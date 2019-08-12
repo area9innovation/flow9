@@ -10,6 +10,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	style = m.style;
 	rows = m.rows;
 
+	cellBorder = 16.;
+	externalBorder = 16.;
+
 	reorderList = tryExtractStruct(style, MListReorder(make([]), const(false)));
 	isReorderEnabled = eitherMap(reorderList, \rl : MListReorder -> fgetValue(rl.enabled), false);
 	reorderShowIcon = !contains(style, MListReorderHideIcon());
@@ -28,7 +31,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	replaceHeader = contains(headerActions.style, MReplaceHeader());
 
 	currentPage = tryExtractStruct(style, MCurrentPage(make(0)));
-	scrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
+	scrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
 
 	selection : MListSelection =
 		extractStruct(style, MListSelection(
@@ -40,21 +43,23 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	selectionEnabled : MListSelectionEnabled = extractStruct(style, MListSelectionEnabled(const([])));
 	hoverEnabled : MHoverEnabled = extractStruct(style, MHoverEnabled(const(true)));
 	expandRowEnabled = extractStruct(style, MExpandRow(const(false))).enabled;
+	isDefExpandRow = isFConst(expandRowEnabled) && !fgetValue(expandRowEnabled);
 	scrollEnabled = extractStruct(style, TScrollEnabled(const(false))).enabled;
 	onClick : MOnListClick = extractStruct(style, MOnListClick(const(false), nop1));
 	clickEnabled : MClickEnabled = extractStruct(style, MClickEnabled(const(true)));
 
 	rowHeight = extractStruct(style, MRowHeight(if (extractStruct(style, MCondensed(false)).condensed) 32. else 48.)).height;
 	headerRowHeight = extractStruct(style, MHeaderRowHeight(rowHeight)).height;
-	lineHeight = \isHeader -> if (isHeader) headerRowHeight else rowHeight;
+	lineHeight = \isHeader -> if (!isHeader) rowHeight else if (replaceHeader) 0. else headerRowHeight;
 	checkboxSelection = tryExtractStruct(style, MCheckBoxSelection([]));
+	isCheckboxColumn = \i -> isSome(checkboxSelection) && i == 0;
 	checkboxColor = eitherMap(checkboxSelection, \cs -> extractStruct(cs.style, getPrimaryColor(parent)), getPrimaryColor(parent));
 	checkEnabled = extractStruct(
 		either(checkboxSelection, MCheckBoxSelection([])).style,
 		MCheckBoxEnabled(\__ -> true)
 	).fn;
 	checkboxBorder = \rh -> forceRange((rh - 24.) / 2., 0., 12.);
-	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + standardIconSize;
+	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + standardIconSize - cellBorder;
 
 	headerStyle = tryExtractStruct(style, MHeaderStyle([], [], []));
 	rowBackgroundStyle = tryExtractStruct(style, MRowBackgroundStyle(\__ -> []));
@@ -68,10 +73,15 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
 
 	widthByContent = contains(style, MWidthByContent());
-	columns0 = m.columns
+	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode()));
+	isInnerScroll = isSome(innerScroll);
+
+	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
+	lifted = eitherMap(innerScroll, \is -> is.mode == MLiftedFirstColumnMode(), false);
+
+	columns = m.columns
 		|> (\arr -> if (widthByContent) map(arr, \col -> MColumnDynamic(col.header, col.tooltip, col.width, arrayPush(col.style, MWidthByContent()))) else arr)
-		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContent()])], arr) else arr);
-	columns = columns0
+		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContent()])], arr) else arr)
 		|> (\arr -> if (isSome(checkboxSelection)) concat([MColumn("", "", floor(checkboxColumnWidth), [MMaxWidth(floor(checkboxColumnWidth))])], arr) else arr);
 	columnsCount = length(columns);
 	isAnyWidthByContent = widthByContent || any(map(columns, \col -> contains(col.style, MWidthByContent())));
@@ -140,22 +150,20 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	// Width handling
 
-	border = 16.;
-	externalBorder = 16.;
 	screenW = make(0.);
 	rowsBoxH = make(0.);
 
 	fullWidthAdvanced = contains(style, MFullWidthAdvanced());
 	fullWidth = contains(style, MFullWidth()) || fullWidthAdvanced;
 
-	minWidths = mapi(columns, \i, c -> i2d(c.width) + border);
+	minWidths = map(columns, \c -> i2d(c.width) + cellBorder);
 
 	cellWs : Transform<[[DynamicBehaviour<double>]]> =
 		fselect(rowsCountB, FLift(\rc ->
 			generate(0, rc + b2i(isSome(fixedRow)), \__ ->
 				generate(0, columnsCount, \i ->
 					if (!widthByContent && !contains(columns[i].style, MWidthByContent())) make(0.)
-					else if (isSome(checkboxSelection) && i == 0) make(checkboxColumnWidth)
+					else if (isCheckboxColumn(i)) make(checkboxColumnWidth)
 					else make(^tropicFillersMax)
 				)
 			)
@@ -181,7 +189,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									map(currentRows, \row -> elementAt(row, i, make(0.))),
 									i2d(columns[i].width)
 								),
-								const(border)
+								const(cellBorder)
 							)
 						}))
 					))
@@ -192,12 +200,19 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				const(minWidths[i])
 		);
 
+	headCount = 1 + b2i(showRowNumbers) + b2i(isSome(checkboxSelection));
+
+	colsHead = \arr : [flow] -> take(arr, headCount);
+	colsTail = \arr : [flow] -> tailFrom(arr, headCount);
+	splitWithoutHead = \arr, er -> concat(map(colsHead(arr), v2a), splitByNumber(colsTail(arr), er));
+	mapSplitWithoutHead = \arr, er, fn -> map(splitWithoutHead(arr, er), fn);
+
 	tableWidth : (Transform<int>) -> Transform<double> = \expRow ->
 		if (columnsCount == 0)
 			const(0.)
 		else
 			fselect2(fmerge(columnWidths), expRow, FLift2(\colWs : [double], er : int ->
-				dsum(mapSplitWidths(colWs, er, \ws -> either(maxA(ws), 0.))) + 2. * externalBorder
+				dsum(mapSplitWithoutHead(if (lifted) colsTail(colWs) else colWs, er, \ws -> either(maxA(ws), 0.))) + 2. * externalBorder
 			));
 
 	prevER = ref 1;
@@ -211,6 +226,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			^prevER) |> (\f -> {prevER := f; f});
 
 	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else const(dsum(minWidths));
+	
+	innerScrollEnabled = if (fullWidth) fless(screenW, faddition(minWidthsSum, const(2. * externalBorder))) else const(true);
+	innerScrollVisible0 = make(false);
+	innerScrollVisible = fand(innerScrollEnabled, innerScrollVisible0);
+	innerScrollPosition = makePoint();
 
 	expandRow =
 		fif(
@@ -230,7 +250,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	tableHeight = make(0.);
 
 	countRowHeight = \er : int ->
-		rowHeight * i2d(er) + separatorsHeight;
+		rowHeight * (i2d(er) + b2d(lifted)) + separatorsHeight;
 
 	minimumRowsDef = 3;
 	minTableHeightDef = i2d(minimumRowsDef + b2i(!replaceHeader)) * countRowHeight(1) + footerHeight;
@@ -243,6 +263,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		fgetValue(rowsCountB)
 	);
 
+	rowsAvailableHeight =
+		fselect4(rowsPerPage, rowsCountB, showFixedRow, expandRow, \rpp, rc, fr, er ->
+			i2d(min(rpp, rc) + b2i(fr)) * countRowHeight(er)
+		);
+
 	// Helpers
 
 	makeChkbox = \p, trigger, en, onClk, h -> {
@@ -253,7 +278,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			MCheckBox(TEmpty(), trigger, [MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)]),
 			m2t
 		)
-		|> (\t -> TBorderA(-checkboxBorder(lh) / 2., 0., 0., 0., t))
+		|> (\t -> TBorderA(-checkboxBorder(lh) / 2. - cellBorder / 2., 0., 0., 0., t))
 		|> (\t -> TCenterYIn(t, TFixed(0., lh)))
 	}
 
@@ -268,29 +293,23 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				\tr ->
 					TTweak(
 						[TAlign(const(if (center) 0.5 else if (right) 1. else 0.), const(0.5))],
-						TBorderA(8., 0., 8., 1., TAvailable(content, TBorderA(-16., 0., 0., -1., tr))),
+						TBorderA(cellBorder / 2., 0., cellBorder / 2., 1., TAvailable(content, TBorderA(-cellBorder, 0., 0., -1., tr))),
 						tr
 					),
 				false
 			)
 		}
 
-	expandContent = \cells : [Tropic], er : int ->
-		map(
-			if (length(cells) > 0 && isNone(checkboxSelection))
-				splitWidths(cells, er)
-			else
-				splitByNumber(cells, er),
-			TLines);
+	expandContent = \cells : [Tropic], er : int -> map(splitWithoutHead(cells, er), TLines);
 
 	// Header
 
-	tableHeader = \p -> if (replaceHeader) TEmpty() else
-		mapi(columns0, \i0, c : MColumnDynamic -> {
+	headerTitles = \p ->
+		mapi(columns, \i0, c : MColumnDynamic -> if (replaceHeader) cellBox(i0, true) else {
 			rightAlign = changeBoolIfRTL(contains(c.style, RightAlign()));
 			sortStyle = if (isSome(reorderList)) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
 			sortable = isNone(reorderList) && (hasExtOrderBy || contains(c.style, MAutoSort()));
-			i = i0 - b2i(showRowNumbers);
+			i = i0 - headCount + 1;
 
 			makeHeaderTitle = \isSelected : bool ->
 				TSelect(c.header, \header ->
@@ -362,83 +381,244 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				else
 					MTooltip2T(manager, p, MTooltip(f2, MDynamicText(c.tooltip, [MTooltipDesktop(), sameLightMColor(p)]), []), m2t)
 			)
-			|> alignCellContent(c.style, cellBox(i0 + b2i(isSome(checkboxSelection)), true))
-		})
-		|> (\headers : [Tropic] -> {
-
-			addCheckbox = \colHeaders : Tropic ->
-				eitherMap(
-					checkboxSelection,
-					\__ -> {
-						selAll = make(false);
-						selPage =
-							fselect3(
-								fif(scrollEnabled, fselect(rowsCountB, FLift(\rc -> Pair(0, rc))), page),
-								sortingResult,
-								fsubselect(selectionEnabled.enabled, FLift(fmerge)),
-								\pg, sr, en ->
-									fold(
-										enumFromTo(pg.first, min(pg.first + pg.second, length(sr)) - 1),
-										[], \acc, i ->
-											ifArrayPush(acc, elementAt(en, i, true), elementAt(sr, i, i))
-									)
-							);
-
-						makeChkbox(p, selAll,
-							if (selection.multiple)
-								fand(selection.enabled, fselect(selPage, FLift(\pg -> length(pg) > 0)))
-							else
-								const(false),
-							\ -> nextDistinct(selection.selected,
-								if (getValue(selAll))
-									concat(getValue(selection.selected), fgetValue(selPage)) |> uniq
-								else
-									filter(getValue(selection.selected), \x -> !contains(fgetValue(selPage), x))
-							),
-							true
-						)
-							|> (\t ->
-								if (selection.multiple) {
-									TConstruct(
-										[
-											make2Subscribe(selection.selected, selPage, \sel, pg ->
-												nextDistinct(
-													selAll,
-													length(pg) != 0 && length(sel) >= length(pg)
-														&& forall(pg, \i -> contains(sel, i))
-												)
-											)
-										],
-										t
-									)
-								} else
-									t
+			|> (\t -> if (isCheckboxColumn(i0)) {
+					selAll = make(false);
+					selPage =
+						fselect3(
+							fif(scrollEnabled, fselect(rowsCountB, FLift(\rc -> Pair(0, rc))), page),
+							sortingResult,
+							fsubselect(selectionEnabled.enabled, FLift(fmerge)),
+							\pg, sr, en ->
+								fold(
+									enumFromTo(pg.first, min(pg.first + pg.second, length(sr)) - 1),
+									[], \acc, j ->
+										ifArrayPush(acc, elementAt(en, j, true), elementAt(sr, j, j))
 								)
-							|> (\chkbox -> TCols2A(chkbox, colHeaders))
-					},
-					colHeaders
-				);
+						);
 
-			TSelect(expandRow, \er ->
-				expandContent(headers, er)
-				|> TColsA
+					makeChkbox(p, selAll,
+						if (selection.multiple)
+							fand(selection.enabled, fselect(selPage, FLift(\pg -> length(pg) > 0)))
+						else
+							const(false),
+						\ -> nextDistinct(selection.selected,
+							if (getValue(selAll))
+								concat(getValue(selection.selected), fgetValue(selPage)) |> uniq
+							else
+								filter(getValue(selection.selected), \x -> !contains(fgetValue(selPage), x))
+						),
+						true
+					)
+					|> (\t2 ->
+						if (selection.multiple)
+							TConstruct(
+								[
+									make2Subscribe(selection.selected, selPage, \sel, pg ->
+										nextDistinct(
+											selAll,
+											length(pg) != 0 && length(sel) >= length(pg)
+												&& forall(pg, \j -> contains(sel, j))
+										)
+									)
+								],
+								t2
+							)
+						else
+							t2
+					)
+				} else t
 			)
-			|> addCheckbox
-			|> (\f2 -> TBorderA(externalBorder, 0., externalBorder + reorderIconSpace, 0., f2))
-		})
-		|> (\f ->
+			|> alignCellContent(c.style, cellBox(i0, true))
+		});
+
+	tableHeader = \headers0 ->
+		TSelect(expandRow, \er ->
+			expandContent(headers0, er)
+			|> (\headers ->
+				if (lifted) colsTail(headers)
+				else if (glued)	concat([TShow(fthrottle(fnot(innerScrollVisible), 1), colsHead(headers) |> TCols)], colsTail(headers))
+				else headers
+			)
+			|> TColsA
+		)
+		|> (\t -> if (glued)
+				TBorderT(fif(innerScrollVisible, zero, const(externalBorder)), zero, const(externalBorder + reorderIconSpace), zero, t)
+			else TBorderA(externalBorder, 0., externalBorder + reorderIconSpace, 0., t)
+		)
+		|> (\t ->
 			eitherMap(
 				headerStyle,
 				\hs ->
 					TCopySize(
-						f,
+						t,
 						\tr ->
 							TRounded(2., 2., 0., 0., hs.background, tr),
 						false
 					),
-				f
+				t
 			)
 		);
+
+	makeCells : (MFocusGroup, int, [Material]) -> [Tropic] = \p, j, row -> {
+		checkbox = eitherMap(checkboxSelection, \__ ->
+			if (j >= 0) {
+				selRow = make(contains(getValue(selection.selected), j));
+				chEnabled = checkEnabled(j);
+				makeChkbox(p, selRow,
+					fands([
+						selection.enabled, 
+						fsubselect(selectionEnabled.enabled, FLift(\en ->
+							elementAt(en, j, const(true)),
+						)),
+						const(chEnabled)
+					], true),
+					\ -> {
+						sel = getValue(selection.selected);
+
+						if (selection.multiple) {
+							if (!getValue(selRow) && chEnabled)
+								nextDistinct(selection.selected, removeAll(sel, j))
+							else if (!contains(sel, j) && chEnabled)
+								nextDistinct(selection.selected, arrayPush(sel, j))
+						} else {
+							if (getValue(selRow) && chEnabled)
+								nextDistinct(selection.selected, [j])
+							else if (selection.toggle && chEnabled)
+								nextDistinct(selection.selected, [])
+						}
+					},
+					false
+				)
+				|> (\t -> TConstruct(
+					[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j) && chEnabled)], t
+				))
+				|> v2a
+			}
+			else [TFixed(checkboxColumnWidth, 0.)],
+			[]
+		);
+
+		fullRow = [
+			checkbox,
+			if (showRowNumbers) [MText(i2s(j + 1), [])] else [],
+			row
+		] |> concatA;
+
+		mapi(fullRow, \i, cell -> {
+			if (i >= columnsCount)
+				TEmpty()
+			else {
+				colStyle = columns[i].style;
+				box = cellBox(i, false);
+				// TODO : improve
+				// Hotfix : rerender content in the column if rowsCountB changed. 
+				content =
+					if (contains(colStyle, MWidthByContent()))
+						MSelect(cellWs, \cws ->
+							MAttachWidth(cell, elementAt(elementAt(cws, j, []), i, make(0.0)))
+						)
+					else
+						cell;
+
+				MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
+				|> alignCellContent(colStyle, box)
+			}
+		})
+	};
+
+
+	addSeparatedFirstColumn = \p, headers0 -> \table ->
+		if (glued || lifted) {
+
+			implementExpandRow = \isHeader ->
+				\t -> TBorderT(zero, zero, zero, fselect(expandRow, FLift(\er -> lineHeight(isHeader) * (i2d(er - 1)))), t);
+
+			firstColumnWidth = arrayPush(colsHead(columnWidths), const(externalBorder)) |> fsum;
+
+			firstColumnHeader =
+				(
+					if (lifted) TFixed(0., lineHeight(true))
+					else colsHead(headers0) |> TCols |> TBorderLeft(externalBorder)
+				)
+				|> implementExpandRow(true);
+
+			cells =
+				fselect(sortingResult, FLift(\sortRes -> {
+					rws = fgetValue(rows);
+					map(sortRes, \i -> elementAt(rws, i, []))
+					|> (\arr -> eitherMap(fixedRow, \fr -> concat([fr.cols], arr), arr))
+					|> (\arr -> mapi(arr, \i0, row -> {
+						i = i0 - b2i(isSome(fixedRow));
+						makeCells(p, i, row)
+						|> colsHead
+						|> TCols
+						|> (\t ->
+							if (lifted)
+								TAlpha(fselect(innerScrollPosition, FLift(\isp -> max(0.5, 1. - abs(isp.x) / 100.))), t)
+								|> TBorderBottom(rowHeight)
+							else t
+						)
+						|> implementExpandRow(false)
+						|> TBorderLeft(externalBorder)
+						|> (\t -> if (glued)
+								eitherMap(rowBackgroundStyle, \rb -> if (i == -1) t else
+									TIfLazy2(
+										fselect(selection.selected, FLift(\arr2 -> contains(arr2, sortRes[i]))),
+										\v -> if (v && isSome(selectedBgStyle)) TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, []), t)
+											else TFrame(0., 0., rb.fn(sortRes[i]), t),
+										false
+									), t
+								)
+							else t
+						)
+						|> (\t -> if (separators && glued) TLines2(t, MSeparator2T(manager, p, true)) else t)
+					}))
+				}));
+
+			firstColumn =
+				TSelect(eitherMap(fixedRow, \__ -> fselect(cells, FLift(tail)), cells), TLines)
+				|> (\t -> MScroll2T(manager, p, MScroll(t, TFillXY(), [
+						MScrollCropByContent(),
+						TScrollEnabled(const(false)),
+						MScrollbars(
+							TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
+							TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
+						),
+						scrollPosition,
+						MScrollBound(const(false), const(false))
+					]), m2t))
+				|> (\t -> eitherMap(fixedRow, \fr -> {
+						bStyle =
+							filtermap(fr.style, \st -> switch (st) {
+								TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
+								default : None()
+							});
+
+						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
+						|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
+						|> (\t2 -> TShow(fr.show, t2))
+						|> (\t2 -> TLines2(t2, t))
+					}, t))
+				|> (\t -> TAvailableHeight(t, rowsAvailableHeight))
+				|> (\t -> if (separators && glued) TLines2(MSeparator2T(manager, p, true), t) else t)
+				|> (\t -> TAvailableWidth(t, firstColumnWidth))
+				|> (\t -> TLines2(firstColumnHeader, t))
+				|> (\t ->
+						if (glued)
+							TShow(innerScrollVisible,
+								TCols2(t, TAvailableHeight(
+									MSeparator2T(manager, p, false),
+									faddition(rowsAvailableHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
+								))
+							)
+						else t
+				);
+
+			TGroup2(
+				if (glued) TBorderT(fdelay(fif(innerScrollVisible, firstColumnWidth, zero), 0), zero, zero, zero, table) else table,
+				firstColumn
+			)
+		} else table;
 
 	addHeaderActions = \p -> \t : Tropic ->
 		if (headerActions.actions != TEmpty())
@@ -554,6 +734,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	|> (\t -> TAttachMinWidth(t, footerMinWidth));
 
 	(\p -> {
+		headers0 = headerTitles(p);
+
 		// Data rows
 		MSelect2T(manager, p, "MDynamicDataTableLines", [], expandRow, \er, p2 ->
 			eitherMap(
@@ -561,83 +743,33 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				\fr -> fconcat(const([fr.cols]), rows),
 				rows
 			)
-			|> (\rc -> fmapi(rc, \j, row -> {
-					addCheckbox = \p3 : MFocusGroup -> \cells : Tropic ->
-						eitherMap(checkboxSelection, \cs -> {
-							j0 = j - b2i(isSome(fixedRow));
-							if (j0 >= 0) {
-								selRow = make(contains(getValue(selection.selected), j0));
-								chEnabled = checkEnabled(j0);
-								makeChkbox(p3, selRow,
-									fands([
-										selection.enabled, 
-										fsubselect(selectionEnabled.enabled, FLift(\en ->
-											elementAt(en, j0, const(true)),
-										)),
-										const(chEnabled)
-									], true),
-									\ -> {
-										sel = getValue(selection.selected);
+			|> (\rc -> fmapi(rc, \j0, row -> {
 
-										if (selection.multiple) {
-											if (!getValue(selRow) && chEnabled)
-												nextDistinct(selection.selected, removeAll(sel, j0))
-											else if (!contains(sel, j0) && chEnabled)
-												nextDistinct(selection.selected, arrayPush(sel, j0))
-										} else {
-											if (getValue(selRow) && chEnabled)
-												nextDistinct(selection.selected, [j0])
-											else if (selection.toggle && chEnabled)
-												nextDistinct(selection.selected, [])
-										}
-									},
-									false
-								)
-								|> (\t -> TConstruct(
-										[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j0) && chEnabled)], t
-									))
-								|> (\t -> TCols2A(t, cells))
-							} else
-								TBorderA(checkboxColumnWidth, 0., 0., 0., cells)
-							},
-							cells
-						);
-					row2 = if (showRowNumbers) concat([MText(i2s(j + 1), [])], row) else row;
+					j = j0 - b2i(isSome(fixedRow));
+					
 					makeLineContent = \p3 : MFocusGroup ->
-						mapi(row2, \i0, cell -> {
-							i = i0 + b2i(isSome(checkboxSelection));
-							if (i >= columnsCount)
-								TEmpty()
-							else {
-								colStyle = columns[i].style;
-								box = cellBox(i, false);
-								// TODO : improve
-								// Hotfix : rerender content in the column if rowsCountB changed.
-								content =
-									if (contains(colStyle, MWidthByContent()))
-										MSelect(cellWs, \cws ->
-											MAttachWidth(cell, elementAt(elementAt(cws, j, []), i, make(0.0)))
-										)
-									else
-										cell;
-
-								MCellContent2T(manager, p3,	content, rowHeight,	box, crop, m2t)
-								|> alignCellContent(colStyle, box)
-							}
-						})
-							|> (\cells -> expandContent(cells, er))
-							|> TColsA
-							|> addCheckbox(p3)
-							|> TBorderLeftRight(externalBorder)
-							|> (\t -> TFixSize(t, TFillXH(countRowHeight(er) - separatorsHeight)))
-							|> (\t -> eitherMap(rowBackgroundStyle, \rb ->
-										TIfLazy2(
-											fselect(selection.selected, FLift(\arr -> contains(arr, j))),
-											\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
-											false
-										), t
-									))
-							|> (\t -> if (separators) TLines2(t, m2t(MSeparator(true), p3)) else t);
+						makeCells(p3, j, row)
+						|> (\cells : [Tropic] -> expandContent(cells, er))
+						|> (\cells ->
+							if (lifted) colsTail(cells)
+							else if (glued) concat([TShow(fnot(innerScrollVisible), colsHead(cells) |> TCols)], colsTail(cells))
+							else cells
+						)
+						|> TColsA
+						|> (\t -> 
+							if (glued) TBorderT(fif(innerScrollVisible, zero, const(externalBorder)), zero, const(externalBorder), zero, t)
+							else t |> TBorderLeftRight(externalBorder)
+						)
+						|> (if (lifted) TBorderTop(rowHeight) else idfn)
+						|> (\t -> TFixSize(t, TFillXH(countRowHeight(er) - separatorsHeight)))
+						|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
+									TIfLazy2(
+										fselect(selection.selected, FLift(\arr -> contains(arr, j))),
+										\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
+										false
+									), t
+								))
+						|> (\t -> if (separators) TLines2(t, m2t(MSeparator(true), p3)) else t);
 
 					MCustomLine(
 						MGetFocusGroup(makeLineContent),
@@ -744,15 +876,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					)
 				)
 			)
-			|> (\f2 ->
-				TAvailableHeight(
-					f2,
-					fselect3(rowsPerPage, rowsCountB, showFixedRow, \rpp, rc, fr ->
-						i2d(min(rpp, rc) + b2i(fr)) * countRowHeight(er)
-					)
-				)
-			)
 		)
+		|> (\f -> TAvailableHeight(f, rowsAvailableHeight))
 		|> (\f -> TConstruct(
 				concat(
 					if (isEmptyPagination) [
@@ -793,6 +918,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 					if (fullWidth && !widthByContent && length(columnWidths) > 0) [
 						make3Subscribe(screenW, expandRow, fmerge(columnWidths), \width, er, colWs -> {
+							cutFirstColumn = \arr : [flow] -> if (lifted || glued) colsTail(arr) else arr;
+
 							miw =
 								mapi(columns, \i, c -> {
 									if (contains(c.style, MWidthByContent()))
@@ -801,10 +928,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 										minWidths[i]
 								})
 								|> (\arr ->
-									mapSplitWidths(arr, er,
+									mapSplitWithoutHead(arr, er,
 										\r -> either(maxA(r), -1.)
 									)
-								);
+								)
+								|> cutFirstColumn;
 
 							maw =
 								mapi(columns, \i, c -> {
@@ -816,26 +944,28 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 										if (w == -1)
 											-1.
 										else if (w < c.width)
-											i2d(c.width) + border
+											i2d(c.width) + cellBorder
 										else
-											i2d(w) + border
+											i2d(w) + cellBorder
 									}
 								})
 								|> (\arr ->
-									mapSplitWidths(arr, er,
+									mapSplitWithoutHead(arr, er,
 										\r -> if (contains(r, -1.)) -1. else either(maxA(r), -1.)
 									)
-								);
+								)
+								|> cutFirstColumn;
 
 							newSizes =
 								distributeSizesEvenly(
 									miw,
 									maw,
 									max(width - externalBorder * 2. - reorderIconSpace, getValue(footerMinWidth))
+									- if (glued) fgetValue(fsum(colsHead(columnWidths))) else 0.
 								);
 
 							iteri(
-								splitWidths(columnWidths, er),
+								splitWithoutHead(columnWidths, er) |> cutFirstColumn,
 								\i, r -> iter(r, \r0 : Transform<double> ->
 									switch (r0) {
 										DynamicBehaviour(__, __):
@@ -855,7 +985,28 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			else idfn)
 		|> (\t -> if (separators) TLines2(m2t(MSeparator(true), p), t) else t)
 		// Header
-		|> (\f -> TLines2(tableHeader(p), f))
+		|> (\f -> TLines2(tableHeader(headers0), f))
+		|> (\t : Tropic -> if (isInnerScroll) {
+				scrollStyle = [
+					TScrollInspectShowScrolling(innerScrollVisible0),
+					MScrollPosition(innerScrollPosition),
+					MScrollDisableOutOfBounds(const(true)),
+					TScrollEnabled(innerScrollEnabled),
+					MScrollbars(
+						TScrollbarStyle(getMaterialScrollBar().x with visible = innerScrollEnabled),
+						TScrollbarStyle(getMaterialScrollBar().y with visible = innerScrollEnabled)
+					),
+				];
+				scroll =
+					if (autoPagination || fgetValue(scrollEnabled)) MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
+					else {
+						contentHeight = make(0.);
+						MScroll(MAttachHeight(t, contentHeight), TFillXHT(contentHeight), scrollStyle)
+					}
+
+				MScroll2T(manager, p, scroll, m2t)
+			} else t)
+		|> addSeparatedFirstColumn(p, headers0)
 		|> addHeaderActions(p)
 		// Bottom bar
 		|> (\f : Tropic -> TLines2(f, footer(p)))
@@ -950,10 +1101,10 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				f
 			)
 		)
-		|> (\t -> TAvailableWidth(t, tableWidth(expandRow)))
+		|> (\t -> TAvailableWidth(t, if (isInnerScroll) fmin(screenW, tableWidth(expandRow)) else tableWidth(expandRow)))
 		|> (\t -> if (fullWidthAdvanced) TTweak([TSnapSize(8., -1., false)], t, TEmpty()) else t)
 		|> (if (!anyTypePagination && isFConst(m.rows) && !fgetValue(scrollEnabled)) makeTropicConstantHeight(None()) else idfn)
-		|> (if (fullWidth || isAnyWidthByContent) idfn else makeTropicConstantWidth(None()))
+		|> (if (fullWidth || isAnyWidthByContent || isInnerScroll || !isDefExpandRow) idfn else makeTropicConstantWidth(None()))
 		|> (\t ->
 			if (fullWidth) {
 				table = if (autoPagination || fgetValue(scrollEnabled)) t else TAttachHeight(t, tableHeight);
@@ -973,7 +1124,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			f
 		)
 	)
-	|> (\t -> if (isFConst(expandRowEnabled) && !fgetValue(expandRowEnabled) && !fullWidth) t else TAttachWidth2(TFillX(), screenW, t))
+	|> (\t ->
+		if (isInnerScroll || !isDefExpandRow) TAttachAvailableWidth(t, screenW)
+		else if (fullWidth) TAttachWidth2(TFillX(), screenW, t)
+		else t
+	)
 }
 
 MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, rowHeight : double, box : Tropic, crop : bool, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -1119,16 +1274,6 @@ hideIfLittlePages(rowsCount : int, rowsPerPage : Transform<int>) -> (Tropic) -> 
 
 divCeil(a : int, b : int) -> int {
 	ceil(i2d(a) / i2d(b))
-}
-
-
-
-splitWidths(arr : [?], er : int) -> [[?]] {
-	concat([[arr[0]]], splitByNumber(arr |> tail, er))
-}
-
-mapSplitWidths(arr : [?], er : int, fn : ([?]) -> double) -> [double] {
-	map(splitWidths(arr, er), fn)
 }
 
 updateTrigger(trigger : DynamicBehaviour<bool>, delay : int) -> void {
