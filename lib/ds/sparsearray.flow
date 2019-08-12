@@ -52,6 +52,7 @@ SparseArray(
 	// to represent an array ["a", "b"] as {0: ["a"], 1: ["a"]}. Instead, we should
 	// combine and have {0: ["a", "b"]}
 	mutable ranges : Tree<int, SparseRange<?>>,
+	mutable length : int,
 	// The function which can generate/retrieve values at the given point.
 	retrieveRange : (start : int, end : int, cb : ([?]) -> void) -> void,
 	// The function which can generate/retrieve array length at the given point.
@@ -67,12 +68,13 @@ makeSparseArray(
 	retrieveRange : (start : int, end : int, cb : ([?]) -> void) -> void,
 	retrieveLength : (cb : (int) -> void) -> void
 ) -> SparseArray<?> {
-	SparseArray(makeTree(), retrieveRange, retrieveLength);
+	SparseArray(makeTree(), -1, retrieveRange, retrieveLength);
 }
 
 array2SparseArray(vals : [?]) -> SparseArray<?> {
 	SparseArray(
 		makeTree1(0, SparseArrayRange(0, length(vals), vals)),
+		length(vals),
 		\f, t, cb ->
 			// timer(round(5.0 + random() * 10.0), \ -> cb(subrange(vals, f, t - f))), // Fake retrieve delay for testing
 			cb(subrange(vals, f, t - f)),
@@ -218,7 +220,11 @@ getSparseArrayRange(s : SparseArray<?>, start : int, end : int, cb : ([?]) -> vo
 }
 
 getSparseArrayLength(s : SparseArray<?>, cb : (int) -> void) -> void {
-	s.retrieveLength(cb);
+	if (s.length >= 0) {
+		cb(s.length);
+	} else {
+		s.retrieveLength(\l -> { s.length ::= l; cb(l); });
+	}
 }
 
 getSparseArrayIndex(s : SparseArray<?>, index : int, cb : (?) -> void) -> void {
@@ -290,14 +296,31 @@ removeSparseArrayIndex(s : SparseArray<?>, index : int) -> SparseArray<?> {
 }
 
 insertSparseArrayIndex(s : SparseArray<?>, index : int, value : ?) -> SparseArray<?> {
-	insertSparseArray(s, index, array2SparseArray([value]))
+	makeSparseArray(
+		\f, t, cb ->
+			if (f <= index && t > index)
+				getSparseArrayRange(s, f, index, \r ->
+					getSparseArrayRange(s, index, t, \r2 ->
+						cb(concat3(r, [value], r2))
+					)
+				)
+			else
+				getSparseArrayRange(s, f, t, cb),
+		\cb ->
+			getSparseArrayLength(s, \l -> cb(l + 1))
+	)
 }
 
 containsSparseArray(s : SparseArray<?>, v : ?, cb : (bool) -> void) -> void {
-	if (contains(instantiatedSparseArray2array(s), v)) {
+	ia = instantiatedSparseArray2array(s);
+	if (contains(ia, v)) {
 		cb(true)
 	} else {
-		getSparseArrayLength(s, \l -> getSparseArrayRange(s, 0, l, \vv -> cb(contains(vv, v))));
+		getSparseArrayLength(s, \l -> {
+			// Do we already have everything?
+			if (l == length(ia)) cb(false) // Yep, we know it is not there
+			else getSparseArrayRange(s, 0, l, \vv -> cb(contains(vv, v)))
+		});
 	}
 }
 
@@ -358,7 +381,7 @@ subrangeSparseArray(s : SparseArray<?>, from : int, len : int) -> SparseArray<?>
 		\f, t, cb ->
 			getSparseArrayRange(s, f + from, (if (len >= 0) min(t, len) else t) + from, cb),
 		\cb ->
-			getSparseArrayLength(s, \l -> cb(if (len >= 0) min(l - from, len) else l - from))
+			getSparseArrayLength(s, \l -> cb(max(if (len >= 0) min(l - from, len) else l - from, 0)))
 	)
 }
 

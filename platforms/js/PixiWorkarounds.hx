@@ -752,6 +752,58 @@ class PixiWorkarounds {
 			// 	return lines;
 			// }
 
+			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y)
+			{
+				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
+
+				const style = this._style;
+
+				// letterSpacing of 0 means normal
+				// Skip directional chars
+				const letterSpacing = style.letterSpacing;
+
+				if (letterSpacing === 0)
+				{
+					if (isStroke)
+					{
+						this.context.strokeText(text, x, y);
+					}
+					else
+					{
+						this.context.fillText(text, x, y);
+					}
+
+					return;
+				}
+
+				var currentPosition = x;
+				var allWidth = this.context.measureText(text).width;
+				var char, tailWidth, charWidth;
+
+				do {
+					char = text.substr(0, 1);
+					text = text.substr(1);
+
+					if (isStroke) {
+						this.context.strokeText(char, currentPosition, y);
+					} else {
+						this.context.fillText(char, currentPosition, y);
+					}
+
+					if (text == '')
+						tailWidth = 0;
+					else
+						tailWidth = this.context.measureText(text).width;
+
+
+					charWidth = allWidth - tailWidth;
+
+					currentPosition += charWidth +
+						((char.charCodeAt(0) === 0x202A || char.charCodeAt(0) === 0x202B || char.charCodeAt(0) === 0x202C) ? 0.0 : letterSpacing);
+					allWidth = tailWidth;
+				} while (text != '');
+			}
+
 			PIXI.Text.prototype._renderCanvas = function(renderer)
 			{
 				const scaleX = this.worldTransform.a;
