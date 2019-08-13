@@ -50,7 +50,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, timeout : double,
 	started = ref 0.0;
 	uns = ref [];
 
-	deferredFns : ref [() -> bool] = ref [];
+	deferredFn : ref Maybe<() -> bool> = ref None();
 	deferredTime = ref 0.0;
 	deferredTimeInner = ref 0.0;
 	currentRepeat = ref 0;
@@ -83,64 +83,67 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, timeout : double,
 					}
 
 					offset = ts - ^started;
-					if (^deferredFns != []) {
-						if (offset > ^deferredTime + ^deferredTimeInner) {
-							deferredFns := mapConcat(^deferredFns, \fn -> {
-								if (fn()) [] else [fn]
-							});
-							if (^deferredFns == []) {
-								delays := map(^delays, \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second));
-							} else if (offset > ^deferredTime + 10000.) {
-								println("IScript timeout");
-								stopFn();
-							} else {
-								deferredTimeInner := ^deferredTimeInner + timeout;
-							}
-						}
-					} else {
-						foldWhile(^delays, offset, \t, d -> {
-							if (^delays[0].first < offset) {
-								eitherFn(
-									lookupTree(tree, ^delays[0].second),
-									\records -> {
+					eitherFn(
+						^deferredFn,
+						\fn -> {
+							if (offset > ^deferredTime + ^deferredTimeInner) {
+								if(fn()) deferredFn := None();
 
-										tailedRecords = tailFrom(records, ^startNext);
-										result0 = foldWhile(tailedRecords, Pair([], 0),
-											\acc, fn -> {
-												if (fn.first()) {
-													Some(Pair(arrayPush(acc.first, fn), acc.second + b2i(fn.second)))
-												} else {
-													None()
+								if (isNone(^deferredFn)) {
+									delays := map(^delays, \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second));
+								} else if (offset > ^deferredTime + 10000.) {
+									println("IScript timeout");
+									stopFn();
+								} else {
+									deferredTimeInner := ^deferredTimeInner + timeout;
+								}
+							}
+						},
+						\ -> {
+							foldWhile(^delays, offset, \t, d -> {
+								if (^delays[0].first < offset) {
+									eitherFn(
+										lookupTree(tree, ^delays[0].second),
+										\records -> {
+											tailedRecords = tailFrom(records, ^startNext);
+											result0 = foldWhile(tailedRecords, Pair([], 0),
+												\acc, fn -> {
+													if (fn.first()) {
+														Some(Pair(arrayPush(acc.first, fn), acc.second + b2i(fn.second)))
+													} else {
+														None()
+													}
 												}
-											}
-										);
-										result = result0.first;
-										if (result == tailedRecords) {
-											delays := tail(^delays);
-											startNext := 0;
-											if (result0.second == 0) Some(t) else None()
-										} else {
-											startNext := length(result) + 1;
-											if (length(result) + 1 == length(tailedRecords)) {
+											);
+											result = result0.first;
+
+											if (result == tailedRecords) {
 												delays := tail(^delays);
 												startNext := 0;
+												if (result0.second == 0) Some(t) else None()
+											} else {
+												startNext := length(result) + 1;
+												if (length(result) + 1 == length(tailedRecords)) {
+													delays := tail(^delays);
+													startNext := 0;
+												}
+												deferredFn := Some(subtractA(tailedRecords, result)[0].first);
+												deferredTime := offset;
+												deferredTimeInner := timeout;
+												None()
 											}
-											deferredFns := [subtractA(tailedRecords, result)[0].first];
-											deferredTime := offset;
-											deferredTimeInner := timeout;
-											None()
+										},
+										\ -> {
+											delays := tail(^delays);
+											Some(t)
 										}
-									},
-									\ -> {
-										delays := tail(^delays);
-										Some(t)
-									}
-								);
-							} else {
-								None()
-							}
-						}) |> ignore
-					}
+									);
+								} else {
+									None()
+								}
+							}) |> ignore
+						}
+					)
 				})()
 			];
 	}
