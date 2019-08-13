@@ -752,32 +752,98 @@ class PixiWorkarounds {
 			// 	return lines;
 			// }
 
+			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y)
+			{
+				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
+
+				const style = this._style;
+
+				// letterSpacing of 0 means normal
+				// Skip directional chars
+				const letterSpacing = style.letterSpacing;
+
+				if (letterSpacing === 0)
+				{
+					if (isStroke)
+					{
+						this.context.strokeText(text, x, y);
+					}
+					else
+					{
+						this.context.fillText(text, x, y);
+					}
+
+					return;
+				}
+
+				var currentPosition = x;
+				var allWidth = this.context.measureText(text).width;
+				var char, tailWidth, charWidth;
+
+				do {
+					char = text.substr(0, 1);
+					text = text.substr(1);
+
+					if (isStroke) {
+						this.context.strokeText(char, currentPosition, y);
+					} else {
+						this.context.fillText(char, currentPosition, y);
+					}
+
+					if (text == '')
+						tailWidth = 0;
+					else
+						tailWidth = this.context.measureText(text).width;
+
+
+					charWidth = allWidth - tailWidth;
+
+					currentPosition += charWidth +
+						((char.charCodeAt(0) === 0x202A || char.charCodeAt(0) === 0x202B || char.charCodeAt(0) === 0x202C) ? 0.0 : letterSpacing);
+					allWidth = tailWidth;
+				} while (text != '');
+			}
+
 			PIXI.Text.prototype._renderCanvas = function(renderer)
 			{
 				const scaleX = this.worldTransform.a;
 				const scaleY = this.worldTransform.d;
-				const scaleFactor = Math.min(scaleX, scaleY);
+				const scaleFactor = Math.min(scaleX, scaleY) * renderer.resolution * this.style.resolution;
 				const fontSize = scaleFactor * this.style.fontSize;
-				const scaleText = fontSize > 0.6;
+				const scaleText = fontSize > 0.6 && scaleFactor != 1.0;
+
+				const tempRoundPixels = renderer.roundPixels;
+				renderer.roundPixels = renderer.resolution === this.style.resolution;
 
 				if (scaleText) {
-					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
-					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
+					this.worldTransform.a = scaleX / scaleFactor;
+					this.worldTransform.d = scaleY / scaleFactor;
 
 					const tempFontSize = this.style.fontSize;
 					const tempLetterSpacing = this.style.letterSpacing;
 					const tempLineHeight = this.style.lineHeight;
 					const tempWordWrapWidth = this.style.wordWrapWidth;
+					const tempStrokeThickness = this.style.strokeThickness;
+					const tempDropShadowDistance = this.style.dropShadowDistance;
+					const tempLeading = this.style.leading;
 
+					this.style.scaleFactor = scaleFactor;
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
 					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
+					this.style.strokeThickness = this.style.strokeThickness * scaleFactor;
+					this.style.dropShadowDistance = this.style.dropShadowDistance * scaleFactor;
+					this.style.leading = this.style.leading * scaleFactor;
+					this.style.fontString = this.style.toFontString();
 
-					if (this.resolution !== renderer.resolution)
+					if (!PIXI.TextMetrics._fonts[this.style.fontString])
 					{
-						this.resolution = renderer.resolution;
-						this.dirty = true;
+						PIXI.TextMetrics._fonts[this.style.fontString] = {
+							fontSize : this.style.fontProperties.fontSize * scaleFactor,
+							ascent : this.style.fontProperties.ascent * scaleFactor,
+							descent : this.style.fontProperties.descent * scaleFactor
+						};
 					}
 
 					PIXI.Text.prototype.updateText.call(this, true);
@@ -787,19 +853,18 @@ class PixiWorkarounds {
 					this.style.letterSpacing = tempLetterSpacing;
 					this.style.lineHeight = tempLineHeight;
 					this.style.wordWrapWidth = tempWordWrapWidth;
+					this.style.strokeThickness = tempStrokeThickness;
+					this.style.dropShadowDistance = tempDropShadowDistance;
+					this.style.leading = tempLeading;
 
 					this.worldTransform.a = scaleX;
 					this.worldTransform.d = scaleY;
 				} else {
-					if (this.resolution !== renderer.resolution)
-					{
-						this.resolution = renderer.resolution;
-						this.dirty = true;
-					}
-
 					PIXI.Text.prototype.updateText.call(this, true);
 					PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 				}
+
+				renderer.roundPixels = tempRoundPixels;
 			}
 
 			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
@@ -827,6 +892,7 @@ class PixiWorkarounds {
 
 					this._boundsID++;
 					this.transform.updateTransform(this.parent.transform);
+					this.emit('transformchanged');
 
 					// TODO: check render flags, how to process stuff here
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
@@ -844,10 +910,7 @@ class PixiWorkarounds {
 
 				if (transformChanged) {
 					if (this.child && !this.child.transformChanged) {
-						this.child.transformChanged = true;
-
-						RenderSupportJSPixi.PixiStageChanged = true;
-						RenderSupportJSPixi.TransformChanged = true;
+						DisplayObjectHelper.invalidateTransform(this.child);
 					}
 
 					if (this.accessWidget) {
@@ -864,8 +927,8 @@ class PixiWorkarounds {
 					this.transformChanged = false;
 
 					this._boundsID++;
-
 					this.transform.updateTransform(this.parent.transform);
+					this.emit('transformchanged');
 
 					// TODO: check render flags, how to process stuff here
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;

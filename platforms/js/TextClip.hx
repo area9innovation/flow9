@@ -32,21 +32,10 @@ class UnicodeTranslation {
 	public var rangeContentFlags : Int;
 	static var map : Map<String, UnicodeTranslation> = new Map<String, UnicodeTranslation>();
 
-	public function new(rangeStart, rangeContentFlags) {
-		this.rangeStart = rangeStart;
-		this.rangeContentFlags = rangeContentFlags;
-	}
-
-	static public function getCharAvailableVariants(chr: String): Int {
-		var unit = map.get(chr);
-		if (unit == null) return 1;
-		return unit.rangeContentFlags;
-	}
-
-	static public function getCharVariant(chr: String, gv: Int): String {
+	private static function initMap() {
 		var found = "";
 		for (found in map) break;
-		if (found != "") {
+		if (found == "") {
 			// Glyphs start here.
 			var rangeStart : Int = 0xFE81;
 			// Packed values, bit per character. How many glyphs
@@ -70,6 +59,22 @@ class UnicodeTranslation {
 				rangeStart += 2;
 			}
 		}
+	}
+
+	public function new(rangeStart, rangeContentFlags) {
+		this.rangeStart = rangeStart;
+		this.rangeContentFlags = rangeContentFlags;
+	}
+
+	static public function getCharAvailableVariants(chr: String): Int {
+		initMap();
+		var unit = map.get(chr);
+		if (unit == null) return 1;
+		return unit.rangeContentFlags;
+	}
+
+	static public function getCharVariant(chr: String, gv: Int): String {
+		initMap();
 		var unit = map[chr];
 		if (unit == null) return chr;
 		var tr_gv = unit.rangeContentFlags;
@@ -88,7 +93,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = 'ltr';
-	private var style : TextStyle = new TextStyle();
+	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
 	private var autocomplete : String = '';
@@ -107,7 +112,6 @@ class TextClip extends NativeWidgetClip {
 	private var background : FlowGraphics = null;
 
 	private var metrics : TextMetrics;
-	private var fontMetrics : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -119,6 +123,12 @@ class TextClip extends NativeWidgetClip {
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
+
+	public function new(?worldVisible : Bool = false) {
+		super(worldVisible);
+
+		style.resolution = 1.0;
+	}
 
 	public static function isRtlChar(ch: String) {
 		var code = ch.charCodeAt(0);
@@ -230,24 +240,23 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 		var gv = GV_ISOLATED;
-		i = 0;
+		i = -1;
 		var ret = "";
 		var rightConnect = false;  // Assume only RTL ones have connections.
 		while (i<=lret.length) {
 			var j = i+1;
 			while (j<lret.length && isCharCombining(lret, j)) j += 1;
 			var conMask = UnicodeTranslation.getCharAvailableVariants(j >= lret.length? "" : lret.substr(j, 1));
-
-			// Simplified implementation due seems following character, if RTL, always support connection.
-			if ((conMask & 3) == 3) {
+			if ((conMask & 3) != 3) gv &= 1;
+			var chr = i >=0 ? UnicodeTranslation.getCharVariant(lret.substr(i, 1), gv) : "";
+			if ((conMask & 12) != 0) {
 				gv = rightConnect? GV_MEDIAL : GV_INITIAL;
 				rightConnect = true;
 			} else {
 				gv = rightConnect? GV_FINAL : GV_ISOLATED;
 				rightConnect = false;
 			}
-			if (i>0) ret += UnicodeTranslation.getCharVariant(lret.substr(i-1, 1), gv);
-			ret += lret.substr(i, j-i-1);
+			ret += chr + lret.substr(i+1, j-i-1);
 			i = j;
 		}
 		return new TextMappedModification(ret, positionsDiff);
@@ -306,7 +315,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${cast(style.fontSize, Float) * 1.15 + interlineSpacing}px';
+		nativeWidget.style.lineHeight = '${style.fontSize * 1.15 + interlineSpacing}px';
 		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
@@ -361,14 +370,26 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function bidiDecorate(text : String) : String {
-		if (textDirection == 'ltr') {
+	private static function bidiDecorate(text : String, dir : String) : String {
+		// I do not know how comes this workaround is needed.
+		// But without it, paragraph has &lt; and &gt; displayed wrong.
+		if (text == "<" || text == ">") return text;
+
+		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
-		} else if (textDirection == 'rtl') {
+		} else if (dir == 'rtl') {
 			return String.fromCharCode(0x202B) + text + String.fromCharCode(0x202C);
 		} else {
 			return text;
 		}
+	}
+
+	private static function bidiUndecorate(text : String) : Array<String> {
+		if (text.charCodeAt(text.length-1) == 0x202C) {
+			if (text.charCodeAt(0) == 0x202A) return [text.substr(1, text.length-2), 'ltr'];
+			if (text.charCodeAt(0) == 0x202B) return [text.substr(1, text.length-2), 'rtl'];
+		}
+		return [text, ''];
 	}
 
 	private static inline function capitalize(s : String) : String {
@@ -430,9 +451,9 @@ class TextClip extends NativeWidgetClip {
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
-		style.padding = fontSize * 0.2;
+		style.padding = Math.ceil(fontSize * 0.2);
 
-		fontMetrics = TextMetrics.measureFont(untyped style.toFontString());
+		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
 		this.backgroundColor = backgroundColor;
@@ -446,13 +467,17 @@ class TextClip extends NativeWidgetClip {
 		invalidateMetrics();
 	}
 
+	private function measureFont() : Void {
+		style.fontProperties = TextMetrics.measureFont(style.toFontString());
+	}
+
 	private function layoutText() : Void {
 		if (isFocused || text == '') {
 			if (textClip != null) {
 				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
 			var text = modification.modified;
 			var chrIdx: Int = 0;
 			var texts = wordWrap ? [[text]] : checkTextLength(text);
@@ -469,10 +494,11 @@ class TextClip extends NativeWidgetClip {
 				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
+			} else {
+				textClip.text = bidiDecorate(texts[0][0], textDirection);
+				textClip.style = style;
 			}
 
-			textClip.text = texts[0][0];
-			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
@@ -484,13 +510,16 @@ class TextClip extends NativeWidgetClip {
 
 			if (texts.length > 1 || texts[0].length > 1) {
 				var currentHeight = 0.0;
+				var firstTextClip = true;
 
 				for (line in texts) {
 					var currentWidth = 0.0;
 					var lineHeight = 0.0;
 
 					for (txt in line) {
-						if (txt == texts[0][0]) {
+						if (firstTextClip) {
+							firstTextClip = false;
+
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
@@ -528,22 +557,26 @@ class TextClip extends NativeWidgetClip {
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
-			}
-
 			textClip.setClipRenderable(true);
 			textClipChanged = false;
 		}
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		textClip = new Text(textMod.modified, style);
+		var textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
 		textClip.charIdx = chrIdx;
 		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);
 
 		return textClip;
+	}
+
+	public override function invalidateStyle() : Void {
+		if (isInput) {
+			setScrollRect(0, 0, getWidth(), getHeight());
+		}
+
+		super.invalidateStyle();
 	}
 
 	public function invalidateMetrics() : Void {
@@ -644,7 +677,7 @@ class TextClip extends NativeWidgetClip {
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
 		if (this.interlineSpacing != interlineSpacing) {
 			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = cast(style.fontSize, Float) * 1.15 + interlineSpacing;
+			style.lineHeight = style.fontSize * 1.15 + interlineSpacing;
 
 			invalidateMetrics();
 		}
@@ -653,6 +686,16 @@ class TextClip extends NativeWidgetClip {
 	public function setTextDirection(textDirection : String) : Void {
 		if (this.textDirection != textDirection) {
 			this.textDirection = textDirection.toLowerCase();
+
+			invalidateStyle();
+			invalidateMetrics();
+			layoutText();
+		}
+	}
+
+	public function setResolution(resolution : Float) : Void {
+		if (style.resolution != resolution) {
+			style.resolution = resolution;
 
 			invalidateStyle();
 		}
@@ -758,7 +801,7 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		}
 
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
 		RenderSupportJSPixi.provideEvent(e);
 	}
@@ -793,12 +836,20 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
+		if (nativeWidget == null) {
+			return;
+		}
+
 		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
 		isFocused = false;
 		emit('blur');
+
+		if (nativeWidget == null) {
+			return;
+		}
 
 		invalidateMetrics();
 	}
@@ -812,6 +863,10 @@ class TextClip extends NativeWidgetClip {
 
 		for (f in TextInputFilters) {
 			newValue = f(newValue);
+		}
+
+		if (nativeWidget == null) {
+			return;
 		}
 
 		if (newValue != nativeWidget.value) {
@@ -994,20 +1049,20 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextMetrics() : Void {
-		if (text != "" && cast(style.fontSize, Float) > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
+		if (text != "" && style.fontSize > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
 			metrics = TextMetrics.measureText(text, style);
 		}
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		if (fontMetrics == null) {
-			var ascent = 0.9 * cast(style.fontSize, Float);
-			var descent = 0.1 * cast(style.fontSize, Float);
-			var leading = 0.15 * cast(style.fontSize, Float);
+		if (style.fontProperties == null) {
+			var ascent = 0.9 * style.fontSize;
+			var descent = 0.1 * style.fontSize;
+			var leading = 0.15 * style.fontSize;
 
 			return [ascent, descent, leading];
 		} else {
-			return [fontMetrics.ascent, fontMetrics.descent, fontMetrics.descent];
+			return [style.fontProperties.ascent, style.fontProperties.descent, style.fontProperties.descent];
 		}
 	}
 }

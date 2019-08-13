@@ -16,6 +16,9 @@ import nw.Gui;
 #if (js && !flow_nodejs)
 import js.Browser;
 import js.Promise;
+#if pixijs
+import pixi.core.math.Point;
+#end
 #end
 
 class Util
@@ -200,6 +203,24 @@ class Util
 
 		return '';
 	}
+
+	public static function isMouseEventName(event : String) : Bool {
+		return event == "mouseout" || event == "mousedown" || event == "mousemove" || 
+			   event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup" || 
+			   event == "mousemiddledown" || event == "mousemiddleup" ||
+			   event == "touchstart" || event == "touchmove" || event == "touchend";
+	}
+
+#if pixijs
+	public static function getPointerEventPosition(e : Dynamic) : Point {
+		if (e.type == "touchstart" || e.type == "touchend" || e.type == "touchmove")
+			return new Point(e.touches[0].pageX, e.touches[0].pageY);
+		else if (isMouseEventName(e.type))
+			return new Point(e.clientX, e.clientY);
+		else
+			return new Point(null, null);
+	}
+#end
 #end
 
 #if (js && !flow_nodejs)

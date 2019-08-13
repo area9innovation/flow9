@@ -216,6 +216,16 @@ class AccessWidgetTree extends EventEmitter {
 			var clip : DisplayObject = accessWidget.clip;
 
 			if (nativeWidget != null) {
+				if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
+					var localStage : FlowContainer = untyped clip.stage;
+
+					if (localStage != null) {
+						var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
+							nativeWidget.className == "droparea" ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget;
+						nativeWidget.style.zIndex = Std.string(zIndex);
+					}
+				}
+
 				if (DebugAccessOrder) {
 					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
 					nativeWidget.setAttribute("zorder", '${zorder}');
@@ -346,10 +356,9 @@ class AccessWidget extends EventEmitter {
 	];
 
 	public static var zIndexValues = {
-		"canvas" : "0",
-		"accessButton" : "2",
-		"droparea" : "1",
-		"nativeWidget" : "2"
+		"canvas" : 0,
+		"droparea" : 1,
+		"nativeWidget" : 2
 	};
 
 	public static var tree : AccessWidgetTree = new AccessWidgetTree(0);
@@ -437,10 +446,6 @@ class AccessWidget extends EventEmitter {
 				this.element.addEventListener("blur", function () {
 					clip.emit("blur");
 				});
-
-				if (this.element.style.zIndex == null || this.element.style.zIndex == "") {
-					this.element.style.zIndex = AccessWidget.zIndexValues.accessButton;
-				}
 
 				if (tagName == "button") {
 					this.element.classList.add("accessButton");
@@ -635,7 +640,14 @@ class AccessWidget extends EventEmitter {
 			switch (key) {
 				case "role" : role = attributes.get(key);
 				case "description" : description = attributes.get(key);
-				case "zorder" : zorder = Std.parseInt(attributes.get(key));
+				case "zorder" : {
+					if (zorder != null) {
+						zorder = Std.parseInt(attributes.get(key));
+						updateZorder();
+					} else {
+						zorder = Std.parseInt(attributes.get(key));
+					}
+				}
 				case "id" : id = attributes.get(key);
 				case "enabled" : enabled = attributes.get(key) == "true";
 				case "nodeindex" : nodeindex = parseNodeIndex(attributes.get(key));
@@ -797,7 +809,7 @@ class AccessWidget extends EventEmitter {
 			if (accessWidget != null && accessWidget.element != null) {
 				if (child.changed) {
 					try {
-						if (previousElement != null && previousElement.nextSibling != null) {
+						if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {
 							parent.insertBefore(accessWidget.element, previousElement.nextSibling);
 						} else {
 							parent.appendChild(accessWidget.element);

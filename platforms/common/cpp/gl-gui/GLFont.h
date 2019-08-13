@@ -412,6 +412,16 @@ protected:
 
     GLTextLayout(GLFont::Ptr font, float size);
 
+    bool processIfReverseRemains(
+        bool condition,
+        bool rtl,
+        Utf32InputIterator &end,
+        shared_ptr<Utf32InputIterator> &strIter,
+        shared_ptr<Utf32InputIterator> &strReverseRemains,
+        shared_ptr<Utf32InputIterator> &strDirectAgain,
+        float cursor,
+        int &reverseCount
+    );
     void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool rtl);
 
     struct RenderPass {
@@ -470,6 +480,8 @@ public:
 
     const GLBoundingBox &getBoundingBox() { return bbox; }
 
+    static bool isDigit(ucs4_char c);  // Defined to work with 32 bits characters.
+    static bool isWeakChar(ucs4_char c);
     static bool isRtlChar(ucs4_char c);
     static bool isLtrChar(ucs4_char c);
     static ucs4_char tryMirrorChar(ucs4_char code);

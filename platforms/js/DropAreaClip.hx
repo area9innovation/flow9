@@ -33,7 +33,6 @@ class DropAreaClip extends NativeWidgetClip {
 
 		accessWidget.nodeindex = [-AccessWidget.tree.childrenSize];
 		nativeWidget.className = "droparea";
-		nativeWidget.style.zIndex = AccessWidget.zIndexValues.droparea;
 		nativeWidget.onmousemove = provideEvent;
 		nativeWidget.onmousedown = provideEvent;
 		nativeWidget.onmouseup = provideEvent;
@@ -44,7 +43,7 @@ class DropAreaClip extends NativeWidgetClip {
 
 	private function provideEvent(event : Dynamic) : Void {
 		event.preventDefault();
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 		RenderSupportJSPixi.provideEvent(event);
 	}
 
