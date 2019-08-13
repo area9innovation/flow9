@@ -43,7 +43,7 @@ ContinuousTimer(
 	pause : () -> void,
 );
 
-continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, speed : double, onFinished : (bool) -> void) -> ContinuousTimer {
+continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, timeout : double, speed : double, onFinished : (bool) -> void) -> ContinuousTimer {
 	isFinished = ref true;
 	delays : ref [Pair<double, double>] = ref [];
 	r = repeatable2(1, false);
@@ -53,7 +53,6 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, speed : double, o
 	deferredFns : ref [() -> bool] = ref [];
 	deferredTime = ref 0.0;
 	deferredTimeInner = ref 0.0;
-	dt = 25.0;
 	currentRepeat = ref 0;
 
 	startFn = \ -> {
@@ -89,13 +88,13 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, speed : double, o
 							deferredFns := mapConcat(^deferredFns, \fn -> {
 								if (fn()) [] else [fn]
 							});
-							if (^deferredFns == [])
-								delays := map(^delays, \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second))
-							else if (offset > ^deferredTime + 10000.) {
+							if (^deferredFns == []) {
+								delays := map(^delays, \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second));
+							} else if (offset > ^deferredTime + 10000.) {
 								println("IScript timeout");
 								stopFn();
 							} else {
-								deferredTimeInner := ^deferredTimeInner + dt;
+								deferredTimeInner := ^deferredTimeInner + timeout;
 							}
 						}
 					} else {
@@ -108,8 +107,6 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, speed : double, o
 										tailedRecords = tailFrom(records, ^startNext);
 										result0 = foldWhile(tailedRecords, Pair([], 0),
 											\acc, fn -> {
-												//println(^delays[0].second);
-												//println(offset);
 												if (fn.first()) {
 													Some(Pair(arrayPush(acc.first, fn), acc.second + b2i(fn.second)))
 												} else {
@@ -130,7 +127,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, speed : double, o
 											}
 											deferredFns := [subtractA(tailedRecords, result)[0].first];
 											deferredTime := offset;
-											deferredTimeInner := dt;
+											deferredTimeInner := timeout;
 											None()
 										}
 									},
@@ -161,24 +158,6 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, speed : double, o
 	)
 }
 
-/*getFocusPaths(focus : MaterialFocus) -> Transform<Tree<List<IScriptIdentifier>, MFocus>> {
-	switchMaterialFocus(
-		focus,
-		\f -> {
-			const(makeTree1(getFullMFocusId(f), f))
-		},
-		\f -> {
-			fsubselect(
-				f.iScriptIds,
-				FLift(\fids -> fselect(
-					fmerge(map(getTreeValues(fids), getFocusPaths)),
-					FLift(mergeTrees)
-				))
-			)
-		}
-	)
-}*/
-
 fixIScriptTree(tree : Tree<double, [Triple<() -> bool, () -> bool, bool>]>) -> Tree<double, [Pair<() -> bool, bool>]> {
 	foldTree(
 		tree,
@@ -198,10 +177,7 @@ fixIScriptTree(tree : Tree<double, [Triple<() -> bool, () -> bool, bool>]>) -> T
 }
 
 replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
-	//defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
-	//maxRepeats = getValue(manager.iscript.settings.replayRepeats);
-
-	//focusesB = getFocusPaths(manager.focus);
+	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
 
 	foldTree(iScript.stack, makeTree(), \delay, records, acc ->
 		setTree(
@@ -215,7 +191,7 @@ replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool)
 		)
 	)
 	|> fixIScriptTree
-	|> (\t -> continuousTimer(t, getValue(manager.iscript.settings.replaySpeed), onFinished))
+	|> (\t -> continuousTimer(t, defaultTimeout, getValue(manager.iscript.settings.replaySpeed), onFinished))
 	|> (\t -> {
 		if (getValue(manager.iscript.settings.replayProfile)) {
 			startProfile(getValue(manager.iscript.currentFileNameB));
@@ -254,18 +230,7 @@ isClickValid(manager : MaterialManager, record : IScriptRecord) -> bool {
 					getValue,
 					true
 				)
-			} else /*if (descriptor.name == "keydown") {
-				eitherMap(
-					lookupTree(fgetValue(focusesB), descriptor.component.id),
-					\foc -> {
-						if (!getValue(foc.focused)) {
-							next(foc.focused, true)
-						}
-						true
-					},
-					true
-				)
-			} *else*/ {
+			} else  {
 				true
 			}
 		},
@@ -500,22 +465,21 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 			true
 		} else if ((name == "keypress" || name == "keydown" || name == "keyup") && isSameStructType(value, KeyEventRecord("", false, false, false, false, 0))) {
 			kst = cast(value : flow -> KeyEventRecord);
-			//fn = ref nop;
-			delayKey = if (name == "keydown") {
+
+			iScriptInfo(
+				manager,
+				checkStr,
+				Some(behaviourDescriptor.component.id)
+			);
+
+			isFocused = if (name == "keydown") {
 				eitherMap(
 					getMaterialFocusByIScriptId(manager.focus, behaviourDescriptor.component.id),
 					\foc -> {
 						switchMaterialFocus(
 							foc,
 							\f -> {
-								Some(f.focused)
-								/*println(getValue(f.focused));
-								if (!getValue(f.focused)) {
-									fn := \ -> next(f.focused, true);
-									true
-								} else {
-									false
-								}*/
+								Some(getValue(f.focused))
 							},
 							\f -> {
 								None()
@@ -527,41 +491,21 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 			} else {
 				None()
 			};
-			iScriptInfo(
-				manager,
-				checkStr,
-				Some(behaviourDescriptor.component.id)
-			);
-			emitKey = \ -> emitKeyEvent(currentClip(), name, kst.utf, kst.ctrl, kst.shift, kst.alt, kst.meta, kst.keycode);
+			emitKey = \ -> {
+				emitKeyEvent(currentClip(), name, kst.utf, kst.ctrl, kst.shift, kst.alt, kst.meta, kst.keycode);
+				true
+			}
 			eitherFn(
-				delayKey,
-				\dk -> {
-					if (getValue(dk)) {
-						emitKey();
-						//timer(10, emitKey);
-						true
+				isFocused,
+				\focused -> {
+					if (focused) {
+						emitKey()
 					} else {
 						false
-						/*disp = ref nop;
-						disp := subscribe2(dk, \d -> if (d) {
-							timer(10, emitKey);
-							^disp();
-						});*/
 					}
 				},
-				\ -> {
-					emitKey();
-					true
-				}
+				emitKey
 			)
-			/*if (delayKey)
-				timer(100, \ -> {
-					^fn();
-					timer(10, \ -> emitKey())
-				})
-			else*/
-				//emitKey();
-			//true
 		} else {
 			replayBehaviour = contains(getValue(manager.iscript.settings.replayReplayBehaviours), name);
 			checkEnabled = replayBehaviour;
