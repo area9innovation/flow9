@@ -1,0 +1,786 @@
+
+import tropic/tropic_paragraph_preparation;
+import form/paragraph3;
+import text/bidi_text;
+
+export {
+	TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> Tropic;
+	getDynamicTropicSize(tropic : Tropic) -> Pair<Tropic, TFormMetrics>;
+}
+
+isConstMetrics(m : TFormMetrics) -> bool {
+	isFConst(m.width) && isFConst(m.height) && isFConst(m.baseline);
+}
+
+TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> Tropic {
+
+	alignment : ParaLineAlignment = fold(s, StartAlign(), \acc, st -> {
+		switch (st : ParagraphStyle) {
+			CenterAlign(): st;
+			Justify(): st;
+			RightAlign(): st;
+			LeftAlign(): st;
+			EndAlign(): st;
+			default: acc;
+		};
+	});
+
+	interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
+
+	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
+
+	tightWidth = contains(s, TightWidth());
+
+	fill = filtermap(s, \st -> switch (st) {
+		Fill(__): Some(st);
+		FillOpacity(__): Some(st);
+		default: None();
+	});
+
+	topLineBaseline = contains(s, TopLineBaseline());
+
+	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
+
+	isSingleLine = containsStruct(s, ParagraphSingleLine());
+
+	// Expand elements into word-units
+	words : [TParaWord] = expandParagraphElements(p);
+
+	aw = make(0.0);
+	update = make(0);
+	lines : DynamicBehaviour<[TParaLine]> = make([]);
+	nonDynamic = TSelect(lines, \l -> TRenderParaLines(
+		getValue(aw), l, tightWidth, alignment, interlineSpacing, topLineBaseline, interactiveStyles, rtl
+	));
+	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
+
+	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
+	ndynamic = fold(words, 0, \acc, w -> if (isConstMetrics(w.metrics)) acc else 1 + acc);
+	ndymamicUpper = extractStruct(s, DynamicBlockDelay(1)).n;
+
+	contentGroup = TGroup(concat(
+		// [if (fill != []) Background(fill, nonDynamic) else nonDynamic],
+		 [if (fill != []) TFrame(0., 0., fill, nonDynamic) else nonDynamic],
+		constructDynamicParts(words, interactiveStyles)
+	));
+
+	TConstruct(
+		[\ -> {
+			updateFn = \wi -> {
+				// Ignore negative widths
+				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+				w = if (isSingleLine) 100000.0 else max(0.0, wi);
+				newLines = wrapTParaWords(words, w, indent);
+				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
+				next(lines, newLines);
+			};
+
+			unsub1 = subscribe(aw, updateFn);
+
+			unsubs = filtermap(words, \w -> if (isConstMetrics(w.metrics)) None() else {
+				// Force an update by changing the available
+				Some(make3Subscribe2(w.metrics.width, w.metrics.height, w.metrics.baseline, \wi, he, ba -> {
+					if (ndynamic <= ndymamicUpper) {
+						// There is less or equal than upper limit of dynamic elements here, so just update immediately
+						updateFn(getValue(aw))
+					} else {
+						// There are more, so to prevent unnecessary work, delay the update
+						nextDistinct(update, 1);
+					}
+				})())
+			});
+
+			// When an update from a dynamic element is requested, we do it in the next frame
+			unsub2 = subscribe(update, \u -> {
+				if (u == 1) {
+					timer(0, \ -> {
+						next(update, 0);
+						// Force an update
+						updateFn(getValue(aw))
+					})
+				}
+			});
+
+			\ -> {
+				unsub1();
+				applyall(unsubs);
+				unsub2();
+			}
+		}],
+		TAttachAvailableWidth(
+			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
+				TBorder(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
+			} else {
+				contentGroup;
+			},
+			aw
+		)
+	);
+}
+
+// Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
+expandParagraphElements(
+	elements : [TParagraphElement],
+) -> [TParaWord] {
+	list2array(foldi(elements, makeList(), \i, acc, elem  -> {
+		switch(elem) {
+			TTextFragments(parts) : concatList(
+				foldList(
+					parts,
+					makeList(),
+					\subAcc, part -> Cons(makeTParaWord(part, i), subAcc)
+				),
+				acc
+			);
+			TSpace(st) : Cons(
+				makeTParaWord(TSpace(st), i),
+				acc
+			);
+			NewLine() : Cons(
+				makeTParaWord(NewLine(), i),
+				acc
+			);
+			TZeroWidthSpace(st) : Cons(
+				makeTParaWord(TZeroWidthSpace(st), i),
+				acc
+			);
+			TLinePart(f, m, e) : Cons(
+				makeTParaWord(TLinePart(f, m, e), i),
+				acc
+			);
+			default : {
+				tr : Tropic = cast(elem : TParagraphElement -> Tropic);
+				Cons(makeTParaWord(tr, i), acc)
+			}
+		}
+	}));
+}
+
+makeTParaWord(w : TWrapElement, id : int) -> TParaWord {
+	s2w = \s : Pair<Tropic, TFormMetrics> -> switch(s.first) {
+			TText(__, __) : TParaWord(s.first, s.second, s.first, id);
+		default : {
+			p = make(Point(0., 0.));
+			TParaWord(TEmpty(), s.second, GhostElem(p, s.first), id);
+		}
+	}
+	switch (w : TWrapElement) {
+		NewLine() : TParaWord(w, zeroTMetrics, TEmpty(), id);
+		TSpace(st) : {
+			tropicWithSize = getDynamicTropicSize(TText(spaceStr, st));
+			TParaWord(w, tropicWithSize.second, tropicWithSize.first, id);
+		}
+		TLinePart(f, m, l) : s2w(getDynamicTropicSize(m));
+		TInspectElement(e, i, p, wh, lh, ln, detached) : {
+			makeWord = \word, tr -> TParaWord(
+				word,
+				fMetrics2TMetrics(getTropicMetrics(tr)),
+				TCoordinateInspectElement(i, p, wh, lh, tr, detached),
+				id
+			);
+			switch(e) {
+				TText(t, s): {
+					makeWord(e, e);
+				}
+				TLinePart(f, m, l): {
+					makeWord(TLinePart(f, m, l), m);
+				}
+				TSpace(st): {
+					makeWord(TSpace(st), TText(spaceStr, st));
+				}
+				default: {
+					s = getDynamicTropicSize(cast(e : TWord -> Tropic));
+					TParaWord(
+						TEmpty(),
+						s.second,
+						TInspectGhost(p, wh, lh, ln, s.first),
+						id
+					);
+				}
+			}
+		}
+		default : s2w(getDynamicTropicSize(cast(w : TWrapElement -> Tropic)));
+	}
+}
+
+spaceStr : string = " ";
+
+fMetrics2TMetrics(f : FormMetrics) -> TFormMetrics {
+	TFormMetrics(const(f.width), const(f.height), const(f.baseline));
+}
+
+getDynamicTropicSize(tropic : Tropic) -> Pair<Tropic, TFormMetrics> {
+	
+	if (isConstantSizeTropic(tropic)) {
+		fMetrics = getTropicMetrics(tropic);
+		Pair(tropic, fMetrics2TMetrics(fMetrics));
+	} else {
+		widthB = make(0.);
+		heightB = make(0.);
+		baselineB = make(0.);
+		m = TFormMetrics(widthB, heightB, baselineB);
+
+		Pair(TInspect([IWidth(widthB), IHeight(heightB), IBaseline(baselineB)], tropic), m);
+	}
+}
+isTGhostable(f : Tropic) -> bool {
+	switch (f) {
+		TText(__, __): false;
+		default: {
+			true;
+		}
+	}
+}
+
+TParaLine(words : [TParaWord], indent : double);
+
+// Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
+wrapTParaWords(words : [TParaWord], availableParaWidth : double, paraIndent : double) -> [TParaLine] {
+	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
+	text = wrapTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
+	if (isBiDiEnabled())
+		zipWith(
+			text,
+			reflowTextToBiDi(map(text, \l -> l.words), isTWordEmpty, getTParaWordText, setTParaWordText),
+			\l, ws -> TParaLine(ws, l.indent),
+		)
+	else text;
+}
+
+// here availableWidth is an amount of width for current line
+wrapTParaWordsRec(
+	words : [TParaWord],
+	availableWidth : double,
+	remaining : double,
+	currentWords : [TParaWord],
+	lines : [TParaLine],
+	paraIndent : double,
+) -> [TParaLine] {
+	addLine = \cw, indent -> {
+		if (cw != []) arrayPush(lines, TParaLine(cw, indent)) else lines;
+	}
+
+	detachWord = \w : TParaWord, detach : bool -> {
+		switch (w.ghostView) {
+			TCoordinateInspectElement(index, __, __, __, __, detached): nextDistinct(detached, detach);
+			default: {}
+		}
+	}
+
+	lineIndex = length(lines);
+	lineIndent = getLineIndent(paraIndent, lineIndex);
+	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, lineIndex + 1);
+
+	if (words == []) {
+		addLine(currentWords, lineIndent)
+	} else {
+		word = words[0];
+		detachWord(word, false);
+		rest = subrange(words, 1, length(words) - 1);
+
+		getWordWidth = \word1 -> fgetValue(word1.metrics.width);
+
+		switch (word.word : TWrapElement) {
+			NewLine(): {
+				wrapTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+			}
+			TLinePart(first, mid, end): {
+
+				makeLinePartWord = \form2 : Tropic -> {
+					g = word.ghostView;
+					newGhosted : GhostTropic = switch (g : GhostTropic) {
+						GhostElem(p, __): GhostElem(p, form2);
+						TInspectGhost(p, wh, lh, ln, __): TInspectGhost(p, wh, lh, ln, form2);
+						TCoordinateInspectElement(index, p, wh, lh, __, detached): TCoordinateInspectElement(index, p, wh, lh, form2, detached);
+						default : form2
+					};
+
+					TParaWord(word.word, fMetrics2TMetrics(getTropicMetrics(form2)), newGhosted, word.id);
+				};
+				width = getWordWidth(word);
+				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
+
+				if (currentWords == []) {
+					// If it is the first item on the line
+					paraword = makeLinePartWord(first);
+					wrapTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+				} else if (width + nextWordWidth < remaining) {
+					// If it is the middle item on the line
+					paraword = makeLinePartWord(mid);
+					wrapTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+				} else {
+					// If it is the last item on the line
+					paraword = makeLinePartWord(end);
+					wrapTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
+				}
+			}
+			TSpace(__): {
+				// LSTSBU-454
+				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
+				width = getWordWidth(word);
+				if (width < remaining) {
+					wrapTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent);
+				} else {
+					detachWord(word, true);
+					wrapTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+				}
+			}
+			default: {
+				width = ref 0.0;
+				getWordView = \w -> {
+					g = w.ghostView;
+					switch (g: GhostTropic) {
+						GhostElem(__, f): f;
+						TInspectGhost(__, __, __, __, f): f;
+						TCoordinateInspectElement(__, __, __, __, f, __): f;
+						default : cast(g : GhostTropic -> Tropic);
+					};
+				};
+
+				form = getWordView(word);
+
+				// Number of words that should be on the same line
+				wordsCount = if (keepWordsTogether(form)) {
+					iteriUntil(words, \i, _word -> {
+						switch (_word.word) {
+							NewLine(): true;
+							TSpace(__): true;
+							TLinePart(__, __, __): true;
+							default: {
+								f = getWordView(_word);
+								// it is no use to make line with zero-width content, so we continue counting if the width is 0
+								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
+								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+								if (keepWordsTogether(f) || ^width == 0.0) {
+									width := ^width + getWordWidth(_word);
+									false;
+								} else {
+									true
+								}
+							};
+						};
+					});
+				} else {
+					width := getWordWidth(word);
+					1;
+				};
+
+				if (^width <= remaining || currentWords == []) { // Overflow situation where a word is longer than the available width
+					_words = subrange(words, 0, wordsCount);
+					_rest = subrange(words, wordsCount, length(words) - wordsCount);
+
+					newCurrentWords = concat(currentWords, _words);
+
+					wrapTParaWordsRec(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent);
+				} else {
+					wrapTParaWordsRec(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent);
+				}
+			}
+		}
+	}
+}
+
+// This function gets the form and decides, should the next form kept together in the same line or should it be placed on the next line
+keepWordsTogether(tr : Tropic) -> bool {
+	switch (tr) {
+		TEmpty(): true;
+		TText(t, s): t !=  spaceStr;
+		TCols2(left, right): keepWordsTogether(left) && keepWordsTogether(right);
+		TBaselineCols2(left, right): keepWordsTogether(left) && keepWordsTogether(right);
+		TBaselineLines2(top, bottom): keepWordsTogether(top) && keepWordsTogether(bottom);
+		TLines2(up, down): keepWordsTogether(up) && keepWordsTogether(down);
+		TGroup2(down, up): keepWordsTogether(up) && keepWordsTogether(down);
+		TMinimumGroup2(down, up): keepWordsTogether(up) && keepWordsTogether(down);
+		TScale(fac, t): keepWordsTogether(t);
+		TConstruct(__, t): keepWordsTogether(t);
+		TCrop(__, size, t): keepWordsTogether(t);
+		TTag(__, t): keepWordsTogether(t);
+		TFormIn(__, b): keepWordsTogether(b);
+		TForm(f): false;
+		TTranslate(__, t): keepWordsTogether(t);
+		TRotate(__, t): keepWordsTogether(t);
+		TInteractive(__, t): keepWordsTogether(t);
+		TAccess(__, t): keepWordsTogether(t);
+		TAlpha(__, t): keepWordsTogether(t);
+		TCursor(__, t): keepWordsTogether(t);
+		TCropSize(size, t): keepWordsTogether(size);
+		TSize(size, t): keepWordsTogether(t);
+		TDispose(__, t): keepWordsTogether(t);
+		TRounded(__, __, __, __, __, t): keepWordsTogether(t);
+		TBorder(left, top, right, bottom, t): keepWordsTogether(t);
+		TSubtractGroup2(t1, t2): keepWordsTogether(t1) && keepWordsTogether(t2);
+		TTweak(style, content, s): false;
+		TAttach(ghost, fn): false;
+		TFilter(__, t): keepWordsTogether(t);
+		TDebug(__, t): keepWordsTogether(t);
+		default : false;
+	}
+}
+
+TParaLineAcc(lines : List<Tropic>, width : double, y : double, baseline : double);
+
+TRenderParaLines(
+	availableWidth : double,
+	lines : [TParaLine],
+	tightWidth : bool,
+	alignment: ParaLineAlignment,
+	interlineSpacing : double,
+	topLineBaseline : bool,
+	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
+	rtl : bool
+) -> Tropic {
+	lasti = length(lines) - 1;
+	singleLine = length(lines) == 1;
+
+	// we need to find out the width of the longest line (including indent)
+	// to define the width of a paragraph in tightWidth mode
+	// it is possible to do in StartAlign case only because other alignments use fillers
+	width = if (tightWidth && paraLineAlignmentIsStart(alignment)) {
+		fold(lines, 0.0, \acc : double, line : TParaLine -> {
+			optimizedLine = getTOptimizedLine(line.words, alignment);
+			metrics = map(optimizedLine, \p -> p.metrics);
+			lw = line.indent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.width));
+			max(acc, lw);
+		});
+	} else {
+		availableWidth
+	}
+
+	a : TParaLineAcc = foldi(lines, TParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
+		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
+		lastLine = i == lasti;
+		// On the last line, we do not justify.
+		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
+		lineAlignment =
+			if (alignment == Justify() && lastLine) {
+				StartAlign()
+			} else {
+				alignment;
+			}
+		f = TRenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, styleTree, rtl);
+		nwidth = max(acc.width, f.width);
+		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
+		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
+		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
+		nbaseline = f.baseline;
+		TParaLineAcc(
+			Cons(TSize(TSized(const(zeroWH)), f.form), acc.lines),
+			nwidth,
+			nheight,
+			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
+		);
+	});
+
+	TBaseline(const(a.baseline), TSize(
+		TSized(const(if (tightWidth) WidthHeight(a.width, a.y) else WidthHeight(max(width, a.width), a.y))),
+		TGroup(list2array(a.lines))
+	));
+}
+
+TParaLineResult(form : Tropic, width : double, height : double, baseline : double);
+TOptimizedLineElement(f : GhostTropic, metrics : TFormMetrics, id : int);
+
+getTOptimizedLine(words : [TParaWord], alignment : ParaLineAlignment) -> [TOptimizedLineElement] {
+	if (!isBiDiEnabled() && alignment != Justify()) {
+		optimizeTLine(words);
+	} else {
+		map(words, \w -> TOptimizedLineElement(w.ghostView, w.metrics, w.id));
+	};
+}
+
+// Aligns all elements to the baseline, as well as calculates the height and the baseline
+// Send out the result, width, height
+TRenderLine(
+	y : double,
+	words : [TParaWord],
+	width : double,
+	tightWidth : bool,
+	alignment : ParaLineAlignment,
+	lineIndent: double,
+	lineNumber : int,
+	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>,
+	rtl : bool
+) -> TParaLineResult {
+	optimizedLine = getTOptimizedLine(words, alignment);
+	metrics = map(optimizedLine, \p -> p.metrics);
+	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.width)); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
+	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, fgetValue(m.baseline)));
+	lineHeight = fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + fgetValue(m.height) - fgetValue(m.baseline)));
+
+	// Alignment offset
+	startOffset = if (rtl) width - lineWidth else 0.;
+	endOffset = if (rtl) min(0., width - lineWidth) else max(0., width - lineWidth);
+	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
+		LeftAlign(): if (rtl) endOffset else startOffset;
+		RightAlign(): if (rtl) startOffset else endOffset;
+		CenterAlign(): max(0.0, (width - lineWidth) / 2.0);
+		StartAlign(): startOffset;
+		EndAlign(): endOffset;
+		Justify(): 0.0;
+	} + (if (rtl) 0. else lineIndent);
+
+	// Inter-word spacing for justification
+	interWord = if (alignment == Justify() && length(optimizedLine) > 1) {
+		nwords = length(optimizedLine);
+		remaining = width - lineWidth;
+		min(10.0, remaining / i2d(nwords - 1));
+	} else 0.0;
+
+	// The width and the individual forms
+	lo : [Tropic] = filtermapi(optimizedLine, \i : int, elem : TOptimizedLineElement -> {
+		f = elem.f;
+		elemWidth = fgetValue(elem.metrics.width);
+		elemHeight = fgetValue(elem.metrics.height);
+		elemBaseline = fgetValue(elem.metrics.baseline);
+		dy = max(lineAsc - elemBaseline, 0.0);
+		applyStylesAndOffset = \fm : Tropic -> eitherMap(
+			None(),
+			\id -> TApplyIntStylesAndHighlighting(
+				fm,
+				lookupTreeDef(interactiveStyles, id, []),
+				^alignmentOffset,
+				y,
+				dy,
+				elemWidth,
+				lineHeight,
+				interWord
+			),
+			TTranslate(const(Point(^alignmentOffset, y + dy)), fm)
+		);
+
+		r = switch (f : GhostTropic) {
+			TEmpty(): None();
+			GhostElem(p, fm): {
+				nextDistinct(p, Point(^alignmentOffset, y + dy));
+				Some(applyStylesAndOffset(TEmpty()));
+			}
+			TInspectGhost(p, wh, lh, ln,  fm): {
+				nextDistinct(p, Point(^alignmentOffset, y + dy));
+				nextDistinct(wh, WidthHeight(elemWidth, elemHeight));
+				nextDistinct(lh, lineHeight);
+				nextDistinct(ln, lineNumber);
+				Some(applyStylesAndOffset(TEmpty()));
+			}
+			TCoordinateInspectElement(in, p, wh, lh, fm, detached): {
+				fo = applyStylesAndOffset(fm);
+				nextDistinct(p, Point(^alignmentOffset, y + dy));
+				nextDistinct(wh, WidthHeight(elemWidth, elemHeight));
+				nextDistinct(lh, lineHeight);
+				Some(fo);
+			}
+			default: Some(applyStylesAndOffset(cast(f : GhostTropic -> Tropic)))
+		}
+			alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) elemWidth + interWord else 0.0;
+			r;
+	});
+	TParaLineResult(TGroup(lo), lineWidth, lineHeight, y + lineAsc);
+}
+
+TApplyIntStylesAndHighlighting(
+	form : Tropic,
+	styles : [ParaElementInteractiveStyle],
+	xOffset : double,
+	yOffset : double,
+	baselineShift : double,
+	width : double,
+	height : double,
+	interWord : double,
+) -> Tropic {
+	// getStyleForBackgroundFromCharStyle = \s -> eitherMap(
+	// 	tryExtractStruct(s, BackgroundFill(white)),
+	// 	\backFill -> [
+	// 		Fill(backFill.color),
+	// 		FillOpacity(extractStruct(s, BackgroundFillOpacity(1.0)).opacity)
+	// 	],
+	// 	[]
+	// );
+
+	// makeBackRect = \defStyle, dynStyle -> TRectangle(
+	// 	replaceStructMany(
+	// 		getStyleForBackgroundFromCharStyle(defStyle),
+	// 		getStyleForBackgroundFromCharStyle(dynStyle)
+	// 	),
+	// 	TFixed(
+	// 		width + interWord,
+	// 		height,
+	// 	)
+	// );
+
+	// dynamicCharStyleBM = tryExtractStruct(styles, DynamicCharStyle(make([])));
+
+	// textAndBackPair = switch(form) {
+	// 	// Refactor this to use TFrame
+	// 	Text(txt, txtStyle) : {
+
+	// 		makeTxt = \dynStyle -> TText(
+	// 			txt,
+	// 			removeAllStructsMany(
+	// 				replaceStructMany(txtStyle, dynStyle),
+	// 				[BackgroundFill(0), BackgroundFillOpacity(0.0)]
+	// 			)
+	// 		);
+
+	// 		// We draw custom highlighting to fix gaps for cases of justifying alignment
+	// 		// And to have more straight and pretty highlighting.
+	// 		eitherMap(
+	// 			dynamicCharStyleBM,
+	// 			\dynCharStyle -> Pair(
+	// 				TSelect(dynCharStyle.styleB, \chStyle -> makeTxt(chStyle)),
+	// 				TSelect(dynCharStyle.styleB, \chStyle -> makeBackRect(txtStyle, chStyle))
+	// 			),
+	// 			Pair(makeTxt([]), makeBackRect(txtStyle, []))
+	// 		)
+	// 	}
+	// 	default : Pair(
+	// 		TFormAvailable(form, TFillXY()),
+	// 		eitherMap(
+	// 			dynamicCharStyleBM,
+	// 			\dynCharStyle -> TSelect(dynCharStyle.styleB, \chStyle -> makeBackRect([], chStyle)),
+	// 			TEmpty()
+	// 		)
+	// 	);
+	TEmpty();
+	}
+
+// 	// modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
+
+// 	TGroup([
+// 		TTranslate(const(xOffset - interWord / 2.), const(yOffset), textAndBackPair.second),
+// 		TTranslate(const(xOffset), const(yOffset + baselineShift), textAndBackPair.first),
+// 	]);
+// }
+
+// applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) -> Form {
+// 	if (form == Empty()) form else {
+// 		eventListenersM = tryExtractStruct(styles, EventListeners([]));
+// 		interactiveForm = eitherMap(
+// 			eventListenersM,
+// 			\el -> Interactive(el.listeners, form),
+// 			form
+// 		);
+
+// 		formModifiersM = tryExtractStruct(styles, FormModifiers([]));
+// 		eitherMap(
+// 			formModifiersM,
+// 			\modifiers -> fold(modifiers.fns, interactiveForm, \acc, fn -> fn(acc)),
+// 			interactiveForm
+// 		);
+// 	}
+// }
+
+
+// Joins texts together to a single text element, along with the new metrics
+optimizeTLine(words : [TParaWord]) -> [TOptimizedLineElement] {
+	fold(words, makeList(), \acc : List<TOptimizedLineElement>, word : TParaWord -> {
+		f = word.ghostView;
+		metrics = word.metrics;
+		intId = word.id;
+		switch(acc){
+			EmptyList(): Cons(TOptimizedLineElement(f, metrics, intId), acc);
+			Cons(p, tail_): {
+				switch (p.f : GhostTropic) {
+					TText(t1, s1): {
+						switch (f : GhostTropic) {
+							TText(t2, s2): {
+								join = joinTText(t1, s1, t2, s2);
+								if (length(join) == 1 && intId == p.id) {
+									t : Tropic = join[0];
+									// TODO: Do not do this until at the end of the joining fest
+									m = fMetrics2TMetrics(getTropicMetrics(t));
+									// Replace the last element with the newly joined
+									Cons(TOptimizedLineElement(t, m, intId), tail_)
+								} else Cons(TOptimizedLineElement(f, metrics, intId), acc);
+							}
+							default: {
+								Cons(TOptimizedLineElement(f, metrics, intId), acc);
+							}
+						}
+					}
+					default: Cons(TOptimizedLineElement(f, metrics, intId), acc);
+				}
+			}
+		}
+	}) |> list2array
+}
+
+joinTText(t1 : string, s1 : [TCharacterStyle], t2: string, s2 : [TCharacterStyle]) -> [Tropic] {
+	if (s1 == s2) [TText(t1 + t2, s1)] else [TText(t1, s1), TText(t2, s2)]
+}
+
+constructDynamicParts(
+	words : [TParaWord],
+	styleTree : Tree<int, [ParaElementInteractiveStyle]>
+) -> [Tropic] {
+	filtermap(words, \word -> {
+		// styles = lookupTreeDef(styleTree, either(word.id, -1), []);
+		// applyStyles = \form -> applyListenersAndModifiers(styles, form);
+		// applyStyles = \f -> TFormAvailable(form, TFillXY());
+		switch (word.ghostView : GhostTropic) {
+			GhostElem(p, f): Some(TTranslate(p, f));
+			TInspectGhost(p, __, __, __, f): Some(TTranslate(p, f));
+			TCoordinateInspectElement(__, __, __, __, __, __): None();
+			default : None()
+		}
+	})
+}
+
+
+isTWordEmpty(w: TParaWord) -> bool {
+	switch(w.word) {
+		TText(t, __): t == "";
+		default: false;
+	}
+}
+
+getTParaWordText(w: TParaWord) -> string {
+	switch(w.word) {
+		TText(t, __): t;
+		TEmpty(): switch (w.ghostView) {
+			TInspectGhost(__, __, __, __, form): getTropicText(form);
+			GhostElem(__, form): getTropicText(form);
+			default: "";
+		};
+		default: "";
+	}
+}
+
+// TODO: implement not dummy versions they are needed for 
+getTropicText(tr : Tropic) -> string {
+	switch(tr) {
+		TText(txt, __) : txt;
+		default : "";
+	}
+}
+
+getTropicTextStyle(tr : Tropic) -> [TCharacterStyle] {
+	switch(tr) {
+		TText(__, st) : st;
+		default : [];
+	}	
+}
+
+setTParaWordText(w: TParaWord, t: string) -> TParaWord {
+	switch(w.word) {
+		TText(__, s): TParaWord(
+			TText(t, s), w.metrics,
+			switch(w.ghostView) {
+				TCoordinateInspectElement(index, p, wh, lineHeight, form, detached): TCoordinateInspectElement(
+					index,
+					p,
+					wh,
+					lineHeight,
+					TText(t, getTropicTextStyle(form)),
+					detached
+				);
+				TText(__, fs): TText(t, fs);
+				default: w.ghostView;
+			},
+			w.id
+		);
+		default: w;
+	};
+}
+
+setWordGhostedView(word: TParaWord, tr: GhostTropic) -> TParaWord {
+	TParaWord(word with ghostView = tr);
+};
