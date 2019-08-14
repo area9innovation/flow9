@@ -1,0 +1,251 @@
+import material/internal/material_iscript_internal;
+import material/material;
+
+export {
+	MIscripter(m : Material) -> Material;
+	applyHandler(id : string, value : string) -> void;
+}
+
+getMsliderHandler(mf : MaterialFocus) -> Maybe<Pair<string, (string) -> void>> {
+	if (toLowerCase(mf.name) == "mslider") {
+		minValue = getIScriptPairValueB(mf.behaviours, "minValue", make(0.0));
+		maxValue = getIScriptPairValueB(mf.behaviours, "maxValue", make(1.0));
+		valueB = getIScriptPairValueB(mf.behaviours, "value", cloneBehaviour(minValue));
+		Pair(
+			either(mf.iScriptId, "mslider_value"),
+			\newValue -> {
+				value = if (newValue == "") getValue(minValue) else s2d(newValue);
+				if (fgetValue(mf.enabled) && getValue(minValue) <= value && value <= getValue(maxValue)) {
+					nextDistinct(valueB, value)
+				}
+			}
+		) |> Some
+	} else {
+		None()
+	}
+}
+
+getMTextInputHandler(mf : MaterialFocus) -> Maybe<Pair<string, (string) -> void>> {
+	if (toLowerCase(mf.name) == "mtextinput") {
+		valueB = getIScriptPairValueB(mf.behaviours, "content", make(""));
+		Pair(
+			either(mf.iScriptId, "mtextinput_content"),
+			\newValue -> if (fgetValue(mf.enabled)) {
+				nextDistinct(valueB, newValue)
+			},
+		) |> Some
+	} else {
+		None()
+	}
+}
+
+// To make it works correct you have to mark your MRadio elements which share DynamicBehaviour
+// with the same IScriptId(id) like MRadios does it.
+getMRadiosHandler(mfs : [MaterialFocus]) -> Maybe<Pair<string, (string) -> void>> {
+	if (mfs != []) {
+		previousActiveIndexB = make(-1);
+		valueBPs = filtermap(
+			mfs,
+			\mf -> eitherMap(
+				getIScriptPairValueBM(mf.behaviours, "value"),
+				\valueB -> Some(Pair(valueB, mf.enabled)),
+				None()
+			)
+		);
+		valueBs = map(valueBPs, firstOfPair);
+		Pair(
+			either(mfs[0].iScriptId, "mradio_value"),
+			\newValue -> {
+				index = if (newValue == "") -1 else s2i(newValue);
+				if (existsIndex(valueBPs, index)) {
+					valueBP = valueBPs[index];
+					if (fgetValue(valueBP.second)) {
+						nextDistinct(valueBP.first, true);
+						nextDistinct(previousActiveIndexB, index);
+					}
+				} else {
+					maybeApply(
+						elementAtM(valueBPs, getValue(previousActiveIndexB)),
+						\valueBP -> if (fgetValue(valueBP.second)) {
+							nextDistinct(valueBP.first, false);
+							nextDistinct(previousActiveIndexB, -1);
+						}
+					)
+				}
+			}
+		) |> Some
+	} else {
+		None()
+	}
+}
+
+getButtonsHandlers(mf : MaterialFocus) -> Maybe<Pair<string, (string) -> void>> {
+	eitherMap(
+		mf.iScriptId,
+		\id -> {
+			if (strContains(toLowerCase(mf.name), "button")) {
+				eitherMap(
+					getIScriptPairValueBM(mf.behaviours, "click"),
+					\clickB -> {
+						Pair(
+							id,
+							\__ -> if (fgetValue(mf.enabled)) {
+								nextDistinct(clickB, true);
+								nextDistinct(clickB, false);
+							}
+						) |> Some
+					},
+					None()
+				)
+			} else {
+				None()
+			}
+		},
+		None()
+	)
+}
+
+getOtherHandlers(mf : MaterialFocus) -> Maybe<Pair<string, (string) -> void>> {
+	iScriptId = either(mf.iScriptId, "");
+	if (iScriptId != "") {
+		eitherFn(
+			lookupTree(mf.behaviours, "value"),
+			\valueBP -> getIScriptBehaviourHandler(mf, valueBP, "value"),
+			\ -> {
+				eitherFn(
+					lookupTree(mf.behaviours, "content"),
+					\contentBP -> getIScriptBehaviourHandler(mf, contentBP, "content"),
+					\ -> eitherFn(
+						lookupTree(mf.behaviours, "selected"),
+						\selectedBP -> getIScriptBehaviourHandler(mf, selectedBP, "selected"),
+						\ -> eitherMap(
+							lookupTree(mf.behaviours, "click"),
+							\clickB -> getIScriptBehaviourHandler(mf, clickB, "click"),
+							None()
+						)
+					)
+				)
+			}
+		)
+	} else {
+		None()
+	}
+}
+
+getIScriptBehaviourHandler(
+	mf : MaterialFocus,
+	ib : Pair<DynamicBehaviour<flow>, IScriptRecordType>,
+	def : string,
+) -> Maybe<Pair<string, (string) -> void>> {
+	valueB = ib.first;
+	type = ib.second;
+	id = toLowerCase(either(mf.iScriptId, def));
+	if (id == "") {
+		None()
+	} else {
+		switch (type) {
+			ISInputValue(values, typeString, __): {
+				if (typeString == "bool") {
+					Pair(
+						id,
+						\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, s2b(newValue)),
+					) |> Some
+				} else if (typeString == "int") {
+					Pair(
+						id,
+						\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, s2i(newValue)),
+					) |> Some
+				} else if (typeString == "string") {
+					Pair(
+						id,
+						\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, newValue),
+					) |> Some
+				} else if (typeString == "index") {
+					Pair(
+						id,
+						\newValue -> {
+							index = if (newValue == "") -1 else s2i(newValue);
+							if (fgetValue(mf.enabled)) {
+								if (existsIndex(values, index)) {
+									nextDistinct(valueB, index)
+								} else if (index == -1) {
+									nextDistinct(valueB, -1);
+								}
+							}
+						}
+					) |> Some
+				} else if (typeString == "double") {
+					Pair(
+						id,
+						\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, s2d(newValue))
+					) |> Some
+				} else {
+					None()
+				}
+			}
+			default: None()
+		}
+	}
+}
+
+getMaterialFocusesTreeHandlers(focusTree : Tree<string, [MaterialFocus]>) -> [Pair<string, (string) -> void>] {
+	foldTree(
+		focusTree,
+		[],
+		\iScriptId, focuses, acc -> {
+			if (focuses != []) {
+				firstFocus = focuses[0];
+				focusName = toLowerCase(firstFocus.name);
+				focusIScriptId = either(firstFocus.iScriptId, "");
+				handlerPairM = if (focusName == "mslider") {
+					getMsliderHandler(firstFocus)
+				} else if (focusName == "mtextinput") {
+					getMTextInputHandler(firstFocus)
+				} else if (focusName == "mradio") {
+					getMRadiosHandler(focuses)
+				} else if (strContains(focusIScriptId, "button")) {
+					getButtonsHandlers(firstFocus)
+				} else {
+					getOtherHandlers(firstFocus)
+				}
+				eitherMap(handlerPairM, \hp -> arrayPush(acc, hp), acc)
+			} else {
+				acc
+			}
+		}
+	)
+}
+
+iScriptHandlers : ref [Pair<string, (string) -> void>] = ref [];
+
+MIscripter(m : Material) -> Material {
+
+	onRendered = \manager -> {
+		materialFocusesTree = collectMaterialFocuses(
+			getValue(manager.focus.focusIds),
+			\focus -> {
+				either(focus.iScriptId, "") != "" &&
+				(
+					containsKeyTree(focus.behaviours, "value") ||
+					containsKeyTree(focus.behaviours, "content") ||
+					containsKeyTree(focus.behaviours, "selected") ||
+					containsKeyTree(focus.behaviours, "click")
+				);
+			}
+		);
+		iScriptHandlers := getMaterialFocusesTreeHandlers(materialFocusesTree);
+		nop;
+	}
+
+	MLines2(
+		m,
+		MGetManager(\mngr -> MConstruct([\-> onRendered(mngr)], MEmpty()))
+	)
+}
+
+applyHandler(id : string, value : string) -> void {
+	maybeApply(
+		find(^iScriptHandlers, \ih : Pair<string, (string) -> void> -> ih.first == id),
+		\f -> f.second(value)
+	)
+}
