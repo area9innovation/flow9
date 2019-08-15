@@ -209,6 +209,7 @@ protected:
 private:
     DECLARE_NATIVE_METHOD(setClipboard)
     DECLARE_NATIVE_METHOD(getClipboard)
+    DECLARE_NATIVE_METHOD(getClipboardToCB)
     DECLARE_NATIVE_METHOD(getClipboardFormat)
     DECLARE_NATIVE_METHOD(setWindowTitleNative)
     DECLARE_NATIVE_METHOD(setFavIcon)

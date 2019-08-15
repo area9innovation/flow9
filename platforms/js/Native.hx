@@ -222,6 +222,24 @@ class Native {
 		#end
 	}
 
+	public static function getClipboardToCB(callback : String->Void) : Void {
+		#if flash
+			callback(clipboardData);
+		#elseif (js && !flow_nodejs)
+			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
+				callback(untyped Browser.window.clipboardData.getData("Text"));
+			} else if (untyped navigator.clipboard) {
+				untyped navigator.clipboard.readText().then(callback, function(e){
+					Errors.print(e);
+				});
+			} else {
+				callback(clipboardData);
+			}
+		#else
+			callback("");
+		#end
+	}
+
 	public static function setCurrentDirectory(path : String) : Void {
 		// do nothing
 	}
