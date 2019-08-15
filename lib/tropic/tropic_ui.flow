@@ -79,7 +79,7 @@ export {
 	// Tropic combobox
 	TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>, style : [TComboboxStyle]) -> Tropic;
 		TComboboxStyle ::= TNoAutoCollapse, TComboBoxStatic, TColor, TStroke, TStyle, TListDecorator, TExpandUp, ComboBoxEnabled,
-						   ComboBoxExpanded, ComboBoxWidth, ComboBoxMaxHeaderWidth, ComboBoxBorder, TComboBoxArrow, TRadius, TUseAllWidth, TButtonGhosted;
+						   ComboBoxExpanded, ComboBoxWidth, ComboBoxMaxHeaderWidth, ComboBoxBorder, TComboBoxArrow, TRadius, TUseAllWidth, TButtonGhosted, TDeltaGhosted;
 			TStroke(color : int);
 			TRadius(radius : double);
 			TListDecorator(decoratorFn : (Tropic) -> Tropic);
@@ -483,6 +483,10 @@ TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>
 	expandUp = make(useExpandingUp);
 	useAllWidth = contains(style, TUseAllWidth());
 	ghostedItems = contains(style, TButtonGhosted());
+	itemsDeltaGhosted = extractStruct(style, TDeltaGhosted(5.0)).delta;
+
+	point = make(Point(0.0, 0.0));
+	startPoint = ref Point(0.0, 0.0);
 
 	noAutoCollapse = contains(style, TNoAutoCollapse());
 
@@ -544,6 +548,9 @@ TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>
 	};
 
 	frameSize = 1.0;
+
+	buttonStyle = ifArrayPush([TDeltaGhosted(itemsDeltaGhosted)], ghostedItems, TButtonGhosted());
+
 	getItemList = \ -> {
 		TLines(mapi(itemsWithBorder, \i, item -> {
 			getButton(
@@ -559,7 +566,7 @@ TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>
 					if (!noAutoCollapse) next(expanded, false);
 					next(selected, i);
 				}),
-				if (ghostedItems) [TButtonGhosted()] else []
+				buttonStyle
 			)
 		}))
 	};
@@ -568,7 +575,13 @@ TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>
 	addMouseDown = if (noAutoCollapse) idfn else {
 		\tropic ->
 			TGroup2(
-				TInteractive([TMouseDown(backgroundClick)], TRectangle([FillOpacity(0.0), Fill(0)], TFillXY())),
+				TInteractive(
+					[
+						TMouseXY(point),
+						TMouseDown(backgroundClick)
+					],
+					TRectangle([FillOpacity(0.0), Fill(0)], TFillXY())
+				),
 				tropic
 			)
 	};
@@ -727,7 +740,16 @@ TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>
 			\ -> \ -> nextDistinct(expanded, false),
 			connectExpandUp,
 			\ -> connectToStageHeight(stageHeight),
-			\ -> subscribe(backgroundClick, \md -> next(expanded, false)),
+			\ -> subscribe2(backgroundClick, \md -> if (md) {
+				startPoint := getValue(point)
+			} else {
+				p = getValue(point);
+				delta = abs(p.y - ^startPoint.y);
+				// if we release mouse out of the distance in delta then do not trigger click
+				if (!ghostedItems || delta < itemsDeltaGhosted) {
+					next(expanded, false)
+				}
+			}),
 			\ -> subscribe(expanded, \e -> {
 				if (e) {
 					unrender := trender(
