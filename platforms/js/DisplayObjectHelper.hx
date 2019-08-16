@@ -57,7 +57,9 @@ class DisplayObjectHelper {
 				}
 			} else if (clip.parent == RenderSupportJSPixi.PixiStage) {
 				untyped clip.stage = clip;
-				untyped clip.createView(clip.parent.children.indexOf(clip) + 1);
+				if (!RenderSupportJSPixi.DomRenderer) {
+					untyped clip.createView(clip.parent.children.indexOf(clip) + 1);
+				}
 
 				var children : Array<DisplayObject> = untyped clip.children;
 
@@ -85,14 +87,6 @@ class DisplayObjectHelper {
 		}
 
 		invalidateWorldTransform(clip);
-	}
-
-	public static inline function invalidateLocalTransform(clip : DisplayObject) : Void {
-		if (!untyped clip.localTransformChanged) {
-			untyped clip.localTransformChanged = true;
-
-			invalidateWorldTransform(clip);
-		}
 	}
 
 	public static inline function invalidateWorldTransform(clip : DisplayObject) : Void {
@@ -131,7 +125,7 @@ class DisplayObjectHelper {
 			untyped clip.clipVisible = clipVisible;
 			clip.visible = visible;
 
-			var updateAccessWidget = updateAccess && untyped clip.accessWidget != null;
+			var updateAccessWidget = RenderSupportJSPixi.DomRenderer ? untyped clip.updateNativeWidgetDisplay != null : updateAccess && untyped clip.accessWidget != null;
 
 			var children : Array<Dynamic> = untyped clip.children;
 			if (children != null) {
@@ -145,8 +139,12 @@ class DisplayObjectHelper {
 			}
 
 			if (updateAccessWidget) {
-				untyped clip.accessWidget.updateDisplay();
-	 		}
+				if (RenderSupportJSPixi.DomRenderer) {
+					untyped clip.updateNativeWidgetDisplay();
+				} else {
+					untyped clip.accessWidget.updateDisplay();
+				}
+			}
 
 			if (clip.visible) {
 				invalidateTransform(clip);
@@ -339,7 +337,11 @@ class DisplayObjectHelper {
 		setClipX(scrollRect, left);
 		setClipY(scrollRect, top);
 
-		invalidateStage(clip);
+		if (RenderSupportJSPixi.DomRenderer) {
+			invalidateTransform(clip);
+		} else {
+			invalidateStage(clip);
+		}
 	}
 
 	public static inline function removeScrollRect(clip : FlowContainer) : Void {
@@ -358,7 +360,11 @@ class DisplayObjectHelper {
 			clip.scrollRect = null;
 		}
 
-		invalidateStage(clip);
+		if (RenderSupportJSPixi.DomRenderer) {
+			invalidateTransform(clip);
+		} else {
+			invalidateStage(clip);
+		}
 	}
 
 	// setClipMask cancels setScrollRect and vice versa
@@ -401,7 +407,13 @@ class DisplayObjectHelper {
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 		clip.emit("graphicschanged");
 
-		invalidateStage(clip);
+		if (RenderSupportJSPixi.DomRenderer) {
+			maskContainer.once("graphicschanged", function () { setClipMask(clip, maskContainer); });
+
+			invalidateTransform(clip);
+		} else {
+			invalidateStage(clip);
+		}
 	}
 
 	public static function getMaskedBounds(clip : DisplayObject) : Bounds {
@@ -554,5 +566,49 @@ class DisplayObjectHelper {
 			disp();
 			onAdded(clip, fn);
 		});
+	}
+
+	public static function getClipUUID(clip : DisplayObject) : String {
+		if (untyped clip.uuid == null) {
+			untyped clip.uuid = untyped __js__("uuidv4()");
+		}
+
+		return untyped clip.uuid;
+	}
+
+	public static function getClipPath(clip : DisplayObject) : String {
+		var graphicsData = untyped clip.graphicsData;
+
+		if (graphicsData != null) {
+			var data = graphicsData[0];
+
+			if (data.shape.type == 0) {
+				return untyped __js__("'polygon(' + data.shape.points.map((p, i) =>
+					i % 2 == 0 ? (clip.x + p) + 'px ' : '' + (clip.y + p) + 'px' + (i != data.shape.points.length - 1 ? ',' : '')).join('') + ')'");
+			} else if (data.shape.type == 1) {
+				return 'polygon(
+					${clip.x + data.shape.x}px ${clip.y + data.shape.y}px,
+					${clip.x + data.shape.x}px ${clip.y + data.shape.y + data.shape.height}px,
+					${clip.x + data.shape.x + data.shape.width}px ${clip.y + data.shape.y + data.shape.height}px,
+					${clip.x + data.shape.x + data.shape.width}px ${clip.y + data.shape.y}px
+				)';
+			} else if (data.shape.type == 2) {
+				return 'circle(${data.shape.radius}px at ${data.shape.x}px ${data.shape.y}px)';
+			} else if (data.shape.type == 4) {
+				return 'polygon(
+					${clip.x + data.shape.x}px ${clip.y + data.shape.y}px,
+					${clip.x + data.shape.x}px ${clip.y + data.shape.y + data.shape.height}px,
+					${clip.x + data.shape.x + data.shape.width}px ${clip.y + data.shape.y + data.shape.height}px,
+					${clip.x + data.shape.x + data.shape.width}px ${clip.y + data.shape.y}px
+				)';
+			}  else {
+				trace("getClipPath: Unknown shape type");
+				trace(data);
+
+				return "";
+			}
+		} else {
+			return "";
+		}
 	}
 }

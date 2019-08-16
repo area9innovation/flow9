@@ -128,6 +128,10 @@ class TextClip extends NativeWidgetClip {
 		super(worldVisible);
 
 		style.resolution = 1.0;
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			createNativeWidget();
+		}
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -308,7 +312,11 @@ class TextClip extends NativeWidgetClip {
 		super.updateNativeWidgetStyle();
 
 		nativeWidget.setAttribute("type", type);
-		nativeWidget.value = text;
+		if (isInput) {
+			nativeWidget.value = text;
+		} else {
+			nativeWidget.innerText = text;
+		}
 		nativeWidget.style.color = style.fill;
 		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';
 		nativeWidget.style.fontFamily = style.fontFamily;
@@ -359,14 +367,16 @@ class TextClip extends NativeWidgetClip {
 
 		nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 
-		if (Platform.isEdge || Platform.isIE) {
-			nativeWidget.style.opacity = 1;
-			var slicedColor : Array<String> = style.fill.split(",");
-			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
+		if (!RenderSupportJSPixi.DomRenderer) {
+			if (Platform.isEdge || Platform.isIE) {
+				nativeWidget.style.opacity = 1;
+				var slicedColor : Array<String> = style.fill.split(",");
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
 
-			nativeWidget.style.color = newColor;
-		} else {
-			nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+				nativeWidget.style.color = newColor;
+			} else {
+				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+			}
 		}
 	}
 
@@ -472,7 +482,9 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function layoutText() : Void {
-		if (isFocused || text == '') {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return;
+		} else if (isFocused || text == '') {
 			if (textClip != null) {
 				textClip.setClipRenderable(false);
 			}
@@ -1063,6 +1075,28 @@ class TextClip extends NativeWidgetClip {
 			return [ascent, descent, leading];
 		} else {
 			return [style.fontProperties.ascent, style.fontProperties.descent, style.fontProperties.descent];
+		}
+	}
+
+	private override function createNativeWidget(?node_name : String = "div") : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			deleteNativeWidget();
+
+			nativeWidget = Browser.document.createElement(node_name);
+			nativeWidget.style.transformOrigin = 'top left';
+			nativeWidget.style.position = 'fixed';
+			nativeWidget.setAttribute('id', getClipUUID());
+			nativeWidget.style.transformOrigin = 'top left';
+			nativeWidget.style.position = 'fixed';
+			nativeWidget.style.whiteSpace = 'normal';
+			// nativeWidget.style.willChange = 'transform, display, opacity';
+			// nativeWidget.style.pointerEvents = 'none';
+
+			updateNativeWidgetDisplay();
+
+			onAdded(function() { addNativeWidget(); return removeNativeWidget; });
+		} else {
+			super.createNativeWidget(node_name);
 		}
 	}
 }

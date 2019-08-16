@@ -2,14 +2,13 @@ import js.Browser;
 
 import pixi.core.math.Matrix;
 import pixi.core.display.Bounds;
+import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
 class NativeWidgetClip extends FlowContainer {
-	private var nativeWidget : Dynamic;
-	private var accessWidget : AccessWidget;
 	private var viewBounds : Bounds;
 
 	private var styleChanged : Bool = true;
@@ -21,18 +20,66 @@ class NativeWidgetClip extends FlowContainer {
 	private function getWidth() : Float { return widgetWidth; }
 	private function getHeight() : Float { return widgetHeight; }
 	private function getTransform() : Matrix {
-		if (accessWidget != null) {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return untyped this.transform.localTransform;
+		} else if (accessWidget != null) {
 			return accessWidget.getTransform();
 		} else {
 			return worldTransform;
 		}
 	}
 
-	public function updateNativeWidget() : Void {
+	private override function createNativeWidget(?node_name : String = "div") : Void {
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget.setAttribute('id', getClipUUID());
+		nativeWidget.style.transformOrigin = 'top left';
+		nativeWidget.style.position = 'fixed';
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			// nativeWidget.style.willChange = 'transform, display, opacity';
+			nativeWidget.style.pointerEvents = 'none';
+
+			updateNativeWidgetDisplay();
+
+			onAdded(function() { addNativeWidget(); return removeNativeWidget; });
+		} else {
+			if (accessWidget == null) {
+				accessWidget = new AccessWidget(this, nativeWidget);
+			} else {
+				accessWidget.element = nativeWidget;
+			}
+
+			if (parent != null) {
+				addNativeWidget();
+			} else {
+				once('added', addNativeWidget);
+			}
+
+			invalidateStyle();
+
+			if (!getClipWorldVisible() && parent != null) {
+				updateNativeWidget();
+			}
+		}
+	}
+
+	private override function deleteNativeWidget() : Void {
+		removeNativeWidget();
+
+		if (accessWidget != null) {
+			AccessWidget.removeAccessWidget(accessWidget);
+		}
+
+		nativeWidget = null;
+	}
+
+	public override function updateNativeWidget() : Void {
 		var transform = getTransform();
 
-		var tx = getClipWorldVisible() ? transform.tx : -widgetWidth;
-		var ty = getClipWorldVisible() ? transform.ty : -widgetHeight;
+		var tx = Math.floor(getClipWorldVisible() ? transform.tx : -widgetWidth);
+		var ty = Math.floor(getClipWorldVisible() ? transform.ty : -widgetHeight);
 
 		if (Platform.isIE) {
 			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
@@ -42,69 +89,100 @@ class NativeWidgetClip extends FlowContainer {
 		} else {
 			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
 		}
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (alpha != 1) {
+				nativeWidget.style.opacity = alpha;
+			} else {
+				nativeWidget.style.opacity = null;
+			}
+		} else {
+			if (worldAlpha != 1) {
+				nativeWidget.style.opacity = worldAlpha;
+			} else {
+				nativeWidget.style.opacity = null;
+			}
+		}
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (scrollRect != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${scrollRect.y}px,
+						${scrollRect.x + scrollRect.width}px,
+						${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = 'polygon(
+						${scrollRect.x}px ${scrollRect.y}px,
+						${scrollRect.x}px ${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x + scrollRect.width}px ${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x + scrollRect.width}px ${scrollRect.y}px
+					)';
+				}
+			} else if (mask != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${mask.y}px,
+						${mask.x + mask.getWidth()}px,
+						${mask.y + mask.getHeight()}px,
+						${mask.x}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = cast(mask, DisplayObject).getClipPath();
+				}
+			} else {
+				nativeWidget.style.clipPath = null;
+			}
+		}
+
+		if (styleChanged || (!RenderSupportJSPixi.DomRenderer && viewBounds == null)) {
+			updateNativeWidgetStyle();
+		}
 	}
 
 	public function updateNativeWidgetStyle() : Void {
 		nativeWidget.style.width = '${untyped getWidth()}px';
 		nativeWidget.style.height = '${untyped getHeight()}px';
 
-		var maskedBounds = getMaskedLocalBounds();
+		if (!RenderSupportJSPixi.DomRenderer) {
+			var maskedBounds = getMaskedLocalBounds();
 
-		if (Platform.isIE || Platform.isEdge) {
-			nativeWidget.style.clip = 'rect(
-				${maskedBounds.minY}px,
-				${maskedBounds.maxX}px,
-				${maskedBounds.maxY}px,
-				${maskedBounds.minX}px
-			)';
-		} else {
-			nativeWidget.style.clipPath = 'polygon(
-				${maskedBounds.minX}px ${maskedBounds.minY}px,
-				${maskedBounds.minX}px ${maskedBounds.maxY}px,
-				${maskedBounds.maxX}px ${maskedBounds.maxY}px,
-				${maskedBounds.maxX}px ${maskedBounds.minY}px
-			)';
+			if (Platform.isIE || Platform.isEdge) {
+				nativeWidget.style.clip = 'rect(
+					${maskedBounds.minY}px,
+					${maskedBounds.maxX}px,
+					${maskedBounds.maxY}px,
+					${maskedBounds.minX}px
+				)';
+			} else {
+				nativeWidget.style.clipPath = 'polygon(
+					${maskedBounds.minX}px ${maskedBounds.minY}px,
+					${maskedBounds.minX}px ${maskedBounds.maxY}px,
+					${maskedBounds.maxX}px ${maskedBounds.maxY}px,
+					${maskedBounds.maxX}px ${maskedBounds.minY}px
+				)';
+			}
 		}
 
 		styleChanged = false;
 	}
 
-	private function addNativeWidget() : Void {
-		once('removed', deleteNativeWidget);
-	}
-
-	private function createNativeWidget(node_name : String) : Void {
-		deleteNativeWidget();
-
-		nativeWidget = Browser.document.createElement(node_name);
-		nativeWidget.style.transformOrigin = 'top left';
-		nativeWidget.style.position = 'fixed';
-
-		if (accessWidget == null) {
-			accessWidget = new AccessWidget(this, nativeWidget);
+	private override function addNativeWidget() : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
+				untyped parent.nativeWidget.appendChild(nativeWidget);
+			}
 		} else {
-			accessWidget.element = nativeWidget;
-		}
-
-		if (parent != null) {
-			addNativeWidget();
-		} else {
-			once('added', addNativeWidget);
-		}
-
-		invalidateStyle();
-
-		if (!getClipWorldVisible() && parent != null) {
-			updateNativeWidget();
+			once('removed', deleteNativeWidget);
 		}
 	}
 
-	private function deleteNativeWidget() : Void {
-		if (accessWidget != null) {
-			AccessWidget.removeAccessWidget(accessWidget);
+	private override function removeNativeWidget() : Void {
+		if (nativeWidget != null && nativeWidget.parentNode != null) {
+			nativeWidget.parentNode.removeChild(nativeWidget);
 		}
-
-		nativeWidget = null;
 	}
 
 	public function setFocus(focus : Bool) : Bool {
@@ -201,7 +279,7 @@ class NativeWidgetClip extends FlowContainer {
 		return _bounds.getRectangle(rect);
 	}
 
-	public /*override*/ function calculateBounds() : Void {
+	public override function calculateBounds() : Void {
 		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
 		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
 		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;

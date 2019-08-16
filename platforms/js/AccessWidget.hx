@@ -242,10 +242,6 @@ class AccessWidgetTree extends EventEmitter {
 
 				if (untyped clip.nativeWidget != null) {
 					untyped clip.updateNativeWidget();
-
-					if (untyped clip.styleChanged || untyped clip.viewBounds == null) {
-						untyped clip.updateNativeWidgetStyle();
-					}
 				}
 			}
 		}
@@ -396,6 +392,10 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return;
+		}
+
 		if (untyped clip.accessWidget != null) {
 			removeAccessWidget(untyped clip.accessWidget);
 		}

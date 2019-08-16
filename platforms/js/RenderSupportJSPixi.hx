@@ -22,6 +22,8 @@ import BlurFilter;
 using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
+	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
+
 	public static var PixiView : Dynamic;
 	public static var PixiStage = new FlowContainer(true);
 	public static var PixiRenderer : SystemRenderer;
@@ -878,15 +880,15 @@ class RenderSupportJSPixi {
 		emit("drawframe", timestamp);
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
-			trace("animate");
-
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
 				TransformChanged = false;
 
-				for (child in PixiStage.children) {
-					untyped child.updateView();
+				if (!RenderSupportJSPixi.DomRenderer) {
+					for (child in PixiStage.children) {
+						untyped child.updateView();
+					}
 				}
 
 				AccessWidget.updateAccessTree();
@@ -956,6 +958,10 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setAccessAttributes(clip : Dynamic, attributes : Array<Array<String>>) : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return;
+		}
+
 		var attributesMap = new Map<String, String>();
 
 		for (kv in attributes) {

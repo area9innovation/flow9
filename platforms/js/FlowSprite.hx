@@ -1,5 +1,8 @@
+import js.Browser;
+
 import pixi.core.display.Bounds;
 import pixi.core.math.shapes.Rectangle;
+import pixi.core.display.DisplayObject;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
@@ -22,6 +25,9 @@ class FlowSprite extends Sprite {
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
+
+	private var nativeWidget : Dynamic;
+	private var accessWidget : AccessWidget;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
@@ -50,8 +56,12 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		once("removed", onRemoved);
-		once("added", onAdded);
+		once("removed", onSpriteRemoved);
+		once("added", onSpriteAdded);
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			createNativeWidget();
+		}
 	}
 
 	private static function clearUrlTextureCache(url : String) : Void {
@@ -104,7 +114,7 @@ class FlowSprite extends Sprite {
 		return false;
 	}
 
-	private function onAdded() : Void {
+	private function onSpriteAdded() : Void {
 		if (!loaded) {
 			if (StringTools.endsWith(url, ".svg")) {
 				var svgXhr = new js.html.XMLHttpRequest();
@@ -124,7 +134,7 @@ class FlowSprite extends Sprite {
 		}
 	}
 
-	private function onRemoved() : Void {
+	private function onSpriteRemoved() : Void {
 		if (removeTextureFromCache(texture) && !loaded) {
 			var nativeWidget = texture.baseTexture.source;
 			nativeWidget.removeAttribute('src');
@@ -235,5 +245,117 @@ class FlowSprite extends Sprite {
 		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
 		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
 		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+	}
+
+	private function createNativeWidget(?node_name : String = "img") : Void {
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget.setAttribute('id', getClipUUID());
+		nativeWidget.style.transformOrigin = 'top left';
+		nativeWidget.style.position = 'fixed';
+		// nativeWidget.style.willChange = 'transform, display, opacity';
+		nativeWidget.style.pointerEvents = 'none';
+		nativeWidget.src = url;
+
+		updateNativeWidgetDisplay();
+
+		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
+	}
+
+	private function deleteNativeWidget() : Void {
+		removeNativeWidget();
+
+		if (accessWidget != null) {
+			AccessWidget.removeAccessWidget(accessWidget);
+		}
+
+		nativeWidget = null;
+	}
+
+	private function updateNativeWidget() : Void {
+		if (nativeWidget != null) {
+			var transform = untyped this.transform.localTransform;
+
+			var tx = Math.floor(transform.tx);
+			var ty = Math.floor(transform.ty);
+
+			if (tx != 0 || ty != 0 || transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
+				if (Platform.isIE) {
+					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
+
+					nativeWidget.style.left = '${tx}px';
+					nativeWidget.style.top = '${ty}px';
+				} else {
+					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
+				}
+			} else {
+				nativeWidget.style.transform = null;
+
+				if (Platform.isIE) {
+					nativeWidget.style.left = null;
+					nativeWidget.style.top = null;
+				}
+			}
+
+			if (alpha != 1) {
+				nativeWidget.style.opacity = alpha;
+			} else {
+				nativeWidget.style.opacity = null;
+			}
+
+			if (scrollRect != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${scrollRect.y}px,
+						${scrollRect.x + scrollRect.width}px,
+						${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = 'polygon(
+						${scrollRect.x}px ${scrollRect.y}px,
+						${scrollRect.x}px ${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x + scrollRect.width}px ${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x + scrollRect.width}px ${scrollRect.y}px
+					)';
+				}
+			} else if (mask != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${mask.y}px,
+						${mask.x + mask.getWidth()}px,
+						${mask.y + mask.getHeight()}px,
+						${mask.x}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = cast(mask, DisplayObject).getClipPath();
+				}
+			} else {
+				nativeWidget.style.clipPath = null;
+			}
+		}
+	}
+
+	private function addNativeWidget() : Void {
+		if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
+			untyped parent.nativeWidget.appendChild(nativeWidget);
+		}
+	}
+
+	private function removeNativeWidget() : Void {
+		if (nativeWidget != null && nativeWidget.parentNode != null) {
+			nativeWidget.parentNode.removeChild(nativeWidget);
+		}
+	}
+
+	public function updateNativeWidgetDisplay() : Void {
+		if (nativeWidget != null) {
+			if (visible) {
+				nativeWidget.style.display = "block";
+			} else if (parent == null || (untyped parent.nativeWidget != null && untyped parent.nativeWidget.style.display == "block")) {
+				nativeWidget.style.display = "none";
+			}
+		}
 	}
 }

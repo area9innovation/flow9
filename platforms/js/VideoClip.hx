@@ -1,6 +1,7 @@
 import js.Browser;
 import js.html.Element;
 
+import pixi.core.math.shapes.Rectangle;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
@@ -9,8 +10,6 @@ import pixi.core.renderers.canvas.CanvasRenderer;
 using DisplayObjectHelper;
 
 class VideoClip extends FlowContainer {
-	private var nativeWidget : Dynamic;
-
 	private var metricsFn : Float -> Float -> Void;
 	private var playFn : Bool -> Void;
 	private var durationFn : Float -> Void;
@@ -57,11 +56,18 @@ class VideoClip extends FlowContainer {
 		this.positionFn = positionFn;
 	}
 
-	public function updateNativeWidget() {
+	public override function updateNativeWidget() {
+		if (RenderSupportJSPixi.DomRenderer) {
+			super.updateNativeWidget();
+		}
+
 		if (!nativeWidget.paused) {
 			checkTimeRange(nativeWidget.currentTime, true);
-			if (nativeWidget.width != nativeWidget.videoWidth || nativeWidget.height != nativeWidget.videoHeight) {
-				nativeWidget.dispatchEvent(new js.html.Event("resize"));
+
+			if (!RenderSupportJSPixi.DomRenderer) {
+				if (nativeWidget.width != nativeWidget.videoWidth || nativeWidget.height != nativeWidget.videoHeight) {
+					nativeWidget.dispatchEvent(new js.html.Event("resize"));
+				}
 			}
 		}
 	}
@@ -92,7 +98,12 @@ class VideoClip extends FlowContainer {
 
 		addVideoSource(filename, "");
 
-		nativeWidget = Browser.document.createElement("video");
+		if (RenderSupportJSPixi.DomRenderer) {
+			createNativeWidget();
+		} else {
+			nativeWidget = Browser.document.createElement("video");
+		}
+
 		nativeWidget.crossorigin = Util.determineCrossOrigin(filename);
 		nativeWidget.autoplay = !startPaused;
 		nativeWidget.setAttribute('playsinline', true);
@@ -105,15 +116,17 @@ class VideoClip extends FlowContainer {
 			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
 		}
 
-		videoTexture = Texture.fromVideo(nativeWidget);
-		untyped videoTexture.baseTexture.autoPlay = !startPaused;
-		untyped videoTexture.baseTexture.autoUpdate = false;
-		videoSprite = new Sprite(videoTexture);
-		untyped videoSprite._visible = true;
-		addChild(videoSprite);
+		if (!RenderSupportJSPixi.DomRenderer) {
+			videoTexture = Texture.fromVideo(nativeWidget);
+			untyped videoTexture.baseTexture.autoPlay = !startPaused;
+			untyped videoTexture.baseTexture.autoUpdate = false;
+			videoSprite = new Sprite(videoTexture);
+			untyped videoSprite._visible = true;
+			addChild(videoSprite);
 
-		RenderSupportJSPixi.on("drawframe", updateNativeWidget);
-		once("removed", deleteVideoClip);
+			RenderSupportJSPixi.on("drawframe", updateNativeWidget);
+			once("removed", deleteVideoClip);
+		}
 
 		createStreamStatusListeners();
 		createFullScreenListeners();
@@ -279,8 +292,10 @@ class VideoClip extends FlowContainer {
 		if (!nativeWidget.autoplay) nativeWidget.pause();
 
 		if (textField != null) {
-			if (getChildIndex(videoSprite) > getChildIndex(textField))
+			if (!RenderSupportJSPixi.DomRenderer && getChildIndex(videoSprite) > getChildIndex(textField)) {
 				swapChildren(videoSprite, textField);
+			}
+
 			updateSubtitlesClip();
 		};
 
@@ -288,10 +303,18 @@ class VideoClip extends FlowContainer {
 	}
 
 	private function updateVideoMetrics() {
-		nativeWidget.width = nativeWidget.videoWidth;
-		nativeWidget.height = nativeWidget.videoHeight;
-		videoTexture.update();
+		if (!RenderSupportJSPixi.DomRenderer) {
+			nativeWidget.width = nativeWidget.videoWidth;
+			nativeWidget.height = nativeWidget.videoHeight;
+			videoTexture.update();
+		}
+
 		metricsFn(nativeWidget.videoWidth, nativeWidget.videoHeight);
+
+		localBounds.minX = 0;
+		localBounds.minY = 0;
+		localBounds.maxX = nativeWidget.videoWidth;
+		localBounds.maxY = nativeWidget.videoHeight;
 	}
 
 	private function onStreamLoaded() : Void {
@@ -426,5 +449,24 @@ class VideoClip extends FlowContainer {
 		} catch (e : Dynamic) {
 			return haxe.Serializer.run(e); //"error";
 		}
+	}
+
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		return localBounds.getRectangle(rect);
+	}
+
+	private override function createNativeWidget(?node_name : String = "video") : Void {
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget.setAttribute('id', getClipUUID());
+		nativeWidget.style.transformOrigin = 'top left';
+		nativeWidget.style.position = 'fixed';
+		// nativeWidget.style.willChange = 'transform, display, opacity';
+		nativeWidget.style.pointerEvents = 'none';
+
+		updateNativeWidgetDisplay();
+
+		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
 	}
 }

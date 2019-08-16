@@ -1,6 +1,7 @@
 import js.Browser;
 
 import pixi.core.display.Bounds;
+import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
 import pixi.core.graphics.Graphics;
@@ -25,6 +26,9 @@ class FlowGraphics extends Graphics {
 	public var transformChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
 
+	private var nativeWidget : Dynamic;
+	private var accessWidget : AccessWidget;
+
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
 	}
@@ -35,6 +39,10 @@ class FlowGraphics extends Graphics {
 		visible = false;
 		interactiveChildren = false;
 		lineStyle(1.0, 0, 0.0);
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			createNativeWidget();
+		}
 	}
 
 	public function beginGradientFill(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
@@ -137,6 +145,10 @@ class FlowGraphics extends Graphics {
 			invalidateStage();
 		}
 
+		if (RenderSupportJSPixi.DomRenderer) {
+			updateNativeWidgetGraphicsData();
+		}
+
 		return newGraphics;
 	}
 
@@ -235,6 +247,14 @@ class FlowGraphics extends Graphics {
 		return localBounds.getRectangle(rect);
 	}
 
+	public function getWidth() : Float {
+		return localBounds.maxX - localBounds.minX;
+	}
+
+	public function getHeight() : Float {
+		return localBounds.maxY - localBounds.minY;
+	}
+
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
 		if (!skipUpdate) {
 			updateTransform();
@@ -266,4 +286,189 @@ class FlowGraphics extends Graphics {
 
 		return newGraphics;
 	};
+
+	private function createNativeWidget(?node_name : String = "svg") : Void {
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElementNS('http://www.w3.org/2000/svg', node_name);
+		nativeWidget.setAttribute('id', getClipUUID());
+		nativeWidget.style.transformOrigin = 'top left';
+		nativeWidget.style.position = 'fixed';
+		// nativeWidget.style.willChange = 'transform, display, opacity';
+		nativeWidget.style.pointerEvents = 'none';
+
+		updateNativeWidgetGraphicsData();
+		updateNativeWidgetDisplay();
+
+		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
+	}
+
+	private function deleteNativeWidget() : Void {
+		removeNativeWidget();
+
+		if (accessWidget != null) {
+			AccessWidget.removeAccessWidget(accessWidget);
+		}
+
+		nativeWidget = null;
+	}
+
+	private function updateNativeWidget() : Void {
+		if (nativeWidget != null) {
+			var transform = untyped this.transform.localTransform;
+
+			var tx = Math.floor(transform.tx);
+			var ty = Math.floor(transform.ty);
+
+			if (tx != 0 || ty != 0 || transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
+				if (Platform.isIE) {
+					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
+
+					nativeWidget.style.left = '${tx}px';
+					nativeWidget.style.top = '${ty}px';
+				} else {
+					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
+				}
+			} else {
+				nativeWidget.style.transform = null;
+
+				if (Platform.isIE) {
+					nativeWidget.style.left = null;
+					nativeWidget.style.top = null;
+				}
+			}
+
+			if (alpha != 1) {
+				nativeWidget.style.opacity = alpha;
+			} else {
+				nativeWidget.style.opacity = null;
+			}
+
+			if (scrollRect != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${scrollRect.y}px,
+						${scrollRect.x + scrollRect.width}px,
+						${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = 'polygon(
+						${scrollRect.x}px ${scrollRect.y}px,
+						${scrollRect.x}px ${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x + scrollRect.width}px ${scrollRect.y + scrollRect.height}px,
+						${scrollRect.x + scrollRect.width}px ${scrollRect.y}px
+					)';
+					trace("scrollRect");
+					trace(nativeWidget.style.clipPath);
+				}
+			} else if (mask != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${mask.y}px,
+						${mask.x + mask.getWidth()}px,
+						${mask.y + mask.getHeight()}px,
+						${mask.x}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = cast(mask, DisplayObject).getClipPath();
+					trace(nativeWidget.style.clipPath);
+				}
+			} else {
+				nativeWidget.style.clipPath = null;
+			}
+		}
+	}
+
+	private function updateNativeWidgetGraphicsData() : Void {
+		if (nativeWidget != null) {
+			while (nativeWidget.firstChild != null) {
+			    nativeWidget.removeChild(nativeWidget.firstChild);
+			}
+
+			for (data in graphicsData) {
+				var g = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
+
+				if (data.shape.type == 0) {
+					var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
+
+					var d : String = untyped __js__("data.shape.points.map((p, i) => i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ').join('')");
+					path.setAttribute("d", d);
+
+					g.appendChild(path);
+				} else if (data.shape.type == 1) {
+					var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
+
+					rect.setAttribute("x", Std.string(data.shape.x));
+					rect.setAttribute("y", Std.string(data.shape.y));
+					rect.setAttribute("width", Std.string(data.shape.width));
+					rect.setAttribute("height", Std.string(data.shape.height));
+
+					g.appendChild(rect);
+				} else if (data.shape.type == 2) {
+					var circle = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'circle');
+
+					circle.setAttribute("cx", Std.string(data.shape.x));
+					circle.setAttribute("cy", Std.string(data.shape.y));
+					circle.setAttribute("r", Std.string(data.shape.radius));
+
+					g.appendChild(circle);
+				} else if (data.shape.type == 4) {
+					var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
+
+					rect.setAttribute("x", Std.string(data.shape.x));
+					rect.setAttribute("y", Std.string(data.shape.y));
+					rect.setAttribute("width", Std.string(data.shape.width));
+					rect.setAttribute("height", Std.string(data.shape.height));
+					rect.setAttribute("rx", Std.string(data.shape.radius));
+					rect.setAttribute("ry", Std.string(data.shape.radius));
+
+					g.appendChild(rect);
+				} else {
+					trace("updateNativeWidgetGraphicsData: Unknown shape type");
+					trace(data);
+				}
+
+				if (data.fill) {
+					g.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
+				} else {
+					g.setAttribute("fill", "none");
+				}
+
+				if (data.lineWidth > 0) {
+					g.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
+					g.setAttribute("stroke-width", Std.string(data.lineWidth));
+				} else {
+					g.setAttribute("stroke", "none");
+				}
+
+				nativeWidget.appendChild(g);
+			}
+
+			nativeWidget.style.width = '${untyped getWidth()}px';
+			nativeWidget.style.height = '${untyped getHeight()}px';
+		}
+	}
+
+	private function addNativeWidget() : Void {
+		if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
+			untyped parent.nativeWidget.appendChild(nativeWidget);
+		}
+	}
+
+	private function removeNativeWidget() : Void {
+		if (nativeWidget != null && nativeWidget.parentNode != null) {
+			nativeWidget.parentNode.removeChild(nativeWidget);
+		}
+	}
+
+	public function updateNativeWidgetDisplay() : Void {
+		if (nativeWidget != null) {
+			if (visible && untyped !this.isMask) {
+				nativeWidget.style.display = "block";
+			} else if (parent == null || (untyped parent.nativeWidget != null && untyped parent.nativeWidget.style.display == "block")) {
+				nativeWidget.style.display = "none";
+			}
+		}
+	}
 }
