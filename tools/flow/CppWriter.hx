@@ -379,6 +379,12 @@ enum CppOutputLocation {
 	OutputScalar(name : String, tag : CppTagType);
 }
 
+enum CppCodeBlock {
+	CppDecl(type : String, name : String, indent : String);
+	CppLine(line : String);
+	CppBlock(block : Array<CppCodeBlock>, parent : CppCodeBlock);
+}
+
 // Contains current information about the function being compiled.
 // Controls mapping of local variable names to places.
 class CppEnvironment {
@@ -388,10 +394,12 @@ class CppEnvironment {
 		this.vname = vname;
 
 		lines = 0;
-		line_str = new StringBuf();
+		//line_str = new StringBuf();
 		nlocals = ntemps = nargs = next_ctx = 0;
 		upvalues = [];
-		idxvars = new OrderedHash();
+		//idxvars = new OrderedHash();
+		//idxstack = new Array();
+		//idxstack.push(new OrderedHash<String>());
 		args_used = tail_call = false;
 		locals = new Map();
 		local_reuse = [];
@@ -405,6 +413,7 @@ class CppEnvironment {
 		next_uid = 1000000*depth;
 
 		cur_ctx = new CppContext(this, '    ');
+		code_block = CppBlock([], null);
 	}
 
 	public var parent : CppEnvironment;
@@ -425,12 +434,13 @@ class CppEnvironment {
 	public var closure : CppPlaceInfo;
 	public var closure_type : StructInfo;
 	public var upvalues : Array<String>;
-	public var idxvars : OrderedHash<String>;
+	//public var idxvars : OrderedHash<String>;
+	//public var idxstack : Array<OrderedHash<String>>;
 
 	public var tail_call : Bool;
 
 	public var lines : Int;
-	public var line_str : StringBuf;
+	//public var line_str : StringBuf;
 	public var cur_ctx : CppContext;
 
 	public var locals : Map<String, CppPlaceInfo>;
@@ -438,6 +448,52 @@ class CppEnvironment {
 	public var struct_list : Array<StructInfo>;
 
 	public var meta_globals : Map<Int, { def : CppPlaceInfo, old: PlaceMetadata, my: PlaceMetadata }>;
+
+	public function generateCppBlock() {
+		var sb = new StringBuf();
+		var lines = _generateCppBlock(code_block);
+		for (line in lines) {
+			sb.add(line);
+		}
+		return sb.toString();
+	}
+	public function addCppCode(code : CppCodeBlock) {
+		switch (code_block) {
+			case CppBlock(block, parent): {
+				switch(code) {
+					case CppBlock(b, p): {
+						block.push(code);
+						//code.parent = code_block;
+						//code_block = code;
+					}
+					default: block.push(code);
+				}
+			}
+			default: throw 'impossible';
+		}
+	}
+	static private function _generateCppBlock(block : CppCodeBlock) {
+		var code = new Array<String>();
+		switch (block) {
+			case CppDecl(type, name, indent): {
+				code.push(indent + type + ' ' + name + ';\n');
+			}
+			case CppLine(line): {
+				code.push(line.charAt(line.length - 1) == '\n' ? line : line + '\n');
+			}
+			case CppBlock(sub_blocks, parent): {
+				for (sub_block in sub_blocks) {
+					var sub_lines : Array<String> = _generateCppBlock(sub_block);
+					for (line in sub_lines) {
+						code.push(INDENT + line); 
+					}
+				}
+			}
+		}
+		return code;
+	}
+	private static var INDENT = '    ';
+	private var code_block : CppCodeBlock;
 
 	public function mktemp(id : Int) : CppPlaceInfo {
 		if (id >= ntemps) ntemps = id+1;
@@ -511,10 +567,29 @@ class CppEnvironment {
 			local_reuse.push(curdef.slot);
 	}
 
-	public function registerIdxVar(name : String, type : String) {
-		if (idxvars.get(name) == null)
-			idxvars.set(name, type);
+	/*public function popIdxStack() {
+		idxstack.push(new OrderedHash<String>());
 	}
+	public function pushIdxStack() {
+		idxstack.pop();
+	}
+	private function isNewVar(name : String) {
+		for (idxs in idxstack) {
+			if (idxs.get(name) != null) {
+				return false;
+			}
+		}
+		return true;
+	}
+	public function registerIdxVar(name : String, type : String) {
+		if (isNewVar(name)) {
+			if (idxstack.length == 0) {
+				throw 'idxstack.length == 0';
+			}
+			idxstack[idxstack.length - 1].set(name, type);
+			cur_ctx.wrsemi(type + ' ' + name);
+		}
+	}*/
 
 	public function stashGlobalMeta() {
 		for (info in meta_globals.iterator()) {
@@ -543,6 +618,7 @@ class CppContext {
 		local_names = [];
 		local_binds = [];
 		meta = new Map();
+		idxvars = new OrderedHash();
 	}
 
 	public var env : CppEnvironment;
@@ -555,6 +631,7 @@ class CppContext {
 
 	private var local_names : Array<String>;
 	private var local_binds : Array<CppPlaceInfo>;
+	private var idxvars : OrderedHash<String>;
 
 	private var meta : Map<Int, { def : CppPlaceInfo, old: PlaceMetadata, my: PlaceMetadata }>;
 
@@ -576,7 +653,8 @@ class CppContext {
 
 	public function wrbegin() : StringBuf {
 		env.lines++;
-		var line_str = env.line_str;
+		//var line_str = env.line_str;
+		var line_str = new StringBuf();
 		line_str.add(indent);
 		return line_str;
 	}
@@ -585,12 +663,14 @@ class CppContext {
 		var line_str = wrbegin();
 		line_str.add(s);
 		line_str.add(NEWLINE);
+		env.addCppCode(CppLine(line_str.toString()));
 	}
 
 	public function wrsemi(str : String) {
 		var line_str = wrbegin();
 		line_str.add(str);
 		line_str.add(SEMI_NL);
+		env.addCppCode(CppLine(line_str.toString()));
 	}
 
 	public function wrsemi2(str1 : String, str2 : String) {
@@ -598,6 +678,7 @@ class CppContext {
 		line_str.add(str1);
 		line_str.add(str2);
 		line_str.add(SEMI_NL);
+		env.addCppCode(CppLine(line_str.toString()));
 	}
 
 	public function wrsemi3(str1 : String, str2 : String, str3 : String) {
@@ -606,6 +687,7 @@ class CppContext {
 		line_str.add(str2);
 		line_str.add(str3);
 		line_str.add(SEMI_NL);
+		env.addCppCode(CppLine(line_str.toString()));
 	}
 
 	public function wrsemi4(str1 : String, str2 : String, str3 : String, str4 : String) {
@@ -615,6 +697,7 @@ class CppContext {
 		line_str.add(str3);
 		line_str.add(str4);
 		line_str.add(SEMI_NL);
+		env.addCppCode(CppLine(line_str.toString()));
 	}
 
 	public function enter(idelta : String) {
@@ -751,17 +834,18 @@ class CppContext {
 			var vname = sb.toString();
 
 			if (structname == '') {
-				env.registerIdxVar(vname, 'const StackSlot*');
+				registerIdxVar(vname, 'const StackSlot*');
 
 				if (init) {
 					var size = sref.meta.struct_size == null ? 1 : sref.meta.struct_size;
 					var sb2 = wrbegin();
 					sb2.add(vname); sb2.add(GET_ASPTR); sb2.add(sref.getRValue(this));
 					sb2.add(COMMA); sb2.add(size<1?1:size); sb2.add(PAREN_SEMI_NL);
+					env.addCppCode(CppLine(sb2.toString()));
 				}
 			} else {
 				var vtype = 'FS_'+structname;
-				env.registerIdxVar(vname, vtype+'*');
+				registerIdxVar(vname, vtype+'*');
 
 				if (init) {
 					var sb2 = wrbegin();
@@ -774,6 +858,7 @@ class CppContext {
 					}
 
 					sb2.add(PAREN_SEMI_NL);
+					env.addCppCode(CppLine(sb2.toString()));
 				}
 			}
 
@@ -848,6 +933,7 @@ class CppContext {
 		line_str.add(str);
 		line_str.add(PAREN_SEMI_NL);
 		if (gc) gc_index++;
+		env.addCppCode(CppLine(line_str.toString()));
 	}
 
 	public function wrcheckopt(str : String, check : Bool, ?gc = false) {
@@ -860,6 +946,25 @@ class CppContext {
 			var line_str = wrbegin();
 			line_str.add(str);
 			line_str.add(SEMI_NL);
+			env.addCppCode(CppLine(line_str.toString()));
+		}
+	}
+
+	private function idxVarType(name : String) {
+		if (idxvars.get(name) != null) {
+			return idxvars.get(name);
+		}
+		if (prev != null) {
+			return prev.idxVarType(name);
+		}
+		return null;
+	}
+
+	public function registerIdxVar(name : String, type : String) {
+		if (idxVarType(name) == null) {
+			idxvars.set(name, type);
+			env.addCppCode(CppDecl(type, name, indent));
+			//wrsemi(type + ' ' + name);
 		}
 	}
 }
@@ -1713,13 +1818,12 @@ class CppWriter {
 				o.writeString('    StackSlot *const temps = locals+'+env.nlocals+';\n');
 		}
 
-		for (id in env.idxvars.keys())
-			o.writeString('    '+env.idxvars.get(id)+' '+id+';\n');
-
 		if (env.tail_call)
 			o.writeString('tail_call:\n');
 
-		o.writeString(env.line_str.toString());
+		var code = env.generateCppBlock();
+		//o.writeString(env.line_str.toString());
+		o.writeString(code);
 
 		o.writeString('}\n');
 		/*o.close();
@@ -1840,7 +1944,7 @@ class CppWriter {
 			expr = cb(ctx, expr);
 		case OutputScalar(name,tag2):
 			if (tag != tag2) {
-				ctx.env.registerIdxVar('unbox_tmp','StackSlot');
+				ctx.registerIdxVar('unbox_tmp','StackSlot');
 				ctx.wrcheckopt(assignExpr('unbox_tmp',expr,io||check||gc), check, gc);
 				ctx.wr('CHECK_TAG('+CppPlaceInfo.tagToString(tag2)+
 					   ',unbox_tmp,"'+ctx.env.vname+'");');
@@ -1932,6 +2036,7 @@ class CppWriter {
 		sb.add(',"');
 		sb.add(ctx.env.vname);
 		sb.add('");\n');
+		ctx.env.addCppCode(CppLine(sb.toString()));
 
 		var lm = ctx.localMeta(ref);
 		lm.tag = tag;
@@ -1977,7 +2082,7 @@ class CppWriter {
 
 		if (ref.meta.known_fields == null || !ref.meta.known_fields.has(name))
 		{
-			ctx.env.registerIdxVar(ivar, 'int');
+			ctx.registerIdxVar(ivar, 'int');
 
 			var fidx = getFieldLookupId(name);
 			ctx.wr('FIND_STRUCT_FIELD('+ivar+','+ref.getRValue(ctx)+','+fidx+
@@ -2040,7 +2145,7 @@ class CppWriter {
 
 		if (ref1.meta.known_compares == null || !ref1.meta.known_compares.has(ref2))
 		{
-			ctx.env.registerIdxVar(cvar, 'int');
+			ctx.registerIdxVar(cvar, 'int');
 
 			/*if (type == TString) {
 				ctx.wr(cvar+' = RUNNER->CompareString('+getAddrPair(ref1,TString,ctx)+
@@ -2301,13 +2406,13 @@ class CppWriter {
 		case If(condition, then, elseExp, pos):
 			var cexpr = emitConditionExpr(condition, ctx, mktop(top));
 			ctx.wr('if ('+cexpr+') {');
-			var cif = ctx.enter('    ');
-			compileExpression(then, cif, out, mktop(top));
-			cif.exit();
+				var cif = ctx.enter('    ');
+				compileExpression(then, cif, out, mktop(top));
+				cif.exit();
 			ctx.wr('} else {');
-			var celse = ctx.enter('    ');
-			compileExpression(elseExp, celse, out, mktop(top));
-			celse.exit();
+				var celse = ctx.enter('    ');
+				compileExpression(elseExp, celse, out, mktop(top));
+				celse.exit();
 			ctx.wr('}');
 			ctx.join([cif, celse]);
 		case Switch(e0, type, cases, p):
