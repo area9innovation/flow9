@@ -29,7 +29,7 @@ class RenderSupportJSPixi {
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 
 	private static var MousePos : Point = new Point(0.0, 0.0);
-	private static var PixiStageChanged : Bool = true;
+	public static var PixiStageChanged : Bool = true;
 	private static var TransformChanged : Bool = true;
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
@@ -206,6 +206,10 @@ class RenderSupportJSPixi {
 				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.interaction");
 				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.extract");
 			}
+		} else if (RendererType == "webgl") {
+			untyped PixiRenderer.gl.viewport(0, 0, untyped PixiRenderer.gl.drawingBufferWidth, untyped PixiRenderer.gl.drawingBufferHeight);
+			untyped PixiRenderer.gl.clearColor(1.0, 1.0, 1.0, 1.0);
+			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
 		}
 
 		// Disable Pixi's accessibility manager plugin.
@@ -234,8 +238,9 @@ class RenderSupportJSPixi {
 	}
 
 	private static function initPixiRenderer() {
-		if (untyped PIXI.VERSION[0] > 3)
+		if (untyped PIXI.VERSION[0] > 3) {
 			PixiWorkarounds.workaroundDOMOverOutEventsTransparency();
+		}
 
 		if (untyped PIXI.VERSION != "4.8.2") {
 			untyped __js__("document.location.reload(true)");
@@ -291,7 +296,8 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
-		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(true); requestAnimationFrame(); }, false);
+		Browser.window.addEventListener('focus', function () { requestAnimationFrame(); }, false);
+		// Browser.window.addEventListener('blur', function () { Browser.window.cancelAnimationFrame(AnimationFrameId); }, false);
 	}
 
 	private static inline function calculateMobileTopHeight() {
@@ -477,8 +483,6 @@ class RenderSupportJSPixi {
 		}
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
-		PixiStage.transformChanged = true;
-		PixiStage.invalidateStage(true);
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
@@ -874,6 +878,8 @@ class RenderSupportJSPixi {
 		emit("drawframe", timestamp);
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
+			trace("animate");
+
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
@@ -890,16 +896,20 @@ class RenderSupportJSPixi {
 				}
 
 				untyped PixiRenderer._lastObjectRendered = PixiStage;
-			} else {
+			} else if (RendererType == "webgl") {
+				TransformChanged = false;
+
 				AccessWidget.updateAccessTree();
 
-				if (TransformChanged) {
-					TransformChanged = false;
+				for (child in PixiStage.children) {
+					if (untyped child.stageChanged) {
+						untyped child.stageChanged = false;
 
-					PixiRenderer.render(PixiStage, null, true, null, false);
-				} else {
-					PixiRenderer.render(PixiStage, null, true, null, true);
+						PixiRenderer.render(child, null, true, null, untyped !child.transformChanged);
+					}
 				}
+
+				untyped PixiRenderer._lastObjectRendered = PixiStage;
 			}
 
 			emit("stagechanged", timestamp);
@@ -927,14 +937,6 @@ class RenderSupportJSPixi {
 
 		on("message", handler);
 		return function() { off("message", handler); };
-	}
-
-	public static inline function InvalidateStage() : Void {
-		PixiStageChanged = true;
-	}
-
-	public static inline function InvalidateTransform() : Void {
-		TransformChanged = true;
 	}
 
 	public static function getPixelsPerCm() : Float {
@@ -1250,7 +1252,9 @@ class RenderSupportJSPixi {
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
-		updateTransform();
+		if (clip.parent != null) {
+			clip.updateTransform();
+		}
 
 		clip.setClipFocus(focus);
 	}
@@ -1621,17 +1625,17 @@ class RenderSupportJSPixi {
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
 			cast(clip, DisplayObject).on("pointerover", fn);
-			cast(clip, DisplayObject).updateClipInteractive();
+			cast(clip, DisplayObject).invalidateInteractive();
 			return function() {
 				cast(clip, DisplayObject).off("pointerover", fn);
-				cast(clip, DisplayObject).updateClipInteractive();
+				cast(clip, DisplayObject).invalidateInteractive();
 			};
 		} else if (event == "rollout") {
 			cast(clip, DisplayObject).on("pointerout", fn);
-			cast(clip, DisplayObject).updateClipInteractive();
+			cast(clip, DisplayObject).invalidateInteractive();
 			return function() {
 				cast(clip, DisplayObject).off("pointerout", fn);
-				cast(clip, DisplayObject).updateClipInteractive();
+				cast(clip, DisplayObject).invalidateInteractive();
 			};
 		} else if (event == "scroll") {
 			cast(clip, DisplayObject).on("scroll", fn);
@@ -1724,26 +1728,15 @@ class RenderSupportJSPixi {
 		MousePos.y = y;
 	}
 
-	private static inline function updateTransform() : Void {
-		if (TransformChanged && PixiStage != null) {
-			var cacheParent = PixiStage.parent;
-			PixiStage.parent = untyped PixiStage._tempDisplayObjectParent;
-
-			PixiStage.updateTransform();
-
-			PixiStage.parent = cacheParent;
-
-			TransformChanged = false;
-		}
-	}
-
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
 		if (!clip.getClipWorldVisible() || clip.parent == null) {
 			return false;
 		}
 
 		var point = new Point(x, y);
-		updateTransform();
+		if (clip.parent != null) {
+			clip.updateTransform();
+		}
 
 		return hittestMask(clip.parent, point) && doHitTest(clip, point);
 	}
@@ -1977,7 +1970,7 @@ class RenderSupportJSPixi {
 						f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
 					}
 
-					clip.invalidateStage(false);
+					clip.invalidateStage();
 				};
 
 				clip.onAdded(function () {
@@ -2147,7 +2140,7 @@ class RenderSupportJSPixi {
 
 
 			var mainStage : FlowContainer = cast(untyped PixiStage.children[0], FlowContainer);
-			mainStage.invalidateStage(true);
+			mainStage.invalidateTransform();
 
 			mainStage.renderable = false;
 

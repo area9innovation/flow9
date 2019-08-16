@@ -4,9 +4,10 @@ import pixi.core.display.Bounds;
 
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
+	public static var InvalidateStage : Bool = true;
 
-	public static inline function invalidateStage(clip : DisplayObject, ?updateTransform : Bool = false) : Void {
-		if (getClipWorldVisible(clip) && untyped clip.stage != null) {
+	public static inline function invalidateStage(clip : DisplayObject) : Void {
+		if (InvalidateStage && getClipWorldVisible(clip) && untyped clip.stage != null) {
 			if (DisplayObjectHelper.Redraw && (untyped clip.updateGraphics == null || untyped clip.updateGraphics.parent == null)) {
 				var updateGraphics = new FlowGraphics();
 
@@ -30,11 +31,15 @@ class DisplayObjectHelper {
 					untyped clip.stage.invalidateStage();
 					untyped clip.stage.invalidateTransform();
 				});
-
-				untyped clip.stage.invalidateStage(true);
-			} else {
-				untyped clip.stage.invalidateStage(updateTransform);
 			}
+
+			untyped clip.stage.invalidateStage();
+		}
+	}
+
+	public static inline function invalidateStageByParent(clip : DisplayObject) : Void {
+		if (InvalidateStage && clip.parent != null && getClipWorldVisible(clip.parent)) {
+			invalidateStage(clip.parent);
 		}
 	}
 
@@ -75,38 +80,135 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function invalidateTransform(clip : DisplayObject) : Void {
-		untyped clip.transformChanged = true;
-		invalidateStage(clip, true);
+		if (InvalidateStage) {
+			invalidateParentTransform(clip);
+		}
+
+		invalidateWorldTransform(clip);
 	}
 
-	public static inline function invalidateStageByParent(clip : DisplayObject) : Void {
-		if (clip.parent != null) {
-			invalidateStage(clip.parent, false);
+	public static inline function invalidateLocalTransform(clip : DisplayObject) : Void {
+		if (!untyped clip.localTransformChanged) {
+			untyped clip.localTransformChanged = true;
+
+			invalidateWorldTransform(clip);
 		}
 	}
 
-	public static inline function invalidateTransformByParent(clip : DisplayObject) : Void {
-		untyped clip.transformChanged = true;
-		if (clip.parent != null) {
-			invalidateStage(clip.parent, true);
+	public static inline function invalidateWorldTransform(clip : DisplayObject) : Void {
+		if (clip.visible && !untyped clip.worldTransformChanged && clip.parent != null) {
+			untyped clip.worldTransformChanged = true;
+			untyped clip.transformChanged = true;
+
+			var children : Array<Dynamic> = untyped clip.children;
+			if (children != null) {
+				for (child in children) {
+					if (child.visible) {
+						invalidateWorldTransform(child);
+					}
+				}
+			}
 		}
 	}
 
-	public static inline function updateTreeIds(clip : DisplayObject, ?clean : Bool = false) : Void {
-		if (clean) {
-			untyped clip.id = [-1];
-		} else if (clip.parent == null) {
-			untyped clip.id = [0];
+	public static inline function invalidateParentTransform(clip : DisplayObject) : Void {
+		if (clip.visible && !untyped clip.transformChanged) {
+			untyped clip.transformChanged = true;
+
+			if (clip.parent != null && !untyped clip.parent.transformChanged) {
+				invalidateParentTransform(clip.parent);
+			} else {
+				invalidateStage(clip);
+			}
+		}
+	}
+
+	public static inline function invalidateVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
+		var clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
+		var visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (clipVisible && clip.renderable));
+
+		if (untyped clip.clipVisible != clipVisible || clip.visible != visible) {
+			untyped clip.clipVisible = clipVisible;
+			clip.visible = visible;
+
+			var updateAccessWidget = updateAccess && untyped clip.accessWidget != null;
+
+			var children : Array<Dynamic> = untyped clip.children;
+			if (children != null) {
+				for (child in children) {
+					invalidateVisible(child, updateAccess && !updateAccessWidget);
+				}
+			}
+
+			if (clip.interactive && !getClipWorldVisible(clip)) {
+				clip.emit("pointerout");
+			}
+
+			if (updateAccessWidget) {
+				untyped clip.accessWidget.updateDisplay();
+	 		}
+
+			if (clip.visible) {
+				invalidateTransform(clip);
+			} else if (clip.parent != null && clip.parent.visible) {
+				invalidateStage(clip.parent);
+			}
+		}
+	}
+
+	public static function invalidateInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
+		clip.interactive = clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0;
+		clip.interactiveChildren = clip.interactive || interactiveChildren;
+
+		if (clip.interactive) {
+			setChildrenInteractive(clip);
 		} else {
-			untyped clip.id = Array.from(clip.parent.id);
-			untyped clip.id.push(clip.parent.children.indexOf(clip));
+			if (!clip.interactiveChildren) {
+				var children : Array<Dynamic> = untyped clip.children;
+
+				if (children != null) {
+					for (c in children) {
+						if (c.interactiveChildren) {
+							clip.interactiveChildren = true;
+						}
+					}
+				}
+			}
+
+			if (clip.interactiveChildren) {
+				setChildrenInteractive(clip);
+			}
 		}
 
+		if (clip.parent != null && clip.parent.interactiveChildren != clip.interactiveChildren) {
+			invalidateInteractive(clip.parent, clip.interactiveChildren);
+		}
+	}
+
+	public static function setChildrenInteractive(clip : DisplayObject) : Void {
 		var children : Array<Dynamic> = untyped clip.children;
+
 		if (children != null) {
 			for (c in children) {
-				updateTreeIds(c, clean);
+				if (!c.interactiveChildren) {
+					c.interactiveChildren = true;
+
+					setChildrenInteractive(c);
+				}
 			}
+		}
+	}
+
+	public static inline function invalidate(clip : DisplayObject) : Void {
+		updateStage(clip);
+
+		if (clip.parent != null) {
+			invalidateVisible(clip);
+			invalidateInteractive(clip, clip.parent.interactiveChildren);
+			invalidateTransform(clip);
+		} else {
+			untyped clip.worldTransformChanged = false;
+			untyped clip.transformChanged = false;
 		}
 	}
 
@@ -163,53 +265,23 @@ class DisplayObjectHelper {
 	public static inline function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
-
-			if (clip.parent != null && getClipVisible(clip.parent)) {
-				updateClipWorldVisible(clip);
-			}
-
-			invalidateStageByParent(clip);
+			invalidateVisible(clip);
 		}
 	}
 
-	public static inline function updateClipWorldVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
-		untyped clip.clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
-		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (getClipVisible(clip) && clip.renderable));
-
-		if (clip.interactive && !getClipWorldVisible(clip)) {
-			clip.emit("pointerout");
+	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
+		if (clip.renderable != renderable) {
+			clip.renderable = renderable;
+			invalidateVisible(clip);
 		}
-
-		var updateAccessWidget = updateAccess && untyped clip.accessWidget != null;
-
-		var children : Array<Dynamic> = untyped clip.children;
-		if (children != null) {
-			for (c in children) {
-				if (getClipWorldVisible(c) != getClipWorldVisible(clip) || getClipVisible(c) != getClipVisible(clip)) {
-					updateClipWorldVisible(c, updateAccess && !updateAccessWidget);
-				}
-			}
-		}
-
-		if (updateAccessWidget) {
-			untyped clip.accessWidget.updateDisplay();
- 		}
 	}
 
 	public static inline function getClipVisible(clip : DisplayObject) : Bool {
 		return untyped clip.clipVisible;
 	}
 
-	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
-		if (clip.renderable != renderable) {
-			clip.renderable = renderable;
-
-			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
-				updateClipWorldVisible(clip);
-			}
-
-			invalidateStageByParent(clip);
-		}
+	public static inline function getClipWorldVisible(clip : DisplayObject) : Bool {
+		return untyped clip.visible;
 	}
 
 	public static function setClipFocus(clip : DisplayObject, focus : Bool) : Bool {
@@ -240,53 +312,6 @@ class DisplayObjectHelper {
 		}
 
 		return false;
-	}
-
-	public static inline function getClipWorldVisible(clip : DisplayObject) : Bool {
-		return untyped clip.visible;
-	}
-
-	public static function updateClipInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
-		clip.interactive = clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0;
-		clip.interactiveChildren = clip.interactive || interactiveChildren;
-
-		if (clip.interactive) {
-			setChildrenInteractive(clip);
-		} else {
-			if (!clip.interactiveChildren) {
-				var children : Array<Dynamic> = untyped clip.children;
-
-				if (children != null) {
-					for (c in children) {
-						if (c.interactiveChildren) {
-							clip.interactiveChildren = true;
-						}
-					}
-				}
-			}
-
-			if (clip.interactiveChildren) {
-				setChildrenInteractive(clip);
-			}
-		}
-
-		if (clip.parent != null && clip.parent.interactiveChildren != clip.interactiveChildren) {
-			updateClipInteractive(clip.parent, clip.interactiveChildren);
-		}
-	}
-
-	public static function setChildrenInteractive(clip : DisplayObject) : Void {
-		var children : Array<Dynamic> = untyped clip.children;
-
-		if (children != null) {
-			for (c in children) {
-				if (!c.interactiveChildren) {
-					c.interactiveChildren = true;
-
-					setChildrenInteractive(c);
-				}
-			}
-		}
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
@@ -429,6 +454,24 @@ class DisplayObjectHelper {
 		bounds.maxY = bounds.maxX * worldTransform.b + bounds.maxY * worldTransform.d + worldTransform.ty;
 
 		return bounds;
+	}
+
+	public static inline function updateTreeIds(clip : DisplayObject, ?clean : Bool = false) : Void {
+		if (clean) {
+			untyped clip.id = [-1];
+		} else if (clip.parent == null) {
+			untyped clip.id = [0];
+		} else {
+			untyped clip.id = Array.from(clip.parent.id);
+			untyped clip.id.push(clip.parent.children.indexOf(clip));
+		}
+
+		var children : Array<Dynamic> = untyped clip.children;
+		if (children != null) {
+			for (c in children) {
+				updateTreeIds(c, clean);
+			}
+		}
 	}
 
 	public static function getClipTreePosition(clip : DisplayObject) : Array<Int> {

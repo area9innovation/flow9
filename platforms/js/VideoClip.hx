@@ -274,7 +274,7 @@ class VideoClip extends FlowContainer {
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
-		invalidateStage(true); // Update the widget
+		invalidateTransform(); // Update the widget
 
 		if (!nativeWidget.autoplay) nativeWidget.pause();
 

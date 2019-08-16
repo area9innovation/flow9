@@ -178,45 +178,33 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	#if (pixijs < "4.7.0")
-		public override function getLocalBounds() : Rectangle {
-			var rect = new Rectangle();
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		localBounds.minX = 0;
+		localBounds.minY = 0;
+		localBounds.maxX = getWidth();
+		localBounds.maxY = getHeight();
 
-			rect.x = 0;
-			rect.y = 0;
-			rect.width = getWidth();
-			rect.height = getHeight();
+		return localBounds.getRectangle(rect);
+	}
 
-			return rect;
-		}
-	#else
-		public override function getLocalBounds(?rect:Rectangle) : Rectangle {
-			if (rect == null) {
-				rect = new Rectangle();
-			}
-
-			rect.x = 0;
-			rect.y = 0;
-			rect.width = getWidth();
-			rect.height = getHeight();
-
-			return rect;
-		}
-	#end
-
-	public override function getBounds(?skipUpdate: Bool, ?rect: Rectangle) : Rectangle {
-		if (rect == null) {
-			rect = new Rectangle();
+	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		if (!skipUpdate) {
+			updateTransform();
+			getLocalBounds();
 		}
 
-		var lt = toGlobal(new Point(0.0, 0.0));
-		var rb = toGlobal(new Point(getWidth(), getHeight()));
+		if (untyped this._boundsID != untyped this._lastBoundsID)
+		{
+			calculateBounds();
+		}
 
-		rect.x = lt.x;
-		rect.y = lt.y;
-		rect.width = rb.x - lt.x;
-		rect.height = rb.y - lt.y;
+		return _bounds.getRectangle(rect);
+	}
 
-		return rect;
+	public /*override*/ function calculateBounds() : Void {
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 }

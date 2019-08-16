@@ -1,4 +1,48 @@
 class PixiWorkarounds {
+	public static function workaroundDOMOverOutEventsTransparency() : Void {
+		untyped __js__("
+		var binder = function(fn) {
+			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
+		}
+
+		var emptyFn = function() {};
+
+		var old_pointer_over = PIXI.interaction.InteractionManager.prototype.onPointerOver;
+		var old_pointer_out = PIXI.interaction.InteractionManager.prototype.onPointerOut;
+
+		PIXI.interaction.InteractionManager.prototype.onPointerOver = emptyFn;
+		PIXI.interaction.InteractionManager.prototype.onPointerOut = emptyFn;
+
+		var pointer_over = function(e) {
+			if (e.fromElement == null)
+				binder(old_pointer_over)(e);
+		}
+
+		var mouse_move = function(e) {
+			pointer_over(e);
+			document.removeEventListener('mousemove', mouse_move);
+		}
+
+		// if mouse is already over document
+		document.addEventListener('mousemove', mouse_move);
+
+		document.addEventListener('mouseover', pointer_over);
+
+		document.addEventListener('mouseout', function(e) {
+			if (e.toElement == null)
+				binder(old_pointer_out)(e);
+		});
+
+		document.addEventListener('pointerover', function (e) {
+			if (e.fromElement == null)
+				binder(old_pointer_over)(e);
+		});
+		document.addEventListener('pointerout', function (e) {
+			if (e.toElement == null)
+				binder(old_pointer_out)(e);
+		});");
+	}
+
 	public static function workaroundRendererDestroy() : Void {
 		untyped __js__("
 			PIXI.WebGLRenderer.prototype.bindTexture = function(texture, location, forceLocation)
@@ -365,50 +409,6 @@ class PixiWorkarounds {
 
 			window.CustomEvent = CustomEvent;
 		};");
-	}
-
-	public static function workaroundDOMOverOutEventsTransparency() : Void {
-		untyped __js__("
-		var binder = function(fn) {
-			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
-		}
-
-		var emptyFn = function() {};
-
-		var old_pointer_over = PIXI.interaction.InteractionManager.prototype.onPointerOver;
-		var old_pointer_out = PIXI.interaction.InteractionManager.prototype.onPointerOut;
-
-		PIXI.interaction.InteractionManager.prototype.onPointerOver = emptyFn;
-		PIXI.interaction.InteractionManager.prototype.onPointerOut = emptyFn;
-
-		var pointer_over = function(e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		}
-
-		var mouse_move = function(e) {
-			pointer_over(e);
-			document.removeEventListener('mousemove', mouse_move);
-		}
-
-		// if mouse is already over document
-		document.addEventListener('mousemove', mouse_move);
-
-		document.addEventListener('mouseover', pointer_over);
-
-		document.addEventListener('mouseout', function(e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});
-
-		document.addEventListener('pointerover', function (e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		});
-		document.addEventListener('pointerout', function (e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});");
 	}
 
 	public static function workaroundTextMetrics() : Void {
@@ -867,88 +867,101 @@ class PixiWorkarounds {
 				renderer.roundPixels = tempRoundPixels;
 			}
 
-			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
-				set : function(p) {
-					this.transformChanged = true;
-					this._parent = p;
-				},
-				get : function() {
-					return this._parent;
-				}
-			});
-
 			Object.defineProperty(PIXI.DisplayObject.prototype, 'worldVisible', {
 				get : function() {
 					return this.clipVisible;
 				}
 			});
 
-			PIXI.Container.prototype.updateTransform = function(transformChanged) {
-				var transformChanged = transformChanged || this.transformChanged;
+			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
+				set : function(p) {
+					this._parent = p;
 
-				if (transformChanged)
-				{
+					if (p == null) {
+						this.worldTransformChanged = false;
+					} else if (this.cacheAsBitmap) {
+						DisplayObjectHelper.invalidateTransform(this);
+					}
+				},
+				get : function() {
+					return this._parent;
+				}
+			});
+
+			PIXI.Container.prototype.updateTransform = function() {
+				if (this.parent.worldTransformChanged) {
+					this.parent.updateTransform();
+				} else {
 					this.transformChanged = false;
 
-					this._boundsID++;
-					this.transform.updateTransform(this.parent.transform);
-					this.emit('transformchanged');
-
-					// TODO: check render flags, how to process stuff here
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
+					if (this.worldTransformChanged)
 					{
-						child.updateTransform(transformChanged);
-					}
-				}
+						this.worldTransformChanged = false;
 
-				if (transformChanged) {
-					if (this.child && !this.child.transformChanged) {
-						DisplayObjectHelper.invalidateTransform(this.child);
-					}
+						this._boundsID++;
+						this.transform.updateTransform(this.parent.transform);
+						this.emit('transformchanged');
 
-					if (this.accessWidget) {
-						this.accessWidget.updateTransform();
+						// TODO: check render flags, how to process stuff here
+						this.worldAlpha = this.alpha * this.parent.worldAlpha;
+
+						for (let i = 0, j = this.children.length; i < j; ++i) {
+							const child = this.children[i];
+
+							if (child.visible && child.transformChanged) {
+								child.updateTransform();
+							}
+						}
+
+						if (this.accessWidget) {
+							this.accessWidget.updateTransform();
+						}
+					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+						const child = this.children[i];
+
+						if (child.visible) {
+							child.updateTransform();
+						}
 					}
 				}
 			};
 
-			TextClip.prototype.updateTransform = function(transformChanged) {
-				var transformChanged = transformChanged || this.transformChanged;
-
-				if (transformChanged)
-				{
+			TextClip.prototype.updateTransform = function() {
+				if (this.parent.worldTransformChanged) {
+					this.parent.updateTransform();
+				} else {
 					this.transformChanged = false;
 
-					this._boundsID++;
-					this.transform.updateTransform(this.parent.transform);
-					this.emit('transformchanged');
-
-					// TODO: check render flags, how to process stuff here
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-
-					this.layoutText();
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
+					if (this.worldTransformChanged)
 					{
-						child.updateTransform(transformChanged);
-					}
-				}
+						this.worldTransformChanged = false;
 
-				if (transformChanged) {
-					if (this.accessWidget) {
-						this.accessWidget.updateTransform();
+						this._boundsID++;
+						this.transform.updateTransform(this.parent.transform);
+						this.emit('transformchanged');
+
+						// TODO: check render flags, how to process stuff here
+						this.worldAlpha = this.alpha * this.parent.worldAlpha;
+
+						this.layoutText();
+
+						for (let i = 0, j = this.children.length; i < j; ++i) {
+							const child = this.children[i];
+
+							if (child.visible && child.transformChanged) {
+								child.updateTransform();
+							}
+						}
+
+						if (this.accessWidget) {
+							this.accessWidget.updateTransform();
+						}
+					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+						const child = this.children[i];
+
+						if (child.visible) {
+							child.updateTransform();
+						}
 					}
 				}
 			};

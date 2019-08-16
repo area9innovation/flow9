@@ -14,13 +14,16 @@ class FlowGraphics extends Graphics {
 	private var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
-	private var transformChanged : Bool = true;
 
 	private var pen = new Point(0.0, 0.0);
 	private var localBounds = new Bounds();
+	private var _bounds = new Bounds();
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
+
+	public var transformChanged : Bool = false;
+	private var worldTransformChanged : Bool = false;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
@@ -228,25 +231,28 @@ class FlowGraphics extends Graphics {
 		}
 	}
 
-	#if (pixijs < "4.7.0")
-		public override function getLocalBounds() : Rectangle {
-			return localBounds.getRectangle(new Rectangle());
-		}
-	#else
-		public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-			return localBounds.getRectangle(rect);
-		}
-	#end
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		return localBounds.getRectangle(rect);
+	}
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
-		var bounds = new Bounds();
+		if (!skipUpdate) {
+			updateTransform();
+		}
 
-		bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
-		bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
-		bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
-		bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+		if (untyped this._boundsID != untyped this._lastBoundsID)
+		{
+			calculateBounds();
+		}
 
-		return bounds.getRectangle(rect);
+		return _bounds.getRectangle(rect);
+	}
+
+	public function calculateBounds() : Void {
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
 	public override function clear() : Graphics {

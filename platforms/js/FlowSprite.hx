@@ -1,3 +1,5 @@
+import pixi.core.display.Bounds;
+import pixi.core.math.shapes.Rectangle;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
@@ -17,6 +19,9 @@ class FlowSprite extends Sprite {
 	private var errorFn : String -> Void;
 	private var onlyDownload : Bool = false;
 	private var retries : Int = 0;
+
+	private var localBounds = new Bounds();
+	private var _bounds = new Bounds();
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
@@ -151,7 +156,7 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		invalidateStage(false);
+		invalidateStage();
 	}
 
 	private function onError() : Void {
@@ -172,7 +177,12 @@ class FlowSprite extends Sprite {
 		try {
 			metricsFn(texture.width, texture.height);
 
-			invalidateStage(false);
+			localBounds.minX = 0;
+			localBounds.minY = 0;
+			localBounds.maxX = texture.width;
+			localBounds.maxY = texture.height;
+
+			invalidateStage();
 
 			renderable = true;
 			loaded = true;
@@ -201,5 +211,29 @@ class FlowSprite extends Sprite {
 			texture.baseTexture.on("error", onError);
 			texture.baseTexture.on("dispose", onDispose);
 		}
+	}
+
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		return localBounds.getRectangle(rect);
+	}
+
+	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		if (!skipUpdate) {
+			updateTransform();
+		}
+
+		if (untyped this._boundsID != untyped this._lastBoundsID)
+		{
+			calculateBounds();
+		}
+
+		return _bounds.getRectangle(rect);
+	}
+
+	public function calculateBounds() : Void {
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 }
