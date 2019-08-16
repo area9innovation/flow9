@@ -2336,6 +2336,7 @@ class RenderSupportJSPixi {
 			untyped __js__("
 				resemble(image1)
 				.compareTo(image2)
+				.setReturnEarlyThreshold(Platform.isIE?10:0)
 				.ignoreAntialiasing()
 				.outputSettings({
 					errorType: 'movementDifferenceIntensity',

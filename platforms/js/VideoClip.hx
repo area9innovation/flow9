@@ -424,7 +424,7 @@ class VideoClip extends FlowContainer {
 				return data;
 			}
 		} catch (e : Dynamic) {
-			return "error";
+			return haxe.Serializer.run(e); //"error";
 		}
 	}
 }
