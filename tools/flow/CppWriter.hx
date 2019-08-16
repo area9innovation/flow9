@@ -379,10 +379,50 @@ enum CppOutputLocation {
 	OutputScalar(name : String, tag : CppTagType);
 }
 
-enum CppCodeBlock {
+enum CppLine {
 	CppDecl(type : String, name : String, indent : String);
-	CppLine(line : String);
-	CppBlock(block : Array<CppCodeBlock>, parent : CppCodeBlock);
+	CppAny(line : String);
+	CppBlock(code : CppCodeLines);
+}
+
+class CppCodeLines {
+	public var lines : Array<CppLine>;
+	public var parent : CppCodeLines;
+
+	public function new(parent : CppCodeLines) {
+		this.parent = parent;
+		lines = [];
+	}
+
+	public function codeString() {
+		var sb = new StringBuf();
+		var lines = codeLines();
+		for (line in lines) {
+			sb.add(line);
+		}
+		return sb.toString();
+	}
+
+	private function codeLines() {
+		var code_lines = new Array<String>();
+		for (line in lines) {
+			switch (line) {
+				case CppDecl(type, name, indent): {
+					code_lines.push(indent + type + ' ' + name + ';\n');
+				}
+				case CppAny(line): {
+					code_lines.push(line.charAt(line.length - 1) == '\n' ? line : line + '\n');
+				}
+				case CppBlock(code): {
+					var sub_lines : Array<String> = code.codeLines();
+					for (sub_line in sub_lines) {
+						code_lines.push(sub_line);
+					}
+				}
+			}
+		}
+		return code_lines;
+	}
 }
 
 // Contains current information about the function being compiled.
@@ -412,8 +452,8 @@ class CppEnvironment {
 
 		next_uid = 1000000*depth;
 
+		code_lines = new CppCodeLines(null);
 		cur_ctx = new CppContext(this, '    ');
-		code_block = CppBlock([], null);
 	}
 
 	public var parent : CppEnvironment;
@@ -449,51 +489,17 @@ class CppEnvironment {
 
 	public var meta_globals : Map<Int, { def : CppPlaceInfo, old: PlaceMetadata, my: PlaceMetadata }>;
 
-	public function generateCppBlock() {
-		var sb = new StringBuf();
-		var lines = _generateCppBlock(code_block);
-		for (line in lines) {
-			sb.add(line);
-		}
-		return sb.toString();
+	public function pushCppBlock() {
+		code_lines = new CppCodeLines(code_lines);
 	}
-	public function addCppCode(code : CppCodeBlock) {
-		switch (code_block) {
-			case CppBlock(block, parent): {
-				switch(code) {
-					case CppBlock(b, p): {
-						block.push(code);
-						//code.parent = code_block;
-						//code_block = code;
-					}
-					default: block.push(code);
-				}
-			}
-			default: throw 'impossible';
-		}
+	public function popCppBlock() {
+		code_lines.parent.lines.push(CppBlock(code_lines));
+		code_lines = code_lines.parent;
 	}
-	static private function _generateCppBlock(block : CppCodeBlock) {
-		var code = new Array<String>();
-		switch (block) {
-			case CppDecl(type, name, indent): {
-				code.push(indent + type + ' ' + name + ';\n');
-			}
-			case CppLine(line): {
-				code.push(line.charAt(line.length - 1) == '\n' ? line : line + '\n');
-			}
-			case CppBlock(sub_blocks, parent): {
-				for (sub_block in sub_blocks) {
-					var sub_lines : Array<String> = _generateCppBlock(sub_block);
-					for (line in sub_lines) {
-						code.push(INDENT + line); 
-					}
-				}
-			}
-		}
-		return code;
+	public function addCppLine(line : CppLine) {
+		code_lines.lines.push(line);
 	}
-	private static var INDENT = '    ';
-	private var code_block : CppCodeBlock;
+	public var code_lines : CppCodeLines;
 
 	public function mktemp(id : Int) : CppPlaceInfo {
 		if (id >= ntemps) ntemps = id+1;
@@ -619,6 +625,7 @@ class CppContext {
 		local_binds = [];
 		meta = new Map();
 		idxvars = new OrderedHash();
+		env.pushCppBlock();
 	}
 
 	public var env : CppEnvironment;
@@ -636,6 +643,7 @@ class CppContext {
 	private var meta : Map<Int, { def : CppPlaceInfo, old: PlaceMetadata, my: PlaceMetadata }>;
 
 	public function exit() {
+		env.popCppBlock();
 		popdefs();
 
 		for (mid in meta.iterator()) {
@@ -663,14 +671,14 @@ class CppContext {
 		var line_str = wrbegin();
 		line_str.add(s);
 		line_str.add(NEWLINE);
-		env.addCppCode(CppLine(line_str.toString()));
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi(str : String) {
 		var line_str = wrbegin();
 		line_str.add(str);
 		line_str.add(SEMI_NL);
-		env.addCppCode(CppLine(line_str.toString()));
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi2(str1 : String, str2 : String) {
@@ -678,7 +686,7 @@ class CppContext {
 		line_str.add(str1);
 		line_str.add(str2);
 		line_str.add(SEMI_NL);
-		env.addCppCode(CppLine(line_str.toString()));
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi3(str1 : String, str2 : String, str3 : String) {
@@ -687,7 +695,7 @@ class CppContext {
 		line_str.add(str2);
 		line_str.add(str3);
 		line_str.add(SEMI_NL);
-		env.addCppCode(CppLine(line_str.toString()));
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi4(str1 : String, str2 : String, str3 : String, str4 : String) {
@@ -697,7 +705,7 @@ class CppContext {
 		line_str.add(str3);
 		line_str.add(str4);
 		line_str.add(SEMI_NL);
-		env.addCppCode(CppLine(line_str.toString()));
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function enter(idelta : String) {
@@ -841,7 +849,7 @@ class CppContext {
 					var sb2 = wrbegin();
 					sb2.add(vname); sb2.add(GET_ASPTR); sb2.add(sref.getRValue(this));
 					sb2.add(COMMA); sb2.add(size<1?1:size); sb2.add(PAREN_SEMI_NL);
-					env.addCppCode(CppLine(sb2.toString()));
+					env.addCppLine(CppAny(sb2.toString()));
 				}
 			} else {
 				var vtype = 'FS_'+structname;
@@ -858,7 +866,7 @@ class CppContext {
 					}
 
 					sb2.add(PAREN_SEMI_NL);
-					env.addCppCode(CppLine(sb2.toString()));
+					env.addCppLine(CppAny(sb2.toString()));
 				}
 			}
 
@@ -933,7 +941,7 @@ class CppContext {
 		line_str.add(str);
 		line_str.add(PAREN_SEMI_NL);
 		if (gc) gc_index++;
-		env.addCppCode(CppLine(line_str.toString()));
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrcheckopt(str : String, check : Bool, ?gc = false) {
@@ -946,7 +954,7 @@ class CppContext {
 			var line_str = wrbegin();
 			line_str.add(str);
 			line_str.add(SEMI_NL);
-			env.addCppCode(CppLine(line_str.toString()));
+			env.addCppLine(CppAny(line_str.toString()));
 		}
 	}
 
@@ -963,7 +971,7 @@ class CppContext {
 	public function registerIdxVar(name : String, type : String) {
 		if (idxVarType(name) == null) {
 			idxvars.set(name, type);
-			env.addCppCode(CppDecl(type, name, indent));
+			env.addCppLine(CppDecl(type, name, indent));
 			//wrsemi(type + ' ' + name);
 		}
 	}
@@ -1821,7 +1829,7 @@ class CppWriter {
 		if (env.tail_call)
 			o.writeString('tail_call:\n');
 
-		var code = env.generateCppBlock();
+		var code = env.code_lines.codeString();
 		//o.writeString(env.line_str.toString());
 		o.writeString(code);
 
@@ -2036,7 +2044,7 @@ class CppWriter {
 		sb.add(',"');
 		sb.add(ctx.env.vname);
 		sb.add('");\n');
-		ctx.env.addCppCode(CppLine(sb.toString()));
+		ctx.env.addCppLine(CppAny(sb.toString()));
 
 		var lm = ctx.localMeta(ref);
 		lm.tag = tag;
