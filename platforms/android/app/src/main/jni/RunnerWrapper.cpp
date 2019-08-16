@@ -995,7 +995,7 @@ jboolean AndroidRunnerWrapper::runMain()
     //params[parseUtf8("source")] = parseUtf8("nejm_knowledge");
     //params[parseUtf8("prod")] = parseUtf8("IM");
 
-    pthread_attr_t attr;
+    /*pthread_attr_t attr;
     int retval = 0;
     retval = pthread_attr_init(&attr);
     if (retval != 0) {
@@ -1018,8 +1018,8 @@ jboolean AndroidRunnerWrapper::runMain()
     if (retval != 0) {
         cerr << "Error at pthread_join, retval: " << retval << endl;
         return (jboolean) false;
-    }
-    //runner.RunMain();
+    }*/
+    runner.RunMain();
     return (jboolean) (main_ok = !runner.IsErrorReported());
 }
 
