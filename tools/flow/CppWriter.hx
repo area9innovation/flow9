@@ -380,7 +380,7 @@ enum CppOutputLocation {
 }
 
 enum CppLine {
-	CppDecl(type : String, name : String, indent : String);
+	CppDecl(type : String, name : String, indent : String, origin : CppCodeLines);
 	CppAny(line : String);
 	CppBlock(code : CppCodeLines);
 }
@@ -395,6 +395,7 @@ class CppCodeLines {
 	}
 
 	public function codeString() {
+		pullCommonDecls();
 		var sb = new StringBuf();
 		var lines = codeLines();
 		for (line in lines) {
@@ -407,7 +408,7 @@ class CppCodeLines {
 		var code_lines = new Array<String>();
 		for (line in lines) {
 			switch (line) {
-				case CppDecl(type, name, indent): {
+				case CppDecl(type, name, indent, origin): {
 					code_lines.push(indent + type + ' ' + name + ';\n');
 				}
 				case CppAny(line): {
@@ -422,6 +423,84 @@ class CppCodeLines {
 			}
 		}
 		return code_lines;
+	}
+
+	private function pullCommonDecls() {
+		var decl2line = new Map();
+		fillDecl2Line(decl2line);
+		var decl2line_filtered = new Map();
+		for (name in decl2line.keys()) {
+			var lines = decl2line.get(name);
+			if (lines.length > 1) {
+				decl2line_filtered.set(name, lines);
+			}
+		}
+		for (name in decl2line_filtered.keys()) {
+			trace('multy decls for: ' + name);
+			var common_decls = decl2line_filtered.get(name);
+			var common = leastCommonAncestor(common_decls);
+			common.lines.unshift(common_decls[0]);
+			for (decl in common_decls) {
+				removeCppLine(decl);
+			}
+		}
+	}
+
+	static private function removeCppLine(line : CppLine) {
+		switch (line) {
+			case CppDecl(type, name, indent, origin): {
+				origin.lines.remove(line);
+			}
+			default: throw 'must be CppDecl';
+		}
+	}
+
+	private function leastCommonAncestor(lines : Array<CppLine>) : CppCodeLines {
+		var paths = [];
+		for (line in lines) {
+			switch (line) {
+				case CppDecl(type, name, indent, origin): {
+					var path = [];
+					var cur = origin;
+					while (cur != null) {
+						path.push(cur);
+						cur = cur.parent;
+					}
+					path.reverse();
+					paths.push(path);
+				}
+				default: throw 'must be CppDecl';
+			}
+		}
+		var init_path = paths.shift();
+		var common = null;
+		for (i in 0...init_path.length) {
+			var ancestor = init_path[i];
+			for (path in paths) {
+				if (path[i] != ancestor) {
+					return common;
+				}
+			}
+			common = ancestor;
+		}
+		return common;
+	}
+
+	private function fillDecl2Line(m : Map<String, Array<CppLine>>) {
+		for (line in lines) {
+			switch (line) {
+				case CppDecl(type, name, indent, origin): {
+					if (!m.exists(name)) {
+						m.set(name, []);
+					}
+					m.get(name).push(line);
+				}
+				case CppBlock(code): {
+					code.fillDecl2Line(m);
+				}
+				default:
+			}
+		}
 	}
 }
 
@@ -971,7 +1050,7 @@ class CppContext {
 	public function registerIdxVar(name : String, type : String) {
 		if (idxVarType(name) == null) {
 			idxvars.set(name, type);
-			env.addCppLine(CppDecl(type, name, indent));
+			env.addCppLine(CppDecl(type, name, indent, env.code_lines));
 			//wrsemi(type + ' ' + name);
 		}
 	}
