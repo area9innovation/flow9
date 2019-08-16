@@ -1604,6 +1604,7 @@ NativeFunction *QGLRenderSupport::MakeNativeFunction(const char *name, int num_a
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, getApplicationPath, 0)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, setClipboard, 1)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboard, 0)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboardToCB, 1)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboardFormat, 1)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, setCurrentDirectory, 1)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, getCurrentDirectory, 0)
@@ -1798,6 +1799,12 @@ StackSlot QGLRenderSupport::setClipboard(RUNNER_ARGS)
 StackSlot QGLRenderSupport::getClipboard(RUNNER_ARGS)
 {
     return RUNNER->AllocateString(QApplication::clipboard()->text(QClipboard::Clipboard));
+}
+
+StackSlot QGLRenderSupport::getClipboardToCB(RUNNER_ARGS)
+{
+    StackSlot &callback = RUNNER_ARG(0);
+    RUNNER->EvalFunction(callback, 1, getClipboard(RUNNER, NULL));
 }
 
 StackSlot QGLRenderSupport::getClipboardFormat(RUNNER_ARGS)
