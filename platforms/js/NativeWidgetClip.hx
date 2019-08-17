@@ -38,9 +38,6 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.position = 'fixed';
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			// nativeWidget.style.willChange = 'transform, display, opacity';
-			nativeWidget.style.pointerEvents = 'none';
-
 			updateNativeWidgetDisplay();
 
 			onAdded(function() { addNativeWidget(); return removeNativeWidget; });
@@ -65,7 +62,7 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	private override function deleteNativeWidget() : Void {
+	private function deleteNativeWidget() : Void {
 		removeNativeWidget();
 
 		if (accessWidget != null) {
@@ -75,7 +72,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget = null;
 	}
 
-	public override function updateNativeWidget() : Void {
+	public function updateNativeWidget() : Void {
 		var transform = getTransform();
 
 		var tx = Math.floor(getClipWorldVisible() ? transform.tx : -widgetWidth);
@@ -169,7 +166,7 @@ class NativeWidgetClip extends FlowContainer {
 		styleChanged = false;
 	}
 
-	private override function addNativeWidget() : Void {
+	private function addNativeWidget() : Void {
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
 				untyped parent.nativeWidget.appendChild(nativeWidget);
@@ -179,7 +176,7 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	private override function removeNativeWidget() : Void {
+	private function removeNativeWidget() : Void {
 		if (nativeWidget != null && nativeWidget.parentNode != null) {
 			nativeWidget.parentNode.removeChild(nativeWidget);
 		}

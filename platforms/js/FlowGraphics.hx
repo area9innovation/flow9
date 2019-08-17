@@ -38,7 +38,6 @@ class FlowGraphics extends Graphics {
 
 		visible = false;
 		interactiveChildren = false;
-		lineStyle(1.0, 0, 0.0);
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			createNativeWidget();
@@ -89,6 +88,10 @@ class FlowGraphics extends Graphics {
 
 	public override function endFill() : Graphics {
 		var newGraphics = super.endFill();
+
+		if (lineWidth != null && lineWidth == 0) {
+			lineWidth = null;
+		}
 
 		if (fillGradient != null) {
 			// Only linear gradient is supported
@@ -247,14 +250,6 @@ class FlowGraphics extends Graphics {
 		return localBounds.getRectangle(rect);
 	}
 
-	public function getWidth() : Float {
-		return localBounds.maxX - localBounds.minX;
-	}
-
-	public function getHeight() : Float {
-		return localBounds.maxY - localBounds.minY;
-	}
-
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
 		if (!skipUpdate) {
 			updateTransform();
@@ -294,90 +289,11 @@ class FlowGraphics extends Graphics {
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.style.transformOrigin = 'top left';
 		nativeWidget.style.position = 'fixed';
-		// nativeWidget.style.willChange = 'transform, display, opacity';
-		nativeWidget.style.pointerEvents = 'none';
 
 		updateNativeWidgetGraphicsData();
 		updateNativeWidgetDisplay();
 
 		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
-	}
-
-	private function deleteNativeWidget() : Void {
-		removeNativeWidget();
-
-		if (accessWidget != null) {
-			AccessWidget.removeAccessWidget(accessWidget);
-		}
-
-		nativeWidget = null;
-	}
-
-	private function updateNativeWidget() : Void {
-		if (nativeWidget != null) {
-			var transform = untyped this.transform.localTransform;
-
-			var tx = Math.floor(transform.tx);
-			var ty = Math.floor(transform.ty);
-
-			if (tx != 0 || ty != 0 || transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
-				if (Platform.isIE) {
-					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-
-					nativeWidget.style.left = '${tx}px';
-					nativeWidget.style.top = '${ty}px';
-				} else {
-					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
-				}
-			} else {
-				nativeWidget.style.transform = null;
-
-				if (Platform.isIE) {
-					nativeWidget.style.left = null;
-					nativeWidget.style.top = null;
-				}
-			}
-
-			if (alpha != 1) {
-				nativeWidget.style.opacity = alpha;
-			} else {
-				nativeWidget.style.opacity = null;
-			}
-
-			if (scrollRect != null) {
-				if (Platform.isIE || Platform.isEdge) {
-					nativeWidget.style.clip = 'rect(
-						${scrollRect.y}px,
-						${scrollRect.x + scrollRect.width}px,
-						${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x}px
-					)';
-				} else {
-					nativeWidget.style.clipPath = 'polygon(
-						${scrollRect.x}px ${scrollRect.y}px,
-						${scrollRect.x}px ${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x + scrollRect.width}px ${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x + scrollRect.width}px ${scrollRect.y}px
-					)';
-					trace("scrollRect");
-					trace(nativeWidget.style.clipPath);
-				}
-			} else if (mask != null) {
-				if (Platform.isIE || Platform.isEdge) {
-					nativeWidget.style.clip = 'rect(
-						${mask.y}px,
-						${mask.x + mask.getWidth()}px,
-						${mask.y + mask.getHeight()}px,
-						${mask.x}px
-					)';
-				} else {
-					nativeWidget.style.clipPath = cast(mask, DisplayObject).getClipPath();
-					trace(nativeWidget.style.clipPath);
-				}
-			} else {
-				nativeWidget.style.clipPath = null;
-			}
-		}
 	}
 
 	private function updateNativeWidgetGraphicsData() : Void {
@@ -387,88 +303,68 @@ class FlowGraphics extends Graphics {
 			}
 
 			for (data in graphicsData) {
-				var g = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
+				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
+					var g = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
 
-				if (data.shape.type == 0) {
-					var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
+					if (data.shape.type == 0) {
+						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
-					var d : String = untyped __js__("data.shape.points.map((p, i) => i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ').join('')");
-					path.setAttribute("d", d);
+						var d : String = untyped __js__("data.shape.points.map((p, i) => i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ').join('')");
+						path.setAttribute("d", d);
 
-					g.appendChild(path);
-				} else if (data.shape.type == 1) {
-					var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
+						g.appendChild(path);
+					} else if (data.shape.type == 1) {
+						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
 
-					rect.setAttribute("x", Std.string(data.shape.x));
-					rect.setAttribute("y", Std.string(data.shape.y));
-					rect.setAttribute("width", Std.string(data.shape.width));
-					rect.setAttribute("height", Std.string(data.shape.height));
+						rect.setAttribute("x", Std.string(data.shape.x));
+						rect.setAttribute("y", Std.string(data.shape.y));
+						rect.setAttribute("width", Std.string(data.shape.width));
+						rect.setAttribute("height", Std.string(data.shape.height));
 
-					g.appendChild(rect);
-				} else if (data.shape.type == 2) {
-					var circle = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'circle');
+						g.appendChild(rect);
+					} else if (data.shape.type == 2) {
+						var circle = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'circle');
 
-					circle.setAttribute("cx", Std.string(data.shape.x));
-					circle.setAttribute("cy", Std.string(data.shape.y));
-					circle.setAttribute("r", Std.string(data.shape.radius));
+						circle.setAttribute("cx", Std.string(data.shape.x));
+						circle.setAttribute("cy", Std.string(data.shape.y));
+						circle.setAttribute("r", Std.string(data.shape.radius));
 
-					g.appendChild(circle);
-				} else if (data.shape.type == 4) {
-					var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
+						g.appendChild(circle);
+					} else if (data.shape.type == 4) {
+						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
 
-					rect.setAttribute("x", Std.string(data.shape.x));
-					rect.setAttribute("y", Std.string(data.shape.y));
-					rect.setAttribute("width", Std.string(data.shape.width));
-					rect.setAttribute("height", Std.string(data.shape.height));
-					rect.setAttribute("rx", Std.string(data.shape.radius));
-					rect.setAttribute("ry", Std.string(data.shape.radius));
+						rect.setAttribute("x", Std.string(data.shape.x));
+						rect.setAttribute("y", Std.string(data.shape.y));
+						rect.setAttribute("width", Std.string(data.shape.width));
+						rect.setAttribute("height", Std.string(data.shape.height));
+						rect.setAttribute("rx", Std.string(data.shape.radius));
+						rect.setAttribute("ry", Std.string(data.shape.radius));
 
-					g.appendChild(rect);
-				} else {
-					trace("updateNativeWidgetGraphicsData: Unknown shape type");
-					trace(data);
+						g.appendChild(rect);
+					} else {
+						trace("updateNativeWidgetGraphicsData: Unknown shape type");
+						trace(data);
+					}
+
+					if (data.fill != null) {
+						g.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
+					} else {
+						g.setAttribute("fill", "none");
+					}
+
+					if (data.lineWidth != null && data.lineWidth > 0) {
+						g.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
+						g.setAttribute("stroke-width", Std.string(data.lineWidth));
+					} else {
+						g.setAttribute("stroke", "none");
+					}
+
+					nativeWidget.appendChild(g);
 				}
-
-				if (data.fill) {
-					g.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
-				} else {
-					g.setAttribute("fill", "none");
-				}
-
-				if (data.lineWidth > 0) {
-					g.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
-					g.setAttribute("stroke-width", Std.string(data.lineWidth));
-				} else {
-					g.setAttribute("stroke", "none");
-				}
-
-				nativeWidget.appendChild(g);
 			}
 
 			nativeWidget.style.width = '${untyped getWidth()}px';
 			nativeWidget.style.height = '${untyped getHeight()}px';
-		}
-	}
-
-	private function addNativeWidget() : Void {
-		if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
-			untyped parent.nativeWidget.appendChild(nativeWidget);
-		}
-	}
-
-	private function removeNativeWidget() : Void {
-		if (nativeWidget != null && nativeWidget.parentNode != null) {
-			nativeWidget.parentNode.removeChild(nativeWidget);
-		}
-	}
-
-	public function updateNativeWidgetDisplay() : Void {
-		if (nativeWidget != null) {
-			if (visible && untyped !this.isMask) {
-				nativeWidget.style.display = "block";
-			} else if (parent == null || (untyped parent.nativeWidget != null && untyped parent.nativeWidget.style.display == "block")) {
-				nativeWidget.style.display = "none";
-			}
 		}
 	}
 }

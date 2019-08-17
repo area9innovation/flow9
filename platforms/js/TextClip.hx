@@ -311,22 +311,49 @@ class TextClip extends NativeWidgetClip {
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 
-		nativeWidget.setAttribute("type", type);
 		if (isInput) {
+			nativeWidget.setAttribute("type", type);
 			nativeWidget.value = text;
+			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
+			nativeWidget.readOnly = readOnly;
+			nativeWidget.style.lineHeight = '${style.fontSize * 1.15 + interlineSpacing}px';
+
+			if (cursorColor >= 0) {
+				nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
+			}
+
+			if (type == 'number') {
+				nativeWidget.step = step;
+			}
+
+			nativeWidget.autocomplete = autocomplete;
+
+			if (maxChars >= 0) {
+				nativeWidget.maxLength = maxChars;
+			}
+
+			if (tabIndex >= 0) {
+				nativeWidget.tabIndex = tabIndex;
+			}
+
+			if (multiline) {
+				nativeWidget.style.resize = 'none';
+			}
+
+			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 		} else {
 			nativeWidget.innerText = text;
+			nativeWidget.style.lineHeight = interlineSpacing != 0 ? 'calc(100% + ${interlineSpacing}px)' : null;
 		}
+
 		nativeWidget.style.color = style.fill;
 		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';
 		nativeWidget.style.fontFamily = style.fontFamily;
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${style.fontSize * 1.15 + interlineSpacing}px';
-		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
-		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
+		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 
 		nativeWidget.style.direction = switch (textDirection) {
 			case 'RTL' : 'rtl';
@@ -341,31 +368,6 @@ class TextClip extends NativeWidgetClip {
 			case 'AutoAlignNone' : 'none';
 			default : 'left';
 		}
-
-		if (cursorColor >= 0) {
-			nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
-		}
-
-		if (type == 'number') {
-			nativeWidget.step = step;
-		}
-
-		nativeWidget.autocomplete = autocomplete;
-
-		if (maxChars >= 0) {
-			nativeWidget.maxLength = maxChars;
-		}
-
-		if (tabIndex >= 0) {
-			nativeWidget.tabIndex = tabIndex;
-		}
-
-		if (multiline) {
-			nativeWidget.style.resize = 'none';
-			nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		}
-
-		nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 
 		if (!RenderSupportJSPixi.DomRenderer) {
 			if (Platform.isEdge || Platform.isIE) {
@@ -470,7 +472,7 @@ class TextClip extends NativeWidgetClip {
 		this.backgroundOpacity = backgroundOpacity;
 
 		// Force text value right away
-		if (nativeWidget != null) {
+		if (nativeWidget != null && isInput) {
 			nativeWidget.value = text;
 		}
 
@@ -1083,14 +1085,10 @@ class TextClip extends NativeWidgetClip {
 			deleteNativeWidget();
 
 			nativeWidget = Browser.document.createElement(node_name);
-			nativeWidget.style.transformOrigin = 'top left';
-			nativeWidget.style.position = 'fixed';
 			nativeWidget.setAttribute('id', getClipUUID());
 			nativeWidget.style.transformOrigin = 'top left';
 			nativeWidget.style.position = 'fixed';
 			nativeWidget.style.whiteSpace = 'normal';
-			// nativeWidget.style.willChange = 'transform, display, opacity';
-			// nativeWidget.style.pointerEvents = 'none';
 
 			updateNativeWidgetDisplay();
 

@@ -141,6 +141,34 @@ class RenderSupportJSPixi {
 		return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
 	}
 
+	private static function disablePixiPlugins() {
+		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.sprite");
+		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.graphics");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.accessibility");
+		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.extract");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.tilingSprite");
+		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.interaction");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.mesh");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.particle");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.prepare");
+
+		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.sprite");
+		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.graphics");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.accessibility");
+		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.extract");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.tilingSprite");
+		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.interaction");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.mesh");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.particle");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.prepare");
+
+		// Destroy default pixi ticker
+		untyped PIXI.ticker.shared.autoStart = false;
+		untyped PIXI.ticker.shared.stop();
+		untyped PIXI.ticker.shared.destroy();
+		untyped PIXI.ticker = null;
+	}
+
 	private static function createPixiRenderer() {
 		backingStoreRatio = getBackingStoreRatio();
 
@@ -168,12 +196,7 @@ class RenderSupportJSPixi {
 
 			RendererType = "webgl";
 		} else if (RendererType == "auto") {
-			#if (pixijs <= "4.5.4")
-				PixiRenderer = Detector.autoDetectRenderer(Browser.window.innerWidth + 1, Browser.window.innerHeight + 1, options);
-			#else
-				// With pixijs 4.5.5, this works:
-				PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth + 1, Browser.window.innerHeight + 1);
-			#end
+			PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth + 1, Browser.window.innerHeight + 1);
 
 			if (untyped __instanceof__(PixiRenderer, WebGLRenderer)) {
 				RendererType = "webgl";
@@ -190,44 +213,22 @@ class RenderSupportJSPixi {
 			untyped PixiRenderer.context.fillStyle = "white";
 			untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
 
+			var tempPlugins = untyped WebGLRenderer.__plugins;
+			untyped WebGLRenderer.__plugins = [];
+
 			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
-					transparent : true,
-					autoResize : false,
-					antialias : Antialias,
-					roundPixels : RoundPixels
-				});
+				transparent : true,
+				autoResize : false,
+				antialias : Antialias,
+				roundPixels : RoundPixels
+			});
 
-			if (untyped PixiRenderer.gl.plugins != null) {
-				untyped PixiRenderer.gl.plugins.accessibility.destroy();
-				untyped PixiRenderer.gl.plugins.prepare.destroy();
-				untyped PixiRenderer.gl.plugins.interaction.destroy();
-				untyped PixiRenderer.gl.plugins.extract.destroy();
-
-				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.accessibility");
-				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.prepare");
-				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.interaction");
-				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.extract");
-			}
+			untyped WebGLRenderer.__plugins = tempPlugins;
 		} else if (RendererType == "webgl") {
 			untyped PixiRenderer.gl.viewport(0, 0, untyped PixiRenderer.gl.drawingBufferWidth, untyped PixiRenderer.gl.drawingBufferHeight);
 			untyped PixiRenderer.gl.clearColor(1.0, 1.0, 1.0, 1.0);
 			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
 		}
-
-		// Disable Pixi's accessibility manager plugin.
-		// Use own.
-		if (PixiRenderer.plugins != null) {
-			PixiRenderer.plugins.accessibility.destroy();
-			PixiRenderer.plugins.prepare.destroy();
-
-			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.accessibility");
-			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.prepare");
-		}
-
-		// Destroy default pixi ticker
-		untyped PIXI.ticker.shared.autoStart = false;
-		untyped PIXI.ticker.shared.stop();
-		untyped PIXI.ticker.shared.destroy();
 
 		untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
 
@@ -240,6 +241,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function initPixiRenderer() {
+		disablePixiPlugins();
+
 		if (untyped PIXI.VERSION[0] > 3) {
 			PixiWorkarounds.workaroundDOMOverOutEventsTransparency();
 		}

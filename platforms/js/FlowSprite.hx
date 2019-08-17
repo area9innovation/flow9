@@ -254,108 +254,10 @@ class FlowSprite extends Sprite {
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.style.transformOrigin = 'top left';
 		nativeWidget.style.position = 'fixed';
-		// nativeWidget.style.willChange = 'transform, display, opacity';
-		nativeWidget.style.pointerEvents = 'none';
 		nativeWidget.src = url;
 
 		updateNativeWidgetDisplay();
 
 		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
-	}
-
-	private function deleteNativeWidget() : Void {
-		removeNativeWidget();
-
-		if (accessWidget != null) {
-			AccessWidget.removeAccessWidget(accessWidget);
-		}
-
-		nativeWidget = null;
-	}
-
-	private function updateNativeWidget() : Void {
-		if (nativeWidget != null) {
-			var transform = untyped this.transform.localTransform;
-
-			var tx = Math.floor(transform.tx);
-			var ty = Math.floor(transform.ty);
-
-			if (tx != 0 || ty != 0 || transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
-				if (Platform.isIE) {
-					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-
-					nativeWidget.style.left = '${tx}px';
-					nativeWidget.style.top = '${ty}px';
-				} else {
-					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
-				}
-			} else {
-				nativeWidget.style.transform = null;
-
-				if (Platform.isIE) {
-					nativeWidget.style.left = null;
-					nativeWidget.style.top = null;
-				}
-			}
-
-			if (alpha != 1) {
-				nativeWidget.style.opacity = alpha;
-			} else {
-				nativeWidget.style.opacity = null;
-			}
-
-			if (scrollRect != null) {
-				if (Platform.isIE || Platform.isEdge) {
-					nativeWidget.style.clip = 'rect(
-						${scrollRect.y}px,
-						${scrollRect.x + scrollRect.width}px,
-						${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x}px
-					)';
-				} else {
-					nativeWidget.style.clipPath = 'polygon(
-						${scrollRect.x}px ${scrollRect.y}px,
-						${scrollRect.x}px ${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x + scrollRect.width}px ${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x + scrollRect.width}px ${scrollRect.y}px
-					)';
-				}
-			} else if (mask != null) {
-				if (Platform.isIE || Platform.isEdge) {
-					nativeWidget.style.clip = 'rect(
-						${mask.y}px,
-						${mask.x + mask.getWidth()}px,
-						${mask.y + mask.getHeight()}px,
-						${mask.x}px
-					)';
-				} else {
-					nativeWidget.style.clipPath = cast(mask, DisplayObject).getClipPath();
-				}
-			} else {
-				nativeWidget.style.clipPath = null;
-			}
-		}
-	}
-
-	private function addNativeWidget() : Void {
-		if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
-			untyped parent.nativeWidget.appendChild(nativeWidget);
-		}
-	}
-
-	private function removeNativeWidget() : Void {
-		if (nativeWidget != null && nativeWidget.parentNode != null) {
-			nativeWidget.parentNode.removeChild(nativeWidget);
-		}
-	}
-
-	public function updateNativeWidgetDisplay() : Void {
-		if (nativeWidget != null) {
-			if (visible) {
-				nativeWidget.style.display = "block";
-			} else if (parent == null || (untyped parent.nativeWidget != null && untyped parent.nativeWidget.style.display == "block")) {
-				nativeWidget.style.display = "none";
-			}
-		}
 	}
 }

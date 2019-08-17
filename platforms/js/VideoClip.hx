@@ -30,14 +30,6 @@ class VideoClip extends FlowContainer {
 
 	public static var CanAutoPlay = false;
 
-	public function getWidth() : Float {
-		return nativeWidget != null ? nativeWidget.width : 0;
-	}
-
-	public function getHeight() : Float {
-		return nativeWidget != null ? nativeWidget.height : 0;
-	}
-
 	public static inline function NeedsDrawing() : Bool {
 		if (playingVideos.filter(function (v) { return v.getClipWorldVisible(); }).length > 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
@@ -56,9 +48,15 @@ class VideoClip extends FlowContainer {
 		this.positionFn = positionFn;
 	}
 
-	public override function updateNativeWidget() {
-		if (RenderSupportJSPixi.DomRenderer) {
-			super.updateNativeWidget();
+	public function updateNativeWidget() {
+		if (nativeWidget != null) {
+			if (visible) {
+				updateNativeWidgetTransformMatrix();
+				updateNativeWidgetOpacity();
+				updateNativeWidgetMask();
+			}
+
+			updateNativeWidgetDisplay();
 		}
 
 		if (!nativeWidget.paused) {
@@ -303,18 +301,21 @@ class VideoClip extends FlowContainer {
 	}
 
 	private function updateVideoMetrics() {
-		if (!RenderSupportJSPixi.DomRenderer) {
-			nativeWidget.width = nativeWidget.videoWidth;
-			nativeWidget.height = nativeWidget.videoHeight;
-			videoTexture.update();
-		}
-
 		metricsFn(nativeWidget.videoWidth, nativeWidget.videoHeight);
 
 		localBounds.minX = 0;
 		localBounds.minY = 0;
 		localBounds.maxX = nativeWidget.videoWidth;
 		localBounds.maxY = nativeWidget.videoHeight;
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			nativeWidget.style.width = '${untyped getWidth()}px';
+			nativeWidget.style.height = '${untyped getHeight()}px';
+		} else {
+			nativeWidget.width = nativeWidget.videoWidth;
+			nativeWidget.height = nativeWidget.videoHeight;
+			videoTexture.update();
+		}
 	}
 
 	private function onStreamLoaded() : Void {
@@ -462,8 +463,6 @@ class VideoClip extends FlowContainer {
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.style.transformOrigin = 'top left';
 		nativeWidget.style.position = 'fixed';
-		// nativeWidget.style.willChange = 'transform, display, opacity';
-		nativeWidget.style.pointerEvents = 'none';
 
 		updateNativeWidgetDisplay();
 

@@ -915,8 +915,9 @@ class PixiWorkarounds {
 
 						if (this.accessWidget) {
 							this.accessWidget.updateTransform();
-						} else if (this.nativeWidget) {
-							this.updateNativeWidget();
+						} else if (this.nativeWidget && (this.localTransformChanged || this.parent.scrollRect)) {
+							this.localTransformChanged = false;
+							DisplayObjectHelper.updateNativeWidget(this);
 						}
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
@@ -957,8 +958,9 @@ class PixiWorkarounds {
 
 						if (this.accessWidget) {
 							this.accessWidget.updateTransform();
-						} else if (this.nativeWidget) {
-							this.updateNativeWidget();
+						} else if (this.nativeWidget && (this.localTransformChanged || this.parent.scrollRect)) {
+							this.localTransformChanged = false;
+							DisplayObjectHelper.updateNativeWidget(this);
 						}
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
