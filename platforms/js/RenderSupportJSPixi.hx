@@ -2098,6 +2098,12 @@ class RenderSupportJSPixi {
 		return clip.setClipRenderable(renderable);
 	}
 
+	public static function setClipDebugInfo(clip : DisplayObject, key : String, value : Dynamic) : Void {
+		if (RenderSupportJSPixi.DomRenderer && untyped clip.nativeWidget != null) {
+			untyped clip.nativeWidget.setAttribute(key, HaxeRuntime.typeOf(value).toString());
+		}
+	}
+
 	public static function fullScreenTrigger() {
 		IsFullScreen = isFullScreen();
 		emit("fullscreen", IsFullScreen);

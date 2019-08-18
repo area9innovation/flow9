@@ -131,7 +131,7 @@ class DisplayObjectHelper {
 			untyped clip.clipVisible = clipVisible;
 			clip.visible = visible;
 
-			var updateAccessWidget = RenderSupportJSPixi.DomRenderer ? untyped clip.nativeWidget != null : updateAccess && untyped clip.accessWidget != null;
+			var updateAccessWidget = updateAccess && untyped clip.accessWidget != null;
 
 			var children : Array<Dynamic> = untyped clip.children;
 			if (children != null) {
@@ -145,17 +145,19 @@ class DisplayObjectHelper {
 			}
 
 			if (updateAccessWidget) {
-				if (RenderSupportJSPixi.DomRenderer) {
-					untyped updateNativeWidgetDisplay(clip);
-				} else {
-					untyped clip.accessWidget.updateDisplay();
-				}
+				untyped clip.accessWidget.updateDisplay();
 			}
 
 			if (clip.visible) {
 				invalidateTransform(clip);
-			} else if (clip.parent != null && clip.parent.visible) {
-				invalidateStage(clip.parent);
+			} else {
+				if (RenderSupportJSPixi.DomRenderer) {
+					untyped updateNativeWidgetDisplay(clip);
+				}
+
+				if (clip.parent != null && clip.parent.visible) {
+					invalidateStage(clip.parent);
+				}
 			}
 		}
 	}
@@ -347,6 +349,14 @@ class DisplayObjectHelper {
 		setClipY(scrollRect, top);
 
 		if (RenderSupportJSPixi.DomRenderer) {
+			var children : Array<DisplayObject> = untyped clip.children;
+
+			if (children != null) {
+				for (child in children) {
+					invalidateTransform(child);
+				}
+			}
+
 			invalidateTransform(clip);
 		} else {
 			invalidateStage(clip);
@@ -420,6 +430,7 @@ class DisplayObjectHelper {
 			maskContainer.once("graphicschanged", function () { setClipMask(clip, maskContainer); });
 
 			invalidateTransform(clip);
+			removeNativeWidget(maskContainer);
 		} else {
 			invalidateStage(clip);
 		}
@@ -643,7 +654,7 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null) {
-			var transform = untyped clip.transform.localTransform;
+			var transform = untyped clip.getTransform != null ? untyped clip.getTransform() : untyped clip.transform.localTransform;
 
 			var tx = Math.floor(transform.tx);
 			var ty = Math.floor(transform.ty);
@@ -696,8 +707,16 @@ class DisplayObjectHelper {
 		if (nativeWidget != null) {
 			var mask : FlowGraphics = clip.mask;
 			var scrollRect = untyped clip.scrollRect;
+			var viewBounds = untyped clip.viewBounds;
 
-			if (scrollRect != null) {
+			if (viewBounds != null ) {
+				nativeWidget.style.clip = 'rect(
+					${viewBounds.minY}px,
+					${viewBounds.maxX}px,
+					${viewBounds.maxY}px,
+					${viewBounds.minX}px
+				)';
+			} else if (scrollRect != null) {
 				nativeWidget.style.clip = 'rect(
 					${0}px,
 					${scrollRect.width}px,
@@ -740,21 +759,23 @@ class DisplayObjectHelper {
 	public static inline function addNativeWidget(clip : DisplayObject) : Void {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
-		} else {
+		} else if (RenderSupportJSPixi.DomRenderer) {
 			var nativeWidget : Dynamic = untyped clip.nativeWidget;
-			var parent = untyped clip.parent;
+			var parent : DisplayObject = untyped clip.parent;
 
 			if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
-				if (untyped parent.nativeWidget == Browser.document.body) {
-					nativeWidget.style.pointerEvents = 'none';
-				}
+				if (clip.visible && clip.renderable) {
+					if (untyped parent.nativeWidget == Browser.document.body) {
+						nativeWidget.style.pointerEvents = 'none';
+					}
 
-				if (untyped parent.appendNativeWidget != null) {
-					untyped parent.appendNativeWidget(nativeWidget);
+					appendNativeWidget(parent, clip);
 				} else {
-					untyped parent.nativeWidget.appendChild(nativeWidget);
+					clip.once("transformchanged", function() { addNativeWidget(clip); });
 				}
 			}
+		} else {
+			clip.once('removed', untyped clip.deleteNativeWidget);
 		}
 	}
 
@@ -770,11 +791,23 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function appendNativeWidget(clip : DisplayObject, child : Dynamic) {
-		var nativeWidget = untyped clip.nativeWidget;
+	public static inline function appendNativeWidget(clip : DisplayObject, child : DisplayObject) {
+		var nativeWidget : Dynamic = untyped clip.nativeWidget;
+		var childWidget : Dynamic = untyped child.nativeWidget;
+		var children : Array<DisplayObject> = untyped clip.children;
 
-		if (nativeWidget != null) {
-			nativeWidget.appendChild(child);
+		if (nativeWidget != null && childWidget.parentNode != nativeWidget) {
+			if (children != null) {
+				for (nextChild in children.slice(children.indexOf(child))) {
+					if (childWidget.parentNode != nativeWidget && untyped nextChild.nativeWidget != null && untyped nextChild.nativeWidget.parentNode == nativeWidget) {
+						nativeWidget.insertBefore(childWidget, untyped nextChild.nativeWidget);
+					}
+				}
+			}
+
+			if (childWidget.parentNode != nativeWidget) {
+				nativeWidget.appendChild(childWidget);
+			}
 		}
 	}
 

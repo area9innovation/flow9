@@ -62,75 +62,34 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	private function deleteNativeWidget() : Void {
-		removeNativeWidget();
-
-		if (accessWidget != null) {
-			AccessWidget.removeAccessWidget(accessWidget);
-		}
-
-		nativeWidget = null;
-	}
-
 	public function updateNativeWidget() : Void {
-		var transform = getTransform();
-
-		var tx = Math.floor(getClipWorldVisible() ? transform.tx : -widgetWidth);
-		var ty = Math.floor(getClipWorldVisible() ? transform.ty : -widgetHeight);
-
-		if (Platform.isIE) {
-			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-
-			nativeWidget.style.left = '${tx}px';
-			nativeWidget.style.top = '${ty}px';
-		} else {
-			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
-		}
-
 		if (RenderSupportJSPixi.DomRenderer) {
-			if (alpha != 1) {
-				nativeWidget.style.opacity = alpha;
-			} else {
-				nativeWidget.style.opacity = null;
+			if (visible) {
+				updateNativeWidgetTransformMatrix();
+				updateNativeWidgetOpacity();
+				updateNativeWidgetMask();
 			}
+
+			updateNativeWidgetDisplay();
 		} else {
+			var transform = getTransform();
+
+			var tx = Math.floor(getClipWorldVisible() ? transform.tx : -widgetWidth);
+			var ty = Math.floor(getClipWorldVisible() ? transform.ty : -widgetHeight);
+
+			if (Platform.isIE) {
+				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
+
+				nativeWidget.style.left = '${tx}px';
+				nativeWidget.style.top = '${ty}px';
+			} else {
+				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
+			}
+
 			if (worldAlpha != 1) {
 				nativeWidget.style.opacity = worldAlpha;
 			} else {
 				nativeWidget.style.opacity = null;
-			}
-		}
-
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (scrollRect != null) {
-				if (Platform.isIE || Platform.isEdge) {
-					nativeWidget.style.clip = 'rect(
-						${scrollRect.y}px,
-						${scrollRect.x + scrollRect.width}px,
-						${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x}px
-					)';
-				} else {
-					nativeWidget.style.clipPath = 'polygon(
-						${scrollRect.x}px ${scrollRect.y}px,
-						${scrollRect.x}px ${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x + scrollRect.width}px ${scrollRect.y + scrollRect.height}px,
-						${scrollRect.x + scrollRect.width}px ${scrollRect.y}px
-					)';
-				}
-			} else if (mask != null) {
-				if (Platform.isIE || Platform.isEdge) {
-					nativeWidget.style.clip = 'rect(
-						${mask.y}px,
-						${mask.x + mask.getWidth()}px,
-						${mask.y + mask.getHeight()}px,
-						${mask.x}px
-					)';
-				} else {
-					nativeWidget.style.clipPath = cast(mask, DisplayObject).getClipPath();
-				}
-			} else {
-				nativeWidget.style.clipPath = null;
 			}
 		}
 
@@ -146,21 +105,12 @@ class NativeWidgetClip extends FlowContainer {
 		if (!RenderSupportJSPixi.DomRenderer) {
 			var maskedBounds = getMaskedLocalBounds();
 
-			if (Platform.isIE || Platform.isEdge) {
-				nativeWidget.style.clip = 'rect(
-					${maskedBounds.minY}px,
-					${maskedBounds.maxX}px,
-					${maskedBounds.maxY}px,
-					${maskedBounds.minX}px
-				)';
-			} else {
-				nativeWidget.style.clipPath = 'polygon(
-					${maskedBounds.minX}px ${maskedBounds.minY}px,
-					${maskedBounds.minX}px ${maskedBounds.maxY}px,
-					${maskedBounds.maxX}px ${maskedBounds.maxY}px,
-					${maskedBounds.maxX}px ${maskedBounds.minY}px
-				)';
-			}
+			nativeWidget.style.clip = 'rect(
+				${maskedBounds.minY}px,
+				${maskedBounds.maxX}px,
+				${maskedBounds.maxY}px,
+				${maskedBounds.minX}px
+			)';
 		}
 
 		styleChanged = false;

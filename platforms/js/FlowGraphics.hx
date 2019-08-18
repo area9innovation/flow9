@@ -89,8 +89,10 @@ class FlowGraphics extends Graphics {
 	public override function endFill() : Graphics {
 		var newGraphics = super.endFill();
 
-		if (lineWidth != null && lineWidth == 0) {
-			lineWidth = null;
+		for (data in graphicsData) {
+			if (data.lineWidth != null && lineWidth == 0) {
+				data.lineWidth = null;
+			}
 		}
 
 		if (fillGradient != null) {
