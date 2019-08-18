@@ -21,6 +21,7 @@ class NativeWidgetClip extends FlowContainer {
 	private function getHeight() : Float { return widgetHeight; }
 	private function getTransform() : Matrix {
 		if (RenderSupportJSPixi.DomRenderer) {
+			untyped this.transform.updateLocalTransform();
 			return untyped this.transform.localTransform;
 		} else if (accessWidget != null) {
 			return accessWidget.getTransform();

@@ -275,7 +275,6 @@ class FlowContainer extends Container {
 
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
-		nativeWidget.style.position = 'fixed';
 		nativeWidget.style.transformOrigin = 'top left';
 		nativeWidget.style.position = 'fixed';
 		// nativeWidget.style.willChange = 'transform, display, opacity, clip-path';

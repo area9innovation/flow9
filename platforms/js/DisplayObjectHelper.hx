@@ -654,19 +654,23 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null) {
+			if (untyped clip.getTransform == null) {
+				untyped clip.transform.updateLocalTransform();
+			}
+
 			var transform = untyped clip.getTransform != null ? untyped clip.getTransform() : untyped clip.transform.localTransform;
 
 			var tx = Math.floor(transform.tx);
 			var ty = Math.floor(transform.ty);
 
 			if (untyped clip.scrollRect != null) {
-				tx = tx + untyped clip.scrollRect.x;
-				ty = ty + untyped clip.scrollRect.y;
+				tx = Math.floor(transform.tx + untyped clip.scrollRect.x);
+				ty = Math.floor(transform.ty + untyped clip.scrollRect.y);
 			}
 
 			if (clip.parent != null && untyped clip.parent.scrollRect != null) {
-				tx = tx - untyped clip.parent.scrollRect.x;
-				ty = ty - untyped clip.parent.scrollRect.y;
+				tx = Math.floor(tx - untyped clip.parent.scrollRect.x);
+				ty = Math.floor(ty - untyped clip.parent.scrollRect.y);
 			}
 
 			if (tx != 0 || ty != 0 || transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
