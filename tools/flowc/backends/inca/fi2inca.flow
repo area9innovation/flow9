@@ -5,7 +5,6 @@ import tools/flowc/backends/inca/promote_types;
 import tools/flowc/backends/inca/lift_types;
 import tools/flowc/backends/inca/lift_functions;
 import tools/flowc/backends/inca/lift_globals;
-import tools/flowc/backends/inca/conversion_graph;
 import tools/flowc/backends/inca/fi2incaflow;
 import tools/flowc/manipulation/lambda_lifting;
 
@@ -14,8 +13,17 @@ export {
 }
 
 fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void {
+	timePhases = isUrlParameterTrue("timephases");
+	repTime = \phase, t0 -> {
+		now = timestamp();
+		if (timePhases) println(phase + " " + d2s((now - t0) / 1000.0) + "s");
+		now
+	}
+	time0 = timestamp();
 	incaEnv0 = buildIncaEnv(program);
 	incaEnv = promoteIncaTypes(incaEnv0);
+
+	time1 = repTime("Build inca env", time0);
 
 	if (false) {
 		// OK, new code path for the stack-based flow
@@ -44,19 +52,26 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void 
 		setFileContent("incagraph.dot", dot);
 		{}
 	}
+	time2 = repTime("Build dot", time1);
+
 
 	fcPrintln("Saving " + cfg.outputdir + "/types.flow");
 	types = liftIncaTypes(incaEnv);
 	saveFileContent(cfg.outputdir + "/types.flow", types);
 
-	conversionGraph = buildIncaConversionGraph(incaEnv, true);
+	time3 = repTime("Lift types", time2);
+
 	fcPrintln("Saving " + cfg.outputdir + "/functions.flow");
-	functions = liftIncaFunctions(incaEnv, conversionGraph);
+	functions = liftIncaFunctions(incaEnv, cfg.outputdir);
 	saveFileContent(cfg.outputdir + "/functions.flow", functions);
 
+	time4 = repTime("Lift functions", time3);
+
 	fcPrintln("Saving " + cfg.outputdir + "/globals.flow");
-	globals = liftIncaGlobals(incaEnv);
+	globals = liftIncaGlobals(incaEnv, cfg.outputdir);
 	saveFileContent(cfg.outputdir + "/globals.flow", globals);
+
+	time5 = repTime("Lift globals", time4);
 
 	callback();
 }
@@ -65,8 +80,8 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void 
 buildIncaEnv(program : FiProgram) -> IncaEnv {
 	// What files should we lift from?
 	parsed0 = getTreeKeys(program.modules);
-	incaFolder = dirName(program.config.flowfile);
-	parsed = filter(parsed0, \p -> startsWith(p, incaFolder));
+	// All those ending with _i.flow
+	parsed = filter(parsed0, \p -> endsWith(p, "_i"));
 
 	env0 = IncaEnv(
 		program.config,
@@ -76,6 +91,9 @@ buildIncaEnv(program : FiProgram) -> IncaEnv {
 		makeTree(),
 		makeTree(),
 		makeTree(),
+		[],
+		makeSet(),
+		makeSet(),
 	);
 	fold(parsed, env0, \acc, m -> addModuleToIncaEnv(program, acc, m));
 }
@@ -91,8 +109,21 @@ addModuleToIncaEnv(program : FiProgram, acc : IncaEnv, module : string) -> IncaE
 					acc with
 					structs = fold(mo.structs, acc.structs, \acc0, s -> setTree(acc0, s.name, s)),
 					unions = fold(mo.unions, acc.unions, \acc0, u -> setTree(acc0, u.name, u)),
-					functions = fold(mo.functions, acc.functions, \acc0, f -> setTree(acc0, f.name, f)),
-					globals = fold(mo.globalVars, acc.globals, \acc0, g -> setTree(acc0, g.name, g))
+					functions = fold(mo.functions, acc.functions, \acc0, f -> {
+						if (endsWith(f.name, "_lifted")) acc0
+						else setTree(acc0, f.name, f)
+					}),
+					globals = fold(mo.globalVars, acc.globals, \acc0, g -> setTree(acc0, g.name, g)),
+					globalsOrder = fold(mo.initOrder, acc.globalsOrder, \acc0, o -> if (exists(mo.globalVars, \g -> g.name == o)) arrayPush(acc0, o) else acc0),
+					alreadyLifted = fold(mo.functions, acc.alreadyLifted, \acc0, f -> {
+						if (endsWith(f.name, "_lifted")) insertSet(acc0, strsubsmart(f.name, 0, -7))
+						else acc0
+					}),
+					hasIncaManager = fold(mo.functions, acc.hasIncaManager, \acc0, f -> {
+						if (length(f.type.args) >= 1 && getFiTypeName(f.type.args[0].type) == "IncaManager") {
+							insertSet(acc0, f.name)
+						} else acc0
+					})
 				)
 			} else {
 				println("Error in " + mo.fileinfo.flowfile);
@@ -110,12 +141,6 @@ Todo:
 - Implement linear typing, or automatic insert of copy.
 
 - Implement lambda lifting, and check for closures
-
-- Implement overloading of unions
-
-- Implement duplication of structs in overloaded unions
-
-- Implement "exploding" switches into top-level functions
 */
 
 validIncaModule(m : FiModule) -> bool {
@@ -154,21 +179,16 @@ validIncaType(type : FiType) -> bool {
 		FiTypeInt(): true;
 		FiTypeDouble(): true;
 		FiTypeString(): true;
+		FiTypeNative(): true;
 
 		FiTypeFlow(): false;
 		FiTypeVoid(): false;
 
-		FiTypeNative(): false;
+		FiTypeArray(t): validIncaType(t);
 
-		FiTypeArray(t): {
-			// No nested arrays
-			validIncaType(t) && switch (t) {
-				FiTypeArray(__): false;
-				default: true;
-			}
-		}
 		FiTypeFunction(args, returnType): false;
 		FiTypeRef(t): false;
+
 		FiTypeParameter(n): true;
 		FiTypeName(name, typeparameters): true;
 	}

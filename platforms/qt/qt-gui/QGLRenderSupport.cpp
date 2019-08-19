@@ -1601,35 +1601,38 @@ NativeFunction *QGLRenderSupport::MakeNativeFunction(const char *name, int num_a
 #undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "Native."
 
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getApplicationPath, 0);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setClipboard, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboard, 0);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboardFormat, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setCurrentDirectory, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getCurrentDirectory, 0);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, quit, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, onQuit, 1);
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getApplicationPath, 0)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setClipboard, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboard, 0)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboardToCB, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboardFormat, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setCurrentDirectory, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getCurrentDirectory, 0)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, quit, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, onQuit, 1)
 
 #undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "RenderSupport."
 
-    TRY_USE_NATIVE_METHOD_NAME(QGLRenderSupport, setWindowTitleNative,"setWindowTitle", 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setFavIcon, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, takeSnapshot, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getSnapshot, 0);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getScreenPixelColor, 2);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setNativeTabEnabled, 1);
+    TRY_USE_NATIVE_METHOD_NAME(QGLRenderSupport, setWindowTitleNative,"setWindowTitle", 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setFavIcon, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, takeSnapshot, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, takeSnapshotBox, 5)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getSnapshot, 0)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getSnapshotBox, 4)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getScreenPixelColor, 2)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setNativeTabEnabled, 1)
 
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setFocus, 2);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getFocus, 1);
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setFocus, 2)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getFocus, 1)
 
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, onFullScreen, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, toggleFullScreen, 1);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, isFullScreen, 0);
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, emitKeyEvent, 8);
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, onFullScreen, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, toggleFullScreen, 1)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, isFullScreen, 0)
+    TRY_USE_NATIVE_METHOD(QGLRenderSupport, emitKeyEvent, 8)
 
     //QT only GLClip functionalities
-    TRY_USE_OBJECT_METHOD(GLClip, addFileDropListener, 4);
+    TRY_USE_OBJECT_METHOD(GLClip, addFileDropListener, 4)
 
     return GLRenderSupport::MakeNativeFunction(name, num_args);
 }
@@ -1798,6 +1801,12 @@ StackSlot QGLRenderSupport::getClipboard(RUNNER_ARGS)
     return RUNNER->AllocateString(QApplication::clipboard()->text(QClipboard::Clipboard));
 }
 
+StackSlot QGLRenderSupport::getClipboardToCB(RUNNER_ARGS)
+{
+    StackSlot &callback = RUNNER_ARG(0);
+    RUNNER->EvalFunction(callback, 1, getClipboard(RUNNER, NULL));
+}
+
 StackSlot QGLRenderSupport::getClipboardFormat(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(mimetype);
@@ -1905,10 +1914,30 @@ void QGLRenderSupport::doQuit() {
 }
 
 StackSlot QGLRenderSupport::takeSnapshot(RUNNER_ARGS) {
-    RUNNER_PopArgs1(path);
-    RUNNER_CheckTag(TString, path);
+    RUNNER_PopArgs1(path)
+    RUNNER_CheckTag(TString, path)
 
     QImage screen = grab().toImage();
+    QString full_path = getFullResourcePath(unicode2qt(RUNNER->GetString(path)));
+
+    // Make sure the full directory path exists
+    QDir d = QFileInfo(full_path).absoluteDir();
+    if (!d.exists(d.absolutePath())) {
+        d.mkpath(d.absolutePath());
+    }
+    screen.save(full_path);
+    RETVOID;
+}
+
+StackSlot QGLRenderSupport::takeSnapshotBox(RUNNER_ARGS) {
+    RUNNER_PopArgs5(path, x, y, w, h)
+    RUNNER_CheckTag(TString, path)
+    RUNNER_CheckTag(TInt, x)
+    RUNNER_CheckTag(TInt, y)
+    RUNNER_CheckTag(TInt, w)
+    RUNNER_CheckTag(TInt, h)
+
+    QImage screen = grab().toImage().copy(QRect(x.GetInt(), y.GetInt(), w.GetInt(), h.GetInt()));
     QString full_path = getFullResourcePath(unicode2qt(RUNNER->GetString(path)));
 
     // Make sure the full directory path exists
@@ -1926,6 +1955,22 @@ StackSlot QGLRenderSupport::getSnapshot(RUNNER_ARGS) {
     IGNORE_RUNNER_ARGS;
 
     QImage image = grab().toImage();
+    QByteArray byteArray;
+    QBuffer buffer(&byteArray);
+    image.save(&buffer, "PNG");
+    QString imgBase64 = "data:image/png;base64," + QString::fromLatin1(byteArray.toBase64().data());
+
+    return RUNNER->AllocateString(imgBase64);
+}
+
+StackSlot QGLRenderSupport::getSnapshotBox(RUNNER_ARGS) {
+    RUNNER_PopArgs4(x, y, w, h)
+    RUNNER_CheckTag(TInt, x)
+    RUNNER_CheckTag(TInt, y)
+    RUNNER_CheckTag(TInt, w)
+    RUNNER_CheckTag(TInt, h)
+
+    QImage image = grab().toImage().copy(QRect(x.GetInt(), y.GetInt(), w.GetInt(), h.GetInt()));
     QByteArray byteArray;
     QBuffer buffer(&byteArray);
     image.save(&buffer, "PNG");

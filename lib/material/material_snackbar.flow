@@ -1,14 +1,13 @@
-import material/material;
 import material/material2tropic;
 
 export {
-	//https://www.google.com/design/spec/components/snackbars-toasts.html#
-	//Creation of new snackbar destroys previous one;
+	// https://material.io/design/components/snackbars.html
+	// Creation of new snackbar destroys previous one;
 	showMSnackbar(manager : MaterialManager, text : string, style : [MSnackbarStyle]) -> void;
-	//MTextVisible is for snackbar action, should not be raised (restricted to one action only);
+	// MTextVisible is for snackbar action, should not be raised (restricted to one action only);
 	MSnackbarStyle ::= MTextButton, MSnackbarVisible, MWidth, MColor, MSnackbarTextColor, MSnackbarAutoDisappear,
 			MSnackbarAutoDisappearTime, MSnackbarNoButton, MSnackbarAlignLeft, MSnackBarOffset;
-		//MSnackbarVisible can be used for getting of current snackbar state and for its closing, but not for showing of snackbar;
+		// MSnackbarVisible can be used for getting of current snackbar state and for its closing, but not for showing of snackbar;
 		MSnackbarVisible(visible : DynamicBehaviour<bool>);
 		MSnackbarTextColor(color : MColor);
 		MSnackbarAutoDisappear(enabled : bool);
@@ -18,80 +17,70 @@ export {
 		MSnackBarOffset(offset : Point);
 }
 
-snackbarDisp = ref nop;
+snackbarDisp = initUnsM();
 
 showMSnackbar(manager : MaterialManager, text : string, style : [MSnackbarStyle]) -> void {
-	lightBackground = getLightBackground(manager.focus);
-	visible = extractStruct(style, MSnackbarVisible(make(false)));
-	closeSnackbar = \ -> {
-		if (^snackbarDisp != nop) {
-			^snackbarDisp();
-		}
-	};
+	closeSnackbar = \ -> dispUnsM(snackbarDisp);
 	closeSnackbar();
-	snackbarShow = make(0.0);
-	width = extractStruct(style, MWidth(240.0)).width;
-	deferUntilRender(\ -> animate([DoubleAnimation(snackbarShow, 90.0, 200.0)]));
 
-	customColor = extractStructMany(style, MBlack());
-	customTextColor = extractStructMany(style, MSnackbarTextColor(MBlack()));
-	customButton = extractStructMany(style, MTextButton("", nop, [], []));
-	autoDisappear0 = extractStruct(style, MSnackbarAutoDisappear(true)).enabled;
+	lightBackground = getLightBackground(manager.focus);
+	bgColor = 
+		either(
+			tryExtractStruct(style, MBlack()),
+			MBackgroundColor(!lightBackground)
+		);
+	textColor : MColor =
+		eitherMap(
+			tryExtractStruct(style, MSnackbarTextColor(MBlack())),
+			\tc -> tc.color,
+			MDefaultTextColor(!lightBackground)
+		);
+	
+	autoDisappear = extractStruct(style, MSnackbarAutoDisappear(true)).enabled;
 	autoDisappearTime = extractStruct(style, MSnackbarAutoDisappearTime(6000)).ms;
-	autoDisappear = autoDisappear0 || autoDisappearTime != 6000;
-	bgColor = if (length(customColor) > 0) MColor2int(customColor[0]) else MColor2int(MBackgroundColor(!lightBackground));
-	textColor : MColor = if (length(customTextColor) > 0) customTextColor[0].color else MDefaultTextColor(!lightBackground);
-	button = if (length(customButton) > 0) customButton[0] else if (!contains(style, MSnackbarNoButton())) MIconButton("clear", closeSnackbar, [textColor], []) else TEmpty();
-	textForm : Tropic = material2tropic(manager, MText(if (text != "") text else " ", [textColor, MBody()]));
+
 	alignLeft = extractStruct(style, MSnackbarAlignLeft(true)).left;
 	offset = extractStruct(style, MSnackBarOffset(zeroPoint)).offset;
+	width = extractStruct(style, MWidth(568.0)).width;
+	minWidth = 240.;
+	visible = extractStruct(style, MSnackbarVisible(make(false))).visible;
 
-	hght = getTWordMetrics(textForm, makeTree()).height;
+	customButton = tryExtractStruct(style, MTextButton("", nop, [], []));
+	button =
+		either(customButton,
+			if (contains(style, MSnackbarNoButton())) TEmpty()
+			else MIconButton("clear", closeSnackbar, [textColor], [])
+		)
+		|> MCenterY |> MBorderLeft(8.0);
 
-	snackText =
-		MEllipsis(textForm, TFixed(568.0 - 24.0 - 24.0 - 48.0, hght), [textColor, MBody()])
-		|> (\f -> MFixSize(f, TMinimumGroup2(textForm, TFixed(568.0 - 24.0 - 24.0 - 48.0, hght))))
-		|> (\f -> MBorderA(0.0, 16.0, 24.0 + 48.0, 24.0, f))
-		|> (\f -> MGroup([f, TFixed(width, 0.0)]))
-		|> (\f -> MGroup([f,
-			MColsA([
-				TFillX(),
-				button
-				|> MCenterY
-				|> (\f2 -> MBorderA(0., 0., 8., 0., f2))
-			])
-		]))
-		|> (\f -> material2tropic(manager, f));
-	next(visible.visible, true);
-	renderDisp = ref
-		TCenterY(TDisplay("snack"))
-		|> (\f -> TAvailable(f, TGroup2(TFixed(0.0, hght + 34.), TWidth(TGhost("snack")))))
-		|> (\f -> TFixSize(f, TGroup2(TFixed(0.0, hght + 34.), TWidth(TGhost("snack")))))
-		|> (\f -> TBorderA(24.0, 0.0, 0.0, 0.0, f))
-		|> (\f -> MShapeFrame(manager.focus, [Fill(bgColor)], f, "MSnackbar"))
-		|> (\f -> TShadowShape(manager.focus, const(6.0), f, RectangleShape("MSnackbar")))
-		|> (\f -> TBorderA(24.0, 24.0, 24.0, 24.0, f))
-		|> (\f -> TLines2A(TFillY(), f))
-		|> (\f -> TTranslate(fselect(snackbarShow, FLift(\s -> Point(offset.x, offset.y +(1.0 - sinus(s)) * 48.0))), f))
-		|> (\f -> TLet("snack", snackText, f))
-		|> (\f -> if (alignLeft) TCols2A(f, TFillX()) else TCols2A(TFillX(), f))
-		|> (\f -> TConstruct([\ -> subscribe2(visible.visible, \v -> if (!v) closeSnackbar())], f))
-		|> (\f -> trender(f, manager.manager.renderStyle));
+	snackBar =
+		MText(text, [textColor, MBody()])
+		|> MBorderTopBottom(16.)
+		|> MCenterY
+		|> (\t -> MGroup2(t, TFixed(minWidth, 0.)))
+		|> (\t -> MBaselineCols2(t, button))
+		|> (\t -> material2tropic(manager, t))
+		|> (\t -> TBorderA(16.0, 0.0, 8.0, 0.0, t))
+		|> (\t -> TAvailable(t, if (width == -1.) TFillX() else TFillMax(width, 0.)))
+		|> (\t -> MShapeFrame(manager.focus, [MFill(bgColor)], t, "MSnackbar"))
+		|> (\t -> TShadowShape(manager.focus, const(6.0), t, RectangleShape("MSnackbar")))
+		|> (\t -> TBorder4(24.0, t))
+		|> (\t -> TTranslate(const(offset), t))
+		|> (\t -> TAnimatedExpander(manager, manager.focus, t, visible, [MExpandFromStart(), MNoCrop()]))
+		|> TAlignBottom
+		|> (if (alignLeft) TAlignStart else TAlignEnd)
+		|> (\t -> TConstruct([\ -> subscribe2(visible, \v -> if (!v) closeSnackbar())], t));
 
-	timerDisp = ref if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
+	renderDisp = trender(snackBar, manager.manager.renderStyle);
+	nextDistinct(visible, true);
+	timerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
 
-	snackbarDisp := \ -> {
-		snackbarDisp := nop;
-		if (^timerDisp != nop) {
-			^timerDisp();
-			timerDisp := nop;
+	setUnsM(
+		snackbarDisp,
+		\ -> {
+			timerDisp();
+			renderDisp();
+			nextDistinct(visible, false);
 		}
-		if (^renderDisp != nop) {
-			^renderDisp();
-			renderDisp := nop;
-		}
-		if (fgetValue(visible.visible))
-			next(visible.visible, false);
-	};
-
+	)
 }

@@ -3,34 +3,64 @@ import text/blueprint;
 
 export {
 	// Lift our code to lifted, mutable versions
-	liftIncaGlobals(env : IncaEnv) -> string;
+	liftIncaGlobals(env : IncaEnv, outdir : string) -> string;
 }
 
 
-liftIncaGlobals(env : IncaEnv) -> string {
+liftIncaGlobals(env : IncaEnv, outdir : string) -> string {
 	blueprint("
-		import out/types;
-
+		import inca/manager;
+		import %out%/types;
+		import %out%/functions;
+		import inca/inca2flow;
+		
 		export {
-			globalIncaValues : Tree<string, IncaValue>;
-
-			%dec%
+			makeIncaManager() -> IncaManager;
 		}
 
-		%def%
-
-		%globals%
+		%manager%
 	", [
-		"dec", foldTree(env.globals, "", \name, gl, acc -> acc + (if (acc != "") "\n" else "") + name + "_lifted : IncaValue;"),
-		"def", foldTree(env.globals, "", \name, gl, acc -> acc + liftIncaGlobal(env, name, gl) + "\n"),
-		"globals", buildIncaGlobals(env.globals),
+		"out", outdir,
+		"manager", buildIncaManagerCode(env),
 	]);
 }
 
-liftIncaGlobal(env : IncaEnv, name : string, global : FiGlobalVar) -> string {
-	name + "_lifted = " + liftIncaExp(global.value, 0) + ";";
-}
-
-buildIncaGlobals(globals : Tree<string, FiGlobalVar>) -> string {
-	"globalIncaValues = pairs2tree([" + foldTree(globals, "", \name, gl, acc -> "Pair(\"" + name + "\", " + name + "_lifted),") + "]);"
+buildIncaManagerCode(env : IncaEnv) -> string {
+	// We clear the environment so we can initialize correctly
+	cleanEnv = IncaEnv(env with globals = makeTree());
+	blueprint("
+		makeIncaManager() -> IncaManager {
+			%vars%
+			man0 = IncaManager(
+				pairs2tree([
+					%globals%
+				]),
+				SuperUnion2IncaValue,
+				\\v -> IncaValue2flow(INCA_STRUCT_NAMES, v),
+				\\v, d -> v,
+				\\v -> {},
+				INCA_STRUCT_NAMES,
+				INCA_DIALECTS,
+				INCA_DIALECT_STRUCTS,
+				INCA_DIALECT_DEFAULT_STRUCT_ID,
+				INCA_TYPES,
+			);
+			man0.lower2Dialect ::= \\v, d -> lower2IncaDialect_lifted(man0, v, d);
+			man0.perform ::= \\v -> performIncaEffect_lifted(man0, v);
+			man0
+		}
+	", [
+		"vars", fold(env.globalsOrder, "", \acc, name -> {
+			mgl = lookupTree(env.globals, name);
+			switch (mgl) {
+				None(): acc;
+				Some(gl): {
+					acc + name + "_lifted = " + liftIncaExp(cleanEnv, gl.value, 0) + ";\n"
+				}
+			}
+		}),
+		"globals", foldTree(env.globals, "", \name, gl : FiGlobalVar, acc -> {
+			acc + "Pair(\"" + name + "\", " + name + "_lifted),\n"
+		})
+	])
 }

@@ -371,6 +371,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private static function bidiDecorate(text : String, dir : String) : String {
+		// I do not know how comes this workaround is needed.
+		// But without it, paragraph has &lt; and &gt; displayed wrong.
+		if (text == "<" || text == ">") return text;
+
 		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
 		} else if (dir == 'rtl') {
@@ -490,10 +494,11 @@ class TextClip extends NativeWidgetClip {
 				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
+			} else {
+				textClip.text = bidiDecorate(texts[0][0], textDirection);
+				textClip.style = style;
 			}
 
-			textClip.text = bidiDecorate(texts[0][0], textDirection);
-			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
@@ -552,10 +557,6 @@ class TextClip extends NativeWidgetClip {
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
-			}
-
 			textClip.setClipRenderable(true);
 			textClipChanged = false;
 		}
@@ -568,6 +569,14 @@ class TextClip extends NativeWidgetClip {
 		textClip.setClipVisible(true);
 
 		return textClip;
+	}
+
+	public override function invalidateStyle() : Void {
+		if (isInput) {
+			setScrollRect(0, 0, getWidth(), getHeight());
+		}
+
+		super.invalidateStyle();
 	}
 
 	public function invalidateMetrics() : Void {
@@ -792,7 +801,7 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		}
 
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
 		RenderSupportJSPixi.provideEvent(e);
 	}
@@ -827,12 +836,20 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
+		if (nativeWidget == null) {
+			return;
+		}
+
 		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
 		isFocused = false;
 		emit('blur');
+
+		if (nativeWidget == null) {
+			return;
+		}
 
 		invalidateMetrics();
 	}
@@ -846,6 +863,10 @@ class TextClip extends NativeWidgetClip {
 
 		for (f in TextInputFilters) {
 			newValue = f(newValue);
+		}
+
+		if (nativeWidget == null) {
+			return;
 		}
 
 		if (newValue != nativeWidget.value) {

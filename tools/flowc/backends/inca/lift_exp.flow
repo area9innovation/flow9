@@ -2,10 +2,10 @@ import tools/flowc/backends/inca/env;
 import text/blueprint;
 
 export {
-	liftIncaExp(e : FiExp, tabs : int) -> string;
+	liftIncaExp(env : IncaEnv, e : FiExp, tabs : int) -> string;
 }
 
-liftIncaExp(ex : FiExp, tabs : int) -> string {
+liftIncaExp(env : IncaEnv, ex : FiExp, tabs : int) -> string {
 	todo = \ -> {
 		println("Could not lift " + toString(ex));
 		"/*NOT SUPPORTED YET " + toString(ex) + "*/0";
@@ -14,52 +14,72 @@ liftIncaExp(ex : FiExp, tabs : int) -> string {
 	switch (ex) {
 		FiLambda(args, body, type, start): {
 			buildTabs(tabs) + "\\" + superglue(args, \a -> a.name + "_lifted : IncaValue", ", ") + " -> {\n" +
-			liftIncaExp(body, tabs + 1) + "\n" +
+			liftIncaExp(env, body, tabs + 1) + "\n" +
 			buildTabs(tabs) + "}";
 		}
 		FiCall(f, args, __, info): {
 			switch (f) {
 				FiVar(fn, __, __): {
-					astr = map(args, \a -> liftIncaExp(a, 0));
+					// If we call a lifted function, pass along the manager
+					needsManager = incaNameNeedsManager(env, fn);
+					manager = if (needsManager) ("manager" + if (args != []) ", " else "") else "";
+
+					astr = map(args, \a -> liftIncaExp(env, a, 0));
 
 					if (exists(astr, \a -> strIndexOf(a, "\n") >= 0) || length(astr) > 3) {
-						buildTabs(tabs) + fn + "_lifted(\n"+
+						buildTabs(tabs) + fn + "_lifted(\n" + manager + 
 						buildTabs(tabs + 1) + superglue(astr, \a -> strReplace(a, "\n", "\n" + buildTabs(tabs + 1)), ",\n" + buildTabs(tabs + 1)) + "\n" +
 						buildTabs(tabs) + ")";
 					} else {
-						buildTabs(tabs) + fn + "_lifted(" + superglue(astr, idfn, ", ") + ")";
+						buildTabs(tabs) + fn + "_lifted(" + manager + superglue(astr, \a -> a, ", ") + ")";
 					}
 				}
 				default: todo();
 			}
 		}
 		FiVar(name, type, info): {
-			buildTabs(tabs) + name + "_lifted";
+			if (containsKeyTree(env.globals, name)) {
+				"lookupTreeDef(manager.environment, \"" + name + "\", emptyIncaValue)";
+			} else {
+				def = \ -> buildTabs(tabs) + name + "_lifted";
+				switch (type) {
+					FiTypeFunction(args, __): {
+						needsManager = incaNameNeedsManager(env, name);
+						if (needsManager) {
+							fargs = strGlue(mapi(args, \i, __ -> "_arg" + i2s(i)), ", ");
+							buildTabs(tabs) + "(\\" + fargs + " -> " + name + "_lifted(manager" + (if (args != []) ", " else "") + fargs + "))";
+						} else {
+							def();
+						}
+					}
+					default: def();
+				}
+			}
 		}
 		FiLet(name, type, e1, e2, type2, info): {
 
 			if (name == "__") {
 				// We can skip this
-				liftIncaExp(e2, tabs);
+				liftIncaExp(env, e2, tabs);
 			} else {
-				e1str = liftIncaExp(e1, 0);
+				e1str = liftIncaExp(env, e1, 0);
 
 				if (strIndexOf(e1str, "\n") >= 0) {
 					buildTabs(tabs) + "{" + name + "_lifted =\n" +
 					buildTabs(tabs + 1) + strReplace(e1str, "\n", "\n" + buildTabs(tabs + 1)) + ";\n" +
-					liftIncaExp(e2, tabs) + "}";
+					liftIncaExp(env, e2, tabs) + "}";
 				} else {
 					"{" + buildTabs(tabs) + name + "_lifted = " + e1str + ";\n" +
-					liftIncaExp(e2, tabs) + "}";
+					liftIncaExp(env, e2, tabs) + "}";
 				}
 
 			}
 		}
 		FiIf(e1, e2, e3, type, info): {
 			buildTabs(tabs) + "incaIf(\n" +
-			liftIncaExp(e1, tabs + 1) + ",\n" +
-			liftIncaExp(e2, tabs + 1) + ",\n" +
-			liftIncaExp(e3, tabs + 1) + "\n" +
+			liftIncaExp(env, e1, tabs + 1) + ",\n" +
+			"makeIncaValueLazy(\\ -> getIncaCoreBasicValue({\n" + liftIncaExp(env, e2, tabs + 1) + "\n})),\n" +
+			"makeIncaValueLazy(\\ -> getIncaCoreBasicValue({\n" + liftIncaExp(env, e3, tabs + 1) + "\n}))\n" +
 			buildTabs(tabs) + ")";
 		}
 		FiSwitch(x, switchType, cases, type, info): {
@@ -68,7 +88,7 @@ liftIncaExp(ex : FiExp, tabs : int) -> string {
 				cases,
 				\case -> {
 					"if (switchVal" + x.name + " == " + case.struct + "_ID) {\n" +
-					liftIncaExp(case.body, tabs + 2) + ";\n" +
+					liftIncaExp(env, case.body, tabs + 2) + ";\n" +
 					buildTabs(tabs + 1) + "} else "
 				},
 				""
@@ -79,15 +99,15 @@ liftIncaExp(ex : FiExp, tabs : int) -> string {
 		}
 		FiSeq(es, type, info): {
 			if (length(es) == 1) {
-				liftIncaExp(es[0], tabs)
+				liftIncaExp(env, es[0], tabs)
 			} else {
 				// buildTabs(tabs) + "\n" +
-				"{" + superglue(es, \v -> liftIncaExp(v, tabs), ";\n") + "}";
+				"{" + superglue(es, \v -> liftIncaExp(env, v, tabs), ";\n") + "}";
 				// buildTabs(tabs) + "}";
 			}
 		}
 		FiCallPrim(op, es, type, info): {
-			esstr = map(es, \v -> liftIncaExp(v, 0));
+			esstr = map(es, \v -> liftIncaExp(env, v, 0));
 
 			fn = \n -> {
 				if (exists(esstr, \a -> strIndexOf(a, "\n") >= 0) || length(esstr) > 3) {
@@ -120,7 +140,7 @@ liftIncaExp(ex : FiExp, tabs : int) -> string {
 				FcArrayPrim(): {
 					if (length(es) > 0) {
 						buildTabs(tabs) + "makeIncaArray([\n" +
-						superglue(es, \v -> liftIncaExp(v, tabs + 1), ",\n") + "\n" +
+						superglue(es, \v -> liftIncaExp(env, v, tabs + 1), ",\n") + "\n" +
 						buildTabs(tabs) + "])";
 					} else {
 						buildTabs(tabs) + "makeIncaArray([])";
@@ -166,4 +186,9 @@ incaType2native(t : FiType, val : string) -> string {
 			val + ";\n";
 		}
 	}
+}
+
+incaNameNeedsManager(env : IncaEnv, fn : string) -> bool {
+	(contains(["performIncaEffect"], fn) || containsKeyTree(env.functions, fn)) 
+	&& !containsSet(env.hasIncaManager, fn)
 }

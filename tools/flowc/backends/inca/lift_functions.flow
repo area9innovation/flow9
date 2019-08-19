@@ -4,33 +4,58 @@ import text/blueprint;
 
 export {
 	// Lift our code to lifted, mutable versions
-	liftIncaFunctions(env : IncaEnv, graph : SimpleGraph<string, string>) -> string;
+	liftIncaFunctions(env : IncaEnv, outdir : string) -> string;
 }
 
-liftIncaFunctions(env : IncaEnv, graph : SimpleGraph<string, string>) -> string {
-	perform = liftIncaGraph(env, graph);
+liftIncaFunctions(env : IncaEnv, outdir : string) -> string {
+	perform = liftIncaGraph(env);
 	blueprint("
-		import out/types;
-		import inca/effects_lifted;
+		import %out%/types;
+		import inca/manager;
+		import inca/debug;
 
 		export {
-			performIncaEffect_lifted(v : IncaValue) -> void;
+			%performdec%
 
 			%dec%
 		}
 
-		%perform%
+		%performdef%
 
 		%def%
 	", [
-		"perform", perform,
-		"dec", foldTree(env.functions, "", \name, fn, acc -> acc + (if (acc != "") "\n" else "") + name + "_lifted(" + superglue(fn.lambda.args, \a -> a.name + " : IncaValue", ", ") + ") -> IncaValue;"),
+		"out", outdir,
+		"performdec", perform.first,
+		"performdef", perform.second,
+		"dec", foldTree(env.functions, "", \name, fn, acc -> acc + {
+			dec = getIncaFunctionDec(env, name, fn);
+			if (dec == "") ""
+			else {
+				(if (acc != "") "\n" else "") + dec + ";"
+			}
+		}),
 		"def", foldTree(env.functions, "", \name, fn, acc -> acc + liftIncaFunction(env, name, fn) + "\n")
 	]);
 }
 
 liftIncaFunction(env : IncaEnv, name : string, fn : FiFunctionDec) -> string {
-	name + "_lifted(" + superglue(fn.lambda.args, \a -> a.name + "_lifted : IncaValue", ", ") + ") -> IncaValue {\n"
-	+ liftIncaExp(fn.lambda.body, 1) + ";\n"
-	+ "}\n";
+	dec = getIncaFunctionDec(env, name, fn);
+	if (dec == "") ""
+	else {
+		dec + " {\n"
+		+ liftIncaExp(env, fn.lambda.body, 1) + ";\n"
+		+ "}\n";
+	}
+}
+
+getIncaFunctionDec(env : IncaEnv, name : string, fn : FiFunctionDec) -> string {
+	if (containsSet(env.alreadyLifted, name)) ""
+	else {
+		hasManager = containsSet(env.hasIncaManager, name);
+		name + "_lifted(" + (if (hasManager) fn.lambda.args[0].name else "manager") + " : IncaManager"
+			+ superglue(fn.lambda.args, \a -> {
+				if (hasManager && getFiTypeName(a.type) == "IncaManager") ""
+				else ", " + a.name + "_lifted : IncaValue"
+			}, "") + ") -> IncaValue";
+	}
 }
