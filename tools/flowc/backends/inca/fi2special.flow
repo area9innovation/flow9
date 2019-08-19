@@ -17,27 +17,30 @@ fi2special(env : IncaEnv) -> SiEnv {
 }
 
 fifun2special(env : IncaEnv, fi : FiFunctionDec) -> SiFunction {
+	onError = \e -> {
+		println("Error in " + fi.name + ": " + e);
+	}
 	SiFunction(
 		fi.name, map(fi.lambda.args, \a : FiFunArg -> {
-			SiArgument(a.name, fiType2special(env, a.type))
+			SiArgument(a.name, fiType2special(env, onError, a.type))
 		}),
-		fiType2special(env, fi.type.returnType),
-		fiExp2special(env, fi.lambda.body)
+		fiType2special(env, onError, fi.type.returnType),
+		fiExp2special(env, onError, fi.lambda.body)
 	);
 }
 
-fiType2special(env : IncaEnv, a : FiType) -> SiType {
+fiType2special(env : IncaEnv, onError : (string) -> void, a : FiType) -> SiType {
 	error = \e -> {
-		println("Do not support " + e + " types");
+		onError("Do not support " + e + " types");
 		SiTypeVoid();
 	}
 	switch (a) {
-		FiTypeArray(t): SiTypeArray(fiType2special(env, t));
+		FiTypeArray(t): SiTypeArray(fiType2special(env, onError, t));
 		FiTypeFunction(args, returnType): {
 			error("function");
 		}
 		FiTypeRef(t): error("ref"); 
-		FiTypeParameter(n): error("polymorphic");
+		FiTypeParameter(n): SiTypeParameter(n);
 		FiTypeBool(): SiTypeBool();
 		FiTypeInt(): SiTypeInt();
 		FiTypeDouble(): SiTypeDouble();
@@ -54,7 +57,7 @@ fiType2special(env : IncaEnv, a : FiType) -> SiType {
 						None(): error("Unknown name " + name);
 						Some(ut): {
 							types = map(ut.typenames, \t -> {
-								fiType2special(env, t);
+								fiType2special(env, onError, t);
 							});
 							expanded :[[SiTypeStruct]] = map(types, \tt : SiType -> {
 								switch (tt) {
@@ -69,7 +72,7 @@ fiType2special(env : IncaEnv, a : FiType) -> SiType {
 				}
 				Some(str): {
 					SiTypeStruct(str.name, map(str.args, \ar : FiStructArg -> {
-						SiStructField(ar.name, fiType2special(env, ar.type))
+						SiStructField(ar.name, fiType2special(env, onError, ar.type))
 					}))
 				}
 			}
@@ -77,9 +80,9 @@ fiType2special(env : IncaEnv, a : FiType) -> SiType {
 	}
 }
 
-fiExp2special(env : IncaEnv, fe : FiExp) -> SiExp {
+fiExp2special(env : IncaEnv, onError : (string) -> void, fe : FiExp) -> SiExp {
 	error = \er -> {
-		println(er + " not supported");
+		onError(er + " not supported");
 		SiVoid();
 	}
 	switch (fe) {
@@ -87,28 +90,28 @@ fiExp2special(env : IncaEnv, fe : FiExp) -> SiExp {
 		FiCall(f, args, type, start): {
 			switch (f) {
 				FiVar(v, __, __): {
-					SiCall(v, map(args, \a -> fiExp2special(env, a)));
+					SiCall(v, map(args, \a -> fiExp2special(env, onError, a)));
 				}
 				default: error("first order function");
 			}
 		}
 		FiVar(name, type, start): SiVarRef(name);
-		FiLet(name, type, e1, e2, type2, start): SiLet(name, fiExp2special(env, e1), fiExp2special(env, e2));
-		FiIf(e1, e2, e3, type, start): SiIf(fiExp2special(env, e1), fiExp2special(env, e2), fiExp2special(env, e3));
+		FiLet(name, type, e1, e2, type2, start): SiLet(name, fiExp2special(env, onError, e1), fiExp2special(env, onError, e2));
+		FiIf(e1, e2, e3, type, start): SiIf(fiExp2special(env, onError, e1), fiExp2special(env, onError, e2), fiExp2special(env, onError, e3));
 		FiSwitch(x, switchType, cases, type, start): {
 			SiSwitch(
 				SiVarRef(x.name),
 				map(cases, \case : FiCase -> {
 					SiCase(
-						case.struct, case.argNames, fiExp2special(env, case.body)
+						case.struct, case.argNames, fiExp2special(env, onError, case.body)
 					)
 				})
 			);
 		}
 		FiCast(e, tFrom, tTo, type, start): error("cast");
-		FiSeq(es, type, start): SiSeq(map(es, \s -> fiExp2special(env, s)));
+		FiSeq(es, type, start): SiSeq(map(es, \s -> fiExp2special(env, onError, s)));
 		FiCallPrim(op, es, type, start): {
-			ses = map(es, \ss -> fiExp2special(env, ss));
+			ses = map(es, \ss -> fiExp2special(env, onError, ss));
 			switch (op) {
 				FcOrPrim(): SiPrim(op, ses);
 				FcAndPrim(): SiPrim(op, ses);
@@ -149,7 +152,9 @@ fiExp2special(env : IncaEnv, fe : FiExp) -> SiExp {
 						SiSetField(ses[0], field, ses[1]);
 					}
 				}
-				FcCreateClosurePrim(structName, functionName): error("closure");
+				FcCreateClosurePrim(structName, functionName): {
+					error("closure");
+				}
 				FcQuote(): error("quote");
 				FcUnquote(): error("unquote");
 			}
