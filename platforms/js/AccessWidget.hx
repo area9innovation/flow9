@@ -205,8 +205,10 @@ class AccessWidgetTree extends EventEmitter {
 	public function updateDisplay() : Void {
 		updateTransform();
 
-		for (child in children) {
-			child.updateDisplay();
+		if (!RenderSupportJSPixi.DomRenderer) {
+			for (child in children) {
+				child.updateDisplay();
+			}
 		}
 	}
 
@@ -216,31 +218,34 @@ class AccessWidgetTree extends EventEmitter {
 			var clip : DisplayObject = accessWidget.clip;
 
 			if (nativeWidget != null) {
-				if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
-					var localStage : FlowContainer = untyped clip.stage;
+				if (!RenderSupportJSPixi.DomRenderer) {
+					if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
+						var localStage : FlowContainer = untyped clip.stage;
 
-					if (localStage != null) {
-						var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
-							nativeWidget.className == "droparea" ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget;
-						nativeWidget.style.zIndex = Std.string(zIndex);
+						if (localStage != null) {
+							var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
+								nativeWidget.className == "droparea" ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget;
+							nativeWidget.style.zIndex = Std.string(zIndex);
+						}
+					}
+
+					if (DebugAccessOrder) {
+						nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
+						nativeWidget.setAttribute("zorder", '${zorder}');
+						nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
+					}
+
+					if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
+						nativeWidget.style.display = "block";
+						nativeWidget.style.opacity = clip.worldAlpha;
+					} else {
+						nativeWidget.style.display = "none";
+						return;
 					}
 				}
 
-				if (DebugAccessOrder) {
-					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
-					nativeWidget.setAttribute("zorder", '${zorder}');
-					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
-				}
-
-				if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-					nativeWidget.style.display = "block";
-					nativeWidget.style.opacity = clip.worldAlpha;
-				} else {
-					nativeWidget.style.display = "none";
-					return;
-				}
-
 				if (untyped clip.nativeWidget != null) {
+					untyped clip.localTransformChanged = false;
 					untyped clip.updateNativeWidget();
 				}
 			}
@@ -448,10 +453,14 @@ class AccessWidget extends EventEmitter {
 				});
 
 				if (tagName == "button") {
+					this.element.classList.remove("accessElement");
 					this.element.classList.add("accessButton");
 				} else if (tagName == "div") {
+					this.element.classList.remove("accessButton");
 					this.element.classList.add("accessElement");
 				} else if (tagName == "form") {
+					this.element.classList.remove("accessButton");
+					this.element.classList.remove("accessElement");
 					this.element.onsubmit = function() { return false; };
 				}
 
@@ -510,6 +519,26 @@ class AccessWidget extends EventEmitter {
 
 	public function set_role(role : String) : String {
 		element.setAttribute("role", role);
+
+		if (RenderSupportJSPixi.DomRenderer && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
+			var newElement = Browser.document.createElement(accessRoleMap.get(role));
+
+			for (attr in element.attributes) {
+				newElement.setAttribute(attr.name, attr.value);
+			}
+
+			for (child in element.childNodes) {
+				newElement.appendChild(child);
+			}
+
+			if (element.parentNode != null) {
+				element.parentNode.insertBefore(newElement, element);
+				element.parentNode.removeChild(element);
+			}
+
+			untyped clip.nativeWidget = newElement;
+			element = newElement;
+		}
 
 		// Sets events
 		if (accessRoleMap.get(role) == "button") {
@@ -781,6 +810,10 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element, ?previousElement : Element, ?childrenChanged : Bool = false) : Bool {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return false;
+		}
+
 		if (tree == null) {
 			tree = AccessWidget.tree;
 

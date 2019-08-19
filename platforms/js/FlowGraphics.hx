@@ -410,7 +410,7 @@ class FlowGraphics extends Graphics {
 						}
 
 						if (data.lineWidth != null && data.lineWidth > 0) {
-							nativeWidget.style.border = '${data.lineWidth}}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
+							nativeWidget.style.border = '${data.lineWidth}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
 						} else {
 							nativeWidget.style.border = null;
 						}

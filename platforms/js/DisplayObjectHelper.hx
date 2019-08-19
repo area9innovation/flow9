@@ -342,10 +342,8 @@ class DisplayObjectHelper {
 			clip.scrollRect = new FlowGraphics();
 			scrollRect = clip.scrollRect;
 
-			if (!RenderSupportJSPixi.DomRenderer) {
-				clip.addChild(scrollRect);
-				setClipMask(clip, scrollRect);
-			}
+			clip.addChild(scrollRect);
+			setClipMask(clip, scrollRect);
 		}
 
 		scrollRect.beginFill(0xFFFFFF);
@@ -425,8 +423,6 @@ class DisplayObjectHelper {
 		clip.emit("graphicschanged");
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			maskContainer.once("graphicschanged", function () { setClipMask(clip, maskContainer); });
-
 			invalidateTransform(clip);
 			removeNativeWidget(maskContainer);
 		} else {
@@ -708,17 +704,23 @@ class DisplayObjectHelper {
 				nativeWidget.style.height = '${viewBounds.maxY - viewBounds.minY}px';
 
 				nativeWidget.style.overflow = "hidden";
-				nativeWidget.scroll(viewBounds.minX, untyped viewBounds.minY);
+				var scrollFn = function() {
+					nativeWidget.scroll(viewBounds.minX, viewBounds.minY);
+				};
+				nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+				scrollFn();
 			} else if (scrollRect != null) {
 				nativeWidget.style.width = '${scrollRect.width}px';
 				nativeWidget.style.height = '${scrollRect.height}px';
 
 				nativeWidget.style.overflow = "hidden";
-				nativeWidget.scroll(scrollRect.x, scrollRect.y);
+				var scrollFn = function() {
+					nativeWidget.scroll(scrollRect.x, scrollRect.y);
+				};
+				nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+				scrollFn();
 			} else if (mask != null) {
 				var graphicsData = mask.graphicsData;
-
-				mask.updateTransform();
 				var transform = clip.worldTransform.copy(new Matrix()).prepend(mask.worldTransform.invert());
 
 				if (graphicsData != null) {
@@ -726,6 +728,7 @@ class DisplayObjectHelper {
 
 					if (data.shape.type == 0) {
 						nativeWidget.style.overflow = null;
+						nativeWidget.onscroll = null;
 						var width = getWidth(clip);
 						var height = getHeight(clip);
 						nativeWidget.style.width = '${width * transform.a + height * transform.c}px';
@@ -741,10 +744,14 @@ class DisplayObjectHelper {
 						nativeWidget.style.height = '${data.shape.width * transform.b + data.shape.height * transform.d}px';
 
 						nativeWidget.style.overflow = "hidden";
-						nativeWidget.scroll(
-							untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
-							untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
-						);
+						var scrollFn = function() {
+							nativeWidget.scroll(
+								untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
+								untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
+							);
+						};
+						nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+						scrollFn();
 					} else if (data.shape.type == 2) {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${data.shape.radius * 2.0 * (transform.a + transform.c)}px';
@@ -752,10 +759,14 @@ class DisplayObjectHelper {
 						nativeWidget.style.borderRadius = '${data.shape.radius}px';
 
 						nativeWidget.style.overflow = "hidden";
-						nativeWidget.scroll(
-							untyped transform.tx + (data.shape.x - data.shape.radius) * transform.a + (data.shape.y - data.shape.radius) * transform.c,
-							untyped transform.ty + (data.shape.x - data.shape.radius) * transform.b + (data.shape.y - data.shape.radius) * transform.d
-						);
+						var scrollFn = function() {
+							nativeWidget.scroll(
+								untyped transform.tx + (data.shape.x - data.shape.radius) * transform.a + (data.shape.y - data.shape.radius) * transform.c,
+								untyped transform.ty + (data.shape.x - data.shape.radius) * transform.b + (data.shape.y - data.shape.radius) * transform.d
+							);
+						};
+						nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+						scrollFn();
 					} else if (data.shape.type == 4) {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${data.shape.width * transform.a + data.shape.height * transform.c}px';
@@ -763,20 +774,27 @@ class DisplayObjectHelper {
 						nativeWidget.style.borderRadius = '${data.shape.radius * (transform.a + transform.c + transform.b + transform.d) / 2.0}px';
 
 						nativeWidget.style.overflow = "hidden";
-						nativeWidget.scroll(
-							untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
-							untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
-						);
+						var scrollFn = function() {
+							nativeWidget.scroll(
+								untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
+								untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
+							);
+						};
+						nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+						scrollFn();
 					}  else {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.overflow = null;
+						nativeWidget.onscroll = null;
 
 						trace("updateNativeWidgetMask: Unknown shape type");
 						trace(data);
 					}
 				}
 			} else {
+				nativeWidget.style.clipPath = null;
 				nativeWidget.style.overflow = null;
+				nativeWidget.onscroll = null;
 			}
 		}
 	}

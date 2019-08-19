@@ -602,7 +602,7 @@ class Native {
 
 	#if js
 	private static var DeferQueue : Array< Void -> Void > = new Array();
-	private static function defer(cb : Void -> Void) : Void {
+	public static function defer(cb : Void -> Void) : Void {
 		if (DeferQueue.length == 0) {
 			var fn = function() {
 				for (f in DeferQueue) f();

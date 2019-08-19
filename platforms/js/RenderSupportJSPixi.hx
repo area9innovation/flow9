@@ -963,10 +963,6 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setAccessAttributes(clip : Dynamic, attributes : Array<Array<String>>) : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			return;
-		}
-
 		var attributesMap = new Map<String, String>();
 
 		for (kv in attributes) {
@@ -1635,19 +1631,35 @@ class RenderSupportJSPixi {
 			on(event, fn);
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
-			cast(clip, DisplayObject).on("pointerover", fn);
-			cast(clip, DisplayObject).invalidateInteractive();
-			return function() {
-				cast(clip, DisplayObject).off("pointerover", fn);
+			var nativeWidget : Dynamic = untyped clip.nativeWidget;
+
+			if (nativeWidget != null && false) {
+				nativeWidget.style.pointerEvents = 'auto';
+				nativeWidget.addEventListener("pointerover", fn);
+				return function() { nativeWidget.removeEventListener("pointerover", fn); }
+			} else {
+				cast(clip, DisplayObject).on("pointerover", fn);
 				cast(clip, DisplayObject).invalidateInteractive();
-			};
+				return function() {
+					cast(clip, DisplayObject).off("pointerover", fn);
+					cast(clip, DisplayObject).invalidateInteractive();
+				};
+			}
 		} else if (event == "rollout") {
-			cast(clip, DisplayObject).on("pointerout", fn);
-			cast(clip, DisplayObject).invalidateInteractive();
-			return function() {
-				cast(clip, DisplayObject).off("pointerout", fn);
+			var nativeWidget : Dynamic = untyped clip.nativeWidget;
+
+			if (nativeWidget != null && false) {
+				nativeWidget.style.pointerEvents = 'auto';
+				nativeWidget.addEventListener("pointerout", fn);
+				return function() { nativeWidget.removeEventListener("pointerout", fn); }
+			} else {
+				cast(clip, DisplayObject).on("pointerout", fn);
 				cast(clip, DisplayObject).invalidateInteractive();
-			};
+				return function() {
+					cast(clip, DisplayObject).off("pointerout", fn);
+					cast(clip, DisplayObject).invalidateInteractive();
+				};
+			}
 		} else if (event == "scroll") {
 			cast(clip, DisplayObject).on("scroll", fn);
 			return function() { cast(clip, DisplayObject).off("scroll", fn); };
@@ -1753,7 +1765,9 @@ class RenderSupportJSPixi {
 	}
 
 	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
-		if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
+		if (untyped clip.scrollRect != null && !hittestGraphics(untyped clip.scrollRect, point)) {
+			return false;
+		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
 			return false;
 		} else {
 			return clip.parent == null || hittestMask(clip.parent, point);
@@ -1783,9 +1797,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Bool = false) : DisplayObject {
-		if (!clip.getClipWorldVisible() || untyped clip.isMask) {
-			return null;
-		} else if (checkMask && !hittestMask(clip, point)) {
+		if (checkMask && !hittestMask(clip, point)) {
 			return null;
 		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
 			return null;

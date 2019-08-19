@@ -850,7 +850,7 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
-		if (nativeWidget == null) {
+		if (nativeWidget == null || parent == null) {
 			return;
 		}
 
@@ -861,7 +861,7 @@ class TextClip extends NativeWidgetClip {
 		isFocused = false;
 		emit('blur');
 
-		if (nativeWidget == null) {
+		if (nativeWidget == null || parent == null) {
 			return;
 		}
 

@@ -174,7 +174,9 @@ class FlowContainer extends Container {
 				stageChanged = false;
 
 				if (transformChanged) {
+					DisplayObjectHelper.InvalidateStage = !transformChanged;
 					updateTransform();
+					DisplayObjectHelper.InvalidateStage = true;
 				}
 			}
 		} else if (stageChanged && view != null) {
