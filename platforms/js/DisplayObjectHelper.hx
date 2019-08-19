@@ -3,6 +3,7 @@ import js.Browser;
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
 import pixi.core.display.Bounds;
+import pixi.core.display.TransformBase;
 import pixi.core.math.Matrix;
 
 class DisplayObjectHelper {
@@ -597,8 +598,9 @@ class DisplayObjectHelper {
 			var data = graphicsData[0];
 
 			if (data.shape.type == 0) {
-				return untyped __js__("'polygon(' + data.shape.points.map((p, i) =>
-					i % 2 == 0 ? (clip.x + p) + 'px ' : '' + (clip.y + p) + 'px' + (i != data.shape.points.length - 1 ? ',' : '')).join('') + ')'");
+				return untyped __js__("'polygon(' + data.shape.points.map(function(p, i) {
+					return i % 2 == 0 ? (clip.x + p) + 'px ' : '' + (clip.y + p) + 'px' + (i != data.shape.points.length - 1 ? ',' : '');
+				}).join('') + ')'");
 			} else if (data.shape.type == 1) {
 				return 'polygon(
 					${clip.x + data.shape.x}px ${clip.y + data.shape.y}px,
@@ -705,7 +707,7 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.overflow = "hidden";
 				var scrollFn = function() {
-					nativeWidget.scroll(viewBounds.minX, viewBounds.minY);
+					nativeWidget.scrollTo(viewBounds.minX, viewBounds.minY);
 				};
 				nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
 				scrollFn();
@@ -715,15 +717,22 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.overflow = "hidden";
 				var scrollFn = function() {
-					nativeWidget.scroll(scrollRect.x, scrollRect.y);
+					nativeWidget.scrollTo(scrollRect.x, scrollRect.y);
 				};
 				nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
 				scrollFn();
 			} else if (mask != null) {
 				var graphicsData = mask.graphicsData;
-				var transform = clip.worldTransform.copy(new Matrix()).prepend(mask.worldTransform.invert());
 
 				if (graphicsData != null) {
+					var transform : Dynamic = new TransformBase();
+
+					mask.localTransform.copy(transform.localTransform);
+					mask.worldTransform.copy(transform.worldTransform);
+
+					transform.updateTransform(untyped clip.parent.transform);
+					transform = clip.worldTransform.copy(new Matrix()).prepend(transform.worldTransform.invert());
+
 					var data = graphicsData[0];
 
 					if (data.shape.type == 0) {
@@ -734,10 +743,11 @@ class DisplayObjectHelper {
 						nativeWidget.style.width = '${width * transform.a + height * transform.c}px';
 						nativeWidget.style.height = '${width * transform.b + height * transform.d}px';
 
-						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map((p, i) =>
-							i % 2 == 0 ?
-							(transform.tx + (clip.x + p) * transform.a) + 'px ' :
-							'' + (transform.ty + (clip.y + p) * transform.d) + 'px' + (i != data.shape.points.length - 1 ? ',' : '')).join('') + ')'");
+						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
+							return i % 2 == 0 ?
+								(transform.tx + (clip.x + p) * transform.a) + 'px ' :
+								'' + (transform.ty + (clip.y + p) * transform.d) + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
+						}).join('') + ')'");
 					} else if (data.shape.type == 1) {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${data.shape.width * transform.a + data.shape.height * transform.c}px';
@@ -745,7 +755,7 @@ class DisplayObjectHelper {
 
 						nativeWidget.style.overflow = "hidden";
 						var scrollFn = function() {
-							nativeWidget.scroll(
+							nativeWidget.scrollTo(
 								untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
 								untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
 							);
@@ -760,7 +770,7 @@ class DisplayObjectHelper {
 
 						nativeWidget.style.overflow = "hidden";
 						var scrollFn = function() {
-							nativeWidget.scroll(
+							nativeWidget.scrollTo(
 								untyped transform.tx + (data.shape.x - data.shape.radius) * transform.a + (data.shape.y - data.shape.radius) * transform.c,
 								untyped transform.ty + (data.shape.x - data.shape.radius) * transform.b + (data.shape.y - data.shape.radius) * transform.d
 							);
@@ -775,7 +785,7 @@ class DisplayObjectHelper {
 
 						nativeWidget.style.overflow = "hidden";
 						var scrollFn = function() {
-							nativeWidget.scroll(
+							nativeWidget.scrollTo(
 								untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
 								untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
 							);
@@ -807,7 +817,11 @@ class DisplayObjectHelper {
 
 			if (nativeWidget != null) {
 				if (clip.visible && clip.renderable) {
-					nativeWidget.style.display = null;
+					if (Platform.isIE) {
+						nativeWidget.style.display = "block";
+					} else {
+						nativeWidget.style.display = null;
+					}
 				} else if (clip.parent == null || (clip.parent.visible && clip.parent.renderable)) {
 					nativeWidget.style.display = "none";
 				}

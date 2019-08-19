@@ -1797,7 +1797,9 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Bool = false) : DisplayObject {
-		if (checkMask && !hittestMask(clip, point)) {
+		if (!clip.getClipWorldVisible() || untyped clip.isMask) {
+			return null;
+		} else if (checkMask && !hittestMask(clip, point)) {
 			return null;
 		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
 			return null;

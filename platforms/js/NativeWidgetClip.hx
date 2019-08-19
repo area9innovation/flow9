@@ -99,8 +99,8 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function updateNativeWidgetStyle() : Void {
-		nativeWidget.style.width = '${untyped getWidth()}px';
-		nativeWidget.style.height = '${untyped getHeight()}px';
+		nativeWidget.style.width = '${untyped getWidth() + 1}px';
+		nativeWidget.style.height = '${untyped getHeight() + 1}px';
 
 		if (!RenderSupportJSPixi.DomRenderer) {
 			var maskedBounds = getMaskedLocalBounds();

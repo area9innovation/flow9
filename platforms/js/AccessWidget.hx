@@ -520,7 +520,7 @@ class AccessWidget extends EventEmitter {
 	public function set_role(role : String) : String {
 		element.setAttribute("role", role);
 
-		if (RenderSupportJSPixi.DomRenderer && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
+		if (RenderSupportJSPixi.DomRenderer && accessRoleMap.get(role) != null && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
 			for (attr in element.attributes) {

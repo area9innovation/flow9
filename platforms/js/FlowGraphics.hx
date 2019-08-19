@@ -329,8 +329,10 @@ class FlowGraphics extends Graphics {
 					if (data.shape.type == 0) {
 						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
-						var d : String = untyped __js__("data.shape.points.map((p, i) => i % 2 == 0 ?
-							(i == 0 ? 'M' : 'L') + (p - this.localBounds.minX) + ' ' : '' + (p - this.localBounds.minY) + ' ').join('')");
+						var localBounds = this.localBounds;
+						var d : String = untyped __js__("data.shape.points.map(function(p, i) {
+							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + (p - localBounds.minX) + ' ' : '' + (p - localBounds.minY) + ' ';
+						}).join('')");
 						path.setAttribute("d", d);
 
 						svg.appendChild(path);
@@ -377,8 +379,10 @@ class FlowGraphics extends Graphics {
 						var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
-						var d : String = untyped __js__("data1.shape.points.map((p, i) => i % 2 == 0 ?
-							(i == 0 ? 'M' : 'L') + (p - this.localBounds.minX) + ' ' : '' + (p - this.localBounds.minY) + ' ').join('')");
+						var localBounds = this.localBounds;
+						var d : String = untyped __js__("data1.shape.points.map(function(p, i) {
+							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + (p - localBounds1.minX) + ' ' : '' + (p - localBounds1.minY) + ' ';
+						}).join('')");
 						path.setAttribute("d", d);
 
 						if (data.fill != null) {

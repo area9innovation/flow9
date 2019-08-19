@@ -413,6 +413,8 @@ class PixiWorkarounds {
 
 	public static function workaroundTextMetrics() : Void {
 		untyped __js__("
+			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
+
 			PIXI.TextMetrics.measureFont = function(font)
 			{
 				// as this method is used for preparing assets, don't recalculate things if we don't need to
