@@ -870,6 +870,8 @@ class RenderSupportJSPixi {
 		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
 	}
 
+	private static var animateId = 0;
+
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
@@ -877,6 +879,9 @@ class RenderSupportJSPixi {
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
+				var id = animateId++;
+				untyped console.log("Animate ["+id+"] BEGIN");
+				var startAt = Date.now().getTime();
 				TransformChanged = false;
 
 				for (child in PixiStage.children) {
@@ -890,6 +895,7 @@ class RenderSupportJSPixi {
 				}
 
 				untyped PixiRenderer._lastObjectRendered = PixiStage;
+				untyped console.log("Animate ["+id+"] END in " + (Date.now().getTime() - startAt));
 			} else {
 				AccessWidget.updateAccessTree();
 
@@ -902,6 +908,7 @@ class RenderSupportJSPixi {
 				}
 			}
 
+			PixiStageChanged = false; // to protect against recursive invalidations
 			emit("stagechanged", timestamp);
 		} else {
 			AccessWidget.updateAccessTree();
@@ -930,6 +937,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static inline function InvalidateStage() : Void {
+		if (!PixiStageChanged) {
+			untyped console.trace("InvalidateStage ["+animateId+"]");
+		} else {
+			untyped console.log("InvalidateStage ["+animateId+"]");
+		}
 		PixiStageChanged = true;
 	}
 
@@ -1261,6 +1273,10 @@ class RenderSupportJSPixi {
 
 	public static function setWordWrap(clip : TextClip, wordWrap : Bool) : Void {
 		clip.setWordWrap(wordWrap);
+	}
+
+	public static function setDoNotInvalidateStage(clip : TextClip, dontInvalidate : Bool) : Void {
+		clip.setDoNotInvalidateStage(dontInvalidate);
 	}
 
 	public static function getSelectionStart(clip : TextClip) : Int {
