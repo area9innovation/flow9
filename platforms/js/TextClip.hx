@@ -1086,8 +1086,7 @@ class TextClip extends NativeWidgetClip {
 
 			nativeWidget = Browser.document.createElement(node_name);
 			nativeWidget.setAttribute('id', getClipUUID());
-			nativeWidget.style.transformOrigin = 'top left';
-			nativeWidget.style.position = 'fixed';
+			nativeWidget.className = 'nativeWidget';
 			nativeWidget.style.whiteSpace = 'normal';
 
 			updateNativeWidgetDisplay();

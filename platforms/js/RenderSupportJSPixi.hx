@@ -22,7 +22,7 @@ import BlurFilter;
 using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
-	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
+	public static var DomRenderer : Bool = true;//Util.getParameter("renderer") == "html";
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage = new FlowContainer(true);
@@ -277,7 +277,9 @@ class RenderSupportJSPixi {
 		initFullScreenEventListeners();
 		FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
-		initCanvasStackInteractions();
+		if (!DomRenderer) {
+			initCanvasStackInteractions();
+		}
 
 		printOptionValues();
 
@@ -1932,11 +1934,11 @@ class RenderSupportJSPixi {
 				default: "default";
 			}
 
-		Browser.document.body.style.cursor = css_cursor;
+		PixiView.style.cursor = css_cursor;
 	}
 
 	public static function getCursor() : String {
-		return switch (Browser.document.body.style.cursor) {
+		return switch (PixiView.style.cursor) {
 			case "default": "arrow";
 			case "auto": "auto";
 			case "pointer": "finger";
@@ -1948,59 +1950,73 @@ class RenderSupportJSPixi {
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
-		untyped clip.filterPadding = 0.0;
-		untyped clip.glShaders = false;
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (filters.length > 0) {
+				var filter : Dynamic = filters[0];
+				var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(filter.color, []);
 
-		var dropShadowCount = 0;
-
-		filters = filters.filter(function(f) {
-			if (f == null) {
-				return false;
+				untyped clip.nativeWidget.style.filter = 'drop-shadow(
+					${Math.cos(filter.angle) * filter.distance}px
+					${Math.sin(filter.angle) * filter.distance}px
+					${filter.blur}px
+					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
+				)';
 			}
+		} else {
+			untyped clip.filterPadding = 0.0;
+			untyped clip.glShaders = false;
 
-			if (f.padding != null) {
-				untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
-				dropShadowCount++;
+			var dropShadowCount = 0;
+
+			filters = filters.filter(function(f) {
+				if (f == null) {
+					return false;
+				}
+
+				if (f.padding != null) {
+					untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
+					dropShadowCount++;
+				}
+
+				if (f.uniforms != null && (f.uniforms.time != null || f.uniforms.seed != null || f.uniforms.bounds != null)) {
+					var fn = function () {
+						if (f.uniforms.time != null) {
+							f.uniforms.time = f.uniforms.time == null ? 0.0 : f.uniforms.time + 0.01;
+						}
+
+						if (f.uniforms.seed != null) {
+							f.uniforms.seed = Math.random();
+						}
+
+						if (f.uniforms.bounds != null) {
+							var bounds = clip.getBounds(true);
+
+							f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
+						}
+
+						clip.invalidateStage();
+					};
+
+					clip.onAdded(function () {
+						PixiStage.on("drawframe", fn);
+
+						return function () { PixiStage.off("drawframe", fn); };
+					});
+				}
+
+				if (untyped !__instanceof__(f, DropShadowFilter) && untyped !__instanceof__(f, BlurFilter)) {
+					untyped clip.glShaders = true;
+				}
+
+				return true;
+			});
+
+			untyped clip.filterPadding = clip.filterPadding * dropShadowCount;
+			clip.filters = filters.length > 0 ? filters : null;
+
+			if (RendererType == "canvas") {
+				untyped clip.canvasFilters = clip.filters;
 			}
-
-			if (f.uniforms != null && (f.uniforms.time != null || f.uniforms.seed != null || f.uniforms.bounds != null)) {
-				var fn = function () {
-					if (f.uniforms.time != null) {
-						f.uniforms.time = f.uniforms.time == null ? 0.0 : f.uniforms.time + 0.01;
-					}
-
-					if (f.uniforms.seed != null) {
-						f.uniforms.seed = Math.random();
-					}
-
-					if (f.uniforms.bounds != null) {
-						var bounds = clip.getBounds(true);
-
-						f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
-					}
-
-					clip.invalidateStage();
-				};
-
-				clip.onAdded(function () {
-					PixiStage.on("drawframe", fn);
-
-					return function () { PixiStage.off("drawframe", fn); };
-				});
-			}
-
-			if (untyped !__instanceof__(f, DropShadowFilter) && untyped !__instanceof__(f, BlurFilter)) {
-				untyped clip.glShaders = true;
-			}
-
-			return true;
-		});
-
-		untyped clip.filterPadding = clip.filterPadding * dropShadowCount;
-		clip.filters = filters.length > 0 ? filters : null;
-
-		if (RendererType == "canvas") {
-			untyped clip.canvasFilters = clip.filters;
 		}
 	}
 

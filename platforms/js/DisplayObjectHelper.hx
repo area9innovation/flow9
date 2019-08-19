@@ -84,14 +84,16 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function invalidateTransform(clip : DisplayObject) : Void {
-		untyped clip.localTransformChanged = true;
-		untyped clip.childrenTransformChanged = true;
+		if (clip.visible) {
+			untyped clip.localTransformChanged = true;
+			untyped clip.childrenTransformChanged = true;
 
-		if (InvalidateStage) {
-			invalidateParentTransform(clip);
+			if (InvalidateStage) {
+				invalidateParentTransform(clip);
+			}
+
+			invalidateWorldTransform(clip);
 		}
-
-		invalidateWorldTransform(clip);
 	}
 
 	public static inline function invalidateWorldTransform(clip : DisplayObject) : Void {
@@ -110,13 +112,16 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function invalidateParentTransform(clip : DisplayObject) : Void {
+	public static inline function invalidateParentTransform(clip : DisplayObject, ?invalidateBounds : Bool = true) : Void {
 		if (clip.visible && !untyped clip.transformChanged) {
 			untyped clip.transformChanged = true;
 			untyped clip.childrenTransformChanged = true;
 
 			if (clip.parent != null && !untyped clip.parent.transformChanged) {
-				invalidateParentTransform(clip.parent);
+				invalidateParentTransform(
+					clip.parent,
+					invalidateBounds && (untyped clip.mask != null || clip.alphaMask != null || untyped clip.scrollRect != null)
+				);
 			} else {
 				invalidateStage(clip);
 			}
@@ -349,14 +354,6 @@ class DisplayObjectHelper {
 		setClipY(scrollRect, top);
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			var children : Array<DisplayObject> = untyped clip.children;
-
-			if (children != null) {
-				for (child in children) {
-					invalidateTransform(child);
-				}
-			}
-
 			invalidateTransform(clip);
 		} else {
 			invalidateStage(clip);
@@ -668,27 +665,19 @@ class DisplayObjectHelper {
 				ty = Math.floor(transform.ty + untyped clip.scrollRect.y);
 			}
 
-			if (clip.parent != null && untyped clip.parent.scrollRect != null) {
-				tx = Math.floor(tx - untyped clip.parent.scrollRect.x);
-				ty = Math.floor(ty - untyped clip.parent.scrollRect.y);
+			if (tx != 0 || ty != 0) {
+				nativeWidget.style.left = '${tx}px';
+				nativeWidget.style.top = '${ty}px';
+			} else {
+				nativeWidget.style.left = null;
+				nativeWidget.style.top = null;
 			}
 
-			if (tx != 0 || ty != 0 || transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
-				if (Platform.isIE) {
-					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
 
-					nativeWidget.style.left = '${tx}px';
-					nativeWidget.style.top = '${ty}px';
-				} else {
-					nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
-				}
+			if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
+				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
 			} else {
 				nativeWidget.style.transform = null;
-
-				if (Platform.isIE) {
-					nativeWidget.style.left = null;
-					nativeWidget.style.top = null;
-				}
 			}
 		}
 	}
@@ -714,6 +703,8 @@ class DisplayObjectHelper {
 			var viewBounds = untyped clip.viewBounds;
 
 			if (viewBounds != null ) {
+				nativeWidget.style.overflow = null;
+				nativeWidget.style.clipPath = null;
 				nativeWidget.style.clip = 'rect(
 					${viewBounds.minY}px,
 					${viewBounds.maxX}px,
@@ -721,14 +712,18 @@ class DisplayObjectHelper {
 					${viewBounds.minX}px
 				)';
 			} else if (scrollRect != null) {
-				nativeWidget.style.clip = 'rect(
-					${0}px,
-					${scrollRect.width}px,
-					${scrollRect.height}px,
-					${0}px
-				)';
+				nativeWidget.style.clipPath = null;
+				nativeWidget.style.clip = null;
+
+				nativeWidget.style.width = '${scrollRect.width}px';
+				nativeWidget.style.height = '${scrollRect.height}px';
+
+				nativeWidget.style.overflow = "hidden";
+				nativeWidget.scroll(untyped clip.scrollRect.x, untyped clip.scrollRect.y);
 			} else if (mask != null) {
 				if (Platform.isIE || Platform.isEdge || mask.isFastRect()) {
+					nativeWidget.style.overflow = null;
+					nativeWidget.style.clipPath = null;
 					nativeWidget.style.clip = 'rect(
 						${mask.y}px,
 						${mask.x + getWidth(mask)}px,
@@ -736,9 +731,13 @@ class DisplayObjectHelper {
 						${mask.x}px
 					)';
 				} else {
+					nativeWidget.style.overflow = null;
+					nativeWidget.style.clip = null;
 					nativeWidget.style.clipPath = getClipPath(mask);
 				}
 			} else {
+				nativeWidget.style.overflow = null;
+				nativeWidget.style.clip = null;
 				nativeWidget.style.clipPath = null;
 			}
 		}
@@ -858,6 +857,52 @@ class DisplayObjectHelper {
 				for (child in children) {
 					updateLocalTransform(child);
 				}
+			}
+		}
+	}
+
+	public static function calculateLocalBounds(clip : DisplayObject) : Void {
+		var localBounds : Bounds = untyped clip.localBounds;
+		var children : Array<DisplayObject> = untyped clip.children;
+
+		if (clip.mask || untyped clip.alphaMask || untyped clip.scrollRect) {
+			var mask = clip.mask != null ? clip.mask : untyped clip.alphaMask ? untyped clip.alphaMask : clip.scrollRect;
+
+			if (untyped mask.worldTransformChanged) {
+				untyped mask.transform.updateLocalTransform();
+			}
+
+			var maskRect = mask.getLocalBounds();
+
+			localBounds.minX = maskRect.x * mask.localTransform.a + maskRect.y * mask.localTransform.c + mask.localTransform.tx;
+			localBounds.minY = maskRect.x * mask.localTransform.b + maskRect.y * mask.localTransform.d + mask.localTransform.ty;
+			localBounds.maxX = (maskRect.x + maskRect.width) * mask.localTransform.a + (maskRect.y + maskRect.height) * mask.localTransform.c + mask.localTransform.tx;
+			localBounds.maxY = (maskRect.x + maskRect.width) * mask.localTransform.b + (maskRect.y + maskRect.height) * mask.localTransform.d + mask.localTransform.ty;
+		} else if (untyped clip.children != null && untyped clip.children.length > 0) {
+			var firstChild = children[0];
+
+			if (untyped firstChild.worldTransformChanged) {
+				untyped firstChild.transform.updateLocalTransform();
+			}
+
+			var childRect = firstChild.getLocalBounds();
+
+			localBounds.minX = childRect.x * firstChild.localTransform.a + childRect.y * firstChild.localTransform.c + firstChild.localTransform.tx;
+			localBounds.minY = childRect.x * firstChild.localTransform.b + childRect.y * firstChild.localTransform.d + firstChild.localTransform.ty;
+			localBounds.maxX = (childRect.x + childRect.width) * firstChild.localTransform.a + (childRect.y + childRect.height) * firstChild.localTransform.c + firstChild.localTransform.tx;
+			localBounds.maxY = (childRect.x + childRect.width) * firstChild.localTransform.b + (childRect.y + childRect.height) * firstChild.localTransform.d + firstChild.localTransform.ty;
+
+			for (child in children.slice(1)) {
+				if (untyped child.worldTransformChanged) {
+					untyped child.transform.updateLocalTransform();
+				}
+
+				childRect = child.getLocalBounds();
+
+				localBounds.minX = Math.min(localBounds.minX, childRect.x * child.localTransform.a + childRect.y * child.localTransform.c + child.localTransform.tx);
+				localBounds.minY = Math.min(localBounds.minY, childRect.x * child.localTransform.b + childRect.y * child.localTransform.d + child.localTransform.ty);
+				localBounds.maxX = Math.max(localBounds.maxX, (childRect.x + childRect.width) * child.localTransform.a + (childRect.y + childRect.height) * child.localTransform.c + child.localTransform.tx);
+				localBounds.maxY = Math.max(localBounds.maxY, (childRect.x + childRect.width) * child.localTransform.b + (childRect.y + childRect.height) * child.localTransform.d + child.localTransform.ty);
 			}
 		}
 	}

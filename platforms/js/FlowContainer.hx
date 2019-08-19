@@ -193,49 +193,8 @@ class FlowContainer extends Container {
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		if (RenderSupportJSPixi.DomRenderer) {
-			updateTransform();
-			localBounds.clear();
+			calculateLocalBounds();
 
-			if (this.mask || untyped this.alphaMask || this.scrollRect) {
-				var mask = this.mask != null ? this.mask : untyped this.alphaMask ? untyped this.alphaMask : this.scrollRect;
-
-				if (untyped mask.worldTransformChanged) {
-					untyped mask.transform.updateLocalTransform();
-				}
-
-				var maskRect = mask.getLocalBounds();
-
-				localBounds.minX = maskRect.x * mask.localTransform.a + maskRect.y * mask.localTransform.c + mask.localTransform.tx;
-				localBounds.minY = maskRect.x * mask.localTransform.b + maskRect.y * mask.localTransform.d + mask.localTransform.ty;
-				localBounds.maxX = (maskRect.x + maskRect.width) * mask.localTransform.a + (maskRect.y + maskRect.height) * mask.localTransform.c + mask.localTransform.tx;
-				localBounds.maxY = (maskRect.x + maskRect.width) * mask.localTransform.b + (maskRect.y + maskRect.height) * mask.localTransform.d + mask.localTransform.ty;
-			} else if (children.length > 0) {
-				var firstChild = children[0];
-
-				if (untyped firstChild.worldTransformChanged) {
-					untyped firstChild.transform.updateLocalTransform();
-				}
-
-				var childRect = firstChild.getLocalBounds();
-
-				localBounds.minX = childRect.x * firstChild.localTransform.a + childRect.y * firstChild.localTransform.c + firstChild.localTransform.tx;
-				localBounds.minY = childRect.x * firstChild.localTransform.b + childRect.y * firstChild.localTransform.d + firstChild.localTransform.ty;
-				localBounds.maxX = (childRect.x + childRect.width) * firstChild.localTransform.a + (childRect.y + childRect.height) * firstChild.localTransform.c + firstChild.localTransform.tx;
-				localBounds.maxY = (childRect.x + childRect.width) * firstChild.localTransform.b + (childRect.y + childRect.height) * firstChild.localTransform.d + firstChild.localTransform.ty;
-
-				for (child in children.slice(1)) {
-					if (untyped child.worldTransformChanged) {
-						untyped child.transform.updateLocalTransform();
-					}
-
-					childRect = child.getLocalBounds();
-
-					localBounds.minX = Math.min(localBounds.minX, childRect.x * child.localTransform.a + childRect.y * child.localTransform.c + child.localTransform.tx);
-					localBounds.minY = Math.min(localBounds.minY, childRect.x * child.localTransform.b + childRect.y * child.localTransform.d + child.localTransform.ty);
-					localBounds.maxX = Math.max(localBounds.maxX, (childRect.x + childRect.width) * child.localTransform.a + (childRect.y + childRect.height) * child.localTransform.c + child.localTransform.tx);
-					localBounds.maxY = Math.max(localBounds.maxY, (childRect.x + childRect.width) * child.localTransform.b + (childRect.y + childRect.height) * child.localTransform.d + child.localTransform.ty);
-				}
-			}
 			return localBounds.getRectangle(rect);
 		} else {
 			return super.getLocalBounds(rect);
@@ -245,6 +204,7 @@ class FlowContainer extends Container {
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (!skipUpdate) {
+				updateTransform();
 				getLocalBounds();
 			}
 
@@ -275,8 +235,7 @@ class FlowContainer extends Container {
 
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
-		nativeWidget.style.transformOrigin = 'top left';
-		nativeWidget.style.position = 'fixed';
+		nativeWidget.className = 'nativeWidget';
 		// nativeWidget.style.willChange = 'transform, display, opacity, clip-path';
 		// nativeWidget.style.pointerEvents = 'none';
 

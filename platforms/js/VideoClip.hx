@@ -461,8 +461,7 @@ class VideoClip extends FlowContainer {
 
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
-		nativeWidget.style.transformOrigin = 'top left';
-		nativeWidget.style.position = 'fixed';
+		nativeWidget.className = 'nativeWidget';
 
 		updateNativeWidgetDisplay();
 

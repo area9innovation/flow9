@@ -897,12 +897,8 @@ class PixiWorkarounds {
 					if (this.worldTransformChanged)
 					{
 						this.worldTransformChanged = false;
-
-						this._boundsID++;
+						this._boundsId++;
 						this.transform.updateTransform(this.parent.transform);
-						this.emit('transformchanged');
-
-						// TODO: check render flags, how to process stuff here
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
 						for (let i = 0, j = this.children.length; i < j; ++i) {
@@ -919,6 +915,8 @@ class PixiWorkarounds {
 							this.localTransformChanged = false;
 							DisplayObjectHelper.updateNativeWidget(this);
 						}
+
+						this.emit('transformchanged');
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
@@ -938,16 +936,11 @@ class PixiWorkarounds {
 					if (this.worldTransformChanged)
 					{
 						this.worldTransformChanged = false;
-
-						this._boundsID++;
+						this._boundsId++;
 						this.transform.updateTransform(this.parent.transform);
-
-						// TODO: check render flags, how to process stuff here
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
 						this.layoutText();
-
-						this.emit('transformchanged');
 
 						for (let i = 0, j = this.children.length; i < j; ++i) {
 							const child = this.children[i];
@@ -963,6 +956,8 @@ class PixiWorkarounds {
 							this.localTransformChanged = false;
 							DisplayObjectHelper.updateNativeWidget(this);
 						}
+
+						this.emit('transformchanged');
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 

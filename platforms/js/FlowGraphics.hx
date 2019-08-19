@@ -289,8 +289,9 @@ class FlowGraphics extends Graphics {
 
 		nativeWidget = Browser.document.createElementNS('http://www.w3.org/2000/svg', node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
-		nativeWidget.style.transformOrigin = 'top left';
-		nativeWidget.style.position = 'fixed';
+		// nativeWidget.className = 'nativeWidget';
+		nativeWidget.style.position = "absolute";
+		nativeWidget.style.transformOrigin = "top left";
 
 		updateNativeWidgetGraphicsData();
 		updateNativeWidgetDisplay();

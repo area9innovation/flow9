@@ -252,8 +252,7 @@ class FlowSprite extends Sprite {
 
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
-		nativeWidget.style.transformOrigin = 'top left';
-		nativeWidget.style.position = 'fixed';
+		nativeWidget.className = 'nativeWidget';
 		nativeWidget.src = url;
 
 		updateNativeWidgetDisplay();
