@@ -1,0 +1,81 @@
+import tools/flowc/backends/inca/special_flow;
+import tools/flowc/backends/inca/env;
+
+export {
+	fi2special(env : IncaEnv) -> SiEnv;
+}
+
+fi2special(env : IncaEnv) -> SiEnv {
+	env0 = SiEnv(makeTree(), makeTree());
+	SiEnv(
+		env0 with functions =
+			foldTree(env.functions, env0.functions, 
+				\n : string, f : FiFunctionDec, acc : Tree<string, SiFunction> -> setTree(acc, n, fifun2special(env, f))
+			)
+	);
+}
+
+fifun2special(env : IncaEnv, fi : FiFunctionDec) -> SiFunction {
+	SiFunction(
+		fi.name, map(fi.lambda.args, \a : FiFunArg -> {
+			SiArgument(a.name, fiType2special(env, a.type))
+		}),
+		fiType2special(env, fi.type.returnType),
+		fiExp2special(env, fi.lambda)
+	);
+}
+
+fiType2special(env : IncaEnv, a : FiType) -> SiType {
+	error = \e -> {
+		println("Do not support " + e + " types");
+		SiTypeVoid();
+	}
+	switch (a) {
+		FiTypeArray(t): SiTypeArray(fiType2special(env, t));
+		FiTypeFunction(args, returnType): {
+			error("function");
+		}
+		FiTypeRef(t): error("ref"); 
+		FiTypeParameter(n): error("polymorphic");
+		FiTypeBool(): SiTypeBool();
+		FiTypeInt(): SiTypeInt();
+		FiTypeDouble(): SiTypeDouble();
+		FiTypeString(): SiTypeString();
+		FiTypeFlow(): error("flow");
+		FiTypeVoid(): SiTypeVoid();
+		FiTypeNative(): error("name");
+		FiTypeName(name, typeparameters): {
+			mstr = lookupTree(env.structs, name);
+			switch (mstr) {
+				None(): {
+					muni = lookupTree(env.unions, name);
+					switch (muni) {
+						None(): error("Unknown name " + name);
+						Some(ut): {
+							types = map(ut.typenames, \t -> {
+								fiType2special(env, t);
+							});
+							expanded :[[SiTypeStruct]] = map(types, \tt : SiType -> {
+								switch (tt) {
+									SiTypeUnion(__, ss): ss;
+									SiTypeStruct(__, __): [tt];
+									default: [];
+								}
+							});
+							SiTypeUnion(name, concatA(expanded));
+						}
+					}
+				}
+				Some(str): {
+					SiTypeStruct(str.name, map(str.args, \ar : FiStructArg -> {
+						SiStructField(ar.name, fiType2special(env, ar.type))
+					}))
+				}
+			}
+		}
+	}
+}
+
+fiExp2special(env : IncaEnv, e : FiExp) -> SiExp {
+	SiVoid();
+}
