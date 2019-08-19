@@ -870,8 +870,6 @@ class RenderSupportJSPixi {
 		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
 	}
 
-	private static var animateId = 0;
-
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
@@ -879,8 +877,6 @@ class RenderSupportJSPixi {
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
-				var id = animateId++;
-//				untyped console.log("Animate ["+id+"] BEGIN");
 				var startAt = Date.now().getTime();
 				TransformChanged = false;
 
@@ -895,7 +891,6 @@ class RenderSupportJSPixi {
 				}
 
 				untyped PixiRenderer._lastObjectRendered = PixiStage;
-				untyped console.log("Animate ["+id+"] END in " + (Date.now().getTime() - startAt));
 			} else {
 				AccessWidget.updateAccessTree();
 
@@ -937,11 +932,6 @@ class RenderSupportJSPixi {
 	}
 
 	public static inline function InvalidateStage() : Void {
-		// if (!PixiStageChanged) {
-		// 	untyped console.trace("InvalidateStage ["+animateId+"]");
-		// } else {
-		// 	untyped console.log("InvalidateStage ["+animateId+"]");
-		// }
 		PixiStageChanged = true;
 	}
 
