@@ -22,7 +22,7 @@ import BlurFilter;
 using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
-	public static var DomRenderer : Bool = true;//Util.getParameter("renderer") == "html";
+	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage = new FlowContainer(true);

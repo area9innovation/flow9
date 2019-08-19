@@ -3,6 +3,7 @@ import js.Browser;
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
 import pixi.core.display.Bounds;
+import pixi.core.math.Matrix;
 
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
@@ -703,42 +704,79 @@ class DisplayObjectHelper {
 			var viewBounds = untyped clip.viewBounds;
 
 			if (viewBounds != null ) {
-				nativeWidget.style.overflow = null;
-				nativeWidget.style.clipPath = null;
-				nativeWidget.style.clip = 'rect(
-					${viewBounds.minY}px,
-					${viewBounds.maxX}px,
-					${viewBounds.maxY}px,
-					${viewBounds.minX}px
-				)';
-			} else if (scrollRect != null) {
-				nativeWidget.style.clipPath = null;
-				nativeWidget.style.clip = null;
+				nativeWidget.style.width = '${viewBounds.maxX - viewBounds.minX}px';
+				nativeWidget.style.height = '${viewBounds.maxY - viewBounds.minY}px';
 
+				nativeWidget.style.overflow = "hidden";
+				nativeWidget.scroll(viewBounds.minX, untyped viewBounds.minY);
+			} else if (scrollRect != null) {
 				nativeWidget.style.width = '${scrollRect.width}px';
 				nativeWidget.style.height = '${scrollRect.height}px';
 
 				nativeWidget.style.overflow = "hidden";
-				nativeWidget.scroll(untyped clip.scrollRect.x, untyped clip.scrollRect.y);
+				nativeWidget.scroll(scrollRect.x, scrollRect.y);
 			} else if (mask != null) {
-				if (Platform.isIE || Platform.isEdge || mask.isFastRect()) {
-					nativeWidget.style.overflow = null;
-					nativeWidget.style.clipPath = null;
-					nativeWidget.style.clip = 'rect(
-						${mask.y}px,
-						${mask.x + getWidth(mask)}px,
-						${mask.y + getHeight(mask)}px,
-						${mask.x}px
-					)';
-				} else {
-					nativeWidget.style.overflow = null;
-					nativeWidget.style.clip = null;
-					nativeWidget.style.clipPath = getClipPath(mask);
+				var graphicsData = mask.graphicsData;
+
+				mask.updateTransform();
+				var transform = clip.worldTransform.copy(new Matrix()).prepend(mask.worldTransform.invert());
+
+				if (graphicsData != null) {
+					var data = graphicsData[0];
+
+					if (data.shape.type == 0) {
+						nativeWidget.style.overflow = null;
+						var width = getWidth(clip);
+						var height = getHeight(clip);
+						nativeWidget.style.width = '${width * transform.a + height * transform.c}px';
+						nativeWidget.style.height = '${width * transform.b + height * transform.d}px';
+
+						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map((p, i) =>
+							i % 2 == 0 ?
+							(transform.tx + (clip.x + p) * transform.a) + 'px ' :
+							'' + (transform.ty + (clip.y + p) * transform.d) + 'px' + (i != data.shape.points.length - 1 ? ',' : '')).join('') + ')'");
+					} else if (data.shape.type == 1) {
+						nativeWidget.style.clipPath = null;
+						nativeWidget.style.width = '${data.shape.width * transform.a + data.shape.height * transform.c}px';
+						nativeWidget.style.height = '${data.shape.width * transform.b + data.shape.height * transform.d}px';
+
+						nativeWidget.style.overflow = "hidden";
+						nativeWidget.scroll(
+							untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
+							untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
+						);
+					} else if (data.shape.type == 2) {
+						nativeWidget.style.clipPath = null;
+						nativeWidget.style.width = '${data.shape.radius * 2.0 * (transform.a + transform.c)}px';
+						nativeWidget.style.height = '${data.shape.radius * 2.0 * (transform.b + transform.d)}px';
+						nativeWidget.style.borderRadius = '${data.shape.radius}px';
+
+						nativeWidget.style.overflow = "hidden";
+						nativeWidget.scroll(
+							untyped transform.tx + (data.shape.x - data.shape.radius) * transform.a + (data.shape.y - data.shape.radius) * transform.c,
+							untyped transform.ty + (data.shape.x - data.shape.radius) * transform.b + (data.shape.y - data.shape.radius) * transform.d
+						);
+					} else if (data.shape.type == 4) {
+						nativeWidget.style.clipPath = null;
+						nativeWidget.style.width = '${data.shape.width * transform.a + data.shape.height * transform.c}px';
+						nativeWidget.style.height = '${data.shape.width * transform.b + data.shape.height * transform.d}px';
+						nativeWidget.style.borderRadius = '${data.shape.radius * (transform.a + transform.c + transform.b + transform.d) / 2.0}px';
+
+						nativeWidget.style.overflow = "hidden";
+						nativeWidget.scroll(
+							untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
+							untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
+						);
+					}  else {
+						nativeWidget.style.clipPath = null;
+						nativeWidget.style.overflow = null;
+
+						trace("updateNativeWidgetMask: Unknown shape type");
+						trace(data);
+					}
 				}
 			} else {
 				nativeWidget.style.overflow = null;
-				nativeWidget.style.clip = null;
-				nativeWidget.style.clipPath = null;
 			}
 		}
 	}

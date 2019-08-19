@@ -284,14 +284,12 @@ class FlowGraphics extends Graphics {
 		return newGraphics;
 	};
 
-	private function createNativeWidget(?node_name : String = "svg") : Void {
+	private function createNativeWidget(?node_name : String = "div") : Void {
 		deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElementNS('http://www.w3.org/2000/svg', node_name);
+		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
-		// nativeWidget.className = 'nativeWidget';
-		nativeWidget.style.position = "absolute";
-		nativeWidget.style.transformOrigin = "top left";
+		nativeWidget.className = 'nativeWidget';
 
 		updateNativeWidgetGraphicsData();
 		updateNativeWidgetDisplay();
@@ -305,64 +303,141 @@ class FlowGraphics extends Graphics {
 			    nativeWidget.removeChild(nativeWidget.firstChild);
 			}
 
-			for (data in graphicsData) {
-				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
-					var g = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
+			if (graphicsData.length != 1) {
+				for (data in graphicsData) {
+					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
+
+					svg.style.width = '${localBounds.maxX - localBounds.minX}px';
+					svg.style.height = '${localBounds.maxY - localBounds.minY}px';
+					svg.style.left = '${localBounds.minX}px';
+					svg.style.top = '${localBounds.minY}px';
+					svg.style.position = 'absolute';
+
+					if (data.fill != null) {
+						svg.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
+					} else {
+						svg.setAttribute("fill", "none");
+					}
+
+					if (data.lineWidth != null && data.lineWidth > 0) {
+						svg.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
+						svg.setAttribute("stroke-width", Std.string(data.lineWidth));
+					} else {
+						svg.setAttribute("stroke", "none");
+					}
 
 					if (data.shape.type == 0) {
 						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
-						var d : String = untyped __js__("data.shape.points.map((p, i) => i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ').join('')");
+						var d : String = untyped __js__("data.shape.points.map((p, i) => i % 2 == 0 ?
+							(i == 0 ? 'M' : 'L') + (p - this.localBounds.minX) + ' ' : '' + (p - this.localBounds.minY) + ' ').join('')");
 						path.setAttribute("d", d);
 
-						g.appendChild(path);
+						svg.appendChild(path);
 					} else if (data.shape.type == 1) {
 						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
 
-						rect.setAttribute("x", Std.string(data.shape.x));
-						rect.setAttribute("y", Std.string(data.shape.y));
+						rect.setAttribute("x", Std.string(data.shape.x - localBounds.minX));
+						rect.setAttribute("y", Std.string(data.shape.y - localBounds.minY));
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
 
-						g.appendChild(rect);
+						svg.appendChild(rect);
 					} else if (data.shape.type == 2) {
 						var circle = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'circle');
 
-						circle.setAttribute("cx", Std.string(data.shape.x));
-						circle.setAttribute("cy", Std.string(data.shape.y));
+						circle.setAttribute("cx", Std.string(data.shape.x - localBounds.minX));
+						circle.setAttribute("cy", Std.string(data.shape.y - localBounds.minY));
 						circle.setAttribute("r", Std.string(data.shape.radius));
 
-						g.appendChild(circle);
+						svg.appendChild(circle);
 					} else if (data.shape.type == 4) {
 						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
 
-						rect.setAttribute("x", Std.string(data.shape.x));
-						rect.setAttribute("y", Std.string(data.shape.y));
+						rect.setAttribute("x", Std.string(data.shape.x - localBounds.minX));
+						rect.setAttribute("y", Std.string(data.shape.y - localBounds.minY));
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
 						rect.setAttribute("rx", Std.string(data.shape.radius));
 						rect.setAttribute("ry", Std.string(data.shape.radius));
 
-						g.appendChild(rect);
+						svg.appendChild(rect);
 					} else {
 						trace("updateNativeWidgetGraphicsData: Unknown shape type");
 						trace(data);
 					}
 
-					if (data.fill != null) {
-						g.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
-					} else {
-						g.setAttribute("fill", "none");
-					}
+					nativeWidget.appendChild(svg);
+				}
+			} else {
+				var data = graphicsData[0];
 
-					if (data.lineWidth != null && data.lineWidth > 0) {
-						g.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
-						g.setAttribute("stroke-width", Std.string(data.lineWidth));
-					} else {
-						g.setAttribute("stroke", "none");
-					}
+				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
+					if (data.shape.type == 0) {
+						var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
+						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
-					nativeWidget.appendChild(g);
+						var d : String = untyped __js__("data1.shape.points.map((p, i) => i % 2 == 0 ?
+							(i == 0 ? 'M' : 'L') + (p - this.localBounds.minX) + ' ' : '' + (p - this.localBounds.minY) + ' ').join('')");
+						path.setAttribute("d", d);
+
+						if (data.fill != null) {
+							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
+						} else {
+							path.setAttribute("fill", "none");
+						}
+
+						if (data.lineWidth != null && data.lineWidth > 0) {
+							path.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
+							path.setAttribute("stroke-width", Std.string(data.lineWidth));
+						} else {
+							path.setAttribute("stroke", "none");
+						}
+
+						svg.style.width = '${localBounds.maxX - localBounds.minX}px';
+						svg.style.height = '${localBounds.maxY - localBounds.minY}px';
+						svg.style.left = '${localBounds.minX}px';
+						svg.style.top = '${localBounds.minY}px';
+						svg.style.position = 'absolute';
+
+						svg.appendChild(path);
+						nativeWidget.appendChild(svg);
+					} else {
+						if (data.fill != null) {
+							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+						} else {
+							nativeWidget.style.background = null;
+						}
+
+						if (data.lineWidth != null && data.lineWidth > 0) {
+							nativeWidget.style.border = '${data.lineWidth}}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
+						} else {
+							nativeWidget.style.border = null;
+						}
+
+						if (data.shape.type == 1) {
+							nativeWidget.style.marginLeft = '${data.shape.x}px';
+							nativeWidget.style.marginTop = '${data.shape.y}px';
+							nativeWidget.style.width = '${data.shape.width}px';
+							nativeWidget.style.height = '${data.shape.height}px';
+							nativeWidget.style.borderRadius = null;
+						} else if (data.shape.type == 2) {
+							nativeWidget.style.marginLeft = '${data.shape.x - data.shape.radius}px';
+							nativeWidget.style.marginTop = '${data.shape.y - data.shape.radius}px';
+							nativeWidget.style.width = '${data.shape.radius * 2}px';
+							nativeWidget.style.height = '${data.shape.radius * 2}px';
+							nativeWidget.style.borderRadius = '${data.shape.radius}px';
+						} else if (data.shape.type == 4) {
+							nativeWidget.style.marginLeft = '${data.shape.x}px';
+							nativeWidget.style.marginTop = '${data.shape.y}px';
+							nativeWidget.style.width = '${data.shape.width}px';
+							nativeWidget.style.height = '${data.shape.height}px';
+							nativeWidget.style.borderRadius = '${data.shape.radius}px';
+						} else {
+							trace('updateNativeWidgetGraphicsData: Unknown shape type');
+							trace(data);
+						}
+					}
 				}
 			}
 

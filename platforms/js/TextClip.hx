@@ -343,7 +343,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 		} else {
 			nativeWidget.innerText = text;
-			nativeWidget.style.lineHeight = interlineSpacing != 0 ? 'calc(100% + ${interlineSpacing}px)' : null;
+			nativeWidget.style.lineHeight = interlineSpacing != 0 ? '${style.fontSize * 1.15 + interlineSpacing}px' : null;
 		}
 
 		nativeWidget.style.color = style.fill;
