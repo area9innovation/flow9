@@ -513,12 +513,8 @@ class CppEnvironment {
 		this.vname = vname;
 
 		lines = 0;
-		//line_str = new StringBuf();
 		nlocals = ntemps = nargs = next_ctx = 0;
 		upvalues = [];
-		//idxvars = new OrderedHash();
-		//idxstack = new Array();
-		//idxstack.push(new OrderedHash<String>());
 		args_used = tail_call = false;
 		locals = new Map();
 		local_reuse = [];
@@ -553,13 +549,10 @@ class CppEnvironment {
 	public var closure : CppPlaceInfo;
 	public var closure_type : StructInfo;
 	public var upvalues : Array<String>;
-	//public var idxvars : OrderedHash<String>;
-	//public var idxstack : Array<OrderedHash<String>>;
 
 	public var tail_call : Bool;
 
 	public var lines : Int;
-	//public var line_str : StringBuf;
 	public var cur_ctx : CppContext;
 
 	public var locals : Map<String, CppPlaceInfo>;
@@ -652,30 +645,6 @@ class CppEnvironment {
 			local_reuse.push(curdef.slot);
 	}
 
-	/*public function popIdxStack() {
-		idxstack.push(new OrderedHash<String>());
-	}
-	public function pushIdxStack() {
-		idxstack.pop();
-	}
-	private function isNewVar(name : String) {
-		for (idxs in idxstack) {
-			if (idxs.get(name) != null) {
-				return false;
-			}
-		}
-		return true;
-	}
-	public function registerIdxVar(name : String, type : String) {
-		if (isNewVar(name)) {
-			if (idxstack.length == 0) {
-				throw 'idxstack.length == 0';
-			}
-			idxstack[idxstack.length - 1].set(name, type);
-			cur_ctx.wrsemi(type + ' ' + name);
-		}
-	}*/
-
 	public function stashGlobalMeta() {
 		for (info in meta_globals.iterator()) {
 			info.my = info.def.meta;
@@ -740,7 +709,6 @@ class CppContext {
 
 	public function wrbegin() : StringBuf {
 		env.lines++;
-		//var line_str = env.line_str;
 		var line_str = new StringBuf();
 		line_str.add(indent);
 		return line_str;
@@ -1051,7 +1019,6 @@ class CppContext {
 		if (idxVarType(name) == null) {
 			idxvars.set(name, type);
 			env.addCppLine(CppDecl(type, name, indent, env.code_lines));
-			//wrsemi(type + ' ' + name);
 		}
 	}
 }
@@ -1908,9 +1875,7 @@ class CppWriter {
 		if (env.tail_call)
 			o.writeString('tail_call:\n');
 
-		var code = env.code_lines.codeString();
-		//o.writeString(env.line_str.toString());
-		o.writeString(code);
+		o.writeString(env.code_lines.codeString());
 
 		o.writeString('}\n');
 		/*o.close();
