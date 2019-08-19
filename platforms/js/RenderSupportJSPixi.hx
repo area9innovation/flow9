@@ -880,7 +880,7 @@ class RenderSupportJSPixi {
 
 			if (RendererType == "canvas") {
 				var id = animateId++;
-				untyped console.log("Animate ["+id+"] BEGIN");
+//				untyped console.log("Animate ["+id+"] BEGIN");
 				var startAt = Date.now().getTime();
 				TransformChanged = false;
 
@@ -937,11 +937,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static inline function InvalidateStage() : Void {
-		if (!PixiStageChanged) {
-			untyped console.trace("InvalidateStage ["+animateId+"]");
-		} else {
-			untyped console.log("InvalidateStage ["+animateId+"]");
-		}
+		// if (!PixiStageChanged) {
+		// 	untyped console.trace("InvalidateStage ["+animateId+"]");
+		// } else {
+		// 	untyped console.log("InvalidateStage ["+animateId+"]");
+		// }
 		PixiStageChanged = true;
 	}
 
