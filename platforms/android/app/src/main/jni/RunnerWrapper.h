@@ -387,7 +387,6 @@ class AndroidRunnerWrapper {
     friend class AndroidMediaRecorderSupport;
     friend class AndroidWebSocketSupport;
     friend class AndroidFileSystemInterface;
-    friend void* pthread_runner_executor(void*);
 
     // These must be updated on every outermost java->c++ boundary
     JNIEnv *env;
