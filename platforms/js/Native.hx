@@ -407,12 +407,9 @@ class Native {
 		return str.toUpperCase();
 	}
 
-	public static function string2utf8(str : String) : Array<Int> {
-		var a = new Array<Int>();
+	public static function string2utf8(str : String) : Array<Int> {		
 		var bytes = haxe.io.Bytes.ofString(str);
-		for (i in 0...bytes.length) {
-			a.push(bytes.get(i));
-		}
+		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
 		return a;
 	}
 
