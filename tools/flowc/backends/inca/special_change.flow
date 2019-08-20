@@ -1,13 +1,14 @@
 import tools/flowc/backends/inca/special_flow;
+import tools/flowc/incremental/fi_helpers;
 import math/math;
 
 export {
 	// Generate all change functions for this function and populate the environment with them.
 	// These are the functions that allow one argument to change.
-	makeChangeFunction(env : SiEnv, f : SiFunction) -> SiEnv;
+	makeChangeFunction(names : FiGlobalNames, env : SiEnv, f : SiFunction) -> SiEnv;
 }
 
-makeChangeFunction(env : SiEnv, f : SiFunction) -> SiEnv {
+makeChangeFunction(names : FiGlobalNames, env : SiEnv, f : SiFunction) -> SiEnv {
 	verbose = false;
 	/*if (verbose) {
 		println(prettyF(f));
@@ -22,7 +23,7 @@ makeChangeFunction(env : SiEnv, f : SiFunction) -> SiEnv {
 				println(prettyP(dynamicCode));
 			}*/
 
-			res = reuseOldOutput(dynamicCode, f.output, SiVarRef("__old_output"));
+			res = reuseOldOutput(names, dynamicCode, f.output, SiVarRef("__old_output"));
 
 			fn = SiFunction(f.name + "_change_" + i2s(argno), 
 				arrayPush(
@@ -149,7 +150,7 @@ isSiDyn(code : SiExp) -> bool {
 // Given a code with SiDyn tags, and a known type for the output,
 // as well as the last known output value, reuse as much of the 
 // output as possible
-reuseOldOutput(code : SiExp, type : SiType, output : SiExp) -> SiExp {
+reuseOldOutput(names : FiGlobalNames, code : SiExp, type : FiType, output : SiExp) -> SiExp {
 	switch (code) {
 		SiVoid(): code;
 		SiBool(v): code; // either works, code is probably shortest
@@ -161,16 +162,16 @@ reuseOldOutput(code : SiExp, type : SiType, output : SiExp) -> SiExp {
 
 		SiStructName(name): code;
 		SiConstructor(name, args): {
-			reuseConstructor(code, type, output)
+			reuseConstructor(names, code, type, output)
 		}
 		SiIf(c, then, else_): {
-			SiIf(c, reuseOldOutput(then, type, output), reuseOldOutput(else_, type, output));
+			SiIf(c, reuseOldOutput(names, then, type, output), reuseOldOutput(names, else_, type, output));
 		}
 		SiSwitch(var, cases): {
 			SiSwitch(var,
 				map(cases, \c -> {
 					SiCase(c.struct, c.args, 
-						reuseOldOutput(c.body, type, output)
+						reuseOldOutput(names, c.body, type, output)
 					)
 				})
 			)
@@ -203,14 +204,14 @@ reuseOldOutput(code : SiExp, type : SiType, output : SiExp) -> SiExp {
 					}
 				}
 				SiConstructor(name, args): {
-					reuseConstructor(c, type, output)
+					reuseConstructor(names, c, type, output)
 				}
 				SiSeq(s): reuseSeq(c, output);
 				SiIf(cn, then, else_): {
 					if (isSiDyn(cn)) {
 						code
 					} else {
-						SiIf(cn, reuseOldOutput(then, type, output), reuseOldOutput(else_, type, output));
+						SiIf(cn, reuseOldOutput(names, then, type, output), reuseOldOutput(names, else_, type, output));
 					}
 				}
 				SiSwitch(var, cases): {
@@ -220,7 +221,7 @@ reuseOldOutput(code : SiExp, type : SiType, output : SiExp) -> SiExp {
 						SiSwitch(var,
 							map(cases, \cs -> {
 								SiCase(cs.struct, cs.args, 
-									reuseOldOutput(cs.body, type, output)
+									reuseOldOutput(names, cs.body, type, output)
 								)
 							})
 						)
@@ -233,38 +234,48 @@ reuseOldOutput(code : SiExp, type : SiType, output : SiExp) -> SiExp {
 	}
 }
 
-reuseConstructor(code : SiConstructor, type : SiType, output : SiExp) -> SiExp {
-	switch (type) {
-		SiTypeStruct(sname, sfields): {
-			if (SiStructName(sname) == code.name) {
-				SiConstructor(code.name,
-					mapi(sfields, \i, field -> {
-						reuseOldOutput(code.fields[i], field.type, SiField(output, i))
-					})
-				);
-			} else {
-				// OK, too bad, we have to just redo it
-				code;
+reuseConstructor(names : FiGlobalNames, code : SiConstructor, type : FiType, output : SiExp) -> SiExp {
+	switch (type : FiType) {
+		FiTypeVoid(): code;
+		FiTypeBool(): code;
+		FiTypeInt(): code;
+		FiTypeDouble(): code;
+		FiTypeString(): code;
+		FiTypeArray(at): code;
+		FiTypeFunction(args, returnType): code;
+		FiTypeRef(t): code;
+		FiTypeFlow(): code;
+		FiTypeNative(): code;
+		FiTypeName(name, typeparameters): {
+			stype = resolveFiTypeName(names, type);
+			switch (stype) {
+				FiTypeStruct(sname, typars, sfields, start): {
+					if (SiStructName(sname) == code.name) {
+						SiConstructor(code.name,
+							mapi(sfields, \i, field -> {
+								reuseOldOutput(names, code.fields[i], field.type, SiField(output, i))
+							})
+						);
+					} else {
+						// OK, too bad, we have to just redo it
+						code;
+					}
+				}
+				FiTypeUnion(n, typars, ss, start): {
+					// We expect a result of a given union.
+					// Our code produces a value of a given struct type.
+					// That struct type should be a part of the union, so find it
+					// and we can reuse as if the result was just that struct.
+					mstruct = find(ss, \s -> SiStructName(s.name) == code.name);
+					switch (mstruct) {
+						None(): code;
+						Some(str): reuseConstructor(names, code, str, output)
+					}
+				}
 			}
 		}
-		SiTypeVoid(): code;
-		SiTypeBool(): code;
-		SiTypeInt(): code;
-		SiTypeDouble(): code;
-		SiTypeString(): code;
-		SiTypeArray(at): code;
-		SiTypeUnion(n, ss): {
-			// We expect a result of a given union.
-			// Our code produces a value of a given struct type.
-			// That struct type should be a part of the union, so find it
-			// and we can reuse as if the result was just that struct.
-			mstruct = find(ss, \s -> SiStructName(s.name) == code.name);
-			switch (mstruct) {
-				None(): code;
-				Some(str): reuseConstructor(code, str, output)
-			}
-		}
-		SiTypeParameter(__): code;
+
+		FiTypeParameter(__): code;
 	}
 }
 

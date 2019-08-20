@@ -24,65 +24,17 @@ fifun2special(env : IncaEnv, fi : FiFunctionDec) -> SiFunction {
 	onError = \e -> {
 		println("Error in " + fi.name + ": " + e);
 	}
+	println("Converting " + fi.name);
+	ex = fiExp2special(env, onError, fi.lambda.body);
 	SiFunction(
 		fi.name, map(fi.lambda.args, \a : FiFunArg -> {
-			SiArgument(a.name, fiType2special(env, onError, a.type))
+			SiArgument(a.name, a.type)
 		}),
-		fiType2special(env, onError, fi.type.returnType),
-		fiExp2special(env, onError, fi.lambda.body)
+		fi.type.returnType,
+		ex
 	);
 }
 
-fiType2special(env : IncaEnv, onError : (string) -> void, a : FiType) -> SiType {
-	error = \e -> {
-		onError("Do not support " + e + " types");
-		SiTypeVoid();
-	}
-	switch (a) {
-		FiTypeArray(t): SiTypeArray(fiType2special(env, onError, t));
-		FiTypeFunction(args, returnType): {
-			error("function");
-		}
-		FiTypeRef(t): error("ref"); 
-		FiTypeParameter(n): SiTypeParameter(n);
-		FiTypeBool(): SiTypeBool();
-		FiTypeInt(): SiTypeInt();
-		FiTypeDouble(): SiTypeDouble();
-		FiTypeString(): SiTypeString();
-		FiTypeFlow(): error("flow");
-		FiTypeVoid(): SiTypeVoid();
-		FiTypeNative(): error("name");
-		FiTypeName(name, typeparameters): {
-			mstr = lookupTree(env.structs, name);
-			switch (mstr) {
-				None(): {
-					muni = lookupTree(env.unions, name);
-					switch (muni) {
-						None(): error("Unknown name " + name);
-						Some(ut): {
-							types = map(ut.typenames, \t -> {
-								fiType2special(env, onError, t);
-							});
-							expanded :[[SiTypeStruct]] = map(types, \tt : SiType -> {
-								switch (tt) {
-									SiTypeUnion(__, ss): ss;
-									SiTypeStruct(__, __): [tt];
-									default: [];
-								}
-							});
-							SiTypeUnion(name, concatA(expanded));
-						}
-					}
-				}
-				Some(str): {
-					SiTypeStruct(str.name, map(str.args, \ar : FiStructArg -> {
-						SiStructField(ar.name, fiType2special(env, onError, ar.type))
-					}))
-				}
-			}
-		}
-	}
-}
 
 LambdaReplacements(
 	// Prefix for generated names
@@ -96,22 +48,19 @@ LambdaReplacements(
 liftLocalLambdas(env : IncaEnv) -> IncaEnv {
 	foldTree(env.functions, env, \fnname, fndec, acc -> {
 		rep = LambdaReplacements(fnname, ref makeTree(), ref makeTree());
-		nlambda = extractLocalLambdas(rep, fndec.lambda);
-		switch (nlambda) {
-			FiLambda(__, __, __, __): {
-				// TODO: Check that there are no free vars in the body
-				// outside of globals. Requires that IncaEnv is extended
-				// with global names, it seems.
-				newFunc = FiFunctionDec(fndec with lambda = nlambda);
-				func0 = setTree(acc.functions, fnname, newFunc);
-				func1 = mergeTree(func0, ^(rep.lambdas));
-				IncaEnv(
-					acc with
-					functions = func1;
-				)
-			}
-			default: acc;
-		}
+		nbody = extractLocalLambdas(rep, fndec.lambda.body);
+
+		// TODO: Check that there are no free vars in the body
+		// outside of globals. Requires that IncaEnv is extended
+		// with global names, it seems.
+		nlambda = FiLambda(fndec.lambda with body = nbody);
+		newFunc = FiFunctionDec(fndec with lambda = nlambda);
+		func0 = setTree(acc.functions, fnname, newFunc);
+		func1 = mergeTree(func0, ^(rep.lambdas));
+		IncaEnv(
+			acc with
+			functions = func1;
+		)
 	});
 }
 
@@ -142,7 +91,9 @@ extractLocalLambdas(acc : LambdaReplacements, ex : FiExp) -> FiExp {
 			}
 		}
 		FiLambda(args, body, type, start): {
-			FiLambda(args, extractLocalLambdas(acc, body), type, start)
+			// OK, we convert it
+			lambdaName = addLocalLambda(acc, "implicit", type, ex, start);
+			FiVar(lambdaName, type, start)
 		}
 		FiCall(f, args, type, start): {
 			FiCall(
@@ -188,7 +139,7 @@ extractLocalLambdas(acc : LambdaReplacements, ex : FiExp) -> FiExp {
 	}
 }
 
-addLocalLambda(acc : LambdaReplacements, name : string, type : FiTypeFunction, lambda : FiLambda, start : int) -> void {
+addLocalLambda(acc : LambdaReplacements, name : string, type : FiTypeFunction, lambda : FiLambda, start : int) -> string {
 	newName = acc.prefix + "_" + name + "_lambda_" + i2s(sizeTree(^(acc.lambdas)));
 	acc.lambdas := setTree(^(acc.lambdas), newName, 
 		FiFunctionDec(
@@ -200,6 +151,7 @@ addLocalLambda(acc : LambdaReplacements, name : string, type : FiTypeFunction, l
 		)
 	);
 	acc.renamings := setTree(^(acc.renamings), name, newName);
+	newName;
 }
 
 fiExp2special(env : IncaEnv, onError : (string) -> void, fe : FiExp) -> SiExp {
