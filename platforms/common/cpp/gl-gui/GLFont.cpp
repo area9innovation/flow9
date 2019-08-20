@@ -847,6 +847,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     float new_cursor, pos;
     float cursorPreReverse = 0.0f;
     int reverseCount = 0;
+    unsigned long int dirStack = 0;  // 16 levels, make longlong if need more.
 
     shared_ptr<Utf32InputIterator> strIter, strDirectAgain, strReverseRemains;
     strDirectAgain = end.clone();
@@ -882,6 +883,15 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
         }
         chrIdx = strIter->position();
         chr = **strIter;
+        if ((chr | 1) == 0x202B) {
+            dirStack <<= 2;
+            dirStack |= 2 | (chr & 1);
+        } else if (chr == 0x202C) {
+            chr = 0x202A | (dirStack & 2? dirStack & 1 : rtl);
+            dirStack >>= 2;
+        }
+        bool isReverseOverride = (dirStack & 2) && (rtl == !(dirStack & 1));
+        bool isDirectOverride = (dirStack & 2) && (rtl != !(dirStack & 1));
 
         if (!processIfReverseRemains(
             *strDirectAgain == *strIter,
@@ -892,15 +902,17 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
             strDirectAgain,
             cursor,
             reverseCount
-        )) if (isReverse(chr)) {  // Exploring and saving reverse fragment boundary.
+        )) if (isReverseOverride || isReverse(chr)) {  // Exploring and saving reverse fragment boundary.
             cursorPreReverse = cursor;
             strReverseRemains = strIter->clone();
             strDirectAgain = strIter->clone();
             prev = NULL;  // No kerning between directions.
-            if (isWeakChar(chr)) {
+            if (isReverseOverride) {
+                for (; *strDirectAgain != end && **strDirectAgain != 0x202C; ++*strDirectAgain);
+            } else if (isWeakChar(chr)) {
                 for (; *strDirectAgain != end && isWeakChar(**strDirectAgain); ++*strDirectAgain)
                     chr = **strDirectAgain;
-                if (!isReverse(chr)) {  // For cases of punctuation after punctuation-separated numbers.
+                if (!isReverseOverride && !isReverse(chr)) {  // For cases of punctuation after punctuation-separated numbers.
                     strDirectAgain = strDirectAgain->cloneReversed();
                     ++*strDirectAgain;
                     strDirectAgain = strDirectAgain->cloneReversed();
@@ -1042,6 +1054,7 @@ bool GLTextLayout::isWeakChar(ucs4_char code) {
 
 bool GLTextLayout::isRtlChar(ucs4_char code) {
     return (code >= 0x590 && code < 0x900)
+        || (code == 0x202B)
         || (code >= 0xFB1D && code < 0xFDD0)
         || (code >= 0xFDF0 && code < 0xFE00)
         || (code >= 0xFE70 && code < 0xFF00)
@@ -1055,6 +1068,7 @@ bool GLTextLayout::isLtrChar(ucs4_char code) {
         || (code >= 0x61 && code < 0x7B)
         || (code >= 0xA0 && code < 0x590)
         || (code >= 0x700 && code < 0x2000)
+        || (code == 0x202A)
         || (code >= 0x2100 && code < 0x2190)
         || (code >= 0x2460 && code < 0x2500)
         || (code >= 0x2800 && code < 0x2900)
