@@ -1,0 +1,240 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/backends/cpp2/fi2cpp2_consts;
+
+export {
+
+Cpp2TagType ::= Cpp2TVoid, Cpp2TBool, Cpp2TInt, Cpp2TDouble, Cpp2TString, Cpp2TArray, Cpp2TStruct, Cpp2TCodePointer, Cpp2TNativeFn, Cpp2TRefTo, Cpp2TNative, Cpp2TClosurePointer, Cpp2TNull;
+	Cpp2TVoid();
+	Cpp2TBool();
+	Cpp2TInt();
+	Cpp2TDouble();
+	Cpp2TString();
+	Cpp2TArray();
+	Cpp2TStruct();
+	Cpp2TCodePointer();
+	Cpp2TNativeFn();
+	Cpp2TRefTo();
+	Cpp2TNative();
+	Cpp2TClosurePointer();
+	Cpp2TNull();
+
+Cpp2TypeDeclaration(
+	name : string,
+	type : FiType,
+	is_mutable : bool
+);
+	
+Cpp2StructOrderInfo(
+	compare_idx: int,
+	name: string,
+	args: [Cpp2TypeDeclaration]
+);
+
+Cpp2StructInfo(
+	id : int, 
+	structname : string,
+	args : [Cpp2TypeDeclaration],
+	atypes : [Cpp2TagType],
+	empty_addr : int
+);
+
+Cpp2PlaceType ::= Cpp2GlobalVar, Cpp2Local, Cpp2Argument, Cpp2Temporary, Cpp2SlotAlias, Cpp2FieldAlias, Cpp2GlobalFunction, Cpp2Struct, Cpp2NoPlace;
+	Cpp2GlobalVar();
+	Cpp2Local();
+	Cpp2Argument();
+	Cpp2Temporary();
+	Cpp2SlotAlias(
+		struct_: Cpp2PlaceInfo, 
+		idx: string
+	);
+	Cpp2FieldAlias(
+		struct_: Cpp2PlaceInfo, 
+		struct_info : Cpp2StructInfo
+	);
+	Cpp2GlobalFunction(
+		nargs : int, 
+		native : Maybe<string>
+	);
+	Cpp2Struct(info : Cpp2StructInfo);
+	Cpp2NoPlace(
+		code : FiExp, 
+		errormsg : string
+	);
+
+// Information about already performed type checks
+Cpp2PlaceMetadata(
+	context : int,
+	dirty : bool,
+	tag : Maybe<Cpp2TagType>,
+	type : Maybe<FiType>,
+	struct_size : Maybe<int>,
+	struct_id : Maybe<int>,
+	known_fields : Maybe<List<string>>,
+	known_compares : Maybe<List<Cpp2PlaceInfo>>,
+	struct_ptr_gcid : Maybe<int>,
+	struct_ptr_types : Maybe<List<string>>
+);
+
+Cpp2OutputLocation ::= Cpp2OutputNone, Cpp2OutputReturn, Cpp2OutputVar, Cpp2OutputExpr, Cpp2OutputScalar;
+	Cpp2OutputNone();
+	Cpp2OutputReturn();
+	Cpp2OutputVar(rv : Cpp2PlaceInfo);
+	Cpp2OutputExpr(cb : (Cpp2Context, string) -> string);
+	Cpp2OutputScalar(name : string, tag : Cpp2TagType);
+
+Cpp2Line ::= Cpp2Decl, Cpp2Any, Cpp2Block;
+	Cpp2Decl(
+		type : string, 
+		name : string, 
+		indent : string, 
+		origin : Cpp2CodeLines
+	);
+	Cpp2Any(line : string);
+	Cpp2Block(code : Cpp2CodeLines);
+
+Cpp2CodeLines(
+	lines : ref [Cpp2Line],
+	parent : Maybe<Cpp2CodeLines>,
+);
+
+cpp2_next_guid = ref 0;
+	
+Cpp2PlaceInfo(
+	env: Maybe<Cpp2Environment>,
+	mutable place: Cpp2PlaceType,
+	mutable slot: int,
+	name : string,
+	mutable meta : Cpp2PlaceMetadata,
+	// Unique id for every distinct place in the environment.
+	uid: int,
+	mutable lvalue: string,
+	mutable rvalue : string,
+);
+
+// Contains current information about the function being compiled.
+// Controls mapping of local variable names to places.
+Cpp2Environment(
+	parent : Maybe<Cpp2Environment>,
+	mname : string,
+	vname : string,
+	depth : int,
+	mutable next_uid : int,
+	mutable next_ctx : int,
+	mutable nlocals : int,
+	mutable ntemps : int,
+	nargs : int,
+	mutable local_reuse : [int],
+	mutable args_used : bool,
+	mutable closure : Maybe<Cpp2PlaceInfo>,
+	mutable closure_type : Maybe<Cpp2StructInfo>,
+	upvalues : [string],
+	tail_call : bool,
+	lines : int,
+	cur_ctx : Maybe<Cpp2Context>,
+	mutable locals : Tree<string, Cpp2PlaceInfo>,
+	//struct_list : [Cpp2StructInfo],
+	meta_globals : Tree<int, Cpp2PlaceTriple>,
+	mutable code_lines : Cpp2CodeLines,
+);
+
+Cpp2PlaceTriple(
+	mutable def : Cpp2PlaceInfo, 
+	old: Cpp2PlaceMetadata, 
+	mutable my: Cpp2PlaceMetadata
+);
+
+// Tracks information specific to the current code flow branch,
+// and implements its proper merging when flow converges.
+Cpp2Context(
+	env : Cpp2Environment,
+	prev : Maybe<Cpp2Context>,
+	id : int,
+	gc_index : int,
+	indent : string,
+	local_names : [string],
+	local_binds : [Cpp2PlaceInfo],
+	idxvars : Tree<string, string>,
+	meta : Tree<int, Cpp2PlaceTriple>,
+);
+
+Cpp2StackTop(temp: int);
+
+Cpp2Writer(
+	p : FiProgram,
+	extStructDefs : bool,
+	entry : string,
+	includes : [string],
+	output_dir : string,
+	file_table : Tree<string, string /*haxe.io.Output*/>,
+	num_structs : int,
+	init_count : int,
+	struct_counts : [int], // by size
+	structs : Tree<string, Cpp2StructInfo>,
+	closure_structs : Tree<string, Cpp2StructInfo>,
+	structsOrder : [Cpp2StructOrderInfo],
+	struct_list : [Cpp2StructInfo],
+	struct_hdr_lines : [string],
+	struct_def_lines : [string],
+	struct_gcdef_lines : [string],
+	struct_field_names : [string],
+	struct_field_types : [int],
+	struct_info_refs : [Cpp2StructInfoRef],
+
+	//bytecode : BytesOutput,
+	const_strings : Tree<string, Cpp2ConstString>,
+
+	method_names : [string],
+	function_table : [Cpp2FunctionDescr],
+	function_map : Tree<string, int>,
+
+	global_names : [string],
+	global_map : Tree<string, Cpp2PlaceInfo>,
+
+	// Table for fast lookup of fields by name; maps [name][structid] -> index
+	field_index_table : [[int]],
+	field_index_map : Tree<string, int>,
+	field_index_list : [string],
+	
+	cur_global : string,
+	next_closure_id : int,
+	known_natives : Tree<string, Cpp2NativeDescr>,
+);
+
+Cpp2ConstString(
+	addr : int, 
+	size : int, 
+	rslot : string
+);
+
+Cpp2StructInfoRef(
+	fld_idx : Maybe<int>, 
+	type_idx : Maybe<int>,
+	def_idx : Maybe<int>, 
+	gcdef_idx : Maybe<int>,
+	gcdef_cnt : int, 
+	empty_addr : int,
+	name_addr : int, 
+	name_sz : int
+);
+
+Cpp2FunctionDescr(
+	name: string, 
+	native_name: Maybe<string>, 
+	nargs: int, 
+	fn_name: Maybe<string>
+);
+
+Cpp2NativeDescr(
+	nargs: int, 
+	noalloc: bool, 
+	cname: string
+);
+
+cpp2_err_count = ref 0;
+
+cpp2_error(msg : string) -> void {
+	cpp2_err_count := ^cpp2_err_count + 1;
+	fcPrintln("cpp2 error: " + msg);
+}
+
+}
