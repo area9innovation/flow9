@@ -986,7 +986,6 @@ jboolean AndroidRunnerWrapper::runMain()
     //params[parseUtf8("source")] = parseUtf8("nejm_knowledge");
     //params[parseUtf8("prod")] = parseUtf8("IM");
     runner.RunMain();
-
     return (jboolean) (main_ok = !runner.IsErrorReported());
 }
 
