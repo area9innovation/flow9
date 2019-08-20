@@ -34,7 +34,7 @@ class RenderSupport {
 	public static function makeVideo(width : Int, height : Int, metricsFn : Int -> Int -> Void, durationFn : Float -> Void) : Array<Dynamic>  {
 		return [];
 	}
-	
+
 	public static function setVideoVolume(stream : Dynamic, volume : Float): Void {}
 
 	public static function setVideoLooping(str: Dynamic, loop : Bool) : Void {}
@@ -44,9 +44,9 @@ class RenderSupport {
 	public static function setVideoSubtitle(str: Dynamic, text : String, size : Float, color : Int) : Void {}
 
 	public static function playVideo(str : Dynamic, filename : String, startPaused : Bool) : Void {}
-	
+
 	public static function seekVideo(str : Dynamic, seek : Float) : Void {}
-	
+
 	public static function getVideoPosition(str : Dynamic) : Float {
 		return 0.0;
 	}
@@ -54,7 +54,7 @@ class RenderSupport {
 	public static function pauseVideo(str : Dynamic) : Float {
 		return 0.0;
 	}
-	
+
 	public static function resumeVideo(str : Dynamic) : Float {
 		return 0.0;
 	}
@@ -76,7 +76,7 @@ class RenderSupport {
 	public static function setTextDirection(textfield : Dynamic, direction : String) : Void {}
 
 	public static function setAdvancedText(textfield : Dynamic, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {}
-	
+
 	public static function getTextFieldWidth(textfield : Dynamic) : Float {
 		return 0.0;
 	}
@@ -94,12 +94,12 @@ class RenderSupport {
 	public static function setTextInput(textfield : Dynamic) : Void {}
 
 	public static function setTextInputType(textfield : Dynamic, type : String) : Void {}
-	
+
 	//[- Dry up -] There already is acess attribute for tabindex
 	public static function setTabIndex(textfield : Dynamic, index : Int) : Void {}
 
 	public static function setTabEnabled(textfield : Dynamic, enabled : Bool) : Void {}
-	
+
 	public static function getContent(textfield : Dynamic) : String {
 		return "";
 	}
@@ -131,6 +131,8 @@ class RenderSupport {
 	public static function setMultiline(clip : Dynamic, multiline : Bool) : Void {}
 
 	public static function setWordWrap(clip : Dynamic, wordWrap : Bool) : Void {}
+
+	public static function setDoNotInvalidateStage(clip : Dynamic, value : Bool) : Void {}
 
 	public static function getSelectionStart(textfield : Dynamic) : Int {
 		return 0;
@@ -250,7 +252,7 @@ class RenderSupport {
 	// native beginLineGradientFill : (graphics : native, colors : [int], alphas: [double], offsets: [double], matrix : native) -> void = RenderSupport.beginFill;
 	public static function beginGradientFill(graphics : Dynamic, colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {}
 	// native setLineGradientStroke : (graphics : native, colors : [int], alphas: [double], offsets: [double]) -> void = RenderSupport.beginFill;
-	
+
 	public static function setLineGradientStroke(graphics : Dynamic, colours : Array<Int>, alphas : Array<Float>, offsets : Array<Float>, matrix : Dynamic) : Void {}
 
 	public static function makeMatrix(width : Float, height : Float, rotation : Float, xOffset : Float, yOffset : Float) : Dynamic {
@@ -306,16 +308,16 @@ class RenderSupport {
 	public static function makeBitmap() : Dynamic {
 		return null;
 	}
-	
+
 	public static function bitmapDraw(bitmap : Dynamic, clip : Dynamic, width : Int, height : Int) : Void {}
 
 	public static function addPasteEventListener(cb : Array<Dynamic> -> Void) : (Void -> Void) {
 		return function() {};
 	}
 
-	// setAccessAttributes(clip, attrs) 
+	// setAccessAttributes(clip, attrs)
 	public static function setAccessAttributes(clip : Dynamic, properties : Array<Array<Dynamic>>) : Void {}
-	
+
 	public static function setAccessCallback(clip : Dynamic, cb : Void -> Void) : Void {}
 
 	public static function setClipVisible(clip : Dynamic, vis : Bool) : Void {}
@@ -325,24 +327,24 @@ class RenderSupport {
 	}
 
 	public static function setFullScreenTarget(clip:Dynamic) : Void {}
-	
+
 	public static function setFullScreenRectangle(x:Float, y:Float, w:Float, h:Float) : Void {}
-	
+
 	public static function resetFullScreenTarget() : Void {}
-	
+
 	public static function toggleFullScreen(fs:Bool) : Void {}
-	
-	
+
+
 	public static function onFullScreen(fn : Bool -> Void) : Void -> Void {
 		return function() {};
 	}
-	
+
 	public static function isFullScreen() : Bool {
 		return false;
 	}
 
 	public static function setFullScreen(fs : Bool) : Void {}
-	
+
 	public static function setWindowTitle(title : String) : Void {}
 
 	public static function setFavIcon(url : String) : Void {}
