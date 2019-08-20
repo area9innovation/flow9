@@ -409,11 +409,9 @@ class Native {
 
 	public static function string2utf8(str : String) : Array<Int> {
 		var a = new Array<Int>();
-		var buf = new haxe.io.BytesOutput();
-		buf.writeString(str);
-		var bytes = buf.getBytes();
+		var bytes = haxe.io.Bytes.ofString(str);
 		for (i in 0...bytes.length) {
-			a.push((bytes.get(i)));
+			a.push(bytes.get(i));
 		}
 		return a;
 	}
