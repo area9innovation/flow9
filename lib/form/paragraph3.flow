@@ -1,6 +1,6 @@
 import form/paragraphtypes;
-import form/formtransforms;
 import form/line;
+import form/baseline;
 import text/bidi_text;
 
 import text/blueprint;
@@ -9,6 +9,10 @@ export {
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> Form;
 	paraLineAlignmentIsStart(align: ParaLineAlignment) -> bool;
 	getLineIndent(paraIndent : double, lineIndex : int) -> double;
+	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
+	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement;
+	makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement>;
+	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 }
 
 // TODO:
@@ -38,13 +42,9 @@ GhostForm ::= Form, Ghosted; // It is important that GhostForm is a super type o
 
 // For dynamic elements, we use a ghost to allow reuse of the physical forms
 Ghosted ::= Empty, Ghost, CoordinateInspectElement, InspectGhost;
-	CoordinateInspectElement(index : int, xc : DynamicBehaviour<double>, yc : DynamicBehaviour<double>, wh : DynamicBehaviour<WidthHeight>, lineHeight : DynamicBehaviour<double>, form : Form, detached : DynamicBehaviour<bool>);
+	CoordinateInspectElement(inspector : ParaElementInspector, form : Form);
 	InspectGhost(
-		xc : DynamicBehaviour<double>,
-		yc : DynamicBehaviour<double>,
-		wh : DynamicBehaviour<WidthHeight>,
-		lineHeight : DynamicBehaviour<double>,
-		lineNumber : DynamicBehaviour<int>,
+		inspector : ParaElementInspector,
 		form : Form
 	);
 
@@ -56,6 +56,36 @@ ParaWord(
 	form: GhostForm,
 	interactivityIdM : Maybe<int>
 );
+
+makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement> {
+	mapList(fragments.elements, \elem -> general2WrapElement(elem, fragments.style))
+}
+
+makeZeroSpaceElement(style : [CharacterStyle]) -> Form {
+	spaceMetrics = getStaticFormSize(Text(" ", style));
+	fixBaseline(spaceMetrics.baseline, Fixed(0.0, spaceMetrics.height))
+}
+
+generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
+	GeneralInspectElement(
+		ParaElementInspector(id, make(0.), make(0.), makeWH(), make(0.), make(0), make(false)),
+		EmptyLineElement()
+	)
+}
+
+general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement {
+	switch (elem) {
+		GeneralText(txt) : Text(txt, overrideCharacterStylePerAlphabet(txt, style));
+		GeneralSpace(txt) : Space(Text(txt, style));
+		NewLine() : NewLine();
+		GeneralLinePart(f, m, e) : LinePart(Text(f, style), Text(m, style), Text(e, style));
+		EmptyLineElement() : makeZeroSpaceElement(style);
+		GeneralInspectElement(inspector, element) : InspectElement(
+			inspector,
+			cast(general2WrapElement(element, style) : WrapElement -> InspectableElement)
+		);
+	}
+}
 
 renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> Form {
 
@@ -185,7 +215,7 @@ expandGlueFragments(
 					NewLine(): acc2;
 					Space(f): Cons(f, acc2);
 					LinePart(pr, i, po): Cons(i, acc2);
-					InspectElement(i, x, y, wh, lh, ln, e, __): {
+					InspectElement(inspector, e): {
 						switch (e : InspectableElement) {
 							Space(f): Cons(f, acc2);
 							Text(t, s): Cons(e, acc2);
@@ -257,11 +287,12 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 			line : Form = Line(oc);
 			getDynamicFormSize(line) |> s2w;
 		}
-		InspectElement(i, x, y, wh, lh, ln, e, detached): {
+		InspectElement(inspector, e): {
+			
 			makeWord = \word, form -> ParaWord(
 				word,
 				const(getStaticFormSize(form)),
-				CoordinateInspectElement(i, x, y, wh, lh, form, detached),
+				CoordinateInspectElement(inspector, form),
 				Empty(),
 				interactivityIdM
 			);
@@ -277,7 +308,7 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 				}
 				default: {
 					s = getDynamicFormSize(cast(e : InspectableElement -> Form));
-					ParaWord(Empty(), s.second, InspectGhost(x, y, wh, lh, ln, s.first), Empty(), interactivityIdM);
+					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM);
 				}
 			}
 		}
@@ -344,10 +375,10 @@ reflowParaWords2(
 
 	detachWord = \w : ParaWord, detach : bool -> {
 		switch (w.ghosted) {
-			CoordinateInspectElement(index, __, __, __, __, __, detached): nextDistinct(detached, detach);
+			CoordinateInspectElement(inspector, __): nextDistinct(inspector.detached, detach);
 			default: {
 				switch (w.form) {
-					CoordinateInspectElement(index, __, __, __, __, __, detached): nextDistinct(detached, detach);
+					CoordinateInspectElement(inspector, __): nextDistinct(inspector.detached, detach);
 					default: {}
 				}
 			}
@@ -368,7 +399,7 @@ reflowParaWords2(
 			w : ParaAtomic = word1.word;
 			f : Form = switch(w : ParaAtomic) {
 				ParaOneWord(__): Empty();
-				InspectElement(__, __, __, __, __, __, __, __): Empty();
+				InspectElement(__, __): Empty();
 				LinePart(first, inline, last): inline;
 				Space(s): s;
 				default: cast(w : ParaAtomic -> Form);
@@ -380,8 +411,8 @@ reflowParaWords2(
 			switch (g : Ghosted) {
 				Empty(): extractParaAtomicForm(word1);
 				Ghost(xc, yc, fm): g;
-				InspectGhost(__, __, __, __, __, fm): g;
-				CoordinateInspectElement(index, x, y, wh, lh, fm, __): g;
+				InspectGhost(__, fm): g;
+				CoordinateInspectElement(__, __): g;
 			}
 		};
 		makeParaWord2 = \word2, form2 -> {
@@ -390,8 +421,8 @@ reflowParaWords2(
 				r : Ghosted = switch (g : Ghosted) {
 					Empty(): Empty();
 					Ghost(xc, yc, __): Ghost(xc, yc, form2);
-					InspectGhost(xc, yc, wh, lh, ln, __): InspectGhost(xc, yc, wh, lh, ln, form2);
-					CoordinateInspectElement(index, x, y, wh, lh, __, detached): CoordinateInspectElement(index, x, y, wh, lh, form2, detached);
+					InspectGhost(inspector, __): InspectGhost(inspector, form2);
+					CoordinateInspectElement(inspector, __): CoordinateInspectElement(inspector, form2);
 				}
 				r;
 			};
@@ -450,8 +481,8 @@ reflowParaWords2(
 					switch (g: Ghosted) {
 						Empty(): extractParaAtomicForm(word1);
 						Ghost(xc, yc, f): f;
-						InspectGhost(__, __, __, __, __, f): f;
-						CoordinateInspectElement(index, x, y, wh, lh, f, detached): f;
+						InspectGhost(__, f): f;
+						CoordinateInspectElement(__, f): f;
 					};
 				};
 
@@ -688,20 +719,21 @@ RenderLine(
 				nextDistinct(yc, y + dy);
 				Some(applyStylesAndOffset(Empty()));
 			}
-			InspectGhost(xc, yc, wh, lh, ln,  fm): {
-				nextDistinct(xc, ^alignmentOffset);
-				nextDistinct(yc, y + dy);
-				nextDistinct(wh, WidthHeight(m.width, m.height));
-				nextDistinct(lh, lineHeight);
-				nextDistinct(ln, lineNumber);
+			InspectGhost(inspector, fm): {
+				nextDistinct(inspector.x, ^alignmentOffset);
+				nextDistinct(inspector.y, y + dy);
+				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
+				nextDistinct(inspector.lineHeight, lineHeight);
+				nextDistinct(inspector.lineNumber, lineNumber);
 				Some(applyStylesAndOffset(Empty()));
 			}
-			CoordinateInspectElement(in, xc, yc, wh, lh, fm, detached): {
+			CoordinateInspectElement(inspector, fm): {
 				fo = applyStylesAndOffset(fm);
-				nextDistinct(xc, ^alignmentOffset);
-				nextDistinct(yc, y + dy);
-				nextDistinct(wh, WidthHeight(m.width, m.height));
-				nextDistinct(lh, lineHeight);
+				nextDistinct(inspector.x, ^alignmentOffset);
+				nextDistinct(inspector.y, y + dy);
+				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
+				nextDistinct(inspector.lineHeight, lineHeight);
+				nextDistinct(inspector.lineNumber, lineNumber);
 				Some(fo);
 			}
 			default: Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
@@ -846,8 +878,8 @@ constructDynamicParaForms(
 		switch (word.ghosted : Ghosted) {
 			Empty(): None();
 			Ghost(x, y, f): Some(Translate(x, y, applyStyles(f)));
-			InspectGhost(xc, yc, __, __, __, f): Some(Translate(xc, yc, applyStyles(f)));
-			CoordinateInspectElement(i, x, y, wh, lh, f, detached): None();
+			InspectGhost(inspector, f): Some(Translate(inspector.x, inspector.y, applyStyles(f)));
+			CoordinateInspectElement(__, __): None();
 		}
 	})
 }
@@ -864,7 +896,7 @@ getWordText(w: ParaWord) -> string {
 	switch(w.word) {
 		Text(t, __): t;
 		Empty(): switch (w.form) {
-			InspectGhost(__, __, __, __, __, form): getFormText(form);
+			InspectGhost(__, form): getFormText(form);
 			Ghost(__, __, form): getFormText(form);
 			default: "";
 		};
@@ -877,7 +909,10 @@ setWordText(w: ParaWord, t: string) -> ParaWord {
 		Text(__, s): ParaWord(
 			Text(t, s), w.metrics, w.ghosted,
 			switch(w.form) {
-				CoordinateInspectElement(index, xc, yc, wh, lineHeight, form, detached): CoordinateInspectElement(index, xc, yc, wh, lineHeight, Text(t, getFormTextStyle(form)), detached);
+				CoordinateInspectElement(inspector, form): CoordinateInspectElement(
+					inspector,
+					Text(t, getFormTextStyle(form))
+				);
 				Text(__, fs): Text(t, fs);
 				default: w.form;
 			},

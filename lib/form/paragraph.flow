@@ -4,11 +4,8 @@ import ds/array;
 import algorithms; // sortCustom
 import form/form;
 import form/gui;
-import form/formmetrics;
-import form/formtransforms;
 import string;
 import ds/list;
-import form/baseline;
 
 import form/line;
 import form/paragraphtypes;
@@ -67,17 +64,16 @@ export {
 		style : [CharacterStyle],
 		moreLineBreaks : bool,
 		indexingInit : int,
-		init : List<WrapElement>,
+		init : List<GeneralWrapElement>,
 		isLastChild : bool,
 		paraElementIndexM : Maybe<int>
-	) -> List<WrapElement>;
+	) -> GeneralTextFragments;
 	// for text like "some text\n\n", we have to insert special InspectElement between NewLines in order to be able to position into such line
 	// also we have to add such element after the last \n in the last child text element of the paragraph
 	// makeEmptyLineInspectElement take index and style of the text and returns InspectElement with form with width=0., height={height of the Text with passed style}
 	// index must be the position of the new InspectElement in the text (starting with 0).
 	makeEmptyLineInspectElement(indexing : int, style : [CharacterStyle]) -> WrapElement;
 	// it is used for the same purpose in wigify (i.e. preview mode)
-	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 
 	// Service routine for special cases like:
 	// "**formatted text**,"
@@ -291,16 +287,17 @@ TextFragment(text, charStyle) {
 }
 
 TextFragmentExt(text, charStyle, style) {
+	generalFragments = breakTextFragment(
+		text,
+		charStyle,
+		containsStruct(style, TextFragmentMoreLineBreaks()),
+		-100000,
+		makeList(),
+		containsStruct(style, TextFragmentLastChild()),
+		maybeMap(tryExtractStruct(style, ParaElemIdx(-1)), \pIdx -> pIdx.index)
+	);
 	TextFragments(
-		breakTextFragment(
-			text,
-			charStyle,
-			containsStruct(style, TextFragmentMoreLineBreaks()),
-			-100000,
-			makeList(),
-			containsStruct(style, TextFragmentLastChild()),
-			maybeMap(tryExtractStruct(style, ParaElemIdx(-1)), \pIdx -> pIdx.index)
-		)
+		mapList(generalFragments.elements, \e -> general2WrapElement(e, generalFragments.style))
 	)
 }
 
@@ -551,13 +548,11 @@ applyAlignment(line : [Form], alignment : ParagraphAlignment, width : double,
 	SelectSize(const(w), height, Cols(resultLine));
 }
 
-makeZeroSpaceElement(style : [CharacterStyle]) -> Form {
-	spaceMetrics = getStaticFormSize(Text(" ", style));
-	fixBaseline(spaceMetrics.baseline, Fixed(0.0, spaceMetrics.height))
-}
-
 makeEmptyLineInspectElement(indexing : int, style : [CharacterStyle]) -> WrapElement {
-	InspectElement(indexing, make(0.0), make(0.0), makeWH(), make(0.0), make(-1), makeZeroSpaceElement(style), make(false))
+	InspectElement(
+		ParaElementInspector(indexing, make(0.0), make(0.0), makeWH(), make(0.0), make(-1), make(false)),
+		makeZeroSpaceElement(style)
+	)
 }
 
 breakTextFragment(
@@ -565,18 +560,20 @@ breakTextFragment(
 	style : [CharacterStyle],
 	moreLineBreaks : bool,
 	indexingInit : int,
-	init : List<WrapElement>,
+	init : List<GeneralWrapElement>,
 	isLastChild : bool,
 	paraElementIndexM : Maybe<int>
-) -> List<WrapElement> {
+) -> GeneralTextFragments {
 
-	toInspectingElementIfNecessary : (int, int, InspectableElement) -> WrapElement = \indexing, offset, f -> {
-		wElem = if (0 <= indexing) {
-			InspectElement(offset, make(0.0), make(0.0), makeWH(), make(0.0), make(-1), f, make(false))
+	toInspectingElementIfNecessary : (int, int, GeneralWrapElement) -> GeneralWrapElement = \indexing, offset, f -> {
+		if (0 <= indexing) {
+			GeneralInspectElement(
+				ParaElementInspector(offset, make(0.0), make(0.0), makeWH(), make(0.0), make(-1), make(false)),
+				f
+			)
 		} else {
 			f
 		}
-		eitherMap(paraElementIndexM, \idx -> WordWrapInteractive(wElem, idx), wElem);
 	};
 
 	// Text with LetterSpacing honors spacing between characters only (JS, CPP)
@@ -585,7 +582,7 @@ breakTextFragment(
 	makeLetterSpacing = !isLastChild && containsStruct(style, LetterSpacing(0.0));
 
 	makeTextFn = \indexing, t -> {
-		toInspectingElementIfNecessary(indexing, indexing, Text(if (makeLetterSpacing) t + "\u200b" else t, overrideCharacterStylePerAlphabet(t, style)))
+		toInspectingElementIfNecessary(indexing, indexing, GeneralText(if (makeLetterSpacing) t + "\u200b" else t))
 	};
 
 	textLen = strlen(text);
@@ -598,7 +595,7 @@ breakTextFragment(
 	chrCatPos = ref (if (isBiDiEnabled()) -1 else textLen);    // next pos of split in respect of characters' categories
 
 	remapMinusOne = \p -> if (p >= 0) p else textLen;
-	loop1 = ref \i, indexing, acc -> EmptyList();
+	loop1 : ref (int, int, List<GeneralWrapElement>) -> List<GeneralWrapElement> = ref \i, indexing, acc -> EmptyList();
 	loop1 := \i, indexing, acc -> {
 		if (i >= textLen) {
 			acc
@@ -674,23 +671,22 @@ breakTextFragment(
 						PositionSpace() : {
 							// To get constant time concatenation of paragraph strings to work, we send
 							// the space from the original string to this guy.
-							space = makeSpace(getCharAt(text, keyPos), style);
+							space = makeSpace(getCharAt(text, keyPos));
 							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
 						}
 						PositionAllowBreakAfter() : {
-							toInspectingElementIfNecessary(indexing,
+							toInspectingElementIfNecessary(
+								indexing,
 								indexing + keyPosRelative,
-								makeSpace(getCharAt(text, keyPos),
-									style
-								)
+								makeSpace(getCharAt(text, keyPos))
 							);
 						}
 						PositionAllowSoftBreakAfter() : {
 							toInspectingElementIfNecessary(indexing,
 								indexing + keyPosRelative,
-								LinePart(Empty(),
-									Empty(),
-									Text(getSoftBreakVisualSymbol(), style)
+								GeneralLinePart("",
+									"",
+									getSoftBreakVisualSymbol()
 								)
 							)
 						}
@@ -713,7 +709,7 @@ breakTextFragment(
 									// we should insert special element that forms empty line in rendering time.
 									// in edit mode (indexing >= 0) it should be InspectElement in order to be able to position in the line
 									// in preview mode (indexing < 0) it should be fixBaseline with appropriate height
-									newLineElement = if (0 <= indexing) makeEmptyLineInspectElement(indexing, style) else makeZeroSpaceElement(style);
+									newLineElement = toInspectingElementIfNecessary(indexing, indexing, EmptyLineElement());
 									Cons(keyFragment, Cons(newLineElement, acc))
 								}
 
@@ -749,11 +745,12 @@ breakTextFragment(
 		}
 	}; // loop1
 
-	^loop1(0, indexingInit, init);
+	elements = ^loop1(0, indexingInit, init);
+	GeneralTextFragments(elements, style);
 }
 
-makeSpace(space : string, style : [CharacterStyle]) -> Space {
-	Space(Text(space, style));
+makeSpace(space : string) -> GeneralSpace {
+	GeneralSpace(space);
 }
 
 mergeTextFragments(tf1 : TextFragments, tf2 : TextFragments) -> TextFragments {
