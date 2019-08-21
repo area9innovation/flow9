@@ -99,6 +99,7 @@ class TextClip extends NativeWidgetClip {
 	private var autocomplete : String = '';
 	private var step : Float = 1.0;
 	private var wordWrap : Bool = false;
+	private var doNotInvalidateStage : Bool = false;
 	private var cropWords : Bool = false;
 	private var interlineSpacing : Float = 0.0;
 	private var autoAlign : String = 'AutoAlignNone';
@@ -496,10 +497,11 @@ class TextClip extends NativeWidgetClip {
 				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
+			} else {
+				textClip.text = bidiDecorate(texts[0][0], textDirection);
+				textClip.style = style;
 			}
 
-			textClip.text = bidiDecorate(texts[0][0], textDirection);
-			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
@@ -573,11 +575,13 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function invalidateStyle() : Void {
-		if (isInput) {
-			setScrollRect(0, 0, getWidth(), getHeight());
-		}
+		if (!doNotInvalidateStage) {
+			if (isInput) {
+				setScrollRect(0, 0, getWidth(), getHeight());
+			}
 
-		super.invalidateStyle();
+			super.invalidateStyle();
+		}
 	}
 
 	public function invalidateMetrics() : Void {
@@ -633,6 +637,12 @@ class TextClip extends NativeWidgetClip {
 			style.wordWrap = wordWrap;
 
 			invalidateMetrics();
+		}
+	}
+
+	public  function setDoNotInvalidateStage(doNotInvalidateStage : Bool) : Void {
+		if (this.doNotInvalidateStage != doNotInvalidateStage) {
+			this.doNotInvalidateStage = doNotInvalidateStage;
 		}
 	}
 
@@ -802,7 +812,7 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		}
 
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
 		RenderSupportJSPixi.provideEvent(e);
 	}
@@ -837,12 +847,20 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
+		if (nativeWidget == null) {
+			return;
+		}
+
 		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
 		isFocused = false;
 		emit('blur');
+
+		if (nativeWidget == null) {
+			return;
+		}
 
 		invalidateMetrics();
 	}
@@ -858,8 +876,9 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
-		if (nativeWidget == null)
+		if (nativeWidget == null) {
 			return;
+		}
 
 		if (newValue != nativeWidget.value) {
 			if (e != null && e.data != null && e.data.length != null) {

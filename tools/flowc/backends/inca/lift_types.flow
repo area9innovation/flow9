@@ -2,6 +2,7 @@ import tools/flowc/backends/inca/env;
 import tools/flowc/incremental/fiprettyprint;
 import text/blueprint;
 import ds/treeutils;
+import tools/flowc/backends/inca/conversion_graph;
 
 export {
 	// Lift our structs and unions to lifted, mutable versions
@@ -24,15 +25,25 @@ liftIncaTypes(env : IncaEnv) -> string {
 
 	blueprint("
 		import inca/support_lifted;
+		import inca/inca_types_i;
 		%imports%
 
 		export {
-
 			%promotedStructs%
 
 			%structs%
 
 			%structnames%
+
+			INCA_TYPES = [
+				%structtypes%
+			];
+
+			%dialects%
+
+			%structsInDialects%
+
+			%defaultDialectStructId%
 
 			SuperUnion2IncaValue(v : ?) -> IncaValue;
 
@@ -63,6 +74,20 @@ liftIncaTypes(env : IncaEnv) -> string {
 			acc + name + "_ID = " + i2s(i) + ";\n"
 		}),
 		"structnames", "INCA_STRUCT_NAMES = [" + superglue(structs, \s -> toString(s), ", ") + "]",
+		"structtypes", foldTree(env.structs, "", \name, stdef, acc -> {
+			acc + incaStruct2Type(stdef) + ",\n"
+		}),
+		"dialects", "INCA_DIALECTS = [" + foldTree(env.unions, "", \name, union, acc -> {
+			acc + "\"" + name + "\","
+		}) + "];",
+		"structsInDialects", "INCA_DIALECT_STRUCTS = [" + foldTree(env.unions, "", \name, union, acc -> {
+			dstructs = incaFiName2structs(env, name);
+			acc + "[" + superglue(set2array(dstructs), \s -> s + "_ID", ",") + "],\n"
+		}) + "];",
+		"defaultDialectStructId", "INCA_DIALECT_DEFAULT_STRUCT_ID = [" + foldTree(env.unions, "", \name, union, acc -> {
+			tn = firstStructInTypename(env, name);
+			acc + tn + "_ID,";
+		}) + "];",
 		"superunion", makeSuperUnion(env.structs),
 		"liftUnions2incaDec", foldTree(env.unions, "", \name, union, acc -> {
 			acc + name + "2IncaValue(v : " + name + ") -> IncaValue;\n"
@@ -235,4 +260,38 @@ liftIncaFieldDef(field : string, structs : Set<FiTypeStruct>) -> string {
 		}, "\nelse "),
 	]
 	);
+}
+
+incaStruct2Type(s : FiTypeStruct) -> string {
+	"IncaTypeStruct(" + toString(s.name) + ",[" + superglue(s.args, \a -> "IncaTypeField(" + toString(a.name) + "," + incaType2type(a.type) + ")", ",") + "])"
+}
+
+incaType2type(ft : FiType) -> string {
+	switch (ft) {
+		FiTypeVoid(): "IncaTypeVoid()";
+		FiTypeBool(): "IncaTypeBool()";
+		FiTypeInt(): "IncaTypeInt()";
+		FiTypeDouble(): "IncaTypeDouble()";
+		FiTypeString(): "IncaTypeString()";
+		FiTypeArray(at): "IncaTypeArray(" + incaType2type(at) + ")";
+		FiTypeName(n, __): "IncaTypeName(" + toString(n) + ")";
+		FiTypeNative(): "IncaTypeNative()";
+
+		FiTypeParameter(n): "IncaTypeIncaValue()";
+
+		FiTypeFunction(args, returnType): "NOT SUPPORTED!";
+		FiTypeRef(t): "NOT SUPPORTED!";
+		FiTypeFlow(): "NOT SUPPORTED!";
+	}
+}
+
+firstStructInTypename(env : IncaEnv, tname : string) -> string {
+	mudef = lookupTree(env.unions, tname);
+	switch (mudef) {
+		None(): tname;
+		Some(udef): {
+			if (udef.typenames == []) tname
+			else firstStructInTypename(env, udef.typenames[0].name);
+		}
+	}
 }

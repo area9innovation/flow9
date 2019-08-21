@@ -2,6 +2,8 @@ var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
 
+var SHARED_DATA_ENDPOINT = "share/pwa/data";
+
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
   ".php",
@@ -52,7 +54,7 @@ var extractUrlParameters = function(url) {
 // Removing ignoreParameters from the request url
 var filterUrlParameters = function(url, ignoreParameters) {
   var urlParameters = extractUrlParameters(url);
-  if (urlParameters.length == 0) {
+  if (urlParameters.parameters.length == 0) {
     return url;
   } else {
     return urlParameters.baseUrl + "?" + urlParameters.parameters.filter(function(p) {
@@ -86,7 +88,8 @@ self.addEventListener('install', function(event) {
 self.addEventListener('fetch', function(event) {
   // Creation Promise, which `converts` POST request into GET request
   var getFixedRequestUrl = function(request) {
-    var urlSplitted = extractUrlParameters(urlAddBaseLocation(request.url));
+    var fixedUrl = urlAddBaseLocation(request.url);
+    var urlSplitted = extractUrlParameters(fixedUrl);
     var requestUrl = urlSplitted.baseUrl;
     var glueSymb = "?";
 
@@ -106,10 +109,10 @@ self.addEventListener('fetch', function(event) {
 
         return { urlNewFull : requestUrl, formDataText : formDataText };
       }).catch(function() {
-        return { urlNewFull : requestUrl, formDataText : undefined };
+        return { urlNewFull : fixedUrl, formDataText : undefined };
       });
     } else {
-      return Promise.resolve({ urlNewFull : requestUrl, formDataText : undefined });
+      return Promise.resolve({ urlNewFull : fixedUrl, formDataText : undefined });
     }
   }
 
@@ -139,7 +142,7 @@ self.addEventListener('fetch', function(event) {
 
   // SW does not allow to cache POST requests, so we create GET from the POST
   var prepareRequestToCache = function(requestData) {
-   if (requestData.isCustomCaching) {
+    if (requestData.isCustomCaching || (requestData.urlNewToCache != requestData.originalRequest.url)) {
       var requestCloned = requestData.cloneRequest();
       return (new Request(requestData.urlNewToCache, {
         method: "GET",
@@ -201,15 +204,16 @@ self.addEventListener('fetch', function(event) {
   var fetchResource = function(requestData) {
     return fetch(requestData.cloneRequest()).then(function(response) {
       if (response.status == 200 && response.type == "basic") {
+        fixedRequest = prepareRequestToCache(requestData);
         // Cache the request if it's match any customized filter
         if (requestData.isCustomCaching) {
           caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
-            cache.put(prepareRequestToCache(requestData), response.clone());
+            cache.put(fixedRequest, response.clone());
 
             sendMessageToClient(event, {
               msg: "Cached resource:",
               url: requestData.originalRequest.url,
-              urlCached: requestData.urlNewToCache
+              urlCached: fixedRequest.url
             });
           });
         // Automatically cache uncached static resources
@@ -233,12 +237,12 @@ self.addEventListener('fetch', function(event) {
             }
           })).then(function() {
             caches.open(CACHE_NAME).then(function(cache) {
-              cache.put(requestData.cloneRequest(), response.clone());
+              cache.put(fixedRequest, response.clone());
 
               sendMessageToClient(event, {
                 msg: "Cached resource:",
                 url: requestData.originalRequest.url,
-                urlCached: requestData.originalRequest.url
+                urlCached: fixedRequest.url
               });
             });
           }).catch(function() { return null; })
@@ -348,7 +352,32 @@ self.addEventListener('fetch', function(event) {
     });
   }
 
-  event.respondWith(makeResponse(event.request));
+  const {
+    request,
+    request: {
+      url,
+      method,
+    },
+  } = event;
+
+  if (url.match(SHARED_DATA_ENDPOINT)) {
+    event.respondWith(
+      caches.open(SHARED_DATA_ENDPOINT).then(cache => {
+        if (method == "POST") {
+          return request.text().then(body => {
+            cache.put(SHARED_DATA_ENDPOINT, new Response(body));
+            return new Response("OK");
+          });
+        } else {
+          return cache.match(SHARED_DATA_ENDPOINT).then(response => {
+            return response || new Response("");
+          }) || new Response("");
+        }
+      })
+    );
+  } else {
+    event.respondWith(makeResponse(event.request));
+  }
 });
 
 var cleanServiceWorkerCache = function() {
@@ -368,6 +397,8 @@ var cleanServiceWorkerCache = function() {
 self.addEventListener('activate', function(event) {
   // this cache is only for session
   cleanServiceWorkerCache();
+
+  event.waitUntil(clients.claim());
 });
 
 // Currently not used
@@ -393,11 +424,11 @@ self.addEventListener('message', function(event) {
   };
 
   var fetchAndCacheByUrl = function(url, ignoreParameters) {
-    var request = new Request(url);
+    var request = new Request(urlAddBaseLocation(url));
     return fetch(request).then(function(response) {
       // Automatically cache uncached resources
       if (response.status == 200 && response.type == "basic") {
-        var requestToCache = new Request(filterUrlParameters(url, ignoreParameters));
+        var requestToCache = new Request(filterUrlParameters(request.url, ignoreParameters));
         caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
           cache.put(requestToCache, response.clone());
 
@@ -406,10 +437,14 @@ self.addEventListener('message', function(event) {
             url: url,
             urlCached: requestToCache.url
           });
-        });
-      }
 
-      return true;
+          return true;
+        }).catch(function() {
+          return false;
+        });
+      } else {
+        return false;
+      }
     }).catch(function() {
       return false;
     });
@@ -419,9 +454,8 @@ self.addEventListener('message', function(event) {
     return Promise.all(urls.map(function(url) {
       return caches.match(urlAddBaseLocation(url), { ignoreSearch: false })
       .then(function(response) {
-        if (response) {
-          return url;
-        } else return "";
+        if (response) return url;
+        else return "";
       }).catch(function() { return ""; })
     })).then(function(urls2) { return urls2.filter(function(url) { return url != ""; }); })
     .then(function(urls2) { return { "urls" : urls2, status: "OK" }; })

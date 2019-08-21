@@ -93,7 +93,7 @@ class VideoClip extends FlowContainer {
 		addVideoSource(filename, "");
 
 		nativeWidget = Browser.document.createElement("video");
-		nativeWidget.crossorigin = Util.determineCrossOrigin(filename);
+		nativeWidget.crossOrigin = Util.determineCrossOrigin(filename);
 		nativeWidget.autoplay = !startPaused;
 		nativeWidget.setAttribute('playsinline', true);
 
@@ -274,7 +274,7 @@ class VideoClip extends FlowContainer {
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
-		invalidateStage(); // Update the widget
+		invalidateStage(true); // Update the widget
 
 		if (!nativeWidget.autoplay) nativeWidget.pause();
 

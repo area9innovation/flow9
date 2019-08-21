@@ -165,13 +165,27 @@ PIXI.Container.prototype._updateFilterHooks = function ()
 			this._CF_originalCalculateBounds = this.calculateBounds;
 			this.renderCanvas = this._renderFilterCanvas;
 			this.calculateBounds = this._calculateFilterBounds;
+
+			this.on('childrenchanged', this._onChildrenChanged);
+			this._onChildrenChanged();
 		}
 	}
 	else if (this._CF_originalCalculateBounds != null)
 	{
+		this.cacheAsBitmap = false;
+		this.off('childrenchanged', this._onChildrenChanged);
+
 		this.renderCanvas = this._CF_originalRenderCanvas;
 		this.calculateBounds = this._CF_originalCalculateBounds;
 		this._CF_originalCalculateBounds = null;
+	}
+}
+
+PIXI.Container.prototype._onChildrenChanged = function ()
+{
+	this.cacheAsBitmap = false;
+	if (this.children.length > 0) {
+		this.cacheAsBitmap = true;
 	}
 }
 

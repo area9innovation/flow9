@@ -798,6 +798,8 @@ public class FxRenderSupport extends RenderSupport {
 			updateWidgetTextStyle();
 		}
 
+		void setDoNotInvalidateStage(Boolean value) {}
+
 		void setInterlineSpacing(Double spacing) {
 			this.interlineSpacing = spacing;
 			updateWidgetTextStyle();
@@ -1485,7 +1487,7 @@ public class FxRenderSupport extends RenderSupport {
 	public Object beginFill(Object gr,int color,double alpha) {
 		Graphics g = (Graphics)gr;
 		g.path.setFill(mkColor(color, alpha));
-		g.owner.container.setMouseTransparent(alpha < 0.1); 
+		g.owner.container.setMouseTransparent(alpha < 0.1);
 		return null;
 	}
 	@Override

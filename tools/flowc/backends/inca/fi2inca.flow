@@ -5,7 +5,7 @@ import tools/flowc/backends/inca/promote_types;
 import tools/flowc/backends/inca/lift_types;
 import tools/flowc/backends/inca/lift_functions;
 import tools/flowc/backends/inca/lift_globals;
-import tools/flowc/backends/inca/fi2incaflow;
+import tools/flowc/backends/inca/special_fiexp;
 import tools/flowc/manipulation/lambda_lifting;
 
 export {
@@ -25,14 +25,15 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void 
 
 	time1 = repTime("Build inca env", time0);
 
-	if (false) {
-		// OK, new code path for the stack-based flow
-		// TODO: We should not use the normal lambda lifting, but our own
-		// so any local variables of function type are also optimized out.
-		p0 = lift_lambdas(program);
-		i1 = buildIncaEnv(p0);
-		i2 = promoteIncaTypes(i1);
-		incaFlow = fi2incaflow(i2);
+	if (true) {
+		i1 = buildIncaEnv(program);
+		i2 : IncaEnv = promoteIncaTypes(i1);
+		// Build all the change functions
+		i3 = foldTree(i2.functions, i2, \name, fn, acc -> {
+			makeChangeFunction(acc, fn)
+		});
+		// TODO:
+		// Write the output somewhere
 	}
 
 	if (true) {
@@ -92,7 +93,8 @@ buildIncaEnv(program : FiProgram) -> IncaEnv {
 		makeTree(),
 		makeTree(),
 		[],
-		makeSet()
+		makeSet(),
+		makeSet(),
 	);
 	fold(parsed, env0, \acc, m -> addModuleToIncaEnv(program, acc, m));
 }
@@ -117,6 +119,11 @@ addModuleToIncaEnv(program : FiProgram, acc : IncaEnv, module : string) -> IncaE
 					alreadyLifted = fold(mo.functions, acc.alreadyLifted, \acc0, f -> {
 						if (endsWith(f.name, "_lifted")) insertSet(acc0, strsubsmart(f.name, 0, -7))
 						else acc0
+					}),
+					hasIncaManager = fold(mo.functions, acc.hasIncaManager, \acc0, f -> {
+						if (length(f.type.args) >= 1 && getFiTypeName(f.type.args[0].type) == "IncaManager") {
+							insertSet(acc0, f.name)
+						} else acc0
 					})
 				)
 			} else {
@@ -135,12 +142,6 @@ Todo:
 - Implement linear typing, or automatic insert of copy.
 
 - Implement lambda lifting, and check for closures
-
-- Implement overloading of unions
-
-- Implement duplication of structs in overloaded unions
-
-- Implement "exploding" switches into top-level functions
 */
 
 validIncaModule(m : FiModule) -> bool {
@@ -179,15 +180,16 @@ validIncaType(type : FiType) -> bool {
 		FiTypeInt(): true;
 		FiTypeDouble(): true;
 		FiTypeString(): true;
+		FiTypeNative(): true;
 
 		FiTypeFlow(): false;
 		FiTypeVoid(): false;
 
-		FiTypeNative(): false;
-
 		FiTypeArray(t): validIncaType(t);
+
 		FiTypeFunction(args, returnType): false;
 		FiTypeRef(t): false;
+
 		FiTypeParameter(n): true;
 		FiTypeName(name, typeparameters): true;
 	}

@@ -1186,6 +1186,11 @@ StackSlot GLTextClip::setWordWrap(RUNNER_ARGS)
     RETVOID;
 }
 
+StackSlot GLTextClip::setDoNotInvalidateStage(RUNNER_ARGS)
+{
+    RETVOID;
+}
+
 StackSlot GLTextClip::setAutoAlign(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(state);
@@ -1376,10 +1381,10 @@ StackSlot GLTextClip::removeTextInputKeyDownEventFilter(RUNNER_ARGS, void *)
     const StackSlot * slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 1);
     GLTextClip * clip = RUNNER->GetNative<GLTextClip*>(slot[0]);
     int filter_id = slot[1].GetInt();
-    
+
     int root_id = clip->text_input_key_down_event_filters[filter_id];
     clip->text_input_key_down_event_filters.erase(filter_id);
-    
+
     RUNNER->ReleaseRoot(root_id);
     RETVOID;
 }
@@ -1389,10 +1394,10 @@ StackSlot GLTextClip::removeTextInputKeyUpEventFilter(RUNNER_ARGS, void *)
     const StackSlot * slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 1);
     GLTextClip * clip = RUNNER->GetNative<GLTextClip*>(slot[0]);
     int filter_id = slot[1].GetInt();
-    
+
     int root_id = clip->text_input_key_up_event_filters[filter_id];
     clip->text_input_key_up_event_filters.erase(filter_id);
-    
+
     RUNNER->ReleaseRoot(root_id);
     RETVOID;
 }
