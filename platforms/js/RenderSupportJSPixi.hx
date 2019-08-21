@@ -883,8 +883,11 @@ class RenderSupportJSPixi {
 
 	private static var rendering = false;
 
-	private static function requestAnimationFrame() {
-		Browser.window.cancelAnimationFrame(AnimationFrameId);
+	private static function requestAnimationFrame(?cancel = true) {
+		if (cancel) {
+			Browser.window.cancelAnimationFrame(AnimationFrameId);
+		}
+
 		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
 	}
 
@@ -933,7 +936,7 @@ class RenderSupportJSPixi {
 			emit("freeframe", timestamp);
 		}
 
-		requestAnimationFrame();
+		requestAnimationFrame(false);
 	}
 
 	private static inline function render() {
