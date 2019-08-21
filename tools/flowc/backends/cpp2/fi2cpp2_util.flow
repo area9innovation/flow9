@@ -166,7 +166,7 @@ cpp2IsNonGCFieldType(type : Cpp2TagType) -> bool {
 
 // Cpp2PlaceInfo methods
 cpp2PlaceInfo(env: Maybe<Cpp2Environment>, place: Cpp2PlaceType, slot: int, name : string) -> Cpp2PlaceInfo {
-	Cpp2PlaceInfo(
+	cpp2PlaceInfoMeta(
 		env, place, slot, name, 
 		Cpp2PlaceMetadata(
 			eitherMap(env, \e -> 
@@ -179,7 +179,13 @@ cpp2PlaceInfo(env: Maybe<Cpp2Environment>, place: Cpp2PlaceType, slot: int, name
 			false,
 			None(), None(), None(), None(),
 			None(), None(), None(), None(),
-		),
+		)
+	)
+}
+
+cpp2PlaceInfoMeta(env: Maybe<Cpp2Environment>, place: Cpp2PlaceType, slot: int, name : string, meta : Cpp2PlaceMetadata) -> Cpp2PlaceInfo {
+	Cpp2PlaceInfo(
+		env, place, slot, name, meta,
 		eitherMap(env,
 			\e -> {
 				ret = e.next_uid;
@@ -320,7 +326,12 @@ cpp2PlaceInfoGetRValue(info : Cpp2PlaceInfo, ctx : Cpp2Context) -> string {
 				if (length(info1.args) != 0) {
 					cpp2_error("no rvalue for struct with parameters: " + info1.structname);
 				}
-				"StackSlot::MakeStruct(MakeFlowPtr(" + i2s(info1.empty_addr) + ")," + i2s(info.slot) + ")"
+				switch (info1.empty_addr) {
+					Some(empty_addr): "StackSlot::MakeStruct(MakeFlowPtr(" + i2s(empty_addr) + ")," + i2s(info.slot) + ")";
+					None(): {
+						cpp2_error("no empty_addr in Cpp2Struct"); "";
+					}
+				}
 			}
 			default:
 				cpp2PlaceInfoGetLValue(info);
@@ -485,7 +496,7 @@ cpp2Environment(parent : Maybe<Cpp2Environment>, mname : string, vname : string)
 		Some(p): p.depth + 1;
 		None(): 1;
 	};
-	Cpp2Environment(
+	env = Cpp2Environment(
 		parent,
 		mname,
 		vname,
@@ -498,17 +509,17 @@ cpp2Environment(parent : Maybe<Cpp2Environment>, mname : string, vname : string)
 		[], // local_reuse
 		false, // args_used
 		None(), // closure
-		None(), // closure_type
 		[], // upvalues
 		false, // tail_call
 		0, // lines
-		None(), //cpp2Context(), // cur_ctx : cur_ctx = new CppContext(this, '    ');
+		None(), // cur_ctx = new CppContext(this, '    ');
 		makeTree(), // locals
 		makeTree(), // meta_globals
 		cpp2CodeLines(None()) // code_lines
-	)
+	);
+	env.cur_ctx ::= Some(cpp2Context(env, "    "));
+	env
 }
-
 
 cpp2EnvironmentPushCppBlock(env : Cpp2Environment) -> void {
 	env.code_lines ::= cpp2CodeLines(Some(env.code_lines));
@@ -538,66 +549,68 @@ cpp2EnvironmentTempvar(env : Cpp2Environment, base : string) -> string {
 	env.next_uid ::= env.next_uid + 1;
 	base + i2s(uid);
 }
-/*
+
 cpp2EnvironmentMkupvalue(env : Cpp2Environment, name : string, free : Cpp2PlaceInfo) -> Cpp2PlaceInfo {
-	switch (env.closure) {
-		None(): {
-			env.closure ::= cpp2PlaceInfo(env, Cpp2Argument(), -1);
-			env.closure.meta.context ::= 0;
-			env.closure_type = Cpp2StructInfo(
-				null,
-				mname,
-				[],
-				[],
-				null
-			)
-		}
-		Some(__): { }
-	}
-	/*if (closure == null) {
-		closure = new CppPlaceInfo(this, Argument, -1);
-		closure.meta.context = 0;
-
-		closure_type = {
-			id: null, structname: mname,
-			args: new FlowArray<MonoTypeDeclaration>(),
-			atypes: new FlowArray<CppTagType>(),
-			empty_addr: null
-		};
-	}* /
-
 	id = length(env.upvalues);
-	info = cppPlaceInfo(env, Cpp2FieldAlias(closure, closure_type), id, name);
-
-	var type = free.meta.type;
-	if (type == null)
-		type = TFlow;
-
-	var ttag = CppPlaceInfo.getStructAType(type);
-	var vtag = free.meta.tag;
-	if (!CppPlaceInfo.isStructFieldTag(vtag))
-		vtag = null;
-	if (ttag != null)
-		vtag = (vtag == null || vtag == ttag) ? ttag : null;
-
-	closure_type.args.push({
-		name: 'up_'+info.slot,
-		type: type,
-		position: null,
-		is_mutable: false
-	});
-	closure_type.atypes.push(vtag);
-
-	info.meta.context = 0;
-	info.meta.dirty = true;
-	info.meta.tag = vtag;
-	info.meta.type = type;
-
-	upvalues.push(name);
-	locals.set(name, info);
+	env.upvalues ::= arrayPush(env.upvalues, name);
+	type = switch (free.meta.type) {
+		None(): {
+			(free.meta).type ::= Some(FiTypeFlow());
+			FiTypeFlow()
+		}
+		Some(tp): tp;
+	}
+	ttag = cpp2GetStructAType(type);
+	vtag = ref free.meta.tag;
+	if (!cpp2IsStructFieldTag(^vtag)) {
+		vtag := Cpp2TNull();
+	}
+	if (ttag != Cpp2TNull()) {
+		vtag := if (^vtag == Cpp2TNull() || ^vtag == ttag) ttag else Cpp2TNull();
+	}
+	tdecl = Cpp2TypeDeclaration(
+		"up_" + i2s(id), // name
+		type,
+		false // is_mutable
+	);
+	meta = Cpp2PlaceMetadata(
+		0, // context
+		false, // dirty
+		Some(^vtag), // tag 
+		Some(type), // type 
+		None(), // struct_size
+		None(), // struct_id
+		None(), // known_fields
+		None(), // known_compares
+		None(), // struct_ptr_gcid
+		None(), // struct_ptr_types
+	);
+	info = switch (env.closure) {
+		None(): {
+			new_closure = Cpp2Closure(
+				cpp2PlaceInfo(Some(env), Cpp2Argument(), -1, ""),
+				Cpp2StructInfo(
+					None(),    // id
+					env.mname, // structname
+					[tdecl],   // args
+					[^vtag],    // atypes
+					None()     // empty_addr
+				)
+			);
+			(new_closure.place.meta).context ::= 0;
+			env.closure ::= Some(new_closure);
+			cpp2PlaceInfoMeta(Some(env), Cpp2FieldAlias(new_closure.place, new_closure.type), id, name, meta);
+		}
+		Some(closure): {
+			(closure.type).args ::= arrayPush(closure.type.args, tdecl);
+			(closure.type).atypes ::= arrayPush(closure.type.atypes, ^vtag);
+			cpp2PlaceInfoMeta(Some(env), Cpp2FieldAlias(closure.place, closure.type), id, name, meta);
+		}
+	}
+	env.locals ::= setTree(env.locals, name, info);
 	info
 }
-*/
+
 
 cpp2EnvironmentMklocal(env : Cpp2Environment, name : string) -> Cpp2PlaceInfo {
 	id = if (length(env.local_reuse) > 0) {
@@ -624,12 +637,6 @@ cpp2EnvironmentPoplocal(env : Cpp2Environment, name : string, olddef : Cpp2Place
 			cpp2_error("no name " + name + " in env locals");
 		}
 	}
-	/*curdef = locals.get(name);
-	locals.set(name, olddef);
-
-	if (curdef.place == Cpp2Local()) {
-		local_reuse.push(curdef.slot);
-	}*/
 }
 
 cpp2EnvironmentStashGlobalMeta(env : Cpp2Environment) -> void {
