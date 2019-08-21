@@ -16,17 +16,26 @@ class NativeWidgetClip extends FlowContainer {
 	private var widgetWidth : Float = 0.0;
 	private var widgetHeight : Float = 0.0;
 
+	public function new(?worldVisible : Bool = false) {
+		super(worldVisible);
+
+		isNativeWidget = true;
+	}
+
 	// Returns metrics to set correct native widget size
 	private function getWidth() : Float { return widgetWidth; }
 	private function getHeight() : Float { return widgetHeight; }
-	private function getTransform() : Matrix {
+	private function getTransform(?worldTransform : Bool) : Matrix {
 		if (RenderSupportJSPixi.DomRenderer) {
-			untyped this.transform.updateLocalTransform();
-			return untyped this.transform.localTransform;
+			if (worldTransform == null) {
+				worldTransform = !DisplayObjectHelper.RenderContainers;
+			}
+
+			return worldTransform ? untyped this.worldTransform : untyped this.localTransform;
 		} else if (accessWidget != null) {
 			return accessWidget.getTransform();
 		} else {
-			return worldTransform;
+			return this.worldTransform;
 		}
 	}
 
@@ -114,22 +123,6 @@ class NativeWidgetClip extends FlowContainer {
 		}
 
 		styleChanged = false;
-	}
-
-	private function addNativeWidget() : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
-				untyped parent.nativeWidget.appendChild(nativeWidget);
-			}
-		} else {
-			once('removed', deleteNativeWidget);
-		}
-	}
-
-	private function removeNativeWidget() : Void {
-		if (nativeWidget != null && nativeWidget.parentNode != null) {
-			nativeWidget.parentNode.removeChild(nativeWidget);
-		}
 	}
 
 	public function setFocus(focus : Bool) : Bool {

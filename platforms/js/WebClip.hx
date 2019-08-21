@@ -66,6 +66,10 @@ class WebClip extends NativeWidgetClip {
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
 
+		if (RenderSupportJSPixi.DomRenderer) {
+			iframe.className = 'nativeWidget';
+		}
+
 		if (isUrl(url) || Platform.isIE || Platform.isEdge) {
 			iframe.src = url;
 		} else {
@@ -161,7 +165,7 @@ class WebClip extends NativeWidgetClip {
 		while (i > iframeZorder) {
 
 			var pos = Util.getPointerEventPosition(e);
-			
+
 			if (RenderSupportJSPixi.getClipAt(localStages[i], pos, true, true) != null) {
 				untyped localStages[i].view.style.pointerEvents = "all";
 				untyped localStages[iframeZorder].view.style.pointerEvents = "none";

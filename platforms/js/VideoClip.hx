@@ -42,6 +42,8 @@ class VideoClip extends FlowContainer {
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
 		super();
 
+		isNativeWidget = RenderSupportJSPixi.DomRenderer;
+
 		this.metricsFn = metricsFn;
 		this.playFn = playFn;
 		this.durationFn = durationFn;

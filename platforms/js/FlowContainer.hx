@@ -28,12 +28,15 @@ class FlowContainer extends Container {
 	private var nativeWidget : Dynamic;
 	private var accessWidget : AccessWidget;
 
+	public var isNativeWidget : Bool;
+
 	public function new(?worldVisible : Bool = false) {
 		super();
 
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
+		isNativeWidget = RenderSupportJSPixi.DomRenderer && DisplayObjectHelper.RenderContainers;
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (worldVisible) {
@@ -174,9 +177,9 @@ class FlowContainer extends Container {
 				stageChanged = false;
 
 				if (transformChanged) {
-					DisplayObjectHelper.InvalidateStage = !transformChanged;
+					DisplayObjectHelper.lockStage();
 					updateTransform();
-					DisplayObjectHelper.InvalidateStage = true;
+					DisplayObjectHelper.unlockStage();
 				}
 			}
 		} else if (stageChanged && view != null) {
@@ -187,9 +190,9 @@ class FlowContainer extends Container {
 			untyped renderer.rootContext = context;
 			renderer.transparent = parent.children.indexOf(this) != 0;
 
-			DisplayObjectHelper.InvalidateStage = !transformChanged;
+			DisplayObjectHelper.lockStage();
 			renderer.render(this, null, true, null, !transformChanged);
-			DisplayObjectHelper.InvalidateStage = true;
+			DisplayObjectHelper.unlockStage();
 		}
 	}
 

@@ -29,6 +29,8 @@ class FlowSprite extends Sprite {
 	private var nativeWidget : Dynamic;
 	private var accessWidget : AccessWidget;
 
+	public var isNativeWidget : Bool;
+
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
 
@@ -45,6 +47,7 @@ class FlowSprite extends Sprite {
 
 		visible = false;
 		interactiveChildren = false;
+		isNativeWidget = RenderSupportJSPixi.DomRenderer;
 
 		this.url = url;
 		this.cache = cache;

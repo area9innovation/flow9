@@ -29,6 +29,9 @@ class FlowGraphics extends Graphics {
 	private var nativeWidget : Dynamic;
 	private var accessWidget : AccessWidget;
 
+	public var isEmpty : Bool = true;
+	public var isNativeWidget : Bool;
+
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
 	}
@@ -38,6 +41,7 @@ class FlowGraphics extends Graphics {
 
 		visible = false;
 		interactiveChildren = false;
+		isNativeWidget = RenderSupportJSPixi.DomRenderer;
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			createNativeWidget();
@@ -153,6 +157,8 @@ class FlowGraphics extends Graphics {
 		if (RenderSupportJSPixi.DomRenderer) {
 			updateNativeWidgetGraphicsData();
 		}
+
+		emit("graphicschanged");
 
 		return newGraphics;
 	}
@@ -303,6 +309,8 @@ class FlowGraphics extends Graphics {
 			    nativeWidget.removeChild(nativeWidget.firstChild);
 			}
 
+			isEmpty = true;
+
 			if (graphicsData.length != 1) {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
@@ -313,13 +321,17 @@ class FlowGraphics extends Graphics {
 					svg.style.top = '${localBounds.minY}px';
 					svg.style.position = 'absolute';
 
-					if (data.fill != null) {
+					if (data.fill != null && data.fillAlpha > 0) {
+						isEmpty = false;
+						isNativeWidget = true;
 						svg.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
 					} else {
 						svg.setAttribute("fill", "none");
 					}
 
-					if (data.lineWidth != null && data.lineWidth > 0) {
+					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
+						isEmpty = false;
+						isNativeWidget = true;
 						svg.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
 						svg.setAttribute("stroke-width", Std.string(data.lineWidth));
 					} else {
@@ -369,7 +381,15 @@ class FlowGraphics extends Graphics {
 						trace(data);
 					}
 
-					nativeWidget.appendChild(svg);
+					if (nativeWidget.childNodes.length > 0 && nativeWidget.lastChild.tagName.toLowerCase() == 'svg' &&
+						nativeWidget.lastChild.getAttribute("fill") == svg.getAttribute("fill") &&
+						nativeWidget.lastChild.getAttribute("stroke") == svg.getAttribute("stroke")) {
+						for (child in svg.childNodes) {
+							nativeWidget.lastChild.appendChild(child);
+						}
+					} else {
+						nativeWidget.appendChild(svg);
+					}
 				}
 			} else {
 				var data = graphicsData[0];
@@ -385,13 +405,17 @@ class FlowGraphics extends Graphics {
 						}).join('')");
 						path.setAttribute("d", d);
 
-						if (data.fill != null) {
+						if (data.fill != null && data.fillAlpha > 0) {
+							isEmpty = false;
+							isNativeWidget = true;
 							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
 						} else {
 							path.setAttribute("fill", "none");
 						}
 
-						if (data.lineWidth != null && data.lineWidth > 0) {
+						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
+							isEmpty = false;
+							isNativeWidget = true;
 							path.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
 							path.setAttribute("stroke-width", Std.string(data.lineWidth));
 						} else {
@@ -407,13 +431,17 @@ class FlowGraphics extends Graphics {
 						svg.appendChild(path);
 						nativeWidget.appendChild(svg);
 					} else {
-						if (data.fill != null) {
+						if (data.fill != null && data.fillAlpha > 0) {
+							isEmpty = false;
+							isNativeWidget = true;
 							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 						} else {
 							nativeWidget.style.background = null;
 						}
 
-						if (data.lineWidth != null && data.lineWidth > 0) {
+						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
+							isEmpty = false;
+							isNativeWidget = true;
 							nativeWidget.style.border = '${data.lineWidth}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
 						} else {
 							nativeWidget.style.border = null;

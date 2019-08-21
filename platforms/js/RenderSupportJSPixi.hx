@@ -23,6 +23,7 @@ using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
 	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
+	public static var DomInteractions : Bool = false;
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage = new FlowContainer(true);
@@ -147,7 +148,9 @@ class RenderSupportJSPixi {
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.accessibility");
 		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.extract");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.tilingSprite");
-		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.interaction");
+		if (DomInteractions) {
+			untyped __js__("delete PIXI.CanvasRenderer.__plugins.interaction");
+		}
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.mesh");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.particle");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.prepare");
@@ -155,9 +158,9 @@ class RenderSupportJSPixi {
 		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.sprite");
 		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.graphics");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.accessibility");
-		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.extract");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.extract");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.tilingSprite");
-		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.interaction");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.interaction");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.mesh");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.particle");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.prepare");
@@ -230,7 +233,9 @@ class RenderSupportJSPixi {
 			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
 		}
 
-		untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
+		if (!DomInteractions) {
+			untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
+		}
 
 		PixiView = PixiRenderer.view;
 		// Make absolute position for canvas for Safari to fix fullscreen API
@@ -243,7 +248,7 @@ class RenderSupportJSPixi {
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
-		if (untyped PIXI.VERSION[0] > 3) {
+		if (!DomRenderer && untyped PIXI.VERSION[0] > 3) {
 			PixiWorkarounds.workaroundDOMOverOutEventsTransparency();
 		}
 
@@ -277,7 +282,7 @@ class RenderSupportJSPixi {
 		initFullScreenEventListeners();
 		FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
-		if (!DomRenderer) {
+		if (!DomInteractions) {
 			initCanvasStackInteractions();
 		}
 
@@ -743,8 +748,10 @@ class RenderSupportJSPixi {
 	}
 
 	private static function forceRollOverRollOutUpdate() : Void {
-		untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
-		untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
+		if (!DomInteractions) {
+			untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
+			untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
+		}
 	}
 
 	public static function emitMouseEvent(clip : DisplayObject, event : String, x : Float, y : Float) : Void {
@@ -922,6 +929,8 @@ class RenderSupportJSPixi {
 			emit("stagechanged", timestamp);
 		} else {
 			AccessWidget.updateAccessTree();
+
+			emit("freeframe", timestamp);
 		}
 
 		requestAnimationFrame();
@@ -973,8 +982,12 @@ class RenderSupportJSPixi {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
 				// Create DOM node for access. properties
 				if (clip.nativeWidget != null) {
-					clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
+					if (DomRenderer) {
+						clip.isNativeWidget = true;
+						cast(clip, DisplayObject).invalidateTransform();
+					}
 
+					clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
 					clip.accessWidget.addAccessAttributes(attributesMap);
 				} else {
 					AccessWidget.createAccessWidget(clip, attributesMap);
@@ -1631,35 +1644,19 @@ class RenderSupportJSPixi {
 			on(event, fn);
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
-			var nativeWidget : Dynamic = untyped clip.nativeWidget;
-
-			if (nativeWidget != null && false) {
-				nativeWidget.style.pointerEvents = 'auto';
-				nativeWidget.addEventListener("pointerover", fn);
-				return function() { nativeWidget.removeEventListener("pointerover", fn); }
-			} else {
-				cast(clip, DisplayObject).on("pointerover", fn);
+			cast(clip, DisplayObject).on("pointerover", fn);
+			cast(clip, DisplayObject).invalidateInteractive();
+			return function() {
+				cast(clip, DisplayObject).off("pointerover", fn);
 				cast(clip, DisplayObject).invalidateInteractive();
-				return function() {
-					cast(clip, DisplayObject).off("pointerover", fn);
-					cast(clip, DisplayObject).invalidateInteractive();
-				};
-			}
+			};
 		} else if (event == "rollout") {
-			var nativeWidget : Dynamic = untyped clip.nativeWidget;
-
-			if (nativeWidget != null && false) {
-				nativeWidget.style.pointerEvents = 'auto';
-				nativeWidget.addEventListener("pointerout", fn);
-				return function() { nativeWidget.removeEventListener("pointerout", fn); }
-			} else {
-				cast(clip, DisplayObject).on("pointerout", fn);
+			cast(clip, DisplayObject).on("pointerout", fn);
+			cast(clip, DisplayObject).invalidateInteractive();
+			return function() {
+				cast(clip, DisplayObject).off("pointerout", fn);
 				cast(clip, DisplayObject).invalidateInteractive();
-				return function() {
-					cast(clip, DisplayObject).off("pointerout", fn);
-					cast(clip, DisplayObject).invalidateInteractive();
-				};
-			}
+			};
 		} else if (event == "scroll") {
 			cast(clip, DisplayObject).on("scroll", fn);
 			return function() { cast(clip, DisplayObject).off("scroll", fn); };
@@ -1757,7 +1754,7 @@ class RenderSupportJSPixi {
 		}
 
 		var point = new Point(x, y);
-		if (clip.parent != null) {
+		if (!DomRenderer && clip.parent != null) {
 			clip.updateTransform();
 		}
 
@@ -1969,12 +1966,29 @@ class RenderSupportJSPixi {
 				var filter : Dynamic = filters[0];
 				var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(filter.color, []);
 
-				untyped clip.nativeWidget.style.filter = 'drop-shadow(
-					${Math.cos(filter.angle) * filter.distance}px
-					${Math.sin(filter.angle) * filter.distance}px
-					${filter.blur}px
-					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
-				)';
+				if (!DisplayObjectHelper.RenderContainers) {
+					untyped clip.isNativeWidget = true;
+					clip.invalidateTransform();
+				}
+
+				if (Platform.isIE) { //todo:
+					untyped clip.nativeWidget.style.boxShadow = '
+						${Math.round(Math.cos(filter.angle) * filter.distance)}px
+						${Math.round(Math.sin(filter.angle) * filter.distance)}px
+						${Math.round(filter.blur)}px
+						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
+					';
+
+					untyped clip.nativeWidget.style.width = '${clip.getWidth()}px';
+					untyped clip.nativeWidget.style.height = '${clip.getHeight()}px';
+				} else {
+					untyped clip.nativeWidget.style.filter = 'drop-shadow(
+						${Math.round(Math.cos(filter.angle) * filter.distance)}px
+						${Math.round(Math.sin(filter.angle) * filter.distance)}px
+						${Math.round(filter.blur)}px
+						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
+					)';
+				}
 			}
 		} else {
 			untyped clip.filterPadding = 0.0;

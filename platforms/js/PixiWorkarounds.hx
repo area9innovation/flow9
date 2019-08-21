@@ -907,13 +907,17 @@ class PixiWorkarounds {
 							const child = this.children[i];
 
 							if (child.visible && child.transformChanged) {
+								if (this.localTransformChanged && !this.isNativeWidget) {
+									child.localTransformChanged = true;
+								}
+
 								child.updateTransform();
 							}
 						}
 
 						if (this.accessWidget) {
 							this.accessWidget.updateTransform();
-						} else if (this.nativeWidget && this.localTransformChanged) {
+						} else if (RenderSupportJSPixi.DomRenderer && this.isNativeWidget && this.localTransformChanged) {
 							this.localTransformChanged = false;
 							DisplayObjectHelper.updateNativeWidget(this);
 						}
@@ -948,13 +952,17 @@ class PixiWorkarounds {
 							const child = this.children[i];
 
 							if (child.visible && child.transformChanged) {
+								if (this.localTransformChanged && !this.mask) {
+									child.localTransformChanged = true;
+								}
+
 								child.updateTransform();
 							}
 						}
 
 						if (this.accessWidget) {
 							this.accessWidget.updateTransform();
-						} else if (this.nativeWidget && this.localTransformChanged) {
+						} else if (RenderSupportJSPixi.DomRenderer && this.isNativeWidget && this.localTransformChanged) {
 							this.localTransformChanged = false;
 							DisplayObjectHelper.updateNativeWidget(this);
 						}
