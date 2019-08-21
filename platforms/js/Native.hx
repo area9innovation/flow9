@@ -1690,11 +1690,9 @@ class Native {
 	}
 
 	public static function md5(content: String) : String {
-		var b = new StringBuf();
-		var c = string2utf8(content);
-		for (i in c)
-			b.addChar(i);
-		return Md5.encode(b.toString());
+		var bytes = haxe.io.Bytes.ofString(content);
+		var md5Bytes = haxe.crypto.Md5.make(bytes);
+		return md5Bytes.toHex();
 	}
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
