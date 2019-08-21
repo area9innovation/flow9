@@ -155,7 +155,7 @@ private class FlowClip {
 
 	public function hittest(global_x : Float, global_y : Float) : Bool {
 		if (alpha <= 0.01 || !visible) return false;
-		
+
 		if ( hittestInner(global_x, global_y) ) return true;
 
 		for (c in children) {
@@ -290,7 +290,7 @@ private class FlowGraphics {
 			ctx.fill();
 		}
 
-		if (strokeOpacity != 0.0) ctx.stroke();	
+		if (strokeOpacity != 0.0) ctx.stroke();
 	}
 }
 
@@ -310,7 +310,7 @@ private class FlowTextClip extends FlowClip {
 	private static var activeNativeWidget : Dynamic;
 
 	// Show native widget on click
-	public static function onStageMouseDown(global_x : Float, global_y : Float) {	
+	public static function onStageMouseDown(global_x : Float, global_y : Float) {
 		var clip : Dynamic = FlowClip.getClipByGlobalPoint(global_x, global_y);
 		if (clip != null && clip.nativeWidget != null) {
 			clip.nativeWidget.style.display = "block"; // show it
@@ -411,7 +411,7 @@ private class FlowTextClip extends FlowClip {
 	}
 
 	public function getContent() : String {
-		if (nativeWidget != null) 
+		if (nativeWidget != null)
 			return nativeWidget.value;
 		else
 			return "";
@@ -496,7 +496,7 @@ class RenderSupportJS {
 
 		StageCanvas = js.Browser.document.createElement("CANVAS");
 		StageCanvas.id = "Stage";
-		js.Browser.document.body.appendChild(StageCanvas);	
+		js.Browser.document.body.appendChild(StageCanvas);
 		updateStageCanvasWH();
 
 		if (!isTouchScreen()) {
@@ -518,7 +518,7 @@ class RenderSupportJS {
 
 			StageCanvas.ontouchmove = function(e : Dynamic) {
 				MouseX = untyped e.touches[0].clientX;
-				MouseY = untyped e.touches[0].clientY + untyped Browser.window.pageYOffset; // pageYOffset by screen kbd 
+				MouseY = untyped e.touches[0].clientY + untyped Browser.window.pageYOffset; // pageYOffset by screen kbd
 				//Errors.print("TM: " + MouseX + " " + MouseY);
 				e.preventDefault(); // Dont scroll window
 			}
@@ -540,18 +540,18 @@ class RenderSupportJS {
 
 		FrameCount = 0;
 		ShowMousePosition = false;
-		renderStage(0);		
+		renderStage(0);
 	}
 
 	private static function isTouchScreen() : Bool {
-		return untyped __js__("typeof document.documentElement.ontouchstart != 'undefined'"); 
+		return untyped __js__("typeof document.documentElement.ontouchstart != 'undefined'");
 	}
 
 	private static function updateStageCanvasWH() : Void {
 		StageWidth = js.Browser.window.innerWidth;
 		StageHeight = js.Browser.window.innerHeight;
 		untyped StageCanvas.width = StageWidth;
-		untyped StageCanvas.height = StageHeight;	
+		untyped StageCanvas.height = StageHeight;
 		Context = untyped StageCanvas.getContext("2d");
 	}
 
@@ -746,6 +746,9 @@ class RenderSupportJS {
 		Errors.print("setWordWrap");
 	}
 
+	public static function setDoNotInvalidateStage(clip : Dynamic, value : Bool) : Void {
+	}
+
 	public static function getSelectionStart(textfield : Dynamic) : Int {
 		return 0;
 	}
@@ -828,7 +831,7 @@ class RenderSupportJS {
 		if (clip != CurrentClip && event != "change") return Nop; // Only stage and textbox events for this renderer
 
 		if (event == "change") return (untyped clip.addOnChangeListener(fn));
-		
+
 		if (event == "resize") {
 			if (untyped js.Browser.window.onorientationchange != null) event = "orientationchange"; // Mobile device
 //			untyped js.Browser.window.addEventListener(event, fn);
