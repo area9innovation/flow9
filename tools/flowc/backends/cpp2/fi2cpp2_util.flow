@@ -6,7 +6,7 @@ export {
 clearMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata;
 copyMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata;
 cpp2TagTostring(tag : Cpp2TagType) -> string;
-cpp2GetStructAType(t : FiType) -> Cpp2TagType;
+cpp2GetStructAType(t : FiTypeNullable) -> Cpp2TagType;
 cpp2IsStructFieldTag(type : Cpp2TagType) -> bool;
 cpp2StructFieldCode(type : Cpp2TagType) -> string;
 cpp2IsNonGCFieldType(type : Cpp2TagType) -> bool;
@@ -32,15 +32,9 @@ cpp2CodeLinesToCode(code : Cpp2CodeLines) -> string;
 
 
 
-cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string {
-	""
-}
-cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, fname : string, ftype : Cpp2TagType) -> string {
-	""
-}
-cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string {
-	""
-}
+cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string;
+cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, fname : string, ftype : Cpp2TagType) -> string;
+cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string;
 cpp2Context(env : Cpp2Environment, indent : string) -> Cpp2Context;
 
 }
@@ -49,8 +43,14 @@ clearMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata {
 	Cpp2PlaceMetadata(
 		meta.context,
 		meta.dirty,
-		None(), None(), None(), None(),
-		None(), None(), None(), None(),
+		Cpp2TNull(), // tag
+		FiTypeNull(),  // type
+		-1, // struct_size
+		-1, // struct_id
+		[], // known_fields
+		[], // known_compares
+		-1, // struct_ptr_gcid
+		[], // struct_ptr_types
 	)
 }
 
@@ -63,7 +63,18 @@ copyMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata {
 	if (rv.struct_ptr_types != null)
 		rv.struct_ptr_types = rv.struct_ptr_types.list();
 	return rv;*/
-	meta
+	Cpp2PlaceMetadata(
+		meta.context,
+		meta.dirty,
+		meta.tag,
+		meta.type,
+		meta.struct_size,
+		meta.struct_id,
+		meta.known_fields,
+		meta.known_compares,
+		meta.struct_ptr_gcid,
+		meta.struct_ptr_types
+	)
 }
 
 /*
@@ -110,7 +121,7 @@ cpp2TagTostring(tag : Cpp2TagType) -> string {
 	}
 }
 
-cpp2GetStructAType(t : FiType) -> Cpp2TagType {
+cpp2GetStructAType(t : FiTypeNullable) -> Cpp2TagType {
 	switch(t) {
 		FiTypeVoid():      Cpp2TNull();
 		FiTypeBool():      Cpp2TBool();
@@ -175,10 +186,16 @@ cpp2PlaceInfo(env: Maybe<Cpp2Environment>, place: Cpp2PlaceType, slot: int, name
 					None(): -1;
 				}, 
 				-1
-			),
-			false,
-			None(), None(), None(), None(),
-			None(), None(), None(), None(),
+			), // context
+			false, // dirty
+			Cpp2TNull(), // tag
+			FiTypeNull(),  // type
+			-1, // struct_size
+			-1, // struct_id
+			[], // known_fields
+			[], // known_compares
+			-1, // struct_ptr_gcid
+			[], // struct_ptr_types
 		)
 	)
 }
@@ -511,7 +528,6 @@ cpp2Environment(parent : Maybe<Cpp2Environment>, mname : string, vname : string)
 		None(), // closure
 		[], // upvalues
 		false, // tail_call
-		0, // lines
 		None(), // cur_ctx = new CppContext(this, '    ');
 		makeTree(), // locals
 		makeTree(), // meta_globals
@@ -553,13 +569,10 @@ cpp2EnvironmentTempvar(env : Cpp2Environment, base : string) -> string {
 cpp2EnvironmentMkupvalue(env : Cpp2Environment, name : string, free : Cpp2PlaceInfo) -> Cpp2PlaceInfo {
 	id = length(env.upvalues);
 	env.upvalues ::= arrayPush(env.upvalues, name);
-	type = switch (free.meta.type) {
-		None(): {
-			(free.meta).type ::= Some(FiTypeFlow());
-			FiTypeFlow()
-		}
-		Some(tp): tp;
+	if (free.meta.type == FiTypeNull()) {
+		(free.meta).type ::= FiTypeFlow();
 	}
+	type = free.meta.type;
 	ttag = cpp2GetStructAType(type);
 	vtag = ref free.meta.tag;
 	if (!cpp2IsStructFieldTag(^vtag)) {
@@ -576,14 +589,14 @@ cpp2EnvironmentMkupvalue(env : Cpp2Environment, name : string, free : Cpp2PlaceI
 	meta = Cpp2PlaceMetadata(
 		0, // context
 		false, // dirty
-		Some(^vtag), // tag 
-		Some(type), // type 
-		None(), // struct_size
-		None(), // struct_id
-		None(), // known_fields
-		None(), // known_compares
-		None(), // struct_ptr_gcid
-		None(), // struct_ptr_types
+		^vtag, // tag 
+		type, // type 
+		-1, // struct_size
+		-1, // struct_id
+		[], // known_fields
+		[], // known_compares
+		-1, // struct_ptr_gcid
+		[], // struct_ptr_types
 	);
 	info = switch (env.closure) {
 		None(): {
@@ -689,338 +702,272 @@ cpp2Context(env : Cpp2Environment, indent : string) -> Cpp2Context {
 	)
 }
 
-
-/*
-public function new(env : CppEnvironment, indent : string) {
-	this.env = env;
-	this.prev = env.cur_ctx;
-	this.indent = indent;
-	this.id = env.next_ctx++;
-
-	gc_index = (prev != null) ? prev.gc_index : 0;
-
-	local_names = [];
-	local_binds = [];
-	meta = new Map();
-	idxvars = new OrderedHash();
-	env.pushCppBlock();
-}
-
-
-public function exit() {
-	env.popCppBlock();
-	popdefs();
-
-	for (mid in meta.iterator()) {
-		mid.def.meta = mid.old;
-
+cpp2ContextExit(ctx : Cpp2Context) -> void {
+	cpp2EnvironmentPopCppBlock(ctx.env);
+	cpp2ContextPopdefs(ctx, 0);
+	traverseInOrder(ctx.meta, \__, mid -> {
+		(mid.def).meta ::= mid.old;
 		// Forget globals if restored
-		if (mid.def.env == null && mid.old.context < 0)
-			env.meta_globals.remove(mid.def.uid);
-	}
-
-	env.cur_ctx = prev;
+		if (mid.def.env == None() && mid.old.context < 0)
+			(ctx.env).meta_globals ::= removeFromTree(ctx.env.meta_globals, mid.def.uid);
+	});
+	(ctx.env).cur_ctx ::= ctx.prev;
 }
 
-	public function wrbegin() : stringBuf {
-	env.lines++;
-	var line_str = new stringBuf();
-	line_str.add(indent);
-	return line_str;
+cpp2ContextWr(ctx : Cpp2Context, s : string) -> void {
+	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + cpp2_NEWLINE));
 }
 
-public function wr(s : string) {
-	var line_str = wrbegin();
-	line_str.add(s);
-	line_str.add(NEWLINE);
-	env.addCppLine(CppAny(line_str.tostring()));
+cpp2ContextWrsemi(ctx : Cpp2Context, s: string) -> void {
+	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + cpp2_SEMI_NL));
 }
 
-public function wrsemi(str : string) {
-	var line_str = wrbegin();
-	line_str.add(str);
-	line_str.add(SEMI_NL);
-	env.addCppLine(CppAny(line_str.tostring()));
+cpp2ContextEnter(ctx : Cpp2Context, idelta : string) -> Cpp2Context {
+	new_ctx = cpp2Context(ctx.env, ctx.indent + idelta);
+	(ctx.env).cur_ctx ::= Some(new_ctx);
+	new_ctx
 }
 
-public function wrsemi2(str1 : string, str2 : string) {
-	var line_str = wrbegin();
-	line_str.add(str1);
-	line_str.add(str2);
-	line_str.add(SEMI_NL);
-	env.addCppLine(CppAny(line_str.tostring()));
-}
-
-public function wrsemi3(str1 : string, str2 : string, str3 : string) {
-	var line_str = wrbegin();
-	line_str.add(str1);
-	line_str.add(str2);
-	line_str.add(str3);
-	line_str.add(SEMI_NL);
-	env.addCppLine(CppAny(line_str.tostring()));
-}
-
-public function wrsemi4(str1 : string, str2 : string, str3 : string, str4 : string) {
-	var line_str = wrbegin();
-	line_str.add(str1);
-	line_str.add(str2);
-	line_str.add(str3);
-	line_str.add(str4);
-	line_str.add(SEMI_NL);
-	env.addCppLine(CppAny(line_str.tostring()));
-}
-
-public function enter(idelta : string) {
-	return env.cur_ctx = new CppContext(env, indent + idelta);
-}
-
-public function localMeta(def : CppPlaceInfo) {
-	var curmeta = def.meta;
-
-	var meta = if (curmeta.context >= id) {
+cpp2ContextLocalMeta(ctx : Cpp2Context, def : Cpp2PlaceInfo) -> Cpp2PlaceMetadata {
+	curmeta = def.meta;
+	meta = if (curmeta.context >= ctx.id) {
 		curmeta;
 	} else {
-		var newmeta = CppPlaceInfo.copyMeta(curmeta);
-		newmeta.context = id;
-		meta.set(def.uid, { def: def, old: curmeta, my: newmeta });
+		newmeta = copyMeta(curmeta);
+		newmeta.context ::= ctx.id;
+		ctx.meta ::= setTree(ctx.meta, def.uid, Cpp2PlaceTriple(def, curmeta, newmeta));
 
 		// Remember that a global was changed
-		if (def.env == null && curmeta.context < 0)
-			env.meta_globals.set(def.uid, { def: def, old: curmeta, my: newmeta });
-
-		def.meta = newmeta;
+		switch (def.env) {
+			None(): {
+				if (curmeta.context < 0) {
+					(ctx.env).meta_globals ::= setTree(ctx.env.meta_globals, def.uid, Cpp2PlaceTriple(def, curmeta, newmeta));
+				}
+			}
+			Some(__): { }
+		}
+		def.meta ::= newmeta;
+		newmeta
 	};
-
-	meta.dirty = true;
-	return meta;
+	meta.dirty ::= true;
+	meta
 }
 
-public function join_one(child : CppContext) {
-	if (child.gc_index > gc_index)
-		gc_index = child.gc_index;
+cpp2ContextJoinOne(ctx : Cpp2Context, child : Cpp2Context) -> void {
+	if (child.gc_index > ctx.gc_index) {
+		ctx.gc_index ::= child.gc_index;
+	}
 }
+/*
+cpp2ContextJoin(ctx : Cpp2Context, children : [CppContext]) -> void {
+	if (length(children) > 0) {
+		iter(children, \child -> cpp2ContextJoinOne(ctx, child));
 
-public function join(children : Array<CppContext>) {
-	if (children.length == 0) return;
+		//flist = Cpp2PlaceInfo.meta_fields;
 
-	for (child in children)
-		join_one(child);
+		for (mid in children[0].meta.iterator()) {
+			var defid = mid.def.uid;
 
-	var flist = CppPlaceInfo.meta_fields;
+			var best = [];
+			for (fn in flist)
+				best.push(Reflect.field(mid.my, fn));
+			var ok = true;
 
-	for (mid in children[0].meta.iterator()) {
-		var defid = mid.def.uid;
+			for (i in 1...children.length) {
+				var cur = children[i].meta.get(defid);
+				if (cur == null) {
+					ok = false;
+					break;
+				}
+				for (fi in 0...flist.length) {
+					if (best[fi] == null)
+						continue;
+					best[fi] = CppPlaceInfo.meta_merge_fn[fi](
+						best[fi], Reflect.field(cur.my, flist[fi])
+					);
+				}
+			}
 
-		var best = [];
-		for (fn in flist)
-			best.push(Reflect.field(mid.my, fn));
-		var ok = true;
+			if (!ok)
+				continue;
 
-		for (i in 1...children.length) {
-			var cur = children[i].meta.get(defid);
-			if (cur == null) {
-				ok = false;
+			ok = false;
+			var cur = mid.def.meta;
+			for (fi in 0...flist.length) {
+				if (best[fi] == Reflect.field(cur, flist[fi]))
+					continue;
+				ok = true;
 				break;
 			}
-			for (fi in 0...flist.length) {
-				if (best[fi] == null)
-					continue;
-				best[fi] = CppPlaceInfo.meta_merge_fn[fi](
-					best[fi], Reflect.field(cur.my, flist[fi])
-				);
-			}
-		}
 
-		if (!ok)
-			continue;
-
-		ok = false;
-		var cur = mid.def.meta;
-		for (fi in 0...flist.length) {
-			if (best[fi] == Reflect.field(cur, flist[fi]))
+			if (!ok)
 				continue;
-			ok = true;
-			break;
-		}
 
-		if (!ok)
-			continue;
-
-		var upd = localMeta(mid.def);
-		var dirty = false;
-		for (fi in 0...flist.length) {
-			if (best[fi] != null) dirty = true;
-			Reflect.setField(upd, flist[fi], best[fi]);
-		}
-		upd.dirty = dirty;
-	}
-}
-
-public function pushdef(def : CppPlaceInfo) {
-	local_names.push(def.name);
-	local_binds.push(env.locals.get(def.name));
-	env.locals.set(def.name, def);
-}
-
-public function defpos() { return local_names.length; }
-
-public function popdefs(?pos : int = 0) {
-	for (i in 0...(local_names.length - pos))
-		env.poplocal(local_names.pop(), local_binds.pop());
-}
-
-public function ensureStructPtr(sref : CppPlaceInfo, structname : string, init : bool = true, sb : stringBuf = null)
-{
-	var bad_gcid = sref.meta.struct_ptr_gcid == null || sref.meta.struct_ptr_gcid < gc_index;
-	var stale = (bad_gcid ||
-					sref.meta.struct_ptr_types == null ||
-					!sref.meta.struct_ptr_types.has(structname));
-
-	if (stale && sb == null)
-		sb = new stringBuf();
-
-	if (sb != null) {
-		sb.add(SPTR_);
-		sb.add(sref.uid);
-		if (structname.length > 0)
-		{
-			sb.add(UNDERSCORE);
-			sb.add(structname);
+			var upd = localMeta(mid.def);
+			var dirty = false;
+			for (fi in 0...flist.length) {
+				if (best[fi] != null) dirty = true;
+				Reflect.setField(upd, flist[fi], best[fi]);
+			}
+			upd.dirty = dirty;
 		}
 	}
+}
+*/
 
-	if (stale)
-	{
-		var vname = sb.tostring();
+cpp2ContextPushdef(ctx : Cpp2Context, def : Cpp2PlaceInfo) -> void {
+	ctx.local_names ::= arrayPush(ctx.local_names, def.name);
+	switch (lookupTree(ctx.env.locals, def.name)) {
+		Some(bind): {
+			ctx.local_binds ::= arrayPush(ctx.local_binds, bind);
+		}
+		None(): {
+			cpp2_error("local bind: " + def.name + " is not found");
+		}
+	};
+	(ctx.env).locals ::= setTree(ctx.env.locals, def.name, def)
+}
 
-		if (structname == '') {
-			registerIdxVar(vname, 'const StackSlot*');
+cpp2ContextDefpos(ctx : Cpp2Context) -> int { 
+	length(ctx.local_names) 
+}
 
-			if (init) {
-				var size = sref.meta.struct_size == null ? 1 : sref.meta.struct_size;
-				var sb2 = wrbegin();
-				sb2.add(vname); sb2.add(GET_ASPTR); sb2.add(sref.getRValue(this));
-				sb2.add(COMMA); sb2.add(size<1?1:size); sb2.add(PAREN_SEMI_NL);
-				env.addCppLine(CppAny(sb2.tostring()));
+cpp2ContextPopdefs(ctx : Cpp2Context, pos : int) -> void { // ?pos : int = 0
+	fori(0, length(ctx.local_names) - pos, 
+		\__ -> {
+			loc_name = ctx.local_names[length(ctx.local_names) - 1];
+			loc_bind = ctx.local_binds[length(ctx.local_binds) - 1];
+			ctx.local_names ::= take(ctx.local_names, length(ctx.local_names) - 1);
+			ctx.local_binds ::= take(ctx.local_binds, length(ctx.local_binds) - 1);
+			cpp2EnvironmentPoplocal(ctx.env, loc_name, loc_bind);
+		}
+	)
+	//for (i in 0...(local_names.length - pos))
+	//	env.poplocal(local_names.pop(), local_binds.pop());
+}
+
+cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string { // init : bool = true, sb : stringBuf = null
+	bad_gcid = (sref.meta.struct_ptr_gcid == -1 || sref.meta.struct_ptr_gcid < ctx.gc_index);
+	stale = (bad_gcid || !contains(sref.meta.struct_ptr_types, structname));
+	vname = cpp2_SPTR_ + i2s(sref.uid) + (if (strlen(structname) > 0) cpp2_UNDERSCORE + structname else "");
+	if (stale) {
+		line = if (structname == "") {
+			cpp2ContextRegisterIdxVar(ctx, vname, "const StackSlot*");
+			if (!init) "" else {
+				size = if (sref.meta.struct_size < 1) 1 else sref.meta.struct_size;
+				ctx.indent + vname + cpp2_GET_ASPTR + 
+				cpp2PlaceInfoGetRValue(sref, ctx) + cpp2_COMMA + 
+				i2s(size) + cpp2_PAREN_SEMI_NL;
 			}
 		} else {
-			var vtype = 'FS_'+structname;
-			registerIdxVar(vname, vtype+'*');
-
-			if (init) {
-				var sb2 = wrbegin();
-				sb2.add(vname); sb2.add(EQ_LPAREN); sb2.add(vtype);
-
-				if (sref.isClosureRef()) {
-					sb2.add(GET_CSPTR); sb2.add(sref.getRValue(this));
-				} else {
-					sb2.add(GET_SPTR); sb2.add(sref.getStructAddr(this));
-				}
-
-				sb2.add(PAREN_SEMI_NL);
-				env.addCppLine(CppAny(sb2.tostring()));
+			vtype = "FS_" + structname;
+			cpp2ContextRegisterIdxVar(ctx, vname, vtype + "*");
+			if (!init) "" else {
+				ctx.indent + vname + cpp2_EQ_LPAREN + vtype +
+				(if (cpp2PlaceInfoIsClosureRef(sref))
+					cpp2_GET_CSPTR + cpp2PlaceInfoGetRValue(sref, ctx)
+				else
+					cpp2_GET_SPTR + cpp2PlaceInfoGetStructAddr(sref, ctx)
+				) 
+				+ cpp2_PAREN_SEMI_NL;
 			}
 		}
+		cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line));
+		lm = cpp2ContextLocalMeta(ctx, sref);
+		lm.struct_ptr_gcid ::= ctx.gc_index;
+		lm.struct_ptr_types ::= arrayPush(lm.struct_ptr_types, structname);
+	}
+	vname
+}
 
-		var lm = localMeta(sref);
-		if (lm.struct_ptr_types == null || bad_gcid)
-			lm.struct_ptr_types = new List();
-		lm.struct_ptr_gcid = gc_index;
-		lm.struct_ptr_types.push(structname);
+cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string { // structname : string = '', init : bool = true
+	vname = cpp2ContextEnsureStructPtr(ctx, sref, structname, init);
+	if (sref.name != "") {
+		vname + cpp2_CMSTART + sref.name + cpp2_CMEND;
+	} else {
+		vname
 	}
 }
 
-public function getStructPtr(sref : CppPlaceInfo, structname : string = '', init : bool = true) : string
-{
-	var sb = new stringBuf();
-	ensureStructPtr(sref, structname, init, sb);
-
-	if (sref.name != null) {
-		sb.add(CMSTART); sb.add(sref.name); sb.add(CMEND);
-	}
-
-	return sb.tostring();
-}
-
-public function getStructField(sref : CppPlaceInfo, structname : string, fname : string, ftype : CppTagType) : string
-{
-	var ptr = getStructPtr(sref, structname);
-	var vname = ptr+'->fl_'+fname;
-	if (ftype == null)
-		return vname;
-
-	return switch (ftype) {
-	Tbool: 'StackSlot::Makebool('+vname+')';
-	Tint: 'StackSlot::Makeint('+vname+')';
-	TDouble: 'StackSlot::MakeDouble('+vname+')';
-	Tstring: vname;
-	TArray: vname;
-	TRefTo: vname;
-	TStruct:
-		'StackSlot::MakeStruct('+vname+',RUNNER->GetStructPtr('+vname+')->StructId)';
-	default:
-		throw "impossible";
+cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, fname : string, ftype : Cpp2TagType) -> string {
+	ptr = cpp2ContextGetStructPtr(ctx, sref, structname, true);
+	vname = ptr + "->fl_" + fname;
+	if (ftype == Cpp2TNull()) vname else {
+		switch (ftype) {
+			Cpp2TBool():  "StackSlot::Makebool(" + vname + ")";
+			Cpp2TInt():   "StackSlot::Makeint(" + vname + ")";
+			Cpp2TDouble(): "StackSlot::MakeDouble(" + vname + ")";
+			Cpp2TString(): vname;
+			Cpp2TArray():  vname;
+			Cpp2TRefTo():  vname;
+			Cpp2TStruct():
+				"StackSlot::MakeStruct(" + vname + ",RUNNER->GetStructPtr(" + vname + ")->StructId)";
+			default: {
+				cpp2_error("impossible case in cpp2ContextGetStructField");
+				""
+			}
+		}
 	}
 }
 
-public function tempvar(base : string, tag : CppTagType, ?init : string = null) : string {
-	var name = env.tempvar(base);
-	var type = switch (tag) {
-	Tint: 'int';
-	TDouble: 'double';
-	Tbool: 'bool';
-	default: throw 'bad';
+cpp2ContextTempvar(ctx : Cpp2Context, base : string, tag : Cpp2TagType, init : string) -> string { // ?init : string = null
+	name = cpp2EnvironmentTempvar(ctx.env, base);
+	type = switch (tag) {
+		Cpp2TInt():    "int";
+		Cpp2TDouble(): "double";
+		Cpp2TBool():   "bool";
+		default: {
+			cpp2_error("impossible case in cpp2ContextTempvar");
+			""
+		}
 	}
-
-	wrsemi4(type,SPACE,name, init!=null ? SPC_EQ_SPC+init : EMPTYSTR);
-	return name;
+	cpp2ContextWrsemi(ctx, type + " " + name + (if (init != "") cpp2_SPC_EQ_SPC + init else ""));
+	name
 }
 
-public function inc_gc() {
-	gc_index++;
+cpp2ContextInc_gc(ctx : Cpp2Context) -> void {
+	ctx.gc_index ::= ctx.gc_index + 1
 }
 
-public function wrcheck(str : string, ?gc = false) {
-	var line_str = wrbegin();
-	line_str.add(CHECK_ERROR);
-	line_str.add(str);
-	line_str.add(PAREN_SEMI_NL);
-	if (gc) gc_index++;
-	env.addCppLine(CppAny(line_str.tostring()));
-}
-
-public function wrcheckopt(str : string, check : bool, ?gc = false) {
-	if (gc)
-		inc_gc();
-	if (check)
-		wrcheck(str);
-	else
-	{
-		var line_str = wrbegin();
-		line_str.add(str);
-		line_str.add(SEMI_NL);
-		env.addCppLine(CppAny(line_str.tostring()));
+cpp2ContextWrcheck(ctx : Cpp2Context, str : string, gc_on : bool) { // ?gc = false
+	line_str = ctx.indent + 
+	cpp2_CHECK_ERROR + str + cpp2_PAREN_SEMI_NL;
+	if (gc_on) {
+		ctx.gc_index ::= ctx.gc_index + 1;
 	}
+	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line_str));
 }
 
-private function idxVarType(name : string) {
-	if (idxvars.get(name) != null) {
-		return idxvars.get(name);
+cpp2ContextWrcheckopt(ctx : Cpp2Context, str : string, check : bool, gc_on : bool) { // ?gc = false
+	if (gc_on) {
+		ctx.gc_index ::= ctx.gc_index + 1
 	}
-	if (prev != null) {
-		return prev.idxVarType(name);
-	}
-	return null;
-}
-
-public function registerIdxVar(name : string, type : string) {
-	if (idxVarType(name) == null) {
-		idxvars.set(name, type);
-		env.addCppLine(CppDecl(type, name, indent, env.code_lines));
+	if (check) {
+		cpp2ContextWrcheck(ctx, str, false);
+	} else {
+		line_str = ctx.indent + str + cpp2_SEMI_NL;
+		cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line_str));
 	}
 }
 
+cpp2ContextIdxVarType(ctx : Cpp2Context, name : string) -> string {
+	switch (lookupTree(ctx.idxvars, name)) {
+		Some(type): type;
+		None(): {
+			switch (ctx.prev) {
+				Some(ctx1): cpp2ContextIdxVarType(ctx1, name);
+				None(): "";
+			}
+		}
+	}
+}
 
+cpp2ContextRegisterIdxVar(ctx : Cpp2Context, name : string, type : string) -> void {
+	if (!containsKeyTree(ctx.idxvars, name)) {
+		ctx.idxvars ::= setTree(ctx.idxvars, name, type);
+		cpp2EnvironmentAddCppLine(ctx.env, Cpp2Decl(type, name, ctx.indent, ctx.env.code_lines));
+	}
+}
 
 
 
@@ -1034,7 +981,7 @@ public function registerIdxVar(name : string, type : string) {
 
 
 // CppWriter methods
-
+/*
 public function new(includes : Array<string>, p : Program, debug : bool, entry : string, outdir : string, extStructDefs : bool)  {
 	Profiler.get().profileStart("C++ export");
 	this.p = p;
