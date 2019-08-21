@@ -407,14 +407,9 @@ class Native {
 		return str.toUpperCase();
 	}
 
-	public static function string2utf8(str : String) : Array<Int> {
-		var a = new Array<Int>();
-		var buf = new haxe.io.BytesOutput();
-		buf.writeString(str);
-		var bytes = buf.getBytes();
-		for (i in 0...bytes.length) {
-			a.push((bytes.get(i)));
-		}
+	public static function string2utf8(str : String) : Array<Int> {		
+		var bytes = haxe.io.Bytes.ofString(str);
+		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
 		return a;
 	}
 
@@ -1695,11 +1690,9 @@ class Native {
 	}
 
 	public static function md5(content: String) : String {
-		var b = new StringBuf();
-		var c = string2utf8(content);
-		for (i in c)
-			b.addChar(i);
-		return Md5.encode(b.toString());
+		var bytes = haxe.io.Bytes.ofString(content);
+		var md5Bytes = haxe.crypto.Md5.make(bytes);
+		return md5Bytes.toHex();
 	}
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
