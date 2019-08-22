@@ -464,9 +464,5 @@ class VideoClip extends FlowContainer {
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
-
-		updateNativeWidgetDisplay();
-
-		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
 	}
 }

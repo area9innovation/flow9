@@ -41,7 +41,7 @@ class FlowGraphics extends Graphics {
 
 		visible = false;
 		interactiveChildren = false;
-		isNativeWidget = RenderSupportJSPixi.DomRenderer;
+		isNativeWidget = false;
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			createNativeWidget();
@@ -290,19 +290,6 @@ class FlowGraphics extends Graphics {
 		return newGraphics;
 	};
 
-	private function createNativeWidget(?node_name : String = "div") : Void {
-		deleteNativeWidget();
-
-		nativeWidget = Browser.document.createElement(node_name);
-		nativeWidget.setAttribute('id', getClipUUID());
-		nativeWidget.className = 'nativeWidget';
-
-		updateNativeWidgetGraphicsData();
-		updateNativeWidgetDisplay();
-
-		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
-	}
-
 	private function updateNativeWidgetGraphicsData() : Void {
 		if (nativeWidget != null) {
 			while (nativeWidget.firstChild != null) {
@@ -323,7 +310,6 @@ class FlowGraphics extends Graphics {
 
 					if (data.fill != null && data.fillAlpha > 0) {
 						isEmpty = false;
-						isNativeWidget = true;
 						svg.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
 					} else {
 						svg.setAttribute("fill", "none");
@@ -331,7 +317,6 @@ class FlowGraphics extends Graphics {
 
 					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
 						isEmpty = false;
-						isNativeWidget = true;
 						svg.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
 						svg.setAttribute("stroke-width", Std.string(data.lineWidth));
 					} else {
@@ -407,7 +392,6 @@ class FlowGraphics extends Graphics {
 
 						if (data.fill != null && data.fillAlpha > 0) {
 							isEmpty = false;
-							isNativeWidget = true;
 							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
 						} else {
 							path.setAttribute("fill", "none");
@@ -415,7 +399,6 @@ class FlowGraphics extends Graphics {
 
 						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
 							isEmpty = false;
-							isNativeWidget = true;
 							path.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
 							path.setAttribute("stroke-width", Std.string(data.lineWidth));
 						} else {
@@ -433,7 +416,6 @@ class FlowGraphics extends Graphics {
 					} else {
 						if (data.fill != null && data.fillAlpha > 0) {
 							isEmpty = false;
-							isNativeWidget = true;
 							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 						} else {
 							nativeWidget.style.background = null;
@@ -441,7 +423,6 @@ class FlowGraphics extends Graphics {
 
 						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
 							isEmpty = false;
-							isNativeWidget = true;
 							nativeWidget.style.border = '${data.lineWidth}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
 						} else {
 							nativeWidget.style.border = null;
@@ -475,6 +456,22 @@ class FlowGraphics extends Graphics {
 
 			nativeWidget.style.width = '${untyped getWidth()}px';
 			nativeWidget.style.height = '${untyped getHeight()}px';
+
+			if (isMask) {
+				isNativeWidget = false;
+				invalidateTransform();
+			} else if (!isEmpty) {
+				isNativeWidget = true;
+				invalidateTransform();
+			}
 		}
+	}
+
+	private function createNativeWidget(?node_name : String = "div") : Void {
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget.setAttribute('id', getClipUUID());
+		nativeWidget.className = 'nativeWidget';
 	}
 }

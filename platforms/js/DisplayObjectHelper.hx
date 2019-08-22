@@ -96,16 +96,14 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateTransform(clip : DisplayObject) : Void {
-		if (clip.visible) {
-			untyped clip.localTransformChanged = true;
-			untyped clip.childrenTransformChanged = true;
+		untyped clip.localTransformChanged = true;
+		untyped clip.childrenTransformChanged = true;
 
-			if (InvalidateStage) {
-				invalidateParentTransform(clip);
-			}
-
-			invalidateWorldTransform(clip);
+		if (InvalidateStage) {
+			invalidateParentTransform(clip);
 		}
+
+		invalidateWorldTransform(clip);
 	}
 
 	public static function invalidateWorldTransform(clip : DisplayObject) : Void {
@@ -165,17 +163,7 @@ class DisplayObjectHelper {
 				untyped clip.accessWidget.updateDisplay();
 			}
 
-			if (clip.visible) {
-				invalidateTransform(clip);
-			} else {
-				if (RenderSupportJSPixi.DomRenderer) {
-					untyped updateNativeWidgetDisplay(clip);
-				}
-
-				if (clip.parent != null && clip.parent.visible) {
-					invalidateStage(clip.parent);
-				}
-			}
+			invalidateTransform(clip);
 		}
 	}
 
@@ -185,8 +173,7 @@ class DisplayObjectHelper {
 
 		if (clip.interactive) {
 			if (RenderSupportJSPixi.DomInteractions) {
-				untyped clip.isNativeWidget = true;
-				invalidateTransform(clip);
+				initNativeWidget(clip);
 
 				untyped clip.nativeWidget.onmouseover = function() {
 					clip.emit("pointerover");
@@ -371,8 +358,8 @@ class DisplayObjectHelper {
 			clip.scrollRect = new FlowGraphics();
 			scrollRect = clip.scrollRect;
 
-			clip.addChild(scrollRect);
 			setClipMask(clip, scrollRect);
+			clip.addChild(scrollRect);
 		}
 
 		scrollRect.beginFill(0xFFFFFF);
@@ -453,11 +440,10 @@ class DisplayObjectHelper {
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (clip.mask != null) {
-				untyped clip.isNativeWidget = true;
+				initNativeWidget(clip);
 			}
 
 			invalidateTransform(clip);
-			removeNativeWidget(maskContainer);
 		} else {
 			invalidateStage(clip);
 		}
@@ -667,7 +653,7 @@ class DisplayObjectHelper {
 			var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
 			if (nativeWidget != null) {
-				if (clip.visible) {
+				if (clip.visible && isNativeWidget(clip)) {
 					updateNativeWidgetTransformMatrix(clip);
 					updateNativeWidgetOpacity(clip);
 					updateNativeWidgetMask(clip);
@@ -869,7 +855,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function isNativeWidget(clip : DisplayObject) : Bool {
-		return untyped clip.isNativeWidget || clip.parent == null;
+		return untyped clip.isNativeWidget;
 	}
 
 	public static function updateNativeWidgetDisplay(clip : DisplayObject) : Void {
@@ -879,7 +865,7 @@ class DisplayObjectHelper {
 			var nativeWidget = untyped clip.nativeWidget;
 
 			if (nativeWidget != null) {
-				if (clip.visible && clip.renderable) {
+				if (clip.visible) {
 					if (Platform.isIE) {
 						nativeWidget.style.display = "block";
 					} else {
@@ -904,30 +890,23 @@ class DisplayObjectHelper {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
 		} else if (RenderSupportJSPixi.DomRenderer) {
-			var nativeWidget : Dynamic = untyped clip.nativeWidget;
-			var parent : DisplayObject = untyped clip.parent;
+			if (isNativeWidget(clip)) {
+				var nativeWidget : Dynamic = untyped clip.nativeWidget;
+				var parent : DisplayObject = untyped clip.parent;
 
-			if (nativeWidget != null && parent != null && untyped parent.nativeWidget != null) {
-				if (clip.visible && clip.renderable) {
-					if (!isNativeWidget(clip)) {
-						clip.once("graphicschanged", function() { addNativeWidget(clip); });
-					} else {
-						appendNativeWidget(parent, clip);
-
-						if (!RenderContainers) {
-							var children : Array<DisplayObject> = untyped clip.children;
-
-							if (children != null) {
-								for (child in children) {
-									if (untyped child.nativeWidget != null && untyped child.nativeWidget.parentNode != null) {
-										addNativeWidget(child);
-									}
-								}
-							}
+				if (parent != null) {
+					if (clip.visible && clip.renderable) {
+						if (!isNativeWidget(clip)) {
+							clip.once("graphicschanged", function() { addNativeWidget(clip); });
+						} else {
+							appendNativeWidget(parent, clip);
+							clip.once('removed', function() { removeNativeWidget(clip); });
 						}
+					} else {
+						clip.once("transformchanged", function() { addNativeWidget(clip); });
 					}
 				} else {
-					clip.once("transformchanged", function() { addNativeWidget(clip); });
+					clip.once('added', function() { addNativeWidget(clip); });
 				}
 			}
 		} else {
@@ -988,7 +967,7 @@ class DisplayObjectHelper {
 	public static function findNativeWidgetChild(clip : DisplayObject, parent : js.html.Element) : js.html.Element {
 		if (isNativeWidget(clip) && untyped clip.nativeWidget.parentNode == parent) {
 			return untyped clip.nativeWidget;
-		} else if (!RenderContainers && clip.visible && clip.renderable) {
+		} else if (!RenderContainers) {
 			var children : Array<DisplayObject> = untyped clip.children;
 			if (children != null) {
 				for (child in children) {
@@ -1106,6 +1085,17 @@ class DisplayObjectHelper {
 				localBounds.maxX = Math.max(localBounds.maxX, (childRect.x + childRect.width) * child.localTransform.a + (childRect.y + childRect.height) * child.localTransform.c + child.localTransform.tx);
 				localBounds.maxY = Math.max(localBounds.maxY, (childRect.x + childRect.width) * child.localTransform.b + (childRect.y + childRect.height) * child.localTransform.d + child.localTransform.ty);
 			}
+		}
+	}
+
+	public static function initNativeWidget(clip : DisplayObject) : Void {
+		if (RenderSupportJSPixi.DomRenderer && untyped !clip.isNativeWidget) {
+			untyped clip.isNativeWidget = true;
+			if (untyped clip.nativeWidget == null) {
+				untyped clip.createNativeWidget();
+			}
+
+			invalidateTransform(clip);
 		}
 	}
 }

@@ -903,15 +903,17 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						for (let i = 0, j = this.children.length; i < j; ++i) {
-							const child = this.children[i];
+						if (this.visible) {
+							for (let i = 0, j = this.children.length; i < j; ++i) {
+								const child = this.children[i];
 
-							if (child.visible && child.transformChanged) {
-								if (this.localTransformChanged && !this.isNativeWidget) {
-									child.localTransformChanged = true;
+								if (child.transformChanged) {
+									if (this.localTransformChanged && !this.isNativeWidget) {
+										child.localTransformChanged = true;
+									}
+
+									child.updateTransform();
 								}
-
-								child.updateTransform();
 							}
 						}
 
@@ -948,15 +950,17 @@ class PixiWorkarounds {
 
 						this.layoutText();
 
-						for (let i = 0, j = this.children.length; i < j; ++i) {
-							const child = this.children[i];
+						if (this.visible) {
+							for (let i = 0, j = this.children.length; i < j; ++i) {
+								const child = this.children[i];
 
-							if (child.visible && child.transformChanged) {
-								if (this.localTransformChanged && !this.mask) {
-									child.localTransformChanged = true;
+								if (child.transformChanged) {
+									if (this.localTransformChanged && !this.mask) {
+										child.localTransformChanged = true;
+									}
+
+									child.updateTransform();
 								}
-
-								child.updateTransform();
 							}
 						}
 

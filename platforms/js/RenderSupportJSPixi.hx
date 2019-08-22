@@ -983,13 +983,10 @@ class RenderSupportJSPixi {
 
 		if (clip.accessWidget == null) {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
+				cast(clip, DisplayObject).initNativeWidget();
+
 				// Create DOM node for access. properties
 				if (clip.nativeWidget != null) {
-					if (DomRenderer) {
-						clip.isNativeWidget = true;
-						cast(clip, DisplayObject).invalidateTransform();
-					}
-
 					clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
 					clip.accessWidget.addAccessAttributes(attributesMap);
 				} else {
@@ -1969,10 +1966,7 @@ class RenderSupportJSPixi {
 				var filter : Dynamic = filters[0];
 				var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(filter.color, []);
 
-				if (!DisplayObjectHelper.RenderContainers) {
-					untyped clip.isNativeWidget = true;
-					clip.invalidateTransform();
-				}
+				clip.initNativeWidget();
 
 				if (Platform.isIE) { //todo:
 					untyped clip.nativeWidget.style.boxShadow = '

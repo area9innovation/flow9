@@ -36,7 +36,7 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = RenderSupportJSPixi.DomRenderer && DisplayObjectHelper.RenderContainers;
+		isNativeWidget = RenderSupportJSPixi.DomRenderer && (DisplayObjectHelper.RenderContainers || worldVisible);
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (worldVisible) {
@@ -236,16 +236,14 @@ class FlowContainer extends Container {
 	}
 
 	private function createNativeWidget(?node_name : String = "div") : Void {
+		// if (!isNativeWidget) {
+		// 	return;
+		// }
+
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
-		// nativeWidget.style.willChange = 'transform, display, opacity, clip-path';
-		// nativeWidget.style.pointerEvents = 'none';
-
-		updateNativeWidgetDisplay();
-
-		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
 	}
 }

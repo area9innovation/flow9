@@ -257,9 +257,5 @@ class FlowSprite extends Sprite {
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
 		nativeWidget.src = url;
-
-		updateNativeWidgetDisplay();
-
-		onAdded(function() { addNativeWidget(); return removeNativeWidget; });
 	}
 }

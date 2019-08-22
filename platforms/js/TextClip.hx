@@ -1088,10 +1088,6 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.setAttribute('id', getClipUUID());
 			nativeWidget.className = 'nativeWidget';
 			nativeWidget.style.whiteSpace = 'normal';
-
-			updateNativeWidgetDisplay();
-
-			onAdded(function() { addNativeWidget(); return removeNativeWidget; });
 		} else {
 			super.createNativeWidget(node_name);
 		}

@@ -46,11 +46,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
 
-		if (RenderSupportJSPixi.DomRenderer) {
-			updateNativeWidgetDisplay();
-
-			onAdded(function() { addNativeWidget(); return removeNativeWidget; });
-		} else {
+		if (!RenderSupportJSPixi.DomRenderer) {
 			if (accessWidget == null) {
 				accessWidget = new AccessWidget(this, nativeWidget);
 			} else {
