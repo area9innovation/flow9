@@ -1,0 +1,173 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/lambda_lifting;
+
+export {
+	fi2flow(program : FiProgram, cfg : FcFlowConfig, callback : () -> void) -> void;
+}
+
+/*
+TODO:
+- Non-exported natives. See dynamic.flow
+- Native argument names: See behaviour.flow
+
+- Extra newline after "if"
+- Preserve comments
+
+- Something with types going wrong. See fusion.flow
+
+- Wrap long lines
+
+- Ability to work one funtion at a time
+
+- Preserve order from original source
+  (We could use start position for this)
+ */
+
+fi2flow(program : FiProgram, cfg : FcFlowConfig, callback : () -> void) -> void {
+	traverseInOrder(program.modules, \name, module -> {
+		if (getUrlParameter("inca") == "" || endsWith(name, "_i")) {
+			writeFlow2file(program, cfg.outputdir, module);
+		}
+	});
+	callback();
+}
+
+writeFlow2file(program : FiProgram, path : string, module : FiModule) -> void {
+	filepath : string = pathCombine(path, module.fileinfo.flowfile)  + ".flow";
+
+	imports = superglue(module.imports, \i -> "import " + i.flowfile + ";\n", "");
+	forbids = superglue(module.forbids, \i -> "forbid " + i.flowfile + ";\n", "");
+
+	// TODO: We could do the exports in init order
+	exports = if (module.exports != []) blueprint("
+
+		export {
+			%exports%
+		}
+	", ["exports", superglue(module.exports, \e -> name2dec(program, e) + ";\n", "")
+	]) else "";
+
+	// Non-exported structs and unions
+
+	unions = superglue(module.unions, \u -> {
+		if (contains(module.exports, u.name)) ""
+		else name2dec(program, u.name) + ";\n"
+	}, "");
+
+	structs = superglue(module.structs, \u -> {
+		if (contains(module.exports, u.name)) ""
+		else name2dec(program, u.name)  + ";\n"
+	}, "");
+
+	names = superglue(module.initOrder, \name -> {
+		"\n" + name2def(program, name)
+	}, "");
+
+	file = imports + forbids + exports + unions + structs + names;
+
+	ensureDirectoryExists(dirName(filepath));
+	if (!setFileContent(filepath, file)) {
+		println("Could not write " + filepath);
+	}
+}
+
+name2dec(program : FiProgram, e : string) -> string {
+	pt = \t -> prettyFiType(dummyPretty, t, makeSet());
+
+	mdec = lookupTree(program.names.toplevel, e);
+	switch (mdec) {
+		None(): {
+			ms = lookupTree(program.names.structs, e);
+			switch (ms) {
+				None(): {
+					mu = lookupTree(program.names.unions, e);
+					switch (mu) {
+						None(): {
+							"Unknown " + e;
+						}
+						Some(u): {
+							u.name 
+							+ (if (u.typeparameters != []) "<" + superglue(u.typeparameters, pt, ", ") + ">" else "")
+							+ " ::= " + superglue(u.typenames, pt, ", ") + ""
+						}
+					}
+				}
+				Some(str): {
+					e + "(" + superglue(
+						str.args, 
+						\sa -> (if (sa.ismutable) "mutable " else "") + sa.name + " : " + pt(sa.type), 
+						", "
+					) + ")";
+				}
+			}
+		}
+		Some(dec): {
+			switch (dec) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): e + pt(type);
+				FiGlobalVar(name, value, type, declStart, defiStart): e + " : " + pt(type);
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+					"native " + name + " : " + pt(type) + " = " + nativeName;
+				}
+			}
+		}
+	}
+}
+
+name2def(program : FiProgram, e : string) -> string {
+	pp = \t -> prettyFiExp(dummyPretty, t);
+	pt = \t -> prettyFiType(dummyPretty, t, makeSet());
+
+	mdec = lookupTree(program.names.toplevel, e);
+	switch (mdec) {
+		None(): {
+			"TODO";
+		}
+		Some(dec): {
+			switch (dec) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): {
+					blueprint("
+					%dec% {
+						%body%
+					}
+					", [
+						"dec", name2dec(program, name),
+						"body", pp(lambda.body)
+					])
+				}
+				FiGlobalVar(name, value, type, declStart, defiStart): name2dec(program, name) + " = " + pp(value) + ";";
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+					switch (fallbackLambda) {
+						FiLambda(args, body, ltype, start): {
+							blueprint("
+								%dec% {
+									%body%
+								}
+								", [
+									"dec", name + pt(type),
+									"body", pp(body)
+								]
+							);
+						}
+						default: "";
+					}
+				}
+			}
+		}
+	}
+}
+/*
+		fileinfo : FiFileInfo,
+		structs : [FiTypeStruct],
+		unions : [FiTypeUnion],
+		functions: [FiFunctionDec],
+		globalVars: [FiGlobalVar],
+		natives: [FiNativeDec],
+		// Safe initialization order of globals and functions.
+		initOrder : [string],
+		stringIncludes : [FiFileInfo],
+		start : int, end : int,
+		incremental : bool // module was loaded 'as is', without changes
+
+*/

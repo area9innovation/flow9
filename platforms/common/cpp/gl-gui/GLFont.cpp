@@ -622,6 +622,7 @@ unsigned GLFont::loadSystemGlyph(ucs4_char char_code, bool force)
 
 GLFont::GlyphInfo *GLFont::getGlyphByChar(ucs4_char char_code)
 {
+    if ((char_code|1) == 0x200E || ((char_code-0x202A)|3) == 3 || ((char_code-0x2066)|3) == 3) char_code = 0x200B;
 #ifndef FLOW_DFIELD_FONTS
     int idx = FT_Get_Char_Index(face, char_code);
 #else
@@ -1054,7 +1055,7 @@ bool GLTextLayout::isWeakChar(ucs4_char code) {
 
 bool GLTextLayout::isRtlChar(ucs4_char code) {
     return (code >= 0x590 && code < 0x900)
-        || (code == 0x202B)
+        || (code == 0x200F) || (code == 0x202B)
         || (code >= 0xFB1D && code < 0xFDD0)
         || (code >= 0xFDF0 && code < 0xFE00)
         || (code >= 0xFE70 && code < 0xFF00)
@@ -1068,7 +1069,7 @@ bool GLTextLayout::isLtrChar(ucs4_char code) {
         || (code >= 0x61 && code < 0x7B)
         || (code >= 0xA0 && code < 0x590)
         || (code >= 0x700 && code < 0x2000)
-        || (code == 0x202A)
+        || (code == 0x200E) || (code == 0x202A)  // FIXME: MText("Spell Check (lang)\u200E", []) shows parentheses mirrored.
         || (code >= 0x2100 && code < 0x2190)
         || (code >= 0x2460 && code < 0x2500)
         || (code >= 0x2800 && code < 0x2900)
