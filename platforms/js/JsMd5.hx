@@ -24,9 +24,16 @@ import haxe.ds.Vector;
 	Creates a MD5 of a String.
 **/
 class JsMd5 {
+
+	var input : String;
+	var inputBytes : Int;
+	var nextCharIndex : Int;
+	var bytesStorage : Int;
+	var bytesInStorage : Int;
+
 	public static function encode(s : String) : String {
-		var m = new JsMd5();
-		var h = m.doEncode(str2blks(s));
+		var m = new JsMd5(s);
+		var h = m.doEncode();
 		return m.hex(h);
 	}
 
@@ -38,7 +45,30 @@ class JsMd5 {
  * See http://pajhome.org.uk/site/legal.html for details.
  */
 
-	function new() {
+	function new(s : String) {
+		input = s;
+		inputBytes = 0;
+		nextCharIndex = 0;
+		bytesStorage = 0;
+		bytesInStorage = 0;
+		var i = 0;
+
+		while (i < s.length) {
+			var c : Int = StringTools.fastCodeAt(s, i++);
+			// surrogate pair
+			if (0xD800 <= c && c <= 0xDBFF) {
+				c = (c - 0xD7C0 << 10) | (StringTools.fastCodeAt(s, i++) & 0x3FF);
+			}
+			if (c <= 0x7F) {
+				inputBytes++;
+			} else if (c <= 0x7FF) {
+				inputBytes += 2;
+			} else if (c <= 0xFFFF) {
+				inputBytes += 3;
+			} else {
+				inputBytes += 4;
+			}
+		}
 	}
 
 	function bitOR(a, b) {
@@ -68,63 +98,13 @@ class JsMd5 {
 	function hex(a : Array<Int>) {
 		var str = "";
 		var hex_chr = "0123456789abcdef";
-		for( num in a )
-			for( j in 0...4 )
-				str += hex_chr.charAt((num >> (j * 8 + 4)) & 0x0F) +
-							 hex_chr.charAt((num >> (j * 8)) & 0x0F);
+		for (num in a) {
+			for (j in 0...4) {
+				str += hex_chr.charAt((num >> (j * 8 + 4)) & 0x0F)
+						+ hex_chr.charAt((num >> (j * 8)) & 0x0F);
+			}
+		}
 		return str;
-	}
-
-	static function str2blks(s : String) : Vector<Int> {
-		// utf16-decode and utf8-encode
-		var i = 0;
-		var count = 0;
-		
-		// Compute number of bytes first
-		while (i < s.length) {
-			var c : Int = StringTools.fastCodeAt(s, i++);
-			// surrogate pair
-			if (0xD800 <= c && c <= 0xDBFF) {
-				c = (c - 0xD7C0 << 10) | (StringTools.fastCodeAt(s, i++) & 0x3FF);
-			}
-			if (c <= 0x7F) {
-				count++;
-			} else if (c <= 0x7FF) {
-				count += 2;
-			} else if (c <= 0xFFFF) {
-				count += 3;
-			} else {
-				count += 4;
-			}
-		}
-		// Allocate array of required length
-		var a = new Vector<Int>(count);
-		i = 0;
-		count = 0;
-		// Fill array with bytes
-		while (i < s.length) {
-			var c : Int = StringTools.fastCodeAt(s, i++);
-			// surrogate pair
-			if (0xD800 <= c && c <= 0xDBFF ) {
-				c = (c - 0xD7C0 << 10) | (StringTools.fastCodeAt(s, i++) & 0x3FF);
-			}
-			if (c <= 0x7F) {
-				a[count++] = c;
-			} else if (c <= 0x7FF) {
-				a[count++] = 0xC0 | (c >> 6);
-				a[count++] = 0x80 | (c & 63);
-			} else if (c <= 0xFFFF) {
-				a[count++] = 0xE0 | (c >> 12);
-				a[count++] = 0x80 | ((c >> 6) & 63);
-				a[count++] = 0x80 | (c & 63);
-			} else {
-				a[count++] = 0xF0 | (c >> 18);
-				a[count++] = 0x80 | ((c >> 12) & 63);
-				a[count++] = 0x80 | ((c >> 6) & 63);
-				a[count++] = 0x80 | (c & 63);
-			}
-		}
-		return a;
 	}
 
 	function rol(num, cnt) {
@@ -151,14 +131,56 @@ class JsMd5 {
 		return cmn(bitXOR(c, bitOR(b, (~d))), a, b, x, s, t);
 	}
 
-	function setBlockData(b : Vector<Int>, x : Vector<Int>, blockNumber : Int, numberOfBlocks : Int) : Void {
+	// TODO: move to a separate class
+	function getNextByte() : Int {
+		if (bytesInStorage != 0) {
+			bytesInStorage--;
+			var result = bytesStorage & 0xFF;
+			bytesStorage >>= 8;
+			return result;
+		}
+
+		var result : Int = 0;
+		if (nextCharIndex >= input.length) { // Error
+			return result;
+		}
+
+		var c : Int = StringTools.fastCodeAt(input, nextCharIndex++);
+		// utf16-decode and utf8-encode
+		// surrogate pair
+		if (0xD800 <= c && c <= 0xDBFF ) {
+			c = (c - 0xD7C0 << 10) | (StringTools.fastCodeAt(input, nextCharIndex++) & 0x3FF);
+		}
+		
+		if (c <= 0x7F) {
+			result = c;
+		} else if (c <= 0x7FF) {
+			result = 0xC0 | (c >> 6);
+			bytesInStorage = 1;
+			bytesStorage = 0x80 | (c & 63);
+		} else if (c <= 0xFFFF) {
+			result = 0xE0 | (c >> 12);
+			bytesInStorage = 2;
+			bytesStorage = (0x80 | ((c >> 6) & 63)) | ((0x80 | (c & 63)) << 8);
+		} else {
+			result = 0xF0 | (c >> 18);
+			bytesInStorage = 3;
+			bytesStorage = (0x80 | ((c >> 12) & 63))
+						| ((0x80 | ((c >> 6) & 63)) << 8)
+						| ((0x80 | (c & 63)) << 16);
+		}
+
+		return result;
+	}
+
+	function setBlockData(x : Vector<Int>, blockNumber : Int, numberOfBlocks : Int) : Void {
 		var i = 0;
 		var byteOffset = blockNumber << 6;
 
 		var getByte = function (idx) {
-			if (idx < b.length) {
-				return b.get(idx);
-			} else if (idx == b.length) {
+			if (idx < inputBytes) {
+				return getNextByte();
+			} else if (idx == inputBytes) {
 				return 0x80;
 			} else {
 				return 0;
@@ -167,7 +189,7 @@ class JsMd5 {
 
 		for (i in 0...16) {
 			if ((blockNumber + 1) == numberOfBlocks && i == 14) {
-				x[i] = b.length << 3;
+				x[i] = inputBytes << 3;
 			} else {
 				x[i] = getByte(byteOffset) 
 					| (getByte(byteOffset + 1) << 8)
@@ -178,7 +200,7 @@ class JsMd5 {
 		}
 	}
 
-	function doEncode(bytes : Vector<Int>) : Array<Int> {
+	function doEncode() : Array<Int> {
 
 		var a =  1732584193;
 		var b = -271733879;
@@ -187,7 +209,10 @@ class JsMd5 {
 
 		var step;
 
-		var numberOfBlocks = ((bytes.length + 8) >> 6) + 1;
+		nextCharIndex = 0;
+		bytesStorage = 0;
+		bytesInStorage = 0;
+		var numberOfBlocks = ((inputBytes + 8) >> 6) + 1;
 		var x = new Vector<Int>(16);
 
 		var blockNumber = 0;
@@ -197,7 +222,7 @@ class JsMd5 {
 			var oldc = c;
 			var oldd = d;
 
-			setBlockData(bytes, x, blockNumber, numberOfBlocks);
+			setBlockData(x, blockNumber, numberOfBlocks);
 
 			step = 0;
 			a = ff(a, b, c, d, x[0], 7 , -680876936);
