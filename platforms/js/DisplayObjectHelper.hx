@@ -107,7 +107,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateWorldTransform(clip : DisplayObject) : Void {
-		if (clip.visible && !untyped clip.worldTransformChanged && clip.parent != null) {
+		if (!untyped clip.worldTransformChanged && clip.parent != null) {
 			untyped clip.worldTransformChanged = true;
 			untyped clip.transformChanged = true;
 
@@ -159,7 +159,7 @@ class DisplayObjectHelper {
 				clip.emit("pointerout");
 			}
 
-			if (updateAccessWidget) {
+			if (updateAccessWidget && !RenderSupportJSPixi.DomRenderer) {
 				untyped clip.accessWidget.updateDisplay();
 			}
 
@@ -715,8 +715,12 @@ class DisplayObjectHelper {
 			if (!RenderContainers) {
 				var parentNativeWidget = findParentNativeWidget(clip);
 
-				if (parentNativeWidget != null && parentNativeWidget.worldAlpha > 0) {
-					alpha = alpha / parentNativeWidget.worldAlpha;
+				if (parentNativeWidget != null) {
+					if (parentNativeWidget.worldAlpha > 0) {
+						alpha = alpha / parentNativeWidget.worldAlpha;
+					} else {
+						alpha = 1;
+					}
 				}
 			}
 
@@ -890,23 +894,15 @@ class DisplayObjectHelper {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
 		} else if (RenderSupportJSPixi.DomRenderer) {
-			if (isNativeWidget(clip)) {
-				var nativeWidget : Dynamic = untyped clip.nativeWidget;
-				var parent : DisplayObject = untyped clip.parent;
+			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && clip.renderable) {
+				appendNativeWidget(untyped clip.parent, clip);
+				clip.once('removed', function() { removeNativeWidget(clip); });
 
-				if (parent != null) {
-					if (clip.visible && clip.renderable) {
-						if (!isNativeWidget(clip)) {
-							clip.once("graphicschanged", function() { addNativeWidget(clip); });
-						} else {
-							appendNativeWidget(parent, clip);
-							clip.once('removed', function() { removeNativeWidget(clip); });
-						}
-					} else {
-						clip.once("transformchanged", function() { addNativeWidget(clip); });
+				var children : Array<DisplayObject> = untyped clip.children;
+				if (children != null) {
+					for (child in children) {
+						addNativeWidget(child);
 					}
-				} else {
-					clip.once('added', function() { addNativeWidget(clip); });
 				}
 			}
 		} else {
@@ -986,12 +982,10 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 		var childWidget : Dynamic = untyped child.nativeWidget;
 
-		if (nativeWidget != null) {
-			if (isNativeWidget(clip)) {
-				nativeWidget.insertBefore(childWidget, findNextNativeWidget(child, nativeWidget));
-			} else {
-				appendNativeWidget(clip.parent, child);
-			}
+		if (nativeWidget != null && isNativeWidget(clip)) {
+			nativeWidget.insertBefore(childWidget, findNextNativeWidget(child, nativeWidget));
+		} else {
+			appendNativeWidget(clip.parent, child);
 		}
 	}
 

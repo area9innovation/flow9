@@ -236,9 +236,9 @@ class FlowContainer extends Container {
 	}
 
 	private function createNativeWidget(?node_name : String = "div") : Void {
-		// if (!isNativeWidget) {
-		// 	return;
-		// }
+		if (!isNativeWidget) {
+			return;
+		}
 
 		deleteNativeWidget();
 
