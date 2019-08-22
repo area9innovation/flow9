@@ -1,1 +1,297 @@
 import tools/flowc/backends/cpp2/fi2cpp2_util;
+
+// CppWriter methods
+
+cpp2_natives = [
+	Cpp2NativeDescr("mapi", 2, false, "mapi"),
+	Cpp2NativeDescr("map", 2, false, "map"),
+	Cpp2NativeDescr("iter", 2, false, "iter"),
+	Cpp2NativeDescr("iteri", 2, false, "iteri"),
+	Cpp2NativeDescr("fold", 3, false, "fold"),
+	Cpp2NativeDescr("foldi", 3, false, "foldi"),
+	Cpp2NativeDescr("filter", 2, false, "filter"),
+	Cpp2NativeDescr("elemIndex", 3, false, "elemIndex"),
+	Cpp2NativeDescr("exists", 2, false, "exists"),
+	Cpp2NativeDescr("find", 2, false, "find"),
+	Cpp2NativeDescr("subrange", 3, false, "subrange"),
+	Cpp2NativeDescr("length", 1, true, "length"),
+	Cpp2NativeDescr("strlen", 1, true, "NativeStrlen"),
+	Cpp2NativeDescr("strIndexOf", 2, true, "strIndexOf"),
+	Cpp2NativeDescr("substring", 3, true, "substring"),
+	Cpp2NativeDescr("concat", 2, false, "mapi"),
+	Cpp2NativeDescr("replace", 3, false, "replace"),
+	Cpp2NativeDescr("bitXor", 2, true, "bitXor"),
+	Cpp2NativeDescr("bitOr", 2, true, "bitOr"),
+	Cpp2NativeDescr("bitAnd", 2, true, "bitAnd"),
+	Cpp2NativeDescr("bitNot", 1, true, "bitNot"),
+];
+
+cpp2Writer(includes : [string], p : FiProgram, debug : bool, entry : string, outdir : string, extStructDefs : bool) -> Cpp2Writer {
+	known_natives = fold(cpp2_natives, makeTree(), 
+		\acc, nat -> setTree(acc, "Native." + nat.name, nat)
+	);
+	// We do this in alphabetical order in order to avoid random changes in the
+	// code just because of hash ordering differences; however, it is combined
+	// with descending order by argument count to allow size checks just by
+	// looking at the id range.
+	fi_structs = mergeSort(
+		getTreeValues(p.names.structs),
+		\s1, s2 -> {
+			if (s1.name < s2.name) -1
+			else if (s1.name == s2.name) 0 else 1;
+		}
+	);
+	structs_inds = foldi(fi_structs, makeTree(),
+		\i, acc, s -> setTree(acc, s.name, i)
+	);
+	structs_order = map(
+		mergeSort(
+			fi_structs,
+			\s1, s2 -> {
+				if (length(s1.args) < length(s2.args)) 1
+				else if (length(s1.args) > length(s2.args)) -1
+				else if (s1.name < s2.name) -1
+				else if (s1.name == s2.name) 0 else 1;
+			}
+		),
+		\s -> Cpp2StructOrderInfo(
+			lookupTreeDef(structs_inds, s.name, -1), 
+			s.name, 
+			map(s.args, \a -> Cpp2StructArg(a.name, a.type, a.ismutable))
+		)
+	);
+	struct_list_map = foldi(structs_order, Pair([], makeTree()),
+		\n, acc, s -> {
+			si = Cpp2StructInfo(
+				n,       // id
+				s.name,  // structname
+				map(s.args, \a -> Cpp2StructArg(a.name, a.type, a.is_mutable)), //args
+				map(s.args, \a -> cpp2GetStructAType(a.type)), // atypes
+				if (length(s.args) == 0) { 
+					2 + n * 4 // TODO: implement with bytecode generator 
+				} else {
+					cpp2_int_UNDEF
+				} // empty_addr
+			);
+			Pair(
+				concat(acc.first, [si]),
+				setTree(acc.second, s.name, si)
+			)
+		}
+	);
+	struct_list = struct_list_map.first;
+	structs = struct_list_map.second;
+	max_size = fold(struct_list, -1, \acc, s -> 
+		if (length(s.args) > acc) length(s.args) else acc
+	);
+	struct_counts_map = foldi(structs_order, Pair(makeTree(), max_size),
+		\n, acc, s -> {
+			updated = fold(enumFromTo(length(s.args), acc.second), acc.first, 
+				\a, i -> setTree(a, i, n)
+			);
+			Pair(setTree(updated, length(s.args), n), length(s.args))
+		}
+	).first;
+	struct_counts = map(enumFromTo(0, max_size), \i -> 
+		lookupTreeDef(struct_counts_map, i, -1) 
+	);
+	struct_code = Cpp2StructCode(ref [], ref [], ref [], ref [], ref [], ref []);
+	writer = Cpp2Writer(
+		p,
+		extStructDefs,
+		entry,
+		includes,
+		outdir, // output_dir
+		makeTree(),             // file_table : Tree<string, string /*haxe.io.Output*/>,
+		length(struct_list),    // num_structs : int,
+		0,                      // init_count : int,
+		struct_counts,          // struct_counts : [int], // by size
+		structs,                // structs : Tree<string, Cpp2StructInfo>,
+		makeTree(),             // closure_structs : Tree<string, Cpp2StructInfo>,
+		structs_order,          // structsOrder : [Cpp2StructOrderInfo],
+		struct_list_map.first,  // struct_list : [Cpp2StructInfo],
+		// struct_hdr_lines : [string],
+		// struct_def_lines : [string],
+		// struct_gcdef_lines : [string],
+		// struct_field_names : [string],
+		// struct_field_types : [int],
+		// struct_info_refs : [Cpp2StructInfoRef],
+		struct_code,            // struct_code
+
+		makeTree(), // const_strings : Tree<string, Cpp2ConstString>,
+		[], // method_names : [string],
+		[], // function_table : [Cpp2FunctionDescr],
+		makeTree(), // function_map : Tree<string, int>,
+		[], // global_names : [string],
+		makeTree(), // global_map : Tree<string, Cpp2PlaceInfo>,
+		//* Table for fast lookup of fields by name; maps [name][structid] -> index
+		[], // field_index_table : [[int]],
+		makeTree(), // field_index_map : Tree<string, int>,
+		[], // field_index_list : [string],
+		
+		//"", // cur_global : string,
+		//1, // next_closure_id : int,
+		known_natives, // known_natives : Tree<string, Cpp2NativeDescr>,
+	);
+	iter(structs_order,
+		\s -> cpp2GenerateStructCode(writer, s, lookupTreeDef(structs, s.name, dummyCpp2StructInfo))
+	);
+	writer
+	// Process natives, functions and globals
+	//enumerateToplevel();
+}
+
+cpp2GenerateStructCode(writer : Cpp2Writer, s : Cpp2StructOrderInfo, info : Cpp2StructInfo) -> void {
+		code = writer.struct_code;
+		name = cpp2WriterRegisterConstString(writer, s.name);
+		if (length(s.args) == 0) {
+			refinfo = Cpp2StructInfoRef(
+				cpp2_int_UNDEF,  // fld_idx
+				cpp2_int_UNDEF,  // type_idx
+				cpp2_int_UNDEF,  // def_idx
+				cpp2_int_UNDEF,  // gcdef_idx
+				0,               // gcdef_cnt 
+				info.empty_addr, // empty_addr
+				name.addr,       // name_addr
+				name.size,       // name_sz
+			);
+			refArrayPush(code.info_refs, refinfo);
+		} else {
+			refinfo = Cpp2StructInfoRef(
+				length(^(code.field_names)), // fld_idx 
+				length(^(code.field_types)), // type_idx
+				length(^(code.def_lines)),   // def_idx
+				length(^(code.gcdef_lines)), // gcdef_idx
+				0, // gcdef_cnt 
+				0, // empty_addr
+				name.addr, //name_addr
+				name.size, // name_sz
+			);
+
+			refArrayPush(code.info_refs, refinfo);
+			refArrayPush(code.hdr_lines, "struct FS_" + s.name + " {");
+			refArrayPush(code.hdr_lines, "    FlowStructHeader hdr;");
+
+			fori(0, length(s.args), \i -> {
+				arg = s.args[i];
+				refArrayPush(code.field_names, s.name);
+				if (arg.is_mutable) {
+					refArrayPush(code.field_types, cpp2_CSetMutable);
+				}
+				writeFlowTypeCode(arg.type, code, writer.extStructDefs);
+				refArrayPush(code.field_types, -1);
+				fname =  "fl_" + arg.name;
+				off = "(int)offsetof(FS_" + s.name + ", " + fname + ")";
+				switch (info.atypes[i]) {
+					Cpp2TBool(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(bool," + off + ")");
+						refArrayPush(code.hdr_lines, "    char " + fname + ";");
+					}
+					Cpp2TInt(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(int," + off + ")");
+						refArrayPush(code.hdr_lines, "    int " + fname + ";");
+					}
+					Cpp2TDouble(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(double," + off + ")");
+						refArrayPush(code.hdr_lines, "    double " + fname + ";");
+					}
+					Cpp2TString(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(string," + off + ")");
+						refArrayPush(code.gcdef_lines, "FLOW_FIELD_GC_DEF(string," + off + ")");
+						refArrayPush(code.hdr_lines, "    FlowStructString " + fname + ";");
+					}
+					Cpp2TArray(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(array," + off + ")");
+						refArrayPush(code.gcdef_lines, "FLOW_FIELD_GC_DEF(array," + off + ")");
+						refArrayPush(code.hdr_lines, "    FlowStructArray " + fname + ";");
+					}
+					Cpp2TRefTo(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(ref," + off + ")");
+						refArrayPush(code.gcdef_lines, "FLOW_FIELD_GC_DEF(ref," + off + ")");
+						refArrayPush(code.hdr_lines, "    FlowStructRef " + fname + ";");
+					}
+					Cpp2TStruct(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(struct," + off + ")");
+						refArrayPush(code.gcdef_lines, "FLOW_FIELD_GC_DEF(struct," + off + ")");
+						refArrayPush(code.hdr_lines, "    FlowPtr " + fname + ";");
+					}
+					Cpp2TNull(): {
+						refArrayPush(code.def_lines, "FLOW_FIELD_DEF(slot," + off + ")");
+						refArrayPush(code.gcdef_lines, "FLOW_FIELD_GC_DEF(slot," + off + ")");
+						refArrayPush(code.hdr_lines, "    StackSlot " + fname + ";");
+					}
+					default: {
+						cpp2_error("impossible");
+					}
+				}
+			});
+			refArrayPush(code.hdr_lines, "};");
+			refinfo.gcdef_cnt ::= length(^(code.gcdef_lines)) - refinfo.gcdef_idx;
+		}
+	}
+	
+writeFlowTypeCode(type : FiTypeNullable, code : Cpp2StructCode, extStructDefs : bool) -> void {
+	switch (type) {
+		FiTypeVoid():   refArrayPush(code.field_types, cpp2_CVoid);
+		FiTypeBool():   refArrayPush(code.field_types, cpp2_CBool);
+		FiTypeInt():    refArrayPush(code.field_types, cpp2_CInt);
+		FiTypeDouble(): refArrayPush(code.field_types, cpp2_CDouble);
+		FiTypeString(): refArrayPush(code.field_types, cpp2_CString);
+		FiTypeArray(t): {
+			if (extStructDefs) {
+				refArrayPush(code.field_types, cpp2_CTypedArray); 
+				writeFlowTypeCode(t, code, extStructDefs);
+			} else {
+				refArrayPush(code.field_types, cpp2_CArray);
+			}
+		}
+		/*TStruct(name, args, max): {
+			refArrayPush(code.field_types, cpp2_CTypedStruct );
+			refArrayPush(code.field_types, structs.get(name).id );
+		}*/
+		FiTypeName(name, args):
+			refArrayPush(code.field_types, cpp2_CStruct);
+		FiTypeRef(t): {
+			if (extStructDefs) {
+				refArrayPush(code.field_types, cpp2_CTypedRefTo);
+				writeFlowTypeCode(t, code, extStructDefs);
+			} else {
+				refArrayPush(code.field_types, cpp2_CRefTo);
+			}
+		}
+		FiTypeNull(): cpp2_error("null type");
+		default: refArrayPush(code.field_types, cpp2_CFlow); // Flow
+	}
+}
+	
+cpp2WriterRegisterConstString(w : Cpp2Writer, s : string) -> Cpp2ConstString {
+	switch (lookupTree(w.const_strings, s)) {
+		Some(cached): cached;
+		None(): {
+			// TODO: implement the stub
+			ret = Cpp2ConstString(0, 0, s);
+			w.const_strings ::= setTree(w.const_strings, s, ret);
+			ret
+		}
+	}/*
+	var cached = const_strings.get(s);
+	if (cached == null) {
+		var addr = bytecode.getPc();
+		var size = bytecode.writeWideStringRaw(s);
+		var rslot;
+
+		if (size > 0xffff) {
+			var raddr = bytecode.getPc();
+			bytecode.writeInt31(size & 0xffff);
+			bytecode.writeInt31(addr);
+			rslot = 'StackSlot::InternalMakeString(MakeFlowPtr('+raddr+'),'+(size>>16)+',true)';
+		}
+		else {
+			rslot = 'StackSlot::InternalMakeString(MakeFlowPtr('+addr+'),'+size+',false)';
+		}
+
+		const_strings.set(s, cached = { addr: addr, size: size, rslot: rslot });
+	}
+	return cached;*/
+}
+	
