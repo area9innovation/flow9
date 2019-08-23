@@ -194,6 +194,9 @@ namespace Area9Innovation.Flow
 		public virtual Object setWordWrap(Object stg, bool val) {
 			return null;
 		}
+		public virtual Object setDoNotInvalidateStage(Object stg, bool val) {
+			return null;
+		}
 		public Object setNumeric(Object stg, bool val) {
 			return setTextInputType(stg, "number");
 		}
@@ -372,4 +375,3 @@ namespace Area9Innovation.Flow
 		}
 	}
 }
-

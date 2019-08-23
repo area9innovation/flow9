@@ -1,0 +1,452 @@
+import tools/flowc/backends/inca/env;
+import tools/flowc/incremental/fi_helpers;
+import math/math;
+
+export {
+	// Generate all change functions for this function and populate the environment with them.
+	// These are the functions that allow one argument to change.
+	makeChangeFunction(env : IncaEnv, f : FiFunctionDec) -> IncaEnv;
+}
+
+makeChangeFunction(env : IncaEnv, f : FiFunctionDec) -> IncaEnv {
+	foldi(f.lambda.args, env, \argno, acc, argument : FiFunArg -> {
+		replaceNames = makeSet1(argument.name);
+
+		dynamicCode = bubbleDynUp(replaceNames, f.lambda.body);
+
+		res = reuseOldOutput(env, dynamicCode, f.type.returnType, 
+			FiVar("__old_output", f.type.returnType, f.declStart)
+		);
+
+		newLambda = FiLambda(f.lambda with body = res);
+
+		fn = FiFunctionDec(
+				f.name + "_change_" + i2s(argno), 
+				newLambda,
+				FiTypeFunction(
+					arrayPush(
+						f.type.args,
+						FiFunArg("__old_output", f.type.returnType),
+					),
+					f.type.returnType, 
+				),
+				f.declStart,
+				f.defiStart,
+		);
+		IncaEnv(
+			acc with
+			program = addFiFunction2Program(acc.program, f.name, fn),
+			functions = setTree(acc.functions, fn.name, fn)
+		)
+	});
+}
+
+// Add this function to the program
+addFiFunction2Program(p : FiProgram, orig : string, fn : FiFunctionDec) -> FiProgram {
+	modulename = lookupTreeDef(p.names.function2module, orig, "");
+	mmodule = lookupTree(p.modules, modulename);
+	switch (mmodule) {
+		None(): {
+			println("Could not find module for " + orig);
+			p;
+		}
+		Some(module): {
+			nmodule = addFiFunction2Module(module, orig, fn);
+			FiProgram(
+				p with
+				modules = setTree(p.modules, modulename, nmodule),
+				names = FiGlobalNames(
+					p.names with
+					function2module = setTree(p.names.function2module, fn.name, modulename),
+					toplevel = setTree(p.names.toplevel, fn.name, fn)
+				)
+			)
+		}
+	}
+}
+
+addFiFunction2Module(m : FiModule, orig : string, fn : FiFunctionDec) -> FiModule {
+	FiModule(
+		m with
+		initOrder = arrayPush(m.initOrder, fn.name),
+		functions = arrayPush(m.functions, fn),
+		exports = if (contains(m.exports, orig)) arrayPush(m.exports, fn.name) else m.exports,
+	)
+}
+
+// This will lift up SiDyn annotations up the AST across operations where there
+// is no chance for us to reuse old values. So we bubble up SiDyn if a child
+// is SiDyn. In some places, we keep dyn beneath, since even if the overall
+// expression is SiDyn, there is potential to reuse some parts in some cases.
+// We give in a set of replacements, where we already know how to lift the
+// expression. This can be used to mark the original arguments as SiDyn.
+bubbleDynUp(dynamicVars : Set<string>, code : FiExp) -> FiExp {
+	switch (code) {
+		FiConst(): code;
+		FiVar(n, __, __): {
+			if (containsSet(dynamicVars, n)) {
+				FiDyn(code)
+			} else code;
+		}
+		FiLet(name, t1, value, body, t2, st): {
+			bubv = bubbleDynUp(dynamicVars, value);
+
+			// OK, if this var is dyn, let us insert it in the map of dyn places,
+			// so we know about it
+			letReplacements = if (isFiDyn(bubv)) {
+				insertSet(dynamicVars, name)
+			} else dynamicVars;
+
+			bubb = bubbleDynUp(letReplacements, body);
+
+			blet = FiLet(name, t1, bubv, bubb, t2, st);
+			if (isFiDyn(bubv) || isFiDyn(bubb)) {
+				FiDyn(blet)
+			} else blet;
+		}
+		FiSeq(seq, t, st): {
+			bubseq = map(seq, \s -> bubbleDynUp(dynamicVars, s));
+			nseq = FiSeq(bubseq, t, st);
+			// We lift dyn up so the entire seq is dyn if anything is
+			if (exists(bubseq, isFiDyn)) FiDyn(nseq) else nseq;
+		}
+		FiIf(cond, then, else_, t, st): {
+			bub = bubbleDynUp(dynamicVars, cond);
+			thenDyn = bubbleDynUp(dynamicVars, then);
+			elseDyn = bubbleDynUp(dynamicVars, else_);
+			ifc = FiIf(bub, thenDyn, elseDyn, t, st);
+			if (isFiDyn(bub) || isFiDyn(thenDyn) || isFiDyn(elseDyn)) {
+				FiDyn(ifc)
+			} else ifc
+		}
+		FiCallPrim(op, args, t, st): {
+			argsDyn = map(args, \arg -> bubbleDynUp(dynamicVars, arg));
+			
+			ncall = FiCallPrim(op, argsDyn, t, st);
+
+			mutOp = switch (op) {
+				FcDerefPrim(): true;
+				FcAssignPrim(): true;
+				FcSetMutablePrim(name): true;
+				default: false;
+			}
+
+			if (exists(argsDyn, isFiDyn) || mutOp) {
+				FiDyn(ncall)
+			} else ncall;
+		}
+		FiCall(f, args, t, st): {
+			fDyn = bubbleDynUp(dynamicVars, f);
+			argsDyn = map(args, \arg -> bubbleDynUp(dynamicVars, arg));
+			ncall = FiCall(fDyn, argsDyn, t, st);
+			if (exists(argsDyn, isFiDyn)) {
+				FiDyn(ncall)
+			} else ncall
+		}
+		FiSwitch(var, st, cases, t, start): {
+			// If the var is in dynamicVars, it is dynamic!
+			dvar = containsSet(dynamicVars, var.name);
+			caseDyn = map(cases, \c : FiCase -> {
+				dynB = bubbleDynUp(dynamicVars, c.body);
+				FiCase(c.struct, c.argNames, dynB, c.start);
+			});
+			dswitch = FiSwitch(var, st, caseDyn, t, start);
+			if (dvar || exists(caseDyn, \c -> isFiDyn(c.body))) {
+				FiDyn(dswitch)
+			} else dswitch;
+		}
+		FiLambda(args, body, type, start): {
+			dbody = bubbleDynUp(dynamicVars, body);
+			nlambda = FiLambda(args, dbody, type, start);
+			if (isFiDyn(dbody)) {
+				FiDyn(nlambda)
+			} else nlambda;
+		}
+		FiCast(e, tFrom, tTo, type, start): {
+			de = bubbleDynUp(dynamicVars, e);
+			ncast = FiCast(de, tFrom, tTo, type, start);
+			if (isFiDyn(de)) {
+				FiDyn(ncast)
+			} else ncast;
+		}
+		FiRequire(flowfile, e, type, start): {
+			de = bubbleDynUp(dynamicVars, e);
+			ncast = FiRequire(flowfile, de, type, start);
+			if (isFiDyn(de)) {
+				FiDyn(ncast)
+			} else ncast;
+		}
+		FiUnsafe(name, fallback, type, start): {
+			de = bubbleDynUp(dynamicVars, fallback);
+			ncast = FiUnsafe(name, de, type, start);
+			if (isFiDyn(de)) {
+				FiDyn(ncast)
+			} else ncast;
+		}
+	}
+}
+
+isFiDyn(code : FiExp) -> bool {
+	switch (code) {
+		FiCallPrim(op, __, __, __): {
+			op == FcQuote();
+		}
+		default: false;
+	}
+}
+
+FiDyn(f : FiExp) -> FiExp {
+	FiCallPrim(
+		FcQuote(),
+		[f],
+		fiExpType(f),
+		f.start,
+	)
+}
+
+stripFiDyn(code : FiExp) -> FiExp {
+	switch (code) {
+		FiLambda(args, body, type, start): FiLambda(args, stripFiDyn(body), type, start);
+		FiCall(f, args, type, start): FiCall(stripFiDyn(f), map(args, stripFiDyn), type, start);
+		FiVar(name, type, start): code;
+		FiLet(name, type, e1, e2, type2, start): FiLet(name, type, stripFiDyn(e1), stripFiDyn(e2), type2, start);
+		FiIf(e1, e2, e3, type, start): FiIf(stripFiDyn(e1), stripFiDyn(e2), stripFiDyn(e3), type, start);
+		FiSwitch(x, switchType, cases, type, start): FiSwitch(x, switchType, map(cases, \c -> {
+			FiCase(c.struct, c.argNames, stripFiDyn(c.body), c.start);
+		}), type, start);
+		FiCast(e, tFrom, tTo, type, start): FiCast(stripFiDyn(e), tFrom, tTo, type, start);
+		FiSeq(es, type, start): FiSeq(map(es, stripFiDyn), type, start);
+		FiCallPrim(op, es, type, start): {
+			switch (op) {
+				FcQuote(): stripFiDyn(es[0]);
+				default: FiCallPrim(op, map(es, stripFiDyn), type, start);
+			}
+		}
+		FiRequire(flowfile, e, type, start): FiRequire(flowfile, stripFiDyn(e), type, start);
+		FiUnsafe(name, fallback, type, start): FiUnsafe(name, stripFiDyn(fallback), type, start);
+		FiConst(): code;
+	}
+}
+
+
+// Given a code with SiDyn tags, and a known type for the output,
+// as well as the last known output value, reuse as much of the 
+// output as possible
+reuseOldOutput(env : IncaEnv, code : FiExp, type : FiType, output : FiExp) -> FiExp {
+	switch (code) {
+		FiVoid(__): code;
+		FiBool(v, __): code; // either works, code is probably shortest
+		FiInt(v, __): code; // either works, code is probably shortest
+		FiDouble(v, __): output;
+		FiString(v, __): output;
+		FiIf(c, then, else_, t, st): {
+			FiIf(stripFiDyn(c), 
+				reuseOldOutput(env, then, type, output), 
+				reuseOldOutput(env, else_, type, output),
+				t,
+				st
+			);
+		}
+		FiSwitch(var, st, cases, t, start): {
+			FiSwitch(var, st,
+				map(cases, \c -> {
+					FiCase(c.struct, c.argNames, 
+						reuseOldOutput(env, c.body, type, output),
+						c.start
+					)
+				}), t, start
+			)
+		}
+		FiSeq(seq, t, st): {
+			reuseSeq(code, output);
+		};
+		FiLet(n,t1, v,b, t2, st): output;
+		FiCallPrim(op, pargs, __, __): {
+			switch (op) {
+				FcOrPrim(): output;
+				FcAndPrim(): output;
+				FcNotPrim(): output;
+				FcEqPrim(): output;
+				FcNePrim(): output;
+				FcLePrim(): output;
+				FcGePrim(): output;
+				FcLtPrim(): output;
+				FcGtPrim(): output;
+				FcPlusPrim(): output;
+				FcMinusPrim(): output;
+				FcMulPrim(): output;
+				FcDivPrim(): output;
+				FcModPrim(): output;
+				FcNegPrim(): output;
+				FcArrayPrim(): output;
+				FcIndexPrim(): output;
+
+				FcStructPrim(struct_name): {
+					reuseConstructor(env, code, struct_name, pargs, type, output)
+				}
+				FcFieldPrim(name): output;
+
+				FcSetMutablePrim(name): stripFiDyn(code);
+				FcDerefPrim(): stripFiDyn(code);
+				FcAssignPrim(): stripFiDyn(code);
+				FcRefPrim(): stripFiDyn(code);
+
+				FcCreateClosurePrim(structName, functionName): output;
+				FcUnquote(): output;
+
+				FcQuote(): {
+					// This is what we use to tag dynamic code,
+					// so the body of this thing is dynamic
+
+					dync = pargs[0];
+					switch (dync) {
+						FiCall(fn, args, t, st): {
+							ndyns = countA(args, isFiDyn);
+							if (ndyns == 1) {
+								switch (fn) {
+									FiVar(n, __, __): {
+										// OK, only one argument is dyn, and we know what named
+										// funciton to call, so we can use a change function
+										dynindex : int = findiDef(args, isFiDyn, 0);
+								
+										changeName = n + "_change_" + i2s(dynindex);
+										FiCall(FiVar(changeName, t, st), arrayPush(args, output), t, st);
+									}
+									default: {
+										stripFiDyn(dync);
+									}
+								};
+							} else {
+								stripFiDyn(dync);
+							}
+						}
+						FiCallPrim(dynop, dynargs, t, st): {
+							switch (dynop) {
+								FcStructPrim(struct_name): {
+									reuseConstructor(env, code, struct_name, dynargs, type, output)
+								}
+								default: stripFiDyn(dync);
+							}
+						}
+						FiSeq(s, t, st): reuseSeq(dync, output);
+						FiIf(cn, then, else_, t, st): {
+							if (isFiDyn(cn)) {
+								stripFiDyn(code)
+							} else {
+								FiIf(cn, 
+									reuseOldOutput(env, then, type, output), 
+									reuseOldOutput(env, else_, type, output),
+									t, st
+								);
+							}
+						}
+						FiSwitch(var, st, cases, t, start): {
+							if (isFiDyn(var)) {
+								code;
+							} else {
+								FiSwitch(var, st,
+									map(cases, \c -> {
+										FiCase(c.struct, c.argNames, 
+											reuseOldOutput(env, c.body, type, output),
+											c.start
+										)
+									}), t, start
+								)
+							}
+						}
+						default: stripFiDyn(dync);
+					}
+				}
+			}
+		}
+		FiVar(__, t, st): output;
+		FiCall(name, args, t, start): output;
+		FiLambda(args, body, t, start): output;
+		FiCast(e, tFrom, tTo, t, start): output;
+		FiRequire(flowfile, e, t, start): output;
+		FiUnsafe(name, fallback, t, start): output;
+	}
+}
+
+reuseConstructor(env : IncaEnv, code : FiExp, structName : string, sargs : [FiExp], type : FiType, output : FiExp) -> FiExp {
+	switch (type : FiType) {
+		FiTypeVoid(): code;
+		FiTypeBool(): code;
+		FiTypeInt(): code;
+		FiTypeDouble(): code;
+		FiTypeString(): code;
+		FiTypeArray(at): code;
+		FiTypeFunction(args, returnType): code;
+		FiTypeRef(t): code;
+		FiTypeFlow(): code;
+		FiTypeNative(): code;
+		FiTypeName(name, typeparameters): {
+			mstr = lookupTree(env.structs, name);
+			switch (mstr) {
+				None(): {
+					// TODO: Check if it is a union
+					/*
+					FiTypeUnion(n, typars, ss, start): {
+						// We expect a result of a given union.
+						// Our code produces a value of a given struct type.
+						// That struct type should be a part of the union, so find it
+						// and we can reuse as if the result was just that struct.
+						mstruct = find(ss, \s -> SiStructName(s.name) == code.name);
+						switch (mstruct) {
+							None(): code;
+							Some(str): reuseConstructor(names, code, str, output)
+						}
+					}*/
+					println("TODO: Reuse unions");
+					code;
+				}
+				Some(stype): {
+					if (stype.name == structName) {
+						FiCallPrim(
+							FcStructPrim(structName),
+							mapi(stype.args, \i, field : FiStructArg -> {
+								reuseOldOutput(env, sargs[i], field.type, 
+									FiCallPrim(
+										FcFieldPrim(field.name),
+										[output],
+										field.type,
+										output.start
+									)
+								)
+							}),
+							fiExpType(code), code.start
+						);
+					} else {
+						// OK, too bad, we have to just redo it
+						code;
+					}
+				}
+			}
+		}
+		FiTypeParameter(__): code;
+	}
+}
+
+reuseSeq(code : FiSeq, output : FiExp) -> FiExp {
+	seq = code.es;
+	// We can drop all the non-dyn parts
+	dynparts = filter(seq, isFiDyn);
+	if (dynparts == []) output
+	else {
+		// Here we keep just the dyn parts, plus the final result if that is not dynamic
+		if (seq != []) {
+			last = lastElement(seq, seq[0]);
+			if (isFiDyn(last)) {
+				// TODO: If the last is an if, call, constructor, seq, which is not 
+				// fully dynamic, there is still an opportunity to reuse stuff
+				// so we should recursively call reuse on the last element
+				FiSeq(dynparts, code.type, code.start);
+			} else {
+				FiSeq(arrayPush(dynparts, output), code.type, code.start);
+			}
+		} else {
+			code;
+		}
+	}
+}
+

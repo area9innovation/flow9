@@ -36,18 +36,9 @@ class DropAreaClip extends NativeWidgetClip {
 		}
 
 		nativeWidget.className = "droparea";
-		nativeWidget.onmousemove = provideEvent;
-		nativeWidget.onmousedown = provideEvent;
-		nativeWidget.onmouseup = provideEvent;
 		nativeWidget.oncontextmenu = onContextMenu;
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
-	}
-
-	private function provideEvent(event : Dynamic) : Void {
-		event.preventDefault();
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
-		RenderSupportJSPixi.provideEvent(event);
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {

@@ -308,8 +308,7 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
-		Browser.window.addEventListener('focus', function () { requestAnimationFrame(); }, false);
-		// Browser.window.addEventListener('blur', function () { Browser.window.cancelAnimationFrame(AnimationFrameId); }, false);
+		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 	}
 
 	private static inline function calculateMobileTopHeight() {
@@ -495,6 +494,7 @@ class RenderSupportJSPixi {
 		}
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
+		InvalidateLocalStages();
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
@@ -898,6 +898,7 @@ class RenderSupportJSPixi {
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
+				var startAt = Date.now().getTime();
 				TransformChanged = false;
 
 				if (!RenderSupportJSPixi.DomRenderer) {
@@ -929,6 +930,7 @@ class RenderSupportJSPixi {
 				untyped PixiRenderer._lastObjectRendered = PixiStage;
 			}
 
+			PixiStageChanged = false; // to protect against recursive invalidations
 			emit("stagechanged", timestamp);
 		} else {
 			AccessWidget.updateAccessTree();
@@ -956,6 +958,14 @@ class RenderSupportJSPixi {
 
 		on("message", handler);
 		return function() { off("message", handler); };
+	}
+
+	private static function InvalidateLocalStages() {
+		if (!RenderSupportJSPixi.DomRenderer) {
+			for (child in PixiStage.children) {
+				child.invalidateTransform();
+			}
+		}
 	}
 
 	public static function getPixelsPerCm() : Float {
@@ -1285,6 +1295,10 @@ class RenderSupportJSPixi {
 
 	public static function setWordWrap(clip : TextClip, wordWrap : Bool) : Void {
 		clip.setWordWrap(wordWrap);
+	}
+
+	public static function setDoNotInvalidateStage(clip : TextClip, dontInvalidate : Bool) : Void {
+		clip.setDoNotInvalidateStage(dontInvalidate);
 	}
 
 	public static function getSelectionStart(clip : TextClip) : Int {
