@@ -436,7 +436,7 @@ class CppCodeLines {
 			}
 		}
 		for (name in decl2line_filtered.keys()) {
-			trace('multy decls for: ' + name);
+			//trace('multy decls for: ' + name);
 			var common_decls = decl2line_filtered.get(name);
 			var common = leastCommonAncestor(common_decls);
 			common.lines.unshift(common_decls[0]);
