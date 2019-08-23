@@ -64,7 +64,9 @@ class FlowGraphics extends Graphics {
 		var newGraphics = super.moveTo(x, y);
 		pen.x = x;
 		pen.y = y;
-		localBounds.addPoint(pen);
+
+		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 
 		return newGraphics;
 	}
@@ -73,7 +75,9 @@ class FlowGraphics extends Graphics {
 		var newGraphics = super.lineTo(x, y);
 		pen.x = x;
 		pen.y = y;
-		localBounds.addPoint(pen);
+
+		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 
 		return newGraphics;
 	}
@@ -85,7 +89,9 @@ class FlowGraphics extends Graphics {
 		var newGraphics = super.quadraticCurveTo(cx, cy, x, y);
 		pen.x = x;
 		pen.y = y;
-		localBounds.addPoint(pen);
+
+		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 
 		return newGraphics;
 	}
@@ -177,8 +183,8 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawRect(x, y, width, height);
 
-			localBounds.addPoint(new Point(x, y));
-			localBounds.addPoint(new Point(x + width, y + height));
+			localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
 
 			endFill();
 
@@ -205,8 +211,8 @@ class FlowGraphics extends Graphics {
 			if (radius > 0) {
 				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
 
-				localBounds.addPoint(new Point(x, y));
-				localBounds.addPoint(new Point(x + width, y + height));
+				localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+				localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
 
 				endFill();
 
@@ -226,8 +232,8 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawEllipse(x, y, width, height);
 
-			localBounds.addPoint(new Point(x - width, y - height));
-			localBounds.addPoint(new Point(x + width, y + height));
+			localBounds.addPoint(new Point(x - width - lineWidth / 2.0, y - height - lineWidth / 2.0));
+			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
 
 			endFill();
 
@@ -243,8 +249,8 @@ class FlowGraphics extends Graphics {
 		if (radius > 0) {
 			var newGraphics = super.drawCircle(x, y, radius);
 
-			localBounds.addPoint(new Point(x - radius, y - radius));
-			localBounds.addPoint(new Point(x + radius, y + radius));
+			localBounds.addPoint(new Point(x - radius - lineWidth / 2.0, y - radius - lineWidth / 2.0));
+			localBounds.addPoint(new Point(x + radius + lineWidth / 2.0, y + radius + lineWidth / 2.0));
 
 			endFill();
 

@@ -26,7 +26,7 @@ class RenderSupportJSPixi {
 	public static var DomInteractions : Bool = false;
 
 	public static var PixiView : Dynamic;
-	public static var PixiStage = new FlowContainer(true);
+	public static var PixiStage : FlowContainer = new FlowContainer(true);
 	public static var PixiRenderer : SystemRenderer;
 
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
@@ -883,11 +883,8 @@ class RenderSupportJSPixi {
 
 	private static var rendering = false;
 
-	private static function requestAnimationFrame(?cancel = true) {
-		if (cancel) {
-			Browser.window.cancelAnimationFrame(AnimationFrameId);
-		}
-
+	private static function requestAnimationFrame() {
+		Browser.window.cancelAnimationFrame(AnimationFrameId);
 		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
 	}
 
@@ -938,7 +935,7 @@ class RenderSupportJSPixi {
 			emit("freeframe", timestamp);
 		}
 
-		requestAnimationFrame(false);
+		requestAnimationFrame();
 	}
 
 	private static inline function render() {
@@ -1768,7 +1765,7 @@ class RenderSupportJSPixi {
 		}
 
 		var point = new Point(x, y);
-		if (!DomRenderer && clip.parent != null) {
+		if (clip.parent != null) {
 			clip.updateTransform();
 		}
 

@@ -903,32 +903,33 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						if (this.visible) {
-							for (let i = 0, j = this.children.length; i < j; ++i) {
-								const child = this.children[i];
+						for (let i = 0, j = this.children.length; i < j; ++i) {
+							const child = this.children[i];
 
-								if (child.transformChanged) {
-									if (this.localTransformChanged && !this.isNativeWidget) {
-										child.localTransformChanged = true;
-									}
-
-									child.updateTransform();
-								}
+							if (child.transformChanged) {
+								child.updateTransform();
 							}
 						}
 
-						if (this.accessWidget) {
-							this.accessWidget.updateTransform();
-						} else if (RenderSupportJSPixi.DomRenderer && this.isNativeWidget && this.localTransformChanged) {
-							this.localTransformChanged = false;
-							DisplayObjectHelper.updateNativeWidget(this);
+						if (RenderSupportJSPixi.DomRenderer) {
+							if (this.localTransformChanged) {
+								this.localTransformChanged = false;
+
+								if (this.isNativeWidget) {
+									DisplayObjectHelper.updateNativeWidget(this);
+								}
+							}
+						} else {
+							if (this.accessWidget) {
+								this.accessWidget.updateTransform();
+							}
 						}
 
 						this.emit('transformchanged');
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
-						if (child.visible) {
+						if (child.transformChanged) {
 							child.updateTransform();
 						}
 					}
@@ -950,32 +951,33 @@ class PixiWorkarounds {
 
 						this.layoutText();
 
-						if (this.visible) {
-							for (let i = 0, j = this.children.length; i < j; ++i) {
-								const child = this.children[i];
+						for (let i = 0, j = this.children.length; i < j; ++i) {
+							const child = this.children[i];
 
-								if (child.transformChanged) {
-									if (this.localTransformChanged && !this.mask) {
-										child.localTransformChanged = true;
-									}
-
-									child.updateTransform();
-								}
+							if (child.transformChanged) {
+								child.updateTransform();
 							}
 						}
 
-						if (this.accessWidget) {
-							this.accessWidget.updateTransform();
-						} else if (RenderSupportJSPixi.DomRenderer && this.isNativeWidget && this.localTransformChanged) {
-							this.localTransformChanged = false;
-							DisplayObjectHelper.updateNativeWidget(this);
+						if (RenderSupportJSPixi.DomRenderer) {
+							if (this.localTransformChanged) {
+								this.localTransformChanged = false;
+
+								if (this.isNativeWidget) {
+									DisplayObjectHelper.updateNativeWidget(this);
+								}
+							}
+						} else {
+							if (this.accessWidget) {
+								this.accessWidget.updateTransform();
+							}
 						}
 
 						this.emit('transformchanged');
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
-						if (child.visible) {
+						if (child.transformChanged) {
 							child.updateTransform();
 						}
 					}

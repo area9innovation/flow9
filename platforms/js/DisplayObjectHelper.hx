@@ -7,8 +7,8 @@ import pixi.core.display.TransformBase;
 import pixi.core.math.Matrix;
 
 class DisplayObjectHelper {
-	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
-	public static var RenderContainers : Bool = false;
+	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
+	public static var RenderContainers : Bool = Util.getParameter("containers") == "1" || !RenderSupportJSPixi.DomRenderer;
 
 	private static var InvalidateStage : Bool = true;
 
@@ -21,7 +21,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateStage(clip : DisplayObject) : Void {
-		if (InvalidateStage && getClipWorldVisible(clip) && untyped clip.stage != null) {
+		if (InvalidateStage && (clip.visible || (clip.parent != null && clip.parent.visible)) && untyped clip.stage != null) {
 			if (DisplayObjectHelper.Redraw && (untyped clip.updateGraphics == null || untyped clip.updateGraphics.parent == null)) {
 				var updateGraphics = new FlowGraphics();
 
@@ -48,12 +48,6 @@ class DisplayObjectHelper {
 			}
 
 			untyped clip.stage.invalidateStage();
-		}
-	}
-
-	public static function invalidateStageByParent(clip : DisplayObject) : Void {
-		if (InvalidateStage && clip.parent != null && getClipWorldVisible(clip.parent)) {
-			invalidateStage(clip.parent);
 		}
 	}
 
@@ -96,42 +90,39 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateTransform(clip : DisplayObject) : Void {
-		untyped clip.localTransformChanged = true;
-		untyped clip.childrenTransformChanged = true;
-
-		if (InvalidateStage) {
+		if (InvalidateStage || true) {
 			invalidateParentTransform(clip);
 		}
 
 		invalidateWorldTransform(clip);
 	}
 
-	public static function invalidateWorldTransform(clip : DisplayObject) : Void {
-		if (!untyped clip.worldTransformChanged && clip.parent != null) {
+	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool = true) : Void {
+		if (clip.parent != null) {
 			untyped clip.worldTransformChanged = true;
 			untyped clip.transformChanged = true;
+
+			if (localTransformChanged) {
+				untyped clip.localTransformChanged = true;
+			}
 
 			var children : Array<Dynamic> = untyped clip.children;
 			if (children != null) {
 				for (child in children) {
 					if (child.visible) {
-						invalidateWorldTransform(child);
+						invalidateWorldTransform(child, localTransformChanged && !isNativeWidget(clip));
 					}
 				}
 			}
 		}
 	}
 
-	public static function invalidateParentTransform(clip : DisplayObject, ?invalidateBounds : Bool = true) : Void {
-		if (clip.visible && !untyped clip.transformChanged) {
+	public static function invalidateParentTransform(clip : DisplayObject) : Void {
+		if (clip.parent != null) {
 			untyped clip.transformChanged = true;
-			untyped clip.childrenTransformChanged = true;
 
-			if (clip.parent != null && !untyped clip.parent.transformChanged) {
-				invalidateParentTransform(
-					clip.parent,
-					invalidateBounds && (untyped clip.mask != null || clip.alphaMask != null || untyped clip.scrollRect != null)
-				);
+			if (clip.parent.visible && clip.parent.parent != null && untyped !clip.parent.transformChanged) {
+				invalidateParentTransform(clip.parent);
 			} else {
 				invalidateStage(clip);
 			}
@@ -155,7 +146,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (clip.interactive && !getClipWorldVisible(clip)) {
+			if (clip.interactive && !clip.visible) {
 				clip.emit("pointerout");
 			}
 
@@ -237,6 +228,9 @@ class DisplayObjectHelper {
 		} else {
 			untyped clip.worldTransformChanged = false;
 			untyped clip.transformChanged = false;
+			untyped clip.localTransformChanged = false;
+
+			deleteNativeWidget(clip);
 		}
 	}
 
@@ -590,15 +584,20 @@ class DisplayObjectHelper {
 		if (clip.parent == null) {
 			clip.once("added", function () {
 				disp = fn();
+
+				clip.once("removed", function () {
+					disp();
+					onAdded(clip, fn);
+				});
 			});
 		} else {
 			disp = fn();
-		}
 
-		clip.once("removed", function () {
-			disp();
-			onAdded(clip, fn);
-		});
+			clip.once("removed", function () {
+				disp();
+				onAdded(clip, fn);
+			});
+		}
 	}
 
 	public static function getClipUUID(clip : DisplayObject) : String {
@@ -732,7 +731,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function updateNativeWidgetMask(clip : DisplayObject, ?worldTransform : Bool) {
+	public static function updateNativeWidgetMask(clip : DisplayObject, ?worldTransform : Bool, ?attachScrollFn : Bool = true) {
 		if (worldTransform == null) {
 			worldTransform = !RenderContainers;
 		}
@@ -750,9 +749,9 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.overflow = "hidden";
 				var scrollFn = function() {
-					nativeWidget.scrollTo(viewBounds.minX, viewBounds.minY);
+					if (viewBounds != null) nativeWidget.scrollTo(viewBounds.minX, viewBounds.minY);
 				};
-				nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+				if (attachScrollFn) nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
 				scrollFn();
 			} else if (scrollRect != null) {
 				nativeWidget.style.width = '${scrollRect.width}px';
@@ -760,27 +759,14 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.overflow = "hidden";
 				var scrollFn = function() {
-					nativeWidget.scrollTo(scrollRect.x, scrollRect.y);
+					if (scrollRect != null) nativeWidget.scrollTo(scrollRect.x, scrollRect.y);
 				};
-				nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+				if (attachScrollFn) nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
 				scrollFn();
 			} else if (mask != null) {
 				var graphicsData = mask.graphicsData;
 
 				if (graphicsData != null) {
-					// var transform : Dynamic = new TransformBase();
-
-					// if (RenderContainers && false) {
-					// 	mask.localTransform.copy(transform.localTransform);
-					// 	mask.worldTransform.copy(transform.worldTransform);
-
-					// 	transform.updateTransform(untyped clip.parent.transform);
-					// 	transform = clip.worldTransform.copy(new Matrix()).prepend(transform.worldTransform.invert());
-					// } else {
-					// 	untyped mask.transform.updateLocalTransform();
-					// 	transform = new Matrix();
-					// }
-
 					var transform = new Matrix();
 					var data = graphicsData[0];
 
@@ -804,12 +790,13 @@ class DisplayObjectHelper {
 
 						nativeWidget.style.overflow = "hidden";
 						var scrollFn = function() {
-							nativeWidget.scrollTo(
-								untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
-								untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
-							);
+							if (data != null && data.shape != null && transform != null)
+								nativeWidget.scrollTo(
+									untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
+									untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
+								);
 						};
-						nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+						if (attachScrollFn) nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
 						scrollFn();
 					} else if (data.shape.type == 2) {
 						nativeWidget.style.clipPath = null;
@@ -819,12 +806,13 @@ class DisplayObjectHelper {
 
 						nativeWidget.style.overflow = "hidden";
 						var scrollFn = function() {
-							nativeWidget.scrollTo(
-								untyped transform.tx + (data.shape.x - data.shape.radius) * transform.a + (data.shape.y - data.shape.radius) * transform.c,
-								untyped transform.ty + (data.shape.x - data.shape.radius) * transform.b + (data.shape.y - data.shape.radius) * transform.d
-							);
+							if (data != null && data.shape != null && transform != null)
+								nativeWidget.scrollTo(
+									untyped transform.tx + (data.shape.x - data.shape.radius) * transform.a + (data.shape.y - data.shape.radius) * transform.c,
+									untyped transform.ty + (data.shape.x - data.shape.radius) * transform.b + (data.shape.y - data.shape.radius) * transform.d
+								);
 						};
-						nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+						if (attachScrollFn) nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
 						scrollFn();
 					} else if (data.shape.type == 4) {
 						nativeWidget.style.clipPath = null;
@@ -834,12 +822,13 @@ class DisplayObjectHelper {
 
 						nativeWidget.style.overflow = "hidden";
 						var scrollFn = function() {
-							nativeWidget.scrollTo(
-								untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
-								untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
-							);
+							if (data != null && data.shape != null && transform != null)
+								nativeWidget.scrollTo(
+									untyped transform.tx + data.shape.x * transform.a + data.shape.y * transform.c,
+									untyped transform.ty + data.shape.x * transform.b + data.shape.y * transform.d
+								);
 						};
-						nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
+						if (attachScrollFn) nativeWidget.onscroll = function() { scrollFn(); Native.defer(scrollFn); };
 						scrollFn();
 					}  else {
 						nativeWidget.style.clipPath = null;
@@ -886,6 +875,14 @@ class DisplayObjectHelper {
 						RenderSupportJSPixi.once("freeframe", function() { if (!clip.visible || !clip.renderable) removeNativeWidget(clip); });
 					}
 				}
+			} else {
+				var children : Array<DisplayObject> = untyped clip.children;
+
+				if (children != null) {
+					for (child in children) {
+						updateNativeWidgetDisplay(child);
+					}
+				}
 			}
 		}
 	}
@@ -896,7 +893,6 @@ class DisplayObjectHelper {
 		} else if (RenderSupportJSPixi.DomRenderer) {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && clip.renderable) {
 				appendNativeWidget(untyped clip.parent, clip);
-				clip.once('removed', function() { removeNativeWidget(clip); });
 
 				var children : Array<DisplayObject> = untyped clip.children;
 				if (children != null) {
@@ -906,7 +902,7 @@ class DisplayObjectHelper {
 				}
 			}
 		} else {
-			clip.once('removed', untyped clip.deleteNativeWidget);
+			clip.once('removed', function() { deleteNativeWidget(clip); });
 		}
 	}
 
@@ -919,12 +915,12 @@ class DisplayObjectHelper {
 			if (nativeWidget != null) {
 				if (nativeWidget.parentNode != null) {
 					nativeWidget.parentNode.removeChild(nativeWidget);
-				} else if (!RenderContainers) {
-					var children : Array<DisplayObject> = untyped clip.children;
-					if (children != null) {
-						for (child in children) {
-							removeNativeWidget(child);
-						}
+				}
+			} else if (!RenderContainers) {
+				var children : Array<DisplayObject> = untyped clip.children;
+				if (children != null) {
+					for (child in children) {
+						removeNativeWidget(child);
 					}
 				}
 			}
@@ -1012,27 +1008,6 @@ class DisplayObjectHelper {
 			return untyped clip.getHeight();
 		} else {
 			return untyped clip.getLocalBounds().height;
-		}
-	}
-
-	public static function updateLocalTransform(clip : DisplayObject) : Void {
-		if (untyped !clip.childrenTransformChanged) {
-			return;
-		}
-
-		if (untyped clip.localTransformChanged) {
-			untyped clip.localTransformChanged = false;
-			untyped clip.transform.updateLocalTransform();
-
-			updateNativeWidget(clip);
-
-			var children : Array<DisplayObject> = untyped clip.children;
-
-			if (children != null) {
-				for (child in children) {
-					updateLocalTransform(child);
-				}
-			}
 		}
 	}
 

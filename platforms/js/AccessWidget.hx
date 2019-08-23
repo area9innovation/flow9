@@ -203,9 +203,9 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateDisplay() : Void {
-		updateTransform();
-
 		if (!RenderSupportJSPixi.DomRenderer) {
+			updateTransform();
+
 			for (child in children) {
 				child.updateDisplay();
 			}
@@ -213,41 +213,36 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateTransform() : Void {
-		if (accessWidget != null) {
+		if (!RenderSupportJSPixi.DomRenderer && accessWidget != null) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
 			if (nativeWidget != null) {
-				if (!RenderSupportJSPixi.DomRenderer) {
-					if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
-						var localStage : FlowContainer = untyped clip.stage;
+				if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
+					var localStage : FlowContainer = untyped clip.stage;
 
-						if (localStage != null) {
-							var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
-								nativeWidget.className == "droparea" ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget;
-							nativeWidget.style.zIndex = Std.string(zIndex);
-						}
-					}
-
-					if (DebugAccessOrder) {
-						nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
-						nativeWidget.setAttribute("zorder", '${zorder}');
-						nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
-					}
-
-					if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-						nativeWidget.style.display = "block";
-						nativeWidget.style.opacity = clip.worldAlpha;
-					} else {
-						nativeWidget.style.display = "none";
-						return;
+					if (localStage != null) {
+						var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
+							nativeWidget.className == "droparea" ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget;
+						nativeWidget.style.zIndex = Std.string(zIndex);
 					}
 				}
 
-				if (untyped clip.nativeWidget != null) {
-					untyped clip.localTransformChanged = false;
-					untyped clip.updateNativeWidget();
+				if (DebugAccessOrder) {
+					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
+					nativeWidget.setAttribute("zorder", '${zorder}');
+					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
 				}
+
+				if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
+					nativeWidget.style.display = "block";
+					nativeWidget.style.opacity = clip.worldAlpha;
+				} else {
+					nativeWidget.style.display = "none";
+					return;
+				}
+
+				clip.updateNativeWidget();
 			}
 		}
 	}
@@ -387,13 +382,15 @@ class AccessWidget extends EventEmitter {
 		this.nodeindex = nodeindex;
 		this.zorder = zorder;
 
-		clip.onAdded(function() {
-			addAccessWidget(this);
+		if (!RenderSupportJSPixi.DomRenderer) {
+			clip.onAdded(function() {
+				addAccessWidget(this);
 
-			return function() {
-				removeAccessWidget(this);
-			}
-		});
+				return function() {
+					removeAccessWidget(this);
+				}
+			});
+		}
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
