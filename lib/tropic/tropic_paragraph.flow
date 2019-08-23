@@ -72,7 +72,7 @@ TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> T
 				// Ignore negative widths
 				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
-				newLines = wrapTParaWords(words, w, indent);
+				newLines = reflowTParaWords(words, w, indent);
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				next(lines, newLines);
 			};
@@ -126,44 +126,10 @@ expandParagraphElements(
 ) ->  Pair<List<TParaWord>, Tree<int, [TropicTextElementModifier]>> {
 	foldi2(elements, makeList(), makeTree(), \i, acc1, acc2, elem  -> {
 		switch(elem) {
-			TTextFragments(parts) : Pair(
-				concatList(
-					foldList(
-						parts,
-						makeList(),
-						\subAcc, part -> Cons(makeTParaWord(part, i), subAcc)
-					),
-					acc1
-				),
-				acc2
-			);
 			StyledTextFragments(fragments, style) : Pair(
-				foldList(
-					reverseList(fragments.elements),
-					acc1,
-					\subAcc, part -> Cons(
-						makeTParaWord(general2TWrapElement(part, fragments.style), i),
-						subAcc
-					)
-				),
-				setTree(acc2, i, style)
-			);
-			// This should not happen this is just for old compiler compatibilty
-			TSpace(st) : Pair(
-				Cons(makeTParaWord(TSpace(st), i), acc1),
-				acc2
-			);
-			NewLine() : Pair(
-				Cons(makeTParaWord(NewLine(), i), acc1),
-				acc2
-			);
-			TZeroWidthSpace(st) : Pair(
-				Cons(makeTParaWord(TZeroWidthSpace(st), i), acc1),
-				acc2
-			);
-			TLinePart(f, m, e) : Pair(
-				Cons(makeTParaWord(TLinePart(f, m, e), i), acc1),
-				acc2
+				switch(fragments: TTextFragments) {
+					TInspectElement(inspector, element)
+				}
 			);
 			default : {
 				tr : Tropic = cast(elem : TParagraphElement -> Tropic);
@@ -183,16 +149,22 @@ commonWordConstructor(s : Pair<Tropic, TFormMetrics>, id : int) -> TParaWord {
 	}
 }
 
-general2TWrapElement(w : GeneralWrapElement, style : [CharacterStyle]) -> TWrapElement {
+general2TWrapElement(
+	w : GeneralWrapElement,
+	style : [CharacterStyle],
+	tropicModifiers : [TropicTextElementModifier]
+) -> TWrapElement {
+	stylesFn : (Tropic) -> Tropic = \tr -> fold(tropicModifiers, tr, \acc, modifier -> modifier.fn(acc));
+	styledText : (string, [CharacterStyle]) -> Tropic = \str, st -> TText(str, st);
 	switch (w) {
-		GeneralText(txt) : TText(txt, overrideCharacterStylePerAlphabet(txt, style));
+		GeneralText(txt) : styledText(txt, overrideCharacterStylePerAlphabet(txt, style));
 		GeneralSpace(txt) : TSpace(style);
 		NewLine() : NewLine();
-		GeneralLinePart(f, m, e) : TLinePart(TText(f, style), TText(m, style), TText(e, style));
+		GeneralLinePart(f, m, e) : TLinePart(styledText(f, style), styledText(m, style), styledText(e, style));
 		EmptyLineElement() : makeTZeroSpaceElement(style);
 		GeneralInspectElement(inspector, element) : TInspectElement(
 			inspector,
-			cast(general2TWrapElement(element, style) : TWrapElement -> TWord)
+			cast(general2TWrapElement(element, style, tropicModifiers) : TWrapElement -> TWord)
 		);
 	}
 }
@@ -279,9 +251,9 @@ isTGhostable(f : Tropic) -> bool {
 TParaLine(words : [TParaWord], indent : double);
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
-wrapTParaWords(words : [TParaWord], availableParaWidth : double, paraIndent : double) -> [TParaLine] {
+reflowTParaWords(words : [TParaWord], availableParaWidth : double, paraIndent : double) -> [TParaLine] {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
-	text = wrapTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
+	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
 	if (isBiDiEnabled())
 		zipWith(
 			text,
@@ -292,7 +264,7 @@ wrapTParaWords(words : [TParaWord], availableParaWidth : double, paraIndent : do
 }
 
 // here availableWidth is an amount of width for current line
-wrapTParaWordsRec(
+reflowTParaWordsRec(
 	words : [TParaWord],
 	availableWidth : double,
 	remaining : double,
@@ -326,7 +298,7 @@ wrapTParaWordsRec(
 
 		switch (word.word : TWrapElement) {
 			NewLine(): {
-				wrapTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+				reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
 			}
 			TLinePart(first, mid, end): {
 
@@ -347,15 +319,15 @@ wrapTParaWordsRec(
 				if (currentWords == []) {
 					// If it is the first item on the line
 					paraword = makeLinePartWord(first);
-					wrapTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
 					paraword = makeLinePartWord(mid);
-					wrapTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
 				} else {
 					// If it is the last item on the line
 					paraword = makeLinePartWord(end);
-					wrapTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
+					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
 				}
 			}
 			TSpace(__): {
@@ -363,10 +335,10 @@ wrapTParaWordsRec(
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = getWordWidth(word);
 				if (width < remaining) {
-					wrapTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent);
 				} else {
 					detachWord(word, true);
-					wrapTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
 				}
 			}
 			default: {
@@ -415,9 +387,9 @@ wrapTParaWordsRec(
 
 					newCurrentWords = concat(currentWords, _words);
 
-					wrapTParaWordsRec(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent);
+					reflowTParaWordsRec(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent);
 				} else {
-					wrapTParaWordsRec(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent);
+					reflowTParaWordsRec(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent);
 				}
 			}
 		}
@@ -439,8 +411,9 @@ keepWordsTogether(tr : Tropic) -> bool {
 		TConstruct(__, t): keepWordsTogether(t);
 		TCrop(__, size, t): keepWordsTogether(t);
 		TTag(__, t): keepWordsTogether(t);
-		TFormIn(__, b): keepWordsTogether(b);
-		TForm(f): false;
+		TFormIn(__, b): true;
+		TForm(f): true;
+		TFormAvailable(__, __) : true; // mos likely this is recursive, so we need to keep forms together
 		TTranslate(__, t): keepWordsTogether(t);
 		TRotate(__, t): keepWordsTogether(t);
 		TInteractive(__, t): keepWordsTogether(t);
@@ -457,7 +430,7 @@ keepWordsTogether(tr : Tropic) -> bool {
 		TAttach(ghost, fn): false;
 		TFilter(__, t): keepWordsTogether(t);
 		TDebug(__, t): keepWordsTogether(t);
-		default : false;
+		default : true;
 	}
 }
 
