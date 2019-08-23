@@ -147,7 +147,6 @@ self.addEventListener('fetch', function(event) {
       return (new Request(requestData.urlNewToCache, {
         method: "GET",
         headers: requestCloned.headers,
-        body: requestCloned.body,
         mode: 'same-origin',
         credentials: requestCloned.credentials,
         cache: requestCloned.cache,

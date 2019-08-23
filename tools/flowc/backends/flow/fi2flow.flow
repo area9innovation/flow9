@@ -1,7 +1,9 @@
 import tools/flowc/backends/common;
+import tools/flowc/backends/doc/fi2doc;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/lambda_lifting;
+
 
 export {
 	fi2flow(program : FiProgram, cfg : FcFlowConfig, callback : () -> void) -> void;
@@ -9,17 +11,14 @@ export {
 
 /*
 TODO:
-- Non-exported natives. See dynamic.flow
-- Native argument names: See behaviour.flow
 
-- Extra newline after "if"
-- Preserve comments
-
-- Something with types going wrong. See fusion.flow
-
-- Wrap long lines
+- Preserve all comments
 
 - Ability to work one funtion at a time
+
+- Something with types going wrong. See fusion.flow. gtype works, though
+
+- Wrap long lines
 
 - Preserve order from original source
   (We could use start position for this)
@@ -37,6 +36,8 @@ fi2flow(program : FiProgram, cfg : FcFlowConfig, callback : () -> void) -> void 
 writeFlow2file(program : FiProgram, path : string, module : FiModule) -> void {
 	filepath : string = pathCombine(path, module.fileinfo.flowfile)  + ".flow";
 
+	docs = if (isUrlParameterTrue("comments")) fiModule2doc(module) else ModuleDocs("", makeTree());
+
 	imports = superglue(module.imports, \i -> "import " + i.flowfile + ";\n", "");
 	forbids = superglue(module.forbids, \i -> "forbid " + i.flowfile + ";\n", "");
 
@@ -46,26 +47,33 @@ writeFlow2file(program : FiProgram, path : string, module : FiModule) -> void {
 		export {
 			%exports%
 		}
-	", ["exports", superglue(module.exports, \e -> name2dec(program, e) + ";\n", "")
+	", ["exports", superglue(module.exports, \e -> name2dec(program, docs, e) + ";\n", "")
 	]) else "";
 
-	// Non-exported structs and unions
+	// Non-exported structs, unions and natives
 
 	unions = superglue(module.unions, \u -> {
 		if (contains(module.exports, u.name)) ""
-		else name2dec(program, u.name) + ";\n"
+		else name2dec(program, docs, u.name) + ";\n"
 	}, "");
 
 	structs = superglue(module.structs, \u -> {
 		if (contains(module.exports, u.name)) ""
-		else name2dec(program, u.name)  + ";\n"
+		else name2dec(program, docs, u.name)  + ";\n"
 	}, "");
+
+	natives = superglue(module.natives, \nat -> {
+		if (contains(module.exports, nat.name)) ""
+		else name2def(program, docs, nat.name) + ";\n"
+	}, "");
+
+	// The bodies
 
 	names = superglue(module.initOrder, \name -> {
-		"\n" + name2def(program, name)
+		"\n" + name2def(program, ModuleDocs("", makeTree()), name)
 	}, "");
 
-	file = imports + forbids + exports + unions + structs + names;
+	file = imports + forbids + exports + unions + structs + names + natives;
 
 	ensureDirectoryExists(dirName(filepath));
 	if (!setFileContent(filepath, file)) {
@@ -73,11 +81,13 @@ writeFlow2file(program : FiProgram, path : string, module : FiModule) -> void {
 	}
 }
 
-name2dec(program : FiProgram, e : string) -> string {
+name2dec(program : FiProgram, docs : ModuleDocs, e : string) -> string {
 	pt = \t -> prettyFiType(dummyPretty, t, makeSet());
+	doc0 = lookupTreeDef(docs.comments, e, "");
+	doc = if (doc0 != "") "\n// " + strReplace(doc0, "\n", "\n// ") + "\n" else "";
 
 	mdec = lookupTree(program.names.toplevel, e);
-	switch (mdec) {
+	doc + switch (mdec) {
 		None(): {
 			ms = lookupTree(program.names.structs, e);
 			switch (ms) {
@@ -115,7 +125,7 @@ name2dec(program : FiProgram, e : string) -> string {
 	}
 }
 
-name2def(program : FiProgram, e : string) -> string {
+name2def(program : FiProgram, docs : ModuleDocs, e : string) -> string {
 	pp = \t -> prettyFiExp(dummyPretty, t);
 	pt = \t -> prettyFiType(dummyPretty, t, makeSet());
 
@@ -132,11 +142,11 @@ name2def(program : FiProgram, e : string) -> string {
 						%body%
 					}
 					", [
-						"dec", name2dec(program, name),
+						"dec", name2dec(program, docs, name),
 						"body", pp(lambda.body)
 					])
 				}
-				FiGlobalVar(name, value, type, declStart, defiStart): name2dec(program, name) + " = " + pp(value) + ";";
+				FiGlobalVar(name, value, type, declStart, defiStart): name2dec(program, docs, name) + " = " + pp(value) + ";";
 				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 					switch (fallbackLambda) {
 						FiLambda(args, body, ltype, start): {
@@ -145,12 +155,14 @@ name2def(program : FiProgram, e : string) -> string {
 									%body%
 								}
 								", [
-									"dec", name + pt(type),
+									"dec", name + pt(ltype),
 									"body", pp(body)
 								]
 							);
 						}
-						default: "";
+						default: {
+							name2dec(program, docs, name);
+						}
 					}
 				}
 			}

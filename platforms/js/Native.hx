@@ -7,6 +7,7 @@ import haxe.CallStack;
 import js.Browser;
 import js.BinaryParser;
 import JSBinflowBuffer;
+import JsMd5;
 #end
 
 #if (flow_nodejs || nwjs)
@@ -1689,10 +1690,8 @@ class Native {
 		return function() { };
 	}
 
-	public static function md5(content: String) : String {
-		var bytes = haxe.io.Bytes.ofString(content);
-		var md5Bytes = haxe.crypto.Md5.make(bytes);
-		return md5Bytes.toHex();
+	public static function md5(content : String) : String {
+		return JsMd5.encode(content);
 	}
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
