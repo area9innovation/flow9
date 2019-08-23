@@ -5,7 +5,8 @@ import tools/flowc/backends/inca/promote_types;
 import tools/flowc/backends/inca/lift_types;
 import tools/flowc/backends/inca/lift_functions;
 import tools/flowc/backends/inca/lift_globals;
-import tools/flowc/backends/inca/special_fiexp;
+import tools/flowc/backends/inca/change_function;
+import tools/flowc/backends/inca/cache_function;
 import tools/flowc/manipulation/lambda_lifting;
 
 export {
@@ -27,11 +28,28 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig) -> FiProgram {
 
 	// Should we make the change functions, or the normal approach?
 	changeApproach = false;
+	cacheApproach = true;
 
 	// Build all the change functions
-	incaEnv = if (changeApproach) foldTree(incaEnv1.functions, incaEnv1, \name, fn, acc -> {
-		makeChangeFunction(acc, fn)
+	incaEnv2 = if (changeApproach || cacheApproach) foldTree(incaEnv1.functions, incaEnv1, \name, fn, acc -> {
+		acc0 = if (changeApproach) makeChangeFunction(acc, fn) else acc;
+		if (cacheApproach) makeCacheFunction(acc0, fn) else acc0; 
 	}) else incaEnv1;
+
+	// OK, add import for inca_change;
+	incaEnv = if (cacheApproach) {
+		IncaEnv(
+			incaEnv2 with
+			program = FiProgram(	
+				incaEnv2.program with
+				modules = mapTree(incaEnv2.program.modules, \m -> {
+					FiModule(m with
+						imports = arrayPush(m.imports, FiImport("inca/inca_change", false, 0))
+					)
+				})
+			)
+		)
+	} else incaEnv2;
 
 	time2 = repTime("Build change functions", time1);
 
