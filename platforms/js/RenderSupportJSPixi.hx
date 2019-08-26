@@ -1128,8 +1128,8 @@ class RenderSupportJSPixi {
 		var rightVal: Float = mtx.width;
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
-		var localX = x - org.x;
-		if (TextClip.getStringDirection(clipGlyphs.modified) == "RTL") localX = rightVal - localX;
+		var localX = Math.min(mtx.width, Math.max(0.0, x - org.x));
+		if (TextClip.getStringDirection(clipGlyphs.modified, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
 		var leftPos: Float = 0;
 		var rightPos: Float = clipGlyphs.modified.length;
 		var midVal: Float = -1.0;

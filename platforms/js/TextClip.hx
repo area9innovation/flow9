@@ -92,7 +92,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorColor : Int = -1;
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
-	private var textDirection : String = 'ltr';
+	private var textDirection : String = '';
 	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
@@ -162,13 +162,16 @@ class TextClip extends NativeWidgetClip {
 			|| (code >= 0x20000 && code < 0x2FA20)*/;
 	}
 
-	public static function getStringDirection(s: String) {
+	public static function getStringDirection(s: String, dflt: String) {
+		var flagsR = 0;
 		for (i in 0...s.length) {
 			var c = s.charAt(i);
-			if (isRtlChar(c)) return "RTL";
-			if (isLtrChar(c)) return "LTR";
+			if (isRtlChar(c)) flagsR |= 2;
+			if (isLtrChar(c)) flagsR |= 1;
 		}
-		return "";
+		if (flagsR == 2) return "rtl";
+		if (flagsR == 1) return "ltr";
+		return dflt;
 	}
 
 	private static function isCharCombining(testChr : String, pos: Int) : Bool {
@@ -297,10 +300,7 @@ class TextClip extends NativeWidgetClip {
 				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
 				var mtxPrev : Dynamic = pixi.core.text.TextMetrics.measureText(text.substr(0, text.length-1), c.style);
 				var result = c.x + (mtxPrev.width*(chridx-charIdx) + mtx.width) / (1 + chridx-charIdx);
-				if (ctext[1] == "rtl") {
-					mtx = pixi.core.text.TextMetrics.measureText(c.text, c.style);
-					return c.width - result;
-				}
+				if (ctext[1] == 'rtl') return c.width - result;
 				return result;
 			}
 		}
@@ -459,6 +459,7 @@ class TextClip extends NativeWidgetClip {
 		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
+		if (this.textDirection == '') this.textDirection = getStringDirection(this.text, '');
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
@@ -566,7 +567,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		var textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
+		var textClip = new Text(bidiDecorate(textMod.modified, getStringDirection(textMod.modified, textDirection)), style);
 		textClip.charIdx = chrIdx;
 		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);
@@ -702,6 +703,10 @@ class TextClip extends NativeWidgetClip {
 			invalidateMetrics();
 			layoutText();
 		}
+	}
+
+	public function getTextDirection() : String {
+		return this.textDirection;
 	}
 
 	public function setResolution(resolution : Float) : Void {
