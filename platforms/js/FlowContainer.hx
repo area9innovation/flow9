@@ -124,6 +124,10 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
+			if (untyped newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
+				addLocalBounds(DisplayObjectHelper.applyBoundsTransform(untyped newChild.localBounds, newChild.localTransform));
+			}
+
 			emitEvent("childrenchanged");
 		}
 
@@ -139,6 +143,9 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
+			if (untyped newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
+				addLocalBounds(DisplayObjectHelper.applyBoundsTransform(untyped newChild.localBounds, newChild.localTransform));
+			}
 			emitEvent("childrenchanged");
 		}
 
@@ -149,6 +156,10 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
+			if (untyped oldChild.localBounds.minX != Math.POSITIVE_INFINITY) {
+				removeLocalBounds(DisplayObjectHelper.applyBoundsTransform(untyped oldChild.localBounds, oldChild.localTransform));
+			}
+
 			oldChild.invalidate();
 
 			invalidateInteractive();
@@ -198,7 +209,9 @@ class FlowContainer extends Container {
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		if (RenderSupportJSPixi.DomRenderer) {
-			calculateLocalBounds();
+			if (localBounds.minX == Math.POSITIVE_INFINITY) {
+				calculateLocalBounds();
+			}
 
 			return localBounds.getRectangle(rect);
 		} else {
@@ -211,11 +224,7 @@ class FlowContainer extends Container {
 			if (!skipUpdate) {
 				updateTransform();
 				getLocalBounds();
-			}
-
-			if (untyped this._boundsID != untyped this._lastBoundsID)
-			{
-				untyped this.calculateBounds();
+				this.calculateBounds();
 			}
 
 			return _bounds.getRectangle(rect);
@@ -232,6 +241,53 @@ class FlowContainer extends Container {
 			_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 		} else {
 			untyped super.calculateBounds();
+		}
+	}
+
+	public function calculateLocalBounds() : Void {
+		var currentBounds = new Bounds();
+
+		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+			localBounds.applyBoundsTransform(localTransform, currentBounds);
+		}
+
+		localBounds.clear();
+
+		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
+			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
+			var maskBounds : Bounds = untyped mask.localBounds;
+
+			if (maskBounds.minX != Math.POSITIVE_INFINITY) {
+				maskBounds.applyBoundsTransform(mask.localTransform, localBounds);
+			}
+		} else if (children.length > 0) {
+			var firstChild = children[0];
+			var childBounds : Bounds = untyped firstChild.localBounds;
+
+			if (childBounds.minX != Math.POSITIVE_INFINITY) {
+				childBounds.applyBoundsTransform(firstChild.localTransform, localBounds);
+			}
+
+			for (child in children.slice(1)) {
+				childBounds = untyped child.localBounds;
+
+				if (childBounds.minX != Math.POSITIVE_INFINITY) {
+					localBounds.minX = Math.min(localBounds.minX, childBounds.minX * child.localTransform.a + childBounds.minY * child.localTransform.c + child.localTransform.tx);
+					localBounds.minY = Math.min(localBounds.minY, childBounds.minX * child.localTransform.b + childBounds.minY * child.localTransform.d + child.localTransform.ty);
+					localBounds.maxX = Math.max(localBounds.maxX, childBounds.maxX * child.localTransform.a + childBounds.maxY * child.localTransform.c + child.localTransform.tx);
+					localBounds.maxY = Math.max(localBounds.maxY, childBounds.maxX * child.localTransform.b + childBounds.maxY * child.localTransform.d + child.localTransform.ty);
+				}
+			}
+		}
+
+		if (parent != null) {
+			var newBounds = localBounds.applyBoundsTransform(localTransform);
+			parent.replaceLocalBounds(currentBounds, newBounds);
+		}
+
+		if (isNativeWidget && nativeWidget != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+			nativeWidget.style.width = '${getWidth()}px';
+			nativeWidget.style.height = '${getHeight()}px';
 		}
 	}
 

@@ -240,8 +240,21 @@ class DisplayObjectHelper {
 		}
 
 		if (clip.x != x) {
-			clip.x = x;
-			invalidateTransform(clip);
+			if (clip.parent != null && untyped clip.localBounds.minX != Math.POSITIVE_INFINITY) {
+				var localBounds = untyped clip.localBounds;
+				var currentBounds = applyBoundsTransform(localBounds, clip.localTransform);
+
+				clip.x = x;
+				invalidateTransform(clip);
+
+				var newBounds = applyBoundsTransform(localBounds, clip.localTransform);
+				var parentLocalBounds : Bounds = untyped clip.parent.localBounds;
+
+				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+			} else {
+				clip.x = x;
+				invalidateTransform(clip);
+			}
 		}
 	}
 
@@ -251,29 +264,73 @@ class DisplayObjectHelper {
 		}
 
 		if (clip.y != y) {
-			clip.y = y;
-			invalidateTransform(clip);
+			if (clip.parent != null && untyped clip.localBounds.minX != Math.POSITIVE_INFINITY) {
+				var localBounds = untyped clip.localBounds;
+				var currentBounds = applyBoundsTransform(localBounds, clip.localTransform);
+
+				clip.y = y;
+				invalidateTransform(clip);
+
+				var newBounds = applyBoundsTransform(localBounds, clip.localTransform);
+				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+			} else {
+				clip.y = y;
+				invalidateTransform(clip);
+			}
 		}
 	}
 
 	public static inline function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.x != scale) {
-			clip.scale.x = scale;
-			invalidateTransform(clip);
+			if (clip.parent != null && untyped clip.localBounds.minX != Math.POSITIVE_INFINITY) {
+				var localBounds = untyped clip.localBounds;
+				var currentBounds = applyBoundsTransform(localBounds, clip.localTransform);
+
+				clip.scale.x = scale;
+				invalidateTransform(clip);
+
+				var newBounds = applyBoundsTransform(localBounds, clip.localTransform);
+				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+			} else {
+				clip.scale.x = scale;
+				invalidateTransform(clip);
+			}
 		}
 	}
 
 	public static inline function setClipScaleY(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.y != scale) {
-			clip.scale.y = scale;
-			invalidateTransform(clip);
+			if (clip.parent != null && untyped clip.localBounds.minX != Math.POSITIVE_INFINITY) {
+				var localBounds = untyped clip.localBounds;
+				var currentBounds = applyBoundsTransform(localBounds, clip.localTransform);
+
+				clip.scale.y = scale;
+				invalidateTransform(clip);
+
+				var newBounds = applyBoundsTransform(localBounds, clip.localTransform);
+				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+			} else {
+				clip.scale.y = scale;
+				invalidateTransform(clip);
+			}
 		}
 	}
 
 	public static inline function setClipRotation(clip : DisplayObject, rotation : Float) : Void {
 		if (clip.rotation != rotation) {
-			clip.rotation = rotation;
-			invalidateTransform(clip);
+			if (clip.parent != null && untyped clip.localBounds.minX != Math.POSITIVE_INFINITY) {
+				var localBounds = untyped clip.localBounds;
+				var currentBounds = applyBoundsTransform(localBounds, clip.localTransform);
+
+				clip.rotation = rotation;
+				invalidateTransform(clip);
+
+				var newBounds = applyBoundsTransform(localBounds, clip.localTransform);
+				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+			} else {
+				clip.rotation = rotation;
+				invalidateTransform(clip);
+			}
 		}
 	}
 
@@ -364,6 +421,9 @@ class DisplayObjectHelper {
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			invalidateTransform(clip);
+			if (untyped clip.calculateLocalBounds != null) {
+				untyped clip.calculateLocalBounds();
+			}
 		} else {
 			invalidateStage(clip);
 		}
@@ -387,6 +447,9 @@ class DisplayObjectHelper {
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			invalidateTransform(clip);
+			if (untyped clip.calculateLocalBounds != null) {
+				untyped clip.calculateLocalBounds();
+			}
 		} else {
 			invalidateStage(clip);
 		}
@@ -438,6 +501,9 @@ class DisplayObjectHelper {
 			}
 
 			invalidateTransform(clip);
+			if (untyped clip.calculateLocalBounds != null) {
+				untyped clip.calculateLocalBounds();
+			}
 		} else {
 			invalidateStage(clip);
 		}
@@ -692,6 +758,16 @@ class DisplayObjectHelper {
 
 			nativeWidget.style.left = '${tx}px';
 			nativeWidget.style.top = '${ty}px';
+
+			if (untyped clip.localBounds.minX != Math.POSITIVE_INFINITY) {
+				nativeWidget.style.width = '${getWidth(clip)}px';
+				nativeWidget.style.height = '${getHeight(clip)}px';
+
+				nativeWidget.setAttribute('minX', untyped clip.localBounds.minX.toString());
+				nativeWidget.setAttribute('minY', untyped clip.localBounds.minY.toString());
+				nativeWidget.setAttribute('maxX', untyped clip.localBounds.maxX.toString());
+				nativeWidget.setAttribute('maxY', untyped clip.localBounds.maxY.toString());
+			}
 
 			if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
 				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
@@ -1011,50 +1087,81 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function calculateLocalBounds(clip : DisplayObject) : Void {
+	public static function replaceLocalBounds(clip : DisplayObject, currentBounds : Bounds, newBounds : Bounds) : Void {
+		if (clip.mask != null || untyped clip.alphaMask != null || clip.scrollRect != null) {
+			return;
+		}
+
 		var localBounds : Bounds = untyped clip.localBounds;
-		var children : Array<DisplayObject> = untyped clip.children;
 
-		if (clip.mask || untyped clip.alphaMask || untyped clip.scrollRect) {
-			var mask = clip.mask != null ? clip.mask : untyped clip.alphaMask ? untyped clip.alphaMask : clip.scrollRect;
+		if (currentBounds.minX != Math.POSITIVE_INFINITY && (localBounds.minX >= currentBounds.minX || localBounds.minY >= currentBounds.minY || localBounds.maxX <= currentBounds.maxX || localBounds.maxY <= currentBounds.maxY)) {
+			untyped clip.calculateLocalBounds();
+		} else {
+			addLocalBounds(clip, newBounds);
+		}
+	}
 
-			if (untyped mask.worldTransformChanged) {
-				untyped mask.transform.updateLocalTransform();
+	public static function addLocalBounds(clip : DisplayObject, bounds : Bounds) : Void {
+		if (clip.mask != null || untyped clip.alphaMask != null || clip.scrollRect != null) {
+			return;
+		}
+
+		var localBounds : Bounds = untyped clip.localBounds;
+
+		if (localBounds.minX > bounds.minX || localBounds.minY > bounds.minY || localBounds.maxX < bounds.maxX || localBounds.maxY < bounds.maxY) {
+			var currentBounds = new Bounds();
+
+			if (clip.parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+				applyBoundsTransform(localBounds, clip.localTransform, currentBounds);
 			}
 
-			var maskRect = mask.getLocalBounds();
+			localBounds.minX = Math.min(localBounds.minX, bounds.minX);
+			localBounds.minY = Math.min(localBounds.minY, bounds.minY);
+			localBounds.maxX = Math.max(localBounds.maxX, bounds.maxX);
+			localBounds.maxY = Math.max(localBounds.maxY, bounds.maxY);
 
-			localBounds.minX = maskRect.x * mask.localTransform.a + maskRect.y * mask.localTransform.c + mask.localTransform.tx;
-			localBounds.minY = maskRect.x * mask.localTransform.b + maskRect.y * mask.localTransform.d + mask.localTransform.ty;
-			localBounds.maxX = (maskRect.x + maskRect.width) * mask.localTransform.a + (maskRect.y + maskRect.height) * mask.localTransform.c + mask.localTransform.tx;
-			localBounds.maxY = (maskRect.x + maskRect.width) * mask.localTransform.b + (maskRect.y + maskRect.height) * mask.localTransform.d + mask.localTransform.ty;
-		} else if (untyped clip.children != null && untyped clip.children.length > 0) {
-			var firstChild = children[0];
-
-			if (untyped firstChild.worldTransformChanged) {
-				untyped firstChild.transform.updateLocalTransform();
+			if (clip.parent != null) {
+				var newBounds = applyBoundsTransform(localBounds, clip.localTransform);
+				replaceLocalBounds(clip.parent, currentBounds, newBounds);
 			}
 
-			var childRect = firstChild.getLocalBounds();
+			if (isNativeWidget(clip) && untyped clip.nativeWidget != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+				untyped clip.nativeWidget.style.width = '${getWidth(clip)}px';
+				untyped clip.nativeWidget.style.height = '${getHeight(clip)}px';
 
-			localBounds.minX = childRect.x * firstChild.localTransform.a + childRect.y * firstChild.localTransform.c + firstChild.localTransform.tx;
-			localBounds.minY = childRect.x * firstChild.localTransform.b + childRect.y * firstChild.localTransform.d + firstChild.localTransform.ty;
-			localBounds.maxX = (childRect.x + childRect.width) * firstChild.localTransform.a + (childRect.y + childRect.height) * firstChild.localTransform.c + firstChild.localTransform.tx;
-			localBounds.maxY = (childRect.x + childRect.width) * firstChild.localTransform.b + (childRect.y + childRect.height) * firstChild.localTransform.d + firstChild.localTransform.ty;
-
-			for (child in children.slice(1)) {
-				if (untyped child.worldTransformChanged) {
-					untyped child.transform.updateLocalTransform();
-				}
-
-				childRect = child.getLocalBounds();
-
-				localBounds.minX = Math.min(localBounds.minX, childRect.x * child.localTransform.a + childRect.y * child.localTransform.c + child.localTransform.tx);
-				localBounds.minY = Math.min(localBounds.minY, childRect.x * child.localTransform.b + childRect.y * child.localTransform.d + child.localTransform.ty);
-				localBounds.maxX = Math.max(localBounds.maxX, (childRect.x + childRect.width) * child.localTransform.a + (childRect.y + childRect.height) * child.localTransform.c + child.localTransform.tx);
-				localBounds.maxY = Math.max(localBounds.maxY, (childRect.x + childRect.width) * child.localTransform.b + (childRect.y + childRect.height) * child.localTransform.d + child.localTransform.ty);
+				untyped clip.nativeWidget.setAttribute('minX', localBounds.minX.toString());
+				untyped clip.nativeWidget.setAttribute('minY', localBounds.minY.toString());
+				untyped clip.nativeWidget.setAttribute('maxX', localBounds.maxX.toString());
+				untyped clip.nativeWidget.setAttribute('maxY', localBounds.maxY.toString());
 			}
 		}
+	}
+
+	public static function removeLocalBounds(clip : DisplayObject, bounds : Bounds) : Void {
+		if (clip.mask != null || untyped clip.alphaMask != null || clip.scrollRect != null) {
+			return;
+		}
+
+		var localBounds = untyped clip.localBounds;
+
+		if (localBounds.minX == bounds.minX || localBounds.minY == bounds.minY || localBounds.maxX == bounds.maxX || localBounds.maxY == bounds.maxY) {
+			if (untyped clip.calculateLocalBounds != null) {
+				untyped clip.calculateLocalBounds();
+			}
+		}
+	}
+
+	public static function applyBoundsTransform(bounds : Bounds, transform : Matrix, ?container : Bounds) : Bounds {
+		if (container == null) {
+			container = new Bounds();
+		}
+
+		container.minX = bounds.minX * transform.a + bounds.minY * transform.c + transform.tx;
+		container.minY = bounds.minX * transform.b + bounds.minY * transform.d + transform.ty;
+		container.maxX = bounds.maxX * transform.a + bounds.maxY * transform.c + transform.tx;
+		container.maxY = bounds.maxX * transform.b + bounds.maxY * transform.d + transform.ty;
+
+		return container;
 	}
 
 	public static function initNativeWidget(clip : DisplayObject) : Void {
