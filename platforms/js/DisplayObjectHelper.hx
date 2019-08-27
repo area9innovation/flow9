@@ -1156,22 +1156,25 @@ class DisplayObjectHelper {
 		var transform = clip.localTransform;
 		var bounds = untyped clip.localBounds;
 
-		container.minX = bounds.minX * transform.a + bounds.minY * transform.c + transform.tx;
-		container.minY = bounds.minX * transform.b + bounds.minY * transform.d + transform.ty;
-		container.maxX = bounds.maxX * transform.a + bounds.maxY * transform.c + transform.tx;
-		container.maxY = bounds.maxX * transform.b + bounds.maxY * transform.d + transform.ty;
+		var x = [
+			bounds.minX * transform.a + bounds.minY * transform.c + transform.tx,
+			bounds.minX * transform.a + bounds.maxY * transform.c + transform.tx,
+			bounds.maxX * transform.a + bounds.maxY * transform.c + transform.tx,
+			bounds.maxX * transform.a + bounds.minY * transform.c + transform.tx
+		];
 
-		if (container.minX > container.maxX) {
-			var tempX = container.minX;
-			container.minX = container.maxX;
-			container.maxX = tempX;
-		}
+		var y = [
+			bounds.minX * transform.b + bounds.minY * transform.d + transform.ty,
+			bounds.minX * transform.b + bounds.maxY * transform.d + transform.ty,
+			bounds.maxX * transform.b + bounds.maxY * transform.d + transform.ty,
+			bounds.maxX * transform.b + bounds.minY * transform.d + transform.ty
+		];
 
-		if (container.minY > container.maxY) {
-			var tempY = container.minY;
-			container.minY = container.maxY;
-			container.maxY = tempY;
-		}
+
+		container.minX = Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3]));
+		container.minY = Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3]));
+		container.maxX = Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3]));
+		container.maxY = Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3]));
 
 		return container;
 	}
@@ -1221,25 +1224,28 @@ class DisplayObjectHelper {
 		if (children != null) {
 			for (child in children) {
 				untyped child.transform.updateLocalTransform();
-				var transform = untyped child.localTransform.clone().invert();
-
+				var transform = untyped child.localTransform;
 				var newViewBounds = new Bounds();
-				newViewBounds.minX = viewBounds.minX * transform.a + viewBounds.minY * transform.c + transform.tx;
-				newViewBounds.minY = viewBounds.minX * transform.b + viewBounds.minY * transform.d + transform.ty;
-				newViewBounds.maxX = viewBounds.maxX * transform.a + viewBounds.maxY * transform.c + transform.tx;
-				newViewBounds.maxY = viewBounds.maxX * transform.b + viewBounds.maxY * transform.d + transform.ty;
 
-				if (newViewBounds.minX > newViewBounds.maxX) {
-					var tempX = newViewBounds.minX;
-					newViewBounds.minX = newViewBounds.maxX;
-					newViewBounds.maxX = tempX;
-				}
+				var x = [
+					(transform.a != 0 ? viewBounds.minX / transform.a : 0) + (transform.c != 0 ? viewBounds.minY / transform.c : 0) - transform.tx,
+					(transform.a != 0 ? viewBounds.minX / transform.a : 0) + (transform.c != 0 ? viewBounds.maxY / transform.c : 0) - transform.tx,
+					(transform.a != 0 ? viewBounds.maxX / transform.a : 0) + (transform.c != 0 ? viewBounds.maxY / transform.c : 0) - transform.tx,
+					(transform.a != 0 ? viewBounds.maxX / transform.a : 0) + (transform.c != 0 ? viewBounds.minY / transform.c : 0) - transform.tx
+				];
 
-				if (newViewBounds.minY > newViewBounds.maxY) {
-					var tempY = newViewBounds.minY;
-					newViewBounds.minY = newViewBounds.maxY;
-					newViewBounds.maxY = tempY;
-				}
+				var y = [
+					(transform.b != 0 ? viewBounds.minX / transform.b : 0) + (transform.d != 0 ? viewBounds.minY / transform.d : 0) - transform.ty,
+					(transform.b != 0 ? viewBounds.minX / transform.b : 0) + (transform.d != 0 ? viewBounds.maxY / transform.d : 0) - transform.ty,
+					(transform.b != 0 ? viewBounds.maxX / transform.b : 0) + (transform.d != 0 ? viewBounds.maxY / transform.d : 0) - transform.ty,
+					(transform.b != 0 ? viewBounds.maxX / transform.b : 0) + (transform.d != 0 ? viewBounds.minY / transform.d : 0) - transform.ty
+				];
+
+
+				newViewBounds.minX = Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3]));
+				newViewBounds.minY = Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3]));
+				newViewBounds.maxX = Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3]));
+				newViewBounds.maxY = Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3]));
 
 				invalidateRenderable(child, newViewBounds);
 			}
