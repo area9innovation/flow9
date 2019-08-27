@@ -1279,7 +1279,7 @@ class RenderSupportJSPixi {
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
-		if (clip.parent != null) {
+		if (!DomRenderer && clip.parent != null) {
 			clip.updateTransform();
 		}
 
@@ -1680,6 +1680,9 @@ class RenderSupportJSPixi {
 		} else if (event == "focusout") {
 			cast(clip, DisplayObject).on("blur", fn);
 			return function() { cast(clip, DisplayObject).off("blur", fn); };
+		} else if (event == "visible"){
+			clip.on("visible", fn);
+			return function() { clip.off("visible", fn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -1760,12 +1763,12 @@ class RenderSupportJSPixi {
 	}
 
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
-		if (!clip.getClipWorldVisible() || clip.parent == null) {
+		if (!clip.getClipRenderable() || clip.parent == null) {
 			return false;
 		}
 
 		var point = new Point(x, y);
-		if (clip.parent != null) {
+		if (!DomRenderer && clip.parent != null) {
 			clip.updateTransform();
 		}
 
@@ -1805,7 +1808,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Bool = false) : DisplayObject {
-		if (!clip.getClipWorldVisible() || untyped clip.isMask) {
+		if (!clip.getClipRenderable() || untyped clip.isMask) {
 			return null;
 		} else if (checkMask && !hittestMask(clip, point)) {
 			return null;
@@ -2146,8 +2149,8 @@ class RenderSupportJSPixi {
 		return clip.setClipVisible(visible);
 	}
 
-	public static function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
-		return clip.setClipRenderable(renderable);
+	public static function getClipRenderable(clip : DisplayObject) : Bool {
+		return clip.getClipRenderable();
 	}
 
 	public static function setClipDebugInfo(clip : DisplayObject, key : String, value : Dynamic) : Void {

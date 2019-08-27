@@ -284,6 +284,32 @@ class FlowGraphics extends Graphics {
 		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
+	public function calculateLocalBounds() : Void {
+		var currentBounds = new Bounds();
+
+		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+			applyLocalBoundsTransform(currentBounds);
+		}
+
+		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
+			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
+
+			localBounds.clear();
+
+			if (untyped mask.localBounds.minX != Math.POSITIVE_INFINITY) {
+				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
+			}
+		}
+
+		if (parent != null) {
+			var newBounds = applyLocalBoundsTransform();
+			if (!currentBounds.isEqualBounds(newBounds)) {
+				parent.replaceLocalBounds(currentBounds, newBounds);
+				invalidateTransform();
+			}
+		}
+	}
+
 	public override function clear() : Graphics {
 		pen = new Point();
 		localBounds = new Bounds();

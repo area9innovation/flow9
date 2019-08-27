@@ -31,7 +31,7 @@ class VideoClip extends FlowContainer {
 	public static var CanAutoPlay = false;
 
 	public static inline function NeedsDrawing() : Bool {
-		if (playingVideos.filter(function (v) { return v.getClipWorldVisible(); }).length > 0) {
+		if (playingVideos.filter(function (v) { return v.getClipRenderable(); }).length > 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
 			return true;
 		}

@@ -188,6 +188,13 @@ class FlowContainer extends Container {
 				stageChanged = false;
 
 				if (transformChanged) {
+					var bounds = new Bounds();
+					bounds.minX = 0;
+					bounds.minY = 0;
+					bounds.maxX = renderer.width;
+					bounds.maxY = renderer.height;
+					invalidateRenderable(bounds);
+
 					DisplayObjectHelper.lockStage();
 					updateTransform();
 					DisplayObjectHelper.unlockStage();
@@ -202,6 +209,16 @@ class FlowContainer extends Container {
 			renderer.transparent = parent.children.indexOf(this) != 0;
 
 			DisplayObjectHelper.lockStage();
+
+			if (transformChanged) {
+				var bounds = new Bounds();
+				bounds.minX = 0;
+				bounds.minY = 0;
+				bounds.maxX = renderer.width;
+				bounds.maxY = renderer.height;
+				invalidateRenderable(bounds);
+			}
+
 			renderer.render(this, null, true, null, !transformChanged);
 			DisplayObjectHelper.unlockStage();
 		}

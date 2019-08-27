@@ -131,11 +131,13 @@ class DisplayObjectHelper {
 
 	public static function invalidateVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
 		var clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
-		var visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (clipVisible && clip.renderable));
+		var visible = clip.parent != null && getClipRenderable(clip.parent) && (untyped clip.isMask || (clipVisible && clip.renderable));
 
 		if (untyped clip.clipVisible != clipVisible || clip.visible != visible) {
 			untyped clip.clipVisible = clipVisible;
 			clip.visible = visible;
+
+			clip.emit("visible");
 
 			var updateAccessWidget = updateAccess && untyped clip.accessWidget != null;
 
@@ -354,7 +356,7 @@ class DisplayObjectHelper {
 		return untyped clip.clipVisible;
 	}
 
-	public static inline function getClipWorldVisible(clip : DisplayObject) : Bool {
+	public static inline function getClipRenderable(clip : DisplayObject) : Bool {
 		return untyped clip.visible;
 	}
 
@@ -759,7 +761,7 @@ class DisplayObjectHelper {
 			if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
 				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
 			} else {
-				nativeWidget.style.transform = null;
+				// nativeWidget.style.transform = null;
 			}
 		}
 	}
@@ -1174,6 +1176,49 @@ class DisplayObjectHelper {
 			}
 
 			invalidateTransform(clip);
+		}
+	}
+
+	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds) : Void {
+		var localBounds = untyped clip.localBounds;
+
+		if (localBounds == null || localBounds.minX == Math.POSITIVE_INFINITY || untyped clip.isMask) {
+			return;
+		}
+
+		if (untyped clip.scrollRect != null) {
+			var newViewBounds = new Bounds();
+			newViewBounds.minX = Math.max(viewBounds.minX, untyped clip.scrollRect.x);
+			newViewBounds.minY = Math.max(viewBounds.minY, untyped clip.scrollRect.y);
+			newViewBounds.maxX = Math.min(viewBounds.maxX, untyped clip.scrollRect.width + untyped clip.scrollRect.x);
+			newViewBounds.maxY = Math.min(viewBounds.maxY, untyped clip.scrollRect.height + untyped clip.scrollRect.y);
+
+			viewBounds = newViewBounds;
+		}
+
+		setClipRenderable(
+			clip,
+			!(viewBounds.maxX < localBounds.minX || viewBounds.minX > localBounds.maxX || viewBounds.maxY < localBounds.minY || viewBounds.minY > localBounds.maxY || viewBounds.isEmpty())
+		);
+
+		if (!clip.visible && untyped !clip.transformChanged) {
+			return;
+		}
+
+		var children : Array<DisplayObject> = untyped clip.children;
+		if (children != null) {
+			for (child in children) {
+				untyped child.transform.updateLocalTransform();
+				var transform = untyped child.localTransform.clone().invert();
+
+				var newViewBounds = new Bounds();
+				newViewBounds.minX = viewBounds.minX * transform.a + viewBounds.minY * transform.c + transform.tx;
+				newViewBounds.minY = viewBounds.minX * transform.b + viewBounds.minY * transform.d + transform.ty;
+				newViewBounds.maxX = viewBounds.maxX * transform.a + viewBounds.maxY * transform.c + transform.tx;
+				newViewBounds.maxY = viewBounds.maxX * transform.b + viewBounds.maxY * transform.d + transform.ty;
+
+				invalidateRenderable(child, newViewBounds);
+			}
 		}
 	}
 }

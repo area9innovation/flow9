@@ -65,7 +65,7 @@ class NativeWidgetClip extends FlowContainer {
 
 			invalidateStyle();
 
-			if (!getClipWorldVisible() && parent != null) {
+			if (!getClipRenderable() && parent != null) {
 				updateNativeWidget();
 			}
 		}
@@ -83,8 +83,8 @@ class NativeWidgetClip extends FlowContainer {
 		} else {
 			var transform = getTransform();
 
-			var tx = Math.floor(getClipWorldVisible() ? transform.tx : -widgetWidth);
-			var ty = Math.floor(getClipWorldVisible() ? transform.ty : -widgetHeight);
+			var tx = Math.floor(getClipRenderable() ? transform.tx : -widgetWidth);
+			var ty = Math.floor(getClipRenderable() ? transform.ty : -widgetHeight);
 
 			if (Platform.isIE) {
 				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
@@ -187,7 +187,7 @@ class NativeWidgetClip extends FlowContainer {
 
 			invalidateStyle();
 
-			if (nativeWidget != null && !getClipWorldVisible() && parent != null) {
+			if (nativeWidget != null && !getClipRenderable() && parent != null) {
 				updateNativeWidget();
 			}
 		}
@@ -199,7 +199,7 @@ class NativeWidgetClip extends FlowContainer {
 
 			invalidateStyle();
 
-			if (nativeWidget != null && !getClipWorldVisible() && parent != null) {
+			if (nativeWidget != null && !getClipRenderable() && parent != null) {
 				updateNativeWidget();
 			}
 		}
