@@ -160,7 +160,7 @@ class RenderSupportJSPixi {
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.accessibility");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.extract");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.tilingSprite");
-		untyped __js__("delete PIXI.WebGLRenderer.__plugins.interaction");
+		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.interaction");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.mesh");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.particle");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.prepare");

@@ -18,6 +18,7 @@ class FlowGraphics extends Graphics {
 
 	private var pen = new Point(0.0, 0.0);
 	private var localBounds = new Bounds();
+	private var graphicsBounds = new Bounds();
 	private var _bounds = new Bounds();
 
 	private var fillGradient : Dynamic;
@@ -155,6 +156,8 @@ class FlowGraphics extends Graphics {
 			addChild(sprite.mask);
 			addChild(sprite);
 		}
+
+		graphicsBounds = localBounds;
 
 		if (parent != null) {
 			invalidateStage();
@@ -294,11 +297,14 @@ class FlowGraphics extends Graphics {
 		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
 			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
 
-			localBounds.clear();
-
 			if (untyped mask.localBounds.minX != Math.POSITIVE_INFINITY) {
+				localBounds.clear();
 				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
+			} else {
+				localBounds = graphicsBounds;
 			}
+		} else {
+			localBounds = graphicsBounds;
 		}
 
 		if (parent != null) {

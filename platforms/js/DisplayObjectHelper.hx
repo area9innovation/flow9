@@ -761,7 +761,7 @@ class DisplayObjectHelper {
 			if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
 				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
 			} else {
-				// nativeWidget.style.transform = null;
+				nativeWidget.style.transform = null;
 			}
 		}
 	}
@@ -1161,6 +1161,18 @@ class DisplayObjectHelper {
 		container.maxX = bounds.maxX * transform.a + bounds.maxY * transform.c + transform.tx;
 		container.maxY = bounds.maxX * transform.b + bounds.maxY * transform.d + transform.ty;
 
+		if (container.minX > container.maxX) {
+			var tempX = container.minX;
+			container.minX = container.maxX;
+			container.maxX = tempX;
+		}
+
+		if (container.minY > container.maxY) {
+			var tempY = container.minY;
+			container.minY = container.maxY;
+			container.maxY = tempY;
+		}
+
 		return container;
 	}
 
@@ -1198,7 +1210,7 @@ class DisplayObjectHelper {
 
 		setClipRenderable(
 			clip,
-			!(viewBounds.maxX < localBounds.minX || viewBounds.minX > localBounds.maxX || viewBounds.maxY < localBounds.minY || viewBounds.minY > localBounds.maxY || viewBounds.isEmpty())
+			!viewBounds.isEmpty() && viewBounds.maxX > localBounds.minX && viewBounds.minX < localBounds.maxX && viewBounds.maxY > localBounds.minY && viewBounds.minY < localBounds.maxY
 		);
 
 		if (!clip.visible && untyped !clip.transformChanged) {
@@ -1216,6 +1228,18 @@ class DisplayObjectHelper {
 				newViewBounds.minY = viewBounds.minX * transform.b + viewBounds.minY * transform.d + transform.ty;
 				newViewBounds.maxX = viewBounds.maxX * transform.a + viewBounds.maxY * transform.c + transform.tx;
 				newViewBounds.maxY = viewBounds.maxX * transform.b + viewBounds.maxY * transform.d + transform.ty;
+
+				if (newViewBounds.minX > newViewBounds.maxX) {
+					var tempX = newViewBounds.minX;
+					newViewBounds.minX = newViewBounds.maxX;
+					newViewBounds.maxX = tempX;
+				}
+
+				if (newViewBounds.minY > newViewBounds.maxY) {
+					var tempY = newViewBounds.minY;
+					newViewBounds.minY = newViewBounds.maxY;
+					newViewBounds.maxY = tempY;
+				}
 
 				invalidateRenderable(child, newViewBounds);
 			}
