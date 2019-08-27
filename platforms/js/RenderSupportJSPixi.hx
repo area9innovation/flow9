@@ -990,7 +990,9 @@ class RenderSupportJSPixi {
 
 		if (clip.accessWidget == null) {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
-				cast(clip, DisplayObject).initNativeWidget();
+				if (RenderSupportJSPixi.DomRenderer) {
+					cast(clip, DisplayObject).initNativeWidget();
+				}
 
 				// Create DOM node for access. properties
 				if (clip.nativeWidget != null) {
@@ -1279,7 +1281,7 @@ class RenderSupportJSPixi {
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
-		if (!DomRenderer && clip.parent != null) {
+		if (clip.parent != null) {
 			clip.updateTransform();
 		}
 
@@ -1768,7 +1770,7 @@ class RenderSupportJSPixi {
 		}
 
 		var point = new Point(x, y);
-		if (!DomRenderer && clip.parent != null) {
+		if (clip.parent != null) {
 			clip.updateTransform();
 		}
 

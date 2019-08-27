@@ -29,7 +29,7 @@ class FlowSprite extends Sprite {
 	private var nativeWidget : Dynamic;
 	private var accessWidget : AccessWidget;
 
-	public var isNativeWidget : Bool;
+	public var isNativeWidget : Bool = false;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
@@ -47,7 +47,6 @@ class FlowSprite extends Sprite {
 
 		visible = false;
 		interactiveChildren = false;
-		isNativeWidget = RenderSupportJSPixi.DomRenderer;
 
 		this.url = url;
 		this.cache = cache;
@@ -63,7 +62,7 @@ class FlowSprite extends Sprite {
 		once("added", onSpriteAdded);
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			createNativeWidget();
+			initNativeWidget("img");
 		}
 	}
 
@@ -250,12 +249,18 @@ class FlowSprite extends Sprite {
 		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
-	private function createNativeWidget(?node_name : String = "img") : Void {
+	private function createNativeWidget(?tagName : String = "img") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
 		deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget = Browser.document.createElement(tagName);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
 		nativeWidget.src = url;
+
+		isNativeWidget = true;
 	}
 }

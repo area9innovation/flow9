@@ -129,10 +129,6 @@ class TextClip extends NativeWidgetClip {
 		super(worldVisible);
 
 		style.resolution = 1.0;
-
-		if (RenderSupportJSPixi.DomRenderer) {
-			createNativeWidget();
-		}
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -478,6 +474,10 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		invalidateMetrics();
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'div');
+		}
 	}
 
 	private function measureFont() : Void {
@@ -769,7 +769,7 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
-		createNativeWidget(multiline ? 'textarea' : 'input');
+		initNativeWidget(multiline ? 'textarea' : 'input');
 
 		nativeWidget.onmousemove = onMouseMove;
 		nativeWidget.onmousedown = onMouseDown;
@@ -1089,16 +1089,22 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private override function createNativeWidget(?node_name : String = "div") : Void {
+	private override function createNativeWidget(?tagName : String = "div") : Void {
 		if (RenderSupportJSPixi.DomRenderer) {
+			if (!isNativeWidget) {
+				return;
+			}
+
 			deleteNativeWidget();
 
-			nativeWidget = Browser.document.createElement(node_name);
+			nativeWidget = Browser.document.createElement(tagName);
 			nativeWidget.setAttribute('id', getClipUUID());
 			nativeWidget.className = 'nativeWidget';
 			nativeWidget.style.whiteSpace = 'normal';
+
+			isNativeWidget = true;
 		} else {
-			super.createNativeWidget(node_name);
+			super.createNativeWidget(tagName);
 		}
 	}
 }

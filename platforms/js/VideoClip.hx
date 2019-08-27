@@ -42,8 +42,6 @@ class VideoClip extends FlowContainer {
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
 		super();
 
-		isNativeWidget = RenderSupportJSPixi.DomRenderer;
-
 		this.metricsFn = metricsFn;
 		this.playFn = playFn;
 		this.durationFn = durationFn;
@@ -99,7 +97,7 @@ class VideoClip extends FlowContainer {
 		addVideoSource(filename, "");
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			createNativeWidget();
+			initNativeWidget("video");
 		} else {
 			nativeWidget = Browser.document.createElement("video");
 		}
@@ -458,11 +456,17 @@ class VideoClip extends FlowContainer {
 		return localBounds.getRectangle(rect);
 	}
 
-	private override function createNativeWidget(?node_name : String = "video") : Void {
+	private override function createNativeWidget(?tagName : String = "video") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
 		deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget = Browser.document.createElement(tagName);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
+
+		isNativeWidget = true;
 	}
 }

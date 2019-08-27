@@ -19,7 +19,7 @@ class DropAreaClip extends NativeWidgetClip {
 		this.regExp = new EReg(mimeTypeRegExpFilter, "g");
 		this.onDone = onDone;
 
-		createNativeWidget();
+		initNativeWidget();
 	}
 
 	public override function updateNativeWidget() : Void {
@@ -28,8 +28,12 @@ class DropAreaClip extends NativeWidgetClip {
 		super.updateNativeWidget();
 	}
 
-	private override function createNativeWidget(?node_name : String = "div") : Void {
-		super.createNativeWidget(node_name);
+	private override function createNativeWidget(?tagName : String = "div") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
+		super.createNativeWidget(tagName);
 
 		if (accessWidget != null) {
 			accessWidget.nodeindex = [-AccessWidget.tree.childrenSize];

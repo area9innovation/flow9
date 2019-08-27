@@ -28,7 +28,7 @@ class FlowContainer extends Container {
 	private var nativeWidget : Dynamic;
 	private var accessWidget : AccessWidget;
 
-	public var isNativeWidget : Bool;
+	public var isNativeWidget : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
@@ -304,15 +304,17 @@ class FlowContainer extends Container {
 		}
 	}
 
-	private function createNativeWidget(?node_name : String = "div") : Void {
+	private function createNativeWidget(?tagName : String = "div") : Void {
 		if (!isNativeWidget) {
 			return;
 		}
 
 		deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget = Browser.document.createElement(tagName);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
+
+		isNativeWidget = true;
 	}
 }

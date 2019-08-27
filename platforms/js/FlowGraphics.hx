@@ -31,6 +31,7 @@ class FlowGraphics extends Graphics {
 	private var accessWidget : AccessWidget;
 
 	public var isEmpty : Bool = true;
+	public var isSvg : Bool = false;
 	public var isNativeWidget : Bool;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
@@ -43,10 +44,6 @@ class FlowGraphics extends Graphics {
 		visible = false;
 		interactiveChildren = false;
 		isNativeWidget = false;
-
-		if (RenderSupportJSPixi.DomRenderer) {
-			createNativeWidget();
-		}
 	}
 
 	public function beginGradientFill(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
@@ -77,6 +74,8 @@ class FlowGraphics extends Graphics {
 		pen.x = x;
 		pen.y = y;
 
+		isSvg = true;
+
 		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
 		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 
@@ -91,6 +90,8 @@ class FlowGraphics extends Graphics {
 		pen.x = x;
 		pen.y = y;
 
+		isSvg = true;
+
 		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
 		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 
@@ -98,6 +99,14 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function endFill() : Graphics {
+		if (((untyped this.fillColor != null && fillAlpha > 0) || (lineWidth > 0 && untyped this.lineAlpha > 0))) {
+			if (!isEmpty) {
+				isSvg = true;
+			}
+
+			isEmpty = false;
+		}
+
 		var newGraphics = super.endFill();
 
 		for (data in graphicsData) {
@@ -163,11 +172,9 @@ class FlowGraphics extends Graphics {
 			invalidateStage();
 		}
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.DomRenderer && !isEmpty && !isMask) {
 			updateNativeWidgetGraphicsData();
 		}
-
-		emit("graphicschanged");
 
 		return newGraphics;
 	}
@@ -321,6 +328,10 @@ class FlowGraphics extends Graphics {
 		localBounds = new Bounds();
 		var newGraphics = super.clear();
 
+		isEmpty = true;
+		isSvg = false;
+		deleteNativeWidget();
+
 		if (parent != null) {
 			invalidateStage();
 		}
@@ -329,12 +340,16 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
+		if (isMask && isNativeWidget) {
+			deleteNativeWidget();
+		} else if (!isEmpty) {
+			initNativeWidget();
+		}
+
 		if (nativeWidget != null) {
 			while (nativeWidget.firstChild != null) {
 			    nativeWidget.removeChild(nativeWidget.firstChild);
 			}
-
-			isEmpty = true;
 
 			if (graphicsData.length != 1) {
 				for (data in graphicsData) {
@@ -347,14 +362,12 @@ class FlowGraphics extends Graphics {
 					svg.style.position = 'absolute';
 
 					if (data.fill != null && data.fillAlpha > 0) {
-						isEmpty = false;
 						svg.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
 					} else {
 						svg.setAttribute("fill", "none");
 					}
 
 					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-						isEmpty = false;
 						svg.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
 						svg.setAttribute("stroke-width", Std.string(data.lineWidth));
 					} else {
@@ -429,14 +442,12 @@ class FlowGraphics extends Graphics {
 						path.setAttribute("d", d);
 
 						if (data.fill != null && data.fillAlpha > 0) {
-							isEmpty = false;
 							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
 						} else {
 							path.setAttribute("fill", "none");
 						}
 
 						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-							isEmpty = false;
 							path.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
 							path.setAttribute("stroke-width", Std.string(data.lineWidth));
 						} else {
@@ -453,14 +464,12 @@ class FlowGraphics extends Graphics {
 						nativeWidget.appendChild(svg);
 					} else {
 						if (data.fill != null && data.fillAlpha > 0) {
-							isEmpty = false;
 							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 						} else {
 							nativeWidget.style.background = null;
 						}
 
 						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-							isEmpty = false;
 							nativeWidget.style.border = '${data.lineWidth}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
 						} else {
 							nativeWidget.style.border = null;
@@ -494,22 +503,20 @@ class FlowGraphics extends Graphics {
 
 			nativeWidget.style.width = '${untyped getWidth()}px';
 			nativeWidget.style.height = '${untyped getHeight()}px';
-
-			if (isMask) {
-				isNativeWidget = false;
-				invalidateTransform();
-			} else if (!isEmpty) {
-				isNativeWidget = true;
-				invalidateTransform();
-			}
 		}
 	}
 
-	private function createNativeWidget(?node_name : String = "div") : Void {
+	private function createNativeWidget(?tagName : String = "div") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
 		deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget = Browser.document.createElement(tagName);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
+
+		isNativeWidget = true;
 	}
 }

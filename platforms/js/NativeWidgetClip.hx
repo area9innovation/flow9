@@ -18,8 +18,6 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
-
-		isNativeWidget = true;
 	}
 
 	// Returns metrics to set correct native widget size
@@ -43,10 +41,14 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	private override function createNativeWidget(?node_name : String = "div") : Void {
+	private override function createNativeWidget(?tagName : String = "div") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
 		deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(node_name);
+		nativeWidget = Browser.document.createElement(tagName);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
 
@@ -69,6 +71,8 @@ class NativeWidgetClip extends FlowContainer {
 				updateNativeWidget();
 			}
 		}
+
+		isNativeWidget = true;
 	}
 
 	public function updateNativeWidget() : Void {

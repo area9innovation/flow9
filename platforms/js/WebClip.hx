@@ -53,7 +53,7 @@ class WebClip extends NativeWidgetClip {
 			try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report("Can not set RealHTML domain" + e); }
 		}
 
-		createNativeWidget("div");
+		initNativeWidget();
 
 		if (Platform.isIOS) {
 			// To restrict size of iframe
