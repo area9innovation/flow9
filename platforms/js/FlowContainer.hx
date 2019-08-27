@@ -299,7 +299,6 @@ class FlowContainer extends Container {
 			var newBounds = applyLocalBoundsTransform();
 			if (!currentBounds.isEqualBounds(newBounds)) {
 				parent.replaceLocalBounds(currentBounds, newBounds);
-				invalidateTransform();
 			}
 		}
 	}

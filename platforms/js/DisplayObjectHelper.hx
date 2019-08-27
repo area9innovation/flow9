@@ -91,7 +91,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateTransform(clip : DisplayObject) : Void {
-		if (InvalidateStage || true) {
+		if (InvalidateStage || !RenderSupportJSPixi.DomRenderer) {
 			invalidateParentTransform(clip);
 		}
 
@@ -497,11 +497,7 @@ class DisplayObjectHelper {
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (clip.mask != null) {
-				// if (untyped clip.mask.isSvg) {
-				// 	replaceWithCanvas(clip);
-				// } else {
-					initNativeWidget(clip);
-				// }
+				initNativeWidget(clip);
 			}
 
 			invalidateTransform(clip);
@@ -911,7 +907,7 @@ class DisplayObjectHelper {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
-						nativeWidget.style.borderRadius = '${data.shape.radius / 2.0}px';
+						nativeWidget.style.borderRadius = '${data.shape.radius}px';
 
 						nativeWidget.style.overflow = "hidden";
 
@@ -1171,7 +1167,6 @@ class DisplayObjectHelper {
 				var newBounds = applyLocalBoundsTransform(clip);
 				if (!isEqualBounds(currentBounds, newBounds)) {
 					replaceLocalBounds(clip.parent, currentBounds, newBounds);
-					invalidateTransform(clip);
 				}
 			}
 		}
@@ -1310,8 +1305,6 @@ class DisplayObjectHelper {
 		var nativeWidget : js.html.CanvasElement = untyped clip.nativeWidget;
 
 		if (untyped clip.isCanvas && nativeWidget != null) {
-			// untyped nativeWidget.context = nativeWidget.getContext("2d", { alpha: true });
-
 			var prevWorldAlpha = clip.worldAlpha;
 			var prevVisible = clip.visible;
 			var prevParent = clip.parent;
@@ -1338,18 +1331,13 @@ class DisplayObjectHelper {
 			untyped RenderSupportJSPixi.PixiRenderer.view = prevView;
 
 			forceUpdateTransform(clip);
-			// invalidateTransform(clip);
 
 			untyped RenderSupportJSPixi.PixiRenderer._lastObjectRendered = RenderSupportJSPixi.PixiStage;
 		}
 	}
 
 	private static function forceUpdateTransform(clip : DisplayObject) {
-		// untyped clip.transformChanged = false;
-		// untyped clip.worldTransformChanged = false;
-		// untyped clip.localTransformChanged = false;
-
-		clip.cacheAsBitmap = false;
+		// clip.cacheAsBitmap = false;
 
 		if (clip.parent != null) {
 			if (untyped clip.isMask) {
@@ -1363,40 +1351,9 @@ class DisplayObjectHelper {
 				untyped clip.transform.updateTransform(untyped clip.parent.transform);
 				clip.worldAlpha = clip.alpha * clip.parent.worldAlpha;
 
-				if (untyped clip.layoutText != null) {
-					untyped clip.textChanged = true;
-					untyped clip.layoutText();
-				}
-
-				// untyped clip.clipVisible = true;
-				// untyped clip.visible = true;
-
-				// if (clip.mask != null) {
-				// 	clip.mask.visible = false;
-				// 	clip.mask = null;
-					// clip.mask = null;
-				// 	untyped clip.mask.clipVisible = true;
-				// 	untyped clip.mask.visible = true;
-				// 	// untyped clip.mask.transformChanged = false;
-				// 	// untyped clip.mask.worldTransformChanged = false;
-				// 	// untyped clip.mask.localTransformChanged = false;
-
-				// 	// if (untyped clip.nativeWidget != null) {
-				// 	// 	deleteNativeWidget(clip.mask);
-				// 	// }
-
-				// 	// var prevTransform = untyped clip.mask.parent.transform;
-				// 	// var prevWorldAlpha = clip.mask.parent.worldAlpha;
-
-				// 	// untyped clip.mask.parent.transform = new Transform();
-				// 	// clip.mask.parent.worldAlpha = 1;
-
-				// 	// untyped clip.mask._boundsId++;
-				// 	// untyped clip.mask.transform.updateTransform(untyped clip.mask.parent.transform);
-				// 	// clip.mask.worldAlpha = clip.mask.alpha * clip.mask.parent.worldAlpha;
-
-				// 	// untyped clip.mask.parent.transform = prevTransform;
-				// 	// clip.mask.parent.worldAlpha = prevWorldAlpha;
+				// if (untyped clip.layoutText != null) {
+				// 	untyped clip.textChanged = true;
+				// 	untyped clip.layoutText();
 				// }
 			}
 		}
