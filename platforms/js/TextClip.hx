@@ -99,6 +99,7 @@ class TextClip extends NativeWidgetClip {
 	private var autocomplete : String = '';
 	private var step : Float = 1.0;
 	private var wordWrap : Bool = false;
+	private var doNotInvalidateStage : Bool = false;
 	private var cropWords : Bool = false;
 	private var interlineSpacing : Float = 0.0;
 	private var autoAlign : String = 'AutoAlignNone';
@@ -315,7 +316,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${style.fontSize * 1.15 + interlineSpacing}px';
+		nativeWidget.style.lineHeight = '${Math.ceil(style.fontSize * 1.15 + interlineSpacing)}px';
 		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
@@ -446,7 +447,7 @@ class TextClip extends NativeWidgetClip {
 		style.fontFamily = fontStyle.family;
 		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		style.lineHeight = fontSize * 1.15 + interlineSpacing;
+		style.lineHeight = Math.ceil(fontSize * 1.15 + interlineSpacing);
 		style.wordWrap = wordWrap;
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		style.breakWords = cropWords;
@@ -572,11 +573,13 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function invalidateStyle() : Void {
-		if (isInput) {
-			setScrollRect(0, 0, getWidth(), getHeight());
-		}
+		if (!doNotInvalidateStage) {
+			if (isInput) {
+				setScrollRect(0, 0, getWidth(), getHeight());
+			}
 
-		super.invalidateStyle();
+			super.invalidateStyle();
+		}
 	}
 
 	public function invalidateMetrics() : Void {
@@ -635,6 +638,12 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	public  function setDoNotInvalidateStage(doNotInvalidateStage : Bool) : Void {
+		if (this.doNotInvalidateStage != doNotInvalidateStage) {
+			this.doNotInvalidateStage = doNotInvalidateStage;
+		}
+	}
+
 	public override function setWidth(widgetWidth : Float) : Void {
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		super.setWidth(widgetWidth);
@@ -677,7 +686,7 @@ class TextClip extends NativeWidgetClip {
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
 		if (this.interlineSpacing != interlineSpacing) {
 			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = style.fontSize * 1.15 + interlineSpacing;
+			style.lineHeight = Math.ceil(style.fontSize * 1.15 + interlineSpacing);
 
 			invalidateMetrics();
 		}

@@ -7,6 +7,7 @@ import haxe.CallStack;
 import js.Browser;
 import js.BinaryParser;
 import JSBinflowBuffer;
+import JsMd5;
 #end
 
 #if (flow_nodejs || nwjs)
@@ -407,14 +408,9 @@ class Native {
 		return str.toUpperCase();
 	}
 
-	public static function string2utf8(str : String) : Array<Int> {
-		var a = new Array<Int>();
-		var buf = new haxe.io.BytesOutput();
-		buf.writeString(str);
-		var bytes = buf.getBytes();
-		for (i in 0...bytes.length) {
-			a.push((bytes.get(i)));
-		}
+	public static function string2utf8(str : String) : Array<Int> {		
+		var bytes = haxe.io.Bytes.ofString(str);
+		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
 		return a;
 	}
 
@@ -1694,12 +1690,8 @@ class Native {
 		return function() { };
 	}
 
-	public static function md5(content: String) : String {
-		var b = new StringBuf();
-		var c = string2utf8(content);
-		for (i in c)
-			b.addChar(i);
-		return Md5.encode(b.toString());
+	public static function md5(content : String) : String {
+		return JsMd5.encode(content);
 	}
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
