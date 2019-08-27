@@ -31,6 +31,10 @@ class NativeWidgetClip extends FlowContainer {
 				worldTransform = !DisplayObjectHelper.RenderContainers;
 			}
 
+			if (!worldTransform) {
+				untyped this.transform.updateLocalTransform();
+			}
+
 			return worldTransform ? untyped this.worldTransform : untyped this.localTransform;
 		} else if (accessWidget != null) {
 			return accessWidget.getTransform();
@@ -161,7 +165,7 @@ class NativeWidgetClip extends FlowContainer {
 		var currentBounds = new Bounds();
 
 		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			localBounds.applyBoundsTransform(localTransform, currentBounds);
+			applyLocalBoundsTransform(currentBounds);
 		}
 
 		localBounds.minX = 0;
@@ -170,7 +174,7 @@ class NativeWidgetClip extends FlowContainer {
 		localBounds.maxY = getHeight();
 
 		if (parent != null) {
-			var newBounds = localBounds.applyBoundsTransform(localTransform);
+			var newBounds = applyLocalBoundsTransform();
 			parent.replaceLocalBounds(currentBounds, newBounds);
 		}
 
