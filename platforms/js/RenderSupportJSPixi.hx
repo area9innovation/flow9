@@ -291,7 +291,7 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
-		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(true); requestAnimationFrame(); }, false);
+		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(true); requestAnimationFrame(); }, false);
 	}
 
 	private static inline function calculateMobileTopHeight() {
@@ -478,7 +478,7 @@ class RenderSupportJSPixi {
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
 		PixiStage.transformChanged = true;
-		PixiStage.invalidateStage(true);
+		InvalidateLocalStages(true);
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
@@ -576,7 +576,9 @@ class RenderSupportJSPixi {
 					}
 
 					// Prevent from mouseout to native clip or droparea element to allow dragging over
-					if (checkElement(e.toElement) && e.fromElement != null || checkElement(e.fromElement) && e.toElement != null)
+					if (e.toElement.parentNode == e.fromElement ||
+						checkElement(e.toElement) && e.fromElement != null ||
+						checkElement(e.fromElement) && e.toElement != null)
 						return;
 
 					listener();
@@ -929,6 +931,12 @@ class RenderSupportJSPixi {
 
 		on("message", handler);
 		return function() { off("message", handler); };
+	}
+
+	private static function InvalidateLocalStages(?updateTransform = false) {
+		for (child in PixiStage.children) {
+			child.invalidateStage(updateTransform);
+		}
 	}
 
 	public static inline function InvalidateStage() : Void {
