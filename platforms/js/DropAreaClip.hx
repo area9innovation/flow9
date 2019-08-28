@@ -1,7 +1,10 @@
 import js.Browser;
+import js.html.MouseEvent;
+import js.html.Event;
 import js.html.File;
 import js.html.FileList;
 
+import pixi.core.math.Point;
 import pixi.core.display.Bounds;
 import pixi.core.display.TransformBase;
 
@@ -36,6 +39,10 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.oncontextmenu = onContextMenu;
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
+
+		nativeWidget.onmousemove = onMouseMove;
+		nativeWidget.onmousedown = onMouseDown;
+		nativeWidget.onmouseup = onMouseUp;
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {
@@ -90,5 +97,18 @@ class DropAreaClip extends NativeWidgetClip {
 		} else {
 			return widgetWidth;
 		}
+	}
+
+	private function onMouseMove(e : MouseEvent) {
+		RenderSupportJSPixi.provideEvent(e);
+	}
+
+	private function onMouseDown(e : Dynamic) {
+		e.preventDefault();
+		RenderSupportJSPixi.provideEvent(e);
+	}
+
+	private function onMouseUp(e : MouseEvent) {
+		RenderSupportJSPixi.provideEvent(e);
 	}
 }
