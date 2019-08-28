@@ -563,12 +563,6 @@ class RenderSupportJSPixi {
 					if (MouseUpReceived)
 						return;
 
-					if (Platform.isIE
-						&& e.toElement.parentNode == e.fromElement
-						&& e.toElement.tagName.toLowerCase() == "canvas"
-						&& e.fromElement.tagName.toLowerCase() == "canvas")
-						return;
-
 					var checkElement = function (el) {
 						if (el != null) {
 							var tagName = el.tagName.toLowerCase();
