@@ -576,7 +576,9 @@ class RenderSupportJSPixi {
 					}
 
 					// Prevent from mouseout to native clip or droparea element to allow dragging over
-					if (checkElement(e.toElement) && e.fromElement != null || checkElement(e.fromElement) && e.toElement != null)
+					if (e.toElement.parentNode == e.fromElement ||
+						checkElement(e.toElement) && e.fromElement != null ||
+						checkElement(e.fromElement) && e.toElement != null)
 						return;
 
 					listener();
