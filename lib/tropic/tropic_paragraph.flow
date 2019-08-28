@@ -43,7 +43,7 @@ TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> T
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 
 	// Expand elements into word-units
-	wordsAndStyles : Pair<List<TParaWord>, Tree<int, [TropicTextElementModifier]>> = expandParagraphElements(p);
+	wordsAndStyles : Pair<List<TParaWord>, Tree<int, [TTexFragmentStyle]>> = expandParagraphElements(p);
 
 	words = list2array(wordsAndStyles.first);
 	interactiveStyles = wordsAndStyles.second;
@@ -123,98 +123,78 @@ TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> T
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
 expandParagraphElements(
 	elements : [TParagraphElement],
-) ->  Pair<List<TParaWord>, Tree<int, [TropicTextElementModifier]>> {
+) ->  Pair<List<TParaWord>, Tree<int, [TTexFragmentStyle]>> {
 	foldi2(elements, makeList(), makeTree(), \i, acc1, acc2, elem  -> {
 		switch(elem) {
 			StyledTextFragments(fragments, style) : Pair(
 				switch(fragments: TTextFragments) {
-					TInspectElement(inspector, element)
-				}
+					GeneralTextFragments(strFragments, characterStyle) : foldList(
+						reverseList(strFragments),
+						acc1,
+						\subAcc, w -> Cons(general2TParaWord(w, characterStyle, i), subAcc)
+					);
+					default : Cons(makeTParaWord(fragments, i), acc1);
+				},
+				setTree(acc2, i, style)
 			);
+			// Should not happen, try to avoid this case.
 			default : {
-				tr : Tropic = cast(elem : TParagraphElement -> Tropic);
-				Pair(Cons(makeTParaWord(tr, i), acc1), acc2)
+				Pair(EmptyList(), makeTree());
 			}
 		}
 	});
 }
 
-commonWordConstructor(s : Pair<Tropic, TFormMetrics>, id : int) -> TParaWord {
-	switch(s.first) {
-		TText(__, __) : TParaWord(s.first, s.second, s.first, id);
-		default : {
-			p = make(Point(0., 0.));
-			TParaWord(TEmpty(), s.second, GhostElem(p, s.first), id);
-		}
-	}
+commonWordConstructor(w : TWrapElement, tr : Tropic, id : int) -> TParaWord {
+	formAndSize = getDynamicTropicSize(tr);
+	TParaWord(w, formAndSize.second, formAndSize.first, id);
 }
 
-general2TWrapElement(
+general2TParaWord(
 	w : GeneralWrapElement,
 	style : [CharacterStyle],
-	tropicModifiers : [TropicTextElementModifier]
-) -> TWrapElement {
-	stylesFn : (Tropic) -> Tropic = \tr -> fold(tropicModifiers, tr, \acc, modifier -> modifier.fn(acc));
-	styledText : (string, [CharacterStyle]) -> Tropic = \str, st -> TText(str, st);
+	id : int
+) -> TParaWord {
 	switch (w) {
-		GeneralText(txt) : styledText(txt, overrideCharacterStylePerAlphabet(txt, style));
-		GeneralSpace(txt) : TSpace(style);
-		NewLine() : NewLine();
-		GeneralLinePart(f, m, e) : TLinePart(styledText(f, style), styledText(m, style), styledText(e, style));
-		EmptyLineElement() : makeTZeroSpaceElement(style);
-		GeneralInspectElement(inspector, element) : TInspectElement(
-			inspector,
-			cast(general2TWrapElement(element, style, tropicModifiers) : TWrapElement -> TWord)
-		);
+		GeneralText(txt) : commonWordConstructor(TText(txt, style), TText(txt, style), id);
+		GeneralSpace(txt) : commonWordConstructor(TSpace(style), TText(txt, style), id);
+		NewLine() : TParaWord(NewLine(), zeroTMetrics, TEmpty(), id);
+		EmptyLineElement() : commonWordConstructor(TEmpty(), makeTZeroSpaceElement(style), id);
+		GeneralLinePart(f, m, e) : {
+			word = TLinePart(TText(f, style), TText(m, style), TText(e, style));
+			commonWordConstructor(word, TText(m, style), id);
+		}
+		GeneralInspectElement(inspector, element) : {
+			inspectingWord = general2TParaWord(element, style, id);
+			TParaWord(inspectingWord with ghostView = TCoordinateInspectElement(
+				inspector,
+				cast(inspectingWord.ghostView : GhostTropic -> Tropic)
+			))
+		}
 	}
 }
 
-makeTParaWord(w : TWrapElement, id : int) -> TParaWord {
-
-	switch (w : TWrapElement) {
-		NewLine() : TParaWord(w, zeroTMetrics, TEmpty(), id);
-		TSpace(st) : {
-			tropicWithSize = getDynamicTropicSize(TText(spaceStr, st));
-			TParaWord(w, tropicWithSize.second, tropicWithSize.first, id);
+makeTParaWord(w : TTextFragments, id : int) -> TParaWord {
+	switch (w : TTextFragments) {
+		TInspectElement(inspector, tr) : {
+ 			inspectingWord = commonWordConstructor(TEmpty(), tr, id);
+			TParaWord(inspectingWord with ghostView = TInspectGhost(
+				inspector,
+				cast(inspectingWord.ghostView : GhostTropic -> Tropic)
+			));
 		}
-		TZeroWidthSpace(st) : {
-			tropicWithSize = getDynamicTropicSize(TText(zeroSpaceStr, st));
-			// TODO: think there is neede special handling of zero width space
-			TParaWord(TSpace(st), tropicWithSize.second, tropicWithSize.first, id);	
-		}
-		TLinePart(f, m, l) : commonWordConstructor(getDynamicTropicSize(m), id);
-		TInspectElement(inspector, e) : {
-			makeWord = \word, tr -> TParaWord(
-				word,
-				fMetrics2TMetrics(getTropicMetrics(tr)),
-				TCoordinateInspectElement(inspector, tr),
+		default : {
+			tropicWithSize = getDynamicTropicSize(cast(w : TTextFragments -> Tropic));
+			TParaWord(
+				TEmpty(),
+				tropicWithSize.second,
+				if (isConstMetrics(tropicWithSize.second)) tropicWithSize.first else GhostElem(
+					make(Point(0., 0.)),
+					tropicWithSize.first
+				),
 				id
 			);
-			switch(e) {
-				TText(t, s): {
-					makeWord(e, e);
-				}
-				TLinePart(f, m, l): {
-					makeWord(TLinePart(f, m, l), m);
-				}
-				TSpace(st): {
-					makeWord(TSpace(st), TText(spaceStr, st));
-				}
-				TZeroWidthSpace(st): {
-					makeWord(TSpace(st), TText(zeroSpaceStr, st));
-				}
-				default: {
-					s = getDynamicTropicSize(cast(e : TWord -> Tropic));
-					TParaWord(
-						TEmpty(),
-						s.second,
-						TInspectGhost(inspector, s.first),
-						id
-					);
-				}
-			}
 		}
-		default : commonWordConstructor(getDynamicTropicSize(cast(w : TWrapElement -> Tropic)), id);
 	}
 }
 
@@ -235,7 +215,6 @@ getDynamicTropicSize(tropic : Tropic) -> Pair<Tropic, TFormMetrics> {
 		heightB = make(0.);
 		baselineB = make(0.);
 		m = TFormMetrics(widthB, heightB, baselineB);
-
 		Pair(TInspect([IWidth(widthB), IHeight(heightB), IBaseline(baselineB)], tropic), m);
 	}
 }
@@ -305,9 +284,9 @@ reflowTParaWordsRec(
 				makeLinePartWord = \form2 : Tropic -> {
 					g = word.ghostView;
 					newGhosted : GhostTropic = switch (g : GhostTropic) {
-						GhostElem(p, __): GhostElem(p, form2);
-						TInspectGhost(inspector, __): TInspectGhost(inspector, form2);
-						TCoordinateInspectElement(inspector, __): TCoordinateInspectElement(inspector, form2);
+						GhostElem(p, f): GhostElem(p, form2);
+						TInspectGhost(inspector, f): TInspectGhost(inspector, form2);
+						TCoordinateInspectElement(inspector, f): TCoordinateInspectElement(inspector, form2);
 						default : form2
 					};
 
@@ -443,7 +422,7 @@ TRenderParaLines(
 	alignment: ParaLineAlignment,
 	interlineSpacing : double,
 	topLineBaseline : bool,
-	styleTree : Tree<int, [TropicTextElementModifier]>,
+	styleTree : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool
 ) -> Tropic {
 	lasti = length(lines) - 1;
@@ -515,14 +494,23 @@ TRenderLine(
 	alignment : ParaLineAlignment,
 	lineIndent: double,
 	lineNumber : int,
-	interactiveStyles : Tree<int, [TropicTextElementModifier]>,
+	interactiveStyles : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool
 ) -> TParaLineResult {
 	optimizedLine = getTOptimizedLine(words, alignment);
+	styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, p.id, []));
 	metrics = map(optimizedLine, \p -> p.metrics);
+	baselineOffsets = mapi(
+		styles,
+		\i, st -> - extractStruct(st, TropicBaselineShift(0.0)).shift * fgetValue(metrics[i].height)
+	);
 	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.width)); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
-	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, fgetValue(m.baseline)));
-	lineHeight = fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + fgetValue(m.height) - fgetValue(m.baseline)));
+	lineAsc = foldi(metrics, 0.0, \i, ac, m -> {
+		max(ac,  fgetValue(m.baseline) + baselineOffsets[i]);
+	});
+	lineHeight = foldi(metrics, 0.0, \i, ac, m ->
+		max(ac, lineAsc + fgetValue(m.height) - (fgetValue(m.baseline) + baselineOffsets[i]))
+	);
 
 	// Alignment offset
 	startOffset = if (rtl) width - lineWidth else 0.;
@@ -549,37 +537,45 @@ TRenderLine(
 		elemWidth = fgetValue(elem.metrics.width);
 		elemHeight = fgetValue(elem.metrics.height);
 		elemBaseline = fgetValue(elem.metrics.baseline);
-		dy = max(lineAsc - elemBaseline, 0.0);
-		applyStylesAndOffset = \fm : Tropic -> TApplyIntStylesAndHighlighting(
-			fm,
-			lookupTreeDef(interactiveStyles, elem.id, []),
-			^alignmentOffset,
-			y,
-			dy,
-			elemWidth,
-			lineHeight,
-			interWord
+		dy = max(lineAsc - elemBaseline - baselineOffsets[i], 0.0);
+		underlineFn = \tr -> eitherMap(
+			tryExtractStruct(styles[i], TropicUnderline(false, 1)),
+			\st -> addUnderlineToTropic(tr, st.color, st.isDouble),
+			tr
 		);
-		// 	TTranslate(const(Point(^alignmentOffset, y + dy)), fm)
-		// );
+		dynStyle = extractStruct(styles[i], TDynamicCharacterStyle(const([]))).st;
+		modifiers = extractStruct(styles[i], TropicTextElementModifiers([])).fns;
+		applyStylesAndOffset = \tr : Tropic -> TApplyModifiers(
+			TApplyDynamicStyles(
+				underlineFn(tr),
+				y,
+				dy,
+				^alignmentOffset,
+				dynStyle,
+				interWord,
+				lineHeight
+			),
+			modifiers
+		);
+		yOffset = y + dy;
 
 		r = switch (f : GhostTropic) {
 			TEmpty(): None();
 			GhostElem(p, fm): {
-				nextDistinct(p, Point(^alignmentOffset, y + dy));
-				Some(applyStylesAndOffset(TEmpty()));
+				nextDistinct(p, Point(^alignmentOffset, yOffset));
+				None();
 			}
 			TInspectGhost(inspector,  fm): {
-				nextDistinct(inspector.y, y + dy);
+				nextDistinct(inspector.y, yOffset);
 				nextDistinct(inspector.x, ^alignmentOffset);
 				nextDistinct(inspector.size, WidthHeight(elemWidth, elemHeight));
 				nextDistinct(inspector.lineHeight, lineHeight);
 				nextDistinct(inspector.lineNumber, lineNumber);
-				Some(applyStylesAndOffset(TEmpty()));
+				None();
 			}
 			TCoordinateInspectElement(inspector, fm): {
 				fo = applyStylesAndOffset(fm);
-				nextDistinct(inspector.y, y + dy);
+				nextDistinct(inspector.y, yOffset);
 				nextDistinct(inspector.x, ^alignmentOffset);
 				nextDistinct(inspector.size, WidthHeight(elemWidth, elemHeight));
 				nextDistinct(inspector.lineHeight, lineHeight);
@@ -593,81 +589,54 @@ TRenderLine(
 	TParaLineResult(TGroup(lo), lineWidth, lineHeight, y + lineAsc);
 }
 
-TApplyIntStylesAndHighlighting(
+extractStyleForRectangle(style : [TCharacterStyle]) -> [GraphicsStyle] {
+	color = extractStruct(style, BackgroundFill(0)).color;
+	opacity = extractStruct(style, BackgroundFillOpacity(0.0)).opacity;
+	[Fill(color), FillOpacity(opacity)]
+}
+
+TApplyModifiers(form : Tropic, modifiers : [(Tropic) -> Tropic]) -> Tropic {
+	fold(modifiers, form, \acc, modifier -> modifier(acc));
+}
+
+TApplyDynamicStyles(
 	form : Tropic,
-	styles : [TropicTextElementModifier],
-	xOffset : double,
-	yOffset : double,
-	baselineShift : double,
-	width : double,
-	height : double,
+	y : double,
+	dy : double,
+	x : double,
+	dynStyleT : Transform<[CharacterStyle]>,
 	interWord : double,
+	lineHeight : double,
 ) -> Tropic {
-	styled = fold(styles, form, \styledElem, style -> style.fn(styledElem));
-
-	TTranslate(const(Point(xOffset, yOffset + baselineShift)), styled);
-	// getStyleForBackgroundFromCharStyle = \s -> eitherMap(
-	// 	tryExtractStruct(s, BackgroundFill(white)),
-	// 	\backFill -> [
-	// 		Fill(backFill.color),
-	// 		FillOpacity(extractStruct(s, BackgroundFillOpacity(1.0)).opacity)
-	// 	],
-	// 	[]
-	// );
-
-	// makeBackRect = \defStyle, dynStyle -> TRectangle(
-	// 	replaceStructMany(
-	// 		getStyleForBackgroundFromCharStyle(defStyle),
-	// 		getStyleForBackgroundFromCharStyle(dynStyle)
-	// 	),
-	// 	TFixed(
-	// 		width + interWord,
-	// 		height,
-	// 	)
-	// );
-
-	// dynamicCharStyleBM = tryExtractStruct(styles, DynamicCharStyle(make([])));
-
-	// textAndBackPair = switch(form) {
-	// 	// Refactor this to use TFrame
-	// 	Text(txt, txtStyle) : {
-
-	// 		makeTxt = \dynStyle -> TText(
-	// 			txt,
-	// 			removeAllStructsMany(
-	// 				replaceStructMany(txtStyle, dynStyle),
-	// 				[BackgroundFill(0), BackgroundFillOpacity(0.0)]
-	// 			)
-	// 		);
-
-	// 		// We draw custom highlighting to fix gaps for cases of justifying alignment
-	// 		// And to have more straight and pretty highlighting.
-	// 		eitherMap(
-	// 			dynamicCharStyleBM,
-	// 			\dynCharStyle -> Pair(
-	// 				TSelect(dynCharStyle.styleB, \chStyle -> makeTxt(chStyle)),
-	// 				TSelect(dynCharStyle.styleB, \chStyle -> makeBackRect(txtStyle, chStyle))
-	// 			),
-	// 			Pair(makeTxt([]), makeBackRect(txtStyle, []))
-	// 		)
-	// 	}
-	// 	default : Pair(
-	// 		TFormAvailable(form, TFillXY()),
-	// 		eitherMap(
-	// 			dynamicCharStyleBM,
-	// 			\dynCharStyle -> TSelect(dynCharStyle.styleB, \chStyle -> makeBackRect([], chStyle)),
-	// 			TEmpty()
-	// 		)
-	// 	);
-	}
-
-// 	// modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
-
-// 	TGroup([
-// 		TTranslate(const(xOffset - interWord / 2.), const(yOffset), textAndBackPair.second),
-// 		TTranslate(const(xOffset), const(yOffset + baselineShift), textAndBackPair.first),
-// 	]);
-// }
+	TSelect(dynStyleT, \dynStyle -> switch (form) {
+		TText(txt, st) : TCopySize2(
+			TText(
+				txt,
+				removeAllStructsMany(
+					replaceStructMany(st, dynStyle),
+					[BackgroundFill(0), BackgroundFillOpacity(0.0)]
+				)
+			),
+			\size, view -> TGroup2(
+				TTranslate(const(Point(x, y)), TRectangle(	
+					extractStyleForRectangle(replaceStructMany(st, dynStyle)),
+					TBorder(interWord / 2., 0., interWord / 2., 0., TGroup2(TFixed(0., lineHeight), size)),
+				)),
+				TTranslate(const(Point(x, y + dy)), view)
+			)
+		);
+		default : TCopySize2(
+			form,
+			\size, view -> TGroup2(
+				TTranslate(const(Point(x, y)), TRectangle(
+					extractStyleForRectangle(dynStyle),
+					TBorder(interWord / 2., 0., interWord / 2., 0., TGroup2(TFixed(0., lineHeight), size)),
+				)),
+				TTranslate(const(Point(x, y + dy)), view)
+			)
+		)
+	})
+}
 
 // applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) -> Form {
 // 	if (form == Empty()) form else {
@@ -728,7 +697,7 @@ joinTText(t1 : string, s1 : [TCharacterStyle], t2: string, s2 : [TCharacterStyle
 
 constructDynamicParts(
 	words : [TParaWord],
-	styleTree : Tree<int, [TropicTextElementModifier]>
+	styleTree : Tree<int, [TTexFragmentStyle]>
 ) -> [Tropic] {
 	filtermap(words, \word -> {
 		// styles = lookupTreeDef(styleTree, either(word.id, -1), []);
