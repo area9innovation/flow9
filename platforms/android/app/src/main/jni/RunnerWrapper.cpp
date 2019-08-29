@@ -229,6 +229,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbRequestPermissionLocalNotification, "(I)V") \
     CALLBACK(cbScheduleLocalNotification, "(DILjava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V") \
     CALLBACK(cbCancelLocalNotification, "(I)V") \
+    CALLBACK(cbGetFBToken, "(I)V") \
     CALLBACK(cbSubscribeToFBTopic, "(Ljava/lang/String;)V") \
     CALLBACK(cbUnsubscribeFromFBTopic, "(Ljava/lang/String;)V") \
     CALLBACK(cbGeolocationGetCurrentPosition, "(IZDDLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V") \
@@ -789,6 +790,12 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverFBToken
    (JNIEnv *env, jobject obj, jlong ptr, jstring token)
  {
      WRAPPER(getNotifications()->deliverFBToken(jni2unicode(env, token)));
+ }
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverFBTokenTo
+   (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring token)
+ {
+     WRAPPER(getNotifications()->deliverFBTokenTo(cb_root, jni2unicode(env, token)));
  }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGeolocationExecuteOnOkCallback
@@ -2207,6 +2214,13 @@ void AndroidNotificationsSupport::doScheduleLocalNotification(double time, int n
 void AndroidNotificationsSupport::doCancelLocalNotification(int notificationId)
 {
     owner->env->CallVoidMethod(owner->owner, cbCancelLocalNotification, notificationId);
+    owner->eatExceptions();
+}
+
+void AndroidNotificationsSupport::doGetFBToken(int cb_root)
+{
+    JNIEnv* env = owner->env;
+    env->CallVoidMethod(owner->owner, cbGetFBToken, cb_root);
     owner->eatExceptions();
 }
 

@@ -214,7 +214,7 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			);
 			typeverifyFiType(newEnv, type, onError, expr.start) && 
 			typeverifyFiExp(newEnv, body, onError) && 
-			fold(args, true, \ok, arg -> ok && typeverifyFiType(newEnv, arg.type, onError, expr.start));
+			forall(args, \arg -> typeverifyFiType(newEnv, arg.type, onError, expr.start));
 		}
 		FiCall(f, args, type, __): {
 			fnType = fiExpType(f);
@@ -234,17 +234,15 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			callTypeIsOk &&
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiExp(env, f, onError) && 
-			forall(args, \arg -> {
-					typeverifyFiExp(env, arg, onError)
-				}
-			);
+			forall(args, \arg -> typeverifyFiExp(env, arg, onError));
 		}
 		FiVar(name, type, s):
 			typeverifyFiVar(env, expr, onError);
 		FiLet(x, tp, e1, e2, type, __): {
 			subType = fiExpType(e1);
 			//println("Check let super\n\t" + prettyFiType(dummyPretty, tp, makeSet()) + ",\nsub\n\t"  + prettyFiType(dummyPretty, subType, makeSet()));
-			if (!isFiSubType(env.module.global.acc.names, subType, tp, true, true)) {
+			check_subtype = isFiSubType(env.module.global.acc.names, subType, tp, true, true);
+			if (!check_subtype) {
 				onError(
 					FcError(
 						"Wrong type in let statement '"
@@ -252,188 +250,124 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 						+  ". Expected\n\t" + prettyFiType(dummyPretty, tp, makeSet()) + ",\ngot\n\t"  + prettyFiType(dummyPretty, subType, makeSet()),
 						[FcPosition(env.module.name, expr.start, expr.start)]
 					)
-				);
-				false
-			} else {
-				newEnv = TypeVerifyEnv(env.module, insertSet(env.varNames, x));
-				typeverifyFiType(newEnv, type, onError, expr.start) && 
-				typeverifyFiType(newEnv, tp, onError, expr.start) && 
-				typeverifyFiExp(newEnv, e1, onError) && 
-				typeverifyFiExp(newEnv, e2, onError);
+				)
 			}
+			if (subType == FiTypeVoid()) {
+				onError(
+					FcError(
+						"Let expression has a void type",
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					)
+				)
+			}
+			newEnv = TypeVerifyEnv(env.module, insertSet(env.varNames, x));
+			check_subtype && subType != FiTypeVoid() &&
+			typeverifyFiType(newEnv, type, onError, expr.start) && 
+			typeverifyFiType(newEnv, tp, onError, expr.start) && 
+			typeverifyFiExp(newEnv, e1, onError) && 
+			typeverifyFiExp(newEnv, e2, onError)
 		}
-		FiIf(e1, e2, e3, type, __):
+		FiIf(e1, e2, e3, type, __): {
+			e1t = fiExpType(e1);
+			e2t = fiExpType(e2);
+			e3t = fiExpType(e3);
+			e1t_is_bool = (e1t == FiTypeBool() || e1t == FiTypeFlow());
+			if (!e1t_is_bool) {
+				onError(
+					FcError(
+						"If condition must have a bool or flow type, but is " +
+						prettyFiType(dummyPretty, e1t, makeSet()),
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					)
+				);
+			}
+			e1_type_is_subtype = isFiSubType(env.module.global.acc.names, e2t, type, true, true);
+			if (!e1_type_is_subtype) {
+				onError(
+					FcError(
+						"Then branch type is not a subtype of return type\n" +
+						"\tthen branch type: " + prettyFiType(dummyPretty, e2t, makeSet()) + "\nand\n"
+						"\treturn type:      " + prettyFiType(dummyPretty, type, makeSet()),
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					)
+				);
+			}
+			e3_type_is_subtype = isFiSubType(env.module.global.acc.names, e3t, type, true, true);
+			if (!e3_type_is_subtype) {
+				onError(
+					FcError(
+						"Else branch type is not a subtype of return type\n" +
+						"\telse branch type: " + prettyFiType(dummyPretty, e3t, makeSet()) + "\n"
+						"\treturn type:      " + prettyFiType(dummyPretty, type, makeSet()),
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					)
+				);
+			};
+			e1t_is_bool && e1_type_is_subtype && e3_type_is_subtype &&
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiExp(env, e1, onError) && 
 			typeverifyFiExp(env, e2, onError) && 
 			typeverifyFiExp(env, e3, onError);
+		}
 		FiSwitch(e, typ, cs, type, __):
 			typeverifyFiSwitch(env, expr, onError);
-		FiCast(e, from, to, type, __):
+		FiCast(e, from, to, type, __): {
+			et = fiExpType(e);
+			expr_type_is_ok = (et == from || et == FiTypeFlow());
+			if (!expr_type_is_ok) {
+				onError(
+					FcError(
+						"Cast expression type doesn't match the cast declared from type\n" +
+						"\texpression type: " + prettyFiType(dummyPretty, et, makeSet()) + "\n"
+						"\tfrom type:       " + prettyFiType(dummyPretty, from, makeSet()),
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					)
+				);
+			}
+			isconvertible = \t ->
+				switch (t : FiType) {
+					FiTypeInt():    true;
+					FiTypeDouble(): true;
+					FiTypeString(): true;
+					default:        false;
+				};
+
+			cast_is_correct = \ -> {
+				ret = if (isConfigParameterTrue(env.module.global.acc.config.config, "strict")) {
+					// Check that we only up-cast
+					isFiSubType(env.module.global.acc.names, from, to, true, true)
+				} else {
+					// Check that some common supertype exists
+					fiSuperTypeExists(env.module.global.acc.names, from, to, true)
+				}
+				if (!ret) {
+					onError(FcError(
+						"Wrong cast typing, from and to cast types don't have a common supertype\n" +
+						"\tfrom type: " + prettyFiType(dummyPretty, from, makeSet()) + "\n"
+						"\tto type:   " + prettyFiType(dummyPretty, to, makeSet()),
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					))
+				}
+				ret
+			};
+			expr_type_is_ok && 
+			(
+				fiTypeIsFlow(from) || fiTypeIsFlow(to) || // Cast to/from flow is always allowed
+				(isconvertible(from) && isconvertible(to)) || // i2s or one of the built-in conversions are excepted and fine
+				cast_is_correct() // general case
+			) &&
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiType(env, from, onError, expr.start) && 
 			typeverifyFiType(env, to, onError, expr.start) && 
 			typeverifyFiExp(env, e, onError);
+		}
 		FiSeq(es, type, __):
 			typeverifyFiType(env, type, onError, expr.start) && 
-			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
-		FiCallPrim(prim, es, type, s): {
-			twoArgsConsistent = \ -> {
-				t1 = fiExpType(es[0]);
-				t2 = fiExpType(es[1]);
-				if (!fiSuperTypeExists(env.module.global.acc.names, t1, t2, true)) {
-					onError(
-						FcError(
-							prettyFiType(dummyPretty, t1, makeSet()) + " not compatible with " + prettyFiType(dummyPretty, t2, makeSet()),
-							[FcPosition(env.module.name, expr.start, expr.start)]
-						)
-					);
-					false;
-				} else true
-			}
-
-			switch (prim) {
-				FcStructPrim(struct_name): {
-                    if (true || isUrlParameterTrue("verify-structs")) {
-                        // OK, the type of the struct can be reconstructed from the args
-                        mstr = lookupTree(env.module.global.acc.names.structs, struct_name);
-                        verify = \fitype : FiTypeStruct -> {
-                            verifyFiStructInstantiation(env.module.global.acc.names, fitype, map(es, \e -> fiExpType(e)), type, \err -> {
-                                onError(
-                                    FcError(
-                                        prettyFiType(dummyPretty, type, makeSet()) + " " + err,
-                                        [FcPosition(env.module.name, expr.start, expr.start)]
-                                    )
-                                );
-                            });
-                        }
-                        switch (mstr) {
-                            None(): {
-                    			switch (lookupTree(env.module.moduleStructsUnions, struct_name)) {
-                                    None(): {
-                                        onError(
-                                            FcError(
-                                                "Could not find struct " + struct_name,
-                                                [FcPosition(env.module.name, expr.start, expr.start)]
-                                            )
-                                        );
-                                    }
-                                    Some(lfi): {
-                                        switch (lfi) {
-                                            FiTypeStruct(__, __, __, __): verify(lfi);
-                                            FiTypeUnion(__, __, __, __): println("Can not make union");
-                                        }
-                                    }
-                                }
-                            }
-                            Some(str): {
-                                // OK, now convert the struct def to fitype
-                                st = fctypestruct2fi(initFcTypeEnvLocal(), \e, __ -> {
-                                        println(e);
-                                    }, str);
-                                verify(st);
-                            }
-                        }
-                    }
-
-					typeverifyFcStructPrim(env, struct_name, es, onError, s);
-                }
-				FcFieldPrim(field_name): {
-					// Check, that the given field name exists
-					switch (fiExpType(es[0])) {
-						FiTypeName(type_name, __): {
-							field_type = getFieldType(GetFieldTypeParams(
-									env.module.global.acc.names,
-									env.module.moduleStructsUnions,
-									field_name, type_name, onError,
-									env.module.name, s
-							));
-							if (field_type == None()) {
-								onError(FcError(
-									"There's no field " + field_name + " in struct or union " + type_name,  
-									[FcPosition(env.module.name, expr.start, expr.start)])
-								);
-								false
-							} else {
-								true
-							}
-						}
-						FiTypeFlow():
-							true;  // We can't do better, if type is flow
-						default:
-							false; // This branch must never occur
-					}
-				}
-				FcNePrim(): twoArgsConsistent();
-				FcEqPrim(): twoArgsConsistent();
-				FcLePrim(): twoArgsConsistent();
-				FcGePrim(): twoArgsConsistent();
-				FcLtPrim(): twoArgsConsistent();
-				FcGtPrim(): twoArgsConsistent();
-				FcArrayPrim(): {
-					at = switch (type) {
-						FiTypeArray(tt): tt;
-						default: type; // Will never happen
-					};
-					argno = ref 0;
-					forall(es, \e -> {
-						argno := ^argno + 1;
-						if (!isFiSubType(env.module.global.acc.names, fiExpType(e), at, true, true)) {
-							onError(FcError(
-								"Wrong type in array element #" + i2s(^argno) 
-								+ ". Expected\n\t" + prettyFiType(dummyPretty, at, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, fiExpType(e), makeSet())
-								,  
-								[FcPosition(env.module.name, e.start, e.start)])
-							);
-							false;
-						} else true;
-					});
-				}
-				FcSetMutablePrim(field_name): {
-					// Check, that the given field name exists and has a proper type for assignment
-					switch (fiExpType(es[0])) {
-						FiTypeName(type_name, __): {
-							mfield_type = getFieldType(GetFieldTypeParams(
-									env.module.global.acc.names,
-									env.module.moduleStructsUnions,
-									field_name, type_name, onError,
-									env.module.name, s
-							));
-							// Check that assigned type is less general
-							assign_type = fiExpType(es[1]);
-							switch (mfield_type){
-								Some(field_type): {
-									if (!isFiSubType(env.module.global.acc.names, assign_type, field_type, true, true)) {
-										onError(FcError(
-											"In assignment of field " + field_name + " in struct or union " + type_name + ":\n" + 
-											"type of field: " + prettyFiType(dummyPretty, field_type, makeSet()) + " "
-											"is not a supertype of assigned value: " + prettyFiType(dummyPretty, assign_type, makeSet()),  
-											[FcPosition(env.module.name, expr.start, expr.start)])
-										);
-										false
-									} else {
-										true
-									}
-								}
-								None(): {
-									onError(FcError(
-										"There's no field " + field_name + " in struct or union " + type_name,  
-										[FcPosition(env.module.name, expr.start, expr.start)])
-									);
-									false; // field doesn't exist
-								}
-							}
-						}
-						FiTypeFlow(): true;
-						default: false; // This branch must never occur
-					}
-				}
-				default: {
-					true;
-				}
-			} && 
+			forall(es, \e -> typeverifyFiExp(env, e, onError));
+		FiCallPrim(__, es, type, s): {
+			typeverifyFiCallPrim(env, expr, onError) && 
 			typeverifyFiType(env, type, onError, expr.start) && 
-			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
+			forall(es, \e -> typeverifyFiExp(env, e, onError));
 		}
 		FiString(__, __):               true;
 		FiBool(__, __):                 true;
@@ -451,6 +385,313 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 		);
 	}
 	ret
+}
+
+typeverifyFiCallPrim(env : TypeVerifyEnv, call : FiCallPrim, onError : (FcError) -> void) -> bool {
+	joinable = \ -> {
+		t1 = fiExpType(call.es[0]);
+		t2 = fiExpType(call.es[1]);
+		supremum_type_exists = fiSuperTypeExists(env.module.global.acc.names, t1, t2, true);
+		if (!supremum_type_exists) {
+			onError(
+				FcError(
+					prettyFiType(dummyPretty, t1, makeSet()) + " not compatible with " + prettyFiType(dummyPretty, t2, makeSet()),
+					[FcPosition(env.module.name, call.start, call.start)]
+				)
+			);
+		}
+		is_func_type = \t -> {
+			if (!isConfigParameterTrue(env.module.global.acc.config.config, "no-fn-comparison")) false else {
+				if (!fiTypeIsFunction(t)) false else {
+					onError(
+						FcError(
+							"Function types are not allowed in operation",
+							[FcPosition(env.module.name, call.start, call.start)]
+						)
+					);
+					true
+				}
+			}
+		}
+		supremum_type_exists && !is_func_type(t1) && !is_func_type(t2)
+	}
+	binis = \types -> {
+		t1 = fiExpType(call.es[0]);
+		t2 = fiExpType(call.es[1]);
+		allowed_type = contains(types, t1);
+		if (!allowed_type) {
+			onError(
+				FcError(
+					"Type " + prettyFiType(dummyPretty, t1, makeSet()) + " is not allowed.\n" +
+					"List of allowed types: " + strGlue(map(types, \t -> prettyFiType(dummyPretty, t, makeSet())), ", "),
+					[FcPosition(env.module.name, call.start, call.start)]
+				)
+			);
+		}
+		equal_operands = (t2 == t1 || t1 == FiTypeFlow() || t2 == FiTypeFlow());
+		if (!equal_operands) {
+			onError(
+				FcError(
+					"Types of operands " + prettyFiType(dummyPretty, t1, makeSet()) + " and " + prettyFiType(dummyPretty, t2, makeSet()) + " must be equal",
+					[FcPosition(env.module.name, call.start, call.start)]
+				)
+			);
+		}
+		allowed_type && equal_operands
+	}
+	is = \given, demanded -> {
+		if (given == FiTypeFlow() || given == demanded) true else {
+			onError(
+				FcError(
+					"Type " + prettyFiType(dummyPretty, given, makeSet()) + " is not allowed.\n" +
+					"List of allowed types: " + prettyFiType(dummyPretty, demanded, makeSet()),
+					[FcPosition(env.module.name, call.start, call.start)]
+				)
+			);
+			false
+		}
+	}
+	switch (call.op) {
+		FcStructPrim(struct_name): {
+			if (true || isUrlParameterTrue("verify-structs")) {
+				// OK, the type of the struct can be reconstructed from the args
+				mstr = lookupTree(env.module.global.acc.names.structs, struct_name);
+				verify = \fitype : FiTypeStruct -> {
+					verifyFiStructInstantiation(env.module.global.acc.names, fitype, map(call.es, \e -> fiExpType(e)), call.type, \err -> {
+						onError(
+							FcError(
+								prettyFiType(dummyPretty, call.type, makeSet()) + " " + err,
+								[FcPosition(env.module.name, call.start, call.start)]
+							)
+						);
+					});
+				}
+				switch (mstr) {
+					None(): {
+						switch (lookupTree(env.module.moduleStructsUnions, struct_name)) {
+							None(): {
+								onError(
+									FcError(
+										"Could not find struct " + struct_name,
+										[FcPosition(env.module.name, call.start, call.start)]
+									)
+								);
+							}
+							Some(lfi): {
+								switch (lfi) {
+									FiTypeStruct(__, __, __, __): verify(lfi);
+									FiTypeUnion(__, __, __, __): println("Can not make union");
+								}
+							}
+						}
+					}
+					Some(str): {
+						// OK, now convert the struct def to fitype
+						st = fctypestruct2fi(initFcTypeEnvLocal(), \e, __ -> println(e), str);
+						verify(st);
+					}
+				}
+			}
+			typeverifyFcStructPrim(env, struct_name, call.es, onError, call.start);
+		}
+		FcFieldPrim(field_name): {
+			// Check, that the given field name exists
+			type = fiExpType(call.es[0]);
+			switch (type) {
+				FiTypeName(type_name, __): {
+					sf_env = GetStructFieldEnv(
+							env.module.global.acc.names,
+							env.module.moduleStructsUnions,
+							field_name, type_name, onError,
+							env.module.name, call.start
+					);
+					if (getStructField(sf_env) != None()) true else {
+						onError(FcError(
+							"There's no field " + field_name + " in struct or union " + type_name,  
+							[FcPosition(env.module.name, call.start, call.start)])
+						);
+						false
+					}
+				}
+				FiTypeFlow():
+					true;  // We can't do better, if type is flow
+				default: {
+					onError(FcError(
+						"Trying to access field " + field_name + " form a non-struct: " + 
+							prettyFiType(dummyPretty, type, makeSet()), 
+						[FcPosition(env.module.name, call.start, call.start)])
+					);
+					false;
+				}
+			}
+		}
+		FcArrayPrim(): {
+			at = switch (call.type) {
+				FiTypeArray(tt): tt;
+				default: call.type; // Will never happen
+			};
+			argno = ref 0;
+			forall(call.es, \e -> {
+				argno := ^argno + 1;
+				if (isFiSubType(env.module.global.acc.names, fiExpType(e), at, true, true)) true else {
+					onError(FcError(
+						"Wrong type in array element #" + i2s(^argno) 
+						+ ". Expected\n\t" + prettyFiType(dummyPretty, at, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, fiExpType(e), makeSet())
+						,  
+						[FcPosition(env.module.name, e.start, e.start)])
+					);
+					false
+				}
+			});
+		}
+		FcSetMutablePrim(field_name): {
+			// Check, that the given field name exists and has a proper type for assignment
+			switch (fiExpType(call.es[0])) {
+				FiTypeName(type_name, __): {
+					sf_env = GetStructFieldEnv(
+						env.module.global.acc.names,
+						env.module.moduleStructsUnions,
+						field_name, type_name, onError,
+						env.module.name, call.start
+					);
+					switch (getStructField(sf_env)) {
+						Some(struct_field): {
+							// Check that assigned type is less general
+							assign_type = fiExpType(call.es[1]);
+							field_subtyping = isFiSubType(env.module.global.acc.names, assign_type, struct_field.type, true, true);
+							if (!field_subtyping) {
+								onError(FcError(
+									"In assignment of field " + field_name + " in struct or union " + type_name + ":\n" + 
+									"type of field: " + prettyFiType(dummyPretty, call.type, makeSet()) + " "
+									"is not a supertype of assigned value: " + prettyFiType(dummyPretty, assign_type, makeSet()),  
+									[FcPosition(env.module.name, call.start, call.start)])
+								)
+							}
+							if (!struct_field.ismutable) {
+								onError(FcError(
+									"Field " + field_name + " of struct or union " + type_name + " must be mutable to be assignable",
+									[FcPosition(env.module.name, call.start, call.start)])
+								)
+							}
+							field_subtyping && struct_field.ismutable
+						}
+						None(): {
+							onError(FcError(
+								"There's no field " + field_name + " in struct or union " + type_name,  
+								[FcPosition(env.module.name, call.start, call.start)])
+							);
+							false; // field doesn't exist
+						}
+					}
+				}
+				FiTypeFlow(): true;
+				default: false; // This branch must never occur
+			}
+		}
+		FcPlusPrim():  binis([FiTypeInt(), FiTypeDouble(), FiTypeString(), FiTypeFlow()]);
+		FcMinusPrim(): binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
+		FcMulPrim():   binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
+		FcDivPrim():   binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
+		FcModPrim():   binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
+		FcNegPrim(): {
+			t1 = fiExpType(call.es[0]);
+			if (t1 == FiTypeInt() || t1 == FiTypeDouble() || t1 == FiTypeFlow()) true else {
+				onError(
+					FcError(
+						"Type " + prettyFiType(dummyPretty, t1, makeSet()) + " is not allowed.\n" +
+						"List of allowed types: int, double",
+						[FcPosition(env.module.name, call.start, call.start)]
+					)
+				);
+				false
+			}
+		}
+		FcNePrim():  joinable();
+		FcEqPrim():  joinable();
+		FcLePrim():  joinable();
+		FcGePrim():  joinable();
+		FcLtPrim():  joinable();
+		FcGtPrim():  joinable();
+		FcAndPrim(): is(fiExpType(call.es[0]), FiTypeBool()) && is(fiExpType(call.es[1]), FiTypeBool());
+		FcOrPrim():  is(fiExpType(call.es[0]), FiTypeBool()) && is(fiExpType(call.es[1]), FiTypeBool());
+		FcNotPrim(): is(fiExpType(call.es[0]), FiTypeBool());
+		FcIndexPrim(): {
+			at = fiExpType(call.es[0]);
+			at_is_ok = fiTypeIsArray(at) || fiTypeIsFlow(at);
+			if (!at_is_ok) {
+				onError(
+					FcError(
+						"Type " + prettyFiType(dummyPretty, at, makeSet()) + " must be array or flow",
+						[FcPosition(env.module.name, call.start, call.start)]
+					)
+				)
+			}
+			it = fiExpType(call.es[1]);
+			it_is_int = (it == FiTypeInt());
+			if (!it_is_int) {
+				onError(
+					FcError(
+						"Array indext type must be int, not " + prettyFiType(dummyPretty, at, makeSet()),
+						[FcPosition(env.module.name, call.start, call.start)]
+					)
+				);
+			}
+			at_is_ok && it_is_int
+		}
+		FcDerefPrim(): {
+			rt = fiExpType(call.es[0]);
+			if (isFiSubType(env.module.global.acc.names, rt, FiTypeRef(call.type), true, true)) true else {
+				onError(
+					FcError(
+						"Reference type doesn't fit\n" +
+						"got:      " + prettyFiType(dummyPretty, rt, makeSet()) + "\n"
+						"expected: " + prettyFiType(dummyPretty, FiTypeRef(call.type), makeSet()),
+						[FcPosition(env.module.name, call.start, call.start)]
+					)
+				);
+				false
+			}
+		}
+		FcRefPrim(): {
+			t = fiExpType(call.es[0]);
+			if (isFiSubType(env.module.global.acc.names, FiTypeRef(t), call.type, true, true)) true else {
+				onError(
+					FcError(
+						"Reference type doesn't fit, type:\n" + 
+						prettyFiType(dummyPretty, FiTypeRef(t), makeSet()) +
+						"\nmust be a subtype of:\n" + 
+						prettyFiType(dummyPretty, call.type, makeSet()),
+						[FcPosition(env.module.name, call.start, call.start)]
+					)
+				);
+				false
+			}
+		}
+		FcAssignPrim(): {
+			tvar = fiExpType(call.es[0]);
+			tval = fiExpType(call.es[1]);
+			deref = \t ->
+				switch (t) {
+					FiTypeRef(r): r;
+					default: t;
+				};
+			if (isFiSubType(env.module.global.acc.names, tval, deref(tvar), true, true)) true else {
+				onError(
+					FcError(
+						"Assignment type doesn't fit, type:\n\t" + 
+						prettyFiType(dummyPretty, tval, makeSet()) +
+						"\nmust be a subtype of:\n\t" + 
+						prettyFiType(dummyPretty, deref(tvar), makeSet()),
+						[FcPosition(env.module.name, call.start, call.start)]
+					)
+				);
+				false
+			}
+		}
+		FcCreateClosurePrim(structName, functionName): true; // TODO:
+		FcQuote(): true; // TODO:
+		FcUnquote(): true; // TODO:
+	}
 }
 
 typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError : (FcError) -> void, start : int) -> bool {
@@ -489,14 +730,14 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 			);
 		}
 		None(): {
+			struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, name));
 			switch (lookupTree(env.module.moduleStructsUnions, name)) {
 				Some(su): {
 					// Case of FiTypeStruct - origin from the current module
 					switch (su) {
 						FiTypeStruct(n, __, args, __): {
 							if (length(args) != length(es)) {
-								struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, name));
-								onError(FcError("number of struct args: " + i2s(length(args)) + " mismatch with number of arguments: " + i2s(length(es)), 
+								onError(FcError("Number of struct args: " + i2s(length(args)) + " mismatch with number of arguments: " + i2s(length(es)), 
 									[
 										FcPosition(env.module.name, start, start),
 										FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, name), struct_start, struct_start)
@@ -513,10 +754,26 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 								}
 							)
 						}
-						FiTypeUnion(__,__,__,__): false;
+						FiTypeUnion(__,__,__,__): {
+							onError(FcError("Union " + name + " is used as struct", 
+								[
+									FcPosition(env.module.name, start, start),
+									FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, name), struct_start, struct_start)
+								]
+							));
+							false;
+						}
 					}
 				}
-				None(): false;
+				None(): {
+					onError(FcError("Struct: " + name + " is not found", 
+						[
+							FcPosition(env.module.name, start, start),
+							FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, name), struct_start, struct_start)
+						]
+					));
+					false;
+				}
 			}
 		}
 	}
@@ -539,6 +796,16 @@ typeverifyFiVar(env : TypeVerifyEnv, var : FiVar, onError : (FcError) -> void) -
 }
 
 typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> void) -> bool {
+	switchVarTypeIsOk = isFiSubType(env.module.global.acc.names, sw.x.type, sw.switchType, true, true);
+	if (!switchVarTypeIsOk) {
+		onError(
+			FcError(
+				"Var type in switch '" + prettyFiType(dummyPretty, sw.x.type, makeSet()) + "' " +
+				"is not a subtype of a switch type " + prettyFiType(dummyPretty, sw.switchType, makeSet()),
+				[FcPosition(env.module.name, sw.start, sw.start)]
+			)
+		);
+	}
 	switchCaseTypes = fold(sw.cases, makeSet(), \caseTypes, c -> insertSet(caseTypes, c.struct));
 	switchTypeName = switch (sw.switchType) {
 		FiTypeFlow(): "";
@@ -568,23 +835,23 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 		diff_1 = diff_set(subtypes, switchCaseTypes);
 		if (sizeSet(diff_1) > 0) {
 			onError(FcError(
-				"switch cases do not cover type variants: " + strGlueSetWithCutoff(diff_1, 16),
+				"Switch cases do not cover type variants: " + strGlueSetWithCutoff(diff_1, 16),
 				[FcPosition(env.module.name, sw.start, sw.start)]
 			));
 		}
 		diff_2 = diff_set(switchCaseTypes, subtypes);
 		if (sizeSet(diff_2) > 0) {
 			onError(FcError(
-				"switch cases which have no corresponding structs: " + strGlueSetWithCutoff(diff_2, 16),
+				"Switch cases which have no corresponding structs: " + strGlueSetWithCutoff(diff_2, 16),
 				[FcPosition(env.module.name, sw.start, sw.start)]
 			));
 		}
 	}
-	caseTypesCoincide &&
+	caseTypesCoincide && switchVarTypeIsOk &&
 	typeverifyFiType(env, sw.type, onError, sw.start) && 
 	typeverifyFiType(env, sw.switchType, onError, sw.start) && 
-	fold(sw.cases, true, 
-		\ok, c -> {
+	forall(sw.cases,
+		\c -> {
 			newEnv = TypeVerifyEnv(
 				env.module,
 				fold(c.argNames, env.varNames, \acc, argname -> insertSet(acc, argname))
@@ -598,7 +865,7 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, c.struct));
 				onError(
 					FcError(
-						"struct '" + c.struct + "' has wrong number of args: " + i2s(length(c.argNames)),
+						"Struct '" + c.struct + "' has wrong number of args: " + i2s(length(c.argNames)),
 						[
 							FcPosition(env.module.name, c.start, c.start),
 							FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, c.struct), struct_start, struct_start)
@@ -606,9 +873,22 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 					)
 				);
 			}
-			ok && 
-			typeverifyFiExp(newEnv, c.body, onError) && 
-			argsNumIsOk
+			caseTypeIsOk = isFiSubType(env.module.global.acc.names, fiExpType(c.body), sw.type, true, true);
+			if (!caseTypeIsOk) {
+				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, c.struct));
+				onError(
+					FcError(
+						"Case '" + c.struct + "' type " + prettyFiType(dummyPretty, fiExpType(c.body), makeSet()) + 
+						" is not a subtype of a switch type " + prettyFiType(dummyPretty, sw.type, makeSet()),
+						[
+							FcPosition(env.module.name, c.start, c.start),
+							FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, c.struct), struct_start, struct_start)
+						]
+					)
+				);
+			}
+			argsNumIsOk && caseTypeIsOk &&
+			typeverifyFiExp(newEnv, c.body, onError)
 		}
 	)
 }
