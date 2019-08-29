@@ -271,11 +271,11 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			e1t = fiExpType(e1);
 			e2t = fiExpType(e2);
 			e3t = fiExpType(e3);
-			e1t_is_bool = (e1t == FiTypeBool());
+			e1t_is_bool = (e1t == FiTypeBool() || e1t == FiTypeFlow());
 			if (!e1t_is_bool) {
 				onError(
 					FcError(
-						"If condition must have a bool type, but is " +
+						"If condition must have a bool or flow type, but is " +
 						prettyFiType(dummyPretty, e1t, makeSet()),
 						[FcPosition(env.module.name, expr.start, expr.start)]
 					)
@@ -287,23 +287,23 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 					FcError(
 						"Then branch type is not a subtype of return type\n" +
 						"\tthen branch type: " + prettyFiType(dummyPretty, e2t, makeSet()) + "\nand\n"
-						"\treturn type: " + prettyFiType(dummyPretty, type, makeSet()),
+						"\treturn type:      " + prettyFiType(dummyPretty, type, makeSet()),
 						[FcPosition(env.module.name, expr.start, expr.start)]
 					)
 				);
 			}
-			e2_type_is_subtype = isFiSubType(env.module.global.acc.names, e3t, type, true, true);
-			if (!e2_type_is_subtype) {
+			e3_type_is_subtype = isFiSubType(env.module.global.acc.names, e3t, type, true, true);
+			if (!e3_type_is_subtype) {
 				onError(
 					FcError(
 						"Else branch type is not a subtype of return type\n" +
 						"\telse branch type: " + prettyFiType(dummyPretty, e3t, makeSet()) + "\n"
-						"\treturn type: " + prettyFiType(dummyPretty, type, makeSet()),
+						"\treturn type:      " + prettyFiType(dummyPretty, type, makeSet()),
 						[FcPosition(env.module.name, expr.start, expr.start)]
 					)
 				);
 			};
-			e1t_is_bool && e1_type_is_subtype && e2_type_is_subtype &&
+			e1t_is_bool && e1_type_is_subtype && e3_type_is_subtype &&
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiExp(env, e1, onError) && 
 			typeverifyFiExp(env, e2, onError) && 
@@ -313,12 +313,13 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			typeverifyFiSwitch(env, expr, onError);
 		FiCast(e, from, to, type, __): {
 			et = fiExpType(e);
-			if (et != from) {
+			expr_type_is_ok = (et == from || et == FiTypeFlow());
+			if (!expr_type_is_ok) {
 				onError(
 					FcError(
 						"Cast expression type doesn't match the cast declared from type\n" +
 						"\texpression type: " + prettyFiType(dummyPretty, et, makeSet()) + "\n"
-						"\tfrom type: " + prettyFiType(dummyPretty, from, makeSet()),
+						"\tfrom type:       " + prettyFiType(dummyPretty, from, makeSet()),
 						[FcPosition(env.module.name, expr.start, expr.start)]
 					)
 				);
@@ -343,13 +344,13 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 					onError(FcError(
 						"Wrong cast typing, from and to cast types don't have a common supertype\n" +
 						"\tfrom type: " + prettyFiType(dummyPretty, from, makeSet()) + "\n"
-						"\tto type: " + prettyFiType(dummyPretty, to, makeSet()),
+						"\tto type:   " + prettyFiType(dummyPretty, to, makeSet()),
 						[FcPosition(env.module.name, expr.start, expr.start)]
 					))
 				}
 				ret
 			};
-			et == from && 
+			expr_type_is_ok && 
 			(
 				fiTypeIsFlow(from) || fiTypeIsFlow(to) || // Cast to/from flow is always allowed
 				(isconvertible(from) && isconvertible(to)) || // i2s or one of the built-in conversions are excepted and fine
@@ -427,7 +428,7 @@ typeverifyFiCallPrim(env : TypeVerifyEnv, call : FiCallPrim, onError : (FcError)
 				)
 			);
 		}
-		equal_operands = (t1 == t2);
+		equal_operands = (t2 == t1 || t1 == FiTypeFlow() || t2 == FiTypeFlow());
 		if (!equal_operands) {
 			onError(
 				FcError(
@@ -439,7 +440,7 @@ typeverifyFiCallPrim(env : TypeVerifyEnv, call : FiCallPrim, onError : (FcError)
 		allowed_type && equal_operands
 	}
 	is = \given, demanded -> {
-		if (given == demanded) true else {
+		if (given == FiTypeFlow() || given == demanded) true else {
 			onError(
 				FcError(
 					"Type " + prettyFiType(dummyPretty, given, makeSet()) + " is not allowed.\n" +
@@ -587,14 +588,14 @@ typeverifyFiCallPrim(env : TypeVerifyEnv, call : FiCallPrim, onError : (FcError)
 				default: false; // This branch must never occur
 			}
 		}
-		FcPlusPrim():  binis([FiTypeInt(), FiTypeDouble(), FiTypeString()]);
-		FcMinusPrim(): binis([FiTypeInt(), FiTypeDouble()]);
-		FcMulPrim():   binis([FiTypeInt(), FiTypeDouble()]);
-		FcDivPrim():   binis([FiTypeInt(), FiTypeDouble()]);
-		FcModPrim():   binis([FiTypeInt(), FiTypeDouble()]);
+		FcPlusPrim():  binis([FiTypeInt(), FiTypeDouble(), FiTypeString(), FiTypeFlow()]);
+		FcMinusPrim(): binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
+		FcMulPrim():   binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
+		FcDivPrim():   binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
+		FcModPrim():   binis([FiTypeInt(), FiTypeDouble(), FiTypeFlow()]);
 		FcNegPrim(): {
 			t1 = fiExpType(call.es[0]);
-			if (t1 == FiTypeInt() || t1 == FiTypeDouble()) true else {
+			if (t1 == FiTypeInt() || t1 == FiTypeDouble() || t1 == FiTypeFlow()) true else {
 				onError(
 					FcError(
 						"Type " + prettyFiType(dummyPretty, t1, makeSet()) + " is not allowed.\n" +
@@ -616,11 +617,11 @@ typeverifyFiCallPrim(env : TypeVerifyEnv, call : FiCallPrim, onError : (FcError)
 		FcNotPrim(): is(fiExpType(call.es[0]), FiTypeBool());
 		FcIndexPrim(): {
 			at = fiExpType(call.es[0]);
-			at_is_array = fiTypeIsArray(at);
-			if (!at_is_array) {
+			at_is_ok = fiTypeIsArray(at) || fiTypeIsFlow(at);
+			if (!at_is_ok) {
 				onError(
 					FcError(
-						"Type " + prettyFiType(dummyPretty, at, makeSet()) + " must be array",
+						"Type " + prettyFiType(dummyPretty, at, makeSet()) + " must be array or flow",
 						[FcPosition(env.module.name, call.start, call.start)]
 					)
 				)
@@ -635,15 +636,16 @@ typeverifyFiCallPrim(env : TypeVerifyEnv, call : FiCallPrim, onError : (FcError)
 					)
 				);
 			}
-			at_is_array && it_is_int
+			at_is_ok && it_is_int
 		}
 		FcDerefPrim(): {
 			rt = fiExpType(call.es[0]);
 			if (isFiSubType(env.module.global.acc.names, rt, FiTypeRef(call.type), true, true)) true else {
 				onError(
 					FcError(
-						"Reference type doesn't fit, got:\n" + prettyFiType(dummyPretty, rt, makeSet()) +
-						"\nexpected:\n" + prettyFiType(dummyPretty, FiTypeRef(call.type), makeSet()),
+						"Reference type doesn't fit\n" +
+						"got:      " + prettyFiType(dummyPretty, rt, makeSet()) + "\n"
+						"expected: " + prettyFiType(dummyPretty, FiTypeRef(call.type), makeSet()),
 						[FcPosition(env.module.name, call.start, call.start)]
 					)
 				);
