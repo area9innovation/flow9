@@ -40,9 +40,7 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
 
-		nativeWidget.onmousemove = onMouseMove;
 		nativeWidget.onmousedown = onMouseDown;
-		nativeWidget.onmouseup = onMouseUp;
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {
@@ -99,16 +97,7 @@ class DropAreaClip extends NativeWidgetClip {
 		}
 	}
 
-	private function onMouseMove(e : MouseEvent) {
-		RenderSupportJSPixi.provideEvent(e);
-	}
-
 	private function onMouseDown(e : Dynamic) {
 		e.preventDefault();
-		RenderSupportJSPixi.provideEvent(e);
-	}
-
-	private function onMouseUp(e : MouseEvent) {
-		RenderSupportJSPixi.provideEvent(e);
 	}
 }
