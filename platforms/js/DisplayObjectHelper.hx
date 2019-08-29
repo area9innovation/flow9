@@ -448,7 +448,10 @@ class DisplayObjectHelper {
 		setClipY(scrollRect, top);
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			initChildWidget(clip);
+			if (left != 0 || top != 0) {
+				initChildWidget(clip);
+			}
+
 			invalidateTransform(clip);
 		} else {
 			invalidateStage(clip);
@@ -870,7 +873,9 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.overflow = "hidden";
 
-				initChildWidget(clip);
+				if (scrollRect.x != 0 || scrollRect.y != 0) {
+					initChildWidget(clip);
+				}
 
 				var fn = function() {
 					nativeWidget.scrollLeft = '${scrollRect.x}';
@@ -913,10 +918,11 @@ class DisplayObjectHelper {
 						nativeWidget.style.borderRadius = '${data.shape.radius}px';
 
 						nativeWidget.style.overflow = "hidden";
+						if (data.shape.x - data.shape.radius != 0 || data.shape.y - data.shape.radius != 0) {
+							initChildWidget(clip);
+						}
 
-						initChildWidget(clip);
-
-						nativeWidget.scrollTo(data.shape.x - data.shape.radius, data.shape.x - data.shape.radius);
+						nativeWidget.scrollTo(data.shape.x - data.shape.radius, data.shape.y - data.shape.radius);
 					} else if (data.shape.type == 4) {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
@@ -925,7 +931,9 @@ class DisplayObjectHelper {
 
 						nativeWidget.style.overflow = "hidden";
 
-						initChildWidget(clip);
+						if (data.shape.x != 0 || data.shape.y != 0) {
+							initChildWidget(clip);
+						}
 
 						nativeWidget.scrollTo(data.shape.x, data.shape.y);
 					}  else {

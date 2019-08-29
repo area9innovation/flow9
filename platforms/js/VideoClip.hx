@@ -273,7 +273,7 @@ class VideoClip extends FlowContainer {
 
 	public function pauseVideo() : Void {
 		if (loaded && !videoWidget.paused) {
-		 	videoWidget.pause();
+			videoWidget.pause();
 			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
 		}
 	}
@@ -290,6 +290,7 @@ class VideoClip extends FlowContainer {
 
 		updateVideoMetrics();
 
+		videoWidget.currentTime = 0;
 		checkTimeRange(videoWidget.currentTime, true);
 
 		invalidateTransform(); // Update the widget
@@ -303,6 +304,8 @@ class VideoClip extends FlowContainer {
 
 			updateSubtitlesClip();
 		};
+
+		videoTexture.update();
 
 		loaded = true;
 	}
