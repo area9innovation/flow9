@@ -36,6 +36,8 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.oncontextmenu = onContextMenu;
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
+
+		nativeWidget.onmousedown = onMouseDown;
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {
@@ -90,5 +92,9 @@ class DropAreaClip extends NativeWidgetClip {
 		} else {
 			return widgetWidth;
 		}
+	}
+
+	private function onMouseDown(e : Dynamic) {
+		e.preventDefault();
 	}
 }
