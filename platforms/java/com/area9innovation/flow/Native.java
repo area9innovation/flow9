@@ -1120,44 +1120,46 @@ public class Native extends NativeHost {
 	@Override
 		public Long call() {
 			long output = 0;
-		try {
-		OutputStream stdin1 = null;
-		InputStream stderr = null;
-		InputStream stdout = null;
+			try {
+				OutputStream stdin1 = null;
+				InputStream stderr = null;
+				InputStream stdout = null;
 
-		Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
-		stdin1 = process.getOutputStream();
-		stderr = process.getErrorStream();
-		stdout = process.getInputStream();
-		stdin1.write(this.stdin.getBytes());
-		stdin1.flush();
+				Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
+				stdin1 = process.getOutputStream();
+				stderr = process.getErrorStream();
+				stdout = process.getInputStream();
+				stdin1.write(this.stdin.getBytes());
+				stdin1.flush();
 
-		BufferedReader brCleanUp = new BufferedReader (new InputStreamReader (stdout));
-		String line;
-		String sout = new String("");
-		while ((line = brCleanUp.readLine ()) != null) {
-			sout = sout + line + "\n";
-		}
-		brCleanUp.close();
+				// We wait for the process to finish before we collect the output!
+				process.waitFor();
 
-		brCleanUp = new BufferedReader (new InputStreamReader (stderr));
-		String serr = new String("");
-		while ((line = brCleanUp.readLine ()) != null) {
-			serr = serr + line + "\n";
-		}
-		brCleanUp.close();
+				BufferedReader brCleanUp = new BufferedReader(new InputStreamReader (stdout));
+				String line;
+				String sout = new String("");
+				while ((line = brCleanUp.readLine ()) != null) {
+					sout = sout + line + "\n";
+				}
+				brCleanUp.close();
 
-		process.waitFor();
-		onExit.invoke(process.exitValue(), sout, serr);
+				brCleanUp = new BufferedReader(new InputStreamReader (stderr));
+				String serr = new String("");
+				while ((line = brCleanUp.readLine()) != null) {
+					serr = serr + line + "\n";
+				}
+				brCleanUp.close();
+
+				onExit.invoke(process.exitValue(), sout, serr);
 			} catch (Exception ex) {
-			String cmd_str = "";
-			for (String c : this.cmd) {
-				cmd_str += c + " ";
+				String cmd_str = "";
+				for (String c : this.cmd) {
+					cmd_str += c + " ";
+				}
+				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString());
 			}
-			onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString());
+			return output;
 		}
-		return output;
-	}
 	}
 
 	public final String md5(String contents) {
