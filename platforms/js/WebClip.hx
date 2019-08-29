@@ -9,6 +9,8 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
 
+	public var keepNativeWidget : Bool = true;
+
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
 	}
@@ -68,6 +70,7 @@ class WebClip extends NativeWidgetClip {
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			iframe.className = 'nativeWidget';
+			iframe.style.pointerEvents = 'auto';
 		}
 
 		if (isUrl(url) || Platform.isIE || Platform.isEdge) {
@@ -89,9 +92,13 @@ class WebClip extends NativeWidgetClip {
 		iframe.onload = function() {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
-				iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
-				if (Native.isTouchScreen())
-					iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+
+				if (!RenderSupportJSPixi.DomRenderer) {
+					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+					if (Native.isTouchScreen()) {
+						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+					}
+				}
 
 				if (shrinkToFit) {
 					try {

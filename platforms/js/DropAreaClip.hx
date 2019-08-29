@@ -22,11 +22,11 @@ class DropAreaClip extends NativeWidgetClip {
 		initNativeWidget();
 	}
 
-	public override function updateNativeWidget() : Void {
-		styleChanged = true;
+	// public function updateNativeWidget() : Void {
+	// 	styleChanged = true;
 
-		super.updateNativeWidget();
-	}
+	// 	super.updateNativeWidget();
+	// }
 
 	private override function createNativeWidget(?tagName : String = "div") : Void {
 		if (!isNativeWidget) {

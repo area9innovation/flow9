@@ -273,20 +273,16 @@ class FlowContainer extends Container {
 		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
 			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
 
-			if (untyped mask.localBounds.minX != Math.POSITIVE_INFINITY) {
+			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
 				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
 			}
-		} else if (children.length > 0) {
-			var firstChild = children[0];
+		} else for (child in children) {
+			if (untyped child.localBounds != null && child.localBounds.minX != Math.POSITIVE_INFINITY) {
+				if (localBounds.minX == Math.POSITIVE_INFINITY) {
+					child.applyLocalBoundsTransform(localBounds);
+				} else {
+					var childBounds = child.applyLocalBoundsTransform();
 
-			if (untyped firstChild.localBounds.minX != Math.POSITIVE_INFINITY) {
-				firstChild.applyLocalBoundsTransform(localBounds);
-			}
-
-			for (child in children.slice(1)) {
-				var childBounds = child.applyLocalBoundsTransform();
-
-				if (untyped child.localBounds.minX != Math.POSITIVE_INFINITY) {
 					localBounds.minX = Math.min(localBounds.minX, childBounds.minX);
 					localBounds.minY = Math.min(localBounds.minY, childBounds.minY);
 					localBounds.maxX = Math.max(localBounds.maxX, childBounds.maxX);

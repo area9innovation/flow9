@@ -23,7 +23,7 @@ using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
 	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
-	public static var DomInteractions : Bool = false;
+	public static var DomInteractions : Bool = Util.getParameter("interactions") == "dom";
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
@@ -891,7 +891,7 @@ class RenderSupportJSPixi {
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
-		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
+		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
@@ -1770,7 +1770,7 @@ class RenderSupportJSPixi {
 		}
 
 		var point = new Point(x, y);
-		if (clip.parent != null) {
+		if (!DomInteractions && clip.parent != null) {
 			clip.updateTransform();
 		}
 
@@ -1925,43 +1925,45 @@ class RenderSupportJSPixi {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
 	}
 
-	public static function setCursor(cursor : String) : Void {
-		var css_cursor =
-			switch (cursor) {
-				case "arrow": "default";
-				case "auto": "auto";
-				case "finger": "pointer";
-				case "move": "move" ;
-				case "text": "text";
-				case "crosshair" : "crosshair";
-				case "help" : "help";
-				case "wait" : "wait";
-				case "context-menu" : "context-menu";
-				case "progress" : "progress";
-				case "copy" : "copy";
-				case "not-allowed" : "not-allowed";
-				case "all-scroll" : "all-scroll";
-				case "col-resize" : "col-resize";
-				case "row-resize" : "row-resize";
-				case "n-resize" : "n-resize";
-				case "e-resize" : "e-resize";
-				case "s-resize" : "s-resize";
-				case "w-resize" : "w-resize";
-				case "ne-resize" : "ne-resize";
-				case "nw-resize" : "nw-resize";
-				case "sw-resize" : "sw-resize";
-				case "ew-resize" : "ew-resize";
-				case "ns-resize" : "ns-resize";
-				case "nesw-resize" : "nesw-resize";
-				case "nwse-resize" : "nwse-resize";
-				case "zoom-in" : "zoom-in";
-				case "zoom-out" : "zoom-out";
-				case "grab" : "grab";
-				case "grabbing" : "grabbing";
-				default: "default";
-			}
+	public static function cursor2css(cursor : String) : String {
+		return switch (cursor) {
+			case "arrow": "default";
+			case "auto": "auto";
+			case "finger": "pointer";
+			case "move": "move" ;
+			case "text": "text";
+			case "crosshair" : "crosshair";
+			case "help" : "help";
+			case "wait" : "wait";
+			case "context-menu" : "context-menu";
+			case "progress" : "progress";
+			case "copy" : "copy";
+			case "not-allowed" : "not-allowed";
+			case "all-scroll" : "all-scroll";
+			case "col-resize" : "col-resize";
+			case "row-resize" : "row-resize";
+			case "n-resize" : "n-resize";
+			case "e-resize" : "e-resize";
+			case "s-resize" : "s-resize";
+			case "w-resize" : "w-resize";
+			case "ne-resize" : "ne-resize";
+			case "nw-resize" : "nw-resize";
+			case "sw-resize" : "sw-resize";
+			case "ew-resize" : "ew-resize";
+			case "ns-resize" : "ns-resize";
+			case "nesw-resize" : "nesw-resize";
+			case "nwse-resize" : "nwse-resize";
+			case "zoom-in" : "zoom-in";
+			case "zoom-out" : "zoom-out";
+			case "grab" : "grab";
+			case "grabbing" : "grabbing";
+			default: "inherit";
+		};
+	}
 
-		PixiView.style.cursor = css_cursor;
+	public static function setCursor(cursor : String) : Void {
+		Native.printCallstack();
+		PixiView.style.cursor = cursor2css(cursor);
 	}
 
 	public static function getCursor() : String {
@@ -2153,6 +2155,10 @@ class RenderSupportJSPixi {
 
 	public static function getClipRenderable(clip : DisplayObject) : Bool {
 		return clip.getClipRenderable();
+	}
+
+	public static function setClipCursor(clip : DisplayObject, cursor : String) : Void {
+		clip.setClipCursor(cursor2css(cursor));
 	}
 
 	public static function setClipDebugInfo(clip : DisplayObject, key : String, value : Dynamic) : Void {

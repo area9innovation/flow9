@@ -339,7 +339,7 @@ class TextClip extends NativeWidgetClip {
 
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 		} else {
-			nativeWidget.innerText = text;
+			nativeWidget.textContent = StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text;
 			nativeWidget.style.lineHeight = interlineSpacing != 0 ? '${style.fontSize * 1.15 + interlineSpacing}px' : null;
 		}
 
@@ -769,6 +769,7 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
+		untyped this.keepNativeWidget = true;
 		initNativeWidget(multiline ? 'textarea' : 'input');
 
 		nativeWidget.onmousemove = onMouseMove;

@@ -478,20 +478,20 @@ class FlowGraphics extends Graphics {
 						if (data.shape.type == 1) {
 							nativeWidget.style.marginLeft = '${data.shape.x}px';
 							nativeWidget.style.marginTop = '${data.shape.y}px';
-							nativeWidget.style.width = '${data.shape.width}px';
-							nativeWidget.style.height = '${data.shape.height}px';
+							nativeWidget.style.width = '${data.shape.width - data.lineWidth * 2}px';
+							nativeWidget.style.height = '${data.shape.height - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
 							nativeWidget.style.marginLeft = '${data.shape.x - data.shape.radius}px';
 							nativeWidget.style.marginTop = '${data.shape.y - data.shape.radius}px';
-							nativeWidget.style.width = '${data.shape.radius * 2}px';
-							nativeWidget.style.height = '${data.shape.radius * 2}px';
+							nativeWidget.style.width = '${data.shape.radius * 2 - data.lineWidth * 2}px';
+							nativeWidget.style.height = '${data.shape.radius * 2 - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						} else if (data.shape.type == 4) {
 							nativeWidget.style.marginLeft = '${data.shape.x}px';
 							nativeWidget.style.marginTop = '${data.shape.y}px';
-							nativeWidget.style.width = '${data.shape.width}px';
-							nativeWidget.style.height = '${data.shape.height}px';
+							nativeWidget.style.width = '${data.shape.width - data.lineWidth * 2}px';
+							nativeWidget.style.height = '${data.shape.height - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');
@@ -500,9 +500,6 @@ class FlowGraphics extends Graphics {
 					}
 				}
 			}
-
-			nativeWidget.style.width = '${untyped getWidth()}px';
-			nativeWidget.style.height = '${untyped getHeight()}px';
 		}
 	}
 

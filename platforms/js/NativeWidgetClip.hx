@@ -75,42 +75,6 @@ class NativeWidgetClip extends FlowContainer {
 		isNativeWidget = true;
 	}
 
-	public function updateNativeWidget() : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (visible) {
-				updateNativeWidgetTransformMatrix();
-				updateNativeWidgetOpacity();
-				updateNativeWidgetMask();
-			}
-
-			updateNativeWidgetDisplay();
-		} else {
-			var transform = getTransform();
-
-			var tx = Math.floor(getClipRenderable() ? transform.tx : -widgetWidth);
-			var ty = Math.floor(getClipRenderable() ? transform.ty : -widgetHeight);
-
-			if (Platform.isIE) {
-				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-
-				nativeWidget.style.left = '${tx}px';
-				nativeWidget.style.top = '${ty}px';
-			} else {
-				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
-			}
-
-			if (worldAlpha != 1) {
-				nativeWidget.style.opacity = worldAlpha;
-			} else {
-				nativeWidget.style.opacity = null;
-			}
-		}
-
-		if (styleChanged || (!RenderSupportJSPixi.DomRenderer && viewBounds == null)) {
-			updateNativeWidgetStyle();
-		}
-	}
-
 	public function updateNativeWidgetStyle() : Void {
 		nativeWidget.style.width = '${untyped getWidth() + 1}px';
 		nativeWidget.style.height = '${untyped getHeight() + 1}px';
