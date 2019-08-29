@@ -1,10 +1,7 @@
 import js.Browser;
-import js.html.MouseEvent;
-import js.html.Event;
 import js.html.File;
 import js.html.FileList;
 
-import pixi.core.math.Point;
 import pixi.core.display.Bounds;
 import pixi.core.display.TransformBase;
 
