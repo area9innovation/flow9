@@ -172,7 +172,7 @@ class FlowGraphics extends Graphics {
 			invalidateStage();
 		}
 
-		if (RenderSupportJSPixi.DomRenderer && !isEmpty && !isMask) {
+		if (RenderSupportJSPixi.DomRenderer && !isEmpty) {
 			updateNativeWidgetGraphicsData();
 		}
 
@@ -340,9 +340,18 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (isMask && isNativeWidget) {
-			deleteNativeWidget();
+		if (isMask) {
+			if (isNativeWidget) {
+				deleteNativeWidget();
+			}
+
+			return;
 		} else if (!isEmpty) {
+			// if (isSvg) {
+			// 	replaceWithCanvas();
+			// } else {
+			// 	initNativeWidget();
+			// }
 			initNativeWidget();
 		}
 

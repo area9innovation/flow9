@@ -183,6 +183,10 @@ class RenderSupportJSPixi {
 			PixiRenderer.destroy();
 		}
 
+		if (DomRenderer) {
+			PixiView = Browser.document.createElement('div');
+		}
+
 		var options = {
 			antialias : Antialias,
 			transparent : TransparentBackground,
@@ -213,8 +217,10 @@ class RenderSupportJSPixi {
 		}
 
 		if (RendererType == "canvas") {
-			untyped PixiRenderer.context.fillStyle = "white";
-			untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
+			if (!DomRenderer) {
+				untyped PixiRenderer.context.fillStyle = "white";
+				untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
+			}
 
 			var tempPlugins = untyped WebGLRenderer.__plugins;
 			untyped WebGLRenderer.__plugins = [];

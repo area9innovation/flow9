@@ -189,6 +189,12 @@ class FlowSprite extends Sprite {
 		try {
 			metricsFn(texture.width, texture.height);
 
+			var currentBounds = new Bounds();
+
+			if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+				applyLocalBoundsTransform(currentBounds);
+			}
+
 			localBounds.minX = 0;
 			localBounds.minY = 0;
 			localBounds.maxX = texture.width;
@@ -198,6 +204,11 @@ class FlowSprite extends Sprite {
 
 			renderable = true;
 			loaded = true;
+
+			if (parent != null) {
+				var newBounds = applyLocalBoundsTransform();
+				parent.replaceLocalBounds(currentBounds, newBounds);
+			}
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();

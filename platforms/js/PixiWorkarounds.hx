@@ -890,6 +890,10 @@ class PixiWorkarounds {
 				}
 			});
 
+			Element.prototype.getContext = function(a, b) {
+				return { imageSmoothingEnabled : true };
+			}
+
 			PIXI.Container.prototype.updateTransform = function() {
 				if (this.parent.worldTransformChanged) {
 					this.parent.updateTransform();
