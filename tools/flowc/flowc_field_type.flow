@@ -18,7 +18,7 @@ export {
 	FcFiTypeStruct  ::= FcTypeStruct, FiTypeStruct;
 	FcFiTypeUnion   ::= FcTypeUnion, FiTypeUnion;
 
-	GetFieldTypeParams(
+	GetStructFieldEnv(
 		globalNames : FcFiGlobalNames,
 		moduleTypes : Tree<string, FiStructOrUnion>,
 		field_name : string,
@@ -28,32 +28,32 @@ export {
 		start : int,
 	);
 
-	getFieldType(params : GetFieldTypeParams) -> Maybe<FiType>;
+	getStructField(env : GetStructFieldEnv) -> Maybe<FiStructArg>;
 }
 
-getFieldType(params : GetFieldTypeParams) -> Maybe<FiType> {
+getStructField(env : GetStructFieldEnv) -> Maybe<FiStructArg> {
 	failCallback = \pos -> {
-		params.onError(FcError(
-			"There is no field '" + params.field_name + "' in struct '" + params.type_name + "'",
+		env.onError(FcError(
+			"There is no field '" + env.field_name + "' in struct '" + env.type_name + "'",
 			[
-				FcPosition(params.moduleName, params.start, params.start),
-				FcPosition(moduleWhereNameIsDefined(params.globalNames, params.type_name), pos, pos),
+				FcPosition(env.moduleName, env.start, env.start),
+				FcPosition(moduleWhereNameIsDefined(env.globalNames, env.type_name), pos, pos),
 			]
 		));
 		None();
 	};
-	if (params.field_name == "structname") Some(FiTypeString()) else {
-		switch (lookupStruct(params.globalNames, params.type_name)) {
-			Some(struct): getStructFieldType(struct, params.field_name, failCallback);
+	if (env.field_name == "structname") Some(FiStructArg("structname", FiTypeString(), false)) else {
+		switch (lookupStruct(env.globalNames, env.type_name)) {
+			Some(struct): getStructStructField(struct, env.field_name, failCallback);
 			None(): {
-				switch (lookupUnion(params.globalNames, params.type_name)) {
-					Some(union): getUnionFieldType(union, params, failCallback);
+				switch (lookupUnion(env.globalNames, env.type_name)) {
+					Some(union): getUnionStructField(union, env, failCallback);
 					None(): {
-						switch (lookupTree(params.moduleTypes, params.type_name)) {
+						switch (lookupTree(env.moduleTypes, env.type_name)) {
 							Some(type): {
 								switch (type) {
-									FiTypeStruct(__,__,__,__): getStructFieldType(type, params.field_name, failCallback);
-									FiTypeUnion(__, __, typenames, __): getUnionFieldType(type, params, failCallback);
+									FiTypeStruct(__,__,__,__): getStructStructField(type, env.field_name, failCallback);
+									FiTypeUnion(__, __, typenames, __): getUnionStructField(type, env, failCallback);
 								}
 							}
 							None(): {
@@ -82,50 +82,50 @@ lookupUnion(globalNames : FcFiGlobalNames, type_name : string) -> Maybe<FcFiType
 	}
 }
 
-getStructFieldType(struct : FcFiTypeStruct, field_name : string, failCallback : (int) -> Maybe<FiType>) -> Maybe<FiType> {
+getStructStructField(struct : FcFiTypeStruct, field_name : string, failCallback : (int) -> Maybe<FiStructArg>) -> Maybe<FiStructArg> {
 	switch (struct) {
 		FiTypeStruct(__,__,__,__):
 			switch (find(struct.args, \arg -> arg.name == field_name)) {
-				Some(arg): Some(arg.type);
+				Some(arg): Some(arg);
 				None(): failCallback(struct.start);
 			}
 		FcTypeStruct(__,__,__,__):
 			switch (find(struct.args, \arg -> arg.name == field_name)) {
-				Some(arg): Some(fctype2fiEasy(arg.type));
+				Some(arg): Some(FiStructArg(arg.name, fctype2fiEasy(arg.type), arg.ismutable));
 				None(): failCallback(struct.info.start);
 			}
 	}
 }
 
-getUnionFieldType(union : FcFiTypeUnion, params : GetFieldTypeParams, failCallback : (int) -> Maybe<FiType>) -> Maybe<FiType>  {
+getUnionStructField(union : FcFiTypeUnion, env : GetStructFieldEnv, failCallback : (int) -> Maybe<FiStructArg>) -> Maybe<FiStructArg>  {
 	switch (union) {
 		FiTypeUnion(__,__,__,__): {
-			field_types = map(union.typenames, \tp -> getFieldType(GetFieldTypeParams(params with type_name = tp.name)));
-			mostGeneralType(field_types, params.globalNames)
+			field_args = map(union.typenames, \tp -> getStructField(GetStructFieldEnv(env with type_name = tp.name)));
+			mostGeneralType(field_args, env.globalNames)
 		}
 		FcTypeUnion(__,__,__,__): {
-			field_types = map(union.typenames, \tp -> getFieldType(GetFieldTypeParams(params with type_name = tp.name)));
-			mostGeneralType(field_types, params.globalNames)
+			field_args = map(union.typenames, \tp -> getStructField(GetStructFieldEnv(env with type_name = tp.name)));
+			mostGeneralType(field_args, env.globalNames)
 		}
 	}
 };
 
-mostGeneralType(types : [Maybe<FiType>], names : FcGlobalNames) -> Maybe<FiType> {
-	pair = fold(types, Pair(None(), true), 
+mostGeneralType(args : [Maybe<FiStructArg>], names : FcGlobalNames) -> Maybe<FiStructArg> {
+	pair = fold(args, Pair(None(), true), 
 		\acc, mtp -> {
 			switch (mtp) {
-				Some(t1): {
+				Some(a1): {
 					switch (acc.first) {
-						Some(t2): {
-							if (isFiSubType(names, t1, t2, true, true)) {
-								Pair(Some(t2), true)
-							} else if (isFiSubType(names, t2, t1, true, true)) {
-								Pair(Some(t1), true)
+						Some(a2): {
+							if (isFiSubType(names, a1.type, a2.type, true, true)) {
+								Pair(Some(a2), true)
+							} else if (isFiSubType(names, a2.type, a1.type, true, true)) {
+								Pair(Some(a1), true)
 							} else {
 								Pair(None(), false)
 							}
 						}
-						None(): Pair(Some(t1), true)
+						None(): Pair(Some(a1), true)
 					}
 				}
 				None(): Pair(None(), false)
