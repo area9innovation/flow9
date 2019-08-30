@@ -58,11 +58,11 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		once("removed", onSpriteRemoved);
-		once("added", onSpriteAdded);
-
 		if (RenderSupportJSPixi.DomRenderer) {
 			initNativeWidget("img");
+		} else {
+			once("removed", onSpriteRemoved);
+			once("added", onSpriteAdded);
 		}
 	}
 
@@ -159,7 +159,9 @@ class FlowSprite extends Sprite {
 
 	private function onDispose() : Void {
 		renderable = false;
-		removeTextureFromCache(texture);
+		if (texture != null) {
+			removeTextureFromCache(texture);
+		}
 		loaded = false;
 
 		if (parent != null) {
@@ -173,7 +175,9 @@ class FlowSprite extends Sprite {
 
 	private function onError() : Void {
 		renderable = false;
-		removeTextureFromCache(texture);
+		if (texture != null) {
+			removeTextureFromCache(texture);
+		}
 		loaded = false;
 
 		texture = Texture.EMPTY;
@@ -187,7 +191,11 @@ class FlowSprite extends Sprite {
 
 	private function onLoaded() : Void {
 		try {
-			metricsFn(texture.width, texture.height);
+			if (RenderSupportJSPixi.DomRenderer) {
+				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
+			} else {
+				metricsFn(texture.width, texture.height);
+			}
 
 			var currentBounds = new Bounds();
 
@@ -197,8 +205,14 @@ class FlowSprite extends Sprite {
 
 			localBounds.minX = 0;
 			localBounds.minY = 0;
-			localBounds.maxX = texture.width;
-			localBounds.maxY = texture.height;
+
+			if (RenderSupportJSPixi.DomRenderer) {
+				localBounds.maxX = nativeWidget.naturalWidth;
+				localBounds.maxY = nativeWidget.naturalHeight;
+			} else {
+				localBounds.maxX = texture.width;
+				localBounds.maxY = texture.height;
+			}
 
 			invalidateStage();
 
@@ -270,6 +284,8 @@ class FlowSprite extends Sprite {
 		nativeWidget = Browser.document.createElement(tagName);
 		nativeWidget.setAttribute('id', getClipUUID());
 		nativeWidget.className = 'nativeWidget';
+		nativeWidget.onload = onLoaded;
+		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
 
 		isNativeWidget = true;

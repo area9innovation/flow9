@@ -828,6 +828,72 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static function createPlaceholderWidget(clip : DisplayObject) : Void {
+		var placeholderWidget = untyped clip.placeholderWidget;
+		var nativeWidget = untyped clip.nativeWidget;
+
+		if (placeholderWidget == null && nativeWidget != null) {
+			placeholderWidget = Browser.document.createElement('div');
+			untyped clip.placeholderWidget = placeholderWidget;
+
+			placeholderWidget.style.height = '10000px';
+			placeholderWidget.style.width = '10000px';
+			placeholderWidget.className = 'nativeWidget';
+			placeholderWidget.style.visibility = 'hidden';
+
+			nativeWidget.insertBefore(placeholderWidget, nativeWidget.firstChild);
+		}
+	}
+
+	public static function removePlaceholderWidget(clip : DisplayObject) : Void {
+		var placeholderWidget : Dynamic = untyped clip.placeholderWidget;
+
+		if (placeholderWidget != null) {
+			if (placeholderWidget.parentNode != null) {
+				placeholderWidget.parentNode.removeChild(placeholderWidget);
+			}
+
+			placeholderWidget = null;
+		}
+	}
+
+	public static function removeNativeWidgetMask(clip : DisplayObject) : Void {
+		removePlaceholderWidget(clip);
+
+		var nativeWidget = untyped clip.nativeWidget;
+
+		if (nativeWidget != null && nativeWidget.style.overflow != '' || nativeWidget.style.clipPath != '') {
+			nativeWidget.style.overflow = null;
+			nativeWidget.style.clipPath = null;
+			nativeWidget.onscroll = null;
+			nativeWidget.style.width = null;
+			nativeWidget.style.height = null;
+			nativeWidget.style.borderRadius = null;
+		}
+	}
+
+	public static function scrollNativeWidget(clip : DisplayObject, x : Int, y : Int) : Void {
+		var nativeWidget : Dynamic = untyped clip.nativeWidget;
+
+		if (nativeWidget != null) {
+			if (x != 0 || y != 0) {
+				createPlaceholderWidget(clip);
+			}
+
+			var fn = function() {
+				if (nativeWidget.scrollLeft != x) {
+					nativeWidget.scrollLeft = x;
+				}
+
+				if (nativeWidget.scrollTop != y) {
+					nativeWidget.scrollTop = y;
+				}
+			}
+			nativeWidget.onscroll = fn;
+			fn();
+		}
+	}
+
 	public static function updateNativeWidgetMask(clip : DisplayObject, ?worldTransform : Bool, ?attachScrollFn : Bool = false) {
 		if (worldTransform == null) {
 			worldTransform = !RenderContainers;
@@ -844,23 +910,10 @@ class DisplayObjectHelper {
 				nativeWidget.style.clipPath = null;
 				nativeWidget.style.width = '${scrollRect.width}px';
 				nativeWidget.style.height = '${scrollRect.height}px';
-
+				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.overflow = "hidden";
 
-				if ((nativeWidget.firstChild == null || nativeWidget.firstChild.style.width != '10000px') && (scrollRect.x != 0 || scrollRect.y != 0)) {
-					var childWidget = Browser.document.createElement('div');
-					childWidget.style.height = '10000px';
-					childWidget.style.width = '10000px';
-					childWidget.className = 'nativeWidget';
-					nativeWidget.insertBefore(childWidget, nativeWidget.firstChild);
-				}
-
-				var fn = function() {
-					nativeWidget.scrollLeft = '${scrollRect.x}';
-					nativeWidget.scrollTop = '${scrollRect.y}';
-				}
-				nativeWidget.onscroll = fn;
-				fn();
+				scrollNativeWidget(clip, scrollRect.x, scrollRect.y);
 			} else if (mask != null) {
 				var graphicsData = mask.graphicsData;
 
@@ -869,16 +922,12 @@ class DisplayObjectHelper {
 					var data = graphicsData[0];
 
 					if (data.shape.type == 0) {
-						if (nativeWidget.style.overflow != '') {
-							nativeWidget.style.overflow = null;
+						removePlaceholderWidget(clip);
 
-							if (nativeWidget.firstChild != null || nativeWidget.firstChild.style.width == '10000px') {
-								nativeWidget.removeChild(nativeWidget.firstChild);
-							}
-						}
+						nativeWidget.style.overflow = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
-
+						nativeWidget.style.borderRadius = null;
 						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
 							return i % 2 == 0 ? p + 'px ' : '' + p + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
 						}).join('') + ')'");
@@ -886,93 +935,34 @@ class DisplayObjectHelper {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
-
 						nativeWidget.style.overflow = "hidden";
 
-						if ((nativeWidget.firstChild == null || nativeWidget.firstChild.style.width != '10000px') && (data.shape.x != 0 || data.shape.y != 0)) {
-							var childWidget = Browser.document.createElement('div');
-							childWidget.style.height = '10000px';
-							childWidget.style.width = '10000px';
-							childWidget.className = 'nativeWidget';
-							nativeWidget.insertBefore(childWidget, nativeWidget.firstChild);
-						}
-
-						var fn = function() {
-							nativeWidget.scrollLeft = '${data.shape.x}';
-							nativeWidget.scrollTop = '${data.shape.y}';
-						}
-						nativeWidget.onscroll = fn;
-						fn();
+						scrollNativeWidget(clip, data.shape.x, data.shape.y);
 					} else if (data.shape.type == 2) {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
 						nativeWidget.style.borderRadius = '${data.shape.radius}px';
-
 						nativeWidget.style.overflow = "hidden";
 
-						if ((nativeWidget.firstChild == null || nativeWidget.firstChild.style.width != '10000px') && (data.shape.x - data.shape.radius != 0 || data.shape.y - data.shape.radius != 0)) {
-							var childWidget = Browser.document.createElement('div');
-							childWidget.style.height = '10000px';
-							childWidget.style.width = '10000px';
-							childWidget.className = 'nativeWidget';
-							nativeWidget.insertBefore(childWidget, nativeWidget.firstChild);
-						}
-
-						var fn = function() {
-							nativeWidget.scrollLeft = '${data.shape.x - data.shape.radius}';
-							nativeWidget.scrollTop = '${data.shape.y - data.shape.radius}';
-						}
-						nativeWidget.onscroll = fn;
-						fn();
+						scrollNativeWidget(clip, Math.floor(data.shape.x - data.shape.radius), Math.floor(data.shape.y - data.shape.radius));
 					} else if (data.shape.type == 4) {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
 						nativeWidget.style.borderRadius = '${data.shape.radius}px';
-
 						nativeWidget.style.overflow = "hidden";
 
-						if ((nativeWidget.firstChild == null || nativeWidget.firstChild.style.width != '10000px') && (data.shape.x != 0 || data.shape.y != 0)) {
-							var childWidget = Browser.document.createElement('div');
-							childWidget.style.height = '10000px';
-							childWidget.style.width = '10000px';
-							childWidget.className = 'nativeWidget';
-							nativeWidget.insertBefore(childWidget, nativeWidget.firstChild);
-						}
-
-						var fn = function() {
-							nativeWidget.scrollLeft = '${data.shape.x}';
-							nativeWidget.scrollTop = '${data.shape.y}';
-						}
-						nativeWidget.onscroll = fn;
-						fn();
+						scrollNativeWidget(clip, data.shape.x, data.shape.y);
 					}  else {
-						nativeWidget.style.clipPath = null;
-						nativeWidget.onscroll = null;
-
-						if (nativeWidget.style.overflow != '') {
-							nativeWidget.style.overflow = null;
-
-							if (nativeWidget.firstChild != null || nativeWidget.firstChild.style.width == '10000px') {
-								nativeWidget.removeChild(nativeWidget.firstChild);
-							}
-						}
+						removeNativeWidgetMask(clip);
 
 						trace("updateNativeWidgetMask: Unknown shape type");
 						trace(data);
 					}
 				}
 			} else {
-				nativeWidget.style.clipPath = null;
-
-				if (nativeWidget.style.overflow != '') {
-					nativeWidget.style.overflow = null;
-
-					if (nativeWidget.firstChild != null || nativeWidget.firstChild.style.width == '10000px') {
-						nativeWidget.removeChild(nativeWidget.firstChild);
-					}
-				}
+				removeNativeWidgetMask(clip);
 			}
 		}
 	}
@@ -1172,6 +1162,10 @@ class DisplayObjectHelper {
 
 		if (nativeWidget != null && isNativeWidget(clip)) {
 			nativeWidget.insertBefore(childWidget, findNextNativeWidget(child, nativeWidget));
+
+			if (nativeWidget.onscroll != null) {
+				nativeWidget.onscroll();
+			}
 		} else {
 			appendNativeWidget(clip.parent, child);
 		}
