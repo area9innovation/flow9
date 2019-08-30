@@ -878,9 +878,22 @@ class DisplayObjectHelper {
 		if (nativeWidget != null) {
 			if (x != 0 || y != 0) {
 				createPlaceholderWidget(clip);
-			}
 
-			var fn = function() {
+				var scrollFn = function() {
+					if (nativeWidget.scrollLeft != x) {
+						nativeWidget.scrollLeft = x;
+					}
+
+					if (nativeWidget.scrollTop != y) {
+						nativeWidget.scrollTop = y;
+					}
+				}
+				nativeWidget.onscroll = scrollFn;
+				scrollFn();
+				untyped clip.scrollFn = scrollFn;
+			} else {
+				nativeWidget.onscroll = null;
+
 				if (nativeWidget.scrollLeft != x) {
 					nativeWidget.scrollLeft = x;
 				}
@@ -889,8 +902,6 @@ class DisplayObjectHelper {
 					nativeWidget.scrollTop = y;
 				}
 			}
-			nativeWidget.onscroll = fn;
-			fn();
 		}
 	}
 
@@ -913,7 +924,7 @@ class DisplayObjectHelper {
 				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.overflow = "hidden";
 
-				scrollNativeWidget(clip, scrollRect.x, scrollRect.y);
+				scrollNativeWidget(clip, Math.floor(scrollRect.x), Math.floor(scrollRect.y));
 			} else if (mask != null) {
 				var graphicsData = mask.graphicsData;
 
@@ -937,7 +948,7 @@ class DisplayObjectHelper {
 						nativeWidget.style.height = '${getHeight(clip)}px';
 						nativeWidget.style.overflow = "hidden";
 
-						scrollNativeWidget(clip, data.shape.x, data.shape.y);
+						scrollNativeWidget(clip, Math.floor(data.shape.x), Math.floor(data.shape.y));
 					} else if (data.shape.type == 2) {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
@@ -953,7 +964,7 @@ class DisplayObjectHelper {
 						nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						nativeWidget.style.overflow = "hidden";
 
-						scrollNativeWidget(clip, data.shape.x, data.shape.y);
+						scrollNativeWidget(clip, Math.floor(data.shape.x), Math.floor(data.shape.y));
 					}  else {
 						removeNativeWidgetMask(clip);
 
@@ -1163,8 +1174,8 @@ class DisplayObjectHelper {
 		if (nativeWidget != null && isNativeWidget(clip)) {
 			nativeWidget.insertBefore(childWidget, findNextNativeWidget(child, nativeWidget));
 
-			if (nativeWidget.onscroll != null) {
-				nativeWidget.onscroll();
+			if (untyped clip.scrollFn != null) {
+				untyped clip.scrollFn();
 			}
 		} else {
 			appendNativeWidget(clip.parent, child);
