@@ -28,13 +28,26 @@ optimizeDupStrings(prog : FiProgram, file : string) -> FiProgram {
 				\acc, flowfile ->
 					eitherMap(
 						lookupTree(prog.modules, flowfile), 
-						\module -> setTree(acc, flowfile, optimizeDupStrModule(module, dupEnv, flowfile)),
+						\module -> setTree(acc, flowfile, optimizeDupStrModule(module, dupEnv, dupstr_modname, flowfile)),
 						acc
 					)
 			),
 			dupstr_modname,
 			dupstr_module
 		);
+
+		toplevel = foldTree(modules, prog.names.toplevel, \m, module : FiModule, acc : Tree<string, FiDeclaration> -> {
+			top1 = fold(module.functions, acc, \acc2 : Tree<string, FiDeclaration>, fn -> {
+				setTree(acc2, fn.name, fn)
+			});
+			top2 = fold(module.globalVars, top1, \acc2 : Tree<string, FiDeclaration>, v -> {
+				setTree(acc2, v.name, v)
+			});
+			fold(module.natives, top2, \acc2 : Tree<string, FiDeclaration>, n -> {
+				setTree(acc2, n.name, n)
+			});
+		});
+
 		FiProgram(
 			prog.config,
 			modules,
@@ -53,7 +66,7 @@ optimizeDupStrings(prog : FiProgram, file : string) -> FiProgram {
 				prog.names.unions,
 				foldTree(
 					dupEnv.strVars,
-					prog.names.toplevel,
+					toplevel,
 					\__, gvar, a -> setTree(a, gvar.name, gvar)
 				),
 			)
@@ -90,7 +103,7 @@ createUniqueNameWithInd(str : string, used : Set<string>, postfix : int) -> stri
 	} else new_n
 }
 
-optimizeDupStrModule(module : FiModule, dupEnv : DupStrEnv, flowfile : string) -> FiModule {
+optimizeDupStrModule(module : FiModule, dupEnv : DupStrEnv, dupModule : string, flowfile : string) -> FiModule {
 	has_changes = ref false;
 	opt_gvars = fold(
 		module.globalVars,
@@ -123,7 +136,7 @@ optimizeDupStrModule(module : FiModule, dupEnv : DupStrEnv, flowfile : string) -
 	);
 	FiModule(
 		module.fileinfo,
-		module.imports,
+		arrayPush(module.imports, FiImport(dupModule, false, 0)),
 		module.forbids,
 		module.exports,
 		module.structs,
@@ -169,7 +182,9 @@ optimizeDupExp(expr : FiExp, dupEnv : DupStrEnv) -> FiExp {
 			switch (e) {
 				FiString(s, __): {
 					switch (lookupTree(dupEnv.strVars, s)){
-						Some(var): FiVar(var.name, FiTypeString(), e.start);
+						Some(var): {
+							FiVar(var.name, FiTypeString(), e.start);
+						}
 						None(): e;
 					}
 				}
