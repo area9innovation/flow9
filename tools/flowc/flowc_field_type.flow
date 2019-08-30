@@ -1,0 +1,167 @@
+//import ds/tree;
+//import tools/flowc/fctypeenv;
+//import tools/flowc/incremental/fimodule;
+import tools/flowc/incremental/fi_helpers;
+//import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fisubtype;
+//import tools/flowc/incremental/fi_verify_struct_type;
+import tools/flowc/flowc_helpers;
+//import tools/flowc/flowc_module;
+import tools/flowc/incremental/fc2fi;
+//import tools/flowc/incremental/fisubtype;
+
+export {
+	moduleWhereNameIsDefined(globalNames : FcFiGlobalNames, name : string) -> string;
+	
+	// Unions of both variants of global names
+	FcFiGlobalNames ::= FcGlobalNames, FiGlobalNames;
+	FcFiTypeStruct  ::= FcTypeStruct, FiTypeStruct;
+	FcFiTypeUnion   ::= FcTypeUnion, FiTypeUnion;
+
+	GetStructFieldEnv(
+		globalNames : FcFiGlobalNames,
+		moduleTypes : Tree<string, FiStructOrUnion>,
+		field_name : string,
+		type_name : string,
+		onError : (FcError) -> void,
+		moduleName : string,
+		start : int,
+	);
+
+	getStructField(env : GetStructFieldEnv) -> Maybe<FiStructArg>;
+}
+
+getStructField(env : GetStructFieldEnv) -> Maybe<FiStructArg> {
+	failCallback = \pos -> {
+		env.onError(FcError(
+			"There is no field '" + env.field_name + "' in struct '" + env.type_name + "'",
+			[
+				FcPosition(env.moduleName, env.start, env.start),
+				FcPosition(moduleWhereNameIsDefined(env.globalNames, env.type_name), pos, pos),
+			]
+		));
+		None();
+	};
+	if (env.field_name == "structname") Some(FiStructArg("structname", FiTypeString(), false)) else {
+		switch (lookupStruct(env.globalNames, env.type_name)) {
+			Some(struct): getStructStructField(struct, env.field_name, failCallback);
+			None(): {
+				switch (lookupUnion(env.globalNames, env.type_name)) {
+					Some(union): getUnionStructField(union, env, failCallback);
+					None(): {
+						switch (lookupTree(env.moduleTypes, env.type_name)) {
+							Some(type): {
+								switch (type) {
+									FiTypeStruct(__,__,__,__): getStructStructField(type, env.field_name, failCallback);
+									FiTypeUnion(__, __, typenames, __): getUnionStructField(type, env, failCallback);
+								}
+							}
+							None(): {
+								// This branch must be impossible
+								None();
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+lookupStruct(globalNames : FcFiGlobalNames, type_name : string) -> Maybe<FcFiTypeStruct> {
+	switch (globalNames) {
+		FcGlobalNames(__,__,__,__,__,__,__,__,__,__,__,__): lookupTree(globalNames.structs, type_name);
+		FiGlobalNames(__,__,__,__,__,__,__,__): lookupTree(globalNames.structs, type_name);
+	}
+}
+
+lookupUnion(globalNames : FcFiGlobalNames, type_name : string) -> Maybe<FcFiTypeUnion> {
+	switch (globalNames) {
+		FcGlobalNames(__,__,__,__,__,__,__,__,__,__,__,__): lookupTree(globalNames.unions, type_name);
+		FiGlobalNames(__,__,__,__,__,__,__,__): lookupTree(globalNames.unions, type_name);
+	}
+}
+
+getStructStructField(struct : FcFiTypeStruct, field_name : string, failCallback : (int) -> Maybe<FiStructArg>) -> Maybe<FiStructArg> {
+	switch (struct) {
+		FiTypeStruct(__,__,__,__):
+			switch (find(struct.args, \arg -> arg.name == field_name)) {
+				Some(arg): Some(arg);
+				None(): failCallback(struct.start);
+			}
+		FcTypeStruct(__,__,__,__):
+			switch (find(struct.args, \arg -> arg.name == field_name)) {
+				Some(arg): Some(FiStructArg(arg.name, fctype2fiEasy(arg.type), arg.ismutable));
+				None(): failCallback(struct.info.start);
+			}
+	}
+}
+
+getUnionStructField(union : FcFiTypeUnion, env : GetStructFieldEnv, failCallback : (int) -> Maybe<FiStructArg>) -> Maybe<FiStructArg>  {
+	switch (union) {
+		FiTypeUnion(__,__,__,__): {
+			field_args = map(union.typenames, \tp -> getStructField(GetStructFieldEnv(env with type_name = tp.name)));
+			mostGeneralType(field_args, env.globalNames)
+		}
+		FcTypeUnion(__,__,__,__): {
+			field_args = map(union.typenames, \tp -> getStructField(GetStructFieldEnv(env with type_name = tp.name)));
+			mostGeneralType(field_args, env.globalNames)
+		}
+	}
+};
+
+mostGeneralType(args : [Maybe<FiStructArg>], names : FcGlobalNames) -> Maybe<FiStructArg> {
+	pair = fold(args, Pair(None(), true), 
+		\acc, mtp -> {
+			switch (mtp) {
+				Some(a1): {
+					switch (acc.first) {
+						Some(a2): {
+							if (isFiSubType(names, a1.type, a2.type, true, true)) {
+								Pair(Some(a2), true)
+							} else if (isFiSubType(names, a2.type, a1.type, true, true)) {
+								Pair(Some(a1), true)
+							} else {
+								Pair(None(), false)
+							}
+						}
+						None(): Pair(Some(a1), true)
+					}
+				}
+				None(): Pair(None(), false)
+			}
+		}
+	);
+	if (pair.second) {
+		pair.first
+	} else {
+		None()
+	}
+};
+
+moduleWhereNameIsDefined(globalNames : FcFiGlobalNames, name : string) -> string {
+	switch (globalNames) {
+		FcGlobalNames(__,__,__,__,__,__,__,__,__,__,__,__): {
+			lookupTreeDef(globalNames.function2module, name,
+				lookupTreeDef(globalNames.globalVar2module, name,
+					lookupTreeDef(globalNames.struct2module, name,
+						lookupTreeDef(globalNames.union2module, name,
+							lookupTreeDef(globalNames.native2module, name, "")
+						)
+					)
+				)
+			);
+		}
+		FiGlobalNames(__,__,__,__,__,__,__,__): {
+			lookupTreeDef(globalNames.function2module, name,
+				lookupTreeDef(globalNames.globalVar2module, name,
+					lookupTreeDef(globalNames.struct2module, name,
+						lookupTreeDef(globalNames.union2module, name,
+							lookupTreeDef(globalNames.native2module, name, "")
+						)
+					)
+				)
+			);
+		}
+	}
+}

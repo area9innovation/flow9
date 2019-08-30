@@ -15,6 +15,7 @@ import nw.Gui;
 
 #if (js && !flow_nodejs)
 import js.Browser;
+import js.Promise;
 #if pixijs
 import pixi.core.math.Point;
 #end
@@ -220,5 +221,18 @@ class Util
 			return new Point(null, null);
 	}
 #end
+#end
+
+#if (js && !flow_nodejs)
+	public static function loadJS(url : String) : Promise<Dynamic> {
+		return new Promise<Dynamic>(function(resolve, reject) {
+			var script : Dynamic = Browser.document.createElement('script');
+			script.addEventListener('load', resolve);
+			script.addEventListener('error', reject);
+			script.addEventListener('abort', reject);
+			script.src = url;
+			Browser.document.head.appendChild(script);
+		});
+	}
 #end
 }
