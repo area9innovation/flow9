@@ -19,14 +19,18 @@ class DropAreaClip extends NativeWidgetClip {
 		this.regExp = new EReg(mimeTypeRegExpFilter, "g");
 		this.onDone = onDone;
 
+		if (RenderSupportJSPixi.DomRenderer) {
+			styleChanged = false;
+		}
+
 		initNativeWidget();
 	}
 
-	// public function updateNativeWidget() : Void {
-	// 	styleChanged = true;
+	public override function updateNativeWidgetStyle() : Void {
+		super.updateNativeWidgetStyle();
 
-	// 	super.updateNativeWidget();
-	// }
+		styleChanged = true;
+	}
 
 	private override function createNativeWidget(?tagName : String = "div") : Void {
 		if (!isNativeWidget) {
@@ -39,10 +43,16 @@ class DropAreaClip extends NativeWidgetClip {
 			accessWidget.nodeindex = [-AccessWidget.tree.childrenSize];
 		}
 
-		nativeWidget.className = "droparea";
+		nativeWidget.classList.add("nativeWidget");
+		nativeWidget.classList.add("droparea");
 		nativeWidget.oncontextmenu = onContextMenu;
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			nativeWidget.style.height = "inherit";
+			nativeWidget.style.width = "inherit";
+		}
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {

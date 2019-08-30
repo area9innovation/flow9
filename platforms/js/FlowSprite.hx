@@ -191,27 +191,14 @@ class FlowSprite extends Sprite {
 
 	private function onLoaded() : Void {
 		try {
+			if (nativeWidget == null) {
+				return;
+			}
+
 			if (RenderSupportJSPixi.DomRenderer) {
 				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 			} else {
 				metricsFn(texture.width, texture.height);
-			}
-
-			var currentBounds = new Bounds();
-
-			if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-				applyLocalBoundsTransform(currentBounds);
-			}
-
-			localBounds.minX = 0;
-			localBounds.minY = 0;
-
-			if (RenderSupportJSPixi.DomRenderer) {
-				localBounds.maxX = nativeWidget.naturalWidth;
-				localBounds.maxY = nativeWidget.naturalHeight;
-			} else {
-				localBounds.maxX = texture.width;
-				localBounds.maxY = texture.height;
 			}
 
 			invalidateStage();
@@ -219,10 +206,7 @@ class FlowSprite extends Sprite {
 			renderable = true;
 			loaded = true;
 
-			if (parent != null) {
-				var newBounds = applyLocalBoundsTransform();
-				parent.replaceLocalBounds(currentBounds, newBounds);
-			}
+			calculateLocalBounds();
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();
@@ -289,5 +273,41 @@ class FlowSprite extends Sprite {
 		nativeWidget.src = url;
 
 		isNativeWidget = true;
+	}
+
+	public function calculateLocalBounds() : Void {
+		var currentBounds = new Bounds();
+
+		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+			applyLocalBoundsTransform(currentBounds);
+		}
+
+		localBounds.clear();
+
+		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
+			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
+
+			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
+				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
+			}
+		} else {
+			localBounds.minX = 0;
+			localBounds.minY = 0;
+
+			if (RenderSupportJSPixi.DomRenderer) {
+				localBounds.maxX = nativeWidget.naturalWidth;
+				localBounds.maxY = nativeWidget.naturalHeight;
+			} else {
+				localBounds.maxX = texture.width;
+				localBounds.maxY = texture.height;
+			}
+		}
+
+		if (parent != null) {
+			var newBounds = applyLocalBoundsTransform();
+			if (!currentBounds.isEqualBounds(newBounds)) {
+				parent.replaceLocalBounds(currentBounds, newBounds);
+			}
+		}
 	}
 }

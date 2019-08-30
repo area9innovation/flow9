@@ -31,7 +31,7 @@ class RenderSupportJSPixi {
 
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 
-	private static var MousePos : Point = new Point(0.0, 0.0);
+	public static var MousePos : Point = new Point(0.0, 0.0);
 	public static var PixiStageChanged : Bool = true;
 	private static var TransformChanged : Bool = true;
 	private static var isEmulating : Bool = false;
@@ -2168,8 +2168,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setClipDebugInfo(clip : DisplayObject, key : String, value : Dynamic) : Void {
-		if (RenderSupportJSPixi.DomRenderer && untyped clip.nativeWidget != null) {
-			untyped clip.nativeWidget.setAttribute(key, HaxeRuntime.typeOf(value).toString());
+		if (RenderSupportJSPixi.DomRenderer) {
+			untyped clip.info = HaxeRuntime.typeOf(value).toString();
 		}
 	}
 

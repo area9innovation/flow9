@@ -6,6 +6,7 @@ import pixi.core.display.Bounds;
 import pixi.core.display.TransformBase;
 import pixi.core.math.Matrix;
 import pixi.core.display.Transform;
+import pixi.core.math.Point;
 
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
@@ -91,7 +92,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateTransform(clip : DisplayObject) : Void {
-		if (InvalidateStage || !RenderSupportJSPixi.DomRenderer) {
+		if (InvalidateStage) {
 			invalidateParentTransform(clip);
 		}
 
@@ -99,7 +100,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool = true) : Void {
-		if (clip.parent != null) {
+		if (clip.parent != null && untyped (!clip.worldTransformChanged || (localTransformChanged && localTransformChanged != clip.localTransformChanged))) {
 			untyped clip.worldTransformChanged = true;
 			untyped clip.transformChanged = true;
 
@@ -448,15 +449,15 @@ class DisplayObjectHelper {
 			}
 
 			clip.scrollRect = null;
-		}
 
-		if (RenderSupportJSPixi.DomRenderer) {
-			invalidateTransform(clip);
-		} else {
-			invalidateStage(clip);
-		}
+			if (RenderSupportJSPixi.DomRenderer) {
+				invalidateTransform(clip);
+			} else {
+				invalidateStage(clip);
+			}
 
-		untyped clip.calculateLocalBounds();
+			untyped clip.calculateLocalBounds();
+		}
 	}
 
 	// setClipMask cancels setScrollRect and vice versa
@@ -553,12 +554,9 @@ class DisplayObjectHelper {
 		}
 
 		var bounds = getMaskedBounds(clip);
-		var worldTransform = clip.worldTransform.clone().invert();
+		var worldTransform = clip.worldTransform;
 
-		bounds.minX = bounds.minX * worldTransform.a + bounds.minY * worldTransform.c + worldTransform.tx;
-		bounds.minY = bounds.minX * worldTransform.b + bounds.minY * worldTransform.d + worldTransform.ty;
-		bounds.maxX = bounds.maxX * worldTransform.a + bounds.maxY * worldTransform.c + worldTransform.tx;
-		bounds.maxY = bounds.maxX * worldTransform.b + bounds.maxY * worldTransform.d + worldTransform.ty;
+		applyBoundsTransform(bounds, worldTransform, bounds);
 
 		return bounds;
 	}
@@ -722,6 +720,16 @@ class DisplayObjectHelper {
 
 				if (nativeWidget != null) {
 					if (clip.visible && isNativeWidget(clip)) {
+						if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
+							var localStage : FlowContainer = untyped clip.stage;
+
+							if (localStage != null) {
+								var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
+									(nativeWidget.classList.contains("droparea") ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget);
+								nativeWidget.style.zIndex = Std.string(zIndex);
+							}
+						}
+
 						updateNativeWidgetTransformMatrix(clip);
 						updateNativeWidgetOpacity(clip);
 						updateNativeWidgetMask(clip);
@@ -914,10 +922,10 @@ class DisplayObjectHelper {
 
 		if (nativeWidget != null) {
 			var mask : FlowGraphics = clip.mask;
-			var scrollRect = untyped clip.scrollRect || untyped clip.viewBounds;
+			var scrollRect = untyped clip.scrollRect /*|| clip.viewBounds*/;
 			var viewBounds = untyped clip.viewBounds;
 
-			if (scrollRect != null) {
+			if (untyped scrollRect != null && clip.children != null && clip.children.length > 0) {
 				nativeWidget.style.clipPath = null;
 				nativeWidget.style.width = '${scrollRect.width}px';
 				nativeWidget.style.height = '${scrollRect.height}px';
@@ -1268,29 +1276,126 @@ class DisplayObjectHelper {
 			container = new Bounds();
 		}
 
-		untyped clip.transform.updateLocalTransform();
+		if (untyped clip.localTransformChanged) {
+			untyped clip.transform.updateLocalTransform();
+		}
+
 		var transform = clip.localTransform;
 		var bounds = untyped clip.localBounds;
 
-		var x = [
-			bounds.minX * transform.a + bounds.minY * transform.c + transform.tx,
-			bounds.minX * transform.a + bounds.maxY * transform.c + transform.tx,
-			bounds.maxX * transform.a + bounds.maxY * transform.c + transform.tx,
-			bounds.maxX * transform.a + bounds.minY * transform.c + transform.tx
-		];
+		applyBoundsTransform(bounds, transform, container);
 
-		var y = [
-			bounds.minX * transform.b + bounds.minY * transform.d + transform.ty,
-			bounds.minX * transform.b + bounds.maxY * transform.d + transform.ty,
-			bounds.maxX * transform.b + bounds.maxY * transform.d + transform.ty,
-			bounds.maxX * transform.b + bounds.minY * transform.d + transform.ty
-		];
+		return container;
+	}
+
+	public static function applyBoundsTransform(bounds : Bounds, transform : Matrix, ?container : Bounds) : Bounds {
+		if (container == null) {
+			container = new Bounds();
+		}
+
+		if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
+			var x = [
+				bounds.minX * transform.a + bounds.minY * transform.c + transform.tx,
+				bounds.minX * transform.a + bounds.maxY * transform.c + transform.tx,
+				bounds.maxX * transform.a + bounds.maxY * transform.c + transform.tx,
+				bounds.maxX * transform.a + bounds.minY * transform.c + transform.tx
+			];
+
+			var y = [
+				bounds.minX * transform.b + bounds.minY * transform.d + transform.ty,
+				bounds.minX * transform.b + bounds.maxY * transform.d + transform.ty,
+				bounds.maxX * transform.b + bounds.maxY * transform.d + transform.ty,
+				bounds.maxX * transform.b + bounds.minY * transform.d + transform.ty
+			];
 
 
-		container.minX = Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3]));
-		container.minY = Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3]));
-		container.maxX = Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3]));
-		container.maxY = Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3]));
+			container.minX = Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3]));
+			container.minY = Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3]));
+			container.maxX = Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3]));
+			container.maxY = Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3]));
+		} else {
+			var x = [
+				bounds.minX + transform.tx,
+				bounds.maxX + transform.tx
+			];
+
+			var y = [
+				bounds.minY + transform.ty,
+				bounds.maxY + transform.ty
+			];
+
+			container.minX = Math.min(x[0], x[1]);
+			container.minY = Math.min(y[0], y[1]);
+			container.maxX = Math.max(x[0], x[1]);
+			container.maxY = Math.max(y[0], y[1]);
+		}
+
+		return container;
+	}
+
+	public static function applyInvertedTransform(bounds : Bounds, transform : Matrix, ?container : Bounds) : Bounds {
+		if (container == null) {
+			container = new Bounds();
+		}
+
+		if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
+			var x = [
+				(transform.a != 0 ? bounds.minX / transform.a : 0) + (transform.c != 0 ? bounds.minY / transform.c : 0) - transform.tx,
+				(transform.a != 0 ? bounds.minX / transform.a : 0) + (transform.c != 0 ? bounds.maxY / transform.c : 0) - transform.tx,
+				(transform.a != 0 ? bounds.maxX / transform.a : 0) + (transform.c != 0 ? bounds.maxY / transform.c : 0) - transform.tx,
+				(transform.a != 0 ? bounds.maxX / transform.a : 0) + (transform.c != 0 ? bounds.minY / transform.c : 0) - transform.tx
+			];
+
+			var y = [
+				(transform.b != 0 ? bounds.minX / transform.b : 0) + (transform.d != 0 ? bounds.minY / transform.d : 0) - transform.ty,
+				(transform.b != 0 ? bounds.minX / transform.b : 0) + (transform.d != 0 ? bounds.maxY / transform.d : 0) - transform.ty,
+				(transform.b != 0 ? bounds.maxX / transform.b : 0) + (transform.d != 0 ? bounds.maxY / transform.d : 0) - transform.ty,
+				(transform.b != 0 ? bounds.maxX / transform.b : 0) + (transform.d != 0 ? bounds.minY / transform.d : 0) - transform.ty
+			];
+
+
+			container.minX = Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3]));
+			container.minY = Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3]));
+			container.maxX = Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3]));
+			container.maxY = Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3]));
+		} else {
+			container.minX = bounds.minX - transform.tx;
+			container.minY = bounds.minY - transform.ty;
+			container.maxX = bounds.maxX - transform.tx;
+			container.maxY = bounds.maxY - transform.ty;
+		}
+
+		return container;
+	}
+
+	public static function applyTransformPoint(point : Point, transform : Matrix, ?container : Point) : Point {
+		if (container == null) {
+			container = new Point();
+		}
+
+		if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
+			container.x = point.x * transform.a + point.y * transform.c + transform.tx;
+			container.y =  point.x * transform.b + point.y * transform.d + transform.ty;
+		} else {
+			container.x = point.x + transform.tx;
+			container.y = point.y + transform.ty;
+		}
+
+		return container;
+	}
+
+	public static function applyInvertedTransformPoint(point : Point, transform : Matrix, ?container : Point) : Point {
+		if (container == null) {
+			container = new Point();
+		}
+
+		if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
+			container.x = (transform.a != 0 ? point.x / transform.a : 0) + (transform.c != 0 ? point.y / transform.c : 0) - transform.tx;
+			container.y = (transform.b != 0 ? point.x / transform.b : 0) + (transform.d != 0 ? point.y / transform.d : 0) - transform.ty;
+		} else {
+			container.x = point.x - transform.tx;
+			container.y = point.y - transform.ty;
+		}
 
 		return container;
 	}
@@ -1317,13 +1422,16 @@ class DisplayObjectHelper {
 
 		if (untyped clip.scrollRect != null) {
 			var newViewBounds = new Bounds();
-			newViewBounds.minX = Math.max(viewBounds.minX, untyped clip.scrollRect.x);
-			newViewBounds.minY = Math.max(viewBounds.minY, untyped clip.scrollRect.y);
-			newViewBounds.maxX = Math.min(viewBounds.maxX, untyped clip.scrollRect.width + untyped clip.scrollRect.x);
-			newViewBounds.maxY = Math.min(viewBounds.maxY, untyped clip.scrollRect.height + untyped clip.scrollRect.y);
+
+			newViewBounds.minX = Math.max(viewBounds.minX, Math.min(untyped clip.mask.localBounds.minX, untyped clip.mask.localBounds.maxX) + clip.mask.x);
+			newViewBounds.minY = Math.max(viewBounds.minY, Math.min(untyped clip.mask.localBounds.minY, untyped clip.mask.localBounds.maxY) + clip.mask.y);
+			newViewBounds.maxX = Math.min(viewBounds.maxX, Math.max(untyped clip.mask.localBounds.minX, untyped clip.mask.localBounds.maxX) + clip.mask.x);
+			newViewBounds.maxY = Math.min(viewBounds.maxY, Math.max(untyped clip.mask.localBounds.minY, untyped clip.mask.localBounds.maxY) + clip.mask.y);
 
 			viewBounds = newViewBounds;
 		}
+
+		untyped clip.viewBounds = viewBounds;
 
 		setClipRenderable(
 			clip,
@@ -1338,28 +1446,11 @@ class DisplayObjectHelper {
 		if (children != null) {
 			for (child in children) {
 				untyped child.transform.updateLocalTransform();
+
 				var transform = untyped child.localTransform;
 				var newViewBounds = new Bounds();
 
-				var x = [
-					(transform.a != 0 ? viewBounds.minX / transform.a : 0) + (transform.c != 0 ? viewBounds.minY / transform.c : 0) - transform.tx,
-					(transform.a != 0 ? viewBounds.minX / transform.a : 0) + (transform.c != 0 ? viewBounds.maxY / transform.c : 0) - transform.tx,
-					(transform.a != 0 ? viewBounds.maxX / transform.a : 0) + (transform.c != 0 ? viewBounds.maxY / transform.c : 0) - transform.tx,
-					(transform.a != 0 ? viewBounds.maxX / transform.a : 0) + (transform.c != 0 ? viewBounds.minY / transform.c : 0) - transform.tx
-				];
-
-				var y = [
-					(transform.b != 0 ? viewBounds.minX / transform.b : 0) + (transform.d != 0 ? viewBounds.minY / transform.d : 0) - transform.ty,
-					(transform.b != 0 ? viewBounds.minX / transform.b : 0) + (transform.d != 0 ? viewBounds.maxY / transform.d : 0) - transform.ty,
-					(transform.b != 0 ? viewBounds.maxX / transform.b : 0) + (transform.d != 0 ? viewBounds.maxY / transform.d : 0) - transform.ty,
-					(transform.b != 0 ? viewBounds.maxX / transform.b : 0) + (transform.d != 0 ? viewBounds.minY / transform.d : 0) - transform.ty
-				];
-
-
-				newViewBounds.minX = Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3]));
-				newViewBounds.minY = Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3]));
-				newViewBounds.maxX = Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3]));
-				newViewBounds.maxY = Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3]));
+				applyInvertedTransform(viewBounds, transform, newViewBounds);
 
 				invalidateRenderable(child, newViewBounds);
 			}

@@ -66,18 +66,6 @@ class VideoClip extends FlowContainer {
 		this.positionFn = positionFn;
 	}
 
-	public function updateNativeWidget() {
-		if (videoWidget != null) {
-			if (visible) {
-				updateNativeWidgetTransformMatrix();
-				updateNativeWidgetOpacity();
-				updateNativeWidgetMask();
-			}
-
-			updateNativeWidgetDisplay();
-		}
-	}
-
 	private function checkTimeRange(currentTime : Float, videoResponse : Bool) : Void {
 		try { // Crashes in IE sometimes
 			if (currentTime < startTime && startTime < videoWidget.duration) {
@@ -305,7 +293,9 @@ class VideoClip extends FlowContainer {
 			updateSubtitlesClip();
 		};
 
-		videoTexture.update();
+		if (!RenderSupportJSPixi.DomRenderer) {
+			videoTexture.update();
+		}
 
 		loaded = true;
 	}
