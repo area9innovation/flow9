@@ -38,6 +38,9 @@ class VideoClip extends FlowContainer {
 		var playingVideosFiltered =
 			playingVideos.filter(function (v) {
 				var videoWidget = v.videoWidget;
+				if (videoWidget == null) {
+					return false;
+				}
 				v.checkTimeRange(videoWidget.currentTime, true);
 
 				if (!RenderSupportJSPixi.DomRenderer) {

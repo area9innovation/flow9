@@ -14,6 +14,10 @@ class DisplayObjectHelper {
 
 	private static var InvalidateStage : Bool = true;
 
+	public static function log(s : Dynamic) : Void {
+		untyped __js__("console.log(s)");
+	}
+
 	public static inline function lockStage() {
 		InvalidateStage = false;
 	}
@@ -168,7 +172,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
-		clip.interactive = clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || untyped clip.cursor != null;
+		clip.interactive = clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || untyped clip.cursor != null || untyped clip.isInteractive;
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
@@ -720,16 +724,6 @@ class DisplayObjectHelper {
 
 				if (nativeWidget != null) {
 					if (clip.visible && isNativeWidget(clip)) {
-						if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
-							var localStage : FlowContainer = untyped clip.stage;
-
-							if (localStage != null) {
-								var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
-									(nativeWidget.classList.contains("droparea") ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget);
-								nativeWidget.style.zIndex = Std.string(zIndex);
-							}
-						}
-
 						updateNativeWidgetTransformMatrix(clip);
 						updateNativeWidgetOpacity(clip);
 						updateNativeWidgetMask(clip);
@@ -741,6 +735,8 @@ class DisplayObjectHelper {
 						if (RenderSupportJSPixi.DomInteractions) {
 							updateNativeWidgetInteractive(clip);
 						}
+
+						updateNativeWidgetShadow(clip);
 					}
 
 					updateNativeWidgetDisplay(clip);
@@ -750,7 +746,7 @@ class DisplayObjectHelper {
 				updateNativeWidgetOpacity(clip);
 			}
 
-			if (untyped clip.styleChanged || (!RenderSupportJSPixi.DomRenderer && untyped clip.viewBounds == null && untyped clip.updateNativeWidgetStyle != null)) {
+			if (untyped clip.styleChanged) {
 				untyped clip.updateNativeWidgetStyle();
 			}
 		}
@@ -828,6 +824,44 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static function updateNativeWidgetShadow(clip : DisplayObject) {
+		var nativeWidget : js.html.Element = untyped clip.nativeWidget;
+
+		if (nativeWidget != null) {
+			var filters = clip.filters;
+
+			if (filters != null) {
+				for (filter in clip.filters) {
+					var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
+
+					if (untyped clip.mask == null && nativeWidget.children != null && nativeWidget.children.length == 1 && false) {
+						for (childWidget in nativeWidget.children) {
+							childWidget.style.boxShadow = '
+								${Math.round(untyped Math.cos(filter.angle) * filter.distance)}px
+								${Math.round(untyped Math.sin(filter.angle) * filter.distance)}px
+								${Math.round(untyped filter.blur)}px
+								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+							';
+						}
+					} else {
+						if (nativeWidget.children != null && false) {
+							for (childWidget in nativeWidget.children) {
+								childWidget.style.boxShadow = null;
+							}
+						}
+
+						nativeWidget.style.filter = 'drop-shadow(
+							${Math.round(untyped Math.cos(filter.angle) * filter.distance)}px
+							${Math.round(untyped Math.sin(filter.angle) * filter.distance)}px
+							${Math.round(untyped filter.blur)}px
+							rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+						)';
+					}
+				}
+			}
+		}
+	}
+
 	public static function getNativeWidgetLocalAlpha(clip : DisplayObject) : Float {
 		if (clip.parent != null && !isNativeWidget(clip.parent)) {
 			return clip.alpha * getNativeWidgetLocalAlpha(clip.parent);
@@ -886,22 +920,9 @@ class DisplayObjectHelper {
 		if (nativeWidget != null) {
 			if (x != 0 || y != 0) {
 				createPlaceholderWidget(clip);
+			}
 
-				var scrollFn = function() {
-					if (nativeWidget.scrollLeft != x) {
-						nativeWidget.scrollLeft = x;
-					}
-
-					if (nativeWidget.scrollTop != y) {
-						nativeWidget.scrollTop = y;
-					}
-				}
-				nativeWidget.onscroll = scrollFn;
-				scrollFn();
-				untyped clip.scrollFn = scrollFn;
-			} else {
-				nativeWidget.onscroll = null;
-
+			var scrollFn = function() {
 				if (nativeWidget.scrollLeft != x) {
 					nativeWidget.scrollLeft = x;
 				}
@@ -910,6 +931,9 @@ class DisplayObjectHelper {
 					nativeWidget.scrollTop = y;
 				}
 			}
+			nativeWidget.onscroll = scrollFn;
+			scrollFn();
+			untyped clip.scrollFn = scrollFn;
 		}
 	}
 
@@ -922,7 +946,7 @@ class DisplayObjectHelper {
 
 		if (nativeWidget != null) {
 			var mask : FlowGraphics = clip.mask;
-			var scrollRect = untyped clip.scrollRect /*|| clip.viewBounds*/;
+			var scrollRect = untyped clip.scrollRect || clip.viewBounds;
 			var viewBounds = untyped clip.viewBounds;
 
 			if (untyped scrollRect != null && clip.children != null && clip.children.length > 0) {
@@ -1020,11 +1044,11 @@ class DisplayObjectHelper {
 
 			if (clip.interactive) {
 				if (nativeWidget.style.onmouseover == null) {
-					nativeWidget.onmouseover = function() {
+					nativeWidget.onpointerover = function() {
 						clip.emit("pointerover");
 					}
 
-					nativeWidget.onmouseout = function() {
+					nativeWidget.onpointerout = function() {
 						clip.emit("pointerout");
 					}
 				}
@@ -1180,6 +1204,15 @@ class DisplayObjectHelper {
 		var childWidget : Dynamic = untyped child.nativeWidget;
 
 		if (nativeWidget != null && isNativeWidget(clip)) {
+			if (childWidget.style.zIndex == null || childWidget.style.zIndex == "") {
+				var localStage : FlowContainer = untyped clip.stage;
+
+				if (localStage != null) {
+					var zIndex = 1000 * localStage.parent.children.indexOf(localStage) + (childWidget.classList.contains("droparea") ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget);
+					childWidget.style.zIndex = Std.string(zIndex);
+				}
+			}
+
 			nativeWidget.insertBefore(childWidget, findNextNativeWidget(child, nativeWidget));
 
 			if (untyped clip.scrollFn != null) {
@@ -1359,10 +1392,20 @@ class DisplayObjectHelper {
 			container.maxX = Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3]));
 			container.maxY = Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3]));
 		} else {
-			container.minX = bounds.minX - transform.tx;
-			container.minY = bounds.minY - transform.ty;
-			container.maxX = bounds.maxX - transform.tx;
-			container.maxY = bounds.maxY - transform.ty;
+			var x = [
+				bounds.minX - transform.tx,
+				bounds.maxX - transform.tx
+			];
+
+			var y = [
+				bounds.minY - transform.ty,
+				bounds.maxY - transform.ty
+			];
+
+			container.minX = Math.min(x[0], x[1]);
+			container.minY = Math.min(y[0], y[1]);
+			container.maxX = Math.max(x[0], x[1]);
+			container.maxY = Math.max(y[0], y[1]);
 		}
 
 		return container;
@@ -1431,7 +1474,14 @@ class DisplayObjectHelper {
 			viewBounds = newViewBounds;
 		}
 
-		untyped clip.viewBounds = viewBounds;
+		if (!RenderSupportJSPixi.DomRenderer) {
+			untyped clip.viewBounds = viewBounds;
+
+			if (untyped clip.styleChanged != null) {
+				untyped clip.invalidateStyle();
+				invalidateTransform(clip);
+			}
+		}
 
 		setClipRenderable(
 			clip,
@@ -1445,7 +1495,9 @@ class DisplayObjectHelper {
 		var children : Array<DisplayObject> = untyped clip.children;
 		if (children != null) {
 			for (child in children) {
-				untyped child.transform.updateLocalTransform();
+				if (untyped child.localTransformChanged) {
+					untyped child.transform.updateLocalTransform();
+				}
 
 				var transform = untyped child.localTransform;
 				var newViewBounds = new Bounds();

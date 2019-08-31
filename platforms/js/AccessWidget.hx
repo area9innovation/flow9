@@ -539,8 +539,8 @@ class AccessWidget extends EventEmitter {
 
 		// Sets events
 		if (accessRoleMap.get(role) == "button") {
-			element.onclick = function(e) {
-				if (e.target == element) {
+			element.onclick = function(e : Dynamic) {
+				if (e.target == element && e.detail == 0) {
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
 					} else {
@@ -549,7 +549,7 @@ class AccessWidget extends EventEmitter {
 				}
 			};
 
-			element.addEventListener('focus', function() {
+			element.addEventListener('focus', function(e : Dynamic) {
 				if (element != null) {
 					element.classList.add('focused');
 				}

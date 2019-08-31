@@ -23,7 +23,7 @@ using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
 	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
-	public static var DomInteractions : Bool = Util.getParameter("interactions") == "dom";
+	public static var DomInteractions : Bool = DomRenderer && (Util.getParameter("interactions") == null || Util.getParameter("interactions") == "dom");
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
@@ -1989,31 +1989,9 @@ class RenderSupportJSPixi {
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
 		if (RenderSupportJSPixi.DomRenderer) {
-			if (filters.length > 0) {
-				var filter : Dynamic = filters[0];
-				var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(filter.color, []);
-
-				clip.initNativeWidget();
-
-				if (Platform.isIE) { //todo:
-					untyped clip.nativeWidget.style.boxShadow = '
-						${Math.round(Math.cos(filter.angle) * filter.distance)}px
-						${Math.round(Math.sin(filter.angle) * filter.distance)}px
-						${Math.round(filter.blur)}px
-						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
-					';
-
-					untyped clip.nativeWidget.style.width = '${clip.getWidth()}px';
-					untyped clip.nativeWidget.style.height = '${clip.getHeight()}px';
-				} else {
-					untyped clip.nativeWidget.style.filter = 'drop-shadow(
-						${Math.round(Math.cos(filter.angle) * filter.distance)}px
-						${Math.round(Math.sin(filter.angle) * filter.distance)}px
-						${Math.round(filter.blur)}px
-						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
-					)';
-				}
-			}
+			untyped clip.filters = filters.filter(function(f) { return f != null; });
+			clip.initNativeWidget();
+			clip.invalidateTransform();
 		} else {
 			untyped clip.filterPadding = 0.0;
 			untyped clip.glShaders = false;
@@ -2253,9 +2231,9 @@ class RenderSupportJSPixi {
 				if (regularFullScreenClipParent != null && regularStageChildren.length != 0) {
 					for (child in regularStageChildren) {
 						child.setClipVisible(untyped child._flow_visible);
+						mainStage.addChild(child);
 					}
 
-					mainStage.children = regularStageChildren;
 					regularFullScreenClipParent.addChild(FullWindowTargetClip);
 				}
 			}
