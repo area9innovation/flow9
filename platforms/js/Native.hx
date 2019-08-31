@@ -397,7 +397,19 @@ class Native {
 	}
 
 	public static inline function substring(str : String, start : Int, end : Int) : String {
-		return str.substr((start), (end));
+		var s = str.substr((start), (end));
+		#if js
+		// It turns out that Chrome does NOT copy strings out when doing substring,
+		// and thus we never free the original string
+		if (2 * s.length < str.length) {
+			// So if our slice is "small", we explicitly force a copy like this
+			return untyped (' ' + s).slice(1);
+		} else {
+			return s;
+		}
+		#else
+		return s;
+		#end
 	}
 
 	public static inline function toLowerCase(str : String) : String {

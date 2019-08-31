@@ -2,7 +2,6 @@ import text/blueprint;
 import runtime;
 import sys/system;
 import formats/base64;
-import formats/json/json;
 import fs/filesystem;
 import tools/common/pathutil;
 import ds/list;
@@ -15,7 +14,7 @@ export {
 		callback : () -> void) -> void;
 }
 
-makeHtml(title, lnFavicon, bgimage, scripts, lnCss, predefinedParams, manifestLink, iosIcons) {
+makeHtml(title, lnFavicon, bgimage, scripts, lnCss, predefinedParams, manifestLink) {
 // ****************************************************************
 // Please pay attention!
 // It is very important to have variable 'htmlBundle' defined
@@ -25,7 +24,7 @@ makeHtml(title, lnFavicon, bgimage, scripts, lnCss, predefinedParams, manifestLi
 // ****************************************************************
 
 Cons("<html xmlns='http://www.w3.org/1999/xhtml' xml:lang='en'>
-  <head> 
+  <head>
     <title>", Cons(title, Cons("</title>
 
     <meta http-equiv='X-UA-Compatible' content='IE=11' />
@@ -34,21 +33,16 @@ Cons("<html xmlns='http://www.w3.org/1999/xhtml' xml:lang='en'>
     <!-- disable user scaling on mobile devices -->
     <meta name='viewport' content='initial-scale=1.0,maximum-scale=1.0,user-scalable=no' />
     <!-- Suppress browser request for favicon.ico -->
-    <link rel='shortcut icon' type='image/x-icon' href='data:image/x-icon;,'/>",
-	Cons(manifestLink, Cons("
-
-    <script>
+    <link rel='shortcut icon' type='image/x-icon' href='data:image/x-icon;,'/>
+	<script>
     var htmlBundle = true;", Cons(predefinedParams, Cons("
     var favIcon ='", Cons(lnFavicon, Cons("';
-    var docHead = document.getElementsByTagName('head')[0];       
+    var docHead = document.getElementsByTagName('head')[0];
     var newLink = document.createElement('link');
     newLink.rel = 'shortcut icon';
     newLink.href = 'data:image/png;base64,'+favIcon;
-    docHead.appendChild(newLink);
+    docHead.appendChild(newLink);",	Cons(manifestLink, Cons("
     </script>
-    <!-- iOS PWA -->
-    <meta name='apple-mobile-web-app-capable' content='yes' />
-    <meta name='apple-mobile-web-app-status-bar-style' content='black' />", Cons(iosIcons, Cons("
   </head>
   <body style=\"background-image: url('data:image/png;base64,", Cons(bgimage, Cons("'); background-position: center top; background-repeat: no-repeat; zoom: 1;\">
 
@@ -57,14 +51,14 @@ Cons(lnCss, Cons(scripts, Cons("
 
 </body>
 </html>
-", makeList())))))))))))))))) |> reverseList |> list2string;
+", makeList())))))))))))))) |> reverseList |> list2string;
 }
 
 
 includeScript(cfg : FiHTMLConfig, name: string)  {
 	fcVerbose(cfg, 1, "Linker: reading " + name);
 	content = getFileContent(findFlowPath(name, false, cfg.includes, cfg.workingDir));
-	
+
 	fcVerbose(cfg, 1, "Linker: blueprinting " + name + "...");
 	"
 <!-- " + name + " -->
@@ -79,7 +73,7 @@ includeScript(cfg : FiHTMLConfig, name: string)  {
 includeCss(cfg : FiHTMLConfig, name: string) -> string {
 	fcVerbose(cfg, 1, "Linker: reading " + name + "...");
 	content = getFileContent(findFlowPath(name, false, cfg.includes, cfg.workingDir));
-	
+
 	fcVerbose(cfg, 1, "Linker: blueprinting " + name + "...");
 "
 <style type='text/css'>
@@ -138,19 +132,20 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 				includeScript(cfg, e)
 			}), "");
 
-			manifestLink = if (cfg.manifestFileName != "") "\n    <link rel=\"manifest\" href=\"" + cfg.manifestFileName + "\">" else "";
-
-			manifestPath = if (cfg.manifestFileName != "") dirName(cfg.outputfile) + "/" + cfg.manifestFileName else "";
-
-			manifestContent = if(manifestPath != "") getFileContent(manifestPath) else "{}";
-			iosIconsLinks = parseJson(manifestContent)
-				|> (\json -> getJsonArrayField(json, "icons"))
-				|> (\icons -> map(icons, \icon -> {
-					fullIconPath = resolveRelativePath(dirName(manifestPath) + "/" + getJsonStringField(icon, "src", ""));
-					relatingIconPath = relatingPath(fullIconPath, resolveRelativePath(dirName(cfg.outputfile)));
-					sizes = getJsonStringField(icon, "sizes", "");
-					"\n    <link rel='apple-touch-icon' sizes='" + sizes + "' href='" + relatingIconPath + "' />";
-				})) |> concatStrings;
+			manifestLink = if (cfg.manifestFileName != "") {
+				"\n    var pwaLink = document.createElement('link');
+    pwaLink.rel = 'manifest';
+    pwaLink.href = '" + cfg.manifestFileName + "' + " + (if (strContains(cfg.manifestFileName, "?")) {
+		"(window.location.search !== '' ? '&' + window.location.search.substring(1) : window.location.search);"
+	} else {
+		"window.location.search;"
+	}) + "document.head.appendChild(pwaLink);
+    var pwaScript = document.createElement('script');
+    pwaScript.src = 'js/pwacompat.min.js';
+    document.head.appendChild(pwaScript);"
+			} else {
+				""
+			};
 
 			predefinedParams =
 				if (cfg.predefinedParams == []) {
@@ -169,10 +164,9 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 				scripts,
 				includeCss(cfg, fiHTMLCss),
 				predefinedParams,
-				manifestLink,
-				iosIconsLinks
+				manifestLink
 			);
-			
+
 			fcVerbose(cfg, 1, "Saving...");
 			setFileContent(cfg.outputfile, res);
 			fcVerbose(cfg, 0, "File " + cfg.outputfile + " linked.");
@@ -218,4 +212,3 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 		callback();
 	}
 }
-

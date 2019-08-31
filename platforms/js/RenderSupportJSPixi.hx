@@ -585,6 +585,10 @@ class RenderSupportJSPixi {
 					if (MouseUpReceived)
 						return;
 
+					// Prevent from mouseout to child
+					if (e.toElement && e.toElement.parent != e.fromElement)
+						return;
+
 					var checkElement = function (el) {
 						if (el != null) {
 							var tagName = el.tagName.toLowerCase();
@@ -596,7 +600,6 @@ class RenderSupportJSPixi {
 
 						return false;
 					}
-
 					// Prevent from mouseout to native clip or droparea element to allow dragging over
 					if (checkElement(e.toElement) && e.fromElement != null || checkElement(e.fromElement) && e.toElement != null)
 						return;

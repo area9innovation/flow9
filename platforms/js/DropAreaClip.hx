@@ -48,6 +48,7 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.oncontextmenu = onContextMenu;
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
+		nativeWidget.onmousedown = onMouseDown;
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			nativeWidget.style.height = "inherit";
@@ -107,5 +108,9 @@ class DropAreaClip extends NativeWidgetClip {
 		} else {
 			return widgetWidth;
 		}
+	}
+
+	private function onMouseDown(e : Dynamic) {
+		e.preventDefault();
 	}
 }
