@@ -911,6 +911,8 @@ class DisplayObjectHelper {
 			nativeWidget.onscroll = null;
 			nativeWidget.style.width = null;
 			nativeWidget.style.height = null;
+			nativeWidget.style.marginLeft = null;
+			nativeWidget.style.marginTop = null;
 			nativeWidget.style.borderRadius = null;
 		}
 	}
@@ -955,6 +957,8 @@ class DisplayObjectHelper {
 				untyped nativeWidget.style.clipPath = null;
 				nativeWidget.style.width = '${scrollRect.width}px';
 				nativeWidget.style.height = '${scrollRect.height}px';
+				nativeWidget.style.marginLeft = null;
+				nativeWidget.style.marginTop = null;
 				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.overflow = "hidden";
 
@@ -972,9 +976,11 @@ class DisplayObjectHelper {
 						nativeWidget.style.overflow = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
+						nativeWidget.style.marginLeft = '${untyped clip.localBounds.minX}px';
+						nativeWidget.style.marginTop = '${untyped clip.localBounds.minY}px';
 						nativeWidget.style.borderRadius = null;
 						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
-							return i % 2 == 0 ? p + 'px ' : '' + p + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
+							return i % 2 == 0 ? (p - clip.localBounds.minX) + 'px ' : '' + (p - clip.localBounds.minY) + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
 						}).join('') + ')'");
 						untyped nativeWidget.style.webkitClipPath = nativeWidget.style.clipPath;
 					} else if (data.shape.type == 1) {
@@ -982,6 +988,9 @@ class DisplayObjectHelper {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
+						nativeWidget.style.marginLeft = null;
+						nativeWidget.style.marginTop = null;
+						nativeWidget.style.borderRadius = null;
 						nativeWidget.style.overflow = "hidden";
 
 						scrollNativeWidget(clip, Math.round(data.shape.x), Math.round(data.shape.y));
@@ -990,6 +999,8 @@ class DisplayObjectHelper {
 						nativeWidget.style.clipPath = null;
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
+						nativeWidget.style.marginLeft = null;
+						nativeWidget.style.marginTop = null;
 						nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						nativeWidget.style.overflow = "hidden";
 
@@ -1000,6 +1011,8 @@ class DisplayObjectHelper {
 						nativeWidget.style.width = '${getWidth(clip)}px';
 						nativeWidget.style.height = '${getHeight(clip)}px';
 						nativeWidget.style.borderRadius = '${data.shape.radius}px';
+						nativeWidget.style.marginLeft = null;
+						nativeWidget.style.marginTop = null;
 						nativeWidget.style.overflow = "hidden";
 
 						scrollNativeWidget(clip, Math.round(data.shape.x), Math.round(data.shape.y));
