@@ -36,7 +36,7 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = RenderSupportJSPixi.DomRenderer && (DisplayObjectHelper.RenderContainers || worldVisible);
+		isNativeWidget = RenderSupportJSPixi.DomRenderer && (RenderSupportJSPixi.RenderContainers || worldVisible);
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (worldVisible) {

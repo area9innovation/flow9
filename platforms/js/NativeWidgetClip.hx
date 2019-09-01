@@ -26,7 +26,7 @@ class NativeWidgetClip extends FlowContainer {
 	private function getTransform(?worldTransform : Bool) : Matrix {
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (worldTransform == null) {
-				worldTransform = !DisplayObjectHelper.RenderContainers;
+				worldTransform = !RenderSupportJSPixi.RenderContainers;
 			}
 
 			if (!worldTransform) {
