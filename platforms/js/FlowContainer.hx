@@ -268,8 +268,6 @@ class FlowContainer extends Container {
 			applyLocalBoundsTransform(currentBounds);
 		}
 
-		localBounds.clear();
-
 		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
 			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
 

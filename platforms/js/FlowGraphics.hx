@@ -166,6 +166,24 @@ class FlowGraphics extends Graphics {
 			addChild(sprite);
 		}
 
+		if (untyped this.mask == null) {
+			var currentBounds = new Bounds();
+
+			if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+				applyLocalBoundsTransform(currentBounds);
+			}
+
+			updateLocalBounds();
+			localBounds = untyped this._localBounds;
+
+			if (parent != null) {
+				var newBounds = applyLocalBoundsTransform();
+				if (!currentBounds.isEqualBounds(newBounds)) {
+					parent.replaceLocalBounds(currentBounds, newBounds);
+				}
+			}
+		}
+
 		graphicsBounds = localBounds;
 
 		if (parent != null) {

@@ -191,11 +191,11 @@ class FlowSprite extends Sprite {
 
 	private function onLoaded() : Void {
 		try {
-			if (nativeWidget == null) {
-				return;
-			}
-
 			if (RenderSupportJSPixi.DomRenderer) {
+				if (nativeWidget == null) {
+					return;
+				}
+
 				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 			} else {
 				metricsFn(texture.width, texture.height);

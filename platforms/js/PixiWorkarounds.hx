@@ -890,8 +890,10 @@ class PixiWorkarounds {
 				}
 			});
 
-			Element.prototype.getContext = function(a, b) {
-				return { imageSmoothingEnabled : true };
+			if (RenderSupportJSPixi.DomRenderer) {
+				Element.prototype.getContext = function(a, b) {
+					return { imageSmoothingEnabled : true };
+				}
 			}
 
 			PIXI.Container.prototype.updateTransform = function() {

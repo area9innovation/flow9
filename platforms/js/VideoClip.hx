@@ -103,6 +103,7 @@ class VideoClip extends FlowContainer {
 
 		videoWidget.crossorigin = Util.determineCrossOrigin(filename);
 		videoWidget.autoplay = !startPaused;
+		videoWidget.className = 'nativeWidget';
 		videoWidget.setAttribute('playsinline', true);
 		videoWidget.style.pointerEvents = 'none';
 

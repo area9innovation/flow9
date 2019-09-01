@@ -124,6 +124,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
+	public var isInteractive : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -489,7 +490,7 @@ class TextClip extends NativeWidgetClip {
 			return;
 		} else if (isFocused || text == '') {
 			if (textClip != null) {
-				textClip.setClipRenderable(false);
+				textClip.setClipVisible(false);
 			}
 		} else if (textClipChanged) {
 			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
@@ -572,7 +573,7 @@ class TextClip extends NativeWidgetClip {
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			textClip.setClipRenderable(true);
+			textClip.setClipVisible(true);
 			textClipChanged = false;
 		}
 	}
@@ -771,6 +772,8 @@ class TextClip extends NativeWidgetClip {
 
 		untyped this.keepNativeWidget = true;
 		initNativeWidget(multiline ? 'textarea' : 'input');
+		isInteractive = true;
+		invalidateInteractive();
 
 		nativeWidget.onmousemove = onMouseMove;
 		nativeWidget.onmousedown = onMouseDown;

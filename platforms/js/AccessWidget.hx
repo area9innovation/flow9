@@ -549,6 +549,24 @@ class AccessWidget extends EventEmitter {
 				}
 			};
 
+			element.onpointerdown = function (e : Dynamic) {
+				RenderSupportJSPixi.MousePos.x = e.pageX;
+				RenderSupportJSPixi.MousePos.y = e.pageY;
+
+				RenderSupportJSPixi.PixiStage.emit("mousedown");
+
+				e.preventDefault();
+			}
+
+			element.onpointerup = function (e : Dynamic) {
+				RenderSupportJSPixi.MousePos.x = e.pageX;
+				RenderSupportJSPixi.MousePos.y = e.pageY;
+
+				RenderSupportJSPixi.PixiStage.emit("mouseup");
+
+				e.preventDefault();
+			}
+
 			element.addEventListener('focus', function(e : Dynamic) {
 				if (element != null) {
 					element.classList.add('focused');

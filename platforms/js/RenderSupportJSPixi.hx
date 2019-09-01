@@ -1779,10 +1779,6 @@ class RenderSupportJSPixi {
 		}
 
 		var point = new Point(x, y);
-		if (!DomInteractions && clip.parent != null) {
-			clip.updateTransform();
-		}
-
 		return hittestMask(clip.parent, point) && doHitTest(clip, point);
 	}
 
