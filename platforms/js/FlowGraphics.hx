@@ -119,13 +119,12 @@ class FlowGraphics extends Graphics {
 			if (RenderSupportJSPixi.DomRenderer) {
 				untyped data.gradient = fillGradient;
 				untyped data.fillGradient = fillGradient.type == 'radial' ?
-					"radial-gradient(circle at " +
-						(50.0 - Math.sin(fillGradient.matrix.rotation * 0.0174532925) * 50.0) + "% " +
-						(50.0 - Math.cos(fillGradient.matrix.rotation * 0.0174532925) * 50.0) + "%, " :
+					"radial-gradient(" :
 					"linear-gradient(" + (fillGradient.matrix.rotation + 90.0) + 'deg, ';
 
 				for (i in 0...fillGradient.colors.length) {
-					untyped data.fillGradient += RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i]) + ' ' + trimFloat(fillGradient.offsets[i], 0.0, 1.0) * 100.0 + '%' +
+					untyped data.fillGradient += RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i]) + ' ' +
+						trimFloat(fillGradient.offsets[i], 0.0, 1.0) * (fillGradient.type == 'radial' ? 70.0 : 100.0) + '%' +
 						(i != fillGradient.colors.length - 1 ? ', ' : '');
 				}
 
@@ -141,18 +140,18 @@ class FlowGraphics extends Graphics {
 				var matrix = fillGradient.matrix;
 				var gradient = fillGradient.type == "radial"
 					? ctx.createRadialGradient(
-						matrix.xOffset + matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI) / 2.0,
-						matrix.yOffset + matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI) / 2.0,
+						matrix.xOffset + matrix.width / 2.0,
+						matrix.yOffset + matrix.height / 2.0,
 						0.0,
-						matrix.xOffset + matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI) / 2.0,
-						matrix.yOffset + matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI) / 2.0,
+						matrix.xOffset + matrix.width / 2.0,
+						matrix.yOffset + matrix.height / 2.0,
 						Math.max(matrix.width / 2.0, matrix.height / 2.0)
 					)
 					: ctx.createLinearGradient(
-						matrix.xOffset,
-						matrix.yOffset,
-						matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI),
-						matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI)
+						matrix.xOffset + (matrix.width / 2.0 - Math.sin((matrix.rotation + 90.0) * 0.0174532925) * matrix.width / 2.0),
+						matrix.yOffset + (matrix.height / 2.0 + Math.cos((matrix.rotation + 90.0) * 0.0174532925) * matrix.height / 2.0),
+						matrix.xOffset + (matrix.width / 2.0 - Math.sin((matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * matrix.width / 2.0),
+						matrix.yOffset + (matrix.height / 2.0 + Math.cos((matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * matrix.height / 2.0)
 					);
 
 				for (i in 0...fillGradient.colors.length) {
@@ -425,13 +424,12 @@ class FlowGraphics extends Graphics {
 						defs.appendChild(linearGradient);
 
 						linearGradient.setAttribute('id', nativeWidget.getAttribute('id') + "gradient");
-						linearGradient.setAttribute('gradientTransform', 'rotate(' + gradient.matrix.rotation + ')');
 
-						if (gradient.type == 'radial') {
-							linearGradient.setAttribute('cx', "50%");
-							linearGradient.setAttribute('cy', "0%");
-							linearGradient.setAttribute('r', "75%");
-						}
+						linearGradient.setAttribute('x1', '' + (50.0 - Math.sin((gradient.matrix.rotation + 90.0) * 0.0174532925) * 50.0) + '%');
+						linearGradient.setAttribute('y1', '' + (50.0 + Math.cos((gradient.matrix.rotation + 90.0) * 0.0174532925) * 50.0) + '%');
+						linearGradient.setAttribute('x2', '' + (50.0 - Math.sin((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
+						linearGradient.setAttribute('y2', '' + (50.0 + Math.cos((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
+
 
 						for (i in 0...gradient.colors.length) {
 							var stop = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'stop');
@@ -549,13 +547,11 @@ class FlowGraphics extends Graphics {
 							defs.appendChild(linearGradient);
 
 							linearGradient.setAttribute('id', nativeWidget.getAttribute('id') + "gradient");
-							linearGradient.setAttribute('gradientTransform', 'rotate(' + gradient.matrix.rotation + ')');
 
-							if (gradient.type == 'radial') {
-								linearGradient.setAttribute('cx', "50%");
-								linearGradient.setAttribute('cy', "0%");
-								linearGradient.setAttribute('r', "75%");
-							}
+							linearGradient.setAttribute('x1', '' + (50.0 - Math.sin((gradient.matrix.rotation + 90.0) * 0.0174532925) * 50.0) + '%');
+							linearGradient.setAttribute('y1', '' + (50.0 + Math.cos((gradient.matrix.rotation + 90.0) * 0.0174532925) * 50.0) + '%');
+							linearGradient.setAttribute('x2', '' + (50.0 - Math.sin((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
+							linearGradient.setAttribute('y2', '' + (50.0 + Math.cos((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
 
 							for (i in 0...gradient.colors.length) {
 								var stop = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'stop');
