@@ -178,6 +178,8 @@ class FlowGraphics extends Graphics {
 
 				addChild(sprite.mask);
 				addChild(sprite);
+
+				sprite.invalidateTransform();
 			}
 		}
 
@@ -189,12 +191,27 @@ class FlowGraphics extends Graphics {
 			}
 
 			updateLocalBounds();
-			localBounds = untyped this._localBounds;
 
-			if (parent != null) {
-				var newBounds = applyLocalBoundsTransform();
-				if (!currentBounds.isEqualBounds(newBounds)) {
-					parent.replaceLocalBounds(currentBounds, newBounds);
+			if (untyped this._localBounds.minX != null && untyped this._localBounds.minX != Math.POSITIVE_INFINITY) {
+				localBounds = untyped this._localBounds;
+
+				if (localBounds.minX > localBounds.maxX) {
+					var tempX = localBounds.minX;
+					localBounds.minX = localBounds.maxX;
+					localBounds.maxX = tempX;
+				}
+
+				if (localBounds.minY > localBounds.maxY) {
+					var tempY = localBounds.minY;
+					localBounds.minY = localBounds.maxY;
+					localBounds.maxY = tempY;
+				}
+
+				if (parent != null) {
+					var newBounds = applyLocalBoundsTransform();
+					if (!currentBounds.isEqualBounds(newBounds)) {
+						parent.replaceLocalBounds(currentBounds, newBounds);
+					}
 				}
 			}
 		}
