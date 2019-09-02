@@ -51,6 +51,10 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
 		nativeWidget.onmousedown = onMouseDown;
+		if (!RenderSupportJSPixi.DomRenderer) {
+			nativeWidget.onmousemove = onMouseMove;
+		}
+		nativeWidget.style.pointerEvents = "auto";
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			nativeWidget.style.height = "inherit";
@@ -114,5 +118,9 @@ class DropAreaClip extends NativeWidgetClip {
 
 	private function onMouseDown(e : Dynamic) {
 		e.preventDefault();
+	}
+
+	private function onMouseMove(e : Dynamic) {
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 	}
 }

@@ -753,7 +753,7 @@ class DisplayObjectHelper {
 
 	public static function updateNativeWidgetTransformMatrix(clip : DisplayObject, ?worldTransform : Bool) {
 		if (worldTransform == null) {
-			worldTransform = !RenderSupportJSPixi.RenderContainers;
+			worldTransform = !RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer;
 		}
 
 		var nativeWidget = untyped clip.nativeWidget;
@@ -766,7 +766,7 @@ class DisplayObjectHelper {
 			var transform : Dynamic = untyped clip.getTransform != null ? untyped clip.getTransform(worldTransform) : worldTransform ?
 				untyped clip.worldTransform : untyped clip.localTransform;
 
-			if (!RenderSupportJSPixi.RenderContainers) {
+			if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 				var parentNativeWidget = findParentNativeWidget(clip);
 
 				if (parentNativeWidget != null) {
@@ -795,7 +795,7 @@ class DisplayObjectHelper {
 
 	public static function updateNativeWidgetOpacity(clip : DisplayObject, ?worldTransform : Bool) {
 		if (worldTransform == null) {
-			worldTransform = !RenderSupportJSPixi.RenderContainers;
+			worldTransform = !RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer;
 		}
 
 		var nativeWidget = untyped clip.nativeWidget;
@@ -803,7 +803,7 @@ class DisplayObjectHelper {
 		if (nativeWidget != null) {
 			var alpha = worldTransform ? clip.worldAlpha : clip.alpha;
 
-			if (!RenderSupportJSPixi.RenderContainers) {
+			if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 				var parentNativeWidget = findParentNativeWidget(clip);
 
 				if (parentNativeWidget != null) {
@@ -942,7 +942,7 @@ class DisplayObjectHelper {
 
 	public static function updateNativeWidgetMask(clip : DisplayObject, ?worldTransform : Bool, ?attachScrollFn : Bool = false) {
 		if (worldTransform == null) {
-			worldTransform = !RenderSupportJSPixi.RenderContainers;
+			worldTransform = !RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer;
 		}
 
 		var nativeWidget = untyped clip.nativeWidget;
@@ -1160,7 +1160,7 @@ class DisplayObjectHelper {
 				if (nativeWidget.parentNode != null) {
 					nativeWidget.parentNode.removeChild(nativeWidget);
 				}
-			} else if (!RenderSupportJSPixi.RenderContainers) {
+			} else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 				var children : Array<DisplayObject> = untyped clip.children;
 				if (children != null) {
 					for (child in children) {
@@ -1203,7 +1203,7 @@ class DisplayObjectHelper {
 	public static function findNativeWidgetChild(clip : DisplayObject, parent : js.html.Element) : js.html.Element {
 		if (isNativeWidget(clip) && getParentNode(clip) == parent) {
 			return untyped clip.nativeWidget;
-		} else if (!RenderSupportJSPixi.RenderContainers) {
+		} else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 			var children : Array<DisplayObject> = untyped clip.children;
 			if (children != null) {
 				for (child in children) {
