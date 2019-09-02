@@ -99,7 +99,7 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function endFill() : Graphics {
-		if (((untyped this.fillColor != null && fillAlpha > 0) || (lineWidth > 0 && untyped this.lineAlpha > 0))) {
+		if (untyped (this.fillColor != null && fillAlpha > 0) || (lineWidth > 0 && this.lineAlpha > 0) || fillGradient != null) {
 			if (!isEmpty) {
 				isSvg = true;
 			}
@@ -116,54 +116,70 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (fillGradient != null) {
-			// Only linear gradient is supported
-			var canvas : js.html.CanvasElement = Browser.document.createCanvasElement();
-			var bounds = getLocalBounds();
-			canvas.width = untyped bounds.width;
-			canvas.height = untyped bounds.height;
+			if (RenderSupportJSPixi.DomRenderer) {
+				untyped data.gradient = fillGradient;
+				untyped data.fillGradient = fillGradient.type == 'radial' ?
+					"radial-gradient(circle at " +
+						(50.0 - Math.sin(fillGradient.matrix.rotation * 0.0174532925) * 50.0) + "% " +
+						(50.0 - Math.cos(fillGradient.matrix.rotation * 0.0174532925) * 50.0) + "%, " :
+					"linear-gradient(" + (fillGradient.matrix.rotation + 90.0) + 'deg, ';
 
-			var ctx = canvas.getContext2d();
-			var matrix = fillGradient.matrix;
-			var gradient = fillGradient.type == "radial"
-				? ctx.createRadialGradient(
-					matrix.xOffset + matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI) / 2.0,
-					matrix.yOffset + matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI) / 2.0,
-					0.0,
-					matrix.xOffset + matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI) / 2.0,
-					matrix.yOffset + matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI) / 2.0,
-					Math.max(matrix.width / 2.0, matrix.height / 2.0)
-				)
-				: ctx.createLinearGradient(
-					matrix.xOffset,
-					matrix.yOffset,
-					matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI),
-					matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI)
-				);
+				for (i in 0...fillGradient.colors.length) {
+					untyped data.fillGradient += RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i]) + ' ' + trimFloat(fillGradient.offsets[i], 0.0, 1.0) * 100.0 + '%' +
+						(i != fillGradient.colors.length - 1 ? ', ' : '');
+				}
 
-			for (i in 0...fillGradient.colors.length) {
-				gradient.addColorStop(
-					trimFloat(fillGradient.offsets[i], 0.0, 1.0),
-					RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i])
-				);
+				untyped data.fillGradient += ")";
+			} else {
+				// Only linear gradient is supported
+				var canvas : js.html.CanvasElement = Browser.document.createCanvasElement();
+				var bounds = getLocalBounds();
+				canvas.width = untyped bounds.width;
+				canvas.height = untyped bounds.height;
+
+				var ctx = canvas.getContext2d();
+				var matrix = fillGradient.matrix;
+				var gradient = fillGradient.type == "radial"
+					? ctx.createRadialGradient(
+						matrix.xOffset + matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI) / 2.0,
+						matrix.yOffset + matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI) / 2.0,
+						0.0,
+						matrix.xOffset + matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI) / 2.0,
+						matrix.yOffset + matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI) / 2.0,
+						Math.max(matrix.width / 2.0, matrix.height / 2.0)
+					)
+					: ctx.createLinearGradient(
+						matrix.xOffset,
+						matrix.yOffset,
+						matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI),
+						matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI)
+					);
+
+				for (i in 0...fillGradient.colors.length) {
+					gradient.addColorStop(
+						trimFloat(fillGradient.offsets[i], 0.0, 1.0),
+						RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i])
+					);
+				}
+
+				ctx.fillStyle = gradient;
+				ctx.fillRect(0.0, 0.0, bounds.width, bounds.height);
+
+				var sprite = new Sprite(Texture.fromCanvas(canvas));
+				var mask = new FlowGraphics();
+
+				mask.graphicsData = graphicsData.map(function (gd) { return gd.clone(); });
+				sprite.mask = mask;
+				untyped sprite._visible = true;
+				untyped sprite.clipVisible = true;
+
+				for (gd in graphicsData) {
+					gd.fillAlpha = 0.0;
+				}
+
+				addChild(sprite.mask);
+				addChild(sprite);
 			}
-
-			ctx.fillStyle = gradient;
-			ctx.fillRect(0.0, 0.0, bounds.width, bounds.height);
-
-			var sprite = new Sprite(Texture.fromCanvas(canvas));
-			var mask = new FlowGraphics();
-
-			mask.graphicsData = graphicsData.map(function (gd) { return gd.clone(); });
-			sprite.mask = mask;
-			untyped sprite._visible = true;
-			untyped sprite.clipVisible = true;
-
-			for (gd in graphicsData) {
-				gd.fillAlpha = 0.0;
-			}
-
-			addChild(sprite.mask);
-			addChild(sprite);
 		}
 
 		if (untyped this.mask == null) {
@@ -401,6 +417,34 @@ class FlowGraphics extends Graphics {
 						svg.setAttribute("stroke", "none");
 					}
 
+					if (untyped data.fillGradient != null) {
+						var gradient : Dynamic = untyped data.gradient;
+						var defs = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
+						var linearGradient = Browser.document.createElementNS("http://www.w3.org/2000/svg", gradient.type == 'radial' ? 'radialGradient' : 'linearGradient');
+
+						defs.appendChild(linearGradient);
+
+						linearGradient.setAttribute('id', nativeWidget.getAttribute('id') + "gradient");
+						linearGradient.setAttribute('gradientTransform', 'rotate(' + gradient.matrix.rotation + ')');
+
+						if (gradient.type == 'radial') {
+							linearGradient.setAttribute('cx', "50%");
+							linearGradient.setAttribute('cy', "0%");
+							linearGradient.setAttribute('r', "75%");
+						}
+
+						for (i in 0...gradient.colors.length) {
+							var stop = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'stop');
+
+							stop.setAttribute("offset", '' + trimFloat(gradient.offsets[i], 0.0, 1.0) * 100.0 + '%');
+							stop.setAttribute("style", 'stop-color:' + RenderSupportJSPixi.makeCSSColor(gradient.colors[i], gradient.alphas[i]));
+
+							linearGradient.appendChild(stop);
+						}
+
+						svg.appendChild(defs);
+					}
+
 					if (data.shape.type == 0) {
 						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
@@ -409,6 +453,10 @@ class FlowGraphics extends Graphics {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + (p - localBounds.minX) + ' ' : '' + (p - localBounds.minY) + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
+
+						if (untyped data.fillGradient != null) {
+							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
+						}
 
 						svg.appendChild(path);
 					} else if (data.shape.type == 1) {
@@ -419,6 +467,10 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
 
+						if (untyped data.fillGradient != null) {
+							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
+						}
+
 						svg.appendChild(rect);
 					} else if (data.shape.type == 2) {
 						var circle = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'circle');
@@ -426,6 +478,10 @@ class FlowGraphics extends Graphics {
 						circle.setAttribute("cx", Std.string(data.shape.x - localBounds.minX));
 						circle.setAttribute("cy", Std.string(data.shape.y - localBounds.minY));
 						circle.setAttribute("r", Std.string(data.shape.radius));
+
+						if (untyped data.fillGradient != null) {
+							circle.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
+						}
 
 						svg.appendChild(circle);
 					} else if (data.shape.type == 4) {
@@ -437,6 +493,10 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("height", Std.string(data.shape.height));
 						rect.setAttribute("rx", Std.string(data.shape.radius));
 						rect.setAttribute("ry", Std.string(data.shape.radius));
+
+						if (untyped data.fillGradient != null) {
+							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
+						}
 
 						svg.appendChild(rect);
 					} else {
@@ -481,6 +541,36 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("stroke", "none");
 						}
 
+						if (untyped data.fillGradient != null) {
+							var gradient : Dynamic = untyped data.gradient;
+							var defs = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
+							var linearGradient = Browser.document.createElementNS("http://www.w3.org/2000/svg", gradient.type == 'radial' ? 'radialGradient' : 'linearGradient');
+
+							defs.appendChild(linearGradient);
+
+							linearGradient.setAttribute('id', nativeWidget.getAttribute('id') + "gradient");
+							linearGradient.setAttribute('gradientTransform', 'rotate(' + gradient.matrix.rotation + ')');
+
+							if (gradient.type == 'radial') {
+								linearGradient.setAttribute('cx', "50%");
+								linearGradient.setAttribute('cy', "0%");
+								linearGradient.setAttribute('r', "75%");
+							}
+
+							for (i in 0...gradient.colors.length) {
+								var stop = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'stop');
+
+								stop.setAttribute("offset", '' + trimFloat(gradient.offsets[i], 0.0, 1.0) * 100.0 + '%');
+								stop.setAttribute("style", 'stop-color:' + RenderSupportJSPixi.makeCSSColor(gradient.colors[i], gradient.alphas[i]));
+
+								linearGradient.appendChild(stop);
+							}
+
+							svg.appendChild(defs);
+
+							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
+						}
+
 						svg.style.width = '${localBounds.maxX - localBounds.minX}px';
 						svg.style.height = '${localBounds.maxY - localBounds.minY}px';
 						svg.style.left = '${localBounds.minX}px';
@@ -502,6 +592,13 @@ class FlowGraphics extends Graphics {
 							nativeWidget.style.border = null;
 						}
 
+						if (untyped data.fillGradient != null) {
+							nativeWidget.style.background = untyped data.fillGradient;
+							trace("---");
+							trace(untyped data.fillGradient);
+							trace(nativeWidget.style.background);
+						}
+
 						if (data.shape.type == 1) {
 							nativeWidget.style.marginLeft = '${data.shape.x}px';
 							nativeWidget.style.marginTop = '${data.shape.y}px';
@@ -514,6 +611,12 @@ class FlowGraphics extends Graphics {
 							nativeWidget.style.width = '${data.shape.radius * 2 - data.lineWidth * 2}px';
 							nativeWidget.style.height = '${data.shape.radius * 2 - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.radius}px';
+						} else if (data.shape.type == 3) {
+							nativeWidget.style.marginLeft = '${data.shape.x - (data.shape.width * 2.0 - data.lineWidth * 2) / 2.0}px';
+							nativeWidget.style.marginTop = '${data.shape.y - (data.shape.height * 2.0 - data.lineWidth * 2) / 2.0}px';
+							nativeWidget.style.width = '${data.shape.width * 2.0 - data.lineWidth * 2}px';
+							nativeWidget.style.height = '${data.shape.height * 2.0 - data.lineWidth * 2}px';
+							nativeWidget.style.borderRadius = '${data.shape.width - data.lineWidth}px / ${data.shape.height - data.lineWidth}px';
 						} else if (data.shape.type == 4) {
 							nativeWidget.style.marginLeft = '${data.shape.x}px';
 							nativeWidget.style.marginTop = '${data.shape.y}px';
