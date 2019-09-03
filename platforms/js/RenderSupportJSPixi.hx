@@ -528,27 +528,27 @@ class RenderSupportJSPixi {
 
 	private static inline function initPixiStageEventListeners() {
 		if (untyped __js__("window.navigator.msPointerEnabled")) {
-			setStagePointerHandler("MSPointerDown", function () { emit("mousedown"); });
-			setStagePointerHandler("MSPointerUp", function () { emit("mouseup"); });
+			setStagePointerHandler("MSPointerDown", function () { if (MouseUpReceived) emit("mousedown"); });
+			setStagePointerHandler("MSPointerUp", function () { if (!MouseUpReceived) emit("mouseup"); });
 			setStagePointerHandler("MSPointerMove", function () { emit("mousemove"); });
 		}
 
 		if (Native.isTouchScreen()) {
 			setStagePointerHandler("touchstart", function () { emit("mousedown"); });
-			setStagePointerHandler("touchend", function () { emit("mouseup"); });
+			setStagePointerHandler("touchend", function () { if (!MouseUpReceived) emit("mouseup"); });
 			setStagePointerHandler("touchmove", function () { emit("mousemove"); });
 		}
 
 		if (!Platform.isMobile) {
-			setStagePointerHandler("mousedown", function () { emit("mousedown"); });
-			setStagePointerHandler("mouseup", function () { emit("mouseup"); });
+			setStagePointerHandler("mousedown", function () { if (MouseUpReceived) emit("mousedown"); });
+			setStagePointerHandler("mouseup", function () { if (!MouseUpReceived) emit("mouseup"); });
 			setStagePointerHandler("mouserightdown", function () { emit("mouserightdown"); });
 			setStagePointerHandler("mouserightup", function () { emit("mouserightup"); });
 			setStagePointerHandler("mousemiddledown", function () { emit("mousemiddledown"); });
 			setStagePointerHandler("mousemiddleup", function () { emit("mousemiddleup"); });
 			setStagePointerHandler("mousemove", function () { emit("mousemove"); });
 			// Emulate mouseup to release scrollable for example
-			setStagePointerHandler("mouseout", function () { emit("mouseup"); });
+			setStagePointerHandler("mouseout", function () { if (!MouseUpReceived) emit("mouseup"); });
 			// Emulate mousemove to update hovers and tooltips
 			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
 			Browser.document.body.addEventListener("keydown", function (e) { emit("keydown", parseKeyEvent(e)); });
@@ -561,7 +561,7 @@ class RenderSupportJSPixi {
 		setDropCurrentFocusOnDown(true);
 	}
 
-	private static var MouseUpReceived : Bool = false;
+	public static var MouseUpReceived : Bool = false;
 
 	private static function setStagePointerHandler(event : String, listener : Void -> Void) : Void {
 		var cb = switch (event) {
@@ -583,9 +583,6 @@ class RenderSupportJSPixi {
 				// Some browsers may produce both mouseup and moseout for some cases.
 				// For example window openning on button click in FF
 				function(e : Dynamic) {
-					if (MouseUpReceived)
-						return;
-
 					// Prevent from mouseout to child
 					if (e.toElement && e.toElement.parent != e.fromElement)
 						return;
@@ -941,8 +938,6 @@ class RenderSupportJSPixi {
 			emit("stagechanged", timestamp);
 		} else {
 			AccessWidget.updateAccessTree();
-
-			emit("freeframe", timestamp);
 		}
 
 		requestAnimationFrame();
@@ -1993,7 +1988,13 @@ class RenderSupportJSPixi {
 		if (RenderSupportJSPixi.DomRenderer) {
 			untyped clip.filters = filters.filter(function(f) { return f != null; });
 			clip.initNativeWidget();
-			clip.invalidateTransform();
+
+			var children : Array<DisplayObject> = untyped clip.children;
+			if (children != null) {
+				for (child in children) {
+					child.invalidateTransform();
+				}
+			}
 		} else {
 			untyped clip.filterPadding = 0.0;
 			untyped clip.glShaders = false;

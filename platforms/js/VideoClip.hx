@@ -236,8 +236,13 @@ class VideoClip extends FlowContainer {
 
 	private function updateSubtitlesClip() : Void {
 		if (videoWidget != null) {
-			textField.setClipX((videoWidget.videoWidth - textField.getWidth()) / 2.0);
-			textField.setClipY(videoWidget.videoHeight - textField.getHeight() - 2.0);
+			if (videoWidget.videoWidth == 0) {
+				textField.setClipVisible(false);
+			} else {
+				textField.setClipX((videoWidget.videoWidth - textField.getWidth()) / 2.0);
+				textField.setClipY(videoWidget.videoHeight - textField.getHeight() - 2.0);
+				textField.setClipVisible(true);
+			}
 		}
 	}
 

@@ -160,8 +160,6 @@ class FlowContainer extends Container {
 				removeLocalBounds(oldChild.applyLocalBoundsTransform());
 			}
 
-			oldChild.invalidate();
-
 			invalidateInteractive();
 			invalidateStage();
 
@@ -309,5 +307,9 @@ class FlowContainer extends Container {
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;
+
+		for (child in children) {
+			untyped child.parentClip = this;
+		}
 	}
 }
