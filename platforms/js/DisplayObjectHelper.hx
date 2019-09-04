@@ -807,12 +807,12 @@ class DisplayObjectHelper {
 			transform = transform.copy(new Matrix()).prepend(parentClip.worldTransform.copy(new Matrix()).invert());
 		}
 
-		var tx = Math.round(transform.tx);
-		var ty = Math.round(transform.ty);
+		var tx = Math.floor(transform.tx);
+		var ty = Math.floor(transform.ty);
 
 		if (untyped clip.scrollRect != null) {
-			tx = Math.round(transform.tx + Math.round(untyped clip.scrollRect.x));
-			ty = Math.round(transform.ty + Math.round(untyped clip.scrollRect.y));
+			tx = Math.floor(transform.tx + Math.round(untyped clip.scrollRect.x));
+			ty = Math.floor(transform.ty + Math.round(untyped clip.scrollRect.y));
 		}
 
 		nativeWidget.style.left = '${tx}px';
