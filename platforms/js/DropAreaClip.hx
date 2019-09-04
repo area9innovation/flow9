@@ -12,6 +12,8 @@ class DropAreaClip extends NativeWidgetClip {
 	private var regExp : EReg;
 	private var onDone : Array<Dynamic> -> Void;
 
+	public var isInteractive : Bool = true;
+
 	public function new(maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) {
 		super();
 
@@ -19,25 +21,45 @@ class DropAreaClip extends NativeWidgetClip {
 		this.regExp = new EReg(mimeTypeRegExpFilter, "g");
 		this.onDone = onDone;
 
-		createNativeWidget("div");
+		if (RenderSupportJSPixi.DomRenderer) {
+			styleChanged = false;
+		}
+
+		initNativeWidget();
 	}
 
-	public override function updateNativeWidget() : Void {
+	public override function updateNativeWidgetStyle() : Void {
+		super.updateNativeWidgetStyle();
+
 		styleChanged = true;
-
-		super.updateNativeWidget();
 	}
 
-	private override function createNativeWidget(node_name : String) : Void {
-		super.createNativeWidget(node_name);
+	private override function createNativeWidget(?tagName : String = "div") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
 
-		accessWidget.nodeindex = [-AccessWidget.tree.childrenSize];
-		nativeWidget.className = "droparea";
+		super.createNativeWidget(tagName);
+
+		if (accessWidget != null) {
+			accessWidget.nodeindex = [-AccessWidget.tree.childrenSize];
+		}
+
+		nativeWidget.classList.add("nativeWidget");
+		nativeWidget.classList.add("droparea");
 		nativeWidget.oncontextmenu = onContextMenu;
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
-
 		nativeWidget.onmousedown = onMouseDown;
+		if (!RenderSupportJSPixi.DomRenderer) {
+			nativeWidget.onmousemove = onMouseMove;
+		}
+		nativeWidget.style.pointerEvents = "auto";
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			nativeWidget.style.height = "inherit";
+			nativeWidget.style.width = "inherit";
+		}
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {
@@ -96,5 +118,9 @@ class DropAreaClip extends NativeWidgetClip {
 
 	private function onMouseDown(e : Dynamic) {
 		e.preventDefault();
+	}
+
+	private function onMouseMove(e : Dynamic) {
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 	}
 }

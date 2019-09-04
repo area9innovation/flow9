@@ -30,11 +30,23 @@ export {
 
 	fform2s(rform : FForm, level : int) -> string;
 
-	FClipCapabilities(move : bool, filters : bool, interactive : bool, scale : bool, alpha : bool);
-	allFClipCapabilities = FClipCapabilities(true, true, true, true, true);
+	FClipCapability ::= FClipMove, FClipScale, FClipRotate, FClipAlpha, FClipVisible, FClipInteractive, FClipMask, FClipFilters, FClipAccess, FClipCursor;
+		FClipMove();
+		FClipScale();
+		FClipRotate();
+		FClipAlpha();
+		FClipVisible();
+		FClipInteractive();
+		FClipMask();
+		FClipFilters();
+		FClipAccess();
+		FClipCursor();
 
-	FRenderResult(clips : [native], disposers : [() -> void], capabilities : FClipCapabilities);
-	emptyFRenderResult = FRenderResult([], [], allFClipCapabilities);
+	// capabilities tell if some capability is already used on this clip
+	// For example FClipMove tells that setClipX has been already used on the clip
+	// and you have to create new one to be able to apply setClipX on top of it
+	FRenderResult(clips : [native], disposers : [() -> void], capabilities : [FClipCapability]);
+	emptyFRenderResult = FRenderResult([], [], []);
 
 	extractFAccessProperties(style : [flow]) -> [FAccessProperty];
 	addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) -> (native) -> () -> void;
@@ -161,6 +173,7 @@ fform2form(fform : FForm) -> Form {
 		FConstructor(form, fn) : Constructor(fform2form(form), fn);
 		FCreate2(current, fn) : Create2(ref fform2form(^current), \ -> fform2form(fn()));
 		FFullWindow(fullscreen, available, form) : FullWindow(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
+		FFullScreen(fullscreen, available, form) : FullScreen(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
 		FBaseline(b, form) : Baseline(b, fform2form(form));
 		FSize2(s, form) : Size2(s, fform2form(form));
 		FAvailable2(a, form) : Available2(a, fform2form(form));
@@ -196,6 +209,7 @@ form2fform(_form : Form) -> FForm {
 		Picture(url, s) : FPicture(url, make(zeroWH), s);
 		Constructor(form, fn) : FConstructor(form2fform(form), fn);
 		FullWindow(fw, form) : FFullWindow(fw, make(zeroWH), form2fform(form));
+		FullScreen(fs, form) : FFullScreen(fs, make(zeroWH), form2fform(form));
 		Baseline(b, form) : FBaseline(b, form2fform(form));
 		Size2(s, form) : FSize2(s, form2fform(form));
 		Available2(a, form) : FAvailable2(a, form2fform(form));
@@ -937,13 +951,13 @@ renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderRes
 			endFill(clip);
 		}
 
-		FRenderResult([clip], [\ -> deleteNative(clip)], allFClipCapabilities)
+		FRenderResult([clip], [\ -> deleteNative(clip)], [])
 	} else {
 		clip = makeClip();
 		setClipDebugInfo(clip, "form", FGraphics(path, style));
 		renderGraphics(clip, path, style) |> ignore;
 
-		FRenderResult([clip], [\ -> deleteNative(clip)], allFClipCapabilities)
+		FRenderResult([clip], [\ -> deleteNative(clip)], [])
 	}
 }
 
@@ -972,7 +986,7 @@ renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 					)
 				})
 			],
-			FClipCapabilities(false, false, true, false, true)
+			[FClipMask()]
 		);
 	}
 }
@@ -995,8 +1009,6 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 		deleteNative(textfield);
 	}
 
-	caps = FClipCapabilities(true, false, true, false, true);
-
 	eitherFn(
 		tryExtractStruct(style, Underlined([])),
 		\undr -> {
@@ -1016,10 +1028,10 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 						[Stroke(extractStruct(style, Fill(0x000000)).color)]
 				);
 
-			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), caps)
+			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), [FClipMask()])
 		},
 		\ ->
-			FRenderResult([textfield], [disposer], caps)
+			FRenderResult([textfield], [disposer], [FClipMask()])
 	)
 }
 
@@ -1048,7 +1060,7 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 					)
 				})
 			],
-			FClipCapabilities(false, false, true, false, true)
+			[FClipMask()]
 		);
 	}
 }
@@ -1221,6 +1233,11 @@ fform2s(rform : FForm, level : int) -> string {
 			generateSpaces + ")"
 		}
 		FFullWindow(fullscreen, wh, form) : {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FFullScreen(fullscreen, wh, form) : {
 			generateSpaces + structName + "\n" +
 			fform2s(form, level + 1) + "\n" +
 			generateSpaces + ")"

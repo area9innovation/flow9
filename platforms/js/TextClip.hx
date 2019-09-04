@@ -124,6 +124,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
+	public var isInteractive : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -308,18 +309,49 @@ class TextClip extends NativeWidgetClip {
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 
-		nativeWidget.setAttribute("type", type);
-		nativeWidget.value = text;
+		if (isInput) {
+			nativeWidget.setAttribute("type", type);
+			nativeWidget.value = text;
+			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
+			nativeWidget.readOnly = readOnly;
+			nativeWidget.style.lineHeight = '${style.lineHeight}px';
+
+			if (cursorColor >= 0) {
+				nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
+			}
+
+			if (type == 'number') {
+				nativeWidget.step = step;
+			}
+
+			nativeWidget.autocomplete = autocomplete;
+
+			if (maxChars >= 0) {
+				nativeWidget.maxLength = maxChars;
+			}
+
+			if (tabIndex >= 0) {
+				nativeWidget.tabIndex = tabIndex;
+			}
+
+			if (multiline) {
+				nativeWidget.style.resize = 'none';
+			}
+
+			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+		} else {
+			nativeWidget.textContent = StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text;
+			nativeWidget.style.lineHeight = '${style.lineHeight}px';
+		}
+
 		nativeWidget.style.color = style.fill;
 		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';
 		nativeWidget.style.fontFamily = style.fontFamily;
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${style.lineHeight}px';
-		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
-		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
+		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 
 		nativeWidget.style.direction = switch (textDirection) {
 			case 'RTL' : 'rtl';
@@ -335,39 +367,16 @@ class TextClip extends NativeWidgetClip {
 			default : 'left';
 		}
 
-		if (cursorColor >= 0) {
-			nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
-		}
+		if (!RenderSupportJSPixi.DomRenderer) {
+			if (Platform.isEdge || Platform.isIE) {
+				nativeWidget.style.opacity = 1;
+				var slicedColor : Array<String> = style.fill.split(",");
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
 
-		if (type == 'number') {
-			nativeWidget.step = step;
-		}
-
-		nativeWidget.autocomplete = autocomplete;
-
-		if (maxChars >= 0) {
-			nativeWidget.maxLength = maxChars;
-		}
-
-		if (tabIndex >= 0) {
-			nativeWidget.tabIndex = tabIndex;
-		}
-
-		if (multiline) {
-			nativeWidget.style.resize = 'none';
-			nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		}
-
-		nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-
-		if (Platform.isEdge || Platform.isIE) {
-			nativeWidget.style.opacity = 1;
-			var slicedColor : Array<String> = style.fill.split(",");
-			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
-
-			nativeWidget.style.color = newColor;
-		} else {
-			nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+				nativeWidget.style.color = newColor;
+			} else {
+				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+			}
 		}
 	}
 
@@ -461,11 +470,15 @@ class TextClip extends NativeWidgetClip {
 		this.backgroundOpacity = backgroundOpacity;
 
 		// Force text value right away
-		if (nativeWidget != null) {
+		if (nativeWidget != null && isInput) {
 			nativeWidget.value = text;
 		}
 
 		invalidateMetrics();
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'div');
+		}
 	}
 
 	private function measureFont() : Void {
@@ -473,9 +486,11 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function layoutText() : Void {
-		if (isFocused || text == '') {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return;
+		} else if (isFocused || text == '') {
 			if (textClip != null) {
-				textClip.setClipRenderable(false);
+				textClip.setClipVisible(false);
 			}
 		} else if (textClipChanged) {
 			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
@@ -558,7 +573,7 @@ class TextClip extends NativeWidgetClip {
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			textClip.setClipRenderable(true);
+			textClip.setClipVisible(true);
 			textClipChanged = false;
 		}
 	}
@@ -755,7 +770,10 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
-		createNativeWidget(multiline ? 'textarea' : 'input');
+		untyped this.keepNativeWidget = true;
+		initNativeWidget(multiline ? 'textarea' : 'input');
+		isInteractive = true;
+		invalidateInteractive();
 
 		nativeWidget.onmousemove = onMouseMove;
 		nativeWidget.onmousedown = onMouseDown;
@@ -821,7 +839,10 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
 
-			if (RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, point, true, true) != this) {
+			RenderSupportJSPixi.MousePos.x = point.x;
+			RenderSupportJSPixi.MousePos.y = point.y;
+
+			if (RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, RenderSupportJSPixi.MousePos, true, true) != this) {
 				e.preventDefault();
 			}
 		}
@@ -845,7 +866,7 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
-		if (nativeWidget == null) {
+		if (nativeWidget == null || parent == null) {
 			return;
 		}
 
@@ -856,7 +877,7 @@ class TextClip extends NativeWidgetClip {
 		isFocused = false;
 		emit('blur');
 
-		if (nativeWidget == null) {
+		if (nativeWidget == null || parent == null) {
 			return;
 		}
 
@@ -959,7 +980,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return widgetWidth > 0.0 && isInput ? widgetWidth : getClipWidth();
+		return (widgetWidth > 0.0 ? widgetWidth : getClipWidth()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
 	}
 
 	private function getClipWidth() : Float {
@@ -968,7 +989,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getHeight() : Float {
-		return widgetHeight > 0.0 && isInput ? widgetHeight : getClipHeight();
+		return (widgetHeight > 0.0 ? widgetHeight : getClipHeight()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
 	}
 
 	private function getClipHeight() : Float {
@@ -1072,6 +1093,25 @@ class TextClip extends NativeWidgetClip {
 			return [ascent, descent, leading];
 		} else {
 			return [style.fontProperties.ascent, style.fontProperties.descent, style.fontProperties.descent];
+		}
+	}
+
+	private override function createNativeWidget(?tagName : String = "div") : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (!isNativeWidget) {
+				return;
+			}
+
+			deleteNativeWidget();
+
+			nativeWidget = Browser.document.createElement(tagName);
+			nativeWidget.setAttribute('id', getClipUUID());
+			nativeWidget.className = 'nativeWidget';
+			nativeWidget.style.whiteSpace = 'pre-wrap';
+
+			isNativeWidget = true;
+		} else {
+			super.createNativeWidget(tagName);
 		}
 	}
 }
