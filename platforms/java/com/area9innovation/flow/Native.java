@@ -1267,6 +1267,19 @@ public class Native extends NativeHost {
 	  return resArr;
 	}
 
+	public final Object concurrentAsync2(Func0<Object> task) {
+		threadpool.submit(new Runnable(){
+        	public void run(){
+				task.invoke();
+			}
+		});
+/*
+		threadpool.submit(() -> {
+			task.invoke();
+		});
+*/		return null;
+	}	
+
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
 			return task.invoke();
