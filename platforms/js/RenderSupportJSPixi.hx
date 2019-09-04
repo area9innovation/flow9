@@ -561,7 +561,7 @@ class RenderSupportJSPixi {
 		setDropCurrentFocusOnDown(true);
 	}
 
-	public static var MouseUpReceived : Bool = false;
+	public static var MouseUpReceived : Bool = true;
 
 	private static function setStagePointerHandler(event : String, listener : Void -> Void) : Void {
 		var cb = switch (event) {
