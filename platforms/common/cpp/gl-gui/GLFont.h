@@ -411,21 +411,21 @@ protected:
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
     std::vector<CharDirection> directions;
+    CharDirection direction;
     shared_ptr<Utf32InputIterator> endpos;
 
-    GLTextLayout(GLFont::Ptr font, float size);
+    GLTextLayout(GLFont::Ptr font, float size, bool rtl);
 
     bool processIfReverseRemains(
         bool condition,
-        bool rtl,
-        Utf32InputIterator &end,
+        shared_ptr<Utf32InputIterator> end,
         shared_ptr<Utf32InputIterator> &strIter,
         shared_ptr<Utf32InputIterator> &strReverseRemains,
         shared_ptr<Utf32InputIterator> &strDirectAgain,
         float cursor,
         int &reverseCount
     );
-    void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool rtl);
+    void buildLayout(shared_ptr<Utf32InputIterator> begin, shared_ptr<Utf32InputIterator> end, float width_limit, float spacing, bool crop_long_words);
 
     struct RenderPass {
         GLRectStrip pcoords;
@@ -479,7 +479,7 @@ public:
     shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
     const std::vector<CharDirection> &getDirections() { return directions; }
-    double getGlyphAdvance(int glyphIdx) { return glyphIdx<0 || glyphIdx>=glyphs.size()? 0.0 : glyphs[glyphIdx]->advance; }
+    double getGlyphAdvance(int glyphIdx) { return glyphIdx<0 || glyphIdx>=glyphs.size()? 0.0 : glyphs[glyphIdx]->advance * size; }
     const std::vector<size_t> &getCharIndices() { return char_indices; }
     int getCharGlyphPositionIdx(int charidx);
 

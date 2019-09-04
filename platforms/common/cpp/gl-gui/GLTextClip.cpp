@@ -872,6 +872,25 @@ StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
         endBuildExtents();
     }
 
+    if (!textDirectionFixed) {
+        DecodeUtf16toUtf32 decoder(plain_text);
+        char flags = 0;
+        shared_ptr<Utf32InputIterator> ctexti = decoder.begin().clone();
+        while(decoder.end() != *ctexti) {
+            if (GLTextLayout::isLtrChar(**ctexti)) flags |= 1;
+            if (GLTextLayout::isRtlChar(**ctexti)) flags |= 2;
+            ++*ctexti;
+        }
+        switch(flags) {
+        case 1:
+            textDirection = LTR;
+            break;
+        case 2:
+            textDirection = RTL;
+            break;
+        }
+    }
+
     setupEvents();
 
     invokeEventCallbacks(FlowTextScroll, 0, NULL);
@@ -887,11 +906,13 @@ StackSlot GLTextClip::setTextDirection(RUNNER_ARGS)
 
     std::string val = encodeUtf8(RUNNER->GetString(dir_str));
 
-    if (val == "LTR" || val == "ltr")
+    if (val == "LTR" || val == "ltr") {
         textDirection = LTR;
-    else if (val == "RTL" || val == "rtl")
+        textDirectionFixed = true;
+    } else if (val == "RTL" || val == "rtl") {
         textDirection = RTL;
-    else
+        textDirectionFixed = true;
+    } else
         RUNNER->ReportError(InvalidArgument, "Unknown TextDirection type: %s", val.c_str());
 
     invalidateLayout();
@@ -999,13 +1020,20 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
         extent = text_real_extents[i];
         if (extent->char_idx <= idx_v) break;
     }
+    if (!extent) return StackSlot::MakeDouble(-1.0);
     int glyphIdx = extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx);
-    double glyphStartOffset = 0.0;
-    if (glyphIdx < extent->layout->getDirections().size() && extent->layout->getDirections()[glyphIdx] == CharDirection::RTL)
-        glyphStartOffset = extent->layout->getGlyphAdvance(glyphIdx);
-    return StackSlot::MakeDouble(
-        extent? extent->layout->getPositions()[glyphIdx] + glyphStartOffset: -1.0
-    );
+    int orgGlyphCharIdx = extent->layout->getCharIndices()[glyphIdx];
+    float glyphPos = extent->layout->getPositions()[glyphIdx];
+    float glyphAdvance = extent->layout->getGlyphAdvance(glyphIdx);
+
+    // TODO upgrade to valid calculation when we have ligatures of more than 2 characters.
+    int glyphCharsCompo = orgGlyphCharIdx!=idx_v-extent->char_idx? 2 : 1;
+
+    int charIdxDelta = idx_v-extent->char_idx-orgGlyphCharIdx;
+    double glyphStartOffset = fabs(glyphAdvance * charIdxDelta/glyphCharsCompo);
+    /*if (glyphIdx < extent->layout->getDirections().size() && extent->layout->getDirections()[glyphIdx] == CharDirection::RTL)
+        glyphStartOffset = glyphAdvance-glyphStartOffset;*/
+    return StackSlot::MakeDouble(glyphPos + glyphStartOffset);
 }
 
 StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
@@ -1024,9 +1052,17 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
             int glyph_idx = ext.first->char_idx + eidx;
             double inGlyphPos = ext.second - positions[eidx];
             double glyphAdv = ext.first->layout->getGlyphAdvance(glyph_idx);
-            if (glyph_idx+1 < positions.size() && inGlyphPos*2 > glyphAdv) {
-                ++glyph_idx;
-                inGlyphPos -= glyphAdv;
+            /*if (textDirection == RTL) {
+                if (glyph_idx+1 > 0 && inGlyphPos*2 < glyphAdv) {
+                    --glyph_idx;
+                    glyphAdv = ext.first->layout->getGlyphAdvance(glyph_idx);
+                    inGlyphPos += glyphAdv;
+                }
+            } else */{
+                if (glyph_idx+1 < positions.size() && inGlyphPos*2 > glyphAdv) {
+                    ++glyph_idx;
+                    inGlyphPos -= glyphAdv;
+                }
             }
 
             // Hence there's UTF16 encoding having sometimes 2 words for 1 char and also ligatures, interpolation needed.
@@ -1041,7 +1077,7 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
                 if (abs(char_delta)>1) {
                     double pos = positions[glyph_idx];
                     double alt_pos = positions[glyph_idx+interp_dir];
-                    char_idx = floor(char_delta*(alt_pos-pos)/(ext.second-pos)+0.5);
+                    char_idx = floor(char_idx+char_delta*(posx.slot_private.DoubleVal-pos)/(alt_pos-pos)+0.5);
                 }
             }
         }
