@@ -139,7 +139,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function invalidateVisible(clip : DisplayObject, ?updateAccess : Bool = true, ?parentClip : DisplayObject) : Void {
+	public static function invalidateVisible(clip : DisplayObject, ?updateChildren : Bool = true,?updateAccess : Bool = true, ?parentClip : DisplayObject) : Void {
 		var clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
 		var visible = clip.parent != null && getClipRenderable(clip.parent) && (untyped clip.isMask || (clipVisible && clip.renderable));
 
@@ -161,14 +161,16 @@ class DisplayObjectHelper {
 				parentClip = clip;
 			}
 
-			var children : Array<Dynamic> = untyped clip.children;
-			if (children != null) {
-				for (child in children) {
-					invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
+			if (updateChildren) {
+				var children : Array<Dynamic> = untyped clip.children;
+				if (children != null) {
+					for (child in children) {
+						invalidateVisible(child, updateChildren, updateAccess && !updateAccessWidget, parentClip);
+					}
 				}
 			}
 
-			if (clip.interactive && !clip.visible) {
+			if (clip.interactive) {
 				clip.emit("pointerout");
 			}
 
@@ -248,11 +250,11 @@ class DisplayObjectHelper {
 			if (Platform.isIE) {
 				RenderSupportJSPixi.once("drawframe", function() {
 					if (clip.parent == null) {
-						deleteNativeWidget(clip);
+						removeNativeWidget(clip);
 					}
 				});
 			} else {
-				deleteNativeWidget(clip);
+				removeNativeWidget(clip);
 			}
 		}
 	}
@@ -366,10 +368,10 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
+	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool, ?updateChildren : Bool) : Void {
 		if (clip.renderable != renderable) {
 			clip.renderable = renderable;
-			invalidateVisible(clip);
+			invalidateVisible(clip, updateChildren);
 		}
 	}
 
@@ -803,10 +805,8 @@ class DisplayObjectHelper {
 		if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 			var parentClip = untyped clip.parentClip;
 
-			if (parentClip != null) {
-				// transform = prependInvertedMatrix(transform, parentClip.worldTransform);
-				transform = transform.copy(new Matrix()).prepend(parentClip.worldTransform.copy(new Matrix()).invert());
-			}
+			// transform = prependInvertedMatrix(transform, parentClip.worldTransform);
+			transform = transform.copy(new Matrix()).prepend(parentClip.worldTransform.copy(new Matrix()).invert());
 		}
 
 		var tx = Math.round(transform.tx);
@@ -839,12 +839,10 @@ class DisplayObjectHelper {
 		if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 			var parentClip = untyped clip.parentClip;
 
-			if (parentClip != null) {
-				if (parentClip.worldAlpha > 0) {
-					alpha = alpha / parentClip.worldAlpha;
-				} else {
-					alpha = getNativeWidgetLocalAlpha(clip);
-				}
+			if (parentClip.worldAlpha > 0) {
+				alpha = alpha / parentClip.worldAlpha;
+			} else {
+				alpha = getNativeWidgetLocalAlpha(clip);
 			}
 		}
 
@@ -1350,11 +1348,11 @@ class DisplayObjectHelper {
 
 		var localBounds : Bounds = untyped clip.localBounds;
 
-		if (currentBounds.minX != Math.POSITIVE_INFINITY && (localBounds.minX == currentBounds.minX || localBounds.minY == currentBounds.minY || localBounds.maxX == currentBounds.maxX || localBounds.maxY == currentBounds.maxY)) {
+		// if (currentBounds.minX != Math.POSITIVE_INFINITY && (localBounds.minX == currentBounds.minX || localBounds.minY == currentBounds.minY || localBounds.maxX == currentBounds.maxX || localBounds.maxY == currentBounds.maxY)) {
 			untyped clip.calculateLocalBounds();
-		} else {
-			addLocalBounds(clip, newBounds);
-		}
+		// } else {
+		// 	addLocalBounds(clip, newBounds);
+		// }
 	}
 
 	public static function addLocalBounds(clip : DisplayObject, bounds : Bounds) : Void {
@@ -1604,10 +1602,11 @@ class DisplayObjectHelper {
 
 		setClipRenderable(
 			clip,
-			!viewBounds.isEmpty() && viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY
+			!viewBounds.isEmpty() && viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY,
+			untyped !clip.transformChanged || !RenderSupportJSPixi.DomRenderer
 		);
 
-		if (!clip.visible && untyped !clip.transformChanged) {
+		if ((!clip.visible && untyped !clip.transformChanged) || (untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget != null)) {
 			return;
 		}
 

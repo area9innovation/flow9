@@ -921,7 +921,7 @@ class PixiWorkarounds {
 							if (this.localTransformChanged) {
 								this.localTransformChanged = false;
 
-								if (this.isNativeWidget) {
+								if (this.isNativeWidget && this.parentClip) {
 									DisplayObjectHelper.updateNativeWidget(this);
 								}
 							}
@@ -969,7 +969,7 @@ class PixiWorkarounds {
 							if (this.localTransformChanged) {
 								this.localTransformChanged = false;
 
-								if (this.isNativeWidget) {
+								if (this.isNativeWidget && this.parentClip) {
 									DisplayObjectHelper.updateNativeWidget(this);
 								}
 							}

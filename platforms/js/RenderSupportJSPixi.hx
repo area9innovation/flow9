@@ -419,9 +419,16 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function initFullScreenEventListeners() {
-		for (e in ['fullscreenchange', 'mozfullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange']) {
-			Browser.document.addEventListener(e, fullScreenTrigger, false);
-		}
+		if (untyped Browser.document.body.requestFullscreen != null)
+			Browser.document.addEventListener('fullscreenchange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.mozRequestFullScreen != null)
+			Browser.document.addEventListener('mozfullscreenchange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.webkitRequestFullscreen != null)
+			Browser.document.addEventListener('webkitfullscreenchange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.msRequestFullscreen != null)
+			Browser.document.addEventListener('MSFullscreenChange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.webkitEnterFullScreen != null)
+			Browser.document.addEventListener('webkitfullscreenchange', fullScreenTrigger, false);
 	}
 
 	private static function receiveWindowMessage(e : Dynamic) {
@@ -580,36 +587,25 @@ class RenderSupportJSPixi {
 			case "touchend" | "MSPointerUp":
 				function(e : Dynamic) { GesturesDetector.endPinch(); if (e.touches != null && e.touches.length == 0) listener(); }
 			case "mouseout":
+				event = "pointerout";
 				// Some browsers may produce both mouseup and moseout for some cases.
 				// For example window openning on button click in FF
 				function(e : Dynamic) {
-					// Prevent from mouseout to child
-					if (e.toElement && e.toElement.parent != e.fromElement)
-						return;
-
-					var checkElement = function (el) {
-						if (el != null) {
-							var tagName = el.tagName.toLowerCase();
-
-							return tagName == "input"
-								|| tagName == "textarea"
-								|| tagName == "div" && el.classList.contains("droparea");
-						}
-
-						return false;
+					if (e.relatedTarget == Browser.document.documentElement) {
+						listener();
 					}
-					// Prevent from mouseout to native clip or droparea element to allow dragging over
-					if (checkElement(e.toElement) && e.fromElement != null || checkElement(e.fromElement) && e.toElement != null)
-						return;
-
-					listener();
 				}
 			case "mousedown" | "mouseup":
+				if (event == "mousedown")
+					event = "pointerdown";
+				else
+					event = "pointerup";
 				function(e : Dynamic) {
 					// Prevent default drop focus on canvas
 					// Works incorrectly in Edge
-					if (e.target == PixiView)
+					if (e.target == PixiView) {
 						e.preventDefault();
+					}
 
 					MousePos.x = e.pageX;
 					MousePos.y = e.pageY;
@@ -618,9 +614,9 @@ class RenderSupportJSPixi {
 				}
 			case "mouserightdown" | "mouserightup":
 				if (event == "mouserightdown")
-					event = "mousedown";
+					event = "pointerdown";
 				else
-					event = "mouseup";
+					event = "pointerup";
 
 				function(e : Dynamic) {
 					MousePos.x = e.pageX;
@@ -630,15 +626,23 @@ class RenderSupportJSPixi {
 				}
 			case "mousemiddledown" | "mousemiddleup":
 				if (event == "mousemiddledown")
-					event = "mousedown";
+					event = "pointerdown";
 				else
-					event = "mouseup";
+					event = "pointerup";
 
 				function(e : Dynamic) {
 					MousePos.x = e.pageX;
 					MousePos.y = e.pageY;
 					if (e.which == 2 || e.button == 1)
 						listener();
+				}
+			case "mousemove":
+				event = "pointermove";
+				function(e : Dynamic) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
+
+					listener();
 				}
 			default:
 				function(e : Dynamic) {
@@ -2173,8 +2177,10 @@ class RenderSupportJSPixi {
 			if (IsFullWindow && FullWindowTargetClip != null) {
 				toggleFullWindow(false);
 				FullWindowTargetClip = clip;
-				if (clip != null)
+
+				if (clip != null) {
 					toggleFullWindow(true);
+				}
 			} else {
 				FullWindowTargetClip = clip;
 			}
@@ -2207,82 +2213,77 @@ class RenderSupportJSPixi {
 			}
 
 
-			var mainStage : FlowContainer = cast(untyped PixiStage.children[0], FlowContainer);
-			mainStage.invalidateTransform();
-
-			mainStage.renderable = false;
+			var mainStage : FlowContainer = cast(PixiStage.children[0], FlowContainer);
 
 			if (fw) {
-				regularStageChildren = mainStage.children;
 				setShouldPreventFromBlur(FullWindowTargetClip);
-				mainStage.children = [];
 
-				regularFullScreenClipParent = FullWindowTargetClip.parent;
-				mainStage.addChild(FullWindowTargetClip);
-
-				var _clip_visible = untyped FullWindowTargetClip._visible;
-
-				// Make other content invisible to prevent from mouse events
-				for (child in regularStageChildren) {
-					untyped child._flow_visible = untyped child._visible;
+				for (child in mainStage.children) {
 					child.setClipVisible(false);
 				}
 
-				FullWindowTargetClip.setClipVisible(_clip_visible);
-				FullWindowTargetClip.updateTransform();
+				regularFullScreenClipParent = FullWindowTargetClip.parent;
+				mainStage.addChild(FullWindowTargetClip);
 			} else {
-				if (regularFullScreenClipParent != null && regularStageChildren.length != 0) {
-					for (child in regularStageChildren) {
-						child.setClipVisible(untyped child._flow_visible);
-						mainStage.addChild(child);
-					}
+				regularFullScreenClipParent.addChild(FullWindowTargetClip);
+				regularFullScreenClipParent = null;
 
-					regularFullScreenClipParent.addChild(FullWindowTargetClip);
+				for (child in mainStage.children) {
+					child.setClipVisible(true);
 				}
 			}
-
-			mainStage.renderable = true;
 
 			fullWindowTrigger(fw);
 		}
 	}
 
-	public static function requestFullScreen(element : Element) {
-		if (untyped element.requestFullscreen != null)
-			untyped element.requestFullscreen();
-		else if (untyped element.mozRequestFullScreen != null)
-			untyped element.mozRequestFullScreen();
-		else if (untyped element.webkitRequestFullscreen != null)
-			untyped element.webkitRequestFullscreen();
-		else if (untyped element.msRequestFullscreen != null)
-			untyped element.msRequestFullscreen();
-		else if (untyped element.webkitEnterFullScreen != null)
-			untyped element.webkitEnterFullScreen();
+	public static function requestFullScreen(element : Dynamic) {
+		RenderSupportJSPixi.once("drawframe", function() {
+			if (element.requestFullscreen != null)
+				element.requestFullscreen();
+			else if (element.mozRequestFullScreen != null)
+				element.mozRequestFullScreen();
+			else if (element.webkitRequestFullscreen != null)
+				element.webkitRequestFullscreen();
+			else if (element.msRequestFullscreen != null)
+				element.msRequestFullscreen();
+			else if (element.webkitEnterFullScreen != null)
+				element.webkitEnterFullScreen();
+		});
 	}
 
-	public static function exitFullScreen(element : Element) {
+	public static function exitFullScreen(element : Dynamic) {
 		if (untyped __instanceof__(element, js.html.CanvasElement)) {
-			element = untyped Browser.document;
+			element = Browser.document;
 		}
 
-		if (IsFullScreen) {
-			if (untyped element.exitFullscreen != null)
-				untyped element.exitFullscreen();
-			else if (untyped element.mozCancelFullScreen != null)
-				untyped element.mozCancelFullScreen();
-			else if (untyped element.webkitExitFullscreen != null)
-				untyped element.webkitExitFullscreen();
-			else if (untyped element.msExitFullscreen != null)
-				untyped element.msExitFullscreen();
-		}
+		RenderSupportJSPixi.once("drawframe", function() {
+			if (IsFullScreen) {
+				if (element.exitFullscreen != null)
+					element.exitFullscreen();
+				else if (element.mozCancelFullScreen != null)
+					element.mozCancelFullScreen();
+				else if (element.webkitExitFullscreen != null)
+					element.webkitExitFullscreen();
+				else if (element.msExitFullscreen != null)
+					element.msExitFullscreen();
+			}
+		});
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!Platform.isIOS) {
-			if (fs)
-				requestFullScreen(PixiView);
-			else
-				exitFullScreen(PixiView);
+			if (RenderSupportJSPixi.DomRenderer) {
+				if (fs)
+					requestFullScreen(Browser.document.body);
+				else
+					exitFullScreen(Browser.document);
+			} else {
+				if (fs)
+					requestFullScreen(PixiView);
+				else
+					exitFullScreen(PixiView);
+			}
 		}
 	}
 

@@ -1,6 +1,8 @@
 import js.Browser;
 import js.html.Element;
 
+import pixi.core.display.Bounds;
+import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
@@ -124,10 +126,10 @@ class VideoClip extends FlowContainer {
 			addChild(videoSprite);
 		}
 
-		once("removed", deleteVideoClip);
-
 		createStreamStatusListeners();
 		createFullScreenListeners();
+
+		once("removed", deleteVideoClip);
 
 		if (!startPaused && !CanAutoPlay) {
 			playFn(false);
@@ -163,6 +165,34 @@ class VideoClip extends FlowContainer {
 		}
 
 		loaded = false;
+	}
+
+	public function updateNativeWidget() : Void {
+		if (visible) {
+			updateNativeWidgetTransformMatrix();
+			updateNativeWidgetOpacity();
+			updateNativeWidgetMask();
+			nativeWidget.style.transform = 'none';
+
+			var width = Math.round(getWidth() * untyped this.transform.scale.x);
+			var height = Math.round(getHeight() * untyped this.transform.scale.y);
+
+			videoWidget.width = width;
+			videoWidget.height = height;
+
+			videoWidget.setAttribute('width', '${width}');
+			videoWidget.setAttribute('height', '${height}');
+			videoWidget.style.width = '${width}px';
+			videoWidget.style.height = '${height}px';
+
+			updateSubtitlesClip();
+
+			if (RenderSupportJSPixi.DomInteractions) {
+				updateNativeWidgetInteractive();
+			}
+		}
+
+		updateNativeWidgetDisplay();
 	}
 
 	public function getDescription() : String {
@@ -235,13 +265,15 @@ class VideoClip extends FlowContainer {
 	}
 
 	private function updateSubtitlesClip() : Void {
-		if (videoWidget != null) {
-			if (videoWidget.videoWidth == 0) {
+		if (videoWidget != null && textField != null) {
+			if (videoWidget.width == 0) {
 				textField.setClipVisible(false);
 			} else {
-				textField.setClipX((videoWidget.videoWidth - textField.getWidth()) / 2.0);
-				textField.setClipY(videoWidget.videoHeight - textField.getHeight() - 2.0);
 				textField.setClipVisible(true);
+				textField.setClipX((videoWidget.width - textField.getWidth()) / 2.0);
+				textField.setClipY(videoWidget.height - textField.getHeight() - 2.0);
+
+				textField.updateTransform();
 			}
 		}
 	}
@@ -312,10 +344,7 @@ class VideoClip extends FlowContainer {
 	private function updateVideoMetrics() {
 		metricsFn(videoWidget.videoWidth, videoWidget.videoHeight);
 
-		localBounds.minX = 0;
-		localBounds.minY = 0;
-		localBounds.maxX = videoWidget.videoWidth;
-		localBounds.maxY = videoWidget.videoHeight;
+		calculateLocalBounds();
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			videoWidget.style.width = '${untyped getWidth()}px';
@@ -371,7 +400,6 @@ class VideoClip extends FlowContainer {
 
 		}
 	}
-
 
 	public function addStreamStatusListener(fn : String -> Void) : Void -> Void {
 		streamStatusListener.push(fn);
@@ -463,6 +491,34 @@ class VideoClip extends FlowContainer {
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		return localBounds.getRectangle(rect);
+	}
+
+	public override function calculateLocalBounds() : Void {
+		var currentBounds = new Bounds();
+
+		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
+			applyLocalBoundsTransform(currentBounds);
+		}
+
+		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
+			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
+
+			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
+				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
+			}
+		} else {
+			localBounds.minX = 0;
+			localBounds.minY = 0;
+			localBounds.maxX = videoWidget.videoWidth;
+			localBounds.maxY = videoWidget.videoHeight;
+		}
+
+		if (parent != null) {
+			var newBounds = applyLocalBoundsTransform();
+			if (!currentBounds.isEqualBounds(newBounds)) {
+				parent.replaceLocalBounds(currentBounds, newBounds);
+			}
+		}
 	}
 
 	private override function createNativeWidget(?tagName : String = "video") : Void {
