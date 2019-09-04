@@ -1606,7 +1606,7 @@ class DisplayObjectHelper {
 			untyped !clip.transformChanged || !RenderSupportJSPixi.DomRenderer
 		);
 
-		if ((!clip.visible && untyped !clip.transformChanged) || (untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget != null)) {
+		if ((!clip.visible && untyped !clip.transformChanged) || (untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget)) {
 			return;
 		}
 
