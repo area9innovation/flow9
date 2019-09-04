@@ -245,7 +245,15 @@ class DisplayObjectHelper {
 			untyped clip.transformChanged = false;
 			untyped clip.localTransformChanged = false;
 
-			deleteNativeWidget(clip);
+			if (Platform.isIE) {
+				RenderSupportJSPixi.once("drawframe", function() {
+					if (clip.parent == null) {
+						deleteNativeWidget(clip);
+					}
+				});
+			} else {
+				deleteNativeWidget(clip);
+			}
 		}
 	}
 
@@ -506,6 +514,18 @@ class DisplayObjectHelper {
 		if (clip.mask != null) {
 			untyped maskContainer.isMask = true;
 			untyped clip.mask.isMask = true;
+
+			if (RenderSupportJSPixi.DomRenderer && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
+				var children : Array<Dynamic> = untyped clip.children;
+				if (children != null) {
+					for (child in children) {
+						child.isSvg = true;
+						if (untyped child.updateNativeWidgetGraphicsData != null) {
+							child.updateNativeWidgetGraphicsData();
+						}
+					}
+				}
+			}
 
 			clip.mask.once("removed", function () { clip.mask = null; });
 		} else if (untyped clip.alphaMask != null) {
@@ -931,8 +951,6 @@ class DisplayObjectHelper {
 			nativeWidget.onscroll = null;
 			nativeWidget.style.width = null;
 			nativeWidget.style.height = null;
-			nativeWidget.style.marginLeft = null;
-			nativeWidget.style.marginTop = null;
 			nativeWidget.style.borderRadius = null;
 		}
 	}
@@ -974,8 +992,6 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			nativeWidget.style.width = '${Math.round(scrollRect.width)}px';
 			nativeWidget.style.height = '${Math.round(scrollRect.height)}px';
-			nativeWidget.style.marginLeft = null;
-			nativeWidget.style.marginTop = null;
 			nativeWidget.style.borderRadius = null;
 			nativeWidget.style.overflow = "hidden";
 
@@ -993,20 +1009,51 @@ class DisplayObjectHelper {
 					nativeWidget.style.overflow = null;
 					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
 					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
-					nativeWidget.style.marginLeft = '${Math.round(untyped clip.localBounds.minX)}px';
-					nativeWidget.style.marginTop = '${Math.round(untyped clip.localBounds.minY)}px';
 					nativeWidget.style.borderRadius = null;
-					nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
-						return i % 2 == 0 ? (p - clip.localBounds.minX) + 'px ' : '' + (p - clip.localBounds.minY) + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
-					}).join('') + ')'");
-					untyped nativeWidget.style.webkitClipPath = nativeWidget.style.clipPath;
+
+					var svgs : Array<js.html.Element> = nativeWidget.getElementsByTagName("svg");
+
+					if (Platform.isIE || svgs.length == 1) {
+						for (svg in svgs) {
+							var clipMask = Browser.document.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+
+							if (clipMask != null && clipMask.parentNode != null) {
+								clipMask.parentNode.removeChild(clipMask);
+							}
+
+							var defs = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
+							clipMask = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'mask');
+
+							var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
+							var d : String = untyped __js__("data.shape.points.map(function(p, i) {
+								return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
+							}).join('')");
+							path.setAttribute("d", d);
+							path.setAttribute("fill", "white");
+							path.setAttribute('transform', 'matrix(1 0 0 1
+								${untyped -Std.int(svg.parentNode.style.left.substring(0, svg.parentNode.style.left.length - 2))}
+								${untyped -Std.int(svg.parentNode.style.top.substring(0, svg.parentNode.style.top.length - 2))})');
+							clipMask.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "mask");
+
+							clipMask.appendChild(path);
+							defs.appendChild(clipMask);
+							svg.appendChild(defs);
+
+							for (child in svg.childNodes) {
+								untyped child.setAttribute("mask", 'url(#' + untyped svg.parentNode.getAttribute('id') + "mask)");
+							}
+						}
+					} else {
+						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
+							return i % 2 == 0 ? '' + p + 'px ' : '' + p + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
+						}).join('') + ')'");
+						untyped nativeWidget.style.webkitClipPath = nativeWidget.style.clipPath;
+					}
 				} else if (data.shape.type == 1) {
 					untyped nativeWidget.style.webkitClipPath = null;
 					nativeWidget.style.clipPath = null;
 					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
 					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
-					nativeWidget.style.marginLeft = null;
-					nativeWidget.style.marginTop = null;
 					nativeWidget.style.borderRadius = null;
 					nativeWidget.style.overflow = "hidden";
 
@@ -1016,8 +1063,6 @@ class DisplayObjectHelper {
 					nativeWidget.style.clipPath = null;
 					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
 					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
-					nativeWidget.style.marginLeft = null;
-					nativeWidget.style.marginTop = null;
 					nativeWidget.style.borderRadius = '${Math.round(data.shape.radius)}px';
 					nativeWidget.style.overflow = "hidden";
 
@@ -1028,8 +1073,6 @@ class DisplayObjectHelper {
 					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
 					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
 					nativeWidget.style.borderRadius = '${Math.round(data.shape.radius)}px';
-					nativeWidget.style.marginLeft = null;
-					nativeWidget.style.marginTop = null;
 					nativeWidget.style.overflow = "hidden";
 
 					scrollNativeWidget(clip, Math.round(data.shape.x), Math.round(data.shape.y));
@@ -1128,7 +1171,11 @@ class DisplayObjectHelper {
 					var nativeWidget = untyped clip.nativeWidget;
 
 					nativeWidget.style.display = "none";
-					removeNativeWidget(clip);
+					RenderSupportJSPixi.once("stagechanged", function() {
+						if (!clip.visible) {
+							removeNativeWidget(clip);
+						}
+					});
 				}
 			}
 		}

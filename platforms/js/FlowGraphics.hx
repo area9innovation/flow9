@@ -410,12 +410,21 @@ class FlowGraphics extends Graphics {
 			    nativeWidget.removeChild(nativeWidget.firstChild);
 			}
 
-			if (graphicsData.length != 1) {
+			if (graphicsData.length != 1 || isSvg) {
+				nativeWidget.style.marginLeft = null;
+				nativeWidget.style.marginTop = null;
+				nativeWidget.style.borderRadius = null;
+				if (Platform.isIE) {
+					nativeWidget.style.background = '';
+				} else {
+					nativeWidget.style.background = null;
+				}
+
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${localBounds.maxX - localBounds.minX}px';
-					svg.style.height = '${localBounds.maxY - localBounds.minY}px';
+					svg.style.width = '${Math.ceil(getWidth())}px';
+					svg.style.height = '${Math.ceil(getHeight())}px';
 					svg.style.left = '${localBounds.minX}px';
 					svg.style.top = '${localBounds.minY}px';
 					svg.style.position = 'absolute';
@@ -463,11 +472,11 @@ class FlowGraphics extends Graphics {
 					if (data.shape.type == 0) {
 						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
-						var localBounds = this.localBounds;
 						var d : String = untyped __js__("data.shape.points.map(function(p, i) {
-							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + (p - localBounds.minX) + ' ' : '' + (p - localBounds.minY) + ' ';
+							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -477,10 +486,11 @@ class FlowGraphics extends Graphics {
 					} else if (data.shape.type == 1) {
 						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
 
-						rect.setAttribute("x", Std.string(data.shape.x - localBounds.minX));
-						rect.setAttribute("y", Std.string(data.shape.y - localBounds.minY));
+						rect.setAttribute("x", Std.string(data.shape.x));
+						rect.setAttribute("y", Std.string(data.shape.y));
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -490,9 +500,10 @@ class FlowGraphics extends Graphics {
 					} else if (data.shape.type == 2) {
 						var circle = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'circle');
 
-						circle.setAttribute("cx", Std.string(data.shape.x - localBounds.minX));
-						circle.setAttribute("cy", Std.string(data.shape.y - localBounds.minY));
+						circle.setAttribute("cx", Std.string(data.shape.x));
+						circle.setAttribute("cy", Std.string(data.shape.y));
 						circle.setAttribute("r", Std.string(data.shape.radius));
+						circle.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							circle.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -502,12 +513,13 @@ class FlowGraphics extends Graphics {
 					} else if (data.shape.type == 4) {
 						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
 
-						rect.setAttribute("x", Std.string(data.shape.x - localBounds.minX));
-						rect.setAttribute("y", Std.string(data.shape.y - localBounds.minY));
+						rect.setAttribute("x", Std.string(data.shape.x));
+						rect.setAttribute("y", Std.string(data.shape.y));
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
 						rect.setAttribute("rx", Std.string(data.shape.radius));
 						rect.setAttribute("ry", Std.string(data.shape.radius));
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -537,11 +549,11 @@ class FlowGraphics extends Graphics {
 						var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 
-						var localBounds = this.localBounds;
 						var d : String = untyped __js__("data1.shape.points.map(function(p, i) {
-							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + (p - localBounds1.minX) + ' ' : '' + (p - localBounds1.minY) + ' ';
+							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
 
 						if (data.fill != null && data.fillAlpha > 0) {
 							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
@@ -584,8 +596,8 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${localBounds.maxX - localBounds.minX}px';
-						svg.style.height = '${localBounds.maxY - localBounds.minY}px';
+						svg.style.width = '${Math.ceil(getWidth())}px';
+						svg.style.height = '${Math.ceil(getHeight())}px';
 						svg.style.left = '${localBounds.minX}px';
 						svg.style.top = '${localBounds.minY}px';
 						svg.style.position = 'absolute';
@@ -607,9 +619,6 @@ class FlowGraphics extends Graphics {
 
 						if (untyped data.fillGradient != null) {
 							nativeWidget.style.background = untyped data.fillGradient;
-							trace("---");
-							trace(untyped data.fillGradient);
-							trace(nativeWidget.style.background);
 						}
 
 						if (data.shape.type == 1) {
