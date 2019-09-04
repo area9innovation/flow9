@@ -314,7 +314,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.value = text;
 			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 			nativeWidget.readOnly = readOnly;
-			nativeWidget.style.lineHeight = '${style.fontSize * 1.15 + interlineSpacing}px';
+			nativeWidget.style.lineHeight = '${style.fontSize * 1.2 + interlineSpacing}px';
 
 			if (cursorColor >= 0) {
 				nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
@@ -341,7 +341,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 		} else {
 			nativeWidget.textContent = StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text;
-			nativeWidget.style.lineHeight = interlineSpacing != 0 ? '${style.fontSize * 1.15 + interlineSpacing}px' : null;
+			nativeWidget.style.lineHeight = interlineSpacing != 0 ? '${style.fontSize * 1.2 + interlineSpacing}px' : null;
 		}
 
 		nativeWidget.style.color = style.fill;
@@ -456,7 +456,7 @@ class TextClip extends NativeWidgetClip {
 		style.fontFamily = fontStyle.family;
 		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		style.lineHeight = Math.ceil(fontSize * 1.15 + interlineSpacing);
+		style.lineHeight = Math.ceil(fontSize * 1.2 + interlineSpacing);
 		style.wordWrap = wordWrap;
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		style.breakWords = cropWords;
@@ -701,7 +701,7 @@ class TextClip extends NativeWidgetClip {
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
 		if (this.interlineSpacing != interlineSpacing) {
 			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = Math.ceil(style.fontSize * 1.15 + interlineSpacing);
+			style.lineHeight = Math.ceil(style.fontSize * 1.2 + interlineSpacing);
 
 			invalidateMetrics();
 		}
@@ -980,7 +980,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return (widgetWidth > 0.0 ? widgetWidth : getClipWidth()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
+		return (widgetWidth > 0.0 && isInput ? widgetWidth : getClipWidth()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
 	}
 
 	private function getClipWidth() : Float {
@@ -989,7 +989,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getHeight() : Float {
-		return (widgetHeight > 0.0 ? widgetHeight : getClipHeight()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
+		return (widgetHeight > 0.0 && isInput ? widgetHeight : getClipHeight()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
 	}
 
 	private function getClipHeight() : Float {

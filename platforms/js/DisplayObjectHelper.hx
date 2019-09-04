@@ -1091,10 +1091,10 @@ class DisplayObjectHelper {
 			var nativeWidget = untyped clip.nativeWidget;
 
 			if (untyped clip.layoutText != null) {
-				nativeWidget.setAttribute('width', '${Math.round(getWidth(clip) + 1.0)}');
-				nativeWidget.setAttribute('height', '${Math.round(getHeight(clip))}');
-				nativeWidget.style.width = '${Math.round(getWidth(clip) + 1.0)}px';
-				nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
+				nativeWidget.setAttribute('width', '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getWidth(clip) + 1.0)}');
+				nativeWidget.setAttribute('height', '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getHeight(clip))}');
+				nativeWidget.style.width = '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getWidth(clip) + 1.0)}px';
+				nativeWidget.style.height = '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getHeight(clip))}px';
 			} else {
 				nativeWidget.setAttribute('width', '${Math.round(getWidth(clip))}');
 				nativeWidget.setAttribute('height', '${Math.round(getHeight(clip))}');
