@@ -188,6 +188,7 @@ class FlowSprite extends Sprite {
 					return;
 				}
 
+				nativeWidget.style.visibility = 'visible';
 				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 			} else {
 				metricsFn(texture.width, texture.height);
@@ -263,6 +264,7 @@ class FlowSprite extends Sprite {
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
+		nativeWidget.style.visibility = 'hidden';
 
 		isNativeWidget = true;
 	}
