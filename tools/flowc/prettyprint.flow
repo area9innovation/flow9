@@ -33,6 +33,27 @@ export {
 }
 
 prettyFcExp(acc : FcPretty, e : FcExp) -> string {
+	doPrettyFcExp(acc, e, 0)
+}
+
+/*
+Precedence:
+-1 @
+0 =  if  setmutable
+1 :=
+2 |>
+3 &&
+4 ||
+5 comparison
+6 + -
+7 * / %
+8 ! - lambda call
+ postfix
+
+*/
+
+doPrettyFcExp(acc : FcPretty, e : FcExp, precedence : int) -> string {
+	wrap = \l, s -> if (precedence > l) "(" + s + ")" else s;
 	pt = \t -> doPrettyFcType(acc, t, true, makeSet(), makeSet());
 	body = switch (e : FcExp) {
 		FcVoid(__): "{}";
@@ -54,13 +75,12 @@ prettyFcExp(acc : FcPretty, e : FcExp) -> string {
 			+ ")";
 		}
 		FcCall(f, args, i): {
-			prettyFcExp(acc, f)
+			doPrettyFcExp(acc, f, 8)
 			+ "(" + superglue(args, \a -> {
-				prettyFcExp(acc, a)
+				doPrettyFcExp(acc, a, 1)
 			}, ", ") + ")";
 		}
 		FcLambda(args, body, in): {
-
 			fargs = switch (^(in.type) : Maybe<FcType>) {
 				None(): args;
 				Some(ft): {
@@ -73,98 +93,123 @@ prettyFcExp(acc : FcPretty, e : FcExp) -> string {
 
 			blueprint(
 				"
-				\\%args% ->
+				\\%args% -> {
 					%body%
-				",
+				}",
 				[
 					"args", superglue(fargs, \a -> {
-							(if (a.name != "") a.name + ":" else "") + pt(a.type)
+							(if (a.name != "") a.name + " : " else "") + pt(a.type)
 						}, ", "),
 					"body", prettyFcExp(acc, body)
 				]
 			);
 		}
 		FcLet(name, type, e1, e2, i): {
-			blueprint(
-				"
-				%name% : %type% = %e1%;
-				%e2%",
-				[
-					"name", name,
-					"type", pt(type),
-					"e1", prettyFcExp(acc, e1),
-					"e2", prettyFcExp(acc, e2),
-				]
-			);
+			let = 
+				blueprint(
+					"
+					%name% : %type% = %e1%;
+					%e2%",
+					[
+						"name", name,
+						"type", pt(type),
+						"e1", doPrettyFcExp(acc, e1, 1),
+						"e2", doPrettyFcExp(acc, e2, precedence),
+					]
+				);
+			if (precedence > 0) "{" + let + "}" else let;
 		}
 		FcIf(e1, e2, e3, i): {
-			blueprint(
-				"
-				if (%c%) {
-					%t%
-				} else {
-					%e%
+			switch (e3) {
+				FcIf(__, __, __, __): {
+					blueprint(
+						"
+						if (%c%) {
+							%t%
+						} else %e%
+						", [
+							"c", prettyFcExp(acc, e1),
+							"t", prettyFcExp(acc, e2),
+							"e", prettyFcExp(acc, e3),
+						]
+					);
 				}
-				", [
-					"c", prettyFcExp(acc, e1),
-					"t", prettyFcExp(acc, e2),
-					"e", prettyFcExp(acc, e3),
-				]
-			);
+				default: {
+					blueprint(
+						"
+						if (%c%) {
+							%t%
+						} else {
+							%e%
+						}", [
+							"c", prettyFcExp(acc, e1),
+							"t", prettyFcExp(acc, e2),
+							"e", prettyFcExp(acc, e3),
+						]
+					);
+
+				}
+			}
 		}
 		FcCallPrim(op, es, i): {
-			s = map(es, \ees -> prettyFcExp(acc, ees));
-			bin = \o -> "(" + s[0] + " " + o + " " + s[1] + ")";
-			pref = \o -> o + s[0];
+			s = \in -> prettyFcExp(acc, es[in]);
+			seq = \p -> {
+				superglue(es, \ees -> doPrettyFcExp(acc, ees, p), ", ")
+			}
+			bin = \p, o -> wrap(p, doPrettyFcExp(acc, es[0], p) + " " + o + " " + doPrettyFcExp(acc, es[1], p));
+			pref = \p, o -> o + doPrettyFcExp(acc, es[0], p);
 			switch (op) {
-				FcEqPrim(): bin("==");
-				FcNePrim(): bin("!=");
-				FcGePrim(): bin(">=");
-				FcLePrim(): bin("<=");
-				FcGtPrim(): bin(">");
-				FcLtPrim(): bin("<");
+				FcEqPrim(): bin(5, "==");
+				FcNePrim(): bin(5, "!=");
+				FcGePrim(): bin(5, ">=");
+				FcLePrim(): bin(5, "<=");
+				FcGtPrim(): bin(5, ">");
+				FcLtPrim(): bin(5, "<");
 
-				FcPlusPrim(): bin("+");
-				FcMinusPrim(): bin("-");
-				FcMulPrim(): bin("*");
-				FcDivPrim(): bin("/");
-				FcModPrim(): bin("%");
-				FcNegPrim(): pref("-");
+				FcPlusPrim(): bin(6, "+");
+				FcMinusPrim(): bin(6, "-");
+				FcMulPrim(): bin(7, "*");
+				FcDivPrim(): bin(7, "/");
+				FcModPrim(): bin(7, "%");
+				FcNegPrim(): pref(9, "-");
 
-				FcAndPrim(): bin("&&");
-				FcOrPrim(): bin("||");
-				FcNotPrim(): pref("!");
+				FcAndPrim(): bin(3, "&&");
+				FcOrPrim(): bin(4, "||");
+				FcNotPrim(): pref(9, "!");
 
-				FcDerefPrim(): pref("^");
-				FcRefPrim(): pref("ref ");
+				FcDerefPrim(): pref(9, "^");
+				FcRefPrim(): pref(9, "ref ");
 
-				FcFieldPrim(n): s[0] + "." + n;
-				FcIndexPrim(): s[0] + "[" + s[1] + "]";
-				FcArrayPrim(): "[" + strGlue(s, ", ") + "]";
+				FcFieldPrim(n): wrap(8, s(0) + "." + n);
+				FcIndexPrim(): wrap(8, s(0) + "[" + s(1) + "]");
+				FcArrayPrim(): "[" + seq(10) + "]";
 
-				FcAssignPrim(): bin(" := ");
-				FcStructPrim(n): n + "(" + strGlue(s, ", ") + ")";
-
-				FcSetMutablePrim(name): s[0] + "." + name + " ::= " + s[1];
-				FcCreateClosurePrim(structName, functionName) : "closure(" + functionName + ", "+ strGlue(s, ", ") + ")";
-				FcQuote(): pref("@");
-				FcUnquote(): pref("$");
+				FcAssignPrim(): bin(1, ":=");
+				FcStructPrim(n): n + "(" + seq(1) + ")";
+				FcSetMutablePrim(name): s(0) + "." + name + " ::= " + s(1);
+				FcCreateClosurePrim(structName, functionName) : "closure(" + functionName + ", "+ seq(0) + ")";
+				FcQuote(): pref(0, "@");
+				FcUnquote(): pref(0, "$");
 			}
 		}
 		FcVar(name, i): {
 			name;
 		}
 		FcSeq(es, i): {
-			blueprint(
-				"
-				{
-					%s%
-				}
-				",
-				[
-					"s", superglue(es, \se -> prettyFcExp(acc, se), ";\n")
-				]
-			);
+			if (length(es) == 1) {
+				doPrettyFcExp(acc, es[0], precedence)
+			} else {
+				blueprint(
+					"
+					{
+						%s%
+					}
+					",
+					[
+						"s", superglue(es, \se -> prettyFcExp(acc, se), ";\n")
+					]
+				);
+			}
 		}
 		FcSwitch(x, t, cases, i): {
 			blueprint(
@@ -183,7 +228,7 @@ prettyFcExp(acc : FcPretty, e : FcExp) -> string {
 								%b%
 							}",[
 								"s", c.struct,
-								"a", strGlue(c.argNames, ","),
+								"a", superglue(c.argNames, \__ -> "__", ", "), // strGlue(c.argNames, ","),
 								"b", prettyFcExp(acc, c.body)
 							]
 						)

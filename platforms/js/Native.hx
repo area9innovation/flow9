@@ -7,6 +7,7 @@ import haxe.CallStack;
 import js.Browser;
 import js.BinaryParser;
 import JSBinflowBuffer;
+import JsMd5;
 #end
 
 #if (flow_nodejs || nwjs)
@@ -222,6 +223,24 @@ class Native {
 		#end
 	}
 
+	public static function getClipboardToCB(callback : String->Void) : Void {
+		#if flash
+			callback(clipboardData);
+		#elseif (js && !flow_nodejs)
+			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
+				callback(untyped Browser.window.clipboardData.getData("Text"));
+			} else if (untyped navigator.clipboard) {
+				untyped navigator.clipboard.readText().then(callback, function(e){
+					Errors.print(e);
+				});
+			} else {
+				callback(clipboardData);
+			}
+		#else
+			callback("");
+		#end
+	}
+
 	public static function setCurrentDirectory(path : String) : Void {
 		// do nothing
 	}
@@ -378,7 +397,19 @@ class Native {
 	}
 
 	public static inline function substring(str : String, start : Int, end : Int) : String {
-		return str.substr((start), (end));
+		var s = str.substr((start), (end));
+		#if js
+		// It turns out that Chrome does NOT copy strings out when doing substring,
+		// and thus we never free the original string
+		if (2 * s.length < str.length) {
+			// So if our slice is "small", we explicitly force a copy like this
+			return untyped (' ' + s).slice(1);
+		} else {
+			return s;
+		}
+		#else
+		return s;
+		#end
 	}
 
 	public static inline function toLowerCase(str : String) : String {
@@ -389,14 +420,9 @@ class Native {
 		return str.toUpperCase();
 	}
 
-	public static function string2utf8(str : String) : Array<Int> {
-		var a = new Array<Int>();
-		var buf = new haxe.io.BytesOutput();
-		buf.writeString(str);
-		var bytes = buf.getBytes();
-		for (i in 0...bytes.length) {
-			a.push((bytes.get(i)));
-		}
+	public static function string2utf8(str : String) : Array<Int> {		
+		var bytes = haxe.io.Bytes.ofString(str);
+		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
 		return a;
 	}
 
@@ -1676,12 +1702,8 @@ class Native {
 		return function() { };
 	}
 
-	public static function md5(content: String) : String {
-		var b = new StringBuf();
-		var c = string2utf8(content);
-		for (i in c)
-			b.addChar(i);
-		return Md5.encode(b.toString());
+	public static function md5(content : String) : String {
+		return JsMd5.encode(content);
 	}
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {

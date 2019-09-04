@@ -291,7 +291,7 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
-		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(true); requestAnimationFrame(); }, false);
+		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(true); requestAnimationFrame(); }, false);
 	}
 
 	private static inline function calculateMobileTopHeight() {
@@ -478,7 +478,7 @@ class RenderSupportJSPixi {
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
 		PixiStage.transformChanged = true;
-		PixiStage.invalidateStage(true);
+		InvalidateLocalStages(true);
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
@@ -563,6 +563,10 @@ class RenderSupportJSPixi {
 					if (MouseUpReceived)
 						return;
 
+					// Prevent from mouseout to child
+					if (e.toElement && e.toElement.parent != e.fromElement)
+						return;
+
 					var checkElement = function (el) {
 						if (el != null) {
 							var tagName = el.tagName.toLowerCase();
@@ -574,7 +578,6 @@ class RenderSupportJSPixi {
 
 						return false;
 					}
-
 					// Prevent from mouseout to native clip or droparea element to allow dragging over
 					if (checkElement(e.toElement) && e.fromElement != null || checkElement(e.fromElement) && e.toElement != null)
 						return;
@@ -877,6 +880,7 @@ class RenderSupportJSPixi {
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
+				var startAt = Date.now().getTime();
 				TransformChanged = false;
 
 				for (child in PixiStage.children) {
@@ -902,6 +906,7 @@ class RenderSupportJSPixi {
 				}
 			}
 
+			PixiStageChanged = false; // to protect against recursive invalidations
 			emit("stagechanged", timestamp);
 		} else {
 			AccessWidget.updateAccessTree();
@@ -927,6 +932,12 @@ class RenderSupportJSPixi {
 
 		on("message", handler);
 		return function() { off("message", handler); };
+	}
+
+	private static function InvalidateLocalStages(?updateTransform = false) {
+		for (child in PixiStage.children) {
+			child.invalidateStage(updateTransform);
+		}
 	}
 
 	public static inline function InvalidateStage() : Void {
@@ -1261,6 +1272,10 @@ class RenderSupportJSPixi {
 
 	public static function setWordWrap(clip : TextClip, wordWrap : Bool) : Void {
 		clip.setWordWrap(wordWrap);
+	}
+
+	public static function setDoNotInvalidateStage(clip : TextClip, dontInvalidate : Bool) : Void {
+		clip.setDoNotInvalidateStage(dontInvalidate);
 	}
 
 	public static function getSelectionStart(clip : TextClip) : Int {
@@ -2336,6 +2351,7 @@ class RenderSupportJSPixi {
 			untyped __js__("
 				resemble(image1)
 				.compareTo(image2)
+				.setReturnEarlyThreshold(Platform.isIE?10:0)
 				.ignoreAntialiasing()
 				.outputSettings({
 					errorType: 'movementDifferenceIntensity',

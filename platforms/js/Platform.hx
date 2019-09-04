@@ -39,7 +39,9 @@ class Platform {
 	// method from video elements (what PIXI ultimately relies on).
 	// As of IE Mobile 11 on Windows Phone 8.1 Update 2. Tested on a Microsoft Lumia 735.
 	public static var SupportsVideoTexture = !Platform.isIEMobile;
-	public static var AccessiblityAllowed = (Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isMobile && !Platform.isEdge;
+	public static var AccessiblityAllowed = 
+		Util.getParameter("accessenabled") == "1" ||
+		((Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isMobile && !Platform.isEdge);
 #end
 }
 

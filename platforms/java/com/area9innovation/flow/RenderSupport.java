@@ -201,8 +201,8 @@ public class RenderSupport extends NativeHost {
 	public Object setTextInputType(Object stg, String type) {
 		return null;
 	}
-	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
-								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
+	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour,double backgroundOpacity) {
 		return null;
 	}
@@ -231,6 +231,9 @@ public class RenderSupport extends NativeHost {
 		return null;
 	}
 	public Object setWordWrap(Object stg, boolean val) {
+		return null;
+	}
+	public Object setDoNotInvalidateStage(Object stg, boolean val) {
 		return null;
 	}
 	public Object setReadOnly(Object stg, boolean val) {
@@ -296,8 +299,8 @@ public class RenderSupport extends NativeHost {
 	public Object setVideoControls(Object stg, Object[] info) {
 		return null;
 	}
-	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
-								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
+	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour,double backgroundOpacity) {
 		return null;
 	}

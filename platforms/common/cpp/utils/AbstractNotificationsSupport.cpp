@@ -20,9 +20,11 @@ NativeFunction *AbstractNotificationsSupport::MakeNativeFunction(const char *nam
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, addOnClickListenerLocalNotification, 1);
 
     // Firebase notifications
+    TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, initializeFBApp, 1);
 
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, addFBNotificationListener, 1);
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, onRefreshFBToken, 1);
+    TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, getFBToken, 1);
 
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, subscribeToFBTopic, 1);
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, unsubscribeFromFBTopic, 1);
@@ -128,6 +130,12 @@ StackSlot AbstractNotificationsSupport::addOnClickListenerLocalNotification(RUNN
         1, StackSlot::MakeInt(cb_root));
 }
 
+StackSlot AbstractNotificationsSupport::initializeFBApp(RUNNER_ARGS)
+{
+    RUNNER->EvalFunction(RUNNER_ARG(0), 0);
+    RETVOID;
+}
+
 StackSlot AbstractNotificationsSupport::addFBNotificationListener(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(cb);
@@ -148,6 +156,14 @@ StackSlot AbstractNotificationsSupport::onRefreshFBToken(RUNNER_ARGS)
 
     return RUNNER->AllocateNativeClosure(removeListenerNotification, "onRefreshFBToken$disposer", 0, &FBRefreshTokenListener,
         1, StackSlot::MakeInt(cb_root));
+}
+
+StackSlot AbstractNotificationsSupport::getFBToken(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(cb);
+    int cb_root = RUNNER->RegisterRoot(cb);
+    doGetFBToken(cb_root);
+    RETVOID;
 }
 
 void AbstractNotificationsSupport::deliverFBMessage(
@@ -199,6 +215,13 @@ void AbstractNotificationsSupport::deliverFBToken(unicode_string token)
     for (T_NotificationListeners::iterator it = FBRefreshTokenListener.begin(); it != FBRefreshTokenListener.end(); ++it) {
         RUNNER->EvalFunction(RUNNER->LookupRoot(*it), 1, _token);
     }
+}
+
+void AbstractNotificationsSupport::deliverFBTokenTo(int cb_root, unicode_string token)
+{
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, RUNNER->AllocateString(token.c_str()));
+    RUNNER->ReleaseRoot(cb_root);
 }
 
 StackSlot AbstractNotificationsSupport::subscribeToFBTopic(RUNNER_ARGS)

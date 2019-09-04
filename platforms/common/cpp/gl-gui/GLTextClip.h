@@ -127,7 +127,7 @@ protected:
     void computeBBoxSelf(GLBoundingBox &bbox, const GLTransform &transform);
 
     void renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box);
-    
+
     typedef std::map<int, int> T_TextInputFilters;
     T_TextInputFilters text_input_filters, text_input_key_down_event_filters, text_input_key_up_event_filters;
     int next_text_input_filter_id, next_text_input_key_down_event_filter_id, next_text_input_key_up_event_filter_id;
@@ -186,7 +186,7 @@ public:
     void setFocus(bool focus);
 
     void setEditState(int cursor, int sel_start, int sel_end, bool set_text, unicode_string text, int scroll_pos = -1);
-    
+
     const unicode_string textFilteredByFlowFilters(const unicode_string &str);
     const bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
 
@@ -198,6 +198,7 @@ public:
 
     DECLARE_NATIVE_METHOD(setMultiline)
     DECLARE_NATIVE_METHOD(setWordWrap)
+    DECLARE_NATIVE_METHOD(setDoNotInvalidateStage)
     DECLARE_NATIVE_METHOD(setAutoAlign)
     DECLARE_NATIVE_METHOD(setAdvancedText)
     DECLARE_NATIVE_METHOD(setReadOnly)

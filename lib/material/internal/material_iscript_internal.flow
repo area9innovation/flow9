@@ -1,9 +1,9 @@
 import material/internal/material_stage_util;
+import material/internal/material_focus_util;
 import tropic/trender;
 
 export {
 	// General utils
-	switchMaterialFocus(focus : MaterialFocus, mFocusFn : (MFocus) -> ?, mFocusGroupFn : (MFocusGroup) -> ?) -> ?;
 	getCallstackIfNeeded(manager : MaterialManager) -> string;
 	getIScriptRecordingStarted(manager : MaterialManager) -> double;
 	getIScriptDelay(manager : MaterialManager) -> double;
@@ -129,6 +129,7 @@ export {
 	captureIScriptKeyEvent(manager : MaterialManager, handled : bool, k : KeyEvent, component : string, type : string) -> bool;
 	captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () -> MouseInfo, canvasPosition : () -> Point, component : string, type : string) -> bool;
 	captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool;
+	addBufferedMouseDownAndDispose(ending : bool) -> void;
 
 	loadAdditionalIScriptInfo(manager : MaterialManager, additionalInfo : IScriptAdditionalInfo) -> void;
 	prepareCurrentIScriptForSave(manager : MaterialManager) -> StoredIScript;
@@ -814,12 +815,44 @@ addIScriptRecordWithDelay(manager : MaterialManager, delay : double, record : IS
 	)
 }
 
-addIScriptBehaviourRecord(manager : MaterialManager, componentName : string, behaviourName : string, value : flow, id : List<IScriptIdentifier>,
-	type : IScriptRecordType, callstack : string) -> void {
+addIScriptBehaviourRecord(
+	manager : MaterialManager,
+	componentName : string,
+	behaviourName : string,
+	value : flow,
+	id : List<IScriptIdentifier>,
+	type : IScriptRecordType,
+	callstack : string
+) -> void {
 
 	if (!checkIsFn(serialize(value)) && checkIScriptRecordTypeCaptureOption(manager, behaviourName, type)) {
 		addIScriptRecord(
 			manager,
+			IScriptBehaviourRecord(
+				IScriptBehaviourDescriptor(IScriptComponentDescriptor(componentName, id), behaviourName),
+				value,
+				type,
+				callstack
+			)
+		)
+	}
+}
+
+addIScriptBehaviourRecordWithDelay(
+	manager : MaterialManager,
+	delay : double,
+	componentName : string,
+	behaviourName : string,
+	value : flow,
+	id : List<IScriptIdentifier>,
+	type : IScriptRecordType,
+	callstack : string
+) -> void {
+
+	if (!checkIsFn(serialize(value)) && checkIScriptRecordTypeCaptureOption(manager, behaviourName, type)) {
+		addIScriptRecordWithDelay(
+			manager,
+			delay,
 			IScriptBehaviourRecord(
 				IScriptBehaviourDescriptor(IScriptComponentDescriptor(componentName, id), behaviourName),
 				value,
@@ -969,7 +1002,7 @@ captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () ->
 			mi = miFn();
 			p = canvasPosition();
 
-			Point(mi.x + p.x, mi.y + p.y - getValue(manager.iscript.topPanelWidthHeightB).height);
+			Point(mi.x + p.x, mi.y + p.y - 48.);
 		};
 
 		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents())) {
@@ -990,30 +1023,67 @@ captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () ->
 	handled;
 }
 
+focusDownUns : ref List<() -> void> = ref makeList();
+bufferedMouseDown : ref (bool) -> void = ref nop1;
+
 captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool {
 	if (!handled && isIScriptEnabled(manager)) {
 		getPoint = \ -> {
 			p = canvasPosition();
 
-			Point(miFn.x + p.x, miFn.y + p.y - getValue(manager.iscript.topPanelWidthHeightB).height);
+			Point(miFn.x + p.x, miFn.y + p.y - 48.);
 		};
 
-		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents())) {
-			addIScriptBehaviourRecord(
+		delay = getIScriptDelay(manager) - 1.;
+
+		updateBuffer = \path -> {
+			bufferedMouseDown := \ending -> addIScriptBehaviourRecordWithDelay(
 				manager,
+				delay,
 				component,
 				"mousedown",
 				getPoint(),
-				makeList(),
+				if (!ending) eitherFn(path, getFullMFocusId, makeList) else makeList(),
 				ISMouseEvent(),
 				getCallstackIfNeeded(manager)
 			)
+		}
+
+		addBufferedMouseDownAndDispose(false);
+
+		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents())) {
+			updateBuffer(None());
+			pressedItemB = getCurrentPressedItemBehaviour(manager);
+			previousPressedB = make(None());
+			focusDownUns := fsubscribe2(
+				fsubselect(pressedItemB, FLift(\previousPressed -> {
+					eitherMap(
+						previousPressed,
+						\pi -> {
+							next(previousPressedB, Some(pi));
+							pressedItemB
+						},
+						previousPressedB
+					)
+				})),
+				updateBuffer
+			);
+			rlistPush(focusDownUns, interruptibleTimer(1000, \ -> addBufferedMouseDownAndDispose(false)))
 		} else if (isIScriptReplaying(manager) || isIScriptScenarioReplaying(manager)) {
 			iScriptInfo(manager, component + " mousedown: " + toString(getPoint()), None());
 		}
 	}
 
 	handled;
+}
+
+addBufferedMouseDownAndDispose(ending : bool) -> void {
+	if (^(bufferedMouseDown) != nop1 || ^focusDownUns != makeList()) {
+		^bufferedMouseDown(ending);
+		bufferedMouseDown := nop1;
+		callList(^focusDownUns);
+		focusDownUns := makeList();
+	}
 }
 
 clearIScriptAdditionalInfo(manager : MaterialManager) -> void {
