@@ -139,7 +139,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function invalidateVisible(clip : DisplayObject, ?updateChildren : Bool = true,?updateAccess : Bool = true, ?parentClip : DisplayObject) : Void {
+	public static function invalidateVisible(clip : DisplayObject, ?updateAccess : Bool = true, ?parentClip : DisplayObject) : Void {
 		var clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
 		var visible = clip.parent != null && getClipRenderable(clip.parent) && (untyped clip.isMask || (clipVisible && clip.renderable));
 
@@ -161,12 +161,10 @@ class DisplayObjectHelper {
 				parentClip = clip;
 			}
 
-			if (updateChildren) {
-				var children : Array<Dynamic> = untyped clip.children;
-				if (children != null) {
-					for (child in children) {
-						invalidateVisible(child, updateChildren, updateAccess && !updateAccessWidget, parentClip);
-					}
+			var children : Array<Dynamic> = untyped clip.children;
+			if (children != null) {
+				for (child in children) {
+					invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
 				}
 			}
 
@@ -368,10 +366,10 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool, ?updateChildren : Bool) : Void {
+	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
 		if (clip.renderable != renderable) {
 			clip.renderable = renderable;
-			invalidateVisible(clip, updateChildren);
+			invalidateVisible(clip);
 		}
 	}
 
@@ -991,7 +989,7 @@ class DisplayObjectHelper {
 			nativeWidget.style.width = '${Math.round(scrollRect.width)}px';
 			nativeWidget.style.height = '${Math.round(scrollRect.height)}px';
 			nativeWidget.style.borderRadius = null;
-			nativeWidget.style.overflow = "hidden";
+			nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
 
 			scrollNativeWidget(clip, Math.round(scrollRect.x), Math.round(scrollRect.y));
 		} else if (mask != null) {
@@ -1602,8 +1600,7 @@ class DisplayObjectHelper {
 
 		setClipRenderable(
 			clip,
-			!viewBounds.isEmpty() && viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY,
-			untyped !clip.transformChanged || !RenderSupportJSPixi.DomRenderer
+			!viewBounds.isEmpty() && viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY
 		);
 
 		if ((!clip.visible && untyped !clip.transformChanged) || (untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget)) {

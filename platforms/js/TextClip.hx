@@ -980,7 +980,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return (widgetWidth > 0.0 && isInput ? widgetWidth : getClipWidth()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
+		return (widgetWidth > 0.0 ? widgetWidth : getClipWidth()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
 	}
 
 	private function getClipWidth() : Float {
@@ -989,7 +989,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getHeight() : Float {
-		return (widgetHeight > 0.0 && isInput ? widgetHeight : getClipHeight()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
+		return (widgetHeight > 0.0 ? widgetHeight : getClipHeight()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
 	}
 
 	private function getClipHeight() : Float {
@@ -1107,7 +1107,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget = Browser.document.createElement(tagName);
 			nativeWidget.setAttribute('id', getClipUUID());
 			nativeWidget.className = 'nativeWidget';
-			nativeWidget.style.whiteSpace = 'normal';
+			nativeWidget.style.whiteSpace = 'pre-wrap';
 
 			isNativeWidget = true;
 		} else {
