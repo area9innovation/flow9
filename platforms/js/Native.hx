@@ -166,7 +166,7 @@ class Native {
 					Browser.document.body.removeChild(textArea);
 				} else {
 					untyped setTimeout(function () {
-						copyAction(textArea); 
+						copyAction(textArea);
 						Browser.document.body.removeChild(textArea);
 					}, 0);
 				}
@@ -367,7 +367,7 @@ class Native {
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
 		/*
 		  Searching within a range suggest that we can stop searching inside long string after end position.
-		  This makes searching a bit faster. But JavaScript has no means for this. 
+		  This makes searching a bit faster. But JavaScript has no means for this.
 		  We have only way to do this - make a copy of string within the range and search there.
 		  It is significantly faster for a long string comparing to simple `indexOf()` for whole string.
 		  But copying is not free. Since copy is linear in general and search is linear in general too,
@@ -412,6 +412,14 @@ class Native {
 		#end
 	}
 
+	public static inline function cloneString(str : String) : String {
+		#if js
+		return untyped (' ' + str).slice(1);
+		#else
+		return str;
+		#end
+	}
+
 	public static inline function toLowerCase(str : String) : String {
 		return str.toLowerCase();
 	}
@@ -420,7 +428,7 @@ class Native {
 		return str.toUpperCase();
 	}
 
-	public static function string2utf8(str : String) : Array<Int> {		
+	public static function string2utf8(str : String) : Array<Int> {
 		var bytes = haxe.io.Bytes.ofString(str);
 		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
 		return a;
@@ -769,7 +777,7 @@ class Native {
 
 	public static function getUrlParameter(name : String) : String {
 		var value = "";
-	
+
 	#if (js && flow_nodejs && flow_webmodule)
 		if (untyped request.method == "GET") {
 			value = untyped request.query[name];
@@ -779,7 +787,7 @@ class Native {
 	#else
 		value = Util.getParameter(name);
 	#end
-		
+
 		return value != null ? value : "";
 	}
 
