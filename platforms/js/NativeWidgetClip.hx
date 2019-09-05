@@ -10,19 +10,14 @@ using DisplayObjectHelper;
 
 class NativeWidgetClip extends FlowContainer {
 	private var viewBounds : Bounds;
+	private var widgetBounds = new Bounds();
 
 	private var styleChanged : Bool = true;
-
-	private var widgetWidth : Float = 0.0;
-	private var widgetHeight : Float = 0.0;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 	}
 
-	// Returns metrics to set correct native widget size
-	private function getWidth() : Float { return widgetWidth; }
-	private function getHeight() : Float { return widgetHeight; }
 	private function getTransform(?worldTransform : Bool) : Matrix {
 		if (RenderSupportJSPixi.DomRenderer) {
 			if (worldTransform == null) {
@@ -76,8 +71,8 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function updateNativeWidgetStyle() : Void {
-		nativeWidget.style.width = '${untyped getWidth()}px';
-		nativeWidget.style.height = '${untyped getHeight()}px';
+		nativeWidget.style.width = '${untyped getWidgetWidth()}px';
+		nativeWidget.style.height = '${untyped getWidgetHeight()}px';
 
 		if (!RenderSupportJSPixi.DomRenderer) {
 			var maskedBounds = getMaskedLocalBounds();
@@ -150,26 +145,20 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {
-		if (this.widgetWidth != widgetWidth) {
-			this.widgetWidth = widgetWidth;
+		if (widgetBounds.getBoundsWidth() != widgetWidth) {
+			widgetBounds.minX = 0;
+			widgetBounds.maxX = widgetWidth;
 
 			invalidateStyle();
-
-			if (nativeWidget != null && !getClipRenderable() && parent != null) {
-				updateNativeWidget();
-			}
 		}
 	}
 
 	public function setHeight(widgetHeight : Float) : Void {
-		if (this.widgetHeight != widgetHeight) {
-			this.widgetHeight = widgetHeight;
+		if (widgetBounds.getBoundsHeight() != widgetHeight) {
+			widgetBounds.minY = 0;
+			widgetBounds.maxY = widgetHeight;
 
 			invalidateStyle();
-
-			if (nativeWidget != null && !getClipRenderable() && parent != null) {
-				updateNativeWidget();
-			}
 		}
 	}
 

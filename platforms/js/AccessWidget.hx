@@ -554,7 +554,11 @@ class AccessWidget extends EventEmitter {
 				RenderSupportJSPixi.MousePos.y = e.pageY;
 
 				if (RenderSupportJSPixi.MouseUpReceived) {
-					RenderSupportJSPixi.PixiStage.emit("mousedown");
+					RenderSupportJSPixi.PixiStage.emit(
+						e.which == 1 || e.button == 0 ? "mousedown" :
+						e.which == 3 || e.button == 2 ? "mouserightdown" :
+						e.which == 2 || e.button == 1 ? "mousemiddledown" : "pointerdown"
+					);
 				}
 
 				e.preventDefault();
@@ -565,7 +569,11 @@ class AccessWidget extends EventEmitter {
 				RenderSupportJSPixi.MousePos.y = e.pageY;
 
 				if (!RenderSupportJSPixi.MouseUpReceived) {
-					RenderSupportJSPixi.PixiStage.emit("mouseup");
+					RenderSupportJSPixi.PixiStage.emit(
+						e.which == 1 || e.button == 0 ? "mouseup" :
+						e.which == 3 || e.button == 2 ? "mouserightup" :
+						e.which == 2 || e.button == 1 ? "mousemiddleup" : "pointerdown"
+					);
 				}
 
 				e.preventDefault();

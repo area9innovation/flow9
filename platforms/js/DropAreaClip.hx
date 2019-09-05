@@ -98,21 +98,21 @@ class DropAreaClip extends NativeWidgetClip {
 		onDone(fileArray);
 	}
 
-	private override function getWidth() : Float {
+	private function getWidth() : Float {
 		if (parent != null) {
 			var bounds = parent.getBounds(true);
 			return bounds.width * parent.worldTransform.a + bounds.height * parent.worldTransform.c;
 		} else {
-			return widgetWidth;
+			return getWidgetWidth();
 		}
 	}
 
-	private override function getHeight() : Float {
+	private function getHeight() : Float {
 		if (parent != null) {
 			var bounds = parent.getBounds(true);
 			return bounds.width * parent.worldTransform.b + bounds.height * parent.worldTransform.d;
 		} else {
-			return widgetWidth;
+			return getWidgetHeight();
 		}
 	}
 

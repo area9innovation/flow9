@@ -20,6 +20,7 @@ class FlowGraphics extends Graphics {
 	private var localBounds = new Bounds();
 	private var graphicsBounds = new Bounds();
 	private var _bounds = new Bounds();
+	private var widgetBounds = new Bounds();
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
@@ -65,6 +66,7 @@ class FlowGraphics extends Graphics {
 
 		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
 		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -78,6 +80,7 @@ class FlowGraphics extends Graphics {
 
 		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
 		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -94,6 +97,7 @@ class FlowGraphics extends Graphics {
 
 		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
 		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -195,18 +199,6 @@ class FlowGraphics extends Graphics {
 			if (untyped this._localBounds.minX != null && untyped this._localBounds.minX != Math.POSITIVE_INFINITY) {
 				localBounds = untyped this._localBounds;
 
-				if (localBounds.minX > localBounds.maxX) {
-					var tempX = localBounds.minX;
-					localBounds.minX = localBounds.maxX;
-					localBounds.maxX = tempX;
-				}
-
-				if (localBounds.minY > localBounds.maxY) {
-					var tempY = localBounds.minY;
-					localBounds.minY = localBounds.maxY;
-					localBounds.maxY = tempY;
-				}
-
 				if (parent != null) {
 					var newBounds = applyLocalBoundsTransform();
 					if (!currentBounds.isEqualBounds(newBounds)) {
@@ -245,6 +237,8 @@ class FlowGraphics extends Graphics {
 
 			localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
 			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			widgetBounds.addPoint(new Point(x, y));
+			widgetBounds.addPoint(new Point(x + width, y + height));
 
 			endFill();
 
@@ -273,6 +267,8 @@ class FlowGraphics extends Graphics {
 
 				localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
 				localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+				widgetBounds.addPoint(new Point(x, y));
+				widgetBounds.addPoint(new Point(x + width, y + height));
 
 				endFill();
 
@@ -294,6 +290,8 @@ class FlowGraphics extends Graphics {
 
 			localBounds.addPoint(new Point(x - width - lineWidth / 2.0, y - height - lineWidth / 2.0));
 			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			widgetBounds.addPoint(new Point(x, y));
+			widgetBounds.addPoint(new Point(x + width, y + height));
 
 			endFill();
 
@@ -311,6 +309,8 @@ class FlowGraphics extends Graphics {
 
 			localBounds.addPoint(new Point(x - radius - lineWidth / 2.0, y - radius - lineWidth / 2.0));
 			localBounds.addPoint(new Point(x + radius + lineWidth / 2.0, y + radius + lineWidth / 2.0));
+			widgetBounds.addPoint(new Point(x - radius, y - radius));
+			widgetBounds.addPoint(new Point(x + radius, y + radius));
 
 			endFill();
 
@@ -376,6 +376,7 @@ class FlowGraphics extends Graphics {
 	public override function clear() : Graphics {
 		pen = new Point();
 		localBounds = new Bounds();
+		widgetBounds = new Bounds();
 		var newGraphics = super.clear();
 
 		isEmpty = true;
@@ -423,8 +424,8 @@ class FlowGraphics extends Graphics {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${Math.ceil(getWidth())}px';
-					svg.style.height = '${Math.ceil(getHeight())}px';
+					svg.style.width = '${getWidth().round()}px';
+					svg.style.height = '${getHeight().round()}px';
 					svg.style.left = '${localBounds.minX}px';
 					svg.style.top = '${localBounds.minY}px';
 					svg.style.position = 'absolute';
@@ -596,8 +597,8 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${Math.ceil(getWidth())}px';
-						svg.style.height = '${Math.ceil(getHeight())}px';
+						svg.style.width = '${getWidth().round()}px';
+						svg.style.height = '${getHeight().round()}px';
 						svg.style.left = '${localBounds.minX}px';
 						svg.style.top = '${localBounds.minY}px';
 						svg.style.position = 'absolute';
@@ -622,28 +623,12 @@ class FlowGraphics extends Graphics {
 						}
 
 						if (data.shape.type == 1) {
-							nativeWidget.style.marginLeft = '${data.shape.x}px';
-							nativeWidget.style.marginTop = '${data.shape.y}px';
-							nativeWidget.style.width = '${data.shape.width - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.height - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
-							nativeWidget.style.marginLeft = '${data.shape.x - data.shape.radius}px';
-							nativeWidget.style.marginTop = '${data.shape.y - data.shape.radius}px';
-							nativeWidget.style.width = '${data.shape.radius * 2 - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.radius * 2 - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						} else if (data.shape.type == 3) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.shape.width * 2.0 - data.lineWidth * 2) / 2.0}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.shape.height * 2.0 - data.lineWidth * 2) / 2.0}px';
-							nativeWidget.style.width = '${data.shape.width * 2.0 - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.height * 2.0 - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.width - data.lineWidth}px / ${data.shape.height - data.lineWidth}px';
 						} else if (data.shape.type == 4) {
-							nativeWidget.style.marginLeft = '${data.shape.x}px';
-							nativeWidget.style.marginTop = '${data.shape.y}px';
-							nativeWidget.style.width = '${data.shape.width - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.height - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');

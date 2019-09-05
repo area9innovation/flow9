@@ -10,6 +10,7 @@ import pixi.core.math.Point;
 
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
+	public static var Round : Bool = Util.getParameter("roundpixels") == "1";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -102,12 +103,12 @@ class DisplayObjectHelper {
 		invalidateWorldTransform(clip);
 	}
 
-	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool = true) : Void {
-		if (clip.parent != null && untyped (!clip.worldTransformChanged || (localTransformChanged && localTransformChanged != clip.localTransformChanged))) {
+	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool) : Void {
+		if (untyped clip.parent != null && (!clip.worldTransformChanged || ((localTransformChanged == null || localTransformChanged) && !clip.localTransformChanged))) {
 			untyped clip.worldTransformChanged = true;
 			untyped clip.transformChanged = true;
 
-			if (localTransformChanged) {
+			if (localTransformChanged == null || localTransformChanged) {
 				untyped clip.localTransformChanged = true;
 			}
 
@@ -115,7 +116,8 @@ class DisplayObjectHelper {
 			if (children != null) {
 				for (child in children) {
 					if (child.visible) {
-						invalidateWorldTransform(child, localTransformChanged && !isNativeWidget(clip));
+						invalidateWorldTransform(child, localTransformChanged != null ? localTransformChanged :
+							(untyped clip.worldTransform.a == 0.0 ? true : (!isNativeWidget(clip) ? null : false)));
 					}
 				}
 			}
@@ -423,6 +425,10 @@ class DisplayObjectHelper {
 		return false;
 	}
 
+	public static inline function round(n : Float) : Float {
+		return Round ? Math.round(n) : n;
+	}
+
 	// setScrollRect cancels setClipMask and vice versa
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
 		var scrollRect : FlowGraphics = clip.scrollRect;
@@ -444,7 +450,7 @@ class DisplayObjectHelper {
 		}
 
 		scrollRect.beginFill(0xFFFFFF);
-		scrollRect.drawRect(0.0, 0.0, Math.round(width), Math.round(height));
+		scrollRect.drawRect(0.0, 0.0, round(width), round(height));
 
 		setClipX(scrollRect, left);
 		setClipY(scrollRect, top);
@@ -803,16 +809,15 @@ class DisplayObjectHelper {
 		if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 			var parentClip = untyped clip.parentClip;
 
-			// transform = prependInvertedMatrix(transform, parentClip.worldTransform);
-			transform = transform.copy(new Matrix()).prepend(parentClip.worldTransform.copy(new Matrix()).invert());
+			transform = prependInvertedMatrix(transform, parentClip.worldTransform);
 		}
 
-		var tx = Math.round(transform.tx);
-		var ty = Math.round(transform.ty);
+		var tx = round(transform.tx);
+		var ty = round(transform.ty);
 
 		if (untyped clip.scrollRect != null) {
-			tx = Math.round(transform.tx + Math.round(untyped clip.scrollRect.x));
-			ty = Math.round(transform.ty + Math.round(untyped clip.scrollRect.y));
+			tx = round(transform.tx + round(untyped clip.scrollRect.x));
+			ty = round(transform.ty + round(untyped clip.scrollRect.y));
 		}
 
 		nativeWidget.style.left = '${tx}px';
@@ -862,18 +867,18 @@ class DisplayObjectHelper {
 					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
 					nativeWidget.style.boxShadow = '
-						${Math.round(untyped Math.cos(filter.angle) * filter.distance)}px
-						${Math.round(untyped Math.sin(filter.angle) * filter.distance)}px
-						${Math.round(untyped filter.blur)}px
+						${round(untyped Math.cos(filter.angle) * filter.distance)}px
+						${round(untyped Math.sin(filter.angle) * filter.distance)}px
+						${round(untyped filter.blur)}px
 						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 					';
 
 					// if (untyped clip.mask == null && nativeWidget.children != null && nativeWidget.children.length == 1 && false) {
 					// 	for (childWidget in nativeWidget.children) {
 					// 		childWidget.style.boxShadow = '
-					// 			${Math.round(untyped Math.cos(filter.angle) * filter.distance)}px
-					// 			${Math.round(untyped Math.sin(filter.angle) * filter.distance)}px
-					// 			${Math.round(untyped filter.blur)}px
+					// 			${round(untyped Math.cos(filter.angle) * filter.distance)}px
+					// 			${round(untyped Math.sin(filter.angle) * filter.distance)}px
+					// 			${round(untyped filter.blur)}px
 					// 			rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 					// 		';
 					// 	}
@@ -885,9 +890,9 @@ class DisplayObjectHelper {
 					// 	}
 
 					// 	nativeWidget.style.filter = 'drop-shadow(
-					// 		${Math.round(untyped Math.cos(filter.angle) * filter.distance)}px
-					// 		${Math.round(untyped Math.sin(filter.angle) * filter.distance)}px
-					// 		${Math.round(untyped filter.blur)}px
+					// 		${round(untyped Math.cos(filter.angle) * filter.distance)}px
+					// 		${round(untyped Math.sin(filter.angle) * filter.distance)}px
+					// 		${round(untyped filter.blur)}px
 					// 		rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 					// 	)';
 					// }
@@ -951,7 +956,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function scrollNativeWidget(clip : DisplayObject, x : Int, y : Int) : Void {
+	public static function scrollNativeWidget(clip : DisplayObject, x : Float, y : Float) : Void {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (x != 0 || y != 0) {
@@ -980,18 +985,27 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		var mask : FlowGraphics = clip.mask;
-		var scrollRect = untyped clip.scrollRect || clip.viewBounds;
+		var scrollRect = untyped clip.scrollRect;
 		var viewBounds = untyped clip.viewBounds;
 
-		if (untyped scrollRect != null && clip.children != null && clip.children.length > 0) {
+		if (viewBounds != null) {
 			untyped nativeWidget.style.webkitClipPath = null;
 			untyped nativeWidget.style.clipPath = null;
-			nativeWidget.style.width = '${Math.round(scrollRect.width)}px';
-			nativeWidget.style.height = '${Math.round(scrollRect.height)}px';
+			nativeWidget.style.clip = 'rect(
+				${viewBounds.minY}px,
+				${viewBounds.maxX}px,
+				${viewBounds.maxY}px,
+				${viewBounds.minX}px
+			)';
+		} else if (untyped scrollRect != null && clip.children != null && clip.children.length > 0) {
+			untyped nativeWidget.style.webkitClipPath = null;
+			untyped nativeWidget.style.clipPath = null;
+			untyped nativeWidget.style.clip = null;
+
 			nativeWidget.style.borderRadius = null;
 			nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
 
-			scrollNativeWidget(clip, Math.round(scrollRect.x), Math.round(scrollRect.y));
+			scrollNativeWidget(clip, round(scrollRect.x), round(scrollRect.y));
 		} else if (mask != null) {
 			var graphicsData = mask.graphicsData;
 
@@ -1003,8 +1017,6 @@ class DisplayObjectHelper {
 					removePlaceholderWidget(clip);
 
 					nativeWidget.style.overflow = null;
-					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
-					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
 					nativeWidget.style.borderRadius = null;
 
 					var svgs : Array<js.html.Element> = nativeWidget.getElementsByTagName("svg");
@@ -1048,30 +1060,24 @@ class DisplayObjectHelper {
 				} else if (data.shape.type == 1) {
 					untyped nativeWidget.style.webkitClipPath = null;
 					nativeWidget.style.clipPath = null;
-					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
-					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
 					nativeWidget.style.borderRadius = null;
 					nativeWidget.style.overflow = "hidden";
 
-					scrollNativeWidget(clip, Math.round(data.shape.x), Math.round(data.shape.y));
+					scrollNativeWidget(clip, round(data.shape.x), round(data.shape.y));
 				} else if (data.shape.type == 2) {
 					untyped nativeWidget.style.webkitClipPath = null;
 					nativeWidget.style.clipPath = null;
-					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
-					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
-					nativeWidget.style.borderRadius = '${Math.round(data.shape.radius)}px';
+					nativeWidget.style.borderRadius = '${round(data.shape.radius)}px';
 					nativeWidget.style.overflow = "hidden";
 
-					scrollNativeWidget(clip, Math.round(data.shape.x - data.shape.radius), Math.round(data.shape.y - data.shape.radius));
+					scrollNativeWidget(clip, round(data.shape.x - data.shape.radius), round(data.shape.y - data.shape.radius));
 				} else if (data.shape.type == 4) {
 					untyped nativeWidget.style.webkitClipPath = null;
 					nativeWidget.style.clipPath = null;
-					nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
-					nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
-					nativeWidget.style.borderRadius = '${Math.round(data.shape.radius)}px';
+					nativeWidget.style.borderRadius = '${round(data.shape.radius)}px';
 					nativeWidget.style.overflow = "hidden";
 
-					scrollNativeWidget(clip, Math.round(data.shape.x), Math.round(data.shape.y));
+					scrollNativeWidget(clip, round(data.shape.x), round(data.shape.y));
 				}  else {
 					removeNativeWidgetMask(clip);
 
@@ -1090,17 +1096,10 @@ class DisplayObjectHelper {
 		if (localBounds.minX != Math.POSITIVE_INFINITY) {
 			var nativeWidget = untyped clip.nativeWidget;
 
-			if (untyped clip.layoutText != null) {
-				nativeWidget.setAttribute('width', '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getWidth(clip) + 1.0)}');
-				nativeWidget.setAttribute('height', '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getHeight(clip))}');
-				nativeWidget.style.width = '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getWidth(clip) + 1.0)}px';
-				nativeWidget.style.height = '${Math.round(untyped clip.widgetWidth > 0 ? clip.widgetWidth : getHeight(clip))}px';
-			} else {
-				nativeWidget.setAttribute('width', '${Math.round(getWidth(clip))}');
-				nativeWidget.setAttribute('height', '${Math.round(getHeight(clip))}');
-				nativeWidget.style.width = '${Math.round(getWidth(clip))}px';
-				nativeWidget.style.height = '${Math.round(getHeight(clip))}px';
-			}
+			nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip))}');
+			nativeWidget.setAttribute('height', '${round(getWidgetHeight(clip))}');
+			nativeWidget.style.width = '${round(getWidgetWidth(clip))}px';
+			nativeWidget.style.height = '${round(getWidgetHeight(clip))}px';
 
 			// nativeWidget.setAttribute('minX', Std.string(localBounds.minX));
 			// nativeWidget.setAttribute('minY', Std.string(localBounds.minY));
@@ -1186,7 +1185,7 @@ class DisplayObjectHelper {
 			untyped clip.addNativeWidget();
 		} else if (RenderSupportJSPixi.DomRenderer) {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && clip.renderable) {
-				appendNativeWidget(untyped clip.parent, clip);
+				appendNativeWidget(findParentClip(clip), clip);
 			}
 		} else {
 			clip.once('removed', function() { deleteNativeWidget(clip); });
@@ -1331,12 +1330,30 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static inline function getBoundsWidth(bounds : Bounds) : Float {
+		return bounds.minX != Math.POSITIVE_INFINITY ? bounds.maxX - bounds.minX : 0;
+	}
+
+	public static inline function getWidgetWidth(clip : DisplayObject) : Float {
+		var widgetBounds : Bounds = untyped clip.widgetBounds;
+		return (widgetBounds != null && widgetBounds.minX != Math.POSITIVE_INFINITY) ? getBoundsWidth(widgetBounds) + 1.0 : getWidth(clip) + 1.0;
+	}
+
 	public static function getHeight(clip : DisplayObject) : Float {
 		if (untyped clip.getHeight != null) {
 			return untyped clip.getHeight();
 		} else {
 			return untyped clip.getLocalBounds().height;
 		}
+	}
+
+	public static inline function getBoundsHeight(bounds : Bounds) : Float {
+		return bounds.minY != Math.POSITIVE_INFINITY ? bounds.maxY - bounds.minY : 0;
+	}
+
+	public static inline function getWidgetHeight(clip : DisplayObject) : Float {
+		var widgetBounds : Bounds = untyped clip.widgetBounds;
+		return (widgetBounds != null && widgetBounds.minY != Math.POSITIVE_INFINITY) ? getBoundsHeight(widgetBounds) : getHeight(clip);
 	}
 
 	public static function replaceLocalBounds(clip : DisplayObject, currentBounds : Bounds, newBounds : Bounds) : Void {
@@ -1404,8 +1421,8 @@ class DisplayObjectHelper {
 			c.c = (b.a != 0.0 ? a.c / b.a : 0.0) + (b.c != 0.0 ? a.d / b.c : 0.0);
 			c.d = (b.b != 0.0 ? a.c / b.b : 0.0) + (b.d != 0.0 ? a.d / b.d : 0.0);
 
-			c.tx = (b.a != 0.0 ? a.tx / b.a : 0.0) + (b.c != 0.0 ? a.ty / b.c : 0.0) - b.tx;
-			c.ty = (b.c != 0.0 ? a.tx / b.c : 0.0) + (b.d != 0.0 ? a.ty / b.d : 0.0) - b.ty;
+			c.tx = (b.a != 0.0 ? (a.tx - b.tx) / b.a : 0.0) + (b.c != 0.0 ? (a.ty - b.ty) / b.c : 0.0);
+			c.ty = (b.b != 0.0 ? (a.tx - b.tx) / b.b : 0.0) + (b.d != 0.0 ? (a.ty - b.ty) / b.d : 0.0);
 		} else {
 			c.a = a.a;
 			c.b = a.b;
