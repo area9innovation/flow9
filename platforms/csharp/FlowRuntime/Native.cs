@@ -153,6 +153,10 @@ namespace Area9Innovation.Flow
 			return str.Substring(start, len2);
 		}
 
+		public String cloneString(String str) {
+			return str;
+		}
+
 		public String toLowerCase(String str) {
 			return str.ToLower();
 		}
@@ -962,4 +966,3 @@ namespace Area9Innovation.Flow
 		}
 	}
 }
-

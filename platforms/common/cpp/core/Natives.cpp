@@ -1310,6 +1310,33 @@ StackSlot ByteCodeRunner::NativeGetTargetName(RUNNER_ARGS) {
     return RUNNER->AllocateString(parseUtf8(ss.str()));
 }
 
+StackSlot ByteCodeRunner::cloneString(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(str);
+    RUNNER_CheckTag(TString, str);
+
+    int str_len = RUNNER->GetStringSize(str);
+
+    if (str_len == 0) {
+        return str;
+    }
+
+    // Do not use safe wrappers for speed:
+    StackSlot rval;
+    unicode_char *nstr = RUNNER->AllocateStringBuffer(&rval, str_len); // ALLOC
+
+    if (RUNNER->IsErrorReported())
+        return StackSlot::MakeVoid();
+
+    const unicode_char *pstr = RUNNER->GetStringPtr(str);
+
+    for (int i = 0; i < str_len; i++)
+        nstr[i] = pstr[i];
+
+    return rval;
+}
+
+
 StackSlot ByteCodeRunner::toLowerCase(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(str);
