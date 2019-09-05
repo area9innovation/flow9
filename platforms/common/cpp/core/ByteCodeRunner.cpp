@@ -3706,7 +3706,6 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC_NAME(ByteCodeRunner, NativePrintCallStack, "printCallstack", 0);
     TRY_USE_NATIVE_STATIC_NAME(ByteCodeRunner, NativeGetTargetName, "getTargetName", 0);
 
-    TRY_USE_NATIVE_STATIC(ByteCodeRunner, cloneString, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, toLowerCase, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, toUpperCase, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, toString, 1);

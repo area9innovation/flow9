@@ -1307,7 +1307,6 @@ private:
     static StackSlot getKeysList(ByteCodeRunner*,StackSlot*);
     static StackSlot removeKeyValue(ByteCodeRunner*,StackSlot*);
     static StackSlot enumFromTo(ByteCodeRunner*,StackSlot*);
-    static StackSlot cloneString(ByteCodeRunner*,StackSlot*);
     static StackSlot toLowerCase(ByteCodeRunner*,StackSlot*);
     static StackSlot toUpperCase(ByteCodeRunner*,StackSlot*);
     static StackSlot toString(ByteCodeRunner*,StackSlot*);

@@ -402,10 +402,6 @@ public class Native extends NativeHost {
 		return str.substring(start, start + len);
 	}
 
-	public final String cloneString(String str) {
-		return str;
-	}
-
 	public final String toLowerCase(String str) {
 		return str.toLowerCase();
 	}
