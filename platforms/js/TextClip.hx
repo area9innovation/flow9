@@ -578,8 +578,6 @@ class TextClip extends NativeWidgetClip {
 			textClip.setClipX(anchorX * Math.max(0, getWidgetWidth() - getClipWidth()));
 			if (style.fontFamily == "Material Icons") {
 				textClip.setClipY(style.fontProperties.descent);
-			} else {
-				trace(style.fontFamily);
 			}
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
