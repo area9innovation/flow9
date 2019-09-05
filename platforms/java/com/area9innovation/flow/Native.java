@@ -44,6 +44,7 @@ import java.time.ZoneOffset;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
+import java.util.concurrent.ConcurrentHashMap;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
@@ -1267,18 +1268,59 @@ public class Native extends NativeHost {
 	  return resArr;
 	}
 
-	public final Object concurrentAsync2(Func0<Object> task) {
-		threadpool.submit(new Runnable(){
-        	public void run(){
-				task.invoke();
+	public final Object concurrentAsyncCallback(Func2<Object, String, Func1<Object, Object>> task, Func1<Object,Object> onDone) {
+		// thread #1
+		CompletableFuture.supplyAsync(() -> {
+			// thread #2
+			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
+			task.invoke(Long.toString(Thread.currentThread().getId()), (res) -> {
+				// thread #2
+				completableFuture.complete(res);
+				return null;
+			});
+			Object result = null;
+			try {
+				result = completableFuture.get();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} catch (ExecutionException e) {
+				e.printStackTrace();
 			}
+			return result;
+		}, threadpool).thenApply(result -> {
+			// thread #2
+			return onDone.invoke(result);
 		});
-/*
-		threadpool.submit(() -> {
-			task.invoke();
-		});
-*/		return null;
+
+		return null;
 	}	
+
+	public final Object initConcurrentHashMap() {
+		return new ConcurrentHashMap();
+	}
+
+	public final Object setConcurrentHashMap(Object map, Object key, Object value) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.put(key, value);
+		return null;
+	}
+
+	public final Object getConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.get(key);
+	}
+
+	public final Boolean containsConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.containsKey(key);
+	}
+
+	public final Object concurrentPrintln(String s) {
+		synchronized (System.out) {
+			System.out.println(s);
+		}
+		return null;
+	}
 
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
