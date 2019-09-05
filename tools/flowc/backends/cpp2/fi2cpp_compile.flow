@@ -129,7 +129,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer {
 		makeTree(), // field_index_map : Tree<string, int>,
 		ref [], // field_index_list : [string],
 		
-		//"", // cur_global : string,
+		"", // cur_global : string,
 		//1, // next_closure_id : int,
 		known_natives, // known_natives : Tree<string, Cpp2NativeDescr>,
 	);
@@ -1419,8 +1419,8 @@ cpp2WriterCompileMath(expr : FiCallPrim, ctx : Cpp2Context, out : Cpp2OutputLoca
 	}
 }
 
-cpp2WriterEmitPrimitiveWrap(op : FcPrim, es : [FiExp], ctx : Cpp2Context, top : Cpp2StackTop) -> string {
-	numbers = \tp, pos -> {
+cpp2WriterEmitPrimitiveWrap(expr : FiExp, ctx : Cpp2Context, top : Cpp2StackTop) -> string {
+	numbers = \tp : FiType -> {
 		tp_tag = cpp2GetPrimitiveTag(tp);
 		if (tp_tag != Cpp2TInt() && tp_tag != Cpp2TDouble()) "" else {
 			cexpr = cpp2WriterEmitNumericExpr(expr, ctx, top, tp_tag);
@@ -1435,34 +1435,39 @@ cpp2WriterEmitPrimitiveWrap(op : FcPrim, es : [FiExp], ctx : Cpp2Context, top : 
 		cexpr = cpp2WriterEmitConditionExpr(expr, ctx, top);
 		"StackSlot::MakeBool(" + cexpr + ")";
 	}
-	switch (op) {
-		FcPlusPrim(e1, e2, pos): numbers(pos);
-		FcMinusPrim(e1, e2, pos): numbers(pos);
-		FcMulPrim(e1, e2, pos): numbers(pos);
-		FcDivPrim(e1, e2, pos): numbers(pos);
-		FcModPrim(e1, e2, pos): numbers(pos);
-		FcNegPrim(e1, pos): numbers(pos);
+	switch (expr) {
+		FiCallPrim(op, es, type, __): {
+			switch (op) {
+				FcPlusPrim():  numbers(type);
+				FcMinusPrim(): numbers(type);
+				FcMulPrim():   numbers(type);
+				FcDivPrim():   numbers(type);
+				FcModPrim():   numbers(type);
+				FcNegPrim():   numbers(type);
 
-		FcAndPrim(e1, e2, pos): boolean();
-		FcOrPrim(e1, e2, pos): boolean();
-		FcNotPrim(e1, pos): boolean();
+				FcAndPrim(): boolean();
+				FcOrPrim():  boolean();
+				FcNotPrim(): boolean();
 
-		FcEqPrim(): boolean();
-		FcNePrim(): boolean();
-		FcGtPrim(): boolean();
-		FcGePrim(): boolean();
-		FcLtPrim(): boolean();
-		FcLePrim(): boolean();
-
-		/*Field(call, name, pos):
-			ttag = getPrimitiveTag(pos);
-			if (ttag == TBool)
-				boolean();
-			else
-				numbers(pos);*/
-		default: {
-			cpp2_error("not supported yet"); // TODO: implement
+				FcEqPrim(): boolean();
+				FcNePrim(): boolean();
+				FcGtPrim(): boolean();
+				FcGePrim(): boolean();
+				FcLtPrim(): boolean();
+				FcLePrim(): boolean();
+				
+				FcFieldPrim(name): {
+					ttag = cpp2GetPrimitiveTag(pos);
+					if (ttag == Cpp2TBool()) {
+						boolean();
+					} else {
+						numbers(type);
+					}
+				}
+				default: "";
+			}
 		}
+		default: "";
 	}
 }
 
@@ -1661,7 +1666,7 @@ cpp2WriterVerifyStructId(writer : Cpp2Writer, ref : Cpp2PlaceInfo, id : int, ctx
 
 cpp2WriterFindFieldIndex(writer : Cpp2Writer, ref : Cpp2PlaceInfo, name : string, ctx : Cpp2Context) -> string {
 	cpp2WriterVerifyStruct(ref, 1, ctx);
-	i= "fidx_" + i2s(ref.uid) + "_" + name;
+	ivar = "fidx_" + i2s(ref.uid) + "_" + name;
 	if (!contains(ref.meta.known_fields, name)) {
 		cpp2ContextRegisterIdxVar(ctx, ivar, "int");
 
@@ -2225,131 +2230,342 @@ cpp2WriterCallNativeName(writer : Cpp2Writer, fn : FiExp, ctx : Cpp2Context) -> 
 }
 
 cpp2WriterCompileCall(writer : Cpp2Writer, code : FiCall, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> Maybe<Cpp2PlaceInfo> {
-	direct_call = null;
-	allocs = true;
+	direct_call = ref "";
+	allocs = ref true;
+
+	proceed = \ -> {
+		// Allocate an output lvalue if necessary
+		out_ref = if (out == Cpp2OutputReturn() || out == Cpp2OutputNone()) {
+			None();
+		} else {
+			Some(cpp2WriterGetOutputOrTemp(ctx, out, top));
+		}
+
+		// Compute index of the start of arguments. Allow the
+		// function reference intersect with the output slot,
+		// but not the actual arguments.
+		aidx = if (^direct_call == "") {
+			switch (out_ref) {
+				Some(or): {
+					if (or.place == Cpp2Temporary() && or.slot == top.temp - 1) {
+						or.slot
+					} else {
+						ret = top.temp;
+						top.temp ::= ret + 1;
+						ret
+					}
+				}
+				None(): {
+					cpp2_error("cpp2_int_UNDEF index");
+					cpp2_int_UNDEF
+				}
+			}
+		} else {
+			top.temp
+		}
+
+		iter(code.es, 
+			\arg -> {
+				ctop = cpp2Mktop(top);
+				top_temp = top.temp;
+				top.temp ::= top_temp + 1;
+				tmp = cpp2EnvironmentMktemp(ctx.env, top_temp);
+				cpp2WriterCompileExpression(writer, arg, ctx, Cpp2OutputVar(tmp), ctop);
+			}
+		)
+
+		expr = if (^direct_call == "") {
+			ftmp = cpp2EnvironmentMktemp(ctx.env, aidx);
+			cpp2WriterCompileExpression(writer, code, ctx, Cpp2OutputVar(ftmp), cpp2Mktop(top));
+			"RUNNER->FastEvalFunction(&temps[" + i2s(aidx) + "], " + i2s(length(code.es)) + ")";
+		} else {
+			if (length(code.es) > 0) {
+				^direct_call + "(RUNNER, &temps[" + i2s(aidx) + "])";
+			} else {
+				^direct_call + "(RUNNER, NULL)";
+			}
+		}
+
+		switch (out_ref) {
+			Some(or): {
+				cpp2ContextWrCheck(ctx, "CALL_WITH_RETSLOT(" + cpp2PlaceInfoGetLValue(or) + "," + expr + ")", ^allocs);
+				cpp2WriterCopyValue(ctx, out, out_ref);
+			}
+			None(): cpp2WriterEmitValue(ctx, out, expr, Cpp2TNull(), true, true, ^allocs);
+		}
+	}
 
 	switch (code.f) {
 		FiVar(n, type, pos): {
 			ref = cpp2WriterResolveName(writer, ctx, n);
 			switch (ref.place) {
 				Cpp2GlobalFunction(nargs, native): {
-					if (length(args) != nargs) {
+					if (length(code.es) != nargs) {
 						cpp2_error("Argument count mismatch in call to " + n);
 					}
 					if (n == writer.cur_global) {
-						if (ctx.env.parent == null && out == OutputReturn) {
-							ctx.env.tail_call = true;
+						if (ctx.env.parent == None() && out == Cpp2OutputReturn()) {
+							(ctx.env).tail_call ::= true;
 
 							// first compute new arguments
-							arefs = [];
-							avals = [];
-							for (i in 0...args.length)
-							{
-								ref = getValueRef(args[i], ctx, false);
-								sval = null;
-
-								if (ref == null || (ref.place == Argument && ref.slot < i))
-								{
-									sval = emitPrimitiveWrap(args[i], ctx, top);
-
-									if (sval == null)
-										ref = evalToTmp(args[i], ctx, top, out);
-									else
-										ref = null;
+							arefs = ref [];
+							avals = ref [];
+							apair = iteri(code.es, 
+								\i, arg -> {
+									try_sval = \ -> {
+										sval = cpp2WriterEmitPrimitiveWrap(arg, ctx, top);
+										if (sval == "") {
+											Pair(cpp2WriterEvalToTmp(writer, arg, ctx, top, out), None());
+										} else {
+											Pair(None(), sval); 
+										}
+									}
+									pair = switch (cpp2WriterGetValueRef(writer, arg, ctx, false)) {
+										Some(r): {
+											if (r.place == Cpp2Argument() && r.slot < i) {
+												try_sval();
+											} else {
+												Pair(Some(r), None());
+											}
+										}
+										None(): try_sval();
+									}
+									refArrayPush(arefs, pair.first);
+									refArrayPush(avals, pair.second);
 								}
-
-								arefs.push(ref);
-								avals.push(sval);
-							}
-
+							);
 							// now compute strings, so that struct pointers get computed
-							astrings = [];
-							for (i in 0...args.length)
-								astrings.push(avals[i]!=null ? avals[i] : arefs[i].getRValue(ctx));
-
+							astrings = ref [];
+							fori(0, length(code.es) - 1, \i -> {
+									switch ((^avals)[i]) {
+										Some(aval): refArrayPush(astrings, aval);
+										None(): 
+											switch ((^arefs)[i]) {
+												Some(aref): refArrayPush(astrings, cpp2PlaceInfoGetRValue(aref, ctx));
+												None(): cpp2_error("must not happen");
+											}
+									}
+								}
+							);
 							// finally assign
-							for (i in 0...args.length) {
-								if (arefs[i] != null &&
-									arefs[i].place == Argument && arefs[i].slot == i)
-									continue;
-								ctx.wrsemi(assignExpr('RUNNER_ARG('+i+')',astrings[i]));
-							}
-
+							fori(0, length(code.es) - 1, 
+								\i -> {
+									switch (arefs[i]) {
+										Some(aref): {
+											if (aref.place == Cpp2Argument() && aref.slot == i) {
+												cpp2ContextWrSemi(ctx, cpp2WriterAssignExpr("RUNNER_ARG(" + i2s(i) + ")", (^astrings)[i], false));
+											}
+										}
+										None(): { }
+									}
+								}
+							);
 							// and jump
-							ctx.wr('goto tail_call;');
-							return;
-						}
-						else {
+							cpp2ContextWrSemi(ctx, "goto tail_call");
+							None();
+						} else {
 							// allow even if optional native
-							direct_call = cpp2FnMethodName(n);
+							direct_call := cpp2FnMethodName(n);
+							proceed();
 						}
 					} else if (native == "") {
-						direct_call = cpp2FnMethodName(n);
+						direct_call := cpp2FnMethodName(n);
+						proceed();
 					} else {
-						rnative = known_natives.get(native);
-						if (rnative != null && rnative.nargs == nargs) {
-							if (inlineNative(code, native, args, ctx, out, top))
-								return;
-							direct_call = 'ByteCodeRunner::'+rnative.cname;
-							if (rnative.noalloc)
-								allocs = false;
+						rnative = lookupTreeDef(writer.known_natives, native, dummyCpp2NativeDescr);
+						if (rnative.name != "" && length(rnative.nargs) == nargs) {
+							if (cpp2WriterInlineNative(code, native, code.es, ctx, out, top)) {
+								None();
+							} else {
+								direct_call := "ByteCodeRunner::" + rnative.cname;
+								if (rnative.noalloc) {
+									allocs := false;
+								}
+								proceed();
+							}
 						}
 					}
 				}
 				Cpp2Struct(info): {
-					if (length(info.args) != length(args)) {
+					if (length(info.args) != length(code.es)) {
 						cpp2_error("Wrong argument count for struct " + info.structname);
 					}
-					compileNewStruct(info, args, ctx, out, top);
-					return;
+					cpp2WriterCompileNewStruct(info, args, ctx, out, top);
+					None();
 				}
-				default: { }
+				default: proceed();
 			}
 		}
-		default: { }
+		default: proceed();
+	}
+}
+
+numeric_natives = ["Native.length", "Native.strlen", "Native.bitXor", "Native.bitOr", "Native.bitAnd", "Native.bitNot"];
+
+cpp2WriterInlineNative(code : FiCall, fn : string, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> bool {
+	eval_tmp = \arg, allow_out -> { // allow_out = false
+		cpp2WriterEvalToTmp(arg, ctx, top, if (allow_out) out else Cpp2OutputNull());
+	}
+	fetch_ref = \arg, lvalue, allow_out -> { // allow_out = false
+		cpp2WriterFetchToRef(arg, ctx, top, lvalue, if (allow_out) out else Cpp2OutputNull());
 	}
 
-	// Allocate an output lvalue if necessary
-	out_ref = if (out == Cpp2OutputReturn() || out == Cpp2OutputNone()) {
-		None();
-	} else {
-		Some(cpp2WriterGetOutputOrTemp(ctx, out, top));
-	}
-
-	// Compute index of the start of arguments. Allow the
-	// function reference intersect with the output slot,
-	// but not the actual arguments.
-	aidx = if (direct_call == "") {
-		(out_ref != null &&
-			out_ref.place == Temporary &&
-			out_ref.slot == top.temp-1) ? out_ref.slot : top.temp++;
-	} else {
-		top.temp
-	}
-
-	for (arg in args)
-	{
-		ctop = mktop(top);
-		tmp = ctx.env.mktemp(top.temp++);
-		compileExpression(arg, ctx, OutputVar(tmp), ctop);
-	}
-
-	expr = if (direct_call == null) {
-		ftmp = ctx.env.mktemp(aidx);
-		compileExpression(fn, ctx, OutputVar(ftmp), mktop(top));
-		'RUNNER->FastEvalFunction(&temps['+aidx+'], '+args.length+')';
-	} else {
-		if (args.length > 0) {
-			direct_call+'(RUNNER, &temps['+aidx+'])';
-		} else {
-			direct_call+'(RUNNER, NULL)';
+	if (contains(fn, numeric_natives)) {
+		cpp2WriterCompileNumericExpr(code, ctx, out, top, Cpp2TInt());
+	} else if (fn == "Native.substring") {
+		str = eval_tmp(code.es[0], true);
+		cpp2WriterVerifyTag(str, TString, ctx);
+		idx = cpp2WriterEmitNumericExpr(code.es[1], ctx, top, Cpp2TInt());
+		len = cpp2WriterEmitNumericExpr(code.es[2], ctx, top, Cpp2TInt());
+		cpp2ContextWrSemi(ctx, "if (unlikely(!RUNNER->DoSubstring(&" + str.getLValue() + "," + idx + "," + len + "))) RETVOID");
+		cpp2WriterCopyValue(ctx, out, str);
+	} else if (fn == "Native.map") {
+		switch (code.es[1]) {
+			FiLambda(args, body, type, __):
+				if (length(args) != 1) {
+					false 
+				} else {
+					cpp2WriterInlineMapNative(code.es[0], None(), "", "", args[0].name, body, ctx, out, top, false);
+				}
+			default: false;
 		}
+	} else if (fn == "Native.mapi") {
+		switch (code.es[1]) {
+			FiLambda(args, body, type, __):
+				if (length(largs) != 2) {
+					false;
+				} else {
+					cpp2WriterInlineMapNative(code.es[0], None(), args[0].name, "", args[1].name, body, ctx, out, top, false);
+				}
+			default: false;
+		}
+	} else if (fn == "Native.iter") {
+		switch (code.es[1]) {
+			FiLambda(args, body, type, __):
+				if (length(largs) != 1) {
+					false;
+				} else {
+					cpp2WriterInlineMapNative(code.es[0], None(), "", "", args[0].name, body, ctx, out, top, true);
+				}
+			default: false;
+		}
+	} else if (fn == "Native.iteri") {
+		switch (code.es[1]) {
+			FiLambda(args, body, type, __):
+				if (length(args) != 2) {
+					false;
+				} else {
+					cpp2WriterInlineMapNative(code.es[0], None(), args[0].name, "", args[1].name, body, ctx, out, top, true);
+				}
+			default: false;
+		}
+	} else if (fn == "Native.fold") {
+		switch (code.es[2]) {
+			FiLambda(args, body, type, __):
+				if (length(args) != 2) {
+					false;
+				} else {
+					cpp2WriterInlineMapNative(code.es[0], Some(code.es[1]), "", args[0].name, args[1].name, body, ctx, out, top, false);
+				}
+			default: false;
+		}
+	} else if (fn == "Native.foldi") {
+		switch (code.es[2]) {
+			FiLambda(args, body, type, __):
+				if (length(args) != 3) {
+					false;
+				} else {
+					cpp2WriterInlineMapNative(code.es[0], Some(code.es[1]), args[0].name, args[1].name, args[2].name, body, ctx, out, top, false);
+				}
+			default: false;
+		}
+	} else {
+		false;
+	}
+}
+
+cpp2WriterInlineMapNative(arr : FiExp, init : Maybe<FiExp>, iarg : string, farg : string, varg : string, body : FiExp, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop, iter0 : Bool) {
+	iter = if (out == Cpp2OutputNone()) true else iter0;
+
+	iv = cpp2WriterFetchToRef(arr, ctx, top, true);
+	ivs = cpp2PlaceInfoGetLValue(iv);
+	cpp2WriterVerifyTag(iv, Cpp2TArray(), ctx);
+
+	arrsize = cpp2ContextTempvar(ctx, "isz", Cpp2TInt(), "RUNNER->GetArraySize(" + ivs + ")");
+
+	var rvs = null, rv = null;
+	if (!iter && farg == "") {
+		// map output array
+		rv = cpp2WriterGetOutputOrTemp(ctx, out, top);
+		rvs = cpp2PlaceInfoGetLValue(rv);
+	}
+	
+	if (farg != "") {
+		// fold init value
+		rv = cpp2WriterEvalToTmp(init, ctx, top);
+		rvs = rv.getLValue();
+
+		rv.name = farg;
+		// Invalidate cached type info
+		CppPlaceInfo.clearMeta(ctx.localMeta(rv));
+	} else if (!iter) {
+		cpp2ContextWrCheck(ctx, cpp2WriterAssignExpr(rvs, "RUNNER->AllocateArray(" + arrsize + ")", true), true);
+		cpp2ContextLocalMeta(ctx, rv).tag ::= Cpp2TArray();
 	}
 
-	if (out_ref != null) {
-		ctx.wrcheck('CALL_WITH_RETSLOT('+out_ref.getLValue()+','+expr+')', allocs);
-		copyValue(ctx, out, out_ref);
+	subtop = cpp2Mktop(top);
+
+	// Index var as slot if used in closure
+	idxpair = if (iarg != "") {
+		subtop_temp = subtop.temp;
+		subtop.temp ::= subtop_temp + 1;
+		idx = cpp2EnvironmentMktemp(ctx.env, subtop_temp);
+		cpp2ContextWrSemi(ctx, "StackSlot::SetInt(" + cpp2PlaceInfoGetLValue(idx) + ",0)");
+		idx.name ::= iarg;
+		cpp2ContextLocalMeta(ctx, idx).tag ::= Cpp2TInt();
+		Pair(Some(idx), cpp2PlaceInfoGetLValue(idx) + ".slot_private.IntValue";)
 	} else {
-		emitValue(ctx, out, expr, null, true, true, allocs);
+		Pair(None(), cpp2ContextTempvar(ctx, "i", Cpp2TInt(), "0"))
+	}
+	idx = idxpair.first;
+	idxvar = idxpair.second;
+
+	// Invalidate all pointer caches
+	cpp2ContextIncGc(ctx);
+
+	cpp2ContextWr(ctx, "for (; " + idxvar + " < " + arrsize + "; " + idxvar + "++) {");
+
+	subctx = cpp2ContextEnter(ctx, "    ");
+	if (iarg != "") {
+		cpp2ContextPushdef(subctx, idx);
+	}
+	if (farg != "") {
+		cpp2ContextPushdef(subctx, rv);
+	}
+	cpp2ContextPushdef(subctx, Cpp2PlaceInfo(ctx.env, Cpp2SlotAlias(iv, idxvar), 0, varg));
+
+	// Emit body
+	if (farg != "") {
+		cpp2WriterCompileExpression(body, subctx, 
+			OutputExpr(\ctx, val -> (val == rvs) ? "/*NOP*/" : cpp2WriterAssignExpr(rvs, val)), 
+			subtop
+		);
+	} else if (iter) {
+		cpp2WriterCompileExpression(body, subctx, OutputNone, subtop);
+	} else {
+		cpp2WriterCompileExpression(body, subctx, 
+			OutputExpr(\ctx, val -> "RUNNER->SetArraySlot(" + rvs + "," + idxvar + "," + val + ")"), 
+			subtop
+		);
+	}
+
+	cpp2ContextExit(subctx);
+	cpp2ContextWr(ctx, "}");
+	cpp2ContextJoinOne(ctx, subctx);
+
+	if (iter) {
+		cpp2WriterEmitValue(ctx, out, "FLOWVOID", null);
+	} else {
+		cpp2WriterCopyValue(ctx, out, rv);
 	}
 }
