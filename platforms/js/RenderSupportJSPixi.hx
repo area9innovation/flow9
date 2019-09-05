@@ -529,134 +529,103 @@ class RenderSupportJSPixi {
 		if (!isEmulating) switchFocusFramesShow(false);
 	}
 
+	public static var MouseUpReceived : Bool = true;
+
 	private static inline function initPixiStageEventListeners() {
-		if (untyped __js__("window.navigator.msPointerEnabled")) {
-			setStagePointerHandler("MSPointerDown", function () { if (MouseUpReceived) emit("mousedown"); });
-			setStagePointerHandler("MSPointerUp", function () { if (!MouseUpReceived) emit("mouseup"); });
-			setStagePointerHandler("MSPointerMove", function () { emit("mousemove"); });
+		var onpointerdown = function(e : Dynamic) {
+			// Prevent default drop focus on canvas
+			// Works incorrectly in Edge
+			if (e.target == PixiView) {
+				e.preventDefault();
+			}
+
+			if (e.touches != null) {
+				if (e.touches.length == 1) {
+					MousePos.x = e.touches[0].pageX;
+					MousePos.y = e.touches[0].pageY;
+
+					if (MouseUpReceived) emit("mousedown");
+				} else if (e.touches.length > 1) {
+					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+				}
+			} else {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
+
+				if (e.which == 3 || e.button == 2) {
+					emit("mouserightdown");
+				} else if (e.which == 2 || e.button == 1) {
+					emit("mousemiddledown");
+				} else {
+					if (MouseUpReceived) emit("mousedown");
+				}
+			}
+		};
+
+		var onpointerup = function(e : Dynamic) {
+			MousePos.x = e.pageX;
+			MousePos.y = e.pageY;
+
+			if (e.which == 3 || e.button == 2) {
+				emit("mouserightup");
+			} else if (e.which == 2 || e.button == 1) {
+				emit("mousemiddleup");
+			} else {
+				if (!MouseUpReceived) emit("mouseup");
+			}
+		};
+
+		var onpointermove = function(e : Dynamic) {
+			MousePos.x = e.pageX;
+			MousePos.y = e.pageY;
+
+			emit("mousemove");
+		};
+
+		var onpointerout = function(e : Dynamic) {
+			if (e.relatedTarget == Browser.document.documentElement) {
+				if (!MouseUpReceived) emit("mouseup");
+			}
+		};
+
+		if (Platform.isIOS) {
+			Browser.document.body.ontouchstart = onpointerdown;
+			Browser.document.body.ontouchend = onpointerup;
+			Browser.document.body.ontouchmove = onpointermove;
+			Browser.document.body.onmouseout = onpointerout;
+		} else if (Platform.isSafari) {
+			Browser.document.body.onmousedown = onpointerdown;
+			Browser.document.body.onmouseup = onpointerup;
+			Browser.document.body.onmousemove = onpointermove;
+			Browser.document.body.onmouseout = onpointerout;
+		} else {
+			Browser.document.body.onpointerdown = onpointerdown;
+			Browser.document.body.onpointerup = onpointerup;
+			Browser.document.body.onpointermove = onpointermove;
+			Browser.document.body.onpointerout = onpointerout;
 		}
 
-		if (Native.isTouchScreen()) {
-			setStagePointerHandler("touchstart", function () { emit("mousedown"); });
-			setStagePointerHandler("touchend", function () { if (!MouseUpReceived) emit("mouseup"); });
-			setStagePointerHandler("touchmove", function () { emit("mousemove"); });
-		}
+		Browser.document.body.onkeydown = function(e : Dynamic) {
+			MousePos.x = e.pageX;
+			MousePos.y = e.pageY;
 
-		if (!Platform.isMobile) {
-			setStagePointerHandler("mousedown", function () { if (MouseUpReceived) emit("mousedown"); });
-			setStagePointerHandler("mouseup", function () { if (!MouseUpReceived) emit("mouseup"); });
-			setStagePointerHandler("mouserightdown", function () { emit("mouserightdown"); });
-			setStagePointerHandler("mouserightup", function () { emit("mouserightup"); });
-			setStagePointerHandler("mousemiddledown", function () { emit("mousemiddledown"); });
-			setStagePointerHandler("mousemiddleup", function () { emit("mousemiddleup"); });
-			setStagePointerHandler("mousemove", function () { emit("mousemove"); });
-			// Emulate mouseup to release scrollable for example
-			setStagePointerHandler("mouseout", function () { if (!MouseUpReceived) emit("mouseup"); });
-			// Emulate mousemove to update hovers and tooltips
-			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
-			Browser.document.body.addEventListener("keydown", function (e) { emit("keydown", parseKeyEvent(e)); });
-			Browser.document.body.addEventListener("keyup", function (e) { emit("keyup", parseKeyEvent(e)); });
-		}
+			emit("keydown", parseKeyEvent(e));
+		};
+
+		Browser.document.body.onkeyup = function(e : Dynamic) {
+			MousePos.x = e.pageX;
+			MousePos.y = e.pageY;
+
+			emit("keyup", parseKeyEvent(e));
+		};
+
+		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
 
 		on("mousedown", function (e) { VideoClip.CanAutoPlay = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
+
 		switchFocusFramesShow(false);
 		setDropCurrentFocusOnDown(true);
-	}
-
-	public static var MouseUpReceived : Bool = true;
-
-	private static function setStagePointerHandler(event : String, listener : Void -> Void) : Void {
-		var cb = switch (event) {
-			case "touchstart" | "touchmove" | "MSPointerDown" | "MSPointerMove":
-				function(e : Dynamic) {
-					if (e.touches != null) {
-						if (e.touches.length == 1) {
-							MousePos.x = e.touches[0].pageX;
-							MousePos.y = e.touches[0].pageY;
-							listener();
-						} else if (e.touches.length == 2) {
-							GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
-						}
-					}
-				}
-			case "touchend" | "MSPointerUp":
-				function(e : Dynamic) { GesturesDetector.endPinch(); if (e.touches != null && e.touches.length == 0) listener(); }
-			case "mouseout":
-				event = "pointerout";
-				// Some browsers may produce both mouseup and moseout for some cases.
-				// For example window openning on button click in FF
-				function(e : Dynamic) {
-					if (e.relatedTarget == Browser.document.documentElement) {
-						listener();
-					}
-				}
-			case "mousedown" | "mouseup":
-				if (event == "mousedown")
-					event = "pointerdown";
-				else
-					event = "pointerup";
-				function(e : Dynamic) {
-					// Prevent default drop focus on canvas
-					// Works incorrectly in Edge
-					if (e.target == PixiView) {
-						e.preventDefault();
-					}
-
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-					if (e.which == 1 || e.button == 0)
-						listener();
-				}
-			case "mouserightdown" | "mouserightup":
-				if (event == "mouserightdown")
-					event = "pointerdown";
-				else
-					event = "pointerup";
-
-				function(e : Dynamic) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-					if (e.which == 3 || e.button == 2)
-						listener();
-				}
-			case "mousemiddledown" | "mousemiddleup":
-				if (event == "mousemiddledown")
-					event = "pointerdown";
-				else
-					event = "pointerup";
-
-				function(e : Dynamic) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-					if (e.which == 2 || e.button == 1)
-						listener();
-				}
-			case "mousemove":
-				event = "pointermove";
-				function(e : Dynamic) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					listener();
-				}
-			default:
-				function(e : Dynamic) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					listener();
-				}
-		}
-
-
-		if (Util.isMouseEventName(event))
-
-			// We should prevent mouseup from being called inside document area
-			// To have drags over textinputs
-			Browser.document.body.addEventListener(event, cb);
-		else
-			PixiView.addEventListener(event, cb);
 	}
 
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
