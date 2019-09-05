@@ -6,6 +6,7 @@ import pixi.core.display.Bounds;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 import pixi.interaction.EventEmitter;
+import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -549,34 +550,62 @@ class AccessWidget extends EventEmitter {
 				}
 			};
 
-			element.onpointerdown = function (e : Dynamic) {
-				RenderSupportJSPixi.MousePos.x = e.pageX;
-				RenderSupportJSPixi.MousePos.y = e.pageY;
+			var onpointerdown = function(e : Dynamic) {
+				// Prevent default drop focus on canvas
+				// Works incorrectly in Edge
+				if (e.target == RenderSupportJSPixi.PixiView) {
+					e.preventDefault();
+				}
 
-				if (RenderSupportJSPixi.MouseUpReceived) {
-					RenderSupportJSPixi.PixiStage.emit(
-						e.which == 1 || e.button == 0 ? "mousedown" :
-						e.which == 3 || e.button == 2 ? "mouserightdown" :
-						e.which == 2 || e.button == 1 ? "mousemiddledown" : "pointerdown"
-					);
+				if (e.touches != null) {
+					if (e.touches.length == 1) {
+						RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+						RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+						if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else {
+					RenderSupportJSPixi.MousePos.x = e.pageX;
+					RenderSupportJSPixi.MousePos.y = e.pageY;
+
+					if (e.which == 3 || e.button == 2) {
+						RenderSupportJSPixi.PixiStage.emit("mouserightdown");
+					} else if (e.which == 2 || e.button == 1) {
+						RenderSupportJSPixi.PixiStage.emit("mousemiddledown");
+					} else {
+						if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+					}
 				}
 
 				e.preventDefault();
-			}
+			};
 
-			element.onpointerup = function (e : Dynamic) {
+			var onpointerup = function(e : Dynamic) {
 				RenderSupportJSPixi.MousePos.x = e.pageX;
 				RenderSupportJSPixi.MousePos.y = e.pageY;
 
-				if (!RenderSupportJSPixi.MouseUpReceived) {
-					RenderSupportJSPixi.PixiStage.emit(
-						e.which == 1 || e.button == 0 ? "mouseup" :
-						e.which == 3 || e.button == 2 ? "mouserightup" :
-						e.which == 2 || e.button == 1 ? "mousemiddleup" : "pointerdown"
-					);
+				if (e.which == 3 || e.button == 2) {
+					RenderSupportJSPixi.PixiStage.emit("mouserightup");
+				} else if (e.which == 2 || e.button == 1) {
+					RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+				} else {
+					if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
 				}
 
 				e.preventDefault();
+			};
+
+			if (Platform.isMobile) {
+				element.ontouchstart = onpointerdown;
+				element.ontouchend = onpointerup;
+			} else if (Platform.isSafari) {
+				element.onmousedown = onpointerdown;
+				element.onmouseup = onpointerup;
+			} else {
+				element.onpointerdown = onpointerdown;
+				element.onpointerup = onpointerup;
 			}
 
 			element.addEventListener('focus', function(e : Dynamic) {

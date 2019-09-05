@@ -576,10 +576,25 @@ class RenderSupportJSPixi {
 		};
 
 		var onpointermove = function(e : Dynamic) {
-			MousePos.x = e.pageX;
-			MousePos.y = e.pageY;
+			if (e.touches != null) {
+				if (e.touches.length == 1) {
+					MousePos.x = e.touches[0].pageX;
+					MousePos.y = e.touches[0].pageY;
 
-			emit("mousemove");
+					emit("mousemove");
+				} else if (e.touches.length > 1) {
+					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+				}
+			} else {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
+
+				emit("mousemove");
+			}
+
+			if (Platform.isChrome && Platform.isMobile) {
+				e.preventDefault();
+			}
 		};
 
 		var onpointerout = function(e : Dynamic) {
@@ -588,11 +603,14 @@ class RenderSupportJSPixi {
 			}
 		};
 
-		if (Platform.isIOS) {
+		if (Platform.isMobile) {
+			if (Platform.isChrome) {
+				untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+			}
+
 			Browser.document.body.ontouchstart = onpointerdown;
 			Browser.document.body.ontouchend = onpointerup;
 			Browser.document.body.ontouchmove = onpointermove;
-			Browser.document.body.onmouseout = onpointerout;
 		} else if (Platform.isSafari) {
 			Browser.document.body.onmousedown = onpointerdown;
 			Browser.document.body.onmouseup = onpointerup;

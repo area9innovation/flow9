@@ -1118,13 +1118,25 @@ class DisplayObjectHelper {
 		}
 
 		if (clip.interactive) {
-			if (nativeWidget.style.onmouseover == null) {
-				nativeWidget.onpointerover = function() {
-					clip.emit("pointerover");
-				}
+			if (Platform.isSafari || Platform.isMobile) {
+				if (nativeWidget.style.onmouseover == null) {
+					nativeWidget.onmouseover = function() {
+						clip.emit("pointerover");
+					}
 
-				nativeWidget.onpointerout = function() {
-					clip.emit("pointerout");
+					nativeWidget.onmouseout = function() {
+						clip.emit("pointerout");
+					}
+				}
+			} else {
+				if (nativeWidget.style.onpointerover == null) {
+					nativeWidget.onpointerover = function() {
+						clip.emit("pointerover");
+					}
+
+					nativeWidget.onpointerout = function() {
+						clip.emit("pointerout");
+					}
 				}
 			}
 
@@ -1133,6 +1145,8 @@ class DisplayObjectHelper {
 		} else {
 			nativeWidget.onmouseover = null;
 			nativeWidget.onmouseout = null;
+			nativeWidget.onpointerover = null;
+			nativeWidget.onpointerout = null;
 			nativeWidget.style.pointerEvents = null;
 		}
 	}
