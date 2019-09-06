@@ -267,10 +267,14 @@ class FlowContainer extends Container {
 		}
 
 		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
+			var mask : Dynamic = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
 
-			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
+			if (mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
+				if (scrollRect == null && mask.parent != this && mask.parent.localTransformChanged) {
+					mask.parent.transform.updateLocalTransform();
+				}
+
+				DisplayObjectHelper.applyBoundsTransform(mask.localBounds, scrollRect != null || mask.parent == this ? mask.localTransform : mask.parent.localTransform, localBounds);
 			}
 		} else for (child in children) {
 			if (untyped child.localBounds != null && child.localBounds.minX != Math.POSITIVE_INFINITY) {

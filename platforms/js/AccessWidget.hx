@@ -580,6 +580,7 @@ class AccessWidget extends EventEmitter {
 				}
 
 				e.preventDefault();
+				e.stopPropagation();
 			};
 
 			var onpointerup = function(e : Dynamic) {
@@ -595,6 +596,7 @@ class AccessWidget extends EventEmitter {
 				}
 
 				e.preventDefault();
+				e.stopPropagation();
 			};
 
 			if (Platform.isMobile) {

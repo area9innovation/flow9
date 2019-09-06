@@ -889,7 +889,6 @@ class RenderSupportJSPixi {
 			PixiStageChanged = false;
 
 			if (RendererType == "canvas") {
-				var startAt = Date.now().getTime();
 				TransformChanged = false;
 
 				if (!RenderSupportJSPixi.DomRenderer) {

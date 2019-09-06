@@ -784,14 +784,18 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		invalidateInteractive();
 
-		nativeWidget.onmousemove = onMouseMove;
-		nativeWidget.onmousedown = onMouseDown;
-		nativeWidget.onmouseup = onMouseUp;
-
-		if (Native.isTouchScreen()) {
+		if (Platform.isMobile) {
+			nativeWidget.ontouchmove = onMouseMove;
 			nativeWidget.ontouchstart = onMouseDown;
 			nativeWidget.ontouchend = onMouseUp;
-			nativeWidget.ontouchmove = onMouseMove;
+		} else if (Platform.isSafari) {
+			nativeWidget.onmousemove = onMouseMove;
+			nativeWidget.onmousedown = onMouseDown;
+			nativeWidget.onmouseup = onMouseUp;
+		} else {
+			nativeWidget.onpointermove = onMouseMove;
+			nativeWidget.onpointerdown = onMouseDown;
+			nativeWidget.onpointerup = onMouseUp;
 		}
 
 		nativeWidget.onfocus = onFocus;
@@ -832,14 +836,30 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function onMouseMove(e : MouseEvent) {
+	private function onMouseMove(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+				RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+				RenderSupportJSPixi.PixiStage.emit("mousemove");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupportJSPixi.MousePos.x = e.pageX;
+			RenderSupportJSPixi.MousePos.y = e.pageY;
+
+			RenderSupportJSPixi.PixiStage.emit("mousemove");
+		}
+
 		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
-		RenderSupportJSPixi.provideEvent(e);
+		e.stopPropagation();
 	}
 
 	private function onMouseDown(e : Dynamic) {
@@ -856,15 +876,48 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+				RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+				if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupportJSPixi.MousePos.x = e.pageX;
+			RenderSupportJSPixi.MousePos.y = e.pageY;
+
+			if (e.which == 3 || e.button == 2) {
+				RenderSupportJSPixi.PixiStage.emit("mouserightdown");
+			} else if (e.which == 2 || e.button == 1) {
+				RenderSupportJSPixi.PixiStage.emit("mousemiddledown");
+			} else {
+				if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+			}
+		}
+
+		e.stopPropagation();
 	}
 
-	private function onMouseUp(e : MouseEvent) {
+	private function onMouseUp(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		RenderSupportJSPixi.MousePos.x = e.pageX;
+		RenderSupportJSPixi.MousePos.y = e.pageY;
+
+		if (e.which == 3 || e.button == 2) {
+			RenderSupportJSPixi.PixiStage.emit("mouserightup");
+		} else if (e.which == 2 || e.button == 1) {
+			RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+		} else {
+			if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+		}
+
+		e.stopPropagation();
 	}
 
 	private function onFocus(e : Event) : Void {

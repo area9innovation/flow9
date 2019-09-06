@@ -449,7 +449,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		}
 
 		// evaluate last filter and render
-		rvlast = filters[filters.length-1].drawToCanvas(curtex, auxtex, ctx, x, y);
+		rvlast = filters[filters.length-1].drawToCanvas(curtex, auxtex, ctx, 0, 0);
 	}
 
 	if (rvlast != null)
