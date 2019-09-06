@@ -68,8 +68,10 @@ public class Native extends NativeHost {
 		}
 
 		try {
-			PrintStream out = new PrintStream(System.out, true, "UTF-8");
-			out.println(s);
+			synchronized (System.out) {
+				PrintStream out = new PrintStream(System.out, true, "UTF-8");
+				out.println(s);
+			}
 		} catch(UnsupportedEncodingException e) {
 		}
 		return null;
@@ -1313,13 +1315,6 @@ public class Native extends NativeHost {
 	public final Boolean containsConcurrentHashMap(Object map, Object key) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		return concurrentMap.containsKey(key);
-	}
-
-	public final Object concurrentPrintln(String s) {
-		synchronized (System.out) {
-			System.out.println(s);
-		}
-		return null;
 	}
 
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
