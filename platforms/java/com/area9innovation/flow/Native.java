@@ -1317,6 +1317,7 @@ public class Native extends NativeHost {
 		return concurrentMap.containsKey(key);
 	}
 
+	// TODO: why don't we use threadpool here?
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
 			return task.invoke();
