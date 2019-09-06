@@ -1194,6 +1194,38 @@ public class Native extends NativeHost {
 	return md5Hex;
 	}
 
+	public String fileChecksum(String filename) {
+		try {
+			InputStream fis =  new FileInputStream(filename);
+			byte[] buffer = new byte[1024];
+			MessageDigest md = MessageDigest.getInstance("MD5");
+			int numRead;
+			do {
+				numRead = fis.read(buffer);
+				if (numRead > 0) {
+					md.update(buffer, 0, numRead);
+				}
+			} while (numRead != -1);
+
+			fis.close();
+
+			byte[] digest = new byte[0];
+			digest = md.digest();
+
+			BigInteger bigInt = new BigInteger(1, digest);
+			String md5Hex = bigInt.toString(16);
+
+			while( md5Hex.length() < 32 ){
+				md5Hex = "0" + md5Hex;
+			}
+
+			return md5Hex;
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "";
+		}
+	}
+
 	// Launch a system process
 	public final Object startProcess(String command, Object[] args, String currentWorkingDirectory, String stdin,
 					 Func3<Object, Integer, String, String> onExit) {
