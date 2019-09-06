@@ -1714,6 +1714,40 @@ class Native {
 		return JsMd5.encode(content);
 	}
 
+	#if js
+	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+		if (untyped __js__("Array.isArray(o)")) {
+			return makeStructValue("JsonArray", [map(o, object2JsonStructs)], null);
+		} else {
+			var t = untyped __js__ ("typeof o");
+			if (t == "boolean") {
+				return makeStructValue("JsonBool", [o], null);
+			} else if ( t == "string" ) {
+				return makeStructValue("JsonString", [o], null);
+			} else if ( t == "number" ) {
+				return makeStructValue("JsonDouble", [o], null); 
+			} else if (o == null) {
+				return makeStructValue("JsonNull", [], null);
+			} else {
+				var props = untyped __js__ ("Object.getOwnPropertyNames(o)");
+				var pairs = map(props, function(p) {
+					return makeStructValue("Pair", [p, object2JsonStructs( untyped __js__ ("o[p]") )] , null);
+				 } );
+				return makeStructValue("JsonObject", [pairs], null);
+			}
+		}
+	}
+
+	public static function parseJson(json : String) : Dynamic {
+	 	try {
+	 		var o = haxe.Json.parse(json);
+			return object2JsonStructs(o);
+		} catch (e : Dynamic) {
+			return makeStructValue("JsonDouble", [0.0], null); 
+		}
+	}
+	#end
+
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
 		#if js
 		untyped __js__("
