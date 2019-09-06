@@ -4,6 +4,8 @@ import tools/flowc/backends/cpp2/fi2cpp2_util;
 export {
 	cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer;
 	cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) -> void;
+	cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void;
+	cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void;
 }
 
 // CppWriter methods
@@ -138,6 +140,99 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer {
 	);
 	writer
 }
+
+cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void {
+	// Translate global functions
+	if (!exists(^(writer.function_table), \f -> f.name == "main")) {
+		cpp2_error("No main() function.")
+	} else {
+		prog = writer.program;
+		iter(prog.traversal, 
+			\mod_name -> {
+				module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
+				iter(module.initOrder, 
+					\glob_name -> {
+						switch (lookupTree(prog.names.toplevel, glob_name)) {
+							Some(decl): {
+								switch (decl) {
+									FiFunctionDec(name, lambda, type, __,__): {
+										cpp2WriterCompileGlobalFn(writer, name, lambda);
+									}
+									FiNativeDec(name, io, type, nat_name, fallback, __,__): {
+										switch (fallback) {
+											FiVoid(__): { } // No fallback
+											FiLambda(__,__,__,__): cpp2WriterCompileGlobalFn(writer, name, fallback);
+											default: cpp2_error("impossible");
+										}
+									}
+									FiGlobalVar(name, value, type, __,__): {
+										// do nothing
+									}
+								}
+							}
+							None(): cpp2_error("impossible");
+						}
+					}
+				)
+			}
+		)
+	}
+}
+
+cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
+
+	endInitFunction = \global_env : Cpp2Environment -> {
+		switch (global_env.cur_ctx) {
+			Some(ctx): {
+				cpp2ContextWrSemi(ctx, "RETVOID");
+				cpp2ContextExit(ctx);
+			}
+			None(): cpp2_error("context must not be None");
+		}
+		cpp2WriterEmitLambdaCode(writer, global_env, "gen_init.cpp");
+	}
+
+	prog = writer.program;
+	last = fold(prog.traversal, Pair(0, cpp2Environment(None(), "aux_init0", "$init", 0, writer.struct_list)),
+		\acc, mod_name -> {
+			module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
+			fold(module.initOrder, acc,
+				\ac, glob_name -> {
+					switch (lookupTree(prog.names.toplevel, glob_name)) {
+						Some(decl): {
+							switch (decl) {
+								FiGlobalVar(name, value, type, __,__): {
+									new_ac = if (length(^(ac.second.code_lines.lines)) >=1024) {
+										endInitFunction(ac.second);
+										new_env = cpp2Environment(None(), "aux_init" + i2s(ac.first + 1), "$init", 0, writer.struct_list);
+										Pair(ac.first + 1, new_env)
+									} else {
+										ac
+									}
+									global_env = new_ac.second;
+									place = lookupTreeDef(writer.global_map, name, dummyCpp2PlaceInfo);
+									global_env.vname ::= name + "$init";
+									switch (global_env.cur_ctx) {
+										Some(ctx): cpp2WriterCompileExpression(writer, value, ctx, Cpp2OutputVar(place), Cpp2StackTop(0));
+										None(): cpp2_error("context must not be None");
+									}
+									new_ac
+								}
+								default: ac; // do nothing
+							}
+						}
+						None(): {
+							cpp2_error("impossible"); 
+							ac;
+						}
+					}
+				}
+			)
+		}
+	);
+	endInitFunction(last.second)
+}
+
 
 cpp2GenerateStructCode(writer : Cpp2Writer, s : Cpp2StructOrderInfo, info : Cpp2StructInfo) -> void {
 	code = writer.struct_code;
