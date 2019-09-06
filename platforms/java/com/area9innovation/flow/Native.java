@@ -1297,6 +1297,10 @@ public class Native extends NativeHost {
 		return null;
 	}	
 
+	public final String getThreadId() {
+		return Long.toString(Thread.currentThread().getId());
+	}
+
 	public final Object initConcurrentHashMap() {
 		return new ConcurrentHashMap();
 	}
@@ -1315,6 +1319,11 @@ public class Native extends NativeHost {
 	public final Boolean containsConcurrentHashMap(Object map, Object key) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		return concurrentMap.containsKey(key);
+	}
+
+	public final Object[] valuesConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.values().toArray();
 	}
 
 	// TODO: why don't we use threadpool here?
