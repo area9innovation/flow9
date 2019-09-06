@@ -119,7 +119,8 @@ makeImageDecorated2(
 			sizeIndependentDecorations,
 			makeParagraphElements,
 			savedSize,
-			zoom
+			zoom,
+			pictureIsLoading
 		);
 
 		Constructor(
@@ -182,7 +183,6 @@ makeImageDecorated2(
 		},
 		idfn
 	);
-	addShadow = \pic -> if (containsStruct(decorations, ImageShadow())) ShadowFilter2(4., pic) else pic;
 
 	defaultImageAdaptiveCrop = ImageAdaptiveCrop(0.0, 0.0, 0.0, 0.0, makeWH());
 	adaptiveCropping = \form : Form -> {
@@ -231,7 +231,6 @@ makeImageDecorated2(
 		|> useSavedSize
 		|> adaptiveCropping
 		|> (\f -> if (preScaleCrop) applyCrop(f) else f)
-		|> addShadow
 		|> zoommer(addDecorations(fullSizeScaleConnector, true))
 		|> unpairC(\f, t -> f |> addDecorations(zoomedImageScaleConnector, false) |> t)
 		|> addPadding;
@@ -399,7 +398,7 @@ makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : doub
 }
 
 
-PictureWithWarning(picture : Picture, warning : Form);
+PictureWithWarning(picture : Form, warning : Form);
 makeImageWithWarning(filename:string, pictureIsLoading : DynamicBehaviour<bool>) -> PictureWithWarning {
 	filenameUrl = unescapeHtml(filename);
 	warning = make(Empty());
@@ -417,7 +416,13 @@ makeImageWithWarning(filename:string, pictureIsLoading : DynamicBehaviour<bool>)
 	setWarning(_("Loading..."), false);
 
 	PictureWithWarning(
-		Picture(filenameUrl, [OnLoadingError(\e -> { setWarning(_("Couldn't load image"), true) } ), OnLoaded(\ -> nextDistinct(pictureIsLoading, false)) ]),
+		Picture(
+			filenameUrl,
+			[
+				OnLoadingError(\e -> { setWarning(_("Couldn't load image"), true) } ),
+				OnLoaded(\ -> nextDistinct(pictureIsLoading, false))
+			]
+		),
 		Mutable(warning)
 	)
 }
@@ -680,7 +685,8 @@ makeSizeIndependentDecorationsAdder(
 	decorations : [SizeIndependentDecoration],
 	makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
 	imgSize: WidthHeight,
-	zoom : bool
+	zoom : bool,
+	pictureIsLoading : Behaviour<bool>
 	) -> ((Form) -> Form)
 {
 	imageWH = makeWH();
@@ -697,50 +703,57 @@ makeSizeIndependentDecorationsAdder(
 		)
 	}
 	addInspector = \size -> \f : Form -> Inspect([ISize(size)], f);
-	defaultDecoration = Pair(idfn, const(zeroWH));
-	addBorder = extract(decorations, defaultDecoration, \d -> switch (d : SizeIndependentDecoration) {
-		ImageBorder(radius, color, thickness) : {
-			fn = \f -> Rounded(radius, [Fill(white), Stroke(color), StrokeWidth(thickness)], f);
-			size = const(WidthHeight(0.0, 2.0 * thickness)); // Width is ignored at moment of implementation
-			Some(Pair(fn, size))
-		}
-		default: None();
-	});
-	addHeader = extract(decorations, defaultDecoration, \d -> switch (d : SizeIndependentDecoration) {
-		ImageHeader(label, fontsize, color) : {
-			size = makeWH();
-			fn = \f : Form -> {
+	addShadow = \pic -> if (containsStruct(decorations, ImageShadow())) {
+		if (js) CustomShadowAround2(black, 0.4, 5., 5., true, pic)
+		else ShadowFilter2(0.4, pic)
+	} else pic;
+
+	defaultDecoration = idfn;
+	addBorder = eitherMap(
+		tryExtractStruct(decorations, ImageBorder(0., 0, 0.)),
+		\d ->  {
+			\f -> Rounded(d.radius, [Fill(white), Stroke(d.color), StrokeWidth(d.thickness)], f);
+		},
+		idfn
+	);
+	addHeader = eitherMap(
+		tryExtractStruct(decorations, ImageHeader("", 0., 0)),
+		\d -> {
+			\f : Form -> {
 				Lines([
-					Paragraph(makeParagraphElements(label, [Fill(color), FontSize(fontsize)]), [CenterAlign()])
-						|> paragraphSizer(5.0, 5.0, 5.0, 5.0)
-						|> addInspector(size),
-					f,
+					Paragraph(
+						makeParagraphElements(d.label, [Fill(d.color), FontSize(d.fontsize)]),
+						[CenterAlign()]
+					) |> paragraphSizer(5.0, 5.0, 5.0, 5.0),
+					f
 				])
 			}
-			Some(Pair(fn, size))
-		}
-		default : None();
-	});
-	addFooter = extract(decorations, defaultDecoration, \d -> switch (d : SizeIndependentDecoration) {
-		ImageFooter(label, fontsize, color) : {
-			size = makeWH();
-			fn = \f : Form -> {
+		},
+		idfn
+	);
+	addFooter = eitherMap(
+		tryExtractStruct(decorations, ImageFooter("", 0., 0)),
+		\d -> {
+			\f : Form -> {
 				Lines([
 					f,
-					Paragraph(makeParagraphElements(label, [Fill(color), FontSize(fontsize)]), [CenterAlign()])
-						|> paragraphSizer(5.0, 5.0, 5.0, 5.0)
-						|> addInspector(size),
+					Paragraph(
+						makeParagraphElements(d.label, [Fill(d.color), FontSize(d.fontsize)]),
+						[CenterAlign()]
+					) |> paragraphSizer(5.0, 5.0, 5.0, 5.0)
 				])
 			}
-			Some(Pair(fn, size))
-		}
-		default : None();
-	});
-	addCopyright = extract(decorations, defaultDecoration, \d -> switch (d : SizeIndependentDecoration) {
-		ImageCopyright(copyright, style) : {
-			size = makeWH();
+		},
+		idfn
+
+	);
+	addCopyright = eitherMap(
+		tryExtractStruct(decorations, ImageCopyright("", [])),
+		\d -> {
+			copyright = d.copyright;
+			style = d.style;
 			text = getImageCopyrightPair(copyright).first;
-			fn = \f -> {
+			\f -> {
 				zoomFs = max(12.0, 12.0 * sqrt(imgSize.width * imgSize.width + imgSize.height * imgSize.height) / 1000.0);
 				newStyle = ifArrayPush(style, !containsStruct(style, Fill(0x525252)), Fill(0x525252));
 
@@ -752,47 +765,43 @@ makeSizeIndependentDecorationsAdder(
 					Paragraph(makeParagraphElements(text, concat(newStyle, [FontSize(if (zoom) zoomFs else 8.0)])), [RightAlign()])
 						|> paragraphSizer(5.0, 5.0, 5.0, 7.0)
 						|> (if (needsHide) \p -> Visibleb(showCopyrightB, p) else idfn)
-						|> if (zoom) idfn else addInspector(size)
 				])
-					|> if (needsHide) \l -> Constructor(
-						Inspect([AvailableHeight(availableH)], l),
-						\ -> subscribe(availableH, \h -> nextDistinct(showCopyrightB, h >= 300. || h == 0.))
-					) else idfn
+				|> if (needsHide) \l -> Constructor(
+					Inspect([AvailableHeight(availableH)], l),
+					\ -> subscribe(availableH, \h -> nextDistinct(showCopyrightB, h >= 300. || h == 0.))
+				) else idfn
 			}
-			Some(Pair(fn, size))
-		}
-		default : None();
-	});
-	addCaption = extract(decorations, defaultDecoration, \d -> switch (d : SizeIndependentDecoration) {
-		ImageCaption(text, fontsize, color, style, pStyle) : {
-			size = makeWH();
-			fn = \f : Form -> {
+		},
+		idfn
+	);
+	addCaption = eitherMap(
+		tryExtractStruct(decorations, ImageCaption("", 0., 0, [], [])),
+		\d -> {
+			\f : Form -> {
 				Lines([
 					f,
-					Paragraph(makeParagraphElements(text, concat(style, [Fill(color), FontSize(fontsize)])), pStyle)
-						|> paragraphSizer(10.0, 10.0, 10.0, 12.0)
-						|> addInspector(size)
+					Paragraph(
+						makeParagraphElements(
+							d.text,
+							replaceStructMany(d.characterStyle, [Fill(d.color), FontSize(d.fontsize)])
+						),
+						d.paragraphStyle
+					) |> paragraphSizer(10.0, 10.0, 10.0, 12.0)
 				])
 			}
-			Some(Pair(fn, size))
-		}
-		default : None();
-	});
-	addAltText = extract(decorations, defaultDecoration, \d -> switch (d : SizeIndependentDecoration) {
-		ImageAltText(text, __): {
-			size = const(zeroWH);
-			fn = \f -> Access([AccessRole("img"), AccessDescription(text)], f);
-			Some(Pair(fn, size))
-		}
-		default : None();
-	});
-	steps = [addBorder, addHeader, addFooter, addCopyright, addCaption, addAltText];
-
-	\f -> fold(
-		map(steps, firstOfPair),
-		Inspect([ISize(imageWH)], f),
-		\acc, fn -> fn(acc)
+		},
+		idfn
 	);
+	addAltText = eitherMap(
+		tryExtractStruct(decorations, ImageAltText("", [])),
+		\d ->  {
+			\f -> Access([AccessRole("img"), AccessDescription(d.label)], f);
+		},
+		idfn
+	);
+	steps = [addBorder, addHeader, addFooter, addShadow, addCopyright, addCaption, addAltText];
+
+	\f -> fold(steps, Inspect([ISize(imageWH)], f), \acc, decorate -> decorate(acc));
 }
 
 makeDimmerShape(
