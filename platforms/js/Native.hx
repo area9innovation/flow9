@@ -1717,26 +1717,28 @@ class Native {
 	#if js
 	private static function object2JsonStructs(o : Dynamic) : Dynamic {
 		if (untyped __js__("Array.isArray(o)")) {
-			return makeStructValue("JsonArray", [map(o, object2JsonStructs)], null);
+			return HaxeRuntime.fastMakeStructValue("JsonArray", map(o, object2JsonStructs));
 		} else {
 			var t = untyped __js__ ("typeof o");
-			if (t == "boolean") {
-				return makeStructValue("JsonBool", [o], null);
-			} else if ( t == "string" ) {
-				return makeStructValue("JsonString", [o], null);
+
+			if ( t == "string" ) {
+				return HaxeRuntime.fastMakeStructValue("JsonString", o);
 			} else if ( t == "number" ) {
-				return makeStructValue("JsonDouble", [o], null); 
+				return HaxeRuntime.fastMakeStructValue("JsonDouble", o);
+			} else if (t == "boolean") {
+				return HaxeRuntime.fastMakeStructValue("JsonBool", o);
 			} else if (o == null) {
 				return makeStructValue("JsonNull", [], null);
 			} else {
-				var props = untyped __js__ ("Object.getOwnPropertyNames(o)");
-				var pairs = map(props, function(p) {
-					return makeStructValue("Pair", [p, object2JsonStructs( untyped __js__ ("o[p]") )] , null);
+				var pairs = map(untyped __js__ ("Object.getOwnPropertyNames(o)"), function(p) {
+					return HaxeRuntime.fastMakeStructValue2("Pair", p, object2JsonStructs( untyped __js__ ("o[p]") ));
 				 } );
-				return makeStructValue("JsonObject", [pairs], null);
+
+				return HaxeRuntime.fastMakeStructValue("JsonObject", pairs);
 			}
 		}
 	}
+
 
 	public static function parseJson(json : String) : Dynamic {
 	 	try {
