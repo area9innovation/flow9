@@ -24,6 +24,7 @@ class FlowSprite extends Sprite {
 	private var retries : Int = 0;
 
 	private var localBounds = new Bounds();
+	private var widgetBounds = new Bounds();
 	private var _bounds = new Bounds();
 
 	private var nativeWidget : Dynamic;
@@ -199,6 +200,7 @@ class FlowSprite extends Sprite {
 			renderable = true;
 			loaded = true;
 
+			calculateWidgetBounds();
 			calculateLocalBounds();
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
@@ -267,6 +269,19 @@ class FlowSprite extends Sprite {
 		nativeWidget.style.visibility = 'hidden';
 
 		isNativeWidget = true;
+	}
+
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0;
+		widgetBounds.minY = 0;
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			widgetBounds.maxX = nativeWidget.naturalWidth;
+			widgetBounds.maxY = nativeWidget.naturalHeight;
+		} else {
+			widgetBounds.maxX = texture.width;
+			widgetBounds.maxY = texture.height;
+		}
 	}
 
 	public function calculateLocalBounds() : Void {

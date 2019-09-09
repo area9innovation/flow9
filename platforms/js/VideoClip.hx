@@ -35,6 +35,7 @@ class VideoClip extends FlowContainer {
 	public static var CanAutoPlay = false;
 
 	private var videoWidget : Dynamic;
+	private var widgetBounds = new Bounds();
 
 	public static inline function NeedsDrawing() : Bool {
 		var playingVideosFiltered =
@@ -344,6 +345,7 @@ class VideoClip extends FlowContainer {
 	private function updateVideoMetrics() {
 		metricsFn(videoWidget.videoWidth, videoWidget.videoHeight);
 
+		calculateWidgetBounds();
 		calculateLocalBounds();
 
 		if (RenderSupportJSPixi.DomRenderer) {
@@ -493,32 +495,11 @@ class VideoClip extends FlowContainer {
 		return localBounds.getRectangle(rect);
 	}
 
-	public override function calculateLocalBounds() : Void {
-		var currentBounds = new Bounds();
-
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
-
-			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
-			}
-		} else {
-			localBounds.minX = 0;
-			localBounds.minY = 0;
-			localBounds.maxX = videoWidget.videoWidth;
-			localBounds.maxY = videoWidget.videoHeight;
-		}
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			if (!currentBounds.isEqualBounds(newBounds)) {
-				parent.replaceLocalBounds(currentBounds, newBounds);
-			}
-		}
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0;
+		widgetBounds.minY = 0;
+		widgetBounds.maxX = videoWidget.videoWidth;
+		widgetBounds.maxY = videoWidget.videoHeight;
 	}
 
 	private override function createNativeWidget(?tagName : String = "video") : Void {

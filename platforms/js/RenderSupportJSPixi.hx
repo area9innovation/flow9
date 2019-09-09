@@ -200,11 +200,11 @@ class RenderSupportJSPixi {
 		};
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
-			PixiRenderer = new WebGLRenderer(Browser.window.innerWidth + 1, Browser.window.innerHeight + 1, options);
+			PixiRenderer = new WebGLRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
 
 			RendererType = "webgl";
 		} else if (RendererType == "auto") {
-			PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth + 1, Browser.window.innerHeight + 1);
+			PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth, Browser.window.innerHeight);
 
 			if (untyped __instanceof__(PixiRenderer, WebGLRenderer)) {
 				RendererType = "webgl";
@@ -212,7 +212,7 @@ class RenderSupportJSPixi {
 				RendererType = "canvas";
 			}
 		} else {
-			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth + 1, Browser.window.innerHeight + 1, options);
+			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
 
 			RendererType = "canvas";
 		}

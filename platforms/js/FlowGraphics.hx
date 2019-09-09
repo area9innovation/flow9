@@ -64,8 +64,8 @@ class FlowGraphics extends Graphics {
 		pen.x = x;
 		pen.y = y;
 
-		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
@@ -78,8 +78,8 @@ class FlowGraphics extends Graphics {
 
 		isSvg = true;
 
-		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
@@ -95,8 +95,8 @@ class FlowGraphics extends Graphics {
 
 		isSvg = true;
 
-		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
 		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
@@ -187,31 +187,11 @@ class FlowGraphics extends Graphics {
 			}
 		}
 
-		if (untyped this.mask == null) {
-			var currentBounds = new Bounds();
-
-			if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-				applyLocalBoundsTransform(currentBounds);
-			}
-
-			updateLocalBounds();
-
-			if (untyped this._localBounds.minX != null && untyped this._localBounds.minX != Math.POSITIVE_INFINITY) {
-				localBounds = untyped this._localBounds;
-
-				if (parent != null) {
-					var newBounds = applyLocalBoundsTransform();
-					if (!currentBounds.isEqualBounds(newBounds)) {
-						parent.replaceLocalBounds(currentBounds, newBounds);
-					}
-				}
-			}
-		}
-
-		graphicsBounds = localBounds;
+		calculateGraphicsBounds();
+		calculateLocalBounds();
 
 		if (parent != null) {
-			invalidateStage();
+			invalidateTransform();
 		}
 
 		if (RenderSupportJSPixi.DomRenderer && !isEmpty) {
@@ -235,8 +215,8 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawRect(x, y, width, height);
 
-			localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
 			widgetBounds.addPoint(new Point(x, y));
 			widgetBounds.addPoint(new Point(x + width, y + height));
 
@@ -265,8 +245,8 @@ class FlowGraphics extends Graphics {
 			if (radius > 0) {
 				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
 
-				localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-				localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+				graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+				graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
 				widgetBounds.addPoint(new Point(x, y));
 				widgetBounds.addPoint(new Point(x + width, y + height));
 
@@ -288,8 +268,8 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawEllipse(x, y, width, height);
 
-			localBounds.addPoint(new Point(x - width - lineWidth / 2.0, y - height - lineWidth / 2.0));
-			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x - width - lineWidth / 2.0, y - height - lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
 			widgetBounds.addPoint(new Point(x, y));
 			widgetBounds.addPoint(new Point(x + width, y + height));
 
@@ -307,8 +287,8 @@ class FlowGraphics extends Graphics {
 		if (radius > 0) {
 			var newGraphics = super.drawCircle(x, y, radius);
 
-			localBounds.addPoint(new Point(x - radius - lineWidth / 2.0, y - radius - lineWidth / 2.0));
-			localBounds.addPoint(new Point(x + radius + lineWidth / 2.0, y + radius + lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x - radius - lineWidth / 2.0, y - radius - lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x + radius + lineWidth / 2.0, y + radius + lineWidth / 2.0));
 			widgetBounds.addPoint(new Point(x - radius, y - radius));
 			widgetBounds.addPoint(new Point(x + radius, y + radius));
 
@@ -344,38 +324,18 @@ class FlowGraphics extends Graphics {
 		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
-	public function calculateLocalBounds() : Void {
-		var currentBounds = new Bounds();
+	public function calculateGraphicsBounds() : Void {
+		updateLocalBounds();
 
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
-
-			if (untyped mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				localBounds.clear();
-				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
-			} else {
-				localBounds = graphicsBounds;
-			}
-		} else {
-			localBounds = graphicsBounds;
-		}
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			if (!currentBounds.isEqualBounds(newBounds)) {
-				parent.replaceLocalBounds(currentBounds, newBounds);
-				invalidateTransform();
-			}
+		if (untyped this._localBounds.minX != null && untyped this._localBounds.minX != Math.POSITIVE_INFINITY) {
+			graphicsBounds = untyped this._localBounds;
 		}
 	}
 
 	public override function clear() : Graphics {
 		pen = new Point();
 		localBounds = new Bounds();
+		graphicsBounds = new Bounds();
 		widgetBounds = new Bounds();
 		var newGraphics = super.clear();
 

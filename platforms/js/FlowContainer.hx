@@ -259,46 +259,6 @@ class FlowContainer extends Container {
 		}
 	}
 
-	public function calculateLocalBounds() : Void {
-		var currentBounds = new Bounds();
-
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask : Dynamic = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
-
-			if (mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				if (scrollRect == null && mask.parent != this && mask.parent.localTransformChanged) {
-					mask.parent.transform.updateLocalTransform();
-				}
-
-				DisplayObjectHelper.applyBoundsTransform(mask.localBounds, scrollRect != null || mask.parent == this ? mask.localTransform : mask.parent.localTransform, localBounds);
-			}
-		} else for (child in children) {
-			if (untyped child.localBounds != null && child.localBounds.minX != Math.POSITIVE_INFINITY) {
-				if (localBounds.minX == Math.POSITIVE_INFINITY) {
-					child.applyLocalBoundsTransform(localBounds);
-				} else {
-					var childBounds = child.applyLocalBoundsTransform();
-
-					localBounds.minX = Math.min(localBounds.minX, childBounds.minX);
-					localBounds.minY = Math.min(localBounds.minY, childBounds.minY);
-					localBounds.maxX = Math.max(localBounds.maxX, childBounds.maxX);
-					localBounds.maxY = Math.max(localBounds.maxY, childBounds.maxY);
-				}
-			}
-		}
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			if (!currentBounds.isEqualBounds(newBounds)) {
-				parent.replaceLocalBounds(currentBounds, newBounds);
-			}
-		}
-	}
-
 	private function createNativeWidget(?tagName : String = "div") : Void {
 		if (!isNativeWidget) {
 			return;

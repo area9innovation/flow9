@@ -125,21 +125,8 @@ class NativeWidgetClip extends FlowContainer {
 	public function invalidateStyle() : Void {
 		styleChanged = true;
 
-		var currentBounds = new Bounds();
-
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		localBounds.minX = 0;
-		localBounds.minY = 0;
-		localBounds.maxX = getWidth();
-		localBounds.maxY = getHeight();
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			parent.replaceLocalBounds(currentBounds, newBounds);
-		}
+		calculateWidgetBounds();
+		calculateLocalBounds();
 
 		invalidateTransform();
 	}
@@ -193,5 +180,12 @@ class NativeWidgetClip extends FlowContainer {
 		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
 		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
 		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+	}
+
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0;
+		widgetBounds.minY = 0;
+		widgetBounds.maxX = getWidth();
+		widgetBounds.maxY = getHeight();
 	}
 }
