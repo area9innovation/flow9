@@ -283,40 +283,4 @@ class FlowSprite extends Sprite {
 			widgetBounds.maxY = texture.height;
 		}
 	}
-
-	public function calculateLocalBounds() : Void {
-		var currentBounds = new Bounds();
-
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		localBounds.clear();
-
-		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
-
-			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
-			}
-		} else {
-			localBounds.minX = 0;
-			localBounds.minY = 0;
-
-			if (RenderSupportJSPixi.DomRenderer) {
-				localBounds.maxX = nativeWidget.naturalWidth;
-				localBounds.maxY = nativeWidget.naturalHeight;
-			} else {
-				localBounds.maxX = texture.width;
-				localBounds.maxY = texture.height;
-			}
-		}
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			if (!currentBounds.isEqualBounds(newBounds)) {
-				parent.replaceLocalBounds(currentBounds, newBounds);
-			}
-		}
-	}
 }

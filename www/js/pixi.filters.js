@@ -419,7 +419,10 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		this._filterTexAux.baseTexture._canvasRenderTarget.clear();
 
 		this._alphaMask.renderable = true;
-		//this._alphaMask.worldTransform.copy(m).translate(-x, -y);
+		// this._alphaMask.worldTransform.copy(m).translate(-x, -y);
+
+		DisplayObjectHelper.invalidateTransform(this._alphaMask);
+
 		renderer.render(this._alphaMask, this._filterTexAux, true, m, false);
 		this._alphaMask.renderable = false;
 
@@ -436,6 +439,9 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 			main_ctx.drawImage(this._filterTexAux.baseTexture._canvasRenderTarget.canvas, 0, 0);
 			main_ctx.globalCompositeOperation = 'source-over';
 		}
+
+		DisplayObjectHelper.invalidateTransform(this._alphaMask);
+		this._alphaMask.updateTransform();
 	}
 
 	// restore context

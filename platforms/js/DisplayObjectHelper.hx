@@ -116,7 +116,7 @@ class DisplayObjectHelper {
 				untyped clip.localTransformChanged = true;
 			}
 
-			if (untyped clip.child != null && (!RenderSupportJSPixi.DomRenderer || clip.transformChanged)) {
+			if (untyped clip.child != null && clip.localTransformChanged) {
 				invalidateTransform(untyped clip.child);
 			}
 
@@ -178,7 +178,8 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (clip.interactive) {
+			if (untyped clip.interactive && clip.pointerOver) {
+				untyped clip.pointerOver = false;
 				clip.emit("pointerout");
 			}
 
@@ -275,15 +276,9 @@ class DisplayObjectHelper {
 
 		if (clip.x != x) {
 			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				var currentBounds = applyLocalBoundsTransform(clip);
-
 				clip.x = x;
 				invalidateTransform(clip);
-
-				var newBounds = applyLocalBoundsTransform(clip);
-				var parentLocalBounds : Bounds = untyped clip.parent.localBounds;
-
-				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+				invalidateLocalBounds(clip);
 			} else {
 				clip.x = x;
 				invalidateTransform(clip);
@@ -298,13 +293,9 @@ class DisplayObjectHelper {
 
 		if (clip.y != y) {
 			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				var currentBounds = applyLocalBoundsTransform(clip);
-
 				clip.y = y;
 				invalidateTransform(clip);
-
-				var newBounds = applyLocalBoundsTransform(clip);
-				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+				invalidateLocalBounds(clip);
 			} else {
 				clip.y = y;
 				invalidateTransform(clip);
@@ -315,13 +306,9 @@ class DisplayObjectHelper {
 	public static inline function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.x != scale) {
 			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				var currentBounds = applyLocalBoundsTransform(clip);
-
 				clip.scale.x = scale;
 				invalidateTransform(clip);
-
-				var newBounds = applyLocalBoundsTransform(clip);
-				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+				invalidateLocalBounds(clip);
 			} else {
 				clip.scale.x = scale;
 				invalidateTransform(clip);
@@ -332,13 +319,9 @@ class DisplayObjectHelper {
 	public static inline function setClipScaleY(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.y != scale) {
 			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				var currentBounds = applyLocalBoundsTransform(clip);
-
 				clip.scale.y = scale;
 				invalidateTransform(clip);
-
-				var newBounds = applyLocalBoundsTransform(clip);
-				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+				invalidateLocalBounds(clip);
 			} else {
 				clip.scale.y = scale;
 				invalidateTransform(clip);
@@ -349,13 +332,9 @@ class DisplayObjectHelper {
 	public static inline function setClipRotation(clip : DisplayObject, rotation : Float) : Void {
 		if (clip.rotation != rotation) {
 			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				var currentBounds = applyLocalBoundsTransform(clip);
-
 				clip.rotation = rotation;
 				invalidateTransform(clip);
-
-				var newBounds = applyLocalBoundsTransform(clip);
-				replaceLocalBounds(clip.parent, currentBounds, newBounds);
+				invalidateLocalBounds(clip);
 			} else {
 				clip.rotation = rotation;
 				invalidateTransform(clip);
@@ -463,8 +442,6 @@ class DisplayObjectHelper {
 
 		setClipX(scrollRect, left);
 		setClipY(scrollRect, top);
-
-		calculateLocalBounds(clip);
 	}
 
 	public static inline function removeScrollRect(clip : FlowContainer) : Void {
@@ -545,13 +522,25 @@ class DisplayObjectHelper {
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
 
+			if (RenderSupportJSPixi.DomRenderer) {
+				var children : Array<Dynamic> = untyped clip.children;
+				if (children != null) {
+					for (child in children) {
+						child.isSvg = true;
+						if (untyped child.updateNativeWidgetGraphicsData != null) {
+							child.updateNativeWidgetGraphicsData();
+						}
+					}
+				}
+			}
+
 			untyped clip.alphaMask.once("removed", function () { untyped clip.alphaMask = null; });
 		}
 
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			if (clip.mask != null) {
+			if (untyped clip.mask != null || clip.alphaMask != null) {
 				initNativeWidget(clip);
 			}
 
@@ -1058,10 +1047,63 @@ class DisplayObjectHelper {
 		var mask : FlowGraphics = clip.mask;
 		var scrollRect = untyped clip.scrollRect;
 		var viewBounds = untyped clip.viewBounds;
+		var alphaMask = untyped clip.alphaMask;
 
-		if (viewBounds != null) {
+		if (alphaMask != null) {
 			untyped nativeWidget.style.webkitClipPath = null;
 			untyped nativeWidget.style.clipPath = null;
+			untyped nativeWidget.style.clip = null;
+			nativeWidget.style.borderRadius = null;
+			removePlaceholderWidget(clip);
+
+			var svgs : Array<js.html.Element> = nativeWidget.getElementsByTagName("svg");
+
+			for (svg in svgs) {
+				var clipMask = Browser.document.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+
+				if (clipMask != null && clipMask.parentNode != null) {
+					clipMask.parentNode.removeChild(clipMask);
+				}
+
+				var defs = svg.firstElementChild != null && svg.firstElementChild.tagName.toLowerCase() == 'defs' ? svg.firstElementChild :
+					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
+				clipMask = defs.firstElementChild != null && defs.firstElementChild.tagName.toLowerCase() == 'mask' ? defs.firstElementChild :
+					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'mask');
+
+				for (child in clipMask.childNodes) {
+					clipMask.removeChild(untyped child);
+				}
+
+				var image = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'image');
+				image.setAttribute('width', '${round(getWidgetWidth(clip))}');
+				image.setAttribute('height', '${round(getWidgetHeight(clip))}');
+				image.setAttribute('href', alphaMask.url);
+				image.setAttribute('transform', 'matrix(1 0 0 1
+					${untyped -Std.int(svg.parentNode.style.marginLeft.substring(0, svg.parentNode.style.marginLeft.length - 2)) - Std.int(svg.parentNode.style.left.substring(0, svg.parentNode.style.left.length - 2))}
+					${untyped -Std.int(svg.parentNode.style.marginTop.substring(0, svg.parentNode.style.marginTop.length - 2)) - Std.int(svg.parentNode.style.top.substring(0, svg.parentNode.style.top.length - 2))})');
+				clipMask.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "mask");
+				clipMask.setAttribute('mask-type', 'alpha');
+
+				clipMask.appendChild(image);
+				defs.insertBefore(clipMask, defs.firstChild);
+				svg.insertBefore(defs, svg.firstChild);
+
+				for (child in svg.childNodes) {
+					untyped child.setAttribute("mask", 'url(#' + untyped svg.parentNode.getAttribute('id') + "mask)");
+				}
+			}
+
+
+			nativeWidget.style.overflow = 'hidden';
+
+			if (untyped clip.localBounds != null) {
+				nativeWidget.style.marginLeft = '${untyped clip.localBounds.minX}px';
+				nativeWidget.style.marginTop = '${untyped clip.localBounds.minY}px';
+			}
+		} else if (viewBounds != null) {
+			untyped nativeWidget.style.webkitClipPath = null;
+			untyped nativeWidget.style.clipPath = null;
+			nativeWidget.style.overflow = null;
 			nativeWidget.style.clip = 'rect(
 				${viewBounds.minY}px,
 				${viewBounds.maxX}px,
@@ -1072,7 +1114,6 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.webkitClipPath = null;
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
-
 			nativeWidget.style.borderRadius = null;
 			nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
 
@@ -1184,21 +1225,33 @@ class DisplayObjectHelper {
 			if (Platform.isSafari || Platform.isMobile) {
 				if (nativeWidget.style.onmouseover == null) {
 					nativeWidget.onmouseover = function() {
-						clip.emit("pointerover");
+						if (untyped !clip.pointerOver) {
+							untyped clip.pointerOver = true;
+							clip.emit("pointerover");
+						}
 					}
 
 					nativeWidget.onmouseout = function() {
-						clip.emit("pointerout");
+						if (untyped clip.pointerOver) {
+							untyped clip.pointerOver = false;
+							clip.emit("pointerout");
+						}
 					}
 				}
 			} else {
 				if (nativeWidget.style.onpointerover == null) {
 					nativeWidget.onpointerover = function() {
-						clip.emit("pointerover");
+						if (untyped !clip.pointerOver) {
+							untyped clip.pointerOver = true;
+							clip.emit("pointerover");
+						}
 					}
 
 					nativeWidget.onpointerout = function() {
-						clip.emit("pointerout");
+						if (untyped clip.pointerOver) {
+							untyped clip.pointerOver = false;
+							clip.emit("pointerout");
+						}
 					}
 				}
 			}
@@ -1456,30 +1509,12 @@ class DisplayObjectHelper {
 		var localBounds : Bounds = untyped clip.localBounds;
 
 		if (localBounds.minX > bounds.minX || localBounds.minY > bounds.minY || localBounds.maxX < bounds.maxX || localBounds.maxY < bounds.maxY) {
-			var currentBounds = new Bounds();
-
-			if (clip.parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-				applyLocalBoundsTransform(clip, currentBounds);
-			}
-
 			localBounds.minX = Math.min(localBounds.minX, bounds.minX);
 			localBounds.minY = Math.min(localBounds.minY, bounds.minY);
 			localBounds.maxX = Math.max(localBounds.maxX, bounds.maxX);
 			localBounds.maxY = Math.max(localBounds.maxY, bounds.maxY);
 
-			if (clip.parent != null) {
-				var newBounds = applyLocalBoundsTransform(clip);
-				if (!isEqualBounds(currentBounds, newBounds)) {
-					untyped clip.currentBounds = newBounds;
-					if (RenderSupportJSPixi.DomRenderer) {
-						invalidateBounds(clip);
-					} else {
-						invalidateTransform(clip);
-						clip.emit("childrenchanged");
-					}
-					replaceLocalBounds(clip.parent, currentBounds, newBounds);
-				}
-			}
+			invalidateLocalBounds(clip);
 		}
 	}
 
@@ -1551,6 +1586,10 @@ class DisplayObjectHelper {
 			}
 		}
 
+		invalidateLocalBounds(clip);
+	}
+
+	public static function invalidateLocalBounds(clip : DisplayObject) : Void {
 		if (clip.parent != null) {
 			var currentBounds = untyped clip.currentBounds;
 			var newBounds = applyLocalBoundsTransform(clip);
@@ -1562,6 +1601,11 @@ class DisplayObjectHelper {
 					invalidateTransform(clip);
 					clip.emit("childrenchanged");
 				}
+
+				if (untyped clip.child != null) {
+					calculateLocalBounds(untyped clip.child);
+				}
+
 				replaceLocalBounds(clip.parent, currentBounds, newBounds);
 			}
 		}
