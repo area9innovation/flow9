@@ -34,6 +34,7 @@ GlobalCSEAcc(
 );
 
 CSEAcc : (
+	module : FiModule,
 	globalAcc : GlobalCSEAcc,
 	// What constants have we found?
 	constants : Tree<FiExp, FvValue>,
@@ -50,7 +51,7 @@ CSEAcc : (
 
 cseFiModule(gacc : GlobalCSEAcc, mo : FiModule) -> Pair<GlobalCSEAcc, FiModule> {
 	// Collect the common expressions across the module
-	acc0 = fold(mo.globalVars, makeCSEAcc(gacc), \acc : CSEAcc, init : FiGlobalVar -> {
+	acc0 = fold(mo.globalVars, makeCSEAcc(mo, gacc), \acc : CSEAcc, init : FiGlobalVar -> {
 		collectCseFiExp(acc, init.value)
 	});
 
@@ -142,7 +143,8 @@ cseFiModule(gacc : GlobalCSEAcc, mo : FiModule) -> Pair<GlobalCSEAcc, FiModule> 
 			gan.native2module,
 			gan.structs,
 			gan.unions,
-			ntoplevel1
+			ntoplevel1,
+			gan.name2module,
 		),
 		newInits.globalAcc.varCount
 	);
@@ -165,14 +167,15 @@ cseFiModule(gacc : GlobalCSEAcc, mo : FiModule) -> Pair<GlobalCSEAcc, FiModule> 
 	)
 }
 
-makeCSEAcc(global : GlobalCSEAcc) {
-	CSEAcc(global, makeTree(), makeTree(), makeTree(), makeList(), makeList());
+makeCSEAcc(mo : FiModule, global : GlobalCSEAcc) {
+	CSEAcc(mo, global, makeTree(), makeTree(), makeTree(), makeList(), makeList());
 }
 
 // Build a data structure to count how often common sub-expressions occur
 collectCseFiExp(acc : CSEAcc, ex : FiExp) -> CSEAcc {
 	add = \v : FvValue -> {
 		CSEAcc(
+			acc.module,
 			acc.globalAcc,
 			setTree(acc.constants, ex, v),
 			incTreeValue(acc.counts, v),
@@ -256,7 +259,7 @@ collectCseFiExps(acc : CSEAcc, es : [FiExp]) -> CSEAcc {
 
 // Construct a global variable for this constant, reusing other constants
 // Only works when done in topological (size) order
-makeFiGlobalConstant(acc : CSEAcc, f : FvValue) -> CSEAcc {
+makeFiGlobalConstant(acc : CSEAcc, f : FvValue, ) -> CSEAcc {
 	name = "cse_" + i2s(acc.globalAcc.varCount);
 
 	ex = fvValue2FiExp(f);
@@ -269,15 +272,17 @@ makeFiGlobalConstant(acc : CSEAcc, f : FvValue) -> CSEAcc {
 		gacc.struct2module,
 		gacc.union2module,
 		gacc.function2module,
-		gacc.globalVar2module, // TODO! Should we populate this with the new globals?
+		setTree(gacc.globalVar2module, name, acc.module.fileinfo.flowfile),
 		gacc.native2module,
 		gacc.structs,
 		gacc.unions,
 		// global vars, functions, natives
-		setTree(gacc.toplevel, name, var)
+		setTree(gacc.toplevel, name, var),
+		setTree(gacc.name2module, name, acc.module.fileinfo.flowfile)
 	);
 
 	CSEAcc(
+		acc.module,
 		GlobalCSEAcc(
 			ngacc,
 			acc.globalAcc.varCount + 1,
