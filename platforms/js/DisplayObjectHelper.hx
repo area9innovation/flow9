@@ -116,7 +116,7 @@ class DisplayObjectHelper {
 				untyped clip.localTransformChanged = true;
 			}
 
-			if (untyped clip.child != null) {
+			if (untyped clip.child != null && (!RenderSupportJSPixi.DomRenderer || untyped clip.transformChanged)) {
 				invalidateTransform(untyped clip.child);
 			}
 
