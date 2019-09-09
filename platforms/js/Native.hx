@@ -1714,6 +1714,40 @@ class Native {
 		return JsMd5.encode(content);
 	}
 
+	#if js
+	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+		if (untyped __js__("Array.isArray(o)")) {
+			return HaxeRuntime.fastMakeStructValue("JsonArray", map(o, object2JsonStructs));
+		} else {
+			var t = untyped __js__ ("typeof o");
+
+			if ( t == "string" ) {
+				return HaxeRuntime.fastMakeStructValue("JsonString", o);
+			} else if ( t == "number" ) {
+				return HaxeRuntime.fastMakeStructValue("JsonDouble", o);
+			} else if (t == "boolean") {
+				return HaxeRuntime.fastMakeStructValue("JsonBool", o);
+			} else if (o == null) {
+				return makeStructValue("JsonNull", [], null);
+			} else {
+				var fields : Array<String> = untyped __js__ ("Object.getOwnPropertyNames(o)");
+				for (i in 0...fields.length)
+					fields[i] = HaxeRuntime.fastMakeStructValue2("Pair", fields[i], object2JsonStructs( untyped __js__ ("o[fields[i]]") ));
+				return HaxeRuntime.fastMakeStructValue("JsonObject", fields);
+			}
+		}
+	}
+
+	public static function parseJson(json : String) : Dynamic {
+	 	try {
+	 		var o = haxe.Json.parse(json);
+			return object2JsonStructs(o);
+		} catch (e : Dynamic) {
+			return makeStructValue("JsonDouble", [0.0], null); 
+		}
+	}
+	#end
+
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
 		#if js
 		untyped __js__("
