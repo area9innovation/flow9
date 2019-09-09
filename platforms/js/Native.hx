@@ -1730,15 +1730,13 @@ class Native {
 			} else if (o == null) {
 				return makeStructValue("JsonNull", [], null);
 			} else {
-				var pairs = map(untyped __js__ ("Object.getOwnPropertyNames(o)"), function(p) {
-					return HaxeRuntime.fastMakeStructValue2("Pair", p, object2JsonStructs( untyped __js__ ("o[p]") ));
-				 } );
-
-				return HaxeRuntime.fastMakeStructValue("JsonObject", pairs);
+				var fields : Array<String> = untyped __js__ ("Object.getOwnPropertyNames(o)");
+				for (i in 0...fields.length)
+					fields[i] = HaxeRuntime.fastMakeStructValue2("Pair", fields[i], object2JsonStructs( untyped __js__ ("o[fields[i]]") ));
+				return HaxeRuntime.fastMakeStructValue("JsonObject", fields);
 			}
 		}
 	}
-
 
 	public static function parseJson(json : String) : Dynamic {
 	 	try {

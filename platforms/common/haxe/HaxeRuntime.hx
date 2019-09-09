@@ -368,7 +368,8 @@ if (a === b) return true;
 	}
 
 	#if js
-	public static function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
+	// Use these when sure args types and count is correct and struct exists 
+	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
 		var sid  = _structids_.get(n);
 		var o = {
 		#if readable
@@ -381,7 +382,7 @@ if (a === b) return true;
 		return o;
 	}
 
-	public static function fastMakeStructValue2(n : String, a1 : Dynamic, a2 : Dynamic) : Dynamic {
+	public static inline function fastMakeStructValue2(n : String, a1 : Dynamic, a2 : Dynamic) : Dynamic {
 		var sid  = _structids_.get(n);
 		var o = {
 		#if readable
