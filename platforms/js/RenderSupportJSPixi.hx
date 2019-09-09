@@ -1981,6 +1981,8 @@ class RenderSupportJSPixi {
 					child.invalidateTransform();
 				}
 			}
+
+			clip.invalidateTransform();
 		} else {
 			untyped clip.filterPadding = 0.0;
 			untyped clip.glShaders = false;

@@ -116,7 +116,7 @@ class DisplayObjectHelper {
 				untyped clip.localTransformChanged = true;
 			}
 
-			if (untyped clip.child != null && (!RenderSupportJSPixi.DomRenderer || untyped clip.transformChanged)) {
+			if (untyped clip.child != null && (!RenderSupportJSPixi.DomRenderer || clip.transformChanged)) {
 				invalidateTransform(untyped clip.child);
 			}
 
@@ -464,12 +464,6 @@ class DisplayObjectHelper {
 		setClipX(scrollRect, left);
 		setClipY(scrollRect, top);
 
-		if (RenderSupportJSPixi.DomRenderer) {
-			invalidateTransform(clip);
-		} else {
-			invalidateStage(clip);
-		}
-
 		calculateLocalBounds(clip);
 	}
 
@@ -723,12 +717,38 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function getClipUUID(clip : DisplayObject) : String {
-		if (untyped clip.uuid == null) {
-			untyped clip.uuid = untyped __js__("uuidv4()");
-		}
+	private static var updateClipUUIDNode : Dynamic = null;
 
-		return untyped clip.uuid;
+	public static function updateClipUUID(clip : DisplayObject) : Void {
+		if (untyped __js__('typeof uuidv4 === "undefined"')) {
+			if (updateClipUUIDNode == null) {
+				var head = Browser.document.getElementsByTagName('head')[0];
+				updateClipUUIDNode = Browser.document.createElement('script');
+
+				updateClipUUIDNode.setAttribute("type","text/javascript");
+				updateClipUUIDNode.setAttribute("src", 'js/uuid_v4.js');
+				updateClipUUIDNode.onload = function() { updateClipUUID(clip); };
+
+				head.appendChild(updateClipUUIDNode);
+			} else {
+				var prevOnLoad = updateClipUUIDNode.onload;
+
+				updateClipUUIDNode.onload = function() {
+					prevOnLoad();
+					updateClipUUID(clip);
+				}
+			}
+		} else {
+			if (untyped clip.uuid == null) {
+				untyped clip.uuid = untyped __js__("uuidv4()");
+			}
+
+			var nativeWidget = untyped clip.nativeWidget;
+
+			if (nativeWidget != null) {
+				nativeWidget.setAttribute('id', untyped clip.uuid);
+			}
+		}
 	}
 
 	public static function updateNativeWidget(clip : DisplayObject) : Void {
@@ -739,6 +759,7 @@ class DisplayObjectHelper {
 				if (isNativeWidget(clip)) {
 					if (clip.visible) {
 						// untyped clip.nativeWidget.setAttribute("update", Std.int(clip.nativeWidget.getAttribute("update")) + 1);
+						// untyped clip.nativeWidget.setAttribute("info", clip.info);
 
 						updateNativeWidgetTransformMatrix(clip);
 						updateNativeWidgetOpacity(clip);
@@ -803,6 +824,7 @@ class DisplayObjectHelper {
 		var localBounds = untyped clip.localBounds;
 
 		if (localBounds.minX != Math.POSITIVE_INFINITY && untyped clip.boundsChanged) {
+			untyped clip.boundsChanged = false;
 			var nativeWidget = untyped clip.nativeWidget;
 
 			nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip))}');
@@ -873,12 +895,14 @@ class DisplayObjectHelper {
 					nativeWidget.style.boxShadow = '
 						${round(untyped Math.cos(filter.angle) * filter.distance)}px
 						${round(untyped Math.sin(filter.angle) * filter.distance)}px
-						${round(untyped filter.blur * 2)}px
+						${round(untyped filter.blur)}px
 						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 					';
 				}
 			}
-		} else if (untyped clip.filters != null) {
+		}
+
+		if (untyped clip.filters != null) {
 			var filters : Array<Dynamic> = untyped clip.filters;
 
 			if (filters != null) {
@@ -887,28 +911,46 @@ class DisplayObjectHelper {
 
 					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
-					if (Platform.isIE) {
-						for (childWidget in nativeWidget.children) {
-							childWidget.style.boxShadow = '
+					if (untyped clip.children != null && clip.children.filter(function(c) { return c.filters != null && c.filters.length > 0; }).length > 0) {
+						if (Platform.isIE) {
+							nativeWidget.style.boxShadow = '
 								${round(untyped Math.cos(filter.angle) * filter.distance)}px
 								${round(untyped Math.sin(filter.angle) * filter.distance)}px
-								${round(untyped filter.blur * 2)}px
+								${round(untyped filter.blur)}px
+								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+							';
+						} else {
+							nativeWidget.style.boxShadow = '
+								${round(untyped Math.cos(filter.angle) * filter.distance)}px
+								${round(untyped Math.sin(filter.angle) * filter.distance)}px
+								${round(untyped filter.blur)}px
 								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 							';
 						}
 					} else {
-						if (nativeWidget.children != null) {
+						if (Platform.isIE) {
 							for (childWidget in nativeWidget.children) {
-								childWidget.style.boxShadow = null;
+								childWidget.style.boxShadow = '
+									${round(untyped Math.cos(filter.angle) * filter.distance)}px
+									${round(untyped Math.sin(filter.angle) * filter.distance)}px
+									${round(untyped filter.blur)}px
+									rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+								';
 							}
-						}
+						} else {
+							if (nativeWidget.children != null) {
+								for (childWidget in nativeWidget.children) {
+									childWidget.style.boxShadow = null;
+								}
+							}
 
-						nativeWidget.style.filter = 'drop-shadow(
-							${round(untyped Math.cos(filter.angle) * filter.distance)}px
-							${round(untyped Math.sin(filter.angle) * filter.distance)}px
-							${round(untyped filter.blur * 2)}px
-							rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
-						)';
+							nativeWidget.style.filter = 'drop-shadow(
+								${round(untyped Math.cos(filter.angle) * filter.distance)}px
+								${round(untyped Math.sin(filter.angle) * filter.distance)}px
+								${round(untyped filter.blur)}px
+								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+							)';
+						}
 					}
 				}
 			}
@@ -1428,7 +1470,13 @@ class DisplayObjectHelper {
 			if (clip.parent != null) {
 				var newBounds = applyLocalBoundsTransform(clip);
 				if (!isEqualBounds(currentBounds, newBounds)) {
-					invalidateBounds(clip);
+					untyped clip.currentBounds = newBounds;
+					if (RenderSupportJSPixi.DomRenderer) {
+						invalidateBounds(clip);
+					} else {
+						invalidateTransform(clip);
+						clip.emit("childrenchanged");
+					}
 					replaceLocalBounds(clip.parent, currentBounds, newBounds);
 				}
 			}
@@ -1508,7 +1556,12 @@ class DisplayObjectHelper {
 			var newBounds = applyLocalBoundsTransform(clip);
 			if (!isEqualBounds(currentBounds, newBounds)) {
 				untyped clip.currentBounds = newBounds;
-				invalidateBounds(clip);
+				if (RenderSupportJSPixi.DomRenderer) {
+					invalidateBounds(clip);
+				} else {
+					invalidateTransform(clip);
+					clip.emit("childrenchanged");
+				}
 				replaceLocalBounds(clip.parent, currentBounds, newBounds);
 			}
 		}

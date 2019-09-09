@@ -223,40 +223,40 @@ class FlowContainer extends Container {
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (localBounds.minX == Math.POSITIVE_INFINITY) {
-				calculateLocalBounds();
-			}
-
-			return localBounds.getRectangle(rect);
-		} else {
-			return super.getLocalBounds(rect);
+		if (localBounds.minX == Math.POSITIVE_INFINITY) {
+			calculateLocalBounds();
 		}
+
+		rect = localBounds.getRectangle(rect);
+
+		var filterPadding = untyped this.filterPadding;
+
+		if (filterPadding != null) {
+			rect.x -= filterPadding;
+			rect.y -= filterPadding;
+			rect.width += filterPadding * 2.0;
+			rect.height += filterPadding * 2.0;
+		}
+
+		return rect;
 	}
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (!skipUpdate) {
-				updateTransform();
-				getLocalBounds();
-				this.calculateBounds();
-			}
-
-			return _bounds.getRectangle(rect);
-		} else {
-			return super.getBounds(skipUpdate, rect);
+		if (!skipUpdate) {
+			updateTransform();
 		}
+
+		getLocalBounds();
+		this.calculateBounds();
+
+		return _bounds.getRectangle(rect);
 	}
 
 	public function calculateBounds() : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
-			_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
-			_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
-			_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
-		} else {
-			untyped super.calculateBounds();
-		}
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
 	private function createNativeWidget(?tagName : String = "div") : Void {
@@ -267,7 +267,7 @@ class FlowContainer extends Container {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		nativeWidget.setAttribute('id', getClipUUID());
+		updateClipUUID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

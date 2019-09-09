@@ -184,9 +184,7 @@ PIXI.Container.prototype._updateFilterHooks = function ()
 PIXI.Container.prototype._onChildrenChanged = function ()
 {
 	this.cacheAsBitmap = false;
-	if (this.children.length > 0) {
-		this.cacheAsBitmap = true;
-	}
+	this.cacheAsBitmap = this.isGraphics();
 }
 
 PIXI.Filter.prototype.expandCanvasBounds = function (bounds)
@@ -285,6 +283,22 @@ PIXI.Container.prototype._calculateFilterBounds = function ()
 	}
 }
 
+PIXI.Container.prototype.isGraphics = function () {
+	return this.parent != null && this._alphaMask == null && this.filters != null && this.filters.length == 1 &&
+		this.filters[0] instanceof PIXI.filters.DropShadowFilter &&
+		(this.parent.filters == null || this.parent.filters.length == 0) &&
+		(
+			(this.graphicsData != null && (this.children == null || this.children.length == 0)) ||
+			(this.children != null && this.children.length == 1 && this.children[0].filters == null &&
+				(this.children[0].graphicsData != null ||
+					(this.children[0].children != null && this.children[0].children.length > 0 &&
+						this.children[0].children[0].graphicsData != null && this.children[0].children[0].filters == null
+					)
+				)
+			)
+		)
+}
+
 PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 {
 	if (!this.visible || this.alpha <= 0 || !this.renderable)
@@ -328,10 +342,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		return;
 	}
 
-	if ((this.graphicsData != null && (this.children == null || this.children.length == 0)) ||
-		(this.children != null && this.children.length == 1 &&
-		(this.children[0].graphicsData != null || (this.children[0].children != null && this.children[0].children.length > 0 && this.children[0].children[0].graphicsData != null))) &&
-		this._alphaMask == null && filters != null && filters.length == 1 && filters[0] instanceof PIXI.filters.DropShadowFilter) {
+	if (this.isGraphics()) {
 		// Special fast case
 		// Shadow around graphics
 		var filter = filters[0];
@@ -351,6 +362,9 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 
 		return;
 	}
+
+	DisplayObjectHelper.invalidateTransform(this);
+	this.updateTransform();
 
 	var bounds = this.getBounds(true);
 	var wt = this.worldTransform;
@@ -386,6 +400,8 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		create_canvas_render_target(this._filterTexMain);
 	}
 	this._filterTexMain.baseTexture._canvasRenderTarget.clear();
+
+	DisplayObjectHelper.invalidateTransform(this);
 
 	renderer.render(this, this._filterTexMain, true, m, false);
 
@@ -449,7 +465,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		}
 
 		// evaluate last filter and render
-		rvlast = filters[filters.length-1].drawToCanvas(curtex, auxtex, ctx, 0, 0);
+		rvlast = filters[filters.length-1].drawToCanvas(curtex, auxtex, ctx, this.cacheAsBitmap ? 0 : x, this.cacheAsBitmap ? 0 : y);
 	}
 
 	if (rvlast != null)
@@ -460,5 +476,6 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		ctx.drawImage(rvlast.baseTexture._canvasRenderTarget.canvas, x * res, y * res);
 	}
 
+	DisplayObjectHelper.invalidateTransform(this);
 	this.updateTransform();
 }

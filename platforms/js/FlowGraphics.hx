@@ -119,6 +119,9 @@ class FlowGraphics extends Graphics {
 			}
 		}
 
+		calculateGraphicsBounds();
+		calculateLocalBounds();
+
 		if (fillGradient != null) {
 			if (RenderSupportJSPixi.DomRenderer) {
 				untyped data.gradient = fillGradient;
@@ -186,9 +189,6 @@ class FlowGraphics extends Graphics {
 				sprite.invalidateTransform();
 			}
 		}
-
-		calculateGraphicsBounds();
-		calculateLocalBounds();
 
 		if (parent != null) {
 			invalidateTransform();
@@ -301,7 +301,22 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		return localBounds.getRectangle(rect);
+		if (localBounds.minX == Math.POSITIVE_INFINITY) {
+			calculateLocalBounds();
+		}
+
+		rect = localBounds.getRectangle(rect);
+
+		var filterPadding = untyped this.filterPadding;
+
+		if (filterPadding != null) {
+			rect.x -= filterPadding;
+			rect.y -= filterPadding;
+			rect.width += filterPadding * 2.0;
+			rect.height += filterPadding * 2.0;
+		}
+
+		return rect;
 	}
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
@@ -608,7 +623,7 @@ class FlowGraphics extends Graphics {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		nativeWidget.setAttribute('id', getClipUUID());
+		updateClipUUID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;
