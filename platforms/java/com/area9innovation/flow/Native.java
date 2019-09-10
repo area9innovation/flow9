@@ -917,6 +917,13 @@ public class Native extends NativeHost {
 		return runtime.makeStructValue(name, args, (Struct)defval);
 	}
 
+	public final Object[] extractStructArguments(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getFields();
+		} else return new Object[0];
+	}
+
+
 	public final Object quit(int c) {
 		System.exit(c);
 		return null;
@@ -1194,6 +1201,38 @@ public class Native extends NativeHost {
 	return md5Hex;
 	}
 
+	public String fileChecksum(String filename) {
+		try {
+			InputStream fis =  new FileInputStream(filename);
+			byte[] buffer = new byte[1024];
+			MessageDigest md = MessageDigest.getInstance("MD5");
+			int numRead;
+			do {
+				numRead = fis.read(buffer);
+				if (numRead > 0) {
+					md.update(buffer, 0, numRead);
+				}
+			} while (numRead != -1);
+
+			fis.close();
+
+			byte[] digest = new byte[0];
+			digest = md.digest();
+
+			BigInteger bigInt = new BigInteger(1, digest);
+			String md5Hex = bigInt.toString(16);
+
+			while( md5Hex.length() < 32 ){
+				md5Hex = "0" + md5Hex;
+			}
+
+			return md5Hex;
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "";
+		}
+	}
+
 	// Launch a system process
 	public final Object startProcess(String command, Object[] args, String currentWorkingDirectory, String stdin,
 					 Func3<Object, Integer, String, String> onExit) {
@@ -1297,6 +1336,10 @@ public class Native extends NativeHost {
 		return null;
 	}	
 
+	public final String getThreadId() {
+		return Long.toString(Thread.currentThread().getId());
+	}
+
 	public final Object initConcurrentHashMap() {
 		return new ConcurrentHashMap();
 	}
@@ -1315,6 +1358,17 @@ public class Native extends NativeHost {
 	public final Boolean containsConcurrentHashMap(Object map, Object key) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		return concurrentMap.containsKey(key);
+	}
+
+	public final Object[] valuesConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.values().toArray();
+	}
+
+	public final Object[] removeConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.remove(key);
+		return null;
 	}
 
 	// TODO: why don't we use threadpool here?

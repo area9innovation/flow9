@@ -415,4 +415,7 @@ public class RenderSupport extends NativeHost {
     public Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
     	return no_op;
     }
+	public Object playVideoFromMediaStream(Object clip, Object stream, Boolean startPaused) {
+		return null;
+	}
 }

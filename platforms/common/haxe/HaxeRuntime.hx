@@ -183,6 +183,25 @@ if (a === b) return true;
 		return (o1 < o2 ? -1 : 1);
 	}
 
+
+	public static function extractStructArguments(value : Dynamic) :  Array<Dynamic> {
+		#if (js && readable)
+			if (!Reflect.hasField(value, "_name")) return [];
+			var i = _structids_.get(value._name);
+		#else
+			if (!Reflect.hasField(value, "_id")) return [];
+			var i = value._id;
+		#end
+
+		var sargs = _structargs_.get(i);
+		var n = sargs.length;
+		var result = untyped Array(n);
+		for (i in 0...n) {
+			result[i] = Reflect.field(value, sargs[i]);
+		}
+		return result;
+	}
+
 	public static inline function isArray(o1 : Dynamic) : Bool {
 		#if js
 		return untyped __js__ ("Array").isArray(o1);
@@ -366,6 +385,37 @@ if (a === b) return true;
 			return default_value;
 		}
 	}
+
+
+	#if js
+	// Use these when sure args types and count is correct and struct exists 
+	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		return o;
+	}
+
+	public static inline function fastMakeStructValue2(n : String, a1 : Dynamic, a2 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		untyped o[_structargs_.get(sid)[1]] = a2;
+		return o;
+	}
+	#end
 
 	public static function makeEmptyStruct(sid : Int) : Dynamic {
 		if (_structtemplates_ != null) {
