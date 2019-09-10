@@ -126,9 +126,9 @@ class NativeWidgetClip extends FlowContainer {
 		styleChanged = true;
 
 		calculateWidgetBounds();
-		calculateLocalBounds();
+		calculateLocalBounds('invalidateStyle');
 
-		invalidateTransform();
+		invalidateTransform('invalidateStyle');
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {

@@ -224,7 +224,7 @@ class FlowContainer extends Container {
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		if (localBounds.minX == Math.POSITIVE_INFINITY) {
-			calculateLocalBounds();
+			calculateLocalBounds('getLocalBounds');
 		}
 
 		rect = localBounds.getRectangle(rect);

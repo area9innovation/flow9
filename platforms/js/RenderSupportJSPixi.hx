@@ -951,7 +951,7 @@ class RenderSupportJSPixi {
 	private static function InvalidateLocalStages() {
 		if (!RenderSupportJSPixi.DomRenderer) {
 			for (child in PixiStage.children) {
-				child.invalidateTransform();
+				child.invalidateTransform('InvalidateLocalStages');
 			}
 		}
 	}
@@ -1978,11 +1978,11 @@ class RenderSupportJSPixi {
 			var children : Array<DisplayObject> = untyped clip.children;
 			if (children != null) {
 				for (child in children) {
-					child.invalidateTransform();
+					child.invalidateTransform('addFilters -> child');
 				}
 			}
 
-			clip.invalidateTransform();
+			clip.invalidateTransform('addFilters');
 		} else {
 			untyped clip.filterPadding = 0.0;
 			untyped clip.glShaders = false;

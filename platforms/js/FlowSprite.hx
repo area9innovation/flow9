@@ -192,24 +192,18 @@ class FlowSprite extends Sprite {
 					return;
 				}
 
-				if (parent == null) {
-					Browser.document.body.removeChild(nativeWidget);
-				} else {
-					untyped this.parentChanged = true;
-				}
-
 				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 			} else {
 				metricsFn(texture.width, texture.height);
 			}
 
-			invalidateTransform();
+			invalidateTransform('onLoaded');
 
 			renderable = true;
 			loaded = true;
 
 			calculateWidgetBounds();
-			calculateLocalBounds();
+			calculateLocalBounds('onLoaded');
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();
@@ -274,8 +268,6 @@ class FlowSprite extends Sprite {
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
-		nativeWidget.style.display = 'none';
-		Browser.document.body.appendChild(nativeWidget);
 
 		isNativeWidget = true;
 	}

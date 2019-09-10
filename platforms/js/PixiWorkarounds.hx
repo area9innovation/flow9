@@ -882,7 +882,7 @@ class PixiWorkarounds {
 					if (p == null) {
 						this.worldTransformChanged = false;
 					} else if (this.cacheAsBitmap) {
-						DisplayObjectHelper.invalidateTransform(this);
+						DisplayObjectHelper.invalidateTransform(this, 'parent');
 					}
 				},
 				get : function() {

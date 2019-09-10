@@ -323,7 +323,7 @@ class VideoClip extends FlowContainer {
 		videoWidget.currentTime = 0;
 		checkTimeRange(videoWidget.currentTime, true);
 
-		invalidateTransform(); // Update the widget
+		invalidateTransform('onMetadataLoaded'); // Update the widget
 
 		if (!videoWidget.autoplay) videoWidget.pause();
 
@@ -346,7 +346,7 @@ class VideoClip extends FlowContainer {
 		metricsFn(videoWidget.videoWidth, videoWidget.videoHeight);
 
 		calculateWidgetBounds();
-		calculateLocalBounds();
+		calculateLocalBounds('updateVideoMetrics');
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			videoWidget.style.width = '${untyped getWidth()}px';

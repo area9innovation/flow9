@@ -120,7 +120,7 @@ class FlowGraphics extends Graphics {
 		}
 
 		calculateGraphicsBounds();
-		calculateLocalBounds();
+		calculateLocalBounds('endFill');
 
 		if (fillGradient != null) {
 			if (RenderSupportJSPixi.DomRenderer) {
@@ -186,12 +186,12 @@ class FlowGraphics extends Graphics {
 				addChild(sprite.mask);
 				addChild(sprite);
 
-				sprite.invalidateTransform();
+				sprite.invalidateTransform('endFill Gradient');
 			}
 		}
 
 		if (parent != null) {
-			invalidateTransform();
+			invalidateTransform('endFill');
 		}
 
 		if (RenderSupportJSPixi.DomRenderer && !isEmpty) {
@@ -302,7 +302,7 @@ class FlowGraphics extends Graphics {
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		if (localBounds.minX == Math.POSITIVE_INFINITY) {
-			calculateLocalBounds();
+			calculateLocalBounds('getLocalBounds');
 		}
 
 		rect = localBounds.getRectangle(rect);
