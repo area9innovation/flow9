@@ -68,11 +68,11 @@ typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError
 			)
 		)
 	);
-	ret = fold(module.structs,    true, \ok, struct -> ok && typeverifyFiTypeStruct(moduleEnv, struct, onError)) &&
-	fold(module.unions,     true, \ok, union -> ok && typeverifyFiTypeUnion(moduleEnv, union, onError)) &&
-	fold(module.functions,  true, \ok, func -> ok && typeverifyFiFunctionDec(moduleEnv, func, onError)) &&
-	fold(module.globalVars, true, \ok, var -> ok && typeverifyFiGlobalVar(moduleEnv, var, onError)) &&
-	fold(module.natives,    true, \ok, nat -> ok && typeverifyFiNativeDec(moduleEnv, nat, onError));
+	ret = forall(module.structs, \struct -> typeverifyFiTypeStruct(moduleEnv, struct, onError)) &&
+	forall(module.unions, \union -> typeverifyFiTypeUnion(moduleEnv, union, onError)) &&
+	forall(module.functions, \func -> typeverifyFiFunctionDec(moduleEnv, func, onError)) &&
+	forall(module.globalVars, \var -> typeverifyFiGlobalVar(moduleEnv, var, onError)) &&
+	forall(module.natives, \nat -> typeverifyFiNativeDec(moduleEnv, nat, onError));
 	incrementTimePhase(fcTimePhases.typeverify, t);
 	ret
 }
@@ -81,8 +81,8 @@ typeverifyFiTypeStruct(moduleEnv : TypeVerifyModuleEnv, struct : FiTypeStruct, o
 	tenv = TypeVerifyLocalEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameIsUnused(moduleEnv, struct.name, onError, struct.start) &&
-		fold(struct.typars, true, \ok, type -> ok && typeverifyFiType(tenv, type, onError, struct.start)) &&
-		fold(struct.args,   true, \ok, arg -> ok && typeverifyFiType(tenv, arg.type, onError, struct.start));
+		forall(struct.typars, \type -> typeverifyFiType(tenv, type, onError, struct.start)) &&
+		forall(struct.args, \arg -> typeverifyFiType(tenv, arg.type, onError, struct.start));
 	if (!ret) {
 		onError(FcError("in struct '" + struct.name + "'", [FcPosition(moduleEnv.module.fileinfo.flowfile, struct.start, struct.start)]));
 	}
@@ -93,7 +93,7 @@ typeverifyFiTypeUnion(moduleEnv : TypeVerifyModuleEnv, union : FiTypeUnion, onEr
 	tenv = TypeVerifyLocalEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameIsUnused(moduleEnv, union.name, onError, union.start) &&
-		fold(union.typeparameters, true, \ok, type -> ok && typeverifyFiType(tenv, type, onError, union.start));
+		forall(union.typeparameters, \type -> typeverifyFiType(tenv, type, onError, union.start));
 	if (!ret) {
 		onError(FcError("in union '" + union.name + "'", [FcPosition(moduleEnv.module.fileinfo.flowfile, union.start, union.start)]));
 	}
@@ -158,9 +158,11 @@ verifyNameIsUnused(env : TypeVerifyModuleEnv, name : string, onError : (FcError)
 }
 
 verifyNameIsAccessible(env : TypeVerifyLocalEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
-	if (containsSet(env.varNames, name)) true // local name
-	else if (containsSet(env.moduleEnv.moduleNames, name)) true // module scope name
-	else {
+	if (containsSet(env.varNames, name)) {
+		true // local name
+	} else if (containsSet(env.moduleEnv.moduleNames, name)) {
+		true // module scope name
+	} else {
 		// global name
 		names = env.moduleEnv.global.acc.names;
 		switch (lookupTree(names.name2module, name)) {
@@ -525,6 +527,7 @@ typeverifyFiCallPrim(env : TypeVerifyLocalEnv, call : FiCallPrim, onError : (FcE
 					}
 				}
 			}
+			verifyNameIsAccessible(env, struct_name, onError, call.start) &&
 			typeverifyFcStructPrim(env, struct_name, call.es, onError, call.start);
 		}
 		FcFieldPrim(field_name): {
@@ -538,13 +541,17 @@ typeverifyFiCallPrim(env : TypeVerifyLocalEnv, call : FiCallPrim, onError : (FcE
 							field_name, type_name, onError,
 							env.moduleEnv.module.fileinfo.flowfile, call.start
 					);
-					if (getStructField(sf_env) != None()) true else {
+					field_exists = if (getStructField(sf_env) != None()) true else {
 						onError(FcError(
 							"There's no field " + field_name + " in struct or union " + type_name,  
 							[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
 						);
 						false
-					}
+					};
+					field_is_accessible = if (!isConfigParameterTrue(env.moduleEnv.global.acc.config.config, "check-fields")) true else {
+						verifyNameIsAccessible(env, type_name, onError, call.start)
+					};
+					field_exists && field_is_accessible
 				}
 				FiTypeFlow():
 					true;  // We can't do better, if type is flow
@@ -606,7 +613,10 @@ typeverifyFiCallPrim(env : TypeVerifyLocalEnv, call : FiCallPrim, onError : (FcE
 									[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
 								)
 							}
-							field_subtyping && struct_field.ismutable
+							field_is_accessible = if (!isConfigParameterTrue(env.moduleEnv.global.acc.config.config, "check-fields")) true else {
+								verifyNameIsAccessible(env, type_name, onError, call.start)
+							};
+							field_subtyping && struct_field.ismutable && field_is_accessible
 						}
 						None(): {
 							onError(FcError(
@@ -721,7 +731,10 @@ typeverifyFiCallPrim(env : TypeVerifyLocalEnv, call : FiCallPrim, onError : (FcE
 				false
 			}
 		}
-		FcCreateClosurePrim(structName, functionName): true; // TODO:
+		FcCreateClosurePrim(structName, functionName): {
+			verifyNameIsAccessible(env, structName, onError, call.start) &&
+			verifyNameIsAccessible(env, functionName, onError, call.start)
+		}
 		FcQuote(): true; // TODO:
 		FcUnquote(): true; // TODO:
 	}
@@ -984,7 +997,7 @@ typeverifyFiType(env : TypeVerifyLocalEnv, type : FiType, onError : (FcError) ->
 }
 
 typeverifyFiTypeName(env : TypeVerifyLocalEnv, type : FiTypeName, onError : (FcError) -> void, start : int) -> bool {
-	fold(type.typeparameters, true, \ok, tp -> ok && typeverifyFiType(env, tp, onError, start)) &&
+	forall(type.typeparameters, \tp -> typeverifyFiType(env, tp, onError, start)) &&
 	typeverifyIsStructOrUnionName(env, type.name, onError, start)
 }
 
