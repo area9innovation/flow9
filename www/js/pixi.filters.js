@@ -371,8 +371,8 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 
 	var x = Math.floor(bounds.x);
 	var y = Math.floor(bounds.y);
-	var w = Math.ceil(bounds.width + bounds.x - x);
-	var h = Math.ceil(bounds.height + bounds.y - y);
+	var w = Math.ceil(bounds.width + bounds.x);
+	var h = Math.ceil(bounds.height + bounds.y);
 
 	// Expand area to increments of 32 to minimize reallocations
 	w = (w+31) & ~31;

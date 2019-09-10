@@ -192,7 +192,12 @@ class FlowSprite extends Sprite {
 					return;
 				}
 
-				Browser.document.body.removeChild(nativeWidget);
+				if (parent == null) {
+					Browser.document.body.removeChild(nativeWidget);
+				} else {
+					untyped this.parentChanged = true;
+				}
+
 				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 			} else {
 				metricsFn(texture.width, texture.height);

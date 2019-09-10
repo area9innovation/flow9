@@ -803,11 +803,17 @@ class DisplayObjectHelper {
 			untyped clip.boundsChanged = false;
 			var nativeWidget = untyped clip.nativeWidget;
 
-			nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip))}');
-			nativeWidget.setAttribute('height', '${round(getWidgetHeight(clip))}');
-			nativeWidget.style.width = '${round(getWidgetWidth(clip))}px';
-			nativeWidget.style.height = '${round(getWidgetHeight(clip))}px';
-
+			if (untyped clip.alphaMask != null) {
+				nativeWidget.setAttribute('width', '${round(localBounds.maxX)}');
+				nativeWidget.setAttribute('height', '${round(localBounds.maxY)}');
+				nativeWidget.style.width = '${round(localBounds.maxX)}px';
+				nativeWidget.style.height = '${round(localBounds.maxY)}px';
+			} else {
+				nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip))}');
+				nativeWidget.setAttribute('height', '${round(getWidgetHeight(clip))}');
+				nativeWidget.style.width = '${round(getWidgetWidth(clip))}px';
+				nativeWidget.style.height = '${round(getWidgetHeight(clip))}px';
+			}
 			// nativeWidget.setAttribute('minX', Std.string(localBounds.minX));
 			// nativeWidget.setAttribute('minY', Std.string(localBounds.minY));
 			// nativeWidget.setAttribute('maxX', Std.string(localBounds.maxX));
@@ -1062,8 +1068,12 @@ class DisplayObjectHelper {
 				}
 
 				var image = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'image');
-				image.setAttribute('width', '${round(getWidgetWidth(clip))}');
-				image.setAttribute('height', '${round(getWidgetHeight(clip))}');
+				if (untyped clip.alphaMask.localBounds.minX != Math.POSITIVE_INFINITY) {
+					image.setAttribute('width', '${round(getWidgetWidth(untyped clip.alphaMask))}');
+					image.setAttribute('height', '${round(getWidgetHeight(untyped clip.alphaMask))}');
+					image.setAttribute('x', '${untyped clip.alphaMask.localBounds.minX}');
+					image.setAttribute('y', '${untyped clip.alphaMask.localBounds.minY}');
+				}
 				image.setAttribute('href', alphaMask.url);
 				image.setAttribute('transform', 'matrix(1 0 0 1
 					${untyped -Std.int(svg.parentNode.style.marginLeft.substring(0, svg.parentNode.style.marginLeft.length - 2)) - Std.int(svg.parentNode.style.left.substring(0, svg.parentNode.style.left.length - 2))}
@@ -1078,13 +1088,6 @@ class DisplayObjectHelper {
 				for (child in svg.childNodes) {
 					untyped child.setAttribute("mask", 'url(#' + untyped svg.parentNode.getAttribute('id') + "mask)");
 				}
-			}
-
-			nativeWidget.style.overflow = 'hidden';
-
-			if (untyped clip.localBounds != null) {
-				nativeWidget.style.marginLeft = '${untyped clip.alphaMask.localBounds.minX}px';
-				nativeWidget.style.marginTop = '${untyped clip.alphaMask.localBounds.minY}px';
 			}
 		} else if (viewBounds != null) {
 			untyped nativeWidget.style.webkitClipPath = null;
@@ -1273,7 +1276,8 @@ class DisplayObjectHelper {
 					nativeWidget.style.display = null;
 				}
 
-				if (getParentNode(clip) == null && isNativeWidget(clip) && clip.parent != null && clip.child == null) {
+				if (untyped (getParentNode(clip) == null || clip.parentChanged) && isNativeWidget(clip) && clip.parent != null && clip.child == null) {
+					untyped clip.parentChanged = false;
 					addNativeWidget(clip);
 				}
 			} else if (!RenderSupportJSPixi.RenderContainers || clip.parent == null || (clip.parent.visible && clip.parent.renderable)) {
@@ -1316,8 +1320,11 @@ class DisplayObjectHelper {
 
 				if (nativeWidget.parentNode != null) {
 					nativeWidget.parentNode.removeChild(nativeWidget);
-					applyScrollFn(untyped clip.parentClip);
-					untyped clip.parentClip = null;
+
+					if (untyped clip.parentClip != null) {
+						applyScrollFn(untyped clip.parentClip);
+						untyped clip.parentClip = null;
+					}
 				}
 			} else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 				var children : Array<DisplayObject> = untyped clip.children;

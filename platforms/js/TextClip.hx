@@ -464,7 +464,7 @@ class TextClip extends NativeWidgetClip {
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
 		style.lineHeight = Math.ceil(fontSize * 1.15 + interlineSpacing);
 		style.wordWrap = wordWrap;
-		style.wordWrapWidth = getWidgetWidth() > 0 ? getWidgetWidth() + 1.0 : 2048.0;
+		style.wordWrapWidth = getWidgetWidth() > 0 ? getWidgetWidth() : 2048.0;
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
