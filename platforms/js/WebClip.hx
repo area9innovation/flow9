@@ -253,4 +253,25 @@ class WebClip extends NativeWidgetClip {
 		}
 	}
 
+	public override function setWidth(widgetWidth : Float) : Void {
+		if (widgetBounds.getBoundsWidth() != widgetWidth) {
+			widgetBounds.minX = 0;
+			widgetBounds.maxX = widgetWidth;
+
+			trace(widgetBounds);
+
+			invalidateStyle();
+		}
+	}
+
+	public override function setHeight(widgetHeight : Float) : Void {
+		if (widgetBounds.getBoundsHeight() != widgetHeight) {
+			widgetBounds.minY = 0;
+			widgetBounds.maxY = widgetHeight;
+
+			trace(widgetBounds);
+
+			invalidateStyle();
+		}
+	}
 }

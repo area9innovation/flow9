@@ -1301,7 +1301,7 @@ class DisplayObjectHelper {
 					nativeWidget.style.display = null;
 				}
 
-				if (untyped getParentNode(clip) == null && isNativeWidget(clip) && clip.parent != null && clip.child == null) {
+				if (untyped getParentNode(clip) != clip.parentClip.nativeWidget && isNativeWidget(clip) && clip.parent != null && clip.child == null) {
 					addNativeWidget(clip);
 				}
 			} else if (!RenderSupportJSPixi.RenderContainers || clip.parent == null || (clip.parent.visible && clip.parent.renderable)) {
@@ -1580,10 +1580,17 @@ class DisplayObjectHelper {
 		} else if (untyped clip.widgetBounds != null) {
 			var widgetBounds = untyped clip.widgetBounds;
 
-			localBounds.minX = widgetBounds.minX;
-			localBounds.minY = widgetBounds.minY;
-			localBounds.maxX = widgetBounds.maxX;
-			localBounds.maxY = widgetBounds.maxY;
+			if (widgetBounds.minX != Math.POSITIVE_INFINITY && widgetBounds.minY != Math.POSITIVE_INFINITY) {
+				localBounds.minX = widgetBounds.minX;
+				localBounds.minY = widgetBounds.minY;
+				localBounds.maxX = widgetBounds.maxX;
+				localBounds.maxY = widgetBounds.maxY;
+			} else {
+				localBounds.minX = 0;
+				localBounds.minY = 0;
+				localBounds.maxX = getWidth(clip);
+				localBounds.maxY = getHeight(clip);
+			}
 		} else if (untyped clip.children != null) {
 			var children : Array<DisplayObject> = untyped clip.children;
 
