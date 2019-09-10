@@ -104,7 +104,11 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateBounds(clip : DisplayObject) : Void {
-		untyped clip.boundsChanged = true;
+		if (RenderSupportJSPixi.DomRenderer) {
+			untyped clip.boundsChanged = true;
+		} else {
+			untyped clip.rvlast = null;
+		}
 	}
 
 	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool) : Void {
@@ -1588,11 +1592,9 @@ class DisplayObjectHelper {
 			var newBounds = applyLocalBoundsTransform(clip);
 			if (!isEqualBounds(currentBounds, newBounds)) {
 				untyped clip.currentBounds = newBounds;
-				if (RenderSupportJSPixi.DomRenderer) {
-					invalidateBounds(clip);
-				} else {
+				invalidateBounds(clip);
+				if (untyped clip.scrollRect == null) {
 					invalidateTransform(clip);
-					clip.emit("childrenchanged");
 				}
 
 				if (untyped clip.child != null) {
