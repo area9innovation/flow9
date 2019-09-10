@@ -251,6 +251,10 @@ class DisplayObjectHelper {
 			invalidateBounds(clip);
 			invalidateTransform(clip);
 
+			if (untyped clip.parent.hasMask) {
+				updateHasMask(clip);
+			}
+
 			clip.once('removed', function() { invalidate(clip); });
 		} else {
 			untyped clip.worldTransformChanged = false;
@@ -504,35 +508,23 @@ class DisplayObjectHelper {
 			untyped clip.mask.child = clip;
 
 			if (RenderSupportJSPixi.DomRenderer && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
-				var children : Array<Dynamic> = untyped clip.children;
-				if (children != null) {
-					for (child in children) {
-						child.isSvg = true;
-						if (untyped child.updateNativeWidgetGraphicsData != null) {
-							child.updateNativeWidgetGraphicsData();
-						}
-					}
-				}
+				updateHasMask(clip);
 			}
 
 			clip.mask.once("removed", function () { clip.mask = null; });
 		} else if (untyped clip.alphaMask != null) {
 			untyped maskContainer.isMask = true;
 			untyped maskContainer.child = clip;
+			untyped maskContainer.url = clip.alphaMask.url;
+
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
 
 			if (RenderSupportJSPixi.DomRenderer) {
-				var children : Array<Dynamic> = untyped clip.children;
-				if (children != null) {
-					for (child in children) {
-						child.isSvg = true;
-						if (untyped child.updateNativeWidgetGraphicsData != null) {
-							child.updateNativeWidgetGraphicsData();
-						}
-					}
-				}
+				untyped clip.alphaMask = untyped maskContainer;
 			}
+
+			updateHasMask(clip);
 
 			untyped clip.alphaMask.once("removed", function () { untyped clip.alphaMask = null; });
 		}
@@ -550,6 +542,23 @@ class DisplayObjectHelper {
 		}
 
 		calculateLocalBounds(clip);
+	}
+
+	public static function updateHasMask(clip : DisplayObject) : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			untyped clip.hasMask = true;
+
+			if (untyped clip.updateNativeWidgetGraphicsData != null) {
+				untyped clip.updateNativeWidgetGraphicsData();
+			}
+
+			var children : Array<Dynamic> = untyped clip.children;
+			if (children != null) {
+				for (child in children) {
+					updateHasMask(child);
+				}
+			}
+		}
 	}
 
 	public static function getMaskedBounds(clip : DisplayObject) : Bounds {
@@ -706,37 +715,15 @@ class DisplayObjectHelper {
 		}
 	}
 
-	private static var updateClipUUIDNode : Dynamic = null;
-
 	public static function updateClipUUID(clip : DisplayObject) : Void {
-		if (untyped __js__('typeof uuidv4 === "undefined"')) {
-			if (updateClipUUIDNode == null) {
-				var head = Browser.document.getElementsByTagName('head')[0];
-				updateClipUUIDNode = Browser.document.createElement('script');
+		if (untyped clip.uuid == null) {
+			untyped clip.uuid = untyped __js__("uuidv4()");
+		}
 
-				updateClipUUIDNode.setAttribute("type","text/javascript");
-				updateClipUUIDNode.setAttribute("src", 'js/uuid_v4.js');
-				updateClipUUIDNode.onload = function() { updateClipUUID(clip); };
+		var nativeWidget = untyped clip.nativeWidget;
 
-				head.appendChild(updateClipUUIDNode);
-			} else {
-				var prevOnLoad = updateClipUUIDNode.onload;
-
-				updateClipUUIDNode.onload = function() {
-					prevOnLoad();
-					updateClipUUID(clip);
-				}
-			}
-		} else {
-			if (untyped clip.uuid == null) {
-				untyped clip.uuid = untyped __js__("uuidv4()");
-			}
-
-			var nativeWidget = untyped clip.nativeWidget;
-
-			if (nativeWidget != null) {
-				nativeWidget.setAttribute('id', untyped clip.uuid);
-			}
+		if (nativeWidget != null) {
+			nativeWidget.setAttribute('id', untyped clip.uuid);
 		}
 	}
 
@@ -1093,12 +1080,11 @@ class DisplayObjectHelper {
 				}
 			}
 
-
 			nativeWidget.style.overflow = 'hidden';
 
 			if (untyped clip.localBounds != null) {
-				nativeWidget.style.marginLeft = '${untyped clip.localBounds.minX}px';
-				nativeWidget.style.marginTop = '${untyped clip.localBounds.minY}px';
+				nativeWidget.style.marginLeft = '${untyped clip.alphaMask.localBounds.minX}px';
+				nativeWidget.style.marginTop = '${untyped clip.alphaMask.localBounds.minY}px';
 			}
 		} else if (viewBounds != null) {
 			untyped nativeWidget.style.webkitClipPath = null;
@@ -1287,7 +1273,7 @@ class DisplayObjectHelper {
 					nativeWidget.style.display = null;
 				}
 
-				if (getParentNode(clip) == null && isNativeWidget(clip) && clip.parent != null) {
+				if (getParentNode(clip) == null && isNativeWidget(clip) && clip.parent != null && clip.child == null) {
 					addNativeWidget(clip);
 				}
 			} else if (!RenderSupportJSPixi.RenderContainers || clip.parent == null || (clip.parent.visible && clip.parent.renderable)) {

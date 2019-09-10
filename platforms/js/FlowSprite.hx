@@ -17,6 +17,7 @@ class FlowSprite extends Sprite {
 
 	private var url : String = "";
 	private var loaded : Bool = false;
+	private var updateParent : Bool = false;
 	private var cache : Bool = false;
 	private var metricsFn : Float -> Float -> Void;
 	private var errorFn : String -> Void;
@@ -164,6 +165,7 @@ class FlowSprite extends Sprite {
 		}
 
 		invalidateStage();
+		deleteNativeWidget();
 	}
 
 	private function onError() : Void {
@@ -180,6 +182,7 @@ class FlowSprite extends Sprite {
 		}
 
 		errorFn("Can not load " + url);
+		deleteNativeWidget();
 	}
 
 	private function onLoaded() : Void {
@@ -189,7 +192,7 @@ class FlowSprite extends Sprite {
 					return;
 				}
 
-				nativeWidget.style.visibility = 'visible';
+				Browser.document.body.removeChild(nativeWidget);
 				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 			} else {
 				metricsFn(texture.width, texture.height);
@@ -266,7 +269,8 @@ class FlowSprite extends Sprite {
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
-		nativeWidget.style.visibility = 'hidden';
+		nativeWidget.style.display = 'none';
+		Browser.document.body.appendChild(nativeWidget);
 
 		isNativeWidget = true;
 	}

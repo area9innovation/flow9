@@ -386,7 +386,7 @@ class FlowGraphics extends Graphics {
 			    nativeWidget.removeChild(nativeWidget.firstChild);
 			}
 
-			if (graphicsData.length != 1 || isSvg) {
+			if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
 				nativeWidget.style.marginLeft = null;
 				nativeWidget.style.marginTop = null;
 				nativeWidget.style.borderRadius = null;
