@@ -367,6 +367,36 @@ if (a === b) return true;
 		}
 	}
 
+	#if js
+	// Use these when sure args types and count is correct and struct exists 
+	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		return o;
+	}
+
+	public static inline function fastMakeStructValue2(n : String, a1 : Dynamic, a2 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		untyped o[_structargs_.get(sid)[1]] = a2;
+		return o;
+	}
+	#end
+
 	public static function makeEmptyStruct(sid : Int) : Dynamic {
 		if (_structtemplates_ != null) {
 			var ff = _structtemplates_.get(sid);

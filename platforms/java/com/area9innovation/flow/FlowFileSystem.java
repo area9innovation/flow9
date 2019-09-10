@@ -68,6 +68,11 @@ public class FlowFileSystem extends NativeHost {
 		double d = file.lastModified() / 1000;
 		return Math.round(d) * 1000;
 	}
+	public double fileModifiedPrecise(String path) {
+		File file = new File(path);
+		return file.lastModified();
+	}
+
 	public String resolveRelativePath(String path) {
 		File file = new File(path);
 		try {
