@@ -2222,18 +2222,16 @@ class RenderSupportJSPixi {
 	}
 
 	public static function requestFullScreen(element : Dynamic) {
-		RenderSupportJSPixi.once("drawframe", function() {
-			if (element.requestFullscreen != null)
-				element.requestFullscreen();
-			else if (element.mozRequestFullScreen != null)
-				element.mozRequestFullScreen();
-			else if (element.webkitRequestFullscreen != null)
-				element.webkitRequestFullscreen();
-			else if (element.msRequestFullscreen != null)
-				element.msRequestFullscreen();
-			else if (element.webkitEnterFullScreen != null)
-				element.webkitEnterFullScreen();
-		});
+		if (element.requestFullscreen != null)
+			element.requestFullscreen();
+		else if (element.mozRequestFullScreen != null)
+			element.mozRequestFullScreen();
+		else if (element.webkitRequestFullscreen != null)
+			element.webkitRequestFullscreen();
+		else if (element.msRequestFullscreen != null)
+			element.msRequestFullscreen();
+		else if (element.webkitEnterFullScreen != null)
+			element.webkitEnterFullScreen();
 	}
 
 	public static function exitFullScreen(element : Dynamic) {
@@ -2241,18 +2239,16 @@ class RenderSupportJSPixi {
 			element = Browser.document;
 		}
 
-		RenderSupportJSPixi.once("drawframe", function() {
-			if (IsFullScreen) {
-				if (element.exitFullscreen != null)
-					element.exitFullscreen();
-				else if (element.mozCancelFullScreen != null)
-					element.mozCancelFullScreen();
-				else if (element.webkitExitFullscreen != null)
-					element.webkitExitFullscreen();
-				else if (element.msExitFullscreen != null)
-					element.msExitFullscreen();
-			}
-		});
+		if (IsFullScreen) {
+			if (element.exitFullscreen != null)
+				element.exitFullscreen();
+			else if (element.mozCancelFullScreen != null)
+				element.mozCancelFullScreen();
+			else if (element.webkitExitFullscreen != null)
+				element.webkitExitFullscreen();
+			else if (element.msExitFullscreen != null)
+				element.msExitFullscreen();
+		}
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
