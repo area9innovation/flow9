@@ -917,6 +917,13 @@ public class Native extends NativeHost {
 		return runtime.makeStructValue(name, args, (Struct)defval);
 	}
 
+	public final Object[] extractStructArguments(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getFields();
+		} else return new Object[0];
+	}
+
+
 	public final Object quit(int c) {
 		System.exit(c);
 		return null;
