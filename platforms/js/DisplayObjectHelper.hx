@@ -561,6 +561,7 @@ class DisplayObjectHelper {
 			untyped clip.alphaMask.once("removed", function () { untyped clip.alphaMask = null; });
 		}
 
+		setClipRenderable(maskContainer, false);
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
 		if (RenderSupportJSPixi.DomRenderer) {
