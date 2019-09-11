@@ -1198,7 +1198,7 @@ public class Native extends NativeHost {
 			md5Hex = "0" + md5Hex;
 		}
 
-	return md5Hex;
+		return md5Hex;
 	}
 
 	public String fileChecksum(String filename) {
@@ -1227,6 +1227,10 @@ public class Native extends NativeHost {
 			}
 
 			return md5Hex;
+		} catch (IOException e) {
+			return "";
+		} catch (InvalidPathException e) {
+			return "";
 		} catch (Exception e) {
 			e.printStackTrace();
 			return "";
