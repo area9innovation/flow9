@@ -1112,6 +1112,10 @@ class Native {
 		return HaxeRuntime.makeStructValue(name, args, default_value);
 	}
 
+	public static function extractStructArguments(value : Dynamic) :  Array<Dynamic> {
+		return HaxeRuntime.extractStructArguments(value);
+	}
+
 	public static function quit(c : Int) : Void {
 #if js
 #if ((flow_nodejs && !flow_webmodule) || nwjs)
