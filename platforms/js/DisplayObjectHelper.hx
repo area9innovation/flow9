@@ -10,7 +10,7 @@ import pixi.core.math.Point;
 
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
-	public static var Round : Bool = Util.getParameter("roundpixels") == "1";
+	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
 
 	private static var InvalidateStage : Bool = true;
 
