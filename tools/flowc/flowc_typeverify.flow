@@ -102,58 +102,19 @@ typeverifyFiTypeUnion(moduleEnv : TypeVerifyModuleEnv, union : FiTypeUnion, onEr
 
 verifyNameIsUnused(env : TypeVerifyModuleEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
 	names = env.global.acc.names;
-	ret = containsKeyTree(names.name2module, name);
-	if (!ret) {
-		position : FcPosition = switch (lookupTree(names.structs, name)) {
-			Some(struct): {
-				module = lookupTreeDef(names.struct2module, name, "");
-				FcPosition(module, struct.info.start, struct.info.end);
-			}
-			None(): {
-				switch (lookupTree(names.unions, name)) {
-					Some(union): {
-						module = lookupTreeDef(names.union2module, name, "");
-						FcPosition(module, union.info.start, union.info.end);
-					}
-					None(): {
-						switch (lookupTree(names.toplevel, name)) {
-							Some(decl): {
-								switch (decl) {
-									FcFunctionDec(__,__,__,declInfo, defiInfo): {
-										module = lookupTreeDef(names.function2module, name, "");
-										FcPosition(module, declInfo.start, declInfo.end);
-									}
-									FcGlobalVar(__,__,declInfo, bodyInfo): {
-										module = lookupTreeDef(names.globalVar2module, name, "");
-										FcPosition(module, declInfo.start, declInfo.end);
-									}
-									FcNativeDec(__,__,__,__,__, info): {
-										module = lookupTreeDef(names.native2module, name, "");
-										FcPosition(module, info.start, info.end);
-									}
-								}
-							}
-							None(): {
-								onError(FcError("this branch is impossible", []));
-								FcPosition("", -1, -1);
-							}
-						}
-					}
-				}
-			}
-		}
-		if (position.file == env.module.fileinfo.flowfile) {
+	mod_name = moduleWhereNameIsDefined(names, name);
+	if (mod_name == "") true else {
+		if (mod_name == env.module.fileinfo.flowfile) {
 			// in this case 'name' is defined in this module, so there's no collision
 			true
 		} else {
+			decl_position = positionWhereNameIsDefined(names, name);
 			onError(FcError(
 				"name '" + name + "' is already used", 
-				[position, FcPosition(env.module.fileinfo.flowfile, start, start)]
+				[FcPosition(mod_name, decl_position, decl_position), FcPosition(env.module.fileinfo.flowfile, start, start)]
 			));
 			false
 		}
-	} else {
-		ret
 	}
 }
 
@@ -164,34 +125,32 @@ verifyNameIsAccessible(env : TypeVerifyLocalEnv, name : string, onError : (FcErr
 		true // module scope name
 	} else {
 		// global name
-		names = env.moduleEnv.global.acc.names;
-		switch (lookupTree(names.name2module, name)) {
-			Some(mod_name): {
-				import_module = lookupTreeDef(env.moduleEnv.global.acc.modules, mod_name, dummyFiModule);
-				is_exported = if (contains(import_module.exports, name)) true else {
-					onError(FcError(
-						"name '" + name + "' is not exported.",
-						[FcPosition(env.moduleEnv.module.fileinfo.flowfile, start, start), FcPosition(import_module.fileinfo.flowfile, start, start)]
-					));
-					false
-				};
-				is_imported = if (containsSet(env.moduleEnv.module.allImports, import_module.fileinfo.flowfile)) true else {
-					onError(FcError(
-						"name '" + name + "' is not imported.\n" +
-						"To fix add 'import " + import_module.fileinfo.flowfile + ";' to the import header of module '" + env.moduleEnv.module.fileinfo.flowfile, 
-						[FcPosition(env.moduleEnv.module.fileinfo.flowfile, start, start), FcPosition(import_module.fileinfo.flowfile, start, start)]
-					));
-					false
-				};
-				is_imported && is_exported
-			}
-			None(): {
+		mod_name = moduleWhereNameIsDefined(env.moduleEnv.global.acc.names, name);
+		if (mod_name != "") {
+			import_module = lookupTreeDef(env.moduleEnv.global.acc.modules, mod_name, dummyFiModule);
+			decl_position = positionWhereNameIsDefined(env.moduleEnv.global.acc.names, name);
+			is_exported = if (contains(import_module.exports, name)) true else {
 				onError(FcError(
-					"name '" + name + "' is unknown", 
-					[FcPosition(env.moduleEnv.module.fileinfo.flowfile, start, start)]
+					"name '" + name + "' is not exported.",
+					[FcPosition(env.moduleEnv.module.fileinfo.flowfile, start, start), FcPosition(import_module.fileinfo.flowfile, decl_position, decl_position)]
 				));
 				false
-			}
+			};
+			is_imported = if (containsSet(env.moduleEnv.module.allImports, import_module.fileinfo.flowfile)) true else {
+				onError(FcError(
+					"name '" + name + "' is not imported.\n" +
+					"To fix add 'import " + import_module.fileinfo.flowfile + ";' to the import header of module '" + env.moduleEnv.module.fileinfo.flowfile, 
+					[FcPosition(env.moduleEnv.module.fileinfo.flowfile, start, start), FcPosition(import_module.fileinfo.flowfile, decl_position, decl_position)]
+				));
+				false
+			};
+			is_imported && is_exported
+		} else {
+			onError(FcError(
+				"name '" + name + "' is unknown", 
+				[FcPosition(env.moduleEnv.module.fileinfo.flowfile, start, start)]
+			));
+			false
 		}
 	}
 }
