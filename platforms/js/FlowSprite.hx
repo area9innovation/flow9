@@ -152,7 +152,6 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onDispose() : Void {
-		renderable = false;
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
@@ -169,7 +168,6 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onError() : Void {
-		renderable = false;
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
@@ -199,7 +197,6 @@ class FlowSprite extends Sprite {
 
 			invalidateTransform('onLoaded');
 
-			renderable = true;
 			loaded = true;
 
 			calculateWidgetBounds();
