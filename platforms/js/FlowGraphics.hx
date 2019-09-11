@@ -20,6 +20,7 @@ class FlowGraphics extends Graphics {
 	private var localBounds = new Bounds();
 	private var graphicsBounds = new Bounds();
 	private var _bounds = new Bounds();
+	private var widgetBounds = new Bounds();
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
@@ -63,8 +64,9 @@ class FlowGraphics extends Graphics {
 		pen.x = x;
 		pen.y = y;
 
-		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -76,8 +78,9 @@ class FlowGraphics extends Graphics {
 
 		isSvg = true;
 
-		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -92,8 +95,9 @@ class FlowGraphics extends Graphics {
 
 		isSvg = true;
 
-		localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		localBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
+		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -114,6 +118,9 @@ class FlowGraphics extends Graphics {
 				data.lineWidth = null;
 			}
 		}
+
+		calculateGraphicsBounds();
+		calculateLocalBounds('endFill');
 
 		if (fillGradient != null) {
 			if (RenderSupportJSPixi.DomRenderer) {
@@ -179,47 +186,12 @@ class FlowGraphics extends Graphics {
 				addChild(sprite.mask);
 				addChild(sprite);
 
-				sprite.invalidateTransform();
+				sprite.invalidateTransform('endFill Gradient');
 			}
 		}
-
-		if (untyped this.mask == null) {
-			var currentBounds = new Bounds();
-
-			if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-				applyLocalBoundsTransform(currentBounds);
-			}
-
-			updateLocalBounds();
-
-			if (untyped this._localBounds.minX != null && untyped this._localBounds.minX != Math.POSITIVE_INFINITY) {
-				localBounds = untyped this._localBounds;
-
-				if (localBounds.minX > localBounds.maxX) {
-					var tempX = localBounds.minX;
-					localBounds.minX = localBounds.maxX;
-					localBounds.maxX = tempX;
-				}
-
-				if (localBounds.minY > localBounds.maxY) {
-					var tempY = localBounds.minY;
-					localBounds.minY = localBounds.maxY;
-					localBounds.maxY = tempY;
-				}
-
-				if (parent != null) {
-					var newBounds = applyLocalBoundsTransform();
-					if (!currentBounds.isEqualBounds(newBounds)) {
-						parent.replaceLocalBounds(currentBounds, newBounds);
-					}
-				}
-			}
-		}
-
-		graphicsBounds = localBounds;
 
 		if (parent != null) {
-			invalidateStage();
+			invalidateTransform('endFill');
 		}
 
 		if (RenderSupportJSPixi.DomRenderer && !isEmpty) {
@@ -243,8 +215,10 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawRect(x, y, width, height);
 
-			localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			widgetBounds.addPoint(new Point(x, y));
+			widgetBounds.addPoint(new Point(x + width, y + height));
 
 			endFill();
 
@@ -271,8 +245,10 @@ class FlowGraphics extends Graphics {
 			if (radius > 0) {
 				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
 
-				localBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-				localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+				graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
+				graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+				widgetBounds.addPoint(new Point(x, y));
+				widgetBounds.addPoint(new Point(x + width, y + height));
 
 				endFill();
 
@@ -292,8 +268,10 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawEllipse(x, y, width, height);
 
-			localBounds.addPoint(new Point(x - width - lineWidth / 2.0, y - height - lineWidth / 2.0));
-			localBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x - width - lineWidth / 2.0, y - height - lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
+			widgetBounds.addPoint(new Point(x, y));
+			widgetBounds.addPoint(new Point(x + width, y + height));
 
 			endFill();
 
@@ -309,8 +287,10 @@ class FlowGraphics extends Graphics {
 		if (radius > 0) {
 			var newGraphics = super.drawCircle(x, y, radius);
 
-			localBounds.addPoint(new Point(x - radius - lineWidth / 2.0, y - radius - lineWidth / 2.0));
-			localBounds.addPoint(new Point(x + radius + lineWidth / 2.0, y + radius + lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x - radius - lineWidth / 2.0, y - radius - lineWidth / 2.0));
+			graphicsBounds.addPoint(new Point(x + radius + lineWidth / 2.0, y + radius + lineWidth / 2.0));
+			widgetBounds.addPoint(new Point(x - radius, y - radius));
+			widgetBounds.addPoint(new Point(x + radius, y + radius));
 
 			endFill();
 
@@ -321,7 +301,22 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		return localBounds.getRectangle(rect);
+		if (localBounds.minX == Math.POSITIVE_INFINITY) {
+			calculateLocalBounds('getLocalBounds');
+		}
+
+		rect = localBounds.getRectangle(rect);
+
+		var filterPadding = untyped this.filterPadding;
+
+		if (filterPadding != null) {
+			rect.x -= filterPadding;
+			rect.y -= filterPadding;
+			rect.width += filterPadding * 2.0;
+			rect.height += filterPadding * 2.0;
+		}
+
+		return rect;
 	}
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
@@ -344,38 +339,19 @@ class FlowGraphics extends Graphics {
 		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
-	public function calculateLocalBounds() : Void {
-		var currentBounds = new Bounds();
+	public function calculateGraphicsBounds() : Void {
+		updateLocalBounds();
 
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
-
-			if (untyped mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				localBounds.clear();
-				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
-			} else {
-				localBounds = graphicsBounds;
-			}
-		} else {
-			localBounds = graphicsBounds;
-		}
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			if (!currentBounds.isEqualBounds(newBounds)) {
-				parent.replaceLocalBounds(currentBounds, newBounds);
-				invalidateTransform();
-			}
+		if (untyped this._localBounds.minX != null && untyped this._localBounds.minX != Math.POSITIVE_INFINITY) {
+			graphicsBounds = untyped this._localBounds;
 		}
 	}
 
 	public override function clear() : Graphics {
 		pen = new Point();
 		localBounds = new Bounds();
+		graphicsBounds = new Bounds();
+		widgetBounds = new Bounds();
 		var newGraphics = super.clear();
 
 		isEmpty = true;
@@ -410,7 +386,7 @@ class FlowGraphics extends Graphics {
 			    nativeWidget.removeChild(nativeWidget.firstChild);
 			}
 
-			if (graphicsData.length != 1 || isSvg) {
+			if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
 				nativeWidget.style.marginLeft = null;
 				nativeWidget.style.marginTop = null;
 				nativeWidget.style.borderRadius = null;
@@ -423,8 +399,8 @@ class FlowGraphics extends Graphics {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${Math.ceil(getWidth())}px';
-					svg.style.height = '${Math.ceil(getHeight())}px';
+					svg.style.width = '${getWidth().round()}px';
+					svg.style.height = '${getHeight().round()}px';
 					svg.style.left = '${localBounds.minX}px';
 					svg.style.top = '${localBounds.minY}px';
 					svg.style.position = 'absolute';
@@ -596,8 +572,8 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${Math.ceil(getWidth())}px';
-						svg.style.height = '${Math.ceil(getHeight())}px';
+						svg.style.width = '${getWidth().round()}px';
+						svg.style.height = '${getHeight().round()}px';
 						svg.style.left = '${localBounds.minX}px';
 						svg.style.top = '${localBounds.minY}px';
 						svg.style.position = 'absolute';
@@ -622,28 +598,12 @@ class FlowGraphics extends Graphics {
 						}
 
 						if (data.shape.type == 1) {
-							nativeWidget.style.marginLeft = '${data.shape.x}px';
-							nativeWidget.style.marginTop = '${data.shape.y}px';
-							nativeWidget.style.width = '${data.shape.width - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.height - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
-							nativeWidget.style.marginLeft = '${data.shape.x - data.shape.radius}px';
-							nativeWidget.style.marginTop = '${data.shape.y - data.shape.radius}px';
-							nativeWidget.style.width = '${data.shape.radius * 2 - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.radius * 2 - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						} else if (data.shape.type == 3) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.shape.width * 2.0 - data.lineWidth * 2) / 2.0}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.shape.height * 2.0 - data.lineWidth * 2) / 2.0}px';
-							nativeWidget.style.width = '${data.shape.width * 2.0 - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.height * 2.0 - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.width - data.lineWidth}px / ${data.shape.height - data.lineWidth}px';
 						} else if (data.shape.type == 4) {
-							nativeWidget.style.marginLeft = '${data.shape.x}px';
-							nativeWidget.style.marginTop = '${data.shape.y}px';
-							nativeWidget.style.width = '${data.shape.width - data.lineWidth * 2}px';
-							nativeWidget.style.height = '${data.shape.height - data.lineWidth * 2}px';
 							nativeWidget.style.borderRadius = '${data.shape.radius}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');
@@ -663,7 +623,7 @@ class FlowGraphics extends Graphics {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		nativeWidget.setAttribute('id', getClipUUID());
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

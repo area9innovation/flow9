@@ -622,7 +622,7 @@ unsigned GLFont::loadSystemGlyph(ucs4_char char_code, bool force)
 
 GLFont::GlyphInfo *GLFont::getGlyphByChar(ucs4_char char_code)
 {
-    if ((char_code|1) == 0x200E || ((char_code-0x202A)|3) == 3 || ((char_code-0x2066)|3) == 3) char_code = 0x200B;
+    if ((char_code|1) == 0x200F || ((char_code-0x202A)|3) == 3 || ((char_code-0x2066)|3) == 3) char_code = 0x200B;
 #ifndef FLOW_DFIELD_FONTS
     int idx = FT_Get_Char_Index(face, char_code);
 #else

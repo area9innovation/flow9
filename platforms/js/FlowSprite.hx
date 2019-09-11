@@ -17,6 +17,7 @@ class FlowSprite extends Sprite {
 
 	private var url : String = "";
 	private var loaded : Bool = false;
+	private var updateParent : Bool = false;
 	private var cache : Bool = false;
 	private var metricsFn : Float -> Float -> Void;
 	private var errorFn : String -> Void;
@@ -24,6 +25,7 @@ class FlowSprite extends Sprite {
 	private var retries : Int = 0;
 
 	private var localBounds = new Bounds();
+	private var widgetBounds = new Bounds();
 	private var _bounds = new Bounds();
 
 	private var nativeWidget : Dynamic;
@@ -150,7 +152,6 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onDispose() : Void {
-		renderable = false;
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
@@ -163,10 +164,10 @@ class FlowSprite extends Sprite {
 		}
 
 		invalidateStage();
+		deleteNativeWidget();
 	}
 
 	private function onError() : Void {
-		renderable = false;
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
@@ -179,6 +180,7 @@ class FlowSprite extends Sprite {
 		}
 
 		errorFn("Can not load " + url);
+		deleteNativeWidget();
 	}
 
 	private function onLoaded() : Void {
@@ -188,18 +190,17 @@ class FlowSprite extends Sprite {
 					return;
 				}
 
-				nativeWidget.style.visibility = 'visible';
 				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 			} else {
 				metricsFn(texture.width, texture.height);
 			}
 
-			invalidateTransform();
+			invalidateTransform('onLoaded');
 
-			renderable = true;
 			loaded = true;
 
-			calculateLocalBounds();
+			calculateWidgetBounds();
+			calculateLocalBounds('onLoaded');
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();
@@ -259,49 +260,25 @@ class FlowSprite extends Sprite {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		nativeWidget.setAttribute('id', getClipUUID());
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
-		nativeWidget.style.visibility = 'hidden';
 
 		isNativeWidget = true;
 	}
 
-	public function calculateLocalBounds() : Void {
-		var currentBounds = new Bounds();
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0;
+		widgetBounds.minY = 0;
 
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		localBounds.clear();
-
-		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
-
-			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
-			}
+		if (RenderSupportJSPixi.DomRenderer) {
+			widgetBounds.maxX = nativeWidget.naturalWidth;
+			widgetBounds.maxY = nativeWidget.naturalHeight;
 		} else {
-			localBounds.minX = 0;
-			localBounds.minY = 0;
-
-			if (RenderSupportJSPixi.DomRenderer) {
-				localBounds.maxX = nativeWidget.naturalWidth;
-				localBounds.maxY = nativeWidget.naturalHeight;
-			} else {
-				localBounds.maxX = texture.width;
-				localBounds.maxY = texture.height;
-			}
-		}
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			if (!currentBounds.isEqualBounds(newBounds)) {
-				parent.replaceLocalBounds(currentBounds, newBounds);
-			}
+			widgetBounds.maxX = texture.width;
+			widgetBounds.maxY = texture.height;
 		}
 	}
 }

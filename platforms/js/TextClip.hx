@@ -309,12 +309,15 @@ class TextClip extends NativeWidgetClip {
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 
+		if (metrics == null) {
+			updateTextMetrics();
+		}
+
 		if (isInput) {
 			nativeWidget.setAttribute("type", type);
 			nativeWidget.value = text;
 			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 			nativeWidget.readOnly = readOnly;
-			nativeWidget.style.lineHeight = '${style.lineHeight}px';
 
 			if (cursorColor >= 0) {
 				nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
@@ -338,10 +341,10 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.resize = 'none';
 			}
 
+			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 		} else {
 			nativeWidget.textContent = StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text;
-			nativeWidget.style.lineHeight = '${style.lineHeight}px';
 		}
 
 		nativeWidget.style.color = style.fill;
@@ -352,6 +355,9 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
+		if (metrics != null) {
+			nativeWidget.style.lineHeight = '${Math.ceil(untyped metrics.lineHeight)}px';
+		}
 
 		nativeWidget.style.direction = switch (textDirection) {
 			case 'RTL' : 'rtl';
@@ -458,7 +464,7 @@ class TextClip extends NativeWidgetClip {
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
 		style.lineHeight = Math.round(fontSize * 1.2 + interlineSpacing);
 		style.wordWrap = wordWrap;
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
+		style.wordWrapWidth = getWidgetWidth() > 0 ? getWidgetWidth() : 2048.0;
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
@@ -569,7 +575,10 @@ class TextClip extends NativeWidgetClip {
 				default : textDirection == 'rtl' ? 1 : 0;
 			};
 
-			textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
+			textClip.setClipX(anchorX * Math.max(0, getWidgetWidth() - getClipWidth()));
+			if (style.fontFamily == "Material Icons") {
+				textClip.setClipY(style.fontProperties.descent);
+			}
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
@@ -589,8 +598,10 @@ class TextClip extends NativeWidgetClip {
 
 	public override function invalidateStyle() : Void {
 		if (!doNotInvalidateStage) {
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
+			if (!RenderSupportJSPixi.DomRenderer) {
+				if (isInput) {
+					setScrollRect(0, 0, getWidth(), getHeight());
+				}
 			}
 
 			super.invalidateStyle();
@@ -775,14 +786,18 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		invalidateInteractive();
 
-		nativeWidget.onmousemove = onMouseMove;
-		nativeWidget.onmousedown = onMouseDown;
-		nativeWidget.onmouseup = onMouseUp;
-
-		if (Native.isTouchScreen()) {
+		if (Platform.isMobile) {
+			nativeWidget.ontouchmove = onMouseMove;
 			nativeWidget.ontouchstart = onMouseDown;
 			nativeWidget.ontouchend = onMouseUp;
-			nativeWidget.ontouchmove = onMouseMove;
+		} else if (Platform.isSafari) {
+			nativeWidget.onmousemove = onMouseMove;
+			nativeWidget.onmousedown = onMouseDown;
+			nativeWidget.onmouseup = onMouseUp;
+		} else {
+			nativeWidget.onpointermove = onMouseMove;
+			nativeWidget.onpointerdown = onMouseDown;
+			nativeWidget.onpointerup = onMouseUp;
 		}
 
 		nativeWidget.onfocus = onFocus;
@@ -823,14 +838,30 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function onMouseMove(e : MouseEvent) {
+	private function onMouseMove(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+				RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+				RenderSupportJSPixi.PixiStage.emit("mousemove");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupportJSPixi.MousePos.x = e.pageX;
+			RenderSupportJSPixi.MousePos.y = e.pageY;
+
+			RenderSupportJSPixi.PixiStage.emit("mousemove");
+		}
+
 		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
-		RenderSupportJSPixi.provideEvent(e);
+		e.stopPropagation();
 	}
 
 	private function onMouseDown(e : Dynamic) {
@@ -847,15 +878,48 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+				RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+				if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupportJSPixi.MousePos.x = e.pageX;
+			RenderSupportJSPixi.MousePos.y = e.pageY;
+
+			if (e.which == 3 || e.button == 2) {
+				RenderSupportJSPixi.PixiStage.emit("mouserightdown");
+			} else if (e.which == 2 || e.button == 1) {
+				RenderSupportJSPixi.PixiStage.emit("mousemiddledown");
+			} else {
+				if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+			}
+		}
+
+		e.stopPropagation();
 	}
 
-	private function onMouseUp(e : MouseEvent) {
+	private function onMouseUp(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		RenderSupportJSPixi.MousePos.x = e.pageX;
+		RenderSupportJSPixi.MousePos.y = e.pageY;
+
+		if (e.which == 3 || e.button == 2) {
+			RenderSupportJSPixi.PixiStage.emit("mouserightup");
+		} else if (e.which == 2 || e.button == 1) {
+			RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+		} else {
+			if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+		}
+
+		e.stopPropagation();
 	}
 
 	private function onFocus(e : Event) : Void {
@@ -868,6 +932,10 @@ class TextClip extends NativeWidgetClip {
 
 		if (nativeWidget == null || parent == null) {
 			return;
+		}
+		
+		if (Platform.isIOS) {
+			RenderSupportJSPixi.ensureCurrentInputVisible();
 		}
 
 		invalidateMetrics();
@@ -979,8 +1047,8 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	public override function getWidth() : Float {
-		return (widgetWidth > 0.0 ? widgetWidth : getClipWidth()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
+	public function getWidth() : Float {
+		return isInput && widgetBounds != null && widgetBounds.minX != Math.POSITIVE_INFINITY ? getWidgetWidth() : getClipWidth();
 	}
 
 	private function getClipWidth() : Float {
@@ -988,8 +1056,8 @@ class TextClip extends NativeWidgetClip {
 		return metrics != null ? untyped metrics.width : 0;
 	}
 
-	public override function getHeight() : Float {
-		return (widgetHeight > 0.0 ? widgetHeight : getClipHeight()) + (RenderSupportJSPixi.DomRenderer ? 1 : 0);
+	public function getHeight() : Float {
+		return isInput && widgetBounds != null && widgetBounds.minY != Math.POSITIVE_INFINITY ? getWidgetHeight() : getClipHeight();
 	}
 
 	private function getClipHeight() : Float {
@@ -1105,7 +1173,7 @@ class TextClip extends NativeWidgetClip {
 			deleteNativeWidget();
 
 			nativeWidget = Browser.document.createElement(tagName);
-			nativeWidget.setAttribute('id', getClipUUID());
+			updateClipID();
 			nativeWidget.className = 'nativeWidget';
 			nativeWidget.style.whiteSpace = 'pre-wrap';
 

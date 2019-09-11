@@ -223,76 +223,40 @@ class FlowContainer extends Container {
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (localBounds.minX == Math.POSITIVE_INFINITY) {
-				calculateLocalBounds();
-			}
-
-			return localBounds.getRectangle(rect);
-		} else {
-			return super.getLocalBounds(rect);
+		if (localBounds.minX == Math.POSITIVE_INFINITY) {
+			calculateLocalBounds('getLocalBounds');
 		}
+
+		rect = localBounds.getRectangle(rect);
+
+		var filterPadding = untyped this.filterPadding;
+
+		if (filterPadding != null) {
+			rect.x -= filterPadding;
+			rect.y -= filterPadding;
+			rect.width += filterPadding * 2.0;
+			rect.height += filterPadding * 2.0;
+		}
+
+		return rect;
 	}
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (!skipUpdate) {
-				updateTransform();
-				getLocalBounds();
-				this.calculateBounds();
-			}
-
-			return _bounds.getRectangle(rect);
-		} else {
-			return super.getBounds(skipUpdate, rect);
+		if (!skipUpdate) {
+			updateTransform();
 		}
+
+		getLocalBounds();
+		this.calculateBounds();
+
+		return _bounds.getRectangle(rect);
 	}
 
 	public function calculateBounds() : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
-			_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
-			_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
-			_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
-		} else {
-			untyped super.calculateBounds();
-		}
-	}
-
-	public function calculateLocalBounds() : Void {
-		var currentBounds = new Bounds();
-
-		if (parent != null && localBounds.minX != Math.POSITIVE_INFINITY) {
-			applyLocalBoundsTransform(currentBounds);
-		}
-
-		if (mask != null || untyped this.alphaMask != null || scrollRect != null) {
-			var mask = mask != null ? mask : untyped this.alphaMask != null ? untyped this.alphaMask : scrollRect;
-
-			if (untyped mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				cast(mask, DisplayObject).applyLocalBoundsTransform(localBounds);
-			}
-		} else for (child in children) {
-			if (untyped child.localBounds != null && child.localBounds.minX != Math.POSITIVE_INFINITY) {
-				if (localBounds.minX == Math.POSITIVE_INFINITY) {
-					child.applyLocalBoundsTransform(localBounds);
-				} else {
-					var childBounds = child.applyLocalBoundsTransform();
-
-					localBounds.minX = Math.min(localBounds.minX, childBounds.minX);
-					localBounds.minY = Math.min(localBounds.minY, childBounds.minY);
-					localBounds.maxX = Math.max(localBounds.maxX, childBounds.maxX);
-					localBounds.maxY = Math.max(localBounds.maxY, childBounds.maxY);
-				}
-			}
-		}
-
-		if (parent != null) {
-			var newBounds = applyLocalBoundsTransform();
-			if (!currentBounds.isEqualBounds(newBounds)) {
-				parent.replaceLocalBounds(currentBounds, newBounds);
-			}
-		}
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
 	private function createNativeWidget(?tagName : String = "div") : Void {
@@ -303,7 +267,7 @@ class FlowContainer extends Container {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		nativeWidget.setAttribute('id', getClipUUID());
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

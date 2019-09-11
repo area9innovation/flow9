@@ -21,6 +21,11 @@ class DropAreaClip extends NativeWidgetClip {
 		this.regExp = new EReg(mimeTypeRegExpFilter, "g");
 		this.onDone = onDone;
 
+		widgetBounds.minX = 0;
+		widgetBounds.minY = 0;
+		widgetBounds.maxX = 0;
+		widgetBounds.maxY = 0;
+
 		if (RenderSupportJSPixi.DomRenderer) {
 			styleChanged = false;
 		}
@@ -98,21 +103,21 @@ class DropAreaClip extends NativeWidgetClip {
 		onDone(fileArray);
 	}
 
-	private override function getWidth() : Float {
+	private function getWidth() : Float {
 		if (parent != null) {
 			var bounds = parent.getBounds(true);
 			return bounds.width * parent.worldTransform.a + bounds.height * parent.worldTransform.c;
 		} else {
-			return widgetWidth;
+			return -1;
 		}
 	}
 
-	private override function getHeight() : Float {
+	private function getHeight() : Float {
 		if (parent != null) {
 			var bounds = parent.getBounds(true);
 			return bounds.width * parent.worldTransform.b + bounds.height * parent.worldTransform.d;
 		} else {
-			return widgetWidth;
+			return -1;
 		}
 	}
 
