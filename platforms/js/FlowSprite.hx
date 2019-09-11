@@ -170,6 +170,8 @@ class FlowSprite extends Sprite {
 
 	private function onLoaded() : Void {
 		try {
+			parent.emit("childrenchanged");
+
 			metricsFn(texture.width, texture.height);
 
 			invalidateStage(false);
