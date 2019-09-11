@@ -1805,6 +1805,7 @@ StackSlot QGLRenderSupport::getClipboardToCB(RUNNER_ARGS)
 {
     StackSlot &callback = RUNNER_ARG(0);
     RUNNER->EvalFunction(callback, 1, getClipboard(RUNNER, NULL));
+    RETVOID;
 }
 
 StackSlot QGLRenderSupport::getClipboardFormat(RUNNER_ARGS)
