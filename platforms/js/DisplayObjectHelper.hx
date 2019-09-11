@@ -1494,7 +1494,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getBoundsWidth(bounds : Bounds) : Float {
-		return bounds.minX != Math.POSITIVE_INFINITY ? bounds.maxX - bounds.minX : 0;
+		return bounds.minX != Math.POSITIVE_INFINITY ? bounds.maxX - bounds.minX : -1;
 	}
 
 	public static inline function getWidgetWidth(clip : DisplayObject) : Float {
@@ -1512,7 +1512,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getBoundsHeight(bounds : Bounds) : Float {
-		return bounds.minY != Math.POSITIVE_INFINITY ? bounds.maxY - bounds.minY : 0;
+		return bounds.minY != Math.POSITIVE_INFINITY ? bounds.maxY - bounds.minY : -1;
 	}
 
 	public static inline function getWidgetHeight(clip : DisplayObject) : Float {
@@ -1852,7 +1852,7 @@ class DisplayObjectHelper {
 			viewBounds = newViewBounds;
 		}
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (!RenderSupportJSPixi.DomRenderer || untyped __instanceof__(clip, DropAreaClip)) {
 			untyped clip.viewBounds = viewBounds;
 
 			if (untyped clip.styleChanged != null) {

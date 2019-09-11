@@ -103,7 +103,7 @@ class DropAreaClip extends NativeWidgetClip {
 			var bounds = parent.getBounds(true);
 			return bounds.width * parent.worldTransform.a + bounds.height * parent.worldTransform.c;
 		} else {
-			return getWidgetWidth();
+			return -1;
 		}
 	}
 
@@ -112,7 +112,7 @@ class DropAreaClip extends NativeWidgetClip {
 			var bounds = parent.getBounds(true);
 			return bounds.width * parent.worldTransform.b + bounds.height * parent.worldTransform.d;
 		} else {
-			return getWidgetHeight();
+			return -1;
 		}
 	}
 

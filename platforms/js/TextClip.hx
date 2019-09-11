@@ -598,8 +598,10 @@ class TextClip extends NativeWidgetClip {
 
 	public override function invalidateStyle() : Void {
 		if (!doNotInvalidateStage) {
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
+			if (!RenderSupportJSPixi.DomRenderer) {
+				if (isInput) {
+					setScrollRect(0, 0, getWidth(), getHeight());
+				}
 			}
 
 			super.invalidateStyle();
