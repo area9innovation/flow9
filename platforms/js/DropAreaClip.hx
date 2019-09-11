@@ -21,6 +21,11 @@ class DropAreaClip extends NativeWidgetClip {
 		this.regExp = new EReg(mimeTypeRegExpFilter, "g");
 		this.onDone = onDone;
 
+		widgetBounds.minX = 0;
+		widgetBounds.minY = 0;
+		widgetBounds.maxX = 0;
+		widgetBounds.maxY = 0;
+
 		if (RenderSupportJSPixi.DomRenderer) {
 			styleChanged = false;
 		}

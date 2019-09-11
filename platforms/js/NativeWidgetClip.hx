@@ -44,7 +44,7 @@ class NativeWidgetClip extends FlowContainer {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipUUID();
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		if (!RenderSupportJSPixi.DomRenderer) {

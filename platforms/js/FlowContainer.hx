@@ -267,7 +267,7 @@ class FlowContainer extends Container {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipUUID();
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

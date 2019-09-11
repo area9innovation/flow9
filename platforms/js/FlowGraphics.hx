@@ -623,7 +623,7 @@ class FlowGraphics extends Graphics {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipUUID();
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

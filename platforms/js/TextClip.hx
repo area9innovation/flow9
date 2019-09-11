@@ -1173,7 +1173,7 @@ class TextClip extends NativeWidgetClip {
 			deleteNativeWidget();
 
 			nativeWidget = Browser.document.createElement(tagName);
-			updateClipUUID();
+			updateClipID();
 			nativeWidget.className = 'nativeWidget';
 			nativeWidget.style.whiteSpace = 'pre-wrap';
 

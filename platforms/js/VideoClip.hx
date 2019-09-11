@@ -510,7 +510,7 @@ class VideoClip extends FlowContainer {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipUUID();
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

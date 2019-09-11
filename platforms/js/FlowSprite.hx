@@ -260,7 +260,7 @@ class FlowSprite extends Sprite {
 		deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipUUID();
+		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;

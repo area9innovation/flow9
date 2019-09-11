@@ -329,7 +329,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		return;
 	}
 
-	if (this.isGraphics()) {
+	if (this.isGraphics() && false) {
 		// Special fast case
 		// Shadow around graphics
 		var filter = filters[0];

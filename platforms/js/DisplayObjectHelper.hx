@@ -277,7 +277,7 @@ class DisplayObjectHelper {
 			untyped clip.transformChanged = false;
 			untyped clip.localTransformChanged = false;
 
-			if (Platform.isIE) {
+			if (Platform.isIE || Platform.isSafari) {
 				RenderSupportJSPixi.once("drawframe", function() {
 					if (clip.parent == null) {
 						removeNativeWidget(clip);
@@ -748,15 +748,11 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function updateClipUUID(clip : DisplayObject) : Void {
-		if (untyped clip.uuid == null) {
-			untyped clip.uuid = untyped __js__("uuidv4()");
-		}
-
+	public static function updateClipID(clip : DisplayObject) : Void {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null) {
-			nativeWidget.setAttribute('id', untyped clip.uuid);
+			nativeWidget.setAttribute('id', Std.string(Std.int(Math.random() * 100000.0)));
 		}
 	}
 
@@ -1367,14 +1363,14 @@ class DisplayObjectHelper {
 						untyped clip.parentClip = null;
 					}
 				}
-			} else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
+			} /*else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
 				var children : Array<DisplayObject> = untyped clip.children;
 				if (children != null) {
 					for (child in children) {
 						removeNativeWidget(child);
 					}
 				}
-			}
+			}*/
 		}
 	}
 
