@@ -1432,7 +1432,7 @@ StackSlot ByteCodeRunner::makeStructValue(RUNNER_ARGS)
 
 StackSlot ByteCodeRunner::extractStructArguments(RUNNER_ARGS)
 {
-    StackSlot flow_struct = RUNNER_ARG(0);
+    StackSlot &flow_struct = RUNNER_ARG(0);
     if (!flow_struct.IsStruct()) {
         return StackSlot::MakeEmptyArray();
     }
