@@ -1275,14 +1275,6 @@ class RenderSupportJSPixi {
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
 
-		if (clip.parent != null) {
-			if (RenderSupportJSPixi.DomRenderer) {
-				render();
-			} else {
-				clip.updateTransform();
-			}
-		}
-
 		clip.setClipFocus(focus);
 	}
 

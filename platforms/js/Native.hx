@@ -603,6 +603,14 @@ class Native {
 			if (clip.parent != null && clip.parent.removeChild != null) {
 				clip.parent.removeChild(clip);
 			}
+
+			if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
+				RenderSupportJSPixi.once("drawframe", function() {
+					DisplayObjectHelper.deleteNativeWidget(clip);
+				});
+			} else {
+				DisplayObjectHelper.deleteNativeWidget(clip);
+			}
 		}
 	}
 

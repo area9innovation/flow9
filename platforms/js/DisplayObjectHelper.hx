@@ -11,7 +11,6 @@ import pixi.core.math.Point;
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
 	public static var Round : Bool = Util.getParameter("roundpixels") == "1";
-	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -277,9 +276,9 @@ class DisplayObjectHelper {
 			untyped clip.transformChanged = false;
 			untyped clip.localTransformChanged = false;
 
-			if (Platform.isIE || Platform.isSafari) {
+			if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
 				RenderSupportJSPixi.once("drawframe", function() {
-					if (clip.parent == null) {
+					if (clip.parent == null || !clip.visible) {
 						removeNativeWidget(clip);
 					}
 				});
@@ -446,7 +445,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function round(n : Float) : Float {
-		return Round ? Math.round(n) : n;
+		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : n;
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
@@ -1063,7 +1062,7 @@ class DisplayObjectHelper {
 				nativeWidget.scrollTop = y;
 			}
 		}
-		nativeWidget.onscroll = scrollFn;
+		// nativeWidget.onscroll = scrollFn;
 		scrollFn();
 		untyped clip.scrollFn = scrollFn;
 	}
@@ -1308,12 +1307,6 @@ class DisplayObjectHelper {
 			if (clip.visible) {
 				var nativeWidget = untyped clip.nativeWidget;
 
-				if (Platform.isIE) {
-					nativeWidget.style.display = "block";
-				} else {
-					nativeWidget.style.display = null;
-				}
-
 				if (untyped getParentNode(clip) != clip.parentClip.nativeWidget && isNativeWidget(clip) && clip.parent != null && clip.child == null) {
 					addNativeWidget(clip);
 				}
@@ -1321,12 +1314,15 @@ class DisplayObjectHelper {
 				if (getParentNode(clip) != null && untyped !clip.keepNativeWidget) { // todo: questionable optimization
 					var nativeWidget = untyped clip.nativeWidget;
 
-					nativeWidget.style.display = "none";
-					RenderSupportJSPixi.once("stagechanged", function() {
-						if (!clip.visible) {
-							removeNativeWidget(clip);
-						}
-					});
+					if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
+						RenderSupportJSPixi.once("drawframe", function() {
+							if (clip.parent == null || !clip.visible) {
+								removeNativeWidget(clip);
+							}
+						});
+					} else {
+						removeNativeWidget(clip);
+					}
 				}
 			}
 		}
@@ -1435,10 +1431,14 @@ class DisplayObjectHelper {
 				}
 			}
 
-			nativeWidget.insertBefore(childWidget, findNextNativeWidget(child, nativeWidget));
+			var nextWidget = findNextNativeWidget(child, nativeWidget);
 
-			applyScrollFn(clip);
-			applyScrollFnChildren(child);
+			nativeWidget.insertBefore(childWidget, nextWidget);
+
+			if (nextWidget == null) {
+				applyScrollFn(clip);
+				applyScrollFnChildren(child);
+			}
 
 			untyped child.parentClip = clip;
 		} else {
@@ -1449,7 +1449,7 @@ class DisplayObjectHelper {
 	public static function applyScrollFn(clip : DisplayObject) : Void {
 		if (untyped clip.scrollFn != null) {
 			untyped clip.scrollFn();
-		} else if (clip.parent != null) {
+		} else if (clip.parent != null && clip.mask == null) {
 			applyScrollFn(clip.parent);
 		}
 	}
@@ -1710,10 +1710,10 @@ class DisplayObjectHelper {
 			];
 
 
-			container.minX = Math.round(Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3])));
-			container.minY = Math.round(Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3])));
-			container.maxX = Math.round(Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3])));
-			container.maxY = Math.round(Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3])));
+			container.minX = round(Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3])));
+			container.minY = round(Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3])));
+			container.maxX = round(Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3])));
+			container.maxY = round(Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3])));
 		} else {
 			var x = [
 				bounds.minX + transform.tx,
@@ -1725,10 +1725,10 @@ class DisplayObjectHelper {
 				bounds.maxY + transform.ty
 			];
 
-			container.minX = Math.round(Math.min(x[0], x[1]));
-			container.minY = Math.round(Math.min(y[0], y[1]));
-			container.maxX = Math.round(Math.max(x[0], x[1]));
-			container.maxY = Math.round(Math.max(y[0], y[1]));
+			container.minX = round(Math.min(x[0], x[1]));
+			container.minY = round(Math.min(y[0], y[1]));
+			container.maxX = round(Math.max(x[0], x[1]));
+			container.maxY = round(Math.max(y[0], y[1]));
 		}
 
 		return container;
