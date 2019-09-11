@@ -906,7 +906,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateNativeWidgetShadow(clip : DisplayObject) {
-		if (untyped clip.parentClip.filters != null && Platform.isIE) {
+		if (untyped clip.parentClip.filters != null && (Platform.isIE || Platform.isSafari || Platform.isIOS)) {
 			var filters : Array<Dynamic> = untyped clip.parentClip.filters;
 
 			if (filters != null) {
@@ -935,7 +935,7 @@ class DisplayObjectHelper {
 					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
 					if (untyped clip.children != null && clip.children.filter(function(c) { return c.filters != null && c.filters.length > 0; }).length > 0) {
-						if (Platform.isIE) {
+						if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
 							nativeWidget.style.boxShadow = '
 								${round(untyped Math.cos(filter.angle) * filter.distance)}px
 								${round(untyped Math.sin(filter.angle) * filter.distance)}px
@@ -951,7 +951,7 @@ class DisplayObjectHelper {
 							';
 						}
 					} else {
-						if (Platform.isIE) {
+						if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
 							for (childWidget in nativeWidget.children) {
 								childWidget.style.boxShadow = '
 									${round(untyped Math.cos(filter.angle) * filter.distance)}px
