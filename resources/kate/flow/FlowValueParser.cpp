@@ -99,6 +99,7 @@ public:
 			case 3: return FlowValue(sv[0].get<FlowNative*>());
 			case 4: return FlowValue(sv[0].get<FlowStruct*>());
 			case 5: return FlowValue(sv[0].get<FlowScalar*>());
+			default: throw std::out_of_range("impossible case");
 			}
 		};
 		parser["REF"] = [](const peg::SemanticValues& sv) {
@@ -118,12 +119,14 @@ public:
 			switch (sv.choice()) {
 			case 0: return std::pair<bool, QVector<FlowValue>>(true, QVector<FlowValue>());
 			case 1: return std::pair<bool, QVector<FlowValue>>(false, sv[0].get<QVector<FlowValue>>());
+			default: throw std::out_of_range("impossible case");
 			}
 		};
 		parser["ARRAY"] = [](const peg::SemanticValues& sv) {
 			switch (sv.choice()) {
 			case 0: return new FlowArray{QVector<FlowValue>(), true};
 			case 1: return new FlowArray{sv[0].get<QVector<FlowValue>>(), false, QString::fromStdString(sv.token())};
+			default: throw std::out_of_range("impossible case");
 			}
 		};
 		parser["VAL_LIST"] = [](const peg::SemanticValues& sv) {

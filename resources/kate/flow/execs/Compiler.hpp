@@ -1,12 +1,13 @@
 #pragma once
 
 #include <QDir>
+#include "ui_FlowConfig.h"
 #include "Runner.hpp"
 
 namespace flow {
 
 struct Compiler {
-	Compiler(QString file, QString flowdir);
+	Compiler(const Ui::FlowConfig& ui, QString file, QString flowdir);
 	enum Type { FLOW, FLOWC1, FLOWC2, DEFAULT = FLOW };
 	Type type() const { return type_; }
 	QStringList includeArgs() const;
@@ -21,7 +22,9 @@ struct Compiler {
 	QString include() const { return include_; }
 	QString compiler() const;
 	const ConfigFile& config() const { return config_; }
+	const Ui::FlowConfig configUi() const { return configUi_; }
 private:
+	const Ui::FlowConfig& configUi_;
 	Type    type_;
 	QString file_;
 	QString include_;
