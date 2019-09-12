@@ -1062,7 +1062,7 @@ class DisplayObjectHelper {
 				nativeWidget.scrollTop = y;
 			}
 		}
-		// nativeWidget.onscroll = scrollFn;
+		nativeWidget.onscroll = scrollFn;
 		scrollFn();
 		untyped clip.scrollFn = scrollFn;
 	}
