@@ -26,10 +26,10 @@ Compiler::Compiler(QString file, QString flowdir) : type_(DEFAULT), file_(file),
 	include_ += flowdir_ + QLatin1String("/lib");
 	if (compiler == QLatin1String("flowc")) {
 		type_ = FLOWC1;
-	} else if (compiler == QLatin1String("flowc1")) {
-		type_ = FLOWC1;
 	} else if (compiler == QLatin1String("flow")) {
 		type_ = FLOW;
+	} else if (compiler == QLatin1String("flowc1")) {
+		type_ = FLOWC1;
 	} else if (compiler == QLatin1String("flowc2")) {
 		type_ = FLOWC2;
 	}
@@ -117,6 +117,13 @@ QStringList Compiler::targetArgs(Runner r) const {
 		case Compiler::FLOWC1: return QStringList() << QLatin1String("cpp=") + r.target();
 		case Compiler::FLOWC2: return QStringList() << QLatin1String("cpp=") + r.target();
 		case Compiler::FLOW:   return QStringList() << QLatin1String("--cpp") << r.target();
+		default:               return QStringList();
+		}
+	case Runner::CPP2:
+		switch (type_) {
+		case Compiler::FLOWC1: return QStringList() << QLatin1String("cpp2=") + r.target();
+		case Compiler::FLOWC2: return QStringList() << QLatin1String("cpp2=") + r.target();
+		case Compiler::FLOW:   return QStringList() << QLatin1String("--cpp2") << r.target();
 		default:               return QStringList();
 		}
 	default: return QStringList();

@@ -7,7 +7,7 @@ namespace flow {
 
 struct Runner {
 	Runner(QString prog, QString targ, QString flowdir);
-	enum Type { BYTECODE, OCAML, JAVA, CPP, NODEJS, DEFAULT = BYTECODE };
+	enum Type { BYTECODE, OCAML, JAVA, CPP, CPP2, NODEJS, DEFAULT = BYTECODE };
 	Type type() const { return type_; }
 	QString invocation() const;
 	QString target() const;

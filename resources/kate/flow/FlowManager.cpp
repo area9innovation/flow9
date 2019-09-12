@@ -64,7 +64,7 @@ void FlowManager::slotCompile() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
@@ -412,11 +412,15 @@ void FlowManager::slotCompleteRename() {
 }
 
 void FlowManager::slotCompileError(QProcess::ProcessError err) {
-    KMessageBox::sorry(nullptr, i18n("Error at compilation: ") + compileProcess_.errorString());
+	KMessageBox::sorry(nullptr, i18n("Error at compilation: ") + compileProcess_.errorString());
+	compileProcess_.kill();
+	state_.stop();
 }
 
 void FlowManager::slotLaunchError(QProcess::ProcessError err) {
-    KMessageBox::sorry(nullptr, i18n("Error at running: ") + launchProcess_.errorString());
+	KMessageBox::sorry(nullptr, i18n("Error at running: ") + launchProcess_.errorString());
+	launchProcess_.kill();
+	state_.stop();
 }
 
 void FlowManager::slotReadCompileStdOut() {
@@ -550,11 +554,14 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 			break;
 		};
 	} else {
-        QString message = i18n("*** flowc crashed *** ") + compileProcess_.errorString();
-        message += QLatin1String(", exit code: ") + QString::number(exitCode);
-    	appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, message);
-    	flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(0);
-		KMessageBox::sorry(mainWindow_->activeView(), message);
+		if (internal_state.state != COMPILING  && internal_state.state != LOOKUP_DEF &&
+			internal_state.state != LOOKUP_TYPE && internal_state.state != LOOKUP_USES) {
+			QString message = i18n("*** flowc crashed *** ") + compileProcess_.errorString();
+			message += QLatin1String(", exit code: ") + QString::number(exitCode);
+			appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, message);
+			flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(0);
+			KMessageBox::sorry(mainWindow_->activeView(), message);
+		}
 	}
 }
 
@@ -565,9 +572,9 @@ void FlowManager::slotLaunchFinished(int exitCode, QProcess::ExitStatus status) 
 	outputExecutionTime(flowView_.flowOutput_.ui.launchOutTextEdit, internal_state.milliseconds());
 	if (exitCode || status != QProcess::NormalExit) {
 		QString message = i18n("*** application crashed *** ") + launchProcess_.errorString();
-        message += QLatin1String(", exit code: ") + QString::number(exitCode);
-    	appendText(flowView_.flowOutput_.ui.launchOutTextEdit, message);
-    	flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(1);
+		message += QLatin1String(", exit code: ") + QString::number(exitCode);
+		appendText(flowView_.flowOutput_.ui.launchOutTextEdit, message);
+		flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(1);
 		KMessageBox::sorry(mainWindow_->activeView(), message);
 	}
 }

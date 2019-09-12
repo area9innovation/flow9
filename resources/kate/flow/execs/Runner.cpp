@@ -24,6 +24,8 @@ Runner::Runner(QString prog, QString targ, QString flowdir) :
 		type_ = JAVA;
 	} else if (targ == QLatin1String("cpp")) {
 		type_ = CPP;
+	} else if (targ == QLatin1String("cpp2")) {
+		type_ = CPP2;
 	}
 }
 
@@ -33,6 +35,7 @@ QString Runner::invocation() const {
 	case JAVA:     return QLatin1String("java");
 	case NODEJS:   return QLatin1String("node");
 	case CPP:      return target();
+	case CPP2:     return target();
 	default:       return QString(); // TODO: add other runners
 	}
 }
@@ -44,6 +47,7 @@ QString Runner::extension() const {
 	case OCAML:    return QLatin1String(".ml");
 	case JAVA:     return QLatin1String(".jar");
 	case CPP:      return QLatin1String(".exe");
+	case CPP2:     return QLatin1String(".exe");
 	default:       return QLatin1String();
 	}
 }
@@ -86,6 +90,12 @@ QStringList Runner::args(QString execArgs, QString progArgs) const {
 		return args;
 	}
 	case Runner::CPP: {
+		QStringList args;
+		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
+		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
+		return args;
+	}
+	case Runner::CPP2: {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));

@@ -49,7 +49,8 @@ qt5_add_resources(kateflowplugin_SRCS plugin.qrc)
 add_library(kateflowplugin MODULE ${kateflowplugin_SRCS})
 kcoreaddons_desktop_to_json (kateflowplugin kateflowplugin.desktop)
 
-target_link_libraries(kateflowplugin KF5::TextEditor KF5::I18n KF5::IconThemes)
+target_link_libraries(kateflowplugin KF5::TextEditor KF5::I18n)
+#KF5::IconThemes
 
 install(TARGETS kateflowplugin DESTINATION ${PLUGIN_INSTALL_DIR}/ktexteditor)
 install(TARGETS kateflowplugin DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/ktexteditor)
