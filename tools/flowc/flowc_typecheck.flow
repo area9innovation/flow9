@@ -33,10 +33,11 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 	);
 
 	// Parse all files, or load incremental files
-	t = timestamp();
+	t0 = timestamp();
 	modules = preloadModules(config, globEnv, file, tenv1.printError);
-	incrementTimePhase(fcTimePhases.parse, t);
+	incrementTimePhase(fcTimePhases.parse, t0);
 
+	t1 = timestamp();
 	// OK, let us reclaim what we can before we continue
 	gc();
 
@@ -44,13 +45,21 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 
 	// Here, we build the import graph, and check for cycles and forbids, before type checking
 	checkForbids(modules, fi.flowfile, tenv1.printError, config);
+	incrementTimePhase(fcTimePhases.forbid, t1);
 
 	if (^errors == 0) {
+		t2 = timestamp();
 		checkAllDependenciesAreResolved(modules, makeSet());
+		incrementTimePhase(fcTimePhases.other, t1);
+		incrementTimePhase(fcTimePhases.other5, t2);
+
 		// Typecheck all files
 		tenv2 = processPreloadedModulesInParallel(tenv1, globEnv, modules);
 
+		t3 = timestamp();
 		prog = fctypeenv2fi(tenv2);
+		incrementTimePhase(fcTimePhases.other, t3);
+		incrementTimePhase(fcTimePhases.other4, t3);
 
 		Pair(prog, ^errors)
 	} else {
@@ -59,6 +68,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 }
 
 processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>) -> FcTypeEnvProgram {
+	t0 = timestamp();
 	// Find the loaded modules where all dependent files are ready
 	readyForProcessing : [FcPreloadedModule] = filtermap(
 		tree2pairs(preloadedModules),
@@ -70,6 +80,8 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 				None()
 			}
 	);
+	incrementTimePhase(fcTimePhases.other, t0);
+	incrementTimePhase(fcTimePhases.other2, t0);
 
 	if (readyForProcessing == []) {
 		// We are done, everything is processed
@@ -197,21 +209,24 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 		// save cached modules
 		saveIncrementalModulesIfNeeded(map(typechecked_all, \typechecked -> typechecked.module), tenv4);
 
+		t3 = timestamp();
 		processedNames = buildSet(map(readyForProcessing, \preloaded -> preloadedFiFileInfo(preloaded).flowfile));
-		// Process what is left
-		processPreloadedModulesInParallel(tenv4, globEnv, 
-			foldTree(
-				preloadedModules,
-				makeTree(),
-				\name, preloaded, acc -> {
-					if (containsSet(processedNames, name)) {
-						acc
-					} else {
-						setTree(acc, name, preloaded)
-					}
+		whatIsLeft = foldTree(
+			preloadedModules,
+			makeTree(),
+			\name, preloaded, acc -> {
+				if (containsSet(processedNames, name)) {
+					acc
+				} else {
+					setTree(acc, name, preloaded)
 				}
-			)
-		)
+			}
+		);
+		incrementTimePhase(fcTimePhases.other, t3);
+		incrementTimePhase(fcTimePhases.other3, t3);
+
+		// Process what is left
+		processPreloadedModulesInParallel(tenv4, globEnv, whatIsLeft)
 	}
 }
 
