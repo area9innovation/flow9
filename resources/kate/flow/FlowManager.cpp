@@ -47,7 +47,7 @@ void FlowManager::slotCompile() {
 		if (state_.start(COMPILING, file)) {
 			mainWindow_->activeView()->document()->documentSave();
 			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-			Compiler compiler(file, flowdir);
+			Compiler compiler(flowView_.flowConfig_.ui, file, flowdir);
 			QStringList args;
 			args << compiler.includeArgs();
 			args << compiler.compileArgs(file);
@@ -76,7 +76,7 @@ void FlowManager::slotRun(int row) {
 		QString progArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
 		QString execArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 6)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Runner runner(prog, targ, flowdir);
+		Runner runner(flowView_.flowConfig_.ui, prog, targ, flowdir);
 		if (flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(runner.target()).isFile()) {
 			build(row, RUNNING);
 		} else if (state_.start(RUNNING, row)) {
@@ -112,7 +112,7 @@ void FlowManager::slotDebug(int row) {
 			QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
 			QString dir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
 			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-			Compiler compiler(prog, flowdir);
+			Compiler compiler(flowView_.flowConfig_.ui, prog, flowdir);
 			if (compiler.type() == Compiler::FLOWC1) {
 				if (state_.start(DUMPING_IDS, QString::number(row) + QLatin1String(":") + prog)) {
 					mainWindow_->activeView()->document()->documentSave();
@@ -148,7 +148,7 @@ void FlowManager::build(int row, State nextState, bool force) {
 		QString opts = flowView_.flowConfig_.ui.launchTableWidget->item(row, 4)->text();
 		//QString astr = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Builder builder(prog, targ, flowdir);
+		Builder builder(flowView_.flowConfig_.ui, prog, targ, flowdir);
 		if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(builder.runner().target()).isFile()) {
 			if (state_.start(BUILDING, QString::number(row) + QLatin1String(":") + QString::number(static_cast<int>(nextState)))) {
 				QStringList args = builder.args(opts);
@@ -192,7 +192,7 @@ void FlowManager::slotLookupDefinition() {
 		if (!id.isEmpty() && state_.start(LOOKUP_DEF, file + QLatin1String(":") + id)) {
 			mainWindow_->activeView()->document()->documentSave();
 			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-			Compiler compiler(file, flowdir);
+			Compiler compiler(flowView_.flowConfig_.ui, file, flowdir);
 			QStringList args;
 			args << compiler.includeArgs();
 			if (compiler.type() == Compiler::FLOWC1) {
@@ -236,7 +236,7 @@ void FlowManager::slotLookupType() {
 		if (state_.start(LOOKUP_TYPE, file + QLatin1String(":") + line + QLatin1String(":") + col)) {
 			mainWindow_->activeView()->document()->documentSave();
 			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-			Compiler compiler(file, flowdir);
+			Compiler compiler(flowView_.flowConfig_.ui, file, flowdir);
 			if (compiler.type() != Compiler::FLOWC1) {
 				KMessageBox::sorry(0, i18n("Only flowc compiler allows type lookup"));
 				state_.stop();
@@ -278,7 +278,7 @@ void FlowManager::slotLookupUses() {
 		if (state_.start(LOOKUP_USES, file + QLatin1String(":") + line + QLatin1String(":") + col)) {
 			mainWindow_->activeView()->document()->documentSave();
 			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-			Compiler compiler(file, flowdir);
+			Compiler compiler(flowView_.flowConfig_.ui, file, flowdir);
 			if (compiler.type() != Compiler::FLOWC1) {
 				KMessageBox::sorry(0, i18n("Only flowc compiler allows uses lookup"));
 				state_.stop();
@@ -312,7 +312,7 @@ void FlowManager::slotOutline(KTextEditor::View* view) {
 		QString file = view->document()->url().toLocalFile();
 		if (state_.start(OUTLINE, file)) {
 			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-			Compiler compiler(file, flowdir);
+			Compiler compiler(flowView_.flowConfig_.ui, file, flowdir);
 			QStringList args;
 			args << compiler.includeArgs();
 			if (compiler.type() == Compiler::FLOWC1) {
@@ -342,7 +342,7 @@ void FlowManager::slotOutline(KTextEditor::View* view) {
 
 void FlowManager::slotRename() {
 	QString file = curFile(mainWindow_);
-	Compiler compiler(file, flowView_.flowConfig_.ui.flowdirLineEdit->text());
+	Compiler compiler(flowView_.flowConfig_.ui, file, flowView_.flowConfig_.ui.flowdirLineEdit->text());
 	if (compiler.type() == Compiler::FLOW) {
 		KMessageBox::sorry(0, i18n("Only flowc compiler allows renaming"));
 		return;
@@ -386,7 +386,7 @@ void FlowManager::slotCompleteRename() {
 		if (!id.isEmpty() && !renamed.isEmpty() && id != renamed && state_.start(RENAMING, stateString)) {
 			mainWindow_->activeView()->document()->documentSave();
 			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-			Compiler compiler(file, flowdir);
+			Compiler compiler(flowView_.flowConfig_.ui, file, flowdir);
 			QStringList args;
 			args << compiler.includeArgs();
 			args << QLatin1String("rename=") + id;

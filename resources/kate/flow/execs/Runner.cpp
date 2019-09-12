@@ -1,11 +1,10 @@
 #include <QDir>
-
 #include "Runner.hpp"
 
 namespace flow {
 
-Runner::Runner(QString prog, QString targ, QString flowdir) :
-	type_(DEFAULT), target_(targ), info_(prog), flowdir_(flowdir) {
+Runner::Runner(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir) :
+	configUi_(ui), type_(DEFAULT), target_(targ), info_(prog), flowdir_(flowdir) {
 
 	if (!info_.exists()) {
 		throw std::runtime_error("program '" + prog.toStdString() + "' doesn't exist");
