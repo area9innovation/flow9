@@ -848,6 +848,10 @@ class TextClip extends NativeWidgetClip {
 		if (nativeWidget == null) {
 			return;
 		}
+		
+		if (Platform.isIOS) {
+			RenderSupportJSPixi.ensureCurrentInputVisible();
+		}
 
 		invalidateMetrics();
 	}

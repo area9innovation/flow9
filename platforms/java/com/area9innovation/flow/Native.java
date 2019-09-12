@@ -917,6 +917,13 @@ public class Native extends NativeHost {
 		return runtime.makeStructValue(name, args, (Struct)defval);
 	}
 
+	public final Object[] extractStructArguments(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getFields();
+		} else return new Object[0];
+	}
+
+
 	public final Object quit(int c) {
 		System.exit(c);
 		return null;
@@ -1191,7 +1198,7 @@ public class Native extends NativeHost {
 			md5Hex = "0" + md5Hex;
 		}
 
-	return md5Hex;
+		return md5Hex;
 	}
 
 	public String fileChecksum(String filename) {
@@ -1220,6 +1227,10 @@ public class Native extends NativeHost {
 			}
 
 			return md5Hex;
+		} catch (IOException e) {
+			return "";
+		} catch (InvalidPathException e) {
+			return "";
 		} catch (Exception e) {
 			e.printStackTrace();
 			return "";
