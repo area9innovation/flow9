@@ -270,12 +270,6 @@ class DisplayObjectHelper {
 			untyped clip.worldTransformChanged = false;
 			untyped clip.transformChanged = false;
 			untyped clip.localTransformChanged = false;
-
-			RenderSupportJSPixi.once("drawframe", function() {
-				if (clip.parent == null || !clip.visible) {
-					removeNativeWidget(clip);
-				}
-			});
 		}
 	}
 
@@ -959,7 +953,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function removeNativeWidgetMask(clip : DisplayObject) : Void {
+	public static function removeNativeMask(clip : DisplayObject) : Void {
 		removePlaceholderWidget(clip);
 
 		var nativeWidget = untyped clip.nativeWidget;
@@ -1172,13 +1166,13 @@ class DisplayObjectHelper {
 
 					scrollNativeWidget(clip, round(data.shape.x), round(data.shape.y));
 				}  else {
-					removeNativeWidgetMask(clip);
+					removeNativeMask(clip);
 
 					trace("updateNativeWidgetMask: Unknown shape type");
 					trace(data);
 				}
 			} else {
-				removeNativeWidgetMask(clip);
+				removeNativeMask(clip);
 			}
 		}
 	}
@@ -1250,21 +1244,17 @@ class DisplayObjectHelper {
 			untyped clip.updateNativeWidgetDisplay();
 		} else {
 			if (clip.visible) {
-				var nativeWidget = untyped clip.nativeWidget;
+				if (untyped !clip.onStage && clip.child == null) {
+					untyped clip.onStage = true;
 
-				if (untyped getParentNode(clip) != clip.parentClip.nativeWidget && isNativeWidget(clip) && clip.parent != null && clip.child == null) {
 					addNativeWidget(clip);
 				}
-			} else if (!RenderSupportJSPixi.RenderContainers || clip.parent == null || (clip.parent.visible && clip.parent.renderable)) {
-				if (getParentNode(clip) != null && untyped !clip.keepNativeWidget) { // todo: questionable optimization
-					var nativeWidget = untyped clip.nativeWidget;
-
-					RenderSupportJSPixi.once("drawframe", function() {
-						if (clip.parent == null || !clip.visible) {
-							removeNativeWidget(clip);
-						}
-					});
-				}
+			} else if (clip.parent != null && (clip.parent.visible && clip.parent.renderable)) {
+				RenderSupportJSPixi.once("drawframe", function() {
+					if (clip.parent == null || !clip.visible) {
+						removeNativeWidget(clip);
+					}
+				});
 			}
 		}
 	}
@@ -1289,7 +1279,8 @@ class DisplayObjectHelper {
 		if (untyped clip.removeNativeWidget != null) {
 			untyped clip.removeNativeWidget();
 		} else {
-			if (isNativeWidget(clip)) {
+			if (untyped isNativeWidget(clip) && clip.onStage) {
+				untyped clip.onStage = false;
 				var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 				if (nativeWidget.parentNode != null) {
