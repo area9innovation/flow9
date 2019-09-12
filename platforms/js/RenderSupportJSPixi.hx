@@ -1647,17 +1647,31 @@ class RenderSupportJSPixi {
 			on(event, fn);
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
-			cast(clip, DisplayObject).on("pointerover", fn);
+			var checkFn = function() {
+				if (untyped !clip.pointerOver) {
+					untyped clip.pointerOver = true;
+					fn();
+				}
+			}
+
+			cast(clip, DisplayObject).on("pointerover", checkFn);
 			cast(clip, DisplayObject).invalidateInteractive();
 			return function() {
-				cast(clip, DisplayObject).off("pointerover", fn);
+				cast(clip, DisplayObject).off("pointerover", checkFn);
 				cast(clip, DisplayObject).invalidateInteractive();
 			};
 		} else if (event == "rollout") {
-			cast(clip, DisplayObject).on("pointerout", fn);
+			var checkFn = function() {
+				if (untyped clip.pointerOver) {
+					untyped clip.pointerOver = false;
+					fn();
+				}
+			}
+
+			cast(clip, DisplayObject).on("pointerout", checkFn);
 			cast(clip, DisplayObject).invalidateInteractive();
 			return function() {
-				cast(clip, DisplayObject).off("pointerout", fn);
+				cast(clip, DisplayObject).off("pointerout", checkFn);
 				cast(clip, DisplayObject).invalidateInteractive();
 			};
 		} else if (event == "scroll") {

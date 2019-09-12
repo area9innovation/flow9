@@ -258,8 +258,6 @@ class WebClip extends NativeWidgetClip {
 			widgetBounds.minX = 0;
 			widgetBounds.maxX = widgetWidth;
 
-			trace(widgetBounds);
-
 			invalidateStyle();
 		}
 	}
@@ -268,8 +266,6 @@ class WebClip extends NativeWidgetClip {
 		if (widgetBounds.getBoundsHeight() != widgetHeight) {
 			widgetBounds.minY = 0;
 			widgetBounds.maxY = widgetHeight;
-
-			trace(widgetBounds);
 
 			invalidateStyle();
 		}

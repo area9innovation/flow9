@@ -143,7 +143,7 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
-			if (untyped newChild.localBounds != null && untyped newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
+			if (untyped newChild.localBounds != null && newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
 				addLocalBounds(newChild.applyLocalBoundsTransform());
 			}
 			emitEvent("childrenchanged");
@@ -156,9 +156,11 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			if (untyped oldChild.localBounds != null && untyped oldChild.localBounds.minX != Math.POSITIVE_INFINITY) {
+			if (untyped oldChild.localBounds != null && oldChild.localBounds.minX != Math.POSITIVE_INFINITY) {
 				removeLocalBounds(oldChild.applyLocalBoundsTransform());
 			}
+
+			// oldChild.removeChildrenNativeWidgets();
 
 			invalidateInteractive();
 			invalidateStage();

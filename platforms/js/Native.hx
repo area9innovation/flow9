@@ -604,13 +604,13 @@ class Native {
 				clip.parent.removeChild(clip);
 			}
 
-			if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
-				RenderSupportJSPixi.once("drawframe", function() {
-					DisplayObjectHelper.deleteNativeWidget(clip);
-				});
-			} else {
-				DisplayObjectHelper.deleteNativeWidget(clip);
+			if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS && untyped clip.nativeWidget != null) {
+				untyped clip.nativeWidget.style.display = 'none';
 			}
+
+			RenderSupportJSPixi.once("drawframe", function() {
+				DisplayObjectHelper.deleteNativeWidget(clip);
+			});
 		}
 	}
 
