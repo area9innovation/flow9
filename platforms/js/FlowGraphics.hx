@@ -399,8 +399,8 @@ class FlowGraphics extends Graphics {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${getWidth().round()}px';
-					svg.style.height = '${getHeight().round()}px';
+					svg.style.width = '${getWidth()}px';
+					svg.style.height = '${getHeight()}px';
 					svg.style.left = '${localBounds.minX}px';
 					svg.style.top = '${localBounds.minY}px';
 					svg.style.position = 'absolute';
@@ -572,8 +572,8 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${getWidth().round()}px';
-						svg.style.height = '${getHeight().round()}px';
+						svg.style.width = '${getWidth()}px';
+						svg.style.height = '${getHeight()}px';
 						svg.style.left = '${localBounds.minX}px';
 						svg.style.top = '${localBounds.minY}px';
 						svg.style.position = 'absolute';

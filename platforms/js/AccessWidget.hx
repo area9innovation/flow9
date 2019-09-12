@@ -447,7 +447,7 @@ class AccessWidget extends EventEmitter {
 
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
-					clip.emit("blur");
+					RenderSupportJSPixi.once("drawframe", function() { clip.emit("blur"); });
 				});
 
 				if (tagName == "button") {
@@ -609,18 +609,6 @@ class AccessWidget extends EventEmitter {
 				element.onpointerdown = onpointerdown;
 				element.onpointerup = onpointerup;
 			}
-
-			element.addEventListener('focus', function(e : Dynamic) {
-				if (element != null) {
-					element.classList.add('focused');
-				}
-			});
-
-			element.addEventListener('blur', function() {
-				if (element != null) {
-					element.classList.remove('focused');
-				}
-			});
 
 			if (element.tabIndex == null) {
 				element.tabIndex = 0;

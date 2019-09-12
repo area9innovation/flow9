@@ -309,9 +309,7 @@ class TextClip extends NativeWidgetClip {
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 
-		if (metrics == null) {
-			updateTextMetrics();
-		}
+		updateTextMetrics();
 
 		if (isInput) {
 			nativeWidget.setAttribute("type", type);
@@ -923,33 +921,37 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onFocus(e : Event) : Void {
-		isFocused = true;
-		emit('focus');
+		RenderSupportJSPixi.once("drawframe", function() {
+			isFocused = true;
+			emit('focus');
 
-		if (parent != null) {
-			parent.emitEvent('childfocused', this);
-		}
+			if (parent != null) {
+				parent.emitEvent('childfocused', this);
+			}
 
-		if (nativeWidget == null || parent == null) {
-			return;
-		}
-		
-		if (Platform.isIOS) {
-			RenderSupportJSPixi.ensureCurrentInputVisible();
-		}
+			if (nativeWidget == null || parent == null) {
+				return;
+			}
 
-		invalidateMetrics();
+			if (Platform.isIOS) {
+				RenderSupportJSPixi.ensureCurrentInputVisible();
+			}
+
+			invalidateMetrics();
+		});
 	}
 
 	private function onBlur(e : Event) : Void {
-		isFocused = false;
-		emit('blur');
+		RenderSupportJSPixi.once("drawframe", function() {
+			isFocused = false;
+			emit('blur');
 
-		if (nativeWidget == null || parent == null) {
-			return;
-		}
+			if (nativeWidget == null || parent == null) {
+				return;
+			}
 
-		invalidateMetrics();
+			invalidateMetrics();
+		});
 	}
 
 	private function onInput(e : Dynamic) {
@@ -1147,7 +1149,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextMetrics() : Void {
-		if (text != "" && style.fontSize > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
+		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			metrics = TextMetrics.measureText(text, style);
 		}
 	}

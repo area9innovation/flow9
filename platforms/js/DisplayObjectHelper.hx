@@ -11,6 +11,7 @@ import pixi.core.math.Point;
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
 	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
+	public static var BoxShadow : Bool = Util.getParameter("boxshadow") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -276,15 +277,11 @@ class DisplayObjectHelper {
 			untyped clip.transformChanged = false;
 			untyped clip.localTransformChanged = false;
 
-			if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
-				RenderSupportJSPixi.once("drawframe", function() {
-					if (clip.parent == null || !clip.visible) {
-						removeNativeWidget(clip);
-					}
-				});
-			} else {
-				removeNativeWidget(clip);
-			}
+			RenderSupportJSPixi.once("drawframe", function() {
+				if (clip.parent == null || !clip.visible) {
+					removeNativeWidget(clip);
+				}
+			});
 		}
 	}
 
@@ -863,6 +860,8 @@ class DisplayObjectHelper {
 			// 	nativeWidget.style.marginLeft = '${-round(localBounds.minX)}px';
 			// 	nativeWidget.style.marginTop = '${-round(localBounds.minY)}px';
 			// }
+
+			applyScrollFn(clip);
 		}
 
 		nativeWidget.style.left = '${tx}px';
@@ -902,7 +901,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateNativeWidgetShadow(clip : DisplayObject) {
-		if (untyped clip.parentClip.filters != null && (Platform.isIE || Platform.isSafari || Platform.isIOS)) {
+		if (untyped clip.parentClip.filters != null && BoxShadow) {
 			var filters : Array<Dynamic> = untyped clip.parentClip.filters;
 
 			if (filters != null) {
@@ -931,7 +930,7 @@ class DisplayObjectHelper {
 					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
 					if (untyped clip.children != null && clip.children.filter(function(c) { return c.filters != null && c.filters.length > 0; }).length > 0) {
-						if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
+						if (BoxShadow) {
 							nativeWidget.style.boxShadow = '
 								${round(untyped Math.cos(filter.angle) * filter.distance)}px
 								${round(untyped Math.sin(filter.angle) * filter.distance)}px
@@ -947,7 +946,7 @@ class DisplayObjectHelper {
 							';
 						}
 					} else {
-						if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
+						if (BoxShadow) {
 							for (childWidget in nativeWidget.children) {
 								childWidget.style.boxShadow = '
 									${round(untyped Math.cos(filter.angle) * filter.distance)}px
@@ -1314,15 +1313,11 @@ class DisplayObjectHelper {
 				if (getParentNode(clip) != null && untyped !clip.keepNativeWidget) { // todo: questionable optimization
 					var nativeWidget = untyped clip.nativeWidget;
 
-					if (Platform.isIE || Platform.isSafari || Platform.isIOS) {
-						RenderSupportJSPixi.once("drawframe", function() {
-							if (clip.parent == null || !clip.visible) {
-								removeNativeWidget(clip);
-							}
-						});
-					} else {
-						removeNativeWidget(clip);
-					}
+					RenderSupportJSPixi.once("drawframe", function() {
+						if (clip.parent == null || !clip.visible) {
+							removeNativeWidget(clip);
+						}
+					});
 				}
 			}
 		}
@@ -1437,8 +1432,9 @@ class DisplayObjectHelper {
 
 			if (nextWidget == null) {
 				applyScrollFn(clip);
-				applyScrollFnChildren(child);
 			}
+
+			applyScrollFnChildren(child);
 
 			untyped child.parentClip = clip;
 		} else {
