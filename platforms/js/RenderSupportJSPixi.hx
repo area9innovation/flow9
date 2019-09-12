@@ -1764,7 +1764,12 @@ class RenderSupportJSPixi {
 	}
 
 	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
-		if (untyped clip.scrollRect != null && !hittestGraphics(untyped clip.scrollRect, point)) {
+		if (untyped clip.viewBounds != null) {
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var viewBounds = untyped clip.viewBounds;
+
+			return viewBounds.minX <= local.x && viewBounds.minY <= local.y && viewBounds.maxX >= local.x && viewBounds.maxY >= local.y;
+		} else if (untyped clip.scrollRect != null && !hittestGraphics(untyped clip.scrollRect, point)) {
 			return false;
 		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
 			return false;

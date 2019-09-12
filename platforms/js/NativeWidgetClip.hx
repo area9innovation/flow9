@@ -75,14 +75,16 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.height = '${untyped getWidgetHeight()}px';
 
 		if (!RenderSupportJSPixi.DomRenderer) {
-			var maskedBounds = getMaskedLocalBounds();
+			var viewBounds = getViewBounds();
 
-			nativeWidget.style.clip = 'rect(
-				${maskedBounds.minY}px,
-				${maskedBounds.maxX}px,
-				${maskedBounds.maxY}px,
-				${maskedBounds.minX}px
-			)';
+			if (viewBounds != null) {
+				nativeWidget.style.clip = 'rect(
+					${viewBounds.minY}px,
+					${viewBounds.maxX}px,
+					${viewBounds.maxY}px,
+					${viewBounds.minX}px
+				)';
+			}
 		}
 
 		styleChanged = false;
