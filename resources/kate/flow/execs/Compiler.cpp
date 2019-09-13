@@ -6,7 +6,7 @@
 
 namespace flow {
 
-Compiler::Compiler(QString file, QString flowdir) : type_(DEFAULT), file_(file), flowdir_(flowdir) {
+Compiler::Compiler(const Ui::FlowConfig& ui, QString file, QString flowdir) : configUi_(ui), type_(DEFAULT), file_(file), flowdir_(flowdir) {
 	if (!QFileInfo(file).exists()) {
 		throw std::runtime_error("file '" + file.toStdString() + "' doesn't exist");
 	}
@@ -26,10 +26,10 @@ Compiler::Compiler(QString file, QString flowdir) : type_(DEFAULT), file_(file),
 	include_ += flowdir_ + QLatin1String("/lib");
 	if (compiler == QLatin1String("flowc")) {
 		type_ = FLOWC1;
-	} else if (compiler == QLatin1String("flowc1")) {
-		type_ = FLOWC1;
 	} else if (compiler == QLatin1String("flow")) {
 		type_ = FLOW;
+	} else if (compiler == QLatin1String("flowc1")) {
+		type_ = FLOWC1;
 	} else if (compiler == QLatin1String("flowc2")) {
 		type_ = FLOWC2;
 	}
@@ -91,6 +91,7 @@ QStringList Compiler::targetArgs(Runner r) const {
 		case Compiler::FLOW:   return QStringList() << QLatin1String("--bytecode") << r.target();
 		default:               return QStringList();
 		}
+		break;
 	case Runner::NODEJS:
 		switch (type_) {
 		case Compiler::FLOWC1: return QStringList() << QLatin1String("es6=") + r.target() << QLatin1String("nodejs=1");
@@ -98,6 +99,7 @@ QStringList Compiler::targetArgs(Runner r) const {
 		case Compiler::FLOW:   return QStringList() << QLatin1String("--es6") << r.target();
 		default:               return QStringList();
 		}
+		break;
 	case Runner::OCAML:
 		switch (type_) {
 		case Compiler::FLOWC1: return QStringList() << QLatin1String("ml=") + r.target();
@@ -105,6 +107,7 @@ QStringList Compiler::targetArgs(Runner r) const {
 		case Compiler::FLOW:   return QStringList() << QLatin1String("--ml") << r.target();
 		default:               return QStringList();
 		}
+		break;
 	case Runner::JAVA:
 		switch (type_) {
 		case Compiler::FLOWC1: return QStringList() << QLatin1String("java=") + r.target();
@@ -112,6 +115,7 @@ QStringList Compiler::targetArgs(Runner r) const {
 		case Compiler::FLOW:   return QStringList() << QLatin1String("--java") << r.target();
 		default:               return QStringList();
 		}
+		break;
 	case Runner::CPP:
 		switch (type_) {
 		case Compiler::FLOWC1: return QStringList() << QLatin1String("cpp=") + r.target();
@@ -119,13 +123,28 @@ QStringList Compiler::targetArgs(Runner r) const {
 		case Compiler::FLOW:   return QStringList() << QLatin1String("--cpp") << r.target();
 		default:               return QStringList();
 		}
+		break;
+	case Runner::CPP2:
+		switch (type_) {
+		case Compiler::FLOWC1: return QStringList() << QLatin1String("cpp2=") + r.target();
+		case Compiler::FLOWC2: return QStringList() << QLatin1String("cpp2=") + r.target();
+		case Compiler::FLOW:   return QStringList() << QLatin1String("--cpp2") << r.target();
+		default:               return QStringList();
+		}
+		break;
 	default: return QStringList();
 	}
 }
 
 QStringList Compiler::compileArgs(QString prog) const {
 	switch (type_) {
-	case Compiler::FLOWC1: return QStringList() << prog;
+	case Compiler::FLOWC1: {
+		if (configUi_.compilationTimePhasesCheckBox->checkState() == Qt::Checked) {
+			return QStringList() << QLatin1String("timephases=1") << prog;
+		} else {
+			return QStringList() << prog;
+		}
+	}
 	case Compiler::FLOWC2: return QStringList() << QLatin1String("bin-dir=") + flowdir_ + QLatin1String("/bin") << prog;
 	case Compiler::FLOW:   return QStringList() << QLatin1String("--dontrun") << prog;
 	default:               return QStringList();

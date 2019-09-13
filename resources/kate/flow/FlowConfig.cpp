@@ -129,6 +129,9 @@ void FlowConfig::readConfig(const KConfigGroup& config) {
 	ui.serverAutostartCheckBox->setCheckState(
 		config.readEntry(QLatin1String("Server autostart"), QString()) == QLatin1String("true") ? Qt::Checked : Qt::Unchecked
 	);
+	ui.compilationTimePhasesCheckBox->setCheckState(
+		config.readEntry(QLatin1String("Compilation time phases"), QString()) == QLatin1String("true") ? Qt::Checked : Qt::Unchecked
+	);
 	for (int row = 0; row < config.readEntry(QLatin1String("Launch configs number"), 0); ++ row) {
 		QString name = config.readEntry(QStringLiteral("Launch config %1 name").arg(row), QString());
 		QString prog = config.readEntry(QStringLiteral("Launch config %1 program").arg(row), QString());
@@ -169,6 +172,9 @@ void FlowConfig::writeConfig(KConfigGroup& config) {
     config.writeEntry(QLatin1String("Server autostart"),
     	ui.serverAutostartCheckBox->checkState() == Qt::Checked ? "true" : "false"
     );
+    config.writeEntry(QLatin1String("Compilation time phases"),
+    	ui.compilationTimePhasesCheckBox->checkState() == Qt::Checked ? "true" : "false"
+    );
     config.writeEntry(QLatin1String("Launch configs number"), ui.launchTableWidget->rowCount());
     for (int row = 0; row < ui.launchTableWidget->rowCount(); ++row) {
     	config.writeEntry(QStringLiteral("Launch config %1 name").arg(row),      ui.launchTableWidget->item(row, 0)->text());
@@ -197,6 +203,7 @@ void FlowConfig::eraseConfig(KConfigGroup& config) {
 	config.deleteEntry(QLatin1String("Flow directory"));
 	config.deleteEntry(QLatin1String("Server directory"));
 	config.deleteEntry(QLatin1String("Server autostart"));
+	config.deleteEntry(QLatin1String("Compilation time phases"));
 }
 
 

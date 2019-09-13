@@ -9,7 +9,7 @@ DO THESE STEPS:
 - Copy flow/symbolviewer plugin sources (directory flow) to kate/addons/ 
 - Add information about flow plugin to kate/addons/CMakeLists.txt (following lines):
 	# flow language IDE
-	ecm_optional_add_subdirectory (flow)
+	ecm_optional_add_subdirectory(flow)
 - Build Kate
 - Run Kate and switch on the flow plugin.
 - Setup flow directory in the flow config/Compiler tab in UI
