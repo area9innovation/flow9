@@ -1,7 +1,6 @@
 import tools/common/compilerconfig;
 import tools/flowc/flowcacc;
 import tools/flowc/preload_modules;
-import tools/flowc/manipulation/import_graph;
 import tools/flowc/typechecker/typechecker;
 import tools/flowc/flowc_typeverify;
 
@@ -40,26 +39,16 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 	t1 = timestamp();
 	// OK, let us reclaim what we can before we continue
 	gc();
-
-	fi = getFcFileInfo(file, config);
-
-	// Here, we build the import graph, and check for cycles and forbids, before type checking
-	checkForbids(modules, fi.flowfile, tenv1.printError, config);
-	incrementTimePhase(fcTimePhases.forbid, t1);
+	incrementTimePhase(fcTimePhases.other, t1);
 
 	if (^errors == 0) {
-		t2 = timestamp();
-		checkAllDependenciesAreResolved(modules, makeSet());
-		incrementTimePhase(fcTimePhases.other, t1);
-		incrementTimePhase(fcTimePhases.other5, t2);
 
 		// Typecheck all files
 		tenv2 = processPreloadedModulesInParallel(tenv1, globEnv, modules);
 
-		t3 = timestamp();
+		t2 = timestamp();
 		prog = fctypeenv2fi(tenv2);
-		incrementTimePhase(fcTimePhases.other, t3);
-		incrementTimePhase(fcTimePhases.other4, t3);
+		incrementTimePhase(fcTimePhases.other, t2);
 
 		Pair(prog, ^errors)
 	} else {
@@ -81,7 +70,6 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 			}
 	);
 	incrementTimePhase(fcTimePhases.other, t0);
-	incrementTimePhase(fcTimePhases.other2, t0);
 
 	if (readyForProcessing == []) {
 		// We are done, everything is processed
@@ -110,7 +98,10 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 							fcPrintln("Verifying types in module '" + module.fileinfo.flowfile + "'");
 						}
 						if (typeverifyFiModule(tenv, module, \__ -> {})) {
-							updated = FiModule(module with fileinfo = updateFiFileInfo(module.fileinfo));
+							updated = FiModule(module with
+								fileinfo = updateFiFileInfo(module.fileinfo),
+								allImports = updateAllImports(module.imports, tenv.acc.modules)
+							);
 							if (!isConfigParameterFalse(tenv.acc.config.config, "incremental")) {
 								saveModuleInIncremental(tenv.acc.config, updated, tenv.acc.config.verbose, tenv);
 							}
@@ -223,45 +214,17 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 			}
 		);
 		incrementTimePhase(fcTimePhases.other, t3);
-		incrementTimePhase(fcTimePhases.other3, t3);
 
 		// Process what is left
 		processPreloadedModulesInParallel(tenv4, globEnv, whatIsLeft)
 	}
 }
 
-checkAllDependenciesAreResolved(preloadedModules : Tree<string, FcPreloadedModule>, resolved : Set<string>) -> Set<string> {
-
-	// Find the loaded modules where all dependent files are resolved.
-	newPortionOfResolved = buildSet(filtermap(
-		tree2pairs(preloadedModules),
-		\p : Pair<string, FcPreloadedModule> ->
-			if (!containsSet(resolved, preloadedFiFileInfo(p.second).flowfile) &&
-				forall(preloadedFcImports(p.second), \im : FcImport -> containsSet(resolved, im.flowfile))) {
-				Some(preloadedFiFileInfo(p.second).flowfile)
-			} else {
-				None()
-			}
-	));
-
-	if (isEmptySet(newPortionOfResolved)) {
-		// We are done, everything is processed
-		notResolved = foldTree(preloadedModules, makeSet(), \flowfile, m, acc -> {
-			if (containsSet(resolved, flowfile)) {
-				acc
-			} else {
-				insertSet(acc, flowfile);
-			}
-		});
-
-		if (!isEmptySet(notResolved)) {
-			fcPrintln("Could not resolve dependencies for these files:");
-			fcPrintln(strGlue(set2array(notResolved), ", "));
-			fcPrintln("Check if there are missing imports in these files");
+updateAllImports(imports : [FiImport], modules : Tree<string, FiModule>) -> Set<string> {
+	fold(imports, buildSet(map(imports, \imp -> imp.flowfile)),
+		\acc, imp -> {
+			imp_mod = lookupTreeDef(modules, imp.flowfile, dummyFiModule);
+			mergeSets(acc, imp_mod.allImports)
 		}
-
-		resolved
-	} else {
-		checkAllDependenciesAreResolved(preloadedModules, mergeSets(resolved, newPortionOfResolved))
-	}
+	);
 }
