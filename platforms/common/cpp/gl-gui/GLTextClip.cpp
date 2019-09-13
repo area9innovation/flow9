@@ -1012,7 +1012,8 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(idx);
     RUNNER_CheckTag1(TInt, idx);
-    int i, idx_v = idx.GetInt();
+    size_t i;
+    int idx_v = idx.GetInt();
 
     layoutText();
     Extent::Ptr extent;
@@ -1027,12 +1028,15 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
     float glyphAdvance = extent->layout->getGlyphAdvance(glyphIdx);
 
     // TODO upgrade to valid calculation when we have ligatures of more than 2 characters.
-    int glyphCharsCompo = orgGlyphCharIdx!=idx_v-extent->char_idx? 2 : 1;
+    int glyphCharsCompo = extent->layout->getGlyphCharsCompo(glyphIdx);
 
     int charIdxDelta = idx_v-extent->char_idx-orgGlyphCharIdx;
-    double glyphStartOffset = fabs(glyphAdvance * charIdxDelta/glyphCharsCompo);
-    /*if (glyphIdx < extent->layout->getDirections().size() && extent->layout->getDirections()[glyphIdx] == CharDirection::RTL)
-        glyphStartOffset = glyphAdvance-glyphStartOffset;*/
+    double glyphStartOffset = glyphAdvance;
+    if (glyphCharsCompo) {
+        glyphStartOffset -= fabs(glyphAdvance * charIdxDelta/glyphCharsCompo);
+        if (extent->layout->getDirections()[glyphIdx] != CharDirection::RTL)
+            glyphStartOffset = glyphAdvance-glyphStartOffset;
+    }
     return StackSlot::MakeDouble(glyphPos + glyphStartOffset);
 }
 
@@ -1052,34 +1056,14 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
             int glyph_idx = ext.first->char_idx + eidx;
             double inGlyphPos = ext.second - positions[eidx];
             double glyphAdv = ext.first->layout->getGlyphAdvance(glyph_idx);
-            /*if (textDirection == RTL) {
-                if (glyph_idx+1 > 0 && inGlyphPos*2 < glyphAdv) {
-                    --glyph_idx;
-                    glyphAdv = ext.first->layout->getGlyphAdvance(glyph_idx);
-                    inGlyphPos += glyphAdv;
-                }
-            } else */{
-                if (glyph_idx+1 < positions.size() && inGlyphPos*2 > glyphAdv) {
-                    ++glyph_idx;
-                    inGlyphPos -= glyphAdv;
-                }
-            }
-
-            // Hence there's UTF16 encoding having sometimes 2 words for 1 char and also ligatures, interpolation needed.
-            int interp_dir = glyph_idx>0? -1 : 1;
-            if (inGlyphPos * (ext.second-positions[glyph_idx+interp_dir]) > 0) interp_dir = -interp_dir;
+            int glyphCharsCompo = ext.first->layout->getGlyphCharsCompo(glyph_idx);
 
             char_idx = char_indices[glyph_idx];
-            // Range check
-            if ((interp_dir>0 || glyph_idx>0) && (glyph_idx<positions.size()-1 || interp_dir<0)) {
-                int alt_char_idx = char_indices[glyph_idx+interp_dir];
-                int char_delta = alt_char_idx-char_idx;
-                if (abs(char_delta)>1) {
-                    double pos = positions[glyph_idx];
-                    double alt_pos = positions[glyph_idx+interp_dir];
-                    char_idx = floor(char_idx+char_delta*(posx.slot_private.DoubleVal-pos)/(alt_pos-pos)+0.5);
-                }
-            }
+
+            if (ext.first->layout->getDirections()[glyph_idx] == RTL)
+                inGlyphPos = glyphAdv-inGlyphPos;
+            if (inGlyphPos > glyphAdv) inGlyphPos = glyphAdv;
+            char_idx += (int)(0.5+glyphCharsCompo*inGlyphPos/glyphAdv);
         }
     }
     return StackSlot::MakeInt(char_idx);

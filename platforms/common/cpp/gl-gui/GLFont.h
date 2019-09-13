@@ -407,6 +407,7 @@ protected:
     GLBoundingBox bbox;
 
     std::vector<size_t> char_indices;
+    std::vector<unsigned char> char_counts;
     std::map<size_t, size_t> char_to_glyph_index;
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
@@ -416,15 +417,7 @@ protected:
 
     GLTextLayout(GLFont::Ptr font, float size, bool rtl);
 
-    bool processIfReverseRemains(
-        bool condition,
-        shared_ptr<Utf32InputIterator> end,
-        shared_ptr<Utf32InputIterator> &strIter,
-        shared_ptr<Utf32InputIterator> &strReverseRemains,
-        shared_ptr<Utf32InputIterator> &strDirectAgain,
-        float cursor,
-        int &reverseCount
-    );
+    void reverseGlyphRange(size_t b, size_t e);
     void buildLayout(shared_ptr<Utf32InputIterator> begin, shared_ptr<Utf32InputIterator> end, float width_limit, float spacing, bool crop_long_words);
 
     struct RenderPass {
@@ -480,6 +473,7 @@ public:
     const std::vector<float> &getPositions() { return positions; }
     const std::vector<CharDirection> &getDirections() { return directions; }
     double getGlyphAdvance(int glyphIdx) { return glyphIdx<0 || glyphIdx>=glyphs.size()? 0.0 : glyphs[glyphIdx]->advance * size; }
+    unsigned char getGlyphCharsCompo(int glyphIdx) {return glyphIdx<0 || glyphIdx>=glyphs.size()? 0 : char_counts[glyphIdx]; }
     const std::vector<size_t> &getCharIndices() { return char_indices; }
     int getCharGlyphPositionIdx(int charidx);
 
