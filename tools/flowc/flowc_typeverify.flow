@@ -27,7 +27,6 @@ TypeVerifyModuleEnv(
 	moduleNames : Set<string>,
 	exprError : ref bool,
 	typeError : ref bool,
-	imports : Set<string>
 );
 
 typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError) -> void) -> bool {
@@ -61,19 +60,43 @@ typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError
 		moduleNames,
 		ref false,
 		ref false,
-		fold(module.imports, makeSet(), \acc, imp ->
-			mergeSets(
-				mergeSets(acc, makeSet1(imp.flowfile)),
-				lookupTreeDef(env.acc.names.moduleImports, imp.flowfile, makeSet())
-			)
-		)
 	);
-	ret = forall(module.structs, \struct -> typeverifyFiTypeStruct(moduleEnv, struct, onError)) &&
+	ret =
+	forall(module.forbids, \forbid_ -> typeverifyFiForbid(moduleEnv, forbid_, onError)) &&
+	forall(module.structs, \struct -> typeverifyFiTypeStruct(moduleEnv, struct, onError)) &&
 	forall(module.unions, \union -> typeverifyFiTypeUnion(moduleEnv, union, onError)) &&
 	forall(module.functions, \func -> typeverifyFiFunctionDec(moduleEnv, func, onError)) &&
 	forall(module.globalVars, \var -> typeverifyFiGlobalVar(moduleEnv, var, onError)) &&
 	forall(module.natives, \nat -> typeverifyFiNativeDec(moduleEnv, nat, onError));
 	incrementTimePhase(fcTimePhases.typeverify, t);
+	ret
+}
+
+typeverifyFiForbid(moduleEnv : TypeVerifyModuleEnv, forbid_ : FiForbid, onError : (FcError) -> void) -> bool {
+	ret = !containsSet(moduleEnv.module.allImports, forbid_.flowfile);
+	if (!ret) {
+		bad_modules = foldSet(moduleEnv.module.allImports, [], \acc, mod_name -> {
+				m = lookupTreeDef(moduleEnv.global.acc.modules, mod_name, dummyFiModule);
+				switch (find(m.imports, \imp -> imp.flowfile == forbid_.flowfile)) {
+					Some(imp): concat(acc, [Pair(m, imp)]);
+					None(): acc;
+				}
+			}
+		);
+		onError(
+			FcError("Forbid '" + forbid_.flowfile + "' is violated",
+				concat(
+					[FcPosition(moduleEnv.module.fileinfo.flowfile, forbid_.start, forbid_.start)],
+					map(bad_modules, \bad_mod_pair -> {
+							bad_mod = bad_mod_pair.first;
+							bad_imp = bad_mod_pair.second;
+							FcPosition(bad_mod.fileinfo.flowfile, bad_imp.start, bad_imp.start)
+						}
+					)
+				)
+			)
+		);
+	}
 	ret
 }
 
@@ -119,13 +142,6 @@ verifyNameIsUnused(env : TypeVerifyModuleEnv, name : string, onError : (FcError)
 }
 
 verifyNameIsAccessible(env : TypeVerifyLocalEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
-	t = timestamp();
-	ret = doVerifyNameIsAccessible(env, name, onError, start);
-	incrementTimePhase(fcTimePhases.checkImports, t);
-	ret
-}
-
-doVerifyNameIsAccessible(env : TypeVerifyLocalEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
 	if (containsSet(env.varNames, name)) {
 		true // local name
 	} else if (containsSet(env.moduleEnv.moduleNames, name)) {
