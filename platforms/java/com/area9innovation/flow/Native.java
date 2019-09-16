@@ -48,9 +48,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
-	private static final int NTHREDS = 8;
+	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
-	private static final ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
+	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
 	public Native() {
 	try {
 		md5original = MessageDigest.getInstance("MD5");
@@ -59,6 +59,7 @@ public class Native extends NativeHost {
 	}
 
 	}
+
 	public final Object println(Object arg) {
 		String s = "";
 		if (arg instanceof String) {
@@ -1402,5 +1403,14 @@ public class Native extends NativeHost {
 	//native addPlatformEventListenerNative : (event : string, cb : () -> bool) -> ( () -> void ) = Native.addPlatformEventListener;
 	public final Func0<Object> addPlatformEventListener (String event, Func0<Boolean> cb) {
 	return null;
+	}
+
+	public final int availableProcessors() {
+		return Runtime.getRuntime().availableProcessors();
+	}
+
+	public final Object setThreadPoolSize(int threads) {
+		threadpool = Executors.newFixedThreadPool(threads);
+		return null;
 	}
 }

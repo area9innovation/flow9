@@ -2,12 +2,17 @@ import tools/flowc/incremental/fi2fc;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/export_signature;
 import tools/flowc/flowc_helpers;
+import tools/flowc/flowc_timephases;
 import text/binary;
 import utctime;
 
 export {
 	getFlowcObjectFolder(config : CompilerConfig) -> string;
+
+	saveIncrementalModulesIfNeeded(modules : [FiModule], tenv : FcTypeEnvProgram) -> void;
+
 	saveModuleInIncremental(config : CompilerConfig, module : FiModule, verbose : int, env : FcTypeEnvProgram) -> void;
+
 	ensureIncrementalDirectoryExists(config : CompilerConfig) -> void;
 
 	/* Loads any up-to-date incremental file if we have it. If we have an outdated one,
@@ -28,7 +33,7 @@ export {
 	getCacheFilename(config : CompilerConfig, flowname : string) -> string;
 }
 
-incrementalVersion = 4;
+incrementalVersion = 5;
 IncrementalModule(version : int, module : FiModule);
 
 getFlowcObjectFolder(config : CompilerConfig) -> string {
@@ -54,7 +59,31 @@ ensureIncrementalDirectoryExists(config : CompilerConfig) -> void {
 	}
 }
 
-saveModuleInIncremental(config : CompilerConfig, module0 : FiModule, verbose : int, env : FcTypeEnvProgram) -> void {
+saveModuleInIncremental(config : CompilerConfig, module : FiModule, verbose : int, env : FcTypeEnvProgram) -> void {
+	if (!isConfigParameterFalse(config.config, "incremental")) {
+		t = timestamp();
+		doSaveModuleInIncremental(config, module, verbose, env);
+		incrementTimePhase(fcTimePhases.save, t);
+	}
+}
+
+saveIncrementalModulesIfNeeded(modules : [FiModule], tenv : FcTypeEnvProgram) -> void {
+	config = tenv.acc.config;
+	if (!isConfigParameterFalse(config.config, "incremental")) {
+		// Incremental
+		t = timestamp();
+		runTasks(config, map(uniq(modules), \module -> \ -> {
+			if (!moduleIsCached(config, module)) {
+				doSaveModuleInIncremental(config, module, config.verbose, tenv);
+				{}
+			}
+			true
+		}));
+		incrementTimePhase(fcTimePhases.save, t);
+	}
+}
+
+doSaveModuleInIncremental(config : CompilerConfig, module0 : FiModule, verbose : int, env : FcTypeEnvProgram) -> void {
 	module = FiModule(module0 with incremental = true);
 	fn = getCacheFilename(config, module.fileinfo.flowfile);
 	if (module.end != 0) {
