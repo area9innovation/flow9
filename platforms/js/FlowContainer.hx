@@ -124,10 +124,6 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
-			if (untyped newChild.localBounds != null && untyped newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
-				addLocalBounds(newChild.applyLocalBoundsTransform());
-			}
-
 			emitEvent("childrenchanged");
 		}
 
@@ -143,9 +139,6 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
-			if (untyped newChild.localBounds != null && newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
-				addLocalBounds(newChild.applyLocalBoundsTransform());
-			}
 			emitEvent("childrenchanged");
 		}
 
@@ -156,14 +149,8 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			if (untyped oldChild.localBounds != null && oldChild.localBounds.minX != Math.POSITIVE_INFINITY) {
-				removeLocalBounds(oldChild.applyLocalBoundsTransform());
-			}
-
-			// oldChild.removeChildrenNativeWidgets();
-
 			invalidateInteractive();
-			invalidateStage();
+			invalidateTransform('removeChild');
 
 			emitEvent("childrenchanged");
 		}
@@ -193,6 +180,7 @@ class FlowContainer extends Container {
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
 					bounds.maxY = renderer.height;
+					invalidateLocalBounds();
 					invalidateRenderable(bounds);
 
 					DisplayObjectHelper.lockStage();
@@ -216,6 +204,7 @@ class FlowContainer extends Container {
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;
 				bounds.maxY = renderer.height;
+				invalidateLocalBounds();
 				invalidateRenderable(bounds);
 			}
 
@@ -225,10 +214,6 @@ class FlowContainer extends Container {
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		if (localBounds.minX == Math.POSITIVE_INFINITY) {
-			calculateLocalBounds('getLocalBounds');
-		}
-
 		rect = localBounds.getRectangle(rect);
 
 		var filterPadding = untyped this.filterPadding;
@@ -249,7 +234,7 @@ class FlowContainer extends Container {
 		}
 
 		getLocalBounds();
-		this.calculateBounds();
+		calculateBounds();
 
 		return _bounds.getRectangle(rect);
 	}

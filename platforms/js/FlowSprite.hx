@@ -200,7 +200,6 @@ class FlowSprite extends Sprite {
 			loaded = true;
 
 			calculateWidgetBounds();
-			calculateLocalBounds('onLoaded');
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();
@@ -270,15 +269,19 @@ class FlowSprite extends Sprite {
 	}
 
 	public function calculateWidgetBounds() : Void {
-		widgetBounds.minX = 0;
-		widgetBounds.minY = 0;
-
-		if (RenderSupportJSPixi.DomRenderer) {
-			widgetBounds.maxX = nativeWidget.naturalWidth;
-			widgetBounds.maxY = nativeWidget.naturalHeight;
+		if (nativeWidget == null) {
+			widgetBounds.clear();
 		} else {
-			widgetBounds.maxX = texture.width;
-			widgetBounds.maxY = texture.height;
+			widgetBounds.minX = 0;
+			widgetBounds.minY = 0;
+
+			if (RenderSupportJSPixi.DomRenderer) {
+				widgetBounds.maxX = nativeWidget.naturalWidth;
+				widgetBounds.maxY = nativeWidget.naturalHeight;
+			} else {
+				widgetBounds.maxX = texture.width;
+				widgetBounds.maxY = texture.height;
+			}
 		}
 	}
 }

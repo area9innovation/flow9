@@ -346,7 +346,7 @@ class VideoClip extends FlowContainer {
 		metricsFn(videoWidget.videoWidth, videoWidget.videoHeight);
 
 		calculateWidgetBounds();
-		calculateLocalBounds('updateVideoMetrics');
+		invalidateTransform('updateVideoMetrics');
 
 		if (RenderSupportJSPixi.DomRenderer) {
 			videoWidget.style.width = '${untyped getWidth()}px';

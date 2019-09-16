@@ -917,27 +917,29 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupportJSPixi.DomRenderer) {
-							if (this.localTransformChanged) {
-								this.localTransformChanged = false;
+						this.emit('transformchanged');
 
-								if (this.isNativeWidget && this.parentClip) {
-									DisplayObjectHelper.updateNativeWidget(this);
-								}
-							}
-						} else {
+						if (!RenderSupportJSPixi.DomRenderer) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
 						}
-
-						this.emit('transformchanged');
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
 						if (child.transformChanged) {
 							child.updateTransform();
 						}
+					}
+
+					if (RenderSupportJSPixi.DomRenderer && this.localTransformChanged) {
+						this.localTransformChanged = false;
+
+						if (this.isNativeWidget && this.parentClip) {
+							DisplayObjectHelper.updateNativeWidget(this);
+						}
+					} else {
+						this.localTransformChanged = false;
 					}
 				}
 			};
@@ -965,15 +967,7 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupportJSPixi.DomRenderer) {
-							if (this.localTransformChanged) {
-								this.localTransformChanged = false;
-
-								if (this.isNativeWidget && this.parentClip) {
-									DisplayObjectHelper.updateNativeWidget(this);
-								}
-							}
-						} else {
+						if (!RenderSupportJSPixi.DomRenderer) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -986,6 +980,16 @@ class PixiWorkarounds {
 						if (child.transformChanged) {
 							child.updateTransform();
 						}
+					}
+
+					if (RenderSupportJSPixi.DomRenderer && this.localTransformChanged) {
+						this.localTransformChanged = false;
+
+						if (this.isNativeWidget && this.parentClip) {
+							DisplayObjectHelper.updateNativeWidget(this);
+						}
+					} else {
+						this.localTransformChanged = false;
 					}
 				}
 			};

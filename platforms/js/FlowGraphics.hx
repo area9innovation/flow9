@@ -120,7 +120,6 @@ class FlowGraphics extends Graphics {
 		}
 
 		calculateGraphicsBounds();
-		calculateLocalBounds('endFill');
 
 		if (fillGradient != null) {
 			if (RenderSupportJSPixi.DomRenderer) {
@@ -190,9 +189,7 @@ class FlowGraphics extends Graphics {
 			}
 		}
 
-		if (parent != null) {
-			invalidateTransform('endFill');
-		}
+		invalidateTransform('endFill');
 
 		if (RenderSupportJSPixi.DomRenderer && !isEmpty) {
 			updateNativeWidgetGraphicsData();
@@ -301,10 +298,6 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		if (localBounds.minX == Math.POSITIVE_INFINITY) {
-			calculateLocalBounds('getLocalBounds');
-		}
-
 		rect = localBounds.getRectangle(rect);
 
 		var filterPadding = untyped this.filterPadding;
@@ -324,10 +317,8 @@ class FlowGraphics extends Graphics {
 			updateTransform();
 		}
 
-		if (untyped this._boundsID != untyped this._lastBoundsID)
-		{
-			calculateBounds();
-		}
+		getLocalBounds();
+		calculateBounds();
 
 		return _bounds.getRectangle(rect);
 	}
@@ -399,10 +390,10 @@ class FlowGraphics extends Graphics {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${getWidth()}px';
-					svg.style.height = '${getHeight()}px';
-					svg.style.left = '${localBounds.minX}px';
-					svg.style.top = '${localBounds.minY}px';
+					svg.style.width = '${graphicsBounds.maxX - graphicsBounds.minX}px';
+					svg.style.height = '${graphicsBounds.maxY - graphicsBounds.minY}px';
+					svg.style.left = '${graphicsBounds.minX}px';
+					svg.style.top = '${graphicsBounds.minY}px';
 					svg.style.position = 'absolute';
 
 					if (data.fill != null && data.fillAlpha > 0) {
@@ -452,7 +443,7 @@ class FlowGraphics extends Graphics {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -466,7 +457,7 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("y", Std.string(data.shape.y));
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -479,7 +470,7 @@ class FlowGraphics extends Graphics {
 						circle.setAttribute("cx", Std.string(data.shape.x));
 						circle.setAttribute("cy", Std.string(data.shape.y));
 						circle.setAttribute("r", Std.string(data.shape.radius));
-						circle.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
+						circle.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							circle.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -495,7 +486,7 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("height", Std.string(data.shape.height));
 						rect.setAttribute("rx", Std.string(data.shape.radius));
 						rect.setAttribute("ry", Std.string(data.shape.radius));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -529,7 +520,7 @@ class FlowGraphics extends Graphics {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${-localBounds.minX} ${-localBounds.minY})');
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
 
 						if (data.fill != null && data.fillAlpha > 0) {
 							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
@@ -572,10 +563,10 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${getWidth()}px';
-						svg.style.height = '${getHeight()}px';
-						svg.style.left = '${localBounds.minX}px';
-						svg.style.top = '${localBounds.minY}px';
+						svg.style.width = '${graphicsBounds.maxX - graphicsBounds.minX}px';
+						svg.style.height = '${graphicsBounds.maxY - graphicsBounds.minY}px';
+						svg.style.left = '${graphicsBounds.minX}px';
+						svg.style.top = '${graphicsBounds.minY}px';
 						svg.style.position = 'absolute';
 
 						svg.appendChild(path);

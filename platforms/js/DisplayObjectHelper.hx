@@ -108,14 +108,6 @@ class DisplayObjectHelper {
 		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null);
 	}
 
-	public static function invalidateBounds(clip : DisplayObject) : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			untyped clip.boundsChanged = true;
-		} else {
-			untyped clip.rvlast = null;
-		}
-	}
-
 	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool, ?from : String) : Void {
 		if (untyped clip.parent != null && (!clip.worldTransformChanged || (localTransformChanged && !clip.localTransformChanged))) {
 			untyped clip.worldTransformChanged = true;
@@ -157,7 +149,18 @@ class DisplayObjectHelper {
 			if (clip.parent.visible && clip.parent.parent != null && untyped !clip.parent.transformChanged) {
 				invalidateParentTransform(clip.parent);
 			} else {
+				invalidateParentLocalBounds(clip);
 				invalidateStage(clip);
+			}
+		}
+	}
+
+	public static function invalidateParentLocalBounds(clip : DisplayObject) : Void {
+		if (untyped !clip.visible && clip.clipVisible && !clip.localBoundsChanged) {
+			untyped clip.localBoundsChanged = true;
+
+			if (untyped clip.parent != null && !clip.parent.transformChanged) {
+				invalidateParentLocalBounds(clip.parent);
 			}
 		}
 	}
@@ -257,7 +260,6 @@ class DisplayObjectHelper {
 		if (clip.parent != null) {
 			invalidateVisible(clip);
 			invalidateInteractive(clip, clip.parent.interactiveChildren);
-			invalidateBounds(clip);
 			invalidateTransform(clip, 'invalidate');
 
 			if (untyped clip.parent.hasMask) {
@@ -301,14 +303,8 @@ class DisplayObjectHelper {
 		if (clip.x != x) {
 			var from = DebugUpdate ? 'setClipX ' + clip.x + ' : ' + x : null;
 
-			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				clip.x = x;
-				invalidateTransform(clip, from);
-				invalidateLocalBounds(clip, from);
-			} else {
-				clip.x = x;
-				invalidateTransform(clip, from);
-			}
+			clip.x = x;
+			invalidateTransform(clip, from);
 		}
 	}
 
@@ -320,14 +316,8 @@ class DisplayObjectHelper {
 		if (clip.y != y) {
 			var from = DebugUpdate ? 'setClipY ' + clip.y + ' : ' + y : null;
 
-			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				clip.y = y;
-				invalidateTransform(clip, from);
-				invalidateLocalBounds(clip, from);
-			} else {
-				clip.y = y;
-				invalidateTransform(clip, from);
-			}
+			clip.y = y;
+			invalidateTransform(clip, from);
 		}
 	}
 
@@ -335,14 +325,8 @@ class DisplayObjectHelper {
 		if (clip.scale.x != scale) {
 			var from = DebugUpdate ? 'setClipScaleX ' + clip.scale.x + ' : ' + scale : null;
 
-			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				clip.scale.x = scale;
-				invalidateTransform(clip, from);
-				invalidateLocalBounds(clip, from);
-			} else {
-				clip.scale.x = scale;
-				invalidateTransform(clip, from);
-			}
+			clip.scale.x = scale;
+			invalidateTransform(clip, from);
 		}
 	}
 
@@ -350,14 +334,8 @@ class DisplayObjectHelper {
 		if (clip.scale.y != scale) {
 			var from = DebugUpdate ? 'setClipScaleY ' + clip.scale.y + ' : ' + scale : null;
 
-			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				clip.scale.y = scale;
-				invalidateTransform(clip, from);
-				invalidateLocalBounds(clip, from);
-			} else {
-				clip.scale.y = scale;
-				invalidateTransform(clip, from);
-			}
+			clip.scale.y = scale;
+			invalidateTransform(clip, from);
 		}
 	}
 
@@ -365,14 +343,8 @@ class DisplayObjectHelper {
 		if (clip.rotation != rotation) {
 			var from = DebugUpdate ? 'setClipRotation ' + clip.rotation + ' : ' + rotation : null;
 
-			if (untyped clip.parent != null && clip.localBounds != null && clip.localBounds.minX != Math.POSITIVE_INFINITY) {
-				clip.rotation = rotation;
-				invalidateTransform(clip, from);
-				invalidateLocalBounds(clip, from);
-			} else {
-				clip.rotation = rotation;
-				invalidateTransform(clip, from);
-			}
+			clip.rotation = rotation;
+			invalidateTransform(clip, from);
 		}
 	}
 
@@ -499,13 +471,7 @@ class DisplayObjectHelper {
 
 			clip.scrollRect = null;
 
-			if (RenderSupportJSPixi.DomRenderer) {
-				invalidateTransform(clip, 'removeScrollRect');
-			} else {
-				invalidateStage(clip);
-			}
-
-			calculateLocalBounds(clip, 'removeScrollRect');
+			invalidateTransform(clip, 'removeScrollRect');
 		}
 	}
 
@@ -572,25 +538,23 @@ class DisplayObjectHelper {
 			if (untyped clip.mask != null || clip.alphaMask != null) {
 				initNativeWidget(clip);
 			}
-
-			invalidateTransform(clip, 'setClipMask');
-		} else {
-			invalidateStage(clip);
 		}
 
-		calculateLocalBounds(clip, 'setClipMask');
+		invalidateTransform(clip, 'setClipMask');
 	}
 
 	public static function updateHasMask(clip : DisplayObject) : Void {
 		if (RenderSupportJSPixi.DomRenderer) {
-			untyped clip.hasMask = true;
+			if (!untyped clip.hasMask) {
+				untyped clip.hasMask = true;
 
-			if (untyped clip.updateNativeWidgetGraphicsData != null) {
-				untyped clip.updateNativeWidgetGraphicsData();
-			}
+				if (untyped clip.updateNativeWidgetGraphicsData != null) {
+					untyped clip.updateNativeWidgetGraphicsData();
+				}
 
-			for (child in getClipChildren(clip)) {
-				updateHasMask(child);
+				for (child in getClipChildren(clip)) {
+					updateHasMask(child);
+				}
 			}
 		}
 	}
@@ -790,8 +754,7 @@ class DisplayObjectHelper {
 
 		var localBounds = untyped clip.localBounds;
 
-		if (localBounds.minX != Math.POSITIVE_INFINITY && untyped clip.boundsChanged) {
-			untyped clip.boundsChanged = false;
+		if (Math.isFinite(localBounds.minX)) {
 			var nativeWidget = untyped clip.nativeWidget;
 
 			if (untyped clip.alphaMask != null) {
@@ -1449,131 +1412,76 @@ class DisplayObjectHelper {
 		return (widgetBounds != null && widgetBounds.minY != Math.POSITIVE_INFINITY) ? getBoundsHeight(widgetBounds) : getHeight(clip);
 	}
 
-	public static function replaceLocalBounds(clip : DisplayObject, currentBounds : Bounds, newBounds : Bounds, ?from : String) : Void {
-		if (untyped clip.mask != null || clip.alphaMask != null || clip.scrollRect != null  || newBounds.minX == Math.POSITIVE_INFINITY || isEqualBounds(currentBounds, newBounds)) {
+	public static function invalidateLocalBounds(clip : DisplayObject) : Void {
+		if (untyped clip.localBounds == null || !clip.clipVisible) {
 			return;
 		}
 
-		var localBounds : Bounds = untyped clip.localBounds;
+		if (untyped clip.transformChanged || clip.localBoundsChanged) {
+			untyped clip.localBoundsChanged = false;
 
-		calculateLocalBounds(clip, DebugUpdate ? from + ' ->\nreplaceLocalBounds' : null);
-		invalidateTransform(clip, DebugUpdate ? from + ' ->\nreplaceLocalBounds' : null);
-	}
-
-	public static function addLocalBounds(clip : DisplayObject, bounds : Bounds) : Void {
-		if (untyped clip.mask != null || clip.alphaMask != null || clip.scrollRect != null) {
-			return;
-		}
-
-		var localBounds : Bounds = untyped clip.localBounds;
-
-		if (localBounds.minX > bounds.minX || localBounds.minY > bounds.minY || localBounds.maxX < bounds.maxX || localBounds.maxY < bounds.maxY) {
-			localBounds.minX = Math.min(localBounds.minX, bounds.minX);
-			localBounds.minY = Math.min(localBounds.minY, bounds.minY);
-			localBounds.maxX = Math.max(localBounds.maxX, bounds.maxX);
-			localBounds.maxY = Math.max(localBounds.maxY, bounds.maxY);
-
-			invalidateLocalBounds(clip, 'addLocalBounds');
-		}
-	}
-
-	public static function removeLocalBounds(clip : DisplayObject, bounds : Bounds) : Void {
-		if (untyped clip.mask != null || clip.alphaMask != null || clip.scrollRect != null) {
-			return;
-		}
-
-		var localBounds = untyped clip.localBounds;
-
-		if (localBounds.minX == bounds.minX || localBounds.minY == bounds.minY || localBounds.maxX == bounds.maxX || localBounds.maxY == bounds.maxY) {
-			calculateLocalBounds(clip, 'removeLocalBounds');
-		}
-	}
-
-	public static function calculateLocalBounds(clip : DisplayObject, ?from : String) : Void {
-		var localBounds : Bounds = untyped clip.localBounds;
-		var mask : Dynamic = untyped clip.mask || clip.alphaMask || clip.scrollRect;
-		// var maskContainer : Dynamic = untyped clip.maskContainer;
-
-		localBounds.clear();
-
-		if (mask != null) {
-			if (mask.localBounds != null && mask.localBounds.minX != Math.POSITIVE_INFINITY) {
-				if (untyped clip.scrollRect == null && mask.parent != clip && mask.parent.localTransformChanged) {
-					mask.transform.updateLocalTransform();
-				}
-
-				DisplayObjectHelper.applyBoundsTransform(mask.localBounds, untyped clip.scrollRect != null || mask.parent == clip ? mask.localTransform : mask.parent.localTransform, localBounds);
-			}
-		/*} else if (maskContainer != null) {
-			if (maskContainer.localBounds != null && maskContainer.localBounds.minX != Math.POSITIVE_INFINITY) {
-				if (maskContainer.localTransformChanged) {
-					maskContainer.transform.updateLocalTransform();
-				}
-
-				DisplayObjectHelper.applyBoundsTransform(maskContainer.localBounds, maskContainer.localTransform, localBounds);
-			}*/
-		} else if (untyped clip.graphicsBounds != null) {
-			var graphicsBounds = untyped clip.graphicsBounds;
-
-			localBounds.minX = graphicsBounds.minX;
-			localBounds.minY = graphicsBounds.minY;
-			localBounds.maxX = graphicsBounds.maxX;
-			localBounds.maxY = graphicsBounds.maxY;
-		} else if (untyped clip.widgetBounds != null) {
-			var widgetBounds = untyped clip.widgetBounds;
-
-			if (widgetBounds.minX != Math.POSITIVE_INFINITY && widgetBounds.minY != Math.POSITIVE_INFINITY) {
-				localBounds.minX = widgetBounds.minX;
-				localBounds.minY = widgetBounds.minY;
-				localBounds.maxX = widgetBounds.maxX;
-				localBounds.maxY = widgetBounds.maxY;
+			if (untyped clip.graphicsBounds != null) {
+				untyped clip.calculateGraphicsBounds();
+				applyNewBounds(clip, untyped clip.graphicsBounds);
+			} else if (untyped clip.widgetBounds != null) {
+				untyped clip.calculateWidgetBounds();
+				applyNewBounds(clip, untyped clip.widgetBounds);
 			} else {
-				localBounds.minX = 0;
-				localBounds.minY = 0;
-				localBounds.maxX = getWidth(clip);
-				localBounds.maxY = getHeight(clip);
-			}
-		} else {
-			for (child in getClipChildren(clip)) {
-				if (untyped child.localBounds != null && child.localBounds.minX != Math.POSITIVE_INFINITY) {
-					if (localBounds.minX == Math.POSITIVE_INFINITY) {
-						applyLocalBoundsTransform(child, localBounds);
-					} else {
-						var childBounds = applyLocalBoundsTransform(child);
+				untyped clip.maxLocalBounds = new Bounds();
 
-						localBounds.minX = Math.min(localBounds.minX, childBounds.minX);
-						localBounds.minY = Math.min(localBounds.minY, childBounds.minY);
-						localBounds.maxX = Math.max(localBounds.maxX, childBounds.maxX);
-						localBounds.maxY = Math.max(localBounds.maxY, childBounds.maxY);
+				for (child in getClipChildren(clip)) {
+					if (untyped !child.isMask) {
+						invalidateLocalBounds(child);
+						if (untyped clip.mask == null) {
+							applyMaxBounds(clip, untyped child.currentBounds);
+						}
 					}
 				}
+
+				if (untyped clip.mask == null) {
+					applyNewBounds(clip, untyped clip.maxLocalBounds);
+				}
+			}
+
+			if (untyped clip.mask != null) {
+				invalidateLocalBounds(untyped clip.mask);
+				applyNewBounds(clip, untyped clip.mask.currentBounds);
+			}
+
+			if (untyped clip.localBoundsChanged || clip.transformChanged) {
+				untyped clip.localBoundsChanged = false;
+				untyped clip.currentBounds = applyLocalBoundsTransform(clip);
 			}
 		}
-
-		invalidateLocalBounds(clip, DebugUpdate ? from + ' ->\ncalculateLocalBounds ' : null);
 	}
 
-	public static function invalidateLocalBounds(clip : DisplayObject, ?from : String) : Void {
-		if (clip.parent != null) {
-			var currentBounds = untyped clip.currentBounds;
-			var newBounds = applyLocalBoundsTransform(clip);
-			if (newBounds.minX == Math.POSITIVE_INFINITY) {
-				return;
+	public static function applyMaxBounds(clip : DisplayObject, newBounds : Bounds) : Void {
+		if (untyped clip.maxLocalBounds == null || newBounds == null || !Math.isFinite(newBounds.minX)) {
+			return;
+		}
+
+		untyped clip.maxLocalBounds.minX = Math.min(untyped clip.maxLocalBounds.minX, newBounds.minX);
+		untyped clip.maxLocalBounds.minY = Math.min(untyped clip.maxLocalBounds.minY, newBounds.minY);
+		untyped clip.maxLocalBounds.maxX = Math.max(untyped clip.maxLocalBounds.maxX, newBounds.maxX);
+		untyped clip.maxLocalBounds.maxY = Math.max(untyped clip.maxLocalBounds.maxY, newBounds.maxY);
+	}
+
+	public static function applyNewBounds(clip : DisplayObject, newBounds : Bounds) : Void {
+		if (newBounds == null || !Math.isFinite(newBounds.minX)) {
+			return;
+		}
+
+		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
+			invalidateTransform(clip);
+			untyped clip.localBoundsChanged = true;
+			if (!RenderSupportJSPixi.DomRenderer) {
+				untyped clip.rvlast = null;
 			}
-			if (!isEqualBounds(currentBounds, newBounds)) {
-				untyped clip.currentBounds = newBounds;
-				invalidateBounds(clip);
 
-				if (untyped clip.scrollRect == null) {
-					invalidateTransform(clip, DebugUpdate ? from + ' ->\ninvalidateLocalBounds ' + currentBounds + ' ' + newBounds : null);
-				}
-
-				if (untyped clip.child != null) {
-					calculateLocalBounds(untyped clip.child, DebugUpdate ? from + ' ->\ninvalidateLocalBounds -> mask child ' + currentBounds + ' ' + newBounds : null);
-				}
-
-				replaceLocalBounds(clip.parent, currentBounds, newBounds, DebugUpdate ? from + ' ->\ninvalidateLocalBounds -> parent' + currentBounds + ' ' + newBounds : null);
-			}
+			untyped clip.localBounds.minX = newBounds.minX;
+			untyped clip.localBounds.minY = newBounds.minY;
+			untyped clip.localBounds.maxX = newBounds.maxX;
+			untyped clip.localBounds.maxY = newBounds.maxY;
 		}
 	}
 
@@ -1766,26 +1674,30 @@ class DisplayObjectHelper {
 			return;
 		}
 
+		if (!Math.isFinite(localBounds.minX) || localBounds.isEmpty()) {
+			// setClipRenderable(clip, untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget);
+			return;
+		}
+
 		if (untyped clip.localTransformChanged) {
 			untyped clip.transform.updateLocalTransform();
 		}
 
-		if (localBounds.minX == Math.POSITIVE_INFINITY) {
-			setClipRenderable(clip, false);
-			return;
-		}
-
 		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
-		untyped clip.viewBounds = viewBounds;
 
 		if (untyped clip.scrollRect != null) {
-			viewBounds.minX = Math.max(viewBounds.minX, untyped clip.localBounds.minX);
-			viewBounds.minY = Math.max(viewBounds.minY, untyped clip.localBounds.minY);
-			viewBounds.maxX = Math.min(viewBounds.maxX, untyped clip.localBounds.maxX);
-			viewBounds.maxY = Math.min(viewBounds.maxY, untyped clip.localBounds.maxY);
+			viewBounds.minX = Math.max(viewBounds.minX, localBounds.minX);
+			viewBounds.minY = Math.max(viewBounds.minY, localBounds.minY);
+			viewBounds.maxX = Math.min(viewBounds.maxX, localBounds.maxX);
+			viewBounds.maxY = Math.min(viewBounds.maxY, localBounds.maxY);
 		}
 
 		untyped clip.viewBounds = viewBounds;
+
+		if (!Math.isFinite(viewBounds.minX) || viewBounds.isEmpty()) {
+			setClipRenderable(clip, untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget);
+			return;
+		}
 
 		if ((!RenderSupportJSPixi.DomRenderer && untyped clip.styleChanged != null) || untyped __instanceof__(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
@@ -1795,7 +1707,7 @@ class DisplayObjectHelper {
 		if (!RenderSupportJSPixi.DomRenderer || isNativeWidget(clip) || !clip.renderable) {
 			setClipRenderable(
 				clip,
-				(!localBounds.isEmpty() && !viewBounds.isEmpty() && viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY) ||
+				(viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY) ||
 					(untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget)
 			);
 		}
@@ -1805,7 +1717,9 @@ class DisplayObjectHelper {
 		}
 
 		for (child in getClipChildren(clip)) {
-			invalidateRenderable(child, viewBounds);
+			if (untyped !child.isMask) {
+				invalidateRenderable(child, viewBounds);
+			}
 		}
 	}
 
