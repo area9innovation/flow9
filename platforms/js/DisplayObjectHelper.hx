@@ -1792,11 +1792,13 @@ class DisplayObjectHelper {
 			invalidateTransform(clip, 'invalidateRenderable');
 		}
 
-		setClipRenderable(
-			clip,
-			(!localBounds.isEmpty() && !viewBounds.isEmpty() && viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY) ||
-				(untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget)
-		);
+		if (!RenderSupportJSPixi.DomRenderer || isNativeWidget(clip) || !clip.renderable) {
+			setClipRenderable(
+				clip,
+				(!localBounds.isEmpty() && !viewBounds.isEmpty() && viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY) ||
+					(untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidget)
+			);
+		}
 
 		if (!clip.visible && untyped !clip.transformChanged) {
 			return;
