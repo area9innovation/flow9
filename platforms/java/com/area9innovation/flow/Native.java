@@ -44,6 +44,7 @@ import java.time.ZoneOffset;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
+import java.util.concurrent.ConcurrentHashMap;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
@@ -67,8 +68,10 @@ public class Native extends NativeHost {
 		}
 
 		try {
-			PrintStream out = new PrintStream(System.out, true, "UTF-8");
-			out.println(s);
+			synchronized (System.out) {
+				PrintStream out = new PrintStream(System.out, true, "UTF-8");
+				out.println(s);
+			}
 		} catch(UnsupportedEncodingException e) {
 		}
 		return null;
@@ -914,6 +917,13 @@ public class Native extends NativeHost {
 		return runtime.makeStructValue(name, args, (Struct)defval);
 	}
 
+	public final Object[] extractStructArguments(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getFields();
+		} else return new Object[0];
+	}
+
+
 	public final Object quit(int c) {
 		System.exit(c);
 		return null;
@@ -1188,7 +1198,43 @@ public class Native extends NativeHost {
 			md5Hex = "0" + md5Hex;
 		}
 
-	return md5Hex;
+		return md5Hex;
+	}
+
+	public String fileChecksum(String filename) {
+		try {
+			InputStream fis =  new FileInputStream(filename);
+			byte[] buffer = new byte[1024];
+			MessageDigest md = MessageDigest.getInstance("MD5");
+			int numRead;
+			do {
+				numRead = fis.read(buffer);
+				if (numRead > 0) {
+					md.update(buffer, 0, numRead);
+				}
+			} while (numRead != -1);
+
+			fis.close();
+
+			byte[] digest = new byte[0];
+			digest = md.digest();
+
+			BigInteger bigInt = new BigInteger(1, digest);
+			String md5Hex = bigInt.toString(16);
+
+			while( md5Hex.length() < 32 ){
+				md5Hex = "0" + md5Hex;
+			}
+
+			return md5Hex;
+		} catch (IOException e) {
+			return "";
+		} catch (InvalidPathException e) {
+			return "";
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "";
+		}
 	}
 
 	// Launch a system process
@@ -1267,6 +1313,69 @@ public class Native extends NativeHost {
 	  return resArr;
 	}
 
+	public final Object concurrentAsyncCallback(Func2<Object, String, Func1<Object, Object>> task, Func1<Object,Object> onDone) {
+		// thread #1
+		CompletableFuture.supplyAsync(() -> {
+			// thread #2
+			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
+			task.invoke(Long.toString(Thread.currentThread().getId()), (res) -> {
+				// thread #2
+				completableFuture.complete(res);
+				return null;
+			});
+			Object result = null;
+			try {
+				result = completableFuture.get();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} catch (ExecutionException e) {
+				e.printStackTrace();
+			}
+			return result;
+		}, threadpool).thenApply(result -> {
+			// thread #2
+			return onDone.invoke(result);
+		});
+
+		return null;
+	}	
+
+	public final String getThreadId() {
+		return Long.toString(Thread.currentThread().getId());
+	}
+
+	public final Object initConcurrentHashMap() {
+		return new ConcurrentHashMap();
+	}
+
+	public final Object setConcurrentHashMap(Object map, Object key, Object value) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.put(key, value);
+		return null;
+	}
+
+	public final Object getConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.get(key);
+	}
+
+	public final Boolean containsConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.containsKey(key);
+	}
+
+	public final Object[] valuesConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.values().toArray();
+	}
+
+	public final Object[] removeConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.remove(key);
+		return null;
+	}
+
+	// TODO: why don't we use threadpool here?
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
 			return task.invoke();

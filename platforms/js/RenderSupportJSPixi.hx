@@ -563,6 +563,10 @@ class RenderSupportJSPixi {
 					if (MouseUpReceived)
 						return;
 
+					// Prevent from mouseout to child
+					if (e.toElement && e.toElement.parent != e.fromElement)
+						return;
+
 					var checkElement = function (el) {
 						if (el != null) {
 							var tagName = el.tagName.toLowerCase();
@@ -574,11 +578,8 @@ class RenderSupportJSPixi {
 
 						return false;
 					}
-
 					// Prevent from mouseout to native clip or droparea element to allow dragging over
-					if (e.toElement.parentNode == e.fromElement ||
-						checkElement(e.toElement) && e.fromElement != null ||
-						checkElement(e.fromElement) && e.toElement != null)
+					if (checkElement(e.toElement) && e.fromElement != null || checkElement(e.fromElement) && e.toElement != null)
 						return;
 
 					listener();
@@ -820,15 +821,17 @@ class RenderSupportJSPixi {
 		}, delay);
 	}
 
-	private static function ensureCurrentInputVisible() : Void {
+	public static function ensureCurrentInputVisible() : Void {
 		var focused_node = Browser.document.activeElement;
 		if (focused_node != null) {
 			var node_name : String = focused_node.nodeName;
 			node_name = node_name.toLowerCase();
 			if (node_name == "input" || node_name == "textarea") {
+				//ios doesn't update window height when virtual keyboard is shown
+				var visibleAreaHeight = if (Platform.isIOS) Browser.window.innerHeight / 4 else Browser.window.innerHeight;
 				var rect = focused_node.getBoundingClientRect();
-				if (rect.bottom > Browser.window.innerHeight) { // Overlaped by screen keyboard
-					PixiStage.setClipY(Browser.window.innerHeight - rect.bottom);
+				if (rect.bottom > visibleAreaHeight) { // Overlaped by screen keyboard
+					Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
 				}
 			}
 		}

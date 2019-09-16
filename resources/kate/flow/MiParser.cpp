@@ -50,6 +50,7 @@ public:
 			case 1: return new MiValue(sv[0].get<MiTuple*>());
 			case 2: return new MiValue(sv[0].get<MiValList*>());
 			case 3: return new MiValue(sv[0].get<MiResList*>());
+			default: throw std::out_of_range("impossible case");
 			}
 		};
 		parser["TUPLE"] = [](const peg::SemanticValues& sv) {
