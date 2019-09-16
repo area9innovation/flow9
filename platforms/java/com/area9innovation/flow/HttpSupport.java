@@ -120,8 +120,6 @@ public class HttpSupport extends NativeHost {
 	 			String key = (String) keyvalue[0];
 				String value = (String) keyvalue[1];
 
-				System.out.println(key);
-				System.out.println(value);
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
@@ -136,8 +134,6 @@ public class HttpSupport extends NativeHost {
 					urlWithParams += "?" + urlParameters;
 				}
 			}
-
-			System.out.println(urlWithParams);
 
 			URL obj = new URL(urlWithParams);
 			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
