@@ -50,21 +50,20 @@ TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> T
 
 	aw = make(0.0);
 	update = make(0);
-	lines : DynamicBehaviour<[TParaLine]> = make([]);
-	nonDynamic = TSelect(lines, \l -> TRenderParaLines(
-		getValue(aw), l, tightWidth, alignment, interlineSpacing, topLineBaseline, interactiveStyles, rtl
-	));
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
 	ndynamic = fold(words, 0, \acc, w -> if (isConstMetrics(w.metrics)) acc else 1 + acc);
 	ndymamicUpper = extractStruct(s, DynamicBlockDelay(1)).n;
 
-	contentGroup = TGroup(concat(
-		// [if (fill != []) Background(fill, nonDynamic) else nonDynamic],
-		 [if (fill != []) TFrame(0., 0., fill, nonDynamic) else nonDynamic],
-		constructDynamicParts(words, interactiveStyles)
-	));
+	stackChanges = make([]);
+	initialWords = ref constructDynamicParts(words, interactiveStyles);
+	paragraphWHB = makeWH();
+
+	contentGroup = TSize(
+		TSized(paragraphWHB),
+		TDynamicGroup2( stackChanges, initialWords, TGroupCombiner())
+	);
 
 	TConstruct(
 		[\ -> {
@@ -72,9 +71,12 @@ TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> T
 				// Ignore negative widths
 				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
-				newLines = reflowTParaWords(words, w, indent);
+				paragraphSize = reflowTParaWords(
+					words, w, indent, tightWidth, alignment, interlineSpacing,
+					topLineBaseline, interactiveStyles, rtl
+				);
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				next(lines, newLines);
+				nextDistinct(paragraphWHB, paragraphSize);
 			};
 
 			unsub1 = subscribe(aw, updateFn);
@@ -145,9 +147,23 @@ expandParagraphElements(
 	});
 }
 
-commonWordConstructor(w : TWrapElement, tr : Tropic, id : int) -> TParaWord {
+commonWordConstructor(
+	w : TWrapElement,
+	tr : Tropic,
+	id : int,
+	inspectorM : Maybe<ParaElementInspector>
+) -> TParaWord {
 	formAndSize = getDynamicTropicSize(tr);
-	TParaWord(w, formAndSize.second, formAndSize.first, id);
+	TParaWord(
+		w,
+		formAndSize.second,
+		eitherMap(
+			inspectorM,
+			\inspector -> TInspectGhost(inspector, formAndSize.first),
+			GhostElem(make(Point(0., 0.,)), formAndSize.first),
+		),
+		id
+	);
 }
 
 general2TParaWord(
@@ -156,20 +172,25 @@ general2TParaWord(
 	id : int
 ) -> TParaWord {
 	switch (w) {
-		GeneralText(txt) : commonWordConstructor(TText(txt, style), TText(txt, style), id);
-		GeneralSpace(txt) : commonWordConstructor(TSpace(style), TText(txt, style), id);
-		NewLine() : TParaWord(NewLine(), zeroTMetrics, TEmpty(), id);
-		EmptyLineElement() : commonWordConstructor(TEmpty(), makeTZeroSpaceElement(style), id);
+		GeneralText(txt) : commonWordConstructor(TText(txt, style), TText(txt, style), id, None());
+		GeneralSpace(txt) : commonWordConstructor(TSpace(style), TText(txt, style), id, None());
+		NewLine() : TParaWord(NewLine(), zeroTMetrics, GhostElem(make(Point(0., 0.)), TEmpty()), id);
+		EmptyLineElement() : commonWordConstructor(TEmpty(), makeTZeroSpaceElement(style), id, None());
 		GeneralLinePart(f, m, e) : {
 			word = TLinePart(TText(f, style), TText(m, style), TText(e, style));
-			commonWordConstructor(word, TText(m, style), id);
+			commonWordConstructor(word, TText(m, style), id, None());
 		}
 		GeneralInspectElement(inspector, element) : {
 			inspectingWord = general2TParaWord(element, style, id);
-			TParaWord(inspectingWord with ghostView = TCoordinateInspectElement(
-				inspector,
-				cast(inspectingWord.ghostView : GhostTropic -> Tropic)
-			))
+			commonWordConstructor(
+				inspectingWord.word,
+				switch (inspectingWord.ghostView) {
+					GhostElem(point, view) : view;
+					TInspectGhost(__, view) : view;
+				},
+				id,
+				Some(inspector)
+			);
 		}
 	}
 }
@@ -177,21 +198,14 @@ general2TParaWord(
 makeTParaWord(w : TTextFragments, id : int) -> TParaWord {
 	switch (w : TTextFragments) {
 		TInspectElement(inspector, tr) : {
- 			inspectingWord = commonWordConstructor(TEmpty(), tr, id);
-			TParaWord(inspectingWord with ghostView = TInspectGhost(
-				inspector,
-				cast(inspectingWord.ghostView : GhostTropic -> Tropic)
-			));
+			commonWordConstructor(TEmpty(), tr, id, Some(inspector));
 		}
 		default : {
 			tropicWithSize = getDynamicTropicSize(cast(w : TTextFragments -> Tropic));
 			TParaWord(
 				TEmpty(),
 				tropicWithSize.second,
-				if (isConstMetrics(tropicWithSize.second)) tropicWithSize.first else GhostElem(
-					make(Point(0., 0.)),
-					tropicWithSize.first
-				),
+				GhostElem(make(Point(0., 0.)), tropicWithSize.first),
 				id
 			);
 		}
@@ -230,16 +244,39 @@ isTGhostable(f : Tropic) -> bool {
 TParaLine(words : [TParaWord], indent : double);
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
-reflowTParaWords(words : [TParaWord], availableParaWidth : double, paraIndent : double) -> [TParaLine] {
+reflowTParaWords(
+	words : [TParaWord],
+	availableParaWidth : double,
+	paraIndent : double,
+	tightWidth : bool,
+	alignment: ParaLineAlignment,
+	interlineSpacing : double,
+	topLineBaseline : bool,
+	styleTree : Tree<int, [TTexFragmentStyle]>,
+	rtl : bool
+) -> WidthHeight {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
 	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
-	if (isBiDiEnabled())
+	paraLines = if (isBiDiEnabled())
 		zipWith(
 			text,
 			reflowTextToBiDi(map(text, \l -> l.words), isTParaWordEmpty, getTParaWordText, setTParaWordText),
 			\l, ws -> TParaLine(ws, l.indent),
 		)
 	else text;
+
+	TAlignParaLines(
+		availableParaWidth,
+		paraLines,
+		tightWidth,
+		alignment,
+		interlineSpacing,
+		topLineBaseline,
+		styleTree,
+		rtl
+	)
+	
+
 }
 
 // here availableWidth is an amount of width for current line
@@ -257,7 +294,7 @@ reflowTParaWordsRec(
 
 	detachWord = \w : TParaWord, detach : bool -> {
 		switch (w.ghostView) {
-			TCoordinateInspectElement(inspector, __): nextDistinct(inspector.detached, detach);
+			TInspectGhost(inspector, __): nextDistinct(inspector.detached, detach);
 			default: {}
 		}
 	}
@@ -283,11 +320,9 @@ reflowTParaWordsRec(
 
 				makeLinePartWord = \form2 : Tropic -> {
 					g = word.ghostView;
-					newGhosted : GhostTropic = switch (g : GhostTropic) {
+					newGhosted : TGhosted = switch (g : TGhosted) {
 						GhostElem(p, f): GhostElem(p, form2);
 						TInspectGhost(inspector, f): TInspectGhost(inspector, form2);
-						TCoordinateInspectElement(inspector, f): TCoordinateInspectElement(inspector, form2);
-						default : form2
 					};
 
 					TParaWord(word.word, fMetrics2TMetrics(getTropicMetrics(form2)), newGhosted, word.id);
@@ -324,11 +359,9 @@ reflowTParaWordsRec(
 				width = ref 0.0;
 				getWordView = \w -> {
 					g = w.ghostView;
-					switch (g: GhostTropic) {
+					switch (g: TGhosted) {
 						GhostElem(__, f): f;
 						TInspectGhost(__, f): f;
-						TCoordinateInspectElement(__, f): f;
-						default : cast(g : GhostTropic -> Tropic);
 					};
 				};
 
@@ -415,9 +448,9 @@ keepWordsTogether(tr : Tropic) -> bool {
 	}
 }
 
-TParaLineAcc(lines : List<Tropic>, width : double, y : double, baseline : double);
+TParaLineAcc(width : double, y : double, baseline : double);
 
-TRenderParaLines(
+TAlignParaLines(
 	availableWidth : double,
 	lines : [TParaLine],
 	tightWidth : bool,
@@ -426,7 +459,7 @@ TRenderParaLines(
 	topLineBaseline : bool,
 	styleTree : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool
-) -> Tropic {
+) -> WidthHeight {
 	lasti = length(lines) - 1;
 	singleLine = length(lines) == 1;
 
@@ -444,7 +477,7 @@ TRenderParaLines(
 		availableWidth
 	}
 
-	a : TParaLineAcc = foldi(lines, TParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
+	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
@@ -462,28 +495,25 @@ TRenderParaLines(
 		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
 		nbaseline = f.baseline;
 		TParaLineAcc(
-			Cons(TSize(TSized(const(zeroWH)), f.form), acc.lines),
 			nwidth,
 			nheight,
 			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
 		);
 	});
 
-	TBaseline(const(a.baseline), TSize(
-		TSized(const(if (tightWidth) WidthHeight(a.width, a.y) else WidthHeight(max(width, a.width), a.y))),
-		TGroup(list2array(a.lines))
-	));
+	if (tightWidth) WidthHeight(a.width, a.y) else WidthHeight(max(width, a.width), a.y);
 }
 
-TParaLineResult(form : Tropic, width : double, height : double, baseline : double);
-TOptimizedLineElement(f : GhostTropic, metrics : TFormMetrics, id : int);
+TParaLineResult(width : double, height : double, baseline : double);
+TOptimizedLineElement(f : TGhosted, metrics : TFormMetrics, id : int);
 
 getTOptimizedLine(words : [TParaWord], alignment : ParaLineAlignment) -> [TOptimizedLineElement] {
-	if (!isBiDiEnabled() && alignment != Justify()) {
-		optimizeTLine(words);
-	} else {
-		map(words, \w -> TOptimizedLineElement(w.ghostView, w.metrics, w.id));
-	};
+	// if (!isBiDiEnabled() && alignment != Justify()) {
+	// 	// optimizeTLine(words);
+	// } else {
+	// 	map(words, \w -> TOptimizedLineElement(w.ghostView, w.metrics, w.id));
+	// };
+	map(words, \w -> TOptimizedLineElement(w.ghostView, w.metrics, w.id));
 }
 
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
@@ -534,7 +564,7 @@ TRenderLine(
 	} else 0.0;
 
 	// The width and the individual forms
-	lo : [Tropic] = filtermapi(optimizedLine, \i : int, elem : TOptimizedLineElement -> {
+	iteri(optimizedLine, \i : int, elem : TOptimizedLineElement -> {
 		f = elem.f;
 		elemWidth = fgetValue(elem.metrics.width);
 		elemHeight = fgetValue(elem.metrics.height);
@@ -561,13 +591,12 @@ TRenderLine(
 		);
 		yOffset = y + dy;
 
-		r = switch (f : GhostTropic) {
-			TEmpty(): None();
+		switch (f : TGhosted) {
 			GhostElem(p, fm): {
 				nextDistinct(p, Point(^alignmentOffset, yOffset));
-				Some(TApplyDynamicStyles(
-					TEmpty(), y, dy, ^alignmentOffset, dynStyle, interWord, lineHeight, elemWidth, []
-				));
+				// Some(TApplyDynamicStyles(
+				// 	TEmpty(), y, dy, ^alignmentOffset, dynStyle, interWord, lineHeight, elemWidth, []
+				// ));
 			}
 			TInspectGhost(inspector,  fm): {
 				nextDistinct(inspector.y, yOffset);
@@ -575,24 +604,14 @@ TRenderLine(
 				nextDistinct(inspector.size, WidthHeight(elemWidth, elemHeight));
 				nextDistinct(inspector.lineHeight, lineHeight);
 				nextDistinct(inspector.lineNumber, lineNumber);
-				Some(TApplyDynamicStyles(
-					TEmpty(), y, dy, ^alignmentOffset, dynStyle, interWord, lineHeight, elemWidth, []
-				));
+				// Some(TApplyDynamicStyles(
+				// 	TEmpty(), y, dy, ^alignmentOffset, dynStyle, interWord, lineHeight, elemWidth, []
+				// ));
 			}
-			TCoordinateInspectElement(inspector, fm): {
-				fo = applyStylesAndOffset(fm);
-				nextDistinct(inspector.y, yOffset);
-				nextDistinct(inspector.x, ^alignmentOffset);
-				nextDistinct(inspector.size, WidthHeight(elemWidth, elemHeight));
-				nextDistinct(inspector.lineHeight, lineHeight);
-				Some(fo);
-			}
-			default: Some(applyStylesAndOffset(cast(f : GhostTropic -> Tropic)))
 		}
-			alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) elemWidth + interWord else 0.0;
-			r;
+		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) elemWidth + interWord else 0.0;
 	});
-	TParaLineResult(TGroup(lo), lineWidth, lineHeight, y + lineAsc);
+	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
 }
 
 extractStyleForRectangle(style : [TCharacterStyle]) -> [GraphicsStyle] {
@@ -646,38 +665,38 @@ TApplyDynamicStyles(
 }
 
 // Joins texts together to a single text element, along with the new metrics
-optimizeTLine(words : [TParaWord]) -> [TOptimizedLineElement] {
-	fold(words, makeList(), \acc : List<TOptimizedLineElement>, word : TParaWord -> {
-		f = word.ghostView;
-		metrics = word.metrics;
-		intId = word.id;
-		switch(acc){
-			EmptyList(): Cons(TOptimizedLineElement(f, metrics, intId), acc);
-			Cons(p, tail_): {
-				switch (p.f : GhostTropic) {
-					TText(t1, s1): {
-						switch (f : GhostTropic) {
-							TText(t2, s2): {
-								join = joinTText(t1, s1, t2, s2);
-								if (length(join) == 1 && intId == p.id) {
-									t : Tropic = join[0];
-									// TODO: Do not do this until at the end of the joining fest
-									m = fMetrics2TMetrics(getTropicMetrics(t));
-									// Replace the last element with the newly joined
-									Cons(TOptimizedLineElement(t, m, intId), tail_)
-								} else Cons(TOptimizedLineElement(f, metrics, intId), acc);
-							}
-							default: {
-								Cons(TOptimizedLineElement(f, metrics, intId), acc);
-							}
-						}
-					}
-					default: Cons(TOptimizedLineElement(f, metrics, intId), acc);
-				}
-			}
-		}
-	}) |> list2array
-}
+// optimizeTLine(words : [TParaWord]) -> [TOptimizedLineElement] {
+// 	fold(words, makeList(), \acc : List<TOptimizedLineElement>, word : TParaWord -> {
+// 		f = word.ghostView;
+// 		metrics = word.metrics;
+// 		intId = word.id;
+// 		switch(acc){
+// 			EmptyList(): Cons(TOptimizedLineElement(f, metrics, intId), acc);
+// 			Cons(p, tail_): {
+// 				switch (p.f : TGhosted) {
+// 					TText(t1, s1): {
+// 						switch (f : TGhosted) {
+// 							TText(t2, s2): {
+// 								join = joinTText(t1, s1, t2, s2);
+// 								if (length(join) == 1 && intId == p.id) {
+// 									t : Tropic = join[0];
+// 									// TODO: Do not do this until at the end of the joining fest
+// 									m = fMetrics2TMetrics(getTropicMetrics(t));
+// 									// Replace the last element with the newly joined
+// 									Cons(TOptimizedLineElement(t, m, intId), tail_)
+// 								} else Cons(TOptimizedLineElement(f, metrics, intId), acc);
+// 							}
+// 							default: {
+// 								Cons(TOptimizedLineElement(f, metrics, intId), acc);
+// 							}
+// 						}
+// 					}
+// 					default: Cons(TOptimizedLineElement(f, metrics, intId), acc);
+// 				}
+// 			}
+// 		}
+// 	}) |> list2array
+// }
 
 joinTText(t1 : string, s1 : [TCharacterStyle], t2: string, s2 : [TCharacterStyle]) -> [Tropic] {
 	if (s1 == s2) [TText(t1 + t2, s1)] else [TText(t1, s1), TText(t2, s2)]
@@ -687,15 +706,13 @@ constructDynamicParts(
 	words : [TParaWord],
 	styleTree : Tree<int, [TTexFragmentStyle]>
 ) -> [Tropic] {
-	filtermap(words, \word -> {
+	map(words, \word -> {
 		// styles = lookupTreeDef(styleTree, either(word.id, -1), []);
 		// applyStyles = \form -> applyListenersAndModifiers(styles, form);
 		// applyStyles = \f -> TFormAvailable(form, TFillXY());
-		switch (word.ghostView : GhostTropic) {
-			GhostElem(p, f): Some(TTranslate(p, f));
-			TInspectGhost(inspector, f): Some(TTranslate(fpoint(inspector.x, inspector.y), f));
-			TCoordinateInspectElement(__, __): None();
-			default : None()
+		switch (word.ghostView : TGhosted) {
+			GhostElem(p, f): TTranslate(p, f);
+			TInspectGhost(inspector, f): TTranslate(fpoint(inspector.x, inspector.y), f);
 		}
 	})
 }
@@ -714,7 +731,6 @@ getTParaWordText(w: TParaWord) -> string {
 		TEmpty(): switch (w.ghostView) {
 			TInspectGhost(__, form): getTropicText(form);
 			GhostElem(__, form): getTropicText(form);
-			default: "";
 		};
 		default: "";
 	}
@@ -762,19 +778,17 @@ setTParaWordText(w: TParaWord, t: string) -> TParaWord {
 		TText(__, s): TParaWord(
 			TText(t, s), w.metrics,
 			switch(w.ghostView) {
-				TCoordinateInspectElement(inspector, form): TCoordinateInspectElement(
+				TInspectGhost(inspector, form): TInspectGhost(
 					inspector,
 					TText(t, getTropicTextStyle(form))
 				);
-				TText(__, fs): TText(t, fs);
-				default: w.ghostView;
+				GhostElem(p, tr) : switch(tr) {
+					TText(__, st) : GhostElem(p, TText(t, st));
+					default : w.ghostView;
+				}
 			},
 			w.id
 		);
 		default: w;
 	};
 }
-
-setWordGhostedView(word: TParaWord, tr: GhostTropic) -> TParaWord {
-	TParaWord(word with ghostView = tr);
-};
