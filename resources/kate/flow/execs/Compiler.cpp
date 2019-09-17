@@ -139,11 +139,15 @@ QStringList Compiler::targetArgs(Runner r) const {
 QStringList Compiler::compileArgs(QString prog) const {
 	switch (type_) {
 	case Compiler::FLOWC1: {
+		QStringList ret;
+		QStringList opts = configUi_.compilerOptionsLineEdit->text().split(QLatin1Char(' '), QString::SkipEmptyParts);
+		ret << opts;
 		if (configUi_.compilationTimePhasesCheckBox->checkState() == Qt::Checked) {
-			return QStringList() << QLatin1String("timephases=1") << prog;
+			ret << QLatin1String("timephases=1") << prog;
 		} else {
-			return QStringList() << prog;
+			ret << prog;
 		}
+		return ret;
 	}
 	case Compiler::FLOWC2: return QStringList() << QLatin1String("bin-dir=") + flowdir_ + QLatin1String("/bin") << prog;
 	case Compiler::FLOW:   return QStringList() << QLatin1String("--dontrun") << prog;
