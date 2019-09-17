@@ -1032,6 +1032,7 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 
     int charIdxDelta = idx_v-extent->char_idx-orgGlyphCharIdx;
     double glyphStartOffset = glyphAdvance;
+    if (glyphIdx) glyphStartOffset += extent->format.spacing;
     if (glyphCharsCompo) {
         glyphStartOffset -= fabs(glyphAdvance * charIdxDelta/glyphCharsCompo);
         if (extent->layout->getDirections()[glyphIdx] != CharDirection::RTL)
