@@ -463,7 +463,7 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 	InternalState internal_state = state_.get();
 	state_.stop();
 	flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(false);
-	if (internal_state.showCompilerOutput()) {
+	if (internal_state.showCompilerOutput() && flowView_.flowConfig_.ui.totalExecutionTimeCheckBox->checkState() == Qt::Checked) {
 		outputExecutionTime(flowView_.flowOutput_.ui.compilerOutTextEdit, internal_state.milliseconds());
 	}
 	if (!exitCode && status == QProcess::NormalExit) {
