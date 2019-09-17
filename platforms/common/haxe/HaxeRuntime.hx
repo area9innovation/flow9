@@ -32,9 +32,9 @@ class HaxeRuntime {
 	untyped __js__("var j='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';var l=j.length;function f(i){var c=j[i%l|0];var r=i/l|0;return r>0?c+f(r-1):c;}");
 
 #if (readable)
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); $global['c$'+f(id)]=new Function(args.join(','),'return {name:'+ name+',' + a + '};')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {name:'+ name+',' + a + '};}')}");
 #else
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); $global['c$'+f(id)]=new Function(args.join(','),'return {_id:'+id.toString()+',' + a + '};')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}')}");
 #end
 #end
 		_structnames_.set(id, name);
