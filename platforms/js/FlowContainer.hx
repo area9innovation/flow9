@@ -151,6 +151,9 @@ class FlowContainer extends Container {
 		if (oldChild != null) {
 			invalidateInteractive();
 			invalidateTransform('removeChild');
+			if (untyped this.keepNativeWidgetChildren) {
+				updateKeepNativeWidgetChildren();
+			}
 
 			emitEvent("childrenchanged");
 		}

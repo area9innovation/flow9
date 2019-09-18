@@ -12,6 +12,8 @@ class DropAreaClip extends NativeWidgetClip {
 	private var regExp : EReg;
 	private var onDone : Array<Dynamic> -> Void;
 
+	public var keepNativeWidget = true;
+
 	public var isInteractive : Bool = true;
 
 	public function new(maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) {
@@ -34,6 +36,7 @@ class DropAreaClip extends NativeWidgetClip {
 	}
 
 	public override function updateNativeWidgetStyle() : Void {
+		calculateWidgetBounds();
 		super.updateNativeWidgetStyle();
 
 		styleChanged = true;
@@ -103,29 +106,17 @@ class DropAreaClip extends NativeWidgetClip {
 		onDone(fileArray);
 	}
 
-	private function getWidth() : Float {
-		if (parent != null) {
-			var bounds = parent.getBounds(true);
-			return bounds.width * parent.worldTransform.a + bounds.height * parent.worldTransform.c;
-		} else {
-			return -1;
-		}
-	}
-
-	private function getHeight() : Float {
-		if (parent != null) {
-			var bounds = parent.getBounds(true);
-			return bounds.width * parent.worldTransform.b + bounds.height * parent.worldTransform.d;
-		} else {
-			return -1;
-		}
-	}
-
 	private function onMouseDown(e : Dynamic) {
 		e.preventDefault();
 	}
 
 	private function onMouseMove(e : Dynamic) {
 		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
+	}
+
+	public override function calculateWidgetBounds() : Void {
+		if (untyped parent != null && parent.localBounds != null) {
+			widgetBounds = untyped parent.localBounds;
+		}
 	}
 }
