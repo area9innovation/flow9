@@ -1,4 +1,5 @@
 import js.Browser;
+import js.Promise;
 
 class WebRTCSupport {
 
