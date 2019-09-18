@@ -90,10 +90,11 @@ class CredentialManagement {
             else if (attestation == "none") None
             else null
         );
-        // untyped console.log(credentialsCreationOptions);
+        untyped console.log(credentialsCreationOptions);
         var createCredentialsPromise = CredentialsContainer.create(credentialsCreationOptions);
         createCredentialsPromise.then(
             function(credential : PublicKeyCredential) {
+                untyped console.log(credential);
                 callback(CredentialManagement.publicKeyCredentialToString(credential, true));
             },
             function(e) {
@@ -172,7 +173,7 @@ class CredentialManagement {
             name: name,
             displayName: displayName,
         };
-        if (icon != null) Reflect.setField(pkcue, "icon", icon);
+        if (icon != "") Reflect.setField(pkcue, "icon", icon);
         var arr : Array<PublicKeyCredentialUserEntity> = [pkcue];
         return arr;
     }
@@ -187,7 +188,7 @@ class CredentialManagement {
             id: id,
             name: name,
         };
-        if (icon != null) Reflect.setField(pkcrpe, "icon", icon);
+        if (icon != "") Reflect.setField(pkcrpe, "icon", icon);
         var arr : Array<PublicKeyCredentialRPEntity> = [pkcrpe];
         return arr;
     }
@@ -206,23 +207,21 @@ class CredentialManagement {
         ?attestation : AttestationConveyancePreference
     ) : PublicKeyCredentialCreationOptions {
 
-        var pkcco : PublicKeyCredentialCreationOptions = {
-            publicKey: {
-                rp: rp,
-                user: user,
-                // This is randomly generated then sent from the relying party's server.
-                // This value (among other client data) will be signed by the authenticator,
-                // using its private key, and must be sent back for verification to the server
-                // as part of AuthenticatorAttestationResponse.attestationObject.
-                challenge: UInt8Array.fromBytes(CredentialManagement.base64UrlDecode(challenge), 0),
-                pubKeyCredParams: pubKeyCredParams.length == 0 ? [{type: PublicKey, alg: -7/* -7 is for yubikey */}] : pubKeyCredParams,
-            }
+        var pkcco = {
+            rp: rp,
+            user: user,
+            // This is randomly generated then sent from the relying party's server.
+            // This value (among other client data) will be signed by the authenticator,
+            // using its private key, and must be sent back for verification to the server
+            // as part of AuthenticatorAttestationResponse.attestationObject.
+            challenge: UInt8Array.fromBytes(CredentialManagement.base64UrlDecode(challenge), 0),
+            pubKeyCredParams: pubKeyCredParams.length == 0 ? [{type: PublicKey, alg: -7/* -7 is for yubikey */}] : pubKeyCredParams,
         };
         if (timeout != null) Reflect.setField(pkcco, "timeout", timeout);
         if (excludeCredentials != null) Reflect.setField(pkcco, "excludeCredentials", excludeCredentials);
         if (authenticatorSelection != null) Reflect.setField(pkcco, "authenticatorSelection", authenticatorSelection);
         if (attestation != null) Reflect.setField(pkcco, "attestation", attestation);
-        return pkcco;
+        return {publicKey: pkcco};
     }
 
     private static function makeCredentialRequestOptions(
@@ -233,16 +232,14 @@ class CredentialManagement {
         ?userVerification : UserVerificationRequirement
     ) : PublicKeyCredentialRequestOptions {
 
-        var pkcro : PublicKeyCredentialRequestOptions = {
-            publicKey: {
-                challenge: UInt8Array.fromBytes(CredentialManagement.base64UrlDecode(challenge), 0),
-                allowCredentials: allowCredentials,
-            }
+        var pkcro = {
+            challenge: UInt8Array.fromBytes(CredentialManagement.base64UrlDecode(challenge), 0),
+            allowCredentials: allowCredentials,
         };
         if (timeout != null) Reflect.setField(pkcro, "timeout", timeout);
         if (rpId != null) Reflect.setField(pkcro, "rpId", rpId);
         if (userVerification != null) Reflect.setField(pkcro, "userVerification", userVerification);
-        return pkcro;
+        return {publicKey: pkcro};
     }
 
     private static function base64UrlEncode(bytes : Bytes) : String {
