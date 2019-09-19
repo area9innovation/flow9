@@ -1430,6 +1430,25 @@ StackSlot ByteCodeRunner::makeStructValue(RUNNER_ARGS)
     return arr;
 }
 
+StackSlot ByteCodeRunner::extractStructArguments(RUNNER_ARGS)
+{
+    StackSlot &flow_struct = RUNNER_ARG(0);
+    if (!flow_struct.IsStruct()) {
+        return StackSlot::MakeEmptyArray();
+    }
+    int size = RUNNER->GetStructSize(flow_struct);
+    StackSlot arrslot = RUNNER->AllocateUninitializedArray(size); // ALLOC
+
+    if (RUNNER->IsErrorReported())
+        return StackSlot::MakeEmptyArray();
+
+    StackSlot *arr = (StackSlot*)MEMORY->GetRawPointer(arrslot.GetInternalArrayPtr(), size*STACK_SLOT_SIZE, true);
+    for (int i = 0; i < size; i++)
+        arr[i] = RUNNER->GetStructSlot(flow_struct, i);
+
+    return arrslot;
+}
+
 bool ByteCodeRunner::VerifyStruct(const StackSlot &arr, int struct_id)
 {
     if (unsigned(struct_id) >= StructDefs.size())

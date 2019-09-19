@@ -5,7 +5,7 @@
 namespace flow {
 
 struct Builder {
-	Builder(QString prog, QString targ, QString flowdir) : compiler_ (prog, flowdir), runner_(prog, targ, flowdir) { }
+	Builder(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir) : compiler_ (ui, prog, flowdir), runner_(ui, prog, targ, flowdir) { }
 	const Compiler& compiler() const { return compiler_; }
 	const Runner& runner() const { return runner_; }
 	QString invocation() const;

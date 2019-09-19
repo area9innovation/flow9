@@ -42,6 +42,15 @@ QStringList Builder::args(const QString& options) const {
 		args << builderOpts(options);
 		return args;
 	}
+	case Runner::CPP2: {
+		QStringList args;
+		args << QLatin1String("type=c++");
+		args << QLatin1String("compiler=") + compiler_.compiler();
+		args << QLatin1String("file=") + compiler_.flowfile();
+		args << QLatin1String("flowdir=") + compiler_.flowdir();
+		args << builderOpts(options);
+		return args;
+	}
 	default: return QStringList();
 	}
 }
