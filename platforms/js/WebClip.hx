@@ -9,6 +9,8 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
 
+	public var keepNativeWidget : Bool = true;
+
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
 	}
@@ -53,7 +55,7 @@ class WebClip extends NativeWidgetClip {
 			try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report("Can not set RealHTML domain" + e); }
 		}
 
-		createNativeWidget("div");
+		initNativeWidget();
 
 		if (Platform.isIOS) {
 			// To restrict size of iframe
@@ -65,6 +67,11 @@ class WebClip extends NativeWidgetClip {
 
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			iframe.className = 'nativeWidget';
+			iframe.style.pointerEvents = 'auto';
+		}
 
 		if (isUrl(url) || Platform.isIE || Platform.isEdge) {
 			iframe.src = url;
@@ -85,9 +92,13 @@ class WebClip extends NativeWidgetClip {
 		iframe.onload = function() {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
-				iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
-				if (Native.isTouchScreen())
-					iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+
+				if (!RenderSupportJSPixi.DomRenderer) {
+					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+					if (Native.isTouchScreen()) {
+						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+					}
+				}
 
 				if (shrinkToFit) {
 					try {
@@ -159,10 +170,12 @@ class WebClip extends NativeWidgetClip {
 		var i = localStages.length - 1;
 
 		while (i > iframeZorder) {
-
 			var pos = Util.getPointerEventPosition(e);
-			
-			if (RenderSupportJSPixi.getClipAt(localStages[i], pos, true, true) != null) {
+
+			RenderSupportJSPixi.MousePos.x = pos.x;
+			RenderSupportJSPixi.MousePos.y = pos.y;
+
+			if (RenderSupportJSPixi.getClipAt(localStages[i], RenderSupportJSPixi.MousePos, true, true) != null) {
 				untyped localStages[i].view.style.pointerEvents = "all";
 				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
 
@@ -239,5 +252,4 @@ class WebClip extends NativeWidgetClip {
 			iframe.contentWindow.postMessage(code, '*');
 		}
 	}
-
 }

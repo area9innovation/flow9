@@ -112,7 +112,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var background : FlowGraphics = null;
 
-	private var metrics : TextMetrics;
+	private var metrics : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -124,6 +124,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
+	public var isInteractive : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -308,18 +309,49 @@ class TextClip extends NativeWidgetClip {
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 
-		nativeWidget.setAttribute("type", type);
-		nativeWidget.value = text;
+		if (isInput) {
+			nativeWidget.setAttribute("type", type);
+			nativeWidget.value = text;
+			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
+			nativeWidget.readOnly = readOnly;
+
+			if (cursorColor >= 0) {
+				nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
+			}
+
+			if (type == 'number') {
+				nativeWidget.step = step;
+			}
+
+			nativeWidget.autocomplete = autocomplete;
+
+			if (maxChars >= 0) {
+				nativeWidget.maxLength = maxChars;
+			}
+
+			if (tabIndex >= 0) {
+				nativeWidget.tabIndex = tabIndex;
+			}
+
+			if (multiline) {
+				nativeWidget.style.resize = 'none';
+			}
+
+			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
+			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+		} else {
+			nativeWidget.textContent = StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text;
+		}
+
 		nativeWidget.style.color = style.fill;
 		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';
 		nativeWidget.style.fontFamily = style.fontFamily;
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${Math.ceil(style.fontSize * 1.15 + interlineSpacing)}px';
-		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
-		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
+		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
+		nativeWidget.style.lineHeight = '${style.lineHeight}px';
 
 		nativeWidget.style.direction = switch (textDirection) {
 			case 'RTL' : 'rtl';
@@ -335,39 +367,16 @@ class TextClip extends NativeWidgetClip {
 			default : 'left';
 		}
 
-		if (cursorColor >= 0) {
-			nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
-		}
+		if (!RenderSupportJSPixi.DomRenderer) {
+			if (Platform.isEdge || Platform.isIE) {
+				nativeWidget.style.opacity = 1;
+				var slicedColor : Array<String> = style.fill.split(",");
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
 
-		if (type == 'number') {
-			nativeWidget.step = step;
-		}
-
-		nativeWidget.autocomplete = autocomplete;
-
-		if (maxChars >= 0) {
-			nativeWidget.maxLength = maxChars;
-		}
-
-		if (tabIndex >= 0) {
-			nativeWidget.tabIndex = tabIndex;
-		}
-
-		if (multiline) {
-			nativeWidget.style.resize = 'none';
-			nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		}
-
-		nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-
-		if (Platform.isEdge || Platform.isIE) {
-			nativeWidget.style.opacity = 1;
-			var slicedColor : Array<String> = style.fill.split(",");
-			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
-
-			nativeWidget.style.color = newColor;
-		} else {
-			nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+				nativeWidget.style.color = newColor;
+			} else {
+				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+			}
 		}
 	}
 
@@ -448,24 +457,27 @@ class TextClip extends NativeWidgetClip {
 		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
 		style.lineHeight = Math.ceil(fontSize * 1.15 + interlineSpacing);
-		style.wordWrap = wordWrap;
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
-		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
 
-		measureFont();
+		if (!RenderSupportJSPixi.DomRenderer) {
+			measureFont();
+		}
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
 		// Force text value right away
-		if (nativeWidget != null) {
+		if (nativeWidget != null && isInput) {
 			nativeWidget.value = text;
 		}
 
 		invalidateMetrics();
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
+		}
 	}
 
 	private function measureFont() : Void {
@@ -473,9 +485,11 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function layoutText() : Void {
-		if (isFocused || text == '') {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return;
+		} else if (isFocused || text == '') {
 			if (textClip != null) {
-				textClip.setClipRenderable(false);
+				textClip.setClipVisible(false);
 			}
 		} else if (textClipChanged) {
 			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
@@ -554,11 +568,14 @@ class TextClip extends NativeWidgetClip {
 				default : textDirection == 'rtl' ? 1 : 0;
 			};
 
-			textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
+			textClip.setClipX(anchorX * Math.max(0, getWidgetWidth() - getClipWidth()));
+			if (style.fontFamily == "Material Icons") {
+				textClip.setClipY(style.fontProperties.descent);
+			}
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			textClip.setClipRenderable(true);
+			textClip.setClipVisible(true);
 			textClipChanged = false;
 		}
 	}
@@ -574,8 +591,10 @@ class TextClip extends NativeWidgetClip {
 
 	public override function invalidateStyle() : Void {
 		if (!doNotInvalidateStage) {
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
+			if (!RenderSupportJSPixi.DomRenderer) {
+				if (isInput) {
+					setScrollRect(0, 0, getWidth(), getHeight());
+				}
 			}
 
 			super.invalidateStyle();
@@ -755,16 +774,24 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
-		createNativeWidget(multiline ? 'textarea' : 'input');
+		untyped this.keepNativeWidget = true;
+		updateKeepNativeWidgetChildren();
+		initNativeWidget(multiline ? 'textarea' : 'input');
+		isInteractive = true;
+		invalidateInteractive();
 
-		nativeWidget.onmousemove = onMouseMove;
-		nativeWidget.onmousedown = onMouseDown;
-		nativeWidget.onmouseup = onMouseUp;
-
-		if (Native.isTouchScreen()) {
+		if (Platform.isMobile) {
+			nativeWidget.ontouchmove = onMouseMove;
 			nativeWidget.ontouchstart = onMouseDown;
 			nativeWidget.ontouchend = onMouseUp;
-			nativeWidget.ontouchmove = onMouseMove;
+		} else if (Platform.isSafari) {
+			nativeWidget.onmousemove = onMouseMove;
+			nativeWidget.onmousedown = onMouseDown;
+			nativeWidget.onmouseup = onMouseUp;
+		} else {
+			nativeWidget.onpointermove = onMouseMove;
+			nativeWidget.onpointerdown = onMouseDown;
+			nativeWidget.onpointerup = onMouseUp;
 		}
 
 		nativeWidget.onfocus = onFocus;
@@ -805,14 +832,30 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function onMouseMove(e : MouseEvent) {
+	private function onMouseMove(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+				RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+				RenderSupportJSPixi.PixiStage.emit("mousemove");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupportJSPixi.MousePos.x = e.pageX;
+			RenderSupportJSPixi.MousePos.y = e.pageY;
+
+			RenderSupportJSPixi.PixiStage.emit("mousemove");
+		}
+
 		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
-		RenderSupportJSPixi.provideEvent(e);
+		e.stopPropagation();
 	}
 
 	private function onMouseDown(e : Dynamic) {
@@ -821,50 +864,90 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
 
-			if (RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, point, true, true) != this) {
+			RenderSupportJSPixi.MousePos.x = point.x;
+			RenderSupportJSPixi.MousePos.y = point.y;
+
+			if (RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, RenderSupportJSPixi.MousePos, true, true) != this) {
 				e.preventDefault();
 			}
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+				RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+				if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupportJSPixi.MousePos.x = e.pageX;
+			RenderSupportJSPixi.MousePos.y = e.pageY;
+
+			if (e.which == 3 || e.button == 2) {
+				RenderSupportJSPixi.PixiStage.emit("mouserightdown");
+			} else if (e.which == 2 || e.button == 1) {
+				RenderSupportJSPixi.PixiStage.emit("mousemiddledown");
+			} else {
+				if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+			}
+		}
+
+		e.stopPropagation();
 	}
 
-	private function onMouseUp(e : MouseEvent) {
+	private function onMouseUp(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		RenderSupportJSPixi.MousePos.x = e.pageX;
+		RenderSupportJSPixi.MousePos.y = e.pageY;
+
+		if (e.which == 3 || e.button == 2) {
+			RenderSupportJSPixi.PixiStage.emit("mouserightup");
+		} else if (e.which == 2 || e.button == 1) {
+			RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+		} else {
+			if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+		}
+
+		e.stopPropagation();
 	}
 
 	private function onFocus(e : Event) : Void {
-		isFocused = true;
-		emit('focus');
+		RenderSupportJSPixi.once("drawframe", function() {
+			isFocused = true;
+			emit('focus');
 
-		if (parent != null) {
-			parent.emitEvent('childfocused', this);
-		}
+			if (parent != null) {
+				parent.emitEvent('childfocused', this);
+			}
 
-		if (nativeWidget == null) {
-			return;
-		}
-		
-		if (Platform.isIOS) {
-			RenderSupportJSPixi.ensureCurrentInputVisible();
-		}
+			if (nativeWidget == null || parent == null) {
+				return;
+			}
 
-		invalidateMetrics();
+			if (Platform.isIOS) {
+				RenderSupportJSPixi.ensureCurrentInputVisible();
+			}
+
+			invalidateMetrics();
+		});
 	}
 
 	private function onBlur(e : Event) : Void {
-		isFocused = false;
-		emit('blur');
+		RenderSupportJSPixi.once("drawframe", function() {
+			isFocused = false;
+			emit('blur');
 
-		if (nativeWidget == null) {
-			return;
-		}
+			if (nativeWidget == null || parent == null) {
+				return;
+			}
 
-		invalidateMetrics();
+			invalidateMetrics();
+		});
 	}
 
 	private function onInput(e : Dynamic) {
@@ -963,16 +1046,16 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return widgetWidth > 0.0 && isInput ? widgetWidth : getClipWidth();
+		return widgetWidth > 0 ? widgetWidth : getClipWidth();
+	}
+
+	public override function getHeight() : Float {
+		return widgetHeight > 0 ? widgetHeight : getClipHeight();
 	}
 
 	private function getClipWidth() : Float {
 		updateTextMetrics();
 		return metrics != null ? untyped metrics.width : 0;
-	}
-
-	public override function getHeight() : Float {
-		return widgetHeight > 0.0 && isInput ? widgetHeight : getClipHeight();
 	}
 
 	private function getClipHeight() : Float {
@@ -1062,7 +1145,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextMetrics() : Void {
-		if (text != "" && style.fontSize > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
+		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			metrics = TextMetrics.measureText(text, style);
 		}
 	}
@@ -1076,6 +1159,25 @@ class TextClip extends NativeWidgetClip {
 			return [ascent, descent, leading];
 		} else {
 			return [style.fontProperties.ascent, style.fontProperties.descent, style.fontProperties.descent];
+		}
+	}
+
+	private override function createNativeWidget(?tagName : String = "p") : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (!isNativeWidget) {
+				return;
+			}
+
+			deleteNativeWidget();
+
+			nativeWidget = Browser.document.createElement(tagName);
+			updateClipID();
+			nativeWidget.className = 'nativeWidget';
+			nativeWidget.style.whiteSpace = 'pre-wrap';
+
+			isNativeWidget = true;
+		} else {
+			super.createNativeWidget(tagName);
 		}
 	}
 }
