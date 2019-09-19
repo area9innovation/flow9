@@ -1718,6 +1718,10 @@ class Native {
 		return JsMd5.encode(content);
 	}
 
+	public static function getCharAt(s : String, i : Int) : String {
+		return s.charAt(i);
+	}
+
 	#if js
 	private static function object2JsonStructs(o : Dynamic) : Dynamic {
 		if (untyped __js__("Array.isArray(o)")) {
