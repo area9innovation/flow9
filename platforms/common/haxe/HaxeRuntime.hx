@@ -32,9 +32,9 @@ class HaxeRuntime {
 	untyped __js__("var j='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';var l=j.length;function f(i){var c=j[i%l|0];var r=i/l|0;return r>0?c+f(r-1):c;}");
 
 #if (readable)
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._name=\"'+name+'\";'+a+'return this;')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {name:'+ name+',' + a + '};}')}");
 #else
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._id='+id.toString()+';'+a+'return this;')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}')}");
 #end
 #end
 		_structnames_.set(id, name);
@@ -181,6 +181,25 @@ if (a === b) return true;
 		}
 
 		return (o1 < o2 ? -1 : 1);
+	}
+
+
+	public static function extractStructArguments(value : Dynamic) :  Array<Dynamic> {
+		#if (js && readable)
+			if (!Reflect.hasField(value, "_name")) return [];
+			var i = _structids_.get(value._name);
+		#else
+			if (!Reflect.hasField(value, "_id")) return [];
+			var i = value._id;
+		#end
+
+		var sargs = _structargs_.get(i);
+		var n = sargs.length;
+		var result = untyped Array(n);
+		for (i in 0...n) {
+			result[i] = Reflect.field(value, sargs[i]);
+		}
+		return result;
 	}
 
 	public static inline function isArray(o1 : Dynamic) : Bool {
@@ -366,6 +385,37 @@ if (a === b) return true;
 			return default_value;
 		}
 	}
+
+
+	#if js
+	// Use these when sure args types and count is correct and struct exists 
+	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		return o;
+	}
+
+	public static inline function fastMakeStructValue2(n : String, a1 : Dynamic, a2 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		untyped o[_structargs_.get(sid)[1]] = a2;
+		return o;
+	}
+	#end
 
 	public static function makeEmptyStruct(sid : Int) : Dynamic {
 		if (_structtemplates_ != null) {

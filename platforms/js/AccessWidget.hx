@@ -6,6 +6,7 @@ import pixi.core.display.Bounds;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 import pixi.interaction.EventEmitter;
+import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -203,15 +204,17 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateDisplay() : Void {
-		updateTransform();
+		if (!RenderSupportJSPixi.DomRenderer) {
+			updateTransform();
 
-		for (child in children) {
-			child.updateDisplay();
+			for (child in children) {
+				child.updateDisplay();
+			}
 		}
 	}
 
 	public function updateTransform() : Void {
-		if (accessWidget != null) {
+		if (!RenderSupportJSPixi.DomRenderer && accessWidget != null) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
@@ -240,13 +243,7 @@ class AccessWidgetTree extends EventEmitter {
 					return;
 				}
 
-				if (untyped clip.nativeWidget != null) {
-					untyped clip.updateNativeWidget();
-
-					if (untyped clip.styleChanged || untyped clip.viewBounds == null) {
-						untyped clip.updateNativeWidgetStyle();
-					}
-				}
+				clip.updateNativeWidget();
 			}
 		}
 	}
@@ -386,16 +383,22 @@ class AccessWidget extends EventEmitter {
 		this.nodeindex = nodeindex;
 		this.zorder = zorder;
 
-		clip.onAdded(function() {
-			addAccessWidget(this);
+		if (!RenderSupportJSPixi.DomRenderer) {
+			clip.onAdded(function() {
+				addAccessWidget(this);
 
-			return function() {
-				removeAccessWidget(this);
-			}
-		});
+				return function() {
+					removeAccessWidget(this);
+				}
+			});
+		}
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return;
+		}
+
 		if (untyped clip.accessWidget != null) {
 			removeAccessWidget(untyped clip.accessWidget);
 		}
@@ -444,14 +447,18 @@ class AccessWidget extends EventEmitter {
 
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
-					clip.emit("blur");
+					RenderSupportJSPixi.once("drawframe", function() { clip.emit("blur"); });
 				});
 
 				if (tagName == "button") {
+					this.element.classList.remove("accessElement");
 					this.element.classList.add("accessButton");
 				} else if (tagName == "div") {
+					this.element.classList.remove("accessButton");
 					this.element.classList.add("accessElement");
 				} else if (tagName == "form") {
+					this.element.classList.remove("accessButton");
+					this.element.classList.remove("accessElement");
 					this.element.onsubmit = function() { return false; };
 				}
 
@@ -511,10 +518,30 @@ class AccessWidget extends EventEmitter {
 	public function set_role(role : String) : String {
 		element.setAttribute("role", role);
 
+		if (RenderSupportJSPixi.DomRenderer && accessRoleMap.get(role) != null && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
+			var newElement = Browser.document.createElement(accessRoleMap.get(role));
+
+			for (attr in element.attributes) {
+				newElement.setAttribute(attr.name, attr.value);
+			}
+
+			for (child in element.childNodes) {
+				newElement.appendChild(child);
+			}
+
+			if (element.parentNode != null) {
+				element.parentNode.insertBefore(newElement, element);
+				element.parentNode.removeChild(element);
+			}
+
+			untyped clip.nativeWidget = newElement;
+			element = newElement;
+		}
+
 		// Sets events
 		if (accessRoleMap.get(role) == "button") {
-			element.onclick = function(e) {
-				if (e.target == element) {
+			element.onclick = function(e : Dynamic) {
+				if (e.target == element && e.detail == 0) {
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
 					} else {
@@ -523,17 +550,65 @@ class AccessWidget extends EventEmitter {
 				}
 			};
 
-			element.addEventListener('focus', function() {
-				if (element != null) {
-					element.classList.add('focused');
+			var onpointerdown = function(e : Dynamic) {
+				// Prevent default drop focus on canvas
+				// Works incorrectly in Edge
+				if (e.target == RenderSupportJSPixi.PixiView) {
+					e.preventDefault();
 				}
-			});
 
-			element.addEventListener('blur', function() {
-				if (element != null) {
-					element.classList.remove('focused');
+				if (e.touches != null) {
+					if (e.touches.length == 1) {
+						RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
+						RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+
+						if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else {
+					RenderSupportJSPixi.MousePos.x = e.pageX;
+					RenderSupportJSPixi.MousePos.y = e.pageY;
+
+					if (e.which == 3 || e.button == 2) {
+						RenderSupportJSPixi.PixiStage.emit("mouserightdown");
+					} else if (e.which == 2 || e.button == 1) {
+						RenderSupportJSPixi.PixiStage.emit("mousemiddledown");
+					} else {
+						if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+					}
 				}
-			});
+
+				e.preventDefault();
+				e.stopPropagation();
+			};
+
+			var onpointerup = function(e : Dynamic) {
+				RenderSupportJSPixi.MousePos.x = e.pageX;
+				RenderSupportJSPixi.MousePos.y = e.pageY;
+
+				if (e.which == 3 || e.button == 2) {
+					RenderSupportJSPixi.PixiStage.emit("mouserightup");
+				} else if (e.which == 2 || e.button == 1) {
+					RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+				} else {
+					if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+				}
+
+				e.preventDefault();
+				e.stopPropagation();
+			};
+
+			if (Platform.isMobile) {
+				element.ontouchstart = onpointerdown;
+				element.ontouchend = onpointerup;
+			} else if (Platform.isSafari) {
+				element.onmousedown = onpointerdown;
+				element.onmouseup = onpointerup;
+			} else {
+				element.onpointerdown = onpointerdown;
+				element.onpointerup = onpointerup;
+			}
 
 			if (element.tabIndex == null) {
 				element.tabIndex = 0;
@@ -781,6 +856,10 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element, ?previousElement : Element, ?childrenChanged : Bool = false) : Bool {
+		if (RenderSupportJSPixi.DomRenderer) {
+			return false;
+		}
+
 		if (tree == null) {
 			tree = AccessWidget.tree;
 

@@ -166,7 +166,7 @@ class Native {
 					Browser.document.body.removeChild(textArea);
 				} else {
 					untyped setTimeout(function () {
-						copyAction(textArea); 
+						copyAction(textArea);
 						Browser.document.body.removeChild(textArea);
 					}, 0);
 				}
@@ -367,7 +367,7 @@ class Native {
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
 		/*
 		  Searching within a range suggest that we can stop searching inside long string after end position.
-		  This makes searching a bit faster. But JavaScript has no means for this. 
+		  This makes searching a bit faster. But JavaScript has no means for this.
 		  We have only way to do this - make a copy of string within the range and search there.
 		  It is significantly faster for a long string comparing to simple `indexOf()` for whole string.
 		  But copying is not free. Since copy is linear in general and search is linear in general too,
@@ -412,6 +412,14 @@ class Native {
 		#end
 	}
 
+	public static inline function cloneString(str : String) : String {
+		#if js
+		return untyped (' ' + str).slice(1);
+		#else
+		return str;
+		#end
+	}
+
 	public static inline function toLowerCase(str : String) : String {
 		return str.toLowerCase();
 	}
@@ -420,7 +428,7 @@ class Native {
 		return str.toUpperCase();
 	}
 
-	public static function string2utf8(str : String) : Array<Int> {		
+	public static function string2utf8(str : String) : Array<Int> {
 		var bytes = haxe.io.Bytes.ofString(str);
 		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
 		return a;
@@ -595,6 +603,14 @@ class Native {
 			if (clip.parent != null && clip.parent.removeChild != null) {
 				clip.parent.removeChild(clip);
 			}
+
+			if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS && untyped clip.nativeWidget != null) {
+				untyped clip.nativeWidget.style.display = 'none';
+			}
+
+			RenderSupportJSPixi.once("drawframe", function() {
+				DisplayObjectHelper.deleteNativeWidget(clip);
+			});
 		}
 	}
 
@@ -610,7 +626,7 @@ class Native {
 
 	#if js
 	private static var DeferQueue : Array< Void -> Void > = new Array();
-	private static function defer(cb : Void -> Void) : Void {
+	public static function defer(cb : Void -> Void) : Void {
 		if (DeferQueue.length == 0) {
 			var fn = function() {
 				for (f in DeferQueue) f();
@@ -769,7 +785,7 @@ class Native {
 
 	public static function getUrlParameter(name : String) : String {
 		var value = "";
-	
+
 	#if (js && flow_nodejs && flow_webmodule)
 		if (untyped request.method == "GET") {
 			value = untyped request.query[name];
@@ -779,7 +795,7 @@ class Native {
 	#else
 		value = Util.getParameter(name);
 	#end
-		
+
 		return value != null ? value : "";
 	}
 
@@ -1102,6 +1118,10 @@ class Native {
 
 	public static inline function makeStructValue(name : String, args : Array<Dynamic>, default_value : Dynamic) : Dynamic {
 		return HaxeRuntime.makeStructValue(name, args, default_value);
+	}
+
+	public static function extractStructArguments(value : Dynamic) :  Array<Dynamic> {
+		return HaxeRuntime.extractStructArguments(value);
 	}
 
 	public static function quit(c : Int) : Void {
@@ -1623,7 +1643,7 @@ class Native {
 					}
 				};
 
-				Browser.window.addEventListener("mousemove", mouseMoveActiveFn);
+				Browser.window.addEventListener("pointermove", mouseMoveActiveFn);
 				Browser.window.addEventListener("videoplaying", mouseMoveActiveFn);
 				Browser.window.addEventListener("focus", mouseMoveActiveFn);
 				Browser.window.addEventListener("blur", mouseMoveActiveFn);
@@ -1632,7 +1652,7 @@ class Native {
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutActiveId)");
-					Browser.window.removeEventListener("mousemove", mouseMoveActiveFn);
+					Browser.window.removeEventListener("pointermove", mouseMoveActiveFn);
 					Browser.window.removeEventListener("videoplaying", mouseMoveActiveFn);
 					Browser.window.removeEventListener("focus", mouseMoveActiveFn);
 					Browser.window.removeEventListener("blur", mouseMoveActiveFn);
@@ -1665,14 +1685,14 @@ class Native {
 					}
 				};
 
-				Browser.window.addEventListener("mousemove", mouseMoveIdleFn);
+				Browser.window.addEventListener("pointermove", mouseMoveIdleFn);
 				Browser.window.addEventListener("videoplaying", mouseMoveIdleFn);
 				Browser.window.addEventListener("focus", mouseMoveIdleFn);
 				Browser.window.addEventListener("blur", mouseMoveIdleFn);
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutIdleId)");
-					Browser.window.removeEventListener("mousemove", mouseMoveIdleFn);
+					Browser.window.removeEventListener("pointermove", mouseMoveIdleFn);
 					Browser.window.removeEventListener("videoplaying", mouseMoveIdleFn);
 					Browser.window.removeEventListener("focus", mouseMoveIdleFn);
 					Browser.window.removeEventListener("blur", mouseMoveIdleFn);
@@ -1705,6 +1725,44 @@ class Native {
 	public static function md5(content : String) : String {
 		return JsMd5.encode(content);
 	}
+
+	public static function getCharAt(s : String, i : Int) : String {
+		return s.charAt(i);
+	}
+
+	#if js
+	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+		if (untyped __js__("Array.isArray(o)")) {
+			return HaxeRuntime.fastMakeStructValue("JsonArray", map(o, object2JsonStructs));
+		} else {
+			var t = untyped __js__ ("typeof o");
+
+			if ( t == "string" ) {
+				return HaxeRuntime.fastMakeStructValue("JsonString", o);
+			} else if ( t == "number" ) {
+				return HaxeRuntime.fastMakeStructValue("JsonDouble", o);
+			} else if (t == "boolean") {
+				return HaxeRuntime.fastMakeStructValue("JsonBool", o);
+			} else if (o == null) {
+				return makeStructValue("JsonNull", [], null);
+			} else {
+				var fields : Array<String> = untyped __js__ ("Object.getOwnPropertyNames(o)");
+				for (i in 0...fields.length)
+					fields[i] = HaxeRuntime.fastMakeStructValue2("Pair", fields[i], object2JsonStructs( untyped __js__ ("o[fields[i]]") ));
+				return HaxeRuntime.fastMakeStructValue("JsonObject", fields);
+			}
+		}
+	}
+
+	public static function parseJson(json : String) : Dynamic {
+	 	try {
+	 		var o = haxe.Json.parse(json);
+			return object2JsonStructs(o);
+		} catch (e : Dynamic) {
+			return makeStructValue("JsonDouble", [0.0], null); 
+		}
+	}
+	#end
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
 		#if js

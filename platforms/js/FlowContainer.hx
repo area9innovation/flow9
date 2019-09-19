@@ -1,6 +1,8 @@
 import js.Browser;
 import js.html.CanvasElement;
 
+import pixi.core.display.Bounds;
+import pixi.core.math.shapes.Rectangle;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 import pixi.core.renderers.canvas.CanvasRenderer;
@@ -11,13 +13,22 @@ class FlowContainer extends Container {
 	public var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
-	public var transformChanged : Bool = true;
-	public var stageChanged : Bool = true;
-	private var childrenChanged : Bool = true;
 
 	private var stage : FlowContainer;
 	private var view : CanvasElement;
 	private var context : Dynamic;
+
+	public var transformChanged : Bool = false;
+	public var stageChanged : Bool = false;
+	private var worldTransformChanged : Bool = false;
+
+	private var localBounds = new Bounds();
+	private var _bounds = new Bounds();
+
+	private var nativeWidget : Dynamic;
+	private var accessWidget : AccessWidget;
+
+	public var isNativeWidget : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
@@ -25,6 +36,15 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
+		isNativeWidget = RenderSupportJSPixi.DomRenderer && (RenderSupportJSPixi.RenderContainers || worldVisible);
+
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (worldVisible) {
+				nativeWidget = Browser.document.body;
+			} else {
+				createNativeWidget();
+			}
+		}
 	}
 
 	public function createView(?zorder : Int) : Void {
@@ -84,9 +104,10 @@ class FlowContainer extends Container {
 	}
 
 	private function onResize() : Void {
-		if (view == RenderSupportJSPixi.PixiRenderer.view)
+		if (view == RenderSupportJSPixi.PixiRenderer.view) {
 			return;
-		
+		}
+
 		view.width = RenderSupportJSPixi.PixiView.width;
 		view.height = RenderSupportJSPixi.PixiView.height;
 
@@ -96,29 +117,13 @@ class FlowContainer extends Container {
 
 	public override function addChild<T:DisplayObject>(child : T) : T {
 		if (child.parent != null) {
-			child.parent.children.remove(child);
-
-			child.parent.updateClipInteractive();
-
-			RenderSupportJSPixi.InvalidateStage();
-
-			untyped child.parent.childrenChanged = true;
-			child.parent.emitEvent("childrenchanged");
-			child.parent = null;
+			untyped child.parent.removeChild(child);
 		}
 
 		var newChild = super.addChild(child);
 
 		if (newChild != null) {
-			newChild.updateStage();
-			newChild.updateClipInteractive(interactiveChildren);
-
-			if (getClipVisible()) {
-				newChild.updateClipWorldVisible();
-				newChild.invalidateStage(true);
-			}
-
-			childrenChanged = true;
+			newChild.invalidate();
 			emitEvent("childrenchanged");
 		}
 
@@ -127,29 +132,13 @@ class FlowContainer extends Container {
 
 	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
 		if (child.parent != null) {
-			child.parent.children.remove(child);
-
-			child.parent.updateClipInteractive();
-
-			RenderSupportJSPixi.InvalidateStage();
-
-			untyped child.parent.childrenChanged = true;
-			child.parent.emitEvent("childrenchanged");
-			child.parent = null;
+			untyped child.parent.removeChild(child);
 		}
 
 		var newChild = super.addChildAt(child, index > children.length ? children.length : index);
 
 		if (newChild != null) {
-			newChild.updateStage();
-			newChild.updateClipInteractive(interactiveChildren);
-
-			if (getClipVisible()) {
-				newChild.updateClipWorldVisible();
-				newChild.invalidateStage(true);
-			}
-
-			childrenChanged = true;
+			newChild.invalidate();
 			emitEvent("childrenchanged");
 		}
 
@@ -160,42 +149,49 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			if (untyped oldChild.stage == oldChild) {
-				for (c in children) {
-					c.invalidateStage(false);
-				}
+			invalidateInteractive();
+			invalidateTransform('removeChild');
+			if (untyped this.keepNativeWidgetChildren) {
+				updateKeepNativeWidgetChildren();
 			}
 
-			oldChild.updateStage();
-			updateClipInteractive();
-
-			invalidateStage(false);
-
-			childrenChanged = true;
 			emitEvent("childrenchanged");
 		}
 
 		return oldChild;
 	}
 
-	public function invalidateStage(?updateTransform : Bool = true) : Void {
+	public function invalidateStage() : Void {
 		if (stage != null) {
 			if (stage != this) {
-				stage.invalidateStage(updateTransform);
+				stage.invalidateStage();
 			} else {
 				stageChanged = true;
-				RenderSupportJSPixi.InvalidateStage();
-
-				if (updateTransform) {
-					transformChanged = true;
-					RenderSupportJSPixi.InvalidateTransform();
-				}
+				RenderSupportJSPixi.PixiStageChanged = true;
 			}
 		}
 	}
 
 	public function render(renderer : CanvasRenderer) {
-		if (stageChanged && view != null) {
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (stageChanged) {
+				stageChanged = false;
+
+				if (transformChanged) {
+					var bounds = new Bounds();
+					bounds.minX = 0;
+					bounds.minY = 0;
+					bounds.maxX = renderer.width;
+					bounds.maxY = renderer.height;
+					invalidateLocalBounds();
+					invalidateRenderable(bounds);
+
+					DisplayObjectHelper.lockStage();
+					updateTransform();
+					DisplayObjectHelper.unlockStage();
+				}
+			}
+		} else if (stageChanged && view != null) {
 			stageChanged = false;
 
 			renderer.view = view;
@@ -203,7 +199,71 @@ class FlowContainer extends Container {
 			untyped renderer.rootContext = context;
 			renderer.transparent = parent.children.indexOf(this) != 0;
 
-			renderer.render(this, null, true, null, false);
+			DisplayObjectHelper.lockStage();
+
+			if (transformChanged) {
+				var bounds = new Bounds();
+				bounds.minX = 0;
+				bounds.minY = 0;
+				bounds.maxX = renderer.width;
+				bounds.maxY = renderer.height;
+				invalidateLocalBounds();
+				invalidateRenderable(bounds);
+			}
+
+			renderer.render(this, null, true, null, !transformChanged);
+			DisplayObjectHelper.unlockStage();
+		}
+	}
+
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		rect = localBounds.getRectangle(rect);
+
+		var filterPadding = untyped this.filterPadding;
+
+		if (filterPadding != null) {
+			rect.x -= filterPadding;
+			rect.y -= filterPadding;
+			rect.width += filterPadding * 2.0;
+			rect.height += filterPadding * 2.0;
+		}
+
+		return rect;
+	}
+
+	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		if (!skipUpdate) {
+			updateTransform();
+		}
+
+		getLocalBounds();
+		calculateBounds();
+
+		return _bounds.getRectangle(rect);
+	}
+
+	public function calculateBounds() : Void {
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+	}
+
+	private function createNativeWidget(?tagName : String = "div") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(tagName);
+		updateClipID();
+		nativeWidget.className = 'nativeWidget';
+
+		isNativeWidget = true;
+
+		for (child in children) {
+			untyped child.parentClip = this;
 		}
 	}
 }

@@ -78,7 +78,7 @@ echo * Generating the Java modules for flowc
 echo   -------------------------------------
 echo.
 ::call flow --java javagen tools\flowc\flowc.flow
-call flowc1 tools/flowc/flowc.flow java=javagen verbose=1
+call flowc1 tools/flowc/flowc.flow java=javagen
 
 echo.
 echo * Compiling the generated code

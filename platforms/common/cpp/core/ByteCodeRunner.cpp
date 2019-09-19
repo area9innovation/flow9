@@ -3710,6 +3710,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, toUpperCase, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, toString, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, makeStructValue, 3);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, extractStructArguments, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContent, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContentBinary, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContent, 2);

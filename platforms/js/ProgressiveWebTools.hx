@@ -22,7 +22,13 @@ class ProgressiveWebTools {
 				trace('ServiceWorker registration successful with scope: ', registration.scope);
 
 				globalRegistration = registration;
-				callback(true);
+				if (registration.active) {
+					callback(true);
+				} else {
+					navigator.serviceWorker.oncontrollerchange = function(e) {
+						callback(true);
+					};
+				}
 			}, function(err) {
 				trace('ServiceWorker registration failed: ', err);
 				callback(false);

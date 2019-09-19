@@ -45,11 +45,16 @@ preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string
 	workingDir = getConfigParameterDef(config.config, "working-dir", "");
 	flowfile = trimFlowfile(file, config.includes, workingDir);
 	preloadedModulesAndErrors = preloadModulesInParallel(config, globEnv, makeTree1(flowfile, FcImport2(flowfile, "", 0, 0)), Pair(makeTree(), []));
-	if (preloadedModulesAndErrors.second != []) {
-		// Some errors.
-		iter(preloadedModulesAndErrors.second, errHandler);
+	all_preloaded = preloadedModulesAndErrors.first;
+	load_errors = preloadedModulesAndErrors.second;
+	if (load_errors != []) {
+		iter(load_errors, errHandler);
 	}
-	preloadedModulesAndErrors.first
+	cyclic_import_errors = checkImportCycles(all_preloaded);
+	if (cyclic_import_errors != []) {
+		iter(cyclic_import_errors, errHandler);
+	}
+	all_preloaded
 }
 
 // Preloads given modules recursively adding imports. Either loads from cache or parses file.
@@ -61,7 +66,6 @@ preloadModulesInParallel(
 ) -> Pair<Tree<string, FcPreloadedModule>, [FcError]> {
 
 	filesToLoad : [FcImport2] = map(tree2pairs(files), \pr -> pr.second);
-	t = timestamp();
 
 	// Load the incremental or parse all the files given in parallel (no recursion)
 	// Triple<flowfile, module, error>
@@ -71,7 +75,6 @@ preloadModulesInParallel(
 		errM = if (pr2.second != dummyFcError) Some(pr2.second) else None();
 		Triple(preloadedFiFileInfo(preloadedModule).flowfile, preloadedModule, errM)
 	}));
-	incrementTimePhase(fcTimePhases.parse, t);
 
 	// Grab the results
 	parsedFiles2 : Tree<string, FcPreloadedModule> = fold(results, preloadedModulesAndErrors.first, \acc, r -> {
@@ -98,6 +101,78 @@ getFcImport2s(m : FcPreloadedModule, fromfile : string) -> [FcImport2] {
 		}
 		FcLoaded(module, __): {
 			map(module.imports, \im -> FcImport2(im.flowfile, fromfile, im.start, im.start))
+		}
+	}
+}
+
+checkImportCycles(all_preloaded : Tree<string, FcPreloadedModule>) -> [FcError] {
+	imports_map : ref Tree<string, Set<string>> = ref makeTree();
+	visited = ref makeSet();
+	foldTree(all_preloaded, [], 
+		\name, preloaded, acc -> {
+			fileinfo = preloadedFiFileInfo(preloaded);
+			all_imports = collectPreloadedImports(preloaded, all_preloaded, imports_map, visited);
+			cycle_error = if (!containsSet(all_imports, name)) [] else {
+				cycle = findPreloadedImportCycle(preloaded, fileinfo.flowfile, all_preloaded, ^imports_map, []);
+				[FcError("Cyclic import in module '" + fileinfo.flowfile + "'",
+					map(cycle, \bad_mod_pair -> {
+							bad_mod = bad_mod_pair.first;
+							bad_imp = bad_mod_pair.second;
+							FcPosition(preloadedFiFileInfo(bad_mod).flowfile, bad_imp.start, bad_imp.end)
+						}
+					)
+				)]
+			}
+			concat(acc, cycle_error)
+		}
+	)
+}
+
+collectPreloadedImports(curr : FcPreloadedModule, all_preloaded : Tree<string, FcPreloadedModule>, imports_map : ref Tree<string, Set<string>>, visited : ref Set<string>) -> Set<string> {
+	fileinfo = preloadedFiFileInfo(curr);
+	visited := insertSet(^visited, fileinfo.flowfile);
+	switch (lookupTree(^imports_map, fileinfo.flowfile)) {
+		Some(all_imports): all_imports;
+		None(): {
+			imports = preloadedFcImports(curr);
+			all_imports = fold(imports, buildSet(map(imports, \imp -> imp.flowfile)), 
+				\acc, imp -> {
+					imp_preloaded = lookupTreeDef(all_preloaded, imp.flowfile, dummyFcPreloaded);
+					if (containsSet(^visited, preloadedFiFileInfo(imp_preloaded).flowfile)) acc else {
+						mergeSets(acc, collectPreloadedImports(imp_preloaded, all_preloaded, imports_map, visited))
+					}
+				}
+			);
+			imports_map := setTree(^imports_map, fileinfo.flowfile, all_imports);
+			all_imports
+		}
+	}
+}
+
+findPreloadedImportCycle(preloaded : FcPreloadedModule, cyclic_name : string, all_preloaded : Tree<string, FcPreloadedModule>, imports_map : Tree<string, Set<string>>, acc : [Pair<FcPreloadedModule, FcImport>]) -> [Pair<FcPreloadedModule, FcImport>] {
+	fileinfo = preloadedFiFileInfo(preloaded);
+	if ((fileinfo.flowfile == cyclic_name && acc != []) || exists(acc, \pm -> preloadedFiFileInfo(pm.first).flowfile == fileinfo.flowfile)) {
+		acc
+	} else {
+		imports = preloadedFcImports(preloaded);
+		cyclic_import = findmap(imports, 
+			\imp -> {
+				imp_preloaded = lookupTreeDef(all_preloaded, imp.flowfile, dummyFcPreloaded);
+				imp_imps = lookupTreeDef(imports_map, preloadedFiFileInfo(imp_preloaded).flowfile, makeSet());
+				if (containsSet(imp_imps, cyclic_name)) {
+					Some(Pair(imp_preloaded, imp)) 
+				} else {
+					None()
+				}
+			}
+		);
+		switch (cyclic_import) {
+			Some(imp_preloaded): findPreloadedImportCycle(
+				imp_preloaded.first, 
+				cyclic_name, all_preloaded, imports_map, 
+				concat(acc, [Pair(preloaded, imp_preloaded.second)])
+			);
+			None(): acc;
 		}
 	}
 }
