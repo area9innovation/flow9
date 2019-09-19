@@ -22,7 +22,7 @@ import BlurFilter;
 using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
-	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html" || Util.getParameter("new") == "1";
+	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
 	public static var DomInteractions : Bool = DomRenderer && (Util.getParameter("interactions") == null || Util.getParameter("interactions") == "dom");
 	public static var RenderContainers : Bool = Util.getParameter("containers") == "1" || !DomRenderer;
 
