@@ -508,7 +508,9 @@ class DisplayObjectHelper {
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
 
-			untyped clip.alphaMask = untyped maskContainer;
+			if (!RenderSupportJSPixi.DomRenderer) {
+				untyped clip.alphaMask = untyped maskContainer;
+			}
 
 			updateHasMask(clip);
 
@@ -1018,17 +1020,13 @@ class DisplayObjectHelper {
 					clipMask.removeChild(untyped child);
 				}
 
-				var image = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'image');
-				if (untyped Math.isFinite(clip.alphaMask.localBounds.minX) && Math.isFinite(clip.alphaMask.localBounds.minY)) {
-					image.setAttribute('width', '${round(getWidgetWidth(untyped clip.alphaMask))}');
-					image.setAttribute('height', '${round(getWidgetHeight(untyped clip.alphaMask))}');
-					image.setAttribute('x', '${untyped clip.alphaMask.localBounds.minX}');
-					image.setAttribute('y', '${untyped clip.alphaMask.localBounds.minY}');
+				if (untyped clip.alphaMask.localTransformChanged) {
+					untyped clip.alphaMask.transform.updateLocalTransform();
 				}
+
+				var image = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'image');
 				image.setAttribute('href', alphaMask.url);
-				image.setAttribute('transform', 'matrix(1 0 0 1
-					${untyped -Std.int(svg.parentNode.style.marginLeft.substring(0, svg.parentNode.style.marginLeft.length - 2)) - Std.int(svg.parentNode.style.left.substring(0, svg.parentNode.style.left.length - 2))}
-					${untyped -Std.int(svg.parentNode.style.marginTop.substring(0, svg.parentNode.style.marginTop.length - 2)) - Std.int(svg.parentNode.style.top.substring(0, svg.parentNode.style.top.length - 2))})');
+				image.setAttribute('transform', 'matrix(${untyped clip.alphaMask.localTransform.a} ${untyped clip.alphaMask.localTransform.b} ${untyped clip.alphaMask.localTransform.c} ${untyped clip.alphaMask.localTransform.d} ${untyped clip.alphaMask.localTransform.tx} ${untyped clip.alphaMask.localTransform.ty})');
 				clipMask.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "mask");
 				clipMask.setAttribute('mask-type', 'alpha');
 
