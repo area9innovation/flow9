@@ -252,6 +252,4 @@ class WebClip extends NativeWidgetClip {
 			iframe.contentWindow.postMessage(code, '*');
 		}
 	}
-
-	public override function calculateWidgetBounds() : Void {}
 }

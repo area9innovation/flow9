@@ -1045,17 +1045,17 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	public function getWidth() : Float {
-		return isInput && Math.isFinite(widgetBounds.minX) ? getWidgetWidth() : getClipWidth();
+	public override function getWidth() : Float {
+		return widgetWidth > 0 ? widgetWidth : getClipWidth();
+	}
+
+	public override function getHeight() : Float {
+		return widgetHeight > 0 ? widgetHeight : getClipHeight();
 	}
 
 	private function getClipWidth() : Float {
 		updateTextMetrics();
 		return metrics != null ? untyped metrics.width : 0;
-	}
-
-	public function getHeight() : Float {
-		return isInput && Math.isFinite(widgetBounds.minY) ? getWidgetHeight() : getClipHeight();
 	}
 
 	private function getClipHeight() : Float {

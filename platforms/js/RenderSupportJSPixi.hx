@@ -1172,7 +1172,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getTextFieldWidth(clip : TextClip) : Float {
-		return clip.getWidth();
+		return untyped clip.isInput ? clip.getWidth() : clip.getClipWidth();
 	}
 
 	public static function setTextFieldWidth(clip : TextClip, width : Float) : Void {
@@ -1181,7 +1181,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getTextFieldHeight(clip : TextClip) : Float {
-		return clip.getHeight();
+		return untyped clip.isInput ? clip.getHeight() : clip.getClipHeight();
 	}
 
 	public static function setTextFieldHeight(clip : TextClip, height : Float) : Void {

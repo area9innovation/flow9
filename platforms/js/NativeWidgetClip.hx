@@ -14,6 +14,9 @@ class NativeWidgetClip extends FlowContainer {
 
 	private var styleChanged : Bool = true;
 
+	public var widgetWidth : Float = -1;
+	public var widgetHeight : Float = -1;
+
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 	}
@@ -131,24 +134,18 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {
-		if (widgetBounds.getBoundsWidth() != widgetWidth) {
-			widgetBounds.minX = 0;
-			widgetBounds.maxX = widgetWidth;
+		if (this.widgetWidth != widgetWidth) {
+			this.widgetWidth = widgetWidth;
 
-			if (Math.isFinite(widgetBounds.minX)) {
-				invalidateStyle();
-			}
+			invalidateStyle();
 		}
 	}
 
 	public function setHeight(widgetHeight : Float) : Void {
-		if (widgetBounds.getBoundsHeight() != widgetHeight) {
-			widgetBounds.minY = 0;
-			widgetBounds.maxY = widgetHeight;
+		if (this.widgetHeight != widgetHeight) {
+			this.widgetHeight = widgetHeight;
 
-			if (Math.isFinite(widgetBounds.minY)) {
-				invalidateStyle();
-			}
+			invalidateStyle();
 		}
 	}
 
@@ -165,5 +162,13 @@ class NativeWidgetClip extends FlowContainer {
 		widgetBounds.minY = 0;
 		widgetBounds.maxX = getWidth();
 		widgetBounds.maxY = getHeight();
+	}
+
+	public function getWidth() : Float {
+		return widgetWidth;
+	}
+
+	public function getHeight() : Float {
+		return widgetHeight;
 	}
 }
