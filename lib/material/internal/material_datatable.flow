@@ -198,10 +198,12 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	headCount = 1 + b2i(showRowNumbers) + b2i(isSome(checkboxSelection));
 
-	colsHead = \arr : [flow] -> take(arr, headCount);
-	colsTail = \arr : [flow] -> tailFrom(arr, headCount);
-	splitWithoutHead = \arr, er -> concat(map(colsHead(arr), v2a), splitByNumber(colsTail(arr), er));
-	mapSplitWithoutHead = \arr, er, fn -> map(splitWithoutHead(arr, er), fn);
+	colsHead : ([flow]) -> [flow] = \arr : [flow] -> take(arr, headCount);
+	colsTail : ([flow]) -> [flow] = \arr : [flow] -> tailFrom(arr, headCount);
+	splitWithoutHead : ([flow], int) -> [flow] = \arr : [flow], er : int -> {
+		concat(map(colsHead(arr), v2a), splitByNumber(colsTail(arr), er));
+	}
+	mapSplitWithoutHead = \arr : [flow], er, fn -> map(splitWithoutHead(arr, er), fn);
 
 	tableWidth : (Transform<int>) -> Transform<double> = \expRow ->
 		if (columnsCount == 0)
@@ -241,6 +243,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	separatorsHeight = b2d(separators);
 
 	noFooter = contains(style, MNoFooter()) && !anyTypePagination;
+	hideAutoPaginationFooter = contains(style, MHideAutoPaginationFooter());
 	footerHeight = if (noFooter) 0. else 56.;
 	footerMinWidth = make(0.);
 	tableHeight = make(0.);
@@ -274,7 +277,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			MCheckBox(TEmpty(), trigger, [MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)]),
 			m2t
 		)
-		|> (\t -> TBorderA(-checkboxBorder(lh) / 2. - cellBorder / 2., 0., 0., 0., t))
+		|> (\t -> TBorderDir(-checkboxBorder(lh) / 2. - cellBorder / 2., 0., 0., 0., t, p.rtl))
 		|> (\t -> TCenterYIn(t, TFixed(0., lh)))
 	}
 
@@ -282,14 +285,17 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	alignCellContent = \colstyle : [MColumnStyle], box : Tropic ->
 		\content : Tropic -> {
-			right = changeBoolIfRTL(contains(colstyle, RightAlign()));
+			right = changeBoolIfRTL2(contains(colstyle, RightAlign()), parent.rtl);
 			center = contains(colstyle, CenterAlign());
 			TCopySize(
 				box,
 				\tr ->
 					TTweak(
 						[TAlign(const(if (center) 0.5 else if (right) 1. else 0.), const(0.5))],
-						TBorderA(cellBorder / 2., 0., cellBorder / 2., 1., TAvailable(content, TBorderA(-cellBorder, 0., 0., -1., tr))),
+						TBorderDir(cellBorder / 2., 0., cellBorder / 2., 1.,
+							TAvailable(content, TBorderDir(-cellBorder, 0., 0., -1., tr, parent.rtl)),
+							parent.rtl
+						),
 						tr
 					),
 				false
@@ -302,7 +308,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	headerTitles = \p ->
 		mapi(columns, \i0, c : MColumnDynamic -> if (replaceHeader) cellBox(i0, true) else {
-			rightAlign = changeBoolIfRTL(contains(c.style, RightAlign()));
+			rightAlign = changeBoolIfRTL2(contains(c.style, RightAlign()), p.rtl);
 			sortStyle = if (isSome(reorderList)) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
 			sortable = isNone(reorderList) && (hasExtOrderBy || contains(c.style, MAutoSort()));
 			i = i0 - headCount + 1;
@@ -350,7 +356,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									TCols(
 										[
 											makeHeaderTitle(h)
-												|> (\t -> TBorderA(0.0, 0.0, 4.0, 0.0, t)),
+												|> (\t -> TBorderDir(0.0, 0.0, 4.0, 0.0, t, p.rtl)),
 											if (sb)
 												TIfLazy2(fselect(sortedByB, FLift(secondOfTriple)), \sb0 ->
 													MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", [MIconSize(15.)]),
@@ -427,7 +433,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			|> alignCellContent(c.style, cellBox(i0, true))
 		});
 
-	tableHeader = \headers0 ->
+	tableHeader = \headers0, p ->
 		TSelect(expandRow, \er ->
 			expandContent(headers0, er)
 			|> (\headers ->
@@ -435,11 +441,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				else if (glued)	concat([TShow(fthrottle(fnot(innerScrollVisible), 1), colsHead(headers) |> TCols)], colsTail(headers))
 				else headers
 			)
-			|> TColsA
+			|> (\t -> TColsDir(t, p.rtl))
 		)
 		|> (\t -> if (glued)
 				TBorderT(fif(innerScrollVisible, zero, const(externalBorder)), zero, const(externalBorder + reorderIconSpace), zero, t)
-			else TBorderA(externalBorder, 0., externalBorder + reorderIconSpace, 0., t)
+			else TBorderDir(externalBorder, 0., externalBorder + reorderIconSpace, 0., t, p.rtl)
 		)
 		|> (\t ->
 			eitherMap(
@@ -637,85 +643,88 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					)
 					|> TCenterY;
 
-				hideFooter = eitherMap(minA(pagination.rowsPerPage), \rpp -> rowsCount < rpp, false);
+				showFooter =
+					eitherMap(minA(pagination.rowsPerPage),
+						\rpp -> const(rowsCount >= rpp),
+						fOr(const(!hideAutoPaginationFooter), fselect(rowsPerPage, FLift(\rpp -> rowsCount > rpp)))
+					);
 
 				if (!isEmptyPagination) {
 					selectedRowsPerPage = fixPaginationCurrent(getValue(pagination.current));
 					updateRowsPerPage(pagination.rowsPerPage[selectedRowsPerPage])
 				};
 
-				if (hideFooter)
-					TEmpty()
-				else
-					concatA([
-						[TFillX()],
-						if (length(pagination.rowsPerPage) > 1)
-							[
-								MText2T(p2, "Rows per Page:", [MCaption()])
-								|> TCenterY
-								|> (\t -> TBorder(8., 0., 16., 0., t)),
-								MDropDown2T(
-									manager,
-									p2,
-									MDropDown(
-										pagination.current,
-										"",
-										map(pagination.rowsPerPage, toString),
-										[MDataTableFooter(), MCroppedButton()]
-									),
-									m2t
-								)
-								|> (\f2 ->
-									TConstruct([
-										makeSubscribe2(pagination.current, \c ->
-											updateRowsPerPage(pagination.rowsPerPage[c])
-										)
-									], f2)
-								)
-								|> TCenterY
-								|> TBorderRight(16.)
-							]
-						else
-							[],
-
+				
+				concatA([
+					[TFillX()],
+					if (length(pagination.rowsPerPage) > 1)
 						[
-							TSelect(page, \pg -> {
-								text =  formatString(
-									if (getDefaultRtl()) _("%1 of %2-%3") else _("%3-%2 of %1"),
-									[i2s(rowsCount), i2s(max(min(pg.first + pg.second, rowsCount), 0)), i2s(min(pg.first + 1, rowsCount))]
-								);
-
-								MText2T(p2, text, [MCaption()])
-							})
-								|> TCenterY
-								|> TBorderRight(16.),
-							makeFooterButton(
-								"first_page",
-								\__ -> 0,
-								\pg -> pg.first > 0
+							MText2T(p2, "Rows per Page:", [MCaption()])
+							|> TCenterY
+							|> (\t -> TBorder(8., 0., 16., 0., t)),
+							MDropDown2T(
+								manager,
+								p2,
+								MDropDown(
+									pagination.current,
+									"",
+									map(pagination.rowsPerPage, toString),
+									[MDataTableFooter(), MCroppedButton()]
+								),
+								m2t
 							)
-								|> hideIfLittlePages(rowsCount, rowsPerPage),
-							makeFooterButton(
-								"navigate_before",
-								\pg -> max(pg.first - pg.second, 0),
-								\pg -> pg.first > 0
-							),
-							makeFooterButton(
-								"navigate_next",
-								\pg -> min(pg.first + pg.second, rowsCount - if (fgetValue(scrollEnabled)) pg.second else 0),
-								\pg -> (rowsCount > 0) && (pg.first + pg.second < rowsCount)
-							),
-							makeFooterButton(
-								"last_page",
-								\pg -> (rowsCount - 1) / pg.second * pg.second,
-								\pg -> pg.first + pg.second < rowsCount
+							|> (\f2 ->
+								TConstruct([
+									makeSubscribe2(pagination.current, \c ->
+										updateRowsPerPage(pagination.rowsPerPage[c])
+									)
+								], f2)
 							)
-								|> hideIfLittlePages(rowsCount, rowsPerPage)
+							|> TCenterY
+							|> TBorderRight(16.)
 						]
-					])
-					|> TColsA
-					|> (\t -> TAvailableHeight(t, const(footerHeight)))
-					|> makeTropicConstantHeight(footerHeight |> Some)
+					else
+						[],
+
+					[
+						TSelect(page, \pg -> {
+							text =  formatString(
+								if (p.rtl) _("%1 of %2-%3") else _("%3-%2 of %1"),
+								[i2s(rowsCount), i2s(max(min(pg.first + pg.second, rowsCount), 0)), i2s(min(pg.first + 1, rowsCount))]
+							);
+
+							MText2T(p2, text, [MCaption()])
+						})
+							|> TCenterY
+							|> TBorderRight(16.),
+						makeFooterButton(
+							"first_page",
+							\__ -> 0,
+							\pg -> pg.first > 0
+						)
+							|> hideIfLittlePages(rowsCount, rowsPerPage),
+						makeFooterButton(
+							"navigate_before",
+							\pg -> max(pg.first - pg.second, 0),
+							\pg -> pg.first > 0
+						),
+						makeFooterButton(
+							"navigate_next",
+							\pg -> min(pg.first + pg.second, rowsCount - if (fgetValue(scrollEnabled)) pg.second else 0),
+							\pg -> (rowsCount > 0) && (pg.first + pg.second < rowsCount)
+						),
+						makeFooterButton(
+							"last_page",
+							\pg -> (rowsCount - 1) / pg.second * pg.second,
+							\pg -> pg.first + pg.second < rowsCount
+						)
+							|> hideIfLittlePages(rowsCount, rowsPerPage)
+					]
+				])
+				|> (\t -> TColsDir(t, p.rtl))
+				|> (\t -> TAvailableHeight(t, const(footerHeight)))
+				|> makeTropicConstantHeight(footerHeight |> Some)
+				|> (\t -> TShowLazy(showFooter, \ -> t))
 			})
 		else if (noFooter)
 			TEmpty()
@@ -746,7 +755,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							else if (glued) concat([TShow(fnot(innerScrollVisible), colsHead(cells) |> TCols)], colsTail(cells))
 							else cells
 						)
-						|> TColsA
+						|> (\t -> TColsDir(t, p.rtl))
 						|> (\t -> 
 							if (glued) TBorderT(fif(innerScrollVisible, zero, const(externalBorder)), zero, const(externalBorder), zero, t)
 							else t |> TBorderLeftRight(externalBorder)
@@ -976,7 +985,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			else idfn)
 		|> (\t -> if (separators) TLines2(m2t(MSeparator(true), p), t) else t)
 		// Header
-		|> (\f -> TLines2(tableHeader(headers0), f))
+		|> (\f -> TLines2(tableHeader(headers0, p), f))
 		|> (\t : Tropic -> if (isInnerScroll) {
 				scrollStyle = [
 					TScrollInspectShowScrolling(innerScrollVisible0),
@@ -1170,16 +1179,16 @@ MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, ro
 			TGroup2(wrapCellContent(m1), wrapCellContent(m2))
 		}
 		MLines(elements): {
-			TLinesA(map(elements, wrapCellContent))
+			TLinesDir(map(elements, wrapCellContent), parent.rtl)
 		}
 		MLines2(m1, m2): {
-			TLines2(wrapCellContent(m1), wrapCellContent(m2))
+			TLines2Dir(wrapCellContent(m1), wrapCellContent(m2), parent.rtl)
 		}
 		MCols(elements): {
-			TColsA(map(elements, wrapCellContent))
+			TColsDir(map(elements, wrapCellContent), parent.rtl)
 		}
 		MCols2(m1, m2): {
-			TCols2(wrapCellContent(m1), wrapCellContent(m2))
+			TCols2Dir(wrapCellContent(m1), wrapCellContent(m2), parent.rtl)
 		}
 		MCenter(m): {
 			TCenter(wrapCellContent(m))

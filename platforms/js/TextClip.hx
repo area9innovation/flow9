@@ -318,7 +318,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${style.fontSize * 1.15 + interlineSpacing}px';
+		nativeWidget.style.lineHeight = '${Math.ceil(style.fontSize * 1.15 + interlineSpacing)}px';
 		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
@@ -449,7 +449,7 @@ class TextClip extends NativeWidgetClip {
 		style.fontFamily = fontStyle.family;
 		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		style.lineHeight = fontSize * 1.15 + interlineSpacing;
+		style.lineHeight = Math.ceil(fontSize * 1.15 + interlineSpacing);
 		style.wordWrap = wordWrap;
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		style.breakWords = cropWords;
@@ -689,7 +689,7 @@ class TextClip extends NativeWidgetClip {
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
 		if (this.interlineSpacing != interlineSpacing) {
 			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = style.fontSize * 1.15 + interlineSpacing;
+			style.lineHeight = Math.ceil(style.fontSize * 1.15 + interlineSpacing);
 
 			invalidateMetrics();
 		}
@@ -854,6 +854,10 @@ class TextClip extends NativeWidgetClip {
 
 		if (nativeWidget == null) {
 			return;
+		}
+		
+		if (Platform.isIOS) {
+			RenderSupportJSPixi.ensureCurrentInputVisible();
 		}
 
 		invalidateMetrics();

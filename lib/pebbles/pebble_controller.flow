@@ -49,6 +49,12 @@ export {
 	restoreLastPebble(controller : PebbleController, pebble : Pebble) -> void;
 	// Just refresh the view, i.e. call dispatcher once again. No URL or history changes 
 	refreshViewForCurrentPebble : (controller : PebbleController) -> void;
+	// we will find last visited pebble by this key if it was set, otherwise, it will be stored with default key
+	// in case of cpp we are always store last visited pebble and prompt developer to open it at application start
+	// in case of js and saveLastPebbleInJsCase is true - last visited pebble will be stored and opened at start without prompt
+	// please make sure that key is user-dependent and application-dependent, otherwise,
+	// the last pebble can be shared between users or application if they use the same domain
+	setLastPebbleKey(key : string, saveLastPebbleInJsCase : bool) -> void;
 	// Open current pebble view at application start or topPebble view in case URL hash is empty or wrong
 	validateCurrentPebbleAndInitView : (controller : PebbleController, manager : MaterialManager, topPebble : Pebble) -> void;
 
@@ -120,6 +126,7 @@ export {
 }
 
 isControllerCreatedRef : ref bool = ref false;
+viewBoxB = make(MEmpty());
 
 makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 	if (^isControllerCreatedRef) {
@@ -128,7 +135,6 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 	isControllerCreatedRef := true;
 
 	dispatchers : ref Tree<string, () -> Material> = ref makeTree();
-	viewBoxB = make(MEmpty());
 
 	pebbleStackB = make([]);
 	currentPebbleB = make(urlHash2Pebble2(takeAfter(getUrlHash(), "#", initialPebbleHash()), makeEmptyPebble()));
@@ -208,6 +214,7 @@ makeDummyPebbleController() -> PebbleController {
 
 clearPebbleController(controller : PebbleController) -> void {
 	controller.dispatchers := makeTree();
+	next(viewBoxB, MEmpty());
 	next(controller.pebbleStackB, []);
 	next(controller.confirmations, []);
 	next(controller.currentPebbleB, makeEmptyPebble());
@@ -366,27 +373,45 @@ addBrowserUrlHashListener(controller : PebbleController) -> () -> void {
 	}
 }
 
-lastPebbleCPPKey() {
-	getAppUrl() + "Pebble"
+lastPebbleKey = ref "";
+lastPebbleOnJS = ref false;
+
+setLastPebbleKey(key : string, saveLastPebbleInJsCase : bool) -> void {
+	lastPebbleKey := key;
+	lastPebbleOnJS := saveLastPebbleInJsCase;
 }
-lastPebbleCPPModeKey() {
-	lastPebbleCPPKey() + "Mode"
+
+lastPebbleOn() -> bool {
+	(cpp || ^lastPebbleOnJS) && !mobile;
 }
-lastPebbleCPPModeAsk = _("Ask");
-lastPebbleCPPModeNever = _("Never go");
-lastPebbleCPPModeAlways = _("Always go");
+
+getLastPebbleKey() -> string {
+	md5((if (^lastPebbleKey != "") ^lastPebbleKey else getAppUrl()) + "Pebble");
+}
+
+getLastPebbleModeKey() -> string {
+	md5((if (^lastPebbleKey != "") ^lastPebbleKey else getAppUrl()) + "PebbleMode");
+}
+
+LAST_PEBBLE_MODE_ASK = _("Ask");
+LAST_PEBBLE_MODE_NEVER = _("Never go");
+LAST_PEBBLE_MODE_ALWAYS = _("Always go");
+
 initialPebbleHash() {
-	if (cpp && !mobile) {
-		getUrlParameterDef("pebble", getKeyValue(lastPebbleCPPKey(), ""))
+	if (lastPebbleOn()) {
+		getUrlParameterDef("pebble", getKeyValue(getLastPebbleKey(), ""))
 	} else {
 		""
 	}
 }
+
 pebbleMode() {
-	if (cpp && !mobile) {
-		getKeyValue(lastPebbleCPPModeKey(), "")
+	if (^lastPebbleOnJS && js) {
+		LAST_PEBBLE_MODE_ALWAYS
+	} else if (lastPebbleOn()) {
+		getKeyValue(getLastPebbleModeKey(), "")
 	} else {
-		lastPebbleCPPModeNever
+		LAST_PEBBLE_MODE_NEVER
 	}
 }
 
@@ -401,18 +426,18 @@ validateCurrentPebbleAndInitView(controller : PebbleController, manager : Materi
 		)
 	}
 
-	if (cpp && !mobile && initialPebbleHash() != "") {
+	if (lastPebbleOn() && initialPebbleHash() != "" && getUrlHash() == "") {
 		initPebble = urlHash2Pebble2(takeAfter(initialPebbleHash(), "#", ""), currentPebble);
-		if (pebbleMode() == lastPebbleCPPModeAsk || pebbleMode() == "") {
+		if (pebbleMode() == LAST_PEBBLE_MODE_ASK || pebbleMode() == "") {
 			initialPebbleDialog(
 				manager,
 				controller,
 				\-> showPebbleView(currentPebble),
-				\mode, pebble -> showPebbleView(if (mode != lastPebbleCPPModeNever) pebble else currentPebble)
+				\mode, pebble -> showPebbleView(if (mode != LAST_PEBBLE_MODE_NEVER) pebble else currentPebble)
 			)
-		} else if (pebbleMode() == lastPebbleCPPModeNever) {
+		} else if (pebbleMode() == LAST_PEBBLE_MODE_NEVER) {
 			showPebbleView(currentPebble)
-		} else if (pebbleMode() == lastPebbleCPPModeAlways) {
+		} else if (pebbleMode() == LAST_PEBBLE_MODE_ALWAYS) {
 			deferred(\-> showPebbleView(initPebble))
 		}
 	} else {
@@ -435,8 +460,9 @@ pushPebble2(pebbleStackB : DynamicBehaviour<[Pebble]>, updateHashUrl : bool, peb
 		if (updateHashUrl) {
 			if (js) {
 				pushPebble2UrlHash(npebble);
-			} else if (cpp && !mobile && pebbleMode() != lastPebbleCPPModeNever) {
-				setKeyValue(lastPebbleCPPKey(), pebble2UrlHash(npebble));
+			}
+			if (lastPebbleOn() && pebbleMode() != LAST_PEBBLE_MODE_NEVER) {
+				setKeyValue(getLastPebbleKey(), pebble2UrlHash(npebble));
 				{}
 			}
 		}
@@ -571,7 +597,7 @@ onUpButtonClick(controller : PebbleController, topPebble : Pebble) -> void {
 
 initialPebbleDialog(manager : MaterialManager, controller : PebbleController, onCancel : () -> void, onOK : (string, Pebble) -> void) -> void {
 	close = make(false);
-	modes = [lastPebbleCPPModeNever, lastPebbleCPPModeAsk, lastPebbleCPPModeAlways];
+	modes = [LAST_PEBBLE_MODE_NEVER, LAST_PEBBLE_MODE_ASK, LAST_PEBBLE_MODE_ALWAYS];
 	selected = make(findiDef(modes, eq(pebbleMode()), 2));
 	pebbleIsOk = make(true);
 	pebbleInput = make(initialPebbleHash());
@@ -601,8 +627,8 @@ initialPebbleDialog(manager : MaterialManager, controller : PebbleController, on
 				}, [], [MShortcut("enter")]),
 				MTextButton(_("OPEN WITH PEBBLE"), \ -> {
 					pebbleHash = getValue(pebbleInput);
-					mode = elementAt(modes, getValue(selected), lastPebbleCPPModeAsk);
-					setKeyValue(lastPebbleCPPModeKey(), mode);
+					mode = elementAt(modes, getValue(selected), LAST_PEBBLE_MODE_ASK);
+					setKeyValue(getLastPebbleModeKey(), mode);
 					onOK(mode, urlHash2Pebble2(takeAfter(pebbleHash, "#", pebbleHash), currentPebble));
 					next(close, true);
 				}, [], [MShortcut("enter"), MEnabled(pebbleIsOk)]),
@@ -615,7 +641,7 @@ initialPebbleDialog(manager : MaterialManager, controller : PebbleController, on
 					[MInputError(pebbleInputError, [MRequiredField(), MInputIsOk(pebbleIsOk),])]
 				),
 				MParagraph(_("Choose what to do when a pebble is found"), []),
-				MDropDown(selected, lastPebbleCPPModeAlways, modes, [])
+				MDropDown(selected, LAST_PEBBLE_MODE_ALWAYS, modes, [])
 			]),
 			TMinimumGroup2(TFillXY(), TFillWY(800.0))
 		)

@@ -22,6 +22,8 @@ export {
 		overrides : Tree<string, FiExp>,
 		// Should we optimize dead structs out of switches?
 		doLiveStructs : bool,
+		// Should we do basic optimization (other than dup strings?)
+		generalOptimize : bool,
 		// Should we do eager evaluation, even if it increases code size?
 		eager : bool,
 		// Replace diplicate strings with variable, holding the common string
@@ -75,7 +77,7 @@ OptEnvExp : (
 optimizeCode(prog : FiProgram, file : string, overrides : Tree<string, FiExp>) -> FiProgram {
 	config = prog.config.config;
 	optEnv = makeOptEnv(config, overrides);
-	opt_prog_local = optimizeCodeLocal(prog, optEnv);
+	opt_prog_local = if (optEnv.generalOptimize) optimizeCodeLocal(prog, optEnv) else prog;
 	opt_prog_dupstr = if (optEnv.removeDupStr) optimizeDupStrings(opt_prog_local, file) else opt_prog_local;
 	if (getConfigParameter(config, "unittests") == "optimize") {
 		dumpFiProgram(opt_prog_dupstr, "tools/flowc/tests/optimize/out");
@@ -89,6 +91,7 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 	OptEnv(
 		overrides,
 		proc_bool_opt(getConfigParameter(config, "do-live-structs"), true),
+		proc_bool_opt(getConfigParameter(config, "optimize"), false),
 		proc_bool_opt(getConfigParameter(config, "eager-manipulation"), false),
 		proc_bool_opt(getConfigParameter(config, "remove-dup-strings"), false),
 		InlineMode(
@@ -226,6 +229,7 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 		module.stringIncludes,
 		module.start, 
 		module.end,
+		module.allImports,
 		if (^has_changes) false else module.incremental
 	)
 }
@@ -233,16 +237,14 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 createInitialOptEnv(optEnv : OptEnv, prog : FiProgram, args : [FiFunArg], flowfile : string, effects : FiEffects) -> OptEnvExp {
 	OptEnvExp(
 		OptEnv(
-			optEnv.overrides,
-			optEnv.doLiveStructs,
-			optEnv.eager,
-			optEnv.removeDupStr,
-			InlineMode(
-				optEnv.inlineMode.force,
-				inliningMaxDepth(prog.config, flowfile, optEnv.inlineMode.maxDepth),
-				inliningMaxNesting(prog.config, flowfile, optEnv.inlineMode.maxNesting),
-				optEnv.inlineMode.doConstStructs
-			)
+			optEnv with
+			inlineMode = 
+				InlineMode(
+					optEnv.inlineMode.force,
+					inliningMaxDepth(prog.config, flowfile, optEnv.inlineMode.maxDepth),
+					inliningMaxNesting(prog.config, flowfile, optEnv.inlineMode.maxNesting),
+					optEnv.inlineMode.doConstStructs
+				)
 		),
 		prog,
 		effects,

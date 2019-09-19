@@ -44,12 +44,13 @@ import java.time.ZoneOffset;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
+import java.util.concurrent.ConcurrentHashMap;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
-	private static final int NTHREDS = 8;
+	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
-	private static final ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
+	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
 	public Native() {
 	try {
 		md5original = MessageDigest.getInstance("MD5");
@@ -58,6 +59,7 @@ public class Native extends NativeHost {
 	}
 
 	}
+
 	public final Object println(Object arg) {
 		String s = "";
 		if (arg instanceof String) {
@@ -67,8 +69,10 @@ public class Native extends NativeHost {
 		}
 
 		try {
-			PrintStream out = new PrintStream(System.out, true, "UTF-8");
-			out.println(s);
+			synchronized (System.out) {
+				PrintStream out = new PrintStream(System.out, true, "UTF-8");
+				out.println(s);
+			}
 		} catch(UnsupportedEncodingException e) {
 		}
 		return null;
@@ -914,6 +918,13 @@ public class Native extends NativeHost {
 		return runtime.makeStructValue(name, args, (Struct)defval);
 	}
 
+	public final Object[] extractStructArguments(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getFields();
+		} else return new Object[0];
+	}
+
+
 	public final Object quit(int c) {
 		System.exit(c);
 		return null;
@@ -1120,44 +1131,46 @@ public class Native extends NativeHost {
 	@Override
 		public Long call() {
 			long output = 0;
-		try {
-		OutputStream stdin1 = null;
-		InputStream stderr = null;
-		InputStream stdout = null;
+			try {
+				OutputStream stdin1 = null;
+				InputStream stderr = null;
+				InputStream stdout = null;
 
-		Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
-		stdin1 = process.getOutputStream();
-		stderr = process.getErrorStream();
-		stdout = process.getInputStream();
-		stdin1.write(this.stdin.getBytes());
-		stdin1.flush();
+				Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
+				stdin1 = process.getOutputStream();
+				stderr = process.getErrorStream();
+				stdout = process.getInputStream();
+				stdin1.write(this.stdin.getBytes());
+				stdin1.flush();
 
-		BufferedReader brCleanUp = new BufferedReader (new InputStreamReader (stdout));
-		String line;
-		String sout = new String("");
-		while ((line = brCleanUp.readLine ()) != null) {
-			sout = sout + line + "\n";
-		}
-		brCleanUp.close();
+				// We wait for the process to finish before we collect the output!
+				process.waitFor();
 
-		brCleanUp = new BufferedReader (new InputStreamReader (stderr));
-		String serr = new String("");
-		while ((line = brCleanUp.readLine ()) != null) {
-			serr = serr + line + "\n";
-		}
-		brCleanUp.close();
+				BufferedReader brCleanUp = new BufferedReader(new InputStreamReader (stdout));
+				String line;
+				String sout = new String("");
+				while ((line = brCleanUp.readLine ()) != null) {
+					sout = sout + line + "\n";
+				}
+				brCleanUp.close();
 
-		process.waitFor();
-		onExit.invoke(process.exitValue(), sout, serr);
+				brCleanUp = new BufferedReader(new InputStreamReader (stderr));
+				String serr = new String("");
+				while ((line = brCleanUp.readLine()) != null) {
+					serr = serr + line + "\n";
+				}
+				brCleanUp.close();
+
+				onExit.invoke(process.exitValue(), sout, serr);
 			} catch (Exception ex) {
-			String cmd_str = "";
-			for (String c : this.cmd) {
-				cmd_str += c + " ";
+				String cmd_str = "";
+				for (String c : this.cmd) {
+					cmd_str += c + " ";
+				}
+				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString());
 			}
-			onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString());
+			return output;
 		}
-		return output;
-	}
 	}
 
 	public final String md5(String contents) {
@@ -1186,7 +1199,43 @@ public class Native extends NativeHost {
 			md5Hex = "0" + md5Hex;
 		}
 
-	return md5Hex;
+		return md5Hex;
+	}
+
+	public String fileChecksum(String filename) {
+		try {
+			InputStream fis =  new FileInputStream(filename);
+			byte[] buffer = new byte[1024];
+			MessageDigest md = MessageDigest.getInstance("MD5");
+			int numRead;
+			do {
+				numRead = fis.read(buffer);
+				if (numRead > 0) {
+					md.update(buffer, 0, numRead);
+				}
+			} while (numRead != -1);
+
+			fis.close();
+
+			byte[] digest = new byte[0];
+			digest = md.digest();
+
+			BigInteger bigInt = new BigInteger(1, digest);
+			String md5Hex = bigInt.toString(16);
+
+			while( md5Hex.length() < 32 ){
+				md5Hex = "0" + md5Hex;
+			}
+
+			return md5Hex;
+		} catch (IOException e) {
+			return "";
+		} catch (InvalidPathException e) {
+			return "";
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "";
+		}
 	}
 
 	// Launch a system process
@@ -1265,6 +1314,69 @@ public class Native extends NativeHost {
 	  return resArr;
 	}
 
+	public final Object concurrentAsyncCallback(Func2<Object, String, Func1<Object, Object>> task, Func1<Object,Object> onDone) {
+		// thread #1
+		CompletableFuture.supplyAsync(() -> {
+			// thread #2
+			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
+			task.invoke(Long.toString(Thread.currentThread().getId()), (res) -> {
+				// thread #2
+				completableFuture.complete(res);
+				return null;
+			});
+			Object result = null;
+			try {
+				result = completableFuture.get();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} catch (ExecutionException e) {
+				e.printStackTrace();
+			}
+			return result;
+		}, threadpool).thenApply(result -> {
+			// thread #2
+			return onDone.invoke(result);
+		});
+
+		return null;
+	}	
+
+	public final String getThreadId() {
+		return Long.toString(Thread.currentThread().getId());
+	}
+
+	public final Object initConcurrentHashMap() {
+		return new ConcurrentHashMap();
+	}
+
+	public final Object setConcurrentHashMap(Object map, Object key, Object value) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.put(key, value);
+		return null;
+	}
+
+	public final Object getConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.get(key);
+	}
+
+	public final Boolean containsConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.containsKey(key);
+	}
+
+	public final Object[] valuesConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.values().toArray();
+	}
+
+	public final Object[] removeConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.remove(key);
+		return null;
+	}
+
+	// TODO: why don't we use threadpool here?
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
 			return task.invoke();
@@ -1291,5 +1403,14 @@ public class Native extends NativeHost {
 	//native addPlatformEventListenerNative : (event : string, cb : () -> bool) -> ( () -> void ) = Native.addPlatformEventListener;
 	public final Func0<Object> addPlatformEventListener (String event, Func0<Boolean> cb) {
 	return null;
+	}
+
+	public final int availableProcessors() {
+		return Runtime.getRuntime().availableProcessors();
+	}
+
+	public final Object setThreadPoolSize(int threads) {
+		threadpool = Executors.newFixedThreadPool(threads);
+		return null;
 	}
 }

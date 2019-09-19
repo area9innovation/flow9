@@ -3,23 +3,12 @@ import js.Promise;
 
 class WebRTCSupport {
 
-	private static function loadJSFilePromise(url : String) : Promise<Dynamic> {
-		return new Promise<Dynamic>(function(resolve, reject) {
-			var script : Dynamic = Browser.document.createElement('script');
-			script.addEventListener('load', resolve);
-			script.addEventListener('error', reject);
-			script.addEventListener('abort', reject);
-			script.src = url;
-			Browser.document.head.appendChild(script);
-		});
-	}
-
 	public static function initWebRTC(
 			onReady : Void->Void
 		) : Void {
 	#if (js && !flow_nodejs)
-		var adapterPromise = loadJSFilePromise("js/webrtc/adapter.js");
-		var socketioPromise = loadJSFilePromise("js/socket.io/socket.io.js");
+		var adapterPromise = Util.loadJS("js/webrtc/adapter.js");
+		var socketioPromise = Util.loadJS("js/socket.io/socket.io.js");
 		Promise.all([adapterPromise, socketioPromise]).then(function(res) {
 			onReady();
 		}, function(e) {});

@@ -5,14 +5,16 @@ import tools/flowc/backends/inca/promote_types;
 import tools/flowc/backends/inca/lift_types;
 import tools/flowc/backends/inca/lift_functions;
 import tools/flowc/backends/inca/lift_globals;
-import tools/flowc/backends/inca/special_fiexp;
+import tools/flowc/backends/inca/change_function;
+import tools/flowc/backends/inca/cache_function;
+import tools/flowc/backends/inca/perform_function;
 import tools/flowc/manipulation/lambda_lifting;
 
 export {
-	fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void;
+	fi2inca(program : FiProgram, cfg : FcIncaConfig) -> FiProgram;
 }
 
-fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void {
+fi2inca(program : FiProgram, cfg : FcIncaConfig) -> FiProgram {
 	timePhases = isUrlParameterTrue("timephases");
 	repTime = \phase, t0 -> {
 		now = timestamp();
@@ -21,22 +23,41 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void 
 	}
 	time0 = timestamp();
 	incaEnv0 = buildIncaEnv(program);
-	incaEnv = promoteIncaTypes(incaEnv0);
+	incaEnv1 = promoteIncaTypes(incaEnv0);
 
 	time1 = repTime("Build inca env", time0);
 
-	if (true) {
-		i1 = buildIncaEnv(program);
-		i2 : IncaEnv = promoteIncaTypes(i1);
-		// Build all the change functions
-		i3 = foldTree(i2.functions, i2, \name, fn, acc -> {
-			makeChangeFunction(acc, fn)
-		});
-		// TODO:
-		// Write the output somewhere
-	}
+	// Should we make the change functions, or the normal approach?
+	changeApproach = false;
+	cacheApproach = true;
 
-	if (true) {
+	// Build all the change functions
+	incaEnv2 = if (changeApproach || cacheApproach) foldTree(incaEnv1.functions, incaEnv1, \name, fn, acc -> {
+		acc0 = if (changeApproach) makeChangeFunction(acc, fn) else acc;
+		if (cacheApproach) makeCacheFunction(acc0, fn) else acc0; 
+	}) else incaEnv1;
+
+	// OK, add import for inca_change;
+	incaEnv3 = if (cacheApproach) {
+		IncaEnv(
+			incaEnv2 with
+			program = FiProgram(	
+				incaEnv2.program with
+				modules = mapTree(incaEnv2.program.modules, \m -> {
+					FiModule(m with
+						imports = arrayPush(m.imports, FiImport("inca/inca_change", false, 0))
+					)
+				})
+			)
+		)
+	} else incaEnv2;
+
+	performApproach = true;
+	incaEnv = makePerformFunction(incaEnv3);
+
+	time2 = repTime("Build change functions", time1);
+
+	if (false) {
 		details = isUrlParameterTrue("details");
 		graph = buildIncaConversionGraph(incaEnv, details);
 		dot = simpleGraph2dot(graph, "", [], \n -> {
@@ -53,28 +74,28 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void 
 		setFileContent("incagraph.dot", dot);
 		{}
 	}
-	time2 = repTime("Build dot", time1);
 
+	if (!performApproach && !changeApproach && !cacheApproach) {
+		fcPrintln("Saving " + cfg.outputdir + "/types.flow");
+		types = liftIncaTypes(incaEnv);
+		saveFileContent(cfg.outputdir + "/types.flow", types);
 
-	fcPrintln("Saving " + cfg.outputdir + "/types.flow");
-	types = liftIncaTypes(incaEnv);
-	saveFileContent(cfg.outputdir + "/types.flow", types);
+		time3 = repTime("Lift types", time2);
 
-	time3 = repTime("Lift types", time2);
+		fcPrintln("Saving " + cfg.outputdir + "/functions.flow");
+		functions = liftIncaFunctions(incaEnv, cfg.outputdir);
+		saveFileContent(cfg.outputdir + "/functions.flow", functions);
 
-	fcPrintln("Saving " + cfg.outputdir + "/functions.flow");
-	functions = liftIncaFunctions(incaEnv, cfg.outputdir);
-	saveFileContent(cfg.outputdir + "/functions.flow", functions);
+		time4 = repTime("Lift functions", time3);
 
-	time4 = repTime("Lift functions", time3);
+		fcPrintln("Saving " + cfg.outputdir + "/globals.flow");
+		globals = liftIncaGlobals(incaEnv, cfg.outputdir);
+		saveFileContent(cfg.outputdir + "/globals.flow", globals);
 
-	fcPrintln("Saving " + cfg.outputdir + "/globals.flow");
-	globals = liftIncaGlobals(incaEnv, cfg.outputdir);
-	saveFileContent(cfg.outputdir + "/globals.flow", globals);
+		time5 = repTime("Lift globals", time4);
+	}
 
-	time5 = repTime("Lift globals", time4);
-
-	callback();
+	incaEnv.program;
 }
 
 
@@ -85,6 +106,7 @@ buildIncaEnv(program : FiProgram) -> IncaEnv {
 	parsed = filter(parsed0, \p -> endsWith(p, "_i"));
 
 	env0 = IncaEnv(
+		program,
 		program.config,
 		parsed,
 		makeTree(),
@@ -160,10 +182,10 @@ validIncaModule(m : FiModule) -> bool {
 	// nested arrays, natives, functions nor polymorphism
 	&& fold(m.structs, true, \acc, t -> acc && {
 		forall(t.args, \a -> {
-			check(validIncaType(a.type), "wrong struct type for " + t.name)
+			true || check(validIncaType(a.type), "wrong struct type for " + t.name)
 		})
 	})
-	&& fold(m.unions, true, \acc, t -> acc && {
+	&& fold(m.unions, true, \acc, t : FiTypeUnion -> acc && {
 		forall(t.typenames, \a -> {
 			check(validIncaType(a), "wrong union type for " + t.name)
 		})
