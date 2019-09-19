@@ -274,7 +274,7 @@ class VideoClip extends FlowContainer {
 				textField.setClipX((videoWidget.width - textField.getWidth()) / 2.0);
 				textField.setClipY(videoWidget.height - textField.getHeight() - 2.0);
 
-				textField.updateTransform();
+				textField.invalidateTransform("updateSubtitlesClip");
 			}
 		}
 	}

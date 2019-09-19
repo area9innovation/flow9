@@ -333,8 +333,11 @@ class FlowGraphics extends Graphics {
 	public function calculateGraphicsBounds() : Void {
 		updateLocalBounds();
 
-		if (untyped this._localBounds.minX != null && untyped this._localBounds.minX != Math.POSITIVE_INFINITY) {
-			graphicsBounds = untyped this._localBounds;
+		if (untyped Math.isFinite(this._localBounds.minX) && Math.isFinite(this._localBounds.minY)) {
+			graphicsBounds.minX = untyped this._localBounds.minX;
+			graphicsBounds.minY = untyped this._localBounds.minY;
+			graphicsBounds.maxX = untyped this._localBounds.maxX;
+			graphicsBounds.maxY = untyped this._localBounds.maxY;
 		}
 	}
 

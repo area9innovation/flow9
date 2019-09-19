@@ -135,7 +135,7 @@ class NativeWidgetClip extends FlowContainer {
 			widgetBounds.minX = 0;
 			widgetBounds.maxX = widgetWidth;
 
-			if (widgetBounds.minY != Math.POSITIVE_INFINITY) {
+			if (Math.isFinite(widgetBounds.minX)) {
 				invalidateStyle();
 			}
 		}
@@ -146,7 +146,7 @@ class NativeWidgetClip extends FlowContainer {
 			widgetBounds.minY = 0;
 			widgetBounds.maxY = widgetHeight;
 
-			if (widgetBounds.minX != Math.POSITIVE_INFINITY) {
+			if (Math.isFinite(widgetBounds.minY)) {
 				invalidateStyle();
 			}
 		}
@@ -158,31 +158,6 @@ class NativeWidgetClip extends FlowContainer {
 
 			invalidateStyle();
 		}
-	}
-
-	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		return localBounds.getRectangle(rect);
-	}
-
-	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
-		if (!skipUpdate) {
-			updateTransform();
-			getLocalBounds();
-		}
-
-		if (untyped this._boundsID != untyped this._lastBoundsID)
-		{
-			calculateBounds();
-		}
-
-		return _bounds.getRectangle(rect);
-	}
-
-	public override function calculateBounds() : Void {
-		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
-		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
-		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
-		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
 	public function calculateWidgetBounds() : Void {

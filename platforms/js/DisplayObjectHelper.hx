@@ -283,22 +283,6 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function removeChildrenNativeWidgets(clip : DisplayObject) : Void {
-		if (isNativeWidget(clip)) {
-			if (untyped clip.onStage) {
-				untyped clip.onStage = false;
-
-				RenderSupportJSPixi.once("drawframe", function() {
-					if (untyped !clip.onStage) {
-						removeNativeWidget(clip);
-					}
-				});
-			}
-		} else for (child in getClipChildren(clip)) {
-			removeChildrenNativeWidgets(child);
-		}
-	}
-
 	public static inline function setClipX(clip : DisplayObject, x : Float) : Void {
 		if (untyped clip.scrollRect != null) {
 			x = x - untyped clip.scrollRect.x;
@@ -562,18 +546,16 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateKeepNativeWidgetChildren(clip : DisplayObject, keepNativeWidgetChildren : Bool = false) : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			untyped clip.keepNativeWidgetChildren = keepNativeWidgetChildren || clip.keepNativeWidget;
+		untyped clip.keepNativeWidgetChildren = keepNativeWidgetChildren || clip.keepNativeWidget;
 
-			if (untyped !clip.keepNativeWidgetChildren) {
-				for (child in getClipChildren(clip)) {
-					untyped clip.keepNativeWidgetChildren = clip.keepNativeWidgetChildren || child.keepNativeWidgetChildren || child.keepNativeWidget;
-				}
+		if (untyped !clip.keepNativeWidgetChildren) {
+			for (child in getClipChildren(clip)) {
+				untyped clip.keepNativeWidgetChildren = clip.keepNativeWidgetChildren || child.keepNativeWidgetChildren || child.keepNativeWidget;
 			}
+		}
 
-			if (untyped clip.parent != null && clip.parent.keepNativeWidgetChildren != clip.keepNativeWidgetChildren) {
-				updateKeepNativeWidgetChildren(clip.parent, untyped clip.keepNativeWidgetChildren);
-			}
+		if (untyped clip.parent != null && clip.parent.keepNativeWidgetChildren != clip.keepNativeWidgetChildren) {
+			updateKeepNativeWidgetChildren(clip.parent, untyped clip.keepNativeWidgetChildren);
 		}
 	}
 
@@ -713,10 +695,6 @@ class DisplayObjectHelper {
 						updateNativeWidgetTransformMatrix(clip);
 						updateNativeWidgetOpacity(clip);
 						updateNativeWidgetMask(clip);
-
-						if (untyped clip.isCanvas) {
-							updateNativeWidgetCanvas(clip);
-						}
 
 						if (RenderSupportJSPixi.DomInteractions) {
 							updateNativeWidgetInteractive(clip);
@@ -1043,7 +1021,7 @@ class DisplayObjectHelper {
 				}
 
 				var image = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'image');
-				if (untyped clip.alphaMask.localBounds.minX != Math.POSITIVE_INFINITY) {
+				if (untyped Math.isFinite(clip.alphaMask.localBounds.minX) && Math.isFinite(clip.alphaMask.localBounds.minY)) {
 					image.setAttribute('width', '${round(getWidgetWidth(untyped clip.alphaMask))}');
 					image.setAttribute('height', '${round(getWidgetHeight(untyped clip.alphaMask))}');
 					image.setAttribute('x', '${untyped clip.alphaMask.localBounds.minX}');
@@ -1269,7 +1247,7 @@ class DisplayObjectHelper {
 		if (untyped clip.removeNativeWidget != null) {
 			untyped clip.removeNativeWidget();
 		} else {
-			if (untyped isNativeWidget(clip) && !clip.onStage && clip.parentClip != null) {
+			if (untyped isNativeWidget(clip) && clip.parentClip != null) {
 				var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 				if (untyped nativeWidget.parentNode != null && (clip.parentClip.parent != null || clip.parentClip == RenderSupportJSPixi.PixiStage)) {
@@ -1709,21 +1687,20 @@ class DisplayObjectHelper {
 
 		untyped clip.viewBounds = viewBounds;
 
-		if (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty()) {
-			setClipRenderable(clip, untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidgetChildren);
-			return;
-		}
-
 		if ((!RenderSupportJSPixi.DomRenderer && untyped clip.styleChanged != null) || untyped __instanceof__(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
 			invalidateTransform(clip, 'invalidateRenderable');
 		}
 
+		if (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty()) {
+			setClipRenderable(clip, untyped clip.keepNativeWidgetChildren);
+			return;
+		}
+
 		if (!RenderSupportJSPixi.DomRenderer || isNativeWidget(clip) || !clip.renderable) {
 			setClipRenderable(
 				clip,
-				(untyped RenderSupportJSPixi.DomRenderer && clip.keepNativeWidgetChildren) ||
-				(viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY)
+				untyped clip.keepNativeWidgetChildren || (viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY)
 			);
 		}
 
@@ -1740,81 +1717,5 @@ class DisplayObjectHelper {
 
 	public static inline function getClipChildren(clip : DisplayObject) : Array<DisplayObject> {
 		return untyped clip.children || [];
-	}
-
-	public static function replaceWithCanvas(clip : DisplayObject) : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			initNativeWidget(clip, "canvas");
-
-			var nativeWidget : js.html.CanvasElement = untyped clip.nativeWidget;
-
-			if (untyped nativeWidget.context == null) {
-				untyped nativeWidget.context = nativeWidget.getContext("2d", { alpha: true });
-			}
-
-			untyped clip.isCanvas = true;
-		}
-	}
-
-	private static function updateNativeWidgetCanvas(clip : DisplayObject) {
-		if (untyped clip.isCanvas) {
-			var nativeWidget : js.html.CanvasElement = untyped clip.nativeWidget;
-
-			var prevWorldAlpha = clip.worldAlpha;
-			var prevVisible = clip.visible;
-			var prevParent = clip.parent;
-			var prevTransform = untyped clip.transform;
-			var prevView = untyped RenderSupportJSPixi.PixiRenderer.view;
-
-			clip.worldAlpha = 1.0;
-			clip.visible = true;
-			clip.parent = null;
-			untyped clip.transform = new Transform();
-
-			RenderSupportJSPixi.PixiRenderer.view = nativeWidget;
-			untyped RenderSupportJSPixi.PixiRenderer.context = nativeWidget.context;
-			untyped RenderSupportJSPixi.PixiRenderer.rootContext = nativeWidget.context;
-			untyped RenderSupportJSPixi.PixiRenderer.context.clearRect(0, 0, nativeWidget.width, nativeWidget.height);
-
-			forceUpdateTransform(clip);
-			untyped clip.renderCanvas(RenderSupportJSPixi.PixiRenderer);
-
-			clip.worldAlpha = prevWorldAlpha;
-			clip.visible = prevVisible;
-			clip.parent = prevParent;
-			untyped clip.transform = prevTransform;
-			untyped RenderSupportJSPixi.PixiRenderer.view = prevView;
-
-			forceUpdateTransform(clip);
-
-			untyped RenderSupportJSPixi.PixiRenderer._lastObjectRendered = RenderSupportJSPixi.PixiStage;
-		}
-	}
-
-	private static function forceUpdateTransform(clip : DisplayObject) {
-		// clip.cacheAsBitmap = false;
-
-		if (clip.parent != null) {
-			if (untyped clip.isMask) {
-				clip.parent.removeChild(clip);
-			} else {
-				if (untyped clip.nativeWidget != null && untyped !clip.isCanvas) {
-					deleteNativeWidget(clip);
-				}
-
-				untyped clip._boundsId++;
-				untyped clip.transform.updateTransform(untyped clip.parent.transform);
-				clip.worldAlpha = clip.alpha * clip.parent.worldAlpha;
-
-				// if (untyped clip.layoutText != null) {
-				// 	untyped clip.textChanged = true;
-				// 	untyped clip.layoutText();
-				// }
-			}
-		}
-
-		for (child in getClipChildren(clip)) {
-			forceUpdateTransform(child);
-		}
 	}
 }

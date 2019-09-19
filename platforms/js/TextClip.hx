@@ -349,7 +349,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.backgroundColor = backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${style.lineHeight}px';
 
@@ -1046,7 +1046,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getWidth() : Float {
-		return isInput && widgetBounds != null && widgetBounds.minX != Math.POSITIVE_INFINITY ? getWidgetWidth() : getClipWidth();
+		return isInput && Math.isFinite(widgetBounds.minX) ? getWidgetWidth() : getClipWidth();
 	}
 
 	private function getClipWidth() : Float {
@@ -1055,7 +1055,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getHeight() : Float {
-		return isInput && widgetBounds != null && widgetBounds.minY != Math.POSITIVE_INFINITY ? getWidgetHeight() : getClipHeight();
+		return isInput && Math.isFinite(widgetBounds.minY) ? getWidgetHeight() : getClipHeight();
 	}
 
 	private function getClipHeight() : Float {
