@@ -508,9 +508,7 @@ class DisplayObjectHelper {
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
 
-			if (RenderSupportJSPixi.DomRenderer) {
-				untyped clip.alphaMask = untyped maskContainer;
-			}
+			untyped clip.alphaMask = untyped maskContainer;
 
 			updateHasMask(clip);
 
