@@ -269,19 +269,20 @@ class FlowSprite extends Sprite {
 	}
 
 	public function calculateWidgetBounds() : Void {
-		if (nativeWidget == null) {
-			widgetBounds.clear();
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (nativeWidget == null) {
+				widgetBounds.clear();
+			} else {
+				widgetBounds.minX = 0;
+				widgetBounds.minY = 0;
+				widgetBounds.maxX = nativeWidget.naturalWidth;
+				widgetBounds.maxY = nativeWidget.naturalHeight;
+			}
 		} else {
 			widgetBounds.minX = 0;
 			widgetBounds.minY = 0;
-
-			if (RenderSupportJSPixi.DomRenderer) {
-				widgetBounds.maxX = nativeWidget.naturalWidth;
-				widgetBounds.maxY = nativeWidget.naturalHeight;
-			} else {
-				widgetBounds.maxX = texture.width;
-				widgetBounds.maxY = texture.height;
-			}
+			widgetBounds.maxX = texture.width;
+			widgetBounds.maxY = texture.height;
 		}
 	}
 }
