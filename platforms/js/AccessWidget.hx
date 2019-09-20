@@ -584,15 +584,20 @@ class AccessWidget extends EventEmitter {
 			};
 
 			var onpointerup = function(e : Dynamic) {
-				RenderSupportJSPixi.MousePos.x = e.pageX;
-				RenderSupportJSPixi.MousePos.y = e.pageY;
+				if (e.touches != null) {
+					GesturesDetector.endPinch();
 
-				if (e.which == 3 || e.button == 2) {
-					RenderSupportJSPixi.PixiStage.emit("mouserightup");
-				} else if (e.which == 2 || e.button == 1) {
-					RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+					if (e.touches.length == 0) {
+						if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+					}
 				} else {
-					if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+					if (e.which == 3 || e.button == 2) {
+						RenderSupportJSPixi.PixiStage.emit("mouserightup");
+					} else if (e.which == 2 || e.button == 1) {
+						RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+					} else {
+						if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+					}
 				}
 
 				e.preventDefault();

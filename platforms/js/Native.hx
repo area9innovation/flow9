@@ -608,9 +608,15 @@ class Native {
 				untyped clip.nativeWidget.style.display = 'none';
 			}
 
-			RenderSupportJSPixi.once("drawframe", function() {
-				DisplayObjectHelper.deleteNativeWidget(clip);
-			});
+			#if js
+			untyped __js__("
+				if (typeof RenderSupportJSPixi !== 'undefined') {
+					RenderSupportJSPixi.once('drawframe', function() {
+						DisplayObjectHelper.deleteNativeWidget(clip);
+					});
+				}
+			");
+			#end
 		}
 	}
 
