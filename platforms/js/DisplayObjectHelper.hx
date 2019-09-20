@@ -765,10 +765,16 @@ class DisplayObjectHelper {
 				nativeWidget.style.width = '${round(getWidgetWidth(clip))}px';
 				nativeWidget.style.height = '${round(getWidgetHeight(clip))}px';
 			}
+
 			// nativeWidget.setAttribute('minX', Std.string(localBounds.minX));
 			// nativeWidget.setAttribute('minY', Std.string(localBounds.minY));
 			// nativeWidget.setAttribute('maxX', Std.string(localBounds.maxX));
 			// nativeWidget.setAttribute('maxY', Std.string(localBounds.maxY));
+
+			// nativeWidget.setAttribute('viewMinX', Std.string(untyped clip.viewBounds.minX));
+			// nativeWidget.setAttribute('viewMinY', Std.string(untyped clip.viewBounds.minY));
+			// nativeWidget.setAttribute('viewMaxX', Std.string(untyped clip.viewBounds.maxX));
+			// nativeWidget.setAttribute('viewMaxY', Std.string(untyped clip.viewBounds.maxY));
 
 			// if (untyped clip.mask == null && untyped clip.alphaMask == null) {
 			// 	tx = round(transform.tx + round(localBounds.minX));
@@ -1570,7 +1576,7 @@ class DisplayObjectHelper {
 		}
 
 		if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
-			var id = 1.0 / ((transform.a * transform.d) + (transform.c * -transform.b));
+			var id = 1.0 / (transform.a * transform.d - transform.c * transform.b);
 
 			var x = [
 				(transform.d * id * bounds.minX) + (-transform.c * id * bounds.minY) + (((transform.ty * transform.c) - (transform.tx * transform.d)) * id),
@@ -1580,10 +1586,10 @@ class DisplayObjectHelper {
 			];
 
 			var y = [
-				(transform.a * id * bounds.minX) + (-transform.b * id * bounds.minY) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id),
-				(transform.a * id * bounds.minX) + (-transform.b * id * bounds.maxY) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id),
-				(transform.a * id * bounds.maxX) + (-transform.b * id * bounds.maxY) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id),
-				(transform.a * id * bounds.maxX) + (-transform.b * id * bounds.minY) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id)
+				(transform.a * id * bounds.minY) + (-transform.b * id * bounds.minX) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id),
+				(transform.a * id * bounds.minY) + (-transform.b * id * bounds.maxX) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id),
+				(transform.a * id * bounds.maxY) + (-transform.b * id * bounds.maxX) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id),
+				(transform.a * id * bounds.maxY) + (-transform.b * id * bounds.minX) + (((-transform.ty * transform.a) + (transform.tx * transform.b)) * id)
 			];
 
 
