@@ -1139,8 +1139,6 @@ public class Native extends NativeHost {
 			this.name = name;
 			this.is = is;
 			contents = new String();
-		}
-		public void start() {
 			thread = new Thread(this);
 			thread.start();
 		}
@@ -1148,11 +1146,11 @@ public class Native extends NativeHost {
 			try {
 				InputStreamReader isr = new InputStreamReader(is);
 				BufferedReader br = new BufferedReader(isr);
-				while (true) {
+				while (!thread.isInterrupted()) {
 					String s = br.readLine();
 					if (s == null) break;
 					contents += s + "\n";
-					System.out.println("[" + name + "] " + s);
+					//System.out.println("[" + name + "] " + s);
 				}
 			} catch (Exception ex) {
 				System.out.println("Problem reading stream " + name + "... :" + ex);
@@ -1160,6 +1158,7 @@ public class Native extends NativeHost {
 			}
 		}
 		public void close() {
+			thread.interrupt();
 			try {
 				is.close();
 			} catch (Exception ex) {
@@ -1175,9 +1174,7 @@ public class Native extends NativeHost {
 			try {
 				Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
 				StreamReader stdout = new StreamReader("stdout", process.getInputStream());
-				StreamReader stderr = new StreamReader("stderr", process.getInputStream());
-				stdout.start();
-				stderr.start();
+				StreamReader stderr = new StreamReader("stderr", process.getErrorStream());
 
 				process.getOutputStream().write(this.stdin.getBytes());
 				process.getOutputStream().flush();
