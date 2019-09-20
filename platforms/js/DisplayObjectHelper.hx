@@ -410,7 +410,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function round(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : n;
+		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : n;
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
@@ -744,8 +744,8 @@ class DisplayObjectHelper {
 		var ty = round(transform.ty);
 
 		if (untyped clip.scrollRect != null) {
-			tx = round(transform.tx + round(untyped clip.scrollRect.x));
-			ty = round(transform.ty + round(untyped clip.scrollRect.y));
+			tx = round(transform.tx + untyped clip.scrollRect.x);
+			ty = round(transform.ty + untyped clip.scrollRect.y);
 		}
 
 		var localBounds = untyped clip.localBounds;
@@ -1385,7 +1385,7 @@ class DisplayObjectHelper {
 	public static inline function getWidgetWidth(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
 		return ((widgetBounds != null && Math.isFinite(widgetBounds.minX)) ? getBoundsWidth(widgetBounds) : getWidth(clip)) +
-			(untyped clip.style != null && untyped clip.style.letterSpacing != null ? untyped clip.style.letterSpacing + 1.0 : 1.0);
+			(untyped clip.style != null ? (untyped untyped clip.style.letterSpacing != null ? clip.style.letterSpacing : 0.0) + 1.0 : 0.0);
 	}
 
 	public static function getHeight(clip : DisplayObject) : Float {
