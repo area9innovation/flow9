@@ -868,7 +868,7 @@ public class Native extends NativeHost {
 	}
 
 	public final String getTargetName() {
-		return "java";
+		return System.getProperty("os.name").toLowerCase() + ",java";
 	}
 
 	public final boolean setKeyValue(String k, String v) {
