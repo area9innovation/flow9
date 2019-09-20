@@ -29,10 +29,14 @@ class FontLoader {
 	// Because browser starts load once it's used by the page
 	private static function workaroundiOSWebFontLoading(config : Dynamic) {
 		if (!Platform.isIOS) return;
-
-		var fontList = Reflect.field(Reflect.field(config, "google"), "families");
-		if (fontList == null)
-			return;
+		
+		var fontFields = ["google", "custom"];
+		var fontList = [];
+		for (i in 0...fontFields.length) {
+			var fonts = Reflect.field(Reflect.field(config, fontFields[i]), "families");
+			if (fonts != null)
+				fontList = fontList.concat(fonts);
+		}
 
 		for (i in 0...fontList.length) {
 			var font = untyped fontList[i];

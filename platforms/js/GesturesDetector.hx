@@ -26,8 +26,10 @@ class GesturesDetector {
 	}
 
 	public static function endPinch() {
-		IsPinchInProgress = false;
-		for (l in PinchListeners) l(2, CurrentPinchFocus.x, CurrentPinchFocus.y, CurrentPinchScaleFactor, 0.0);
+		if (IsPinchInProgress) {
+			IsPinchInProgress = false;
+			for (l in PinchListeners) l(2, CurrentPinchFocus.x, CurrentPinchFocus.y, CurrentPinchScaleFactor, 0.0);
+		}
 	}
 
 	public static function addPinchListener(cb : Int -> Float -> Float -> Float -> Float -> Bool) {
