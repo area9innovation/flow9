@@ -2,7 +2,6 @@ import js.Browser;
 import js.html.Element;
 import js.html.IFrameElement;
 
-import pixi.core.renderers.SystemRenderer;
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Bounds;
 import pixi.core.renderers.Detector;
@@ -28,7 +27,7 @@ class RenderSupportJSPixi {
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
-	public static var PixiRenderer : SystemRenderer;
+	public static var PixiRenderer : Dynamic;
 
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 
@@ -563,15 +562,23 @@ class RenderSupportJSPixi {
 		};
 
 		var onpointerup = function(e : Dynamic) {
-			MousePos.x = e.pageX;
-			MousePos.y = e.pageY;
+			if (e.touches != null) {
+				GesturesDetector.endPinch();
 
-			if (e.which == 3 || e.button == 2) {
-				emit("mouserightup");
-			} else if (e.which == 2 || e.button == 1) {
-				emit("mousemiddleup");
+				if (e.touches.length == 0) {
+					if (!MouseUpReceived) emit("mouseup");
+				}
 			} else {
-				if (!MouseUpReceived) emit("mouseup");
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
+
+				if (e.which == 3 || e.button == 2) {
+					emit("mouserightup");
+				} else if (e.which == 2 || e.button == 1) {
+					emit("mousemiddleup");
+				} else {
+					if (!MouseUpReceived) emit("mouseup");
+				}
 			}
 		};
 
@@ -590,10 +597,6 @@ class RenderSupportJSPixi {
 				MousePos.y = e.pageY;
 
 				emit("mousemove");
-			}
-
-			if (Platform.isChrome && Platform.isMobile) {
-				e.preventDefault();
 			}
 		};
 

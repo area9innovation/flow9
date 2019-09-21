@@ -64,10 +64,6 @@ class FlowGraphics extends Graphics {
 		pen.x = x;
 		pen.y = y;
 
-		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
-		widgetBounds.addPoint(new Point(x, y));
-
 		return newGraphics;
 	}
 
@@ -77,10 +73,6 @@ class FlowGraphics extends Graphics {
 		pen.y = y;
 
 		isSvg = true;
-
-		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
-		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -94,10 +86,6 @@ class FlowGraphics extends Graphics {
 		pen.y = y;
 
 		isSvg = true;
-
-		graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-		graphicsBounds.addPoint(new Point(x + lineWidth / 2.0, y + lineWidth / 2.0));
-		widgetBounds.addPoint(new Point(x, y));
 
 		return newGraphics;
 	}
@@ -212,11 +200,6 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawRect(x, y, width, height);
 
-			graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-			graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
-			widgetBounds.addPoint(new Point(x, y));
-			widgetBounds.addPoint(new Point(x + width, y + height));
-
 			endFill();
 
 			return newGraphics;
@@ -242,11 +225,6 @@ class FlowGraphics extends Graphics {
 			if (radius > 0) {
 				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
 
-				graphicsBounds.addPoint(new Point(x - lineWidth / 2.0, y - lineWidth / 2.0));
-				graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
-				widgetBounds.addPoint(new Point(x, y));
-				widgetBounds.addPoint(new Point(x + width, y + height));
-
 				endFill();
 
 				return newGraphics;
@@ -265,11 +243,6 @@ class FlowGraphics extends Graphics {
 		if (width > 0 && height > 0) {
 			var newGraphics = super.drawEllipse(x, y, width, height);
 
-			graphicsBounds.addPoint(new Point(x - width - lineWidth / 2.0, y - height - lineWidth / 2.0));
-			graphicsBounds.addPoint(new Point(x + width + lineWidth / 2.0, y + height + lineWidth / 2.0));
-			widgetBounds.addPoint(new Point(x, y));
-			widgetBounds.addPoint(new Point(x + width, y + height));
-
 			endFill();
 
 			return newGraphics;
@@ -283,11 +256,6 @@ class FlowGraphics extends Graphics {
 
 		if (radius > 0) {
 			var newGraphics = super.drawCircle(x, y, radius);
-
-			graphicsBounds.addPoint(new Point(x - radius - lineWidth / 2.0, y - radius - lineWidth / 2.0));
-			graphicsBounds.addPoint(new Point(x + radius + lineWidth / 2.0, y + radius + lineWidth / 2.0));
-			widgetBounds.addPoint(new Point(x - radius, y - radius));
-			widgetBounds.addPoint(new Point(x + radius, y + radius));
 
 			endFill();
 
@@ -339,6 +307,11 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.maxX = untyped this._localBounds.maxX;
 			graphicsBounds.maxY = untyped this._localBounds.maxY;
 		}
+
+		widgetBounds.minX = graphicsBounds.minX + lineWidth;
+		widgetBounds.minY = graphicsBounds.minY + lineWidth;
+		widgetBounds.maxX = graphicsBounds.maxX - lineWidth;
+		widgetBounds.maxY = graphicsBounds.maxY - lineWidth;
 	}
 
 	public override function clear() : Graphics {
@@ -589,6 +562,11 @@ class FlowGraphics extends Graphics {
 
 						if (untyped data.fillGradient != null) {
 							nativeWidget.style.background = untyped data.fillGradient;
+						}
+
+						if (data.lineWidth != null) {
+							nativeWidget.style.marginTop = '${-data.lineWidth / 2.0}px';
+							nativeWidget.style.marginLeft = '${-data.lineWidth / 2.0}px';
 						}
 
 						if (data.shape.type == 1) {
