@@ -1151,14 +1151,38 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		if (style.fontProperties == null) {
-			var ascent = 0.9 * style.fontSize;
-			var descent = 0.1 * style.fontSize;
-			var leading = 0.15 * style.fontSize;
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (style.fontProperties == null) {
+				var ascent = 0.9 * style.fontSize;
+				var descent = 0.1 * style.fontSize;
+				var leading = 0.15 * style.fontSize;
 
-			return [ascent, descent, leading];
+				return [
+					ascent + interlineSpacing / 2.0,
+					descent + interlineSpacing / 2.0,
+					leading + interlineSpacing / 2.0
+				];
+			} else {
+				return [
+					style.fontProperties.ascent + interlineSpacing / 2.0,
+					style.fontProperties.descent + interlineSpacing / 2.0,
+					style.fontProperties.descent + interlineSpacing / 2.0
+				];
+			}
 		} else {
-			return [style.fontProperties.ascent, style.fontProperties.descent, style.fontProperties.descent];
+			if (style.fontProperties == null) {
+				var ascent = 0.9 * style.fontSize;
+				var descent = 0.1 * style.fontSize;
+				var leading = 0.15 * style.fontSize;
+
+				return [ascent, descent, leading];
+			} else {
+				return [
+					style.fontProperties.ascent,
+					style.fontProperties.descent,
+					style.fontProperties.descent
+				];
+			}
 		}
 	}
 

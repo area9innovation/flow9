@@ -77,7 +77,7 @@ void FlowManager::slotRun(int row) {
 		QString execArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 6)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
 		Runner runner(flowView_.flowConfig_.ui, prog, targ, flowdir);
-		if (flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(runner.target()).isFile()) {
+		if (flowView_.flowConfig_.progTimestampsChanged(row) || !runner.target().exists()) {
 			build(row, RUNNING);
 		} else if (state_.start(RUNNING, row)) {
 			QString invocation = runner.invocation();
@@ -146,11 +146,16 @@ void FlowManager::build(int row, State nextState, bool force) {
 		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
 		QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
 		QString opts = flowView_.flowConfig_.ui.launchTableWidget->item(row, 4)->text();
-		//QString astr = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Builder builder(flowView_.flowConfig_.ui, prog, targ, flowdir);
-		if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(builder.runner().target()).isFile()) {
-			if (state_.start(BUILDING, QString::number(row) + QLatin1String(":") + QString::number(static_cast<int>(nextState)))) {
+		Target target(flowView_.flowConfig_.ui, prog, targ, flowdir);
+		if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !target.exists()) {
+			Builder builder(flowView_.flowConfig_.ui, prog, targ, flowdir);
+			QString state = QString::number(row);
+			state += QLatin1String(":") + QString::number(static_cast<int>(nextState));
+			// Remember original target name temporary - to rename back after building.
+			state += QLatin1String(":") + builder.target().path();
+			state += QLatin1String(":") + builder.target().tmpPath();
+			if (state_.start(BUILDING, state)) {
 				QStringList args = builder.args(opts);
 	#ifdef DEBUG
 				QTextStream(stdout) << "BUILD: " << builder.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
@@ -472,11 +477,21 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 		case COMPILING: break;
 		case RUNNING:   break;
 		case BUILDING: {
-			static QRegExp rowStateRegex(QLatin1String("([^:]+):([0-9]+)"));
+			static QRegExp rowStateRegex(QLatin1String("([0-9]+):([0-9]+):([^:]+):([^:]+)"));
 			if (rowStateRegex.exactMatch(internal_state.data.value<QString>())) {
 				int row = rowStateRegex.cap(1).toInt();
 				flowView_.flowConfig_.slotSaveProgTimestamps(row);
             	State nextState = static_cast<State>(rowStateRegex.cap(2).toInt());
+            	QString path = rowStateRegex.cap(3);
+            	QString tmpPath = rowStateRegex.cap(4);
+            	if (path != tmpPath && QFileInfo(tmpPath).isFile()) {
+            		if (!QFile(path).remove()) {
+            			throw std::runtime_error("error at removing: '" + path.toStdString() + "'");
+            		}
+            		if (!QFile(tmpPath).rename(path)) {
+            			throw std::runtime_error("error at renaming: '" + tmpPath.toStdString() + "' to '" + path.toStdString() + "'");
+            		}
+            	}
             	switch (nextState) {
             	case RUNNING: slotRun(row); break;
             	case DEBUGGING: slotDebug(row); break;
