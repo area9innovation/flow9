@@ -313,10 +313,10 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.maxY = pen.y + (lineWidth != null ? lineWidth / 2.0 : 0.0);
 		}
 
-		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null ? lineWidth : 0.0);
-		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null ? lineWidth : 0.0);
-		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null ? lineWidth : 0.0);
-		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null ? lineWidth : 0.0);
+		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && !isSvg ? lineWidth : 0.0);
 	}
 
 	public override function clear() : Graphics {
@@ -345,11 +345,6 @@ class FlowGraphics extends Graphics {
 
 			return;
 		} else if (!isEmpty) {
-			// if (isSvg) {
-			// 	replaceWithCanvas();
-			// } else {
-			// 	initNativeWidget();
-			// }
 			initNativeWidget();
 		}
 
@@ -371,8 +366,8 @@ class FlowGraphics extends Graphics {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${graphicsBounds.maxX - graphicsBounds.minX}px';
-					svg.style.height = '${graphicsBounds.maxY - graphicsBounds.minY}px';
+					svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX, 1.0)}px';
+					svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY, 1.0)}px';
 					svg.style.left = '${graphicsBounds.minX}px';
 					svg.style.top = '${graphicsBounds.minY}px';
 					svg.style.position = 'absolute';
@@ -544,8 +539,8 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${graphicsBounds.maxX - graphicsBounds.minX}px';
-						svg.style.height = '${graphicsBounds.maxY - graphicsBounds.minY}px';
+						svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX, 1.0)}px';
+						svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY, 1.0)}px';
 						svg.style.left = '${graphicsBounds.minX}px';
 						svg.style.top = '${graphicsBounds.minY}px';
 						svg.style.position = 'absolute';
