@@ -64,11 +64,11 @@ QStringList Compiler::includeArgs() const {
 	}
 }
 
-QStringList Compiler::debugArgs(Runner r) const {
+QStringList Compiler::debugArgs(const Target& t) const {
 	switch (type_) {
 	case Compiler::FLOWC1: return QStringList() << QLatin1String("debug=1");
 	case Compiler::FLOWC2: return QStringList() << QLatin1String("debug=1");
-	case Compiler::FLOW:   return QStringList() << QLatin1String("--debuginfo") << r.debug();
+	case Compiler::FLOW:   return QStringList() << QLatin1String("--debuginfo") << t.debug();
 	default:               return QStringList();
 	}
 }
@@ -82,53 +82,21 @@ QString Compiler::compiler() const {
 	}
 }
 
-QStringList Compiler::targetArgs(Runner r) const {
-	switch (r.type()) {
-	case Runner::BYTECODE:
+QStringList Compiler::targetArgs(const Target& t) const {
+	switch (t.type()) {
+	case Target::BYTECODE:
 		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("bytecode=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("bytecode=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--bytecode") << r.target();
+		case Compiler::FLOWC1: return QStringList() << QLatin1String("bytecode=") + t.file();
+		case Compiler::FLOWC2: return QStringList() << QLatin1String("bytecode=") + t.file();
+		case Compiler::FLOW:   return QStringList() << QLatin1String("--bytecode") << t.file();
 		default:               return QStringList();
 		}
 		break;
-	case Runner::NODEJS:
+	case Target::NODEJS:
 		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("es6=") + r.target() << QLatin1String("nodejs=1");
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("es6=") + r.target() << QLatin1String("nodejs=1");
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--es6") << r.target();
-		default:               return QStringList();
-		}
-		break;
-	case Runner::OCAML:
-		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("ml=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("ml=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--ml") << r.target();
-		default:               return QStringList();
-		}
-		break;
-	case Runner::JAVA:
-		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("java=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("java=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--java") << r.target();
-		default:               return QStringList();
-		}
-		break;
-	case Runner::CPP:
-		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("cpp=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("cpp=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--cpp") << r.target();
-		default:               return QStringList();
-		}
-		break;
-	case Runner::CPP2:
-		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("cpp2=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("cpp2=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--cpp2") << r.target();
+		case Compiler::FLOWC1: return QStringList() << QLatin1String("es6=") + t.file() << QLatin1String("nodejs=1");
+		case Compiler::FLOWC2: return QStringList() << QLatin1String("es6=") + t.file() << QLatin1String("nodejs=1");
+		case Compiler::FLOW:   return QStringList() << QLatin1String("--es6") << t.file();
 		default:               return QStringList();
 		}
 		break;

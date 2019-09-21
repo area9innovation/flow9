@@ -29,6 +29,7 @@ set(kateflowplugin_SRCS
     execs/Builder.cpp
     execs/Compiler.cpp
     execs/Runner.cpp
+    execs/Target.cpp
 )
 
 set(syntaxhighlighting
