@@ -410,7 +410,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function round(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : n;
+		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : n;
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
@@ -759,6 +759,11 @@ class DisplayObjectHelper {
 				nativeWidget.setAttribute('height', '${round(localBounds.maxY)}');
 				nativeWidget.style.width = '${round(localBounds.maxX)}px';
 				nativeWidget.style.height = '${round(localBounds.maxY)}px';
+			} else if (untyped clip.scrollRect != null) {
+				nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip)) + 1}');
+				nativeWidget.setAttribute('height', '${round(getWidgetHeight(clip)) + 1}');
+				nativeWidget.style.width = '${round(getWidgetWidth(clip)) + 1}px';
+				nativeWidget.style.height = '${round(getWidgetHeight(clip)) + 1}px';
 			} else {
 				nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip))}');
 				nativeWidget.setAttribute('height', '${round(getWidgetHeight(clip))}');

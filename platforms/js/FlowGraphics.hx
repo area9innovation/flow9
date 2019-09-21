@@ -306,12 +306,17 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.minY = untyped this._localBounds.minY;
 			graphicsBounds.maxX = untyped this._localBounds.maxX;
 			graphicsBounds.maxY = untyped this._localBounds.maxY;
+		} else {
+			graphicsBounds.minX = pen.x - (lineWidth != null ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.minY = pen.y - (lineWidth != null ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.maxX = pen.x + (lineWidth != null ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.maxY = pen.y + (lineWidth != null ? lineWidth / 2.0 : 0.0);
 		}
 
-		widgetBounds.minX = graphicsBounds.minX + lineWidth;
-		widgetBounds.minY = graphicsBounds.minY + lineWidth;
-		widgetBounds.maxX = graphicsBounds.maxX - lineWidth;
-		widgetBounds.maxY = graphicsBounds.maxY - lineWidth;
+		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null ? lineWidth : 0.0);
+		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null ? lineWidth : 0.0);
+		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null ? lineWidth : 0.0);
+		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null ? lineWidth : 0.0);
 	}
 
 	public override function clear() : Graphics {
@@ -572,11 +577,12 @@ class FlowGraphics extends Graphics {
 						if (data.shape.type == 1) {
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
-							nativeWidget.style.borderRadius = '${data.shape.radius}px';
+							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else if (data.shape.type == 3) {
-							nativeWidget.style.borderRadius = '${data.shape.width - data.lineWidth}px / ${data.shape.height - data.lineWidth}px';
+							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width - data.lineWidth)}px /
+								${DisplayObjectHelper.round(data.shape.height - data.lineWidth)}px';
 						} else if (data.shape.type == 4) {
-							nativeWidget.style.borderRadius = '${data.shape.radius}px';
+							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');
 							trace(data);
