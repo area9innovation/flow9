@@ -38,6 +38,7 @@ QStringList Builder::args(const QString& options) const {
 	case Target::JAR: {
 		QStringList args;
 		args << QLatin1String("jar=") + target().tmpFile();
+		args << QLatin1String("output-dir=") + target().outdir();
 		args << options.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << compiler_.flowfile();
 		return args;
@@ -53,7 +54,8 @@ QStringList Builder::args(const QString& options) const {
 	}
 	case Target::CPP2: {
 		QStringList args;
-		args << QLatin1String("cpp2=") + compiler_.flowfile();
+		args << QLatin1String("cpp2=") + target().tmpFile();
+		args << QLatin1String("output-dir=") + target().outdir();
 		args << options.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << compiler_.flowfile();
 		return args;
