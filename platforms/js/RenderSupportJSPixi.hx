@@ -21,7 +21,7 @@ import BlurFilter;
 using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
-	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html";
+	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html" || (Util.getParameter("renderer") == null && Util.getParameter("new") == "1");
 	public static var DomInteractions : Bool = DomRenderer && (Util.getParameter("interactions") == null || Util.getParameter("interactions") == "dom");
 	public static var RenderContainers : Bool = Util.getParameter("containers") == "1" || !DomRenderer;
 
@@ -29,7 +29,7 @@ class RenderSupportJSPixi {
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
 	public static var PixiRenderer : Dynamic;
 
-	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
+	public static var RendererType : String = DomRenderer ? "html" : Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 
 	public static var MousePos : Point = new Point(0.0, 0.0);
 	public static var PixiStageChanged : Bool = true;
