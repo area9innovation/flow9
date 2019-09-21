@@ -71,12 +71,12 @@ void FlowManager::slotCompile() {
 void FlowManager::slotRun(int row) {
 	try {
 		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
-		QString dir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
+		QString odir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
 		QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
 		QString progArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
 		QString execArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 6)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Runner runner(flowView_.flowConfig_.ui, prog, targ, flowdir);
+		Runner runner(flowView_.flowConfig_.ui, prog, targ, flowdir, odir);
 		if (flowView_.flowConfig_.progTimestampsChanged(row) || !runner.target().exists()) {
 			build(row, RUNNING);
 		} else if (state_.start(RUNNING, row)) {
@@ -92,7 +92,7 @@ void FlowManager::slotRun(int row) {
 			if (state_.peek().showCompilerOutput()) {
 				flowView_.flowOutput_.ui.launchOutTextEdit->clear();
 			}
-			launchProcess_.setWorkingDirectory(dir);
+			launchProcess_.setWorkingDirectory(odir);
 			launchProcess_.start(runner.invocation(), args);
 			flowView_.flowOutput_.ui.terminateLaunchButton->setEnabled(true);
 		}
@@ -144,12 +144,13 @@ void FlowManager::slotDebug(int row) {
 void FlowManager::build(int row, State nextState, bool force) {
 	try {
 		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
+		QString odir = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
 		QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
 		QString opts = flowView_.flowConfig_.ui.launchTableWidget->item(row, 4)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Target target(flowView_.flowConfig_.ui, prog, targ, flowdir);
+		Target target(flowView_.flowConfig_.ui, prog, targ, flowdir, odir);
 		if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !target.exists()) {
-			Builder builder(flowView_.flowConfig_.ui, prog, targ, flowdir);
+			Builder builder(flowView_.flowConfig_.ui, prog, targ, flowdir, odir);
 			QString state = QString::number(row);
 			state += QLatin1String(":") + QString::number(static_cast<int>(nextState));
 			// Remember original target name temporary - to rename back after building.
