@@ -3,8 +3,8 @@
 
 namespace flow {
 
-Target::Target(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir) :
-	configUi_(ui), type_(DEFAULT), info_(prog), flowdir_(flowdir), uniq_ind(0) {
+Target::Target(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir, QString outdir) :
+	configUi_(ui), type_(DEFAULT), info_(prog), flowdir_(flowdir), outdir_(outdir), uniq_ind(0) {
 
 	if (!QDir(flowdir).exists()) {
 		throw std::runtime_error("directory '" + flowdir.toStdString() + "' doesn't exist");

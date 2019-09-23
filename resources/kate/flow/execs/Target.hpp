@@ -7,7 +7,7 @@
 namespace flow {
 
 struct Target {
-	Target(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir);
+	Target(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir, QString outdir);
 	enum Type { BYTECODE, OCAML, JAVA, JAR, CPP, CPP2, NODEJS, DEFAULT = BYTECODE };
 	Type type() const { return type_; }
 	QString file() const;
@@ -17,6 +17,7 @@ struct Target {
 
 	QString debug() const;
 	QString flowdir() const { return flowdir_; }
+	QString outdir() const { return outdir_; }
 	const QFileInfo& info() const { return info_; }
 	QString extension() const;
 	const Ui::FlowConfig& configUi() const { return configUi_; }
@@ -27,6 +28,7 @@ private:
 	Type    type_;
 	QFileInfo info_;
 	QString flowdir_;
+	QString outdir_;
 	int uniq_ind;
 };
 

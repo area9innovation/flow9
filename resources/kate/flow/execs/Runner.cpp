@@ -3,8 +3,8 @@
 
 namespace flow {
 
-Runner::Runner(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir) :
-	target_(ui, prog, targ, flowdir) {
+Runner::Runner(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir, QString outdir) :
+	target_(ui, prog, targ, flowdir, outdir) {
 	if (!target().exists()) {
 		throw std::runtime_error("program '" + prog.toStdString() + "' doesn't exist");
 	}
