@@ -1,5 +1,6 @@
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/backends/cpp2/fi2cpp2_util;
+import tools/flowc/flowc_field_type;
 
 export {
 	cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer;
@@ -107,9 +108,6 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer {
 	function_table = toplevel_triple.first;
 	global_vars = toplevel_triple.second;
 	global_map = toplevel_triple.third;
-	
-	fcPrintln("global vars: " + strGlue(global_vars, " "));
-	
 	writer = Cpp2Writer(
 		config,
 		program,
@@ -767,84 +765,80 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 	cpp2writeLines(^o, writer.config.outputDir + "gen_tables.cpp");
 }
 
-cpp2WriterCompileGlobalFn(writer : Cpp2Writer, name : string, body : FiExp) -> void {
+cpp2WriterCompileGlobalFn(writer : Cpp2Writer, name : string, body : FiLambda) -> void {
 	writer.cur_global ::= name;
 	writer.next_closure_id ::= 1;
 
 	fcPrintln("compiling global Fn: '" + name + "'");
-	flow(name);
+
 	cpp2WriterCompileLambda(writer, name, cpp2_int_UNDEF, body, None());
 	{}
 }
 
-cpp2WriterCompileLambda(writer : Cpp2Writer, name : string, idx : int, code : FiExp, upenv : Maybe<Cpp2Environment>) -> Cpp2Environment {
-	switch (code) {
-		FiLambda(args, body, type, pos): {
-			atypes = switch (type) {
-				FiTypeFunction(arg_types, ret_type): arg_types;
-				default: {
-					cpp2_error("cpp2Writertype must be FiTypeFunction");
-					[]
-				}
-			};
-			switch (upenv) {
-				Some(env): cpp2EnvironmentStashGlobalMeta(env);
-				None(): { }
-			}
-			// Prepare environment
-			mname = if (idx == cpp2_int_UNDEF) cpp2FnMethodName(name) else cpp2ClosureMethodName(name, idx);
-			vname = if (idx == cpp2_int_UNDEF) name else name + "$" + i2s(idx);
-			env = cpp2Environment(upenv, mname, vname, length(args), writer.struct_list);
-			//ctx = env.cur_ctx;
-			//env.struct_list = struct_list;
-			//env.nargs = args.length;
-			
-			iter(enumFromTo(0, length(args) - 1), \i -> {
-					place = cpp2PlaceInfo(Some(env), Cpp2Argument(), i, args[i].name);
-					(place.meta).context ::= 0;
-					(place.meta).dirty ::= true;
-					(place.meta).type ::= atypes[i].type;
-					env.locals ::= setTree(env.locals, args[i].name, place)
-				}
-			);
-			/*for (i in 0...args.length)
-			{
-				place = new Cpp2PlaceInfo(env, Argument, i, args[i]);
-				if (atypes != null) {
-					place.meta.context = 0;
-					place.meta.dirty = true;
-					place.meta.type = atypes[i];
-				}
-				env.locals.set(args[i], place);
-			}*/
+cpp2WriterCompileLambda(writer : Cpp2Writer, name : string, idx : int, lambda : FiLambda, upenv : Maybe<Cpp2Environment>) -> Cpp2Environment {
 
-			// Process the body
-			maybeApply(env.cur_ctx, 
-				\ctx -> {
-					cpp2ContextExit(ctx);
-					cpp2WriterCompileExpression(writer, body, ctx, Cpp2OutputReturn(), Cpp2StackTop(0))
-				}
-			);
+	fcPrintln("compiling lambda: '" + name + "' idx: " + i2s(idx));
 
-			// Flush the code
-			// TODO: place here a file, which contains lambda
-			// Get rid of the absolute paths to our includes
-			t = fold(writer.config.includes, "" /*file*/, \acc, incl ->
-				strReplace(strReplace(acc, incl, ""), incl + "/", "")
-			);
-			t_norm = strReplace(strReplace(strReplace(t, "/", "_"), ".flow", ""), ".", "_");
-			cpp2WriterEmitLambdaCode(writer, env, writer.config.outputDir + "flow_" + t_norm + ".cpp");
-			switch (upenv) {
-				Some(e): cpp2EnvironmentRestoreGlobalMeta(e);
-				None(): { }
-			}
-			env
-		}
+	atypes = switch (lambda.type) {
+		FiTypeFunction(arg_types, ret_type): arg_types;
 		default: {
-			cpp2_error("cpp2Writerbody must be FiLambda");
-			dummyCpp2Environment
+			cpp2_error("cpp2Writertype must be FiTypeFunction");
+			[]
 		}
+	};
+	switch (upenv) {
+		Some(env): cpp2EnvironmentStashGlobalMeta(env);
+		None(): { }
 	}
+	// Prepare environment
+	mname = if (idx == cpp2_int_UNDEF) cpp2FnMethodName(name) else cpp2ClosureMethodName(name, idx);
+	vname = if (idx == cpp2_int_UNDEF) name else name + "$" + i2s(idx);
+	env = cpp2Environment(upenv, mname, vname, length(lambda.args), writer.struct_list);
+	//ctx = env.cur_ctx;
+	//env.struct_list = struct_list;
+	//env.nargs = args.length;
+	
+	iter(enumFromTo(0, length(lambda.args) - 1), \i -> {
+			place = cpp2PlaceInfo(Some(env), Cpp2Argument(), i, lambda.args[i].name);
+			(place.meta).context ::= 0;
+			(place.meta).dirty ::= true;
+			(place.meta).type ::= atypes[i].type;
+			env.locals ::= setTree(env.locals, lambda.args[i].name, place)
+		}
+	);
+	/*for (i in 0...args.length)
+	{
+		place = new Cpp2PlaceInfo(env, Argument, i, args[i]);
+		if (atypes != null) {
+			place.meta.context = 0;
+			place.meta.dirty = true;
+			place.meta.type = atypes[i];
+		}
+		env.locals.set(args[i], place);
+	}*/
+
+	// Process the body
+	maybeApply(env.cur_ctx, 
+		\ctx -> {
+			cpp2WriterCompileExpression(writer, lambda.body, ctx, Cpp2OutputReturn(), Cpp2StackTop(0));
+			cpp2ContextExit(ctx);
+		}
+	);
+
+	// Flush the code
+	mod_name = moduleWhereNameIsDefined(writer.program.names, writer.cur_global);
+	file_mod = lookupTreeDef(writer.program.modules, mod_name, dummyFiModule);
+	// Get rid of the absolute paths to our includes
+	t = fold(writer.config.includes, file_mod.fileinfo.flowfile, \acc, incl ->
+		strReplace(strReplace(acc, incl, ""), incl + "/", "")
+	);
+	t_norm = strReplace(strReplace(strReplace(t, "/", "_"), ".flow", ""), ".", "_");
+	cpp2WriterEmitLambdaCode(writer, env, writer.config.outputDir + "flow_" + t_norm + ".cpp");
+	switch (upenv) {
+		Some(e): cpp2EnvironmentRestoreGlobalMeta(e);
+		None(): { }
+	}
+	env
 }
 
 cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> void {
@@ -1021,7 +1015,7 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 							{}
 						}
 						default: {
-							cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, value));
+							cpp2_error("Not implemented 1: " + prettyFiExp(dummyPretty, value));
 						}
 					}
 				}
@@ -1041,7 +1035,7 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 							{}
 						}
 						default: {
-							cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, value));
+							cpp2_error("Not implemented 2: " + prettyFiExp(dummyPretty, value));
 						}
 					}
 				}
@@ -1052,7 +1046,7 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 							{}
 						}
 						default: {
-							cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, code));
+							cpp2_error("Not implemented 3: " + prettyFiExp(dummyPretty, code));
 						}
 					}
 				}
@@ -1071,16 +1065,16 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 											{}
 										}
 										default: {
-											cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, code));
+											cpp2_error("Not implemented 4: " + prettyFiExp(dummyPretty, code));
 										}
 								}
 								default: {
-									cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, code));
+									cpp2_error("Not implemented 5: " + prettyFiExp(dummyPretty, code));
 								}
 							}
 						}
 						default: {
-							cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, code));
+							cpp2_error("Not implemented 6: " + prettyFiExp(dummyPretty, code));
 						}
 					}
 				}
@@ -1088,8 +1082,12 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 					cpp2WriterCopyValue(ctx, out, ref);
 					{}
 				}
+				FiTypeParameter(__): {
+					cpp2WriterCopyValue(ctx, out, ref);
+					{}
+				}
 				default: {
-					cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, code));
+					cpp2_error("Not implemented 7: " + prettyFiExp(dummyPretty, code));
 				}
 			}
 		}
@@ -1426,7 +1424,7 @@ cpp2WriterEmitNumericExpr(writer : Cpp2Writer, expr : FiExp, ctx : Cpp2Context, 
 			switch (totype) {
 				FiTypeInt(): { }
 				FiTypeDouble(): { }
-				default: cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, expr));
+				default: cpp2_error("Not implemented -1: " + prettyFiExp(dummyPretty, expr));
 			}
 			switch (fromtype) {
 				// TODO: is there a bug ?...
@@ -1439,7 +1437,7 @@ cpp2WriterEmitNumericExpr(writer : Cpp2Writer, expr : FiExp, ctx : Cpp2Context, 
 					if (tag == Cpp2TDouble()) "int(" + arg + ")" else arg;
 				}
 				default: {
-					cpp2_error("Not implemented: " + prettyFiExp(dummyPretty, expr));
+					cpp2_error("Not implemented -2: " + prettyFiExp(dummyPretty, expr));
 					""
 				}
 			}
@@ -2744,7 +2742,7 @@ cpp2WriterInlineMapNative(writer : Cpp2Writer, arr : FiExp, minit : Maybe<FiExp>
 	}
 }
 
-cpp2WriterCompileClosure(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> Maybe<Cpp2PlaceInfo> {
+cpp2WriterCompileClosure(writer : Cpp2Writer, code : FiLambda, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> Maybe<Cpp2PlaceInfo> {
 
 	fcPrintln("compiling closure for: " + writer.cur_global + " - " + i2s(writer.next_closure_id + 1));
 
