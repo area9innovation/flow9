@@ -179,6 +179,7 @@ class FlowContainer extends Container {
 
 				if (transformChanged) {
 					var bounds = new Bounds();
+					untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
 					bounds.minX = 0;
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
@@ -203,6 +204,7 @@ class FlowContainer extends Container {
 
 			if (transformChanged) {
 				var bounds = new Bounds();
+				untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
 				bounds.minX = 0;
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;
