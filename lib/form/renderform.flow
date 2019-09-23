@@ -726,6 +726,40 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		);
 	}
 
+	FullScreen(fs, form): {
+		fw = make(false);
+		nextDistinct(fs, false);
+
+		isCurrentClip = ref false;
+
+		renderForm(Constructor(FullWindow(fw, form), \ -> {
+			fsListener = onFullScreen(\change -> {
+				if (^isCurrentClip) {
+					if (!change) {
+						nextDistinct(fs, change);
+					}
+
+					isCurrentClip := change;
+					nextDistinct(fw, change);
+				}
+			});
+
+			uns = subscribe2(fs, \fsc -> {
+				isCurrentClip := true;
+
+				toggleFullScreen(fsc);
+
+				// For targets without fullscreen available
+				if (targetNoFullscreen())
+					nextDistinct(fw, fsc);
+			});
+			\ -> {
+				fsListener();
+				uns();
+			}
+		}), available, zorder, tabOrder);
+	}
+
 	Interactive(listeners, form) : {
 		d = renderForm(form, available, zorder, tabOrder);
 
@@ -1150,7 +1184,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		pudis = pu.second;
 
-		RenderResult([clip, maskClip], d2.widthHeight, d2.baseline, pu.first, concat3(r1.disposers, r2.disposers, [\ -> {
+		RenderResult([maskClip, clip], d2.widthHeight, d2.baseline, pu.first, concat3(r1.disposers, r2.disposers, [\ -> {
 			pudis();
 			deleteNative(clip);
 			deleteNative(maskClip);
@@ -1161,6 +1195,87 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		if (targetNoFilters()) {
 			// Not supported
 			d;
+		} else if (getUrlParameter("renderer") == "html" || (getUrlParameter("renderer") == "" && getUrlParameter("new") == "1")) {
+			fold(filters, d, \acc, f -> {
+				fn = \clip -> {
+					fils = switch(f : Filters) {
+						Bevel(params): {
+							angle = ref 45.0;
+							distance = ref 3.0;
+							radius = ref 3.0;
+							spread = ref 1.0;
+							color1 = ref 0xffffff;
+							alpha1 = ref 1.0;
+							color2 = ref 0x000000;
+							alpha2 = ref 1.0;
+							inner = ref true;
+							iter(params, \p -> switch (p : BevelParameter) {
+								Placement(a, ds): { angle := a; distance := ds; }
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+								Color(c, a): { color1 := c; alpha1 := a; }
+								ShadowColor(c, a): { color2 := c; alpha2 := a; }
+								Inner(i): inner := i;
+							});
+							makeBevel(^angle, ^distance, ^radius, ^spread, ^color1, ^alpha1, ^color2, ^alpha2, ^inner);
+						}
+						DropShadow(params): {
+							angle = ref 45.0;
+							distance = ref 4.0;
+							radius = ref 4.0;
+							spread = ref 1.0;
+							color = ref 0x000000;
+							alpha = ref 1.0;
+							inner = ref false;
+							iter(params, \p -> switch (p : DropShadowParameter) {
+								Placement(a, ds): { angle := a; distance := ds; }
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+								Color(c, a): { color := c; alpha := a; }
+								Inner(i): inner := i;
+							});
+							makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+						}
+						Blur(params): {
+							radius = ref 3.0;
+							spread = ref 1.0;
+							iter(params, \p -> switch (p : BlurParameter) {
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+							});
+							makeBlur(^radius, ^spread);
+						}
+						Glow(params): {
+							radius = ref 4.0;
+							spread = ref 1.0;
+							color = ref 0x000000;
+							alpha = ref 1.0;
+							inner = ref false;
+							iter(params, \p -> switch (p : GlowParameter) {
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+								Color(c, a): { color := c; alpha := a; }
+								Inner(i): inner := i;
+							});
+							makeGlow(^radius, ^spread, ^color, ^alpha, ^inner);
+						}
+						Shader(vertex, fragment, uniforms) : {
+							makeShader(
+								strSplitLeave(strReplace(vertex, "\t", ""), "\n"),
+								strSplitLeave(strReplace(fragment, "\t", ""), "\n"),
+								map(uniforms, \u -> [u.name, u.type, u.value])
+							);
+						}
+					};
+					setClipCallstack(clip, stack);
+					addFilters(clip, [fils]);
+
+					[\ -> deleteNative(fils)]
+				}
+				attachChildAndCapability(rform, acc, acc.capabilities.filters,
+					ClipCapabilities(acc.capabilities.move, false, acc.capabilities.interactive, acc.capabilities.scale, acc.capabilities.alpha), fn
+				);
+			});
 		} else {
 			fn = \clip -> {
 				fils = map(filters, \f -> switch(f : Filters) {
@@ -1243,34 +1358,46 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		}
 	}
 	Cursor(shape, form) : {
-		clip = makeClip();
-		setClipDebugInfo(clip, "form", rform);
+		if (js) {
+			d = renderForm(form, available, zorder, tabOrder);
 
-		cursorListeners = makeGlobalCursorListeners(shape, zorder);
+			attachChildAndCapability(
+				rform,
+				d,
+				false,
+				d.capabilities,
+				\clip -> {
+					switch (shape : CursorShape2) {
+						CursorShape(): {
+							setClipCursor(clip, getCursorShapeName(shape));
+							[];
+						}
+						DynamicCursor(shape2): {
+							[makeSubscribe(shape2, \sh -> setClipCursor(clip, getCursorShapeName(sh)))()];
+						}
+					}
+				}
+			);
+		} else {
+			clip = makeClip();
+			setClipDebugInfo(clip, "form", rform);
 
-		d = renderForm(
-			Interactive(
-				cursorListeners.first,
-				form
-			),
-			available,
-			zorder,
-			tabOrder
-		);
+			cursorListeners = makeGlobalCursorListeners(shape, zorder);
 
-		attachChildren(clip, d.clips, d.widthHeight, d.baseline, d.pending,
-			arrayPush(d.disposers, \ -> { cursorListeners.second(); deleteNative(clip); }),
-			allClipCapabilities);
+			d = renderForm(
+				Interactive(
+					cursorListeners.first,
+					form
+				),
+				available,
+				zorder,
+				tabOrder
+			);
 
-		/*
-		// Alternative which requires some changes to users of Cursor:
-		d = renderForm(form, available);
-		fn = \clip -> {
-			setCursor(shapeName);
-			\ -> { setCursor("auto"); }
-		};
-		attachChildAndCapability(d, true, d.capabilities, fn);
-		*/
+			attachChildren(clip, d.clips, d.widthHeight, d.baseline, d.pending,
+				arrayPush(d.disposers, \ -> { cursorListeners.second(); deleteNative(clip); }),
+				allClipCapabilities);
+		}
 	}
 	Inspect(inspectors, form): {
 		// Set up inspection before constructing the child

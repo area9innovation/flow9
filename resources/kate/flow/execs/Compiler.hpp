@@ -2,7 +2,7 @@
 
 #include <QDir>
 #include "ui_FlowConfig.h"
-#include "Runner.hpp"
+#include "Target.hpp"
 
 namespace flow {
 
@@ -11,8 +11,8 @@ struct Compiler {
 	enum Type { FLOW, FLOWC1, FLOWC2, DEFAULT = FLOW };
 	Type type() const { return type_; }
 	QStringList includeArgs() const;
-	QStringList debugArgs(Runner) const;
-	QStringList targetArgs(Runner) const;
+	QStringList debugArgs(const Target&) const;
+	QStringList targetArgs(const Target&) const;
 	QStringList compileArgs(QString) const;
 	QString invocation() const;
 	QString flowfile() const { return file_; }
