@@ -15,6 +15,10 @@ function DropShadowFilter(rotation, distance, blur, color, alpha) {
 	this.resolution = 1;
 	this.quality = Math.min(Math.max(this.blur / 2.0, 3.0), 20.0);
 
+	if (typeof RenderSupportJSPixi !== 'undefined' && RenderSupportJSPixi.DomRenderer) {
+		return;
+	}
+
 	this.targetTransform = new PIXI.Matrix();
 	this.targetTransform.tx = this.distance * Math.cos(this.angle);
 	this.targetTransform.ty = this.distance * Math.sin(this.angle);

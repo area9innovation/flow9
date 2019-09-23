@@ -344,27 +344,27 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		nativeWidget.style.color = style.fill;
-		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';
-		nativeWidget.style.fontFamily = style.fontFamily;
-		nativeWidget.style.fontWeight = style.fontWeight;
-		nativeWidget.style.fontStyle = style.fontStyle;
+		nativeWidget.style.letterSpacing = !RenderSupportJSPixi.DomRenderer || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		nativeWidget.style.fontFamily = !RenderSupportJSPixi.DomRenderer || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
+		nativeWidget.style.fontWeight = !RenderSupportJSPixi.DomRenderer || style.fontWeight != 400 ? style.fontWeight : null;
+		nativeWidget.style.fontStyle = !RenderSupportJSPixi.DomRenderer || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
+		nativeWidget.style.background = !RenderSupportJSPixi.DomRenderer || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${style.lineHeight}px';
 
 		nativeWidget.style.direction = switch (textDirection) {
 			case 'RTL' : 'rtl';
 			case 'rtl' : 'rtl';
-			default : 'ltr';
+			default : null;
 		}
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
-			case 'AutoAlignLeft' : 'left';
+			case 'AutoAlignLeft' : null;
 			case 'AutoAlignRight' : 'right';
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
-			default : 'left';
+			default : null;
 		}
 
 		if (!RenderSupportJSPixi.DomRenderer) {
@@ -1196,8 +1196,8 @@ class TextClip extends NativeWidgetClip {
 
 			nativeWidget = Browser.document.createElement(tagName);
 			updateClipID();
-			nativeWidget.className = 'nativeWidget';
-			nativeWidget.style.whiteSpace = 'pre-wrap';
+			nativeWidget.classList.add('nativeWidget');
+			nativeWidget.classList.add('textWidget');
 
 			isNativeWidget = true;
 		} else {

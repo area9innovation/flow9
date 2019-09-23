@@ -772,18 +772,12 @@ class DisplayObjectHelper {
 			var nativeWidget = untyped clip.nativeWidget;
 
 			if (untyped clip.alphaMask != null) {
-				nativeWidget.setAttribute('width', '${localBounds.maxX}');
-				nativeWidget.setAttribute('height', '${localBounds.maxY}');
 				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
-			} else if (untyped clip.scrollRect != null && false) {
-				nativeWidget.setAttribute('width', '${getWidgetWidth(clip) + 1}');
-				nativeWidget.setAttribute('height', '${getWidgetHeight(clip) + 1}');
+			} else if (untyped clip.scrollRect != null) {
 				nativeWidget.style.width = '${getWidgetWidth(clip) + 1}px';
 				nativeWidget.style.height = '${getWidgetHeight(clip) + 1}px';
 			} else {
-				nativeWidget.setAttribute('width', '${getWidgetWidth(clip)}');
-				nativeWidget.setAttribute('height', '${getWidgetHeight(clip)}');
 				nativeWidget.style.width = '${getWidgetWidth(clip)}px';
 				nativeWidget.style.height = '${getWidgetHeight(clip)}px';
 			}
@@ -809,14 +803,10 @@ class DisplayObjectHelper {
 			// applyScrollFn(clip);
 		}
 
-		nativeWidget.style.left = '${tx}px';
-		nativeWidget.style.top = '${ty}px';
-
-		if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
-			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-		} else {
-			nativeWidget.style.transform = 'none';
-		}
+		nativeWidget.style.left = tx != 0 ? '${tx}px' : null;
+		nativeWidget.style.top = ty != 0 ? '${ty}px' : null;
+		nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
+			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : null;
 	}
 
 	public static function updateNativeWidgetOpacity(clip : DisplayObject, ?worldTransform : Bool) {
@@ -995,6 +985,14 @@ class DisplayObjectHelper {
 
 		if (x != 0 || y != 0) {
 			createPlaceholderWidget(clip);
+		}
+
+		if (x > 10000) {
+			untyped clip.placeholderWidget.style.width = '${getWidgetWidth(clip) + x}px';
+		}
+
+		if (y > 10000) {
+			untyped clip.placeholderWidget.style.height = '${getWidgetHeight(clip) + y}px';
 		}
 
 		var scrollFn = function() {
@@ -1337,7 +1335,7 @@ class DisplayObjectHelper {
 		if (isNativeWidget(clip)) {
 			var childWidget : Dynamic = untyped child.nativeWidget;
 
-			if (childWidget.style.zIndex == null || childWidget.style.zIndex == "") {
+			if (untyped clip.nativeWidget == Browser.document.body && (childWidget.style.zIndex == null || childWidget.style.zIndex == "")) {
 				var localStage : FlowContainer = untyped child.stage;
 
 				if (localStage != null) {

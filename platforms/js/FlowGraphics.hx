@@ -565,21 +565,30 @@ class FlowGraphics extends Graphics {
 						}
 
 						if (data.shape.type == 1) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
-							nativeWidget.style.marginLeft = '${data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else if (data.shape.type == 3) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width - data.lineWidth)}px /
 								${DisplayObjectHelper.round(data.shape.height - data.lineWidth)}px';
 						} else if (data.shape.type == 4) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');
