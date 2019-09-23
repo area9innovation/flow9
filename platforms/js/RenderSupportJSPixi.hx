@@ -262,6 +262,10 @@ class RenderSupportJSPixi {
 			untyped __js__("document.location.reload(true)");
 		}
 
+		if (Platform.isMacintosh || Platform.isIOS) {
+			untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█Å'");
+		}
+
 		PixiWorkarounds.workaroundTextMetrics();
 
 		PixiWorkarounds.workaroundRendererDestroy();
