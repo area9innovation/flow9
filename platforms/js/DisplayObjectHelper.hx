@@ -1380,12 +1380,16 @@ class DisplayObjectHelper {
 		if (untyped clip.nativeWidget != null) {
 			removeNativeWidget(clip);
 
+			untyped __js__("delete clip.nativeWidget");
 			untyped clip.nativeWidget = null;
 			untyped clip.isNativeWidget = false;
 		}
 
 		if (untyped clip.accessWidget != null) {
 			AccessWidget.removeAccessWidget(untyped clip.accessWidget);
+
+			untyped __js__("delete clip.accessWidget");
+			untyped clip.accessWidget = null;
 		}
 	}
 
