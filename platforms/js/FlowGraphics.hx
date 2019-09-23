@@ -306,12 +306,17 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.minY = untyped this._localBounds.minY;
 			graphicsBounds.maxX = untyped this._localBounds.maxX;
 			graphicsBounds.maxY = untyped this._localBounds.maxY;
+		} else {
+			graphicsBounds.minX = pen.x - (lineWidth != null ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.minY = pen.y - (lineWidth != null ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.maxX = pen.x + (lineWidth != null ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.maxY = pen.y + (lineWidth != null ? lineWidth / 2.0 : 0.0);
 		}
 
-		widgetBounds.minX = graphicsBounds.minX + lineWidth;
-		widgetBounds.minY = graphicsBounds.minY + lineWidth;
-		widgetBounds.maxX = graphicsBounds.maxX - lineWidth;
-		widgetBounds.maxY = graphicsBounds.maxY - lineWidth;
+		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && !isSvg ? lineWidth : 0.0);
 	}
 
 	public override function clear() : Graphics {
@@ -340,11 +345,6 @@ class FlowGraphics extends Graphics {
 
 			return;
 		} else if (!isEmpty) {
-			// if (isSvg) {
-			// 	replaceWithCanvas();
-			// } else {
-			// 	initNativeWidget();
-			// }
 			initNativeWidget();
 		}
 
@@ -366,8 +366,8 @@ class FlowGraphics extends Graphics {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${graphicsBounds.maxX - graphicsBounds.minX}px';
-					svg.style.height = '${graphicsBounds.maxY - graphicsBounds.minY}px';
+					svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX, 1.0)}px';
+					svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY, 1.0)}px';
 					svg.style.left = '${graphicsBounds.minX}px';
 					svg.style.top = '${graphicsBounds.minY}px';
 					svg.style.position = 'absolute';
@@ -539,8 +539,8 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${graphicsBounds.maxX - graphicsBounds.minX}px';
-						svg.style.height = '${graphicsBounds.maxY - graphicsBounds.minY}px';
+						svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX, 1.0)}px';
+						svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY, 1.0)}px';
 						svg.style.left = '${graphicsBounds.minX}px';
 						svg.style.top = '${graphicsBounds.minY}px';
 						svg.style.position = 'absolute';
@@ -564,19 +564,23 @@ class FlowGraphics extends Graphics {
 							nativeWidget.style.background = untyped data.fillGradient;
 						}
 
-						if (data.lineWidth != null) {
-							nativeWidget.style.marginTop = '${-data.lineWidth / 2.0}px';
-							nativeWidget.style.marginLeft = '${-data.lineWidth / 2.0}px';
-						}
-
 						if (data.shape.type == 1) {
+							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
-							nativeWidget.style.borderRadius = '${data.shape.radius}px';
+							nativeWidget.style.marginLeft = '${data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							nativeWidget.style.marginTop = '${data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else if (data.shape.type == 3) {
-							nativeWidget.style.borderRadius = '${data.shape.width - data.lineWidth}px / ${data.shape.height - data.lineWidth}px';
+							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width - data.lineWidth)}px /
+								${DisplayObjectHelper.round(data.shape.height - data.lineWidth)}px';
 						} else if (data.shape.type == 4) {
-							nativeWidget.style.borderRadius = '${data.shape.radius}px';
+							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');
 							trace(data);
