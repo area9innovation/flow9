@@ -316,6 +316,21 @@ if (typeof htmlBundle == "undefined") {
 	} else {
 		document.body.appendChild(document.createTextNode("Use 'name' URI parameter to run corresponding flow app"));
 	}
+} else if (typeof localStorage !== 'undefined') {
+	var filename = location.pathname.split("/").slice(-1)[0];
+	var xmlhttp = new XMLHttpRequest();
+	xmlhttp.onreadystatechange = function () {
+		if (this.readyState == 4 && this.status == 200) {
+			var newTimestamp = this.responseText;
+			var oldTimestamp = localStorage.getItem(filename);
+			if (oldTimestamp != newTimestamp) {
+				localStorage.setItem(filename, newTimestamp);
+				window.location.reload(true);
+			}
+		}
+	}
+	xmlhttp.open("GET", "php/stamp.php?file=" + filename, true);
+	xmlhttp.send();
 }
 
 var leaveWarningText = undefined;
