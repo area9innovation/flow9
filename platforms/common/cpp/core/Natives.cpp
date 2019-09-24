@@ -1716,6 +1716,11 @@ StackSlot ByteCodeRunner::setFileContentBytes(RUNNER_ARGS) {
     return setFileContentHelper(RUNNER, pRunnerArgs__, &bytesProcessor);
 }
 
+StackSlot ByteCodeRunner::getBytecodeFilename(RUNNER_ARGS)
+{
+    return RUNNER->AllocateString(parseUtf8(RUNNER->BytecodeFilename));
+}
+
 StackSlot ByteCodeRunner::loaderUrl(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;

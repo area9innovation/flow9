@@ -3719,6 +3719,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentBinary, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentBytes, 2);
 
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, getBytecodeFilename, 0);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, loaderUrl, 0);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getUrlParameter, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getAllUrlParameters, 0);
