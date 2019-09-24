@@ -12,6 +12,7 @@ class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
 	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
 	public static var BoxShadow : Bool = Util.getParameter("boxshadow") != "0";
+	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -137,6 +138,10 @@ class DisplayObjectHelper {
 				}
 			}
 
+			if (!RenderSupportJSPixi.DomRenderer) {
+				untyped clip.rvlast = null;
+			}
+
 			if (untyped clip.child != null && clip.localTransformChanged) {
 				invalidateTransform(untyped clip.child, DebugUpdate ? from + ' ->\ninvalidateWorldTransform -> mask child' : null);
 			}
@@ -152,6 +157,10 @@ class DisplayObjectHelper {
 	public static function invalidateParentTransform(clip : DisplayObject) : Void {
 		if (clip.parent != null) {
 			untyped clip.transformChanged = true;
+
+			if (!RenderSupportJSPixi.DomRenderer) {
+				untyped clip.rvlast = null;
+			}
 
 			if (untyped clip.isCanvas) {
 				untyped clip.worldTransformChanged = true;
@@ -524,10 +533,6 @@ class DisplayObjectHelper {
 
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
-
-			if (!RenderSupportJSPixi.DomRenderer) {
-				untyped clip.alphaMask = untyped maskContainer;
-			}
 
 			updateHasMask(clip);
 
@@ -1684,6 +1689,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds) : Void {
+		if (!InvalidateRenderable) {
+			return;
+		}
+
 		var localBounds = untyped clip.localBounds;
 
 		if (localBounds == null || untyped clip.isMask) {

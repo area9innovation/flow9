@@ -24,6 +24,7 @@ class RenderSupportJSPixi {
 	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html" || (Util.getParameter("renderer") == null && Util.getParameter("new") == "1");
 	public static var DomInteractions : Bool = DomRenderer && (Util.getParameter("interactions") == null || Util.getParameter("interactions") == "dom");
 	public static var RenderContainers : Bool = Util.getParameter("containers") == "1" || !DomRenderer;
+	public static var FiltersEnabled : Bool = Util.getParameter("filters") != "0";
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
@@ -1991,6 +1992,10 @@ class RenderSupportJSPixi {
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
+		if (!FiltersEnabled) {
+			return;
+		}
+
 		if (RenderSupportJSPixi.DomRenderer) {
 			untyped clip.filters = filters.filter(function(f) { return f != null; });
 			clip.initNativeWidget();
