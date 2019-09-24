@@ -630,7 +630,11 @@ void Debugger::printMIFrame(ostream &out, const FlowStackFrame &frame)
                         << "\", value=";
 
                     std::stringstream ss;
-                    getFlowRunner()->PrintData(ss, data_stack()[frame.frame+i], 1, 3);
+                    if (shallow_frame_print) {
+                    	getFlowRunner()->PrintData(ss, data_stack()[frame.frame+i], 1, 3);
+                    } else {
+                    	getFlowRunner()->PrintData(ss, data_stack()[frame.frame+i], print_depth, print_length);
+                    }
                     printQuotedString2(out, ss.str());
 
                     out << "}";
@@ -1089,12 +1093,14 @@ bool Debugger::command_set(std::vector<std::string> &tokens)
         call_depth_check = atoi(tokens[2].c_str());
     else if (cmd == "data-stack-limit")
         data_depth_check = atoi(tokens[2].c_str());
+    else if (cmd == "shallow-frame-print")
+        shallow_frame_print = (tokens[2] == "1");
     else
     {
         cmdError("Unknown option in set: '"+cmd+"'");
         return false;
     }
-
+    debug_out << "Parameter " << cmd << " is set to " << tokens[2] << std::endl;
     return true;
 }
 
