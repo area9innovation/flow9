@@ -872,25 +872,6 @@ StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
         endBuildExtents();
     }
 
-    if (!textDirectionFixed) {
-        DecodeUtf16toUtf32 decoder(plain_text);
-        char flags = 0;
-        shared_ptr<Utf32InputIterator> ctexti = decoder.begin().clone();
-        while(decoder.end() != *ctexti) {
-            if (GLTextLayout::isLtrChar(**ctexti)) flags |= 1;
-            if (GLTextLayout::isRtlChar(**ctexti)) flags |= 2;
-            ++*ctexti;
-        }
-        switch(flags) {
-        case 1:
-            textDirection = LTR;
-            break;
-        case 2:
-            textDirection = RTL;
-            break;
-        }
-    }
-
     setupEvents();
 
     invokeEventCallbacks(FlowTextScroll, 0, NULL);
@@ -906,13 +887,11 @@ StackSlot GLTextClip::setTextDirection(RUNNER_ARGS)
 
     std::string val = encodeUtf8(RUNNER->GetString(dir_str));
 
-    if (val == "LTR" || val == "ltr") {
+    if (val == "LTR" || val == "ltr")
         textDirection = LTR;
-        textDirectionFixed = true;
-    } else if (val == "RTL" || val == "rtl") {
+    else if (val == "RTL" || val == "rtl")
         textDirection = RTL;
-        textDirectionFixed = true;
-    } else
+    else
         RUNNER->ReportError(InvalidArgument, "Unknown TextDirection type: %s", val.c_str());
 
     invalidateLayout();
@@ -1012,8 +991,8 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(idx);
     RUNNER_CheckTag1(TInt, idx);
-    size_t i;
-    int idx_v = idx.GetInt();
+    double pos = -1;
+    int i, idx_v = idx.GetInt();
 
     layoutText();
     Extent::Ptr extent;
@@ -1021,24 +1000,7 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
         extent = text_real_extents[i];
         if (extent->char_idx <= idx_v) break;
     }
-    if (!extent) return StackSlot::MakeDouble(-1.0);
-    int glyphIdx = extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx);
-    int orgGlyphCharIdx = extent->layout->getCharIndices()[glyphIdx];
-    float glyphPos = extent->layout->getPositions()[glyphIdx];
-    float glyphAdvance = extent->layout->getGlyphAdvance(glyphIdx);
-
-    // TODO upgrade to valid calculation when we have ligatures of more than 2 characters.
-    int glyphCharsCompo = extent->layout->getGlyphCharsCompo(glyphIdx);
-
-    int charIdxDelta = idx_v-extent->char_idx-orgGlyphCharIdx;
-    double glyphStartOffset = glyphAdvance;
-    if (glyphIdx) glyphStartOffset += extent->format.spacing;
-    if (glyphCharsCompo) {
-        glyphStartOffset -= fabs(glyphAdvance * charIdxDelta/glyphCharsCompo);
-        if (extent->layout->getDirections()[glyphIdx] != CharDirection::RTL)
-            glyphStartOffset = glyphAdvance-glyphStartOffset;
-    }
-    return StackSlot::MakeDouble(glyphPos + glyphStartOffset);
+    return StackSlot::MakeDouble(extent? extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx)] : -1);
 }
 
 StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
@@ -1055,16 +1017,22 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
             const std::vector<float> &positions = ext.first->layout->getPositions();
             const std::vector<size_t> &char_indices = ext.first->layout->getCharIndices();
             int glyph_idx = ext.first->char_idx + eidx;
-            double inGlyphPos = ext.second - positions[eidx];
-            double glyphAdv = ext.first->layout->getGlyphAdvance(glyph_idx);
-            int glyphCharsCompo = ext.first->layout->getGlyphCharsCompo(glyph_idx);
+
+            // Hence there's UTF16 encoding having sometimes 2 words for 1 char and also ligatures, interpolation needed.
+            int interp_dir = glyph_idx>0? -1 : 1;
+            if ((positions[glyph_idx]-ext.second)*(positions[glyph_idx+interp_dir]-ext.second) > 0) interp_dir = -interp_dir;
 
             char_idx = char_indices[glyph_idx];
-
-            if (ext.first->layout->getDirections()[glyph_idx] == RTL)
-                inGlyphPos = glyphAdv-inGlyphPos;
-            if (inGlyphPos > glyphAdv) inGlyphPos = glyphAdv;
-            char_idx += (int)(0.5+glyphCharsCompo*inGlyphPos/glyphAdv);
+            // Range check
+            if ((interp_dir>0 || glyph_idx>0) && (glyph_idx<positions.size()-1 || interp_dir<0)) {
+                int alt_char_idx = char_indices[glyph_idx+interp_dir];
+                int char_delta = alt_char_idx-char_idx;
+                if (abs(char_delta)>1) {
+                    double pos = positions[glyph_idx];
+                    double alt_pos = positions[glyph_idx+interp_dir];
+                    char_idx = floor(char_delta*(alt_pos-pos)/(ext.second-pos)+0.5);
+                }
+            }
         }
     }
     return StackSlot::MakeInt(char_idx);

@@ -92,7 +92,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorColor : Int = -1;
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
-	private var textDirection : String = '';
+	private var textDirection : String = 'ltr';
 	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
@@ -163,16 +163,13 @@ class TextClip extends NativeWidgetClip {
 			|| (code >= 0x20000 && code < 0x2FA20)*/;
 	}
 
-	public static function getStringDirection(s: String, dflt: String) {
-		var flagsR = 0;
+	public static function getStringDirection(s: String) {
 		for (i in 0...s.length) {
 			var c = s.charAt(i);
-			if (isRtlChar(c)) flagsR |= 2;
-			if (isLtrChar(c)) flagsR |= 1;
+			if (isRtlChar(c)) return "RTL";
+			if (isLtrChar(c)) return "LTR";
 		}
-		if (flagsR == 2) return "rtl";
-		if (flagsR == 1) return "ltr";
-		return dflt;
+		return "";
 	}
 
 	private static function isCharCombining(testChr : String, pos: Int) : Bool {
@@ -289,19 +286,20 @@ class TextClip extends NativeWidgetClip {
 
 		for (child in children) {
 			var c : Dynamic = child;
-			var ctext = bidiUndecorate(c.text);
 			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
 				var text = "";
 				var chridx : Int = c.orgCharIdxStart;
-				for (i in 0...ctext[0].length) {
+				for (i in 0...c.text.length) {
 					if (chridx >= charIdx) break;
 					chridx += 1 + Math.round(c.difPositionMapping[i]);
-					text += ctext[0].substr(i, 1);
+					text += c.text.substr(i, 1);
 				}
 				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
-				var mtxPrev : Dynamic = pixi.core.text.TextMetrics.measureText(text.substr(0, text.length-1), c.style);
-				var result = c.x + (mtxPrev.width*(chridx-charIdx) + mtx.width) / (1 + chridx-charIdx);
-				if (ctext[1] == 'rtl') return c.width - result;
+				var result = c.x + mtx.width;
+				if (TextClip.getStringDirection(c.text) == "RTL") {
+					mtx = pixi.core.text.TextMetrics.measureText(c.text, c.style);
+					return c.width - result;
+				}
 				return result;
 			}
 		}
@@ -467,7 +465,6 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
-		if (this.textDirection == '') this.textDirection = getStringDirection(this.text, '');
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
@@ -495,7 +492,7 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipVisible(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = getContentGlyphs();
+			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
 			var text = modification.modified;
 			var chrIdx: Int = 0;
 			var texts = wordWrap ? [[text]] : checkTextLength(text);
@@ -584,7 +581,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		var textClip = new Text(bidiDecorate(textMod.modified, getStringDirection(textMod.modified, textDirection)), style);
+		var textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
 		textClip.charIdx = chrIdx;
 		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);
@@ -722,10 +719,6 @@ class TextClip extends NativeWidgetClip {
 			invalidateMetrics();
 			layoutText();
 		}
-	}
-
-	public function getTextDirection() : String {
-		return this.textDirection;
 	}
 
 	public function setResolution(resolution : Float) : Void {
@@ -1072,10 +1065,6 @@ class TextClip extends NativeWidgetClip {
 
 	public function getContent() : String {
 		return text;
-	}
-
-	public function getContentGlyphs() : TextMappedModification {
-		return (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
 	}
 
 	public function getStyle() : TextStyle {
