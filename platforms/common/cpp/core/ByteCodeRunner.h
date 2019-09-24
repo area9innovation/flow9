@@ -1312,6 +1312,7 @@ private:
     static StackSlot toString(ByteCodeRunner*,StackSlot*);
     static StackSlot makeStructValue(ByteCodeRunner*,StackSlot*);
     static StackSlot extractStructArguments(ByteCodeRunner*,StackSlot*);
+    static StackSlot getDataTagForValue(ByteCodeRunner*,StackSlot*);
     static StackSlot getFileContent(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContent(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentUTF16(ByteCodeRunner*,StackSlot*);

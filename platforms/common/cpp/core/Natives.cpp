@@ -1449,6 +1449,12 @@ StackSlot ByteCodeRunner::extractStructArguments(RUNNER_ARGS)
     return arrslot;
 }
 
+StackSlot ByteCodeRunner::getDataTagForValue(RUNNER_ARGS)
+{
+    StackSlot &value = RUNNER_ARG(0);
+    return StackSlot::MakeInt(value.GetType());
+}
+
 bool ByteCodeRunner::VerifyStruct(const StackSlot &arr, int struct_id)
 {
     if (unsigned(struct_id) >= StructDefs.size())
