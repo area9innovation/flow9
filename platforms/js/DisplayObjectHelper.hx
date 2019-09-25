@@ -212,7 +212,7 @@ class DisplayObjectHelper {
 				invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
 			}
 
-			if (untyped !RenderSupportJSPixi.DomRenderer && clip.interactive && !clip.clipVisible) {
+			if (untyped clip.interactive) {
 				clip.emit("pointerout");
 			}
 
@@ -479,7 +479,6 @@ class DisplayObjectHelper {
 
 			if (clip.mask == scrollRect) {
 				clip.mask = null;
-				untyped clip.maskContainer = null;
 			}
 
 			clip.scrollRect = null;
@@ -497,16 +496,13 @@ class DisplayObjectHelper {
 		if (clip.mask != null) {
 			untyped clip.mask.child = null;
 			clip.mask = null;
-			untyped clip.maskContainer = null;
-		} else if (untyped clip.alphaMask != null) {
-			untyped clip.alphaMask.child = null;
-			untyped clip.alphaMask = null;
-			untyped clip.maskContainer = null;
 		}
 
 		if (RenderSupportJSPixi.RendererType == "webgl") {
 			clip.mask = getFirstGraphics(maskContainer);
 		} else {
+			untyped clip.alphaMask = null;
+
 			// If it's one Graphics, use clip mask; otherwise use alpha mask
 			var obj : Dynamic = maskContainer;
 			while (obj.children != null && obj.children.length == 1)
@@ -524,7 +520,6 @@ class DisplayObjectHelper {
 			untyped maskContainer.child = clip;
 			untyped clip.mask.isMask = true;
 			untyped clip.mask.child = clip;
-			untyped clip.maskContainer = maskContainer;
 
 			if (RenderSupportJSPixi.DomRenderer && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
 				updateHasMask(clip);
@@ -535,7 +530,6 @@ class DisplayObjectHelper {
 			untyped maskContainer.isMask = true;
 			untyped maskContainer.child = clip;
 			untyped maskContainer.url = clip.alphaMask.url;
-			untyped clip.maskContainer = maskContainer;
 
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
@@ -1437,7 +1431,7 @@ class DisplayObjectHelper {
 		return (widgetBounds != null && Math.isFinite(widgetBounds.minY)) ? getBoundsHeight(widgetBounds) : getHeight(clip);
 	}
 
-	public static function invalidateLocalBounds(clip : DisplayObject, ?isMask : Bool = false) : Void {
+	public static function invalidateLocalBounds(clip : DisplayObject) : Void {
 		if (untyped clip.transformChanged || clip.localBoundsChanged) {
 			untyped clip.localBoundsChanged = false;
 
@@ -1451,22 +1445,22 @@ class DisplayObjectHelper {
 				untyped clip.maxLocalBounds = new Bounds();
 
 				for (child in getClipChildren(clip)) {
-					if (untyped (!child.isMask || isMask) && child.clipVisible && child.localBounds != null) {
-						invalidateLocalBounds(child, isMask);
-						if (untyped clip.maskContainer == null) {
+					if (untyped !child.isMask && child.clipVisible && child.localBounds != null) {
+						invalidateLocalBounds(child);
+						if (untyped clip.mask == null) {
 							applyMaxBounds(clip, untyped child.currentBounds);
 						}
 					}
 				}
 
-				if (untyped clip.maskContainer == null) {
+				if (untyped clip.mask == null) {
 					applyNewBounds(clip, untyped clip.maxLocalBounds);
 				}
 			}
 
-			if (untyped clip.maskContainer != null) {
-				invalidateLocalBounds(untyped clip.maskContainer, true);
-				applyNewBounds(clip, untyped clip.alphaMask != null ? clip.maskContainer.localBounds : clip.maskContainer.currentBounds);
+			if (untyped clip.mask != null) {
+				invalidateLocalBounds(untyped clip.mask);
+				applyNewBounds(clip, untyped clip.mask.currentBounds);
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
@@ -1716,7 +1710,7 @@ class DisplayObjectHelper {
 
 		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
 
-		if (untyped clip.maskContainer != null) {
+		if (untyped clip.scrollRect != null) {
 			viewBounds.minX = Math.max(viewBounds.minX, localBounds.minX);
 			viewBounds.minY = Math.max(viewBounds.minY, localBounds.minY);
 			viewBounds.maxX = Math.min(viewBounds.maxX, localBounds.maxX);

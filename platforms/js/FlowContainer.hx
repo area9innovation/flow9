@@ -233,6 +233,10 @@ class FlowContainer extends Container {
 	}
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		if (!skipUpdate) {
+			updateTransform();
+		}
+
 		getLocalBounds();
 		calculateBounds();
 
@@ -240,10 +244,6 @@ class FlowContainer extends Container {
 	}
 
 	public function calculateBounds() : Void {
-		if (untyped this.worldTransformChanged && this.parent != null) {
-			untyped this.transform.updateTransform(this.parent.transform);
-		}
-
 		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
 		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
 		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
