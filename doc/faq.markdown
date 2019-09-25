@@ -592,3 +592,6 @@ In the first case if v is none, we don't need to run through the array at all, s
 The second case can be replaced by eitherEq:
 
 	filter(arr, \a  -> eitherEq(a, v))
+
+or just moving Some(v) out of the loop :)
+
