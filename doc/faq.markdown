@@ -572,3 +572,23 @@ optimisations. Ignoring this optimisation may lead to stack overflow.
 See [tests/tail_recursion_example.flow](../tests/tail_recursion_example.flow) as an example. 
 While collect2 method in this file might look nicer - it will not be converted into cycle 
 by compiler and would lead to stack overflow.
+
+
+#### Creating Maybe in iterators
+
+There are two common antipaterns:
+
+	m : Maybe<?>
+	filter(arr, \a : ? -> Some(a) == m)
+
+	v : ?
+	filter(arr, \a : Maybe<?> -> a == Some(v))
+
+The problem is that Some is created on the heap at each iteration. There are a lot of ways to avoid this, for example:
+In the first case if v is none, we don't need to run through the array at all, so it can be replaced by:
+
+	eitherMap(m, \v -> filter(arr, \a -> a == v), [])
+
+The second case can be replaced by eitherEq:
+
+	filter(arr, \a  -> eitherEq(a, v))
