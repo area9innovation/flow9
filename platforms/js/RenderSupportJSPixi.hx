@@ -1143,38 +1143,47 @@ class RenderSupportJSPixi {
 		/* Assuming exact glyph codes used to form each clip's text. */
 		var EPSILON = 0.1; // Why not, pixel precision assumed.
 		var clip = getClipAt(textclip, new Point(x, y));
-		var textclip = null;
 		try {
 			textclip = cast(clip, TextClip);
-		} catch(exc: String) {};
+		} catch(exc: String) {
+			clip = textclip;
+		};
 		if (textclip == null) return -1;
-		var clipText : String = textclip.getContent();
+		var clipGlyphs = textclip.getContentGlyphs();
 		var clipStyle : TextStyle = textclip.getStyle();
 		var leftVal: Float = 0;
-		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipText, clipStyle);
+		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified, clipStyle);
 		var rightVal: Float = mtx.width;
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
-		var localX = x - org.x;
-		if (TextClip.getStringDirection(clipText) == "RTL") localX = rightVal - localX;
+		var localX = Math.min(mtx.width, Math.max(0.0, x - org.x));
+		if (TextClip.getStringDirection(clipGlyphs.modified, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
 		var leftPos: Float = 0;
-		var rightPos: Float = clipText.length;
+		var rightPos: Float = clipGlyphs.modified.length;
 		var midVal: Float = -1.0;
 		var midPos: Float = -1;
 		var oldPos: Float = rightPos;
 		while (Math.abs(localX-midVal) >= EPSILON && Math.round(midPos) != Math.round(oldPos)) {
 			oldPos = midPos;
 			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
-			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.ceil(leftPos)), clipStyle);
+			if (midPos<leftPos) break;
+			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.ceil(leftPos)-Math.floor(leftPos)), clipStyle);
 			midVal = leftVal - mtx.width * (leftPos - Math.floor(leftPos));
-			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
+			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
 			midVal += mtx.width;
-			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(midPos), Math.ceil(midPos)), clipStyle);
+			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(midPos), Math.ceil(midPos)-Math.floor(midPos)), clipStyle);
 			midVal += mtx.width * (midPos - Math.floor(midPos));
 			leftPos = midPos;
 			leftVal = midVal;
 		}
-		return Math.round(midPos) + textclip.charIdx;
+		var mappingOffset = 0.0;
+		for (i in 0...Math.round(midPos)) {
+			if (i < Math.ceil(midPos)-1)
+				mappingOffset += clipGlyphs.difPositionMapping[i];
+			else
+				mappingOffset += clipGlyphs.difPositionMapping[i] * (midPos-Math.floor(midPos));
+		}
+		return Math.round(midPos + mappingOffset) + textclip.charIdx;
 	}
 
 	public static function getTextFieldWidth(clip : TextClip) : Float {
