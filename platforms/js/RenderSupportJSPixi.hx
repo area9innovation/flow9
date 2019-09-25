@@ -1788,12 +1788,18 @@ class RenderSupportJSPixi {
 			return false;
 		}
 
+		clip.invalidateLocalBounds();
+
 		var point = new Point(x, y);
 		return hittestMask(clip.parent, point) && doHitTest(clip, point);
 	}
 
 	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
 		if (untyped clip.viewBounds != null) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var viewBounds = untyped clip.viewBounds;
 
@@ -1817,6 +1823,10 @@ class RenderSupportJSPixi {
 		var data = graphicsData[0];
 
 		if (data.fill && data.shape != null && (!checkAlpha || data.fillAlpha > 0)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 
 			return data.shape.contains(local.x, local.y);
@@ -1839,6 +1849,10 @@ class RenderSupportJSPixi {
 		}
 
 		if (untyped __instanceof__(clip, NativeWidgetClip) || untyped __instanceof__(clip, FlowSprite)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = untyped clip.getWidth();
 			var clipHeight = untyped clip.getHeight();
@@ -1847,6 +1861,17 @@ class RenderSupportJSPixi {
 				return clip;
 			}
 		} else if (untyped __instanceof__(clip, FlowContainer)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var localBounds = untyped clip.localBounds;
+
+			if (local.x < localBounds.minX && local.y < localBounds.minY && local.x >= localBounds.maxX && local.y >= localBounds.maxY) {
+				return null;
+			}
+
 			var children : Array<DisplayObject> = untyped clip.children;
 			var i = children.length - 1;
 
