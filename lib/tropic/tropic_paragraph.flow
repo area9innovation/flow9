@@ -5,15 +5,31 @@ import form/paragraph3;
 import text/bidi_text;
 
 export {
-	TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> Tropic;
+	TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> Tropic;
 	getDynamicTropicSize(tropic : Tropic) -> Pair<Tropic, TFormMetrics>;
+	
+	TDynamicParagraph(
+		tropic : Tropic,
+		addWords : (idx : int, newWords : [TParaWord]) -> void,
+		removeWord : (idx : int) -> void
+	);
+
+	general2TParaWord(w : GeneralWrapElement, style : [CharacterStyle], id : int) -> TParaWord;
+	commonWordConstructor(
+		w : TWrapElement,
+		tr : Tropic,
+		id : int,
+		inspectorM : Maybe<ParaElementInspector>
+	) -> TParaWord;
+
 }
 
 isConstMetrics(m : TFormMetrics) -> bool {
 	isFConst(m.width) && isFConst(m.height) && isFConst(m.baseline);
 }
 
-TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> Tropic {
+
+TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> Tropic {
 
 	alignment : ParaLineAlignment = fold(s, StartAlign(), \acc, st -> {
 		switch (st : ParagraphStyle) {
@@ -42,46 +58,69 @@ TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> T
 
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 
-	// Expand elements into word-units
-	wordsAndStyles : Pair<List<TParaWord>, Tree<int, [TTexFragmentStyle]>> = expandParagraphElements(p);
-
-	words = list2array(wordsAndStyles.first);
-	interactiveStyles = wordsAndStyles.second;
+	// interactiveStyles = wordsAndStyles.second;
 
 	aw = make(0.0);
 	update = make(0);
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	ndynamic = fold(words, 0, \acc, w -> if (isConstMetrics(w.metrics)) acc else 1 + acc);
+	ndynamic = fold(^words, 0, \acc, w -> if (isConstMetrics(w.metrics)) acc else 1 + acc);
 	ndymamicUpper = extractStruct(s, DynamicBlockDelay(1)).n;
 
 	stackChanges = make([]);
-	initialWords = ref constructDynamicWords(words, interactiveStyles);
+	initialWords = ref map(^words, translateWord);
 	paragraphWHB = makeWH();
 
 	contentGroup = TSize(
 		TSized(paragraphWHB),
-		TDynamicGroup2( stackChanges, initialWords, TGroupCombiner())
+		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
 	);
 
-	TConstruct(
-		[\ -> {
-			updateFn = \wi -> {
-				// Ignore negative widths
-				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
-				w = if (isSingleLine) 100000.0 else max(0.0, wi);
-				paragraphSize = reflowTParaWords(
-					words, w, indent, tightWidth, alignment, interlineSpacing,
-					topLineBaseline, interactiveStyles, rtl
-				);
-				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				nextDistinct(paragraphWHB, paragraphSize);
-			};
+	// updateWordsIndeces = \ -> {
+	// 	iteri(^words, \i, w -> nextDistinct(w.idx, i); 
+	// }
 
+	updateFn = \wi -> {
+		// Ignore negative widths
+		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+		w = if (isSingleLine) 100000.0 else max(0.0, wi);
+		paragraphSize = reflowTParaWords(
+			^words, w, indent, tightWidth, alignment, interlineSpacing,
+			topLineBaseline, rtl
+		);
+		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
+		nextDistinct(paragraphWHB, paragraphSize);
+	};
+
+	addWords = \index, newWords -> {
+		idx = min(index, length(^words) - 1);
+		words := insertArray2(^words, idx, newWords);
+		// updateWordsIndeces();
+		updateFn(getValue(aw));
+		maybeApply(
+			elementAtM(newWords, 0),
+			\newWord -> dynArrayPush(stackChanges, TGroupReplace(translateWord(newWord), idx))
+		);
+		iteri(tail(newWords), \i, newWord -> dynArrayPush(
+			stackChanges,
+			TGroupAdd(translateWord(newWord), idx + i + 1))
+		)
+	}
+
+	removeWord = \index -> {
+		idx = min(index, length(^words) - 1);
+		words := removeIndex(^words, idx);
+		// updateWordsIndeces();
+		updateFn(getValue(aw));
+		dynArrayPush(stackChanges, TGroupDelete(idx));
+	}
+
+	tropic = TConstruct(
+		[\ -> {
 			unsub1 = subscribe(aw, updateFn);
 
-			unsubs = filtermap(words, \w -> if (isConstMetrics(w.metrics)) None() else {
+			unsubs = filtermap(^words, \w -> if (isConstMetrics(w.metrics)) None() else {
 				// Force an update by changing the available
 				Some(make3Subscribe2(w.metrics.width, w.metrics.height, w.metrics.baseline, \wi, he, ba -> {
 					if (ndynamic <= ndymamicUpper) {
@@ -120,6 +159,7 @@ TRenderParagraph(p : [TParagraphElement], s : [ParagraphStyle], rtl : bool) -> T
 			aw
 		)
 	);
+	tropic;
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -162,7 +202,7 @@ commonWordConstructor(
 			\inspector -> TInspectGhost(inspector, formAndSize.first),
 			GhostElem(make(Point(0., 0.,)), formAndSize.first),
 		),
-		id
+		make(id)
 	);
 }
 
@@ -174,7 +214,7 @@ general2TParaWord(
 	switch (w) {
 		GeneralText(txt) : commonWordConstructor(TText(txt, style), TText(txt, style), id, None());
 		GeneralSpace(txt) : commonWordConstructor(TSpace(style), TText(txt, style), id, None());
-		NewLine() : TParaWord(NewLine(), zeroTMetrics, GhostElem(make(Point(0., 0.)), TEmpty()), id);
+		NewLine() : TParaWord(NewLine(), zeroTMetrics, GhostElem(make(Point(0., 0.)), TEmpty()), make(id));
 		EmptyLineElement() : commonWordConstructor(TEmpty(), makeTZeroSpaceElement(style), id, None());
 		GeneralLinePart(f, m, e) : {
 			word = TLinePart(TText(f, style), TText(m, style), TText(e, style));
@@ -206,7 +246,7 @@ makeTParaWord(w : TTextFragments, id : int) -> TParaWord {
 				TEmpty(),
 				tropicWithSize.second,
 				GhostElem(make(Point(0., 0.)), tropicWithSize.first),
-				id
+				make(id)
 			);
 		}
 	}
@@ -220,7 +260,6 @@ fMetrics2TMetrics(f : FormMetrics) -> TFormMetrics {
 }
 
 getDynamicTropicSize(tropic : Tropic) -> Pair<Tropic, TFormMetrics> {
-	
 	if (isConstantSizeTropic(tropic)) {
 		fMetrics = getTropicMetrics(tropic);
 		Pair(tropic, fMetrics2TMetrics(fMetrics));
@@ -252,7 +291,7 @@ reflowTParaWords(
 	alignment: ParaLineAlignment,
 	interlineSpacing : double,
 	topLineBaseline : bool,
-	styleTree : Tree<int, [TTexFragmentStyle]>,
+	// styleTree : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool
 ) -> WidthHeight {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
@@ -272,7 +311,6 @@ reflowTParaWords(
 		alignment,
 		interlineSpacing,
 		topLineBaseline,
-		styleTree,
 		rtl
 	)
 	
@@ -457,7 +495,6 @@ TAlignParaLines(
 	alignment: ParaLineAlignment,
 	interlineSpacing : double,
 	topLineBaseline : bool,
-	styleTree : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool
 ) -> WidthHeight {
 	lasti = length(lines) - 1;
@@ -488,7 +525,7 @@ TAlignParaLines(
 			} else {
 				alignment;
 			}
-		f = TRenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, styleTree, rtl);
+		f = TRenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, rtl);
 		nwidth = max(acc.width, f.width);
 		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
 		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
@@ -505,7 +542,7 @@ TAlignParaLines(
 }
 
 TParaLineResult(width : double, height : double, baseline : double);
-TOptimizedLineElement(f : TGhosted, metrics : TFormMetrics, id : int);
+TOptimizedLineElement(f : TGhosted, metrics : TFormMetrics, id : DynamicBehaviour<int>);
 
 getTOptimizedLine(words : [TParaWord], alignment : ParaLineAlignment) -> [TOptimizedLineElement] {
 	// if (!isBiDiEnabled() && alignment != Justify()) {
@@ -526,22 +563,17 @@ TRenderLine(
 	alignment : ParaLineAlignment,
 	lineIndent: double,
 	lineNumber : int,
-	interactiveStyles : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool
 ) -> TParaLineResult {
 	optimizedLine = getTOptimizedLine(words, alignment);
-	styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, p.id, []));
+	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
 	metrics = map(optimizedLine, \p -> p.metrics);
-	baselineOffsets = mapi(
-		styles,
-		\i, st -> - extractStruct(st, TropicBaselineShift(0.0)).shift * fgetValue(metrics[i].height)
-	);
 	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.width)); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
 	lineAsc = foldi(metrics, 0.0, \i, ac, m -> {
-		max(ac,  fgetValue(m.baseline) + baselineOffsets[i]);
+		max(ac,  fgetValue(m.baseline));
 	});
 	lineHeight = foldi(metrics, 0.0, \i, ac, m ->
-		max(ac, lineAsc + fgetValue(m.height) - (fgetValue(m.baseline) + baselineOffsets[i]))
+		max(ac, lineAsc + fgetValue(m.height) - (fgetValue(m.baseline)))
 	);
 
 	// Alignment offset
@@ -569,34 +601,16 @@ TRenderLine(
 		elemWidth = fgetValue(elem.metrics.width);
 		elemHeight = fgetValue(elem.metrics.height);
 		elemBaseline = fgetValue(elem.metrics.baseline);
-		dy = max(lineAsc - elemBaseline - baselineOffsets[i], 0.0);
-		underlineFn = \tr -> eitherMap(
-			tryExtractStruct(styles[i], TropicUnderline(false, 1)),
-			\st -> addUnderlineToTropic(tr, st.color, st.isDouble),
-			tr
-		);
-		dynStyle = extractStruct(styles[i], TDynamicCharacterStyle(const([]))).st;
-		modifiers = extractStruct(styles[i], TropicTextElementModifiers([])).fns;
-		applyStylesAndOffset = \tr : Tropic ->
-		TApplyDynamicStyles(
-			underlineFn(tr),
-			y,
-			dy,
-			^alignmentOffset,
-			dynStyle,
-			interWord,
-			lineHeight,
-			elemWidth,
-			modifiers
-		);
+		dy = max(lineAsc - elemBaseline, 0.0);
+		// underlineFn = \tr -> eitherMap(
+		// 	tryExtractStruct(styles[i], TropicUnderline(false, 1)),
+		// 	\st -> addUnderlineToTropic(tr, st.color, st.isDouble),
+		// 	tr
+		// );
 		yOffset = y + dy;
-
 		switch (f : TGhosted) {
 			GhostElem(p, fm): {
 				nextDistinct(p, Point(^alignmentOffset, yOffset));
-				// Some(TApplyDynamicStyles(
-				// 	TEmpty(), y, dy, ^alignmentOffset, dynStyle, interWord, lineHeight, elemWidth, []
-				// ));
 			}
 			TInspectGhost(inspector,  fm): {
 				nextDistinct(inspector.y, yOffset);
@@ -604,9 +618,6 @@ TRenderLine(
 				nextDistinct(inspector.size, WidthHeight(elemWidth, elemHeight));
 				nextDistinct(inspector.lineHeight, lineHeight);
 				nextDistinct(inspector.lineNumber, lineNumber);
-				// Some(TApplyDynamicStyles(
-				// 	TEmpty(), y, dy, ^alignmentOffset, dynStyle, interWord, lineHeight, elemWidth, []
-				// ));
 			}
 		}
 		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) elemWidth + interWord else 0.0;
@@ -669,17 +680,18 @@ constructDynamicWords(
 	words : [TParaWord],
 	styleTree : Tree<int, [TTexFragmentStyle]>
 ) -> [Tropic] {
-	map(words, \word -> {
+	map(words, translateWord);
 		// styles = lookupTreeDef(styleTree, either(word.id, -1), []);
 		// applyStyles = \form -> applyListenersAndModifiers(styles, form);
 		// applyStyles = \f -> TFormAvailable(form, TFillXY());
-		switch (word.ghostView : TGhosted) {
-			GhostElem(p, f): TTranslate(p, f);
-			TInspectGhost(inspector, f): TTranslate(fpoint(inspector.x, inspector.y), f);
-		}
-	})
 }
 
+translateWord(word : TParaWord) -> Tropic {
+	switch (word.ghostView : TGhosted) {
+		GhostElem(p, f): TTranslate(p, f);
+		TInspectGhost(inspector, f): TTranslate(fpoint(inspector.x, inspector.y), f);
+	}
+}
 
 isTParaWordEmpty(w: TParaWord) -> bool {
 	switch(w.word) {
