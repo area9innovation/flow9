@@ -553,9 +553,7 @@ class AccessWidget extends EventEmitter {
 			var onpointerdown = function(e : Dynamic) {
 				// Prevent default drop focus on canvas
 				// Works incorrectly in Edge
-				if (e.target == RenderSupportJSPixi.PixiView) {
-					e.preventDefault();
-				}
+				e.preventDefault();
 
 				if (e.touches != null) {
 					if (e.touches.length == 1) {

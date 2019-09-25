@@ -263,7 +263,7 @@ class RenderSupportJSPixi {
 			untyped __js__("document.location.reload(true)");
 		}
 
-		if (Platform.isMacintosh || Platform.isIOS) {
+		if (Platform.isMacintosh || (Platform.isIOS && !DomRenderer)) {
 			untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█Å'");
 		}
 
@@ -539,9 +539,7 @@ class RenderSupportJSPixi {
 		var onpointerdown = function(e : Dynamic) {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
-			if (e.target == PixiView) {
-				e.preventDefault();
-			}
+			e.preventDefault();
 
 			if (e.touches != null) {
 				if (e.touches.length == 1) {
