@@ -200,8 +200,6 @@ class FlowContainer extends Container {
 			untyped renderer.rootContext = context;
 			renderer.transparent = parent.children.indexOf(this) != 0;
 
-			DisplayObjectHelper.lockStage();
-
 			if (transformChanged) {
 				var bounds = new Bounds();
 				untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
@@ -213,7 +211,8 @@ class FlowContainer extends Container {
 				invalidateRenderable(bounds);
 			}
 
-			renderer.render(this, null, true, null, !transformChanged);
+			DisplayObjectHelper.lockStage();
+			renderer.render(this, null, true, null, false);
 			DisplayObjectHelper.unlockStage();
 		}
 	}

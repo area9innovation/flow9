@@ -167,7 +167,7 @@ class DisplayObjectHelper {
 				untyped clip.localTransformChanged = true;
 			}
 
-			if (untyped clip.parent.parent != null && (clip.parent.visible || clip.parent.parent.visible) && !clip.parent.transformChanged) {
+			if (untyped clip.parent.parent != null && !clip.parent.transformChanged) {
 				invalidateParentTransform(clip.parent);
 			} else {
 				invalidateParentLocalBounds(clip);
@@ -1497,7 +1497,7 @@ class DisplayObjectHelper {
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
 			if (isNativeWidget(clip)) {
-				invalidateTransform(clip);
+				invalidateParentTransform(clip);
 			}
 
 			untyped clip.nativeWidgetBoundsChanged = true;
