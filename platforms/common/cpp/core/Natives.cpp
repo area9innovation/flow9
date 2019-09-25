@@ -1449,6 +1449,12 @@ StackSlot ByteCodeRunner::extractStructArguments(RUNNER_ARGS)
     return arrslot;
 }
 
+StackSlot ByteCodeRunner::getDataTagForValue(RUNNER_ARGS)
+{
+    StackSlot &value = RUNNER_ARG(0);
+    return StackSlot::MakeInt(value.GetType());
+}
+
 bool ByteCodeRunner::VerifyStruct(const StackSlot &arr, int struct_id)
 {
     if (unsigned(struct_id) >= StructDefs.size())
@@ -1708,6 +1714,11 @@ StackSlot ByteCodeRunner::setFileContentBinary(RUNNER_ARGS) {
 
 StackSlot ByteCodeRunner::setFileContentBytes(RUNNER_ARGS) {
     return setFileContentHelper(RUNNER, pRunnerArgs__, &bytesProcessor);
+}
+
+StackSlot ByteCodeRunner::getBytecodeFilename(RUNNER_ARGS)
+{
+    return RUNNER->AllocateString(parseUtf8(RUNNER->BytecodeFilename));
 }
 
 StackSlot ByteCodeRunner::loaderUrl(RUNNER_ARGS)
