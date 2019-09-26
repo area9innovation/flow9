@@ -212,7 +212,7 @@ class DisplayObjectHelper {
 				invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
 			}
 
-			if (untyped clip.interactive) {
+			if (untyped !RenderSupportJSPixi.DomRenderer && clip.interactive && !clip.clipVisible) {
 				clip.emit("pointerout");
 			}
 
