@@ -11,8 +11,9 @@ import pixi.core.math.Point;
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
 	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
-	public static var BoxShadow : Bool = Util.getParameter("boxshadow") != "0";
-	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
+	public static var BoxShadow : Bool = ((Platform.isChrome || Platform.isFirefox) && !Platform.isMobile) ?
+		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
+	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0" ;
 
 	private static var InvalidateStage : Bool = true;
 
@@ -121,10 +122,20 @@ class DisplayObjectHelper {
 		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null);
 	}
 
-	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool, ?from : String) : Void {
+	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool, ?from : String, ?parentClip : DisplayObject) : Void {
 		if (untyped clip.parent != null && (!clip.worldTransformChanged || (localTransformChanged && !clip.localTransformChanged))) {
 			untyped clip.worldTransformChanged = true;
 			untyped clip.transformChanged = true;
+
+			if (untyped !parentClip) {
+				parentClip = findParentClip(clip);
+			}
+
+			untyped clip.parentClip = parentClip;
+
+			if (isNativeWidget(clip)) {
+				parentClip = clip;
+			}
 
 			if (localTransformChanged) {
 				untyped clip.localTransformChanged = true;
@@ -148,7 +159,7 @@ class DisplayObjectHelper {
 
 			for (child in getClipChildren(clip)) {
 				if (child.visible) {
-					invalidateWorldTransform(child, localTransformChanged && !isNativeWidget(clip), DebugUpdate ? from + ' ->\ninvalidateWorldTransform -> child' : null);
+					invalidateWorldTransform(child, localTransformChanged && !isNativeWidget(clip), DebugUpdate ? from + ' ->\ninvalidateWorldTransform -> child' : null, parentClip);
 				}
 			}
 		}
@@ -614,11 +625,11 @@ class DisplayObjectHelper {
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
-	public static function getFirstGraphicsOrSprite(clip : Container) : Container {
-		if (untyped __instanceof__(clip, FlowGraphics) || untyped __instanceof__(clip, FlowSprite))
+	public static function getFirstGraphicsOrSprite(clip : DisplayObject) : DisplayObject {
+		if (untyped clip.clipVisible && (untyped __instanceof__(clip, FlowGraphics) || untyped __instanceof__(clip, FlowSprite)))
 			return clip;
 
-		for (c in clip.children) {
+		for (c in getClipChildren(clip)) {
 			var g = getFirstGraphicsOrSprite(untyped c);
 
 			if (g != null) {
@@ -630,11 +641,11 @@ class DisplayObjectHelper {
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
-	public static function getFirstGraphics(clip : Container) : Container {
+	public static function getFirstGraphics(clip : DisplayObject) : DisplayObject {
 		if (untyped __instanceof__(clip, FlowGraphics))
 			return clip;
 
-		for (c in clip.children) {
+		for (c in getClipChildren(clip)) {
 			var g = getFirstGraphics(untyped c);
 
 			if (g != null) {
@@ -842,75 +853,126 @@ class DisplayObjectHelper {
 
 	public static function updateNativeWidgetShadow(clip : DisplayObject) {
 		if (untyped clip.parentClip.filters != null && BoxShadow) {
-			var filters : Array<Dynamic> = untyped clip.parentClip.filters;
-
-			if (filters != null) {
-				for (filter in filters) {
-					var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
-
-					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
-
-					nativeWidget.style.boxShadow = '
-						${untyped Math.cos(filter.angle) * filter.distance}px
-						${untyped Math.sin(filter.angle) * filter.distance}px
-						${untyped filter.blur}px
-						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
-					';
-				}
-			}
+			updateNativeWidgetShadow(untyped clip.parentClip);
 		}
 
 		if (untyped clip.filters != null) {
 			var filters : Array<Dynamic> = untyped clip.filters;
 
-			if (filters != null) {
-				for (filter in filters) {
-					var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
+			if (filters != null && filters.length > 0) {
+				var filter = filters[0];
 
+				if (untyped BoxShadow || clip.isGraphics()) {
+					applyNativeWidgetBoxShadow(clip, filter);
+				} else {
+					var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
 					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
-					if (untyped clip.children != null && clip.children.filter(function(c) { return c.filters != null && c.filters.length > 0; }).length > 0) {
-						if (BoxShadow) {
-							nativeWidget.style.boxShadow = '
-								${untyped Math.cos(filter.angle) * filter.distance}px
-								${untyped Math.sin(filter.angle) * filter.distance}px
-								${untyped filter.blur}px
-								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
-							';
-						} else {
-							nativeWidget.style.boxShadow = '
-								${untyped Math.cos(filter.angle) * filter.distance}px
-								${untyped Math.sin(filter.angle) * filter.distance}px
-								${untyped filter.blur}px
-								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
-							';
-						}
-					} else {
-						if (BoxShadow) {
-							for (childWidget in nativeWidget.children) {
-								childWidget.style.boxShadow = '
-									${untyped Math.cos(filter.angle) * filter.distance}px
-									${untyped Math.sin(filter.angle) * filter.distance}px
-									${untyped filter.blur}px
-									rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
-								';
-							}
-						} else {
-							if (nativeWidget.children != null) {
-								for (childWidget in nativeWidget.children) {
-									childWidget.style.boxShadow = null;
-								}
-							}
-
-							nativeWidget.style.filter = 'drop-shadow(
-								${untyped Math.cos(filter.angle) * filter.distance}px
-								${untyped Math.sin(filter.angle) * filter.distance}px
-								${untyped filter.blur}px
-								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
-							)';
+					if (nativeWidget.children != null) {
+						for (childWidget in nativeWidget.children) {
+							childWidget.style.boxShadow = null;
 						}
 					}
+
+					nativeWidget.style.filter = 'drop-shadow(
+						${untyped Math.cos(filter.angle) * filter.distance}px
+						${untyped Math.sin(filter.angle) * filter.distance}px
+						${untyped filter.blur}px
+						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+					)';
 				}
+			}
+		}
+	}
+
+	private static function applyNativeWidgetBoxShadow(parent : DisplayObject, filter : Dynamic) : Void {
+		var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
+		var clip = getFirstGraphicsOrSprite(parent);
+		var nativeWidget = untyped clip.nativeWidget;
+
+		if (untyped clip.filterPadding != parent.filterPadding) {
+			untyped clip.filterPadding = parent.filterPadding;
+
+			if (untyped clip.updateNativeWidgetGraphicsData != null) {
+				untyped clip.updateNativeWidgetGraphicsData();
+			}
+		}
+
+		if (nativeWidget != null) {
+			var svgs : Array<js.html.Element> = untyped nativeWidget.getElementsByTagName("svg");
+
+			if (svgs.length > 0) {
+				var svg = svgs[0];
+				var clipFilter : js.html.Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "filter");
+
+				if (clipFilter != null && clipFilter.parentNode != null) {
+					clipFilter.parentNode.removeChild(clipFilter);
+				}
+
+				var defs = svg.firstElementChild != null && svg.firstElementChild.tagName.toLowerCase() == 'defs' ? svg.firstElementChild :
+					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
+				clipFilter = defs.firstElementChild != null && defs.firstElementChild.tagName.toLowerCase() == 'mask' ? defs.firstElementChild :
+					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'filter');
+
+				for (child in clipFilter.childNodes) {
+					clipFilter.removeChild(untyped child);
+				}
+
+				var feColorMatrix = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feColorMatrix');
+				feColorMatrix.setAttribute("in", "SourceAlpha");
+				feColorMatrix.setAttribute("result", "matrixOut");
+				feColorMatrix.setAttribute("type", "matrix");
+				feColorMatrix.setAttribute("values", '${color[0]} ${color[0]} ${color[0]} ${color[0]} 0
+													${color[1]} ${color[1]} ${color[1]} ${color[1]} 0
+													${color[2]} ${color[2]} ${color[2]} ${color[2]} 0
+													0 0 0 ${filter.alpha} 0');
+
+				var feOffset = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feOffset');
+				feOffset.setAttribute("result", "offOut");
+				feOffset.setAttribute("in", "matrixOut");
+				feOffset.setAttribute("dx", '${untyped Math.cos(filter.angle) * filter.distance}');
+				feOffset.setAttribute("dy", '${untyped Math.sin(filter.angle) * filter.distance}');
+
+				var feGaussianBlur = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feGaussianBlur');
+				feGaussianBlur.setAttribute("result", "blurOut");
+				feGaussianBlur.setAttribute("in", "offOut");
+				feGaussianBlur.setAttribute("stdDeviation", '${untyped filter.blur}');
+
+				var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
+				feBlend.setAttribute("in2", "blurOut");
+				feBlend.setAttribute("in", "SourceGraphic");
+				feBlend.setAttribute("mode", "normal");
+
+				clipFilter.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "filter");
+				clipFilter.setAttribute('x', '${untyped -clip.filterPadding}');
+				clipFilter.setAttribute('y', '${untyped -clip.filterPadding}');
+				clipFilter.setAttribute('width', '${untyped getWidgetWidth(clip) + clip.filterPadding}');
+				clipFilter.setAttribute('height', '${untyped getWidgetHeight(clip) + clip.filterPadding}');
+
+				clipFilter.appendChild(feColorMatrix);
+				clipFilter.appendChild(feOffset);
+				clipFilter.appendChild(feGaussianBlur);
+				clipFilter.appendChild(feBlend);
+
+				defs.insertBefore(clipFilter, defs.firstChild);
+				svg.insertBefore(defs, svg.firstChild);
+
+				for (child in svg.childNodes) {
+					if (untyped child.tagName.toLowerCase() != "defs") {
+						untyped child.setAttribute("filter", 'url(#' + untyped svg.parentNode.getAttribute('id') + "filter)");
+
+						parent.once("clearfilter", function() { if (untyped child != null) untyped child.removeAttribute("filter"); });
+					}
+				}
+			} else {
+				nativeWidget.style.boxShadow = '
+					${untyped Math.cos(filter.angle) * filter.distance}px
+					${untyped Math.sin(filter.angle) * filter.distance}px
+					${untyped filter.blur}px
+					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+				';
+
+				parent.once("clearfilter", function() { if (nativeWidget != null) nativeWidget.style.boxShadow = null; });
 			}
 		}
 	}
@@ -1036,7 +1098,7 @@ class DisplayObjectHelper {
 			var svgs : Array<js.html.Element> = nativeWidget.getElementsByTagName("svg");
 
 			for (svg in svgs) {
-				var clipMask = Browser.document.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+				var clipMask : js.html.Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
 
 				if (clipMask != null && clipMask.parentNode != null) {
 					clipMask.parentNode.removeChild(clipMask);
@@ -1105,7 +1167,7 @@ class DisplayObjectHelper {
 
 					if (Platform.isIE || svgs.length == 1) {
 						for (svg in svgs) {
-							var clipMask = Browser.document.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+							var clipMask : js.html.Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
 
 							if (clipMask != null && clipMask.parentNode != null) {
 								clipMask.parentNode.removeChild(clipMask);

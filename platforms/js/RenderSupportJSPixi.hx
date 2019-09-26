@@ -2029,7 +2029,31 @@ class RenderSupportJSPixi {
 		}
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			untyped clip.filters = filters.filter(function(f) { return f != null; });
+			untyped clip.filterPadding = 0.0;
+			var dropShadowCount = 0;
+
+			clip.off("childrenchanged", clip.invalidateTransform);
+			clip.emit("clearfilters");
+
+			untyped clip.filters = filters.filter(function(f) {
+				if (f == null) {
+					return false;
+				} else if (f.padding != null) {
+					untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
+					dropShadowCount++;
+				}
+
+				return true;
+			});
+			untyped clip.filterPadding = clip.filterPadding * dropShadowCount;
+			if (untyped clip.updateNativeWidgetGraphicsData != null) {
+				untyped clip.updateNativeWidgetGraphicsData();
+			}
+
+			if (clip.filters.length > 0) {
+				clip.on("childrenchanged", clip.invalidateTransform);
+			}
+
 			clip.initNativeWidget();
 
 			var children : Array<DisplayObject> = untyped clip.children;

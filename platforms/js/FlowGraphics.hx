@@ -35,6 +35,8 @@ class FlowGraphics extends Graphics {
 	public var isSvg : Bool = false;
 	public var isNativeWidget : Bool;
 
+	public var filterPadding = 0.0;
+
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
 	}
@@ -269,12 +271,10 @@ class FlowGraphics extends Graphics {
 
 		var filterPadding = untyped this.filterPadding;
 
-		if (filterPadding != null) {
-			rect.x -= filterPadding;
-			rect.y -= filterPadding;
-			rect.width += filterPadding * 2.0;
-			rect.height += filterPadding * 2.0;
-		}
+		rect.x -= filterPadding;
+		rect.y -= filterPadding;
+		rect.width += filterPadding * 2.0;
+		rect.height += filterPadding * 2.0;
 
 		return rect;
 	}
@@ -365,10 +365,10 @@ class FlowGraphics extends Graphics {
 				for (data in graphicsData) {
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX, 1.0)}px';
-					svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY, 1.0)}px';
-					svg.style.left = '${graphicsBounds.minX}px';
-					svg.style.top = '${graphicsBounds.minY}px';
+					svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0, 1.0)}px';
+					svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0, 1.0)}px';
+					svg.style.left = '${graphicsBounds.minX - filterPadding}px';
+					svg.style.top = '${graphicsBounds.minY - filterPadding}px';
 					svg.style.position = 'absolute';
 
 					if (data.fill != null && data.fillAlpha > 0) {
@@ -418,7 +418,7 @@ class FlowGraphics extends Graphics {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -432,7 +432,7 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("y", Std.string(data.shape.y));
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -445,7 +445,7 @@ class FlowGraphics extends Graphics {
 						circle.setAttribute("cx", Std.string(data.shape.x));
 						circle.setAttribute("cy", Std.string(data.shape.y));
 						circle.setAttribute("r", Std.string(data.shape.radius));
-						circle.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
+						circle.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							circle.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -461,7 +461,7 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("height", Std.string(data.shape.height));
 						rect.setAttribute("rx", Std.string(data.shape.radius));
 						rect.setAttribute("ry", Std.string(data.shape.radius));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -495,7 +495,7 @@ class FlowGraphics extends Graphics {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${-graphicsBounds.minX} ${-graphicsBounds.minY})');
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
 
 						if (data.fill != null && data.fillAlpha > 0) {
 							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
@@ -538,10 +538,10 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX, 1.0)}px';
-						svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY, 1.0)}px';
-						svg.style.left = '${graphicsBounds.minX}px';
-						svg.style.top = '${graphicsBounds.minY}px';
+						svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0, 1.0)}px';
+						svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0, 1.0)}px';
+						svg.style.left = '${graphicsBounds.minX - filterPadding}px';
+						svg.style.top = '${graphicsBounds.minY - filterPadding}px';
 						svg.style.position = 'absolute';
 
 						svg.appendChild(path);
