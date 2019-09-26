@@ -81,6 +81,17 @@ fcCompile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper : (int
 			if (isConfigParameterTrue(config.config, "dump-program")) {
 				fcPrintBinary(serialize(progOptimized));
 			}
+			if (isConfigParameterSet(config.config, "compile-expression")) {
+				switch (lookupTree(progOptimized.names.toplevel, "___tmpvar___")) {
+					Some(decl): {
+						switch (decl) {
+							FiGlobalVar(__, value, __,__,__): fcPrintBinary(serialize(value));
+							default: fcPrintln("___tmpvar___ is not a var");
+						}
+					}
+					None(): fcPrintln("___tmpvar___ is not found");
+				}
+			}
 			buildFiProgram(progOptimized, globEnv, \code -> {
 				incrementTimePhase(fcTimePhases.build, t);
 				showStopper(code)
@@ -345,6 +356,16 @@ fcServerLog(message : string) -> void {
 	writeLogMessage(message, "flowc_server.log", 128)
 }
 
+fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
+	if (!isConfigParameterSet(conf.config, "compile-expression")) Pair(conf, nop) else {
+		expr = getConfigParameter(conf.config, "compilefile");
+		tmp_file_str = "import " + conf.flowfile + ";\n\n ___tmpvar___ = " + expr + ";\n\n";
+		setFileContent("___tmp_expr___.flow", tmp_file_str);
+		upd_conf = CompilerConfig(conf with flowfile = "___tmp_expr___.flow");
+		Pair(upd_conf, \ -> { deleteFile("___tmp_expr___.flow"); {}});
+	}
+}
+
 main() {
 	fcPrintln("Flow compiler (3rd generation)");
 	fcPrintln("");
@@ -397,12 +418,12 @@ main() {
 							fcPrintln("WARNING: Illegal compilation config.");
 							response(HttpResponse(400, fcOutput(), []));
 						} else {
-							conf : CompilerConfig = cast(cf : flow -> CompilerConfig);
-							if (conf.verbose > 0) {
+							conf1 : CompilerConfig = cast(cf : flow -> CompilerConfig);
+							if (conf1.verbose > 0) {
 								fcPrintln("server cwd: " + strReplace(resolveRelativePath("."), "\\", "/"));
-								fcPrintln("objc directory: " + getFlowcObjectFolder(conf));
+								fcPrintln("objc directory: " + getFlowcObjectFolder(conf1));
 							}
-							if (isConfigParameterTrue(conf.config, "server-shutdown")) {
+							if (isConfigParameterTrue(conf1.config, "server-shutdown")) {
 								fcPrintln("Server stopped.");
 								HttpResponse(200, fcOutput(), []) |> response;
 								//^server();  // TODO: why calling ^server(); causes freezing of flowc?
@@ -413,6 +434,9 @@ main() {
 							} else {
 								code = ref 0;
 								start_time = timestamp();
+								pair = fcPrepareConfig(conf1);
+								conf = pair.first;
+								conf_callback = pair.second;
 								conf_str = foldTree(compilerConfigToTree(conf), "",
 									\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
 								);
@@ -422,6 +446,7 @@ main() {
 									fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
 									code := c
 								});
+								conf_callback();
 								if (isConfigParameterTrue(config.config, "dump-program")) {
 									HttpResponse(200 + ^code, fcBinary(), []) |> response;
 								} else {
