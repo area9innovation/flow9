@@ -457,6 +457,9 @@ class TextClip extends NativeWidgetClip {
 		fontFamilies = fontWeight > 0 || fontSlope != ""
 				? fontFamilies.split(",").map(function (fontFamily) { return recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(",")
 				: fontFamilies;
+		if (Platform.isSafari) {
+			fontSize = Math.round(fontSize);
+		}
 
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
 
