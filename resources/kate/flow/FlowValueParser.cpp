@@ -9,25 +9,40 @@ namespace flow {
 
 QString FlowValue::type() const {
 	switch (kind_) {
-	case SCALAR:  return val_.scalar_->type();
-	case STRUCT:  return val_.struct_->type();
-	case ARRAY:   return val_.array_->type();
-	case REF:     return val_.ref_->type();
-	case CLOSURE: return val_.closure_->type();
-	case NATIVE:  return val_.native_->type();
-	default:      return QLatin1String("?");
+	case SCALAR:   return val_.scalar_->type();
+	case STRUCT:   return val_.struct_->type();
+	case ARRAY:    return val_.array_->type();
+	case REF:      return val_.ref_->type();
+	case CLOSURE:  return val_.closure_->type();
+	case NATIVE:   return val_.native_->type();
+	case ELLIPSIS: return val_.ellipsis_->type();
+	default:       return QLatin1String("?");
 	}
 }
 
+
+QString FlowValue::show() const {
+	switch (kind_) {
+	case SCALAR:   return val_.scalar_->show();
+	case STRUCT:   return val_.struct_->show();
+	case ARRAY:    return val_.array_->show();
+	case REF:      return val_.ref_->show();
+	case CLOSURE:  return val_.closure_->show();
+	case NATIVE:   return val_.native_->show();
+	case ELLIPSIS: return val_.ellipsis_->show();
+	default:       return QLatin1String("NONE");
+	}
+}
 QString FlowValue::value() const {
 	switch (kind_) {
-	case SCALAR:  return val_.scalar_->value_;
-	case STRUCT:  return val_.struct_->value_;
-	case ARRAY:   return val_.array_->value_;
-	case REF:     return val_.ref_->value_;
-	case CLOSURE: return val_.closure_->value_;
-	case NATIVE:  return val_.native_->value_;
-	default:      return QLatin1String("?");
+	case SCALAR:   return val_.scalar_->value_;
+	case STRUCT:   return val_.struct_->value_;
+	case ARRAY:    return val_.array_->value_;
+	case REF:      return val_.ref_->value_;
+	case CLOSURE:  return val_.closure_->value_;
+	case NATIVE:   return val_.native_->value_;
+	case ELLIPSIS: return val_.ellipsis_->value_;
+	default:       return QLatin1String("?");
 	}
 }
 
@@ -52,6 +67,21 @@ QString FlowScalar::type() const {
 	}
 }
 
+QString FlowStruct::show() const {
+	QString ret = name_;
+	ret += QLatin1String("(");
+	bool first = true;
+	for (auto& f : fields_) {
+		if (!first) {
+			ret += QLatin1String(", ");
+		}
+		ret += f.show();
+		first = false;
+	}
+	ret += QLatin1String(")");
+	return ret;
+}
+
 QString FlowArray::type() const {
 	if (elements_.isEmpty()) {
 		return QLatin1String("[?]");
@@ -61,24 +91,39 @@ QString FlowArray::type() const {
 	}
 }
 
+QString FlowArray::show() const {
+	QString ret;
+	ret += QLatin1String("[");
+	bool first = true;
+	for (auto& e : elements_) {
+		if (!first) {
+			ret += QLatin1String(", ");
+		}
+		ret += e.show();
+		first = false;
+	}
+	ret += QLatin1String("]");
+	return ret;
+}
+
 class FlowValueParser {
 	static const char* mi_result_grammar() {
 		return R"(
 			# Flow value result grammar
 
-			VALUE       <- ARRAY / REF / CLOSURE / NATIVE / STRUCT / SCALAR
-			ARRAY       <- '[' ('...' / VAL_LIST) ']'
+			VALUE       <- ELLIPSIS / ARRAY / REF / CLOSURE / NATIVE / STRUCT / SCALAR 
+			ARRAY       <- '[' VAL_LIST ']' 
 			REF         <- '<ref' '#' NUM ':' VALUE '>'
 			CLOSURE     <- '<closure' HEX ':' ID ('$' NUM)? '>'
 			NATIVE      <- '<native' NUM ':' ID '>'
-			STRUCT      <- ID '(' STRUCT_BODY ')'
-			STRUCT_BODY <- '...' / VAL_LIST
+			STRUCT      <- ID '(' VAL_LIST ')'
 			VAL_LIST    <- (VALUE (',' VALUE)*)?
 			SCALAR      <- STRING / ID
-			ID          <- < (![(,)$<>] .)+ >
+			ELLIPSIS    <- '...'
+			ID          <- !('[' / "\"") < (![(,)$<>\]] .)+ >
 			STRING      <- '"' STR_CHAR * '"'
 			STR_CHAR    <- '\\"' / < (!'"' .) >
-			NUM         <- < [0-9]+ >
+			NUM         <- < ('+'/'-')? [0-9]+ >
 			HEX         <- < '0x' [0-9a-fA-F]+ >
 
 			%whitespace <- [ \t\r\n]*
@@ -91,14 +136,18 @@ public:
 			QTextStream(stderr) << "Flow value grammar is not correct\n";
 			exit(1);
 		}
+		parser.log = [](size_t ln, size_t col, const std::string& err_msg) {
+			QTextStream(stderr) << QString::fromStdString(err_msg) << ", line: " << ln << ", col: " << col << endl;
+		};
 		parser["VALUE"] = [](const peg::SemanticValues& sv) {
 			switch (sv.choice()) {
-			case 0: return FlowValue(sv[0].get<FlowArray*>());
-			case 1: return FlowValue(sv[0].get<FlowRef*>());
-			case 2: return FlowValue(sv[0].get<FlowClosure*>());
-			case 3: return FlowValue(sv[0].get<FlowNative*>());
-			case 4: return FlowValue(sv[0].get<FlowStruct*>());
-			case 5: return FlowValue(sv[0].get<FlowScalar*>());
+			case 0: return FlowValue(sv[0].get<FlowEllipsis*>());
+			case 1: return FlowValue(sv[0].get<FlowArray*>());
+			case 2: return FlowValue(sv[0].get<FlowRef*>());
+			case 3: return FlowValue(sv[0].get<FlowClosure*>());
+			case 4: return FlowValue(sv[0].get<FlowNative*>());
+			case 5: return FlowValue(sv[0].get<FlowStruct*>());
+			case 6: return FlowValue(sv[0].get<FlowScalar*>());
 			default: throw std::out_of_range("impossible case");
 			}
 		};
@@ -112,28 +161,19 @@ public:
 			return new FlowNative{sv[1].get<QString>(), QString::fromStdString(sv.token())};
 		};
 		parser["STRUCT"] = [](const peg::SemanticValues& sv) {
-			auto pair = sv[1].get<std::pair<bool, QVector<FlowValue>>>();
-			return new FlowStruct{sv[0].get<QString>(), pair.second, pair.first, QString::fromStdString(sv.token())};
-		};
-		parser["STRUCT_BODY"] = [](const peg::SemanticValues& sv) {
-			switch (sv.choice()) {
-			case 0: return std::pair<bool, QVector<FlowValue>>(true, QVector<FlowValue>());
-			case 1: return std::pair<bool, QVector<FlowValue>>(false, sv[0].get<QVector<FlowValue>>());
-			default: throw std::out_of_range("impossible case");
-			}
+			return new FlowStruct{sv[0].get<QString>(), sv[1].get<QVector<FlowValue>>(), QString::fromStdString(sv.token())};
 		};
 		parser["ARRAY"] = [](const peg::SemanticValues& sv) {
-			switch (sv.choice()) {
-			case 0: return new FlowArray{QVector<FlowValue>(), true};
-			case 1: return new FlowArray{sv[0].get<QVector<FlowValue>>(), false, QString::fromStdString(sv.token())};
-			default: throw std::out_of_range("impossible case");
-			}
+			return new FlowArray{sv[0].get<QVector<FlowValue>>(), QString::fromStdString(sv.token())};
 		};
 		parser["VAL_LIST"] = [](const peg::SemanticValues& sv) {
 			return QVector<FlowValue>::fromStdVector(sv.transform<FlowValue>());
 		};
 		parser["SCALAR"] = [](const peg::SemanticValues& sv) {
 			return new FlowScalar{QString::fromStdString(sv.token())};
+		};
+		parser["ELLIPSIS"] = [](const peg::SemanticValues& sv) {
+			return new FlowEllipsis{QString::fromStdString(sv.token())};
 		};
 		parser["ID"] = [](const peg::SemanticValues& sv) {
 			return QString::fromStdString(sv.token());
@@ -144,12 +184,23 @@ public:
 		parser["NUM"] = [](const peg::SemanticValues& sv) {
 			return QString::fromStdString(sv.token()).toInt();
 		};
+
+		QString test = QLatin1String("[A(...), ...]");
+
+		FlowValue ret;
+		if (!parser.parse<FlowValue>(test.toStdString().c_str(), ret)) {
+			QTextStream(stdout) << "Error parsing test: \n";
+			exit(1);
+		}
+
 	}
 	FlowValue parse(const QString& str) {
 		FlowValue ret;
-		if (!parser.parse<FlowValue>(str.toStdString().c_str(), ret)) {
-			QTextStream(stdout) << "Error parsing result: " << str << "\n";
-		}
+		parser.log = [&str](size_t ln, size_t col, const std::string& err_msg) {
+			QTextStream(stdout) << QLatin1String("Flow value ") << QString::fromStdString(err_msg) << ", line: " << ln << ", col: " << col << endl;
+			QTextStream(stdout) << str.mid(col - 32, 64) << endl;
+		};
+		parser.parse<FlowValue>(str.toStdString().c_str(), ret);
 		return ret;
 	}
 

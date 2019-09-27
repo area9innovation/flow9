@@ -37,7 +37,7 @@ void DebugManager::runDebugger(const DebugConf &conf) {
 			connect(&debugProcess_, SIGNAL(readyReadStandardError()), this, SLOT(slotReadDebugStdErr()));
 			connect(&debugProcess_, SIGNAL(readyReadStandardOutput()), this, SLOT(slotReadDebugStdOut()));
 			connect(&debugProcess_, SIGNAL(finished(int, QProcess::ExitStatus)), this, SLOT(slotDebugFinished(int, QProcess::ExitStatus)));
-			connect(flowView_.flowOutput_.ui.terminateCompilerButton, SIGNAL(clicked()), &debugProcess_, SLOT(terminate()));
+			connect(flowView_.flowOutput_.ui.terminateDebugButton, SIGNAL(clicked()), &debugProcess_, SLOT(terminate()));
 
 			QStringList args;
 			args << QLatin1String("--debug-mi");
@@ -59,6 +59,27 @@ void DebugManager::runDebugger(const DebugConf &conf) {
 			// here we have to trigger it manually.
 			QTimer::singleShot(0, this, SLOT(slotIssueNextCommand()));
 		}
+		bool ok;
+
+		// Set the max depth of fdb printed values
+		QString max_depth_str = flowView_.flowConfig_.ui.debuggerMaxDepthLineEdit->text();
+		int max_depth = max_depth_str.toInt(&ok);
+		if (ok) {
+			nextCommands_ << QLatin1String("set print-depth ") + QString::number(max_depth);
+		} else {
+			KMessageBox::sorry(0, QLatin1String("Illegal integer parameter - max depth: ") + max_depth_str);
+		}
+
+		// Set the max length of fdb printed values
+		QString max_length_str = flowView_.flowConfig_.ui.debuggerMaxLengthLineEdit->text();
+		int max_length = max_length_str.toInt(&ok);
+		if (ok) {
+			nextCommands_ << QLatin1String("set print-length ") + QString::number(max_length);
+		} else {
+			KMessageBox::sorry(0, QLatin1String("Illegal integer parameter - max length: ") + max_length_str);
+		}
+
+		nextCommands_ << QLatin1String("set shallow-frame-print 0");
 		for (auto bp : breakPointList_) {
 			nextCommands_ << QStringLiteral("-break-insert %1:%2").arg(bp.file.path()).arg(bp.line);
 		}
@@ -82,6 +103,7 @@ void DebugManager::slotDebug(int row) {
 		runDebugger(debugConf);
 	} catch (std::exception& ex) {
 		debugProcess_.kill();
+		collected_out.clear();
 		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
@@ -129,31 +151,45 @@ void DebugManager::stackFrameSelected(int level) {
 }
 
 void DebugManager::slotError(QProcess::ProcessError err) {
-    KMessageBox::sorry(NULL, i18n("Error in debugger process: ") + debugProcess_.errorString());
+	appendText(
+		flowView_.flowOutput_.ui.debugOutTextEdit,
+		i18n("Error in debugger process: ") + debugProcess_.errorString() + QLatin1String("\n")
+	);
 }
 
 inline QString prepareOutput(const QString& line) {
-	return line.mid(2,line.length() - 3).replace(QLatin1String("\\n"), QLatin1String("\n"));
+	return line.mid(2,line.length() - 3).
+		replace(QLatin1String("\\n"), QLatin1String("\n")).
+		replace(QLatin1String("\\t"), QLatin1String("\t")).
+		replace(QLatin1String("\\\\"), QLatin1String("\\")).
+		replace(QLatin1String("\\\""), QLatin1String("\""));
 }
 
 void DebugManager::slotReadDebugStdOut() {
 	static QRegExp nonemptyString(QLatin1String("^(?!\\s*$).+"));
 	QString out = QString::fromLocal8Bit(debugProcess_.readAllStandardOutput().data());
-	//QTextStream(stdout) << "OUT:\n" << out << "\n-----\n";
-    QStringList lines = out.split(QLatin1Char('\n')).filter(nonemptyString);
-    for (auto line : lines) {
-    	if (line.startsWith(QLatin1Char('@'))) {
-    		appendText(flowView_.flowOutput_.ui.launchOutTextEdit, prepareOutput(line));
-    		flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(1);
-    	} else if (line.startsWith(QLatin1Char('~'))) {
-    		appendText(flowView_.flowOutput_.ui.debugOutTextEdit, prepareOutput(line));
-    		flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(2);
-    	} else if (line.startsWith(QLatin1Char('&'))) {
-    		// TODO: handle log output
-    	} else if (!line.isEmpty()) {
-    		processLine(line);
-    	}
-    }
+	collected_out += out;
+	if (out.endsWith(QLatin1String("(gdb)\n"))) {
+		//QTextStream(stdout) << "OUT:\n" << out << "\n-----\n";
+		QStringList lines = collected_out.split(QLatin1Char('\n')).filter(nonemptyString);
+		collected_out.clear();
+		for (auto line : lines) {
+			if (line.startsWith(QLatin1Char('@'))) {
+				appendText(flowView_.flowOutput_.ui.launchOutTextEdit, prepareOutput(line));
+				flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(1);
+			} else if (line.startsWith(QLatin1Char('~'))) {
+				appendText(flowView_.flowOutput_.ui.debugOutTextEdit, prepareOutput(line));
+				flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(2);
+			} else if (line.startsWith(QLatin1Char('&'))) {
+				// TODO: handle log output
+			} else if (!line.isEmpty()) {
+				if (flowView_.flowOutput_.ui.fdbMiOutEnabledCheckBox->checkState() == Qt::Checked) {
+					appendText(flowView_.flowOutput_.ui.fdbMiOutTextEdit, line + QLatin1Char('\n'));
+				}
+				processLine(line);
+			}
+		}
+	}
 }
 
 void DebugManager::slotReadDebugStdErr() {
@@ -166,10 +202,12 @@ void DebugManager::slotReadDebugStdErr() {
 void DebugManager::slotDebugFinished(int exitCode, QProcess::ExitStatus status) {
 	flowView_.flowOutput_.ui.terminateDebugButton->setEnabled(false);
     if (status != QProcess::NormalExit) {
-        QString message = i18n("*** fdb crashed *** ") + debugProcess_.errorString();
+        QString message = i18n("*** fdb terminated *** ");
+        message += QLatin1String("exit code: ") + QString::number(exitCode) + QLatin1String("\n");
+        message += debugProcess_.errorString() + QLatin1String("\n");
     	appendText(flowView_.flowOutput_.ui.debugOutTextEdit, message);
     	flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(2);
-    	KMessageBox::sorry(flowView_.mainWindow_->activeView(), message);
+    	collected_out.clear();
     }
 }
 
@@ -177,6 +215,7 @@ void DebugManager::slotInterrupt() {
     if (debugProcess_.state() == QProcess::Running) {
         debugLocationChanged_ = true;
     }
+    collected_out.clear();
     int pid = debugProcess_.pid();
     if (pid != 0) {
         ::kill(pid, SIGINT);
@@ -206,8 +245,8 @@ void DebugManager::slotContinue() {
     issueCommand(QLatin1String("-exec-continue"));
 }
 
-struct PromptHandler : public DebugManager::LineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
-	PromptHandler() : DebugManager::LineHandler(
+struct PromptHandler : public DebugManager::RegExpLineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
+	PromptHandler() : DebugManager::RegExpLineHandler(
 		QLatin1String("\\([gf]db\\)\\s*")
 	) {}
 	void handle(const QString& line, DebugManager* manager) override {
@@ -215,8 +254,8 @@ struct PromptHandler : public DebugManager::LineHandler { // @suppress("Class ha
 	}
 };
 
-struct BreakpointHandler : public DebugManager::LineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
-	BreakpointHandler() : DebugManager::LineHandler(
+struct BreakpointHandler : public DebugManager::RegExpLineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
+	BreakpointHandler() : DebugManager::RegExpLineHandler(
 		QLatin1String("\\^done,bkpt=\\{.*number=\"(\\d+)\",.*fullname=\"([^\"]*)\",.*line=\"(\\d+)\".*")
 	) {}
 	void handle(const QString& line, DebugManager* manager) override {
@@ -231,8 +270,8 @@ struct BreakpointHandler : public DebugManager::LineHandler { // @suppress("Clas
 	}
 };
 
-struct FrameStoppedHandler : public DebugManager::LineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
-	FrameStoppedHandler() : DebugManager::LineHandler(
+struct FrameStoppedHandler : public DebugManager::RegExpLineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
+	FrameStoppedHandler() : DebugManager::RegExpLineHandler(
 		QLatin1String("\\*stopped,frame=\\{.*func=\"([^\"]*)\",.*fullname=\"([^\"]*)\",.*line=\"(\\d+)\".*")
 	) {}
 	void handle(const QString& line, DebugManager* manager) override {
@@ -247,40 +286,40 @@ struct FrameStoppedHandler : public DebugManager::LineHandler { // @suppress("Cl
 	}
 };
 
-struct StackLocalsHandler : public DebugManager::LineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
-	StackLocalsHandler() : DebugManager::LineHandler(
-		QLatin1String("\\^done,(locals=\\[.*\\])")
+struct StackLocalsHandler : public DebugManager::ExactMatchLineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
+	StackLocalsHandler() : DebugManager::ExactMatchLineHandler(
+		QLatin1String("^done,"), QLatin1String("locals=[")
 	) {}
 	void handle(const QString& line, DebugManager* manager) override {
-		emit manager->signalLocalsInfo(lineMatcher.cap(1));
+		emit manager->signalLocalsInfo(getMatch(line));
 	}
 };
 
-struct StackFramesHandler : public DebugManager::LineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
-	StackFramesHandler() : DebugManager::LineHandler(
-		QLatin1String("\\^done,(stack=\\[.*\\])")
+struct StackFramesHandler : public DebugManager::ExactMatchLineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
+	StackFramesHandler() : DebugManager::ExactMatchLineHandler(
+		QLatin1String("^done,"), QLatin1String("stack=[")
 	) {}
 	void handle(const QString& line, DebugManager* manager) override {
-		emit manager->signalStackInfo(lineMatcher.cap(1));
+		emit manager->signalStackInfo(getMatch(line));
 	}
 };
 
-struct StackArgsHandler : public DebugManager::LineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
-	StackArgsHandler() : DebugManager::LineHandler(
-		QLatin1String("\\^done,(stack-args=\\[.*\\])")
+struct StackArgsHandler : public DebugManager::ExactMatchLineHandler { // @suppress("Class has a virtual method and non-virtual destructor")
+	StackArgsHandler() : DebugManager::ExactMatchLineHandler(
+		QLatin1String("^done,"), QLatin1String("stack-args=[")
 	) {}
 	void handle(const QString& line, DebugManager* manager) override {
-		emit manager->signalArgsInfo(lineMatcher.cap(1), manager->currentFrame_);
+		emit manager->signalArgsInfo(getMatch(line), manager->currentFrame_);
 	}
 };
 
-void DebugManager::processLine(QString line) {
+void DebugManager::processLine(const QString& line) {
 	static DebugManager::LineHandler* handlers[] = {
 		new PromptHandler,      new BreakpointHandler,  new FrameStoppedHandler,
 		new StackLocalsHandler, new StackFramesHandler, new StackArgsHandler
 	};
 	for (auto h : handlers) {
-		if (h->lineMatcher.exactMatch(line)) {
+		if (h->matches(line)) {
 			h->handle(line, this);
 			break;
 		}
@@ -289,6 +328,9 @@ void DebugManager::processLine(QString line) {
 
 void DebugManager::issueCommand(QString const& cmd) {
 	lastCommand_ = cmd;
+	collected_out.clear();
+	debugProcess_.readAllStandardOutput();
+	debugProcess_.readAllStandardError();
 	//QTextStream (stdout) << "COMMAND:\n" << lastCommand_ << "\n-------------------\n\n";
 	debugProcess_.write(qPrintable(cmd));
 	debugProcess_.write("\n");

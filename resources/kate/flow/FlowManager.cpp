@@ -65,6 +65,7 @@ void FlowManager::slotCompile() {
 		compileProcess_.kill();
 		state_.stop();
 		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -99,7 +100,8 @@ void FlowManager::slotRun(int row) {
 	} catch (std::exception& ex) {
 		launchProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.launchOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -137,7 +139,8 @@ void FlowManager::slotDebug(int row) {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.debugOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -179,7 +182,8 @@ void FlowManager::build(int row, State nextState, bool force) {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -226,7 +230,8 @@ void FlowManager::slotLookupDefinition() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()) + QLatin1String("\n"));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -267,7 +272,8 @@ void FlowManager::slotLookupType() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -309,7 +315,8 @@ void FlowManager::slotLookupUses() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -342,7 +349,8 @@ void FlowManager::slotOutline(KTextEditor::View* view) {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -413,7 +421,8 @@ void FlowManager::slotCompleteRename() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -572,11 +581,12 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 	} else {
 		if (internal_state.state != COMPILING  && internal_state.state != LOOKUP_DEF &&
 			internal_state.state != LOOKUP_TYPE && internal_state.state != LOOKUP_USES) {
-			QString message = i18n("*** flowc crashed *** ") + compileProcess_.errorString();
-			message += QLatin1String(", exit code: ") + QString::number(exitCode);
+			QString message = i18n("*** flowc terminated *** ");
+			message += QLatin1String("exit code: ") + QString::number(exitCode) + QLatin1String("\n");
+			message += compileProcess_.errorString() + QLatin1String("\n");
 			appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, message);
 			flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(0);
-			KMessageBox::sorry(mainWindow_->activeView(), message);
+			//KMessageBox::sorry(mainWindow_->activeView(), message);
 		}
 	}
 }
@@ -587,11 +597,11 @@ void FlowManager::slotLaunchFinished(int exitCode, QProcess::ExitStatus status) 
 	flowView_.flowOutput_.ui.terminateLaunchButton->setEnabled(false);
 	outputExecutionTime(flowView_.flowOutput_.ui.launchOutTextEdit, internal_state.milliseconds());
 	if (exitCode || status != QProcess::NormalExit) {
-		QString message = i18n("*** application crashed *** ") + launchProcess_.errorString();
+		QString message = i18n("*** application terminated *** ") + launchProcess_.errorString();
 		message += QLatin1String(", exit code: ") + QString::number(exitCode);
 		appendText(flowView_.flowOutput_.ui.launchOutTextEdit, message);
 		flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(1);
-		KMessageBox::sorry(mainWindow_->activeView(), message);
+		//KMessageBox::sorry(mainWindow_->activeView(), message);
 	}
 }
 

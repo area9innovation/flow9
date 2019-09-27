@@ -133,6 +133,8 @@ void FlowConfig::readConfig(const KConfigGroup& config) {
 		config.readEntry(QLatin1String("Compilation time phases"), QString()) == QLatin1String("true") ? Qt::Checked : Qt::Unchecked
 	);
 	ui.compilerOptionsLineEdit->setText(config.readEntry(QLatin1String("Compiler options"), QString()));
+	ui.debuggerMaxDepthLineEdit->setText(config.readEntry(QLatin1String("Debugger max depth"), QString(QLatin1String("16"))));
+	ui.debuggerMaxLengthLineEdit->setText(config.readEntry(QLatin1String("Debugger max length"), QString(QLatin1String("1024"))));
 	for (int row = 0; row < config.readEntry(QLatin1String("Launch configs number"), 0); ++ row) {
 		QString name = config.readEntry(QStringLiteral("Launch config %1 name").arg(row), QString());
 		QString prog = config.readEntry(QStringLiteral("Launch config %1 program").arg(row), QString());
@@ -177,6 +179,8 @@ void FlowConfig::writeConfig(KConfigGroup& config) {
     	ui.compilationTimePhasesCheckBox->checkState() == Qt::Checked ? "true" : "false"
     );
     config.writeEntry(QLatin1String("Compiler options"), ui.compilerOptionsLineEdit->text());
+    config.writeEntry(QLatin1String("Debugger max depth"), ui.debuggerMaxDepthLineEdit->text());
+    config.writeEntry(QLatin1String("Debugger max length"), ui.debuggerMaxLengthLineEdit->text());
     config.writeEntry(QLatin1String("Launch configs number"), ui.launchTableWidget->rowCount());
     for (int row = 0; row < ui.launchTableWidget->rowCount(); ++row) {
     	config.writeEntry(QStringLiteral("Launch config %1 name").arg(row),      ui.launchTableWidget->item(row, 0)->text());
@@ -207,6 +211,8 @@ void FlowConfig::eraseConfig(KConfigGroup& config) {
 	config.deleteEntry(QLatin1String("Server autostart"));
 	config.deleteEntry(QLatin1String("Compilation time phases"));
 	config.deleteEntry(QLatin1String("Compiler options"));
+	config.deleteEntry(QLatin1String("Debugger max depth"));
+	config.deleteEntry(QLatin1String("Debugger max length"));
 }
 
 

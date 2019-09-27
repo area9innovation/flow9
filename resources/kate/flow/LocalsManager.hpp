@@ -17,8 +17,8 @@ public:
     ~LocalsManager();
 
 public Q_SLOTS:
-    void slotLocalsInfo(QString description);
-    void slotArgsInfo(QString description, int frameIndex);
+    void slotLocalsInfo(const QString& description);
+    void slotArgsInfo(const QString& description, int frameIndex);
 
 private:
     template<class T>
