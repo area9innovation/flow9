@@ -342,7 +342,11 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 		} else {
-			nativeWidget.textContent = StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text;
+			nativeWidget.textContent = StringTools.replace(
+				StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text,
+				"\t",
+				" "
+			);
 		}
 
 		nativeWidget.style.color = style.fill;

@@ -833,7 +833,7 @@ class PixiWorkarounds {
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
-					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
+					this.style.wordWrapWidth = Math.ceil(Math.max(this.style.wordWrapWidth - 1.0, 0.0) * scaleFactor) + 1.0;
 					this.style.strokeThickness = this.style.strokeThickness * scaleFactor;
 					this.style.dropShadowDistance = this.style.dropShadowDistance * scaleFactor;
 					this.style.leading = this.style.leading * scaleFactor;

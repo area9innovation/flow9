@@ -585,13 +585,9 @@ There are two common antipaterns:
 	filter(arr, \a : Maybe<?> -> a == Some(v))
 
 The problem is that Some is created on the heap at each iteration. There are a lot of ways to avoid this, for example:
+
 In the first case if v is none, we don't need to run through the array at all, so it can be replaced by:
 
 	eitherMap(m, \v -> filter(arr, \a -> a == v), [])
 
-The second case can be replaced by eitherEq:
-
-	filter(arr, \a  -> eitherEq(a, v))
-
-or just moving Some(v) out of the loop :)
-
+The second case can be fixed by moving Some(v) out of the loop :)

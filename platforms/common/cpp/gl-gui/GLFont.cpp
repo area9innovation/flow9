@@ -944,7 +944,8 @@ void GLTextLayout::buildLayout(shared_ptr<Utf32InputIterator> begin, shared_ptr<
         }
         cursor = new_cursor;
     }
-    positions.push_back(cursor-spacing);  // We shouldn't add spacing after the last glyph.
+    cursor -= spacing;
+    positions.push_back(cursor);  // We shouldn't add spacing after the last glyph.
 
 
     // TODO calculate positions, including final position depending on flow direction(s).
