@@ -1,0 +1,64 @@
+import text/serialize;
+import net/http;
+import tools/common/config;
+
+export {
+	// Run a task, described by a config, on a remote flowc server
+	runConfigRemote(config : CompilerConfig, onData: (flow) -> void, onError : (string) -> void, onRunComplete : (int) -> void) -> bool;
+}
+
+runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string) -> void, onRunComplete : (int) -> void) -> bool {
+	serverUrl = 
+		"http://localhost:" +
+		getConfigParameterDef(conf.config, "server-port", "10001");
+	cwd = strReplace(resolveRelativePath("."), "\\", "/");
+	patchedConfig = CompilerConfig(conf with config =
+		setTree(
+			setTree(
+				switch (lookupTree(conf.config, "output-dir")) {
+					Some(__): conf.config;
+					None():   setTree(conf.config, "output-dir", cwd);
+				},
+				"file",
+				conf.flowfile
+			),
+			"working-dir",
+			lookupTreeDef(conf.config, "working-dir", cwd)
+		)
+	);
+	onComplete = ref nop;
+	success = ref true;
+	httpCustomRequest(
+		serverUrl,
+		GET(), [], RequestPayload(serialize(patchedConfig)),
+		\status, data, headers -> {
+			code = status - 200;
+			if (code == 0) {
+				if (isConfigParameterSet(conf.config, "compile-expression") || isConfigParameterTrue(conf.config, "dump-program")) {
+					value = deserialize(data, IllegalStruct());
+					if (value == IllegalStruct()) {
+						onError("WARNING: Illegal serialized data in response.");
+					} else {
+						onData(value);
+					}
+				} else {
+					onData(data);
+				}
+				onComplete := \-> onRunComplete(0);
+			} else if (0 < code && code < 64) {
+				onError("Compilation error " + i2s(code) + "\n" + data);
+				onComplete := \-> onRunComplete(code);
+				success := false;
+			} else {
+				if (isConfigParameterTrue(conf.config, "client-mode")) {
+					onError("Server connection error " + i2s(status));
+					onError(data);
+				}
+				success := false;
+			}
+		},
+		false
+	);
+	^onComplete();
+	^success;
+}
