@@ -613,6 +613,8 @@ class AccessWidget extends EventEmitter {
 				element.onpointerup = onpointerup;
 			}
 
+			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
+
 			if (element.tabIndex == null) {
 				element.tabIndex = 0;
 			}

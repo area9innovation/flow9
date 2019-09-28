@@ -1269,6 +1269,7 @@ class DisplayObjectHelper {
 				}
 			}
 
+			nativeWidget.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 			nativeWidget.style.pointerEvents = 'auto';
 		} else {
 			nativeWidget.onmouseover = null;

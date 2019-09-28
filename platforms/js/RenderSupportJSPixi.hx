@@ -1661,7 +1661,7 @@ class RenderSupportJSPixi {
 			return function() { off(event, fn); }
 		} else if (event == "mouserightdown" || event == "mouserightup") {
 			// When we register a right-click handler, we turn off the browser context menu.
-			PixiView.oncontextmenu = function () { return false; };
+			PixiView.oncontextmenu = function (e) { e.stopPropagation(); return false; };
 
 			on(event, fn);
 			return function() { off(event, fn); }
