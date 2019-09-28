@@ -2436,14 +2436,18 @@ class RenderSupportJSPixi {
 			return "";
 		}
 
+		untyped RenderSupportJSPixi.LayoutText = true;
 		child.setScrollRect(x, y, w, h);
+
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
 			child.removeScrollRect();
+			untyped RenderSupportJSPixi.LayoutText = false;
 
 			return img;
 		} catch(e : Dynamic) {
 			child.removeScrollRect();
+			untyped RenderSupportJSPixi.LayoutText = false;
 
 			return 'error';
 		}

@@ -957,7 +957,19 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						if (!RenderSupportJSPixi.DomRenderer) {
+						if (RenderSupportJSPixi.DomRenderer) {
+							if (RenderSupportJSPixi.LayoutText) {
+								this.textClipChanged = true;
+								this.layoutText();
+							} else if (this.children.length > 0) {
+								for (let i = 0, j = this.children.length; i < j; ++i) {
+									this.removeChild(this.children[i]);
+								}
+
+								this.textClip = null;
+								this.background = null;
+							}
+						} else {
 							this.layoutText();
 						}
 

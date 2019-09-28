@@ -1294,7 +1294,7 @@ class DisplayObjectHelper {
 		} else {
 			if (untyped clip.visibilityChanged) {
 				untyped clip.visibilityChanged = false;
-				untyped clip.nativeWidget.style.visibility = clip.loaded ? null : "hidden";
+				untyped clip.nativeWidget.style.visibility = clip.loaded ? (Platform.isIE ? "visible" : null) : "hidden";
 			}
 
 			if (clip.visible) {
@@ -1809,7 +1809,7 @@ class DisplayObjectHelper {
 				setClipRenderable(clip, true);
 
 				if (untyped clip.keepNativeWidgetChildren && !clip.keepNativeWidget && isNativeWidget(clip)) {
-					untyped clip.nativeWidget.style.visibility = null;
+					untyped clip.nativeWidget.style.visibility = Platform.isIE ? "visible" : null;
 				}
 			} else {
 				setClipRenderable(clip, untyped clip.keepNativeWidgetChildren);
