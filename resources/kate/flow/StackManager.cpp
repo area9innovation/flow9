@@ -21,10 +21,10 @@ StackManager::StackManager(QTableWidget* stack, FlowView& view)
 StackManager::~StackManager() {
 }
 
-void StackManager::slotStackInfo(QString descr) {
+void StackManager::slotStackInfo(const QString& descr) {
 	stack_->clearContents();
 	MiResult locals = mi_parse(descr);
-	if (locals.value()->emptyList()) {
+	if (!locals.value() || locals.value()->emptyList()) {
 		return;
 	}
 	for (MiResult& frameDescr : locals.value(QLatin1String("stack"))->resList()->list) {

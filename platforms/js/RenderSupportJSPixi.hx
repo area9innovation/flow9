@@ -24,6 +24,7 @@ class RenderSupportJSPixi {
 	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html" || (Util.getParameter("renderer") == null && Util.getParameter("new") == "1");
 	public static var DomInteractions : Bool = DomRenderer && (Util.getParameter("interactions") == null || Util.getParameter("interactions") == "dom");
 	public static var RenderContainers : Bool = Util.getParameter("containers") == "1" || !DomRenderer;
+	public static var FiltersEnabled : Bool = Util.getParameter("filters") != "0";
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
@@ -42,7 +43,7 @@ class RenderSupportJSPixi {
 	public static var EnableFocusFrame : Bool = false;
 	/* Antialiasing doesn't work correctly on mobile devices */
 	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
-	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
+	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : !DomRenderer;
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
 	public static var DropCurrentFocusOnDown : Bool;
@@ -260,6 +261,10 @@ class RenderSupportJSPixi {
 
 		if (untyped PIXI.VERSION != "4.8.2") {
 			untyped __js__("document.location.reload(true)");
+		}
+
+		if (Platform.isMacintosh || (Platform.isIOS && !DomRenderer)) {
+			untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█Å'");
 		}
 
 		PixiWorkarounds.workaroundTextMetrics();
@@ -534,9 +539,7 @@ class RenderSupportJSPixi {
 		var onpointerdown = function(e : Dynamic) {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
-			if (e.target == PixiView) {
-				e.preventDefault();
-			}
+			e.preventDefault();
 
 			if (e.touches != null) {
 				if (e.touches.length == 1) {
@@ -1140,38 +1143,47 @@ class RenderSupportJSPixi {
 		/* Assuming exact glyph codes used to form each clip's text. */
 		var EPSILON = 0.1; // Why not, pixel precision assumed.
 		var clip = getClipAt(textclip, new Point(x, y));
-		var textclip = null;
 		try {
 			textclip = cast(clip, TextClip);
-		} catch(exc: String) {};
+		} catch(exc: String) {
+			clip = textclip;
+		};
 		if (textclip == null) return -1;
-		var clipText : String = textclip.getContent();
+		var clipGlyphs = textclip.getContentGlyphs();
 		var clipStyle : TextStyle = textclip.getStyle();
 		var leftVal: Float = 0;
-		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipText, clipStyle);
+		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified, clipStyle);
 		var rightVal: Float = mtx.width;
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
-		var localX = x - org.x;
-		if (TextClip.getStringDirection(clipText) == "RTL") localX = rightVal - localX;
+		var localX = Math.min(mtx.width, Math.max(0.0, x - org.x));
+		if (TextClip.getStringDirection(clipGlyphs.modified, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
 		var leftPos: Float = 0;
-		var rightPos: Float = clipText.length;
+		var rightPos: Float = clipGlyphs.modified.length;
 		var midVal: Float = -1.0;
 		var midPos: Float = -1;
 		var oldPos: Float = rightPos;
 		while (Math.abs(localX-midVal) >= EPSILON && Math.round(midPos) != Math.round(oldPos)) {
 			oldPos = midPos;
 			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
-			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.ceil(leftPos)), clipStyle);
+			if (midPos<leftPos) break;
+			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.ceil(leftPos)-Math.floor(leftPos)), clipStyle);
 			midVal = leftVal - mtx.width * (leftPos - Math.floor(leftPos));
-			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
+			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
 			midVal += mtx.width;
-			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(midPos), Math.ceil(midPos)), clipStyle);
+			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(midPos), Math.ceil(midPos)-Math.floor(midPos)), clipStyle);
 			midVal += mtx.width * (midPos - Math.floor(midPos));
 			leftPos = midPos;
 			leftVal = midVal;
 		}
-		return Math.round(midPos) + textclip.charIdx;
+		var mappingOffset = 0.0;
+		for (i in 0...Math.round(midPos)) {
+			if (i < Math.ceil(midPos)-1)
+				mappingOffset += clipGlyphs.difPositionMapping[i];
+			else
+				mappingOffset += clipGlyphs.difPositionMapping[i] * (midPos-Math.floor(midPos));
+		}
+		return Math.round(midPos + mappingOffset) + textclip.charIdx;
 	}
 
 	public static function getTextFieldWidth(clip : TextClip) : Float {
@@ -1276,7 +1288,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
-		AccessWidget.updateAccessTree();
+		if (RenderSupportJSPixi.DomRenderer) {
+			render();
+		} else {
+			AccessWidget.updateAccessTree();
+		}
 
 		clip.setClipFocus(focus);
 	}
@@ -1776,12 +1792,18 @@ class RenderSupportJSPixi {
 			return false;
 		}
 
+		clip.invalidateLocalBounds();
+
 		var point = new Point(x, y);
 		return hittestMask(clip.parent, point) && doHitTest(clip, point);
 	}
 
 	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
 		if (untyped clip.viewBounds != null) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var viewBounds = untyped clip.viewBounds;
 
@@ -1805,6 +1827,10 @@ class RenderSupportJSPixi {
 		var data = graphicsData[0];
 
 		if (data.fill && data.shape != null && (!checkAlpha || data.fillAlpha > 0)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 
 			return data.shape.contains(local.x, local.y);
@@ -1827,6 +1853,10 @@ class RenderSupportJSPixi {
 		}
 
 		if (untyped __instanceof__(clip, NativeWidgetClip) || untyped __instanceof__(clip, FlowSprite)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = untyped clip.getWidth();
 			var clipHeight = untyped clip.getHeight();
@@ -1835,6 +1865,17 @@ class RenderSupportJSPixi {
 				return clip;
 			}
 		} else if (untyped __instanceof__(clip, FlowContainer)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var localBounds = untyped clip.localBounds;
+
+			if (local.x < localBounds.minX && local.y < localBounds.minY && local.x >= localBounds.maxX && local.y >= localBounds.maxY) {
+				return null;
+			}
+
 			var children : Array<DisplayObject> = untyped clip.children;
 			var i = children.length - 1;
 
@@ -1987,6 +2028,10 @@ class RenderSupportJSPixi {
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
+		if (!FiltersEnabled) {
+			return;
+		}
+
 		if (RenderSupportJSPixi.DomRenderer) {
 			untyped clip.filters = filters.filter(function(f) { return f != null; });
 			clip.initNativeWidget();

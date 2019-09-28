@@ -158,10 +158,10 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function calculateWidgetBounds() : Void {
-		widgetBounds.minX = 0;
-		widgetBounds.minY = 0;
-		widgetBounds.maxX = getWidth();
-		widgetBounds.maxY = getHeight();
+		widgetBounds.minX = 0.0;
+		widgetBounds.minY = 0.0;
+		widgetBounds.maxX = DisplayObjectHelper.ceil(getWidth());
+		widgetBounds.maxY = DisplayObjectHelper.ceil(getHeight());
 	}
 
 	public function getWidth() : Float {

@@ -126,9 +126,8 @@ class FlowGraphics extends Graphics {
 			} else {
 				// Only linear gradient is supported
 				var canvas : js.html.CanvasElement = Browser.document.createCanvasElement();
-				var bounds = getLocalBounds();
-				canvas.width = untyped bounds.width;
-				canvas.height = untyped bounds.height;
+				canvas.width = Math.ceil(graphicsBounds.maxX);
+				canvas.height = Math.ceil(graphicsBounds.maxY);
 
 				var ctx = canvas.getContext2d();
 				var matrix = fillGradient.matrix;
@@ -156,7 +155,7 @@ class FlowGraphics extends Graphics {
 				}
 
 				ctx.fillStyle = gradient;
-				ctx.fillRect(0.0, 0.0, bounds.width, bounds.height);
+				ctx.fillRect(0.0, 0.0, canvas.width, canvas.height);
 
 				var sprite = new Sprite(Texture.fromCanvas(canvas));
 				var mask = new FlowGraphics();
@@ -565,21 +564,30 @@ class FlowGraphics extends Graphics {
 						}
 
 						if (data.shape.type == 1) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
-							nativeWidget.style.marginLeft = '${data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else if (data.shape.type == 3) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width - data.lineWidth)}px /
 								${DisplayObjectHelper.round(data.shape.height - data.lineWidth)}px';
 						} else if (data.shape.type == 4) {
-							nativeWidget.style.marginLeft = '${data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
-							nativeWidget.style.marginTop = '${data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0)}px';
+							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');

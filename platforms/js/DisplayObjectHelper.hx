@@ -12,6 +12,7 @@ class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
 	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
 	public static var BoxShadow : Bool = Util.getParameter("boxshadow") != "0";
+	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -29,6 +30,18 @@ class DisplayObjectHelper {
 
 	public static inline function unlockStage() {
 		InvalidateStage = true;
+	}
+
+	public static inline function round(n : Float) : Float {
+		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : n;
+	}
+
+	public static inline function floor(n : Float) : Float {
+		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : n;
+	}
+
+	public static inline function ceil(n : Float) : Float {
+		return RenderSupportJSPixi.RoundPixels ? Math.ceil(n) : n;
 	}
 
 	public static function invalidateStage(clip : DisplayObject) : Void {
@@ -125,6 +138,10 @@ class DisplayObjectHelper {
 				}
 			}
 
+			if (!RenderSupportJSPixi.DomRenderer) {
+				untyped clip.rvlast = null;
+			}
+
 			if (untyped clip.child != null && clip.localTransformChanged) {
 				invalidateTransform(untyped clip.child, DebugUpdate ? from + ' ->\ninvalidateWorldTransform -> mask child' : null);
 			}
@@ -141,12 +158,16 @@ class DisplayObjectHelper {
 		if (clip.parent != null) {
 			untyped clip.transformChanged = true;
 
+			if (!RenderSupportJSPixi.DomRenderer) {
+				untyped clip.rvlast = null;
+			}
+
 			if (untyped clip.isCanvas) {
 				untyped clip.worldTransformChanged = true;
 				untyped clip.localTransformChanged = true;
 			}
 
-			if (untyped clip.parent.parent != null && (clip.parent.visible || clip.parent.parent.visible) && !clip.parent.transformChanged) {
+			if (untyped clip.parent.parent != null && !clip.parent.transformChanged) {
 				invalidateParentTransform(clip.parent);
 			} else {
 				invalidateParentLocalBounds(clip);
@@ -191,7 +212,7 @@ class DisplayObjectHelper {
 				invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
 			}
 
-			if (untyped clip.interactive) {
+			if (untyped !RenderSupportJSPixi.DomRenderer && clip.interactive && !clip.clipVisible) {
 				clip.emit("pointerout");
 			}
 
@@ -409,15 +430,20 @@ class DisplayObjectHelper {
 		return false;
 	}
 
-	public static inline function round(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : n;
-	}
-
 	// setScrollRect cancels setClipMask and vice versa
-	public static inline function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
+	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
 		var scrollRect : FlowGraphics = clip.scrollRect;
 
+		left = round(left);
+		top = round(top);
+		width = round(width);
+		height = round(height);
+
 		if (scrollRect != null) {
+			if (left == scrollRect.x && top == scrollRect.y && width == scrollRect.width && height == scrollRect.height) {
+				return;
+			}
+
 			clip.x = clip.x + scrollRect.x - left;
 			clip.y = clip.y + scrollRect.y - top;
 			untyped clip.localTransformChanged = true;
@@ -439,7 +465,7 @@ class DisplayObjectHelper {
 		scrollRect.y = top;
 
 		scrollRect.beginFill(0xFFFFFF);
-		scrollRect.drawRect(0.0, 0.0, round(width), round(height));
+		scrollRect.drawRect(0.0, 0.0, width, height);
 	}
 
 	public static inline function removeScrollRect(clip : FlowContainer) : Void {
@@ -507,10 +533,6 @@ class DisplayObjectHelper {
 
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
-
-			if (!RenderSupportJSPixi.DomRenderer) {
-				untyped clip.alphaMask = untyped maskContainer;
-			}
 
 			updateHasMask(clip);
 
@@ -744,8 +766,8 @@ class DisplayObjectHelper {
 		var ty = round(transform.ty);
 
 		if (untyped clip.scrollRect != null) {
-			tx = round(transform.tx + untyped clip.scrollRect.x);
-			ty = round(transform.ty + untyped clip.scrollRect.y);
+			tx = round(transform.tx) + untyped clip.scrollRect.x;
+			ty = round(transform.ty) + untyped clip.scrollRect.y;
 		}
 
 		var localBounds = untyped clip.localBounds;
@@ -755,20 +777,14 @@ class DisplayObjectHelper {
 			var nativeWidget = untyped clip.nativeWidget;
 
 			if (untyped clip.alphaMask != null) {
-				nativeWidget.setAttribute('width', '${round(localBounds.maxX)}');
-				nativeWidget.setAttribute('height', '${round(localBounds.maxY)}');
-				nativeWidget.style.width = '${round(localBounds.maxX)}px';
-				nativeWidget.style.height = '${round(localBounds.maxY)}px';
+				nativeWidget.style.width = '${localBounds.maxX}px';
+				nativeWidget.style.height = '${localBounds.maxY}px';
 			} else if (untyped clip.scrollRect != null) {
-				nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip)) + 1}');
-				nativeWidget.setAttribute('height', '${round(getWidgetHeight(clip)) + 1}');
-				nativeWidget.style.width = '${round(getWidgetWidth(clip)) + 1}px';
-				nativeWidget.style.height = '${round(getWidgetHeight(clip)) + 1}px';
+				nativeWidget.style.width = '${getWidgetWidth(clip) + 1}px';
+				nativeWidget.style.height = '${getWidgetHeight(clip) + 1}px';
 			} else {
-				nativeWidget.setAttribute('width', '${round(getWidgetWidth(clip))}');
-				nativeWidget.setAttribute('height', '${round(getWidgetHeight(clip))}');
-				nativeWidget.style.width = '${round(getWidgetWidth(clip))}px';
-				nativeWidget.style.height = '${round(getWidgetHeight(clip))}px';
+				nativeWidget.style.width = '${getWidgetWidth(clip)}px';
+				nativeWidget.style.height = '${getWidgetHeight(clip)}px';
 			}
 
 			// nativeWidget.setAttribute('minX', Std.string(localBounds.minX));
@@ -792,14 +808,10 @@ class DisplayObjectHelper {
 			// applyScrollFn(clip);
 		}
 
-		nativeWidget.style.left = '${tx}px';
-		nativeWidget.style.top = '${ty}px';
-
-		if (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) {
-			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-		} else {
-			nativeWidget.style.transform = 'none';
-		}
+		nativeWidget.style.left = tx != 0 ? '${tx}px' : null;
+		nativeWidget.style.top = ty != 0 ? '${ty}px' : null;
+		nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
+			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : null;
 	}
 
 	public static function updateNativeWidgetOpacity(clip : DisplayObject, ?worldTransform : Bool) {
@@ -839,9 +851,9 @@ class DisplayObjectHelper {
 					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
 					nativeWidget.style.boxShadow = '
-						${round(untyped Math.cos(filter.angle) * filter.distance)}px
-						${round(untyped Math.sin(filter.angle) * filter.distance)}px
-						${round(untyped filter.blur)}px
+						${untyped Math.cos(filter.angle) * filter.distance}px
+						${untyped Math.sin(filter.angle) * filter.distance}px
+						${untyped filter.blur}px
 						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 					';
 				}
@@ -860,16 +872,16 @@ class DisplayObjectHelper {
 					if (untyped clip.children != null && clip.children.filter(function(c) { return c.filters != null && c.filters.length > 0; }).length > 0) {
 						if (BoxShadow) {
 							nativeWidget.style.boxShadow = '
-								${round(untyped Math.cos(filter.angle) * filter.distance)}px
-								${round(untyped Math.sin(filter.angle) * filter.distance)}px
-								${round(untyped filter.blur)}px
+								${untyped Math.cos(filter.angle) * filter.distance}px
+								${untyped Math.sin(filter.angle) * filter.distance}px
+								${untyped filter.blur}px
 								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 							';
 						} else {
 							nativeWidget.style.boxShadow = '
-								${round(untyped Math.cos(filter.angle) * filter.distance)}px
-								${round(untyped Math.sin(filter.angle) * filter.distance)}px
-								${round(untyped filter.blur)}px
+								${untyped Math.cos(filter.angle) * filter.distance}px
+								${untyped Math.sin(filter.angle) * filter.distance}px
+								${untyped filter.blur}px
 								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 							';
 						}
@@ -877,9 +889,9 @@ class DisplayObjectHelper {
 						if (BoxShadow) {
 							for (childWidget in nativeWidget.children) {
 								childWidget.style.boxShadow = '
-									${round(untyped Math.cos(filter.angle) * filter.distance)}px
-									${round(untyped Math.sin(filter.angle) * filter.distance)}px
-									${round(untyped filter.blur)}px
+									${untyped Math.cos(filter.angle) * filter.distance}px
+									${untyped Math.sin(filter.angle) * filter.distance}px
+									${untyped filter.blur}px
 									rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 								';
 							}
@@ -891,9 +903,9 @@ class DisplayObjectHelper {
 							}
 
 							nativeWidget.style.filter = 'drop-shadow(
-								${round(untyped Math.cos(filter.angle) * filter.distance)}px
-								${round(untyped Math.sin(filter.angle) * filter.distance)}px
-								${round(untyped filter.blur)}px
+								${untyped Math.cos(filter.angle) * filter.distance}px
+								${untyped Math.sin(filter.angle) * filter.distance}px
+								${untyped filter.blur}px
 								rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 							)';
 						}
@@ -965,8 +977,8 @@ class DisplayObjectHelper {
 			nativeWidget.style.marginLeft = '${-x}px';
 			nativeWidget.style.marginTop = '${-y}px';
 
-			nativeWidget.style.width = '${round(getWidgetWidth(clip) + x)}px';
-			nativeWidget.style.height = '${round(getWidgetHeight(clip) + y)}px';
+			nativeWidget.style.width = '${getWidgetWidth(clip) + x}px';
+			nativeWidget.style.height = '${getWidgetHeight(clip) + y}px';
 
 			y = 0;
 			x = 0;
@@ -978,6 +990,14 @@ class DisplayObjectHelper {
 
 		if (x != 0 || y != 0) {
 			createPlaceholderWidget(clip);
+		}
+
+		if (x > 10000) {
+			untyped clip.placeholderWidget.style.width = '${getWidgetWidth(clip) + x}px';
+		}
+
+		if (y > 10000) {
+			untyped clip.placeholderWidget.style.height = '${getWidgetHeight(clip) + y}px';
 		}
 
 		var scrollFn = function() {
@@ -1320,7 +1340,7 @@ class DisplayObjectHelper {
 		if (isNativeWidget(clip)) {
 			var childWidget : Dynamic = untyped child.nativeWidget;
 
-			if (childWidget.style.zIndex == null || childWidget.style.zIndex == "") {
+			if (untyped clip.nativeWidget == Browser.document.body && (childWidget.style.zIndex == null || childWidget.style.zIndex == "")) {
 				var localStage : FlowContainer = untyped child.stage;
 
 				if (localStage != null) {
@@ -1363,12 +1383,16 @@ class DisplayObjectHelper {
 		if (untyped clip.nativeWidget != null) {
 			removeNativeWidget(clip);
 
+			untyped __js__("delete clip.nativeWidget");
 			untyped clip.nativeWidget = null;
 			untyped clip.isNativeWidget = false;
 		}
 
 		if (untyped clip.accessWidget != null) {
 			AccessWidget.removeAccessWidget(untyped clip.accessWidget);
+
+			untyped __js__("delete clip.accessWidget");
+			untyped clip.accessWidget = null;
 		}
 	}
 
@@ -1467,7 +1491,7 @@ class DisplayObjectHelper {
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
 			if (isNativeWidget(clip)) {
-				invalidateTransform(clip);
+				invalidateParentTransform(clip);
 			}
 
 			untyped clip.nativeWidgetBoundsChanged = true;
@@ -1548,10 +1572,10 @@ class DisplayObjectHelper {
 			];
 
 
-			container.minX = round(Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3])));
-			container.minY = round(Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3])));
-			container.maxX = round(Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3])));
-			container.maxY = round(Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3])));
+			container.minX = ceil(Math.min(Math.min(x[0], x[1]), Math.min(x[2], x[3])));
+			container.minY = ceil(Math.min(Math.min(y[0], y[1]), Math.min(y[2], y[3])));
+			container.maxX = ceil(Math.max(Math.max(x[0], x[1]), Math.max(x[2], x[3])));
+			container.maxY = ceil(Math.max(Math.max(y[0], y[1]), Math.max(y[2], y[3])));
 		} else {
 			var x = [
 				bounds.minX + transform.tx,
@@ -1563,10 +1587,10 @@ class DisplayObjectHelper {
 				bounds.maxY + transform.ty
 			];
 
-			container.minX = round(Math.min(x[0], x[1]));
-			container.minY = round(Math.min(y[0], y[1]));
-			container.maxX = round(Math.max(x[0], x[1]));
-			container.maxY = round(Math.max(y[0], y[1]));
+			container.minX = ceil(Math.min(x[0], x[1]));
+			container.minY = ceil(Math.min(y[0], y[1]));
+			container.maxX = ceil(Math.max(x[0], x[1]));
+			container.maxY = ceil(Math.max(y[0], y[1]));
 		}
 
 		return container;
@@ -1665,6 +1689,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds) : Void {
+		if (!InvalidateRenderable) {
+			return;
+		}
+
 		var localBounds = untyped clip.localBounds;
 
 		if (localBounds == null || untyped clip.isMask) {

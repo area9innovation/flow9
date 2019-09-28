@@ -70,6 +70,7 @@ protected:
     unicode_string html_text, plain_text;
     unicode_string base_font_name;
     TextDirection textDirection;
+    bool textDirectionFixed = false;
     FormatRec base_format;
 
     bool has_urls;
