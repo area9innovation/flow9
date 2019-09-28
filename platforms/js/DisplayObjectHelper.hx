@@ -831,7 +831,6 @@ class DisplayObjectHelper {
 		}
 
 		var nativeWidget = untyped clip.nativeWidget;
-
 		var alpha = worldTransform ? clip.worldAlpha : clip.alpha;
 
 		if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
@@ -844,10 +843,18 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (alpha != 1) {
-			nativeWidget.style.opacity = alpha;
+		if (untyped clip.isInput) {
+			if (Platform.isEdge || Platform.isIE) {
+				nativeWidget.style.opacity = 1.0;
+				var slicedColor : Array<String> = untyped clip.style.fill.split(",");
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (untyped clip.isFocused ? alpha : 0) + ")";
+
+				nativeWidget.style.color = newColor;
+			} else {
+				nativeWidget.style.opacity = untyped clip.isFocused ? alpha : 0;
+			}
 		} else {
-			nativeWidget.style.opacity = null;
+			nativeWidget.style.opacity = alpha != 1 ? alpha : null;
 		}
 	}
 
