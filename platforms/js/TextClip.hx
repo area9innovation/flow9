@@ -290,16 +290,20 @@ class TextClip extends NativeWidgetClip {
 		for (child in children) {
 			var c : Dynamic = child;
 			var ctext = bidiUndecorate(c.text);
-			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
+			var chridx : Int = c.orgCharIdxStart;
+			var chridxe : Int = c.orgCharIdxEnd;
+			if (chridx <= charIdx && chridxe >= charIdx) {
 				var text = "";
-				var chridx : Int = c.orgCharIdxStart;
 				for (i in 0...ctext[0].length) {
 					if (chridx >= charIdx) break;
 					chridx += 1 + Math.round(c.difPositionMapping[i]);
 					text += ctext[0].substr(i, 1);
 				}
+				var mtx0 : Dynamic = pixi.core.text.TextMetrics.measureText("", c.style);
 				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
 				var mtxPrev : Dynamic = pixi.core.text.TextMetrics.measureText(text.substr(0, text.length-1), c.style);
+				mtx.width -= mtx0.width;
+				mtxPrev.width -= mtx0.width;
 				var result = c.x + (mtxPrev.width*(chridx-charIdx) + mtx.width) / (1 + chridx-charIdx);
 				if (ctext[1] == 'rtl') return c.width - result;
 				return result;
@@ -484,9 +488,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function layoutText() : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			return;
-		} else if (isFocused || text == '') {
+		if (isFocused || text == '') {
 			if (textClip != null) {
 				textClip.setClipVisible(false);
 			}
@@ -504,14 +506,15 @@ class TextClip extends NativeWidgetClip {
 					),
 					chrIdx, style
 				);
-				textClip.orgCharIdxStart = chrIdx;
-				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
 			} else {
 				textClip.text = bidiDecorate(texts[0][0], textDirection);
+				textClip.difPositionMapping = modification.difPositionMapping;
 				textClip.style = style;
 			}
+			textClip.orgCharIdxStart = chrIdx;
+			textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
@@ -568,7 +571,12 @@ class TextClip extends NativeWidgetClip {
 			};
 
 			textClip.setClipX(anchorX * Math.max(0, getWidgetWidth() - getClipWidth()));
+
 			if (style.fontFamily == "Material Icons") {
+				if (style.fontProperties == null) {
+					measureFont();
+				}
+
 				textClip.setClipY(style.fontProperties.descent / (Platform.isIOS ? 2.0 : Platform.isMacintosh ? RenderSupportJSPixi.backingStoreRatio : 1.0));
 			}
 
@@ -1159,7 +1167,7 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMetrics() : Array<Float> {
 		if (RenderSupportJSPixi.DomRenderer) {
-			if (style.fontProperties == null) {
+			if (style.fontProperties == null || true) {
 				var ascent = 0.9 * style.fontSize;
 				var descent = 0.1 * style.fontSize;
 				var leading = 0.15 * style.fontSize;
