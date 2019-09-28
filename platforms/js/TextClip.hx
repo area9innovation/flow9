@@ -349,7 +349,12 @@ class TextClip extends NativeWidgetClip {
 			);
 		}
 
-		nativeWidget.style.color = style.fill;
+		if ((!Platform.isIE && !Platform.isEdge) || !isInput) {
+			nativeWidget.style.color = style.fill;
+		} else {
+			nativeWidget.style.opacity = null;
+		}
+
 		nativeWidget.style.letterSpacing = !RenderSupportJSPixi.DomRenderer || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
 		nativeWidget.style.fontFamily = !RenderSupportJSPixi.DomRenderer || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = !RenderSupportJSPixi.DomRenderer || style.fontWeight != 400 ? style.fontWeight : null;
@@ -371,18 +376,6 @@ class TextClip extends NativeWidgetClip {
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
 			default : null;
-		}
-
-		if (!RenderSupportJSPixi.DomRenderer) {
-			if (Platform.isEdge || Platform.isIE) {
-				nativeWidget.style.opacity = 1;
-				var slicedColor : Array<String> = style.fill.split(",");
-				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
-
-				nativeWidget.style.color = newColor;
-			} else {
-				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
-			}
 		}
 	}
 
