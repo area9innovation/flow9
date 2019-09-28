@@ -3,7 +3,7 @@ import tools/flowc/backends/cpp2/fi2cpp2_util;
 import tools/flowc/flowc_field_type;
 
 export {
-	cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer;
+	cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> Cpp2Writer;
 	cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) -> void;
 	cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void;
 	cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void;
@@ -35,7 +35,7 @@ cpp2_natives = [
 	Cpp2NativeDescr("bitNot", 1, true, "bitNot"),
 ];
 
-cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer {
+cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> Cpp2Writer {
 	known_natives = fold(cpp2_natives, makeTree(), 
 		\acc, nat -> setTree(acc, "Native." + nat.name, nat)
 	);
@@ -104,13 +104,14 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer {
 	struct_counts = map(enumFromTo(0, max_size), \i -> 
 		lookupTreeDef(struct_counts_map, i, -1) 
 	);
-	toplevel_triple = cpp2WriterEnumerateToplevel(program);
+	toplevel_triple = cpp2WriterEnumerateToplevel(program, main);
 	function_table = toplevel_triple.first;
 	global_vars = toplevel_triple.second;
 	global_map = toplevel_triple.third;
 	writer = Cpp2Writer(
 		config,
 		program,
+		main,
 		length(struct_list),    // num_structs : int,
 		0,                      // init_count : int,
 		struct_counts,          // struct_counts : [int], // by size
@@ -359,11 +360,17 @@ writeFiExpTypeCode(type : FiTypeNullable, code : Cpp2StructCode, extStructDefs :
 }
 
 // Index natives and globals
-cpp2WriterEnumerateToplevel(program : FiProgram) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
-	triple : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>> = foldTree(program.names.toplevel, Triple(ref [], ref [], makeTree()),
-		\name, decl : FiDeclaration, acc : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>> -> {
+cpp2WriterEnumerateToplevel(program : FiProgram, main : FiFunctionDec) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
+
+	deps = getAllDependencies(program.names.toplevel, main.lambda, Cpp2Dependencies(makeSet(), makeSet(), makeSet(), makeSet()));
+
+	fcPrintln("deps: '" + strGlue(map(set2array(deps.all_decls), \decl -> decl.name), ", ") + "'");
+
+	triple : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>> = 
+	foldSet(deps.all_decls, Triple(ref [], ref [], makeTree()),
+		\acc : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>>, decl : FiDeclaration -> {
 			switch (decl) {
-				FiFunctionDec(n, lambda, __, __,__): {
+				FiFunctionDec(name, lambda, __, __,__): {
 					info = Cpp2PlaceInfo(
 						None(), // env
 						Cpp2GlobalFunction(length(lambda.args), ""), // place
@@ -376,7 +383,7 @@ cpp2WriterEnumerateToplevel(program : FiProgram) -> Triple<[Cpp2FunctionDescr], 
 					);
 					Triple(acc.first, acc.second, setTree(acc.third, name, info))
 				}
-				FiGlobalVar(n, value, type, __,__): {
+				FiGlobalVar(name, value, type, __,__): {
 					// assign id to global var
 					info = Cpp2PlaceInfo(
 						None(), // env
@@ -391,7 +398,7 @@ cpp2WriterEnumerateToplevel(program : FiProgram) -> Triple<[Cpp2FunctionDescr], 
 					refArrayPush(acc.second, name);
 					Triple(acc.first, acc.second, setTree(acc.third, name, info))
 				}
-				FiNativeDec(n, io, type, n_name, fbLambda, __,__): {
+				FiNativeDec(name, io, type, n_name, fbLambda, __,__): {
 					nargs = switch (type) {
 						FiTypeFunction(tp_args, tp_ret): length(tp_args);
 						default: {
@@ -434,7 +441,61 @@ cpp2WriterEnumerateToplevel(program : FiProgram) -> Triple<[Cpp2FunctionDescr], 
 	Triple(^(triple.first), ^(triple.second), triple.third)
 }
 
-	
+Cpp2Dependencies(
+	funcs : Set<FiFunctionDec>,
+	natives : Set<FiNativeDec>,
+	vars : Set<FiGlobalVar>,
+	all_decls : Set<FiDeclaration>,
+);
+
+getAllDependencies(toplevel : Tree<string, FiDeclaration>, expr : FiExp, acc : Cpp2Dependencies) -> Cpp2Dependencies {
+	switch (expr) {
+		FiConst(): acc;
+		FiSeq(es, __, __): 
+			fold(es, acc, \a, e -> getAllDependencies(toplevel, e, a));
+		FiCast(e, __, __, __, _):
+			getAllDependencies(toplevel, e, acc);
+		FiCall(f, args, __, __):
+			fold(args, getAllDependencies(toplevel, f, acc), \a, arg -> getAllDependencies(toplevel, arg, a));
+		FiSwitch(x, __, cases, __, __):
+			fold(cases, getAllDependencies(toplevel, x, acc), \a, c -> getAllDependencies(toplevel, c.body, a));
+		FiLambda(__, body, __, __):
+			getAllDependencies(toplevel, body, acc);
+		FiLet(__, __, e1, e2, __, __):
+			getAllDependencies(toplevel, e1, getAllDependencies(toplevel, e2, acc));
+		FiIf(e1, e2, e3, __, __):
+			getAllDependencies(toplevel, e1, getAllDependencies(toplevel, e2, getAllDependencies(toplevel, e3, acc)));
+		FiCallPrim(__, es, __, __): 
+			fold(es, acc, \a, e -> getAllDependencies(toplevel, e, a));
+		FiVar(name, __, __): {
+			switch (lookupTree(toplevel, name)) {
+				Some(decl): {
+					if (containsSet(acc.all_decls, decl)) acc else
+					switch (decl) {
+						FiFunctionDec(__, lambda, __,__,__): {
+							a = getAllDependencies(toplevel, lambda, acc);
+							Cpp2Dependencies(a with funcs = insertSet(a.funcs, decl), all_decls = insertSet(a.all_decls, decl));
+						}
+						FiNativeDec(__,__,__,__, fallback, __,__): {
+							a = getAllDependencies(toplevel, fallback, acc);
+							Cpp2Dependencies(a with natives = insertSet(a.natives, decl), all_decls = insertSet(a.all_decls, decl));
+						}
+						FiGlobalVar(__, value,__,__,__): {
+							a = getAllDependencies(toplevel, value, acc);
+							Cpp2Dependencies(a with vars = insertSet(a.vars, decl), all_decls = insertSet(a.all_decls, decl));
+						}
+					}
+				}
+				None(): acc
+			}
+		}
+		FiRequire(__, ex, __, __): 
+			getAllDependencies(toplevel, ex, acc);
+		FiUnsafe(__, fallback, __, __): 
+			getAllDependencies(toplevel, fallback, acc);
+	}
+}
+
 cpp2WriterRegisterConstString(w : Cpp2Writer, s : string) -> Cpp2ConstString {
 	switch (lookupTree(w.const_strings, s)) {
 		Some(cached): cached;
