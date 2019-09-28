@@ -331,10 +331,6 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.maxLength = maxChars;
 			}
 
-			if (tabIndex >= 0) {
-				nativeWidget.tabIndex = tabIndex;
-			}
-
 			if (multiline) {
 				nativeWidget.style.resize = 'none';
 			}

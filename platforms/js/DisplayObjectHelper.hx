@@ -1800,10 +1800,19 @@ class DisplayObjectHelper {
 		}
 
 		if (!RenderSupportJSPixi.DomRenderer || isNativeWidget(clip) || !clip.renderable) {
-			setClipRenderable(
-				clip,
-				untyped clip.keepNativeWidgetChildren || (viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY)
-			);
+			if (viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY) {
+				setClipRenderable(clip, true);
+
+				if (untyped clip.keepNativeWidgetChildren && !clip.keepNativeWidget && isNativeWidget(clip)) {
+					untyped clip.nativeWidget.style.visibility = "visible";
+				}
+			} else {
+				setClipRenderable(clip, untyped clip.keepNativeWidgetChildren);
+
+				if (untyped clip.keepNativeWidgetChildren && !clip.keepNativeWidget && isNativeWidget(clip)) {
+					untyped clip.nativeWidget.style.visibility = "hidden";
+				}
+			}
 		}
 
 		if (untyped !clip.transformChanged || (!clip.visible && !clip.parent.visible)) {
