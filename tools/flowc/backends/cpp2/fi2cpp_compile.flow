@@ -135,6 +135,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram) -> Cpp2Writer {
 		"", // cur_global : string,
 		1, // next_closure_id : int,
 		known_natives, // known_natives : Tree<string, Cpp2NativeDescr>,
+		makeTree()
 	);
 	iter(structs_order,
 		\s -> cpp2GenerateStructCode(writer, s, lookupTreeDef(structs, s.name, dummyCpp2StructInfo))
@@ -471,8 +472,7 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 	h = ref makeList();
 	o = ref makeList();
 
-	rlistPush(o, "#" + "include \"gen_common.h\"\n");
-	rlistPush(o, "#" + "include \"core/GarbageCollector.h\"\n");
+	rlistPush(o, "#" + "include \"core/GarbageCollector.h\"");
 
 	cpp2wrLine(h, 
 		[
@@ -500,9 +500,9 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 	);
 
 	if (length(writer.struct_counts) >= 1) {
-		rlistPush(h, "\n");
+		rlistPush(h, "");
 		iter(enumFromTo(0, length(writer.struct_counts) - 1), \i ->
-			rlistPush(h, "    static const unsigned NUM_STRUCTS_" + i2s(i) + " = " + i2s(writer.struct_counts[i]) + ";\n")
+			rlistPush(h, "    static const unsigned NUM_STRUCTS_" + i2s(i) + " = " + i2s(writer.struct_counts[i]) + ";")
 		)
 	}
 
@@ -536,11 +536,11 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	iter(^(writer.struct_code.hdr_lines), \l -> rlistPush(h, "    " + l + "\n"));
+	iter(^(writer.struct_code.hdr_lines), \l -> rlistPush(h, "    " + l));
 
 	cpp2wrLine(h, ["#pragma pack(pop)", ""]);
 
-	iter(^(writer.method_names), \name -> rlistPush(h, "    DECLARE_NATIVE_METHOD(" + name + ")\n"));
+	iter(^(writer.method_names), \name -> rlistPush(h, "    DECLARE_NATIVE_METHOD(" + name + ")"));
 
 	rlistPush(h, "}");
 
@@ -761,8 +761,8 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 	if (writer.config.verbose > 0) {
 		fcPrintln("writing gen_common.h and gen_tables.cpp")
 	}
-	cpp2writeLines(^h, writer.config.outputDir + "gen_common.h");
-	cpp2writeLines(^o, writer.config.outputDir + "gen_tables.cpp");
+	cpp2AddLines(writer, list2array(^h), writer.config.outputDir + "gen_common.h");
+	cpp2AddLines(writer, list2array(^o), writer.config.outputDir + "gen_tables.cpp");
 }
 
 cpp2WriterCompileGlobalFn(writer : Cpp2Writer, name : string, body : FiLambda) -> void {
@@ -1825,7 +1825,6 @@ cpp2WriterGetAddrPair(ref : Cpp2PlaceInfo, tag : Cpp2TagType, ctx : Cpp2Context)
 cpp2WriterEmitLambdaCode(writer : Cpp2Writer, env : Cpp2Environment, file : string) -> void {
 	refArrayPush(writer.method_names, env.mname);
 	out_lines = ref makeList();
-	rlistPush(out_lines, "#" + "include \"gen_common.h\"\n");
 	switch (env.closure) {
 		Some(closure): {
 			mask = fold(closure.type.atypes, "", \acc, t -> 
@@ -1852,19 +1851,19 @@ cpp2WriterEmitLambdaCode(writer : Cpp2Writer, env : Cpp2Environment, file : stri
 		}
 		None(): { }
 	}
-	rlistPush(out_lines, "\nStackSlot flowgen_" + writer.config.entry + "::" + env.mname + "(RUNNER_ARGS) {\n");
+	rlistPush(out_lines, "\nStackSlot flowgen_" + writer.config.entry + "::" + env.mname + "(RUNNER_ARGS) {");
 	if (env.nlocals > 0 || env.ntemps > 0) {
-		rlistPush(out_lines, "    RUNNER_DefSlotArray(locals, " + i2s(env.nlocals) + "+" + i2s(env.ntemps) + ");\n");
+		rlistPush(out_lines, "    RUNNER_DefSlotArray(locals, " + i2s(env.nlocals) + "+" + i2s(env.ntemps) + ");");
 		if (env.ntemps > 0) {
-			rlistPush(out_lines, "    StackSlot *const temps = locals+" + i2s(env.nlocals) + ";\n");
+			rlistPush(out_lines, "    StackSlot *const temps = locals+" + i2s(env.nlocals) + ";");
 		}
 	}
 	if (env.tail_call) {
-		rlistPush(out_lines, "tail_call:\n");
+		rlistPush(out_lines, "tail_call:");
 	}
 	rlistPush(out_lines, cpp2CodeLinesToCode(env.code_lines));
-	rlistPush(out_lines, "}\n");
-	cpp2writeLines(^out_lines, file);
+	rlistPush(out_lines, "}");
+	cpp2AddLines(writer, list2array(^out_lines), file);
 }
 
 
@@ -2106,10 +2105,7 @@ Cpp2FieldInfo(
 );
 
 cpp2WriterFieldSetInfo(writer : Cpp2Writer, call : FiExp, ref : Cpp2PlaceInfo, name : string) -> Cpp2FieldInfo {
-	if (ref.meta.struct_id != cpp2_int_UNDEF) {
-		if (length(^(writer.structs_order)) <= ref.meta.struct_id || ref.meta.struct_id == -1) {
-			cpp2_error("Array index: " + i2s(ref.meta.struct_id) + " >= " + i2s(length(^(writer.structs_order))));
-		}
+	if (ref.meta.struct_id != cpp2_int_UNDEF && ref.meta.struct_id != -1) {
 		info = ^(writer.structs_order)[ref.meta.struct_id];
 		index = switch (findi(info.args, \arg -> arg.name == name)) {
 			Some(i): i; 

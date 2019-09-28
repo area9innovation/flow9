@@ -5,7 +5,8 @@ export {
 
 cpp2wrLine(o : ref List<string>, lines : [string]) -> void;
 cpp2wrArray(cnt : int, per_line : int, head : string, indent : string, tail_ : string, f : (int) -> string) -> string;
-cpp2writeLines(lines : List<string>, path : string) -> void;
+cpp2AddLines(writer : Cpp2Writer, lines : [string], path : string) -> void;
+cpp2writeSources(writer : Cpp2Writer) -> void;
 
 cpp2FnMethodName(n : string) -> string;
 cpp2ClosureMethodName(n : string, idx : int) -> string;
@@ -68,7 +69,7 @@ cpp2GetPrimitiveTag(t : FiTypeNullable) -> Cpp2TagType;
 }
 
 cpp2wrLine(o : ref List<string>, lines : [string]) -> void {
-	iter(lines, \line -> rlistPush(o, line + "\n"));
+	iter(lines, \line -> rlistPush(o, line));
 }
 
 cpp2wrArray(cnt : int, per_line : int, head : string, indent : string, tail_ : string, f : (int) -> string) -> string {
@@ -99,11 +100,31 @@ cpp2ClosureMethodName(n : string, idx : int) -> string {
 	"cl_" + i2s(idx) + "_" + n
 }
 
-cpp2writeLines(lines : List<string>, path : string) -> void {
-	fcPrintln("writing to: " + path);
-	if (!setFileContent(path, list2string(lines))) {
-		cpp2_error("writing to file " + path + "failed");
+cpp2AddLines(writer : Cpp2Writer, new_lines : [string], path : string) -> void {
+	switch (lookupTree(writer.compiled_targets, path)) {
+		Some(old_lines): refConcat(old_lines, new_lines);
+		None(): {
+			header =
+			if (endsWith(path, ".cpp")) {
+				ref ["#" + "include \"gen_common.h\""]
+			} else {
+				ref[]
+			}
+			refConcat(header, new_lines);
+			writer.compiled_targets ::= setTree(writer.compiled_targets, path, header);
+		}
 	}
+}
+
+cpp2writeSources(writer : Cpp2Writer) -> void {
+	traverseInOrder(writer.compiled_targets, \path, lines -> {
+			fcPrintln("writing to: " + path);
+			src = fold(^lines, "", \acc, line -> acc + line + "\n");
+			if (!setFileContent(path, src)) {
+				cpp2_error("writing to file " + path + "failed");
+			}
+		}
+	)
 }
 
 cpp2ClearMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata {
@@ -312,9 +333,9 @@ cpp2PlaceInfoGetLValue(info : Cpp2PlaceInfo) -> string {
 	if (info.lvalue != "") info.lvalue else {
 		lval = switch (info.place) {
 			Cpp2GlobalVar():
-				cpp2_GLOBALS + i2s(info.slot) + cpp2_CMSTART + info.name + cpp2_CMENDBR;
+				cpp2_GLOBALS + i2s(info.slot) + "/*" + info.name + "*/]";
 			Cpp2Local():
-				cpp2_LOCALS + i2s(info.slot) + cpp2_CMSTART + info.name +  cpp2_CMENDBR;
+				cpp2_LOCALS + i2s(info.slot) + "/*" + info.name +  "*/]";
 			Cpp2Argument(): {
 				switch (info.env) {
 					Some(e): e.args_used ::= true;
@@ -322,11 +343,11 @@ cpp2PlaceInfoGetLValue(info : Cpp2PlaceInfo) -> string {
 				}
 				if (info.slot < 0) "RUNNER_CLOSURE"
 				else {
-					cpp2_RUNNER_ARG + i2s(info.slot) + cpp2_CMSTART + info.name + cpp2_CMENDPR;
+					cpp2_RUNNER_ARG + i2s(info.slot) + "/*" + info.name + "*/)";
 				}
 			}
 			Cpp2Temporary():
-				cpp2_TEMPS + i2s(info.slot) + cpp2_RBRACE;
+				cpp2_TEMPS + i2s(info.slot) + "]";
 			Cpp2Struct(info1): {
 				cpp2_error("no lvalue for struct " + info1.structname);
 				""
@@ -386,19 +407,19 @@ cpp2PlaceInfoGetRValue(info : Cpp2PlaceInfo, ctx : Cpp2Context) -> string {
 				if (info.slot < 0) {
 					cpp2_error("no assigned function slot"); ""
 				} else {
-					cpp2_FUNCTIONS + i2s(info.slot) + cpp2_CMSTART + info.name + cpp2_CMENDBR;
+					cpp2_FUNCTIONS + i2s(info.slot) + "/*" + info.name + "*/]";
 				}
 			}
 			Cpp2SlotAlias(where, idxvar): {
 				cpp2ContextGetStructPtr(ctx, where, "", true) +
-				cpp2_LBRACE + (if (idxvar == "") i2s(info.slot) else idxvar);
-				cpp2_CMSTART + info.name + cpp2_CMENDBR;
+				"[" + (if (idxvar == "") i2s(info.slot) else idxvar) +
+				"/*" + info.name + "*/]";
 			}
 			Cpp2FieldAlias(where, sinfo): {
 				fname = sinfo.args[info.slot].name;
 				s = cpp2ContextGetStructField(ctx, where, sinfo.structname, fname, sinfo.atypes[info.slot]);
 				if (info.name != "" && info.name != fname) {
-					s + cpp2_CMSTART + info.name + cpp2_CMEND;
+					s + "/*" + info.name + "*/";
 				} else {
 					s
 				}
@@ -785,11 +806,11 @@ cpp2ContextExit(ctx : Cpp2Context) -> void {
 }
 
 cpp2ContextWr(ctx : Cpp2Context, s : string) -> void {
-	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + cpp2_NEWLINE));
+	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + "\n"));
 }
 
 cpp2ContextWrSemi(ctx : Cpp2Context, s: string) -> void {
-	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + cpp2_SEMI_NL));
+	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + ";\n"));
 }
 
 cpp2ContextEnter(ctx : Cpp2Context, idelta : string) -> Cpp2Context {
@@ -830,6 +851,7 @@ cpp2ContextJoinOne(ctx : Cpp2Context, child : Cpp2Context) -> void {
 }
 
 cpp2ContextJoin(ctx : Cpp2Context, children : [Cpp2Context]) -> void {
+	cpp2_error("cpp2ContextJoin is not implemented yet")
 }
 /*
 cpp2ContextJoin(ctx : Cpp2Context, children : [CppContext]) -> void {
@@ -915,27 +937,27 @@ cpp2ContextPopdefs(ctx : Cpp2Context, pos : int) -> void { // ?pos : int = 0
 cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string { // init : bool = true, sb : stringBuf = null
 	bad_gcid = (sref.meta.struct_ptr_gcid == -1 || sref.meta.struct_ptr_gcid < ctx.gc_index);
 	stale = (bad_gcid || !contains(sref.meta.struct_ptr_types, structname));
-	vname = cpp2_SPTR_ + i2s(sref.uid) + (if (strlen(structname) > 0) cpp2_UNDERSCORE + structname else "");
+	vname = "sptr_" + i2s(sref.uid) + (if (strlen(structname) > 0) "_" + structname else "");
 	if (stale) {
 		line = if (structname == "") {
 			cpp2ContextRegisterIdxVar(ctx, vname, "const StackSlot*");
 			if (!init) "" else {
 				size = if (sref.meta.struct_size < 1) 1 else sref.meta.struct_size;
 				ctx.indent + vname + cpp2_GET_ASPTR + 
-				cpp2PlaceInfoGetRValue(sref, ctx) + cpp2_COMMA + 
-				i2s(size) + cpp2_PAREN_SEMI_NL;
+				cpp2PlaceInfoGetRValue(sref, ctx) + "," + 
+				i2s(size) + ");\n";
 			}
 		} else {
 			vtype = "FS_" + structname;
 			cpp2ContextRegisterIdxVar(ctx, vname, vtype + "*");
 			if (!init) "" else {
-				ctx.indent + vname + cpp2_EQ_LPAREN + vtype +
+				ctx.indent + vname + " = (" + vtype +
 				(if (cpp2PlaceInfoIsClosureRef(sref))
 					cpp2_GET_CSPTR + cpp2PlaceInfoGetRValue(sref, ctx)
 				else
 					cpp2_GET_SPTR + cpp2PlaceInfoGetStructAddr(sref, ctx)
 				) 
-				+ cpp2_PAREN_SEMI_NL;
+				+ ");\n";
 			}
 		}
 		cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line));
@@ -949,7 +971,7 @@ cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname :
 cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string { // structname : string = '', init : bool = true
 	vname = cpp2ContextEnsureStructPtr(ctx, sref, structname, init);
 	if (sref.name != "") {
-		vname + cpp2_CMSTART + sref.name + cpp2_CMEND;
+		vname + "/*" + sref.name + "*/";
 	} else {
 		vname
 	}
@@ -987,7 +1009,7 @@ cpp2ContextTempvar(ctx : Cpp2Context, base : string, tag : Cpp2TagType, init : s
 			""
 		}
 	}
-	cpp2ContextWrSemi(ctx, type + " " + name + (if (init != "") cpp2_SPC_EQ_SPC + init else ""));
+	cpp2ContextWrSemi(ctx, type + " " + name + (if (init != "") " = " + init else ""));
 	name
 }
 
@@ -997,7 +1019,7 @@ cpp2ContextIncGc(ctx : Cpp2Context) -> void {
 
 cpp2ContextWrCheck(ctx : Cpp2Context, str : string, gc_on : bool) -> void { // ?gc = false
 	line_str = ctx.indent + 
-	cpp2_CHECK_ERROR + str + cpp2_PAREN_SEMI_NL;
+	cpp2_CHECK_ERROR + str + ");\n";
 	if (gc_on) {
 		ctx.gc_index ::= ctx.gc_index + 1;
 	}
@@ -1011,7 +1033,7 @@ cpp2ContextWrCheckopt(ctx : Cpp2Context, str : string, check : bool, gc_on : boo
 	if (check) {
 		cpp2ContextWrCheck(ctx, str, false);
 	} else {
-		line_str = ctx.indent + str + cpp2_SEMI_NL;
+		line_str = ctx.indent + str + ";\n";
 		cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line_str));
 	}
 }
