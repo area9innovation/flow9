@@ -843,7 +843,7 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (untyped clip.isInput) {
+		if (untyped !RenderSupportJSPixi.DomRenderer && clip.isInput) {
 			if (Platform.isEdge || Platform.isIE) {
 				nativeWidget.style.opacity = 1.0;
 				var slicedColor : Array<String> = untyped clip.style.fill.split(",");
