@@ -1292,6 +1292,11 @@ class DisplayObjectHelper {
 		if (untyped clip.updateNativeWidgetDisplay != null) {
 			untyped clip.updateNativeWidgetDisplay();
 		} else {
+			if (untyped clip.visibilityChanged) {
+				untyped clip.visibilityChanged = false;
+				untyped clip.nativeWidget.style.visibility = clip.loaded ? null : "hidden";
+			}
+
 			if (clip.visible) {
 				if (untyped clip.child == null && (!clip.onStage || getParentNode(clip) != clip.parentClip.nativeWidget)) {
 					untyped clip.onStage = true;
@@ -1804,7 +1809,7 @@ class DisplayObjectHelper {
 				setClipRenderable(clip, true);
 
 				if (untyped clip.keepNativeWidgetChildren && !clip.keepNativeWidget && isNativeWidget(clip)) {
-					untyped clip.nativeWidget.style.visibility = "visible";
+					untyped clip.nativeWidget.style.visibility = null;
 				}
 			} else {
 				setClipRenderable(clip, untyped clip.keepNativeWidgetChildren);

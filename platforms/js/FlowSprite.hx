@@ -17,6 +17,7 @@ class FlowSprite extends Sprite {
 
 	private var url : String = "";
 	private var loaded : Bool = false;
+	private var visibilityChanged : Bool = true;
 	private var updateParent : Bool = false;
 	private var cache : Bool = false;
 	private var metricsFn : Float -> Float -> Void;
@@ -155,7 +156,9 @@ class FlowSprite extends Sprite {
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		if (parent != null) {
 			loadTexture();
@@ -171,7 +174,9 @@ class FlowSprite extends Sprite {
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		texture = Texture.EMPTY;
 
@@ -196,10 +201,10 @@ class FlowSprite extends Sprite {
 			}
 
 			invalidateTransform('onLoaded');
+			calculateWidgetBounds();
 
 			loaded = true;
-
-			calculateWidgetBounds();
+			visibilityChanged = true;
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();
@@ -264,6 +269,7 @@ class FlowSprite extends Sprite {
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
+		nativeWidget.style.visibility = 'hidden';
 
 		isNativeWidget = true;
 	}
