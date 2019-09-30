@@ -475,7 +475,7 @@ class VideoClip extends FlowContainer {
 
 	public function getCurrentFrame() : String {
 		try {
-			var canvas = Browser.document.createElement('canvas');
+			var canvas : Dynamic = Browser.document.createElement('canvas');
 			var ctx = canvas.getContext('2d');
 
 			canvas.width = videoWidget.videoWidth;
