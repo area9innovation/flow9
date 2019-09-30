@@ -2439,15 +2439,21 @@ class RenderSupportJSPixi {
 		untyped RenderSupportJSPixi.LayoutText = true;
 		child.setScrollRect(x, y, w, h);
 
+		render();
+
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
 			child.removeScrollRect();
 			untyped RenderSupportJSPixi.LayoutText = false;
 
+			render();
+
 			return img;
 		} catch(e : Dynamic) {
 			child.removeScrollRect();
 			untyped RenderSupportJSPixi.LayoutText = false;
+
+			render();
 
 			return 'error';
 		}
