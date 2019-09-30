@@ -5,6 +5,7 @@ import js.html.Uint8Array;
 import js.html.ArrayBuffer;
 import haxe.io.Bytes;
 import haxe.crypto.BaseCode;
+import haxe.crypto.Base64;
 import haxe.Json;
 import PublicKeyCredentialOptions;
 
@@ -90,17 +91,12 @@ class CredentialManagement {
             else if (attestation == "none") None
             else null
         );
-        untyped console.log(credentialsCreationOptions);
         var createCredentialsPromise = CredentialsContainer.create(credentialsCreationOptions);
         createCredentialsPromise.then(
             function(credential : PublicKeyCredential) {
-                untyped console.log(credential);
                 callback(CredentialManagement.publicKeyCredentialToString(credential, true));
             },
             function(e) {
-                // untyped console.log(e.code);
-                // untyped console.log(e.message);
-                // untyped console.log(e.name);
                 onError(e.message);
             }
         );
@@ -126,17 +122,12 @@ class CredentialManagement {
             else if (userVerification == "preferred") Preferred
             else null
         );
-        // untyped console.log(credentialRequestOptions);
         var getCredentialsPromise = CredentialsContainer.get(credentialRequestOptions);
         getCredentialsPromise.then(
             function(credential : PublicKeyCredential) {
-                // untyped console.log(credential);
                 callback(CredentialManagement.publicKeyCredentialToString(credential, false));
             },
             function(e) {
-                // untyped console.log(e.code);
-                // untyped console.log(e.message);
-                // untyped console.log(e.name);
                 onError(e.message);
             }
         );
@@ -169,7 +160,7 @@ class CredentialManagement {
     ) : Array<PublicKeyCredentialUserEntity> {
 
         var pkcue : PublicKeyCredentialUserEntity = {
-            id: UInt8Array.fromBytes(CredentialManagement.base64UrlDecode(id), 0),
+            id: UInt8Array.fromBytes(Base64.decode(id), 0),
             name: name,
             displayName: displayName,
         };
@@ -185,7 +176,7 @@ class CredentialManagement {
     ) : Array<PublicKeyCredentialRPEntity> {
 
         var pkcrpe : PublicKeyCredentialRPEntity = {
-            id: id,
+            id: id == "" ? Browser.location.hostname : id,
             name: name,
         };
         if (icon != "") Reflect.setField(pkcrpe, "icon", icon);
@@ -235,9 +226,9 @@ class CredentialManagement {
         var pkcro = {
             challenge: UInt8Array.fromBytes(CredentialManagement.base64UrlDecode(challenge), 0),
             allowCredentials: allowCredentials,
+            rpId: rpId != null ? rpId : Browser.location.hostname
         };
         if (timeout != null) Reflect.setField(pkcro, "timeout", timeout);
-        if (rpId != null) Reflect.setField(pkcro, "rpId", rpId);
         if (userVerification != null) Reflect.setField(pkcro, "userVerification", userVerification);
         return {publicKey: pkcro};
     }
