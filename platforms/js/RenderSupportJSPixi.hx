@@ -78,6 +78,24 @@ class RenderSupportJSPixi {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
 	}
 
+	public static function setRendererType(rendererType : String) {
+		if (RendererType != rendererType) {
+			RendererType = rendererType;
+			DomRenderer = rendererType == "html";
+			DomInteractions = DomRenderer && (Util.getParameter("interactions") == null || Util.getParameter("interactions") == "dom");
+			RenderContainers = Util.getParameter("containers") == "1" || !DomRenderer;
+
+			if (DomRenderer) {
+				untyped PixiStage.nativeWidget = Browser.document.body;
+				untyped PixiStage.isNativeWidget = true;
+			} else {
+				untyped PixiStage.isNativeWidget = false;
+			}
+
+			createPixiRenderer();
+		}
+	}
+
 	private static function roundPlus(x : Float, n : Int) : Float {
 		var m = Math.pow(10, n);
 		return Math.fround(x * m) / m;
@@ -184,6 +202,10 @@ class RenderSupportJSPixi {
 			PixiRenderer.destroy();
 		}
 
+		if (PixiView != null && PixiView.parentNode != null) {
+			PixiView.parentNode.removeChild(PixiView);
+		}
+
 		if (DomRenderer) {
 			PixiView = Browser.document.createElement('div');
 			PixiView.tabIndex = 1;
@@ -251,6 +273,19 @@ class RenderSupportJSPixi {
 			PixiView.style.position = "absolute";
 			PixiView.style.top = "0px";
 		}
+
+		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
+		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
+
+		// Enable browser canvas rendered image smoothing
+		var ctx = untyped PixiRenderer.context;
+		if (ctx != null) {
+			ctx.mozImageSmoothingEnabled = true;
+			ctx.webkitImageSmoothingEnabled = true;
+			ctx.imageSmoothingQuality = if (Platform.isChrome) "high" else "medium";
+			ctx.msImageSmoothingEnabled = true;
+			ctx.imageSmoothingEnabled = true;
+		}
 	}
 
 	private static function initPixiRenderer() {
@@ -280,9 +315,6 @@ class RenderSupportJSPixi {
 
 		createPixiRenderer();
 
-		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
-
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
 		initBrowserWindowEventListeners();
@@ -295,16 +327,6 @@ class RenderSupportJSPixi {
 		}
 
 		printOptionValues();
-
-		// Enable browser canvas rendered image smoothing
-		var ctx = untyped PixiRenderer.context;
-		if (ctx != null) {
-			ctx.mozImageSmoothingEnabled = true;
-			ctx.webkitImageSmoothingEnabled = true;
-			ctx.imageSmoothingQuality = if (Platform.isChrome) "high" else "medium";
-			ctx.msImageSmoothingEnabled = true;
-			ctx.imageSmoothingEnabled = true;
-		}
 
 		render();
 		requestAnimationFrame();
@@ -808,9 +830,9 @@ class RenderSupportJSPixi {
 
 				var ie : Dynamic = untyped __js__("{
 					data : activeElement.value,
-					inputType: 'insertText',
-					isComposing: false,
-					bubbles: true,
+					inputType : 'insertText',
+					isComposing : false,
+					bubbles : true,
 					composed : true,
 					isTrusted : true
 				}");
