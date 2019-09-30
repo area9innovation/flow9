@@ -341,12 +341,21 @@ class TextClip extends NativeWidgetClip {
 
 			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+
+			nativeWidget.style.direction = switch (textDirection) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		} else {
-			nativeWidget.textContent = StringTools.replace(
-				StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text,
-				"\t",
-				" "
-			);
+			var textContent = getContentGlyphs().modified;
+			nativeWidget.textContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+
+			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		}
 
 		if ((!Platform.isIE && !Platform.isEdge) || !isInput) {
@@ -363,12 +372,6 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.background = !RenderSupportJSPixi.DomRenderer || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${style.lineHeight}px';
-
-		nativeWidget.style.direction = switch (textDirection) {
-			case 'RTL' : 'rtl';
-			case 'rtl' : 'rtl';
-			default : null;
-		}
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
