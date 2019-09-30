@@ -186,6 +186,7 @@ class RenderSupportJSPixi {
 
 		if (DomRenderer) {
 			PixiView = Browser.document.createElement('div');
+			PixiView.tabIndex = 1;
 		}
 
 		var options = {

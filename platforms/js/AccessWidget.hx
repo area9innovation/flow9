@@ -22,7 +22,7 @@ class AccessWidgetTree extends EventEmitter {
 	@:isVar public var childrenChanged(get, set) : Bool;
 	@:isVar public var changed(get, set) : Bool;
 	public var zorder : Int = 0;
-	public var childrenTabIndex : Int = 0;
+	public var childrenTabIndex : Int = 1;
 
 	public function new(id : Int, ?accessWidget : AccessWidget, ?parent : AccessWidgetTree) {
 		super();
@@ -874,7 +874,7 @@ class AccessWidget extends EventEmitter {
 			return tree.childrenTabIndex;
 		}
 
-		tree.childrenTabIndex = tree.parent != null ? tree.parent.childrenTabIndex : 0;
+		tree.childrenTabIndex = tree.parent != null ? tree.parent.childrenTabIndex : 1;
 
 		if (parent == null) {
 			parent = Browser.document.body;
@@ -883,7 +883,6 @@ class AccessWidget extends EventEmitter {
 		for (key in tree.children.keys()) {
 			var child = tree.children.get(key);
 
-			tree.childrenTabIndex++;
 			childrenChanged = childrenChanged || child.childrenChanged;
 
 			if (!child.childrenChanged && !child.changed && (!childrenChanged || !RenderSupportJSPixi.DomRenderer)) {
@@ -910,8 +909,13 @@ class AccessWidget extends EventEmitter {
 					previousElement = accessWidget.element;
 				} else {
 					var tagName = accessWidget.element.tagName.toLowerCase();
-					if ((tagName == "button" || tagName == "input" || tagName == "textarea") && accessWidget.element.tabIndex != tree.childrenTabIndex) {
-						accessWidget.element.tabIndex = tree.childrenTabIndex;
+
+					if (tagName == "button" || tagName == "input" || tagName == "textarea") {
+						tree.childrenTabIndex++;
+
+						if (accessWidget.element.tabIndex != tree.childrenTabIndex) {
+							accessWidget.element.tabIndex = tree.childrenTabIndex;
+						}
 					}
 				}
 

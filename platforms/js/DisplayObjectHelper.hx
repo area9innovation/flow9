@@ -1307,20 +1307,18 @@ class DisplayObjectHelper {
 
 					addNativeWidget(clip);
 				}
-			} else {
-				if (untyped clip.onStage && !clip.keepNativeWidgetChildren) {
-					untyped clip.onStage = false;
+			} else if (untyped clip.onStage) {
+				untyped clip.onStage = false;
 
-					if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS) {
-						untyped clip.nativeWidget.style.display = 'none';
-					}
-
-					RenderSupportJSPixi.once("drawframe", function() {
-						if (untyped !clip.onStage && (!clip.visible || clip.parent == null)) {
-							removeNativeWidget(clip);
-						}
-					});
+				if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS) {
+					untyped clip.nativeWidget.style.display = 'none';
 				}
+
+				RenderSupportJSPixi.once("drawframe", function() {
+					if (untyped !clip.onStage && (!clip.visible || clip.parent == null)) {
+						removeNativeWidget(clip);
+					}
+				});
 			}
 		}
 	}
@@ -1805,19 +1803,13 @@ class DisplayObjectHelper {
 		}
 
 		if (!RenderSupportJSPixi.DomRenderer || isNativeWidget(clip) || !clip.renderable) {
-			if (viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY) {
-				setClipRenderable(clip, true);
+			var renderable = viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY;
 
-				if (untyped clip.keepNativeWidgetChildren && !clip.keepNativeWidget && isNativeWidget(clip)) {
-					untyped clip.nativeWidget.style.visibility = Platform.isIE ? "visible" : null;
-				}
-			} else {
-				setClipRenderable(clip, untyped clip.keepNativeWidgetChildren);
-
-				if (untyped clip.keepNativeWidgetChildren && !clip.keepNativeWidget && isNativeWidget(clip)) {
-					untyped clip.nativeWidget.style.visibility = "hidden";
-				}
+			if (untyped clip.keepNativeWidgetChildren && isNativeWidget(clip)) {
+				untyped clip.nativeWidget.style.visibility = clip.nativeWidget.tabIndex > 0 ? "visible" : (renderable ? "inherit" : "hidden");
 			}
+
+			setClipRenderable(clip, untyped clip.keepNativeWidgetChildren || renderable);
 		}
 
 		if (untyped !clip.transformChanged || (!clip.visible && !clip.parent.visible)) {
