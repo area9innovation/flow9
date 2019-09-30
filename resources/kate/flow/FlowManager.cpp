@@ -65,19 +65,20 @@ void FlowManager::slotCompile() {
 		compileProcess_.kill();
 		state_.stop();
 		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
 void FlowManager::slotRun(int row) {
 	try {
 		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
-		QString dir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
+		QString odir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
 		QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
 		QString progArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
 		QString execArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 6)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Runner runner(flowView_.flowConfig_.ui, prog, targ, flowdir);
-		if (flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(runner.target()).isFile()) {
+		Runner runner(flowView_.flowConfig_.ui, prog, targ, flowdir, odir);
+		if (flowView_.flowConfig_.progTimestampsChanged(row) || !runner.target().exists()) {
 			build(row, RUNNING);
 		} else if (state_.start(RUNNING, row)) {
 			QString invocation = runner.invocation();
@@ -92,14 +93,15 @@ void FlowManager::slotRun(int row) {
 			if (state_.peek().showCompilerOutput()) {
 				flowView_.flowOutput_.ui.launchOutTextEdit->clear();
 			}
-			launchProcess_.setWorkingDirectory(dir);
+			launchProcess_.setWorkingDirectory(odir);
 			launchProcess_.start(runner.invocation(), args);
 			flowView_.flowOutput_.ui.terminateLaunchButton->setEnabled(true);
 		}
 	} catch (std::exception& ex) {
 		launchProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.launchOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -137,20 +139,27 @@ void FlowManager::slotDebug(int row) {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.debugOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
 void FlowManager::build(int row, State nextState, bool force) {
 	try {
 		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
+		QString odir = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
 		QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
 		QString opts = flowView_.flowConfig_.ui.launchTableWidget->item(row, 4)->text();
-		//QString astr = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Builder builder(flowView_.flowConfig_.ui, prog, targ, flowdir);
-		if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(builder.runner().target()).isFile()) {
-			if (state_.start(BUILDING, QString::number(row) + QLatin1String(":") + QString::number(static_cast<int>(nextState)))) {
+		Target target(flowView_.flowConfig_.ui, prog, targ, flowdir, odir);
+		if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !target.exists()) {
+			Builder builder(flowView_.flowConfig_.ui, prog, targ, flowdir, odir);
+			QString state = QString::number(row);
+			state += QLatin1String(":") + QString::number(static_cast<int>(nextState));
+			// Remember original target name temporary - to rename back after building.
+			state += QLatin1String(":") + builder.target().path();
+			state += QLatin1String(":") + builder.target().tmpPath();
+			if (state_.start(BUILDING, state)) {
 				QStringList args = builder.args(opts);
 	#ifdef DEBUG
 				QTextStream(stdout) << "BUILD: " << builder.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
@@ -173,7 +182,8 @@ void FlowManager::build(int row, State nextState, bool force) {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -220,7 +230,8 @@ void FlowManager::slotLookupDefinition() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()) + QLatin1String("\n"));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -261,7 +272,8 @@ void FlowManager::slotLookupType() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -303,7 +315,8 @@ void FlowManager::slotLookupUses() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -336,7 +349,8 @@ void FlowManager::slotOutline(KTextEditor::View* view) {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -407,7 +421,8 @@ void FlowManager::slotCompleteRename() {
 	} catch (std::exception& ex) {
 		compileProcess_.kill();
 		state_.stop();
-		KMessageBox::sorry(0, QLatin1String(ex.what()));
+		//KMessageBox::sorry(0, QLatin1String(ex.what()));
+		appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, QLatin1String(ex.what()) + QLatin1String("\n"));
 	}
 }
 
@@ -472,11 +487,21 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 		case COMPILING: break;
 		case RUNNING:   break;
 		case BUILDING: {
-			static QRegExp rowStateRegex(QLatin1String("([^:]+):([0-9]+)"));
+			static QRegExp rowStateRegex(QLatin1String("([0-9]+):([0-9]+):([^:]+):([^:]+)"));
 			if (rowStateRegex.exactMatch(internal_state.data.value<QString>())) {
 				int row = rowStateRegex.cap(1).toInt();
 				flowView_.flowConfig_.slotSaveProgTimestamps(row);
             	State nextState = static_cast<State>(rowStateRegex.cap(2).toInt());
+            	QString path = rowStateRegex.cap(3);
+            	QString tmpPath = rowStateRegex.cap(4);
+            	if (path != tmpPath && QFileInfo(tmpPath).isFile()) {
+            		if (!QFile(path).remove()) {
+            			throw std::runtime_error("error at removing: '" + path.toStdString() + "'");
+            		}
+            		if (!QFile(tmpPath).rename(path)) {
+            			throw std::runtime_error("error at renaming: '" + tmpPath.toStdString() + "' to '" + path.toStdString() + "'");
+            		}
+            	}
             	switch (nextState) {
             	case RUNNING: slotRun(row); break;
             	case DEBUGGING: slotDebug(row); break;
@@ -556,11 +581,12 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 	} else {
 		if (internal_state.state != COMPILING  && internal_state.state != LOOKUP_DEF &&
 			internal_state.state != LOOKUP_TYPE && internal_state.state != LOOKUP_USES) {
-			QString message = i18n("*** flowc crashed *** ") + compileProcess_.errorString();
-			message += QLatin1String(", exit code: ") + QString::number(exitCode);
+			QString message = i18n("*** flowc terminated *** ");
+			message += QLatin1String("exit code: ") + QString::number(exitCode) + QLatin1String("\n");
+			message += compileProcess_.errorString() + QLatin1String("\n");
 			appendText(flowView_.flowOutput_.ui.compilerOutTextEdit, message);
 			flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(0);
-			KMessageBox::sorry(mainWindow_->activeView(), message);
+			//KMessageBox::sorry(mainWindow_->activeView(), message);
 		}
 	}
 }
@@ -571,11 +597,11 @@ void FlowManager::slotLaunchFinished(int exitCode, QProcess::ExitStatus status) 
 	flowView_.flowOutput_.ui.terminateLaunchButton->setEnabled(false);
 	outputExecutionTime(flowView_.flowOutput_.ui.launchOutTextEdit, internal_state.milliseconds());
 	if (exitCode || status != QProcess::NormalExit) {
-		QString message = i18n("*** application crashed *** ") + launchProcess_.errorString();
+		QString message = i18n("*** application terminated *** ") + launchProcess_.errorString();
 		message += QLatin1String(", exit code: ") + QString::number(exitCode);
 		appendText(flowView_.flowOutput_.ui.launchOutTextEdit, message);
 		flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(1);
-		KMessageBox::sorry(mainWindow_->activeView(), message);
+		//KMessageBox::sorry(mainWindow_->activeView(), message);
 	}
 }
 

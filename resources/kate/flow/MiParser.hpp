@@ -94,7 +94,7 @@ struct MiResult {
 	QString variable() const { return variable_; }
 	MiValue* value() {
 		if (!value_) {
-			QTextStream(stdout) << "null result value of " << variable_ << "\n";
+			QTextStream(stdout) << "null result value of '" << variable_ << "'\n";
 		}
 		return value_;
 	}
@@ -105,6 +105,7 @@ struct MiResult {
 		}
 		return value();
 	}
+	QString string() const { return string_; }
 private:
 	QString  variable_;
 	MiValue* value_;

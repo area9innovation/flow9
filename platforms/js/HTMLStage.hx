@@ -10,7 +10,7 @@ class HTMLStage extends NativeWidgetClip {
 		setWidth(width);
 		setHeight(height);
 
-		createNativeWidget("div");
+		initNativeWidget();
 
 		untyped nativeWidget.style['pointer-events'] = 'auto';
 	}

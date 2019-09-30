@@ -2,109 +2,95 @@ import js.Browser;
 
 import pixi.core.math.Matrix;
 import pixi.core.display.Bounds;
+import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
 class NativeWidgetClip extends FlowContainer {
-	private var nativeWidget : Dynamic;
-	private var accessWidget : AccessWidget;
 	private var viewBounds : Bounds;
+	private var widgetBounds = new Bounds();
 
 	private var styleChanged : Bool = true;
 
-	private var widgetWidth : Float = 0.0;
-	private var widgetHeight : Float = 0.0;
+	public var widgetWidth : Float = -1;
+	public var widgetHeight : Float = -1;
 
-	// Returns metrics to set correct native widget size
-	private function getWidth() : Float { return widgetWidth; }
-	private function getHeight() : Float { return widgetHeight; }
-	private function getTransform() : Matrix {
-		if (accessWidget != null) {
+	public function new(?worldVisible : Bool = false) {
+		super(worldVisible);
+	}
+
+	private function getTransform(?worldTransform : Bool) : Matrix {
+		if (RenderSupportJSPixi.DomRenderer) {
+			if (worldTransform == null) {
+				worldTransform = !RenderSupportJSPixi.RenderContainers;
+			}
+
+			if (!worldTransform) {
+				untyped this.transform.updateLocalTransform();
+			}
+
+			return worldTransform ? untyped this.worldTransform : untyped this.localTransform;
+		} else if (accessWidget != null) {
 			return accessWidget.getTransform();
 		} else {
-			return worldTransform;
+			return this.worldTransform;
 		}
 	}
 
-	public function updateNativeWidget() : Void {
-		var transform = getTransform();
-
-		var tx = getClipWorldVisible() ? transform.tx : -widgetWidth;
-		var ty = getClipWorldVisible() ? transform.ty : -widgetHeight;
-
-		if (Platform.isIE) {
-			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-
-			nativeWidget.style.left = '${tx}px';
-			nativeWidget.style.top = '${ty}px';
-		} else {
-			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
+	private override function createNativeWidget(?tagName : String = "div") : Void {
+		if (!isNativeWidget) {
+			return;
 		}
+
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(tagName);
+		updateClipID();
+		nativeWidget.className = 'nativeWidget';
+
+		if (!RenderSupportJSPixi.DomRenderer) {
+			if (accessWidget == null) {
+				accessWidget = new AccessWidget(this, nativeWidget);
+			} else {
+				accessWidget.element = nativeWidget;
+			}
+
+			if (parent != null) {
+				addNativeWidget();
+			} else {
+				once('added', addNativeWidget);
+			}
+
+			invalidateStyle();
+
+			if (!getClipRenderable() && parent != null) {
+				updateNativeWidget();
+			}
+		}
+
+		isNativeWidget = true;
 	}
 
 	public function updateNativeWidgetStyle() : Void {
-		nativeWidget.style.width = '${untyped getWidth()}px';
-		nativeWidget.style.height = '${untyped getHeight()}px';
+		nativeWidget.style.width = '${untyped getWidgetWidth()}px';
+		nativeWidget.style.height = '${untyped getWidgetHeight()}px';
 
-		var maskedBounds = getMaskedLocalBounds();
+		if (!RenderSupportJSPixi.DomRenderer) {
+			var viewBounds = getViewBounds();
 
-		if (Platform.isIE || Platform.isEdge) {
-			nativeWidget.style.clip = 'rect(
-				${maskedBounds.minY}px,
-				${maskedBounds.maxX}px,
-				${maskedBounds.maxY}px,
-				${maskedBounds.minX}px
-			)';
-		} else {
-			nativeWidget.style.clipPath = 'polygon(
-				${maskedBounds.minX}px ${maskedBounds.minY}px,
-				${maskedBounds.minX}px ${maskedBounds.maxY}px,
-				${maskedBounds.maxX}px ${maskedBounds.maxY}px,
-				${maskedBounds.maxX}px ${maskedBounds.minY}px
-			)';
+			if (viewBounds != null) {
+				nativeWidget.style.clip = 'rect(
+					${viewBounds.minY}px,
+					${viewBounds.maxX}px,
+					${viewBounds.maxY}px,
+					${viewBounds.minX}px
+				)';
+			}
 		}
 
 		styleChanged = false;
-	}
-
-	private function addNativeWidget() : Void {
-		once('removed', deleteNativeWidget);
-	}
-
-	private function createNativeWidget(node_name : String) : Void {
-		deleteNativeWidget();
-
-		nativeWidget = Browser.document.createElement(node_name);
-		nativeWidget.style.transformOrigin = 'top left';
-		nativeWidget.style.position = 'fixed';
-
-		if (accessWidget == null) {
-			accessWidget = new AccessWidget(this, nativeWidget);
-		} else {
-			accessWidget.element = nativeWidget;
-		}
-
-		if (parent != null) {
-			addNativeWidget();
-		} else {
-			once('added', addNativeWidget);
-		}
-
-		invalidateStyle();
-
-		if (!getClipWorldVisible() && parent != null) {
-			updateNativeWidget();
-		}
-	}
-
-	private function deleteNativeWidget() : Void {
-		if (accessWidget != null) {
-			AccessWidget.removeAccessWidget(accessWidget);
-		}
-
-		nativeWidget = null;
 	}
 
 	public function setFocus(focus : Bool) : Bool {
@@ -143,7 +129,8 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function invalidateStyle() : Void {
 		styleChanged = true;
-		invalidateTransform();
+
+		invalidateTransform('invalidateStyle');
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {
@@ -151,10 +138,6 @@ class NativeWidgetClip extends FlowContainer {
 			this.widgetWidth = widgetWidth;
 
 			invalidateStyle();
-
-			if (nativeWidget != null && !getClipWorldVisible() && parent != null) {
-				updateNativeWidget();
-			}
 		}
 	}
 
@@ -163,10 +146,6 @@ class NativeWidgetClip extends FlowContainer {
 			this.widgetHeight = widgetHeight;
 
 			invalidateStyle();
-
-			if (nativeWidget != null && !getClipWorldVisible() && parent != null) {
-				updateNativeWidget();
-			}
 		}
 	}
 
@@ -178,45 +157,18 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	#if (pixijs < "4.7.0")
-		public override function getLocalBounds() : Rectangle {
-			var rect = new Rectangle();
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0.0;
+		widgetBounds.minY = 0.0;
+		widgetBounds.maxX = DisplayObjectHelper.ceil(getWidth());
+		widgetBounds.maxY = DisplayObjectHelper.ceil(getHeight());
+	}
 
-			rect.x = 0;
-			rect.y = 0;
-			rect.width = getWidth();
-			rect.height = getHeight();
+	public function getWidth() : Float {
+		return widgetWidth;
+	}
 
-			return rect;
-		}
-	#else
-		public override function getLocalBounds(?rect:Rectangle) : Rectangle {
-			if (rect == null) {
-				rect = new Rectangle();
-			}
-
-			rect.x = 0;
-			rect.y = 0;
-			rect.width = getWidth();
-			rect.height = getHeight();
-
-			return rect;
-		}
-	#end
-
-	public override function getBounds(?skipUpdate: Bool, ?rect: Rectangle) : Rectangle {
-		if (rect == null) {
-			rect = new Rectangle();
-		}
-
-		var lt = toGlobal(new Point(0.0, 0.0));
-		var rb = toGlobal(new Point(getWidth(), getHeight()));
-
-		rect.x = lt.x;
-		rect.y = lt.y;
-		rect.width = rb.x - lt.x;
-		rect.height = rb.y - lt.y;
-
-		return rect;
+	public function getHeight() : Float {
+		return widgetHeight;
 	}
 }

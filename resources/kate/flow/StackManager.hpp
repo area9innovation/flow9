@@ -14,7 +14,7 @@ public:
     ~StackManager();
 
 public Q_SLOTS:
-    void slotStackInfo(QString description);
+    void slotStackInfo(const QString& description);
 
 private:
     FlowView&     flowView_;

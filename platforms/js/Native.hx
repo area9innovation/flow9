@@ -603,6 +603,20 @@ class Native {
 			if (clip.parent != null && clip.parent.removeChild != null) {
 				clip.parent.removeChild(clip);
 			}
+
+			if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS && untyped clip.nativeWidget != null) {
+				untyped clip.nativeWidget.style.display = 'none';
+			}
+
+			#if js
+			untyped __js__("
+				if (typeof RenderSupportJSPixi !== 'undefined') {
+					RenderSupportJSPixi.once('drawframe', function() {
+						DisplayObjectHelper.deleteNativeWidget(clip);
+					});
+				}
+			");
+			#end
 		}
 	}
 
@@ -618,7 +632,7 @@ class Native {
 
 	#if js
 	private static var DeferQueue : Array< Void -> Void > = new Array();
-	private static function defer(cb : Void -> Void) : Void {
+	public static function defer(cb : Void -> Void) : Void {
 		if (DeferQueue.length == 0) {
 			var fn = function() {
 				for (f in DeferQueue) f();
@@ -1635,7 +1649,7 @@ class Native {
 					}
 				};
 
-				Browser.window.addEventListener("mousemove", mouseMoveActiveFn);
+				Browser.window.addEventListener("pointermove", mouseMoveActiveFn);
 				Browser.window.addEventListener("videoplaying", mouseMoveActiveFn);
 				Browser.window.addEventListener("focus", mouseMoveActiveFn);
 				Browser.window.addEventListener("blur", mouseMoveActiveFn);
@@ -1644,7 +1658,7 @@ class Native {
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutActiveId)");
-					Browser.window.removeEventListener("mousemove", mouseMoveActiveFn);
+					Browser.window.removeEventListener("pointermove", mouseMoveActiveFn);
 					Browser.window.removeEventListener("videoplaying", mouseMoveActiveFn);
 					Browser.window.removeEventListener("focus", mouseMoveActiveFn);
 					Browser.window.removeEventListener("blur", mouseMoveActiveFn);
@@ -1677,14 +1691,14 @@ class Native {
 					}
 				};
 
-				Browser.window.addEventListener("mousemove", mouseMoveIdleFn);
+				Browser.window.addEventListener("pointermove", mouseMoveIdleFn);
 				Browser.window.addEventListener("videoplaying", mouseMoveIdleFn);
 				Browser.window.addEventListener("focus", mouseMoveIdleFn);
 				Browser.window.addEventListener("blur", mouseMoveIdleFn);
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutIdleId)");
-					Browser.window.removeEventListener("mousemove", mouseMoveIdleFn);
+					Browser.window.removeEventListener("pointermove", mouseMoveIdleFn);
 					Browser.window.removeEventListener("videoplaying", mouseMoveIdleFn);
 					Browser.window.removeEventListener("focus", mouseMoveIdleFn);
 					Browser.window.removeEventListener("blur", mouseMoveIdleFn);

@@ -18,17 +18,15 @@ LocalsManager::~LocalsManager() {
 
 template<class T>
 void LocalsManager::createItem(T* parent, const QString& name, FlowValue& value) {
-	enum { MAX_SHORT_VALUE_LENGTH = 24 };
+	enum { MAX_VALUE_LENGTH = 256 };
 	QTreeWidgetItem *item = new QTreeWidgetItem(parent, QStringList(name));
 	QString fullValueStr = value.value();
-	QString shortValueStr = fullValueStr;
-	if (shortValueStr.length() >= MAX_SHORT_VALUE_LENGTH) {
-		shortValueStr.truncate(MAX_SHORT_VALUE_LENGTH);
-		shortValueStr += QLatin1String("...");
+	QString valueStr = fullValueStr;
+	if (valueStr.length() >= MAX_VALUE_LENGTH) {
+		valueStr.truncate(MAX_VALUE_LENGTH);
+		valueStr += QLatin1String("...");
 	}
-	tree_->setItemWidget(item, 1, new QLabel(shortValueStr));
-	tree_->setItemWidget(item, 2, new QLabel(value.type()));
-	tree_->setItemWidget(item, 3, new QLabel(fullValueStr));
+	tree_->setItemWidget(item, 1, new QLabel(valueStr));
     switch (value.kind()) {
     case FlowValue::SCALAR: break;
     case FlowValue::ARRAY: {
@@ -44,7 +42,8 @@ void LocalsManager::createItem(T* parent, const QString& name, FlowValue& value)
 		StructDef structDef = flowView_.debugView_->symbols().findDef(structName);
 		for (FlowValue& child : value._struct()->fields_) {
 			FieldDef fieldDef = count < structDef.fields.count() ? structDef.fields[count++] : FieldDef();
-			createItem(item, fieldDef.name, child);
+			QString fname = (fieldDef.name.startsWith(QLatin1String("mutable "))) ? fieldDef.name.mid(8) : fieldDef.name;
+			createItem(item, fname, child);
 		}
 		break;
     }
@@ -52,10 +51,10 @@ void LocalsManager::createItem(T* parent, const QString& name, FlowValue& value)
     }
 }
 
-void LocalsManager::slotArgsInfo(QString descr, int frameIndex) {
+void LocalsManager::slotArgsInfo(const QString& descr, int frameIndex) {
 	tree_->clear();
 	MiResult locals = mi_parse(descr);
-	if (locals.value()->emptyList()) {
+	if (!locals.value() || locals.value()->emptyList()) {
 		return;
 	}
 	for (MiResult& frameDescr : locals.value(QLatin1String("stack-args"))->resList()->list) {
@@ -71,6 +70,9 @@ void LocalsManager::slotArgsInfo(QString descr, int frameIndex) {
 						val = val.replace(QLatin1String("\\\""), QLatin1String("\""));
 						val = val.mid(1, val.length() - 2); // Remove enclosing quotes
 						FlowValue flowVal = flow_value_parse(val);
+						if (var == QLatin1String("writer")) {
+							QTextStream(stdout) << "writer: " << flowVal.show() << "\n";
+						}
 						createItem(tree_, var, flowVal);
 					}
 				}
@@ -90,10 +92,10 @@ void LocalsManager::slotArgsInfo(QString descr, int frameIndex) {
 		}
 	}
 }
-void LocalsManager::slotLocalsInfo(QString descr) {
+void LocalsManager::slotLocalsInfo(const QString& descr) {
 	//tree_->clear();
 	MiResult locals = mi_parse(descr);
-	if (locals.value()->emptyList()) {
+	if (!locals.value() || locals.value()->emptyList()) {
 		return;
 	}
 	for (MiValue* varDescr : locals.value(QLatin1String("locals"))->valList()->list) {
