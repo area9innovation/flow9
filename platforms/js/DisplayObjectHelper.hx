@@ -90,7 +90,7 @@ class DisplayObjectHelper {
 				}
 			} else if (clip.parent == RenderSupportJSPixi.PixiStage) {
 				untyped clip.stage = clip;
-				if (!RenderSupportJSPixi.DomRenderer) {
+				if (RenderSupportJSPixi.RendererType != "html") {
 					untyped clip.createView(clip.parent.children.indexOf(clip) + 1);
 				}
 
@@ -149,7 +149,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (!RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType != "html") {
 				untyped clip.rvlast = null;
 			}
 
@@ -169,7 +169,7 @@ class DisplayObjectHelper {
 		if (clip.parent != null) {
 			untyped clip.transformChanged = true;
 
-			if (!RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType != "html") {
 				untyped clip.rvlast = null;
 			}
 
@@ -223,11 +223,7 @@ class DisplayObjectHelper {
 				invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
 			}
 
-			if (untyped !RenderSupportJSPixi.DomRenderer && clip.interactive && !clip.clipVisible) {
-				clip.emit("pointerout");
-			}
-
-			if (!RenderSupportJSPixi.DomRenderer && updateAccessWidget) {
+			if (RenderSupportJSPixi.RendererType != "html" && updateAccessWidget) {
 				untyped clip.accessWidget.updateDisplay();
 			}
 
@@ -240,7 +236,7 @@ class DisplayObjectHelper {
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
-			if (RenderSupportJSPixi.DomInteractions) {
+			if (RenderSupportJSPixi.RendererType == "html") {
 				if (!isNativeWidget(clip)) {
 					initNativeWidget(clip);
 				} else {
@@ -403,7 +399,7 @@ class DisplayObjectHelper {
 		if (untyped clip.cursor != cursor) {
 			untyped clip.cursor = cursor;
 
-			if (RenderSupportJSPixi.DomInteractions && !isNativeWidget(clip)) {
+			if (RenderSupportJSPixi.RendererType == "html" && !isNativeWidget(clip)) {
 				initNativeWidget(clip);
 			}
 
@@ -532,7 +528,7 @@ class DisplayObjectHelper {
 			untyped clip.mask.isMask = true;
 			untyped clip.mask.child = clip;
 
-			if (RenderSupportJSPixi.DomRenderer && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
+			if (RenderSupportJSPixi.RendererType == "html" && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
 				updateHasMask(clip);
 			}
 
@@ -553,7 +549,7 @@ class DisplayObjectHelper {
 		setClipRenderable(maskContainer, false);
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (untyped clip.mask != null || clip.alphaMask != null) {
 				initNativeWidget(clip);
 			}
@@ -563,7 +559,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateHasMask(clip : DisplayObject) : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (!untyped clip.hasMask) {
 				untyped clip.hasMask = true;
 
@@ -710,7 +706,7 @@ class DisplayObjectHelper {
 		if (untyped clip.updateNativeWidget != null) {
 			untyped clip.updateNativeWidget();
 		} else {
-			if (RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType == "html") {
 				if (isNativeWidget(clip)) {
 					if (clip.visible) {
 						if (DebugUpdate) {
@@ -729,9 +725,7 @@ class DisplayObjectHelper {
 						updateNativeWidgetOpacity(clip);
 						updateNativeWidgetMask(clip);
 
-						if (RenderSupportJSPixi.DomInteractions) {
-							updateNativeWidgetInteractive(clip);
-						}
+						updateNativeWidgetInteractive(clip);
 
 						if (untyped clip.styleChanged) {
 							untyped clip.updateNativeWidgetStyle();
@@ -753,25 +747,32 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function updateNativeWidgetTransformMatrix(clip : DisplayObject, ?worldTransform : Bool) {
-		if (worldTransform == null) {
-			worldTransform = !RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer;
-		}
+	public static inline function getNativeWidgetTransform(clip : DisplayObject) : Matrix {
+		if (RenderSupportJSPixi.RendererType == "html") {
+			if (RenderSupportJSPixi.RenderContainers) {
+				if (untyped clip.localTransformChanged) {
+					untyped clip.transform.updateLocalTransform();
+				}
 
+				return clip.localTransform;
+			} else {
+				return prependInvertedMatrix(clip.worldTransform, untyped clip.parentClip.worldTransform);
+			}
+		} else if (untyped clip.accessWidget != null) {
+			return untyped clip.accessWidget.getAccessWidgetTransform();
+		} else {
+			return clip.worldTransform;
+		}
+	}
+
+	public static function updateNativeWidgetTransformMatrix(clip : DisplayObject) {
 		var nativeWidget = untyped clip.nativeWidget;
 
-		if (untyped clip.getTransform == null && !worldTransform) {
+		if (untyped clip.localTransformChanged) {
 			untyped clip.transform.updateLocalTransform();
 		}
 
-		var transform : Dynamic = untyped clip.getTransform != null ? untyped clip.getTransform(worldTransform) : worldTransform ?
-			untyped clip.worldTransform : untyped clip.localTransform;
-
-		if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
-			var parentClip = untyped clip.parentClip;
-
-			transform = prependInvertedMatrix(transform, parentClip.worldTransform);
-		}
+		var transform = getNativeWidgetTransform(clip);
 
 		var tx = round(transform.tx);
 		var ty = round(transform.ty);
@@ -825,25 +826,25 @@ class DisplayObjectHelper {
 			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : null;
 	}
 
-	public static function updateNativeWidgetOpacity(clip : DisplayObject, ?worldTransform : Bool) {
-		if (worldTransform == null) {
-			worldTransform = !RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer;
-		}
-
-		var nativeWidget = untyped clip.nativeWidget;
-		var alpha = worldTransform ? clip.worldAlpha : clip.alpha;
-
-		if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
-			var parentClip = untyped clip.parentClip;
-
-			if (parentClip.worldAlpha > 0) {
-				alpha = alpha / parentClip.worldAlpha;
+	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
+		if (RenderSupportJSPixi.RendererType == "html" && !RenderSupportJSPixi.RenderContainers) {
+			if (untyped clip.parentClip.worldAlpha > 0) {
+				return clip.worldAlpha / untyped clip.parentClip.worldAlpha;
+			} else if (clip.parent != null && !isNativeWidget(clip.parent)) {
+				return clip.alpha * getNativeWidgetAlpha(clip.parent);
 			} else {
-				alpha = getNativeWidgetLocalAlpha(clip);
+				return clip.alpha;
 			}
+		} else {
+			return clip.alpha;
 		}
+	}
 
-		if (untyped !RenderSupportJSPixi.DomRenderer && clip.isInput) {
+	public static function updateNativeWidgetOpacity(clip : DisplayObject) {
+		var nativeWidget = untyped clip.nativeWidget;
+		var alpha = getNativeWidgetAlpha(clip);
+
+		if (untyped RenderSupportJSPixi.RendererType != "html" && clip.isInput) {
 			if (Platform.isEdge || Platform.isIE) {
 				nativeWidget.style.opacity = 1.0;
 				var slicedColor : Array<String> = untyped clip.style.fill.split(",");
@@ -984,14 +985,6 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function getNativeWidgetLocalAlpha(clip : DisplayObject) : Float {
-		if (clip.parent != null && !isNativeWidget(clip.parent)) {
-			return clip.alpha * getNativeWidgetLocalAlpha(clip.parent);
-		} else {
-			return clip.alpha;
-		}
-	}
-
 	public static function createPlaceholderWidget(clip : DisplayObject) : Void {
 		var placeholderWidget = untyped clip.placeholderWidget;
 
@@ -1083,11 +1076,7 @@ class DisplayObjectHelper {
 		untyped clip.scrollFn = scrollFn;
 	}
 
-	public static function updateNativeWidgetMask(clip : DisplayObject, ?worldTransform : Bool, ?attachScrollFn : Bool = false) {
-		if (worldTransform == null) {
-			worldTransform = !RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer;
-		}
-
+	public static function updateNativeWidgetMask(clip : DisplayObject, ?attachScrollFn : Bool = false) {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		var mask : FlowGraphics = clip.mask;
@@ -1330,7 +1319,7 @@ class DisplayObjectHelper {
 	public static function addNativeWidget(clip : DisplayObject) : Void {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
-		} else if (RenderSupportJSPixi.DomRenderer) {
+		} else if (RenderSupportJSPixi.RendererType == "html") {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && clip.renderable) {
 				appendNativeWidget(findParentClip(clip), clip);
 				RenderSupportJSPixi.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
@@ -1394,7 +1383,7 @@ class DisplayObjectHelper {
 	public static function findNativeWidgetChild(clip : DisplayObject, parent : DisplayObject) : js.html.Element {
 		if (untyped isNativeWidget(clip) && clip.parentClip == parent && getParentNode(clip) == parent.nativeWidget) {
 			return untyped clip.nativeWidget;
-		} else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.DomRenderer) {
+		} else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.RendererType == "html") {
 			for (child in getClipChildren(clip)) {
 				if (untyped child.visible && (!isNativeWidget(child) || child.parentClip == parent)) {
 					var nativeWidget = findNativeWidgetChild(child, parent);
@@ -1537,7 +1526,7 @@ class DisplayObjectHelper {
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
-				if (!RenderSupportJSPixi.DomRenderer) {
+				if (RenderSupportJSPixi.RendererType != "html") {
 					untyped clip.nativeWidgetBoundsChanged = false;
 				}
 
@@ -1568,7 +1557,7 @@ class DisplayObjectHelper {
 			}
 
 			untyped clip.nativeWidgetBoundsChanged = true;
-			if (!RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType != "html") {
 				untyped clip.rvlast = null;
 			}
 
@@ -1773,7 +1762,7 @@ class DisplayObjectHelper {
 		}
 
 		if (!Math.isFinite(localBounds.minX) || !Math.isFinite(localBounds.minY) || localBounds.isEmpty()) {
-			// setClipRenderable(clip, untyped RenderSupportJSPixi.DomRenderer && clip.updateKeepNativeWidgetChildren);
+			// setClipRenderable(clip, untyped RenderSupportJSPixi.RendererType == "html" && clip.updateKeepNativeWidgetChildren);
 			return;
 		}
 
@@ -1792,7 +1781,7 @@ class DisplayObjectHelper {
 
 		untyped clip.viewBounds = viewBounds;
 
-		if ((!RenderSupportJSPixi.DomRenderer && untyped clip.styleChanged != null) || untyped __instanceof__(clip, DropAreaClip)) {
+		if ((RenderSupportJSPixi.RendererType != "html" && untyped clip.styleChanged != null) || untyped __instanceof__(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
 			invalidateTransform(clip, 'invalidateRenderable');
 		}
@@ -1802,7 +1791,7 @@ class DisplayObjectHelper {
 			return;
 		}
 
-		if (!RenderSupportJSPixi.DomRenderer || isNativeWidget(clip) || !clip.renderable) {
+		if (RenderSupportJSPixi.RendererType != "html" || isNativeWidget(clip) || !clip.renderable) {
 			var renderable = viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY;
 
 			if (untyped clip.keepNativeWidgetChildren && isNativeWidget(clip)) {

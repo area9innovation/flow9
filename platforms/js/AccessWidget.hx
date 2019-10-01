@@ -159,16 +159,16 @@ class AccessWidgetTree extends EventEmitter {
 		}
 	}
 
-	public function getTransform(append : Bool = true) : Matrix {
+	public function getAccessWidgetTransform(append : Bool = true) : Matrix {
 		if (accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null && untyped accessWidget.clip.nativeWidget != null) {
 			if (append && parent != null) {
-				var parentTransform = parent.getTransform(false);
+				var parentTransform = parent.getAccessWidgetTransform(false);
 				return accessWidget.clip.worldTransform.clone().append(parentTransform.clone().invert());
 			} else {
 				return accessWidget.clip.worldTransform;
 			}
 		} else if (!append && parent != null) {
-			return parent.getTransform();
+			return parent.getAccessWidgetTransform();
 		} else {
 			return new Matrix();
 		}
@@ -205,7 +205,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateDisplay() : Void {
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			updateTransform();
 
 			for (child in children) {
@@ -215,7 +215,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateTransform() : Void {
-		if (!RenderSupportJSPixi.DomRenderer && accessWidget != null) {
+		if (RenderSupportJSPixi.RendererType != "html" && accessWidget != null) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
@@ -396,7 +396,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			return;
 		}
 
@@ -519,7 +519,7 @@ class AccessWidget extends EventEmitter {
 	public function set_role(role : String) : String {
 		element.setAttribute("role", role);
 
-		if (RenderSupportJSPixi.DomRenderer && accessRoleMap.get(role) != null && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
+		if (RenderSupportJSPixi.RendererType == "html" && accessRoleMap.get(role) != null && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
 			for (attr in element.attributes) {
@@ -747,9 +747,9 @@ class AccessWidget extends EventEmitter {
 		}
 	}
 
-	public function getTransform() : Matrix {
+	public function getAccessWidgetTransform() : Matrix {
 		if (parent != null) {
-			return parent.getTransform();
+			return parent.getAccessWidgetTransform();
 		} else if (clip != null) {
 			return clip.worldTransform;
 		} else {
@@ -870,7 +870,7 @@ class AccessWidget extends EventEmitter {
 			}
 		}
 
-		if (!tree.childrenChanged && (!childrenChanged || !RenderSupportJSPixi.DomRenderer)) {
+		if (!tree.childrenChanged && (!childrenChanged || RenderSupportJSPixi.RendererType != "html")) {
 			return tree.childrenTabIndex;
 		}
 
@@ -885,7 +885,7 @@ class AccessWidget extends EventEmitter {
 
 			childrenChanged = childrenChanged || child.childrenChanged;
 
-			if (!child.childrenChanged && !child.changed && (!childrenChanged || !RenderSupportJSPixi.DomRenderer)) {
+			if (!child.childrenChanged && !child.changed && (!childrenChanged || RenderSupportJSPixi.RendererType != "html")) {
 				tree.childrenTabIndex = child.childrenTabIndex;
 				continue;
 			}
@@ -893,7 +893,7 @@ class AccessWidget extends EventEmitter {
 			var accessWidget = child.accessWidget;
 
 			if (accessWidget != null && accessWidget.element != null) {
-				if (!RenderSupportJSPixi.DomRenderer) {
+				if (RenderSupportJSPixi.RendererType != "html") {
 					if (child.changed) {
 						try {
 							if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {

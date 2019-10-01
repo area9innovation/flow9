@@ -36,9 +36,9 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = RenderSupportJSPixi.DomRenderer && (RenderSupportJSPixi.RenderContainers || worldVisible);
+		isNativeWidget = RenderSupportJSPixi.RenderContainers || worldVisible;
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (worldVisible) {
 				nativeWidget = Browser.document.body;
 			} else {
@@ -173,7 +173,7 @@ class FlowContainer extends Container {
 	}
 
 	public function render(renderer : CanvasRenderer) {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (stageChanged) {
 				stageChanged = false;
 
