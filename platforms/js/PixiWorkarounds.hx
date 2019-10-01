@@ -370,10 +370,8 @@ class PixiWorkarounds {
 	public static function workaroundGetContext() : Void {
 		untyped __js__("
 			if (RenderSupportJSPixi.RendererType == 'html') {
-				console.log('get context html');
 				Element.prototype.getContext = function(a, b) { return { imageSmoothingEnabled : true }; };
 			} else {
-				console.log('get context canvas');
 				Element.prototype.getContext = null;
 			}
 		");
