@@ -21,16 +21,13 @@ import BlurFilter;
 using DisplayObjectHelper;
 
 class RenderSupportJSPixi {
-	public static var DomRenderer : Bool = Util.getParameter("renderer") == "html" || (Util.getParameter("renderer") == null && Util.getParameter("new") == "1");
-	public static var DomInteractions : Bool = DomRenderer && (Util.getParameter("interactions") == null || Util.getParameter("interactions") == "dom");
-	public static var RenderContainers : Bool = Util.getParameter("containers") == "1" || !DomRenderer;
+	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
+	public static var RenderContainers : Bool = Util.getParameter("containers") == "1";
 	public static var FiltersEnabled : Bool = Util.getParameter("filters") != "0";
 
 	public static var PixiView : Dynamic;
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
 	public static var PixiRenderer : Dynamic;
-
-	public static var RendererType : String = DomRenderer ? "html" : Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 
 	public static var MousePos : Point = new Point(0.0, 0.0);
 	public static var PixiStageChanged : Bool = true;
@@ -43,7 +40,7 @@ class RenderSupportJSPixi {
 	public static var EnableFocusFrame : Bool = false;
 	/* Antialiasing doesn't work correctly on mobile devices */
 	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
-	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : !DomRenderer;
+	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
 	public static var DropCurrentFocusOnDown : Bool;
@@ -76,6 +73,25 @@ class RenderSupportJSPixi {
 
 	public static inline function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
+	}
+
+	public static function setRendererType(rendererType : String) : Void {
+		if (RendererType != rendererType) {
+			RendererType = rendererType;
+			RoundPixels = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
+			Antialias = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" :
+				!Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+
+			untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupportJSPixi.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+
+			PixiWorkarounds.workaroundGetContext();
+
+			createPixiRenderer();
+		}
+	}
+
+	public static function getRendererType() : String {
+		return RendererType;
 	}
 
 	private static function roundPlus(x : Float, n : Int) : Float {
@@ -144,24 +160,15 @@ class RenderSupportJSPixi {
 	}
 
 	private static function disablePixiPlugins() {
-		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.sprite");
-		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.graphics");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.accessibility");
-		// untyped __js__("delete PIXI.CanvasRenderer.__plugins.extract");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.tilingSprite");
-		if (DomInteractions) {
-			untyped __js__("delete PIXI.CanvasRenderer.__plugins.interaction");
-		}
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.mesh");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.particle");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.prepare");
 
-		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.sprite");
-		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.graphics");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.accessibility");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.extract");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.tilingSprite");
-		// untyped __js__("delete PIXI.WebGLRenderer.__plugins.interaction");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.mesh");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.particle");
 		untyped __js__("delete PIXI.WebGLRenderer.__plugins.prepare");
@@ -184,8 +191,15 @@ class RenderSupportJSPixi {
 			PixiRenderer.destroy();
 		}
 
-		if (DomRenderer) {
+		if (PixiView != null && PixiView.parentNode != null) {
+			PixiView.parentNode.removeChild(PixiView);
+		}
+
+		if (RendererType == "html") {
 			PixiView = Browser.document.createElement('div');
+			PixiView.tabIndex = 1;
+		} else if (PixiView != null && PixiView.tagName.toLowerCase() == 'div') {
+			PixiView = null;
 		}
 
 		var options = {
@@ -211,6 +225,8 @@ class RenderSupportJSPixi {
 			} else {
 				RendererType = "canvas";
 			}
+		} else if (RendererType == "html") {
+			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
 		} else {
 			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
 
@@ -218,10 +234,9 @@ class RenderSupportJSPixi {
 		}
 
 		if (RendererType == "canvas") {
-			if (!DomRenderer) {
-				untyped PixiRenderer.context.fillStyle = "white";
-				untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
-			}
+			untyped PixiRenderer.context.fillStyle = "white";
+			untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
+			untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
 
 			var tempPlugins = untyped WebGLRenderer.__plugins;
 			untyped WebGLRenderer.__plugins = [];
@@ -240,33 +255,37 @@ class RenderSupportJSPixi {
 			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
 		}
 
-		if (!DomInteractions) {
-			untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
-		}
-
 		PixiView = PixiRenderer.view;
 		// Make absolute position for canvas for Safari to fix fullscreen API
 		if (Platform.isSafari) {
 			PixiView.style.position = "absolute";
 			PixiView.style.top = "0px";
 		}
+
+		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
+		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
+
+		// Enable browser canvas rendered image smoothing
+		var ctx = untyped PixiRenderer.context;
+		if (ctx != null) {
+			ctx.mozImageSmoothingEnabled = true;
+			ctx.webkitImageSmoothingEnabled = true;
+			ctx.imageSmoothingQuality = if (Platform.isChrome) "high" else "medium";
+			ctx.msImageSmoothingEnabled = true;
+			ctx.imageSmoothingEnabled = true;
+		}
 	}
 
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
-		if (!DomRenderer && untyped PIXI.VERSION[0] > 3) {
-			PixiWorkarounds.workaroundDOMOverOutEventsTransparency();
-		}
-
 		if (untyped PIXI.VERSION != "4.8.2") {
 			untyped __js__("document.location.reload(true)");
 		}
 
-		if (Platform.isMacintosh || (Platform.isIOS && !DomRenderer)) {
-			untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█Å'");
-		}
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupportJSPixi.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
 
+		PixiWorkarounds.workaroundGetContext();
 		PixiWorkarounds.workaroundTextMetrics();
 
 		PixiWorkarounds.workaroundRendererDestroy();
@@ -279,9 +298,6 @@ class RenderSupportJSPixi {
 
 		createPixiRenderer();
 
-		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
-
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
 		initBrowserWindowEventListeners();
@@ -289,21 +305,9 @@ class RenderSupportJSPixi {
 		initFullScreenEventListeners();
 		FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
-		if (!DomInteractions) {
-			initCanvasStackInteractions();
-		}
+		initCanvasStackInteractions();
 
 		printOptionValues();
-
-		// Enable browser canvas rendered image smoothing
-		var ctx = untyped PixiRenderer.context;
-		if (ctx != null) {
-			ctx.mozImageSmoothingEnabled = true;
-			ctx.webkitImageSmoothingEnabled = true;
-			ctx.imageSmoothingQuality = if (Platform.isChrome) "high" else "medium";
-			ctx.msImageSmoothingEnabled = true;
-			ctx.imageSmoothingEnabled = true;
-		}
 
 		render();
 		requestAnimationFrame();
@@ -748,7 +752,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function forceRollOverRollOutUpdate() : Void {
-		if (!DomInteractions) {
+		if (RendererType != "html") {
 			untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
 			untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
 		}
@@ -807,9 +811,9 @@ class RenderSupportJSPixi {
 
 				var ie : Dynamic = untyped __js__("{
 					data : activeElement.value,
-					inputType: 'insertText',
-					isComposing: false,
-					bubbles: true,
+					inputType : 'insertText',
+					isComposing : false,
+					bubbles : true,
 					composed : true,
 					isTrusted : true
 				}");
@@ -896,13 +900,19 @@ class RenderSupportJSPixi {
 		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
 			PixiStageChanged = false;
 
-			if (RendererType == "canvas") {
+			if (RendererType == "html") {
 				TransformChanged = false;
 
-				if (!RenderSupportJSPixi.DomRenderer) {
-					for (child in PixiStage.children) {
-						untyped child.updateView();
-					}
+				AccessWidget.updateAccessTree();
+
+				for (child in PixiStage.children) {
+					untyped child.render(untyped PixiRenderer);
+				}
+			} else if (RendererType == "canvas") {
+				TransformChanged = false;
+
+				for (child in PixiStage.children) {
+					untyped child.updateView();
 				}
 
 				AccessWidget.updateAccessTree();
@@ -910,8 +920,6 @@ class RenderSupportJSPixi {
 				for (child in PixiStage.children) {
 					untyped child.render(untyped PixiRenderer);
 				}
-
-				untyped PixiRenderer._lastObjectRendered = PixiStage;
 			} else if (RendererType == "webgl") {
 				TransformChanged = false;
 
@@ -924,10 +932,9 @@ class RenderSupportJSPixi {
 						PixiRenderer.render(child, null, true, null, untyped !child.transformChanged);
 					}
 				}
-
-				untyped PixiRenderer._lastObjectRendered = PixiStage;
 			}
 
+			untyped PixiRenderer._lastObjectRendered = PixiStage;
 			PixiStageChanged = false; // to protect against recursive invalidations
 			emit("stagechanged", timestamp);
 		} else {
@@ -957,7 +964,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function InvalidateLocalStages() {
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RendererType != "html") {
 			for (child in PixiStage.children) {
 				child.invalidateTransform('InvalidateLocalStages');
 			}
@@ -989,7 +996,7 @@ class RenderSupportJSPixi {
 
 		if (clip.accessWidget == null) {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
-				if (RenderSupportJSPixi.DomRenderer) {
+				if (RendererType == "html") {
 					cast(clip, DisplayObject).initNativeWidget();
 				}
 
@@ -1289,10 +1296,7 @@ class RenderSupportJSPixi {
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
-
-		if (RenderSupportJSPixi.DomRenderer) {
-			render();
-		}
+		render();
 
 		clip.setClipFocus(focus);
 	}
@@ -2032,7 +2036,7 @@ class RenderSupportJSPixi {
 			return;
 		}
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RendererType == "html") {
 			untyped clip.filterPadding = 0.0;
 			var dropShadowCount = 0;
 
@@ -2225,9 +2229,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setClipDebugInfo(clip : DisplayObject, key : String, value : Dynamic) : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			untyped clip.info = HaxeRuntime.typeOf(value).toString();
-		}
+		untyped clip.info = HaxeRuntime.typeOf(value).toString();
 	}
 
 	public static function fullScreenTrigger() {
@@ -2338,7 +2340,7 @@ class RenderSupportJSPixi {
 
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!Platform.isIOS) {
-			if (RenderSupportJSPixi.DomRenderer) {
+			if (RendererType == "html") {
 				if (fs)
 					requestFullScreen(Browser.document.body);
 				else

@@ -339,7 +339,7 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.resize = 'none';
 			}
 
-			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
+			nativeWidget.style.marginTop = RenderSupportJSPixi.RendererType == "html" ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
 
 			nativeWidget.style.direction = switch (textDirection) {
@@ -364,12 +364,12 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.opacity = null;
 		}
 
-		nativeWidget.style.letterSpacing = !RenderSupportJSPixi.DomRenderer || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
-		nativeWidget.style.fontFamily = !RenderSupportJSPixi.DomRenderer || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
-		nativeWidget.style.fontWeight = !RenderSupportJSPixi.DomRenderer || style.fontWeight != 400 ? style.fontWeight : null;
-		nativeWidget.style.fontStyle = !RenderSupportJSPixi.DomRenderer || style.fontStyle != 'normal' ? style.fontStyle : null;
+		nativeWidget.style.letterSpacing = RenderSupportJSPixi.RendererType != "html" || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		nativeWidget.style.fontFamily = RenderSupportJSPixi.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
+		nativeWidget.style.fontWeight = RenderSupportJSPixi.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
+		nativeWidget.style.fontStyle = RenderSupportJSPixi.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.background = !RenderSupportJSPixi.DomRenderer || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${style.lineHeight}px';
 
@@ -465,7 +465,7 @@ class TextClip extends NativeWidgetClip {
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			measureFont();
 		}
 
@@ -481,7 +481,7 @@ class TextClip extends NativeWidgetClip {
 
 		invalidateMetrics();
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 		}
 	}
@@ -601,7 +601,7 @@ class TextClip extends NativeWidgetClip {
 
 	public override function invalidateStyle() : Void {
 		if (!doNotInvalidateStage) {
-			if (!RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType != "html") {
 				if (isInput) {
 					setScrollRect(0, 0, getWidth(), getHeight());
 				}
@@ -1169,7 +1169,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (style.fontProperties == null || true) {
 				var ascent = 0.9 * style.fontSize;
 				var descent = 0.1 * style.fontSize;
@@ -1205,7 +1205,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (!isNativeWidget) {
 				return;
 			}

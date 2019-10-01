@@ -46,7 +46,7 @@ class VideoClip extends FlowContainer {
 				}
 				v.checkTimeRange(videoWidget.currentTime, true);
 
-				if (!RenderSupportJSPixi.DomRenderer) {
+				if (RenderSupportJSPixi.RendererType != "html") {
 					if (videoWidget.width != videoWidget.videoWidth || videoWidget.height != videoWidget.videoHeight) {
 						videoWidget.dispatchEvent(new js.html.Event("resize"));
 					}
@@ -99,12 +99,12 @@ class VideoClip extends FlowContainer {
 		addVideoSource(filename, "");
 		videoWidget = Browser.document.createElement("video");
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget("div");
 			nativeWidget.appendChild(videoWidget);
 		}
 
-		videoWidget.crossorigin = Util.determineCrossOrigin(filename);
+		videoWidget.crossOrigin = Util.determineCrossOrigin(filename);
 		videoWidget.autoplay = !startPaused;
 		videoWidget.className = 'nativeWidget';
 		videoWidget.setAttribute('playsinline', true);
@@ -118,7 +118,7 @@ class VideoClip extends FlowContainer {
 			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
 		}
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			videoTexture = Texture.fromVideo(videoWidget);
 			untyped videoTexture.baseTexture.autoPlay = !startPaused;
 			untyped videoTexture.baseTexture.autoUpdate = false;
@@ -188,9 +188,7 @@ class VideoClip extends FlowContainer {
 
 			updateSubtitlesClip();
 
-			if (RenderSupportJSPixi.DomInteractions) {
-				updateNativeWidgetInteractive();
-			}
+			updateNativeWidgetInteractive();
 		}
 
 		updateNativeWidgetDisplay();
@@ -328,14 +326,14 @@ class VideoClip extends FlowContainer {
 		if (!videoWidget.autoplay) videoWidget.pause();
 
 		if (textField != null) {
-			if (!RenderSupportJSPixi.DomRenderer && getChildIndex(videoSprite) > getChildIndex(textField)) {
+			if (RenderSupportJSPixi.RendererType != "html" && getChildIndex(videoSprite) > getChildIndex(textField)) {
 				swapChildren(videoSprite, textField);
 			}
 
 			updateSubtitlesClip();
 		};
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			videoTexture.update();
 		}
 
@@ -348,7 +346,7 @@ class VideoClip extends FlowContainer {
 		calculateWidgetBounds();
 		invalidateTransform('updateVideoMetrics');
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			videoWidget.style.width = '${untyped getWidth()}px';
 			videoWidget.style.height = '${untyped getHeight()}px';
 		} else {
