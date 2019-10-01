@@ -1,48 +1,4 @@
 class PixiWorkarounds {
-	public static function workaroundDOMOverOutEventsTransparency() : Void {
-		untyped __js__("
-		var binder = function(fn) {
-			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
-		}
-
-		var emptyFn = function() {};
-
-		var old_pointer_over = PIXI.interaction.InteractionManager.prototype.onPointerOver;
-		var old_pointer_out = PIXI.interaction.InteractionManager.prototype.onPointerOut;
-
-		PIXI.interaction.InteractionManager.prototype.onPointerOver = emptyFn;
-		PIXI.interaction.InteractionManager.prototype.onPointerOut = emptyFn;
-
-		var pointer_over = function(e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		}
-
-		var mouse_move = function(e) {
-			pointer_over(e);
-			document.removeEventListener('mousemove', mouse_move);
-		}
-
-		// if mouse is already over document
-		document.addEventListener('mousemove', mouse_move);
-
-		document.addEventListener('mouseover', pointer_over);
-
-		document.addEventListener('mouseout', function(e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});
-
-		document.addEventListener('pointerover', function (e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		});
-		document.addEventListener('pointerout', function (e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});");
-	}
-
 	public static function workaroundRendererDestroy() : Void {
 		untyped __js__("
 			PIXI.WebGLRenderer.prototype.bindTexture = function(texture, location, forceLocation)
@@ -409,6 +365,18 @@ class PixiWorkarounds {
 
 			window.CustomEvent = CustomEvent;
 		};");
+	}
+
+	public static function workaroundGetContext() : Void {
+		untyped __js__("
+			if (RenderSupportJSPixi.RendererType == 'html') {
+				console.log('get context html');
+				Element.prototype.getContext = function(a, b) { return { imageSmoothingEnabled : true }; };
+			} else {
+				console.log('get context canvas');
+				Element.prototype.getContext = null;
+			}
+		");
 	}
 
 	public static function workaroundTextMetrics() : Void {
@@ -890,12 +858,6 @@ class PixiWorkarounds {
 				}
 			});
 
-			if (RenderSupportJSPixi.DomRenderer) {
-				Element.prototype.getContext = function(a, b) {
-					return { imageSmoothingEnabled : true };
-				}
-			}
-
 			PIXI.Container.prototype.updateTransform = function() {
 				if (this.parent.worldTransformChanged) {
 					this.parent.updateTransform();
@@ -919,7 +881,7 @@ class PixiWorkarounds {
 
 						this.emit('transformchanged');
 
-						if (!RenderSupportJSPixi.DomRenderer) {
+						if (RenderSupportJSPixi.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -932,7 +894,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.DomRenderer && this.localTransformChanged) {
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
@@ -957,7 +919,7 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						if (RenderSupportJSPixi.DomRenderer) {
+						if (RenderSupportJSPixi.RendererType == 'html') {
 							if (RenderSupportJSPixi.LayoutText) {
 								this.textClipChanged = true;
 								this.layoutText();
@@ -981,7 +943,7 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (!RenderSupportJSPixi.DomRenderer) {
+						if (RenderSupportJSPixi.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -996,7 +958,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.DomRenderer && this.localTransformChanged) {
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
