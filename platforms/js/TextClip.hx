@@ -335,25 +335,35 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.maxLength = maxChars;
 			}
 
-			if (tabIndex >= 0) {
-				nativeWidget.tabIndex = tabIndex;
-			}
-
 			if (multiline) {
 				nativeWidget.style.resize = 'none';
 			}
 
 			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+
+			nativeWidget.style.direction = switch (textDirection) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		} else {
-			nativeWidget.textContent = StringTools.replace(
-				StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text,
-				"\t",
-				" "
-			);
+			var textContent = getContentGlyphs().modified;
+			nativeWidget.textContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+
+			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		}
 
-		nativeWidget.style.color = style.fill;
+		if ((!Platform.isIE && !Platform.isEdge) || !isInput) {
+			nativeWidget.style.color = style.fill;
+		} else {
+			nativeWidget.style.opacity = null;
+		}
+
 		nativeWidget.style.letterSpacing = !RenderSupportJSPixi.DomRenderer || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
 		nativeWidget.style.fontFamily = !RenderSupportJSPixi.DomRenderer || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = !RenderSupportJSPixi.DomRenderer || style.fontWeight != 400 ? style.fontWeight : null;
@@ -363,30 +373,12 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${style.lineHeight}px';
 
-		nativeWidget.style.direction = switch (textDirection) {
-			case 'RTL' : 'rtl';
-			case 'rtl' : 'rtl';
-			default : null;
-		}
-
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
 			case 'AutoAlignRight' : 'right';
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
 			default : null;
-		}
-
-		if (!RenderSupportJSPixi.DomRenderer) {
-			if (Platform.isEdge || Platform.isIE) {
-				nativeWidget.style.opacity = 1;
-				var slicedColor : Array<String> = style.fill.split(",");
-				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
-
-				nativeWidget.style.color = newColor;
-			} else {
-				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
-			}
 		}
 	}
 
@@ -582,7 +574,12 @@ class TextClip extends NativeWidgetClip {
 			};
 
 			textClip.setClipX(anchorX * Math.max(0, getWidgetWidth() - getClipWidth()));
+
 			if (style.fontFamily == "Material Icons") {
+				if (style.fontProperties == null) {
+					measureFont();
+				}
+
 				textClip.setClipY(style.fontProperties.descent / (Platform.isIOS ? 2.0 : Platform.isMacintosh ? RenderSupportJSPixi.backingStoreRatio : 1.0));
 			}
 
@@ -1173,7 +1170,7 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMetrics() : Array<Float> {
 		if (RenderSupportJSPixi.DomRenderer) {
-			if (style.fontProperties == null) {
+			if (style.fontProperties == null || true) {
 				var ascent = 0.9 * style.fontSize;
 				var descent = 0.1 * style.fontSize;
 				var leading = 0.15 * style.fontSize;

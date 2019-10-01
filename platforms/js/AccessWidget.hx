@@ -22,6 +22,7 @@ class AccessWidgetTree extends EventEmitter {
 	@:isVar public var childrenChanged(get, set) : Bool;
 	@:isVar public var changed(get, set) : Bool;
 	public var zorder : Int = 0;
+	public var childrenTabIndex : Int = 1;
 
 	public function new(id : Int, ?accessWidget : AccessWidget, ?parent : AccessWidgetTree) {
 		super();
@@ -383,15 +384,15 @@ class AccessWidget extends EventEmitter {
 		this.nodeindex = nodeindex;
 		this.zorder = zorder;
 
-		if (!RenderSupportJSPixi.DomRenderer) {
-			clip.onAdded(function() {
+		clip.onAdded(function() {
+			if (untyped clip.accessWidget == this) {
 				addAccessWidget(this);
+			}
 
-				return function() {
-					removeAccessWidget(this);
-				}
-			});
-		}
+			return function() {
+				removeAccessWidget(this);
+			}
+		});
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
@@ -612,6 +613,8 @@ class AccessWidget extends EventEmitter {
 				element.onpointerdown = onpointerdown;
 				element.onpointerup = onpointerup;
 			}
+
+			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 
 			if (element.tabIndex == null) {
 				element.tabIndex = 0;
@@ -858,11 +861,7 @@ class AccessWidget extends EventEmitter {
 		}
 	}
 
-	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element, ?previousElement : Element, ?childrenChanged : Bool = false) : Bool {
-		if (RenderSupportJSPixi.DomRenderer) {
-			return false;
-		}
-
+	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element, ?previousElement : Element, ?childrenChanged : Bool = false) : Int {
 		if (tree == null) {
 			tree = AccessWidget.tree;
 
@@ -871,9 +870,11 @@ class AccessWidget extends EventEmitter {
 			}
 		}
 
-		if (!tree.childrenChanged) {
-			return false;
+		if (!tree.childrenChanged && (!childrenChanged || !RenderSupportJSPixi.DomRenderer)) {
+			return tree.childrenTabIndex;
 		}
+
+		tree.childrenTabIndex = tree.parent != null ? tree.parent.childrenTabIndex : 1;
 
 		if (parent == null) {
 			parent = Browser.document.body;
@@ -882,34 +883,50 @@ class AccessWidget extends EventEmitter {
 		for (key in tree.children.keys()) {
 			var child = tree.children.get(key);
 
-			if (!child.childrenChanged && !child.changed) {
+			childrenChanged = childrenChanged || child.childrenChanged;
+
+			if (!child.childrenChanged && !child.changed && (!childrenChanged || !RenderSupportJSPixi.DomRenderer)) {
+				tree.childrenTabIndex = child.childrenTabIndex;
 				continue;
 			}
 
 			var accessWidget = child.accessWidget;
 
 			if (accessWidget != null && accessWidget.element != null) {
-				if (child.changed) {
-					try {
-						if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {
-							parent.insertBefore(accessWidget.element, previousElement.nextSibling);
-						} else {
-							parent.appendChild(accessWidget.element);
-						}
+				if (!RenderSupportJSPixi.DomRenderer) {
+					if (child.changed) {
+						try {
+							if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {
+								parent.insertBefore(accessWidget.element, previousElement.nextSibling);
+							} else {
+								parent.appendChild(accessWidget.element);
+							}
 
-						child.changed = false;
-					} catch (e : Dynamic) {}
+							child.changed = false;
+						} catch (e : Dynamic) {}
+					}
+
+					previousElement = accessWidget.element;
+				} else {
+					var tagName = accessWidget.element.tagName.toLowerCase();
+
+					if (tagName == "button" || tagName == "input" || tagName == "textarea") {
+						tree.childrenTabIndex++;
+
+						if (accessWidget.element.tabIndex != tree.childrenTabIndex) {
+							accessWidget.element.tabIndex = tree.childrenTabIndex;
+						}
+					}
 				}
 
-				previousElement = accessWidget.element;
-				updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild, true);
+				tree.childrenTabIndex = updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild, childrenChanged);
 			} else {
-				updateAccessTree(child, parent, previousElement, true);
+				tree.childrenTabIndex = updateAccessTree(child, parent, previousElement, childrenChanged);
 			}
 		}
 
 		tree.childrenChanged = false;
 
-		return true;
+		return tree.childrenTabIndex;
 	}
 }

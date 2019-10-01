@@ -475,17 +475,16 @@ class VideoClip extends FlowContainer {
 
 	public function getCurrentFrame() : String {
 		try {
-			if (textField != null && textField.visible) {
-				textField.visible = false;
-				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
-				textField.visible = true;
+			var canvas : Dynamic = Browser.document.createElement('canvas');
+			var ctx = canvas.getContext('2d');
 
-				return data;
-			} else {
-				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
+			canvas.width = videoWidget.videoWidth;
+			canvas.height = videoWidget.videoHeight;
 
-				return data;
-			}
+			ctx.drawImage(videoWidget, 0, 0);
+
+			var data = canvas.toDataURL();
+			return data;
 		} catch (e : Dynamic) {
 			return "error";
 		}

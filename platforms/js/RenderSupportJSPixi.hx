@@ -186,6 +186,7 @@ class RenderSupportJSPixi {
 
 		if (DomRenderer) {
 			PixiView = Browser.document.createElement('div');
+			PixiView.tabIndex = 1;
 		}
 
 		var options = {
@@ -1288,10 +1289,10 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
+		AccessWidget.updateAccessTree();
+
 		if (RenderSupportJSPixi.DomRenderer) {
 			render();
-		} else {
-			AccessWidget.updateAccessTree();
 		}
 
 		clip.setClipFocus(focus);
@@ -1661,7 +1662,7 @@ class RenderSupportJSPixi {
 			return function() { off(event, fn); }
 		} else if (event == "mouserightdown" || event == "mouserightup") {
 			// When we register a right-click handler, we turn off the browser context menu.
-			PixiView.oncontextmenu = function () { return false; };
+			PixiView.oncontextmenu = function (e) { e.stopPropagation(); return false; };
 
 			on(event, fn);
 			return function() { off(event, fn); }
@@ -2033,7 +2034,31 @@ class RenderSupportJSPixi {
 		}
 
 		if (RenderSupportJSPixi.DomRenderer) {
-			untyped clip.filters = filters.filter(function(f) { return f != null; });
+			untyped clip.filterPadding = 0.0;
+			var dropShadowCount = 0;
+
+			clip.off("childrenchanged", clip.invalidateTransform);
+			clip.emit("clearfilters");
+
+			untyped clip.filters = filters.filter(function(f) {
+				if (f == null) {
+					return false;
+				} else if (f.padding != null) {
+					untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
+					dropShadowCount++;
+				}
+
+				return true;
+			});
+			untyped clip.filterPadding = clip.filterPadding * dropShadowCount;
+			if (untyped clip.updateNativeWidgetGraphicsData != null) {
+				untyped clip.updateNativeWidgetGraphicsData();
+			}
+
+			if (clip.filters.length > 0) {
+				clip.on("childrenchanged", clip.invalidateTransform);
+			}
+
 			clip.initNativeWidget();
 
 			var children : Array<DisplayObject> = untyped clip.children;
@@ -2412,14 +2437,24 @@ class RenderSupportJSPixi {
 			return "";
 		}
 
+		untyped RenderSupportJSPixi.LayoutText = true;
 		child.setScrollRect(x, y, w, h);
+
+		render();
+
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
 			child.removeScrollRect();
+			untyped RenderSupportJSPixi.LayoutText = false;
+
+			render();
 
 			return img;
 		} catch(e : Dynamic) {
 			child.removeScrollRect();
+			untyped RenderSupportJSPixi.LayoutText = false;
+
+			render();
 
 			return 'error';
 		}
