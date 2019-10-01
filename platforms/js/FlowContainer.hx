@@ -36,14 +36,12 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = RenderSupportJSPixi.RenderContainers || worldVisible;
+		isNativeWidget = (RenderSupportJSPixi.RendererType == "html" && RenderSupportJSPixi.RenderContainers) || worldVisible;
 
-		if (RenderSupportJSPixi.RendererType == "html") {
-			if (worldVisible) {
-				nativeWidget = Browser.document.body;
-			} else {
-				createNativeWidget();
-			}
+		if (worldVisible) {
+			nativeWidget = Browser.document.body;
+		} else if (RenderSupportJSPixi.RendererType == "html") {
+			createNativeWidget();
 		}
 	}
 
