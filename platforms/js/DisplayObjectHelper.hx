@@ -527,6 +527,7 @@ class DisplayObjectHelper {
 			untyped maskContainer.child = clip;
 			untyped clip.mask.isMask = true;
 			untyped clip.mask.child = clip;
+			untyped clip.maskContainer = maskContainer;
 
 			if (RenderSupportJSPixi.RendererType == "html" && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
 				updateHasMask(clip);
@@ -540,6 +541,7 @@ class DisplayObjectHelper {
 
 			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
+			untyped clip.maskContainer = maskContainer;
 
 			updateHasMask(clip);
 
@@ -1493,7 +1495,7 @@ class DisplayObjectHelper {
 		return (widgetBounds != null && Math.isFinite(widgetBounds.minY)) ? getBoundsHeight(widgetBounds) : getHeight(clip);
 	}
 
-	public static function invalidateLocalBounds(clip : DisplayObject) : Void {
+	public static function invalidateLocalBounds(clip : DisplayObject, ?invalidateMask : Bool = false) : Void {
 		if (untyped clip.transformChanged || clip.localBoundsChanged) {
 			untyped clip.localBoundsChanged = false;
 
@@ -1507,8 +1509,8 @@ class DisplayObjectHelper {
 				untyped clip.maxLocalBounds = new Bounds();
 
 				for (child in getClipChildren(clip)) {
-					if (untyped !child.isMask && child.clipVisible && child.localBounds != null) {
-						invalidateLocalBounds(child);
+					if (untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null) {
+						invalidateLocalBounds(child, invalidateMask);
 						if (untyped clip.mask == null) {
 							applyMaxBounds(clip, untyped child.currentBounds);
 						}
@@ -1520,9 +1522,9 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (untyped clip.mask != null) {
-				invalidateLocalBounds(untyped clip.mask);
-				applyNewBounds(clip, untyped clip.mask.currentBounds);
+			if (untyped clip.maskContainer != null) {
+				invalidateLocalBounds(untyped clip.maskContainer, true);
+				applyNewBounds(clip, untyped clip.maskContainer.currentBounds);
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
