@@ -1112,7 +1112,6 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
 
     TRY_USE_OBJECT_METHOD(GLTextClip, setMultiline, 2);
     TRY_USE_OBJECT_METHOD(GLTextClip, setWordWrap, 2);
-    TRY_USE_OBJECT_METHOD(GLTextClip, setDoNotInvalidateStage, 2);
     TRY_USE_OBJECT_METHOD(GLTextClip, setAutoAlign, 2);
     TRY_USE_OBJECT_METHOD(GLTextClip, setAdvancedText, 4);
     TRY_USE_OBJECT_METHOD(GLTextClip, setReadOnly, 2);

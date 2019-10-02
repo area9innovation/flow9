@@ -199,7 +199,6 @@ public:
 
     DECLARE_NATIVE_METHOD(setMultiline)
     DECLARE_NATIVE_METHOD(setWordWrap)
-    DECLARE_NATIVE_METHOD(setDoNotInvalidateStage)
     DECLARE_NATIVE_METHOD(setAutoAlign)
     DECLARE_NATIVE_METHOD(setAdvancedText)
     DECLARE_NATIVE_METHOD(setReadOnly)
