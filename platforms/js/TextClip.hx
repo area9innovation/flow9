@@ -465,9 +465,7 @@ class TextClip extends NativeWidgetClip {
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
 
-		if (RenderSupportJSPixi.RendererType != "html") {
-			measureFont();
-		}
+		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
 		if (this.textDirection == '') this.textDirection = getStringDirection(this.text, '');
@@ -1169,38 +1167,18 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		if (RenderSupportJSPixi.RendererType == "html") {
-			if (style.fontProperties == null || true) {
-				var ascent = 0.9 * style.fontSize;
-				var descent = 0.1 * style.fontSize;
-				var leading = 0.15 * style.fontSize;
+		if (style.fontProperties == null) {
+			var ascent = 0.9 * style.fontSize;
+			var descent = 0.1 * style.fontSize;
+			var leading = 0.15 * style.fontSize;
 
-				return [
-					ascent + interlineSpacing / 2.0,
-					descent + interlineSpacing / 2.0,
-					leading + interlineSpacing / 2.0
-				];
-			} else {
-				return [
-					style.fontProperties.ascent + interlineSpacing / 2.0,
-					style.fontProperties.descent + interlineSpacing / 2.0,
-					style.fontProperties.descent + interlineSpacing / 2.0
-				];
-			}
+			return [ascent, descent, leading];
 		} else {
-			if (style.fontProperties == null) {
-				var ascent = 0.9 * style.fontSize;
-				var descent = 0.1 * style.fontSize;
-				var leading = 0.15 * style.fontSize;
-
-				return [ascent, descent, leading];
-			} else {
-				return [
-					style.fontProperties.ascent,
-					style.fontProperties.descent,
-					style.fontProperties.descent
-				];
-			}
+			return [
+				style.fontProperties.ascent,
+				style.fontProperties.descent,
+				style.fontProperties.descent
+			];
 		}
 	}
 
