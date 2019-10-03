@@ -34,15 +34,15 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function round(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : n;
+		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : Math.round(n * 10.0) / 10.0;
 	}
 
 	public static inline function floor(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : n;
+		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : Math.floor(n * 10.0) / 10.0;
 	}
 
 	public static inline function ceil(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.ceil(n) : n;
+		return RenderSupportJSPixi.RoundPixels ? Math.ceil(n) : Math.ceil(n * 10.0) / 10.0;
 	}
 
 	public static function invalidateStage(clip : DisplayObject) : Void {
@@ -733,7 +733,7 @@ class DisplayObjectHelper {
 							untyped clip.updateNativeWidgetStyle();
 						}
 
-						updateNativeWidgetShadow(clip);
+						updateNativeWidgetFilters(clip);
 					}
 
 					updateNativeWidgetDisplay(clip);
@@ -780,8 +780,10 @@ class DisplayObjectHelper {
 		var ty = round(transform.ty);
 
 		if (untyped clip.scrollRect != null) {
-			tx = round(transform.tx) + untyped clip.scrollRect.x;
-			ty = round(transform.ty) + untyped clip.scrollRect.y;
+			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
+
+			tx = round(point.x);
+			ty = round(point.y);
 		}
 
 		var localBounds = untyped clip.localBounds;
@@ -822,10 +824,10 @@ class DisplayObjectHelper {
 			// applyScrollFn(clip);
 		}
 
-		nativeWidget.style.left = tx != 0 ? '${tx}px' : null;
-		nativeWidget.style.top = ty != 0 ? '${ty}px' : null;
+		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
+		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
 		nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
-			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : null;
+			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
 	}
 
 	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
@@ -857,13 +859,13 @@ class DisplayObjectHelper {
 				nativeWidget.style.opacity = untyped clip.isFocused ? alpha : 0;
 			}
 		} else {
-			nativeWidget.style.opacity = alpha != 1 ? alpha : null;
+			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
 		}
 	}
 
-	public static function updateNativeWidgetShadow(clip : DisplayObject) {
+	public static function updateNativeWidgetFilters(clip : DisplayObject) {
 		if (untyped clip.parentClip.filters != null && BoxShadow) {
-			updateNativeWidgetShadow(untyped clip.parentClip);
+			updateNativeWidgetFilters(untyped clip.parentClip);
 		}
 
 		if (untyped clip.filters != null) {
@@ -872,24 +874,29 @@ class DisplayObjectHelper {
 			if (filters != null && filters.length > 0) {
 				var filter = filters[0];
 
-				if (untyped BoxShadow || clip.isGraphics()) {
-					applyNativeWidgetBoxShadow(clip, filter);
-				} else {
-					var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
-					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
+				if (untyped __instanceof__(filter, DropShadowFilter)) {
+					if (untyped BoxShadow || clip.isGraphics()) {
+						applyNativeWidgetBoxShadow(clip, filter);
+					} else {
+						var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
+						var nativeWidget : js.html.Element = untyped clip.nativeWidget;
 
-					if (nativeWidget.children != null) {
-						for (childWidget in nativeWidget.children) {
-							childWidget.style.boxShadow = null;
+						if (nativeWidget.children != null) {
+							for (childWidget in nativeWidget.children) {
+								childWidget.style.boxShadow = null;
+							}
 						}
-					}
 
-					nativeWidget.style.filter = 'drop-shadow(
-						${untyped Math.cos(filter.angle) * filter.distance}px
-						${untyped Math.sin(filter.angle) * filter.distance}px
-						${untyped filter.blur}px
-						rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
-					)';
+						nativeWidget.style.filter = 'drop-shadow(
+							${untyped Math.cos(filter.angle) * filter.distance}px
+							${untyped Math.sin(filter.angle) * filter.distance}px
+							${untyped filter.blur}px
+							rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+						)';
+					}
+				} else if (untyped __instanceof__(filter, BlurFilter)) {
+					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
+					nativeWidget.style.filter = 'blur(${filter.blur}px)';
 				}
 			}
 		}
@@ -1148,7 +1155,6 @@ class DisplayObjectHelper {
 			var graphicsData = mask.graphicsData;
 
 			if (graphicsData != null) {
-				var transform = new Matrix();
 				var data = graphicsData[0];
 
 				if (data.shape.type == 0) {
@@ -1200,8 +1206,9 @@ class DisplayObjectHelper {
 							}
 						}
 					} else {
+						var transform = prependInvertedMatrix(clip.worldTransform, untyped clip.mask.worldTransform);
 						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
-							return i % 2 == 0 ? '' + p * mask.parent.localTransform.a + 'px ' : '' + p * mask.parent.localTransform.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
+							return i % 2 == 0 ? '' + p * transform1.a + 'px ' : '' + p * transform1.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
 						}).join('') + ')'");
 						untyped nativeWidget.style.webkitClipPath = nativeWidget.style.clipPath;
 					}
@@ -1522,9 +1529,17 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (untyped clip.maskContainer != null) {
+			if (untyped clip.scrollRect != null) {
+				invalidateLocalBounds(untyped clip.scrollRect, true);
+				applyNewBounds(clip, untyped clip.scrollRect.currentBounds);
+			} else if (untyped clip.maskContainer != null) {
 				invalidateLocalBounds(untyped clip.maskContainer, true);
-				applyNewBounds(clip, untyped clip.maskContainer.currentBounds);
+
+				if (untyped clip.localTransformChanged) {
+					untyped clip.transform.updateLocalTransform();
+				}
+
+				applyNewBounds(clip, applyInvertedTransform(untyped clip.maskContainer.currentBounds, clip.localTransform));
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
