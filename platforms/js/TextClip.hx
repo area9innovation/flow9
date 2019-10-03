@@ -339,14 +339,23 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.resize = 'none';
 			}
 
-			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
+			nativeWidget.style.marginTop = RenderSupportJSPixi.RendererType == "html" ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+
+			nativeWidget.style.direction = switch (textDirection) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		} else {
-			nativeWidget.textContent = StringTools.replace(
-				StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text,
-				"\t",
-				" "
-			);
+			var textContent = getContentGlyphs().modified;
+			nativeWidget.textContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+
+			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		}
 
 		if ((!Platform.isIE && !Platform.isEdge) || !isInput) {
@@ -355,20 +364,14 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.opacity = null;
 		}
 
-		nativeWidget.style.letterSpacing = !RenderSupportJSPixi.DomRenderer || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
-		nativeWidget.style.fontFamily = !RenderSupportJSPixi.DomRenderer || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
-		nativeWidget.style.fontWeight = !RenderSupportJSPixi.DomRenderer || style.fontWeight != 400 ? style.fontWeight : null;
-		nativeWidget.style.fontStyle = !RenderSupportJSPixi.DomRenderer || style.fontStyle != 'normal' ? style.fontStyle : null;
+		nativeWidget.style.letterSpacing = RenderSupportJSPixi.RendererType != "html" || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		nativeWidget.style.fontFamily = RenderSupportJSPixi.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
+		nativeWidget.style.fontWeight = RenderSupportJSPixi.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
+		nativeWidget.style.fontStyle = RenderSupportJSPixi.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.background = !RenderSupportJSPixi.DomRenderer || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${style.lineHeight}px';
-
-		nativeWidget.style.direction = switch (textDirection) {
-			case 'RTL' : 'rtl';
-			case 'rtl' : 'rtl';
-			default : null;
-		}
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -462,9 +465,7 @@ class TextClip extends NativeWidgetClip {
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
 
-		if (!RenderSupportJSPixi.DomRenderer) {
-			measureFont();
-		}
+		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
 		if (this.textDirection == '') this.textDirection = getStringDirection(this.text, '');
@@ -478,7 +479,7 @@ class TextClip extends NativeWidgetClip {
 
 		invalidateMetrics();
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 		}
 	}
@@ -598,7 +599,7 @@ class TextClip extends NativeWidgetClip {
 
 	public override function invalidateStyle() : Void {
 		if (!doNotInvalidateStage) {
-			if (!RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType != "html") {
 				if (isInput) {
 					setScrollRect(0, 0, getWidth(), getHeight());
 				}
@@ -1166,43 +1167,23 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (style.fontProperties == null || true) {
-				var ascent = 0.9 * style.fontSize;
-				var descent = 0.1 * style.fontSize;
-				var leading = 0.15 * style.fontSize;
+		if (style.fontProperties == null) {
+			var ascent = 0.9 * style.fontSize;
+			var descent = 0.1 * style.fontSize;
+			var leading = 0.15 * style.fontSize;
 
-				return [
-					ascent + interlineSpacing / 2.0,
-					descent + interlineSpacing / 2.0,
-					leading + interlineSpacing / 2.0
-				];
-			} else {
-				return [
-					style.fontProperties.ascent + interlineSpacing / 2.0,
-					style.fontProperties.descent + interlineSpacing / 2.0,
-					style.fontProperties.descent + interlineSpacing / 2.0
-				];
-			}
+			return [ascent, descent, leading];
 		} else {
-			if (style.fontProperties == null) {
-				var ascent = 0.9 * style.fontSize;
-				var descent = 0.1 * style.fontSize;
-				var leading = 0.15 * style.fontSize;
-
-				return [ascent, descent, leading];
-			} else {
-				return [
-					style.fontProperties.ascent,
-					style.fontProperties.descent,
-					style.fontProperties.descent
-				];
-			}
+			return [
+				style.fontProperties.ascent,
+				style.fontProperties.descent,
+				style.fontProperties.descent
+			];
 		}
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (!isNativeWidget) {
 				return;
 			}

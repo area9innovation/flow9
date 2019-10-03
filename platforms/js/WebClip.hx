@@ -68,7 +68,7 @@ class WebClip extends NativeWidgetClip {
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			iframe.className = 'nativeWidget';
 			iframe.style.pointerEvents = 'auto';
 		}
@@ -93,7 +93,7 @@ class WebClip extends NativeWidgetClip {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
 
-				if (!RenderSupportJSPixi.DomRenderer) {
+				if (RenderSupportJSPixi.RendererType != "html") {
 					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
 					if (Native.isTouchScreen()) {
 						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);

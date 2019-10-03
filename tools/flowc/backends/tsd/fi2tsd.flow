@@ -1,0 +1,113 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+import text/blueprint;
+
+export {
+	fi2tsd(f : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void;
+}
+
+fi2tsd(p : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void {
+
+	folder = if (cfg.outputfolder == "1") "@types/" else cfg.outputfolder;
+
+	traverseInOrder(p.modules, \path, module -> {
+		modul = fimodule2tsd(p, cfg, module);
+
+		file = pathCombine(folder, path)  + ".d.ts";
+		ensureDirectoryExists(dirName(file));
+		setFileContent(file, modul);
+		{}
+	});
+
+	callback();
+}
+
+
+fimodule2tsd(p : FiProgram, cfg : FiTsdConfig, m : FiModule) -> string {
+	superglue(m.imports, \im -> {
+		"import '" + im.flowfile + "';\n"
+	}, "")
+	+ superglue(m.exports, \ex -> {
+		finame2ts(p, m, ex);
+	}, "\n");
+}
+
+finame2ts(p : FiProgram, m : FiModule, e : string) -> string {
+	mdec = lookupTree(p.names.toplevel, e);
+	switch (mdec) {
+		None(): {
+			ms = lookupTree(p.names.structs, e);
+			switch (ms) {
+				None(): {
+					mu = lookupTree(p.names.unions, e);
+					switch (mu) {
+						None(): {
+							"Unknown " + e;
+						}
+						Some(u): {
+							"// TODO: Check union syntax"
+							+ tsReserved(u.name )
+							+ (if (u.typeparameters != []) "<" + superglue(u.typeparameters, fitype2ts, ", ") + ">" else "")
+							+ " ::= " + superglue(u.typenames, fitype2ts, ", ") + ";"
+						}
+					}
+				}
+				Some(str): {
+					"export interface " + tsReserved(e) + " {" + superglue(
+						str.args, 
+						\sa -> (if (sa.ismutable) "mutable " else "") + sa.name + " : " + fitype2ts(sa.type) + ";", 
+						" "
+					) + "};";
+				}
+			}
+		}
+		Some(dec): {
+			switch (dec) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): "export function " + tsReserved(name) + 
+					"(" + superglue(type.args, \arg -> {
+						(if (arg.name != "") arg.name + ": " else "") + fitype2ts(arg.type)
+					}, ", ") + "): " + fitype2ts(type.returnType)
+					+ ";";
+				FiGlobalVar(name, value, type, declStart, defiStart): "export const " + tsReserved(name) + " : " + fitype2ts(type) + ";";
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+					"// TODO native " + tsReserved(name) + " : " + fitype2ts(type) + " = " + nativeName;
+				}
+			}
+		}
+	}	
+}
+
+tsReserved(name : string) -> string {
+	// https://github.com/Microsoft/TypeScript/issues/2536
+	if (contains(["break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do", "else", "enum", "export", 
+		"extends", "false", "finally", "for", "function", "if", "import", "in", "instanceof", "new", "null", "return", "super",
+		"switch", "this", "throw", "true", "try", "typeof", "var", "void", "while", "with",
+		
+		"as", "implements", "interface", "let", "package", "private", "protected", "public", "static", "yield",
+
+		"any", "boolean", "constructor", "declare", "get", "module", "require", "number", "set", "string", "symbol", "type", "from", "of",
+		], name)) {
+		name + "_"
+	} else name;
+}
+
+fitype2ts(ty : FiType) -> string {
+	switch (ty) {
+		FiTypeVoid(): "void";
+		FiTypeArray(t): "Array<" + fitype2ts(t) + ">";
+		FiTypeFunction(args, returnType): {
+			"(" + supergluei(args, \i, arg -> {
+				(if (arg.name != "") tsReserved(arg.name) + ": " else "a" + i2s(i) + ": ") + fitype2ts(arg.type)
+			}, ", ") + ")=> " + fitype2ts(returnType);
+		}
+		FiTypeRef(t): "any"; // TODO
+		FiTypeParameter(n): "any"; // TODO
+		FiTypeBool(): "boolean";
+		FiTypeInt(): "bigint";
+		FiTypeDouble(): "number";
+		FiTypeString(): "string";
+		FiTypeFlow(): "any";
+		FiTypeNative(): "any";
+		FiTypeName(name, typeparameters): "any"; // TODO
+	}
+}

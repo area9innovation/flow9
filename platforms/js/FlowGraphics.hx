@@ -112,7 +112,7 @@ class FlowGraphics extends Graphics {
 		calculateGraphicsBounds();
 
 		if (fillGradient != null) {
-			if (RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType == "html") {
 				untyped data.gradient = fillGradient;
 				untyped data.fillGradient = fillGradient.type == 'radial' ?
 					"radial-gradient(" :
@@ -180,7 +180,7 @@ class FlowGraphics extends Graphics {
 
 		invalidateTransform('endFill');
 
-		if (RenderSupportJSPixi.DomRenderer && !isEmpty) {
+		if (RenderSupportJSPixi.RendererType == "html" && !isEmpty) {
 			updateNativeWidgetGraphicsData();
 		}
 
