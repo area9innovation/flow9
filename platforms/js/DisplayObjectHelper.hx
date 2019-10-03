@@ -824,10 +824,10 @@ class DisplayObjectHelper {
 			// applyScrollFn(clip);
 		}
 
-		nativeWidget.style.left = tx != 0 ? '${tx}px' : null;
-		nativeWidget.style.top = ty != 0 ? '${ty}px' : null;
+		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
+		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
 		nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
-			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : null;
+			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
 	}
 
 	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
@@ -859,7 +859,7 @@ class DisplayObjectHelper {
 				nativeWidget.style.opacity = untyped clip.isFocused ? alpha : 0;
 			}
 		} else {
-			nativeWidget.style.opacity = alpha != 1 ? alpha : null;
+			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
 		}
 	}
 
