@@ -780,8 +780,10 @@ class DisplayObjectHelper {
 		var ty = round(transform.ty);
 
 		if (untyped clip.scrollRect != null) {
-			tx = round(transform.tx) + untyped clip.scrollRect.x;
-			ty = round(transform.ty) + untyped clip.scrollRect.y;
+			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
+
+			tx = round(point.x);
+			ty = round(point.y);
 		}
 
 		var localBounds = untyped clip.localBounds;
@@ -1148,7 +1150,6 @@ class DisplayObjectHelper {
 			var graphicsData = mask.graphicsData;
 
 			if (graphicsData != null) {
-				var transform = new Matrix();
 				var data = graphicsData[0];
 
 				if (data.shape.type == 0) {
@@ -1200,8 +1201,9 @@ class DisplayObjectHelper {
 							}
 						}
 					} else {
+						var transform = prependInvertedMatrix(clip.worldTransform, untyped clip.mask.worldTransform);
 						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
-							return i % 2 == 0 ? '' + p * mask.parent.localTransform.a + 'px ' : '' + p * mask.parent.localTransform.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
+							return i % 2 == 0 ? '' + p * transform1.a + 'px ' : '' + p * transform1.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
 						}).join('') + ')'");
 						untyped nativeWidget.style.webkitClipPath = nativeWidget.style.clipPath;
 					}
@@ -1522,9 +1524,17 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (untyped clip.maskContainer != null) {
+			if (untyped clip.scrollRect != null) {
+				invalidateLocalBounds(untyped clip.scrollRect, true);
+				applyNewBounds(clip, untyped clip.scrollRect.currentBounds);
+			} else if (untyped clip.maskContainer != null) {
 				invalidateLocalBounds(untyped clip.maskContainer, true);
-				applyNewBounds(clip, untyped clip.maskContainer.currentBounds);
+
+				if (untyped clip.localTransformChanged) {
+					untyped clip.transform.updateLocalTransform();
+				}
+
+				applyNewBounds(clip, applyInvertedTransform(untyped clip.maskContainer.currentBounds, clip.localTransform));
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
