@@ -9,55 +9,46 @@ contentZoomDef = MCarouselContentZoom(1., 1., 0.);
 
 MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	state = makeMCarouselState(manager, m);
-	contentHeight = make(0.0);
-	heightByContent = contains(m.style, MCarouselHeightByContent());
 
 	if (state.contentsLength > 0)
 		(\p -> {
 			boxWH = makeWH();
+			contentHeight = make(0.0);
 
 			mapi(m.contents, \i, c ->
 				MCarouselContent2T(manager, p, c, i, m.style, state, m2t)
 			)
 			|> TGroup
-			|> (\f ->
-				if (heightByContent) {
-					TAttachHeight(f, contentHeight);
-				} else {
-					f;
-				}
-			)
 			|> (\f -> TTranslate(fpoint(state.tx, const(0.)), f))
-			|> (\f -> TCrop(const(zeroPoint), state.wh, f))
 			|> (\f ->
 				TConstruct(
 					[
-						makeSubscribe(
-							if (heightByContent) {
-								fselect2(boxWH, contentHeight, FLift2(\wh, ch -> {
-									WidthHeight(
-										wh.width,
-										ch
-									)
-								}));
-							} else {
-								fselect(boxWH, FLift(\wh ->
-									WidthHeight(
-										if (wh.width < 120.) {if (wh.height < 120.) 120. else wh.height * goldenRatio} else wh.width,
-										if (wh.height < 120.) {if (wh.width < 120.) 120. else wh.width / goldenRatio} else wh.height
-									)
-								));
-							},	\wh -> {
-								nextDistinct(state.wh, wh);
-								nextDistinct(state.tx, -wh.width * i2d(getValue(state.activeIdx)));
-								next(state.activeIdx, getValue(state.activeIdx)); // in order to trigger the animation
-							}
-						)
+						makeSubscribe(boxWH, \wh -> {
+							whWithRatio =
+								if (state.heightByContent) wh
+								else WidthHeight(
+									if (wh.width < 120.) {if (wh.height < 120.) 120. else wh.height * goldenRatio} else wh.width,
+									if (wh.height < 120.) {if (wh.width < 120.) 120. else wh.width / goldenRatio} else wh.height
+								);
+							nextDistinct(state.wh, whWithRatio);
+							nextDistinct(state.tx, -whWithRatio.width * i2d(getValue(state.activeIdx)));
+							next(state.activeIdx, getValue(state.activeIdx)); // in order to trigger the animation
+						})
 					],
 					f
 				)
 			)
-			|> (\t -> TAttachAvailable(t, boxWH))
+			|> (\f -> if (state.heightByContent) TAttachHeight(f, contentHeight) else f)
+			|> (\f -> TCrop(const(zeroPoint), state.wh, f))
+			|> (\f -> if (state.heightByContent) {
+				availableWidth = make(0.0);
+				TConstruct(
+					[ \ -> fconnect(fwh(availableWidth, contentHeight), boxWH) ],
+					TAttachAvailableWidth(f, availableWidth)
+				);
+			} else {
+				TAttachAvailable(f, boxWH);
+			})
 			|> (\f : Tropic ->
 				if (state.contentsLength > state.itemsSpan)
 					MSwipe2T(
@@ -285,6 +276,7 @@ MCarouselState(
 	bottomMargin : double,
 	buttonsColor : MColor,
 	iconSize : double,
+	heightByContent : bool,
 	subs : [() -> () -> void]
 );
 
@@ -422,6 +414,8 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		true
 	}
 
+	heightByContent = contains(m.style, MCarouselHeightByContent());
+
 	subs =
 		[
 			\ -> subscribe2(targetTx, \finalTx -> {
@@ -491,6 +485,7 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		bottomMargin,
 		buttonsColor,
 		iconSize,
+		heightByContent,
 		subs
 	)
 }
@@ -682,7 +677,7 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 						|> (\f2 -> TGroup2(TFillX(), f2))
 						|> (\f2 -> TFixSize(f2, TFillXH(state.bottomMargin)))
 						|> (\f2 -> TFrame(0., 0., [MFill(footerColor), FillOpacity(footerOpacity)], f2))
-						|> (\f2 -> TAvailable(f2, carouselBox))
+						|> (\f2 -> TAvailableWidth(f2, blockWidth))
 						|> (\f2 ->
 							eitherMap(
 								state.maximize,
@@ -722,7 +717,7 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 		)
 	)
 	|> (\f -> TFrame(0., 0., bgStyle, f)) // Add background
-	|> (\f -> TAvailable(f, carouselBox))
+	|> (\f -> if (state.heightByContent) TAvailableWidth(f, blockWidth) else TAvailable(f, carouselBox))
 	// |> (\f ->
 	// 	TInteractive(
 	// 		[

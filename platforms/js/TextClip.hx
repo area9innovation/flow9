@@ -290,16 +290,20 @@ class TextClip extends NativeWidgetClip {
 		for (child in children) {
 			var c : Dynamic = child;
 			var ctext = bidiUndecorate(c.text);
-			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
+			var chridx : Int = c.orgCharIdxStart;
+			var chridxe : Int = c.orgCharIdxEnd;
+			if (chridx <= charIdx && chridxe >= charIdx) {
 				var text = "";
-				var chridx : Int = c.orgCharIdxStart;
 				for (i in 0...ctext[0].length) {
 					if (chridx >= charIdx) break;
 					chridx += 1 + Math.round(c.difPositionMapping[i]);
 					text += ctext[0].substr(i, 1);
 				}
+				var mtx0 : Dynamic = pixi.core.text.TextMetrics.measureText("", c.style);
 				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
 				var mtxPrev : Dynamic = pixi.core.text.TextMetrics.measureText(text.substr(0, text.length-1), c.style);
+				mtx.width -= mtx0.width;
+				mtxPrev.width -= mtx0.width;
 				var result = c.x + (mtxPrev.width*(chridx-charIdx) + mtx.width) / (1 + chridx-charIdx);
 				if (ctext[1] == 'rtl') return c.width - result;
 				return result;
@@ -331,39 +335,43 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.maxLength = maxChars;
 			}
 
-			if (tabIndex >= 0) {
-				nativeWidget.tabIndex = tabIndex;
-			}
-
 			if (multiline) {
 				nativeWidget.style.resize = 'none';
 			}
 
-			nativeWidget.style.marginTop = RenderSupportJSPixi.DomRenderer ? '0px' : '-1px';
+			nativeWidget.style.marginTop = RenderSupportJSPixi.RendererType == "html" ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+
+			nativeWidget.style.direction = switch (textDirection) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		} else {
-			nativeWidget.textContent = StringTools.replace(
-				StringTools.startsWith(text, ' ') ? ' ' + text.substring(1) : text,
-				"\t",
-				" "
-			);
+			var textContent = getContentGlyphs().modified;
+			nativeWidget.textContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+
+			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
 		}
 
-		nativeWidget.style.color = style.fill;
-		nativeWidget.style.letterSpacing = !RenderSupportJSPixi.DomRenderer || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
-		nativeWidget.style.fontFamily = !RenderSupportJSPixi.DomRenderer || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
-		nativeWidget.style.fontWeight = !RenderSupportJSPixi.DomRenderer || style.fontWeight != 400 ? style.fontWeight : null;
-		nativeWidget.style.fontStyle = !RenderSupportJSPixi.DomRenderer || style.fontStyle != 'normal' ? style.fontStyle : null;
+		if ((!Platform.isIE && !Platform.isEdge) || !isInput) {
+			nativeWidget.style.color = style.fill;
+		} else {
+			nativeWidget.style.opacity = null;
+		}
+
+		nativeWidget.style.letterSpacing = RenderSupportJSPixi.RendererType != "html" || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		nativeWidget.style.fontFamily = RenderSupportJSPixi.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
+		nativeWidget.style.fontWeight = RenderSupportJSPixi.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
+		nativeWidget.style.fontStyle = RenderSupportJSPixi.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.background = !RenderSupportJSPixi.DomRenderer || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${style.lineHeight}px';
-
-		nativeWidget.style.direction = switch (textDirection) {
-			case 'RTL' : 'rtl';
-			case 'rtl' : 'rtl';
-			default : null;
-		}
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -371,18 +379,6 @@ class TextClip extends NativeWidgetClip {
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
 			default : null;
-		}
-
-		if (!RenderSupportJSPixi.DomRenderer) {
-			if (Platform.isEdge || Platform.isIE) {
-				nativeWidget.style.opacity = 1;
-				var slicedColor : Array<String> = style.fill.split(",");
-				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
-
-				nativeWidget.style.color = newColor;
-			} else {
-				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
-			}
 		}
 	}
 
@@ -453,6 +449,9 @@ class TextClip extends NativeWidgetClip {
 		fontFamilies = fontWeight > 0 || fontSlope != ""
 				? fontFamilies.split(",").map(function (fontFamily) { return recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(",")
 				: fontFamilies;
+		if (Platform.isSafari) {
+			fontSize = Math.round(fontSize);
+		}
 
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
 
@@ -466,9 +465,7 @@ class TextClip extends NativeWidgetClip {
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
 
-		if (!RenderSupportJSPixi.DomRenderer) {
-			measureFont();
-		}
+		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
 		if (this.textDirection == '') this.textDirection = getStringDirection(this.text, '');
@@ -482,7 +479,7 @@ class TextClip extends NativeWidgetClip {
 
 		invalidateMetrics();
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 		}
 	}
@@ -492,9 +489,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function layoutText() : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
-			return;
-		} else if (isFocused || text == '') {
+		if (isFocused || text == '') {
 			if (textClip != null) {
 				textClip.setClipVisible(false);
 			}
@@ -512,14 +507,15 @@ class TextClip extends NativeWidgetClip {
 					),
 					chrIdx, style
 				);
-				textClip.orgCharIdxStart = chrIdx;
-				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
 			} else {
 				textClip.text = bidiDecorate(texts[0][0], textDirection);
+				textClip.difPositionMapping = modification.difPositionMapping;
 				textClip.style = style;
 			}
+			textClip.orgCharIdxStart = chrIdx;
+			textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
@@ -576,7 +572,12 @@ class TextClip extends NativeWidgetClip {
 			};
 
 			textClip.setClipX(anchorX * Math.max(0, getWidgetWidth() - getClipWidth()));
+
 			if (style.fontFamily == "Material Icons") {
+				if (style.fontProperties == null) {
+					measureFont();
+				}
+
 				textClip.setClipY(style.fontProperties.descent / (Platform.isIOS ? 2.0 : Platform.isMacintosh ? RenderSupportJSPixi.backingStoreRatio : 1.0));
 			}
 
@@ -598,7 +599,7 @@ class TextClip extends NativeWidgetClip {
 
 	public override function invalidateStyle() : Void {
 		if (!doNotInvalidateStage) {
-			if (!RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType != "html") {
 				if (isInput) {
 					setScrollRect(0, 0, getWidth(), getHeight());
 				}
@@ -1166,43 +1167,23 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (style.fontProperties == null) {
-				var ascent = 0.9 * style.fontSize;
-				var descent = 0.1 * style.fontSize;
-				var leading = 0.15 * style.fontSize;
+		if (style.fontProperties == null) {
+			var ascent = 0.9 * style.fontSize;
+			var descent = 0.1 * style.fontSize;
+			var leading = 0.15 * style.fontSize;
 
-				return [
-					ascent + interlineSpacing / 2.0,
-					descent + interlineSpacing / 2.0,
-					leading + interlineSpacing / 2.0
-				];
-			} else {
-				return [
-					style.fontProperties.ascent + interlineSpacing / 2.0,
-					style.fontProperties.descent + interlineSpacing / 2.0,
-					style.fontProperties.descent + interlineSpacing / 2.0
-				];
-			}
+			return [ascent, descent, leading];
 		} else {
-			if (style.fontProperties == null) {
-				var ascent = 0.9 * style.fontSize;
-				var descent = 0.1 * style.fontSize;
-				var leading = 0.15 * style.fontSize;
-
-				return [ascent, descent, leading];
-			} else {
-				return [
-					style.fontProperties.ascent,
-					style.fontProperties.descent,
-					style.fontProperties.descent
-				];
-			}
+			return [
+				style.fontProperties.ascent,
+				style.fontProperties.descent,
+				style.fontProperties.descent
+			];
 		}
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (!isNativeWidget) {
 				return;
 			}

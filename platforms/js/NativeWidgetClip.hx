@@ -21,24 +21,6 @@ class NativeWidgetClip extends FlowContainer {
 		super(worldVisible);
 	}
 
-	private function getTransform(?worldTransform : Bool) : Matrix {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (worldTransform == null) {
-				worldTransform = !RenderSupportJSPixi.RenderContainers;
-			}
-
-			if (!worldTransform) {
-				untyped this.transform.updateLocalTransform();
-			}
-
-			return worldTransform ? untyped this.worldTransform : untyped this.localTransform;
-		} else if (accessWidget != null) {
-			return accessWidget.getTransform();
-		} else {
-			return this.worldTransform;
-		}
-	}
-
 	private override function createNativeWidget(?tagName : String = "div") : Void {
 		if (!isNativeWidget) {
 			return;
@@ -50,7 +32,7 @@ class NativeWidgetClip extends FlowContainer {
 		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			if (accessWidget == null) {
 				accessWidget = new AccessWidget(this, nativeWidget);
 			} else {
@@ -77,7 +59,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.width = '${untyped getWidgetWidth()}px';
 		nativeWidget.style.height = '${untyped getWidgetHeight()}px';
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			var viewBounds = getViewBounds();
 
 			if (viewBounds != null) {

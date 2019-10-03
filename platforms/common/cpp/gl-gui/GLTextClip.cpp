@@ -1209,11 +1209,6 @@ StackSlot GLTextClip::setWordWrap(RUNNER_ARGS)
     RETVOID;
 }
 
-StackSlot GLTextClip::setDoNotInvalidateStage(RUNNER_ARGS)
-{
-    RETVOID;
-}
-
 StackSlot GLTextClip::setAutoAlign(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(state);
