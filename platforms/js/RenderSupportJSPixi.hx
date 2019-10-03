@@ -253,6 +253,8 @@ class RenderSupportJSPixi {
 			untyped PixiRenderer.gl.viewport(0, 0, untyped PixiRenderer.gl.drawingBufferWidth, untyped PixiRenderer.gl.drawingBufferHeight);
 			untyped PixiRenderer.gl.clearColor(1.0, 1.0, 1.0, 1.0);
 			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
+		} else if (RendererType == "html") {
+			untyped PixiRenderer.plugins.interaction.removeEvents();
 		}
 
 		PixiView = PixiRenderer.view;
