@@ -1,4 +1,4 @@
-#include "DebugManager.hpp"
+#include "debug/DebugManager.hpp"
 
 #include <QRegExp>
 #include <QFile>
@@ -19,6 +19,8 @@ namespace flow {
 
 DebugManager::DebugManager(FlowView& view)
 :   QObject(&view), flowView_(view), debugLocationChanged_(true), currentFrame_(0) {
+	connect(flowView_.flowOutput_.ui.fdbMiOutEnabledCheckBox, SIGNAL(stateChanged(int)), this, SLOT(slotMiOutputStateChanged(int)));
+	flowView_.flowOutput_.ui.tabWidget->removeTab(3);
 }
 
 DebugManager::~DebugManager() {
@@ -344,6 +346,20 @@ void DebugManager::slotIssueNextCommand() {
 		debugLocationChanged_ = false;
 		queryLocals();
 		return;
+	}
+}
+
+void DebugManager::slotMiOutputStateChanged(int new_state) {
+	int num_tabs = flowView_.flowOutput_.ui.tabWidget->count();
+	if (new_state == Qt::Checked) {
+		flowView_.flowOutput_.ui.tabWidget->insertTab(num_tabs, flowView_.flowOutput_.ui.miOutputTab, QLatin1String("Fdb Mi output"));
+	} else {
+		int mi_tab_index = -1;
+		for (int i = 0; i < num_tabs; ++ i) {
+			if (flowView_.flowOutput_.ui.tabWidget->tabBar()->tabText(i) == QLatin1String("Fdb Mi output")) {
+				flowView_.flowOutput_.ui.tabWidget->removeTab(i);
+			}
+		}
 	}
 }
 
