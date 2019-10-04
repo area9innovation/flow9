@@ -35,7 +35,7 @@ FlowView::FlowView(KatePluginFlow* plugin, KTextEditor::MainWindow* mainWin) :
 		QIcon::fromTheme(QLatin1String("media-playback-start")),
 		QLatin1String("Flow config")
 	)),
-	flowManager_(new FlowManager(mainWindow_, *this)),
+	flowManager_(new FlowManager(FlowEnv{mainWindow_, *this})),
 	debugView_(new DebugView(plugin_, mainWindow_, *this)),
 	flowServer_(new FlowServer(mainWindow_, *this)),
 	outline_ (new Outline(mainWindow_, this)),
@@ -51,6 +51,7 @@ FlowView::FlowView(KatePluginFlow* plugin, KTextEditor::MainWindow* mainWin) :
     debugView_->slotReloadLaunchConfigs();
     slotReloadLaunchConfigs();
     connect(flowOutput_.ui.compilerOutTextEdit, SIGNAL(signalCompilerLocation(QString, int, int)), this, SLOT(slotGotoLocation(QString, int, int)));
+    connect(flowConfig_.ui.serverTextEdit, SIGNAL(signalCompilerLocation(QString, int, int)), this, SLOT(slotGotoLocation(QString, int, int)));
     connect (mainWindow_, SIGNAL(viewChanged(KTextEditor::View*)), outline_, SLOT(refresh(KTextEditor::View*)));
 
     mainWindow_->guiFactory()->addClient(this);
