@@ -1,4 +1,4 @@
-#include "DebugView.hpp"
+#include "debug/DebugView.hpp"
 
 #include <QMenu>
 #include <QFileInfo>
@@ -18,10 +18,10 @@
 
 #include "FlowView.hpp"
 #include "FlowManager.hpp"
-#include "LocalsManager.hpp"
-#include "StackManager.hpp"
-#include "DebugManager.hpp"
 #include "DebugView.moc"
+#include "debug/LocalsManager.hpp"
+#include "debug/StackManager.hpp"
+#include "DebugManager.hpp"
 
 namespace flow {
 

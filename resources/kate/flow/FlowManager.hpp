@@ -14,12 +14,10 @@
 
 namespace flow {
 
-class FlowView;
-
 class FlowManager : public QObject {
 	Q_OBJECT
 public:
-	enum State {
+	enum Task {
 		IDLE,
 		COMPILING,
 		RUNNING,
@@ -45,7 +43,7 @@ public Q_SLOTS:
     void slotLookupDefinition();
     void slotLookupType();
     void slotLookupUses();
-    void slotRename();
+    void slotStartRename();
     void slotCompleteRename();
     void slotOutline(KTextEditor::View* view);
 
@@ -61,7 +59,7 @@ private Q_SLOTS:
     void slotLaunchFinished(int exitCode, QProcess::ExitStatus status);
 
 private:
-    void build(int, State nextState, bool force = false);
+    void build(int, Task nextTask, bool force = false);
     bool makeGlobalConfig(const QString& root) const;
 
     KTextEditor::MainWindow* mainWindow_;
@@ -72,10 +70,10 @@ private:
 
 	typedef std::chrono::high_resolution_clock::time_point Time;
 
-	struct InternalState {
-		InternalState() : state(State::IDLE) { }
+	struct InternalTask {
+		InternalTask() : task(Task::IDLE) { }
 		template<class T>
-		InternalState(State s, const T& d) : state(s), data(d) {
+		InternalTask(Task s, const T& d) : task(s), data(d) {
 			start = std::chrono::high_resolution_clock::now();
 		}
 		double milliseconds() const {
@@ -84,7 +82,7 @@ private:
 			return static_cast<double>(time) / 1000.0;
 		}
 		bool showCompilerOutput() const {
-			switch (state) {
+			switch (task) {
 			case IDLE:        return false;
 			case COMPILING:   return true;
 			case RUNNING:     return true;
@@ -101,7 +99,7 @@ private:
 		}
 		QString show(bool full = false) const {
 			QString ret;
-			switch (state) {
+			switch (task) {
 			case IDLE:        ret += QLatin1String("IDLE");        break;
 			case COMPILING:   ret += QLatin1String("COMPILING");   break;
 			case RUNNING:     ret += QLatin1String("RUNNING");     break;
@@ -120,33 +118,33 @@ private:
 			}
 			return ret;
 		}
-		State state;
+		Task task;
 		QVariant data;
 		QString output;
 		Time start;
 		Time end;
 	};
 
-	struct StateKeeper {
-		InternalState get() {
-			internal_state_.end = std::chrono::high_resolution_clock::now();
-			return internal_state_;
+	struct TaskKeeper {
+		InternalTask get() {
+			internal_task_.end = std::chrono::high_resolution_clock::now();
+			return internal_task_;
 		}
-		InternalState peek() {
-			return internal_state_;
+		InternalTask peek() {
+			return internal_task_;
 		}
-		QString& output() { return internal_state_.output; }
+		QString& output() { return internal_task_.output; }
 		template<class T>
-		bool start(State s, const T& d) {
-			if (internal_state_.state != State::IDLE) return false;
-			internal_state_ = InternalState(s, d);
+		bool start(Task s, const T& d) {
+			if (internal_task_.task != Task::IDLE) return false;
+			internal_task_ = InternalTask(s, d);
 			return true;
 		}
-		void stop() { internal_state_ = InternalState(); }
+		void stop() { internal_task_ = InternalTask(); }
 	private:
-		InternalState internal_state_;
+		InternalTask internal_task_;
 	};
-	StateKeeper state_;
+	TaskKeeper task_;
 };
 
 }

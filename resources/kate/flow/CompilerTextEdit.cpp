@@ -21,7 +21,7 @@ void CompilerTextEdit::mousePressEvent(QMouseEvent *e) {
 		int line = errorPosExp.cap(3).toInt() - 1;
 		int col = errorPosExp.cap(5).toInt();
 		if (line > -1) {
-			emit signalCompilerError(file, line, col);
+			emit signalCompilerLocation(file, line, col);
 		}
 	}
 	QPlainTextEdit::mousePressEvent(e);

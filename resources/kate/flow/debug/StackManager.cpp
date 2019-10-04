@@ -1,13 +1,14 @@
+#include "debug/StackManager.hpp"
+
 #include <QLabel>
 #include <QTextStream>
 #include <QHeaderView>
 
 #include "common.hpp"
-#include "MiParser.hpp"
-#include "FlowView.hpp"
-#include "FlowValueParser.hpp"
+#include "debug/MiParser.hpp"
 #include "DebugSymbols.hpp"
-#include "StackManager.hpp"
+#include "FlowValueParser.hpp"
+#include "FlowView.hpp"
 
 namespace flow {
 
