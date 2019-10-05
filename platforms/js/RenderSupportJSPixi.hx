@@ -936,7 +936,7 @@ class RenderSupportJSPixi {
 		requestAnimationFrame();
 	}
 
-	private static inline function render() {
+	public static inline function render() {
 		animate(Browser.window.performance.now());
 	}
 

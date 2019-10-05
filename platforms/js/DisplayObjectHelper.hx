@@ -585,9 +585,15 @@ class DisplayObjectHelper {
 			}
 		}
 
+		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget(clip)) {
+			untyped clip.nativeWidget.style.visibility = untyped clip.keepNativeWidget ? "visible" : clip.keepNativeWidgetChildren ? "inherit" : null;
+		}
+
 		if (untyped clip.parent != null && clip.parent.keepNativeWidgetChildren != clip.keepNativeWidgetChildren) {
 			updateKeepNativeWidgetChildren(clip.parent, untyped clip.keepNativeWidgetChildren);
 		}
+
+		invalidateTransform(clip, 'updateKeepNativeWidgetChildren');
 	}
 
 	public static function getViewBounds(clip : DisplayObject) : Bounds {
