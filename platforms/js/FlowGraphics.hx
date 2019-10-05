@@ -547,16 +547,24 @@ class FlowGraphics extends Graphics {
 						svg.appendChild(path);
 						nativeWidget.appendChild(svg);
 					} else {
-						if (data.fill != null && data.fillAlpha > 0) {
-							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
-						} else {
-							nativeWidget.style.background = null;
-						}
-
 						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
 							nativeWidget.style.border = '${data.lineWidth}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
 						} else {
 							nativeWidget.style.border = null;
+						}
+
+						if (data.fill != null && data.fillAlpha > 0) {
+							if (widgetBounds.getBoundsWidth() <= 2.0) {
+								nativeWidget.style.borderLeft = '${widgetBounds.getBoundsWidth()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+								nativeWidget.style.background = null;
+							} else if (widgetBounds.getBoundsHeight() <= 2.0) {
+								nativeWidget.style.borderTop = '${widgetBounds.getBoundsHeight()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+								nativeWidget.style.background = null;
+							} else {
+								nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+							}
+						} else {
+							nativeWidget.style.background = null;
 						}
 
 						if (untyped data.fillGradient != null) {
@@ -567,27 +575,30 @@ class FlowGraphics extends Graphics {
 							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
 							var left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else if (data.shape.type == 3) {
 							var left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width - data.lineWidth)}px /
 								${DisplayObjectHelper.round(data.shape.height - data.lineWidth)}px';
 						} else if (data.shape.type == 4) {
 							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');
