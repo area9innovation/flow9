@@ -2,56 +2,88 @@ import forcelayout;
 
 import ds/simplegraph;
 import ui/slider;
+import ui/easybutton;
 
-Data(id : int, self : int, score: int);
+Data(id : int, self : int, score: int, time : int);
 
 main() {
 	datapoints = [
-		Data(3715, 1, 100),
-		Data(2200, 1, 80),
-		Data(2245, 1, 75),
-		Data(2095, 1, 67),
-		Data(19007, 2, 0),
-		Data(19008, 2, 0),
-		Data(19004, 4, 100),
-		Data(2200, 1,20),
-		Data(2245, 2, 75),
-		Data(2095, 2, 50),
-		Data(19007, 1, 100),
-		Data(19005, 4, 0 ),
-		Data(19008, 1, 100),
-		Data(2200, 3,  0 ),
-		Data(2245, 1, 100),
-		Data(2458, 2, 0),
-		Data(3468, 2, 0),
-		Data(9458, 2, 0),
-		Data(19005, 4, 0 ),
-		Data(24556, 2, 0),
-		Data(19008, 2, 0),
-		Data(3428, 2, 0),
+		Data(3715, 1, 100, 60),
+		Data(2200, 1, 80, 30),
+		Data(2245, 1, 75, 45),
+		Data(2095, 1, 67, 25),
+		Data(19007, 2, 0, 56),
+		Data(19008, 2, 0, 62),
+		Data(19004, 4, 100, 23),
+		Data(2200, 1,20, 54),
+		Data(2245, 2, 75, 64),
+		Data(2095, 2, 50, 23),
+		Data(19007, 1, 100, 35),
+		Data(19005, 4, 0, 36),
 	];
 
-	graph0 = makeSimpleGraph();
-
-	graph = foldi(datapoints, graph0, \i, acc, data -> {
-		if (i == 0) {
-			addSimpleNode(acc, data.id);
-		} else {
-			prev = datapoints[i - 1];
-			addSimpleEdge(acc, prev.id, data.id, data.score, 1)
+	layout = fold(
+		datapoints, DataAndLayout(datapoints, makeForceLayout(WidthHeight(600.0, 600.0))),
+		\acc, data -> {
+			addDataPoint(acc, data)
 		}
-	});
+	);
 
-	layout = graph2layout(getEGNodes(graph.graph), getEGEdges(graph.graph), [0], [], WidthHeight(600.0, 1024.0));
+	datalayout = make(layout);
 
-	gui = layout2form(layout);
+	gui = Lines([
+		EasyButton("ADD", "", orange, \-> {
+			dataid = if (random() < 0.5) {
+				data0 = pickOne(getValue(datalayout).datapoints);
+				data0.id;
+			} else {
+				floor(random() * 1000.0);
+			}
+
+			data = Data(dataid, floor(random() * 4.0) + 1, round(random() * 100.0), round(random() * 60.0) + 10);
+			nl = addDataPoint(getValue(datalayout), data);
+			next(datalayout, nl);
+		}, []),
+		Select(datalayout, \dl -> {
+			layout2form(dl)
+		})
+	]);
 
 	render(gui);
 }
 
+
+DataAndLayout(
+	datapoints : [Data],
+	layout : ForceLayout
+);
+
+addDataPoint(acc : DataAndLayout, d : Data) -> DataAndLayout {
+	nodeid = findiDef(acc.layout.nodes, \n -> n.id == d.id, -1);
+	layout0 = if (nodeid == -1) {
+		addNodeIdToLayout(acc.layout, d.id);
+	} else {
+		acc.layout;
+	}
+	layout1 = if (layout0.nodes == []) {
+		layout0
+	} else {
+		lastPoint = lastElement(acc.datapoints, d);
+		addEdgeToLayout(layout0, lastPoint.id, d.id);
+	}
+
+	// Give it new energy
+	layout1.alpha := 0.1;
+
+	DataAndLayout(
+		arrayPush(acc.datapoints, d),
+		layout1
+	);
+}
+
 // Helpers to set up a force layout graph
 
-graph2layout(nodes : [GNode], edges : [GEdge], sources : [int], sinks : [int], size : WidthHeight) -> ForceLayout {
+graph2layout(nodes : [GNode], edges : [GEdge], size : WidthHeight) -> ForceLayout {
 	layout0 = foldi(nodes, makeForceLayout(WidthHeight(600.0, 600.0)), \i, acc, node -> {
 		addNodeIdToLayout(acc, node.id)
 	});
@@ -60,12 +92,21 @@ graph2layout(nodes : [GNode], edges : [GEdge], sources : [int], sinks : [int], s
 	})
 }
 
-layout2form(layout : ForceLayout) -> Form {
-	generate(0, 100, \i -> forceTick(layout));
+layout2form(datalayout : DataAndLayout) -> Form {
+	layout = datalayout.layout;
+	generate(0, 50, \i -> forceTick(layout));
 	formDiGraphLayout2(layout, \nodeid : int -> {
-		color = if (random() < 0.5) green else if (random() < 0.5) yellow else red;
-		size = random() * 20.0 + 10.0;
-		Circle(0.0, 0.0, size, [Fill(color)])
+		mdata = find(datalayout.datapoints, \d -> d.id == nodeid);
+		switch (mdata) {
+			None(): {
+				Circle(0.0, 0.0, 10.0, [Fill(black)])
+			}
+			Some(data): {
+				color = if (data.score > 90) green else if (data.score >= 75) yellow else red;
+				size = i2d(min(data.time, 50)) / 2.0;
+				Circle(0.0, 0.0, size, [Fill(color)])
+			}
+		}
 	});
 }
 
@@ -102,7 +143,9 @@ drawGraphArrow(p2 : Point, p1 : Point) -> Form {
 	dx = p2.x - p1.x;
 	dy = p2.y - p1.y;
 
-	dist = sqrt(dx * dx + dy * dy);
+	dist0 = sqrt(dx * dx + dy * dy);
+
+	dist = if (dist0 == 0.0) 1.0 else dist0;
 
 	ux = dx / dist;
 	uy = dy / dist;
