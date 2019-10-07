@@ -316,6 +316,11 @@ class FlowGraphics extends Graphics {
 		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && !isSvg ? lineWidth : 0.0);
 		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && !isSvg ? lineWidth : 0.0);
 		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && !isSvg ? lineWidth : 0.0);
+
+		if (isSvg) {
+			widgetBounds.maxX = Math.max(widgetBounds.minX + 4.0, widgetBounds.maxX);
+			widgetBounds.maxY = Math.max(widgetBounds.minY + 4.0, widgetBounds.maxY);
+		}
 	}
 
 	public override function clear() : Graphics {
@@ -363,12 +368,13 @@ class FlowGraphics extends Graphics {
 				}
 
 				for (data in graphicsData) {
+					var lineWidth : Float = data.lineWidth != null ? data.lineWidth / 2.0 : 0.0;
 					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
 
-					svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0, 1.0)}px';
-					svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0, 1.0)}px';
-					svg.style.left = '${graphicsBounds.minX - filterPadding}px';
-					svg.style.top = '${graphicsBounds.minY - filterPadding}px';
+					svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+					svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+					svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
+					svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
 					svg.style.position = 'absolute';
 
 					if (data.fill != null && data.fillAlpha > 0) {
@@ -418,7 +424,7 @@ class FlowGraphics extends Graphics {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
 
 						if (untyped data.fillGradient != null) {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -432,7 +438,7 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("y", Std.string(data.shape.y));
 						rect.setAttribute("width", Std.string(data.shape.width));
 						rect.setAttribute("height", Std.string(data.shape.height));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -445,7 +451,7 @@ class FlowGraphics extends Graphics {
 						circle.setAttribute("cx", Std.string(data.shape.x));
 						circle.setAttribute("cy", Std.string(data.shape.y));
 						circle.setAttribute("r", Std.string(data.shape.radius));
-						circle.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
+						circle.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
 
 						if (untyped data.fillGradient != null) {
 							circle.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -461,7 +467,7 @@ class FlowGraphics extends Graphics {
 						rect.setAttribute("height", Std.string(data.shape.height));
 						rect.setAttribute("rx", Std.string(data.shape.radius));
 						rect.setAttribute("ry", Std.string(data.shape.radius));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
+						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
 
 						if (untyped data.fillGradient != null) {
 							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -485,6 +491,7 @@ class FlowGraphics extends Graphics {
 				}
 			} else {
 				var data = graphicsData[0];
+				var lineWidth : Float = data.lineWidth != null ? data.lineWidth / 2.0 : 0.0;
 
 				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
 					if (data.shape.type == 0) {
@@ -495,7 +502,7 @@ class FlowGraphics extends Graphics {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
 						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
+						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
 
 						if (data.fill != null && data.fillAlpha > 0) {
 							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
@@ -538,25 +545,33 @@ class FlowGraphics extends Graphics {
 							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						}
 
-						svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0, 1.0)}px';
-						svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0, 1.0)}px';
-						svg.style.left = '${graphicsBounds.minX - filterPadding}px';
-						svg.style.top = '${graphicsBounds.minY - filterPadding}px';
+						svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+						svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+						svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
+						svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
 						svg.style.position = 'absolute';
 
 						svg.appendChild(path);
 						nativeWidget.appendChild(svg);
 					} else {
-						if (data.fill != null && data.fillAlpha > 0) {
-							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
-						} else {
-							nativeWidget.style.background = null;
-						}
-
 						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
 							nativeWidget.style.border = '${data.lineWidth}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
 						} else {
 							nativeWidget.style.border = null;
+						}
+
+						if (data.fill != null && data.fillAlpha > 0) {
+							if (widgetBounds.getBoundsWidth() <= 2.0) {
+								nativeWidget.style.borderLeft = '${widgetBounds.getBoundsWidth()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+								nativeWidget.style.background = null;
+							} else if (widgetBounds.getBoundsHeight() <= 2.0) {
+								nativeWidget.style.borderTop = '${widgetBounds.getBoundsHeight()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+								nativeWidget.style.background = null;
+							} else {
+								nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+							}
+						} else {
+							nativeWidget.style.background = null;
 						}
 
 						if (untyped data.fillGradient != null) {
@@ -567,27 +582,30 @@ class FlowGraphics extends Graphics {
 							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = null;
 						} else if (data.shape.type == 2) {
 							var left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else if (data.shape.type == 3) {
 							var left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width - data.lineWidth)}px /
 								${DisplayObjectHelper.round(data.shape.height - data.lineWidth)}px';
 						} else if (data.shape.type == 4) {
 							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
+
+							nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+							nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 						} else {
 							trace('updateNativeWidgetGraphicsData: Unknown shape type');
