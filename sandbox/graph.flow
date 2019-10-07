@@ -44,22 +44,64 @@ main() {
 
 	layout = graph2layout(getEGNodes(graph.graph), getEGEdges(graph.graph), [0], [], WidthHeight(600.0, 1024.0));
 
-	gui = layout2form(getEGNodes(graph.graph), getEGEdges(graph.graph), layout);
+	gui = layout2form(layout);
 
 	render(gui);
 }
 
-graph2layout(nodes : [GNode], edges : [GEdge], sources : [int], sinks : [int], size : WidthHeight) -> ForceLayout {
-	node2coordinate = calculateCoordinatesOld(nodes, sources, sinks, size);
-	edge2distances = calculateDistanceOld(edges, size);
+//
 
-	defParams = ForceLayoutParams(0.1, 0.9, 0.03, 0.8);
-
-	forceDiGraphLayout(nodes, edges, sources, sinks, size, defParams, node2coordinate, edge2distances, false);
+makeForceLayout() -> ForceLayout {
+	ForceLayout(
+		WidthHeight(600.0, 600.0), // size
+		ref 0.1, // alpha
+		0.9, // friction
+		0.03, // gravity
+		0.8, // theta
+		[], // nodes
+		[], // edges
+	)	
 }
 
-layout2form(nodes : [GNode<int>], edges : [GEdge<int>], layout : ForceLayout) -> Form {
-	generate(0, 100, \i -> forceTick(layout));
+addNodeIdToLayout(layout : ForceLayout, nodeid : int, fixcoordinate : bool) -> ForceLayout {
+	nodesCount = length(layout.nodes);
+	t = 2.0 * PI * i2d(nodesCount) / i2d(20) + 1.5 * PI;
+
+	x = cos(t) * (layout.size.width) / 2.0  + layout.size.width / 2.0;
+	y = sin(t) * (layout.size.height) / 2.0  + layout.size.height / 2.0;
+
+	fnode = ForceNode(make(x), make(y), ref x, ref y, 10.0, 1000.0, fixcoordinate, fixcoordinate, nodeid);
+
+	ForceLayout(
+		layout with
+		nodes = arrayPush(layout.nodes, fnode)
+	);
+}
+
+addEdgeToLayout(layout : ForceLayout, fromid : int, toid : int) -> ForceLayout {
+	fromIndex = findiDef(layout.nodes, \n -> n.id == fromid, -1);
+	toIndex = findiDef(layout.nodes, \n -> n.id == toid, -1);
+
+	edge = ForceEdge(fromIndex, toIndex, 1.0, 50.0, 50.0);
+
+	ForceLayout(
+		layout with
+		edges = arrayPush(layout.edges, edge)
+	);
+}
+
+
+graph2layout(nodes : [GNode], edges : [GEdge], sources : [int], sinks : [int], size : WidthHeight) -> ForceLayout {
+	layout0 = foldi(nodes, makeForceLayout(), \i, acc, node -> {
+		addNodeIdToLayout(acc, node.id, i == 0)
+	});
+	fold(edges, layout0, \acc, edge -> {
+		addEdgeToLayout(acc, edge.from, edge.to);
+	})
+}
+
+layout2form(layout : ForceLayout) -> Form {
+	generate(0, 50, \i -> forceTick(layout));
 	formDiGraphLayout2(layout, \nodeid : int -> {
 		color = if (random() < 0.5) green else if (random() < 0.5) yellow else red;
 		size = random() * 20.0 + 10.0;
@@ -96,7 +138,7 @@ formDiGraphLayout2(layout : ForceLayout, nodeFn : (nodeid : int) -> Form) -> For
 	Group(concat(edgesForms, nodes))
 }
 
-drawGraphArrow(p1 : Point, p2 : Point) -> Form {
+drawGraphArrow(p2 : Point, p1 : Point) -> Form {
 	dx = p2.x - p1.x;
 	dy = p2.y - p1.y;
 
