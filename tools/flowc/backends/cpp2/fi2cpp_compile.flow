@@ -73,7 +73,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 		\n, acc, s -> {
 			si = Cpp2StructInfo(
 				n,       // id
-				s.name,  // structname
+				s.name,  // struct_name
 				map(s.args, \a -> Cpp2StructArg(a.name, a.type, a.is_mutable)), //args
 				map(s.args, \a -> cpp2GetStructAType(a.type)), // atypes
 				if (length(s.args) == 0) { 
@@ -108,6 +108,9 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 	function_table = toplevel_triple.first;
 	global_vars = toplevel_triple.second;
 	global_map = toplevel_triple.third;
+	
+	fcPrintln("globals: " + strGlue(global_vars, ", "));
+	
 	writer = Cpp2Writer(
 		config,
 		program,
@@ -1892,7 +1895,7 @@ cpp2WriterEmitLambdaCode(writer : Cpp2Writer, env : Cpp2Environment, file : stri
 			);
 			switch (lookupTree(writer.closure_structs, mask)) {
 				Some(cs): {
-					rlistPush(out_lines, "\ntypedef flowgen_native_program::FS_" + cs.structname + " FS_" + closure.type.structname + ";");
+					rlistPush(out_lines, "\ntypedef flowgen_native_program::FS_" + cs.struct_name + " FS_" + closure.type.struct_name + ";");
 					closure.type ::= cs;
 				}
 				None(): {
@@ -1901,7 +1904,7 @@ cpp2WriterEmitLambdaCode(writer : Cpp2Writer, env : Cpp2Environment, file : stri
 					cs.id ::= length(^(writer.structs_order));
 					oinfo = Cpp2StructOrderInfo(
 						cs.id, // compare_idx
-						cs.structname, // name
+						cs.struct_name, // name
 						cs.args // args
 					);
 					refArrayPush(writer.structs_order, oinfo);
@@ -1951,7 +1954,7 @@ cpp2WriterResolveName(writer : Cpp2Writer, ctx : Cpp2Context, name : string) -> 
 			switch (lookupTree(writer.global_map, name)) {
 				Some(global): global;
 				None(): {
-					cpp2_error("Unknown variable: "+name);
+					cpp2_error("Unknown variable: " + name);
 					dummyCpp2PlaceInfo;
 				}
 			}
@@ -2212,10 +2215,10 @@ cpp2WriterFieldSetInfo(writer : Cpp2Writer, call : FiExp, ref : Cpp2PlaceInfo, n
 						}
 					}
 				}
-				/*TStruct(structname, cargs, max): {
+				/*TStruct(struct_name, cargs, max): {
 					minsize = cargs.length;
 					index = cpp2WriterFieldIndex(writer, fields, name);
-					stype = structs.get(structname).id;
+					stype = structs.get(struct_name).id;
 				}
 				TUnion(min, max):
 				if (max != null) {
@@ -2333,7 +2336,7 @@ cpp2WriterCompileNewStruct(writer : Cpp2Writer, info : Cpp2StructInfo, args : [F
 		None(); //dummyCpp2PlaceInfo
 	} else {
 		if (length(args) == 0) {
-			space_info = lookupTreeDef(writer.global_map, info.structname, dummyCpp2PlaceInfo);
+			space_info = lookupTreeDef(writer.global_map, info.struct_name, dummyCpp2PlaceInfo);
 			cpp2WriterCopyValue(ctx, out, space_info);
 		} else {
 			otmp = cpp2WriterGetOutputOrTemp(ctx, out, top);
@@ -2363,14 +2366,14 @@ cpp2WriterCompileNewStruct(writer : Cpp2Writer, info : Cpp2StructInfo, args : [F
 			);
 			refs : [Maybe<Cpp2PlaceInfo>] = ^rrefs;
 			vals : [Maybe<string>] = ^rvals;
-			ptr = cpp2ContextGetStructPtr(ctx, otmp, info.structname, false);
+			ptr = cpp2ContextGetStructPtr(ctx, otmp, info.struct_name, false);
 
 			if (closure != "") {
-				cpp2ContextWrCheck(ctx, ptr + " = RUNNER->AllocateRawClosure<FS_" + info.structname + ">(&" + sout + "," + i2s(info.id) + "," + closure + ".slot_private.IntValue)", true);
+				cpp2ContextWrCheck(ctx, ptr + " = RUNNER->AllocateRawClosure<FS_" + info.struct_name + ">(&" + sout + "," + i2s(info.id) + "," + closure + ".slot_private.IntValue)", true);
 				lm = cpp2ContextLocalMeta(ctx, otmp);
 				lm.tag ::= Cpp2TNativeFn();
 			} else {
-				cpp2ContextWrCheck(ctx, ptr + " = RUNNER->AllocateRawStruct<FS_" + info.structname + ">(&" + sout + "," + i2s(info.id) + ")", true);
+				cpp2ContextWrCheck(ctx, ptr + " = RUNNER->AllocateRawStruct<FS_" + info.struct_name + ">(&" + sout + "," + i2s(info.id) + ")", true);
 
 				lm = cpp2ContextLocalMeta(ctx, otmp);
 				lm.tag ::= Cpp2TStruct();
@@ -2393,7 +2396,7 @@ cpp2WriterCompileNewStruct(writer : Cpp2Writer, info : Cpp2StructInfo, args : [F
 										switch (ref.place) {
 											Cpp2FieldAlias(where, sinfo): {
 												if (sinfo.atypes[ref.slot] == info.atypes[i]) {
-													cpp2ContextWrSemi(ctx, fname + " = " + cpp2ContextGetStructPtr(ctx, where, sinfo.structname, true) + "->fl_" + sinfo.args[ref.slot].name);
+													cpp2ContextWrSemi(ctx, fname + " = " + cpp2ContextGetStructPtr(ctx, where, sinfo.struct_name, true) + "->fl_" + sinfo.args[ref.slot].name);
 												} else {
 													cpp2ContextWrSemi(ctx, "flow_struct::set_" + cpp2StructFieldCode(info.atypes[i]) + "(" + fname + "," + cpp2PlaceInfoGetRValue(ref, ctx) + ")");
 												}
@@ -2592,7 +2595,7 @@ cpp2WriterCompileCall(writer : Cpp2Writer, code : FiCall, ctx : Cpp2Context, out
 				}
 				Cpp2Struct(info): {
 					if (length(info.args) != length(code.args)) {
-						cpp2_error("Wrong argument count for struct " + info.structname);
+						cpp2_error("Wrong argument count for struct " + info.struct_name);
 					}
 					cpp2WriterCompileNewStruct(writer, info, code.args, ctx, out, top, "");
 					None();
