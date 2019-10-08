@@ -11,30 +11,6 @@ export {
 
 // CppWriter methods
 
-cpp2_natives = [
-	Cpp2NativeDescr("mapi", 2, false, "mapi"),
-	Cpp2NativeDescr("map", 2, false, "map"),
-	Cpp2NativeDescr("iter", 2, false, "iter"),
-	Cpp2NativeDescr("iteri", 2, false, "iteri"),
-	Cpp2NativeDescr("fold", 3, false, "fold"),
-	Cpp2NativeDescr("foldi", 3, false, "foldi"),
-	Cpp2NativeDescr("filter", 2, false, "filter"),
-	Cpp2NativeDescr("elemIndex", 3, false, "elemIndex"),
-	Cpp2NativeDescr("exists", 2, false, "exists"),
-	Cpp2NativeDescr("find", 2, false, "find"),
-	Cpp2NativeDescr("subrange", 3, false, "subrange"),
-	Cpp2NativeDescr("length", 1, true, "length"),
-	Cpp2NativeDescr("strlen", 1, true, "NativeStrlen"),
-	Cpp2NativeDescr("strIndexOf", 2, true, "strIndexOf"),
-	Cpp2NativeDescr("substring", 3, true, "substring"),
-	Cpp2NativeDescr("concat", 2, false, "mapi"),
-	Cpp2NativeDescr("replace", 3, false, "replace"),
-	Cpp2NativeDescr("bitXor", 2, true, "bitXor"),
-	Cpp2NativeDescr("bitOr", 2, true, "bitOr"),
-	Cpp2NativeDescr("bitAnd", 2, true, "bitAnd"),
-	Cpp2NativeDescr("bitNot", 1, true, "bitNot"),
-];
-
 cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> Cpp2Writer {
 	known_natives = fold(cpp2_natives, makeTree(), 
 		\acc, nat -> setTree(acc, "Native." + nat.name, nat)
@@ -152,6 +128,7 @@ cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void {
 	iter(prog.traversal, 
 		\mod_name -> {
 			module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
+			println("MODULE: " + module.fileinfo.flowfile + ", INIT ORDER: " + strGlue(module.initOrder, ", "));
 			iter(module.initOrder, 
 				\glob_name -> {
 					switch (lookupTree(prog.names.toplevel, glob_name)) {
@@ -203,6 +180,9 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 						Some(decl): {
 							switch (decl) {
 								FiGlobalVar(name, value, type, __,__): {
+								
+									println("transl glob var: " + name + ", module: " + module.fileinfo.flowfile);
+								
 									new_ac = if (length(^(ac.second.code_lines.lines)) >=1024) {
 										endInitFunction(ac.second);
 										new_env = cpp2Environment(None(), "aux_init" + i2s(ac.first + 1), "$init", 0, writer.struct_list);
@@ -213,6 +193,7 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 									global_env = new_ac.second;
 									place = lookupTreeDef(writer.global_map, name, dummyCpp2PlaceInfo);
 									global_env.vname ::= name + "$init";
+									writer.cur_global ::= name;
 									switch (global_env.cur_ctx) {
 										Some(ctx): cpp2WriterCompileExpression(writer, value, ctx, Cpp2OutputVar(place), Cpp2StackTop(0));
 										None(): cpp2_error("context must not be None");
@@ -233,7 +214,6 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 	);
 	endInitFunction(last.second)
 }
-
 
 cpp2GenerateStructCode(writer : Cpp2Writer, s : Cpp2StructOrderInfo, info : Cpp2StructInfo) -> void {
 	code = writer.struct_code;
@@ -362,6 +342,25 @@ writeFiExpTypeCode(type : FiTypeNullable, code : Cpp2StructCode, extStructDefs :
 	}
 }
 
+// Gather all decls from module.initOrder
+cpp2gatherInitOrder(prog : FiProgram) -> [FiDeclaration] {
+	decls = ref [];
+	iter(prog.traversal,
+		\mod_name -> {
+			module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
+			iter(module.initOrder,
+				\name -> {
+					switch (lookupTree(prog.names.toplevel, name)) {
+						Some(decl): refArrayPush(decls, decl);
+						None(): { }
+					}
+				}
+			)
+		}
+	);
+	^decls
+}
+
 // Index natives and globals
 cpp2WriterEnumerateToplevel(program : FiProgram, main : FiFunctionDec) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
 
@@ -369,8 +368,10 @@ cpp2WriterEnumerateToplevel(program : FiProgram, main : FiFunctionDec) -> Triple
 
 	fcPrintln("deps: '" + strGlue(map(set2array(deps.all_decls), \decl -> decl.name), ", ") + "'");
 
+	all_decls = concat(set2array(deps.all_decls), filter(cpp2gatherInitOrder(program), \decl -> !containsSet(deps.all_decls, decl)));
+	
 	triple : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>> = 
-	foldSet(deps.all_decls, Triple(ref [], ref [], makeTree()),
+	fold(all_decls, Triple(ref [], ref [], makeTree()),
 		\acc : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>>, decl : FiDeclaration -> {
 			switch (decl) {
 				FiFunctionDec(name, lambda, __, __,__): {
@@ -908,6 +909,9 @@ cpp2WriterCompileLambda(writer : Cpp2Writer, name : string, idx : int, lambda : 
 cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> void {
 
 	fcPrintln("compiling expr: " + prettyFiExp(dummyPretty, code));
+	if (prettyFiExp(dummyPretty, code) == "\"cpp2outputFile\"") {
+		println(code);
+	}
 
 	output = \expr, tag -> {
 		cpp2WriterEmitValue(ctx, out, expr, tag, false, false, false); {}
