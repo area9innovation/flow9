@@ -104,9 +104,29 @@ typeverifyFiTypeStruct(moduleEnv : TypeVerifyModuleEnv, struct : FiTypeStruct, o
 	tenv = TypeVerifyLocalEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameIsUnused(moduleEnv, struct.name, onError, struct.start) &&
-		forall(struct.typars, \type -> verifyTypeIsAccessible(tenv, type, onError, struct.start)) &&
-		forall(struct.args, \arg -> verifyTypeIsAccessible(tenv, arg.type, onError, struct.start)
-		);
+		fold(struct.args, Pair(true, makeSet()), \acc, arg -> {
+			is_accessible = verifyTypeIsAccessible(tenv, arg.type, onError, struct.start);
+			ok = acc.first && !containsSet(acc.second, arg.name) && arg.name != "structname" && is_accessible;
+			if (!ok) {
+				if (containsSet(acc.second, arg.name)) {
+					onError(FcError("duplicate field name: " + arg.name, []));
+				}
+				if (arg.name == "structname") {
+					onError(FcError("field name: " + arg.name + " is reserved as a build-it field", []));
+				}
+				if (!is_accessible) {
+					onError(FcError("field type: " + arg.name + " is inaccessible", []));
+				}
+			}
+			Pair(ok, insertSet(acc.second, arg.name))
+		}).first &&
+		forall(struct.typars, \type -> {
+			is_accessible = verifyTypeIsAccessible(tenv, type, onError, struct.start);
+			if (!is_accessible) {
+				onError(FcError("type parameter: " + prettyFiType(dummyPretty, type, makeSet()) + " is inaccessible", []));
+			}
+			is_accessible
+		});
 	if (!ret) {
 		onError(FcError("in struct '" + struct.name + "'", [FcPosition(moduleEnv.module.fileinfo.flowfile, struct.start, struct.start)]));
 	}
@@ -117,6 +137,22 @@ typeverifyFiTypeUnion(moduleEnv : TypeVerifyModuleEnv, union : FiTypeUnion, onEr
 	tenv = TypeVerifyLocalEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameIsUnused(moduleEnv, union.name, onError, union.start) &&
+		fold(union.typenames, Pair(true, makeSet()), \acc, typename -> {
+			is_accessible = verifyTypeIsAccessible(tenv, typename, onError, union.start);
+			ok = acc.first && !containsSet(acc.second, typename.name) && typename.name != union.name && is_accessible;
+			if (!ok) {
+				if (containsSet(acc.second, typename.name)) {
+					onError(FcError("duplicate type name in union: " + typename.name, []));
+				}
+				if (typename.name == union.name) {
+					onError(FcError("union contains itself: " + typename.name, []));
+				}
+				if (!is_accessible) {
+					onError(FcError("type: " +  prettyFiType(dummyPretty, typename, makeSet()) + " in union is inaccessible", []));
+				}
+			}
+			Pair(ok, insertSet(acc.second, typename.name))
+		}).first &&
 		forall(union.typeparameters, \type -> verifyTypeIsAccessible(tenv, type, onError, union.start));
 	if (!ret) {
 		onError(FcError("in union '" + union.name + "'", [FcPosition(moduleEnv.module.fileinfo.flowfile, union.start, union.start)]));
