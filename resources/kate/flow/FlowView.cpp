@@ -9,10 +9,11 @@
 
 #include "common.hpp"
 #include "FlowView.hpp"
+
+#include "debug/DebugManager.hpp"
+#include "debug/DebugView.hpp"
 #include "FlowManager.hpp"
 #include "FlowServer.hpp"
-#include "DebugManager.hpp"
-#include "DebugView.hpp"
 
 namespace flow {
 
@@ -34,10 +35,11 @@ FlowView::FlowView(KatePluginFlow* plugin, KTextEditor::MainWindow* mainWin) :
 		QIcon::fromTheme(QLatin1String("media-playback-start")),
 		QLatin1String("Flow config")
 	)),
-	flowManager_(new FlowManager(mainWindow_, *this)),
+	flowManager_(new FlowManager(FlowEnv{mainWindow_, *this})),
 	debugView_(new DebugView(plugin_, mainWindow_, *this)),
 	flowServer_(new FlowServer(mainWindow_, *this)),
-	outline_ (new Outline(mainWindow_, this))
+	outline_ (new Outline(mainWindow_, this)),
+	taskManager_(FlowEnv{mainWindow_, *this})
 {
 	KConfigGroup config(KSharedConfig::openConfig(), QLatin1String("Flow"));
     readConfig(config);
@@ -48,7 +50,8 @@ FlowView::FlowView(KatePluginFlow* plugin, KTextEditor::MainWindow* mainWin) :
     initActions();
     debugView_->slotReloadLaunchConfigs();
     slotReloadLaunchConfigs();
-    connect(flowOutput_.ui.compilerOutTextEdit, SIGNAL(signalCompilerError(QString, int, int)), this, SLOT(slotGotoLocation(QString, int, int)));
+    connect(flowOutput_.ui.compilerOutTextEdit, SIGNAL(signalCompilerLocation(QString, int, int)), this, SLOT(slotGotoLocation(QString, int, int)));
+    connect(flowConfig_.ui.serverTextEdit, SIGNAL(signalCompilerLocation(QString, int, int)), this, SLOT(slotGotoLocation(QString, int, int)));
     connect (mainWindow_, SIGNAL(viewChanged(KTextEditor::View*)), outline_, SLOT(refresh(KTextEditor::View*)));
 
     mainWindow_->guiFactory()->addClient(this);
@@ -66,6 +69,22 @@ FlowView::~FlowView() {
     delete debugView_;
     delete flowManager_;
 	mainWindow_->guiFactory()->removeClient(this);
+}
+
+void FlowView::switchToOutputTab(QWidget* tab) {
+	outputTabs()->setCurrentWidget(tab);
+}
+
+void FlowView::removeOutputTab(QWidget* tab) {
+	for (int i = 0; i < outputTabs()->count(); ++ i) {
+		if (outputTabs()->widget(i) == tab) {
+			outputTabs()->removeTab(i);
+			break;
+		}
+	}
+}
+void FlowView::addOutputTab(QWidget* tab, const QString& label) {
+	outputTabs()->insertTab(outputTabs()->count(), tab, label);
 }
 
 void FlowView::slotReloadLaunchConfigs() {
@@ -136,7 +155,7 @@ void FlowView::initActions() {
 
     lookupUses_ = menu_->menu()->addAction(QLatin1String("lookup_flow_uses"), flowManager_, SLOT(slotLookupUses()));
 
-    rename_ = menu_->menu()->addAction(QLatin1String("rename_flow_id"), flowManager_, SLOT(slotRename()));
+    rename_ = menu_->menu()->addAction(QLatin1String("rename_flow_id"), flowManager_, SLOT(slotStartRename()));
     //a->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+R")));
 }
 

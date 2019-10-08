@@ -233,9 +233,6 @@ public class RenderSupport extends NativeHost {
 	public Object setWordWrap(Object stg, boolean val) {
 		return null;
 	}
-	public Object setDoNotInvalidateStage(Object stg, boolean val) {
-		return null;
-	}
 	public Object setReadOnly(Object stg, boolean val) {
 		return null;
 	}

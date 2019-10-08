@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QMap>
 #include <QString>
 #include <QDateTime>
@@ -39,5 +41,14 @@ inline ConfigFile parseConfigForFile(const QString& file) {
 }
 
 void appendText(QPlainTextEdit* textEdit, const QString& text);
+
+QString locationNeighbourhood(const QString& str, int line, int col, int width);
+
+class FlowView;
+
+struct FlowEnv {
+	KTextEditor::MainWindow* main;
+	FlowView& view;
+};
 
 }

@@ -18,6 +18,8 @@ import java.awt.datatransfer.UnsupportedFlavorException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.BufferedReader;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.charset.CharsetDecoder;
 import java.io.FileInputStream;
 import java.io.File;
@@ -48,9 +50,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
-	private static final int NTHREDS = 8;
+	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
-	private static final ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
+	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
 	public Native() {
 	try {
 		md5original = MessageDigest.getInstance("MD5");
@@ -59,6 +61,7 @@ public class Native extends NativeHost {
 	}
 
 	}
+
 	public final Object println(Object arg) {
 		String s = "";
 		if (arg instanceof String) {
@@ -865,7 +868,10 @@ public class Native extends NativeHost {
 	}
 
 	public final String getTargetName() {
-		return "java";
+		String osName = System.getProperty("os.name").toLowerCase();
+		int space_ind = osName.indexOf(" ");
+		osName = osName.substring(0, space_ind == -1 ? osName.length() : space_ind);
+		return  osName + ",java";
 	}
 
 	public final boolean setKeyValue(String k, String v) {
@@ -1127,46 +1133,69 @@ public class Native extends NativeHost {
 		this.stdin = stdin;
 	}
 
+	public class StreamReader implements Runnable {
+		String name;
+		InputStream is;
+		String contents;
+		Thread thread;
+		public StreamReader(String name, InputStream is) {
+			this.name = name;
+			this.is = is;
+			contents = new String();
+			thread = new Thread(this);
+			thread.start();
+		}
+		public void run() {
+			try {
+				InputStreamReader isr = new InputStreamReader(is);
+				BufferedReader br = new BufferedReader(isr);
+				while (!thread.isInterrupted()) {
+					String s = br.readLine();
+					if (s == null) break;
+					contents += s + "\n";
+					//System.out.println("[" + name + "] " + s);
+				}
+			} catch (Exception ex) {
+				System.out.println("Problem reading stream " + name + "... :" + ex);
+				ex.printStackTrace();
+			}
+		}
+		public void close() {
+			thread.interrupt();
+			try {
+				is.close();
+			} catch (Exception ex) {
+				System.out.println("Problem closing stream " + name + "... :" + ex);
+				ex.printStackTrace();
+			}
+		}
+	}
+
 	@Override
 		public Long call() {
 			long output = 0;
 			try {
-				OutputStream stdin1 = null;
-				InputStream stderr = null;
-				InputStream stdout = null;
-
 				Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
-				stdin1 = process.getOutputStream();
-				stderr = process.getErrorStream();
-				stdout = process.getInputStream();
-				stdin1.write(this.stdin.getBytes());
-				stdin1.flush();
+				StreamReader stdout = new StreamReader("stdout", process.getInputStream());
+				StreamReader stderr = new StreamReader("stderr", process.getErrorStream());
+
+				process.getOutputStream().write(this.stdin.getBytes());
+				process.getOutputStream().flush();
 
 				// We wait for the process to finish before we collect the output!
 				process.waitFor();
 
-				BufferedReader brCleanUp = new BufferedReader(new InputStreamReader (stdout));
-				String line;
-				String sout = new String("");
-				while ((line = brCleanUp.readLine ()) != null) {
-					sout = sout + line + "\n";
-				}
-				brCleanUp.close();
-
-				brCleanUp = new BufferedReader(new InputStreamReader (stderr));
-				String serr = new String("");
-				while ((line = brCleanUp.readLine()) != null) {
-					serr = serr + line + "\n";
-				}
-				brCleanUp.close();
-
-				onExit.invoke(process.exitValue(), sout, serr);
+				stdout.close();
+				stderr.close();
+				onExit.invoke(process.exitValue(), stdout.contents, stderr.contents);
 			} catch (Exception ex) {
 				String cmd_str = "";
 				for (String c : this.cmd) {
 					cmd_str += c + " ";
 				}
-				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString());
+				StringWriter errors = new StringWriter();
+				ex.printStackTrace(new PrintWriter(errors));
+				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + errors.toString());
 			}
 			return output;
 		}
@@ -1402,5 +1431,14 @@ public class Native extends NativeHost {
 	//native addPlatformEventListenerNative : (event : string, cb : () -> bool) -> ( () -> void ) = Native.addPlatformEventListener;
 	public final Func0<Object> addPlatformEventListener (String event, Func0<Boolean> cb) {
 	return null;
+	}
+
+	public final int availableProcessors() {
+		return Runtime.getRuntime().availableProcessors();
+	}
+
+	public final Object setThreadPoolSize(int threads) {
+		threadpool = Executors.newFixedThreadPool(threads);
+		return null;
 	}
 }

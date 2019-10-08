@@ -1,3 +1,8 @@
+import js.Browser;
+
+import pixi.core.display.Bounds;
+import pixi.core.math.shapes.Rectangle;
+import pixi.core.display.DisplayObject;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
@@ -12,22 +17,25 @@ class FlowSprite extends Sprite {
 
 	private var url : String = "";
 	private var loaded : Bool = false;
+	private var visibilityChanged : Bool = true;
+	private var updateParent : Bool = false;
 	private var cache : Bool = false;
 	private var metricsFn : Float -> Float -> Void;
 	private var errorFn : String -> Void;
 	private var onlyDownload : Bool = false;
 	private var retries : Int = 0;
 
+	private var localBounds = new Bounds();
+	private var widgetBounds = new Bounds();
+	private var _bounds = new Bounds();
+
+	private var nativeWidget : Dynamic;
+	private var accessWidget : AccessWidget;
+
+	public var isNativeWidget : Bool = false;
+
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
-
-	public function getWidth() : Float {
-		return texture != null ? texture.width : 0;
-	}
-
-	public function getHeight() : Float {
-		return texture != null ? texture.height : 0;
-	}
 
 	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) {
 		super();
@@ -45,8 +53,12 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		once("removed", onRemoved);
-		once("added", onAdded);
+		if (RenderSupportJSPixi.RendererType == "html") {
+			initNativeWidget("img");
+		} else {
+			once("removed", onSpriteRemoved);
+			once("added", onSpriteAdded);
+		}
 	}
 
 	private static function clearUrlTextureCache(url : String) : Void {
@@ -99,7 +111,7 @@ class FlowSprite extends Sprite {
 		return false;
 	}
 
-	private function onAdded() : Void {
+	private function onSpriteAdded() : Void {
 		if (!loaded) {
 			if (StringTools.endsWith(url, ".svg")) {
 				var svgXhr = new js.html.XMLHttpRequest();
@@ -119,7 +131,7 @@ class FlowSprite extends Sprite {
 		}
 	}
 
-	private function onRemoved() : Void {
+	private function onSpriteRemoved() : Void {
 		if (removeTextureFromCache(texture) && !loaded) {
 			var nativeWidget = texture.baseTexture.source;
 			nativeWidget.removeAttribute('src');
@@ -141,9 +153,12 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onDispose() : Void {
-		renderable = false;
-		removeTextureFromCache(texture);
+		if (texture != null) {
+			removeTextureFromCache(texture);
+		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		if (parent != null) {
 			loadTexture();
@@ -151,13 +166,17 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		invalidateStage(false);
+		invalidateStage();
+		deleteNativeWidget();
 	}
 
 	private function onError() : Void {
-		renderable = false;
-		removeTextureFromCache(texture);
+		if (texture != null) {
+			removeTextureFromCache(texture);
+		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		texture = Texture.EMPTY;
 
@@ -166,18 +185,26 @@ class FlowSprite extends Sprite {
 		}
 
 		errorFn("Can not load " + url);
+		deleteNativeWidget();
 	}
 
 	private function onLoaded() : Void {
 		try {
-			parent.emit("childrenchanged");
+			if (RenderSupportJSPixi.RendererType == "html") {
+				if (nativeWidget == null) {
+					return;
+				}
 
-			metricsFn(texture.width, texture.height);
+				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
+			} else {
+				metricsFn(texture.width, texture.height);
+			}
 
-			invalidateStage(false);
+			invalidateTransform('onLoaded');
+			calculateWidgetBounds();
 
-			renderable = true;
 			loaded = true;
+			visibilityChanged = true;
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();
@@ -202,6 +229,66 @@ class FlowSprite extends Sprite {
 			texture.baseTexture.on("loaded", onLoaded);
 			texture.baseTexture.on("error", onError);
 			texture.baseTexture.on("dispose", onDispose);
+		}
+	}
+
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		return localBounds.getRectangle(rect);
+	}
+
+	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		if (!skipUpdate) {
+			updateTransform();
+		}
+
+		if (untyped this._boundsID != untyped this._lastBoundsID)
+		{
+			calculateBounds();
+		}
+
+		return _bounds.getRectangle(rect);
+	}
+
+	public function calculateBounds() : Void {
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+	}
+
+	private function createNativeWidget(?tagName : String = "img") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
+		deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(tagName);
+		updateClipID();
+		nativeWidget.className = 'nativeWidget';
+		nativeWidget.onload = onLoaded;
+		nativeWidget.onerror = onError;
+		nativeWidget.src = url;
+		nativeWidget.style.visibility = 'hidden';
+
+		isNativeWidget = true;
+	}
+
+	public function calculateWidgetBounds() : Void {
+		if (RenderSupportJSPixi.RendererType == "html") {
+			if (nativeWidget == null) {
+				widgetBounds.clear();
+			} else {
+				widgetBounds.minX = 0;
+				widgetBounds.minY = 0;
+				widgetBounds.maxX = nativeWidget.naturalWidth;
+				widgetBounds.maxY = nativeWidget.naturalHeight;
+			}
+		} else {
+			widgetBounds.minX = 0;
+			widgetBounds.minY = 0;
+			widgetBounds.maxX = texture.width;
+			widgetBounds.maxY = texture.height;
 		}
 	}
 }

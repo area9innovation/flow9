@@ -1,3 +1,5 @@
+import sys/system;
+import sys/target;
 import tools/flowc/backends/common;
 
 export {
@@ -6,9 +8,50 @@ export {
 
 buildFiJarFile(cfg : FiJavaConfig, path : string, callback : () -> void) -> void {
 	jar = changeFileExt(cfg.jarfile, ".jar");
-	println("\"%JAVA_HOME%\\bin\\javac\" -Xlint:unchecked -encoding UTF-8 -cp platforms/java " + path + "/*.java");
-	println("\"%JAVA_HOME%\\bin\\jar\" cf " + jar + " -C platforms/java com/area9innovation/flow/");
-	println("\"%JAVA_HOME%\\bin\\jar\" feu " + jar + " com.area9innovation.flow.Main -C " + cfg.outputdir + " com/area9innovation/flow");
-	println("Run with \"java -jar " + jar + "\"");
-	callback();
+	flowdir = rtrim2(getFlowDir(), "/");
+	exit_handler = \prog, success, failure -> {
+		\errcode, stdout, stderr -> {
+			if (stdout != "") fcPrintln(stdout);
+			if (stderr != "") fcPrintln(stderr);
+				if (errcode == 0) {
+				success()
+			} else {
+				fcPrintln("Failed to run " + prog + ". Check if " + prog + " is installed, JAVA_HOME environment variable is properly defined and is present in your PATH.");
+				failure()
+			}
+		}
+	}
+	build_program_jar = \-> {
+		if (cfg.verbose > 0) {
+			fcPrintln("Adding a program to " + jar);
+		}
+		args = ["feu", jar, "com.area9innovation.flow.Main", "-C", cfg.outputdir, "com/area9innovation/flow"];
+		startProcess("jar", args, ".", "",
+			exit_handler("jar",
+				\ -> {
+					if (cfg.verbose > 0) {
+						fcPrintln("Run with \"java -jar " + jar + "\"");
+					}
+					callback()
+				},
+				callback
+			)
+		)
+	}
+	build_runtime_jar = \-> {
+		if (cfg.verbose > 0) {
+			fcPrintln("Adding a runtime to " + jar);
+		}
+		args = ["cf", jar, "-C", flowdir + "/platforms/java", "com/area9innovation/flow"];
+		startProcess("jar", args, ".", "", exit_handler("jar", build_program_jar, callback))
+	}
+	compile_java = \ -> {
+		if (cfg.verbose > 0) {
+			fcPrintln("Compiling the generated code");
+		}
+		cp_sep = if (hasTargetName("windows")) ";" else ":";
+		args = ["-Xlint:unchecked", "-encoding", "UTF-8", "-cp", flowdir + "/platforms/java" + cp_sep + "javagen", "@"/ + path + "/sources"];
+		startProcess("javac", args, ".", "", exit_handler("javac", build_runtime_jar, callback))
+	}
+	compile_java();
 }

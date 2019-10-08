@@ -2,6 +2,7 @@ package com.area9innovation.flow;
 
 import java.util.*;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.net.URL;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
@@ -18,22 +19,48 @@ public class HttpSupport extends NativeHost {
 		// TODO
 		try {
 			// Add parameters
-			String urlparams = "";
-			String sep = "?";
+			String urlParameters = "";
 			for (Object param : params) {
 	 			Object [] keyvalue = (Object []) param;
 	 			String key = (String) keyvalue[0];
-	 			String value = (String) keyvalue[1];
-	 			urlparams = urlparams + sep + key + "=" + value; // URLEncoder.encode(value, charset);
-	 			sep = "&";
+				String value = (String) keyvalue[1];
+				if (!urlParameters.isEmpty()) {
+					urlParameters += "&";
+				}
+	 			urlParameters = urlParameters + key + "=" + value; // URLEncoder.encode(value, charset);
 			}
 
-			String urlWithParams = url + urlparams;
-			URL obj = new URL(urlWithParams);
-			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
+			HttpURLConnection con = null;
+
 			if (post) {
+				// POST
+				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
+				int postDataLength = postData.length;
+
+				URL obj = new URL(url);
+				con = (HttpURLConnection) obj.openConnection();
 				con.setDoOutput(true); // Triggers POST.
+				con.setRequestMethod("POST");
+
+				con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded"); 
+				con.setRequestProperty("charset", "utf-8");
+				con.setRequestProperty("Content-Length", Integer.toString(postDataLength));
+				con.setUseCaches(false);
+				try(DataOutputStream wr = new DataOutputStream(con.getOutputStream())) {
+					wr.write(postData);
+				}
 			} else {
+				// GET
+				String urlWithParams = url;
+				if (!urlParameters.isEmpty()) {
+					if (url.contains("?")) {
+						urlWithParams += "&" + urlParameters;
+					} else {
+						urlWithParams += "?" + urlParameters;
+					}
+				}
+				URL obj = new URL(urlWithParams);
+				con = (HttpURLConnection) obj.openConnection();
 				con.setRequestMethod("GET");
 			}
 
@@ -87,17 +114,27 @@ public class HttpSupport extends NativeHost {
 		// TODO
 		try {
 			// Add parameters
-			String urlparams = "";
-			String sep = "?";
+			String urlParameters = "";
 			for (Object param : params) {
 	 			Object [] keyvalue = (Object []) param;
 	 			String key = (String) keyvalue[0];
-	 			String value = (String) keyvalue[1];
-	 			urlparams = urlparams + sep + key + "=" + value; // URLEncoder.encode(value, charset);
-	 			sep = "&";
+				String value = (String) keyvalue[1];
+
+				if (!urlParameters.isEmpty()) {
+					urlParameters += "&";
+				}
+	 			urlParameters += key + "=" + value; // URLEncoder.encode(value, charset);
 			}
 
-			String urlWithParams = url + urlparams;
+			String urlWithParams = url;
+			if (!urlParameters.isEmpty()) {
+				if (url.contains("?")) {
+					urlWithParams += "&" + urlParameters;
+				} else {
+					urlWithParams += "?" + urlParameters;
+				}
+			}
+
 			URL obj = new URL(urlWithParams);
 			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
 			con.setRequestMethod(method);
