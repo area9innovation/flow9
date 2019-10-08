@@ -782,14 +782,25 @@ class DisplayObjectHelper {
 
 		var transform = getNativeWidgetTransform(clip);
 
-		var tx = round(transform.tx);
-		var ty = round(transform.ty);
+		var tx : Float = 0.0;
+		var ty : Float = 0.0;
 
 		if (untyped clip.scrollRect != null) {
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
 
-			tx = round(point.x);
-			ty = round(point.y);
+			if (untyped clip.parentClip.scrollRect != null) {
+				tx = round(point.x + 0.5);
+				ty = round(point.y + 0.5);
+			} else {
+				tx = round(point.x);
+				ty = round(point.y);
+			}
+		} else if (untyped clip.parentClip.scrollRect != null) {
+			tx = round(transform.tx + 0.5);
+			ty = round(transform.ty + 0.5);
+		} else {
+			tx = round(transform.tx);
+			ty = round(transform.ty);
 		}
 
 		var localBounds = untyped clip.localBounds;
@@ -802,8 +813,8 @@ class DisplayObjectHelper {
 				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
 			} else if (untyped clip.scrollRect != null) {
-				nativeWidget.style.width = '${getWidgetWidth(clip) + 1}px';
-				nativeWidget.style.height = '${getWidgetHeight(clip) + 1}px';
+				nativeWidget.style.width = '${getWidgetWidth(clip) + 1.0}px';
+				nativeWidget.style.height = '${getWidgetHeight(clip) + 1.0}px';
 			} else {
 				nativeWidget.style.width = '${getWidgetWidth(clip)}px';
 				nativeWidget.style.height = '${getWidgetHeight(clip)}px';
@@ -1051,17 +1062,19 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (y < 0 || x < 0) {
-			nativeWidget.style.marginLeft = '${-x}px';
-			nativeWidget.style.marginTop = '${-y}px';
+			nativeWidget.style.margin = '-0.5px';
+			nativeWidget.style.marginLeft = '${-x - 0.5}px';
+			nativeWidget.style.marginTop = '${-y - 0.5}px';
 
-			nativeWidget.style.width = '${getWidgetWidth(clip) + x}px';
-			nativeWidget.style.height = '${getWidgetHeight(clip) + y}px';
+			nativeWidget.style.width = '${getWidgetWidth(clip) + x + 1.0}px';
+			nativeWidget.style.height = '${getWidgetHeight(clip) + y + 1.0}px';
 
 			y = 0;
 			x = 0;
 		} else {
 			nativeWidget.style.marginLeft = null;
 			nativeWidget.style.marginTop = null;
+			nativeWidget.style.margin = '-0.5px';
 			nativeWidget.style.clip = null;
 		}
 

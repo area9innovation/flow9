@@ -1,94 +1,129 @@
 import forcelayout;
 
 import ds/simplegraph;
-import ds/easygraph2form;
+import ui/slider;
+import ui/easybutton;
 
-Data(id : int, self : int, score: int);
+Data(id : int, self : int, score: int, time : int);
 
 main() {
 	datapoints = [
-		Data(3715, 1, 100),
-		Data(2200, 1, 80),
-		Data(2245, 1, 75),
-		Data(2095, 1, 67),
-		Data(19007, 2, 0),
-		Data(19008, 2, 0),
-		Data(19004, 4, 100),
-		Data(2200, 1,20),
-		Data(2245, 2, 75),
-		Data(2095, 2, 50),
-		Data(19007, 1, 100),
-		Data(19005, 4, 0 ),
-		Data(19008, 1, 100),
-		Data(2200, 3,  0 ),
-		Data(2245, 1, 100),
-		Data(2458, 2, 0),
-		Data(3468, 2, 0),
-		Data(9458, 2, 0),
-		Data(19005, 4, 0 ),
-		Data(24556, 2, 0),
-		Data(19008, 2, 0),
-		Data(3428, 2, 0),
+		Data(3715, 1, 100, 60),
+		Data(2200, 1, 80, 30),
+		Data(2245, 1, 75, 45),
+		Data(2095, 1, 67, 25),
+		Data(19007, 2, 0, 56),
+		Data(19008, 2, 0, 62),
+		Data(19004, 4, 100, 23),
+		Data(2200, 1,20, 54),
+		Data(2245, 2, 75, 64),
+		Data(2095, 2, 50, 23),
+		Data(19007, 1, 100, 35),
+		Data(19005, 4, 0, 36),
 	];
-
-	graph0 = makeSimpleGraph();
-
-	graph = foldi(datapoints, graph0, \i, acc, data -> {
-		if (i == 0) {
-			addSimpleNode(acc, data.id);
-		} else {
-			prev = datapoints[i - 1];
-			addSimpleEdge(acc, prev.id, data.id, data.score, 1)
+	layout0 = fold(
+		datapoints, DataAndLayout(datapoints, makeForceLayout(WidthHeight(600.0, 600.0))),
+		\acc, data -> {
+			addDataPoint(acc, data)
 		}
+	);
+
+	layout = foldRange(0, 50, layout0, \acc, l -> {
+		addNewDataPoint(acc)
 	});
 
-	layout = graph2layout(getEGNodes(graph.graph), getEGEdges(graph.graph), [0], [], WidthHeight(600.0, 1024.0));
+	datalayout = make(layout);
 
-	gui = layout2form(getEGNodes(graph.graph), getEGEdges(graph.graph), layout);
+	gui = Lines([
+		EasyButton("ADD", "", orange, \-> {
+			nl = addNewDataPoint(getValue(datalayout));
+			next(datalayout, nl);
+		}, []),
+		Select(datalayout, \dl -> {
+			layout2form(dl)
+		}),
+	]);
+
+	addDrawFrameEventListener(\dt -> {
+		forceTick(getValue(datalayout).layout);
+		{}
+//		println(dt);
+	});
 
 	render(gui);
 }
 
-graph2layout(nodes : [GNode], edges : [GEdge], sources : [int], sinks : [int], size : WidthHeight) -> ForceLayout {
-	node2coordinate = calculateCoordinatesOld(nodes, sources, sinks, size);
-	edge2distances = calculateDistanceOld(edges, size);
+addNewDataPoint(datalayout : DataAndLayout) -> DataAndLayout {
+	dataid = if (random() < 0.25) {
+		data0 = pickOne(datalayout.datapoints);
+		data0.id;
+	} else {
+		floor(random() * 1000.0);
+	}
 
-	defParams = ForceLayoutParams(0.1, 0.9, 0.03, 0.8);
-
-	forceDiGraphLayout(nodes, edges, sources, sinks, size, defParams, node2coordinate, edge2distances, false);
+	data = Data(dataid, floor(random() * 4.0) + 1, round(random() * 100.0), round(random() * 60.0) + 10);
+	addDataPoint(datalayout, data);
 }
 
-layout2form(nodes : [GNode<int>], edges : [GEdge<int>], layout : ForceLayout) -> Form {
-	generate(0, 100, \i -> forceTick(layout));
+
+DataAndLayout(
+	datapoints : [Data],
+	layout : ForceLayout
+);
+
+addDataPoint(acc : DataAndLayout, d : Data) -> DataAndLayout {
+	nodeid = findiDef(acc.layout.nodes, \n -> n.id == d.id, -1);
+	layout0 = if (nodeid == -1) {
+		addNodeIdToLayout(acc.layout, d.id, time2charge(d.time));
+	} else {
+		acc.layout;
+	}
+	layout1 = if (layout0.nodes == []) {
+		layout0
+	} else {
+		lastPoint = lastElement(acc.datapoints, d);
+		addEdgeToLayout(layout0, lastPoint.id, d.id);
+	}
+
+	// Give it new energy
+	layout1.alpha := 0.1;
+
+	DataAndLayout(
+		arrayPush(acc.datapoints, d),
+		layout1
+	);
+}
+
+layout2form(datalayout : DataAndLayout) -> Form {
+	layout = datalayout.layout;
+//	generate(0, 50, \i -> forceTick(layout));
 	formDiGraphLayout2(layout, \nodeid : int -> {
-		color = if (random() < 0.5) green else if (random() < 0.5) yellow else red;
-		size = random() * 20.0 + 10.0;
-		Circle(size, size, size, [Fill(color)])
+		mdata = find(datalayout.datapoints, \d -> d.id == nodeid);
+		switch (mdata) {
+			None(): {
+				Circle(0.0, 0.0, 10.0, [Fill(black)])
+			}
+			Some(data): {
+				color = if (data.score > 90) green else if (data.score >= 75) yellow else red;
+				size = i2d(min(data.time, 50)) / 2.0;
+				Circle(0.0, 0.0, size, [Fill(color)])
+			}
+		}
 	});
 }
 
 formDiGraphLayout2(layout : ForceLayout, nodeFn : (nodeid : int) -> Form) -> Form {
-	nodesAndSizes : Pair<[Form], Tree<int, DynamicBehaviour<WidthHeight>>> =
-		foldi(layout.nodes, Pair([], makeTree()), \index, acc : Pair<[Form], Tree<int, DynamicBehaviour<WidthHeight>>>, node : ForceNode -> {
+	nodes : [Form] =
+		map(layout.nodes, \node : ForceNode -> {
 			nodeForm = nodeFn(node.id);
-
-			nodeWHB : DynamicBehaviour<WidthHeight> = makeWH();
-			nodeForm2 = Inspect([ISize(nodeWHB)], nodeForm);
-
-			nodeForm3 : Form = 
-				Slider(
-					node.x, 
-					node.y, 
-					const(layout.size.width), 
-					const(layout.size.height), 
-					nodeForm2, 
-					[]
-				);
-
-			Pair(
-				arrayPush(acc.first, nodeForm3),
-				setTree(acc.second, index, nodeWHB)
-			)
+			Slider(
+				node.x, 
+				node.y, 
+				const(layout.size.width), 
+				const(layout.size.height), 
+				nodeForm, 
+				[]
+			);
 		});
 
 	edgesForms = 
@@ -96,24 +131,23 @@ formDiGraphLayout2(layout : ForceLayout, nodeFn : (nodeid : int) -> Form) -> For
 			sourceNode = layout.nodes[edge.source];
 			targetNode = layout.nodes[edge.target];
 
-			sourceSize = lookupTreeDef(nodesAndSizes.second, edge.source, makeWH());
-			targetSize = lookupTreeDef(nodesAndSizes.second, edge.target, makeWH());
-
 			Select2(
-				select3(sourceNode.x, sourceNode.y, sourceSize, \x, y, wh -> Point(x + wh.width / 2.0, y + wh.height / 2.0)), 
-				select3(targetNode.x, targetNode.y, targetSize, \x, y, wh -> Point(x + wh.width / 2.0, y + wh.height / 2.0)), 
+				select2(sourceNode.x, sourceNode.y, \x, y -> Point(x, y)), 
+				select2(targetNode.x, targetNode.y, \x, y -> Point(x, y)), 
 				drawGraphArrow
 			)
 		});
 
-	Group(concat(edgesForms, nodesAndSizes.first))
+	Group(concat(edgesForms, nodes))
 }
 
-drawGraphArrow(p1 : Point, p2 : Point) -> Form {
+drawGraphArrow(p2 : Point, p1 : Point) -> Form {
 	dx = p2.x - p1.x;
 	dy = p2.y - p1.y;
 
-	dist = sqrt(dx * dx + dy * dy);
+	dist0 = sqrt(dx * dx + dy * dy);
+
+	dist = if (dist0 == 0.0) 1.0 else dist0;
 
 	ux = dx / dist;
 	uy = dy / dist;
@@ -138,4 +172,8 @@ drawGraphArrow(p1 : Point, p2 : Point) -> Form {
 			LineTo(p2.x - back1 * ux, p2.y - back1 * uy),
 		], [Fill(0x888888)])
 	])	
+}
+
+time2charge(t : int) -> double {
+	5.0 * i2d(t) + 300.;
 }
