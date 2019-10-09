@@ -956,10 +956,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function InvalidateLocalStages() {
-		if (RendererType != "html") {
-			for (child in PixiStage.children) {
-				child.invalidateTransform('InvalidateLocalStages');
-			}
+		for (child in PixiStage.children) {
+			child.invalidateTransform('InvalidateLocalStages');
 		}
 	}
 

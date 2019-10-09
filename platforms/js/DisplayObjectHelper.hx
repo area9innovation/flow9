@@ -1851,4 +1851,17 @@ class DisplayObjectHelper {
 	public static inline function getClipChildren(clip : DisplayObject) : Array<DisplayObject> {
 		return untyped clip.children || [];
 	}
+
+
+	public static inline function addElementNS(parent : js.html.Element, tagName : String) : js.html.Element {
+		var el = parent.getElementsByTagName(tagName);
+
+		if (el.length > 0) {
+			return el[0];
+		} else {
+			var element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
+			parent.appendChild(element);
+			return element;
+		}
+	}
 }
