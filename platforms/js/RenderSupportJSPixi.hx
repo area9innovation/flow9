@@ -1360,6 +1360,10 @@ class RenderSupportJSPixi {
 		return new FlowContainer();
 	}
 
+	public static function makeCanvasClip() : FlowCanvas {
+		return new FlowCanvas();
+	}
+
 	public static function setClipCallstack(clip : DisplayObject, callstack : Dynamic) : Void {
 		// stub
 	}
