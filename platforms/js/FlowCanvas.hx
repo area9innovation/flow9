@@ -41,19 +41,19 @@ class FlowCanvas extends FlowContainer {
 			updateNativeWidgetTransformMatrix();
 			updateNativeWidgetOpacity();
 
-			var minX = Math.max(Math.ceil(-localBounds.minX * worldTransform.a), 0.0);
-			var minY =  Math.max(Math.ceil(-localBounds.minY * worldTransform.d), 0.0);
+			var minX = Math.max(Math.ceil(-localBounds.minX * worldTransform.a), 0.0) * RenderSupportJSPixi.PixiRenderer.resolution;
+			var minY =  Math.max(Math.ceil(-localBounds.minY * worldTransform.d), 0.0) * RenderSupportJSPixi.PixiRenderer.resolution;
 
-			var width = Math.ceil(localBounds.maxX * worldTransform.a) + minX;
-			var height = Math.ceil(localBounds.maxY * worldTransform.d) + minY;
+			var width = Math.ceil(localBounds.maxX * worldTransform.a) * RenderSupportJSPixi.PixiRenderer.resolution + minX;
+			var height = Math.ceil(localBounds.maxY * worldTransform.d) * RenderSupportJSPixi.PixiRenderer.resolution + minY;
 
 			var transform = getNativeWidgetTransform();
 
 			var canvasWidth = Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
 			var canvasHeight = Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
 
-			offscreenCanvas.width = width + Math.round(worldTransform.tx);
-			offscreenCanvas.height = height + Math.round(worldTransform.ty);
+			offscreenCanvas.width = width + Math.round(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution;
+			offscreenCanvas.height = height + Math.round(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution;
 
 			RenderSupportJSPixi.PixiRenderer.context = offscreenContext;
 			RenderSupportJSPixi.PixiRenderer.rootContext = offscreenContext;
@@ -75,8 +75,8 @@ class FlowCanvas extends FlowContainer {
 
 			context.drawImage(
 				offscreenCanvas,
-				Math.ceil(worldTransform.tx) - minX,
-				Math.ceil(worldTransform.ty) - minY,
+				Math.ceil(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution - minX,
+				Math.ceil(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution - minY,
 				width,
 				height,
 				0.0,
