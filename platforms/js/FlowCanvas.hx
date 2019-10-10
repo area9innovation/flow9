@@ -41,8 +41,19 @@ class FlowCanvas extends FlowContainer {
 			updateNativeWidgetTransformMatrix();
 			updateNativeWidgetOpacity();
 
-			offscreenCanvas.width = Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0) + Math.ceil(worldTransform.tx);
-			offscreenCanvas.height = Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0) + Math.ceil(worldTransform.ty);
+			var minX = Math.max(Math.ceil(-localBounds.minX * worldTransform.a), 0.0);
+			var minY =  Math.max(Math.ceil(-localBounds.minY * worldTransform.d), 0.0);
+
+			var width = Math.ceil(localBounds.maxX * worldTransform.a) + minX;
+			var height = Math.ceil(localBounds.maxY * worldTransform.d) + minY;
+
+			var transform = getNativeWidgetTransform();
+
+			var canvasWidth = Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
+			var canvasHeight = Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
+
+			offscreenCanvas.width = width + Math.round(worldTransform.tx);
+			offscreenCanvas.height = height + Math.round(worldTransform.ty);
 
 			RenderSupportJSPixi.PixiRenderer.context = offscreenContext;
 			RenderSupportJSPixi.PixiRenderer.rootContext = offscreenContext;
@@ -58,14 +69,20 @@ class FlowCanvas extends FlowContainer {
 			context.clearRect(
 				0,
 				0,
-				Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0),
-				Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0)
+				canvasWidth,
+				canvasHeight
 			);
 
 			context.drawImage(
 				offscreenCanvas,
-				Math.max(Math.ceil(-localBounds.minX), 0.0) - Math.ceil(worldTransform.tx),
-				Math.max(Math.ceil(-localBounds.minY), 0.0) - Math.ceil(worldTransform.ty)
+				Math.ceil(worldTransform.tx) - minX,
+				Math.ceil(worldTransform.ty) - minY,
+				width,
+				height,
+				0.0,
+				0.0,
+				canvasWidth,
+				canvasHeight
 			);
 
 			RenderSupportJSPixi.PixiRenderer.view = RenderSupportJSPixi.PixiView;

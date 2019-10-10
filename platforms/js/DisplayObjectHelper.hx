@@ -817,8 +817,8 @@ class DisplayObjectHelper {
 		var localBounds = untyped clip.localBounds;
 
 		if (untyped clip.isCanvas) {
-			tx -= Math.max(Math.ceil(-localBounds.minX), 0.0);
-			ty -= Math.max(Math.ceil(-localBounds.minY), 0.0);
+			tx -= Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
+			ty -= Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
 		}
 
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
@@ -826,10 +826,10 @@ class DisplayObjectHelper {
 			var nativeWidget = untyped clip.nativeWidget;
 
 			if (untyped clip.isCanvas) {
-				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0)}');
-				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0)}');
-				nativeWidget.style.width = '${Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0)}px';
-				nativeWidget.style.height = '${Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0)}px';
+				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0)}');
+				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0)}');
+				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0)}px';
+				nativeWidget.style.height = '${Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0)}px';
 			} else if (untyped clip.alphaMask != null) {
 				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
@@ -864,6 +864,11 @@ class DisplayObjectHelper {
 
 		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
 		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
+
+		if (untyped clip.isCanvas) {
+			return;
+		}
+
 		nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
 			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
 	}
