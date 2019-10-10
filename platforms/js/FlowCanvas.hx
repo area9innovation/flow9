@@ -12,7 +12,7 @@ import haxe.extern.EitherType;
 using DisplayObjectHelper;
 
 class FlowCanvas extends FlowContainer {
-	private var offscreenCanvas : Dynamic = untyped __js__("new OffscreenCanvas(RenderSupportJSPixi.PixiView.width, RenderSupportJSPixi.PixiView.height)");
+	private var offscreenCanvas : Dynamic = untyped __js__("typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(RenderSupportJSPixi.PixiView.width, RenderSupportJSPixi.PixiView.height) : document.createElement('canvas')");
 	private var offscreenContext : Dynamic = null;
 
 	public function new(?worldVisible : Bool = false) {
