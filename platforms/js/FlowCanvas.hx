@@ -86,6 +86,10 @@ class FlowCanvas extends FlowContainer {
 			);
 
 			RenderSupportJSPixi.PixiRenderer.view = RenderSupportJSPixi.PixiView;
+
+			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
+				untyped this.localTransformChanged = true;
+			}
 		}
 
 		updateNativeWidgetDisplay();
@@ -99,6 +103,20 @@ class FlowCanvas extends FlowContainer {
 
 		context = nativeWidget != null ? nativeWidget.getContext('2d', { alpha : true }) : null;
 		offscreenContext = offscreenCanvas != null ? offscreenCanvas.getContext('2d', { alpha : true }) : null;
+
+		if (nativeWidget != null) {
+			nativeWidget.onpointermove = function(e) {
+				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerMove(e);
+				nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
+			};
+			nativeWidget.onpointerover = function(e) {
+				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver(e);
+			};
+			nativeWidget.onpointerout = function(e) {
+				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut(e);
+			};
+			nativeWidget.style.pointerEvents = 'auto';
+		}
 
 		RenderSupportJSPixi.RendererType = 'html';
 		PixiWorkarounds.workaroundGetContext();

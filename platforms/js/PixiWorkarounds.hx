@@ -892,7 +892,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.RendererType == 'html' && (this.localTransformChanged || this.isCanvas)) {
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
