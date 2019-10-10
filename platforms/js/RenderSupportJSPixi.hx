@@ -936,7 +936,7 @@ class RenderSupportJSPixi {
 		requestAnimationFrame();
 	}
 
-	private static inline function render() {
+	public static inline function render() {
 		animate(Browser.window.performance.now());
 	}
 
@@ -956,10 +956,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function InvalidateLocalStages() {
-		if (RendererType != "html") {
-			for (child in PixiStage.children) {
-				child.invalidateTransform('InvalidateLocalStages');
-			}
+		for (child in PixiStage.children) {
+			child.invalidateTransform('InvalidateLocalStages');
 		}
 	}
 
@@ -1360,6 +1358,10 @@ class RenderSupportJSPixi {
 
 	public static function makeClip() : FlowContainer {
 		return new FlowContainer();
+	}
+
+	public static function makeCanvasClip() : FlowCanvas {
+		return new FlowCanvas();
 	}
 
 	public static function setClipCallstack(clip : DisplayObject, callstack : Dynamic) : Void {

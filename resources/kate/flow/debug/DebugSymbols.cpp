@@ -1,9 +1,10 @@
+#include "debug/DebugSymbols.hpp"
+
 #include <QFile>
 #include <QTextStream>
 #include <tuple>
 #include "peglib/peglib.h"
 
-#include "DebugSymbols.hpp"
 
 namespace flow {
 

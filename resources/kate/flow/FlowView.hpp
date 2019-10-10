@@ -11,6 +11,7 @@
 #include "FlowOutput.hpp"
 #include "FlowConfig.hpp"
 #include "Outline.hpp"
+#include "tasks/TaskManager.hpp"
 
 namespace flow {
 
@@ -30,6 +31,10 @@ public Q_SLOTS:
 	void slotReloadLaunchConfigs();
 	void showMenu();
 	void slotGotoLocation(const QString& file, int line, int col = 0);
+	QTabWidget* outputTabs() { return flowOutput_.ui.tabWidget; }
+	void switchToOutputTab(QWidget*);
+	void removeOutputTab(QWidget*);
+	void addOutputTab(QWidget*, const QString&);
 
 private:
 	friend class DebugView;
@@ -61,6 +66,7 @@ public:
 	DebugView*   debugView_;
 	FlowServer*  flowServer_;
 	Outline*     outline_;
+	TaskManager  taskManager_;
 };
 
 }

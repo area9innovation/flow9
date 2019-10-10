@@ -289,6 +289,11 @@ class TextClip extends NativeWidgetClip {
 
 		for (child in children) {
 			var c : Dynamic = child;
+
+			if (c.text == null) {
+				continue;
+			}
+
 			var ctext = bidiUndecorate(c.text);
 			var chridx : Int = c.orgCharIdxStart;
 			var chridxe : Int = c.orgCharIdxEnd;

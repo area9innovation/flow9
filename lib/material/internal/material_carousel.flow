@@ -12,43 +12,52 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 
 	if (state.contentsLength > 0)
 		(\p -> {
-			boxWH = makeWH();
-			contentHeight = make(0.0);
-
 			mapi(m.contents, \i, c ->
 				MCarouselContent2T(manager, p, c, i, m.style, state, m2t)
 			)
 			|> TGroup
 			|> (\f -> TTranslate(fpoint(state.tx, const(0.)), f))
 			|> (\f ->
-				TConstruct(
-					[
-						makeSubscribe(boxWH, \wh -> {
-							whWithRatio =
-								if (state.heightByContent) wh
-								else WidthHeight(
-									if (wh.width < 120.) {if (wh.height < 120.) 120. else wh.height * goldenRatio} else wh.width,
-									if (wh.height < 120.) {if (wh.width < 120.) 120. else wh.width / goldenRatio} else wh.height
-								);
-							nextDistinct(state.wh, whWithRatio);
-							nextDistinct(state.tx, -whWithRatio.width * i2d(getValue(state.activeIdx)));
-							next(state.activeIdx, getValue(state.activeIdx)); // in order to trigger the animation
-						})
-					],
-					f
-				)
+				if (state.heightByContent) {
+					TConstruct(
+						[
+							makeSubscribe(state.width, \w -> updateTxForWidth(w, state))
+						],
+						TAttachAvailableWidth(TCropWidth(f, state.width), state.width)
+					);
+				} else {
+					awh = makeWH();
+					whWithRatio =
+						fselect(awh, FLift(\wh -> {
+							w = wh.width;
+							h = wh.height;
+							WidthHeight(
+								if (w < 120.) {if (h < 120.) 120. else h * goldenRatio} else w,
+								if (h < 120.) {if (w < 120.) 120. else w / goldenRatio} else h
+							)
+						}));
+
+					TConstruct(
+						[
+							makeSubscribe(whWithRatio, \wh -> {
+								nextDistinct(state.width, wh.width);
+								nextDistinct(state.height, wh.height);
+								updateTxForWidth(wh.width, state);
+							})
+						],
+						TAttachAvailable(
+							TCrop(const(zeroPoint), whWithRatio, f),
+							awh
+						)
+					);
+				}
 			)
-			|> (\f -> if (state.heightByContent) TAttachHeight(f, contentHeight) else f)
-			|> (\f -> TCrop(const(zeroPoint), state.wh, f))
-			|> (\f -> if (state.heightByContent) {
-				availableWidth = make(0.0);
-				TConstruct(
-					[ \ -> fconnect(fwh(availableWidth, contentHeight), boxWH) ],
-					TAttachAvailableWidth(f, availableWidth)
-				);
-			} else {
-				TAttachAvailable(f, boxWH);
-			})
+			|> (\f ->
+				// We need to make sure that native clip is container, so that
+				// swipe events on it is not biased while content is translated
+				// (useful if no MInteractionsOnTop style is set)
+				TDecorator(f, [], false)
+			)
 			|> (\f : Tropic ->
 				if (state.contentsLength > state.itemsSpan)
 					MSwipe2T(
@@ -251,9 +260,15 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 		TEmpty()
 }
 
+updateTxForWidth(width : double, state : MCarouselState) {
+	nextDistinct(state.tx, -width * i2d(getValue(state.activeIdx)));
+	next(state.activeIdx, getValue(state.activeIdx)); // in order to trigger the animation
+}
+
 MCarouselState(
 	contentsLength : int,
-	wh : DynamicBehaviour<WidthHeight>,
+	width : DynamicBehaviour<double>,
+	height : DynamicBehaviour<double>,
 	itemWidth : Transform<double>,
 	tx : DynamicBehaviour<double>,
 	down : DynamicBehaviour<bool>,
@@ -303,8 +318,9 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	enableChevrons = !contains(m.style, MNoChevrons()) && contentsLength > itemsSpan;
 	enableProgress = !contains(m.style, MNoProgress()) && contentsLength > itemsSpan;
 
-	wh = makeWH();
-	itemWidth = fselect(wh, FLift(\v -> v.width / i2d(itemsSpan)));
+	width = make(0.0);
+	height = make(0.0);
+	itemWidth = fdivide(width, const(i2d(itemsSpan)));
 	uns = initUnsM();
 	targetTx = make(0.);
 	tx = customPanning.shiftX;
@@ -462,7 +478,8 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 
 	MCarouselState(
 		contentsLength,
-		wh,
+		width,
+		height,
 		itemWidth,
 		tx,
 		down,
@@ -581,9 +598,6 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 	contentScaling = !contains(style, MCarouselNoContentScaling());
 	bgStyle = extractStruct(style, MBackgroundStyle([MFill(MBackgroundColor(!getLightBackground(parent)))])).style;
 
-	blockWidth = fdivide(fwidth(state.wh), const(i2d(state.itemsSpan)));
-	carouselBox = TSizedWidthHeight(blockWidth, fheight(state.wh));
-
 	makeTitle = \text, font : MFontStyle ->
 		if (text != "")
 			MEllipsisText2T(manager, parent, MEllipsisText(text, [font, textColor, MShowTooltip(const(true))]), m2t)
@@ -593,9 +607,9 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 	(\p ->
 		(\p2 ->
 			if (contentScaling) // Crop content to the size of the box
-				TTweak([TFillZoom(true)], m2t(c.content, p2), carouselBox)
+				TTweak([TFillZoom(true)], m2t(c.content, p2), TSizedWidthHeight(state.itemWidth, state.height))
 			else
-				TCropWidth(m2t(c.content, p2), blockWidth)
+				TCropWidth(m2t(c.content, p2), state.itemWidth)
 		)
 		|> (\f : (MFocusGroup) -> Tropic ->
 			if (isSome(state.contentZoom) ||
@@ -677,7 +691,7 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 						|> (\f2 -> TGroup2(TFillX(), f2))
 						|> (\f2 -> TFixSize(f2, TFillXH(state.bottomMargin)))
 						|> (\f2 -> TFrame(0., 0., [MFill(footerColor), FillOpacity(footerOpacity)], f2))
-						|> (\f2 -> TAvailableWidth(f2, blockWidth))
+						|> (\f2 -> TAvailableWidth(f2, state.itemWidth))
 						|> (\f2 ->
 							eitherMap(
 								state.maximize,
@@ -717,7 +731,13 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 		)
 	)
 	|> (\f -> TFrame(0., 0., bgStyle, f)) // Add background
-	|> (\f -> if (state.heightByContent) TAvailableWidth(f, blockWidth) else TAvailable(f, carouselBox))
+	|> (\f ->
+		if (state.heightByContent) {
+			TAvailableWidth(f, state.itemWidth);
+		} else {
+			TAvailableWidthHeight(f, state.itemWidth, state.height);
+		}
+	)
 	// |> (\f ->
 	// 	TInteractive(
 	// 		[
