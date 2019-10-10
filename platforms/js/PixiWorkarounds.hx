@@ -892,7 +892,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
+					if (RenderSupportJSPixi.RendererType == 'html' && (this.localTransformChanged || this.isCanvas)) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
@@ -918,7 +918,7 @@ class PixiWorkarounds {
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
 						if (RenderSupportJSPixi.RendererType == 'html') {
-							if (RenderSupportJSPixi.LayoutText) {
+							if (RenderSupportJSPixi.LayoutText || this.isCanvas) {
 								this.textClipChanged = true;
 								this.layoutText();
 							} else if (this.children.length > 0) {
