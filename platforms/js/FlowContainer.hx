@@ -21,6 +21,7 @@ class FlowContainer extends Container {
 	public var transformChanged : Bool = false;
 	public var stageChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
+	private var localTransformChanged : Bool = true;
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
@@ -190,13 +191,15 @@ class FlowContainer extends Container {
 					DisplayObjectHelper.unlockStage();
 				}
 			}
-		} else if (stageChanged && view != null) {
+		} else if (stageChanged) {
 			stageChanged = false;
 
-			renderer.view = view;
-			renderer.context = context;
-			untyped renderer.rootContext = context;
-			renderer.transparent = parent.children.indexOf(this) != 0;
+			if (view != null) {
+				renderer.view = view;
+				renderer.context = context;
+				untyped renderer.rootContext = context;
+				renderer.transparent = parent.children.indexOf(this) != 0;
+			}
 
 			if (transformChanged) {
 				var bounds = new Bounds();

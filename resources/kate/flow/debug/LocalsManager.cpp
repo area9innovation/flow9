@@ -1,11 +1,12 @@
+#include "debug/LocalsManager.hpp"
+
 #include <QLabel>
 
 #include "common.hpp"
-#include "MiParser.hpp"
-#include "FlowView.hpp"
-#include "FlowValueParser.hpp"
+#include "debug/MiParser.hpp"
 #include "DebugSymbols.hpp"
-#include "LocalsManager.hpp"
+#include "FlowValueParser.hpp"
+#include "FlowView.hpp"
 
 namespace flow {
 

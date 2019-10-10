@@ -4,7 +4,7 @@
 #include <KConfigGroup>
 
 #include "common.hpp"
-#include "DebugView.hpp"
+#include "debug/DebugView.hpp"
 #include "Plugin.hpp"
 
 #include "ui_FlowConfig.h"

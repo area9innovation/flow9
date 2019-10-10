@@ -1,9 +1,10 @@
+#include "debug/FlowValueParser.hpp"
+
 #include <QTextStream>
 #include <QRegExp>
 #include <tuple>
 #include "peglib/peglib.h"
 
-#include "FlowValueParser.hpp"
 
 namespace flow {
 

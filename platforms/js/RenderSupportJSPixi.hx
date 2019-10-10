@@ -253,6 +253,8 @@ class RenderSupportJSPixi {
 			untyped PixiRenderer.gl.viewport(0, 0, untyped PixiRenderer.gl.drawingBufferWidth, untyped PixiRenderer.gl.drawingBufferHeight);
 			untyped PixiRenderer.gl.clearColor(1.0, 1.0, 1.0, 1.0);
 			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
+		} else if (RendererType == "html") {
+			untyped PixiRenderer.plugins.interaction.removeEvents();
 		}
 
 		PixiView = PixiRenderer.view;
@@ -908,29 +910,19 @@ class RenderSupportJSPixi {
 				for (child in PixiStage.children) {
 					untyped child.render(untyped PixiRenderer);
 				}
-			} else if (RendererType == "canvas") {
+			} else {
 				TransformChanged = false;
 
-				for (child in PixiStage.children) {
-					untyped child.updateView();
+				if (RendererType == "canvas") {
+					for (child in PixiStage.children) {
+						untyped child.updateView();
+					}
 				}
 
 				AccessWidget.updateAccessTree();
 
 				for (child in PixiStage.children) {
 					untyped child.render(untyped PixiRenderer);
-				}
-			} else if (RendererType == "webgl") {
-				TransformChanged = false;
-
-				AccessWidget.updateAccessTree();
-
-				for (child in PixiStage.children) {
-					if (untyped child.stageChanged) {
-						untyped child.stageChanged = false;
-
-						PixiRenderer.render(child, null, true, null, untyped !child.transformChanged);
-					}
 				}
 			}
 
@@ -944,7 +936,7 @@ class RenderSupportJSPixi {
 		requestAnimationFrame();
 	}
 
-	private static inline function render() {
+	public static inline function render() {
 		animate(Browser.window.performance.now());
 	}
 
@@ -964,10 +956,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function InvalidateLocalStages() {
-		if (RendererType != "html") {
-			for (child in PixiStage.children) {
-				child.invalidateTransform('InvalidateLocalStages');
-			}
+		for (child in PixiStage.children) {
+			child.invalidateTransform('InvalidateLocalStages');
 		}
 	}
 
@@ -1368,6 +1358,10 @@ class RenderSupportJSPixi {
 
 	public static function makeClip() : FlowContainer {
 		return new FlowContainer();
+	}
+
+	public static function makeCanvasClip() : FlowCanvas {
+		return new FlowCanvas();
 	}
 
 	public static function setClipCallstack(clip : DisplayObject, callstack : Dynamic) : Void {
@@ -2038,7 +2032,7 @@ class RenderSupportJSPixi {
 
 		if (RendererType == "html") {
 			untyped clip.filterPadding = 0.0;
-			var dropShadowCount = 0;
+			var filterCount = 0;
 
 			clip.off("childrenchanged", clip.invalidateTransform);
 			clip.emit("clearfilters");
@@ -2048,12 +2042,12 @@ class RenderSupportJSPixi {
 					return false;
 				} else if (f.padding != null) {
 					untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
-					dropShadowCount++;
+					filterCount++;
 				}
 
 				return true;
 			});
-			untyped clip.filterPadding = clip.filterPadding * dropShadowCount;
+			untyped clip.filterPadding = clip.filterPadding * filterCount;
 			if (untyped clip.updateNativeWidgetGraphicsData != null) {
 				untyped clip.updateNativeWidgetGraphicsData();
 			}
@@ -2076,7 +2070,7 @@ class RenderSupportJSPixi {
 			untyped clip.filterPadding = 0.0;
 			untyped clip.glShaders = false;
 
-			var dropShadowCount = 0;
+			var filterCount = 0;
 
 			filters = filters.filter(function(f) {
 				if (f == null) {
@@ -2085,7 +2079,7 @@ class RenderSupportJSPixi {
 
 				if (f.padding != null) {
 					untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
-					dropShadowCount++;
+					filterCount++;
 				}
 
 				if (f.uniforms != null && (f.uniforms.time != null || f.uniforms.seed != null || f.uniforms.bounds != null)) {
@@ -2121,7 +2115,7 @@ class RenderSupportJSPixi {
 				return true;
 			});
 
-			untyped clip.filterPadding = clip.filterPadding * dropShadowCount;
+			untyped clip.filterPadding = clip.filterPadding * filterCount;
 			clip.filters = filters.length > 0 ? filters : null;
 
 			if (RendererType == "canvas") {

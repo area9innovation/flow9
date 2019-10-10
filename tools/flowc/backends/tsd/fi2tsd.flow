@@ -7,17 +7,31 @@ export {
 }
 
 fi2tsd(p : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void {
-
 	folder = if (cfg.outputfolder == "1") "@types/" else cfg.outputfolder;
 
-	traverseInOrder(p.modules, \path, module -> {
-		modul = fimodule2tsd(p, cfg, module);
+	if (isEmptySet(cfg.jslibrary) || cfg.jslibraryObject == "") {
+		traverseInOrder(p.modules, \path, module -> {
+			modul = fimodule2tsd(p, cfg, module);
 
-		file = pathCombine(folder, path)  + ".d.ts";
+			file = pathCombine(folder, path)  + ".d.ts";
+			ensureDirectoryExists(dirName(file));
+			setFileContent(file, modul);
+			{}
+		});
+	} else {
+		// OK, tsd in combination with jslibrary, and we make a package
+		// just with the exported names
+		modul = "declare module " + cfg.jslibraryObject + " {\n"
+			+ superglue(set2array(cfg.jslibrary), \name -> {
+				"\t" + finame2ts(p, name);
+			}, "\n")
+			+ "\n}";
+
+		file = pathCombine(folder, cfg.jslibraryObject)  + ".d.ts";
 		ensureDirectoryExists(dirName(file));
 		setFileContent(file, modul);
 		{}
-	});
+	}
 
 	callback();
 }
@@ -28,11 +42,11 @@ fimodule2tsd(p : FiProgram, cfg : FiTsdConfig, m : FiModule) -> string {
 		"import '" + im.flowfile + "';\n"
 	}, "")
 	+ superglue(m.exports, \ex -> {
-		finame2ts(p, m, ex);
+		finame2ts(p, ex);
 	}, "\n");
 }
 
-finame2ts(p : FiProgram, m : FiModule, e : string) -> string {
+finame2ts(p : FiProgram, e : string) -> string {
 	mdec = lookupTree(p.names.toplevel, e);
 	switch (mdec) {
 		None(): {
@@ -45,7 +59,7 @@ finame2ts(p : FiProgram, m : FiModule, e : string) -> string {
 							"Unknown " + e;
 						}
 						Some(u): {
-							"// TODO: Check union syntax"
+							"// TODO: Check union syntax "
 							+ tsReserved(u.name )
 							+ (if (u.typeparameters != []) "<" + superglue(u.typeparameters, fitype2ts, ", ") + ">" else "")
 							+ " ::= " + superglue(u.typenames, fitype2ts, ", ") + ";"
@@ -53,7 +67,7 @@ finame2ts(p : FiProgram, m : FiModule, e : string) -> string {
 					}
 				}
 				Some(str): {
-					"export interface " + tsReserved(e) + " {" + superglue(
+					"// export interface " + tsReserved(e) + " {" + superglue(
 						str.args, 
 						\sa -> (if (sa.ismutable) "mutable " else "") + sa.name + " : " + fitype2ts(sa.type) + ";", 
 						" "

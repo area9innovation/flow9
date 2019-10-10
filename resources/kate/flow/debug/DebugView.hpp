@@ -10,7 +10,6 @@
 #include <KTextEditor/MainWindow>
 
 #include "DebugSymbols.hpp"
-
 #include "ui_StackLocals.h"
 #include "ui_BreakPoints.h"
 

@@ -54,6 +54,7 @@ public Q_SLOTS:
     void slotReadDebugStdErr();
     void slotDebugFinished(int exitCode, QProcess::ExitStatus status);
     void slotIssueNextCommand();
+    void slotMiOutputStateChanged(int);
 
 Q_SIGNALS:
     void signalDebugLocationChanged(QUrl file, int lineNum);
