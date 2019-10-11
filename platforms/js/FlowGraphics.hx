@@ -1,4 +1,5 @@
 import js.Browser;
+import js.html.Element;
 
 import pixi.core.display.Bounds;
 import pixi.core.display.DisplayObject;
@@ -28,7 +29,7 @@ class FlowGraphics extends Graphics {
 	public var transformChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
 
-	private var nativeWidget : Dynamic;
+	private var nativeWidget : Element;
 	private var accessWidget : AccessWidget;
 
 	public var isEmpty : Bool = true;
@@ -58,7 +59,9 @@ class FlowGraphics extends Graphics {
 	public function lineGradientStroke(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic) : Void {
 		strokeGradient = { colors : colors, alphas : alphas, offsets : offsets, matrix : matrix };
 
-		lineStyle(1.0, RenderSupportJSPixi.removeAlphaChannel(colors[0]), alphas[0]);
+		isSvg = true;
+
+		lineStyle(lineWidth, RenderSupportJSPixi.removeAlphaChannel(colors[0]), alphas[0]);
 	}
 
 	public override function moveTo(x : Float, y : Float) : Graphics {
@@ -111,8 +114,23 @@ class FlowGraphics extends Graphics {
 
 		calculateGraphicsBounds();
 
+		if (strokeGradient != null && RenderSupportJSPixi.RendererType == "html") {
+			untyped data.gradient = strokeGradient;
+			untyped data.strokeGradient = strokeGradient.type == 'radial' ?
+				"radial-gradient(" :
+				"linear-gradient(" + (strokeGradient.matrix.rotation + 90.0) + 'deg, ';
+
+			for (i in 0...strokeGradient.colors.length) {
+				untyped data.strokeGradient += RenderSupportJSPixi.makeCSSColor(strokeGradient.colors[i], strokeGradient.alphas[i]) + ' ' +
+					trimFloat(strokeGradient.offsets[i], 0.0, 1.0) * (strokeGradient.type == 'radial' ? 70.0 : 100.0) + '%' +
+					(i != strokeGradient.colors.length - 1 ? ', ' : '');
+			}
+
+			untyped data.strokeGradient += ")";
+		}
+
 		if (fillGradient != null) {
-			if (RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType == "html") {
 				untyped data.gradient = fillGradient;
 				untyped data.fillGradient = fillGradient.type == 'radial' ?
 					"radial-gradient(" :
@@ -180,7 +198,7 @@ class FlowGraphics extends Graphics {
 
 		invalidateTransform('endFill');
 
-		if (RenderSupportJSPixi.DomRenderer && !isEmpty) {
+		if (RenderSupportJSPixi.RendererType == "html" && !isEmpty) {
 			updateNativeWidgetGraphicsData();
 		}
 
@@ -316,28 +334,37 @@ class FlowGraphics extends Graphics {
 		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && !isSvg ? lineWidth : 0.0);
 		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && !isSvg ? lineWidth : 0.0);
 		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && !isSvg ? lineWidth : 0.0);
+
+		if (isSvg) {
+			widgetBounds.maxX = Math.max(widgetBounds.minX + 4.0, widgetBounds.maxX);
+			widgetBounds.maxY = Math.max(widgetBounds.minY + 4.0, widgetBounds.maxY);
+		}
 	}
 
 	public override function clear() : Graphics {
-		pen = new Point();
-		localBounds = new Bounds();
-		graphicsBounds = new Bounds();
-		widgetBounds = new Bounds();
-		var newGraphics = super.clear();
+		if (graphicsData != []) {
+			pen = new Point();
+			localBounds = new Bounds();
+			graphicsBounds = new Bounds();
+			widgetBounds = new Bounds();
+			var newGraphics = super.clear();
+			untyped this.fillAlpha = null;
 
-		isEmpty = true;
-		isSvg = false;
-		deleteNativeWidget();
+			isEmpty = true;
+			isSvg = false;
 
-		if (parent != null) {
-			invalidateStage();
+			if (parent != null) {
+				invalidateStage();
+			}
+
+			return newGraphics;
+		} else {
+			return this;
 		}
-
-		return newGraphics;
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (isMask) {
+		if (untyped isMask || this.isCanvas) {
 			if (isNativeWidget) {
 				deleteNativeWidget();
 			}
@@ -348,11 +375,18 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (nativeWidget != null) {
-			while (nativeWidget.firstChild != null) {
-			    nativeWidget.removeChild(nativeWidget.firstChild);
-			}
+			if (graphicsData.length == 0) {
+				while (nativeWidget.lastElementChild != null) {
+					nativeWidget.removeChild(nativeWidget.lastElementChild);
+				}
 
-			if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
+				nativeWidget.style.background = null;
+				nativeWidget.style.border = null;
+				nativeWidget.style.marginLeft = null;
+				nativeWidget.style.marginTop = null;
+				nativeWidget.style.borderRadius = null;
+				nativeWidget.style.borderImage = null;
+			} else if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
 				nativeWidget.style.marginLeft = null;
 				nativeWidget.style.marginTop = null;
 				nativeWidget.style.borderRadius = null;
@@ -362,34 +396,56 @@ class FlowGraphics extends Graphics {
 					nativeWidget.style.background = null;
 				}
 
+				var svg : js.html.Element = nativeWidget.addElementNS('svg');
+				var lineWidth : Float = Lambda.fold(graphicsData, function(a, b) {
+					if (a.lineWidth != null) {
+						return Math.max(a.lineWidth / 2.0, b);
+					} else {
+						return b;
+					}
+				}, 0.0);
+
+				svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+				svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+				svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
+				svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
+				svg.style.position = 'absolute';
+
+				if (graphicsData.length == 1) {
+					for (child in svg.childNodes) {
+						if (untyped child.tagName != null && child.tagName.toLowerCase() == 'g') {
+							svg.removeChild(child);
+						}
+					}
+				} else {
+					while (svg.lastElementChild != null && svg.lastElementChild.tagName.toLowerCase() != 'g' && svg.lastElementChild.tagName.toLowerCase() != 'defs') {
+						svg.removeChild(svg.lastElementChild);
+					}
+
+					svg = svg.addElementNS('g');
+
+					while (svg.lastElementChild != null) {
+						svg.removeChild(svg.lastElementChild);
+					}
+				}
+
 				for (data in graphicsData) {
-					var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
+					var element : js.html.Element = null;
 
-					svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0, 1.0)}px';
-					svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0, 1.0)}px';
-					svg.style.left = '${graphicsBounds.minX - filterPadding}px';
-					svg.style.top = '${graphicsBounds.minY - filterPadding}px';
-					svg.style.position = 'absolute';
-
-					if (data.fill != null && data.fillAlpha > 0) {
-						svg.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
-					} else {
-						svg.setAttribute("fill", "none");
-					}
-
-					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-						svg.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
-						svg.setAttribute("stroke-width", Std.string(data.lineWidth));
-					} else {
-						svg.setAttribute("stroke", "none");
-					}
-
-					if (untyped data.fillGradient != null) {
+					if (untyped data.fillGradient != null || data.strokeGradient != null) {
 						var gradient : Dynamic = untyped data.gradient;
-						var defs = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
-						var linearGradient = Browser.document.createElementNS("http://www.w3.org/2000/svg", gradient.type == 'radial' ? 'radialGradient' : 'linearGradient');
+						var defs = svg.addElementNS('defs');
+						var linearGradient = defs.addElementNS(gradient.type == 'radial' ? 'radialGradient' : 'linearGradient');
 
-						defs.appendChild(linearGradient);
+						if (gradient.type == 'radial') {
+							for (child in defs.getElementsByTagName('linearGradient')) {
+								svg.removeChild(child);
+							}
+						} else {
+							for (child in defs.getElementsByTagName('radialGradient')) {
+								svg.removeChild(child);
+							}
+						}
 
 						linearGradient.setAttribute('id', nativeWidget.getAttribute('id') + "gradient");
 
@@ -398,6 +454,9 @@ class FlowGraphics extends Graphics {
 						linearGradient.setAttribute('x2', '' + (50.0 - Math.sin((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
 						linearGradient.setAttribute('y2', '' + (50.0 + Math.cos((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
 
+						while (linearGradient.lastElementChild != null) {
+							linearGradient.removeChild(linearGradient.lastElementChild);
+						}
 
 						for (i in 0...gradient.colors.length) {
 							var stop = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'stop');
@@ -407,192 +466,146 @@ class FlowGraphics extends Graphics {
 
 							linearGradient.appendChild(stop);
 						}
-
-						svg.appendChild(defs);
 					}
 
-					if (data.shape.type == 0) {
-						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
+					var createSvgElement = function(tagName) {
+						if (graphicsData.length == 1) {
+							while (svg.lastElementChild != null && svg.lastElementChild.tagName.toLowerCase() != tagName && svg.lastElementChild.tagName.toLowerCase() != 'defs') {
+								svg.removeChild(svg.lastElementChild);
+							}
 
-						var d : String = untyped __js__("data.shape.points.map(function(p, i) {
+							element = svg.addElementNS('path');
+						} else {
+							element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
+							svg.appendChild(element);
+						}
+
+						element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
+
+						if (untyped data.fillGradient != null) {
+							element.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
+						} else if (data.fill != null && data.fillAlpha > 0) {
+							element.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
+						} else {
+							element.setAttribute("fill", "none");
+						}
+
+						if (untyped data.strokeGradient != null) {
+							element.setAttribute("stroke", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
+							element.setAttribute("stroke-width", Std.string(data.lineWidth));
+						} else if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
+							element.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
+							element.setAttribute("stroke-width", Std.string(data.lineWidth));
+						} else {
+							element.setAttribute("stroke", "none");
+							element.removeAttribute("stroke-width");
+						}
+					};
+
+					if (data.shape.type == 0) {
+						createSvgElement('path');
+
+						var d : String = untyped __js__("data[0].shape.points.map(function(p, i) {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
-						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
-
-						if (untyped data.fillGradient != null) {
-							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
-						}
-
-						svg.appendChild(path);
+						element.setAttribute("d", d);
 					} else if (data.shape.type == 1) {
-						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
+						createSvgElement('rect');
 
-						rect.setAttribute("x", Std.string(data.shape.x));
-						rect.setAttribute("y", Std.string(data.shape.y));
-						rect.setAttribute("width", Std.string(data.shape.width));
-						rect.setAttribute("height", Std.string(data.shape.height));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
-
-						if (untyped data.fillGradient != null) {
-							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
-						}
-
-						svg.appendChild(rect);
+						element.setAttribute("x", Std.string(data.shape.x));
+						element.setAttribute("y", Std.string(data.shape.y));
+						element.setAttribute("width", Std.string(data.shape.width));
+						element.setAttribute("height", Std.string(data.shape.height));
+						element.removeAttribute("rx");
+						element.removeAttribute("ry");
 					} else if (data.shape.type == 2) {
-						var circle = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'circle');
+						createSvgElement('circle');
 
-						circle.setAttribute("cx", Std.string(data.shape.x));
-						circle.setAttribute("cy", Std.string(data.shape.y));
-						circle.setAttribute("r", Std.string(data.shape.radius));
-						circle.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
-
-						if (untyped data.fillGradient != null) {
-							circle.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
-						}
-
-						svg.appendChild(circle);
+						element.setAttribute("cx", Std.string(data.shape.x));
+						element.setAttribute("cy", Std.string(data.shape.y));
+						element.setAttribute("r", Std.string(data.shape.radius));
 					} else if (data.shape.type == 4) {
-						var rect = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'rect');
+						createSvgElement('rect');
 
-						rect.setAttribute("x", Std.string(data.shape.x));
-						rect.setAttribute("y", Std.string(data.shape.y));
-						rect.setAttribute("width", Std.string(data.shape.width));
-						rect.setAttribute("height", Std.string(data.shape.height));
-						rect.setAttribute("rx", Std.string(data.shape.radius));
-						rect.setAttribute("ry", Std.string(data.shape.radius));
-						rect.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
-
-						if (untyped data.fillGradient != null) {
-							rect.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
-						}
-
-						svg.appendChild(rect);
+						element.setAttribute("x", Std.string(data.shape.x));
+						element.setAttribute("y", Std.string(data.shape.y));
+						element.setAttribute("width", Std.string(data.shape.width));
+						element.setAttribute("height", Std.string(data.shape.height));
+						element.setAttribute("rx", Std.string(data.shape.radius));
+						element.setAttribute("ry", Std.string(data.shape.radius));
 					} else {
 						trace("updateNativeWidgetGraphicsData: Unknown shape type");
 						trace(data);
 					}
-
-					if (nativeWidget.childNodes.length > 0 && nativeWidget.lastChild.tagName.toLowerCase() == 'svg' &&
-						nativeWidget.lastChild.getAttribute("fill") == svg.getAttribute("fill") &&
-						nativeWidget.lastChild.getAttribute("stroke") == svg.getAttribute("stroke")) {
-						for (child in svg.childNodes) {
-							nativeWidget.lastChild.appendChild(child);
-						}
-					} else {
-						nativeWidget.appendChild(svg);
-					}
 				}
 			} else {
+				while (nativeWidget.lastElementChild != null) {
+					nativeWidget.removeChild(nativeWidget.lastElementChild);
+				}
+
 				var data = graphicsData[0];
+				var lineWidth : Float = data.lineWidth != null ? data.lineWidth / 2.0 : 0.0;
 
 				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
-					if (data.shape.type == 0) {
-						var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'svg');
-						var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
-
-						var d : String = untyped __js__("data1.shape.points.map(function(p, i) {
-							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
-						}).join('')");
-						path.setAttribute("d", d);
-						path.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX} ${filterPadding - graphicsBounds.minY})');
-
-						if (data.fill != null && data.fillAlpha > 0) {
-							path.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
-						} else {
-							path.setAttribute("fill", "none");
-						}
-
-						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-							path.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
-							path.setAttribute("stroke-width", Std.string(data.lineWidth));
-						} else {
-							path.setAttribute("stroke", "none");
-						}
-
-						if (untyped data.fillGradient != null) {
-							var gradient : Dynamic = untyped data.gradient;
-							var defs = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
-							var linearGradient = Browser.document.createElementNS("http://www.w3.org/2000/svg", gradient.type == 'radial' ? 'radialGradient' : 'linearGradient');
-
-							defs.appendChild(linearGradient);
-
-							linearGradient.setAttribute('id', nativeWidget.getAttribute('id') + "gradient");
-
-							linearGradient.setAttribute('x1', '' + (50.0 - Math.sin((gradient.matrix.rotation + 90.0) * 0.0174532925) * 50.0) + '%');
-							linearGradient.setAttribute('y1', '' + (50.0 + Math.cos((gradient.matrix.rotation + 90.0) * 0.0174532925) * 50.0) + '%');
-							linearGradient.setAttribute('x2', '' + (50.0 - Math.sin((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
-							linearGradient.setAttribute('y2', '' + (50.0 + Math.cos((gradient.matrix.rotation + 90.0) * 0.0174532925 - Math.PI) * 50.0) + '%');
-
-							for (i in 0...gradient.colors.length) {
-								var stop = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'stop');
-
-								stop.setAttribute("offset", '' + trimFloat(gradient.offsets[i], 0.0, 1.0) * 100.0 + '%');
-								stop.setAttribute("style", 'stop-color:' + RenderSupportJSPixi.makeCSSColor(gradient.colors[i], gradient.alphas[i]));
-
-								linearGradient.appendChild(stop);
-							}
-
-							svg.appendChild(defs);
-
-							path.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
-						}
-
-						svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0, 1.0)}px';
-						svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0, 1.0)}px';
-						svg.style.left = '${graphicsBounds.minX - filterPadding}px';
-						svg.style.top = '${graphicsBounds.minY - filterPadding}px';
-						svg.style.position = 'absolute';
-
-						svg.appendChild(path);
-						nativeWidget.appendChild(svg);
+					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
+						nativeWidget.style.border = '${data.lineWidth}px solid ' + (untyped data.strokeGradient != null ? '' : RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
 					} else {
-						if (data.fill != null && data.fillAlpha > 0) {
-							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
-						} else {
+						nativeWidget.style.border = null;
+					}
+
+					if (data.fill != null && data.fillAlpha > 0) {
+						if (widgetBounds.getBoundsWidth() <= 2.0) {
+							nativeWidget.style.borderLeft = '${widgetBounds.getBoundsWidth()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 							nativeWidget.style.background = null;
-						}
-
-						if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-							nativeWidget.style.border = '${data.lineWidth}px solid ' + RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha);
+						} else if (widgetBounds.getBoundsHeight() <= 2.0) {
+							nativeWidget.style.borderTop = '${widgetBounds.getBoundsHeight()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+							nativeWidget.style.background = null;
 						} else {
-							nativeWidget.style.border = null;
+							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 						}
+					} else {
+						nativeWidget.style.background = null;
+					}
 
-						if (untyped data.fillGradient != null) {
-							nativeWidget.style.background = untyped data.fillGradient;
-						}
+					if (untyped data.fillGradient != null) {
+						nativeWidget.style.background = untyped data.fillGradient;
+					} else if (untyped data.strokeGradient != null) {
+						trace(untyped data.strokeGradient);
+						nativeWidget.style.borderImage = untyped data.strokeGradient;
+					}
 
-						if (data.shape.type == 1) {
-							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+					if (data.shape.type == 1) {
+						var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
-							nativeWidget.style.borderRadius = null;
-						} else if (data.shape.type == 2) {
-							var left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							var top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
-							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
-						} else if (data.shape.type == 3) {
-							var left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							var top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
-							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width - data.lineWidth)}px /
-								${DisplayObjectHelper.round(data.shape.height - data.lineWidth)}px';
-						} else if (data.shape.type == 4) {
-							var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-							nativeWidget.style.marginLeft = left != 0 ? '${left}px' : null;
-							nativeWidget.style.marginTop = top != 0 ? '${top}px' : null;
-							nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
-						} else {
-							trace('updateNativeWidgetGraphicsData: Unknown shape type');
-							trace(data);
-						}
+						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
+						nativeWidget.style.borderRadius = null;
+					} else if (data.shape.type == 2) {
+						var left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						var top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+
+						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
+						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius + data.lineWidth)}px';
+					} else if (data.shape.type == 3) {
+						var left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						var top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+
+						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
+						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width + data.lineWidth)}px /
+							${DisplayObjectHelper.round(data.shape.height + data.lineWidth)}px';
+					} else if (data.shape.type == 4) {
+						var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+
+						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
+						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
+						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
+					} else {
+						trace('updateNativeWidgetGraphicsData: Unknown shape type');
+						trace(data);
 					}
 				}
 			}

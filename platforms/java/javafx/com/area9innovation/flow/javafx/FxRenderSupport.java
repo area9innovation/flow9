@@ -798,8 +798,6 @@ public class FxRenderSupport extends RenderSupport {
 			updateWidgetTextStyle();
 		}
 
-		void setDoNotInvalidateStage(Boolean value) {}
-
 		void setInterlineSpacing(Double spacing) {
 			this.interlineSpacing = spacing;
 			updateWidgetTextStyle();

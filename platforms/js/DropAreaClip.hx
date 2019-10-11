@@ -4,6 +4,7 @@ import js.html.FileList;
 
 import pixi.core.display.Bounds;
 import pixi.core.display.TransformBase;
+import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -28,7 +29,7 @@ class DropAreaClip extends NativeWidgetClip {
 		widgetBounds.maxX = 0;
 		widgetBounds.maxY = 0;
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			styleChanged = false;
 		}
 
@@ -59,12 +60,15 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
 		nativeWidget.onmousedown = onMouseDown;
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			nativeWidget.onmousemove = onMouseMove;
+
+			nativeWidget.onpointerover = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver(e); };
+			nativeWidget.onpointerout = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut(e); };
 		}
 		nativeWidget.style.pointerEvents = "auto";
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			nativeWidget.style.height = "inherit";
 			nativeWidget.style.width = "inherit";
 		}

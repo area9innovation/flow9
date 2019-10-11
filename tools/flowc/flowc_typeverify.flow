@@ -104,8 +104,29 @@ typeverifyFiTypeStruct(moduleEnv : TypeVerifyModuleEnv, struct : FiTypeStruct, o
 	tenv = TypeVerifyLocalEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameIsUnused(moduleEnv, struct.name, onError, struct.start) &&
-		forall(struct.typars, \type -> typeverifyFiType(tenv, type, onError, struct.start)) &&
-		forall(struct.args, \arg -> typeverifyFiType(tenv, arg.type, onError, struct.start));
+		fold(struct.args, Pair(true, makeSet()), \acc, arg -> {
+			is_accessible = verifyTypeIsAccessible(tenv, arg.type, onError, struct.start);
+			ok = acc.first && !containsSet(acc.second, arg.name) && arg.name != "structname" && is_accessible;
+			if (!ok) {
+				if (containsSet(acc.second, arg.name)) {
+					onError(FcError("duplicate field name: " + arg.name, []));
+				}
+				if (arg.name == "structname") {
+					onError(FcError("field name: " + arg.name + " is reserved as a build-it field", []));
+				}
+				if (!is_accessible) {
+					onError(FcError("field type: " + arg.name + " is inaccessible", []));
+				}
+			}
+			Pair(ok, insertSet(acc.second, arg.name))
+		}).first &&
+		forall(struct.typars, \type -> {
+			is_accessible = verifyTypeIsAccessible(tenv, type, onError, struct.start);
+			if (!is_accessible) {
+				onError(FcError("type parameter: " + prettyFiType(dummyPretty, type, makeSet()) + " is inaccessible", []));
+			}
+			is_accessible
+		});
 	if (!ret) {
 		onError(FcError("in struct '" + struct.name + "'", [FcPosition(moduleEnv.module.fileinfo.flowfile, struct.start, struct.start)]));
 	}
@@ -116,7 +137,23 @@ typeverifyFiTypeUnion(moduleEnv : TypeVerifyModuleEnv, union : FiTypeUnion, onEr
 	tenv = TypeVerifyLocalEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameIsUnused(moduleEnv, union.name, onError, union.start) &&
-		forall(union.typeparameters, \type -> typeverifyFiType(tenv, type, onError, union.start));
+		fold(union.typenames, Pair(true, makeSet()), \acc, typename -> {
+			is_accessible = verifyTypeIsAccessible(tenv, typename, onError, union.start);
+			ok = acc.first && !containsSet(acc.second, typename.name) && typename.name != union.name && is_accessible;
+			if (!ok) {
+				if (containsSet(acc.second, typename.name)) {
+					onError(FcError("duplicate type name in union: " + typename.name, []));
+				}
+				if (typename.name == union.name) {
+					onError(FcError("union contains itself: " + typename.name, []));
+				}
+				if (!is_accessible) {
+					onError(FcError("type: " +  prettyFiType(dummyPretty, typename, makeSet()) + " in union is inaccessible", []));
+				}
+			}
+			Pair(ok, insertSet(acc.second, typename.name))
+		}).first &&
+		forall(union.typeparameters, \type -> verifyTypeIsAccessible(tenv, type, onError, union.start));
 	if (!ret) {
 		onError(FcError("in union '" + union.name + "'", [FcPosition(moduleEnv.module.fileinfo.flowfile, union.start, union.start)]));
 	}
@@ -175,6 +212,23 @@ verifyNameIsAccessible(env : TypeVerifyLocalEnv, name : string, onError : (FcErr
 			));
 			false
 		}
+	}
+}
+
+verifyTypeIsAccessible(env : TypeVerifyLocalEnv, type : FiType, onError : (FcError) -> void, start : int) -> bool {
+	typeverifyFiType(env, type, onError, start) &&
+	switch (type) {
+		FiTypeName(name, ts):
+			verifyNameIsAccessible(env, name, onError, start) &&
+			forall(ts, \t -> verifyTypeIsAccessible(env, t, onError, start));
+		FiTypeArray(t):
+			verifyTypeIsAccessible(env, t, onError, start);
+		FiTypeFunction(as, rt):
+			verifyTypeIsAccessible(env, rt, onError, start) &&
+			forall(as, \a -> verifyTypeIsAccessible(env, a.type, onError, start));
+		FiTypeRef(t):
+			verifyTypeIsAccessible(env, t, onError, start);
+		default: true;
 	}
 }
 
@@ -523,13 +577,28 @@ typeverifyFiCallPrim(env : TypeVerifyLocalEnv, call : FiCallPrim, onError : (FcE
 							field_name, type_name, onError,
 							env.moduleEnv.module.fileinfo.flowfile, call.start
 					);
-					field_exists = if (getStructField(sf_env) != None()) true else {
-						onError(FcError(
-							"There's no field " + field_name + " in struct or union " + type_name,  
-							[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
-						);
-						false
+
+					field_exists = switch (getStructField(sf_env)) {
+						None(): {
+							onError(FcError(
+								"There's no field " + field_name + " in struct or union " + type_name,  
+								[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
+							);
+							false
+						}
+						Some(structField): {
+							is_supertype = fiSuperTypeExists(env.moduleEnv.global.acc.names, call.type, structField.type, true);
+							if (!is_supertype) {
+								onError(FcError(
+									"Field '" + field_name + "' type '" + prettyFiType(dummyPretty, structField.type, makeSet()) + "' "
+									"disregards the typing obligation. It should be a supertype for '" + prettyFiType(dummyPretty, call.type, makeSet()) + "'",  
+									[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
+								);
+							}
+							is_supertype
+						}
 					};
+
 					field_is_accessible = if (!isConfigParameterTrue(env.moduleEnv.global.acc.config.config, "check-fields")) true else {
 						verifyNameIsAccessible(env, type_name, onError, call.start)
 					};
