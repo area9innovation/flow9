@@ -27,6 +27,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.media.MediaMetadataRetriever;
@@ -547,6 +548,15 @@ public class FlowRunnerActivity extends FragmentActivity  {
                     Rect r = new Rect();
                     d.getWindowVisibleDisplayFrame(r);
                     h = dh - r.top;
+
+                    //on Android 10 navigation bar is a part of WindowVisibleDisplayFrame
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        Resources resources = getBaseContext().getResources();
+                        int resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android");
+                        if (resourceId > 0) {
+                            h -= resources.getDimensionPixelSize(resourceId);
+                        }
+                    }
                 }
 
                 if (h != ContentView.getMinimumHeight()) {
