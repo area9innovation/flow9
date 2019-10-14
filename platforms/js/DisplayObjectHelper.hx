@@ -169,11 +169,15 @@ class DisplayObjectHelper {
 		if (clip.parent != null) {
 			untyped clip.transformChanged = true;
 
+			if (untyped clip.isCanvas) {
+				untyped clip.localTransformChanged = true;
+			}
+
 			if (RenderSupportJSPixi.RendererType != "html") {
 				untyped clip.rvlast = null;
 			}
 
-			if (untyped clip.parent.parent != null && !clip.parent.transformChanged) {
+			if (untyped clip.parent.parent != null && (!clip.parent.transformChanged || (clip.parent.isCanvas && !clip.parent.localTransformChanged))) {
 				invalidateParentTransform(clip.parent);
 			} else {
 				invalidateParentLocalBounds(clip);
@@ -817,19 +821,18 @@ class DisplayObjectHelper {
 		var localBounds = untyped clip.localBounds;
 
 		if (untyped clip.isCanvas) {
-			tx -= Math.max(Math.ceil(-localBounds.minX), 0.0);
-			ty -= Math.max(Math.ceil(-localBounds.minY), 0.0);
+			tx -= Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
+			ty -= Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
 		}
 
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
-			var nativeWidget = untyped clip.nativeWidget;
 
 			if (untyped clip.isCanvas) {
-				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0)}');
-				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0)}');
-				nativeWidget.style.width = '${Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0)}px';
-				nativeWidget.style.height = '${Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0)}px';
+				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0)}');
+				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0)}');
+				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0)}px';
+				nativeWidget.style.height = '${Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0)}px';
 			} else if (untyped clip.alphaMask != null) {
 				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
@@ -864,6 +867,11 @@ class DisplayObjectHelper {
 
 		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
 		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
+
+		if (untyped clip.isCanvas) {
+			return;
+		}
+
 		nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
 			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
 	}
@@ -1610,7 +1618,11 @@ class DisplayObjectHelper {
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
 			if (isNativeWidget(clip)) {
-				invalidateParentTransform(clip);
+				if (RenderSupportJSPixi.RendererType == "html") {
+					invalidateTransform(clip);
+				} else {
+					invalidateParentTransform(clip);
+				}
 			}
 
 			untyped clip.nativeWidgetBoundsChanged = true;
@@ -1663,9 +1675,32 @@ class DisplayObjectHelper {
 		}
 
 		var transform = clip.localTransform;
-		var bounds = untyped clip.localBounds;
 
-		applyBoundsTransform(bounds, transform, container);
+		if (untyped clip.children != null && clip.children.length == 1 && clip.children[0].graphicsData != null && clip.children[0].graphicsData.length > 0 && clip.children[0].graphicsData[0].shape.points != null) {
+			var tempPoints = untyped clip.children[0].graphicsData[0].shape.points;
+
+			untyped __js__("clip.children[0].graphicsData[0].shape.points = clip.children[0].graphicsData[0].shape.points.map(function(point, i) {
+				if (i % 2 == 0) {
+					return point * transform.a + clip.children[0].graphicsData[0].shape.points[i + 1] * transform.c + transform.tx;
+				} else {
+					return clip.children[0].graphicsData[0].shape.points[i - 1] * transform.b + point * transform.d + transform.ty;
+				}
+			})");
+			untyped clip.children[0].calculateGraphicsBounds();
+
+			var bounds = untyped clip.children[0].graphicsBounds;
+
+			container.minX = bounds.minX;
+			container.minY = bounds.minY;
+			container.maxX = bounds.maxX;
+			container.maxY = bounds.maxY;
+
+			untyped clip.children[0].graphicsData[0].shape.points = tempPoints;
+			untyped clip.children[0].calculateGraphicsBounds();
+		} else {
+			var bounds = untyped clip.localBounds;
+			applyBoundsTransform(bounds, transform, container);
+		}
 
 		return container;
 	}

@@ -12,7 +12,7 @@ import haxe.extern.EitherType;
 using DisplayObjectHelper;
 
 class FlowCanvas extends FlowContainer {
-	private var offscreenCanvas : Dynamic = untyped __js__("new OffscreenCanvas(RenderSupportJSPixi.PixiView.width, RenderSupportJSPixi.PixiView.height)");
+	private var offscreenCanvas : Dynamic = untyped __js__("typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(RenderSupportJSPixi.PixiView.width, RenderSupportJSPixi.PixiView.height) : document.createElement('canvas')");
 	private var offscreenContext : Dynamic = null;
 
 	public function new(?worldVisible : Bool = false) {
@@ -41,34 +41,57 @@ class FlowCanvas extends FlowContainer {
 			updateNativeWidgetTransformMatrix();
 			updateNativeWidgetOpacity();
 
-			offscreenCanvas.width = Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0) + Math.ceil(worldTransform.tx);
-			offscreenCanvas.height = Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0) + Math.ceil(worldTransform.ty);
+			var minX = Math.max(Math.ceil(-localBounds.minX * worldTransform.a), 0.0) * RenderSupportJSPixi.PixiRenderer.resolution;
+			var minY =  Math.max(Math.ceil(-localBounds.minY * worldTransform.d), 0.0) * RenderSupportJSPixi.PixiRenderer.resolution;
 
-			RenderSupportJSPixi.PixiRenderer.context = offscreenContext;
-			RenderSupportJSPixi.PixiRenderer.rootContext = offscreenContext;
+			var width = Math.ceil(localBounds.maxX * worldTransform.a) * RenderSupportJSPixi.PixiRenderer.resolution + minX;
+			var height = Math.ceil(localBounds.maxY * worldTransform.d) * RenderSupportJSPixi.PixiRenderer.resolution + minY;
 
-			RenderSupportJSPixi.PixiRenderer.view = offscreenCanvas;
-			RenderSupportJSPixi.PixiRenderer.transparent = true;
-			RenderSupportJSPixi.PixiRenderer.roundPixels = true;
+			if (width > 0 && height > 0 && Math.ceil(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution - minX > 0 && Math.ceil(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution - minY > 0) {
+				var transform = getNativeWidgetTransform();
 
-			RenderSupportJSPixi.RendererType = 'canvas';
-			RenderSupportJSPixi.PixiRenderer.render(this, null, true, null, false);
-			RenderSupportJSPixi.RendererType = 'html';
+				var canvasWidth = Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
+				var canvasHeight = Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
 
-			context.clearRect(
-				0,
-				0,
-				Math.ceil(localBounds.maxX) + Math.max(Math.ceil(-localBounds.minX), 0.0),
-				Math.ceil(localBounds.maxY) + Math.max(Math.ceil(-localBounds.minY), 0.0)
-			);
+				offscreenCanvas.width = width + Math.round(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution;
+				offscreenCanvas.height = height + Math.round(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution;
 
-			context.drawImage(
-				offscreenCanvas,
-				Math.max(Math.ceil(-localBounds.minX), 0.0) - Math.ceil(worldTransform.tx),
-				Math.max(Math.ceil(-localBounds.minY), 0.0) - Math.ceil(worldTransform.ty)
-			);
+				RenderSupportJSPixi.PixiRenderer.context = offscreenContext;
+				RenderSupportJSPixi.PixiRenderer.rootContext = offscreenContext;
 
-			RenderSupportJSPixi.PixiRenderer.view = RenderSupportJSPixi.PixiView;
+				RenderSupportJSPixi.PixiRenderer.view = offscreenCanvas;
+				RenderSupportJSPixi.PixiRenderer.transparent = true;
+				RenderSupportJSPixi.PixiRenderer.roundPixels = true;
+
+				RenderSupportJSPixi.RendererType = 'canvas';
+				RenderSupportJSPixi.PixiRenderer.render(this, null, true, null, false);
+				RenderSupportJSPixi.RendererType = 'html';
+
+				context.clearRect(
+					0,
+					0,
+					canvasWidth,
+					canvasHeight
+				);
+
+				context.drawImage(
+					offscreenCanvas,
+					Math.ceil(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution - minX,
+					Math.ceil(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution - minY,
+					width,
+					height,
+					0.0,
+					0.0,
+					canvasWidth,
+					canvasHeight
+				);
+
+				RenderSupportJSPixi.PixiRenderer.view = RenderSupportJSPixi.PixiView;
+			}
+
+			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
+				untyped this.localTransformChanged = true;
+			}
 		}
 
 		updateNativeWidgetDisplay();
@@ -82,6 +105,20 @@ class FlowCanvas extends FlowContainer {
 
 		context = nativeWidget != null ? nativeWidget.getContext('2d', { alpha : true }) : null;
 		offscreenContext = offscreenCanvas != null ? offscreenCanvas.getContext('2d', { alpha : true }) : null;
+
+		if (nativeWidget != null) {
+			nativeWidget.onpointermove = function(e) {
+				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerMove(e);
+				nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
+			};
+			nativeWidget.onpointerover = function(e) {
+				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver(e);
+			};
+			nativeWidget.onpointerout = function(e) {
+				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut(e);
+			};
+			nativeWidget.style.pointerEvents = 'auto';
+		}
 
 		RenderSupportJSPixi.RendererType = 'html';
 		PixiWorkarounds.workaroundGetContext();
