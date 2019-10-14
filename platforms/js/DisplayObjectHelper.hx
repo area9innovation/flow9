@@ -827,7 +827,6 @@ class DisplayObjectHelper {
 
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
-			var nativeWidget = untyped clip.nativeWidget;
 
 			if (untyped clip.isCanvas) {
 				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0)}');
@@ -1619,7 +1618,11 @@ class DisplayObjectHelper {
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
 			if (isNativeWidget(clip)) {
-				invalidateParentTransform(clip);
+				if (RenderSupportJSPixi.RendererType == "html") {
+					invalidateTransform(clip);
+				} else {
+					invalidateParentTransform(clip);
+				}
 			}
 
 			untyped clip.nativeWidgetBoundsChanged = true;
