@@ -255,6 +255,7 @@ class RenderSupportJSPixi {
 			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
 		} else if (RendererType == "html") {
 			untyped PixiRenderer.plugins.interaction.removeEvents();
+			untyped PixiRenderer.plugins.interaction.interactionDOMElement = PixiView;
 		}
 
 		PixiView = PixiRenderer.view;
@@ -956,10 +957,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function InvalidateLocalStages() {
-		if (RendererType != "html") {
-			for (child in PixiStage.children) {
-				child.invalidateTransform('InvalidateLocalStages');
-			}
+		for (child in PixiStage.children) {
+			child.invalidateTransform('InvalidateLocalStages');
 		}
 	}
 
@@ -1360,6 +1359,10 @@ class RenderSupportJSPixi {
 
 	public static function makeClip() : FlowContainer {
 		return new FlowContainer();
+	}
+
+	public static function makeCanvasClip() : FlowCanvas {
+		return new FlowCanvas();
 	}
 
 	public static function setClipCallstack(clip : DisplayObject, callstack : Dynamic) : Void {

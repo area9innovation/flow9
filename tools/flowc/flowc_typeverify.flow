@@ -68,7 +68,7 @@ typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError
 	forall(module.functions, \func -> typeverifyFiFunctionDec(moduleEnv, func, onError)) &&
 	forall(module.globalVars, \var -> typeverifyFiGlobalVar(moduleEnv, var, onError)) &&
 	forall(module.natives, \nat -> typeverifyFiNativeDec(moduleEnv, nat, onError));
-	incrementTimePhase(fcTimePhases.typeverify, t);
+	incrementTimePhase(getTimePhases(env.acc.config.threadId).typeverify, t);
 	ret
 }
 
@@ -577,13 +577,28 @@ typeverifyFiCallPrim(env : TypeVerifyLocalEnv, call : FiCallPrim, onError : (FcE
 							field_name, type_name, onError,
 							env.moduleEnv.module.fileinfo.flowfile, call.start
 					);
-					field_exists = if (getStructField(sf_env) != None()) true else {
-						onError(FcError(
-							"There's no field " + field_name + " in struct or union " + type_name,  
-							[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
-						);
-						false
+
+					field_exists = switch (getStructField(sf_env)) {
+						None(): {
+							onError(FcError(
+								"There's no field " + field_name + " in struct or union " + type_name,  
+								[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
+							);
+							false
+						}
+						Some(structField): {
+							is_supertype = fiSuperTypeExists(env.moduleEnv.global.acc.names, call.type, structField.type, true);
+							if (!is_supertype) {
+								onError(FcError(
+									"Field '" + field_name + "' type '" + prettyFiType(dummyPretty, structField.type, makeSet()) + "' "
+									"disregards the typing obligation. It should be a supertype for '" + prettyFiType(dummyPretty, call.type, makeSet()) + "'",  
+									[FcPosition(env.moduleEnv.module.fileinfo.flowfile, call.start, call.start)])
+								);
+							}
+							is_supertype
+						}
 					};
+
 					field_is_accessible = if (!isConfigParameterTrue(env.moduleEnv.global.acc.config.config, "check-fields")) true else {
 						verifyNameIsAccessible(env, type_name, onError, call.start)
 					};

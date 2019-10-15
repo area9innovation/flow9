@@ -13,7 +13,7 @@ wrap_natives(cfg : FiWasmConfig, program : FiProgram, names : FiGlobalNames, typ
 			Some(m): {
 				newfuncs = map(m.functions, \f : FiFunctionDec -> {
 					FiFunctionDec(f with lambda = FiLambda(f.lambda with body = 
-						embedd_lambda(names, types, natives, f.lambda.body, ref makeTree(), false)
+						embedd_lambda(names, types, natives, f.lambda.body, ref makeTree(), false, cfg.threadId)
 					))
 				});
 
@@ -40,15 +40,15 @@ next_lambda_indx() {
 
 // this function will create wrapper for js callback.
 // i.e. it will replace function f(args) with lambda \args -> invoke(f, args)
-wrap_create_js_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : FiFunArg) -> FiExp {
+wrap_create_js_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : FiFunArg, threadId : int) -> FiExp {
 	atype = arg.type;
 	switch (atype) {
-		FiTypeFunction(jsargs, jsretType): {											
+		FiTypeFunction(jsargs, jsretType): {
 			// create another lambda here and call js callback insid
-			i_name = fiInvokeName(fitype2wasmtype(names, arg.type), types);
+			i_name = fiInvokeName(fitype2wasmtype(names, arg.type, threadId), types, threadId);
 			args2 = map(jsargs, \aaa -> {
 				var = FiVar(aaa.name, aaa.type, 0);
-				wrap_create_wasm_lambda(names, types, aaa, var);				
+				wrap_create_wasm_lambda(names, types, aaa, var, threadId);
 			});
 
 			type = FiTypeFunction(concat([FiFunArg(arg.name, FiTypeInt())], jsargs), jsretType);
@@ -78,14 +78,14 @@ wrap_create_js_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : FiFu
 // fn(\cb ->
 // 	f(cb)
 // )
-wrap_create_wasm_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : FiFunArg, callEx : FiExp) -> FiExp {
+wrap_create_wasm_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : FiFunArg, callEx : FiExp, threadId : int) -> FiExp {
 	atype = arg.type;
 	switch (atype) {
 		FiTypeFunction(args, retType): {
 			// we don't need to create an extra lambda if call doesn't contains callback to js
 			if (exists(args, \a -> isSameStructType(a.type, FiTypeFunction([], FiTypeVoid())))) {
 				pars = mapi(args, \i, a -> {
-					wrap_create_js_lambda(names, types, a);	
+					wrap_create_js_lambda(names, types, a, threadId);
 				});
 			
 				FiLambda(
@@ -107,14 +107,14 @@ wrap_create_wasm_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : Fi
 	}
 }
 
-wrap_create_lambda(names : FiGlobalNames, types : FiWasmTypeTable, fn : FiCall, v : FiVar) -> FiExp {
+wrap_create_lambda(names : FiGlobalNames, types : FiWasmTypeTable, fn : FiCall, v : FiVar, threadId : int) -> FiExp {
 	switch (v.type) {
 		FiTypeFunction(fargs, fretType): {	
 			if (exists(fargs, \a -> isSameStructType(a.type, FiTypeFunction([], FiTypeVoid())))) {
 				FiCall(
 					v,
 					mapi(fargs, \i, a -> {
-						wrap_create_wasm_lambda(names, types, a, fn.args[i]);
+						wrap_create_wasm_lambda(names, types, a, fn.args[i], threadId);
 					}),
 					fn.type, 
 					0
@@ -128,8 +128,8 @@ wrap_create_lambda(names : FiGlobalNames, types : FiWasmTypeTable, fn : FiCall, 
 	}
 }
 
-embedd_lambda(names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<string, FiWasmNativeDec>, e : FiExp, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool) -> FiExp {
-	process = \ex -> embedd_lambda(names, types, natives, ex, local, isnative);
+embedd_lambda(names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<string, FiWasmNativeDec>, e : FiExp, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool, threadId : int) -> FiExp {
+	process = \ex -> embedd_lambda(names, types, natives, ex, local, isnative, threadId);
 
 	switch (e) {
 		FiLambda(args, b, type, start): 
@@ -143,7 +143,7 @@ embedd_lambda(names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<stri
 						nativeDec,
 						\d -> { 
 							if (fiWasmIsPureNative(d.decl.nativeName) || fiWasmIsHostWNative(d.decl.nativeName)) 
-								wrap_create_lambda(names, types, e, f)
+								wrap_create_lambda(names, types, e, f, threadId)
 							else 
 								simpleCall();
 						},
