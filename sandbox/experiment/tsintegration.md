@@ -1,38 +1,3 @@
-# Using flow code in Typescript
-
-At the end of the JS file, the flow compiler produces if we call the library <test>, 
-add this:
-
-<test> = {foo:foo};
-
-Wrap d.ts file with 
-
-	declare module <test> {
-		export function foo():void;
-		...
-	}
-
-Then do this in the TS file:
-
-/// <reference types="../@types/test/test" />
-
-	// And now we can call:
-    test.foo();
-
-And add this in the HTML:
-
-<html>
-    <head>
-		<script src="test.js"></script>
-		...
-    </head>
-    <body >
-	...
-    </body>
-</html>
-I
-
-
 # Using JS in flow code
 
 Create a DOM node with a <script> element.

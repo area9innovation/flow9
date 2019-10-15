@@ -63,8 +63,8 @@ class DropAreaClip extends NativeWidgetClip {
 		if (RenderSupportJSPixi.RendererType != "html") {
 			nativeWidget.onmousemove = onMouseMove;
 
-			nativeWidget.onpointerover = RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver;
-			nativeWidget.onpointerout = RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut;
+			nativeWidget.onpointerover = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver(e); };
+			nativeWidget.onpointerout = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut(e); };
 		}
 		nativeWidget.style.pointerEvents = "auto";
 
