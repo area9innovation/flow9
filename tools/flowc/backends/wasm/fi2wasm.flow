@@ -60,10 +60,10 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	stringAcc = fiWasmCollectStrings(cfg, decls1);
 
 	fcVerbose(cfg, 1, "Building type table..");
-	types0 : FiWasmTypeTable = fiWasmBuildTypeTable(program3.names, decls1, stringAcc.offset);
+	types0 : FiWasmTypeTable = fiWasmBuildTypeTable(program3.names, decls1, stringAcc.offset, cfg.threadId);
 	
 	fcVerbose(cfg, 1, "Creating JS wrappers..");
-	wrapped = fiWasmCreateNativeWrappers(natives2, types0, program3.names);
+	wrapped = fiWasmCreateNativeWrappers(natives2, types0, program3.names, cfg.threadId);
 	natives : Tree<string, FiWasmNativeDec> = wrapped.natives;
 	callbacks : Tree<string, FiDeclaration> = wrapped.callbacks;
 
@@ -82,7 +82,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	fcVerbose(cfg, 1, "Creating WASM-side wrappers..");
 	program = wrap_natives(cfg, program3, program3.names, types0, natives);
 	decls2: [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
-	types : FiWasmTypeTable = fiWasmBuildTypeTable(program.names, decls2, stringAcc.offset);
+	types : FiWasmTypeTable = fiWasmBuildTypeTable(program.names, decls2, stringAcc.offset, cfg.threadId);
 
 	fcVerbose(cfg, 1, "Building function table..");
 
@@ -250,7 +250,7 @@ fiWasmExtendWithRuntime(program : FiProgram, globEnv : FcTypeEnvGlobal) -> FiPro
 	runtimeConfig = setConfigFlowfile(runtimeMConfig, runtimeFile);
 	parsedWasmRuntime = parseAndTypecheckFlowFile(runtimeConfig, globEnv, nativesFile);
 	if (parsedWasmRuntime.second != 0) {
-		fcPrintln("Could not compile Wasm runtime in " + runtimeFile);
+		fcPrintln("Could not compile Wasm runtime in " + runtimeFile, program.config.threadId);
 	}
 	wasmRuntime = parsedWasmRuntime.first;
 
@@ -292,18 +292,18 @@ fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, 
 					FiFunctionDec(name, lambda, type, declStart, defiStart): {
 						"FUNCTION: " + 
 						decl.name + " " + 
-						fiPrintWasmType(fitype2wasmtype(context.globalNames, type)) + 
-						fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, lambda), "");
+						fiPrintWasmType(fitype2wasmtype(context.globalNames, type, cfg.threadId)) + 
+						fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, lambda, cfg.threadId), "");
 					}
 					FiGlobalVar(name, value, type, declStart, defiStart): {
 						"GLOBAL VAR: " + name + " " +
-						fiPrintWasmType(fitype2wasmtype(context.globalNames, type)) + 
-						fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, value), "");
+						fiPrintWasmType(fitype2wasmtype(context.globalNames, type, cfg.threadId)) + 
+						fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, value, cfg.threadId), "");
 					}
 					FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 						"NATIVE: " + name + " " +
-						fiPrintWasmType(fitype2wasmtype(context.globalNames, type)) + 
-                        fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, fallbackLambda), "");
+						fiPrintWasmType(fitype2wasmtype(context.globalNames, type, cfg.threadId)) + 
+                        fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, fallbackLambda, cfg.threadId), "");
 					}
 				}
 			});
@@ -317,21 +317,21 @@ fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, 
 fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback : (bool) -> void) {
 	watfile = changeFileExt(cfg.outputfile, ".wat");
 	if (!setFileContent(watfile, contents)) {
-		fcPrintln("Could not save " + watfile);
+		fcPrintln("Could not save " + watfile, cfg.threadId);
 		callback(false);
 	} else {
 		startProcess("wat2wasm", [watfile, "--debug-names", "-o", wasmfile], ".", "",
 			\c, o, e -> {
 				fcVerbose(cfg, 1, "Wasm succeeded");
 				if (c != 0) {
-					fcPrintln("Wasm failed");
-					fcPrintln(e);
-					fcPrintln(o);
-					fcPrintln(i2s(c));
-					fcPrintln("wat2wasm " + watfile + " -o " + wasmfile);
+					fcPrintln("Wasm failed", cfg.threadId);
+					fcPrintln(e, cfg.threadId);
+					fcPrintln(o, cfg.threadId);
+					fcPrintln(i2s(c), cfg.threadId);
+					fcPrintln("wat2wasm " + watfile + " -o " + wasmfile, cfg.threadId);
 					callback(false);
 				} else {
-					fcPrintln("Saved '" + wasmfile + "'");
+					fcPrintln("Saved '" + wasmfile + "'", cfg.threadId);
 					// deleteFile(watfile);
 					callback(true);
 				}
@@ -647,7 +647,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 					WASMInstance.exports.main();
 				});";
 		if (!setFileContent(cfg.hostfile, result)) {
-			fcPrintln("Problem saving template file");
+			fcPrintln("Problem saving template file", cfg.threadId);
 		} else {
 			fcVerbose(cfg, 1, "Creating Wasm host template finished");
 		}
@@ -664,8 +664,8 @@ fiWasmCreateModuleHeader(cfg : FiWasmConfig, wasmContext : WasmContext, callback
 			function = if (length(nameComponents) > 2) nameComponents[2] else nameComponents[1];
 			if (fiTypeIsFunction(nativeDec.decl.type)) {
 				Cons("(import \"" + module + "\" \"" + function + "\"" + 
-					fiWasmBuildFunctionDecl(name, fitype2wasmtype(wasmContext.globalNames, nativeDec.decl.type), 
-						false, true) 
+					fiWasmBuildFunctionDecl(name, fitype2wasmtype(wasmContext.globalNames, nativeDec.decl.type, cfg.threadId), 
+						false, true, cfg.threadId) 
 					+ "))\n", acc)
 			} else acc;
 		} else if (fiWasmIsPureNative(nativeDec.decl.nativeName) || fiWasmIsHostWNative(nativeDec.decl.nativeName)) {
@@ -704,7 +704,7 @@ fiGenerateNativeJSFile(cfg : FiWasmConfig, usedModules : [string], callback : (b
 
 	// import math covers string & array as well
 	if (setFileContent(tmp_name, strGlue(map(usedModules, \m -> { "import " + m + ";"	}), "\n") + "\nmain() {}")) {
-		fcPrintln("Compiling natives ...");
+		fcPrintln("Compiling natives ...", cfg.threadId);
 		nativeJsFn = fiNativeJSFileName(cfg.hostfile);
 		// call compilation routine
 		startProcess(
@@ -718,7 +718,7 @@ fiGenerateNativeJSFile(cfg : FiWasmConfig, usedModules : [string], callback : (b
 			".", "",
 			\ec, so, se -> { 
 				if (ec != 0 || strContains(so, "Error")) {
-					fcPrintln("Error while compiling native js.\nCode: " + i2s(ec) + "\nOutput: " + so + "\nError: " + se);
+					fcPrintln("Error while compiling native js.\nCode: " + i2s(ec) + "\nOutput: " + so + "\nError: " + se, cfg.threadId);
 				}
 
 				if (ec == 0) fiSuppressNodeJsWarning(nativeJsFn);
@@ -852,7 +852,7 @@ fiInjectFunctions(program : FiProgram, flowfile : string, funcs : [FiFunctionDec
 			)
 		}
 		None(): {
-			println("Cannot find module " + flowfile);
+			fcPrintln("Cannot find module " + flowfile, program.config.threadId);
 			program
 		}
 	}

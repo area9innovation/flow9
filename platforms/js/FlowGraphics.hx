@@ -28,6 +28,7 @@ class FlowGraphics extends Graphics {
 
 	public var transformChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
+	private var graphicsChanged : Bool = false;
 
 	private var nativeWidget : Element;
 	private var accessWidget : AccessWidget;
@@ -196,10 +197,15 @@ class FlowGraphics extends Graphics {
 			}
 		}
 
+		graphicsChanged = true;
 		invalidateTransform('endFill');
 
-		if (RenderSupportJSPixi.RendererType == "html" && !isEmpty) {
-			updateNativeWidgetGraphicsData();
+		if (untyped isMask || this.isCanvas) {
+			if (isNativeWidget) {
+				deleteNativeWidget();
+			}
+		} else if (!isEmpty) {
+			initNativeWidget();
 		}
 
 		return newGraphics;
@@ -372,6 +378,10 @@ class FlowGraphics extends Graphics {
 			return;
 		} else if (!isEmpty) {
 			initNativeWidget();
+		}
+
+		if (!graphicsChanged) {
+			return;
 		}
 
 		if (nativeWidget != null) {
@@ -555,9 +565,11 @@ class FlowGraphics extends Graphics {
 
 					if (data.fill != null && data.fillAlpha > 0) {
 						if (widgetBounds.getBoundsWidth() <= 2.0) {
+							nativeWidget.style.border = null;
 							nativeWidget.style.borderLeft = '${widgetBounds.getBoundsWidth()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 							nativeWidget.style.background = null;
 						} else if (widgetBounds.getBoundsHeight() <= 2.0) {
+							nativeWidget.style.border = null;
 							nativeWidget.style.borderTop = '${widgetBounds.getBoundsHeight()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 							nativeWidget.style.background = null;
 						} else {
@@ -609,6 +621,8 @@ class FlowGraphics extends Graphics {
 					}
 				}
 			}
+
+			graphicsChanged = false;
 		}
 	}
 

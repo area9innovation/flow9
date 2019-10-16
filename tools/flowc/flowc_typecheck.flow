@@ -18,7 +18,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 			if (^errors < 200) {
 				printFcError(acc, e)
 			} else if (^errors == 200) {
-				fcPrintln("Too many errors. Ignoring the rest");
+				fcPrintln("Too many errors. Ignoring the rest", config.threadId);
 			}
 		};
 
@@ -34,12 +34,12 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 	// Parse all files, or load incremental files
 	t0 = timestamp();
 	modules = preloadModules(config, globEnv, file, tenv1.printError);
-	incrementTimePhase(fcTimePhases.parse, t0);
+	incrementTimePhase(getTimePhases(tenv1.acc.config.threadId).parse, t0);
 
 	t1 = timestamp();
 	// OK, let us reclaim what we can before we continue
 	gc();
-	incrementTimePhase(fcTimePhases.other, t1);
+	incrementTimePhase(getTimePhases(tenv1.acc.config.threadId).other, t1);
 
 	if (^errors == 0) {
 
@@ -48,7 +48,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 
 		t2 = timestamp();
 		prog = fctypeenv2fi(tenv2);
-		incrementTimePhase(fcTimePhases.other, t2);
+		incrementTimePhase(getTimePhases(tenv2.acc.config.threadId).other, t2);
 
 		Pair(prog, ^errors)
 	} else {
@@ -69,7 +69,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 				None()
 			}
 	);
-	incrementTimePhase(fcTimePhases.other, t0);
+	incrementTimePhase(getTimePhases(tenv.acc.config.threadId).other, t0);
 
 	if (readyForProcessing == []) {
 		// We are done, everything is processed
@@ -83,7 +83,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 					switch (fcLoadFromCache(globEnv, fileinfo.flowfile)) {
 						Some(__): {
 							if (tenv.acc.config.verbose >= 1) {
-								fcPrintln("Removing outdated module '" + fileinfo.flowfile + "' from cache");
+								fcPrintln("Removing outdated module '" + fileinfo.flowfile + "' from cache", tenv.acc.config.threadId);
 							}
 							// When a module is parsed, it means that its version in cache is outdated.
 							fcRemoveFromCache(globEnv, fileinfo.flowfile)
@@ -95,7 +95,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 				FcLoaded(module, dependencyChanged): {
 					if (dependencyChanged()) {
 						if (tenv.acc.config.verbose >= 1) {
-							fcPrintln("Verifying types in module '" + module.fileinfo.flowfile + "'");
+							fcPrintln("Verifying types in module '" + module.fileinfo.flowfile + "'", tenv.acc.config.threadId);
 						}
 						if (typeverifyFiModule(tenv, module, \__ -> {})) {
 							updated = FiModule(module with
@@ -108,7 +108,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 							FcLoaded(updated, dependencyChanged);
 						} else {
 							if (tenv.acc.config.verbose >= 1) {
-								fcPrintln("Failed type verification for incremental for " + module.fileinfo.flowfile);
+								fcPrintln("Failed type verification for incremental for " + module.fileinfo.flowfile, tenv.acc.config.threadId);
 							}
 							reparseOutdatedModule(module.fileinfo.flowfile, tenv.acc.config, tenv.printError)
 						}
@@ -158,7 +158,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 		tenv2 = fold(desugared, tenv1, \tenvCur, modEnv ->
 			addDesugaredModuleToGlobal(tenvCur, modEnv.first)
 		);
-		incrementTimePhase(fcTimePhases.desugar, t1);
+		incrementTimePhase(getTimePhases(tenv2.acc.config.threadId).desugar, t1);
 
 		// Typecheck all modules. Leave only error-free modules.
 		t2 = timestamp();
@@ -195,7 +195,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 		});
 
 		tenv4 = fold(ready4, tenv3, \acc, m : FiModule -> mergeIncremental2TypeEnvProgram(acc, globEnv, m));
-		incrementTimePhase(fcTimePhases.typecheck, t2);
+		incrementTimePhase(getTimePhases(tenv4.acc.config.threadId).typecheck, t2);
 
 		// save cached modules
 		saveIncrementalModulesIfNeeded(map(typechecked_all, \typechecked -> typechecked.module), tenv4);
@@ -213,7 +213,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 				}
 			}
 		);
-		incrementTimePhase(fcTimePhases.other, t3);
+		incrementTimePhase(getTimePhases(tenv4.acc.config.threadId).other, t3);
 
 		// Process what is left
 		processPreloadedModulesInParallel(tenv4, globEnv, whatIsLeft)
