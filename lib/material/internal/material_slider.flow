@@ -41,6 +41,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	cursorPercent = fdivide(fpointX(point), sliderWidth);
 
 	percent2value = \p -> sliderRange.min + p * minMax;
+	percent2strvalue = \p -> d2st(percent2value(p), 2);
 	value2percent = if (minMax != 0.) \v -> (v - sliderRange.min) / minMax else \v -> 0.;
 
 	preparePercent = \p ->
@@ -146,7 +147,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		focusState,
 		\focus ->
 			makeMSlider(manager, focus, percent, sliderWidth, fand(focus.enabled, downAnywhere), color,
-				getLightBackground(parent), discreteValues, fselect(percent, FLift(\p -> d2st(percent2value(p), 2))),
+				getLightBackground(parent), discreteValues, fselect(percent, FLift(percent2strvalue)),
 				isDiscrete, sliderUndefined, outlineOnMinimum, maximizeOnHover, condensed, mkCustomThumb, showDiscreteValues
 			)
 			|> (\t -> if (!fullWidth) t else TAttachAvailableWidth(t, sliderWidth))
@@ -300,7 +301,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	makeThumb = \thumb, sliderFoc, style -> {
 		name = if (thumb.isStart) "startThumb" else "endThumb";
 		activeU = if (thumb.isStart) thumb.active else fOr(sliderUndefined, thumb.active);
-		thumbPoint = fselect2(thumb.percent, sliderWidth, FLift2(\p, sw -> Point(preparePercent2(p) * sw, 0.)));
+		thumbPoint = fselect2(thumb.percent, sliderWidth, FLift2(\p, sw -> Point(p * sw, 0.)));
 		show = fif(sliderUndefined, sliderFoc.hover, const(true));
 
 		MComponent2T(manager, parent, name, concatA([[
@@ -316,7 +317,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 						TIf(
 							fand(foc.enabled, activeU),
 							TSelect(thumb.percent, \prc ->
-								makeBlobHandle(foc.parent, d2st(percent2value(preparePercent2(prc)), 2), 14.,
+								makeBlobHandle(foc.parent, percent2strvalue(prc), 14.,
 									if (outlineOnMinimum && prc == 0.) [MFill(MGrey(500))] else style(true)
 								)
 							),
@@ -337,8 +338,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			), t))
 		|> TBorderTop(barHeight / 2.)
 		|> (\t -> TConstruct([
-			makeSubscribe2Trigger(activeU, point, \p ->
-				nextDistinct(thumb.percent, preparePercent2(thumb.restrictPercent(p.x / getValue(sliderWidth))))
+			makeSubscribe2Trigger(activeU, cursorPercent, \p ->
+				nextDistinct(thumb.percent, thumb.restrictPercent(p))
 			)
 		], t))
 		|> (\t -> TTranslate(thumbPoint, t))
@@ -364,18 +365,18 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 					MEnabled(innerEnabled),
 					MInputFilter(\es, foc -> {
 						if (es != "") maybeApply(sliderUndefinedM, \su -> nextDistinct(su.undefined, false));
-						if (foc) es else if (fgetValue(sliderUndefined)) "" else d2st(percent2value(getValue(thumb.percent)), 2)
+						if (foc) es else if (fgetValue(sliderUndefined)) "" else percent2strvalue(getValue(thumb.percent))
 					})
 				]
 			),
 			m2t
 		)
 		|> (\t -> TConstruct([
-				makeSubscribe(thumb.percent, \p ->
-					nextDistinct(strValue, if (fgetValue(sliderUndefined)) "" else d2st(percent2value(p), 2))
+				make2Subscribe(thumb.percent, sliderUndefined, \p, su ->
+					nextDistinct(strValue, if (su) "" else percent2strvalue(p))
 				),
 				makeSubscribe2(strValue, \sv -> 
-					nextDistinct(thumb.percent, preparePercent2(thumb.restrictPercent(value2percent(s2d(sv)))))
+					nextDistinct(thumb.percent, thumb.restrictPercent(value2percent(s2d(sv))))
 				)
 			], t))
 	}
@@ -393,25 +394,25 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	sliderBar = \style, prc ->
 		TRectangle(style, TSizedWidth(fmultiply(prc, sliderWidth), barHeight));
 
-	makeValuesPercentBidirectionalLink = \value, prc ->
-		\ -> fBidirectionalLink(
-			value,
-			prc,
-			\v -> if (!fgetValue(sliderUndefined)) nextDistinct(prc, preparePercent2(value2percent(v))),
-			\p -> if (!fgetValue(sliderUndefined)) nextDistinct(value, percent2value(p))
-		);
+	makeOuterValueLink = \value, prc ->
+		[
+			makeSubscribe(value, \v -> if (!fgetValue(sliderUndefined)) nextDistinct(prc, preparePercent2(value2percent(v)))),
+			makeSubscribe2(fpair(prc, sliderUndefined), \p -> if (!p.second) nextDistinct(value, percent2value(p.first)))
+		];
 
 	if (isUrlParameterTrue("old_slider")) oldSlider
 	else
 		eitherMap(chooseRange, \chR -> {
-				rangeStartPercent = make(-1.);
+				rangeStartPercent = make(0.);
 				rangeEndPercent = make(0.);
+
+				stepPercent = if (sliderStep >= 0.) sliderStep / minMax else 0.01;
 
 				startThumb =
 					MSliderThumb(
 						rangeStartPercent,
 						make(false),
-						\p -> forceRange(p, 0., fgetValue(rangeEndPercent) - 0.01),
+						\p -> preparePercent2(min(p, fgetValue(rangeEndPercent) - stepPercent)),
 						true
 					);
 
@@ -419,7 +420,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 					MSliderThumb(
 						rangeEndPercent,
 						make(false),
-						\p -> forceRange(p, fgetValue(rangeStartPercent) + 0.01, 1.),
+						\p -> preparePercent2(max(p, fgetValue(rangeStartPercent) + stepPercent)),
 						false
 					);
 
@@ -476,23 +477,22 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				})
 				|> (\makeSlider -> MComponent2T(manager, parent, "MSlider", focusState, makeSlider, m2t))
 				|> (\t -> TInteractive([TMouseDownGhost(downAnywhere)], t))
-				|> (\t -> TConstruct([
+				|> (\t -> TConstruct(concat3([
 					makeSubscribe2(down2, \d -> if (d) {
 						maybeApply(sliderUndefinedM, \su -> nextDistinct(su.undefined, false));
-						prc = fgetValue(cursorPercent);
+						prc = preparePercent2(fgetValue(cursorPercent));
 						thumb = if (prc <= getValue(rangeStartPercent)) startThumb else endThumb;
 						nextDistinct(thumb.percent, prc);
 						nextDistinct(thumb.active, true);
-					}),
-					makeValuesPercentBidirectionalLink(chR.start, rangeStartPercent),
-					makeValuesPercentBidirectionalLink(chR.end, rangeEndPercent),
-					makeSubscribe2(sliderUndefined, \su -> if (!su) next(rangeStartPercent, 0.))
-				], t))
+					})],
+					makeOuterValueLink(chR.end, rangeEndPercent),
+					makeOuterValueLink(chR.start, rangeStartPercent),
+				), t))
 				|> (\t -> eitherMap(sliderTooltip, \tooltip -> {
 						tooltipW = make(0.);
 						
 						tooltipText2 = fselect(cursorPercent, FLift(\prc ->
-							tooltip.textFn(prepareValue(percent2value(prc)))
+							tooltip.textFn(percent2value(preparePercent2(prc)))
 						));
 						MTooltip2T(
 							manager,
