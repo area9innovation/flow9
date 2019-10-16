@@ -74,6 +74,10 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function lineTo(x : Float, y : Float) : Graphics {
+		if (untyped !this.currentPath) {
+			moveTo(0.0, 0.0);
+		}
+
 		var newGraphics = super.lineTo(x, y);
 		pen.x = x;
 		pen.y = y;
