@@ -1095,7 +1095,7 @@ class DisplayObjectHelper {
 	public static function scrollNativeWidget(clip : DisplayObject, x : Float, y : Float) : Void {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
-		if (untyped clip.parentClip.hasMarginGap) {
+		if (untyped clip.hasMarginGap) {
 			if (y < 0 || x < 0) {
 				nativeWidget.style.margin = '${-round(MarginGap)}px';
 				nativeWidget.style.marginLeft = '${-round(x + MarginGap)}px';
