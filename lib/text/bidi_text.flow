@@ -21,6 +21,7 @@ export {
 	getTextDirectionAndMajority(t: string) -> DirectionAndMajority;
 
 	reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?, reverseDir: (?) -> ?) -> [[?]];
+	markListToBiDiReverse(list: List<?>, getText: (?) -> string) -> List<Pair<?, int>>;
 }
 
 // Appears when automatic line break takes place, disappears on no more need.
@@ -169,7 +170,7 @@ groupByCounterDirReverse(ws: [BiDiWord<?>], getText: (?) -> string) -> [[BiDiWor
 	).first;
 }
 
-reflowLineToBiDi(ws: [BiDiWord<?>], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?, reverseDir: (?) -> ?) -> [BiDiWord<?>] {
+reflowWordsToBiDi(ws: [BiDiWord<?>], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?, reverseDir: (?) -> ?) -> [BiDiWord<?>] {
 	rtl = getDefaultRtl();
 	// Grouping words with counter-direction into subarrays, and reversing order.
 	ltrGrouping = map(
@@ -225,7 +226,7 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 	mapi(
 		lines, \i,
 		line -> unwrapLine(
-			reflowLineToBiDi(
+			reflowWordsToBiDi(
 				concat3(
 					[LineTerminal(fold(
 						reverseA(take(lines, i)), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, lineAbove -> fold2DMs(acc, lineAbove.endDM)
@@ -239,4 +240,71 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 			),
 		)
 	);
+}
+
+findListMajor(list: List<?>, getText: (?) -> string) -> List<?> {
+	findpList(list, \__, el -> getTextDirectionAndMajority(getText(el)).m > 1);
+}
+
+findListMinor(list: List<?>, getText: (?) -> string) -> List<?> {
+	findpList(list, \__, el -> getTextDirectionAndMajority(getText(el)).m <= 1);
+}
+
+getListDM(l: List<?>, getText: (?) -> string) -> DirectionAndMajority {
+	rtl = getDefaultRtl();
+	defaultDir = if (rtl) uc_dir_rtl else uc_dir_ltr;
+	defaultDM = DirectionAndMajority(defaultDir, 2);
+	switch(l) {
+		EmptyList(): defaultDM;
+		Cons(h, t): getTextDirectionAndMajority(getText(h))
+	};
+}
+
+markRange(iiter: List<?>, ituple: Triple<List<Pair<?, int>>, DirectionAndMajority, List<?>>, getText: (?) -> string)
+-> Triple<List<Pair<?, int>>, DirectionAndMajority, List<?>> {
+	rtl = getDefaultRtl();
+	defaultDir = if (rtl) uc_dir_rtl else uc_dir_ltr;
+	fdir = ituple.second.d;
+	lDM = getListDM(iiter, getText);
+	dir = if (fdir == lDM.d) fdir else defaultDir;
+
+	Triple(
+		foldpList(
+			ituple.third, Pair(true, ituple.first), \jiter, jtuple, jw -> {
+				if (jtuple.first) {
+					Pair(
+						jiter != iiter,
+						Cons(Pair(jw, if (jiter == iiter) lDM.d else dir), jtuple.second)
+					)
+				} else
+					jtuple
+			}
+		).second,
+		lDM,
+		switch(iiter) {
+			EmptyList(): EmptyList();
+			Cons(__, nx): nx;
+		},
+	)
+}
+
+markListToBiDiReverse(list: List<?>, getText: (?) -> string) -> List<Pair<?, int>> {
+	rtl = getDefaultRtl();
+	defaultDir = if (rtl) uc_dir_rtl else uc_dir_ltr;
+	defaultDM = DirectionAndMajority(defaultDir, 2);
+	markRange(
+		EmptyList(),
+		foldpList(
+			list,
+			Triple(
+				EmptyList(),
+				defaultDM,
+				list,
+			),
+			\iiter, ituple, iw -> {
+				if (getTextDirectionAndMajority(getText(iw)).m <= 1) ituple else markRange(iiter, ituple, getText)
+			}
+		),
+		getText
+	).first;
 }
