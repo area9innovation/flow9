@@ -1,4 +1,5 @@
 import js.Browser;
+import pixi.core.display.Bounds;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
@@ -22,7 +23,7 @@ import js.three.WebGLRenderer;
 using DisplayObjectHelper;
 using Object3DHelper;
 
-class ThreeJSStage extends DisplayObject {
+class ThreeJSStage extends Container {
 	public var camera : Camera;
 	public var scene : Scene;
 	public var renderer : WebGLRenderer;
@@ -41,17 +42,47 @@ class ThreeJSStage extends DisplayObject {
 	private var widgetWidth : Float = 0.0;
 	private var widgetHeight : Float = 0.0;
 
+	public var transformChanged : Bool = false;
+	public var stageChanged : Bool = false;
+	private var worldTransformChanged : Bool = false;
+	private var localTransformChanged : Bool = true;
+
+	private var localBounds = new Bounds();
+	private var widgetBounds = new Bounds();
+	private var _bounds = new Bounds();
+
+	private var nativeWidget : Dynamic;
+	private var accessWidget : AccessWidget;
+
+	public var isNativeWidget : Bool = false;
+
 	public function new(width : Float, height : Float) {
 		super();
 
 		widgetWidth = width;
 		widgetHeight = height;
 
-		this.renderer = new WebGLRenderer({antialias: true, alpha : true});
+		if (RenderSupportJSPixi.RendererType == "html") {
+			initNativeWidget('canvas');
+			this.renderer = new WebGLRenderer({antialias: true, alpha : true, canvas : nativeWidget});
+			DisplayObjectHelper.log(this.renderer.domElement);
+			DisplayObjectHelper.log(this.nativeWidget);
+		} else {
+			this.renderer = new WebGLRenderer({antialias: true, alpha : true});
+		}
+
 		renderer.setSize(width, height);
 
 		// Chrome Inspect Three.js extension support
 		untyped __js__("window.THREE = THREE;");
+	}
+
+	public function invalidateStage() {
+		if (RenderSupportJSPixi.RendererType == "html") {
+			invalidateTransform('ThreeJSStage');
+		} else {
+			DisplayObjectHelper.invalidateStage(this);
+		}
 	}
 
 	private function addEventListeners() {
@@ -63,6 +94,26 @@ class ThreeJSStage extends DisplayObject {
 
 		renderer.domElement.removeEventListener("mousemove", onMouseEvent);
 		renderer.domElement.addEventListener("mousemove", onMouseEvent);
+	}
+
+	public function onMouseEvent(event : Dynamic, ?object : Object3D) : Void {
+		if (orbitControls != null && !orbitControls.enabled) {
+			return;
+		}
+
+		var handledObjects = new Array<Dynamic>();
+
+		var raycaster = new Raycaster();
+		raycaster.setFromCamera(new Vector2((event.pageX / getWidth()) * 2.0 - 1.0, -(event.pageY / getHeight()) * 2.0 + 1.0), camera);
+
+		for (ob in raycaster.intersectObjects(scene.get3DObjectAllChildren())) {
+			var object = ob.object;
+
+			if (handledObjects.indexOf(object) == -1) {
+				handledObjects.push(object);
+				object.emitEvent(event.type);
+			}
+		};
 	}
 
 	private function createTransformControls() {
@@ -132,8 +183,8 @@ class ThreeJSStage extends DisplayObject {
 	}
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
-		if (!this.visible || this.worldAlpha <= 0 || !this.renderable || camera == null || scene == null)
-		{
+		if (!this.visible || this.worldAlpha <= 0 || !this.renderable || camera == null || scene == null ||
+			getWidth() <= 0 || getHeight() <= 0) {
 			return;
 		}
 
@@ -191,65 +242,104 @@ class ThreeJSStage extends DisplayObject {
 		}
 	}
 
-	#if (pixijs < "4.7.0")
-		public override function getLocalBounds() : Rectangle {
-			var rect = new Rectangle();
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		rect = localBounds.getRectangle(rect);
 
-			rect.x = 0;
-			rect.y = 0;
-			rect.width = getWidth();
-			rect.height = getHeight();
+		var filterPadding = untyped this.filterPadding;
 
-			return rect;
+		if (filterPadding != null) {
+			rect.x -= filterPadding;
+			rect.y -= filterPadding;
+			rect.width += filterPadding * 2.0;
+			rect.height += filterPadding * 2.0;
 		}
-	#else
-		public override function getLocalBounds(?rect:Rectangle) : Rectangle {
-			if (rect == null) {
-				rect = new Rectangle();
-			};
-
-			rect.x = 0;
-			rect.y = 0;
-			rect.width = getWidth();
-			rect.height = getHeight();
-
-			return rect;
-		}
-	#end
-
-	public override function getBounds(?skipUpdate: Bool, ?rect: Rectangle) : Rectangle {
-		if (rect == null) {
-			rect = new Rectangle();
-		};
-
-		var lt = toGlobal(new Point(0.0, 0.0));
-		var rb = toGlobal(new Point(getWidth(), getHeight()));
-
-		rect.x = lt.x;
-		rect.y = lt.y;
-		rect.width = rb.x - lt.x;
-		rect.height = rb.y - lt.y;
 
 		return rect;
 	}
 
-	public function onMouseEvent(event : Dynamic, ?object : Object3D) : Void {
-		if (orbitControls != null && !orbitControls.enabled) {
+	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		if (!skipUpdate) {
+			updateTransform();
+		}
+
+		getLocalBounds();
+		calculateBounds();
+
+		return _bounds.getRectangle(rect);
+	}
+
+	public function calculateBounds() : Void {
+		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+	}
+
+	private function createNativeWidget(?tagName : String = "canvas") : Void {
+		if (!isNativeWidget) {
 			return;
 		}
 
-		var handledObjects = new Array<Dynamic>();
+		deleteNativeWidget();
 
-		var raycaster = new Raycaster();
-		raycaster.setFromCamera(new Vector2((event.pageX / getWidth()) * 2.0 - 1.0, -(event.pageY / getHeight()) * 2.0 + 1.0), camera);
+		nativeWidget = Browser.document.createElement(tagName);
+		updateClipID();
+		nativeWidget.className = 'nativeWidget';
 
-		for (ob in raycaster.intersectObjects(scene.get3DObjectAllChildren())) {
-			var object = ob.object;
+		isNativeWidget = true;
+	}
 
-			if (handledObjects.indexOf(object) == -1) {
-				handledObjects.push(object);
-				object.emitEvent(event.type);
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0.0;
+		widgetBounds.minY = 0.0;
+		widgetBounds.maxX = DisplayObjectHelper.ceil(getWidth());
+		widgetBounds.maxY = DisplayObjectHelper.ceil(getHeight());
+	}
+
+	public function updateNativeWidget() : Void {
+		if (RenderSupportJSPixi.RendererType == "html") {
+			if (isNativeWidget) {
+				if (visible) {
+					if (DisplayObjectHelper.DebugUpdate) {
+						untyped this.nativeWidget.setAttribute("update", Std.int(this.nativeWidget.getAttribute("update")) + 1);
+						if (untyped this.from) {
+							untyped this.nativeWidget.setAttribute("from", this.from);
+							untyped this.from = null;
+						}
+
+						if (untyped this.info) {
+							untyped this.nativeWidget.setAttribute("info", this.info);
+						}
+					}
+
+					updateNativeWidgetTransformMatrix();
+					updateNativeWidgetOpacity();
+
+					if (orbitControls != null) {
+						orbitControls.update();
+					}
+
+					if (transformControls != null) {
+						scene.add(transformControls);
+					}
+
+					for (b in boxHelpers) {
+						scene.add(b);
+					}
+
+					this.renderer.render(scene, camera);
+
+					for (b in boxHelpers) {
+						scene.remove(b);
+					}
+
+					if (transformControls != null) {
+						scene.remove(transformControls);
+					}
+				}
+
+				updateNativeWidgetDisplay();
 			}
-		};
+		}
 	}
 }

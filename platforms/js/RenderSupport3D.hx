@@ -306,7 +306,7 @@ class RenderSupport3D {
 	}
 
 	public static function load3DTexture(object : Material, url : String) : Material {
-		untyped object.map = new TextureLoader().load(url, untyped RenderSupportJSPixi.InvalidateStage);
+		untyped object.map = new TextureLoader().load(url, function(e) { object.invalidateStage(); });
 		return object;
 	}
 
@@ -1181,7 +1181,7 @@ class RenderSupport3D {
 		var action = mixer.clipAction(animation);
 		var drawFrameFn = function() {
 			mixer.update(untyped mixer.clock.getDelta());
-			RenderSupportJSPixi.InvalidateStage();
+			RenderSupportJSPixi.PixiStageChanged = true;
 		};
 
 		action.play();

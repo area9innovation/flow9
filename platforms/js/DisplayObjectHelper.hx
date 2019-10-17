@@ -1099,7 +1099,7 @@ class DisplayObjectHelper {
 			if (y < 0 || x < 0) {
 				nativeWidget.style.margin = '${-round(MarginGap)}px';
 				nativeWidget.style.marginLeft = '${-round(x + MarginGap)}px';
-				nativeWidget.style.marginTop = '${-round(y + MarginGap)}x';
+				nativeWidget.style.marginTop = '${-round(y + MarginGap)}px';
 
 				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + MarginGap * 2.0)}px';
 				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + MarginGap * 2.0)}px';
