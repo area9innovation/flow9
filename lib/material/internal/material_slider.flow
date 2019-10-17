@@ -281,17 +281,19 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	|> if (fullWidth) idfn else makeTropicConstant(None(), None());
 
 	barHeight = 3.;
-	gap = 6.;
+	activeItemStyle = \en -> if (en) [MFill(color)] else replaceStruct(mDisabledStyle(lightBackground), FillOpacity(0.5));
+	unactiveItemStyle = mDisabledStyle(lightBackground);
 	outlinedStyle = replaceStruct(mDisabledStyle(lightBackground), FillOpacity(if (lightBackground) 0.38 else 0.3));
 
 	makeCircleThumb = \sliderFoc, foc, st, stroke -> {
 		radius =
 			if (condensed) fif(fmax3(sliderFoc.hover, foc.focused, down2), const(6.), const(0.))
-			else  
-				fif(foc.down, const(9.), const(6.));
+			else if (maximizeOnHover) 
+				fif(foc.down, const(9.), const(6.))
+			else const(6.);
 
 		TSelect4(radius, foc.enabled, fand(const(maximizeOnHover), foc.hover), stroke, \r, en, h, str -> {
-			rad = if (en) (r + b2d(h)) else 4.;
+			rad = if (condensed) r else if (en) (r + b2d(h)) else 4.;
 			if (str)
 				TGroup2(TCenteredCircle(rad + 1., outlinedStyle), TCenteredCircle(rad - 1., [MFill(MBackgroundColor(lightBackground))]))
 			else
@@ -344,7 +346,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			)
 		], t))
 		|> (\t -> TTranslate(thumbPoint, t))
-		|> (\t -> TShow(show, t));
+		|> (\t -> TVisible(show, t));
 	}
 
 	makeValueInput = \thumb -> {
@@ -392,8 +394,16 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			MIfLazy2T(manager, parent, innerEnabled, \en, p -> MIcon2T(p, title, iconStyle(en)), true)
 		}
 
-	sliderBar = \style, prc ->
-		TRectangle(style, TSizedWidth(fmultiply(prc, sliderWidth), barHeight));
+	sliderBar = \foc, type, prc ->
+		TSelect(foc.enabled, \en -> {
+			circleGap = if (en || condensed || isSome(customThumb)) 0. else 6.;
+			barLength = fsubtract(fmultiply(prc, sliderWidth), const(if (type == CenterBar()) 2. * circleGap else circleGap));
+			border = faddition(fmin(const(0.), barLength), const(circleGap));
+			style = if (type != CenterBar()) unactiveItemStyle else activeItemStyle(en);
+
+			TRectangle(style, TSizedWidth(fmax(barLength, const(0.)), barHeight))
+			|> (\t -> TBorderT(if (type == LeftBar()) zero else border, zero, if (type == RightBar()) zero else border, zero, t))
+		});
 
 	makeOuterValueLink = \value, prc ->
 		[
@@ -445,7 +455,10 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 						|> (\t -> TShowLazy(fand(
 								eitherMap(showDiscreteValues,
 									\sdv -> sdv.show,
-									fif(sliderUndefined, foc.hover, fmax3(down2, startThumb.active, endThumb.active))
+									fand(
+										foc.enabled,
+										fif(sliderUndefined, foc.hover, fmax3(down2, startThumb.active, endThumb.active))
+									)
 								),
 								fselect(sliderWidth, FLift(\w -> i2d(length(discreteValues)) < w / 10.))
 							), t
@@ -453,20 +466,15 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 					);
 
 				(\foc -> {
-					rangeStartPercentU = fif(fnot(sliderUndefined), rangeStartPercent, const(0.));
-					rangeEndPercentU = fif(fOr(fnot(sliderUndefined), foc.hover), rangeEndPercent, const(0.));
-
-					activeItemStyle = \en -> if (en) [MFill(color)] else mDisabledStyle(lightBackground);
-					unactiveItemStyle = mDisabledStyle(lightBackground);
+					rangeStartPercentU = fif(sliderUndefined, const(0.), rangeStartPercent);
+					rangeEndPercentU = fif(fand(sliderUndefined, fnot(foc.hover)), const(0.), rangeEndPercent);
 
 					leftBar =
-						sliderBar(unactiveItemStyle, rangeStartPercentU);
+						sliderBar(foc, LeftBar(), rangeStartPercentU);
 					centerBar =
-						TSelect(foc.enabled, \en ->
-							sliderBar(activeItemStyle(en), fsubtract(rangeEndPercentU, rangeStartPercentU))
-						);
+						sliderBar(foc, CenterBar(), fsubtract(rangeEndPercentU, rangeStartPercentU));
 					rightBar =
-						sliderBar(unactiveItemStyle, fsubtract(const(1.), rangeEndPercentU));
+						sliderBar(foc, RightBar(), fsubtract(const(1.), rangeEndPercentU));
 
 					TGroupSameMetrics([
 						TColsDir([leftBar, centerBar, rightBar], isRTL)
@@ -528,6 +536,11 @@ MSliderThumb(
 	restrictPercent : (double) -> double,
 	isStart : bool
 );
+
+SliderBar ::= LeftBar, CenterBar, RightBar;
+	LeftBar();
+	CenterBar();
+	RightBar();
 
 IconBasedCircle(parent : MFocusGroup, radius : double, style : [TGraphicsStyle]) -> Tropic {
 	color = extractStruct(style, Fill(black)).color;
