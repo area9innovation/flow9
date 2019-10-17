@@ -365,15 +365,21 @@ class RenderSupport3D {
 		var ev : Dynamic = null;
 
 		if (event == "mousemiddledown" || event == "mousemiddleup") {
-			ev = new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mousemiddledown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 1;
 		} else if (event == "mouserightdown" || event == "mouserightup") {
-			ev = new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mouserightdown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 2;
 		} else {
-			ev = new js.html.Event(event);
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event)")
+				: new js.html.Event(event);
 
 			if (event == "mousedown" || event == "mouseup") {
 				untyped ev.button = 0;
