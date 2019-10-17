@@ -808,14 +808,14 @@ class DisplayObjectHelper {
 		if (untyped clip.scrollRect != null) {
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
 
-			if (untyped clip.parentClip.hasMarginGap) {
+			if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
 				tx = round(point.x + MarginGap);
 				ty = round(point.y + MarginGap);
 			} else {
 				tx = round(point.x);
 				ty = round(point.y);
 			}
-		} else if (untyped clip.parentClip.hasMarginGap) {
+		} else if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
 			tx = round(transform.tx + MarginGap);
 			ty = round(transform.ty + MarginGap);
 		} else {
