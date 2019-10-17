@@ -274,16 +274,37 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		untyped __js__("
-			new THREE.MTLLoader()
-				.load(mtlUrl, function (materials) {
-					materials.preload();
+		if (Platform.isIE || Platform.isEdge) {
+			untyped __js__("
+				new THREE.MTLLoader()
+					.load(mtlUrl, function (materials) {
+						materials.preload();
 
-					new THREE.OBJLoader()
-						.setMaterials(materials)
-						.load(objUrl, onLoad);
-				});
-		");
+						new THREE.OBJLoader()
+							.setMaterials(materials)
+							.load(objUrl, onLoad);
+					})
+			");
+		} else {
+			untyped __js__("
+				eval(\"import('./js/threejs/MTLLoader2.js')\".concat(
+					\".then((module) => {\",
+					\"import('./js/threejs/OBJLoader2.js')\",
+					\".then((module2) => {\",
+					\"import('./js/threejs/obj2/bridge/MtlObjBridge.js')\",
+					\".then((module3) => {\",
+					\"new module.MTLLoader()\",
+					\".load(mtlUrl, function(materials) {\",
+					\"new module2.OBJLoader2()\",
+					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
+					\".load(objUrl, onLoad);\",
+					\"});\",
+					\"});\",
+					\"});\",
+					\"})\"
+				))
+			");
+		}
 	}
 
 	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
