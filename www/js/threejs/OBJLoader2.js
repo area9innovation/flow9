@@ -7,7 +7,7 @@ import {
 	FileLoader,
 	Object3D,
 	Loader
-} from "../../../build/three.module.js";
+} from "./three.module.js";
 
 import { OBJLoader2Parser } from "./obj2/worker/parallel/OBJLoader2Parser.js";
 import { MeshReceiver } from "./obj2/shared/MeshReceiver.js";
