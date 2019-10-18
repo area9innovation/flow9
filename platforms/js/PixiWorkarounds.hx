@@ -862,6 +862,10 @@ class PixiWorkarounds {
 				} else {
 					this.transformChanged = false;
 
+					if (this.graphicsChanged) {
+						this.updateNativeWidgetGraphicsData();
+					}
+
 					if (this.worldTransformChanged)
 					{
 						this.worldTransformChanged = false;
@@ -918,7 +922,7 @@ class PixiWorkarounds {
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
 						if (RenderSupportJSPixi.RendererType == 'html') {
-							if (RenderSupportJSPixi.LayoutText) {
+							if (RenderSupportJSPixi.LayoutText || this.isCanvas) {
 								this.textClipChanged = true;
 								this.layoutText();
 							} else if (this.children.length > 0) {

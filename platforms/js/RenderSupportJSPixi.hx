@@ -255,6 +255,7 @@ class RenderSupportJSPixi {
 			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
 		} else if (RendererType == "html") {
 			untyped PixiRenderer.plugins.interaction.removeEvents();
+			untyped PixiRenderer.plugins.interaction.interactionDOMElement = PixiView;
 		}
 
 		PixiView = PixiRenderer.view;
