@@ -412,6 +412,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DAmbientLight(Integer color, Double intensity) {
+		return null;
+	}
+
 	public Object set3DLightColor(Object object, Integer color) {
 		return null;
 	}

@@ -33,6 +33,7 @@ import js.three.MeshStandardMaterial;
 import js.three.Light;
 import js.three.PointLight;
 import js.three.SpotLight;
+import js.three.AmbientLight;
 
 import js.three.GridHelper;
 import js.three.PointLightHelper;
@@ -1061,6 +1062,10 @@ class RenderSupport3D {
 
 	public static function make3DSpotLight(color : Int, intensity : Float, distance : Float, angle : Float, penumbra : Float, decay : Float) : Light {
 		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
+	}
+
+	public static function make3DAmbientLight(color : Int, intensity : Float) : Light {
+		return new AmbientLight(color, intensity);
 	}
 
 
