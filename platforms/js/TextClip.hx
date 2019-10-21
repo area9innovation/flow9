@@ -948,7 +948,7 @@ class TextClip extends NativeWidgetClip {
 				return;
 			}
 
-			if (Platform.isIOS) {
+			if (Platform.isIOS && RenderSupportJSPixi.RendererType != "html") {
 				RenderSupportJSPixi.ensureCurrentInputVisible();
 			}
 
