@@ -212,7 +212,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Double get3DObjectAlpha(Object object) {
-		return false;
+		return 0.0;
 	}
 	public Object set3DObjectAlpha(Object object, Double alpha) {
 		return null;
