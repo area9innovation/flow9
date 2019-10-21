@@ -140,6 +140,7 @@ public class HttpSupport extends NativeHost {
 			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
 			con.setRequestMethod(method);
 			con.setConnectTimeout(timeout.intValue());
+			con.setReadTimeout(timeout.intValue());
 
 			// Add headers
 	 		for (Object header : headers) {
