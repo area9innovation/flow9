@@ -33,6 +33,7 @@ import js.three.MeshStandardMaterial;
 import js.three.Light;
 import js.three.PointLight;
 import js.three.SpotLight;
+import js.three.AmbientLight;
 
 import js.three.GridHelper;
 import js.three.PointLightHelper;
@@ -274,16 +275,37 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		untyped __js__("
-			new THREE.MTLLoader()
-				.load(mtlUrl, function (materials) {
-					materials.preload();
+		if (Platform.isIE || Platform.isEdge) {
+			untyped __js__("
+				new THREE.MTLLoader()
+					.load(mtlUrl, function (materials) {
+						materials.preload();
 
-					new THREE.OBJLoader()
-						.setMaterials(materials)
-						.load(objUrl, onLoad);
-				});
-		");
+						new THREE.OBJLoader()
+							.setMaterials(materials)
+							.load(objUrl, onLoad);
+					})
+			");
+		} else {
+			untyped __js__("
+				eval(\"import('./js/threejs/MTLLoader2.js')\".concat(
+					\".then((module) => {\",
+					\"import('./js/threejs/OBJLoader2.js')\",
+					\".then((module2) => {\",
+					\"import('./js/threejs/obj2/bridge/MtlObjBridge.js')\",
+					\".then((module3) => {\",
+					\"new module.MTLLoader()\",
+					\".load(mtlUrl, function(materials) {\",
+					\"new module2.OBJLoader2()\",
+					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
+					\".load(objUrl, onLoad);\",
+					\"});\",
+					\"});\",
+					\"});\",
+					\"})\"
+				))
+			");
+		}
 	}
 
 	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
@@ -306,7 +328,7 @@ class RenderSupport3D {
 	}
 
 	public static function load3DTexture(object : Material, url : String) : Material {
-		untyped object.map = new TextureLoader().load(url, untyped RenderSupportJSPixi.InvalidateStage);
+		untyped object.map = new TextureLoader().load(url, function(e) { object.invalidateStage(); });
 		return object;
 	}
 
@@ -344,15 +366,21 @@ class RenderSupport3D {
 		var ev : Dynamic = null;
 
 		if (event == "mousemiddledown" || event == "mousemiddleup") {
-			ev = new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mousemiddledown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 1;
 		} else if (event == "mouserightdown" || event == "mouserightup") {
-			ev = new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mouserightdown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 2;
 		} else {
-			ev = new js.html.Event(event);
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event)")
+				: new js.html.Event(event);
 
 			if (event == "mousedown" || event == "mouseup") {
 				untyped ev.button = 0;
@@ -1036,6 +1064,10 @@ class RenderSupport3D {
 		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
 	}
 
+	public static function make3DAmbientLight(color : Int, intensity : Float) : Light {
+		return new AmbientLight(color, intensity);
+	}
+
 
 	public static function set3DLightColor(object : Light, color : Int) : Void {
 		object.color = new Color(color);
@@ -1181,7 +1213,7 @@ class RenderSupport3D {
 		var action = mixer.clipAction(animation);
 		var drawFrameFn = function() {
 			mixer.update(untyped mixer.clock.getDelta());
-			RenderSupportJSPixi.InvalidateStage();
+			RenderSupportJSPixi.PixiStageChanged = true;
 		};
 
 		action.play();

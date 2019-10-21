@@ -28,6 +28,7 @@ class FlowGraphics extends Graphics {
 
 	public var transformChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
+	private var graphicsChanged : Bool = false;
 
 	private var nativeWidget : Element;
 	private var accessWidget : AccessWidget;
@@ -73,6 +74,10 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function lineTo(x : Float, y : Float) : Graphics {
+		if (untyped !this.currentPath) {
+			moveTo(0.0, 0.0);
+		}
+
 		var newGraphics = super.lineTo(x, y);
 		pen.x = x;
 		pen.y = y;
@@ -196,10 +201,15 @@ class FlowGraphics extends Graphics {
 			}
 		}
 
+		graphicsChanged = true;
 		invalidateTransform('endFill');
 
-		if (RenderSupportJSPixi.RendererType == "html" && !isEmpty) {
-			updateNativeWidgetGraphicsData();
+		if (untyped isMask || this.isCanvas) {
+			if (isNativeWidget) {
+				deleteNativeWidget();
+			}
+		} else if (!isEmpty) {
+			initNativeWidget();
 		}
 
 		return newGraphics;
@@ -330,6 +340,18 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.maxY = pen.y + (lineWidth != null ? lineWidth / 2.0 : 0.0);
 		}
 
+		if (graphicsBounds.minX > graphicsBounds.maxX) {
+			var temp = graphicsBounds.maxX;
+			graphicsBounds.maxX = graphicsBounds.minX;
+			graphicsBounds.minX = temp;
+		}
+
+		if (graphicsBounds.minY > graphicsBounds.maxY) {
+			var temp = graphicsBounds.maxY;
+			graphicsBounds.maxY = graphicsBounds.minY;
+			graphicsBounds.minY = temp;
+		}
+
 		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null && !isSvg ? lineWidth : 0.0);
 		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && !isSvg ? lineWidth : 0.0);
 		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && !isSvg ? lineWidth : 0.0);
@@ -372,6 +394,10 @@ class FlowGraphics extends Graphics {
 			return;
 		} else if (!isEmpty) {
 			initNativeWidget();
+		}
+
+		if (!graphicsChanged) {
+			return;
 		}
 
 		if (nativeWidget != null) {
@@ -555,9 +581,11 @@ class FlowGraphics extends Graphics {
 
 					if (data.fill != null && data.fillAlpha > 0) {
 						if (widgetBounds.getBoundsWidth() <= 2.0) {
+							nativeWidget.style.border = null;
 							nativeWidget.style.borderLeft = '${widgetBounds.getBoundsWidth()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 							nativeWidget.style.background = null;
 						} else if (widgetBounds.getBoundsHeight() <= 2.0) {
+							nativeWidget.style.border = null;
 							nativeWidget.style.borderTop = '${widgetBounds.getBoundsHeight()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
 							nativeWidget.style.background = null;
 						} else {
@@ -609,6 +637,8 @@ class FlowGraphics extends Graphics {
 					}
 				}
 			}
+
+			graphicsChanged = false;
 		}
 	}
 

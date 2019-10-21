@@ -13,7 +13,8 @@ class DisplayObjectHelper {
 	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
 	public static var BoxShadow : Bool = ((Platform.isChrome || Platform.isFirefox) && !Platform.isMobile) ?
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
-	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0" ;
+	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
+	public static var MarginGap : Float = 0.5;
 
 	private static var InvalidateStage : Bool = true;
 
@@ -476,6 +477,10 @@ class DisplayObjectHelper {
 
 		scrollRect.beginFill(0xFFFFFF);
 		scrollRect.drawRect(0.0, 0.0, width, height);
+
+		if (RenderSupportJSPixi.RendererType == "html") {
+			untyped clip.hasMarginGap = true;
+		}
 	}
 
 	public static inline function removeScrollRect(clip : FlowContainer) : Void {
@@ -803,16 +808,16 @@ class DisplayObjectHelper {
 		if (untyped clip.scrollRect != null) {
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
 
-			if (untyped clip.parentClip.scrollRect != null) {
-				tx = round(point.x + 0.5);
-				ty = round(point.y + 0.5);
+			if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
+				tx = round(point.x + MarginGap);
+				ty = round(point.y + MarginGap);
 			} else {
 				tx = round(point.x);
 				ty = round(point.y);
 			}
-		} else if (untyped clip.parentClip.scrollRect != null) {
-			tx = round(transform.tx + 0.5);
-			ty = round(transform.ty + 0.5);
+		} else if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
+			tx = round(transform.tx + MarginGap);
+			ty = round(transform.ty + MarginGap);
 		} else {
 			tx = round(transform.tx);
 			ty = round(transform.ty);
@@ -836,9 +841,9 @@ class DisplayObjectHelper {
 			} else if (untyped clip.alphaMask != null) {
 				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
-			} else if (untyped clip.scrollRect != null) {
-				nativeWidget.style.width = '${getWidgetWidth(clip) + 1.0}px';
-				nativeWidget.style.height = '${getWidgetHeight(clip) + 1.0}px';
+			} else if (untyped clip.hasMarginGap) {
+				nativeWidget.style.width = '${round(getWidgetWidth(clip) + MarginGap * 2.0)}px';
+				nativeWidget.style.height = '${round(getWidgetHeight(clip) + MarginGap * 2.0)}px';
 			} else {
 				nativeWidget.style.width = '${getWidgetWidth(clip)}px';
 				nativeWidget.style.height = '${getWidgetHeight(clip)}px';
@@ -1090,21 +1095,40 @@ class DisplayObjectHelper {
 	public static function scrollNativeWidget(clip : DisplayObject, x : Float, y : Float) : Void {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
-		if (y < 0 || x < 0) {
-			nativeWidget.style.margin = '${-round(0.5)}px';
-			nativeWidget.style.marginLeft = '${-round(x + 0.5)}px';
-			nativeWidget.style.marginTop = '${-round(y + 0.5)}x';
+		if (untyped clip.hasMarginGap) {
+			if (y < 0 || x < 0) {
+				nativeWidget.style.margin = '${-round(MarginGap)}px';
+				nativeWidget.style.marginLeft = '${-round(x + MarginGap)}px';
+				nativeWidget.style.marginTop = '${-round(y + MarginGap)}px';
 
-			nativeWidget.style.width = '${getWidgetWidth(clip) + x + 1.0}px';
-			nativeWidget.style.height = '${getWidgetHeight(clip) + y + 1.0}px';
+				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + MarginGap * 2.0)}px';
+				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + MarginGap * 2.0)}px';
 
-			y = 0;
-			x = 0;
+				y = 0;
+				x = 0;
+			} else {
+				nativeWidget.style.marginLeft = null;
+				nativeWidget.style.marginTop = null;
+				nativeWidget.style.margin = '${-round(MarginGap)}px';
+				nativeWidget.style.clip = null;
+			}
 		} else {
-			nativeWidget.style.marginLeft = null;
-			nativeWidget.style.marginTop = null;
-			nativeWidget.style.margin = '${-round(0.5)}px';
-			nativeWidget.style.clip = null;
+			if (y < 0 || x < 0) {
+				nativeWidget.style.margin = null;
+				nativeWidget.style.marginLeft = '${-round(x)}px';
+				nativeWidget.style.marginTop = '${-round(y)}x';
+
+				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x)}px';
+				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y)}px';
+
+				y = 0;
+				x = 0;
+			} else {
+				nativeWidget.style.marginLeft = null;
+				nativeWidget.style.marginTop = null;
+				nativeWidget.style.margin = null;
+				nativeWidget.style.clip = null;
+			}
 		}
 
 		if (x != 0 || y != 0) {
