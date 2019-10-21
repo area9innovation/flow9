@@ -211,6 +211,13 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Double get3DObjectAlpha(Object object) {
+		return false;
+	}
+	public Object set3DObjectAlpha(Object object, Double alpha) {
+		return null;
+	}
+
 	public Boolean get3DObjectCastShadow(Object object) {
 		return false;
 	}
@@ -499,7 +506,11 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object make3DMesh(Object geometry, Object material) {
+	public Object make3DMesh(Object geometry, Object material, Object[] parameters) {
+		return null;
+	}
+
+	public Object set3DObjectAlphaMap(Object object, Object alphaMap) {
 		return null;
 	}
 
