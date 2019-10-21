@@ -75,6 +75,12 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DTexture(Object object, String url) {
 		return null;
 	}
+	public Object make3DDataTexture(Object object, Object[] data, Integer width, Integer height, Object[] parameters) {
+		return null;
+	}
+	public Object make3DCanvasTexture(Object object, Object clip) {
+		return null;
+	}
 
 	public Object make3DAxesHelper(Double size) {
 		return null;

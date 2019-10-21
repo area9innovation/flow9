@@ -30,6 +30,8 @@ import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
 
+import js.three.Texture;
+
 import js.three.Light;
 import js.three.PointLight;
 import js.three.SpotLight;
@@ -333,6 +335,46 @@ class RenderSupport3D {
 				child.invalidateTransform('InvalidateLocalStages');
 			}
 		});
+		return object;
+	}
+
+	public static function make3DDataTexture(object : Material, data : Array<Int>, width : Int, height : Int, parameters : Array<Array<String>>) : Material {
+		untyped __js__("
+			var size = width * height;
+			var udata = new Uint8Array(3 * size);
+
+			for (var i = 0; i < size; i++) {
+				var stride = i * 3;
+
+				udata[stride] = data[stride];
+				udata[stride + 1] = data[stride + 1];
+				udata[stride + 2] = data[stride + 2];
+			}
+
+			object.map = new THREE.DataTexture(udata, width, height, THREE.RGBFormat);
+		");
+
+		for (par in parameters) {
+			untyped object.map[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return object;
+	}
+
+	public static function make3DCanvasTexture(object : Material, clip : FlowContainer) : Material {
+		var container = new FlowCanvas();
+
+		container.addChild(clip);
+		RenderSupportJSPixi.mainRenderClip().addChild(container);
+		RenderSupportJSPixi.render();
+
+		var texture = new Texture(untyped container.nativeWidget);
+		texture.needsUpdate = true;
+		untyped object.map = texture;
+
+		RenderSupportJSPixi.mainRenderClip().removeChild(container);
+		RenderSupportJSPixi.render();
+
 		return object;
 	}
 
@@ -1214,7 +1256,7 @@ class RenderSupport3D {
 		var mesh = new Mesh(geometry, material);
 
 		for (par in parameters) {
-			untyped mesh[par[0]] = haxe.Json.parse(par[1]);
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
 		}
 
 		return mesh;
