@@ -26,6 +26,9 @@ import js.three.ConeGeometry;
 import js.three.CylinderGeometry;
 import js.three.SphereGeometry;
 
+import js.three.BufferGeometry;
+import js.three.SphereBufferGeometry;
+
 import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
@@ -329,12 +332,17 @@ class RenderSupport3D {
 		new ObjectLoader().load(url, onLoad);
 	}
 
-	public static function load3DTexture(object : Material, url : String) : Material {
+	public static function load3DTexture(object : Material, url : String, parameters : Array<Array<String>>) : Material {
 		untyped object.map = new TextureLoader().load(url, function(e) {
 			for (child in RenderSupportJSPixi.PixiStage.children) {
 				child.invalidateTransform('InvalidateLocalStages');
 			}
 		});
+
+		for (par in parameters) {
+			untyped object.map[par[0]] = untyped __js__("eval(par[1])");
+		}
+
 		return object;
 	}
 
@@ -377,6 +385,38 @@ class RenderSupport3D {
 
 		return object;
 	}
+
+
+	public static function set3DMaterialRotation(object : Material, rotation : Float) : Void {
+		if (untyped object.map != null && object.map.rotation != rotation) {
+			untyped object.map.rotation = rotation;
+		}
+	}
+
+	public static function get3DMaterialRotation(object : Material) : Float {
+		return untyped object.map != null && object.map.rotation != null ? object.map.rotation : 0.0;
+	}
+
+	public static function set3DMaterialOffsetX(object : Material, x : Float) : Void {
+		if (untyped object.map != null && object.map.offset.x != x) {
+			untyped object.map.offset.x = x;
+		}
+	}
+
+	public static function get3DMaterialOffsetX(object : Material) : Float {
+		return untyped object.map != null && object.map.offset != null ? object.map.offset.x : 0.0;
+	}
+
+	public static function set3DMaterialOffsetY(object : Material, y : Float) : Void {
+		if (untyped object.map != null && object.map.offset.y != y) {
+			untyped object.map.offset.y = y;
+		}
+	}
+
+	public static function get3DMaterialOffsetY(object : Material) : Float {
+		return untyped object.map != null && object.map.offset != null ? object.map.offset.y : 0.0;
+	}
+
 
 	public static function make3DAxesHelper(size : Float) : Object3D {
 		return untyped __js__("new THREE.AxesHelper(size)");
@@ -1231,29 +1271,41 @@ class RenderSupport3D {
 		return new SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
 	}
 
+	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : BufferGeometry {
+		return new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+	}
+
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
-		var materialParameters : Dynamic = {color : new Color(color)};
+		var material = new MeshBasicMaterial(untyped {color : new Color(color)});
 
 		for (par in parameters) {
-			untyped materialParameters[par[0]] = par[1];
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
 		}
 
-		return new MeshBasicMaterial(materialParameters);
+		return material;
 	}
 
 	public static function make3DMeshStandardMaterial(color : Int, parameters : Array<Array<String>>) : Material {
-		var materialParameters : Dynamic = {color : new Color(color)};
+		var material = new MeshStandardMaterial(untyped {color : new Color(color)});
 
 		for (par in parameters) {
-			untyped materialParameters[par[0]] = par[1];
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
 		}
 
-		return new MeshStandardMaterial(materialParameters);
+		return material;
 	}
 
 
-	public static function make3DMesh(geometry : Geometry, material : Material, parameters : Array<Array<String>>) : Mesh {
-		var mesh = new Mesh(geometry, material);
+	public static function make3DMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Mesh {
+		if (untyped geometry.clearGroups != null) {
+			untyped geometry.clearGroups();
+
+			for (i in 0...materials.length) {
+				untyped geometry.addGroup(0, Math.POSITIVE_INFINITY, i);
+			}
+		}
+
+		var mesh = new Mesh(geometry, untyped materials.length == 1 ? materials[0] : materials);
 
 		for (par in parameters) {
 			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
