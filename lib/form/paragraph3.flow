@@ -117,18 +117,21 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> For
 	aw = make(0.0);
 	update = make(0);
 	lines : DynamicBehaviour<[ParaLine]> = make([]);
-	nonDynamic = Select(lines, \l -> renderParaLines(
+
+	// it renders all words but for dynamics it just reserves space and updates coordinates
+	renderedParagraph = Select(lines, \l -> renderParaLines(
 		getValue(aw), l, tightWidth, alignment, interlineSpacing, topLineBaseline, interactiveStyles, rtl
 	));
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	ndynamic = fold(words, 0, \acc, w -> if (isConst(w.metrics)) acc else 1 + acc);
-	ndymamicUpper = extractStruct(s, DynamicBlockDelay(1)).n;
+	dynamicWords = filter(words, \w -> !isConst(w.metrics));
+	ndynamic = length(dynamicWords);
+	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
 
 	contentGroup = Group(concat(
-		[if (fill != []) Background(fill, nonDynamic) else nonDynamic],
-		constructDynamicParaForms(words, interactiveStyles)
+		[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
+		constructDynamicParaForms(dynamicWords, interactiveStyles)
 	));
 
 	Constructor(
@@ -141,7 +144,11 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> For
 			}
 		),
 		\ -> {
-			updateFn = \wi -> {
+			cancelDeferredUpdate = ref nop;
+			updateFn = \wi-> {
+				^cancelDeferredUpdate();
+				cancelDeferredUpdate := nop;
+				next(update, 0);
 				// Ignore negative widths
 				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
@@ -150,37 +157,22 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> For
 				next(lines, newLines);
 			};
 
-			unsub1 = subscribe(aw, updateFn);
-
-			unsubs = filtermap(words, \w -> if (isConst(w.metrics)) None() else {
-				// Force an update by changing the available
-				Some(subscribe2(w.metrics, \m -> {
-					if (ndynamic <= ndymamicUpper) {
-						// There is less or equal than upper limit of dynamic elements here, so just update immediately
-						updateFn(getValue(aw))
-					} else {
-						// There are more, so to prevent unnecessary work, delay the update
-						nextDistinct(update, 1);
-					}
-				}))
-			});
-
-			// When an update from a dynamic element is requested, we do it in the next frame
-			unsub2 = subscribe(update, \u -> {
-				if (u == 1) {
-					timer(0, \ -> {
-						next(update, 0);
-						// Force an update
-						updateFn(getValue(aw))
+			uns = concatA([
+				[subscribe(aw, \v -> updateFn(v))],
+				if (ndymamicUpper == 0) [] else
+				[
+					subscribe2(update, \u -> {
+						// When an update from a dynamic element is requested, we do it in the next frame
+						// in JS it could introduce unwanted and unpredictable delay because
+						// there is only one "queue" which is used by all activities in the application
+						// and some activities schedules long work
+						if (u == 1) cancelDeferredUpdate := interruptibleTimer(0, \ -> updateFn(getValue(aw)))
 					})
-				}
-			});
+				],
+				mapi(dynamicWords, \i, w -> subscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1)))
+			]);
 
-			\ -> {
-				unsub1();
-				applyall(unsubs);
-				unsub2();
-			}
+			\ -> applyall(uns)
 		}
 	);
 }
