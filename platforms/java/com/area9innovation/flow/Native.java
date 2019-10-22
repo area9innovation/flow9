@@ -1378,6 +1378,8 @@ public class Native extends NativeHost {
 					callback.invoke(process.exitValue());
 				} catch (InterruptedException ex) {
 					// TODO: stub
+					System.out.println("Problem running ExitHandler: " + ex);
+					ex.printStackTrace();
 				}
 			}
 		}
@@ -1390,17 +1392,29 @@ public class Native extends NativeHost {
 				}
 			} catch (IOException ex) {
 				// TODO: stub
+				System.out.println("Problem writeStdin: " + ex);
+				ex.printStackTrace();
 			}
 		}
 
 		public void kill() {
 			try {
+				stdout.close();
+				stderr.close();
+				process.waitFor(100, TimeUnit.MILLISECONDS);
 				if (process != null && process.isAlive()) {
-					process.destroyForcibly();
+					process.destroy();
 					process.waitFor(250, TimeUnit.MILLISECONDS);
+					if (process.isAlive()) {
+						process.destroyForcibly();
+						process.waitFor();
+					}
 				}
+				process = null;
 			} catch (InterruptedException ex) {
 				// TODO: stub
+				System.out.println("Problem kill: " + ex);
+				ex.printStackTrace();
 			}
 		}
 
@@ -1421,6 +1435,8 @@ public class Native extends NativeHost {
 				ex.printStackTrace(new PrintWriter(errors));*/
 				//onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + errors.toString());
 				// TODO: stub
+				System.out.println("Problem call: " + ex);
+				ex.printStackTrace();
 			}
 			return output;
 		}
