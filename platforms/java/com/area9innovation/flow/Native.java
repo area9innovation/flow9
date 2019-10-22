@@ -1126,7 +1126,7 @@ public class Native extends NativeHost {
 		return stackTrace.toString();
 	}
 
-	private final class ProcessRunner implements Callable {
+	private final class ProcessRunner implements Runnable {
 
 		private final String[] cmd;
 		private final String cwd;
@@ -1145,9 +1145,20 @@ public class Native extends NativeHost {
 			InputStream is;
 			String contents;
 			Thread thread;
+			StreamReader errReader;
+
 			public StreamReader(String name, InputStream is) {
 				this.name = name;
 				this.is = is;
+				errReader = this;
+				contents = new String();
+				thread = new Thread(this);
+				thread.start();
+			}
+			public StreamReader(String name, InputStream is, StreamReader errReader) {
+				this.name = name;
+				this.is = is;
+				this.errReader = errReader;
 				contents = new String();
 				thread = new Thread(this);
 				thread.start();
@@ -1160,11 +1171,9 @@ public class Native extends NativeHost {
 						String s = br.readLine();
 						if (s == null) break;
 						contents += s + "\n";
-						//System.out.println("[" + name + "] " + s);
 					}
 				} catch (Exception ex) {
-					System.out.println("Problem reading stream " + name + "... :" + ex);
-					ex.printStackTrace();
+					errReader.contents += exceptionStackTrace(ex) + "\n";
 				}
 			}
 			public void close() {
@@ -1172,19 +1181,19 @@ public class Native extends NativeHost {
 				try {
 					is.close();
 				} catch (Exception ex) {
-					System.out.println("Problem closing stream " + name + "... :" + ex);
-					ex.printStackTrace();
+					errReader.contents += exceptionStackTrace(ex) + "\n";
 				}
 			}
 		}
 
 		@Override
-		public Long call() {
-			long output = 0;
+		public void run() {
+			StreamReader stderr = null;
+			StreamReader stdout = null;
 			try {
 				Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
-				StreamReader stdout = new StreamReader("stdout", process.getInputStream());
-				StreamReader stderr = new StreamReader("stderr", process.getErrorStream());
+				stderr = new StreamReader("stderr", process.getErrorStream());
+				stdout = new StreamReader("stdout", process.getInputStream(), stderr);
 
 				process.getOutputStream().write(this.stdin.getBytes());
 				process.getOutputStream().flush();
@@ -1200,9 +1209,14 @@ public class Native extends NativeHost {
 				for (String c : this.cmd) {
 					cmd_str += c + " ";
 				}
-				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + exceptionStackTrace(ex));
+				String err_str = ""; 
+				if (stderr != null) {
+					err_str += stderr.contents + "\n";
+				}
+				err_str += "while executing:\n" + cmd_str + "\n";
+				err_str += exceptionStackTrace(ex);
+				onExit.invoke(-200, "", err_str);
 			}
-			return output;
 		}
 	}
 
@@ -1287,7 +1301,7 @@ public class Native extends NativeHost {
 
 		return true;
 	} catch (Exception ex) {
-		onExit.invoke(-200, "", "while starting:\n'" + command + "'\noccured:\n" + exceptionStackTrace(ex));
+		onExit.invoke(-200, "", "while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
 		return false;
 	}
 	}
@@ -1341,7 +1355,6 @@ public class Native extends NativeHost {
 						String s = br.readLine();
 						if (s == null) break;
 						callback.invoke(s);
-						//System.out.println("[" + name + "] " + s);
 					}
 				} catch (Exception ex) {
 					onErr.invoke("Problem reading stream " + name + ":\n" + exceptionStackTrace(ex));
@@ -1430,7 +1443,7 @@ public class Native extends NativeHost {
 				for (String c : this.cmd) {
 					cmd_str += c + " ";
 				}
-				onErr.invoke("while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + exceptionStackTrace(ex));
+				onErr.invoke("while executing:\n" + cmd_str + "\n" + exceptionStackTrace(ex));
 				onExit.invoke(-200);
 			}
 		}
@@ -1450,7 +1463,7 @@ public class Native extends NativeHost {
 
 			return runner;
 		} catch (Exception ex) {
-			onErr.invoke("while starting:\n'" + command + "'\noccured:\n" + exceptionStackTrace(ex));
+			onErr.invoke("while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
 			onExit.invoke(-200);
 			return null;
 		}
