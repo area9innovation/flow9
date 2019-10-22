@@ -27,7 +27,7 @@
 ;; it is a ordinary elisp-file, for example:
 ;;
 ;; (a9flow-add-target "learner-js"  "flowc1 learner/learner.flow js=~/area9/lyceum/rhapsode/www2/learner.js")
-;; (a9flow-add-target "educator" :compile-cmd "flowcpp --no-jit educator/educator.flow -- devtrace=1 dev=1")
+;; (a9flow-add-target "educator" "flowcpp --no-jit educator/educator.flow -- devtrace=1 dev=1")
 ;; 		 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Load project:
@@ -411,6 +411,8 @@ point currently is on, and the associated indentation rules."
 ;;;;;;;;;;;;; PROJECT MANAGEMENT ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defvar a9flow-flow-directory "../../flow9" "a9flow flow directory")
+(defvar a9flow-project-file nil "Current project file name")
+
 (defvar a9flow-proj-default-directory nil "a9flow default directory")
 (defvar a9flow-include-list () "a9flow include directories list")
 (defvar a9flow-target-list () "a9flow project targets list")
@@ -419,8 +421,9 @@ point currently is on, and the associated indentation rules."
 (defvar a9flow-goto-history '())
 (defvar a9flow-goto-hash '())
 
-(cl-defun a9flow-add-target (name compile-cmd)
+(defun a9flow-add-target (name compile-cmd)
   "Add project (or replace) to project list"
+  (interactive "sName:\nsCommand:")
   (if (stringp name)
       (progn
 	(setq a9flow-default-target name) 
@@ -429,7 +432,11 @@ point currently is on, and the associated indentation rules."
 	      (cl-delete name a9flow-target-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))))
     (message "load project error: name:'%s'" name)))
 
-
+(defun a9flow-clear-target-list ()
+ "Clear target list"
+  (interactive)
+  (setq a9flow-target-list nil)
+ )
 
 (defun a9flow-proj-find (target-name)
   (cl-find target-name a9flow-target-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))
@@ -437,6 +444,7 @@ point currently is on, and the associated indentation rules."
 (defun a9flow-open-project (project-file-name)
   "Load project file"
   (interactive	"fProject file: ")
+  (setq a9flow-project-file project-file-name)
   (let* ((proj-dir (file-name-directory project-file-name))
 	(dir (if proj-dir proj-dir default-directory)))
     (message "a9flow project:%s" project-file-name)
@@ -503,6 +511,14 @@ point currently is on, and the associated indentation rules."
       (setq a9flow-include-list (append a9flow-include-list (split-string include ",")))
       )))
 
+(defun a9flow-set-default-directory (dir)
+  "Set default directory for find function definitions without project file or from project file"
+  (interactive	"DDirectory: ")
+  (setq a9flow-proj-default-directory dir)
+  (cd dir)
+  (when (not a9flow-project-file) (a9flow-load-flow-config)))
+
+
 ;;;;;;;;;; GOTO PROCEDURES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun a9flow-goto-function-definition ()
@@ -547,7 +563,9 @@ point currently is on, and the associated indentation rules."
   (setq cv (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
   (if (string-match "import[ \\t]+\\(.*\\);" cv)
       (a9flow-goto-import)
-      (a9flow-goto-function-definition)))
+    (a9flow-goto-function-definition)
+    )
+  (cd (file-name-directory (buffer-file-name))))
 
 (defun a9flow-goto-import ()
   (interactive)
@@ -631,6 +649,12 @@ point currently is on, and the associated indentation rules."
   (push current-position a9flow-goto-history))
 
 
+(defun a9flow-cd-default ()
+  "Change directory to a9flow-proj-default-directory"
+  (interactive)
+  (cd a9flow-proj-default-directory))
+
+    
 ;; (defun a9flow-compile-filter-hk ()
 ;;   (let ((str (buffer-substring compilation-filter-start (point-max)))
 ;; 	err-msg)
@@ -643,7 +667,21 @@ point currently is on, and the associated indentation rules."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defun a9flow-insert-dbg-var-print ()
+  "Insert debug print of variable from kill-ring"
+  (interactive)
+  (when kill-ring
+    (let ((s (car kill-ring)))
+      (insert (format "println(\"*** %s:\" + toString(%s));\n" s s)))))
+
+(defun a9flow-insert-dbg-name-print ()
+  "Insert debug print name from kill-ring"
+  (interactive)
+  (when kill-ring
+    (let ((s (car kill-ring)))
+      (insert (format "println(\"*** %s\");\n" s)))))
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (provide 'a9flow-mode2)
