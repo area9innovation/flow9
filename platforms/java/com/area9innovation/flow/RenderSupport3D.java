@@ -75,6 +75,12 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DTexture(Object object, String url) {
 		return null;
 	}
+	public Object make3DDataTexture(Object object, Object[] data, Integer width, Integer height, Object[] parameters) {
+		return null;
+	}
+	public Object make3DCanvasTexture(Object object, Object clip) {
+		return null;
+	}
 
 	public Object make3DAxesHelper(Double size) {
 		return null;
@@ -208,6 +214,13 @@ public class RenderSupport3D extends NativeHost {
 		return false;
 	}
 	public Object set3DObjectVisible(Object object, Boolean visible) {
+		return null;
+	}
+
+	public Double get3DObjectAlpha(Object object) {
+		return 0.0;
+	}
+	public Object set3DObjectAlpha(Object object, Double alpha) {
 		return null;
 	}
 
@@ -499,7 +512,11 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object make3DMesh(Object geometry, Object material) {
+	public Object make3DMesh(Object geometry, Object material, Object[] parameters) {
+		return null;
+	}
+
+	public Object set3DObjectAlphaMap(Object object, Object alphaMap) {
 		return null;
 	}
 

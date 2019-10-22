@@ -47,7 +47,7 @@ class FlowCanvas extends FlowContainer {
 			var width = Math.ceil(localBounds.maxX * worldTransform.a) * RenderSupportJSPixi.PixiRenderer.resolution + minX;
 			var height = Math.ceil(localBounds.maxY * worldTransform.d) * RenderSupportJSPixi.PixiRenderer.resolution + minY;
 
-			if (width > 0 && height > 0 && Math.ceil(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution - minX > 0 && Math.ceil(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution - minY > 0) {
+			if (width > 0 && height > 0 && Math.ceil(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution - minX >= 0 && Math.ceil(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution - minY >= 0) {
 				var transform = getNativeWidgetTransform();
 
 				var canvasWidth = Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
