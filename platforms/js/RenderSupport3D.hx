@@ -30,6 +30,8 @@ import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
 
+import js.three.Texture;
+
 import js.three.Light;
 import js.three.PointLight;
 import js.three.SpotLight;
@@ -328,7 +330,51 @@ class RenderSupport3D {
 	}
 
 	public static function load3DTexture(object : Material, url : String) : Material {
-		untyped object.map = new TextureLoader().load(url, function(e) { object.invalidateStage(); });
+		untyped object.map = new TextureLoader().load(url, function(e) {
+			for (child in RenderSupportJSPixi.PixiStage.children) {
+				child.invalidateTransform('InvalidateLocalStages');
+			}
+		});
+		return object;
+	}
+
+	public static function make3DDataTexture(object : Material, data : Array<Int>, width : Int, height : Int, parameters : Array<Array<String>>) : Material {
+		untyped __js__("
+			var size = width * height;
+			var udata = new Uint8Array(3 * size);
+
+			for (var i = 0; i < size; i++) {
+				var stride = i * 3;
+
+				udata[stride] = data[stride];
+				udata[stride + 1] = data[stride + 1];
+				udata[stride + 2] = data[stride + 2];
+			}
+
+			object.map = new THREE.DataTexture(udata, width, height, THREE.RGBFormat);
+		");
+
+		for (par in parameters) {
+			untyped object.map[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return object;
+	}
+
+	public static function make3DCanvasTexture(object : Material, clip : FlowContainer) : Material {
+		var container = new FlowCanvas();
+
+		container.addChild(clip);
+		RenderSupportJSPixi.mainRenderClip().addChild(container);
+		RenderSupportJSPixi.render();
+
+		var texture = new Texture(untyped container.nativeWidget);
+		texture.needsUpdate = true;
+		untyped object.map = texture;
+
+		RenderSupportJSPixi.mainRenderClip().removeChild(container);
+		RenderSupportJSPixi.render();
+
 		return object;
 	}
 
@@ -664,6 +710,22 @@ class RenderSupport3D {
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (object.visible != visible) {
 			object.visible = visible;
+
+			object.broadcastEvent("visiblechanged");
+			object.emitEvent("change");
+
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectAlpha(object : Object3D) : Float {
+		return untyped object.material != null ? object.material.opacity : 0.0;
+	}
+
+	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
+		if (untyped object.material != null && object.material.opacity != alpha) {
+			untyped object.material.transparent = true;
+			untyped object.material.opacity = alpha;
 
 			object.broadcastEvent("visiblechanged");
 			object.emitEvent("change");
@@ -1190,8 +1252,22 @@ class RenderSupport3D {
 	}
 
 
-	public static function make3DMesh(geometry : Geometry, material : Material) : Mesh {
-		return new Mesh(geometry, material);
+	public static function make3DMesh(geometry : Geometry, material : Material, parameters : Array<Array<String>>) : Mesh {
+		var mesh = new Mesh(geometry, material);
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function set3DObjectAlphaMap(object : Object3D, alphaMap : Material) : Void {
+		if (untyped object.material != null && object.material.alphaMap != alphaMap.map) {
+			untyped object.material.alphaMap = alphaMap.map;
+			untyped object.material.transparent = true;
+			object.invalidateStage();
+		}
 	}
 
 
