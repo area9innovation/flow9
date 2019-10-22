@@ -808,14 +808,14 @@ class DisplayObjectHelper {
 		if (untyped clip.scrollRect != null) {
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
 
-			if (untyped clip.parentClip.hasMarginGap) {
+			if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
 				tx = round(point.x + MarginGap);
 				ty = round(point.y + MarginGap);
 			} else {
 				tx = round(point.x);
 				ty = round(point.y);
 			}
-		} else if (untyped clip.parentClip.hasMarginGap) {
+		} else if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
 			tx = round(transform.tx + MarginGap);
 			ty = round(transform.ty + MarginGap);
 		} else {
@@ -1099,7 +1099,7 @@ class DisplayObjectHelper {
 			if (y < 0 || x < 0) {
 				nativeWidget.style.margin = '${-round(MarginGap)}px';
 				nativeWidget.style.marginLeft = '${-round(x + MarginGap)}px';
-				nativeWidget.style.marginTop = '${-round(y + MarginGap)}x';
+				nativeWidget.style.marginTop = '${-round(y + MarginGap)}px';
 
 				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + MarginGap * 2.0)}px';
 				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + MarginGap * 2.0)}px';

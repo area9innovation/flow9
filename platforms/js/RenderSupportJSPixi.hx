@@ -956,7 +956,7 @@ class RenderSupportJSPixi {
 		return function() { off("message", handler); };
 	}
 
-	private static function InvalidateLocalStages() {
+	public static function InvalidateLocalStages() {
 		for (child in PixiStage.children) {
 			child.invalidateTransform('InvalidateLocalStages');
 		}
@@ -1032,13 +1032,15 @@ class RenderSupportJSPixi {
 		return PixiStage;
 	}
 
-	public static function mainRenderClip() : DisplayObject {
-		var stage = PixiStage.children[0];
-		if (stage == null) {
-			stage = new FlowContainer();
+	public static function mainRenderClip() : FlowContainer {
+		if (PixiStage.children.length == 0) {
+			var stage = new FlowContainer();
 			addChild(PixiStage, stage);
+
+			return stage;
+		} else {
+			return cast(PixiStage.children[0], FlowContainer);
 		}
-		return stage;
 	}
 
 	public static function enableResize() : Void {
@@ -1287,7 +1289,9 @@ class RenderSupportJSPixi {
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
-		render();
+		if (focus) {
+			render();
+		}
 
 		clip.setClipFocus(focus);
 	}

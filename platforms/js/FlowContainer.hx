@@ -26,8 +26,8 @@ class FlowContainer extends Container {
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
 
-	private var nativeWidget : Dynamic;
-	private var accessWidget : AccessWidget;
+	public var nativeWidget : Dynamic;
+	public var accessWidget : AccessWidget;
 
 	public var isNativeWidget : Bool = false;
 

@@ -12,7 +12,7 @@ class Object3DHelper {
 
 		if (getClipWorldVisible(object)) {
 			for (stage in getStage(object)) {
-				stage.invalidateStage(false);
+				stage.invalidateStage();
 			}
 		}
 	}

@@ -387,12 +387,12 @@ self.addEventListener('fetch', function(event) {
     event.respondWith(
       caches.open(SHARED_DATA_ENDPOINT).then(cache => {
         if (method == "POST") {
-          return request.text().then(body => {
-            cache.put(SHARED_DATA_ENDPOINT, new Response(body));
+          return request.json().then(data => {
+            cache.put(SHARED_DATA_ENDPOINT + '/' + data.key, new Response(data.value));
             return new Response("OK");
           });
         } else {
-          return cache.match(SHARED_DATA_ENDPOINT).then(response => {
+          return cache.match(SHARED_DATA_ENDPOINT + '/' + new URL(request.url).searchParams.get('key')).then(response => {
             return response || new Response("");
           }) || new Response("");
         }
@@ -409,13 +409,19 @@ var cleanServiceWorkerCache = function() {
 
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
-      if (CACHE_NAME != key) {
+      if (CACHE_NAME != key && SHARED_DATA_ENDPOINT != key) {
         console.log("cache cleared", key);
         return caches.delete(key);
       }
     }));
   });
 };
+
+self.addEventListener('install', event => {
+  self.skipWaiting();
+  
+  event.waitUntil(Promise.resolve());
+});
 
 self.addEventListener('activate', function(event) {
   // this cache is only for session

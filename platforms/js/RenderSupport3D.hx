@@ -30,9 +30,12 @@ import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
 
+import js.three.Texture;
+
 import js.three.Light;
 import js.three.PointLight;
 import js.three.SpotLight;
+import js.three.AmbientLight;
 
 import js.three.GridHelper;
 import js.three.PointLightHelper;
@@ -274,16 +277,37 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		untyped __js__("
-			new THREE.MTLLoader()
-				.load(mtlUrl, function (materials) {
-					materials.preload();
+		if (Platform.isIE || Platform.isEdge) {
+			untyped __js__("
+				new THREE.MTLLoader()
+					.load(mtlUrl, function (materials) {
+						materials.preload();
 
-					new THREE.OBJLoader()
-						.setMaterials(materials)
-						.load(objUrl, onLoad);
-				});
-		");
+						new THREE.OBJLoader()
+							.setMaterials(materials)
+							.load(objUrl, onLoad);
+					})
+			");
+		} else {
+			untyped __js__("
+				eval(\"import('./js/threejs/MTLLoader2.js')\".concat(
+					\".then((module) => {\",
+					\"import('./js/threejs/OBJLoader2.js')\",
+					\".then((module2) => {\",
+					\"import('./js/threejs/obj2/bridge/MtlObjBridge.js')\",
+					\".then((module3) => {\",
+					\"new module.MTLLoader()\",
+					\".load(mtlUrl, function(materials) {\",
+					\"new module2.OBJLoader2()\",
+					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
+					\".load(objUrl, onLoad);\",
+					\"});\",
+					\"});\",
+					\"});\",
+					\"})\"
+				))
+			");
+		}
 	}
 
 	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
@@ -306,7 +330,51 @@ class RenderSupport3D {
 	}
 
 	public static function load3DTexture(object : Material, url : String) : Material {
-		untyped object.map = new TextureLoader().load(url, untyped RenderSupportJSPixi.InvalidateStage);
+		untyped object.map = new TextureLoader().load(url, function(e) {
+			for (child in RenderSupportJSPixi.PixiStage.children) {
+				child.invalidateTransform('InvalidateLocalStages');
+			}
+		});
+		return object;
+	}
+
+	public static function make3DDataTexture(object : Material, data : Array<Int>, width : Int, height : Int, parameters : Array<Array<String>>) : Material {
+		untyped __js__("
+			var size = width * height;
+			var udata = new Uint8Array(3 * size);
+
+			for (var i = 0; i < size; i++) {
+				var stride = i * 3;
+
+				udata[stride] = data[stride];
+				udata[stride + 1] = data[stride + 1];
+				udata[stride + 2] = data[stride + 2];
+			}
+
+			object.map = new THREE.DataTexture(udata, width, height, THREE.RGBFormat);
+		");
+
+		for (par in parameters) {
+			untyped object.map[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return object;
+	}
+
+	public static function make3DCanvasTexture(object : Material, clip : FlowContainer) : Material {
+		var container = new FlowCanvas();
+
+		container.addChild(clip);
+		RenderSupportJSPixi.mainRenderClip().addChild(container);
+		RenderSupportJSPixi.render();
+
+		var texture = new Texture(untyped container.nativeWidget);
+		texture.needsUpdate = true;
+		untyped object.map = texture;
+
+		RenderSupportJSPixi.mainRenderClip().removeChild(container);
+		RenderSupportJSPixi.render();
+
 		return object;
 	}
 
@@ -344,15 +412,21 @@ class RenderSupport3D {
 		var ev : Dynamic = null;
 
 		if (event == "mousemiddledown" || event == "mousemiddleup") {
-			ev = new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mousemiddledown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 1;
 		} else if (event == "mouserightdown" || event == "mouserightup") {
-			ev = new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mouserightdown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 2;
 		} else {
-			ev = new js.html.Event(event);
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event)")
+				: new js.html.Event(event);
 
 			if (event == "mousedown" || event == "mouseup") {
 				untyped ev.button = 0;
@@ -636,6 +710,22 @@ class RenderSupport3D {
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (object.visible != visible) {
 			object.visible = visible;
+
+			object.broadcastEvent("visiblechanged");
+			object.emitEvent("change");
+
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectAlpha(object : Object3D) : Float {
+		return untyped object.material != null ? object.material.opacity : 0.0;
+	}
+
+	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
+		if (untyped object.material != null && object.material.opacity != alpha) {
+			untyped object.material.transparent = true;
+			untyped object.material.opacity = alpha;
 
 			object.broadcastEvent("visiblechanged");
 			object.emitEvent("change");
@@ -1036,6 +1126,10 @@ class RenderSupport3D {
 		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
 	}
 
+	public static function make3DAmbientLight(color : Int, intensity : Float) : Light {
+		return new AmbientLight(color, intensity);
+	}
+
 
 	public static function set3DLightColor(object : Light, color : Int) : Void {
 		object.color = new Color(color);
@@ -1158,8 +1252,22 @@ class RenderSupport3D {
 	}
 
 
-	public static function make3DMesh(geometry : Geometry, material : Material) : Mesh {
-		return new Mesh(geometry, material);
+	public static function make3DMesh(geometry : Geometry, material : Material, parameters : Array<Array<String>>) : Mesh {
+		var mesh = new Mesh(geometry, material);
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function set3DObjectAlphaMap(object : Object3D, alphaMap : Material) : Void {
+		if (untyped object.material != null && object.material.alphaMap != alphaMap.map) {
+			untyped object.material.alphaMap = alphaMap.map;
+			untyped object.material.transparent = true;
+			object.invalidateStage();
+		}
 	}
 
 
@@ -1181,7 +1289,7 @@ class RenderSupport3D {
 		var action = mixer.clipAction(animation);
 		var drawFrameFn = function() {
 			mixer.update(untyped mixer.clock.getDelta());
-			RenderSupportJSPixi.InvalidateStage();
+			RenderSupportJSPixi.PixiStageChanged = true;
 		};
 
 		action.play();
