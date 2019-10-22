@@ -1120,6 +1120,12 @@ public class Native extends NativeHost {
 			return aa; else return ab;
 	}
 
+	private final static String exceptionStackTrace(Exception ex) {
+		StringWriter stackTrace = new StringWriter();
+		ex.printStackTrace(new PrintWriter(stackTrace));
+		return stackTrace.toString();
+	}
+
 	private final class ProcessRunner implements Callable {
 
 		private final String[] cmd;
@@ -1194,9 +1200,7 @@ public class Native extends NativeHost {
 				for (String c : this.cmd) {
 					cmd_str += c + " ";
 				}
-				StringWriter errors = new StringWriter();
-				ex.printStackTrace(new PrintWriter(errors));
-				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + errors.toString());
+				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + exceptionStackTrace(ex));
 			}
 			return output;
 		}
@@ -1283,12 +1287,12 @@ public class Native extends NativeHost {
 
 		return true;
 	} catch (Exception ex) {
-		onExit.invoke(-200, "", "while starting:\n'" + command + "'\noccured:\n" + ex.toString());
+		onExit.invoke(-200, "", "while starting:\n'" + command + "'\noccured:\n" + exceptionStackTrace(ex));
 		return false;
 	}
 	}
 
-	private final class ProcessStarter implements Callable {
+	private final class ProcessStarter implements Runnable {
 
 		private final String[] cmd;
 		private final String cwd;
@@ -1319,11 +1323,13 @@ public class Native extends NativeHost {
 			InputStream is;
 			Thread thread;
 			private final Func1<Object, String> callback;
-			
-			public StreamReader(String name, InputStream is, Func1<Object, String> callback) {
+			private final Func1<Object, String> onErr;
+
+			public StreamReader(String name, InputStream is, Func1<Object, String> callback, Func1<Object, String> onErr) {
 				this.name = name;
 				this.is = is;
 				this.callback = callback;
+				this.onErr = onErr;
 				thread = new Thread(this);
 				thread.start();
 			}
@@ -1338,8 +1344,7 @@ public class Native extends NativeHost {
 						//System.out.println("[" + name + "] " + s);
 					}
 				} catch (Exception ex) {
-					System.out.println("Problem reading stream " + name + "... :" + ex);
-					ex.printStackTrace();
+					onErr.invoke("Problem reading stream " + name + ":\n" + exceptionStackTrace(ex));
 				}
 			}
 			public void close() {
@@ -1347,8 +1352,7 @@ public class Native extends NativeHost {
 				try {
 					is.close();
 				} catch (Exception ex) {
-					System.out.println("Problem closing stream " + name + "... :" + ex);
-					ex.printStackTrace();
+					onErr.invoke("Problem closing stream " + name + ":\n" + exceptionStackTrace(ex));
 				}
 			}
 		}
@@ -1359,12 +1363,14 @@ public class Native extends NativeHost {
 			StreamReader out;
 			StreamReader err;
 			private final Func1<Object, Integer> callback;
-			
-			public ExitHandler(Process process, Func1<Object, Integer> callback, StreamReader out, StreamReader err) {
+			private final Func1<Object, String> onErr;
+
+			public ExitHandler(Process process, Func1<Object, Integer> callback, Func1<Object, String> onErr, StreamReader out, StreamReader err) {
 				this.process = process;
 				this.callback = callback;
 				this.out = out;
 				this.err = err;
+				this.onErr = onErr;
 				thread = new Thread(this);
 				thread.start();
 			}
@@ -1377,9 +1383,7 @@ public class Native extends NativeHost {
 					out.close();
 					callback.invoke(process.exitValue());
 				} catch (InterruptedException ex) {
-					// TODO: stub
-					System.out.println("Problem running ExitHandler: " + ex);
-					ex.printStackTrace();
+					onErr.invoke(exceptionStackTrace(ex));
 				}
 			}
 		}
@@ -1391,9 +1395,7 @@ public class Native extends NativeHost {
 					process.getOutputStream().flush();
 				}
 			} catch (IOException ex) {
-				// TODO: stub
-				System.out.println("Problem writeStdin: " + ex);
-				ex.printStackTrace();
+				onErr.invoke(exceptionStackTrace(ex));
 			}
 		}
 
@@ -1412,36 +1414,27 @@ public class Native extends NativeHost {
 				}
 				process = null;
 			} catch (InterruptedException ex) {
-				// TODO: stub
-				System.out.println("Problem kill: " + ex);
-				ex.printStackTrace();
+				onErr.invoke(exceptionStackTrace(ex));
 			}
 		}
 
 		@Override
-		public Long call() {
-			long output = 0;
+		public void run() {
 			try {
 				process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
-				stdout = new StreamReader("stdout", process.getInputStream(), onOut);
-				stderr = new StreamReader("stderr", process.getErrorStream(), onErr);
-				exit   = new ExitHandler(process, onExit, stdout, stderr);
+				stdout = new StreamReader("stdout", process.getInputStream(), onOut, onOut);
+				stderr = new StreamReader("stderr", process.getErrorStream(), onErr, onOut);
+				exit   = new ExitHandler(process, onExit, onErr, stdout, stderr);
 			} catch (IOException ex) {
-				/*String cmd_str = "";
+				String cmd_str = "";
 				for (String c : this.cmd) {
 					cmd_str += c + " ";
 				}
-				StringWriter errors = new StringWriter();
-				ex.printStackTrace(new PrintWriter(errors));*/
-				//onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + errors.toString());
-				// TODO: stub
-				System.out.println("Problem call: " + ex);
-				ex.printStackTrace();
+				onErr.invoke("while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString() + "\n" + exceptionStackTrace(ex));
+				onExit.invoke(-200);
 			}
-			return output;
 		}
 	}
-
 
 	public final Object runProcess(String command, Object[] args, String currentWorkingDirectory,
 					Func1<Object, String> onOut, Func1<Object, String> onErr, Func1<Object, Integer> onExit) {
@@ -1457,7 +1450,8 @@ public class Native extends NativeHost {
 
 			return runner;
 		} catch (Exception ex) {
-			//onExit.invoke(-200, "", "while starting:\n'" + command + "'\noccured:\n" + ex.toString());
+			onErr.invoke("while starting:\n'" + command + "'\noccured:\n" + exceptionStackTrace(ex));
+			onExit.invoke(-200);
 			return null;
 		}
 	}
