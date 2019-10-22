@@ -1,7 +1,7 @@
-import server/http;
 import tools/flowc/flowc_local;
 import tools/flowc/flowc_remote;
-import tools/common/logging;
+import tools/flowc/flowc_server;
+import tools/flowc/flowc_watchdog;
 
 runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
 	if (isConfigParameterFalse(config.config, "server") || !java) {
@@ -12,33 +12,12 @@ runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : 
 			\msg -> fcPrintln(msg, config.threadId), 
 			\msg -> fcPrintln(msg, config.threadId), 
 			onRunComplete, 
-			\__ -> if (isConfigParameterSet(config.config, "ping")) {
-				fcPrintln("ping failed", config.threadId);
+			\__, data -> if (isConfigParameterSet(config.config, "ping")) {
+				fcPrintln("ping failed\n" + data, config.threadId);
 			} else {
 				runConfigLocally(config, globalEnv, onRunComplete);
 			}
 		)
-	}
-}
-
-fcServerLog(message : string) -> void {
-	writeLogMessage(message, "flowc_server.log", 128)
-}
-
-fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
-	if (!isConfigParameterSet(conf.config, "compile-expression")) Pair(conf, nop) else {
-		expr = getConfigParameter(conf.config, "compile-expression");
-		fileinfo = getFcFileInfo(conf.flowfile, conf);
-		file = trimFlowfile(fileinfo.fullpath, conf.includes, getConfigParameterDef(conf.config, "working-dir", ""));
-		file_dir = dirName(fileinfo.fullpath);
-		file_path = file_dir + "/___tmp_expr___.flow";
-		file_str = "import " + file + ";\n\n ___tmpvar___ = " + expr + ";\n\n";
-		setFileContent(file_path, file_str);
-		upd_conf = CompilerConfig(conf with flowfile = "___tmp_expr___.flow");
-		Pair(upd_conf, \ -> {
-			deleteFile(file_path);
-			{}
-		});
 	}
 }
 
@@ -47,7 +26,6 @@ main() {
 	fcPrintln("Flow compiler (3rd generation)", threadId);
 	fcPrintln("", threadId);
 
-	globalEnv = FcTypeEnvGlobal(ref makeTree());
 	switch (getCompilerConfig()) {
 		Failed(msg): {
 			fcPrintln(msg, threadId);
@@ -63,6 +41,7 @@ main() {
 					fcPrintln("Total batch compilation time: " + d2st((timestamp() - starttime) / 1000.0, 2) + "s", threadId);
 					quit(0);
 				};
+				globalEnv = FcTypeEnvGlobal(ref makeTree());
 				callback_chain = fold(configs, [exit_callback], \acc, conf -> 
 					concat(acc, [
 							\code -> {
@@ -79,66 +58,11 @@ main() {
 				);
 				lastElement(callback_chain, nop1)(0);
 			} else if (isConfigParameterSet(config.config, "server-mode")) {
-				port = s2i(getConfigParameter(config.config, "server-port"));
-				server = ref nop;
-				server := createHttpServer(port,
-					\-> {
-						fcServerLog("Server started.");
-						fcPrintln("Server started.", threadId)
-					},
-					\request, response -> {
-						requestThreadId = s2i(getThreadId());
-						cf = deserialize(request.body, IllegalStruct());
-						if (cf == IllegalStruct()) {
-							fcServerLog("WARNING: Illegal compilation config.");
-							fcPrintln("WARNING: Illegal compilation config.", requestThreadId);
-							HttpResponse(400, fcOutput(requestThreadId), []) |> response;
-							clearFcOutput(requestThreadId);
-						} else {
-							conf0 : CompilerConfig = cast(cf : flow -> CompilerConfig);
-							conf1 = CompilerConfig(conf0 with threadId = requestThreadId);
-							if (conf1.verbose > 0) {
-								fcPrintln("server cwd: " + strReplace(resolveRelativePath("."), "\\", "/"), conf1.threadId);
-								fcPrintln("objc directory: " + getFlowcObjectFolder(conf1), conf1.threadId);
-							}
-							if (isConfigParameterTrue(conf1.config, "server-shutdown")) {
-								fcPrintln("Server stopped.", conf1.threadId);
-								HttpResponse(200, fcOutput(conf1.threadId), []) |> response;
-								clearFcOutput(conf1.threadId);
-								fcServerLog("Server stopped.");
-								quit(0);
-							} else {
-								code = ref 0;
-								start_time = timestamp();
-								pair = fcPrepareConfig(conf1);
-								conf = pair.first;
-								conf_callback = pair.second;
-								conf_str = foldTree(compilerConfigToTree(conf), "",
-									\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
-								);
-								fcServerLog("Processing request: <" + conf_str + " >");
-								if (isConfigParameterSet(conf.config, "ping")) {
-									fcPrintln("Processing 'ping' on server.", conf.threadId);
-								} else {
-									fcPrintln("Processing '" + conf.flowfile + "' on server.", conf.threadId);
-									runConfigLocally(conf, globalEnv, \c -> {
-										fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
-										code := c
-									});
-								}
-								conf_callback();
-								if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
-									HttpResponse(200 + ^code, fcBinary(conf.threadId), []) |> response;
-								} else {
-									HttpResponse(200 + ^code, fcOutput(conf.threadId), []) |> response;
-								}
-								clearFcOutput(conf.threadId);
-								clearTimePhases(conf.threadId);
-							}
-						}
-					}
-				);
+				runServer(config, threadId);
+			}  else if (isConfigParameterSet(config.config, "watchdog-mode")) {
+				runWatchdog(config);
 			} else {
+				globalEnv = FcTypeEnvGlobal(ref makeTree());
 				runConfig(config, globalEnv, 
 					\code -> {
 						if (code != 0) fcPrintln("Exit code " + i2s(code), threadId);

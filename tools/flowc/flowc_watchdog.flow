@@ -1,0 +1,63 @@
+import server/http;
+import tools/flowc/flowc_local;
+import tools/flowc/flowc_remote;
+import tools/common/logging;
+
+export {
+	// Starts flowc server and keeps it running: 
+	// once it is shut down or hangs it is restarted.
+	runWatchdog(config : CompilerConfig) -> void;
+}
+
+fcCheckServerHangs(conf : CompilerConfig, kill_server : () -> void) -> void {
+	ping_conf = CompilerConfig(conf with
+		config = setTree(conf.config, "ping", "1")
+	);
+	runConfigRemote(ping_conf, 
+		\out -> { println("PING: " + out) }, 
+		\err -> { println("PING: " + err) }, 
+		\__ -> { },  // run complete
+		\__,__ -> kill_server()
+	)
+}
+
+fcStartServer(config : CompilerConfig, server : ref Maybe<native>) -> void {
+	args = map(
+		tree2pairs(
+			setTree(
+				setTree(compilerConfigToTree(config), "server-mode", "1"),
+				"watchdog-mode", "0"
+			)
+		), 
+		\p -> p.first + "=" + p.second
+	);
+	server := Some(runSystemProcess("flowc1", args, ".", 
+		\out -> println(out),
+		\err -> println(err),
+		\code : int -> { server := None(); }
+	))
+}
+
+runWatchdog(config : CompilerConfig) -> void {
+	println("flowc server keeper started");
+	server = ref None();
+	fcStartServer(config, server);
+	wait_for = s2i(getConfigParameterDef(config.config, "watchdog-period", "10000"));
+	timer(wait_for, \-> fcKeepServerRunning(config, server));
+}
+
+fcKeepServerRunning(config : CompilerConfig, server : ref Maybe<native>) -> void {
+	fcCheckServerHangs(config, \ -> {
+			println("Detected flowc server hanging: killing it");
+			switch (^server) {
+				Some(proc): killSystemProcess(proc);
+				None(): println("error: no running instance of flowc server");
+			}
+		}
+	);
+	if (^server == None()) {
+		fcStartServer(config, server);
+	}
+	wait_for = s2i(getConfigParameterDef(config.config, "watchdog-period", "10000"));
+	timer(wait_for, \-> fcKeepServerRunning(config, server))
+}
