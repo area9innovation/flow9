@@ -90,10 +90,27 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 		nextDistinct(paragraphWHB, paragraphSize);
 	};
 
+	subscribe2dynWord = \w -> if (isSameStructType(NonTextElement(), w.word)) apply0(make2Subscribe2(
+		w.inspector.size,
+		w.inspector.baseline,
+		\size, ba -> {
+			if (ndynamic <= ndymamicUpper) {
+				// There is less or equal than upper limit of dynamic elements here, so just update immediately
+				updateFn(getValue(aw))
+			} else {
+				// There are more, so to prevent unnecessary work, delay the update
+				nextDistinct(update, 1);
+			}
+		}
+	)) else nop;
+
+	dynamicWordsUns = ref [];
+
 	addWords = \index, newWords -> {
 		idx = max(min(index, length(^words)), 0);
 		iteri(newWords, \i, newWord -> {
 			words := insertArray(^words, idx + i, newWord);
+			dynamicWordsUns := insertArray(^dynamicWordsUns, idx + i, subscribe2dynWord(newWord));
 			// println("new other words " + toString(newWord.word));
 			dynArrayPush(
 				stackChanges,
@@ -101,19 +118,14 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 			);
 		});
 		updateFn(getValue(aw));
-		iter(^words, \w -> println(
-			formatString("::::::::  %1  id %2  index %3", [
-				toString(w.word),
-				i2s(getValue(w.id)),
-				i2s(getValue(w.inspector.index))
-			])
-		));
 	}
 
 	removeWords = \start, count, reflow -> {
 		idx = min(start, length(^words) - 1);
 		fori(1, count, \__ -> {
 			words := removeIndex(^words, idx);
+			apply0(elementAt(^dynamicWordsUns, idx, nop));
+			dynamicWordsUns := removeIndex(^dynamicWordsUns, idx);
 			dynArrayPush(stackChanges, TGroupDelete(idx));
 		});
 		if (reflow) updateFn(getValue(aw));
@@ -122,19 +134,7 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	tropic = TConstruct(
 		[\ -> {
 			unsub1 = subscribe(aw, updateFn);
-
-			unsubs = filtermap(^words, \w -> if (!isSameStructType(NonTextElement(), w.word)) None() else {
-				// Force an update by changing the available
-				Some(make2Subscribe2(w.inspector.size, w.inspector.baseline, \size, ba -> {
-					if (ndynamic <= ndymamicUpper) {
-						// There is less or equal than upper limit of dynamic elements here, so just update immediately
-						updateFn(getValue(aw))
-					} else {
-						// There are more, so to prevent unnecessary work, delay the update
-						nextDistinct(update, 1);
-					}
-				})())
-			});
+			dynamicWordsUns := map(^words, subscribe2dynWord);
 
 			// When an update from a dynamic element is requested, we do it in the next frame
 			unsub2 = subscribe(update, \u -> {
@@ -149,7 +149,8 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 
 			\ -> {
 				unsub1();
-				applyall(unsubs);
+				applyall(^dynamicWordsUns);
+				dynamicWordsUns := [];
 				unsub2();
 			}
 		}],
@@ -487,7 +488,7 @@ TRenderLine(
 	inspectors = map(words, \p -> p.inspector);
 	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
 	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
-		max(ac,  getValue(m.baseline));
+		max(ac, getValue(m.baseline));
 	});
 	lineHeight = foldi(inspectors, 0.0, \i, ac, m ->
 		max(ac, lineAsc + getValue(m.size).height - getValue(m.baseline))
@@ -517,7 +518,7 @@ TRenderLine(
 		elemWidth = getValue(inspector.size).width;
 		elemHeight = getValue(inspector.size).height;
 		elemBaseline = getValue(inspector.baseline);
-		dy = max(lineAsc - elemBaseline, 0.0);
+		dy = if (elemBaseline > 0.) max(lineAsc - elemBaseline, 0.0) else 0.0;
 		yOffset = y + dy;
 
 		nextDistinct(inspector.y, yOffset);
