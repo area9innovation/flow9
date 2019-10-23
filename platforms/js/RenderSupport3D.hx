@@ -450,8 +450,8 @@ class RenderSupport3D {
 	}
 
 
-	public static function set3DCamera(stage : ThreeJSStage, camera : Camera) : Void {
-		stage.setCamera(camera);
+	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, minDistance : Float, maxDistance : Float) : Void {
+		stage.setCamera(camera, minDistance, maxDistance);
 	}
 
 	public static function set3DScene(stage : ThreeJSStage, scene : Scene) : Void {

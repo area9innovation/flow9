@@ -151,12 +151,15 @@ class ThreeJSStage extends Container {
 		invalidateStage();
 	}
 
-	public function setCamera(camera : Camera) {
+	public function setCamera(camera : Camera, minDistance : Float, maxDistance : Float) {
 		this.camera = camera;
 
 		createOrbitControls();
 		createTransformControls();
 		addEventListeners();
+
+		orbitControls.minDistance = minDistance;
+		orbitControls.maxDistance = maxDistance;
 
 		invalidateStage();
 	}

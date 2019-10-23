@@ -117,7 +117,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object set3DCamera(Object stage, Object camera) {
+	public Object set3DCamera(Object stage, Object camera, Double minDistance, Double maxDistance) {
 		return null;
 	}
 	public Object set3DScene(Object stage, Object scene) {
