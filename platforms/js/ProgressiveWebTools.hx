@@ -1,6 +1,8 @@
 #if js
 import js.Browser;
 import js.html.MessageChannel;
+import js.html.Location;
+import js.html.Window;
 #end
 
 class ProgressiveWebTools {
@@ -37,12 +39,32 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function subscribeOnServiceWorkerUpdateFound(onUpdateFound : Void -> Void, onError : String -> Void) {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null) {
+			globalRegistration.onupdatefound = function() {
+				var installingWorker = globalRegistration.installing;
+				installingWorker.onstatechange = function() {
+					if (installingWorker.state == 'installed') {
+						onUpdateFound();
+					}
+				};
+			}
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
 	public static function disableServiceWorkerCaching(callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
 		#elseif js
 		if (globalRegistration != null) {
 			untyped globalRegistration.unregister().then(function() {
+				globalRegistration = null;
 				callback(true);
 			}, function(err) {
 				callback(false);
@@ -255,5 +277,33 @@ class ProgressiveWebTools {
 
 	public static function isRunningPWA() : Bool {
 		return !Browser.window.matchMedia("(display-mode: browser)").matches;
+	}
+
+	public static function getServiceWorkerJsVersion(
+		onOK : Int -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't execute one or more requests");
+				} else {
+					onOK(event.data.data);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_service_worker_version"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
 	}
 }

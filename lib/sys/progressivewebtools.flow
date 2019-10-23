@@ -81,7 +81,19 @@ export {
 	native isRunningPWA : io () -> bool = ProgressiveWebTools.isRunningPWA;
 
 	addShortcutDialog() -> () -> void;
-	setServiceWorkerEnabled(enabled : bool, ondone : (success : bool) -> void) -> void;
+	// onUpdateFound() callback is activated if new version of ServiceWorker was loaded and installed in the browser, 
+	// but don't activated (app restart needs). Dosn't work on IE.
+	setServiceWorkerEnabled(enabled : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void;
+
+	native getServiceWorkerJsVersion : io (
+		onOK : (int) -> void,
+		onError : (string) -> void
+	) -> void = ProgressiveWebTools.getServiceWorkerJsVersion;
+
+	native subscribeOnServiceWorkerUpdateFound : io (
+		onUpdateFound : () -> void,
+		onError : (string) -> void
+	) -> void = ProgressiveWebTools.subscribeOnServiceWorkerUpdateFound;
 
 	// The endpoint could be used for transferring data between browser & PWA application
 	// Simply POST data with httpRequestCustom to put any data there with RequestPayload
@@ -92,12 +104,16 @@ export {
 	takeSharedKeyValue(key : string, callback : (value : string) -> void) -> void;
 }
 
+service_worker_version = 1;
+
 enableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
 disableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
 checkServiceWorkerCachingEnabled(callback : (bool) -> void) { callback(false) }
 cleanServiceWorkerCache(callback : (bool) -> void) { callback(false) }
 loadAndCacheUrls(urls : [string], ignoreParameterKeysOnCache : [string], onOK : () -> void, onError : (string) -> void) -> void { onOK(); }
 checkUrlsInServiceWorkerCache(urls : [string], onOK : ([string]) -> void, onError : (string) -> void) -> void { onOK([]); };
+getServiceWorkerJsVersion(onOK : (int) -> void, onError : (string) -> void) -> void { onOK(0); };
+subscribeOnServiceWorkerUpdateFound(onUpdateFound : () -> void, onError : (string) -> void) -> void {};
 isRunningPWA() { false }
 
 addShortcutDialog() -> () -> void {
@@ -117,11 +133,33 @@ addShortcutDialog() -> () -> void {
 	dispose;
 }
 
-setServiceWorkerEnabled(enable : bool, ondone : (success : bool) -> void) -> void {
+setServiceWorkerEnabled(enable : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void {
 	doEnable = enable && !isUrlParameterFalse("sw");
 	checkServiceWorkerCachingEnabled(\enabled -> {
-		cb = \success -> {
+		onDone2 = \success -> {
 			ondone(success);
+			if (enable) {
+				subscribeOnServiceWorkerUpdateFound(
+					\-> {
+						msg = "New version of ServiceWorker was loaded. Restart you application to apply it.";
+						println(msg);
+						onUpdateFound(msg);
+					},
+					\err -> println(formatString("Can not load info about ServiceWorker updates: %1", [err]))
+				);
+
+				if (success) getServiceWorkerJsVersion(
+					\v -> {
+						if (v == service_worker_version) println(formatString("ServiceWorker version is #%1 (the last version).", [i2s(v)]))
+						else println(formatString("ServiceWorker version is #%1 (an old, exists version #%2).", [i2s(v), i2s(service_worker_version)]))
+					},
+					\err -> println(formatString("Can not retrieve version of ServiceWorker: %1.", [err]))
+				);
+			}
+		}
+
+		cb = \success -> {
+			onDone2(success);
 			devtrace(if (success) "Success Service Worker Toggle" else "Service Worker Error");
 		};
 
@@ -130,7 +168,7 @@ setServiceWorkerEnabled(enable : bool, ondone : (success : bool) -> void) -> voi
 		else if (enabled && !doEnable)
 			disableServiceWorkerCaching(cb)
 		else
-			ondone(true);
+			onDone2(true);
 	});
 }
 
