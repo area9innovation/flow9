@@ -160,6 +160,9 @@ class ThreeJSStage extends Container {
 
 		orbitControls.minDistance = minDistance;
 		orbitControls.maxDistance = maxDistance;
+		orbitControls.enableDamping = true;
+		orbitControls.dampingFactor = 0.1;
+		orbitControls.rotateSpeed = 0.05;
 
 		invalidateStage();
 	}
