@@ -40,11 +40,14 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	sliderTooltip = tryExtractStruct(m.style, MSliderTooltip(\__ -> ""));
 	mousePosition : MMousePosition = extractStruct(m.style, MMousePosition(make(zeroPoint)));
 	point = mousePosition.point;
+	noRipple = !contains(m.style, MSliderRipple());
 
 	isRTL = parent.rtl;
 	lightBackground = getLightBackground(parent);
 
 	minMax = sliderRange.max - sliderRange.min;
+	stepPercent = if (sliderStep >= 0.) sliderStep / minMax else 0.01;
+
 	sliderWidth = make(mWidth);
 	percent = make(0.);
 	editString = make("");
@@ -73,6 +76,9 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			|> value2percent
 		else
 			forceRange(p, 0.0, 1.0);
+
+	setNewPercent = \thumb, prc ->
+		nextDistinct(thumb.percent, snapPercent(thumb.restrictPercent(prc)));
 
 	prepareValue = \v ->
 		if (sliderStep > 0.)
@@ -297,20 +303,21 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	unactiveItemStyle = mDisabledStyle(lightBackground);
 	outlinedStyle = replaceStruct(mDisabledStyle(lightBackground), FillOpacity(if (lightBackground) 0.38 else 0.3));
 
-	makeCircleThumb = \sliderFoc, foc, st, stroke -> {
-		radius =
-			if (condensed) fif(fmax3(sliderFoc.hover, foc.focused, down2), const(6.), const(0.))
-			else if (maximizeOnHover) 
-				fif(foc.down, const(9.), const(6.))
-			else const(6.);
+	makeCircleThumb = \radius, foc, st, outlined -> {
+		circleStyle = fif(outlined, const(outlinedStyle), fselect(foc.enabled, FLift(st)));
 
-		TSelect4(radius, foc.enabled, fand(const(maximizeOnHover), foc.hover), stroke, \r, en, h, str -> {
-			rad = if (condensed) r else if (en) (r + b2d(h)) else 4.;
-			if (str)
-				TGroup2(TCenteredCircle(rad + 1., outlinedStyle), TCenteredCircle(rad - 1., [MFill(MBackgroundColor(lightBackground))]))
-			else
-				TCenteredCircle(rad, st(en))
-		})
+		rippleRadius = fif(foc.down, const(24.), const(16.));
+		setRipple = if (noRipple) idfn else \t ->
+			MRipple2T(manager, foc.parent, t, fOr(foc.focused, fOr(foc.hover, foc.down)), [
+				MRippleType(const(MRippleCenter())),
+				MRippleColor(fif(outlined, const(MBlack()), const(color))),
+				MRippleOpacity(fif(fOr(foc.focused, foc.down), const(0.2), const(0.1))),
+				MRippleWidthHeight(fselect(rippleRadius, FLift(\rr -> WidthHeight(2. * rr, 2. * rr))))
+			])
+			|> (\t2 -> TBorderT(fsubtract(radius, rippleRadius), fsubtract(radius, rippleRadius), zero, zero, t2));
+
+		TCenteredCircle(radius, circleStyle, Pair(outlined, lightBackground), setRipple)
+	}
 	}
 
 	makeThumb = \thumb, sliderFoc, style -> {
@@ -318,16 +325,29 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		activeU = if (thumb.isStart) thumb.active else fOr(sliderUndefined, thumb.active);
 		thumbPoint = fselect2(thumb.percent, sliderWidth, FLift2(\p, sw -> Point((if (isRTL) 1. - p else p) * sw, 0.)));
 		show = fif(sliderUndefined, sliderFoc.hover, const(true));
+		focused = if (isSome(chooseRange)) make(false) else sliderFoc.focused;
 
 		MComponent2T(manager, parent, name, concatA([[
 					MOnMouseDown(\__, ins -> nextDistinct(thumb.active, ins)),
 					MOnMouseUp(\__, __ -> nextDistinct(thumb.active, false)),
 					MEnabled(enabled),
+					MFocused(focused),
+					MAddFocusGroup(true)
 				],
 				eitherMap(sliderUndefinedM, \__ -> [MPassClicks()], [])
 			]), \foc -> {
 				eitherMap(mkCustomThumb, \ct -> ct(thumb.active, foc.focused), {
-					circle = makeCircleThumb(sliderFoc, foc, style, fand(const(outlineOnMinimum), feq(thumb.percent, 0.)));
+					radius =
+						if (condensed) fif(fmax3(sliderFoc.hover, foc.focused, down2), const(6.), const(0.))
+						else 
+							fif(foc.enabled,
+								if (maximizeOnHover)
+									fif(foc.down, const(if (noRipple) 9. else 7.), fif(fOr(foc.hover, activeU), const(7.), const(6.)))
+								else
+									const(6.),
+								const(4.)
+							);
+					circle = makeCircleThumb(radius, foc, style, fand(const(outlineOnMinimum), feq(thumb.percent, 0.)));
 					if (isDiscrete)
 						TIf(
 							fand(foc.enabled, activeU),
@@ -353,9 +373,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			), t))
 		|> TBorderTop(barHeight / 2.)
 		|> (\t -> TConstruct([
-			makeSubscribe2Trigger(activeU, cursorPercent, \p ->
-				nextDistinct(thumb.percent, snapPercent(thumb.restrictPercent(p)))
-			)
+			makeSubscribe2Trigger(activeU, cursorPercent, \p -> setNewPercent(thumb, p)),
+			makeSubscribe2(thumb.active, \act -> if (act) deferred( \ -> nextDistinct(focused, true)))
 		], t))
 		|> (\t -> TTranslate(thumbPoint, t))
 		|> (\t -> TVisible(show, t));
@@ -390,9 +409,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				make2Subscribe(thumb.percent, sliderUndefined, \p, su ->
 					nextDistinct(strValue, if (su) "" else percent2strvalue(p))
 				),
-				makeSubscribe2(strValue, \sv -> 
-					nextDistinct(thumb.percent, snapPercent(thumb.restrictPercent(value2percent(s2d(sv)))))
-				)
+				makeSubscribe2(strValue, \sv -> setNewPercent(thumb, value2percent(s2d(sv))))
 			], t))
 	}
 
@@ -427,8 +444,6 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	if (isUrlParameterTrue("new") && !isUrlParameterTrue("oldSlider")) {
 			rangeStartPercent = make(0.);
 			rangeEndPercent = make(0.);
-
-			stepPercent = if (sliderStep >= 0.) sliderStep / minMax else 0.01;
 
 			startThumb =
 				MSliderThumb(
@@ -704,6 +719,17 @@ mirrorIfRTL(isRTL : bool) -> (double) -> double {
 	\value -> if (isRTL) 1.0 - value else value
 }
 
-TCenteredCircle(radius : double, style : [TGraphicsStyle]) -> Tropic {
-	TBorder(-radius, -radius, 0., 0., TCircle(radius, style))
+TCenteredCircle(
+	radius0 : Transform<double>,
+	style : Transform<[TGraphicsStyle]>,
+	outlined : Pair<Transform<bool>, bool>,
+	setRipple : (Tropic) -> Tropic) -> Tropic {
+
+	radius = fif(outlined.first, faddition(radius0, const(1.)), radius0);
+	outlinedCircle = TBorder(2., 2., 0., 0., TShowLazy(outlined.first, \ -> TSelect(radius0, \r -> TCircle(r - 1., [MFill(MBackgroundColor(outlined.second))]))));
+
+	TSelect2(radius, style, \r, st -> TCircle(r, st))
+	|> (\t -> TGroup2(t, outlinedCircle))
+	|> setRipple
+	|> (\t -> TBorderT(fnegate(radius), fnegate(radius), zero, zero, t))
 }
