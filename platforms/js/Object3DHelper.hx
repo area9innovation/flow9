@@ -272,4 +272,14 @@ class Object3DHelper {
 
 		return children;
 	}
+
+	public static function get3DObjectAllInteractiveChildren(parent : Object3D) : Array<Object3D> {
+		var children = Lambda.array(Lambda.filter(parent.children.copy(), function(v) { return untyped v.interactive; }));
+
+		for (child in parent.children) {
+			children = children.concat(get3DObjectAllInteractiveChildren(child));
+		}
+
+		return children;
+	}
 }

@@ -72,13 +72,26 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DScene(String url, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DTexture(Object object, String url, Object[] parameters) {
+	public Object load3DTexture(String url, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;
 	}
-	public Object make3DDataTexture(Object object, Object[] data, Integer width, Integer height, Object[] parameters) {
+	public Object make3DDataTexture(Object[] data, Integer width, Integer height, Object[] parameters) {
 		return null;
 	}
-	public Object make3DCanvasTexture(Object object, Object clip) {
+	public Object make3DCanvasTexture(Object clip, Object[] parameters) {
+		return null;
+	}
+
+
+	public Object set3DMaterialMap(Object object, Object map) {
+		return null;
+	}
+
+	public Object set3DMaterialAlphaMap(Object object, Object alphaMap) {
+		return null;
+	}
+
+	public Object set3DMaterialOpacity(Object object, Double opacity) {
 		return null;
 	}
 
@@ -534,10 +547,6 @@ public class RenderSupport3D extends NativeHost {
 
 
 	public Object make3DMesh(Object geometry, Object[] materials, Object[] parameters) {
-		return null;
-	}
-
-	public Object set3DObjectAlphaMap(Object object, Object alphaMap) {
 		return null;
 	}
 
