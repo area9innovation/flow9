@@ -9,11 +9,15 @@ function DropShadowFilter(rotation, distance, blur, color, alpha) {
 	this.blur = Math.max(blur, 1.0);
 	this.alpha = alpha;
 	this.color = color;
-	this.padding = this.distance + (this.blur * 2);
+	this.padding = Math.ceil(this.distance + (this.blur * 2));
 	this.shadowOnly = false;
 	this.pixelSize = 1;
 	this.resolution = 1;
 	this.quality = Math.min(Math.max(this.blur / 2.0, 3.0), 20.0);
+
+	if (typeof RenderSupportJSPixi !== 'undefined' && RenderSupportJSPixi.DomRenderer) {
+		return;
+	}
 
 	this.targetTransform = new PIXI.Matrix();
 	this.targetTransform.tx = this.distance * Math.cos(this.angle);
@@ -329,7 +333,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		return;
 	}
 
-	if (this.isGraphics() && false) {
+	if (this.isGraphics()) {
 		// Special fast case
 		// Shadow around graphics
 		var filter = filters[0];
@@ -350,26 +354,17 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		return;
 	}
 
-	var bounds = this.getLocalBounds();
+	// evaluate filters
+	var ctx = renderer.context;
+	var res = renderer.resolution;
+
+	var bounds = this.getBounds(true);
 	var wt = this.worldTransform.clone();
 
 	var x = Math.floor(bounds.x);
 	var y = Math.floor(bounds.y);
-	var w = Math.ceil(bounds.width);
-	var h = Math.ceil(bounds.height);
-
-	// evaluate filters
-	var ctx = renderer.context;
-
-	if (this.rvlast != null)
-	{
-		var res = renderer.resolution;
-
-		ctx.globalAlpha = this.worldAlpha;
-		ctx.setTransform(wt.a, wt.b, wt.c, wt.d, wt.tx, wt.ty);
-		ctx.drawImage(this.rvlast.baseTexture._canvasRenderTarget.canvas, x * res, y * res);
-		return;
-	}
+	var w = x + Math.ceil(bounds.width);
+	var h = y + Math.ceil(bounds.height);
 
 	// Expand area to increments of 32 to minimize reallocations
 	w = (w+31) & ~31;
@@ -377,6 +372,20 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 
 	if (w < 1 || h < 1)
 		return;
+
+	if (!isFinite(bounds.width) || !isFinite(bounds.height)) {
+		DisplayObjectHelper.invalidateTransform(this);
+		return;
+	}
+
+	if (this.rvlast != null && this.rvlast.baseTexture.resolution == renderer.resolution &&
+		this.rvlast.baseTexture.width == w && this.rvlast.baseTexture.height == h)
+	{
+		ctx.globalAlpha = this.worldAlpha;
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.drawImage(this.rvlast.baseTexture._canvasRenderTarget.canvas, 0, 0);
+		return;
+	}
 
 	var cachedRenderTarget = renderer.context;
 
@@ -393,9 +402,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 	}
 	this._filterTexMain.baseTexture._canvasRenderTarget.clear();
 
-	DisplayObjectHelper.invalidateTransform(this);
-
-	renderer.render(this, this._filterTexMain, true, null, false);
+	renderer.render(this, this._filterTexMain, true, wt, false);
 
 	this.renderCanvas = originalRenderCanvas;
 
@@ -412,27 +419,22 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 
 		this._alphaMask.renderable = true;
 
-		DisplayObjectHelper.invalidateTransform(this._alphaMask);
-
-		renderer.render(this._alphaMask, this._filterTexAux, true, null, false);
+		renderer.render(this._alphaMask, this._filterTexAux, true, wt, false);
 		this._alphaMask.renderable = false;
 
 		var mask_ctx = this._filterTexAux.baseTexture._canvasRenderTarget.context;
 
 		if (AlphaMask_use_getImageData)
 		{
-			apply_alpha_mask(main_ctx, mask_ctx, w, h, renderer.resolution);
+			apply_alpha_mask(main_ctx, mask_ctx, w, h, res);
 		}
 		else
 		{
 			main_ctx.globalCompositeOperation = 'destination-in';
 			main_ctx.setTransform(1, 0, 0, 1, 0, 0);
-			main_ctx.drawImage(this._filterTexAux.baseTexture._canvasRenderTarget.canvas, x, y);
+			main_ctx.drawImage(this._filterTexAux.baseTexture._canvasRenderTarget.canvas, 0, 0);
 			main_ctx.globalCompositeOperation = 'source-over';
 		}
-
-		DisplayObjectHelper.invalidateTransform(this._alphaMask);
-		this._alphaMask.updateTransform();
 	}
 
 	// restore context
@@ -448,7 +450,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 	{
 		for (var i = 0; i < filters.length-1; i++)
 		{
-			var rv = filters[i].drawToCanvas(curtex, auxtex, null, -x / filters.length, -y / filters.length);
+			var rv = filters[i].drawToCanvas(curtex, auxtex, null, 0, 0);
 
 			if (rv == auxtex)
 			{
@@ -459,17 +461,12 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		}
 
 		// evaluate last filter and render
-		this.rvlast = filters[filters.length-1].drawToCanvas(curtex, auxtex, null, -x / filters.length, -y / filters.length);
+		this.rvlast = filters[filters.length-1].drawToCanvas(curtex, auxtex, null, 0, 0);
 	}
 
 	if (this.rvlast != null)
 	{
-		var res = renderer.resolution;
-
-		ctx.setTransform(wt.a, wt.b, wt.c, wt.d, Math.max(0, wt.tx), wt.ty);
-		ctx.drawImage(this.rvlast.baseTexture._canvasRenderTarget.canvas, x * res, y * res);
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.drawImage(this.rvlast.baseTexture._canvasRenderTarget.canvas, 0, 0);
 	}
-
-	DisplayObjectHelper.invalidateTransform(this);
-	this.updateTransform();
 }

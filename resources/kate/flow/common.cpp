@@ -228,4 +228,18 @@ void appendText(QPlainTextEdit* textEdit, const QString& text) {
 	textEdit->moveCursor (QTextCursor::End);
 }
 
+QString locationNeighbourhood(const QString& str, int line, int col, int width) {
+	for (int i = 0, l = 0, c = 0; i < str.size(); ++ i) {
+		if (str[i] == QLatin1Char('\n')) {
+			++l; c = 0;
+		} else {
+			++c;
+		}
+		if (l == line && c == col) {
+			return str.mid(std::max(i - width, 0) / 2, std::min(width, str.size() - width));
+		}
+	}
+	return QString();
+}
+
 }

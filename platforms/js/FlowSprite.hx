@@ -17,6 +17,7 @@ class FlowSprite extends Sprite {
 
 	private var url : String = "";
 	private var loaded : Bool = false;
+	private var visibilityChanged : Bool = true;
 	private var updateParent : Bool = false;
 	private var cache : Bool = false;
 	private var metricsFn : Float -> Float -> Void;
@@ -52,7 +53,7 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget("img");
 		} else {
 			once("removed", onSpriteRemoved);
@@ -155,7 +156,9 @@ class FlowSprite extends Sprite {
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		if (parent != null) {
 			loadTexture();
@@ -171,7 +174,9 @@ class FlowSprite extends Sprite {
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		texture = Texture.EMPTY;
 
@@ -185,7 +190,7 @@ class FlowSprite extends Sprite {
 
 	private function onLoaded() : Void {
 		try {
-			if (RenderSupportJSPixi.DomRenderer) {
+			if (RenderSupportJSPixi.RendererType == "html") {
 				if (nativeWidget == null) {
 					return;
 				}
@@ -196,11 +201,10 @@ class FlowSprite extends Sprite {
 			}
 
 			invalidateTransform('onLoaded');
+			calculateWidgetBounds();
 
 			loaded = true;
-
-			calculateWidgetBounds();
-			calculateLocalBounds('onLoaded');
+			visibilityChanged = true;
 		} catch (e : Dynamic) {
 			if (parent != null && retries < 2) {
 				loadTexture();
@@ -265,18 +269,24 @@ class FlowSprite extends Sprite {
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
+		nativeWidget.style.visibility = 'hidden';
 
 		isNativeWidget = true;
 	}
 
 	public function calculateWidgetBounds() : Void {
-		widgetBounds.minX = 0;
-		widgetBounds.minY = 0;
-
-		if (RenderSupportJSPixi.DomRenderer) {
-			widgetBounds.maxX = nativeWidget.naturalWidth;
-			widgetBounds.maxY = nativeWidget.naturalHeight;
+		if (RenderSupportJSPixi.RendererType == "html") {
+			if (nativeWidget == null) {
+				widgetBounds.clear();
+			} else {
+				widgetBounds.minX = 0;
+				widgetBounds.minY = 0;
+				widgetBounds.maxX = nativeWidget.naturalWidth;
+				widgetBounds.maxY = nativeWidget.naturalHeight;
+			}
 		} else {
+			widgetBounds.minX = 0;
+			widgetBounds.minY = 0;
 			widgetBounds.maxX = texture.width;
 			widgetBounds.maxY = texture.height;
 		}

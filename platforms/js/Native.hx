@@ -603,6 +603,20 @@ class Native {
 			if (clip.parent != null && clip.parent.removeChild != null) {
 				clip.parent.removeChild(clip);
 			}
+
+			if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS && untyped clip.nativeWidget != null) {
+				untyped clip.nativeWidget.style.display = 'none';
+			}
+
+			#if js
+			untyped __js__("
+				if (typeof RenderSupportJSPixi !== 'undefined') {
+					RenderSupportJSPixi.once('drawframe', function() {
+						DisplayObjectHelper.deleteNativeWidget(clip);
+					});
+				}
+			");
+			#end
 		}
 	}
 
@@ -1716,6 +1730,10 @@ class Native {
 
 	public static function md5(content : String) : String {
 		return JsMd5.encode(content);
+	}
+
+	public static function getCharAt(s : String, i : Int) : String {
+		return s.charAt(i);
 	}
 
 	#if js

@@ -1,340 +1,19 @@
-import ds/treeutils;
 import server/http;
-import net/http;
-import sys/target;
-import text/serialize;
-import tools/flowc/flowc_println;
-import tools/flowc/flowc_find;
-import tools/flowc/flowc_usage;
-import tools/flowc/flowc_version;
-import tools/flowc/flowc_rename;
-import tools/flowc/flowc_outline;
-import tools/flowc/backends/build;
-import tools/flowc/manipulation/deadcode;
-import tools/flowc/manipulation/find_unused;
-import tools/flowc/manipulation/cse;
-import tools/flowc/manipulation/cse_global;
-import tools/flowc/manipulation/lint;
-import tools/flowc/manipulation/xliff;
+import tools/flowc/flowc_local;
+import tools/flowc/flowc_remote;
 import tools/common/logging;
-
-// We do not want that old peg compiler
-forbid lingo/pegcode/grammar2code;
-forbid lingo/flow/stringtools;
-forbid lingo/flow/treetools;
-
-fcCompileUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : string, showStopper : (int) -> void) -> void {
-	tests = readDirectory(folder);
-	skipp = getConfigParameter(config.config, "skip");
-	skips = if (skipp == "") [] else map(strSplit(skipp, ","), \t -> "test" + t);
-
-	compile = \file -> {
-		fcPrintln("Testing " + file);
-		starttime = timestamp();
-
-		config1 = CompilerConfig(updateJsConfig(config, file) with flowfile = file);
-
-		fcCompile(config1, globEnv, \e -> {
-			fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n");
-		});
-	}
-
-	iter(tests, \test -> {
-		if (skips != [] && exists(skips, \skip -> startsWith(test, skip))) {
-			fcPrintln("Skipping " + test);
-		} else {
-			file = folder + "/" + test + "/" + test + ".flow";
-			if (isDirectory(folder + "/" + test) && fileExists(file)) {
-				compile(file);
-			} else {
-				file1 = folder + (if (endsWith(folder, "/")) "" else "/") + test;
-				if (endsWith(file1, ".flow") && fileExists(file1)) {
-					compile(file1);
-				}
-			}
-		}
-	});
-	fcPrintln("Test complete");
-	showStopper(0);
-}
-
-fcCompile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper : (int) -> void) -> void {
-	forceBuild = isConfigParameterTrue(config.config, "force-build");
-	ensureIncrementalDirectoryExists(config);
-	parsedAndChecked = parseAndTypecheckFlowFile(config, globEnv, config.flowfile);
-	progTypechecked = parsedAndChecked.first;
-	errors = ref parsedAndChecked.second;
-
-	if (^errors == 0 || forceBuild) {
-		progOptimized = doFiProgramAnalysis(progTypechecked,
-			\err -> {
-				errors := ^errors + 1;
-				printFiError(progTypechecked, err)
-			},
-			config.flowfile
-		);
-		if (^errors == 0 || forceBuild) {
-			if (^errors != 0 && forceBuild) {
-				fcPrintln("WARNING: Building program despite of type check errors (force-build=1)");
-			}
-			t = timestamp();
-			buildFiProgram(progOptimized, globEnv, \code -> {
-				incrementTimePhase(fcTimePhases.build, t);
-				showStopper(code)
-			});
-		} else {
-			showStopper(4);
-		}
-	} else {
-		showStopper(3);
-	}
-}
-
-// Here code analysis for  FiProgram is done:
-// - callgraph output
-// - check for unused symbols
-// - dead code elimination
-// - common sub-expression elimination
-// - optimizations
-doFiProgramAnalysis(prog : FiProgram, onError : (FcError) -> void, file : string) -> FiProgram {
-	config = prog.config.config;
-
-	callgraphFilename = getConfigParameter(config, "callgraph");
-	if (callgraphFilename != "") {
-		printCallGraph(callgraphFilename, prog);
-	}
-
-	// Handle all switches that look and dump info about the program
-	handleFindOptions(file, prog);
-
-	// Extract translation data from program
-	xliff = isConfigParameterTrue(config, "xliff");
-	if (xliff) {
-		saveXliffData(prog, changeFileExt(fileNameOnly(file), ".xlf"));
-	}
-
-	lint = getConfigParameterDef(config, "lint", "0");
-	findUnusedLocalsParam = getConfigParameterDef(config, "find-unused-locals", "0");
-	if (lint >= "1"|| findUnusedLocalsParam != "0") {
-		lintCode(prog, isConfigParameterTrue(config, "lint-picky"), onError);
-		findUnusedLocals(prog, findUnusedLocalsParam == "2", onError)
-	}
-
-	findUnusedExportsParam = getConfigParameterDef(config, "find-unused-exports", "0");
-	if (lint >= "2" || findUnusedExportsParam != "0") {
-		findUnusedExports(prog, findUnusedExportsParam == "2", onError)
-	}
-
-	prog_elim =
-		if (isParameterFalse(getConfigParameter(config, "dce")) 
-			|| isConfigParameterTrue(config, "readable")
-			|| getConfigParameterDef(config, "inca", "") != "") {
-			prog
-		} else {
-			if (prog.config.verbose >= 1) fcPrintln("Dead code elimination...");
-			preservedNames = fold(strSplit(getConfigParameterDef(config, "dce-preserved-names", ""), ","), makeSet(), \accPn, v -> 
-				if (v != "") insertSet(accPn, v) else accPn
-			);
-			dceRemoveMain = isConfigParameterTrue(config, "dce-remove-main");
-			// don't include globals (even if they have side-effects) to the initial used names set at DCE
-			removeGlobals = isConfigParameterTrue(config, "dce-force-remove-globals");
-			// forcefully eliminate names from the given file at DCE
-			// file should contain names line-by-line; everything after '//' is skipped
-			eliminateNamesFile = getConfigParameterDef(config, "dce-force-eliminate-names-file", "");
-			eliminateNames = if (eliminateNamesFile == "") {
-				makeSet();
-			} else {
-				workingDir = getConfigParameterDef(config, "working-dir", "");
-				eliminateNamesFileResolved = if (workingDir == "") eliminateNamesFile else {
-					workingDir + "/" + eliminateNamesFile
-				};
-				eliminateNamesFileContent = getFileContent(eliminateNamesFileResolved);
-				if (eliminateNamesFileContent == "") {
-					onError(FcError("dce-force-eliminate-names-file: file not fount or empty", []));
-					makeSet();
-				} else {
-					fold(strSplit(eliminateNamesFileContent, "\n"), makeSet(), \acc, v -> {
-						v1 = trim(takeBefore(v, "//", v));
-						if (v1 != "") insertSet(acc, v1) else acc
-					});
-				}
-			}
-			// TODO: use common effects for dead code and optimizations
-			deadFiCode(prog, collectFiEffects(prog), preservedNames, eliminateNames, dceRemoveMain, removeGlobals, prog.config.verbose);
-		};
-
-	cse = if (isConfigParameterTrue(config, "cse") || isConfigParameterTrue(config, "cse-global")) {
-		t = timestamp();
-		if (prog.config.verbose >= 1) fcPrintln("Common subexpression elimination...");
-		cse_result = if (isConfigParameterTrue(config, "cse-global")) {
-			csegFiProgram(prog_elim);
-		} else {
-			cseFiProgram(prog_elim);
-		}
-		incrementTimePhase(fcTimePhases.cse, t);
-		cse_result
-	} else prog_elim;
-
-	t = timestamp();
-	prog_optimized = optimizeCode(cse, file, makeTree());
-	incrementTimePhase(fcTimePhases.optimize, t);
-	prog_optimized
-}
-
-printCallGraph(filename : string, prog : FiProgram) -> void {
-	lines = concatA(map(getTreeValues(prog.modules), \module -> {
-		config = prog.config.config;
-		useFullPath = isConfigParameterTrue(config, "callgraph-fullpath");
-
-		heading = "*** file: " + (if (useFullPath) module.fileinfo.fullpath else {module.fileinfo.flowfile + ".flow"});
-		functions = map(module.functions, \f : FiFunctionDec ->
-			Pair(f.name, fifreevars(f.lambda))
-		);
-		natives = map(module.natives, \f : FiNativeDec ->
-			Pair(f.name,
-				switch (f.fallbackLambda) {
-					FiLambda(__, __, __, __): fifreevars(f.fallbackLambda);
-					FiVoid(__): makeSet();
-					default: {
-						fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, f.fallbackLambda));
-						makeSet()
-					}
-				}
-			)
-		);
-		lines2 = map(concat(natives, functions), \p : Pair<string, Set<string>> ->
-			p.first + ": " + strGlue(set2array(p.second), " ")
-		);
-		concat([heading], lines2)
-	}));
-	if (setFileContent(filename, strGlue(map(lines, \l -> l + "\n"), ""))) {}
-	else fcPrintln("Cannot write callgraph to file '" + filename + "'");
-}
-
-runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
-	starttime = timestamp();
-	showStopper = \code -> {
-		endtime = timestamp();
-		fcTimePhases.total := endtime - starttime;
-
-		if (code == 0 && isConfigParameterTrue(config.config, "timephases")) {
-			displayTimePhase(config);
-		}
-		fcPrintln(d2st((endtime - starttime) / 1000.0, 2) + "s");
-
-		if (isConfigParameterTrue(config.config, "dot")) {
-		} else {
-			onRunComplete(code);
-		}
-	}
-	renameSymbol = getConfigParameter(config.config, "rename");
-	if (renameSymbol != "") {
-		unittests = getConfigParameter(config.config, "unittests");
-		if (unittests != "") {
-			ut = if (unittests == "1") "tools/flowc/tests/rename" else unittests;
-			fcRenamingUnittests(config, globalEnv, ut, showStopper);
-		} else {
-			fcRename(config, globalEnv, renameSymbol, showStopper);
-		}
-	} else {
-		file = config.flowfile;
-		if (file == "") {
-			unittests = getConfigParameter(config.config, "unittests");
-			if (unittests == "") {
-				if (!isConfigParameterTrue(config.config, "server-shutdown")) {
-					printUsage(config);
-					showStopper(2);
-				} else {
-					fcPrintln("no flowc server is running");
-				}
-			} else {
-				ut = if (unittests == "1") "tools/flowc/tests" else unittests;
-				fcCompileUnittests(config, globalEnv, ut, showStopper);
-			}
-		} else if (file == "/?" || file == "-?" || file == "--help" || file == "-help" || file == "-h") {
-			printUsage(config);
-			showStopper(0);
-		} else if (file == "/v" || file == "-v" || file == "--version") {
-			fcPrintln("Version " + flowc_version + " (git rev: " + flowc_git_revision + ")");
-			showStopper(0);
-		} else {
-			findSymbol = getConfigParameterDef(config.config, "find-definition", 
-				getConfigParameterDef(config.config, "find-declaration", 
-					getConfigParameter(config.config, "find-defdecl")
-				)
-			);
-			if (findSymbol != "") {
-				findDefDecl(config, globalEnv, file, findSymbol);
-				showStopper(0);
-			} else {
-				findUses = getConfigParameter(config.config, "find-uses");
-				if (findUses != "") {
-					fcFindUses(config, globalEnv, findUses, showStopper);
-				} else if (isConfigParameterTrue(config.config, "print-outline")) {
-					fcPrintOutline(config, globalEnv, showStopper);
-				} else {
-					fcCompile(config, globalEnv, showStopper);
-				}
-			}
-		}
-	}
-}
 
 runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
 	if (isConfigParameterFalse(config.config, "server") || !java) {
 		runConfigLocally(config, globalEnv, onRunComplete);
 	} else {
-		serverUrl = 
-			"http://localhost:" +
-			getConfigParameterDef(config.config, "server-port", "10001");
-		cwd = strReplace(resolveRelativePath("."), "\\", "/");
-		patchedConfig = CompilerConfig(
-			config.flowfile,
-			config.includes,
-			config.objectFolders,
-			config.verbose,
-			config.jsParams,
-			setTree(
-				setTree(
-					switch (lookupTree(config.config, "output-dir")) {
-						Some(__): config.config;
-						None():   setTree(config.config, "output-dir", cwd);
-					},
-					"file",
-					config.flowfile
-				),
-				"working-dir",
-				switch (lookupTree(config.config, "working-dir")) {
-					Some(workingDir): workingDir;
-					None(): cwd;
-				},
-			)
-		);
-		onComplete = ref nop;
-		httpCustomRequest(
-			serverUrl,
-			GET(), [], RequestPayload(serialize(patchedConfig)),
-			\status, data, headers -> {
-				code = status - 200;
-				if (code == 0) {
-					fcPrintln(data);
-					onComplete := \-> onRunComplete(0);
-				} else if (0 < code && code < 64) {
-					fcPrintln("Compilation error " + i2s(code));
-					fcPrintln(data);
-					onComplete := \-> onRunComplete(code);
-				} else {
-					if (isConfigParameterTrue(config.config, "client-mode")) {
-						fcPrintln("Server connection error " + i2s(status));
-						fcPrintln(data);
-					} else {
-						runConfigLocally(config, globalEnv, onRunComplete);
-					}
-				}
-			},
-			false
-		);
-		^onComplete();
+		runConfigRemote(
+			config, 
+			\msg -> fcPrintln(msg, config.threadId), 
+			\msg -> fcPrintln(msg, config.threadId), 
+			onRunComplete, 
+			\__ -> runConfigLocally(config, globalEnv, onRunComplete)
+		)
 	}
 }
 
@@ -342,14 +21,32 @@ fcServerLog(message : string) -> void {
 	writeLogMessage(message, "flowc_server.log", 128)
 }
 
+fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
+	if (!isConfigParameterSet(conf.config, "compile-expression")) Pair(conf, nop) else {
+		expr = getConfigParameter(conf.config, "compile-expression");
+		fileinfo = getFcFileInfo(conf.flowfile, conf);
+		file = trimFlowfile(fileinfo.fullpath, conf.includes, getConfigParameterDef(conf.config, "working-dir", ""));
+		file_dir = dirName(fileinfo.fullpath);
+		file_path = file_dir + "/___tmp_expr___.flow";
+		file_str = "import " + file + ";\n\n ___tmpvar___ = " + expr + ";\n\n";
+		setFileContent(file_path, file_str);
+		upd_conf = CompilerConfig(conf with flowfile = "___tmp_expr___.flow");
+		Pair(upd_conf, \ -> {
+			deleteFile(file_path);
+			{}
+		});
+	}
+}
+
 main() {
-	fcPrintln("Flow compiler (3rd generation)");
-	fcPrintln("");
+	threadId = s2i(getThreadId());
+	fcPrintln("Flow compiler (3rd generation)", threadId);
+	fcPrintln("", threadId);
 
 	globalEnv = FcTypeEnvGlobal(ref makeTree());
 	switch (getCompilerConfig()) {
 		Failed(msg): {
-			fcPrintln(msg);
+			fcPrintln(msg, threadId);
 			quit(1);
 		}
 		Some(config): {
@@ -358,49 +55,52 @@ main() {
 				compilefile = getConfigParameter(config.config, "compilefile");
 				configs = reverseA(readConfigsFormCompileFile(config, compilefile));
 				exit_callback = \code -> {
-					if (code != 0) fcPrintln("Exit code " + i2s(code));
-					fcPrintln("Total batch compilation time: " + d2st((timestamp() - starttime) / 1000.0, 2) + "s");
+					if (code != 0) fcPrintln("Exit code " + i2s(code), threadId);
+					fcPrintln("Total batch compilation time: " + d2st((timestamp() - starttime) / 1000.0, 2) + "s", threadId);
 					quit(0);
 				};
 				callback_chain = fold(configs, [exit_callback], \acc, conf -> 
 					concat(acc, [
 							\code -> {
 								if (code != 0) {
-									fcPrintln("Exit code " + i2s(code));
+									fcPrintln("Exit code " + i2s(code), conf.threadId);
 									quit(code);
 								}
-								fcPrintln("Processing '" + conf.flowfile + "'");
-								clearTimePhases();
+								fcPrintln("Processing '" + conf.flowfile + "'", conf.threadId);
+								clearTimePhases(conf.threadId);
 								runConfig(conf, globalEnv, lastElement(acc, \__-> {}))
 							}
 						]
 					)
 				);
-				lastElement(callback_chain, \__-> { })(0);
+				lastElement(callback_chain, nop1)(0);
 			} else if (isConfigParameterSet(config.config, "server-mode")) {
 				port = s2i(getConfigParameter(config.config, "server-port"));
 				server = ref nop;
 				server := createHttpServer(port,
 					\-> {
 						fcServerLog("Server started.");
-						fcPrintln("Server started.")
+						fcPrintln("Server started.", threadId)
 					},
 					\request, response -> {
-						clearFcOutput();
+						requestThreadId = s2i(getThreadId());
 						cf = deserialize(request.body, IllegalStruct());
 						if (cf == IllegalStruct()) {
 							fcServerLog("WARNING: Illegal compilation config.");
-							fcPrintln("WARNING: Illegal compilation config.");
-							response(HttpResponse(400, fcOutput(), []));
+							fcPrintln("WARNING: Illegal compilation config.", requestThreadId);
+							HttpResponse(400, fcOutput(requestThreadId), []) |> response;
+							clearFcOutput(requestThreadId);
 						} else {
-							conf : CompilerConfig = cast(cf : flow -> CompilerConfig);
-							if (conf.verbose > 0) {
-								fcPrintln("server cwd: " + strReplace(resolveRelativePath("."), "\\", "/"));
-								fcPrintln("objc directory: " + getFlowcObjectFolder(conf));
+							conf0 : CompilerConfig = cast(cf : flow -> CompilerConfig);
+							conf1 = CompilerConfig(conf0 with threadId = requestThreadId);
+							if (conf1.verbose > 0) {
+								fcPrintln("server cwd: " + strReplace(resolveRelativePath("."), "\\", "/"), conf1.threadId);
+								fcPrintln("objc directory: " + getFlowcObjectFolder(conf1), conf1.threadId);
 							}
-							if (isConfigParameterTrue(conf.config, "server-shutdown")) {
-								fcPrintln("Server stopped.");
-								HttpResponse(200, fcOutput(), []) |> response;
+							if (isConfigParameterTrue(conf1.config, "server-shutdown")) {
+								fcPrintln("Server stopped.", conf1.threadId);
+								HttpResponse(200, fcOutput(conf1.threadId), []) |> response;
+								clearFcOutput(conf1.threadId);
 								//^server();  // TODO: why calling ^server(); causes freezing of flowc?
 								timer(200, \-> {
 									fcServerLog("Server stopped.");
@@ -409,16 +109,26 @@ main() {
 							} else {
 								code = ref 0;
 								start_time = timestamp();
+								pair = fcPrepareConfig(conf1);
+								conf = pair.first;
+								conf_callback = pair.second;
 								conf_str = foldTree(compilerConfigToTree(conf), "",
 									\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
 								);
 								fcServerLog("Processing request: <" + conf_str + " >");
-								fcPrintln("Processing '" + conf.flowfile + "' on server.");
+								fcPrintln("Processing '" + conf.flowfile + "' on server.", conf1.threadId);
 								runConfigLocally(conf, globalEnv, \c -> {
 									fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
 									code := c
 								});
-								HttpResponse(200 + ^code, fcOutput(), []) |> response;
+								conf_callback();
+								if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
+									HttpResponse(200 + ^code, fcBinary(conf.threadId), []) |> response;
+								} else {
+									HttpResponse(200 + ^code, fcOutput(conf.threadId), []) |> response;
+								}
+								clearFcOutput(conf.threadId);
+								clearTimePhases(conf.threadId);
 							}
 						}
 					}
@@ -426,7 +136,7 @@ main() {
 			} else {
 				runConfig(config, globalEnv, 
 					\code -> {
-						if (code != 0) fcPrintln("Exit code " + i2s(code));
+						if (code != 0) fcPrintln("Exit code " + i2s(code), threadId);
 						quit(code);
 					}
 				);

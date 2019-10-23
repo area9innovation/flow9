@@ -92,27 +92,38 @@ self.addEventListener('fetch', function(event) {
     var urlSplitted = extractUrlParameters(fixedUrl);
     var requestUrl = urlSplitted.baseUrl;
     var glueSymb = "?";
+    var isFileUploadingRequest = false;
 
     if (request.method == "POST") {
-      if (urlSplitted.parameters.length != 0) {
-        requestUrl += glueSymb + urlSplitted.parameters.join("&");
-        glueSymb = "&";
+      // Here we trying to recognize file uploading request to skip it in cache operations then
+      if (request.headers.has("Content-Type")) {
+        var ctValue = request.headers.get("Content-Type").toLowerCase();
+        isFileUploadingRequest = ctValue.includes("multipart/form-data") && ctValue.includes("boundary=");
       }
 
-      return request.clone().text().then(function(reqParamsText) {
-        var formDataText = undefined;
-        // We add form data (POST parameters) into GET request url string
-        if (reqParamsText !== null && reqParamsText !== undefined && reqParamsText != "") {
-          formDataText = reqParamsText;
-          requestUrl += glueSymb + reqParamsText;
+      if (!isFileUploadingRequest) {
+        if (urlSplitted.parameters.length != 0) {
+          requestUrl += glueSymb + urlSplitted.parameters.join("&");
+          glueSymb = "&";
         }
 
-        return { urlNewFull : requestUrl, formDataText : formDataText };
-      }).catch(function() {
-        return { urlNewFull : fixedUrl, formDataText : undefined };
-      });
+        return request.clone().text().then(function(reqParamsText) {
+          var formDataText = undefined;
+          // We add form data (POST parameters) into GET request url string
+          if (reqParamsText !== null && reqParamsText !== undefined && reqParamsText != "") {
+            formDataText = reqParamsText;
+            requestUrl += glueSymb + reqParamsText;
+          }
+
+          return { urlNewFull : requestUrl, formDataText : formDataText, isFileUploading : isFileUploadingRequest };
+        }).catch(function() {
+          return { urlNewFull : fixedUrl, formDataText : undefined, isFileUploading : isFileUploadingRequest };
+        });
+      } else {
+        return Promise.resolve({ urlNewFull : fixedUrl, formDataText : undefined, isFileUploading : isFileUploadingRequest });
+      }
     } else {
-      return Promise.resolve({ urlNewFull : fixedUrl, formDataText : undefined });
+      return Promise.resolve({ urlNewFull : fixedUrl, formDataText : undefined, isFileUploading : isFileUploadingRequest });
     }
   }
 
@@ -174,20 +185,25 @@ self.addEventListener('fetch', function(event) {
   }
 
   var getResourceFromCache = function(requestData, ignoreSearch) {
-    return caches.match(prepareRequestToCache(requestData), { ignoreSearch: (ignoreSearch && !requestData.isCustomCaching) })
-      .then(function(response) {
-        if (!response) {
-          return Promise.reject();
-        }
+    if (requestData.isFileUploading) {
+      // We don't cache file uploading request, so we skip the step of request searching in cache
+      return Promise.reject();
+    } else {
+      return caches.match(prepareRequestToCache(requestData), { ignoreSearch: (ignoreSearch && !requestData.isCustomCaching) })
+        .then(function(response) {
+          if (!response) {
+            return Promise.reject();
+          }
 
-        sendMessageToClient(event, {
-          msg: "Responded with cache:",
-          url: requestData.originalRequest.url,
-          urlCached: requestData.urlNewToCache
+          sendMessageToClient(event, {
+            msg: "Responded with cache:",
+            url: requestData.originalRequest.url,
+            urlCached: requestData.urlNewToCache
+          });
+          
+          return response;
         });
-        
-        return response;
-      });
+    }
   }
 
   var getCachedResource = function(requestData) {
@@ -201,41 +217,18 @@ self.addEventListener('fetch', function(event) {
   };
   
   var fetchResource = function(requestData) {
-    return fetch(requestData.cloneRequest()).then(function(response) {
-      if (response.status == 200 && response.type == "basic") {
-        fixedRequest = prepareRequestToCache(requestData);
-        // Cache the request if it's match any customized filter
-        if (requestData.isCustomCaching) {
-          caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
-            cache.put(fixedRequest, response.clone());
-
-            sendMessageToClient(event, {
-              msg: "Cached resource:",
-              url: requestData.originalRequest.url,
-              urlCached: fixedRequest.url
-            });
-          });
-        // Automatically cache uncached static resources
-        } else if (CacheMode.CacheStaticContent) {
-          var url = new URL(requestData.originalRequest.url);
-
-          Promise.all(dynamicResourcesExtensions.map(function(resourceName) {
-            if (!url.pathname.endsWith(resourceName)) {
-              return Promise.resolve();
-            } else {
-              // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
-              return isStampForApplicationJsRequest().then(function() {
-                return caches.open(CACHE_NAME).then(function(cache) {
-                  // Clean all previous stamp.php caches (sensitive to timestamp)
-                  return cache.delete(self.registration.scope + "php/stamp.php", { ignoreSearch: true }).then(function() {
-                    // Clean all previous application.js caches (sensitive to timestamp)
-                    return cache.delete(self.registration.scope + url.searchParams.get("file"), { ignoreSearch: true });
-                  });
-                });
-              });
-            }
-          })).then(function() {
-            caches.open(CACHE_NAME).then(function(cache) {
+    if (requestData.isFileUploading) {
+      // We can't to clone file uploading request, so we processing it as is, without caching
+      return fetch(requestData.originalRequest)
+        .then(function(response) { return response.clone(); })
+        .catch(function() { return null; })
+    } else {
+      return fetch(requestData.cloneRequest()).then(function(response) {
+        if (response.status == 200 && response.type == "basic") {
+          fixedRequest = prepareRequestToCache(requestData);
+          // Cache the request if it's match any customized filter
+          if (requestData.isCustomCaching) {
+            caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
               cache.put(fixedRequest, response.clone());
 
               sendMessageToClient(event, {
@@ -244,12 +237,42 @@ self.addEventListener('fetch', function(event) {
                 urlCached: fixedRequest.url
               });
             });
-          }).catch(function() { return null; })
-        }
-      }
+          // Automatically cache uncached static resources
+          } else if (CacheMode.CacheStaticContent) {
+            var url = new URL(requestData.originalRequest.url);
 
-      return response.clone();
-    });
+            Promise.all(dynamicResourcesExtensions.map(function(resourceName) {
+              if (!url.pathname.endsWith(resourceName)) {
+                return Promise.resolve();
+              } else {
+                // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
+                return isStampForApplicationJsRequest().then(function() {
+                  return caches.open(CACHE_NAME).then(function(cache) {
+                    // Clean all previous stamp.php caches (sensitive to timestamp)
+                    return cache.delete(self.registration.scope + "php/stamp.php", { ignoreSearch: true }).then(function() {
+                      // Clean all previous application.js caches (sensitive to timestamp)
+                      return cache.delete(self.registration.scope + url.searchParams.get("file"), { ignoreSearch: true });
+                    });
+                  });
+                });
+              }
+            })).then(function() {
+              caches.open(CACHE_NAME).then(function(cache) {
+                cache.put(fixedRequest, response.clone());
+
+                sendMessageToClient(event, {
+                  msg: "Cached resource:",
+                  url: requestData.originalRequest.url,
+                  urlCached: fixedRequest.url
+                });
+              });
+            }).catch(function() { return null; })
+          }
+        }
+
+        return response.clone();
+      });
+    }
   }
 
   function buildResponse(requestData) {
@@ -339,6 +362,7 @@ self.addEventListener('fetch', function(event) {
         customCacheFilter : cacheFilter,
         formDataText : urlAndBody.formDataText,
         originalRequest : request,
+        isFileUploading : urlAndBody.isFileUploading,
         cloneRequest : function() { return request.clone(); }
       };
     })
@@ -363,12 +387,12 @@ self.addEventListener('fetch', function(event) {
     event.respondWith(
       caches.open(SHARED_DATA_ENDPOINT).then(cache => {
         if (method == "POST") {
-          return request.text().then(body => {
-            cache.put(SHARED_DATA_ENDPOINT, new Response(body));
+          return request.json().then(data => {
+            cache.put(SHARED_DATA_ENDPOINT + '/' + data.key, new Response(data.value));
             return new Response("OK");
           });
         } else {
-          return cache.match(SHARED_DATA_ENDPOINT).then(response => {
+          return cache.match(SHARED_DATA_ENDPOINT + '/' + new URL(request.url).searchParams.get('key')).then(response => {
             return response || new Response("");
           }) || new Response("");
         }
@@ -385,13 +409,19 @@ var cleanServiceWorkerCache = function() {
 
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
-      if (CACHE_NAME != key) {
+      if (CACHE_NAME != key && SHARED_DATA_ENDPOINT != key) {
         console.log("cache cleared", key);
         return caches.delete(key);
       }
     }));
   });
 };
+
+self.addEventListener('install', event => {
+  self.skipWaiting();
+  
+  event.waitUntil(Promise.resolve());
+});
 
 self.addEventListener('activate', function(event) {
   // this cache is only for session

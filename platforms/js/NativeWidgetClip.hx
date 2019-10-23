@@ -14,26 +14,11 @@ class NativeWidgetClip extends FlowContainer {
 
 	private var styleChanged : Bool = true;
 
+	public var widgetWidth : Float = -1;
+	public var widgetHeight : Float = -1;
+
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
-	}
-
-	private function getTransform(?worldTransform : Bool) : Matrix {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (worldTransform == null) {
-				worldTransform = !RenderSupportJSPixi.RenderContainers;
-			}
-
-			if (!worldTransform) {
-				untyped this.transform.updateLocalTransform();
-			}
-
-			return worldTransform ? untyped this.worldTransform : untyped this.localTransform;
-		} else if (accessWidget != null) {
-			return accessWidget.getTransform();
-		} else {
-			return this.worldTransform;
-		}
 	}
 
 	private override function createNativeWidget(?tagName : String = "div") : Void {
@@ -47,7 +32,7 @@ class NativeWidgetClip extends FlowContainer {
 		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			if (accessWidget == null) {
 				accessWidget = new AccessWidget(this, nativeWidget);
 			} else {
@@ -74,15 +59,17 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.width = '${untyped getWidgetWidth()}px';
 		nativeWidget.style.height = '${untyped getWidgetHeight()}px';
 
-		if (!RenderSupportJSPixi.DomRenderer) {
-			var maskedBounds = getMaskedLocalBounds();
+		if (RenderSupportJSPixi.RendererType != "html") {
+			var viewBounds = getViewBounds();
 
-			nativeWidget.style.clip = 'rect(
-				${maskedBounds.minY}px,
-				${maskedBounds.maxX}px,
-				${maskedBounds.maxY}px,
-				${maskedBounds.minX}px
-			)';
+			if (viewBounds != null) {
+				nativeWidget.style.clip = 'rect(
+					${viewBounds.minY}px,
+					${viewBounds.maxX}px,
+					${viewBounds.maxY}px,
+					${viewBounds.minX}px
+				)';
+			}
 		}
 
 		styleChanged = false;
@@ -125,29 +112,22 @@ class NativeWidgetClip extends FlowContainer {
 	public function invalidateStyle() : Void {
 		styleChanged = true;
 
-		calculateLocalBounds('invalidateStyle');
 		invalidateTransform('invalidateStyle');
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {
-		if (widgetBounds.getBoundsWidth() != widgetWidth) {
-			widgetBounds.minX = 0;
-			widgetBounds.maxX = widgetWidth;
+		if (this.widgetWidth != widgetWidth) {
+			this.widgetWidth = widgetWidth;
 
-			if (widgetBounds.minY != Math.POSITIVE_INFINITY) {
-				invalidateStyle();
-			}
+			invalidateStyle();
 		}
 	}
 
 	public function setHeight(widgetHeight : Float) : Void {
-		if (widgetBounds.getBoundsHeight() != widgetHeight) {
-			widgetBounds.minY = 0;
-			widgetBounds.maxY = widgetHeight;
+		if (this.widgetHeight != widgetHeight) {
+			this.widgetHeight = widgetHeight;
 
-			if (widgetBounds.minX != Math.POSITIVE_INFINITY) {
-				invalidateStyle();
-			}
+			invalidateStyle();
 		}
 	}
 
@@ -159,28 +139,18 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		return localBounds.getRectangle(rect);
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0.0;
+		widgetBounds.minY = 0.0;
+		widgetBounds.maxX = DisplayObjectHelper.ceil(getWidth());
+		widgetBounds.maxY = DisplayObjectHelper.ceil(getHeight());
 	}
 
-	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
-		if (!skipUpdate) {
-			updateTransform();
-			getLocalBounds();
-		}
-
-		if (untyped this._boundsID != untyped this._lastBoundsID)
-		{
-			calculateBounds();
-		}
-
-		return _bounds.getRectangle(rect);
+	public function getWidth() : Float {
+		return widgetWidth;
 	}
 
-	public override function calculateBounds() : Void {
-		_bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
-		_bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
-		_bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
-		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+	public function getHeight() : Float {
+		return widgetHeight;
 	}
 }

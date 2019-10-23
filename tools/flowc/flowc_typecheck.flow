@@ -1,8 +1,6 @@
 import tools/common/compilerconfig;
-import tools/flowc/flowc_imports;
 import tools/flowc/flowcacc;
 import tools/flowc/preload_modules;
-import tools/flowc/manipulation/import_graph;
 import tools/flowc/typechecker/typechecker;
 import tools/flowc/flowc_typeverify;
 
@@ -20,7 +18,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 			if (^errors < 200) {
 				printFcError(acc, e)
 			} else if (^errors == 200) {
-				fcPrintln("Too many errors. Ignoring the rest");
+				fcPrintln("Too many errors. Ignoring the rest", config.threadId);
 			}
 		};
 
@@ -34,25 +32,23 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 	);
 
 	// Parse all files, or load incremental files
+	t0 = timestamp();
 	modules = preloadModules(config, globEnv, file, tenv1.printError);
+	incrementTimePhase(getTimePhases(tenv1.acc.config.threadId).parse, t0);
 
+	t1 = timestamp();
 	// OK, let us reclaim what we can before we continue
 	gc();
-
-	fi = getFcFileInfo(file, config);
-
-	// Here, we build the import graph, and check for cycles and forbids, before type checking
-	checkForbids(modules, fi.flowfile, tenv1.printError, config);
+	incrementTimePhase(getTimePhases(tenv1.acc.config.threadId).other, t1);
 
 	if (^errors == 0) {
-		checkAllDependenciesAreResolved(modules, makeSet());
+
 		// Typecheck all files
 		tenv2 = processPreloadedModulesInParallel(tenv1, globEnv, modules);
 
+		t2 = timestamp();
 		prog = fctypeenv2fi(tenv2);
-
-		// Check, that all names are properly exported/imported
-		fcCheckImports(prog, errHandler);
+		incrementTimePhase(getTimePhases(tenv2.acc.config.threadId).other, t2);
 
 		Pair(prog, ^errors)
 	} else {
@@ -61,6 +57,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 }
 
 processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>) -> FcTypeEnvProgram {
+	t0 = timestamp();
 	// Find the loaded modules where all dependent files are ready
 	readyForProcessing : [FcPreloadedModule] = filtermap(
 		tree2pairs(preloadedModules),
@@ -72,6 +69,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 				None()
 			}
 	);
+	incrementTimePhase(getTimePhases(tenv.acc.config.threadId).other, t0);
 
 	if (readyForProcessing == []) {
 		// We are done, everything is processed
@@ -85,7 +83,7 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 					switch (fcLoadFromCache(globEnv, fileinfo.flowfile)) {
 						Some(__): {
 							if (tenv.acc.config.verbose >= 1) {
-								fcPrintln("Removing outdated module '" + fileinfo.flowfile + "' from cache");
+								fcPrintln("Removing outdated module '" + fileinfo.flowfile + "' from cache", tenv.acc.config.threadId);
 							}
 							// When a module is parsed, it means that its version in cache is outdated.
 							fcRemoveFromCache(globEnv, fileinfo.flowfile)
@@ -97,19 +95,20 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 				FcLoaded(module, dependencyChanged): {
 					if (dependencyChanged()) {
 						if (tenv.acc.config.verbose >= 1) {
-							fcPrintln("Verifying types in module '" + module.fileinfo.flowfile + "'");
+							fcPrintln("Verifying types in module '" + module.fileinfo.flowfile + "'", tenv.acc.config.threadId);
 						}
 						if (typeverifyFiModule(tenv, module, \__ -> {})) {
-							updated = FiModule(module with fileinfo = updateFiFileInfo(module.fileinfo));
+							updated = FiModule(module with
+								fileinfo = updateFiFileInfo(module.fileinfo),
+								allImports = updateAllImports(module.imports, tenv.acc.modules)
+							);
 							if (!isConfigParameterFalse(tenv.acc.config.config, "incremental")) {
-								t = timestamp();
 								saveModuleInIncremental(tenv.acc.config, updated, tenv.acc.config.verbose, tenv);
-								incrementTimePhase(fcTimePhases.saveIncremental, t);
 							}
 							FcLoaded(updated, dependencyChanged);
 						} else {
 							if (tenv.acc.config.verbose >= 1) {
-								fcPrintln("Failed type verification for incremental for " + module.fileinfo.flowfile);
+								fcPrintln("Failed type verification for incremental for " + module.fileinfo.flowfile, tenv.acc.config.threadId);
 							}
 							reparseOutdatedModule(module.fileinfo.flowfile, tenv.acc.config, tenv.printError)
 						}
@@ -155,12 +154,11 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 				}
 			}
 		);
-		incrementTimePhase(fcTimePhases.desugar, t1);
-
 		// add all parsed and desugared modules to tenv
 		tenv2 = fold(desugared, tenv1, \tenvCur, modEnv ->
 			addDesugaredModuleToGlobal(tenvCur, modEnv.first)
 		);
+		incrementTimePhase(getTimePhases(tenv2.acc.config.threadId).desugar, t1);
 
 		// Typecheck all modules. Leave only error-free modules.
 		t2 = timestamp();
@@ -187,7 +185,6 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 		tenv3 = fold(typechecked_all, tenv2, \tenvCur, typechecked ->
 			mergeTypechecked2TypeEnv(typechecked.typing, typechecked.module, tenvCur, globEnv)
 		);
-		incrementTimePhase(fcTimePhases.typecheck, t2);
 
 		//
 		// Now, do the incremental modules
@@ -198,76 +195,36 @@ processPreloadedModulesInParallel(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGl
 		});
 
 		tenv4 = fold(ready4, tenv3, \acc, m : FiModule -> mergeIncremental2TypeEnvProgram(acc, globEnv, m));
+		incrementTimePhase(getTimePhases(tenv4.acc.config.threadId).typecheck, t2);
 
 		// save cached modules
 		saveIncrementalModulesIfNeeded(map(typechecked_all, \typechecked -> typechecked.module), tenv4);
 
+		t3 = timestamp();
 		processedNames = buildSet(map(readyForProcessing, \preloaded -> preloadedFiFileInfo(preloaded).flowfile));
-		// Process what is left
-		processPreloadedModulesInParallel(tenv4, globEnv, 
-			foldTree(
-				preloadedModules,
-				makeTree(),
-				\name, preloaded, acc -> {
-					if (containsSet(processedNames, name)) {
-						acc
-					} else {
-						setTree(acc, name, preloaded)
-					}
+		whatIsLeft = foldTree(
+			preloadedModules,
+			makeTree(),
+			\name, preloaded, acc -> {
+				if (containsSet(processedNames, name)) {
+					acc
+				} else {
+					setTree(acc, name, preloaded)
 				}
-			)
-		)
+			}
+		);
+		incrementTimePhase(getTimePhases(tenv4.acc.config.threadId).other, t3);
+
+		// Process what is left
+		processPreloadedModulesInParallel(tenv4, globEnv, whatIsLeft)
 	}
 }
 
-checkAllDependenciesAreResolved(preloadedModules : Tree<string, FcPreloadedModule>, resolved : Set<string>) -> Set<string> {
-
-	// Find the loaded modules where all dependent files are resolved.
-	newPortionOfResolved = buildSet(filtermap(
-		tree2pairs(preloadedModules),
-		\p : Pair<string, FcPreloadedModule> ->
-			if (!containsSet(resolved, preloadedFiFileInfo(p.second).flowfile) &&
-				forall(preloadedFcImports(p.second), \im : FcImport -> containsSet(resolved, im.flowfile))) {
-				Some(preloadedFiFileInfo(p.second).flowfile)
-			} else {
-				None()
-			}
-	));
-
-	if (isEmptySet(newPortionOfResolved)) {
-		// We are done, everything is processed
-		notResolved = foldTree(preloadedModules, makeSet(), \flowfile, m, acc -> {
-			if (containsSet(resolved, flowfile)) {
-				acc
-			} else {
-				insertSet(acc, flowfile);
-			}
-		});
-
-		if (!isEmptySet(notResolved)) {
-			fcPrintln("Could not resolve dependencies for these files:");
-			fcPrintln(strGlue(set2array(notResolved), ", "));
-			fcPrintln("Check if there are missing imports in these files");
+updateAllImports(imports : [FiImport], modules : Tree<string, FiModule>) -> Set<string> {
+	fold(imports, buildSet(map(imports, \imp -> imp.flowfile)),
+		\acc, imp -> {
+			imp_mod = lookupTreeDef(modules, imp.flowfile, dummyFiModule);
+			mergeSets(acc, imp_mod.allImports)
 		}
-
-		resolved
-	} else {
-		checkAllDependenciesAreResolved(preloadedModules, mergeSets(resolved, newPortionOfResolved))
-	}
-}
-
-saveIncrementalModulesIfNeeded(modules : [FiModule], tenv : FcTypeEnvProgram) -> void {
-	config = tenv.acc.config;
-	if (!isConfigParameterFalse(config.config, "incremental")) {
-		// Incremental
-		t = timestamp();
-		runTasks(config, map(uniq(modules), \module -> \ -> {
-			if (!moduleIsCached(config, module)) {
-				saveModuleInIncremental(config, module, config.verbose, tenv);
-				{}
-			}
-			true
-		}));
-		incrementTimePhase(fcTimePhases.saveIncremental, t);
-	}
+	);
 }

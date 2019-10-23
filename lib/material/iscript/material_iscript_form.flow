@@ -2,8 +2,9 @@ import material/extra/feedback/parse_form;
 import material/internal/material_edit_grid;
 
 export {
-	IScriptForm ::= FForm, ISTranslate, ISScale, ISRotate, ISAlpha, ISAvailable2, ISSize2, ISSetPending, ISBaseline, ISGroup, ISGroup2, ISDecorator2,
-		ISBorder, ISMask2, ISFilter2, ISCrop2, ISAccess, ISFullWindow, ISFullScreen, ISSetPending, ISDynamicGroup2, ISMForm;
+	IScriptForm ::= FForm, ISTranslate, ISScale, ISRotate, ISAlpha, ISAvailable2, ISSize2, ISBaseline, ISGroup, ISGroup2, ISDecorator2,
+		ISBorder, ISMask2, ISFilter2, ISCrop2, ISAccess, ISFullWindow, ISFullScreen, ISSetPending, ISDynamicGroup2, ISMForm,
+		ISGraphics, ISCanvas;
 
 		ISTranslate : (x : double, y : double, form : IScriptForm);
 		ISScale : (x : double, y : double, form : IScriptForm);
@@ -27,6 +28,8 @@ export {
 		ISSetPending : (pending : int, form : IScriptForm);
 		ISDynamicGroup2(stackChanges : [FGroupChange], currentStack : [IScriptForm]);
 		ISMForm : (form : PForm);
+		ISGraphics : (path : [StaticGraphicOp], style : [GraphicsStyle]);
+		ISCanvas : (content : IScriptForm);
 
 	takeLogicalSnapshot(f : FForm) -> IScriptForm;
 	deserializeLogicalSnapshot(manager : MaterialManager, serializeForm : string, inputs : bool, m2t : (Material, MFocusGroup) -> Tropic) -> FForm;
@@ -61,7 +64,7 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 				})
 			)
 		}
-		FGraphics(p, s) : f;
+		FGraphics(p, s) : ISGraphics(fgetValue(p), fgetValue(s));
 		FPicture(url, sz, s) : {
 			filteredStyle = filter(s, \style -> {
 				switch (style : PictureStyle) {
@@ -167,6 +170,7 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 		FTextInput(__, __, __): FEmpty(); //TODO:
 		FMForm(form): ISMForm(takeSnapshot(form) |> form2PForm);
 		FNativeForm(__, __, fform, __): takeLogicalSnapshot(fform());
+		FCanvas(content): ISCanvas(takeLogicalSnapshot(content));
 	}
 }
 
@@ -182,6 +186,29 @@ _eqd(a : double, b : double) -> bool {
 diffLogicalSnapshots(f1 : IScriptForm, f2 : IScriptForm) -> [DistinctIScriptForms] {
 	switch (f1 : IScriptForm) {
 		FEmpty() : [];
+		ISGraphics(path, style): {
+			switch (f2 : IScriptForm) {
+				ISGraphics(path2, style2): {
+					if (length(path) == length(path2) && !contains(mapi(path, \i, p -> diffIGraphicOp(p, path2[i])), false) && sort(style) == sort(style2))
+						[]
+					else
+						[DistinctIScriptForms(f1, f2, [])];
+				}
+				default: {
+					[DistinctIScriptForms(f1, f2, [])];
+				}
+			}
+		}
+		ISCanvas(content): {
+			switch (f2 : IScriptForm) {
+				ISCanvas(content2): {
+					diffLogicalSnapshots(content, content2);
+				}
+				default: {
+					[DistinctIScriptForms(f1, f2, [])];
+				}
+			}
+		}
 		ISBorder(left, top, right, bottom, form): {
 			switch (f2 : IScriptForm) {
 				ISBorder(left2, top2, right2, bottom2, form2): {
@@ -503,6 +530,8 @@ IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, M
 		ISDynamicGroup2(stackChanges, currentStack):
 			FDynamicGroup2(make(stackChanges), make(map(currentStack, \cs -> IScriptForm2FForm(manager, cs, m2t, id, inputs))), captureCallstack());
 		ISMForm(form) : FMForm(form |> pForm2Form);
+		ISGraphics(path, style): FGraphics(const(path), const(style));
+		ISCanvas(content): FCanvas(IScriptForm2FForm(manager, content, m2t, id, inputs));
 		FParagraph(text, style): f; //TODO:
 		FText(textT, style): {
 			text = fgetValue(textT);
@@ -694,6 +723,7 @@ IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, M
 		FTextInput(__, __, __): f;
 		FMForm(__) : f;
 		FNativeForm(__, __, __, __): f;
+		FCanvas(content) : f;
 	}
 }
 

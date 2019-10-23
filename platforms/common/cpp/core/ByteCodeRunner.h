@@ -161,6 +161,8 @@ public:
     FlowPtr CodeStartPtr() const { return MakeFlowPtr(0); }
     int     CodeSize() const { return NativeReturnInsn - CodeStartPtr(); }
 
+    void setBytecodeFilename(std::string filename) { BytecodeFilename = filename; }
+
     typedef STL_HASH_MAP<unicode_string, unicode_string> T_UrlParameters;
     unicode_string &getUrlString() { return UrlString; }
     void setUrlString(unicode_string url) { UrlString = url; }
@@ -1312,12 +1314,14 @@ private:
     static StackSlot toString(ByteCodeRunner*,StackSlot*);
     static StackSlot makeStructValue(ByteCodeRunner*,StackSlot*);
     static StackSlot extractStructArguments(ByteCodeRunner*,StackSlot*);
+    static StackSlot getDataTagForValue(ByteCodeRunner*,StackSlot*);
     static StackSlot getFileContent(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContent(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentUTF16(ByteCodeRunner*,StackSlot*);
     static StackSlot getFileContentBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBytes(ByteCodeRunner*,StackSlot*);
+    static StackSlot getBytecodeFilename(ByteCodeRunner*,StackSlot*);
     static StackSlot loaderUrl(ByteCodeRunner*,StackSlot*);
     static StackSlot getUrlParameter(ByteCodeRunner*,StackSlot*);
     static StackSlot getAllUrlParameters(ByteCodeRunner*,StackSlot*);

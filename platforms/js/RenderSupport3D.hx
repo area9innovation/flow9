@@ -26,13 +26,19 @@ import js.three.ConeGeometry;
 import js.three.CylinderGeometry;
 import js.three.SphereGeometry;
 
+import js.three.BufferGeometry;
+import js.three.SphereBufferGeometry;
+
 import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
 
+import js.three.Texture;
+
 import js.three.Light;
 import js.three.PointLight;
 import js.three.SpotLight;
+import js.three.AmbientLight;
 
 import js.three.GridHelper;
 import js.three.PointLightHelper;
@@ -274,16 +280,37 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		untyped __js__("
-			new THREE.MTLLoader()
-				.load(mtlUrl, function (materials) {
-					materials.preload();
+		if (Platform.isIE || Platform.isEdge) {
+			untyped __js__("
+				new THREE.MTLLoader()
+					.load(mtlUrl, function (materials) {
+						materials.preload();
 
-					new THREE.OBJLoader()
-						.setMaterials(materials)
-						.load(objUrl, onLoad);
-				});
-		");
+						new THREE.OBJLoader()
+							.setMaterials(materials)
+							.load(objUrl, onLoad);
+					})
+			");
+		} else {
+			untyped __js__("
+				eval(\"import('./js/threejs/MTLLoader2.js')\".concat(
+					\".then((module) => {\",
+					\"import('./js/threejs/OBJLoader2.js')\",
+					\".then((module2) => {\",
+					\"import('./js/threejs/obj2/bridge/MtlObjBridge.js')\",
+					\".then((module3) => {\",
+					\"new module.MTLLoader()\",
+					\".load(mtlUrl, function(materials) {\",
+					\"new module2.OBJLoader2()\",
+					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
+					\".load(objUrl, onLoad);\",
+					\"});\",
+					\"});\",
+					\"});\",
+					\"})\"
+				))
+			");
+		}
 	}
 
 	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
@@ -305,10 +332,114 @@ class RenderSupport3D {
 		new ObjectLoader().load(url, onLoad);
 	}
 
-	public static function load3DTexture(object : Material, url : String) : Material {
-		untyped object.map = new TextureLoader().load(url, untyped RenderSupportJSPixi.InvalidateStage);
-		return object;
+	public static function load3DTexture(url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		return new TextureLoader().load(url, function(texture) {
+			for (par in parameters) {
+				untyped texture[par[0]] = untyped __js__("eval(par[1])");
+			}
+
+			onLoad(texture);
+		});
 	}
+
+	public static function make3DDataTexture(data : Array<Int>, width : Int, height : Int, parameters : Array<Array<String>>) : Texture {
+		var texture : Dynamic = null;
+
+		untyped __js__("
+			var size = width * height;
+			var udata = new Uint8Array(3 * size);
+
+			for (var i = 0; i < size; i++) {
+				var stride = i * 3;
+
+				udata[stride] = data[stride];
+				udata[stride + 1] = data[stride + 1];
+				udata[stride + 2] = data[stride + 2];
+			}
+
+			texture = new THREE.DataTexture(udata, width, height, THREE.RGBFormat);
+		");
+
+		for (par in parameters) {
+			untyped texture[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return texture;
+	}
+
+	public static function make3DCanvasTexture(clip : FlowContainer, parameters : Array<Array<String>>) : Texture {
+		var container = new FlowCanvas();
+
+		container.addChild(clip);
+		RenderSupportJSPixi.mainRenderClip().addChild(container);
+		RenderSupportJSPixi.render();
+
+		var texture = new Texture(untyped container.nativeWidget);
+		texture.needsUpdate = true;
+
+		for (par in parameters) {
+			untyped texture[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		RenderSupportJSPixi.mainRenderClip().removeChild(container);
+		RenderSupportJSPixi.render();
+
+		return texture;
+	}
+
+
+	public static function set3DMaterialMap(material : Material, map : Texture) : Void {
+		if (untyped material.map != map) {
+			untyped material.map = map;
+			untyped material.transparent = true;
+		}
+	}
+
+	public static function set3DMaterialAlphaMap(material : Material, alphaMap : Texture) : Void {
+		if (untyped material.alphaMap != alphaMap) {
+			untyped material.alphaMap = alphaMap;
+			untyped material.transparent = true;
+		}
+	}
+
+	public static function set3DMaterialOpacity(material : Material, opacity : Float) : Void {
+		if (untyped material.opacity != opacity) {
+			untyped material.opacity = opacity;
+			untyped material.transparent = true;
+		}
+	}
+
+
+	public static function set3DMaterialRotation(object : Material, rotation : Float) : Void {
+		if (untyped object.map != null && object.map.rotation != rotation) {
+			untyped object.map.rotation = rotation;
+		}
+	}
+
+	public static function get3DMaterialRotation(object : Material) : Float {
+		return untyped object.map != null && object.map.rotation != null ? object.map.rotation : 0.0;
+	}
+
+	public static function set3DMaterialOffsetX(object : Material, x : Float) : Void {
+		if (untyped object.map != null && object.map.offset.x != x) {
+			untyped object.map.offset.x = x;
+		}
+	}
+
+	public static function get3DMaterialOffsetX(object : Material) : Float {
+		return untyped object.map != null && object.map.offset != null ? object.map.offset.x : 0.0;
+	}
+
+	public static function set3DMaterialOffsetY(object : Material, y : Float) : Void {
+		if (untyped object.map != null && object.map.offset.y != y) {
+			untyped object.map.offset.y = y;
+		}
+	}
+
+	public static function get3DMaterialOffsetY(object : Material) : Float {
+		return untyped object.map != null && object.map.offset != null ? object.map.offset.y : 0.0;
+	}
+
 
 	public static function make3DAxesHelper(size : Float) : Object3D {
 		return untyped __js__("new THREE.AxesHelper(size)");
@@ -331,6 +462,10 @@ class RenderSupport3D {
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
 		object.addEventListener(event, untyped cb);
 
+		if (event == "mousedown" || event == "mouseup" || event == "mousemove") {
+			untyped object.interactive = true;
+		}
+
 		return function() {
 			object.removeEventListener(event, untyped cb);
 		};
@@ -344,15 +479,21 @@ class RenderSupport3D {
 		var ev : Dynamic = null;
 
 		if (event == "mousemiddledown" || event == "mousemiddleup") {
-			ev = new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mousemiddledown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 1;
 		} else if (event == "mouserightdown" || event == "mouserightup") {
-			ev = new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mouserightdown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 2;
 		} else {
-			ev = new js.html.Event(event);
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event)")
+				: new js.html.Event(event);
 
 			if (event == "mousedown" || event == "mouseup") {
 				untyped ev.button = 0;
@@ -636,6 +777,26 @@ class RenderSupport3D {
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (object.visible != visible) {
 			object.visible = visible;
+
+			object.broadcastEvent("visiblechanged");
+			object.emitEvent("change");
+
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectAlpha(object : Object3D) : Float {
+		return untyped object.materials != null && object.materials.length > 0 ? object.materials[0] : 0.0;
+	}
+
+	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
+		if (untyped object.materials != null && object.materials.length > 0 && object.materials[0].opacity != alpha) {
+			var materials : Array<Dynamic> = untyped object.materials;
+
+			for (material in materials) {
+				material.transparent = true;
+				material.opacity = alpha;
+			}
 
 			object.broadcastEvent("visiblechanged");
 			object.emitEvent("change");
@@ -1036,6 +1197,10 @@ class RenderSupport3D {
 		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
 	}
 
+	public static function make3DAmbientLight(color : Int, intensity : Float) : Light {
+		return new AmbientLight(color, intensity);
+	}
+
 
 	public static function set3DLightColor(object : Light, color : Int) : Void {
 		object.color = new Color(color);
@@ -1137,29 +1302,49 @@ class RenderSupport3D {
 		return new SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
 	}
 
+	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : BufferGeometry {
+		return new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+	}
+
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
-		var materialParameters : Dynamic = {color : new Color(color)};
+		var material = new MeshBasicMaterial(untyped {color : new Color(color)});
 
 		for (par in parameters) {
-			untyped materialParameters[par[0]] = par[1];
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
 		}
 
-		return new MeshBasicMaterial(materialParameters);
+		return material;
 	}
 
 	public static function make3DMeshStandardMaterial(color : Int, parameters : Array<Array<String>>) : Material {
-		var materialParameters : Dynamic = {color : new Color(color)};
+		var material = new MeshStandardMaterial(untyped {color : new Color(color)});
 
 		for (par in parameters) {
-			untyped materialParameters[par[0]] = par[1];
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
 		}
 
-		return new MeshStandardMaterial(materialParameters);
+		return material;
 	}
 
 
-	public static function make3DMesh(geometry : Geometry, material : Material) : Mesh {
-		return new Mesh(geometry, material);
+	public static function make3DMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Mesh {
+		if (untyped geometry.clearGroups != null) {
+			untyped geometry.clearGroups();
+
+			for (i in 0...materials.length) {
+				untyped geometry.addGroup(0, geometry.index.count, i);
+			}
+		}
+
+		var mesh = new Mesh(geometry, untyped materials.length == 1 ? materials[0] : materials);
+
+		untyped mesh.materials = materials;
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
 	}
 
 
@@ -1181,7 +1366,7 @@ class RenderSupport3D {
 		var action = mixer.clipAction(animation);
 		var drawFrameFn = function() {
 			mixer.update(untyped mixer.clock.getDelta());
-			RenderSupportJSPixi.InvalidateStage();
+			RenderSupportJSPixi.PixiStageChanged = true;
 		};
 
 		action.play();

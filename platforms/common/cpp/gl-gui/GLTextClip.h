@@ -70,6 +70,7 @@ protected:
     unicode_string html_text, plain_text;
     unicode_string base_font_name;
     TextDirection textDirection;
+    bool textDirectionFixed = false;
     FormatRec base_format;
 
     bool has_urls;
@@ -198,7 +199,6 @@ public:
 
     DECLARE_NATIVE_METHOD(setMultiline)
     DECLARE_NATIVE_METHOD(setWordWrap)
-    DECLARE_NATIVE_METHOD(setDoNotInvalidateStage)
     DECLARE_NATIVE_METHOD(setAutoAlign)
     DECLARE_NATIVE_METHOD(setAdvancedText)
     DECLARE_NATIVE_METHOD(setReadOnly)

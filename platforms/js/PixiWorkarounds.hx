@@ -1,48 +1,4 @@
 class PixiWorkarounds {
-	public static function workaroundDOMOverOutEventsTransparency() : Void {
-		untyped __js__("
-		var binder = function(fn) {
-			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
-		}
-
-		var emptyFn = function() {};
-
-		var old_pointer_over = PIXI.interaction.InteractionManager.prototype.onPointerOver;
-		var old_pointer_out = PIXI.interaction.InteractionManager.prototype.onPointerOut;
-
-		PIXI.interaction.InteractionManager.prototype.onPointerOver = emptyFn;
-		PIXI.interaction.InteractionManager.prototype.onPointerOut = emptyFn;
-
-		var pointer_over = function(e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		}
-
-		var mouse_move = function(e) {
-			pointer_over(e);
-			document.removeEventListener('mousemove', mouse_move);
-		}
-
-		// if mouse is already over document
-		document.addEventListener('mousemove', mouse_move);
-
-		document.addEventListener('mouseover', pointer_over);
-
-		document.addEventListener('mouseout', function(e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});
-
-		document.addEventListener('pointerover', function (e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		});
-		document.addEventListener('pointerout', function (e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});");
-	}
-
 	public static function workaroundRendererDestroy() : Void {
 		untyped __js__("
 			PIXI.WebGLRenderer.prototype.bindTexture = function(texture, location, forceLocation)
@@ -409,6 +365,16 @@ class PixiWorkarounds {
 
 			window.CustomEvent = CustomEvent;
 		};");
+	}
+
+	public static function workaroundGetContext() : Void {
+		untyped __js__("
+			if (RenderSupportJSPixi.RendererType == 'html') {
+				Element.prototype.getContext = function(a, b) { return { imageSmoothingEnabled : true }; };
+			} else {
+				Element.prototype.getContext = null;
+			}
+		");
 	}
 
 	public static function workaroundTextMetrics() : Void {
@@ -833,7 +799,7 @@ class PixiWorkarounds {
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
-					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
+					this.style.wordWrapWidth = Math.ceil(Math.max(this.style.wordWrapWidth - 1.0, 0.0) * scaleFactor) + 1.0;
 					this.style.strokeThickness = this.style.strokeThickness * scaleFactor;
 					this.style.dropShadowDistance = this.style.dropShadowDistance * scaleFactor;
 					this.style.leading = this.style.leading * scaleFactor;
@@ -890,17 +856,15 @@ class PixiWorkarounds {
 				}
 			});
 
-			if (RenderSupportJSPixi.DomRenderer) {
-				Element.prototype.getContext = function(a, b) {
-					return { imageSmoothingEnabled : true };
-				}
-			}
-
 			PIXI.Container.prototype.updateTransform = function() {
 				if (this.parent.worldTransformChanged) {
 					this.parent.updateTransform();
 				} else {
 					this.transformChanged = false;
+
+					if (this.graphicsChanged) {
+						this.updateNativeWidgetGraphicsData();
+					}
 
 					if (this.worldTransformChanged)
 					{
@@ -917,27 +881,29 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupportJSPixi.DomRenderer) {
-							if (this.localTransformChanged) {
-								this.localTransformChanged = false;
+						this.emit('transformchanged');
 
-								if (this.isNativeWidget && this.parentClip) {
-									DisplayObjectHelper.updateNativeWidget(this);
-								}
-							}
-						} else {
+						if (RenderSupportJSPixi.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
 						}
-
-						this.emit('transformchanged');
 					} else for (let i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
 						if (child.transformChanged) {
 							child.updateTransform();
 						}
+					}
+
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
+						this.localTransformChanged = false;
+
+						if (this.isNativeWidget && this.parentClip) {
+							DisplayObjectHelper.updateNativeWidget(this);
+						}
+					} else {
+						this.localTransformChanged = false;
 					}
 				}
 			};
@@ -955,7 +921,21 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						this.layoutText();
+						if (RenderSupportJSPixi.RendererType == 'html') {
+							if (RenderSupportJSPixi.LayoutText || this.isCanvas) {
+								this.textClipChanged = true;
+								this.layoutText();
+							} else if (this.children.length > 0) {
+								for (let i = 0, j = this.children.length; i < j; ++i) {
+									this.removeChild(this.children[i]);
+								}
+
+								this.textClip = null;
+								this.background = null;
+							}
+						} else {
+							this.layoutText();
+						}
 
 						for (let i = 0, j = this.children.length; i < j; ++i) {
 							const child = this.children[i];
@@ -965,15 +945,7 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupportJSPixi.DomRenderer) {
-							if (this.localTransformChanged) {
-								this.localTransformChanged = false;
-
-								if (this.isNativeWidget && this.parentClip) {
-									DisplayObjectHelper.updateNativeWidget(this);
-								}
-							}
-						} else {
+						if (RenderSupportJSPixi.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -986,6 +958,16 @@ class PixiWorkarounds {
 						if (child.transformChanged) {
 							child.updateTransform();
 						}
+					}
+
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
+						this.localTransformChanged = false;
+
+						if (this.isNativeWidget && this.parentClip) {
+							DisplayObjectHelper.updateNativeWidget(this);
+						}
+					} else {
+						this.localTransformChanged = false;
 					}
 				}
 			};

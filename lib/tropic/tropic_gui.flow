@@ -6,6 +6,7 @@ import ui/fontmapping;
 import fusion_utils;
 import fform/renderfform;
 import tropic/tropic_manager;
+import fform/renderform3d;
 
 export {
 	// A fixed size, empty block
@@ -268,6 +269,9 @@ export {
 	TAvailableHeight(tr : Tropic, available : Transform<double>) -> Tropic;
 	TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : Transform<double>) -> Tropic;
 
+	TCropWidth(tr : Tropic, w : Transform<double>) -> Tropic;
+	TCropHeight(tr : Tropic, h : Transform<double>) -> Tropic;
+
 	TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic;
 	TAlignHorizontalDir(align : CommonAlignment, isRTL : bool) -> (Tropic) -> Tropic;
 	TAlignStart(t : Tropic) -> Tropic; // Align left if LTR, align right if RTL
@@ -345,6 +349,11 @@ export {
 	// Helper to move already rendered clip from one spot to another
 	// Automatically dettaches and reattaches to original clip if tropic passed to 'fn' is rendered anywhere
 	TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic;
+
+	// Draws content with 'canvas' renderer
+	// Works only in js with 'html' renderer, for other targets identical to regular clip
+	// WARNING: Doesn't support native widgets making it applicable only to groups of graphical objects
+	TCanvas(content : Tropic) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -523,14 +532,16 @@ linesToLinesRTL(ls : [Tropic]) -> [Tropic] {
 
 	mapi(
 		ls,
-		\i, l -> TransformTAcc2(\t2a -> {
-			b1 = t2a(l);
+		\i, l -> TransformTAcc(\t2a, pi, s, mo -> {
+			x = fsubtract(maxWidth, widths[i]);
 
-			form = FTranslate(
-				fsubtract(maxWidth, b1.metrics.width),
-				const(0.0),
-				b1.form
-			);
+			newParentInfo =
+				TParentInfo(pi with
+					transformMatrix = fworldtransform(pi.transformMatrix, fx2transform(x))
+				);
+
+			b1 = t2a(l, newParentInfo, s, mo);
+			form = FTranslate(x, const(0.0), b1.form);
 
 			disp =
 				arrayPush(
@@ -680,9 +691,10 @@ TSegmentSameMetric(segments : [Tropic], cols : bool, vertical : bool) -> Tropic 
 		);
 
 	(if (vertical)
-		map(segmentsAttaches, \sa -> TAvailableHeight(sa, fmaxA(sizes, 0.0)))
+		map(segmentsAttaches, \sa -> TAvailable(sa, TFillXHT(fmaxA(sizes, 0.0))))
 	else
-		map(segmentsAttaches, \sa -> TAvailableWidth(sa, fmaxA(sizes, 0.0))))
+		map(segmentsAttaches, \sa -> TAvailable(sa, TFillWYT(fmaxA(sizes, 0.0))))
+	)
 	|> if (cols) TCols else TLines
 }
 
@@ -707,25 +719,19 @@ TFrame(margin : double, radius : double, style : [TGraphicsStyle], box : Tropic)
 		TransformTAcc2(\tac -> {
 			b1 = borderedBox |> tac;
 
-			gstyle = tgraphicsStyle2graphicsStyle(style);
-
-			makeFGraphics = \w, h ->
-				FGraphics(
-					if (equalDoubles(radius, 0.))
-						[GRect(0.0, 0.0, w, h)]
-					else if (equalDoubles(w, h) && equalDoubles(radius, w / 2.0))
-						[GCircle(radius, radius, radius)]
-					else
-						[GRoundedRect(0.0, 0.0, w, h, radius)],
-					gstyle
-				);
-
 			TAcc(b1 with form =
 				FGroup([
-					if (b1.xConstant && b1.yConstant)
-						makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
-					else
-						FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
+					FGraphics(
+						fselect2(b1.metrics.width, b1.metrics.height, FLift2(\w, h ->
+							if (equalDoubles(radius, 0.))
+								[GRect(0.0, 0.0, w, h)]
+							else if (equalDoubles(w, h) && equalDoubles(radius, w / 2.0))
+								[GCircle(radius, radius, radius)]
+							else
+								[GRoundedRect(0.0, 0.0, w, h, radius)]
+						)),
+						const(tgraphicsStyle2graphicsStyle(style))
+					),
 					b1.form
 				], false)
 			)
@@ -744,15 +750,15 @@ TFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphi
 			gstyle = tgraphicsStyle2graphicsStyle(style);
 
 			makeFGraphics = \w, h ->
-				FMutable(fselect(radius, FLift(\r ->
-					FGraphics(
+				FGraphics(
+					fselect(radius, FLift(\r ->
 						if (r == 0.)
 							rectangle(0., 0., w, h)
 						else
-							perfectRoundedRect(w, h, r),
-						gstyle
-					)
-				)));
+							perfectRoundedRect(w, h, r)
+					)),
+					const(gstyle)
+				);
 
 			TAcc(b1 with form =
 				FGroup([
@@ -776,18 +782,12 @@ TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double,
 
 				gstyle = tgraphicsStyle2graphicsStyle(style);
 
-				makeFGraphics = \w, h ->
-					FGraphics(
-						customRect(w, h, tl, tr, br, bl, tlRounded, trRounded, brRounded, blRounded),
-						gstyle
-					);
-
 				TAcc(b1 with form =
 					FGroup([
-						if (b1.xConstant && b1.yConstant)
-							makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
-						else
-							FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
+						FGraphics(
+							fselect2(b1.metrics.width, b1.metrics.height, FLift2(\w, h -> customRect(w, h, tl, tr, br, bl, tlRounded, trRounded, brRounded, blRounded))),
+							const(gstyle)
+						),
 						b1.form
 					], false)
 				)
@@ -806,21 +806,12 @@ TRoundedFull(style : [TGraphicsStyle], size : Tropic) -> Tropic {
 		if (style != []) {
 			gstyle = tgraphicsStyle2graphicsStyle(style);
 
-			makeFGraphics = \w, h -> {
-				r = min(w, h) / 2.0;
-
-				if (r > 0.)
-					FGraphics([GRoundedRect(0.0, 0.0, w, h, r)], gstyle)
-				else
-					FEmpty()
-			};
-
 			TAcc(b1 with form =
 				FGroup([
-					if (b1.xConstant && b1.yConstant)
-						makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
-					else
-						FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
+					FGraphics(
+						fselect2(b1.metrics.width, b1.metrics.height, FLift2(\w, h -> [GRoundedRect(0.0, 0.0, w, h, min(w, h) / 2.0)])),
+						const(gstyle)
+					),
 					b1.form
 				], false)
 			)
@@ -1327,11 +1318,53 @@ TVisibleLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic {
 }
 
 TCropSizeX(content : Tropic, width : Tropic) -> Tropic {
-	TCropSize(TGroup2(THeight(content), TWidth(width)), content);
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		c = t2a(content, parent, sheet, metricsOnly);
+		b = t2a(width, parent, sheet, true);
+		form =
+			if (metricsOnly)
+				FEmpty()
+			else
+				FCrop(
+					zero,
+					zero,
+					b.metrics.width,
+					c.metrics.height,
+					c.form
+				);
+		TAcc(c with
+			form = form,
+			minWidth = b.minWidth,
+			maxWidth = b.maxWidth,
+			metrics = TFormMetrics(c.metrics with width = b.metrics.width),
+			xFillers = b.xFillers
+		)
+	});
 }
 
 TCropSizeY(content : Tropic, height : Tropic) -> Tropic {
-	TCropSize(TGroup2(TWidth(content), THeight(height)), content);
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		c = t2a(content, parent, sheet, metricsOnly);
+		b = t2a(height, parent, sheet, true);
+		form =
+			if (metricsOnly)
+				FEmpty()
+			else
+				FCrop(
+					zero,
+					zero,
+					c.metrics.width,
+					b.metrics.height,
+					c.form
+				);
+		TAcc(c with
+			form = form,
+			minHeight = b.minHeight,
+			maxHeight = b.maxHeight,
+			metrics = TFormMetrics(c.metrics with height = b.metrics.height),
+			yFillers = b.yFillers
+		)
+	});
 }
 
 TAcc2Size(acc : TAcc) -> Tropic {
@@ -1723,6 +1756,60 @@ TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : 
 	TransformTAcc(\t2a, pi, st, mo ->
 		t2a(tr, TParentInfo(pi with maxX = availableW, maxY = availableH), st, mo)
 	)
+}
+
+TCropWidth(tr : Tropic, width : Transform<double>) -> Tropic {
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		a = t2a(tr, parent, sheet, metricsOnly);
+		metrics = TFormMetrics(a.metrics with width = width);
+		form =
+			if (metricsOnly)
+				FEmpty()
+			else
+				FCrop(
+					zero,
+					zero,
+					metrics.width,
+					metrics.height,
+					a.form
+				);
+		TAcc(
+			a with
+				form = form,
+				minWidth = width,
+				maxWidth = width,
+				metrics = metrics,
+				xFillers = const(0.0),
+				xConstant = isFConst(width)
+		)
+	});
+}
+
+TCropHeight(tr : Tropic, height : Transform<double>) -> Tropic {
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		a = t2a(tr, parent, sheet, metricsOnly);
+		metrics = TFormMetrics(a.metrics with height = height);
+		form =
+			if (metricsOnly)
+				FEmpty()
+			else
+				FCrop(
+					zero,
+					zero,
+					metrics.width,
+					metrics.height,
+					a.form
+				);
+		TAcc(
+			a with
+				form = form,
+				minHeight = height,
+				maxHeight = height,
+				metrics = metrics,
+				yFillers = const(0.0),
+				yConstant = isFConst(height)
+		)
+	});
 }
 
 TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic {
@@ -2439,5 +2526,13 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 				}
 			)
 		)
+	})
+}
+
+TCanvas(content : Tropic) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b = t2a(content);
+
+		TAcc(b with form = FCanvas(b.form));
 	})
 }

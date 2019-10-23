@@ -2,12 +2,17 @@ import tools/flowc/incremental/fi2fc;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/export_signature;
 import tools/flowc/flowc_helpers;
+import tools/flowc/flowc_timephases;
 import text/binary;
 import utctime;
 
 export {
 	getFlowcObjectFolder(config : CompilerConfig) -> string;
+
+	saveIncrementalModulesIfNeeded(modules : [FiModule], tenv : FcTypeEnvProgram) -> void;
+
 	saveModuleInIncremental(config : CompilerConfig, module : FiModule, verbose : int, env : FcTypeEnvProgram) -> void;
+
 	ensureIncrementalDirectoryExists(config : CompilerConfig) -> void;
 
 	/* Loads any up-to-date incremental file if we have it. If we have an outdated one,
@@ -28,7 +33,7 @@ export {
 	getCacheFilename(config : CompilerConfig, flowname : string) -> string;
 }
 
-incrementalVersion = 4;
+incrementalVersion = 5;
 IncrementalModule(version : int, module : FiModule);
 
 getFlowcObjectFolder(config : CompilerConfig) -> string {
@@ -54,19 +59,45 @@ ensureIncrementalDirectoryExists(config : CompilerConfig) -> void {
 	}
 }
 
-saveModuleInIncremental(config : CompilerConfig, module0 : FiModule, verbose : int, env : FcTypeEnvProgram) -> void {
+saveModuleInIncremental(config : CompilerConfig, module : FiModule, verbose : int, env : FcTypeEnvProgram) -> void {
+	if (!isConfigParameterFalse(config.config, "incremental")) {
+		t = timestamp();
+		doSaveModuleInIncremental(config, module, verbose, env);
+		incrementTimePhase(getTimePhases(config.threadId).save, t);
+	}
+}
+
+saveIncrementalModulesIfNeeded(modules : [FiModule], tenv : FcTypeEnvProgram) -> void {
+	config = tenv.acc.config;
+	if (!isConfigParameterFalse(config.config, "incremental")) {
+		// Incremental
+		t = timestamp();
+		runTasks(config, map(uniq(modules), \module -> \ -> {
+			if (!moduleIsCached(config, module)) {
+				doSaveModuleInIncremental(config, module, config.verbose, tenv);
+				{}
+			}
+			true
+		}));
+		incrementTimePhase(getTimePhases(tenv.acc.config.threadId).save, t);
+	}
+}
+
+doSaveModuleInIncremental(config : CompilerConfig, module0 : FiModule, verbose : int, env : FcTypeEnvProgram) -> void {
 	module = FiModule(module0 with incremental = true);
 	fn = getCacheFilename(config, module.fileinfo.flowfile);
 	if (module.end != 0) {
-		if (verbose >= 1) fcPrintln("Saving incremental for " + module.fileinfo.flowfile);
+		if (verbose >= 1) {
+			fcPrintln("Saving incremental for " + module.fileinfo.flowfile, config.threadId);
+		}
 		s = toBinary(IncrementalModule(incrementalVersion, module));
 		if (!setFileContent(fn, s)) {
-			fcPrintln("WARNING: Cannot create incremental file " + fn);
+			fcPrintln("WARNING: Cannot create incremental file " + fn, config.threadId);
 		} else {
 			if (fileModified(module.fileinfo.fullpath) > module.fileinfo.trampstamp) {
 				// This is not an error, in fact, just annoying
 				if (verbose >= 1) {
-					fcPrintln("File '" + module.fileinfo.flowfile + "' has changed during compilation. Incremental file not saved.");
+					fcPrintln("File '" + module.fileinfo.flowfile + "' has changed during compilation. Incremental file not saved.", config.threadId);
 				}
 				// Delete obsolete incremental file
 				deleteFile(fn);
@@ -82,7 +113,7 @@ saveModuleInIncremental(config : CompilerConfig, module0 : FiModule, verbose : i
 		// and we only state that there were error(s).
 		// So it is not error, but warning instead.
 
-		fcPrintln("WARNING: Cannot convert " + fn + " to fimodule");
+		fcPrintln("WARNING: Cannot convert " + fn + " to fimodule", config.threadId);
 	}
 }
 
@@ -96,7 +127,7 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 		cachedVersion = if (strlen(f) >= 4) s2a(substring(f, 4, 1))[0] else -1;
 		if (cachedVersion != incrementalVersion) {
 			if (config.verbose >= 1) {
-				fcPrintln("Incremental for '" + flowfile + "' has wrong format version " + i2s(cachedVersion) + ", current is " + i2s(incrementalVersion));
+				fcPrintln("Incremental for '" + flowfile + "' has wrong format version " + i2s(cachedVersion) + ", current is " + i2s(incrementalVersion), config.threadId);
 			}
 			deleteIncrementalModule(config, flowfile);
 			PreloadResult(None(), makeTree());
@@ -109,7 +140,7 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 				// It is not an error, we ignore incremental file
 				// and force compiler to reread and reparse flow file. 
 
-				fcPrintln("WARNING: Illegal structure of incremental file for " + flowfile + ". Incremental file deleted.");
+				fcPrintln("WARNING: Illegal structure of incremental file for " + flowfile + ". Incremental file deleted.", config.threadId);
 				deleteIncrementalModule(config, flowfile);
 				PreloadResult(None(), makeTree());
 			} else {
@@ -127,10 +158,10 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 						sourcefileinfo = getFcFileInfo(flowfile, config);
 						if (config.verbose > 0) {
 							if (!isSamePath(fileinfo.fullpath, sourcefileinfo.fullpath)) {
-								fcPrintln("Incremental file says original was found at '" + fileinfo.fullpath + "' Source file is found at ''" + sourcefileinfo.fullpath + "'");
+								fcPrintln("Incremental file says original was found at '" + fileinfo.fullpath + "' Source file is found at ''" + sourcefileinfo.fullpath + "'", config.threadId);
 							} else {
 								if (config.verbose > 1) {
-									fcPrintln("  File is found at '" + fileinfo.fullpath + "'");
+									fcPrintln("  File is found at '" + fileinfo.fullpath + "'", config.threadId);
 								}
 							}
 						}
@@ -139,9 +170,9 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 
 				if (!incrementalPriority && needToReload) {
 					if (needToReload && config.verbose >= 1) {
-						fcPrintln("Outdated incremental file:");
-						fiFileInfoFileChangedMessage(fileinfo, checkMd5);
-						iter(fimodule.stringIncludes, \inc -> fiFileInfoFileChangedMessage(inc, checkMd5));
+						fcPrintln("Outdated incremental file:", config.threadId);
+						fiFileInfoFileChangedMessage(fileinfo, checkMd5, config.threadId);
+						iter(fimodule.stringIncludes, \inc -> fiFileInfoFileChangedMessage(inc, checkMd5, config.threadId));
 					}
 					deleteIncrementalModule(config, flowfile);
 
@@ -149,7 +180,9 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 
 					PreloadResult(None(), oldExports);
 				} else {
-					if (config.verbose >= 1) fcPrintln("Loaded incremental for " + flowfile);
+					if (config.verbose >= 1) {
+						fcPrintln("Loaded incremental for " + flowfile, config.threadId);
+					}
 					PreloadResult(Some(FcLoaded(fimodule, fcDependencyChangedCallback(config, globEnv, fimodule))), makeTree());
 				}
 			}
@@ -160,11 +193,11 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 
 deleteIncrementalModule(config : CompilerConfig, flowfile : string) {
 	fn = getCacheFilename(config, flowfile);
-	if (config.verbose >= 1) fcPrintln("Deleting outdated incremental for " + flowfile + ", file " + fn);
+	if (config.verbose >= 1) fcPrintln("Deleting outdated incremental for " + flowfile + ", file " + fn, config.threadId);
 	e = deleteFile(fn);
 	if (e != "") {
 		if (fileExists(fn)) {
-			fcPrintln("Could not delete " + fn + ": " + e);
+			fcPrintln("Could not delete " + fn + ": " + e, config.threadId);
 		}
 	}
 	{}
@@ -172,7 +205,7 @@ deleteIncrementalModule(config : CompilerConfig, flowfile : string) {
 
 mergeIncremental2TypeEnvProgram(tenv0 : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, module : FiModule) -> FcTypeEnvProgram {
 	if (tenv0.acc.config.verbose >= 1) {
-		fcPrintln("Updating global environment with incremental module " + module.fileinfo.flowfile);
+		fcPrintln("Updating global environment with incremental module " + module.fileinfo.flowfile, tenv0.acc.config.threadId);
 	}
 
 	tenv = addFiModuleToFcTypeEnv(tenv0, globEnv, module);

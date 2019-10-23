@@ -155,10 +155,16 @@ KatePluginSymbolViewerView::KatePluginSymbolViewerView(KatePluginSymbolViewer *p
   m_symbols->setIndentation(10);
 
   m_toolview->installEventFilter(this);
+
+  // register view
+  m_plugin->m_views.insert(this);
 }
 
 KatePluginSymbolViewerView::~KatePluginSymbolViewerView()
 {
+  // un-register view
+  m_plugin->m_views.remove(this);
+
   m_mainWindow->guiFactory()->removeClient (this);
   delete m_toolview;
   delete m_popup;
@@ -314,13 +320,13 @@ void KatePluginSymbolViewerView::parseSymbols()
   /** Get the current highlighting mode */
   QString hlModeName = doc->mode();
 
-  if (hlModeName.contains(QLatin1String("C++")) || hlModeName == QLatin1String("C") || hlModeName == QLatin1String("ANSI C89"))
+  if (hlModeName.contains(QLatin1String("C++")) || hlModeName == QLatin1Char('C') || hlModeName == QLatin1String("ANSI C89"))
      parseCppSymbols();
  else if (hlModeName == QLatin1String("PHP (HTML)"))
     parsePhpSymbols();
   else if (hlModeName == QLatin1String("Tcl/Tk"))
      parseTclSymbols();
-  else if (hlModeName == QLatin1String("Fortran"))
+  else if (hlModeName.contains(QLatin1String("Fortran")))
      parseFortranSymbols();
   else if (hlModeName == QLatin1String("Perl"))
      parsePerlSymbols();
@@ -332,6 +338,8 @@ void KatePluginSymbolViewerView::parseSymbols()
      parseCppSymbols();
   else if (hlModeName == QLatin1String("xslt"))
      parseXsltSymbols();
+  else if (hlModeName == QLatin1String("XML") || hlModeName == QLatin1String("HTML"))
+     parseXMLSymbols();
   else if (hlModeName == QLatin1String("Bash"))
      parseBashSymbols();
   else if (hlModeName == QLatin1String("ActionScript 2.0") ||
@@ -387,8 +395,7 @@ KatePluginSymbolViewer::~KatePluginSymbolViewer()
 
 QObject *KatePluginSymbolViewer::createView (KTextEditor::MainWindow *mainWindow)
 {
-  m_view = new KatePluginSymbolViewerView (this, mainWindow);
-  return m_view;
+  return new KatePluginSymbolViewerView (this, mainWindow);
 }
 
 KTextEditor::ConfigPage* KatePluginSymbolViewer::configPage(int, QWidget *parent)
@@ -412,14 +419,14 @@ void KatePluginSymbolViewer::applyConfig(KatePluginSymbolViewerConfigPage* p)
   config.writeEntry(QStringLiteral("TreeView"), p->treeView->isChecked());
   config.writeEntry(QStringLiteral("SortSymbols"), p->sortSymbols->isChecked());
 
-  if (m_view) {
-    m_view->m_typesOn->setChecked(p->viewReturns->isChecked());
-    m_view->m_expandOn->setChecked(p->expandTree->isChecked());
-    m_view->m_treeOn->setChecked(p->treeView->isChecked());
-    m_view->m_sort->setChecked(p->sortSymbols->isChecked());
+  for (auto view : m_views) {
+    view->m_typesOn->setChecked(p->viewReturns->isChecked());
+    view->m_expandOn->setChecked(p->expandTree->isChecked());
+    view->m_treeOn->setChecked(p->treeView->isChecked());
+    view->m_sort->setChecked(p->sortSymbols->isChecked());
 
-    m_view->m_expandOn->setEnabled(m_view->m_treeOn->isChecked());
-    m_view->m_typesOn->setEnabled(m_view->m_func->isChecked());
+    view->m_expandOn->setEnabled(view->m_treeOn->isChecked());
+    view->m_typesOn->setEnabled(view->m_func->isChecked());
   }
 }
 
@@ -436,7 +443,7 @@ KatePluginSymbolViewerConfigPage::KatePluginSymbolViewerConfigPage(
   expandTree = new QCheckBox(i18n("Automatically expand nodes in tree mode"));
   treeView = new QCheckBox(i18n("Always display symbols in tree mode"));
   sortSymbols = new QCheckBox(i18n("Always sort symbols"));
-  
+
 
   QGroupBox* parserGBox = new QGroupBox( i18n("Parser Options"), this);
   QVBoxLayout* top = new QVBoxLayout(parserGBox);

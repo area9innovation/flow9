@@ -5,14 +5,14 @@ export {
 	// Collect a set of names of functions with and without side-effects
 	collectFiEffects(program : FiProgram) -> FiEffects;
 
-	FiEffects(names : FiGlobalNames, hasEffects : Set<string>, effectFree : Set<string>);
+	FiEffects(names : FiGlobalNames, hasEffects : Set<string>, effectFree : Set<string>, config : CompilerConfig);
 
 	// Checks if this name has any side-effects
 	hasFiSideEffects(effects : FiEffects, e : FiExp) -> bool;
 }
 
 collectFiEffects(program : FiProgram) -> FiEffects {
-	fold(program.traversal, FiEffects(program.names, makeSet(), makeSet()), \acc, name ->
+	fold(program.traversal, FiEffects(program.names, makeSet(), makeSet(), program.config), \acc, name ->
 		collectFiModuleEffects(acc, lookupTreeDef(program.modules, name, dummyFiModule))
 	)
 }
@@ -20,23 +20,23 @@ collectFiEffects(program : FiProgram) -> FiEffects {
 collectFiModuleEffects(acc : FiEffects, module : FiModule) -> FiEffects {
 	e1 = fold(module.natives, acc, \acc2 : FiEffects, nat : FiNativeDec -> {
 		if (nat.io) {
-			FiEffects(acc2.names, insertSet(acc2.hasEffects, nat.name), acc2.effectFree)
+			FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, nat.name))
 		} else {
-			FiEffects(acc2.names, acc2.hasEffects, insertSet(acc2.effectFree, nat.name))
+			FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, nat.name))
 		}
 	});
 	e2 = fold(module.globalVars, e1, \acc2 : FiEffects, init : FiGlobalVar -> {
 		if (hasFiSideEffects(acc2, init.value)) {
-			FiEffects(acc2.names, insertSet(acc2.hasEffects, init.name), acc2.effectFree)
+			FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, init.name))
 		} else {
-			FiEffects(acc2.names, acc2.hasEffects, insertSet(acc2.effectFree, init.name))
+			FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, init.name))
 		}
 	});
 	fold(module.functions, e2, \acc2 : FiEffects, fn : FiFunctionDec -> {
 		if (hasFiSideEffects(acc2, fn.lambda)) {
-			FiEffects(acc2.names, insertSet(acc2.hasEffects, fn.name), acc2.effectFree)
+			FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, fn.name))
 		} else {
-			FiEffects(acc2.names, acc2.hasEffects, insertSet(acc2.effectFree, fn.name))
+			FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, fn.name))
 		}
 	});
 }
@@ -88,7 +88,7 @@ hasFiSideEffects(effects : FiEffects, expr : FiExp) -> bool {
 				FcFieldPrim(name): {
 					// If this is a mutable field of a struct, we have a problem
 					// so find the name of the type
-					isFiTypenameFieldMutable(effects.names, fiExpType(args[0]), name);
+					isFiTypenameFieldMutable(effects.names, fiExpType(args[0]), name, effects.config);
 				}
 				FcSetMutablePrim(name): true;
 				FcCreateClosurePrim(sName, fName) : false;
@@ -104,7 +104,7 @@ hasFiSideEffects(effects : FiEffects, expr : FiExp) -> bool {
 				true;
 			} else {
 				// Let us do name tracking here so more vars are known to be effect free
-				ne = FiEffects(effects.names, effects.hasEffects, insertSet(effects.effectFree, x));
+				ne = FiEffects(effects with effectFree = insertSet(effects.effectFree, x));
 				hasFiSideEffects(ne, e2);
 			}
 		}
@@ -120,8 +120,8 @@ haveFiSideEffects(effects : FiEffects, es : [FiExp]) -> bool {
 	fold(es, false, \acc, e -> {t = hasFiSideEffects(effects, e); acc || t})
 }
 
-isFiTypenameFieldMutable(names : FiGlobalNames, type : FiType, field : string) -> bool {
-	rt = resolveFiTypeName(names, type);
+isFiTypenameFieldMutable(names : FiGlobalNames, type : FiType, field : string, conf : CompilerConfig) -> bool {
+	rt = resolveFiTypeName(names, type, conf.threadId);
 	switch (rt) {
 		FiTypeStruct(n, __, as, __): {
 			found = find(as, \f : FiStructArg -> f.name == field);
@@ -132,7 +132,7 @@ isFiTypenameFieldMutable(names : FiGlobalNames, type : FiType, field : string) -
 		}
 		FiTypeUnion(__, __, tnames, __): {
 			exists(tnames, \n ->
-				isFiTypenameFieldMutable(names, n, field)
+				isFiTypenameFieldMutable(names, n, field, conf)
 			)
 		}
 	}

@@ -1,6 +1,7 @@
 import fform/fform;
 import render;
 import fusion_utils;
+import form/formmetrics;
 
 export {
 	addChildClip(parent : native, child : native, alive : ref bool) -> void;
@@ -22,7 +23,7 @@ export {
 
 	style2characterStyle(s : [?]) -> [CharacterStyle];
 
-	renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult;
+	renderFGraphics(path : Transform<[StaticGraphicOp]>, style : Transform<[GraphicsStyle]>) -> FRenderResult;
 	renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult;
 	renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult;
 	renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult;
@@ -138,7 +139,24 @@ fform2form(fform : FForm) -> Form {
 			}
 		}
 		FParagraph(__, __) : FParagraph2Form(fform);
-		FGraphics(path, style) : Graphics(path, style);
+		FGraphics(path, style) : {
+			fm = make(FormMetrics(0., 0., 0., 0.));
+
+			NativeForm(
+				fform,
+				fm,
+				\ -> Empty(),
+				\av, zo, to -> {
+					d = renderFGraphics(path, style);
+					u = make2Subscribe(path, style, \p, s -> next(fm, getStaticFormSize2(Graphics(p, s), false)))();
+
+					NativeRenderResult(
+						d.clips,
+						\ -> applyall(arrayPush(d.disposers, u))
+					)
+				}
+			);
+		}
 		FTranslate(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Translate(x0, y0, fform2form(form))));
 		FScale(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Scale(x0, y0, fform2form(form))));
 		FRotate(degree, form) : switchTransform(degree, \dg -> Rotate(dg, fform2form(form)));
@@ -185,13 +203,14 @@ fform2form(fform : FForm) -> Form {
 		FVideo(__, __, __) : FVideo2Video(fform) |> (\f -> Constructor(f.first, f.second));
 		FNativeForm(init, metrics, ff, fn): NativeForm(init, metrics, \ -> fform2form(ff()), fn);
 		FTextInput(__, __, __) : FTextInput2TextInput(fform) |> (\f -> Constructor(f.first, f.second));
+		FCanvas(content) : fform2form(content);
 	}
 }
 
 form2fform(_form : Form) -> FForm {
 	switch (_form : Form) {
 		Text(text, style) : FText(const(text), style);
-		Graphics(path, style) : FGraphics(path, style);
+		Graphics(path, style) : FGraphics(const(path), const(style));
 		Translate(x, y, form) : FTranslate(x, y, form2fform(form));
 		Scale(x, y, form) : FScale(x, y, form2fform(form));
 		Rotate(deg, form) : FRotate(deg, form2fform(form));
@@ -824,140 +843,147 @@ FParagraph2Form(fParagraph : FParagraph) -> Form {
 	)
 }
 
-renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult {
+renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[GraphicsStyle]>) -> FRenderResult {
 	if (js) {
 		clip = makeGraphics();
-		setClipDebugInfo(clip, "form", FGraphics(path, style));
+		setClipDebugInfo(clip, "form", FGraphics(path0, style0));
 
-		fillcolour = ref None();
-		fillopacity = ref 1.0;
-		gradientFill = ref None();
-		gradientType = ref "linear";
-		strokecolour = ref None();
-		strokeopacity = ref 1.0;
-		strokewidth = ref 1.0;
-		strokeLineGradient = ref None();
+		u = make2Subscribe(path0, style0, \path, style -> {
+			clearGraphics(clip);
 
-		iter(style, \s : GraphicsStyle ->
-			switch (s : GraphicsStyle) {
-				Fill(col): fillcolour := Some(col);
-				FillOpacity(op): fillopacity := op;
-				GradientFill(c, rotation): gradientFill := Some(s);
-				RadialGradient(): gradientType := "radial";
-				Stroke(colour): strokecolour := Some(colour);
-				StrokeOpacity(opacity): strokeopacity := opacity;
-				StrokeWidth(width): strokewidth := width;
-				StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+			fillcolour = ref None();
+			fillopacity = ref 1.0;
+			gradientFill = ref None();
+			gradientType = ref "linear";
+			strokecolour = ref None();
+			strokeopacity = ref 1.0;
+			strokewidth = ref 1.0;
+			strokeLineGradient = ref None();
+
+			iter(style, \s : GraphicsStyle ->
+				switch (s : GraphicsStyle) {
+					Fill(col): fillcolour := Some(col);
+					FillOpacity(op): fillopacity := op;
+					GradientFill(c, rotation): gradientFill := Some(s);
+					RadialGradient(): gradientType := "radial";
+					Stroke(colour): strokecolour := Some(colour);
+					StrokeOpacity(opacity): strokeopacity := opacity;
+					StrokeWidth(width): strokewidth := width;
+					StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+				}
+			);
+
+			matrix = if (isSome(^strokeLineGradient) || isSome(^gradientFill)) {
+				updateQRange = \acc : Quadruple<double, double, double, double>, x : double, y : double -> {
+					Quadruple(
+						min(x, acc.first),
+						max(x, acc.second),
+						min(y, acc.third),
+						max(y, acc.fourth),
+					)
+				}
+
+				m = fold(path, Quadruple(doubleMax, doubleMin, doubleMax, doubleMin), \acc : Quadruple<double, double, double, double>, op : StaticGraphicOp ->
+					switch (op : StaticGraphicOp) {
+						MoveTo(x, y) : updateQRange(acc, x, y);
+						LineTo(x, y) : updateQRange(acc, x, y);
+						CubicBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
+						QuadraticBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
+						ClosePath(): acc;
+						GRect(x, y, w, h): {
+							updateQRange(updateQRange(acc, x, y), x + w, y + h);
+						}
+						GRoundedRect(x, y, w, h, __): {
+							updateQRange(updateQRange(acc, x, y), x + w, y + h);
+						}
+						GEllipse(x, y, w, h): {
+							updateQRange(updateQRange(acc, x - w, y - h), x + w, y + h);
+						}
+						GCircle(x, y, r): {
+							updateQRange(updateQRange(acc, x - r, y - r), x + r, y + r);
+						}
+					}
+				);
+
+				Some(\r -> makeMatrix(abs(m.second - m.first), abs(m.fourth - m.third), r, m.first, m.third))
+			} else {
+				None()
 			}
-		);
 
-		matrix = if (isSome(^strokeLineGradient) || isSome(^gradientFill)) {
-			updateQRange = \acc : Quadruple<double, double, double, double>, x : double, y : double -> {
-				Quadruple(
-					min(x, acc.first),
-					max(x, acc.second),
-					min(y, acc.third),
-					max(y, acc.fourth),
-				)
-			}
+			maybeApply(^fillcolour, \fc : int -> beginFill(clip, fc, ^fillopacity));
+			maybeApply(^strokecolour, \sc : int -> setLineStyle(clip, ^strokewidth, sc, ^strokeopacity));
+			maybeApply(^strokeLineGradient, \sg : StrokeLineGradient-> {
+				colors = map(sg.points, \c -> c.color);
+				alphas = map(sg.points, \c -> c.alpha);
+				offsets = map(sg.points, \c -> c.offset);
+				maybeApply(matrix, \m -> setLineGradientStroke(clip, colors, alphas, offsets, m(sg.rotation)));
+			});
+			maybeApply(^gradientFill, \gf : GradientFill -> {
+				colors = map(gf.points, \c -> c.color);
+				alphas = map(gf.points, \c -> c.alpha);
+				offsets = map(gf.points, \c -> c.offset);
+				maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
+			});
 
-			m = fold(path, Quadruple(doubleMax, doubleMin, doubleMax, doubleMin), \acc : Quadruple<double, double, double, double>, op : StaticGraphicOp ->
+			// Render the path
+			needClose = ref false;
+			moveTo(clip, 0.0, 0.0);
+
+			iter(if (cpp) deconstructGraphicsPath(path) else path, \op : StaticGraphicOp ->
 				switch (op : StaticGraphicOp) {
-					MoveTo(x, y) : updateQRange(acc, x, y);
-					LineTo(x, y) : updateQRange(acc, x, y);
-					CubicBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
-					QuadraticBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
-					ClosePath(): acc;
-					GRect(x, y, w, h): {
-						updateQRange(updateQRange(acc, x, y), x + w, y + h);
+					MoveTo(x, y) : {
+						moveTo(clip, x, y);
 					}
-					GRoundedRect(x, y, w, h, __): {
-						updateQRange(updateQRange(acc, x, y), x + w, y + h);
+					LineTo(x, y) : {
+						needClose := true;
+						lineTo(clip, x, y);
 					}
-					GEllipse(x, y, w, h): {
-						updateQRange(updateQRange(acc, x - w, y - h), x + w, y + h);
+					CubicBezierTo(x, y, cx, cy): {
+						needClose := true;
+						curveTo(clip, cx, cy, x, y);
 					}
-					GCircle(x, y, r): {
-						updateQRange(updateQRange(acc, x - r, y - r), x + r, y + r);
+					QuadraticBezierTo(x, y, cx, cy): {
+						needClose := true;
+						curveTo(clip, cx, cy, x, y);
+					}
+					ClosePath(): {
+						needClose := false;
+						endFill(clip);
+					}
+					GRect(x, y, width, height): {
+						needClose := false;
+						drawRect(clip, x, y, width, height);
+					}
+					GRoundedRect(x, y, width, height, radius): {
+						needClose := false;
+						drawRoundedRect(clip, x, y, width, height, radius);
+					}
+					GEllipse(x, y, width, height): {
+						needClose := false;
+						drawEllipse(clip, x, y, width, height);
+					}
+					GCircle(x, y, radius): {
+						needClose := false;
+						drawCircle(clip, x, y, radius);
 					}
 				}
 			);
 
-			Some(\r -> makeMatrix(abs(m.second - m.first), abs(m.fourth - m.third), r, m.first, m.third))
-		} else {
-			None()
-		}
-
-		maybeApply(^fillcolour, \fc : int -> beginFill(clip, fc, ^fillopacity));
-		maybeApply(^strokecolour, \sc : int -> setLineStyle(clip, ^strokewidth, sc, ^strokeopacity));
-		maybeApply(^strokeLineGradient, \sg : StrokeLineGradient-> {
-			colors = map(sg.points, \c -> c.color);
-			alphas = map(sg.points, \c -> c.alpha);
-			offsets = map(sg.points, \c -> c.offset);
-			maybeApply(matrix, \m -> setLineGradientStroke(clip, colors, alphas, offsets, m(sg.rotation)));
-		});
-		maybeApply(^gradientFill, \gf : GradientFill -> {
-			colors = map(gf.points, \c -> c.color);
-			alphas = map(gf.points, \c -> c.alpha);
-			offsets = map(gf.points, \c -> c.offset);
-			maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
-		});
-
-		// Render the path
-		needClose = ref false;
-		moveTo(clip, 0.0, 0.0);
-
-		iter(if (cpp) deconstructGraphicsPath(path) else path, \op : StaticGraphicOp ->
-			switch (op : StaticGraphicOp) {
-				MoveTo(x, y) : {
-					moveTo(clip, x, y);
-				}
-				LineTo(x, y) : {
-					needClose := true;
-					lineTo(clip, x, y);
-				}
-				CubicBezierTo(x, y, cx, cy): {
-					needClose := true;
-					curveTo(clip, cx, cy, x, y);
-				}
-				QuadraticBezierTo(x, y, cx, cy): {
-					needClose := true;
-					curveTo(clip, cx, cy, x, y);
-				}
-				ClosePath(): {
-					needClose := false;
-					endFill(clip);
-				}
-				GRect(x, y, width, height): {
-					needClose := false;
-					drawRect(clip, x, y, width, height);
-				}
-				GRoundedRect(x, y, width, height, radius): {
-					needClose := false;
-					drawRoundedRect(clip, x, y, width, height, radius);
-				}
-				GEllipse(x, y, width, height): {
-					needClose := false;
-					drawEllipse(clip, x, y, width, height);
-				}
-				GCircle(x, y, radius): {
-					needClose := false;
-					drawCircle(clip, x, y, radius);
-				}
+			if (^needClose) {
+				endFill(clip);
 			}
-		);
 
-		if (^needClose) {
-			endFill(clip);
-		}
+		})();
 
-		FRenderResult([clip], [\ -> deleteNative(clip)], [])
+		FRenderResult([clip], [u, \ -> deleteNative(clip)], [])
 	} else {
 		clip = makeClip();
-		setClipDebugInfo(clip, "form", FGraphics(path, style));
-		renderGraphics(clip, path, style) |> ignore;
+		setClipDebugInfo(clip, "form", FGraphics(path0, style0));
+		u = make2Subscribe(path0, style0, \path, style -> {
+			renderGraphics(clip, path, style) |> ignore;
+		})();
 
-		FRenderResult([clip], [\ -> deleteNative(clip)], [])
+		FRenderResult([clip], [u, \ -> deleteNative(clip)], [])
 	}
 }
 
@@ -1018,14 +1044,16 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 
 			urr =
 				renderFGraphics(
-					[
+					const([
 						MoveTo(0., hgt),
 						LineTo(wd, hgt),
-					],
-					if (uStyle != [])
-						uStyle
-					else
-						[Stroke(extractStruct(style, Fill(0x000000)).color)]
+					]),
+					const(
+						if (uStyle != [])
+							uStyle
+						else
+							[Stroke(extractStruct(style, Fill(0x000000)).color)]
+					)
 				);
 
 			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), [FClipMask()])
@@ -1299,12 +1327,17 @@ fform2s(rform : FForm, level : int) -> string {
 		FTextInput(content, wh, style): {
 			generateSpaces + structName + stringEncodeFix(getValue(content)) + ")"
 		}
-      	FSetPending(pen, form): fform2s(form, level);
-      	FNativeForm(__, __, ff, __): {
-      		generateSpaces + structName + "\n" +
+		FSetPending(pen, form): fform2s(form, level);
+		FNativeForm(__, __, ff, __): {
+			generateSpaces + structName + "\n" +
 			fform2s(ff(), level + 1) + "\n" +
 			generateSpaces + ")"
-      	}
+		}
+		FCanvas(content): {
+			generateSpaces + structName + "\n" +
+			fform2s(content, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
 	}
 }
 

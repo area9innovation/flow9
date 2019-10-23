@@ -4,6 +4,7 @@ import js.html.FileList;
 
 import pixi.core.display.Bounds;
 import pixi.core.display.TransformBase;
+import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -11,6 +12,8 @@ class DropAreaClip extends NativeWidgetClip {
 	private var maxFilesCount : Int;
 	private var regExp : EReg;
 	private var onDone : Array<Dynamic> -> Void;
+
+	public var keepNativeWidget = true;
 
 	public var isInteractive : Bool = true;
 
@@ -26,7 +29,7 @@ class DropAreaClip extends NativeWidgetClip {
 		widgetBounds.maxX = 0;
 		widgetBounds.maxY = 0;
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			styleChanged = false;
 		}
 
@@ -34,6 +37,7 @@ class DropAreaClip extends NativeWidgetClip {
 	}
 
 	public override function updateNativeWidgetStyle() : Void {
+		calculateWidgetBounds();
 		super.updateNativeWidgetStyle();
 
 		styleChanged = true;
@@ -56,12 +60,15 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
 		nativeWidget.onmousedown = onMouseDown;
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			nativeWidget.onmousemove = onMouseMove;
+
+			nativeWidget.onpointerover = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver(e); };
+			nativeWidget.onpointerout = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut(e); };
 		}
 		nativeWidget.style.pointerEvents = "auto";
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			nativeWidget.style.height = "inherit";
 			nativeWidget.style.width = "inherit";
 		}
@@ -103,29 +110,17 @@ class DropAreaClip extends NativeWidgetClip {
 		onDone(fileArray);
 	}
 
-	private function getWidth() : Float {
-		if (parent != null) {
-			var bounds = parent.getBounds(true);
-			return bounds.width * parent.worldTransform.a + bounds.height * parent.worldTransform.c;
-		} else {
-			return -1;
-		}
-	}
-
-	private function getHeight() : Float {
-		if (parent != null) {
-			var bounds = parent.getBounds(true);
-			return bounds.width * parent.worldTransform.b + bounds.height * parent.worldTransform.d;
-		} else {
-			return -1;
-		}
-	}
-
 	private function onMouseDown(e : Dynamic) {
 		e.preventDefault();
 	}
 
 	private function onMouseMove(e : Dynamic) {
 		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
+	}
+
+	public override function calculateWidgetBounds() : Void {
+		if (untyped parent != null && parent.localBounds != null) {
+			widgetBounds = untyped parent.localBounds;
+		}
 	}
 }

@@ -21,12 +21,13 @@ class FlowContainer extends Container {
 	public var transformChanged : Bool = false;
 	public var stageChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
+	private var localTransformChanged : Bool = true;
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
 
-	private var nativeWidget : Dynamic;
-	private var accessWidget : AccessWidget;
+	public var nativeWidget : Dynamic;
+	public var accessWidget : AccessWidget;
 
 	public var isNativeWidget : Bool = false;
 
@@ -36,14 +37,12 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = RenderSupportJSPixi.DomRenderer && (RenderSupportJSPixi.RenderContainers || worldVisible);
+		isNativeWidget = (RenderSupportJSPixi.RendererType == "html" && RenderSupportJSPixi.RenderContainers) || worldVisible;
 
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (worldVisible) {
-				nativeWidget = Browser.document.body;
-			} else {
-				createNativeWidget();
-			}
+		if (worldVisible) {
+			nativeWidget = Browser.document.body;
+		} else if (RenderSupportJSPixi.RendererType == "html") {
+			createNativeWidget();
 		}
 	}
 
@@ -124,10 +123,6 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
-			if (untyped newChild.localBounds != null && untyped newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
-				addLocalBounds(newChild.applyLocalBoundsTransform());
-			}
-
 			emitEvent("childrenchanged");
 		}
 
@@ -143,9 +138,6 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
-			if (untyped newChild.localBounds != null && untyped newChild.localBounds.minX != Math.POSITIVE_INFINITY) {
-				addLocalBounds(newChild.applyLocalBoundsTransform());
-			}
 			emitEvent("childrenchanged");
 		}
 
@@ -156,12 +148,11 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			if (untyped oldChild.localBounds != null && untyped oldChild.localBounds.minX != Math.POSITIVE_INFINITY) {
-				removeLocalBounds(oldChild.applyLocalBoundsTransform());
-			}
-
 			invalidateInteractive();
-			invalidateStage();
+			invalidateTransform('removeChild');
+			if (untyped this.keepNativeWidgetChildren) {
+				updateKeepNativeWidgetChildren();
+			}
 
 			emitEvent("childrenchanged");
 		}
@@ -181,16 +172,18 @@ class FlowContainer extends Container {
 	}
 
 	public function render(renderer : CanvasRenderer) {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (stageChanged) {
 				stageChanged = false;
 
 				if (transformChanged) {
 					var bounds = new Bounds();
+					untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
 					bounds.minX = 0;
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
 					bounds.maxY = renderer.height;
+					invalidateLocalBounds();
 					invalidateRenderable(bounds);
 
 					DisplayObjectHelper.lockStage();
@@ -198,35 +191,34 @@ class FlowContainer extends Container {
 					DisplayObjectHelper.unlockStage();
 				}
 			}
-		} else if (stageChanged && view != null) {
+		} else if (stageChanged) {
 			stageChanged = false;
 
-			renderer.view = view;
-			renderer.context = context;
-			untyped renderer.rootContext = context;
-			renderer.transparent = parent.children.indexOf(this) != 0;
-
-			DisplayObjectHelper.lockStage();
+			if (view != null) {
+				renderer.view = view;
+				renderer.context = context;
+				untyped renderer.rootContext = context;
+				renderer.transparent = parent.children.indexOf(this) != 0;
+			}
 
 			if (transformChanged) {
 				var bounds = new Bounds();
+				untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
 				bounds.minX = 0;
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;
 				bounds.maxY = renderer.height;
+				invalidateLocalBounds();
 				invalidateRenderable(bounds);
 			}
 
-			renderer.render(this, null, true, null, !transformChanged);
+			DisplayObjectHelper.lockStage();
+			renderer.render(this, null, true, null, false);
 			DisplayObjectHelper.unlockStage();
 		}
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		if (localBounds.minX == Math.POSITIVE_INFINITY) {
-			calculateLocalBounds('getLocalBounds');
-		}
-
 		rect = localBounds.getRectangle(rect);
 
 		var filterPadding = untyped this.filterPadding;
@@ -247,7 +239,7 @@ class FlowContainer extends Container {
 		}
 
 		getLocalBounds();
-		this.calculateBounds();
+		calculateBounds();
 
 		return _bounds.getRectangle(rect);
 	}

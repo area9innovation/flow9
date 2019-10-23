@@ -68,7 +68,7 @@ class WebClip extends NativeWidgetClip {
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			iframe.className = 'nativeWidget';
 			iframe.style.pointerEvents = 'auto';
 		}
@@ -93,7 +93,7 @@ class WebClip extends NativeWidgetClip {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
 
-				if (!RenderSupportJSPixi.DomRenderer) {
+				if (RenderSupportJSPixi.RendererType != "html") {
 					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
 					if (Native.isTouchScreen()) {
 						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
@@ -250,28 +250,6 @@ class WebClip extends NativeWidgetClip {
 	public function evalJS(code : String) : Void {
 		if (iframe.contentWindow != null) {
 			iframe.contentWindow.postMessage(code, '*');
-		}
-	}
-
-	public override function setWidth(widgetWidth : Float) : Void {
-		if (widgetBounds.getBoundsWidth() != widgetWidth) {
-			widgetBounds.minX = 0;
-			widgetBounds.maxX = widgetWidth;
-
-			trace(widgetBounds);
-
-			invalidateStyle();
-		}
-	}
-
-	public override function setHeight(widgetHeight : Float) : Void {
-		if (widgetBounds.getBoundsHeight() != widgetHeight) {
-			widgetBounds.minY = 0;
-			widgetBounds.maxY = widgetHeight;
-
-			trace(widgetBounds);
-
-			invalidateStyle();
 		}
 	}
 }

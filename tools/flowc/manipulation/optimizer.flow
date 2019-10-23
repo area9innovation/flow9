@@ -147,7 +147,7 @@ optimizeCodeLocal(prog : FiProgram, optEnv : OptEnv) -> FiProgram {
 optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : string, effects : FiEffects) -> FiModule {
 	t0 = timestamp();
 	if (prog.config.verbose >= 2) {
-		fcPrintln("Optimizing module " + module.fileinfo.flowfile);
+		fcPrintln("Optimizing module " + module.fileinfo.flowfile, prog.config.threadId);
 	}
 	has_changes = ref false;
 	opt_gvars = fold(
@@ -156,7 +156,7 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 		\acc, gvar -> {
 			t1 = timestamp();
 			if (prog.config.verbose >= 2) {
-				fcPrintln("\tOptimizing global variable " + gvar.name);
+				fcPrintln("\tOptimizing global variable " + gvar.name, prog.config.threadId);
 			}
 			optimized = optimizeExp(
 				gvar.value, 
@@ -165,7 +165,7 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 			has_changes := ^has_changes || optimized != gvar.value;
 			dt = timestamp() - t1;
 			if (prog.config.verbose >= 2 && dt > 20.0) {
-				fcPrintln("\tGlobal variable " + gvar.name + " is optimized in " + d2st(dt / 1000.0, 3) + " s.");
+				fcPrintln("\tGlobal variable " + gvar.name + " is optimized in " + d2st(dt / 1000.0, 3) + " s.", prog.config.threadId);
 			}
 			concat(
 				acc, [
@@ -186,7 +186,7 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 		\acc, func : FiFunctionDec -> {
 			t1 = timestamp();
 			if (prog.config.verbose >= 2) {
-				fcPrintln("\tOptimizing function " + func.name);
+				fcPrintln("\tOptimizing function " + func.name, prog.config.threadId);
 			}
 			optimized = optimizeExp(
 				func.lambda, 
@@ -195,7 +195,7 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 			has_changes := ^has_changes || optimized != func.lambda;
 			dt = timestamp() - t1;
 			if (prog.config.verbose >= 2 && dt > 20.0) {
-				fcPrintln("\tFunction " + func.name + " is optimized in " + d2st(dt / 1000.0, 3) + " s.");
+				fcPrintln("\tFunction " + func.name + " is optimized in " + d2st(dt / 1000.0, 3) + " s.", prog.config.threadId);
 			}
 			switch (optimized) {
 				FiLambda(__, __, __, __): 
@@ -213,7 +213,7 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 	);
 	dt = timestamp() - t0;
 	if (prog.config.verbose >= 1) {
-		fcPrintln("Module " + module.fileinfo.flowfile + " is optimized in " + d2st(dt / 1000.0, 3) + " s.");
+		fcPrintln("Module " + module.fileinfo.flowfile + " is optimized in " + d2st(dt / 1000.0, 3) + " s.", prog.config.threadId);
 	}
 	FiModule(
 		module.fileinfo, 
@@ -229,6 +229,7 @@ optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : 
 		module.stringIncludes,
 		module.start, 
 		module.end,
+		module.allImports,
 		if (^has_changes) false else module.incremental
 	)
 }
@@ -552,7 +553,7 @@ optimizeCallPrim(expr : FiCallPrim, envExp : OptEnvExp) -> FiExp {
 		FcAndPrim():    applyBoolBinOp(es, \x, y, i -> FiBool(x && y, i), def_val);
 		FcNotPrim():    applyBoolUnOp(es, \x, i -> FiBool(!x, i), def_val);
 		FcArrayPrim():  def_val;
-		FcIndexPrim():  applyArrayAccess(es, def_val);
+		FcIndexPrim():  applyArrayAccess(es, def_val, envExp);
 
 		FcDerefPrim():	 def_val;  // TODO
 		FcAssignPrim():	 def_val;  // TODO
@@ -654,7 +655,7 @@ applyStringUnOp(es : [FiExp], fn : (string, int) -> FiExp, def_val : FiExp) -> F
 	} else def_val
 }
 
-applyArrayAccess(es : [FiExp], def_val : FiExp) -> FiExp {
+applyArrayAccess(es : [FiExp], def_val : FiExp, envExp : OptEnvExp) -> FiExp {
 	if (length(es) == 2) {
 		switch (es[0]) {
 			FiCallPrim(op, arr, __, __): {
@@ -664,7 +665,7 @@ applyArrayAccess(es : [FiExp], def_val : FiExp) -> FiExp {
 							FiInt(i, __) :
 								if (0 <= i && i < length(arr)) arr[i]
 								else {
-									fcPrintln("array index " + i2s(i) + " is out of bounds: " + i2s(length(arr)));
+									fcPrintln("array index " + i2s(i) + " is out of bounds: " + i2s(length(arr)), envExp.prog.config.threadId);
 									def_val
 								}
 							default: def_val;
@@ -729,19 +730,19 @@ accessStructField(field : string, op : FcPrim, ess : [FiExp], type : FiType, def
 								FiTypeStruct(__, __, args, __):
 									findiDef(args, \a -> (a.name == field) && !(typeIsRef(a.type)) && !a.ismutable, -1);
 								default: {
-									fcPrintln("accessing a field " + field + " of non-struct " + nm);
+									fcPrintln("accessing a field " + field + " of non-struct " + nm, envExp.prog.config.threadId);
 									-1;
 								}
 							}
 						}
 						None(): {
-							fcPrintln("unknown field " + field + " in struct " + nm);
+							fcPrintln("unknown field " + field + " in struct " + nm, envExp.prog.config.threadId);
 							-1
 						}
 					}
 				}
 				default: {
-					fcPrintln("unknown field " + field + " in struct " + nm);
+					fcPrintln("unknown field " + field + " in struct " + nm, envExp.prog.config.threadId);
 					-1;
 				}
 			}
