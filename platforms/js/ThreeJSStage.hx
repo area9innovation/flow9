@@ -99,12 +99,18 @@ class ThreeJSStage extends Container {
 			return;
 		}
 
+		var interactiveChildren = scene.get3DObjectAllInteractiveChildren();
+
+		if (interactiveChildren.length == 0) {
+			return;
+		}
+
 		var handledObjects = new Array<Dynamic>();
 
 		var raycaster = new Raycaster();
 		raycaster.setFromCamera(new Vector2((event.pageX / getWidth()) * 2.0 - 1.0, -(event.pageY / getHeight()) * 2.0 + 1.0), camera);
 
-		for (ob in raycaster.intersectObjects(scene.get3DObjectAllChildren())) {
+		for (ob in raycaster.intersectObjects(interactiveChildren)) {
 			var object = ob.object;
 
 			if (handledObjects.indexOf(object) == -1) {
@@ -145,12 +151,18 @@ class ThreeJSStage extends Container {
 		invalidateStage();
 	}
 
-	public function setCamera(camera : Camera) {
+	public function setCamera(camera : Camera, minDistance : Float, maxDistance : Float) {
 		this.camera = camera;
 
 		createOrbitControls();
 		createTransformControls();
 		addEventListeners();
+
+		orbitControls.minDistance = minDistance;
+		orbitControls.maxDistance = maxDistance;
+		orbitControls.enableDamping = true;
+		orbitControls.dampingFactor = 0.1;
+		orbitControls.rotateSpeed = 0.05;
 
 		invalidateStage();
 	}
