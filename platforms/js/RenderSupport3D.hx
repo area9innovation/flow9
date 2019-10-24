@@ -402,6 +402,14 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function set3DMaterialDisplacementMap(material : Material, displacementMap : Texture, displacementScale : Float, displacementBias : Float) : Void {
+		if (untyped material.displacementMap != displacementMap) {
+			untyped material.displacementMap = displacementMap;
+			untyped material.displacementScale = displacementScale;
+			untyped material.displacementBias = displacementBias;
+		}
+	}
+
 	public static function set3DMaterialOpacity(material : Material, opacity : Float) : Void {
 		if (untyped material.opacity != opacity) {
 			untyped material.opacity = opacity;

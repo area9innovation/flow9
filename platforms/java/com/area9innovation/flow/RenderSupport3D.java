@@ -91,6 +91,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DMaterialDisplacementMap(Object object, Object displacementMap, Double displacementScale, Double displacementBias) {
+		return null;
+	}
+
 	public Object set3DMaterialOpacity(Object object, Double opacity) {
 		return null;
 	}
