@@ -32,6 +32,7 @@ import js.three.SphereBufferGeometry;
 import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
+import js.three.ShaderMaterial;
 
 import js.three.Texture;
 
@@ -545,10 +546,10 @@ class RenderSupport3D {
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
 		if (stage.transformControls != null) {
-		 	if (untyped object.transformControls != null) {
-		 		if (untyped object.transformControls.object != null) {
-		 			detach3DTransformControls(stage, untyped object.transformControls.object);
-		 		}
+			if (untyped object.transformControls != null) {
+				if (untyped object.transformControls.object != null) {
+					detach3DTransformControls(stage, untyped object.transformControls.object);
+				}
 			} else {
 				if (stage.transformControls.object != null) {
 					if (stage.transformControls.object == object) {
@@ -1332,6 +1333,28 @@ class RenderSupport3D {
 		}
 
 		return material;
+	}
+
+	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String) : Material {
+		if (vertexShader != "") {
+			if (fragmentShader != "") {
+				return new ShaderMaterial(untyped {
+					uniforms: haxe.Json.parse(uniforms),
+					vertexShader: vertexShader,
+					fragmentShader: fragmentShader
+				});
+			} else {
+				return new ShaderMaterial(untyped {
+					uniforms: haxe.Json.parse(uniforms),
+					vertexShader: vertexShader,
+				});
+			}
+		} else {
+			return new ShaderMaterial(untyped {
+				uniforms: haxe.Json.parse(uniforms),
+				fragmentShader: fragmentShader
+			});
+		}
 	}
 
 
