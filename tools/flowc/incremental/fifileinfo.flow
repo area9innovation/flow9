@@ -39,6 +39,34 @@ export {
 
 	// Detects if a file is outdated for some reason. Doesn't check dependencies.
 	fcModuleNeedReloading(fileinfo : FiFileInfo, stringIncludes : [FiFileInfo], config : CompilerConfig) -> bool;
+
+	getFlowcObjectFolder(config : CompilerConfig) -> string;
+	moduleIsCached(config : CompilerConfig, fileinfo : FiFileInfo) -> bool;
+	getCacheFilename(config : CompilerConfig, flowname : string) -> string;
+	ensureIncrementalDirectoryExists(config : CompilerConfig) -> void;
+}
+
+getFlowcObjectFolder(config : CompilerConfig) -> string {
+	cobj = getConfigParameter(config.config, "obj");
+	// Workaround when incremental is 0
+	if (cobj == "obj,objshared") "objc"
+	else if (config.objectFolders == []) "objc" else lastElement(config.objectFolders, config.objectFolders[0]);
+}
+
+getCacheFilename(config : CompilerConfig, flowname : string) -> string {
+	getFlowcObjectFolder(config) + "/" + strReplace(strReplace(flowname, "/", "_"), ":", "_")  + ".module"
+}
+
+moduleIsCached(config : CompilerConfig, fileinfo : FiFileInfo) -> bool {
+	fileExists(getCacheFilename(config, fileinfo.flowfile))
+}
+
+ensureIncrementalDirectoryExists(config : CompilerConfig) -> void {
+	isIncremental = !isConfigParameterFalse(config.config, "incremental");
+	if (isIncremental) {
+		incrementalDir = getFlowcObjectFolder(config);
+		ensureDirectoryExists(incrementalDir) |> ignore;
+	}
 }
 
 getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
@@ -59,7 +87,7 @@ getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
 
 fcModuleNeedReloading(fileinfo : FiFileInfo, stringIncludes : [FiFileInfo], config : CompilerConfig) -> bool {
 	checkMd5 = getConfigParameter(config.config, "use-md5") == "1";
-	fiFileInfoFileChanged(fileinfo, config) || exists(stringIncludes, \inc -> fiFileInfoFileChanged(inc, config))
+	!moduleIsCached(config, fileinfo) || fiFileInfoFileChanged(fileinfo, config) || exists(stringIncludes, \inc -> fiFileInfoFileChanged(inc, config))
 	// We also have to check that the NEW full path of the file MATCHES
 	// the full path inside the incremental, because if the file is moved
 	// it might register as unchanged, even if it really is.
