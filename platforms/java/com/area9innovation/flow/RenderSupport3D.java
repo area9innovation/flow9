@@ -72,15 +72,42 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DScene(String url, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DTexture(Object object, String url) {
+	public Object load3DTexture(String url, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;
 	}
-	public Object make3DDataTexture(Object object, Object[] data, Integer width, Integer height, Object[] parameters) {
+	public Object make3DDataTexture(Object[] data, Integer width, Integer height, Object[] parameters) {
 		return null;
 	}
-	public Object make3DCanvasTexture(Object object, Object clip) {
+	public Object make3DCanvasTexture(Object clip, Object[] parameters) {
 		return null;
 	}
+
+
+	public Object set3DMaterialMap(Object object, Object map) {
+		return null;
+	}
+
+	public Object set3DMaterialAlphaMap(Object object, Object alphaMap) {
+		return null;
+	}
+
+	public Object set3DMaterialOpacity(Object object, Double opacity) {
+		return null;
+	}
+
+
+	public Object set3DMaterialRotation(Object object, Double rotation) {
+		return null;
+	}
+
+	public Object set3DMaterialOffsetX(Object object, Double x) {
+		return null;
+	}
+
+	public Object set3DMaterialOffsetY(Object object, Double y) {
+		return null;
+	}
+
 
 	public Object make3DAxesHelper(Double size) {
 		return null;
@@ -90,7 +117,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object set3DCamera(Object stage, Object camera) {
+	public Object set3DCamera(Object stage, Object camera, Double minDistance, Double maxDistance) {
 		return null;
 	}
 	public Object set3DScene(Object stage, Object scene) {
@@ -503,6 +530,13 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+
+	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
+		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength) {
+		return null;
+	}
+
+
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
 		return null;
 	}
@@ -512,11 +546,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object make3DMesh(Object geometry, Object material, Object[] parameters) {
-		return null;
-	}
-
-	public Object set3DObjectAlphaMap(Object object, Object alphaMap) {
+	public Object make3DMesh(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}
 
