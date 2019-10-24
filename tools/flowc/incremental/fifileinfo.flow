@@ -1,8 +1,19 @@
 import utctime;
 import fs/filesystem;
+import tools/common/compilerconfig;
 import tools/flowc/flowc_println;
 
 export {
+
+	FcFileInfo(
+		flowfile : string, // The path as used by flow imports
+		trampstamp : double,
+		fullpath : string, // The full filesystem path
+		md5sum : string,
+		mutable content : string,
+		mutable gensymid : int,
+		filesize : double
+	);
 
 	FiFileInfo(
 		flowfile : string, // The path as used by flow imports
@@ -16,38 +27,81 @@ export {
 	dummyFiFileInfo = FiFileInfo("", 0.0,"","", 0.0, 0.0);
 
 	// Switching on md5 check may slow down a checking
-	fiFileInfoFileChanged(file : FiFileInfo, checkMd5 : bool) -> bool;
+	fiFileInfoFileChanged(file : FiFileInfo, config : CompilerConfig) -> bool;
 
 	// Switching on md5 check may slow down a checking
-	fiFileInfoFileChangedMessage(fileinfo : FiFileInfo, checkMd5 : bool, id : int) -> void;
+	fiFileInfoFileChangedMessage(fileinfo : FiFileInfo, config : CompilerConfig) -> void;
 
 	// Set 'lastupdate' to the current timestamp
 	updateFiFileInfo(fileinfo : FiFileInfo) -> FiFileInfo;
+
+	getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo;
+
+	// Detects if a file is outdated for some reason. Doesn't check dependencies.
+	fcModuleNeedReloading(fileinfo : FiFileInfo, stringIncludes : [FiFileInfo], config : CompilerConfig) -> bool;
 }
 
-fiFileInfoFileChanged(fileinfo : FiFileInfo, checkMd5 : bool) -> bool {
+getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	realfile = findFlowPath(file, true, config.includes, workingDir);
+	content = getFileContent(realfile);
+
+	FcFileInfo(
+		trimFlowfile(file, config.includes, workingDir),
+		fileModified(realfile),
+		realfile,
+		md5(content),
+		content,
+		0,
+		fileSize(realfile)
+	);
+}
+
+fcModuleNeedReloading(fileinfo : FiFileInfo, stringIncludes : [FiFileInfo], config : CompilerConfig) -> bool {
+	checkMd5 = getConfigParameter(config.config, "use-md5") == "1";
+	fiFileInfoFileChanged(fileinfo, config) || exists(stringIncludes, \inc -> fiFileInfoFileChanged(inc, config))
+	// We also have to check that the NEW full path of the file MATCHES
+	// the full path inside the incremental, because if the file is moved
+	// it might register as unchanged, even if it really is.
+	|| {
+		sourcefileinfo = getFcFileInfo(fileinfo.flowfile, config);
+		if (config.verbose > 0) {
+			if (!isSamePath(fileinfo.fullpath, sourcefileinfo.fullpath)) {
+				fcPrintln("Incremental file says original was found at '" + fileinfo.fullpath + "' Source file is found at ''" + sourcefileinfo.fullpath + "'", config.threadId);
+			} else {
+				if (config.verbose > 1) {
+					fcPrintln("  File is found at '" + fileinfo.fullpath + "'", config.threadId);
+				}
+			}
+		}
+		!isSamePath(fileinfo.fullpath, sourcefileinfo.fullpath)
+	}
+}
+
+fiFileInfoFileChanged(fileinfo : FiFileInfo, config : CompilerConfig) -> bool {
 	timestamp_ = fileModified(fileinfo.fullpath);
 	actualFilesize = fileSize(fileinfo.fullpath);
-
+	checkMd5 = getConfigParameter(config.config, "use-md5") == "1";
 	actualMd5Sum = if (checkMd5) fileChecksum(fileinfo.fullpath) else dummyFiFileInfo.md5sum;
 	(fileinfo.trampstamp != timestamp_) || (fileinfo.filesize != actualFilesize) || checkMd5 && (fileinfo.md5sum != actualMd5Sum);
 }
 
-fiFileInfoFileChangedMessage(fileinfo : FiFileInfo, checkMd5 : bool, id : int) -> void {
+fiFileInfoFileChangedMessage(fileinfo : FiFileInfo, config : CompilerConfig) -> void {
 	timestamp_ = fileModified(fileinfo.fullpath);
 	actualFilesize = fileSize(fileinfo.fullpath);
+	checkMd5 = getConfigParameter(config.config, "use-md5") == "1";
 	actualMd5Sum = if (checkMd5) fileChecksum(fileinfo.fullpath) else dummyFiFileInfo.md5sum;
 	if (fileinfo.trampstamp != timestamp_) {
-		fcPrintln("Module '" + fileinfo.flowfile + "' is obsolete with timestamp '" + time2stringUtc(fileinfo.trampstamp) + "' while source has '" + time2stringUtc(timestamp_) + "'", id);
-		fcPrintln("File at " + fileinfo.fullpath, id);
+		fcPrintln("Module '" + fileinfo.flowfile + "' is obsolete with timestamp '" + time2stringUtc(fileinfo.trampstamp) + "' while source has '" + time2stringUtc(timestamp_) + "'", config.threadId);
+		fcPrintln("File at " + fileinfo.fullpath, config.threadId);
 	}
 	if (fileinfo.filesize != actualFilesize) {
-		fcPrintln("Module '" + fileinfo.flowfile + "' is obsolete with file size " + d2s(fileinfo.filesize) + " while source size is " + d2s(actualFilesize), id);
-		fcPrintln("File at " + fileinfo.fullpath, id);
+		fcPrintln("Module '" + fileinfo.flowfile + "' is obsolete with file size " + d2s(fileinfo.filesize) + " while source size is " + d2s(actualFilesize), config.threadId);
+		fcPrintln("File at " + fileinfo.fullpath, config.threadId);
 	}
 	if (checkMd5 && fileinfo.md5sum != actualMd5Sum) {
-		fcPrintln("Module '" + fileinfo.flowfile + "' is obsolete with md5 sum " + fileinfo.md5sum + " while source md5 sum is " + actualMd5Sum, id);
-		fcPrintln("File at " + fileinfo.fullpath, id);
+		fcPrintln("Module '" + fileinfo.flowfile + "' is obsolete with md5 sum " + fileinfo.md5sum + " while source md5 sum is " + actualMd5Sum, config.threadId);
+		fcPrintln("File at " + fileinfo.fullpath, config.threadId);
 	}
 }
 
