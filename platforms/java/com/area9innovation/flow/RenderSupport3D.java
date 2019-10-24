@@ -91,6 +91,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DMaterialDisplacementMap(Object object, Object displacementMap, Double displacementScale, Double displacementBias) {
+		return null;
+	}
+
 	public Object set3DMaterialOpacity(Object object, Double opacity) {
 		return null;
 	}
@@ -117,7 +121,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object set3DCamera(Object stage, Object camera) {
+	public Object set3DCamera(Object stage, Object camera, Double minDistance, Double maxDistance) {
 		return null;
 	}
 	public Object set3DScene(Object stage, Object scene) {
@@ -542,6 +546,10 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object make3DMeshStandardMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DShaderMaterial(String uniforms, String vertexShader, String fragmentShader) {
 		return null;
 	}
 
