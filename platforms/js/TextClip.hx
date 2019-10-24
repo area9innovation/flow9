@@ -720,7 +720,7 @@ class TextClip extends NativeWidgetClip {
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
 		if (this.interlineSpacing != interlineSpacing) {
 			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = style.fontSize * 1.2 + interlineSpacing;
+			style.lineHeight = Math.ceil(style.fontSize * 1.15 + interlineSpacing);
 
 			invalidateMetrics();
 		}
@@ -936,37 +936,44 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onFocus(e : Event) : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
-			isFocused = true;
-			emit('focus');
+		isFocused = true;
 
-			if (parent != null) {
-				parent.emitEvent('childfocused', this);
-			}
+		if (RenderSupportJSPixi.Animating) {
+			RenderSupportJSPixi.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
 
-			if (nativeWidget == null || parent == null) {
-				return;
-			}
+		emit('focus');
 
-			if (Platform.isIOS && RenderSupportJSPixi.RendererType != "html") {
-				RenderSupportJSPixi.ensureCurrentInputVisible();
-			}
+		if (parent != null) {
+			parent.emitEvent('childfocused', this);
+		}
 
-			invalidateMetrics();
-		});
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
+
+		if (Platform.isIOS && RenderSupportJSPixi.RendererType != "html") {
+			RenderSupportJSPixi.ensureCurrentInputVisible();
+		}
+
+		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
-			isFocused = false;
-			emit('blur');
+		if (RenderSupportJSPixi.Animating) {
+			RenderSupportJSPixi.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
 
-			if (nativeWidget == null || parent == null) {
-				return;
-			}
+		isFocused = false;
+		emit('blur');
 
-			invalidateMetrics();
-		});
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
+
+		invalidateMetrics();
 	}
 
 	private function onInput(e : Dynamic) {

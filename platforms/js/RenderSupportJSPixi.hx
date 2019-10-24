@@ -897,10 +897,13 @@ class RenderSupportJSPixi {
 		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
 	}
 
+	public static var Animating = false;
+
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
 		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
+			Animating = true;
 			PixiStageChanged = false;
 
 			if (RendererType == "html") {
@@ -929,6 +932,8 @@ class RenderSupportJSPixi {
 
 			untyped PixiRenderer._lastObjectRendered = PixiStage;
 			PixiStageChanged = false; // to protect against recursive invalidations
+			Animating = false;
+
 			emit("stagechanged", timestamp);
 		} else {
 			AccessWidget.updateAccessTree();
@@ -2014,7 +2019,6 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setCursor(cursor : String) : Void {
-		Native.printCallstack();
 		PixiView.style.cursor = cursor2css(cursor);
 	}
 

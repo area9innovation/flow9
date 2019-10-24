@@ -286,6 +286,7 @@ class DisplayObjectHelper {
 		updateStage(clip);
 
 		if (clip.parent != null) {
+			invalidateParentClip(clip);
 			invalidateVisible(clip);
 			invalidateInteractive(clip, clip.parent.interactiveChildren);
 			invalidateTransform(clip, 'invalidate');
@@ -312,6 +313,18 @@ class DisplayObjectHelper {
 			if (isNativeWidget(clip)) {
 				updateNativeWidgetDisplay(clip);
 			}
+		}
+	}
+
+	public static function invalidateParentClip(clip : DisplayObject, ?parentClip : DisplayObject) : Void {
+		if (untyped !parentClip) {
+			parentClip = findParentClip(clip);
+		}
+
+		untyped clip.parentClip = parentClip;
+
+		for (child in getClipChildren(clip)) {
+			invalidateParentClip(child, isNativeWidget(clip) ? clip : parentClip);
 		}
 	}
 
@@ -1402,7 +1415,7 @@ class DisplayObjectHelper {
 			untyped clip.addNativeWidget();
 		} else if (RenderSupportJSPixi.RendererType == "html") {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && clip.renderable) {
-				appendNativeWidget(findParentClip(clip), clip);
+				appendNativeWidget(untyped clip.parentClip || findParentClip(clip), clip);
 				RenderSupportJSPixi.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
 			}
 		} else {
@@ -1493,12 +1506,9 @@ class DisplayObjectHelper {
 			}
 
 			var nextWidget = findNextNativeWidget(child, clip);
-
 			untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
 
 			applyScrollFnChildren(child);
-
-			untyped child.parentClip = clip;
 		} else {
 			appendNativeWidget(clip.parent, child);
 		}
