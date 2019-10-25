@@ -6,28 +6,25 @@ import text/bidi_text;
 
 export {
 	TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> TDynamicParagraph;
-	getDynamicTropicSize(tropic : Tropic) -> Pair<Tropic, TFormMetrics>;
 
 	TDynamicParagraph(
 		tropic : Tropic,
-		addWords : (idx : int, newWords : [TParaWord]/* , newElem : bool */) -> void,
-		removeWord : (idx : int) -> void
+		addWords : (idx : int, newWords : [TParaWord]) -> void,
+		removeWords : (start : int, count : int, reflow : bool) -> void
 	);
 
 	general2TParaWord(w : GeneralWrapElement, style : [CharacterStyle], id : int) -> TParaWord;
 	commonWordConstructor(
-		w : TWrapElement,
+		w : GeneralWrapElement,
 		tr : Tropic,
 		id : int,
+		style : [CharacterStyle],
 		inspectorM : Maybe<ParaElementInspector>
 	) -> TParaWord;
+	inspectWordView(tr : Tropic, inspector : ParaElementInspector) -> Tropic;
+
 
 }
-
-isConstMetrics(m : TFormMetrics) -> bool {
-	isFConst(m.width) && isFConst(m.height) && isFConst(m.baseline);
-}
-
 
 TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> TDynamicParagraph {
 
@@ -65,7 +62,10 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	ndynamic = fold(^words, 0, \acc, w -> if (isConstMetrics(w.metrics)) acc else 1 + acc);
+	ndynamic = fold(^words, 0, \acc, w -> switch (w.word) {
+		NonTextElement() : acc + 1;
+		default : acc;
+	});
 	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
 
 	stackChanges = make([]);
@@ -90,48 +90,50 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 		nextDistinct(paragraphWHB, paragraphSize);
 	};
 
-	addWords = \index, newWords -> {
-		idx = max(min(index, length(^words) - 1), 0);
-		maybeApply(
-			elementAtM(newWords, 0),
-			\newWord -> {
-				words := replace(^words, idx, newWord);
-				dynArrayPush(stackChanges, TGroupReplace(translateWord(newWord), idx));
+	subscribe2dynWord = \w -> if (isSameStructType(NonTextElement(), w.word)) apply0(make2Subscribe2(
+		w.inspector.size,
+		w.inspector.baseline,
+		\size, ba -> {
+			if (ndynamic <= ndymamicUpper) {
+				// There is less or equal than upper limit of dynamic elements here, so just update immediately
+				updateFn(getValue(aw))
+			} else {
+				// There are more, so to prevent unnecessary work, delay the update
+				nextDistinct(update, 1);
 			}
-		);
-		iteri(tail(newWords), \i, newWord -> {
-			words := insertArray(^words, idx + i + 1, newWord);
+		}
+	)) else nop;
+
+	dynamicWordsUns = ref [];
+
+	addWords = \index, newWords -> {
+		idx = max(min(index, length(^words)), 0);
+		iteri(newWords, \i, newWord -> {
+			words := insertArray(^words, idx + i, newWord);
+			dynamicWordsUns := insertArray(^dynamicWordsUns, idx + i, subscribe2dynWord(newWord));
 			dynArrayPush(
 				stackChanges,
-				TGroupAdd(translateWord(newWord), idx + i + 1)
+				TGroupAdd(translateWord(newWord), idx + i)
 			);
 		});
 		updateFn(getValue(aw));
 	}
 
-	removeWord = \index -> {
-		idx = min(index, length(^words) - 1);
-		words := removeIndex(^words, idx);
-		updateFn(getValue(aw));
-		dynArrayPush(stackChanges, TGroupDelete(idx));
+	removeWords = \start, count, reflow -> {
+		idx = min(start, length(^words) - 1);
+		fori(1, count, \__ -> {
+			words := removeIndex(^words, idx);
+			apply0(elementAt(^dynamicWordsUns, idx, nop));
+			dynamicWordsUns := removeIndex(^dynamicWordsUns, idx);
+			dynArrayPush(stackChanges, TGroupDelete(idx));
+		});
+		if (reflow) updateFn(getValue(aw));
 	}
 
 	tropic = TConstruct(
 		[\ -> {
 			unsub1 = subscribe(aw, updateFn);
-
-			unsubs = filtermap(^words, \w -> if (isConstMetrics(w.metrics)) None() else {
-				// Force an update by changing the available
-				Some(make3Subscribe2(w.metrics.width, w.metrics.height, w.metrics.baseline, \wi, he, ba -> {
-					if (ndynamic <= ndymamicUpper) {
-						// There is less or equal than upper limit of dynamic elements here, so just update immediately
-						updateFn(getValue(aw))
-					} else {
-						// There are more, so to prevent unnecessary work, delay the update
-						nextDistinct(update, 1);
-					}
-				})())
-			});
+			dynamicWordsUns := map(^words, subscribe2dynWord);
 
 			// When an update from a dynamic element is requested, we do it in the next frame
 			unsub2 = subscribe(update, \u -> {
@@ -146,7 +148,8 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 
 			\ -> {
 				unsub1();
-				applyall(unsubs);
+				applyall(^dynamicWordsUns);
+				dynamicWordsUns := [];
 				unsub2();
 			}
 		}],
@@ -159,126 +162,67 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 			aw
 		)
 	);
-	TDynamicParagraph(tropic, addWords, removeWord);
+	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
-expandParagraphElements(
-	elements : [TParagraphElement],
-) ->  Pair<List<TParaWord>, Tree<int, [TTexFragmentStyle]>> {
-	foldi2(elements, makeList(), makeTree(), \i, acc1, acc2, elem  -> {
-		switch(elem) {
-			StyledTextFragments(fragments, style) : Pair(
-				switch(fragments: TTextFragments) {
-					GeneralTextFragments(strFragments, characterStyle) : foldList(
-						reverseList(strFragments),
-						acc1,
-						\subAcc, w -> Cons(general2TParaWord(w, characterStyle, i), subAcc)
-					);
-					default : Cons(makeTParaWord(fragments, i), acc1);
-				},
-				setTree(acc2, i, style)
-			);
-			// Should not happen, try to avoid this case.
-			default : {
-				Pair(EmptyList(), makeTree());
-			}
-		}
-	});
-}
 
 commonWordConstructor(
-	w : TWrapElement,
+	w : GeneralWrapElement,
 	tr : Tropic,
 	id : int,
+	style : [CharacterStyle],
 	inspectorM : Maybe<ParaElementInspector>
 ) -> TParaWord {
-	formAndSize = getDynamicTropicSize(tr);
+	inspector = either(inspectorM, dummyInspector());
+	wordView = inspectWordView(tr, inspector);
 	TParaWord(
 		w,
-		formAndSize.second,
-		eitherMap(
-			inspectorM,
-			\inspector -> TInspectGhost(inspector, formAndSize.first),
-			GhostElem(make(Point(0., 0.,)), formAndSize.first),
-		),
-		make(id)
+		inspector,
+		wordView,
+		make(id),
+		style,
+		make(false)
 	);
 }
 
-general2TParaWord(
-	w : GeneralWrapElement,
-	style : [CharacterStyle],
-	id : int
-) -> TParaWord {
-	switch (w) {
-		GeneralText(txt) : commonWordConstructor(TText(txt, style), TText(txt, style), id, None());
-		GeneralSpace(txt) : commonWordConstructor(TSpace(style), TText(txt, style), id, None());
-		NewLine() : TParaWord(NewLine(), zeroTMetrics, GhostElem(make(Point(0., 0.)), TEmpty()), make(id));
-		EmptyLineElement() : commonWordConstructor(TEmpty(), makeTZeroSpaceElement(style), id, None());
-		GeneralLinePart(f, m, e) : {
-			word = TLinePart(TText(f, style), TText(m, style), TText(e, style));
-			commonWordConstructor(word, TText(m, style), id, None());
-		}
-		GeneralInspectElement(inspector, element) : {
-			inspectingWord = general2TParaWord(element, style, id);
-			commonWordConstructor(
-				inspectingWord.word,
-				switch (inspectingWord.ghostView) {
-					GhostElem(point, view) : view;
-					TInspectGhost(__, view) : view;
-				},
-				id,
-				Some(inspector)
-			);
-		}
+inspectWordView(tr : Tropic, inspector : ParaElementInspector) -> Tropic {
+	if (isConstantSizeTropic(tr)) {
+		fMetrics = getTropicMetrics(tr);
+		nextDistinct(inspector.size, WidthHeight(fMetrics.width, fMetrics.height));
+		nextDistinct(inspector.baseline, fMetrics.baseline);
+		tr;
+	} else {
+		TInspect([ISize(inspector.size), IBaseline(inspector.baseline)], tr);
 	}
 }
 
-makeTParaWord(w : TTextFragments, id : int) -> TParaWord {
-	switch (w : TTextFragments) {
-		TInspectElement(inspector, tr) : {
-			commonWordConstructor(TEmpty(), tr, id, Some(inspector));
+general2TParaWord(w : GeneralWrapElement, style : [CharacterStyle], id : int) -> TParaWord {
+	makeTText = \t -> TText(t, overrideCharacterStylePerAlphabet(t, style));
+	switch (w) {
+		GeneralText(txt) : commonWordConstructor(w, makeTText(txt), id, style, None());
+		GeneralSpace(txt) : commonWordConstructor(w, TText(txt, style), id, style, None());
+		NewLine() : TParaWord(NewLine(), dummyInspector(), TEmpty(), make(id), [], make(false));
+		EmptyLineElement() : commonWordConstructor(w, makeTZeroSpaceElement(style), id, style, None());
+		GeneralLinePart(f, m, e) : {
+			commonWordConstructor(w, makeTText(m), id, style, None());
 		}
-		default : {
-			tropicWithSize = getDynamicTropicSize(cast(w : TTextFragments -> Tropic));
+		GeneralInspectElement(insp, element) : {
+			inspectingWord = general2TParaWord(element, style, id);
+			wSize = inspectingWord.inspector.size;
+			wBaseline = inspectingWord.inspector.baseline;
 			TParaWord(
-				TEmpty(),
-				tropicWithSize.second,
-				GhostElem(make(Point(0., 0.)), tropicWithSize.first),
-				make(id)
+				inspectingWord with inspector = ParaElementInspector(
+					insp with size = wSize, baseline = wBaseline
+				)
 			);
 		}
+		NonTextElement() : dummyTParaWord;
 	}
 }
 
 spaceStr : string = " ";
 zeroSpaceStr : string = "\u200b";
-
-fMetrics2TMetrics(f : FormMetrics) -> TFormMetrics {
-	TFormMetrics(const(f.width), const(f.height), const(f.baseline));
-}
-
-getDynamicTropicSize(tropic : Tropic) -> Pair<Tropic, TFormMetrics> {
-	if (isConstantSizeTropic(tropic)) {
-		fMetrics = getTropicMetrics(tropic);
-		Pair(tropic, fMetrics2TMetrics(fMetrics));
-	} else {
-		widthB = make(0.);
-		heightB = make(0.);
-		baselineB = make(0.);
-		m = TFormMetrics(widthB, heightB, baselineB);
-		Pair(TInspect([IWidth(widthB), IHeight(heightB), IBaseline(baselineB)], tropic), m);
-	}
-}
-isTGhostable(f : Tropic) -> bool {
-	switch (f) {
-		TText(__, __): false;
-		default: {
-			true;
-		}
-	}
-}
 
 TParaLine(words : [TParaWord], indent : double);
 
@@ -333,10 +277,7 @@ reflowTParaWordsRec(
 	}
 
 	detachWord = \w : TParaWord, detach : bool -> {
-		switch (w.ghostView) {
-			TInspectGhost(inspector, __): nextDistinct(inspector.detached, detach);
-			default: {}
-		}
+		nextDistinct(w.inspector.detached, detach);
 	}
 
 	lineIndex = length(lines);
@@ -350,22 +291,17 @@ reflowTParaWordsRec(
 		detachWord(word, false);
 		rest = subrange(words, 1, length(words) - 1);
 
-		getWordWidth = \word1 -> fgetValue(word1.metrics.width);
+		getWordWidth = \word1 -> getValue(word1.inspector.size).width;
 
-		switch (word.word : TWrapElement) {
+		switch (word.word : GeneralWrapElement) {
 			NewLine(): {
 				reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
 			}
-			TLinePart(first, mid, end): {
+			GeneralLinePart(first, mid, end): {
 
-				makeLinePartWord = \form2 : Tropic -> {
-					g = word.ghostView;
-					newGhosted : TGhosted = switch (g : TGhosted) {
-						GhostElem(p, f): GhostElem(p, form2);
-						TInspectGhost(inspector, f): TInspectGhost(inspector, form2);
-					};
-
-					TParaWord(word.word, fMetrics2TMetrics(getTropicMetrics(form2)), newGhosted, word.id);
+				makeLinePartWord = \txt : string -> {
+					newView = inspectWordView(TText(txt, overrideCharacterStylePerAlphabet(txt, word.style)), word.inspector);
+					TParaWord(word with ghostView = newView);
 				};
 				width = getWordWidth(word);
 				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
@@ -384,7 +320,7 @@ reflowTParaWordsRec(
 					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
 				}
 			}
-			TSpace(__): {
+			GeneralSpace(__): {
 				// LSTSBU-454
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = getWordWidth(word);
@@ -397,13 +333,7 @@ reflowTParaWordsRec(
 			}
 			default: {
 				width = ref 0.0;
-				getWordView = \w -> {
-					g = w.ghostView;
-					switch (g: TGhosted) {
-						GhostElem(__, f): f;
-						TInspectGhost(__, f): f;
-					};
-				};
+				getWordView = \w -> w.ghostView;
 
 				form = getWordView(word);
 
@@ -412,8 +342,8 @@ reflowTParaWordsRec(
 					iteriUntil(words, \i, _word -> {
 						switch (_word.word) {
 							NewLine(): true;
-							TSpace(__): true;
-							TLinePart(__, __, __): true;
+							GeneralSpace(__): true;
+							GeneralLinePart(__, __, __): true;
 							default: {
 								f = getWordView(_word);
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
@@ -436,12 +366,24 @@ reflowTParaWordsRec(
 				if (^width <= remaining || currentWords == []) { // Overflow situation where a word is longer than the available width
 					_words = subrange(words, 0, wordsCount);
 					_rest = subrange(words, wordsCount, length(words) - wordsCount);
-
 					newCurrentWords = concat(currentWords, _words);
-
-					reflowTParaWordsRec(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent);
+					reflowTParaWordsRec(
+						_rest,
+						availableWidth,
+						remaining - ^width,
+						newCurrentWords,
+						lines,
+						paraIndent
+					);
 				} else {
-					reflowTParaWordsRec(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent);
+					reflowTParaWordsRec(
+						words,
+						nextLineWidth,
+						nextLineWidth,
+						[],
+						addLine(currentWords, lineIndent),
+						paraIndent
+					);
 				}
 			}
 		}
@@ -508,9 +450,8 @@ TAlignParaLines(
 	// it is possible to do in StartAlign case only because other alignments use fillers
 	width = if (tightWidth && isStartAlignment(alignment)) {
 		fold(lines, 0.0, \acc : double, line : TParaLine -> {
-			optimizedLine = getTOptimizedLine(line.words, alignment);
-			metrics = map(optimizedLine, \p -> p.metrics);
-			lw = line.indent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.width));
+			metrics = map(line.words, \p -> p.inspector);
+			lw = line.indent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.size).width);
 			max(acc, lw);
 		});
 	} else {
@@ -545,16 +486,6 @@ TAlignParaLines(
 }
 
 TParaLineResult(width : double, height : double, baseline : double);
-TOptimizedLineElement(f : TGhosted, metrics : TFormMetrics, id : DynamicBehaviour<int>);
-
-getTOptimizedLine(words : [TParaWord], alignment : ParaLineAlignment) -> [TOptimizedLineElement] {
-	// if (!isBiDiEnabled() && alignment != Justify()) {
-	// 	// optimizeTLine(words);
-	// } else {
-	// 	map(words, \w -> TOptimizedLineElement(w.ghostView, w.metrics, w.id));
-	// };
-	map(words, \w -> TOptimizedLineElement(w.ghostView, w.metrics, w.id));
-}
 
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
 // Send out the result, width, height
@@ -569,19 +500,18 @@ TRenderLine(
 	rtl : bool,
 	isMarked : bool
 ) -> TParaLineResult {
-	optimizedLine = getTOptimizedLine(words, alignment);
 	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
-	metrics = map(optimizedLine, \p -> p.metrics);
-	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.width)); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
-	lineAsc = foldi(metrics, 0.0, \i, ac, m -> {
-		max(ac,  fgetValue(m.baseline));
+	inspectors = map(words, \p -> p.inspector);
+	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
+	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
+		max(ac, getValue(m.baseline));
 	});
-	lineHeight = foldi(metrics, 0.0, \i, ac, m ->
-		max(ac, lineAsc + fgetValue(m.height) - (fgetValue(m.baseline)))
+	lineHeight = foldi(inspectors, 0.0, \i, ac, m ->
+		max(ac, lineAsc + getValue(m.size).height - getValue(m.baseline))
 	);
 
 	// Alignment offset
-	startOffset = if (rtl) width - lineWidth else 0.;
+	startOffset = (if (rtl) width - lineWidth else 0.);
 	endOffset = if (rtl) min(0., width - lineWidth) else max(0., width - lineWidth);
 	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
 		LeftAlign(): if (rtl) endOffset else startOffset;
@@ -593,33 +523,24 @@ TRenderLine(
 	} + (if (rtl) 0. else lineIndent);
 
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && length(optimizedLine) > 1) {
-		nwords = length(optimizedLine);
+	interWord = if (alignment == Justify() && length(inspectors) > 1) {
+		nwords = length(inspectors);
 		remaining = width - lineWidth;
 		min(10.0, remaining / i2d(nwords - 1));
 	} else 0.0;
 
 	// The width and the individual forms
-	iteri(optimizedLine, \i : int, elem : TOptimizedLineElement -> {
-		f = elem.f;
-		elemWidth = fgetValue(elem.metrics.width);
-		elemHeight = fgetValue(elem.metrics.height);
-		elemBaseline = fgetValue(elem.metrics.baseline);
-		dy = max(lineAsc - elemBaseline, 0.0);
+	iteri(inspectors, \i : int, inspector -> {
+		elemWidth = getValue(inspector.size).width;
+		elemHeight = getValue(inspector.size).height;
+		elemBaseline = getValue(inspector.baseline);
+		dy = if (elemBaseline > 0.) max(lineAsc - elemBaseline, 0.0) else 0.0;
 		yOffset = y + dy;
+		nextDistinct(inspector.y, yOffset);
+		nextDistinct(inspector.x, ^alignmentOffset);
+		nextDistinct(inspector.lineHeight, lineHeight);
+		nextDistinct(inspector.lineNumber, lineNumber);
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
-		switch (f : TGhosted) {
-			GhostElem(p, fm): {
-				nextDistinct(p, Point(^alignmentOffset, yOffset));
-			}
-			TInspectGhost(inspector,  fm): {
-				nextDistinct(inspector.y, yOffset);
-				nextDistinct(inspector.x, ^alignmentOffset);
-				nextDistinct(inspector.size, WidthHeight(elemWidth, elemHeight));
-				nextDistinct(inspector.lineHeight, lineHeight);
-				nextDistinct(inspector.lineNumber, lineNumber);
-			}
-		}
 		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) elemWidth + justifyOffset else 0.0;
 	});
 	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
@@ -675,58 +596,31 @@ TApplyDynamicStyles(
 	});
 }
 
-
-constructDynamicWords(
-	words : [TParaWord],
-	styleTree : Tree<int, [TTexFragmentStyle]>
-) -> [Tropic] {
-	map(words, translateWord);
-		// styles = lookupTreeDef(styleTree, either(word.id, -1), []);
-		// applyStyles = \form -> applyListenersAndModifiers(styles, form);
-		// applyStyles = \f -> TFormAvailable(form, TFillXY());
-}
-
 translateWord(word : TParaWord) -> Tropic {
-	switch (word.ghostView : TGhosted) {
-		GhostElem(p, f): TTranslate(p, f);
-		TInspectGhost(inspector, f): TTranslate(fpoint(inspector.x, inspector.y), f);
-	}
+	TTranslate(fpoint(word.inspector.x, word.inspector.y), word.ghostView);
 }
 
 isTParaWordEmpty(w: TParaWord) -> bool {
 	switch(w.word) {
-		TText(t, __): t == "";
+		GeneralText(t): t == "";
 		default: false;
 	}
 }
 
 getTParaWordText(w: TParaWord) -> string {
 	switch(w.word) {
-		TText(t, __): t;
-		TEmpty(): switch (w.ghostView) {
-			TInspectGhost(__, form): getTropicText(form);
-			GhostElem(__, form): getTropicText(form);
-		};
+		GeneralText(t): t;
 		default: "";
 	}
 }
 
 setTParaWordText(w: TParaWord, t: string) -> TParaWord {
 	switch(w.word) {
-		TText(__, s): TParaWord(
-			TText(t, s), w.metrics,
-			switch(w.ghostView) {
-				TInspectGhost(inspector, form): TInspectGhost(
-					inspector,
-					TText(t, getTropicTextStyle(form))
-				);
-				GhostElem(p, tr) : switch(tr) {
-					TText(__, st) : GhostElem(p, TText(t, st));
-					default : w.ghostView;
-				}
-			},
-			w.id
-		);
+		GeneralText(__): {
+			view = inspectWordView(TText(t, overrideCharacterStylePerAlphabet(t, w.style)), w.inspector);
+
+			TParaWord(w with ghostView = view);
+		}
 		default: w;
 	};
 }
