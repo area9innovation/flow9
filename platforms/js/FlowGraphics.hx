@@ -38,6 +38,8 @@ class FlowGraphics extends Graphics {
 	public var isNativeWidget : Bool;
 
 	public var filterPadding = 0.0;
+	public var left = 0.0;
+	public var top = 0.0;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
@@ -408,13 +410,9 @@ class FlowGraphics extends Graphics {
 
 				nativeWidget.style.background = null;
 				nativeWidget.style.border = null;
-				nativeWidget.style.marginLeft = null;
-				nativeWidget.style.marginTop = null;
 				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.borderImage = null;
 			} else if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
-				nativeWidget.style.marginLeft = null;
-				nativeWidget.style.marginTop = null;
 				nativeWidget.style.borderRadius = null;
 				if (Platform.isIE) {
 					nativeWidget.style.background = '';
@@ -610,33 +608,25 @@ class FlowGraphics extends Graphics {
 					}
 
 					if (data.shape.type == 1) {
-						var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 
-						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
-						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 						nativeWidget.style.borderRadius = null;
 					} else if (data.shape.type == 2) {
-						var left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						var top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 
-						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
-						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius + data.lineWidth)}px';
 					} else if (data.shape.type == 3) {
-						var left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						var top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 
-						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
-						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width + data.lineWidth)}px /
 							${DisplayObjectHelper.round(data.shape.height + data.lineWidth)}px';
 					} else if (data.shape.type == 4) {
-						var left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						var top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
 
-						nativeWidget.style.marginLeft = left != 0.0 ? '${left}px' : null;
-						nativeWidget.style.marginTop = top != 0.0 ? '${top}px' : null;
 						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 					} else {
 						trace('updateNativeWidgetGraphicsData: Unknown shape type');

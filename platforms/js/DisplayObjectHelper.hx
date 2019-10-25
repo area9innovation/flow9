@@ -823,6 +823,11 @@ class DisplayObjectHelper {
 			ty = round(transform.ty);
 		}
 
+		if (untyped clip.left != null && clip.top != null) {
+			tx += untyped clip.left * transform.a + clip.top * transform.c;
+			ty += untyped clip.left * transform.b + clip.top * transform.d;
+		}
+
 		var localBounds = untyped clip.localBounds;
 
 		if (untyped clip.isCanvas) {
