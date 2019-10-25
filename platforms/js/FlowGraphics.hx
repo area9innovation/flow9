@@ -534,6 +534,13 @@ class FlowGraphics extends Graphics {
 						var d : String = untyped __js__("data[0].shape.points.map(function(p, i) {
 							return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 						}).join('')");
+
+						if (untyped data.shape.points.length > 2 &&
+							data.shape.points[0] == data.shape.points[data.shape.points.length - 2] &&
+							data.shape.points[1] == data.shape.points[data.shape.points.length - 1]) {
+							d = d + ' Z';
+						}
+
 						element.setAttribute("d", d);
 					} else if (data.shape.type == 1) {
 						createSvgElement('rect');
