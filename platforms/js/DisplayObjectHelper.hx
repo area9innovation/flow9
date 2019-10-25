@@ -35,15 +35,15 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function round(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : Math.round(n * 10.0) / 10.0;
+		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : Math.round(n * 10.0 * RenderSupportJSPixi.backingStoreRatio) / (10.0 * RenderSupportJSPixi.backingStoreRatio);
 	}
 
 	public static inline function floor(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : Math.floor(n * 10.0) / 10.0;
+		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : Math.floor(n * 10.0 * RenderSupportJSPixi.backingStoreRatio) / (10.0 * RenderSupportJSPixi.backingStoreRatio);
 	}
 
 	public static inline function ceil(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.ceil(n) : Math.ceil(n * 10.0) / 10.0;
+		return RenderSupportJSPixi.RoundPixels ? Math.ceil(n) : Math.ceil(n * 10.0 * RenderSupportJSPixi.backingStoreRatio) / (10.0 * RenderSupportJSPixi.backingStoreRatio);
 	}
 
 	public static function invalidateStage(clip : DisplayObject) : Void {
