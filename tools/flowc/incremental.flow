@@ -7,13 +7,9 @@ import text/binary;
 import utctime;
 
 export {
-	getFlowcObjectFolder(config : CompilerConfig) -> string;
-
 	saveIncrementalModulesIfNeeded(modules : [FiModule], tenv : FcTypeEnvProgram) -> void;
 
 	saveModuleInIncremental(config : CompilerConfig, module : FiModule, verbose : int, env : FcTypeEnvProgram) -> void;
-
-	ensureIncrementalDirectoryExists(config : CompilerConfig) -> void;
 
 	/* Loads any up-to-date incremental file if we have it. If we have an outdated one,
 	 * we extract what the types of the old exports are to allow more fine-grained
@@ -23,41 +19,14 @@ export {
 		PreloadResult(module : Maybe<FcLoaded>, oldExports : Tree<string, FiExportSignature>);
 
 
-	deleteIncrementalModule(config : CompilerConfig, flowfile : string) -> void;
+	deleteIncrementalModule(config : CompilerConfig, env : FcTypeEnvGlobal, flowfile : string) -> void;
 
 	// Add incremental, typed modules to the environment
 	mergeIncremental2TypeEnvProgram(env : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, module : FiModule) -> FcTypeEnvProgram;
-
-	ensureIncrementalFolders(config : CompilerConfig) -> void;
-	moduleIsCached(config : CompilerConfig, module : FiModule) -> bool;
-	getCacheFilename(config : CompilerConfig, flowname : string) -> string;
 }
 
-incrementalVersion = 5;
+incrementalVersion = 6;
 IncrementalModule(version : int, module : FiModule);
-
-getFlowcObjectFolder(config : CompilerConfig) -> string {
-	cobj = getConfigParameter(config.config, "obj");
-	// Workaround when incremental is 0
-	if (cobj == "obj,objshared") "objc"
-	else if (config.objectFolders == []) "objc" else lastElement(config.objectFolders, config.objectFolders[0]);
-}
-
-getCacheFilename(config, flowname) {
-	getFlowcObjectFolder(config) + "/" + strReplace(strReplace(flowname, "/", "_"), ":", "_")  + ".module"
-}
-
-moduleIsCached(config : CompilerConfig, module : FiModule) -> bool {
-	fileExists(getCacheFilename(config, module.fileinfo.flowfile))
-}
-
-ensureIncrementalDirectoryExists(config : CompilerConfig) -> void {
-	isIncremental = !isConfigParameterFalse(config.config, "incremental");
-	if (isIncremental) {
-		incrementalDir = getFlowcObjectFolder(config);
-		ensureDirectoryExists(incrementalDir) |> ignore;
-	}
-}
 
 saveModuleInIncremental(config : CompilerConfig, module : FiModule, verbose : int, env : FcTypeEnvProgram) -> void {
 	if (!isConfigParameterFalse(config.config, "incremental")) {
@@ -73,7 +42,7 @@ saveIncrementalModulesIfNeeded(modules : [FiModule], tenv : FcTypeEnvProgram) ->
 		// Incremental
 		t = timestamp();
 		runTasks(config, map(uniq(modules), \module -> \ -> {
-			if (!moduleIsCached(config, module)) {
+			if (!moduleIsCached(config, module.fileinfo)) {
 				doSaveModuleInIncremental(config, module, config.verbose, tenv);
 				{}
 			}
@@ -129,7 +98,7 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 			if (config.verbose >= 1) {
 				fcPrintln("Incremental for '" + flowfile + "' has wrong format version " + i2s(cachedVersion) + ", current is " + i2s(incrementalVersion), config.threadId);
 			}
-			deleteIncrementalModule(config, flowfile);
+			deleteIncrementalModule(config, globEnv, flowfile);
 			PreloadResult(None(), makeTree());
 		} else {
 			fi = deserializeBinary(f, IllegalStruct());
@@ -141,49 +110,27 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 				// and force compiler to reread and reparse flow file. 
 
 				fcPrintln("WARNING: Illegal structure of incremental file for " + flowfile + ". Incremental file deleted.", config.threadId);
-				deleteIncrementalModule(config, flowfile);
+				deleteIncrementalModule(config, globEnv, flowfile);
 				PreloadResult(None(), makeTree());
 			} else {
 				im : IncrementalModule = cast(fi : flow -> IncrementalModule);
-				fimodule : FiModule = im.module;
-				fileinfo = fimodule.fileinfo;
-				checkMd5 = getConfigParameter(config.config, "use-md5") == "1";
-				incrementalPriority = getConfigParameter(config.config, "incremental-priority") == "1";
-
-				needToReload = fiFileInfoFileChanged(fileinfo, checkMd5) || exists(fimodule.stringIncludes, \inc -> fiFileInfoFileChanged(inc, checkMd5))
-					// We also have to check that the NEW full path of the file MATCHES
-					// the full path inside the incremental, because if the file is moved
-					// it might register as unchanged, even if it really is.
-					|| {
-						sourcefileinfo = getFcFileInfo(flowfile, config);
-						if (config.verbose > 0) {
-							if (!isSamePath(fileinfo.fullpath, sourcefileinfo.fullpath)) {
-								fcPrintln("Incremental file says original was found at '" + fileinfo.fullpath + "' Source file is found at ''" + sourcefileinfo.fullpath + "'", config.threadId);
-							} else {
-								if (config.verbose > 1) {
-									fcPrintln("  File is found at '" + fileinfo.fullpath + "'", config.threadId);
-								}
-							}
-						}
-						!isSamePath(fileinfo.fullpath, sourcefileinfo.fullpath)
-					};
-
-				if (!incrementalPriority && needToReload) {
+				needToReload = fcModuleNeedReloading(im.module.fileinfo, im.module.stringIncludes, config);
+				if ((!isConfigParameterTrue(config.config, "incremental-priority") && needToReload) || isConfigParameterFalse(config.config, "incremental")) {
 					if (needToReload && config.verbose >= 1) {
 						fcPrintln("Outdated incremental file:", config.threadId);
-						fiFileInfoFileChangedMessage(fileinfo, checkMd5, config.threadId);
-						iter(fimodule.stringIncludes, \inc -> fiFileInfoFileChangedMessage(inc, checkMd5, config.threadId));
+						fiFileInfoFileChangedMessage(im.module.fileinfo, config);
+						iter(im.module.stringIncludes, \inc -> fiFileInfoFileChangedMessage(inc, config));
 					}
-					deleteIncrementalModule(config, flowfile);
+					deleteIncrementalModule(config, globEnv, flowfile);
 
-					oldExports = getExportedFiTypes(fimodule);
+					oldExports = getExportedFiTypes(im.module);
 
 					PreloadResult(None(), oldExports);
 				} else {
 					if (config.verbose >= 1) {
 						fcPrintln("Loaded incremental for " + flowfile, config.threadId);
 					}
-					PreloadResult(Some(FcLoaded(fimodule, fcDependencyChangedCallback(config, globEnv, fimodule))), makeTree());
+					PreloadResult(Some(FcLoaded(im.module, fcDependencyChangedCallback(config, globEnv, im.module))), makeTree());
 				}
 			}
 		}
@@ -191,10 +138,11 @@ preloadIncrementalModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, flo
 }
 
 
-deleteIncrementalModule(config : CompilerConfig, flowfile : string) {
+deleteIncrementalModule(config : CompilerConfig, env : FcTypeEnvGlobal, flowfile : string) {
 	fn = getCacheFilename(config, flowfile);
 	if (config.verbose >= 1) fcPrintln("Deleting outdated incremental for " + flowfile + ", file " + fn, config.threadId);
 	e = deleteFile(fn);
+	fcRemoveFromCache(env, flowfile);
 	if (e != "") {
 		if (fileExists(fn)) {
 			fcPrintln("Could not delete " + fn + ": " + e, config.threadId);
@@ -221,6 +169,6 @@ mergeIncremental2TypeEnvProgram(tenv0 : FcTypeEnvProgram, globEnv : FcTypeEnvGlo
 	)
 }
 
-ensureIncrementalFolders(config : CompilerConfig) {
-	ensureDirectoryExists(getCacheFilename(config, "")) |> ignore;
-}
+//ensureIncrementalFolders(config : CompilerConfig) {
+//	ensureDirectoryExists(getCacheFilename(config, "")) |> ignore;
+//}
