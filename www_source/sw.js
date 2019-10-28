@@ -219,7 +219,7 @@ self.addEventListener('fetch', function(event) {
   var fetchResource = function(requestData) {
     if (requestData.isFileUploading) {
       // We can't to clone file uploading request, so we processing it as is, without caching
-      return fetch(requestData.originalRequest)
+      return fetch(requestData.cloneRequest())
         .then(function(response) { return response.clone(); })
         .catch(function() { return null; })
     } else {
