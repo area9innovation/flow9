@@ -28,10 +28,12 @@ import js.three.SphereGeometry;
 
 import js.three.BufferGeometry;
 import js.three.SphereBufferGeometry;
+import js.three.BufferAttribute;
 
 import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
+import js.three.MeshNormalMaterial;
 import js.three.ShaderMaterial;
 
 import js.three.Texture;
@@ -411,10 +413,23 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function set3DMaterialBumpMap(material : Material, bumpMap : Texture, bumpScale : Float) : Void {
+		if (untyped material.bumpMap != bumpMap) {
+			untyped material.bumpMap = bumpMap;
+			untyped material.bumpScale = bumpScale;
+		}
+	}
+
 	public static function set3DMaterialOpacity(material : Material, opacity : Float) : Void {
 		if (untyped material.opacity != opacity) {
 			untyped material.opacity = opacity;
 			untyped material.transparent = true;
+		}
+	}
+
+	public static function set3DMaterialVisible(material : Material, visible : Bool) : Void {
+		if (untyped material.visible != visible) {
+			untyped material.visible = visible;
 		}
 	}
 
@@ -1315,6 +1330,48 @@ class RenderSupport3D {
 		return new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
 	}
 
+	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
+		if (data.length > 0) {
+			var attribute : Dynamic = new BufferAttribute(new js.html.Float32Array(data.length * data[0].length), data[0].length);
+
+			for (i in 0...data.length) {
+				if (data[i].length > 0) {
+					attribute.setX(i, data[i][0]);
+				}
+
+				if (data[i].length > 1) {
+					attribute.setY(i, data[i][1]);
+				}
+
+				if (data[i].length > 2) {
+					attribute.setZ(i, data[i][2]);
+				}
+
+				if (data[i].length > 3) {
+					attribute.setW(i, data[i][3]);
+				}
+			}
+
+			geometry.addAttribute(name, attribute);
+		}
+	}
+
+	public static function get3DBufferGeometryAttribute(geometry : BufferGeometry, name : String) : Array<Array<Float>> {
+		var attribute : Dynamic = geometry.getAttribute(name);
+		var data = new Array<Array<Float>>();
+
+		for (i in 0...attribute.count) {
+			data.push([
+				attribute.getX(i),
+				attribute.getY(i),
+				attribute.getZ(i),
+				attribute.getW(i)
+			]);
+		}
+
+		return data;
+	}
+
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
 		var material = new MeshBasicMaterial(untyped {color : new Color(color)});
 
@@ -1327,6 +1384,16 @@ class RenderSupport3D {
 
 	public static function make3DMeshStandardMaterial(color : Int, parameters : Array<Array<String>>) : Material {
 		var material = new MeshStandardMaterial(untyped {color : new Color(color)});
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
+	}
+
+	public static function make3DMeshNormalMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		var material = new MeshNormalMaterial(untyped {color : new Color(color)});
 
 		for (par in parameters) {
 			untyped material[par[0]] = untyped __js__("eval(par[1])");

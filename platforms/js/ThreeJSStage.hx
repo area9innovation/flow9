@@ -64,9 +64,9 @@ class ThreeJSStage extends Container {
 
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget('canvas');
-			this.renderer = new WebGLRenderer({antialias: true, alpha : true, canvas : nativeWidget});
+			this.renderer = new WebGLRenderer({antialias: true, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
 		} else {
-			this.renderer = new WebGLRenderer({antialias: true, alpha : true});
+			this.renderer = new WebGLRenderer({antialias: true, alpha : true, logarithmicDepthBuffer : true});
 		}
 
 		renderer.setSize(width, height);

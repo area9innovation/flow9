@@ -95,6 +95,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DMaterialBumpMap(Object object, Object bumpMap, Double bumpScale) {
+		return null;
+	}
+
 	public Object set3DMaterialOpacity(Object object, Double opacity) {
 		return null;
 	}
@@ -540,12 +544,23 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object add3DBufferGeometryAttribute(Object geometry, String name, Object[] data) {
+		return null;
+	}
+	public Object[] get3DBufferGeometryAttribute(Object geometry, String name) {
+		return new Object[0];
+	}
+
 
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
 		return null;
 	}
 
 	public Object make3DMeshStandardMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DMeshNormalMaterial(Integer color, Object[] parameters) {
 		return null;
 	}
 

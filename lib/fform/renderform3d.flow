@@ -85,21 +85,29 @@ export {
 				F3DCylinderGeometry(radiusTop : double, radiusBottom : double, height : double, radialSegments : int, heightSegments : int, openEnded : bool, thetaStart : double, thetaLength : double);
 				F3DNativeGeometry(geometry : native);
 			F3DBufferGeometry ::= F3DSphereBufferGeometry;
-				F3DSphereBufferGeometry(radius : double, widthSegments : int, heightSegments : int, phiStart : double, phiLength : double, thetaStart : double, thetaLength : double);
+				F3DSphereBufferGeometry(radius : double, widthSegments : int, heightSegments : int, phiStart : double, phiLength : double,
+					thetaStart : double, thetaLength : double, attributes : Maybe<F3DBufferGeometryAttributes>);
 
-			F3DMaterial ::= F3DMeshBasicMaterial, F3DMeshStandardMaterial, F3DShaderMaterial, F3DNativeMaterials,
-				F3DMaterialTexture, F3DMaterialAlphaTexture, F3DMaterialDisplacementTexture,
+					F3DBufferGeometryAttributes(
+						get : [string], // Attributes names to get from buffer geometry, these attributes data is passed as 'attributes' to 'add' function
+						add : (attributes : Tree<string, [[double]]>) -> Tree<string, [[double]]> // Attributes to add to buffer geometry
+					);
+
+			F3DMaterial ::= F3DMeshBasicMaterial, F3DMeshStandardMaterial, F3DMeshNormalMaterial, F3DShaderMaterial, F3DNativeMaterials,
+				F3DMaterialTexture, F3DMaterialAlphaTexture, F3DMaterialDisplacementTexture, F3DMaterialBumpTexture,
 				// F3DMaterialRotation, F3DMaterialOffset,
-				F3DMaterialOpacity;
+				F3DMaterialOpacity, F3DMaterialVisible;
 
 				F3DMeshBasicMaterial(color : int, parameters : [KeyValue]);
 				F3DMeshStandardMaterial(color : int, parameters : [KeyValue]);
+				F3DMeshNormalMaterial(color : int, parameters : [KeyValue]);
 				F3DShaderMaterial(uniforms : string, vertexShader : string, fragmentShader : string);
 				F3DNativeMaterials(materials : native);
 
 				F3DMaterialTexture(material : F3DMaterial, texture : F3DTexture);
 				F3DMaterialAlphaTexture(material : F3DMaterial, texture : F3DTexture);
-				F3DMaterialDisplacementTexture(material : F3DMaterial, texture : F3DTexture);
+				F3DMaterialDisplacementTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>, bias : Transform<double>);
+				F3DMaterialBumpTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>);
 
 					F3DTexture ::= F3DTextureLoader, F3DDataTexture, F3DFFormTexture;
 
@@ -109,6 +117,7 @@ export {
 
 
 				F3DMaterialOpacity(material : F3DMaterial, opacity : Transform<double>);
+				F3DMaterialVisible(material : F3DMaterial, visible : Transform<bool>);
 				F3DMaterialAlpha(material : F3DMaterial, alpha : Transform<double>) -> F3DMaterialOpacity { F3DMaterialOpacity(material, alpha) };
 
 				// F3DMaterialRotation(material : F3DMaterial, rotation : Transform<double>);
@@ -907,8 +916,19 @@ renderF3DGeometry(geometry : F3DGeometry) -> native {
 		F3DSphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength) : {
 			make3DSphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
 		}
-		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength) : {
-			make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, attributesM) : {
+			g = make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+
+			maybeApply(
+				attributesM,
+				\attributes ->
+					iter(
+						tree2pairs(attributes.add(pairs2tree(map(attributes.get, \a -> Pair(a, get3DBufferGeometryAttribute(g, a)))))),
+						\p -> add3DBufferGeometryAttribute(g, p.first, p.second)
+					)
+			);
+
+			g;
 		}
 		F3DCircleGeometry(radius, segments, thetaStart, thetaLength) : {
 			make3DCircleGeometry(radius, segments, thetaStart, thetaLength);
@@ -941,6 +961,12 @@ renderF3DMaterial(material : F3DMaterial) -> F3DMaterialDisposers {
 				[]
 			);
 		}
+		F3DMeshNormalMaterial(color, parameters) : {
+			F3DMaterialDisposers(
+				make3DMeshNormalMaterial(color, map(parameters, \v -> [v.key, v.value])),
+				[]
+			);
+		}
 		F3DShaderMaterial(uniforms, vertexShader, fragmentShader) : {
 			F3DMaterialDisposers(
 				make3DShaderMaterial(uniforms, vertexShader, fragmentShader),
@@ -962,9 +988,15 @@ renderF3DMaterial(material : F3DMaterial) -> F3DMaterialDisposers {
 
 			m;
 		}
-		F3DMaterialDisplacementTexture(innerMaterial, texture) : {
+		F3DMaterialDisplacementTexture(innerMaterial, texture, scale, bias) : {
 			m = renderF3DMaterial(innerMaterial);
-			set3DMaterialDisplacementMap(m.material, renderF3DTexture(texture), 1.0, 0.0);
+			set3DMaterialDisplacementMap(m.material, renderF3DTexture(texture), fgetValue(scale), fgetValue(bias));
+
+			m;
+		}
+		F3DMaterialBumpTexture(innerMaterial, texture, scale) : {
+			m = renderF3DMaterial(innerMaterial);
+			set3DMaterialBumpMap(m.material, renderF3DTexture(texture), fgetValue(scale));
 
 			m;
 		}
@@ -976,6 +1008,17 @@ renderF3DMaterial(material : F3DMaterial) -> F3DMaterialDisposers {
 				arrayPush(
 					m.disposers,
 					makeSubscribe(opacity, \v -> set3DMaterialOpacity(m.material, v))()
+				)
+			);
+		}
+		F3DMaterialVisible(innerMaterial, visible) : {
+			m = renderF3DMaterial(innerMaterial);
+
+			F3DMaterialDisposers(
+				m.material,
+				arrayPush(
+					m.disposers,
+					makeSubscribe(visible, \v -> set3DMaterialVisible(m.material, v))()
 				)
 			);
 		}
