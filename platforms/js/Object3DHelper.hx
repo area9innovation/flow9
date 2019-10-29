@@ -1,4 +1,6 @@
 import js.three.Object3D;
+import js.three.Material;
+import js.three.Texture;
 import js.three.Box3;
 import js.three.Camera;
 
@@ -14,6 +16,18 @@ class Object3DHelper {
 			for (stage in getStage(object)) {
 				stage.invalidateStage();
 			}
+		}
+	}
+
+	public static inline function invalidateMaterialStage(object : Material) : Void {
+		if (untyped object.parent != null) {
+			invalidateStage(untyped object.parent);
+		}
+	}
+
+	public static inline function invalidateTextureStage(object : Texture) : Void {
+		if (untyped object.parent != null) {
+			invalidateMaterialStage(untyped object.parent);
 		}
 	}
 

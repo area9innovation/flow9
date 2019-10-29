@@ -62,6 +62,14 @@ class ThreeJSStage extends Container {
 		widgetWidth = width;
 		widgetHeight = height;
 
+		initRenderer();
+	}
+
+	private function initRenderer() {
+		if (this.renderer != null) {
+			destroyRenderer();
+		}
+
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget('canvas');
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
@@ -69,10 +77,36 @@ class ThreeJSStage extends Container {
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, logarithmicDepthBuffer : true});
 		}
 
-		renderer.setSize(width, height);
+		renderer.setSize(widgetWidth, widgetHeight);
+
+		renderer.domElement.addEventListener("webglcontextlost", function(event) {
+			event.preventDefault();
+			initRenderer();
+		}, false);
 
 		// Chrome Inspect Three.js extension support
 		untyped __js__("window.THREE = THREE;");
+
+		if (camera != null && orbitControls != null) {
+			setCamera(camera, orbitControls.minDistance, orbitControls.maxDistance);
+		}
+
+		if (scene != null) {
+			setScene(scene);
+		}
+	}
+
+	public function destroyRenderer() {
+		if (orbitControls != null) {
+			RenderSupportJSPixi.off("drawframe", orbitControls.update);
+		}
+
+		if (renderer != null) {
+			renderer.dispose();
+			renderer = null;
+		}
+
+		deleteNativeWidget();
 	}
 
 	public function invalidateStage() {
@@ -144,8 +178,13 @@ class ThreeJSStage extends Container {
 	}
 
 	private function createOrbitControls() {
+		if (orbitControls != null) {
+			RenderSupportJSPixi.off("drawframe", orbitControls.update);
+		}
+
 		if (camera != null) {
 			orbitControls = new OrbitControls(camera, renderer.domElement);
+			RenderSupportJSPixi.on("drawframe", orbitControls.update);
 		}
 
 		invalidateStage();
@@ -164,7 +203,11 @@ class ThreeJSStage extends Container {
 		orbitControls.dampingFactor = 0.1;
 		orbitControls.rotateSpeed = 0.05;
 
-		invalidateStage();
+		if (this.camera != null) {
+			untyped this.camera.stage = this;
+
+			invalidateStage();
+		}
 	}
 
 	public function setScene(scene : Scene) {
@@ -196,10 +239,6 @@ class ThreeJSStage extends Container {
 		if (!this.visible || this.worldAlpha <= 0 || !this.renderable || camera == null || scene == null ||
 			getWidth() <= 0 || getHeight() <= 0) {
 			return;
-		}
-
-		if (orbitControls != null) {
-			orbitControls.update();
 		}
 
 		if (transformControls != null) {
@@ -306,6 +345,11 @@ class ThreeJSStage extends Container {
 		widgetBounds.maxY = DisplayObjectHelper.ceil(getHeight());
 	}
 
+	private function simulateContextLost() : Void { // Useful for debugging
+		untyped __js__("console.log(this.nativeWidget.getContext(\"webgl\").getSupportedExtensions())");
+		untyped __js__("this.nativeWidget.getContext(\"webgl\").getExtension(\"WEBGL_lose_context\").loseContext()");
+	}
+
 	public function updateNativeWidget() : Void {
 		if (RenderSupportJSPixi.RendererType == "html") {
 			if (isNativeWidget) {
@@ -324,10 +368,6 @@ class ThreeJSStage extends Container {
 
 					updateNativeWidgetTransformMatrix();
 					updateNativeWidgetOpacity();
-
-					if (orbitControls != null) {
-						orbitControls.update();
-					}
 
 					if (transformControls != null) {
 						scene.add(transformControls);

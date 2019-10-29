@@ -393,30 +393,42 @@ class RenderSupport3D {
 
 	public static function set3DMaterialMap(material : Material, map : Texture) : Void {
 		if (untyped material.map != map) {
+			untyped map.parent = material;
 			untyped material.map = map;
 			untyped material.transparent = true;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
 	public static function set3DMaterialAlphaMap(material : Material, alphaMap : Texture) : Void {
 		if (untyped material.alphaMap != alphaMap) {
+			untyped alphaMap.parent = material;
 			untyped material.alphaMap = alphaMap;
 			untyped material.transparent = true;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
 	public static function set3DMaterialDisplacementMap(material : Material, displacementMap : Texture, displacementScale : Float, displacementBias : Float) : Void {
 		if (untyped material.displacementMap != displacementMap) {
+			untyped displacementMap.parent = material;
 			untyped material.displacementMap = displacementMap;
 			untyped material.displacementScale = displacementScale;
 			untyped material.displacementBias = displacementBias;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
 	public static function set3DMaterialBumpMap(material : Material, bumpMap : Texture, bumpScale : Float) : Void {
 		if (untyped material.bumpMap != bumpMap) {
+			untyped bumpMap.parent = material;
 			untyped material.bumpMap = bumpMap;
 			untyped material.bumpScale = bumpScale;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
@@ -424,12 +436,18 @@ class RenderSupport3D {
 		if (untyped material.opacity != opacity) {
 			untyped material.opacity = opacity;
 			untyped material.transparent = true;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
 	public static function set3DMaterialVisible(material : Material, visible : Bool) : Void {
 		if (untyped material.visible != visible) {
+			material.invalidateMaterialStage();
+
 			untyped material.visible = visible;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
@@ -545,7 +563,6 @@ class RenderSupport3D {
 		}
 
 		stage.renderer.domElement.dispatchEvent(ev);
-		stage.scene.invalidateStage();
 	}
 
 	static function emit3DKeyEvent(stage : ThreeJSStage, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
@@ -556,7 +573,6 @@ class RenderSupport3D {
 		stage.metaKey = meta;
 
 		stage.renderer.domElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
-		stage.scene.invalidateStage();
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
@@ -800,6 +816,7 @@ class RenderSupport3D {
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (object.visible != visible) {
+			object.invalidateStage();
 			object.visible = visible;
 
 			object.broadcastEvent("visiblechanged");
@@ -1435,6 +1452,10 @@ class RenderSupport3D {
 		}
 
 		var mesh = new Mesh(geometry, untyped materials.length == 1 ? materials[0] : materials);
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
 
 		untyped mesh.materials = materials;
 
