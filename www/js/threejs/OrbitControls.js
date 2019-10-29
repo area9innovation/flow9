@@ -13,11 +13,13 @@
 //    Zoom - middle mouse, or mousewheel / touch: two-finger spread or squish
 //    Pan - right mouse, or left mouse + ctrl/meta/shiftKey, or arrow keys / touch: two-finger move
 
-THREE.OrbitControls = function ( object, domElement ) {
+THREE.OrbitControls = function ( object, domElement, eventElement ) {
 
 	this.object = object;
 
 	this.domElement = ( domElement !== undefined ) ? domElement : document;
+
+	this.eventElement = ( eventElement !== undefined ) ? eventElement : document;
 
 	// Set to false to disable this control
 	this.enabled = true;
@@ -226,18 +228,21 @@ THREE.OrbitControls = function ( object, domElement ) {
 
 	this.dispose = function () {
 
-		scope.domElement.removeEventListener( 'contextmenu', onContextMenu, false );
-		scope.domElement.removeEventListener( 'mousedown', onMouseDown, false );
-		scope.domElement.removeEventListener( 'wheel', onMouseWheel, false );
+		scope.eventElement.removeEventListener( 'contextmenu', onContextMenu, false );
+		scope.eventElement.removeEventListener( 'mousedown', onMouseDown, false );
+		scope.eventElement.removeEventListener( 'pointerdown', onMouseDown, false );
+		scope.eventElement.removeEventListener( 'wheel', onMouseWheel, false );
 
-		scope.domElement.removeEventListener( 'touchstart', onTouchStart, false );
-		scope.domElement.removeEventListener( 'touchend', onTouchEnd, false );
-		scope.domElement.removeEventListener( 'touchmove', onTouchMove, false );
+		scope.eventElement.removeEventListener( 'touchstart', onTouchStart, false );
+		scope.eventElement.removeEventListener( 'touchend', onTouchEnd, false );
+		scope.eventElement.removeEventListener( 'touchmove', onTouchMove, false );
 
-		scope.domElement.removeEventListener( 'mousemove', onMouseMove, false );
-		scope.domElement.removeEventListener( 'mouseup', onMouseUp, false );
+		scope.eventElement.removeEventListener( 'mousemove', onMouseMove, false );
+		scope.eventElement.removeEventListener( 'pointermove', onMouseMove, false );
+		scope.eventElement.removeEventListener( 'mouseup', onMouseUp, false );
+		scope.eventElement.removeEventListener( 'pointerup', onMouseUp, false );
 
-		scope.domElement.removeEventListener( 'keydown', onKeyDown, false );
+		scope.eventElement.removeEventListener( 'keydown', onKeyDown, false );
 
 		//scope.dispatchEvent( { type: 'dispose' } ); // should this be added here?
 
@@ -745,8 +750,10 @@ THREE.OrbitControls = function ( object, domElement ) {
 
 		if ( state !== STATE.NONE ) {
 
-			scope.domElement.addEventListener( 'mousemove', onMouseMove, false );
-			scope.domElement.addEventListener( 'mouseup', onMouseUp, false );
+			scope.eventElement.addEventListener( 'mousemove', onMouseMove, false );
+			scope.eventElement.addEventListener( 'pointermove', onMouseMove, false );
+			scope.eventElement.addEventListener( 'mouseup', onMouseUp, false );
+			scope.eventElement.addEventListener( 'pointerup', onMouseUp, false );
 
 			scope.dispatchEvent( startEvent );
 
@@ -796,8 +803,10 @@ THREE.OrbitControls = function ( object, domElement ) {
 
 		handleMouseUp( event );
 
-		scope.domElement.removeEventListener( 'mousemove', onMouseMove, false );
-		scope.domElement.removeEventListener( 'mouseup', onMouseUp, false );
+		scope.eventElement.removeEventListener( 'mousemove', onMouseMove, false );
+		scope.eventElement.removeEventListener( 'pointermove', onMouseMove, false );
+		scope.eventElement.removeEventListener( 'mouseup', onMouseUp, false );
+		scope.eventElement.removeEventListener( 'pointerup', onMouseUp, false );
 
 		scope.dispatchEvent( endEvent );
 
@@ -927,16 +936,17 @@ THREE.OrbitControls = function ( object, domElement ) {
 
 	//
 
-	scope.domElement.addEventListener( 'contextmenu', onContextMenu, false );
+	scope.eventElement.addEventListener( 'contextmenu', onContextMenu, false );
 
-	scope.domElement.addEventListener( 'mousedown', onMouseDown, false );
-	scope.domElement.addEventListener( 'wheel', onMouseWheel, false );
+	scope.eventElement.addEventListener( 'pointerdown', onMouseDown, false );
+	scope.eventElement.addEventListener( 'mousedown', onMouseDown, false );
+	scope.eventElement.addEventListener( 'wheel', onMouseWheel, false );
 
-	scope.domElement.addEventListener( 'touchstart', onTouchStart, false );
-	scope.domElement.addEventListener( 'touchend', onTouchEnd, false );
-	scope.domElement.addEventListener( 'touchmove', onTouchMove, false );
+	scope.eventElement.addEventListener( 'touchstart', onTouchStart, false );
+	scope.eventElement.addEventListener( 'touchend', onTouchEnd, false );
+	scope.eventElement.addEventListener( 'touchmove', onTouchMove, false );
 
-	scope.domElement.addEventListener( 'keydown', onKeyDown, false );
+	scope.eventElement.addEventListener( 'keydown', onKeyDown, false );
 
 	// force an update at start
 

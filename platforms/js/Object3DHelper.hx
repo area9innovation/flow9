@@ -154,7 +154,7 @@ class Object3DHelper {
 			if (stage.length > 0) {
 				for (subChild in child.children) {
 					if (untyped __instanceof__(subChild, Camera)) {
-						stage[0].setCamera(cast(subChild, Camera), null, null);
+						stage[0].setCamera(cast(subChild, Camera), []);
 						child.remove(subChild);
 						subChild.parent = null;
 					}

@@ -125,7 +125,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object set3DCamera(Object stage, Object camera, Double minDistance, Double maxDistance) {
+	public Object set3DCamera(Object stage, Object camera, Object[] parameters) {
 		return null;
 	}
 	public Object set3DScene(Object stage, Object scene) {
@@ -136,6 +136,9 @@ public class RenderSupport3D extends NativeHost {
 		return no_op;
 	}
 	public Object emit3DMouseEvent(Object stage, String event, Double x, Double y) {
+		return null;
+	}
+	public Object emit3DTouchEvent(Object stage, String event, Object[] points) {
 		return null;
 	}
 	public Object emit3DKeyEvent(Object stage, String event, String utf, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer keycode) {

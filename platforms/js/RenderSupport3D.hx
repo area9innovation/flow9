@@ -492,8 +492,8 @@ class RenderSupport3D {
 	}
 
 
-	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, minDistance : Float, maxDistance : Float) : Void {
-		stage.setCamera(camera, minDistance, maxDistance);
+	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, parameters : Array<Array<String>>) : Void {
+		stage.setCamera(camera, parameters);
 	}
 
 	public static function set3DScene(stage : ThreeJSStage, scene : Scene) : Void {
@@ -562,7 +562,38 @@ class RenderSupport3D {
 			untyped ev.pageY = y;
 		}
 
-		stage.renderer.domElement.dispatchEvent(ev);
+		untyped stage.renderer.eventElement.dispatchEvent(ev);
+	}
+
+	static function emit3DTouchEvent(stage : ThreeJSStage, event : String, points : Array<Array<Float>>) : Void {
+		if (stage.scene == null) {
+			return;
+		}
+
+		var ev : Dynamic = Platform.isIE || Platform.isSafari
+			? untyped __js__("new CustomEvent(event)")
+			: new js.html.Event(event);
+
+		ev.touches = Lambda.array(Lambda.map(points, function(p) {
+			return {
+				pageX : p[0],
+				pageY : p[1]
+			}
+		}));
+
+		if (stage.ctrlKey) {
+			ev.ctrlKey == true;
+		}
+
+		if (stage.metaKey) {
+			ev.metaKey == true;
+		}
+
+		if (stage.shiftKey) {
+			ev.shiftKey == true;
+		}
+
+		untyped stage.renderer.eventElement.dispatchEvent(ev);
 	}
 
 	static function emit3DKeyEvent(stage : ThreeJSStage, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
@@ -572,7 +603,7 @@ class RenderSupport3D {
 		stage.shiftKey = shift;
 		stage.metaKey = meta;
 
-		stage.renderer.domElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+		untyped stage.renderer.eventElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {

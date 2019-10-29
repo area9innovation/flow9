@@ -73,8 +73,10 @@ class ThreeJSStage extends Container {
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget('canvas');
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
+			untyped this.renderer.eventElement = nativeWidget;
 		} else {
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, logarithmicDepthBuffer : true});
+			untyped this.renderer.eventElement = Browser.document.createElement('div');
 		}
 
 		renderer.setSize(widgetWidth, widgetHeight);
@@ -88,7 +90,7 @@ class ThreeJSStage extends Container {
 		untyped __js__("window.THREE = THREE;");
 
 		if (camera != null && orbitControls != null) {
-			setCamera(camera, orbitControls.minDistance, orbitControls.maxDistance);
+			setCamera(camera, untyped orbitControls.parameters);
 		}
 
 		if (scene != null) {
@@ -118,14 +120,14 @@ class ThreeJSStage extends Container {
 	}
 
 	private function addEventListeners() {
-		renderer.domElement.removeEventListener("mousedown", onMouseEvent);
-		renderer.domElement.addEventListener("mousedown", onMouseEvent);
+		untyped renderer.eventElement.removeEventListener("mousedown", onMouseEvent);
+		untyped renderer.eventElement.addEventListener("mousedown", onMouseEvent);
 
-		renderer.domElement.removeEventListener("mouseup", onMouseEvent);
-		renderer.domElement.addEventListener("mouseup", onMouseEvent);
+		untyped renderer.eventElement.removeEventListener("mouseup", onMouseEvent);
+		untyped renderer.eventElement.addEventListener("mouseup", onMouseEvent);
 
-		renderer.domElement.removeEventListener("mousemove", onMouseEvent);
-		renderer.domElement.addEventListener("mousemove", onMouseEvent);
+		untyped renderer.eventElement.removeEventListener("mousemove", onMouseEvent);
+		untyped renderer.eventElement.addEventListener("mousemove", onMouseEvent);
 	}
 
 	public function onMouseEvent(event : Dynamic, ?object : Object3D) : Void {
@@ -160,7 +162,7 @@ class ThreeJSStage extends Container {
 		}
 
 		if (camera != null) {
-			transformControls = new TransformControls(camera, renderer.domElement);
+			transformControls = untyped __js__("new THREE.TransformControls(this.camera, this.renderer.domElement, this.renderer.eventElement)");
 			untyped transformControls.transformControls = transformControls;
 		}
 
@@ -183,25 +185,25 @@ class ThreeJSStage extends Container {
 		}
 
 		if (camera != null) {
-			orbitControls = new OrbitControls(camera, renderer.domElement);
+			orbitControls = untyped __js__("new THREE.OrbitControls(this.camera, this.renderer.domElement, this.renderer.eventElement)");
 			RenderSupportJSPixi.on("drawframe", orbitControls.update);
 		}
 
 		invalidateStage();
 	}
 
-	public function setCamera(camera : Camera, minDistance : Float, maxDistance : Float) {
+	public function setCamera(camera : Camera, parameters : Array<Array<String>>) {
 		this.camera = camera;
 
 		createOrbitControls();
 		createTransformControls();
 		addEventListeners();
 
-		orbitControls.minDistance = minDistance;
-		orbitControls.maxDistance = maxDistance;
-		orbitControls.enableDamping = true;
-		orbitControls.dampingFactor = 0.1;
-		orbitControls.rotateSpeed = 0.05;
+		untyped orbitControls.parameters = parameters;
+
+		for (par in parameters) {
+			untyped orbitControls[par[0]] = untyped __js__("eval(par[1])");
+		}
 
 		if (this.camera != null) {
 			untyped this.camera.stage = this;
@@ -334,6 +336,7 @@ class ThreeJSStage extends Container {
 		nativeWidget = Browser.document.createElement(tagName);
 		updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		nativeWidget.style.pointerEvents = 'auto';
 
 		isNativeWidget = true;
 	}
