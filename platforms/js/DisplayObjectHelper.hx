@@ -1571,7 +1571,7 @@ class DisplayObjectHelper {
 		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) : getWidth(clip);
 
 		if (untyped clip.style != null) {
-			return Math.ceil(untyped clip.style.letterSpacing != null ? widgetWidth + clip.style.letterSpacing + 1.0 : widgetWidth + 1.0);
+			return Math.ceil(untyped clip.style.letterSpacing != null ? widgetWidth + clip.style.letterSpacing + 2.0 : widgetWidth + 2.0);
 		} else {
 			return widgetWidth;
 		}
