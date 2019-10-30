@@ -8,11 +8,15 @@ export {
 	makePoint3D() -> DynamicBehaviour<Point3D> { make(zeroPoint3D) };
 
 	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
-		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled, F3DAttachTransformControls;
+		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled, F3DAttachTransformControls, F3DCameraDistance,
+			F3DOrbitControlsParameters;
+
 			F3DIgnoreMouseEvents();
 			F3DExportScene(fn : ref Maybe<(includeCamera : bool) -> string>);
 			F3DTransformControlsEnabled(enabled : Transform<bool>); // const(false) by default, doesn't affect F3DTransformControls
 			F3DAttachTransformControls(fn : ref (clip : native, attach : bool) -> void);
+			F3DCameraDistance(min : double, max : double); // min = 0.0, max = 100.0 by default
+			F3DOrbitControlsParameters(parameters : [KeyValue]);
 
 	F3DObject ::= F3DScene, F3DMutable, F3DVisible, F3DAlpha, F3DPosition, F3DRotation, F3DScale, F3DLookAt, F3DOnLoad,
 		F3DInspectRotation, F3DInspectPosition, F3DInspectScale, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin,
@@ -84,19 +88,29 @@ export {
 				F3DCylinderGeometry(radiusTop : double, radiusBottom : double, height : double, radialSegments : int, heightSegments : int, openEnded : bool, thetaStart : double, thetaLength : double);
 				F3DNativeGeometry(geometry : native);
 			F3DBufferGeometry ::= F3DSphereBufferGeometry;
-				F3DSphereBufferGeometry(radius : double, widthSegments : int, heightSegments : int, phiStart : double, phiLength : double, thetaStart : double, thetaLength : double);
+				F3DSphereBufferGeometry(radius : double, widthSegments : int, heightSegments : int, phiStart : double, phiLength : double,
+					thetaStart : double, thetaLength : double, attributes : Maybe<F3DBufferGeometryAttributes>);
 
-			F3DMaterial ::= F3DMeshBasicMaterial, F3DMeshStandardMaterial, F3DNativeMaterials,
-				F3DMaterialTexture, F3DMaterialAlphaTexture,
+					F3DBufferGeometryAttributes(
+						get : [string], // Attributes names to get from buffer geometry, these attributes data is passed as 'attributes' to 'add' function
+						add : (attributes : Tree<string, [[double]]>) -> Tree<string, [[double]]> // Attributes to add to buffer geometry
+					);
+
+			F3DMaterial ::= F3DMeshBasicMaterial, F3DMeshStandardMaterial, F3DMeshNormalMaterial, F3DShaderMaterial, F3DNativeMaterials,
+				F3DMaterialTexture, F3DMaterialAlphaTexture, F3DMaterialDisplacementTexture, F3DMaterialBumpTexture,
 				// F3DMaterialRotation, F3DMaterialOffset,
-				F3DMaterialOpacity;
+				F3DMaterialOpacity, F3DMaterialVisible;
 
 				F3DMeshBasicMaterial(color : int, parameters : [KeyValue]);
 				F3DMeshStandardMaterial(color : int, parameters : [KeyValue]);
+				F3DMeshNormalMaterial(color : int, parameters : [KeyValue]);
+				F3DShaderMaterial(uniforms : string, vertexShader : string, fragmentShader : string);
 				F3DNativeMaterials(materials : native);
 
 				F3DMaterialTexture(material : F3DMaterial, texture : F3DTexture);
 				F3DMaterialAlphaTexture(material : F3DMaterial, texture : F3DTexture);
+				F3DMaterialDisplacementTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>, bias : Transform<double>);
+				F3DMaterialBumpTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>);
 
 					F3DTexture ::= F3DTextureLoader, F3DDataTexture, F3DFFormTexture;
 
@@ -106,6 +120,7 @@ export {
 
 
 				F3DMaterialOpacity(material : F3DMaterial, opacity : Transform<double>);
+				F3DMaterialVisible(material : F3DMaterial, visible : Transform<bool>);
 				F3DMaterialAlpha(material : F3DMaterial, alpha : Transform<double>) -> F3DMaterialOpacity { F3DMaterialOpacity(material, alpha) };
 
 				// F3DMaterialRotation(material : F3DMaterial, rotation : Transform<double>);
@@ -146,7 +161,17 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 									})()
 								],
 								render3dform(camera, clip, const(false), \c -> {
-										set3DCamera(clip, c);
+										cameraDistance = extractStruct(style, F3DCameraDistance(0.0, 100.0));
+										parameters =
+											concat(
+												extractStruct(style, F3DOrbitControlsParameters([])).parameters,
+												[
+													KeyValue("minDistance", toString(cameraDistance.min)),
+													KeyValue("maxDistance", toString(cameraDistance.max))
+												]
+											);
+
+										set3DCamera(clip, c, map(parameters, \v -> [v.key, v.value]));
 
 										[];
 									}
@@ -165,7 +190,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 						)
 				)
 				|> (\f ->
-					if (!contains(style, F3DIgnoreMouseEvents())) {
+					if (!contains(style, F3DIgnoreMouseEvents()) && getRendererType() != "html") {
 						mouseDown = make(false);
 
 						FGroup2(
@@ -286,6 +311,39 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 												-mi.dy
 											);
 										}
+									}),
+									TouchStart(\mi -> {
+										if (exists(mi.inside, apply0)) {
+											emit3DTouchEvent(
+												clip,
+												"touchstart",
+												map(mi.points, \p -> [p.x, p.y])
+											);
+
+											if (!^handled3DMouseDown) {
+												clear3DTransformControls(clip);
+											}
+										}
+
+										false;
+									}),
+									TouchMove(\mi -> {
+										emit3DTouchEvent(
+											clip,
+											"touchmove",
+											map(mi.points, \p -> [p.x, p.y])
+										);
+
+										false;
+									}),
+									TouchEnd(\mi -> {
+										emit3DTouchEvent(
+											clip,
+											"touchend",
+											map(mi.points, \p -> [p.x, p.y])
+										);
+
+										false;
 									})
 								],
 								FGraphics(fselect(wh, FLift(\v -> [GRect(0.0, 0.0, v.width, v.height)])), const([Fill(0x000000), FillOpacity(0.0)])),
@@ -903,8 +961,19 @@ renderF3DGeometry(geometry : F3DGeometry) -> native {
 		F3DSphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength) : {
 			make3DSphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
 		}
-		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength) : {
-			make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, attributesM) : {
+			g = make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+
+			maybeApply(
+				attributesM,
+				\attributes ->
+					iter(
+						tree2pairs(attributes.add(pairs2tree(map(attributes.get, \a -> Pair(a, get3DBufferGeometryAttribute(g, a)))))),
+						\p -> add3DBufferGeometryAttribute(g, p.first, p.second)
+					)
+			);
+
+			g;
 		}
 		F3DCircleGeometry(radius, segments, thetaStart, thetaLength) : {
 			make3DCircleGeometry(radius, segments, thetaStart, thetaLength);
@@ -937,6 +1006,18 @@ renderF3DMaterial(material : F3DMaterial) -> F3DMaterialDisposers {
 				[]
 			);
 		}
+		F3DMeshNormalMaterial(color, parameters) : {
+			F3DMaterialDisposers(
+				make3DMeshNormalMaterial(color, map(parameters, \v -> [v.key, v.value])),
+				[]
+			);
+		}
+		F3DShaderMaterial(uniforms, vertexShader, fragmentShader) : {
+			F3DMaterialDisposers(
+				make3DShaderMaterial(uniforms, vertexShader, fragmentShader),
+				[]
+			);
+		}
 		F3DNativeMaterials(innerMaterials) : {
 			F3DMaterialDisposers(innerMaterials, []);
 		}
@@ -952,6 +1033,18 @@ renderF3DMaterial(material : F3DMaterial) -> F3DMaterialDisposers {
 
 			m;
 		}
+		F3DMaterialDisplacementTexture(innerMaterial, texture, scale, bias) : {
+			m = renderF3DMaterial(innerMaterial);
+			set3DMaterialDisplacementMap(m.material, renderF3DTexture(texture), fgetValue(scale), fgetValue(bias));
+
+			m;
+		}
+		F3DMaterialBumpTexture(innerMaterial, texture, scale) : {
+			m = renderF3DMaterial(innerMaterial);
+			set3DMaterialBumpMap(m.material, renderF3DTexture(texture), fgetValue(scale));
+
+			m;
+		}
 		F3DMaterialOpacity(innerMaterial, opacity) : {
 			m = renderF3DMaterial(innerMaterial);
 
@@ -960,6 +1053,17 @@ renderF3DMaterial(material : F3DMaterial) -> F3DMaterialDisposers {
 				arrayPush(
 					m.disposers,
 					makeSubscribe(opacity, \v -> set3DMaterialOpacity(m.material, v))()
+				)
+			);
+		}
+		F3DMaterialVisible(innerMaterial, visible) : {
+			m = renderF3DMaterial(innerMaterial);
+
+			F3DMaterialDisposers(
+				m.material,
+				arrayPush(
+					m.disposers,
+					makeSubscribe(visible, \v -> set3DMaterialVisible(m.material, v))()
 				)
 			);
 		}
@@ -975,7 +1079,7 @@ renderF3DTexture(texture : F3DTexture) -> native {
 			make3DDataTexture(data, width, height, map(parameters, \v -> [v.key, v.value]))
 		}
 		F3DFFormTexture(fform, parameters) : {
-			d = renderFForm(fform, [0]);
+			d = renderFForm(fform, const([0]));
 			t = make3DCanvasTexture(d.clips[0], map(parameters, \v -> [v.key, v.value]));
 			applyall(d.disposers);
 			t;
