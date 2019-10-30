@@ -104,15 +104,15 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object set3DMaterialRotation(Object object, Double rotation) {
+	public Object set3DTextureRotation(Object object, Double rotation) {
 		return null;
 	}
 
-	public Object set3DMaterialOffsetX(Object object, Double x) {
+	public Object set3DTextureOffsetX(Object object, Double x) {
 		return null;
 	}
 
-	public Object set3DMaterialOffsetY(Object object, Double y) {
+	public Object set3DTextureOffsetY(Object object, Double y) {
 		return null;
 	}
 
