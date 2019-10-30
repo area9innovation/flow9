@@ -400,6 +400,15 @@ self.addEventListener('fetch', function(event) {
       })
     );
   } else {
+    if (request.method == "POST") {
+      // Here we trying to recognize file uploading request to skip it in cache operations then
+      if (request.headers.has("Content-Type")) {
+        var ctValue = request.headers.get("Content-Type").toLowerCase();
+        if (ctValue.includes("multipart/form-data") && ctValue.includes("boundary=")){
+          return;
+        }
+      }
+    }
     event.respondWith(makeResponse(event.request));
   }
 });
