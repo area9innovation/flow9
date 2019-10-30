@@ -80,7 +80,6 @@ var sendMessageToClient = function(event, data) {
 };
 
 self.addEventListener('install', function(event) {
-  console.log("ServiceWorker installed, v.", SERVICE_WORKER_VERSION);
   // Perform install steps
   event.waitUntil(
     initializeCacheStorage()
@@ -532,6 +531,6 @@ self.addEventListener('message', function(event) {
   } else if (event.data.action == "get_service_worker_version") {
     respond({data: SERVICE_WORKER_VERSION});
   } else {
-    respond({ status: "Failed" });
+    respond({ status: "Failed", error : "Unknown operation: " + event.data.action });
   }
 });

@@ -1,8 +1,6 @@
 #if js
 import js.Browser;
 import js.html.MessageChannel;
-import js.html.Location;
-import js.html.Window;
 #end
 
 class ProgressiveWebTools {
