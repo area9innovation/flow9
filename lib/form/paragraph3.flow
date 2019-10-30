@@ -6,13 +6,19 @@ import text/bidi_text;
 import text/blueprint;
 
 export {
-	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> Form;
+	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : WigiParagraphWidthManager) -> Form;
 	getLineIndent(paraIndent : double, lineIndex : int) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement;
 	makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement>;
 	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 	keepFormTogether(form : Form) -> bool;
+
+	WigiStoryWidthManager(paragraph : [WigiParagraphWidthManager], width : Behaviour<double>);
+	WigiParagraphWidthManager(storyWidth : Behaviour<double>, width : DynamicBehaviour<double>);
+
+	makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidthManager;
+	dummyWigiParagraphWidthManager = WigiParagraphWidthManager(const(0.0), make(0.0));
 }
 
 // TODO:
@@ -88,7 +94,12 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> Wrap
 	}
 }
 
-renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> Form {
+renderParagraph(
+	p : [ParagraphElement],
+	s : [ParagraphStyle],
+	rtl : bool,
+	widthManager : WigiParagraphWidthManager
+) -> Form {
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 
@@ -120,10 +131,17 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> For
 	lines : DynamicBehaviour<[ParaLine]> = make([]);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = Select(lines, \l -> renderParaLines(
-		getValue(aw), l, tightWidth, alignment, interlineSpacing,
-		topLineBaseline, interactiveStyles, rtl, containsStruct(s, ParagraphMarked())
-	));
+	renderedParagraph = if (tightWidth && widthManager != dummyWigiParagraphWidthManager) {
+		Select2(lines, widthManager.storyWidth, \l, storyWidth -> renderParaLines(
+			storyWidth, l, tightWidth, alignment, interlineSpacing,
+			topLineBaseline, interactiveStyles, rtl, containsStruct(s, ParagraphMarked())
+		));
+	} else {
+		Select(lines, \l -> renderParaLines(
+			getValue(aw), l, tightWidth, alignment, interlineSpacing,
+			topLineBaseline, interactiveStyles, rtl, containsStruct(s, ParagraphMarked())
+		));
+	}
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
@@ -163,6 +181,9 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> For
 				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
 				newLines = reflowParaWords(words, w, indent);
+
+				nextDistinct(widthManager.width, fold(map(newLines, \l -> fold(l.words, 0.0, \acc, w1 -> acc + geParaWordWidth(w1))), 0.0, \acc, width -> if (width > acc) width else acc));
+
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				next(lines, newLines);
 			};
@@ -352,6 +373,10 @@ reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : do
 	else text;
 }
 
+geParaWordWidth(word : ParaWord) -> double {
+	getValue(word.metrics).width;
+};
+
 // here availableWidth is an amount of width for current line
 reflowParaWords2(
 	words : [ParaWord],
@@ -429,17 +454,13 @@ reflowParaWords2(
 			ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm, word2.interactivityIdM);
 		};
 
-		getWordWidth = \word1 -> {
-			m : Behaviour<FormMetrics> = word1.metrics;
-			getValue(m).width;
-		};
 		switch (word.word : ParaAtomic) {
 			NewLine(): {
 				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
 			}
 			LinePart(f, p, e): {
-				width = getWordWidth(word);
-				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
+				width = geParaWordWidth(word);
+				nextWordWidth = if (rest != []) geParaWordWidth(rest[0]) else 0.0;
 
 				if (currentWords == []) {
 					// If it is the first item on the line
@@ -458,7 +479,7 @@ reflowParaWords2(
 			Space(s): {
 				// LSTSBU-454
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
-				width = getWordWidth(word);
+				width = geParaWordWidth(word);
 				if (width < remaining) {
 					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent);
 				} else {
@@ -493,7 +514,7 @@ reflowParaWords2(
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
 								if (keepFormTogether(f) || ^width == 0.0) {
-									width := ^width + getValue(_word.metrics).width;
+									width := ^width + geParaWordWidth(_word);
 									false;
 								} else {
 									true
@@ -502,7 +523,7 @@ reflowParaWords2(
 						};
 					});
 				} else {
-					width := getWordWidth(word);
+					width := geParaWordWidth(word);
 					1;
 				};
 
@@ -579,7 +600,7 @@ renderParaLines(
 	topLineBaseline : bool,
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
-	isMarked : bool
+	isMarked : bool,
 ) -> Form {
 	lasti = length(lines) - 1;
 
@@ -893,3 +914,20 @@ setWordText(w: ParaWord, t: string) -> ParaWord {
 setWordForm(word: ParaWord, form: GhostForm) -> ParaWord {
 	ParaWord(word.word, word.metrics, word.ghosted, form, word.interactivityIdM);
 };
+
+makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidthManager {
+	paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
+	if (tightWidth) {
+		storyWidth = arrayMaxu(paragraphWidths);
+
+		WigiStoryWidthManager(
+			mapi(paragraphWidths, \i, w -> WigiParagraphWidthManager(storyWidth.first, paragraphWidths[i])),
+			storyWidth.first
+		)
+	} else {
+		WigiStoryWidthManager(
+			map(paragraphWidths, \__ -> dummyWigiParagraphWidthManager),
+			const(0.0)
+		)
+	}
+}
