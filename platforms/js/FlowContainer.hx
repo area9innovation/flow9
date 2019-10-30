@@ -264,8 +264,6 @@ class FlowContainer extends Container {
 
 		isNativeWidget = true;
 
-		for (child in children) {
-			untyped child.parentClip = this;
-		}
+		invalidateParentClip();
 	}
 }

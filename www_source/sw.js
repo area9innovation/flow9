@@ -1,3 +1,4 @@
+var SERVICE_WORKER_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -527,5 +528,9 @@ self.addEventListener('message', function(event) {
     );
   } else if (event.data.action == "check_urls_in_cache") {
     checkUrlsInCache(event.data.data.urls).then(respond);
+  } else if (event.data.action == "get_service_worker_version") {
+    respond({data: SERVICE_WORKER_VERSION});
+  } else {
+    respond({ status: "Failed", error : "Unknown operation: " + event.data.action });
   }
 });
