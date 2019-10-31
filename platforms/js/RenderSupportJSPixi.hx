@@ -627,9 +627,7 @@ class RenderSupportJSPixi {
 		};
 
 		if (Platform.isMobile) {
-			if (Platform.isChrome) {
-				untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-			}
+			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
 
 			Browser.document.body.ontouchstart = onpointerdown;
 			Browser.document.body.ontouchend = onpointerup;
