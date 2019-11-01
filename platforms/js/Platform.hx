@@ -37,7 +37,10 @@ class Platform {
 	public static var isWindows : Bool = ~/Win/i.match(Browser.window.navigator.platform);
 	public static var isLinux : Bool = ~/Linux/i.match(Browser.window.navigator.platform);
 
-	public static var browserMajorVersion : Int = untyped __js__("parseInt(window.navigator.userAgent.match(/version\\/(\\d+)/i)[1]) || 0");
+	public static var browserMajorVersion : Int = untyped __js__("function() {
+		var version = window.navigator.userAgent.match(/version\\/(\\d+)/i);
+		return version && version.length > 1 ? parseInt(version[1]) || 0 : 0;
+	}()");
 
 	// IE Mobile on Windows Phones doesn't seem to support the HTML5 canvas drawImage
 	// method from video elements (what PIXI ultimately relies on).
