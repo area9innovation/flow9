@@ -126,6 +126,8 @@ class TextClip extends NativeWidgetClip {
 	private var isFocused : Bool = false;
 	public var isInteractive : Bool = false;
 
+	private var baselineWidget : Dynamic;
+
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 
@@ -371,13 +373,9 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontFamily = RenderSupportJSPixi.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupportJSPixi.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupportJSPixi.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
-		nativeWidget.style.fontSize =  '${style.fontSize}px';
+		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-
-		nativeWidget.style.marginTop = style.fontFamily != 'Material Icons' ?
-			'${DisplayObjectHelper.round(Math.max(style.fontProperties.fontSize - Math.ceil(style.fontSize * 1.15), 0.0) - interlineSpacing / 2.0 - 1.0 + Math.ceil(style.fontSize * 1.15) - style.fontSize * 1.15)}px' :
-			'${DisplayObjectHelper.round(-interlineSpacing / 2.0)}px';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.lineHeight)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
@@ -386,6 +384,20 @@ class TextClip extends NativeWidgetClip {
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
 			default : null;
+		}
+
+		updateBaselineWidget();
+	}
+
+	public inline function updateBaselineWidget() : Void {
+		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget) {
+			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0)}px';
+				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0) * getNativeWidgetTransform().d)}px';
+			} else if (baselineWidget.parentNode != null) {
+				baselineWidget.parentNode.removeChild(baselineWidget);
+			}
 		}
 	}
 
@@ -1208,6 +1220,9 @@ class TextClip extends NativeWidgetClip {
 			updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
+
+			baselineWidget = Browser.document.createElement('span');
+			baselineWidget.classList.add('baselineWidget');
 
 			isNativeWidget = true;
 		} else {
