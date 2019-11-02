@@ -344,9 +344,7 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.resize = 'none';
 			}
 
-			nativeWidget.style.marginTop = RenderSupportJSPixi.RendererType == "html" ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-
 			nativeWidget.style.direction = switch (textDirection) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
@@ -376,7 +374,11 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${style.lineHeight}px';
+
+		nativeWidget.style.marginTop = style.fontFamily != 'Material Icons' ?
+			'${DisplayObjectHelper.round(Math.max(style.fontProperties.fontSize - Math.ceil(style.fontSize * 1.15), 0.0) - interlineSpacing / 2.0 - 1.0 + Math.ceil(style.fontSize * 1.15) - style.fontSize * 1.15)}px' :
+			'${DisplayObjectHelper.round(-interlineSpacing / 2.0)}px';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.lineHeight)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -934,37 +936,44 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onFocus(e : Event) : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
-			isFocused = true;
-			emit('focus');
+		isFocused = true;
 
-			if (parent != null) {
-				parent.emitEvent('childfocused', this);
-			}
+		if (RenderSupportJSPixi.Animating) {
+			RenderSupportJSPixi.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
 
-			if (nativeWidget == null || parent == null) {
-				return;
-			}
+		emit('focus');
 
-			if (Platform.isIOS) {
-				RenderSupportJSPixi.ensureCurrentInputVisible();
-			}
+		if (parent != null) {
+			parent.emitEvent('childfocused', this);
+		}
 
-			invalidateMetrics();
-		});
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
+
+		if (Platform.isIOS && RenderSupportJSPixi.RendererType != "html") {
+			RenderSupportJSPixi.ensureCurrentInputVisible();
+		}
+
+		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
-			isFocused = false;
-			emit('blur');
+		if (RenderSupportJSPixi.Animating) {
+			RenderSupportJSPixi.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
 
-			if (nativeWidget == null || parent == null) {
-				return;
-			}
+		isFocused = false;
+		emit('blur');
 
-			invalidateMetrics();
-		});
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
+
+		invalidateMetrics();
 	}
 
 	private function onInput(e : Dynamic) {

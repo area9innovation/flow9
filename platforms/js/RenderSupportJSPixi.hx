@@ -29,6 +29,7 @@ class RenderSupportJSPixi {
 	public static var PixiStage : FlowContainer = new FlowContainer(true);
 	public static var PixiRenderer : Dynamic;
 
+	public static var TouchPoints : Dynamic;
 	public static var MousePos : Point = new Point(0.0, 0.0);
 	public static var PixiStageChanged : Bool = true;
 	private static var TransformChanged : Bool = true;
@@ -549,6 +550,9 @@ class RenderSupportJSPixi {
 			e.preventDefault();
 
 			if (e.touches != null) {
+				TouchPoints = e.touches;
+				emit("touchstart");
+
 				if (e.touches.length == 1) {
 					MousePos.x = e.touches[0].pageX;
 					MousePos.y = e.touches[0].pageY;
@@ -573,6 +577,9 @@ class RenderSupportJSPixi {
 
 		var onpointerup = function(e : Dynamic) {
 			if (e.touches != null) {
+				TouchPoints = e.touches;
+				emit("touchend");
+
 				GesturesDetector.endPinch();
 
 				if (e.touches.length == 0) {
@@ -594,6 +601,9 @@ class RenderSupportJSPixi {
 
 		var onpointermove = function(e : Dynamic) {
 			if (e.touches != null) {
+				TouchPoints = e.touches;
+				emit("touchmove");
+
 				if (e.touches.length == 1) {
 					MousePos.x = e.touches[0].pageX;
 					MousePos.y = e.touches[0].pageY;
@@ -616,24 +626,22 @@ class RenderSupportJSPixi {
 			}
 		};
 
-		if (Platform.isMobile) {
-			if (Platform.isChrome) {
-				untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-			}
-
-			Browser.document.body.ontouchstart = onpointerdown;
-			Browser.document.body.ontouchend = onpointerup;
-			Browser.document.body.ontouchmove = onpointermove;
-		} else if (Platform.isSafari) {
-			Browser.document.body.onmousedown = onpointerdown;
-			Browser.document.body.onmouseup = onpointerup;
-			Browser.document.body.onmousemove = onpointermove;
-			Browser.document.body.onmouseout = onpointerout;
-		} else {
+		if (!Platform.isMobile && !Platform.isSafari || Platform.isSafari && Platform.browserMajorVersion >= 13) {
 			Browser.document.body.onpointerdown = onpointerdown;
 			Browser.document.body.onpointerup = onpointerup;
 			Browser.document.body.onpointermove = onpointermove;
 			Browser.document.body.onpointerout = onpointerout;
+		} else if (Platform.isMobile) {
+			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+
+			Browser.document.body.ontouchstart = onpointerdown;
+			Browser.document.body.ontouchend = onpointerup;
+			Browser.document.body.ontouchmove = onpointermove;
+		} else {
+			Browser.document.body.onmousedown = onpointerdown;
+			Browser.document.body.onmouseup = onpointerup;
+			Browser.document.body.onmousemove = onpointermove;
+			Browser.document.body.onmouseout = onpointerout;
 		}
 
 		Browser.document.body.onkeydown = function(e : Dynamic) {
@@ -897,10 +905,13 @@ class RenderSupportJSPixi {
 		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
 	}
 
+	public static var Animating = false;
+
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
 		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
+			Animating = true;
 			PixiStageChanged = false;
 
 			if (RendererType == "html") {
@@ -929,6 +940,8 @@ class RenderSupportJSPixi {
 
 			untyped PixiRenderer._lastObjectRendered = PixiStage;
 			PixiStageChanged = false; // to protect against recursive invalidations
+			Animating = false;
+
 			emit("stagechanged", timestamp);
 		} else {
 			AccessWidget.updateAccessTree();
@@ -956,7 +969,7 @@ class RenderSupportJSPixi {
 		return function() { off("message", handler); };
 	}
 
-	private static function InvalidateLocalStages() {
+	public static function InvalidateLocalStages() {
 		for (child in PixiStage.children) {
 			child.invalidateTransform('InvalidateLocalStages');
 		}
@@ -1032,13 +1045,15 @@ class RenderSupportJSPixi {
 		return PixiStage;
 	}
 
-	public static function mainRenderClip() : DisplayObject {
-		var stage = PixiStage.children[0];
-		if (stage == null) {
-			stage = new FlowContainer();
+	public static function mainRenderClip() : FlowContainer {
+		if (PixiStage.children.length == 0) {
+			var stage = new FlowContainer();
 			addChild(PixiStage, stage);
+
+			return stage;
+		} else {
+			return cast(PixiStage.children[0], FlowContainer);
 		}
-		return stage;
 	}
 
 	public static function enableResize() : Void {
@@ -1287,7 +1302,9 @@ class RenderSupportJSPixi {
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
-		render();
+		if (focus) {
+			render();
+		}
 
 		clip.setClipFocus(focus);
 	}
@@ -1655,7 +1672,8 @@ class RenderSupportJSPixi {
 		} else if (event == "resize") {
 			on("resize", fn);
 			return function() { off("resize", fn); }
-		} else if (event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup") {
+		} else if (event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup"
+			|| event == "touchstart" || event == "touchmove" || event == "touchend") {
 			on(event, fn);
 			return function() { off(event, fn); }
 		} else if (event == "mouserightdown" || event == "mouserightup") {
@@ -1776,6 +1794,23 @@ class RenderSupportJSPixi {
 			return MousePos.y;
 		else
 			return untyped __js__('clip.toLocal(RenderSupportJSPixi.MousePos, null, null, true).y');
+	}
+
+	public static function getTouchPoints(?clip : DisplayObject) : Array<Array<Float>> {
+		var touches = [];
+
+		for (i in 0...TouchPoints.length) {
+			touches.push([TouchPoints[i].pageX, TouchPoints[i].pageY]);
+		}
+
+		if (clip != null && clip != PixiStage) {
+			return Lambda.array(Lambda.map(touches, function(t : Dynamic) {
+				t = untyped __js__('clip.toLocal(new PIXI.Point(t[0], t[1]), null, null, true)');
+				return [t.x, t.y];
+			}));
+		} else {
+			return touches;
+		}
 	}
 
 	public static function setMouseX(x : Float) {
@@ -2010,7 +2045,6 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setCursor(cursor : String) : Void {
-		Native.printCallstack();
 		PixiView.style.cursor = cursor2css(cursor);
 	}
 

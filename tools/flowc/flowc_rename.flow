@@ -14,20 +14,20 @@ fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder :
 	skips = if (skipp == "") [] else map(strSplit(skipp, ","), \t -> "test" + t);
 	iter(tests, \test ->
 		if (skips != [] && exists(skips, \skip -> startsWith(test, skip))) {
-			fcPrintln("Skipping " + test);
+			fcPrintln("Skipping " + test, config.threadId);
 		} else if (endsWith(test, ".flow")) {
 			file = folder + (if (endsWith(folder, "/")) "" else "/") + test;
 			if (isDirectory(folder) && fileExists(file)) {
-				fcPrintln("Testing " + file);
+				fcPrintln("Testing " + file, config.threadId);
 				starttime = timestamp();
 				prog_error = parseAndTypecheckFlowFile(setConfigFlowfile(config, file), globEnv, file);
 				prog = prog_error.first;
 				if (prog_error.second == 0) testRenameGlobalSymbols(prog, file);
-				fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n");
+				fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n", config.threadId);
 			}
 		}
 	);
-	fcPrintln("Test complete");
+	fcPrintln("Test complete", config.threadId);
 	showStopper(0);
 }
 
@@ -46,7 +46,7 @@ fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : strin
 					fcLocalRename(config, globEnv, renameSymbol, symbolnature.kind);
 			}
 		None(): {
-			fcPrintln(renameSymbol + " is not found");
+			fcPrintln(renameSymbol + " is not found", config.threadId);
 		}
 	}
 	showStopper(0);
@@ -58,7 +58,7 @@ fcGlobalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol 
 	compute_reacheable = \ -> {
 		// Skip all error messages at parsing/typechecking, because 
 		// occasionaly we can process old/broken/erraneous files.
-		fcSkipPrinting := true;
+		fcSetSkipPrinting(config.threadId, true);
 
 		// Find all sources, containing symbol
 		workingDir = getConfigParameterDef(config.config, "working-dir", "");
@@ -103,11 +103,11 @@ fcGlobalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol 
 	).first;
 
 	// Return the normal output mode.
-	fcSkipPrinting := false;
+	fcSetSkipPrinting(config.threadId, false);
 
 	renameTo = getConfigParameter(config.config, "to");
 	if (renameTo == "") {
-		fcPrintln("Provide rename=<symbol> with to=<renamed>");
+		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
 	} else {
 		foldTree(programs, makeSet(), \file, prog, ac -> 
 			renameGlobalSymbolTo(prog, renameSymbol, kind, renameTo, ac)
@@ -120,7 +120,7 @@ fcLocalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string,
 	file = resolveRelativePath(getCompilationFile(config.config, config.verbose));
 	to = getConfigParameter(config.config, "to");
 	if (to == "") {
-		fcPrintln("Provide rename=<symbol> with to=<renamed>");
+		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
 	} else {
 		line_str = getConfigParameter(config.config, "exp-line");
 		column_str = getConfigParameter(config.config, "exp-column");
@@ -134,7 +134,7 @@ fcLocalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string,
 				renameLocalSymbolTo(prog, file, line, column, from, kind, to);
 			}
 		} else {
-			fcPrintln("local remaning requires passing varible line and column");
+			fcPrintln("local remaning requires passing varible line and column", config.threadId);
 		}
 	};
 }
@@ -143,7 +143,7 @@ fcModuleRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string
 	file = resolveRelativePath(getCompilationFile(config.config, config.verbose));
 	to = getConfigParameter(config.config, "to");
 	if (to == "") {
-		fcPrintln("Provide rename=<symbol> with to=<renamed>");
+		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
 	} else {
 		prog_error = parseAndTypecheckFlowFile(setConfigFlowfile(config, file), globEnv, file);
 		prog = prog_error.first;
@@ -166,7 +166,7 @@ renameGlobalSymbolTo(prog : FiProgram, from : string, kind : FcSymbolKind, to : 
 					if (getConfigParameter(config.config, "unittests") != "rename") {
 						path = module.fileinfo.fullpath;
 						if (!setFileContent(path, pair.second)) {
-							fcPrintln("can't save renamed source file: " + path)
+							fcPrintln("can't save renamed source file: " + path, prog.config.threadId)
 						}
 						insertSet(acc, path)
 					} else {
@@ -188,7 +188,7 @@ renameLocalSymbolTo(prog : FiProgram, file : string, line : int, col : int, from
 			code = getFileContent(module.fileinfo.fullpath);
 			renamed = completeRenaming(code, from, to, occurrences);
 			if (!setFileContent(module.fileinfo.fullpath, renamed)) {
-				fcPrintln("can't save renamed source file: " + module.fileinfo.fullpath)
+				fcPrintln("can't save renamed source file: " + module.fileinfo.fullpath, prog.config.threadId)
 			}
 		}
 		None(): { }
@@ -206,11 +206,11 @@ renameModuleSymbolTo(prog : FiProgram, file : string, from : string, kind : FcSy
 			renamed = completeRenaming(code, from, to, occurences);
 			path = module.fileinfo.fullpath;
 			if (!setFileContent(path, renamed)) {
-				fcPrintln("can't save renamed source file: " + path)
+				fcPrintln("can't save renamed source file: " + path, prog.config.threadId)
 			}
 		}
 		None(): {
-			fcPrintln("module = " + relative + " not found");
+			fcPrintln("module = " + relative + " not found", prog.config.threadId);
 		}
 	}
 }
@@ -225,10 +225,10 @@ testRenameGlobalSymbols(prog : FiProgram, flowfile : string) -> void {
 				Some(to): {
 					renameGlobalSymbolTo(prog, from, FcNameSymbol(), to, makeSet()); {}
 				}
-				None(): fcPrintln("Config parameter 'test-rename-tos' should include an entry for file: " + test);
+				None(): fcPrintln("Config parameter 'test-rename-tos' should include an entry for file: " + test, prog.config.threadId);
 			}
 		}
-		None(): fcPrintln("Config parameter 'test-rename-froms' should include an entry for file: " + test);
+		None(): fcPrintln("Config parameter 'test-rename-froms' should include an entry for file: " + test, prog.config.threadId);
 	}
 }
 
@@ -253,7 +253,7 @@ outputRenamedModule(path : string, code : string, config : CompilerConfig) -> vo
 		ensureDirectoryExists(outfolder);
 		outfile = outfolder + "/" + strReplace(path, "/", "_") + ".flow";
 		if (!setFileContent(outfile, code)) {
-			fcPrintln("can't save renamed source file: " + outfile)
+			fcPrintln("can't save renamed source file: " + outfile, config.threadId)
 		}
 	}
 }

@@ -1,4 +1,6 @@
 import js.three.Object3D;
+import js.three.Material;
+import js.three.Texture;
 import js.three.Box3;
 import js.three.Camera;
 
@@ -12,8 +14,20 @@ class Object3DHelper {
 
 		if (getClipWorldVisible(object)) {
 			for (stage in getStage(object)) {
-				stage.invalidateStage(false);
+				stage.invalidateStage();
 			}
+		}
+	}
+
+	public static inline function invalidateMaterialStage(object : Material) : Void {
+		if (untyped object.parent != null) {
+			invalidateStage(untyped object.parent);
+		}
+	}
+
+	public static inline function invalidateTextureStage(object : Texture) : Void {
+		if (untyped object.parent != null) {
+			invalidateMaterialStage(untyped object.parent);
 		}
 	}
 
@@ -119,18 +133,19 @@ class Object3DHelper {
 			child.parent = parent;
 
 			// Apply object world transform while adding to new parent
+			if (untyped child.worldTransformSaved) {
+				RenderSupport3D.set3DObjectWorldX(child, RenderSupport3D.get3DObjectX(child));
+				RenderSupport3D.set3DObjectWorldY(child, RenderSupport3D.get3DObjectY(child));
+				RenderSupport3D.set3DObjectWorldZ(child, RenderSupport3D.get3DObjectZ(child));
 
-			RenderSupport3D.set3DObjectWorldX(child, RenderSupport3D.get3DObjectX(child));
-			RenderSupport3D.set3DObjectWorldY(child, RenderSupport3D.get3DObjectY(child));
-			RenderSupport3D.set3DObjectWorldZ(child, RenderSupport3D.get3DObjectZ(child));
+				RenderSupport3D.set3DObjectWorldScaleX(child, RenderSupport3D.get3DObjectScaleX(child));
+				RenderSupport3D.set3DObjectWorldScaleY(child, RenderSupport3D.get3DObjectScaleY(child));
+				RenderSupport3D.set3DObjectWorldScaleZ(child, RenderSupport3D.get3DObjectScaleZ(child));
 
-			RenderSupport3D.set3DObjectWorldScaleX(child, RenderSupport3D.get3DObjectScaleX(child));
-			RenderSupport3D.set3DObjectWorldScaleY(child, RenderSupport3D.get3DObjectScaleY(child));
-			RenderSupport3D.set3DObjectWorldScaleZ(child, RenderSupport3D.get3DObjectScaleZ(child));
-
-			RenderSupport3D.set3DObjectWorldRotationX(child, RenderSupport3D.get3DObjectRotationX(child));
-			RenderSupport3D.set3DObjectWorldRotationY(child, RenderSupport3D.get3DObjectRotationY(child));
-			RenderSupport3D.set3DObjectWorldRotationZ(child, RenderSupport3D.get3DObjectRotationZ(child));
+				RenderSupport3D.set3DObjectWorldRotationX(child, RenderSupport3D.get3DObjectRotationX(child));
+				RenderSupport3D.set3DObjectWorldRotationY(child, RenderSupport3D.get3DObjectRotationY(child));
+				RenderSupport3D.set3DObjectWorldRotationZ(child, RenderSupport3D.get3DObjectRotationZ(child));
+			}
 
 			update3DChildren(parent);
 
@@ -139,7 +154,7 @@ class Object3DHelper {
 			if (stage.length > 0) {
 				for (subChild in child.children) {
 					if (untyped __instanceof__(subChild, Camera)) {
-						stage[0].setCamera(cast(subChild, Camera));
+						stage[0].setCamera(cast(subChild, Camera), []);
 						child.remove(subChild);
 						subChild.parent = null;
 					}
@@ -197,6 +212,8 @@ class Object3DHelper {
 		RenderSupport3D.set3DObjectRotationX(child, RenderSupport3D.get3DObjectWorldRotationX(child));
 		RenderSupport3D.set3DObjectRotationY(child, RenderSupport3D.get3DObjectWorldRotationY(child));
 		RenderSupport3D.set3DObjectRotationZ(child, RenderSupport3D.get3DObjectWorldRotationZ(child));
+
+		untyped child.worldTransformSaved = true;
 
 		parent.remove(child);
 		child.parent = null;
@@ -265,6 +282,16 @@ class Object3DHelper {
 
 		for (child in parent.children) {
 			children = children.concat(get3DObjectAllChildren(child));
+		}
+
+		return children;
+	}
+
+	public static function get3DObjectAllInteractiveChildren(parent : Object3D) : Array<Object3D> {
+		var children = Lambda.array(Lambda.filter(parent.children.copy(), function(v) { return untyped v.interactive; }));
+
+		for (child in parent.children) {
+			children = children.concat(get3DObjectAllInteractiveChildren(child));
 		}
 
 		return children;

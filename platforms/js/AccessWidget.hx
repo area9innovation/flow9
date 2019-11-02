@@ -545,6 +545,11 @@ class AccessWidget extends EventEmitter {
 				this.element.addEventListener("focus", function () {
 					focused = true;
 
+					if (RenderSupportJSPixi.Animating) {
+						RenderSupportJSPixi.once("stagechanged", function() { if (focused) this.element.focus(); });
+						return;
+					}
+
 					if (RenderSupportJSPixi.RendererType == "html") {
 						if (parent != null) {
 							var accessWidget = parent.getNextAccessWidget();
@@ -578,6 +583,11 @@ class AccessWidget extends EventEmitter {
 
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
+					if (RenderSupportJSPixi.Animating) {
+						RenderSupportJSPixi.once("stagechanged", function() { if (focused) this.element.focus(); });
+						return;
+					}
+
 					RenderSupportJSPixi.once("drawframe", function() {
 						focused = false;
 						clip.emit("blur");
@@ -679,7 +689,8 @@ class AccessWidget extends EventEmitter {
 	public function set_role(role : String) : String {
 		element.setAttribute("role", role);
 
-		if (RenderSupportJSPixi.RendererType == "html" && accessRoleMap.get(role) != null && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
+		if (RenderSupportJSPixi.RendererType == "html" && accessRoleMap.get(role) != null &&
+			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
 			for (attr in element.attributes) {

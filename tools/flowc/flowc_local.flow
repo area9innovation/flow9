@@ -28,19 +28,19 @@ fcCompileUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : 
 	skips = if (skipp == "") [] else map(strSplit(skipp, ","), \t -> "test" + t);
 
 	compile = \file -> {
-		fcPrintln("Testing " + file);
+		fcPrintln("Testing " + file, config.threadId);
 		starttime = timestamp();
 
 		config1 = CompilerConfig(updateJsConfig(config, file) with flowfile = file);
 
 		fcCompile(config1, globEnv, \e -> {
-			fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n");
+			fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n", config.threadId);
 		});
 	}
 
 	iter(tests, \test -> {
 		if (skips != [] && exists(skips, \skip -> startsWith(test, skip))) {
-			fcPrintln("Skipping " + test);
+			fcPrintln("Skipping " + test, config.threadId);
 		} else {
 			file = folder + "/" + test + "/" + test + ".flow";
 			if (isDirectory(folder + "/" + test) && fileExists(file)) {
@@ -53,7 +53,7 @@ fcCompileUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : 
 			}
 		}
 	});
-	fcPrintln("Test complete");
+	fcPrintln("Test complete", config.threadId);
 	showStopper(0);
 }
 
@@ -74,25 +74,25 @@ fcCompile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper : (int
 		);
 		if (^errors == 0 || forceBuild) {
 			if (^errors != 0 && forceBuild) {
-				fcPrintln("WARNING: Building program despite of type check errors (force-build=1)");
+				fcPrintln("WARNING: Building program despite of type check errors (force-build=1)", config.threadId);
 			}
 			t = timestamp();
 			if (isConfigParameterTrue(config.config, "dump-program")) {
-				fcPrintBinary(serialize(progOptimized));
+				fcPrintBinary(serialize(progOptimized), config.threadId);
 			}
 			if (isConfigParameterSet(config.config, "compile-expression")) {
 				switch (lookupTree(progOptimized.names.toplevel, "___tmpvar___")) {
 					Some(decl): {
 						switch (decl) {
-							FiGlobalVar(__, value, __,__,__): fcPrintBinary(serialize(value));
-							default: fcPrintln("___tmpvar___ is not a var");
+							FiGlobalVar(__, value, __,__,__): fcPrintBinary(serialize(value), config.threadId);
+							default: fcPrintln("___tmpvar___ is not a var", config.threadId);
 						}
 					}
-					None(): fcPrintln("___tmpvar___ is not found");
+					None(): fcPrintln("___tmpvar___ is not found", config.threadId);
 				}
 			}
 			buildFiProgram(progOptimized, globEnv, \code -> {
-				incrementTimePhase(fcTimePhases.build, t);
+				incrementTimePhase(getTimePhases(config.threadId).build, t);
 				showStopper(code)
 			});
 		} else {
@@ -144,7 +144,7 @@ doFiProgramAnalysis(prog : FiProgram, onError : (FcError) -> void, file : string
 			|| getConfigParameterDef(config, "inca", "") != "") {
 			prog
 		} else {
-			if (prog.config.verbose >= 1) fcPrintln("Dead code elimination...");
+			if (prog.config.verbose >= 1) fcPrintln("Dead code elimination...", prog.config.threadId);
 			preservedNames = fold(strSplit(getConfigParameterDef(config, "dce-preserved-names", ""), ","), makeSet(), \accPn, v -> 
 				if (v != "") insertSet(accPn, v) else accPn
 			);
@@ -178,19 +178,19 @@ doFiProgramAnalysis(prog : FiProgram, onError : (FcError) -> void, file : string
 
 	cse = if (isConfigParameterTrue(config, "cse") || isConfigParameterTrue(config, "cse-global")) {
 		t = timestamp();
-		if (prog.config.verbose >= 1) fcPrintln("Common subexpression elimination...");
+		if (prog.config.verbose >= 1) fcPrintln("Common subexpression elimination...", prog.config.threadId);
 		cse_result = if (isConfigParameterTrue(config, "cse-global")) {
 			csegFiProgram(prog_elim);
 		} else {
 			cseFiProgram(prog_elim);
 		}
-		incrementTimePhase(fcTimePhases.cse, t);
+		incrementTimePhase(getTimePhases(prog.config.threadId).cse, t);
 		cse_result
 	} else prog_elim;
 
 	t = timestamp();
 	prog_optimized = optimizeCode(cse, file, makeTree());
-	incrementTimePhase(fcTimePhases.optimize, t);
+	incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
 	prog_optimized
 }
 
@@ -209,7 +209,7 @@ printCallGraph(filename : string, prog : FiProgram) -> void {
 					FiLambda(__, __, __, __): fifreevars(f.fallbackLambda);
 					FiVoid(__): makeSet();
 					default: {
-						fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, f.fallbackLambda));
+						fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, f.fallbackLambda), prog.config.threadId);
 						makeSet()
 					}
 				}
@@ -221,19 +221,19 @@ printCallGraph(filename : string, prog : FiProgram) -> void {
 		concat([heading], lines2)
 	}));
 	if (setFileContent(filename, strGlue(map(lines, \l -> l + "\n"), ""))) {}
-	else fcPrintln("Cannot write callgraph to file '" + filename + "'");
+	else fcPrintln("Cannot write callgraph to file '" + filename + "'", prog.config.threadId);
 }
 
 runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
 	starttime = timestamp();
 	showStopper = \code -> {
 		endtime = timestamp();
-		fcTimePhases.total := endtime - starttime;
+		getTimePhases(config.threadId).total := endtime - starttime;
 
 		if (code == 0 && isConfigParameterTrue(config.config, "timephases")) {
 			displayTimePhase(config);
 		}
-		fcPrintln(d2st((endtime - starttime) / 1000.0, 2) + "s");
+		fcPrintln(d2st((endtime - starttime) / 1000.0, 2) + "s", config.threadId);
 
 		if (isConfigParameterTrue(config.config, "dot")) {
 		} else {
@@ -258,7 +258,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 					printUsage(config);
 					showStopper(2);
 				} else {
-					fcPrintln("no flowc server is running");
+					fcPrintln("no flowc server is running", config.threadId);
 				}
 			} else {
 				ut = if (unittests == "1") "tools/flowc/tests" else unittests;
@@ -268,7 +268,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 			printUsage(config);
 			showStopper(0);
 		} else if (file == "/v" || file == "-v" || file == "--version") {
-			fcPrintln("Version " + flowc_version + " (git rev: " + flowc_git_revision + ")");
+			fcPrintln("Version " + flowc_version + " (git rev: " + flowc_git_revision + ")", config.threadId);
 			showStopper(0);
 		} else {
 			findSymbol = getConfigParameterDef(config.config, "find-definition", 
