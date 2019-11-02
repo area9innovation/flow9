@@ -774,7 +774,15 @@ class AccessWidget extends EventEmitter {
 				e.stopPropagation();
 			};
 
-			if (Platform.isMobile) {
+			if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+				element.onpointerdown = onpointerdown;
+				element.onpointerup = onpointerup;
+
+				untyped __js__("this.element.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+
+				element.ontouchstart = onpointerdown;
+				element.ontouchend = onpointerup;
+			} else if (Platform.isMobile) {
 				element.ontouchstart = onpointerdown;
 				element.ontouchend = onpointerup;
 			} else if (Platform.isSafari) {
