@@ -567,7 +567,7 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object make3DShaderMaterial(String uniforms, String vertexShader, String fragmentShader) {
+	public Object make3DShaderMaterial(String uniforms, String vertexShader, String fragmentShader, Object[] parameters) {
 		return null;
 	}
 

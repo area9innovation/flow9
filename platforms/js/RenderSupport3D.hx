@@ -4,6 +4,7 @@ import js.three.Scene;
 import js.three.Fog;
 
 import js.three.Color;
+import js.three.Vector2;
 import js.three.Vector3;
 import js.three.Euler;
 import js.three.Quaternion;
@@ -408,6 +409,18 @@ class RenderSupport3D {
 			untyped alphaMap.parent = material;
 			untyped material.alphaMap = alphaMap;
 			untyped material.transparent = true;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.alphaMap = {
+					type : 't',
+					value : alphaMap
+				}
+
+				// untyped material.uniforms.alphaMapResolution = {
+				// 	type : 'v2',
+				// 	value : new Vector2(alphaMap.width, alphaMap.height)
+				// }
+			}
 
 			material.invalidateMaterialStage();
 		}
@@ -1458,26 +1471,51 @@ class RenderSupport3D {
 		return material;
 	}
 
-	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String) : Material {
+	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String, parameters : Array<Array<String>>) : Material {
+		var material : Dynamic = null;
+		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
+
+		uniformsObject.resolution = {
+			type : 'v2',
+			value : new Vector2(Browser.window.innerWidth, Browser.window.innerHeight)
+		};
+
+		uniformsObject.time = {
+			value : Browser.window.performance.now()
+		};
+
 		if (vertexShader != "") {
 			if (fragmentShader != "") {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 					fragmentShader: fragmentShader
 				});
 			} else {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 				});
 			}
 		} else {
-			return new ShaderMaterial(untyped {
-				uniforms: haxe.Json.parse(uniforms),
+			material = new ShaderMaterial(untyped {
+				uniforms: uniformsObject,
 				fragmentShader: fragmentShader
 			});
 		}
+
+		material.updateUniformTime = function(v) {
+			material.uniforms.time.value = v;
+		};
+
+		// TODO: Implement dispose
+		RenderSupportJSPixi.on("drawframe", material.updateUniformTime);
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
 	}
 
 
