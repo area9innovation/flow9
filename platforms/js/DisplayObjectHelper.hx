@@ -770,6 +770,8 @@ class DisplayObjectHelper {
 
 						if (untyped clip.styleChanged) {
 							untyped clip.updateNativeWidgetStyle();
+						} else if (untyped clip.updateBaselineWidget != null) {
+							untyped clip.updateBaselineWidget();
 						}
 
 						updateNativeWidgetFilters(clip);

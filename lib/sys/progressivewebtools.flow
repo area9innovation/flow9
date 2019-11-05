@@ -24,7 +24,7 @@ export {
 
 	// Registers the Service Worker for a web page.
 	// Once called the Service Worker will be run until disableServiceWorkerCaching called.
-	native enableServiceWorkerCaching : io (callback : (success : bool) -> void) -> void = ProgressiveWebTools.enableServiceWorkerCaching;
+	native enableServiceWorkerCaching : io (swFileName : string, callback : (success : bool) -> void) -> void = ProgressiveWebTools.enableServiceWorkerCaching;
 
 	// Unregisters the Service Worker from a web page.
 	// Make sure to call after enableServiceWorkerCaching or checkServiceWorkerCachingEnabled callback called with true.
@@ -33,7 +33,7 @@ export {
 
 
 	// Check whether we already registered a Service Worker
-	native checkServiceWorkerCachingEnabled : io (callback : (enabled : bool) -> void) -> void = ProgressiveWebTools.checkServiceWorkerCachingEnabled;
+	native checkServiceWorkerCachingEnabled : io (swFileName : string, callback : (enabled : bool) -> void) -> void = ProgressiveWebTools.checkServiceWorkerCachingEnabled;
 
 	// Fires when all progressive web app requirements are abided: https, web app manifest, service worker registered
 	native addShortcutAvailableListener : io (callback : () -> void) -> (() -> void) = ProgressiveWebTools.addShortcutAvailableListener;
@@ -81,9 +81,13 @@ export {
 	native isRunningPWA : io () -> bool = ProgressiveWebTools.isRunningPWA;
 
 	addShortcutDialog() -> () -> void;
-	// onUpdateFound() callback is activated if new version of ServiceWorker was loaded and installed in the browser, 
+	// By default for ServiceWorker registration will be used `defaultServiceWorkerFilePath` sw file (see path below).
+	// But in some cases (for different applications on the same origin) we can't register different sw files with the same name - 
+	//  will works only one application. So, by this reason each application may now initialize ServiceWorker with own sw file.
+	//  Specific SW file will be create on app genetation and you can send it name in `specificServiceWorkerFileM` parameter.
+	// `onUpdateFound` callback is activated if new version of ServiceWorker was loaded and installed in the browser, 
 	// but didn't activated (app reload needs). Doesn't supported on IE.
-	setServiceWorkerEnabled(enabled : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void;
+	setServiceWorkerEnabled(specificServiceWorkerFileM : Maybe<string>, enabled : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void;
 
 	native getServiceWorkerJsVersion : io (
 		onOK : (int) -> void,
@@ -104,11 +108,12 @@ export {
 	takeSharedKeyValue(key : string, callback : (value : string) -> void) -> void;
 }
 
+defaultServiceWorkerFilePath = "sw.min.js";
 service_worker_version = 2;
 
-enableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
+enableServiceWorkerCaching(swFileName : string, callback : (bool) -> void) { callback(false) }
 disableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
-checkServiceWorkerCachingEnabled(callback : (bool) -> void) { callback(false) }
+checkServiceWorkerCachingEnabled(swFileName : string, callback : (bool) -> void) { callback(false) }
 cleanServiceWorkerCache(callback : (bool) -> void) { callback(false) }
 loadAndCacheUrls(urls : [string], ignoreParameterKeysOnCache : [string], onOK : () -> void, onError : (string) -> void) -> void { onOK(); }
 checkUrlsInServiceWorkerCache(urls : [string], onOK : ([string]) -> void, onError : (string) -> void) -> void { onOK([]); };
@@ -133,12 +138,13 @@ addShortcutDialog() -> () -> void {
 	dispose;
 }
 
-setServiceWorkerEnabled(enable : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void {
+setServiceWorkerEnabled(specificServiceWorkerFileM : Maybe<string>, enable : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void {
 	doEnable = enable && !isUrlParameterFalse("sw");
-	checkServiceWorkerCachingEnabled(\enabled -> {
+	swFileName = either(specificServiceWorkerFileM, defaultServiceWorkerFilePath);
+	checkServiceWorkerCachingEnabled(swFileName, \enabled -> {
 		onDone2 = \success -> {
 			ondone(success);
-			if (enable) {
+			if (enable && success) {
 				subscribeOnServiceWorkerUpdateFound(
 					\-> {
 						msg = "A component is updated. Please reload the application to apply it.";
@@ -164,7 +170,7 @@ setServiceWorkerEnabled(enable : bool, ondone : (success : bool) -> void, onUpda
 		};
 
 		if (!enabled && doEnable)
-			enableServiceWorkerCaching(cb)
+			enableServiceWorkerCaching(swFileName, cb)
 		else if (enabled && !doEnable)
 			disableServiceWorkerCaching(cb)
 		else

@@ -4,6 +4,7 @@ import js.three.Scene;
 import js.three.Fog;
 
 import js.three.Color;
+import js.three.Vector2;
 import js.three.Vector3;
 import js.three.Euler;
 import js.three.Quaternion;
@@ -76,31 +77,31 @@ class RenderSupport3D {
 			node.onload = function() {
 				var node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/MTLLoader.js');
+				node.setAttribute("src", 'js/threejs/loaders/MTLLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/OBJLoader.js');
+				node.setAttribute("src", 'js/threejs/loaders/OBJLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/GLTFLoader.js');
+				node.setAttribute("src", 'js/threejs/loaders/GLTFLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/OrbitControls.js');
+				node.setAttribute("src", 'js/threejs/controls/OrbitControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/TransformControls.js');
+				node.setAttribute("src", 'js/threejs/controls/TransformControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 			};
@@ -296,11 +297,11 @@ class RenderSupport3D {
 			");
 		} else {
 			untyped __js__("
-				eval(\"import('./js/threejs/MTLLoader2.js')\".concat(
+				eval(\"import('./js/threejs/loaders/MTLLoader2.js')\".concat(
 					\".then((module) => {\",
-					\"import('./js/threejs/OBJLoader2.js')\",
+					\"import('./js/threejs/loaders/OBJLoader2.js')\",
 					\".then((module2) => {\",
-					\"import('./js/threejs/obj2/bridge/MtlObjBridge.js')\",
+					\"import('./js/threejs/loaders/obj2/bridge/MtlObjBridge.js')\",
 					\".then((module3) => {\",
 					\"new module.MTLLoader()\",
 					\".load(mtlUrl, function(materials) {\",
@@ -340,6 +341,8 @@ class RenderSupport3D {
 			for (par in parameters) {
 				untyped texture[par[0]] = untyped __js__("eval(par[1])");
 			}
+
+			texture.invalidateTextureStage();
 
 			onLoad(texture);
 		});
@@ -407,6 +410,18 @@ class RenderSupport3D {
 			untyped material.alphaMap = alphaMap;
 			untyped material.transparent = true;
 
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.alphaMap = {
+					type : 't',
+					value : alphaMap
+				}
+
+				// untyped material.uniforms.alphaMapResolution = {
+				// 	type : 'v2',
+				// 	value : new Vector2(alphaMap.width, alphaMap.height)
+				// }
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
@@ -452,34 +467,40 @@ class RenderSupport3D {
 	}
 
 
-	public static function set3DMaterialRotation(object : Material, rotation : Float) : Void {
-		if (untyped object.map != null && object.map.rotation != rotation) {
-			untyped object.map.rotation = rotation;
+	public static function set3DTextureRotation(object : Texture, rotation : Float) : Void {
+		if (untyped object.rotation != rotation) {
+			untyped object.rotation = rotation;
+
+			object.invalidateTextureStage();
 		}
 	}
 
-	public static function get3DMaterialRotation(object : Material) : Float {
-		return untyped object.map != null && object.map.rotation != null ? object.map.rotation : 0.0;
+	public static function get3DTextureRotation(object : Texture) : Float {
+		return untyped object.rotation;
 	}
 
-	public static function set3DMaterialOffsetX(object : Material, x : Float) : Void {
-		if (untyped object.map != null && object.map.offset.x != x) {
-			untyped object.map.offset.x = x;
+	public static function set3DTextureOffsetX(object : Texture, x : Float) : Void {
+		if (object.offset.x != x) {
+			object.offset.x = x;
+
+			object.invalidateTextureStage();
 		}
 	}
 
-	public static function get3DMaterialOffsetX(object : Material) : Float {
-		return untyped object.map != null && object.map.offset != null ? object.map.offset.x : 0.0;
+	public static function get3DTextureOffsetX(object : Texture) : Float {
+		return object.offset.x;
 	}
 
-	public static function set3DMaterialOffsetY(object : Material, y : Float) : Void {
-		if (untyped object.map != null && object.map.offset.y != y) {
-			untyped object.map.offset.y = y;
+	public static function set3DTextureOffsetY(object : Texture, y : Float) : Void {
+		if (object.offset.y != y) {
+			object.offset.y = y;
+
+			object.invalidateTextureStage();
 		}
 	}
 
-	public static function get3DMaterialOffsetY(object : Material) : Float {
-		return untyped object.map != null && object.map.offset != null ? object.map.offset.y : 0.0;
+	public static function get3DTextureOffsetY(object : Texture) : Float {
+		return object.offset.y;
 	}
 
 
@@ -1450,26 +1471,51 @@ class RenderSupport3D {
 		return material;
 	}
 
-	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String) : Material {
+	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String, parameters : Array<Array<String>>) : Material {
+		var material : Dynamic = null;
+		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
+
+		uniformsObject.resolution = {
+			type : 'v2',
+			value : new Vector2(Browser.window.innerWidth, Browser.window.innerHeight)
+		};
+
+		uniformsObject.time = {
+			value : Browser.window.performance.now()
+		};
+
 		if (vertexShader != "") {
 			if (fragmentShader != "") {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 					fragmentShader: fragmentShader
 				});
 			} else {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 				});
 			}
 		} else {
-			return new ShaderMaterial(untyped {
-				uniforms: haxe.Json.parse(uniforms),
+			material = new ShaderMaterial(untyped {
+				uniforms: uniformsObject,
 				fragmentShader: fragmentShader
 			});
 		}
+
+		material.updateUniformTime = function(v) {
+			material.uniforms.time.value = v;
+		};
+
+		// TODO: Implement dispose
+		RenderSupportJSPixi.on("drawframe", material.updateUniformTime);
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
 	}
 
 

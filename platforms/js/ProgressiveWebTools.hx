@@ -11,14 +11,13 @@ class ProgressiveWebTools {
 
 	public static var globalRegistration : Dynamic = null;
 	public static var globalInstallPrompt : Dynamic = null;
-	public static var serviceWorkerFilePath : String = "sw.min.js";
 
-	public static function enableServiceWorkerCaching(callback : Bool -> Void) : Void {
+	public static function enableServiceWorkerCaching(swFilePath : String, callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
 		#elseif js
 		if (untyped navigator.serviceWorker) {
-			untyped navigator.serviceWorker.register(serviceWorkerFilePath).then(function(registration) {
+			untyped navigator.serviceWorker.register(swFilePath).then(function(registration) {
 				trace('ServiceWorker registration successful with scope: ', registration.scope);
 
 				globalRegistration = registration;
@@ -33,6 +32,9 @@ class ProgressiveWebTools {
 				trace('ServiceWorker registration failed: ', err);
 				callback(false);
 			});
+		} else {
+			callback(false);
+			trace('No ServiceWorker on this browser');
 		}
 		#end
 	}
@@ -71,16 +73,13 @@ class ProgressiveWebTools {
 		#end
 	}
 
-	public static function checkServiceWorkerCachingEnabled(callback : Bool -> Void) : Void {
+	public static function checkServiceWorkerCachingEnabled(swFileName : String, callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
 		#elseif js
 		if (globalRegistration != null) {
 			callback(true);
-			return;
-		}
-
-		if (untyped navigator.serviceWorker) {
+		} else if (untyped navigator.serviceWorker) {
 			untyped navigator.serviceWorker.getRegistrations().then(function(registrations) {
 				if (registrations.length == 0) {
 					callback(false);
@@ -91,7 +90,7 @@ class ProgressiveWebTools {
 						return Promise.reject();
 					}
 
-					if (untyped registration.active.scriptURL == (registration.scope + serviceWorkerFilePath)) {
+					if (untyped registration.active.scriptURL == (registration.scope + swFileName)) {
 						globalRegistration = registration;
 						return Promise.resolve();
 					} else {
@@ -105,6 +104,9 @@ class ProgressiveWebTools {
 			}, function(err) {
 				callback(false);
 			});
+		} else {
+			callback(false);
+			trace('No ServiceWorker on this browser');
 		}
 		#end
 	}

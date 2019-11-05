@@ -626,10 +626,19 @@ class RenderSupportJSPixi {
 			}
 		};
 
-		if (Platform.isMobile) {
-			if (Platform.isChrome) {
-				untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-			}
+		if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+			Browser.document.body.onpointerdown = onpointerdown;
+			Browser.document.body.onpointerup = onpointerup;
+			Browser.document.body.onpointermove = onpointermove;
+			Browser.document.body.onpointerout = onpointerout;
+
+			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+
+			Browser.document.body.ontouchstart = onpointerdown;
+			Browser.document.body.ontouchend = onpointerup;
+			Browser.document.body.ontouchmove = onpointermove;
+		} else if (Platform.isMobile) {
+			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
 
 			Browser.document.body.ontouchstart = onpointerdown;
 			Browser.document.body.ontouchend = onpointerup;

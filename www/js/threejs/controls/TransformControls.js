@@ -107,14 +107,11 @@ THREE.TransformControls = function ( camera, domElement, eventElement ) {
 	{
 
 		eventElement.addEventListener( "mousedown", onPointerDown, false );
-		eventElement.addEventListener( "pointerdown", onPointerDown, false );
 		eventElement.addEventListener( "touchstart", onPointerDown, false );
 		eventElement.addEventListener( "mousemove", onPointerHover, false );
 		eventElement.addEventListener( "touchmove", onPointerHover, false );
-		eventElement.addEventListener( "pointermove", onPointerHover, false );
 		eventElement.addEventListener( "touchmove", onPointerMove, false );
 		eventElement.addEventListener( "mouseup", onPointerUp, false );
-		eventElement.addEventListener( "pointerup", onPointerUp, false );
 		eventElement.addEventListener( "touchend", onPointerUp, false );
 		eventElement.addEventListener( "touchcancel", onPointerUp, false );
 		eventElement.addEventListener( "touchleave", onPointerUp, false );
@@ -124,16 +121,12 @@ THREE.TransformControls = function ( camera, domElement, eventElement ) {
 	this.dispose = function () {
 
 		eventElement.removeEventListener( "mousedown", onPointerDown );
-		eventElement.removeEventListener( "pointerdown", onPointerDown );
 		eventElement.removeEventListener( "touchstart", onPointerDown );
 		eventElement.removeEventListener( "mousemove", onPointerHover );
 		eventElement.removeEventListener( "touchmove", onPointerHover );
-		eventElement.removeEventListener( "pointermove", onPointerHover );
 		eventElement.removeEventListener( "mousemove", onPointerMove );
 		eventElement.removeEventListener( "touchmove", onPointerMove );
-		eventElement.removeEventListener( "pointermove", onPointerMove );
 		eventElement.removeEventListener( "mouseup", onPointerUp );
-		eventElement.removeEventListener( "pointerup", onPointerUp );
 		eventElement.removeEventListener( "touchend", onPointerUp );
 		eventElement.removeEventListener( "touchcancel", onPointerUp );
 		eventElement.removeEventListener( "touchleave", onPointerUp );
@@ -152,12 +145,20 @@ THREE.TransformControls = function ( camera, domElement, eventElement ) {
 
 		this.object = object;
 		this.visible = true;
+		this.invalidateStage();
 
+	};
+
+	this.invalidateStage = function () {
+		if (this.object) {
+			Object3DHelper.invalidateStage(this.object);
+		}
 	};
 
 	// Detatch from object
 	this.detach = function () {
 
+		this.invalidateStage();
 		this.object = undefined;
 		this.visible = false;
 		this.axis = null;
@@ -241,11 +242,17 @@ THREE.TransformControls = function ( camera, domElement, eventElement ) {
 
 		if ( intersect ) {
 
-			this.axis = intersect.object.name;
+			if (this.axis != intersect.object.name) {
+				this.axis = intersect.object.name;
+				this.invalidateStage();
+			}
 
 		} else {
 
-			this.axis = null;
+			if (this.axis != null) {
+				this.axis = null;
+				this.invalidateStage();
+			}
 
 		}
 
@@ -509,6 +516,7 @@ THREE.TransformControls = function ( camera, domElement, eventElement ) {
 
 		this.dispatchEvent( changeEvent );
 		this.dispatchEvent( objectChangeEvent );
+		this.invalidateStage();
 
 	};
 
@@ -558,7 +566,6 @@ THREE.TransformControls = function ( camera, domElement, eventElement ) {
 		if ( !scope.enabled ) return;
 
 		eventElement.addEventListener( "mousemove", onPointerMove, false );
-		eventElement.addEventListener( "pointermove", onPointerMove, false );
 
 
 		scope.pointerHover( getPointer( event ) );
@@ -579,7 +586,6 @@ THREE.TransformControls = function ( camera, domElement, eventElement ) {
 		if ( !scope.enabled ) return;
 
 		eventElement.removeEventListener( "mousemove", onPointerMove, false );
-		eventElement.removeEventListener( "pointermove", onPointerMove, false );
 
 		scope.pointerUp( getPointer( event ) );
 

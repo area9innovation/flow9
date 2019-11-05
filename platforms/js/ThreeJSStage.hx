@@ -73,11 +73,11 @@ class ThreeJSStage extends Container {
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget('canvas');
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
-			untyped this.renderer.eventElement = nativeWidget;
 		} else {
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, logarithmicDepthBuffer : true});
-			untyped this.renderer.eventElement = Browser.document.createElement('div');
 		}
+
+		untyped this.renderer.eventElement = Browser.document.createElement('div');
 
 		renderer.setSize(widgetWidth, widgetHeight);
 
@@ -151,7 +151,9 @@ class ThreeJSStage extends Container {
 
 			if (handledObjects.indexOf(object) == -1) {
 				handledObjects.push(object);
+
 				object.emitEvent(event.type);
+				object.invalidateStage();
 			}
 		};
 	}

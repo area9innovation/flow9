@@ -39,6 +39,9 @@ MAppBarState(
 MFloatingToolbarState(
 	translation : Transform<double>,
 	expanded : Transform<bool>,
+	height : DynamicBehaviour<double>,
+	scrollMoving : DynamicBehaviour<bool>,
+	animationTrigger : Transform<bool>,
 	subs : [() -> () -> void]
 );
 
@@ -100,12 +103,13 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 						TScrollDisableOutOfBounds(const(true)),
 						TScrollbars(invisibleScrollBar, invisibleScrollBar),
 					]
-					else []
+					else [],
+					eitherMap(ab.floatingToolbar, \ft -> [TScrollYMoving(ft.scrollMoving)], [])
 				]
 				|> concatA;
 
 				(if (isSome(ab.floatingToolbar)) TLines([
-							THeight(TGhost("MAppBar")),
+							THeight(TGhost("MAppBarSize")),
 							THeight(TGhost("MBanner")),
 							f
 						]) else f
@@ -113,7 +117,7 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 				|> wrapContentByScroll(manager, parent, state.scrollParent, m2t, m.style, scrollStyle)
 				|> (\t -> if (isNone(ab.floatingToolbar))
 						TLines([
-							THeight(TGhost("MAppBar")),
+							THeight(TGhost("MAppBarSize")),
 							THeight(TGhost("MBanner")),
 							t
 						])
@@ -627,14 +631,18 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 						startPoint = ref 0.;
 						updateStartPoint = \ -> startPoint := getValue(scrollPosition).y;
 
+						height = make(0.);
+						scrollMoving = make(false);
+						animationTrigger = fOr(scrollMoving, mouseDown);
+
 						isUp = fselectWithLast(scrollPosition, FLift2(\last, new ->
 							new.y - last.y > 0.
 						));
 
 						expanded =
 							ftransistor(
-								fnot(mouseDown),
-								fnot(isUp)
+								fnot(animationTrigger),
+								fOr(fless(fpointY(scrollPosition), height), fnot(isUp))
 							);
 
 						delta = fselect(scrollPosition, FLift(\sp -> sp.y - ^startPoint));
@@ -648,7 +656,7 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 							)
 						];
 
-						Some(MFloatingToolbarState(delta, expanded, subs))
+						Some(MFloatingToolbarState(delta, expanded, height, scrollMoving, animationTrigger, subs))
 					} else None();
 
 				MAppBarState(
@@ -719,14 +727,14 @@ letBanner(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 				MFocusId(const(2)),
 			],
 			\p -> m2t(ban.first, p)
-		),
+		)
+		|> (\t -> eitherMap(state.flexible,
+			\__ -> TCols2(t, TWidth(TGhost("MAppSideSheet"))),
+			t)
+		)
+		|> restrictSizeBySideNavs(state, false),
 		TEmpty()
 	)
-	|> (\t -> eitherMap(state.flexible,
-		\__ -> TCols2(t, TWidth(TGhost("MAppSideSheet"))),
-		t)
-	)
-	|> restrictSizeBySideNavs(state, false)
 	|> (\t -> TLet("MBanner", t, content))
 }
 
@@ -802,20 +810,20 @@ letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 						fixExpander(p, idfn)
 				)
 		)
-		|> (\t ->
-				eitherMap(
-					ab.floatingToolbar, \ft ->
-		 			TConstruct(ft.subs,	TCollapsingBox(manager, parent, t, ft.translation, ft.expanded, false, false)),
-		 			t
-		 		)
-			)
 		|> restrictSizeBySideNavs(state, true)
 	}
 
 	eitherMap(
 		state.appBar,
 		\ab : MAppBarState ->
-			TLet("MAppBar", makeAppBar(ab), content),
+			TLet("MAppBar",
+				eitherMap(ab.floatingToolbar, \ft ->
+					TConstruct(ft.subs,	TCollapsingBox(manager, parent, TDisplay("MAppBarSize"), ft.translation, ft.expanded, Some(ft.animationTrigger), Some(ft.height), false, false)),
+					TDisplay("MAppBarSize")
+				),
+				content
+			)
+			|> (\t -> TLet("MAppBarSize", makeAppBar(ab), t)),
 		content
 	)
 }
