@@ -545,6 +545,11 @@ class AccessWidget extends EventEmitter {
 				this.element.addEventListener("focus", function () {
 					focused = true;
 
+					if (RenderSupportJSPixi.Animating) {
+						RenderSupportJSPixi.once("stagechanged", function() { if (focused) this.element.focus(); });
+						return;
+					}
+
 					if (RenderSupportJSPixi.RendererType == "html") {
 						if (parent != null) {
 							var accessWidget = parent.getNextAccessWidget();
@@ -578,6 +583,11 @@ class AccessWidget extends EventEmitter {
 
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
+					if (RenderSupportJSPixi.Animating) {
+						RenderSupportJSPixi.once("stagechanged", function() { if (focused) this.element.focus(); });
+						return;
+					}
+
 					RenderSupportJSPixi.once("drawframe", function() {
 						focused = false;
 						clip.emit("blur");
@@ -764,7 +774,15 @@ class AccessWidget extends EventEmitter {
 				e.stopPropagation();
 			};
 
-			if (Platform.isMobile) {
+			if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+				element.onpointerdown = onpointerdown;
+				element.onpointerup = onpointerup;
+
+				untyped __js__("this.element.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+
+				element.ontouchstart = onpointerdown;
+				element.ontouchend = onpointerup;
+			} else if (Platform.isMobile) {
 				element.ontouchstart = onpointerdown;
 				element.ontouchend = onpointerup;
 			} else if (Platform.isSafari) {

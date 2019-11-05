@@ -35,15 +35,15 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function round(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : Math.round(n * 10.0) / 10.0;
+		return RenderSupportJSPixi.RoundPixels ? Math.round(n) : Math.round(n * 10.0 * RenderSupportJSPixi.backingStoreRatio) / (10.0 * RenderSupportJSPixi.backingStoreRatio);
 	}
 
 	public static inline function floor(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : Math.floor(n * 10.0) / 10.0;
+		return RenderSupportJSPixi.RoundPixels ? Math.floor(n) : Math.floor(n * 10.0 * RenderSupportJSPixi.backingStoreRatio) / (10.0 * RenderSupportJSPixi.backingStoreRatio);
 	}
 
 	public static inline function ceil(n : Float) : Float {
-		return RenderSupportJSPixi.RoundPixels ? Math.ceil(n) : Math.ceil(n * 10.0) / 10.0;
+		return RenderSupportJSPixi.RoundPixels ? Math.ceil(n) : Math.ceil(n * 10.0 * RenderSupportJSPixi.backingStoreRatio) / (10.0 * RenderSupportJSPixi.backingStoreRatio);
 	}
 
 	public static function invalidateStage(clip : DisplayObject) : Void {
@@ -286,6 +286,7 @@ class DisplayObjectHelper {
 		updateStage(clip);
 
 		if (clip.parent != null) {
+			invalidateParentClip(clip);
 			invalidateVisible(clip);
 			invalidateInteractive(clip, clip.parent.interactiveChildren);
 			invalidateTransform(clip, 'invalidate');
@@ -312,6 +313,18 @@ class DisplayObjectHelper {
 			if (isNativeWidget(clip)) {
 				updateNativeWidgetDisplay(clip);
 			}
+		}
+	}
+
+	public static function invalidateParentClip(clip : DisplayObject, ?parentClip : DisplayObject) : Void {
+		if (untyped !parentClip) {
+			parentClip = findParentClip(clip);
+		}
+
+		untyped clip.parentClip = parentClip;
+
+		for (child in getClipChildren(clip)) {
+			invalidateParentClip(child, isNativeWidget(clip) ? clip : parentClip);
 		}
 	}
 
@@ -757,6 +770,8 @@ class DisplayObjectHelper {
 
 						if (untyped clip.styleChanged) {
 							untyped clip.updateNativeWidgetStyle();
+						} else if (untyped clip.updateBaselineWidget != null) {
+							untyped clip.updateBaselineWidget();
 						}
 
 						updateNativeWidgetFilters(clip);
@@ -821,6 +836,11 @@ class DisplayObjectHelper {
 		} else {
 			tx = round(transform.tx);
 			ty = round(transform.ty);
+		}
+
+		if (untyped clip.left != null && clip.top != null) {
+			tx += untyped clip.left * transform.a + clip.top * transform.c;
+			ty += untyped clip.left * transform.b + clip.top * transform.d;
 		}
 
 		var localBounds = untyped clip.localBounds;
@@ -1402,7 +1422,7 @@ class DisplayObjectHelper {
 			untyped clip.addNativeWidget();
 		} else if (RenderSupportJSPixi.RendererType == "html") {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && clip.renderable) {
-				appendNativeWidget(findParentClip(clip), clip);
+				appendNativeWidget(untyped clip.parentClip || findParentClip(clip), clip);
 				RenderSupportJSPixi.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
 			}
 		} else {
@@ -1493,12 +1513,9 @@ class DisplayObjectHelper {
 			}
 
 			var nextWidget = findNextNativeWidget(child, clip);
-
 			untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
 
 			applyScrollFnChildren(child);
-
-			untyped child.parentClip = clip;
 		} else {
 			appendNativeWidget(clip.parent, child);
 		}
@@ -1553,8 +1570,13 @@ class DisplayObjectHelper {
 
 	public static inline function getWidgetWidth(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
-		return ((widgetBounds != null && Math.isFinite(widgetBounds.minX)) ? getBoundsWidth(widgetBounds) : getWidth(clip)) +
-			(untyped clip.style != null ? (untyped untyped clip.style.letterSpacing != null ? clip.style.letterSpacing : 0.0) + 1.0 : 0.0);
+		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) : getWidth(clip);
+
+		if (untyped clip.style != null) {
+			return Math.ceil(untyped clip.style.letterSpacing != null ? widgetWidth + clip.style.letterSpacing + 2.0 : widgetWidth + 2.0);
+		} else {
+			return widgetWidth;
+		}
 	}
 
 	public static function getHeight(clip : DisplayObject) : Float {

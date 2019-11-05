@@ -4,6 +4,7 @@ import js.three.Scene;
 import js.three.Fog;
 
 import js.three.Color;
+import js.three.Vector2;
 import js.three.Vector3;
 import js.three.Euler;
 import js.three.Quaternion;
@@ -28,10 +29,12 @@ import js.three.SphereGeometry;
 
 import js.three.BufferGeometry;
 import js.three.SphereBufferGeometry;
+import js.three.BufferAttribute;
 
 import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
+import js.three.MeshNormalMaterial;
 import js.three.ShaderMaterial;
 
 import js.three.Texture;
@@ -74,31 +77,31 @@ class RenderSupport3D {
 			node.onload = function() {
 				var node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/MTLLoader.js');
+				node.setAttribute("src", 'js/threejs/loaders/MTLLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/OBJLoader.js');
+				node.setAttribute("src", 'js/threejs/loaders/OBJLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/GLTFLoader.js');
+				node.setAttribute("src", 'js/threejs/loaders/GLTFLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/OrbitControls.js');
+				node.setAttribute("src", 'js/threejs/controls/OrbitControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/TransformControls.js');
+				node.setAttribute("src", 'js/threejs/controls/TransformControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 			};
@@ -294,11 +297,11 @@ class RenderSupport3D {
 			");
 		} else {
 			untyped __js__("
-				eval(\"import('./js/threejs/MTLLoader2.js')\".concat(
+				eval(\"import('./js/threejs/loaders/MTLLoader2.js')\".concat(
 					\".then((module) => {\",
-					\"import('./js/threejs/OBJLoader2.js')\",
+					\"import('./js/threejs/loaders/OBJLoader2.js')\",
 					\".then((module2) => {\",
-					\"import('./js/threejs/obj2/bridge/MtlObjBridge.js')\",
+					\"import('./js/threejs/loaders/obj2/bridge/MtlObjBridge.js')\",
 					\".then((module3) => {\",
 					\"new module.MTLLoader()\",
 					\".load(mtlUrl, function(materials) {\",
@@ -338,6 +341,8 @@ class RenderSupport3D {
 			for (par in parameters) {
 				untyped texture[par[0]] = untyped __js__("eval(par[1])");
 			}
+
+			texture.invalidateTextureStage();
 
 			onLoad(texture);
 		});
@@ -391,23 +396,54 @@ class RenderSupport3D {
 
 	public static function set3DMaterialMap(material : Material, map : Texture) : Void {
 		if (untyped material.map != map) {
+			untyped map.parent = material;
 			untyped material.map = map;
 			untyped material.transparent = true;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
 	public static function set3DMaterialAlphaMap(material : Material, alphaMap : Texture) : Void {
 		if (untyped material.alphaMap != alphaMap) {
+			untyped alphaMap.parent = material;
 			untyped material.alphaMap = alphaMap;
 			untyped material.transparent = true;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.alphaMap = {
+					type : 't',
+					value : alphaMap
+				}
+
+				// untyped material.uniforms.alphaMapResolution = {
+				// 	type : 'v2',
+				// 	value : new Vector2(alphaMap.width, alphaMap.height)
+				// }
+			}
+
+			material.invalidateMaterialStage();
 		}
 	}
 
 	public static function set3DMaterialDisplacementMap(material : Material, displacementMap : Texture, displacementScale : Float, displacementBias : Float) : Void {
 		if (untyped material.displacementMap != displacementMap) {
+			untyped displacementMap.parent = material;
 			untyped material.displacementMap = displacementMap;
 			untyped material.displacementScale = displacementScale;
 			untyped material.displacementBias = displacementBias;
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+	public static function set3DMaterialBumpMap(material : Material, bumpMap : Texture, bumpScale : Float) : Void {
+		if (untyped material.bumpMap != bumpMap) {
+			untyped bumpMap.parent = material;
+			untyped material.bumpMap = bumpMap;
+			untyped material.bumpScale = bumpScale;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
@@ -415,38 +451,56 @@ class RenderSupport3D {
 		if (untyped material.opacity != opacity) {
 			untyped material.opacity = opacity;
 			untyped material.transparent = true;
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+	public static function set3DMaterialVisible(material : Material, visible : Bool) : Void {
+		if (untyped material.visible != visible) {
+			material.invalidateMaterialStage();
+
+			untyped material.visible = visible;
+
+			material.invalidateMaterialStage();
 		}
 	}
 
 
-	public static function set3DMaterialRotation(object : Material, rotation : Float) : Void {
-		if (untyped object.map != null && object.map.rotation != rotation) {
-			untyped object.map.rotation = rotation;
+	public static function set3DTextureRotation(object : Texture, rotation : Float) : Void {
+		if (untyped object.rotation != rotation) {
+			untyped object.rotation = rotation;
+
+			object.invalidateTextureStage();
 		}
 	}
 
-	public static function get3DMaterialRotation(object : Material) : Float {
-		return untyped object.map != null && object.map.rotation != null ? object.map.rotation : 0.0;
+	public static function get3DTextureRotation(object : Texture) : Float {
+		return untyped object.rotation;
 	}
 
-	public static function set3DMaterialOffsetX(object : Material, x : Float) : Void {
-		if (untyped object.map != null && object.map.offset.x != x) {
-			untyped object.map.offset.x = x;
+	public static function set3DTextureOffsetX(object : Texture, x : Float) : Void {
+		if (object.offset.x != x) {
+			object.offset.x = x;
+
+			object.invalidateTextureStage();
 		}
 	}
 
-	public static function get3DMaterialOffsetX(object : Material) : Float {
-		return untyped object.map != null && object.map.offset != null ? object.map.offset.x : 0.0;
+	public static function get3DTextureOffsetX(object : Texture) : Float {
+		return object.offset.x;
 	}
 
-	public static function set3DMaterialOffsetY(object : Material, y : Float) : Void {
-		if (untyped object.map != null && object.map.offset.y != y) {
-			untyped object.map.offset.y = y;
+	public static function set3DTextureOffsetY(object : Texture, y : Float) : Void {
+		if (object.offset.y != y) {
+			object.offset.y = y;
+
+			object.invalidateTextureStage();
 		}
 	}
 
-	public static function get3DMaterialOffsetY(object : Material) : Float {
-		return untyped object.map != null && object.map.offset != null ? object.map.offset.y : 0.0;
+	public static function get3DTextureOffsetY(object : Texture) : Float {
+		return object.offset.y;
 	}
 
 
@@ -459,8 +513,8 @@ class RenderSupport3D {
 	}
 
 
-	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, minDistance : Float, maxDistance : Float) : Void {
-		stage.setCamera(camera, minDistance, maxDistance);
+	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, parameters : Array<Array<String>>) : Void {
+		stage.setCamera(camera, parameters);
 	}
 
 	public static function set3DScene(stage : ThreeJSStage, scene : Scene) : Void {
@@ -529,8 +583,38 @@ class RenderSupport3D {
 			untyped ev.pageY = y;
 		}
 
-		stage.renderer.domElement.dispatchEvent(ev);
-		stage.scene.invalidateStage();
+		untyped stage.renderer.eventElement.dispatchEvent(ev);
+	}
+
+	static function emit3DTouchEvent(stage : ThreeJSStage, event : String, points : Array<Array<Float>>) : Void {
+		if (stage.scene == null) {
+			return;
+		}
+
+		var ev : Dynamic = Platform.isIE || Platform.isSafari
+			? untyped __js__("new CustomEvent(event)")
+			: new js.html.Event(event);
+
+		ev.touches = Lambda.array(Lambda.map(points, function(p) {
+			return {
+				pageX : p[0],
+				pageY : p[1]
+			}
+		}));
+
+		if (stage.ctrlKey) {
+			ev.ctrlKey == true;
+		}
+
+		if (stage.metaKey) {
+			ev.metaKey == true;
+		}
+
+		if (stage.shiftKey) {
+			ev.shiftKey == true;
+		}
+
+		untyped stage.renderer.eventElement.dispatchEvent(ev);
 	}
 
 	static function emit3DKeyEvent(stage : ThreeJSStage, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
@@ -540,8 +624,7 @@ class RenderSupport3D {
 		stage.shiftKey = shift;
 		stage.metaKey = meta;
 
-		stage.renderer.domElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
-		stage.scene.invalidateStage();
+		untyped stage.renderer.eventElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
@@ -785,6 +868,7 @@ class RenderSupport3D {
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (object.visible != visible) {
+			object.invalidateStage();
 			object.visible = visible;
 
 			object.broadcastEvent("visiblechanged");
@@ -1315,6 +1399,48 @@ class RenderSupport3D {
 		return new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
 	}
 
+	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
+		if (data.length > 0) {
+			var attribute : Dynamic = new BufferAttribute(new js.html.Float32Array(data.length * data[0].length), data[0].length);
+
+			for (i in 0...data.length) {
+				if (data[i].length > 0) {
+					attribute.setX(i, data[i][0]);
+				}
+
+				if (data[i].length > 1) {
+					attribute.setY(i, data[i][1]);
+				}
+
+				if (data[i].length > 2) {
+					attribute.setZ(i, data[i][2]);
+				}
+
+				if (data[i].length > 3) {
+					attribute.setW(i, data[i][3]);
+				}
+			}
+
+			geometry.addAttribute(name, attribute);
+		}
+	}
+
+	public static function get3DBufferGeometryAttribute(geometry : BufferGeometry, name : String) : Array<Array<Float>> {
+		var attribute : Dynamic = geometry.getAttribute(name);
+		var data = new Array<Array<Float>>();
+
+		for (i in 0...attribute.count) {
+			data.push([
+				attribute.getX(i),
+				attribute.getY(i),
+				attribute.getZ(i),
+				attribute.getW(i)
+			]);
+		}
+
+		return data;
+	}
+
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
 		var material = new MeshBasicMaterial(untyped {color : new Color(color)});
 
@@ -1335,26 +1461,61 @@ class RenderSupport3D {
 		return material;
 	}
 
-	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String) : Material {
+	public static function make3DMeshNormalMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		var material = new MeshNormalMaterial(untyped {color : new Color(color)});
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
+	}
+
+	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String, parameters : Array<Array<String>>) : Material {
+		var material : Dynamic = null;
+		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
+
+		uniformsObject.resolution = {
+			type : 'v2',
+			value : new Vector2(Browser.window.innerWidth, Browser.window.innerHeight)
+		};
+
+		uniformsObject.time = {
+			value : Browser.window.performance.now()
+		};
+
 		if (vertexShader != "") {
 			if (fragmentShader != "") {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 					fragmentShader: fragmentShader
 				});
 			} else {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 				});
 			}
 		} else {
-			return new ShaderMaterial(untyped {
-				uniforms: haxe.Json.parse(uniforms),
+			material = new ShaderMaterial(untyped {
+				uniforms: uniformsObject,
 				fragmentShader: fragmentShader
 			});
 		}
+
+		material.updateUniformTime = function(v) {
+			material.uniforms.time.value = v;
+		};
+
+		// TODO: Implement dispose
+		RenderSupportJSPixi.on("drawframe", material.updateUniformTime);
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
 	}
 
 
@@ -1368,6 +1529,10 @@ class RenderSupport3D {
 		}
 
 		var mesh = new Mesh(geometry, untyped materials.length == 1 ? materials[0] : materials);
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
 
 		untyped mesh.materials = materials;
 
