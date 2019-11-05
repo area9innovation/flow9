@@ -28,10 +28,11 @@ fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
 	}
 }
 
-fuck = ref false;
+jobs = ref 0;
 
 runServer(config : CompilerConfig, threadId : int) -> void {
 	port = s2i(getConfigParameter(config.config, "server-port"));
+	jobs_limit = s2i(getConfigParameterDef(config.config, "jobs-limit", "2"));
 	globalEnv = initFcTypeEnvGlobal();
 	server = ref nop;
 	server := createHttpServer(port,
@@ -56,10 +57,6 @@ runServer(config : CompilerConfig, threadId : int) -> void {
 				}
 				shutdown_param = getConfigParameterDef(conf1.config, "server-shutdown", "");
 				if (shutdown_param != "" && shutdown_param != "0") {
-				
-					if (^fuck) {
-						fcServerLog("FUCK!! A");
-					}
 					fcSetRequestForShutdown(globalEnv);
 					fcPrintln("Server stopped: " + shutdown_param, conf1.threadId);
 					HttpResponse(200, fcOutput(conf1.threadId), []) |> response;
@@ -69,14 +66,9 @@ runServer(config : CompilerConfig, threadId : int) -> void {
 						(^server)();
 					}
 					fcServerLog("Just before exit...");
-					fuck := true;
 					quit(0);
 					fcServerLog("After exit... =)");
 				} else if (fcGetRequestForShutdown(globalEnv)) {
-					if (^fuck) {
-						fcServerLog("FUCK!! B");
-					}
-				
 					fcPrintln("Server in stopping right now... Request is not accepted", conf1.threadId);
 					HttpResponse(200, fcOutput(conf1.threadId), []) |> response;
 					clearFcOutput(conf1.threadId);
@@ -85,48 +77,44 @@ runServer(config : CompilerConfig, threadId : int) -> void {
 					pair = fcPrepareConfig(conf1);
 					conf = pair.first;
 					conf_callback = pair.second;
-					conf_str = foldTree(compilerConfigToTree(conf), "",
-						\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
-					);
 					if (isConfigParameterSet(conf.config, "watchdog-shutdown")) {
-					
-						if (^fuck) {
-							fcServerLog("FUCK!! C");
-						}
-				
 						fcPrintln("Processing 'watchdog-shutdown' on server.", conf.threadId);
 						HttpResponse(200, fcOutput(conf.threadId), []) |> response;
 						clearFcOutput(conf.threadId);
 						clearTimePhases(conf.threadId);
 					} else if (isConfigParameterSet(conf.config, "ping")) {
-					
-						if (^fuck) {
-							fcServerLog("FUCK!! D");
-						}
-					
 						fcPrintln("Processing 'ping' on server.", conf.threadId);
 						HttpResponse(200, fcOutput(conf.threadId), []) |> response;
 						clearFcOutput(conf.threadId);
 						clearTimePhases(conf.threadId);
 					} else {
-						fcServerLog("Processing request: <" + conf_str + " >");
-						fcPrintln("Processing '" + conf.flowfile + "' on server.", conf.threadId);
-						runConfigLocally(conf, globalEnv, \code -> {
-						
-							if (^fuck) {
-								fcServerLog("FUCK!! E");
-							}
-							fcPrintln("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.", conf.threadId);
-							fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
-							if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
-								HttpResponse(200 + code, fcBinary(conf.threadId), []) |> response;
-							} else {
-								HttpResponse(200 + code, fcOutput(conf.threadId), []) |> response;
-							}
-							clearFcOutput(conf.threadId);
-							clearTimePhases(conf.threadId);
-							conf_callback();
-						});
+						jobs_num = atomicRefIntAddition(jobs, 1) + 1;
+						if (jobs_num > jobs_limit) {
+							fcServerLog("Request rejected, job num. " + i2s(jobs_num) + " > " + i2s(jobs_limit) + "");
+							fcPrintln("The jobs number " + i2s(jobs_num) + " exceeded a limit: " + i2s(jobs_limit) + ", request is rejected", conf.threadId);
+							HttpResponse(200, fcOutput(conf1.threadId), []) |> response;
+							atomicRefIntAddition(jobs, -1);
+							{}
+						} else {
+							conf_str = foldTree(compilerConfigToTree(conf), "",
+								\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
+							);
+							fcServerLog("Processing request: <" + conf_str + " >, jobs num. " + i2s(jobs_num));
+							fcPrintln("Processing '" + conf.flowfile + "' on server.", conf.threadId);
+							runConfigLocally(conf, globalEnv, \code -> {
+								fcPrintln("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.", conf.threadId);
+								fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
+								if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
+									HttpResponse(200 + code, fcBinary(conf.threadId), []) |> response;
+								} else {
+									HttpResponse(200 + code, fcOutput(conf.threadId), []) |> response;
+								}
+								clearFcOutput(conf.threadId);
+								clearTimePhases(conf.threadId);
+								atomicRefIntAddition(jobs, -1);
+								conf_callback();
+							});
+						}
 					}
 					
 				}
