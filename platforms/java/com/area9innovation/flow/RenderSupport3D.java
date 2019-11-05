@@ -572,6 +572,15 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
+	public Object set3DShaderMaterialUniformValue(Object material, String uniform, String value) {
+		return null;
+	}
+
+	public String get3DShaderMaterialUniformValue(Object material, String uniform) {
+		return "";
+	}
+
+
 	public Object make3DMesh(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}

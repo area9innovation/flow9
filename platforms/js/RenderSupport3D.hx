@@ -57,6 +57,7 @@ import js.three.Clock;
 
 using DisplayObjectHelper;
 using Object3DHelper;
+using Texture3DHelper;
 
 class RenderSupport3D {
 	public static function load3DLibraries(cb : Void -> Void) : Void {
@@ -343,6 +344,7 @@ class RenderSupport3D {
 			}
 
 			texture.invalidateTextureStage();
+			texture.emit("loaded");
 
 			onLoad(texture);
 		});
@@ -400,6 +402,26 @@ class RenderSupport3D {
 			untyped material.map = map;
 			untyped material.transparent = true;
 
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.map = {
+					type : 't',
+					value : map
+				}
+
+				untyped material.uniforms.mapResolution = {
+					type : 'v2',
+					value : new Vector2(0.0, 0.0)
+				}
+
+				if (map.image == null) {
+					map.once("loaded", function() {
+						untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+					});
+				} else {
+					untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+				}
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
@@ -416,10 +438,18 @@ class RenderSupport3D {
 					value : alphaMap
 				}
 
-				// untyped material.uniforms.alphaMapResolution = {
-				// 	type : 'v2',
-				// 	value : new Vector2(alphaMap.width, alphaMap.height)
-				// }
+				untyped material.uniforms.alphaMapResolution = {
+					type : 'v2',
+					value : new Vector2(0.0, 0.0)
+				}
+
+				if (alphaMap.image == null) {
+					alphaMap.once("loaded", function() {
+						untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+					});
+				} else {
+					untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+				}
 			}
 
 			material.invalidateMaterialStage();
@@ -1504,18 +1534,20 @@ class RenderSupport3D {
 			});
 		}
 
-		material.updateUniformTime = function(v) {
-			material.uniforms.time.value = v;
-		};
-
-		// TODO: Implement dispose
-		RenderSupportJSPixi.on("drawframe", material.updateUniformTime);
-
 		for (par in parameters) {
 			untyped material[par[0]] = untyped __js__("eval(par[1])");
 		}
 
 		return material;
+	}
+
+
+	public static function set3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String, value : String) : Void {
+		untyped material.uniforms[uniform].value = __js__("eval(value)");
+	}
+
+	public static function get3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String) : String {
+		return untyped material.uniforms[uniform].value.toString();
 	}
 
 
