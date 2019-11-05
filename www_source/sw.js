@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 1;
+var SERVICE_WORKER_VERSION = 2;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -87,21 +87,25 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
+  // Here we trying to recognize file uploading request to skip it in cache operations then
+  var isFileUploadingRequestFn = function(request) {
+  	if (request.method == "POST" && request.headers.has("Content-Type")) {
+      var ctValue = request.headers.get("Content-Type").toLowerCase();
+      return ctValue.includes("multipart/form-data") && ctValue.includes("boundary=");
+    } else {
+      return false;
+    }
+  }
+
   // Creation Promise, which `converts` POST request into GET request
   var getFixedRequestUrl = function(request) {
     var fixedUrl = urlAddBaseLocation(request.url);
     var urlSplitted = extractUrlParameters(fixedUrl);
     var requestUrl = urlSplitted.baseUrl;
     var glueSymb = "?";
-    var isFileUploadingRequest = false;
+    var isFileUploadingRequest = isFileUploadingRequestFn(request);
 
     if (request.method == "POST") {
-      // Here we trying to recognize file uploading request to skip it in cache operations then
-      if (request.headers.has("Content-Type")) {
-        var ctValue = request.headers.get("Content-Type").toLowerCase();
-        isFileUploadingRequest = ctValue.includes("multipart/form-data") && ctValue.includes("boundary=");
-      }
-
       if (!isFileUploadingRequest) {
         if (urlSplitted.parameters.length != 0) {
           requestUrl += glueSymb + urlSplitted.parameters.join("&");
@@ -400,7 +404,11 @@ self.addEventListener('fetch', function(event) {
       })
     );
   } else {
-    event.respondWith(makeResponse(event.request));
+    if (isFileUploadingRequestFn(request)) {
+      return;
+    } else {
+      event.respondWith(makeResponse(event.request));
+    }
   }
 });
 
