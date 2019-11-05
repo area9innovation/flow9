@@ -15,6 +15,7 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var MarginGap : Float = 0.5;
+	public static var TextGap = Platform.isSafari ? 3.0 : 1.0;
 
 	private static var InvalidateStage : Bool = true;
 
@@ -1573,7 +1574,7 @@ class DisplayObjectHelper {
 		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) : getWidth(clip);
 
 		if (untyped clip.style != null) {
-			return Math.ceil(untyped clip.style.letterSpacing != null ? widgetWidth + clip.style.letterSpacing + 2.0 : widgetWidth + 2.0);
+			return Math.ceil(untyped clip.style.letterSpacing != null ? widgetWidth + clip.style.letterSpacing + TextGap : widgetWidth + TextGap);
 		} else {
 			return widgetWidth;
 		}
