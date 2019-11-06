@@ -77,6 +77,8 @@ class ThreeJSStage extends Container {
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, logarithmicDepthBuffer : true});
 		}
 
+		this.renderer.setPixelRatio(RenderSupportJSPixi.backingStoreRatio);
+
 		untyped this.renderer.eventElement = Browser.document.createElement('div');
 
 		renderer.setSize(widgetWidth, widgetHeight);
