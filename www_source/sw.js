@@ -3,7 +3,7 @@ var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
 
-var SHARED_DATA_ENDPOINT = "share/pwa/data";
+var SHARED_DATA_ENDPOINT = 'share/pwa/data.php';
 
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
