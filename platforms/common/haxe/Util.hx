@@ -197,8 +197,8 @@ class Util
 		var samePort = (!tempAnchor.port && loc.port == '') || (tempAnchor.port == loc.port);
 
 		// if cross origin
-		if (false/*tempAnchor.hostname != loc.hostname || !samePort || tempAnchor.protocol != loc.protocol*/) {
-			return 'use-credentials';
+		if (tempAnchor.hostname != loc.hostname || !samePort || tempAnchor.protocol != loc.protocol) {
+			return 'anonymous';
 		}
 
 		return '';
