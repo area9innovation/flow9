@@ -787,6 +787,14 @@ class DisplayObjectHelper {
 				if (untyped clip.styleChanged) {
 					untyped clip.updateNativeWidgetStyle();
 				}
+
+				if (untyped Platform.isIE && clip.isFocused) {
+					untyped clip.preventBlur = true;
+
+					RenderSupportJSPixi.once("stagechanged", function() {
+						untyped clip.preventBlur = false;
+					});
+				}
 			}
 		}
 	}
@@ -920,9 +928,8 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 		var alpha = getNativeWidgetAlpha(clip);
 
-		if (untyped RenderSupportJSPixi.RendererType != "html" && clip.isInput) {
+		if (untyped clip.isInput) {
 			if (Platform.isEdge || Platform.isIE) {
-				nativeWidget.style.opacity = 1.0;
 				var slicedColor : Array<String> = untyped clip.style.fill.split(",");
 				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (untyped clip.isFocused ? alpha : 0) + ")";
 
@@ -1531,8 +1538,21 @@ class DisplayObjectHelper {
 	}
 
 	public static function applyScrollFnChildren(clip : DisplayObject) : Void {
-		if (untyped clip.visible && clip.scrollFn != null) {
-			untyped clip.scrollFn();
+		if (clip.visible) {
+			if (untyped clip.scrollFn != null) {
+				untyped clip.scrollFn();
+			}
+
+			if (untyped clip.isFocused) {
+				if (Platform.isIE) {
+					untyped clip.nativeWidget.blur();
+					RenderSupportJSPixi.once("drawframe", function() {
+						untyped clip.nativeWidget.focus();
+					});
+				} else {
+					untyped clip.nativeWidget.focus();
+				}
+			}
 		}
 
 		for (child in getClipChildren(clip)) {

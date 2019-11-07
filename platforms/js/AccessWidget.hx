@@ -583,7 +583,7 @@ class AccessWidget extends EventEmitter {
 
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
-					if (RenderSupportJSPixi.Animating) {
+					if (untyped RenderSupportJSPixi.Animating || clip.preventBlur) {
 						RenderSupportJSPixi.once("stagechanged", function() { if (focused) this.element.focus(); });
 						return;
 					}
