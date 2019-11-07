@@ -18,12 +18,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 // this is only for checking hardware acceleration, probably could be refactored
-import android.app.AlertDialog;
-import android.app.Dialog;
-import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 // for network state change
 import android.content.IntentFilter;
@@ -31,6 +27,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.media.MediaMetadataRetriever;
@@ -111,6 +108,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
     @Nullable
     private IFlowGooglePlayServices flowGooglePlayServices = null;
 
+    private DialogFragmentManager dialogFragmentManager = null;
+
     private SoftKeyboardHeightListener softKeyboardHeightListener;
 
     private void browseUrl(@NonNull final String url) {
@@ -137,6 +136,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
         super.onCreate(icicle);
 
         flowGooglePlayServices = FlowGooglePlayServicesFactory.getFlowGooglePlayServices(this);//new FlowGooglePlayServices(this);
+
+        dialogFragmentManager = new DialogFragmentManager(getSupportFragmentManager());
 
         // initialization of different sources of parameters
         String xmlParams = Utils.getAppMetadata(FlowRunnerActivity.this, "url_parameters");
@@ -314,7 +315,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 runOnUiThread(new Runnable() {
                     public void run() {
                         crashed = true;
-                        setCurDialog(DIALOG_CRASH_ID);
+                        dialogFragmentManager.setCurDialog(DialogFragmentManager.DIALOG_CRASH_ID);
                         Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show();
                     }
                 });
@@ -547,6 +548,15 @@ public class FlowRunnerActivity extends FragmentActivity  {
                     Rect r = new Rect();
                     d.getWindowVisibleDisplayFrame(r);
                     h = dh - r.top;
+
+                    //on Android 10 navigation bar is a part of WindowVisibleDisplayFrame
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        Resources resources = getBaseContext().getResources();
+                        int resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android");
+                        if (resourceId > 0) {
+                            h -= resources.getDimensionPixelSize(resourceId);
+                        }
+                    }
                 }
 
                 if (h != ContentView.getMinimumHeight()) {
@@ -643,7 +653,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
     }
     
-    private void loadWrapper() {
+    void loadWrapper() {
         Intent intent = getIntent();
                 
         Utils.handleHardwareAcceleration(initialized, FlowRunnerActivity.this);
@@ -770,84 +780,6 @@ public class FlowRunnerActivity extends FragmentActivity  {
             wrapper.DeliverFBToken(extras.getString("token"));
         }
     };
-    
-    /* Dialogs */
-    static final int DIALOG_LOADING_ID = 1;
-    static final int DIALOG_DOWNLOAD_FAILED_ID = 2;
-    static final int DIALOG_LOAD_FAILED_ID = 3;
-    static final int DIALOG_CRASH_ID = 4;
-    static final int DIALOG_DOWNLOADING_ID = 5;
-
-    private int cur_dialog = 0;
-    
-    private void setCurDialog(int id) {
-        if (cur_dialog == id)
-            return;
-        if (cur_dialog != 0)
-            dismissDialog(cur_dialog);
-        cur_dialog = id;
-        if (cur_dialog != 0)
-            showDialog(cur_dialog);
-    }
-    
-    private void configureErrorDialog(AlertDialog.Builder builder, String restart_btn)
-    {
-        builder.setCancelable(false)
-               .setPositiveButton(restart_btn, new DialogInterface.OnClickListener() {
-                   public void onClick(@NonNull DialogInterface dialog, int id) {
-                       dialog.dismiss();
-                       cur_dialog = 0;
-                       loadWrapper();
-                   }
-               })
-               .setNegativeButton("Exit", new DialogInterface.OnClickListener() {
-                   public void onClick(DialogInterface dialog, int id) {
-                       FlowRunnerActivity.this.finish();
-                   }
-               });
-    }
-    
-    @Nullable
-    private ProgressDialog download_progress = null;
-
-    @Nullable
-    protected Dialog onCreateDialog(int id) {
-        ProgressDialog progressDialog;
-        AlertDialog.Builder builder;
-
-        switch(id) {
-        case DIALOG_LOADING_ID:
-            progressDialog = new ProgressDialog(this);
-            //progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
-            progressDialog.setMessage("Loading executable...");
-            progressDialog.setCancelable(false);
-            return progressDialog;
-        case DIALOG_DOWNLOAD_FAILED_ID:
-            builder = new AlertDialog.Builder(this);
-            builder.setMessage("Could not access the network server.");
-            configureErrorDialog(builder, "Retry");
-            return builder.create();
-        case DIALOG_LOAD_FAILED_ID:
-            builder = new AlertDialog.Builder(this);
-            builder.setMessage("Could not load the executable.");
-            configureErrorDialog(builder, "Retry");
-            return builder.create();
-        case DIALOG_CRASH_ID:
-            builder = new AlertDialog.Builder(this);
-            builder.setMessage("The program has crashed.");
-            configureErrorDialog(builder, "Restart");
-            return builder.create();
-        case DIALOG_DOWNLOADING_ID:
-            progressDialog = new ProgressDialog(this);
-            progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
-            progressDialog.setMessage("Downloading data...");
-            progressDialog.setCancelable(false);
-            progressDialog.setProgress(0);
-            return download_progress = progressDialog;
-        default:
-            return null;
-        }
-    }
 
     /**
      * Active bytecode loader thread.
@@ -865,7 +797,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
             if (started)
                 return;
             started = true;
-            setCurDialog(DIALOG_LOADING_ID);
+            dialogFragmentManager.setCurDialog(DialogFragmentManager.DIALOG_LOADING_ID);
             super.start();
         }
         
@@ -885,7 +817,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 public void run() {
                     if (!finishLoad()) return;
 
-                    setCurDialog(code);
+                    dialogFragmentManager.setCurDialog(code);
                     crashed = true;
                 }
             });
@@ -896,7 +828,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 public void run() {
                     if (!finishLoad()) return;
 
-                    setCurDialog(0);
+                    dialogFragmentManager.setCurDialog(0);
                     initialized = true;
                     mView.setBlockEvents(false);
                 }
@@ -907,13 +839,9 @@ public class FlowRunnerActivity extends FragmentActivity  {
             runOnUiThread(new Runnable() {
                 public void run() {
                     if (!isActual()) return;
-
-                    setCurDialog(DIALOG_DOWNLOADING_ID);
-                    if (download_progress == null)
-                        return;
-
-                    download_progress.setProgress(0);
-                    download_progress.setMax((int)size);
+                    dialogFragmentManager.setCurDialog(DialogFragmentManager.DIALOG_DOWNLOADING_ID);
+                    dialogFragmentManager.setProgress(0);
+                    dialogFragmentManager.setMax((int)size);
                 }
             });
         }
@@ -922,11 +850,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
             runOnUiThread(new Runnable() {
                 public void run() {
                     if (!isActual()) return;
-
-                    if (cur_dialog != DIALOG_DOWNLOADING_ID || download_progress == null)
-                        return;
-
-                    download_progress.setProgress((int)pos);
+                    dialogFragmentManager.setProgress((int)pos);
                 }
             });
         }
@@ -935,7 +859,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
             runOnUiThread(new Runnable() {
                 public void run() {
                     if (!isActual()) return;
-                    setCurDialog(DIALOG_LOADING_ID);
+                    dialogFragmentManager.setCurDialog(DialogFragmentManager.DIALOG_LOADING_ID);
                 }
             });
         }
@@ -968,8 +892,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 dl_ok = false;
 
             if (!dl_ok) {
-                resolveError(DIALOG_DOWNLOAD_FAILED_ID);
-                return;
+                resolveError(DialogFragmentManager.DIALOG_DOWNLOAD_FAILED_ID);
             } else {
                 stopProgress();
             } 
@@ -1059,7 +982,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 }
                 
                 if (!ok || isInterrupted()) {
-                    if (!ok) resolveError(DIALOG_LOAD_FAILED_ID);
+                    if (!ok) resolveError(DialogFragmentManager.DIALOG_LOAD_FAILED_ID);
                     return;
                 }
 
@@ -1109,14 +1032,14 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 }
                 
                 if (!ok || isInterrupted()) {
-                    if (!ok) resolveError(DIALOG_LOAD_FAILED_ID);
+                    if (!ok) resolveError(DialogFragmentManager.DIALOG_LOAD_FAILED_ID);
                 } else {
                     resolveSuccess();
                 }
             } catch (Exception e) {
                 Log.e(Utils.LOG_TAG, "LOAD EXCEPTION: " + e.toString());
                 e.printStackTrace();
-                resolveError(DIALOG_LOAD_FAILED_ID);
+                resolveError(DialogFragmentManager.DIALOG_LOAD_FAILED_ID);
             }
         }
     }

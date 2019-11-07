@@ -15,6 +15,10 @@ import nw.Gui;
 
 #if (js && !flow_nodejs)
 import js.Browser;
+import js.Promise;
+#if pixijs
+import pixi.core.math.Point;
+#end
 #end
 
 class Util
@@ -90,7 +94,7 @@ class Util
 	#if sys
 		Sys.println(s);
 	#elseif (js && (flow_nodejs || nwjs))
-		process.stdout.write(s + "\n");	
+		process.stdout.write(s + "\n");
 		#if nwjs
 			untyped console.log(s);
 		#end
@@ -148,7 +152,7 @@ class Util
 		output.close();
 #end
 	}
-	
+
 	public static function compareStrings(a : String, b : String) {
 		if (a < b) return -1;
 		if (a > b) return  1;
@@ -198,6 +202,39 @@ class Util
 		}
 
 		return '';
+	}
+
+	public static function isMouseEventName(event : String) : Bool {
+		return event == "pointerdown" || event == "pointerup" || event == "pointermove" ||
+			   event == "pointerover" || event == "pointerout" ||
+			   event == "mouseout" || event == "mousedown" || event == "mousemove" ||
+			   event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup" ||
+			   event == "mousemiddledown" || event == "mousemiddleup" ||
+			   event == "touchstart" || event == "touchmove" || event == "touchend";
+	}
+
+#if pixijs
+	public static function getPointerEventPosition(e : Dynamic) : Point {
+		if (e.type == "touchstart" || e.type == "touchend" || e.type == "touchmove")
+			return new Point(e.touches[0].pageX, e.touches[0].pageY);
+		else if (isMouseEventName(e.type))
+			return new Point(e.clientX, e.clientY);
+		else
+			return new Point(null, null);
+	}
+#end
+#end
+
+#if (js && !flow_nodejs)
+	public static function loadJS(url : String) : Promise<Dynamic> {
+		return new Promise<Dynamic>(function(resolve, reject) {
+			var script : Dynamic = Browser.document.createElement('script');
+			script.addEventListener('load', resolve);
+			script.addEventListener('error', reject);
+			script.addEventListener('abort', reject);
+			script.src = url;
+			Browser.document.head.appendChild(script);
+		});
 	}
 #end
 }

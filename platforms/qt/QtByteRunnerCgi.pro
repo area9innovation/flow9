@@ -65,7 +65,8 @@ SOURCES += \
     ../common/cpp/core/Natives.cpp \
     ../common/cpp/core/Utf8.cpp \
     ../common/cpp/core/Utf32.cpp \
-    ../common/cpp/core/md5.cpp \
+    ../common/cpp/utils/md5.cpp \
+    ../common/cpp/utils/base64.cpp \
     ../common/cpp/utils/AbstractHttpSupport.cpp \
     ../common/cpp/utils/AbstractSoundSupport.cpp \
     ../common/cpp/utils/FileLocalStore.cpp \
@@ -84,7 +85,8 @@ HEADERS  += \
     ../common/cpp/core/opcodes.h \
     ../common/cpp/core/RunnerMacros.h \
     ../common/cpp/core/STLHelpers.h \
-    ../common/cpp/core/md5.h \
+    ../common/cpp/utils/md5.h \
+    ../common/cpp/utils/base64.h \
     ../common/cpp/utils/AbstractHttpSupport.h \
     ../common/cpp/utils/AbstractSoundSupport.h \
     ../common/cpp/utils/FileLocalStore.h \

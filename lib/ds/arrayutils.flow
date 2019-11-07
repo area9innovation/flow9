@@ -37,10 +37,15 @@ export {
 	// Same as doneP(parallelP(map(xs, \x -> Promise(\f, r -> f(x, f, r)))), fulfill, reject)
 	mapAsyncParallel(xs : [?], fn : (?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
 	mapiAsyncParallel(xs : [?], fn : (int, ?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
+	// Same as doneP(parallelXP(map(splitByNumber(xs, chunkSize), \x -> Promise(\f, r -> fn(x, f, r))), simultaneous), \x -> fulfill(concatA(x)), reject)
+	mapAsyncParallelChunked(xs : [?], chunkSize : int, simultaneous : int, fn : ([?], ([??]) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
+
 
 	iterAsync(xs : [?], fn : (?, () -> void, (??) -> void) -> void, fulfill : () -> void, reject : (??) -> void) -> void;
 
 	iteriAsync(xs : [?], fn : (int, ?, () -> void, (??) -> void) -> void, onOK : () -> void, onError : (??) -> void) -> void;
+	
+	iterAsyncParallelChunked(xs : [?], chunkSize : int, simultaneous : int, fn : ([?], () -> void, (???) -> void) -> void, fulfill : () -> void, reject : (???) -> void) -> void;
 
 	// Count from start until the predicate is false, and collect all products from fn into an array
 	generateWhile : (start : int, predicate : (int) -> bool, fn : (i : int) -> ?) -> [?];
@@ -99,6 +104,9 @@ export {
 	// Sorts as and groups the elements into equivalence classes (as given by
 	// compare). Equivalence classes are sorted according to compare.
 	sortGroupBy : (as : [?], compare : (?, ?)->int) -> [[?]];
+	// Groups the elements into equivalence classes (as given by compare).
+	// arrayGroupBy([1, 1, 2, 3, 3, 3], eq) ==> [[1, 1], [2,], [3, 3, 3]]
+	arrayGroupBy(as : [?], compare : (?, ?) -> bool) -> [[?]];
 	// The same as arrayPush but append only if condition is true
 	ifArrayPush : ([?], bool, ?) -> [?];
 	ifArrayPushMany(array : [?], rules : [Pair<bool, ?>]) -> [?];
@@ -116,6 +124,9 @@ export {
 	elementAtM(a : [?], idx : int) -> Maybe<?>;
 
 	elementAtMap(a : [?], idx : int, fn : (?) -> ??, def : ??) -> ??;
+
+	// Removes the last element of the array. O(n)
+	removeLastElement(a : [?]) -> [?];
 }
 
 // Removes elements from a that are equal to elements of b.
@@ -243,6 +254,12 @@ mapiAsyncParallel(xs : [?], fn : (int, ?, (??) -> void, (???) -> void) -> void, 
 	doneP(parallelP(promises), fulfill, reject);
 }
 
+mapAsyncParallelChunked(xs : [?], chunkSize : int, simultaneous : int, fn : ([?], ([??]) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void {
+	chunks = splitByNumber(xs, chunkSize);
+	promises = map(chunks, \x -> Promise(\fulf, rej -> fn(x, fulf, rej)));
+	doneP(parallelXP(promises, simultaneous), \chunksResults -> fulfill(concatA(chunksResults)), reject);
+}
+
 iterAsync(xs : [?], fn : (?, () -> void, (??) -> void) -> void, onOK : () -> void, onError : (??) -> void) -> void {
 	foldAsync(xs, 0, \acc, x, onOKFn, onErrorFn -> {
 		fn(x, \-> onOKFn(acc), onErrorFn)
@@ -253,6 +270,12 @@ iteriAsync(xs : [?], fn : (int, ?, () -> void, (??) -> void) -> void, onOK : () 
 	foldiAsync(xs, 0, \i, acc, x, onOKFn, onErrorFn -> {
 		fn(i, x, \-> onOKFn(acc), onErrorFn)
 	}, \__ -> onOK(), onError)
+}
+
+iterAsyncParallelChunked(xs : [?], chunkSize : int, simultaneous : int, fn : ([?], () -> void, (???) -> void) -> void, fulfill : () -> void, reject : (???) -> void) -> void {
+	chunks = splitByNumber(xs, chunkSize);
+	promises = map(chunks, \x -> Promise(\fulf, rej -> fn(x, \-> fulf(0), rej)));
+	doneP(parallelXP(promises, simultaneous), \__ -> fulfill(), reject);
 }
 
 generateWhile(start, predicate, fn) {
@@ -372,20 +395,24 @@ uniqueSortedArrayWorker(xs : [?], i : int, equ : (?, ?) -> bool) -> bool {
 
 sortGroupBy(as : [?], compare : (?, ?)->int) -> [[?]] {
 	sorted = mergeSort(as, compare);
-	sortedGroupByWorker(sorted, 0, [], [], \a,b->compare(a,b) == 0);
+	arrayGroupBy(sorted, \a,b->compare(a,b) == 0);
 }
 
-sortedGroupByWorker(as : [?], i : int, g : [?], gs : [[?]], equals : (?, ?) -> bool) -> [[?]] {
+arrayGroupBy(as : [?], compare : (?, ?) -> bool) -> [[?]] {
+	list2array(sortedGroupByWorker(as, 0, [], makeList(), compare));
+}
+
+sortedGroupByWorker(as : [?], i : int, g : [?], gs : List<[?]>, equals : (?, ?) -> bool) -> List<[?]> {
 	if (i < length(as)) {
 		a = as[i];
 
 		if (length(g) == 0 || equals(g[0], a)) {
 			sortedGroupByWorker(as, i + 1, arrayPush(g, a), gs, equals)
 		} else {
-			sortedGroupByWorker(as, i + 1, [a], arrayPush(gs, g), equals);
+			sortedGroupByWorker(as, i + 1, [a], Cons(g, gs), equals);
 		}
 	} else if (length(g) > 0) {
-		arrayPush(gs, g)
+		Cons(g, gs)
 	} else {
 		gs;
 	}
@@ -446,4 +473,8 @@ elementAtMap(a : [?], idx : int, fn : (?) -> ??, def : ??) -> ?? {
 	} else {
 		def
 	}
+}
+
+removeLastElement(a : [?]) -> [?] {
+	subrange(a, 0, length(a) - 1)
 }

@@ -1,0 +1,228 @@
+import forcelayout;
+
+import ds/simplegraph;
+import ui/slider;
+import ui/easybutton;
+
+Data(id : int, self : int, score: int, time : int);
+
+main() {
+	datapoints = [
+		Data(3715, 1, 100, 60),
+		Data(2200, 1, 80, 30),
+		Data(2245, 1, 75, 45),
+		Data(2095, 1, 67, 25),
+		Data(19007, 2, 0, 56),
+		Data(19008, 2, 0, 62),
+		Data(19004, 4, 100, 23),
+		Data(2200, 1,20, 54),
+		Data(2245, 2, 75, 64),
+		Data(2095, 2, 50, 23),
+		Data(19007, 1, 100, 35),
+		Data(19005, 4, 0, 36),
+	];
+	layout0 = fold(
+		datapoints, DataAndLayout(datapoints, makeForceLayout(WidthHeight(600.0, 600.0))),
+		\acc, data -> {
+			addDataPoint(acc, data)
+		}
+	);
+
+	layout = foldRange(0, 50, layout0, \acc, l -> {
+		addNewDataPoint(acc)
+	});
+
+	datalayout = make(layout);
+
+	gui = Lines([
+		EasyButton("ADD", "", orange, \-> {
+			nl = addNewDataPoint(getValue(datalayout));
+			next(datalayout, nl);
+		}, []),
+		Select(datalayout, \dl -> {
+			layout2form(dl)
+		}),
+	]);
+
+	addDrawFrameEventListener(\dt -> {
+		forceTick(getValue(datalayout).layout);
+		{}
+//		println(dt);
+	});
+
+	render(gui);
+}
+
+addNewDataPoint(datalayout : DataAndLayout) -> DataAndLayout {
+	dataid = if (random() < 0.25) {
+		data0 = pickOne(datalayout.datapoints);
+		data0.id;
+	} else {
+		floor(random() * 1000.0);
+	}
+
+	data = Data(dataid, floor(random() * 4.0) + 1, round(random() * 100.0), round(random() * 60.0) + 10);
+	addDataPoint(datalayout, data);
+}
+
+
+DataAndLayout(
+	datapoints : [Data],
+	layout : ForceLayout
+);
+
+addDataPoint(acc : DataAndLayout, d : Data) -> DataAndLayout {
+	nodeid = findiDef(acc.layout.nodes, \n -> n.id == d.id, -1);
+	layout0 = if (nodeid == -1) {
+		addNodeIdToLayout(acc.layout, d.id, time2charge(d.time));
+	} else {
+		acc.layout;
+	}
+	layout1 = if (layout0.nodes == []) {
+		layout0
+	} else {
+		lastPoint = lastElement(acc.datapoints, d);
+		addEdgeToLayout(layout0, lastPoint.id, d.id);
+	}
+
+	// Give it new energy
+	layout1.alpha := 0.1;
+
+	DataAndLayout(
+		arrayPush(acc.datapoints, d),
+		layout1
+	);
+}
+
+layout2form(datalayout : DataAndLayout) -> Form {
+	layout = datalayout.layout;
+//	generate(0, 50, \i -> forceTick(layout));
+	formDiGraphLayout2(layout, \nodeid : int -> {
+		mdata = find(datalayout.datapoints, \d -> d.id == nodeid);
+		switch (mdata) {
+			None(): {
+				Circle(0.0, 0.0, 10.0, [Fill(black)])
+			}
+			Some(data): {
+				color = if (data.score > 90) green else if (data.score >= 75) yellow else red;
+				size = i2d(min(data.time, 50)) / 2.0;
+				Circle(0.0, 0.0, size, [Fill(color)])
+			}
+		}
+	});
+}
+
+formDiGraphLayout2(layout : ForceLayout, nodeFn : (nodeid : int) -> Form) -> Form {
+	nodes : [Form] =
+		map(layout.nodes, \node : ForceNode -> {
+			nodeForm = nodeFn(node.id);
+			Slider(
+				node.x,
+				node.y,
+				const(layout.size.width),
+				const(layout.size.height),
+				nodeForm,
+				[]
+			);
+		});
+
+	lines = map(layout.edges, \edge -> {
+		sourceNode = layout.nodes[edge.source];
+		targetNode = layout.nodes[edge.target];
+		drawDynLine(targetNode.x, targetNode.y, sourceNode.x, sourceNode.y)
+	});
+
+	edgesForms =
+		mapi(layout.edges, \i, edge -> {
+			sourceNode = layout.nodes[edge.source];
+			targetNode = layout.nodes[edge.target];
+
+			drawGraphArrow(
+				fpoint(sourceNode.x, sourceNode.y),
+				fpoint(targetNode.x, targetNode.y)
+			)
+		});
+
+	Group(concat(if (true) lines else edgesForms, nodes))
+}
+
+drawGraphArrow(pp : Transform<Point>, p : Transform<Point>) -> Form {
+	Group([
+		DynamicGraphics(
+			fselect2(p, pp, FLift2(\p1, p2 ->
+				[
+					MoveTo(p1.x, p2.y),
+					LineTo(p1.x, p2.y),
+				]
+			)),
+			const([Stroke(0x888888), StrokeWidth(1.0)])
+		),
+		DynamicGraphics(
+			fselect2(p, pp, FLift2(\p1, p2 -> {
+				dx = p2.x - p1.x;
+				dy = p2.y - p1.y;
+
+				dist0 = sqrt(dx * dx + dy * dy);
+
+				dist = if (dist0 == 0.0) 1.0 else dist0;
+
+				ux = dx / dist;
+				uy = dy / dist;
+
+				middle = dist / 2.0;
+
+				side = 5.0;
+
+				back1 = middle - 4.0;
+				back2 = middle + 4.0;
+
+				[
+					MoveTo(p2.x - back1 * ux, p2.y - back1 * uy),
+					LineTo(p2.x - side * uy - back1 * ux, p2.y + side * ux - back1 * uy),
+					LineTo(p2.x - back2 * ux, p2.y - back2 * uy),
+					LineTo(p2.x + side * uy - back1 * ux, p2.y - side * ux - back1 * uy),
+					LineTo(p2.x - back1 * ux, p2.y - back1 * uy),
+				]
+			})),
+			const([Fill(0x888888)])
+		)
+	])
+}
+
+drawDynLine(x1 : Behaviour<double>, y1 : Behaviour<double>, x2 : Behaviour<double>, y2 : Behaviour<double>) -> Form {
+	// TODO: Clean up subscriptions
+	dx = select2(x1, x2, \xc1, xc2 -> xc2 - xc1);
+	dy = select2(y1, y2, \yc1, yc2 -> yc2 - yc1);
+	dist = select2(dx, dy, \xx, yy -> sqrt(xx * xx + yy * yy) / 100.0);
+	angle = select2(dx, dy, \xx, yy -> atan2(yy, xx) |> rad2deg);
+
+	cx = select(dx, \d -> 0.5 * d);
+	cy = select(dy, \d -> 0.5 * d);
+
+	Translate(x1, y1,
+		Group([
+			Rotate(
+				angle,
+				Scale(
+					dist, const(1.0),
+					Graphics(
+						[MoveTo(0.0, 0.0), LineTo(100.0, 0.0)], [Stroke(0x888888), StrokeWidth(1.0)]
+					)
+				)
+			),
+			Translate(cx, cy,
+				Rotate(
+					angle,
+					Graphics(
+						[MoveTo(2.0, 5.0), LineTo(2.0, -5.0), LineTo(-4.0, 0.0), ClosePath()], [Fill(0x888888)]
+					)
+				)
+			)
+		])
+	)
+}
+
+
+time2charge(t : int) -> double {
+	5.0 * i2d(t) + 300.;
+}

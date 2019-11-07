@@ -45,6 +45,7 @@ enum FlowEvent {
     FlowMouseDownInTextEdit = 66,
     FlowMouseRightDownInTextEdit = 67,
     FlowMouseMiddleDownInTextEdit = 68,
+    FlowTransformChange = 69
 };
 
 enum FlowGestureState {

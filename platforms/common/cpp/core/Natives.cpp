@@ -1430,6 +1430,31 @@ StackSlot ByteCodeRunner::makeStructValue(RUNNER_ARGS)
     return arr;
 }
 
+StackSlot ByteCodeRunner::extractStructArguments(RUNNER_ARGS)
+{
+    StackSlot &flow_struct = RUNNER_ARG(0);
+    if (!flow_struct.IsStruct()) {
+        return StackSlot::MakeEmptyArray();
+    }
+    int size = RUNNER->GetStructSize(flow_struct);
+    StackSlot arrslot = RUNNER->AllocateUninitializedArray(size); // ALLOC
+
+    if (RUNNER->IsErrorReported())
+        return StackSlot::MakeEmptyArray();
+
+    StackSlot *arr = (StackSlot*)MEMORY->GetRawPointer(arrslot.GetInternalArrayPtr(), size*STACK_SLOT_SIZE, true);
+    for (int i = 0; i < size; i++)
+        arr[i] = RUNNER->GetStructSlot(flow_struct, i);
+
+    return arrslot;
+}
+
+StackSlot ByteCodeRunner::getDataTagForValue(RUNNER_ARGS)
+{
+    StackSlot &value = RUNNER_ARG(0);
+    return StackSlot::MakeInt(value.GetType());
+}
+
 bool ByteCodeRunner::VerifyStruct(const StackSlot &arr, int struct_id)
 {
     if (unsigned(struct_id) >= StructDefs.size())
@@ -1689,6 +1714,11 @@ StackSlot ByteCodeRunner::setFileContentBinary(RUNNER_ARGS) {
 
 StackSlot ByteCodeRunner::setFileContentBytes(RUNNER_ARGS) {
     return setFileContentHelper(RUNNER, pRunnerArgs__, &bytesProcessor);
+}
+
+StackSlot ByteCodeRunner::getBytecodeFilename(RUNNER_ARGS)
+{
+    return RUNNER->AllocateString(parseUtf8(RUNNER->BytecodeFilename));
 }
 
 StackSlot ByteCodeRunner::loaderUrl(RUNNER_ARGS)

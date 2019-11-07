@@ -8,7 +8,8 @@ class WebSocketServerSupport {
 		isHttp : Bool,
 		pfxPath : String,
 		pfxPassword : String,
-		onOpen : WebSocket -> Void) : Bool {
+		onOpen : WebSocket -> Void,
+		onError : String -> Void) : (Void -> Void) {
 
 		#if flow_nodejs
 			var server =
@@ -23,20 +24,26 @@ class WebSocketServerSupport {
 
 			if (webSocketServer != null) {
 				webSocketServer.on('connection', onOpen);
-				return true;
+				webSocketServer.on('error', onError);
+				return function() {
+					webSocketServer.close();
+					server.close();
+				}
 			} else {
-				return false;
+				return function() {
+					server.close();
+				};
 			}
 		#else
 			reportInvalidInvocation();
-			return null;
+			return function() {};
 		#end
 	}
 
 	public static function embedListeners(
 		webSocket : WebSocket,
 		onClose : Int -> Void,
-	 	onError : Int -> Void,
+	 	onError : String -> Void,
 	 	onMessage : String -> Void) : Void {
 
 		webSocket.on('message', onMessage);

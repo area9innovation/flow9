@@ -367,52 +367,20 @@ class PixiWorkarounds {
 		};");
 	}
 
-	public static function workaroundDOMOverOutEventsTransparency() : Void {
+	public static function workaroundGetContext() : Void {
 		untyped __js__("
-		var binder = function(fn) {
-			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
-		}
-
-		var emptyFn = function() {};
-
-		var old_pointer_over = PIXI.interaction.InteractionManager.prototype.onPointerOver;
-		var old_pointer_out = PIXI.interaction.InteractionManager.prototype.onPointerOut;
-
-		PIXI.interaction.InteractionManager.prototype.onPointerOver = emptyFn;
-		PIXI.interaction.InteractionManager.prototype.onPointerOut = emptyFn;
-
-		var pointer_over = function(e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		}
-
-		var mouse_move = function(e) {
-			pointer_over(e);
-			document.removeEventListener('mousemove', mouse_move);
-		}
-
-		// if mouse is already over document
-		document.addEventListener('mousemove', mouse_move);
-
-		document.addEventListener('mouseover', pointer_over);
-
-		document.addEventListener('mouseout', function(e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});
-
-		document.addEventListener('pointerover', function (e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		});
-		document.addEventListener('pointerout', function (e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});");
+			if (RenderSupportJSPixi.RendererType == 'html') {
+				Element.prototype.getContext = function(a, b) { return { imageSmoothingEnabled : true }; };
+			} else {
+				Element.prototype.getContext = null;
+			}
+		");
 	}
 
 	public static function workaroundTextMetrics() : Void {
 		untyped __js__("
+			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
+
 			PIXI.TextMetrics.measureFont = function(font)
 			{
 				// as this method is used for preparing assets, don't recalculate things if we don't need to
@@ -752,32 +720,98 @@ class PixiWorkarounds {
 			// 	return lines;
 			// }
 
+			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y)
+			{
+				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
+
+				const style = this._style;
+
+				// letterSpacing of 0 means normal
+				// Skip directional chars
+				const letterSpacing = style.letterSpacing;
+
+				if (letterSpacing === 0)
+				{
+					if (isStroke)
+					{
+						this.context.strokeText(text, x, y);
+					}
+					else
+					{
+						this.context.fillText(text, x, y);
+					}
+
+					return;
+				}
+
+				var currentPosition = x;
+				var allWidth = this.context.measureText(text).width;
+				var char, tailWidth, charWidth;
+
+				do {
+					char = text.substr(0, 1);
+					text = text.substr(1);
+
+					if (isStroke) {
+						this.context.strokeText(char, currentPosition, y);
+					} else {
+						this.context.fillText(char, currentPosition, y);
+					}
+
+					if (text == '')
+						tailWidth = 0;
+					else
+						tailWidth = this.context.measureText(text).width;
+
+
+					charWidth = allWidth - tailWidth;
+
+					currentPosition += charWidth +
+						((char.charCodeAt(0) === 0x202A || char.charCodeAt(0) === 0x202B || char.charCodeAt(0) === 0x202C) ? 0.0 : letterSpacing);
+					allWidth = tailWidth;
+				} while (text != '');
+			}
+
 			PIXI.Text.prototype._renderCanvas = function(renderer)
 			{
 				const scaleX = this.worldTransform.a;
 				const scaleY = this.worldTransform.d;
-				const scaleFactor = Math.min(scaleX, scaleY);
+				const scaleFactor = Math.min(scaleX, scaleY) * renderer.resolution * this.style.resolution;
 				const fontSize = scaleFactor * this.style.fontSize;
-				const scaleText = fontSize > 0.6;
+				const scaleText = fontSize > 0.6 && scaleFactor != 1.0;
+
+				const tempRoundPixels = renderer.roundPixels;
+				renderer.roundPixels = renderer.resolution === this.style.resolution;
 
 				if (scaleText) {
-					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
-					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
+					this.worldTransform.a = scaleX / scaleFactor;
+					this.worldTransform.d = scaleY / scaleFactor;
 
 					const tempFontSize = this.style.fontSize;
 					const tempLetterSpacing = this.style.letterSpacing;
 					const tempLineHeight = this.style.lineHeight;
 					const tempWordWrapWidth = this.style.wordWrapWidth;
+					const tempStrokeThickness = this.style.strokeThickness;
+					const tempDropShadowDistance = this.style.dropShadowDistance;
+					const tempLeading = this.style.leading;
 
+					this.style.scaleFactor = scaleFactor;
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
-					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
+					this.style.wordWrapWidth = Math.ceil(Math.max(this.style.wordWrapWidth - 1.0, 0.0) * scaleFactor) + 1.0;
+					this.style.strokeThickness = this.style.strokeThickness * scaleFactor;
+					this.style.dropShadowDistance = this.style.dropShadowDistance * scaleFactor;
+					this.style.leading = this.style.leading * scaleFactor;
+					this.style.fontString = this.style.toFontString();
 
-					if (this.resolution !== renderer.resolution)
+					if (!PIXI.TextMetrics._fonts[this.style.fontString])
 					{
-						this.resolution = renderer.resolution;
-						this.dirty = true;
+						PIXI.TextMetrics._fonts[this.style.fontString] = {
+							fontSize : this.style.fontProperties.fontSize * scaleFactor,
+							ascent : this.style.fontProperties.ascent * scaleFactor,
+							descent : this.style.fontProperties.descent * scaleFactor
+						};
 					}
 
 					PIXI.Text.prototype.updateText.call(this, true);
@@ -787,30 +821,19 @@ class PixiWorkarounds {
 					this.style.letterSpacing = tempLetterSpacing;
 					this.style.lineHeight = tempLineHeight;
 					this.style.wordWrapWidth = tempWordWrapWidth;
+					this.style.strokeThickness = tempStrokeThickness;
+					this.style.dropShadowDistance = tempDropShadowDistance;
+					this.style.leading = tempLeading;
 
 					this.worldTransform.a = scaleX;
 					this.worldTransform.d = scaleY;
 				} else {
-					if (this.resolution !== renderer.resolution)
-					{
-						this.resolution = renderer.resolution;
-						this.dirty = true;
-					}
-
 					PIXI.Text.prototype.updateText.call(this, true);
 					PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 				}
-			}
 
-			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
-				set : function(p) {
-					this.transformChanged = true;
-					this._parent = p;
-				},
-				get : function() {
-					return this._parent;
-				}
-			});
+				renderer.roundPixels = tempRoundPixels;
+			}
 
 			Object.defineProperty(PIXI.DisplayObject.prototype, 'worldVisible', {
 				get : function() {
@@ -818,74 +841,133 @@ class PixiWorkarounds {
 				}
 			});
 
-			PIXI.Container.prototype.updateTransform = function(transformChanged) {
-				var transformChanged = transformChanged || this.transformChanged;
+			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
+				set : function(p) {
+					this._parent = p;
 
-				if (transformChanged)
-				{
+					if (p == null) {
+						this.worldTransformChanged = false;
+					} else if (this.cacheAsBitmap) {
+						DisplayObjectHelper.invalidateTransform(this, 'parent');
+					}
+				},
+				get : function() {
+					return this._parent;
+				}
+			});
+
+			PIXI.Container.prototype.updateTransform = function() {
+				if (this.parent.worldTransformChanged) {
+					this.parent.updateTransform();
+				} else {
 					this.transformChanged = false;
 
-					this._boundsID++;
-					this.transform.updateTransform(this.parent.transform);
+					if (this.graphicsChanged) {
+						this.updateNativeWidgetGraphicsData();
+					}
 
-					// TODO: check render flags, how to process stuff here
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
+					if (this.worldTransformChanged)
 					{
-						child.updateTransform(transformChanged);
+						this.worldTransformChanged = false;
+						this._boundsId++;
+						this.transform.updateTransform(this.parent.transform);
+						this.worldAlpha = this.alpha * this.parent.worldAlpha;
+
+						for (let i = 0, j = this.children.length; i < j; ++i) {
+							const child = this.children[i];
+
+							if (child.transformChanged) {
+								child.updateTransform();
+							}
+						}
+
+						this.emit('transformchanged');
+
+						if (RenderSupportJSPixi.RendererType != 'html') {
+							if (this.accessWidget) {
+								this.accessWidget.updateTransform();
+							}
+						}
+					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+						const child = this.children[i];
+
+						if (child.transformChanged) {
+							child.updateTransform();
+						}
 					}
-				}
 
-				if (transformChanged) {
-					if (this.child && !this.child.transformChanged) {
-						this.child.transformChanged = true;
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
+						this.localTransformChanged = false;
 
-						RenderSupportJSPixi.PixiStageChanged = true;
-						RenderSupportJSPixi.TransformChanged = true;
-					}
-
-					if (this.accessWidget) {
-						this.accessWidget.updateTransform();
+						if (this.isNativeWidget && this.parentClip) {
+							DisplayObjectHelper.updateNativeWidget(this);
+						}
+					} else {
+						this.localTransformChanged = false;
 					}
 				}
 			};
 
-			TextClip.prototype.updateTransform = function(transformChanged) {
-				var transformChanged = transformChanged || this.transformChanged;
-
-				if (transformChanged)
-				{
+			TextClip.prototype.updateTransform = function() {
+				if (this.parent.worldTransformChanged) {
+					this.parent.updateTransform();
+				} else {
 					this.transformChanged = false;
 
-					this._boundsID++;
-
-					this.transform.updateTransform(this.parent.transform);
-
-					// TODO: check render flags, how to process stuff here
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-
-					this.layoutText();
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
+					if (this.worldTransformChanged)
 					{
-						child.updateTransform(transformChanged);
-					}
-				}
+						this.worldTransformChanged = false;
+						this._boundsId++;
+						this.transform.updateTransform(this.parent.transform);
+						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-				if (transformChanged) {
-					if (this.accessWidget) {
-						this.accessWidget.updateTransform();
+						if (RenderSupportJSPixi.RendererType == 'html') {
+							if (RenderSupportJSPixi.LayoutText || this.isCanvas) {
+								this.textClipChanged = true;
+								this.layoutText();
+							} else if (this.children.length > 0) {
+								for (let i = 0, j = this.children.length; i < j; ++i) {
+									this.removeChild(this.children[i]);
+								}
+
+								this.textClip = null;
+								this.background = null;
+							}
+						} else {
+							this.layoutText();
+						}
+
+						for (let i = 0, j = this.children.length; i < j; ++i) {
+							const child = this.children[i];
+
+							if (child.transformChanged) {
+								child.updateTransform();
+							}
+						}
+
+						if (RenderSupportJSPixi.RendererType != 'html') {
+							if (this.accessWidget) {
+								this.accessWidget.updateTransform();
+							}
+						}
+
+						this.emit('transformchanged');
+					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+						const child = this.children[i];
+
+						if (child.transformChanged) {
+							child.updateTransform();
+						}
+					}
+
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
+						this.localTransformChanged = false;
+
+						if (this.isNativeWidget && this.parentClip) {
+							DisplayObjectHelper.updateNativeWidget(this);
+						}
+					} else {
+						this.localTransformChanged = false;
 					}
 				}
 			};

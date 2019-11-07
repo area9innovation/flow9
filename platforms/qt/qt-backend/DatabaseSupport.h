@@ -44,6 +44,8 @@ public:
     DECLARE_NATIVE_METHOD(requestDb);
     DECLARE_NATIVE_METHOD(requestExceptionDb);
 
+    DECLARE_NATIVE_METHOD(requestDbMulti);
+
     DECLARE_NATIVE_METHOD(lastInsertIdDb);
 
     DECLARE_NATIVE_METHOD(startTransactionDb);
@@ -58,6 +60,9 @@ class DatabaseResult : public FlowNativeObject {
     DatabaseConnection *owner;
     QSqlQuery *query;
     int index;
+
+private:
+    StackSlot getRecord(RUNNER_VAR);
 
 protected:
     void flowGCObject(GarbageCollectorFn fn);

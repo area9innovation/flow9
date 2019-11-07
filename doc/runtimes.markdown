@@ -297,3 +297,34 @@ nwjs/nwjs.app/Contents/MacOS/nw . fun
 
 You can call developer console of NWJS for debugging purpose, press F12 on Windows and 
 Cmd+Alt+I on MacOS X.
+
+# Using flow code in Typescript
+
+To use flow code in Typescript, compile the flow code to a js-library,
+define the name of the object to keep the exported names, and produce a
+`.d.ts` file. This is done with a command line like this:
+
+	flowc test/test.flow js=www/test.js jslibrary=foo jslibraryobject=test tsd=1
+
+We compile a file `test/test.flow`, save the resulting library in the `www/test.js`
+file, export the name `foo` in an object called `test`, and produce a `@types/test.d.ts` file,
+which defines the type of the `foo` function for use in Typescript.
+
+Then do this in your TS file that should use the code:
+
+	/// <reference types="../@types/test" />
+
+	// And now we can call:
+    test.foo();
+
+To link the flow code in JS, add something like this in the HTML:
+
+	<html>
+		<head>
+			<script src="test.js"></script>
+			...
+		</head>
+		<body >
+		...
+		</body>
+	</html>

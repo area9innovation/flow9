@@ -214,6 +214,7 @@ protected:
     virtual void doScheduleLocalNotification(double time, int notificationId, std::string notificationCallbackArgs, std::string notificationTitle, std::string notificationText, bool withSound, bool pinned);
     virtual void doCancelLocalNotification(int notificationId);
 
+    virtual void doGetFBToken(int cb_root);
     virtual void doSubscribeToFBTopic(unicode_string name);
     virtual void doUnsubscribeFromFBTopic(unicode_string name);
 };

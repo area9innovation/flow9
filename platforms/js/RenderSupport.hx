@@ -24,7 +24,7 @@ class RenderSupport {
 	static var TempClip : Dynamic;
 	static var ImageCache : Map<String,Dynamic>;
 	static var PendingImages : Map<String, Array< Dynamic > >;
-	
+
 	private static var typekitTryCount : Int = 0;
 
 	private static var MouseX : Float;
@@ -46,7 +46,7 @@ class RenderSupport {
 	private static var UrlHashListeners : Array<String -> Void>;
 	#end
 
-	public function new() { 
+	public function new() {
 		#if flash
 		oldinit();
 		#end
@@ -182,7 +182,7 @@ class RenderSupport {
 				for (cb in UrlHashListeners) cb(hash);
 			});
 		}
-		
+
 		addPasteClipboardListener(getStage());
 /*
 		flash.system.IME.enabled = true;
@@ -223,7 +223,7 @@ class RenderSupport {
 			cb(dx, dy);
 		}
 	}
-	
+
 	private static function addPasteClipboardListener(clip : Dynamic) {
 		var pasteFromClipboard = function(e)  {
 			if(Clipboard.generalClipboard.hasFormat(ClipboardFormats.TEXT_FORMAT)) {
@@ -234,7 +234,7 @@ class RenderSupport {
 				Native.clipboardData = "";
 			}
 		};
-		
+
 		clip.addEventListener(Event.PASTE, pasteFromClipboard); //Ctrl+V on stage
 	}
 	#end
@@ -763,7 +763,7 @@ class RenderSupport {
 
 			// Set the embedded flag for the fonts we recognize as built-in
 			textfield.embedFonts = isEmbeddedFont(fontfamily);
-			
+
 			if (textfield.type == TextFieldType.INPUT) {
 				setHtmlText(textfield, text, fontfamily, fontsize, letterspacing);
 
@@ -800,7 +800,7 @@ class RenderSupport {
 		return builtinFonts.get(fontfamily) == true;
 	}
 	#end
-	
+
 	#if js
 	private static function patchTextFormatting(node : Dynamic) : Void {
 		if (node.tagName == "FONT") {
@@ -1102,7 +1102,7 @@ class RenderSupport {
 	}
 
 	public static function setTextInputType(textfield : Dynamic, type : String) : Void {
-		#if js 
+		#if js
 			if (textfield.input) {
 				textfield.children[0].type = type;
 			}
@@ -1164,7 +1164,7 @@ class RenderSupport {
 	}
 
 	public static function setTabEnabled(textfield : Dynamic, enabled : Bool) : Void {
-		#if js 
+		#if js
 			// stub;
 		#elseif flash
 			var textfield_ : flash.text.TextField = textfield;
@@ -1203,16 +1203,16 @@ class RenderSupport {
 	}
 
 	#if js
-	static function getCaret(el : Dynamic) : Int { 
-		if (untyped el.selectionStart) { 
-			return el.selectionStart; 
-		} else if (untyped Browser.document.selection) { 
-			el.focus(); 
+	static function getCaret(el : Dynamic) : Int {
+		if (untyped el.selectionStart) {
+			return el.selectionStart;
+		} else if (untyped Browser.document.selection) {
+			el.focus();
 
-			var r : Dynamic = untyped Browser.document.selection.createRange(); 
-			if (r == null) { 
-				return 0; 
-			} 
+			var r : Dynamic = untyped Browser.document.selection.createRange();
+			if (r == null) {
+				return 0;
+			}
 
 			var re = el.createTextRange();
 			var rc = re.duplicate();
@@ -1327,6 +1327,9 @@ class RenderSupport {
 		#end
 	}
 
+	public static function setDoNotInvalidateStage(clip : Dynamic, value : Bool) : Void {
+	}
+
 	public static function getSelectionStart(textfield : Dynamic) : Int {
 		#if flash
 			var textfield_ : flash.text.TextField = textfield;
@@ -1375,7 +1378,7 @@ class RenderSupport {
 
 	public static function setMaxChars(textfield : Dynamic, maxChars : Int) : Void {
 		#if js
-			if (textfield.input)		
+			if (textfield.input)
 				textfield.children[0].maxLength = maxChars;
 		#elseif flash
 			var textfield_ : flash.text.TextField = textfield;

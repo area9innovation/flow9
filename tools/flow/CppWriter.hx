@@ -379,6 +379,131 @@ enum CppOutputLocation {
 	OutputScalar(name : String, tag : CppTagType);
 }
 
+enum CppLine {
+	CppDecl(type : String, name : String, indent : String, origin : CppCodeLines);
+	CppAny(line : String);
+	CppBlock(code : CppCodeLines);
+}
+
+class CppCodeLines {
+	public var lines : Array<CppLine>;
+	public var parent : CppCodeLines;
+
+	public function new(parent : CppCodeLines) {
+		this.parent = parent;
+		lines = [];
+	}
+
+	public function codeString() {
+		pullCommonDecls();
+		var sb = new StringBuf();
+		var lines = codeLines();
+		for (line in lines) {
+			sb.add(line);
+		}
+		return sb.toString();
+	}
+
+	private function codeLines() {
+		var code_lines = new Array<String>();
+		for (line in lines) {
+			switch (line) {
+				case CppDecl(type, name, indent, origin): {
+					code_lines.push(indent + type + ' ' + name + ';\n');
+				}
+				case CppAny(line): {
+					code_lines.push(line.charAt(line.length - 1) == '\n' ? line : line + '\n');
+				}
+				case CppBlock(code): {
+					var sub_lines : Array<String> = code.codeLines();
+					for (sub_line in sub_lines) {
+						code_lines.push(sub_line);
+					}
+				}
+			}
+		}
+		return code_lines;
+	}
+
+	private function pullCommonDecls() {
+		var decl2line = new Map();
+		fillDecl2Line(decl2line);
+		var decl2line_filtered = new Map();
+		for (name in decl2line.keys()) {
+			var lines = decl2line.get(name);
+			if (lines.length > 1) {
+				decl2line_filtered.set(name, lines);
+			}
+		}
+		for (name in decl2line_filtered.keys()) {
+			trace('multy decls for: ' + name);
+			var common_decls = decl2line_filtered.get(name);
+			var common = leastCommonAncestor(common_decls);
+			common.lines.unshift(common_decls[0]);
+			for (decl in common_decls) {
+				removeCppLine(decl);
+			}
+		}
+	}
+
+	static private function removeCppLine(line : CppLine) {
+		switch (line) {
+			case CppDecl(type, name, indent, origin): {
+				origin.lines.remove(line);
+			}
+			default: throw 'must be CppDecl';
+		}
+	}
+
+	private function leastCommonAncestor(lines : Array<CppLine>) : CppCodeLines {
+		var paths = [];
+		for (line in lines) {
+			switch (line) {
+				case CppDecl(type, name, indent, origin): {
+					var path = [];
+					var cur = origin;
+					while (cur != null) {
+						path.push(cur);
+						cur = cur.parent;
+					}
+					path.reverse();
+					paths.push(path);
+				}
+				default: throw 'must be CppDecl';
+			}
+		}
+		var init_path = paths.shift();
+		var common = null;
+		for (i in 0...init_path.length) {
+			var ancestor = init_path[i];
+			for (path in paths) {
+				if (path[i] != ancestor) {
+					return common;
+				}
+			}
+			common = ancestor;
+		}
+		return common;
+	}
+
+	private function fillDecl2Line(m : Map<String, Array<CppLine>>) {
+		for (line in lines) {
+			switch (line) {
+				case CppDecl(type, name, indent, origin): {
+					if (!m.exists(name)) {
+						m.set(name, []);
+					}
+					m.get(name).push(line);
+				}
+				case CppBlock(code): {
+					code.fillDecl2Line(m);
+				}
+				default:
+			}
+		}
+	}
+}
+
 // Contains current information about the function being compiled.
 // Controls mapping of local variable names to places.
 class CppEnvironment {
@@ -388,10 +513,8 @@ class CppEnvironment {
 		this.vname = vname;
 
 		lines = 0;
-		line_str = new StringBuf();
 		nlocals = ntemps = nargs = next_ctx = 0;
 		upvalues = [];
-		idxvars = new OrderedHash();
 		args_used = tail_call = false;
 		locals = new Map();
 		local_reuse = [];
@@ -404,6 +527,7 @@ class CppEnvironment {
 
 		next_uid = 1000000*depth;
 
+		code_lines = new CppCodeLines(null);
 		cur_ctx = new CppContext(this, '    ');
 	}
 
@@ -425,12 +549,10 @@ class CppEnvironment {
 	public var closure : CppPlaceInfo;
 	public var closure_type : StructInfo;
 	public var upvalues : Array<String>;
-	public var idxvars : OrderedHash<String>;
 
 	public var tail_call : Bool;
 
 	public var lines : Int;
-	public var line_str : StringBuf;
 	public var cur_ctx : CppContext;
 
 	public var locals : Map<String, CppPlaceInfo>;
@@ -438,6 +560,18 @@ class CppEnvironment {
 	public var struct_list : Array<StructInfo>;
 
 	public var meta_globals : Map<Int, { def : CppPlaceInfo, old: PlaceMetadata, my: PlaceMetadata }>;
+
+	public function pushCppBlock() {
+		code_lines = new CppCodeLines(code_lines);
+	}
+	public function popCppBlock() {
+		code_lines.parent.lines.push(CppBlock(code_lines));
+		code_lines = code_lines.parent;
+	}
+	public function addCppLine(line : CppLine) {
+		code_lines.lines.push(line);
+	}
+	public var code_lines : CppCodeLines;
 
 	public function mktemp(id : Int) : CppPlaceInfo {
 		if (id >= ntemps) ntemps = id+1;
@@ -511,11 +645,6 @@ class CppEnvironment {
 			local_reuse.push(curdef.slot);
 	}
 
-	public function registerIdxVar(name : String, type : String) {
-		if (idxvars.get(name) == null)
-			idxvars.set(name, type);
-	}
-
 	public function stashGlobalMeta() {
 		for (info in meta_globals.iterator()) {
 			info.my = info.def.meta;
@@ -543,6 +672,8 @@ class CppContext {
 		local_names = [];
 		local_binds = [];
 		meta = new Map();
+		idxvars = new OrderedHash();
+		env.pushCppBlock();
 	}
 
 	public var env : CppEnvironment;
@@ -555,10 +686,12 @@ class CppContext {
 
 	private var local_names : Array<String>;
 	private var local_binds : Array<CppPlaceInfo>;
+	private var idxvars : OrderedHash<String>;
 
 	private var meta : Map<Int, { def : CppPlaceInfo, old: PlaceMetadata, my: PlaceMetadata }>;
 
 	public function exit() {
+		env.popCppBlock();
 		popdefs();
 
 		for (mid in meta.iterator()) {
@@ -576,7 +709,7 @@ class CppContext {
 
 	public function wrbegin() : StringBuf {
 		env.lines++;
-		var line_str = env.line_str;
+		var line_str = new StringBuf();
 		line_str.add(indent);
 		return line_str;
 	}
@@ -585,12 +718,14 @@ class CppContext {
 		var line_str = wrbegin();
 		line_str.add(s);
 		line_str.add(NEWLINE);
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi(str : String) {
 		var line_str = wrbegin();
 		line_str.add(str);
 		line_str.add(SEMI_NL);
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi2(str1 : String, str2 : String) {
@@ -598,6 +733,7 @@ class CppContext {
 		line_str.add(str1);
 		line_str.add(str2);
 		line_str.add(SEMI_NL);
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi3(str1 : String, str2 : String, str3 : String) {
@@ -606,6 +742,7 @@ class CppContext {
 		line_str.add(str2);
 		line_str.add(str3);
 		line_str.add(SEMI_NL);
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrsemi4(str1 : String, str2 : String, str3 : String, str4 : String) {
@@ -615,6 +752,7 @@ class CppContext {
 		line_str.add(str3);
 		line_str.add(str4);
 		line_str.add(SEMI_NL);
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function enter(idelta : String) {
@@ -751,17 +889,18 @@ class CppContext {
 			var vname = sb.toString();
 
 			if (structname == '') {
-				env.registerIdxVar(vname, 'const StackSlot*');
+				registerIdxVar(vname, 'const StackSlot*');
 
 				if (init) {
 					var size = sref.meta.struct_size == null ? 1 : sref.meta.struct_size;
 					var sb2 = wrbegin();
 					sb2.add(vname); sb2.add(GET_ASPTR); sb2.add(sref.getRValue(this));
 					sb2.add(COMMA); sb2.add(size<1?1:size); sb2.add(PAREN_SEMI_NL);
+					env.addCppLine(CppAny(sb2.toString()));
 				}
 			} else {
 				var vtype = 'FS_'+structname;
-				env.registerIdxVar(vname, vtype+'*');
+				registerIdxVar(vname, vtype+'*');
 
 				if (init) {
 					var sb2 = wrbegin();
@@ -774,6 +913,7 @@ class CppContext {
 					}
 
 					sb2.add(PAREN_SEMI_NL);
+					env.addCppLine(CppAny(sb2.toString()));
 				}
 			}
 
@@ -848,6 +988,7 @@ class CppContext {
 		line_str.add(str);
 		line_str.add(PAREN_SEMI_NL);
 		if (gc) gc_index++;
+		env.addCppLine(CppAny(line_str.toString()));
 	}
 
 	public function wrcheckopt(str : String, check : Bool, ?gc = false) {
@@ -860,6 +1001,24 @@ class CppContext {
 			var line_str = wrbegin();
 			line_str.add(str);
 			line_str.add(SEMI_NL);
+			env.addCppLine(CppAny(line_str.toString()));
+		}
+	}
+
+	private function idxVarType(name : String) {
+		if (idxvars.get(name) != null) {
+			return idxvars.get(name);
+		}
+		if (prev != null) {
+			return prev.idxVarType(name);
+		}
+		return null;
+	}
+
+	public function registerIdxVar(name : String, type : String) {
+		if (idxVarType(name) == null) {
+			idxvars.set(name, type);
+			env.addCppLine(CppDecl(type, name, indent, env.code_lines));
 		}
 	}
 }
@@ -1713,13 +1872,10 @@ class CppWriter {
 				o.writeString('    StackSlot *const temps = locals+'+env.nlocals+';\n');
 		}
 
-		for (id in env.idxvars.keys())
-			o.writeString('    '+env.idxvars.get(id)+' '+id+';\n');
-
 		if (env.tail_call)
 			o.writeString('tail_call:\n');
 
-		o.writeString(env.line_str.toString());
+		o.writeString(env.code_lines.codeString());
 
 		o.writeString('}\n');
 		/*o.close();
@@ -1840,7 +1996,7 @@ class CppWriter {
 			expr = cb(ctx, expr);
 		case OutputScalar(name,tag2):
 			if (tag != tag2) {
-				ctx.env.registerIdxVar('unbox_tmp','StackSlot');
+				ctx.registerIdxVar('unbox_tmp','StackSlot');
 				ctx.wrcheckopt(assignExpr('unbox_tmp',expr,io||check||gc), check, gc);
 				ctx.wr('CHECK_TAG('+CppPlaceInfo.tagToString(tag2)+
 					   ',unbox_tmp,"'+ctx.env.vname+'");');
@@ -1932,6 +2088,7 @@ class CppWriter {
 		sb.add(',"');
 		sb.add(ctx.env.vname);
 		sb.add('");\n');
+		ctx.env.addCppLine(CppAny(sb.toString()));
 
 		var lm = ctx.localMeta(ref);
 		lm.tag = tag;
@@ -1977,7 +2134,7 @@ class CppWriter {
 
 		if (ref.meta.known_fields == null || !ref.meta.known_fields.has(name))
 		{
-			ctx.env.registerIdxVar(ivar, 'int');
+			ctx.registerIdxVar(ivar, 'int');
 
 			var fidx = getFieldLookupId(name);
 			ctx.wr('FIND_STRUCT_FIELD('+ivar+','+ref.getRValue(ctx)+','+fidx+
@@ -2040,7 +2197,7 @@ class CppWriter {
 
 		if (ref1.meta.known_compares == null || !ref1.meta.known_compares.has(ref2))
 		{
-			ctx.env.registerIdxVar(cvar, 'int');
+			ctx.registerIdxVar(cvar, 'int');
 
 			/*if (type == TString) {
 				ctx.wr(cvar+' = RUNNER->CompareString('+getAddrPair(ref1,TString,ctx)+
@@ -2301,13 +2458,13 @@ class CppWriter {
 		case If(condition, then, elseExp, pos):
 			var cexpr = emitConditionExpr(condition, ctx, mktop(top));
 			ctx.wr('if ('+cexpr+') {');
-			var cif = ctx.enter('    ');
-			compileExpression(then, cif, out, mktop(top));
-			cif.exit();
+				var cif = ctx.enter('    ');
+				compileExpression(then, cif, out, mktop(top));
+				cif.exit();
 			ctx.wr('} else {');
-			var celse = ctx.enter('    ');
-			compileExpression(elseExp, celse, out, mktop(top));
-			celse.exit();
+				var celse = ctx.enter('    ');
+				compileExpression(elseExp, celse, out, mktop(top));
+				celse.exit();
 			ctx.wr('}');
 			ctx.join([cif, celse]);
 		case Switch(e0, type, cases, p):

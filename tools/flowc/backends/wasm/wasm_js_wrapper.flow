@@ -24,13 +24,13 @@ export {
 		wrappersJSCode : string
 	);
 
-	fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWasmTypeTable, globalNames : FiGlobalNames) -> NativeWrappers;
+	fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWasmTypeTable, globalNames : FiGlobalNames, threadId : int) -> NativeWrappers;
 	
 	// fiInvokeDecl(type : WasmTypeDescriptor, typeTable : FiWasmTypeTable) -> string;
 }
 
 // (func $invoke_4_4_2__0 (param i32) (param i32) (param i32) (param i32) )
-fiInvokeDecl(ftype : WasmTypeDescriptor, typeTable : FiWasmTypeTable) {
+fiInvokeDecl(ftype : WasmTypeDescriptor, typeTable : FiWasmTypeTable, threadId : int) {
 	funType = cast(ftype : WasmTypeDescriptor -> WasmTypeFunction);
 
 	args = switch (ftype) {
@@ -39,7 +39,7 @@ fiInvokeDecl(ftype : WasmTypeDescriptor, typeTable : FiWasmTypeTable) {
 		default: []
 	};
 
-	name = fiInvokeName(funType, typeTable);
+	name = fiInvokeName(funType, typeTable, threadId);
 
 	a_name = \a -> "(param" + (if (a.name != "") " $" + a.name else "") + " " + compileWasmType(a.type, false) + ")";
 
@@ -66,7 +66,7 @@ FuncArg(namein: string, nameout: string, retrievecode: [string], cb: FuncCallbac
 
 empty_cb() { FuncCallback("", true, [], []); }
 
-getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable : FiWasmTypeTable, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>, decode: bool) {
+getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable : FiWasmTypeTable, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>, decode: bool, threadId : int) {
 	f = \name, typebytes -> {
 		typestr = "[" + a2s2(typebytes, ",", i2s) + "]";
 		if (decode) {
@@ -83,15 +83,15 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 		cb = FuncCallback(
 			name, 
 			dec, 
-			getFuncArgs(argTypes, typeTable, callbacks, dec), 
-			getFuncArg("cb_in_" + index, "cb_ret_" + index, returnType, typeTable, callbacks, !dec)
+			getFuncArgs(argTypes, typeTable, callbacks, dec, threadId), 
+			getFuncArg("cb_in_" + index, "cb_ret_" + index, returnType, typeTable, callbacks, !dec, threadId)
 		);
 
 		if (dec) {
 			lookupTreeSet(callbacks, a, \key -> {
 				args = strGlue(mapi(argTypes, \i, ar -> "arg_" + i2s(i)), ", ");
 				WasmCallback(
-					fiInvokeName(a, typeTable) + ": function(fn_id, " + args + ") {\n" + 
+					fiInvokeName(a, typeTable, threadId) + ": function(fn_id, " + args + ") {\n" + 
 					"		var fn = IDHandler.getObjectFromID(decode_data(0, fn_id, [6]));\n" + 
 					"		return fn(" + args + ");\n" + 
 					"	}",
@@ -119,7 +119,7 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 		WasmTypeInt(): buildEmpty();
 		WasmTypeDouble(): buildEmpty();
 		WasmTypeString(): buildArg1(["var " + nameOut + " = " + f(nameIn, [4])]);
-		WasmTypeArray(type): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
+		WasmTypeArray(type): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false, threadId))]);
 		// WasmTypeNative(): buildArg1(["var " + nameOut + " = " + (if (decode)  "IDHandler.getObjectFromID(" + nameIn + ");" else "IDHandler.createObjectId(" + nameIn + ");")]);
 		WasmTypeNative(): {
 			tmpName = if (decode)  
@@ -128,10 +128,10 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 				"encode_data(IDHandler.createObjectId(" + nameIn + "), [6])";
 			buildArg1(["var " + nameOut + " = " + tmpName]);
 		}
-		WasmTypeFlow(): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
+		WasmTypeFlow(): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false, threadId))]);
 
 		WasmTypeUnion(u_name, u_structs): {
-			buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
+			buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false, threadId))]);
 		}
 
 		WasmTypeFunction(argTypes, returnType): {
@@ -145,7 +145,7 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 		WasmTypeVoid(): buildEmpty();
 
 		default: {
-			bytes = "[" + strGlue(map(wasmTypeDescriptor2bytes(typeTable, a, false), \s-> i2s(s)), ", ") + "]";
+			bytes = "[" + strGlue(map(wasmTypeDescriptor2bytes(typeTable, a, false, threadId), \s-> i2s(s)), ", ") + "]";
 			println("Not supported WasmTypeDescriptor: " + bytes);
 
 			[];
@@ -153,10 +153,10 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 	}
 }
 
-getFuncArgs(args, typeTable : FiWasmTypeTable, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>, decode: bool) {
+getFuncArgs(args, typeTable : FiWasmTypeTable, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>, decode: bool, threadId : int) {
 	foldi(args, [], \i, acc, a -> {
 		basename = "arg_" + i2s(^callback_counter) + "_" + i2s(i);
-		addendum = getFuncArg(basename + "_in", basename + "_out", a.type, typeTable, callbacks, decode);
+		addendum = getFuncArg(basename + "_in", basename + "_out", a.type, typeTable, callbacks, decode, threadId);
 		concat(acc, addendum);
 	});
 }
@@ -175,12 +175,12 @@ wasmNativeName(name: string) {
 
 
 // it will create a wrapper functions for Native
-wasmCreateWrapper(nativeName: string, nameWrapped: string, typedesc: WasmTypeDescriptor, typeTable : FiWasmTypeTable, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>, decode: bool) -> Pair<[FuncArg], [FuncArg]>{
+wasmCreateWrapper(nativeName: string, nameWrapped: string, typedesc: WasmTypeDescriptor, typeTable : FiWasmTypeTable, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>, decode: bool, threadId : int) -> Pair<[FuncArg], [FuncArg]>{
 	args = switch (typedesc) {
 		WasmTypeFunction(argTypes, returnType): {
 			Pair(
-				getFuncArgs(argTypes, typeTable, callbacks, decode), 
-				getFuncArg("retIn", "retOut", returnType, typeTable, callbacks, !decode)
+				getFuncArgs(argTypes, typeTable, callbacks, decode, threadId), 
+				getFuncArg("retIn", "retOut", returnType, typeTable, callbacks, !decode, threadId)
 			);
 		}
 		default: {
@@ -193,8 +193,8 @@ wasmCreateWrapper(nativeName: string, nameWrapped: string, typedesc: WasmTypeDes
 }
 
 // it will create a wrapper functions for Native
-fiWasmCreateNativeWrapper(name: string, nameWrapped: string, decl: FiNativeDec, typeTable : FiWasmTypeTable, globalNames : FiGlobalNames, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>) -> Pair<[FuncArg], [FuncArg]> {
-	wasmCreateWrapper(decl.nativeName, nameWrapped, fitype2wasmtype(globalNames, decl.type), typeTable, callbacks, true);
+fiWasmCreateNativeWrapper(name: string, nameWrapped: string, decl: FiNativeDec, typeTable : FiWasmTypeTable, globalNames : FiGlobalNames, callbacks: ref Tree<WasmTypeDescriptor, WasmCallback>, threadId : int) -> Pair<[FuncArg], [FuncArg]> {
+	wasmCreateWrapper(decl.nativeName, nameWrapped, fitype2wasmtype(globalNames, decl.type, threadId), typeTable, callbacks, true, threadId);
 }
 
 buildJSWrapperDecl(name: string, args: [FuncArg]) -> string {
@@ -258,7 +258,7 @@ buildFunction(name: string, nativeName: string, retName: string, args: [FuncArg]
 	indent + "}";
 }
 
-fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWasmTypeTable, globalNames : FiGlobalNames) {
+fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWasmTypeTable, globalNames : FiGlobalNames, threadId : int) {
 	callbacks = ref makeTree();
 
 	// filter those which have fallback
@@ -277,14 +277,14 @@ fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWas
 			if ((fiWasmIsPureNative(decl.nativeName) || fiWasmIsHostWNative(decl.nativeName))) {
 				nameWrapped = fiNativeJSWrapperFunctionName(decl.nativeName);
 
-				wr = fiWasmCreateNativeWrapper(name, nameWrapped, decl, typeTable, globalNames, callbacks);
+				wr = fiWasmCreateNativeWrapper(name, nameWrapped, decl, typeTable, globalNames, callbacks, threadId);
 				wrapperJSCode = buildFunction(nameWrapped, decl.nativeName, "ret", wr.first, wr.second, "	", false, true);
 
 				refArrayPush(allWrapperJSCode, wrapperJSCode);
 
 				FiWasmNativeWrap(
 					nameWrapped, {
-						fiWasmBuildFunctionDecl(nameWrapped, fitype2wasmtype(globalNames, decl.type), false, true)
+						fiWasmBuildFunctionDecl(nameWrapped, fitype2wasmtype(globalNames, decl.type, threadId), false, true, threadId)
 					}
 				)
 			} else FiWasmNativeWrap("", "")
@@ -293,8 +293,8 @@ fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWas
 
 	cbs : Triple<Tree<string, FiDeclaration>, [string], [string]> = foldTree(^callbacks, Triple(makeTree(), [], []), \type, cb, tls -> {
 		functionType = cast(type : WasmTypeDescriptor -> WasmTypeFunction);
-		declstr = fiInvokeDecl(type, typeTable);
-		name = fiInvokeName(type, typeTable); 
+		declstr = fiInvokeDecl(type, typeTable, threadId);
+		name = fiInvokeName(type, typeTable, threadId); 
 
 		s = "(import \"callbacks\" \"" + name + "\"" + declstr + ")\n"; 
 		code = if (cb.callbackJS != "") arrayPush(tls.third, cb.callbackJS) else tls.third;

@@ -213,6 +213,7 @@ void GLClip::prepareRenderTransforms(const GLTransform &parent, bool force, floa
     // Transform might have changed
     if (force) {
         global_transform = parent * getLocalTransform();
+        invokeEventCallbacks(FlowTransformChange, 0, NULL);
         global_alpha = parent_alpha * alpha;
         global_visible = parent_visible && visible;
         global_renderable = parent_renderable && renderable;
@@ -988,6 +989,8 @@ StackSlot GLClip::addEventListener(RUNNER_ARGS)
         type = FlowFocusIn;
     else if (event == "focusout")
         type = FlowFocusOut;
+    else if (event == "transformchanged")
+        type = FlowTransformChange;
 
     return addEventCallback(RUNNER, type, cb, "addEventListener$disposer");
 }
@@ -1025,16 +1028,6 @@ StackSlot GLClip::emitMouseEvent(RUNNER_ARGS)
         type = FlowMouseMiddleUp;
     else if (event == "click")
         type = FlowMouseClick;
-    else if (event == "resize")
-        type = FlowSceneResize;
-    else if (event == "change")
-        type = FlowTextChange;
-    else if (event == "scroll")
-        type = FlowTextScroll;
-    else if (event == "focusin")
-        type = FlowFocusIn;
-    else if (event == "focusout")
-        type = FlowFocusOut;
 
     owner->dispatchMouseEvent(type, mouseX, mouseY);
 

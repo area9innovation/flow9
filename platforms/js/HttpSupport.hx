@@ -625,9 +625,12 @@ class HttpSupport {
 
 		#elseif (js && !flow_nodejs)
 
-		onOpenFn();
 
 		var xhr : Dynamic = untyped __js__ ("new XMLHttpRequest()");
+
+		xhr.open("POST", url, true);
+		onOpenFn();
+
 		xhr.onload = xhr.onerror = function() {
 			if(xhr.status != 200) { onErrorFn("" + xhr.status); } else { onDataFn(xhr.responseText); }
 		};
@@ -653,7 +656,6 @@ class HttpSupport {
 			xhr.setRequestHeader(header[0], header[1]);
 		}
 
-		xhr.open("POST", url, true);
 		xhr.send(form_data);
 		#end
 

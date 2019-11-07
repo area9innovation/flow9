@@ -9,6 +9,8 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
 
+	public var keepNativeWidget : Bool = true;
+
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
 	}
@@ -53,7 +55,7 @@ class WebClip extends NativeWidgetClip {
 			try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report("Can not set RealHTML domain" + e); }
 		}
 
-		createNativeWidget("div");
+		initNativeWidget();
 
 		if (Platform.isIOS) {
 			// To restrict size of iframe
@@ -65,6 +67,11 @@ class WebClip extends NativeWidgetClip {
 
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
+
+		if (RenderSupportJSPixi.RendererType == "html") {
+			iframe.className = 'nativeWidget';
+			iframe.style.pointerEvents = 'auto';
+		}
 
 		if (isUrl(url) || Platform.isIE || Platform.isEdge) {
 			iframe.src = url;
@@ -84,10 +91,19 @@ class WebClip extends NativeWidgetClip {
 
 		iframe.onload = function() {
 			try {
+				var iframeDocument = iframe.contentWindow.document;
+
+				if (RenderSupportJSPixi.RendererType != "html") {
+					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+					if (Native.isTouchScreen()) {
+						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+					}
+				}
+
 				if (shrinkToFit) {
 					try {
-						this.htmlPageWidth = iframe.contentWindow.document.body.scrollWidth;
-						this.htmlPageHeight = iframe.contentWindow.document.body.scrollHeight;
+						this.htmlPageWidth = iframeDocument.body.scrollWidth;
+						this.htmlPageHeight = iframeDocument.body.scrollHeight;
 						applyShrinkToFit();
 					} catch(e : Dynamic) {
 						// if we can't get the size of the html page, we can't do shrink so disable it
@@ -145,6 +161,35 @@ class WebClip extends NativeWidgetClip {
 			iframe.style.width = nativeWidget.style.width;
 			iframe.style.height = nativeWidget.style.height;
 			iframe.style.visibility = "visible";
+		}
+	}
+
+	private function onContentMouseMove(e : Dynamic) {
+		var iframeZorder : Int = Math.floor(Std.parseInt(nativeWidget.style.zIndex) / 1000);
+		var localStages = RenderSupportJSPixi.PixiStage.children;
+		var i = localStages.length - 1;
+
+		while (i > iframeZorder) {
+			var pos = Util.getPointerEventPosition(e);
+
+			RenderSupportJSPixi.MousePos.x = pos.x;
+			RenderSupportJSPixi.MousePos.y = pos.y;
+
+			if (RenderSupportJSPixi.getClipAt(localStages[i], RenderSupportJSPixi.MousePos, true, true) != null) {
+				untyped localStages[i].view.style.pointerEvents = "all";
+				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
+
+				untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
+
+				if (e.type == "touchstart") {
+					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mousedown", pos.x, pos.y);
+					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mouseup", pos.x, pos.y);
+				}
+
+				return;
+			}
+
+			i--;
 		}
 	}
 
@@ -207,5 +252,4 @@ class WebClip extends NativeWidgetClip {
 			iframe.contentWindow.postMessage(code, '*');
 		}
 	}
-
 }

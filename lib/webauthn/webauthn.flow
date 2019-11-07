@@ -1,0 +1,163 @@
+import webauthn/webauthn_types;
+import ds/arrayutils;
+import sys/target;
+
+export {
+    native webauthnSupported : () -> bool = CredentialManagement.webauthnSupported;
+    createCredentials(
+        creationOptions : PublicKeyCredentialCreationOptions,
+        callback : (publicKeyCredential : string) -> void,
+        onError : (string) -> void
+    ) -> void;
+    getCredentials(
+        requestOptions : PublicKeyCredentialRequestOptions,
+        callback : (publicKeyCredential : string) -> void,
+        onError : (string) -> void
+    ) -> void;
+}
+
+webauthnSupportedTarget : bool = js && !nodejs && !nwjs;
+
+native makePublicCredentialDescriptorNative : (
+    id : string, // base64Url encoded string
+    transports : [string]
+) -> [native] = CredentialManagement.makePublicCredentialDescriptor;
+
+publicCredentialDescriptorToNative(descriptor : PublicCredentialDescriptor) -> [native] {
+    if (webauthnSupportedTarget) {
+        makePublicCredentialDescriptorNative(descriptor.id, map(descriptor.transports, authenticationTransportToString))
+    } else {
+        []
+    }
+}
+
+native makeAuthenticatorSelectionCriteriaNative : (
+    authenticatorAttachment : string,
+    requireResidentKey : bool,
+    userVerification : string
+) -> [native] = CredentialManagement.makeAuthenticatorSelectionCriteria;
+
+authenticatorSelectionCriteriaToNative(criteria : AuthenticatorSelectionCriteria) -> [native] {
+    if (webauthnSupportedTarget) {
+        makeAuthenticatorSelectionCriteriaNative(
+            authenticatorAttachmentToString(either(criteria.authenticatorAttachment, CrossPlatform())),
+            either(criteria.requireResidentKey, false),
+            userVerificationRequirementToString(either(criteria.userVerification, Preferred()))
+        )
+    } else {
+        []
+    }
+}
+
+native makePublicKeyCredentialUserEntityNative : (
+    id : string,
+    name : string,
+    displayName : string,
+    icon : string // empty considered as optional
+) -> [native] = CredentialManagement.makePublicKeyCredentialUserEntityNative;
+
+publicKeyCredentialUserEntityToNative(userEntity : PublicKeyCredentialUserEntity) -> [native] {
+    if (webauthnSupportedTarget) {
+        makePublicKeyCredentialUserEntityNative(
+            userEntity.id,
+            userEntity.name,
+            userEntity.displayName,
+            either(userEntity.icon, "")
+        )
+    } else {
+        []
+    }
+}
+
+native makePublicKeyCredentialRPEntityNative : (
+    id : string,
+    name : string,
+    icon : string // empty considered as optional
+) -> [native] = CredentialManagement.makePublicKeyCredentialRPEntityNative;
+
+publicKeyCredentialRPEntityToNative(rpEntity : PublicKeyCredentialRPEntity) -> [native] {
+    if (webauthnSupportedTarget) {
+        makePublicKeyCredentialRPEntityNative(
+            rpEntity.id,
+            rpEntity.name,
+            either(rpEntity.icon, "")
+        )
+    } else {
+        []
+    }
+}
+
+webauthnSupported() {
+    false
+}
+
+native createCredentialsNative : (
+    user : [native], // only firstElement used
+    rp : [native], // only firstElement used
+    challenge : string, // base64Url encoded string
+    algorithms : [int],
+    timeout : int, // less than 1000 won't be considered
+    // some cool stuff, more to investigate
+    excludeCredentials : [native], // can forbid repetitive registration map(PublicCredentialDescriptor, publicCredentialDescriptorToNative)
+    authenticatorSelection : [native], // can be defended by pin e.g., only firstElement used
+    attestation : string,
+    // receive json string, "rawId" field have to be stored and will be used later during getCredentials request
+    callback : (string) -> void,
+    onError : (string) -> void
+) -> void = CredentialManagement.createCredentials;
+
+
+createCredentials(
+    creationOptions : PublicKeyCredentialCreationOptions,
+    callback : (publicKeyCredential : string) -> void,
+    onError : (string) -> void
+) -> void {
+    if (webauthnSupportedTarget) {
+        createCredentialsNative(
+            publicKeyCredentialRPEntityToNative(creationOptions.rp),
+            publicKeyCredentialUserEntityToNative(creationOptions.user),
+            creationOptions.challenge,
+            map(creationOptions.pubKeyCredParams, \pkcp : PublicKeyCredParam -> pkcp.alg),
+            either(creationOptions.timeout, 0),
+            filtermap(
+                creationOptions.excludeCredentials,
+                \ec -> elementAtM(publicCredentialDescriptorToNative(ec), 0)
+            ),
+            eitherMap(creationOptions.authenticatorSelection, authenticatorSelectionCriteriaToNative, []),
+            attestationConveyancePreferenceToString(either(creationOptions.attestation, None())),
+            callback,
+            onError
+        )
+    }
+}
+
+native getCredentialsNative : (
+    challenge : string, // base64Url encoded string
+    allowCredentials : [native], // map(PublicCredentialDescriptor, publicCredentialDescriptorToNative)
+    timeout : int, // less than 1000 won't be considered
+    rpId : string, // empty considered as optional
+    userVerification : string,
+    callback : (publicKeyCredential : string) -> void,
+    onError : (string) -> void
+) -> void = CredentialManagement.getCredentials;
+
+getCredentials(
+    requestOptions : PublicKeyCredentialRequestOptions,
+    callback : (string) -> void,
+    onError : (string) -> void
+) -> void {
+    if (webauthnSupportedTarget) {
+        getCredentialsNative(
+            requestOptions.challenge,
+            filtermap(
+                requestOptions.allowCredentials,
+                \ac -> elementAtM(publicCredentialDescriptorToNative(ac), 0)
+            ),
+            either(requestOptions.timeout, 0),
+            either(requestOptions.rpId, ""),
+            userVerificationRequirementToString(either(requestOptions.userVerification, Preferred())),
+            callback,
+            onError
+        )
+    }
+}

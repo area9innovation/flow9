@@ -101,10 +101,13 @@ export {
 	applyallsubs(array : [() -> () -> void]) -> [() -> void];
 
 	fselectdelay(b : Transform<?>, fn : (?) -> int) -> Transform<?>;
+	fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?>;
 	flerp(start : double, end : double, t : Transform<double>) -> Transform<double>;
 
 	flookupTree(tree : Transform<Tree<?, ??>>, key : Transform<?>) -> Transform<Maybe<??>>;
 	fremoveFromTree(tree : Transform<Tree<?, ??>>, key : Transform<?>) -> Transform<Tree<?, ??>>;
+
+	fextractStruct(a : Transform<[?]>, e : Transform<??>) -> Transform<??>;
 
 	// Advised dispose helpers
 	initUnsM() -> ref Maybe<() -> void>;
@@ -933,7 +936,7 @@ fboundsoverlap(b1 : Transform<Bounds>, b2 : Transform<Bounds>) -> Transform<bool
 				min(v1.minX, v1.maxX) <= max(v2.minX, v2.maxX) &&
 				max(v1.minY, v1.maxY) >= min(v2.minY, v2.maxY) &&
 				min(v1.minY, v1.maxY) <= max(v2.minY, v2.maxY)
-		}));
+		}))
 	}
 }
 
@@ -1107,29 +1110,56 @@ fselectdelay(b : Transform<?>, fn : (?) -> int) -> Transform<?> {
 	provider : ref Maybe<DynamicBehaviour<?>> = ref None();
 	uns = ref nop;
 
-	fsubselect(b, FLift(\v -> {
-		^uns();
-		r = fn(v);
+	fdisposable(
+		fsubselect(b, FLift(\v -> {
+			^uns();
+			r = fn(v);
 
-		eitherFn(
-			^provider,
-			\p -> {
-				uns :=
-					if (r > 0) {
-						interruptibleTimer(r, \ -> nextDistinct(p, v));
-					} else {
-						nextDistinct(p, v);
-						nop;
-					};
+			eitherFn(
+				^provider,
+				\p -> {
+					uns :=
+						if (r > 0) {
+							interruptibleTimer(r, \ -> nextDistinct(p, v));
+						} else {
+							nextDistinct(p, v);
+							nop;
+						};
 
-				cast(p : DynamicBehaviour<?> -> Behaviour<?>);
-			},
-			\ -> {
-				provider := Some(make(v));
-				either(^provider, const(v));
-			}
-		);
-	}))
+					cast(p : DynamicBehaviour<?> -> Behaviour<?>);
+				},
+				\ -> {
+					provider := Some(make(v));
+					either(^provider, const(v));
+				}
+			);
+		})),
+		\ -> ^uns()
+	)
+}
+
+fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?> {
+	provider : ref Maybe<DynamicBehaviour<?>> = ref None();
+	uns = ref nop;
+
+	fdisposable(
+		fsubselect(b, FLift(\v -> {
+			^uns();
+
+			eitherFn(
+				^provider,
+				\p -> {
+					uns := interruptibleDeferUntilNextFrameRendered(\ -> nextDistinct(p, v));
+					cast(p : DynamicBehaviour<?> -> Behaviour<?>);
+				},
+				\ -> {
+					provider := Some(make(v));
+					either(^provider, const(v));
+				}
+			);
+		})),
+		\ -> ^uns()
+	);
 }
 
 flerp(start : double, end : double, t : Transform<double>) -> Transform<double> {
@@ -1142,6 +1172,10 @@ flookupTree(tree : Transform<Tree<?, ??>>, key : Transform<?>) -> Transform<Mayb
 
 fremoveFromTree(tree : Transform<Tree<?, ??>>, key : Transform<?>) -> Transform<Tree<?, ??>> {
 	fselect2(tree, key, FLift2(\t, k -> removeFromTree(t, k)));
+}
+
+fextractStruct(a : Transform<[?]>, e : Transform<??>) -> Transform<??> {
+	fselect2(a, e, FLift2(\aa, ee -> extractStruct(aa, ee)));
 }
 
 initUnsM() -> ref Maybe<() -> void> {

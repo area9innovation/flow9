@@ -22,8 +22,8 @@ class Database {
 		return null;
 	}
 
-	// native requestExceptionDb : (database : native, result : native) -> string = Database.requestExceptionDb;
-	public static function requestExceptionDb(database : Dynamic, result : Dynamic) : String {
+	// native requestExceptionDb : (database : native) -> string = Database.requestExceptionDb;
+	public static function requestExceptionDb(database : Dynamic) : String {
 		return "Database requests not supported in this target";
 	}
 

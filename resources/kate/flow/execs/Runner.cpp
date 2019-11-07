@@ -1,68 +1,34 @@
 #include <QDir>
-
 #include "Runner.hpp"
 
 namespace flow {
 
-Runner::Runner(QString prog, QString targ, QString flowdir) :
-	type_(DEFAULT), target_(targ), info_(prog), flowdir_(flowdir) {
-
-	if (!info_.exists()) {
+Runner::Runner(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir, QString outdir) :
+	target_(ui, prog, targ, flowdir, outdir) {
+	if (!target().exists()) {
 		throw std::runtime_error("program '" + prog.toStdString() + "' doesn't exist");
-	}
-	if (!QDir(flowdir).exists()) {
-		throw std::runtime_error("directory '" + flowdir.toStdString() + "' doesn't exist");
-	}
-
-	if (targ == QLatin1String("js")) {
-		type_ = NODEJS;
-	} else if (targ == QLatin1String("bytecode") || targ == QLatin1String("bc")) {
-		type_ = BYTECODE;
-	} else if (targ == QLatin1String("ml")) {
-		type_ = OCAML;
-	} else if (targ == QLatin1String("java")) {
-		type_ = JAVA;
-	} else if (targ == QLatin1String("cpp")) {
-		type_ = CPP;
 	}
 }
 
 QString Runner::invocation() const {
-	switch (type_) {
-	case BYTECODE: return QFileInfo(flowdir_ + QLatin1String("/bin/flowcpp")).absoluteFilePath();
-	case JAVA:     return QLatin1String("java");
-	case NODEJS:   return QLatin1String("node");
-	case CPP:      return target();
+	switch (target().type()) {
+	case Target::BYTECODE: return QFileInfo(target().flowdir() + QLatin1String("/bin/flowcpp")).absoluteFilePath();
+	case Target::JAVA:     return QLatin1String("java");
+	case Target::JAR:      return QLatin1String("java");
+	case Target::NODEJS:   return QLatin1String("node");
+	case Target::CPP:      return target().file();
+	case Target::CPP2:     return target().file();
 	default:       return QString(); // TODO: add other runners
 	}
 }
 
-QString Runner::extension() const {
-	switch (type_) {
-	case BYTECODE: return QLatin1String(".bytecode");
-	case NODEJS:   return QLatin1String(".js");
-	case OCAML:    return QLatin1String(".ml");
-	case JAVA:     return QLatin1String(".jar");
-	case CPP:      return QLatin1String(".exe");
-	default:       return QLatin1String();
-	}
-}
-
-QString Runner::target() const {
-	return info_.dir().path() + QDir::separator() + info_.baseName() + extension();
-}
-
-QString Runner::debug() const {
-	return info_.baseName() + QLatin1String(".debug");
-}
-
 QStringList Runner::args(QString execArgs, QString progArgs) const {
-	switch (type_) {
-	case Runner::BYTECODE: {
+	switch (target().type()) {
+	case Target::BYTECODE: {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
-		args << info_.dir().path() + QDir::separator() + info_.baseName() + QLatin1String(".bytecode");
-		args << info_.dir().path() + QDir::separator() + info_.baseName() + QLatin1String(".debug");
+		args << target().info().dir().path() + QDir::separator() + target().info().baseName() + QLatin1String(".bytecode");
+		args << target().info().dir().path() + QDir::separator() + target().info().baseName() + QLatin1String(".debug");
 		QStringList launchArgs = progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		if (!launchArgs.isEmpty()) {
 			args << QLatin1String("--");
@@ -70,22 +36,36 @@ QStringList Runner::args(QString execArgs, QString progArgs) const {
 		}
 		return args;
 	}
-	case Runner::JAVA: {
+	case Target::JAVA: {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << QLatin1String("-jar");
-		args << target();
+		args << target().file();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}
-	case Runner::NODEJS: {
+	case Target::JAR: {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
-		args << target();
+		args << QLatin1String("-jar");
+		args << target().file();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}
-	case Runner::CPP: {
+	case Target::NODEJS: {
+		QStringList args;
+		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
+		args << target().file();
+		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
+		return args;
+	}
+	case Target::CPP: {
+		QStringList args;
+		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
+		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
+		return args;
+	}
+	case Target::CPP2: {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));

@@ -18,6 +18,7 @@ export {
 
 	MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle];
 	MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, sto: double) -> MCustomFont;
+	overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MTextStyle]) -> [MTextStyle];
 
 	style2MTextStyle(style : [?]) -> [MTextStyle];
 
@@ -41,7 +42,11 @@ currentMLang = ref "";
 currentMLangFont = ref "";
 
 MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic {
-	TText(text, addMLangFontFamily(text, MTextStyle2CharacterStyleDef(parent, style, Triple(getTextColor(parent), getFontStyle(parent), true))))
+	textStyle =
+		MTextStyle2CharacterStyleDef(parent, style, Triple(getTextColor(parent), getFontStyle(parent), true))
+		|> (\st -> arrayPush(st, FSetDirection(parent.rtl)))
+		|> (\st -> addMLangFontFamily(text, st));
+	TText(text, textStyle)
 }
 
 MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MParagraphStyle]) -> Tropic {
@@ -58,7 +63,7 @@ MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MPa
 
 	concat3(characterStyle, [ParagraphWidth(const(mWidth)), paragraphMargin, interlineSpacing], cropLongWords)
 	|> (\parStyle : [TParagraphStyle] -> {
-		arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style)))
+		arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style), parent.rtl))
 	})
 	|> (\parStyle -> TParagraph(text, parStyle))
 }
@@ -187,6 +192,28 @@ MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, st
 		MaterialType(): MFontStyle2MCustomFont(parent, MaterialType2MFontStyle(parent, style), pto, sto);
 	}
 }
+
+overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MTextStyle]) -> [MTextStyle] {
+	alphabet = getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1));
+	if (alphabet == "arb") {
+		map(styles, \s -> {
+			switch (s) {
+				MFontStyle(): {
+					font = MFontStyle2MCustomFont(parent, s, 0.87, 0.54);
+					fsize = FontSize(font.size);
+					ffamily = FontFamily(font.family);
+					charStyles = overrideCharacterStylePerAlphabet(text, [fsize, ffamily]);
+					MCustomFont(extractStruct(charStyles, fsize).size, extractStruct(charStyles, ffamily).name, font.opacity);
+				}
+				MColor(__, __, __): s;
+				MTextDisabled(): s;
+				Underlined(__): s;
+				EscapeHTML(__): s;
+				LetterSpacing(__): s;
+			}
+		})
+	} else styles
+}
 MFontStyle2ParagraphMargin(parent : MFocusGroup, style : MFontStyle) -> ParagraphMargin {
 	switch (style : MFontStyle) {
 		MDisplay5(): ParagraphMargin(0., 26.);
@@ -248,48 +275,13 @@ MFontStyle2InterlineSpacing(parent : MFocusGroup, style : MFontStyle) -> Interli
 }
 
 style2MTextStyle(style : [?]) -> [MTextStyle] {
-	concatA([
-		extractStructMany(style, MWhite()),
-		extractStructMany(style, MBody()),
-		extractStructMany(style, MBodyPrimary()),
-		extractStructMany(style, MListBody()),
-		extractStructMany(style, MHeadline()),
-		extractStructMany(style, MTitle()),
-		extractStructMany(style, MDisplay5()),
-		extractStructMany(style, MDisplay4()),
-		extractStructMany(style, MDisplay3()),
-		extractStructMany(style, MDisplay2()),
-		extractStructMany(style, MSubheading()),
-		extractStructMany(style, MSubtitle()),
-		extractStructMany(style, MBodyBold()),
-		extractStructMany(style, MButtonStyle()),
-		extractStructMany(style, MCaption()),
-		extractStructMany(style, MDisplay1()),
-		extractStructMany(style, MDisplay1Medium()),
-		extractStructMany(style, MCaptionSolid()),
-		extractStructMany(style, MCaptionColumn()),
-		extractStructMany(style, MCaptionColumnSelected()),
-		extractStructMany(style, MDataRow()),
-		extractStructMany(style, MOverline()),
-		extractStructMany(style, MH1()),
-		extractStructMany(style, MH2()),
-		extractStructMany(style, MH3()),
-		extractStructMany(style, MH4()),
-		extractStructMany(style, MH5()),
-		extractStructMany(style, MH6()),
-		extractStructMany(style, MSubtitle1()),
-		extractStructMany(style, MSubtitle2()),
-		extractStructMany(style, MBody1()),
-		extractStructMany(style, MBody2()),
-		extractStructMany(style, MButton1()),
-		extractStructMany(style, MCaption1()),
-		extractStructMany(style, MOverline1()),
-		extractStructMany(style, MCustomFont(0., "", 0.)),
-		extractStructMany(style, MTextDisabled()),
-		extractStructMany(style, Underlined([])),
-		[extractStruct(style, EscapeHTML(true))]
-	])
-	|> (\mTextStyle -> arrayPushMaybe(mTextStyle, tryExtractStruct(style, LetterSpacing(0.))))
+	filtermap(style, \st : flow ->
+		switch (st) {
+			MTextStyle() : {a : Maybe<MTextStyle> = Some(st); a};
+			default : None()
+		}
+	)
+	|> (\arr -> arrayPush(arr, extractStruct(style, EscapeHTML(true))))
 }
 
 setMLang(lang : string) -> void {

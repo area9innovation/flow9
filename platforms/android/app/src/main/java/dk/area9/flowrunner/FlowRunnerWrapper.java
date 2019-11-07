@@ -1182,6 +1182,25 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         }
     }
 
+    public void cbGetFBToken(int cb_root) {
+        try {
+            Class service = Class.forName("com.google.firebase.iid.FirebaseInstanceId");
+
+            try {
+                Method getInstance = service.getMethod("getInstance");
+                Object instance = getInstance.invoke(null);
+
+                Method subscription = service.getMethod("getToken");
+                String token = (String)subscription.invoke(instance);
+                nDeliverFBTokenTo(cPtr(), cb_root, token);
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        } catch (ClassNotFoundException ex) {
+            Log.i(Utils.LOG_TAG, "No Firebase messaging enbled!");
+        }
+    }
+
     public void cbSubscribeToFBTopic(String name) {
         callFirebaseServiceSubscription(true, name);
     }
@@ -1230,6 +1249,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nDeliverFBMessage(long ptr, String id, String body, String title, String from, long stamp, String[] data);
     private native void nDeliverFBToken(long ptr, String token);
+    private native void nDeliverFBTokenTo(long ptr, int cb_root, String token);
     
     @Nullable
     private FlowGeolocationAPI flowGeolocationAPI = null;

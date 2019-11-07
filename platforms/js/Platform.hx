@@ -18,6 +18,8 @@ class Platform {
 	public static var isWindows : Bool = false;
 	public static var isLinux : Bool = false;
 
+	public static var browserMajorVersion : Int = 0;
+
 	public static var SupportsVideoTexture = false;
 	public static var AccessiblityAllowed = false;
 #else
@@ -35,11 +37,18 @@ class Platform {
 	public static var isWindows : Bool = ~/Win/i.match(Browser.window.navigator.platform);
 	public static var isLinux : Bool = ~/Linux/i.match(Browser.window.navigator.platform);
 
+	public static var browserMajorVersion : Int = untyped __js__("function() {
+		var version = window.navigator.userAgent.match(/version\\/(\\d+)/i);
+		return version && version.length > 1 ? parseInt(version[1]) || 0 : 0;
+	}()");
+
 	// IE Mobile on Windows Phones doesn't seem to support the HTML5 canvas drawImage
 	// method from video elements (what PIXI ultimately relies on).
 	// As of IE Mobile 11 on Windows Phone 8.1 Update 2. Tested on a Microsoft Lumia 735.
 	public static var SupportsVideoTexture = !Platform.isIEMobile;
-	public static var AccessiblityAllowed = (Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isMobile && !Platform.isEdge;
+	public static var AccessiblityAllowed = 
+		Util.getParameter("accessenabled") == "1" ||
+		((Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isMobile && !Platform.isEdge);
 #end
 }
 

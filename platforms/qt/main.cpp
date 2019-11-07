@@ -662,6 +662,7 @@ int main(int argc, char *argv[])
                 return 1;
 
             FlowRunner.Init(jit);
+            FlowRunner.setBytecodeFilename(bytecodeFile.toStdString());
         }
         else
 #endif

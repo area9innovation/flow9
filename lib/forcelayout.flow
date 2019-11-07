@@ -41,8 +41,85 @@ export {
 		maxDistance : double,
 	);
 
+	// Prepare an empty graph for layout
+	makeForceLayout(size : WidthHeight) -> ForceLayout;
+
+	// Adds a node to the graph with a given node id. The first will be placed
+	// at the top, in a fixed position. The charge is good at 500.0 or so
+	addNodeIdToLayout(layout : ForceLayout, nodeid : int, charge : double) -> ForceLayout;
+
+	// Add an edge between these two nodes.
+	addEdgeToLayout(layout : ForceLayout, fromid : int, toid : int) -> ForceLayout;
+
+	// Move nodes around to minimize energy. Returns false if no movement is done
 	forceTick(f : ForceLayout) -> bool;
 }
+
+makeForceLayout(size : WidthHeight) -> ForceLayout {
+	ForceLayout(
+		size, // size
+		ref 0.1, // alpha
+		0.3, // friction
+		0.2, // gravity
+		0.5, // theta -> distance before we do not calculate individual forces
+		[], // nodes
+		[], // edges
+	)	
+}
+
+addNodeIdToLayout(layout : ForceLayout, nodeid : int, charge : double) -> ForceLayout {
+	if (exists(layout.nodes, \n -> n.id == nodeid)) layout
+	else {
+		fnode = if (layout.nodes == []) {
+			x = layout.size.width / 2.0;
+			y = 0.0;
+			ForceNode(make(x), make(y), ref x, ref y, 
+				// Weight
+				10.0, 
+				// Charge - repulsion between nodes
+				charge, true, true, nodeid
+			);
+		} else {
+			// Layout our nodes in a snake
+			lastNode = lastElement(layout.nodes, ForceNode(make(0.0), make(0.0), ref 0.0, ref 0.0, 0.0, 0.0, false, false, -1));
+			angle = ((i2d(length(layout.nodes)) / 16.0) % 1.0) * 2.0 * PI;
+			dx = cos(angle) * 75.0;
+			dy = abs(sin(angle)) * 50.0;
+			x = getValue(lastNode.x) + dx;
+			y = getValue(lastNode.y) + dy;
+			ForceNode(make(x), make(y), ref x, ref y, 
+				// Weight
+				10.0, 
+				// Charge - repulsion between nodes
+				charge, 
+				false, false, 
+				nodeid
+			);
+		}
+
+		ForceLayout(
+			layout with
+			nodes = arrayPush(layout.nodes, fnode)
+		);
+	}
+}
+
+addEdgeToLayout(layout : ForceLayout, fromid : int, toid : int) -> ForceLayout {
+	fromIndex = findiDef(layout.nodes, \n -> n.id == fromid, -1);
+	toIndex = findiDef(layout.nodes, \n -> n.id == toid, -1);
+
+	if (fromIndex == -1 || toIndex == -1) {
+		layout
+	} else {
+		edge = ForceEdge(fromIndex, toIndex, 1.0, 50.0, 50.0);
+
+		ForceLayout(
+			layout with
+			edges = arrayPush(layout.edges, edge)
+		);
+	}
+}
+
 
 forceTick(f : ForceLayout) -> bool {
 	// Simulated annealing
@@ -68,7 +145,7 @@ doForceTick(f : ForceLayout) -> bool {
 	nodes = map(f.nodes, \n -> XYWeight(getValue(n.x), getValue(n.y), n.weight));
 	deltaX = map(f.nodes, \n -> ref 0.0);
 	deltaY = map(f.nodes, \n -> ref 0.0);
-	iter(f.edges, \o : ForceEdge-> {
+	iter(f.edges, \o : ForceEdge -> {
 		s : XYWeight = nodes[o.source];
 		t : XYWeight = nodes[o.target];
 		dx = t.x - s.x;
@@ -84,6 +161,7 @@ doForceTick(f : ForceLayout) -> bool {
 		dx2 = dx * l2;
 		dy2 = dy * l2;
 		k = s.weight / (t.weight + s.weight);
+		// Attract based on the distance between the nodes
 		deltaX[o.target] := ^(deltaX[o.target]) - dx2 * k;
 		deltaY[o.target] := ^(deltaY[o.target]) - dy2 * k;
 		deltaX[o.source] := ^(deltaX[o.source]) + dx2 * (1.0 - k);
@@ -100,10 +178,11 @@ doForceTick(f : ForceLayout) -> bool {
 			deltaY[i] := ^(deltaY[i]) + (y - nodes[i].y) * k;
 		});
 	}
-
 	// Compute quadtree center of mass and apply charge forces
 	q : QuadTree<Force> = foldi(f.nodes, makeQTree(dummyForce), \i, acc, n -> {
-		insertQTree(acc, QPoint(getValue(n.x), getValue(n.y)), Force(i, n, 0.0, 0.0, 0.0, 0.0), dummyForce, 0.0, 0.0, f.size.width, f.size.height);
+		insertQTree(acc, QPoint(getValue(n.x), getValue(n.y)), Force(i, n, 0.0, 0.0, 0.0, 0.0), 
+			dummyForce, 0.0, 0.0, f.size.width, f.size.height
+		);
 	});
 
 	centerOfMass(f, q, deltaX, deltaY);
@@ -112,7 +191,9 @@ doForceTick(f : ForceLayout) -> bool {
 //	visitQTree(q, "");
 
 	iteri(f.nodes, \i, n -> {
-		iterQTreeUntil(q, dummyForce, 0.0, 0.0, f.size.width, f.size.height, \cq, x1, y1, x2, y2 -> repulse(i, deltaX, deltaY, n, f.theta, cq, x1, y1, x2, y2))
+		iterQTreeUntil(q, dummyForce, 0.0, 0.0, f.size.width, f.size.height, \cq, x1, y1, x2, y2 -> 
+			repulse(i, deltaX, deltaY, n, f.theta, cq, x1, y1, x2, y2)
+		)
 	});
 
 	// Do the verlet integration
@@ -135,7 +216,7 @@ doForceTick(f : ForceLayout) -> bool {
 	true;
 }
 
-visitQTree(q : QuadTree, indent : string) -> void {
+visitQTree(q : QuadTree<Force>, indent : string) -> void {
 	n = switch (q.point) {
 		None(): { "Internal" }
 		Some(p): {
@@ -143,7 +224,7 @@ visitQTree(q : QuadTree, indent : string) -> void {
 		}
 	}
 
-	val = ^(q.v);
+	val = ^(q.value);
 	c = d2st(val.cx, 2) + "," + d2st(val.cy, 2) + " " + d2st(val.charge, 2) + " " + d2st(val.chargeSum, 2) + ". id: " + i2s(val.index);
 
 	println(indent + n + " COM: " + c + if (length(q.children) > 0) ":" else ".");
@@ -153,11 +234,11 @@ visitQTree(q : QuadTree, indent : string) -> void {
 
 
 centerOfMass(f : ForceLayout, q : QuadTree<Force>, deltaX : [ref double], deltaY : [ref double]) -> void {
-	force = ^(q.v);
+	force = ^(q.value);
 
 	f1 = fold(q.children, Force(force.index, force.node, 0.0, 0.0, 0.0, 0.0), \acc, ch : QuadTree<Force> -> {
 		centerOfMass(f, ch, deltaX, deltaY);
-		c : Force = ^(ch.v);
+		c : Force = ^(ch.value);
 		Force(
 			acc.index,
 			acc.node,
@@ -179,29 +260,40 @@ centerOfMass(f : ForceLayout, q : QuadTree<Force>, deltaX : [ref double], deltaY
 		}
 	}
 	if (f2.chargeSum == 0.0) {
-		q.v := Force(f2.index, f2.node, f2.cx, f2.cy, f2.charge, f2.chargeSum);
+		q.value := Force(f2.index, f2.node, f2.cx, f2.cy, f2.charge, f2.chargeSum);
 	} else {
 	//	println(toString(q.point) + ": " + d2s(f2.cx / f2.chargeSum) + "," + d2s(f2.cy/ f2.chargeSum) + " charge " + d2s(f2.charge) + ", " + d2s(f2.chargeSum));
-		q.v := Force(f2.index, f2.node, f2.cx / f2.chargeSum, f2.cy / f2.chargeSum, f2.charge, f2.chargeSum);
+		q.value := Force(f2.index, f2.node, f2.cx / f2.chargeSum, f2.cy / f2.chargeSum, f2.charge, f2.chargeSum);
 	}
 }
 
-repulse(index : int, deltaX : [ref double], deltaY : [ref double], node : ForceNode, theta : double, quad : QuadTree, x1 : double, y1 : double, x2 : double, y2 : double) -> bool {
-	f = ^(quad.v);
+// For the given node index with force "node", calculate how much we push the other nodes
+// in this quad-tree
+repulse(index : int, deltaX : [ref double], deltaY : [ref double], node : ForceNode, theta : double, quad : QuadTree<Force>, 
+		x1 : double, y1 : double, x2 : double, y2 : double) -> bool {
+	// What force do we have at this point in the tree?
+	f = ^(quad.value);
 	if (f.index != index) {
+		// It is a difference node, so let us find the forces
 		dx = if (node.lockx) 0.0 else f.cx - getValue(node.x);
 		dy = if (node.locky) 0.0 else f.cy - getValue(node.y);
 		dist = dx * dx + dy * dy;
 		if (abs(dist) <= 1.0) {
+			// OK, they are so close we ignore them
 			false;
 		} else {
+			// The closer they are, the more they push each others
 			dn = 1.0 / sqrt(dist);
+
+			// println(d2s(sqrt(dist)) + " " + d2s((x2 - x1) * dn));
 			// Barnes-Hut criterion.
 			if ((x2 - x1) * dn < theta) {
+				// OK, it is so small we do not have to proceed recursively
 //				println("Opt:" + i2s(node.n) + "<->" + i2s(f.node.n) + ": " + d2st(sqrt(dist), 2) + " relative to size: "  + d2st((x2 - x1) * dn, 2));
 				k = f.chargeSum * dn * dn;
 				deltaX[index] := ^(deltaX[index]) - dx * k;
 				deltaY[index] := ^(deltaY[index]) - dy * k;
+
 				true;
 			} else {
 				switch (quad.point) {
@@ -217,6 +309,7 @@ repulse(index : int, deltaX : [ref double], deltaY : [ref double], node : ForceN
 			}
 		}
 	} else {
+		// Against itself. Keep going if we have more charge
 		f.chargeSum == 0.0;
 	}
 }

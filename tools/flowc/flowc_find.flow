@@ -47,9 +47,9 @@ handleFindOptions(flowfile : string, prog : FiProgram) -> void {
 findLocalExpType(prog : FiProgram, file : string, line : int, col : int) -> void {
 	mexp : Maybe<FiExp> = findFiExpAtLineCol(prog, file, line, col, true).first;
 	switch (mexp) {
-		Some(e): fcPrintln("Type=" + prettyFiType(FcPretty(false, true, makeTree(), makeTree()), fiExpType(e), makeSet()));
+		Some(e): fcPrintln("Type=" + prettyFiType(FcPretty(false, true, makeTree(), makeTree()), fiExpType(e), makeSet()), prog.config.threadId);
 		None(): {
-			fcPrintln("Could not find type in " + file + " at line " + i2s(line) + " col " + i2s(col));
+			fcPrintln("Could not find type in " + file + " at line " + i2s(line) + " col " + i2s(col), prog.config.threadId);
 		}
 	}
 }
@@ -232,7 +232,7 @@ findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pr
 	);
 	if (readyForProcessing == []) {
 		// we are done, everything is processed - nothing is found
-		fcPrintln(file + ": Could not find " + symbol);
+		fcPrintln(file + ": Could not find " + symbol, tenv.acc.config.threadId);
 		tenv
 	} else {
 		fromCache : [FiModule] = filtermap(readyForProcessing, \preloaded ->
@@ -327,7 +327,7 @@ printDefDeclLocation(config : CompilerConfig, module : FiModule, symbol : string
 			printLocation(config, module.fileinfo.fullpath, declInfo.start, typeMessage);
 		}
 	} else { 
-		fcPrintln("Something went wrong: this should never happen");
+		fcPrintln("Something went wrong: this should never happen", config.threadId);
 	}
 }
 
@@ -339,13 +339,9 @@ addFictiveFiModuleFromFcModule(env : FcTypeEnvProgram, module : FcModule) -> FcT
 	info = module.fileinfo;
 	FcTypeEnvProgram(
 		env with acc = FlowcAcc(
-			acc with modules = 
-				setTree(acc.modules, module.fileinfo.flowfile, 
-					FiModule(
-						FiFileInfo(info.flowfile, info.trampstamp, info.fullpath, info.md5sum, info.filesize, timestamp()), 
-						[], [], [], [], [], [], [], [], [], [], -1, -1, false
-					)
-				)
+			acc with modules = setTree(acc.modules, module.fileinfo.flowfile,
+				FiModule(dummyFiModule with fileinfo = FiFileInfo(info.flowfile, info.trampstamp, info.fullpath, info.md5sum, info.filesize, timestamp()))
+			)
 		)
 	)
 }
@@ -383,7 +379,7 @@ fcFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string, s
 			}
 		}
 		None(): {
-			fcPrintln(symbol + " is not found");
+			fcPrintln(symbol + " is not found", config.threadId);
 		}
 	}
 	showStopper(0);
@@ -395,7 +391,7 @@ fcFindGlobalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 	compute_reacheable = \ -> {
 		// Skip all error messages at parsing/typechecking, because 
 		// occasionaly we can process old/broken/erraneous files.
-		fcSkipPrinting := true;
+		fcSetSkipPrinting(config.threadId, true);
 
 		// Find all sources, containing symbol
 		workingDir = getConfigParameterDef(config.config, "working-dir", ".");
@@ -440,7 +436,7 @@ fcFindGlobalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 	).first;
 
 	// Return the normal output mode.
-	fcSkipPrinting := false;
+	fcSetSkipPrinting(config.threadId, false);
 
 	locations = foldTree(programs, Pair(makeSet(), makeSet()), \file, prog, ac -> {
 			if (containsSet(ac.first, prog.config.flowfile)) ac else {
@@ -456,7 +452,7 @@ fcFindGlobalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 			}
 		}
 	).second;
-	iterSet(locations, \location -> fcPrintln(location + " uses " + symbol));
+	iterSet(locations, \location -> fcPrintln(location + " uses " + symbol, config.threadId));
 }
 
 fcFindModuleUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string, kind : FcSymbolKind) -> void {
@@ -496,7 +492,7 @@ fcFindLocalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : str
 					}
 				}
 				None(): {
-					fcPrintln("module = " + relative + " not found");
+					fcPrintln("module = " + relative + " not found", config.threadId);
 				}
 			}
 		}

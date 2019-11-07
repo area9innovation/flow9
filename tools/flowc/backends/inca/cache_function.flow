@@ -1,0 +1,176 @@
+import tools/flowc/backends/inca/env;
+import tools/flowc/backends/inca/change_function;
+import tools/flowc/incremental/fi_helpers;
+import math/math;
+
+export {
+	// Generate all cached functions for this function and populate the environment with it.
+	makeCacheFunction(env : IncaEnv, f : FiFunctionDec) -> IncaEnv;
+}
+
+makeCacheFunction(env : IncaEnv, f : FiFunctionDec) -> IncaEnv {
+	if (length(f.type.args) == 1 && f.name != "performIncaEffect") {
+		res = cacheFiExp(env, f.name, f.lambda.body);
+
+		// 	useIncaRecursiveCache(new, \nextChildCache -> {
+
+		wrap = FiCall(
+				FiVar("useIncaRecursiveCache", FiTypeFlow(), f.declStart), [
+					FiVar(f.type.args[0].name, f.type.args[0].type, f.declStart),
+					FiLambda(
+						[FiFunArg("nextChildCache", FiTypeFlow())],
+						res,
+						FiTypeFunction([
+							FiFunArg("nextChildCache", FiTypeFlow()),
+						], f.type.returnType),
+						f.declStart,
+
+					),
+					FiVar("cache", FiTypeName("IncaRecursiveCache", []), f.declStart),
+
+				], f.type.returnType, f.declStart
+			);
+
+		newLambda = FiLambda(f.lambda with body = wrap);
+
+		fn = FiFunctionDec(
+			f.name + "_cached", 
+			newLambda,
+			FiTypeFunction(
+				arrayPush(
+					f.type.args,
+					// Add a cache argument
+					FiFunArg("cache", FiTypeName("IncaRecursiveCache", [])),
+				),
+				f.type.returnType, 
+			),
+			f.declStart,
+			f.defiStart,
+		);
+
+		IncaEnv(
+			env with
+			program = addFiFunction2Program(env.program, f.name, fn),
+			functions = setTree(env.functions, fn.name, fn)
+		)
+	} else env;
+}
+
+// Replace calls with cached calls
+cacheFiExp(env : IncaEnv, fnname : string, fe : FiExp) -> FiExp {
+	switch (fe) {
+		FiConst(): fe;
+		FiLambda(args, body, type, start): {
+			FiLambda(args, cacheFiExp(env, fnname, body), type, start);
+		}
+		FiCall(f, args, type, start): {
+			switch (f) {
+				FiVar(name, ftype, fstart): {
+					cachable = isIncaCachable(env, name);
+					newname = if (cachable) {
+						FiVar(name + "_cached", ftype, fstart)
+					} else f;
+					nargs = map(args, \a -> cacheFiExp(env, fnname, a));
+					FiCall(
+						newname, 
+						if (cachable) arrayPush(nargs, 
+							FiCall(
+								FiVar("nextChildCache", FiTypeFlow(), start),
+								[],
+								FiTypeFlow(),
+								start
+							)
+						) else nargs,
+						type, start
+					);
+				}
+				default: {
+					FiCall(
+						cacheFiExp(env, fnname, f), 
+						map(args, \a -> cacheFiExp(env, fnname, a)),
+						type, start
+					);
+				}
+			}
+		}
+		FiVar(name, type, start): {
+			if (name == fnname) {
+				println("TODO: Replace with closure that caches");
+				fe;
+			} else {
+				fe
+			}
+		}
+		FiLet(name, type, e1, e2, type2, start): FiLet(
+			name,
+			type,
+			cacheFiExp(env, fnname, e1),
+			cacheFiExp(env, fnname, e2),
+			type2,
+			start
+		);
+		FiIf(e1, e2, e3, type, start): FiIf(
+			cacheFiExp(env, fnname, e1),
+			cacheFiExp(env, fnname, e2),
+			cacheFiExp(env, fnname, e3),
+			type, 
+			start
+		);
+		FiSwitch(x, switchType, cases, type, start): {
+			FiSwitch(x, switchType,
+				map(cases, \c -> {
+					FiCase(c.struct, c.argNames, cacheFiExp(env, fnname, c.body), c.start)
+				}),
+				type,
+				start
+			)
+		}
+		FiCast(e, tFrom, tTo, type, start): {
+			FiCast(
+				cacheFiExp(env, fnname, e),
+				tFrom, tTo, type, start
+			)
+		}
+		FiSeq(es, type, start): {
+			FiSeq(map(es, \a -> cacheFiExp(env, fnname, a)), type, start);
+		}
+		FiCallPrim(op, es, type, start): {
+			FiCallPrim(op, map(es, \a -> cacheFiExp(env, fnname, a)), type, start);
+		}
+		FiRequire(flowfile, e, type, start): {
+			FiRequire(flowfile, cacheFiExp(env, fnname, e), type, start);
+		}
+		FiUnsafe(name, fallback, type, start): FiUnsafe(name, cacheFiExp(env, fnname, fallback), type, start);
+	}
+}
+
+isIncaCachable(env : IncaEnv, name : string) -> bool {
+	fn = lookupTree(env.functions, name);
+	switch (fn) {
+		None(): false;
+		Some(f): length(f.type.args) == 1;
+	}
+}
+
+/*
+reverseForm(f : Form) -> RForm {
+	switch (f) {
+		Text(t): RText(t);
+		Translate(x, child): RTranslate(-x, reverseForm(child));
+		Group(children): RGroup(map(children, reverseForm));
+		Tree(node, children): RTree(reverseForm(node), map(children, reverseForm));
+	}
+}
+
+reverseForm_cached(new : Form, cache : IncaRecursiveCache<Form, RForm>) -> RForm {
+	useIncaRecursiveCache(new, \nextChildCache -> {
+		switch (new) {
+			Text(t): RText(t);
+			Translate(x, child): RTranslate(-x, reverseForm_cached(child, nextChildCache()));
+			Group(children): RGroup(map(children, \c -> reverseForm_cached(c, nextChildCache())));
+			Tree(node, children): RTree(reverseForm_cached(node, nextChildCache()), map(children, \c -> reverseForm_cached(c, nextChildCache())));
+		}
+	}, cache);
+}
+
+*/

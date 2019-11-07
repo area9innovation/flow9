@@ -63,6 +63,27 @@ public class RenderSupport extends NativeHost {
 	public Object setWebClipDomains(Object clip, Object[] domains) {
 		return null;
 	}
+	public Object makeHTMLStage(double width, double height) {
+		return null;
+	}
+	public Object createElement(String tagName) {
+		return null;
+	}
+	public Object createTextNode(String text) {
+		return null;
+	}
+	public Object setAttribute(Object element, String name, String value) {
+		return null;
+	}
+	public Object appendChild(Object element, Object child) {
+		return null;
+	}
+	public Object insertBefore(Object element, Object child, Object reference) {
+		return null;
+	}
+	public Object removeElementChild(Object element, Object child) {
+		return null;
+	}
 	public Object addFilters(Object stg, Object[] filters) {
 		return null;
 	}
@@ -180,8 +201,8 @@ public class RenderSupport extends NativeHost {
 	public Object setTextInputType(Object stg, String type) {
 		return null;
 	}
-	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
-								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
+	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour,double backgroundOpacity) {
 		return null;
 	}
@@ -275,8 +296,8 @@ public class RenderSupport extends NativeHost {
 	public Object setVideoControls(Object stg, Object[] info) {
 		return null;
 	}
-	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
-								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
+	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour,double backgroundOpacity) {
 		return null;
 	}
@@ -391,4 +412,7 @@ public class RenderSupport extends NativeHost {
     public Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
     	return no_op;
     }
+	public Object playVideoFromMediaStream(Object clip, Object stream, Boolean startPaused) {
+		return null;
+	}
 }

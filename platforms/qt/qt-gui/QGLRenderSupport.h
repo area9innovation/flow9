@@ -209,12 +209,15 @@ protected:
 private:
     DECLARE_NATIVE_METHOD(setClipboard)
     DECLARE_NATIVE_METHOD(getClipboard)
+    DECLARE_NATIVE_METHOD(getClipboardToCB)
     DECLARE_NATIVE_METHOD(getClipboardFormat)
     DECLARE_NATIVE_METHOD(setWindowTitleNative)
     DECLARE_NATIVE_METHOD(setFavIcon)
     DECLARE_NATIVE_METHOD(quit)
     DECLARE_NATIVE_METHOD(takeSnapshot)
+    DECLARE_NATIVE_METHOD(takeSnapshotBox)
     DECLARE_NATIVE_METHOD(getSnapshot)
+    DECLARE_NATIVE_METHOD(getSnapshotBox)
     DECLARE_NATIVE_METHOD(getScreenPixelColor)
     DECLARE_NATIVE_METHOD(setNativeTabEnabled)
 

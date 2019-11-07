@@ -29,6 +29,37 @@ Helpful tips:
  prompt you to do that - use your local machine, refer to this guide how to access it from the emulator:
  https://developer.android.com/studio/run/emulator-networking 
 
+------ Building with SDK and NDK on Windows ------
+
+1) Install Android Studio: https://developer.android.com/studio/index.html
+Alternatively sdk-tools-windows<xxx>.zip can be dowloaded and
+sdkmanager included be used to install all SDK-packages included in the Studio by default
+
+2*) Download and unpack NDK (tested on android-ndk-r12b): https://developer.android.com/ndk/downloads/older_releases
+Add it to the path: set PATH=%PATH%;<pat_to_ndk_dir>
+
+3*) Download and unpack SDK build-tools (tested on 25.0.2): https://developer.android.com/studio/releases/build-tools
+Add it to the path: set PATH=%PATH%;<pat_to_build_tools_dir>
+
+4) Make symbolic links instead files in your <flow9>\platforms\android\app\src\main\jni folder.
+Currently the files to be changed are as follows: core, font, gl-gui, include, utils.
+Example: del core; mklink /D core ..\..\..\..\..\common\cpp\core
+
+5) Set environment variables:
+set JAVA_HOME=<path_to_jdk1.8.0_221>
+set ANDROID_HOME=<path_to_sdk_dir>
+set ANDROID_NDK_HOME=<pat_to_ndk_dir>
+
+Note, build may not working with the latest Java.
+
+6) Run the build:
+gradlew build
+
+Note, when gradle starts first time it downloads to %userprofile%\.gradle. The .android is also created
+
+7) When you want to clean build, invoke: git clean -fdx --dry-run and remove the files/folders.
+
+* - seems to be excessive
 
 ------ Building with Eclipse (obsolete) ------
 

@@ -15,13 +15,13 @@ Now install the "format" and "pixijs" haxe libraries:
 
 Now check that you can compile the compiler:
 
-	cd c:\flow9\src
+	cd c:\flow9\tools\flow
 	haxe FlowNeko.hxml
 
 # Install VC runtime
 
 Run
-	C:\flow9\QtByteRunner\bin\windows\vcredist_x64.exe
+	C:\flow9\platforms\qt\bin\windows\vcredist_x64.exe
 
 to install the Visual Studio runtime needed for our flow bytecode runner.
 

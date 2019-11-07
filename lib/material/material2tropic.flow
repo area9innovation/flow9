@@ -25,6 +25,10 @@ export {
 	// Use this if you render multiple materials with single MaterialManager
 	// 'captureKeys' assumes that material has the entire screen and captures tab , ctr+i
 	mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void;
+	
+	// In difference to mrender renders content over all 
+	// iframes and textinputs of previous render calls
+	mrenderStage(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void;
 
 	// Only for special use
 	material2tropic(manager : MaterialManager, m : Material) -> Tropic;
@@ -38,6 +42,14 @@ export {
 renderCounterRef = ref 0;
 
 mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void {
+	mrender2stage(manager, false, captureKeys, m);
+}
+
+mrenderStage(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void {
+	mrender2stage(manager, true, captureKeys, m);
+}
+
+mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m : Material) -> () -> void {
 	mrenderInit = timestamp();
 
 	renderCounterRef := ^renderCounterRef + 1;
@@ -116,12 +128,13 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 	// trenderManager without warning
 	// TTweak for integer width on mobile
 	r =
-		trender2(
+		trender2Stage(
 			if (mobile)
 				TTweak([TSnapSize(1., 1., true)], t, TEmpty())
 			else
 				t,
-			manager.manager.renderStyle
+			manager.manager.renderStyle, 
+			toStage
 		);
 
 	manager.manager.findPositionScaleFn := r.second;
@@ -197,7 +210,7 @@ initMaterialManagerSubs(manager : MaterialManager) -> void {
 						false,
 						false
 					),
-					handleIScriptState(manager, \mat, p -> doMaterial2tropic(MaterialRender(manager, -1), mat, p)),
+					handleIScriptState(manager),
 					makeSubscribe2(manager.focus.focusEnabled, \fen -> if (!fen) {
 						nextDistinct(manager.focus.focusedId, -1);
 						nextDistinct(manager.focus.focused, false);
@@ -297,7 +310,10 @@ material2tropic(manager : MaterialManager, m : Material) -> Tropic {
 				setiOSStatusBarColor(MColor2int(getPrimaryColor(manager)));
 				setiOSStatusBarIconsTheme(MTextColor(getToolbarItemsColor(manager)) == black);
 
-				trop = doMaterial2tropic(rend, m, manager.focus);
+				rootFocus = manager.focus;
+				rootFocus.rtl ::= extractStruct(manager.style, MSetRTL(getDefaultRtl())).rtl;
+
+				trop = doMaterial2tropic(rend, m, rootFocus);
 
 				if (getUrlParameterDef("profile", "") >= "1") {
 					profileTropic(trop);
@@ -512,7 +528,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MLines(ls): TLines(map(ls, \l -> doMaterial2tropic(rend, l, parent)));
 		MCols(cs): TCols(map(cs, \c -> doMaterial2tropic(rend, c, parent)));
 		MGroup(ms): TGroup(map(ms, \gm -> doMaterial2tropic(rend, gm, parent)));
-		MGrid(mls): TGrid(map(mls, \ms -> map(ms, \gm -> doMaterial2tropic(rend, gm, parent)) |> arrayRTL));
+		MGrid(mls): TGrid(map(mls, \ms -> map(ms, \gm -> doMaterial2tropic(rend, gm, parent))));
 		MLines2(m1, m2) : TLines2(doMaterial2tropic(rend, m1, parent), doMaterial2tropic(rend, m2, parent));
 		MCols2(m1, m2) : TCols2(doMaterial2tropic(rend, m1, parent), doMaterial2tropic(rend, m2, parent));
 		MGroup2(m1, m2) : TGroup2(doMaterial2tropic(rend, m1, parent), doMaterial2tropic(rend, m2, parent));
@@ -543,6 +559,20 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MInteractive(i, mat): TInteractive(i, doMaterial2tropic(rend, mat, parent));
 		MCursor(kind, mat): TCursor(kind, doMaterial2tropic(rend, mat, parent));
 		MFilter(filters, mat): TFilter(filters, doMaterial2tropic(rend, mat, parent));
+		MGraphics(shape, style): {
+			TDynamicGraphics(
+				fselect(shape, FLift(\sh ->
+					switch (sh : GShape) {
+						GPath(path): path;
+						GRect(__, __, __, __): [sh];
+						GRoundedRect(__, __, __, __, __): [sh];
+						GEllipse(__, __, __, __): [sh];
+						GCircle(__, __, __): [sh];
+					}
+				)),
+				style
+			);
+		}
 		MTranslate(p, mat): TTranslate(p, doMaterial2tropic(rend, mat, parent));
 		MRotate(degree, mat) : TRotate(degree, doMaterial2tropic(rend, mat, parent));
 		MCenter(mat): TCenter(doMaterial2tropic(rend, mat, parent));

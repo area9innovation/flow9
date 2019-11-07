@@ -229,6 +229,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbRequestPermissionLocalNotification, "(I)V") \
     CALLBACK(cbScheduleLocalNotification, "(DILjava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V") \
     CALLBACK(cbCancelLocalNotification, "(I)V") \
+    CALLBACK(cbGetFBToken, "(I)V") \
     CALLBACK(cbSubscribeToFBTopic, "(Ljava/lang/String;)V") \
     CALLBACK(cbUnsubscribeFromFBTopic, "(Ljava/lang/String;)V") \
     CALLBACK(cbGeolocationGetCurrentPosition, "(IZDDLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V") \
@@ -791,6 +792,12 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverFBToken
      WRAPPER(getNotifications()->deliverFBToken(jni2unicode(env, token)));
  }
 
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverFBTokenTo
+   (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring token)
+ {
+     WRAPPER(getNotifications()->deliverFBTokenTo(cb_root, jni2unicode(env, token)));
+ }
+
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGeolocationExecuteOnOkCallback
   (JNIEnv *env, jobject obj, jlong ptr, jint callbacksRoot, jboolean removeAfterCall, jdouble latitude, jdouble longitude, jdouble altitude,
    jdouble accuracy, jdouble altitudeAccuracy, jdouble heading, jdouble speed, jdouble time)
@@ -986,7 +993,6 @@ jboolean AndroidRunnerWrapper::runMain()
     //params[parseUtf8("source")] = parseUtf8("nejm_knowledge");
     //params[parseUtf8("prod")] = parseUtf8("IM");
     runner.RunMain();
-
     return (jboolean) (main_ok = !runner.IsErrorReported());
 }
 
@@ -2208,6 +2214,13 @@ void AndroidNotificationsSupport::doScheduleLocalNotification(double time, int n
 void AndroidNotificationsSupport::doCancelLocalNotification(int notificationId)
 {
     owner->env->CallVoidMethod(owner->owner, cbCancelLocalNotification, notificationId);
+    owner->eatExceptions();
+}
+
+void AndroidNotificationsSupport::doGetFBToken(int cb_root)
+{
+    JNIEnv* env = owner->env;
+    env->CallVoidMethod(owner->owner, cbGetFBToken, cb_root);
     owner->eatExceptions();
 }
 

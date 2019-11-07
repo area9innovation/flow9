@@ -6,7 +6,7 @@
 
 namespace flow {
 
-Compiler::Compiler(QString file, QString flowdir) : type_(DEFAULT), file_(file), flowdir_(flowdir) {
+Compiler::Compiler(const Ui::FlowConfig& ui, QString file, QString flowdir) : configUi_(ui), type_(DEFAULT), file_(file), flowdir_(flowdir) {
 	if (!QFileInfo(file).exists()) {
 		throw std::runtime_error("file '" + file.toStdString() + "' doesn't exist");
 	}
@@ -26,10 +26,10 @@ Compiler::Compiler(QString file, QString flowdir) : type_(DEFAULT), file_(file),
 	include_ += flowdir_ + QLatin1String("/lib");
 	if (compiler == QLatin1String("flowc")) {
 		type_ = FLOWC1;
-	} else if (compiler == QLatin1String("flowc1")) {
-		type_ = FLOWC1;
 	} else if (compiler == QLatin1String("flow")) {
 		type_ = FLOW;
+	} else if (compiler == QLatin1String("flowc1")) {
+		type_ = FLOWC1;
 	} else if (compiler == QLatin1String("flowc2")) {
 		type_ = FLOWC2;
 	}
@@ -64,11 +64,11 @@ QStringList Compiler::includeArgs() const {
 	}
 }
 
-QStringList Compiler::debugArgs(Runner r) const {
+QStringList Compiler::debugArgs(const Target& t) const {
 	switch (type_) {
 	case Compiler::FLOWC1: return QStringList() << QLatin1String("debug=1");
 	case Compiler::FLOWC2: return QStringList() << QLatin1String("debug=1");
-	case Compiler::FLOW:   return QStringList() << QLatin1String("--debuginfo") << r.debug();
+	case Compiler::FLOW:   return QStringList() << QLatin1String("--debuginfo") << t.debug();
 	default:               return QStringList();
 	}
 }
@@ -82,50 +82,41 @@ QString Compiler::compiler() const {
 	}
 }
 
-QStringList Compiler::targetArgs(Runner r) const {
-	switch (r.type()) {
-	case Runner::BYTECODE:
+QStringList Compiler::targetArgs(const Target& t) const {
+	switch (t.type()) {
+	case Target::BYTECODE:
 		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("bytecode=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("bytecode=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--bytecode") << r.target();
+		case Compiler::FLOWC1: return QStringList() << QLatin1String("bytecode=") + t.file();
+		case Compiler::FLOWC2: return QStringList() << QLatin1String("bytecode=") + t.file();
+		case Compiler::FLOW:   return QStringList() << QLatin1String("--bytecode") << t.file();
 		default:               return QStringList();
 		}
-	case Runner::NODEJS:
+		break;
+	case Target::NODEJS:
 		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("es6=") + r.target() << QLatin1String("nodejs=1");
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("es6=") + r.target() << QLatin1String("nodejs=1");
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--es6") << r.target();
+		case Compiler::FLOWC1: return QStringList() << QLatin1String("es6=") + t.file() << QLatin1String("nodejs=1");
+		case Compiler::FLOWC2: return QStringList() << QLatin1String("es6=") + t.file() << QLatin1String("nodejs=1");
+		case Compiler::FLOW:   return QStringList() << QLatin1String("--es6") << t.file();
 		default:               return QStringList();
 		}
-	case Runner::OCAML:
-		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("ml=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("ml=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--ml") << r.target();
-		default:               return QStringList();
-		}
-	case Runner::JAVA:
-		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("java=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("java=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--java") << r.target();
-		default:               return QStringList();
-		}
-	case Runner::CPP:
-		switch (type_) {
-		case Compiler::FLOWC1: return QStringList() << QLatin1String("cpp=") + r.target();
-		case Compiler::FLOWC2: return QStringList() << QLatin1String("cpp=") + r.target();
-		case Compiler::FLOW:   return QStringList() << QLatin1String("--cpp") << r.target();
-		default:               return QStringList();
-		}
+		break;
 	default: return QStringList();
 	}
 }
 
 QStringList Compiler::compileArgs(QString prog) const {
 	switch (type_) {
-	case Compiler::FLOWC1: return QStringList() << prog;
+	case Compiler::FLOWC1: {
+		QStringList ret;
+		QStringList opts = configUi_.compilerOptionsLineEdit->text().split(QLatin1Char(' '), QString::SkipEmptyParts);
+		ret << opts;
+		if (configUi_.compilationTimePhasesCheckBox->checkState() == Qt::Checked) {
+			ret << QLatin1String("timephases=1") << prog;
+		} else {
+			ret << prog;
+		}
+		return ret;
+	}
 	case Compiler::FLOWC2: return QStringList() << QLatin1String("bin-dir=") + flowdir_ + QLatin1String("/bin") << prog;
 	case Compiler::FLOW:   return QStringList() << QLatin1String("--dontrun") << prog;
 	default:               return QStringList();

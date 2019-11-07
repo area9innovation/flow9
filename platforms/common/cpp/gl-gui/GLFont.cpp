@@ -622,6 +622,7 @@ unsigned GLFont::loadSystemGlyph(ucs4_char char_code, bool force)
 
 GLFont::GlyphInfo *GLFont::getGlyphByChar(ucs4_char char_code)
 {
+    if ((char_code|1) == 0x200F || ((char_code-0x202A)|3) == 3 || ((char_code-0x2066)|3) == 3) char_code = 0x200B;
 #ifndef FLOW_DFIELD_FONTS
     int idx = FT_Get_Char_Index(face, char_code);
 #else
@@ -757,190 +758,199 @@ GLTextureImage::Ptr GLFont::getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *t
 #endif
 
 int GLTextLayout::getCharGlyphPositionIdx(int charidx) {
+    if (charidx<0 || charidx > endpos->position()) return -1;
     typename std::map<size_t, size_t>::const_iterator it = char_to_glyph_index.find( charidx );
-    if ( it == char_to_glyph_index.end() ) {
-       return -1;
+    // For case of ligature
+    int delta = 1;
+    while (it == char_to_glyph_index.end()) {
+        if (delta>charidx && charidx+delta>=char_indices.size()) return charidx;
+        it = char_to_glyph_index.find(charidx-delta);
+        ++delta;
     }
-    else {
-       return it->second;
-    }
+    return it->second;
 }
 
 GLTextLayout::Ptr GLFont::layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit, float spacing, bool crop_long_words, bool rtl) {
-    GLTextLayout::Ptr layout(new GLTextLayout(self.lock(), size));
-    layout->buildLayout(strb, stre, width_limit, spacing, crop_long_words, rtl);
+    GLTextLayout::Ptr layout(new GLTextLayout(self.lock(), size, rtl));
+    layout->buildLayout(strb.clone(), stre.clone(), width_limit, spacing, crop_long_words);
     return layout;
 }
 
-GLTextLayout::GLTextLayout(GLFont::Ptr font, float size) :
+GLTextLayout::GLTextLayout(GLFont::Ptr font, float size, bool rtl) :
     font(font), size(size)
 {
+    direction = rtl? RTL : LTR;
     pass_scale = -1e+6;
     spacing = 0.0f;
     pass_origin = pass_adj_origin = vec2(-1e+6);
 }
 
-void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &end, float width_limit, float spacing, bool crop_long_words, bool rtl) {
-    float cursor = 0.0f;
+void clippedIncrementReversedIterator(shared_ptr<Utf32InputIterator> &iter, Utf32InputIterator &bound, Utf32InputIterator &deportation) {
+    if (*iter == bound) iter = deportation.cloneReversed(); else ++*iter;
+}
 
-    this->spacing = spacing;
+void GLTextLayout::reverseGlyphRange(size_t b, size_t e) {
+    while(b<e) {
+        GLFont::GlyphInfo *glyph;
+        int char_idx;
+        CharDirection dir;
+        --e;
+        glyph = glyphs[b];
+        glyphs[b] = glyphs[e];
+        glyphs[e] = glyph;
+        char_idx = char_indices[b];
+        char_indices[b] = char_indices[e];
+        char_indices[e] = char_idx;
+        char_idx = char_counts[b];
+        char_counts[b] = char_counts[e];
+        char_counts[e] = char_idx;
+        // Numbers might be here, so directions to swap also.
+        dir = directions[b];
+        directions[b] = directions[e];
+        directions[e] = dir;
+        ++b;
+    }
+}
+
+void GLTextLayout::buildLayout(shared_ptr<Utf32InputIterator> begin, shared_ptr<Utf32InputIterator> end, float width_limit, float spacing, bool crop_long_words) {
+    shared_ptr<Utf32InputIterator> strIter;
+    shared_ptr<Utf32InputIterator> strDirectAgain;
+    shared_ptr<Utf32InputIterator> strReverseRemains;
+    strReverseRemains = strDirectAgain = end;
     {
-        size_t elemcount = end.position() - begin.position();
+        strIter = begin->clone();
+        ++*strIter;
+        size_t elemcount = strIter->position() > begin->position()? end->position() - begin->position() : begin->position();
         char_indices.reserve(elemcount+1);
         char_to_glyph_index.clear();
         glyphs.reserve(elemcount);
         positions.reserve(elemcount+1);
+        directions.reserve(elemcount);
     }
 
-    GLFont::GlyphInfo *info = NULL, *prev = NULL;
-    shared_ptr<Utf32InputIterator> strIter;
-    shared_ptr<Utf32InputIterator> strEnd;
-    shared_ptr<Utf32InputIterator> strRevStart(end.cloneReversed());
-    shared_ptr<Utf32InputIterator> strRevEnd(end.cloneReversed());
-    bool (*isReverse)(ucs4_char code) = rtl? isLtrChar : isRtlChar;
-    bool (*isDirect)(ucs4_char code) = rtl? isRtlChar : isLtrChar;
+    GLFont::GlyphInfo *info = nullptr;
+    GLFont::GlyphInfo *prev = nullptr;
+    bool (*isReverse)(ucs4_char code) = direction == RTL? isLtrChar : isRtlChar;
+    bool (*isDirect)(ucs4_char code) = direction == RTL? isRtlChar : isLtrChar;
 
     bbox.clear();
 
-	// String str comes LTR always, already BiDi-processed,
-	// so, leftmost character is first for LTR, and last for RTL.
     GLTextLayout::GLYPH_VARIANT gv = GLTextLayout::GV_ISOLATED;
-    if (rtl) {
-        strIter = begin.cloneReversed();
-        strIter->seekBegin();
-        strEnd = end.cloneReversed();
-    } else {
-        strIter = begin.clone();
-        strEnd = end.clone();
-    }
+    shared_ptr<Utf32InputIterator> strPrevNC(end->clone());
+    shared_ptr<Utf32InputIterator> strNextNC(strIter->clone());
+    ucs4_char chr;
+    size_t chrIdx;
+    size_t directionChangeGlyphIdx=-1;
+    float width = 0.0;
 
-    shared_ptr<Utf32InputIterator> leftPos(strEnd->clone()); // Setting to End state, so connecting algo won't connect left.
-    shared_ptr<Utf32InputIterator> rightPos(strIter->clone());
-    shared_ptr<Utf32InputIterator> strProc(strIter->clone());
-
-    for (*strIter; *strIter != *strEnd; prev = info) {
-        ucs4_char chr;
-        size_t chrIdx;
+    for (strIter = begin->clone(); *strIter != *end;) {
+        if (*strNextNC == *strIter) {
+            ++*strNextNC;
+            // Find next non-combining character to determine connection.
+            while (*strNextNC != *end && isCharCombining(**strNextNC)) ++*strNextNC;
+        }
+        if (strIter == strDirectAgain) {
+            reverseGlyphRange(directionChangeGlyphIdx, glyphs.size());
+            directionChangeGlyphIdx = -1;
+            strReverseRemains = strDirectAgain = end;
+        }
         chrIdx = strIter->position();
         chr = **strIter;
-        if (*strRevStart == *strEnd) {
-            if (isReverse(chr)) {
-                strRevStart = leftPos;
-                leftPos = rightPos;
-                rightPos = strRevStart;
-                strRevStart = strIter->clone();
-                strRevEnd = strProc = strEnd;  // *strProc == *strEnd — no character processing
-            } else {
-                strProc = strIter;  // character processing goes on from strProc
-            }
-        } else {
-            #define IS_DIGIT(x) (x>=0x30 && x<0x3A)
-            if (
-                isDirect(chr) ||
-                (
-                    !isReverse(chr) &&
-                    !((chr==0x27 || chr==0x2C || chr==0x2E) && IS_DIGIT(**leftPos) && IS_DIGIT(**rightPos)) &&
-                    !(!IS_DIGIT(**leftPos) && !IS_DIGIT(**rightPos))
-                )
-            ) {
-                if (*strRevEnd == *strEnd) {
-                    strRevEnd = strIter->cloneReversed();
-                    ++*strRevEnd;
-                    chr = **strRevEnd;
-                    while (!isReverse(chr)) {
-                        ++*strRevEnd;
-                        chr = **strRevEnd;
-                    }
-                    strProc = strRevEnd->cloneReversed();
-                    strRevEnd = strProc->clone();
-                    ++*strRevEnd;
-                    while (isCharCombining(chr) && (*strRevEnd != *strEnd)) {
-                        ++*strRevEnd;
-                        ++*strProc;
-                        chr = **strRevEnd;
-                    }
-                    leftPos = strProc->cloneReversed();
-                    strRevEnd = strProc->cloneReversed();
-                    strProc = strRevEnd->clone();
-                    rightPos = strRevEnd->clone();
-                    ++*rightPos;
+
+        if (strDirectAgain == end && isReverse(chr)) {  // Exploring and saving reverse fragment boundary.
+            directionChangeGlyphIdx = glyphs.size();
+            strReverseRemains = strIter->clone();
+            strDirectAgain = strIter->clone();
+            prev = nullptr;  // No kerning between directions.
+            if (isWeakChar(chr)) {
+                for (; *strDirectAgain != *end && isWeakChar(**strDirectAgain); ++*strDirectAgain)
+                    chr = **strDirectAgain;
+                if (!isReverse(chr)) {  // For cases of punctuation after punctuation-separated numbers.
+                    strDirectAgain = strDirectAgain->cloneReversed();
+                    ++*strDirectAgain;
+                    strDirectAgain = strDirectAgain->cloneReversed();
                 }
-                chrIdx = strProc->position();
-                chr = **strProc;
+                chr = **strIter;
             } else {
-                ++*rightPos;
-                chrIdx = strProc->position();
-                chr = **strProc;
-                ++*strIter;
-                ++*leftPos;
+                for (; *strDirectAgain != *end && !isDirect(**strDirectAgain); ++*strDirectAgain);
+                strDirectAgain = strDirectAgain->cloneReversed();
+                ++*strDirectAgain;
+                for (; *strDirectAgain != *end && !isReverse(**strDirectAgain); ++*strDirectAgain);
+                strDirectAgain = strDirectAgain->cloneReversed();
+                ++*strDirectAgain;
             }
-            #undef IS_DIGIT
+        } // Otherwise direction remains intact.
+
+        // Convert all whitespace to ordinary space
+        if (chr < 256 && isspace(chr))
+            chr = ' ';
+
+        bool nextConnect = getCharVariantsMask(*strNextNC == *end?' ':**strNextNC) & (1<<GLTextLayout::GV_FINAL);
+        bool prevConnect = getCharVariantsMask(*strPrevNC == *end?' ':**strPrevNC) & (1<<GLTextLayout::GV_INITIAL);
+        // TODO check current direction for RTL.
+        bool currentRTL = (strDirectAgain == end) ^ (direction == LTR);
+        if (currentRTL) chr = tryMirrorChar(chr);
+        gv = prevConnect? (nextConnect?GV_MEDIAL:GV_FINAL) : (nextConnect?GV_INITIAL:GV_ISOLATED);
+
+        info = font->getGlyphByChar(getCharVariant(chr, gv));
+
+        // Place some code here to calculate glyphs total width and rewrite regarding it layout quit condition below.
+
+        width += font->getKerning(prev, info) * size;
+        float width_inc = info? info->advance * size : 0.0;
+        if (width_inc) width_inc = fmax(0.0, spacing + width_inc);
+
+        // This quits layout cycle.
+        if (width_limit > 0.0f && width + width_inc > width_limit && (crop_long_words || chr == ' ')) break;
+        width += width_inc;
+
+        // Keep behind current iterator, stay until non-combining
+        // character met to determine connection.
+        if (!isCharCombining(chr)) {
+            strPrevNC = strIter->clone();
+            prev = info;
         }
 
-        if (*strProc != *strEnd) {
-            // Always go ahead current iterator.
-            if (*rightPos == *strProc) ++*rightPos;
-            // Find next non-combining character to determine connection.
-            while (*rightPos != *strEnd && isCharCombining(**rightPos)) ++*rightPos;
-            bool rightConnect = getCharVariantsMask(*rightPos == *strEnd?' ':**rightPos) & (1<<GLTextLayout::GV_INITIAL);
-            if (rtl ^ (*strRevStart != *strEnd)) chr = tryMirrorChar(chr);
-            if (getCharVariantsMask(*leftPos == *strEnd?' ':**leftPos) & (1<<GLTextLayout::GV_FINAL)) {
-                gv = rightConnect? GLTextLayout::GV_MEDIAL : GLTextLayout::GV_INITIAL;
-            } else {
-                gv = rightConnect? GLTextLayout::GV_FINAL : GLTextLayout::GV_ISOLATED;
-            }
+        ++*strIter;
+        char_indices.push_back(chrIdx);
+        char_counts.push_back(strIter->position()-chrIdx);
+        glyphs.push_back(info);
+        directions.push_back(currentRTL? RTL : LTR);
 
-            // Keep behind current iterator, stay until non-combining
-            // character met to determine connection.
-            if (!isCharCombining(**strProc)) leftPos = strProc->clone();
-
-            if (*strProc == *strRevStart && *strRevStart != *strEnd) {
-                // Reversed sequence processed, prepare to the direct back.
-                strRevStart = strEnd;
-                strIter = strRevEnd->cloneReversed();
-                ++*strIter;
-                rightPos = strIter->clone();
-            } else ++*strProc;
-            ++*rightPos;
-
-            // Convert all whitespace to ordinary space
-            if (chr < 256 && isspace(chr))
-                chr = ' ';
-
-            info = font->getGlyphByChar(getCharVariant(chr, gv));
-
-            float kerning = font->getKerning(prev, info);
-            float pos = cursor + kerning * size;
-            float g_size = info ? info->advance * size : 0.0f;
-
-            // We shouldn't add spacing after the last char in the string
-            float new_cursor = std::max(pos + g_size + spacing * (*strProc != *strEnd), cursor);
-
-            if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' ')) {
-                // Step back hence this char overflows.
-                strIter = strProc->cloneReversed();
-                ++*strIter;
-                strIter = strIter->cloneReversed();
-                break;  // This quits layout cycle.
-            }
-
-            char_to_glyph_index[chrIdx] = char_indices.size();
-            char_indices.push_back(chrIdx);
-            glyphs.push_back(info);
-            positions.push_back(pos);
-
-            if (info) {
-                bbox |= vec2(pos,0) + info->bearing * size;
-                bbox |= vec2(pos,0) + (info->bearing + info->size) * size;
-            }
-
-            cursor = new_cursor;
-        }
     }
-
-    positions.push_back(cursor);
     char_indices.push_back(strIter->position());
+    if (strDirectAgain != end)
+        reverseGlyphRange(directionChangeGlyphIdx, glyphs.size());
+    if (direction == RTL) reverseGlyphRange(0, glyphs.size());
+
     endpos = strIter->clone();
+    float cursor = 0.0f;
+    float new_cursor, pos;
+    this->spacing = spacing;
+    info = nullptr;
+
+    for (chrIdx = 0; chrIdx < glyphs.size(); ++chrIdx) {
+        // Move cursor
+        prev = info;
+        info = glyphs[chrIdx];
+        pos = cursor + font->getKerning(prev, info) * size;
+        if (info) new_cursor = info->advance * size;
+        new_cursor = pos + (!!new_cursor) * (spacing + new_cursor);
+        if (new_cursor<cursor) new_cursor = cursor;
+        positions.push_back(pos);
+        if (info) {
+            bbox |= vec2(pos,0) + info->bearing * size;
+            bbox |= vec2(pos,0) + (info->bearing + info->size) * size;
+        }
+        cursor = new_cursor;
+    }
+    cursor -= spacing;
+    positions.push_back(cursor);  // We shouldn't add spacing after the last glyph.
+
+
+    // TODO calculate positions, including final position depending on flow direction(s).
+    for(size_t i=0; i<char_indices.size(); ++i)
+        char_to_glyph_index[char_indices[i]] = i;
 
     if (!glyphs.empty()) {
         bbox |= vec2(0.0f);
@@ -957,6 +967,7 @@ int GLTextLayout::findIndexByPos(float x, bool nearest)
         return -1;
 
     unsigned i = 1;
+    // TODO add direction and advance checking.
     while (i < positions.size() && positions[i] <= x)
         i++;
 
@@ -990,8 +1001,17 @@ void GLTextLayout::renderPasses(GLRenderer *renderer, const T_passes &passes, ve
     glDisableVertexAttribArray(GLRenderer::AttrVertexTexCoord);
 }
 
+bool GLTextLayout::isDigit(ucs4_char code) {
+    return (code >= 0x30 && code < 0x3A);
+}
+
+bool GLTextLayout::isWeakChar(ucs4_char code) {
+    return isDigit(code) || code == 0x2E;  // Maybe more.
+}
+
 bool GLTextLayout::isRtlChar(ucs4_char code) {
     return (code >= 0x590 && code < 0x900)
+        || (code == 0x200F) || (code == 0x202B)
         || (code >= 0xFB1D && code < 0xFDD0)
         || (code >= 0xFDF0 && code < 0xFE00)
         || (code >= 0xFE70 && code < 0xFF00)
@@ -1005,6 +1025,7 @@ bool GLTextLayout::isLtrChar(ucs4_char code) {
         || (code >= 0x61 && code < 0x7B)
         || (code >= 0xA0 && code < 0x590)
         || (code >= 0x700 && code < 0x2000)
+        || (code == 0x200E) || (code == 0x202A)  // FIXME: MText("Spell Check (lang)\u200E", []) shows parentheses mirrored.
         || (code >= 0x2100 && code < 0x2190)
         || (code >= 0x2460 && code < 0x2500)
         || (code >= 0x2800 && code < 0x2900)
@@ -1020,8 +1041,8 @@ bool GLTextLayout::isLtrChar(ucs4_char code) {
 ucs4_char GLTextLayout::tryMirrorChar(ucs4_char code) {
 	// Does not mirror 0x3C and 0x3E hence they're supposed to be
 	// HTML tag delimiters and all our texts are HTML-encoded.
-    #define PAIRS_COUNT 6
-    ucs4_char chars[PAIRS_COUNT*2] = {0x28, 0x29, 0x5B, 0x5D, 0x7D, 0x7B, 0xBB, 0xAB, 0x2019, 0x2018, 0x201C, 0x201D};
+    #define PAIRS_COUNT 8
+    ucs4_char chars[PAIRS_COUNT*2] = {0x3C, 0x3E, 0x28, 0x29, 0x5B, 0x5D, 0x7B, 0x7D, 0xBB, 0xAB, 0x2019, 0x2018, 0x201C, 0x201D};
     for (int i=0; i<PAIRS_COUNT*2; ++i) if (chars[i] == code) return chars[i^1];
     return code;
     #undef PAIRS_COUNT
@@ -1101,7 +1122,7 @@ void GLTextLayout::computePasses(const GLTransform &/*transform*/, vec2 /*origin
         GLTextureImage::Ptr tex = font->getGlyphTile(info, &bearing, &tex1, &tex2);
         if (!tex) continue;
 
-        vec2 pos1 = adj_origin + vec2(positions[i],0) + bearing*size;
+        vec2 pos1 = adj_origin + vec2(positions[i], 0) + bearing*size;
         vec2 pos2 = pos1 + font->active_tile_size*size;
 
         RenderPass &pass = passes[tex];
