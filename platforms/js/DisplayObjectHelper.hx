@@ -1442,10 +1442,10 @@ class DisplayObjectHelper {
 		if (untyped clip.removeNativeWidget != null) {
 			untyped clip.removeNativeWidget();
 		} else {
-			if (untyped isNativeWidget(clip) && clip.parentClip != null) {
+			if (untyped isNativeWidget(clip)) {
 				var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
-				if (untyped nativeWidget.parentNode != null && (clip.parentClip.parent != null || clip.parentClip == RenderSupportJSPixi.PixiStage)) {
+				if (untyped nativeWidget.parentNode != null) {
 					nativeWidget.parentNode.removeChild(nativeWidget);
 
 					if (untyped clip.parentClip != null) {
