@@ -6,6 +6,7 @@ import ui/fontmapping;
 import fusion_utils;
 import fform/renderfform;
 import tropic/tropic_manager;
+import fform/renderform3d;
 
 export {
 	// A fixed size, empty block
@@ -145,15 +146,13 @@ export {
 	// Center and scale with variable fill percentage, use 1.0/3.0 for centering
 	TCenterScale(tropic : Tropic, xscale : double, yscale: double) -> Tropic;
 
-	// Returns tropic with its minimum metrics
-	TMinimumMetrics(content : Tropic) -> Tropic;
-
 	// Grows in both direction
 	TFillXY() -> Tropic;
 
 	// Defines a filler which grows from 0,0 up to the maximum size, without preserving aspect ratio
 	TFillMax(maxWidth : double, maxHeight : double) -> Tropic;
 	TFillMaxWY(maxWidth : double) -> Tropic;
+	TFillMaxHX(maxHeight : double) -> Tropic;
 
 	TFillMin(minWidth : double, minHeight : double) -> Tropic;
 
@@ -344,6 +343,10 @@ export {
 	T3DStage(scene : F3DObject, camera : F3DObject, size : Tropic, style : [F3DStageStyle]) -> Tropic;
 
 	THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Tropic;
+
+	// Helper to move already rendered clip from one spot to another
+	// Automatically dettaches and reattaches to original clip if tropic passed to 'fn' is rendered anywhere
+	TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic;
 
 	// Draws content with 'canvas' renderer
 	// Works only in js with 'html' renderer, for other targets identical to regular clip
@@ -909,20 +912,6 @@ TCenterScale(tropic : Tropic, xscale : double, yscale: double) -> Tropic {
 	))
 }
 
-TMinimumMetrics(content : Tropic) -> Tropic {
-	TransformTAcc2(\t2a -> {
-		b1 = content |> t2a;
-
-		TAcc(b1 with metrics =
-			TFormMetrics(
-				b1.minWidth,
-				b1.minHeight,
-				b1.metrics.baseline
-			)
-		)
-	})
-}
-
 TFillXY() -> Tropic {
 	TNative(\x, y -> {
 		wd = fmax(x, zero);
@@ -1083,6 +1072,10 @@ TFillMax(maxWidth : double, maxHeight : double) -> Tropic {
 
 TFillMaxWY(maxWidth : double) -> Tropic {
 	TFillMax(maxWidth, ^tropicFillersMax)
+}
+
+TFillMaxHX(maxHeight : double) -> Tropic {
+	TFillMax(^tropicFillersMax, maxHeight)
 }
 
 TFillMin(minWidth : double, minHeight : double) -> Tropic {
@@ -1455,7 +1448,7 @@ longTouchCounter = ref 0;
 
 TLongTouch(duration : int, fn : () -> void, handle : bool, tropic : Tropic) -> Tropic {
 	pressed = ref false;
-	mdowni = ref MouseDownInfo(0.0, 0.0, 0.0, 0.0, \ -> false);
+	mdowni = ref MouseDownInfo(0.0, 0.0, \ -> false);
 
 	TInteractive(
 		[
@@ -2322,8 +2315,13 @@ disableInteractivesBelow(content : Tropic) -> Tropic {
 			TInteractive(
 				[
 					MouseDown(\mi -> mi.inside()),
+					MouseRightDown(\mi -> mi.inside()),
+					MouseMiddleDown(\mi -> mi.inside()),
 					MouseUp(\mi -> mi().inside),
 					MouseMove(\mi -> mi().inside),
+					TouchStart(\mi -> !exists(mi.inside, \m -> !m())),
+					TouchMove(\mi -> !exists(mi.inside, \m -> !m())),
+					TouchEnd(\mi -> !exists(mi.inside, \m -> !m())),
 					RollOver(nop1),
 					RollOut(nop1)
 				],
@@ -2473,6 +2471,53 @@ THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> 
 			fheight(wh)
 		)
 	)
+}
+
+TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b = t2a(t);
+
+		TAcc(b with
+			form = FNativeForm(
+				t,
+				const(FormMetrics(0., 0., 0., 0.)),
+				\ -> b.form,
+				\__, z, __ -> {
+					zorder = make(z);
+					rr = renderFForm(b.form, zorder);
+					originalParent = makeClip();
+					alive = ref true;
+					iter(rr.clips, \c -> addChild(originalParent, c));
+
+					fn(
+						TFForm(
+							FNativeForm(
+								t,
+								const(FormMetrics(0., 0., 0., 0.)),
+								\ -> b.form,
+								\__, z2, __ -> {
+									parent = makeClip();
+									iter(rr.clips, \c -> addChild(parent, c));
+									nextDistinct(zorder, z2);
+
+									NativeRenderResult(
+										[parent],
+										\ -> {
+											nextDistinct(zorder, z);
+											iter(rr.clips, \c -> if (^alive) addChild(originalParent, c) else removeChild(parent, c));
+										}
+									)
+								}
+							),
+							b.metrics
+						)
+					);
+
+					NativeRenderResult([originalParent], \ -> { alive := false; applyall(rr.disposers); } )
+				}
+			)
+		)
+	})
 }
 
 TCanvas(content : Tropic) -> Tropic {

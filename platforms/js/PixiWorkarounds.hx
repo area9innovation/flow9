@@ -862,6 +862,10 @@ class PixiWorkarounds {
 				} else {
 					this.transformChanged = false;
 
+					if (this.graphicsChanged) {
+						this.updateNativeWidgetGraphicsData();
+					}
+
 					if (this.worldTransformChanged)
 					{
 						this.worldTransformChanged = false;

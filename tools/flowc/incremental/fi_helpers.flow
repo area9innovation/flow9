@@ -8,7 +8,7 @@ import ds/array;
 
 export {
 	// If t is a typename, we resolve it to FiStruct or FiUnion
-	resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion;
+	resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnion;
 
 	// Get type of the FiExp
 	fiExpType(expr : FiExp) -> FiType;
@@ -32,7 +32,7 @@ export {
 	fiCollectTypars(prog : FiProgram, type : FiType, acc : Set<string>) -> Set<string>;
 
 	// Analog of fcNativeHasFallback
-	fiNativeHasFallback(nat : FiNativeDec) -> bool;
+	fiNativeHasFallback(nat : FiNativeDec, id : int) -> bool;
 
 	isSameFiExp(e1 : FiExp, e2 : FiExp) -> bool;
 	getFiTypeName(t : FiType) -> string;
@@ -107,7 +107,7 @@ fiExpType(expr) {
 	}
 }
 
-resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion {
+resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnion {
 	switch (t) {
 		FiTypeName(n, tps): {
 			ms = lookupTree(names.structs, n);
@@ -116,7 +116,7 @@ resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion {
 					mu = lookupTree(names.unions, n);
 					switch (mu) {
 						None(): {
-							fcPrintln("Unknown type name " + n);
+							fcPrintln("Unknown type name " + n, id);
 							dummyFiTypeStruct;
 						}
 						Some(u): {
@@ -138,7 +138,7 @@ fiUnion2structs(prog : FiProgram, union : FiTypeUnion) -> [FiTypeStruct] {
 }
 
 fiTypename2structs(prog : FiProgram, typename : FiTypeName) -> [FiTypeStruct] {
-	rt = resolveFiTypeName(prog.names, typename);
+	rt = resolveFiTypeName(prog.names, typename, prog.config.threadId);
 	switch (rt) {
 		FiTypeStruct(__, __, __, __): [rt];
 		FiTypeUnion(__, __, __, __): fiUnion2structs(prog, rt);
@@ -147,7 +147,7 @@ fiTypename2structs(prog : FiProgram, typename : FiTypeName) -> [FiTypeStruct] {
 
 fiUnion2unions(prog : FiProgram, union : FiTypeUnion) -> [FiTypeUnion] {
 	concatA(map(union.typenames, \typename : FiTypeName -> {
-		rt = resolveFiTypeName(prog.names, typename);
+		rt = resolveFiTypeName(prog.names, typename, prog.config.threadId);
 		switch (rt) {
 			FiTypeUnion(__, __, __, __): arrayPush(fiUnion2unions(prog, rt), rt);
 			default: []
@@ -202,7 +202,7 @@ fiStruct2unions(prog : FiProgram) -> Tree<string, [string]> {
 				union.typenames,
 				acc,
 				\a, typename -> {
-					switch (resolveFiTypeName(prog.names, typename)) {
+					switch (resolveFiTypeName(prog.names, typename, prog.config.threadId)) {
 						FiTypeStruct(sname, __, __, __) : {
 							switch (lookupTree(a, sname)) {
 								Some(arr) : setTree(a, sname, concat(arr, [uname]));
@@ -237,12 +237,12 @@ fiCollectTypars(prog : FiProgram, type : FiType, acc : Set<string>) -> Set<strin
 	}
 }
 
-fiNativeHasFallback(nat : FiNativeDec) -> bool {
+fiNativeHasFallback(nat : FiNativeDec, id : int) -> bool {
 	switch (nat.fallbackLambda) {
 		FiLambda(__, __, __, __) : true;
 		FiVoid(__) : false;
 		default : {
-			fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, nat.fallbackLambda));
+			fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, nat.fallbackLambda), id);
 			false
 		}
 	}
@@ -417,9 +417,9 @@ printFiError(prog : FiProgram, error : FcError) -> void {
 		err = (if (i == 0) ": " + error.message else ": and here");
 
 		if (fileinfo.flowfile == "") {
-			fcPrintln(error.message);
+			fcPrintln(error.message, prog.config.threadId);
 		} else {
-			fcPrintln(fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err);
+			fcPrintln(fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err, prog.config.threadId);
 		}
 
 	});

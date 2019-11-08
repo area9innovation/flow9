@@ -126,6 +126,8 @@ class TextClip extends NativeWidgetClip {
 	private var isFocused : Bool = false;
 	public var isInteractive : Bool = false;
 
+	private var baselineWidget : Dynamic;
+
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 
@@ -344,9 +346,7 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.resize = 'none';
 			}
 
-			nativeWidget.style.marginTop = RenderSupportJSPixi.RendererType == "html" ? '0px' : '-1px';
 			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-
 			nativeWidget.style.direction = switch (textDirection) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
@@ -373,10 +373,10 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontFamily = RenderSupportJSPixi.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupportJSPixi.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupportJSPixi.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
-		nativeWidget.style.fontSize =  '${style.fontSize}px';
+		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${style.lineHeight}px';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.lineHeight)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -384,6 +384,20 @@ class TextClip extends NativeWidgetClip {
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
 			default : null;
+		}
+
+		updateBaselineWidget();
+	}
+
+	public inline function updateBaselineWidget() : Void {
+		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget) {
+			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0)}px';
+				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0) * getNativeWidgetTransform().d)}px';
+			} else if (baselineWidget.parentNode != null) {
+				baselineWidget.parentNode.removeChild(baselineWidget);
+			}
 		}
 	}
 
@@ -797,7 +811,17 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		invalidateInteractive();
 
-		if (Platform.isMobile) {
+		if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+			nativeWidget.onpointermove = onMouseMove;
+			nativeWidget.onpointerdown = onMouseDown;
+			nativeWidget.onpointerup = onMouseUp;
+
+			untyped __js__("this.nativeWidget.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+
+			nativeWidget.ontouchmove = onMouseMove;
+			nativeWidget.ontouchstart = onMouseDown;
+			nativeWidget.ontouchend = onMouseUp;
+		} else if (Platform.isMobile) {
 			nativeWidget.ontouchmove = onMouseMove;
 			nativeWidget.ontouchstart = onMouseDown;
 			nativeWidget.ontouchend = onMouseUp;
@@ -934,37 +958,44 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onFocus(e : Event) : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
-			isFocused = true;
-			emit('focus');
+		isFocused = true;
 
-			if (parent != null) {
-				parent.emitEvent('childfocused', this);
-			}
+		if (RenderSupportJSPixi.Animating) {
+			RenderSupportJSPixi.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
 
-			if (nativeWidget == null || parent == null) {
-				return;
-			}
+		emit('focus');
 
-			if (Platform.isIOS) {
-				RenderSupportJSPixi.ensureCurrentInputVisible();
-			}
+		if (parent != null) {
+			parent.emitEvent('childfocused', this);
+		}
 
-			invalidateMetrics();
-		});
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
+
+		if (Platform.isIOS && RenderSupportJSPixi.RendererType != "html") {
+			RenderSupportJSPixi.ensureCurrentInputVisible();
+		}
+
+		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
-			isFocused = false;
-			emit('blur');
+		if (RenderSupportJSPixi.Animating) {
+			RenderSupportJSPixi.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
 
-			if (nativeWidget == null || parent == null) {
-				return;
-			}
+		isFocused = false;
+		emit('blur');
 
-			invalidateMetrics();
-		});
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
+
+		invalidateMetrics();
 	}
 
 	private function onInput(e : Dynamic) {
@@ -1199,6 +1230,9 @@ class TextClip extends NativeWidgetClip {
 			updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
+
+			baselineWidget = Browser.document.createElement('span');
+			baselineWidget.classList.add('baselineWidget');
 
 			isNativeWidget = true;
 		} else {

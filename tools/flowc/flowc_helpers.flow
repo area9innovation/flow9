@@ -16,7 +16,6 @@ export {
 	addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProgram;
 	printFcError(acc : FlowcAcc, error : FcError) -> void;
 	prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc;
-	getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo;
 
 	// Add the types we got from the typechecker to the environment
 	mergeTypechecked2TypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal) -> FcTypeEnvProgram;
@@ -293,7 +292,7 @@ printFcError(acc : FlowcAcc, error : FcError) -> void {
 	un = uniq(error.positions);
 
 	if (length(error.positions) == 0) {
-		fcPrintln(error.message);
+		fcPrintln(error.message, acc.config.threadId);
 	}
 
 	iteri(un, \i : int, p : FcPosition -> {
@@ -325,22 +324,6 @@ prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc {
 		makeIdGroup(globalid),
 		makeTracer()
 	)
-}
-
-getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
-	workingDir = getConfigParameterDef(config.config, "working-dir", "");
-	realfile = findFlowPath(file, true, config.includes, workingDir);
-	content = getFileContent(realfile);
-
-	FcFileInfo(
-		trimFlowfile(file, config.includes, workingDir),
-		fileModified(realfile),
-		realfile,
-		md5(content),
-		content,
-		0,
-		fileSize(realfile)
-	);
 }
 
 mergeTypechecked2TypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv0 : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal) -> FcTypeEnvProgram {
@@ -387,7 +370,7 @@ addFiModuleToFcTypeEnv(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, fimod
 	exist = lookupTreeDef(acc.file2flowfile, fimodule.fileinfo.fullpath, "");
 	if (exist != "" && exist != fimodule.fileinfo.flowfile) {
 		// TODO: Make this an error instead
-		fcPrintln(fimodule.fileinfo.fullpath + " imported both as " + fimodule.fileinfo.flowfile + " and " + exist);
+		fcPrintln(fimodule.fileinfo.fullpath + " imported both as " + fimodule.fileinfo.flowfile + " and " + exist, tenv.acc.config.threadId);
 	}
 
 	FcTypeEnvProgram(
@@ -404,7 +387,7 @@ runTasks(config : CompilerConfig, tasks : [() -> ?]) -> [?] {
 	if (isConfigParameterFalse(config.config, "parallel")) sequential(true, tasks)
 	else concurrent(true, tasks)
 }
-
+   
 fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool {
 	checkMd5 = isConfigParameterTrue(config.config, "use-md5");
 	changed = \ -> {
@@ -414,11 +397,11 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 					module.fileinfo.lastupdate < cachedInc.module.fileinfo.lastupdate || cachedInc.dependencyChanged();
 				}
 				None(): {
-					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there"); true; 
+					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there", config.threadId); true; 
 				}
 			}
 		);
-		check_string_includes = exists(module.stringIncludes, \inc ->fiFileInfoFileChanged(inc, checkMd5));
+		check_string_includes = exists(module.stringIncludes, \inc ->fiFileInfoFileChanged(inc, config));
 		ret = check_imports || check_string_includes;
 		fcAddToCache(globEnv, module.fileinfo.flowfile, FcLoaded(module, \ -> ret));
 		ret
@@ -428,7 +411,7 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 }
 
 printLocation(config : CompilerConfig, file : string, start : int, message : string) -> void {
-	fcPrintln(makeLocation(config, file, start) + " " + message)
+	fcPrintln(makeLocation(config, file, start) + " " + message, config.threadId)
 }
 
 makeLocation(config : CompilerConfig, file : string, start : int) -> string {

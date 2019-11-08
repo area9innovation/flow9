@@ -72,9 +72,50 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DScene(String url, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DTexture(Object object, String url) {
+	public Object load3DTexture(String url, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;
 	}
+	public Object make3DDataTexture(Object[] data, Integer width, Integer height, Object[] parameters) {
+		return null;
+	}
+	public Object make3DCanvasTexture(Object clip, Object[] parameters) {
+		return null;
+	}
+
+
+	public Object set3DMaterialMap(Object object, Object map) {
+		return null;
+	}
+
+	public Object set3DMaterialAlphaMap(Object object, Object alphaMap) {
+		return null;
+	}
+
+	public Object set3DMaterialDisplacementMap(Object object, Object displacementMap, Double displacementScale, Double displacementBias) {
+		return null;
+	}
+
+	public Object set3DMaterialBumpMap(Object object, Object bumpMap, Double bumpScale) {
+		return null;
+	}
+
+	public Object set3DMaterialOpacity(Object object, Double opacity) {
+		return null;
+	}
+
+
+	public Object set3DTextureRotation(Object object, Double rotation) {
+		return null;
+	}
+
+	public Object set3DTextureOffsetX(Object object, Double x) {
+		return null;
+	}
+
+	public Object set3DTextureOffsetY(Object object, Double y) {
+		return null;
+	}
+
 
 	public Object make3DAxesHelper(Double size) {
 		return null;
@@ -84,7 +125,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object set3DCamera(Object stage, Object camera) {
+	public Object set3DCamera(Object stage, Object camera, Object[] parameters) {
 		return null;
 	}
 	public Object set3DScene(Object stage, Object scene) {
@@ -95,6 +136,9 @@ public class RenderSupport3D extends NativeHost {
 		return no_op;
 	}
 	public Object emit3DMouseEvent(Object stage, String event, Double x, Double y) {
+		return null;
+	}
+	public Object emit3DTouchEvent(Object stage, String event, Object[] points) {
 		return null;
 	}
 	public Object emit3DKeyEvent(Object stage, String event, String utf, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer keycode) {
@@ -208,6 +252,13 @@ public class RenderSupport3D extends NativeHost {
 		return false;
 	}
 	public Object set3DObjectVisible(Object object, Boolean visible) {
+		return null;
+	}
+
+	public Double get3DObjectAlpha(Object object) {
+		return 0.0;
+	}
+	public Object set3DObjectAlpha(Object object, Double alpha) {
 		return null;
 	}
 
@@ -412,6 +463,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DAmbientLight(Integer color, Double intensity) {
+		return null;
+	}
+
 	public Object set3DLightColor(Object object, Integer color) {
 		return null;
 	}
@@ -486,6 +541,20 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+
+	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
+		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength) {
+		return null;
+	}
+
+	public Object add3DBufferGeometryAttribute(Object geometry, String name, Object[] data) {
+		return null;
+	}
+	public Object[] get3DBufferGeometryAttribute(Object geometry, String name) {
+		return new Object[0];
+	}
+
+
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
 		return null;
 	}
@@ -494,8 +563,16 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DMeshNormalMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
 
-	public Object make3DMesh(Object geometry, Object material) {
+	public Object make3DShaderMaterial(String uniforms, String vertexShader, String fragmentShader, Object[] parameters) {
+		return null;
+	}
+
+
+	public Object make3DMesh(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}
 
