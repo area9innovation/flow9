@@ -1485,6 +1485,14 @@ class RenderSupportJSPixi {
 		clip.setHeight(height);
 	}
 
+	public static function getClipWidth(clip : NativeWidgetClip) : Float {
+		return clip.getWidth();
+	}
+
+	public static function getClipHeight(clip : NativeWidgetClip) : Float {
+		return clip.getHeight();
+	}
+
 	public static function setClipResolution(clip : TextClip, resolution : Float) : Void {
 		clip.setResolution(resolution);
 	}

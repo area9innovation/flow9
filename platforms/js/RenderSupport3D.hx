@@ -1501,16 +1501,17 @@ class RenderSupport3D {
 		return material;
 	}
 
-	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String, parameters : Array<Array<String>>) : Material {
+	public static function make3DShaderMaterial(stage : ThreeJSStage, uniforms : String, vertexShader : String, fragmentShader : String, parameters : Array<Array<String>>) : Material {
 		var material : Dynamic = null;
 		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
 
 		uniformsObject.resolution = {
 			type : 'v2',
-			value : new Vector2(Browser.window.innerWidth, Browser.window.innerHeight)
+			value : new Vector2(stage.getWidth(), stage.getHeight())
 		};
 
 		uniformsObject.time = {
+			type : 'f',
 			value : Browser.window.performance.now()
 		};
 
