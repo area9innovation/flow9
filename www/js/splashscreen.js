@@ -34,7 +34,7 @@ function setSplashScreen() {
 	c.appendChild(s);
 	if (g('progressShown')) {
 		var p = document.createElement('video');
-		if (p.canPlayType('video/webm; codecs="vp8, vorbis"')) {
+		if (p.canPlayType && p.canPlayType('video/webm; codecs="vp8, vorbis"')) {
 			p.src = g('progressSrc');
 			p.loop = 'true';
 			p.autoplay = 'true';
