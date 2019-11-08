@@ -10,7 +10,7 @@ class PixiWorkarounds {
 				if (!forceLocation)
 				{
 					// TODO - maybe look into adding boundIds.. save us the loop?
-					for (let i = 0; i < this.boundTextures.length; i++)
+					for (var i = 0; i < this.boundTextures.length; i++)
 					{
 						if (this.boundTextures[i] === texture)
 						{
@@ -146,11 +146,11 @@ class PixiWorkarounds {
 
 				interactive = displayObject.interactive || interactive;
 
-				let hit = false;
-				let interactiveParent = interactive;
+				var hit = false;
+				var interactiveParent = interactive;
 
 				// Flag here can set to false if the event is outside the parents hitArea or mask
-				let hitTestChildren = true;
+				var hitTestChildren = true;
 
 				// If there is a hitArea, no need to test against anything else if the pointer is not within the hitArea
 				// There is also no longer a need to hitTest children.
@@ -191,7 +191,7 @@ class PixiWorkarounds {
 				{
 					const children = displayObject.children;
 
-					for (let i = children.length - 1; i >= 0; i--)
+					for (var i = children.length - 1; i >= 0; i--)
 					{
 						const child = children[i];
 
@@ -398,7 +398,7 @@ class PixiWorkarounds {
 
 				const metricsString = PIXI.TextMetrics.METRICS_STRING + PIXI.TextMetrics.BASELINE_SYMBOL;
 				const width = Math.ceil(context.measureText(metricsString).width);
-				let baseline = Math.ceil(context.measureText(PIXI.TextMetrics.BASELINE_SYMBOL).width) * 2;
+				var baseline = Math.ceil(context.measureText(PIXI.TextMetrics.BASELINE_SYMBOL).width) * 2;
 				const height = 2 * baseline;
 
 				baseline = baseline * PIXI.TextMetrics.BASELINE_MULTIPLIER | 0;
@@ -419,14 +419,14 @@ class PixiWorkarounds {
 				const pixels = imagedata.length;
 				const line = width * 4;
 
-				let i = 0;
-				let idx = 0;
-				let stop = false;
+				var i = 0;
+				var idx = 0;
+				var stop = false;
 
 				// ascent. scan from top to bottom until we find a non red pixel
 				for (i = 0; i < baseline; ++i)
 				{
-					for (let j = 0; j < line; j += 4)
+					for (var j = 0; j < line; j += 4)
 					{
 						if (imagedata[idx + j] !== 255)
 						{
@@ -452,7 +452,7 @@ class PixiWorkarounds {
 				// descent. scan from bottom to top until we find a non red pixel
 				for (i = height; i > baseline; --i)
 				{
-					for (let j = 0; j < line; j += 4)
+					for (var j = 0; j < line; j += 4)
 					{
 						if (imagedata[idx + j] !== 255)
 						{
@@ -873,7 +873,7 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						for (let i = 0, j = this.children.length; i < j; ++i) {
+						for (var i = 0, j = this.children.length; i < j; ++i) {
 							const child = this.children[i];
 
 							if (child.transformChanged) {
@@ -888,7 +888,7 @@ class PixiWorkarounds {
 								this.accessWidget.updateTransform();
 							}
 						}
-					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+					} else for (var i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
 						if (child.transformChanged) {
@@ -926,7 +926,7 @@ class PixiWorkarounds {
 								this.textClipChanged = true;
 								this.layoutText();
 							} else if (this.children.length > 0) {
-								for (let i = 0, j = this.children.length; i < j; ++i) {
+								for (var i = 0, j = this.children.length; i < j; ++i) {
 									this.removeChild(this.children[i]);
 								}
 
@@ -937,7 +937,7 @@ class PixiWorkarounds {
 							this.layoutText();
 						}
 
-						for (let i = 0, j = this.children.length; i < j; ++i) {
+						for (var i = 0, j = this.children.length; i < j; ++i) {
 							const child = this.children[i];
 
 							if (child.transformChanged) {
@@ -952,7 +952,7 @@ class PixiWorkarounds {
 						}
 
 						this.emit('transformchanged');
-					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+					} else for (var i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
 						if (child.transformChanged) {

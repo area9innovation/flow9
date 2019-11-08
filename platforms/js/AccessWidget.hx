@@ -774,7 +774,7 @@ class AccessWidget extends EventEmitter {
 				e.stopPropagation();
 			};
 
-			if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+			if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
 				element.onpointerdown = onpointerdown;
 				element.onpointerup = onpointerup;
 

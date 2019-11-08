@@ -819,7 +819,7 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		invalidateInteractive();
 
-		if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
 			nativeWidget.onpointermove = onMouseMove;
 			nativeWidget.onpointerdown = onMouseDown;
 			nativeWidget.onpointerup = onMouseUp;
