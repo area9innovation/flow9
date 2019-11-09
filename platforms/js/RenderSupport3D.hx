@@ -482,6 +482,10 @@ class RenderSupport3D {
 			untyped material.opacity = opacity;
 			untyped material.transparent = true;
 
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iOpacity.value = opacity;
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
@@ -491,6 +495,10 @@ class RenderSupport3D {
 			material.invalidateMaterialStage();
 
 			untyped material.visible = visible;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iVisible.value = visible;
+			}
 
 			material.invalidateMaterialStage();
 		}
@@ -1505,14 +1513,24 @@ class RenderSupport3D {
 		var material : Dynamic = null;
 		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
 
-		uniformsObject.resolution = {
+		uniformsObject.iResolution = {
 			type : 'v2',
 			value : new Vector2(stage.getWidth(), stage.getHeight())
 		};
 
-		uniformsObject.time = {
+		uniformsObject.iTime = {
 			type : 'f',
-			value : Browser.window.performance.now()
+			value : Browser.window.performance.now() / 1000.0
+		};
+
+		uniformsObject.iOpacity = {
+			type : 'f',
+			value : 1.0
+		};
+
+		uniformsObject.iVisible = {
+			type : 'f',
+			value : true
 		};
 
 		if (vertexShader != "") {
