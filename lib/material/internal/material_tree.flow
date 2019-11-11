@@ -306,9 +306,8 @@ makeMTreeDragDropState(
 }
 
 MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	lazyLoad = maybeMap(tryExtractStruct(m.style, MTreeLazyLoad(0)), \ll -> ll.loadCount);
-	loadQuota = maybeMap(lazyLoad, make);
-	onUpdateQuota = \ -> maybeApply(loadQuota, \lq -> nextDistinct(lq, getValue(lq) + either(lazyLoad, 0)));
+	loadLazy = tryExtractStruct(m.style, MTreeLazyLoad(0, None()));
+	lazyLoadState = maybeMap(loadLazy, makeMTreeLazyLoadState);
 
 	dragDropStateM =
 		eitherFn(
@@ -328,7 +327,7 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 		);
 
 	children =
-		eitherMap(loadQuota, \lq -> fselect2(m.children, lq, FLift2(\arr, quota -> take(arr, quota))), m.children)
+		eitherMap(lazyLoadState, \st -> fselect2(m.children, st.loadQuota, FLift2(\arr, lq -> take(arr, lq))), m.children)
 		|> (\children ->
 			ffuseinit(
 				eitherMap(dragDropStateM, \dragDropState -> MTreeOrder2MTreeNodes(children, dragDropState.order), children),
@@ -367,20 +366,13 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 					c,
 					farray(index),
 					m2t,
-					const(showSeparators)
+					const(showSeparators),
+					loadLazy
 				)
 			});
 		}
 	)
-	|> (\t -> eitherMap(loadQuota, \lq ->
-		TLines2(t,
-			MIcon2T(parent, "unfold_more", [])
-			|> (\t2 -> TCenterIn(t2, TFillXH(56.)))
-			|> (\t2 -> TCopySize(t2, \tr -> TRectangle([MFill(MGrey(200)), FillOpacity(0.5)], tr), false))
-			|> (\t2 -> MComponent2T(manager, parent, "unfold_panel", [MOnClick(onUpdateQuota)], \__ -> t2, m2t))
-			|> (\t2 -> TShow(flessi(lq, flength(m.children)), t2))
-		), t)
-	)
+	|> addUnfoldPanel(parent, m2t, m.children, lazyLoadState)
 	|> TBorderBottom(1.)
 	|> (\mtree ->
 		TConstruct(
@@ -529,6 +521,33 @@ buildLineFnDef(contentBoxB : DynamicBehaviour<WidthHeight>, color : MColor) -> M
 	|> (\m -> MTranslate(fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))), m))
 }
 
+buildUnfoldPanelDef(onClick : () -> void) -> Material {
+	MIcon("unfold_more", [])
+	|> (\t -> MCenterIn(t, TFillXH(56.)))
+	|> (\t -> MCopySize(t, \tr -> TRectangle([MFill(MGrey(200)), FillOpacity(0.5)], tr), false))
+	|> (\t -> MComponent([MOnClick(onClick)], \__ -> t))
+}
+
+addUnfoldPanel(parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic, children : Transform<[MTreeNode]>, state : Maybe<MTreeLazyLoadState>) -> (Tropic) -> Tropic {
+	\t ->
+		eitherMap(state, \st ->
+			TLines2(t, TShow(flessi(st.loadQuota, flength(children)), m2t(st.panel, parent))),
+			t
+		)
+}
+
+MTreeLazyLoadState(
+	loadQuota : DynamicBehaviour<int>,
+	panel : Material
+);
+
+makeMTreeLazyLoadState(loadLazy : MTreeLazyLoad) -> MTreeLazyLoadState {
+	loadQuota = make(loadLazy.loadCount);
+	updateFn = \ -> nextDistinct(loadQuota, getValue(loadQuota) + loadLazy.loadCount);
+	buildPanelFn = either(loadLazy.buildPanelFn, buildUnfoldPanelDef);
+	MTreeLazyLoadState(loadQuota, buildPanelFn(updateFn))
+}
+
 Corner ::= TopLeft, TopRight, BottomLeft, BottomRight;
 	TopLeft();
 	TopRight();
@@ -541,9 +560,12 @@ DropOperation ::= DropAbove, DropBelow, DropInside;
 	DropInside();
 
 MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<?>, m : MTreeNode<?>, treeIndex : Transform<[int]>,
-	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
-	children = ffuseinit(m.children, make([]));
-	childrenLength = fselect(children.first, length |> FLift);
+	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>, loadLazy : Maybe<MTreeLazyLoad>) -> Tropic {
+
+	lazyLoadState = maybeMap(loadLazy, makeMTreeLazyLoadState);
+
+	children = ffuseinit(eitherMap(lazyLoadState, \st -> fselect2(m.children, st.loadQuota, FLift2(\arr, lq -> take(arr, lq))), m.children), make([]));
+	childrenLength = flength(children.first);
 	expanded = extractStruct(m.style, MExpanded(make(false))).expanded;
 	selected = extractStruct(m.style, MSelected(make(false))).selected;
 	focused = extractStruct(m.style, MFocused(make(false))).focused;
@@ -748,7 +770,8 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								if (state.showSeparators)
 									flessi(index, fadditioni(childrenLength, const(-1)))
 								else
-									const(false)
+									const(false),
+								loadLazy
 							)
 						});
 					}
@@ -779,6 +802,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					)
 				)
 				|> (\t -> TAvailableHeight(t, const(0.)))
+				|> addUnfoldPanel(parent, m2t, m.children, lazyLoadState)
 		),
 
 		MSeparator2T(manager, parent, true)
