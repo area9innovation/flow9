@@ -1,5 +1,6 @@
 import material/internal/selectmarray;
 import material/internal/material_dragdrop;
+import material/internal/material_icons;
 import ui/animate/teasing;
 
 export {
@@ -305,6 +306,10 @@ makeMTreeDragDropState(
 }
 
 MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	lazyLoad = maybeMap(tryExtractStruct(m.style, MTreeLazyLoad(0)), \ll -> ll.loadCount);
+	loadQuota = maybeMap(lazyLoad, make);
+	onUpdateQuota = \ -> maybeApply(loadQuota, \lq -> nextDistinct(lq, getValue(lq) + either(lazyLoad, 0)));
+
 	dragDropStateM =
 		eitherFn(
 			maybeMap(
@@ -322,12 +327,13 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 				)
 		);
 
-
-
 	children =
-		ffuseinit(
-			eitherMap(dragDropStateM, \dragDropState -> MTreeOrder2MTreeNodes(m.children, dragDropState.order), m.children),
-			make([])
+		eitherMap(loadQuota, \lq -> fselect2(m.children, lq, FLift2(\arr, quota -> take(arr, quota))), m.children)
+		|> (\children ->
+			ffuseinit(
+				eitherMap(dragDropStateM, \dragDropState -> MTreeOrder2MTreeNodes(children, dragDropState.order), children),
+				make([])
+			)
 		);
 	selIndexes = ffuseinit(fSelectionIndexes(children.first), make([[]]));
 
@@ -365,6 +371,15 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 				)
 			});
 		}
+	)
+	|> (\t -> eitherMap(loadQuota, \lq ->
+		TLines2(t,
+			MIcon2T(parent, "unfold_more", [])
+			|> (\t2 -> TCenterIn(t2, TFillXH(56.)))
+			|> (\t2 -> TCopySize(t2, \tr -> TRectangle([MFill(MGrey(200)), FillOpacity(0.5)], tr), false))
+			|> (\t2 -> MComponent2T(manager, parent, "unfold_panel", [MOnClick(onUpdateQuota)], \__ -> t2, m2t))
+			|> (\t2 -> TShow(flessi(lq, flength(m.children)), t2))
+		), t)
 	)
 	|> TBorderBottom(1.)
 	|> (\mtree ->
