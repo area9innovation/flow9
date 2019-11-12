@@ -961,8 +961,16 @@ class RenderSupportJSPixi {
 		requestAnimationFrame();
 	}
 
-	public static inline function render() {
+	public static inline function render() : Void {
 		animate(Browser.window.performance.now());
+	}
+
+	public static function forceRender() : Void {
+		for (child in PixiStage.getClipChildren()) {
+			child.invalidateTransform("forceRender", true);
+		}
+		
+		render();
 	}
 
 	public static function addPasteEventListener(fn : Array<Dynamic> -> Void) : Void -> Void {
@@ -982,7 +990,7 @@ class RenderSupportJSPixi {
 
 	public static function InvalidateLocalStages() {
 		for (child in PixiStage.children) {
-			child.invalidateTransform('InvalidateLocalStages');
+			child.invalidateTransform('InvalidateLocalStages', true);
 		}
 
 		render();

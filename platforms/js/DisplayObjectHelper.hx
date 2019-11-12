@@ -116,16 +116,16 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function invalidateTransform(clip : DisplayObject, ?from : String) : Void {
+	public static function invalidateTransform(clip : DisplayObject, ?from : String, ?force : Bool = false) : Void {
 		if (InvalidateStage) {
 			invalidateParentTransform(clip);
 		}
 
-		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null);
+		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null, force);
 	}
 
-	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool, ?from : String, ?parentClip : DisplayObject) : Void {
-		if (untyped clip.parent != null && (!clip.worldTransformChanged || (localTransformChanged && !clip.localTransformChanged))) {
+	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool, ?from : String, ?parentClip : DisplayObject, ?force : Bool = false) : Void {
+		if (untyped clip.parent != null && (!clip.worldTransformChanged || (localTransformChanged && !clip.localTransformChanged) || force)) {
 			untyped clip.worldTransformChanged = true;
 			untyped clip.transformChanged = true;
 
@@ -139,7 +139,7 @@ class DisplayObjectHelper {
 				parentClip = clip;
 			}
 
-			if (localTransformChanged) {
+			if (localTransformChanged || force) {
 				untyped clip.localTransformChanged = true;
 
 				if (DebugUpdate) {
@@ -161,7 +161,7 @@ class DisplayObjectHelper {
 
 			for (child in getClipChildren(clip)) {
 				if (child.visible) {
-					invalidateWorldTransform(child, localTransformChanged && !isNativeWidget(clip), DebugUpdate ? from + ' ->\ninvalidateWorldTransform -> child' : null, parentClip);
+					invalidateWorldTransform(child, localTransformChanged && !isNativeWidget(clip), DebugUpdate ? from + ' ->\ninvalidateWorldTransform -> child' : null, parentClip, force);
 				}
 			}
 		}
