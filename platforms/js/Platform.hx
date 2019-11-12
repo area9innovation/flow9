@@ -31,7 +31,7 @@ class Platform {
 
 	public static var isIEMobile : Bool = ~/iemobile/i.match(Browser.window.navigator.userAgent);
 	public static var isAndroid : Bool = ~/android/i.match(Browser.window.navigator.userAgent);
-	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent);
+	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent) || untyped __typeof__(navigator.standalone) != 'undefined';
 	public static var isMobile : Bool = ~/webOS|BlackBerry|Windows Phone/i.match(Browser.window.navigator.userAgent) || isIEMobile || isAndroid || isIOS;
 
 	public static var isMacintosh : Bool = ~/Mac/i.match(Browser.window.navigator.platform);
