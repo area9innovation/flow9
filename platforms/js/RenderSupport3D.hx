@@ -1518,6 +1518,11 @@ class RenderSupport3D {
 			value : new Vector2(stage.getWidth(), stage.getHeight())
 		};
 
+		uniformsObject.iAspectRatio = {
+			type : 'f',
+			value : stage.getHeight() / stage.getWidth()
+		};
+
 		uniformsObject.iTime = {
 			type : 'f',
 			value : Browser.window.performance.now() / 1000.0
