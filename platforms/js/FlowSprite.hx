@@ -33,6 +33,7 @@ class FlowSprite extends Sprite {
 	private var accessWidget : AccessWidget;
 
 	public var isNativeWidget : Bool = false;
+	private var disposed : Bool = false;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
@@ -153,6 +154,8 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onDispose() : Void {
+		disposed = true;
+
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
@@ -189,29 +192,35 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onLoaded() : Void {
-		try {
-			if (RenderSupportJSPixi.RendererType == "html") {
-				if (nativeWidget == null) {
-					return;
+		RenderSupportJSPixi.once("drawframe", function() {
+			if (disposed) {
+				return;
+			}
+
+			try {
+				if (RenderSupportJSPixi.RendererType == "html") {
+					if (nativeWidget == null) {
+						return;
+					}
+
+					metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
+				} else {
+					metricsFn(texture.width, texture.height);
 				}
 
-				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
-			} else {
-				metricsFn(texture.width, texture.height);
-			}
+				invalidateTransform('onLoaded');
+				calculateWidgetBounds();
 
-			invalidateTransform('onLoaded');
-			calculateWidgetBounds();
-
-			loaded = true;
-			visibilityChanged = true;
-		} catch (e : Dynamic) {
-			if (parent != null && retries < 2) {
-				loadTexture();
-			} else {
-				onError();
-			}
-		};
+				loaded = true;
+				visibilityChanged = true;
+			} catch (e : Dynamic) {
+				if (parent != null && retries < 2) {
+					loadTexture();
+				} else {
+					onError();
+				}
+			};
+		});
 	}
 
 	private function loadTexture() : Void {

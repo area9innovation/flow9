@@ -21,11 +21,15 @@ export {
 	F3DObject ::= F3DScene, F3DMutable, F3DVisible, F3DAlpha, F3DPosition, F3DRotation, F3DScale, F3DLookAt, F3DOnLoad,
 		F3DInspectRotation, F3DInspectPosition, F3DInspectScale, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin,
 		F3DInspectBoundingSphereMax, F3DCamera, F3DLight, F3DMesh, F3DTransformControls, F3DLoader, F3DGLTFLoader, F3DSceneLoader,
-		F3DChildren, F3DNative, F3DJsonObject, F3DObject2Json, F3DBoxHelper, F3DAxesHelper, F3DGridHelper, F3DInteractive;
+		F3DChildren, F3DNative, F3DJsonObject, F3DObject2Json, F3DBoxHelper, F3DAxesHelper, F3DGridHelper, F3DInteractive, F3DEmpty;
 
 		F3DScene(objects : Transform<[F3DObject]>);
 		F3DGroup(objects : [F3DObject]) -> F3DScene { F3DScene(const(objects)); };
 		F3DMutable(object : Transform<F3DObject>);
+
+		F3DSelect(t : Transform<?>, fn : (?) -> F3DObject) -> F3DObject { F3DMutable(fselect(t, fn |> FLift)); };
+		F3DSelect2(t1 : Transform<?>, t2 : Transform<??>, fn : (?, ??) -> F3DObject) -> F3DObject { F3DMutable(fselect2(t1, t2, fn |> FLift2)); };
+		F3DSelect3(t1 : Transform<?>, t2 : Transform<??>, t3 : Transform<???>, fn : (?, ??, ???) -> F3DObject) -> F3DObject { F3DMutable(fselect3(t1, t2, t3, fn)); };
 
 		F3DVisible(object : F3DObject, visible : Transform<bool>);
 		F3DAlpha(object : F3DObject, alpha : Transform<double>);
@@ -123,6 +127,8 @@ export {
 				F3DMaterialOpacity(material : F3DMaterial, opacity : Transform<double>);
 				F3DMaterialVisible(material : F3DMaterial, visible : Transform<bool>);
 				F3DMaterialAlpha(material : F3DMaterial, alpha : Transform<double>) -> F3DMaterialOpacity { F3DMaterialOpacity(material, alpha) };
+
+		F3DEmpty();
 }
 
 handled3DMouseDown : ref bool = ref false;
@@ -364,6 +370,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 
 render3dform(object : F3DObject, stage : native, transformControlsEnabled : Transform<bool>, onLoad : (native) -> [() -> void]) -> [() -> void] {
 	switch (object : F3DObject) {
+		F3DEmpty() : [];
 		F3DScene(objects) : {
 			scene = make3DScene();
 
@@ -689,7 +696,7 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 			renderF3DCamera(object, onLoad);
 		}
 		F3DMesh(geometry, materials, parameters) : {
-			materialDisposers = map(materials, renderF3DMaterial);
+			materialDisposers = map(materials, \m -> renderF3DMaterial(m, stage));
 
 			concat(
 				map(materialDisposers, \m -> m.disposers) |> concatA,
@@ -990,7 +997,7 @@ renderF3DGeometry(geometry : F3DGeometry) -> native {
 
 F3DRenderResult(clip : native, disposers : [() -> void]);
 
-renderF3DMaterial(material : F3DMaterial) -> F3DRenderResult {
+renderF3DMaterial(material : F3DMaterial, stage : native) -> F3DRenderResult {
 	switch (material : F3DMaterial) {
 		F3DMeshBasicMaterial(color, parameters) : {
 			F3DRenderResult(
@@ -1011,44 +1018,53 @@ renderF3DMaterial(material : F3DMaterial) -> F3DRenderResult {
 			);
 		}
 		F3DShaderMaterial(uniforms, vertexShader, fragmentShader, parameters) : {
+			m = make3DShaderMaterial(stage, uniforms, vertexShader, fragmentShader, map(parameters, \v -> [v.key, v.value]));
+
 			F3DRenderResult(
-				make3DShaderMaterial(uniforms, vertexShader, fragmentShader, map(parameters, \v -> [v.key, v.value])),
-				[]
+				m,
+				[
+					addDrawFrameEventListener(\ts -> {
+						set3DShaderMaterialUniformValue(m, "iTime", d2s(ts / 1000.0));
+					}),
+					addEventListener(getStage(), "resize", \ -> {
+						set3DShaderMaterialUniformValue(m, "iResolution", "new THREE.Vector2(" + d2s(getClipWidth(stage)) + ", " + d2s(getClipHeight(stage)) + ")");
+					})
+				]
 			);
 		}
 		F3DNativeMaterials(innerMaterials) : {
 			F3DRenderResult(innerMaterials, []);
 		}
 		F3DMaterialTexture(innerMaterial, texture) : {
-			m = renderF3DMaterial(innerMaterial);
+			m = renderF3DMaterial(innerMaterial, stage);
 			t = renderF3DTexture(texture);
 			set3DMaterialMap(m.clip, t.clip);
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
 		}
 		F3DMaterialAlphaTexture(innerMaterial, texture) : {
-			m = renderF3DMaterial(innerMaterial);
+			m = renderF3DMaterial(innerMaterial, stage);
 			t = renderF3DTexture(texture);
 			set3DMaterialAlphaMap(m.clip, t.clip);
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
 		}
 		F3DMaterialDisplacementTexture(innerMaterial, texture, scale, bias) : {
-			m = renderF3DMaterial(innerMaterial);
+			m = renderF3DMaterial(innerMaterial, stage);
 			t = renderF3DTexture(texture);
 			set3DMaterialDisplacementMap(m.clip, t.clip, fgetValue(scale), fgetValue(bias));
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
 		}
 		F3DMaterialBumpTexture(innerMaterial, texture, scale) : {
-			m = renderF3DMaterial(innerMaterial);
+			m = renderF3DMaterial(innerMaterial, stage);
 			t = renderF3DTexture(texture);
 			set3DMaterialBumpMap(m.clip, t.clip, fgetValue(scale));
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
 		}
 		F3DMaterialOpacity(innerMaterial, opacity) : {
-			m = renderF3DMaterial(innerMaterial);
+			m = renderF3DMaterial(innerMaterial, stage);
 
 			F3DRenderResult(
 				m.clip,
@@ -1059,7 +1075,7 @@ renderF3DMaterial(material : F3DMaterial) -> F3DRenderResult {
 			);
 		}
 		F3DMaterialVisible(innerMaterial, visible) : {
-			m = renderF3DMaterial(innerMaterial);
+			m = renderF3DMaterial(innerMaterial, stage);
 
 			F3DRenderResult(
 				m.clip,

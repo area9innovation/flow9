@@ -178,7 +178,6 @@ class RenderSupportJSPixi {
 		untyped PIXI.ticker.shared.autoStart = false;
 		untyped PIXI.ticker.shared.stop();
 		untyped PIXI.ticker.shared.destroy();
-		untyped PIXI.ticker = null;
 	}
 
 	private static function createPixiRenderer() {
@@ -626,7 +625,7 @@ class RenderSupportJSPixi {
 			}
 		};
 
-		if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
 			Browser.document.body.onpointerdown = onpointerdown;
 			Browser.document.body.onpointerup = onpointerup;
 			Browser.document.body.onpointermove = onpointermove;
@@ -1483,6 +1482,14 @@ class RenderSupportJSPixi {
 
 	public static function setClipHeight(clip : NativeWidgetClip, height : Float) : Void {
 		clip.setHeight(height);
+	}
+
+	public static function getClipWidth(clip : NativeWidgetClip) : Float {
+		return clip.getWidth();
+	}
+
+	public static function getClipHeight(clip : NativeWidgetClip) : Float {
+		return clip.getHeight();
 	}
 
 	public static function setClipResolution(clip : TextClip, resolution : Float) : Void {
@@ -2450,11 +2457,11 @@ class RenderSupportJSPixi {
 				const sliceSize = 512;
 				const byteCharacters = atob(base64);
 
-				for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+				for (var offset = 0; offset < byteCharacters.length; offset += sliceSize) {
 					const slice = byteCharacters.slice(offset, offset + sliceSize);
 
 					const byteNumbers = new Array(slice.length);
-					for (let i = 0; i < slice.length; i++) {
+					for (var i = 0; i < slice.length; i++) {
 						byteNumbers[i] = slice.charCodeAt(i);
 					}
 

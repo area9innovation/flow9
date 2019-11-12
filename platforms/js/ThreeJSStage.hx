@@ -77,6 +77,8 @@ class ThreeJSStage extends Container {
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, logarithmicDepthBuffer : true});
 		}
 
+		this.renderer.setPixelRatio(RenderSupportJSPixi.backingStoreRatio);
+
 		untyped this.renderer.eventElement = Browser.document.createElement('div');
 
 		renderer.setSize(widgetWidth, widgetHeight);
@@ -271,15 +273,15 @@ class ThreeJSStage extends Container {
 		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth(), getHeight(), 0, 0, getWidth() * resolution, getHeight() * resolution);
 	}
 
-	private function getWidth() : Float {
+	public function getWidth() : Float {
 		return widgetWidth;
 	}
 
-	private function getHeight() : Float {
+	public function getHeight() : Float {
 		return widgetHeight;
 	}
 
-	private function setWidth(width : Float) : Void {
+	public function setWidth(width : Float) : Void {
 		if (widgetWidth != width) {
 			widgetWidth = width;
 			renderer.setSize(width, getHeight());
@@ -287,7 +289,7 @@ class ThreeJSStage extends Container {
 		}
 	}
 
-	private function setHeight(height : Float) : Void {
+	public function setHeight(height : Float) : Void {
 		if (widgetHeight != height) {
 			widgetHeight = height;
 			renderer.setSize(getWidth(), height);
