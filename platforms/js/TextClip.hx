@@ -127,11 +127,22 @@ class TextClip extends NativeWidgetClip {
 	public var isInteractive : Bool = false;
 
 	private var baselineWidget : Dynamic;
+	private var widthDelta : Float = 0.0;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 
 		style.resolution = 1.0;
+
+		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && RenderSupportJSPixi.IsRetinaDisplay) {
+			onAdded(function() {
+				RenderSupportJSPixi.on("resize", updateWidthDelta);
+
+				return function() {
+					RenderSupportJSPixi.off("resize", updateWidthDelta);
+				}
+			});
+		}
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -471,6 +482,39 @@ class TextClip extends NativeWidgetClip {
 			return "Black";
 	}
 
+	private function updateWidthDelta() {
+		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && RenderSupportJSPixi.IsRetinaDisplay) {
+			var zoomFactor = Platform.isSafari
+				? RenderSupportJSPixi.backingStoreRatio / Browser.window.devicePixelRatio
+				: Browser.window.devicePixelRatio / 2.0;
+
+			updateTextMetrics();
+
+			if (zoomFactor <= 1.0 && metrics != null && metrics.lines != null && metrics.lines.length > 0) {
+				var fontSize = style.fontSize;
+				var wordWrapWidth = style.wordWrapWidth;
+				var wd = getClipWidth();
+				var text = this.text;
+
+				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, 6.0));
+				style.wordWrapWidth = 2048.0;
+				this.text = metrics.lines[0];
+
+				metrics = null;
+				widthDelta = Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd) + 1.0;
+
+				style.fontSize = fontSize;
+				style.wordWrapWidth = wordWrapWidth;
+				this.text = text;
+
+				metrics = null;
+				updateTextMetrics();
+			} else {
+				widthDelta = 0.0;
+			}
+		}
+	}
+
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 		fontFamilies = fontWeight > 0 || fontSlope != ""
@@ -505,6 +549,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		invalidateMetrics();
+		updateWidthDelta();
 
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
@@ -702,6 +747,7 @@ class TextClip extends NativeWidgetClip {
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
+		updateWidthDelta();
 	}
 
 	public function setCropWords(cropWords : Bool) : Void {
@@ -1118,7 +1164,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return widgetWidth > 0 ? widgetWidth : getClipWidth();
+		return (widgetWidth > 0 ? widgetWidth : getClipWidth()) + widthDelta;
 	}
 
 	public override function getHeight() : Float {

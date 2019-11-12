@@ -859,6 +859,10 @@ class DisplayObjectHelper {
 			ty -= Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
 		}
 
+		if (untyped clip.widthDelta != null && clip.style != null && clip.style.align != null && clip.style.align == 'center') {
+			tx -= untyped clip.widthDelta / 2.0;
+		}
+
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
 

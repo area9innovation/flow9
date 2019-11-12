@@ -49,6 +49,7 @@ class RenderSupportJSPixi {
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
+	public static var IsRetinaDisplay : Bool = getIsRetinaDisplay();
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -983,6 +984,20 @@ class RenderSupportJSPixi {
 		for (child in PixiStage.children) {
 			child.invalidateTransform('InvalidateLocalStages');
 		}
+
+		render();
+	}
+
+	private static function getIsRetinaDisplay() : Bool {
+		if (Platform.isMacintosh && Browser.window.matchMedia != null) {
+			return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 192dpi), only screen and (min-resolution: 2dppx), only screen and (min-resolution: 75.6dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 2), only screen and (-o-min-device-pixel-ratio: 2/1), only screen and (min--moz-device-pixel-ratio: 2), only screen and (min-device-pixel-ratio: 2)').matches)) || (window.devicePixelRatio && window.devicePixelRatio >= 2)) && /(iPad|iPhone|iPod)/g.test(navigator.userAgent)") || getIsHighDensity();
+		} else {
+			return false;
+		}
+	}
+
+	private static function getIsHighDensity(){
+		return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 124dpi), only screen and (min-resolution: 1.3dppx), only screen and (min-resolution: 48.8dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 1.3), only screen and (-o-min-device-pixel-ratio: 2.6/2), only screen and (min--moz-device-pixel-ratio: 1.3), only screen and (min-device-pixel-ratio: 1.3)').matches)) || (window.devicePixelRatio && window.devicePixelRatio > 1.3))");
 	}
 
 	public static function getPixelsPerCm() : Float {
