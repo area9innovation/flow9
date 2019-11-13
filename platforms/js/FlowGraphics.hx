@@ -251,7 +251,7 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (width > 0 && height > 0) {
-			radius = Math.abs(radius);
+			radius = Math.abs(Math.min(radius, Math.min(width / 2.0, height / 2.0)));
 
 			if (radius > 0) {
 				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);

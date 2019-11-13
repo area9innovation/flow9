@@ -321,6 +321,7 @@ class TextClip extends NativeWidgetClip {
 
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
+		var alpha = getNativeWidgetAlpha();
 
 		if (isInput) {
 			nativeWidget.setAttribute("type", type);
@@ -352,6 +353,16 @@ class TextClip extends NativeWidgetClip {
 				case 'rtl' : 'rtl';
 				default : null;
 			}
+
+			if (Platform.isEdge || Platform.isIE) {
+				var slicedColor : Array<String> = style.fill.split(",");
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
+
+				nativeWidget.style.color = newColor;
+			} else {
+				nativeWidget.style.opacity = isFocused ? alpha : 0;
+				nativeWidget.style.color = style.fill;
+			}
 		} else {
 			var textContent = getContentGlyphs().modified;
 			nativeWidget.textContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
@@ -361,12 +372,9 @@ class TextClip extends NativeWidgetClip {
 				case 'rtl' : 'rtl';
 				default : null;
 			}
-		}
 
-		if ((!Platform.isIE && !Platform.isEdge) || !isInput) {
+			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
 			nativeWidget.style.color = style.fill;
-		} else {
-			nativeWidget.style.opacity = null;
 		}
 
 		nativeWidget.style.letterSpacing = RenderSupportJSPixi.RendererType != "html" || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
@@ -811,7 +819,7 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		invalidateInteractive();
 
-		if (Platform.isSafari && Platform.browserMajorVersion >= 13) {
+		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
 			nativeWidget.onpointermove = onMouseMove;
 			nativeWidget.onpointerdown = onMouseDown;
 			nativeWidget.onpointerup = onMouseUp;
@@ -965,6 +973,13 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
+		if (Platform.isEdge || Platform.isIE) {
+			var slicedColor : Array<String> = style.fill.split(",");
+			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
+
+			nativeWidget.style.color = newColor;
+		}
+
 		emit('focus');
 
 		if (parent != null) {
@@ -983,12 +998,21 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onBlur(e : Event) : Void {
-		if (RenderSupportJSPixi.Animating) {
+		if (untyped RenderSupportJSPixi.Animating || this.preventBlur) {
+			untyped this.preventBlur = false;
 			RenderSupportJSPixi.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
 			return;
 		}
 
 		isFocused = false;
+
+		if (Platform.isEdge || Platform.isIE) {
+			var slicedColor : Array<String> = style.fill.split(",");
+			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
+
+			nativeWidget.style.color = newColor;
+		}
+
 		emit('blur');
 
 		if (nativeWidget == null || parent == null) {

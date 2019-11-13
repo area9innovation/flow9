@@ -62,6 +62,30 @@ class Object3DHelper {
 		}
 	}
 
+	public static function emit(parent : Object3D, event : String) : Void {
+		parent.dispatchEvent({ type : event });
+	}
+
+	public static function on(parent : Object3D, event : String, fn : Void -> Void) : Void {
+		parent.addEventListener(event, untyped fn);
+	}
+
+	public static function off(parent : Object3D, event : String, fn : Void -> Void) : Void {
+		parent.removeEventListener(event, untyped fn);
+	}
+
+	public static function once(parent : Object3D, event : String, fn : Void -> Void) : Void {
+		var disp : Void -> Void = null;
+		disp = function() {
+			off(parent, event, fn);
+			off(parent, event, disp);
+		};
+
+		on(parent, event, fn);
+		on(parent, event, disp);
+	}
+
+
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
 

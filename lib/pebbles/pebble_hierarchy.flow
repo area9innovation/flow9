@@ -36,9 +36,11 @@ export {
 		style : [PebbledHierarchyBodyStyle]
 	) -> Material;
 
-	PebbledHierarchyBodyStyle ::= PebbledHierarchyBodyAdditionalChips, PebbledHierarchyBodyErrorView;
+	PebbledHierarchyBodyStyle ::= PebbledHierarchyBodyAdditionalChips, PebbledHierarchyBodyErrorView, PebbledHierarchyBodyHideChips;
 		PebbledHierarchyBodyAdditionalChips(chips : Transform<[Material]>);
 		PebbledHierarchyBodyErrorView(fn : (itemName : string, itemId : string) -> Material);
+		// useful when hierarchy view does not depend on chip filtration and uses visual elements like breadcrumbs
+		PebbledHierarchyBodyHideChips();
 
 	// Display view corresponding to selected item preserving pebble parameters.
 	// For example: open `organizations` table
@@ -98,13 +100,14 @@ makePebbledHierarchyItem(name : string, id2label : (int) -> string, children : [
 		name,
 		makePebbledHierarchyParameterName(name),
 		id2label,
-		children,
+		children
 	)
 }
 
 MPebbledHierarchyBody(controller : PebbleController, items : [PebbledHierarchyItem], content : (Tree<string, int>) -> Material, style : [PebbledHierarchyBodyStyle]) -> Material {
 	allItems = getAllPebbledHierarchyItems(items);
 	valuesBs = map(allItems, \__ -> make(""));
+	hideChips = containsStruct(style, PebbledHierarchyBodyHideChips());
 
 	MLinkPebbleParameters(
 		controller,
@@ -112,15 +115,17 @@ MPebbledHierarchyBody(controller : PebbleController, items : [PebbledHierarchyIt
 			PebbleStringLink(item.parameter, valuesBs[i], nop1, RecordURLRestoreOrChangeParameters([]))
 		}),
 		MSelect(fmerge(valuesBs), \values -> {
-			hdata = collectPebbledHierarchyData2(allItems, values);
+			hdata = collectPebbledHierarchyData2(allItems, values, false);
 			switch(hdata) {
 				PebbledHierarchyItemsData(datas): {
 					valuesMap = fold(datas, makeTree(), \acc, data -> {
 						setTree(acc, data.item.parameter, s2i(data.value))
 					});
-
+					chips = if (hideChips) MEmpty() else {
+						buildPebbledHierarchyChips(controller, datas, style);
+					}
 					MLines([
-						buildPebbledHierarchyChips(controller, datas, style),
+						chips,
 						content(valuesMap)
 					])
 				}
@@ -140,7 +145,7 @@ collectPebbledHierarchyData(controller : PebbleController, items : [PebbledHiera
 	allItems = getAllPebbledHierarchyItems(items);
 	values = collectPebbledHierarchyItemsValues(controller, allItems);
 
-	collectPebbledHierarchyData2(allItems, values);
+	collectPebbledHierarchyData2(allItems, values, true);
 }
 
 collectPebbledHierarchyItemsValues(controller : PebbleController, items : [PebbledHierarchyItem]) -> [string] {
@@ -151,7 +156,7 @@ collectPebbledHierarchyItemsValues(controller : PebbleController, items : [Pebbl
 	})
 }
 	
-collectPebbledHierarchyData2(items : [PebbledHierarchyItem], values : [string]) -> PebbledHierarchyData {
+collectPebbledHierarchyData2(items : [PebbledHierarchyItem], values : [string], includeEmpty : bool) -> PebbledHierarchyData {
 	foldi(items, PebbledHierarchyItemsData([]), \i, acc, item -> {
 		switch(acc) {
 			PebbledHierarchyItemsData(datas): {
@@ -166,6 +171,10 @@ collectPebbledHierarchyData2(items : [PebbledHierarchyItem], values : [string]) 
 					} else {
 						PebbledHierarchyError(item.parameter, value);
 					}
+				} else if (includeEmpty) {
+					PebbledHierarchyItemsData(
+						arrayPush(datas, PebbledHierarchyItemData(item, "", ""))
+					)
 				} else {
 					acc
 				}
@@ -210,7 +219,10 @@ setViewForPebbledHierarchyItemParametersInner(
 	pebbleParameters = switch(hdata) {
 		PebbledHierarchyItemsData(datas): {
 			concat(
-				map(datas, \data -> KeyValue(data.item.parameter, data.value)),
+				filter(
+					uniq(map(datas, \data -> KeyValue(data.item.parameter, data.value))),
+					\dataParam -> !exists(parameters, \p -> p.key == dataParam.key)
+				),
 				parameters
 			)
 		}
@@ -219,10 +231,14 @@ setViewForPebbledHierarchyItemParametersInner(
 			[]
 		}
 	};
+	pebble = makeSimplePebble3(itemName, pebbleParameters);
 
-	restoreLastPebble(
-		controller, 
-		makeSimplePebble3(itemName, uniq(pebbleParameters))
+	setViewFromPebble(
+		controller,
+		setLastPathPartParameters(
+			findLastPebbleInStack(controller, lastElement(pebble.path, makeEmptyPathPart()), pebble),
+			pebbleParameters
+		)
 	)
 }
 

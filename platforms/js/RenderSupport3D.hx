@@ -4,6 +4,7 @@ import js.three.Scene;
 import js.three.Fog;
 
 import js.three.Color;
+import js.three.Vector2;
 import js.three.Vector3;
 import js.three.Euler;
 import js.three.Quaternion;
@@ -56,6 +57,7 @@ import js.three.Clock;
 
 using DisplayObjectHelper;
 using Object3DHelper;
+using Texture3DHelper;
 
 class RenderSupport3D {
 	public static function load3DLibraries(cb : Void -> Void) : Void {
@@ -342,6 +344,7 @@ class RenderSupport3D {
 			}
 
 			texture.invalidateTextureStage();
+			texture.emit("loaded");
 
 			onLoad(texture);
 		});
@@ -399,6 +402,26 @@ class RenderSupport3D {
 			untyped material.map = map;
 			untyped material.transparent = true;
 
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.map = {
+					type : 't',
+					value : map
+				}
+
+				untyped material.uniforms.mapResolution = {
+					type : 'v2',
+					value : new Vector2(0.0, 0.0)
+				}
+
+				if (map.image == null) {
+					map.once("loaded", function() {
+						untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+					});
+				} else {
+					untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+				}
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
@@ -408,6 +431,26 @@ class RenderSupport3D {
 			untyped alphaMap.parent = material;
 			untyped material.alphaMap = alphaMap;
 			untyped material.transparent = true;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.alphaMap = {
+					type : 't',
+					value : alphaMap
+				}
+
+				untyped material.uniforms.alphaMapResolution = {
+					type : 'v2',
+					value : new Vector2(0.0, 0.0)
+				}
+
+				if (alphaMap.image == null) {
+					alphaMap.once("loaded", function() {
+						untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+					});
+				} else {
+					untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+				}
+			}
 
 			material.invalidateMaterialStage();
 		}
@@ -439,6 +482,10 @@ class RenderSupport3D {
 			untyped material.opacity = opacity;
 			untyped material.transparent = true;
 
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iOpacity.value = opacity;
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
@@ -448,6 +495,10 @@ class RenderSupport3D {
 			material.invalidateMaterialStage();
 
 			untyped material.visible = visible;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iVisible.value = visible;
+			}
 
 			material.invalidateMaterialStage();
 		}
@@ -1458,26 +1509,69 @@ class RenderSupport3D {
 		return material;
 	}
 
-	public static function make3DShaderMaterial(uniforms : String, vertexShader : String, fragmentShader : String) : Material {
+	public static function make3DShaderMaterial(stage : ThreeJSStage, uniforms : String, vertexShader : String, fragmentShader : String, parameters : Array<Array<String>>) : Material {
+		var material : Dynamic = null;
+		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
+
+		uniformsObject.iResolution = {
+			type : 'v2',
+			value : new Vector2(stage.getWidth(), stage.getHeight())
+		};
+
+		uniformsObject.iAspectRatio = {
+			type : 'f',
+			value : stage.getHeight() / stage.getWidth()
+		};
+
+		uniformsObject.iTime = {
+			type : 'f',
+			value : Browser.window.performance.now() / 1000.0
+		};
+
+		uniformsObject.iOpacity = {
+			type : 'f',
+			value : 1.0
+		};
+
+		uniformsObject.iVisible = {
+			type : 'f',
+			value : true
+		};
+
 		if (vertexShader != "") {
 			if (fragmentShader != "") {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 					fragmentShader: fragmentShader
 				});
 			} else {
-				return new ShaderMaterial(untyped {
-					uniforms: haxe.Json.parse(uniforms),
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 				});
 			}
 		} else {
-			return new ShaderMaterial(untyped {
-				uniforms: haxe.Json.parse(uniforms),
+			material = new ShaderMaterial(untyped {
+				uniforms: uniformsObject,
 				fragmentShader: fragmentShader
 			});
 		}
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
+	}
+
+
+	public static function set3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String, value : String) : Void {
+		untyped material.uniforms[uniform].value = __js__("eval(value)");
+	}
+
+	public static function get3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String) : String {
+		return untyped material.uniforms[uniform].value.toString();
 	}
 
 
