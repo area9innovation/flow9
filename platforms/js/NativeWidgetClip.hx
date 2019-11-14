@@ -77,12 +77,6 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function setFocus(focus : Bool) : Bool {
 		if (nativeWidget != null) {
-			if (nativeWidget.parentNode == null) {
-				RenderSupportJSPixi.once("drawframe", function() { setFocus(focus); });
-
-				return true;
-			}
-
 			if (focus && nativeWidget.focus != null && !getFocus()) {
 				nativeWidget.focus();
 
