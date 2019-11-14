@@ -1178,7 +1178,7 @@ class TextClip extends NativeWidgetClip {
 
 	private function getClipHeight() : Float {
 		updateTextMetrics();
-		return metrics != null ? untyped metrics.height : 0;
+		return metrics != null ? untyped metrics.height - interlineSpacing : 0;
 	}
 
 	public function getContent() : String {
