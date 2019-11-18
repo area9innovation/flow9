@@ -326,11 +326,15 @@ class RenderSupportJSPixi {
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 	}
 
+	private static inline function isPortaitOrientation() {
+		return Browser.window.matchMedia("(orientation: portrait)").matches || Browser.window.orientation == 0;
+	}
+
 	private static inline function calculateMobileTopHeight() {
 		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 
 		// Calculate top height only once for each orientation
-		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+		if (isPortaitOrientation()) {
 			if (WindowTopHeightPortrait == -1)
 				WindowTopHeightPortrait = topHeight;
 		} else {
@@ -390,7 +394,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function getMobileTopHeight() {
-		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+		if (isPortaitOrientation()) {
 			return WindowTopHeightPortrait;
 		} else {
 			return WindowTopHeightLandscape;
@@ -469,7 +473,7 @@ class RenderSupportJSPixi {
 
 	private static inline function getScreenSize() {
 		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
-			var is_portrait = Browser.window.matchMedia("(orientation: portrait)").matches;
+			var is_portrait = isPortaitOrientation();
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
 				{ height : Browser.window.screen.width, width : Browser.window.screen.height};
