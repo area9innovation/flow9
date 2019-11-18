@@ -876,7 +876,18 @@ class RenderSupportJSPixi {
 				var visibleAreaHeight = if (Platform.isIOS) Browser.window.innerHeight / 4 else Browser.window.innerHeight;
 				var rect = focused_node.getBoundingClientRect();
 				if (rect.bottom > visibleAreaHeight) { // Overlaped by screen keyboard
-					Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
+					if (Platform.isIOS) {
+						Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
+					} else {
+						var mainStage = PixiStage.children[0];
+						mainStage.y = visibleAreaHeight - rect.bottom;
+						var onblur : Dynamic;
+						onblur = function() {
+							mainStage.y = 0;
+							focused_node.removeEventListener("blur", onblur);
+						};
+						focused_node.addEventListener("blur", onblur);
+					}
 				}
 			}
 		}
