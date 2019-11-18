@@ -71,7 +71,7 @@ void FlowServer::slotClearIncremental() {
 	//QTextStream(stdout) << "DELETING INCREMENTALS FROM: " << objcDir << "\n";
 	dir.setNameFilters(QStringList() << QLatin1String("*.*"));
 	dir.setFilter(QDir::Files);
-	foreach (QString dirFile, dir.entryList()) {
+	for (QString dirFile : dir.entryList()) {
 		dir.remove(dirFile);
 	}
 }

@@ -486,7 +486,7 @@ THREE.OrbitControls = function ( object, domElement, eventElement ) {
 		rotateEnd.set( event.pageX, event.pageY );
 
 		rotateDelta.subVectors( rotateEnd, rotateStart ).multiplyScalar(
-			scope.rotateSpeed *
+			scope.rotateSpeed * window.devicePixelRatio *
 				(scope.maxDistance != Infinity ?
 				Math.sqrt(Math.max(scope.object.position.distanceTo(panOffset) - scope.minDistance, 1.0)) * 10.0 / (scope.maxDistance - scope.minDistance) :
 				0.0)

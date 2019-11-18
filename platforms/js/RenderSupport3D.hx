@@ -45,6 +45,7 @@ import js.three.SpotLight;
 import js.three.AmbientLight;
 
 import js.three.GridHelper;
+import js.three.VertexNormalsHelper;
 import js.three.PointLightHelper;
 import js.three.SpotLightHelper;
 
@@ -550,6 +551,9 @@ class RenderSupport3D {
 		return new GridHelper(size, divisions, new Color(colorCenterLine), new Color(colorGrid));
 	}
 
+	public static function make3DVertexNormalsHelper(object : Object3D, size : Float, color : Int, lineWidth : Float) : Object3D {
+		return new VertexNormalsHelper(object, size, color, lineWidth);
+	}
 
 	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, parameters : Array<Array<String>>) : Void {
 		stage.setCamera(camera, parameters);
