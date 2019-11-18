@@ -1227,8 +1227,6 @@ class RenderSupport3D {
 
 
 	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
-		DisplayObjectHelper.log(object.parent);
-
 		RenderSupportJSPixi.once("drawframe", function() {
 			object.lookAt(new Vector3(x, y, z));
 			object.invalidateStage();
@@ -1476,13 +1474,15 @@ class RenderSupport3D {
 	}
 
 	public static function make3DCylinderGeometry(radiusTop : Float, radiusBottom : Float, height : Float, radialSegments : Int, heightSegments : Int, openEnded : Bool, thetaStart : Float, thetaLength : Float) : Geometry {
-		var g = new CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
-		g.applyMatrix(new Matrix4().makeRotationX(-Math.PI/2));
-		return g;
+		return new CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
 	}
 
 	public static function make3DSphereGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : Geometry {
 		return new SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+	}
+
+	public static function set3DGeometryMatrix(geometry : Geometry, matrix : Array<Float>) : Void {
+		geometry.applyMatrix(new Matrix4().fromArray(matrix));
 	}
 
 	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : BufferGeometry {

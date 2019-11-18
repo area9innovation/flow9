@@ -559,6 +559,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DGeometryMatrix(Object geometry, Object[] matrix) {
+		return null;
+	}
+
 
 	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
 		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength) {
