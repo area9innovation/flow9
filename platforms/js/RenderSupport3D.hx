@@ -45,6 +45,7 @@ import js.three.SpotLight;
 import js.three.AmbientLight;
 
 import js.three.GridHelper;
+import js.three.VertexNormalsHelper;
 import js.three.PointLightHelper;
 import js.three.SpotLightHelper;
 
@@ -482,6 +483,10 @@ class RenderSupport3D {
 			untyped material.opacity = opacity;
 			untyped material.transparent = true;
 
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iOpacity.value = opacity;
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
@@ -491,6 +496,10 @@ class RenderSupport3D {
 			material.invalidateMaterialStage();
 
 			untyped material.visible = visible;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iVisible.value = visible;
+			}
 
 			material.invalidateMaterialStage();
 		}
@@ -542,6 +551,9 @@ class RenderSupport3D {
 		return new GridHelper(size, divisions, new Color(colorCenterLine), new Color(colorGrid));
 	}
 
+	public static function make3DVertexNormalsHelper(object : Object3D, size : Float, color : Int, lineWidth : Float) : Object3D {
+		return new VertexNormalsHelper(object, size, color, lineWidth);
+	}
 
 	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, parameters : Array<Array<String>>) : Void {
 		stage.setCamera(camera, parameters);
@@ -1505,14 +1517,29 @@ class RenderSupport3D {
 		var material : Dynamic = null;
 		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
 
-		uniformsObject.resolution = {
+		uniformsObject.iResolution = {
 			type : 'v2',
 			value : new Vector2(stage.getWidth(), stage.getHeight())
 		};
 
-		uniformsObject.time = {
+		uniformsObject.iAspectRatio = {
 			type : 'f',
-			value : Browser.window.performance.now()
+			value : stage.getHeight() / stage.getWidth()
+		};
+
+		uniformsObject.iTime = {
+			type : 'f',
+			value : Browser.window.performance.now() / 1000.0
+		};
+
+		uniformsObject.iOpacity = {
+			type : 'f',
+			value : 1.0
+		};
+
+		uniformsObject.iVisible = {
+			type : 'f',
+			value : true
 		};
 
 		if (vertexShader != "") {

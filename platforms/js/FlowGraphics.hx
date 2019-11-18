@@ -251,7 +251,7 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (width > 0 && height > 0) {
-			radius = Math.abs(radius);
+			radius = Math.abs(Math.min(radius, Math.min(width / 2.0, height / 2.0)));
 
 			if (radius > 0) {
 				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
@@ -431,8 +431,8 @@ class FlowGraphics extends Graphics {
 
 				svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
 				svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-				svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
-				svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
+				svg.style.left = '${-filterPadding - lineWidth}px';
+				svg.style.top = '${-filterPadding - lineWidth}px';
 				svg.style.position = 'absolute';
 
 				if (graphicsData.length == 1) {
@@ -504,7 +504,7 @@ class FlowGraphics extends Graphics {
 							svg.appendChild(element);
 						}
 
-						element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
+						element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding + lineWidth} ${filterPadding + lineWidth})');
 
 						if (untyped data.fillGradient != null) {
 							element.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");

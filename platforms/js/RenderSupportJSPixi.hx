@@ -49,6 +49,7 @@ class RenderSupportJSPixi {
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
+	public static var IsRetinaDisplay : Bool = getIsRetinaDisplay();
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -325,11 +326,15 @@ class RenderSupportJSPixi {
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 	}
 
+	private static inline function isPortaitOrientation() {
+		return Browser.window.matchMedia("(orientation: portrait)").matches || Browser.window.orientation == 0;
+	}
+
 	private static inline function calculateMobileTopHeight() {
 		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 
 		// Calculate top height only once for each orientation
-		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+		if (isPortaitOrientation()) {
 			if (WindowTopHeightPortrait == -1)
 				WindowTopHeightPortrait = topHeight;
 		} else {
@@ -389,7 +394,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function getMobileTopHeight() {
-		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+		if (isPortaitOrientation()) {
 			return WindowTopHeightPortrait;
 		} else {
 			return WindowTopHeightLandscape;
@@ -468,7 +473,7 @@ class RenderSupportJSPixi {
 
 	private static inline function getScreenSize() {
 		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
-			var is_portrait = Browser.window.matchMedia("(orientation: portrait)").matches;
+			var is_portrait = isPortaitOrientation();
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
 				{ height : Browser.window.screen.width, width : Browser.window.screen.height};
@@ -871,7 +876,18 @@ class RenderSupportJSPixi {
 				var visibleAreaHeight = if (Platform.isIOS) Browser.window.innerHeight / 4 else Browser.window.innerHeight;
 				var rect = focused_node.getBoundingClientRect();
 				if (rect.bottom > visibleAreaHeight) { // Overlaped by screen keyboard
-					Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
+					if (Platform.isIOS) {
+						Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
+					} else {
+						var mainStage = PixiStage.children[0];
+						mainStage.y = visibleAreaHeight - rect.bottom;
+						var onblur : Dynamic;
+						onblur = function() {
+							mainStage.y = 0;
+							focused_node.removeEventListener("blur", onblur);
+						};
+						focused_node.addEventListener("blur", onblur);
+					}
 				}
 			}
 		}
@@ -960,8 +976,16 @@ class RenderSupportJSPixi {
 		requestAnimationFrame();
 	}
 
-	public static inline function render() {
+	public static inline function render() : Void {
 		animate(Browser.window.performance.now());
+	}
+
+	public static function forceRender() : Void {
+		for (child in PixiStage.getClipChildren()) {
+			child.invalidateTransform("forceRender", true);
+		}
+		
+		render();
 	}
 
 	public static function addPasteEventListener(fn : Array<Dynamic> -> Void) : Void -> Void {
@@ -981,8 +1005,22 @@ class RenderSupportJSPixi {
 
 	public static function InvalidateLocalStages() {
 		for (child in PixiStage.children) {
-			child.invalidateTransform('InvalidateLocalStages');
+			child.invalidateTransform('InvalidateLocalStages', true);
 		}
+
+		render();
+	}
+
+	private static function getIsRetinaDisplay() : Bool {
+		if (Platform.isMacintosh && Browser.window.matchMedia != null) {
+			return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 192dpi), only screen and (min-resolution: 2dppx), only screen and (min-resolution: 75.6dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 2), only screen and (-o-min-device-pixel-ratio: 2/1), only screen and (min--moz-device-pixel-ratio: 2), only screen and (min-device-pixel-ratio: 2)').matches)) || (window.devicePixelRatio && window.devicePixelRatio >= 2)) && /(iPad|iPhone|iPod)/g.test(navigator.userAgent)") || getIsHighDensity();
+		} else {
+			return false;
+		}
+	}
+
+	private static function getIsHighDensity(){
+		return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 124dpi), only screen and (min-resolution: 1.3dppx), only screen and (min-resolution: 48.8dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 1.3), only screen and (-o-min-device-pixel-ratio: 2.6/2), only screen and (min--moz-device-pixel-ratio: 1.3), only screen and (min-device-pixel-ratio: 1.3)').matches)) || (window.devicePixelRatio && window.devicePixelRatio > 1.3))");
 	}
 
 	public static function getPixelsPerCm() : Float {

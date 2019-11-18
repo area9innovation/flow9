@@ -124,6 +124,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DVertexNormalsHelper(Object object, Double size, Integer color, Double lineWidth) {
+		return null;
+	}
+
 
 	public Object set3DCamera(Object stage, Object camera, Object[] parameters) {
 		return null;
