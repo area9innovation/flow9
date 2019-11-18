@@ -64,6 +64,7 @@ class Object3DHelper {
 
 	public static function emit(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
+		parent.dispatchEvent({ type : "change" });
 	}
 
 	public static function on(parent : Object3D, event : String, fn : Void -> Void) : Void {
@@ -88,6 +89,7 @@ class Object3DHelper {
 
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
+		parent.dispatchEvent({ type : "change" });
 
 		var children : Array<Dynamic> = untyped parent.children;
 		if (children != null) {
@@ -99,6 +101,7 @@ class Object3DHelper {
 
 	public static function emitEvent(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
+		parent.dispatchEvent({ type : "change" });
 
 		if (parent.parent != null) {
 			emitEvent(parent.parent, event);

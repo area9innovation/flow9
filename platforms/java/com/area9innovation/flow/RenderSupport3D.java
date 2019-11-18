@@ -411,6 +411,14 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DObjectLocalMatrix(Object object, Object[] matrix) {
+		return null;
+	}
+
+	public Object set3DObjectWorldMatrix(Object object, Object[] matrix) {
+		return null;
+	}
+
 	public Object[] get3DObjectBoundingBox(Object object) {
 		return new Object[0];
 	}
@@ -425,6 +433,12 @@ public class RenderSupport3D extends NativeHost {
 		return no_op;
 	}
 	public Func0<Object> add3DObjectBoundingBoxListener(Object object, Func1<Object,Object[]> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectLocalMatrixListener(Object object, Func1<Object,Object[]> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectWorldMatrixListener(Object object, Func1<Object,Object[]> cb) {
 		return no_op;
 	}
 

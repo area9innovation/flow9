@@ -8,6 +8,7 @@ import js.three.Vector2;
 import js.three.Vector3;
 import js.three.Euler;
 import js.three.Quaternion;
+import js.three.Matrix4;
 
 import js.three.Object3D;
 import js.three.Mesh;
@@ -1226,14 +1227,37 @@ class RenderSupport3D {
 
 
 	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
-		object.lookAt(new Vector3(x, y, z));
+		DisplayObjectHelper.log(object.parent);
+
+		RenderSupportJSPixi.once("drawframe", function() {
+			object.lookAt(new Vector3(x, y, z));
+			object.invalidateStage();
+		});
+	}
+
+	public static function set3DObjectLocalMatrix(object : Object3D, matrix : Array<Float>) : Void {
+		object.matrix.fromArray(matrix);
 		object.invalidateStage();
 	}
+
+	public static function set3DObjectWorldMatrix(object : Object3D, matrix : Array<Float>) : Void {
+		object.matrixWorld.fromArray(matrix);
+		object.invalidateStage();
+	}
+
 
 
 	public static function get3DObjectBoundingBox(object : Object3D) : Array<Array<Float>> {
 		var box = object.getBoundingBox();
 		return [[box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]];
+	}
+
+	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
+		return object.matrix.toArray();
+	}
+
+	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
+		return object.matrixWorld.toArray();
 	}
 
 	public static function add3DObjectPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1278,6 +1302,28 @@ class RenderSupport3D {
 
 		object.addEventListener("box", fn);
 		return function() { object.removeEventListener("box", fn); };
+	}
+
+	public static function add3DObjectLocalMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectLocalMatrix(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectWorldMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectWorldMatrix(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 
@@ -1430,7 +1476,9 @@ class RenderSupport3D {
 	}
 
 	public static function make3DCylinderGeometry(radiusTop : Float, radiusBottom : Float, height : Float, radialSegments : Int, heightSegments : Int, openEnded : Bool, thetaStart : Float, thetaLength : Float) : Geometry {
-		return new CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+		var g = new CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+		g.applyMatrix(new Matrix4().makeRotationX(-Math.PI/2));
+		return g;
 	}
 
 	public static function make3DSphereGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : Geometry {
