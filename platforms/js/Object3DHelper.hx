@@ -38,6 +38,13 @@ class Object3DHelper {
 	public static inline function getBoundingBox(object : Object3D) : Box3 {
 		var completeBoundingBox = new Box3(); // create a new box which will contain the entire values
 
+		if (untyped object.geometry != null) {
+			untyped object.geometry.computeBoundingBox(); // compute the bounding box of the the meshes geometry
+			var box = untyped object.geometry.boundingBox.clone(); // clone the calculated bounding box, because we have to translate it
+			box.translate(object.position); // translate the geometries bounding box by the meshes position
+			completeBoundingBox.expandByPoint(box.max).expandByPoint(box.min); // add the max and min values to your completeBoundingBox
+		}
+
 		for (child in object.children) { // iterate through the children
 			if (untyped child.geometry != null) {
 				untyped child.geometry.computeBoundingBox(); // compute the bounding box of the the meshes geometry

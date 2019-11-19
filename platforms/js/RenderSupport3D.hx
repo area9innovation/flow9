@@ -1265,8 +1265,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("position", fn);
-		return function() { object.removeEventListener("position", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 	public static function add3DObjectRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1276,8 +1276,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("rotation", fn);
-		return function() { object.removeEventListener("rotation", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 	public static function add3DObjectScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1287,8 +1287,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("scale", fn);
-		return function() { object.removeEventListener("scale", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 	public static function add3DObjectBoundingBoxListener(object : Object3D, cb : (Array<Array<Float>>) -> Void) : Void -> Void {
@@ -1298,8 +1298,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("box", fn);
-		return function() { object.removeEventListener("box", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 	public static function add3DObjectLocalMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
