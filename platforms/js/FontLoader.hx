@@ -11,7 +11,7 @@ class FontLoader {
 				webfontconfig.active = onDone;
 				webfontconfig.inactive = onDone;
 				webfontconfig.loading = function() {
-					workaroundiOSWebFontLoading(webfontconfig);
+					workaroundWebFontLoading(webfontconfig);
 					Errors.print("Loading web fonts...");
 				};
 				WebFont.load(webfontconfig);
@@ -27,9 +27,7 @@ class FontLoader {
 	// On some iOS devices (especially old iPad)
 	// We have to append text with described google families to body
 	// Because browser starts load once it's used by the page
-	private static function workaroundiOSWebFontLoading(config : Dynamic) {
-		if (!Platform.isIOS) return;
-		
+	private static function workaroundWebFontLoading(config : Dynamic) {
 		var fontFields = ["google", "custom"];
 		var fontList = [];
 		for (i in 0...fontFields.length) {
