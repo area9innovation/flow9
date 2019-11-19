@@ -70,8 +70,8 @@ class FlowCanvas extends FlowContainer {
 				context.clearRect(
 					0,
 					0,
-					canvasWidth,
-					canvasHeight
+					canvasWidth * RenderSupportJSPixi.PixiRenderer.resolution,
+					canvasHeight * RenderSupportJSPixi.PixiRenderer.resolution
 				);
 
 				context.drawImage(
@@ -82,8 +82,8 @@ class FlowCanvas extends FlowContainer {
 					height,
 					0.0,
 					0.0,
-					canvasWidth,
-					canvasHeight
+					canvasWidth  * RenderSupportJSPixi.PixiRenderer.resolution,
+					canvasHeight * RenderSupportJSPixi.PixiRenderer.resolution
 				);
 
 				RenderSupportJSPixi.PixiRenderer.view = RenderSupportJSPixi.PixiView;

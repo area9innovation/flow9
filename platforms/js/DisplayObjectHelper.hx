@@ -867,10 +867,10 @@ class DisplayObjectHelper {
 			untyped clip.nativeWidgetBoundsChanged = false;
 
 			if (untyped clip.isCanvas) {
-				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0)}');
-				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0)}');
-				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0)}px';
-				nativeWidget.style.height = '${Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0)}px';
+				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a * RenderSupportJSPixi.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupportJSPixi.PixiRenderer.resolution), 0.0)}');
+				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * transform.d * RenderSupportJSPixi.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupportJSPixi.PixiRenderer.resolution), 0.0)}');
+				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a * RenderSupportJSPixi.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupportJSPixi.PixiRenderer.resolution), 0.0)}px';
+				nativeWidget.style.height = '${Math.ceil(localBounds.maxY * transform.d * RenderSupportJSPixi.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupportJSPixi.PixiRenderer.resolution), 0.0)}px';
 			} else if (untyped clip.alphaMask != null) {
 				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
@@ -907,11 +907,11 @@ class DisplayObjectHelper {
 		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
 
 		if (untyped clip.isCanvas) {
-			return;
+			nativeWidget.style.transform = 'matrix(${1.0 / RenderSupportJSPixi.PixiRenderer.resolution}, 0, 0, ${1.0 / RenderSupportJSPixi.PixiRenderer.resolution}, 0, 0)';
+		} else {
+			nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
+				'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
 		}
-
-		nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
-			'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
 	}
 
 	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
