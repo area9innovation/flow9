@@ -498,10 +498,14 @@ class TextClip extends NativeWidgetClip {
 
 				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, 6.0));
 				style.wordWrapWidth = 2048.0;
-				this.text = metrics.lines[0];
+				var lines : Array<Dynamic> = metrics.lines;
+				widthDelta = lines.length > 0 ? Math.NEGATIVE_INFINITY : 0.0;
 
-				metrics = null;
-				widthDelta = Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd) + 1.0;
+				for (line in lines) {
+					this.text = line;
+					metrics = null;
+					widthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd) + 1.0, widthDelta);
+				}
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;
