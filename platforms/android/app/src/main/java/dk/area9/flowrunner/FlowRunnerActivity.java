@@ -14,6 +14,11 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -111,6 +116,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
     private DialogFragmentManager dialogFragmentManager = null;
 
     private SoftKeyboardHeightListener softKeyboardHeightListener;
+
+    private SoftKeyboardSupport softKeyboardSupport;
 
     private void browseUrl(@NonNull final String url) {
         try {
@@ -398,6 +405,11 @@ public class FlowRunnerActivity extends FragmentActivity  {
                     wrapper.VirtualKeyboardHeightCallback((double)keyboardHeight);
                 }
         });
+
+        softKeyboardSupport = new SoftKeyboardSupport(this);
+        wrapper.setSoftKeyboardSupport(softKeyboardSupport);
+        mView.addView(softKeyboardSupport);
+
 
         Log.i(Utils.LOG_TAG, "Runner wrapper lib loaded");
     }

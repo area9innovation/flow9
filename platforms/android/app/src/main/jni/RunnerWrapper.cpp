@@ -255,8 +255,9 @@ static jfieldID c_ptr_field = NULL;
 	CALLBACK(cbSendMessageWSClient, "(Lorg/java_websocket/client/WebSocketClient;Ljava/lang/String;)Z") \
 	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V") \
 	CALLBACK(cbOpenFileDialog, "(I[Ljava/lang/String;I)V") \
-	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;")
-
+	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;") \
+	CALLBACK(cbShowSoftKeyboard, "()V") \
+	CALLBACK(cbHideSoftKeyboard, "()V")
 
 #define CALLBACK(id, type) static jmethodID id = NULL;
 CALLBACKS
@@ -908,6 +909,13 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverOpenFileDialogRe
     WRAPPER(getFSInterface()->deliverOpenFileDialogCallback(callbackRoot, filePaths));
 }
 
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverSoftKeyboardEvent
+        (JNIEnv *env, jobject obj, jlong ptr, jstring keyValue, jint keyCode)
+{
+    WRAPPER(getRenderer()->deliverSoftKeyboardEvent(keyValue, keyCode));
+}
+
 AndroidRunnerWrapper::AndroidRunnerWrapper(JNIEnv *env, jobject owner_obj)
     : env(env), owner(owner_obj),
       runner(), renderer(this), http(this), sound(this), localytics(this), purchase(this), notifications(this), store(&runner),
@@ -1219,6 +1227,10 @@ NativeFunction *AndroidRenderSupport::MakeNativeFunction(const char *name, int n
 
     TRY_USE_NATIVE_METHOD(AndroidRenderSupport, timer, 2);
 
+    TRY_USE_NATIVE_METHOD(AndroidRenderSupport, showSoftKeyboard, 0);
+    TRY_USE_NATIVE_METHOD(AndroidRenderSupport, hideSoftKeyboard, 0);
+    TRY_USE_NATIVE_METHOD(AndroidRenderSupport, subscribeToSoftKeyboardEvents, 1);
+
     return GLRenderSupport::MakeNativeFunction(name, num_args);
 }
 
@@ -1266,6 +1278,50 @@ void AndroidRenderSupport::deliverTimer(jint id)
 
         getFlowRunner()->EvalFunction(cb, 0);
         getFlowRunner()->NotifyHostEvent(HostEventTimer);
+    }
+}
+
+StackSlot AndroidRenderSupport::showSoftKeyboard(RUNNER_ARGS)
+{
+    JNIEnv *env = owner->env;
+    env->CallVoidMethod(owner->owner, cbShowSoftKeyboard);
+    owner->eatExceptions();
+    RETVOID;
+}
+
+StackSlot AndroidRenderSupport::hideSoftKeyboard(RUNNER_ARGS)
+{
+    JNIEnv *env = owner->env;
+    env->CallVoidMethod(owner->owner, cbHideSoftKeyboard);
+    owner->eatExceptions();
+    RETVOID;
+}
+
+StackSlot AndroidRenderSupport::subscribeToSoftKeyboardEvents(RUNNER_ARGS)
+{
+    int cb_root = RUNNER->RegisterRoot(RUNNER_ARG(0));
+    keyboardEventListenersRoots.push_back(cb_root);
+    return RUNNER->AllocateNativeClosure(removeSoftKeyboardEventListener, "subscribeToSoftKeyboardEvents$disposer", 0, &keyboardEventListenersRoots, 1, StackSlot::MakeInt(cb_root));
+}
+
+StackSlot AndroidRenderSupport::removeSoftKeyboardEventListener(RUNNER_ARGS, void * data)
+{
+    const StackSlot *slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 1);
+    int cb_root = slot[0].GetInt();
+    std::vector<int>* listeners = (std::vector<int>*)data;
+
+    listeners->erase(std::find(listeners->begin(), listeners->end(), cb_root));
+    RUNNER->ReleaseRoot(cb_root);
+    RETVOID;
+}
+
+void AndroidRenderSupport::deliverSoftKeyboardEvent(jstring keyValue, jint keyCode)
+{
+    RUNNER_VAR = owner->getRunner();
+    JNIEnv *env = owner->env;
+
+    for(int i = 0; i < keyboardEventListenersRoots.size(); i++) {
+        RUNNER->EvalFunction(RUNNER->LookupRoot(keyboardEventListenersRoots[i]), 7, RUNNER->AllocateString(jni2unicode(env, keyValue)), false, false, false, false, keyCode, StackSlot::MakeVoid());
     }
 }
 

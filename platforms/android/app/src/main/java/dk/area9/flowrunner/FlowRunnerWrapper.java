@@ -1759,4 +1759,24 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nDeliverOpenFileDialogResult(long ptr, int callbackRoot, String[] filePaths);
 
+
+    private SoftKeyboardSupport softKeyboardSupport = null;
+
+    public void setSoftKeyboardSupport(SoftKeyboardSupport softKeyboardSupport) {
+        this.softKeyboardSupport = softKeyboardSupport;
+    }
+
+    public synchronized void cbShowSoftKeyboard() {
+        softKeyboardSupport.showKeyboard();
+    }
+
+    public synchronized void cbHideSoftKeyboard() {
+        softKeyboardSupport.hideKeyboard();
+    }
+
+    public synchronized void deliverSoftKeyboardEvent(String keyValue, int keyCode) {
+        nDeliverSoftKeyboardEvent(cPtr(), keyValue, keyCode);
+    }
+
+    private native void nDeliverSoftKeyboardEvent(long ptr, String keyValue, int keyCode);
 }
