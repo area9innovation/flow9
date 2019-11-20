@@ -1,4 +1,6 @@
 import js.Browser;
+import js.html.Element;
+import js.html.CanvasElement;
 
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
@@ -962,7 +964,7 @@ class DisplayObjectHelper {
 						applyNativeWidgetBoxShadow(clip, filter);
 					} else {
 						var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
-						var nativeWidget : js.html.Element = untyped clip.nativeWidget;
+						var nativeWidget : Element = untyped clip.nativeWidget;
 
 						if (nativeWidget.children != null) {
 							for (childWidget in nativeWidget.children) {
@@ -978,7 +980,7 @@ class DisplayObjectHelper {
 						)';
 					}
 				} else if (untyped __instanceof__(filter, BlurFilter)) {
-					var nativeWidget : js.html.Element = untyped clip.nativeWidget;
+					var nativeWidget : Element = untyped clip.nativeWidget;
 					nativeWidget.style.filter = 'blur(${filter.blur}px)';
 				}
 			}
@@ -999,11 +1001,11 @@ class DisplayObjectHelper {
 		}
 
 		if (nativeWidget != null) {
-			var svgs : Array<js.html.Element> = untyped nativeWidget.getElementsByTagName("svg");
+			var svgs : Array<Element> = untyped nativeWidget.getElementsByTagName("svg");
 
 			if (svgs.length > 0) {
 				var svg = svgs[0];
-				var clipFilter : js.html.Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "filter");
+				var clipFilter : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "filter");
 
 				if (clipFilter != null && clipFilter.parentNode != null) {
 					clipFilter.parentNode.removeChild(clipFilter);
@@ -1204,10 +1206,10 @@ class DisplayObjectHelper {
 			nativeWidget.style.borderRadius = null;
 			removePlaceholderWidget(clip);
 
-			var svgs : Array<js.html.Element> = nativeWidget.getElementsByTagName("svg");
+			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
 			for (svg in svgs) {
-				var clipMask : js.html.Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+				var clipMask : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
 
 				if (clipMask != null && clipMask.parentNode != null) {
 					clipMask.parentNode.removeChild(clipMask);
@@ -1267,7 +1269,7 @@ class DisplayObjectHelper {
 					nativeWidget.style.overflow = null;
 					nativeWidget.style.borderRadius = null;
 
-					var svgs : Array<js.html.Element> = nativeWidget.getElementsByTagName("svg");
+					var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
 					if (untyped mask.parent.localTransformChanged) {
 						untyped mask.parent.transform.updateLocalTransform();
@@ -1275,7 +1277,7 @@ class DisplayObjectHelper {
 
 					if (Platform.isIE || svgs.length == 1) {
 						for (svg in svgs) {
-							var clipMask : js.html.Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+							var clipMask : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
 
 							if (clipMask != null && clipMask.parentNode != null) {
 								clipMask.parentNode.removeChild(clipMask);
@@ -1471,7 +1473,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function findNextNativeWidget(clip : DisplayObject, parent : DisplayObject) : js.html.Element {
+	public static function findNextNativeWidget(clip : DisplayObject, parent : DisplayObject) : Element {
 		if (clip.parent != null) {
 			var children = clip.parent.children;
 
@@ -1493,7 +1495,7 @@ class DisplayObjectHelper {
 		return null;
 	}
 
-	public static function findNativeWidgetChild(clip : DisplayObject, parent : DisplayObject) : js.html.Element {
+	public static function findNativeWidgetChild(clip : DisplayObject, parent : DisplayObject) : Element {
 		if (untyped isNativeWidget(clip) && clip.parentClip == parent && getParentNode(clip) == parent.nativeWidget) {
 			return untyped clip.nativeWidget;
 		} else if (!RenderSupportJSPixi.RenderContainers && RenderSupportJSPixi.RendererType == "html") {
@@ -1984,7 +1986,7 @@ class DisplayObjectHelper {
 	}
 
 
-	public static inline function addElementNS(parent : js.html.Element, tagName : String) : js.html.Element {
+	public static inline function addElementNS(parent : Element, tagName : String) : Element {
 		var el = parent.getElementsByTagName(tagName);
 
 		if (el.length > 0) {
@@ -1993,6 +1995,91 @@ class DisplayObjectHelper {
 			var element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
 			parent.appendChild(element);
 			return element;
+		}
+	}
+
+	public static inline function renderToCanvas(clip : DisplayObject, canvas : CanvasElement, ?context : Dynamic, ?transform : Matrix) : Void {
+		if (!clip.visible || clip.worldAlpha <= 0 || !clip.renderable)
+		{
+			return;
+		}
+
+		var tempView : Dynamic = null;
+		var tempRootContext : Dynamic = null;
+		var tempContext : Dynamic = null;
+		var tempRendererType : Dynamic = null;
+		var tempTransparent : Dynamic = null;
+		var tempRoundPixels : Dynamic = null;
+		var tempMaskWorldTransform : Dynamic = null;
+		var tempWorldTransform : Dynamic = null;
+
+		var children = getClipChildren(clip);
+
+		if (RenderSupportJSPixi.PixiRenderer.view != canvas) {
+			tempView = RenderSupportJSPixi.PixiRenderer.view;
+			tempRootContext = RenderSupportJSPixi.PixiRenderer.rootContext;
+			tempContext = RenderSupportJSPixi.PixiRenderer.context;
+			tempRendererType = RenderSupportJSPixi.RendererType;
+			tempTransparent = RenderSupportJSPixi.PixiRenderer.transparent;
+			tempRoundPixels = RenderSupportJSPixi.PixiRenderer.roundPixels;
+
+			RenderSupportJSPixi.PixiRenderer.view = canvas;
+			RenderSupportJSPixi.PixiRenderer.rootContext = context != null ? context : canvas.getContext('2d', { alpha : true });
+			RenderSupportJSPixi.PixiRenderer.context = context != null ? context : canvas.getContext('2d', { alpha : true });
+			RenderSupportJSPixi.PixiRenderer.transparent = true;
+			// RenderSupportJSPixi.PixiRenderer.roundPixels = true;
+
+			RenderSupportJSPixi.PixiRenderer.context.setTransform(1, 0, 0, 1, 0, 0);
+			RenderSupportJSPixi.PixiRenderer.context.globalAlpha = 1;
+			RenderSupportJSPixi.PixiRenderer.context.clearRect(0, 0, untyped clip.localBounds.maxX * RenderSupportJSPixi.PixiRenderer.resolution, untyped clip.localBounds.maxY * RenderSupportJSPixi.PixiRenderer.resolution);
+
+			RenderSupportJSPixi.RendererType = 'canvas';
+		}
+
+		if (clip.mask != null)
+		{
+			if (transform != null) {
+				untyped tempMaskWorldTransform = clip.mask.transform.worldTransform;
+				untyped clip.mask.transform.worldTransform = clip.mask.transform.worldTransform.clone().prepend(transform);
+			}
+
+			RenderSupportJSPixi.PixiRenderer.maskManager.pushMask(clip.mask);
+		}
+
+		if (children.length > 0) {
+			for (child in children) {
+				renderToCanvas(child, canvas, context, transform);
+			}
+		} else {
+			if (transform != null) {
+				untyped tempWorldTransform = clip.transform.worldTransform;
+				untyped clip.transform.worldTransform = clip.transform.worldTransform.clone().prepend(transform);
+			}
+
+			untyped clip.renderCanvas(RenderSupportJSPixi.PixiRenderer);
+
+			if (transform != null) {
+				untyped clip.transform.worldTransform = tempWorldTransform;
+			}
+		}
+
+		if (clip.mask != null)
+		{
+			RenderSupportJSPixi.PixiRenderer.maskManager.popMask(RenderSupportJSPixi.PixiRenderer);
+
+			if (transform != null) {
+				untyped clip.mask.transform.worldTransform = tempMaskWorldTransform;
+			}
+		}
+
+		if (tempView != null) {
+			RenderSupportJSPixi.PixiRenderer.view = tempView;
+			RenderSupportJSPixi.PixiRenderer.rootContext = tempRootContext;
+			RenderSupportJSPixi.PixiRenderer.context = tempContext;
+			RenderSupportJSPixi.PixiRenderer.transparent = tempTransparent;
+			RenderSupportJSPixi.PixiRenderer.roundPixels = tempRoundPixels;
+
+			RenderSupportJSPixi.RendererType = tempRendererType;
 		}
 	}
 }
