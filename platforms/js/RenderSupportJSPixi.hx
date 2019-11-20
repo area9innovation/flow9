@@ -199,6 +199,7 @@ class RenderSupportJSPixi {
 		if (RendererType == "html") {
 			PixiView = Browser.document.createElement('div');
 			PixiView.tabIndex = 1;
+			PixiView.style.background = "white";
 		} else if (PixiView != null && PixiView.tagName.toLowerCase() == 'div') {
 			PixiView = null;
 		}

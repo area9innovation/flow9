@@ -287,63 +287,63 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Double get3DObjectX(Object object) {
+	public Double get3DObjectLocalPositionX(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectY(Object object) {
+	public Double get3DObjectLocalPositionY(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectZ(Object object) {
+	public Double get3DObjectLocalPositionZ(Object object) {
 		return 0.0;
 	}
 
-	public Object set3DObjectX(Object object, Double x) {
+	public Object set3DObjectLocalPositionX(Object object, Double x) {
 		return null;
 	}
-	public Object set3DObjectY(Object object, Double y) {
+	public Object set3DObjectLocalPositionY(Object object, Double y) {
 		return null;
 	}
-	public Object set3DObjectZ(Object object, Double z) {
+	public Object set3DObjectLocalPositionZ(Object object, Double z) {
 		return null;
 	}
 
 	public Double get3DObjectRotationX(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectRotationY(Object object) {
+	public Double get3DObjectLocalRotationY(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectRotationZ(Object object) {
-		return 0.0;
-	}
-
-	public Object set3DObjectRotationX(Object object, Double x) {
-		return null;
-	}
-	public Object set3DObjectRotationY(Object object, Double y) {
-		return null;
-	}
-	public Object set3DObjectRotationZ(Object object, Double z) {
-		return null;
-	}
-
-	public Double get3DObjectScaleX(Object object) {
-		return 0.0;
-	}
-	public Double get3DObjectScaleY(Object object) {
-		return 0.0;
-	}
-	public Double get3DObjectScaleZ(Object object) {
+	public Double get3DObjectLocalRotationZ(Object object) {
 		return 0.0;
 	}
 
-	public Object set3DObjectScaleX(Object object, Double x) {
+	public Object set3DObjectLocalRotationX(Object object, Double x) {
 		return null;
 	}
-	public Object set3DObjectScaleY(Object object, Double y) {
+	public Object set3DObjectLocalRotationY(Object object, Double y) {
 		return null;
 	}
-	public Object set3DObjectScaleZ(Object object, Double z) {
+	public Object set3DObjectLocalRotationZ(Object object, Double z) {
+		return null;
+	}
+
+	public Double get3DObjectLocalScaleX(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectLocalScaleY(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectLocalScaleZ(Object object) {
+		return 0.0;
+	}
+
+	public Object set3DObjectLocalScaleX(Object object, Double x) {
+		return null;
+	}
+	public Object set3DObjectLocalScaleY(Object object, Double y) {
+		return null;
+	}
+	public Object set3DObjectLocalScaleZ(Object object, Double z) {
 		return null;
 	}
 
@@ -411,20 +411,37 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DObjectLocalMatrix(Object object, Object[] matrix) {
+		return null;
+	}
+
+	public Object set3DObjectWorldMatrix(Object object, Object[] matrix) {
+		return null;
+	}
+
 	public Object[] get3DObjectBoundingBox(Object object) {
 		return new Object[0];
 	}
 
-	public Func0<Object> add3DObjectPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
+	public Func0<Object> add3DObjectLocalPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
-	public Func0<Object> add3DObjectRotationListener(Object object, Func3<Object,Double,Double,Double> cb) {
+	public Func0<Object> add3DObjectWorldPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
-	public Func0<Object> add3DObjectScaleListener(Object object, Func3<Object,Double,Double,Double> cb) {
+	public Func0<Object> add3DObjectLocalRotationListener(Object object, Func3<Object,Double,Double,Double> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectLocalScaleListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
 	public Func0<Object> add3DObjectBoundingBoxListener(Object object, Func1<Object,Object[]> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectLocalMatrixListener(Object object, Func1<Object,Object[]> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectWorldMatrixListener(Object object, Func1<Object,Object[]> cb) {
 		return no_op;
 	}
 
@@ -545,6 +562,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DGeometryMatrix(Object geometry, Object[] matrix) {
+		return null;
+	}
+
 
 	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
 		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength) {
@@ -605,5 +626,8 @@ public class RenderSupport3D extends NativeHost {
 
 	public Object clear3DStageObjectCache(Object stage) {
 		return null;
+	}
+	public Object[] convert3DVectorToStageCoordinates(Object stage, Double x, Double y, Double z) {
+		return new Object[0];
 	}
 }

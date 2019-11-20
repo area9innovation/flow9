@@ -8,6 +8,7 @@ import js.three.Vector2;
 import js.three.Vector3;
 import js.three.Euler;
 import js.three.Quaternion;
+import js.three.Matrix4;
 
 import js.three.Object3D;
 import js.three.Mesh;
@@ -832,9 +833,9 @@ class RenderSupport3D {
 				};
 				untyped boxHelper.disposers =
 					[
-						add3DObjectPositionListener(object, fn),
-						add3DObjectScaleListener(object, fn),
-						add3DObjectRotationListener(object, fn)
+						add3DObjectLocalPositionListener(object, fn),
+						add3DObjectLocalScaleListener(object, fn),
+						add3DObjectLocalRotationListener(object, fn)
 					];
 
 				stage.boxHelpers.push(boxHelper);
@@ -985,19 +986,31 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function get3DObjectX(object : Object3D) : Float {
+	public static function get3DObjectLocalPositionX(object : Object3D) : Float {
 		return object.position.x;
 	}
 
-	public static function get3DObjectY(object : Object3D) : Float {
+	public static function get3DObjectWorldPositionX(object : Object3D) : Float {
+		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).x");
+	}
+
+	public static function get3DObjectLocalPositionY(object : Object3D) : Float {
 		return object.position.y;
 	}
 
-	public static function get3DObjectZ(object : Object3D) : Float {
+	public static function get3DObjectWorldPositionY(object : Object3D) : Float {
+		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).y");
+	}
+
+	public static function get3DObjectLocalPositionZ(object : Object3D) : Float {
 		return object.position.z;
 	}
 
-	public static function set3DObjectX(object : Object3D, x : Float) : Void {
+	public static function get3DObjectWorldPositionZ(object : Object3D) : Float {
+		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).z");
+	}
+
+	public static function set3DObjectLocalPositionX(object : Object3D, x : Float) : Void {
 		if (object.position.x != x) {
 			object.position.x = x;
 
@@ -1008,7 +1021,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectY(object : Object3D, y : Float) : Void {
+	public static function set3DObjectLocalPositionY(object : Object3D, y : Float) : Void {
 		if (object.position.y != y) {
 			object.position.y = y;
 
@@ -1019,7 +1032,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectZ(object : Object3D, z : Float) : Void {
+	public static function set3DObjectLocalPositionZ(object : Object3D, z : Float) : Void {
 		if (object.position.z != z) {
 			object.position.z = z;
 
@@ -1036,15 +1049,15 @@ class RenderSupport3D {
 		return object.rotation.x / 0.0174532925 /*degrees*/;
 	}
 
-	public static function get3DObjectRotationY(object : Object3D) : Float {
+	public static function get3DObjectLocalRotationY(object : Object3D) : Float {
 		return object.rotation.y / 0.0174532925 /*degrees*/;
 	}
 
-	public static function get3DObjectRotationZ(object : Object3D) : Float {
+	public static function get3DObjectLocalRotationZ(object : Object3D) : Float {
 		return object.rotation.z / 0.0174532925 /*degrees*/;
 	}
 
-	public static function set3DObjectRotationX(object : Object3D, x : Float) : Void {
+	public static function set3DObjectLocalRotationX(object : Object3D, x : Float) : Void {
 		x = x * 0.0174532925 /*radians*/;
 
 		if (object.rotation.x != x) {
@@ -1058,7 +1071,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectRotationY(object : Object3D, y : Float) : Void {
+	public static function set3DObjectLocalRotationY(object : Object3D, y : Float) : Void {
 		y = y * 0.0174532925 /*radians*/;
 
 		if (object.rotation.y != y) {
@@ -1072,7 +1085,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectRotationZ(object : Object3D, z : Float) : Void {
+	public static function set3DObjectLocalRotationZ(object : Object3D, z : Float) : Void {
 		z = z * 0.0174532925 /*radians*/;
 
 		if (object.rotation.z != z) {
@@ -1088,19 +1101,19 @@ class RenderSupport3D {
 
 
 
-	public static function get3DObjectScaleX(object : Object3D) : Float {
+	public static function get3DObjectLocalScaleX(object : Object3D) : Float {
 		return object.scale.x;
 	}
 
-	public static function get3DObjectScaleY(object : Object3D) : Float {
+	public static function get3DObjectLocalScaleY(object : Object3D) : Float {
 		return object.scale.y;
 	}
 
-	public static function get3DObjectScaleZ(object : Object3D) : Float {
+	public static function get3DObjectLocalScaleZ(object : Object3D) : Float {
 		return object.scale.z;
 	}
 
-	public static function set3DObjectScaleX(object : Object3D, x : Float) : Void {
+	public static function set3DObjectLocalScaleX(object : Object3D, x : Float) : Void {
 		if (object.scale.x != x) {
 			object.scale.x = x;
 
@@ -1112,7 +1125,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectScaleY(object : Object3D, y : Float) : Void {
+	public static function set3DObjectLocalScaleY(object : Object3D, y : Float) : Void {
 		if (object.scale.y != y) {
 			object.scale.y = y;
 
@@ -1124,7 +1137,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectScaleZ(object : Object3D, z : Float) : Void {
+	public static function set3DObjectLocalScaleZ(object : Object3D, z : Float) : Void {
 		if (object.scale.z != z) {
 			object.scale.z = z;
 
@@ -1151,15 +1164,15 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectWorldX(object : Object3D, x : Float) : Void {
-		set3DObjectX(object, object.parent != null ? x - get3DObjectWorldX(object.parent) : x);
+		set3DObjectLocalPositionX(object, object.parent != null ? x - get3DObjectWorldX(object.parent) : x);
 	}
 
 	public static function set3DObjectWorldY(object : Object3D, y : Float) : Void {
-		set3DObjectY(object, object.parent != null ? y - get3DObjectWorldY(object.parent) : y);
+		set3DObjectLocalPositionY(object, object.parent != null ? y - get3DObjectWorldY(object.parent) : y);
 	}
 
 	public static function set3DObjectWorldZ(object : Object3D, z : Float) : Void {
-		set3DObjectZ(object, object.parent != null ? z - get3DObjectWorldZ(object.parent) : z);
+		set3DObjectLocalPositionZ(object, object.parent != null ? z - get3DObjectWorldZ(object.parent) : z);
 	}
 
 
@@ -1186,15 +1199,15 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectWorldRotationX(object : Object3D, x : Float) : Void {
-		set3DObjectRotationX(object, object.parent != null ? x - get3DObjectWorldRotationX(object.parent) : x);
+		set3DObjectLocalRotationX(object, object.parent != null ? x - get3DObjectWorldRotationX(object.parent) : x);
 	}
 
 	public static function set3DObjectWorldRotationY(object : Object3D, y : Float) : Void {
-		set3DObjectRotationY(object, object.parent != null ? y - get3DObjectWorldRotationY(object.parent) : y);
+		set3DObjectLocalRotationY(object, object.parent != null ? y - get3DObjectWorldRotationY(object.parent) : y);
 	}
 
 	public static function set3DObjectWorldRotationZ(object : Object3D, z : Float) : Void {
-		set3DObjectRotationZ(object, object.parent != null ? z - get3DObjectWorldRotationZ(object.parent) : z);
+		set3DObjectLocalRotationZ(object, object.parent != null ? z - get3DObjectWorldRotationZ(object.parent) : z);
 	}
 
 
@@ -1212,23 +1225,36 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectWorldScaleX(object : Object3D, x : Float) : Void {
-		set3DObjectScaleX(object, object.parent != null ? x / get3DObjectWorldScaleX(object.parent) : x);
+		set3DObjectLocalScaleX(object, object.parent != null ? x / get3DObjectWorldScaleX(object.parent) : x);
 	}
 
 	public static function set3DObjectWorldScaleY(object : Object3D, y : Float) : Void {
-		set3DObjectScaleY(object, object.parent != null ? y / get3DObjectWorldScaleY(object.parent) : y);
+		set3DObjectLocalScaleY(object, object.parent != null ? y / get3DObjectWorldScaleY(object.parent) : y);
 	}
 
 	public static function set3DObjectWorldScaleZ(object : Object3D, z : Float) : Void {
-		set3DObjectScaleZ(object, object.parent != null ? z / get3DObjectWorldScaleZ(object.parent) : z);
+		set3DObjectLocalScaleZ(object, object.parent != null ? z / get3DObjectWorldScaleZ(object.parent) : z);
 	}
 
 
 
 	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
-		object.lookAt(new Vector3(x, y, z));
+		RenderSupportJSPixi.once("drawframe", function() {
+			object.lookAt(new Vector3(x, y, z));
+			object.invalidateStage();
+		});
+	}
+
+	public static function set3DObjectLocalMatrix(object : Object3D, matrix : Array<Float>) : Void {
+		object.matrix.fromArray(matrix);
 		object.invalidateStage();
 	}
+
+	public static function set3DObjectWorldMatrix(object : Object3D, matrix : Array<Float>) : Void {
+		object.matrixWorld.fromArray(matrix);
+		object.invalidateStage();
+	}
+
 
 
 	public static function get3DObjectBoundingBox(object : Object3D) : Array<Array<Float>> {
@@ -1236,37 +1262,56 @@ class RenderSupport3D {
 		return [[box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]];
 	}
 
-	public static function add3DObjectPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
-		var fn = function(e : Dynamic) {
-			cb(get3DObjectX(object), get3DObjectY(object), get3DObjectZ(object));
-		};
-
-		fn(0);
-
-		object.addEventListener("position", fn);
-		return function() { object.removeEventListener("position", fn); };
+	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
+		return object.matrix.toArray();
 	}
 
-	public static function add3DObjectRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
-		var fn = function(e : Dynamic) {
-			cb(get3DObjectRotationX(object), get3DObjectRotationY(object), get3DObjectRotationZ(object));
-		};
-
-		fn(0);
-
-		object.addEventListener("rotation", fn);
-		return function() { object.removeEventListener("rotation", fn); };
+	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
+		return object.matrixWorld.toArray();
 	}
 
-	public static function add3DObjectScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+	public static function add3DObjectLocalPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
-			cb(get3DObjectScaleX(object), get3DObjectScaleY(object), get3DObjectScaleZ(object));
+			cb(get3DObjectLocalPositionX(object), get3DObjectLocalPositionY(object), get3DObjectLocalPositionZ(object));
 		};
 
 		fn(0);
 
-		object.addEventListener("scale", fn);
-		return function() { object.removeEventListener("scale", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectWorldPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectLocalRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectRotationX(object), get3DObjectLocalRotationY(object), get3DObjectLocalRotationZ(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectLocalScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectLocalScaleX(object), get3DObjectLocalScaleY(object), get3DObjectLocalScaleZ(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 	public static function add3DObjectBoundingBoxListener(object : Object3D, cb : (Array<Array<Float>>) -> Void) : Void -> Void {
@@ -1276,8 +1321,30 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("box", fn);
-		return function() { object.removeEventListener("box", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectLocalMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectLocalMatrix(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectWorldMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectWorldMatrix(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 
@@ -1435,6 +1502,10 @@ class RenderSupport3D {
 
 	public static function make3DSphereGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : Geometry {
 		return new SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+	}
+
+	public static function set3DGeometryMatrix(geometry : Geometry, matrix : Array<Float>) : Void {
+		geometry.applyMatrix(new Matrix4().fromArray(matrix));
 	}
 
 	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : BufferGeometry {
@@ -1638,5 +1709,18 @@ class RenderSupport3D {
 		if (stage.objectCache != null) {
 			stage.objectCache = new Array<Object3D>();
 		}
+	}
+
+	public static function convert3DVectorToStageCoordinates(stage : ThreeJSStage, x : Float, y : Float, z : Float) : Array<Float> {
+		var widthHalf = stage.getWidth() / 2;
+		var heightHalf = stage.getHeight() / 2;
+
+		var vector = new Vector3(x, y, z);
+		vector.project(stage.camera);
+
+		return [
+			( vector.x * widthHalf ) + widthHalf,
+			( -vector.y * heightHalf ) + heightHalf
+		];
 	}
 }

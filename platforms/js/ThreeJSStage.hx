@@ -270,7 +270,7 @@ class ThreeJSStage extends Container {
 
 		ctx.globalAlpha = this.worldAlpha;
 		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
-		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth(), getHeight(), 0, 0, getWidth() * resolution, getHeight() * resolution);
+		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth() * Browser.window.devicePixelRatio, getHeight() * Browser.window.devicePixelRatio, 0, 0, getWidth() * resolution, getHeight() * resolution);
 	}
 
 	public function getWidth() : Float {
