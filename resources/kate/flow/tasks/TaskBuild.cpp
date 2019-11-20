@@ -44,9 +44,9 @@ TaskBuild::TaskBuild(FlowEnv e, int row, bool force, Task::Callback cb) : TaskFa
 		QString tmpPath = builder.target().tmpPath();
 
 		QStringList args = builder.args(opts);
-#ifdef DEBUG
+//#ifdef DEBUG
 		QTextStream(stdout) << "BUILD: " << builder.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
+//#endif
 
 		QString workingDir = builder.compiler().confdir();
 		QString executor = builder.invocation();

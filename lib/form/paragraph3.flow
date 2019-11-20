@@ -14,11 +14,22 @@ export {
 	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 	keepFormTogether(form : Form) -> bool;
 
-	WigiStoryWidthManager(paragraph : [WigiParagraphWidthManager], width : Behaviour<double>, constructor : () -> () -> void);
-	WigiParagraphWidthManager(storyWidth : Behaviour<double>, width : DynamicBehaviour<double>);
+	WigiStoryWidthManager(
+		paragraphManagers : [WigiParagraphWidthManager],
+		getParagraphManagerAt: (int) -> WigiParagraphWidthManager,
+		width : Behaviour<double>,
+		infoOnly : bool, /* do not control width of paragraphs, just gather their widths */
+		constructor : () -> () -> void,
+	);
+	WigiParagraphWidthManager(
+		storyWidth : Behaviour<double>,
+		width : DynamicBehaviour<double>,
+		infoOnly : bool
+	);
 
-	makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidthManager;
-	dummyWigiParagraphWidthManager = WigiParagraphWidthManager(const(0.0), make(0.0));
+	makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager;
+	dummyWigiParagraphWidthManager = WigiParagraphWidthManager(const(0.0), make(0.0), true);
+	dummyWigiStoryWidthManager = WigiStoryWidthManager([], \__ -> dummyWigiParagraphWidthManager, zero, true, \ -> nop);
 }
 
 // TODO:
@@ -121,7 +132,6 @@ renderParagraph(
 
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 	isParagraphMarked = containsStruct(s, ParagraphMarked());
-	hasWidthManager = widthManager != dummyWigiParagraphWidthManager;
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// Expand elements into word-units
@@ -139,7 +149,17 @@ renderParagraph(
 	);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = if (tightWidth && hasWidthManager) {
+	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager) {
+		Select(linesB, \lines -> renderParaLinesFn(lines, getValue(aw)).first);
+	} else if (widthManager.infoOnly) {
+		// in this non-TightWidth case we just inform WidthManager about our width
+		// we will not take story width into account in this case, but use availableWidth as usual
+		Select(linesB, \lines -> {
+			rendered = renderParaLinesFn(lines, getValue(aw));
+			nextDistinct(widthManager.width, rendered.second);
+			rendered.first
+		});
+	} else {
 		Select2(linesB, widthManager.storyWidth, \lines, storyWidth -> {
 			rendered = renderParaLinesFn(
 				lines,
@@ -150,8 +170,6 @@ renderParagraph(
 			deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, rendered.second));
 			rendered.first
 		});
-	} else {
-		Select(linesB, \lines -> renderParaLinesFn(lines, getValue(aw)).first);
 	}
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
@@ -927,15 +945,20 @@ setWordForm(word: ParaWord, form: GhostForm) -> ParaWord {
 	ParaWord(word.word, word.metrics, word.ghosted, form, word.interactivityIdM);
 };
 
-makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidthManager {
-	if (tightWidth) {
-		paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
-		storyWidth = make(0.0);
+makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager {
+	paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
+	storyWidth = make(0.0);
 
-		WigiStoryWidthManager(
-			map(paragraphWidths, \pw -> WigiParagraphWidthManager(storyWidth, pw)),
-			storyWidth,
-			\ -> {
+	paragraphManagers = map(paragraphWidths, \pw -> WigiParagraphWidthManager(storyWidth, pw, infoOnly));
+	WigiStoryWidthManager(
+		paragraphManagers,
+		\i -> elementAt(paragraphManagers, i, dummyWigiParagraphWidthManager),
+		storyWidth,
+		infoOnly,
+		\ -> {
+			if (infoOnly) {
+				nop
+			} else {
 				maxWidth = arrayMaxu(paragraphWidths);
 				uns = [
 					maxWidth.second,
@@ -943,12 +966,6 @@ makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidth
 				];
 				\ -> applyall(uns);
 			}
-		)
-	} else {
-		WigiStoryWidthManager(
-			generate(0, paragraphs, \__ -> dummyWigiParagraphWidthManager),
-			zero,
-			\ -> nop
-		)
-	}
+		}
+	)
 }

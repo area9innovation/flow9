@@ -1,3 +1,4 @@
+#include <QTextStream>
 #include <KMessageBox>
 #include <KTextEditor/View>
 #include "execs/Compiler.hpp"
@@ -13,31 +14,59 @@ FlowManager::FlowManager(FlowEnv e) :
 }
 
 void FlowManager::slotCompile() {
-	env_.view.taskManager_.compile();
+	try {
+		env_.view.taskManager_.compile();
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotRun(int row) {
-	env_.view.taskManager_.run(row);
+	try {
+		env_.view.taskManager_.run(row);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotDebug(int row) {
-	env_.view.taskManager_.debug(row);
+	try {
+		env_.view.taskManager_.debug(row);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotBuild(int row) {
-	env_.view.taskManager_.build(row, false);
+	try {
+		env_.view.taskManager_.build(row, false);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotForceBuild(int row) {
-	env_.view.taskManager_.build(row, true);
+	try {
+		env_.view.taskManager_.build(row, true);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotLookupDefinition() {
-	env_.view.taskManager_.lookupDef();
+	try {
+		env_.view.taskManager_.lookupDef();
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotLookupType() {
-	env_.view.taskManager_.lookupType();
+	try {
+		env_.view.taskManager_.lookupType();
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotLookupUses() {
@@ -46,7 +75,11 @@ void FlowManager::slotLookupUses() {
 
 void FlowManager::slotOutline(KTextEditor::View* view) {
 	QString file = view->document()->url().toLocalFile();
-	env_.view.taskManager_.outline(file);
+	try {
+		env_.view.taskManager_.outline(file);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 void FlowManager::slotStartRename() {
@@ -75,7 +108,11 @@ void FlowManager::slotCompleteRename() {
 	}
 	QString renamed = renameDialog_.renameLineEdit->text();
 	env_.main->deleteViewBar(activeView);
-	env_.view.taskManager_.rename(renamed);
+	try {
+		env_.view.taskManager_.rename(renamed);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << ex.what() << endl;
+	}
 }
 
 }

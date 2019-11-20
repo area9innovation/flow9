@@ -24,6 +24,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	iconRight = extractStruct(m.style, MSliderIconRight("")).name;
 	sliderRange = extractStruct(m.style, MSliderRange(0., 1.));
 	sliderStep = extractStruct(m.style, MSliderStep(-1.)).value;
+	sliderSteps = extractStruct(m.style, MSliderSteps([])).steps;
 	showValue = extractStruct(m.style, MSliderDisplayValue(false)).display;
 	isDiscrete = contains(m.style, MSliderDiscrete());
 	showDiscreteValues = tryExtractStruct(m.style, MSliderShowDiscreteValues(const(false)));
@@ -60,29 +61,49 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	percent2strvalue = \p -> d2st(percent2value(p), 2);
 	value2percent = if (minMax != 0.) \v -> (v - sliderRange.min) / minMax else \v -> 0.;
 
-	preparePercent = \p ->
-		if (sliderStep > 0.)
-			roundTo(forceRange(p, 0.0, 1.0) * minMax, sliderStep) + sliderRange.min
-			|> (\f -> if (f > sliderRange.max) f - sliderStep else if (f < sliderRange.min) f + sliderStep else f)
-			|> value2percent
-			|> mirrorIfRTL(isRTL)
-		else
-			forceRange(p, 0.0, 1.0)
-			|> mirrorIfRTL(isRTL);
-
 	snapPercent = \p ->
-		if (sliderStep > 0.)
+		if (length(sliderSteps) > 0)
+			percent2value(p)
+			|> (\f ->
+				fold(sliderSteps, Pair(-1.0, -1.0), \acc, ss ->
+					if (acc.second >= 0.0) {
+						if (acc.second > abs(ss - f))
+							Pair(ss, abs(ss - f))
+						else
+							acc
+					} else {
+						Pair(ss, abs(ss - f))
+					}
+				).first
+			)
+			|> value2percent
+		else if (sliderStep > 0.)
 			roundTo(forceRange(p, 0.0, 1.0) * minMax, sliderStep) + sliderRange.min
 			|> (\f -> if (f > sliderRange.max) f - sliderStep else if (f < sliderRange.min) f + sliderStep else f)
 			|> value2percent
 		else
 			forceRange(p, 0.0, 1.0);
 
+	preparePercent = \p ->
+		snapPercent(p)
+		|> mirrorIfRTL(isRTL);
+
 	setNewPercent = \thumb, prc ->
 		nextDistinct(thumb.percent, snapPercent(thumb.restrictPercent(prc)));
 
 	prepareValue = \v ->
-		if (sliderStep > 0.)
+		if (length(sliderSteps) > 0)
+			fold(sliderSteps, Pair(-1.0, -1.0), \acc, ss ->
+				if (acc.second >= 0.0) {
+					if (acc.second > abs(ss - v))
+						Pair(ss, abs(ss - v))
+					else
+						acc
+				} else {
+					Pair(ss, abs(ss - v))
+				}
+			).first
+		else if (sliderStep > 0.)
 			(roundTo(max(sliderRange.min, min(sliderRange.max, v)) - sliderRange.min, sliderStep) + sliderRange.min)
 			|> (\f -> if (f > sliderRange.max) f - sliderStep else if (f < sliderRange.min) f + sliderStep else f)
 		else
@@ -107,7 +128,9 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	}
 
 	discreteValues =
-		if (sliderStep > 0. && minMax != 0. && minMax / sliderStep < 2000.) {
+		if (length(sliderSteps) > 0)
+			map(sliderSteps, \ss -> (ss - sliderRange.min) / minMax)
+		else if (sliderStep > 0. && minMax != 0. && minMax / sliderStep < 2000.) {
 			mValue = sliderRange.min;
 			generate(
 				0,
@@ -302,7 +325,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	barHeight = 3.;
 	activeItemStyle = \en -> [MFill(if (en) color else MGrey(if (lightBackground) 700 else 300))];
 	unactiveItemStyle = mDisabledStyle(lightBackground);
-	outlinedStyle = replaceStruct(mDisabledStyle(lightBackground), FillOpacity(if (lightBackground) 0.38 else 0.3));
+	outlinedStyle = replaceStruct(mDisabledStyle(lightBackground), FillOpacity(defaultDisabledOpacity(lightBackground)));
 
 	makeCircleThumb = \radius, foc, st, outlined -> {
 		circleStyle = fif(outlined, const(outlinedStyle), fselect(foc.enabled, FLift(st)));
@@ -681,7 +704,7 @@ makeMSlider(manager : MaterialManager, focus : MFocus, value0 : Transform<double
 			TTranslate(
 				const(Point(-r - 1., -r - 1.)),
 				TGroup2SameMetrics(
-					TCircle(r + 1., replaceStruct(mDisabledStyle(lightBackground), FillOpacity(if (lightBackground) 0.38 else 0.3))),
+					TCircle(r + 1., replaceStruct(mDisabledStyle(lightBackground), FillOpacity(defaultDisabledOpacity(lightBackground)))),
 					TTranslate(const(Point(2., 2.)), TCircle(r - 1., [MFill(MBackgroundColor(lightBackground))]))
 				)
 			)
