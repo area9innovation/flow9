@@ -4,6 +4,8 @@ import pixi.loaders.Loader;
 import Platform;
 
 class FontLoader {
+	private static var FontLoadingTimeout = 5000; //ms
+
 	public static function loadWebFonts(onDone : Void -> Void) {
 		if (untyped __typeof__(WebFont) != "undefined") {
 			var webfontconfig : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
@@ -52,11 +54,15 @@ class FontLoader {
 
 	private static function addStyledText(family : String, weight : String = "") {
 		var text = Browser.document.createElement('span');
-		text.innerText = "load the font";
+		text.innerText = "Loading font...";
 		text.style.fontFamily = family;
 		if (weight != "")
 			text.style.fontWeight = weight;
 		text.style.visibility = "hidden";
 		Browser.document.body.appendChild(text);
+
+		Native.timer(FontLoadingTimeout, function() {
+			Browser.document.body.removeChild(text);
+		});
 	}
 }

@@ -35,6 +35,7 @@ class RenderSupportJSPixi {
 	private static var TransformChanged : Bool = true;
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
+	private static var PageWasHidden = false;
 
 	// Renderer options
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
@@ -324,6 +325,7 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
+		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 	}
 
@@ -937,6 +939,13 @@ class RenderSupportJSPixi {
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
+		if (PageWasHidden) {
+			PageWasHidden = false;
+			InvalidateLocalStages();
+		} else if (Browser.document.hidden) {
+			PageWasHidden = true;
+		}
+
 		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
 			Animating = true;
 			PixiStageChanged = false;
@@ -985,7 +994,7 @@ class RenderSupportJSPixi {
 		for (child in PixiStage.getClipChildren()) {
 			child.invalidateTransform("forceRender", true);
 		}
-		
+
 		render();
 	}
 
