@@ -856,11 +856,6 @@ class DisplayObjectHelper {
 
 		var localBounds = untyped clip.localBounds;
 
-		if (untyped clip.isCanvas) {
-			tx -= Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
-			ty -= Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
-		}
-
 		if (untyped clip.widthDelta != null && clip.style != null && clip.style.align != null && clip.style.align == 'center') {
 			tx -= untyped clip.widthDelta / 2.0;
 		}
