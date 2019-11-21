@@ -188,6 +188,10 @@ class TextClip extends NativeWidgetClip {
 		return dflt;
 	}
 
+	public static function isStringArabic(s: String) : Bool {
+		return getStringDirection(s, null) == "rtl";
+	}
+
 	private static function isCharCombining(testChr : String, pos: Int) : Bool {
 		var chr = testChr.charCodeAt(pos);
 		return
@@ -498,10 +502,14 @@ class TextClip extends NativeWidgetClip {
 
 				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, 6.0));
 				style.wordWrapWidth = 2048.0;
-				this.text = metrics.lines[0];
+				var lines : Array<Dynamic> = metrics.lines;
+				widthDelta = lines.length > 0 ? Math.NEGATIVE_INFINITY : 0.0;
 
-				metrics = null;
-				widthDelta = Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd) + 1.0;
+				for (line in lines) {
+					this.text = line;
+					metrics = null;
+					widthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd) + 1.0, widthDelta);
+				}
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;
@@ -548,12 +556,12 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.value = text;
 		}
 
-		invalidateMetrics();
-		updateWidthDelta();
-
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 		}
+
+		invalidateMetrics();
+		updateWidthDelta();
 	}
 
 	private function measureFont() : Void {
@@ -1269,7 +1277,53 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			metrics = TextMetrics.measureText(text, style);
+
+			if (isStringArabic(text)) {
+				if (nativeWidget == null) {
+					isNativeWidget = true;
+					createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
+				}
+
+				var textNodeMetrics : Dynamic = null;
+
+				updateNativeWidgetStyle();
+				if (nativeWidget.parentNode == null) {
+					Browser.document.body.appendChild(nativeWidget);
+					textNodeMetrics = getTextNodeMetrics(nativeWidget);
+					Browser.document.body.removeChild(nativeWidget);
+				} else {
+					textNodeMetrics = getTextNodeMetrics(nativeWidget);
+				}
+
+				if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
+					return;
+				}
+
+				if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
+					metrics.width = textNodeMetrics.width;
+				}
+
+				if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
+					deleteNativeWidget();
+				}
+			}
 		}
+	}
+
+	private static function getTextNodeMetrics(textNode) : Dynamic {
+		var textNodeMetrics : Dynamic = {};
+		if (Browser.document.createRange != null) {
+			var range = Browser.document.createRange();
+			range.selectNodeContents(textNode);
+			if (range.getBoundingClientRect != null) {
+				var rect = range.getBoundingClientRect();
+				if (rect != null) {
+					textNodeMetrics.width = rect.right - rect.left;
+					textNodeMetrics.height = rect.bottom - rect.top;
+				}
+			}
+		}
+		return textNodeMetrics;
 	}
 
 	public function getTextMetrics() : Array<Float> {
