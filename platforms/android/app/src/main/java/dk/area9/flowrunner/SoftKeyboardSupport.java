@@ -43,6 +43,10 @@ public class SoftKeyboardSupport extends View {
         this.setOnKeyListener(new OnKeyListener() {
             @Override
             public boolean onKey(View v, int keyCode, KeyEvent event) {
+                int flowKeyCode = 0;
+                if (keyCode == KeyEvent.KEYCODE_DEL) {
+                    flowKeyCode = 8;
+                }
                 wrp.DispatchKeyEvent(
                     event.getAction() == KeyEvent.ACTION_UP ? FlowRunnerWrapper.FLOW_KEYUP : FlowRunnerWrapper.FLOW_KEYDOWN,
                     Character.toString((char)event.getUnicodeChar()),
@@ -50,7 +54,7 @@ public class SoftKeyboardSupport extends View {
                     false,
                     false,
                     false,
-                    event.getUnicodeChar()
+                    flowKeyCode
                 );
                 return true;
             }
