@@ -188,6 +188,10 @@ class TextClip extends NativeWidgetClip {
 		return dflt;
 	}
 
+	public static function isStringArabic(s: String) : Bool {
+		return getStringDirection(s, null) == "rtl";
+	}
+
 	private static function isCharCombining(testChr : String, pos: Int) : Bool {
 		var chr = testChr.charCodeAt(pos);
 		return
@@ -552,12 +556,12 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.value = text;
 		}
 
-		invalidateMetrics();
-		updateWidthDelta();
-
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 		}
+
+		invalidateMetrics();
+		updateWidthDelta();
 	}
 
 	private function measureFont() : Void {
@@ -1273,7 +1277,44 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			metrics = TextMetrics.measureText(text, style);
+
+			if (nativeWidget != null && isStringArabic(text)) {
+				var textNodeMetrics : Dynamic = null;
+
+				updateNativeWidgetStyle();
+				if (nativeWidget.parentNode == null) {
+					Browser.document.body.appendChild(nativeWidget);
+					textNodeMetrics = getTextNodeMetrics(nativeWidget);
+					Browser.document.body.removeChild(nativeWidget);
+				} else {
+					textNodeMetrics = getTextNodeMetrics(nativeWidget);
+				}
+
+				if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
+					return;
+				}
+
+				if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
+					metrics.width = textNodeMetrics.width;
+				}
+			}
 		}
+	}
+
+	private static function getTextNodeMetrics(textNode) : Dynamic {
+		var textNodeMetrics : Dynamic = {};
+		if (Browser.document.createRange != null) {
+			var range = Browser.document.createRange();
+			range.selectNodeContents(textNode);
+			if (range.getBoundingClientRect != null) {
+				var rect = range.getBoundingClientRect();
+				if (rect != null) {
+					textNodeMetrics.width = rect.right - rect.left;
+					textNodeMetrics.height = rect.bottom - rect.top;
+				}
+			}
+		}
+		return textNodeMetrics;
 	}
 
 	public function getTextMetrics() : Array<Float> {

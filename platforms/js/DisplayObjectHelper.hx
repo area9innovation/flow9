@@ -803,7 +803,7 @@ class DisplayObjectHelper {
 
 	public static inline function getNativeWidgetTransform(clip : DisplayObject) : Matrix {
 		if (RenderSupportJSPixi.RendererType == "html") {
-			if (RenderSupportJSPixi.RenderContainers) {
+			if (untyped !clip.parentClip || RenderSupportJSPixi.RenderContainers) {
 				if (untyped clip.localTransformChanged) {
 					untyped clip.transform.updateLocalTransform();
 				}
@@ -918,7 +918,7 @@ class DisplayObjectHelper {
 
 	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
 		if (RenderSupportJSPixi.RendererType == "html" && !RenderSupportJSPixi.RenderContainers) {
-			if (untyped clip.parentClip.worldAlpha > 0) {
+			if (untyped clip.parentClip && clip.parentClip.worldAlpha > 0) {
 				return clip.worldAlpha / untyped clip.parentClip.worldAlpha;
 			} else if (clip.parent != null && !isNativeWidget(clip.parent)) {
 				return clip.alpha * getNativeWidgetAlpha(clip.parent);
