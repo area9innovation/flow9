@@ -115,9 +115,6 @@ public:
     bool loadSystemFont(FontHeader *header, TextFont textFont);
     bool loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, TextFont textFont, ucs4_char code);
 
-    static StackSlot removeSoftKeyboardEventListener(ByteCodeRunner*, StackSlot*, void*);
-    void deliverSoftKeyboardEvent(jstring keyValue, jint keyCode);
-
     jobjectArray fetchAccessibleClips();
 protected:
     void OnHostEvent(HostEvent);
@@ -155,7 +152,6 @@ private:
     DECLARE_NATIVE_METHOD(timer);
     DECLARE_NATIVE_METHOD(showSoftKeyboard);
     DECLARE_NATIVE_METHOD(hideSoftKeyboard);
-    DECLARE_NATIVE_METHOD(subscribeToSoftKeyboardEvents);
 };
 
 class AndroidHttpSupport : public AbstractHttpSupport {

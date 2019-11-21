@@ -1,8 +1,5 @@
 package dk.area9.flowrunner;
 
-import android.app.Activity;
-import android.os.Handler;
-import android.support.annotation.NonNull;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.View;
@@ -37,14 +34,26 @@ public class SoftKeyboardSupport extends View {
     };
 
     public SoftKeyboardSupport(FlowRunnerActivity activity, FlowRunnerWrapper wrp) {
-        super(activity.getBaseContext());
+        super(activity.mView.getContext());
         setFocusableInTouchMode(true);
         this.activity = activity;
         this.contentView = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0);
-        contentView.getViewTreeObserver().addOnGlobalLayoutListener(keyboardLayoutListener);this.setOnKeyListener(new OnKeyListener() {
+        contentView.getViewTreeObserver().addOnGlobalLayoutListener(keyboardLayoutListener);
+        this.layout(-1, 0, 0, 0);
+        this.setOnKeyListener(new OnKeyListener() {
             @Override
             public boolean onKey(View v, int keyCode, KeyEvent event) {
-                wrp.deliverSoftKeyboardEvent("", keyCode);
+                if(event.getAction() == KeyEvent.ACTION_UP) {
+                    wrp.DispatchKeyEvent(
+                        FlowRunnerWrapper.FLOW_KEYDOWN,
+                        Character.toString((char)event.getUnicodeChar()),
+                        false,
+                        false,
+                        false,
+                        false,
+                        keyCode
+                    );
+                }
                 return false;
             }
         });
@@ -60,7 +69,8 @@ public class SoftKeyboardSupport extends View {
     }
 
     public void showKeyboard() {
-        activity.mView.getIMM().showSoftInput(this, InputMethodManager.SHOW_FORCED);
+        this.requestFocus();
+        activity.mView.getIMM().showSoftInput(this, 0);
     }
 
     public void hideKeyboard() {

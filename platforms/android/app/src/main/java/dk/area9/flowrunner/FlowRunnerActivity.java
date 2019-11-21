@@ -14,11 +14,6 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.Callable;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -114,8 +109,6 @@ public class FlowRunnerActivity extends FragmentActivity  {
     private IFlowGooglePlayServices flowGooglePlayServices = null;
 
     private DialogFragmentManager dialogFragmentManager = null;
-
-    private SoftKeyboardHeightListener softKeyboardHeightListener;
 
     private SoftKeyboardSupport softKeyboardSupport;
 
@@ -397,16 +390,11 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         loadWrapper();
 
-        softKeyboardHeightListener = new SoftKeyboardHeightListener(this,
-            new SoftKeyboardHeightListener.KeyBoardHeightListener(){
-                @Override
-                public void keyboardHeightChanged(int keyboardHeight) {
-                    updateContentViewMinHeight();
-                    wrapper.VirtualKeyboardHeightCallback((double)keyboardHeight);
-                }
+        softKeyboardSupport = new SoftKeyboardSupport(this, wrapper);
+        softKeyboardSupport.setKeyboardHeightListener(keyboardHeight -> {
+            updateContentViewMinHeight();
+            wrapper.VirtualKeyboardHeightCallback((double)keyboardHeight);
         });
-
-        softKeyboardSupport = new SoftKeyboardSupport(this);
         wrapper.setSoftKeyboardSupport(softKeyboardSupport);
         mView.addView(softKeyboardSupport);
 
@@ -753,7 +741,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.onGoogleServicesDisconnected();
         flowGooglePlayServices.disconnectGooglePlayServices();
 
-        softKeyboardHeightListener.removeListener();
+        softKeyboardSupport.removeListener();
 
         wrapper.destroy();
         Log.i(Utils.LOG_TAG, "Runner wrapper destroyed successfully");
