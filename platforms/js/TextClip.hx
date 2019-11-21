@@ -1278,7 +1278,12 @@ class TextClip extends NativeWidgetClip {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			metrics = TextMetrics.measureText(text, style);
 
-			if (nativeWidget != null && isStringArabic(text)) {
+			if (isStringArabic(text)) {
+				if (nativeWidget == null) {
+					isNativeWidget = true;
+					createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
+				}
+
 				var textNodeMetrics : Dynamic = null;
 
 				updateNativeWidgetStyle();
@@ -1296,6 +1301,10 @@ class TextClip extends NativeWidgetClip {
 
 				if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
 					metrics.width = textNodeMetrics.width;
+				}
+
+				if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
+					deleteNativeWidget();
 				}
 			}
 		}
