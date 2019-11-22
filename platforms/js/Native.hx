@@ -604,7 +604,7 @@ class Native {
 				clip.parent.removeChild(clip);
 			}
 
-			if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS && untyped clip.nativeWidget != null) {
+			if (!Platform.isIE && untyped clip.nativeWidget != null) {
 				untyped clip.nativeWidget.style.display = 'none';
 			}
 

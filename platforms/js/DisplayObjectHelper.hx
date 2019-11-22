@@ -1400,7 +1400,7 @@ class DisplayObjectHelper {
 				if (untyped clip.child == null && (!clip.onStage || getParentNode(clip) != clip.parentClip.nativeWidget)) {
 					untyped clip.onStage = true;
 
-					if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS) {
+					if (!Platform.isIE) {
 						untyped clip.nativeWidget.style.display = null;
 					}
 
@@ -1409,7 +1409,7 @@ class DisplayObjectHelper {
 			} else if (untyped clip.onStage) {
 				untyped clip.onStage = false;
 
-				if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS) {
+				if (!Platform.isIE) {
 					untyped clip.nativeWidget.style.display = 'none';
 				}
 
