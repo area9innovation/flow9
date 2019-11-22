@@ -334,6 +334,10 @@ class TextClip extends NativeWidgetClip {
 		return -1.0;
 	}
 
+	private static function convertContentGlyphs2TextContent(textContent : String) : String {
+		return StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+	}
+
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 		var alpha = getNativeWidgetAlpha();
@@ -380,8 +384,8 @@ class TextClip extends NativeWidgetClip {
 			}
 		} else {
 			var textContent = getContentGlyphs().modified;
-			nativeWidget.textContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
-
+			var newTextContent = convertContentGlyphs2TextContent(textContent);
+			nativeWidget.textContent = newTextContent;
 			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
@@ -1276,36 +1280,10 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
-			metrics = TextMetrics.measureText(text, style);
-
 			if (isStringArabic(text)) {
-				if (nativeWidget == null) {
-					isNativeWidget = true;
-					createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
-				}
-
-				var textNodeMetrics : Dynamic = null;
-
-				updateNativeWidgetStyle();
-				if (nativeWidget.parentNode == null) {
-					Browser.document.body.appendChild(nativeWidget);
-					textNodeMetrics = getTextNodeMetrics(nativeWidget);
-					Browser.document.body.removeChild(nativeWidget);
-				} else {
-					textNodeMetrics = getTextNodeMetrics(nativeWidget);
-				}
-
-				if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
-					return;
-				}
-
-				if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
-					metrics.width = textNodeMetrics.width;
-				}
-
-				if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
-					deleteNativeWidget();
-				}
+				metrics = TextMetrics.measureText(convertContentGlyphs2TextContent(getContentGlyphs().modified), style);
+			} else {
+				metrics = TextMetrics.measureText(text, style);
 			}
 		}
 	}
