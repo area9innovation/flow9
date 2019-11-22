@@ -1059,7 +1059,7 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		if (Platform.isIOS && RenderSupportJSPixi.RendererType != "html") {
+		if (Platform.isIOS && Platform.browserMajorVersion < 13) {
 			RenderSupportJSPixi.ensureCurrentInputVisible();
 		}
 
