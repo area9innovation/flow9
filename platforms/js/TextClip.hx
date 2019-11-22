@@ -392,6 +392,7 @@ class TextClip extends NativeWidgetClip {
 
 			nativeWidget.style.direction = newTextDirection;
 			this.textDirection = newTextDirection;
+			this.metrics = TextMetrics.measureText(this.text, this.style);
 
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
 			nativeWidget.style.color = style.fill;
