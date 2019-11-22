@@ -380,13 +380,18 @@ class TextClip extends NativeWidgetClip {
 			}
 		} else {
 			var textContent = getContentGlyphs().modified;
-			nativeWidget.textContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+			var newTextContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+			nativeWidget.textContent = newTextContent;
+			this.text = newTextContent;
 
-			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
+			var newTextDirection = switch (getStringDirection(textContent, textDirection)) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
 				default : null;
 			}
+
+			nativeWidget.style.direction = newTextDirection;
+			this.textDirection = newTextDirection;
 
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
 			nativeWidget.style.color = style.fill;
