@@ -2366,19 +2366,6 @@ class RenderSupportJSPixi {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			if (Platform.isIOS) {
-				FullWindowTargetClip = untyped getFirstVideoWidget(untyped FullWindowTargetClip) || FullWindowTargetClip;
-				if (untyped __instanceof__(FullWindowTargetClip, VideoClip)) {
-					if (fw)
-						requestFullScreen(untyped FullWindowTargetClip.nativeWidget)
-					else
-						exitFullScreen(untyped FullWindowTargetClip.nativeWidget);
-
-					return;
-				}
-			}
-
-
 			var mainStage : FlowContainer = cast(PixiStage.children[0], FlowContainer);
 
 			if (fw) {
@@ -2434,18 +2421,16 @@ class RenderSupportJSPixi {
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
-		if (!Platform.isIOS) {
-			if (RendererType == "html") {
-				if (fs)
-					requestFullScreen(Browser.document.body);
-				else
-					exitFullScreen(Browser.document);
-			} else {
-				if (fs)
-					requestFullScreen(PixiView);
-				else
-					exitFullScreen(PixiView);
-			}
+		if (RendererType == "html") {
+			if (fs)
+				requestFullScreen(Browser.document.body);
+			else
+				exitFullScreen(Browser.document);
+		} else {
+			if (fs)
+				requestFullScreen(PixiView);
+			else
+				exitFullScreen(PixiView);
 		}
 	}
 
