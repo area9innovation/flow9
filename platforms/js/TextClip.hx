@@ -25,6 +25,14 @@ class TextMappedModification {
 		this.modified = modified;
 		this.difPositionMapping = difPositionMapping;
 	}
+
+	public static function createInvariantForString(text : String) : TextMappedModification {
+		var positionsDiff : Array<Int> = [];
+		for (i in 0...text.length) {
+			positionsDiff.push(0);
+		}
+		return new TextMappedModification(text, positionsDiff);
+	}
 }
 
 class UnicodeTranslation {
@@ -128,6 +136,8 @@ class TextClip extends NativeWidgetClip {
 
 	private var baselineWidget : Dynamic;
 	private var widthDelta : Float = 0.0;
+
+	private var doNotRemap : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -537,6 +547,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
+		this.doNotRemap = fontStyle.doNotRemap;
 
 		style.fontSize = Math.max(fontSize, 0.6);
 		style.fill = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
@@ -1198,7 +1209,13 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getContentGlyphs() : TextMappedModification {
-		return (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
+		if (isInput && type == "password") {
+			return getBulletsString(this.text);
+		} else if (doNotRemap) {
+			return TextMappedModification.createInvariantForString(this.text);
+		} else {
+			return getActualGlyphsString(this.text);
+		}
 	}
 
 	public function getStyle() : TextStyle {
