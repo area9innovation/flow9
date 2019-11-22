@@ -1290,24 +1290,7 @@ class TextClip extends NativeWidgetClip {
 					createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 				}
 
-				var textNodeMetrics : Dynamic = null;
-
 				updateNativeWidgetStyle();
-				if (nativeWidget.parentNode == null) {
-					Browser.document.body.appendChild(nativeWidget);
-					textNodeMetrics = getTextNodeMetrics(nativeWidget);
-					Browser.document.body.removeChild(nativeWidget);
-				} else {
-					textNodeMetrics = getTextNodeMetrics(nativeWidget);
-				}
-
-				if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
-					return;
-				}
-
-				if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
-					metrics.width = textNodeMetrics.width;
-				}
 
 				if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
 					deleteNativeWidget();
