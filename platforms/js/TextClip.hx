@@ -1285,16 +1285,7 @@ class TextClip extends NativeWidgetClip {
 			metrics = TextMetrics.measureText(text, style);
 
 			if (isStringArabic(text)) {
-				if (nativeWidget == null) {
-					isNativeWidget = true;
-					createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
-				}
-
 				updateNativeWidgetStyle();
-
-				if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
-					deleteNativeWidget();
-				}
 			}
 		}
 	}
