@@ -334,6 +334,10 @@ class TextClip extends NativeWidgetClip {
 		return -1.0;
 	}
 
+	private static function convertContentGlyphs2TextContent(textContent : String) : String {
+		return StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+	}
+
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 		var alpha = getNativeWidgetAlpha();
@@ -380,15 +384,13 @@ class TextClip extends NativeWidgetClip {
 			}
 		} else {
 			var textContent = getContentGlyphs().modified;
-			var newTextContent = StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+			var newTextContent = convertContentGlyphs2TextContent(textContent);
 			nativeWidget.textContent = newTextContent;
 			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
 				default : null;
 			}
-
-			this.metrics = TextMetrics.measureText(newTextContent, this.style);
 
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
 			nativeWidget.style.color = style.fill;
@@ -1278,10 +1280,10 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
-			metrics = TextMetrics.measureText(text, style);
-
 			if (isStringArabic(text)) {
-				updateNativeWidgetStyle();
+				metrics = TextMetrics.measureText(convertContentGlyphs2TextContent(getContentGlyphs().modified), style);
+			} else {
+				metrics = TextMetrics.measureText(text, style);
 			}
 		}
 	}
