@@ -77,7 +77,9 @@ class ThreeJSStage extends Container {
 			this.renderer = new WebGLRenderer({antialias: true, alpha : true, logarithmicDepthBuffer : true});
 		}
 
-		this.renderer.setPixelRatio(RenderSupportJSPixi.backingStoreRatio);
+		updatePixelRatio();
+
+		RenderSupportJSPixi.on("resize", updatePixelRatio);
 
 		untyped this.renderer.eventElement = Browser.document.createElement('div');
 
@@ -100,7 +102,13 @@ class ThreeJSStage extends Container {
 		}
 	}
 
-	public function destroyRenderer() {
+	private function updatePixelRatio() : Void {
+		this.renderer.setPixelRatio(RenderSupportJSPixi.backingStoreRatio);
+	}
+
+	public function destroyRenderer() : Void {
+		RenderSupportJSPixi.off("resize", updatePixelRatio);
+
 		if (orbitControls != null) {
 			RenderSupportJSPixi.off("drawframe", orbitControls.update);
 		}
@@ -146,7 +154,13 @@ class ThreeJSStage extends Container {
 		var handledObjects = new Array<Dynamic>();
 
 		var raycaster = new Raycaster();
-		raycaster.setFromCamera(new Vector2((event.pageX / getWidth()) * 2.0 - 1.0, -(event.pageY / getHeight()) * 2.0 + 1.0), camera);
+		raycaster.setFromCamera(
+			new Vector2(
+				(event.pageX / getWidth() / RenderSupportJSPixi.backingStoreRatio) * 2.0 - 1.0,
+				-(event.pageY / getHeight() / RenderSupportJSPixi.backingStoreRatio) * 2.0 + 1.0
+			),
+			camera
+		);
 
 		for (ob in raycaster.intersectObjects(interactiveChildren)) {
 			var object = ob.object;
@@ -270,7 +284,7 @@ class ThreeJSStage extends Container {
 
 		ctx.globalAlpha = this.worldAlpha;
 		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
-		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth() * Browser.window.devicePixelRatio, getHeight() * Browser.window.devicePixelRatio, 0, 0, getWidth() * resolution, getHeight() * resolution);
+		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth() * RenderSupportJSPixi.backingStoreRatio, getHeight() * RenderSupportJSPixi.backingStoreRatio, 0, 0, getWidth() * resolution, getHeight() * resolution);
 	}
 
 	public function getWidth() : Float {
