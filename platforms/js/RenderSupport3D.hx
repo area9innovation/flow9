@@ -268,7 +268,9 @@ class RenderSupport3D {
 	}
 
 	public static function make3DScene() : Scene {
-		return new Scene();
+		var scene = new Scene();
+		scene.name = "Group";
+		return scene;
 	}
 
 	public static function make3DColor(color : String) : Color {
@@ -287,6 +289,23 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
+		var onLoadFn = function(obj : Dynamic) {
+			RenderSupportJSPixi.once("drawframe", function() {
+				for (geometry in Object3DHelper.get3DObjectAllGeometries(obj)) {
+					geometry.computeVertexNormals();
+				}
+
+				if (obj.name == "" && obj.uuid != null) {
+					obj.name = obj.uuid;
+				}
+
+				Object3DHelper.invalidateStage(obj);
+				Object3DHelper.emit(obj, "loaded");
+
+				onLoad(obj);
+			});
+		}
+
 		if (Platform.isIE || Platform.isEdge) {
 			untyped __js__("
 				new THREE.MTLLoader()
@@ -295,7 +314,7 @@ class RenderSupport3D {
 
 						new THREE.OBJLoader()
 							.setMaterials(materials)
-							.load(objUrl, onLoad);
+							.load(objUrl, onLoadFn);
 					})
 			");
 		} else {
@@ -310,7 +329,7 @@ class RenderSupport3D {
 					\".load(mtlUrl, function(materials) {\",
 					\"new module2.OBJLoader2()\",
 					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
-					\".load(objUrl, onLoad);\",
+					\".load(objUrl, onLoadFn);\",
 					\"});\",
 					\"});\",
 					\"});\",
@@ -622,8 +641,8 @@ class RenderSupport3D {
 			untyped ev.deltaX = x;
 			untyped ev.deltaY = y;
 		} else {
-			untyped ev.pageX = x;
-			untyped ev.pageY = y;
+			untyped ev.pageX = x * RenderSupportJSPixi.backingStoreRatio;
+			untyped ev.pageY = y * RenderSupportJSPixi.backingStoreRatio;
 		}
 
 		untyped stage.renderer.eventElement.dispatchEvent(ev);
@@ -640,8 +659,8 @@ class RenderSupport3D {
 
 		ev.touches = Lambda.array(Lambda.map(points, function(p) {
 			return {
-				pageX : p[0],
-				pageY : p[1]
+				pageX : p[0] * RenderSupportJSPixi.backingStoreRatio,
+				pageY : p[1] * RenderSupportJSPixi.backingStoreRatio
 			}
 		}));
 
@@ -668,6 +687,8 @@ class RenderSupport3D {
 		stage.metaKey = meta;
 
 		untyped stage.renderer.eventElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+
+		stage.invalidateStage();
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
@@ -1392,15 +1413,21 @@ class RenderSupport3D {
 
 
 	public static function make3DPointLight(color : Int, intensity : Float, distance : Float, decay : Float) : Light {
-		return new PointLight(color, intensity, distance, decay);
+		var light = new PointLight(color, intensity, distance, decay);
+		light.name = "Point Light";
+		return light;
 	}
 
 	public static function make3DSpotLight(color : Int, intensity : Float, distance : Float, angle : Float, penumbra : Float, decay : Float) : Light {
-		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
+		var light = new SpotLight(color, intensity, distance, angle, penumbra, decay);
+		light.name = "Spot Light";
+		return light;
 	}
 
 	public static function make3DAmbientLight(color : Int, intensity : Float) : Light {
-		return new AmbientLight(color, intensity);
+		var light = new AmbientLight(color, intensity);
+		light.name = "Ambient Light";
+		return light;
 	}
 
 
@@ -1686,6 +1713,10 @@ class RenderSupport3D {
 	public static function create3DAnimationMixer(object : Object3D) : AnimationMixer {
 		var mixer : Dynamic = untyped __js__("new THREE.AnimationMixer(object)");
 		mixer.clock = new Clock();
+		mixer.object = object;
+		for (stage in object.getStage()) {
+			mixer.stage = stage;
+		}
 		return mixer;
 	}
 
@@ -1693,7 +1724,7 @@ class RenderSupport3D {
 		var action = mixer.clipAction(animation);
 		var drawFrameFn = function() {
 			mixer.update(untyped mixer.clock.getDelta());
-			RenderSupportJSPixi.PixiStageChanged = true;
+			Object3DHelper.invalidateStage(untyped mixer.object);
 		};
 
 		action.play();
