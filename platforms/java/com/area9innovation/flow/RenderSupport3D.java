@@ -56,6 +56,19 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DStageOnLoad(Object stage, Func1<Object,Object> onLoad) {
+		return null;
+	}
+	public Object set3DStageOnError(Object stage, Func1<Object,Object> onError) {
+		return null;
+	}
+	public Object set3DStageOnStart(Object stage, Func1<Object,Object> onStart) {
+		return null;
+	}
+	public Object set3DStageOnProgress(Object stage, Func3<String,Integer,Integer,Object> onProgress) {
+		return null;
+	}
+
 	public Object set3DSceneBackground(Object scene, Object background) {
 		return null;
 	}
@@ -63,16 +76,16 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object load3DObject(String objUrl, String mtlUrl, Func1<Object,Object> onLoad) {
+	public Object load3DObject(Object stage, String objUrl, String mtlUrl, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DGLTFObject(String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad) {
+	public Object load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad) {
 		return null;
 	}
-	public Object load3DScene(String url, Func1<Object,Object> onLoad) {
+	public Object load3DScene(Object stage, String url, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DTexture(String url, Func1<Object,Object> onLoad, Object[] parameters) {
+	public Object load3DTexture(Object stage, String url, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;
 	}
 	public Object make3DDataTexture(Object[] data, Integer width, Integer height, Object[] parameters) {
@@ -417,6 +430,13 @@ public class RenderSupport3D extends NativeHost {
 
 	public Object set3DObjectWorldMatrix(Object object, Object[] matrix) {
 		return null;
+	}
+
+	public Object set3DObjectInteractive(Object object, Boolean interactive) {
+		return null;
+	}
+	public Boolean get3DObjectInteractive(Object object) {
+		return false;
 	}
 
 	public Object[] get3DObjectBoundingBox(Object object) {

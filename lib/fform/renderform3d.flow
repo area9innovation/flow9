@@ -9,7 +9,7 @@ export {
 
 	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
 		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled, F3DAttachTransformControls, F3DCameraDistance,
-			F3DOrbitControlsParameters;
+			F3DOrbitControlsParameters, F3DLoading;
 
 			F3DIgnoreMouseEvents();
 			F3DExportScene(fn : ref Maybe<(includeCamera : bool) -> string>);
@@ -17,6 +17,7 @@ export {
 			F3DAttachTransformControls(fn : ref (clip : native, attach : bool) -> void);
 			F3DCameraDistance(min : double, max : double); // min = 0.0, max = 1000.0 by default
 			F3DOrbitControlsParameters(parameters : [KeyValue]);
+			F3DLoading(loading : DynamicBehaviour<bool>);
 
 	F3DObject ::= F3DScene, F3DMutable, F3DName, F3DVisible, F3DAlpha, F3DLocalPosition, F3DLocalRotation, F3DLocalScale, F3DLookAt, F3DLocalMatrix, F3DWorldMatrix, F3DOnLoad,
 		F3DInspectLocalRotation, F3DInspectLocalPosition, F3DInspectLocalScale, F3DInspectWorldPosition, F3DInspectStagePosition,
@@ -81,7 +82,7 @@ export {
 
 		F3DVertexNormalsHelper(object : F3DObject, size : double, color : int, lineWidth : double);
 
-		F3DInteractive(object : F3DObject, listeners : [F3DEventHandler]);
+		F3DInteractive(object : F3DObject, listeners : [F3DEventHandler], enabled : Transform<bool>);
 			F3DEventHandler ::= F3DMouseDown, F3DMouseUp;
 				F3DMouseDown(fn : (handled : bool) -> bool);
 				F3DMouseUp(fn : (handled : bool) -> bool);
@@ -154,6 +155,9 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 		container = make(FEmpty());
 
 		load3DLibraries(\ -> {
+			isLoading = extractStruct(style, F3DLoading(make(true))).loading;
+			nextDistinct(isLoading, true);
+
 			metrics = make(FormMetrics(0., 0., 0., 0.));
 			clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
 			transformControlsEnabled = extractStruct(style, F3DTransformControlsEnabled(const(false))).enabled;
@@ -161,6 +165,42 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 				tryExtractStruct(style, F3DAttachTransformControls(ref nop2)),
 				\es -> es.fn := \c, b -> if (b) attach3DTransformControls(clip, c) else detach3DTransformControls(clip, c)
 			);
+
+			onDoneCounter : ref int = ref 0;
+			resourcesLoading : ref bool = ref false;
+
+			set3DStageOnStart(clip, \ -> {
+				println("Three.js loading resources");
+				resourcesLoading := true;
+			});
+
+			set3DStageOnError(clip, \ -> {
+				println("Three.js loading error");
+				nextDistinct(isLoading, false);
+			});
+
+			set3DStageOnLoad(clip, \ -> {
+				println("Three.js loading finished");
+				resourcesLoading := false;
+
+				if (^onDoneCounter == 2) {
+					nextDistinct(isLoading, false);
+				}
+			});
+
+			set3DStageOnProgress(clip, \url, loaded, total -> {
+				println("Three.js loaded " + i2s(loaded) + " of " + i2s(total));
+			});
+
+			innerOnDone = \ -> {
+				onDoneCounter := ^onDoneCounter + 1;
+
+				if (^onDoneCounter == 2 && !^resourcesLoading) {
+					nextDistinct(isLoading, false);
+				}
+
+				[]
+			}
 
 			next(
 				container,
@@ -179,7 +219,11 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 										nextDistinct(metrics, FormMetrics(v.width, v.height, v.height, v.height));
 									})()
 								],
-								render3dform(camera, clip, const(false), \c -> {
+								render3dform(
+									camera,
+									clip,
+									const(false),
+									\c -> {
 										cameraDistance = extractStruct(style, F3DCameraDistance(0.0, 1000.0));
 										parameters =
 											concat(
@@ -193,17 +237,23 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 										set3DCamera(clip, c, map(parameters, \v -> [v.key, v.value]));
 
 										[];
-									}
+									},
+									innerOnDone
 								),
-								render3dform(scene, clip, transformControlsEnabled, \s -> {
-									set3DScene(clip, s);
+								render3dform(
+									F3DVisible(scene, fnot(isLoading)),
+									clip,
+									transformControlsEnabled, \s -> {
+										set3DScene(clip, s);
 
-									maybeApply(tryExtractStruct(style, F3DExportScene(ref None())), \es ->
-										es.fn := Some(\includeCamera -> get3DObjectJSON(s, includeCamera))
-									);
+										maybeApply(tryExtractStruct(style, F3DExportScene(ref None())), \es ->
+											es.fn := Some(\includeCamera -> get3DObjectJSON(s, includeCamera))
+										);
 
-									addF3DMouseListeners(clip, s, transformControlsEnabled);
-								})
+										addF3DMouseListeners(clip, s, transformControlsEnabled);
+									},
+									innerOnDone
+								)
 							)
 							|> (\f -> \ -> applyall(f))
 						)
@@ -383,14 +433,24 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 	}
 }
 
-render3dform(object : F3DObject, stage : native, transformControlsEnabled : Transform<bool>, onLoad : (native) -> [() -> void]) -> [() -> void] {
+render3dform(object : F3DObject, stage : native, transformControlsEnabled : Transform<bool>, onStart : (native) -> [() -> void], onDone : () -> [() -> void]) -> [() -> void] {
 	switch (object : F3DObject) {
-		F3DEmpty() : [];
+		F3DEmpty() : onDone();
 		F3DScene(objects) : {
 			scene = make3DScene();
+			onDoneCounter : ref int = ref 0;
+			innerOnDone = \ -> {
+				onDoneCounter := ^onDoneCounter + 1;
+
+				if (^onDoneCounter == length(fgetValue(objects))) {
+					onDone();
+				} else {
+					[]
+				}
+			}
 
 			concat(
-				onLoad(scene),
+				onStart(scene),
 				[
 					fiteriu(objects, \index, o -> {
 						render3dform(
@@ -404,20 +464,24 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
 										\ -> remove3DChild(scene, c)
 									]
-								)
+								),
+							innerOnDone
 						)
 					})
 				]
 			)
 		}
 		F3DMutable(innerObject) : {
+			onDonePad = ref None();
+
 			[
 				makeSubscribeUns(innerObject, \obj ->
 					render3dform(
 						obj,
 						stage,
 						transformControlsEnabled,
-						onLoad
+						onStart,
+						\ -> onlyOnce(onDonePad, onDone)
 					)
 				)()
 			]
@@ -429,24 +493,28 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip -> {
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(name, \v -> set3DObjectName(clip, v))(),
 						]
 					)
-				}
+				},
+				onDone
 			);
 
 			r;
 		}
 		F3DNativeMutable(innerObject) : {
+			onDonePad = ref None();
+
 			[
 				makeSubscribeUns(innerObject, \obj ->
 					render3dform(
 						obj,
 						stage,
 						transformControlsEnabled,
-						onLoad
+						onStart,
+						\ -> onlyOnce(onDonePad, onDone)
 					)
 				)()
 			]
@@ -457,10 +525,11 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				stage,
 				transformControlsEnabled,
 				\clip -> {
-					d = onLoad(clip);
+					d = onStart(clip);
 					innerOnLoad(clip);
 					d;
-				}
+				},
+				onDone
 			);
 
 			r;
@@ -472,12 +541,13 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip -> {
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(visible, \v -> set3DObjectVisible(clip, v))(),
 						]
 					)
-				}
+				},
+				onDone
 			);
 
 			r;
@@ -489,12 +559,13 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip -> {
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(alpha, \v -> set3DObjectAlpha(clip, v))(),
 						]
 					)
-				}
+				},
+				onDone
 			);
 
 			r;
@@ -506,7 +577,7 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip -> {
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(point, \v -> {
 								set3DObjectLocalPositionX(clip, v.x);
@@ -515,7 +586,8 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 							})()
 						]
 					)
-				}
+				},
+				onDone
 			);
 
 			r;
@@ -527,7 +599,7 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(point, \v -> {
 								set3DObjectLocalRotationX(clip, v.x);
@@ -535,7 +607,8 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 								set3DObjectLocalRotationZ(clip, v.z);
 							})()
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -547,7 +620,7 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(point, \v -> {
 								set3DObjectLocalScaleX(clip, v.x);
@@ -555,7 +628,8 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 								set3DObjectLocalScaleZ(clip, v.z);
 							})()
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -567,11 +641,12 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							make2Subscribe(point, update, \v, __ -> set3DObjectLookAt(clip, v.x, v.y, v.z))()
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -583,11 +658,12 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(matrix, \m -> set3DObjectLocalMatrix(clip, m))()
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -599,11 +675,12 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(matrix, \m -> set3DObjectWorldMatrix(clip, m))()
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -614,10 +691,11 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				stage,
 				transformControlsEnabled,
 				\clip -> {
-					d = onLoad(clip);
+					d = onStart(clip);
 					innerOnLoad(clip);
 					d;
-				}
+				},
+				onDone
 			);
 
 			r;
@@ -629,13 +707,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectLocalRotationListener(clip, \nx, ny, nz -> {
 								nextDistinct(point, Point3D(nx, ny, nz));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -647,13 +726,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectLocalPositionListener(clip, \nx, ny, nz -> {
 								nextDistinct(point, Point3D(nx, ny, nz));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -665,13 +745,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectLocalScaleListener(clip, \nx, ny, nz -> {
 								nextDistinct(point, Point3D(nx, ny, nz));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -683,13 +764,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectWorldPositionListener(clip, \nx, ny, nz -> {
 								nextDistinct(point, Point3D(nx, ny, nz));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -701,14 +783,15 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectWorldPositionListener(clip, \nx, ny, nz -> {
 								sc = convert3DVectorToStageCoordinates(stage, nx, ny, nz);
 								nextDistinct(point, Point(sc[0], sc[1]));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -720,13 +803,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectBoundingBoxListener(clip, \box -> {
 								nextDistinct(point, Point3D((box[0][0] + box[1][0]) / 2.0, (box[0][1] + box[1][1]) / 2.0, (box[0][2] + box[1][2]) / 2.0));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -738,13 +822,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectBoundingBoxListener(clip, \box -> {
 								nextDistinct(point, Point3D(box[0][0], box[0][1], box[0][2]));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -756,13 +841,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectBoundingBoxListener(clip, \box -> {
 								nextDistinct(point, Point3D(box[1][0], box[1][1], box[1][2]));
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -774,13 +860,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectLocalMatrixListener(clip, \m -> {
 								nextDistinct(matrix, m);
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -792,13 +879,14 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DObjectWorldMatrixListener(clip, \m -> {
 								nextDistinct(matrix, m);
 							})
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
@@ -810,7 +898,7 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							add3DEventListener(clip, "detached", \ -> nextDistinct(enabled, false)),
 							add3DEventListener(clip, "attached", \ -> nextDistinct(enabled, true)),
@@ -821,32 +909,34 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 									detach3DTransformControls(stage, clip)
 							)()
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
 		}
 		F3DLight() : {
-			renderF3DLight(object, onLoad);
+			renderF3DLight(object, onStart, onDone);
 		}
 		F3DCamera() : {
-			renderF3DCamera(object, onLoad);
+			renderF3DCamera(object, onStart, onDone);
 		}
 		F3DMesh(geometry, materials, parameters) : {
 			materialDisposers = map(materials, \m -> renderF3DMaterial(m, stage));
 			geometryDisposers = renderF3DGeometry(geometry);
 
-			concat3(
+			concatA([
 				map(materialDisposers, \m -> m.disposers) |> concatA,
 				geometryDisposers.disposers,
-				onLoad(make3DMesh(geometryDisposers.clip, map(materialDisposers, \m -> m.clip), map(parameters, \v -> [v.key, v.value])))
-			);
+				onStart(make3DMesh(geometryDisposers.clip, map(materialDisposers, \m -> m.clip), map(parameters, \v -> [v.key, v.value]))),
+				onDone()
+			]);
 		}
 		F3DLoader(objUrl, mtlUrl) : {
 			uns = ref [];
 
-			load3DObject(objUrl, mtlUrl, \obj -> {
-				uns := onLoad(obj);
+			load3DObject(stage, objUrl, mtlUrl, \obj -> {
+				uns := concat(onStart(obj), onDone());
 			});
 
 			[
@@ -856,8 +946,8 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 		F3DGLTFLoader(url, onAnimation) : {
 			uns = ref [];
 
-			load3DGLTFObject(url, \animations, scene, scenes, cameras, assets -> {
-				uns := onLoad(scene);
+			load3DGLTFObject(stage, url, \animations, scene, scenes, cameras, assets -> {
+				uns := onStart(scene);
 
 				if (length(animations) > 0) {
 					mixer = create3DAnimationMixer(scene);
@@ -888,6 +978,8 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 						})
 					)
 				}
+
+				uns := concat(^uns, onDone());
 			});
 
 			[
@@ -897,8 +989,8 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 		F3DSceneLoader(url) : {
 			uns = ref [];
 
-			load3DScene(url, \obj -> {
-				uns := onLoad(obj);
+			load3DScene(stage, url, \obj -> {
+				uns := concat(onStart(obj), onDone());
 			});
 
 			[
@@ -906,6 +998,17 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 			]
 		}
 		F3DChildren(innerObject, fn) : {
+			onDoneCounter : ref int = ref 0;
+			innerOnDone = \ -> {
+				onDoneCounter := ^onDoneCounter + 1;
+
+				if (^onDoneCounter == 1) {
+					onDone();
+				} else {
+					[]
+				}
+			}
+
 			r = render3dform(
 				innerObject,
 				stage,
@@ -919,20 +1022,36 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 							fn(parsedClip.first),
 							stage,
 							transformControlsEnabled,
-							onLoad
+							onStart,
+							innerOnDone
 						)
 					)
-				}
+				},
+				innerOnDone
 			);
 
 			r;
 		}
 		F3DNativeObject(nativeObject) : {
-			onLoad(nativeObject);
+			concat(
+				onStart(nativeObject),
+				onDone()
+			)
 		}
 		F3DNativeScene(scene, objects) : {
+			onDoneCounter : ref int = ref 0;
+			innerOnDone = \ -> {
+				onDoneCounter := ^onDoneCounter + 1;
+
+				if (^onDoneCounter == length(fgetValue(objects))) {
+					onDone();
+				} else {
+					[]
+				}
+			}
+
 			concat(
-				onLoad(scene),
+				onStart(scene),
 				[
 					fiteriu(objects, \index, o -> {
 						render3dform(
@@ -946,14 +1065,18 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
 										// \ -> remove3DChild(scene, c) TODO:
 									]
-								)
+								),
+							innerOnDone
 						)
 					})
 				]
 			)
 		}
 		F3DJsonObject(json) : {
-			onLoad(make3DObjectFromJSON(json));
+			concat(
+				onStart(make3DObjectFromJSON(json)),
+				onDone()
+			);
 		}
 		F3DObject2Json(innerObject, jsonFn) : {
 			r = render3dform(
@@ -963,8 +1086,9 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				\clip -> {
 					jsonFn := Some(\includeCamera -> get3DObjectJSON(clip, includeCamera));
 
-					onLoad(clip);
-				}
+					onStart(clip);
+				},
+				onDone
 			);
 
 			r;
@@ -976,7 +1100,7 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				transformControlsEnabled,
 				\clip ->
 					concat(
-						onLoad(clip),
+						onStart(clip),
 						[
 							makeSubscribe(enabled, \en ->
 								if (en)
@@ -985,18 +1109,36 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 									detach3DBoxHelper(stage, clip)
 							)()
 						]
-					)
+					),
+				onDone
 			);
 
 			r;
 		}
 		F3DAxesHelper(size) : {
-			onLoad(make3DAxesHelper(size));
+			concat(
+				onStart(make3DAxesHelper(size)),
+				onDone()
+			);
 		}
 		F3DGridHelper(size, divisions, colorCenterLine, colorGrid) : {
-			onLoad(make3DGridHelper(size, divisions, colorCenterLine, colorGrid));
+			concat(
+				onStart(make3DGridHelper(size, divisions, colorCenterLine, colorGrid)),
+				onDone()
+			);
 		}
 		F3DVertexNormalsHelper(innerObject, size, color, lineWidth) : {
+			onDoneCounter : ref int = ref 0;
+			innerOnDone = \ -> {
+				onDoneCounter := ^onDoneCounter + 1;
+
+				if (^onDoneCounter == 2) {
+					onDone();
+				} else {
+					[]
+				}
+			}
+
 			r = render3dform(
 				innerObject,
 				stage,
@@ -1006,20 +1148,22 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 						F3DGroup([F3DNativeObject(clip), F3DNativeObject(make3DVertexNormalsHelper(clip, size, color, lineWidth))]),
 						stage,
 						transformControlsEnabled,
-						onLoad
-					)
+						onStart,
+						innerOnDone
+					),
+				innerOnDone
 			);
 
 			r;
 		}
-		F3DInteractive(innerObject, listeners) : {
+		F3DInteractive(innerObject, listeners, enabled) : {
 			r = render3dform(
 				innerObject,
 				stage,
 				transformControlsEnabled,
 				\clip ->
-					concat(
-						onLoad(clip),
+					concat3(
+						onStart(clip),
 						map(listeners, \l -> {
 							switch (l : F3DEventHandler) {
 								F3DMouseDown(fn): {
@@ -1042,8 +1186,12 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 									});
 								}
 							}
-						})
-					)
+						}),
+						[
+							makeSubscribe(enabled, \v -> set3DObjectInteractive(clip, v))()
+						]
+					),
+				onDone
 			);
 
 			r;
@@ -1051,44 +1199,46 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 	}
 }
 
-renderF3DCamera(camera : F3DCamera, onLoad : (native) -> [() -> void]) -> [() -> void] {
+renderF3DCamera(camera : F3DCamera, onStart : (native) -> [() -> void], onDone : () -> [() -> void]) -> [() -> void] {
 	switch (camera : F3DCamera) {
 		F3DPerspectiveCamera(fov, aspect, near, far): {
 			clip = make3DPerspectiveCamera(fgetValue(fov), fgetValue(aspect), fgetValue(near), fgetValue(far));
 
-			concat(
-				onLoad(clip),
+			concat3(
+				onStart(clip),
 				[
 					makeSubscribe2(fov, \v -> set3DCameraFov(clip, v))(),
 					makeSubscribe2(aspect, \v -> set3DCameraAspect(clip, v))(),
 					makeSubscribe2(near, \v -> set3DCameraNear(clip, v))(),
 					makeSubscribe2(far, \v -> set3DCameraFar(clip, v))()
-				]
+				],
+				onDone()
 			)
 		}
 	}
 }
 
-renderF3DLight(light : F3DLight, onLoad : (native) -> [() -> void]) -> [() -> void] {
+renderF3DLight(light : F3DLight, onStart : (native) -> [() -> void], onDone : () -> [() -> void]) -> [() -> void] {
 	switch (light : F3DLight) {
 		F3DPointLight(color, intensity, distance, decayAmount): {
 			clip = make3DPointLight(fgetValue(color), fgetValue(intensity), fgetValue(distance), fgetValue(decayAmount));
 
-			concat(
-				onLoad(clip),
+			concat3(
+				onStart(clip),
 				[
 					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
 					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))(),
 					makeSubscribe2(distance, \v -> set3DLightDistance(clip, v))(),
 					makeSubscribe2(decayAmount, \v -> set3DLightDecay(clip, v))()
-				]
+				],
+				onDone()
 			)
 		}
 		F3DSpotLight(color, intensity, distance, angle, penumbra, decayAmount): {
 			clip = make3DSpotLight(fgetValue(color), fgetValue(intensity), fgetValue(distance), fgetValue(angle), fgetValue(penumbra), fgetValue(decayAmount));
 
-			concat(
-				onLoad(clip),
+			concat3(
+				onStart(clip),
 				[
 					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
 					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))(),
@@ -1096,18 +1246,20 @@ renderF3DLight(light : F3DLight, onLoad : (native) -> [() -> void]) -> [() -> vo
 					makeSubscribe2(angle, \v -> set3DLightAngle(clip, v))(),
 					makeSubscribe2(penumbra, \v -> set3DLightPenumbra(clip, v))(),
 					makeSubscribe2(decayAmount, \v -> set3DLightDecay(clip, v))()
-				]
+				],
+				onDone()
 			)
 		}
 		F3DAmbientLight(color, intensity): {
 			clip = make3DAmbientLight(fgetValue(color), fgetValue(intensity));
 
-			concat(
-				onLoad(clip),
+			concat3(
+				onStart(clip),
 				[
 					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
 					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))()
-				]
+				],
+				onDone()
 			)
 		}
 	}
@@ -1234,28 +1386,28 @@ renderF3DMaterial(material : F3DMaterial, stage : native) -> F3DRenderResult {
 		}
 		F3DMaterialTexture(innerMaterial, texture) : {
 			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture);
+			t = renderF3DTexture(texture, stage);
 			set3DMaterialMap(m.clip, t.clip);
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
 		}
 		F3DMaterialAlphaTexture(innerMaterial, texture) : {
 			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture);
+			t = renderF3DTexture(texture, stage);
 			set3DMaterialAlphaMap(m.clip, t.clip);
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
 		}
 		F3DMaterialDisplacementTexture(innerMaterial, texture, scale, bias) : {
 			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture);
+			t = renderF3DTexture(texture, stage);
 			set3DMaterialDisplacementMap(m.clip, t.clip, fgetValue(scale), fgetValue(bias));
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
 		}
 		F3DMaterialBumpTexture(innerMaterial, texture, scale) : {
 			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture);
+			t = renderF3DTexture(texture, stage);
 			set3DMaterialBumpMap(m.clip, t.clip, fgetValue(scale));
 
 			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
@@ -1285,11 +1437,11 @@ renderF3DMaterial(material : F3DMaterial, stage : native) -> F3DRenderResult {
 	}
 }
 
-renderF3DTexture(texture : F3DTexture) -> F3DRenderResult {
+renderF3DTexture(texture : F3DTexture, stage : native) -> F3DRenderResult {
 	switch (texture : F3DTexture) {
 		F3DTextureLoader(url, onLoad, parameters) : {
 			F3DRenderResult(
-				load3DTexture(url, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value])),
+				load3DTexture(stage, url, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value])),
 				[]
 			);
 		}
@@ -1308,7 +1460,7 @@ renderF3DTexture(texture : F3DTexture) -> F3DRenderResult {
 			F3DRenderResult(t, []);
 		}
 		F3DTextureRotation(innerTexture, rotation) : {
-			t = renderF3DTexture(innerTexture);
+			t = renderF3DTexture(innerTexture, stage);
 
 			F3DRenderResult(
 				t.clip,
@@ -1319,7 +1471,7 @@ renderF3DTexture(texture : F3DTexture) -> F3DRenderResult {
 			)
 		}
 		F3DTextureOffset(innerTexture, point) : {
-			t = renderF3DTexture(innerTexture);
+			t = renderF3DTexture(innerTexture, stage);
 
 			F3DRenderResult(
 				t.clip,
@@ -1344,11 +1496,7 @@ parseF3DNativeObject(object : native) -> Pair<F3DNative, [() -> void]> {
 		[
 			add3DEventListener(object, "childrenchanged", \ -> {
 				^uns();
-				newChildren = get3DObjectChildren(object);
-
-				if (map(getValue(children), get3DObjectId) != map(newChildren, get3DObjectId)) {
-					uns := interruptibleTimer(33, \ -> next(children, newChildren));
-				}
+				uns := interruptibleTimer(33, \ -> nextDistinct(children, get3DObjectChildren(object)));
 			}),
 			\ -> ^uns()
 		]

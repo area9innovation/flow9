@@ -18,6 +18,7 @@ import js.three.BoxHelper;
 import js.three.Scene;
 import js.three.Raycaster;
 import js.three.WebGLRenderer;
+import js.three.LoadingManager;
 
 
 using DisplayObjectHelper;
@@ -31,6 +32,7 @@ class ThreeJSStage extends Container {
 	public var transformControls : Dynamic;
 	public var boxHelpers : Array<Object3D> = new Array<Object3D>();
 	public var objectCache : Array<Object3D> = new Array<Object3D>();
+	public var loadingManager = new LoadingManager();
 
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
@@ -167,6 +169,10 @@ class ThreeJSStage extends Container {
 
 			if (handledObjects.indexOf(object) == -1) {
 				handledObjects.push(object);
+
+				if (boxHelpers.indexOf(object) >= 0) {
+					return;
+				}
 
 				object.emitEvent(event.type);
 				object.invalidateStage();
