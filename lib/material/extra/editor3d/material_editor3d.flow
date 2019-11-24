@@ -38,6 +38,7 @@ M3DEditorState(
 	wh : DynamicBehaviour<WidthHeight>,
 	mutable stage : native,
 	scene : DynamicBehaviour<Maybe<F3DObject>>,
+	loading : DynamicBehaviour<bool>,
 	tree : DynamicBehaviour<Transform<[MTreeNode<string>]>>,
 	treeOrder : DynamicBehaviour<[MTreeOrderNode<string>]>,
 	selected : DynamicBehaviour<Maybe<native>>,
@@ -59,6 +60,7 @@ makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEd
 	wh = extractStruct(style, M3DEditorStageSize(makeWH())).wh;
 	stage = makeClip();
 	scene = extractStruct(style, M3DEditorScene(make(None()))).scene;
+	loading = extractStruct(style, F3DLoading(make(true))).loading;
 	tree = extractStruct(style, M3DEditorTree(make(const([])))).tree;
 	treeOrder = extractStruct(style, M3DEditorTreeOrder(make([]))).treeOrder;
 	selected = extractStruct(style, M3DEditorSelected(make(None()))).selected;
@@ -117,6 +119,7 @@ makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEd
 		wh,
 		stage,
 		scene,
+		loading,
 		tree,
 		treeOrder,
 		selected,
@@ -147,13 +150,24 @@ M3DEditorStyle2F3DStageStyle(style : [M3DEditorStyle]) -> [F3DStageStyle] {
 makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor {
 	state = makeM3DEditorState(manager, style);
 	state.propertiesFn := Some(\obj -> F3DObjectProperties(state, obj));
+	cameraDistance = extractStruct(style, F3DCameraDistance(0.0, 1000.0));
 
 	scene =
 		F3DName(
 			F3DChildren(
 				F3DScene(feitherMap(state.scene, \c -> [F3DObject2Json(c, state.exportFn)], const([]))),
 				\c -> {
-					next(state.tree, farray(makeF3DTree(state, c)));
+					if (getValue(state.loading)) {
+						uns = ref nop;
+						uns := makeSubscribe2(state.loading, \l -> {
+							if (!l) {
+								next(state.tree, farray(makeF3DTree(state, c)));
+								^uns();
+							}
+						})();
+					} else {
+						next(state.tree, farray(makeF3DTree(state, c)));
+					}
 
 					state.parseFn(c)
 				}
@@ -444,13 +458,21 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 	stage =
 		M3DStage(
 			F3DScene(const([
-				F3DVisible(F3DAxesHelper(2500.0), state.axes),
-				F3DVisible(F3DGridHelper(5000.0, 50, 0xaaaaaa, 0xffffff), state.grid),
+				F3DInteractive(F3DVisible(F3DAxesHelper(cameraDistance.max), state.axes), [], const(false)),
+				F3DInteractive(F3DVisible(F3DGridHelper(cameraDistance.max * 2.0, 50, 0xaaaaaa, 0xffffff), state.grid), [], const(false)),
 				scene
 			])),
 			camera,
 			TFillXY(),
-			M3DEditorStyle2F3DStageStyle(replaceStruct(style, extractStruct(style, F3DTransformControlsEnabled(const(true)))))
+			M3DEditorStyle2F3DStageStyle(
+				replaceStructMany(
+					style,
+					[
+						extractStruct(style, F3DTransformControlsEnabled(const(true))),
+						F3DLoading(state.loading)
+					]
+				)
+			)
 		)
 		|> (\f -> MInspect([ISize(state.wh)], f))
 		|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f))

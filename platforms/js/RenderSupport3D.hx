@@ -277,6 +277,22 @@ class RenderSupport3D {
 		return new Color(color);
 	}
 
+	public static function set3DStageOnStart(stage : ThreeJSStage, onStart : Void -> Void) : Void  {
+		stage.loadingManager.onStart = onStart;
+	}
+
+	public static function set3DStageOnError(stage : ThreeJSStage, onError : Void -> Void) : Void  {
+		stage.loadingManager.onError = onError;
+	}
+
+	public static function set3DStageOnLoad(stage : ThreeJSStage, onLoad : Void -> Void) : Void  {
+		stage.loadingManager.onLoad = onLoad;
+	}
+
+	public static function set3DStageOnProgress(stage : ThreeJSStage, onProgress : String -> Int -> Int -> Void) : Void {
+		stage.loadingManager.onProgress = untyped onProgress;
+	}
+
 	public static function set3DSceneBackground(scene : Scene, background : Dynamic) : Void {
 		scene.background = background;
 		scene.invalidateStage();
@@ -288,7 +304,7 @@ class RenderSupport3D {
 	}
 
 
-	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
+	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
 		var onLoadFn = function(obj : Dynamic) {
 			RenderSupportJSPixi.once("drawframe", function() {
 				for (geometry in Object3DHelper.get3DObjectAllGeometries(obj)) {
@@ -306,13 +322,13 @@ class RenderSupport3D {
 			});
 		}
 
-		if (Platform.isIE || Platform.isEdge) {
+		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
 			untyped __js__("
-				new THREE.MTLLoader()
+				new THREE.MTLLoader(stage.loadingManager)
 					.load(mtlUrl, function (materials) {
 						materials.preload();
 
-						new THREE.OBJLoader()
+						new THREE.OBJLoader(stage.loadingManager)
 							.setMaterials(materials)
 							.load(objUrl, onLoadFn);
 					})
@@ -325,9 +341,9 @@ class RenderSupport3D {
 					\".then((module2) => {\",
 					\"import('./js/threejs/loaders/obj2/bridge/MtlObjBridge.js')\",
 					\".then((module3) => {\",
-					\"new module.MTLLoader()\",
+					\"new module.MTLLoader(stage.loadingManager)\",
 					\".load(mtlUrl, function(materials) {\",
-					\"new module2.OBJLoader2()\",
+					\"new module2.OBJLoader2(stage.loadingManager)\",
 					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
 					\".load(objUrl, onLoadFn);\",
 					\"});\",
@@ -339,9 +355,9 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
+	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
 		untyped __js__("
-			new THREE.GLTFLoader()
+			new THREE.GLTFLoader(stage.loadingManager)
 				.load(url, function (gltf) {
 					onLoad(
 						gltf.animations, // Array<THREE.AnimationClip>
@@ -354,12 +370,12 @@ class RenderSupport3D {
 		");
 	}
 
-	public static function load3DScene(url : String, onLoad : Dynamic -> Void) : Void {
-		new ObjectLoader().load(url, onLoad);
+	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
+		new ObjectLoader(stage.loadingManager).load(url, onLoad);
 	}
 
-	public static function load3DTexture(url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
-		return new TextureLoader().load(url, function(texture) {
+	public static function load3DTexture(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		return new TextureLoader(stage.loadingManager).load(url, function(texture) {
 			for (par in parameters) {
 				untyped texture[par[0]] = untyped __js__("eval(par[1])");
 			}
@@ -587,7 +603,7 @@ class RenderSupport3D {
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
 		object.addEventListener(event, untyped cb);
 
-		if (event == "mousedown" || event == "mouseup" || event == "mousemove") {
+		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove") && object.interactive == null){
 			untyped object.interactive = true;
 		}
 
@@ -1274,6 +1290,22 @@ class RenderSupport3D {
 	public static function set3DObjectWorldMatrix(object : Object3D, matrix : Array<Float>) : Void {
 		object.matrixWorld.fromArray(matrix);
 		object.invalidateStage();
+	}
+
+
+	public static function set3DObjectInteractive(object : Object3D, interactive : Bool) : Void {
+		if (untyped object.interactive != interactive) {
+			untyped object.interactive = interactive;
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectInteractive(object : Object3D) : Bool {
+		if (untyped object.interactive != null) {
+			return untyped object.interactive;
+		} else {
+			return false;
+		}
 	}
 
 
