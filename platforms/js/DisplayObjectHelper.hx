@@ -803,7 +803,7 @@ class DisplayObjectHelper {
 
 	public static inline function getNativeWidgetTransform(clip : DisplayObject) : Matrix {
 		if (RenderSupportJSPixi.RendererType == "html") {
-			if (RenderSupportJSPixi.RenderContainers) {
+			if (untyped !clip.parentClip || RenderSupportJSPixi.RenderContainers) {
 				if (untyped clip.localTransformChanged) {
 					untyped clip.transform.updateLocalTransform();
 				}
@@ -855,11 +855,6 @@ class DisplayObjectHelper {
 		}
 
 		var localBounds = untyped clip.localBounds;
-
-		if (untyped clip.isCanvas) {
-			tx -= Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
-			ty -= Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
-		}
 
 		if (untyped clip.widthDelta != null && clip.style != null && clip.style.align != null && clip.style.align == 'center') {
 			tx -= untyped clip.widthDelta / 2.0;
@@ -918,7 +913,7 @@ class DisplayObjectHelper {
 
 	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
 		if (RenderSupportJSPixi.RendererType == "html" && !RenderSupportJSPixi.RenderContainers) {
-			if (untyped clip.parentClip.worldAlpha > 0) {
+			if (untyped clip.parentClip && clip.parentClip.worldAlpha > 0) {
 				return clip.worldAlpha / untyped clip.parentClip.worldAlpha;
 			} else if (clip.parent != null && !isNativeWidget(clip.parent)) {
 				return clip.alpha * getNativeWidgetAlpha(clip.parent);

@@ -35,6 +35,7 @@ class RenderSupportJSPixi {
 	private static var TransformChanged : Bool = true;
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
+	private static var PageWasHidden = false;
 
 	// Renderer options
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
@@ -324,6 +325,7 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
+		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 	}
 
@@ -548,6 +550,10 @@ class RenderSupportJSPixi {
 
 	public static var MouseUpReceived : Bool = true;
 
+	private static function addNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.addEventListener(event, fn, { passive : false })");
+	}
+
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
 			// Prevent default drop focus on canvas
@@ -606,6 +612,8 @@ class RenderSupportJSPixi {
 
 		var onpointermove = function(e : Dynamic) {
 			if (e.touches != null) {
+				e.preventDefault();
+
 				TouchPoints = e.touches;
 				emit("touchmove");
 
@@ -632,47 +640,43 @@ class RenderSupportJSPixi {
 		};
 
 		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
-			Browser.document.body.onpointerdown = onpointerdown;
-			Browser.document.body.onpointerup = onpointerup;
-			Browser.document.body.onpointermove = onpointermove;
-			Browser.document.body.onpointerout = onpointerout;
+			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
 
-			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-
-			Browser.document.body.ontouchstart = onpointerdown;
-			Browser.document.body.ontouchend = onpointerup;
-			Browser.document.body.ontouchmove = onpointermove;
+			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
 		} else if (Platform.isMobile) {
-			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-
-			Browser.document.body.ontouchstart = onpointerdown;
-			Browser.document.body.ontouchend = onpointerup;
-			Browser.document.body.ontouchmove = onpointermove;
+			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
 		} else if (Platform.isSafari) {
-			Browser.document.body.onmousedown = onpointerdown;
-			Browser.document.body.onmouseup = onpointerup;
-			Browser.document.body.onmousemove = onpointermove;
-			Browser.document.body.onmouseout = onpointerout;
+			addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
 		} else {
-			Browser.document.body.onpointerdown = onpointerdown;
-			Browser.document.body.onpointerup = onpointerup;
-			Browser.document.body.onpointermove = onpointermove;
-			Browser.document.body.onpointerout = onpointerout;
+			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
 		}
 
-		Browser.document.body.onkeydown = function(e : Dynamic) {
+		addNonPassiveEventListener(Browser.document.body, "keydown", function(e : Dynamic) {
 			MousePos.x = e.pageX;
 			MousePos.y = e.pageY;
 
 			emit("keydown", parseKeyEvent(e));
-		};
+		});
 
-		Browser.document.body.onkeyup = function(e : Dynamic) {
+		addNonPassiveEventListener(Browser.document.body, "keyup", function(e : Dynamic) {
 			MousePos.x = e.pageX;
 			MousePos.y = e.pageY;
 
 			emit("keyup", parseKeyEvent(e));
-		};
+		});
 
 		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
 
@@ -937,6 +941,13 @@ class RenderSupportJSPixi {
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
+		if (PageWasHidden) {
+			PageWasHidden = false;
+			InvalidateLocalStages();
+		} else if (Browser.document.hidden) {
+			PageWasHidden = true;
+		}
+
 		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
 			Animating = true;
 			PixiStageChanged = false;
@@ -985,7 +996,7 @@ class RenderSupportJSPixi {
 		for (child in PixiStage.getClipChildren()) {
 			child.invalidateTransform("forceRender", true);
 		}
-		
+
 		render();
 	}
 
@@ -2357,19 +2368,6 @@ class RenderSupportJSPixi {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			if (Platform.isIOS) {
-				FullWindowTargetClip = untyped getFirstVideoWidget(untyped FullWindowTargetClip) || FullWindowTargetClip;
-				if (untyped __instanceof__(FullWindowTargetClip, VideoClip)) {
-					if (fw)
-						requestFullScreen(untyped FullWindowTargetClip.nativeWidget)
-					else
-						exitFullScreen(untyped FullWindowTargetClip.nativeWidget);
-
-					return;
-				}
-			}
-
-
 			var mainStage : FlowContainer = cast(PixiStage.children[0], FlowContainer);
 
 			if (fw) {
@@ -2425,18 +2423,16 @@ class RenderSupportJSPixi {
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
-		if (!Platform.isIOS) {
-			if (RendererType == "html") {
-				if (fs)
-					requestFullScreen(Browser.document.body);
-				else
-					exitFullScreen(Browser.document);
-			} else {
-				if (fs)
-					requestFullScreen(PixiView);
-				else
-					exitFullScreen(PixiView);
-			}
+		if (RendererType == "html") {
+			if (fs)
+				requestFullScreen(Browser.document.body);
+			else
+				exitFullScreen(Browser.document);
+		} else {
+			if (fs)
+				requestFullScreen(PixiView);
+			else
+				exitFullScreen(PixiView);
 		}
 	}
 
