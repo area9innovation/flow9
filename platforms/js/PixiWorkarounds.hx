@@ -444,7 +444,7 @@ class PixiWorkarounds {
 					}
 				}
 
-				properties.ascent = baseline - i;
+				properties.ascent = baseline - i + (Platform.isMacintosh ? (font.indexOf('Material Icons') < 0 ? -1.0 : 1.0) : 0.0);
 
 				idx = pixels - line;
 				stop = false;
@@ -471,7 +471,7 @@ class PixiWorkarounds {
 					}
 				}
 
-				properties.descent = i - baseline;
+				properties.descent = i - baseline + (Platform.isMacintosh ? (font.indexOf('Material Icons') < 0 ? 1.0 : -1.0) : 0.0);
 				properties.fontSize = properties.ascent + properties.descent;
 
 				PIXI.TextMetrics._fonts[font] = properties;

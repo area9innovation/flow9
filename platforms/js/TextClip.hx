@@ -413,7 +413,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.lineHeight)}px';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" ? style.lineHeight : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
