@@ -413,7 +413,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.lineHeight)}px';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" ? style.lineHeight : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -502,28 +502,30 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateWidthDelta() {
 		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && RenderSupportJSPixi.IsRetinaDisplay) {
-			var zoomFactor = Platform.isSafari
-				? RenderSupportJSPixi.backingStoreRatio / Browser.window.devicePixelRatio
-				: Browser.window.devicePixelRatio / 2.0;
+			var zoomFactor = Browser.window.outerWidth / Browser.window.innerWidth;
 
 			updateTextMetrics();
 
-			if (zoomFactor <= 1.0 && metrics != null && metrics.lines != null && metrics.lines.length > 0) {
+			if (zoomFactor < 1.0 && metrics != null && metrics.lines != null && metrics.lines.length > 0) {
 				var fontSize = style.fontSize;
 				var wordWrapWidth = style.wordWrapWidth;
+				widthDelta = 0.0;
+				metrics = null;
 				var wd = getClipWidth();
 				var text = this.text;
 
-				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, 6.0));
+				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, Platform.isSafari ? 10.0 : 6.0));
 				style.wordWrapWidth = 2048.0;
 				var lines : Array<Dynamic> = metrics.lines;
-				widthDelta = lines.length > 0 ? Math.NEGATIVE_INFINITY : 0.0;
+				var newWidthDelta = Math.NEGATIVE_INFINITY;
 
 				for (line in lines) {
 					this.text = line;
 					metrics = null;
-					widthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd) + 1.0, widthDelta);
+					newWidthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd), newWidthDelta);
 				}
+
+				widthDelta = newWidthDelta;
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;
@@ -531,6 +533,7 @@ class TextClip extends NativeWidgetClip {
 
 				metrics = null;
 				updateTextMetrics();
+				invalidateTransform();
 			} else {
 				widthDelta = 0.0;
 			}
