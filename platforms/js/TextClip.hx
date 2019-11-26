@@ -145,7 +145,7 @@ class TextClip extends NativeWidgetClip {
 
 		style.resolution = 1.0;
 
-		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && RenderSupportJSPixi.IsRetinaDisplay) {
+		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
 			onAdded(function() {
 				RenderSupportJSPixi.on("resize", updateWidthDelta);
 
@@ -430,9 +430,9 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0 + 1.0)}px';
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0 + (RenderSupportJSPixi.IsRetinaDisplay ? 1.0 : 0.5))}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0 - 0.5) * getNativeWidgetTransform().d)}px';
+				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0 - (RenderSupportJSPixi.IsRetinaDisplay ? 0.5 : 0.0)) * getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
@@ -502,7 +502,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateWidthDelta() {
-		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && RenderSupportJSPixi.IsRetinaDisplay) {
+		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
 			var zoomFactor = Browser.window.outerWidth / Browser.window.innerWidth;
 
 			updateTextMetrics();
@@ -527,7 +527,7 @@ class TextClip extends NativeWidgetClip {
 				}
 
 				widthDelta = newWidthDelta;
-				fontDelta = (Platform.isSafari ? Math.floor(Math.ceil(fontSize * zoomFactor) / zoomFactor) : Math.ceil(Math.floor(fontSize * zoomFactor) / zoomFactor)) - fontSize;
+				fontDelta = Math.floor(Math.ceil(fontSize * zoomFactor) / zoomFactor) - fontSize;
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;
