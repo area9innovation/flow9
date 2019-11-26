@@ -136,6 +136,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var baselineWidget : Dynamic;
 	private var widthDelta : Float = 0.0;
+	private var fontDelta : Float = 0.0;
 
 	private var doNotRemap : Bool = false;
 
@@ -410,7 +411,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontFamily = RenderSupportJSPixi.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupportJSPixi.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupportJSPixi.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
-		nativeWidget.style.fontSize = '${style.fontSize}px';
+		nativeWidget.style.fontSize = '${style.fontSize + fontDelta}px';
 		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" ? style.lineHeight : metrics.height)}px';
@@ -429,9 +430,9 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0)}px';
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0 + 1.0)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0) * getNativeWidgetTransform().d)}px';
+				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0 - 0.5) * getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
@@ -526,17 +527,17 @@ class TextClip extends NativeWidgetClip {
 				}
 
 				widthDelta = newWidthDelta;
+				fontDelta = (Platform.isSafari ? Math.floor(Math.ceil(fontSize * zoomFactor) / zoomFactor) : Math.ceil(Math.floor(fontSize * zoomFactor) / zoomFactor)) - fontSize;
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;
 				this.text = text;
-
-				metrics = null;
-				updateTextMetrics();
-				invalidateTransform();
 			} else {
 				widthDelta = 0.0;
+				fontDelta = 0.0;
 			}
+
+			invalidateMetrics();
 		}
 	}
 
