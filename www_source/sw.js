@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 2;
+var SERVICE_WORKER_VERSION = 3;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -404,7 +404,8 @@ self.addEventListener('fetch', function(event) {
       })
     );
   } else {
-    if (isFileUploadingRequestFn(request)) {
+    // We disable Range requests for a while
+    if (isFileUploadingRequestFn(request) || event.request.headers.get('range')) {
       return;
     } else {
       event.respondWith(makeResponse(event.request));
