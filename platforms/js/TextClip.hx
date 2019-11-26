@@ -430,9 +430,9 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0 + (RenderSupportJSPixi.IsRetinaDisplay ? 1.0 : 0.5))}px';
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0 + (Platform.isHighDensityDisplay ? 1.0 : 0.5))}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0 - (RenderSupportJSPixi.IsRetinaDisplay ? 0.5 : 0.0)) * getNativeWidgetTransform().d)}px';
+				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0 - (Platform.isHighDensityDisplay ? 0.5 : 0.0)) * getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
@@ -527,7 +527,7 @@ class TextClip extends NativeWidgetClip {
 				}
 
 				widthDelta = newWidthDelta;
-				fontDelta = Math.floor(Math.ceil(fontSize * zoomFactor) / zoomFactor) - fontSize;
+				fontDelta = (Platform.isSafari || !Platform.isHighDensityDisplay ? Math.floor(Math.ceil(fontSize * zoomFactor) / zoomFactor) : Math.ceil(Math.floor(fontSize * zoomFactor) / zoomFactor)) - fontSize;
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;
