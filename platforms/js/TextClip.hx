@@ -527,7 +527,7 @@ class TextClip extends NativeWidgetClip {
 				}
 
 				widthDelta = newWidthDelta;
-				fontDelta = -fontSize / 96.0 / zoomFactor;
+				fontDelta = -fontSize / 120.0 / zoomFactor;
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;

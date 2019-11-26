@@ -1126,9 +1126,10 @@ class DisplayObjectHelper {
 
 		if (untyped clip.hasMarginGap) {
 			if (y < 0 || x < 0) {
-				nativeWidget.style.margin = '${-round(MarginGap)}px';
 				nativeWidget.style.marginLeft = '${-round(x + MarginGap)}px';
+				nativeWidget.style.marginRight = '${-round(MarginGap)}px';
 				nativeWidget.style.marginTop = '${-round(y + MarginGap)}px';
+				nativeWidget.style.marginBottom = '${-round(MarginGap)}px';
 
 				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + MarginGap * 2.0)}px';
 				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + MarginGap * 2.0)}px';
@@ -1136,9 +1137,10 @@ class DisplayObjectHelper {
 				y = 0;
 				x = 0;
 			} else {
-				nativeWidget.style.marginLeft = null;
-				nativeWidget.style.marginTop = null;
-				nativeWidget.style.margin = '${-round(MarginGap)}px';
+				nativeWidget.style.marginLeft = '${-round(MarginGap)}px';
+				nativeWidget.style.marginRight = '${-round(MarginGap)}px';
+				nativeWidget.style.marginTop = '${-round(MarginGap)}px';
+				nativeWidget.style.marginBottom = '${-round(MarginGap)}px';
 				nativeWidget.style.clip = null;
 			}
 		} else {
