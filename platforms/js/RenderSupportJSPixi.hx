@@ -50,6 +50,7 @@ class RenderSupportJSPixi {
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
+	public static var browserZoom : Float = 1.0;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -104,9 +105,10 @@ class RenderSupportJSPixi {
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
+		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
 
 		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
-			ratio *= Browser.window.outerWidth / Browser.window.innerWidth;
+			ratio *= browserZoom;
 		}
 
 		return Math.max(roundPlus(ratio, 2), 1.0);
@@ -1022,6 +1024,10 @@ class RenderSupportJSPixi {
 
 	public static function getPixelsPerCm() : Float {
 		return 96.0 / 2.54;
+	}
+
+	public static function getBrowserZoom() : Float {
+		return browserZoom;
 	}
 
 	public static function setHitboxRadius(radius : Float) : Bool {
