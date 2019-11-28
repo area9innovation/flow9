@@ -21,12 +21,13 @@ class FlowContainer extends Container {
 	public var transformChanged : Bool = false;
 	public var stageChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
+	private var localTransformChanged : Bool = true;
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
 
-	private var nativeWidget : Dynamic;
-	private var accessWidget : AccessWidget;
+	public var nativeWidget : Dynamic;
+	public var accessWidget : AccessWidget;
 
 	public var isNativeWidget : Bool = false;
 
@@ -263,8 +264,6 @@ class FlowContainer extends Container {
 
 		isNativeWidget = true;
 
-		for (child in children) {
-			untyped child.parentClip = this;
-		}
+		invalidateParentClip();
 	}
 }

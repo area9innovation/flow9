@@ -94,15 +94,20 @@ void DebugManager::runDebugger(const DebugConf &conf) {
 
 void DebugManager::slotDebug(int row) {
 	try {
-		DebugConf debugConf;
-		debugConf.executable = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
-		debugConf.workDir    = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
-		debugConf.arguments  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
-		debugConf.fdbCmd     = QFileInfo(QLatin1String("flowcpp")).absoluteFilePath();
-		QFileInfo info(debugConf.executable);
-		debugConf.executable = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".bytecode");
-		debugConf.debuginfo = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".debug");
-		runDebugger(debugConf);
+		QFileInfo fdbInfo(flowView_.flowConfig_.ui.flowdirLineEdit->text() + QLatin1String("/bin/flowcpp"));
+		if (fdbInfo.exists()) {
+			DebugConf debugConf;
+			debugConf.executable = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
+			debugConf.workDir    = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
+			debugConf.arguments  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
+			debugConf.fdbCmd     = fdbInfo.absoluteFilePath();
+			QFileInfo info(debugConf.executable);
+			debugConf.executable = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".bytecode");
+			debugConf.debuginfo = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".debug");
+			runDebugger(debugConf);
+		} else {
+			KMessageBox::sorry(0, QLatin1String("flowcpp is not found"));
+		}
 	} catch (std::exception& ex) {
 		debugProcess_.kill();
 		collected_out.clear();

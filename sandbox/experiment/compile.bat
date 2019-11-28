@@ -1,1 +1,1 @@
-flowc jslibrary=foo test/test.flow js=www/test.js tsd=1
+flowc jslibrary=foo jslibraryobject=test test/test.flow js=www/test.js tsd=1

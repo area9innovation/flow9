@@ -1,5 +1,6 @@
 import material/internal/selectmarray;
 import material/internal/material_dragdrop;
+import material/internal/material_icons;
 import ui/animate/teasing;
 
 export {
@@ -305,6 +306,9 @@ makeMTreeDragDropState(
 }
 
 MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	loadLazy = tryExtractStruct(m.style, MTreeLazyLoad(0, None()));
+	lazyLoadState = maybeMap(loadLazy, makeMTreeLazyLoadState);
+
 	dragDropStateM =
 		eitherFn(
 			maybeMap(
@@ -322,12 +326,13 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 				)
 		);
 
-
-
 	children =
-		ffuseinit(
-			eitherMap(dragDropStateM, \dragDropState -> MTreeOrder2MTreeNodes(m.children, dragDropState.order), m.children),
-			make([])
+		eitherMap(lazyLoadState, \st -> fselect2(m.children, st.loadQuota, FLift2(\arr, lq -> take(arr, lq))), m.children)
+		|> (\children ->
+			ffuseinit(
+				eitherMap(dragDropStateM, \dragDropState -> MTreeOrder2MTreeNodes(children, dragDropState.order), children),
+				make([])
+			)
 		);
 	selIndexes = ffuseinit(fSelectionIndexes(children.first), make([[]]));
 
@@ -361,11 +366,13 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 					c,
 					farray(index),
 					m2t,
-					const(showSeparators)
+					const(showSeparators),
+					loadLazy
 				)
 			});
 		}
 	)
+	|> addUnfoldPanel(parent, m2t, m.children, lazyLoadState)
 	|> TBorderBottom(1.)
 	|> (\mtree ->
 		TConstruct(
@@ -514,6 +521,35 @@ buildLineFnDef(contentBoxB : DynamicBehaviour<WidthHeight>, color : MColor) -> M
 	|> (\m -> MTranslate(fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))), m))
 }
 
+buildUnfoldPanelDef(onClick : () -> void) -> Material {
+	MIcon("unfold_more", [])
+	|> (\t -> MCenterIn(t, TFillXH(56.)))
+	|> (\t -> MCopySize(t, \tr -> TRectangle([MFill(MGrey(200)), FillOpacity(0.5)], tr), false))
+	|> (\t -> MComponent([MOnClick(onClick)], \__ -> t))
+}
+
+addUnfoldPanel(parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic, children : Transform<[MTreeNode]>, state : Maybe<MTreeLazyLoadState>) -> (Tropic) -> Tropic {
+	\t ->
+		eitherMap(state, \st ->
+			TLines2(t, TShow(flessi(st.loadQuota, flength(children)), m2t(st.panel, parent))),
+			t
+		)
+}
+
+MTreeLazyLoadState(
+	loadQuota : DynamicBehaviour<int>,
+	panel : Material,
+	resetFn : () -> void
+);
+
+makeMTreeLazyLoadState(loadLazy : MTreeLazyLoad) -> MTreeLazyLoadState {
+	loadQuota = make(loadLazy.loadCount);
+	resetFn = \ -> nextDistinct(loadQuota, loadLazy.loadCount);
+	updateFn = \ -> nextDistinct(loadQuota, getValue(loadQuota) + loadLazy.loadCount);
+	buildPanelFn = either(loadLazy.buildPanelFn, buildUnfoldPanelDef);
+	MTreeLazyLoadState(loadQuota, buildPanelFn(updateFn), resetFn)
+}
+
 Corner ::= TopLeft, TopRight, BottomLeft, BottomRight;
 	TopLeft();
 	TopRight();
@@ -526,9 +562,12 @@ DropOperation ::= DropAbove, DropBelow, DropInside;
 	DropInside();
 
 MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<?>, m : MTreeNode<?>, treeIndex : Transform<[int]>,
-	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
-	children = ffuseinit(m.children, make([]));
-	childrenLength = fselect(children.first, length |> FLift);
+	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>, loadLazy : Maybe<MTreeLazyLoad>) -> Tropic {
+
+	lazyLoadState = maybeMap(loadLazy, makeMTreeLazyLoadState);
+
+	children = ffuseinit(eitherMap(lazyLoadState, \st -> fselect2(m.children, st.loadQuota, FLift2(\arr, lq -> take(arr, lq))), m.children), make([]));
+	childrenLength = flength(children.first);
 	expanded = extractStruct(m.style, MExpanded(make(false))).expanded;
 	selected = extractStruct(m.style, MSelected(make(false))).selected;
 	focused = extractStruct(m.style, MFocused(make(false))).focused;
@@ -733,7 +772,8 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								if (state.showSeparators)
 									flessi(index, fadditioni(childrenLength, const(-1)))
 								else
-									const(false)
+									const(false),
+								loadLazy
 							)
 						});
 					}
@@ -764,6 +804,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					)
 				)
 				|> (\t -> TAvailableHeight(t, const(0.)))
+				|> addUnfoldPanel(parent, m2t, m.children, lazyLoadState)
 		),
 
 		MSeparator2T(manager, parent, true)
@@ -802,7 +843,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 				makeSubscribeUns(selected, \s -> if (s) [interruptibleDeferUntilNextFrameRendered(\ -> nextDistinct(focused, true))] else []),
 				\ -> fBidirectionalLink(
 					fselectWithLast(fif(selected, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
-					fselect2(state.selected, treeIndex, containsSet |> FLift2),
+					fstall(fselect2(state.selected, treeIndex, containsSet |> FLift2), 0),
 					\s ->
 						if (length(s.first) > 0 || length(s.second) > 0)
 							nextDistinct(
@@ -831,15 +872,15 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 				),
 				\ -> fBidirectionalLink(
 					fselectWithLast(fif(expanded, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
-					fselect2(state.expanded, treeIndex, containsSet |> FLift2),
+					fstall(fselect2(state.expanded, treeIndex, containsSet |> FLift2), 0),
 					\e ->
 						if (length(e.first) > 0 || length(e.second) > 0)
 							nextDistinct(
 								state.expanded,
 								getValue(state.expanded)
 								|> (\ex ->
-									if (length(e.first) > 0 && (!contains(getValue(state.items), e.first) || length(e.second) == 0))
-										removeSet(getValue(state.expanded), e.first)
+									if (length(e.first) > 0)
+										removeSet(ex, e.first)
 									else
 										ex
 								)
@@ -880,7 +921,10 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 							)
 					)
 				)
-			),
+			)
+			|> (\arr -> arrayPushMaybe(arr, maybeMap(lazyLoadState, \st ->
+				makeSubscribe2(expanded, \e -> if (!e) st.resetFn())
+			))),
 			treeNode
 		)
 	)

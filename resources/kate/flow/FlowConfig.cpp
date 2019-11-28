@@ -64,29 +64,32 @@ void FlowConfig::slotSetServerPort(const QString& port) {
 }
 
 void FlowConfig::slotSaveProgTimestamps(int row) {
-	progTimestamps_[row] = progTimestampsCurrent(row);
+	try {
+		progTimestamps_[row] = progTimestampsCurrent(row);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << "Exception at slotSaveProgTimestamps: " << ex.what() << "\n";
+	}
 }
 
 void FlowConfig::slotAddLaunch() {
-	int currRow = ui.launchTableWidget->currentRow();
-	int rowInd = currRow == -1 ? ui.launchTableWidget->rowCount() : currRow + 1;
-	ui.launchTableWidget->insertRow(rowInd);
 	QString program = QFileDialog::getOpenFileName(widget, i18n("Flow file"), QString());
-
-	// Flow file and directory should be setup via file/dir dialog,
-	// so they are not directly editable
-	ui.launchTableWidget->setItem(rowInd, 0, new QTableWidgetItem(QFileInfo(program).baseName()));
-	ui.launchTableWidget->setItem(rowInd, 1, setNotEditable(new QTableWidgetItem(program)));
-	ui.launchTableWidget->setItem(rowInd, 2, setNotEditable(new QTableWidgetItem(QFileInfo(program).dir().path())));
-	ui.launchTableWidget->setItem(rowInd, 3, new QTableWidgetItem(QLatin1String("bc")));
-	ui.launchTableWidget->setItem(rowInd, 4, new QTableWidgetItem(QLatin1String("timephases=1")));
-	ui.launchTableWidget->setItem(rowInd, 5, new QTableWidgetItem());
-	ui.launchTableWidget->setItem(rowInd, 6, new QTableWidgetItem());
-	ui.removeLaunchButton->setEnabled(true);
-
-	slotSaveProgTimestamps(rowInd);
-
-	emit launchConfigsChanged();
+	if (!program.isEmpty()) {
+		int currRow = ui.launchTableWidget->currentRow();
+		int rowInd = currRow == -1 ? ui.launchTableWidget->rowCount() : currRow + 1;
+		ui.launchTableWidget->insertRow(rowInd);
+		// Flow file and directory should be setup via file/dir dialog,
+		// so they are not directly editable
+		ui.launchTableWidget->setItem(rowInd, 0, new QTableWidgetItem(QFileInfo(program).baseName()));
+		ui.launchTableWidget->setItem(rowInd, 1, setNotEditable(new QTableWidgetItem(program)));
+		ui.launchTableWidget->setItem(rowInd, 2, setNotEditable(new QTableWidgetItem(QFileInfo(program).dir().path())));
+		ui.launchTableWidget->setItem(rowInd, 3, new QTableWidgetItem(QLatin1String("bc")));
+		ui.launchTableWidget->setItem(rowInd, 4, new QTableWidgetItem(QLatin1String("timephases=1")));
+		ui.launchTableWidget->setItem(rowInd, 5, new QTableWidgetItem());
+		ui.launchTableWidget->setItem(rowInd, 6, new QTableWidgetItem());
+		ui.removeLaunchButton->setEnabled(true);
+		slotSaveProgTimestamps(rowInd);
+		emit launchConfigsChanged();
+	}
 }
 
 void FlowConfig::slotRemoveLaunch() {

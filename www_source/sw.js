@@ -1,8 +1,9 @@
+var SERVICE_WORKER_VERSION = 3;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
 
-var SHARED_DATA_ENDPOINT = "share/pwa/data";
+var SHARED_DATA_ENDPOINT = 'share/pwa/data.php';
 
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
@@ -86,21 +87,25 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
+  // Here we trying to recognize file uploading request to skip it in cache operations then
+  var isFileUploadingRequestFn = function(request) {
+  	if (request.method == "POST" && request.headers.has("Content-Type")) {
+      var ctValue = request.headers.get("Content-Type").toLowerCase();
+      return ctValue.includes("multipart/form-data") && ctValue.includes("boundary=");
+    } else {
+      return false;
+    }
+  }
+
   // Creation Promise, which `converts` POST request into GET request
   var getFixedRequestUrl = function(request) {
     var fixedUrl = urlAddBaseLocation(request.url);
     var urlSplitted = extractUrlParameters(fixedUrl);
     var requestUrl = urlSplitted.baseUrl;
     var glueSymb = "?";
-    var isFileUploadingRequest = false;
+    var isFileUploadingRequest = isFileUploadingRequestFn(request);
 
     if (request.method == "POST") {
-      // Here we trying to recognize file uploading request to skip it in cache operations then
-      if (request.headers.has("Content-Type")) {
-        var ctValue = request.headers.get("Content-Type").toLowerCase();
-        isFileUploadingRequest = ctValue.includes("multipart/form-data") && ctValue.includes("boundary=");
-      }
-
       if (!isFileUploadingRequest) {
         if (urlSplitted.parameters.length != 0) {
           requestUrl += glueSymb + urlSplitted.parameters.join("&");
@@ -219,7 +224,7 @@ self.addEventListener('fetch', function(event) {
   var fetchResource = function(requestData) {
     if (requestData.isFileUploading) {
       // We can't to clone file uploading request, so we processing it as is, without caching
-      return fetch(requestData.originalRequest)
+      return fetch(requestData.cloneRequest())
         .then(function(response) { return response.clone(); })
         .catch(function() { return null; })
     } else {
@@ -387,19 +392,24 @@ self.addEventListener('fetch', function(event) {
     event.respondWith(
       caches.open(SHARED_DATA_ENDPOINT).then(cache => {
         if (method == "POST") {
-          return request.text().then(body => {
-            cache.put(SHARED_DATA_ENDPOINT, new Response(body));
+          return request.json().then(data => {
+            cache.put(SHARED_DATA_ENDPOINT + '/' + data.key, new Response(data.value));
             return new Response("OK");
           });
         } else {
-          return cache.match(SHARED_DATA_ENDPOINT).then(response => {
+          return cache.match(SHARED_DATA_ENDPOINT + '/' + new URL(request.url).searchParams.get('key')).then(response => {
             return response || new Response("");
           }) || new Response("");
         }
       })
     );
   } else {
-    event.respondWith(makeResponse(event.request));
+    // We disable Range requests for a while
+    if (isFileUploadingRequestFn(request) || event.request.headers.get('range')) {
+      return;
+    } else {
+      event.respondWith(makeResponse(event.request));
+    }
   }
 });
 
@@ -409,13 +419,19 @@ var cleanServiceWorkerCache = function() {
 
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
-      if (CACHE_NAME != key) {
+      if (CACHE_NAME != key && SHARED_DATA_ENDPOINT != key) {
         console.log("cache cleared", key);
         return caches.delete(key);
       }
     }));
   });
 };
+
+self.addEventListener('install', event => {
+  self.skipWaiting();
+  
+  event.waitUntil(Promise.resolve());
+});
 
 self.addEventListener('activate', function(event) {
   // this cache is only for session
@@ -521,5 +537,9 @@ self.addEventListener('message', function(event) {
     );
   } else if (event.data.action == "check_urls_in_cache") {
     checkUrlsInCache(event.data.data.urls).then(respond);
+  } else if (event.data.action == "get_service_worker_version") {
+    respond({data: SERVICE_WORKER_VERSION});
+  } else {
+    respond({ status: "Failed", error : "Unknown operation: " + event.data.action });
   }
 });

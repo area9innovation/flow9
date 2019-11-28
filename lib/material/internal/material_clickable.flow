@@ -86,13 +86,14 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 	longUns = initUnsM();
 	doubleClickUns = initUnsM();
 	wasDown = ref false;
-	rightWasDown = ref false;
-	middleWasDown = ref false;
 	doubleClickWasDown = ref false;
 	tripleClickWasDown = ref false;
 	longClickWasDown = ref false;
+	longDelay = extractStruct(state, MLongTouchDelay(500)).delay;
 
 	down = extractStruct(state, TPressed(make(false))).pressed;
+	rightDown = extractStruct(state, MRightDown(make(false))).down;
+	middleDown = extractStruct(state, MMiddleDown(make(false))).down;
 	hover = extractStruct(state, THovering(make(false))).hovering;
 	onClick =
 		[extractStruct(state, MOnClick(nop)).click, extractStruct(state, TOnClicked(nop)).clicked]
@@ -184,7 +185,7 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 					\lt -> {
 						setUnsM(
 							longUns,
-							interruptibleTimer(500, \ -> { blockOtherMInteractionItemIds(manager, interactionId); lt.touch(); })
+							interruptibleTimer(longDelay, \ -> { blockOtherMInteractionItemIds(manager, interactionId); lt.touch(); })
 						);
 						arrayPush(f, \ -> dispUnsM(longUns));
 					},
@@ -369,8 +370,8 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 								if (!fgetValue(enabled)) release();
 							}
 
-							if (^rightWasDown) rightWasDown := false
-							else if (^middleWasDown) middleWasDown := false;
+							nextDistinct(rightDown, false);
+							nextDistinct(middleDown, false);
 						})
 					]
 					|> (\rollInteractives ->
@@ -416,8 +417,8 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 									if (!mobile || mobileForceHover) nextDistinct(hover, false);
 								}
 
-								if (^rightWasDown) rightWasDown := false
-								else if (^middleWasDown) middleWasDown := false;
+								nextDistinct(rightDown, false);
+								nextDistinct(middleDown, false);
 
 								false
 							}
@@ -437,66 +438,46 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 		)
 		|> (\f ->
 			if (!mobile)
-				eitherFn(
-					rightClick,
-					\rc ->
-						concat(
-							f,
-							[
-								MouseRightDown(\mi ->
-									if (fgetValue(enabled) && mi.inside()) {
-										rightWasDown := true;
-										true
-									} else
-										false
-								),
-								MouseRightUp2(\h, mi -> {
-									if (^rightWasDown) {
-										if (fgetValue(enabled) && mi().inside)
-											rc.click();
-										rightWasDown := false;
-
-										true
-									} else
-										h
-								})
-							]
+				concat(
+					f,
+					[
+						MouseMiddleDown(\mi ->
+							if (fgetValue(enabled) && mi.inside()) {
+								nextDistinct(middleDown, true);
+								true
+							} else
+								false
 						),
-					\ ->
-						f
-				)
-			else
-				f
-		)
-		|> (\f ->
-			if (!mobile)
-				eitherFn(
-					middleClick,
-					\mc ->
-						concat(
-							f,
-							[
-								MouseMiddleDown(\mi ->
-									if (fgetValue(enabled) && mi.inside()) {
-										middleWasDown := true;
-										true
-									} else
-										false
-								),
-								MouseMiddleUp2(\h, mi -> {
-									if (^middleWasDown) {
-										if (fgetValue(enabled) && mi().inside)
-											mc.click();
-										middleWasDown := false;
+						MouseMiddleUp2(\h, mi -> {
+							if (getValue(middleDown)) {
+								maybeApply(middleClick, \mc -> if (fgetValue(enabled) && mi().inside) mc.click());
+								nextDistinct(middleDown, false);
 
-										true
-									} else
-										h
-								})
-							]
+								true
+							} else
+								h
+						}),
+						MouseRightDown(\mi ->
+							if (fgetValue(enabled) && mi.inside()) {
+								if (debugMaterialClicks) println("rightDown true");
+								nextDistinct(rightDown, true);
+								true
+							} else {
+								false
+							}
 						),
-					\ ->
-						f
+						MouseRightUp2(\h, mi -> {
+							if (getValue(rightDown)) {
+								maybeApply(rightClick, \rc -> if (fgetValue(enabled) && mi().inside) rc.click());
+								if (debugMaterialClicks) println("rightDown false");
+								nextDistinct(rightDown, false);
+
+								true
+							} else {
+								h
+							}
+						})
+					]
 				)
 			else
 				f
@@ -613,6 +594,7 @@ MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Mat
 	swipeId = makeTropicTag(manager);
 	currentInteractive = extractStruct(m.state, MCurrentInteractive(make(None()))).current;
 	down = extractStruct(m.state, TPressed(make(false))).pressed;
+	onSwipeCallback = extractStruct(m.state, MOnSwipe(nop1)).fn;
 	onSwipeDown = extractStruct(m.state, MOnSwipeDown(\__, __ -> false)).onSwipe;
 	onSwipeUp = extractStruct(m.state, MOnSwipeUp(\__, __ -> false)).onSwipe;
 	onSwipeLeft = extractStruct(m.state, MOnSwipeLeft(\__, __ -> false)).onSwipe;
@@ -640,15 +622,19 @@ MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Mat
 					onSwipeRight(p, delta);
 			} else if (p.y - ^lastMouseXY.y >= swipeGap && onSwipeDown(p, zeroPoint)) {
 				swipeAction := 0;
+				onSwipeCallback(true);
 				true
 			} else if (p.y - ^lastMouseXY.y <= -swipeGap && onSwipeUp(p, zeroPoint)) {
 				swipeAction := 1;
+				onSwipeCallback(true);
 				true
 			} else if (p.x - ^lastMouseXY.x <= -swipeGap && onSwipeLeft(p, zeroPoint)) {
 				swipeAction := 2;
+				onSwipeCallback(true);
 				true
 			} else if (p.x - ^lastMouseXY.x >= swipeGap && onSwipeRight(p, zeroPoint)) {
 				swipeAction := 3;
+				onSwipeCallback(true);
 				true
 			} else {
 				false
@@ -663,6 +649,7 @@ MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Mat
 		lastMouseXY := Point(-1., -1.);
 		swipeAction := -1;
 		nextDistinct(down, false);
+		onSwipeCallback(false);
 		removeMInteractionItemId(manager, swipeId);
 	}
 
@@ -678,10 +665,13 @@ MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Mat
 								mi = mi0();
 
 								if (mi.inside) {
-									h = onSwipe(Point(mi.x, mi.y));
+									point = Point(mi.x, mi.y);
+									h = onSwipe(point);
 
 									if (h)
-										nextDistinct(currentInteractive, Some(true));
+										nextDistinct(currentInteractive, Some(true))
+									else if (^swipeAction >= 0)
+										nextDistinct(currentInteractive, None());
 
 									h
 								} else

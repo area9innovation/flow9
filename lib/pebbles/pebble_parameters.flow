@@ -171,11 +171,14 @@ export {
 
 MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameterLink], m : Material) -> Material {
 	callstack = if (debugPebbles()) captureStringCallstack() else "";
+	lastPathPartName = getLastPathPartName(controller);
+	// as old view is disposed after the new one is constructed we must check that we are not interfering in new view' pebble
+	checkPebble = \-> lastPathPartName == getLastPathPartName(controller);
 
 	MSelectPebbleParameters(
 		controller,
 		map(handlers, \handler -> handler.parameter),
-		\parameters : [Pair<string, Transform<string>>] -> {
+		\parameters : [Pair<string, DynamicBehaviour<string>>] -> {
 			MConstruct(concatA(
 				map(handlers, \handler -> {
 					if (handler.action == DoNotRecord() || controller.dummy) {
@@ -186,7 +189,7 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 					} else {
 						[
 							makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
-								changeParameterValue(handler, value, callstack)
+								changeParameterValue(handler, value, callstack, checkPebble)
 							}),
 							setViewOnParameterChange(controller, handler)
 						]
@@ -201,7 +204,7 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 MSelectPebbleParameters(
 	controller : PebbleController,
 	parametersNames : [string],
-	display : (parameters : [Pair<string, Transform<string>>]) -> Material
+	display : (parameters : [Pair<string, DynamicBehaviour<string>>]) -> Material
 ) -> Material {
 
 	parameters : [Pair<string, DynamicBehaviour<string>>] = map(parametersNames, \key -> Pair(key, make("")));
@@ -227,28 +230,28 @@ makeDummyPebbleParameterLink() -> PebbleParameterLink {
 	PebbleStringLink("", make(""), nop1, DoNotRecord())
 }
 
-getDynamicPebbleParameter(parameters : [Pair<string, Transform<string>>], key : string) -> Transform<string> {
-	findDef(parameters, \a -> a.first == key, Pair(key, const(""))).second;
+getDynamicPebbleParameter(parameters : [Pair<string, DynamicBehaviour<string>>], key : string) -> Transform<string> {
+	findDef(parameters, \a -> a.first == key, Pair(key, make(""))).second;
 }
 
 // Process new value from current pebble parameter
-changeParameterValue(handler : PebbleParameterLink, value : string, callstack : string) -> void {
+changeParameterValue(handler : PebbleParameterLink, value : string, callstack : string, checkPebble : () -> bool) -> void {
 	switch (handler) {
 		PebbleStringLink(parameter, valueB, onChange, __): {
 			urlDecodedValue = urlDecode(value);
 			printPebbleCallStackInfo(parameter, urlDecodedValue, callstack);
 			nextDistinct(valueB, urlDecodedValue);
-			onChange(urlDecodedValue);
+			if (checkPebble()) onChange(urlDecodedValue);
 		};
 		PebbleIntLink(parameter, valueB, onChange, __): {
 			printPebbleCallStackInfo(parameter, value, callstack);
 			nextDistinct(valueB, s2i(value));
-			onChange(s2i(value));
+			if (checkPebble()) onChange(s2i(value));
 		};
 		PebbleBoolLink(parameter, valueB, onChange, __): {
 			printPebbleCallStackInfo(parameter, value, callstack);
 			nextDistinct(valueB, s2b(value));
-			onChange(s2b(value));
+			if (checkPebble()) onChange(s2b(value));
 		};
 	}
 }
@@ -429,4 +432,8 @@ MConfirmPebbleParameterSwitch(
 
 makePebbleTabUid(s : string) -> string {
 	strReplace(toLowerCase(s), " ", "_")
+}
+
+getLastPathPartName(controller : PebbleController) -> string {
+	getLastPathPart(lastElement(getValue(controller.pebbleStackB), makeEmptyPebble()), makeEmptyPathPart()).name
 }

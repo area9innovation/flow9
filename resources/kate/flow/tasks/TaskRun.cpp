@@ -40,9 +40,9 @@ TaskRun::TaskRun(FlowEnv e, int row, Task::Callback cb) : TaskFactory(e, cb), la
 	Runner runner(env.view.flowConfig_.ui, prog, targ, flowdir, odir);
 
 	QStringList args = runner.args(execArgs, progArgs);
-#ifdef DEBUG
+//#ifdef DEBUG
 	QTextStream(stdout) << "RUN: " << runner.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
+//#endif
 	//QString workingDir = runner.confdir();
 	QString executor = runner.invocation();
 	if (executor.isEmpty()) {

@@ -27,6 +27,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.media.MediaMetadataRetriever;
@@ -109,7 +110,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
 
     private DialogFragmentManager dialogFragmentManager = null;
 
-    private SoftKeyboardHeightListener softKeyboardHeightListener;
+    private SoftKeyboardSupport softKeyboardSupport;
 
     private void browseUrl(@NonNull final String url) {
         try {
@@ -389,14 +390,14 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         loadWrapper();
 
-        softKeyboardHeightListener = new SoftKeyboardHeightListener(this,
-            new SoftKeyboardHeightListener.KeyBoardHeightListener(){
-                @Override
-                public void keyboardHeightChanged(int keyboardHeight) {
-                    updateContentViewMinHeight();
-                    wrapper.VirtualKeyboardHeightCallback((double)keyboardHeight);
-                }
+        softKeyboardSupport = new SoftKeyboardSupport(this, wrapper);
+        softKeyboardSupport.setKeyboardHeightListener(keyboardHeight -> {
+            updateContentViewMinHeight();
+            wrapper.VirtualKeyboardHeightCallback((double)keyboardHeight);
         });
+        wrapper.setSoftKeyboardSupport(softKeyboardSupport);
+        mView.addView(softKeyboardSupport);
+
 
         Log.i(Utils.LOG_TAG, "Runner wrapper lib loaded");
     }
@@ -547,6 +548,15 @@ public class FlowRunnerActivity extends FragmentActivity  {
                     Rect r = new Rect();
                     d.getWindowVisibleDisplayFrame(r);
                     h = dh - r.top;
+
+                    //on Android 10 navigation bar is a part of WindowVisibleDisplayFrame
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        Resources resources = getBaseContext().getResources();
+                        int resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android");
+                        if (resourceId > 0) {
+                            h -= resources.getDimensionPixelSize(resourceId);
+                        }
+                    }
                 }
 
                 if (h != ContentView.getMinimumHeight()) {
@@ -731,7 +741,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.onGoogleServicesDisconnected();
         flowGooglePlayServices.disconnectGooglePlayServices();
 
-        softKeyboardHeightListener.removeListener();
+        softKeyboardSupport.removeListener();
 
         wrapper.destroy();
         Log.i(Utils.LOG_TAG, "Runner wrapper destroyed successfully");

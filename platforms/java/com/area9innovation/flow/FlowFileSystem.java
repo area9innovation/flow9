@@ -88,14 +88,18 @@ public class FlowFileSystem extends NativeHost {
 	}
 
     public Object openFileDialog(Integer maxFiles, Object[] fileTypes, Func1<Object, Object[]> callback) {
-	return null;
+		return null;
     }
 
     public String fileName(Object file) {
-	return "";
+		return "";
     }
 
     public Object readFile(Object file, String as, Func1<Object,String> onData, Func1<Object, String> onError) {
-	return null;
+		return null;
     }
+
+    public Object saveFileClient(String filename, String data, String type) {
+		return null;
+	}
 }
