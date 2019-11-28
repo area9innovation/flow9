@@ -380,7 +380,7 @@ class ThreeJSStage extends Container {
 	public function updateNativeWidget() : Void {
 		if (RenderSupportJSPixi.RendererType == "html") {
 			if (isNativeWidget) {
-				if (visible) {
+				if (visible && camera != null && scene != null && getWidth() > 0 && getHeight() > 0) {
 					if (DisplayObjectHelper.DebugUpdate) {
 						untyped this.nativeWidget.setAttribute("update", Std.int(this.nativeWidget.getAttribute("update")) + 1);
 						if (untyped this.from) {

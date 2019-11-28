@@ -1759,13 +1759,25 @@ class RenderSupport3D {
 			Object3DHelper.invalidateStage(untyped mixer.object);
 		};
 
-		action.play();
-		RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		var playFn = function() {
+			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+			action.play();
+			RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		}
 
-		return function() {
+		var stopFn = function() {
 			action.stop();
 			RenderSupportJSPixi.off('drawframe', drawFrameFn);
 		}
+
+		playFn();
+
+		cast(untyped mixer.object, Object3D).on("added", function() {
+			playFn();
+			cast(untyped mixer.object, Object3D).once("removed", stopFn);
+		});
+
+		return stopFn;
 	}
 
 	public static function clear3DStageObjectCache(stage : ThreeJSStage) : Void {

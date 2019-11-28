@@ -57,6 +57,8 @@ class RenderSupportJSPixi {
 	private static var WindowTopHeightPortrait : Int = -1;
 	private static var WindowTopHeightLandscape : Int = -1;
 
+	public static var hadUserInteracted = false;
+
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
@@ -679,7 +681,7 @@ class RenderSupportJSPixi {
 
 		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
 
-		on("mousedown", function (e) { VideoClip.CanAutoPlay = true; MouseUpReceived = false; });
+		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
 
 		switchFocusFramesShow(false);
@@ -2414,6 +2416,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
+		if (!hadUserInteracted) return;
+
 		if (RendererType == "html") {
 			if (fs)
 				requestFullScreen(Browser.document.body);

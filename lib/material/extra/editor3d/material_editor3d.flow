@@ -4,11 +4,13 @@ import material/extra/filebrowser/material_filebrowser;
 export {
 	makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor;
 
-		M3DEditorStyle ::= M3DEditorCamera, M3DEditorStageSize, M3DEditorScene, M3DEditorTree, M3DEditorTreeOrder, M3DEditorSelected,
+		M3DEditorStyle ::= M3DEditorCamera, M3DEditorCameraPosition, M3DEditorStageSize, M3DEditorScene, M3DEditorTree, M3DEditorTreeOrder, M3DEditorSelected,
 			M3DEditorAxesVisible, M3DEditorGridVisible, M3DEditorBoxesVisible,
 			M3DEditorLoadFn, M3DEditorSaveFn, M3DEditorExportFn, M3DEditorPropertiesFn, M3DEditorParseFn, F3DStageStyle;
 
 			M3DEditorCamera(camera : F3DObject); // Editor initial camera
+			M3DEditorCameraPosition(position : DynamicBehaviour<Point3D>); // Get or set camera position
+			M3DEditorCameraDistance(minDistance : double, maxDistance : double) -> F3DStageStyle { F3DCameraDistance(minDistance, maxDistance); }; // Bounds camera zoom
 			M3DEditorStageSize(wh : DynamicBehaviour<WidthHeight>); // Inspect stage size
 			M3DEditorScene(scene : DynamicBehaviour<Maybe<F3DObject>>); // Inspect or update currently loaded scene
 			M3DEditorTree(tree : DynamicBehaviour<Transform<[MTreeNode<string>]>>); // Inspect MTree created for currently loaded scene
@@ -52,8 +54,7 @@ M3DEditorState(
 	exportFn : ref Maybe<(includeCamera : bool) -> string>,
 	propertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
 	parseFn : (F3DNative) -> F3DNative,
-	mutable ignoreUndo : bool,
-	mutable updateScene : bool
+	mutable ignoreUndo : bool
 );
 
 makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditorState {
@@ -133,8 +134,7 @@ makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEd
 		exportFn,
 		propertiesFn,
 		parseFn,
-		false,
-		true
+		false
 	)
 }
 
@@ -175,13 +175,21 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 			const("Scene")
 		);
 
+	cameraPosition =
+		extractStruct(
+			style,
+			M3DEditorCameraPosition(make(Point3D(0.0, 0.0, (cameraDistance.max - cameraDistance.min) / 2.0)))
+		).position;
 	camera =
 		extractStruct(
 			style,
 			M3DEditorCamera(
 				F3DLocalPosition(
-					F3DPerspectiveCamera(const(50.0), fdivide(fwidth(state.wh), fheight(state.wh)), const(0.01), const(6000.0)),
-					make(Point3D(0.0, 0.0, 1000.0))
+					F3DInspectLocalPosition(
+						F3DPerspectiveCamera(const(50.0), fdivide(fwidth(state.wh), fheight(state.wh)), const(0.01), const(cameraDistance.max * 2.0)),
+						cameraPosition
+					),
+					cameraPosition
 				)
 			)
 		).camera;
@@ -201,7 +209,6 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 										next(state.scene, None());
 
 										clear3DStageObjectCache(state.stage);
-										state.updateScene ::= true;
 
 										next(state.undoStack, []);
 										next(state.redoStack, []);
@@ -456,7 +463,7 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 		);
 
 	stage =
-		M3DStage(
+		T3DStage(
 			F3DScene(const([
 				F3DInteractive(F3DVisible(F3DAxesHelper(cameraDistance.max), state.axes), [], const(false)),
 				F3DInteractive(F3DVisible(F3DGridHelper(cameraDistance.max * 2.0, 50, 0xaaaaaa, 0xffffff), state.grid), [], const(false)),
@@ -475,7 +482,13 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 			)
 		)
 		|> (\f -> MInspect([ISize(state.wh)], f))
-		|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f))
+		|> (\f ->
+			MCopySize(
+				f,
+				\sz -> MSelect(manager.white, \w -> MFrame(0.0, 0.0, [MFill(MGrey(if (w) 200 else 800))], sz)),
+				false
+			)
+		)
 		|> (\f ->
 			MInteractive(
 				[
@@ -523,15 +536,11 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 				MTreeHideSeparators(),
 				MTreeOrder(state.treeOrder),
 				MTreeOnOrderChange(\t -> {
-					if (state.updateScene && length(t) > 0 && length(getValue(t[0].children)) > 0) {
-						state.updateScene ::= false;
-
+					if (length(t) > 0 && length(getValue(t[0].children)) > 0) {
 						next(
 							state.scene,
 							Some(
-								F3DNativeMutable(fsubselect(state.treeOrder, FLift(\to -> {
-									fselect(to[0].children, FLift(\ch -> makeF3DScene(state, ch[0])))
-								})))
+								makeF3DScene(state, fgetValue(fgetValue(state.treeOrder)[0].children)[0])
 							)
 						);
 					}
@@ -688,7 +697,11 @@ makeF3DTreeNode(
 				)
 			]),
 		children,
-		[MExpanded(make(true)), MTreeNodeCustomHighlighter(\wh -> TFrame(0., 4., [MFill(MGrey(300))], TSized(wh))), MSelected(sel)]
+		[
+			MExpanded(make(true)),
+			MTreeNodeCustomHighlighter(\wh -> MSelect(state.manager.white, \w -> TFrame(0., 4., [MFill(if (w) MGrey(300) else MGrey(700))], TSized(wh)))),
+			MSelected(sel)
+		]
 	)
 }
 
@@ -719,7 +732,7 @@ makeF3DTree(
 makeF3DScene(state : M3DEditorState, node : MTreeOrderNode<string>) -> F3DNative {
 	clips = get3DObjectById(state.stage, node.content);
 
-	F3DNativeScene(clips[0], fmap(node.children, \c -> makeF3DScene(state, c)))
+	F3DNativeScene(clips[0], const(map(fgetValue(node.children), \c -> makeF3DScene(state, c))))
 }
 
 addF3DNativeObject(state : M3DEditorState, clip : native, name : string) -> void {
