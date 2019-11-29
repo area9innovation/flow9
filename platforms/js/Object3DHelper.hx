@@ -197,6 +197,7 @@ class Object3DHelper {
 			}
 
 			if (invalidate) {
+				emitEvent(child, "added");
 				emitEvent(parent, "box");
 				emitEvent(parent, "childrenchanged");
 
@@ -262,6 +263,7 @@ class Object3DHelper {
 			emitEvent(parent, "childrenchanged");
 
 			emitEvent(parent, "change");
+			emitEvent(child, "removed");
 
 			invalidateStage(parent);
 		}

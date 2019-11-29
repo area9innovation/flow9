@@ -32,8 +32,6 @@ class VideoClip extends FlowContainer {
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
-	public static var CanAutoPlay = false;
-
 	private var videoWidget : Dynamic;
 	private var widgetBounds = new Bounds();
 
@@ -132,7 +130,7 @@ class VideoClip extends FlowContainer {
 
 		once("removed", deleteVideoClip);
 
-		if (!startPaused && !CanAutoPlay) {
+		if (!startPaused && !RenderSupportJSPixi.hadUserInteracted) {
 			playFn(false);
 		}
 	}
