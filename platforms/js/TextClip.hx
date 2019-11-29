@@ -136,6 +136,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var baselineWidget : Dynamic;
 	private var widthDelta : Float = 0.0;
+	private var fontDelta : Float = 0.0;
 
 	private var doNotRemap : Bool = false;
 
@@ -144,7 +145,7 @@ class TextClip extends NativeWidgetClip {
 
 		style.resolution = 1.0;
 
-		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && RenderSupportJSPixi.IsRetinaDisplay) {
+		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
 			onAdded(function() {
 				RenderSupportJSPixi.on("resize", updateWidthDelta);
 
@@ -410,10 +411,10 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontFamily = RenderSupportJSPixi.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupportJSPixi.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupportJSPixi.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
-		nativeWidget.style.fontSize = '${style.fontSize}px';
+		nativeWidget.style.fontSize = '${style.fontSize + fontDelta}px';
 		nativeWidget.style.background = RenderSupportJSPixi.RendererType != "html" || backgroundOpacity > 0 ? RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.lineHeight)}px';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -429,9 +430,9 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0)}px';
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontSize + interlineSpacing / 2.0 + (Platform.isHighDensityDisplay ? 0.5 : 0.0))}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0) * getNativeWidgetTransform().d)}px';
+				nativeWidget.style.marginTop = '${DisplayObjectHelper.round((style.fontProperties.ascent - style.fontSize - interlineSpacing / 2.0 - (Platform.isHighDensityDisplay ? 0.5 : 0.0)) * getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
@@ -501,39 +502,42 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateWidthDelta() {
-		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && RenderSupportJSPixi.IsRetinaDisplay) {
-			var zoomFactor = Platform.isSafari
-				? RenderSupportJSPixi.backingStoreRatio / Browser.window.devicePixelRatio
-				: Browser.window.devicePixelRatio / 2.0;
+		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
+			var zoomFactor = RenderSupportJSPixi.browserZoom;
 
 			updateTextMetrics();
 
-			if (zoomFactor <= 1.0 && metrics != null && metrics.lines != null && metrics.lines.length > 0) {
+			if (zoomFactor < 1.0 && metrics != null && metrics.lines != null && metrics.lines.length > 0) {
 				var fontSize = style.fontSize;
 				var wordWrapWidth = style.wordWrapWidth;
+				widthDelta = 0.0;
+				metrics = null;
 				var wd = getClipWidth();
 				var text = this.text;
 
-				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, 6.0));
+				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, Platform.isSafari ? 10.0 : 6.0));
 				style.wordWrapWidth = 2048.0;
 				var lines : Array<Dynamic> = metrics.lines;
-				widthDelta = lines.length > 0 ? Math.NEGATIVE_INFINITY : 0.0;
+				var newWidthDelta = Math.NEGATIVE_INFINITY;
 
 				for (line in lines) {
 					this.text = line;
 					metrics = null;
-					widthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd) + 1.0, widthDelta);
+					newWidthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd), newWidthDelta);
 				}
+
+				widthDelta = newWidthDelta;
+				fontDelta = -fontSize / 120.0 / zoomFactor;
 
 				style.fontSize = fontSize;
 				style.wordWrapWidth = wordWrapWidth;
 				this.text = text;
-
-				metrics = null;
-				updateTextMetrics();
 			} else {
 				widthDelta = 0.0;
+				fontDelta = 0.0;
 			}
+
+			invalidateMetrics();
 		}
 	}
 
@@ -767,7 +771,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 		updateWidthDelta();
@@ -1059,7 +1063,7 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		if (Platform.isIOS && RenderSupportJSPixi.RendererType != "html") {
+		if (Platform.isIOS && Platform.browserMajorVersion < 13) {
 			RenderSupportJSPixi.ensureCurrentInputVisible();
 		}
 

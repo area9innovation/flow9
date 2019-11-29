@@ -9,7 +9,7 @@ import {
 	MeshStandardMaterial,
 	PointsMaterial,
 	VertexColors
-} from "../../three.module.js";
+} from "../../../three.module.js";
 
 
 const MaterialHandler = function () {

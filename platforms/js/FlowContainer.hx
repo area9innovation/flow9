@@ -176,6 +176,9 @@ class FlowContainer extends Container {
 			if (stageChanged) {
 				stageChanged = false;
 
+				setClipScaleX(RenderSupportJSPixi.getAccessibilityZoom());
+				setClipScaleY(RenderSupportJSPixi.getAccessibilityZoom());
+
 				if (transformChanged) {
 					var bounds = new Bounds();
 					untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;

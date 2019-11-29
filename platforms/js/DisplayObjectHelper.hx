@@ -819,6 +819,10 @@ class DisplayObjectHelper {
 		}
 	}
 
+	private static inline function getMarginGap() : Float {
+		return RenderSupportJSPixi.browserZoom == 1.0 ? 0.0 : MarginGap;
+	}
+
 	public static function updateNativeWidgetTransformMatrix(clip : DisplayObject) {
 		var nativeWidget = untyped clip.nativeWidget;
 
@@ -835,15 +839,15 @@ class DisplayObjectHelper {
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
 
 			if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
-				tx = round(point.x + MarginGap);
-				ty = round(point.y + MarginGap);
+				tx = round(point.x + getMarginGap());
+				ty = round(point.y + getMarginGap());
 			} else {
 				tx = round(point.x);
 				ty = round(point.y);
 			}
 		} else if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
-			tx = round(transform.tx + MarginGap);
-			ty = round(transform.ty + MarginGap);
+			tx = round(transform.tx + getMarginGap());
+			ty = round(transform.ty + getMarginGap());
 		} else {
 			tx = round(transform.tx);
 			ty = round(transform.ty);
@@ -872,8 +876,8 @@ class DisplayObjectHelper {
 				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
 			} else if (untyped clip.hasMarginGap) {
-				nativeWidget.style.width = '${round(getWidgetWidth(clip) + MarginGap * 2.0)}px';
-				nativeWidget.style.height = '${round(getWidgetHeight(clip) + MarginGap * 2.0)}px';
+				nativeWidget.style.width = '${round(getWidgetWidth(clip) + getMarginGap() * 2.0)}px';
+				nativeWidget.style.height = '${round(getWidgetHeight(clip) + getMarginGap() * 2.0)}px';
 			} else {
 				nativeWidget.style.width = '${getWidgetWidth(clip)}px';
 				nativeWidget.style.height = '${getWidgetHeight(clip)}px';
@@ -1126,19 +1130,21 @@ class DisplayObjectHelper {
 
 		if (untyped clip.hasMarginGap) {
 			if (y < 0 || x < 0) {
-				nativeWidget.style.margin = '${-round(MarginGap)}px';
-				nativeWidget.style.marginLeft = '${-round(x + MarginGap)}px';
-				nativeWidget.style.marginTop = '${-round(y + MarginGap)}px';
+				nativeWidget.style.marginLeft = '${-round(x + getMarginGap())}px';
+				nativeWidget.style.marginRight = '${-round(getMarginGap())}px';
+				nativeWidget.style.marginTop = '${-round(y + getMarginGap())}px';
+				nativeWidget.style.marginBottom = '${-round(getMarginGap())}px';
 
-				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + MarginGap * 2.0)}px';
-				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + MarginGap * 2.0)}px';
+				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + getMarginGap() * 2.0)}px';
+				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + getMarginGap() * 2.0)}px';
 
 				y = 0;
 				x = 0;
 			} else {
-				nativeWidget.style.marginLeft = null;
-				nativeWidget.style.marginTop = null;
-				nativeWidget.style.margin = '${-round(MarginGap)}px';
+				nativeWidget.style.marginLeft = '${-round(getMarginGap())}px';
+				nativeWidget.style.marginRight = '${-round(getMarginGap())}px';
+				nativeWidget.style.marginTop = '${-round(getMarginGap())}px';
+				nativeWidget.style.marginBottom = '${-round(getMarginGap())}px';
 				nativeWidget.style.clip = null;
 			}
 		} else {
@@ -1594,7 +1600,7 @@ class DisplayObjectHelper {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
 		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) : getWidth(clip);
 
-		if (untyped clip.style != null) {
+		if (untyped clip.style != null && !clip.isInput) {
 			return Math.ceil(untyped clip.style.letterSpacing != null ? widgetWidth + clip.style.letterSpacing + TextGap : widgetWidth + TextGap);
 		} else {
 			return widgetWidth;
