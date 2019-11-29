@@ -104,10 +104,90 @@ class RenderSupportJSPixi {
 		return Math.fround(x * m) / m;
 	}
 
+	private static var accessibilityZoom : Float = Std.parseFloat(Native.getKeyValue("accessibility_zoom", "1.0"));
+	private static var accessibilityZoomValues : Array<Float> = [0.25, 0.33, 0.5, 0.66, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0];
+
+	public static function getAccessibilityZoom() : Float {
+		return RendererType == "html" && accessibilityZoom > 0.0 ? accessibilityZoom : 1.0;
+	}
+
+	public static function setAccessibilityZoom(zoom : Float) : Void {
+		if (accessibilityZoom != zoom) {
+			accessibilityZoom = zoom;
+			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
+
+			PixiStage.broadcastEvent("resize", backingStoreRatio);
+			InvalidateLocalStages();
+
+			showAccessibilityZoomTooltip();
+		}
+	}
+
+	private static var accessibilityZoomTooltip : Dynamic;
+
+	public static function showAccessibilityZoomTooltip() : Void {
+		if (accessibilityZoomTooltip != null) {
+			Browser.document.body.removeChild(accessibilityZoomTooltip);
+			accessibilityZoomTooltip = null;
+		}
+
+		if (browserZoom != 1.0) {
+			return;
+		}
+
+		var p = Browser.document.createElement("p");
+		Browser.document.body.appendChild(p);
+
+		p.classList.add('nativeWidget');
+		p.classList.add('textWidget');
+		p.textContent = "Zoom: " + Math.round(accessibilityZoom * 100) + "%";
+		p.style.fontSize = "12px";
+		p.style.zIndex = "1000";
+		p.style.background = "#424242";
+		p.style.color = "#FFFFFF";
+		p.style.padding = "8px";
+		p.style.paddingTop = "4px";
+		p.style.paddingBottom = "4px";
+		p.style.borderRadius = "4px";
+		p.style.left = "50%";
+		p.style.top = "8px";
+		p.style.transform = "translate(-50%, 0)";
+
+		accessibilityZoomTooltip = p;
+
+		Native.timer(2000, function() {
+			if (accessibilityZoomTooltip != null && accessibilityZoomTooltip == p) {
+				accessibilityZoomTooltip = null;
+				Browser.document.body.removeChild(p);
+			}
+		});
+	}
+
+	public static function onKeyDownAccessibilityZoom(e : Dynamic) : Void {
+		if (browserZoom != 1.0) {
+			return;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (e.which == '61' || e.which == "107" || e.which == "187") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+			} else if (e.which == '173' || e.which == "109" || e.which == "189") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+			}
+		}
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
 		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
+
+		if (browserZoom != 1.0) {
+			accessibilityZoom = 1.0;
+			Native.setKeyValue("accessibility_zoom", "1.0");
+		}
 
 		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
 			ratio *= browserZoom;
@@ -666,6 +746,10 @@ class RenderSupportJSPixi {
 		}
 
 		addNonPassiveEventListener(Browser.document.body, "keydown", function(e : Dynamic) {
+			if (RendererType == "html") {
+				onKeyDownAccessibilityZoom(e);
+			}
+
 			MousePos.x = e.pageX;
 			MousePos.y = e.pageY;
 
@@ -1119,11 +1203,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getStageWidth() : Float {
-		return PixiRenderer.width / backingStoreRatio;
+		return PixiRenderer.width / backingStoreRatio / getAccessibilityZoom();
 	}
 
 	public static function getStageHeight() : Float {
-		return PixiRenderer.height / backingStoreRatio;
+		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
 	public static function makeTextField(fontFamily : String) : TextClip {
