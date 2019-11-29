@@ -35,6 +35,8 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     // Set headers for HTTP request
     setRequestHeaders(request, rq.headers);
 
+    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+
     if (getFlowRunner()->NotifyStubs)
         getFlowRunner()->flow_err << "Requesting URL: " << url.toString().toUtf8().data() << std::endl;
 
