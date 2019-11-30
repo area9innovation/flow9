@@ -131,6 +131,8 @@ export {
 		TScrollInspectShowScrolling(show : DynamicBehaviour<bool>);
 
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
+
+	nativeScroll = \ -> getRendererType() == "html";
 }
 
 TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyle]) -> Tropic {
@@ -410,7 +412,12 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						else
 							t
 					)
-					|> (\t -> TCrop(scrollPosition, boxWH, t))
+					|> (\t ->
+						if (nativeScroll())
+							TScrollRectT(scrollPosition, boxWH, t)
+						else
+							TCrop(scrollPosition, boxWH, t)
+					)
 				),
 				eitherMap(
 					scrollFadeContent,
@@ -473,23 +480,26 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					],
 					TRectangle(interactiveRectangleStyle, TSized(boxWH))
 				),
-				TShowLazy(
-					showScrolling,
-					\ -> createTScrollBars(
-						manager,
-						scrollId,
-						eitherMap(scrollFadeContent, \__ -> replaceStruct(style, scrollBarsVisible), style),
-						contentWH,
-						boxWH,
-						scrollPosition,
-						currentInteractive,
-						downXBar,
-						downYBar,
-						xMoving,
-						yMoving,
-						TRectangle(interactiveRectangleStyle, TSized(boxWH))
+				if (nativeScroll())
+					TRectangle(interactiveRectangleStyle, TSized(boxWH))
+				else
+					TShowLazy(
+						showScrolling,
+						\ -> createTScrollBars(
+							manager,
+							scrollId,
+							eitherMap(scrollFadeContent, \__ -> replaceStruct(style, scrollBarsVisible), style),
+							contentWH,
+							boxWH,
+							scrollPosition,
+							currentInteractive,
+							downXBar,
+							downYBar,
+							xMoving,
+							yMoving,
+							TRectangle(interactiveRectangleStyle, TSized(boxWH))
+						)
 					)
-				)
 			])
 			|> t2a;
 
@@ -523,6 +533,51 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 				b.yConstant,
 				concat(b.disposers, c.disposers)
 			)
+	})
+}
+
+TScrollRectT(scrollPosition : DynamicBehaviour<Point>, boxWH : Transform<WidthHeight>, t : Tropic) -> Tropic {
+	TransformTAcc(\t2a, pi, ss, mo -> {
+		b =
+			t2a(
+				t,
+				TParentInfo(pi with
+					transformMatrix = fworldtransform(pi.transformMatrix, fpoint2transform(fselect(scrollPosition, FLift(\sp -> Point(-sp.x, -sp.y)))))
+				),
+				ss,
+				mo
+			);
+
+		TAcc(b with
+			form = FNativeForm(
+				t,
+				const(zeroMetrics),
+				\ -> b.form,
+				\av, zo, to -> {
+					clip = makeClip();
+
+					d0 = renderFForm(b.form, const(zo));
+					d = attachFChildren(clip, d0.clips, d0.disposers, [FClipMove(), FClipRotate(), FClipScale(), FClipMask()]);
+
+					listenScrollRect(clip, \dx, dy -> {
+						nextDistinct(scrollPosition, Point(dx, dy));
+					});
+
+					disposers =
+						concat(
+							d.disposers,
+							[
+								makeSubscribe(boxWH, \bwh -> setScrollRect(clip, getValue(scrollPosition).x, getValue(scrollPosition).y, bwh.width, bwh.height))()
+							]
+						);
+
+					NativeRenderResult(
+						[clip],
+						\ -> applyall(disposers)
+					)
+				}
+			)
+		)
 	})
 }
 
@@ -819,7 +874,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		tr
 	)
 	|> (\f2 ->
-		if (disableWheel)
+		if (disableWheel || nativeScroll())
 			f2
 		else
 			TGroupWithoutMetrics([

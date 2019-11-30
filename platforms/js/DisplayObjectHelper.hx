@@ -235,7 +235,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
-		clip.interactive = untyped clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null || clip.isInteractive;
+		clip.interactive = untyped clip.scrollRectListener != null || clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null || clip.isInteractive;
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
@@ -497,6 +497,12 @@ class DisplayObjectHelper {
 		if (RenderSupportJSPixi.RendererType == "html") {
 			untyped clip.hasMarginGap = true;
 		}
+	}
+
+	public static inline function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void {
+		untyped clip.scrollRectListener = cb;
+		invalidateInteractive(clip);
+		invalidateTransform(clip, "listenScrollRect");
 	}
 
 	public static inline function removeScrollRect(clip : FlowContainer) : Void {
@@ -1129,7 +1135,7 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (untyped clip.hasMarginGap) {
-			if (y < 0 || x < 0) {
+			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0)) {
 				nativeWidget.style.marginLeft = '${-round(x + getMarginGap())}px';
 				nativeWidget.style.marginRight = '${-round(getMarginGap())}px';
 				nativeWidget.style.marginTop = '${-round(y + getMarginGap())}px';
@@ -1148,7 +1154,7 @@ class DisplayObjectHelper {
 				nativeWidget.style.clip = null;
 			}
 		} else {
-			if (y < 0 || x < 0) {
+			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0)) {
 				nativeWidget.style.margin = null;
 				nativeWidget.style.marginLeft = '${-round(x)}px';
 				nativeWidget.style.marginTop = '${-round(y)}x';
@@ -1166,27 +1172,62 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (x != 0 || y != 0) {
+		if (untyped clip.scrollRectListener == null && (x != 0 || y != 0)) {
 			createPlaceholderWidget(clip);
-		}
 
-		if (x > 10000) {
-			untyped clip.placeholderWidget.style.width = '${getWidgetWidth(clip) + x}px';
-		}
-
-		if (y > 10000) {
-			untyped clip.placeholderWidget.style.height = '${getWidgetHeight(clip) + y}px';
-		}
-
-		var scrollFn = function() {
-			if (nativeWidget.scrollLeft != x) {
-				nativeWidget.scrollLeft = x;
+			if (x > 10000) {
+				untyped clip.placeholderWidget.style.width = '${getWidgetWidth(clip) + x}px';
 			}
 
-			if (nativeWidget.scrollTop != y) {
-				nativeWidget.scrollTop = y;
+			if (y > 10000) {
+				untyped clip.placeholderWidget.style.height = '${getWidgetHeight(clip) + y}px';
 			}
 		}
+
+		var currentScrollLeft = round(nativeWidget.scrollLeft);
+		var currentScrollTop = round(nativeWidget.scrollTop);
+
+		var updateScrollRectFn = function() {
+			if (untyped clip.scrollRect != null && clip.parent != null) {
+				untyped clip.x = clip.x + clip.scrollRect.x - currentScrollLeft;
+				untyped clip.y = clip.y + clip.scrollRect.y - currentScrollTop;
+
+				untyped clip.scrollRect.x = currentScrollLeft;
+				untyped clip.scrollRect.y = currentScrollTop;
+
+				invalidateTransform(untyped clip.scrollRect, "scrollNativeWidget");
+
+				untyped clip.scrollRectListener(currentScrollLeft, currentScrollTop);
+			}
+		}
+
+		var scrollFn =
+			if (untyped clip.scrollRectListener != null)
+				function() {
+					var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft);
+					var nativeWidgetScrollTop = round(nativeWidget.scrollTop);
+
+					if (nativeWidgetScrollLeft == currentScrollLeft && nativeWidgetScrollTop == currentScrollTop) {
+						return;
+					} else {
+						currentScrollLeft = nativeWidgetScrollLeft;
+						currentScrollTop = nativeWidgetScrollTop;
+					}
+
+					RenderSupportJSPixi.off("drawframe", updateScrollRectFn);
+					RenderSupportJSPixi.once("drawframe", updateScrollRectFn);
+				}
+			else
+				function() {
+					if (nativeWidget.scrollLeft != x) {
+						nativeWidget.scrollLeft = x;
+					}
+
+					if (nativeWidget.scrollTop != y) {
+						nativeWidget.scrollTop = y;
+					}
+				};
+
 		nativeWidget.onscroll = scrollFn;
 		scrollFn();
 		untyped clip.scrollFn = scrollFn;
@@ -1255,7 +1296,7 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
 			nativeWidget.style.borderRadius = null;
-			nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
+			nativeWidget.style.overflow = untyped clip.isInput || clip.scrollRectListener != null ? "auto" : "hidden";
 
 			scrollNativeWidget(clip, round(scrollRect.x), round(scrollRect.y));
 		} else if (mask != null) {
