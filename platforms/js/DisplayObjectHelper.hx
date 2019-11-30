@@ -499,13 +499,22 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void {
+	public static inline function listenScrollRect(clip : FlowContainer, width : Float, height : Float, cb : Float -> Float -> Void) : Void -> Void {
 		untyped clip.scrollRectListener = cb;
+		setScrollRect(clip, untyped clip.scrollRect != null ? clip.scrollRect.x : 0, untyped clip.scrollRect != null ? clip.scrollRect.y : 0, width, height);
+
 		invalidateInteractive(clip);
 		invalidateTransform(clip, "listenScrollRect");
+
+		return function() {
+			removeScrollRect(clip);
+			invalidateInteractive(clip);
+			invalidateTransform(clip, "listenScrollRect disposer");
+		}
 	}
 
 	public static inline function removeScrollRect(clip : FlowContainer) : Void {
+		untyped clip.scrollRectListener = null;
 		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		if (scrollRect != null) {
@@ -1201,35 +1210,48 @@ class DisplayObjectHelper {
 			}
 		}
 
-		var scrollFn =
+		var scrollFn = function() {
+			if (untyped clip.scrollRect != null && clip.parent != null) {
+				if (nativeWidget.scrollLeft != untyped clip.scrollRect.x) {
+					nativeWidget.scrollLeft = untyped clip.scrollRect.x;
+				}
+
+				if (nativeWidget.scrollTop != untyped clip.scrollRect.y) {
+					nativeWidget.scrollTop = untyped clip.scrollRect.y;
+				}
+			}
+		};
+
+		var onScrollFn =
 			if (untyped clip.scrollRectListener != null)
 				function() {
-					var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft);
-					var nativeWidgetScrollTop = round(nativeWidget.scrollTop);
+					if (untyped clip.scrollRect != null && clip.parent != null) {
+						var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft);
+						var nativeWidgetScrollTop = round(nativeWidget.scrollTop);
 
-					if (nativeWidgetScrollLeft == currentScrollLeft && nativeWidgetScrollTop == currentScrollTop) {
-						return;
-					} else {
-						currentScrollLeft = nativeWidgetScrollLeft;
-						currentScrollTop = nativeWidgetScrollTop;
+						if (nativeWidgetScrollLeft == currentScrollLeft && nativeWidgetScrollTop == currentScrollTop) {
+							return;
+						} else {
+							currentScrollLeft = nativeWidgetScrollLeft;
+							currentScrollTop = nativeWidgetScrollTop;
+						}
+
+						RenderSupportJSPixi.off("drawframe", updateScrollRectFn);
+
+						if (RenderSupportJSPixi.Animating) {
+							RenderSupportJSPixi.once("drawframe", updateScrollRectFn);
+						} else {
+							updateScrollRectFn();
+						}
 					}
-
-					RenderSupportJSPixi.off("drawframe", updateScrollRectFn);
-					RenderSupportJSPixi.once("drawframe", updateScrollRectFn);
 				}
 			else
-				function() {
-					if (nativeWidget.scrollLeft != x) {
-						nativeWidget.scrollLeft = x;
-					}
+				scrollFn;
 
-					if (nativeWidget.scrollTop != y) {
-						nativeWidget.scrollTop = y;
-					}
-				};
-
-		nativeWidget.onscroll = scrollFn;
-		scrollFn();
+		nativeWidget.onscroll = onScrollFn;
+		if (untyped clip.scrollRectListener == null || (x >= 0 && y >= 0)) {
+			scrollFn();
+		}
 		untyped clip.scrollFn = scrollFn;
 	}
 
