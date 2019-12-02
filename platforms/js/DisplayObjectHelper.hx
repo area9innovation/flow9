@@ -499,6 +499,21 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static inline function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
+		if (untyped clip.contentBounds == null) {
+			untyped clip.contentBounds = new Bounds();
+		}
+
+		var contentBounds = untyped clip.contentBounds;
+
+		contentBounds.minX = 0.0;
+		contentBounds.minY = 0.0;
+		contentBounds.maxX = width;
+		contentBounds.maxY = height;
+
+		invalidateTransform(clip, "setContentRect");
+	}
+
 	public static inline function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
 		untyped clip.scrollRectListener = cb;
 
@@ -850,9 +865,14 @@ class DisplayObjectHelper {
 		var ty : Float = 0.0;
 
 		if (untyped clip.scrollRect != null) {
-			if (untyped clip.maxLocalBounds != null && nativeWidget.firstChild != null) {
-				nativeWidget.firstChild.style.width = '${untyped clip.maxLocalBounds.maxX}px';
-				nativeWidget.firstChild.style.height = '${untyped clip.maxLocalBounds.maxY}px';
+			if (nativeWidget.firstChild != null) {
+				if (untyped clip.contentBounds != null) {
+					nativeWidget.firstChild.style.width = '${untyped clip.contentBounds.maxX}px';
+					nativeWidget.firstChild.style.height = '${untyped clip.contentBounds.maxY}px';
+				} else if (untyped clip.maxLocalBounds != null) {
+					nativeWidget.firstChild.style.width = '${untyped clip.maxLocalBounds.maxX}px';
+					nativeWidget.firstChild.style.height = '${untyped clip.maxLocalBounds.maxY}px';
+				}
 			}
 
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
@@ -1097,39 +1117,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function createPlaceholderWidget(clip : DisplayObject) : Void {
-		var placeholderWidget = untyped clip.placeholderWidget;
-
-		if (placeholderWidget == null) {
-			var nativeWidget = untyped clip.nativeWidget;
-
-			placeholderWidget = Browser.document.createElement('div');
-			untyped clip.placeholderWidget = placeholderWidget;
-
-			placeholderWidget.style.height = '10000px';
-			placeholderWidget.style.width = '10000px';
-			placeholderWidget.className = 'nativeWidget';
-			placeholderWidget.style.visibility = 'hidden';
-
-			nativeWidget.insertBefore(placeholderWidget, nativeWidget.firstChild);
-		}
-	}
-
-	public static function removePlaceholderWidget(clip : DisplayObject) : Void {
-		var placeholderWidget : Dynamic = untyped clip.placeholderWidget;
-
-		if (placeholderWidget != null) {
-			if (placeholderWidget.parentNode != null) {
-				placeholderWidget.parentNode.removeChild(placeholderWidget);
-			}
-
-			placeholderWidget = null;
-		}
-	}
-
 	public static function removeNativeMask(clip : DisplayObject) : Void {
-		removePlaceholderWidget(clip);
-
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if ((nativeWidget.style.overflow != null && nativeWidget.style.overflow != '') ||
@@ -1182,18 +1170,6 @@ class DisplayObjectHelper {
 				nativeWidget.style.marginTop = null;
 				nativeWidget.style.margin = null;
 				nativeWidget.style.clip = null;
-			}
-		}
-
-		if (untyped clip.scrollRectListener == null && (x != 0 || y != 0)) {
-			createPlaceholderWidget(clip);
-
-			if (x > 10000) {
-				untyped clip.placeholderWidget.style.width = '${getWidgetWidth(clip) + x}px';
-			}
-
-			if (y > 10000) {
-				untyped clip.placeholderWidget.style.height = '${getWidgetHeight(clip) + y}px';
 			}
 		}
 
@@ -1272,7 +1248,6 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
 			nativeWidget.style.borderRadius = null;
-			removePlaceholderWidget(clip);
 
 			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
@@ -1332,8 +1307,6 @@ class DisplayObjectHelper {
 				var data = graphicsData[0];
 
 				if (data.shape.type == 0) {
-					removePlaceholderWidget(clip);
-
 					nativeWidget.style.overflow = null;
 					nativeWidget.style.borderRadius = null;
 

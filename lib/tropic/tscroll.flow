@@ -481,7 +481,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					TRectangle(interactiveRectangleStyle, TSized(boxWH))
 				),
 				if (nativeScroll())
-					TRectangle(interactiveRectangleStyle, TSized(boxWH))
+					TEmpty()
 				else
 					TShowLazy(
 						showScrolling,
@@ -537,58 +537,90 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 }
 
 TScrollRectT(scrollPosition : DynamicBehaviour<Point>, boxWH : Transform<WidthHeight>, t : Tropic) -> Tropic {
-	TransformTAcc(\t2a, pi, ss, mo -> {
-		b =
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		x1 = fpointX(scrollPosition);
+		y1 = fpointY(scrollPosition);
+		wi = fwidth(boxWH);
+		he = fheight(boxWH);
+
+		bf =
 			t2a(
 				t,
-				TParentInfo(pi with
-					transformMatrix = fworldtransform(pi.transformMatrix, fpoint2transform(fselect(scrollPosition, FLift(\sp -> Point(-sp.x, -sp.y)))))
+				TParentInfo(parent with
+					transformMatrix = fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(fnegate(x1), fnegate(y1))))
 				),
-				ss,
-				mo
+				sheet,
+				metricsOnly
 			);
+		fm = make(zeroMetrics);
 
-		TAcc(b with
-			form = FNativeForm(
-				t,
-				const(zeroMetrics),
-				\ -> b.form,
-				\av, zo, to -> {
-					scrollResponse = ref false;
-					scrollPositionResponse = ref false;
+		TAcc(
+			if (metricsOnly)
+				FEmpty()
+			else
+				FNativeForm(
+					t,
+					fm,
+					\ -> FCrop(
+							x1,
+							y1,
+							wi,
+							he,
+							bf.form
+						),
+					\av, zo, to -> {
+						scrollResponse = ref false;
+						scrollPositionResponse = ref false;
 
-					clip = makeClip();
+						clip = makeClip();
 
-					d0 = renderFForm(b.form, const(zo));
-					d = attachFChildren(clip, d0.clips, d0.disposers, [FClipMove(), FClipRotate(), FClipScale(), FClipMask()]);
+						d0 = renderFForm(bf.form, const(zo));
+						d = attachFChildren(clip, d0.clips, d0.disposers, [FClipMove(), FClipRotate(), FClipScale(), FClipMask()]);
 
-					disposers =
-						concat(
-							d.disposers,
-							[
-								makeSubscribe(scrollPosition, \sp ->
-									if (!^scrollResponse) {
-										scrollPositionResponse := true;
-										setScrollRect(clip, sp.x, sp.y, fgetValue(boxWH).width, fgetValue(boxWH).height);
-										scrollPositionResponse := false;
-									}
-								)(),
-								listenScrollRect(clip, \dx, dy -> {
-									if (!^scrollPositionResponse) {
-										scrollResponse := true;
-										nextDistinct(scrollPosition, Point(dx, dy));
-										scrollResponse := false;
-									}
-								})
-							]
-						);
+						disposers =
+							concat(
+								d.disposers,
+								[
+									make2Subscribe(bf.metrics.width, bf.metrics.height, \wd, hgt ->
+										setContentRect(clip, wd, hgt)
+									)(),
+									make2Subscribe(scrollPosition, boxWH, \sp, bwh -> {
+										if (!^scrollResponse) {
+											scrollPositionResponse := true;
+											setScrollRect(clip, sp.x, sp.y, bwh.width, bwh.height);
+											scrollPositionResponse := false;
+										}
+									})(),
+									listenScrollRect(clip, \dx, dy -> {
+										if (!^scrollPositionResponse) {
+											scrollResponse := true;
+											nextDistinct(scrollPosition, Point(dx, dy));
+											scrollResponse := false;
+										}
+									}),
+									fconnect(fselect(boxWH, FLift(\wh -> FormMetrics(wh.width, wh.height, wh.height, wh.height))), fm)
+								]
+							);
 
-					NativeRenderResult(
-						[clip],
-						\ -> applyall(disposers)
-					)
-				}
-			)
+						NativeRenderResult(
+							[clip],
+							\ -> applyall(disposers)
+						)
+					}
+				),
+			TFormMetrics(
+				wi,
+				he,
+				he
+			),
+			wi,
+			he,
+			wi,
+			he,
+			bf.xFillers, bf.yFillers, bf.addFillers,
+			bf.xConstant && isFConst(x1) && isFConst(wi),
+			bf.yConstant && isFConst(y1) && isFConst(he),
+			bf.disposers
 		)
 	})
 }
