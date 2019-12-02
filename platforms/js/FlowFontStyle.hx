@@ -11,6 +11,7 @@ class FlowFontStyle {
 	private static var flowFontStyles : Dynamic;
 
 	public static function fromFlowFonts(names : String) : FontStyle {
+		flowFontStyles = null;
 		var styles : Dynamic = null;
 
 		for (name in names.split(",")) {
