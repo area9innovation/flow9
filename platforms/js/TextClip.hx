@@ -101,6 +101,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = '';
+	private var escapeHTML : Bool = true;
 	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
@@ -396,7 +397,18 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			var textContent = getContentGlyphs().modified;
 			var newTextContent = convertContentGlyphs2TextContent(textContent);
-			nativeWidget.textContent = newTextContent;
+
+			if (escapeHTML) {
+				nativeWidget.textContent = newTextContent;
+			} else {
+				nativeWidget.innerHTML = newTextContent;
+
+				var children : Array<Dynamic> = nativeWidget.childNodes;
+				for (child in children) {
+					child.className = "baselineWidget";
+				}
+			}
+
 			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
@@ -580,7 +592,14 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		invalidateMetrics();
-		updateWidthDelta();
+	}
+
+	public function setEscapeHTML(escapeHTML : Bool) : Void {
+		if (this.escapeHTML != escapeHTML) {
+			this.escapeHTML = escapeHTML;
+			invalidateMetrics();
+			updateWidthDelta();
+		}
 	}
 
 	private function measureFont() : Void {
@@ -761,6 +780,7 @@ class TextClip extends NativeWidgetClip {
 			style.wordWrap = wordWrap;
 
 			invalidateMetrics();
+			updateWidthDelta();
 		}
 	}
 
@@ -783,6 +803,7 @@ class TextClip extends NativeWidgetClip {
 			style.breakWords = cropWords;
 
 			invalidateMetrics();
+			updateWidthDelta();
 		}
 	}
 
