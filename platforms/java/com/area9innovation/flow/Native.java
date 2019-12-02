@@ -1383,9 +1383,9 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final Object getConcurrentHashMap(Object map, Object key) {
+	public final Object getConcurrentHashMap(Object map, Object key, Object defval) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
-		return concurrentMap.get(key);
+		return concurrentMap.containsKey(key) ? concurrentMap.get(key) : defval;
 	}
 
 	public final Boolean containsConcurrentHashMap(Object map, Object key) {
