@@ -2379,8 +2379,8 @@ class RenderSupportJSPixi {
 		clip.setScrollRect(left, top, width, height);
 	}
 
-	public static function listenScrollRect(clip : FlowContainer, width : Float, height : Float, cb : Float -> Float -> Void) : Void -> Void {
-		return clip.listenScrollRect(width, height, cb);
+	public static function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
+		return clip.listenScrollRect(cb);
 	}
 
 	public static function getTextMetrics(clip : TextClip) : Array<Float> {

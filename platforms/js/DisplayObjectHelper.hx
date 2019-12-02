@@ -499,9 +499,8 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function listenScrollRect(clip : FlowContainer, width : Float, height : Float, cb : Float -> Float -> Void) : Void -> Void {
+	public static inline function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
 		untyped clip.scrollRectListener = cb;
-		setScrollRect(clip, untyped clip.scrollRect != null ? clip.scrollRect.x : 0, untyped clip.scrollRect != null ? clip.scrollRect.y : 0, width, height);
 
 		invalidateInteractive(clip);
 		invalidateTransform(clip, "listenScrollRect");
@@ -851,6 +850,11 @@ class DisplayObjectHelper {
 		var ty : Float = 0.0;
 
 		if (untyped clip.scrollRect != null) {
+			if (untyped clip.maxLocalBounds != null && nativeWidget.firstChild != null) {
+				nativeWidget.firstChild.style.width = '${untyped clip.maxLocalBounds.maxX}px';
+				nativeWidget.firstChild.style.height = '${untyped clip.maxLocalBounds.maxY}px';
+			}
+
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
 
 			if (untyped clip.parentClip && clip.parentClip.hasMarginGap) {
@@ -1591,7 +1595,17 @@ class DisplayObjectHelper {
 			}
 
 			var nextWidget = findNextNativeWidget(child, clip);
-			untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+			if (untyped clip.scrollRect != null) {
+				if (untyped clip.nativeWidget.firstChild == null) {
+					var cont = Browser.document.createElement("div");
+					cont.className = 'nativeWidget';
+					untyped clip.nativeWidget.appendChild(cont);
+				}
+
+				untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+			} else {
+				untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+			}
 
 			applyScrollFnChildren(child);
 		} else {
@@ -1703,9 +1717,7 @@ class DisplayObjectHelper {
 				for (child in getClipChildren(clip)) {
 					if (untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null) {
 						invalidateLocalBounds(child, invalidateMask);
-						if (untyped clip.mask == null) {
-							applyMaxBounds(clip, untyped child.currentBounds);
-						}
+						applyMaxBounds(clip, untyped child.currentBounds);
 					}
 				}
 
