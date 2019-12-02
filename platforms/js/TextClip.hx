@@ -403,7 +403,7 @@ class TextClip extends NativeWidgetClip {
 			} else {
 				nativeWidget.innerHTML = newTextContent;
 
-				var children : Array<Dynamic> = nativeWidget.childNodes;
+				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
 					child.className = "baselineWidget";
 				}
@@ -1322,11 +1322,45 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
-			if (isStringArabic(text)) {
+			if (!escapeHTML) {
+				metrics = TextMetrics.measureText(untyped __js__("this.text.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
+				measureHTMLWidth();
+			} else if (isStringArabic(text)) {
 				metrics = TextMetrics.measureText(convertContentGlyphs2TextContent(getContentGlyphs().modified), style);
 			} else {
 				metrics = TextMetrics.measureText(text, style);
 			}
+		}
+	}
+
+	private function measureHTMLWidth() : Void {
+		if (nativeWidget == null) {
+			isNativeWidget = true;
+			createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
+		}
+
+		var textNodeMetrics : Dynamic = null;
+
+		updateNativeWidgetStyle();
+
+		if (nativeWidget.parentNode == null) {
+			Browser.document.body.appendChild(nativeWidget);
+			textNodeMetrics = getTextNodeMetrics(nativeWidget);
+			Browser.document.body.removeChild(nativeWidget);
+		} else {
+			textNodeMetrics = getTextNodeMetrics(nativeWidget);
+		}
+
+		if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
+			return;
+		}
+
+		if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
+			metrics.width = textNodeMetrics.width;
+		}
+
+		if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
+			deleteNativeWidget();
 		}
 	}
 
