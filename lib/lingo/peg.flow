@@ -9,10 +9,23 @@ import runtime;
 import string;
 import ds/tree;
 import ds/inttree;
+import ds/arrayutils;
 import lingo/pegtype;
 
 export {
 	Grammar(productions : [Production]);
+	RawGrammar(blocks : [GrammarBlock]);
+		GrammarBlock ::= Production, PreprocessorBlock;
+			PreprocessorBlock ::= ConditionalBlock;
+
+	PreprocessorInfo(
+		definitions : [string]
+	);
+	makeDummyPreprocessorInfo = \ -> PreprocessorInfo([]);
+
+	ConditionalBlock(ifBranch: ConditionalPair, elifBranches : [ConditionalPair], elseBranch : [GrammarBlock]);
+		ConditionalPair(name : string, blocks : [GrammarBlock]);
+
 	Production(name : string, caching : bool, type : PegType, choices : [Seq]);
 	ParseConstants : (input : flow, inputlen : int, grammar : Grammar, semantics : SemanticActions); // exported for generated parsers
 	nilParseResult = ParseResult(-1, None()); // exported for generated parsers
@@ -88,6 +101,7 @@ export {
 	inlineProductions(g : Grammar) -> Grammar;
 	processNestedSequences(g : Grammar) -> Grammar;
 
+	preprocessRawGrammar(g : RawGrammar, info : PreprocessorInfo) -> Grammar;
 
 
 	// For debugging
@@ -114,7 +128,79 @@ export {
 	parseCacheMisses : ref IntTree<int> = makeIntTree();
 }
 
+preprocessRawGrammar(g : RawGrammar, info : PreprocessorInfo) -> Grammar {
+	conditionalResolved = resolveConditionalBlocks(g.blocks, info.definitions);
+	validationRes : Pair<bool, [string]> = validateAfterPreprocess(conditionalResolved);
 
+	if (validationRes.first) {
+		Grammar(filtermap(conditionalResolved, \b -> {
+			switch (b) {
+				Production(__, __, __, __) : Some(b);
+				default : None();
+			}
+		}));
+	} else {
+		println("Grammar preprocessing failed with errors:");
+		iter(validationRes.second, println);
+		Grammar([]);
+	}
+}
+
+resolveConditionalBlocks(blocks : [GrammarBlock], definitions : [string]) -> [GrammarBlock] {
+	mapConcat(blocks, \block -> {
+		switch (block) {
+			Production(__, __, __, __) : [block];
+			ConditionalBlock(ifBranch, elifBranches, elseBranch) : {
+				if (contains(definitions, ifBranch.name))
+					resolveConditionalBlocks(ifBranch.blocks, definitions)
+				else
+					eitherMap(
+						findi(elifBranches, \branch -> contains(definitions, branch.name)),
+						\idx -> resolveConditionalBlocks(elifBranches[idx].blocks, definitions),
+						block.elseBranch
+					);
+			}
+		}
+	})
+}
+
+validateAfterPreprocess(blocks : [GrammarBlock]) -> Pair<bool, [string]> {
+	prodList = filtermap(blocks, \b -> switch (b) {
+		Production(name, __, __, __) : Some(name);
+		default : None();
+	});
+
+	fold(blocks, Pair(true, []), \acc, b -> {
+		switch (b) {
+			Production(name, __, __, choices) : {
+				links = extractRulesLinks(choices);
+				unknownRules = subtractA(links, prodList);
+				allKnownRules = unknownRules == [];
+
+				Pair(
+					acc.first && allKnownRules,
+					if (!allKnownRules) arrayPush(acc.second, "Unknown rules from production \"" + name + "\": " + strGlue(unknownRules, ", ")) else acc.second
+				)
+			}
+			ConditionalBlock(pif, __, __) : Pair(false, arrayPush(acc.second, "Conditional block after preprocess, condition \"" + pif.name + "\""));
+		}
+	})
+}
+
+extractRulesLinks(choices : [Parsing]) -> [string] {
+	mapConcat(choices, \choice -> {
+		switch (choice : Parsing) {
+			Rule(name): [name];
+			Star(p): extractRulesLinks([p]);
+			Plus(p): extractRulesLinks([p]);
+			Opt(p): extractRulesLinks([p]);
+			Negation(p): extractRulesLinks([p]);
+			Choices(s): extractRulesLinks(s);
+			Seq(s): extractRulesLinks(s);
+			default : [];
+		}
+	});
+}
 
 processNestedSequences(g : Grammar) -> Grammar {
 	nextFree = ref length(g.productions);
