@@ -820,7 +820,7 @@ class DisplayObjectHelper {
 	}
 
 	private static inline function getMarginGap() : Float {
-		return Platform.isChrome && Platform.isHighDensityDisplay ? MarginGap * Browser.window.devicePixelRatio : MarginGap;
+		return Platform.isChrome && RenderSupportJSPixi.getAccessibilityZoom() == 1.75 ? MarginGap * 2.0 : MarginGap;
 	}
 
 	public static function updateNativeWidgetTransformMatrix(clip : DisplayObject) {
