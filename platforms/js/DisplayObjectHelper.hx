@@ -521,7 +521,8 @@ class DisplayObjectHelper {
 		invalidateTransform(clip, "listenScrollRect");
 
 		return function() {
-			removeScrollRect(clip);
+			untyped clip.scrollRectListener = null;
+
 			invalidateInteractive(clip);
 			invalidateTransform(clip, "listenScrollRect disposer");
 		}
