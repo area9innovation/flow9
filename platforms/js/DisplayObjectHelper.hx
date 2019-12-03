@@ -820,7 +820,7 @@ class DisplayObjectHelper {
 	}
 
 	private static inline function getMarginGap() : Float {
-		return RenderSupportJSPixi.browserZoom == 1.0 ? 0.0 : MarginGap;
+		return /* RenderSupportJSPixi.browserZoom == 1.0 ? 0.0 : */MarginGap;
 	}
 
 	public static function updateNativeWidgetTransformMatrix(clip : DisplayObject) {
@@ -1406,7 +1406,7 @@ class DisplayObjectHelper {
 				if (untyped clip.child == null && (!clip.onStage || getParentNode(clip) != clip.parentClip.nativeWidget)) {
 					untyped clip.onStage = true;
 
-					if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS) {
+					if (!Platform.isIE) {
 						untyped clip.nativeWidget.style.display = null;
 					}
 
@@ -1415,7 +1415,7 @@ class DisplayObjectHelper {
 			} else if (untyped clip.onStage) {
 				untyped clip.onStage = false;
 
-				if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS) {
+				if (!Platform.isIE) {
 					untyped clip.nativeWidget.style.display = 'none';
 				}
 
