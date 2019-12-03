@@ -850,7 +850,7 @@ class DisplayObjectHelper {
 	}
 
 	private static inline function getMarginGap() : Float {
-		return RenderSupportJSPixi.browserZoom == 1.0 ? 0.0 : MarginGap;
+		return /* RenderSupportJSPixi.browserZoom == 1.0 ? 0.0 : */MarginGap;
 	}
 
 	public static function updateNativeWidgetTransformMatrix(clip : DisplayObject) {
