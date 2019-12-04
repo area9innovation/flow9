@@ -429,9 +429,9 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupportJSPixi.RendererType == "html" && isNativeWidget) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.ascent + style.leading / 2.0)}px';
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.leading / 2.0)}px';
+				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
