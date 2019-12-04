@@ -471,7 +471,7 @@ class PixiWorkarounds {
 					}
 				}
 
-				properties.descent = i - baseline;// + (Platform.isMacintosh ? (font.indexOf('Material Icons') < 0 ? 1.0 : -1.0) : 0.0);
+				properties.descent = i - baseline;
 				properties.fontSize = properties.ascent + properties.descent;
 
 				context.fillStyle = '#f00';
@@ -510,9 +510,11 @@ class PixiWorkarounds {
 					}
 				}
 
-				properties.baselineCorrection = (properties.descent - (properties.ascent - (baseline - i - 1))) / 2.0;
-				properties.descent -= properties.baselineCorrection;
-				properties.ascent += properties.baselineCorrection;
+				if (Platform.isMacintosh) {
+					properties.baselineCorrection = (properties.descent - (properties.ascent - (baseline - i - 1.0))) / 2.0;
+					properties.descent -= properties.baselineCorrection;
+					properties.ascent += properties.baselineCorrection;
+				}
 
 				PIXI.TextMetrics._fonts[font] = properties;
 
