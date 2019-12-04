@@ -151,6 +151,31 @@ The grammar
 
 will give the position of where the b's start, as well as where they end.
 
+Preprocessor
+------------
+
+Lingo has a small basic preprocessor, which allows to implement conditional grammar. Here is the syntax:
+
+	#ifdef CONDITION
+	prod = 'a'* { A() };
+	#else
+	prod = 'b'* { B() };
+	#endif
+
+`CONDITION` is a user definition, case-sensitive, has same restrictions as production's name.
+Multiple cases can be implemented by using **#elif**:
+
+	#ifdef CONDITION
+	prod = 'a'* { A() };
+	#elif CONDITION_2
+	prod = 'b'* { B() };
+	#else
+	prod = 'c'* { C() };
+	#endif
+
+Nested conditions are also allowed.
+Definitions can be stated through `definitions` parameter for pegcompiler or by using `compilePegGrammar3` function.
+
 Testing a grammar
 -----------------
 
