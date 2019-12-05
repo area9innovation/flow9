@@ -1116,6 +1116,10 @@ class RenderSupportJSPixi {
 		return browserZoom;
 	}
 
+	public static function isDarkMode() : Bool {
+		return Platform.isDarkMode;
+	}
+
 	public static function setHitboxRadius(radius : Float) : Bool {
 		return false;
 	}
@@ -2373,6 +2377,14 @@ class RenderSupportJSPixi {
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
 		clip.setScrollRect(left, top, width, height);
+	}
+
+	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
+		clip.setContentRect(width, height);
+	}
+
+	public static function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
+		return clip.listenScrollRect(cb);
 	}
 
 	public static function getTextMetrics(clip : TextClip) : Array<Float> {
