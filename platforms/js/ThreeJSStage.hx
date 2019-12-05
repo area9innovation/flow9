@@ -142,6 +142,8 @@ class ThreeJSStage extends Container {
 		untyped renderer.eventElement.addEventListener("mousemove", onMouseEvent);
 	}
 
+	public var objectsInside : Array<Object3D> = [];
+
 	public function onMouseEvent(event : Dynamic, ?object : Object3D) : Void {
 		if (orbitControls != null && !orbitControls.enabled) {
 			return;
@@ -164,6 +166,8 @@ class ThreeJSStage extends Container {
 			camera
 		);
 
+		var newObjectsInside = [];
+
 		for (ob in raycaster.intersectObjects(interactiveChildren)) {
 			var object = ob.object;
 
@@ -174,10 +178,26 @@ class ThreeJSStage extends Container {
 					return;
 				}
 
+				if (untyped !object.inside) {
+					untyped object.inside = true;
+					object.emitEvent("mouseover");
+				}
+
+				newObjectsInside.push(object);
+
 				object.emitEvent(event.type);
 				object.invalidateStage();
 			}
 		};
+
+		for (o in objectsInside) {
+			if (newObjectsInside.indexOf(o) < 0) {
+				untyped o.inside = false;
+				o.emitEvent("mouseout");
+			}
+		}
+
+		objectsInside = newObjectsInside;
 	}
 
 	private function createTransformControls() {
