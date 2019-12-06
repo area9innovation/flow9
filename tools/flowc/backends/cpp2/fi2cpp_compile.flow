@@ -1,3 +1,4 @@
+import text/utf8;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/backends/cpp2/fi2cpp2_util;
 import tools/flowc/flowc_field_type;
@@ -45,6 +46,13 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 			map(s.args, \a -> Cpp2StructArg(a.name, a.type, a.ismutable))
 		)
 	);
+	int2bc = \i -> {
+		fromCharCode(bitAnd(i, 0xFF))+
+		fromCharCode(bitAnd(bitUshr(i, 8), 0xFF))+
+		fromCharCode(bitAnd(bitUshr(i, 16), 0xFF))+
+		fromCharCode(bitAnd(bitUshr(i, 24), 0xFF));
+	}
+	bytecode = ref "\x39\x39"; // CLast CLast
 	struct_list_map = foldi(structs_order, Pair([], makeTree()),
 		\n, acc, s -> {
 			si = Cpp2StructInfo(
@@ -52,8 +60,10 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 				s.name,  // struct_name
 				map(s.args, \a -> Cpp2StructArg(a.name, a.type, a.is_mutable)), //args
 				map(s.args, \a -> cpp2GetStructAType(a.type)), // atypes
-				if (length(s.args) == 0) { 
-					2 + n * 4 // TODO: implement with bytecode generator 
+				if (length(s.args) == 0) {
+					eaddr = strlen(^bytecode);
+					bytecode := ^bytecode + int2bc(n);
+					eaddr
 				} else {
 					cpp2_int_UNDEF
 				} // empty_addr
@@ -91,6 +101,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 		config,
 		program,
 		main,
+		
 		length(struct_list),    // num_structs : int,
 		0,                      // init_count : int,
 		struct_counts,          // struct_counts : [int], // by size
@@ -101,6 +112,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 
 		Cpp2StructCode(ref [], ref [], ref [], ref [], ref [], ref []),  // struct_code
 
+		^bytecode,
 		makeTree(),     // const_strings : Tree<string, Cpp2ConstString>,
 		ref [],         // method_names : [string],
 		ref function_table, // function_table : [Cpp2FunctionDescr],
@@ -193,7 +205,7 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 									global_env = new_ac.second;
 									place = lookupTreeDef(writer.global_map, name, dummyCpp2PlaceInfo);
 									global_env.vname ::= name + "$init";
-									writer.cur_global ::= name;
+									// TODO: writer.cur_global ::= name;
 									switch (global_env.cur_ctx) {
 										Some(ctx): cpp2WriterCompileExpression(writer, value, ctx, Cpp2OutputVar(place), Cpp2StackTop(0));
 										None(): cpp2_error("context must not be None");
@@ -248,14 +260,14 @@ cpp2GenerateStructCode(writer : Cpp2Writer, s : Cpp2StructOrderInfo, info : Cpp2
 
 		fori(0, length(s.args) - 1, \i -> {
 			arg = s.args[i];
-			refArrayPush(code.field_names, s.name);
+			refArrayPush(code.field_names, arg.name);
 			if (arg.is_mutable) {
 				refArrayPush(code.field_types, cpp2_CSetMutable);
 			}
 			writeFiExpTypeCode(arg.type, code, writer.config.extStructDefs);
 			refArrayPush(code.field_types, -1);
 			fname =  "fl_" + arg.name;
-			off = "(int)offsetof(FS_" + s.name + ", " + fname + ")";
+			off = "(int)offsetof(FS_" + s.name + "," + fname + ")";
 			if (i < length(info.atypes)) {
 				switch (info.atypes[i]) {
 					Cpp2TBool(): {
@@ -504,35 +516,33 @@ cpp2WriterRegisterConstString(w : Cpp2Writer, s : string) -> Cpp2ConstString {
 	switch (lookupTree(w.const_strings, s)) {
 		Some(cached): cached;
 		None(): {
-			// TODO: implement the stub
-			ret = Cpp2ConstString(0, 0, s);
+			/*addr = cpp2BytesOutputGetPc(w.bytecode);
+			size = cpp2BytesOutputWriteWideStringRaw(w.bytecode, s);
+			rslot = if (size > 0xFFFF) {
+				raddr = cpp2BytesOutputGetPc(w.bytecode);
+				cpp2BytesOutputWriteInt31(w.bytecode, bitAnd(size, 0xFFFF));
+				cpp2BytesOutputWriteInt31(w.bytecode, addr);
+				"StackSlot::InternalMakeString(MakeFlowPtr(" + i2s(raddr) + ")," + i2s(bitUshr(size, 16)) + ",true)";
+			} else {
+				"StackSlot::InternalMakeString(MakeFlowPtr(" + i2s(addr) + ")," + i2s(size) + ",false)";
+			}
+			ret = Cpp2ConstString(addr, size, rslot);
+			w.const_strings ::= setTree(w.const_strings, s, ret);
+			ret*/
+			
+			addr = strlen(w.bytecode);
+			str_raw = \str -> stringFold(str, "", \acc, x -> acc + fromCharCode(bitAnd(x, 0xFF)) + fromCharCode(bitAnd(x / 256, 0xFF)));
+			w.bytecode ::= w.bytecode + str_raw(s);
+			size = (strlen(w.bytecode) - addr) / 2;
+			ret = Cpp2ConstString(addr, size, "StackSlot::InternalMakeString(MakeFlowPtr(" + i2s(addr) + ")," + i2s(size) + ",false)");
 			w.const_strings ::= setTree(w.const_strings, s, ret);
 			ret
 		}
-	}/*
-	cached = const_strings.get(s);
-	if (cached == null) {
-		addr = bytecode.getPc();
-		size = bytecode.writeWideStringRaw(s);
-		rslot;
-
-		if (size > 0xffff) {
-			raddr = bytecode.getPc();
-			bytecode.writeInt31(size & 0xffff);
-			bytecode.writeInt31(addr);
-			rslot = "StackSlot::InternalMakeString(MakeFlowPtr('+raddr+'),'+(size>>16)+",true)";
-		}
-		else {
-			rslot = "StackSlot::InternalMakeString(MakeFlowPtr('+addr+'),'+size+",false)";
-		}
-
-		const_strings.set(s, cached = { addr: addr, size: size, rslot: rslot });
 	}
-	return cached;*/
 }
 
 cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
-	bytes : [int] = []; //bytecode.extractBytes();  // TODO: use actual bytecode
+	bytes = s2a(writer.bytecode);
 	
 	h = ref makeList();
 	o = ref makeList();
@@ -655,7 +665,7 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		"const unsigned char flowgen_" + writer.config.entry + "::bytecode_bytes[] = {"
 	]);
 
-	rlistPush(o, cpp2wrArray(length(bytes), 20, "    ", "    ", "\n", \i -> i2s(bytes[i])));
+	rlistPush(o, cpp2wrArray(length(bytes), 20, "    ", "    ", "", \i -> i2s(bytes[i])));
 
 	cpp2wrLine(o, 
 		[
@@ -665,26 +675,28 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	rlistPush(o, 
-		cpp2wrArray(length(^(writer.function_table)), 1, "    ", "    ", "\n", 
+	function_specs = cpp2wrArray(length(^(writer.function_table)), 1, "    ", "    ", "", 
 			\i -> {
 				spec = ^(writer.function_table)[i];
 				"{ \"" + spec.name + "\", " +
-				if (spec.native_name != "") {
+				(if (spec.native_name != "") {
 					"\"" + spec.native_name + "\"";
 				} else {
 					"NULL"
-				} +
-				", " + i2s(spec.nargs) + ", ";
-				if (spec.fn_name != "") {
+				}) +
+				", " + i2s(spec.nargs) + ", " +
+				(if (spec.fn_name != "") {
 					"&" + spec.fn_name
 				} else {
 					"NULL"
-				}
+				})
 				+ " }";
 			}
-		)
-	);
+		);
+
+	if (function_specs != "") {
+		rlistPush(o, function_specs);
+	}
 
 	cpp2wrLine(o, 
 		[
@@ -694,11 +706,12 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	rlistPush(o, 
-		cpp2wrArray(length(^(writer.struct_code.field_names)), 10, "    ", "    ", "\n", 
+	struct_field_names = cpp2wrArray(length(^(writer.struct_code.field_names)), 10, "    ", "    ", "", 
 			\i -> "\"" + ^(writer.struct_code.field_names)[i] + "\""
-		)
-	);
+		);
+	if (struct_field_names != "") {
+		rlistPush(o, struct_field_names);
+	}
 
 	cpp2wrLine(o, 
 		[
@@ -708,11 +721,12 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	rlistPush(o, 
-		cpp2wrArray(length(^(writer.struct_code.field_types)), 20, "    ", "    ", "\n", 
+	struct_field_types = cpp2wrArray(length(^(writer.struct_code.field_types)), 20, "    ", "    ", "", 
 			\i -> i2s(^(writer.struct_code.field_types)[i])
-		)
-	);
+		);
+	if (struct_field_types != "") {
+		rlistPush(o, struct_field_types);
+	}
 
 	cpp2wrLine(o, 
 		[
@@ -722,11 +736,12 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	rlistPush(o, 
-		cpp2wrArray(length(^(writer.struct_code.def_lines)), 1, "    ", "    ", "\n", 
+	struct_field_defs = cpp2wrArray(length(^(writer.struct_code.def_lines)), 1, "    ", "    ", "", 
 			\i -> ^(writer.struct_code.def_lines)[i]
-		)
-	);
+		);
+	if (struct_field_defs != "") {
+		rlistPush(o, struct_field_defs)
+	}
 
 	cpp2wrLine(o, 
 		[
@@ -736,11 +751,12 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	rlistPush(o, 
-		cpp2wrArray(length(^(writer.struct_code.gcdef_lines)), 1, "    ", "    ", "\n", 
+	struct_field_gcdefs = cpp2wrArray(length(^(writer.struct_code.gcdef_lines)), 1, "    ", "    ", "", 
 			\i -> ^(writer.struct_code.gcdef_lines)[i]
-		)
-	);
+		);
+	if (struct_field_gcdefs != "") {
+		rlistPush(o, struct_field_gcdefs);
+	}
 
 	cpp2wrLine(o, 
 		[
@@ -750,8 +766,7 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	rlistPush(o, 
-		cpp2wrArray(length(^(writer.structs_order)), 1, "    ", "    ", "\n", 
+	struct_specs = cpp2wrArray(length(^(writer.structs_order)), 1, "    ", "    ", "", 
 			\i ->{
 				s = ^(writer.structs_order)[i];
 				r = ^(writer.struct_code.info_refs)[i];
@@ -759,18 +774,20 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 				i2s(r.name_sz) + ", " + i2s(r.name_addr) + ", " +
 				(if (length(s.args) > 0) "sizeof(FS_" + s.name + ")" else "4") + ", " +
 				i2s(r.empty_addr) + ", " + i2s(r.gcdef_cnt) + ", \"" + s.name +"\", " +
-				if (r.fld_idx != cpp2_int_UNDEF) {
+				(if (r.fld_idx != cpp2_int_UNDEF) {
 					"&struct_field_names["     + i2s(r.fld_idx) +
 					"], &struct_field_types["  + i2s(r.type_idx) + 
 					"], &struct_field_defs["   + i2s(r.def_idx) +
 					"], &struct_field_gcdefs[" + i2s(r.gcdef_idx) + "]"
 				} else {
 					"NULL, NULL, NULL, NULL"
-				}
+				})
 				+ " }"
 			}
-		)
-	);
+		);
+	if (struct_specs != "") {
+		rlistPush(o, struct_specs);
+	}
 
 	cpp2wrLine(o, 
 		[
@@ -780,8 +797,7 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 		]
 	);
 
-	rlistPush(o, 
-		cpp2wrArray(length(^(writer.field_index_table)), 1, "    ", "    ", "\n", 
+	field_index_table = cpp2wrArray(length(^(writer.field_index_table)), 1, "    ", "    ", "", 
 			\i -> {
 				ln = ^(writer.field_index_table)[i];
 				"// " + ^(writer.field_index_list)[i] + ":\n    { " +
@@ -789,10 +805,12 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 					\j -> "(char)" + i2s(ln[j])
 				) + "}"
 			}
-		)
-	);
+		);
+	if (field_index_table != "") {
+		rlistPush(o, field_index_table);
+	}
 
-	rlistPush(o, "};");
+	cpp2wrLine(o, ["};"]);
 
 	cpp2wrLine(h, 
 		[
