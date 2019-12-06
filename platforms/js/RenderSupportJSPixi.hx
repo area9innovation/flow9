@@ -179,6 +179,44 @@ class RenderSupportJSPixi {
 		}
 	}
 
+	private static var onMouseWheelAccessibilityZoomEnabled = true;
+
+	public static function onMouseWheelAccessibilityZoom(e : Dynamic, dx : Float, dy : Float) : Bool {
+		if (browserZoom != 1.0 || Platform.isMacintosh) {
+			return false;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (dy > 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			} else if (dy < 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
@@ -819,7 +857,9 @@ class RenderSupportJSPixi {
 				sY = 0.0;
 			}
 
-			listener(new Point(-sX, -sY));
+			if (RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
+				listener(new Point(-sX, -sY));
+			}
 
 			return false;
 		};

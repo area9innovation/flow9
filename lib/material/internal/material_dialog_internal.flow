@@ -54,6 +54,21 @@ export {
 
 	renderMDialog2(manager : MaterialManager, closeWhen : Transform<bool>, style : [MDialogStyle], content : Material,
 		m2t : (Material, MFocusGroup) -> Tropic, renderFn : (Tropic) -> () -> void) -> void;
+
+	renderMSnackbar(manager : MaterialManager, text : string, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn : (Tropic) -> () -> void) -> void;
+	// MTextVisible is for snackbar action, should not be raised (restricted to one action only);
+	MSnackbarStyle ::= MTextButton, MMaxLines, MSnackbarVisible, MWidth, MColor, MSnackbarTextColor, MSnackbarAutoDisappear,
+		MSnackbarAutoDisappearTime, MSnackbarNoButton, MSnackbarAlignLeft, MSnackBarOffset, MSnackbarFadeAnimation, CommonAlignment, MSnackbarOnDisappear;
+		// MSnackbarVisible can be used for getting of current snackbar state and for its closing, but not for showing of snackbar;
+		MSnackbarVisible(visible : DynamicBehaviour<bool>);
+		MSnackbarTextColor(color : MColor);
+		MSnackbarAutoDisappear(enabled : bool);
+		MSnackbarAutoDisappearTime(ms : int);
+		MSnackbarNoButton();
+		MSnackbarAlignLeft(left : bool); // TODO : get rid of
+		MSnackBarOffset(offset : Point);
+		MSnackbarFadeAnimation(fade : bool); // Change in/out animation type
+		MSnackbarOnDisappear(fn : () -> void);
 }
 
 renderMDialog2(
@@ -549,4 +564,104 @@ renderMDialog2(
 
 	if (!noAnimation)
 		easing.start();
+}
+
+snackbarDisp = initUnsM();
+
+renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn  : (Tropic) -> () -> void) -> void {
+	closeSnackbar = \ -> maybeApply(^snackbarDisp, \fn -> {
+		snackbarDisp := None();
+		fn();
+		maybeApply(tryExtractStruct(style, MSnackbarOnDisappear(nop)), \d -> d.fn());
+	});
+	closeSnackbar();
+
+	text = eitherMap(
+		tryExtractStruct(style, MMaxLines(0)),
+		\maxLines -> concatStrings(take(strSplitLeave(text0, "\n"), maxLines.lines * 2 - 1)),
+		text0
+	);
+
+	lightBackground = getLightBackground(manager.focus);
+	bgColor =
+		either(
+			tryExtractStruct(style, MBlack()),
+			MBackgroundColor(!lightBackground)
+		);
+	textColor : MColor =
+		eitherMap(
+			tryExtractStruct(style, MSnackbarTextColor(MBlack())),
+			\tc -> tc.color,
+			MDefaultTextColor(!lightBackground)
+		);
+
+	autoDisappear = extractStruct(style, MSnackbarAutoDisappear(true)).enabled;
+	autoDisappearTime = extractStruct(style, MSnackbarAutoDisappearTime(6000)).ms;
+
+	alignment = eitherMap(
+		tryExtractStruct(style, MSnackbarAlignLeft(true)),
+		\align -> if (align.left) LeftAlign() else RightAlign(),
+		extractCommonAlignment(style)
+	);
+	offset = extractStruct(style, MSnackBarOffset(zeroPoint)).offset;
+	width = extractStruct(style, MWidth(568.0)).width;
+	minWidth = 240.;
+	visible = extractStruct(style, MSnackbarVisible(make(false))).visible;
+	progress = make(0.);
+	fadeAnimation = extractStruct(style, MSnackbarFadeAnimation(offset.y != 0.)).fade;
+
+	customButton = tryExtractStruct(style, MTextButton("", nop, [], []));
+	button =
+		either(customButton,
+			if (contains(style, MSnackbarNoButton())) TEmpty()
+			else MIconButton("clear", closeSnackbar, [textColor], [])
+		)
+		|> MCenterY |> MBorderLeft(8.0);
+
+	snackBar =
+		MParagraph(text, [textColor, MBody()])
+		|> MBorderTopBottom(16.)
+		|> MCenterY
+		|> (\t -> MGroup2(t, TFixed(minWidth, 0.)))
+		|> (\t -> MBaselineCols2(t, button))
+		|> (\t -> MBorderA(16., 0., 8., 0., t))
+		|> (\t -> m2t(t, manager.focus))
+		|> (\t -> TAvailable(t, if (width == -1.) TFillX() else TFillMax(width, 0.)))
+		|> (\t -> MShapeFrame(manager.focus, [MFill(bgColor)], t, "MSnackbar"))
+		|> (\t -> TShadowShape(manager.focus, const(6.0), t, RectangleShape("MSnackbar")))
+		|> (\t -> TBorder4(24.0, t))
+		|> (\t -> TTranslate(const(offset), t))
+		|> (\t ->
+			if (fadeAnimation)
+				MEasingAnimation(
+					manager,
+					manager.focus,
+					const(0.3),
+					const(easingFastOutSlowIn),
+					visible,
+					\v -> Some(v),
+					\v, prc ->
+						nextDistinct(progress, if (v) prc else 1.0 - prc),
+					[],
+					TLet("bar", TAlpha(progress, t), TCenterIn(TScale(ffactor2(flerp(0.9, 1., progress)), TDisplay("bar")), TGhost("bar")))
+				)
+			else
+				TAnimatedExpander(manager, manager.focus, t, visible, [MNoCrop(), MExpanderProgress(progress), MExpandFromStart()])
+		)
+		|> TAlignBottom
+		|> TAlignHorizontalDir(alignment, manager.focus.rtl)
+		|> (\t -> TConstruct([\ -> subscribe2(visible, \v -> if (!v) closeSnackbar())], t));
+
+	renderDisp = renderFn(snackBar);
+	nextDistinct(visible, true);
+	timerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
+
+	setUnsM(
+		snackbarDisp,
+		\ -> {
+			timerDisp();
+			timer(300, renderDisp);
+			nextDistinct(visible, false);
+		}
+	)
 }
