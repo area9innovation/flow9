@@ -1636,6 +1636,8 @@ class DisplayObjectHelper {
 			untyped __js__("delete clip.accessWidget");
 			untyped clip.accessWidget = null;
 		}
+
+		untyped clip.destroyed = true;
 	}
 
 	public static inline function getWidth(clip : DisplayObject) : Float {
