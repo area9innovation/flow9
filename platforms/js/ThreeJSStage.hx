@@ -106,6 +106,10 @@ class ThreeJSStage extends Container {
 
 	private function updatePixelRatio() : Void {
 		this.renderer.setPixelRatio(RenderSupportJSPixi.backingStoreRatio);
+
+		if (camera != null) {
+			camera.emit("change");
+		}
 	}
 
 	public function destroyRenderer() : Void {

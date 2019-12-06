@@ -1316,10 +1316,12 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrix();
 		return object.matrix.toArray();
 	}
 
 	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrixWorld(true);
 		return object.matrixWorld.toArray();
 	}
 
@@ -1343,6 +1345,27 @@ class RenderSupport3D {
 
 		object.addEventListener("change", fn);
 		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectStagePositionListener(stage : ThreeJSStage, object : Object3D, cb : Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			var sc = convert3DVectorToStageCoordinates(stage, get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
+			cb(sc[0], sc[1]);
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		if (stage.camera != null) {
+			stage.camera.addEventListener("change", fn);
+		}
+
+		return function() {
+			object.removeEventListener("change", fn);
+			if (stage.camera != null) {
+				stage.camera.removeEventListener("change", fn);
+			}
+		};
 	}
 
 	public static function add3DObjectLocalRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1791,6 +1814,8 @@ class RenderSupport3D {
 		var heightHalf = stage.getHeight() / 2;
 
 		var vector = new Vector3(x, y, z);
+		stage.camera.updateMatrix();
+		stage.camera.updateMatrixWorld(true);
 		vector.project(stage.camera);
 
 		return [

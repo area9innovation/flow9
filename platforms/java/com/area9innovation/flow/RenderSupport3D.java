@@ -449,6 +449,9 @@ public class RenderSupport3D extends NativeHost {
 	public Func0<Object> add3DObjectWorldPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
+	public Func0<Object> add3DObjectStagePositionListener(Object stage, Object object, Func2<Object,Double,Double> cb) {
+		return no_op;
+	}
 	public Func0<Object> add3DObjectLocalRotationListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
