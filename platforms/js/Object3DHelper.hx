@@ -184,19 +184,22 @@ class Object3DHelper {
 
 			update3DChildren(parent);
 
-			var stage = getStage(parent);
-
-			if (stage.length > 0) {
+			for (stage in getStage(parent)) {
 				for (subChild in child.children) {
 					if (untyped __instanceof__(subChild, Camera)) {
-						stage[0].setCamera(cast(subChild, Camera), []);
+						stage.setCamera(cast(subChild, Camera), []);
 						child.remove(subChild);
 						subChild.parent = null;
 					}
 				}
+
+				if (untyped child.interactive && stage.interactiveObjects.indexOf(child) < 0) {
+					stage.interactiveObjects.push(child);
+				}
 			}
 
 			if (invalidate) {
+				emitEvent(child, "added");
 				emitEvent(parent, "box");
 				emitEvent(parent, "childrenchanged");
 
@@ -216,13 +219,15 @@ class Object3DHelper {
 			return;
 		}
 
-		var stage = getStage(parent);
-
-		if (stage.length > 0) {
-			untyped stage[0].objectCache.push(child);
+		for (stage in getStage(parent)) {
+			untyped stage.objectCache.push(child);
 
 			if (invalidate) { // Do no lose transform controls if it isn't the last operation
-				RenderSupport3D.detach3DTransformControls(stage[0], child);
+				RenderSupport3D.detach3DTransformControls(stage, child);
+			}
+
+			if (untyped child.interactive && stage.interactiveObjects.indexOf(child) >= 0) {
+				stage.interactiveObjects.remove(child);
 			}
 		}
 
@@ -262,6 +267,7 @@ class Object3DHelper {
 			emitEvent(parent, "childrenchanged");
 
 			emitEvent(parent, "change");
+			emitEvent(child, "removed");
 
 			invalidateStage(parent);
 		}

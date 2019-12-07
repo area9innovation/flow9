@@ -50,12 +50,14 @@ class RenderSupportJSPixi {
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
-	public static var IsRetinaDisplay : Bool = getIsRetinaDisplay();
+	public static var browserZoom : Float = 1.0;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
 	private static var WindowTopHeightPortrait : Int = -1;
 	private static var WindowTopHeightLandscape : Int = -1;
+
+	public static var hadUserInteracted = false;
 
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
@@ -102,17 +104,134 @@ class RenderSupportJSPixi {
 		return Math.fround(x * m) / m;
 	}
 
-	private static function getBackingStoreRatio() : Float {
-		var minRatio = 1.0;
-		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
-			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
+	private static var accessibilityZoom : Float = Std.parseFloat(Native.getKeyValue("accessibility_zoom", "1.0"));
+	private static var accessibilityZoomValues : Array<Float> = [0.25, 0.33, 0.5, 0.66, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0];
 
-		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
-			ratio *= Browser.window.outerWidth / Browser.window.innerWidth;
-			minRatio = detectExternalVideoCard() && ratio > 0.49 && ratio < 2.02 ? 2.0 : 1.0;
+	public static function getAccessibilityZoom() : Float {
+		return RendererType == "html" && accessibilityZoom > 0.0 ? accessibilityZoom : 1.0;
+	}
+
+	public static function setAccessibilityZoom(zoom : Float) : Void {
+		if (accessibilityZoom != zoom) {
+			accessibilityZoom = zoom;
+			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
+
+			PixiStage.broadcastEvent("resize", backingStoreRatio);
+			InvalidateLocalStages();
+
+			showAccessibilityZoomTooltip();
+		}
+	}
+
+	private static var accessibilityZoomTooltip : Dynamic;
+
+	public static function showAccessibilityZoomTooltip() : Void {
+		if (accessibilityZoomTooltip != null) {
+			Browser.document.body.removeChild(accessibilityZoomTooltip);
+			accessibilityZoomTooltip = null;
 		}
 
-		return Math.max(roundPlus(ratio, 2), minRatio);
+		if (browserZoom != 1.0) {
+			return;
+		}
+
+		var p = Browser.document.createElement("p");
+		Browser.document.body.appendChild(p);
+
+		p.classList.add('nativeWidget');
+		p.classList.add('textWidget');
+		p.textContent = "Zoom: " + Math.round(accessibilityZoom * 100) + "%";
+		p.style.fontSize = "12px";
+		p.style.zIndex = "1000";
+		p.style.background = "#424242";
+		p.style.color = "#FFFFFF";
+		p.style.padding = "8px";
+		p.style.paddingTop = "4px";
+		p.style.paddingBottom = "4px";
+		p.style.borderRadius = "4px";
+		p.style.left = "50%";
+		p.style.top = "8px";
+		p.style.transform = "translate(-50%, 0)";
+
+		accessibilityZoomTooltip = p;
+
+		Native.timer(2000, function() {
+			if (accessibilityZoomTooltip != null && accessibilityZoomTooltip == p) {
+				accessibilityZoomTooltip = null;
+				Browser.document.body.removeChild(p);
+			}
+		});
+	}
+
+	public static function onKeyDownAccessibilityZoom(e : Dynamic) : Void {
+		if (browserZoom != 1.0) {
+			return;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (e.which == '61' || e.which == "107" || e.which == "187") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+			} else if (e.which == '173' || e.which == "109" || e.which == "189") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+			}
+		}
+	}
+
+	private static var onMouseWheelAccessibilityZoomEnabled = true;
+
+	public static function onMouseWheelAccessibilityZoom(e : Dynamic, dx : Float, dy : Float) : Bool {
+		if (browserZoom != 1.0 || Platform.isMacintosh) {
+			return false;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (dy > 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			} else if (dy < 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static function getBackingStoreRatio() : Float {
+		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
+			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
+		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
+
+		if (browserZoom != 1.0) {
+			accessibilityZoom = 1.0;
+			Native.setKeyValue("accessibility_zoom", "1.0");
+		}
+
+		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
+			ratio *= browserZoom;
+		}
+
+		return Math.max(roundPlus(ratio, 2), 1.0);
 	}
 
 	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
@@ -665,6 +784,10 @@ class RenderSupportJSPixi {
 		}
 
 		addNonPassiveEventListener(Browser.document.body, "keydown", function(e : Dynamic) {
+			if (RendererType == "html") {
+				onKeyDownAccessibilityZoom(e);
+			}
+
 			MousePos.x = e.pageX;
 			MousePos.y = e.pageY;
 
@@ -680,7 +803,7 @@ class RenderSupportJSPixi {
 
 		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
 
-		on("mousedown", function (e) { VideoClip.CanAutoPlay = true; MouseUpReceived = false; });
+		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
 
 		switchFocusFramesShow(false);
@@ -734,7 +857,9 @@ class RenderSupportJSPixi {
 				sY = 0.0;
 			}
 
-			listener(new Point(-sX, -sY));
+			if (RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
+				listener(new Point(-sX, -sY));
+			}
 
 			return false;
 		};
@@ -1023,20 +1148,16 @@ class RenderSupportJSPixi {
 		render();
 	}
 
-	private static function getIsRetinaDisplay() : Bool {
-		if (Platform.isMacintosh && Browser.window.matchMedia != null) {
-			return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 192dpi), only screen and (min-resolution: 2dppx), only screen and (min-resolution: 75.6dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 2), only screen and (-o-min-device-pixel-ratio: 2/1), only screen and (min--moz-device-pixel-ratio: 2), only screen and (min-device-pixel-ratio: 2)').matches)) || (window.devicePixelRatio && window.devicePixelRatio >= 2)) && /(iPad|iPhone|iPod)/g.test(navigator.userAgent)") || getIsHighDensity();
-		} else {
-			return false;
-		}
-	}
-
-	private static function getIsHighDensity(){
-		return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 124dpi), only screen and (min-resolution: 1.3dppx), only screen and (min-resolution: 48.8dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 1.3), only screen and (-o-min-device-pixel-ratio: 2.6/2), only screen and (min--moz-device-pixel-ratio: 1.3), only screen and (min-device-pixel-ratio: 1.3)').matches)) || (window.devicePixelRatio && window.devicePixelRatio > 1.3))");
-	}
-
 	public static function getPixelsPerCm() : Float {
 		return 96.0 / 2.54;
+	}
+
+	public static function getBrowserZoom() : Float {
+		return browserZoom;
+	}
+
+	public static function isDarkMode() : Bool {
+		return Platform.isDarkMode;
 	}
 
 	public static function setHitboxRadius(radius : Float) : Bool {
@@ -1126,11 +1247,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getStageWidth() : Float {
-		return PixiRenderer.width / backingStoreRatio;
+		return PixiRenderer.width / backingStoreRatio / getAccessibilityZoom();
 	}
 
 	public static function getStageHeight() : Float {
-		return PixiRenderer.height / backingStoreRatio;
+		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
 	public static function makeTextField(fontFamily : String) : TextClip {
@@ -2298,6 +2419,14 @@ class RenderSupportJSPixi {
 		clip.setScrollRect(left, top, width, height);
 	}
 
+	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
+		clip.setContentRect(width, height);
+	}
+
+	public static function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
+		return clip.listenScrollRect(cb);
+	}
+
 	public static function getTextMetrics(clip : TextClip) : Array<Float> {
 		return clip.getTextMetrics();
 	}
@@ -2423,6 +2552,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
+		if (!hadUserInteracted) return;
+
 		if (RendererType == "html") {
 			if (fs)
 				requestFullScreen(Browser.document.body);

@@ -76,35 +76,35 @@ class RenderSupport3D {
 
 			var node = Browser.document.createElement('script');
 			node.setAttribute("type","text/javascript");
-			node.setAttribute("src", 'js/threejs/three.min.js');
+			node.setAttribute("src", 'js/threejs/build/three.min.js');
 			node.onload = function() {
 				var node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/MTLLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/MTLLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/OBJLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/GLTFLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/GLTFLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/controls/OrbitControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/controls/OrbitControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/controls/TransformControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/controls/TransformControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 			};
@@ -335,11 +335,11 @@ class RenderSupport3D {
 			");
 		} else {
 			untyped __js__("
-				eval(\"import('./js/threejs/loaders/MTLLoader2.js')\".concat(
+				eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
 					\".then((module) => {\",
-					\"import('./js/threejs/loaders/OBJLoader2.js')\",
+					\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
 					\".then((module2) => {\",
-					\"import('./js/threejs/loaders/obj2/bridge/MtlObjBridge.js')\",
+					\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
 					\".then((module3) => {\",
 					\"new module.MTLLoader(stage.loadingManager)\",
 					\".load(mtlUrl, function(materials) {\",
@@ -603,8 +603,8 @@ class RenderSupport3D {
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
 		object.addEventListener(event, untyped cb);
 
-		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove") && object.interactive == null){
-			untyped object.interactive = true;
+		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout") && object.interactive == null){
+			set3DObjectInteractive(object, true);
 		}
 
 		return function() {
@@ -1297,6 +1297,14 @@ class RenderSupport3D {
 		if (untyped object.interactive != interactive) {
 			untyped object.interactive = interactive;
 			object.invalidateStage();
+
+			for (stage in object.getStage()) {
+				if (interactive && stage.interactiveObjects.indexOf(object) < 0) {
+					stage.interactiveObjects.push(object);
+				} else if (!interactive && stage.interactiveObjects.indexOf(object) >= 0) {
+					stage.interactiveObjects.remove(object);
+				}
+			}
 		}
 	}
 
@@ -1316,10 +1324,12 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrix();
 		return object.matrix.toArray();
 	}
 
 	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrixWorld(true);
 		return object.matrixWorld.toArray();
 	}
 
@@ -1343,6 +1353,27 @@ class RenderSupport3D {
 
 		object.addEventListener("change", fn);
 		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectStagePositionListener(stage : ThreeJSStage, object : Object3D, cb : Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			var sc = convert3DVectorToStageCoordinates(stage, get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
+			cb(sc[0], sc[1]);
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		if (stage.camera != null) {
+			stage.camera.addEventListener("change", fn);
+		}
+
+		return function() {
+			object.removeEventListener("change", fn);
+			if (stage.camera != null) {
+				stage.camera.removeEventListener("change", fn);
+			}
+		};
 	}
 
 	public static function add3DObjectLocalRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1593,7 +1624,7 @@ class RenderSupport3D {
 				}
 			}
 
-			geometry.addAttribute(name, attribute);
+			untyped geometry.setAttribute(name, attribute);
 		}
 	}
 
@@ -1759,13 +1790,25 @@ class RenderSupport3D {
 			Object3DHelper.invalidateStage(untyped mixer.object);
 		};
 
-		action.play();
-		RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		var playFn = function() {
+			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+			action.play();
+			RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		}
 
-		return function() {
+		var stopFn = function() {
 			action.stop();
 			RenderSupportJSPixi.off('drawframe', drawFrameFn);
 		}
+
+		playFn();
+
+		cast(untyped mixer.object, Object3D).on("added", function() {
+			playFn();
+			cast(untyped mixer.object, Object3D).once("removed", stopFn);
+		});
+
+		return stopFn;
 	}
 
 	public static function clear3DStageObjectCache(stage : ThreeJSStage) : Void {
@@ -1779,6 +1822,8 @@ class RenderSupport3D {
 		var heightHalf = stage.getHeight() / 2;
 
 		var vector = new Vector3(x, y, z);
+		stage.camera.updateMatrix();
+		stage.camera.updateMatrixWorld(true);
 		vector.project(stage.camera);
 
 		return [
