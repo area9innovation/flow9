@@ -76,35 +76,35 @@ class RenderSupport3D {
 
 			var node = Browser.document.createElement('script');
 			node.setAttribute("type","text/javascript");
-			node.setAttribute("src", 'js/threejs/three.min.js');
+			node.setAttribute("src", 'js/threejs/build/three.min.js');
 			node.onload = function() {
 				var node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/MTLLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/MTLLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/OBJLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/GLTFLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/GLTFLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/controls/OrbitControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/controls/OrbitControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/controls/TransformControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/controls/TransformControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 			};
@@ -335,11 +335,11 @@ class RenderSupport3D {
 			");
 		} else {
 			untyped __js__("
-				eval(\"import('./js/threejs/loaders/MTLLoader2.js')\".concat(
+				eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
 					\".then((module) => {\",
-					\"import('./js/threejs/loaders/OBJLoader2.js')\",
+					\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
 					\".then((module2) => {\",
-					\"import('./js/threejs/loaders/obj2/bridge/MtlObjBridge.js')\",
+					\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
 					\".then((module3) => {\",
 					\"new module.MTLLoader(stage.loadingManager)\",
 					\".load(mtlUrl, function(materials) {\",
@@ -1624,7 +1624,7 @@ class RenderSupport3D {
 				}
 			}
 
-			geometry.addAttribute(name, attribute);
+			untyped geometry.setAttribute(name, attribute);
 		}
 	}
 
