@@ -603,8 +603,8 @@ class RenderSupport3D {
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
 		object.addEventListener(event, untyped cb);
 
-		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove") && object.interactive == null){
-			untyped object.interactive = true;
+		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout") && object.interactive == null){
+			set3DObjectInteractive(object, true);
 		}
 
 		return function() {
@@ -1297,6 +1297,14 @@ class RenderSupport3D {
 		if (untyped object.interactive != interactive) {
 			untyped object.interactive = interactive;
 			object.invalidateStage();
+
+			for (stage in object.getStage()) {
+				if (interactive && stage.interactiveObjects.indexOf(object) < 0) {
+					stage.interactiveObjects.push(object);
+				} else if (!interactive && stage.interactiveObjects.indexOf(object) >= 0) {
+					stage.interactiveObjects.remove(object);
+				}
+			}
 		}
 	}
 
