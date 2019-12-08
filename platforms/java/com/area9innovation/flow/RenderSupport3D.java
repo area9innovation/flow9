@@ -594,12 +594,12 @@ public class RenderSupport3D extends NativeHost {
 
 
 	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
-		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength, Func3<Int, Int, Object[]> addGroups) {
+		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength, Func2<Integer, Integer, Object[]> addGroups) {
 		return null;
 	}
 
 	public Object make3DBoxBufferGeometry(Double width, Double height, Double depth, Integer widthSegments, Integer heightSegments,
-		Integer depthSegments, Func3<Int, Int, Object[]> addGroups) {
+		Integer depthSegments, Func2<Integer, Integer, Object[]> addGroups) {
 		return null;
 	}
 
