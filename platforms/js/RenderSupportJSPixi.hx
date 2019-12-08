@@ -266,7 +266,7 @@ class RenderSupportJSPixi {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
 	}
 
-	private static function detectExternalVideoCard() : Bool {
+	public static function detectExternalVideoCard() : Bool {
 		var canvas = Browser.document.createElement('canvas');
 		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
 

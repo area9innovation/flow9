@@ -78,9 +78,9 @@ class ThreeJSStage extends Container {
 
 		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget('canvas');
-			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
+			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupportJSPixi.detectExternalVideoCard(), alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
 		} else {
-			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS, alpha : true, logarithmicDepthBuffer : true});
+			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupportJSPixi.detectExternalVideoCard(), alpha : true, logarithmicDepthBuffer : true});
 		}
 
 		updatePixelRatio();
