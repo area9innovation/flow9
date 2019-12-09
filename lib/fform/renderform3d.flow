@@ -110,10 +110,30 @@ export {
 
 				F3DGeometryMatrix(geometry : F3DGeometry, matrix : Transform<[double]>);
 
-			F3DBufferGeometry ::= F3DSphereBufferGeometry;
-				F3DSphereBufferGeometry(radius : double, widthSegments : int, heightSegments : int, phiStart : double, phiLength : double,
-					thetaStart : double, thetaLength : double, attributes : Maybe<F3DBufferGeometryAttributes>);
+			F3DBufferGeometry ::= F3DSphereBufferGeometry, F3DBoxBufferGeometry;
+				F3DSphereBufferGeometry(
+					radius : double,
+					widthSegments : int,
+					heightSegments : int,
+					phiStart : double,
+					phiLength : double,
+					thetaStart : double,
+					thetaLength : double,
+					addGroups : (geometryLength : int, materialsLength : int) -> [F3DBufferGeometryGroup],
+					attributes : Maybe<F3DBufferGeometryAttributes>
+				);
+				F3DBoxBufferGeometry(
+					width : double,
+					height : double,
+					depth : double,
+					widthSegments : int,
+					heightSegments : int,
+					depthSegments : int,
+					addGroups : (geometryLength : int, materialsLength : int) -> [F3DBufferGeometryGroup],
+					attributes : Maybe<F3DBufferGeometryAttributes>
+				);
 
+					F3DBufferGeometryGroup(start : int, count : int, materialIndex : int);
 					F3DBufferGeometryAttributes(
 						get : [string], // Attributes names to get from buffer geometry, these attributes data is passed as 'attributes' to 'add' function
 						add : (attributes : Tree<string, [[double]]>) -> Tree<string, [[double]]> // Attributes to add to buffer geometry
@@ -134,9 +154,19 @@ export {
 				F3DMaterialDisplacementTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>, bias : Transform<double>);
 				F3DMaterialBumpTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>);
 
-					F3DTexture ::= F3DTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset;
+					F3DTexture ::= F3DTextureLoader, F3DCubeTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset;
 
 						F3DTextureLoader(url : string, onLoad : () -> void, parameters : [KeyValue]);
+						F3DCubeTextureLoader(
+							px : string,
+							nx : string,
+							py : string,
+							ny : string,
+							pz : string,
+							nz : string,
+							onLoad : () -> void,
+							parameters : [KeyValue]
+						);
 						F3DDataTexture(data : [int], width : int, height : int, parameters : [KeyValue]);
 						F3DFFormTexture(fform : FForm, parameters : [KeyValue]);
 						F3DTextureRotation(material : F3DTexture, rotation : Transform<double>);
@@ -785,9 +815,8 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 					concat(
 						onStart(clip),
 						[
-							add3DObjectWorldPositionListener(clip, \nx, ny, nz -> {
-								sc = convert3DVectorToStageCoordinates(state.stage, nx, ny, nz);
-								nextDistinct(point, Point(sc[0], sc[1]));
+							add3DObjectStagePositionListener(state.stage, clip, \nx, ny -> {
+								nextDistinct(point, Point(nx, ny));
 							})
 						]
 					),
@@ -1300,8 +1329,27 @@ renderF3DGeometry(geometry : F3DGeometry) -> F3DRenderResult {
 				[]
 			)
 		}
-		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, attributesM) : {
-			g = make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, addGroups, attributesM) : {
+			addGroupsFn = \gl, ml -> map(addGroups(gl, ml), \g -> [g.start, g.count, g.materialIndex]);
+			g = make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, addGroupsFn);
+
+			maybeApply(
+				attributesM,
+				\attributes ->
+					iter(
+						tree2pairs(attributes.add(pairs2tree(map(attributes.get, \a -> Pair(a, get3DBufferGeometryAttribute(g, a)))))),
+						\p -> add3DBufferGeometryAttribute(g, p.first, p.second)
+					)
+			);
+
+			F3DRenderResult(
+				g,
+				[]
+			)
+		}
+		F3DBoxBufferGeometry(width, height, depth, widthSegments, heightSegments, depthSegments, addGroups, attributesM) : {
+			addGroupsFn = \gl, ml -> map(addGroups(gl, ml), \g -> [g.start, g.count, g.materialIndex]);
+			g = make3DBoxBufferGeometry(width, height, depth, widthSegments, heightSegments, depthSegments, addGroupsFn);
 
 			maybeApply(
 				attributesM,
@@ -1455,6 +1503,12 @@ renderF3DTexture(texture : F3DTexture, stage : native) -> F3DRenderResult {
 		F3DTextureLoader(url, onLoad, parameters) : {
 			F3DRenderResult(
 				load3DTexture(stage, url, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value])),
+				[]
+			);
+		}
+		F3DCubeTextureLoader(px, nx, py, ny, pz, nz, onLoad, parameters) : {
+			F3DRenderResult(
+				load3DCubeTexture(stage, px, nx, py, ny, pz, nz, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value])),
 				[]
 			);
 		}
