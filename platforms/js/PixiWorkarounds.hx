@@ -381,6 +381,77 @@ class PixiWorkarounds {
 		untyped __js__("
 			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
 
+			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas = PIXI.TextMetrics._canvas)
+			{
+				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
+				const font = style.toFontString();
+				const fontProperties = PIXI.TextMetrics.measureFont(font);
+
+				// fallback in case UA disallow canvas data extraction
+				// (toDataURI, getImageData functions)
+				if (fontProperties.fontSize === 0)
+				{
+					fontProperties.fontSize = style.fontSize;
+					fontProperties.ascent = style.fontSize;
+				}
+
+				const context = canvas.getContext('2d');
+
+				context.font = font;
+
+				const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
+				const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
+				const lineWidths = new Array(lines.length);
+				let maxLineWidth = 0;
+
+				const spaceWidth = Platform.isSafari ? context.measureText(' ').width : 0;
+
+				for (let i = 0; i < lines.length; i++)
+				{
+					let lineWidth;
+					if (Platform.isSafari) {
+						let spacesCount = 0;
+						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
+						lineWidth += spacesCount * spaceWidth;
+					} else {
+						lineWidth = context.measureText(lines[i]).width;
+					}
+					lineWidth += (lines[i].length - 1) * style.letterSpacing;
+
+					console.log(lineWidth);
+
+					lineWidths[i] = lineWidth;
+					maxLineWidth = Math.max(maxLineWidth, lineWidth);
+				}
+				let width = maxLineWidth + style.strokeThickness;
+
+				if (style.dropShadow)
+				{
+					width += style.dropShadowDistance;
+				}
+
+				const lineHeight = style.lineHeight || fontProperties.fontSize + style.strokeThickness;
+				let height = Math.max(lineHeight, fontProperties.fontSize + style.strokeThickness)
+					+ ((lines.length - 1) * (lineHeight + style.leading));
+
+				if (style.dropShadow)
+				{
+					height += style.dropShadowDistance;
+				}
+
+				return new PIXI.TextMetrics(
+					text,
+					style,
+					width,
+					height,
+					lines,
+					lineWidths,
+					lineHeight + style.leading,
+					maxLineWidth,
+					fontProperties
+				);
+			}
+
 			PIXI.TextMetrics.measureFont = function(font)
 			{
 				// as this method is used for preparing assets, don't recalculate things if we don't need to
