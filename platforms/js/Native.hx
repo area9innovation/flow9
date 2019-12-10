@@ -617,6 +617,8 @@ class Native {
 				}
 			");
 			#end
+
+			untyped clip.destroyed = true;
 		}
 	}
 

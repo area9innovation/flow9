@@ -868,11 +868,11 @@ class DisplayObjectHelper {
 		if (untyped clip.scrollRect != null) {
 			if (nativeWidget.firstChild != null) {
 				if (untyped clip.contentBounds != null) {
-					nativeWidget.firstChild.style.width = '${untyped clip.contentBounds.maxX}px';
-					nativeWidget.firstChild.style.height = '${untyped clip.contentBounds.maxY}px';
+					nativeWidget.firstChild.style.width = '${untyped Math.max(clip.contentBounds.maxX, clip.scrollRect.width)}px';
+					nativeWidget.firstChild.style.height = '${untyped Math.max(clip.contentBounds.maxY, clip.scrollRect.height)}px';
 				} else if (untyped clip.maxLocalBounds != null) {
-					nativeWidget.firstChild.style.width = '${untyped clip.maxLocalBounds.maxX}px';
-					nativeWidget.firstChild.style.height = '${untyped clip.maxLocalBounds.maxY}px';
+					nativeWidget.firstChild.style.width = '${untyped clip.maxLocalBounds.maxX + clip.scrollRect.width}px';
+					nativeWidget.firstChild.style.height = '${untyped clip.maxLocalBounds.maxY + clip.scrollRect.height}px';
 				}
 			}
 
@@ -1636,8 +1636,6 @@ class DisplayObjectHelper {
 			untyped __js__("delete clip.accessWidget");
 			untyped clip.accessWidget = null;
 		}
-
-		untyped clip.destroyed = true;
 	}
 
 	public static inline function getWidth(clip : DisplayObject) : Float {

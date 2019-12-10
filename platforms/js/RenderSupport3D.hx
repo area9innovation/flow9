@@ -30,6 +30,7 @@ import js.three.SphereGeometry;
 
 import js.three.BufferGeometry;
 import js.three.SphereBufferGeometry;
+import js.three.BoxBufferGeometry;
 import js.three.BufferAttribute;
 
 import js.three.Material;
@@ -39,6 +40,7 @@ import js.three.MeshNormalMaterial;
 import js.three.ShaderMaterial;
 
 import js.three.Texture;
+import js.three.CubeTexture;
 
 import js.three.Light;
 import js.three.PointLight;
@@ -51,6 +53,7 @@ import js.three.PointLightHelper;
 import js.three.SpotLightHelper;
 
 import js.three.TextureLoader;
+import js.three.CubeTextureLoader;
 import js.three.ObjectLoader;
 
 import js.three.AnimationClip;
@@ -69,7 +72,7 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 4) {
+				if (jscounter > 6) {
 					cb();
 				}
 			}
@@ -87,6 +90,18 @@ class RenderSupport3D {
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
 				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/DDSLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/PVRLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
@@ -375,7 +390,30 @@ class RenderSupport3D {
 	}
 
 	public static function load3DTexture(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
-		return new TextureLoader(stage.loadingManager).load(url, function(texture) {
+		var loader : Dynamic =
+			if (StringTools.endsWith(url, ".dds"))
+				untyped __js__("new THREE.DDSLoader(stage.loadingManager)")
+			else if (StringTools.endsWith(url, ".pvr"))
+				untyped __js__("new THREE.PVRLoader(stage.loadingManager)")
+			else
+				new TextureLoader(stage.loadingManager);
+
+		return loader.load(url, function(texture : Texture) {
+			for (par in parameters) {
+				untyped texture[par[0]] = untyped __js__("eval(par[1])");
+			}
+
+			texture.invalidateTextureStage();
+			texture.emit("loaded");
+
+			onLoad(texture);
+		});
+	}
+
+	public static function load3DCubeTexture(stage : ThreeJSStage, px : String, nx : String, py : String, ny : String, pz : String, nz : String,
+		onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+
+		return untyped new CubeTextureLoader(stage.loadingManager).load([px, nx, py, ny, pz, nz], function(texture) {
 			for (par in parameters) {
 				untyped texture[par[0]] = untyped __js__("eval(par[1])");
 			}
@@ -1598,8 +1636,16 @@ class RenderSupport3D {
 		geometry.applyMatrix(new Matrix4().fromArray(matrix));
 	}
 
-	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : BufferGeometry {
-		return new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		untyped g.addGroups = addGroups;
+		return g;
+	}
+
+	public static function make3DBoxBufferGeometry(width : Float, height : Float, depth : Float, widthSegments : Int, heightSegments : Int, depthSegments : Int, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new BoxBufferGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
+		untyped g.addGroups = addGroups;
+		return g;
 	}
 
 	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
@@ -1741,11 +1787,12 @@ class RenderSupport3D {
 
 
 	public static function make3DMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Mesh {
-		if (untyped geometry.clearGroups != null) {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
 			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
 
-			for (i in 0...materials.length) {
-				untyped geometry.addGroup(0, geometry.index.count, i);
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
 			}
 		}
 
