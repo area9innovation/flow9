@@ -72,7 +72,7 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 4) {
+				if (jscounter > 6) {
 					cb();
 				}
 			}
@@ -90,6 +90,18 @@ class RenderSupport3D {
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
 				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/DDSLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/PVRLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
@@ -378,7 +390,15 @@ class RenderSupport3D {
 	}
 
 	public static function load3DTexture(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
-		return new TextureLoader(stage.loadingManager).load(url, function(texture) {
+		var loader : Dynamic =
+			if (StringTools.endsWith(url, ".dds"))
+				untyped __js__("new THREE.DDSLoader(stage.loadingManager)")
+			else if (StringTools.endsWith(url, ".pvr"))
+				untyped __js__("new THREE.PVRLoader(stage.loadingManager)")
+			else
+				new TextureLoader(stage.loadingManager);
+
+		return loader.load(url, function(texture : Texture) {
 			for (par in parameters) {
 				untyped texture[par[0]] = untyped __js__("eval(par[1])");
 			}
