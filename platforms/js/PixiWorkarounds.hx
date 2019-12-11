@@ -418,8 +418,6 @@ class PixiWorkarounds {
 					}
 					lineWidth += (lines[i].length - 1) * style.letterSpacing;
 
-					console.log(lineWidth);
-
 					lineWidths[i] = lineWidth;
 					maxLineWidth = Math.max(maxLineWidth, lineWidth);
 				}
