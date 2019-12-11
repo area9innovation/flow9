@@ -117,14 +117,20 @@ var BrowserDetect = {
 			subString: "Chrome",
 			identity: "Chrome"
 		},
+		{
+			string: navigator.userAgent,
+			subString: "CriOS",
+			identity: "Chrome",
+			versionSearch: "CriOS"
+		},
 		{   string: navigator.userAgent,
 			subString: "OmniWeb",
 			versionSearch: "OmniWeb/",
 			identity: "OmniWeb"
 		},
 		{
-			string: navigator.vendor,
-			subString: "Apple",
+			string: navigator.userAgent,
+			subString: "Safari",
 			identity: "Safari",
 			versionSearch: "Version"
 		},
@@ -254,7 +260,7 @@ function loadFavicon(url) {
 }
 
 function loadExternalResources() {
-	loadCSSFileInternal("flowjspixi.css?5");
+	loadCSSFileInternal("flowjspixi.css?6");
 }
 
 var overlayLoadTimestamp = "";

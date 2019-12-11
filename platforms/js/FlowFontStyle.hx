@@ -2,7 +2,8 @@ typedef FontStyle = {
 	family : String,
 	weight : String,
 	size : Float,
-	style : String 		// normal, italic
+	style : String, 		// normal, italic,
+	doNotRemap : Bool
 }
 
 // Singleton used to map flow fonts to css styles
@@ -42,6 +43,6 @@ class FlowFontStyle {
 		}
 
 		var style : FontStyle = Reflect.field(flowFontStyles, name.toLowerCase());
-		return (style != null) ? style : {family: name, weight: "", size: 0.0, style: "normal"};
+		return (style != null) ? style : {family: name, weight: "", size: 0.0, style: "normal", doNotRemap : false};
 	}
 }

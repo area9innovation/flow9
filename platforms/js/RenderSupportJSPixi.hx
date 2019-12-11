@@ -35,6 +35,7 @@ class RenderSupportJSPixi {
 	private static var TransformChanged : Bool = true;
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
+	private static var PageWasHidden = false;
 
 	// Renderer options
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
@@ -49,12 +50,14 @@ class RenderSupportJSPixi {
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
-	public static var IsRetinaDisplay : Bool = getIsRetinaDisplay();
+	public static var browserZoom : Float = 1.0;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
 	private static var WindowTopHeightPortrait : Int = -1;
 	private static var WindowTopHeightLandscape : Int = -1;
+
+	public static var hadUserInteracted = false;
 
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
@@ -101,17 +104,134 @@ class RenderSupportJSPixi {
 		return Math.fround(x * m) / m;
 	}
 
-	private static function getBackingStoreRatio() : Float {
-		var minRatio = 1.0;
-		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
-			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
+	private static var accessibilityZoom : Float = Std.parseFloat(Native.getKeyValue("accessibility_zoom", "1.0"));
+	private static var accessibilityZoomValues : Array<Float> = [0.25, 0.33, 0.5, 0.66, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0];
 
-		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
-			ratio *= Browser.window.outerWidth / Browser.window.innerWidth;
-			minRatio = detectExternalVideoCard() && ratio > 0.49 && ratio < 2.02 ? 2.0 : 1.0;
+	public static function getAccessibilityZoom() : Float {
+		return RendererType == "html" && accessibilityZoom > 0.0 ? accessibilityZoom : 1.0;
+	}
+
+	public static function setAccessibilityZoom(zoom : Float) : Void {
+		if (accessibilityZoom != zoom) {
+			accessibilityZoom = zoom;
+			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
+
+			PixiStage.broadcastEvent("resize", backingStoreRatio);
+			InvalidateLocalStages();
+
+			showAccessibilityZoomTooltip();
+		}
+	}
+
+	private static var accessibilityZoomTooltip : Dynamic;
+
+	public static function showAccessibilityZoomTooltip() : Void {
+		if (accessibilityZoomTooltip != null) {
+			Browser.document.body.removeChild(accessibilityZoomTooltip);
+			accessibilityZoomTooltip = null;
 		}
 
-		return Math.max(roundPlus(ratio, 2), minRatio);
+		if (browserZoom != 1.0) {
+			return;
+		}
+
+		var p = Browser.document.createElement("p");
+		Browser.document.body.appendChild(p);
+
+		p.classList.add('nativeWidget');
+		p.classList.add('textWidget');
+		p.textContent = "Zoom: " + Math.round(accessibilityZoom * 100) + "%";
+		p.style.fontSize = "12px";
+		p.style.zIndex = "1000";
+		p.style.background = "#424242";
+		p.style.color = "#FFFFFF";
+		p.style.padding = "8px";
+		p.style.paddingTop = "4px";
+		p.style.paddingBottom = "4px";
+		p.style.borderRadius = "4px";
+		p.style.left = "50%";
+		p.style.top = "8px";
+		p.style.transform = "translate(-50%, 0)";
+
+		accessibilityZoomTooltip = p;
+
+		Native.timer(2000, function() {
+			if (accessibilityZoomTooltip != null && accessibilityZoomTooltip == p) {
+				accessibilityZoomTooltip = null;
+				Browser.document.body.removeChild(p);
+			}
+		});
+	}
+
+	public static function onKeyDownAccessibilityZoom(e : Dynamic) : Void {
+		if (browserZoom != 1.0) {
+			return;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (e.which == '61' || e.which == "107" || e.which == "187") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+			} else if (e.which == '173' || e.which == "109" || e.which == "189") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+			}
+		}
+	}
+
+	private static var onMouseWheelAccessibilityZoomEnabled = true;
+
+	public static function onMouseWheelAccessibilityZoom(e : Dynamic, dx : Float, dy : Float) : Bool {
+		if (browserZoom != 1.0 || Platform.isMacintosh) {
+			return false;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (dy > 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			} else if (dy < 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static function getBackingStoreRatio() : Float {
+		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
+			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
+		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
+
+		if (browserZoom != 1.0) {
+			accessibilityZoom = 1.0;
+			Native.setKeyValue("accessibility_zoom", "1.0");
+		}
+
+		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
+			ratio *= browserZoom;
+		}
+
+		return Math.max(roundPlus(ratio, 2), 1.0);
 	}
 
 	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
@@ -146,7 +266,7 @@ class RenderSupportJSPixi {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
 	}
 
-	private static function detectExternalVideoCard() : Bool {
+	public static function detectExternalVideoCard() : Bool {
 		var canvas = Browser.document.createElement('canvas');
 		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
 
@@ -324,6 +444,7 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
+		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 	}
 
@@ -548,6 +669,10 @@ class RenderSupportJSPixi {
 
 	public static var MouseUpReceived : Bool = true;
 
+	private static function addNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.addEventListener(event, fn, { passive : false })");
+	}
+
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
 			// Prevent default drop focus on canvas
@@ -606,6 +731,8 @@ class RenderSupportJSPixi {
 
 		var onpointermove = function(e : Dynamic) {
 			if (e.touches != null) {
+				e.preventDefault();
+
 				TouchPoints = e.touches;
 				emit("touchmove");
 
@@ -632,51 +759,51 @@ class RenderSupportJSPixi {
 		};
 
 		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
-			Browser.document.body.onpointerdown = onpointerdown;
-			Browser.document.body.onpointerup = onpointerup;
-			Browser.document.body.onpointermove = onpointermove;
-			Browser.document.body.onpointerout = onpointerout;
+			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
 
-			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-
-			Browser.document.body.ontouchstart = onpointerdown;
-			Browser.document.body.ontouchend = onpointerup;
-			Browser.document.body.ontouchmove = onpointermove;
+			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
 		} else if (Platform.isMobile) {
-			untyped __js__("document.body.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-
-			Browser.document.body.ontouchstart = onpointerdown;
-			Browser.document.body.ontouchend = onpointerup;
-			Browser.document.body.ontouchmove = onpointermove;
+			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
 		} else if (Platform.isSafari) {
-			Browser.document.body.onmousedown = onpointerdown;
-			Browser.document.body.onmouseup = onpointerup;
-			Browser.document.body.onmousemove = onpointermove;
-			Browser.document.body.onmouseout = onpointerout;
+			addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
 		} else {
-			Browser.document.body.onpointerdown = onpointerdown;
-			Browser.document.body.onpointerup = onpointerup;
-			Browser.document.body.onpointermove = onpointermove;
-			Browser.document.body.onpointerout = onpointerout;
+			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
 		}
 
-		Browser.document.body.onkeydown = function(e : Dynamic) {
+		addNonPassiveEventListener(Browser.document.body, "keydown", function(e : Dynamic) {
+			if (RendererType == "html") {
+				onKeyDownAccessibilityZoom(e);
+			}
+
 			MousePos.x = e.pageX;
 			MousePos.y = e.pageY;
 
 			emit("keydown", parseKeyEvent(e));
-		};
+		});
 
-		Browser.document.body.onkeyup = function(e : Dynamic) {
+		addNonPassiveEventListener(Browser.document.body, "keyup", function(e : Dynamic) {
 			MousePos.x = e.pageX;
 			MousePos.y = e.pageY;
 
 			emit("keyup", parseKeyEvent(e));
-		};
+		});
 
 		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
 
-		on("mousedown", function (e) { VideoClip.CanAutoPlay = true; MouseUpReceived = false; });
+		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
 
 		switchFocusFramesShow(false);
@@ -730,7 +857,9 @@ class RenderSupportJSPixi {
 				sY = 0.0;
 			}
 
-			listener(new Point(-sX, -sY));
+			if (RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
+				listener(new Point(-sX, -sY));
+			}
 
 			return false;
 		};
@@ -937,6 +1066,13 @@ class RenderSupportJSPixi {
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
+		if (PageWasHidden) {
+			PageWasHidden = false;
+			InvalidateLocalStages();
+		} else if (Browser.document.hidden) {
+			PageWasHidden = true;
+		}
+
 		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
 			Animating = true;
 			PixiStageChanged = false;
@@ -985,7 +1121,7 @@ class RenderSupportJSPixi {
 		for (child in PixiStage.getClipChildren()) {
 			child.invalidateTransform("forceRender", true);
 		}
-		
+
 		render();
 	}
 
@@ -1012,20 +1148,16 @@ class RenderSupportJSPixi {
 		render();
 	}
 
-	private static function getIsRetinaDisplay() : Bool {
-		if (Platform.isMacintosh && Browser.window.matchMedia != null) {
-			return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 192dpi), only screen and (min-resolution: 2dppx), only screen and (min-resolution: 75.6dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 2), only screen and (-o-min-device-pixel-ratio: 2/1), only screen and (min--moz-device-pixel-ratio: 2), only screen and (min-device-pixel-ratio: 2)').matches)) || (window.devicePixelRatio && window.devicePixelRatio >= 2)) && /(iPad|iPhone|iPod)/g.test(navigator.userAgent)") || getIsHighDensity();
-		} else {
-			return false;
-		}
-	}
-
-	private static function getIsHighDensity(){
-		return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 124dpi), only screen and (min-resolution: 1.3dppx), only screen and (min-resolution: 48.8dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 1.3), only screen and (-o-min-device-pixel-ratio: 2.6/2), only screen and (min--moz-device-pixel-ratio: 1.3), only screen and (min-device-pixel-ratio: 1.3)').matches)) || (window.devicePixelRatio && window.devicePixelRatio > 1.3))");
-	}
-
 	public static function getPixelsPerCm() : Float {
 		return 96.0 / 2.54;
+	}
+
+	public static function getBrowserZoom() : Float {
+		return browserZoom;
+	}
+
+	public static function isDarkMode() : Bool {
+		return Platform.isDarkMode;
 	}
 
 	public static function setHitboxRadius(radius : Float) : Bool {
@@ -1115,11 +1247,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getStageWidth() : Float {
-		return PixiRenderer.width / backingStoreRatio;
+		return PixiRenderer.width / backingStoreRatio / getAccessibilityZoom();
 	}
 
 	public static function getStageHeight() : Float {
-		return PixiRenderer.height / backingStoreRatio;
+		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
 	public static function makeTextField(fontFamily : String) : TextClip {
@@ -2287,6 +2419,14 @@ class RenderSupportJSPixi {
 		clip.setScrollRect(left, top, width, height);
 	}
 
+	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
+		clip.setContentRect(width, height);
+	}
+
+	public static function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
+		return clip.listenScrollRect(cb);
+	}
+
 	public static function getTextMetrics(clip : TextClip) : Array<Float> {
 		return clip.getTextMetrics();
 	}
@@ -2357,19 +2497,6 @@ class RenderSupportJSPixi {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			if (Platform.isIOS) {
-				FullWindowTargetClip = untyped getFirstVideoWidget(untyped FullWindowTargetClip) || FullWindowTargetClip;
-				if (untyped __instanceof__(FullWindowTargetClip, VideoClip)) {
-					if (fw)
-						requestFullScreen(untyped FullWindowTargetClip.nativeWidget)
-					else
-						exitFullScreen(untyped FullWindowTargetClip.nativeWidget);
-
-					return;
-				}
-			}
-
-
 			var mainStage : FlowContainer = cast(PixiStage.children[0], FlowContainer);
 
 			if (fw) {
@@ -2425,18 +2552,18 @@ class RenderSupportJSPixi {
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
-		if (!Platform.isIOS) {
-			if (RendererType == "html") {
-				if (fs)
-					requestFullScreen(Browser.document.body);
-				else
-					exitFullScreen(Browser.document);
-			} else {
-				if (fs)
-					requestFullScreen(PixiView);
-				else
-					exitFullScreen(PixiView);
-			}
+		if (!hadUserInteracted) return;
+
+		if (RendererType == "html") {
+			if (fs)
+				requestFullScreen(Browser.document.body);
+			else
+				exitFullScreen(Browser.document);
+		} else {
+			if (fs)
+				requestFullScreen(PixiView);
+			else
+				exitFullScreen(PixiView);
 		}
 	}
 

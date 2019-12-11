@@ -41,6 +41,7 @@ class AndroidRenderSupport : public GLRenderSupport {
 
     int next_timer_id;
     STL_HASH_MAP<int, StackSlot> timers; // ROOT
+    std::vector<int> keyboardEventListenersRoots;
 
 public:
     AndroidRenderSupport(AndroidRunnerWrapper *owner);
@@ -149,6 +150,8 @@ protected:
     int ScreenWidth, ScreenHeight;
 private:
     DECLARE_NATIVE_METHOD(timer);
+    DECLARE_NATIVE_METHOD(showSoftKeyboard);
+    DECLARE_NATIVE_METHOD(hideSoftKeyboard);
 };
 
 class AndroidHttpSupport : public AbstractHttpSupport {

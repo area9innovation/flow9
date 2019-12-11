@@ -30,6 +30,7 @@ import js.three.SphereGeometry;
 
 import js.three.BufferGeometry;
 import js.three.SphereBufferGeometry;
+import js.three.BoxBufferGeometry;
 import js.three.BufferAttribute;
 
 import js.three.Material;
@@ -39,6 +40,7 @@ import js.three.MeshNormalMaterial;
 import js.three.ShaderMaterial;
 
 import js.three.Texture;
+import js.three.CubeTexture;
 
 import js.three.Light;
 import js.three.PointLight;
@@ -51,6 +53,7 @@ import js.three.PointLightHelper;
 import js.three.SpotLightHelper;
 
 import js.three.TextureLoader;
+import js.three.CubeTextureLoader;
 import js.three.ObjectLoader;
 
 import js.three.AnimationClip;
@@ -69,42 +72,54 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 4) {
+				if (jscounter > 6) {
 					cb();
 				}
 			}
 
 			var node = Browser.document.createElement('script');
 			node.setAttribute("type","text/javascript");
-			node.setAttribute("src", 'js/threejs/three.min.js');
+			node.setAttribute("src", 'js/threejs/build/three.min.js');
 			node.onload = function() {
 				var node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/MTLLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/MTLLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/OBJLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/loaders/GLTFLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/DDSLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/controls/OrbitControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/PVRLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/controls/TransformControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/GLTFLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/controls/OrbitControls.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/controls/TransformControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 			};
@@ -268,11 +283,29 @@ class RenderSupport3D {
 	}
 
 	public static function make3DScene() : Scene {
-		return new Scene();
+		var scene = new Scene();
+		scene.name = "Group";
+		return scene;
 	}
 
 	public static function make3DColor(color : String) : Color {
 		return new Color(color);
+	}
+
+	public static function set3DStageOnStart(stage : ThreeJSStage, onStart : Void -> Void) : Void  {
+		stage.loadingManager.onStart = onStart;
+	}
+
+	public static function set3DStageOnError(stage : ThreeJSStage, onError : Void -> Void) : Void  {
+		stage.loadingManager.onError = onError;
+	}
+
+	public static function set3DStageOnLoad(stage : ThreeJSStage, onLoad : Void -> Void) : Void  {
+		stage.loadingManager.onLoad = onLoad;
+	}
+
+	public static function set3DStageOnProgress(stage : ThreeJSStage, onProgress : String -> Int -> Int -> Void) : Void {
+		stage.loadingManager.onProgress = untyped onProgress;
 	}
 
 	public static function set3DSceneBackground(scene : Scene, background : Dynamic) : Void {
@@ -286,31 +319,48 @@ class RenderSupport3D {
 	}
 
 
-	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		if (Platform.isIE || Platform.isEdge) {
+	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
+		var onLoadFn = function(obj : Dynamic) {
+			RenderSupportJSPixi.once("drawframe", function() {
+				for (geometry in Object3DHelper.get3DObjectAllGeometries(obj)) {
+					geometry.computeVertexNormals();
+				}
+
+				if (obj.name == "" && obj.uuid != null) {
+					obj.name = obj.uuid;
+				}
+
+				Object3DHelper.invalidateStage(obj);
+				Object3DHelper.emit(obj, "loaded");
+
+				onLoad(obj);
+			});
+		}
+
+		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
 			untyped __js__("
-				new THREE.MTLLoader()
+				new THREE.MTLLoader(stage.loadingManager)
 					.load(mtlUrl, function (materials) {
 						materials.preload();
 
-						new THREE.OBJLoader()
+						new THREE.OBJLoader(stage.loadingManager)
 							.setMaterials(materials)
-							.load(objUrl, onLoad);
+							.load(objUrl, onLoadFn);
 					})
 			");
 		} else {
 			untyped __js__("
-				eval(\"import('./js/threejs/loaders/MTLLoader2.js')\".concat(
+				eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
 					\".then((module) => {\",
-					\"import('./js/threejs/loaders/OBJLoader2.js')\",
+					\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
 					\".then((module2) => {\",
-					\"import('./js/threejs/loaders/obj2/bridge/MtlObjBridge.js')\",
+					\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
 					\".then((module3) => {\",
-					\"new module.MTLLoader()\",
+					\"new module.MTLLoader(stage.loadingManager)\",
 					\".load(mtlUrl, function(materials) {\",
-					\"new module2.OBJLoader2()\",
+					\"new module2.OBJLoader2(stage.loadingManager)\",
 					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
-					\".load(objUrl, onLoad);\",
+					\".load(objUrl, onLoadFn);\",
 					\"});\",
 					\"});\",
 					\"});\",
@@ -320,9 +370,9 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
+	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
 		untyped __js__("
-			new THREE.GLTFLoader()
+			new THREE.GLTFLoader(stage.loadingManager)
 				.load(url, function (gltf) {
 					onLoad(
 						gltf.animations, // Array<THREE.AnimationClip>
@@ -335,12 +385,35 @@ class RenderSupport3D {
 		");
 	}
 
-	public static function load3DScene(url : String, onLoad : Dynamic -> Void) : Void {
-		new ObjectLoader().load(url, onLoad);
+	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
+		new ObjectLoader(stage.loadingManager).load(url, onLoad);
 	}
 
-	public static function load3DTexture(url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
-		return new TextureLoader().load(url, function(texture) {
+	public static function load3DTexture(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		var loader : Dynamic =
+			if (StringTools.endsWith(url, ".dds"))
+				untyped __js__("new THREE.DDSLoader(stage.loadingManager)")
+			else if (StringTools.endsWith(url, ".pvr"))
+				untyped __js__("new THREE.PVRLoader(stage.loadingManager)")
+			else
+				new TextureLoader(stage.loadingManager);
+
+		return loader.load(url, function(texture : Texture) {
+			for (par in parameters) {
+				untyped texture[par[0]] = untyped __js__("eval(par[1])");
+			}
+
+			texture.invalidateTextureStage();
+			texture.emit("loaded");
+
+			onLoad(texture);
+		});
+	}
+
+	public static function load3DCubeTexture(stage : ThreeJSStage, px : String, nx : String, py : String, ny : String, pz : String, nz : String,
+		onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+
+		return untyped new CubeTextureLoader(stage.loadingManager).load([px, nx, py, ny, pz, nz], function(texture) {
 			for (par in parameters) {
 				untyped texture[par[0]] = untyped __js__("eval(par[1])");
 			}
@@ -568,8 +641,8 @@ class RenderSupport3D {
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
 		object.addEventListener(event, untyped cb);
 
-		if (event == "mousedown" || event == "mouseup" || event == "mousemove") {
-			untyped object.interactive = true;
+		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout") && object.interactive == null){
+			set3DObjectInteractive(object, true);
 		}
 
 		return function() {
@@ -622,8 +695,8 @@ class RenderSupport3D {
 			untyped ev.deltaX = x;
 			untyped ev.deltaY = y;
 		} else {
-			untyped ev.pageX = x;
-			untyped ev.pageY = y;
+			untyped ev.pageX = x * RenderSupportJSPixi.backingStoreRatio;
+			untyped ev.pageY = y * RenderSupportJSPixi.backingStoreRatio;
 		}
 
 		untyped stage.renderer.eventElement.dispatchEvent(ev);
@@ -640,8 +713,8 @@ class RenderSupport3D {
 
 		ev.touches = Lambda.array(Lambda.map(points, function(p) {
 			return {
-				pageX : p[0],
-				pageY : p[1]
+				pageX : p[0] * RenderSupportJSPixi.backingStoreRatio,
+				pageY : p[1] * RenderSupportJSPixi.backingStoreRatio
 			}
 		}));
 
@@ -668,6 +741,8 @@ class RenderSupport3D {
 		stage.metaKey = meta;
 
 		untyped stage.renderer.eventElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+
+		stage.invalidateStage();
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
@@ -1256,6 +1331,30 @@ class RenderSupport3D {
 	}
 
 
+	public static function set3DObjectInteractive(object : Object3D, interactive : Bool) : Void {
+		if (untyped object.interactive != interactive) {
+			untyped object.interactive = interactive;
+			object.invalidateStage();
+
+			for (stage in object.getStage()) {
+				if (interactive && stage.interactiveObjects.indexOf(object) < 0) {
+					stage.interactiveObjects.push(object);
+				} else if (!interactive && stage.interactiveObjects.indexOf(object) >= 0) {
+					stage.interactiveObjects.remove(object);
+				}
+			}
+		}
+	}
+
+	public static function get3DObjectInteractive(object : Object3D) : Bool {
+		if (untyped object.interactive != null) {
+			return untyped object.interactive;
+		} else {
+			return false;
+		}
+	}
+
+
 
 	public static function get3DObjectBoundingBox(object : Object3D) : Array<Array<Float>> {
 		var box = object.getBoundingBox();
@@ -1263,10 +1362,12 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrix();
 		return object.matrix.toArray();
 	}
 
 	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrixWorld(true);
 		return object.matrixWorld.toArray();
 	}
 
@@ -1290,6 +1391,27 @@ class RenderSupport3D {
 
 		object.addEventListener("change", fn);
 		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectStagePositionListener(stage : ThreeJSStage, object : Object3D, cb : Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			var sc = convert3DVectorToStageCoordinates(stage, get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
+			cb(sc[0], sc[1]);
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		if (stage.camera != null) {
+			stage.camera.addEventListener("change", fn);
+		}
+
+		return function() {
+			object.removeEventListener("change", fn);
+			if (stage.camera != null) {
+				stage.camera.removeEventListener("change", fn);
+			}
+		};
 	}
 
 	public static function add3DObjectLocalRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1392,15 +1514,21 @@ class RenderSupport3D {
 
 
 	public static function make3DPointLight(color : Int, intensity : Float, distance : Float, decay : Float) : Light {
-		return new PointLight(color, intensity, distance, decay);
+		var light = new PointLight(color, intensity, distance, decay);
+		light.name = "Point Light";
+		return light;
 	}
 
 	public static function make3DSpotLight(color : Int, intensity : Float, distance : Float, angle : Float, penumbra : Float, decay : Float) : Light {
-		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
+		var light = new SpotLight(color, intensity, distance, angle, penumbra, decay);
+		light.name = "Spot Light";
+		return light;
 	}
 
 	public static function make3DAmbientLight(color : Int, intensity : Float) : Light {
-		return new AmbientLight(color, intensity);
+		var light = new AmbientLight(color, intensity);
+		light.name = "Ambient Light";
+		return light;
 	}
 
 
@@ -1508,8 +1636,16 @@ class RenderSupport3D {
 		geometry.applyMatrix(new Matrix4().fromArray(matrix));
 	}
 
-	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : BufferGeometry {
-		return new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		untyped g.addGroups = addGroups;
+		return g;
+	}
+
+	public static function make3DBoxBufferGeometry(width : Float, height : Float, depth : Float, widthSegments : Int, heightSegments : Int, depthSegments : Int, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new BoxBufferGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
+		untyped g.addGroups = addGroups;
+		return g;
 	}
 
 	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
@@ -1534,7 +1670,7 @@ class RenderSupport3D {
 				}
 			}
 
-			geometry.addAttribute(name, attribute);
+			untyped geometry.setAttribute(name, attribute);
 		}
 	}
 
@@ -1651,11 +1787,12 @@ class RenderSupport3D {
 
 
 	public static function make3DMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Mesh {
-		if (untyped geometry.clearGroups != null) {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
 			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
 
-			for (i in 0...materials.length) {
-				untyped geometry.addGroup(0, geometry.index.count, i);
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
 			}
 		}
 
@@ -1686,6 +1823,10 @@ class RenderSupport3D {
 	public static function create3DAnimationMixer(object : Object3D) : AnimationMixer {
 		var mixer : Dynamic = untyped __js__("new THREE.AnimationMixer(object)");
 		mixer.clock = new Clock();
+		mixer.object = object;
+		for (stage in object.getStage()) {
+			mixer.stage = stage;
+		}
 		return mixer;
 	}
 
@@ -1693,16 +1834,28 @@ class RenderSupport3D {
 		var action = mixer.clipAction(animation);
 		var drawFrameFn = function() {
 			mixer.update(untyped mixer.clock.getDelta());
-			RenderSupportJSPixi.PixiStageChanged = true;
+			Object3DHelper.invalidateStage(untyped mixer.object);
 		};
 
-		action.play();
-		RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		var playFn = function() {
+			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+			action.play();
+			RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		}
 
-		return function() {
+		var stopFn = function() {
 			action.stop();
 			RenderSupportJSPixi.off('drawframe', drawFrameFn);
 		}
+
+		playFn();
+
+		cast(untyped mixer.object, Object3D).on("added", function() {
+			playFn();
+			cast(untyped mixer.object, Object3D).once("removed", stopFn);
+		});
+
+		return stopFn;
 	}
 
 	public static function clear3DStageObjectCache(stage : ThreeJSStage) : Void {
@@ -1716,6 +1869,8 @@ class RenderSupport3D {
 		var heightHalf = stage.getHeight() / 2;
 
 		var vector = new Vector3(x, y, z);
+		stage.camera.updateMatrix();
+		stage.camera.updateMatrixWorld(true);
 		vector.project(stage.camera);
 
 		return [

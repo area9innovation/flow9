@@ -110,7 +110,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
 
     private DialogFragmentManager dialogFragmentManager = null;
 
-    private SoftKeyboardHeightListener softKeyboardHeightListener;
+    private SoftKeyboardSupport softKeyboardSupport;
 
     private void browseUrl(@NonNull final String url) {
         try {
@@ -390,14 +390,14 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         loadWrapper();
 
-        softKeyboardHeightListener = new SoftKeyboardHeightListener(this,
-            new SoftKeyboardHeightListener.KeyBoardHeightListener(){
-                @Override
-                public void keyboardHeightChanged(int keyboardHeight) {
-                    updateContentViewMinHeight();
-                    wrapper.VirtualKeyboardHeightCallback((double)keyboardHeight);
-                }
+        softKeyboardSupport = new SoftKeyboardSupport(this, wrapper);
+        softKeyboardSupport.setKeyboardHeightListener(keyboardHeight -> {
+            updateContentViewMinHeight();
+            wrapper.VirtualKeyboardHeightCallback((double)keyboardHeight);
         });
+        wrapper.setSoftKeyboardSupport(softKeyboardSupport);
+        mView.addView(softKeyboardSupport);
+
 
         Log.i(Utils.LOG_TAG, "Runner wrapper lib loaded");
     }
@@ -741,7 +741,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.onGoogleServicesDisconnected();
         flowGooglePlayServices.disconnectGooglePlayServices();
 
-        softKeyboardHeightListener.removeListener();
+        softKeyboardSupport.removeListener();
 
         wrapper.destroy();
         Log.i(Utils.LOG_TAG, "Runner wrapper destroyed successfully");

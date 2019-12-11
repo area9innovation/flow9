@@ -415,9 +415,9 @@ class PixiWorkarounds {
 				context.fillStyle = '#000';
 				context.fillText(metricsString, 0, baseline);
 
-				const imagedata = context.getImageData(0, 0, width, height).data;
-				const pixels = imagedata.length;
-				const line = width * 4;
+				var imagedata = context.getImageData(0, 0, width, height).data;
+				var pixels = imagedata.length;
+				var line = width * 4;
 
 				var i = 0;
 				var idx = 0;
@@ -473,6 +473,48 @@ class PixiWorkarounds {
 
 				properties.descent = i - baseline;
 				properties.fontSize = properties.ascent + properties.descent;
+
+				context.fillStyle = '#f00';
+				context.fillRect(0, 0, width, height);
+
+				context.textBaseline = 'alphabetic';
+				context.fillStyle = '#000';
+				context.fillText('B', 0, baseline);
+
+				imagedata = context.getImageData(0, 0, width, height).data;
+				pixels = imagedata.length;
+				line = width * 4;
+
+				i = 0;
+				idx = 0;
+				stop = false;
+
+				// ascent. scan from top to bottom until we find a non red pixel
+				for (i = 0; i < baseline; ++i)
+				{
+					for (var j = 0; j < line; j += 4)
+					{
+						if (imagedata[idx + j] !== 255)
+						{
+							stop = true;
+							break;
+						}
+					}
+					if (!stop)
+					{
+						idx += line;
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				if (Platform.isMacintosh) {
+					properties.baselineCorrection = (properties.descent - (properties.ascent - (baseline - i - 1.0))) / 2.0;
+					properties.descent -= properties.baselineCorrection;
+					properties.ascent += properties.baselineCorrection;
+				}
 
 				PIXI.TextMetrics._fonts[font] = properties;
 

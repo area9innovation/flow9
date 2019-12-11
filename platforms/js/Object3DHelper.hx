@@ -3,6 +3,7 @@ import js.three.Material;
 import js.three.Texture;
 import js.three.Box3;
 import js.three.Camera;
+import js.three.Geometry;
 
 using DisplayObjectHelper;
 
@@ -183,19 +184,22 @@ class Object3DHelper {
 
 			update3DChildren(parent);
 
-			var stage = getStage(parent);
-
-			if (stage.length > 0) {
+			for (stage in getStage(parent)) {
 				for (subChild in child.children) {
 					if (untyped __instanceof__(subChild, Camera)) {
-						stage[0].setCamera(cast(subChild, Camera), []);
+						stage.setCamera(cast(subChild, Camera), []);
 						child.remove(subChild);
 						subChild.parent = null;
 					}
 				}
+
+				if (untyped child.interactive && stage.interactiveObjects.indexOf(child) < 0) {
+					stage.interactiveObjects.push(child);
+				}
 			}
 
 			if (invalidate) {
+				emitEvent(child, "added");
 				emitEvent(parent, "box");
 				emitEvent(parent, "childrenchanged");
 
@@ -215,13 +219,15 @@ class Object3DHelper {
 			return;
 		}
 
-		var stage = getStage(parent);
-
-		if (stage.length > 0) {
-			untyped stage[0].objectCache.push(child);
+		for (stage in getStage(parent)) {
+			untyped stage.objectCache.push(child);
 
 			if (invalidate) { // Do no lose transform controls if it isn't the last operation
-				RenderSupport3D.detach3DTransformControls(stage[0], child);
+				RenderSupport3D.detach3DTransformControls(stage, child);
+			}
+
+			if (untyped child.interactive && stage.interactiveObjects.indexOf(child) >= 0) {
+				stage.interactiveObjects.remove(child);
 			}
 		}
 
@@ -235,19 +241,21 @@ class Object3DHelper {
 
 		// Save object world transform while removing from parent
 
-		RenderSupport3D.set3DObjectLocalPositionX(child, RenderSupport3D.get3DObjectWorldX(child));
-		RenderSupport3D.set3DObjectLocalPositionY(child, RenderSupport3D.get3DObjectWorldY(child));
-		RenderSupport3D.set3DObjectLocalPositionZ(child, RenderSupport3D.get3DObjectWorldZ(child));
+		if (untyped child.saveWorldTransform) {
+			RenderSupport3D.set3DObjectLocalPositionX(child, RenderSupport3D.get3DObjectWorldX(child));
+			RenderSupport3D.set3DObjectLocalPositionY(child, RenderSupport3D.get3DObjectWorldY(child));
+			RenderSupport3D.set3DObjectLocalPositionZ(child, RenderSupport3D.get3DObjectWorldZ(child));
 
-		RenderSupport3D.set3DObjectLocalScaleX(child, RenderSupport3D.get3DObjectWorldScaleX(child));
-		RenderSupport3D.set3DObjectLocalScaleY(child, RenderSupport3D.get3DObjectWorldScaleY(child));
-		RenderSupport3D.set3DObjectLocalScaleZ(child, RenderSupport3D.get3DObjectWorldScaleZ(child));
+			RenderSupport3D.set3DObjectLocalScaleX(child, RenderSupport3D.get3DObjectWorldScaleX(child));
+			RenderSupport3D.set3DObjectLocalScaleY(child, RenderSupport3D.get3DObjectWorldScaleY(child));
+			RenderSupport3D.set3DObjectLocalScaleZ(child, RenderSupport3D.get3DObjectWorldScaleZ(child));
 
-		RenderSupport3D.set3DObjectLocalRotationX(child, RenderSupport3D.get3DObjectWorldRotationX(child));
-		RenderSupport3D.set3DObjectLocalRotationY(child, RenderSupport3D.get3DObjectWorldRotationY(child));
-		RenderSupport3D.set3DObjectLocalRotationZ(child, RenderSupport3D.get3DObjectWorldRotationZ(child));
+			RenderSupport3D.set3DObjectLocalRotationX(child, RenderSupport3D.get3DObjectWorldRotationX(child));
+			RenderSupport3D.set3DObjectLocalRotationY(child, RenderSupport3D.get3DObjectWorldRotationY(child));
+			RenderSupport3D.set3DObjectLocalRotationZ(child, RenderSupport3D.get3DObjectWorldRotationZ(child));
 
-		untyped child.worldTransformSaved = true;
+			untyped child.worldTransformSaved = true;
+		}
 
 		parent.remove(child);
 		child.parent = null;
@@ -259,6 +267,7 @@ class Object3DHelper {
 			emitEvent(parent, "childrenchanged");
 
 			emitEvent(parent, "change");
+			emitEvent(child, "removed");
 
 			invalidateStage(parent);
 		}
@@ -326,6 +335,25 @@ class Object3DHelper {
 
 		for (child in parent.children) {
 			children = children.concat(get3DObjectAllInteractiveChildren(child));
+		}
+
+		return children;
+	}
+
+	public static function get3DObjectAllGeometries(parent : Object3D) : Array<Geometry> {
+		var children : Array<Geometry> =
+			Lambda.array(
+				Lambda.map(
+					Lambda.filter(
+						get3DObjectAllChildren(parent),
+						function(v) { return untyped v.geometry != null; }
+					),
+					function(v) { return untyped v.geometry; }
+				)
+			);
+
+		if (untyped parent.geometry != null) {
+			children.push(untyped parent.geometry);
 		}
 
 		return children;

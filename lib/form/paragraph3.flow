@@ -208,7 +208,7 @@ renderParagraph(
 				// Ignore negative widths
 				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
-				newLines = reflowParaWords(words, w, indent);
+				newLines = reflowParaWords(words, w, indent, isParagraphMarked);
 
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				next(linesB, newLines);
@@ -387,9 +387,9 @@ getLineIndent(paraIndent : double, lineIndex : int) -> double {
 }
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
-reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double) -> [ParaLine] {
+reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double, isFirstMark : bool) -> [ParaLine] {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
-	text = reflowParaWords2(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
+	text = reflowParaWords2(words, firstLineWidth, firstLineWidth, [], [], paraIndent, isFirstMark);
 	if (isBiDiEnabled())
 		zipWith(
 			text,
@@ -399,8 +399,9 @@ reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : do
 	else text;
 }
 
+ieWidthFix = if (strContains(toLowerCase(getBrowser()), "explorer")) 0.5 else 0.0;
 geParaWordWidth(word : ParaWord) -> double {
-	getValue(word.metrics).width;
+	getValue(word.metrics).width + ieWidthFix;
 };
 
 // here availableWidth is an amount of width for current line
@@ -411,6 +412,7 @@ reflowParaWords2(
 	currentWords : [ParaWord],
 	lines : [ParaLine],
 	paraIndent : double,
+	isFirstMark : bool
 ) -> [ParaLine] {
 	addLine = \cw, indent -> {
 		if (cw != []) arrayPush(lines, ParaLine(cw, indent)) else lines;
@@ -482,7 +484,7 @@ reflowParaWords2(
 
 		switch (word.word : ParaAtomic) {
 			NewLine(): {
-				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 			}
 			LinePart(f, p, e): {
 				width = geParaWordWidth(word);
@@ -491,15 +493,15 @@ reflowParaWords2(
 				if (currentWords == []) {
 					// If it is the first item on the line
 					paraword = makeParaWord2(word, f);
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
 					paraword = makeParaWord2(word, p);
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else {
 					// If it is the last item on the line
 					paraword = makeParaWord2(word, e);
-					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
+					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent, false);
 				}
 			}
 			Space(s): {
@@ -507,10 +509,10 @@ reflowParaWords2(
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = geParaWordWidth(word);
 				if (width < remaining) {
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent, false);
 				} else {
 					detachWord(word, true);
-					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 				}
 			}
 			default: {
@@ -528,7 +530,8 @@ reflowParaWords2(
 				form = getWordForm(word);
 
 				// Number of words that should be on the same line
-				wordsCount = if (keepFormTogether(form)) {
+				keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isFirstMark && i <= 1);
+				wordsCount = if (keepFormTogetherOrWithMark(form, 0)) {
 					iteriUntil(words, \i, _word -> {
 						switch (_word.word) {
 							NewLine(): true;
@@ -539,7 +542,7 @@ reflowParaWords2(
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-								if (keepFormTogether(f) || ^width == 0.0) {
+								if (keepFormTogetherOrWithMark(f, i) || ^width == 0.0) {
 									width := ^width + geParaWordWidth(_word);
 									false;
 								} else {
@@ -564,9 +567,9 @@ reflowParaWords2(
 						));
 					});
 
-					reflowParaWords2(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent);
+					reflowParaWords2(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent, false);
 				} else {
-					reflowParaWords2(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent);
+					reflowParaWords2(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent, false);
 				}
 			}
 		}
@@ -658,8 +661,6 @@ renderParaLines(
 			}
 		f = RenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, styleTree, rtl, isMarked);
 		nwidth = max(acc.width, f.width);
-		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
-		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
 		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
 		nbaseline = f.baseline;
 		ParaLineAcc(
