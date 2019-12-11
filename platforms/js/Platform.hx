@@ -42,6 +42,8 @@ class Platform {
 	public static var isWindows : Bool = ~/Win/i.match(Browser.window.navigator.platform);
 	public static var isLinux : Bool = ~/Linux/i.match(Browser.window.navigator.platform);
 
+	public static var isDarkMode = Browser.window.matchMedia("(prefers-color-scheme: dark)").matches;
+
 	public static var browserMajorVersion : Int = untyped __js__("function() {
 		var version = window.navigator.userAgent.match(/version\\/(\\d+)/i);
 		return version && version.length > 1 ? parseInt(version[1]) || 0 : 0;

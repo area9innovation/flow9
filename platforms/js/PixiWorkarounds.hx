@@ -381,6 +381,75 @@ class PixiWorkarounds {
 		untyped __js__("
 			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
 
+			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas = PIXI.TextMetrics._canvas)
+			{
+				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
+				const font = style.toFontString();
+				const fontProperties = PIXI.TextMetrics.measureFont(font);
+
+				// fallback in case UA disallow canvas data extraction
+				// (toDataURI, getImageData functions)
+				if (fontProperties.fontSize === 0)
+				{
+					fontProperties.fontSize = style.fontSize;
+					fontProperties.ascent = style.fontSize;
+				}
+
+				const context = canvas.getContext('2d');
+
+				context.font = font;
+
+				const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
+				const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
+				const lineWidths = new Array(lines.length);
+				let maxLineWidth = 0;
+
+				const spaceWidth = Platform.isSafari ? context.measureText(' ').width : 0;
+
+				for (let i = 0; i < lines.length; i++)
+				{
+					let lineWidth;
+					if (Platform.isSafari) {
+						let spacesCount = 0;
+						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
+						lineWidth += spacesCount * spaceWidth;
+					} else {
+						lineWidth = context.measureText(lines[i]).width;
+					}
+					lineWidth += (lines[i].length - 1) * style.letterSpacing;
+
+					lineWidths[i] = lineWidth;
+					maxLineWidth = Math.max(maxLineWidth, lineWidth);
+				}
+				let width = maxLineWidth + style.strokeThickness;
+
+				if (style.dropShadow)
+				{
+					width += style.dropShadowDistance;
+				}
+
+				const lineHeight = style.lineHeight || fontProperties.fontSize + style.strokeThickness;
+				let height = Math.max(lineHeight, fontProperties.fontSize + style.strokeThickness)
+					+ ((lines.length - 1) * (lineHeight + style.leading));
+
+				if (style.dropShadow)
+				{
+					height += style.dropShadowDistance;
+				}
+
+				return new PIXI.TextMetrics(
+					text,
+					style,
+					width,
+					height,
+					lines,
+					lineWidths,
+					lineHeight + style.leading,
+					maxLineWidth,
+					fontProperties
+				);
+			}
+
 			PIXI.TextMetrics.measureFont = function(font)
 			{
 				// as this method is used for preparing assets, don't recalculate things if we don't need to
@@ -415,9 +484,9 @@ class PixiWorkarounds {
 				context.fillStyle = '#000';
 				context.fillText(metricsString, 0, baseline);
 
-				const imagedata = context.getImageData(0, 0, width, height).data;
-				const pixels = imagedata.length;
-				const line = width * 4;
+				var imagedata = context.getImageData(0, 0, width, height).data;
+				var pixels = imagedata.length;
+				var line = width * 4;
 
 				var i = 0;
 				var idx = 0;
@@ -444,7 +513,7 @@ class PixiWorkarounds {
 					}
 				}
 
-				properties.ascent = baseline - i + (Platform.isMacintosh ? (font.indexOf('Material Icons') < 0 ? -1.0 : 1.0) : 0.0);
+				properties.ascent = baseline - i;
 
 				idx = pixels - line;
 				stop = false;
@@ -471,8 +540,50 @@ class PixiWorkarounds {
 					}
 				}
 
-				properties.descent = i - baseline + (Platform.isMacintosh ? (font.indexOf('Material Icons') < 0 ? 1.0 : -1.0) : 0.0);
+				properties.descent = i - baseline;
 				properties.fontSize = properties.ascent + properties.descent;
+
+				context.fillStyle = '#f00';
+				context.fillRect(0, 0, width, height);
+
+				context.textBaseline = 'alphabetic';
+				context.fillStyle = '#000';
+				context.fillText('B', 0, baseline);
+
+				imagedata = context.getImageData(0, 0, width, height).data;
+				pixels = imagedata.length;
+				line = width * 4;
+
+				i = 0;
+				idx = 0;
+				stop = false;
+
+				// ascent. scan from top to bottom until we find a non red pixel
+				for (i = 0; i < baseline; ++i)
+				{
+					for (var j = 0; j < line; j += 4)
+					{
+						if (imagedata[idx + j] !== 255)
+						{
+							stop = true;
+							break;
+						}
+					}
+					if (!stop)
+					{
+						idx += line;
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				if (Platform.isMacintosh) {
+					properties.baselineCorrection = (properties.descent - (properties.ascent - (baseline - i - 1.0))) / 2.0;
+					properties.descent -= properties.baselineCorrection;
+					properties.ascent += properties.baselineCorrection;
+				}
 
 				PIXI.TextMetrics._fonts[font] = properties;
 

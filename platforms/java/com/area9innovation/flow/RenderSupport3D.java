@@ -88,6 +88,9 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DTexture(Object stage, String url, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;
 	}
+	public Object load3DCubeTexture(Object stage, String px, String nx, String py, String ny, String pz, String nz, Func1<Object,Object> onLoad, Object[] parameters) {
+		return null;
+	}
 	public Object make3DDataTexture(Object[] data, Integer width, Integer height, Object[] parameters) {
 		return null;
 	}
@@ -449,6 +452,9 @@ public class RenderSupport3D extends NativeHost {
 	public Func0<Object> add3DObjectWorldPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
+	public Func0<Object> add3DObjectStagePositionListener(Object stage, Object object, Func2<Object,Double,Double> cb) {
+		return no_op;
+	}
 	public Func0<Object> add3DObjectLocalRotationListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
@@ -588,9 +594,15 @@ public class RenderSupport3D extends NativeHost {
 
 
 	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
-		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength) {
+		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength, Func2<Integer, Integer, Object[]> addGroups) {
 		return null;
 	}
+
+	public Object make3DBoxBufferGeometry(Double width, Double height, Double depth, Integer widthSegments, Integer heightSegments,
+		Integer depthSegments, Func2<Integer, Integer, Object[]> addGroups) {
+		return null;
+	}
+
 
 	public Object add3DBufferGeometryAttribute(Object geometry, String name, Object[] data) {
 		return null;
