@@ -183,7 +183,7 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 	}
 
 	prog = writer.program;
-	last = fold(prog.traversal, Pair(0, cpp2Environment(writer.config, None(), "aux_init0", "$init", 0, writer.struct_list)),
+	last = fold(prog.traversal, cpp2Environment(writer.config, None(), "aux_init0", "$init", 0, writer.struct_list),
 		\acc, mod_name -> {
 			module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
 			fold(module.initOrder, acc,
@@ -195,19 +195,21 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 								
 									println("transl glob var: " + name + ", module: " + module.fileinfo.flowfile);
 								
-									new_ac = if (length(^(ac.second.code_lines.lines)) >=1024) {
-										endInitFunction(ac.second);
-										new_env = cpp2Environment(writer.config, None(), "aux_init" + i2s(ac.first + 1), "$init", 0, writer.struct_list);
-										Pair(ac.first + 1, new_env)
+									new_ac = if (writer.init_count == 0 || length(^(ac.code_lines.lines)) >=1024) {
+										if (writer.init_count > 0) {
+											endInitFunction(ac);
+										}
+										new_env = cpp2Environment(writer.config, None(), "aux_init" + i2s(writer.init_count), "$init", 0, writer.struct_list);
+										writer.init_count ::= writer.init_count + 1;
+										new_env
 									} else {
 										ac
 									}
-									global_env = new_ac.second;
 									place = lookupTreeDef(writer.global_map, name, dummyCpp2PlaceInfo);
-									global_env.vname ::= name + "$init";
+									new_ac.vname ::= name + "$init";
 									// TODO: 
 									writer.cur_global ::= name;
-									switch (global_env.cur_ctx) {
+									switch (new_ac.cur_ctx) {
 										Some(ctx): cpp2WriterCompileExpression(writer, value, ctx, Cpp2OutputVar(place), Cpp2StackTop(0));
 										None(): cpp2_error("context must not be None");
 									}
@@ -225,7 +227,7 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 			)
 		}
 	);
-	endInitFunction(last.second)
+	endInitFunction(last)
 }
 
 cpp2GenerateStructCode(writer : Cpp2Writer, s : Cpp2StructOrderInfo, info : Cpp2StructInfo) -> void {
@@ -1379,17 +1381,17 @@ cpp2WriterEmitConditionExpr(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 		FiCallPrim(op, es, type, __): {
 			switch (op) {
 				FcEqPrim():
-					cpp2WriterEmitComparisonExpr(writer, "==", es[0], es[1], type, ctx, top);
+					cpp2WriterEmitComparisonExpr(writer, "==", es[0], es[1], fiExpType(es[0]), ctx, top);
 				FcNePrim():
-					cpp2WriterEmitComparisonExpr(writer, "!=", es[0], es[1], type, ctx, top);
+					cpp2WriterEmitComparisonExpr(writer, "!=", es[0], es[1], fiExpType(es[0]), ctx, top);
 				FcLtPrim():
-					cpp2WriterEmitComparisonExpr(writer, "<", es[0], es[1], type, ctx, top);
+					cpp2WriterEmitComparisonExpr(writer, "<", es[0], es[1], fiExpType(es[0]), ctx, top);
 				FcLePrim():
-					cpp2WriterEmitComparisonExpr(writer, "<=", es[0], es[1], type, ctx, top);
+					cpp2WriterEmitComparisonExpr(writer, "<=", es[0], es[1], fiExpType(es[0]), ctx, top);
 				FcGtPrim():
-					cpp2WriterEmitComparisonExpr(writer, ">", es[0], es[1], type, ctx, top);
+					cpp2WriterEmitComparisonExpr(writer, ">", es[0], es[1], fiExpType(es[0]), ctx, top);
 				FcGePrim():
-					cpp2WriterEmitComparisonExpr(writer, ">=", es[0], es[1], type, ctx, top);
+					cpp2WriterEmitComparisonExpr(writer, ">=", es[0], es[1], fiExpType(es[0]), ctx, top);
 				FcNotPrim():
 					"!" + cpp2WriterEmitConditionExpr(writer, es[0], ctx, top);
 				FcAndPrim(): {
@@ -1434,12 +1436,17 @@ cpp2WriterEmitComparisonExpr(writer : Cpp2Writer, op : string, expr1 : FiExp, ex
 	if (type == Cpp2TInt() || type == Cpp2TDouble()) {
 		val1 = cpp2WriterEmitNumericExpr(writer, expr1, ctx, top2, type);
 		val2 = cpp2WriterEmitNumericExpr(writer, expr2, ctx, top2, type);
+		
+		println("val1 = " + val1);
+		
 		cpp2ContextTempvar(ctx, "btmp", Cpp2TBool(), val1 + op + val2);
 	} else if (type == Cpp2TBool() && (op == "==" || op == "!=")) {
 		val1 = cpp2WriterEmitConditionExpr(writer, expr1, ctx, top2);
 		val2 = cpp2WriterEmitConditionExpr(writer, expr2, ctx, top2);
 		cpp2ContextTempvar(ctx, "btmp", Cpp2TBool(), val1 + op + val2);
 	} else {
+		println("cpp2WriterEmitComparisonExpr type: " + cpp2TagToString(type) + " op: " + op);
+	
 		ref1_0 = cpp2WriterFetchToRef(writer, expr1, ctx, top2, false, Cpp2OutputNull());
 		ref2_0 = cpp2WriterFetchToRef(writer, expr2, ctx, top2, false, Cpp2OutputNull());
 
@@ -1502,8 +1509,7 @@ cpp2WriterEmitNumericExpr(writer : Cpp2Writer, expr : FiExp, ctx : Cpp2Context, 
 				}
 				FcNegPrim(): "(-" + cpp2WriterEmitNumericExpr(writer, es[0], ctx, top, tag) + ")"
 				default: {
-					cpp2_error("Illegal numeric expression: " + prettyFiExp(dummyPretty, expr));
-					""
+					cpp2WriterFetchToScalar(writer, expr, ctx, top, tag);
 				}
 			}
 		}
@@ -2640,6 +2646,8 @@ cpp2WriterInlineNative(writer : Cpp2Writer, code : FiCall, fn : string, ctx : Cp
 		cpp2WriterFetchToRef(writer, arg, ctx, top, lvalue, if (allow_out) out else Cpp2OutputNull());
 	}
 
+	println("cpp2WriterInlineNative: " + fn);
+	
 	if (contains(numeric_natives, fn)) {
 		cpp2WriterCompileNumericExpr(writer, code, ctx, out, top, Cpp2TInt());
 		true
@@ -2765,6 +2773,7 @@ cpp2WriterInlineMapNative(writer : Cpp2Writer, arr : FiExp, minit : Maybe<FiExp>
 
 	// Index var as slot if used in closure
 	idxpair = if (iarg != "") {
+		println("iarg: '" + iarg + "'");
 		subtop_temp = subtop.temp;
 		subtop.temp ::= subtop_temp + 1;
 		idx = cpp2EnvironmentMktemp(ctx.env, subtop_temp);
