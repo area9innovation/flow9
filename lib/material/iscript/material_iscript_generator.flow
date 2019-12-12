@@ -1,0 +1,74 @@
+import material/iscript/material_focus_tree;
+export {
+	generateIScriptFromCommands(manager : MaterialManager, input : string) -> void;
+}
+
+IScriptGeneratorCommands ::= ISGFindFocus, ISGSetFocusContent, ISGPressButton, ISGCheckBehaviour;
+
+ISGFindFocus(name : string);
+ISGSetFocusContent(focusName : string, content : string);
+ISGPressButton(name : string);
+ISGCheckBehaviour(focusName : string, behaviourName : string, content : string);
+
+generateIScriptFromCommands(manager : MaterialManager, input : string) -> void {
+	commands : [IScriptGeneratorCommands] = deserialize3(input);
+	println(commands);
+
+	iter(commands, \command -> {
+		switch(command) {
+			ISGFindFocus(name): {
+				//foc = getMaterialFocusByUniqueIdRec(manager.focus, name);
+			}
+			ISGSetFocusContent(focusName, content): {
+				foc = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
+				if (isUrlParameterTrue(UP_ISCRIPTCHECKERRORS)) {
+					maybeApply(foc, \f -> next(f.focused, true));
+					iter(s2a(content), \c -> {
+						emitKeyEvent(currentClip(), "keydown", fromCharCode(c), false, false, false, false, 0);
+					})
+				} else {
+					maybeApply(
+						lookupTree(eitherMap(foc, \f -> f.behaviours, makeTree()), "content"),
+						\b -> next(b.first, content)
+					);
+				}
+			};
+			ISGPressButton(name): {
+				foc = getMaterialFocusByUniqueIdRec(manager.focus, name);
+				maybeApply(
+					lookupTree(eitherMap(foc, \f -> f.behaviours, makeTree()), "click"),
+					\b -> next(b.first, "true")
+				);
+			}
+			ISGCheckBehaviour(focusName, behaviourName, content): {
+				foc = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
+				maybeApply(
+					lookupTree(eitherMap(foc, \f -> f.behaviours, makeTree()), behaviourName),
+					\b -> println(getValue(b.first) == content)
+				);
+			}
+		}
+	})
+}
+
+getMaterialFocusByUniqueIdRec(parent : MFocusGroup, id : string) -> Maybe<MaterialFocus> {
+	iScriptIdParent : MFocusGroup =
+		if (isSome(parent.iScriptId))
+			parent
+		else
+			getIScriptUniqueIdParent(parent);
+	iScriptIds : Tree<string, MaterialFocus> = getValue(iScriptIdParent.iScriptIds);
+	eitherFn(
+		lookupTree(iScriptIds, id),
+		\v -> Some(v),
+		\ -> foldTree(getValue(parent.focusIds), None(), \k : int, v : MaterialFocus, acc : Maybe<MaterialFocus> -> {
+			if (isNone(acc)) {
+				switchMaterialFocus(
+					v,
+					\f -> maybeBind(f.iScriptId, \isi -> if (isi == id) Some(f) else None()),
+					\f -> getMaterialFocusByUniqueIdRec(f, id)
+				)
+			} else acc
+		})
+	)
+}
