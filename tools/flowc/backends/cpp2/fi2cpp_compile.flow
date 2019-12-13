@@ -53,7 +53,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 		fromCharCode(bitAnd(bitUshr(i, 24), 0xFF));
 	}
 	bytecode = ref "\x39\x39"; // CLast CLast
-	struct_list_map = foldi(structs_order, Pair([], makeTree()),
+	struct_list_map = foldi(structs_order, Triple([], makeTree(), makeTree()),
 		\n, acc, s -> {
 			si = Cpp2StructInfo(
 				n,       // id
@@ -68,9 +68,16 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 					cpp2_int_UNDEF
 				} // empty_addr
 			);
-			Pair(
+			pi = cpp2PlaceInfo(None(), Cpp2Struct(si), n, s.name);
+			if (length(s.args) == 0) {
+				(pi.meta).dirty ::= true;
+				(pi.meta).tag ::= Cpp2TStruct();
+				(pi.meta).struct_id ::= n;
+			}
+			Triple(
 				concat(acc.first, [si]),
-				setTree(acc.second, s.name, si)
+				setTree(acc.second, s.name, si),
+				setTree(acc.third, s.name, pi)
 			)
 		}
 	);
@@ -93,7 +100,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 	toplevel_triple = cpp2WriterEnumerateToplevel(program, main);
 	function_table = toplevel_triple.first;
 	global_vars = toplevel_triple.second;
-	global_map = toplevel_triple.third;
+	global_map = mergeTree(struct_list_map.third, toplevel_triple.third);
 	
 	fcPrintln("globals: " + strGlue(global_vars, ", "), config.threadId);
 	
@@ -1445,7 +1452,7 @@ cpp2WriterEmitComparisonExpr(writer : Cpp2Writer, op : string, expr1 : FiExp, ex
 		val2 = cpp2WriterEmitConditionExpr(writer, expr2, ctx, top2);
 		cpp2ContextTempvar(ctx, "btmp", Cpp2TBool(), val1 + op + val2);
 	} else {
-		println("cpp2WriterEmitComparisonExpr type: " + cpp2TagToString(type) + " op: " + op);
+		//println("cpp2WriterEmitComparisonExpr type: " + cpp2TagToString(type) + " op: " + op);
 	
 		ref1_0 = cpp2WriterFetchToRef(writer, expr1, ctx, top2, false, Cpp2OutputNull());
 		ref2_0 = cpp2WriterFetchToRef(writer, expr2, ctx, top2, false, Cpp2OutputNull());
@@ -2366,6 +2373,9 @@ cpp2WriterCompileNewStruct(writer : Cpp2Writer, info : Cpp2StructInfo, args : [F
 	} else {
 		if (length(args) == 0) {
 			space_info = lookupTreeDef(writer.global_map, info.struct_name, dummyCpp2PlaceInfo);
+			if (space_info == dummyCpp2PlaceInfo) {
+				cpp2_error("space info not found for struct: " + info.struct_name)
+			}
 			cpp2WriterCopyValue(ctx, out, space_info);
 		} else {
 			otmp = cpp2WriterGetOutputOrTemp(ctx, out, top);
