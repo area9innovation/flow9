@@ -381,8 +381,10 @@ class PixiWorkarounds {
 		untyped __js__("
 			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
 
-			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas = PIXI.TextMetrics._canvas)
+			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
 			{
+				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
+
 				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
 				const font = style.toFontString();
 				const fontProperties = PIXI.TextMetrics.measureFont(font);
