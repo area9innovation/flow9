@@ -92,6 +92,13 @@ var BrowserDetect = {
 			|| this.searchVersion(navigator.appVersion)
 			|| "an unknown version";
 		this.OS = this.searchString(this.dataOS) || "an unknown OS";
+
+		// It's require to find Chrome/<ver> Mobile to detect Android Chrome browser
+		if (this.OS == "Android" && this.browser == "Chrome") {
+			if (!navigator.userAgent.match(/Chrome\/[.0-9]* Mobile/gm)) {
+				this.browser = "An unknown browser";
+			}
+		}
 	},
 	searchString: function (data) {
 		for (var i=0;i<data.length;i++) {
@@ -204,6 +211,11 @@ var BrowserDetect = {
 			string: navigator.userAgent,
 			subString: "iPhone",
 			identity: "iPhone/iPod"
+		},
+		{
+			string: navigator.platform,
+			subString: "Android",
+			identity: "Android"
 		},
 		{
 			string: navigator.platform,
