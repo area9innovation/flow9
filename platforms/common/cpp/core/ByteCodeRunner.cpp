@@ -1452,7 +1452,7 @@ StackSlot ByteCodeRunner::AllocateStruct(const char *name, unsigned size)
     int id = it->second;
 
     StructDef *def = &StructDefs.at(id);
-    if (unlikely(def->FieldsCount != size)) {
+    if (unlikely(unsigned(def->FieldsCount) != size)) {
         ReportError(InvalidArgument, "Structure '%s' actually has size %d, not %d", name, def->FieldsCount, size);
         return StackSlot::MakeVoid();
     }
@@ -3325,7 +3325,7 @@ bool ByteCodeRunner::PrintData(ostream &out, const StackSlot &slot, int max_dept
         unicode_string tmp = GetString(slot);
         if (max_count > 0 && tmp.size() > unsigned(5*max_count))
             tmp = tmp.substr(0,max_count*5) + parseUtf8("...");
-        printQuotedString(out, encodeUtf8(tmp));
+        printQuotedString(out, encodeUtf8(tmp), false);
         break;
     }
     case TArray:
