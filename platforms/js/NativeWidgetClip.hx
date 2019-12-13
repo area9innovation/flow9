@@ -17,6 +17,8 @@ class NativeWidgetClip extends FlowContainer {
 	public var widgetWidth : Float = -1;
 	public var widgetHeight : Float = -1;
 
+	private var focusRetries : Int = 0;
+
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 	}
@@ -77,11 +79,14 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function setFocus(focus : Bool) : Bool {
 		if (nativeWidget != null) {
-			if (nativeWidget.parentNode == null) {
+			if (untyped nativeWidget.parentNode == null && !this.destroyed && this.focusRetries < 3) {
+				focusRetries++;
 				RenderSupportJSPixi.once("drawframe", function() { setFocus(focus); });
 
 				return true;
 			}
+
+			focusRetries = 0;
 
 			if (focus && nativeWidget.focus != null && !getFocus()) {
 				nativeWidget.focus();

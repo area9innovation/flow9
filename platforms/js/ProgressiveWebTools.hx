@@ -276,7 +276,7 @@ class ProgressiveWebTools {
 	}
 
 	public static function isRunningPWA() : Bool {
-		return !Browser.window.matchMedia("(display-mode: browser)").matches;
+		return !Browser.window.matchMedia("(display-mode: browser)").matches || (Platform.isIOS && untyped Browser.window.navigator.standalone == true);
 	}
 
 	public static function getServiceWorkerJsVersion(

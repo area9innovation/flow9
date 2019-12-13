@@ -179,6 +179,44 @@ class RenderSupportJSPixi {
 		}
 	}
 
+	private static var onMouseWheelAccessibilityZoomEnabled = true;
+
+	public static function onMouseWheelAccessibilityZoom(e : Dynamic, dx : Float, dy : Float) : Bool {
+		if (browserZoom != 1.0 || Platform.isMacintosh) {
+			return false;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (dy > 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			} else if (dy < 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
@@ -228,7 +266,7 @@ class RenderSupportJSPixi {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
 	}
 
-	private static function detectExternalVideoCard() : Bool {
+	public static function detectExternalVideoCard() : Bool {
 		var canvas = Browser.document.createElement('canvas');
 		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
 
@@ -819,7 +857,9 @@ class RenderSupportJSPixi {
 				sY = 0.0;
 			}
 
-			listener(new Point(-sX, -sY));
+			if (RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
+				listener(new Point(-sX, -sY));
+			}
 
 			return false;
 		};
@@ -1114,6 +1154,10 @@ class RenderSupportJSPixi {
 
 	public static function getBrowserZoom() : Float {
 		return browserZoom;
+	}
+
+	public static function isDarkMode() : Bool {
+		return Platform.isDarkMode;
 	}
 
 	public static function setHitboxRadius(radius : Float) : Bool {
@@ -2377,6 +2421,14 @@ class RenderSupportJSPixi {
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
 		clip.setScrollRect(left, top, width, height);
+	}
+
+	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
+		clip.setContentRect(width, height);
+	}
+
+	public static function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
+		return clip.listenScrollRect(cb);
 	}
 
 	public static function getTextMetrics(clip : TextClip) : Array<Float> {
