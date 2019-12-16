@@ -13,7 +13,94 @@ ISGCheckBehaviour(focusName : string, behaviourName : string, content : string);
 generateIScriptFromCommands(manager : MaterialManager, input : string) -> void {
 	commands : [IScriptGeneratorCommands] = deserialize3(input);
 	println(commands);
-	runIScriptCommands(manager, commands);
+	//runIScriptCommands(manager, commands);
+	script = generateIScript(manager, commands);
+	next(manager.iscript.script, IScript(0., pairs2tree(mapi(script, \i, s -> Pair(i2d(i), [s])))));
+}
+
+generateIScript(manager : MaterialManager, commands : [IScriptGeneratorCommands]) -> [IScriptRecord] {
+	mapConcat(commands, \command -> {
+		switch(command) {
+			ISGFindFocus(name): {
+				[]
+			}
+			ISGSetFocusContent(focusName, content): {
+				focus = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
+				eitherMap(
+					focus,
+					\f -> {
+						descriptor = IScriptComponentDescriptor("MTextInput", getFullMFocusId(f));
+						concat3(
+							generateMouseClickOnFocus(f),
+							map(s2a(content), \c -> {
+								IScriptBehaviourRecord(
+									IScriptBehaviourDescriptor(
+										descriptor,
+										"keydown"
+									),
+									KeyEventRecord(fromCharCode(c), false, false, false, false, 0),
+									ISKeyEvent(),
+									""
+								)
+							}),
+							[
+								IScriptBehaviourRecord(
+									IScriptBehaviourDescriptor(
+										IScriptComponentDescriptor(
+											"MTextInput",
+											getFullMFocusId(f)
+										),
+										"content"
+									),
+									content,
+									ISDetailedTextEvent(),
+									""
+								)
+							]
+						)
+					},
+					[]
+				)
+			}
+			ISGPressButton(name): {
+				eitherMap(
+					getMaterialFocusByUniqueIdRec(manager.focus, name),
+					generateMouseClickOnFocus,
+					[]
+				)
+			}
+			ISGCheckBehaviour(focusName, behaviourName, content): {
+				[]
+			}
+		}
+	})
+}
+
+generateMouseClickOnFocus(focus : MaterialFocus) -> [IScriptBehaviourRecord] {
+	x = fgetValue(focus.position).pos.x + (fgetValue(focus.widthHeight).width / 2.);
+	y = fgetValue(focus.position).pos.y + (fgetValue(focus.widthHeight).height / 2.) - 48.;
+	descriptor = IScriptComponentDescriptor("canvas", getFullMFocusId(focus));
+
+	[
+		IScriptBehaviourRecord(
+			IScriptBehaviourDescriptor(
+				descriptor,
+				"mousedown"
+			),
+			Point(x, y),
+			ISMouseEvent(),
+			""
+		),
+		IScriptBehaviourRecord(
+			IScriptBehaviourDescriptor(
+				descriptor,
+				"mouseup"
+			),
+			Point(x, y),
+			ISMouseEvent(),
+			""
+		),
+	]
 }
 
 runIScriptCommands(manager : MaterialManager, commands : [IScriptGeneratorCommands]) -> void {
@@ -25,9 +112,9 @@ runIScriptCommands(manager : MaterialManager, commands : [IScriptGeneratorComman
 				runIScriptCommands(manager, tail(commands));
 			}
 			ISGSetFocusContent(focusName, content): {
-				foc = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
+				focus = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
 				if (getValue(manager.iscript.settings.replayCheckErrors)) {
-					maybeApply(foc, \f -> next(f.focused, true));
+					maybeApply(focus, \f -> next(f.focused, true));
 					deferUntilRender(\ -> {
 						iter(s2a(content), \c -> {
 							emitKeyEvent(currentClip(), "keydown", fromCharCode(c), false, false, false, false, 0);
@@ -36,17 +123,17 @@ runIScriptCommands(manager : MaterialManager, commands : [IScriptGeneratorComman
 					})
 				} else {
 					maybeApply(
-						lookupTree(eitherMap(foc, \f -> f.behaviours, makeTree()), "content"),
+						lookupTree(eitherMap(focus, \f -> f.behaviours, makeTree()), "content"),
 						\b -> next(b.first, content)
 					);
 					runIScriptCommands(manager, tail(commands));
 				}
-			};
+			}
 			ISGPressButton(name): {
-				foc = getMaterialFocusByUniqueIdRec(manager.focus, name);
+				focus = getMaterialFocusByUniqueIdRec(manager.focus, name);
 				if (getValue(manager.iscript.settings.replayCheckErrors)) {
 					//press from mouse. should we allow to press from keyboard?
-					maybeApply(foc, \f -> {
+					maybeApply(focus, \f -> {
 						x = fgetValue(f.position).pos.x + (fgetValue(f.widthHeight).width / 2.);
 						y = fgetValue(f.position).pos.y + (fgetValue(f.widthHeight).height / 2.);
 
@@ -65,16 +152,16 @@ runIScriptCommands(manager : MaterialManager, commands : [IScriptGeneratorComman
 					})
 				} else {
 					maybeApply(
-						lookupTree(eitherMap(foc, \f -> f.behaviours, makeTree()), "click"),
+						lookupTree(eitherMap(focus, \f -> f.behaviours, makeTree()), "click"),
 						\b -> next(b.first, true)
 					)
 				}
 				runIScriptCommands(manager, tail(commands));
 			}
 			ISGCheckBehaviour(focusName, behaviourName, content): {
-				foc = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
+				focus = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
 				pprint(toString(command) + ":")(maybeMap(
-					lookupTree(eitherMap(foc, \f -> f.behaviours, makeTree()), behaviourName),
+					lookupTree(eitherMap(focus, \f -> f.behaviours, makeTree()), behaviourName),
 					\b -> getValue(b.first) == content
 				)) |> ignore;
 				runIScriptCommands(manager, tail(commands));
