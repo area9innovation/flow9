@@ -23,22 +23,22 @@ class PDF {
 	}
 
 	public static function getPdfDocument(url : String, onOK : Dynamic -> Void, onError : String -> Void) {
-		var promise : Promise<Dynamic> = untyped pdfjsLib.getDocument(url).promise;
+		var promise : Promise<Dynamic> = pdfjsLib.getDocument(url).promise;
 		promise.then(onOK).catchError(onError);
 	}
 
 	public static function getPdfDocumentNumPages(document : Dynamic) {
-		return untyped document.numPages;
+		return document.numPages;
 	}
 
 	public static function getPdfDocumentPage(document : Dynamic, num : Int, onOK : Dynamic -> Void, onError : String -> Void) {
-		var promise : Promise<Dynamic> = untyped document.getPage(num);
+		var promise : Promise<Dynamic> = document.getPage(num);
 		promise.then(onOK).catchError(onError);
 	}
 
 	public static function getPdfPageDimensions(page : Dynamic) : Array<Float> {
-		var viewport = untyped page.getViewport({ scale: 1.0 });
-		return [untyped viewport.width, untyped viewport.height];
+		var viewport = page.getViewport({ scale: 1.0 });
+		return [viewport.width, viewport.height];
 	}
 
 	public static function makePdfClip() : Dynamic {
