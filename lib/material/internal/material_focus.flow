@@ -78,7 +78,7 @@ popZorder(manager : MaterialManager) -> () -> void {
 }
 
 getNextFocusId(parent : MFocusGroup) -> int {
-	foldTree(getValue(parent.focusIds), 0, \k, __, acc -> if (k == acc) acc + 1 else acc)
+	parent.nextFocusId
 }
 
 getMFocusTabOrder(focus : MaterialFocus) -> [int] {
@@ -114,11 +114,15 @@ changeMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, f : Mater
 			lookupTree(getValue(parent.focusIds), prevId),
 			\fid -> if (fid == f) {
 				next(parent.focusIds, removeFromTree(getValue(parent.focusIds), prevId));
-				maybeApply(f.iScriptId, \id -> {
-					iScriptIdParent = getIScriptUniqueIdParent(f);
-					next(iScriptIdParent.iScriptIds, removeFromTree(getValue(iScriptIdParent.iScriptIds), id));
-					traverseInOrder(getValue(iScriptIdParent.iScriptIds), \__, v -> fixIScriptUniqueId(v));
-				});
+				parent.nextFocusId ::= min(parent.nextFocusId, prevId);
+
+				if (isIScriptEnabled(manager)) {
+					maybeApply(f.iScriptId, \id -> {
+						iScriptIdParent = getIScriptUniqueIdParent(f);
+						next(iScriptIdParent.iScriptIds, removeFromTree(getValue(iScriptIdParent.iScriptIds), id));
+						traverseInOrder(getValue(iScriptIdParent.iScriptIds), \__, v -> fixIScriptUniqueId(v));
+					});
+				}
 
 				if (prevId >= 0 && getValue(parent.focusedId) == prevId) {
 					next(f.focused, false);
@@ -132,7 +136,17 @@ changeMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, f : Mater
 	if (newId >= 0) {
 		setIdFn = \ -> {
 		 	next(parent.focusIds, setTree(getValue(parent.focusIds), newId, f));
-		 	fixIScriptUniqueId(f);
+			if (parent.nextFocusId == newId) {
+				if (isNone(lookupTree(getValue(parent.focusIds), parent.nextFocusId + 1))) {
+					parent.nextFocusId ::= parent.nextFocusId + 1;
+				} else {
+					parent.nextFocusId ::= foldTree(getValue(parent.focusIds), 0, \k, __, acc -> if (k == acc) acc + 1 else acc);
+				}
+			}
+
+			if (isIScriptEnabled(manager)) {
+		 		fixIScriptUniqueId(f);
+			}
 
 			if (prevId >= 0 && getValue(parent.focusedId) == prevId)
 				next(parent.focusedId, -1);
@@ -282,7 +296,7 @@ addMaterialFocusId(
 				focusId,
 				FEmpty(),
 				fselect2(parent.tabOrder, focusId, FLift2(\to, fi -> arrayPush(to, fi))),
-				iScriptId,
+				None(),
 				strReplace(name, " ", "_"),
 				title,
 				parent,
@@ -410,7 +424,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				FEmpty(),
 				fselect2(parent.tabOrder, focusId, FLift2(\to, fi -> arrayPush(to, fi))),
 				zorder,
-				eitherMap(iScriptId, \ui -> Some(strReplaces(ui, [" ", "_", "[", "_", "]", "_", ",", "_"])), None()),
+				eitherMap(None(), \ui -> Some(strReplaces(ui, [" ", "_", "[", "_", "]", "_", ",", "_"])), None()),
 				strReplace(name, " ", "_"),
 				Some(parent),
 				eitherMap(parent.vertical, \v -> Some(if (v == manager.focus) parent else v), None()),
@@ -419,6 +433,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				make(-1),
 				getValue(focusedId),
 				make(makeTree()),
+				0,
 				make(makeTree()),
 				en,
 				zorderEn,
