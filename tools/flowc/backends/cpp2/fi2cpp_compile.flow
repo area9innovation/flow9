@@ -4,7 +4,7 @@ import tools/flowc/backends/cpp2/fi2cpp2_util;
 import tools/flowc/flowc_field_type;
 
 export {
-	cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> Cpp2Writer;
+	cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) -> Cpp2Writer;
 	cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) -> void;
 	cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void;
 	cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void;
@@ -12,7 +12,7 @@ export {
 
 // CppWriter methods
 
-cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> Cpp2Writer {
+cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) -> Cpp2Writer {
 	known_natives = fold(cpp2_natives, makeTree(), 
 		\acc, nat -> setTree(acc, "Native." + nat.name, nat)
 	);
@@ -97,17 +97,17 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, main : FiFunctionDec) -> 
 	struct_counts = map(enumFromTo(0, max_size), \i -> 
 		lookupTreeDef(struct_counts_map, i, -1) 
 	);
-	toplevel_triple = cpp2WriterEnumerateToplevel(program, main);
+	toplevel_triple = cpp2WriterEnumerateToplevel(program, amain);
 	function_table = toplevel_triple.first;
 	global_vars = toplevel_triple.second;
 	global_map = mergeTree(struct_list_map.third, toplevel_triple.third);
 	
-	fcPrintln("globals: " + strGlue(global_vars, ", "), config.threadId);
+	//fcPrintln("globals: " + strGlue(global_vars, ", "), config.threadId);
 	
 	writer = Cpp2Writer(
 		config,
 		program,
-		main,
+		amain,
 		
 		length(struct_list),    // num_structs : int,
 		0,                      // init_count : int,
@@ -147,7 +147,9 @@ cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void {
 	iter(prog.traversal, 
 		\mod_name -> {
 			module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
-			println("MODULE: " + module.fileinfo.flowfile + ", INIT ORDER: " + strGlue(module.initOrder, ", "));
+			if (writer.config.verbose > 0) {
+				fcPrintln("translating module: " + module.fileinfo.flowfile, writer.config.threadId);
+			}
 			iter(module.initOrder, 
 				\glob_name -> {
 					switch (lookupTree(prog.names.toplevel, glob_name)) {
@@ -200,7 +202,7 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 							switch (decl) {
 								FiGlobalVar(name, value, type, __,__): {
 								
-									println("transl glob var: " + name + ", module: " + module.fileinfo.flowfile);
+									//println("transl glob var: " + name + ", module: " + module.fileinfo.flowfile);
 								
 									new_ac = if (writer.init_count == 0 || length(^(ac.code_lines.lines)) >=1024) {
 										if (writer.init_count > 0) {
@@ -384,11 +386,11 @@ cpp2gatherInitOrder(prog : FiProgram) -> [FiDeclaration] {
 }
 
 // Index natives and globals
-cpp2WriterEnumerateToplevel(program : FiProgram, main : FiFunctionDec) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
+cpp2WriterEnumerateToplevel(program : FiProgram, amain : FiFunctionDec) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
 
-	deps = getAllDependencies(program.names.toplevel, main.lambda, Cpp2Dependencies(makeSet(), makeSet(), makeSet(), makeSet()));
+	deps = getAllDependencies(program.names.toplevel, amain.lambda, Cpp2Dependencies(makeSet(), makeSet(), makeSet(), makeSet()));
 
-	fcPrintln("deps: '" + strGlue(map(set2array(deps.all_decls), \decl -> decl.name), ", ") + "'", program.config.threadId);
+	//fcPrintln("deps: '" + strGlue(map(set2array(deps.all_decls), \decl -> decl.name), ", ") + "'", program.config.threadId);
 
 	all_decls = concat(set2array(deps.all_decls), filter(cpp2gatherInitOrder(program), \decl -> !containsSet(deps.all_decls, decl)));
 	
@@ -498,18 +500,12 @@ getAllDependencies(toplevel : Tree<string, FiDeclaration>, expr : FiExp, acc : C
 				Some(decl): {
 					if (containsSet(acc.all_decls, decl)) acc else
 					switch (decl) {
-						FiFunctionDec(__, lambda, __,__,__): {
-							a = getAllDependencies(toplevel, lambda, acc);
-							Cpp2Dependencies(a with funcs = insertSet(a.funcs, decl), all_decls = insertSet(a.all_decls, decl));
-						}
-						FiNativeDec(__,__,__,__, fallback, __,__): {
-							a = getAllDependencies(toplevel, fallback, acc);
-							Cpp2Dependencies(a with natives = insertSet(a.natives, decl), all_decls = insertSet(a.all_decls, decl));
-						}
-						FiGlobalVar(__, value,__,__,__): {
-							a = getAllDependencies(toplevel, value, acc);
-							Cpp2Dependencies(a with vars = insertSet(a.vars, decl), all_decls = insertSet(a.all_decls, decl));
-						}
+						FiFunctionDec(__, lambda, __,__,__):
+							getAllDependencies(toplevel, lambda, Cpp2Dependencies(acc with funcs = insertSet(acc.funcs, decl), all_decls = insertSet(acc.all_decls, decl)));
+						FiNativeDec(__,__,__,__, fallback, __,__):
+							getAllDependencies(toplevel, fallback, Cpp2Dependencies(acc with natives = insertSet(acc.natives, decl), all_decls = insertSet(acc.all_decls, decl)));
+						FiGlobalVar(__, value,__,__,__):
+							getAllDependencies(toplevel, value, Cpp2Dependencies(acc with vars = insertSet(acc.vars, decl), all_decls = insertSet(acc.all_decls, decl)));
 					}
 				}
 				None(): acc
@@ -553,277 +549,207 @@ cpp2WriterRegisterConstString(w : Cpp2Writer, s : string) -> Cpp2ConstString {
 
 cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 	bytes = s2a(writer.bytecode);
-	
 	h = ref makeList();
 	o = ref makeList();
 
 	rlistPush(o, "#" + "include \"core/GarbageCollector.h\"");
-
-	cpp2wrLine(h, 
-		[
-			"#" + "include \"core/NativeProgram.h\"",
-			"#" + "include \"core/RunnerMacros.h\"",
-			"",
-			"#" +  "include <limits>",
-			"",
-			"#pragma GCC diagnostic ignored \"-Wunused-parameter\"",
-			"",
-			"#ifndef FLOW_COMPACT_STRUCTS",
-			"#error Runner built without compact structs is not supported",
-			"#endif",
-			"",
-			"namespace flowgen_" + writer.config.entry + " {",
-			"    using namespace flowgen_common;",
-			"",
-			"    static const unsigned NUM_CODE_BYTES = " + i2s(length(bytes)) + ";",
-			"    static const unsigned NUM_FUNCTIONS = " + i2s(length(^(writer.function_table))) + ";",
-			"    static const unsigned NUM_STRUCTS = " + i2s(writer.num_structs) + ";",
-			"    static const unsigned NUM_STRUCT_DEFS = " + i2s(length(^(writer.structs_order))) + ";",
-			"    static const unsigned NUM_FIELDS = " + i2s(length(^(writer.field_index_table))) + ";",
-			"    static const unsigned NUM_GLOBALS = " + i2s(length(writer.global_vars)) + ";"
-		]
-	);
-
+	cpp2wrLines(h, [
+		"#" + "include \"core/NativeProgram.h\"",
+		"#" + "include \"core/RunnerMacros.h\"",
+		"",
+		"#" +  "include <limits>",
+		"",
+		"#pragma GCC diagnostic ignored \"-Wunused-parameter\"",
+		"",
+		"#ifndef FLOW_COMPACT_STRUCTS",
+		"#error Runner built without compact structs is not supported",
+		"#endif",
+		"",
+		"namespace flowgen_" + writer.config.entry + " {",
+		"    using namespace flowgen_common;",
+		"",
+		"    static const unsigned NUM_CODE_BYTES = " + i2s(length(bytes)) + ";",
+		"    static const unsigned NUM_FUNCTIONS = " + i2s(length(^(writer.function_table))) + ";",
+		"    static const unsigned NUM_STRUCTS = " + i2s(writer.num_structs) + ";",
+		"    static const unsigned NUM_STRUCT_DEFS = " + i2s(length(^(writer.structs_order))) + ";",
+		"    static const unsigned NUM_FIELDS = " + i2s(length(^(writer.field_index_table))) + ";",
+		"    static const unsigned NUM_GLOBALS = " + i2s(length(writer.global_vars)) + ";"
+	]);
 	if (length(writer.struct_counts) >= 1) {
 		rlistPush(h, "");
 		iter(enumFromTo(0, length(writer.struct_counts) - 1), \i ->
 			rlistPush(h, "    static const unsigned NUM_STRUCTS_" + i2s(i) + " = " + i2s(writer.struct_counts[i]) + ";")
-		)
+		);
 	}
-
-	cpp2wrLine(h, 
-		[
-			"",
-			"    class NativeProgramImpl : public NativeProgram {",
-			"    public:",
-			"        NativeProgramImpl() {}",
-			"",
-			"    protected:",
-			"        virtual const char *getByteCode(int *length);",
-			"        virtual void flowGCObject(GarbageCollectorFn fn);",
-			"        virtual void onRunMain();",
-			"",
-			"    public:",
-			"        StackSlot functions[NUM_FUNCTIONS];",
-			"        StackSlot globals[NUM_GLOBALS];",
-			"    };",
-			"",
-			"    extern const unsigned char bytecode_bytes[NUM_CODE_BYTES];",
-			"    extern const NativeProgram::FunctionSpec function_specs[NUM_FUNCTIONS];",
-			"    extern const NativeProgram::StructSpec struct_specs[NUM_STRUCT_DEFS];",
-			"    extern const char field_index_table[NUM_FIELDS][NUM_STRUCTS_1];",
-			"",
-			"    __attribute__((always_inline)) inline NativeProgramImpl *getSelf(ByteCodeRunner *runner) {",
-			"        return (NativeProgramImpl*)runner->getProgram();",
-			"    }",
-			"",
-			"#pragma pack(push, 4)"
-		]
-	);
-
+	cpp2wrLines(h, [
+		"",
+		"    class NativeProgramImpl : public NativeProgram {",
+		"    public:",
+		"        NativeProgramImpl() {}",
+		"",
+		"    protected:",
+		"        virtual const char *getByteCode(int *length);",
+		"        virtual void flowGCObject(GarbageCollectorFn fn);",
+		"        virtual void onRunMain();",
+		"",
+		"    public:",
+		"        StackSlot functions[NUM_FUNCTIONS];",
+		"        StackSlot globals[NUM_GLOBALS];",
+		"    };",
+		"",
+		"    extern const unsigned char bytecode_bytes[NUM_CODE_BYTES];",
+		"    extern const NativeProgram::FunctionSpec function_specs[NUM_FUNCTIONS];",
+		"    extern const NativeProgram::StructSpec struct_specs[NUM_STRUCT_DEFS];",
+		"    extern const char field_index_table[NUM_FIELDS][NUM_STRUCTS_1];",
+		"",
+		"    __attribute__((always_inline)) inline NativeProgramImpl *getSelf(ByteCodeRunner *runner) {",
+		"        return (NativeProgramImpl*)runner->getProgram();",
+		"    }",
+		"",
+		"#pragma pack(push, 4)"
+	]);
 	iter(^(writer.struct_code.hdr_lines), \l -> rlistPush(h, "    " + l));
-
-	cpp2wrLine(h, ["#pragma pack(pop)", ""]);
-
+	cpp2wrLines(h, ["#pragma pack(pop)", ""]);
 	iter(^(writer.method_names), \name -> rlistPush(h, "    DECLARE_NATIVE_METHOD(" + name + ")"));
-
 	rlistPush(h, "}");
-
-	cpp2wrLine(o, 
-		[
-			"",
-			"using namespace flowgen_" + writer.config.entry + ";",
-			"",
-			"NativeProgram *load_" + writer.config.entry + "() {",
-			"    return new NativeProgramImpl();",
-			"}",
-			"",
-			"const char *NativeProgramImpl::getByteCode(int *length) {",
-			"    *length = NUM_CODE_BYTES;",
-			"    return (const char*)bytecode_bytes;",
-			"}",
-			"",
-			"void NativeProgramImpl::flowGCObject(GarbageCollectorFn fn) {",
-			"    fn(globals, NUM_GLOBALS);",
-			"}",
-			"",
-			"void NativeProgramImpl::onRunMain() {",
-			"    RUNNER_VAR = getFlowRunner();",
-			"",
-			"    if (!InitStructTable(struct_specs, NUM_STRUCT_DEFS))",
-			"        return;",
-			"    if (!InitFunctionTable(functions, function_specs, NUM_FUNCTIONS))",
-			"        return;",
-			"",
-			"    memset(globals, 0, sizeof(globals));",
-			"    RUNNER->FreezeNativeFunctions(true);",
-			""
-		]
-	);
-
+	cpp2wrLines(o, [
+		"",
+		"using namespace flowgen_" + writer.config.entry + ";",
+		"",
+		"NativeProgram *load_" + writer.config.entry + "() {",
+		"    return new NativeProgramImpl();",
+		"}",
+		"",
+		"const char *NativeProgramImpl::getByteCode(int *length) {",
+		"    *length = NUM_CODE_BYTES;",
+		"    return (const char*)bytecode_bytes;",
+		"}",
+		"",
+		"void NativeProgramImpl::flowGCObject(GarbageCollectorFn fn) {",
+		"    fn(globals, NUM_GLOBALS);",
+		"}",
+		"",
+		"void NativeProgramImpl::onRunMain() {",
+		"    RUNNER_VAR = getFlowRunner();",
+		"",
+		"    if (!InitStructTable(struct_specs, NUM_STRUCT_DEFS))",
+		"        return;",
+		"    if (!InitFunctionTable(functions, function_specs, NUM_FUNCTIONS))",
+		"        return;",
+		"",
+		"    memset(globals, 0, sizeof(globals));",
+		"    RUNNER->FreezeNativeFunctions(true);",
+		""
+	]);
 	iter(enumFromTo(0, writer.init_count - 1), \i ->
-		cpp2wrLine(o, [
+		cpp2wrLines(o, [
 			"    aux_init" + i2s(i) + "(RUNNER, NULL);",
 			"    if (RUNNER->IsErrorReported()) return;"
 		])
 	);
-
-	cpp2wrLine(o, [
+	cpp2wrLines(o, [
 		"    fn_main(RUNNER, NULL);",
 		"}",
 		"",
 		"const unsigned char flowgen_" + writer.config.entry + "::bytecode_bytes[] = {"
 	]);
-
-	rlistPush(o, cpp2wrArray(length(bytes), 20, "    ", "    ", "", \i -> i2s(bytes[i])));
-
-	cpp2wrLine(o, 
-		[
-			"};",
-			"",
-			"const NativeProgram::FunctionSpec flowgen_" + writer.config.entry + "::function_specs[] = {"
-		]
+	cpp2wrArray(o, length(bytes), 20, \i -> i2s(bytes[i]));
+	cpp2wrLines(o, [
+		"};",
+		"",
+		"const NativeProgram::FunctionSpec flowgen_" + writer.config.entry + "::function_specs[] = {"
+	]);
+	cpp2wrArray(o, length(^(writer.function_table)), 1,
+		\i -> {
+			spec = ^(writer.function_table)[i];
+			"{ \"" + spec.name + "\", " +
+			(if (spec.native_name != "") {
+				"\"" + spec.native_name + "\"";
+			} else {
+				"NULL"
+			}) +
+			", " + i2s(spec.nargs) + ", " +
+			(if (spec.fn_name != "") {
+				"&" + spec.fn_name
+			} else {
+				"NULL"
+			})
+			+ " }";
+		}
 	);
-
-	function_specs = cpp2wrArray(length(^(writer.function_table)), 1, "    ", "    ", "", 
-			\i -> {
-				spec = ^(writer.function_table)[i];
-				"{ \"" + spec.name + "\", " +
-				(if (spec.native_name != "") {
-					"\"" + spec.native_name + "\"";
-				} else {
-					"NULL"
-				}) +
-				", " + i2s(spec.nargs) + ", " +
-				(if (spec.fn_name != "") {
-					"&" + spec.fn_name
-				} else {
-					"NULL"
-				})
-				+ " }";
-			}
-		);
-
-	if (function_specs != "") {
-		rlistPush(o, function_specs);
-	}
-
-	cpp2wrLine(o, 
-		[
-			"};",
-			"",
-			"static const char *const struct_field_names[] = {"
-		]
+	cpp2wrLines(o, [
+		"};",
+		"",
+		"static const char *const struct_field_names[] = {"
+	]);
+	cpp2wrArray(o, length(^(writer.struct_code.field_names)), 10,
+		\i -> "\"" + ^(writer.struct_code.field_names)[i] + "\""
 	);
-
-	struct_field_names = cpp2wrArray(length(^(writer.struct_code.field_names)), 10, "    ", "    ", "", 
-			\i -> "\"" + ^(writer.struct_code.field_names)[i] + "\""
-		);
-	if (struct_field_names != "") {
-		rlistPush(o, struct_field_names);
-	}
-
-	cpp2wrLine(o, 
-		[
-			"};",
-			"",
-			"static const int struct_field_types[] = {"
-		]
+	cpp2wrLines(o, [
+		"};",
+		"",
+		"static const int struct_field_types[] = {"
+	]);
+	cpp2wrArray(o, length(^(writer.struct_code.field_types)), 20,
+		\i -> i2s(^(writer.struct_code.field_types)[i])
 	);
-
-	struct_field_types = cpp2wrArray(length(^(writer.struct_code.field_types)), 20, "    ", "    ", "", 
-			\i -> i2s(^(writer.struct_code.field_types)[i])
-		);
-	if (struct_field_types != "") {
-		rlistPush(o, struct_field_types);
-	}
-
-	cpp2wrLine(o, 
-		[
-			"};",
-			"",
-			"static const FlowStructFieldDef struct_field_defs[] = {"
-		]
-	);
-
-	struct_field_defs = cpp2wrArray(length(^(writer.struct_code.def_lines)), 1, "    ", "    ", "", 
+	cpp2wrLines(o, [
+		"};",
+		"",
+		"static const FlowStructFieldDef struct_field_defs[] = {"
+	]);
+	cpp2wrArray(o, length(^(writer.struct_code.def_lines)), 1,
 			\i -> ^(writer.struct_code.def_lines)[i]
-		);
-	if (struct_field_defs != "") {
-		rlistPush(o, struct_field_defs)
-	}
-
-	cpp2wrLine(o, 
-		[
-			"};",
-			"",
-			"static const FlowStructFieldGCDef struct_field_gcdefs[] = {"
-		]
+	);
+	cpp2wrLines(o, [
+		"};",
+		"",
+		"static const FlowStructFieldGCDef struct_field_gcdefs[] = {"
+	]);
+	cpp2wrArray(o, length(^(writer.struct_code.gcdef_lines)), 1, 
+		\i -> ^(writer.struct_code.gcdef_lines)[i]
+	);
+	cpp2wrLines(o, [
+		"};",
+		"",
+		"const NativeProgram::StructSpec flowgen_" + writer.config.entry + "::struct_specs[] = {"
+	]);
+	cpp2wrArray(o, length(^(writer.structs_order)), 1,
+		\i ->{
+			s = ^(writer.structs_order)[i];
+			r = ^(writer.struct_code.info_refs)[i];
+			"{ " + i2s(length(s.args)) + ", " + i2s(s.compare_idx) + ", " +
+			i2s(r.name_sz) + ", " + i2s(r.name_addr) + ", " +
+			(if (length(s.args) > 0) "sizeof(FS_" + s.name + ")" else "4") + ", " +
+			i2s(r.empty_addr) + ", " + i2s(r.gcdef_cnt) + ", \"" + s.name +"\", " +
+			(if (r.fld_idx != cpp2_int_UNDEF) {
+				"&struct_field_names["     + i2s(r.fld_idx) +
+				"], &struct_field_types["  + i2s(r.type_idx) + 
+				"], &struct_field_defs["   + i2s(r.def_idx) +
+				"], &struct_field_gcdefs[" + i2s(r.gcdef_idx) + "]"
+			} else {
+				"NULL, NULL, NULL, NULL"
+			})
+			+ " }"
+		}
+	);
+	cpp2wrLines(o, [
+		"};",
+		"",
+		"const char flowgen_" + writer.config.entry + "::field_index_table[NUM_FIELDS][NUM_STRUCTS_1] = {"
+	]);
+	iteri(^(writer.field_index_table), \i, ln -> {
+			cpp2wrLines(o, [
+				"    // " + ^(writer.field_index_list)[i] + ":", 
+				"    { "
+			]);
+			cpp2wrArray(o, length(ln), 20, \j -> "(char)" + i2s(ln[j])); 
+			cpp2wrLines(o, ["    }" + (if (i + 1 == length(^(writer.field_index_table))) "" else ",")]);
+		}
 	);
 
-	struct_field_gcdefs = cpp2wrArray(length(^(writer.struct_code.gcdef_lines)), 1, "    ", "    ", "", 
-			\i -> ^(writer.struct_code.gcdef_lines)[i]
-		);
-	if (struct_field_gcdefs != "") {
-		rlistPush(o, struct_field_gcdefs);
-	}
-
-	cpp2wrLine(o, 
-		[
-			"};",
-			"",
-			"const NativeProgram::StructSpec flowgen_" + writer.config.entry + "::struct_specs[] = {"
-		]
-	);
-
-	struct_specs = cpp2wrArray(length(^(writer.structs_order)), 1, "    ", "    ", "", 
-			\i ->{
-				s = ^(writer.structs_order)[i];
-				r = ^(writer.struct_code.info_refs)[i];
-				"{ " + i2s(length(s.args)) + ", " + i2s(s.compare_idx) + ", " +
-				i2s(r.name_sz) + ", " + i2s(r.name_addr) + ", " +
-				(if (length(s.args) > 0) "sizeof(FS_" + s.name + ")" else "4") + ", " +
-				i2s(r.empty_addr) + ", " + i2s(r.gcdef_cnt) + ", \"" + s.name +"\", " +
-				(if (r.fld_idx != cpp2_int_UNDEF) {
-					"&struct_field_names["     + i2s(r.fld_idx) +
-					"], &struct_field_types["  + i2s(r.type_idx) + 
-					"], &struct_field_defs["   + i2s(r.def_idx) +
-					"], &struct_field_gcdefs[" + i2s(r.gcdef_idx) + "]"
-				} else {
-					"NULL, NULL, NULL, NULL"
-				})
-				+ " }"
-			}
-		);
-	if (struct_specs != "") {
-		rlistPush(o, struct_specs);
-	}
-
-	cpp2wrLine(o, 
-		[
-			"};",
-			"",
-			"const char flowgen_" + writer.config.entry + "::field_index_table[NUM_FIELDS][NUM_STRUCTS_1] = {"
-		]
-	);
-
-	field_index_table = cpp2wrArray(length(^(writer.field_index_table)), 1, "    ", "    ", "", 
-			\i -> {
-				ln = ^(writer.field_index_table)[i];
-				"// " + ^(writer.field_index_list)[i] + ":\n    { " +
-				cpp2wrArray(length(ln), 20, "", "      ", " ", 
-					\j -> "(char)" + i2s(ln[j])
-				) + "}"
-			}
-		);
-	if (field_index_table != "") {
-		rlistPush(o, field_index_table);
-	}
-
-	cpp2wrLine(o, ["};"]);
-
-	cpp2wrLine(h, 
-		[
+	rlistPush(o, "};");
+	cpp2wrLines(h, [
 			"",
 			"#define CHECK_ERROR(cmd) \\",
 			"    cmd; \\",
@@ -849,8 +775,7 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 			"        RUNNER->ReportFieldNameError(slot, name, func); \\",
 			"        RETVOID; \\",
 			"    }"
-		]
-	);
+	]);
 	if (writer.config.verbose > 0) {
 		fcPrintln("writing gen_common.h and gen_tables.cpp", writer.config.threadId)
 	}
@@ -862,7 +787,7 @@ cpp2WriterCompileGlobalFn(writer : Cpp2Writer, name : string, body : FiLambda) -
 	writer.cur_global ::= name;
 	writer.next_closure_id ::= 1;
 
-	fcPrintln("compiling global Fn: '" + name + "'", writer.config.threadId);
+	//fcPrintln("compiling global Fn: '" + name + "'", writer.config.threadId);
 
 	cpp2WriterCompileLambda(writer, name, cpp2_int_UNDEF, body, None());
 	{}
@@ -870,7 +795,7 @@ cpp2WriterCompileGlobalFn(writer : Cpp2Writer, name : string, body : FiLambda) -
 
 cpp2WriterCompileLambda(writer : Cpp2Writer, name : string, idx : int, lambda : FiLambda, upenv : Maybe<Cpp2Environment>) -> Cpp2Environment {
 
-	fcPrintln("compiling lambda: '" + name + "' idx: " + i2s(idx), writer.config.threadId);
+	//fcPrintln("compiling lambda: '" + name + "' idx: " + i2s(idx), writer.config.threadId);
 
 	atypes = switch (lambda.type) {
 		FiTypeFunction(arg_types, ret_type): arg_types;
@@ -936,10 +861,10 @@ cpp2WriterCompileLambda(writer : Cpp2Writer, name : string, idx : int, lambda : 
 
 cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> void {
 
-	fcPrintln("compiling expr: " + prettyFiExp(dummyPretty, code), writer.config.threadId);
-	if (prettyFiExp(dummyPretty, code) == "\"cpp2outputFile\"") {
-		println(code);
-	}
+	//fcPrintln("compiling expr: " + prettyFiExp(dummyPretty, code), writer.config.threadId);
+	//if (prettyFiExp(dummyPretty, code) == "\"cpp2outputFile\"") {
+	//	println(code);
+	//}
 
 	output = \expr, tag -> {
 		cpp2WriterEmitValue(ctx, out, expr, tag, false, false, false); {}
@@ -1054,12 +979,13 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 						loc.struct_id ::= structDef.id;
 						fori(0, length(c.argNames) - 1, 
 							\i -> {
+								def0 = cpp2PlaceInfo(Some(ctx.env), Cpp2FieldAlias(vexpr, structDef), i, c.argNames[i]);
 								def = if (structDef.args[i].is_mutable) {
 									def1 = cpp2EnvironmentMklocal(subctx.env, c.argNames[i]);
-									cpp2ContextWr(ctx, cpp2PlaceInfoGetLValue(def1) + " = " + cpp2PlaceInfoGetRValue(def1, subctx));
+									cpp2ContextWrSemi(ctx, cpp2PlaceInfoGetLValue(def1) + " = " + cpp2PlaceInfoGetRValue(def0, subctx));
 									def1;
 								} else {
-									cpp2PlaceInfo(Some(ctx.env), Cpp2FieldAlias(vexpr, structDef), i, c.argNames[i])
+									def0;
 								};
 								(def.meta).dirty ::= true;
 								(def.meta).type ::= structDef.args[i].type;
@@ -1093,14 +1019,14 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 			}
 		}
 		FiCast(value, fromtype, totype, type, __): {
-			ref = fetch_ref(value, false);
-			rexpr = cpp2PlaceInfoGetRValue(ref, ctx);
+			aref = fetch_ref(value, false);
+			rexpr = cpp2PlaceInfoGetRValue(aref, ctx);
 			switch (fromtype) {
 				FiTypeInt(): {
-					cpp2WriterVerifyTag(ref, Cpp2TInt(), ctx);
+					cpp2WriterVerifyTag(aref, Cpp2TInt(), ctx);
 					switch (totype) {
 						FiTypeInt(): {
-							cpp2WriterCopyValue(ctx, out, ref);
+							cpp2WriterCopyValue(ctx, out, aref);
 							{}
 						}
 						FiTypeDouble(): {
@@ -1118,12 +1044,12 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 				FiTypeDouble(): {
 					switch (totype) {
 						FiTypeInt(): {
-							cpp2WriterVerifyTag(ref, Cpp2TDouble(), ctx);
+							cpp2WriterVerifyTag(aref, Cpp2TDouble(), ctx);
 							output("StackSlot::MakeInt(" + rexpr + ".GetDouble())", Cpp2TInt());
 						}
 						FiTypeDouble(): {
-							cpp2WriterVerifyTag(ref, Cpp2TDouble(), ctx);
-							cpp2WriterCopyValue(ctx, out, ref);
+							cpp2WriterVerifyTag(aref, Cpp2TDouble(), ctx);
+							cpp2WriterCopyValue(ctx, out, aref);
 							{}
 						}
 						FiTypeString(): {
@@ -1138,7 +1064,7 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 				FiTypeName(n1, __): {
 					switch (totype) {
 						FiTypeName(n2, __): {
-							cpp2WriterCopyValue(ctx, out, ref);
+							cpp2WriterCopyValue(ctx, out, aref);
 							{}
 						}
 						default: {
@@ -1147,7 +1073,7 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 					}
 				}
 				/*TBoundTyvar(__): {
-					cpp2WriterCopyValue(ctx, out, ref);
+					cpp2WriterCopyValue(ctx, out, aref);
 				}*/
 				FiTypeArray(fa): {
 					switch (totype) {
@@ -1157,7 +1083,7 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 									switch (ta) {
 										// Array of named types are OK 
 										FiTypeName(n2, __): {
-											cpp2WriterCopyValue(ctx, out, ref);
+											cpp2WriterCopyValue(ctx, out, aref);
 											{}
 										}
 										default: {
@@ -1175,11 +1101,11 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 					}
 				}
 				FiTypeFlow(): {
-					cpp2WriterCopyValue(ctx, out, ref);
+					cpp2WriterCopyValue(ctx, out, aref);
 					{}
 				}
 				FiTypeParameter(__): {
-					cpp2WriterCopyValue(ctx, out, ref);
+					cpp2WriterCopyValue(ctx, out, aref);
 					{}
 				}
 				default: {
@@ -1231,8 +1157,8 @@ cpp2WriterCompileCallPrim(writer : Cpp2Writer, code : FiCallPrim, ctx : Cpp2Cont
 			{}
 		}
 		FcRefPrim(): {
-			ref = fetch_ref(code.es[0], true);
-			cpp2WriterEmitValue(ctx, out, "RUNNER->AllocateRef(" + cpp2PlaceInfoGetLValue(ref) + ")", Cpp2TRefTo(), false, true, true);
+			aref = fetch_ref(code.es[0], true);
+			cpp2WriterEmitValue(ctx, out, "RUNNER->AllocateRef(" + cpp2PlaceInfoGetLValue(aref) + ")", Cpp2TRefTo(), false, true, true);
 			{}
 		}
 		FcIndexPrim(): {
@@ -1244,17 +1170,17 @@ cpp2WriterCompileCallPrim(writer : Cpp2Writer, code : FiCallPrim, ctx : Cpp2Cont
 			{}
 		}
 		FcDerefPrim(): {
-			ref = fetch_ref(code.es[0], false);
-			cpp2WriterVerifyTag(ref, Cpp2TRefTo(), ctx);
-			output("RUNNER->GetRefTarget(" + cpp2PlaceInfoGetRValue(ref, ctx) + ")", Cpp2TNull());
+			aref = fetch_ref(code.es[0], false);
+			cpp2WriterVerifyTag(aref, Cpp2TRefTo(), ctx);
+			output("RUNNER->GetRefTarget(" + cpp2PlaceInfoGetRValue(aref, ctx) + ")", Cpp2TNull());
 			{}
 		}
 		FcAssignPrim(): {
-			ref = fetch_ref(code.es[0], false);
+			aref = fetch_ref(code.es[0], false);
 			value = fetch_ref(code.es[1], false);
-			cpp2WriterVerifyTag(ref, Cpp2TRefTo(), ctx);
-			//output("RUNNER->SetRefTarget(" + cpp2PlaceInfoGetRValue(ref, ctx) + "," + cpp2PlaceInfoGetRValue(value, ctx) + ");");
-			cpp2ContextWrSemi(ctx, "RUNNER->SetRefTarget(" + cpp2PlaceInfoGetRValue(ref, ctx) + "," + cpp2PlaceInfoGetRValue(value, ctx) + ")");
+			cpp2WriterVerifyTag(aref, Cpp2TRefTo(), ctx);
+			//output("RUNNER->SetRefTarget(" + cpp2PlaceInfoGetRValue(aref, ctx) + "," + cpp2PlaceInfoGetRValue(value, ctx) + ");");
+			cpp2ContextWrSemi(ctx, "RUNNER->SetRefTarget(" + cpp2PlaceInfoGetRValue(aref, ctx) + "," + cpp2PlaceInfoGetRValue(value, ctx) + ")");
 			cpp2WriterCopyValue(ctx, out, value);
 			{}
 		}
@@ -1269,57 +1195,57 @@ cpp2WriterCompileCallPrim(writer : Cpp2Writer, code : FiCallPrim, ctx : Cpp2Cont
 			{}
 		}
 		FcFieldPrim(name): {
-			ref = fetch_ref(code.es[0], false);
-			sref = cpp2PlaceInfoGetRValue(ref, ctx);
+			aref = fetch_ref(code.es[0], false);
+			sref = cpp2PlaceInfoGetRValue(aref, ctx);
 			if (name == "structname") {
-				cpp2WriterVerifyStruct(ref, 0, ctx);
+				cpp2WriterVerifyStruct(aref, 0, ctx);
 				specs = "struct_specs[" + sref + ".GetStructId()]";
 				output("StackSlot::InternalMakeString(MakeFlowPtr(" + 
 					specs + ".name_addr)," + specs + ".name_size,false)", Cpp2TString());
 			} else {
-				v = cpp2WriterFieldSetInfo(writer, code.es[0], ref, name);
+				v = cpp2WriterFieldSetInfo(writer, code.es[0], aref, name);
 				if (v.stype != cpp2_int_UNDEF) {
 					info = writer.struct_list[v.stype];
-					cpp2WriterVerifyStructId(writer, ref, v.stype, ctx);
+					cpp2WriterVerifyStructId(writer, aref, v.stype, ctx);
 					at = info.atypes[v.index];
 					switch (out) {
 						Cpp2OutputScalar(sname, tag): {
 							if (tag == at) {
-								rf = cpp2ContextGetStructField(ctx, ref, ^(writer.structs_order)[v.stype].name, name, Cpp2TNull());
+								rf = cpp2ContextGetStructField(ctx, aref, ^(writer.structs_order)[v.stype].name, name, Cpp2TNull());
 								cpp2ContextWrSemi(ctx, sname + " = " + rf);
 							} else {
-								output(cpp2ContextGetStructField(ctx, ref, ^(writer.structs_order)[v.stype].name, name, at), at);
+								output(cpp2ContextGetStructField(ctx, aref, ^(writer.structs_order)[v.stype].name, name, at), at);
 							}
 						}
 						default: { 
-							output(cpp2ContextGetStructField(ctx, ref, ^(writer.structs_order)[v.stype].name, name, at), at);
+							output(cpp2ContextGetStructField(ctx, aref, ^(writer.structs_order)[v.stype].name, name, at), at);
 						}
 					}
 				} else if (v.index != cpp2_int_UNDEF && v.index >= 0) {
-					cpp2WriterVerifyStruct(ref, v.minsize, ctx);
+					cpp2WriterVerifyStruct(aref, v.minsize, ctx);
 					output("RUNNER->GetStructSlot(" + sref + "," + i2s(v.index) + "/*" + name + "*/)", Cpp2TNull());
 				} else {
 					// Dynamic lookup
-					i= cpp2WriterFindFieldIndex(writer, ref, name, ctx);
+					i= cpp2WriterFindFieldIndex(writer, aref, name, ctx);
 					output("RUNNER->GetStructSlot(" + sref + "," + i+ ")", Cpp2TNull());
 				}
 			}
 			{}
 		}
 		FcSetMutablePrim(name): {
-			ref = fetch_ref(code.es[0], false);
+			aref = fetch_ref(code.es[0], false);
 			val = fetch_ref(code.es[1], false);
-			sref = cpp2PlaceInfoGetRValue(ref, ctx);
+			sref = cpp2PlaceInfoGetRValue(aref, ctx);
 			if (name != "structname") {
-				v = cpp2WriterFieldSetInfo(writer, code.es[0], ref, name);
+				v = cpp2WriterFieldSetInfo(writer, code.es[0], aref, name);
 				if (v.stype != cpp2_int_UNDEF) {
 					info = writer.struct_list[v.stype];
-					cpp2WriterVerifyStructId(writer, ref, v.stype, ctx);
+					cpp2WriterVerifyStructId(writer, aref, v.stype, ctx);
 					at = info.atypes[v.index];
 					if (at != Cpp2TNull()) {
 						cpp2WriterVerifyTag(val, at, ctx); {}
 					}
-					ptr = cpp2ContextGetStructPtr(ctx, ref, ^(writer.structs_order)[v.stype].name, true);
+					ptr = cpp2ContextGetStructPtr(ctx, aref, ^(writer.structs_order)[v.stype].name, true);
 					if (!cpp2IsNonGCFieldType(at)) {
 						cpp2ContextWrSemi(ctx, "RUNNER->RegisterWrite(&" + ptr + "->hdr)");
 					}
@@ -1330,11 +1256,11 @@ cpp2WriterCompileCallPrim(writer : Cpp2Writer, code : FiCallPrim, ctx : Cpp2Cont
 							"(" + ptr + "->fl_" + name + "," + cpp2PlaceInfoGetRValue(val, ctx) + ")");
 					}
 				} else if (v.index != cpp2_int_UNDEF && v.index >= 0) {
-					cpp2WriterVerifyStruct(ref, v.minsize, ctx);
+					cpp2WriterVerifyStruct(aref, v.minsize, ctx);
 					cpp2ContextWrCheck(ctx, "RUNNER->SetStructSlot(" + sref + "," + i2s(v.index) + "/*" + name + "*/," + cpp2PlaceInfoGetRValue(val, ctx) + ")", false);
 				} else {
 					// Dynamic lookup
-					i= cpp2WriterFindFieldIndex(writer, ref, name, ctx);
+					i= cpp2WriterFindFieldIndex(writer, aref, name, ctx);
 					cpp2ContextWrCheck(ctx, "RUNNER->SetStructSlot(" + sref + "," + i+ "," + cpp2PlaceInfoGetRValue(val, ctx) + ")", false);
 				}
 			}
@@ -1443,9 +1369,6 @@ cpp2WriterEmitComparisonExpr(writer : Cpp2Writer, op : string, expr1 : FiExp, ex
 	if (type == Cpp2TInt() || type == Cpp2TDouble()) {
 		val1 = cpp2WriterEmitNumericExpr(writer, expr1, ctx, top2, type);
 		val2 = cpp2WriterEmitNumericExpr(writer, expr2, ctx, top2, type);
-		
-		println("val1 = " + val1);
-		
 		cpp2ContextTempvar(ctx, "btmp", Cpp2TBool(), val1 + op + val2);
 	} else if (type == Cpp2TBool() && (op == "==" || op == "!=")) {
 		val1 = cpp2WriterEmitConditionExpr(writer, expr1, ctx, top2);
@@ -1514,7 +1437,7 @@ cpp2WriterEmitNumericExpr(writer : Cpp2Writer, expr : FiExp, ctx : Cpp2Context, 
 						 simple_binary(es[0], es[1], "%");
 					}
 				}
-				FcNegPrim(): "(-" + cpp2WriterEmitNumericExpr(writer, es[0], ctx, top, tag) + ")"
+				FcNegPrim(): "(-" + cpp2WriterEmitNumericExpr(writer, es[0], ctx, top, tag) + ")";
 				default: {
 					cpp2WriterFetchToScalar(writer, expr, ctx, top, tag);
 				}
@@ -1702,7 +1625,7 @@ cpp2WriterEmitPrimitiveWrap(writer : Cpp2Writer, expr : FiExp, ctx : Cpp2Context
 }
 
 cpp2WriterAssignExpr(plv : string, expr : string, call : bool) -> string { // ?call : Bool = false
-	if (startsWith(expr, cpp2_STACKSLOT_MAKE)) {
+	if (startsWith(expr, "StackSlot::Make")) {
 		i = strIndexOf(expr, "(");
 		"StackSlot::Set" + 
 		substring(expr, 15, i-15) +
@@ -1828,46 +1751,46 @@ cpp2WriterCopyValue(ctx : Cpp2Context, out : Cpp2OutputLocation, inv: Cpp2PlaceI
 cpp2WriterGetValueRef(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context, lvalue : bool) -> Maybe<Cpp2PlaceInfo> { //?lvalue : Bool = false
 	switch (code) {
 		FiVar(n, type, __): {
-			ref = cpp2WriterResolveName(writer, ctx, n);
-			if (lvalue && !cpp2PlaceInfoIsLValue(ref)) {
+			aref = cpp2WriterResolveName(writer, ctx, n);
+			if (lvalue && !cpp2PlaceInfoIsLValue(aref)) {
 				None()
 			} else {
-				if (cpp2PlaceInfoIsStub(ref)) {
-					cpp2WriterReifyStub(writer, ref, code);
+				if (cpp2PlaceInfoIsStub(aref)) {
+					cpp2WriterReifyStub(writer, aref, code);
 				}
-				Some(ref);
+				Some(aref);
 			}
 		}
 		default: None();
 	}
 }
 
-cpp2WriterVerifyTag(ref : Cpp2PlaceInfo, tag : Cpp2TagType, ctx : Cpp2Context) -> bool {
-	if (ref.meta.tag == tag) true else {
+cpp2WriterVerifyTag(aref : Cpp2PlaceInfo, tag : Cpp2TagType, ctx : Cpp2Context) -> bool {
+	if (aref.meta.tag == tag) true else {
 		tstr = cpp2TagToString(tag);
-		if (ref.meta.tag != Cpp2TNull()) {
-			cpp2_error("Cannot verify tag " + tstr + " - already " + cpp2TagToString(ref.meta.tag));
+		if (aref.meta.tag != Cpp2TNull()) {
+			cpp2_error("Cannot verify tag " + tstr + " - already " + cpp2TagToString(aref.meta.tag));
 		}
 		cpp2ContextWr(ctx, 
 			"CHECK_TAG(" + tstr + 
-			"," + cpp2PlaceInfoGetRValue(ref, ctx) + ",\"" + ctx.env.vname + "\");"
+			"," + cpp2PlaceInfoGetRValue(aref, ctx) + ",\"" + ctx.env.vname + "\");"
 		);
-		lm = cpp2ContextLocalMeta(ctx, ref);
+		lm = cpp2ContextLocalMeta(ctx, aref);
 		lm.tag ::= tag;
 		false
 	}
 }
 
-cpp2WriterVerifyStruct(ref : Cpp2PlaceInfo, size : int, ctx : Cpp2Context) -> bool {
-	if (ref.meta.tag == Cpp2TStruct() && ref.meta.struct_size >= size) true else {
-		if (ref.meta.tag != Cpp2TNull() && ref.meta.tag != Cpp2TStruct()) {
-			cpp2_error("Cannot verify struct - already " + cpp2TagToString(ref.meta.tag));
+cpp2WriterVerifyStruct(aref : Cpp2PlaceInfo, size : int, ctx : Cpp2Context) -> bool {
+	if (aref.meta.tag == Cpp2TStruct() && aref.meta.struct_size >= size) true else {
+		if (aref.meta.tag != Cpp2TNull() && aref.meta.tag != Cpp2TStruct()) {
+			cpp2_error("Cannot verify struct - already " + cpp2TagToString(aref.meta.tag));
 		} else {
 			cpp2ContextWr(ctx, 
-				"CHECK_STRUCT(" + cpp2PlaceInfoGetRValue(ref, ctx) + 
+				"CHECK_STRUCT(" + cpp2PlaceInfoGetRValue(aref, ctx) + 
 				"," + i2s(size) + ",\"" + ctx.env.vname + "\");"
 			);
-			lm = cpp2ContextLocalMeta(ctx, ref);
+			lm = cpp2ContextLocalMeta(ctx, aref);
 			lm.tag ::= Cpp2TStruct();
 			lm.struct_size ::= size;
 		}
@@ -1875,16 +1798,16 @@ cpp2WriterVerifyStruct(ref : Cpp2PlaceInfo, size : int, ctx : Cpp2Context) -> bo
 	}
 }
 
-cpp2WriterVerifyStructId(writer : Cpp2Writer, ref : Cpp2PlaceInfo, id : int, ctx : Cpp2Context) -> bool {
-	if (ref.meta.tag == Cpp2TStruct() && ref.meta.struct_id == id) true else {
-		if (ref.meta.tag != Cpp2TNull() && ref.meta.tag != Cpp2TStruct()) {
-			cpp2_error("Cannot verify struct - already " + cpp2TagToString(ref.meta.tag));
+cpp2WriterVerifyStructId(writer : Cpp2Writer, aref : Cpp2PlaceInfo, id : int, ctx : Cpp2Context) -> bool {
+	if (aref.meta.tag == Cpp2TStruct() && aref.meta.struct_id == id) true else {
+		if (aref.meta.tag != Cpp2TNull() && aref.meta.tag != Cpp2TStruct()) {
+			cpp2_error("Cannot verify struct - already " + cpp2TagToString(aref.meta.tag));
 		} else {
 			cpp2ContextWr(ctx, 
-				"CHECK_STRUCT_TYPE(" + cpp2PlaceInfoGetRValue(ref, ctx) 
+				"CHECK_STRUCT_TYPE(" + cpp2PlaceInfoGetRValue(aref, ctx) 
 				+ "," + i2s(id) + ",\"" + ctx.env.vname + "\");"
 			);
-			lm = cpp2ContextLocalMeta(ctx, ref);
+			lm = cpp2ContextLocalMeta(ctx, aref);
 			lm.tag ::= Cpp2TStruct();
 			lm.struct_size ::= length(writer.struct_list[id].args);
 			lm.struct_id ::= id;
@@ -1893,30 +1816,30 @@ cpp2WriterVerifyStructId(writer : Cpp2Writer, ref : Cpp2PlaceInfo, id : int, ctx
 	}
 }
 
-cpp2WriterFindFieldIndex(writer : Cpp2Writer, ref : Cpp2PlaceInfo, name : string, ctx : Cpp2Context) -> string {
-	cpp2WriterVerifyStruct(ref, 1, ctx);
-	ivar = "fidx_" + i2s(ref.uid) + "_" + name;
-	if (!contains(ref.meta.known_fields, name)) {
+cpp2WriterFindFieldIndex(writer : Cpp2Writer, aref : Cpp2PlaceInfo, name : string, ctx : Cpp2Context) -> string {
+	cpp2WriterVerifyStruct(aref, 1, ctx);
+	ivar = "fidx_" + i2s(aref.uid) + "_" + name;
+	if (!contains(aref.meta.known_fields, name)) {
 		cpp2ContextRegisterIdxVar(ctx, ivar, "int");
 
 		fidx = cpp2WriterGetFieldLookupId(writer, name);
 		cpp2ContextWr(ctx, 
-			"FIND_STRUCT_FIELD(" + ivar+ "," + cpp2PlaceInfoGetRValue(ref, ctx) + "," + i2s(fidx) + 
+			"FIND_STRUCT_FIELD(" + ivar+ "," + cpp2PlaceInfoGetRValue(aref, ctx) + "," + i2s(fidx) + 
 			",\"" + name + "\",\"" + ctx.env.vname + "\");");
 
-		lm = cpp2ContextLocalMeta(ctx, ref);
+		lm = cpp2ContextLocalMeta(ctx, aref);
 		lm.known_fields ::= concat(lm.known_fields, [name]);
 	}
 	ivar
 }
 
-cpp2WriterGetAddrPair(ref : Cpp2PlaceInfo, tag : Cpp2TagType, ctx : Cpp2Context) -> string {
-	cpp2WriterVerifyTag(ref, tag, ctx);
-	lv = cpp2PlaceInfoGetRawField(ref, ctx, tag);
+cpp2WriterGetAddrPair(aref : Cpp2PlaceInfo, tag : Cpp2TagType, ctx : Cpp2Context) -> string {
+	cpp2WriterVerifyTag(aref, tag, ctx);
+	lv = cpp2PlaceInfoGetRawField(aref, ctx, tag);
 	if (lv != "") {
 		lv + ".addr," + lv + ".size";
 	} else {
-		lrv = cpp2PlaceInfoGetRValue(ref, ctx);
+		lrv = cpp2PlaceInfoGetRValue(aref, ctx);
 		lrv + ".PtrValue," + lrv + ".IntValue2";
 	}
 }
@@ -1998,12 +1921,12 @@ cpp2WriterResolveName(writer : Cpp2Writer, ctx : Cpp2Context, name : string) -> 
 	}
 }
 
-cpp2WriterReifyStub(writer : Cpp2Writer, ref : Cpp2PlaceInfo, code : FiExp) -> void {
-	switch (ref.place) {
+cpp2WriterReifyStub(writer : Cpp2Writer, aref : Cpp2PlaceInfo, code : FiExp) -> void {
+	switch (aref.place) {
 		Cpp2GlobalFunction(nargs, native): {
-			ref.slot ::= length(^(writer.function_table));
+			aref.slot ::= length(^(writer.function_table));
 			refArrayPush(writer.function_table,
-				Cpp2FunctionDescr(ref.name, "", nargs, cpp2FnMethodName(ref.name))
+				Cpp2FunctionDescr(aref.name, "", nargs, cpp2FnMethodName(aref.name))
 			);
 		}
 		Cpp2Struct(info): {
@@ -2186,7 +2109,7 @@ cpp2WriterEvalToTmp(writer : Cpp2Writer, arg : FiExp, ctx : Cpp2Context, top : C
 
 cpp2WriterFetchToRef(writer : Cpp2Writer, arg : FiExp, ctx : Cpp2Context, top : Cpp2StackTop, lvalue : bool, out : Cpp2OutputLocation) -> Cpp2PlaceInfo { // ?out : Null<CppOutputLocation> = null	
 	switch (cpp2WriterGetValueRef(writer, arg, ctx, lvalue)) {
-		Some(ref): ref;
+		Some(aref): aref;
 		None(): cpp2WriterEvalToTmp(writer, arg, ctx, top, out);
 	}
 }
@@ -2203,9 +2126,9 @@ Cpp2FieldInfo(
 	stype : int
 );
 
-cpp2WriterFieldSetInfo(writer : Cpp2Writer, call : FiExp, ref : Cpp2PlaceInfo, name : string) -> Cpp2FieldInfo {
-	if (ref.meta.struct_id != cpp2_int_UNDEF && ref.meta.struct_id != -1) {
-		info = ^(writer.structs_order)[ref.meta.struct_id];
+cpp2WriterFieldSetInfo(writer : Cpp2Writer, call : FiExp, aref : Cpp2PlaceInfo, name : string) -> Cpp2FieldInfo {
+	if (aref.meta.struct_id != cpp2_int_UNDEF && aref.meta.struct_id != -1) {
+		info = ^(writer.structs_order)[aref.meta.struct_id];
 		index = switch (findi(info.args, \arg -> arg.name == name)) {
 			Some(i): i; 
 			None(): {
@@ -2213,7 +2136,7 @@ cpp2WriterFieldSetInfo(writer : Cpp2Writer, call : FiExp, ref : Cpp2PlaceInfo, n
 				cpp2_int_UNDEF
 			}
 		}
-		Cpp2FieldInfo(index, length(info.args), ref.meta.struct_id)
+		Cpp2FieldInfo(index, length(info.args), aref.meta.struct_id)
 	} else {
 		field_type = fiExpType(call);
 		switch (field_type ) {
@@ -2226,28 +2149,29 @@ cpp2WriterFieldSetInfo(writer : Cpp2Writer, call : FiExp, ref : Cpp2PlaceInfo, n
 						Cpp2FieldInfo(index, minsize, stype)
 					}
 					None(): {
-						switch (lookupTree(writer.program.names.unions, type_name)) {
-							Some(uinon): {
-								fold(uinon.typenames, Cpp2FieldInfo(cpp2_int_UNDEF, cpp2_int_UNDEF, cpp2_int_UNDEF),
-									\acc, tn -> {
-										new_index = cpp2WriterFieldIndex(writer, tn, name); 
-										if (acc.index != cpp2_int_UNDEF && new_index != acc.index) {
-											cpp2_error("field has different indexes in union");
-										}
+						if (containsKeyTree(writer.program.names.unions, type_name)) {
+							fold(fiUnion2typenames(writer.program, type_name), Pair(Cpp2FieldInfo(cpp2_int_UNDEF, cpp2_int_UNDEF, cpp2_int_UNDEF), true),
+								\acc, tn -> {
+									if (!acc.second) acc else {
 										new_minsize = cpp2WriterStructTypeSize(writer, tn);
-										new_stype = if (acc.stype == cpp2_int_UNDEF) cpp2WriterStructTypeId(writer, tn) else acc.stype;
-										Cpp2FieldInfo(
-											new_index, 
-											if (acc.minsize < new_minsize) new_minsize else acc.minsize, 
-											new_stype
-										)
+										new_stype = if (acc.first.stype == cpp2_int_UNDEF) cpp2WriterStructTypeId(writer, tn) else acc.first.stype;
+										new_index = cpp2WriterFieldIndex(writer, tn, name); 
+										ok = (acc.first.index == cpp2_int_UNDEF || new_index == acc.first.index);
+										Pair(
+											if (!ok) Cpp2FieldInfo(cpp2_int_UNDEF, cpp2_int_UNDEF, cpp2_int_UNDEF) else 
+												Cpp2FieldInfo(
+													new_index, 
+													if (acc.first.minsize < new_minsize) new_minsize else acc.first.minsize, 
+													new_stype
+												)
+											, ok
+										);
 									}
-								)
-							}
-							None(): {
-								cpp2_error("must be a struct or union");
-								Cpp2FieldInfo(cpp2_int_UNDEF, cpp2_int_UNDEF, cpp2_int_UNDEF)
-							}
+								}
+							).first
+						} else {
+							cpp2_error("must be a struct or union");
+							Cpp2FieldInfo(cpp2_int_UNDEF, cpp2_int_UNDEF, cpp2_int_UNDEF)
 						}
 					}
 				}
@@ -2297,12 +2221,12 @@ cpp2WriterCompileConstructor(writer : Cpp2Writer, args : [FiExp], ctx : Cpp2Cont
 		fast = foldi(refs, true, \i, acc, mref -> {
 				if (!acc) acc else {
 					switch (mref) {
-						Some(ref): {
-							if (cpp2PlaceInfoIsLValue(ref)) {
+						Some(aref): {
+							if (cpp2PlaceInfoIsLValue(aref)) {
 								if (i == 0) true else {
 									switch (refs[i - 1]) {
 										Some(ref1): {
-											ref.place == ref1.place && ref.slot == ref.slot + 1
+											aref.place == ref1.place && aref.slot == aref.slot + 1
 										}
 										None(): false;
 									}
@@ -2318,8 +2242,8 @@ cpp2WriterCompileConstructor(writer : Cpp2Writer, args : [FiExp], ctx : Cpp2Cont
 		);
 		if (fast) {
 			switch (refs[0]) {
-				Some(ref): {
-					place = cpp2PlaceInfoGetLValue(ref);
+				Some(aref): {
+					place = cpp2PlaceInfoGetLValue(aref);
 					cpp2WriterEmitValue(ctx, out, expr_cb(csize, "&" + place), tag, false, true, true)
 				}
 				None(): {
@@ -2393,11 +2317,11 @@ cpp2WriterCompileNewStruct(writer : Cpp2Writer, info : Cpp2StructInfo, args : [F
 						refArrayPush(rrefs, None());
 						refArrayPush(rvals, Some(cpp2WriterEmitConditionExpr(writer, args[i], ctx, top)));
 					} else {
-						ref = cpp2WriterFetchToRef(writer, args[i], ctx, top, false, Cpp2OutputNull());
-						refArrayPush(rrefs, Some(ref));
+						aref = cpp2WriterFetchToRef(writer, args[i], ctx, top, false, Cpp2OutputNull());
+						refArrayPush(rrefs, Some(aref));
 						refArrayPush(rvals, None());
 						if (info.atypes[i] != Cpp2TNull()) {
-							cpp2WriterVerifyTag(ref, info.atypes[i], ctx);
+							cpp2WriterVerifyTag(aref, info.atypes[i], ctx);
 							{}
 						}
 					}
@@ -2428,20 +2352,20 @@ cpp2WriterCompileNewStruct(writer : Cpp2Writer, info : Cpp2StructInfo, args : [F
 							cpp2ContextWrSemi(ctx, fname + " = " + val);
 						None(): {
 							switch (refs[i]) {
-								Some(ref): {
+								Some(aref): {
 									if (info.atypes[i] == Cpp2TStruct()) {
-										cpp2ContextWrSemi(ctx, fname + " = " + cpp2PlaceInfoGetStructAddr(ref, ctx));
+										cpp2ContextWrSemi(ctx, fname + " = " + cpp2PlaceInfoGetStructAddr(aref, ctx));
 									} else {
-										switch (ref.place) {
+										switch (aref.place) {
 											Cpp2FieldAlias(where, sinfo): {
-												if (sinfo.atypes[ref.slot] == info.atypes[i]) {
-													cpp2ContextWrSemi(ctx, fname + " = " + cpp2ContextGetStructPtr(ctx, where, sinfo.struct_name, true) + "->fl_" + sinfo.args[ref.slot].name);
+												if (sinfo.atypes[aref.slot] == info.atypes[i]) {
+													cpp2ContextWrSemi(ctx, fname + " = " + cpp2ContextGetStructPtr(ctx, where, sinfo.struct_name, true) + "->fl_" + sinfo.args[aref.slot].name);
 												} else {
-													cpp2ContextWrSemi(ctx, "flow_struct::set_" + cpp2StructFieldCode(info.atypes[i]) + "(" + fname + "," + cpp2PlaceInfoGetRValue(ref, ctx) + ")");
+													cpp2ContextWrSemi(ctx, "flow_struct::set_" + cpp2StructFieldCode(info.atypes[i]) + "(" + fname + "," + cpp2PlaceInfoGetRValue(aref, ctx) + ")");
 												}
 											}
 											default: { 
-												cpp2ContextWrSemi(ctx, "flow_struct::set_" + cpp2StructFieldCode(info.atypes[i]) + "(" + fname + "," + cpp2PlaceInfoGetRValue(ref, ctx) + ")");
+												cpp2ContextWrSemi(ctx, "flow_struct::set_" + cpp2StructFieldCode(info.atypes[i]) + "(" + fname + "," + cpp2PlaceInfoGetRValue(aref, ctx) + ")");
 											}
 										}
 									}
@@ -2462,8 +2386,8 @@ cpp2WriterCompileNewStruct(writer : Cpp2Writer, info : Cpp2StructInfo, args : [F
 cpp2WriterCallNativeName(writer : Cpp2Writer, fn : FiExp, ctx : Cpp2Context) -> string {
 	switch (fn) {
 		FiVar(n, type, pos): {
-			ref = cpp2WriterResolveName(writer, ctx, n);
-			switch (ref.place) {
+			aref = cpp2WriterResolveName(writer, ctx, n);
+			switch (aref.place) {
 				Cpp2GlobalFunction(nargs, native): native;
 				default: "";
 			}
@@ -2516,7 +2440,7 @@ cpp2WriterCompileCall(writer : Cpp2Writer, code : FiCall, ctx : Cpp2Context, out
 				tmp = cpp2EnvironmentMktemp(ctx.env, top_temp);
 				cpp2WriterCompileExpression(writer, arg, ctx, Cpp2OutputVar(tmp), ctop);
 			}
-		)
+		);
 
 		expr = if (^direct_call == "") {
 			ftmp = cpp2EnvironmentMktemp(ctx.env, aidx);
@@ -2541,8 +2465,7 @@ cpp2WriterCompileCall(writer : Cpp2Writer, code : FiCall, ctx : Cpp2Context, out
 
 	switch (code.f) {
 		FiVar(n, type, pos): {
-			ref = cpp2WriterResolveName(writer, ctx, n);
-			switch (ref.place) {
+			switch (cpp2WriterResolveName(writer, ctx, n).place) {
 				Cpp2GlobalFunction(nargs, native): {
 					if (length(code.args) != nargs) {
 						cpp2_error("Argument count mismatch in call to " + n);
@@ -2655,9 +2578,6 @@ cpp2WriterInlineNative(writer : Cpp2Writer, code : FiCall, fn : string, ctx : Cp
 	fetch_ref = \arg, lvalue, allow_out -> { // allow_out = false
 		cpp2WriterFetchToRef(writer, arg, ctx, top, lvalue, if (allow_out) out else Cpp2OutputNull());
 	}
-
-	println("cpp2WriterInlineNative: " + fn);
-	
 	if (contains(numeric_natives, fn)) {
 		cpp2WriterCompileNumericExpr(writer, code, ctx, out, top, Cpp2TInt());
 		true
@@ -2783,7 +2703,6 @@ cpp2WriterInlineMapNative(writer : Cpp2Writer, arr : FiExp, minit : Maybe<FiExp>
 
 	// Index var as slot if used in closure
 	idxpair = if (iarg != "") {
-		println("iarg: '" + iarg + "'");
 		subtop_temp = subtop.temp;
 		subtop.temp ::= subtop_temp + 1;
 		idx = cpp2EnvironmentMktemp(ctx.env, subtop_temp);
@@ -2849,7 +2768,7 @@ cpp2WriterInlineMapNative(writer : Cpp2Writer, arr : FiExp, minit : Maybe<FiExp>
 
 cpp2WriterCompileClosure(writer : Cpp2Writer, code : FiLambda, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> Maybe<Cpp2PlaceInfo> {
 
-	fcPrintln("compiling closure for: " + writer.cur_global + " - " + i2s(writer.next_closure_id + 1), writer.config.threadId);
+	//fcPrintln("compiling closure for: " + writer.cur_global + " - " + i2s(writer.next_closure_id + 1), writer.config.threadId);
 
 	id = writer.next_closure_id;
 	writer.next_closure_id ::= id + 1;
