@@ -102,6 +102,7 @@ export {
 
 	fselectdelay(b : Transform<?>, fn : (?) -> int) -> Transform<?>;
 	fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?>;
+	fthrottleUntilNextFrameRendered(b : Transform<?>) -> Transform<?>;
 	flerp(start : double, end : double, t : Transform<double>) -> Transform<double>;
 
 	flookupTree(tree : Transform<Tree<?, ??>>, key : Transform<?>) -> Transform<Maybe<??>>;
@@ -127,7 +128,7 @@ fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 		fselect(a, FLift(\a0 -> {
 			if (length(a0) == 0) {
 				output := [];
-			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 				iter(arrayDiff(^input, a0, false), \op ->
 					switch (op : ArrayOperation) {
 						ArrayNop(__, __): {}
@@ -171,7 +172,7 @@ fmapu(a : Transform<[??]>, fn : (??) -> Pair<?, [() -> void]>) -> Transform<[?]>
 
 						output := [];
 						disposers := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, false), \op ->
 							switch (op : ArrayOperation) {
@@ -252,7 +253,7 @@ fmapi(a : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]> {
 		fselect(a, FLift(\a0 -> {
 			if (length(a0) == 0) {
 				output := [];
-			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 				iter(arrayDiff(^input, a0, true), \op -> {
 					switch (op : ArrayOperation) {
 						ArrayNop(x, y): {
@@ -302,7 +303,7 @@ fmapiu(a : Transform<[??]>, fn : (Transform<int>, ??) -> Pair<?, [() -> void]>) 
 						disposers := [];
 						output := [];
 						indexes := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, true), \op ->
 							switch (op : ArrayOperation) {
@@ -419,7 +420,7 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 						disposers := [];
 						indexes := [];
 						newOutput := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						nopFns = ref [];
 
 						// Call disposers before initializers
@@ -561,7 +562,7 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 						disposers := [];
 						newOutput := [];
 						indexes := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						nopFns = ref [];
 						
 						// Call disposers before initializers
@@ -695,7 +696,7 @@ ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
 
 				if (length(a0) == 0) {
 					output := [];
-				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 					// Call disposers before initializers
 					iter(arrayDiff(^input, a0, true) |> reverseA, \op ->
 						switch (op : ArrayOperation) {
@@ -1191,6 +1192,42 @@ fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?> {
 					cast(p : DynamicBehaviour<?> -> Behaviour<?>);
 				},
 				\ -> {
+					provider := Some(make(v));
+					either(^provider, const(v));
+				}
+			);
+		})),
+		\ -> ^uns()
+	);
+}
+
+fthrottleUntilNextFrameRendered(b : Transform<?>) -> Transform<?> {
+	provider : ref Maybe<DynamicBehaviour<?>> = ref None();
+	ts = ref timestamp();
+	uns = ref nop;
+
+	fdisposable(
+		fsubselect(b, FLift(\v -> {
+			^uns();
+
+			eitherFn(
+				^provider,
+				\p -> {
+					if (^ts + 33.0 > timestamp()) {
+						ts := timestamp();
+						provider := Some(make(v));
+						either(^provider, const(v));
+					} else {
+						ts := timestamp();
+						uns := interruptibleDeferUntilNextFrameRendered(\ -> {
+							nextDistinct(p, v);
+							uns := nop;
+						});
+						cast(p : DynamicBehaviour<?> -> Behaviour<?>);
+					}
+				},
+				\ -> {
+					ts := timestamp();
 					provider := Some(make(v));
 					either(^provider, const(v));
 				}
