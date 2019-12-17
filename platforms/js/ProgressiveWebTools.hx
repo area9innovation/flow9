@@ -73,6 +73,18 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function checkServiceWorkerEnabledOnly(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null && untyped navigator.serviceWorker) {
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
 	public static function checkServiceWorkerCachingEnabled(swFileName : String, callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
