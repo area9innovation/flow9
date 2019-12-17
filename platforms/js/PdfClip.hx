@@ -52,7 +52,7 @@ class PdfClip extends FlowCanvas {
 
 	public function setRenderPage(page : Dynamic, scale : Float) {
 		this.page = page;
-		this.pageScale = scale * RenderSupportJSPixi.backingStoreRatio;
+		this.pageScale = scale;
 
 		var viewport = untyped page.getViewport({ scale: this.pageScale });
 		localBounds.minX = 0;
@@ -60,10 +60,10 @@ class PdfClip extends FlowCanvas {
 		localBounds.maxX = viewport.width;
 		localBounds.maxY = viewport.height;
 
-		renderWidget.setAttribute('width', '${localBounds.maxX}');
-		renderWidget.setAttribute('height', '${localBounds.maxY}');
-		renderWidget.style.width = '${localBounds.maxX}px';
-		renderWidget.style.height = '${localBounds.maxY}px';
+		renderWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * localTransform.a * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minX * localTransform.a * RenderSupportJSPixi.backingStoreRatio), 0.0)}');
+		renderWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * localTransform.d * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minY * localTransform.d * RenderSupportJSPixi.backingStoreRatio), 0.0)}');
+		renderWidget.style.width = '${Math.ceil(localBounds.maxX * localTransform.a * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minX * localTransform.a * RenderSupportJSPixi.backingStoreRatio), 0.0)}px';
+		renderWidget.style.height = '${Math.ceil(localBounds.maxY * localTransform.d * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minY * localTransform.d * RenderSupportJSPixi.backingStoreRatio), 0.0)}px';
 
 		renderPage();
 	}
@@ -71,15 +71,11 @@ class PdfClip extends FlowCanvas {
 	private function renderPage() {
 		if (page != null) {
 			if (renderTask != null) {
-				// if (untyped renderTask.cancelling) {
-					renderTask.cancel();
-				// }
-
-				// untyped renderTask.cancelling = true;
+				renderTask.cancel();
 			} else {
 				renderTask = page.render({
 					canvasContext: renderContext,
-					viewport: page.getViewport({ scale: pageScale })
+					viewport: page.getViewport({ scale: pageScale * RenderSupportJSPixi.backingStoreRatio })
 				});
 
 				var taskPromise : Promise<Dynamic> = renderTask.promise;
@@ -101,7 +97,10 @@ class PdfClip extends FlowCanvas {
 			ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
 		}
 
-		ctx.drawImage(this.renderWidget, 0, 0, getWidth() * RenderSupportJSPixi.backingStoreRatio, getHeight() * RenderSupportJSPixi.backingStoreRatio, 0, 0, getWidth() * resolution, getHeight() * resolution);
+		var width = getWidth() * resolution;
+		var height = getHeight() * resolution;
+
+		ctx.drawImage(this.renderWidget, 0, 0, width, height, 0, 0, width, height);
 	}
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
