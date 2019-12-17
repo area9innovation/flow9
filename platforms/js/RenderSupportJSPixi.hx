@@ -2113,8 +2113,36 @@ class RenderSupportJSPixi {
 				}
 			}
 		} else if (untyped __instanceof__(clip, FlowGraphics)) {
-			if (hittestGraphics(untyped clip, point, checkAlpha)) {
-				return clip;
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var localBounds = untyped clip.localBounds;
+
+			if (local.x < localBounds.minX && local.y < localBounds.minY && local.x >= localBounds.maxX && local.y >= localBounds.maxY) {
+				return null;
+			}
+
+			var children : Array<DisplayObject> = untyped clip.children;
+
+			if (children.length > 0) {
+				var i = children.length - 1;
+
+				while (i >= 0) {
+					var child = children[i];
+					i--;
+
+					var clipHit = getClipAt(child, point, false, checkAlpha);
+
+					if (clipHit != null) {
+						return clipHit;
+					}
+				}
+			} else {
+				if (hittestGraphics(untyped clip, point, checkAlpha)) {
+					return clip;
+				}
 			}
 		}
 

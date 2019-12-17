@@ -32,6 +32,7 @@ class FlowGraphics extends Graphics {
 
 	private var nativeWidget : Element;
 	private var accessWidget : AccessWidget;
+	private var svgWidget : Element;
 
 	public var isEmpty : Bool = true;
 	public var isSvg : Bool = false;
@@ -49,7 +50,7 @@ class FlowGraphics extends Graphics {
 		super();
 
 		visible = false;
-		interactiveChildren = false;
+		interactiveChildren = true;
 		isNativeWidget = false;
 	}
 
@@ -210,7 +211,7 @@ class FlowGraphics extends Graphics {
 			if (isNativeWidget) {
 				deleteNativeWidget();
 			}
-		} else if (!isEmpty) {
+		} else if ((!isEmpty || clipHasChildren()) && nativeWidget == null) {
 			initNativeWidget();
 		}
 
@@ -388,7 +389,7 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (untyped this.isMask || this.isCanvas || this.isEmpty) {
+		if (untyped this.isMask || this.isCanvas) {
 			if (isNativeWidget) {
 				deleteNativeWidget();
 			}
@@ -396,16 +397,19 @@ class FlowGraphics extends Graphics {
 			return;
 		}
 
-		initNativeWidget();
+		if (nativeWidget == null) {
+			initNativeWidget();
+		}
 
-		if (!graphicsChanged) {
+		if (!graphicsChanged || isEmpty) {
 			return;
 		}
 
 		if (nativeWidget != null) {
 			if (graphicsData.length == 0) {
-				while (nativeWidget.lastElementChild != null) {
-					nativeWidget.removeChild(nativeWidget.lastElementChild);
+				if (svgWidget != null) {
+					nativeWidget.removeChild(svgWidget);
+					svgWidget = null;
 				}
 
 				nativeWidget.style.background = null;
@@ -413,6 +417,11 @@ class FlowGraphics extends Graphics {
 				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.borderImage = null;
 			} else if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
+				if (svgWidget != null) {
+					nativeWidget.removeChild(svgWidget);
+					svgWidget = null;
+				}
+
 				nativeWidget.style.borderRadius = null;
 				if (Platform.isIE) {
 					nativeWidget.style.background = '';
@@ -420,7 +429,7 @@ class FlowGraphics extends Graphics {
 					nativeWidget.style.background = null;
 				}
 
-				var svg : js.html.Element = nativeWidget.addElementNS('svg');
+				svgWidget = nativeWidget.addElementNS('svg');
 				var lineWidth : Float = Lambda.fold(graphicsData, function(a, b) {
 					if (a.lineWidth != null) {
 						return Math.max(a.lineWidth / 2.0, b);
@@ -429,27 +438,27 @@ class FlowGraphics extends Graphics {
 					}
 				}, 0.0);
 
-				svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-				svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-				svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
-				svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
-				svg.style.position = 'absolute';
+				svgWidget.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+				svgWidget.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
+				svgWidget.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
+				svgWidget.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
+				svgWidget.style.position = 'absolute';
 
 				if (graphicsData.length == 1) {
-					for (child in svg.childNodes) {
+					for (child in svgWidget.childNodes) {
 						if (untyped child.tagName != null && child.tagName.toLowerCase() == 'g') {
-							svg.removeChild(child);
+							svgWidget.removeChild(child);
 						}
 					}
 				} else {
-					while (svg.lastElementChild != null && svg.lastElementChild.tagName.toLowerCase() != 'g' && svg.lastElementChild.tagName.toLowerCase() != 'defs') {
-						svg.removeChild(svg.lastElementChild);
+					while (svgWidget.lastElementChild != null && svgWidget.lastElementChild.tagName.toLowerCase() != 'g' && svgWidget.lastElementChild.tagName.toLowerCase() != 'defs') {
+						svgWidget.removeChild(svgWidget.lastElementChild);
 					}
 
-					svg = svg.addElementNS('g');
+					svgWidget = svgWidget.addElementNS('g');
 
-					while (svg.lastElementChild != null) {
-						svg.removeChild(svg.lastElementChild);
+					while (svgWidget.lastElementChild != null) {
+						svgWidget.removeChild(svgWidget.lastElementChild);
 					}
 				}
 
@@ -458,16 +467,16 @@ class FlowGraphics extends Graphics {
 
 					if (untyped data.fillGradient != null || data.strokeGradient != null) {
 						var gradient : Dynamic = untyped data.gradient;
-						var defs = svg.addElementNS('defs');
+						var defs = svgWidget.addElementNS('defs');
 						var linearGradient = defs.addElementNS(gradient.type == 'radial' ? 'radialGradient' : 'linearGradient');
 
 						if (gradient.type == 'radial') {
 							for (child in defs.getElementsByTagName('linearGradient')) {
-								svg.removeChild(child);
+								svgWidget.removeChild(child);
 							}
 						} else {
 							for (child in defs.getElementsByTagName('radialGradient')) {
-								svg.removeChild(child);
+								svgWidget.removeChild(child);
 							}
 						}
 
@@ -494,14 +503,14 @@ class FlowGraphics extends Graphics {
 
 					var createSvgElement = function(tagName) {
 						if (graphicsData.length == 1) {
-							while (svg.lastElementChild != null && svg.lastElementChild.tagName.toLowerCase() != tagName && svg.lastElementChild.tagName.toLowerCase() != 'defs') {
-								svg.removeChild(svg.lastElementChild);
+							while (svgWidget.lastElementChild != null && svgWidget.lastElementChild.tagName.toLowerCase() != tagName && svgWidget.lastElementChild.tagName.toLowerCase() != 'defs') {
+								svgWidget.removeChild(svgWidget.lastElementChild);
 							}
 
-							element = svg.addElementNS('path');
+							element = svgWidget.addElementNS('path');
 						} else {
 							element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
-							svg.appendChild(element);
+							svgWidget.appendChild(element);
 						}
 
 						element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
@@ -570,8 +579,9 @@ class FlowGraphics extends Graphics {
 					}
 				}
 			} else {
-				while (nativeWidget.lastElementChild != null) {
-					nativeWidget.removeChild(nativeWidget.lastElementChild);
+				if (svgWidget != null) {
+					nativeWidget.removeChild(svgWidget);
+					svgWidget = null;
 				}
 
 				var data = graphicsData[0];
@@ -651,5 +661,57 @@ class FlowGraphics extends Graphics {
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;
+
+		invalidateParentClip();
+	}
+
+	public override function addChild<T:DisplayObject>(child : T) : T {
+		initNativeWidget();
+
+		if (child.parent != null) {
+			untyped child.parent.removeChild(child);
+		}
+
+		var newChild = super.addChild(child);
+
+		if (newChild != null) {
+			newChild.invalidate();
+			emitEvent("childrenchanged");
+		}
+
+		return newChild;
+	}
+
+	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
+		initNativeWidget();
+
+		if (child.parent != null) {
+			untyped child.parent.removeChild(child);
+		}
+
+		var newChild = super.addChildAt(child, index > children.length ? children.length : index);
+
+		if (newChild != null) {
+			newChild.invalidate();
+			emitEvent("childrenchanged");
+		}
+
+		return newChild;
+	}
+
+	public override function removeChild(child : DisplayObject) : DisplayObject {
+		var oldChild = super.removeChild(child);
+
+		if (oldChild != null) {
+			invalidateInteractive();
+			invalidateTransform('removeChild');
+			if (untyped this.keepNativeWidgetChildren) {
+				updateKeepNativeWidgetChildren();
+			}
+
+			emitEvent("childrenchanged");
+		}
+
+		return oldChild;
 	}
 }

@@ -4,7 +4,7 @@ import material/internal/material_edit_grid;
 export {
 	IScriptForm ::= FForm, ISTranslate, ISScale, ISRotate, ISAlpha, ISAvailable2, ISSize2, ISBaseline, ISGroup, ISGroup2, ISDecorator2,
 		ISBorder, ISMask2, ISFilter2, ISCrop2, ISAccess, ISFullWindow, ISFullScreen, ISSetPending, ISDynamicGroup2, ISMForm,
-		ISGraphics, ISCanvas;
+		ISGraphics, ISFrame, ISCanvas;
 
 		ISTranslate : (x : double, y : double, form : IScriptForm);
 		ISScale : (x : double, y : double, form : IScriptForm);
@@ -29,6 +29,7 @@ export {
 		ISDynamicGroup2(stackChanges : [FGroupChange], currentStack : [IScriptForm]);
 		ISMForm : (form : PForm);
 		ISGraphics : (path : [StaticGraphicOp], style : [GraphicsStyle]);
+		ISFrame : (path : [StaticGraphicOp], style : [GraphicsStyle], form : IScriptForm);
 		ISCanvas : (content : IScriptForm);
 
 	takeLogicalSnapshot(f : FForm) -> IScriptForm;
@@ -65,6 +66,7 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 			)
 		}
 		FGraphics(p, s) : ISGraphics(fgetValue(p), fgetValue(s));
+		FFrame(p, s, form) : ISFrame(fgetValue(p), fgetValue(s), takeLogicalSnapshot(form));
 		FPicture(url, sz, s) : {
 			filteredStyle = filter(s, \style -> {
 				switch (style : PictureStyle) {
@@ -187,6 +189,7 @@ diffLogicalSnapshots(f1 : IScriptForm, f2 : IScriptForm) -> [DistinctIScriptForm
 	switch (f1 : IScriptForm) {
 		FEmpty() : [];
 		ISGraphics(path, style): diffLogicalSnapshotsISGraphics(f1, f2);
+		ISFrame(path, style, form): diffLogicalSnapshotsISFrame(f1, f2);
 		ISCanvas(content): diffLogicalSnapshotsISCanvas(f1, f2);
 		ISBorder(left, top, right, bottom, form): diffLogicalSnapshotsISBorder(f1, f2);
 		ISTranslate(x, y, form): diffLogicalSnapshotsISTranslate(f1, f2);
@@ -217,6 +220,20 @@ diffLogicalSnapshotsISGraphics(f1 : ISGraphics, f2 : IScriptForm) -> [DistinctIS
 		ISGraphics(path2, style2): {
 			if (length(f1.path) == length(path2) && !contains(mapi(f1.path, \i, p -> diffIGraphicOp(p, path2[i])), false) && sort(f1.style) == sort(style2))
 				[]
+			else
+				[DistinctIScriptForms(f1, f2, [])];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISFrame(f1 : ISFrame, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISFrame(path2, style2, form2): {
+			if (length(f1.path) == length(path2) && !contains(mapi(f1.path, \i, p -> diffIGraphicOp(p, path2[i])), false) && sort(f1.style) == sort(style2))
+				diffLogicalSnapshots(f1.form, form2)
 			else
 				[DistinctIScriptForms(f1, f2, [])];
 		}
@@ -577,6 +594,8 @@ IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, M
 			FDynamicGroup2(make(stackChanges), make(map(currentStack, \cs -> IScriptForm2FForm(manager, cs, m2t, id, inputs))), captureCallstack());
 		ISMForm(form) : FMForm(form |> pForm2Form);
 		ISGraphics(path, style): FGraphics(const(path), const(style));
+		ISFrame(path, style, form): FFrame(const(path), const(style),
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
 		ISCanvas(content): FCanvas(IScriptForm2FForm(manager, content, m2t, id, inputs));
 		FParagraph(text, style): f; //TODO:
 		FText(textT, style): {
@@ -693,6 +712,7 @@ IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, M
 		}
 		FPicture(__, __, __): f;
 		FGraphics(__, __): f;
+		FFrame(p, s, form): FFrame(p, s, IScriptForm2FForm(manager, form, m2t, id, inputs));
 		FAvailable2(av, form): FAvailable2(av,
 			IScriptForm2FForm(manager, form, m2t, id, inputs));
 		FRotate(rt, form): FRotate(rt,

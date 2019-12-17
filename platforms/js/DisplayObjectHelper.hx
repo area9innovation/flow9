@@ -1684,7 +1684,23 @@ class DisplayObjectHelper {
 
 			if (untyped clip.graphicsBounds != null) {
 				untyped clip.calculateGraphicsBounds();
-				applyNewBounds(clip, untyped clip.graphicsBounds);
+				untyped clip.maxLocalBounds = new Bounds();
+
+				untyped clip.maxLocalBounds.minX = untyped clip.graphicsBounds.minX;
+				untyped clip.maxLocalBounds.minY = untyped clip.graphicsBounds.minY;
+				untyped clip.maxLocalBounds.maxX = untyped clip.graphicsBounds.maxX;
+				untyped clip.maxLocalBounds.maxY = untyped clip.graphicsBounds.maxY;
+
+				for (child in getClipChildren(clip)) {
+					if (untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null) {
+						invalidateLocalBounds(child, invalidateMask);
+						applyMaxBounds(clip, untyped child.currentBounds);
+					}
+				}
+
+				if (untyped clip.mask == null) {
+					applyNewBounds(clip, untyped clip.maxLocalBounds);
+				}
 			} else if (untyped clip.widgetBounds != null) {
 				untyped clip.calculateWidgetBounds();
 				applyNewBounds(clip, untyped clip.widgetBounds);
@@ -2036,6 +2052,10 @@ class DisplayObjectHelper {
 
 	public static inline function getClipChildren(clip : DisplayObject) : Array<DisplayObject> {
 		return untyped clip.children || [];
+	}
+
+	public static inline function clipHasChildren(clip : DisplayObject) : Bool {
+		return getClipChildren(clip).length > 0;
 	}
 
 
