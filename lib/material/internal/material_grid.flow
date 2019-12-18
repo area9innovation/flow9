@@ -481,7 +481,7 @@ MRecyclerGridId(row : int, column : int);
 filterVisibleMRecyclerGridContainers(containers : [[MRecyclerGridContainer]], scrollBounds : Bounds) -> [MRecyclerGridId] {
 	position = ref zeroPoint;
 	filterDone = ref false;
-	chunkSize = 1;
+	chunkSize = 50;
 
 	concatA(
 		generate(0, ceil(i2d(length(containers)) / i2d(chunkSize)), \i -> {
@@ -513,10 +513,11 @@ filterVisibleMRecyclerGridContainers2(position : Point, containers : [[MRecycler
 
 		next(container.position, position);
 		containerBounds = pointwh2bounds(position, size);
+		emptySize = size.width == 0.0 || size.height == 0.0;
 
-		if (size.width == 0.0 && size.height == 0.0) {
+		if (emptySize && column % 5 == 0 && row % 5 == 0) {
 			[MRecyclerGridId(row, column)]
-		} else if (boundsOverlap(scrollBounds, containerBounds)) {
+		} else if (emptySize || boundsOverlap(scrollBounds, containerBounds)) {
 			if (column == 0 && length(containers) > 1) {
 				r = filterVisibleMRecyclerGridContainers2(Point(position.x + size.width, position.y), containers, row, column + 1, scrollBounds);
 				newPosition = fold(containers[row], Point(0.0, containerBounds.maxY), \acc, c -> {
@@ -653,7 +654,14 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 	scrollSize = extractStruct(m.style, MScrollWidthHeight(make(zeroWH), make(zeroWH)));
 	contentSize = make(zeroWH);
 	position = extractStruct(m.style, MScrollPosition(makePoint())).position;
-	scrollBounds = fpointwh2bounds(position, scrollSize.box);
+	scrollBounds = fselect2(fthrottle(position, 33), scrollSize.box, FLift2(\p, bwh ->
+		Bounds(
+			dfloor(p.x / bwh.width - 0.1) * bwh.width,
+			dfloor(p.y / bwh.height - 0.1) * bwh.height,
+			dceil(p.x / bwh.width + 1.1) * bwh.width,
+			dceil(p.y / bwh.height + 1.1) * bwh.height
+		)
+	));
 
 	containers : DynamicBehaviour<[MRecyclerGridId]> = make([]);
 	availableWH = fselect2(scrollSize.box, m.items, FLift2(\cs, it -> WidthHeight(cs.width / i2d(max(either(maxA(map(it, length)), 0), 1)), cs.height / i2d(max(length(it), 1)))));
@@ -661,12 +669,12 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 	contentSizeNeedsUpdate = ref true;
 
 	SelectTGroup(
-		fsubmap(containers, \id -> fselect(items.first, FLift(\it ->
+		fdelayUntilNextFrameRendered(fsubselect(items.first, FLift(\it -> fselect(containers, FLift(\ids -> map(ids, \id ->
 			if (length(it) > id.row && length(it[id.row]) > id.column)
 				it[id.row][id.column]
 			else
 				emptyMRecyclerGridContainer
-		))),
+		)))))),
 		\index, __, c -> {
 			wh = makeWH();
 
@@ -749,7 +757,7 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 					manager.manager.deltaTimer.attach();
 					manager.manager.deltaTimer.detach;
 				},
-				make2Subscribe(items.first, fthrottle(scrollBounds, 33), \__, __ -> needsUpdate := true),
+				make2Subscribe(items.first, scrollBounds, \__, __ -> needsUpdate := true),
 				makeSubscribe(manager.manager.deltaTimer.timer, \__ -> {
 					if (^needsUpdate) {
 						it = getValue(items.first);
