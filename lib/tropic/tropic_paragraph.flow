@@ -72,23 +72,25 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	stackChanges = make([]);
 	initialWords = ref map(^words, translateWord);
 	paragraphWHB = makeWH();
+	paragraphBaselineB = make(0.0);
 
-	contentGroup = TSize(
+	contentGroup = TBaseline(paragraphBaselineB, TSize(
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
-	);
+	));
 
 
 	updateFn = \wi -> {
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 		w = if (isSingleLine) 100000.0 else max(0.0, wi);
-		paragraphSize = reflowTParaWords(
+		paragraphSizeAndBaseline = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked())
 		);
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-		nextDistinct(paragraphWHB, paragraphSize);
+		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 	};
 
 	subscribe2dynWord = \w -> if (isSameStructType(NonTextElement(), w.word)) apply0(make2Subscribe2(
@@ -239,9 +241,9 @@ reflowTParaWords(
 	// styleTree : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool,
 	isMarked : bool
-) -> WidthHeight {
+) -> Pair<WidthHeight, double> {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
-	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
+	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], paraIndent, isMarked);
 	paraLines = if (isBiDiEnabled())
 		zipWith(
 			text,
@@ -272,6 +274,7 @@ reflowTParaWordsRec(
 	currentWords : [TParaWord],
 	lines : [TParaLine],
 	paraIndent : double,
+	isMarked : bool
 ) -> [TParaLine] {
 	addLine = \cw, indent -> {
 		if (cw != []) arrayPush(lines, TParaLine(cw, indent)) else lines;
@@ -296,7 +299,7 @@ reflowTParaWordsRec(
 
 		switch (word.word : GeneralWrapElement) {
 			NewLine(): {
-				reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+				reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 			}
 			GeneralLinePart(first, mid, end): {
 
@@ -310,15 +313,15 @@ reflowTParaWordsRec(
 				if (currentWords == []) {
 					// If it is the first item on the line
 					paraword = makeLinePartWord(first);
-					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
 					paraword = makeLinePartWord(mid);
-					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else {
 					// If it is the last item on the line
 					paraword = makeLinePartWord(end);
-					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
+					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent, false);
 				}
 			}
 			GeneralSpace(__): {
@@ -326,10 +329,10 @@ reflowTParaWordsRec(
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = getWordWidth(word);
 				if (width < remaining) {
-					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent, false);
 				} else {
 					detachWord(word, true);
-					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 				}
 			}
 			default: {
@@ -350,7 +353,7 @@ reflowTParaWordsRec(
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-								if (keepWordsTogether(f) || ^width == 0.0) {
+								if ((isMarked && i <= 1) || keepWordsTogether(f) || ^width == 0.0) {
 									width := ^width + getWordWidth(_word);
 									false;
 								} else {
@@ -364,7 +367,7 @@ reflowTParaWordsRec(
 					1;
 				};
 
-				if (^width <= remaining || currentWords == []) { // Overflow situation where a word is longer than the available width
+				if (^width <= remaining || currentWords == []) {
 					_words = subrange(words, 0, wordsCount);
 					_rest = subrange(words, wordsCount, length(words) - wordsCount);
 					newCurrentWords = concat(currentWords, _words);
@@ -374,7 +377,8 @@ reflowTParaWordsRec(
 						remaining - ^width,
 						newCurrentWords,
 						lines,
-						paraIndent
+						paraIndent,
+						false
 					);
 				} else {
 					reflowTParaWordsRec(
@@ -383,7 +387,8 @@ reflowTParaWordsRec(
 						nextLineWidth,
 						[],
 						addLine(currentWords, lineIndent),
-						paraIndent
+						paraIndent,
+						false
 					);
 				}
 			}
@@ -442,7 +447,7 @@ TAlignParaLines(
 	topLineBaseline : bool,
 	rtl : bool,
 	isMarked : bool
-) -> WidthHeight {
+) -> Pair<WidthHeight, double> {
 	lasti = length(lines) - 1;
 	singleLine = length(lines) == 1;
 
@@ -482,8 +487,7 @@ TAlignParaLines(
 			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
 		);
 	});
-
-	if (tightWidth) WidthHeight(a.width, a.y) else WidthHeight(max(width, a.width), a.y);
+	Pair(WidthHeight(if (tightWidth) a.width else max(width, a.width), a.y), a.baseline);
 }
 
 TParaLineResult(width : double, height : double, baseline : double);
