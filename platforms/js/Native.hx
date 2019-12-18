@@ -595,7 +595,7 @@ class Native {
 	}
 
 	public static inline function deleteNative(clip : Dynamic) : Void {
-		if (clip != null) {
+		if (untyped clip != null && !clip.destroyed) {
 			if (clip.destroy != null) {
 				untyped clip.destroy({children: true, texture: true, baseTexture: true});
 			}
