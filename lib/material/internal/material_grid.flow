@@ -447,6 +447,7 @@ MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid
 }
 
 MRecyclerGridContainer(id : int, row : int, column : int, material : Material, size : DynamicBehaviour<WidthHeight>, position : DynamicBehaviour<Point>, mutable cached : Maybe<Tropic>);
+emptyMRecyclerGridContainer = MRecyclerGridContainer(-1, -1, -1, TEmpty(), makeWH(), makePoint(), None())
 
 boundsOverlap(bounds1 : Bounds, bounds2 : Bounds) -> bool {
 	max(bounds1.minX, bounds1.maxX) >= min(bounds2.minX, bounds2.maxX) &&
@@ -491,20 +492,13 @@ filterVisibleMRecyclerGridContainers(containers : [[MRecyclerGridContainer]], sc
 
 				r = filterVisibleMRecyclerGridContainers2(^position, containersChunk, chunkSize * i, 0, scrollBounds);
 
-				if (length(r) > 0) {
-					if (!exists(r, \rr -> rr.row == chunkSize * (i + 1) - 1)) {
-						filterDone := true;
-						r;
-					} else {
-						position := fold(r, zeroPoint, \acc, rr -> {
-							c = containersChunk[rr.row][rr.column];
-							Point(0.0, max(acc.y, getValue(c.position).y + getValue(c.size).height));
-						});
-						r;
-					}
+				if (length(r) > 0 && !exists(r, \rr -> rr.row == chunkSize * (i + 1) - 1)) {
+					filterDone := true;
+					r;
 				} else {
-					c = containersChunk[length(containersChunk) - 1][0];
-					position := Point(0.0, getValue(c.position).y + getValue(c.size).height);
+					position := fold(containersChunk[length(containersChunk) - 1], ^position, \acc, c -> {
+						Point(0.0, max(acc.y, getValue(c.position).y + getValue(c.size).height));
+					});
 					r;
 				}
 			}
@@ -523,10 +517,9 @@ filterVisibleMRecyclerGridContainers2(position : Point, containers : [[MRecycler
 		if (size.width == 0.0 && size.height == 0.0) {
 			[MRecyclerGridId(row, column)]
 		} else if (boundsOverlap(scrollBounds, containerBounds)) {
-			if (column == 0) {
+			if (column == 0 && length(containers) > 1) {
 				r = filterVisibleMRecyclerGridContainers2(Point(position.x + size.width, position.y), containers, row, column + 1, scrollBounds);
-				newPosition = fold(r, Point(0.0, containerBounds.maxY), \acc, rr -> {
-					c = containers[rr.row][rr.column];
+				newPosition = fold(containers[row], Point(0.0, containerBounds.maxY), \acc, c -> {
 					Point(0.0, max(acc.y, getValue(c.position).y + getValue(c.size).height));
 				});
 
@@ -544,10 +537,9 @@ filterVisibleMRecyclerGridContainers2(position : Point, containers : [[MRecycler
 		} else if (position.x > scrollBounds.maxX || position.y > scrollBounds.maxY) {
 			[];
 		} else {
-			if (column == 0) {
+			if (column == 0 && length(containers) > 1) {
 				r = filterVisibleMRecyclerGridContainers2(Point(position.x + size.width, position.y), containers, row, column + 1, scrollBounds);
-				newPosition = fold(r, zeroPoint, \acc, rr -> {
-					c = containers[rr.row][rr.column];
+				newPosition = fold(containers[row], zeroPoint, \acc, c -> {
 					Point(0.0, max(acc.y, getValue(c.position).y + getValue(c.size).height));
 				});
 
@@ -565,9 +557,9 @@ filterVisibleMRecyclerGridContainers2(position : Point, containers : [[MRecycler
 }
 
 getMRecyclerGridContentSize(containers : [[MRecyclerGridContainer]]) -> WidthHeight {
-	sz =
+	gridSize =
 		foldWhile(containers, Pair(0, WidthHeight(0.0, 0.0)), \accHeight, cc -> {
-			sz =
+			rowSize =
 				foldWhile(cc, Pair(0, WidthHeight(0.0, 0.0)), \accWidth, c -> {
 					size = getValue(c.size);
 
@@ -580,8 +572,8 @@ getMRecyclerGridContentSize(containers : [[MRecyclerGridContainer]]) -> WidthHei
 
 			size =
 				WidthHeight(
-					sz.second.width / i2d(max(sz.first, 1)) * i2d(length(cc)),
-					sz.second.height
+					rowSize.second.width / i2d(max(rowSize.first, 1)) * i2d(length(cc)),
+					rowSize.second.height
 				);
 
 			if (size.width > 0.0 && size.height > 0.0) {
@@ -592,8 +584,8 @@ getMRecyclerGridContentSize(containers : [[MRecyclerGridContainer]]) -> WidthHei
 		});
 
 	WidthHeight(
-		sz.second.width,
-		sz.second.height / i2d(max(sz.first, 1)) * i2d(length(containers))
+		gridSize.second.width,
+		gridSize.second.height / i2d(max(gridSize.first, 1)) * i2d(length(containers))
 	);
 }
 
@@ -649,13 +641,13 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 	sameSize = if (contains(m.style, MSameSize())) Some(makeWH()) else None();
 	items =
 		ffuseinit(
-			fselect(m.items, FLift(\mi -> {
-				itemId = ref -1;
-				mapi(mi, \i, ii -> mapi(ii, \j, it -> {
-					itemId := ^itemId + 1;
-					MRecyclerGridContainer(^itemId, i, j, it, either(sameSize, makeWH()), makePoint(), None());
-				}))
-			})),
+			fsubmapi(fsplit2d(m.items), \row, mi ->
+				fsubmapi(mi, \column, it ->
+					fselect2(row, column, FLift2(\r, c ->
+						MRecyclerGridContainer(r * 10000 + c, r, c, it, either(sameSize, makeWH()), makePoint(), None())
+					))
+				)
+			),
 			make([])
 		);
 	scrollSize = extractStruct(m.style, MScrollWidthHeight(make(zeroWH), make(zeroWH)));
@@ -668,62 +660,72 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 	needsUpdate = ref true;
 	contentSizeNeedsUpdate = ref true;
 
-	invalidateContentSize = \__ -> {
-		needsUpdate := true;
-		contentSizeNeedsUpdate := true;
-	}
+	SelectTGroup(
+		fsubmap(containers, \id -> fselect(items.first, FLift(\it ->
+			if (length(it) > id.row && length(it[id.row]) > id.column)
+				it[id.row][id.column]
+			else
+				emptyMRecyclerGridContainer
+		))),
+		\index, __, c -> {
+			wh = makeWH();
 
-	SelectTGroup(containers, \index, __, id -> {
-		c = getValue(items.first)[id.row][id.column];
+			TConstruct(
+				[
+					makeSubscribe(wh, \v -> {
+						if (v.width > 0.0 && v.height > 0.0) {
+							v2 = getValue(c.size);
 
-		TConstruct(
-			[
-				if (getValue(c.size).width == 0.0 || getValue(c.size).height == 0.0)
-					makeSubscribe(c.size, invalidateContentSize)
-				else
-					makeSubscribe2(c.size, invalidateContentSize)
-			],
-			TTranslate(
-				c.position,
-				TFixSize(
-					TAvailable(
-						eitherFn(
-							c.cached,
-							\tcached -> tcached,
-							\ -> {
-								tcached = MComponentGroup2T(manager, parent, "MRecyclerGridItem", [MFocusId(const(c.id))], \p -> m2t(c.material, p));
-								c.cached ::= Some(tcached);
-								tcached;
+							if (v != v2) {
+								next(c.size, v);
+								needsUpdate := true;
+								contentSizeNeedsUpdate := true;
 							}
-						)
-						|> (\f ->
-							if (isNone(sameSize) || (c.row == 0 && c.column == 0))
-								TInspect(
-									[ISize(c.size)],
+						}
+					})
+				],
+				TTranslate(
+					c.position,
+					TFixSize(
+						TAvailable(
+							eitherFn(
+								c.cached,
+								\tcached -> tcached,
+								\ -> {
+									tcached = MComponentGroup2T(manager, parent, "MRecyclerGridItem", [MFocusId(const(c.id))], \p -> m2t(c.material, p));
+									c.cached ::= Some(tcached);
+									tcached;
+								}
+							)
+							|> (\f ->
+								if (isNone(sameSize) || (c.row == 0 && c.column == 0))
+									TInspect(
+										[ISize(wh)],
+										f
+									)
+								else
 									f
-								)
-							else
-								f
+							),
+							TSized(availableWH)
 						),
-						TSized(availableWH)
-					),
-					TEmpty()
-				)
-			)
-		)
-		|> (\f ->
-			TGroup2(
-				f,
-				TShow(
-					feq(index, 0),
-					TTranslate(
-						fpoint(fselect(scrollBounds, FLift(\sb -> sb.minX)), fselect(scrollBounds, FLift(\sb -> sb.minY))),
-						TRectangle([], TSized(fselect(scrollBounds, FLift(\sb -> WidthHeight(bounds2w(sb), bounds2h(sb))))))
+						TEmpty()
 					)
 				)
 			)
-		)
-	})
+			|> (\f ->
+				TGroup2(
+					f,
+					TShow(
+						feq(index, 0),
+						TTranslate(
+							fpoint(fselect(scrollBounds, FLift(\sb -> sb.minX)), fselect(scrollBounds, FLift(\sb -> sb.minY))),
+							TRectangle([], TSized(fselect(scrollBounds, FLift(\sb -> WidthHeight(bounds2w(sb), bounds2h(sb))))))
+						)
+					)
+				)
+			)
+		}
+	)
 	|> (\f ->
 		MScroll2T(
 			manager,

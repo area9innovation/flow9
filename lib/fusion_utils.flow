@@ -26,6 +26,8 @@ export {
 	flength(a : Transform<[?]>) -> Transform<int>;
 	felementAt(a : Transform<[?]>, idx : Transform<int>, def : Transform<?>) -> Transform<?>;
 
+	fsplit2d(a : Transform<[[?]]>) -> Transform<[Transform<[?]>]>;
+
 	fpointaddition(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
 	fpointsubtract(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
 	fpointmultiply(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
@@ -510,8 +512,14 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 							index = make(i);
 							indexes := replace(^indexes, i, index);
 
-							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+							makeSubscribe2(v, \v0 ->
+								if (getValue(isNopFnsApplying))
+									newOutput := replace(^newOutput, getValue(index), v0)
+								else
+									next(output, replace(getValue(output), getValue(index), v0))
+							)();
 						});
+
 						newOutput := map(d, fgetValue);
 					}
 
@@ -564,7 +572,7 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 						indexes := [];
 					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						nopFns = ref [];
-						
+
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, true), \op ->
 							switch (op : ArrayOperation) {
@@ -655,8 +663,14 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 
 						disposers := mapi(d, \i, v -> {
 							index = ^indexes[i];
-							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+							makeSubscribe2(v, \v0 ->
+								if (getValue(isNopFnsApplying))
+									newOutput := replace(^newOutput, getValue(index), v0)
+								else
+									next(output, replace(getValue(output), getValue(index), v0))
+							)()
 						});
+
 						newOutput := map(d, fgetValue);
 					}
 
@@ -770,6 +784,41 @@ flength(v : Transform<[?]>) -> Transform<int> {
 
 felementAt(a : Transform<[?]>, idx : Transform<int>, def : Transform<?>) -> Transform<?> {
 	fselect3(a, idx, def, \v, i, d -> elementAt(v, i, d))
+}
+
+fsplit2d(a : Transform<[[?]]>) -> Transform<[Transform<[?]>]> {
+	if (isFConst(a)) {
+		const(map(fgetValue(a), const));
+	} else {
+		input = ref [];
+		output = ref [];
+
+		fselect(a, FLift(\a0 -> {
+			if (length(a0) == 0) {
+				output := [];
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				iter(arrayDiff(^input, a0, false), \op ->
+					switch (op : ArrayOperation) {
+						ArrayNop(__, __): {}
+						ArrayInsert(x, __, v): {
+							output := insertArray(^output, x, make(v));
+						}
+						ArrayReplace(x, __, v): {
+							nextDistinct(^output[x], v);
+						}
+						ArrayRemove(x, __): {
+							output := removeIndex(^output, x);
+						}
+					}
+				);
+			} else {
+				output := map(a0, make);
+			}
+
+			input := a0;
+			^output;
+		}));
+	}
 }
 
 fpointaddition(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point> {
