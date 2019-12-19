@@ -50,7 +50,7 @@ class FlowGraphics extends Graphics {
 		super();
 
 		visible = false;
-		interactiveChildren = true;
+		interactiveChildren = false;
 		isNativeWidget = false;
 	}
 
