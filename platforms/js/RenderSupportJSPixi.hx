@@ -1920,6 +1920,10 @@ class RenderSupportJSPixi {
 		}
 	}
 
+	public static function addMouseEventListener(clip : DisplayObject, event : String, fn : Float -> Float -> Bool) : Void -> Void {
+		return clip.addMouseEventListener(event, fn);
+	}
+
 	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };

@@ -32,14 +32,15 @@ class FlowFontStyle {
 		return styles;
 	}
 
+	private static var flowFontStylesJSON = haxe.Json.parse(haxe.Resource.getString("fontstyles"));
+
 	public static function fromFlowFont(name : String) : FontStyle {
 		if (flowFontStyles == null) {
 			// Convert all flow font names to lowercase in order avoid case inconsistencies
-			var styles = haxe.Json.parse(haxe.Resource.getString("fontstyles"));
 			flowFontStyles = {};
 
-			for (fontname in Reflect.fields(styles)) {
-				Reflect.setField(flowFontStyles, fontname.toLowerCase(), Reflect.field(styles, fontname));
+			for (fontname in Reflect.fields(flowFontStylesJSON)) {
+				Reflect.setField(flowFontStyles, fontname.toLowerCase(), Reflect.field(flowFontStylesJSON, fontname));
 			}
 		}
 

@@ -693,6 +693,11 @@ class AccessWidget extends EventEmitter {
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
+			var events = clip.getClipEvents();
+			for (event in events.keys()) {
+				newElement.addEventListener(event, events[event], true);
+			}
+
 			for (attr in element.attributes) {
 				newElement.setAttribute(attr.name, attr.value);
 			}

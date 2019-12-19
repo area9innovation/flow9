@@ -2156,4 +2156,51 @@ class DisplayObjectHelper {
 			RenderSupportJSPixi.RendererType = tempRendererType;
 		}
 	}
+
+	public static function addMouseEventListener(clip : DisplayObject, event : String, fn : Float -> Float -> Bool) : Void -> Void {
+		untyped clip.isInteractive = true;
+		var nativeWidget = getClipNativeWidget(clip);
+		var eFn = function(e : Dynamic) {
+			RenderSupportJSPixi.MousePos.x = e.pageX;
+			RenderSupportJSPixi.MousePos.y = e.pageY;
+
+			if (fn(e.offsetX, e.offsetY)) {
+				e.stopImmediatePropagation();
+			}
+		};
+
+		var events = getClipEvents(clip);
+		events.set(event, eFn);
+
+		if (nativeWidget != null) {
+			nativeWidget.addEventListener(event, eFn);
+		}
+		invalidateInteractive(clip);
+
+		return function() {
+			if (untyped clip != null) {
+				nativeWidget = getClipNativeWidget(clip);
+				if (nativeWidget != null) {
+					nativeWidget.removeEventListener(event, eFn);
+					invalidateInteractive(clip);
+				}
+			}
+
+			if (events != null) {
+				events.remove(event);
+			}
+		}
+	}
+
+	public static inline function getClipNativeWidget(clip : DisplayObject) : Element {
+		initNativeWidget(clip);
+		return untyped clip.nativeWidget;
+	}
+
+	public static inline function getClipEvents(clip : DisplayObject) : Map<String, (Dynamic) -> Void> {
+		if (untyped clip.events == null) {
+			untyped clip.events = new Map<String, Dynamic -> Void>();
+		}
+		return untyped clip.events;
+	}
 }

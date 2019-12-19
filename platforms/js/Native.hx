@@ -546,6 +546,17 @@ class Native {
 		return result;
 	}
 
+	public static function mapiUntil<T, U>(values : Array<T>, clos : Int -> T -> (Void -> Void) -> U) : Array<U> {
+		var n = values.length;
+		var result = untyped Array(n);
+		var i = 0;
+		var breakFn = function() { i = n; };
+		while (i < n) {
+			result[i] = clos(i, values[i], breakFn);
+		}
+		return result;
+	}
+
 	public static function iteri<T>(values : Array<T>, clos : Int -> T -> Void) : Void {
 		var i : Int = 0;
 		for (v in values) {
@@ -573,9 +584,21 @@ class Native {
 	}
 
 	public static function foldi<T, U>(values : Array<T>, init : U, fn : Int -> U -> T -> U) : U {
+		var n = values.length;
 		var i = 0;
-		for (v in values) {
-			init = fn(i, init, v);
+		while (i < n) {
+			init = fn(i, init, values[i]);
+			i++;
+		}
+		return init;
+	}
+
+	public static function foldiUntil<T, U>(values : Array<T>, init : U, fn : Int -> U -> T -> (Void -> U) -> U) : U {
+		var n = values.length;
+		var i = 0;
+		var breakFn = function() { i = n; return init; };
+		while (i < n) {
+			init = fn(i, init, values[i], breakFn);
 			i++;
 		}
 		return init;
