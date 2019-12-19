@@ -29,16 +29,9 @@ export {
 
 TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> TDynamicParagraph {
 
-	alignment : ParaLineAlignment = fold(s, StartAlign(), \acc, st -> {
-		switch (st : ParagraphStyle) {
-			CenterAlign(): st;
-			Justify(): st;
-			RightAlign(): st;
-			LeftAlign(): st;
-			EndAlign(): st;
-			default: acc;
-		};
-	});
+	alignment : ParaLineAlignment = extractParaLineAlignment(s);
+	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
+	needIndent = genIndent != 0.0;
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 
@@ -77,7 +70,6 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
 	);
-
 
 	updateFn = \wi -> {
 		// Ignore negative widths
@@ -132,12 +124,9 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	}
 
 	tropic = TConstruct(
-		[\ -> {
-			unsub1 = subscribe(aw, updateFn);
-			dynamicWordsUns := map(^words, subscribe2dynWord);
-
-			// When an update from a dynamic element is requested, we do it in the next frame
-			unsub2 = subscribe(update, \u -> {
+		[
+			\-> subscribe(aw, updateFn),
+			\-> subscribe(update, \u -> {
 				if (u == 1) {
 					deferUntilNextFrameRendered(\ -> {
 						next(update, 0);
@@ -145,15 +134,15 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 						updateFn(getValue(aw))
 					})
 				}
-			});
-
+			}),
 			\ -> {
-				unsub1();
-				applyall(^dynamicWordsUns);
-				dynamicWordsUns := [];
-				unsub2();
+				dynamicWordsUns := map(^words, subscribe2dynWord);
+				\ -> {
+					applyall(^dynamicWordsUns);
+					dynamicWordsUns := [];
+				}
 			}
-		}],
+		],
 		TAttachAvailableWidth(
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
 				TBorder(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
@@ -162,7 +151,12 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 			},
 			aw
 		)
-	);
+	)
+	|> (\f -> if (needIndent) {
+		if (rtl) TBorderRight(genIndent)(f) else TBorderLeft(genIndent)(f)
+	 } else {
+		 f
+	 });
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
