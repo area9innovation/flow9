@@ -34,9 +34,6 @@ export {
 	// The result may be in a different order than tasks.
 	native concurrent : (fine : bool, tasks : [() -> ?]) -> [?] = Native.concurrent;
 
-	// Implementation with using concurrentAsyncCallback: a new task is started just as some previous has finished.
-	concurrent2 : (fine : bool, tasks : [() -> ?]) -> [?];
-
 	// Returns the value of a given ref while atomically adding to it. It is guaranteed
 	// that the operation is atomic even with different concurrent tasks sharing the reference
 	native atomicRefIntAddition : (v : ref int, delta : int) -> int = Native.atomicRefIntAddition;
@@ -60,9 +57,6 @@ export {
 
 	// Returns number of CPUs on the machine
 	native availableProcessors : () -> int = Native.availableProcessors;
-
-	// Calls Thread.sleep(ms) in java backend
-	native threadSleep : (ms : int) -> void = Native.threadSleep;
 
 	// Also see bellow: concurrentAsyncOne
 
@@ -101,7 +95,7 @@ notifyParentRunner(id, message) {}
 registerParentRunnerCallback(onMessage) {}
 
 // For Haskell and Java backends
-concurrent(fine : bool, tasks : [()->?])->[?] {
+concurrent (fine : bool, tasks : [()->?])->[?] {
 	sequential(fine, tasks)
 }
 
@@ -136,10 +130,6 @@ getThreadId() -> string {
 	""
 }
 
-// CAUTION: the fallback doens't actually makes a thread sleep
-threadSleep(ms : int) -> void {
-}
-
 // Fallbacks for concurrent hash map
 
 initConcurrentHashMap() -> native {
@@ -169,49 +159,4 @@ valuesConcurrentHashMap(m : native) -> [??] {
 removeConcurrentHashMap(m : native, key : ?) -> void {
 	t = cast(flow(m) : flow -> ref Tree<?, ??>);
 	t := removeFromTree(^t, key);
-}
-
-concurrent2(fine : bool, tasks: [() -> ?]) -> [?] {
-	if (length(tasks) == 0) [] else
-	if (length(tasks) == 1) [tasks[0]()] else 
-	if (length(tasks) <= availableProcessors()) concurrent(fine, tasks) else {
-		status = initConcurrentHashMap();
-		results = initConcurrentHashMap();
-		iteri(tasks, \i, task -> setConcurrentHashMap(status, i, ConcurTaskStatus(i, task)));
-		doConcurrent2(length(tasks), status, ref 0, ref 0, results);
-		getTreeValues(fold(valuesConcurrentHashMap(results), makeTree(), \acc, res -> setTree(acc, res.ind, res.data)));
-	}
-}
-
-ConcurTaskStatus(
-	ind : int,
-	task : () -> ?
-);
-
-ConcurTaskResult(
-	ind : int,
-	data : ?
-);
-
-doConcurrent2(ntasks : int, status : native, started : ref int, finished : ref int, results : native) -> void {
-	if (^finished < ntasks) {
-		free_cpus = availableProcessors() - (^started - ^finished);
-		if (free_cpus > 0) {
-			ready = take(valuesConcurrentHashMap(status), free_cpus);
-			iter(ready, \task_status -> {
-				atomicRefIntAddition(started, 1);
-				removeConcurrentHashMap(status, task_status.ind);
-				concurrentAsyncCallback(
-					\__, cb -> cb(task_status.task()),
-					\r -> {
-						setConcurrentHashMap(results, task_status.ind, ConcurTaskResult(task_status.ind, r));
-						atomicRefIntAddition(finished, 1);
-						{}
-					}
-				)
-			});
-		}
-		threadSleep(100);
-		doConcurrent2(ntasks, status, started, finished, results);
-	}
 }

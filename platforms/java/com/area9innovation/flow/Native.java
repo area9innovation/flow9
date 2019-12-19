@@ -1441,13 +1441,4 @@ public class Native extends NativeHost {
 		threadpool = Executors.newFixedThreadPool(threads);
 		return null;
 	}
-
-	public final Object threadSleep(int ms) {
-		try {
-			Thread.sleep(ms);
-		} catch (InterruptedException ex) {
-			ex.printStackTrace();
-		}
-		return null;
-	}
 }
