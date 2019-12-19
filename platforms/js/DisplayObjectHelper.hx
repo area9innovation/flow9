@@ -251,13 +251,14 @@ class DisplayObjectHelper {
 		} else {
 			if (!clip.interactiveChildren) {
 				var children : Array<Dynamic> = untyped clip.children;
+				var i = 0;
 
-				if (children != null) {
-					for (c in children) {
-						if (c.interactiveChildren) {
-							clip.interactiveChildren = true;
-						}
+				while (children.length > i && !clip.interactiveChildren) {
+					if (children[i].interactiveChildren) {
+						clip.interactiveChildren = true;
 					}
+
+					i++;
 				}
 			}
 
