@@ -73,6 +73,18 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function checkServiceWorkerEnabledOnly(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null && untyped navigator.serviceWorker) {
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
 	public static function checkServiceWorkerCachingEnabled(swFileName : String, callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
@@ -276,7 +288,7 @@ class ProgressiveWebTools {
 	}
 
 	public static function isRunningPWA() : Bool {
-		return !Browser.window.matchMedia("(display-mode: browser)").matches;
+		return !Browser.window.matchMedia("(display-mode: browser)").matches || (Platform.isIOS && untyped Browser.window.navigator.standalone == true);
 	}
 
 	public static function getServiceWorkerJsVersion(

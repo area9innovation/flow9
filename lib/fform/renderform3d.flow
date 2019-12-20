@@ -110,10 +110,30 @@ export {
 
 				F3DGeometryMatrix(geometry : F3DGeometry, matrix : Transform<[double]>);
 
-			F3DBufferGeometry ::= F3DSphereBufferGeometry;
-				F3DSphereBufferGeometry(radius : double, widthSegments : int, heightSegments : int, phiStart : double, phiLength : double,
-					thetaStart : double, thetaLength : double, attributes : Maybe<F3DBufferGeometryAttributes>);
+			F3DBufferGeometry ::= F3DSphereBufferGeometry, F3DBoxBufferGeometry;
+				F3DSphereBufferGeometry(
+					radius : double,
+					widthSegments : int,
+					heightSegments : int,
+					phiStart : double,
+					phiLength : double,
+					thetaStart : double,
+					thetaLength : double,
+					addGroups : (geometryLength : int, materialsLength : int) -> [F3DBufferGeometryGroup],
+					attributes : Maybe<F3DBufferGeometryAttributes>
+				);
+				F3DBoxBufferGeometry(
+					width : double,
+					height : double,
+					depth : double,
+					widthSegments : int,
+					heightSegments : int,
+					depthSegments : int,
+					addGroups : (geometryLength : int, materialsLength : int) -> [F3DBufferGeometryGroup],
+					attributes : Maybe<F3DBufferGeometryAttributes>
+				);
 
+					F3DBufferGeometryGroup(start : int, count : int, materialIndex : int);
 					F3DBufferGeometryAttributes(
 						get : [string], // Attributes names to get from buffer geometry, these attributes data is passed as 'attributes' to 'add' function
 						add : (attributes : Tree<string, [[double]]>) -> Tree<string, [[double]]> // Attributes to add to buffer geometry
@@ -134,9 +154,19 @@ export {
 				F3DMaterialDisplacementTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>, bias : Transform<double>);
 				F3DMaterialBumpTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>);
 
-					F3DTexture ::= F3DTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset;
+					F3DTexture ::= F3DTextureLoader, F3DCubeTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset;
 
 						F3DTextureLoader(url : string, onLoad : () -> void, parameters : [KeyValue]);
+						F3DCubeTextureLoader(
+							px : string,
+							nx : string,
+							py : string,
+							ny : string,
+							pz : string,
+							nz : string,
+							onLoad : () -> void,
+							parameters : [KeyValue]
+						);
 						F3DDataTexture(data : [int], width : int, height : int, parameters : [KeyValue]);
 						F3DFFormTexture(fform : FForm, parameters : [KeyValue]);
 						F3DTextureRotation(material : F3DTexture, rotation : Transform<double>);
@@ -785,9 +815,8 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 					concat(
 						onStart(clip),
 						[
-							add3DObjectWorldPositionListener(clip, \nx, ny, nz -> {
-								sc = convert3DVectorToStageCoordinates(state.stage, nx, ny, nz);
-								nextDistinct(point, Point(sc[0], sc[1]));
+							add3DObjectStagePositionListener(state.stage, clip, \nx, ny -> {
+								nextDistinct(point, Point(nx, ny));
 							})
 						]
 					),
@@ -916,15 +945,35 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 			renderF3DCamera(object, onStart, onDone);
 		}
 		F3DMesh(geometry, materials, parameters) : {
-			materialDisposers = map(materials, \m -> renderF3DMaterial(m, state.stage));
-			geometryDisposers = renderF3DGeometry(geometry);
+			renderF3DGeometry(
+				geometry,
+				state,
+				\g -> {
+					materialClips = ref makeTree();
 
-			concatA([
-				map(materialDisposers, \m -> m.disposers) |> concatA,
-				geometryDisposers.disposers,
-				onStart(make3DMesh(geometryDisposers.clip, map(materialDisposers, \m -> m.clip), map(parameters, \v -> [v.key, v.value]))),
-				onDone()
-			]);
+					mapi(materials, \i, mm ->
+						renderF3DMaterial(
+							mm,
+							state,
+							\m -> {
+								materialClips := setTree(^materialClips, i, m);
+
+								if (sizeTree(^materialClips) == length(materials)) {
+									concat(
+										onStart(make3DMesh(g, getTreeValues(^materialClips), map(parameters, \v -> [v.key, v.value]))),
+										onDone()
+									)
+								} else {
+									[]
+								}
+							},
+							\ -> []
+						)
+					)
+					|> concatA
+				},
+				\ -> []
+			)
 		}
 		F3DLoader(objUrl, mtlUrl) : {
 			uns = ref [];
@@ -1278,30 +1327,29 @@ renderF3DLight(light : F3DLight, onStart : (native) -> [() -> void], onDone : ()
 	}
 }
 
-F3DRenderResult(clip : native, disposers : [() -> void]);
-
-renderF3DGeometry(geometry : F3DGeometry) -> F3DRenderResult {
+renderF3DGeometry(geometry : F3DGeometry, state : F3DRenderState, onStart : (native) -> [() -> void], onDone : () -> [() -> void]) -> [() -> void] {
 	switch (geometry : F3DGeometry) {
 		F3DPlaneGeometry(width, height, widthSegments, heightSegments) : {
-			F3DRenderResult(
-				make3DPlaneGeometry(width, height, widthSegments, heightSegments),
-				[]
-			)
+			concat(
+				onStart(make3DPlaneGeometry(width, height, widthSegments, heightSegments)),
+				onDone()
+			);
 		}
 		F3DBoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments) : {
-			F3DRenderResult(
-				make3DBoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments),
-				[]
-			)
+			concat(
+				onStart(make3DBoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments)),
+				onDone()
+			);
 		}
 		F3DSphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength) : {
-			F3DRenderResult(
-				make3DSphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength),
-				[]
-			)
+			concat(
+				onStart(make3DSphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength)),
+				onDone()
+			);
 		}
-		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, attributesM) : {
-			g = make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		F3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, addGroups, attributesM) : {
+			addGroupsFn = \gl, ml -> map(addGroups(gl, ml), \g -> [g.start, g.count, g.materialIndex]);
+			g = make3DSphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength, addGroupsFn);
 
 			maybeApply(
 				attributesM,
@@ -1312,190 +1360,284 @@ renderF3DGeometry(geometry : F3DGeometry) -> F3DRenderResult {
 					)
 			);
 
-			F3DRenderResult(
-				g,
-				[]
-			)
+			concat(
+				onStart(g),
+				onDone()
+			);
+		}
+		F3DBoxBufferGeometry(width, height, depth, widthSegments, heightSegments, depthSegments, addGroups, attributesM) : {
+			addGroupsFn = \gl, ml -> map(addGroups(gl, ml), \g -> [g.start, g.count, g.materialIndex]);
+			g = make3DBoxBufferGeometry(width, height, depth, widthSegments, heightSegments, depthSegments, addGroupsFn);
+
+			maybeApply(
+				attributesM,
+				\attributes ->
+					iter(
+						tree2pairs(attributes.add(pairs2tree(map(attributes.get, \a -> Pair(a, get3DBufferGeometryAttribute(g, a)))))),
+						\p -> add3DBufferGeometryAttribute(g, p.first, p.second)
+					)
+			);
+
+			concat(
+				onStart(g),
+				onDone()
+			);
 		}
 		F3DCircleGeometry(radius, segments, thetaStart, thetaLength) : {
-			F3DRenderResult(
-				make3DCircleGeometry(radius, segments, thetaStart, thetaLength),
-				[]
-			)
+			concat(
+				onStart(make3DCircleGeometry(radius, segments, thetaStart, thetaLength)),
+				onDone()
+			);
 		}
 		F3DConeGeometry(radius, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength) : {
-			F3DRenderResult(
-				make3DConeGeometry(radius, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength),
-				[]
-			)
+			concat(
+				onStart(make3DConeGeometry(radius, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength)),
+				onDone()
+			);
 		}
 		F3DCylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength) : {
-			F3DRenderResult(
-				make3DCylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength),
-				[]
-			)
+			concat(
+				onStart(make3DCylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength)),
+				onDone()
+			);
 		}
 		F3DNativeGeometry(innerGeometry) : {
-			F3DRenderResult(
-				innerGeometry,
-				[]
-			)
+			concat(
+				onStart(innerGeometry),
+				onDone()
+			);
 		}
 		F3DGeometryMatrix(innerGeometry, matrix) : {
-			g = renderF3DGeometry(innerGeometry);
+			r = renderF3DGeometry(
+				innerGeometry,
+				state,
+				\clip ->
+					arrayPush(
+						onStart(clip),
+						makeSubscribe(matrix, \m -> set3DGeometryMatrix(clip, m))()
+					),
+				onDone
+			);
 
-			F3DRenderResult(
-				g.clip,
-				arrayPush(
-					g.disposers,
-					makeSubscribe(matrix, \m -> set3DGeometryMatrix(g.clip, m))()
-				)
-			)
+			r;
 		}
 	}
 }
 
-renderF3DMaterial(material : F3DMaterial, stage : native) -> F3DRenderResult {
+renderF3DMaterial(material : F3DMaterial, state : F3DRenderState, onStart : (native) -> [() -> void], onDone : () -> [() -> void]) -> [() -> void] {
 	switch (material : F3DMaterial) {
 		F3DMeshBasicMaterial(color, parameters) : {
-			F3DRenderResult(
-				make3DMeshBasicMaterial(color, map(parameters, \v -> [v.key, v.value])),
-				[]
+			concat(
+				onStart(make3DMeshBasicMaterial(color, map(parameters, \v -> [v.key, v.value]))),
+				onDone()
 			);
 		}
 		F3DMeshStandardMaterial(color, parameters) : {
-			F3DRenderResult(
-				make3DMeshStandardMaterial(color, map(parameters, \v -> [v.key, v.value])),
-				[]
+			concat(
+				onStart(make3DMeshStandardMaterial(color, map(parameters, \v -> [v.key, v.value]))),
+				onDone()
 			);
 		}
 		F3DMeshNormalMaterial(color, parameters) : {
-			F3DRenderResult(
-				make3DMeshNormalMaterial(color, map(parameters, \v -> [v.key, v.value])),
-				[]
+			concat(
+				onStart(make3DMeshNormalMaterial(color, map(parameters, \v -> [v.key, v.value]))),
+				onDone()
 			);
 		}
 		F3DShaderMaterial(uniforms, vertexShader, fragmentShader, parameters) : {
-			m = make3DShaderMaterial(stage, uniforms, vertexShader, fragmentShader, map(parameters, \v -> [v.key, v.value]));
+			m = make3DShaderMaterial(state.stage, uniforms, vertexShader, fragmentShader, map(parameters, \v -> [v.key, v.value]));
 
-			F3DRenderResult(
-				m,
+			concat3(
+				onStart(m),
 				[
 					addDrawFrameEventListener(\ts -> {
 						set3DShaderMaterialUniformValue(m, "iTime", d2s(ts / 1000.0));
 					}),
 					addEventListener(getStage(), "resize", \ -> {
-						wd = getClipWidth(stage);
-						hgt = getClipHeight(stage);
+						wd = getClipWidth(state.stage);
+						hgt = getClipHeight(state.stage);
 
 						set3DShaderMaterialUniformValue(m, "iResolution", "new THREE.Vector2(" + d2s(wd) + ", " + d2s(hgt) + ")");
 						set3DShaderMaterialUniformValue(m, "iAspectRatio", d2s(hgt / wd));
 					})
-				]
+				],
+				onDone()
 			);
 		}
 		F3DNativeMaterials(innerMaterials) : {
-			F3DRenderResult(innerMaterials, []);
+			concat(
+				onStart(innerMaterials),
+				onDone()
+			);
 		}
 		F3DMaterialTexture(innerMaterial, texture) : {
-			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture, stage);
-			set3DMaterialMap(m.clip, t.clip);
+			r = renderF3DMaterial(
+				innerMaterial,
+				state,
+				\mclip ->
+					renderF3DTexture(
+						texture,
+						state,
+						\tclip -> {
+							set3DMaterialMap(mclip, tclip);
+							onStart(mclip);
+						},
+						\ -> []
+					),
+				onDone
+			);
 
-			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
+			r;
 		}
 		F3DMaterialAlphaTexture(innerMaterial, texture) : {
-			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture, stage);
-			set3DMaterialAlphaMap(m.clip, t.clip);
+			r = renderF3DMaterial(
+				innerMaterial,
+				state,
+				\mclip ->
+					renderF3DTexture(
+						texture,
+						state,
+						\tclip -> {
+							set3DMaterialAlphaMap(mclip, tclip);
+							onStart(mclip);
+						},
+						\ -> []
+					),
+				onDone
+			);
 
-			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
+			r;
 		}
 		F3DMaterialDisplacementTexture(innerMaterial, texture, scale, bias) : {
-			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture, stage);
-			set3DMaterialDisplacementMap(m.clip, t.clip, fgetValue(scale), fgetValue(bias));
+			r = renderF3DMaterial(
+				innerMaterial,
+				state,
+				\mclip ->
+					renderF3DTexture(
+						texture,
+						state,
+						\tclip -> {
+							set3DMaterialDisplacementMap(mclip, tclip, fgetValue(scale), fgetValue(bias));
+							onStart(mclip);
+						},
+						\ -> []
+					),
+				onDone
+			);
 
-			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
+			r;
 		}
 		F3DMaterialBumpTexture(innerMaterial, texture, scale) : {
-			m = renderF3DMaterial(innerMaterial, stage);
-			t = renderF3DTexture(texture, stage);
-			set3DMaterialBumpMap(m.clip, t.clip, fgetValue(scale));
+			r = renderF3DMaterial(
+				innerMaterial,
+				state,
+				\mclip ->
+					renderF3DTexture(
+						texture,
+						state,
+						\tclip -> {
+							set3DMaterialBumpMap(mclip, tclip, fgetValue(scale));
+							onStart(mclip);
+						},
+						\ -> []
+					),
+				onDone
+			);
 
-			F3DRenderResult(m.clip, concat(m.disposers, t.disposers));
+			r;
 		}
 		F3DMaterialOpacity(innerMaterial, opacity) : {
-			m = renderF3DMaterial(innerMaterial, stage);
-
-			F3DRenderResult(
-				m.clip,
-				arrayPush(
-					m.disposers,
-					makeSubscribe(opacity, \v -> set3DMaterialOpacity(m.clip, v))()
-				)
+			r = renderF3DMaterial(
+				innerMaterial,
+				state,
+				\mclip ->
+					arrayPush(
+						onStart(mclip),
+						makeSubscribe(opacity, \v -> set3DMaterialOpacity(mclip, v))()
+					),
+				onDone
 			);
+
+			r;
 		}
 		F3DMaterialVisible(innerMaterial, visible) : {
-			m = renderF3DMaterial(innerMaterial, stage);
-
-			F3DRenderResult(
-				m.clip,
-				arrayPush(
-					m.disposers,
-					makeSubscribe(visible, \v -> set3DMaterialVisible(m.clip, v))()
-				)
+			r = renderF3DMaterial(
+				innerMaterial,
+				state,
+				\clip ->
+					arrayPush(
+						onStart(clip),
+						makeSubscribe(visible, \v -> set3DMaterialVisible(clip, v))()
+					),
+				onDone
 			);
+
+			r;
 		}
 	}
 }
 
-renderF3DTexture(texture : F3DTexture, stage : native) -> F3DRenderResult {
+renderF3DTexture(texture : F3DTexture, state : F3DRenderState, onStart : (native) -> [() -> void], onDone : () -> [() -> void]) -> [() -> void] {
 	switch (texture : F3DTexture) {
 		F3DTextureLoader(url, onLoad, parameters) : {
-			F3DRenderResult(
-				load3DTexture(stage, url, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value])),
-				[]
+			concat(
+				onStart(load3DTexture(state.stage, url, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value]))),
+				onDone()
+			);
+		}
+		F3DCubeTextureLoader(px, nx, py, ny, pz, nz, onLoad, parameters) : {
+			concat(
+				onStart(load3DCubeTexture(state.stage, px, nx, py, ny, pz, nz, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value]))),
+				onDone()
 			);
 		}
 		F3DDataTexture(data, width, height, parameters) : {
-			F3DRenderResult(
-				make3DDataTexture(data, width, height, map(parameters, \v -> [v.key, v.value])),
-				[]
+			concat(
+				onStart(make3DDataTexture(data, width, height, map(parameters, \v -> [v.key, v.value]))),
+				onDone()
 			);
 		}
 		F3DFFormTexture(fform, parameters) : {
 			d = renderFForm(fform, const([0]));
 			t = make3DCanvasTexture(d.clips[0], map(parameters, \v -> [v.key, v.value]));
-			applyall(d.disposers);
-			t;
 
-			F3DRenderResult(t, []);
+			applyall(d.disposers);
+
+			concat(
+				onStart(t),
+				onDone()
+			);
 		}
 		F3DTextureRotation(innerTexture, rotation) : {
-			t = renderF3DTexture(innerTexture, stage);
+			r = renderF3DTexture(
+				innerTexture,
+				state,
+				\clip ->
+					arrayPush(
+						onStart(clip),
+						makeSubscribe(rotation, \r -> set3DTextureRotation(clip, r))()
+					),
+				onDone
+			);
 
-			F3DRenderResult(
-				t.clip,
-				arrayPush(
-					t.disposers,
-					makeSubscribe(rotation, \r -> set3DTextureRotation(t.clip, r))()
-				)
-			)
+			r;
 		}
 		F3DTextureOffset(innerTexture, point) : {
-			t = renderF3DTexture(innerTexture, stage);
+			r = renderF3DTexture(
+				innerTexture,
+				state,
+				\clip ->
+					arrayPush(
+						onStart(clip),
+						makeSubscribe(point, \p -> {
+							set3DTextureOffsetX(clip, p.x);
+							set3DTextureOffsetY(clip, p.y);
+						})()
+					),
+				onDone
+			);
 
-			F3DRenderResult(
-				t.clip,
-				arrayPush(
-					t.disposers,
-					makeSubscribe(point, \p -> {
-						set3DTextureOffsetX(t.clip, p.x);
-						set3DTextureOffsetY(t.clip, p.y);
-					})()
-				)
-			)
+			r;
 		}
 	}
 }

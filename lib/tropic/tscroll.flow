@@ -11,7 +11,8 @@ export {
 		TScrollDisableMouseWheel, TReverseMouseWheel, TScrollDisableOutOfBounds, TScrollKeysEnabled, TScrollbarsVisible,
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarLeft, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
-		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent;
+		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
+		TScrollbarsAdditionalBox;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -104,6 +105,8 @@ export {
 
 			TScrollBarsStyle(x : TScrollbarStyle, y : TScrollbarStyle) -> TScrollbars { TScrollbars(x, y); };
 
+		TScrollbarsAdditionalBox(box : Transform<WidthHeight>);
+
 		TExpandOnHover(expand : bool);
 
 		TScrollBarTop();
@@ -131,6 +134,8 @@ export {
 		TScrollInspectShowScrolling(show : DynamicBehaviour<bool>);
 
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
+
+	nativeScroll = \ -> isUrlParameterTrue("native_scroll") && getRendererType() == "html";
 }
 
 TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyle]) -> Tropic {
@@ -153,6 +158,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	mouseEnabled = extractStruct(style, TScrollMouseEnabled(const(true))).enabled;
 
 	scrollBarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
+	scrollBarsAdditionalBox = extractStruct(style, TScrollbarsAdditionalBox(const(WidthHeight(0., 0.)))).box;
 	scrollFadeContent = tryExtractStruct(style, TScrollFadeContent(0, 0.0));
 
 	onScrolledToBottom = tryExtractStruct(style, TOnScrolledToBottom(nop));
@@ -410,7 +416,12 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						else
 							t
 					)
-					|> (\t -> TCrop(scrollPosition, boxWH, t))
+					|> (\t ->
+						if (nativeScroll())
+							TScrollRectT(scrollPosition, boxWH, t, enabled)
+						else
+							TCrop(scrollPosition, boxWH, t)
+					)
 				),
 				eitherMap(
 					scrollFadeContent,
@@ -473,23 +484,26 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					],
 					TRectangle(interactiveRectangleStyle, TSized(boxWH))
 				),
-				TShowLazy(
-					showScrolling,
-					\ -> createTScrollBars(
-						manager,
-						scrollId,
-						eitherMap(scrollFadeContent, \__ -> replaceStruct(style, scrollBarsVisible), style),
-						contentWH,
-						boxWH,
-						scrollPosition,
-						currentInteractive,
-						downXBar,
-						downYBar,
-						xMoving,
-						yMoving,
-						TRectangle(interactiveRectangleStyle, TSized(boxWH))
+				if (nativeScroll())
+					TEmpty()
+				else
+					TShowLazy(
+						showScrolling,
+						\ -> createTScrollBars(
+							manager,
+							scrollId,
+							eitherMap(scrollFadeContent, \__ -> replaceStruct(style, scrollBarsVisible), style),
+							contentWH,
+							boxWH,
+							scrollPosition,
+							currentInteractive,
+							downXBar,
+							downYBar,
+							xMoving,
+							yMoving,
+							TRectangle(interactiveRectangleStyle, TSized(fwhaddition(boxWH, scrollBarsAdditionalBox)))
+						)
 					)
-				)
 			])
 			|> t2a;
 
@@ -523,6 +537,102 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 				b.yConstant,
 				concat(b.disposers, c.disposers)
 			)
+	})
+}
+
+TScrollRectT(scrollPosition : DynamicBehaviour<Point>, boxWH : Transform<WidthHeight>, t : Tropic, enabled : Transform<bool>) -> Tropic {
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		x1 = fpointX(scrollPosition);
+		y1 = fpointY(scrollPosition);
+		wi = fwidth(boxWH);
+		he = fheight(boxWH);
+
+		bf =
+			t2a(
+				t,
+				TParentInfo(parent with
+					transformMatrix = fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(fnegate(x1), fnegate(y1))))
+				),
+				sheet,
+				metricsOnly
+			);
+		fm = make(zeroMetrics);
+
+		TAcc(
+			if (metricsOnly)
+				FEmpty()
+			else
+				FNativeForm(
+					t,
+					fm,
+					\ -> FCrop(
+							x1,
+							y1,
+							wi,
+							he,
+							bf.form
+						),
+					\av, zo, to -> {
+						scrollResponse = ref false;
+						scrollPositionResponse = ref false;
+
+						clip = makeClip();
+
+						d0 = renderFForm(bf.form, const(zo));
+						d = attachFChildren(clip, d0.clips, d0.disposers, [FClipMove(), FClipRotate(), FClipScale(), FClipMask()]);
+
+						disposers =
+							concat(
+								d.disposers,
+								[
+									make2Subscribe(bf.metrics.width, bf.metrics.height, \wd, hgt ->
+										setContentRect(clip, wd, hgt)
+									)(),
+									make2Subscribe(scrollPosition, boxWH, \sp, bwh -> {
+										if (!^scrollResponse) {
+											scrollPositionResponse := true;
+											setScrollRect(clip, sp.x, sp.y, bwh.width, bwh.height);
+											scrollPositionResponse := false;
+										}
+									})(),
+									makeSubscribeUns(enabled, \en ->
+										if (en)
+											[
+												listenScrollRect(clip, \dx, dy -> {
+													if (!^scrollPositionResponse) {
+														scrollResponse := true;
+														nextDistinct(scrollPosition, Point(dx, dy));
+														scrollResponse := false;
+													}
+												})
+											]
+										else
+											[]
+									)(),
+									fconnect(fselect(boxWH, FLift(\wh -> FormMetrics(wh.width, wh.height, wh.height, wh.height))), fm)
+								]
+							);
+
+						NativeRenderResult(
+							[clip],
+							\ -> applyall(disposers)
+						)
+					}
+				),
+			TFormMetrics(
+				wi,
+				he,
+				he
+			),
+			wi,
+			he,
+			wi,
+			he,
+			bf.xFillers, bf.yFillers, bf.addFillers,
+			bf.xConstant && isFConst(x1) && isFConst(wi),
+			bf.yConstant && isFConst(y1) && isFConst(he),
+			bf.disposers
+		)
 	})
 }
 
@@ -819,7 +929,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		tr
 	)
 	|> (\f2 ->
-		if (disableWheel)
+		if (disableWheel || nativeScroll())
 			f2
 		else
 			TGroupWithoutMetrics([

@@ -235,7 +235,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
-		clip.interactive = untyped clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null || clip.isInteractive;
+		clip.interactive = untyped clip.scrollRectListener != null || clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null || clip.isInteractive;
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
@@ -251,13 +251,14 @@ class DisplayObjectHelper {
 		} else {
 			if (!clip.interactiveChildren) {
 				var children : Array<Dynamic> = untyped clip.children;
+				var i = 0;
 
-				if (children != null) {
-					for (c in children) {
-						if (c.interactiveChildren) {
-							clip.interactiveChildren = true;
-						}
+				while (children.length > i && !clip.interactiveChildren) {
+					if (children[i].interactiveChildren) {
+						clip.interactiveChildren = true;
 					}
+
+					i++;
 				}
 			}
 
@@ -499,7 +500,37 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static inline function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
+		if (untyped clip.contentBounds == null) {
+			untyped clip.contentBounds = new Bounds();
+		}
+
+		var contentBounds = untyped clip.contentBounds;
+
+		contentBounds.minX = 0.0;
+		contentBounds.minY = 0.0;
+		contentBounds.maxX = width;
+		contentBounds.maxY = height;
+
+		invalidateTransform(clip, "setContentRect");
+	}
+
+	public static inline function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
+		untyped clip.scrollRectListener = cb;
+
+		invalidateInteractive(clip);
+		invalidateTransform(clip, "listenScrollRect");
+
+		return function() {
+			untyped clip.scrollRectListener = null;
+
+			invalidateInteractive(clip);
+			invalidateTransform(clip, "listenScrollRect disposer");
+		}
+	}
+
 	public static inline function removeScrollRect(clip : FlowContainer) : Void {
+		untyped clip.scrollRectListener = null;
 		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		if (scrollRect != null) {
@@ -836,6 +867,16 @@ class DisplayObjectHelper {
 		var ty : Float = 0.0;
 
 		if (untyped clip.scrollRect != null) {
+			if (nativeWidget.firstChild != null) {
+				if (untyped clip.contentBounds != null) {
+					nativeWidget.firstChild.style.width = '${untyped Math.max(clip.contentBounds.maxX, clip.scrollRect.width)}px';
+					nativeWidget.firstChild.style.height = '${untyped Math.max(clip.contentBounds.maxY, clip.scrollRect.height)}px';
+				} else if (untyped clip.maxLocalBounds != null) {
+					nativeWidget.firstChild.style.width = '${untyped clip.maxLocalBounds.maxX + clip.scrollRect.width}px';
+					nativeWidget.firstChild.style.height = '${untyped clip.maxLocalBounds.maxY + clip.scrollRect.height}px';
+				}
+			}
+
 			var point = applyTransformPoint(new Point(untyped clip.scrollRect.x, untyped clip.scrollRect.y), transform);
 
 			if (untyped clip.parentClip && clip.parentClip.hasMarginGap && clip.parentClip.parentClip != RenderSupportJSPixi.PixiStage) {
@@ -1078,39 +1119,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function createPlaceholderWidget(clip : DisplayObject) : Void {
-		var placeholderWidget = untyped clip.placeholderWidget;
-
-		if (placeholderWidget == null) {
-			var nativeWidget = untyped clip.nativeWidget;
-
-			placeholderWidget = Browser.document.createElement('div');
-			untyped clip.placeholderWidget = placeholderWidget;
-
-			placeholderWidget.style.height = '10000px';
-			placeholderWidget.style.width = '10000px';
-			placeholderWidget.className = 'nativeWidget';
-			placeholderWidget.style.visibility = 'hidden';
-
-			nativeWidget.insertBefore(placeholderWidget, nativeWidget.firstChild);
-		}
-	}
-
-	public static function removePlaceholderWidget(clip : DisplayObject) : Void {
-		var placeholderWidget : Dynamic = untyped clip.placeholderWidget;
-
-		if (placeholderWidget != null) {
-			if (placeholderWidget.parentNode != null) {
-				placeholderWidget.parentNode.removeChild(placeholderWidget);
-			}
-
-			placeholderWidget = null;
-		}
-	}
-
 	public static function removeNativeMask(clip : DisplayObject) : Void {
-		removePlaceholderWidget(clip);
-
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if ((nativeWidget.style.overflow != null && nativeWidget.style.overflow != '') ||
@@ -1130,7 +1139,7 @@ class DisplayObjectHelper {
 		var transform = getNativeWidgetTransform(clip);
 
 		if (untyped clip.hasMarginGap && clip.parentClip != RenderSupportJSPixi.PixiStage) {
-			if (y < 0 || x < 0) {
+			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0)) {
 				nativeWidget.style.marginLeft = '${-round(x + getMarginGap() * transform.a)}px';
 				nativeWidget.style.marginRight = '${-round(getMarginGap() * transform.a)}px';
 				nativeWidget.style.marginTop = '${-round(y + getMarginGap() * transform.d)}px';
@@ -1149,7 +1158,7 @@ class DisplayObjectHelper {
 				nativeWidget.style.clip = null;
 			}
 		} else {
-			if (y < 0 || x < 0) {
+			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0)) {
 				nativeWidget.style.margin = null;
 				nativeWidget.style.marginLeft = '${-round(x)}px';
 				nativeWidget.style.marginTop = '${-round(y)}x';
@@ -1167,29 +1176,65 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (x != 0 || y != 0) {
-			createPlaceholderWidget(clip);
-		}
+		var currentScrollLeft = round(nativeWidget.scrollLeft);
+		var currentScrollTop = round(nativeWidget.scrollTop);
 
-		if (x > 10000) {
-			untyped clip.placeholderWidget.style.width = '${getWidgetWidth(clip) + x}px';
-		}
+		var updateScrollRectFn = function() {
+			if (untyped clip.scrollRect != null && clip.parent != null) {
+				untyped clip.x = clip.x + clip.scrollRect.x - currentScrollLeft;
+				untyped clip.y = clip.y + clip.scrollRect.y - currentScrollTop;
 
-		if (y > 10000) {
-			untyped clip.placeholderWidget.style.height = '${getWidgetHeight(clip) + y}px';
+				untyped clip.scrollRect.x = currentScrollLeft;
+				untyped clip.scrollRect.y = currentScrollTop;
+
+				invalidateTransform(untyped clip.scrollRect, "scrollNativeWidget");
+
+				untyped clip.scrollRectListener(currentScrollLeft, currentScrollTop);
+			}
 		}
 
 		var scrollFn = function() {
-			if (nativeWidget.scrollLeft != x) {
-				nativeWidget.scrollLeft = x;
-			}
+			if (untyped clip.scrollRect != null && clip.parent != null) {
+				if (nativeWidget.scrollLeft != untyped clip.scrollRect.x) {
+					nativeWidget.scrollLeft = untyped clip.scrollRect.x;
+				}
 
-			if (nativeWidget.scrollTop != y) {
-				nativeWidget.scrollTop = y;
+				if (nativeWidget.scrollTop != untyped clip.scrollRect.y) {
+					nativeWidget.scrollTop = untyped clip.scrollRect.y;
+				}
 			}
+		};
+
+		var onScrollFn =
+			if (untyped clip.scrollRectListener != null)
+				function() {
+					if (untyped clip.scrollRect != null && clip.parent != null) {
+						var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft);
+						var nativeWidgetScrollTop = round(nativeWidget.scrollTop);
+
+						if (nativeWidgetScrollLeft == currentScrollLeft && nativeWidgetScrollTop == currentScrollTop) {
+							return;
+						} else {
+							currentScrollLeft = nativeWidgetScrollLeft;
+							currentScrollTop = nativeWidgetScrollTop;
+						}
+
+						RenderSupportJSPixi.off("drawframe", updateScrollRectFn);
+
+						if (RenderSupportJSPixi.Animating) {
+							RenderSupportJSPixi.once("drawframe", updateScrollRectFn);
+						} else {
+							updateScrollRectFn();
+						}
+					}
+				}
+			else
+				scrollFn;
+
+		nativeWidget.onscroll = onScrollFn;
+		if (untyped clip.scrollRectListener == null || (x >= 0 && y >= 0)) {
+			scrollFn();
 		}
-		nativeWidget.onscroll = scrollFn;
-		scrollFn();
 		untyped clip.scrollFn = scrollFn;
 	}
 
@@ -1206,7 +1251,6 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
 			nativeWidget.style.borderRadius = null;
-			removePlaceholderWidget(clip);
 
 			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
@@ -1256,7 +1300,7 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
 			nativeWidget.style.borderRadius = null;
-			nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
+			nativeWidget.style.overflow = untyped clip.isInput || clip.scrollRectListener != null ? "auto" : "hidden";
 
 			scrollNativeWidget(clip, round(scrollRect.x), round(scrollRect.y));
 		} else if (mask != null) {
@@ -1266,8 +1310,6 @@ class DisplayObjectHelper {
 				var data = graphicsData[0];
 
 				if (data.shape.type == 0) {
-					removePlaceholderWidget(clip);
-
 					nativeWidget.style.overflow = null;
 					nativeWidget.style.borderRadius = null;
 
@@ -1388,7 +1430,9 @@ class DisplayObjectHelper {
 
 	public static function getParentNode(clip : DisplayObject) : Dynamic {
 		if (isNativeWidget(clip)) {
-			return untyped clip.nativeWidget.parentNode;
+			return untyped clip.parentClip != null && clip.parentClip.scrollRect != null && clip.nativeWidget.parentNode != null ?
+				clip.nativeWidget.parentNode.parentNode :
+				clip.nativeWidget.parentNode;
 		}
 
 		return null;
@@ -1529,7 +1573,17 @@ class DisplayObjectHelper {
 			}
 
 			var nextWidget = findNextNativeWidget(child, clip);
-			untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+			if (untyped clip.scrollRect != null) {
+				if (untyped clip.nativeWidget.firstChild == null) {
+					var cont = Browser.document.createElement("div");
+					cont.className = 'nativeWidget';
+					untyped clip.nativeWidget.appendChild(cont);
+				}
+
+				untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+			} else {
+				untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+			}
 
 			applyScrollFnChildren(child);
 		} else {
@@ -1641,9 +1695,7 @@ class DisplayObjectHelper {
 				for (child in getClipChildren(clip)) {
 					if (untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null) {
 						invalidateLocalBounds(child, invalidateMask);
-						if (untyped clip.mask == null) {
-							applyMaxBounds(clip, untyped child.currentBounds);
-						}
+						applyMaxBounds(clip, untyped child.currentBounds);
 					}
 				}
 
