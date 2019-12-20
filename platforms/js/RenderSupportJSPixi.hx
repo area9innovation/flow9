@@ -758,16 +758,12 @@ class RenderSupportJSPixi {
 			}
 		};
 
-		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
+		if (Platform.isMobile && (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13))) {
 			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
 
-			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
-		} else if (Platform.isMobile) {
 			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
