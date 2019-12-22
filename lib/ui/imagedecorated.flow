@@ -196,6 +196,8 @@ makeImageDecorated2(
 
 	adaptiveCropping = \form : Form -> {
 		if (containsStruct(decorations, defaultImageAdaptiveCrop)){
+			debug = isUrlParameterTrue("adaptive_crop_debug");
+
 			crop = extractStruct(decorations, defaultImageAdaptiveCrop);
 			cropX = make(crop.x);
 			cropY = make(crop.y);
@@ -205,13 +207,39 @@ makeImageDecorated2(
 			tweaks = extractStruct(decorations, ImageAdaptiveCropTweaks([]));
 			squareness = extractStruct(tweaks.style, Squareness(0.0)).value;
 
+			debug_uns : ref [()->void] = ref [];
+
 			Constructor(
 				Crop(cropX, cropY, cropW, cropH, form),
 				\ -> {
+					if (debug) {
+						refArrayPush(debug_uns, subscribe(savedOrRealSize, \s -> {println("savedOrRealSize:"); println(savedOrRealSize);}));
+						refArrayPush(debug_uns, subscribe(cropX, \v -> println("CropX: " + d2s(v))));
+						refArrayPush(debug_uns, subscribe(cropY, \v -> println("CropY: " + d2s(v))));
+						refArrayPush(debug_uns, subscribe(cropW, \v -> println("CropW: " + d2s(v))));
+						refArrayPush(debug_uns, subscribe(cropH, \v -> println("CropH: " + d2s(v))));
+					}
+							
 					awhP = stallu(crop.availableWHB, 100);	// Avoid excessive renderings on partial update
 					bP = select2u(pictureIsLoading, awhP.first, \loading, awh -> {
+
 						formSize = getValue(savedOrRealSize);
+
+						if (debug) {
+							println("Adaptive crop event:");
+							println("formSize: ");
+							println(formSize);
+							println("loading: " + b2s(loading));
+							println("awh: ");
+							println(awh);
+						}
+
 						if (loading || formSize.width <= awh.width && formSize.height <= awh.height) {
+
+							if (debug) {
+								println("Set crop x,y,w,h to: 0.0, 0.0, " + d2s(formSize.width) + ", " + d2s(formSize.height));
+							}
+
 							nextDistinct(cropX, 0.0);
 							nextDistinct(cropY, 0.0);
 							nextDistinct(cropW, formSize.width);
@@ -230,18 +258,27 @@ makeImageDecorated2(
 
 							cropWidth = min(max(spaceWH.width * scale, crop.width), formSize.width);
 							cropHeight = min(max(spaceWH.height * scale, crop.height), formSize.height);
-							nextDistinct(cropW, cropWidth);
-							nextDistinct(cropH, cropHeight);
-
-							newCropX = max(0.0, crop.x + crop.width / 2.0 - cropWidth / 2.0);
-							newCropY = max(0.0, crop.y + crop.height / 2.0 - cropHeight / 2.0);
+							
+							desiredCropX = max(0.0, crop.x + crop.width / 2.0 - cropWidth / 2.0);
+							desiredCropY = max(0.0, crop.y + crop.height / 2.0 - cropHeight / 2.0);
+							
 							cropXMax = formSize.width - cropWidth;
 							cropYMax = formSize.height - cropHeight;
-							nextDistinct(cropX, if (newCropX > cropXMax) cropXMax else newCropX);
-							nextDistinct(cropY, if (newCropY > cropYMax) cropYMax else newCropY);
+							
+							newCropX = if (desiredCropX > cropXMax) cropXMax else desiredCropX;
+							newCropY = if (desiredCropX > cropYMax) cropYMax else desiredCropX;
+
+							if (debug) {
+								println("Set crop x,y,w,h to: " + d2s(newCropX) + ", " + d2s(newCropY) + ", " + d2s(cropWidth) + ", " + d2s(cropHeight));
+							}
+
+							nextDistinct(cropW, cropWidth);
+							nextDistinct(cropH, cropHeight);
+							nextDistinct(cropX, newCropX);
+							nextDistinct(cropY, newCropY);
 						}
 					});
-					\ -> applyall([awhP.second, bP.second]);
+					\ -> applyall([awhP.second, bP.second, \ -> applyall(^debug_uns)]);
 				}
 			)
 		} else {
