@@ -76,6 +76,31 @@ export {
 	) -> [StaticGraphicOp];
 }
 
+calculateAdaptiveCropValues(crop : ImageAdaptiveCrop, formSize : WidthHeight, givenSize : WidthHeight, loading : bool, availableWH : WidthHeight, squareness : double) -> Quadruple<double, double, double, double> {
+	if (loading || formSize.width <= availableWH.width && formSize.height <= availableWH.height) {
+		Quadruple(0.0, 0.0, formSize.width, formSize.height);
+	} else {
+		awhRatio = availableWH.width / availableWH.height;
+		k = (awhRatio - 1.0) * (1.0 - squareness);
+
+		spaceWH =
+			if (availableWH.width <= 0.0)
+				givenSize
+			else	
+				WidthHeight(availableWH.height + availableWH.height * k, availableWH.height);
+							
+		scale = max3(crop.width / spaceWH.width, crop.height / spaceWH.height, 1.0);
+
+		newCropW = min(max(spaceWH.width * scale, crop.width), formSize.width);
+		newCropH = min(max(spaceWH.height * scale, crop.height), formSize.height);
+
+		newCropX = min(max(0.0, crop.x + crop.width / 2.0 - newCropW / 2.0), formSize.width - newCropW);
+		newCropY = min(max(0.0, crop.y + crop.height / 2.0 - newCropH / 2.0), formSize.height - newCropH);
+							
+		Quadruple(newCropX, newCropY, newCropW, newCropH);		
+	}
+}
+
 // Width and height are serialized on OK click in the image decorations editor. So, we have information about picture size until it is loaded.
 // But we also  have some legacy sources with width = height = 0. The reason is unclear. Probably it was a bug in the editor.
 makeImageDecorated2(
@@ -196,96 +221,31 @@ makeImageDecorated2(
 
 	adaptiveCropping = \form : Form -> {
 		if (containsStruct(decorations, defaultImageAdaptiveCrop)){
-			debug = isUrlParameterTrue("adaptive_crop_debug");
-
 			crop = extractStruct(decorations, defaultImageAdaptiveCrop);
-			cropX = make(crop.x);
-			cropY = make(crop.y);
-			cropW = make(crop.width);
-			cropH = make(crop.height);
-
 			tweaks = extractStruct(decorations, ImageAdaptiveCropTweaks([]));
 			squareness = extractStruct(tweaks.style, Squareness(0.0)).value;
 
-			debug_uns : ref [()->void] = ref [];
+			initValues = calculateAdaptiveCropValues(crop, getValue(savedOrRealSize), givenSize, getValue(pictureIsLoading), getValue(crop.availableWHB), squareness);
+
+			cropX = make(initValues.first);
+			cropY = make(initValues.second);
+			cropW = make(initValues.third);
+			cropH = make(initValues.fourth);
 
 			Constructor(
 				Crop(cropX, cropY, cropW, cropH, form),
 				\ -> {
-					if (debug) {
-						refArrayPush(debug_uns, subscribe(savedOrRealSize, \s -> {println("savedOrRealSize:"); println(savedOrRealSize);}));
-						refArrayPush(debug_uns, subscribe(cropX, \v -> println("CropX: " + d2s(v))));
-						refArrayPush(debug_uns, subscribe(cropY, \v -> println("CropY: " + d2s(v))));
-						refArrayPush(debug_uns, subscribe(cropW, \v -> println("CropW: " + d2s(v))));
-						refArrayPush(debug_uns, subscribe(cropH, \v -> println("CropH: " + d2s(v))));
-					}
-							
 					awhP = stallu(crop.availableWHB, 100);	// Avoid excessive renderings on partial update
 					bP = select2u(pictureIsLoading, awhP.first, \loading, awh -> {
+						curValues = calculateAdaptiveCropValues(crop, getValue(savedOrRealSize), givenSize, loading, awh, squareness);
 
-						formSize = getValue(savedOrRealSize);
-
-						if (debug) {
-							println("Adaptive crop event:");
-							println("formSize: ");
-							println(formSize);
-							println("loading: " + b2s(loading));
-							println("awh: ");
-							println(awh);
-						}
-
-						if (loading || formSize.width <= awh.width && formSize.height <= awh.height) {
-
-							if (debug) {
-								println("Set crop x,y,w,h to: 0.0, 0.0, " + d2s(formSize.width) + ", " + d2s(formSize.height));
-							}
-
-							nextDistinct(cropX, 0.0);
-							nextDistinct(cropY, 0.0);
-							nextDistinct(cropW, formSize.width);
-							nextDistinct(cropH, formSize.height);
-						} else {
-							awhRatio = awh.width / awh.height;
-							k = (awhRatio - 1.0) * (1.0 - squareness);
-
-							spaceWH =
-								if (awh.width <= 0.0)
-									givenSize
-								else	
-									WidthHeight(awh.height + awh.height * k, awh.height);
-							
-							scale = max3(crop.width / spaceWH.width, crop.height / spaceWH.height, 1.0);
-
-							cropWidth = min(max(spaceWH.width * scale, crop.width), formSize.width);
-							cropHeight = min(max(spaceWH.height * scale, crop.height), formSize.height);
-							
-							desiredCropX = max(0.0, crop.x + crop.width / 2.0 - cropWidth / 2.0);
-							desiredCropY = max(0.0, crop.y + crop.height / 2.0 - cropHeight / 2.0);
-							
-							cropXMax = formSize.width - cropWidth;
-							cropYMax = formSize.height - cropHeight;
-							
-							newCropX = if (desiredCropX > cropXMax) cropXMax else desiredCropX;
-							newCropY = if (desiredCropY > cropYMax) cropYMax else desiredCropY;
-
-							if (debug) {
-								println("Set crop x,y,w,h to: " + d2s(newCropX) + ", " + d2s(newCropY) + ", " + d2s(cropWidth) + ", " + d2s(cropHeight));
-							
-								timer(1, \ -> {
-									nextDistinct(cropW, cropWidth);
-									nextDistinct(cropH, cropHeight);
-									nextDistinct(cropX, newCropX);
-									nextDistinct(cropY, newCropY);
-								});
-							} else {
-									nextDistinct(cropW, cropWidth);
-									nextDistinct(cropH, cropHeight);
-									nextDistinct(cropX, newCropX);
-									nextDistinct(cropY, newCropY);								
-							}
-						}
+						nextDistinct(cropX, curValues.first);
+						nextDistinct(cropY, curValues.second);
+						nextDistinct(cropW, curValues.third);
+						nextDistinct(cropH, curValues.fourth);
 					});
-					\ -> applyall([awhP.second, bP.second, \ -> applyall(^debug_uns)]);
+
+					\ -> applyall([awhP.second, bP.second]);
 				}
 			)
 		} else {
