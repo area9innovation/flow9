@@ -401,6 +401,18 @@ class PixiWorkarounds {
 
 				context.font = font;
 
+				const widthContext = Platform.isIE ? canvas.getContext('2d') : context;
+				const ieWidthMulti = Platform.isIE ? 10 : 1;
+				if (Platform.isIE) {
+					let widthStyle = style.clone();
+					widthStyle.fontSize *= ieWidthMulti;
+					const widthFont = widthStyle.toFontString();
+					widthContext.font = widthFont;
+				} else {
+					widthContext.font = font;
+				}
+
+
 				const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
 				const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
 				const lineWidths = new Array(lines.length);
@@ -413,10 +425,10 @@ class PixiWorkarounds {
 					let lineWidth;
 					if (Platform.isSafari) {
 						let spacesCount = 0;
-						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
+						lineWidth = widthContext.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width / ieWidthMulti;
 						lineWidth += spacesCount * spaceWidth;
 					} else {
-						lineWidth = context.measureText(lines[i]).width;
+						lineWidth = widthContext.measureText(lines[i]).width / ieWidthMulti;
 					}
 					lineWidth += (lines[i].length - 1) * style.letterSpacing;
 
