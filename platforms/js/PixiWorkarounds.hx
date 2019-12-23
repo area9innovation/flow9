@@ -399,17 +399,13 @@ class PixiWorkarounds {
 
 				const context = canvas.getContext('2d');
 
-				context.font = font;
-
-				const widthContext = Platform.isIE ? canvas.getContext('2d') : context;
-				const ieWidthMulti = Platform.isIE ? 10 : 1;
+				const ieWidthMulti = Platform.isIE ? 100 : 1;
 				if (Platform.isIE) {
-					let widthStyle = style.clone();
-					widthStyle.fontSize *= ieWidthMulti;
-					const widthFont = widthStyle.toFontString();
-					widthContext.font = widthFont;
+					let clonedStyle = style.clone();
+					clonedStyle.fontSize *= ieWidthMulti;
+					context.font = clonedStyle.toFontString();
 				} else {
-					widthContext.font = font;
+					context.font = font;
 				}
 
 
@@ -425,10 +421,10 @@ class PixiWorkarounds {
 					let lineWidth;
 					if (Platform.isSafari) {
 						let spacesCount = 0;
-						lineWidth = widthContext.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width / ieWidthMulti;
+						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
 						lineWidth += spacesCount * spaceWidth;
 					} else {
-						lineWidth = widthContext.measureText(lines[i]).width / ieWidthMulti;
+						lineWidth = context.measureText(lines[i]).width / ieWidthMulti;
 					}
 					lineWidth += (lines[i].length - 1) * style.letterSpacing;
 
@@ -449,6 +445,10 @@ class PixiWorkarounds {
 				if (style.dropShadow)
 				{
 					height += style.dropShadowDistance;
+				}
+
+				if (Platform.isIE) {
+					context.font = font;
 				}
 
 				return new PIXI.TextMetrics(
