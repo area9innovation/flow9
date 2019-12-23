@@ -97,7 +97,13 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) ->
 	struct_counts = map(enumFromTo(0, max_size), \i -> 
 		lookupTreeDef(struct_counts_map, i, -1) 
 	);
-	toplevel_triple = cpp2WriterEnumerateToplevel(program, amain);
+	
+	dependencies = getAllDependencies(
+		program.names.toplevel, 
+		amain.lambda, 
+		emptyCpp2Dependencies
+	);
+	toplevel_triple = cpp2WriterEnumerateToplevel(program, dependencies);
 	function_table = toplevel_triple.first;
 	global_vars = toplevel_triple.second;
 	global_map = mergeTree(struct_list_map.third, toplevel_triple.third);
@@ -134,7 +140,8 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) ->
 		"", // cur_global : string,
 		1, // next_closure_id : int,
 		known_natives, // known_natives : Tree<string, Cpp2NativeDescr>,
-		makeTree()
+		makeTree(),
+		foldSet(dependencies.all_decls, makeSet(), \acc, d -> insertSet(acc, d.name))
 	);
 	iter(structs_order,
 		\s -> cpp2GenerateStructCode(writer, s, lookupTreeDef(structs, s.name, dummyCpp2StructInfo))
@@ -152,7 +159,7 @@ cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void {
 			}
 			iter(module.initOrder, 
 				\glob_name -> {
-					//if (containsKeyTree(writer.global_map, glob_name)) {
+					if (containsSet(writer.dependencies, glob_name)) {
 						switch (lookupTree(prog.names.toplevel, glob_name)) {
 							Some(decl): {
 								switch (decl) {
@@ -173,7 +180,7 @@ cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void {
 							}
 							None(): cpp2_error("impossible");
 						}
-					//}
+					}
 				}
 			)
 		}
@@ -388,9 +395,7 @@ cpp2gatherInitOrder(prog : FiProgram) -> [FiDeclaration] {
 }
 
 // Index natives and globals
-cpp2WriterEnumerateToplevel(program : FiProgram, amain : FiFunctionDec) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
-
-	deps = getAllDependencies(program.names.toplevel, amain.lambda, Cpp2Dependencies(makeSet(), makeSet(), makeSet(), makeSet()));
+cpp2WriterEnumerateToplevel(program : FiProgram, deps : Cpp2Dependencies) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
 
 	//fcPrintln("deps: '" + strGlue(map(set2array(deps.all_decls), \decl -> decl.name), ", ") + "'", program.config.threadId);
 
@@ -443,13 +448,6 @@ cpp2WriterEnumerateToplevel(program : FiProgram, amain : FiFunctionDec) -> Tripl
 	);
 	Triple(^(triple.first), ^(triple.second), triple.third)
 }
-
-Cpp2Dependencies(
-	funcs : Set<FiFunctionDec>,
-	natives : Set<FiNativeDec>,
-	vars : Set<FiGlobalVar>,
-	all_decls : Set<FiDeclaration>,
-);
 
 getAllDependencies(toplevel : Tree<string, FiDeclaration>, expr : FiExp, acc : Cpp2Dependencies) -> Cpp2Dependencies {
 	switch (expr) {
