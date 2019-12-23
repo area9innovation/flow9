@@ -363,6 +363,11 @@ class DisplayObjectHelper {
 			var from = DebugUpdate ? 'setClipScaleX ' + clip.scale.x + ' : ' + scale : null;
 
 			clip.scale.x = scale;
+
+			if (RenderSupportJSPixi.RendererType == "html" && scale != 1.0) {
+				initNativeWidget(clip);
+			}
+
 			invalidateTransform(clip, from);
 		}
 	}
@@ -372,6 +377,11 @@ class DisplayObjectHelper {
 			var from = DebugUpdate ? 'setClipScaleY ' + clip.scale.y + ' : ' + scale : null;
 
 			clip.scale.y = scale;
+
+			if (RenderSupportJSPixi.RendererType == "html" && scale != 1.0) {
+				initNativeWidget(clip);
+			}
+
 			invalidateTransform(clip, from);
 		}
 	}
