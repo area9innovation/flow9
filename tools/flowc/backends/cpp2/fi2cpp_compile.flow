@@ -16,6 +16,11 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) ->
 	known_natives = fold(cpp2_natives, makeTree(), 
 		\acc, nat -> setTree(acc, "Native." + nat.name, nat)
 	);
+	dependencies = getAllDependencies(
+		program.names.toplevel, 
+		amain.lambda, 
+		emptyCpp2Dependencies
+	);
 	// We do this in alphabetical order in order to avoid random changes in the
 	// code just because of hash ordering differences; however, it is combined
 	// with descending order by argument count to allow size checks just by
@@ -97,12 +102,6 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) ->
 	struct_counts = map(enumFromTo(0, max_size), \i -> 
 		lookupTreeDef(struct_counts_map, i, -1) 
 	);
-	
-	dependencies = getAllDependencies(
-		program.names.toplevel, 
-		amain.lambda, 
-		emptyCpp2Dependencies
-	);
 	toplevel_triple = cpp2WriterEnumerateToplevel(program, dependencies);
 	function_table = toplevel_triple.first;
 	global_vars = toplevel_triple.second;
@@ -141,7 +140,7 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) ->
 		1, // next_closure_id : int,
 		known_natives, // known_natives : Tree<string, Cpp2NativeDescr>,
 		makeTree(),
-		foldSet(dependencies.all_decls, makeSet(), \acc, d -> insertSet(acc, d.name))
+		foldSet(dependencies.all_decls, makeSet1("main"), \acc, d -> insertSet(acc, d.name))
 	);
 	iter(structs_order,
 		\s -> cpp2GenerateStructCode(writer, s, lookupTreeDef(structs, s.name, dummyCpp2StructInfo))
@@ -206,7 +205,7 @@ cpp2WriterTranslateGlobalVariables(writer : Cpp2Writer) -> void {
 			module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
 			fold(module.initOrder, acc,
 				\ac, glob_name -> {
-					if (!containsKeyTree(writer.global_map, glob_name)) ac else {
+					if (!containsSet(writer.dependencies, glob_name)) ac else {
 						switch (lookupTree(prog.names.toplevel, glob_name)) {
 							Some(decl): {
 								switch (decl) {
@@ -396,11 +395,7 @@ cpp2gatherInitOrder(prog : FiProgram) -> [FiDeclaration] {
 
 // Index natives and globals
 cpp2WriterEnumerateToplevel(program : FiProgram, deps : Cpp2Dependencies) -> Triple<[Cpp2FunctionDescr], [string], Tree<string, Cpp2PlaceInfo>> {
-
-	//fcPrintln("deps: '" + strGlue(map(set2array(deps.all_decls), \decl -> decl.name), ", ") + "'", program.config.threadId);
-
-	all_decls = concat(set2array(deps.all_decls), filter(cpp2gatherInitOrder(program), \decl -> !containsSet(deps.all_decls, decl)));
-	
+	all_decls = set2array(deps.all_decls);
 	triple : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>> = 
 	fold(all_decls, Triple(ref [], ref [], makeTree()),
 		\acc : Triple<ref [Cpp2FunctionDescr], ref [string], Tree<string, Cpp2PlaceInfo>>, decl : FiDeclaration -> {
@@ -2495,11 +2490,12 @@ cpp2WriterCompileCall(writer : Cpp2Writer, code : FiCall, ctx : Cpp2Context, out
 								\i -> {
 									switch ((^arefs)[i]) {
 										Some(aref): {
-											if (aref.place == Cpp2Argument() && aref.slot == i) {
+											if (aref.place != Cpp2Argument() || aref.slot != i) {
 												cpp2ContextWrSemi(ctx, cpp2WriterAssignExpr("RUNNER_ARG(" + i2s(i) + ")", (^astrings)[i], false));
 											}
 										}
-										None(): { }
+										None():
+											cpp2ContextWrSemi(ctx, cpp2WriterAssignExpr("RUNNER_ARG(" + i2s(i) + ")", (^astrings)[i], false));
 									}
 								}
 							);
