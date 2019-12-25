@@ -1969,7 +1969,7 @@ class DisplayObjectHelper {
 			untyped clip.isNativeWidget = true;
 			untyped clip.createNativeWidget(tagName);
 
-			invalidateTransform(clip, 'initNativeWidget');
+			invalidateTransform(clip, 'initNativeWidget', untyped clip.parent != null);
 		}
 	}
 
