@@ -389,7 +389,7 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (untyped this.isMask || this.isCanvas) {
+		if (untyped this.isMask || this.isCanvas || (this.isEmpty && clipHasChildren())) {
 			if (isNativeWidget) {
 				deleteNativeWidget();
 			}
