@@ -2257,7 +2257,6 @@ class RenderSupportJSPixi {
 			var filterCount = 0;
 
 			clip.off("childrenchanged", clip.invalidateTransform);
-			clip.emit("clearfilters");
 
 			untyped clip.filters = filters.filter(function(f) {
 				if (f == null) {
@@ -2275,6 +2274,7 @@ class RenderSupportJSPixi {
 			}
 
 			if (clip.filters.length > 0) {
+				clip.updateEmitChildrenChanged();
 				clip.on("childrenchanged", clip.invalidateTransform);
 			}
 
