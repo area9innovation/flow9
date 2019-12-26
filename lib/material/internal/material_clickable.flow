@@ -190,7 +190,7 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 						arrayPush(f, \ -> dispUnsM(longUns));
 					},
 					\ ->
-						if (!mobile && blockClicks)
+						if (blockClicks)
 							arrayPush(f, interruptibleTimer(510, \ -> blockOtherMInteractionItemIds(manager, interactionId)))
 						else
 							f
@@ -221,90 +221,60 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 
 	(\size -> TInteractive(
 		[
-			if (!mobile && blockClicks && nativeScroll())
-				PointerDown(enabled, \x, y -> {
-					if (debugMaterialClicks)
-						println("down " + i2s(interactionId));
-					maybeApply(onDownFn, \fn -> fn.down(Point(x, y), true));
-					hold();
+			MouseDown(\mi ->
+				if (fgetValue(enabled)) {
+					if (mi.inside()) {
+						if (debugMaterialClicks)
+							println("down " + i2s(interactionId));
+						maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), true));
+						hold();
 
-					eitherFn(
-						tripleClick,
-						\tc ->
-							if (^tripleClickWasDown) {
-								dispUnsM(uns);
-								dispUnsM(doubleClickUns);
-								tripleClickWasDown := false;
+						eitherFn(
+							tripleClick,
+							\tc ->
+								if (^tripleClickWasDown) {
+									dispUnsM(uns);
+									dispUnsM(doubleClickUns);
+									tripleClickWasDown := false;
 
-								tc.click();
-							},
-						\ ->
-							maybeApply(
-								doubleClick,
-								\dc ->
-									if (^doubleClickWasDown) {
-										dispUnsM(uns);
-										dispUnsM(doubleClickUns);
-										doubleClickWasDown := false;
+									tc.click();
+								},
+							\ ->
+								maybeApply(
+									doubleClick,
+									\dc ->
+										if (^doubleClickWasDown) {
+											dispUnsM(uns);
+											dispUnsM(doubleClickUns);
+											doubleClickWasDown := false;
 
-										dc.click();
-									}
-							)
-					);
+											dc.click();
+										}
+								)
+						);
 
-					true;
-				})
-			else
-				MouseDown(\mi ->
-					if (fgetValue(enabled)) {
-						if (mi.inside()) {
-							if (debugMaterialClicks)
-								println("down " + i2s(interactionId));
-							maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), true));
-							hold();
-
-							eitherFn(
-								tripleClick,
-								\tc ->
-									if (^tripleClickWasDown) {
-										dispUnsM(uns);
-										dispUnsM(doubleClickUns);
-										tripleClickWasDown := false;
-
-										tc.click();
-									},
-								\ ->
-									maybeApply(
-										doubleClick,
-										\dc ->
-											if (^doubleClickWasDown) {
-												dispUnsM(uns);
-												dispUnsM(doubleClickUns);
-												doubleClickWasDown := false;
-
-												dc.click();
-											}
-									)
-							);
-
-							blockClicks
-						} else {
-							maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), false));
-							false
-						}
+						blockClicks
 					} else {
+						maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), false));
 						false
 					}
-				),
-			if (!mobile && blockClicks && nativeScroll())
-				PointerUp(enabled, \x, y -> {
+				} else {
+					false
+				}
+			),
+			MouseUp2(\h, mi -> {
+				wasDown := false;
+
+				if (getValue(down)) {
 					if (debugMaterialClicks)
 						println("up " + i2s(interactionId));
 
-					maybeApply(onUp, \fn -> fn.up(Point(x, y), true));
+					mouseInfo = mi();
+					if (fgetValue(enabled))
+						maybeApply(onUp, \fn -> fn.up(Point(mouseInfo.x, mouseInfo.y), mouseInfo.inside));
 					next(down, false);
 
-					if (isSome(^uns)) {
+					if (!h && isSome(^uns) && fgetValue(enabled) && mouseInfo.inside) {
 						dispUnsM(uns);
 
 						(\ -> {
@@ -366,101 +336,21 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 							)
 						);
 
-						true;
+						blockClicks
 					} else {
-						false;
-					}
-				})
-			else
-				MouseUp2(\h, mi -> {
-					wasDown := false;
-
-					if (getValue(down)) {
-						if (debugMaterialClicks)
-							println("up " + i2s(interactionId));
-
-						mouseInfo = mi();
-						if (fgetValue(enabled))
-							maybeApply(onUp, \fn -> fn.up(Point(mouseInfo.x, mouseInfo.y), mouseInfo.inside));
-						next(down, false);
-
-						if (!h && isSome(^uns) && fgetValue(enabled) && mouseInfo.inside) {
-							dispUnsM(uns);
-
-							(\ -> {
-								if (isSome(doubleClick) || isSome(tripleClick)) {
-									if (!^doubleClickWasDown) {
-										doubleClickWasDown := true;
-
-										dispUnsM(doubleClickUns);
-										setUnsM(
-											doubleClickUns,
-											interruptibleTimer(^materialDoubleClickDelay, \ -> {
-												doubleClickWasDown := false;
-												onClickFn();
-											})
-										);
-									}
-								} else {
-									onClickFn()
-								}
-							})
-							|> (\f ->
-								eitherMap(
-									onClickAsync,
-									\clickAsync : MOnClickAsync -> \ -> {
-										next(clickEnabled, false);
-										f();
-										timerDisp = interruptibleTimer(10000, \ -> nextDistinct(clickEnabled, true));
-
-										clickAsync.click(\ -> { timerDisp(); nextDistinct(clickEnabled, true); });
-									},
-									f
-								)
-							)
-							|> (\f ->
-								eitherFn(
-									tripleClick,
-									\tc ->
-										if (^doubleClickWasDown && !^tripleClickWasDown) {
-											doubleClickWasDown := false;
-											tripleClickWasDown := true;
-
-											dispUnsM(doubleClickUns);
-											setUnsM(
-												doubleClickUns,
-												interruptibleTimer(^materialDoubleClickDelay, \ -> {
-													tripleClickWasDown := false;
-
-													eitherFn(
-														doubleClick,
-														\dc ->
-															dc.click(),
-														onClickFn
-													)
-												})
-											);
-										} else
-											f(),
-									f
-								)
-							);
-
-							blockClicks
-						} else {
-							h
-						}
-					} else {
-						if (fgetValue(enabled))
-							maybeApply(onUp, \fn -> {mouseInfo = mi(); fn.up(Point(mouseInfo.x, mouseInfo.y), mouseInfo.inside);});
 						h
 					}
-				})
+				} else {
+					if (fgetValue(enabled))
+						maybeApply(onUp, \fn -> {mouseInfo = mi(); fn.up(Point(mouseInfo.x, mouseInfo.y), mouseInfo.inside);});
+					h
+				}
+			})
 		]
 		|> (\f ->
 			if (disableHover)
 				f
-			else if (!mobile && blockClicks && nativeScroll())
+			else if (!mobile && isNone(point) && blockClicks)
 				concat(
 					f,
 					[
@@ -482,14 +372,6 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 
 							nextDistinct(rightDown, false);
 							nextDistinct(middleDown, false);
-						}),
-						PointerMove(enabled, \x, y -> {
-							if (debugMaterialClicks)
-								println("handled inside " + i2s(interactionId));
-
-							maybeApply(point, \p -> nextDistinct(p.point, Point(x, y)));
-							if (!mobile || mobileForceHover) nextDistinct(hover, true);
-							blockClicks && getValue(manager.manager.dragging) == -1
 						})
 					]
 					|> (\rollInteractives ->
