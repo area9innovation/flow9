@@ -754,9 +754,6 @@ cpp2WriterEmitCommonAndTables(writer : Cpp2Writer) {
 cpp2WriterCompileGlobalFn(writer : Cpp2Writer, name : string, body : FiLambda) -> void {
 	writer.cur_global ::= name;
 	writer.next_closure_id ::= 1;
-
-	//fcPrintln("compiling global Fn: '" + name + "'", writer.config.threadId);
-
 	cpp2WriterCompileLambda(writer, name, cpp2_int_UNDEF, body, None());
 	{}
 }
@@ -1608,6 +1605,9 @@ cpp2WriterAssignExpr(plv : string, expr : string, call : bool) -> string { // ?c
 		(if (getCharAt(expr, i + 1) != ")") "," else "") +
 		substring(expr, i + 1, strlen(expr))
 	} else if (call) {
+		if (plv == "") {
+			cpp2_error("empty plv in cpp2WriterAssignExpr");
+		}
 		"CALL_WITH_RETSLOT(" + plv + "," + expr + ")"
 	} else {
 		plv + " = " + expr
@@ -2027,23 +2027,7 @@ cpp2WriterStructTypeSize(writer : Cpp2Writer, type : FiTypeNullable) -> int {
 	}
 }
 
-cpp2WriterMktop(top : Cpp2StackTop) -> Cpp2StackTop {
-	Cpp2StackTop(top.temp)
-}
-
-cpp2WriterGetOutputPlace(out : Cpp2OutputLocation, top : Cpp2StackTop) -> Maybe<Cpp2PlaceInfo> { // ?top : Cpp2StackTop = null
-	/*if (out == null)
-		return null;
-
-	return switch (out) {
-		Cpp2OutputVar(place):
-			if (top != null && place.place == Temporary && place.slot >= top.temp)
-				top.temp = place.slot+1;
-			place;
-		default:
-			null;
-	}*/
-
+cpp2WriterGetOutputPlace(out : Cpp2OutputLocation, top : Cpp2StackTop) -> Maybe<Cpp2PlaceInfo> { // ?top : 
 	switch (out) {
 		Cpp2OutputVar(place): {
 			if (place.place == Cpp2Temporary() && place.slot >= top.temp) {
@@ -2056,11 +2040,6 @@ cpp2WriterGetOutputPlace(out : Cpp2OutputLocation, top : Cpp2StackTop) -> Maybe<
 }
 
 cpp2WriterGetOutputOrTemp(ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop) -> Cpp2PlaceInfo {
-	/*tmp = getOutputPlace(out, top);
-	if (tmp == null) {
-		tmp = ctx.env.mktemp(top.temp++);
-	}
-	return tmp;*/
 	switch (cpp2WriterGetOutputPlace(out, top)) {
 		Some(tmp): tmp;
 		None(): {
@@ -2072,7 +2051,7 @@ cpp2WriterGetOutputOrTemp(ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp
 }
 
 cpp2WriterEvalToTmp(writer : Cpp2Writer, arg : FiExp, ctx : Cpp2Context, top : Cpp2StackTop, out : Cpp2OutputLocation) -> Cpp2PlaceInfo { // out : Null<Cpp2OutputLocation> = null
-	atmp = cpp2WriterMktop(top);
+	atmp = cpp2Mktop(top);
 	tmp = cpp2WriterGetOutputOrTemp(ctx, out, top);
 	cpp2WriterCompileExpression(writer, arg, ctx, Cpp2OutputVar(tmp), atmp);
 	tmp
@@ -2406,9 +2385,8 @@ cpp2WriterCompileCall(writer : Cpp2Writer, code : FiCall, ctx : Cpp2Context, out
 		iter(code.args, 
 			\arg -> {
 				ctop = cpp2Mktop(top);
-				top_temp = top.temp;
-				top.temp ::= top_temp + 1;
-				tmp = cpp2EnvironmentMktemp(ctx.env, top_temp);
+				tmp = cpp2EnvironmentMktemp(ctx.env, top.temp);
+				top.temp ::= top.temp + 1;
 				cpp2WriterCompileExpression(writer, arg, ctx, Cpp2OutputVar(tmp), ctop);
 			}
 		);
@@ -2444,7 +2422,6 @@ cpp2WriterCompileCall(writer : Cpp2Writer, code : FiCall, ctx : Cpp2Context, out
 					if (n == writer.cur_global) {
 						if (ctx.env.parent == None() && out == Cpp2OutputReturn()) {
 							(ctx.env).tail_call ::= true;
-
 							// first compute new arguments
 							arefs = ref [];
 							avals = ref [];
@@ -2634,39 +2611,41 @@ cpp2WriterInlineNative(writer : Cpp2Writer, code : FiCall, fn : string, ctx : Cp
 
 cpp2WriterInlineMapNative(writer : Cpp2Writer, arr : FiExp, minit : Maybe<FiExp>, iarg : string, farg : string, varg : string, body : FiExp, ctx : Cpp2Context, out : Cpp2OutputLocation, top : Cpp2StackTop, iter0 : bool) -> Maybe<Cpp2PlaceInfo> {
 	iter1 = if (out == Cpp2OutputNone()) true else iter0;
-
+	rvpair0 = if (!iter1 && farg == "") {
+		rv = cpp2WriterGetOutputOrTemp(ctx, out, top);
+		rvs = cpp2PlaceInfoGetLValue(rv);
+		Pair(rv, rvs);
+	} else {
+		Pair(dummyCpp2PlaceInfo, "");
+	}
 	iv = cpp2WriterFetchToRef(writer, arr, ctx, top, true, Cpp2OutputNull());
 	ivs = cpp2PlaceInfoGetLValue(iv);
 	cpp2WriterVerifyTag(iv, Cpp2TArray(), ctx);
 
 	arrsize = cpp2ContextTempvar(ctx, "isz", Cpp2TInt(), "RUNNER->GetArraySize(" + ivs + ")");
 
-	rvpair = if (farg != "") {
-		switch (minit) {
-			Some(init): {
-				// fold init value
-				rv = cpp2WriterEvalToTmp(writer, init, ctx, top, Cpp2OutputNull());
-				rvs = cpp2PlaceInfoGetLValue(rv);
+	rvpair = switch (minit) {
+		Some(init): {
+			// fold init value
+			rv = cpp2WriterEvalToTmp(writer, init, ctx, top, Cpp2OutputNull());
+			rvs = cpp2PlaceInfoGetLValue(rv);
 
-				rv.name ::= farg;
-				// Invalidate cached type info
-				cpp2ClearMeta(cpp2ContextLocalMeta(ctx, rv));
+			rv.name ::= farg;
+			// Invalidate cached type info
+			cpp2ClearMeta(cpp2ContextLocalMeta(ctx, rv));
+			Pair(Some(rv), rvs)
+		}
+		None(): {
+			if (farg == "") {
+				rv = rvpair0.first;
+				rvs = rvpair0.second;
+				cpp2ContextWrCheck(ctx, cpp2WriterAssignExpr(rvs, "RUNNER->AllocateArray(" + arrsize + ")", true), true);
+				(cpp2ContextLocalMeta(ctx, rv)).tag ::= Cpp2TArray();
 				Pair(Some(rv), rvs)
-			}
-			None(): {
+			} else {
 				cpp2_error("someth. is wrong");
 				Pair(None(), "");
 			}
-		}
-	} else {
-		if (iter1) {
-			Pair(None(), "")
-		} else {
-			rv = cpp2WriterGetOutputOrTemp(ctx, out, top);
-			rvs = cpp2PlaceInfoGetLValue(rv);
-			cpp2ContextWrCheck(ctx, cpp2WriterAssignExpr(rvs, "RUNNER->AllocateArray(" + arrsize + ")", true), true);
-			(cpp2ContextLocalMeta(ctx, rv)).tag ::= Cpp2TArray();
-			Pair(Some(rv), rvs)
 		}
 	}
 	rv = rvpair.first;
