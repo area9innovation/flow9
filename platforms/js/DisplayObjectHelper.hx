@@ -81,6 +81,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateStage(clip : DisplayObject, ?clear : Bool = false) : Void {
+		if (untyped clip.stage != null) {
+			return;
+		}
+
 		if (!clear && clip.parent != null) {
 			if (untyped clip.parent.stage != null && untyped clip.parent.stage != untyped clip.stage) {
 				untyped clip.stage = untyped clip.parent.stage;
@@ -251,13 +255,14 @@ class DisplayObjectHelper {
 		} else {
 			if (!clip.interactiveChildren) {
 				var children : Array<Dynamic> = untyped clip.children;
+				var i = 0;
 
-				if (children != null) {
-					for (c in children) {
-						if (c.interactiveChildren) {
-							clip.interactiveChildren = true;
-						}
+				while (children.length > i && !clip.interactiveChildren) {
+					if (children[i].interactiveChildren) {
+						clip.interactiveChildren = true;
 					}
+
+					i++;
 				}
 			}
 
@@ -272,6 +277,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function setChildrenInteractive(clip : DisplayObject) : Void {
+		if (RenderSupportJSPixi.RendererType == "html") {
+			return;
+		}
+
 		var children : Array<Dynamic> = untyped clip.children;
 
 		if (children != null) {
@@ -296,6 +305,10 @@ class DisplayObjectHelper {
 
 			if (untyped clip.parent.hasMask) {
 				updateHasMask(clip);
+			}
+
+			if (untyped clip.parent.isMask) {
+				updateIsMask(clip);
 			}
 
 			if (untyped clip.parent.isCanvas) {
@@ -362,6 +375,11 @@ class DisplayObjectHelper {
 			var from = DebugUpdate ? 'setClipScaleX ' + clip.scale.x + ' : ' + scale : null;
 
 			clip.scale.x = scale;
+
+			if (RenderSupportJSPixi.RendererType == "html" && scale != 1.0 && getClipChildren(clip).length > 16) {
+				initNativeWidget(clip);
+			}
+
 			invalidateTransform(clip, from);
 		}
 	}
@@ -371,6 +389,11 @@ class DisplayObjectHelper {
 			var from = DebugUpdate ? 'setClipScaleY ' + clip.scale.y + ' : ' + scale : null;
 
 			clip.scale.y = scale;
+
+			if (RenderSupportJSPixi.RendererType == "html" && scale != 1.0 && getClipChildren(clip).length > 16) {
+				initNativeWidget(clip);
+			}
+
 			invalidateTransform(clip, from);
 		}
 	}
@@ -577,9 +600,7 @@ class DisplayObjectHelper {
 		}
 
 		if (clip.mask != null) {
-			untyped maskContainer.isMask = true;
 			untyped maskContainer.child = clip;
-			untyped clip.mask.isMask = true;
 			untyped clip.mask.child = clip;
 			untyped clip.maskContainer = maskContainer;
 
@@ -589,11 +610,8 @@ class DisplayObjectHelper {
 
 			clip.mask.once("removed", function () { clip.mask = null; });
 		} else if (untyped clip.alphaMask != null) {
-			untyped maskContainer.isMask = true;
 			untyped maskContainer.child = clip;
 			untyped maskContainer.url = clip.alphaMask.url;
-
-			untyped clip.alphaMask.isMask = true;
 			untyped clip.alphaMask.child = clip;
 			untyped clip.maskContainer = maskContainer;
 
@@ -602,6 +620,8 @@ class DisplayObjectHelper {
 			untyped clip.alphaMask.once("removed", function () { untyped clip.alphaMask = null; });
 		}
 
+
+		updateIsMask(maskContainer);
 		setClipRenderable(maskContainer, false);
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
@@ -626,6 +646,27 @@ class DisplayObjectHelper {
 				for (child in getClipChildren(clip)) {
 					updateHasMask(child);
 				}
+			}
+		}
+	}
+
+	public static function updateIsMask(clip : DisplayObject) : Void {
+		if (!untyped clip.isMask) {
+			untyped clip.isMask = true;
+			untyped clip.emitChildrenChanged = true;
+
+			for (child in getClipChildren(clip)) {
+				updateIsMask(child);
+			}
+		}
+	}
+
+	public static function updateEmitChildrenChanged(clip : DisplayObject) : Void {
+		if (!untyped clip.emitChildrenChanged) {
+			untyped clip.emitChildrenChanged = true;
+
+			for (child in getClipChildren(clip)) {
+				updateEmitChildrenChanged(child);
 			}
 		}
 	}
@@ -727,6 +768,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function emitEvent(parent : DisplayObject, event : String, ?value : Dynamic) : Void {
+		if (untyped event == "childrenchanged" && !parent.emitChildrenChanged) {
+			return;
+		}
+
 		parent.emit(event, value);
 
 		if (parent.parent != null) {
@@ -1968,7 +2013,7 @@ class DisplayObjectHelper {
 			untyped clip.isNativeWidget = true;
 			untyped clip.createNativeWidget(tagName);
 
-			invalidateTransform(clip, 'initNativeWidget');
+			invalidateTransform(clip, 'initNativeWidget', untyped clip.parent != null);
 		}
 	}
 

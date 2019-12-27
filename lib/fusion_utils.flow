@@ -26,6 +26,8 @@ export {
 	flength(a : Transform<[?]>) -> Transform<int>;
 	felementAt(a : Transform<[?]>, idx : Transform<int>, def : Transform<?>) -> Transform<?>;
 
+	fsplit2d(a : Transform<[[?]]>) -> Transform<[Transform<[?]>]>;
+
 	fpointaddition(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
 	fpointsubtract(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
 	fpointmultiply(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
@@ -102,6 +104,7 @@ export {
 
 	fselectdelay(b : Transform<?>, fn : (?) -> int) -> Transform<?>;
 	fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?>;
+	fthrottleUntilNextFrameRendered(b : Transform<?>) -> Transform<?>;
 	flerp(start : double, end : double, t : Transform<double>) -> Transform<double>;
 
 	flookupTree(tree : Transform<Tree<?, ??>>, key : Transform<?>) -> Transform<Maybe<??>>;
@@ -113,6 +116,9 @@ export {
 	initUnsM() -> ref Maybe<() -> void>;
 	setUnsM(uns : ref Maybe<() -> void>, v : () -> void) -> void;
 	dispUnsM(uns : ref Maybe<() -> void>) -> void;
+
+	fselectLift(b : Transform<??>, fn : (??) -> ?) -> Transform<?>;
+	fselect2Lift(b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> ?) -> Transform<?>;
 }
 
 ARRAY_DIFF_TRESHOLD = 400;
@@ -127,7 +133,7 @@ fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 		fselect(a, FLift(\a0 -> {
 			if (length(a0) == 0) {
 				output := [];
-			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 				iter(arrayDiff(^input, a0, false), \op ->
 					switch (op : ArrayOperation) {
 						ArrayNop(__, __): {}
@@ -171,7 +177,7 @@ fmapu(a : Transform<[??]>, fn : (??) -> Pair<?, [() -> void]>) -> Transform<[?]>
 
 						output := [];
 						disposers := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, false), \op ->
 							switch (op : ArrayOperation) {
@@ -252,7 +258,7 @@ fmapi(a : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]> {
 		fselect(a, FLift(\a0 -> {
 			if (length(a0) == 0) {
 				output := [];
-			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 				iter(arrayDiff(^input, a0, true), \op -> {
 					switch (op : ArrayOperation) {
 						ArrayNop(x, y): {
@@ -302,7 +308,7 @@ fmapiu(a : Transform<[??]>, fn : (Transform<int>, ??) -> Pair<?, [() -> void]>) 
 						disposers := [];
 						output := [];
 						indexes := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, true), \op ->
 							switch (op : ArrayOperation) {
@@ -419,7 +425,7 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 						disposers := [];
 						indexes := [];
 						newOutput := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						nopFns = ref [];
 
 						// Call disposers before initializers
@@ -509,8 +515,14 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 							index = make(i);
 							indexes := replace(^indexes, i, index);
 
-							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+							makeSubscribe2(v, \v0 ->
+								if (getValue(isNopFnsApplying))
+									newOutput := replace(^newOutput, getValue(index), v0)
+								else
+									next(output, replace(getValue(output), getValue(index), v0))
+							)();
 						});
+
 						newOutput := map(d, fgetValue);
 					}
 
@@ -561,9 +573,9 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 						disposers := [];
 						newOutput := [];
 						indexes := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						nopFns = ref [];
-						
+
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, true), \op ->
 							switch (op : ArrayOperation) {
@@ -654,8 +666,14 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 
 						disposers := mapi(d, \i, v -> {
 							index = ^indexes[i];
-							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+							makeSubscribe2(v, \v0 ->
+								if (getValue(isNopFnsApplying))
+									newOutput := replace(^newOutput, getValue(index), v0)
+								else
+									next(output, replace(getValue(output), getValue(index), v0))
+							)()
 						});
+
 						newOutput := map(d, fgetValue);
 					}
 
@@ -695,7 +713,7 @@ ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
 
 				if (length(a0) == 0) {
 					output := [];
-				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 					// Call disposers before initializers
 					iter(arrayDiff(^input, a0, true) |> reverseA, \op ->
 						switch (op : ArrayOperation) {
@@ -769,6 +787,41 @@ flength(v : Transform<[?]>) -> Transform<int> {
 
 felementAt(a : Transform<[?]>, idx : Transform<int>, def : Transform<?>) -> Transform<?> {
 	fselect3(a, idx, def, \v, i, d -> elementAt(v, i, d))
+}
+
+fsplit2d(a : Transform<[[?]]>) -> Transform<[Transform<[?]>]> {
+	if (isFConst(a)) {
+		const(map(fgetValue(a), const));
+	} else {
+		input = ref [];
+		output : ref [DynamicBehaviour<[?]>] = ref [];
+
+		fselect(a, FLift(\a0 -> {
+			if (length(a0) == 0) {
+				output := [];
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				iter(arrayDiff(^input, a0, false), \op ->
+					switch (op : ArrayOperation) {
+						ArrayNop(__, __): {}
+						ArrayInsert(x, __, v): {
+							output := insertArray(^output, x, make(v));
+						}
+						ArrayReplace(x, __, v): {
+							nextDistinct(^output[x], v);
+						}
+						ArrayRemove(x, __): {
+							output := removeIndex(^output, x);
+						}
+					}
+				);
+			} else {
+				output := map(a0, make);
+			}
+
+			input := a0;
+			cast(^output : [DynamicBehaviour<[?]>] -> [Transform<[?]>]);
+		}));
+	}
 }
 
 fpointaddition(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point> {
@@ -1200,6 +1253,42 @@ fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?> {
 	);
 }
 
+fthrottleUntilNextFrameRendered(b : Transform<?>) -> Transform<?> {
+	provider : ref Maybe<DynamicBehaviour<?>> = ref None();
+	ts = ref timestamp();
+	uns = ref nop;
+
+	fdisposable(
+		fsubselect(b, FLift(\v -> {
+			^uns();
+
+			eitherFn(
+				^provider,
+				\p -> {
+					if (^ts + 33.0 > timestamp()) {
+						ts := timestamp();
+						provider := Some(make(v));
+						either(^provider, const(v));
+					} else {
+						ts := timestamp();
+						uns := interruptibleDeferUntilNextFrameRendered(\ -> {
+							nextDistinct(p, v);
+							uns := nop;
+						});
+						cast(p : DynamicBehaviour<?> -> Behaviour<?>);
+					}
+				},
+				\ -> {
+					ts := timestamp();
+					provider := Some(make(v));
+					either(^provider, const(v));
+				}
+			);
+		})),
+		\ -> ^uns()
+	);
+}
+
 flerp(start : double, end : double, t : Transform<double>) -> Transform<double> {
 	fselect(t, FLift(\v -> (1.0 - v) * start + v * end));
 }
@@ -1242,4 +1331,12 @@ fpprint(title : string) -> (Transform<?>) -> Transform<?> {
 		fsubscribe(tr, \v -> pprint(title + " : ")(v) |> ignore);
 		tr
 	}
+}
+
+fselectLift(b : Transform<??>, fn : (??) -> ?) -> Transform<?> {
+	fselect(b, FLift(fn));
+}
+
+fselect2Lift(b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> ?) -> Transform<?> {
+	fselect2(b1, b2, FLift2(fn));
 }

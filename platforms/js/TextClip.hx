@@ -1234,10 +1234,10 @@ class TextClip extends NativeWidgetClip {
 	public function getContentGlyphs() : TextMappedModification {
 		if (isInput && type == "password") {
 			return getBulletsString(this.text);
-		} else if (doNotRemap) {
-			return TextMappedModification.createInvariantForString(this.text);
-		} else {
+		} else if (isStringArabic(text) && !doNotRemap) {
 			return getActualGlyphsString(this.text);
+		} else {
+			return TextMappedModification.createInvariantForString(this.text);
 		}
 	}
 
