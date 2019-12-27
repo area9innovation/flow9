@@ -14,6 +14,7 @@ export {
 	fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Transform<[?]>;
 
 	ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?>;
+	ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?>;
 
 	ffilter(a : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]>;
 	ffiltermap(a : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]>;
@@ -740,6 +741,64 @@ ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
 					output :=
 						fold(a0, Pair(def, []), \acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
 							newAcc = fn(acc.first, v);
+							Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
+						}).second;
+				}
+
+				input := a0;
+				nested := false;
+			}
+
+			if (length(^output) > 0) {
+				^output[length(^output) - 1].second;
+			} else {
+				def;
+			}
+		}))
+	}
+}
+
+ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?> {
+	if (isFConst(a)) {
+		const(foldi(fgetValue(a), def, fn));
+	} else {
+		nested = ref false;
+		input = ref [];
+		output : ref [Pair<?, ?>] = ref [];
+
+		fselect(a, FLift(\a0 -> {
+			if (!^nested) {
+				nested := true;
+
+				if (length(a0) == 0) {
+					output := [];
+				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					// Call disposers before initializers
+					iter(arrayDiff(^input, a0, true) |> reverseA, \op ->
+						switch (op : ArrayOperation) {
+							ArrayNop(x, y): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								if (^output[y].first != acc) {
+									output := replace(^output, y, Pair(acc, fn(y, acc, a0[y])));
+								}
+							}
+							ArrayInsert(x, y, v): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								output := insertArray(^output, y, Pair(acc, fn(y, acc, v)));
+							}
+							ArrayReplace(x, y, v): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								output := replace(^output, y, Pair(acc, fn(y, acc, v)));
+							}
+							ArrayRemove(x, y): {
+								output := removeIndex(^output, y);
+							}
+						}
+					);
+				} else {
+					output :=
+						foldi(a0, Pair(def, []), \y : int, acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
+							newAcc = fn(y, acc.first, v);
 							Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
 						}).second;
 				}
