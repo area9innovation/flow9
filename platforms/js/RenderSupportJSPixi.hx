@@ -1262,6 +1262,10 @@ class RenderSupportJSPixi {
 			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
 	}
 
+	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
+		clip.setEscapeHTML(escapeHTML);
+	}
+
 	public static function setAdvancedText(clip : TextClip, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {
 		// NOP
 	}
