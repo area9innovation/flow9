@@ -389,7 +389,7 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (untyped this.isMask || this.isCanvas || (this.isEmpty && clipHasChildren())) {
+		if (untyped this.isMask || this.isCanvas || (this.isEmpty && !clipHasChildren())) {
 			if (isNativeWidget) {
 				deleteNativeWidget();
 			}
@@ -407,7 +407,7 @@ class FlowGraphics extends Graphics {
 
 		if (nativeWidget != null) {
 			if (graphicsData.length == 0) {
-				if (svgWidget != null) {
+				if (svgWidget != null && svgWidget.parentNode == nativeWidget) {
 					nativeWidget.removeChild(svgWidget);
 					svgWidget = null;
 				}
@@ -417,7 +417,7 @@ class FlowGraphics extends Graphics {
 				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.borderImage = null;
 			} else if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
-				if (svgWidget != null) {
+				if (svgWidget != null && svgWidget.parentNode == nativeWidget) {
 					nativeWidget.removeChild(svgWidget);
 					svgWidget = null;
 				}
@@ -472,11 +472,11 @@ class FlowGraphics extends Graphics {
 
 						if (gradient.type == 'radial') {
 							for (child in defs.getElementsByTagName('linearGradient')) {
-								svgWidget.removeChild(child);
+								defs.removeChild(child);
 							}
 						} else {
 							for (child in defs.getElementsByTagName('radialGradient')) {
-								svgWidget.removeChild(child);
+								defs.removeChild(child);
 							}
 						}
 
@@ -579,7 +579,7 @@ class FlowGraphics extends Graphics {
 					}
 				}
 			} else {
-				if (svgWidget != null) {
+				if (svgWidget != null && svgWidget.parentNode == nativeWidget) {
 					nativeWidget.removeChild(svgWidget);
 					svgWidget = null;
 				}
@@ -703,8 +703,6 @@ class FlowGraphics extends Graphics {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			invalidateInteractive();
-			invalidateTransform('removeChild');
 			if (untyped this.keepNativeWidgetChildren) {
 				updateKeepNativeWidgetChildren();
 			}
