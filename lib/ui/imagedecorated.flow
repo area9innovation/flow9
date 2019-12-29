@@ -152,8 +152,7 @@ makeImageDecorated2(
 			sizeIndependentDecorations,
 			makeParagraphElements,
 			savedSize,
-			zoom,
-			pictureIsLoading
+			zoom
 		);
 
 		Constructor(
@@ -220,7 +219,7 @@ makeImageDecorated2(
 	defaultImageAdaptiveCrop = makeDefaultAdaptiveCrop();
 
 	adaptiveCropping = \form : Form -> {
-		if (containsStruct(decorations, defaultImageAdaptiveCrop)){
+		if (containsStruct(decorations, defaultImageAdaptiveCrop)) {
 			crop = extractStruct(decorations, defaultImageAdaptiveCrop);
 			tweaks = extractStruct(decorations, ImageAdaptiveCropTweaks([]));
 			squareness = extractStruct(tweaks.style, Squareness(0.0)).value;
@@ -234,23 +233,34 @@ makeImageDecorated2(
 
 			Constructor(
 				Crop(cropX, cropY, cropW, cropH, form),
-				\ -> {
-					awhP = stallu(crop.availableWHB, 100);	// Avoid excessive renderings on partial update
-					bP = select2u(pictureIsLoading, awhP.first, \loading, awh -> {
-						curValues = calculateAdaptiveCropValues(crop, getValue(savedOrRealSize), givenSize, loading, awh, squareness);
+					\ -> {
+						select3u(pictureIsLoading, crop.availableWHB, savedOrRealSize, \loading, awh, formSize -> {						
+							curValues = calculateAdaptiveCropValues(crop, formSize, givenSize, loading, awh, squareness);								
+							nextDistinct(cropX, curValues.first);
+							nextDistinct(cropY, curValues.second);
+							nextDistinct(cropW, curValues.third);
+							nextDistinct(cropH, curValues.fourth);
 
-						nextDistinct(cropX, curValues.first);
-						nextDistinct(cropY, curValues.second);
-						nextDistinct(cropW, curValues.third);
-						nextDistinct(cropH, curValues.fourth);
-					});
+							// Mac Safari has an issue when visual layout does not update sometimes and we get incorrect crop.
+							// This trick fixes it.
+							 if (macosx() && strContains(toLowerCase(getBrowser()), "safari")) {
+								timer(50, \ -> {
+									next(cropX, getValue(cropX) + 0.1);
+									timer(200, \ -> {
+										next(cropX, getValue(cropX) - 0.1);
+										timer(1000, \ -> {
+											next(cropX, getValue(cropX) + 0.1);
+										})
+									})
+								})
+							}
 
-					\ -> applyall([awhP.second, bP.second]);
+						}).second;
 				}
-			)
+			)		
 		} else {
 			form
-		}
+		};	
 	};
 
 	thePicture =
@@ -275,7 +285,7 @@ makeImageDecorated2(
 				decoratedPicSize,
 				Center(pictureWithWarning.warning)
 			),
-			\ -> nextDistinct(pictureIsLoading, false)
+			nop
 		),
 		\ -> {
 			uns0 = if (trustedSizes || givenSize.width < 0.5)
@@ -285,7 +295,7 @@ makeImageDecorated2(
 				connectSelectDistinctu(savedOrRealSize, replacedImageScale, \as -> as.width / givenSize.width);
 
 			uns1 = connectSelect2Distinctu(pictureIsLoading, wholeImageWH, savedOrRealSize, \l, wh -> {(if (!l && wh.width > 0.0) wh else savedSize)});
-			uns2 = selectu(pictureIsLoading, \loading -> if (!loading) onLoaded()).second;
+			uns2 = selectDistinctu(pictureIsLoading, \loading -> if (!loading) onLoaded()).second;
 
 			\ -> {
 				uns0();
@@ -711,8 +721,7 @@ makeSizeIndependentDecorationsAdder(
 	decorations : [SizeIndependentDecoration],
 	makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
 	imgSize: WidthHeight,
-	zoom : bool,
-	pictureIsLoading : Behaviour<bool>
+	zoom : bool
 	) -> ((Form) -> Form)
 {
 	imageWH = makeWH();
