@@ -376,10 +376,7 @@ class DisplayObjectHelper {
 
 			clip.scale.x = scale;
 
-			if (RenderSupportJSPixi.RendererType == "html" && scale != 1.0 && getClipChildren(clip).length > 16) {
-				initNativeWidget(clip);
-			}
-
+			initNativeWidget(clip);
 			invalidateTransform(clip, from);
 		}
 	}
@@ -390,10 +387,7 @@ class DisplayObjectHelper {
 
 			clip.scale.y = scale;
 
-			if (RenderSupportJSPixi.RendererType == "html" && scale != 1.0 && getClipChildren(clip).length > 16) {
-				initNativeWidget(clip);
-			}
-
+			initNativeWidget(clip);
 			invalidateTransform(clip, from);
 		}
 	}

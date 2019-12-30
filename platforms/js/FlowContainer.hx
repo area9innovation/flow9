@@ -126,10 +126,6 @@ class FlowContainer extends Container {
 			emitEvent("childrenchanged");
 		}
 
-		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && getClipChildren().length > 16) {
-			initNativeWidget();
-		}
-
 		return newChild;
 	}
 
@@ -143,10 +139,6 @@ class FlowContainer extends Container {
 		if (newChild != null) {
 			newChild.invalidate();
 			emitEvent("childrenchanged");
-		}
-
-		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && getClipChildren().length > 16) {
-			initNativeWidget();
 		}
 
 		return newChild;
