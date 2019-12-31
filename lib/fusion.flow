@@ -30,8 +30,6 @@ export {
 	fsubselect : (b : Transform<??>, fn : FFn<??, Transform<?>>) -> Transform<?>;
 	fsubselect2 : (b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> Transform<?>) -> Transform<?>;
 
-	fselectContainer(init : ?) -> Pair<Transform<?>, (() -> Transform<?>) -> void>;
-
 	// disp is called after last unsubcription from b Transform
 	fdisposable(b : Transform<?>, disp : () -> void) -> Transform<?>;
 
@@ -113,7 +111,7 @@ export {
 	// Do not construct FSelect and friends directly - use the functions above instead.
 	Transform<?> ::= ConstBehaviour<?>, DynamicBehaviour<?>, FSelect<?>, FSelect2<?>, FSubSelect<?>, 
 		// To ensure that behaviour is a subtype, we explicitly list it as well
-		Behaviour<?>, FDisposable<?>;
+		Behaviour<?>, FDisposable<?>, TransformMutable<?>;
 
 	// Common functions. Use FLift for other functions
 	faddition(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double>;
@@ -237,6 +235,9 @@ export {
 		FusionOr();
 		FusionXor();
 		FusionWidthHeight();
+
+	makeTransform(init : Transform<?>) -> TransformMutable<?>;
+	nextTransform(t : TransformMutable<?>, b : Transform<?>) -> void;
 }
 
 FBehaviour<?> ::= FDestroyed, FInitialized<?>;
@@ -250,19 +251,7 @@ FSelect(b : Transform<flow>, fn : FFn<flow, ?>, mutable beh : FBehaviour<?>);
 FSelect2(b1 : Transform<flow>, b2 : Transform<flow>, fn : FFn2<flow, flow, ?>, mutable beh : FBehaviour<?>);
 FSubSelect(b : Transform<flow>, fn : FFn<flow, Transform<?>>, mutable beh : FBehaviour<?>);
 FDisposable(b : Transform<?>, disp : () -> void, mutable beh : FBehaviour<?>);
-
-fselectContainer(init : ?) -> Pair<Transform<?>, (() -> Transform<?>) -> void> {
-	fn : ref () -> Transform<?> = ref \ -> const(init);
-	b = make(false);
-
-	Pair(
-		fsubselect(b, FLift(\__ -> ^fn())),
-		\ffn -> {
-			fn := ffn;
-			next(b, true);
-		}
-	);
-}
+TransformMutable(mutable b : Transform<?>, disp : ref () -> void, mutable beh : FBehaviour<?>);
 
 fselect(b : Transform<??>, fn : FFn<??, ?>) -> Transform<?> {
 	switch (b : Transform<??>) {
@@ -752,6 +741,11 @@ fgetValue(t : Transform<?>) -> ? {
 					r;
 				}
 			}
+		TransformMutable(b, disp, beh):
+			switch (beh) {
+				FInitialized(__, __, dyn): cast(getValue(dyn) : flow -> ?);
+				FDestroyed(): fgetValue(b);
+			}
 	}
 }
 
@@ -763,6 +757,7 @@ fgetDynamicBehaviours(t : Transform<?>) -> [DynamicBehaviour] {
 		FSelect2(b1, b2, f1, __): concat(fgetDynamicBehaviours(b1), fgetDynamicBehaviours(b2));
 		FSubSelect(b, f1, __): fgetDynamicBehaviours(b);
 		FDisposable(b, __, __): fgetDynamicBehaviours(b);
+		TransformMutable(b, __, __): fgetDynamicBehaviours(b);
 	}
 }
 
@@ -1078,6 +1073,32 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 				}
 			}
 		}
+		TransformMutable(b, disposer, beh): {
+			switch (beh) {
+				FInitialized(subs, disp, dyn): {
+					subs := ^subs + 1;
+					Pair(dyn, disp);
+				}
+				FDestroyed(): {
+					^disposer();
+					cb = doFuseDynamic(b);
+
+					subs = ref 1;
+					dyn : DynamicBehaviour<?> = make(getValue(firstOfPair(cb)));
+
+					disposer :=
+						[
+							fconnect(firstOfPair(cb), dyn),
+							secondOfPair(cb)
+						]
+						|> (\f -> \ -> applyall(f));
+					disp = \ -> {subs := ^subs - 1; if (^subs == 0) {^disposer(); disposer := nop; t.beh ::= FDestroyed();}};
+
+					t.beh ::= FInitialized(subs, disp, dyn);
+					Pair(dyn, disp);
+				}
+			}
+		}
 	}
 }
 
@@ -1107,6 +1128,7 @@ transform2string(s : Transform<?>) -> string {
 			transform2string(b) + "=>" + transform2string(instantiateFn(fn)(fgetValue(b))); // ffn2string(fn);
 		}
 		FDisposable(b, __, __): transform2string(b);
+		TransformMutable(b, __, __): transform2string(b);
 	}
 }
 
@@ -1135,6 +1157,9 @@ transformLength(s : Transform<?>) -> int {
 			}
 
 			r;
+		}
+		TransformMutable(b, disp, __): {
+			transformLength(b);
 		}
 	}
 }
@@ -2001,6 +2026,30 @@ safeToString(t : flow) -> string {
 	else if (isSameStructType(t, t)) {
 		t.structname + "()"
 	} else toString(t);
+}
+
+makeTransform(b : Transform<?>) -> TransformMutable<?> {
+	TransformMutable(b, ref nop, FDestroyed());
+}
+
+nextTransform(t : TransformMutable<?>, b : Transform<?>) -> void {
+	switch (t.beh) {
+		FInitialized(subs, disp, dyn): {
+			^(t.disp)();
+			cb = doFuseDynamic(b);
+
+			t.b ::= b;
+			t.disp :=
+				[
+					fconnect(firstOfPair(cb), dyn),
+					secondOfPair(cb)
+				]
+				|> (\f -> \ -> applyall(f));
+		}
+		FDestroyed(): {
+			t.b ::= b;
+		}
+	}
 }
 
 /*
