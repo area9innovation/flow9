@@ -5,11 +5,12 @@ import lingo/pegcode/driver;
 Spreadsheet(
 	// Column index first, then row.
 	cells : [[Cell]],
-	dependencies : ref Tree<CellPos, Set<CellPos>>
+	dependencies : ref Tree<CellRef, Set<CellRef>>
 );
 
 Cell(
 	text : DynamicBehaviour<string>,
+	formula : DynamicBehaviour<Formula>,
 	value : DynamicBehaviour<Value>
 );
 
@@ -149,7 +150,6 @@ evalFormula(spreadsheet : Spreadsheet, formula : Formula) -> Value {
 						CellPos(__, __): evalFormula(spreadsheet, arg);
 						Range(start, end): {
 							cells = rangeToCells(arg);
-							println(cells);
 							Number(fold(cells, 0.0, \acc, cell -> {
 								acc + getCellNumber(spreadsheet, cell, acc)
 							}));
@@ -214,25 +214,75 @@ getNumber(value : Value) -> Maybe<double> {
 
 // Change propagation
 
-propagateChange(spreadsheet : Spreadsheet, c : CellPos, visited : Set<CellPos>) -> void {
+setCellText(spreadsheet : Spreadsheet, c : CellRef, text : string) -> void {
+	if (c.col < length(spreadsheet.cells)) {
+		column = spreadsheet.cells[c.col];
+		if (c.row < length(column)) {
+			cell = column[c.row];
 
+			next(cell.text, text);
+			formula = parseExpr(text);
+			next(cell.formula, formula);
+			value = evalFormula(spreadsheet, formula);
+			setCellValue(spreadsheet, c, value, makeSet());
+
+			// Update dependencies
+			deps = dependencies(makeSet(), formula);
+			spreadsheet.dependencies := setTree(^(spreadsheet.dependencies), c, deps);
+
+			{}
+		}
+	}
 }
 
-dependencies(acc : Set<Range>, f : Formula) -> Set<Range> {
+setCellValue(spreadsheet : Spreadsheet, c : CellRef, value : Value, visited : Set<CellRef>) -> Set<CellRef> {
+	if (!containsSet(visited, c) && c.col < length(spreadsheet.cells)) {
+		nvisited = insertSet(visited, c);
+		column = spreadsheet.cells[c.col];
+		if (c.row < length(column)) {
+			cell = column[c.row];
+			next(cell.value, value);
+			next(cell.text, value2text(value));
+			deps = lookupTreeDef(^(spreadsheet.dependencies), c, makeSet());
+			foldSet(deps, nvisited, \acc, dep -> {
+				val = getCellValue(spreadsheet, dep);
+				setCellValue(spreadsheet, dep, val, acc)
+			});
+		} else nvisited;
+	} else visited;
+}
+
+value2text(v : Value) -> string {
+	switch (v) {
+		Number(n): d2s(n);
+		String(s): s;
+	}
+}
+
+getCellValue(spreadsheet : Spreadsheet, c : CellRef) -> Value {
+	if (c.col < length(spreadsheet.cells)) {
+		column = spreadsheet.cells[c.col];
+		if (c.row < length(column)) {
+			cell = column[c.row];
+			form = getValue(cell.formula);
+			evalFormula(spreadsheet, form);
+		} else String("Unknown cell");
+	} else String("Unknown cell");
+}
+
+dependencies(acc : Set<CellRef>, f : Formula) -> Set<CellRef> {
 	switch (f) {
 		Value(): acc;
-		Range(__, __): insertSet(acc, f);
-		CellPos(__, __): insertSet(acc, Range(f, f));
+		Range(__, __): fold(rangeToCells(f), acc, insertSet);
+		CellPos(__, __): insertSet(acc, cellPos2Ref(f));
 		Call(id, args): fold(args, acc, dependencies);
 	}
 }
 
-
-
 main() {
 	cells : [[Cell]]= generate(0, 26, \col -> {
 		generate(0, 100, \row -> {
-			Cell(make("1"), make(Number(1.0)))
+			Cell(make("1"), make(Number(1.0)), make(Number(1.0)))
 		})
 	});
 	spreadsheet = Spreadsheet(cells, ref makeTree());
