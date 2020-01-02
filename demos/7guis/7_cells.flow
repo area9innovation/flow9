@@ -10,11 +10,15 @@ Spreadsheet(
 );
 
 Cell(
+	// The text representation of the cell
 	text : DynamicBehaviour<string>,
+	// The formula representation of the cell
 	formula : DynamicBehaviour<Formula>,
+	// The value of the cell
 	value : DynamicBehaviour<Value>
 );
 
+// Construct a UI with a spreadsheet with this number of cols and rows
 makeSpreadsheet(cols : int, rows : int) -> Material {
 	cells : [[Cell]]= generate(0, cols, \col -> {
 		generate(0, rows, \row -> {
@@ -25,6 +29,7 @@ makeSpreadsheet(cols : int, rows : int) -> Material {
 	MScroll(	
 		MCols(
 			concat([
+					// The numbers in the left hand side
 					MLines(
 						generate(-1, rows, \row -> {
 							makeHeading(if (row == -1) "" else i2s(row))
@@ -34,8 +39,10 @@ makeSpreadsheet(cols : int, rows : int) -> Material {
 				mapi(cells, \x, col -> {
 					MLines(concat(
 						[
+							// The letters at the top
 							makeHeading(fromCharCode(65 + x)),
 						],
+						// The column goes here
 						mapi(col, \y, cell -> {
 							drawCell(spreadsheet, cell, CellRef(x, y))
 						})
@@ -47,6 +54,7 @@ makeSpreadsheet(cols : int, rows : int) -> Material {
 	);
 }
 
+// An editable cell in a spreadsheet
 drawCell(spreadsheet : Spreadsheet, cell : Cell, cellref : CellRef) -> Material {
 	editing = make(false);
 	MBorder(0.0, 0.0, 1.0, 1.0,
@@ -62,6 +70,7 @@ drawCell(spreadsheet : Spreadsheet, cell : Cell, cellref : CellRef) -> Material 
 							MConstruct([
 									makeSubscribe(focus, \f -> {
 										if (!f) {
+											// OK, when we loose focus, we update the spreadsheet
 											val = getValue(formula);
 											setCellText(spreadsheet, cellref, val);
 											next(editing, false);
@@ -157,6 +166,7 @@ exprGrammar() {
 	});
 }
 
+// Evaluation engine
 evalFormula(spreadsheet : Spreadsheet, formula : Formula) -> Value {
 	switch (formula) {
 		Value(): formula;
@@ -232,6 +242,7 @@ evalFormula(spreadsheet : Spreadsheet, formula : Formula) -> Value {
 	}
 }
 
+// What number is in this cell?
 getCellNumber(spreadsheet : Spreadsheet, cell : CellRef, def : double) -> double {
 	if (cell.col < length(spreadsheet.cells)) {
 		column = spreadsheet.cells[cell.col];
@@ -242,11 +253,13 @@ getCellNumber(spreadsheet : Spreadsheet, cell : CellRef, def : double) -> double
 	} else def;
 }
 
+// Resolve cell position to coordinates
 cellPos2Ref(c : CellPos) -> CellRef {
 	col = getCharCodeAt(toUpperCase(c.col), 0) - 65;
 	CellRef(col, c.row)
 }
 
+// Expand a range to individual cells
 rangeToCells(r : Range) -> [CellRef] {
 	s = cellPos2Ref(r.start);
 	e = cellPos2Ref(r.end);
@@ -261,6 +274,22 @@ getNumber(value : Value) -> Maybe<double> {
 	switch (value) {
 		String(__): None();
 		Number(n): Some(n);
+	}
+}
+
+value2text(v : Value) -> string {
+	switch (v) {
+		Number(n): d2s(n);
+		String(s): s;
+	}
+}
+
+formula2text(f : Formula, prefix : string) -> string {
+	switch (f) {
+		Value(): value2text(f);
+		CellPos(c, r): prefix + c + i2s(r);
+		Range(start, end): prefix + formula2text(start, "") + ":" + formula2text(end, "");
+		Call(id, args): prefix + id + "(" + superglue(args, \a -> formula2text(a, ""), ",") + ")";
 	}
 }
 
@@ -305,6 +334,17 @@ removeDependency(t : Tree<CellRef, Set<CellRef>>, from : CellRef, to : CellRef) 
 	setTree(t, to, removeSet(existing, from));
 }
 
+// What cells does this formula depend on?
+dependencies(acc : Set<CellRef>, f : Formula) -> Set<CellRef> {
+	switch (f) {
+		Value(): acc;
+		Range(__, __): fold(rangeToCells(f), acc, insertSet);
+		CellPos(__, __): insertSet(acc, cellPos2Ref(f));
+		Call(id, args): fold(args, acc, dependencies);
+	}
+}
+
+// Set the value of this cell, and propagate any changes
 setCellValue(spreadsheet : Spreadsheet, c : CellRef, value : Value, visited : Set<CellRef>) -> Set<CellRef> {
 	if (!containsSet(visited, c) && c.col < length(spreadsheet.cells)) {
 		nvisited = insertSet(visited, c);
@@ -322,24 +362,7 @@ setCellValue(spreadsheet : Spreadsheet, c : CellRef, value : Value, visited : Se
 	} else visited;
 }
 
-value2text(v : Value) -> string {
-	switch (v) {
-		Number(n): d2s(n);
-		String(s): s;
-	}
-}
-
-formula2text(f : Formula, prefix : string) -> string {
-	switch (f) {
-		Value(): value2text(f);
-		CellPos(c, r): prefix + c + i2s(r);
-		Range(start, end): prefix + formula2text(start, "") + ":" + formula2text(end, "");
-		Call(id, args): prefix + id + "(" + superglue(args, \a -> formula2text(a, ""), ",") + ")";
-	}
-}
-
-
-
+// What is the value of this cell as calculated by the formula in the cell?
 getCellValue(spreadsheet : Spreadsheet, c : CellRef) -> Value {
 	if (c.col < length(spreadsheet.cells)) {
 		column = spreadsheet.cells[c.col];
@@ -351,17 +374,7 @@ getCellValue(spreadsheet : Spreadsheet, c : CellRef) -> Value {
 	} else String("Unknown cell");
 }
 
-dependencies(acc : Set<CellRef>, f : Formula) -> Set<CellRef> {
-	switch (f) {
-		Value(): acc;
-		Range(__, __): fold(rangeToCells(f), acc, insertSet);
-		CellPos(__, __): insertSet(acc, cellPos2Ref(f));
-		Call(id, args): fold(args, acc, dependencies);
-	}
-}
-
 main() {
 	spreadsheet = makeSpreadsheet(26, 100);
-
 	mrender(makeMaterialManager([]), true, spreadsheet);
 }
