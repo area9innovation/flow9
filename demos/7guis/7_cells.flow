@@ -2,12 +2,15 @@ import material/material2tropic;
 
 import lingo/pegcode/driver;
 
+Spreadsheet(
+	// Column index first, then row.
+	cells : [[Cell]],
+	dependencies : ref Tree<CellPos, Set<CellPos>>
+);
 
 Cell(
-	x : int,
-	y : int,
 	text : DynamicBehaviour<string>,
-	value : DynamicBehaviour<double>
+	value : DynamicBehaviour<Value>
 );
 
 drawCell(cell : Cell) -> Material {
@@ -37,6 +40,8 @@ makeHeading(s : string) -> Material {
 	)
 }
 
+// The formula language parser and evaluator
+
 Formula ::= Expr, String;
 Expr ::= Range, CellPos, Number, Call;
 
@@ -45,6 +50,10 @@ Range(start : CellPos, end : CellPos);
 CellPos(col : string, row : int);
 String(s : string);
 Call(id : string, args : [Expr]);
+
+Value ::= Number, String;
+
+CellRef(col : int, row : int);
 
 lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
 
@@ -95,14 +104,141 @@ exprGrammar() {
 	});
 }
 
-main() {
-	println(parseExpr(".2"));
+evalFormula(spreadsheet : Spreadsheet, formula : Formula) -> Value {
+	switch (formula) {
+		Value(): formula;
+		Range(start, end): String("Range has no value");
+		CellPos(tcol, row): {
+			cellref = cellPos2Ref(formula);
+			if (cellref.col < length(spreadsheet.cells)) {
+				column = spreadsheet.cells[cellref.col];
+				if (cellref.row < length(column)) {
+					getValue(column[cellref.row].value);
+				} else {
+					String("Cell does not exist");
+				}
+			} else {
+				String("Cell does not exist");
+			}
+		}
+		Call(id, args): {
+			if (id == "add") {
+				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
+				res = dsum(eargs);
+				Number(res);
+			} else if (id == "sub") {
+				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
+				res = foldi(eargs, 0.0, \i, acc, n -> if (i == 0) n else acc - n);
+				Number(res);
+			} else if (id == "mul") {
+				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
+				res = fold(eargs, 1.0, \acc, n -> acc * n);
+				Number(res);
+			} else if (id == "div") {
+				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
+				res = foldi(eargs, 0.0, \i, acc, n -> if (i == 0) n else acc / n);
+				Number(res);
+			} else if (id == "mod") {
+				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
+				res = foldi(eargs, 0.0, \i, acc, n -> if (i == 0) n else acc % n);
+				Number(res);
+			} else if (id == "sum") {
+				if (length(args) == 1) {
+					arg = args[0];
+					switch (arg) {
+						CellPos(__, __): evalFormula(spreadsheet, arg);
+						Range(start, end): {
+							cells = rangeToCells(arg);
+							println(cells);
+							Number(fold(cells, 0.0, \acc, cell -> {
+								acc + getCellNumber(spreadsheet, cell, acc)
+							}));
+						}
+						default: String("sum expected range");
+					}
+				} else {
+					String("Expected 1 arg to sum");
+				}
+			} else if (id == "prod") {
+				if (length(args) == 1) {
+					arg = args[0];
+					switch (arg) {
+						CellPos(__, __): evalFormula(spreadsheet, arg);
+						Range(start, end): {
+							cells = rangeToCells(arg);
+							Number(fold(cells, 1.0, \acc, cell -> {
+								acc * getCellNumber(spreadsheet, cell, acc)
+							}));
+						}
+						default: String("prod expected range");
+					}
+				} else {
+					String("Expected 1 arg to prod");
+				}
+			} else String("Id " + id + " not supported");
+		}
+	}
+}
 
+getCellNumber(spreadsheet : Spreadsheet, cell : CellRef, def : double) -> double {
+	if (cell.col < length(spreadsheet.cells)) {
+		column = spreadsheet.cells[cell.col];
+		if (cell.row < length(column)) {
+			val = getValue(column[cell.row].value);
+			either(getNumber(val), def)
+		} else def;
+	} else def;
+}
+
+cellPos2Ref(c : CellPos) -> CellRef {
+	col = getCharCodeAt(toUpperCase(c.col), 0) - 65;
+	CellRef(col, c.row)
+}
+
+rangeToCells(r : Range) -> [CellRef] {
+	s = cellPos2Ref(r.start);
+	e = cellPos2Ref(r.end);
+	concatA(generate(s.col, max(s.col, e.col) + 1, \col -> {
+		generate(s.row, max(s.row, e.row) + 1, \row -> {
+			CellRef(col, row)
+		})
+	}));
+}
+
+getNumber(value : Value) -> Maybe<double> {
+	switch (value) {
+		String(__): None();
+		Number(n): Some(n);
+	}
+}
+
+// Change propagation
+
+propagateChange(spreadsheet : Spreadsheet, c : CellPos, visited : Set<CellPos>) -> void {
+
+}
+
+dependencies(acc : Set<Range>, f : Formula) -> Set<Range> {
+	switch (f) {
+		Value(): acc;
+		Range(__, __): insertSet(acc, f);
+		CellPos(__, __): insertSet(acc, Range(f, f));
+		Call(id, args): fold(args, acc, dependencies);
+	}
+}
+
+
+
+main() {
 	cells : [[Cell]]= generate(0, 26, \col -> {
 		generate(0, 100, \row -> {
-			Cell(col, row, make(""), make(0.0))
+			Cell(make("1"), make(Number(1.0)))
 		})
 	});
+	spreadsheet = Spreadsheet(cells, ref makeTree());
+
+	println(evalFormula(spreadsheet, parseExpr("=sum(a1:b5)")));
+
 	mrender(makeMaterialManager([]), true, 
 		MScroll(	
 			MCols(
