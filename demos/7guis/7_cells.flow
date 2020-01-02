@@ -5,6 +5,7 @@ import lingo/pegcode/driver;
 Spreadsheet(
 	// Column index first, then row.
 	cells : [[Cell]],
+	// From cell to what cells depends on this value
 	dependencies : ref Tree<CellRef, Set<CellRef>>
 );
 
@@ -13,6 +14,38 @@ Cell(
 	formula : DynamicBehaviour<Formula>,
 	value : DynamicBehaviour<Value>
 );
+
+makeSpreadsheet(cols : int, rows : int) -> Material {
+	cells : [[Cell]]= generate(0, cols, \col -> {
+		generate(0, rows, \row -> {
+			Cell(make(""), make(String("")), make(String("")))
+		})
+	});
+	spreadsheet = Spreadsheet(cells, ref makeTree());
+	MScroll(	
+		MCols(
+			concat([
+					MLines(
+						generate(-1, rows, \row -> {
+							makeHeading(if (row == -1) "" else i2s(row))
+						})
+					)
+				],
+				mapi(cells, \x, col -> {
+					MLines(concat(
+						[
+							makeHeading(fromCharCode(65 + x)),
+						],
+						mapi(col, \y, cell -> {
+							drawCell(spreadsheet, cell, CellRef(x, y))
+						})
+					))
+				})
+			)
+		), MFillXY(),
+		[]
+	);
+}
 
 drawCell(spreadsheet : Spreadsheet, cell : Cell, cellref : CellRef) -> Material {
 	editing = make(false);
@@ -239,7 +272,14 @@ setCellText(spreadsheet : Spreadsheet, c : CellRef, text : string) -> void {
 		if (c.row < length(column)) {
 			cell = column[c.row];
 
-			next(cell.text, text);
+			// OK, first find the old dependencies
+			oldDeps = dependencies(makeSet(), getValue(cell.formula));
+			// and remove them
+			deps0 = foldSet(oldDeps, ^(spreadsheet.dependencies), \acc, dep -> {
+				removeDependency(acc, c, dep);
+			});
+
+			// Next, update the cell with the new text, formula and value
 			formula = parseExpr(text);
 			next(cell.formula, formula);
 			value = evalFormula(spreadsheet, formula);
@@ -247,11 +287,22 @@ setCellText(spreadsheet : Spreadsheet, c : CellRef, text : string) -> void {
 
 			// Update dependencies
 			deps = dependencies(makeSet(), formula);
-			spreadsheet.dependencies := setTree(^(spreadsheet.dependencies), c, deps);
-
-			{}
+			deps1 = foldSet(deps, deps0, \acc, dep -> {
+				addDependency(acc, c, dep)
+			})
+			spreadsheet.dependencies := deps1;
 		}
 	}
+}
+
+addDependency(t : Tree<CellRef, Set<CellRef>>, from : CellRef, to : CellRef) -> Tree<CellRef, Set<CellRef>> {
+	existing = lookupTreeDef(t, to, makeSet());
+	setTree(t, to, insertSet(existing, from));
+}
+
+removeDependency(t : Tree<CellRef, Set<CellRef>>, from : CellRef, to : CellRef) -> Tree<CellRef, Set<CellRef>> {
+	existing = lookupTreeDef(t, to, makeSet());
+	setTree(t, to, removeSet(existing, from));
 }
 
 setCellValue(spreadsheet : Spreadsheet, c : CellRef, value : Value, visited : Set<CellRef>) -> Set<CellRef> {
@@ -310,38 +361,7 @@ dependencies(acc : Set<CellRef>, f : Formula) -> Set<CellRef> {
 }
 
 main() {
-	cells : [[Cell]]= generate(0, 26, \col -> {
-		generate(0, 100, \row -> {
-			Cell(make("1"), make(Number(1.0)), make(Number(1.0)))
-		})
-	});
-	spreadsheet = Spreadsheet(cells, ref makeTree());
+	spreadsheet = makeSpreadsheet(26, 100);
 
-	println(evalFormula(spreadsheet, parseExpr("=sum(a1:b5)")));
-
-	mrender(makeMaterialManager([]), true, 
-		MScroll(	
-			MCols(
-				concat([
-						MLines(
-							generate(-1, 100, \row -> {
-								makeHeading(if (row == -1) "" else i2s(row))
-							})
-						)
-					],
-					mapi(cells, \x, col -> {
-						MLines(concat(
-							[
-								makeHeading(fromCharCode(65 + x)),
-							],
-							mapi(col, \y, cell -> {
-								drawCell(spreadsheet, cell, CellRef(x, y))
-							})
-						))
-					})
-				)
-			), MFillXY(),
-			[]
-		)
-	);
+	mrender(makeMaterialManager([]), true, spreadsheet);
 }
