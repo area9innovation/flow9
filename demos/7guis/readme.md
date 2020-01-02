@@ -12,6 +12,6 @@ Summary:
 4: timer		35 lines	105 lines	97 lines	21 lines
 5: crud			60 lines	115 lines	237 lines	37 lines
 6: circles		137 lines	442 lines	276 lines	121 lines
-7: cells		380 lines	546 lines	543 lines 	N/A
+7: cells		377 lines	546 lines	543 lines 	N/A
 
 
