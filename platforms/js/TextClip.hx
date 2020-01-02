@@ -101,6 +101,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = '';
+	private var escapeHTML : Bool = true;
 	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
@@ -395,7 +396,18 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			var textContent = getContentGlyphs().modified;
 			var newTextContent = convertContentGlyphs2TextContent(textContent);
-			nativeWidget.textContent = newTextContent;
+
+			if (escapeHTML) {
+				nativeWidget.textContent = newTextContent;
+			} else {
+				nativeWidget.innerHTML = newTextContent;
+
+				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
+				for (child in children) {
+					child.className = "baselineWidget";
+				}
+			}
+
 			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
@@ -579,7 +591,14 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		invalidateMetrics();
-		updateWidthDelta();
+	}
+
+	public function setEscapeHTML(escapeHTML : Bool) : Void {
+		if (this.escapeHTML != escapeHTML) {
+			this.escapeHTML = escapeHTML;
+			invalidateMetrics();
+			updateWidthDelta();
+		}
 	}
 
 	private function measureFont() : Void {
@@ -760,6 +779,7 @@ class TextClip extends NativeWidgetClip {
 			style.wordWrap = wordWrap;
 
 			invalidateMetrics();
+			updateWidthDelta();
 		}
 	}
 
@@ -782,6 +802,7 @@ class TextClip extends NativeWidgetClip {
 			style.breakWords = cropWords;
 
 			invalidateMetrics();
+			updateWidthDelta();
 		}
 	}
 
@@ -1213,10 +1234,10 @@ class TextClip extends NativeWidgetClip {
 	public function getContentGlyphs() : TextMappedModification {
 		if (isInput && type == "password") {
 			return getBulletsString(this.text);
-		} else if (doNotRemap) {
-			return TextMappedModification.createInvariantForString(this.text);
-		} else {
+		} else if (isStringArabic(text) && !doNotRemap) {
 			return getActualGlyphsString(this.text);
+		} else {
+			return TextMappedModification.createInvariantForString(this.text);
 		}
 	}
 
@@ -1299,11 +1320,45 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
-			if (isStringArabic(text)) {
+			if (!escapeHTML) {
+				metrics = TextMetrics.measureText(untyped __js__("this.text.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
+				measureHTMLWidth();
+			} else if (isStringArabic(text)) {
 				metrics = TextMetrics.measureText(convertContentGlyphs2TextContent(getContentGlyphs().modified), style);
 			} else {
 				metrics = TextMetrics.measureText(text, style);
 			}
+		}
+	}
+
+	private function measureHTMLWidth() : Void {
+		if (nativeWidget == null) {
+			isNativeWidget = true;
+			createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
+		}
+
+		var textNodeMetrics : Dynamic = null;
+
+		updateNativeWidgetStyle();
+
+		if (nativeWidget.parentNode == null) {
+			Browser.document.body.appendChild(nativeWidget);
+			textNodeMetrics = getTextNodeMetrics(nativeWidget);
+			Browser.document.body.removeChild(nativeWidget);
+		} else {
+			textNodeMetrics = getTextNodeMetrics(nativeWidget);
+		}
+
+		if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
+			return;
+		}
+
+		if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
+			metrics.width = textNodeMetrics.width;
+		}
+
+		if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
+			deleteNativeWidget();
 		}
 	}
 

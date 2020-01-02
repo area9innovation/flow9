@@ -758,16 +758,14 @@ class RenderSupportJSPixi {
 			}
 		};
 
-		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
-			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
-			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+		if (Platform.isMobile) {
+			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+				addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
+				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
+				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+			}
 
-			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
-		} else if (Platform.isMobile) {
 			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
@@ -1262,6 +1260,10 @@ class RenderSupportJSPixi {
 		fillColor : Int, fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 		clip.setTextAndStyle(text, fontFamily, fontSize, fontWeight, fontSlope,
 			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
+	}
+
+	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
+		clip.setEscapeHTML(escapeHTML);
 	}
 
 	public static function setAdvancedText(clip : TextClip, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {
@@ -2259,7 +2261,6 @@ class RenderSupportJSPixi {
 			var filterCount = 0;
 
 			clip.off("childrenchanged", clip.invalidateTransform);
-			clip.emit("clearfilters");
 
 			untyped clip.filters = filters.filter(function(f) {
 				if (f == null) {
@@ -2277,6 +2278,7 @@ class RenderSupportJSPixi {
 			}
 
 			if (clip.filters.length > 0) {
+				clip.updateEmitChildrenChanged();
 				clip.on("childrenchanged", clip.invalidateTransform);
 			}
 

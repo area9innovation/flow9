@@ -1,0 +1,87 @@
+import material/material2tropic;
+import material/material_dialog;
+import date;
+
+main() {
+	manager = makeMaterialManager([]);
+
+	// The flight type. 0 = one-way flight, 1 = return flight
+	flightType = make(0);
+
+	// The dates in text format
+	startDateText = make(date2formatString(getCurrentDate(), "%M.%D.%YYYY"));
+	endDateText = make(getValue(startDateText));
+
+	// The dates parsed
+	startDate : Transform<Maybe<Date>> = fselect(startDateText, FLift(\date -> {
+		formatString2date(strReplace(date, ".", "-"), "%M%D%YYYY");
+	}));
+	endDate : Transform<Maybe<Date>> = fselect(endDateText, FLift(\date -> {
+		formatString2date(strReplace(date, ".", "-"), "%M%D%YYYY");
+	}));
+
+	// If we have a return flight and the start date is after the end date (or either is invalid)
+	invalidDates : Transform<bool> = 
+		fand(
+			feq(flightType, 1), 
+			fselect2(startDate, endDate, FLift2(\ms, me -> {
+				eitherMap(ms, \s : Date -> {
+					eitherMap(me, \e : Date -> {
+						s > e
+					}, true)
+				}, true)
+			}))		
+		);
+
+	mrender(manager, true, MLines([
+		MDropDown(flightType, "Pick flight", ["one-way flight", "return flight"], []),
+		MTextInput(startDateText, [], [
+			// Color this red if the date is invalid, or we have a return flight with start date after leaving date
+			MInputError(
+				fselect2(startDate, invalidDates, FLift2(\ms, invalid -> {
+					if (ms == None()) Some(Pair("Invalid date", false))
+					else if (invalid) Some(Pair("Start date has to be before leaving date", false))
+					else None()
+				})),
+				[]
+			)
+		]),
+		MTextInput(endDateText, [], [
+			// Only enabled on return flights
+			MEnabled(feq(flightType, 1)),
+			// Color this red if the date is invalid
+			MInputError(
+				fselect(endDate, FLift(\md -> {
+					if (md == None()) Some(Pair("Invalid date", false))
+					else None()
+				})), []
+			)
+		]),
+		MTextButton("BOOK", \ -> {
+			message = if (getValue(flightType) == 0) {
+				"You have booked a one-way flight for " + getValue(startDateText) + "."
+			} else {
+				"You have booked a return flight from " + getValue(startDateText) 
+				+ " to " + getValue(endDateText) + "."
+			}
+			ShowMConfirmation(manager,
+				"Confirmation", "OK", "enter",
+				MText(message, [])
+			)
+		}, [], [
+			MEnabled(
+				fnot(
+					fOr(
+						// If either date is badly formatted
+						fOr(
+							feq(startDate, None()),
+							feq(endDate, None()),
+						),
+						// Or a return flight has wrong dates
+						invalidDates
+					)
+				)
+			)
+		]),
+	]));
+}
