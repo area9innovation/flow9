@@ -1,20 +1,29 @@
 import material/material2tropic;
 
+import lingo/pegcode/driver;
 
-drawCell(cell : DynamicBehaviour<string>) -> Material {
+
+Cell(
+	x : int,
+	y : int,
+	text : DynamicBehaviour<string>,
+	value : DynamicBehaviour<double>
+);
+
+drawCell(cell : Cell) -> Material {
 	MBorder(0.0, 0.0, 1.0, 1.0,
 		MClickable(
 			MFrame(2.0, 0.0,
 				[Fill(white)],
 				MGroup([
 					MFixed(128.0, 24.0),
-					MSelect(cell, \c -> {
+					MSelect(cell.text, \c -> {
 						MText(c, [])
 					}),
 				])
 			),
 			\ -> {
-				next(cell, "A")
+				next(cell.text, "A")
 			}
 		)
 	)
@@ -24,14 +33,74 @@ makeHeading(s : string) -> Material {
 	MFixSize(
 		MBorder(2.0, 2.0, 0.0, 0.0,
 			MText(s, [])
-		), MFixed(64.0, 24.0)
+		), MFixed(64.0, 29.0)
 	)
 }
 
+Formula ::= Expr, String;
+Expr ::= Range, CellPos, Number, Call;
+
+Number(d : double);
+Range(start : CellPos, end : CellPos);
+CellPos(col : string, row : int);
+String(s : string);
+Call(id : string, args : [Expr]);
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+parseExpr(e : string) -> Formula {
+	parsic(exprGrammar(), e, defaultPegActions);
+}
+
+exprGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar(
+			"
+			formula = '=' expr:e { :e }
+				| number:n { Number(:n) }
+				| (char*)$s { String($s) }
+				;
+
+			expr = range | cell | number:n { Number(:n) } | call;
+
+			call = id$i '(' args:a ')' { Call($i, :a) }
+				| id$i '()' { Call($i, array()) };
+
+				args = expr:e (',' expr:s {:s})*:t { consArray(:e, :t) }
+					| expr:e { array(:e) };
+
+			range = cell:c1 ':' cell:c2 { Range(:c1, :c2) };
+
+			cell = letter$l int:i { CellPos($l, $i) };
+
+			number = ('.' int)$d { s2d($d) }
+				| (int '.' int?)$d { s2d($d) }
+				| int$d { s2d($d) };
+
+			int = (digit+)$i {s2i($i)};
+			id! = (letter letterOrDigit*)$s {$s};
+
+			letterOrDigit = 'a'-'z'
+				| 'A'-'Z'
+				| '_'
+				| '0'-'9';
+			letter = 'a'-'z'
+				| 'A'-'Z'
+				| '_';
+			digit = '0'-'9';
+
+			char = '\u0000' - '\uffff';
+			"
+		)
+	});
+}
+
 main() {
-	cells : [[DynamicBehaviour<string>]]= generate(0, 26, \col -> {
-		generate(0, 99, \row -> {
-			make("")
+	println(parseExpr(".2"));
+
+	cells : [[Cell]]= generate(0, 26, \col -> {
+		generate(0, 100, \row -> {
+			Cell(col, row, make(""), make(0.0))
 		})
 	});
 	mrender(makeMaterialManager([]), true, 
@@ -39,7 +108,7 @@ main() {
 			MCols(
 				concat([
 						MLines(
-							generate(-1, 99, \row -> {
+							generate(-1, 100, \row -> {
 								makeHeading(if (row == -1) "" else i2s(row))
 							})
 						)
