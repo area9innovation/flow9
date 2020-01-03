@@ -26,6 +26,8 @@ export {
 	handleIScriptState(manager : MaterialManager) -> () -> void;
 
 	isIScriptUrlParamsSet() -> bool;
+
+	getMaterialFocusByUniqueIdRec(parent : MFocusGroup, id : string) -> Maybe<MaterialFocus>;
 }
 
 stopIScriptReplay(manager : MaterialManager) -> void {
@@ -75,7 +77,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, timeout : double,
 				r.stop,
 				\ -> if (!(^isFinished)) {
 					isFinished := true;
-					onFinished(length(^delays) == 0);
+					onFinished(length(^delays) == 0 && isNone(^deferredFn));
 				},
 				makeSubscribe2(r.value, \ts -> {
 					if (length(^delays) == 0 && isNone(^deferredFn)) {
@@ -223,6 +225,16 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInp
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
 			repeatBehaviourById(manager, descriptor, value)
+		}
+		IScriptDynamicBehaviourRecord(id, name, value) : {
+			eitherMap(
+				getMaterialFocusByUniqueIdRec(manager.focus, id),
+				\f -> {
+					descriptor = IScriptBehaviourDescriptor(IScriptComponentDescriptor(f.name, getFullMFocusId(f)), name);
+					repeatBehaviourById(manager, descriptor, value)
+				},
+				false
+			)
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
 			if (handleInputOutput) {
@@ -1317,4 +1329,26 @@ getIscriptReportResults(results : [IScriptReplayResult]) -> string {
 			]
 		)
 	}), "\n")
+}
+
+getMaterialFocusByUniqueIdRec(parent : MFocusGroup, id : string) -> Maybe<MaterialFocus> {
+	iScriptIdParent : MFocusGroup =
+		if (isSome(parent.iScriptId))
+			parent
+		else
+			getIScriptUniqueIdParent(parent);
+	iScriptIds : Tree<string, MaterialFocus> = getValue(iScriptIdParent.iScriptIds);
+	eitherFn(
+		lookupTree(iScriptIds, id),
+		\v -> Some(v),
+		\ -> foldTree(getValue(parent.focusIds), None(), \k : int, v : MaterialFocus, acc : Maybe<MaterialFocus> -> {
+			if (isNone(acc)) {
+				switchMaterialFocus(
+					v,
+					\f -> maybeBind(f.iScriptId, \isi -> if (isi == id) Some(f) else None()),
+					\f -> getMaterialFocusByUniqueIdRec(f, id)
+				)
+			} else acc
+		})
+	)
 }
