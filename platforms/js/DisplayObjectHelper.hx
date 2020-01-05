@@ -2110,6 +2110,7 @@ class DisplayObjectHelper {
 		var tempRoundPixels : Dynamic = null;
 		var tempMaskWorldTransform : Dynamic = null;
 		var tempWorldTransform : Dynamic = null;
+		var tempWorldAlpha : Dynamic =  null;
 
 		var children = getClipChildren(clip);
 
@@ -2151,13 +2152,16 @@ class DisplayObjectHelper {
 		} else {
 			if (transform != null) {
 				untyped tempWorldTransform = clip.transform.worldTransform;
+				untyped tempWorldAlpha = clip.worldAlpha;
 				untyped clip.transform.worldTransform = clip.transform.worldTransform.clone().prepend(transform);
+				untyped clip.worldAlpha = clip.alpha;
 			}
 
 			untyped clip.renderCanvas(RenderSupportJSPixi.PixiRenderer);
 
 			if (transform != null) {
 				untyped clip.transform.worldTransform = tempWorldTransform;
+				untyped clip.worldAlpha = tempWorldAlpha;
 			}
 		}
 
