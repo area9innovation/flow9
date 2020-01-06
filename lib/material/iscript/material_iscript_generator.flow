@@ -4,11 +4,12 @@ export {
 	runIScriptFromCommands(manager : MaterialManager, input : string) -> void;
 }
 
-IScriptGeneratorCommands ::= ISGFindFocus, ISGSetFocusContent, ISGPressButton, ISGCheckBehaviour;
+IScriptGeneratorCommands ::= ISGFindFocus, ISGSetFocusContent, ISGPressButton, ISGPressButtonPath, ISGCheckBehaviour;
 
 ISGFindFocus(name : string);
 ISGSetFocusContent(focusName : string, content : string);
 ISGPressButton(name : string);
+ISGPressButtonPath(path : [string]);
 ISGCheckBehaviour(focusName : string, behaviourName : string, content : string);
 
 generateIScriptFromCommands(manager : MaterialManager, input : string) -> void {
@@ -30,7 +31,10 @@ generateIScript(manager : MaterialManager, commands : [IScriptGeneratorCommands]
 	mapConcat(commands, \command -> {
 		switch(command) {
 			ISGFindFocus(id): {
-				[IScriptDynamicBehaviourRecord(id, "value", false)]
+				[IScriptSearchBehaviourRecord(IScriptBehaviourDescriptor(
+					IScriptComponentDescriptor("", Cons(IScriptId(id), EmptyList())),
+					"value"
+				), false)]
 			}
 			ISGSetFocusContent(focusName, content): {
 				eitherMap(
@@ -47,11 +51,16 @@ generateIScript(manager : MaterialManager, commands : [IScriptGeneratorCommands]
 				)
 			}
 			ISGPressButton(name): {
-				eitherMap(
+				eitherFn(
 					getMaterialFocusByUniqueIdRec(manager.focus, name),
 					generateMouseClickOnFocus,
-					[]
+					\ -> {
+						generateMouseClickOnFocusSearch(Cons(IScriptId(name), EmptyList()))
+					}
 				)
+			}
+			ISGPressButtonPath(path): {
+				generateMouseClickOnFocusSearch(array2list(map(path, \p -> IScriptId(p))))
 			}
 			ISGCheckBehaviour(focusName, behaviourName, content): {
 				eitherMap(
@@ -121,6 +130,34 @@ generateMouseClickOnFocus(focus : MaterialFocus) -> [IScriptBehaviourRecord] {
 	]
 }
 
+generateMouseClickOnFocusSearch(id : List<IScriptId>) -> [IScriptSearchBehaviourRecord] {
+	descriptor = IScriptComponentDescriptor("canvas", id);
+
+	[
+		/*IScriptSearchBehaviourRecord(
+			IScriptBehaviourDescriptor(
+				descriptor,
+				"value"
+			),
+			false
+		),*/
+		IScriptSearchBehaviourRecord(
+			IScriptBehaviourDescriptor(
+				descriptor,
+				"mousedown"
+			),
+			zeroPoint
+		),
+		IScriptSearchBehaviourRecord(
+			IScriptBehaviourDescriptor(
+				descriptor,
+				"mouseup"
+			),
+			zeroPoint
+		),
+	]
+}
+
 runIScriptCommands(manager : MaterialManager, commands : [IScriptGeneratorCommands]) -> void {
 	if (length(commands) >= 1) {
 		command = commands[0];
@@ -176,6 +213,7 @@ runIScriptCommands(manager : MaterialManager, commands : [IScriptGeneratorComman
 				}
 				runIScriptCommands(manager, tail(commands));
 			}
+			ISGPressButtonPath(__): runIScriptCommands(manager, tail(commands));
 			ISGCheckBehaviour(focusName, behaviourName, content): {
 				focus = getMaterialFocusByUniqueIdRec(manager.focus, focusName);
 				pprint(toString(command) + ":")(maybeMap(
