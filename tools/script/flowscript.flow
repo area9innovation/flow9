@@ -57,7 +57,7 @@ processFiFunction(library : LibraryRewrites, f : FiFunctionDec) -> FiFunctionDec
 	)
 }
 
-// foo := 0
+// Find the first sites of "foo := 0" and extract those
 extractFiExpBehaviours(acc : Tree<string, FiExp>, ex : FiExp) -> Tree<string, FiExp> {
 	switch (ex) {
 		FiConst(): acc;
@@ -93,6 +93,7 @@ extractFiExpsBehaviours(acc : Tree<string, FiExp>, es : [FiExp]) -> Tree<string,
 	fold(es, acc, extractFiExpBehaviours)
 }
 
+// Apply prototypes and conversions to this FiExp
 processFiExp(library : LibraryRewrites, expect : FiType, e : FiExp) -> FiExp {
 	todo = \ -> {
 		println("TODO Process: " + toString(e) + " as " + toString(expect));
@@ -105,23 +106,17 @@ processFiExp(library : LibraryRewrites, expect : FiType, e : FiExp) -> FiExp {
 				FiVar(fn, vt, vs): {
 					proto = lookupTree(library.prototypes, fn);
 					switch (proto) {
-						None(): todo();
+						None(): {
+							// Normal call. Just do kids
+							argTypes = getLibraryArgTypes(library, fn);
+							FiCall(f, mapi(args, \i, a -> {
+								argtype = elementAt(argTypes, i, FiTypeFlow());
+								processFiExp(library, argtype, a)
+							}), type, start);
+						}
 						Some(pro): {
 							// What type is the result?
-							resType = lookupTree(library.names.toplevel, pro.name);
-							argTypes : [FiType] = switch (resType) {
-								None(): {
-									structType = lookupTree(library.names.structs, pro.name);
-									switch (structType) {
-										None(): [];
-										Some(st): map(st.args, \a -> a.type);
-									}
-								}
-								Some(rt): {
-									println("TODO: Find args");
-									[];
-								}
-							}
+							argTypes = getLibraryArgTypes(library, pro.name);
 							// Is this a single array?
 							arrayType = extractArrayType(argTypes);
 
@@ -264,6 +259,28 @@ processFiExp(library : LibraryRewrites, expect : FiType, e : FiExp) -> FiExp {
 	}
 }
 
+getLibraryArgTypes(library : LibraryRewrites, name : string) -> [FiType] {
+	resType = lookupTree(library.names.toplevel, name);
+	switch (resType) {
+		None(): {
+			structType = lookupTree(library.names.structs, name);
+			switch (structType) {
+				None(): [];
+				Some(st): map(st.args, \a : FiStructArg -> a.type);
+			}
+		}
+		Some(rt): {
+			switch (rt.type) {
+				FiTypeFunction(fargs, __): map(fargs, \a : FiFunArg -> a.type);
+				default: {
+					println("TODO: Find args for " + name);
+					[];
+				}
+			}
+		}
+	}
+}
+
 extractArrayType(ts : [FiType]) -> Maybe<FiType> {
 	if (length(ts) != 1) None()
 	else switch (ts[0]) {
@@ -280,8 +297,8 @@ processFiLambda(library : LibraryRewrites, expect : FiType, l : FiLambda) -> FiL
 }
 
 main() {
-	// file = getUrlParameterDef("file", "tools/script/test/1_counter.flow");
-	file = getUrlParameterDef("file", "tools/script/test/2_temperature.flow");
+	file = getUrlParameterDef("file", "tools/script/test/1_counter.flow");
+	// file = getUrlParameterDef("file", "tools/script/test/2_temperature.flow");
 	// file = getUrlParameterDef("file", "tools/script/test/3_flight.flow");
 	files = loadFiModules(makeEmptyFcTypeEnv(), file, \e -> {
 		println(e);
