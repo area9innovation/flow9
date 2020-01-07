@@ -1,0 +1,245 @@
+import tools/script/parser;
+import tools/flowc/incremental/fi2flowsrc;
+
+// Here we record the various rewrites we should do
+LibraryRewrites(
+	// Implicit type conversions
+	typeConversions : Tree<FiType, [TypeConversion]>,
+
+	// Short names and default arguments
+	prototypes : Tree<string, Prototype>,
+
+	// The types of names
+	names : FiGlobalNames
+);
+
+extractLibraryRewrites(p : FiProgram) -> LibraryRewrites {
+	library = foldTree(p.modules, dummyFiModule, \n, m, acc -> {
+		if (strContains(n, "material_lib")) m else acc
+	});
+
+	LibraryRewrites(
+		extractConversions(library),
+		extractPrototypes(library),
+		p.names
+	)
+}
+
+/*
+Functions like "convert_(f : ?) -> ??" in the library
+are recognized as implicit conversion functions.
+*/
+TypeConversion(
+	from : FiType,
+	to : FiType,
+	code : FiFunctionDec
+);
+
+extractConversions(l : FiModule) -> Tree<FiType, [TypeConversion]> {
+	fold(l.functions, makeTree(), \acc, f : FiFunctionDec -> {
+		if (startsWith(f.name, "convert_") && length(f.lambda.args) == 1) {
+			conv = TypeConversion(
+				f.type.args[0].type,
+				f.type.returnType,
+				f
+			);
+			treePushToArrayValue(acc, conv.to, conv);
+		} else acc;
+	})
+}
+
+
+/*
+When we have this in the library
+
+	text = MText("", []);
+
+that means we should convert
+
+	text("Foo")
+
+to
+
+	MText("Foo", [])
+*/
+
+Prototype(
+	name : string,
+	args : [FiExp],
+);
+
+extractPrototypes(l : FiModule) -> Tree<string, Prototype> {
+	fold(l.globalVars, makeTree(), \acc, f : FiGlobalVar -> {
+		todo = \ -> {
+			println("TODO: " + toString(f.value) + " for " + f.name);
+			acc;
+		}
+
+		switch (f.value) {
+			FiCall(fn, args, __, __): {
+				switch (fn) {
+					FiVar(n, __, __): {
+						prot = Prototype(n, args);
+						setTree(acc, f.name, prot)
+					}
+					default: todo();
+				}
+			}
+			FiCallPrim(op, args, __, __): {
+				switch (op) {
+					FcStructPrim(name): {
+						prot = Prototype(name, args);
+						setTree(acc, f.name, prot)
+					}
+					default: todo();
+				}
+			}
+			default: todo();
+		}
+	})
+}
+
+processFiModule(library : LibraryRewrites, m : FiModule) -> FiModule {
+	FiModule(
+		m with functions = map(m.functions, \f : FiFunctionDec -> {
+			FiFunctionDec(f with
+				lambda = processFiLambda(library, FiTypeName("Material", []), f.lambda)
+			)
+		})
+	)
+}
+
+processFiExp(library : LibraryRewrites, expect : FiType, e : FiExp) -> FiExp {
+	todo = \ -> {
+		println("TODO Process: " + toString(e) + " as " + toString(expect));
+		e;
+	}
+	switch (e) {
+		FiVar(name, type, start): todo();
+		FiCall(f, args, type, start): {
+			switch (f) {
+				FiVar(fn, vt, vs): {
+					proto = lookupTree(library.prototypes, fn);
+					switch (proto) {
+						None(): todo();
+						Some(pro): {
+							// What type is the result?
+							resType = lookupTree(library.names.toplevel, pro.name);
+							argTypes : [FiType] = switch (resType) {
+								None(): {
+									structType = lookupTree(library.names.structs, pro.name);
+									switch (structType) {
+										None(): [];
+										Some(st): map(st.args, \a -> a.type);
+									}
+								}
+								Some(rt): {
+									println("TODO: Find args");
+									[];
+								}
+							}
+
+
+							arrayType = extractArrayType(argTypes);
+
+							def = \ -> {
+								FiCall(FiVar(pro.name, vt, vs),
+									mapi(pro.args, \i, arg -> {
+										if (i < length(args)) {
+											// Find definition of this guy and do the right thing
+											argtype = elementAt(argTypes, i, FiTypeFlow());
+											processFiExp(library, argtype, args[i])
+										} else {
+											pro.args[i]
+										}
+									}), type, start
+								)
+							}
+
+							switch (arrayType) {
+								None(): def();
+								Some(at): {
+									if (length(args) != 1) {
+										// OK, we lift to an array
+										FiCall(
+											FiVar(pro.name, vt, vs),
+											[FiCallPrim(
+												FcArrayPrim(),
+												map(args, \a -> {
+													processFiExp(library, at, a)
+												}),
+												FiTypeArray(at),
+												start
+											)],
+											type, start
+										)
+									} else {
+										def();
+									}
+								}
+							}
+						}
+					}
+				}
+				default: todo();
+			}
+		}
+
+		FiLambda(args, body, type, start): todo();
+		FiLet(name, type, e1, e2, type2, start): todo();
+		FiIf(e1, e2, e3, type, start): todo();
+		FiSwitch(x, switchType, cases, type, start): todo();
+		FiCast(ec, tFrom, tTo, type, start): todo();
+		FiSeq(es, type, start): todo();
+		FiCallPrim(op, es, type, start): todo();
+
+		FiVoid(start): todo();
+		FiDouble(d, start): todo();
+		FiInt(i, start): todo();
+		FiString(s, start): todo();
+		FiBool(b, start): todo();
+
+		FiRequire(flowfile, er, type, start): todo();
+		FiUnsafe(name, fallback, type, start): todo();
+	}
+}
+
+extractArrayType(ts : [FiType]) -> Maybe<FiType> {
+	if (length(ts) != 1) None()
+	else switch (ts[0]) {
+		FiTypeArray(at): Some(at);
+		default: None();
+	}
+}
+
+processFiLambda(library : LibraryRewrites, expect : FiType, l : FiLambda) -> FiLambda {
+	FiLambda(
+		l with
+		body = processFiExp(library, expect, l.body)
+	)
+}
+
+main() {
+	file = getUrlParameterDef("file", "tools/script/test/1_counter.flow");
+	// file = getUrlParameterDef("file", "tools/script/test/2_temperature.flow");
+	// file = getUrlParameterDef("file", "tools/script/test/3_flight.flow");
+	//file = getUrlParameterDef("file", "tools/script/material_lib.flow");
+	files = loadFiModules(makeEmptyFcTypeEnv(), file, \e -> {
+		println(e);
+	});
+
+	// Parse the library
+
+	library = loadFiProgram(makeEmptyFcTypeEnv(), "tools/script/material_lib.flow");
+
+	rewrites = extractLibraryRewrites(library);
+
+	traverseInOrder(files, \f, module -> {
+		processed = processFiModule(rewrites, module);
+		println(f);
+		println(fimodule2flowsrc(module));
+		println("becomes");
+		println(fimodule2flowsrc(processed));
+	});
+	quit(0);
+}
