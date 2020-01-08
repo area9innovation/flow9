@@ -12,7 +12,7 @@ export {
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarLeft, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
-		TScrollbarsAdditionalBox, TScrollbarDoNotOverlapContent;
+		TScrollbarsAdditionalBox, TScrollbarOverlapContent;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -133,7 +133,7 @@ export {
 
 		TScrollInspectShowScrolling(show : DynamicBehaviour<bool>);
 
-		TScrollbarDoNotOverlapContent();
+		TScrollbarOverlapContent();
 
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
 
@@ -158,13 +158,20 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	scrollHandle = !contains(style, TScrollDontHandle());
 	currentInteractive = extractStruct(style, TCurrentInteractive(make(None()))).current;
 	mouseEnabled = extractStruct(style, TScrollMouseEnabled(const(true))).enabled;
-	overlapContent = !contains(style, TScrollbarDoNotOverlapContent());
+
+	overlapContent0 = make(false);
+	overlapContent =
+		if (contains(style, TScrollbarOverlapContent())) const(true)
+		else overlapContent0;
 
 	scrollBarStyles = extractStruct(style, TScrollbars(standardScrollBar, standardScrollBar));
 	scrollBarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
 	scrollBarsAdditionalBox = extractStruct(style, TScrollbarsAdditionalBox(
-		if (overlapContent) const(WidthHeight(0., 0.))
-		else fwh(scrollBarStyles.y.thickness, scrollBarStyles.x.thickness)
+		fif(
+			overlapContent,
+			const(WidthHeight(0., 0.)),
+			fwh(scrollBarStyles.y.thickness, scrollBarStyles.x.thickness)
+		)
 	)).box;
 	scrollFadeContent = tryExtractStruct(style, TScrollFadeContent(0, 0.0));
 
@@ -175,10 +182,15 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	contentWH = wh.content;
 	// WidthHeight of available box
 	boxWH0 = wh.box;
-	boxWHCutted = if (overlapContent) boxWH0 else fstall(fwhsubtract(boxWH0, fwh(
-		fif(scrollBarsVisible.y, scrollBarStyles.y.thickness, const(0.)),
-		fif(scrollBarsVisible.x, scrollBarStyles.x.thickness, const(0.))
-	)), 0);
+	boxWHCutted =
+		fif(
+			overlapContent,
+			boxWH0,
+			fstall(fwhsubtract(boxWH0, fwh(
+				fif(scrollBarsVisible.y, scrollBarStyles.y.thickness, const(0.)),
+				fif(scrollBarsVisible.x, scrollBarStyles.x.thickness, const(0.))
+			)), 0)
+		);
 
 	// Maximum scroll offset (0 if content fits available box)
 	maxWH = fwhmax(fwhsubtract(contentWH, boxWHCutted), const(WidthHeight(0., 0.)));
@@ -212,16 +224,22 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 
 		cAcc = ref zeroTAcc;
 		c0 = {
-			cont =
-				TAvailable(
-					TFrame(
-						0.0,
-						0.0,
-						interactiveRectangleStyle,
-						TAttachBox(content, contentWH)
-					),
-					TSized(boxWHCutted)
+			cont0 =
+				TFrame(
+					0.0,
+					0.0,
+					interactiveRectangleStyle,
+					TAttachBox(content, contentWH)
 				);
+
+			cont =
+				TransformTAcc2(\t2a2 -> {
+					tacc = cont0 |> t2a2;
+					TAcc(tacc with disposers = concat(tacc.disposers, [
+						make2Subscribe(tacc.xFillers, tacc.yFillers, \x, y -> nextDistinct(overlapContent0, x + y == 0.))()
+					]))
+				})
+				|> (\t -> TAvailable(t,	TSized(boxWHCutted)));
 
 			if (cropByContent)
 				TransformTAcc2(\t2a2 -> {
