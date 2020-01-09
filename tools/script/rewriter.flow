@@ -1,100 +1,326 @@
 import tools/flowc/incremental/fi2flowsrc;
 import tools/script/parser;
+import tools/flowc/fctypeenv;
+import tools/flowc/type_helpers;
 
 /*
 TODO:
 - Implement pattern matching and replacement
 */
 
-Rewrite(pattern : FiExp, target : string);
-
 Rewrites(
-	rewrites : [Rewrite]
+	rewrites : [Rewrite],
+	replacements : [Replacement],
 );
 
+Rewrite(pattern : FcExp, target : string);
+
+Replacement(from : FcInfo2, to : string);
+
+emptyBindings = Bindings(makeTree(), false);
+mismatchBindings = Bindings(makeTree(), true);
+Bindings(
+	vars : Tree<string, FcExp>,
+	mismatch : bool,
+);
+
+hasBinding(b : Bindings) -> bool {
+	!b.mismatch && b != emptyBindings
+}
+
 // This will do all the rewrites we need on a given module.
-processFiModule(library : Rewrites, m : FiModule) -> FiModule {
-	FiModule(
-		m with functions = map(m.functions, \f : FiFunctionDec -> {
-			processFiFunction(library, f);
-		})
-	)
+processFcModule(library : Rewrites, m : FcModule) -> Rewrites {
+	facc = foldTree(m.functions, library, \n, f: FcFunctionDec, acc -> {
+		lambda = f.lambda;
+		lambda ?? processFcExp(acc, lambda) : acc;
+	});
+	foldTree(m.globalVars, facc, \n, g : FcGlobalVar, acc -> {
+		value = g.value;
+		value ?? processFcExp(acc, value) : acc;
+	})
 }
 
-processFiFunction(library : Rewrites, f : FiFunctionDec) -> FiFunctionDec {
-	FiFunctionDec(f with lambda = processFiLambda(library, f.lambda))
-}
-
-
-processFiExp(library : Rewrites, e : FiExp) -> FiExp {
-	todo = \ -> {
-		println("TODO Process: " + toString(e));
-		e;
-	}
-	r = switch (e) {
-		FiVar(name, type, start): todo();
-		FiCall(f, args, type, start): todo();
-		FiLambda(args, body, type, start): todo();
-		FiLet(name, type, e1, e2, type2, start): todo();
-		FiIf(e1, e2, e3, type, start): todo();
-		FiSwitch(x, switchType, cases, type, start): todo();
-		FiCast(ec, tFrom, tTo, type, start): todo();
-		FiSeq(es, type, start): todo();
-		FiCallPrim(op, es, type, start): {
-			rec = \ -> {
-				FiCallPrim(op, mapi(es, \i, ex -> processFiExp(library, ex)), type, start);
+processFcExp(library : Rewrites, ex : FcExp) -> Rewrites {
+	match = fold(library.rewrites, None(), \acc, rewrite -> {
+		if (acc != None()) acc
+		else {
+			bindings = matchFcExp(emptyBindings, rewrite.pattern, ex);
+			if (bindings != emptyBindings && !bindings.mismatch) {
+				Some(makeReplacement(ex.info, bindings, rewrite.target));
+			} else {
+				acc;
 			}
+		}
+	});
+
+	match ?? Rewrites(library with replacements = arrayPush(library.replacements, match))
+		: {
+		todo = \ -> {
+			println("TODO Recurse: " + toString(ex));
+			library;
+		}
+		switch (ex) {
+			FcLambda(args, body, info): processFcExp(library, body);
+			FcCall(f, args, info): processFcExps(library, concat([f], args));
+			FcVar(name, info): library;
+			FcLet(name, type, e1, e2, info): todo();
+			FcIf(e1, e2, e3, info): todo();
+			FcSwitch(x, switchType, cases, info): todo();
+			FcCast(e, tFrom, tTo, info): todo();
+			FcSeq(es, info): processFcExps(library, es);
+			FcCallPrim(op, es, info): processFcExps(library, es);
+			FcVoid(info): library;
+			FcDouble(d, info): library;
+			FcInt(i, info): library;
+			FcString(s, info): library;
+			FcBool(b, info): library;
+			FcRequire(flowfile, e, info): todo();
+			FcUnsafe(name, fallback, info): todo();
+		}
+	}
+}
+
+processFcExps(library : Rewrites, exs : [FcExp]) -> Rewrites {
+	fold(exs, library, processFcExp)
+}
+
+makeReplacement(info : FcInfo, bindings : Bindings, target : string) -> Replacement {
+	Replacement(
+		FcInfo2(info.start, info.end),
+		target
+	);
+}
+
+// Try to match this pattern against this exp. If it works, add bindings. If not, returns the empty tree
+matchFcExp(bindings : Bindings, pattern : FcExp, ex : FcExp) -> Bindings {
+	todo = \ -> {
+		println("TODO: Match");
+		println(pattern);
+		println(ex);
+		bindings;
+	}
+	switch (pattern) {
+		FcLambda(pargs, pbody, pinfo): switch (ex) {
+			FcLambda(eargs, ebody, einfo): {
+				argsEqual = length(pargs) == length(eargs)
+				 && forall(mapi(pargs, \i, parg -> {
+					 earg = eargs[i];
+					 parg.name == earg.name
+					 && fcTypesAreEqual(parg.type, earg.type)
+				 }), eq(true));
+				if (argsEqual) {
+					matchFcExp(bindings, pbody, ebody);
+				} else mismatchBindings
+			}
+			default: mismatchBindings;
+		}
+		FcCall(pf, pargs, pinfo): {
+			switch (ex) {
+				FcCall(ef, eargs, einfo): {
+					matchFcExps(bindings, arrayPush(pargs, pf), arrayPush(eargs, ef))
+				}
+				default: mismatchBindings;
+			}
+		}
+		FcVar(name, info): {
+			if (startsWith(name, "exp_")) {
+				// OK, any expression
+				hasBindingM = lookupTree(bindings.vars, name);
+				mismatch = hasBindingM ?? equalFcExp(hasBindingM, ex) : false;
+				if (mismatch) mismatchBindings
+				else Bindings(bindings with vars = setTree(bindings.vars, name, ex));
+			} else {
+				todo();
+			}
+		}
+		FcLet(name, type, e1, e2, info): todo();
+		FcIf(e1, e2, e3, info): {
+			switch (ex) {
+				FcIf(ee1, ee2, ee3, einfo): {
+					matchFcExps(bindings, [e1, e2, e3], [ee1, ee2, ee3]);
+				}
+				default: mismatchBindings;
+			}
+		}
+		FcSwitch(x, switchType, cases, info): {
+			switch (ex) {
+				FcSwitch(xe, eswitchType, ecases, einfo): {
+					caseBindings = foldi(cases, bindings, \i, acc, case -> {
+						if (i < length(ecases)) {
+							ecase = ecases[i];
+							if (case.struct == ecase.struct
+								&& case.argNames == ecase.argNames) {
+									matchFcExp(acc, case.body, ecase.body)
+							} else mismatchBindings;
+						} else mismatchBindings
+					});
+					// TODO: We could verify the switch type
+					matchFcExp(caseBindings, x, xe)
+				}
+				default: mismatchBindings;
+			}
+		}
+		FcCast(e, tFrom, tTo, info): todo();
+		FcSeq(es, info): todo();
+		FcCallPrim(pop, pes, pinfo): {
+			switch (ex) {
+				FcCallPrim(eop, ees, einfo): {
+					if (pop == eop) {
+						matchFcExps(bindings, pes, ees)
+					} else mismatchBindings;
+				}
+				default: mismatchBindings;
+			}
+		}
+		FcVoid(info): {
+			switch (ex) {
+				FcVoid(__): bindings;
+				default: mismatchBindings;
+			}
+		}
+		FcDouble(d, info): {
+			switch (ex) {
+				FcDouble(ed, __): if (d == ed) bindings else mismatchBindings;
+				default: mismatchBindings;
+			}
+		}
+		FcInt(i, info): {
+			switch (ex) {
+				FcInt(ei, __): if (i == ei) bindings else mismatchBindings;
+				default: mismatchBindings;
+			}
+		}
+		FcString(s, info): {
+			switch (ex) {
+				FcString(es, __): if (s == es) bindings else mismatchBindings;
+				default: mismatchBindings;
+			}
+		}
+		FcBool(b, info): {
+			switch (ex) {
+				FcBool(eb, __): if (b == eb) bindings else mismatchBindings;
+				default: mismatchBindings;
+			}
+		}
+		FcRequire(flowfile, e, info): todo();
+		FcUnsafe(name, fallback, info): todo();
+	}
+}
+
+matchFcExps(bindings : Bindings, patterns : [FcExp], exs : [FcExp]) -> Bindings {
+	if (length(patterns) != length(exs)) mismatchBindings
+	else foldi(patterns, bindings, \i, acc, pat -> {
+		matchFcExp(acc, pat, exs[i])
+	})
+}
+
+equalFcExp(left : FcExp, right : FcExp) -> bool {
+	todo = \ -> {
+		println("Implement fcexp comparison");
+		println([left, right]);
+		false;
+	}
+	switch (left) {
+		FcLambda(pargs, pbody, pinfo): {
 			todo();
 		}
-		FiVoid(start): e;
-		FiDouble(d, start): e;
-		FiInt(i, start): e;
-		FiString(s, start): e;
-		FiBool(b, start): e;
-
-		FiRequire(flowfile, er, type, start): todo();
-		FiUnsafe(name, fallback, type, start): todo();
+		FcCall(f, args, info): {
+			todo();
+		}
+		FcVar(name, info): {
+			todo();
+		}
+		FcLet(name, type, e1, e2, info): todo();
+		FcIf(e1, e2, e3, info): todo();
+		FcSwitch(x, switchType, cases, info): todo();
+		FcCast(e, tFrom, tTo, info): todo();
+		FcSeq(es, info): todo();
+		FcCallPrim(op, es, info): todo();
+		FcVoid(info): {
+			switch (right) {
+				FcVoid(__): true;
+				default: false;
+			}
+		}
+		FcDouble(d, info): {
+			switch (right) {
+				FcDouble(ed, __): d == ed;
+				default: false;
+			}
+		}
+		FcInt(i, info): {
+			switch (right) {
+				FcInt(ei, __): i == ei;
+				default: false;
+			}
+		}
+		FcString(s, info): {
+			switch (right) {
+				FcString(es, __): s == es;
+				default: false;
+			}
+		}
+		FcBool(b, info): {
+			switch (right) {
+				FcBool(eb, __): b == eb;
+				default: false;
+			}
+		}
+		FcRequire(flowfile, e, info): todo();
+		FcUnsafe(name, fallback, info): todo();
 	}
-
-	r;
-}
-
-processFiLambda(library : Rewrites, l : FiLambda) -> FiLambda {
-	FiLambda(
-		l with
-		body = processFiExp(library, l.body)
-	)
 }
 
 getLibrary() -> Rewrites {
-	rewrites = loadFiModules(makeEmptyFcTypeEnv(), "tools/script/rewrite_rules.flow", println);
-	module = foldTree(rewrites, dummyFiModule, \n, m, acc -> m);
-	vars = findmap(module.globalVars, \g -> Some(g.value));
-	rules = vars ?? switch (vars) {
-		FiCallPrim(op, args, __, __): args;
+	module = parseFcModule(makeEmptyFcTypeEnv(), "tools/script/rewrite_rules.flow");
+	varValueM : Maybe<FcExp> = foldTree(module.globalVars, None(), \v, g, acc -> g.value);
+	rules = varValueM ?? switch (varValueM : FcExp) {
+		FcCallPrim(op, args, __): {
+			filtermap(args, \a -> {
+				switch (a) {
+					FcCallPrim(__, pargs, __): {
+						switch (pargs[1]) {
+							FcString(s, __): {
+								Some(Rewrite(pargs[0], s));
+							}
+							default: None();
+						}
+					}
+					default: None();
+				}
+			})
+		}
 		default: [];
 	} : [];
-	println(rules);
-	Rewrites([]);
+	Rewrites(rules, []);
+}
+
+replaceFcModule(m : FcModule, replacements : [Replacement]) -> void {
+	content = getFileContent(m.fileinfo.fullpath);
+
+	reversed = sortCustom(replacements, \r -> r.from.start, false);
+
+	result = fold(reversed, content, \acc, replacement -> {
+		before = strLeft(acc, replacement.from.start);
+		after = strRight(acc, replacement.from.end);
+		before + replacement.to + after;
+	});
+	println(result);
+	// TODO: Save the result
 }
 
 main() {
-	file = getUrlParameterDef("file", "tools/script/test/1_counter.flow");
-	// file = getUrlParameterDef("file", "tools/script/test/2_temperature.flow");
-	// file = getUrlParameterDef("file", "tools/script/test/3_flight.flow");
-	files = loadFiModules(makeEmptyFcTypeEnv(), file, \e -> {
-		println(e);
-	});
+	file = getUrlParameterDef("file", "tools/script/test/1_rewrites.flow");
 
 	// Parse the library
-	rewrites = getLibrary();
+	library = getLibrary();
 
-	traverseInOrder(files, \f, module -> {
-		processed = processFiModule(rewrites, module);
-		println(f);
-		println(fimodule2flowsrc(module));
-		println("becomes");
-		println(fimodule2flowsrc(processed));
-	});
+	module = parseFcModule(makeEmptyFcTypeEnv(), file);
+
+	rewrites = processFcModule(library, module);
+
+	replaceFcModule(module, rewrites.replacements);
+
 	quit(0);
 }
+
