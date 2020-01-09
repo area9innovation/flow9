@@ -36,10 +36,8 @@ makeSpreadsheet(cols : int, rows : int) -> Material {
 				],
 				mapi(cells, \x, col -> {
 					MLines(concat(
-						[
-							// The letters at the top
-							makeHeading(fromCharCode(65 + x)),
-						],
+						// The letters at the top
+						[ makeHeading(fromCharCode(65 + x)) ],
 						// The column goes here
 						mapi(col, \y, cell -> {
 							drawCell(spreadsheet, cell, CellRef(x, y))
@@ -57,8 +55,7 @@ drawCell(spreadsheet : Spreadsheet, cell : Cell, cellref : CellRef) -> Material 
 	editing = make(false);
 	MBorder(0.0, 0.0, 1.0, 1.0,
 		MClickable(
-			MFrame(2.0, 0.0,
-				[Fill(white)],
+			MFrame(2.0, 0.0, [Fill(white)],
 				MGroup([
 					MFixed(128.0, 24.0),
 					MSelect(editing, \edit -> {
@@ -69,8 +66,7 @@ drawCell(spreadsheet : Spreadsheet, cell : Cell, cellref : CellRef) -> Material 
 									makeSubscribe(focus, \f -> {
 										if (!f) {
 											// OK, when we loose focus, we update the spreadsheet
-											val = getValue(formula);
-											setCellText(spreadsheet, cellref, val);
+											setCellText(spreadsheet, cellref, getValue(formula));
 											next(editing, false);
 										}
 									})
@@ -79,15 +75,13 @@ drawCell(spreadsheet : Spreadsheet, cell : Cell, cellref : CellRef) -> Material 
 							)
 						} else {
 							MSelect(cell.value, \c -> {
-								MText(value2text(c), [])
+								MText(formula2text(c, ""), [])
 							})
 						}
 					}),
 				])
 			),
-			\ -> {
-				next(editing, true)
-			}
+			\ -> next(editing, true)
 		)
 	)
 }
@@ -115,20 +109,17 @@ Value ::= Number, String;
 
 CellRef(col : int, row : int);
 
-lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
-
 parseExpr(e : string) -> Formula {
 	parsic(exprGrammar(), e, defaultPegActions);
 }
 
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
 exprGrammar() {
 	onlyOnce(lingoGrammarOp, \ -> {
-		compilePegGrammar(
-			"
+		compilePegGrammar("
 			formula = '=' expr:e { :e }
 				| number:n { Number(:n) }
-				| (char*)$s { String($s) }
-				;
+				| (char*)$s { String($s) };
 
 			expr = range | cell | number:n { Number(:n) } | call;
 
@@ -149,18 +140,11 @@ exprGrammar() {
 			int = (digit+)$i {s2i($i)};
 			id! = (letter letterOrDigit*)$s {$s};
 
-			letterOrDigit = 'a'-'z'
-				| 'A'-'Z'
-				| '_'
-				| '0'-'9';
-			letter = 'a'-'z'
-				| 'A'-'Z'
-				| '_';
+			letterOrDigit = 'a'-'z' | 'A'-'Z' | '_' | '0'-'9';
+			letter = 'a'-'z' | 'A'-'Z' | '_';
 			digit = '0'-'9';
-
 			char = '\u0000' - '\uffff';
-			"
-		)
+		")
 	});
 }
 
@@ -171,38 +155,21 @@ evalFormula(spreadsheet : Spreadsheet, formula : Formula) -> Value {
 		Range(start, end): String("Range has no value");
 		CellPos(tcol, row): {
 			cellref = cellPos2Ref(formula);
-			if (cellref.col < length(spreadsheet.cells)) {
-				column = spreadsheet.cells[cellref.col];
-				if (cellref.row < length(column)) {
-					getValue(column[cellref.row].value);
-				} else {
-					String("Cell does not exist");
-				}
-			} else {
-				String("Cell does not exist");
-			}
+			cell = getCell(spreadsheet, cellref);
+			getValue(cell.value);
 		}
 		Call(id, args): {
+			nargs = \ -> filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
 			if (id == "add") {
-				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
-				res = dsum(eargs);
-				Number(res);
+				Number(dsum(nargs()));
 			} else if (id == "sub") {
-				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
-				res = foldi(eargs, 0.0, \i, acc, n -> if (i == 0) n else acc - n);
-				Number(res);
+				Number(foldi(nargs(), 0.0, \i, acc, n -> if (i == 0) n else acc - n));
 			} else if (id == "mul") {
-				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
-				res = fold(eargs, 1.0, \acc, n -> acc * n);
-				Number(res);
+				Number(fold(nargs(), 1.0, \acc, n -> acc * n));
 			} else if (id == "div") {
-				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
-				res = foldi(eargs, 0.0, \i, acc, n -> if (i == 0) n else acc / n);
-				Number(res);
+				Number(foldi(nargs(), 0.0, \i, acc, n -> if (i == 0) n else acc / n));
 			} else if (id == "mod") {
-				eargs = filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
-				res = foldi(eargs, 0.0, \i, acc, n -> if (i == 0) n else acc % n);
-				Number(res);
+				Number(foldi(nargs(), 0.0, \i, acc, n -> if (i == 0) n else acc % n));
 			} else if (id == "sum") {
 				if (length(args) == 1) {
 					arg = args[0];
@@ -240,15 +207,24 @@ evalFormula(spreadsheet : Spreadsheet, formula : Formula) -> Value {
 	}
 }
 
-// What number is in this cell?
-getCellNumber(spreadsheet : Spreadsheet, cell : CellRef, def : double) -> double {
+dummyCell = Cell(make(String("Unknown cell")), make(String("Unknown cell")));
+
+getCell(spreadsheet : Spreadsheet, cell : CellRef) -> Cell {
 	if (cell.col < length(spreadsheet.cells)) {
 		column = spreadsheet.cells[cell.col];
 		if (cell.row < length(column)) {
-			val = getValue(column[cell.row].value);
-			either(getNumber(val), def)
-		} else def;
-	} else def;
+			column[cell.row];
+		} else dummyCell
+	} else dummyCell
+}
+
+// What number is in this cell?
+getCellNumber(spreadsheet : Spreadsheet, cellRef : CellRef, def : double) -> double {
+	cell = getCell(spreadsheet, cellRef);
+	if (cell == dummyCell) def
+	else {
+		either(getNumber(getValue(cell.value)), def)
+	}
 }
 
 // Resolve cell position to coordinates
@@ -275,16 +251,10 @@ getNumber(value : Value) -> Maybe<double> {
 	}
 }
 
-value2text(v : Value) -> string {
-	switch (v) {
-		Number(n): d2s(n);
-		String(s): s;
-	}
-}
-
 formula2text(f : Formula, prefix : string) -> string {
 	switch (f) {
-		Value(): value2text(f);
+		Number(n): d2s(n);
+		String(s): s;
 		CellPos(c, r): prefix + c + i2s(r);
 		Range(start, end): prefix + formula2text(start, "") + ":" + formula2text(end, "");
 		Call(id, args): prefix + id + "(" + superglue(args, \a -> formula2text(a, ""), ",") + ")";
@@ -294,31 +264,27 @@ formula2text(f : Formula, prefix : string) -> string {
 // Change propagation
 
 setCellText(spreadsheet : Spreadsheet, c : CellRef, text : string) -> void {
-	if (c.col < length(spreadsheet.cells)) {
-		column = spreadsheet.cells[c.col];
-		if (c.row < length(column)) {
-			cell = column[c.row];
+	cell = getCell(spreadsheet, c);
+	if (cell != dummyCell) {
+		// OK, first find the old dependencies
+		oldDeps = dependencies(makeSet(), getValue(cell.formula));
+		// and remove them
+		deps0 = foldSet(oldDeps, ^(spreadsheet.dependencies), \acc, dep -> {
+			removeDependency(acc, c, dep);
+		});
 
-			// OK, first find the old dependencies
-			oldDeps = dependencies(makeSet(), getValue(cell.formula));
-			// and remove them
-			deps0 = foldSet(oldDeps, ^(spreadsheet.dependencies), \acc, dep -> {
-				removeDependency(acc, c, dep);
-			});
+		// Next, update the cell with the new text, formula and value
+		formula = parseExpr(text);
+		next(cell.formula, formula);
+		value = evalFormula(spreadsheet, formula);
+		setCellValue(spreadsheet, c, value, makeSet());
 
-			// Next, update the cell with the new text, formula and value
-			formula = parseExpr(text);
-			next(cell.formula, formula);
-			value = evalFormula(spreadsheet, formula);
-			setCellValue(spreadsheet, c, value, makeSet());
-
-			// Update dependencies
-			deps = dependencies(makeSet(), formula);
-			deps1 = foldSet(deps, deps0, \acc, dep -> {
-				addDependency(acc, c, dep)
-			})
-			spreadsheet.dependencies := deps1;
-		}
+		// Update dependencies
+		deps = dependencies(makeSet(), formula);
+		deps1 = foldSet(deps, deps0, \acc, dep -> {
+			addDependency(acc, c, dep)
+		})
+		spreadsheet.dependencies := deps1;
 	}
 }
 
@@ -344,11 +310,10 @@ dependencies(acc : Set<CellRef>, f : Formula) -> Set<CellRef> {
 
 // Set the value of this cell, and propagate any changes
 setCellValue(spreadsheet : Spreadsheet, c : CellRef, value : Value, visited : Set<CellRef>) -> Set<CellRef> {
-	if (!containsSet(visited, c) && c.col < length(spreadsheet.cells)) {
+	if (!containsSet(visited, c)) {
 		nvisited = insertSet(visited, c);
-		column = spreadsheet.cells[c.col];
-		if (c.row < length(column)) {
-			cell = column[c.row];
+		cell = getCell(spreadsheet, c);
+		if (cell != dummyCell) {
 			next(cell.value, value);
 			deps = lookupTreeDef(^(spreadsheet.dependencies), c, makeSet());
 			foldSet(deps, nvisited, \acc, dep -> {
@@ -361,14 +326,9 @@ setCellValue(spreadsheet : Spreadsheet, c : CellRef, value : Value, visited : Se
 
 // What is the value of this cell as calculated by the formula in the cell?
 getCellValue(spreadsheet : Spreadsheet, c : CellRef) -> Value {
-	if (c.col < length(spreadsheet.cells)) {
-		column = spreadsheet.cells[c.col];
-		if (c.row < length(column)) {
-			cell = column[c.row];
-			form = getValue(cell.formula);
-			evalFormula(spreadsheet, form);
-		} else String("Unknown cell");
-	} else String("Unknown cell");
+	cell = getCell(spreadsheet, c);
+	form = getValue(cell.formula);
+	evalFormula(spreadsheet, form);
 }
 
 main() {
