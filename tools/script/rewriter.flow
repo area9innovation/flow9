@@ -1,0 +1,100 @@
+import tools/flowc/incremental/fi2flowsrc;
+import tools/script/parser;
+
+/*
+TODO:
+- Implement pattern matching and replacement
+*/
+
+Rewrite(pattern : FiExp, target : string);
+
+Rewrites(
+	rewrites : [Rewrite]
+);
+
+// This will do all the rewrites we need on a given module.
+processFiModule(library : Rewrites, m : FiModule) -> FiModule {
+	FiModule(
+		m with functions = map(m.functions, \f : FiFunctionDec -> {
+			processFiFunction(library, f);
+		})
+	)
+}
+
+processFiFunction(library : Rewrites, f : FiFunctionDec) -> FiFunctionDec {
+	FiFunctionDec(f with lambda = processFiLambda(library, f.lambda))
+}
+
+
+processFiExp(library : Rewrites, e : FiExp) -> FiExp {
+	todo = \ -> {
+		println("TODO Process: " + toString(e));
+		e;
+	}
+	r = switch (e) {
+		FiVar(name, type, start): todo();
+		FiCall(f, args, type, start): todo();
+		FiLambda(args, body, type, start): todo();
+		FiLet(name, type, e1, e2, type2, start): todo();
+		FiIf(e1, e2, e3, type, start): todo();
+		FiSwitch(x, switchType, cases, type, start): todo();
+		FiCast(ec, tFrom, tTo, type, start): todo();
+		FiSeq(es, type, start): todo();
+		FiCallPrim(op, es, type, start): {
+			rec = \ -> {
+				FiCallPrim(op, mapi(es, \i, ex -> processFiExp(library, ex)), type, start);
+			}
+			todo();
+		}
+		FiVoid(start): e;
+		FiDouble(d, start): e;
+		FiInt(i, start): e;
+		FiString(s, start): e;
+		FiBool(b, start): e;
+
+		FiRequire(flowfile, er, type, start): todo();
+		FiUnsafe(name, fallback, type, start): todo();
+	}
+
+	r;
+}
+
+processFiLambda(library : Rewrites, l : FiLambda) -> FiLambda {
+	FiLambda(
+		l with
+		body = processFiExp(library, l.body)
+	)
+}
+
+getLibrary() -> Rewrites {
+	rewrites = loadFiModules(makeEmptyFcTypeEnv(), "tools/script/rewrite_rules.flow", println);
+	module = foldTree(rewrites, dummyFiModule, \n, m, acc -> m);
+	vars = findmap(module.globalVars, \g -> Some(g.value));
+	rules = vars ?? switch (vars) {
+		FiCallPrim(op, args, __, __): args;
+		default: [];
+	} : [];
+	println(rules);
+	Rewrites([]);
+}
+
+main() {
+	file = getUrlParameterDef("file", "tools/script/test/1_counter.flow");
+	// file = getUrlParameterDef("file", "tools/script/test/2_temperature.flow");
+	// file = getUrlParameterDef("file", "tools/script/test/3_flight.flow");
+	files = loadFiModules(makeEmptyFcTypeEnv(), file, \e -> {
+		println(e);
+	});
+
+	// Parse the library
+	rewrites = getLibrary();
+
+	traverseInOrder(files, \f, module -> {
+		processed = processFiModule(rewrites, module);
+		println(f);
+		println(fimodule2flowsrc(module));
+		println("becomes");
+		println(fimodule2flowsrc(processed));
+	});
+	quit(0);
+}

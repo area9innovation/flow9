@@ -1,3 +1,12 @@
+Instead of counter := "0",  the more general idea seems to be to introduce
+
+	(a ^= value)
+
+which would define a at the top of the function, and otherwise
+replace the occurence with a.
+
+This is inspired by beef
+
 /*
 How to reduce counter to 1 line:
 1. The program is a value, which we display.
