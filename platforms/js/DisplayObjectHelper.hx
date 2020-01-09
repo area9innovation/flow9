@@ -1184,16 +1184,20 @@ class DisplayObjectHelper {
 
 		if (untyped clip.hasMarginGap && clip.parentClip != RenderSupportJSPixi.PixiStage) {
 			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0)) {
-				nativeWidget.style.marginLeft = '${-round(x + getMarginGap() * transform.a)}px';
-				nativeWidget.style.marginRight = '${-round(getMarginGap() * transform.a)}px';
-				nativeWidget.style.marginTop = '${-round(y + getMarginGap() * transform.d)}px';
-				nativeWidget.style.marginBottom = '${-round(getMarginGap() * transform.d)}px';
 
-				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + getMarginGap() * 2.0)}px';
-				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + getMarginGap() * 2.0)}px';
+				if (x < 0) {
+					nativeWidget.style.marginLeft = '${-round(x + getMarginGap() * transform.a)}px';
+					nativeWidget.style.marginRight = '${-round(getMarginGap() * transform.a)}px';
+					nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + getMarginGap() * 2.0)}px';
+					x = 0;
+				}
 
-				y = 0;
-				x = 0;
+				if (y < 0) {
+					nativeWidget.style.marginTop = '${-round(y + getMarginGap() * transform.d)}px';
+					nativeWidget.style.marginBottom = '${-round(getMarginGap() * transform.d)}px';
+					nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + getMarginGap() * 2.0)}px';
+					y = 0;
+				}
 			} else {
 				nativeWidget.style.marginLeft = '${-round(getMarginGap() * transform.a)}px';
 				nativeWidget.style.marginRight = '${-round(getMarginGap() * transform.a)}px';

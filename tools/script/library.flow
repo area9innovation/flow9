@@ -1,0 +1,114 @@
+import tools/script/parser;
+
+export {
+	// Here we record the various rewrites we should do
+	LibraryRewrites(
+		// Implicit type conversions
+		typeConversions : Tree<FiType, [TypeConversion]>,
+
+		// Short names and default arguments
+		prototypes : Tree<string, Prototype>,
+
+		// Implicitly lifted behaviours
+		env : Tree<string, FiExp>,
+
+		// The types of names in the library
+		names : FiGlobalNames,
+	);
+
+	TypeConversion(
+		from : FiType,
+		to : FiType,
+		code : FiFunctionDec
+	);
+
+
+	Prototype(
+		name : string,
+		args : [FiExp],
+	);
+
+
+	getLibrary() -> LibraryRewrites;
+
+}
+
+getLibrary() -> LibraryRewrites {
+	library = loadFiProgram(makeEmptyFcTypeEnv(), "tools/script/material_lib.flow");
+
+	extractLibraryRewrites(library);
+}
+
+extractLibraryRewrites(p : FiProgram) -> LibraryRewrites {
+	library = foldTree(p.modules, dummyFiModule, \n, m, acc -> {
+		if (strContains(n, "material_lib")) m else acc
+	});
+
+	LibraryRewrites(
+		extractConversions(library),
+		extractPrototypes(library),
+		makeTree(),
+		p.names
+	)
+}
+
+/*
+Functions like "convert_(f : ?) -> ??" in the library
+are recognized as implicit conversion functions.
+*/
+extractConversions(l : FiModule) -> Tree<FiType, [TypeConversion]> {
+	fold(l.functions, makeTree(), \acc, f : FiFunctionDec -> {
+		if (startsWith(f.name, "convert_") && length(f.lambda.args) == 1) {
+			conv = TypeConversion(
+				f.type.args[0].type,
+				f.type.returnType,
+				f
+			);
+			treePushToArrayValue(acc, conv.to, conv);
+		} else acc;
+	})
+}
+
+/*
+When we have this in the library
+
+	text = MText("", []);
+
+that means we should convert
+
+	text("Foo")
+
+to
+
+	MText("Foo", [])
+*/
+extractPrototypes(l : FiModule) -> Tree<string, Prototype> {
+	fold(l.globalVars, makeTree(), \acc, f : FiGlobalVar -> {
+		todo = \ -> {
+			println("TODO: " + toString(f.value) + " for " + f.name);
+			acc;
+		}
+
+		switch (f.value) {
+			FiCall(fn, args, __, __): {
+				switch (fn) {
+					FiVar(n, __, __): {
+						prot = Prototype(n, args);
+						setTree(acc, f.name, prot)
+					}
+					default: todo();
+				}
+			}
+			FiCallPrim(op, args, __, __): {
+				switch (op) {
+					FcStructPrim(name): {
+						prot = Prototype(name, args);
+						setTree(acc, f.name, prot)
+					}
+					default: todo();
+				}
+			}
+			default: todo();
+		}
+	})
+}
