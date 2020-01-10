@@ -613,6 +613,18 @@ int main(int argc, char *argv[])
 #ifdef NATIVE_BUILD
         FlowRunner.Init(load_native_program());
         FlowRunner.setUrl(params);
+        QStringList args = app->arguments();
+        args.removeFirst();
+        for (auto& arg : args) {
+			int equal = arg.indexOf('=');
+			if (equal > 0) {
+				QString key = arg.left(equal);
+				QString value = arg.mid(equal + 1);
+				FlowRunner.setUrlParameter(key, value);
+			} else {
+				FlowRunner.setUrlParameter(arg, QString());
+			}
+		}
         FlowRunner.RunMain();
 #else
     if (argc >= 2) {
