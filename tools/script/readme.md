@@ -1,3 +1,17 @@
+# Rewrite tool
+
+The rewriter will match a series of anti-patterns and attempt to fix them.
+
+	flowcpp tools/script/rewriter.flow -- file=<file> save=1
+
+or
+
+	flowcpp tools/script/rewriter.flow -- file=<folder>  save=1
+
+See `rewrite_rules.flow` for a database of rules.
+
+# General notes on the other script thing
+
 Instead of counter := "0",  the more general idea seems to be to introduce
 
 	(a ^= value)
