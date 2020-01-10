@@ -1,0 +1,136 @@
+import material/material2tropic;
+import material/material_dialog;
+
+ACircle(x : double, y : double, diameter : double);
+
+Canvas(circles : [ACircle]);
+
+adjustDiameter(manager : MaterialManager, diameter : DynamicBehaviour<double>, onUpdate : (double) -> void) -> void {
+	start = getValue(diameter);
+	close = make(false);
+	ShowMDialogWithCallbacks(
+		manager, 
+		MLines([
+			MText("Adjust diameter", []),
+			MSlider(
+				diameter,
+				[MSliderRange(0.0, 400.0)]
+			),
+		]),
+		const(true),
+		\ -> onUpdate(getValue(diameter)),
+		\ -> next(diameter, start)
+	)
+}
+
+drawACircle(manager : MaterialManager, c : ACircle, index : int, selected : DynamicBehaviour<int>, onUpdate : (ACircle) -> void) -> Material {
+	diameter = make(c.diameter);
+	MSelect(diameter, \d -> {
+		radius = d / 2.0;
+		MPad(
+			c.x - radius, c.y - radius,
+			MClickable(
+				MSelect(selected, \sel -> {
+					MCircle(
+						radius,
+						[Stroke(black), Fill(if (sel == index) 0xc0c0c0 else white)]
+					)
+				}),
+				\ -> {
+					if (getValue(selected) == index) {
+						// Already selected - show the diameter adjustment dialog
+						adjustDiameter(manager, diameter, \dia -> {
+							onUpdate(ACircle(c with diameter = dia));
+						})
+					} else {
+						next(selected, index);
+					}
+				}
+			)
+		)
+	})
+}
+
+main() {
+	document = make(Canvas([]));
+	undoStack = make([]);
+	redoStack = make([]);
+	selected = make(-1);
+	mouseXY = make(Point(0.0, 0.0));
+	click = make(false);
+
+	recordUndo = \doc -> {
+		next(undoStack, concat([getValue(document)], getValue(undoStack)));
+		next(document, doc);
+		next(redoStack, []);
+	};
+
+	manager = makeMaterialManager([]);
+	mrender(manager, true, 
+		MBorder(8.0, 8.0, 8.0, 8.0,
+			MLines([
+				// The toolbar
+				MCols([
+					MFillX(),
+					MTextButton("UNDO", \ -> {
+						next(redoStack, concat([getValue(document)], getValue(redoStack)));
+						us = getValue(undoStack);
+						next(document, elementAt(us, 0, getValue(document)));
+						next(undoStack, tail(us));
+					}, [], [
+						MEnabled(fneq(undoStack, []))
+					]),
+					MTextButton("REDO", \ -> {
+						rs = getValue(redoStack);
+						if (rs != []) {
+							recordUndo(elementAt(rs, 0, getValue(document)));
+							next(redoStack, tail(rs));
+						}
+					}, [], [
+						MEnabled(fneq(redoStack, []))
+					]),
+					MFillX(),
+				]),
+				// The canvas
+				MFrame(0.0, 0.0, [MStroke(MBlack())],
+					MGroup([
+						// The empty canvas where we can click to add new circles
+						MInteractive([
+								TMouseXY(mouseXY),
+								TMouseDown(click),
+							],
+							MConstruct([
+									makeSubscribe(click, \c -> {
+										if (c) {
+											xy = getValue(mouseXY);
+											circle = ACircle(xy.x, xy.y, 50.0);
+											circles = getValue(document).circles;
+											recordUndo(Canvas(arrayPush(circles, circle)));
+											next(selected, -1);
+										}
+									})
+								],
+								// A white rectangle, so we get click events
+								TRectangle([MFill(MWhite())], TFillXY())
+							)
+						),
+						// The circles in the document
+						MCropSize(
+							MFillXY(),
+							MSelect(document, \d -> {
+								MGroup(
+									mapi(d.circles, \i, c -> {
+										drawACircle(manager, c, i, selected, \update : ACircle -> {
+											circles = getValue(document).circles;
+											recordUndo(Canvas(replace(circles, i, update)));
+										})
+									}),
+								)
+							}),
+						),
+					])
+				),
+			])
+		)
+	);
+}

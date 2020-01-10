@@ -1,0 +1,337 @@
+import material/material2tropic;
+
+import lingo/pegcode/driver;
+
+Spreadsheet(
+	// Column index first, then row.
+	cells : [[Cell]],
+	// From cell to what cells depends on this value
+	dependencies : ref Tree<CellRef, Set<CellRef>>
+);
+
+Cell(
+	// The formula representation of the cell
+	formula : DynamicBehaviour<Formula>,
+	// The value of the cell
+	value : DynamicBehaviour<Value>
+);
+
+// Construct a UI with a spreadsheet with this number of cols and rows
+makeSpreadsheet(cols : int, rows : int) -> Material {
+	cells : [[Cell]]= generate(0, cols, \col -> {
+		generate(0, rows, \row -> {
+			Cell(make(String("")), make(String("")))
+		})
+	});
+	spreadsheet = Spreadsheet(cells, ref makeTree());
+	MScroll(	
+		MCols(
+			concat([
+					// The numbers in the left hand side
+					MLines(
+						generate(-1, rows, \row -> {
+							makeHeading(if (row == -1) "" else i2s(row))
+						})
+					)
+				],
+				mapi(cells, \x, col -> {
+					MLines(concat(
+						// The letters at the top
+						[ makeHeading(fromCharCode(65 + x)) ],
+						// The column goes here
+						mapi(col, \y, cell -> {
+							drawCell(spreadsheet, cell, CellRef(x, y))
+						})
+					))
+				})
+			)
+		), MFillXY(),
+		[]
+	);
+}
+
+// An editable cell in a spreadsheet
+drawCell(spreadsheet : Spreadsheet, cell : Cell, cellref : CellRef) -> Material {
+	editing = make(false);
+	MBorder(0.0, 0.0, 1.0, 1.0,
+		MClickable(
+			MFrame(2.0, 0.0, [Fill(white)],
+				MGroup([
+					MFixed(128.0, 24.0),
+					MSelect(editing, \edit -> {
+						if (edit) {
+							focus = make(true);
+							formula = make(formula2text(getValue(cell.formula), "="));
+							MConstruct([
+									makeSubscribe(focus, \f -> {
+										if (!f) {
+											// OK, when we loose focus, we update the spreadsheet
+											setCellText(spreadsheet, cellref, getValue(formula));
+											next(editing, false);
+										}
+									})
+								],
+								MTextInput(formula, [], [TTextInputFocus(focus)])
+							)
+						} else {
+							MSelect(cell.value, \c -> {
+								MText(formula2text(c, ""), [])
+							})
+						}
+					}),
+				])
+			),
+			\ -> next(editing, true)
+		)
+	)
+}
+
+makeHeading(s : string) -> Material {
+	MFixSize(
+		MBorder(2.0, 2.0, 0.0, 0.0,
+			MText(s, [])
+		), MFixed(64.0, 29.0)
+	)
+}
+
+// The formula language parser and evaluator
+
+Formula ::= Expr, String;
+Expr ::= Range, CellPos, Number, Call;
+
+Number(d : double);
+Range(start : CellPos, end : CellPos);
+CellPos(col : string, row : int);
+String(s : string);
+Call(id : string, args : [Expr]);
+
+Value ::= Number, String;
+
+CellRef(col : int, row : int);
+
+parseExpr(e : string) -> Formula {
+	parsic(exprGrammar(), e, defaultPegActions);
+}
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+exprGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("
+			formula = '=' expr:e { :e }
+				| number:n { Number(:n) }
+				| (char*)$s { String($s) };
+
+			expr = range | cell | number:n { Number(:n) } | call;
+
+			call = id$i '(' args:a ')' { Call($i, :a) }
+				| id$i '()' { Call($i, array()) };
+
+				args = expr:e (',' expr:s {:s})*:t { consArray(:e, :t) }
+					| expr:e { array(:e) };
+
+			range = cell:c1 ':' cell:c2 { Range(:c1, :c2) };
+
+			cell = letter$l int:i { CellPos($l, $i) };
+
+			number = ('.' int)$d { s2d($d) }
+				| (int '.' int?)$d { s2d($d) }
+				| int$d { s2d($d) };
+
+			int = (digit+)$i {s2i($i)};
+			id! = (letter letterOrDigit*)$s {$s};
+
+			letterOrDigit = 'a'-'z' | 'A'-'Z' | '_' | '0'-'9';
+			letter = 'a'-'z' | 'A'-'Z' | '_';
+			digit = '0'-'9';
+			char = '\u0000' - '\uffff';
+		")
+	});
+}
+
+// Evaluation engine
+evalFormula(spreadsheet : Spreadsheet, formula : Formula) -> Value {
+	switch (formula) {
+		Value(): formula;
+		Range(start, end): String("Range has no value");
+		CellPos(tcol, row): {
+			cellref = cellPos2Ref(formula);
+			cell = getCell(spreadsheet, cellref);
+			getValue(cell.value);
+		}
+		Call(id, args): {
+			nargs = \ -> filtermap(args, \a -> getNumber(evalFormula(spreadsheet, a)));
+			if (id == "add") {
+				Number(dsum(nargs()));
+			} else if (id == "sub") {
+				Number(foldi(nargs(), 0.0, \i, acc, n -> if (i == 0) n else acc - n));
+			} else if (id == "mul") {
+				Number(fold(nargs(), 1.0, \acc, n -> acc * n));
+			} else if (id == "div") {
+				Number(foldi(nargs(), 0.0, \i, acc, n -> if (i == 0) n else acc / n));
+			} else if (id == "mod") {
+				Number(foldi(nargs(), 0.0, \i, acc, n -> if (i == 0) n else acc % n));
+			} else if (id == "sum") {
+				if (length(args) == 1) {
+					arg = args[0];
+					switch (arg) {
+						CellPos(__, __): evalFormula(spreadsheet, arg);
+						Range(start, end): {
+							cells = rangeToCells(arg);
+							Number(fold(cells, 0.0, \acc, cell -> {
+								acc + getCellNumber(spreadsheet, cell, acc)
+							}));
+						}
+						default: String("sum expected range");
+					}
+				} else {
+					String("Expected 1 arg to sum");
+				}
+			} else if (id == "prod") {
+				if (length(args) == 1) {
+					arg = args[0];
+					switch (arg) {
+						CellPos(__, __): evalFormula(spreadsheet, arg);
+						Range(start, end): {
+							cells = rangeToCells(arg);
+							Number(fold(cells, 1.0, \acc, cell -> {
+								acc * getCellNumber(spreadsheet, cell, acc)
+							}));
+						}
+						default: String("prod expected range");
+					}
+				} else {
+					String("Expected 1 arg to prod");
+				}
+			} else String("Id " + id + " not supported");
+		}
+	}
+}
+
+dummyCell = Cell(make(String("Unknown cell")), make(String("Unknown cell")));
+
+getCell(spreadsheet : Spreadsheet, cell : CellRef) -> Cell {
+	if (cell.col < length(spreadsheet.cells)) {
+		column = spreadsheet.cells[cell.col];
+		if (cell.row < length(column)) {
+			column[cell.row];
+		} else dummyCell
+	} else dummyCell
+}
+
+// What number is in this cell?
+getCellNumber(spreadsheet : Spreadsheet, cellRef : CellRef, def : double) -> double {
+	cell = getCell(spreadsheet, cellRef);
+	if (cell == dummyCell) def
+	else {
+		either(getNumber(getValue(cell.value)), def)
+	}
+}
+
+// Resolve cell position to coordinates
+cellPos2Ref(c : CellPos) -> CellRef {
+	col = getCharCodeAt(toUpperCase(c.col), 0) - 65;
+	CellRef(col, c.row)
+}
+
+// Expand a range to individual cells
+rangeToCells(r : Range) -> [CellRef] {
+	s = cellPos2Ref(r.start);
+	e = cellPos2Ref(r.end);
+	concatA(generate(s.col, max(s.col, e.col) + 1, \col -> {
+		generate(s.row, max(s.row, e.row) + 1, \row -> {
+			CellRef(col, row)
+		})
+	}));
+}
+
+getNumber(value : Value) -> Maybe<double> {
+	switch (value) {
+		String(__): None();
+		Number(n): Some(n);
+	}
+}
+
+formula2text(f : Formula, prefix : string) -> string {
+	switch (f) {
+		Number(n): d2s(n);
+		String(s): s;
+		CellPos(c, r): prefix + c + i2s(r);
+		Range(start, end): prefix + formula2text(start, "") + ":" + formula2text(end, "");
+		Call(id, args): prefix + id + "(" + superglue(args, \a -> formula2text(a, ""), ",") + ")";
+	}
+}
+
+// Change propagation
+
+setCellText(spreadsheet : Spreadsheet, c : CellRef, text : string) -> void {
+	cell = getCell(spreadsheet, c);
+	if (cell != dummyCell) {
+		// OK, first find the old dependencies
+		oldDeps = dependencies(makeSet(), getValue(cell.formula));
+		// and remove them
+		deps0 = foldSet(oldDeps, ^(spreadsheet.dependencies), \acc, dep -> {
+			removeDependency(acc, c, dep);
+		});
+
+		// Next, update the cell with the new text, formula and value
+		formula = parseExpr(text);
+		next(cell.formula, formula);
+		value = evalFormula(spreadsheet, formula);
+		setCellValue(spreadsheet, c, value, makeSet());
+
+		// Update dependencies
+		deps = dependencies(makeSet(), formula);
+		deps1 = foldSet(deps, deps0, \acc, dep -> {
+			addDependency(acc, c, dep)
+		})
+		spreadsheet.dependencies := deps1;
+	}
+}
+
+addDependency(t : Tree<CellRef, Set<CellRef>>, from : CellRef, to : CellRef) -> Tree<CellRef, Set<CellRef>> {
+	existing = lookupTreeDef(t, to, makeSet());
+	setTree(t, to, insertSet(existing, from));
+}
+
+removeDependency(t : Tree<CellRef, Set<CellRef>>, from : CellRef, to : CellRef) -> Tree<CellRef, Set<CellRef>> {
+	existing = lookupTreeDef(t, to, makeSet());
+	setTree(t, to, removeSet(existing, from));
+}
+
+// What cells does this formula depend on?
+dependencies(acc : Set<CellRef>, f : Formula) -> Set<CellRef> {
+	switch (f) {
+		Value(): acc;
+		Range(__, __): fold(rangeToCells(f), acc, insertSet);
+		CellPos(__, __): insertSet(acc, cellPos2Ref(f));
+		Call(id, args): fold(args, acc, dependencies);
+	}
+}
+
+// Set the value of this cell, and propagate any changes
+setCellValue(spreadsheet : Spreadsheet, c : CellRef, value : Value, visited : Set<CellRef>) -> Set<CellRef> {
+	if (!containsSet(visited, c)) {
+		nvisited = insertSet(visited, c);
+		cell = getCell(spreadsheet, c);
+		if (cell != dummyCell) {
+			next(cell.value, value);
+			deps = lookupTreeDef(^(spreadsheet.dependencies), c, makeSet());
+			foldSet(deps, nvisited, \acc, dep -> {
+				val = getCellValue(spreadsheet, dep);
+				setCellValue(spreadsheet, dep, val, acc)
+			});
+		} else nvisited;
+	} else visited;
+}
+
+// What is the value of this cell as calculated by the formula in the cell?
+getCellValue(spreadsheet : Spreadsheet, c : CellRef) -> Value {
+	cell = getCell(spreadsheet, c);
+	form = getValue(cell.formula);
+	evalFormula(spreadsheet, form);
+}
+
+main() {
+	spreadsheet = makeSpreadsheet(26, 100);
+	mrender(makeMaterialManager([]), true, spreadsheet);
+}
