@@ -4,12 +4,10 @@ import tools/flowc/fctypeenv;
 
 /*
 TODO:
-- Match pattern in lambda arg names
-- If the replacement has a substitution at the end, then do not remove
-  trailing whitespaces from this substitution
+- If the replacement has a substitution at the start or end, then do not remove
+  whitespaces from this substitution at that point.
 
 Fix positions of:
-
 - sequence: see ds/tree.flow and promise.flow
 - End brace in switch: see string.flow
 - Somehow ^ matches id, which it should not. See fusion.flow
@@ -38,21 +36,24 @@ Replacement(from : FcInfo2, to : string);
 
 // The result of matching.
 Bindings(
-	// Bindings of variables. We put to an exp from the source AST. The positions have to be correct
-	vars : Tree<string, FcExp>,
-	// Bindings where we already know what to substite with
+	// The original source
+	source : string,
+	// Bindings of vars to what string to substitute with
 	stringVars : Tree<string, string>,
 	// If we have a mismatch, then this is true, and the bindings are invalid
 	mismatch : bool,
 );
-emptyBindings = Bindings(makeTree(), makeTree(), false);
-mismatchBindings = Bindings(makeTree(), makeTree(), true);
+emptyBindings(source : string) -> Bindings {
+	Bindings(source, makeTree(), false);
+}
+mismatchBindings = Bindings("", makeTree(), true);
 
 // This will do all the rewrites we need on a given module.
 processFcModule(library : Rewrites, m : FcModule) -> Rewrites {
 	facc = foldTree(m.functions, library, \n, f: FcFunctionDec, acc -> {
 		lambdaM = f.lambda;
-		lambdaM ?? processFcExp(acc, lambdaM) : acc;
+		// We go directly in the body, since we do not want to rewrite top-level functions
+		lambdaM ?? processFcExp(acc, lambdaM.body) : acc;
 	});
 	foldTree(m.globalVars, facc, \n, g : FcGlobalVar, acc -> {
 		valueM = g.value;
@@ -64,7 +65,7 @@ processFcExp(library : Rewrites, ex : FcExp) -> Rewrites {
 	match0 = fold(library.rewrites, None(), \acc, rewrite -> {
 		if (acc != None()) acc
 		else {
-			bindings = matchFcExp(emptyBindings, rewrite.pattern, ex);
+			bindings = matchFcExp(emptyBindings(library.source), rewrite.pattern, ex);
 			if (!bindings.mismatch) {
 				Some(makeReplacement(library.source, ex.info, bindings, rewrite.target));
 			} else {
@@ -109,13 +110,15 @@ processFcExps(library : Rewrites, exs : [FcExp]) -> Rewrites {
 
 // Instantiate a replacement
 makeReplacement(source : string, info : FcInfo, bindings : Bindings, target : string) -> Replacement {
-	names1 = foldTree(bindings.vars, [], \name, fcexp, acc -> {
+
+	/*names1 = foldTree(bindings.vars, [], \name, fcexp, acc -> {
 		sourceExp = substring(source, fcexp.info.start, fcexp.info.end - fcexp.info.start);
 		concat(acc, [
 			name, trim2(sourceExp, " \t\n")
 		])
 	});
-	names = foldTree(bindings.stringVars, names1, \name, res, acc -> {
+	*/
+	names = foldTree(bindings.stringVars, [], \name, res, acc -> {
 		concat(acc, [name, res])
 	});
 	Replacement(
@@ -132,7 +135,10 @@ matchFcExp(bindings : Bindings, pattern : FcExp, ex : FcExp) -> Bindings {
 				if (length(pargs) == length(eargs)) {
 					argBindings = foldi(pargs, bindings, \i, acc, parg -> {
 						earg = eargs[i];
-						if (parg.name == earg.name) {
+						if (startsWith(parg.name, "id_")) {
+							// OK, bind the argument name to a string
+							bindName2String(acc, parg.name, earg.name);
+						} else if (parg.name == earg.name) {
 							matchFcType(acc, parg.type, earg.type);
 						} else mismatchBindings;
 					});
@@ -367,14 +373,9 @@ matchFcType(bindings : Bindings, pattern : FcType, type : FcType) -> Bindings {
 	}
 }
 
-
 bindName(bindings : Bindings, name : string, ex : FcExp) -> Bindings {
-	hasBindingM = lookupTree(bindings.vars, name);
-	mismatch = hasBindingM ?? !equalFcExp(hasBindingM, ex) : false;
-	if (mismatch) mismatchBindings
-	else {
-		Bindings(bindings with vars = setTree(bindings.vars, name, ex));
-	}
+	sourceExp = substring(bindings.source, ex.info.start, ex.info.end - ex.info.start);
+	bindName2String(bindings, name, sourceExp);
 }
 
 bindName2String(bindings : Bindings, name : string, res : string) -> Bindings {
