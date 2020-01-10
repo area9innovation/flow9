@@ -7,10 +7,11 @@ TODO:
 
 Fix positions of:
 
-- sequence: see ds/tree.flow
+- sequence: see ds/tree.flow and promise.flow
 - End brace in switch: see string.flow
 - Somehow ^ matches id, which it should not. See fusion.flow
 - Somehow we get the wrong extent for lambda or something. See fusion_utils.flow
+- Something is wrong in date.flow with call
 
 */
 
@@ -421,8 +422,30 @@ equalFcExp(left : FcExp, right : FcExp) -> bool {
 			}
 		}
 		FcLet(name, type, e1, e2, info): todo();
-		FcIf(e1, e2, e3, info): todo();
-		FcSwitch(x, switchType, cases, info): todo();
+		FcIf(e1, e2, e3, info): {
+			switch (right) {
+				FcIf(re1, re2, re3, rinfo): {
+					equalFcExps([e1, e2, e3], [re1, re2, re3]);
+				}
+				default: false;
+			}
+		}
+		FcSwitch(x, switchType, cases, info): {
+			switch (right) {
+				FcSwitch(rx, rswitchType, rcases, rinfo): {
+					equalFcExp(x, rx)
+					&& fcTypesAreEqual(switchType, rswitchType)
+					&& length(cases) == length(rcases)
+					&& forall(mapi(cases, \i, case -> {
+						rcase = rcases[i];
+						case.struct == rcase.struct
+						&& case.argNames == rcase.argNames
+						&& equalFcExp(case.body, rcase.body)
+					}), eq(true))
+				}
+				default: false;
+			}
+		}
 		FcCast(e, tFrom, tTo, info): todo();
 		FcSeq(es, info): todo();
 		FcCallPrim(op, es, info): {
@@ -523,20 +546,37 @@ replaceFcModule(m : FcModule, replacements : [Replacement]) -> void {
 		}
 
 	}
+}
 
+rewriteFile(library : Rewrites, file : string) -> void {
+	module = parseFcModule(makeEmptyFcTypeEnv(), file);
+	rewrites = processFcModule(Rewrites(library with source = getFileContent(module.fileinfo.fullpath)), module);
+	replaceFcModule(module, rewrites.replacements);
+}
+
+recurseFolder(library : Rewrites, folder : string) -> void {
+	files = readDirectory(folder);
+	iter(files, \f -> {
+		path = pathCombine(folder, f);
+		if (f != "." && f != ".." && isDirectory(path)) {
+			recurseFolder(library, path);
+		} else if (endsWith(f, ".flow")) {
+			rewriteFile(library, path);
+		}
+	});
 }
 
 main() {
-	file = getUrlParameterDef("file", "tools/script/test/1_rewrites.flow");
-
 	// Parse the library
 	library = getLibrary();
 
-	module = parseFcModule(makeEmptyFcTypeEnv(), file);
-
-	rewrites = processFcModule(Rewrites(library with source = getFileContent(module.fileinfo.fullpath)), module);
-
-	replaceFcModule(module, rewrites.replacements);
+	file = getUrlParameterDef("file", "tools/script/test/1_rewrites.flow");
+	folder = getUrlParameter("folder");
+	if (folder != "") {
+		recurseFolder(library, folder);
+	} else {
+		rewriteFile(library, file);
+	}
 
 	quit(0);
 }
