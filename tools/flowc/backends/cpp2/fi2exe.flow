@@ -1,0 +1,79 @@
+import sys/system;
+import sys/target;
+import math/stringmath;
+import tools/flowc/backends/common;
+
+export {
+	buildFiExeFile(cfg : FcCpp2Config, callback : () -> void) -> void;
+}
+
+ProcDescr(
+	msg   : string,
+	prog  : string,
+	args  : [string],
+	dir   : string,
+	stdin : string
+);
+
+chainOfProcesses(procs : [ProcDescr], verbose : int, output : (string) -> void) -> ((() -> void) -> () -> void) {
+	\callback -> 
+		fold(reverseA(procs), 
+			\-> {
+				if (verbose > 1) {
+					output("all finished.");
+				}
+				callback()
+			}, 
+			\acc, proc : ProcDescr -> {
+				\-> {
+					if (verbose > 1) {
+						output("running: " + proc.prog + " " + strGlue(proc.args, " "));
+					}
+					if (verbose > 0 && proc.msg != "") {
+						output(proc.msg);
+					}
+					start = timestamp();
+					startProcess(proc.prog, proc.args, proc.dir, proc.stdin, 
+						\code, out, err -> {
+							output(out);
+							if (err != "") {
+								output("errors:\n" + err);
+								//callback();
+								if (verbose > 0) {
+									output("finished in: " + d2st((timestamp() - start) / 1000.0, 2) + "s");
+								}
+								acc();
+							} else if (code != 0) {
+								output("return code: " + i2s(code));
+								callback();
+							} else {
+								if (verbose > 0) {
+									output("finished in: " + d2st((timestamp() - start) / 1000.0, 2) + "s");
+								}
+								acc();
+							}
+						}
+					)
+				}
+			}
+		);
+}
+
+buildFiExeFile(cfg : FcCpp2Config, callback : () -> void) -> void {
+	exe = if (hasTargetName("windows")) changeFileExt(cfg.outputFile, ".exe") else changeFileExt(cfg.outputFile, "");
+	flowdir = rtrim2(getFlowDir(), "/");
+	outdir = if (cfg.outputDir == "") "." else cfg.outputDir;
+	gendir = flowdir + "/platforms/qt/flowgen/";
+	builddir = flowdir + "/platforms/qt/build/";
+	println("gendir: " + gendir);
+	println("buinddir: " + builddir);
+	ensureDirectoryExists(builddir);
+	ensureDirectoryExists(outdir);
+	chainOfProcesses([
+		ProcDescr("Configuring build for " + cfg.outputFile, "qmake", ["CONFIG+=native_build", "../QtByteRunner.pro"], builddir, ""),
+		ProcDescr("Building " + cfg.outputFile, "make", ["-j" + i2s(availableProcessors())], builddir, ""),
+		ProcDescr("Copying executable " + exe, "cp", ["QtByteRunner", exe], builddir, "")], 
+		cfg.verbose,
+		\msg -> fcPrintln(msg, cfg.threadId)
+	)(callback)();
+}
