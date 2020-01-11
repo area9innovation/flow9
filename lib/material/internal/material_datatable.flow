@@ -69,7 +69,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
 
 	widthByContent = contains(style, MWidthByContent());
-	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode()));
+	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
 	isInnerScroll = isSome(innerScroll);
 
 	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
@@ -381,7 +381,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				if (c.tooltip == const(""))
 					f2
 				else
-					MTooltip2T(manager, p, MTooltip(f2, MDynamicText(c.tooltip, [MTooltipDesktop(), sameLightMColor(p)]), []), m2t)
+					MTooltip2T(manager, p, MTooltip(f2, MSelect(c.tooltip, \t -> MText(t, [MTooltipDesktop(), sameLightMColor(p)])), []), m2t)
 			)
 			|> (\t -> if (isCheckboxColumn(i0)) {
 					selAll = make(false);
@@ -392,9 +392,13 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							fsubselect(selectionEnabled.enabled, FLift(fmerge)),
 							\pg, sr, en ->
 								fold(
-									enumFromTo(pg.first, min(pg.first + pg.second, length(sr)) - 1),
+									subrange(sr, pg.first, min(pg.second, length(sr))),
 									[], \acc, j ->
-										ifArrayPush(acc, elementAt(en, j, true), elementAt(sr, j, j))
+										ifArrayPush(
+											acc, 
+											elementAt(en, j, true), 
+											j
+										)
 								)
 						);
 
@@ -406,7 +410,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						\ -> nextDistinct(selection.selected,
 							if (getValue(selAll))
 								concat(getValue(selection.selected), fgetValue(selPage)) |> uniq
-							else
+							else 
 								filter(getValue(selection.selected), \x -> !contains(fgetValue(selPage), x))
 						),
 						true
@@ -540,8 +544,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				|> implementExpandRow(true);
 
 			cells =
-				fselect(sortingResult, FLift(\sortRes -> {
-					rws = fgetValue(rows);
+				fselect2(sortingResult, rows, FLift2(\sortRes, rws -> {
 					map(sortRes, \i -> elementAt(rws, i, []))
 					|> (\arr -> eitherMap(fixedRow, \fr -> concat([fr.cols], arr), arr))
 					|> (\arr -> mapi(arr, \i0, row -> {
@@ -986,17 +989,20 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		|> (\t -> if (separators) TLines2(m2t(MSeparator(true), p), t) else t)
 		// Header
 		|> (\f -> TLines2(tableHeader(headers0, p), f))
-		|> (\t : Tropic -> if (isInnerScroll) {
-				scrollStyle = [
+		|> (\t : Tropic -> eitherMap(innerScroll, \is -> {
+				defaultScrollBarStyle : TScrollbars = extractStruct(is.style, getMaterialScrollBar());
+
+				scrollStyle = concat(is.style, [
 					TScrollInspectShowScrolling(innerScrollVisible0),
 					MScrollPosition(innerScrollPosition),
 					MScrollDisableOutOfBounds(const(true)),
 					TScrollEnabled(innerScrollEnabled),
 					MScrollbars(
-						TScrollbarStyle(getMaterialScrollBar().x with visible = innerScrollEnabled),
-						TScrollbarStyle(getMaterialScrollBar().y with visible = innerScrollEnabled)
-					),
-				];
+						TScrollbarStyle(defaultScrollBarStyle.x with visible = innerScrollEnabled),
+						TScrollbarStyle(defaultScrollBarStyle.y with visible = innerScrollEnabled)
+					)
+				]);
+
 				scroll =
 					if (autoPagination || fgetValue(scrollEnabled)) MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
 					else {
@@ -1005,7 +1011,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					}
 
 				MScroll2T(manager, p, scroll, m2t)
-			} else t)
+			}, t))
 		|> addSeparatedFirstColumn(p, headers0)
 		|> addHeaderActions(p)
 		// Bottom bar
@@ -1215,6 +1221,15 @@ MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, ro
 				}
 				default: wrapCellContentDef(c);
 			}
+		}
+		MGetFocusGroup(fn): {
+			wrapCellContent(fn(parent))
+		}
+		MGetManager(fn): {
+			wrapCellContent(fn(manager))
+		}
+		MGetMaterial2Tropic(fn): {
+			wrapCellContent(fn(m2t))
 		}
 		default: {
 			wrapCellContentDef(c)

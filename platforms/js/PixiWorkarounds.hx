@@ -1,48 +1,4 @@
 class PixiWorkarounds {
-	public static function workaroundDOMOverOutEventsTransparency() : Void {
-		untyped __js__("
-		var binder = function(fn) {
-			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
-		}
-
-		var emptyFn = function() {};
-
-		var old_pointer_over = PIXI.interaction.InteractionManager.prototype.onPointerOver;
-		var old_pointer_out = PIXI.interaction.InteractionManager.prototype.onPointerOut;
-
-		PIXI.interaction.InteractionManager.prototype.onPointerOver = emptyFn;
-		PIXI.interaction.InteractionManager.prototype.onPointerOut = emptyFn;
-
-		var pointer_over = function(e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		}
-
-		var mouse_move = function(e) {
-			pointer_over(e);
-			document.removeEventListener('mousemove', mouse_move);
-		}
-
-		// if mouse is already over document
-		document.addEventListener('mousemove', mouse_move);
-
-		document.addEventListener('mouseover', pointer_over);
-
-		document.addEventListener('mouseout', function(e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});
-
-		document.addEventListener('pointerover', function (e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		});
-		document.addEventListener('pointerout', function (e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});");
-	}
-
 	public static function workaroundRendererDestroy() : Void {
 		untyped __js__("
 			PIXI.WebGLRenderer.prototype.bindTexture = function(texture, location, forceLocation)
@@ -54,7 +10,7 @@ class PixiWorkarounds {
 				if (!forceLocation)
 				{
 					// TODO - maybe look into adding boundIds.. save us the loop?
-					for (let i = 0; i < this.boundTextures.length; i++)
+					for (var i = 0; i < this.boundTextures.length; i++)
 					{
 						if (this.boundTextures[i] === texture)
 						{
@@ -190,11 +146,11 @@ class PixiWorkarounds {
 
 				interactive = displayObject.interactive || interactive;
 
-				let hit = false;
-				let interactiveParent = interactive;
+				var hit = false;
+				var interactiveParent = interactive;
 
 				// Flag here can set to false if the event is outside the parents hitArea or mask
-				let hitTestChildren = true;
+				var hitTestChildren = true;
 
 				// If there is a hitArea, no need to test against anything else if the pointer is not within the hitArea
 				// There is also no longer a need to hitTest children.
@@ -235,7 +191,7 @@ class PixiWorkarounds {
 				{
 					const children = displayObject.children;
 
-					for (let i = children.length - 1; i >= 0; i--)
+					for (var i = children.length - 1; i >= 0; i--)
 					{
 						const child = children[i];
 
@@ -411,9 +367,106 @@ class PixiWorkarounds {
 		};");
 	}
 
+	public static function workaroundGetContext() : Void {
+		untyped __js__("
+			if (RenderSupportJSPixi.RendererType == 'html') {
+				Element.prototype.getContext = function(a, b) { return { imageSmoothingEnabled : true }; };
+			} else {
+				Element.prototype.getContext = null;
+			}
+		");
+	}
+
 	public static function workaroundTextMetrics() : Void {
 		untyped __js__("
 			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
+
+			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
+			{
+				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
+
+				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
+				const font = style.toFontString();
+				const fontProperties = PIXI.TextMetrics.measureFont(font);
+
+				// fallback in case UA disallow canvas data extraction
+				// (toDataURI, getImageData functions)
+				if (fontProperties.fontSize === 0)
+				{
+					fontProperties.fontSize = style.fontSize;
+					fontProperties.ascent = style.fontSize;
+				}
+
+				const context = canvas.getContext('2d');
+				context.font = font;
+				let widthContext = context;
+
+				const ieWidthMulti = Platform.isIE ? 100 : 1;
+				if (Platform.isIE) {
+					// In IE, CanvasRenderingContext2D measure text with integer preceision
+					// it leads to cumulative errors in flow
+					// for example, if we counts width of words in the line
+					let widthCanvas = PIXI.TextMetrics._widthCanvas;
+					if (typeof widthCanvas === 'undefined') {
+						PIXI.TextMetrics._widthCanvas = document.createElement('canvas');
+						widthCanvas = PIXI.TextMetrics._widthCanvas;
+					}
+					let clonedStyle = style.clone();
+					clonedStyle.fontSize *= ieWidthMulti;
+					widthContext = widthCanvas.getContext('2d');
+					widthContext.font = clonedStyle.toFontString();
+				}
+
+				const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
+				const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
+				const lineWidths = new Array(lines.length);
+				let maxLineWidth = 0;
+
+				const spaceWidth = Platform.isSafari ? context.measureText(' ').width : 0;
+
+				for (let i = 0; i < lines.length; i++)
+				{
+					let lineWidth;
+					if (Platform.isSafari) {
+						let spacesCount = 0;
+						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
+						lineWidth += spacesCount * spaceWidth;
+					} else {
+						lineWidth = widthContext.measureText(lines[i]).width / ieWidthMulti;
+					}
+					lineWidth += (lines[i].length - 1) * style.letterSpacing;
+
+					lineWidths[i] = lineWidth;
+					maxLineWidth = Math.max(maxLineWidth, lineWidth);
+				}
+				let width = maxLineWidth + style.strokeThickness;
+
+				if (style.dropShadow)
+				{
+					width += style.dropShadowDistance;
+				}
+
+				const lineHeight = style.lineHeight || fontProperties.fontSize + style.strokeThickness;
+				let height = Math.max(lineHeight, fontProperties.fontSize + style.strokeThickness)
+					+ ((lines.length - 1) * (lineHeight + style.leading));
+
+				if (style.dropShadow)
+				{
+					height += style.dropShadowDistance;
+				}
+
+				return new PIXI.TextMetrics(
+					text,
+					style,
+					width,
+					height,
+					lines,
+					lineWidths,
+					lineHeight + style.leading,
+					maxLineWidth,
+					fontProperties
+				);
+			}
 
 			PIXI.TextMetrics.measureFont = function(font)
 			{
@@ -432,7 +485,7 @@ class PixiWorkarounds {
 
 				const metricsString = PIXI.TextMetrics.METRICS_STRING + PIXI.TextMetrics.BASELINE_SYMBOL;
 				const width = Math.ceil(context.measureText(metricsString).width);
-				let baseline = Math.ceil(context.measureText(PIXI.TextMetrics.BASELINE_SYMBOL).width) * 2;
+				var baseline = Math.ceil(context.measureText(PIXI.TextMetrics.BASELINE_SYMBOL).width) * 2;
 				const height = 2 * baseline;
 
 				baseline = baseline * PIXI.TextMetrics.BASELINE_MULTIPLIER | 0;
@@ -449,18 +502,18 @@ class PixiWorkarounds {
 				context.fillStyle = '#000';
 				context.fillText(metricsString, 0, baseline);
 
-				const imagedata = context.getImageData(0, 0, width, height).data;
-				const pixels = imagedata.length;
-				const line = width * 4;
+				var imagedata = context.getImageData(0, 0, width, height).data;
+				var pixels = imagedata.length;
+				var line = width * 4;
 
-				let i = 0;
-				let idx = 0;
-				let stop = false;
+				var i = 0;
+				var idx = 0;
+				var stop = false;
 
 				// ascent. scan from top to bottom until we find a non red pixel
 				for (i = 0; i < baseline; ++i)
 				{
-					for (let j = 0; j < line; j += 4)
+					for (var j = 0; j < line; j += 4)
 					{
 						if (imagedata[idx + j] !== 255)
 						{
@@ -486,7 +539,7 @@ class PixiWorkarounds {
 				// descent. scan from bottom to top until we find a non red pixel
 				for (i = height; i > baseline; --i)
 				{
-					for (let j = 0; j < line; j += 4)
+					for (var j = 0; j < line; j += 4)
 					{
 						if (imagedata[idx + j] !== 255)
 						{
@@ -507,6 +560,48 @@ class PixiWorkarounds {
 
 				properties.descent = i - baseline;
 				properties.fontSize = properties.ascent + properties.descent;
+
+				context.fillStyle = '#f00';
+				context.fillRect(0, 0, width, height);
+
+				context.textBaseline = 'alphabetic';
+				context.fillStyle = '#000';
+				context.fillText('B', 0, baseline);
+
+				imagedata = context.getImageData(0, 0, width, height).data;
+				pixels = imagedata.length;
+				line = width * 4;
+
+				i = 0;
+				idx = 0;
+				stop = false;
+
+				// ascent. scan from top to bottom until we find a non red pixel
+				for (i = 0; i < baseline; ++i)
+				{
+					for (var j = 0; j < line; j += 4)
+					{
+						if (imagedata[idx + j] !== 255)
+						{
+							stop = true;
+							break;
+						}
+					}
+					if (!stop)
+					{
+						idx += line;
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				if (Platform.isMacintosh) {
+					properties.baselineCorrection = (properties.descent - (properties.ascent - (baseline - i - 1.0))) / 2.0;
+					properties.descent -= properties.baselineCorrection;
+					properties.ascent += properties.baselineCorrection;
+				}
 
 				PIXI.TextMetrics._fonts[font] = properties;
 
@@ -833,7 +928,7 @@ class PixiWorkarounds {
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
-					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
+					this.style.wordWrapWidth = Math.ceil(Math.max(this.style.wordWrapWidth - 1.0, 0.0) * scaleFactor) + 1.0;
 					this.style.strokeThickness = this.style.strokeThickness * scaleFactor;
 					this.style.dropShadowDistance = this.style.dropShadowDistance * scaleFactor;
 					this.style.leading = this.style.leading * scaleFactor;
@@ -890,17 +985,15 @@ class PixiWorkarounds {
 				}
 			});
 
-			if (RenderSupportJSPixi.DomRenderer) {
-				Element.prototype.getContext = function(a, b) {
-					return { imageSmoothingEnabled : true };
-				}
-			}
-
 			PIXI.Container.prototype.updateTransform = function() {
 				if (this.parent.worldTransformChanged) {
 					this.parent.updateTransform();
 				} else {
 					this.transformChanged = false;
+
+					if (this.graphicsChanged) {
+						this.updateNativeWidgetGraphicsData();
+					}
 
 					if (this.worldTransformChanged)
 					{
@@ -909,7 +1002,7 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						for (let i = 0, j = this.children.length; i < j; ++i) {
+						for (var i = 0, j = this.children.length; i < j; ++i) {
 							const child = this.children[i];
 
 							if (child.transformChanged) {
@@ -919,12 +1012,12 @@ class PixiWorkarounds {
 
 						this.emit('transformchanged');
 
-						if (!RenderSupportJSPixi.DomRenderer) {
+						if (RenderSupportJSPixi.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
 						}
-					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+					} else for (var i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
 						if (child.transformChanged) {
@@ -932,7 +1025,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.DomRenderer && this.localTransformChanged) {
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
@@ -957,9 +1050,23 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						this.layoutText();
+						if (RenderSupportJSPixi.RendererType == 'html') {
+							if (RenderSupportJSPixi.LayoutText || this.isCanvas) {
+								this.textClipChanged = true;
+								this.layoutText();
+							} else if (this.children.length > 0) {
+								for (var i = 0, j = this.children.length; i < j; ++i) {
+									this.removeChild(this.children[i]);
+								}
 
-						for (let i = 0, j = this.children.length; i < j; ++i) {
+								this.textClip = null;
+								this.background = null;
+							}
+						} else {
+							this.layoutText();
+						}
+
+						for (var i = 0, j = this.children.length; i < j; ++i) {
 							const child = this.children[i];
 
 							if (child.transformChanged) {
@@ -967,14 +1074,14 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (!RenderSupportJSPixi.DomRenderer) {
+						if (RenderSupportJSPixi.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
 						}
 
 						this.emit('transformchanged');
-					} else for (let i = 0, j = this.children.length; i < j; ++i) {
+					} else for (var i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
 						if (child.transformChanged) {
@@ -982,7 +1089,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.DomRenderer && this.localTransformChanged) {
+					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {

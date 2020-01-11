@@ -1,13 +1,12 @@
 import fform/optimizefform;
 import fform/fformutils;
-import fform/renderform3d;
 import form/renderform;
 import formats/svg/svg;
 
 export {
 	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void);
 	frenderStage : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void);
-	renderFForm(rform : FForm, zorder : [int]) -> FRenderResult;
+	renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult;
 	attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability]) -> FRenderResult;
 
 	// Override to set custom stage wh
@@ -23,7 +22,7 @@ frenderTo(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>) ->
 	globalRenderCount := ^globalRenderCount + 1;
 
 	d1 = monitorFResize(awh);
-	d2 = optimizeAndRenderFForm(parent, form, [renCt]);
+	d2 = optimizeAndRenderFForm(parent, form, const([renCt]));
 
 	\ -> {d1(); applyall(d2.disposers); if (renCt == ^globalRenderCount - 1) globalRenderCount := renCt}
 }
@@ -68,12 +67,12 @@ monitorFResize(awh : DynamicBehaviour<WidthHeight>) -> () -> void {
 	\ -> { r := Some(nop); disposer(); }
 }
 
-optimizeAndRenderFForm(parent : native, form : FForm, zorder : [int]) -> FRenderResult {
+optimizeAndRenderFForm(parent : native, form : FForm, zorder : Transform<[int]>) -> FRenderResult {
 	renderFForm(optimizeFForm(form), zorder)
 	|> (\r  -> attachFChildren(parent, r.clips, r.disposers, r.capabilities))
 }
 
-optimizeAndRenderFFormAt(parent : native, form : FForm, zorder : [int], id : int) -> FRenderResult {
+optimizeAndRenderFFormAt(parent : native, form : FForm, zorder : Transform<[int]>, id : int) -> FRenderResult {
 	renderFForm(optimizeFForm(form), zorder)
 	|> (\r  -> attachFChildrenAt(parent, r.clips, r.disposers, r.capabilities, id))
 }
@@ -115,7 +114,25 @@ attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapabilit
 	}
 }
 
-renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
+fullScreenTarget : ref Maybe<native> = ref None();
+
+setFullScreenTarget(clip : native) -> void {
+	fullScreenTarget := Some(clip);
+}
+
+isFullScreenTarget(clip : native) -> bool {
+	eitherFn(^fullScreenTarget, \ft -> ft == clip, \ -> { setFullScreenTarget(clip); true; });
+};
+
+removeFullScreenTarget(clip : native) -> void {
+	if (isSome(^fullScreenTarget)) {
+		if (isFullScreenTarget(clip)) {
+			setFullScreenTarget(clip);
+		}
+	}
+}
+
+renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 	// println(rform.structname);
 	// currentFFormCount := ^currentFFormCount + 1;
 
@@ -138,7 +155,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 		FText(text, style): {
 			if (!js && extractStruct(style, EscapeHTML(false)).escape) {
 				renderFText(fselect(text, escapeHtml |> FLift), style);
-			} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
+			} else if (js && getRendererType() != "html" && !extractStruct(style, EscapeHTML(false)).escape) {
 				if (extractStruct(style, ParseHTML(true)).parse) {
 					charStyle = style2characterStyle(style);
 					renderFTexts(fselect(text, FLift(\t -> html2text(t, charStyle))), style);
@@ -152,7 +169,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 		FParagraph(text, style): {
 			if (!js && extractStruct(style, EscapeHTML(false)).escape) {
 				renderFParagraph(fselect(text, escapeHtml |> FLift), style);
-			} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
+			} else if (js && getRendererType() != "html" && !extractStruct(style, EscapeHTML(false)).escape) {
 				if (extractStruct(style, ParseHTML(true)).parse) {
 					charStyle = style2characterStyle(style);
 					renderFParagraphs(fselect(text, FLift(\t -> html2text(t, charStyle))), style);
@@ -285,7 +302,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
-				[FClipMove()],
+				[FClipMove(), FClipInteractive()],
 				\clip ->
 					[
 						makeSubscribe(x, \x0 -> setClipX(clip, x0))(),
@@ -374,7 +391,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			handleAdd = \form, z -> {
 				childrenAfter = tailFrom(^childrenClips, z);
 
-				childResult = renderFForm(form, arrayPush(zorder, z));
+				childResult = renderFForm(form, farrayPush(zorder, const(z)));
 				childClip = map(childResult.clips, \c -> Pair(c, ref false));
 				clipsBefore = length(concatA(subrange(^childrenClips, 0, z)));
 				iteri(childClip, \i, d -> addChildClipAt(parentClip, d.first, clipsBefore + i, d.second));
@@ -400,7 +417,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 
 				applyall(^childDisposers[z]);
 
-				childResult = renderFForm(form, arrayPush(zorder, z));
+				childResult = renderFForm(form, farrayPush(zorder, const(z)));
 				childClip = map(childResult.clips, \c -> Pair(c, ref false));
 
 				iter(
@@ -485,7 +502,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			FRenderResult([parentClip], [disposeGroup], []);
 		}
 		FGroup(forms, z) : {
-			results : [FRenderResult] = mapi(forms, \i, form -> renderFForm(form, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) arrayPush(zorder, i) else zorder));
+			results : [FRenderResult] = mapi(forms, \i, form -> renderFForm(form, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) farrayPush(zorder, const(i)) else zorder));
 			clips = concatA(map(results, \r -> r.clips));
 			disposers = concatA(map(results, \r -> r.disposers));
 			capabilities = concatA(map(results, \r -> if (length(r.clips) > 0) [r.capabilities] else []));
@@ -493,8 +510,8 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			FRenderResult(clips, disposers, if (length(clips) == 1 && length(capabilities) > 0) capabilities[0] else [])
 		}
 		FGroup2(form1, form2, z) : {
-			r1 = renderFForm(form1, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) arrayPush(zorder, 0) else zorder);
-			r2 = renderFForm(form2, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) arrayPush(zorder, 1) else zorder);
+			r1 = renderFForm(form1, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) farrayPush(zorder, const(0)) else zorder);
+			r2 = renderFForm(form2, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) farrayPush(zorder, const(1)) else zorder);
 
 			FRenderResult(
 				concat(r1.clips, r2.clips),
@@ -517,7 +534,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			d1 = renderFForm(
 					optimizeFForm(form),
 					if (^accessibilityEnabled || ^fAccessibilityEnabled)
-						arrayPush(zorder, b2i(!above))
+						farrayPush(zorder, const(b2i(!above)))
 					else
 						zorder
 				);
@@ -537,7 +554,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 							r = renderFForm(
 								optimizeFForm(d.second()),
 								if (^accessibilityEnabled || ^fAccessibilityEnabled)
-									arrayPush(zorder, b2i(above))
+									farrayPush(zorder, const(b2i(above)))
 								else
 									zorder,
 							);
@@ -684,6 +701,12 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 				[],
 				\clip -> {
 					changeFullscreen = \fsc -> {
+						if (fsc) {
+							setFullScreenTarget(clip);
+						} else {
+							removeFullScreenTarget(clip);
+						}
+
 						nextDistinct(fw, fsc);
 						toggleFullScreen(fsc);
 					}
@@ -693,8 +716,11 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 					}
 
 					ofsd = onFullScreen(\change -> {
-						nextDistinct(fullscreen, change);
+						if (isFullScreenTarget(clip) || !change) {
+							nextDistinct(fullscreen, change);
+						}
 					});
+
 					cfsd = subscribe2(fullscreen, changeFullscreen);
 
 					\ -> {
@@ -714,13 +740,10 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
-				if (js)
-					[]
-				else
-					[FClipInteractive()],
+				[FClipInteractive()],
 				\clip -> {
 					stage = getStage();
-					disposers = map(listeners, \l -> handleRealEvents(l, clip, clipalive, stage, zorder, true, false));
+					disposers = map(listeners, \l -> makeSubscribeUns(zorder, \z -> [handleRealEvents(l, clip, clipalive, stage, z, true, false)])());
 
 					\ -> {
 						applyall(disposers);
@@ -768,7 +791,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			if (targetNoFilters()) {
 				// Not supported
 				d
-			} else if (getUrlParameter("renderer") == "html") {
+			} else if (getRendererType() == "html") {
 				fold(filters, d, \acc, f -> {
 					attachFChildAndCapability(
 						rform,
@@ -1023,7 +1046,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			}
 		}
 		FMForm(form): {
-			d = renderForm(form, const(zeroWH), zorder, zorder);
+			d = renderForm(form, const(zeroWH), fgetValue(zorder), fgetValue(zorder)); // TODO: sub to zorder
 
 			FRenderResult(
 				d.clips,
@@ -1142,11 +1165,17 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 							default: acc;
 						}
 				)
-				|> (\disp -> arrayPush(disp, \ -> deleteNative(clip)));
-
-			if (^accessibilityEnabled || ^fAccessibilityEnabled) {
-				setAccessAttributes(clip, [["zorder", toString(zorder[0])]]);
-			}
+				|> (\disp -> arrayPush(disp, \ -> deleteNative(clip)))
+				|> (\disp ->
+					if (^accessibilityEnabled || ^fAccessibilityEnabled) {
+						arrayPush(
+							disp,
+							makeSubscribe(felementAt(zorder, const(0), const(0)), \z -> setAccessAttributes(clip, [["zorder", toString(z)]]))()
+						);
+					} else {
+						disp;
+					}
+				);
 
 			FRenderResult(
 				[clip],
@@ -1310,17 +1339,19 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 							prevWH = ref getValue(wh);
 
 							[
-								onFullScreen(\v -> nextDistinct(fs.fullscreen, v)),
+								onFullScreen(\v -> if (isFullScreenTarget(video) || !v) nextDistinct(fs.fullscreen, v)),
 								makeSubscribe(fs.fullscreen, \v -> {
 									setFullWindowTarget(video);
 
 									^resize();
 
 									if (v) {
+										setFullScreenTarget(video);
 										prevWH := getValue(wh);
 										nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
 										resize := monitorFResize(wh);
 									} else {
+										removeFullScreenTarget(video);
 										nextDistinct(wh, ^prevWH);
 									}
 
@@ -1421,7 +1452,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 							setTextFieldHeight(textfield, v.height);
 						})(),
 						makeSubscribe(focus, \f ->
-							if (!^textInputResponse) deferred(\ -> setFocus(textfield, f))
+							if (!^textInputResponse) setFocus(textfield, f)
 						)(),
 						make2Subscribe(position, selection, \p, s -> if (!^textInputResponse) setSelection(textfield, p, s))(),
 						makeSubscribe(inputType, \t -> setTextInputType(textfield,
@@ -1547,11 +1578,33 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 		}
 		FSetPending(pen, form): renderFForm(form, zorder);
 		FNativeForm(__, __, __, fn): {
-			d = fn(const(zeroWH), [], []);
+			d = fn(const(zeroWH), fgetValue(zorder), fgetValue(zorder)); // TODO: sub to zorder
 
 			FRenderResult(
 				d.clips,
 				[d.dispose],
+				[
+					FClipMove(),
+					FClipScale(),
+					FClipRotate(),
+					FClipAlpha(),
+					FClipVisible(),
+					FClipInteractive(),
+					FClipMask(),
+					FClipFilters(),
+					FClipAccess(),
+					FClipCursor()
+				]
+			)
+		}
+		FCanvas(content): {
+			clip = makeCanvasClip();
+			d = renderFForm(content, zorder);
+
+			attachFChildren(
+				clip,
+				d.clips,
+				d.disposers,
 				[
 					FClipMove(),
 					FClipScale(),

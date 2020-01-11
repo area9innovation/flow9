@@ -92,6 +92,13 @@ var BrowserDetect = {
 			|| this.searchVersion(navigator.appVersion)
 			|| "an unknown version";
 		this.OS = this.searchString(this.dataOS) || "an unknown OS";
+
+		// It's require to find Chrome/<ver> Mobile to detect Android Chrome browser
+		if (this.OS == "Android" && this.browser == "Chrome") {
+			if (!navigator.userAgent.match(/Chrome\/[.0-9]* Mobile/gm)) {
+				this.browser = "An unknown browser";
+			}
+		}
 	},
 	searchString: function (data) {
 		for (var i=0;i<data.length;i++) {
@@ -117,14 +124,20 @@ var BrowserDetect = {
 			subString: "Chrome",
 			identity: "Chrome"
 		},
+		{
+			string: navigator.userAgent,
+			subString: "CriOS",
+			identity: "Chrome",
+			versionSearch: "CriOS"
+		},
 		{   string: navigator.userAgent,
 			subString: "OmniWeb",
 			versionSearch: "OmniWeb/",
 			identity: "OmniWeb"
 		},
 		{
-			string: navigator.vendor,
-			subString: "Apple",
+			string: navigator.userAgent,
+			subString: "Safari",
 			identity: "Safari",
 			versionSearch: "Version"
 		},
@@ -201,6 +214,11 @@ var BrowserDetect = {
 		},
 		{
 			string: navigator.platform,
+			subString: "Android",
+			identity: "Android"
+		},
+		{
+			string: navigator.platform,
 			subString: "Linux",
 			identity: "Linux"
 		}
@@ -254,7 +272,7 @@ function loadFavicon(url) {
 }
 
 function loadExternalResources() {
-	loadCSSFileInternal("flowjspixi.css?1");
+	loadCSSFileInternal("flowjspixi.css?6");
 }
 
 var overlayLoadTimestamp = "";
@@ -316,6 +334,21 @@ if (typeof htmlBundle == "undefined") {
 	} else {
 		document.body.appendChild(document.createTextNode("Use 'name' URI parameter to run corresponding flow app"));
 	}
+} else if (typeof localStorage !== 'undefined') {
+	var filename = location.pathname.split("/").slice(-1)[0];
+	var xmlhttp = new XMLHttpRequest();
+	xmlhttp.onreadystatechange = function () {
+		if (this.readyState == 4 && this.status == 200) {
+			var newTimestamp = this.responseText;
+			var oldTimestamp = localStorage.getItem(filename);
+			if (oldTimestamp != newTimestamp) {
+				localStorage.setItem(filename, newTimestamp);
+				window.location.reload(true);
+			}
+		}
+	}
+	xmlhttp.open("GET", "php/stamp.php?file=" + filename, true);
+	xmlhttp.send();
 }
 
 var leaveWarningText = undefined;

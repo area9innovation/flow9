@@ -1,5 +1,7 @@
 import devmode;
 import net/http_types;
+import formats/json/json;
+import net/http;
 
 export {
 	// A service worker is a script which your browser runs in the background, separate from a web page, opening the door to features that don't need a web page or user interaction.
@@ -22,7 +24,7 @@ export {
 
 	// Registers the Service Worker for a web page.
 	// Once called the Service Worker will be run until disableServiceWorkerCaching called.
-	native enableServiceWorkerCaching : io (callback : (success : bool) -> void) -> void = ProgressiveWebTools.enableServiceWorkerCaching;
+	native enableServiceWorkerCaching : io (swFileName : string, callback : (success : bool) -> void) -> void = ProgressiveWebTools.enableServiceWorkerCaching;
 
 	// Unregisters the Service Worker from a web page.
 	// Make sure to call after enableServiceWorkerCaching or checkServiceWorkerCachingEnabled callback called with true.
@@ -31,7 +33,10 @@ export {
 
 
 	// Check whether we already registered a Service Worker
-	native checkServiceWorkerCachingEnabled : io (callback : (enabled : bool) -> void) -> void = ProgressiveWebTools.checkServiceWorkerCachingEnabled;
+	native checkServiceWorkerEnabledOnly : io (callback : (enabled : bool) -> void) -> void = ProgressiveWebTools.checkServiceWorkerEnabledOnly;
+
+	// Check whether we already registered a Service Worker and if does not - register new one
+	native checkServiceWorkerCachingEnabled : io (swFileName : string, callback : (enabled : bool) -> void) -> void = ProgressiveWebTools.checkServiceWorkerCachingEnabled;
 
 	// Fires when all progressive web app requirements are abided: https, web app manifest, service worker registered
 	native addShortcutAvailableListener : io (callback : () -> void) -> (() -> void) = ProgressiveWebTools.addShortcutAvailableListener;
@@ -79,20 +84,46 @@ export {
 	native isRunningPWA : io () -> bool = ProgressiveWebTools.isRunningPWA;
 
 	addShortcutDialog() -> () -> void;
-	setServiceWorkerEnabled(enabled : bool, ondone : (success : bool) -> void) -> void;
+	// By default for ServiceWorker registration will be used `defaultServiceWorkerFilePath` sw file (see path below).
+	// But in some cases (for different applications on the same origin) we can't register different sw files with the same name - 
+	//  will works only one application. So, by this reason each application may now initialize ServiceWorker with own sw file.
+	//  Specific SW file will be create on app genetation and you can send it name in `specificServiceWorkerFileM` parameter.
+	// `onUpdateFound` callback is activated if new version of ServiceWorker was loaded and installed in the browser, 
+	// but didn't activated (app reload needs). Doesn't supported on IE.
+	setServiceWorkerEnabled(specificServiceWorkerFileM : Maybe<string>, enabled : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void;
+
+	native getServiceWorkerJsVersion : io (
+		onOK : (int) -> void,
+		onError : (string) -> void
+	) -> void = ProgressiveWebTools.getServiceWorkerJsVersion;
+
+	native subscribeOnServiceWorkerUpdateFound : io (
+		onUpdateFound : () -> void,
+		onError : (string) -> void
+	) -> void = ProgressiveWebTools.subscribeOnServiceWorkerUpdateFound;
 
 	// The endpoint could be used for transferring data between browser & PWA application
 	// Simply POST data with httpRequestCustom to put any data there with RequestPayload
 	// Use GET request to the endpoint to get stored data
-	PWA_SHARED_DATA_ENDPOINT = "/share/pwa/data";
+	// PHP should force to don't use cached shared pwa data on PWA
+	PWA_SHARED_DATA_ENDPOINT = "/share/pwa/data.php";
+
+	storeSharedKeyValue(key : string, value : string) -> void;
+	takeSharedKeyValue(key : string, callback : (value : string) -> void) -> void;
 }
 
-enableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
+defaultServiceWorkerFilePath = "sw.min.js";
+service_worker_version = 4;
+
+enableServiceWorkerCaching(swFileName : string, callback : (bool) -> void) { callback(false) }
 disableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
-checkServiceWorkerCachingEnabled(callback : (bool) -> void) { callback(false) }
+checkServiceWorkerEnabledOnly(callback : (bool) -> void) { callback(false) }
+checkServiceWorkerCachingEnabled(swFileName : string, callback : (bool) -> void) { callback(false) }
 cleanServiceWorkerCache(callback : (bool) -> void) { callback(false) }
 loadAndCacheUrls(urls : [string], ignoreParameterKeysOnCache : [string], onOK : () -> void, onError : (string) -> void) -> void { onOK(); }
 checkUrlsInServiceWorkerCache(urls : [string], onOK : ([string]) -> void, onError : (string) -> void) -> void { onOK([]); };
+getServiceWorkerJsVersion(onOK : (int) -> void, onError : (string) -> void) -> void { onOK(0); };
+subscribeOnServiceWorkerUpdateFound(onUpdateFound : () -> void, onError : (string) -> void) -> void {};
 isRunningPWA() { false }
 
 addShortcutDialog() -> () -> void {
@@ -112,20 +143,43 @@ addShortcutDialog() -> () -> void {
 	dispose;
 }
 
-setServiceWorkerEnabled(enable : bool, ondone : (success : bool) -> void) -> void {
+setServiceWorkerEnabled(specificServiceWorkerFileM : Maybe<string>, enable : bool, ondone : (success : bool) -> void, onUpdateFound : (string) -> void) -> void {
 	doEnable = enable && !isUrlParameterFalse("sw");
-	checkServiceWorkerCachingEnabled(\enabled -> {
-		cb = \success -> {
+	swFileName = either(specificServiceWorkerFileM, defaultServiceWorkerFilePath);
+	checkServiceWorkerCachingEnabled(swFileName, \enabled -> {
+		onDone2 = \success -> {
 			ondone(success);
+			if (enable && success) {
+				subscribeOnServiceWorkerUpdateFound(
+					\-> {
+						msg = "A component is updated. Please reload the application to apply it.";
+						println(msg);
+						onUpdateFound(msg);
+					},
+					\err -> println(formatString("Can not load info about ServiceWorker updates: %1", [err]))
+				);
+
+				if (success) getServiceWorkerJsVersion(
+					\v -> {
+						if (v == service_worker_version) println(formatString("ServiceWorker version is #%1 (the last version).", [i2s(v)]))
+						else println(formatString("ServiceWorker version is #%1 (an old, exists version #%2).", [i2s(v), i2s(service_worker_version)]))
+					},
+					\err -> println(formatString("Can not retrieve version of ServiceWorker: %1.", [err]))
+				);
+			}
+		}
+
+		cb = \success -> {
+			onDone2(success);
 			devtrace(if (success) "Success Service Worker Toggle" else "Service Worker Error");
 		};
 
 		if (!enabled && doEnable)
-			enableServiceWorkerCaching(cb)
+			enableServiceWorkerCaching(swFileName, cb)
 		else if (enabled && !doEnable)
 			disableServiceWorkerCaching(cb)
 		else
-			ondone(true);
+			onDone2(true);
 	});
 }
 
@@ -146,13 +200,50 @@ addRequestCacheFilter(
 	onOK : () -> void,
 	onError : (string) -> void
 ) -> void {
-	if (cacheIfUrlMatchM == Some(""))
-		onError("Parameter `cacheIfUrlMatchM` can't be empty");
+	checkServiceWorkerEnabledOnly(
+		\enabled -> if (enabled) {
+			if (cacheIfUrlMatchM == Some(""))
+				onError("Parameter `cacheIfUrlMatchM` can't be empty");
 
-	cacheIfUrlMatch = either(cacheIfUrlMatchM, "");
-	cacheIfMethodMatch = eitherMap(cacheIfMethodMatchM, method2string, "");
-	cacheIfParametersMatchN = map(cacheIfParametersMatch, \p -> [toLowerCase(p.key), toLowerCase(p.value)]);
-	ignoreParameterKeysOnCacheN = map(ignoreParameterKeysOnCache, toLowerCase);
+			cacheIfUrlMatch = either(cacheIfUrlMatchM, "");
+			cacheIfMethodMatch = eitherMap(cacheIfMethodMatchM, method2string, "");
+			cacheIfParametersMatchN = map(cacheIfParametersMatch, \p -> [toLowerCase(p.key), toLowerCase(p.value)]);
+			ignoreParameterKeysOnCacheN = map(ignoreParameterKeysOnCache, toLowerCase);
 
-	addRequestCacheFilterN(strReplace(cacheIfUrlMatch, "//", "/"), cacheIfMethodMatch, cacheIfParametersMatchN, ignoreParameterKeysOnCacheN, onOK, onError);
+			addRequestCacheFilterN(strReplace(cacheIfUrlMatch, "//", "/"), cacheIfMethodMatch, cacheIfParametersMatchN, ignoreParameterKeysOnCacheN, onOK, onError);
+		} else {
+			onOK();
+		}
+	);
+}
+
+storeSharedKeyValue(key : string, value : string) {
+	payload = json2string(JsonObject([
+		Pair("key", JsonString(key)),
+		Pair("value", JsonString(value))
+	]));
+
+	httpCustomRequest(
+		PWA_SHARED_DATA_ENDPOINT,
+		POST(),
+		[],
+		RequestPayload(payload),
+		nop3,
+		true
+	);
+}
+
+takeSharedKeyValue(key : string, callback : (value : string) -> void) {
+	payload = json2string(JsonObject([
+		Pair("key", JsonString(key))
+	]));
+
+	httpCustomRequest(
+		PWA_SHARED_DATA_ENDPOINT,
+		GET(),
+		[],
+		RequestParameters([KeyValue("key", key)]),
+		\__, value, __ -> callback(value),
+		true
+	);
 }

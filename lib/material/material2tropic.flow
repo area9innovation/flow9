@@ -174,9 +174,30 @@ mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m :
 	disp;
 }
 
+materialZoomWarningDialogEnabled = ref false;
+
 initMaterialManagerSubs(manager : MaterialManager) -> void {
 	if (isNone(lookupTree(manager.disposers, -1))) {
 		m2t = \mat, p -> material2tropicWithParent(manager, p, mat);
+
+		if (^materialZoomWarningDialogEnabled && js && !mobile && getRendererType() == "html" && getBrowserZoom() != 1.0 && !s2b(getKeyValue("zoom_warning_shown", "false"))) {
+			key = if (macosx()) "Cmd" else "Ctrl";
+
+			deferUntilNextFrameRendered(\ ->
+				renderMSnackbar(
+					manager,
+					_("Warning: You are using page zoom which causes\nproblems with text.\nTo prevent those problems set page zoom to 100%\nand then use " + key + "+/" + key + "- to set required zoom."),
+					[MSnackbarAutoDisappear(false), MSnackbarOnDisappear(\ -> setKeyValue("zoom_warning_shown", "true") |> ignore)],
+					\m, p ->
+						material2tropicWithParent(manager, p, m),
+					\t ->
+						trender(
+							t,
+							manager.manager.renderStyle
+						)
+				)
+			);
+		}
 
 		manager.disposers ::=
 			setTree(
@@ -297,6 +318,8 @@ material2tropic(manager : MaterialManager, m : Material) -> Tropic {
 	TConstruct(
 		[
 			makeSubscribe(manager.white, \w -> {
+				setKeyValue("dark_mode", b2s(!w)) |> ignore;
+
 				if (w != getLightBackground(manager.focus)) {
 					updateMaterialTheme(manager, MLightTheme(manager.theme, w))
 				}
@@ -481,6 +504,10 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			MDynamicGrid2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
 
+		MRecyclerGrid(__, __): {
+			MRecyclerGrid2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
+		}
+
 		MTree(__, __): {
 			MTree2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
@@ -559,6 +586,20 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MInteractive(i, mat): TInteractive(i, doMaterial2tropic(rend, mat, parent));
 		MCursor(kind, mat): TCursor(kind, doMaterial2tropic(rend, mat, parent));
 		MFilter(filters, mat): TFilter(filters, doMaterial2tropic(rend, mat, parent));
+		MGraphics(shape, style): {
+			TDynamicGraphics(
+				fselect(shape, FLift(\sh ->
+					switch (sh : GShape) {
+						GPath(path): path;
+						GRect(__, __, __, __): [sh];
+						GRoundedRect(__, __, __, __, __): [sh];
+						GEllipse(__, __, __, __): [sh];
+						GCircle(__, __, __): [sh];
+					}
+				)),
+				style
+			);
+		}
 		MTranslate(p, mat): TTranslate(p, doMaterial2tropic(rend, mat, parent));
 		MRotate(degree, mat) : TRotate(degree, doMaterial2tropic(rend, mat, parent));
 		MCenter(mat): TCenter(doMaterial2tropic(rend, mat, parent));

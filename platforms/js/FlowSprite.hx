@@ -17,6 +17,7 @@ class FlowSprite extends Sprite {
 
 	private var url : String = "";
 	private var loaded : Bool = false;
+	private var visibilityChanged : Bool = true;
 	private var updateParent : Bool = false;
 	private var cache : Bool = false;
 	private var metricsFn : Float -> Float -> Void;
@@ -32,6 +33,7 @@ class FlowSprite extends Sprite {
 	private var accessWidget : AccessWidget;
 
 	public var isNativeWidget : Bool = false;
+	private var disposed : Bool = false;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
@@ -52,7 +54,7 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			initNativeWidget("img");
 		} else {
 			once("removed", onSpriteRemoved);
@@ -152,10 +154,14 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onDispose() : Void {
+		disposed = true;
+
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		if (parent != null) {
 			loadTexture();
@@ -171,7 +177,9 @@ class FlowSprite extends Sprite {
 		if (texture != null) {
 			removeTextureFromCache(texture);
 		}
+
 		loaded = false;
+		visibilityChanged = true;
 
 		texture = Texture.EMPTY;
 
@@ -184,29 +192,35 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onLoaded() : Void {
-		try {
-			if (RenderSupportJSPixi.DomRenderer) {
-				if (nativeWidget == null) {
-					return;
+		RenderSupportJSPixi.once("drawframe", function() {
+			if (disposed) {
+				return;
+			}
+
+			try {
+				if (RenderSupportJSPixi.RendererType == "html") {
+					if (nativeWidget == null) {
+						return;
+					}
+
+					metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
+				} else {
+					metricsFn(texture.width, texture.height);
 				}
 
-				metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
-			} else {
-				metricsFn(texture.width, texture.height);
-			}
+				invalidateTransform('onLoaded');
+				calculateWidgetBounds();
 
-			invalidateTransform('onLoaded');
-
-			loaded = true;
-
-			calculateWidgetBounds();
-		} catch (e : Dynamic) {
-			if (parent != null && retries < 2) {
-				loadTexture();
-			} else {
-				onError();
-			}
-		};
+				loaded = true;
+				visibilityChanged = true;
+			} catch (e : Dynamic) {
+				if (parent != null && retries < 2) {
+					loadTexture();
+				} else {
+					onError();
+				}
+			};
+		});
 	}
 
 	private function loadTexture() : Void {
@@ -264,12 +278,13 @@ class FlowSprite extends Sprite {
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
+		nativeWidget.style.visibility = 'hidden';
 
 		isNativeWidget = true;
 	}
 
 	public function calculateWidgetBounds() : Void {
-		if (RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType == "html") {
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {

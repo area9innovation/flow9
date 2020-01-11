@@ -255,8 +255,9 @@ static jfieldID c_ptr_field = NULL;
 	CALLBACK(cbSendMessageWSClient, "(Lorg/java_websocket/client/WebSocketClient;Ljava/lang/String;)Z") \
 	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V") \
 	CALLBACK(cbOpenFileDialog, "(I[Ljava/lang/String;I)V") \
-	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;")
-
+	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;") \
+	CALLBACK(cbShowSoftKeyboard, "()V") \
+	CALLBACK(cbHideSoftKeyboard, "()V")
 
 #define CALLBACK(id, type) static jmethodID id = NULL;
 CALLBACKS
@@ -1219,6 +1220,9 @@ NativeFunction *AndroidRenderSupport::MakeNativeFunction(const char *name, int n
 
     TRY_USE_NATIVE_METHOD(AndroidRenderSupport, timer, 2);
 
+    TRY_USE_NATIVE_METHOD(AndroidRenderSupport, showSoftKeyboard, 0);
+    TRY_USE_NATIVE_METHOD(AndroidRenderSupport, hideSoftKeyboard, 0);
+
     return GLRenderSupport::MakeNativeFunction(name, num_args);
 }
 
@@ -1267,6 +1271,22 @@ void AndroidRenderSupport::deliverTimer(jint id)
         getFlowRunner()->EvalFunction(cb, 0);
         getFlowRunner()->NotifyHostEvent(HostEventTimer);
     }
+}
+
+StackSlot AndroidRenderSupport::showSoftKeyboard(RUNNER_ARGS)
+{
+    JNIEnv *env = owner->env;
+    env->CallVoidMethod(owner->owner, cbShowSoftKeyboard);
+    owner->eatExceptions();
+    RETVOID;
+}
+
+StackSlot AndroidRenderSupport::hideSoftKeyboard(RUNNER_ARGS)
+{
+    JNIEnv *env = owner->env;
+    env->CallVoidMethod(owner->owner, cbHideSoftKeyboard);
+    owner->eatExceptions();
+    RETVOID;
 }
 
 void AndroidRenderSupport::GetTargetTokens(std::set<std::string> &tokens)

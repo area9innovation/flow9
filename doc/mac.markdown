@@ -190,10 +190,10 @@ There are also runtime dependencies on the XQuartz libraries libpng and libGLU. 
 The repository contains a prebuilt Mac OS X binary for `flowcpp`.
 
 You can also run command-line-only stuff with it, and avoid
-initializing the GUI subsystem, using `--batch`:
+initializing the GUI subsystem:
 
     cd ~/flow9
-    flowcpp --batch sandbox/hello.flow
+    flowcpp sandbox/hello.flow
 
 You should see:
 

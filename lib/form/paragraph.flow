@@ -66,7 +66,7 @@ export {
 		indexingInit : int,
 		init : List<GeneralWrapElement>,
 		isLastChild : bool,
-		paraElementIndexM : Maybe<int>
+		disableBreaksAfterHyphen : bool
 	) -> GeneralTextFragments;
 	// for text like "some text\n\n", we have to insert special InspectElement between NewLines in order to be able to position into such line
 	// also we have to add such element after the last \n in the last child text element of the paragraph
@@ -116,9 +116,6 @@ export {
 		//    • punctuation,
 		//    • number boundary.
 		PositionCharCat : ();
-
-	allowBreaksAfterHyphen = !isUrlParameterTrue("fix40612");
-
 }
 
 // Paragraph transformations
@@ -149,7 +146,7 @@ paramap(elements : [ParagraphElement], fn : (Form) -> Form) -> [ParagraphElement
 
 
 Paragraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
-	renderParagraph(p, s, getDefaultRtl());
+	renderParagraph(p, s, getDefaultRtl(), dummyWigiParagraphWidthManager);
 }
 
 
@@ -294,7 +291,7 @@ TextFragmentExt(text, charStyle, style) {
 		-100000,
 		makeList(),
 		containsStruct(style, TextFragmentLastChild()),
-		maybeMap(tryExtractStruct(style, ParaElemIdx(-1)), \pIdx -> pIdx.index)
+		false
 	);
 	TextFragments(
 		mapList(generalFragments.elements, \e -> general2WrapElement(e, generalFragments.style))
@@ -550,7 +547,7 @@ applyAlignment(line : [Form], alignment : ParagraphAlignment, width : double,
 
 makeEmptyLineInspectElement(indexing : int, style : [CharacterStyle]) -> WrapElement {
 	InspectElement(
-		ParaElementInspector(indexing, make(0.0), make(0.0), makeWH(), make(0.0), make(-1), make(false)),
+		ParaElementInspector(make(indexing), make(0.0), make(0.0), makeWH(), make(0.0), make(0.0), make(-1), make(false)),
 		makeZeroSpaceElement(style)
 	)
 }
@@ -562,13 +559,13 @@ breakTextFragment(
 	indexingInit : int,
 	init : List<GeneralWrapElement>,
 	isLastChild : bool,
-	paraElementIndexM : Maybe<int>
+	disableBreaksAfterHyphen : bool
 ) -> GeneralTextFragments {
 
 	toInspectingElementIfNecessary : (int, int, GeneralWrapElement) -> GeneralWrapElement = \indexing, offset, f -> {
 		if (0 <= indexing) {
 			GeneralInspectElement(
-				ParaElementInspector(offset, make(0.0), make(0.0), makeWH(), make(0.0), make(-1), make(false)),
+				ParaElementInspector(make(offset), make(0.0), make(0.0), makeWH(), make(0.0), make(0.0), make(-1), make(false)),
 				f
 			)
 		} else {
@@ -613,7 +610,7 @@ breakTextFragment(
 
 			if (^chrCatPos >= ^hyphenPos.first) {  // soft inequality because we want to keep hyphenPos greater than ^chrCatPos (findBreakAfterAllowPos2 returns at least ^chrCatPos+1)
 				hyphenPos := {
-					if (!allowBreaksAfterHyphen)
+					if (disableBreaksAfterHyphen || isUrlParameterTrue("fix40612"))
 						Pair(textLen, false)
 					else {
 						posAndSoft = findBreakAfterAllowPos2(text, ^chrCatPos, moreLineBreaks);
@@ -686,10 +683,7 @@ breakTextFragment(
 						PositionAllowSoftBreakAfter() : {
 							toInspectingElementIfNecessary(indexing,
 								indexing + keyPosRelative,
-								GeneralLinePart("",
-									"",
-									getSoftBreakVisualSymbol()
-								)
+								GeneralLinePart("", "", getSoftBreakVisualSymbol())
 							)
 						}
 						PositionCharCat(): {
@@ -732,7 +726,8 @@ breakTextFragment(
 						doNotSkipSymbolDelta = if (doNotSkipSymbolDeltaOnLang(posType == PositionAllowBreakAfter()) || posType == PositionCharCat()) 1 else 0;
 						word = substring(text, i, keyPos - i + doNotSkipSymbolDelta); //println("word:" + word);
 						^loop1(
-							keyPos + 1, indexing + keyPosRelative + 1,
+							keyPos + 1,
+							indexing + keyPosRelative + 1,
 							if (posType == PositionCharCat())
 								Cons(makeTextFn(indexing, word), acc)
 							else

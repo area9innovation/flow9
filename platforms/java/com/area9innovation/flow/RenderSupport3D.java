@@ -56,6 +56,19 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DStageOnLoad(Object stage, Func1<Object,Object> onLoad) {
+		return null;
+	}
+	public Object set3DStageOnError(Object stage, Func1<Object,Object> onError) {
+		return null;
+	}
+	public Object set3DStageOnStart(Object stage, Func1<Object,Object> onStart) {
+		return null;
+	}
+	public Object set3DStageOnProgress(Object stage, Func3<String,Integer,Integer,Object> onProgress) {
+		return null;
+	}
+
 	public Object set3DSceneBackground(Object scene, Object background) {
 		return null;
 	}
@@ -63,18 +76,62 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object load3DObject(String objUrl, String mtlUrl, Func1<Object,Object> onLoad) {
+	public Object load3DObject(Object stage, String objUrl, String mtlUrl, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DGLTFObject(String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad) {
+	public Object load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad) {
 		return null;
 	}
-	public Object load3DScene(String url, Func1<Object,Object> onLoad) {
+	public Object load3DScene(Object stage, String url, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DTexture(Object object, String url) {
+	public Object load3DTexture(Object stage, String url, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;
 	}
+	public Object load3DCubeTexture(Object stage, String px, String nx, String py, String ny, String pz, String nz, Func1<Object,Object> onLoad, Object[] parameters) {
+		return null;
+	}
+	public Object make3DDataTexture(Object[] data, Integer width, Integer height, Object[] parameters) {
+		return null;
+	}
+	public Object make3DCanvasTexture(Object clip, Object[] parameters) {
+		return null;
+	}
+
+
+	public Object set3DMaterialMap(Object object, Object map) {
+		return null;
+	}
+
+	public Object set3DMaterialAlphaMap(Object object, Object alphaMap) {
+		return null;
+	}
+
+	public Object set3DMaterialDisplacementMap(Object object, Object displacementMap, Double displacementScale, Double displacementBias) {
+		return null;
+	}
+
+	public Object set3DMaterialBumpMap(Object object, Object bumpMap, Double bumpScale) {
+		return null;
+	}
+
+	public Object set3DMaterialOpacity(Object object, Double opacity) {
+		return null;
+	}
+
+
+	public Object set3DTextureRotation(Object object, Double rotation) {
+		return null;
+	}
+
+	public Object set3DTextureOffsetX(Object object, Double x) {
+		return null;
+	}
+
+	public Object set3DTextureOffsetY(Object object, Double y) {
+		return null;
+	}
+
 
 	public Object make3DAxesHelper(Double size) {
 		return null;
@@ -83,8 +140,12 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DVertexNormalsHelper(Object object, Double size, Integer color, Double lineWidth) {
+		return null;
+	}
 
-	public Object set3DCamera(Object stage, Object camera) {
+
+	public Object set3DCamera(Object stage, Object camera, Object[] parameters) {
 		return null;
 	}
 	public Object set3DScene(Object stage, Object scene) {
@@ -95,6 +156,9 @@ public class RenderSupport3D extends NativeHost {
 		return no_op;
 	}
 	public Object emit3DMouseEvent(Object stage, String event, Double x, Double y) {
+		return null;
+	}
+	public Object emit3DTouchEvent(Object stage, String event, Object[] points) {
 		return null;
 	}
 	public Object emit3DKeyEvent(Object stage, String event, String utf, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer keycode) {
@@ -211,6 +275,13 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Double get3DObjectAlpha(Object object) {
+		return 0.0;
+	}
+	public Object set3DObjectAlpha(Object object, Double alpha) {
+		return null;
+	}
+
 	public Boolean get3DObjectCastShadow(Object object) {
 		return false;
 	}
@@ -232,63 +303,63 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Double get3DObjectX(Object object) {
+	public Double get3DObjectLocalPositionX(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectY(Object object) {
+	public Double get3DObjectLocalPositionY(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectZ(Object object) {
+	public Double get3DObjectLocalPositionZ(Object object) {
 		return 0.0;
 	}
 
-	public Object set3DObjectX(Object object, Double x) {
+	public Object set3DObjectLocalPositionX(Object object, Double x) {
 		return null;
 	}
-	public Object set3DObjectY(Object object, Double y) {
+	public Object set3DObjectLocalPositionY(Object object, Double y) {
 		return null;
 	}
-	public Object set3DObjectZ(Object object, Double z) {
+	public Object set3DObjectLocalPositionZ(Object object, Double z) {
 		return null;
 	}
 
 	public Double get3DObjectRotationX(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectRotationY(Object object) {
+	public Double get3DObjectLocalRotationY(Object object) {
 		return 0.0;
 	}
-	public Double get3DObjectRotationZ(Object object) {
-		return 0.0;
-	}
-
-	public Object set3DObjectRotationX(Object object, Double x) {
-		return null;
-	}
-	public Object set3DObjectRotationY(Object object, Double y) {
-		return null;
-	}
-	public Object set3DObjectRotationZ(Object object, Double z) {
-		return null;
-	}
-
-	public Double get3DObjectScaleX(Object object) {
-		return 0.0;
-	}
-	public Double get3DObjectScaleY(Object object) {
-		return 0.0;
-	}
-	public Double get3DObjectScaleZ(Object object) {
+	public Double get3DObjectLocalRotationZ(Object object) {
 		return 0.0;
 	}
 
-	public Object set3DObjectScaleX(Object object, Double x) {
+	public Object set3DObjectLocalRotationX(Object object, Double x) {
 		return null;
 	}
-	public Object set3DObjectScaleY(Object object, Double y) {
+	public Object set3DObjectLocalRotationY(Object object, Double y) {
 		return null;
 	}
-	public Object set3DObjectScaleZ(Object object, Double z) {
+	public Object set3DObjectLocalRotationZ(Object object, Double z) {
+		return null;
+	}
+
+	public Double get3DObjectLocalScaleX(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectLocalScaleY(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectLocalScaleZ(Object object) {
+		return 0.0;
+	}
+
+	public Object set3DObjectLocalScaleX(Object object, Double x) {
+		return null;
+	}
+	public Object set3DObjectLocalScaleY(Object object, Double y) {
+		return null;
+	}
+	public Object set3DObjectLocalScaleZ(Object object, Double z) {
 		return null;
 	}
 
@@ -356,20 +427,47 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DObjectLocalMatrix(Object object, Object[] matrix) {
+		return null;
+	}
+
+	public Object set3DObjectWorldMatrix(Object object, Object[] matrix) {
+		return null;
+	}
+
+	public Object set3DObjectInteractive(Object object, Boolean interactive) {
+		return null;
+	}
+	public Boolean get3DObjectInteractive(Object object) {
+		return false;
+	}
+
 	public Object[] get3DObjectBoundingBox(Object object) {
 		return new Object[0];
 	}
 
-	public Func0<Object> add3DObjectPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
+	public Func0<Object> add3DObjectLocalPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
-	public Func0<Object> add3DObjectRotationListener(Object object, Func3<Object,Double,Double,Double> cb) {
+	public Func0<Object> add3DObjectWorldPositionListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
-	public Func0<Object> add3DObjectScaleListener(Object object, Func3<Object,Double,Double,Double> cb) {
+	public Func0<Object> add3DObjectStagePositionListener(Object stage, Object object, Func2<Object,Double,Double> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectLocalRotationListener(Object object, Func3<Object,Double,Double,Double> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectLocalScaleListener(Object object, Func3<Object,Double,Double,Double> cb) {
 		return no_op;
 	}
 	public Func0<Object> add3DObjectBoundingBoxListener(Object object, Func1<Object,Object[]> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectLocalMatrixListener(Object object, Func1<Object,Object[]> cb) {
+		return no_op;
+	}
+	public Func0<Object> add3DObjectWorldMatrixListener(Object object, Func1<Object,Object[]> cb) {
 		return no_op;
 	}
 
@@ -409,6 +507,10 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object make3DSpotLight(Integer color, Double intensity, Double distance, Double angle, Double penumbra, Double decayAmount) {
+		return null;
+	}
+
+	public Object make3DAmbientLight(Integer color, Double intensity) {
 		return null;
 	}
 
@@ -486,6 +588,30 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DGeometryMatrix(Object geometry, Object[] matrix) {
+		return null;
+	}
+
+
+	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
+		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength, Func2<Integer, Integer, Object[]> addGroups) {
+		return null;
+	}
+
+	public Object make3DBoxBufferGeometry(Double width, Double height, Double depth, Integer widthSegments, Integer heightSegments,
+		Integer depthSegments, Func2<Integer, Integer, Object[]> addGroups) {
+		return null;
+	}
+
+
+	public Object add3DBufferGeometryAttribute(Object geometry, String name, Object[] data) {
+		return null;
+	}
+	public Object[] get3DBufferGeometryAttribute(Object geometry, String name) {
+		return new Object[0];
+	}
+
+
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
 		return null;
 	}
@@ -494,8 +620,25 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DMeshNormalMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
 
-	public Object make3DMesh(Object geometry, Object material) {
+	public Object make3DShaderMaterial(Object stage, String uniforms, String vertexShader, String fragmentShader, Object[] parameters) {
+		return null;
+	}
+
+
+	public Object set3DShaderMaterialUniformValue(Object material, String uniform, String value) {
+		return null;
+	}
+
+	public String get3DShaderMaterialUniformValue(Object material, String uniform) {
+		return "";
+	}
+
+
+	public Object make3DMesh(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}
 
@@ -515,5 +658,8 @@ public class RenderSupport3D extends NativeHost {
 
 	public Object clear3DStageObjectCache(Object stage) {
 		return null;
+	}
+	public Object[] convert3DVectorToStageCoordinates(Object stage, Double x, Double y, Double z) {
+		return new Object[0];
 	}
 }

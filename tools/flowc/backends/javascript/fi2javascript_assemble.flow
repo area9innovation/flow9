@@ -57,7 +57,7 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 			}
 
 		fin = "  }\n}\n";
-		saveFileContent(hx, rt + imports + cls + rs + fin);
+		saveFileContent(hx, rt + imports + cls + rs + fin, cfg.threadId);
 		srcDir = getFlowDir() + "platforms/js";
 		commonSrcDir = getFlowDir() + "platforms/common/haxe";
 		hxparams =
@@ -115,18 +115,18 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 			\c, o, e -> {
 				r0 = getFileContent(jsfile);
 				r = if (c != 0) {
-						println("Haxe failed with message:");
-						fcPrintln(e);
-						fcPrintln(o);
-						fcPrintln(i2s(c));
+						fcPrintln("Haxe failed with message:", cfg.threadId);
+						fcPrintln(e, cfg.threadId);
+						fcPrintln(o, cfg.threadId);
+						fcPrintln(i2s(c), cfg.threadId);
 						deleteFile(cfg.outputfile);
 						""
 					} else {
 						if (o != "") {
-							fcPrintln(o);
+							fcPrintln(o, cfg.threadId);
 						}
 						if (e != "") {
-							fcPrintln(e);
+							fcPrintln(e, cfg.threadId);
 						}
 						fcVerbose(cfg, 1, "Haxe succeeded.");
 						r0
@@ -171,14 +171,14 @@ fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeCont
 	if (!hasRequire) {
 		haxeRuntimeModuleName = (if (cfg.modules != "") cfg.modules + "/" else "") + "haxeruntime.js";
 		ovl.beautifyList ::= arrayPush(ovl.beautifyList, haxeRuntimeModuleName);
-		saveFileContent(haxeRuntimeModuleName, haxeRuntimeModule);
+		saveFileContent(haxeRuntimeModuleName, haxeRuntimeModule, cfg.threadId);
 		if (cfg.jsmode == TS_MODE) {
 			saveFileContent((if (cfg.modules != "") cfg.modules + "/" else "") + "haxeruntime.d.ts", 
 				fold(
 					set2array(mergeSets(buildSet(["RuntimeType", "HaxeRuntime", "Util", "Std"]), ovl.nativeClasses)),
 					"",
 					\acc, hr -> acc + "    export var " + hr + ";\n"
-				)
+				), cfg.threadId
 			);
 			{}
 		}
@@ -229,13 +229,14 @@ fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeCont
 	if (!hasRequire) {
 		rModuleName = cfg.modules + "/R." + if (cfg.jsmode == TS_MODE) "ts" else "js";
 		ovl.beautifyList ::= arrayPush(ovl.beautifyList, rModuleName);
-		saveFileContent(rModuleName, rModule);
+		saveFileContent(rModuleName, rModule, cfg.threadId);
 	}
 }
 
 fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 	hasRequire = ovl.requireList != [];
 
+	// If we use modules or require, we do this
 	separatedHeaderCode =
 		if (cfg.jsmode == TS_MODE) "" /*
 			unpair(tsModuleWrap([Pair("haxeruntime", "haxeruntime")], "header", 1),
@@ -262,7 +263,7 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 		ensureDirectoryExists(cfg.modules);
 		if (!hasRequire) {
 			hName = cfg.modules + "/" + "header." + if (cfg.jsmode == TS_MODE) "ts" else "js";
-			saveFileContent(hName, separatedHeaderCode);
+			saveFileContent(hName, separatedHeaderCode, cfg.threadId);
 		}
 	}
 
@@ -291,8 +292,11 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 		])
 	} else if (!containsSet(ovl.nativeClasses, "RenderSupport") && cfg.callMain) {
 		mainfn + "();"
+	} else if (cfg.jslibraryObject != "") {
+		// All exported names are placed into an object
+		cfg.jslibraryObject + " = { " + superglue(set2array(cfg.jslibrary), \n -> n + ":" + n, ",") + "};"
 	} else {
-		""
+		""		
 	}
 
 	fcVerbose(cfg, 1, "Assembling output file...");
@@ -312,8 +316,8 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 
 			fcVerbose(cfg, 0, "Generated HTML stub file '" + stubFileName + "' for '" + htmlStub + "()'");
 		} else {
-			fcPrintln("WARNING: 'html-stub' parameter is set, but 'jslibrary' is not set.");
-			fcPrintln("HTML stub file was not generated.");
+			fcPrintln("WARNING: 'html-stub' parameter is set, but 'jslibrary' is not set.", cfg.threadId);
+			fcPrintln("HTML stub file was not generated.", cfg.threadId);
 		}
 	}
 
@@ -330,9 +334,9 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 	fcVerbose(cfg, 1, "Assembling done.");
 
 	fcVerbose(cfg, 1, "Saving output file...");
-	saveFileContent((if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile, fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + generatedContent);
+	saveFileContent((if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile, fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + generatedContent, cfg.threadId);
 	if (cfg.code) {
-		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + generatedContent);
+		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + generatedContent, cfg.threadId);
 	}
 	fcVerbose(cfg, 1, "File saved.");
 	jsmode = fiJavascriptMode(cfg);
@@ -426,7 +430,7 @@ fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<str
 	if ((hasRequire && contains(ovl.requireList, module.fileinfo.flowfile)) || !hasRequire) {
 		moduleName = moduleNameOnly + if (cfg.jsmode == TS_MODE) ".ts" else ".js";
 		ovl.beautifyList ::= arrayPush(ovl.beautifyList, moduleName);
-		saveFileContent(moduleName, moduleContent);
+		saveFileContent(moduleName, moduleContent, cfg.threadId);
 	}
 	// Push module into list for solid file generation.
 	m = Cons(moduleContent, ovl.requireModulesList);
@@ -452,10 +456,10 @@ fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback) {
 						fcVerbose(cfg, 0, "Trying js-beautify.cmd for '" + cfg.outputfile + "'");
 						callback();
 						if (c1 != 0) {
-							fcPrintln("js-beautify.cmd failed.");
-							fcPrintln(e1);
-							fcPrintln(o1);
-							fcPrintln(i2s(c1));
+							fcPrintln("js-beautify.cmd failed.", cfg.threadId);
+							fcPrintln(e1, cfg.threadId);
+							fcPrintln(o1, cfg.threadId);
+							fcPrintln(i2s(c1), cfg.threadId);
 						}
 					}
 				);

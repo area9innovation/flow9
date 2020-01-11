@@ -69,7 +69,8 @@ export {
 	arrayRTL2(isRTL : bool) -> ([?]) -> [?];
 }
 
-
+addMappedFontsPad : ref Maybe<bool> = ref None();
+addMappedFonts = \ -> onlyOnce(addMappedFontsPad, \ -> getRendererType() == "html" && isUrlParameterTrue("add_fonts"));
 debugFontMapping = isUrlParameterTrue("debugfontmapping");
 
 relativeScaleArabicMultiplier = 1.4;
@@ -165,7 +166,7 @@ koreanFontParams : Triple<string, string, double> = {
 	}
 }
 
-arabicFontParams : Triple<string, string, double> = {
+arabicFontParams : () -> Triple<string, string, double> = \ -> {
 	if (windows()) {
 		if (opengl) {
 			Triple("Tahoma", "Tahoma", 0.95)
@@ -175,13 +176,13 @@ arabicFontParams : Triple<string, string, double> = {
 			Triple("Tahoma", "Tahoma", 1.0)
 		}
 	} else if (android()) {
-		Triple("Tahoma", "Tahoma", if (js) 0.95 else 1.0)
+		Triple("Tahoma", "Tahoma", if (addMappedFonts() || !js) 1.0 else 0.95)
 	} else if (linux()) {
 		Triple("DejaVu Sans", "DejaVu Sans", 0.835)
 	} else if (ios()) {
-		Triple("Tahoma", "Tahoma", if (js) 0.95 else 1.0)
+		Triple("GeezaPro", "GeezaPro", if (addMappedFonts() || !js) 1.0 else 0.95)
 	} else if (macosx()) {
-		Triple("Tahoma", "Tahoma", 0.95)
+		Triple("Tahoma", "Tahoma", if (addMappedFonts()) 1.0 else 0.95)
 	} else {
 		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
 	}
@@ -200,7 +201,7 @@ getKoreanFont() -> FontFamily {
 }
 
 getArabicFont() -> FontFamily {
-	FontFamily(arabicFontParams.first)
+	FontFamily(arabicFontParams().first)
 }
 
 getChineseFontMinimal() -> FontFamily {
@@ -218,8 +219,8 @@ getMappedFont_cache_value = ref Pair("", -1.0);
 getMappedFont(family : string, size : double) {
 	if (family != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
 		mappedFont =
-			if (family == "MaterialIcons")
-				Pair(family, size)
+			if (family == "MaterialIcons" || (cpp && family == "'Material Icons'"))
+				Pair("MaterialIcons", size)
 			else
 		 		(^getMappedFontFn)(family, size);
 		getMappedFont_cache_key := Pair(family, size);
@@ -302,7 +303,7 @@ setDefaultFontMappingFnHelper(mapping : [Pair<string, string>]) -> (string, doub
 		\family, size -> Pair(family, size)
 	} else {
 		\family, size -> Pair(
-			lookupTreeDef(directTree, family, family),
+			eitherMap(lookupTree(directTree, family), \ff -> if (addMappedFonts()) family + "," + ff else ff, family),
 			size
 		)
 	}
@@ -329,21 +330,31 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 		else if (isChinese(lang))
 			chineseFontParams
 		else if (lang == "ar") { // enable font mapping for arabic
-			font = arabicFontParams.first;
-			fontMedium = font + "Medium";
-			fontItalic = font + "Italic";
-			fontBold = font + "Bold";
-			mapper = setDefaultFontMappingFnHelper([
-				Pair("Roboto", font),
-				Pair("RobotoMedium", fontBold),
-				Pair("RobotoItalic", fontItalic),
-				Pair("RobotoBold", fontBold),
-				Pair("Book", font),
-				Pair("Medium", fontBold),
-				Pair("MediumItalic", fontItalic),
-				Pair("Italic", fontItalic),
-			]);
-			mapper(family, size) |> (\fm -> Triple(fm.first, fm.first, arabicFontParams.third))
+			font = arabicFontParams().first;
+			makeFontMedium = \font1 -> font1 + "Medium";
+			makeFontItalic = \font1 -> font1 + "Italic";
+			makeFontBold = \font1 -> font1 + "Bold";
+			makePairs = \font1, font2 -> {[
+				Pair(font1, font2),
+				Pair(makeFontMedium(font1), makeFontBold(font2)),
+				Pair(makeFontItalic(font1), makeFontItalic(font2)),
+				Pair(makeFontBold(font1), makeFontBold(font2)),
+			]};
+
+			mapper = setDefaultFontMappingFnHelper(concat(
+				if (ios() && isUrlParameterTrue("ArabicExtraFonts")) {
+					makePairs("Tahoma", font)
+				} else {
+					makePairs("Roboto", font)
+				},
+				[
+					Pair("Book", font),
+					Pair("Medium", makeFontBold(font)),
+					Pair("MediumItalic", makeFontItalic(font)),
+					Pair("Italic", makeFontItalic(font))
+				]
+			));
+			mapper(family, size) |> (\fm -> Triple(fm.first, fm.first, arabicFontParams().third))
 		} else
 			^defaultFontMappingFn(family, size) |> (\fm -> Triple(fm.first, fm.first, fm.second / size));
 	};

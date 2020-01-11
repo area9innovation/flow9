@@ -48,7 +48,7 @@ export {
 	downloadPictures = !isUrlParameterFalse("download_pictures");
 	showRedraw = !js && isUrlParameterTrue("redraw");
 
-	makeGlobalCursorListeners(shape : CursorShape2, zorder : [int]) -> Pair<[EventHandler], () -> void>;
+	makeGlobalCursorListeners(shape : CursorShape2, zorder : Transform<[int]>) -> Pair<[EventHandler], () -> void>;
 
 	getCursorShapeName(cursorShape : CursorShape) -> string;
 
@@ -251,7 +251,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 	Text(text, style): {
 		if (!js && extractStruct(style, EscapeHTML(false)).escape) {
 			renderText(text |> escapeHtml, style, available, zorder, tabOrder)
-		} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
+		} else if (js && getRendererType() != "html" && !extractStruct(style, EscapeHTML(false)).escape) {
 			if (extractStruct(style, ParseHTML(true)).parse) {
 				texts = html2text(text, style);
 
@@ -1195,7 +1195,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		if (targetNoFilters()) {
 			// Not supported
 			d;
-		} else if (getUrlParameter("renderer") == "html") {
+		} else if (getRendererType() == "html") {
 			fold(filters, d, \acc, f -> {
 				fn = \clip -> {
 					fils = switch(f : Filters) {
@@ -1382,7 +1382,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			clip = makeClip();
 			setClipDebugInfo(clip, "form", rform);
 
-			cursorListeners = makeGlobalCursorListeners(shape, zorder);
+			cursorListeners = makeGlobalCursorListeners(shape, const(zorder));
 
 			d = renderForm(
 				Interactive(
@@ -1444,63 +1444,27 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		RenderResult(d.clips, widthHeight, d.baseline, d.pending, concat3(d.disposers, unsubs1, unsubs2), d.capabilities);
 	}
 	Crop2(left, top, cwidth, cheight, form, stack): {
-		if (js) {
-			// Opengl does not support setScrollRect, so we will emulate this with
-			// Mask and Translate:
-			// multiplier of 128 is used as a workaround only for Vivante GC1000 video renderer, which doesn't render scale if width or height is more than 100.0
-			// on PixiJS, native cpp and swf targets, re-rendering Graphics with actual width and height, without Scale is 3 times faster
-			// see flowapps/tets/perf_renderform_crop2.flow
-			grSize = 128.0;
-			cw2 = selectu(cwidth, \v -> max(v / grSize, 0.01));
-			ch2 = selectu(cheight, \v -> max(v / grSize, 0.01));
-			mask = Scale(cw2.first, ch2.first,
-				Graphics(
-					[ MoveTo(0.0, 0.0), LineTo(grSize, 0.0), LineTo(grSize, grSize), LineTo(0.0, grSize)
-					, ClosePath() ]
-					, [Fill(0xffffff)])
-			);
-			sl = selectu(left, \l -> -l);
-			st = selectu(top, \t -> -t);
-			renderForm(Mask2(
-				Constructor(
-					Translate(
-						sl.first,
-						st.first,
-						form
-					), \ -> {
-						\ -> {
-							sl.second();
-							st.second();
-							cw2.second();
-							ch2.second();
-						}
-					}
-				),
-				mask, stack
-			), available, zorder, tabOrder);
-		} else {
-			d = renderForm(form, available, zorder, tabOrder);
-			// TODO: Find out if the child supports clipping
-			clip = makeClip();
-			setClipCallstack(clip, stack);
-			setClipDebugInfo(clip, "form", rform);
-			u = select4u(left, top, cwidth, cheight, \l, t, w, h -> {
-				setScrollRect(clip, l, t, w, h);
-			}).second;
-			baseline = make(0.0);
-			widthHeight = select2u(cwidth, cheight, \w,h -> {
-				nextDistinct(baseline, h);
-				WidthHeight(w, h)
-			});
-			disp = widthHeight.second;
-			// Opengl target forbids using any transformation natives on the same clip as setScrollRect
-			caps = if (opengl) ClipCapabilities(false, false, false, false, true) else allClipCapabilities;
-			attachChildren(
-				clip, d.clips, widthHeight.first, baseline, d.pending,
-				arrayPush(d.disposers, \->{ u(); disp(); deleteNative(clip); }),
-				caps
-			);
-		}
+		d = renderForm(form, available, zorder, tabOrder);
+		// TODO: Find out if the child supports clipping
+		clip = makeClip();
+		setClipCallstack(clip, stack);
+		setClipDebugInfo(clip, "form", rform);
+		u = select4u(left, top, cwidth, cheight, \l, t, w, h -> {
+			setScrollRect(clip, l, t, w, h);
+		}).second;
+		baseline = make(0.0);
+		widthHeight = select2u(cwidth, cheight, \w,h -> {
+			nextDistinct(baseline, h);
+			WidthHeight(w, h)
+		});
+		disp = widthHeight.second;
+		// Opengl target forbids using any transformation natives on the same clip as setScrollRect
+		caps = ClipCapabilities(false, false, false, false, true);
+		attachChildren(
+			clip, d.clips, widthHeight.first, baseline, d.pending,
+			arrayPush(d.disposers, \->{ u(); disp(); deleteNative(clip); }),
+			caps
+		);
 	}
 	Access(properties, form) : {
 		role = ref "";
@@ -2642,7 +2606,7 @@ globalCursorOrder : ref Tree<[int], Pair<int, string>> = ref makeTree();
 globalCursorId : ref int = ref 0;
 globalCursorPoint : ref Point = ref Point(-1., -1.);
 
-applyGlobalTopCursor() {
+applyGlobalTopCursor() -> void {
 	switch (popmax(^globalCursorOrder)) {
 		PopResult(k, v, rest): {
 			setCursor(v.second);
@@ -2653,30 +2617,40 @@ applyGlobalTopCursor() {
 	}
 }
 
-filterGlobalCursorOrderByCursorId(curId)
-	globalCursorOrder := foldTree(^globalCursorOrder, makeTree(), \k, v, acc -> {
-		if (v.first == curId)
-			acc
-		else
-			setTree(acc, k, v)
-	});
-
 makeGlobalCursorListeners(
 	shape : CursorShape2,
-	zorder : [int]) -> Pair<[EventHandler], () -> void> {
-
+	zorder : Transform<[int]>
+) -> Pair<[EventHandler], () -> void> {
 	curInside = ref false;
 	curId = ^globalCursorId;
 	globalCursorId := curId + 1;
 	shapeName = ref "auto";
+	uns = ref nop;
+
+	addCursorToTree = \ -> {
+		^uns();
+		uns := makeSubscribeUns(zorder, \z -> {
+			globalCursorOrder := setTree(^globalCursorOrder, z, Pair(curId, ^shapeName));
+
+			[
+				\ -> if (eitherMap(lookupTree(^globalCursorOrder, z), \c -> c.first == curId, false)) {
+					globalCursorOrder := removeFromTree(^globalCursorOrder, z);
+				}
+			]
+		})();
+	}
+
+	removeCursorFromTree = \ -> {
+		^uns();
+		uns := nop;
+	}
 
 	// Deferred so the rolledOver is called after the rolledOut
 	rolledOver = \ -> if (!^curInside) {
 		curInside := true;
 
 		if (^shapeName != "") {
-			globalCursorOrder := setTree(^globalCursorOrder, zorder, Pair(curId, ^shapeName));
-
+			addCursorToTree();
 			applyGlobalTopCursor();
 		}
 	};
@@ -2685,7 +2659,7 @@ makeGlobalCursorListeners(
 		curInside := false;
 
 		if (^shapeName != "") {
-			filterGlobalCursorOrderByCursorId(curId);
+			removeCursorFromTree();
 			applyGlobalTopCursor();
 		}
 	};
@@ -2748,10 +2722,9 @@ makeGlobalCursorListeners(
 
 						if (^curInside) {
 							if (prevShapeName == "" && ^shapeName != "") {
-								globalCursorOrder :=
-									setTree(^globalCursorOrder, zorder, Pair(curId, ^shapeName));
+								addCursorToTree();
 							} else if (^shapeName == "") {
-								filterGlobalCursorOrderByCursorId(curId);
+								removeCursorFromTree();
 							} else {
 								globalCursorOrder :=
 									mapTree2(

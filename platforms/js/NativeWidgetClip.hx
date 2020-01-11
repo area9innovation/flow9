@@ -17,26 +17,10 @@ class NativeWidgetClip extends FlowContainer {
 	public var widgetWidth : Float = -1;
 	public var widgetHeight : Float = -1;
 
+	private var focusRetries : Int = 0;
+
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
-	}
-
-	private function getTransform(?worldTransform : Bool) : Matrix {
-		if (RenderSupportJSPixi.DomRenderer) {
-			if (worldTransform == null) {
-				worldTransform = !RenderSupportJSPixi.RenderContainers;
-			}
-
-			if (!worldTransform) {
-				untyped this.transform.updateLocalTransform();
-			}
-
-			return worldTransform ? untyped this.worldTransform : untyped this.localTransform;
-		} else if (accessWidget != null) {
-			return accessWidget.getTransform();
-		} else {
-			return this.worldTransform;
-		}
 	}
 
 	private override function createNativeWidget(?tagName : String = "div") : Void {
@@ -50,7 +34,7 @@ class NativeWidgetClip extends FlowContainer {
 		updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			if (accessWidget == null) {
 				accessWidget = new AccessWidget(this, nativeWidget);
 			} else {
@@ -77,7 +61,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.width = '${untyped getWidgetWidth()}px';
 		nativeWidget.style.height = '${untyped getWidgetHeight()}px';
 
-		if (!RenderSupportJSPixi.DomRenderer) {
+		if (RenderSupportJSPixi.RendererType != "html") {
 			var viewBounds = getViewBounds();
 
 			if (viewBounds != null) {
@@ -95,6 +79,15 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function setFocus(focus : Bool) : Bool {
 		if (nativeWidget != null) {
+			if (untyped nativeWidget.parentNode == null && !this.destroyed && this.focusRetries < 3) {
+				focusRetries++;
+				RenderSupportJSPixi.once("drawframe", function() { setFocus(focus); });
+
+				return true;
+			}
+
+			focusRetries = 0;
+
 			if (focus && nativeWidget.focus != null && !getFocus()) {
 				nativeWidget.focus();
 
@@ -158,10 +151,10 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function calculateWidgetBounds() : Void {
-		widgetBounds.minX = 0;
-		widgetBounds.minY = 0;
-		widgetBounds.maxX = getWidth();
-		widgetBounds.maxY = getHeight();
+		widgetBounds.minX = 0.0;
+		widgetBounds.minY = 0.0;
+		widgetBounds.maxX = DisplayObjectHelper.ceil(getWidth());
+		widgetBounds.maxY = DisplayObjectHelper.ceil(getHeight());
 	}
 
 	public function getWidth() : Float {

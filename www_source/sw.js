@@ -1,8 +1,9 @@
+var SERVICE_WORKER_VERSION = 4;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
 
-var SHARED_DATA_ENDPOINT = "share/pwa/data";
+var SHARED_DATA_ENDPOINT = 'share/pwa/data.php';
 
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
@@ -18,6 +19,17 @@ var CacheMode = {
 }
 
 // Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
+// The structure of `requestsCacheFilter` is
+//  [{
+//    url /*string*/,
+//    methods : [{
+//      method /*string*/,
+//      parameters : [{
+//        keyValues : [{ key /*string*/, value /*string*/ }],
+//        ignoreKeys : [ /*string*/ ]
+//      }]
+//    }]
+//  }]
 var requestsCacheFilter = [];
 
 function initializeCacheStorage() {
@@ -26,6 +38,16 @@ function initializeCacheStorage() {
       console.log('Opened cache');
       return Promise.resolve();
     });
+}
+
+function isEmpty(v) {
+  return (
+    (typeof v === "undefined") ||
+    (v === null) ||
+    ((typeof v === "string") && (v == "")) ||
+    (Array.isArray(v) && (v.length == 0)) ||
+    ((typeof v === "object") && (Object.keys(v).length == 0))
+  );
 }
 
 // Adding base url if the given url is relative (starts with ./)
@@ -45,9 +67,9 @@ var urlAddBaseLocation = function(url) {
 var extractUrlParameters = function(url) {
   var urlSplitted = url.split("?");
   if (urlSplitted.length > 1) {
-    return { baseUrl : urlSplitted[0], parameters : urlSplitted.slice(1).join("?").split("&") };
+    return { baseUrl: urlSplitted[0], parameters: urlSplitted.slice(1).join("?").split("&") };
   } else {
-    return { baseUrl : url, parameters : [] };
+    return { baseUrl: url, parameters: [] };
   }
 }
 
@@ -86,58 +108,148 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
+  // Here we trying to recognize file uploading request to skip it in cache operations then
+  var isFileUploadingRequestFn = function(request) {
+    if (request.method == "POST" && request.headers.has("Content-Type")) {
+      var ctValue = request.headers.get("Content-Type").toLowerCase();
+      return ctValue.includes("multipart/form-data") && ctValue.includes("boundary=");
+    } else {
+      return false;
+    }
+  }
+
+  // Is it a static request?
+  var isStaticCachingFn = function(url) {
+    var requestUrl = (new URL(request.url)).pathname,
+      parts,
+      ext = (parts = requestUrl.split("/").pop().split(".")).length > 1 ? parts.pop() : "";
+    var name = (parts.length > 0 ? parts.pop() : "");
+
+    return (CacheMode.CacheStaticContent && !isEmpty(ext) && (
+      !dynamicResourcesExtensions.includes("." + ext) ||
+      "stamp.php" == name + "." + ext));
+  }
+
+  // Creation a requestData for GET requests
+  var createRequestDataGET = function(request) {
+    var fixedUrl = urlAddBaseLocation(request.url);
+    var urlSplitted = extractUrlParameters(fixedUrl);
+    var requestUrl = urlSplitted.baseUrl;
+    var glueSymb = "?";
+
+    if (request.method == "GET") {
+      var cacheFilter = findCacheFilter(fixedUrl, request.method, false);
+      var fixedUrlToCache = request.url;
+      if (!isEmpty(cacheFilter)) {
+        fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
+      }
+
+      return requestData = {
+        urlNewFull: fixedUrl,
+        urlNewToCache: fixedUrlToCache,
+        isCustomCaching: (!isEmpty(cacheFilter)),
+        isStaticCaching: isStaticCachingFn(event.request.url),
+        customCacheFilter: cacheFilter,
+        originalRequest: request,
+        isFileUploading: isFileUploadingRequestFn(request),
+        cloneRequest: function() { return request.clone(); }
+      };
+    } else {
+      return null;
+    }
+  }
+
   // Creation Promise, which `converts` POST request into GET request
   var getFixedRequestUrl = function(request) {
     var fixedUrl = urlAddBaseLocation(request.url);
     var urlSplitted = extractUrlParameters(fixedUrl);
     var requestUrl = urlSplitted.baseUrl;
     var glueSymb = "?";
+    var isFileUploadingRequest = isFileUploadingRequestFn(request);
 
     if (request.method == "POST") {
-      if (urlSplitted.parameters.length != 0) {
-        requestUrl += glueSymb + urlSplitted.parameters.join("&");
-        glueSymb = "&";
-      }
-
-      return request.clone().text().then(function(reqParamsText) {
-        var formDataText = undefined;
-        // We add form data (POST parameters) into GET request url string
-        if (reqParamsText !== null && reqParamsText !== undefined && reqParamsText != "") {
-          formDataText = reqParamsText;
-          requestUrl += glueSymb + reqParamsText;
+      if (!isFileUploadingRequest) {
+        if (urlSplitted.parameters.length != 0) {
+          requestUrl += glueSymb + urlSplitted.parameters.join("&");
+          glueSymb = "&";
         }
 
-        return { urlNewFull : requestUrl, formDataText : formDataText };
-      }).catch(function() {
-        return { urlNewFull : fixedUrl, formDataText : undefined };
-      });
+        return request.clone().text().then(function(reqParamsText) {
+          // We add form data (POST parameters) into GET request url string
+          if (!isEmpty(reqParamsText)) {
+            requestUrl += glueSymb + reqParamsText;
+          }
+
+          return { urlNewFull: requestUrl, isFileUploading: isFileUploadingRequest };
+        }).catch(function() {
+          return { urlNewFull: fixedUrl, isFileUploading: isFileUploadingRequest };
+        });
+      } else {
+        return Promise.resolve({ urlNewFull: fixedUrl, isFileUploading: isFileUploadingRequest });
+      }
     } else {
-      return Promise.resolve({ urlNewFull : fixedUrl, formDataText : undefined });
+      return Promise.resolve({ urlNewFull: fixedUrl, isFileUploading: isFileUploadingRequest });
     }
   }
 
   // Searching the filter to which the request is match
-  var findCacheFilter = function(fixedUrl, method) {
-    return requestsCacheFilter.find(function(el) {
-      var resUrl = true;
-      var resMethod = true;
-      var resParameters = true;
+  var findCacheFilter = function(fixedUrl, method, checkWithoutParameters) {
+    fixedUrl = fixedUrl.toLowerCase();
+    method = method.toLowerCase();
+    var urlParams = extractUrlParameters(fixedUrl).parameters;
 
-      if (el.cacheIfUrlMatch != "") {
-        el.cacheIfUrlMatch = urlAddBaseLocation(el.cacheIfUrlMatch);
-        resUrl = fixedUrl.startsWith(el.cacheIfUrlMatch);
-      }
-      if (el.method != "") resMethod = (method == el.method);
-      if (el.cacheIfParametersMatch.length > 0) {
-        var urlParams = extractUrlParameters(fixedUrl).parameters.map(function(v) { return v.toLowerCase(); });
-        
-        resParameters = el.cacheIfParametersMatch.every(function(pair) {
-          return urlParams.includes(pair[0] + "=" + pair[1]);
-        });
-      }
+    var cFilters = requestsCacheFilter.map(function(elUrl) {
+        // Does url matched
+        if (elUrl.url == "" || fixedUrl.startsWith(elUrl.url)) {
+          methods = elUrl.methods.map(function(elMethod) {
+              // Does method matched
+              if (elMethod.method == "" || elMethod.method == method) {
+                if (elMethod.parameters.length == 0 || checkWithoutParameters) {
+                  return [{ method: elMethod.method, parameters: [], ignoreKeys: [] }];
+                } else {
+                  var checkRequestParameters = function(parameter) {
+                    return parameter.keyValues.every(function(keyValue) {
+                      var pair = (keyValue.key + "=" + keyValue.value);
+                      return (urlParams.findIndex(function(up) {
+                        return (pair == up);
+                      }) != -1);
+                    });
+                  };
 
-      return resUrl && resMethod && resParameters;
-    });
+                  return elMethod.parameters.filter(function(parameter) {
+                      return parameter.keyValues.length == 0 || checkRequestParameters(parameter);
+                    })
+                    .map(function(parameter) {
+                      return { method: elMethod.method, parameters: parameter.keyValues, ignoreKeys: parameter.ignoreKeys };
+                    });
+                }
+              }
+            })
+            .filter(function(elMethod) { return elMethod != undefined; })
+            .flat();
+
+          if (methods.length > 0) {
+            return methods.map(function(elMethod) {
+              return { url: elUrl.url, method: elMethod.method, parameters: elMethod.parameters, ignoreKeys: elMethod.ignoreKeys };
+            });
+          } else {
+            return undefined;
+          }
+        } else {
+          return undefined;
+        }
+      })
+      .filter(function(el1) { return el1 != undefined; })
+      .flat();
+
+    if (cFilters.length > 0) return cFilters[0];
+    else return undefined;
+  }
+
+  // Searching the filter to which the request is match (without parameters)
+  var findCacheFilterSimple = function(request) {
+    var fixedUrl = urlAddBaseLocation(request.url);
+    return findCacheFilter(fixedUrl, request.method, true);
   }
 
   // SW does not allow to cache POST requests, so we create GET from the POST
@@ -159,6 +271,43 @@ self.addEventListener('fetch', function(event) {
     }
   }
 
+  // SW does not allow to cache POST requests, so we create GET from the POST
+  var createIfNoneMatchRequest = function(requestData, etag) {
+    var requestCloned = requestData.cloneRequest();
+    var headers = new Headers();
+    requestCloned.headers.forEach(function(val, key) {
+      headers.set(key, val);
+    });
+    headers.set('If-None-Match', etag);
+    return (new Request(requestCloned.url, {
+      method: requestCloned.method,
+      headers: headers,
+      body: requestCloned.body,
+      mode: 'same-origin',
+      credentials: requestCloned.credentials,
+      cache: requestCloned.cache,
+      redirect: requestCloned.redirect,
+      referrer: requestCloned.referrer,
+      integrity: requestCloned.integrity
+    }));
+  }
+
+  // Clean all previous caches for sensitive to timestamp requests
+  var cleanTimestampSensitiveRequests = function(originalUrl) {
+    var url = new URL(originalUrl);
+
+    // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
+    return isStampForApplicationJsRequest().then(function() {
+      return caches.open(CACHE_NAME).then(function(cache) {
+        // Clean all previous stamp.php caches (sensitive to timestamp)
+        return cache.delete(self.registration.scope + "php/stamp.php", { ignoreSearch: true }).then(function() {
+          // Clean all previous application.js caches (sensitive to timestamp)
+          return cache.delete(self.registration.scope + url.searchParams.get("file"), { ignoreSearch: true });
+        });
+      });
+    }).catch(function() { return null; });
+  }
+
   var isStampForApplicationJsRequest = function() {
     if (!event.clientId) return Promise.reject();
     var url = new URL(event.request.url);
@@ -173,92 +322,122 @@ self.addEventListener('fetch', function(event) {
     });
   }
 
-  var getResourceFromCache = function(requestData, ignoreSearch) {
-    return caches.match(prepareRequestToCache(requestData), { ignoreSearch: (ignoreSearch && !requestData.isCustomCaching) })
-      .then(function(response) {
-        if (!response) {
-          return Promise.reject();
-        }
-
-        sendMessageToClient(event, {
-          msg: "Responded with cache:",
-          url: requestData.originalRequest.url,
-          urlCached: requestData.urlNewToCache
-        });
-        
-        return response;
-      });
+  // Should we skip this request?
+  var checkRequestForSkipping = function(request, requestData) {
+    // Do not process files uploading requests
+    return isFileUploadingRequestFn(request) ||
+      // We disable Range requests for a while
+      !isEmpty(request.headers.get('range')) ||
+      (
+        // Skip if is not a web resource
+        !isStaticCachingFn(request.url) &&
+        // Skip GET request which do not match any custom filter
+        (isEmpty(requestData) || !requestData.isCustomCaching)) &&
+      // Skip POST request which url is not match any filter (without parameters)
+      isEmpty(findCacheFilterSimple(request));
   }
 
-  var getCachedResource = function(requestData) {
+  function getResourceFromCache(requestData, ignoreSearch) {
+    if (requestData.isFileUploading) {
+      // We don't cache file uploading request, so we skip the step of request searching in cache
+      return Promise.reject();
+    } else {
+      return caches.match(prepareRequestToCache(requestData), { ignoreSearch: (ignoreSearch && !requestData.isCustomCaching) })
+        .then(function(response) {
+          if (!response) {
+            return Promise.reject();
+          }
+
+          sendMessageToClient(event, {
+            msg: "Responded with cache:",
+            url: requestData.originalRequest.url,
+            urlCached: requestData.urlNewToCache
+          });
+
+          return response.clone();
+        });
+    }
+  }
+
+  function getCachedResource(requestData) {
     // Ignore search string if that is request to stamp.php for application.js file
     return isStampForApplicationJsRequest()
       .then(function() {
         return getResourceFromCache(requestData, true);
       }).catch(function() {
-        return getResourceFromCache(requestData, false); 
+        return getResourceFromCache(requestData, false);
       });
-  };
-  
-  var fetchResource = function(requestData) {
-    return fetch(requestData.cloneRequest()).then(function(response) {
-      if (response.status == 200 && response.type == "basic") {
-        fixedRequest = prepareRequestToCache(requestData);
-        // Cache the request if it's match any customized filter
-        if (requestData.isCustomCaching) {
-          caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
-            cache.put(fixedRequest, response.clone());
+  }
 
-            sendMessageToClient(event, {
-              msg: "Cached resource:",
-              url: requestData.originalRequest.url,
-              urlCached: fixedRequest.url
-            });
+  function fetchResource(requestData, checkIfNotModified) {
+    var doCacheFn = function(response) {
+      var fixedRequest = prepareRequestToCache(requestData);
+      var usedCacheName = CACHE_NAME;
+      if (requestData.isCustomCaching) usedCacheName = CACHE_NAME_DYNAMIC;
+
+      // Cache the request if it's match any customized filter or
+      // automatically cache uncached static resources
+      if (requestData.isCustomCaching || requestData.isStaticCaching) {
+        caches.open(usedCacheName).then(function(cache) {
+          cache.put(fixedRequest, response.clone());
+
+          sendMessageToClient(event, {
+            msg: "Cached resource:",
+            url: requestData.originalRequest.url,
+            urlCached: fixedRequest.url
           });
-        // Automatically cache uncached static resources
-        } else if (CacheMode.CacheStaticContent) {
-          var url = new URL(requestData.originalRequest.url);
+        });
+      }
+    };
 
-          Promise.all(dynamicResourcesExtensions.map(function(resourceName) {
-            if (!url.pathname.endsWith(resourceName)) {
-              return Promise.resolve();
+    var doFetchFn = function() {
+      return fetch(requestData.cloneRequest()).then(function(response) {
+        if (response.status == 200 && response.type == "basic") {
+          doCacheFn(response);
+        }
+
+        return response.clone();
+      });
+    };
+
+    if (requestData.isFileUploading) {
+      // We can't to clone file uploading request, so we processing it as is, without caching
+      return fetch(requestData.cloneRequest())
+        .then(function(response) { return response.clone(); });
+    } else {
+      if (checkIfNotModified) {
+        return getCachedResource(requestData)
+          .then(function(responseCache) {
+            var etag = responseCache.headers.get('etag');
+            if (isEmpty(etag)) {
+              return doFetchFn();
             } else {
-              // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
-              return isStampForApplicationJsRequest().then(function() {
-                return caches.open(CACHE_NAME).then(function(cache) {
-                  // Clean all previous stamp.php caches (sensitive to timestamp)
-                  return cache.delete(self.registration.scope + "php/stamp.php", { ignoreSearch: true }).then(function() {
-                    // Clean all previous application.js caches (sensitive to timestamp)
-                    return cache.delete(self.registration.scope + url.searchParams.get("file"), { ignoreSearch: true });
-                  });
-                });
+              return fetch(createIfNoneMatchRequest(requestData, etag)).then(function(response) {
+                if (response.status == 200 && response.type == "basic") {
+                  doCacheFn(response);
+                  return response.clone();
+                } else if (response.status == 304 && response.type == "basic") {
+                  return responseCache.clone();
+                } else {
+                  return response.clone();
+                }
               });
             }
-          })).then(function() {
-            caches.open(CACHE_NAME).then(function(cache) {
-              cache.put(fixedRequest, response.clone());
-
-              sendMessageToClient(event, {
-                msg: "Cached resource:",
-                url: requestData.originalRequest.url,
-                urlCached: fixedRequest.url
-              });
-            });
-          }).catch(function() { return null; })
-        }
+          })
+          .catch(doFetchFn);
+      } else {
+        return doFetchFn();
       }
-
-      return response.clone();
-    });
+    }
   }
 
   function buildResponse(requestData) {
     if (CacheMode.PreferCachedResources) {
       return getCachedResource(requestData).catch(function() {
-        return fetchResource(requestData);
+        return fetchResource(requestData, false);
       });
     } else {
-      return fetchResource(requestData).catch(function() {
+      return fetchResource(requestData, true).catch(function() {
         return getCachedResource(requestData);
       });
     }
@@ -313,7 +492,9 @@ self.addEventListener('fetch', function(event) {
                 return new Response(null, {
                   status: 416,
                   statusText: 'Range Not Satisfiable',
-                  headers: [['Content-Range', '*/' + arrayBuffer.byteLength]]
+                  headers: [
+                    ['Content-Range', '*/' + arrayBuffer.byteLength]
+                  ]
                 });
               }
             });
@@ -323,30 +504,38 @@ self.addEventListener('fetch', function(event) {
       });
   }
 
-  function makeResponse(request) {
-    return getFixedRequestUrl(request)
-    .then(function(urlAndBody) {
-      var cacheFilter = findCacheFilter(urlAndBody.urlNewFull, request.method);
-      var fixedUrlToCache = urlAndBody.urlNewFull;
-      if (cacheFilter !== undefined) {
-        fixedUrlToCache = filterUrlParameters(urlAndBody.urlNewFull, cacheFilter.ignoreParameterKeysOnCache);
-      }
-
-      return {
-        urlNewFull : urlAndBody.urlNewFull,
-        urlNewToCache : fixedUrlToCache,
-        isCustomCaching : (cacheFilter !== undefined),
-        customCacheFilter : cacheFilter,
-        formDataText : urlAndBody.formDataText,
-        originalRequest : request,
-        cloneRequest : function() { return request.clone(); }
-      };
-    })
-    .then(function(requestData) {
-      if (requestData.originalRequest.headers.get('range')) {
-        return buildRangeResponse(requestData);
+  function makeResponse(request, requestData) {
+    var fn = function() {
+      if (requestData != null) {
+        return Promise.resolve(requestData);
       } else {
-        return buildResponse(requestData);
+        return getFixedRequestUrl(request)
+          .then(function(urlAndBody) {
+            var cacheFilter = findCacheFilter(urlAndBody.urlNewFull, request.method, false);
+            var fixedUrlToCache = urlAndBody.urlNewFull;
+            if (!isEmpty(cacheFilter)) {
+              fixedUrlToCache = filterUrlParameters(urlAndBody.urlNewFull, cacheFilter.ignoreKeys);
+            }
+
+            return {
+              urlNewFull: urlAndBody.urlNewFull,
+              urlNewToCache: fixedUrlToCache,
+              isCustomCaching: !isEmpty(cacheFilter),
+              isStaticCaching: isStaticCachingFn(event.request.url),
+              customCacheFilter: cacheFilter,
+              originalRequest: request,
+              isFileUploading: urlAndBody.isFileUploading,
+              cloneRequest: function() { return request.clone(); }
+            };
+          });
+      }
+    };
+
+    return fn().then(function(requestData2) {
+      if (requestData2.originalRequest.headers.get('range')) {
+        return buildRangeResponse(requestData2);
+      } else {
+        return buildResponse(requestData2);
       }
     });
   }
@@ -363,19 +552,26 @@ self.addEventListener('fetch', function(event) {
     event.respondWith(
       caches.open(SHARED_DATA_ENDPOINT).then(cache => {
         if (method == "POST") {
-          return request.text().then(body => {
-            cache.put(SHARED_DATA_ENDPOINT, new Response(body));
+          return request.json().then(data => {
+            cache.put(SHARED_DATA_ENDPOINT + '/' + data.key, new Response(data.value));
             return new Response("OK");
           });
         } else {
-          return cache.match(SHARED_DATA_ENDPOINT).then(response => {
+          return cache.match(SHARED_DATA_ENDPOINT + '/' + new URL(request.url).searchParams.get('key')).then(response => {
             return response || new Response("");
           }) || new Response("");
         }
       })
     );
   } else {
-    event.respondWith(makeResponse(event.request));
+    cleanTimestampSensitiveRequests(event.request.url);
+    var requestData = createRequestDataGET(event.request);
+
+    if (checkRequestForSkipping(event.request, requestData)) {
+      return;
+    } else {
+      event.respondWith(makeResponse(event.request, requestData));
+    }
   }
 });
 
@@ -385,13 +581,19 @@ var cleanServiceWorkerCache = function() {
 
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
-      if (CACHE_NAME != key) {
+      if (CACHE_NAME != key && SHARED_DATA_ENDPOINT != key) {
         console.log("cache cleared", key);
         return caches.delete(key);
       }
     }));
   });
 };
+
+self.addEventListener('install', event => {
+  self.skipWaiting();
+
+  event.waitUntil(Promise.resolve());
+});
 
 self.addEventListener('activate', function(event) {
   // this cache is only for session
@@ -451,14 +653,14 @@ self.addEventListener('message', function(event) {
 
   var checkUrlsInCache = function(urls) {
     return Promise.all(urls.map(function(url) {
-      return caches.match(urlAddBaseLocation(url), { ignoreSearch: false })
-      .then(function(response) {
-        if (response) return url;
-        else return "";
-      }).catch(function() { return ""; })
-    })).then(function(urls2) { return urls2.filter(function(url) { return url != ""; }); })
-    .then(function(urls2) { return { "urls" : urls2, status: "OK" }; })
-    .catch(function() { return { "urls" : [], status: "Failed" }; });
+        return caches.match(urlAddBaseLocation(url), { ignoreSearch: false })
+          .then(function(response) {
+            if (response) return url;
+            else return "";
+          }).catch(function() { return ""; })
+      })).then(function(urls2) { return urls2.filter(function(url) { return url != ""; }); })
+      .then(function(urls2) { return { "urls": urls2, status: "OK" }; })
+      .catch(function() { return { "urls": [], status: "Failed" }; });
   };
 
   if (event.data.action == "get_cache_version") {
@@ -486,9 +688,59 @@ self.addEventListener('message', function(event) {
   } else if (event.data.action == "clean_cache_storage") {
     respondWithStatus(cleanServiceWorkerCache());
   } else if (event.data.action == "requests_cache_filter") {
-    if (!requestsCacheFilter.includes(event.data.data))
-      requestsCacheFilter.push(event.data.data);
-    respond({status: "OK"});
+    event.data.data.cacheIfUrlMatch = urlAddBaseLocation(event.data.data.cacheIfUrlMatch).toLowerCase();
+    event.data.data.method = event.data.data.method.toLowerCase();
+    //event.data.data.cacheIfParametersMatch = event.data.data.cacheIfParametersMatch.map(function(el) { return el .toLowerCase();; });
+    event.data.data.ignoreParameterKeysOnCache = event.data.data.ignoreParameterKeysOnCache.map(function(el) { return el.toLowerCase();; });
+
+    var isEqualStrings = function(str1, str2) {
+      return ((isEmpty(str1) && isEmpty(str2)) || (str1 === str2));
+    }
+
+    var getNotEmptyString = function(str) {
+      if (isEmpty(str)) return "";
+      else return str;
+    }
+
+    var idx1 = requestsCacheFilter.findIndex(function(el) { return isEqualStrings(event.data.data.cacheIfUrlMatch, el.url); });
+    if (idx1 == -1) {
+      requestsCacheFilter.push({ url: getNotEmptyString(event.data.data.cacheIfUrlMatch), methods: [] });
+      idx1 = requestsCacheFilter.length - 1;
+    }
+
+    var idx2 = requestsCacheFilter[idx1].methods.findIndex(function(el) {
+      return isEqualStrings(event.data.data.method, el.method);
+    });
+    if (idx2 == -1) {
+      requestsCacheFilter[idx1].methods.push({ method: getNotEmptyString(event.data.data.method), parameters: [] });
+      idx2 = requestsCacheFilter[idx1].methods.length - 1;
+    }
+
+    var idx3 = requestsCacheFilter[idx1].methods[idx2].parameters.findIndex(function(els) {
+      if (els.keyValues.length == event.data.data.cacheIfParametersMatch.length) {
+        return event.data.data.cacheIfParametersMatch.every(function(pair) {
+          return (pair.length == 2 && els.keyValues.findIndex(function(kv) {
+            return (isEqualStrings(kv.key, pair[0]) && isEqualStrings(kv.value, pair[1]));
+          }) != -1);
+        });
+      } else {
+        return false;
+      }
+    });
+
+    if (idx3 == -1) {
+      requestsCacheFilter[idx1].methods[idx2].parameters.push({
+        keyValues: event.data.data.cacheIfParametersMatch.map(function(pair) { return { key: pair[0], value: pair[1] }; }),
+        ignoreKeys: event.data.data.ignoreParameterKeysOnCache
+      });
+    } else {
+      requestsCacheFilter[idx1].methods[idx2].parameters[idx3] = {
+        keyValues: event.data.data.cacheIfParametersMatch.map(function(pair) { return { key: pair[0], value: pair[1] }; }),
+        ignoreKeys: event.data.data.ignoreParameterKeysOnCache
+      };
+    }
+
+    respond({ status: "OK" });
   } else if (event.data.action == "load_and_cache_urls") {
     respondWithStatus(
       Promise.all(event.data.data.urls.map(function(url) {
@@ -497,5 +749,9 @@ self.addEventListener('message', function(event) {
     );
   } else if (event.data.action == "check_urls_in_cache") {
     checkUrlsInCache(event.data.data.urls).then(respond);
+  } else if (event.data.action == "get_service_worker_version") {
+    respond({ data: SERVICE_WORKER_VERSION });
+  } else {
+    respond({ status: "Failed", error: "Unknown operation: " + event.data.action });
   }
 });

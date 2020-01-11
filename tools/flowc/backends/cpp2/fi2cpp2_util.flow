@@ -3,9 +3,10 @@ import tools/flowc/incremental/fiprettyprint;
 
 export {
 
-cpp2wrLine(o : ref List<string>, lines : [string]) -> void;
-cpp2wrArray(cnt : int, per_line : int, head : string, indent : string, tail_ : string, f : (int) -> string) -> string;
-cpp2writeLines(lines : List<string>, path : string) -> void;
+cpp2wrLines(o : ref List<string>, lines : [string]) -> void;
+cpp2wrArray( o : ref List<string>, cnt : int, per_line : int, f : (int) -> string) -> void;
+cpp2AddLines(writer : Cpp2Writer, lines : [string], path : string) -> void;
+cpp2writeSources(writer : Cpp2Writer) -> void;
 
 cpp2FnMethodName(n : string) -> string;
 cpp2ClosureMethodName(n : string, idx : int) -> string;
@@ -16,7 +17,6 @@ cpp2GetStructAType(t : FiTypeNullable) -> Cpp2TagType;
 cpp2IsStructFieldTag(type : Cpp2TagType) -> bool;
 cpp2StructFieldCode(type : Cpp2TagType) -> string;
 cpp2IsNonGCFieldType(type : Cpp2TagType) -> bool;
-cpp2PlaceInfoIsClosureRef(info : Cpp2PlaceInfo) -> bool;
 cpp2PlaceInfoIsLValue(info : Cpp2PlaceInfo) -> bool;
 
 cpp2PlaceInfo(env: Maybe<Cpp2Environment>, place: Cpp2PlaceType, slot: int, name : string) -> Cpp2PlaceInfo;
@@ -34,7 +34,7 @@ cpp2PlaceInfoGetStructAddr(info : Cpp2PlaceInfo, ctx : Cpp2Context) -> string;
 cpp2CodeLines(parent : Maybe<Cpp2CodeLines>) -> Cpp2CodeLines;
 cpp2CodeLinesToCode(code : Cpp2CodeLines) -> string;
 
-cpp2Environment(parent : Maybe<Cpp2Environment>, mname : string, vname : string, nargs : int, struct_list : [Cpp2StructInfo]) -> Cpp2Environment;
+cpp2Environment(writer : Cpp2Writer, parent : Maybe<Cpp2Environment>, mname : string, vname : string, nargs : int, struct_list : [Cpp2StructInfo]) -> Cpp2Environment;
 cpp2EnvironmentStashGlobalMeta(env : Cpp2Environment) -> void;
 cpp2EnvironmentRestoreGlobalMeta(env : Cpp2Environment) -> void;
 cpp2EnvironmentMklocal(env : Cpp2Environment, name : string) -> Cpp2PlaceInfo;
@@ -43,9 +43,9 @@ cpp2EnvironmentMkupvalue(env : Cpp2Environment, name : string, free : Cpp2PlaceI
 cpp2EnvironmentPoplocal(env : Cpp2Environment, name : string, olddef : Cpp2PlaceInfo) -> void;
 
 cpp2Context(env : Cpp2Environment, indent : string) -> Cpp2Context;
-cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string;
-cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, fname : string, ftype : Cpp2TagType) -> string;
-cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string;
+cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, struct_name : string, init : bool) -> string;
+cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, struct_name : string, fname : string, ftype : Cpp2TagType) -> string;
+cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, struct_name : string, init : bool) -> string;
 cpp2ContextEnter(ctx : Cpp2Context, idelta : string) -> Cpp2Context;
 cpp2ContextExit(ctx : Cpp2Context) -> void;
 cpp2ContextWr(ctx : Cpp2Context, s : string) -> void;
@@ -67,27 +67,22 @@ cpp2GetPrimitiveTag(t : FiTypeNullable) -> Cpp2TagType;
 
 }
 
-cpp2wrLine(o : ref List<string>, lines : [string]) -> void {
-	iter(lines, \line -> rlistPush(o, line + "\n"));
+cpp2wrLines(o : ref List<string>, lines : [string]) -> void {
+	iter(lines, \line -> rlistPush(o, line));
 }
 
-cpp2wrArray(cnt : int, per_line : int, head : string, indent : string, tail_ : string, f : (int) -> string) -> string {
-	if (cnt <= 0) "" else {
-		head + 
-		fold(enumFromTo(0, cnt - 1), "", 
-			\acc, i -> {
-				f(i) +
-				if (i < cnt - 1) {
-					if ((i + 1) % per_line != 0) {
-						", "
-					} else {
-						",\n" + indent
-					}
-				} else {
-					tail_
-				}
-			}
-		)
+cpp2wrArray(o : ref List<string>, cnt : int, per_line : int, f : (int) -> string) -> void {
+	if (cnt > 0) {
+		delim = \i, j -> if (i * per_line + j < cnt - 1) "," + (if (j + 1 < per_line) " " else "") else "";
+		n_full_lines = cnt / per_line;
+		fori(0, n_full_lines - 1, \i ->
+			rlistPush(o, fold(enumFromTo(0, per_line - 1), "    ", \acc, j ->
+				acc + f(i * per_line + j) + delim(i, j)
+			))
+		);
+		rlistPush(o, fold(enumFromTo(0, cnt % per_line - 1), "    ", \acc, j ->
+			acc + f(n_full_lines * per_line + j) + delim(n_full_lines, j)
+		));
 	}
 }
 
@@ -99,11 +94,34 @@ cpp2ClosureMethodName(n : string, idx : int) -> string {
 	"cl_" + i2s(idx) + "_" + n
 }
 
-cpp2writeLines(lines : List<string>, path : string) -> void {
-	fcPrintln("writing to: " + path);
-	if (!setFileContent(path, list2string(lines))) {
-		cpp2_error("writing to file " + path + "failed");
+cpp2AddLines(writer : Cpp2Writer, new_lines : [string], path : string) -> void {
+	switch (lookupTree(writer.compiled_targets, path)) {
+		Some(old_lines): refConcat(old_lines, new_lines);
+		None(): {
+			header =
+			if (endsWith(path, ".cpp")) {
+				ref ["#" + "include \"gen_common.h\""]
+			} else {
+				ref[]
+			}
+			refConcat(header, new_lines);
+			writer.compiled_targets ::= setTree(writer.compiled_targets, path, header);
+		}
 	}
+}
+
+cpp2writeSources(writer : Cpp2Writer) -> void {
+	traverseInOrder(writer.compiled_targets, \path, lines -> {
+			if (writer.config.verbose > 0) {
+				fcPrintln("writing to: " + path, writer.config.threadId);
+			}
+			src = concatStrings(map(^lines, \line -> line + "\n"));
+			ensureDirectoryExists(dirName(path));
+			if (!setFileContent(path, src)) {
+				cpp2_error("writing to file " + path + "failed");
+			}
+		}
+	)
 }
 
 cpp2ClearMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata {
@@ -119,14 +137,6 @@ cpp2ClearMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata {
 }
 
 cpp2CopyMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata {
-	/*var rv = Reflect.copy(meta);
-	if (rv.known_fields != null)
-		rv.known_fields = rv.known_fields.list();
-	if (rv.known_compares != null)
-		rv.known_compares = rv.known_compares.list();
-	if (rv.struct_ptr_types != null)
-		rv.struct_ptr_types = rv.struct_ptr_types.list();
-	return rv;*/
 	Cpp2PlaceMetadata(
 		meta.context,
 		meta.dirty,
@@ -140,29 +150,6 @@ cpp2CopyMeta(meta : Cpp2PlaceMetadata) -> Cpp2PlaceMetadata {
 		meta.struct_ptr_types
 	)
 }
-
-/*
-cpp2_meta_merge_fn : [flow] = [
-		\a : flow, b : flow -> if (a == b) a else None(),
-		\a : flow, b : flow -> if (a == b) a else None(),
-		\a : Maybe<int>, b : Maybe<int> ->
-			eitherMap(b, \bi -> eitherMap(a, \ai -> ai > bi, None()) ,None()),
-		\a : Maybe<int>, b : Maybe<int> -> if (a == b) a else None(),
-		function(a : List<string>, b : Maybe<List<string>>) {
-			return if (b == null) null
-			else a.filter(function(v) { return b.has(v); });
-		},
-		function(a : List<CppPlaceInfo>,b : Maybe<List<CppPlaceInfo>>) {
-			return if (b == null) null
-			else a.filter(function(v) { return b.has(v); });
-		},
-		function(a:Maybe<int>,b:Maybe<int>) { return if (b == null) null else if (a > b) b else a; },
-		function(a : List<string>, b : Maybe<List<string>>) {
-			return if (b == null) null
-			else a.filter(function(v) { return b.has(v); });
-		},
-	];
-*/
 
 cpp2TagToString(tag : Cpp2TagType) -> string {
 	switch (tag) {
@@ -238,7 +225,6 @@ cpp2IsNonGCFieldType(type : Cpp2TagType) -> bool {
 	}
 }
 
-
 // Cpp2PlaceInfo methods
 cpp2PlaceInfo(env: Maybe<Cpp2Environment>, place: Cpp2PlaceType, slot: int, name : string) -> Cpp2PlaceInfo {
 	cpp2PlaceInfoMeta(
@@ -312,9 +298,9 @@ cpp2PlaceInfoGetLValue(info : Cpp2PlaceInfo) -> string {
 	if (info.lvalue != "") info.lvalue else {
 		lval = switch (info.place) {
 			Cpp2GlobalVar():
-				cpp2_GLOBALS + i2s(info.slot) + cpp2_CMSTART + info.name + cpp2_CMENDBR;
+				"getSelf(RUNNER)->globals[" + i2s(info.slot) + "/*" + info.name + "*/]";
 			Cpp2Local():
-				cpp2_LOCALS + i2s(info.slot) + cpp2_CMSTART + info.name +  cpp2_CMENDBR;
+				"locals[" + i2s(info.slot) + "/*" + info.name +  "*/]";
 			Cpp2Argument(): {
 				switch (info.env) {
 					Some(e): e.args_used ::= true;
@@ -322,13 +308,14 @@ cpp2PlaceInfoGetLValue(info : Cpp2PlaceInfo) -> string {
 				}
 				if (info.slot < 0) "RUNNER_CLOSURE"
 				else {
-					cpp2_RUNNER_ARG + i2s(info.slot) + cpp2_CMSTART + info.name + cpp2_CMENDPR;
+					"RUNNER_ARG(" + i2s(info.slot) + "/*" + info.name + "*/)";
 				}
 			}
-			Cpp2Temporary():
-				cpp2_TEMPS + i2s(info.slot) + cpp2_RBRACE;
+			Cpp2Temporary(): {
+				"temps[" + i2s(info.slot) + "]";
+			}
 			Cpp2Struct(info1): {
-				cpp2_error("no lvalue for struct " + info1.structname);
+				cpp2_error("no lvalue for struct " + info1.struct_name);
 				""
 			}
 			Cpp2SlotAlias(where, idx): {
@@ -376,7 +363,7 @@ cpp2PlaceInfoGetRValue(info : Cpp2PlaceInfo, ctx : Cpp2Context) -> string {
 				Cpp2SlotAlias(where, idxvar):
 					cpp2ContextEnsureStructPtr(ctx, where, "", true);
 				Cpp2FieldAlias(where, sinfo):
-					cpp2ContextEnsureStructPtr(ctx, where, sinfo.structname, true);
+					cpp2ContextEnsureStructPtr(ctx, where, sinfo.struct_name, true);
 				default:  "";
 			}
 			info.rvalue
@@ -386,26 +373,26 @@ cpp2PlaceInfoGetRValue(info : Cpp2PlaceInfo, ctx : Cpp2Context) -> string {
 				if (info.slot < 0) {
 					cpp2_error("no assigned function slot"); ""
 				} else {
-					cpp2_FUNCTIONS + i2s(info.slot) + cpp2_CMSTART + info.name + cpp2_CMENDBR;
+					"getSelf(RUNNER)->functions[" + i2s(info.slot) + "/*" + info.name + "*/]";
 				}
 			}
 			Cpp2SlotAlias(where, idxvar): {
 				cpp2ContextGetStructPtr(ctx, where, "", true) +
-				cpp2_LBRACE + (if (idxvar == "") i2s(info.slot) else idxvar);
-				cpp2_CMSTART + info.name + cpp2_CMENDBR;
+				"[" + (if (idxvar == "") i2s(info.slot) else idxvar) +
+				"/*" + info.name + "*/]";
 			}
 			Cpp2FieldAlias(where, sinfo): {
 				fname = sinfo.args[info.slot].name;
-				s = cpp2ContextGetStructField(ctx, where, sinfo.structname, fname, sinfo.atypes[info.slot]);
+				s = cpp2ContextGetStructField(ctx, where, sinfo.struct_name, fname, sinfo.atypes[info.slot]);
 				if (info.name != "" && info.name != fname) {
-					s + cpp2_CMSTART + info.name + cpp2_CMEND;
+					s + "/*" + info.name + "*/";
 				} else {
 					s
 				}
 			}
 			Cpp2Struct(info1): {
 				if (length(info1.args) != 0) {
-					cpp2_error("no rvalue for struct with parameters: " + info1.structname);
+					cpp2_error("no rvalue for struct with parameters: " + info1.struct_name);
 				}
 				if (info1.empty_addr != cpp2_int_UNDEF) {
 					"StackSlot::MakeStruct(MakeFlowPtr(" + i2s(info1.empty_addr) + ")," + i2s(info.slot) + ")";
@@ -425,7 +412,7 @@ cpp2PlaceInfoGetRawField(info : Cpp2PlaceInfo, ctx : Cpp2Context, type : Cpp2Tag
 	switch (info.place) {
 		Cpp2FieldAlias(where, sinfo): {
 			if (sinfo.atypes[info.slot] == type) {
-				cpp2ContextGetStructPtr(ctx, where, sinfo.structname, true) + "->fl_" + sinfo.args[info.slot].name;
+				cpp2ContextGetStructPtr(ctx, where, sinfo.struct_name, true) + "->fl_" + sinfo.args[info.slot].name;
 			} else {
 				""
 			}
@@ -439,7 +426,7 @@ cpp2PlaceInfoGetStructAddr(info : Cpp2PlaceInfo, ctx : Cpp2Context) -> string {
 	switch (info.place) {
 		Cpp2FieldAlias(where, sinfo): {
 			if (sinfo.atypes[info.slot] == Cpp2TStruct()) {
-				cpp2ContextGetStructPtr(ctx, where, sinfo.structname, true) + "->fl_" + sinfo.args[info.slot].name;
+				cpp2ContextGetStructPtr(ctx, where, sinfo.struct_name, true) + "->fl_" + sinfo.args[info.slot].name;
 			} else {
 				defval();
 			}
@@ -448,22 +435,6 @@ cpp2PlaceInfoGetStructAddr(info : Cpp2PlaceInfo, ctx : Cpp2Context) -> string {
 	}
 }
 
-
-	
-
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
 // Cpp2CodeLines methods
 
 cpp2CodeLines(parent : Maybe<Cpp2CodeLines>) -> Cpp2CodeLines {
@@ -476,18 +447,26 @@ cpp2CodeLinesToCode(code : Cpp2CodeLines) -> string {
 }
 
 cpp2CodeLinesToString(code : Cpp2CodeLines, acc : string) -> string {
-	fold(^(code.lines), acc, 
-		\ac, line -> {
+	decls = fold(^(code.lines), "", 
+		\ac, line -> 
+		switch (line) {
+			Cpp2Decl(type, name, indent, origin):
+				ac + indent + type + " " + name + ";\n";
+			default: ac;
+		}
+	);
+	lines = fold(^(code.lines), "", 
+		\ac, line ->
 			switch (line) {
 				Cpp2Decl(type, name, indent, origin):
-					ac + indent + type + " " + name + ";\n";
+					ac;
 				Cpp2Any(line1):
 					ac + line1;
 				Cpp2Block(code1):
 					cpp2CodeLinesToString(code1, ac);
 			}
-		}
-	)
+	);
+	acc + decls + lines;
 }
 
 cpp2CodeLinesPullCommonDecls(code : Cpp2CodeLines) -> void {
@@ -499,10 +478,16 @@ cpp2CodeLinesPullCommonDecls(code : Cpp2CodeLines) -> void {
 		\name, decl_lines -> {
 			switch (cpp2CodeLinesLeastCommonAncestor(decl_lines)) {
 				Some(common): {
-					iter(decl_lines, \decl : Cpp2Decl ->
-						decl.origin.lines := removeFirst(^(decl.origin.lines), decl)
+					pull_decl = forall(decl_lines, \decl -> decl.origin != common);
+					iter(decl_lines, \decl : Cpp2Decl -> {
+							if (decl.origin != common) {
+								decl.origin.lines := removeFirst(^(decl.origin.lines), decl)
+							}
+						}
 					);
-					common.lines := concat([cast(decl_lines[0] : Cpp2Decl -> Cpp2Line)], ^(common.lines));
+					if (pull_decl) {
+						common.lines := concat([cast(decl_lines[0] : Cpp2Decl -> Cpp2Line)], ^(common.lines));
+					}
 				}
 				None(): {
 					cpp2_error("no common ancestor is found");
@@ -522,7 +507,7 @@ cpp2CodeLinesLeastCommonAncestor(lines : [Cpp2Decl]) -> Maybe<Cpp2CodeLines> {
 	);
 	cpp2CodeLinesFindCommon(0, None(), paths)
 }
-	
+
 cpp2CodeLinesFindCommon(i : int, val : Maybe<Cpp2CodeLines>, paths : [[Cpp2CodeLines]]) -> Maybe<Cpp2CodeLines> {
 	if (
 		forall(paths, \path -> i < length(path)) &&
@@ -540,7 +525,7 @@ cpp2CodeLinesGetPath(mcode : Maybe<Cpp2CodeLines>, acc : [Cpp2CodeLines]) -> [Cp
 		None(): acc;
 	}
 }
-	
+
 cpp2CodeLinesDecl2Line(code : Cpp2CodeLines, acc : Tree<string, [Cpp2Decl]>) -> Tree<string, [Cpp2Decl]> {
 	fold(^(code.lines), acc, 
 		\ac, line -> {
@@ -554,29 +539,21 @@ cpp2CodeLinesDecl2Line(code : Cpp2CodeLines, acc : Tree<string, [Cpp2Decl]>) -> 
 				Cpp2Block(code1): {
 					cpp2CodeLinesDecl2Line(code1, ac);
 				}
-				default: acc;
+				default: ac;
 			}
 		}
 	)
 }
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
+
 // Cppe2Environment methods:
 
-cpp2Environment(parent : Maybe<Cpp2Environment>, mname : string, vname : string, nargs : int, struct_list : [Cpp2StructInfo]) -> Cpp2Environment {
+cpp2Environment(writer : Cpp2Writer, parent : Maybe<Cpp2Environment>, mname : string, vname : string, nargs : int, struct_list : [Cpp2StructInfo]) -> Cpp2Environment {
 	depth = switch (parent) {
 		Some(p): p.depth + 1;
 		None(): 1;
 	};
 	env = Cpp2Environment(
+		writer,
 		parent,
 		mname,
 		vname,
@@ -673,7 +650,7 @@ cpp2EnvironmentMkupvalue(env : Cpp2Environment, name : string, free : Cpp2PlaceI
 				cpp2PlaceInfo(Some(env), Cpp2Argument(), -1, ""),
 				Cpp2StructInfo(
 					cpp2_int_UNDEF, // id
-					env.mname,      // structname
+					env.mname,      // struct_name
 					[tdecl],        // args
 					[^vtag],        // atypes
 					cpp2_int_UNDEF  // empty_addr
@@ -736,19 +713,6 @@ cpp2EnvironmentRestoreGlobalMeta(env : Cpp2Environment) -> void {
 	)
 }
 
-
-
-
-	
-	
-	
-	
-	
-	
-	
-	
-	
-
 // Cpp2Context methods
 
 cpp2Context(env : Cpp2Environment, indent : string) -> Cpp2Context {
@@ -758,6 +722,7 @@ cpp2Context(env : Cpp2Environment, indent : string) -> Cpp2Context {
 		Some(ctx): ctx.gc_index;
 		None(): 0;
 	};
+	cpp2EnvironmentPushCppBlock(env);
 	Cpp2Context(
 		env,
 		env.cur_ctx, // prev
@@ -784,11 +749,11 @@ cpp2ContextExit(ctx : Cpp2Context) -> void {
 }
 
 cpp2ContextWr(ctx : Cpp2Context, s : string) -> void {
-	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + cpp2_NEWLINE));
+	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + "\n"));
 }
 
 cpp2ContextWrSemi(ctx : Cpp2Context, s: string) -> void {
-	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + cpp2_SEMI_NL));
+	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(ctx.indent + s + ";\n"));
 }
 
 cpp2ContextEnter(ctx : Cpp2Context, idelta : string) -> Cpp2Context {
@@ -828,14 +793,22 @@ cpp2ContextJoinOne(ctx : Cpp2Context, child : Cpp2Context) -> void {
 	}
 }
 
-cpp2ContextJoin(ctx : Cpp2Context, children : [Cpp2Context]) -> void {
+cpp2ContextJoinOld(ctx : Cpp2Context, children : [Cpp2Context]) -> void {
+	// TODO:
+	cpp2_error("cpp2ContextJoin is not implemented yet")
 }
-/*
-cpp2ContextJoin(ctx : Cpp2Context, children : [CppContext]) -> void {
+
+cpp2ContextJoin(ctx : Cpp2Context, children : [Cpp2Context]) -> void {
 	if (length(children) > 0) {
 		iter(children, \child -> cpp2ContextJoinOne(ctx, child));
 
 		//flist = Cpp2PlaceInfo.meta_fields;
+		
+		/*traverseInOrder(children[0].meta, \mid -> {
+				defid = mid.def.uid;
+				
+			}
+		)
 
 		for (mid in children[0].meta.iterator()) {
 			var defid = mid.def.uid;
@@ -882,21 +855,14 @@ cpp2ContextJoin(ctx : Cpp2Context, children : [CppContext]) -> void {
 				Reflect.setField(upd, flist[fi], best[fi]);
 			}
 			upd.dirty = dirty;
-		}
+		}*/
 	}
 }
-*/
+
 
 cpp2ContextPushdef(ctx : Cpp2Context, def : Cpp2PlaceInfo) -> void {
 	ctx.local_names ::= arrayPush(ctx.local_names, def.name);
-	switch (lookupTree(ctx.env.locals, def.name)) {
-		Some(bind): {
-			ctx.local_binds ::= arrayPush(ctx.local_binds, bind);
-		}
-		None(): {
-			cpp2_error("local bind: " + def.name + " is not found");
-		}
-	};
+	ctx.local_binds ::= arrayPush(ctx.local_binds, lookupTreeDef(ctx.env.locals, def.name, dummyCpp2PlaceInfo));
 	(ctx.env).locals ::= setTree(ctx.env.locals, def.name, def)
 }
 
@@ -904,7 +870,7 @@ cpp2ContextDefpos(ctx : Cpp2Context) -> int {
 	length(ctx.local_names) 
 }
 
-cpp2ContextPopdefs(ctx : Cpp2Context, pos : int) -> void { // ?pos : int = 0
+cpp2ContextPopdefs(ctx : Cpp2Context, pos : int) -> void {
 	fori(0, length(ctx.local_names) - pos - 1, 
 		\__ -> {
 			loc_name = ctx.local_names[length(ctx.local_names) - 1];
@@ -914,60 +880,60 @@ cpp2ContextPopdefs(ctx : Cpp2Context, pos : int) -> void { // ?pos : int = 0
 			cpp2EnvironmentPoplocal(ctx.env, loc_name, loc_bind);
 		}
 	)
-	//for (i in 0...(local_names.length - pos))
-	//	env.poplocal(local_names.pop(), local_binds.pop());
 }
 
-cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string { // init : bool = true, sb : stringBuf = null
+cpp2ContextEnsureStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, struct_name : string, init : bool) -> string {
 	bad_gcid = (sref.meta.struct_ptr_gcid == -1 || sref.meta.struct_ptr_gcid < ctx.gc_index);
-	stale = (bad_gcid || !contains(sref.meta.struct_ptr_types, structname));
-	vname = cpp2_SPTR_ + i2s(sref.uid) + (if (strlen(structname) > 0) cpp2_UNDERSCORE + structname else "");
+	stale = (bad_gcid || !contains(sref.meta.struct_ptr_types, struct_name));
+	vname = "sptr_" + i2s(sref.uid) + (if (strlen(struct_name) > 0) "_" + struct_name else "");
 	if (stale) {
-		line = if (structname == "") {
+		line = if (struct_name == "") {
 			cpp2ContextRegisterIdxVar(ctx, vname, "const StackSlot*");
 			if (!init) "" else {
 				size = if (sref.meta.struct_size < 1) 1 else sref.meta.struct_size;
-				ctx.indent + vname + cpp2_GET_ASPTR + 
-				cpp2PlaceInfoGetRValue(sref, ctx) + cpp2_COMMA + 
-				i2s(size) + cpp2_PAREN_SEMI_NL;
+				ctx.indent + vname + " = RUNNER->GetArraySlotPtr(" + 
+				cpp2PlaceInfoGetRValue(sref, ctx) + "," + 
+				i2s(size) + ");\n";
 			}
 		} else {
-			vtype = "FS_" + structname;
+			vtype = "FS_" + struct_name;
 			cpp2ContextRegisterIdxVar(ctx, vname, vtype + "*");
 			if (!init) "" else {
-				ctx.indent + vname + cpp2_EQ_LPAREN + vtype +
+				ctx.indent + vname + " = (" + vtype +
 				(if (cpp2PlaceInfoIsClosureRef(sref))
-					cpp2_GET_CSPTR + cpp2PlaceInfoGetRValue(sref, ctx)
+					"*)RUNNER->GetClosureStructPtr(" + cpp2PlaceInfoGetRValue(sref, ctx)
 				else
-					cpp2_GET_SPTR + cpp2PlaceInfoGetStructAddr(sref, ctx)
+					"*)RUNNER->GetStructPtr(" + cpp2PlaceInfoGetStructAddr(sref, ctx)
 				) 
-				+ cpp2_PAREN_SEMI_NL;
+				+ ");\n";
 			}
 		}
-		cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line));
+		if (line != "") {
+			cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line));
+		}
 		lm = cpp2ContextLocalMeta(ctx, sref);
 		lm.struct_ptr_gcid ::= ctx.gc_index;
-		lm.struct_ptr_types ::= arrayPush(lm.struct_ptr_types, structname);
+		lm.struct_ptr_types ::= arrayPush(lm.struct_ptr_types, struct_name);
 	}
 	vname
 }
 
-cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, init : bool) -> string { // structname : string = '', init : bool = true
-	vname = cpp2ContextEnsureStructPtr(ctx, sref, structname, init);
+cpp2ContextGetStructPtr(ctx : Cpp2Context, sref : Cpp2PlaceInfo, struct_name : string, init : bool) -> string {
+	vname = cpp2ContextEnsureStructPtr(ctx, sref, struct_name, init);
 	if (sref.name != "") {
-		vname + cpp2_CMSTART + sref.name + cpp2_CMEND;
+		vname + "/*" + sref.name + "*/";
 	} else {
 		vname
 	}
 }
 
-cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : string, fname : string, ftype : Cpp2TagType) -> string {
-	ptr = cpp2ContextGetStructPtr(ctx, sref, structname, true);
+cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, struct_name : string, fname : string, ftype : Cpp2TagType) -> string {
+	ptr = cpp2ContextGetStructPtr(ctx, sref, struct_name, true);
 	vname = ptr + "->fl_" + fname;
 	if (ftype == Cpp2TNull()) vname else {
 		switch (ftype) {
-			Cpp2TBool():  "StackSlot::Makebool(" + vname + ")";
-			Cpp2TInt():   "StackSlot::Makeint(" + vname + ")";
+			Cpp2TBool():   "StackSlot::MakeBool(" + vname + ")";
+			Cpp2TInt():    "StackSlot::MakeInt(" + vname + ")";
 			Cpp2TDouble(): "StackSlot::MakeDouble(" + vname + ")";
 			Cpp2TString(): vname;
 			Cpp2TArray():  vname;
@@ -982,7 +948,7 @@ cpp2ContextGetStructField(ctx : Cpp2Context, sref : Cpp2PlaceInfo, structname : 
 	}
 }
 
-cpp2ContextTempvar(ctx : Cpp2Context, base : string, tag : Cpp2TagType, init : string) -> string { // ?init : string = null
+cpp2ContextTempvar(ctx : Cpp2Context, base : string, tag : Cpp2TagType, init : string) -> string {
 	name = cpp2EnvironmentTempvar(ctx.env, base);
 	type = switch (tag) {
 		Cpp2TInt():    "int";
@@ -993,7 +959,7 @@ cpp2ContextTempvar(ctx : Cpp2Context, base : string, tag : Cpp2TagType, init : s
 			""
 		}
 	}
-	cpp2ContextWrSemi(ctx, type + " " + name + (if (init != "") cpp2_SPC_EQ_SPC + init else ""));
+	cpp2ContextWrSemi(ctx, type + " " + name + (if (init != "") " = " + init else ""));
 	name
 }
 
@@ -1001,23 +967,23 @@ cpp2ContextIncGc(ctx : Cpp2Context) -> void {
 	ctx.gc_index ::= ctx.gc_index + 1
 }
 
-cpp2ContextWrCheck(ctx : Cpp2Context, str : string, gc_on : bool) -> void { // ?gc = false
+cpp2ContextWrCheck(ctx : Cpp2Context, str : string, gc_on : bool) -> void {
 	line_str = ctx.indent + 
-	cpp2_CHECK_ERROR + str + cpp2_PAREN_SEMI_NL;
+	"CHECK_ERROR(" + str + ");\n";
 	if (gc_on) {
 		ctx.gc_index ::= ctx.gc_index + 1;
 	}
 	cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line_str));
 }
 
-cpp2ContextWrCheckopt(ctx : Cpp2Context, str : string, check : bool, gc_on : bool) -> void { // ?gc = false
+cpp2ContextWrCheckopt(ctx : Cpp2Context, str : string, check : bool, gc_on : bool) -> void {
 	if (gc_on) {
 		ctx.gc_index ::= ctx.gc_index + 1
 	}
 	if (check) {
 		cpp2ContextWrCheck(ctx, str, false);
 	} else {
-		line_str = ctx.indent + str + cpp2_SEMI_NL;
+		line_str = ctx.indent + str + ";\n";
 		cpp2EnvironmentAddCppLine(ctx.env, Cpp2Any(line_str));
 	}
 }
@@ -1059,12 +1025,3 @@ cpp2GetPrimitiveTag(t : FiTypeNullable) -> Cpp2TagType {
 		default:        Cpp2TNull();
 	}
 }
-
-
-
-
-
-
-
-
-

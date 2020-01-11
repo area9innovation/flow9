@@ -39,9 +39,9 @@ export {
 
 
 	ImageDecoration4(
-		first : [PreZoomDecoration], 
-		second : [PostZoomDecoration], 
-		third : [SizeIndependentDecoration], 
+		first : [PreZoomDecoration],
+		second : [PostZoomDecoration],
+		third : [SizeIndependentDecoration],
 		fourth : Maybe<ImageCrop>
 	);
 
@@ -74,6 +74,31 @@ export {
 		leftTopPoint : Point,
 		rightBotPoint : Point
 	) -> [StaticGraphicOp];
+}
+
+calculateAdaptiveCropValues(crop : ImageAdaptiveCrop, formSize : WidthHeight, givenSize : WidthHeight, loading : bool, availableWH : WidthHeight, squareness : double) -> Quadruple<double, double, double, double> {
+	if (loading || formSize.width <= availableWH.width && formSize.height <= availableWH.height) {
+		Quadruple(0.0, 0.0, formSize.width, formSize.height);
+	} else {
+		awhRatio = availableWH.width / availableWH.height;
+		k = (awhRatio - 1.0) * (1.0 - squareness);
+
+		spaceWH =
+			if (availableWH.width <= 0.0)
+				givenSize
+			else	
+				WidthHeight(availableWH.height + availableWH.height * k, availableWH.height);
+							
+		scale = max3(crop.width / spaceWH.width, crop.height / spaceWH.height, 1.0);
+
+		newCropW = min(max(spaceWH.width * scale, crop.width), formSize.width);
+		newCropH = min(max(spaceWH.height * scale, crop.height), formSize.height);
+
+		newCropX = min(max(0.0, crop.x + crop.width / 2.0 - newCropW / 2.0), formSize.width - newCropW);
+		newCropY = min(max(0.0, crop.y + crop.height / 2.0 - newCropH / 2.0), formSize.height - newCropH);
+							
+		Quadruple(newCropX, newCropY, newCropW, newCropH);		
+	}
 }
 
 // Width and height are serialized on OK click in the image decorations editor. So, we have information about picture size until it is loaded.
@@ -127,8 +152,7 @@ makeImageDecorated2(
 			sizeIndependentDecorations,
 			makeParagraphElements,
 			savedSize,
-			zoom,
-			pictureIsLoading
+			zoom
 		);
 
 		Constructor(
@@ -192,46 +216,51 @@ makeImageDecorated2(
 		idfn
 	);
 
-	defaultImageAdaptiveCrop = ImageAdaptiveCrop(0.0, 0.0, 0.0, 0.0, makeWH());
+	defaultImageAdaptiveCrop = makeDefaultAdaptiveCrop();
+
 	adaptiveCropping = \form : Form -> {
-		if (containsStruct(decorations, defaultImageAdaptiveCrop)){
+		if (containsStruct(decorations, defaultImageAdaptiveCrop)) {
 			crop = extractStruct(decorations, defaultImageAdaptiveCrop);
-			cropX = make(crop.x);
-			cropY = make(crop.y);
-			cropW = make(crop.width);
-			cropH = make(crop.height);
+			tweaks = extractStruct(decorations, ImageAdaptiveCropTweaks([]));
+			squareness = extractStruct(tweaks.style, Squareness(0.0)).value;
+
+			initValues = calculateAdaptiveCropValues(crop, getValue(savedOrRealSize), givenSize, getValue(pictureIsLoading), getValue(crop.availableWHB), squareness);
+
+			cropX = make(initValues.first);
+			cropY = make(initValues.second);
+			cropW = make(initValues.third);
+			cropH = make(initValues.fourth);
+
 			Constructor(
 				Crop(cropX, cropY, cropW, cropH, form),
-				\ -> {
-					select2u(pictureIsLoading, crop.availableWHB, \loading, awh -> {
-						formSize = getValue(savedOrRealSize);
-						if (loading || formSize.width <= awh.width && formSize.height <= awh.height) {
-							nextDistinct(cropX, 0.0);
-							nextDistinct(cropY, 0.0);
-							nextDistinct(cropW, formSize.width);
-							nextDistinct(cropH, formSize.height);
-						} else {
-							spaceWH = if (awh.width > 0.0) awh else givenSize;
-							scale = max3(crop.width / spaceWH.width, crop.height / spaceWH.height, 1.0);
+					\ -> {
+						select3u(pictureIsLoading, crop.availableWHB, savedOrRealSize, \loading, awh, formSize -> {						
+							curValues = calculateAdaptiveCropValues(crop, formSize, givenSize, loading, awh, squareness);								
+							nextDistinct(cropX, curValues.first);
+							nextDistinct(cropY, curValues.second);
+							nextDistinct(cropW, curValues.third);
+							nextDistinct(cropH, curValues.fourth);
 
-							cropWidth = min(max(spaceWH.width * scale, crop.width), formSize.width);
-							cropHeight = min(max(spaceWH.height * scale, crop.height), formSize.height);
-							nextDistinct(cropW, cropWidth);
-							nextDistinct(cropH, cropHeight);
+							// Mac Safari has an issue when visual layout does not update sometimes and we get incorrect crop.
+							// This trick fixes it.
+							 if (macosx() && strContains(toLowerCase(getBrowser()), "safari")) {
+								timer(50, \ -> {
+									next(cropX, getValue(cropX) + 0.1);
+									timer(200, \ -> {
+										next(cropX, getValue(cropX) - 0.1);
+										timer(1000, \ -> {
+											next(cropX, getValue(cropX) + 0.1);
+										})
+									})
+								})
+							}
 
-							newCropX = max(0.0, crop.x + crop.width / 2.0 - cropWidth / 2.0);
-							newCropY = max(0.0, crop.y + crop.height / 2.0 - cropHeight / 2.0);
-							cropXMax = formSize.width - cropWidth;
-							cropYMax = formSize.height - cropHeight;
-							nextDistinct(cropX, if (newCropX > cropXMax) cropXMax else newCropX);
-							nextDistinct(cropY, if (newCropY > cropYMax) cropYMax else newCropY);
-						}
-					}).second
+						}).second;
 				}
-			)
+			)		
 		} else {
 			form
-		}
+		};	
 	};
 
 	thePicture =
@@ -256,7 +285,7 @@ makeImageDecorated2(
 				decoratedPicSize,
 				Center(pictureWithWarning.warning)
 			),
-			\ -> nextDistinct(pictureIsLoading, false)
+			nop
 		),
 		\ -> {
 			uns0 = if (trustedSizes || givenSize.width < 0.5)
@@ -266,7 +295,7 @@ makeImageDecorated2(
 				connectSelectDistinctu(savedOrRealSize, replacedImageScale, \as -> as.width / givenSize.width);
 
 			uns1 = connectSelect2Distinctu(pictureIsLoading, wholeImageWH, savedOrRealSize, \l, wh -> {(if (!l && wh.width > 0.0) wh else savedSize)});
-			uns2 = selectu(pictureIsLoading, \loading -> if (!loading) onLoaded()).second;
+			uns2 = selectDistinctu(pictureIsLoading, \loading -> if (!loading) onLoaded()).second;
 
 			\ -> {
 				uns0();
@@ -561,6 +590,7 @@ splitImageDecorations(
 			ImageCrop(x, y, w, h):
 				ImageDecoration4(acc.first, acc.second, acc.third, Some(d));
 			ImageAdaptiveCrop(__, __, __, __, __): acc;
+			ImageAdaptiveCropTweaks(__): acc; 
 			ImageDimmer(__, __, __, __, __, __, __):
 				ImageDecoration4(arrayPush(acc.first, d), acc.second, acc.third, acc.fourth);
 		}
@@ -691,8 +721,7 @@ makeSizeIndependentDecorationsAdder(
 	decorations : [SizeIndependentDecoration],
 	makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
 	imgSize: WidthHeight,
-	zoom : bool,
-	pictureIsLoading : Behaviour<bool>
+	zoom : bool
 	) -> ((Form) -> Form)
 {
 	imageWH = makeWH();
@@ -822,6 +851,12 @@ makeDimmerShape(
 			radius = min(w, h) / 2.0;
 			SectorPath(leftTopPoint.x + radius, leftTopPoint.y + radius, radius, 0.0, 360.0, false, false, false);
 		}
-		ImageDimmerRectangle(): rectangle(leftTopPoint.x, leftTopPoint.y, w, h);
+		ImageDimmerRectangle(): {
+			if (js) {
+				rectangle(leftTopPoint.x, leftTopPoint.y, w, h);
+			} else {
+				RectanglePath(leftTopPoint, WidthHeight(w, h));
+			}
+		}
 	}
 }

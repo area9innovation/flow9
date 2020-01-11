@@ -11,14 +11,13 @@ class ProgressiveWebTools {
 
 	public static var globalRegistration : Dynamic = null;
 	public static var globalInstallPrompt : Dynamic = null;
-	public static var serviceWorkerFilePath : String = "sw.min.js";
 
-	public static function enableServiceWorkerCaching(callback : Bool -> Void) : Void {
+	public static function enableServiceWorkerCaching(swFilePath : String, callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
 		#elseif js
 		if (untyped navigator.serviceWorker) {
-			untyped navigator.serviceWorker.register(serviceWorkerFilePath).then(function(registration) {
+			untyped navigator.serviceWorker.register(swFilePath).then(function(registration) {
 				trace('ServiceWorker registration successful with scope: ', registration.scope);
 
 				globalRegistration = registration;
@@ -33,6 +32,28 @@ class ProgressiveWebTools {
 				trace('ServiceWorker registration failed: ', err);
 				callback(false);
 			});
+		} else {
+			callback(false);
+			trace('No ServiceWorker on this browser');
+		}
+		#end
+	}
+
+	public static function subscribeOnServiceWorkerUpdateFound(onUpdateFound : Void -> Void, onError : String -> Void) {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null) {
+			globalRegistration.onupdatefound = function() {
+				var installingWorker = globalRegistration.installing;
+				installingWorker.onstatechange = function() {
+					if (installingWorker.state == 'installed') {
+						onUpdateFound();
+					}
+				};
+			}
+		} else {
+			onError("ServiceWorker is not initialized");
 		}
 		#end
 	}
@@ -43,6 +64,7 @@ class ProgressiveWebTools {
 		#elseif js
 		if (globalRegistration != null) {
 			untyped globalRegistration.unregister().then(function() {
+				globalRegistration = null;
 				callback(true);
 			}, function(err) {
 				callback(false);
@@ -51,16 +73,25 @@ class ProgressiveWebTools {
 		#end
 	}
 
-	public static function checkServiceWorkerCachingEnabled(callback : Bool -> Void) : Void {
+	public static function checkServiceWorkerEnabledOnly(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null && untyped navigator.serviceWorker) {
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function checkServiceWorkerCachingEnabled(swFileName : String, callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
 		#elseif js
 		if (globalRegistration != null) {
 			callback(true);
-			return;
-		}
-
-		if (untyped navigator.serviceWorker) {
+		} else if (untyped navigator.serviceWorker) {
 			untyped navigator.serviceWorker.getRegistrations().then(function(registrations) {
 				if (registrations.length == 0) {
 					callback(false);
@@ -71,7 +102,7 @@ class ProgressiveWebTools {
 						return Promise.reject();
 					}
 
-					if (untyped registration.active.scriptURL == (registration.scope + serviceWorkerFilePath)) {
+					if (untyped registration.active.scriptURL == (registration.scope + swFileName)) {
 						globalRegistration = registration;
 						return Promise.resolve();
 					} else {
@@ -85,6 +116,9 @@ class ProgressiveWebTools {
 			}, function(err) {
 				callback(false);
 			});
+		} else {
+			callback(false);
+			trace('No ServiceWorker on this browser');
 		}
 		#end
 	}
@@ -254,6 +288,34 @@ class ProgressiveWebTools {
 	}
 
 	public static function isRunningPWA() : Bool {
-		return !Browser.window.matchMedia("(display-mode: browser)").matches;
+		return !Browser.window.matchMedia("(display-mode: browser)").matches || (Platform.isIOS && untyped Browser.window.navigator.standalone == true);
+	}
+
+	public static function getServiceWorkerJsVersion(
+		onOK : Int -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't execute one or more requests");
+				} else {
+					onOK(event.data.data);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_service_worker_version"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
 	}
 }

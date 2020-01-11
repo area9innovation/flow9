@@ -36,7 +36,7 @@ Cpp2StructOrderInfo(
 
 Cpp2StructInfo(
 	mutable id : int, 
-	structname : string,
+	struct_name : string,
 	mutable args : [Cpp2StructArg],
 	mutable atypes : [Cpp2TagType],
 	empty_addr : int
@@ -119,6 +119,7 @@ Cpp2PlaceInfo(
 // Contains current information about the function being compiled.
 // Controls mapping of local variable names to places.
 Cpp2Environment(
+	writer : Cpp2Writer,
 	parent : Maybe<Cpp2Environment>,
 	mname : string,
 	mutable vname : string,
@@ -168,6 +169,7 @@ Cpp2Context(
 Cpp2Writer(
 	config : FcCpp2Config,
 	program : FiProgram,
+	main : FiFunctionDec,
 
 	num_structs : int,
 	mutable init_count : int,
@@ -178,7 +180,7 @@ Cpp2Writer(
 	struct_list : [Cpp2StructInfo],
 	struct_code : Cpp2StructCode,
 
-	//bytecode : BytesOutput,
+	mutable bytecode : string,
 	mutable const_strings : Tree<string, Cpp2ConstString>,
 
 	method_names : ref [string],
@@ -194,6 +196,10 @@ Cpp2Writer(
 	mutable cur_global : string,
  	mutable next_closure_id : int,
 	known_natives : Tree<string, Cpp2NativeDescr>,
+
+	// The contents of compiled files.
+	mutable compiled_targets : Tree<string, ref [string]>,
+	dependencies : Set<string>
 );
 
 Cpp2StructCode(
@@ -236,26 +242,38 @@ Cpp2NativeDescr(
 	cname: string
 );
 
+Cpp2Dependencies(
+	funcs : Set<FiFunctionDec>,
+	natives : Set<FiNativeDec>,
+	vars : Set<FiGlobalVar>,
+	all_decls : Set<FiDeclaration>,
+);
+
 cpp2_err_count = ref 0;
 
-cpp2_error(msg : string) -> void {
+cpp2_error(msg : string, /*threadId : int*/) -> void {
 	cpp2_err_count := ^cpp2_err_count + 1;
-	fcPrintln("cpp2 error: " + msg);
+	//TODO: fcPrintln("cpp2 error: " + msg, threadId);
+	println("cpp2 error: " + msg);
+	quit(-1);
 }
 
+emptyCpp2Dependencies = Cpp2Dependencies(makeSet(), makeSet(), makeSet(), makeSet());
+dummyCpp2Config = FcCpp2Config("", "", "", [], false, 0, 0, false, "");
 dummyCpp2StructInfo = Cpp2StructInfo(cpp2_int_UNDEF, "", [], [], cpp2_int_UNDEF);
-dummyCpp2PlaceMetadata = Cpp2PlaceMetadata(cpp2_int_UNDEF, false, Cpp2TNull(), FiTypeNull(), 0, 0, [], [], 0, []);
+dummyCpp2PlaceMetadata = Cpp2PlaceMetadata(cpp2_int_UNDEF, false, Cpp2TNull(), FiTypeNull(), -1, -1, [], [], -1, []);
 dummyCpp2Environment = Cpp2Environment(
+	dummyCpp2Writer,
 	None(),
 	"", //mname : string,
 	"", // vname : string,
-	0, // nargs : int,
+	-1, // nargs : int,
 	[], // struct_list
-	0, // depth : int,
-	0, // mutable next_uid : int,
-	0, // mutable next_ctx : int,
-	0, //mutable nlocals : int,
-	0, //mutable ntemps : int,
+	-1, // depth : int,
+	-1, // mutable next_uid : int,
+	-1, // mutable next_ctx : int,
+	-1, //mutable nlocals : int,
+	-1, //mutable ntemps : int,
 	[], // mutable local_reuse : [int],
 	false, // mutable args_used : bool,
 	None(), // mutable closure : Maybe<Cpp2Closure>,
@@ -267,6 +285,18 @@ dummyCpp2Environment = Cpp2Environment(
 	makeTree(), // mutable meta_globals : Tree<int, Cpp2PlaceTriple>,
 	Cpp2CodeLines(ref [], None()),
 );
+
+dummyJSCliParams = JSCliParams("", "", "", false, false, "", false, false, false, false, false, tsProcessing_dummy, false, false, -1, false, "", makeSet(), false, "", false);
+dummyCompilerConfig = CompilerConfig("", [], [], -1, dummyJSCliParams, makeTree(), -1);
+dummyFiGlobalNames = FiGlobalNames(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree());
+dummyFiProgram = FiProgram(dummyCompilerConfig, makeTree(), [], dummyFiGlobalNames);
+dummyFiLambda = FiLambda([], FiVoid(-1), dummyFiTypeFunction, -1);
+dummyFiTypeFunction = FiTypeFunction([], FiTypeVoid());
+dummyFiFunctionDec = FiFunctionDec("", dummyFiLambda, dummyFiTypeFunction, -1, -1);
+dummyCpp2StructCode = Cpp2StructCode(ref [], ref [], ref [], ref [], ref [], ref []);
+
+dummyCpp2Writer = Cpp2Writer(dummyCpp2Config, dummyFiProgram, dummyFiFunctionDec, -1, -1, [], makeTree(), makeTree(), ref [], [], dummyCpp2StructCode, "", makeTree(), ref [], ref [], [], makeTree(), ref [], makeTree(), ref [], "", -1, makeTree(), makeTree(), makeSet());
+
 dummyCpp2PlaceInfo = Cpp2PlaceInfo(
 	None(), //env: Maybe<Cpp2Environment>,
 	Cpp2NoPlace(FiVoid(0), "dummyCpp2PlaceInfo"), // mutable place: Cpp2PlaceType,
@@ -283,7 +313,34 @@ dummyCpp2NativeDescr = Cpp2NativeDescr("", 0, false, "");
 Cpp2StackTop(mutable temp: int);
 
 cpp2Mktop(top : Cpp2StackTop) -> Cpp2StackTop {
-	Cpp2StackTop(top.temp);
+	val : int = top.temp;
+	Cpp2StackTop(val);
 }
+
+cpp2_int_UNDEF = 0x80000000;
+
+cpp2_natives = [
+	Cpp2NativeDescr("mapi", 2, false, "mapi"),
+	Cpp2NativeDescr("map", 2, false, "map"),
+	Cpp2NativeDescr("iter", 2, false, "iter"),
+	Cpp2NativeDescr("iteri", 2, false, "iteri"),
+	Cpp2NativeDescr("fold", 3, false, "fold"),
+	Cpp2NativeDescr("foldi", 3, false, "foldi"),
+	Cpp2NativeDescr("filter", 2, false, "filter"),
+	Cpp2NativeDescr("elemIndex", 3, false, "elemIndex"),
+	Cpp2NativeDescr("exists", 2, false, "exists"),
+	Cpp2NativeDescr("find", 2, false, "find"),
+	Cpp2NativeDescr("subrange", 3, false, "subrange"),
+	Cpp2NativeDescr("length", 1, true, "length"),
+	Cpp2NativeDescr("strlen", 1, true, "NativeStrlen"),
+	Cpp2NativeDescr("strIndexOf", 2, true, "strIndexOf"),
+	Cpp2NativeDescr("substring", 3, true, "substring"),
+	Cpp2NativeDescr("concat", 2, false, "concat"),
+	Cpp2NativeDescr("replace", 3, false, "replace"),
+	Cpp2NativeDescr("bitXor", 2, true, "bitXor"),
+	Cpp2NativeDescr("bitOr", 2, true, "bitOr"),
+	Cpp2NativeDescr("bitAnd", 2, true, "bitAnd"),
+	Cpp2NativeDescr("bitNot", 1, true, "bitNot"),
+];
 
 }

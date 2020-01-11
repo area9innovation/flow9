@@ -4,9 +4,11 @@ import js.three.Scene;
 import js.three.Fog;
 
 import js.three.Color;
+import js.three.Vector2;
 import js.three.Vector3;
 import js.three.Euler;
 import js.three.Quaternion;
+import js.three.Matrix4;
 
 import js.three.Object3D;
 import js.three.Mesh;
@@ -26,19 +28,32 @@ import js.three.ConeGeometry;
 import js.three.CylinderGeometry;
 import js.three.SphereGeometry;
 
+import js.three.BufferGeometry;
+import js.three.SphereBufferGeometry;
+import js.three.BoxBufferGeometry;
+import js.three.BufferAttribute;
+
 import js.three.Material;
 import js.three.MeshBasicMaterial;
 import js.three.MeshStandardMaterial;
+import js.three.MeshNormalMaterial;
+import js.three.ShaderMaterial;
+
+import js.three.Texture;
+import js.three.CubeTexture;
 
 import js.three.Light;
 import js.three.PointLight;
 import js.three.SpotLight;
+import js.three.AmbientLight;
 
 import js.three.GridHelper;
+import js.three.VertexNormalsHelper;
 import js.three.PointLightHelper;
 import js.three.SpotLightHelper;
 
 import js.three.TextureLoader;
+import js.three.CubeTextureLoader;
 import js.three.ObjectLoader;
 
 import js.three.AnimationClip;
@@ -47,6 +62,7 @@ import js.three.Clock;
 
 using DisplayObjectHelper;
 using Object3DHelper;
+using Texture3DHelper;
 
 class RenderSupport3D {
 	public static function load3DLibraries(cb : Void -> Void) : Void {
@@ -56,42 +72,54 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 4) {
+				if (jscounter > 6) {
 					cb();
 				}
 			}
 
 			var node = Browser.document.createElement('script');
 			node.setAttribute("type","text/javascript");
-			node.setAttribute("src", 'js/threejs/three.min.js');
+			node.setAttribute("src", 'js/threejs/build/three.min.js');
 			node.onload = function() {
 				var node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/MTLLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/MTLLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/OBJLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/GLTFLoader.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/DDSLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/OrbitControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/PVRLoader.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/TransformControls.js');
+				node.setAttribute("src", 'js/threejs/examples/js/loaders/GLTFLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/controls/OrbitControls.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/controls/TransformControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 			};
@@ -255,11 +283,29 @@ class RenderSupport3D {
 	}
 
 	public static function make3DScene() : Scene {
-		return new Scene();
+		var scene = new Scene();
+		scene.name = "Group";
+		return scene;
 	}
 
 	public static function make3DColor(color : String) : Color {
 		return new Color(color);
+	}
+
+	public static function set3DStageOnStart(stage : ThreeJSStage, onStart : Void -> Void) : Void  {
+		stage.loadingManager.onStart = onStart;
+	}
+
+	public static function set3DStageOnError(stage : ThreeJSStage, onError : Void -> Void) : Void  {
+		stage.loadingManager.onError = onError;
+	}
+
+	public static function set3DStageOnLoad(stage : ThreeJSStage, onLoad : Void -> Void) : Void  {
+		stage.loadingManager.onLoad = onLoad;
+	}
+
+	public static function set3DStageOnProgress(stage : ThreeJSStage, onProgress : String -> Int -> Int -> Void) : Void {
+		stage.loadingManager.onProgress = untyped onProgress;
 	}
 
 	public static function set3DSceneBackground(scene : Scene, background : Dynamic) : Void {
@@ -273,22 +319,60 @@ class RenderSupport3D {
 	}
 
 
-	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		untyped __js__("
-			new THREE.MTLLoader()
-				.load(mtlUrl, function (materials) {
-					materials.preload();
+	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
+		var onLoadFn = function(obj : Dynamic) {
+			RenderSupportJSPixi.once("drawframe", function() {
+				for (geometry in Object3DHelper.get3DObjectAllGeometries(obj)) {
+					geometry.computeVertexNormals();
+				}
 
-					new THREE.OBJLoader()
-						.setMaterials(materials)
-						.load(objUrl, onLoad);
-				});
-		");
+				if (obj.name == "" && obj.uuid != null) {
+					obj.name = obj.uuid;
+				}
+
+				Object3DHelper.invalidateStage(obj);
+				Object3DHelper.emit(obj, "loaded");
+
+				onLoad(obj);
+			});
+		}
+
+		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
+			untyped __js__("
+				new THREE.MTLLoader(stage.loadingManager)
+					.load(mtlUrl, function (materials) {
+						materials.preload();
+
+						new THREE.OBJLoader(stage.loadingManager)
+							.setMaterials(materials)
+							.load(objUrl, onLoadFn);
+					})
+			");
+		} else {
+			untyped __js__("
+				eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
+					\".then((module) => {\",
+					\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
+					\".then((module2) => {\",
+					\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
+					\".then((module3) => {\",
+					\"new module.MTLLoader(stage.loadingManager)\",
+					\".load(mtlUrl, function(materials) {\",
+					\"new module2.OBJLoader2(stage.loadingManager)\",
+					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
+					\".load(objUrl, onLoadFn);\",
+					\"});\",
+					\"});\",
+					\"});\",
+					\"})\"
+				))
+			");
+		}
 	}
 
-	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
+	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
 		untyped __js__("
-			new THREE.GLTFLoader()
+			new THREE.GLTFLoader(stage.loadingManager)
 				.load(url, function (gltf) {
 					onLoad(
 						gltf.animations, // Array<THREE.AnimationClip>
@@ -301,14 +385,237 @@ class RenderSupport3D {
 		");
 	}
 
-	public static function load3DScene(url : String, onLoad : Dynamic -> Void) : Void {
-		new ObjectLoader().load(url, onLoad);
+	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
+		new ObjectLoader(stage.loadingManager).load(url, onLoad);
 	}
 
-	public static function load3DTexture(object : Material, url : String) : Material {
-		untyped object.map = new TextureLoader().load(url, untyped RenderSupportJSPixi.InvalidateStage);
-		return object;
+	public static function load3DTexture(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		var loader : Dynamic =
+			if (StringTools.endsWith(url, ".dds"))
+				untyped __js__("new THREE.DDSLoader(stage.loadingManager)")
+			else if (StringTools.endsWith(url, ".pvr"))
+				untyped __js__("new THREE.PVRLoader(stage.loadingManager)")
+			else
+				new TextureLoader(stage.loadingManager);
+
+		return loader.load(url, function(texture : Texture) {
+			for (par in parameters) {
+				untyped texture[par[0]] = untyped __js__("eval(par[1])");
+			}
+
+			texture.invalidateTextureStage();
+			texture.emit("loaded");
+
+			onLoad(texture);
+		});
 	}
+
+	public static function load3DCubeTexture(stage : ThreeJSStage, px : String, nx : String, py : String, ny : String, pz : String, nz : String,
+		onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+
+		return untyped new CubeTextureLoader(stage.loadingManager).load([px, nx, py, ny, pz, nz], function(texture) {
+			for (par in parameters) {
+				untyped texture[par[0]] = untyped __js__("eval(par[1])");
+			}
+
+			texture.invalidateTextureStage();
+			texture.emit("loaded");
+
+			onLoad(texture);
+		});
+	}
+
+	public static function make3DDataTexture(data : Array<Int>, width : Int, height : Int, parameters : Array<Array<String>>) : Texture {
+		var texture : Dynamic = null;
+
+		untyped __js__("
+			var size = width * height;
+			var udata = new Uint8Array(3 * size);
+
+			for (var i = 0; i < size; i++) {
+				var stride = i * 3;
+
+				udata[stride] = data[stride];
+				udata[stride + 1] = data[stride + 1];
+				udata[stride + 2] = data[stride + 2];
+			}
+
+			texture = new THREE.DataTexture(udata, width, height, THREE.RGBFormat);
+		");
+
+		for (par in parameters) {
+			untyped texture[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return texture;
+	}
+
+	public static function make3DCanvasTexture(clip : FlowContainer, parameters : Array<Array<String>>) : Texture {
+		var container = new FlowCanvas();
+
+		container.addChild(clip);
+		RenderSupportJSPixi.mainRenderClip().addChild(container);
+		RenderSupportJSPixi.render();
+
+		var texture = new Texture(untyped container.nativeWidget);
+		texture.needsUpdate = true;
+
+		for (par in parameters) {
+			untyped texture[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		RenderSupportJSPixi.mainRenderClip().removeChild(container);
+		RenderSupportJSPixi.render();
+
+		return texture;
+	}
+
+
+	public static function set3DMaterialMap(material : Material, map : Texture) : Void {
+		if (untyped material.map != map) {
+			untyped map.parent = material;
+			untyped material.map = map;
+			untyped material.transparent = true;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.map = {
+					type : 't',
+					value : map
+				}
+
+				untyped material.uniforms.mapResolution = {
+					type : 'v2',
+					value : new Vector2(0.0, 0.0)
+				}
+
+				if (map.image == null) {
+					map.once("loaded", function() {
+						untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+					});
+				} else {
+					untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+				}
+			}
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+	public static function set3DMaterialAlphaMap(material : Material, alphaMap : Texture) : Void {
+		if (untyped material.alphaMap != alphaMap) {
+			untyped alphaMap.parent = material;
+			untyped material.alphaMap = alphaMap;
+			untyped material.transparent = true;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.alphaMap = {
+					type : 't',
+					value : alphaMap
+				}
+
+				untyped material.uniforms.alphaMapResolution = {
+					type : 'v2',
+					value : new Vector2(0.0, 0.0)
+				}
+
+				if (alphaMap.image == null) {
+					alphaMap.once("loaded", function() {
+						untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+					});
+				} else {
+					untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+				}
+			}
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+	public static function set3DMaterialDisplacementMap(material : Material, displacementMap : Texture, displacementScale : Float, displacementBias : Float) : Void {
+		if (untyped material.displacementMap != displacementMap) {
+			untyped displacementMap.parent = material;
+			untyped material.displacementMap = displacementMap;
+			untyped material.displacementScale = displacementScale;
+			untyped material.displacementBias = displacementBias;
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+	public static function set3DMaterialBumpMap(material : Material, bumpMap : Texture, bumpScale : Float) : Void {
+		if (untyped material.bumpMap != bumpMap) {
+			untyped bumpMap.parent = material;
+			untyped material.bumpMap = bumpMap;
+			untyped material.bumpScale = bumpScale;
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+	public static function set3DMaterialOpacity(material : Material, opacity : Float) : Void {
+		if (untyped material.opacity != opacity) {
+			untyped material.opacity = opacity;
+			untyped material.transparent = true;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iOpacity.value = opacity;
+			}
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+	public static function set3DMaterialVisible(material : Material, visible : Bool) : Void {
+		if (untyped material.visible != visible) {
+			material.invalidateMaterialStage();
+
+			untyped material.visible = visible;
+
+			if (untyped material.uniforms != null) {
+				untyped material.uniforms.iVisible.value = visible;
+			}
+
+			material.invalidateMaterialStage();
+		}
+	}
+
+
+	public static function set3DTextureRotation(object : Texture, rotation : Float) : Void {
+		if (untyped object.rotation != rotation) {
+			untyped object.rotation = rotation;
+
+			object.invalidateTextureStage();
+		}
+	}
+
+	public static function get3DTextureRotation(object : Texture) : Float {
+		return untyped object.rotation;
+	}
+
+	public static function set3DTextureOffsetX(object : Texture, x : Float) : Void {
+		if (object.offset.x != x) {
+			object.offset.x = x;
+
+			object.invalidateTextureStage();
+		}
+	}
+
+	public static function get3DTextureOffsetX(object : Texture) : Float {
+		return object.offset.x;
+	}
+
+	public static function set3DTextureOffsetY(object : Texture, y : Float) : Void {
+		if (object.offset.y != y) {
+			object.offset.y = y;
+
+			object.invalidateTextureStage();
+		}
+	}
+
+	public static function get3DTextureOffsetY(object : Texture) : Float {
+		return object.offset.y;
+	}
+
 
 	public static function make3DAxesHelper(size : Float) : Object3D {
 		return untyped __js__("new THREE.AxesHelper(size)");
@@ -318,9 +625,12 @@ class RenderSupport3D {
 		return new GridHelper(size, divisions, new Color(colorCenterLine), new Color(colorGrid));
 	}
 
+	public static function make3DVertexNormalsHelper(object : Object3D, size : Float, color : Int, lineWidth : Float) : Object3D {
+		return new VertexNormalsHelper(object, size, color, lineWidth);
+	}
 
-	public static function set3DCamera(stage : ThreeJSStage, camera : Camera) : Void {
-		stage.setCamera(camera);
+	public static function set3DCamera(stage : ThreeJSStage, camera : Camera, parameters : Array<Array<String>>) : Void {
+		stage.setCamera(camera, parameters);
 	}
 
 	public static function set3DScene(stage : ThreeJSStage, scene : Scene) : Void {
@@ -330,6 +640,10 @@ class RenderSupport3D {
 
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
 		object.addEventListener(event, untyped cb);
+
+		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout") && object.interactive == null){
+			set3DObjectInteractive(object, true);
+		}
 
 		return function() {
 			object.removeEventListener(event, untyped cb);
@@ -344,15 +658,21 @@ class RenderSupport3D {
 		var ev : Dynamic = null;
 
 		if (event == "mousemiddledown" || event == "mousemiddleup") {
-			ev = new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mousemiddledown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 1;
 		} else if (event == "mouserightdown" || event == "mouserightup") {
-			ev = new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event == 'mouserightdown' ? 'mousedown' : 'mouseup')")
+				: new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
 
 			untyped ev.button = 2;
 		} else {
-			ev = new js.html.Event(event);
+			ev = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent(event)")
+				: new js.html.Event(event);
 
 			if (event == "mousedown" || event == "mouseup") {
 				untyped ev.button = 0;
@@ -375,12 +695,42 @@ class RenderSupport3D {
 			untyped ev.deltaX = x;
 			untyped ev.deltaY = y;
 		} else {
-			untyped ev.pageX = x;
-			untyped ev.pageY = y;
+			untyped ev.pageX = x * RenderSupportJSPixi.backingStoreRatio;
+			untyped ev.pageY = y * RenderSupportJSPixi.backingStoreRatio;
 		}
 
-		stage.renderer.domElement.dispatchEvent(ev);
-		stage.scene.invalidateStage();
+		untyped stage.renderer.eventElement.dispatchEvent(ev);
+	}
+
+	static function emit3DTouchEvent(stage : ThreeJSStage, event : String, points : Array<Array<Float>>) : Void {
+		if (stage.scene == null) {
+			return;
+		}
+
+		var ev : Dynamic = Platform.isIE || Platform.isSafari
+			? untyped __js__("new CustomEvent(event)")
+			: new js.html.Event(event);
+
+		ev.touches = Lambda.array(Lambda.map(points, function(p) {
+			return {
+				pageX : p[0] * RenderSupportJSPixi.backingStoreRatio,
+				pageY : p[1] * RenderSupportJSPixi.backingStoreRatio
+			}
+		}));
+
+		if (stage.ctrlKey) {
+			ev.ctrlKey == true;
+		}
+
+		if (stage.metaKey) {
+			ev.metaKey == true;
+		}
+
+		if (stage.shiftKey) {
+			ev.shiftKey == true;
+		}
+
+		untyped stage.renderer.eventElement.dispatchEvent(ev);
 	}
 
 	static function emit3DKeyEvent(stage : ThreeJSStage, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
@@ -390,16 +740,17 @@ class RenderSupport3D {
 		stage.shiftKey = shift;
 		stage.metaKey = meta;
 
-		stage.renderer.domElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
-		stage.scene.invalidateStage();
+		untyped stage.renderer.eventElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+
+		stage.invalidateStage();
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
 		if (stage.transformControls != null) {
-		 	if (untyped object.transformControls != null) {
-		 		if (untyped object.transformControls.object != null) {
-		 			detach3DTransformControls(stage, untyped object.transformControls.object);
-		 		}
+			if (untyped object.transformControls != null) {
+				if (untyped object.transformControls.object != null) {
+					detach3DTransformControls(stage, untyped object.transformControls.object);
+				}
 			} else {
 				if (stage.transformControls.object != null) {
 					if (stage.transformControls.object == object) {
@@ -557,9 +908,9 @@ class RenderSupport3D {
 				};
 				untyped boxHelper.disposers =
 					[
-						add3DObjectPositionListener(object, fn),
-						add3DObjectScaleListener(object, fn),
-						add3DObjectRotationListener(object, fn)
+						add3DObjectLocalPositionListener(object, fn),
+						add3DObjectLocalScaleListener(object, fn),
+						add3DObjectLocalRotationListener(object, fn)
 					];
 
 				stage.boxHelpers.push(boxHelper);
@@ -635,7 +986,28 @@ class RenderSupport3D {
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (object.visible != visible) {
+			object.invalidateStage();
 			object.visible = visible;
+
+			object.broadcastEvent("visiblechanged");
+			object.emitEvent("change");
+
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectAlpha(object : Object3D) : Float {
+		return untyped object.materials != null && object.materials.length > 0 ? object.materials[0] : 0.0;
+	}
+
+	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
+		if (untyped object.materials != null && object.materials.length > 0 && object.materials[0].opacity != alpha) {
+			var materials : Array<Dynamic> = untyped object.materials;
+
+			for (material in materials) {
+				material.transparent = true;
+				material.opacity = alpha;
+			}
 
 			object.broadcastEvent("visiblechanged");
 			object.emitEvent("change");
@@ -689,19 +1061,31 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function get3DObjectX(object : Object3D) : Float {
+	public static function get3DObjectLocalPositionX(object : Object3D) : Float {
 		return object.position.x;
 	}
 
-	public static function get3DObjectY(object : Object3D) : Float {
+	public static function get3DObjectWorldPositionX(object : Object3D) : Float {
+		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).x");
+	}
+
+	public static function get3DObjectLocalPositionY(object : Object3D) : Float {
 		return object.position.y;
 	}
 
-	public static function get3DObjectZ(object : Object3D) : Float {
+	public static function get3DObjectWorldPositionY(object : Object3D) : Float {
+		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).y");
+	}
+
+	public static function get3DObjectLocalPositionZ(object : Object3D) : Float {
 		return object.position.z;
 	}
 
-	public static function set3DObjectX(object : Object3D, x : Float) : Void {
+	public static function get3DObjectWorldPositionZ(object : Object3D) : Float {
+		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).z");
+	}
+
+	public static function set3DObjectLocalPositionX(object : Object3D, x : Float) : Void {
 		if (object.position.x != x) {
 			object.position.x = x;
 
@@ -712,7 +1096,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectY(object : Object3D, y : Float) : Void {
+	public static function set3DObjectLocalPositionY(object : Object3D, y : Float) : Void {
 		if (object.position.y != y) {
 			object.position.y = y;
 
@@ -723,7 +1107,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectZ(object : Object3D, z : Float) : Void {
+	public static function set3DObjectLocalPositionZ(object : Object3D, z : Float) : Void {
 		if (object.position.z != z) {
 			object.position.z = z;
 
@@ -740,15 +1124,15 @@ class RenderSupport3D {
 		return object.rotation.x / 0.0174532925 /*degrees*/;
 	}
 
-	public static function get3DObjectRotationY(object : Object3D) : Float {
+	public static function get3DObjectLocalRotationY(object : Object3D) : Float {
 		return object.rotation.y / 0.0174532925 /*degrees*/;
 	}
 
-	public static function get3DObjectRotationZ(object : Object3D) : Float {
+	public static function get3DObjectLocalRotationZ(object : Object3D) : Float {
 		return object.rotation.z / 0.0174532925 /*degrees*/;
 	}
 
-	public static function set3DObjectRotationX(object : Object3D, x : Float) : Void {
+	public static function set3DObjectLocalRotationX(object : Object3D, x : Float) : Void {
 		x = x * 0.0174532925 /*radians*/;
 
 		if (object.rotation.x != x) {
@@ -762,7 +1146,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectRotationY(object : Object3D, y : Float) : Void {
+	public static function set3DObjectLocalRotationY(object : Object3D, y : Float) : Void {
 		y = y * 0.0174532925 /*radians*/;
 
 		if (object.rotation.y != y) {
@@ -776,7 +1160,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectRotationZ(object : Object3D, z : Float) : Void {
+	public static function set3DObjectLocalRotationZ(object : Object3D, z : Float) : Void {
 		z = z * 0.0174532925 /*radians*/;
 
 		if (object.rotation.z != z) {
@@ -792,19 +1176,19 @@ class RenderSupport3D {
 
 
 
-	public static function get3DObjectScaleX(object : Object3D) : Float {
+	public static function get3DObjectLocalScaleX(object : Object3D) : Float {
 		return object.scale.x;
 	}
 
-	public static function get3DObjectScaleY(object : Object3D) : Float {
+	public static function get3DObjectLocalScaleY(object : Object3D) : Float {
 		return object.scale.y;
 	}
 
-	public static function get3DObjectScaleZ(object : Object3D) : Float {
+	public static function get3DObjectLocalScaleZ(object : Object3D) : Float {
 		return object.scale.z;
 	}
 
-	public static function set3DObjectScaleX(object : Object3D, x : Float) : Void {
+	public static function set3DObjectLocalScaleX(object : Object3D, x : Float) : Void {
 		if (object.scale.x != x) {
 			object.scale.x = x;
 
@@ -816,7 +1200,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectScaleY(object : Object3D, y : Float) : Void {
+	public static function set3DObjectLocalScaleY(object : Object3D, y : Float) : Void {
 		if (object.scale.y != y) {
 			object.scale.y = y;
 
@@ -828,7 +1212,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function set3DObjectScaleZ(object : Object3D, z : Float) : Void {
+	public static function set3DObjectLocalScaleZ(object : Object3D, z : Float) : Void {
 		if (object.scale.z != z) {
 			object.scale.z = z;
 
@@ -855,15 +1239,15 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectWorldX(object : Object3D, x : Float) : Void {
-		set3DObjectX(object, object.parent != null ? x - get3DObjectWorldX(object.parent) : x);
+		set3DObjectLocalPositionX(object, object.parent != null ? x - get3DObjectWorldX(object.parent) : x);
 	}
 
 	public static function set3DObjectWorldY(object : Object3D, y : Float) : Void {
-		set3DObjectY(object, object.parent != null ? y - get3DObjectWorldY(object.parent) : y);
+		set3DObjectLocalPositionY(object, object.parent != null ? y - get3DObjectWorldY(object.parent) : y);
 	}
 
 	public static function set3DObjectWorldZ(object : Object3D, z : Float) : Void {
-		set3DObjectZ(object, object.parent != null ? z - get3DObjectWorldZ(object.parent) : z);
+		set3DObjectLocalPositionZ(object, object.parent != null ? z - get3DObjectWorldZ(object.parent) : z);
 	}
 
 
@@ -890,15 +1274,15 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectWorldRotationX(object : Object3D, x : Float) : Void {
-		set3DObjectRotationX(object, object.parent != null ? x - get3DObjectWorldRotationX(object.parent) : x);
+		set3DObjectLocalRotationX(object, object.parent != null ? x - get3DObjectWorldRotationX(object.parent) : x);
 	}
 
 	public static function set3DObjectWorldRotationY(object : Object3D, y : Float) : Void {
-		set3DObjectRotationY(object, object.parent != null ? y - get3DObjectWorldRotationY(object.parent) : y);
+		set3DObjectLocalRotationY(object, object.parent != null ? y - get3DObjectWorldRotationY(object.parent) : y);
 	}
 
 	public static function set3DObjectWorldRotationZ(object : Object3D, z : Float) : Void {
-		set3DObjectRotationZ(object, object.parent != null ? z - get3DObjectWorldRotationZ(object.parent) : z);
+		set3DObjectLocalRotationZ(object, object.parent != null ? z - get3DObjectWorldRotationZ(object.parent) : z);
 	}
 
 
@@ -916,23 +1300,60 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectWorldScaleX(object : Object3D, x : Float) : Void {
-		set3DObjectScaleX(object, object.parent != null ? x / get3DObjectWorldScaleX(object.parent) : x);
+		set3DObjectLocalScaleX(object, object.parent != null ? x / get3DObjectWorldScaleX(object.parent) : x);
 	}
 
 	public static function set3DObjectWorldScaleY(object : Object3D, y : Float) : Void {
-		set3DObjectScaleY(object, object.parent != null ? y / get3DObjectWorldScaleY(object.parent) : y);
+		set3DObjectLocalScaleY(object, object.parent != null ? y / get3DObjectWorldScaleY(object.parent) : y);
 	}
 
 	public static function set3DObjectWorldScaleZ(object : Object3D, z : Float) : Void {
-		set3DObjectScaleZ(object, object.parent != null ? z / get3DObjectWorldScaleZ(object.parent) : z);
+		set3DObjectLocalScaleZ(object, object.parent != null ? z / get3DObjectWorldScaleZ(object.parent) : z);
 	}
 
 
 
 	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
-		object.lookAt(new Vector3(x, y, z));
+		RenderSupportJSPixi.once("drawframe", function() {
+			object.lookAt(new Vector3(x, y, z));
+			object.invalidateStage();
+		});
+	}
+
+	public static function set3DObjectLocalMatrix(object : Object3D, matrix : Array<Float>) : Void {
+		object.matrix.fromArray(matrix);
 		object.invalidateStage();
 	}
+
+	public static function set3DObjectWorldMatrix(object : Object3D, matrix : Array<Float>) : Void {
+		object.matrixWorld.fromArray(matrix);
+		object.invalidateStage();
+	}
+
+
+	public static function set3DObjectInteractive(object : Object3D, interactive : Bool) : Void {
+		if (untyped object.interactive != interactive) {
+			untyped object.interactive = interactive;
+			object.invalidateStage();
+
+			for (stage in object.getStage()) {
+				if (interactive && stage.interactiveObjects.indexOf(object) < 0) {
+					stage.interactiveObjects.push(object);
+				} else if (!interactive && stage.interactiveObjects.indexOf(object) >= 0) {
+					stage.interactiveObjects.remove(object);
+				}
+			}
+		}
+	}
+
+	public static function get3DObjectInteractive(object : Object3D) : Bool {
+		if (untyped object.interactive != null) {
+			return untyped object.interactive;
+		} else {
+			return false;
+		}
+	}
+
 
 
 	public static function get3DObjectBoundingBox(object : Object3D) : Array<Array<Float>> {
@@ -940,37 +1361,79 @@ class RenderSupport3D {
 		return [[box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]];
 	}
 
-	public static function add3DObjectPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
-		var fn = function(e : Dynamic) {
-			cb(get3DObjectX(object), get3DObjectY(object), get3DObjectZ(object));
-		};
-
-		fn(0);
-
-		object.addEventListener("position", fn);
-		return function() { object.removeEventListener("position", fn); };
+	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrix();
+		return object.matrix.toArray();
 	}
 
-	public static function add3DObjectRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
-		var fn = function(e : Dynamic) {
-			cb(get3DObjectRotationX(object), get3DObjectRotationY(object), get3DObjectRotationZ(object));
-		};
-
-		fn(0);
-
-		object.addEventListener("rotation", fn);
-		return function() { object.removeEventListener("rotation", fn); };
+	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
+		object.updateMatrixWorld(true);
+		return object.matrixWorld.toArray();
 	}
 
-	public static function add3DObjectScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+	public static function add3DObjectLocalPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
-			cb(get3DObjectScaleX(object), get3DObjectScaleY(object), get3DObjectScaleZ(object));
+			cb(get3DObjectLocalPositionX(object), get3DObjectLocalPositionY(object), get3DObjectLocalPositionZ(object));
 		};
 
 		fn(0);
 
-		object.addEventListener("scale", fn);
-		return function() { object.removeEventListener("scale", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectWorldPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectStagePositionListener(stage : ThreeJSStage, object : Object3D, cb : Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			var sc = convert3DVectorToStageCoordinates(stage, get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
+			cb(sc[0], sc[1]);
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		if (stage.camera != null) {
+			stage.camera.addEventListener("change", fn);
+		}
+
+		return function() {
+			object.removeEventListener("change", fn);
+			if (stage.camera != null) {
+				stage.camera.removeEventListener("change", fn);
+			}
+		};
+	}
+
+	public static function add3DObjectLocalRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectRotationX(object), get3DObjectLocalRotationY(object), get3DObjectLocalRotationZ(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectLocalScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectLocalScaleX(object), get3DObjectLocalScaleY(object), get3DObjectLocalScaleZ(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 	public static function add3DObjectBoundingBoxListener(object : Object3D, cb : (Array<Array<Float>>) -> Void) : Void -> Void {
@@ -980,8 +1443,30 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("box", fn);
-		return function() { object.removeEventListener("box", fn); };
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectLocalMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectLocalMatrix(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
+	}
+
+	public static function add3DObjectWorldMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectWorldMatrix(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("change", fn);
+		return function() { object.removeEventListener("change", fn); };
 	}
 
 
@@ -1029,11 +1514,21 @@ class RenderSupport3D {
 
 
 	public static function make3DPointLight(color : Int, intensity : Float, distance : Float, decay : Float) : Light {
-		return new PointLight(color, intensity, distance, decay);
+		var light = new PointLight(color, intensity, distance, decay);
+		light.name = "Point Light";
+		return light;
 	}
 
 	public static function make3DSpotLight(color : Int, intensity : Float, distance : Float, angle : Float, penumbra : Float, decay : Float) : Light {
-		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
+		var light = new SpotLight(color, intensity, distance, angle, penumbra, decay);
+		light.name = "Spot Light";
+		return light;
+	}
+
+	public static function make3DAmbientLight(color : Int, intensity : Float) : Light {
+		var light = new AmbientLight(color, intensity);
+		light.name = "Ambient Light";
+		return light;
 	}
 
 
@@ -1137,29 +1632,183 @@ class RenderSupport3D {
 		return new SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
 	}
 
-	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
-		var materialParameters : Dynamic = {color : new Color(color)};
+	public static function set3DGeometryMatrix(geometry : Geometry, matrix : Array<Float>) : Void {
+		geometry.applyMatrix(new Matrix4().fromArray(matrix));
+	}
 
-		for (par in parameters) {
-			untyped materialParameters[par[0]] = par[1];
+	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		untyped g.addGroups = addGroups;
+		return g;
+	}
+
+	public static function make3DBoxBufferGeometry(width : Float, height : Float, depth : Float, widthSegments : Int, heightSegments : Int, depthSegments : Int, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new BoxBufferGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
+		untyped g.addGroups = addGroups;
+		return g;
+	}
+
+	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
+		if (data.length > 0) {
+			var attribute : Dynamic = new BufferAttribute(new js.html.Float32Array(data.length * data[0].length), data[0].length);
+
+			for (i in 0...data.length) {
+				if (data[i].length > 0) {
+					attribute.setX(i, data[i][0]);
+				}
+
+				if (data[i].length > 1) {
+					attribute.setY(i, data[i][1]);
+				}
+
+				if (data[i].length > 2) {
+					attribute.setZ(i, data[i][2]);
+				}
+
+				if (data[i].length > 3) {
+					attribute.setW(i, data[i][3]);
+				}
+			}
+
+			untyped geometry.setAttribute(name, attribute);
+		}
+	}
+
+	public static function get3DBufferGeometryAttribute(geometry : BufferGeometry, name : String) : Array<Array<Float>> {
+		var attribute : Dynamic = geometry.getAttribute(name);
+		var data = new Array<Array<Float>>();
+
+		for (i in 0...attribute.count) {
+			data.push([
+				attribute.getX(i),
+				attribute.getY(i),
+				attribute.getZ(i),
+				attribute.getW(i)
+			]);
 		}
 
-		return new MeshBasicMaterial(materialParameters);
+		return data;
+	}
+
+	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		var material = new MeshBasicMaterial(untyped {color : new Color(color)});
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
 	}
 
 	public static function make3DMeshStandardMaterial(color : Int, parameters : Array<Array<String>>) : Material {
-		var materialParameters : Dynamic = {color : new Color(color)};
+		var material = new MeshStandardMaterial(untyped {color : new Color(color)});
 
 		for (par in parameters) {
-			untyped materialParameters[par[0]] = par[1];
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
 		}
 
-		return new MeshStandardMaterial(materialParameters);
+		return material;
+	}
+
+	public static function make3DMeshNormalMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		var material = new MeshNormalMaterial(untyped {color : new Color(color)});
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
+	}
+
+	public static function make3DShaderMaterial(stage : ThreeJSStage, uniforms : String, vertexShader : String, fragmentShader : String, parameters : Array<Array<String>>) : Material {
+		var material : Dynamic = null;
+		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
+
+		uniformsObject.iResolution = {
+			type : 'v2',
+			value : new Vector2(stage.getWidth(), stage.getHeight())
+		};
+
+		uniformsObject.iAspectRatio = {
+			type : 'f',
+			value : stage.getHeight() / stage.getWidth()
+		};
+
+		uniformsObject.iTime = {
+			type : 'f',
+			value : Browser.window.performance.now() / 1000.0
+		};
+
+		uniformsObject.iOpacity = {
+			type : 'f',
+			value : 1.0
+		};
+
+		uniformsObject.iVisible = {
+			type : 'f',
+			value : true
+		};
+
+		if (vertexShader != "") {
+			if (fragmentShader != "") {
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
+					vertexShader: vertexShader,
+					fragmentShader: fragmentShader
+				});
+			} else {
+				material = new ShaderMaterial(untyped {
+					uniforms: uniformsObject,
+					vertexShader: vertexShader,
+				});
+			}
+		} else {
+			material = new ShaderMaterial(untyped {
+				uniforms: uniformsObject,
+				fragmentShader: fragmentShader
+			});
+		}
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
 	}
 
 
-	public static function make3DMesh(geometry : Geometry, material : Material) : Mesh {
-		return new Mesh(geometry, material);
+	public static function set3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String, value : String) : Void {
+		untyped material.uniforms[uniform].value = __js__("eval(value)");
+	}
+
+	public static function get3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String) : String {
+		return untyped material.uniforms[uniform].value.toString();
+	}
+
+
+	public static function make3DMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Mesh {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
+			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
+			}
+		}
+
+		var mesh = new Mesh(geometry, untyped materials.length == 1 ? materials[0] : materials);
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
+
+		untyped mesh.materials = materials;
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
 	}
 
 
@@ -1174,6 +1823,10 @@ class RenderSupport3D {
 	public static function create3DAnimationMixer(object : Object3D) : AnimationMixer {
 		var mixer : Dynamic = untyped __js__("new THREE.AnimationMixer(object)");
 		mixer.clock = new Clock();
+		mixer.object = object;
+		for (stage in object.getStage()) {
+			mixer.stage = stage;
+		}
 		return mixer;
 	}
 
@@ -1181,21 +1834,48 @@ class RenderSupport3D {
 		var action = mixer.clipAction(animation);
 		var drawFrameFn = function() {
 			mixer.update(untyped mixer.clock.getDelta());
-			RenderSupportJSPixi.InvalidateStage();
+			Object3DHelper.invalidateStage(untyped mixer.object);
 		};
 
-		action.play();
-		RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		var playFn = function() {
+			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+			action.play();
+			RenderSupportJSPixi.on('drawframe', drawFrameFn);
+		}
 
-		return function() {
+		var stopFn = function() {
 			action.stop();
 			RenderSupportJSPixi.off('drawframe', drawFrameFn);
 		}
+
+		playFn();
+
+		cast(untyped mixer.object, Object3D).on("added", function() {
+			playFn();
+			cast(untyped mixer.object, Object3D).once("removed", stopFn);
+		});
+
+		return stopFn;
 	}
 
 	public static function clear3DStageObjectCache(stage : ThreeJSStage) : Void {
 		if (stage.objectCache != null) {
 			stage.objectCache = new Array<Object3D>();
 		}
+	}
+
+	public static function convert3DVectorToStageCoordinates(stage : ThreeJSStage, x : Float, y : Float, z : Float) : Array<Float> {
+		var widthHalf = stage.getWidth() / 2;
+		var heightHalf = stage.getHeight() / 2;
+
+		var vector = new Vector3(x, y, z);
+		stage.camera.updateMatrix();
+		stage.camera.updateMatrixWorld(true);
+		vector.project(stage.camera);
+
+		return [
+			( vector.x * widthHalf ) + widthHalf,
+			( -vector.y * heightHalf ) + heightHalf
+		];
 	}
 }

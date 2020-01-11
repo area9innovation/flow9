@@ -138,6 +138,21 @@ public class RenderSupport extends NativeHost {
 	public Object setClipRotation(Object stg, double val) {
 		return null;
 	}
+	public Object setClipWidth(Object clip, double width) {
+		return null;
+	}
+	public double getClipHeight(Object clip) {
+		return 0;
+	}
+	public double getClipWidth(Object clip) {
+		return 0;
+	}
+	public Object setClipHeight(Object clip, double height) {
+		return null;
+	}
+	public Object setClipResolution(Object clip, double resolution) {
+		return null;
+	}
 	public Object setScrollRect(Object stg, double x, double y, double w, double h) {
 		return null;
 	}
@@ -231,9 +246,6 @@ public class RenderSupport extends NativeHost {
 		return null;
 	}
 	public Object setWordWrap(Object stg, boolean val) {
-		return null;
-	}
-	public Object setDoNotInvalidateStage(Object stg, boolean val) {
 		return null;
 	}
 	public Object setReadOnly(Object stg, boolean val) {
@@ -416,6 +428,9 @@ public class RenderSupport extends NativeHost {
     	return no_op;
     }
 	public Object playVideoFromMediaStream(Object clip, Object stream, Boolean startPaused) {
+		return null;
+	}
+	public Object compareImages(String image1, String image2, Func1<Object, String> cb) {
 		return null;
 	}
 }

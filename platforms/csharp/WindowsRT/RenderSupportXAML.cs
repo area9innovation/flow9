@@ -1410,7 +1410,6 @@ namespace Area9Innovation.Flow
 				public abstract string getContent();
 				public virtual void setMultiline(bool val) {}
 				public virtual void setWordWrap(bool val) {}
-				public virtual void setDoNotInvalidateStage(bool val) {}
 				public virtual void setReadOnly(bool val) {}
 				public virtual void setAutoAlign(string val) {}
 				public virtual void setTextInputType(string mode) {}
@@ -1581,9 +1580,6 @@ namespace Area9Innovation.Flow
 				public override void setWordWrap(bool val)
 				{
 					input.TextWrapping = val ? TextWrapping.Wrap : TextWrapping.NoWrap;
-				}
-				public override void setDoNotInvalidateStage(bool val)
-				{
 				}
 				public override void setReadOnly(bool val)
 				{
@@ -1804,10 +1800,6 @@ namespace Area9Innovation.Flow
 		public override Object setWordWrap(Object stg, bool val)
 		{
 			((TextClip)stg).impl.setWordWrap(val);
-			return null;
-		}
-		public override Object setDoNotInvalidateStage(Object stg, bool val)
-		{
 			return null;
 		}
 		public override Object setReadOnly(Object stg, bool val)

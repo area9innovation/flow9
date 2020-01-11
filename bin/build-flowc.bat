@@ -65,35 +65,5 @@ echo }>> %VERFILE%
 
 )
 
-echo * Compiling runtime
-echo   -----------------
-echo.
-
-pushd %BASE_DIR%\platforms\java
-"%JAVAC%" -g com\area9innovation\flow\*.java -Xlint:deprecation
-popd
-
-echo.
-echo * Generating the Java modules for flowc
-echo   -------------------------------------
-echo.
-::call flow --java javagen tools\flowc\flowc.flow
-call flowc1 tools/flowc/flowc.flow java=javagen
-
-echo.
-echo * Compiling the generated code
-echo   ----------------------------
-echo.
-
-"%JAVAC%" -Xlint:unchecked -encoding UTF-8 -cp platforms/java javagen/com/area9innovation/flow/*.java
-
-echo.
-echo * Building the 'flowc.jar'
-echo   ------------------------
-echo.
-
-"%JAR%" cf tools\flowc\flowc.jar -C platforms/java com/area9innovation/flow/
-"%JAR%" feu tools\flowc\flowc.jar com.area9innovation.flow.Main -C javagen com/area9innovation/flow/
-
-echo.
-echo Done.
+call flowc1 jar=flowc_1 tools/flowc/flowc.flow
+move flowc_1.jar tools/flowc/flowc.jar
