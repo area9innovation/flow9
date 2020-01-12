@@ -613,6 +613,7 @@ int main(int argc, char *argv[])
 #ifdef NATIVE_BUILD
         FlowRunner.Init(load_native_program());
         FlowRunner.setUrl(params);
+        // Here we add all command line arguments as Url parameters
         QStringList args = app->arguments();
         args.removeFirst();
         for (auto& arg : args) {
