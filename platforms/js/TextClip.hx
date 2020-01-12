@@ -513,7 +513,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateWidthDelta() {
-		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
+		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome) && parent != null) {
 			var zoomFactor = RenderSupportJSPixi.browserZoom;
 
 			updateTextMetrics();
