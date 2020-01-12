@@ -404,7 +404,9 @@ class TextClip extends NativeWidgetClip {
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
-					child.className = "baselineWidget";
+					if (child != baselineWidget) {
+						child.className = "inlineWidget";
+					}
 				}
 			}
 
