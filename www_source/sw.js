@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 4;
+var SERVICE_WORKER_VERSION = 5;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -17,6 +17,17 @@ var CacheMode = {
   // Cache all static files requests
   CacheStaticContent: true
 }
+
+// Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
+// The structure of `requestsCacheFilter` is
+//  [{
+//    url /*string*/,
+//    methods : [{
+//      method /*string*/,
+//      headers : [{ key /*string*/, value /*string*/ }]
+//    }]
+//  }]
+var requestsSkipOnFetch = [];
 
 // Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
 // The structure of `requestsCacheFilter` is
@@ -108,11 +119,39 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
+  var isMatchSkipFilter = function(request) {
+    var fixedUrl = urlAddBaseLocation(request.url).toLowerCase();
+    var method = request.method.toLowerCase();
+
+    return !isEmpty(requestsSkipOnFetch.find(function(elUrl) {
+      // Does url matched
+      if (isEmpty(elUrl.url) || fixedUrl.startsWith(elUrl.url)) {
+        return !isEmpty(elUrl.methods.find(function(elMethod) {
+          // Does method matched
+          if (isEmpty(elMethod.method) || elMethod.method == method) {
+            return !isEmpty(elMethod.headers.find(function(elHeader) {
+              // Does any header matched
+              return (
+                isEmpty(elHeader.key) ||
+                (request.headers.has(elHeader.key) && request.headers.get(elHeader.key) == elHeader.value)
+              );
+            }));
+          } else {
+            return false;
+          }
+        }));
+      } else {
+        return false;
+      }
+    }));
+  }
+
   // Here we trying to recognize file uploading request to skip it in cache operations then
   var isFileUploadingRequestFn = function(request) {
     if (request.method == "POST" && request.headers.has("Content-Type")) {
       var ctValue = request.headers.get("Content-Type").toLowerCase();
-      return ctValue.includes("multipart/form-data") && ctValue.includes("boundary=");
+      var clValue = request.headers.get("Content-Length");
+      return (ctValue.includes("multipart/form-data") && ctValue.includes("boundary=")) || clValue > 10000;
     } else {
       return false;
     }
@@ -324,8 +363,10 @@ self.addEventListener('fetch', function(event) {
 
   // Should we skip this request?
   var checkRequestForSkipping = function(request, requestData) {
-    // Do not process files uploading requests
-    return isFileUploadingRequestFn(request) ||
+    // Should be skipped by special filter?
+    return isMatchSkipFilter(request) ||
+      // Do not process files uploading requests
+      isFileUploadingRequestFn(request) ||
       // We disable Range requests for a while
       !isEmpty(request.headers.get('range')) ||
       (
@@ -651,6 +692,15 @@ self.addEventListener('message', function(event) {
     });
   };
 
+  var isEqualStrings = function(str1, str2) {
+    return ((isEmpty(str1) && isEmpty(str2)) || (str1 === str2));
+  };
+
+  var getNotEmptyString = function(str) {
+    if (isEmpty(str)) return "";
+    else return str;
+  };
+
   var checkUrlsInCache = function(urls) {
     return Promise.all(urls.map(function(url) {
         return caches.match(urlAddBaseLocation(url), { ignoreSearch: false })
@@ -691,16 +741,7 @@ self.addEventListener('message', function(event) {
     event.data.data.cacheIfUrlMatch = urlAddBaseLocation(event.data.data.cacheIfUrlMatch).toLowerCase();
     event.data.data.method = event.data.data.method.toLowerCase();
     //event.data.data.cacheIfParametersMatch = event.data.data.cacheIfParametersMatch.map(function(el) { return el .toLowerCase();; });
-    event.data.data.ignoreParameterKeysOnCache = event.data.data.ignoreParameterKeysOnCache.map(function(el) { return el.toLowerCase();; });
-
-    var isEqualStrings = function(str1, str2) {
-      return ((isEmpty(str1) && isEmpty(str2)) || (str1 === str2));
-    }
-
-    var getNotEmptyString = function(str) {
-      if (isEmpty(str)) return "";
-      else return str;
-    }
+    event.data.data.ignoreParameterKeysOnCache = event.data.data.ignoreParameterKeysOnCache.map(function(el) { return el.toLowerCase(); });
 
     var idx1 = requestsCacheFilter.findIndex(function(el) { return isEqualStrings(event.data.data.cacheIfUrlMatch, el.url); });
     if (idx1 == -1) {
@@ -738,6 +779,39 @@ self.addEventListener('message', function(event) {
         keyValues: event.data.data.cacheIfParametersMatch.map(function(pair) { return { key: pair[0], value: pair[1] }; }),
         ignoreKeys: event.data.data.ignoreParameterKeysOnCache
       };
+    }
+
+    respond({ status: "OK" });
+  } else if (event.data.action == "requests_skip_filter") {
+    event.data.data.url = urlAddBaseLocation(event.data.data.url).toLowerCase();
+    event.data.data.method = event.data.data.method.toLowerCase();
+    event.data.data.header = event.data.data.header.map(function(el) { return el.toLowerCase(); });
+    if (event.data.data.header.length == 2) {
+      event.data.data.header = { key : event.data.data.header[0], value : event.data.data.header[1] };
+    } else {
+      event.data.data.header = { key : "", value : "" };
+    }
+
+    var idx1 = requestsSkipOnFetch.findIndex(function(el) { return isEqualStrings(event.data.data.url, el.url); });
+    if (idx1 == -1) {
+      requestsSkipOnFetch.push({ url: getNotEmptyString(event.data.data.url), methods: [] });
+      idx1 = requestsSkipOnFetch.length - 1;
+    }
+
+    var idx2 = requestsSkipOnFetch[idx1].methods.findIndex(function(el) {
+      return isEqualStrings(event.data.data.method, el.method);
+    });
+    if (idx2 == -1) {
+      requestsSkipOnFetch[idx1].methods.push({ method: getNotEmptyString(event.data.data.method), headers: [] });
+      idx2 = requestsSkipOnFetch[idx1].methods.length - 1;
+    }
+
+    var idx3 = requestsSkipOnFetch[idx1].methods[idx2].headers.findIndex(function(h) {
+      return (isEqualStrings(h.key, event.data.data.header.key) && isEqualStrings(h.value, event.data.data.header.value));
+    });
+
+    if (idx3 == -1) {
+      requestsSkipOnFetch[idx1].methods[idx2].headers.push(event.data.data.header);
     }
 
     respond({ status: "OK" });
