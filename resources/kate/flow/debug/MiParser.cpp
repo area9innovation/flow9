@@ -85,6 +85,8 @@ public:
 			QTextStream(stdout) << "Mi fdb output " << QString::fromStdString(err_msg) << ", line: " << ln << ", col: " << col << endl;
 			QTextStream(stdout) << str.mid(0, 64) << endl;
 			QTextStream(stdout) << str.mid(col - 32, 64) << endl;
+			QTextStream(stdout) << str << endl;
+
 		};
 		parser.parse<MiResult>(str.toStdString().c_str(), ret);
 		return ret;
