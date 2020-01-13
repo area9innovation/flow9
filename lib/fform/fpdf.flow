@@ -1,0 +1,90 @@
+import pdf/pdf_natives;
+import form/form;
+import fform/fform;
+
+export {
+	loadFPdfDocument(url : string, onLoad : (FPdfDocument) -> void, style : [FPdfDocumentStyle]) -> void;
+
+	FPdfDocumentStyle ::= OnError;
+
+	FPdfDocument(
+		pageCount : int,
+		getPageView : (page : Transform<int>, style : [FPdfPageStyle], availableWH : Transform<WidthHeight>) -> FForm
+	);
+
+	FPdfPageStyle ::= FPdfMetrics;
+		FPdfMetrics(metrics : DynamicBehaviour<FormMetrics>);
+}
+
+loadFPdfDocument(url : string, onLoad : (FPdfDocument) -> void, style : [FPdfDocumentStyle]) {
+	onError = extractStruct(style, OnError(nop1)).fn;
+
+	getPageSize = \page -> {
+		dims = getPdfPageDimensions(page);
+		WidthHeight(dims[0], dims[1]);
+	}
+
+	makePageViewFn =
+		\document -> {
+			\pageNum, pageStyle, availableWH -> {
+				metrics = extractStruct(pageStyle, FPdfMetrics(make(FormMetrics(0.0, 0.0, 0.0, 0.0)))).metrics;
+
+				FNativeForm(
+					"",
+					metrics,
+					\ -> FEmpty(),
+					\av, zo, to -> {
+						clip = makePdfClip();
+
+						u2 = ref nop;
+
+						u1 = makeSubscribe(pageNum, \num -> {
+							getPdfDocumentPage(
+								document,
+								num,
+								\page -> {
+									^u2();
+
+									u2 := makeSubscribe(availableWH, \avail -> {
+										size = getPageSize(page);
+										scale = min(avail.width / size.width, avail.height / size.height);
+										scaledSize = WidthHeight(size.width * scale, size.height * scale);
+
+										setPdfClipRenderPage(clip, page, scale);
+
+										next(metrics, FormMetrics(scaledSize.width, scaledSize.height, scaledSize.height, scaledSize.height));
+									})();
+								},
+								onError
+							)
+						})();
+
+						NativeRenderResult(
+							[clip],
+							\ -> {
+								u1();
+								^u2();
+							}
+						)
+					}
+				)
+			}
+		}
+
+	loadPdfLibrary(
+		\-> {
+			getPdfDocument(
+				url,
+				\obj -> {
+					onLoad(
+						FPdfDocument(
+							getPdfDocumentNumPages(obj),
+							makePageViewFn(obj)
+						)
+					)
+				},
+				onError
+			)
+		}
+	)
+}

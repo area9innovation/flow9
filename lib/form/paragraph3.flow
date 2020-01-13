@@ -113,6 +113,8 @@ renderParagraph(
 ) -> Form {
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
+	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
+	needIndent = genIndent != 0.0;
 
 	interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
 
@@ -145,7 +147,7 @@ renderParagraph(
 
 	renderParaLinesFn = \lines, storyWidth -> renderParaLines(
 		storyWidth, lines, tightWidth, alignment, interlineSpacing,
-		topLineBaseline, interactiveStyles, rtl, isParagraphMarked
+		topLineBaseline, interactiveStyles, rtl, isParagraphMarked, genIndent
 	);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
@@ -215,7 +217,9 @@ renderParagraph(
 			};
 
 			uns = concatA([
-				[subscribe(aw, \v -> updateFn(v))],
+				[
+					subscribe(aw, \v -> updateFn(v)),
+				],
 				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
 					subscribe2(update, \u -> {
@@ -231,7 +235,14 @@ renderParagraph(
 
 			\ -> applyall(uns)
 		}
-	);
+	)
+	|> (\f -> {
+		if (needIndent) {
+			if (rtl) Border(0.0, 0.0, genIndent, 0.0, f) else Border(genIndent, 0.0, 0.0, 0.0, f)
+		} else {
+			f
+		}
+	})
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -399,9 +410,8 @@ reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : do
 	else text;
 }
 
-ieWidthFix = if (strContains(toLowerCase(getBrowser()), "explorer")) 0.5 else 0.0;
 geParaWordWidth(word : ParaWord) -> double {
-	getValue(word.metrics).width + ieWidthFix;
+	getValue(word.metrics).width;
 };
 
 // here availableWidth is an amount of width for current line
@@ -631,6 +641,7 @@ renderParaLines(
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
 	isMarked : bool,
+	generalIndent : double
 ) -> Pair<Form, double> {
 	lasti = length(lines) - 1;
 
@@ -659,8 +670,14 @@ renderParaLines(
 			} else {
 				alignment;
 			}
-		f = RenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, styleTree, rtl, isMarked);
+		f = RenderLine(
+			acc.y, line.words, width, tightWidth,
+			lineAlignment, line.indent + generalIndent,
+			i, styleTree, rtl, isMarked
+		);
 		nwidth = max(acc.width, f.width);
+		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
+		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
 		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
 		nbaseline = f.baseline;
 		ParaLineAcc(

@@ -12,7 +12,7 @@ export {
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarLeft, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
-		TScrollbarsAdditionalBox;
+		TScrollbarsAdditionalBox, TScrollbarOverlapContent;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -133,6 +133,8 @@ export {
 
 		TScrollInspectShowScrolling(show : DynamicBehaviour<bool>);
 
+		TScrollbarOverlapContent(overlap : bool); // true by default
+
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
 
 	nativeScroll = \ -> isUrlParameterTrue("native_scroll") && getRendererType() == "html";
@@ -157,8 +159,21 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	currentInteractive = extractStruct(style, TCurrentInteractive(make(None()))).current;
 	mouseEnabled = extractStruct(style, TScrollMouseEnabled(const(true))).enabled;
 
+	overlapContent =
+		if (isUrlParameterTrue("scroll_overlap_debug"))
+			const(false)
+		else
+			const(extractStruct(style, TScrollbarOverlapContent(true)).overlap);
+
+	scrollBarStyles = extractStruct(style, TScrollbars(standardScrollBar, standardScrollBar));
 	scrollBarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
-	scrollBarsAdditionalBox = extractStruct(style, TScrollbarsAdditionalBox(const(WidthHeight(0., 0.)))).box;
+	scrollBarsAdditionalBox = extractStruct(style, TScrollbarsAdditionalBox(
+		fif(
+			overlapContent,
+			const(WidthHeight(0., 0.)),
+			fwh(scrollBarStyles.y.thickness, scrollBarStyles.x.thickness)
+		)
+	)).box;
 	scrollFadeContent = tryExtractStruct(style, TScrollFadeContent(0, 0.0));
 
 	onScrolledToBottom = tryExtractStruct(style, TOnScrolledToBottom(nop));
@@ -168,9 +183,18 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	contentWH = wh.content;
 	// WidthHeight of available box
 	boxWH0 = wh.box;
+	boxWHCutted =
+		fif(
+			overlapContent,
+			boxWH0,
+			fwhsubtract(boxWH0, fstall(fwh(
+				fif(scrollBarsVisible.y, scrollBarStyles.y.thickness, const(0.)),
+				fif(scrollBarsVisible.x, scrollBarStyles.x.thickness, const(0.))
+			), 0))
+		);
 
 	// Maximum scroll offset (0 if content fits available box)
-	maxWH = fwhmax(fwhsubtract(contentWH, boxWH0), const(WidthHeight(0., 0.)));
+	maxWH = fwhmax(fwhsubtract(contentWH, boxWHCutted), const(WidthHeight(0., 0.)));
 
 	// Is moving by axis
 	xMoving = extractStruct(style, TScrollXMoving(make(false))).moving;
@@ -193,19 +217,22 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	TransformTAcc2(\t2a -> {
 		boxWH =
 			if (cropByContent)
-				fwhmin(boxWH0, contentWH)
+				fwhmin(boxWHCutted, contentWH)
 			else
-				boxWH0;
+				boxWHCutted;
 
 		b = TAttachBox(box, boxWH0) |> t2a;
 
 		cAcc = ref zeroTAcc;
 		c0 = {
 			cont =
-				TAvailable(
-					TAttachBox(content, contentWH),
-					TSizedWidthHeight(b.metrics.width, b.metrics.height)
-				);
+				TFrame(
+					0.0,
+					0.0,
+					interactiveRectangleStyle,
+					TAttachBox(content, contentWH)
+				)
+				|> (\t -> TAvailable(t,	TSized(boxWHCutted)));
 
 			if (cropByContent)
 				TransformTAcc2(\t2a2 -> {
@@ -492,7 +519,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						\ -> createTScrollBars(
 							manager,
 							scrollId,
-							eitherMap(scrollFadeContent, \__ -> replaceStruct(style, scrollBarsVisible), style),
+							replaceStruct(style, scrollBarsVisible),
 							contentWH,
 							boxWH,
 							scrollPosition,
@@ -1126,23 +1153,23 @@ createTScrollBars(
 					)
 				)
 				|> (\t -> TFixSize(t, makeScrollbarBox(boxSize)))
-				|> (\t ->
+			})
+			|> (\t ->
 					TConstruct(
 						[
-								make2Subscribe(boxSize, contentWH, \boxSz, __ -> {
-									scl = fgetValue(scale);
-									nextDistinct(barVisible, scl < 1.);
-									minBSize = min(24., boxSz / 2.);
-									bSize0 = boxSz * scl;
-									nextDistinct(scrollbarLength, max(bSize0, minBSize));
-									nextDistinct(barGap, min(bSize0 - minBSize, 0.));
-								})
+							make2Subscribe(boxSize, contentWH, \boxSz, __ -> {
+								scl = fgetValue(scale);
+								nextDistinct(barVisible, scl < 1.);
+								minBSize = min(24., boxSz / 2.);
+								bSize0 = boxSz * scl;
+								nextDistinct(scrollbarLength, max(bSize0, minBSize));
+								nextDistinct(barGap, min(bSize0 - minBSize, 0.));
+							})
 						],
 						t
 					)
 				)
-			}
-		))
+		)
 		|> (\makeBar ->
 			if (mobile) {
 				makeBar();

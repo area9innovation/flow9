@@ -78,7 +78,7 @@ popZorder(manager : MaterialManager) -> () -> void {
 }
 
 getNextFocusId(parent : MFocusGroup) -> int {
-	foldTree(getValue(parent.focusIds), 0, \k, __, acc -> if (k == acc) acc + 1 else acc)
+	parent.nextFocusId
 }
 
 getMFocusTabOrder(focus : MaterialFocus) -> [int] {
@@ -114,11 +114,15 @@ changeMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, f : Mater
 			lookupTree(getValue(parent.focusIds), prevId),
 			\fid -> if (fid == f) {
 				next(parent.focusIds, removeFromTree(getValue(parent.focusIds), prevId));
-				maybeApply(f.iScriptId, \id -> {
-					iScriptIdParent = getIScriptUniqueIdParent(f);
-					next(iScriptIdParent.iScriptIds, removeFromTree(getValue(iScriptIdParent.iScriptIds), id));
-					traverseInOrder(getValue(iScriptIdParent.iScriptIds), \__, v -> fixIScriptUniqueId(v));
-				});
+				parent.nextFocusId ::= min(parent.nextFocusId, prevId);
+
+				if (isIScriptEnabled(manager)) {
+					maybeApply(f.iScriptId, \id -> {
+						iScriptIdParent = getIScriptUniqueIdParent(f);
+						next(iScriptIdParent.iScriptIds, removeFromTree(getValue(iScriptIdParent.iScriptIds), id));
+						traverseInOrder(getValue(iScriptIdParent.iScriptIds), \__, v -> fixIScriptUniqueId(v));
+					});
+				}
 
 				if (prevId >= 0 && getValue(parent.focusedId) == prevId) {
 					next(f.focused, false);
@@ -132,7 +136,17 @@ changeMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, f : Mater
 	if (newId >= 0) {
 		setIdFn = \ -> {
 		 	next(parent.focusIds, setTree(getValue(parent.focusIds), newId, f));
-		 	fixIScriptUniqueId(f);
+			if (parent.nextFocusId == newId) {
+				if (isNone(lookupTree(getValue(parent.focusIds), parent.nextFocusId + 1))) {
+					parent.nextFocusId ::= parent.nextFocusId + 1;
+				} else {
+					parent.nextFocusId ::= foldTree(getValue(parent.focusIds), 0, \k, __, acc -> if (k == acc) acc + 1 else acc);
+				}
+			}
+
+			if (isIScriptEnabled(manager)) {
+		 		fixIScriptUniqueId(f);
+			}
 
 			if (prevId >= 0 && getValue(parent.focusedId) == prevId)
 				next(parent.focusedId, -1);
@@ -261,6 +275,8 @@ addMaterialFocusId(
 	tabOrder : Maybe<Transform<int>>,
 	fn : (MFocus) -> Tropic
 ) -> Tropic {
+	next(parent.isInitialized, true);
+
 	defaultFocusId = make(-1);
 	focusId = either(tabOrder, defaultFocusId);
 
@@ -402,6 +418,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 	TransformTAcc(\t2a, pi, s, mo -> {
 		f =
 			MFocusGroup(
+				make(false),
 				parent.managerId,
 				focusId,
 				FEmpty(),
@@ -416,6 +433,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				make(-1),
 				getValue(focusedId),
 				make(makeTree()),
+				0,
 				make(makeTree()),
 				en,
 				zorderEn,
@@ -437,76 +455,81 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 		content =
 			TConstruct(
 				[
-					\ -> {
-						if (isNone(tabOrder))
-							next(defaultFocusId, getNextFocusId(parent));
+					makeSubscribeUns(f.isInitialized, \i ->
+						if (i) {
+							next(parent.isInitialized, true);
 
-						[
-							makeSubscribe(fselectWithLast(f.id, FIdentity2()), \id ->
-								changeMaterialFocusId(manager, parent, f, firstOfPair(id), secondOfPair(id)))(),
-							makeSubscribe2(fmin3(focusEnabled, enabled, if (zorderKeeper) zorderEn else clickEnabled), \fen -> if (!fen) {
-								nextDistinct(f.focusedId, -1);
-								nextDistinct(f.focused, false);
-							})(),
-							makeSubscribe2(f.nextId, \nid ->
-								traverseInOrder(getValue(f.focusIds), \k, v -> if (k != nid) switchMaterialFocus(v, nop1, \fg -> nextDistinct(fg.nextId, -1)))
-							)(),
-							makeSubscribe(f.focusedId, \foc -> {
-								if (foc != -1) {
-									nextDistinct(f.nextId, foc);
-								}
+							if (isNone(tabOrder))
+								next(defaultFocusId, getNextFocusId(parent));
 
-								fid = fgetValue(f.id);
-								pid = getValue(parent.focusedId);
+							[
+								makeSubscribe(fselectWithLast(f.id, FIdentity2()), \id ->
+									changeMaterialFocusId(manager, parent, f, firstOfPair(id), secondOfPair(id)))(),
+								makeSubscribe2(fmin3(focusEnabled, enabled, if (zorderKeeper) zorderEn else clickEnabled), \fen -> if (!fen) {
+									nextDistinct(f.focusedId, -1);
+									nextDistinct(f.focused, false);
+								})(),
+								makeSubscribe2(f.nextId, \nid ->
+									traverseInOrder(getValue(f.focusIds), \k, v -> if (k != nid) switchMaterialFocus(v, nop1, \fg -> nextDistinct(fg.nextId, -1)))
+								)(),
+								makeSubscribe(f.focusedId, \foc -> {
+									if (foc != -1) {
+										nextDistinct(f.nextId, foc);
+									}
 
-								if (foc == -1 && pid == fid)
-									next(parent.focusedId, -1)
-								else if (foc != -1 && pid != fid)
-									next(parent.focusedId, fid);
+									fid = fgetValue(f.id);
+									pid = getValue(parent.focusedId);
 
-								if (foc != f.previousFocusedId) {
-									maybeApply(lookupTree(fgetValue(f.focusIds), f.previousFocusedId), \v -> switchMaterialFocus(
-										v,
-										\fc -> {
-											nextDistinct(fc.focused, false);
-										},
-										\fc -> {
-											nextDistinct(fc.focused, false);
-											if (foc != -1) {
-												next(fc.nextId, -1);
-											}
-											next(fc.focusedId, -1);
-										}
-									));
+									if (foc == -1 && pid == fid)
+										next(parent.focusedId, -1)
+									else if (foc != -1 && pid != fid)
+										next(parent.focusedId, fid);
 
-									maybeApply(lookupTree(fgetValue(f.focusIds), foc), \v -> switchMaterialFocus(
-										v,
-										\fc -> {
-											if (fgetValue(fc.focusEnabled)) {
-												nextDistinct(fc.focused, true);
-											} else {
+									if (foc != f.previousFocusedId) {
+										maybeApply(lookupTree(fgetValue(f.focusIds), f.previousFocusedId), \v -> switchMaterialFocus(
+											v,
+											\fc -> {
 												nextDistinct(fc.focused, false);
-												deferred(\ -> next(f.focusedId, -1));
+											},
+											\fc -> {
+												nextDistinct(fc.focused, false);
+												if (foc != -1) {
+													next(fc.nextId, -1);
+												}
+												next(fc.focusedId, -1);
 											}
-										},
-										\fc -> {
-											nextDistinct(fc.focused, true);
-										}
-									));
+										));
 
-									f.previousFocusedId ::= foc;
-								}
-							})(),
-							\ -> changeMaterialFocusId(manager, parent, f, fgetValue(f.id), -1)
-						]
-						|> (\disps ->
-							if (isIScriptRecording(manager))
-								arrayPush(disps, initIScriptRecording(manager, f, true))
-							else
-								disps
-						)
-						|> (\disps -> \ -> applyall(disps))
-					}
+										maybeApply(lookupTree(fgetValue(f.focusIds), foc), \v -> switchMaterialFocus(
+											v,
+											\fc -> {
+												if (fgetValue(fc.focusEnabled)) {
+													nextDistinct(fc.focused, true);
+												} else {
+													nextDistinct(fc.focused, false);
+													deferred(\ -> next(f.focusedId, -1));
+												}
+											},
+											\fc -> {
+												nextDistinct(fc.focused, true);
+											}
+										));
+
+										f.previousFocusedId ::= foc;
+									}
+								})(),
+								\ -> changeMaterialFocusId(manager, parent, f, fgetValue(f.id), -1)
+							]
+							|> (\disps ->
+								if (isIScriptRecording(manager))
+									arrayPush(disps, initIScriptRecording(manager, f, true))
+								else
+									disps
+							)
+						} else {
+							[]
+						}
+					)
 				],
 				fn(f)
 			);
@@ -974,12 +997,14 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 							FAccessZorder(f.zorder),
 							AccessRole(accessRole),
 							FAccessEnabled(f.focusEnabled),
+							FAccessVisible(f.isInitialized),
 							FAccessTabOrder(f.tabOrder)
 						]
 					else
 						[
 							FAccessZorder(f.zorder),
 							AccessRole("group"),
+							FAccessVisible(f.isInitialized),
 							FAccessTabOrder(f.tabOrder)
 						])
 					|> (\f3 ->

@@ -126,6 +126,10 @@ class FlowContainer extends Container {
 			emitEvent("childrenchanged");
 		}
 
+		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && getClipChildren().length > 16) {
+			initNativeWidget();
+		}
+
 		return newChild;
 	}
 
@@ -141,6 +145,10 @@ class FlowContainer extends Container {
 			emitEvent("childrenchanged");
 		}
 
+		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && getClipChildren().length > 16) {
+			initNativeWidget();
+		}
+
 		return newChild;
 	}
 
@@ -148,8 +156,6 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			invalidateInteractive();
-			invalidateTransform('removeChild');
 			if (untyped this.keepNativeWidgetChildren) {
 				updateKeepNativeWidgetChildren();
 			}

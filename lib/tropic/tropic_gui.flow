@@ -7,6 +7,7 @@ import fusion_utils;
 import fform/renderfform;
 import tropic/tropic_manager;
 import fform/renderform3d;
+import fform/fpdf;
 
 export {
 	// A fixed size, empty block
@@ -305,6 +306,9 @@ export {
 	// Helper for dynamic text
 	TDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic;
 
+	THTMLText(text : string, style : [TCharacterStyle]) -> Tropic;
+	THTMLDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic;
+
 	// TDebug that shows metrics on top of the tropic
 	TDebugMetrics(c : int, tr : Tropic) -> Tropic;
 	TDebugPositionScale(c : int, tr : Tropic) -> Tropic;
@@ -362,6 +366,16 @@ export {
 	// Works only in js with 'html' renderer, for other targets identical to regular clip
 	// WARNING: Doesn't support native widgets making it applicable only to groups of graphical objects
 	TCanvas(content : Tropic) -> Tropic;
+
+
+	loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) -> void;
+
+	TPdfDocumentStyle ::= OnError;
+
+	TPdfDocument(
+		pageCount : int,
+		getPageView : (page : Transform<int>) -> Tropic,
+	);
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -490,7 +504,7 @@ TGrid(c : [[Tropic]]) -> Tropic {
 }
 
 TColsDir(t : [Tropic], isRTL : bool) -> Tropic {
-	if (isRTL) TCols(reverseA(t)) else TCols(t)
+	TCols(if (isRTL) reverseA(t) else t)
 }
 
 TCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
@@ -506,7 +520,7 @@ TCols2A(t1 : Tropic, t2 : Tropic) -> Tropic {
 }
 
 TBaselineColsDir(t : [Tropic], isRTL : bool) -> Tropic {
-	if (isRTL) TBaselineCols(reverseA(t)) else TBaselineCols(t)
+	TBaselineCols(if (isRTL) reverseA(t) else t)
 }
 
 TBaselineCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
@@ -1986,6 +2000,14 @@ TDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic {
 		TParagraph(text, style);
 }
 
+THTMLText(text : string, style : [TCharacterStyle]) -> Tropic {
+	TText(text, replaceStruct(style, EscapeHTML(false)));
+}
+
+THTMLDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic {
+	TDynamicText(text, replaceStruct(style, EscapeHTML(false)));
+}
+
 TDebugMetrics(c : int, tr : Tropic) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b = TDebug(c, tr) |> t2a;
@@ -2536,4 +2558,47 @@ TCanvas(content : Tropic) -> Tropic {
 
 		TAcc(b with form = FCanvas(b.form));
 	})
+}
+
+filterFPdfDocumentStyle(style : [TPdfDocumentStyle]) -> [FPdfDocumentStyle] {
+	map(style, \st ->
+		switch (st) {
+			OnError(__): st;
+		}
+	)
+}
+
+loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) {
+	makeTViewFn = \document -> \page -> {
+		availableWH = makeWH();
+		metrics = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
+		tMetrics = TFormMetrics(
+			fselect(metrics, FLift(\m -> m.width)),
+			fselect(metrics, FLift(\m -> m.height)),
+			fselect(metrics, FLift(\m -> m.baseline))
+		);
+
+		TInspect(
+			[
+				IAvailable(availableWH)
+			],
+			TFForm(
+				document.getPageView(page, [FPdfMetrics(metrics)], availableWH),
+				tMetrics
+			)
+		)
+	}
+
+	loadFPdfDocument(
+		url,
+		\fPdfDocument -> {
+			onLoad(
+				TPdfDocument(
+					fPdfDocument.pageCount,
+					makeTViewFn(fPdfDocument)
+				)
+			)
+		},
+		filterFPdfDocumentStyle(style)
+	)
 }
