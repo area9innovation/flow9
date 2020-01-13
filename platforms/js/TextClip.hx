@@ -341,7 +341,7 @@ class TextClip extends NativeWidgetClip {
 			text.length > 0 ? [text] : [];
 	}
 
-	private static function getAW(key: String, style: TextStyle) : Array<Array<Int>> {
+	private static function getAdvancedWidths(key: String, style: TextStyle) : Array<Array<Int>> {
 		if (
 			untyped RenderSupportJSPixi.WebFontsConfig.custom.metrics.hasOwnProperty(style.fontFamily)
 		&&
@@ -370,17 +370,17 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	// Given len is supposed to be measured from the beginning.
-	private static function getAWCorrection(tm: TextMappedModification, style: TextStyle, textLen: Int, glyphsLen: Int, inGlyphBack: Int) : Int {
+	private static function getAdvancedWidthsCorrection(tm: TextMappedModification, style: TextStyle, textLen: Int, glyphsLen: Int, inGlyphBack: Int) : Int {
 		if (textLen < 1 || glyphsLen < 1) return 0;
 		var variant : Int = tm.variants[glyphsLen-1];
 		if (variant <= 1 && inGlyphBack == 0) return 0;
 		// Last char is initial or medial — will be mistakenly measured as
 		// isolated or final — correction needed.
 		var key : String = tm.text.substr(textLen-1, 1 + tm.difPositionMapping[glyphsLen-1]);
-		var nMetrics : Array<Array<Int>> = getAW(key, style);
+		var nMetrics : Array<Array<Int>> = getAdvancedWidths(key, style);
 		if (key != tm.text.substr(textLen-1, 1)) {
 			key = tm.text.substr(textLen-1, 1 + tm.difPositionMapping[glyphsLen-1] - inGlyphBack);
-			var oMetrics : Array<Array<Int>> = getAW(key, style);
+			var oMetrics : Array<Array<Int>> = getAdvancedWidths(key, style);
 			return nMetrics[variant][0]-oMetrics[variant&1][0];
 		}
 		return nMetrics[variant][0]-nMetrics[variant&1][0];
@@ -407,7 +407,7 @@ class TextClip extends NativeWidgetClip {
 		if (bochi > eochi || bochi < 0) return -1.0;
 		var advanceCorrection : Float = 0.0;
 
-		advanceCorrection = untyped (getAWCorrection(tm, style, eochi, egchi, egb)-getAWCorrection(tm, style, bochi, bgchi, bgb)) / UPM * style.fontSize;
+		advanceCorrection = untyped (getAdvancedWidthsCorrection(tm, style, eochi, egchi, egb)-getAWCorrection(tm, style, bochi, bgchi, bgb)) / UPM * style.fontSize;
 
 		var mtxb : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, bochi), style);
 		var mtxe : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, eochi), style);
