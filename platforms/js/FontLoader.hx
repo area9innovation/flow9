@@ -20,9 +20,11 @@ class FontLoader {
 			} else {
 				onDone();
 			}
+			return webfontconfig;
 		} else {
 			Errors.print("WebFont is not defined");
 			onDone();
+			return untyped {};
 		}
 	}
 
