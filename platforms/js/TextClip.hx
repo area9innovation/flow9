@@ -495,7 +495,9 @@ class TextClip extends NativeWidgetClip {
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
-					child.className = "baselineWidget";
+					if (child != baselineWidget) {
+						child.className = "inlineWidget";
+					}
 				}
 			}
 
@@ -604,7 +606,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateWidthDelta() {
-		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
+		if (untyped RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome) && !this.destroyed) {
 			var zoomFactor = RenderSupportJSPixi.browserZoom;
 
 			updateTextMetrics();

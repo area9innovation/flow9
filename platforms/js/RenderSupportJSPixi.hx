@@ -776,6 +776,11 @@ class RenderSupportJSPixi {
 			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
 			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
+		} else if (Platform.isIE) {
+			Browser.document.body.onpointerdown = onpointerdown;
+			Browser.document.body.onpointerup = onpointerup;
+			Browser.document.body.onpointermove = onpointermove;
+			Browser.document.body.onpointerout = onpointerout;
 		} else {
 			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);

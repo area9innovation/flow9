@@ -381,6 +381,43 @@ It is especially useful in "template" functions where you can't specify a
 default "none" value for all types. Examples: `findDef`, `firstElement`,
 `lookupTreeDef`.
 
+## The `??` operator for deconstructing `Maybe` values
+
+Although the use of default values is a common practice which helps avoid the
+use of `Maybe`, it is still very common. To help decompose values of type
+Maybe, the `??` operator is helpful:
+
+	foo(m : Maybe<int>) -> int {
+		m ?? m + 2 : 0;
+	}
+
+This is equivalent to a switch:
+
+	foo(m : Maybe<int>) -> int {
+		switch (m) {
+			Some(v): v + 2;
+			None(): 0;
+		}
+	}
+
+The `??` operator has this form: `<var> ?? <exp1> : <exp2>`, and it is short for
+this code:
+
+		switch (<var>) {
+			None(): <exp2>;
+			Some(<value>): <exp1> where <var> is replaced by <value>;
+		}
+
+Here is a list of examples on how this operator can replace some of the `Maybe` helpers:
+
+	m ?? m : a               == either(m, a)
+	m ?? fn(m) : a           == eitherMap(m, fn, a)
+	m ?? fn(m) : afn()       == eitherFn(m, fn, afn)
+	m ?? f(m) : None()       == maybeBind(m, f)
+	m ?? Some(f(m)) : None() == maybeMap(m, f)
+	m ?? f(m) : {}           == maybeApply(m, f)
+	m ?? true : false        == isSome(m)
+
 <h2 id=refs>References</h2>
 
 In *flow*, all variables are immutable. To support imperative programming, you
