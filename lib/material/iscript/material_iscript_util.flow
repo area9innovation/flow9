@@ -25,7 +25,8 @@ export {
 
 	handleIScriptState(manager : MaterialManager) -> () -> void;
 
-	isIScriptUrlParamsSet() -> bool;
+	getMaterialFocusByUniqueIdRec(parent : MFocusGroup, id : string) -> Maybe<MaterialFocus>;
+	getMaterialFocusByPathRec(parent : MFocusGroup, path : List<IScriptIdentifier>) -> Maybe<MaterialFocus>;
 }
 
 stopIScriptReplay(manager : MaterialManager) -> void {
@@ -75,7 +76,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, timeout : double,
 				r.stop,
 				\ -> if (!(^isFinished)) {
 					isFinished := true;
-					onFinished(length(^delays) == 0);
+					onFinished(length(^delays) == 0 && isNone(^deferredFn));
 				},
 				makeSubscribe2(r.value, \ts -> {
 					if (length(^delays) == 0 && isNone(^deferredFn)) {
@@ -223,6 +224,34 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInp
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
 			repeatBehaviourById(manager, descriptor, value)
+		}
+		IScriptSearchBehaviourRecord(descriptor, value) : {
+			runCommand = \f -> {
+				value2 = if (descriptor.name == "mousedown" || descriptor.name == "mouseup") {
+					x = fgetValue(f.position).pos.x + (fgetValue(f.widthHeight).width / 2.);
+					y = fgetValue(f.position).pos.y + (fgetValue(f.widthHeight).height / 2.) - 48.;
+					Point(x, y);
+				} else value;
+				descriptor2 = IScriptBehaviourDescriptor(IScriptComponentDescriptor(f.name, getFullMFocusId(f)), descriptor.name);
+				repeatBehaviourById(manager, descriptor2, value2)
+			};
+			if (countList(descriptor.component.id) == 1) {
+				id = headList(descriptor.component.id, IScriptId("")) |> (\h -> switch(h) {
+					IScriptId(id) : id;
+					default : "";
+				})
+				eitherMap(
+					getMaterialFocusByUniqueIdRec(manager.focus, id),
+					runCommand,
+					false
+				)
+			} else {
+				eitherMap(
+					getMaterialFocusByPathRec(manager.focus, descriptor.component.id),
+					runCommand,
+					false
+				)
+			}
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
 			if (handleInputOutput) {
@@ -1258,17 +1287,16 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 			else
 				compareDialog(b);
 		} else {
-			if (getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "")
+			if (
+				getUrlParameter(UP_ISCRIPTPLAY) != "" ||
+				getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "" ||
+				getUrlParameter(UP_ISCRIPTGENERATEPLAY) != ""
+			)
 				quit(b2i(countA(b, \v -> v.isReplaySuccessful) < length(b)))
 			else
 				compareDialog(b);
 		}
 	}
-}
-
-isIScriptUrlParamsSet() -> bool {
-	isUrlParameterTrue(UP_ISCRIPTRECORD) ||
-	getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != ""
 }
 
 getIScriptScenarioFileName(manager : MaterialManager) -> string {
@@ -1317,4 +1345,62 @@ getIscriptReportResults(results : [IScriptReplayResult]) -> string {
 			]
 		)
 	}), "\n")
+}
+
+getMaterialFocusByUniqueIdRec(parent : MFocusGroup, id : string) -> Maybe<MaterialFocus> {
+	iScriptIdParent : MFocusGroup =
+		if (isSome(parent.iScriptId))
+			parent
+		else
+			getIScriptUniqueIdParent(parent);
+	iScriptIds : Tree<string, MaterialFocus> = getValue(iScriptIdParent.iScriptIds);
+	eitherFn(
+		lookupTree(iScriptIds, id),
+		\v -> Some(v),
+		\ -> foldTree(getValue(parent.focusIds), None(), \k : int, v : MaterialFocus, acc : Maybe<MaterialFocus> -> {
+			if (isNone(acc)) {
+				switchMaterialFocus(
+					v,
+					\f -> maybeBind(f.iScriptId, \isi -> if (isi == id) Some(f) else None()),
+					\f -> getMaterialFocusByUniqueIdRec(f, id)
+				)
+			} else acc
+		})
+	)
+}
+
+getMaterialFocusByPathRec(parent : MFocusGroup, path : List<IScriptIdentifier>) -> Maybe<MaterialFocus> {
+	iScriptIdParent : MFocusGroup =
+		if (isSome(parent.iScriptId))
+			parent
+		else
+			getIScriptUniqueIdParent(parent);
+	iScriptIds : Tree<string, MaterialFocus> = getValue(iScriptIdParent.iScriptIds);
+	id = headList(path, IScriptId("")) |> (\h -> switch(h) {
+		IScriptId(id) : id;
+		default : "";
+	});
+	eitherFn(
+		lookupTree(iScriptIds, id),
+		\mf -> {
+			if (countList(path) > 1) {
+				switchMaterialFocus(
+					mf,
+					\__ -> None(),
+					\f -> getMaterialFocusByPathRec(f, tailList(path))
+				)
+			} else {
+				Some(mf)
+			}
+		},
+		\ -> foldTree(getValue(parent.focusIds), None(), \k : int, v : MaterialFocus, acc : Maybe<MaterialFocus> -> {
+			if (isNone(acc)) {
+				switchMaterialFocus(
+					v,
+					\f -> maybeBind(f.iScriptId, \isi -> if (isi == id && countList(path) == 1) Some(f) else None()),
+					\f -> getMaterialFocusByPathRec(f, path)
+				)
+			} else acc
+		})
+	)
 }
