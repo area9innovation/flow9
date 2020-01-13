@@ -73,10 +73,13 @@ See the Material demo, as well as Material test programs to learn how to use Mat
 
 	c:\flow9> flowcpp material/tests/material_test.flow
 
+Also, check out the 7 GUIs challenge in `demos/7guis`. Those examples exist in many other languages,
+so that is a good way to compare and contrast.
+
 Basic layout
 ------------
 
-Like in `Form`, we have helpers `TCols`, `TLines`, `TGroup` and `TGrid` to make layouts.
+We have helpers `TCols`, `TLines`, `TGroup` and `TGrid` to make layouts.
 
 	import tropic/trender;
 
@@ -122,7 +125,7 @@ To make our hello-world example above align right, we use a horizontal filler:
 
 which introduces the filler element `TFillX`. A filler is an actual physical element of whatever size it can achieve - up to the maximum possible. An `TFillX` is thus as wide as it can be, always with zero height. Similarly, we have `TFillY`, which expands in the height up to the maximum possible, always with zero width. The combination `TFillXY` is useful if you need something that grows in both directions.
 
-Alignment is often done with fillers like this. In `Form`, we have `Align` and `Align2`, which allow alignment to arbitrary places, but in `Tropic`, we typically just use the `TCenterX` helper. You can think of that as defined like this:
+Alignment is often done with fillers like this, or you can use the `TCenterX` helper. You can think of that as defined like this:
 
 	TCenterX(b : Tropic) -> Tropic {
 		TCols([TFillX(), b, TFillX()]);
@@ -131,8 +134,6 @@ Alignment is often done with fillers like this. In `Form`, we have `Align` and `
 You can see that by surrounding the element by two fillers that expand equally, the effect is that the element is centered. We also have `TCenterY` for vertical centering, and `TCenter` that centers in both directions. (In reality, `TCenterX` and friends are implemented using a powerful `TTweak` construct underneath, but the above helps illustrate the concept of fillers.)
 
 The filler is a well-proven concept, which dates all the way back to TeX.
-
-Compared to `Form`, the `TCols` and `TLines` helpers are more robust: You do not have to worry about using `WideLines` or `TallCols` anymore, since fillers are respected no matter where they occur. This makes implementing a resizing design simpler than earlier. Even fillers in a grid will resize as expected.
 
 Notice that fillers only grow if there is space to grow in. So in code like this:
 
@@ -162,14 +163,12 @@ Similarly, `TRectangle` also does that except that the corners are not round:
 
 This paints the entire screen red.
 
-In `Form`, the rectangles takes concrete sizes to draw a rectangle, but it turns out that commonly, you just want to draw a decoration that follows the size of something else. This is the reason for changing the default of rectangles to follow the size of another tropic. As you will see later, it also means that we do not need helpers like `Background`, `Behind`, `InFront` and so on.
-
-This is one of the ways we try to reduce the cognitive load: By having fewer, but more useful primitives, you do not need to learn about as many names.
+Notice that the size of the rectangle is defined as TFillXY(). This is very flexible, and also helps to reduce the cognitive load: By having fewer, but more useful primitives, you do not need to learn about as many names.
 
 The fill-box
 ------------
 
-The fillers all expand according to how much space is available. At the top level, the available space is defined to be the entire screen/window. This is similar to the notion of available area in Form. This area can be controlled in Form using `Available`, and the same can be done in Tropic using the `TAvailable` primitive. This will center the text in a 300x200 pixel box:
+The fillers all expand according to how much space is available. At the top level, the available space is defined to be the entire screen/window. This area can be controlled using the `TAvailable` primitive. This will center the text in a 300x200 pixel box:
 
 	import tropic/trender;
 
@@ -223,7 +222,7 @@ good defaults for sizes of things depending on your DPI.
 TSelect
 -------
 
-This is the construct to use for dynamic parts of the user interface. As such, this is similar to `Mutable` and `Select` in Form. `TSelect` is really implemented through `TMutable`, which stores a concrete value. (There is also a variant called TFSelect, which uses the Transform-fusion-enabled behaviours. These are useful to avoid leaks from behaviour transforms. This is an advanced topic, which might be described some day, but until then, you can try to read `lib/fusion.flow` to understand this better.)
+This is the construct to use for dynamic parts of the user interface. `TSelect` is really implemented through `TMutable`, which stores a concrete value. (There is also a variant called TFSelect, which uses the Transform-fusion-enabled behaviours. These are useful to avoid leaks from behaviour transforms. This is an advanced topic, you can read about in `lib/fusion.flow` to understand this better.)
 
 TIf
 ---
@@ -392,7 +391,7 @@ If you find yourself in this situation, there is a profiler for Tropic in `tropi
 Physical sizes & ghosts
 -----------------------
 
-In contrast to `Form`, we have no notion of logical size in the form of `Inspect` and `Size` or hardcoded dimensions in `Available` or other places. We avoid using physical sizes, but instead manipulate and represent them in the form of concrete `Tropic` elements, or so-called *ghosts*. 
+In Tropic, we avoid using physical sizes, but instead manipulate and represent them in the form of concrete `Tropic` elements, or so-called *ghosts*. 
 
 A *ghost* is an invisible, but real box with the same metrics as the original Tropic element it refers to. As such, it is a concrete element, just like a filler is. Everything in tropic is concrete. You will see how to make a ghost in the next section.
 
@@ -403,7 +402,7 @@ Let's see how to make a ghost using assignments.
 Assignments
 -----------
 
-In Tropic, `TLet` introduces an assignment. This defines a named value within a scope. The family of `TLet`, `TDisplay` and `TGhost` allows for implementing a pattern that replace the use of `Inspect` in `Form`, by:
+In Tropic, `TLet` introduces an assignment. This defines a named value within a scope. The family of `TLet`, `TDisplay` and `TGhost` allows for implementing a pattern to use the size of elements in building layout:
 
 		TLet(
 			"pic", TPicture("www/images/roadsigns/redcircle.png", []),

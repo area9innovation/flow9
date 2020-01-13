@@ -138,7 +138,7 @@ haxelib setup ~/haxelib/lib
 ```
 Then install the required libraries:
 ```bash
-haxelib install format
+haxelib install format 3.4.2
 haxelib install pixijs 4.7.1 #(or a newer edition)
 ```
 # Install `Neko`

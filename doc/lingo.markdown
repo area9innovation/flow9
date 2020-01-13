@@ -189,13 +189,13 @@ Add this line to the top of `lingo/pegcode/pegcompiler.flow`:
 
 Run a command:
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=sandbox/mygrammar.lingo testfile=sandbox/testcase.txt
+	flowcpp lib/lingo/pegcode/pegcompiler.flow -- file=sandbox/mygrammar.lingo testfile=sandbox/testcase.txt
 
 This will parse the grammar, check it for errors, and then use it to parse the contents of the `testcase.txt`
 file. It will report whether the file parsed or not. If you want to inspect the semantic output of the file,
 then add `result=1`:
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=sandbox/mygrammar.lingo testfile=sandbox/testcase.txt result=1
+	flowcpp lib/lingo/pegcode/pegcompiler.flow -- file=sandbox/mygrammar.lingo testfile=sandbox/testcase.txt result=1
 
 The output for the files above would be:
 
@@ -211,13 +211,13 @@ If we want to test the flow grammar itself, add this line to the top of `pegcomp
 
 to get all definitions of the flow AST structures defined, and test with this
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=lib/lingo/flow.lingo testfile=lib/maybe.flow result=1
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo testfile=lib/maybe.flow result=1
 
 and it should dump the AST for the maybe.flow file.
 
 A useful shorthand is to use `test=a=1` instead of `testfile` if you just need to parse a short string:
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=lib/lingo/flow.lingo test=a=1 result=1
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo test=a=1 result=1
 
 which prints
 
@@ -230,7 +230,7 @@ As you can see, the program also prints the number of seconds required to parse 
 is too small to be noticable. To get more statistical data, you can parse the same string many times using
 the `testruns=10` flag:
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=lib/lingo/flow.lingo test=a=1 testruns=100
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo test=a=1 testruns=100
 
 which takes 0.0156 seconds for 100 runs on my machine.
 
@@ -264,7 +264,7 @@ Tracing
 Another option to using the `debug()` action is to use tracing. This is done by adding `trace=1` to the invocation
 of pegcompiler when testing your grammar:
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=lib/lingo/flow.lingo test=a=1 trace=1
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo test=a=1 trace=1
 
 The result is something like this:
 
@@ -301,7 +301,7 @@ Thus, the first line shows the `ws` rule matched the empty string. The next show
 
 If we just wanted to focus on a few rules, we could list the names of the rules we are interested in:
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=lib/lingo/flow.lingo test=a=1 trace=atom,exp
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo test=a=1 trace=atom,exp
 
 which results in this:
 
@@ -750,7 +750,7 @@ Compiling to native flow code
 When the ultimate parsing speed is required, you can compile a Lingo grammar to a flow program, 
 which parses the grammar efficiently.
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=lib/lingo/flow.lingo flowparser=path/flow_parser.flow
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo flowparser=path/flow_parser.flow
 
 This will produce a parser for the flow grammar in the `flow_parser.flow` file. That file will
 expose exactly one function:
@@ -776,7 +776,7 @@ error message. You can use the `start` and `end` positions to find out where the
 To make it easier to work with the SyntaxTree structure, you can use the `flowparserast=flow_ast.flow`
 switch:
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=lib/lingo/flow.lingo flowparser=path/flow_parser.flow
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo flowparser=path/flow_parser.flow
 				flowparserast=flow_ast.flow
 
 and now the compiler will also produce a file with a long list of functions, which help extract the

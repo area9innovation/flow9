@@ -330,7 +330,7 @@ if (a === b) return true;
 
 				return "\"" + s + "\"";
 			} else {
-				StringTools.replace(s, "\\", "\\\\"); // Check if realy a string
+				StringTools.replace(s, "\\", "\\\\"); // Check if really a string
 
 				return s;
 			}

@@ -381,8 +381,10 @@ class PixiWorkarounds {
 		untyped __js__("
 			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
 
-			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas = PIXI.TextMetrics._canvas)
+			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
 			{
+				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
+
 				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
 				const font = style.toFontString();
 				const fontProperties = PIXI.TextMetrics.measureFont(font);
@@ -396,8 +398,24 @@ class PixiWorkarounds {
 				}
 
 				const context = canvas.getContext('2d');
-
 				context.font = font;
+				let widthContext = context;
+
+				const ieWidthMulti = Platform.isIE ? 100 : 1;
+				if (Platform.isIE) {
+					// In IE, CanvasRenderingContext2D measure text with integer preceision
+					// it leads to cumulative errors in flow
+					// for example, if we counts width of words in the line
+					let widthCanvas = PIXI.TextMetrics._widthCanvas;
+					if (typeof widthCanvas === 'undefined') {
+						PIXI.TextMetrics._widthCanvas = document.createElement('canvas');
+						widthCanvas = PIXI.TextMetrics._widthCanvas;
+					}
+					let clonedStyle = style.clone();
+					clonedStyle.fontSize *= ieWidthMulti;
+					widthContext = widthCanvas.getContext('2d');
+					widthContext.font = clonedStyle.toFontString();
+				}
 
 				const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
 				const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
@@ -414,7 +432,7 @@ class PixiWorkarounds {
 						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
 						lineWidth += spacesCount * spaceWidth;
 					} else {
-						lineWidth = context.measureText(lines[i]).width;
+						lineWidth = widthContext.measureText(lines[i]).width / ieWidthMulti;
 					}
 					lineWidth += (lines[i].length - 1) * style.letterSpacing;
 
