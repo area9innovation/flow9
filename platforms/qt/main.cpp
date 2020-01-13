@@ -113,6 +113,7 @@ static void shift_args(int &argc, char *argv[], int cnt)
     memmove(argv+1, argv+1+cnt, sizeof(char*)*(argc-1));
 }
 
+#ifdef QT_GUI_LIB
 static void loadFonts(QGLRenderSupport *pRenderer, QDir media_dir) {
     media_dir.setFilter(QDir::Dirs);
 
@@ -124,6 +125,7 @@ static void loadFonts(QGLRenderSupport *pRenderer, QDir media_dir) {
          }
     }
 }
+#endif
 
 #ifdef QT_GUI_LIB
 //TODO: remove it after update to Qt 5.7
@@ -389,6 +391,7 @@ int main(int argc, char *argv[])
         }
     }
 
+#ifdef QT_GUI_LIB
     QSurfaceFormat format;
     format.setDepthBufferSize(24);
     format.setStencilBufferSize(8);
@@ -401,6 +404,7 @@ int main(int argc, char *argv[])
     if (transparent)
         format.setAlphaBufferSize(8);
     QSurfaceFormat::setDefaultFormat(format);
+#endif
 
     // We need to share the OpenGL context for Qt's QVideoWidget (when used)
     // to work, since otherwise QVideoWidget interferes with our own context
