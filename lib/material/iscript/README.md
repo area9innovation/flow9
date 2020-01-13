@@ -19,13 +19,13 @@ without errors and 1 if errors occurred during the execution of the script.
 Scripts can be grouped in scenarios. Scenario will sequentially execute list of scripts.
 Scenario also can be launched with `playiscriptscenario=scenario_name` command-line parameter. In this case exit status will represent a number of failed scripts.
 
-There is possible to run script by passing it with JS messages. You can do this by calling `postMessage` with `'{"iscript":decodeURIComponent("urlencoded script")}'`. It can be obtained with corresponding save option. Parameters that can be used here:
+There is possible to run script by passing it with JS messages. You can do this by calling `postMessage` with `'{"playiscript":decodeURIComponent("urlencoded script")}'`. It can be obtained with corresponding save option. Parameters that can be used here:
 * `callid` - string that will be returned with response
 * `iscriptcheckerrors` - for more checks during replay and more verbose errors in response (default false)
 * `speed` - sets speed of replay (default 1.0)
 * `showcomparedialog` - shows dialog with screenshoots comparasion in the end of replay (default false)
 
-Full call can look like this: `window.postMessage(JSON.stringify({ callid : "someid", iscriptcheckerrors : true, iscript : decodeURIComponent("urlencoded script")}), "*")`.
+Full call can look like this: `window.postMessage(JSON.stringify({ callid : "someid", iscriptcheckerrors : true, playiscript : decodeURIComponent("urlencoded script")}), "*")`.
 After replay iscript will send response with `postMessage`, so it can be recieved with `window.addEventListener("message", console.log)`. Response has the following format: `{"callid":"someid", "status":"OK/ERROR", "errors":"array of errors, if any"}`.
 
 "Save" and "Open" actions work with any available directory. This option works on CPP target only.
