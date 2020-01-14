@@ -15,6 +15,12 @@ FlowFile::FlowFile(ByteCodeRunner *owner, std::string filepath) : FlowNativeObje
     _end = getFileSize();
 }
 
+FlowFile::~FlowFile()
+{
+    if (temporary)
+        std::remove(_filepath.c_str());
+}
+
 std::string FlowFile::getFilepath()
 {
     return _filepath;
@@ -105,3 +111,7 @@ double FlowFile::getFileLastModified(std::string filepath)
     return info.st_mtime * 1000.0;
 }
 
+void FlowFile::setTemporary(bool value)
+{
+    temporary = value;
+}

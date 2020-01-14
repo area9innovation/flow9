@@ -10,6 +10,10 @@ typedef FlowFile = Dynamic; // cannos use js.html.File, because can be sliced to
 
 class FlowFileSystem {
 
+	public static function createTempFile(name : String, content : String) : js.html.File {
+		return new js.html.File([content], name);
+	}
+
 	public static function createDirectory(dir : String) : String {
 		try {
 			#if sys

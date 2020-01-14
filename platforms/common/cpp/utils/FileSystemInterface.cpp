@@ -91,6 +91,7 @@ NativeFunction *FileSystemInterface::MakeNativeFunction(const char *name, int nu
     TRY_USE_NATIVE_METHOD(FileSystemInterface, resolveRelativePath, 1);
 
     TRY_USE_NATIVE_METHOD(FileSystemInterface, getFileByPath, 1);
+    TRY_USE_NATIVE_METHOD(FileSystemInterface, createTempFile, 2);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, openFileDialog, 3);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileName, 1);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileType, 1);
@@ -288,6 +289,22 @@ StackSlot FileSystemInterface::getFileByPath(RUNNER_ARGS)
     RUNNER_CheckTag1(TString, path_str);
 
     std::string path = encodeUtf8(RUNNER->GetString(path_str));
+
+    return RUNNER->AllocNative(new FlowFile(owner, path));
+}
+
+StackSlot FileSystemInterface::createTempFile(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(filename, content);
+    RUNNER_CheckTag2(TString, filename, content);
+
+    std::string path = encodeUtf8(RUNNER->GetString(filename));
+
+    std::ofstream fs(path);
+    if (!fs) {
+        fs << encodeUtf8(RUNNER->GetString(content));
+        fs.close();
+    }
 
     return RUNNER->AllocNative(new FlowFile(owner, path));
 }
