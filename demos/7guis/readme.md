@@ -1,8 +1,6 @@
 # 7 GUIs
 
-See 
-https://eugenkiss.github.io/7guis/
-
+See https://eugenkiss.github.io/7guis/
 
 Summary lines of code:
 				flow	react	java	red		svelte	foam	haskell	elm		phix	scala
@@ -12,10 +10,9 @@ Summary lines of code:
 4: timer		35		105		97		21		53		83		30+		48++	57		56
 5: crud			60		115		237		37		128		128		28+		117++	138		92
 6: circles		137		442		276		121		130		140		66+		N/A		216		148
-7: cells		337		546		543 	N/A		N/A		309		N/A		N/A		444		249
+7: cells		337		546		543 	N/A		N/A		309		N/A		N/A		444		249*
 
 
-* incomplete: does not do coloring
-+ there is a shared library of ~400 lines of helper functions. That ends up at 66 lines per task.
+* incomplete: does not do coloring or error handling
++ there is a shared library of ~400 lines of helper functions. That ends up at +66 lines per task.
 ++ there is a shared library of 64 lines of helper functions.
-
