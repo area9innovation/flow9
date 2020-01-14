@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 5;
+var SERVICE_WORKER_VERSION = 6;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -318,23 +318,51 @@ self.addEventListener('fetch', function(event) {
       headers.set(key, val);
     });
     headers.set('If-None-Match', etag);
-    return (new Request(requestCloned.url, {
-      method: requestCloned.method,
-      headers: headers,
-      body: requestCloned.body,
-      mode: 'same-origin',
-      credentials: requestCloned.credentials,
-      cache: requestCloned.cache,
-      redirect: requestCloned.redirect,
-      referrer: requestCloned.referrer,
-      integrity: requestCloned.integrity
-    }));
+
+    if (requestCloned.method == "POST") {
+      return requestCloned.blob().then(function(reqBlob) {
+        return (new Request(requestCloned.url, {
+          method: requestCloned.method,
+          headers: headers,
+          body: reqBlob,
+          mode: 'same-origin',
+          credentials: requestCloned.credentials,
+          cache: requestCloned.cache,
+          redirect: requestCloned.redirect,
+          referrer: requestCloned.referrer,
+          integrity: requestCloned.integrity
+        }));
+      }).catch(function() {
+        return (new Request(requestCloned.url, {
+          method: requestCloned.method,
+          headers: headers,
+          mode: 'same-origin',
+          credentials: requestCloned.credentials,
+          cache: requestCloned.cache,
+          redirect: requestCloned.redirect,
+          referrer: requestCloned.referrer,
+          integrity: requestCloned.integrity
+        }));
+      });
+    } else {
+      return Promise.resolve(
+        (new Request(requestCloned.url, {
+          method: requestCloned.method,
+          headers: headers,
+          mode: 'same-origin',
+          credentials: requestCloned.credentials,
+          cache: requestCloned.cache,
+          redirect: requestCloned.redirect,
+          referrer: requestCloned.referrer,
+          integrity: requestCloned.integrity
+        }))
+      );
+    }
   }
 
   // Clean all previous caches for sensitive to timestamp requests
   var cleanTimestampSensitiveRequests = function(originalUrl) {
     var url = new URL(originalUrl);
-
     // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
     return isStampForApplicationJsRequest().then(function() {
       return caches.open(CACHE_NAME).then(function(cache) {
@@ -411,6 +439,7 @@ self.addEventListener('fetch', function(event) {
   }
 
   function fetchResource(requestData, checkIfNotModified) {
+
     var doCacheFn = function(response) {
       var fixedRequest = prepareRequestToCache(requestData);
       var usedCacheName = CACHE_NAME;
@@ -453,7 +482,8 @@ self.addEventListener('fetch', function(event) {
             if (isEmpty(etag)) {
               return doFetchFn();
             } else {
-              return fetch(createIfNoneMatchRequest(requestData, etag)).then(function(response) {
+              return createIfNoneMatchRequest(requestData, etag).then(function(cRequest) {
+                return fetch(cRequest).then(function(response) {
                 if (response.status == 200 && response.type == "basic") {
                   doCacheFn(response);
                   return response.clone();
@@ -462,10 +492,12 @@ self.addEventListener('fetch', function(event) {
                 } else {
                   return response.clone();
                 }
-              });
-            }
-          })
-          .catch(doFetchFn);
+              })
+              .catch(doFetchFn);
+            });
+          }
+        })
+        .catch(doFetchFn);
       } else {
         return doFetchFn();
       }
