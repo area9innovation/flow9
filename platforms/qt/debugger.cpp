@@ -174,7 +174,10 @@ void Debugger::intSignalHandler(int)
     instance->SetAsyncInterrupt(true);
 
     char a = 1;
-    ::write(instance->sigintFd[0], &a, sizeof(a));
+    ssize_t written = ::write(instance->sigintFd[0], &a, sizeof(a));
+    if (written == -1) {
+    	// TODO: an error occured
+    }
 }
 #endif
 
@@ -184,7 +187,10 @@ void Debugger::handleSigInt()
 #else
     snInt->setEnabled(false);
     char tmp;
-    ::read(sigintFd[1], &tmp, sizeof(tmp));
+    ssize_t was_read = ::read(sigintFd[1], &tmp, sizeof(tmp));
+    if (was_read == -1) {
+    	// TODO: an error occured
+    }
     snInt->setEnabled(true);
 #endif
 
@@ -266,7 +272,7 @@ bool Debugger::setCommand(Command cmd, FlowPtr insn)
         if (DebugInfo()->chunk_ranges.empty())
             return false;
         cur_line = getLine(insn);
-
+        /* fall through */
     case CMD_STEPI:
         SetTraps(true, check_calls, false);
         break;
@@ -275,7 +281,7 @@ bool Debugger::setCommand(Command cmd, FlowPtr insn)
         if (DebugInfo()->chunk_ranges.empty())
             return false;
         cur_line = getLine(insn);
-
+        /* fall through */
     case CMD_NEXTI:
         SetTraps(true, true, false);
         break;
@@ -745,12 +751,8 @@ void Debugger::InputThread::run()
         if (feof(stdin) || ferror(stdin))
             exit(0);
 
-        char buf[65536];
-#ifdef _MSC_VER
-        gets_s(buf, 65536);
-#else
-        gets(buf);
-#endif
+        std::string buf;
+        std::cin >> buf;
 
         setTerminationEnabled(false);
 

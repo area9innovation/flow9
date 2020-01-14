@@ -238,7 +238,7 @@ void StartProcess::provideStdout(FlowProcess *p)
 
         if (p->controlled_process)
         {
-            if (p->stdout_buf.size() <= p->stdout_pos)
+            if (size_t(p->stdout_buf.size()) <= p->stdout_pos)
                 return;
 
             RUNNER_VAR = getFlowRunner();
@@ -261,7 +261,7 @@ void StartProcess::provideStderr(FlowProcess *p)
 
         if (p->controlled_process)
         {
-            if (p->stderr_buf.size() <= p->stderr_pos)
+            if (size_t(p->stderr_buf.size()) <= p->stderr_pos)
                 return;
             RUNNER_VAR = getFlowRunner();
             WITH_RUNNER_LOCK_DEFERRED(RUNNER);

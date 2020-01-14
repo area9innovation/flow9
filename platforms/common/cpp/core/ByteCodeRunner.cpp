@@ -313,7 +313,11 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
             if (!Memory.MapFile(CodeStart, bytecode_length, bytecode_buffer_or_fn, 0, true))
             {
                 char *p = Memory.GetRawPointer(CodeStart, bytecode_length, true);
-                fread(p, 1, bytecode_length, file);
+                int have_read = int(fread(p, 1, bytecode_length, file));
+                if (have_read < bytecode_length) {
+                	// We have read less elements, then required.
+                	cerr << "Error loading bytecode file: <<" << bytecode_buffer_or_fn << ">>, have read " << have_read << " bytes while acquired " << bytecode_length << " bytes" << endl;
+                }
             }
             else
                 code_mapped = true;
@@ -1412,7 +1416,7 @@ void ByteCodeRunner::StructSlotPack(const StackSlot &str, const StackSlot *src, 
     StructDef &def = StructDefs[str.GetStructId()];
     FlowStructHeader *ph = Memory.GetStructPointer(str.GetRawStructPtr(), true);
 
-    for (int i = 0; i < count; i++)
+    for (unsigned int i = 0; i < count; i++)
     {
         const FlowStructFieldDef &fd = def.FieldDefs[start + i];
 
@@ -1432,7 +1436,7 @@ void ByteCodeRunner::StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int 
     StructDef &def = StructDefs[str.GetStructId()];
     FlowStructHeader *ph = Memory.GetStructPointer(str.GetRawStructPtr(), false);
 
-    for (int i = 0; i < count; i++)
+    for (unsigned int i = 0; i < count; i++)
     {
         const FlowStructFieldDef &fd = def.FieldDefs[start + i];
         tgt[i] = fd.fn_get(ph->Bytes + fd.offset, this);
@@ -1544,8 +1548,11 @@ bool ByteCodeRunner::Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPt
     Code.SetPosition(start_position);
 
     std::map<FlowPtr,FlowInstruction>::iterator it = pmap->begin();
-
-    while (int(Code.GetPosition() - start_position) < size && !Code.Eof())
+#ifdef DEBUG_FLOW
+    while (Code.GetPosition() - start_position < int(size) && !Code.Eof())
+#else
+    while (int(Code.GetPosition()) - int(start_position) < int(size) && !Code.Eof())
+#endif
     {
         FlowPtr pos = Code.GetPosition();
 
@@ -2041,7 +2048,7 @@ inline void ByteCodeRunner::DoField(int i) {
     RUNNER_RefArgsRet1(struct_ref);
     RUNNER_CheckTag(TStruct, struct_ref);
 
-    unsigned size = GetStructSize(struct_ref);
+    int size = GetStructSize(struct_ref);
     if (likely(i >= 0 && i < size))
         struct_ref = GetStructSlot(struct_ref, i);
     else
@@ -2052,7 +2059,7 @@ inline void ByteCodeRunner::DoSetMutable(int i) {
     RUNNER_RefArgsRet2(struct_ref, val_ref);
     RUNNER_CheckTag(TStruct, struct_ref);
 
-    unsigned size = GetStructSize(struct_ref);
+    int size = GetStructSize(struct_ref);
     if (likely(i >= 0 && i < size))
     {
         StructDef &def = StructDefs[struct_ref.GetStructId()];
@@ -2503,12 +2510,11 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
     reparse_breakpoint:
         switch (opcode)
         {
-        case CTailCall: {
-            int locals = Code.ReadInt31_16();
-            if (DoTailCall(locals))
-                break;
-            // fall through
-        }
+        case CTailCall:
+            if (!DoTailCall(Code.ReadInt31_16())) {
+            	DoCall();
+            }
+            break;
         case CCall:
             DoCall(); // CALL->ALLOC
             break;

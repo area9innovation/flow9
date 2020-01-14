@@ -95,7 +95,7 @@ public:
     virtual ucs4_char operator *();
     virtual ucs4_char_tracer traceCurrent();
     virtual Utf32InputIterator &operator ++() {return next();}
-    virtual Utf32InputIterator &operator ++(int _)  {return next();}
+    virtual Utf32InputIterator &operator ++(int)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();
     virtual shared_ptr<Utf32InputIterator> cloneReversed();
     virtual void seekBegin() { cur = org->clone(); nx = org->clone(); ++*nx; };
@@ -144,7 +144,7 @@ protected:
         virtual ucs4_char operator *();
         virtual ucs4_char_tracer traceCurrent();
         virtual Utf32InputIterator &operator ++() {return next();}
-        virtual Utf32InputIterator &operator ++(int _)  {return next();}
+        virtual Utf32InputIterator &operator ++(int)  {return next();}
         virtual shared_ptr<Utf32InputIterator> clone();
         virtual shared_ptr<Utf32InputIterator> cloneReversed();
         bool isEnd() {return *cur==*master->end;}
@@ -163,7 +163,7 @@ public:
     virtual ucs4_char_tracer traceCurrent();
     static ucs4_char yield(Utf32InputIterator *cur, Utf32InputIterator *end, shared_ptr<Utf32InputIterator> *nx, size_t *ligalen);
     virtual Utf32InputIterator &operator ++() {return next();}
-    virtual Utf32InputIterator &operator ++(int _)  {return next();}
+    virtual Utf32InputIterator &operator ++(int)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();
     virtual shared_ptr<Utf32InputIterator> cloneReversed();
     bool isEnd() {return *cur==*shared->end;}
@@ -472,8 +472,8 @@ public:
     shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
     const std::vector<CharDirection> &getDirections() { return directions; }
-    double getGlyphAdvance(int glyphIdx) { return glyphIdx<0 || glyphIdx>=glyphs.size()? 0.0 : glyphs[glyphIdx]->advance * size; }
-    unsigned char getGlyphCharsCompo(int glyphIdx) {return glyphIdx<0 || glyphIdx>=glyphs.size()? 0 : char_counts[glyphIdx]; }
+    double getGlyphAdvance(int glyphIdx) { return glyphIdx < 0 || glyphIdx >= int(glyphs.size()) ? 0.0 : glyphs[glyphIdx]->advance * size; }
+    unsigned char getGlyphCharsCompo(int glyphIdx) {return glyphIdx < 0 || glyphIdx >= int(glyphs.size()) ? 0 : char_counts[glyphIdx]; }
     const std::vector<size_t> &getCharIndices() { return char_indices; }
     int getCharGlyphPositionIdx(int charidx);
 

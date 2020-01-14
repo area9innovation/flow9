@@ -27,10 +27,10 @@ private:
     T_WebSocketCallbacksRoots CallbackRoots;
     int nCallbackRoots;
 
-    virtual StackSlot doOpen(unicode_string url, int callbacksKey) { return StackSlot::MakeVoid(); }
-    virtual StackSlot doSend(StackSlot websocket, unicode_string message) { return StackSlot::MakeVoid(); }
-    virtual StackSlot doHasBufferedData(StackSlot websocket) { return StackSlot::MakeVoid(); }
-    virtual void doClose(StackSlot websocket, int code, unicode_string reason) {}
+    virtual StackSlot doOpen(unicode_string /*url*/, int /*callbacksKey*/) { return StackSlot::MakeVoid(); }
+    virtual StackSlot doSend(StackSlot /*websocket*/, unicode_string /*message*/) { return StackSlot::MakeVoid(); }
+    virtual StackSlot doHasBufferedData(StackSlot /*websocket*/) { return StackSlot::MakeVoid(); }
+    virtual void doClose(StackSlot /*websocket*/, int /*code*/, unicode_string /*reason*/) {}
 
     DECLARE_NATIVE_METHOD(open)
     DECLARE_NATIVE_METHOD(send)
