@@ -286,7 +286,7 @@ NativeFunction *AbstractHttpSupport::MakeNativeFunction(const char *name, int nu
 
 void AbstractHttpSupport::decodeMap(RUNNER_VAR, HttpRequest::T_SMap *pmap, const StackSlot &smap)
 {
-    for (int i = 0; i < RUNNER->GetArraySize(smap); i++) {
+    for (unsigned int i = 0; i < RUNNER->GetArraySize(smap); i++) {
         const StackSlot &map_item = RUNNER->GetArraySlot(smap,i);
         RUNNER_CheckTagVoid(TArray, map_item);
 

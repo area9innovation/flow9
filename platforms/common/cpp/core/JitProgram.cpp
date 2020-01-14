@@ -155,7 +155,7 @@ void deleteJitProgram(FlowJitProgram *program)
     delete program;
 }
 
-FlowJitProgram::FlowJitProgram(ostream &e, const std::string &log_fn, const unsigned long memory_limit) : err(e), log_filename(log_fn), memory_limit(memory_limit)
+FlowJitProgram::FlowJitProgram(ostream &e, const std::string &log_fn, const unsigned long memory_limit) : err(e), memory_limit(memory_limit), log_filename(log_fn)
 {
     layout_info.start = layout_info.end = layout_info.num_symbols = 0;
     layout_info.next = flow_gdb_memory_layout;
@@ -266,7 +266,7 @@ void FlowJitProgram::init_runner_funcs(ByteCodeRunner *runner)
  *  When a new native is dynamically registered from C++, add a reference to the
  *  generic native thunk for JIT->C++ calls via TNativeFn.
  */
-void FlowJitProgram::RegisterNative(ByteCodeRunner *runner, unsigned id, NativeFunction *fn)
+void FlowJitProgram::RegisterNative(ByteCodeRunner *runner, unsigned id, NativeFunction * /*fn*/)
 {
     while (runner->JitFuncs.size() <= id)
         runner->JitFuncs.push_back(invalid_native_ptr);
@@ -349,9 +349,10 @@ void FlowJitProgram::ParseCallstack(std::vector<FlowStackFrame> *vec, ByteCodeRu
     }
 }
 
-void FlowJitProgram::ResetRunner(ByteCodeRunner *runner)
+void FlowJitProgram::ResetRunner(ByteCodeRunner * /*runner*/)
 {
-    runner = runner;
+	// WTF?...
+    // runner = runner;
 }
 
 StackSlot FlowJitProgram::GetMainFunction()
@@ -2827,7 +2828,7 @@ void FlowJitProgram::FunctionAssembler::preprocess()
             // don't count jump to next instruction - it's skipped at code generation
             if (i+1 < code_in.size() && insn.PtrValue == code_in[i+1]->first)
                 continue;
-
+            /* fall through */
         case CIfFalse:
             jump_targets[insn.PtrValue] = as.newLabel();
             break;
@@ -3859,7 +3860,7 @@ void FlowJitProgram::FunctionAssembler::generate()
             if (it != closure_args.end())
             {
                 T_bytecode_list &args = it->second;
-                assert(args.size() == insn.IntValue);
+                assert(args.size() == unsigned(insn.IntValue));
 
                 as.lea(rdi, ptr(rMemBase, rax, 0, 8));
                 as.add(rax, owner->const_qword(tag.slot_private.QWordVal));

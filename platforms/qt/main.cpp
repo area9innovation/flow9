@@ -81,6 +81,7 @@
 using std::max;
 using std::min;
 
+#ifndef NATIVE_BUILD
 // --profile-bytecode 2000 --url "http://localhost:81/flow/flowrunner.html?name=program" program.bytecode program.debug
 static QString compileFlow(int const flowCompiler, QString const & flow, QString const & flow_path, QStringList const & args, bool /*cgi*/) {
     QFileInfo fileinfo(flow);
@@ -105,7 +106,7 @@ static QString compileFlow(int const flowCompiler, QString const & flow, QString
 #endif
     return base;
 }
-
+#endif
 
 static void shift_args(int &argc, char *argv[], int cnt)
 {
@@ -611,20 +612,34 @@ int main(int argc, char *argv[])
 
 #if !COMPILED
 #ifdef NATIVE_BUILD
+    	// Suppress the 'unused variables' warnings
+    	UNUSED(mem_prof_step);
+    	UNUSED(cpu_prof_step);
+    	UNUSED(time_prof_step);
+    	UNUSED(garbage_prof);
+    	UNUSED(coverage_prof);
+    	UNUSED(garbage_stack);
+    	UNUSED(disassemble);
+    	UNUSED(use_jit);
+    	UNUSED(jit_memory_limit);
+    	UNUSED(pdbg);
+
         FlowRunner.Init(load_native_program());
         FlowRunner.setUrl(params);
-        // Here we add all command line arguments as Url parameters
+        // Here we add all command line arguments of the form: key=value as Url parameters
         QStringList args = app->arguments();
         args.removeFirst();
         for (auto& arg : args) {
-			int equal = arg.indexOf('=');
-			if (equal > 0) {
-				QString key = arg.left(equal);
-				QString value = arg.mid(equal + 1);
-				FlowRunner.setUrlParameter(key, value);
-			} else {
-				FlowRunner.setUrlParameter(arg, QString());
-			}
+        	if (!arg.startsWith(QLatin1String("--"))) {
+				int equal = arg.indexOf('=');
+				if (equal > 0) {
+					QString key = arg.left(equal);
+					QString value = arg.mid(equal + 1);
+					FlowRunner.setUrlParameter(key, value);
+				} else {
+					FlowRunner.setUrlParameter(arg, QString());
+				}
+        	}
 		}
         FlowRunner.RunMain();
 #else

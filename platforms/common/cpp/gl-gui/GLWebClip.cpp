@@ -6,7 +6,7 @@
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLWebClip, GLClip);
 
 GLWebClip::GLWebClip(GLRenderSupport *owner, ivec2 size, const unicode_string url, bool use_cache, const StackSlot & callback, const StackSlot & _ondone) :
-    GLClip(owner), size(size), url(url), callback(callback), useCache(use_cache), ondone(_ondone)
+    GLClip(owner), size(size), url(url), useCache(use_cache), callback(callback), ondone(_ondone)
 {
     owner->createNativeWidget(this);
 }

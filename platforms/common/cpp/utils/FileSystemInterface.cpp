@@ -302,7 +302,7 @@ StackSlot FileSystemInterface::openFileDialog(RUNNER_ARGS)
 
     std::vector<std::string> fileTypes;
 
-    for (int i = 0; i < RUNNER->GetArraySize(types); i++)
+    for (unsigned int i = 0; i < RUNNER->GetArraySize(types); i++)
     {
         const StackSlot &str = RUNNER->GetArraySlot(types, i);
         RUNNER_CheckTag1(TString, str);

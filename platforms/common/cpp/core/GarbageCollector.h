@@ -57,7 +57,13 @@ class GarbageCollector : private GarbageCollectorFnCallback
     ByteCodeRunner *Runner;
 
     // The heap pointer in the new heap half
-    FlowPtr hp_big_pos, hp_ref_end;
+#ifdef DEBUG_FLOW
+    FlowPtr hp_big_pos = MakeFlowPtr(0);
+    FlowPtr hp_ref_end = MakeFlowPtr(0);
+#else
+    FlowPtr hp_big_pos = 0;
+    FlowPtr hp_ref_end = 0;
+#endif
 
     HeapLimits OldLimits;
     FlowPtr HeapStart, HeapEnd;

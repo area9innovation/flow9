@@ -253,7 +253,7 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
     resultArr = RUNNER->AllocateArray(nresults);
     for (int i = 0, n = 0; i < nqueries; i++) {
         StackSlot qResults = RUNNER->GetArraySlot(queriesResults, i);
-        for (int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
+        for (unsigned int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
             RUNNER->SetArraySlot(resultArr, n, RUNNER->GetArraySlot(qResults, c));
         }
     }
@@ -376,7 +376,7 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
             case QVariant::Int:
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
-            case QMetaType::Char:    // it's tinyint
+            case QVariant::Char:    // it's tinyint
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
             case QVariant::UInt:

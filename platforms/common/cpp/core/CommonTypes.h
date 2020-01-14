@@ -624,7 +624,7 @@ struct FlowInstruction
         char is_mutable;
     } *fields;
 
-    FlowInstruction() : shape(Atom), op(CLast), cases(NULL), fields(NULL) {}
+    FlowInstruction() : shape(Atom), op(CLast), DoubleVal(0.0), cases(NULL), fields(NULL) {}
     FlowInstruction(OpCode op) : shape(Atom), op(op), cases(NULL), fields(NULL) {}
     ~FlowInstruction() { delete[] cases; delete[] fields; }
 
@@ -756,13 +756,20 @@ class FlowStack
     friend class FlowJitProgram;
 
     void grow(unsigned new_sz) {
-        while (new_sz > limit)
+        while (new_sz > limit) {
             limit *= 2;
-        buf = (T*)realloc(buf, sizeof(T)*limit);
+        }
+        T* new_buf = new T[sizeof(T) * limit];
+        for (unsigned i = 0; i < pos; ++ i) {
+        	new_buf[i] = buf[i];
+        }
+        delete buf;
+        buf = new_buf;
+        //buf = (T*)realloc(buf, sizeof(T)*limit);
     }
 
 public:
-    FlowStack() : buf(NULL) { clear(); }
+    FlowStack() : buf(nullptr) { clear(); }
     ~FlowStack() { free(buf); }
 
     void swap(FlowStack<T,MinSize> &other) {
@@ -772,7 +779,8 @@ public:
     }
 
     void clear() {
-        buf = (T*)realloc(buf, sizeof(T)*MinSize);
+    	delete buf;
+        buf = new T[sizeof(T) * MinSize];
         pos = 0; limit = MinSize;
     }
 
@@ -814,6 +822,7 @@ public:
 	__INLINE_WRAP(T &pop()) { return *pop_ptr(); }
 };
 
+#define UNUSED(expr) do { (void)(expr); } while (0)
 
 #include "nativefunction.h"
 

@@ -103,7 +103,7 @@ void QFileSystemInterface::doOpenFileDialog(int maxFilesCount, std::vector<std::
 
     /* Fix for drawing file dialog contents under Linux */
     #ifdef __linux__
-        connect(dialog, &QFileDialog::finished, [=](int v){window->setUpdatesEnabled(true);});
+        connect(dialog, &QFileDialog::finished, [=](int){window->setUpdatesEnabled(true);});
         window->setUpdatesEnabled(false);
     #endif
 
