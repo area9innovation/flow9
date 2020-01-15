@@ -17,6 +17,6 @@ Summary lines of code:
 
 `*` incomplete: does not do coloring or error handling.
 
-`+` there is a shared library of ~400 lines of helper functions. That ends up at +66 lines per task.
+`+` there is a shared library of ~400 lines of helper functions, thus +66 lines per task.
 
-`++` there is a shared library of 64 lines of helper functions.
+`++` there is a shared library of 64 lines of helper functions, thus +12 lines per task.
