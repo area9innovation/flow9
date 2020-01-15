@@ -183,6 +183,11 @@ class VideoClip extends FlowContainer {
 			videoWidget.setAttribute('height', '${height}');
 			videoWidget.style.width = '${width}px';
 			videoWidget.style.height = '${height}px';
+			if (untyped this.transform.scale.x == untyped this.transform.scale.y) {
+				videoWidget.style.objectFit = '';
+			} else {
+				videoWidget.style.objectFit = 'fill';
+			}
 
 			updateSubtitlesClip();
 

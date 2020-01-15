@@ -68,7 +68,7 @@ void LocalsManager::slotArgsInfo(const QString& descr, int frameIndex) {
 					for (MiValue* upvarDescr : upvar_vals->valList()->list) {
 						QString var = upvarDescr->tuple()->getField(QLatin1String("name"))->string();
 						QString val = upvarDescr->tuple()->getField(QLatin1String("value"))->string();
-						val = val.replace(QLatin1String("\\\""), QLatin1String("\""));
+						val = val.replace(QLatin1String("\\\""), QLatin1String("\"")).replace(QLatin1String("\\\\"), QLatin1String("\\"));
 						val = val.mid(1, val.length() - 2); // Remove enclosing quotes
 						FlowValue flowVal = flow_value_parse(val);
 						if (var == QLatin1String("writer")) {
@@ -81,7 +81,7 @@ void LocalsManager::slotArgsInfo(const QString& descr, int frameIndex) {
 					for (MiValue* varDescr : arg_vals->valList()->list) {
 						QString var = varDescr->tuple()->getField(QLatin1String("name"))->string();
 						QString val = varDescr->tuple()->getField(QLatin1String("value"))->string();
-						val = val.replace(QLatin1String("\\\""), QLatin1String("\""));
+						val = val.replace(QLatin1String("\\\""), QLatin1String("\"")).replace(QLatin1String("\\\\"), QLatin1String("\\"));
 						val = val.mid(1, val.length() - 2); // Remove enclosing quotes
 						FlowValue flowVal = flow_value_parse(val);
 						createItem(tree_, var, flowVal);

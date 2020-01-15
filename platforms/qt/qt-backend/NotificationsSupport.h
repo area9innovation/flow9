@@ -16,6 +16,7 @@ class QtNotificationsSupport : public QObject, public AbstractNotificationsSuppo
 {
     Q_OBJECT
 
+    bool cgi;
 #ifdef QT_GUI_LIB
     struct NotificationInfo
     {
@@ -33,7 +34,6 @@ class QtNotificationsSupport : public QObject, public AbstractNotificationsSuppo
     QHash<int, int> scheduledTimers; // timerId -> notificationId mapping
     QHash<int, NotificationInfo> notificationInfo;
     int lastCreatedNotificationId;
-    bool cgi;
 
     void timerEvent(QTimerEvent*);
 #endif

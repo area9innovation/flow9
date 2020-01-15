@@ -40,7 +40,7 @@ QStringList Runner::args(QString execArgs, QString progArgs) const {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << QLatin1String("-jar");
-		args << target().file();
+		args << target().path();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}
@@ -48,14 +48,14 @@ QStringList Runner::args(QString execArgs, QString progArgs) const {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << QLatin1String("-jar");
-		args << target().file();
+		args << target().path();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}
 	case Target::NODEJS: {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
-		args << target().file();
+		args << target().path();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}

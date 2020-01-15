@@ -17,6 +17,7 @@ TaskDebug::TaskDebug(FlowEnv e, int row, Task::Callback cb) : TaskFactory(e, cb)
 		QString idsFile = prog + QLatin1String(".ids");
 		env.view.debugView_->symbols().loadIdFile(idsFile);
 		QFile(idsFile).remove();
+		QTextStream(stdout) << "going to start debugging " << prog << endl;
 		env.view.debugView_->manager()->slotDebug(row);
 	}));
 	builder_.reset(new TaskBuild(env, row, false, [this]() {

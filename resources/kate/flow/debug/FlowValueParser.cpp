@@ -180,7 +180,18 @@ public:
 			return QString::fromStdString(sv.token());
 		};
 		parser["STRING"] = [](const peg::SemanticValues& sv) {
-			return new QString(QString::fromStdString(sv.token()));
+			std::string str = sv.token();
+			//std::cout << "str: " << str << "\n";
+			/*size_t i = 0;
+			while (true) {
+				i = str.find("\\", i);
+				if (i == std::string::npos) {
+					break;
+				}
+				str.replace(i, 2, "");
+			};*/
+			//std::cout << "replaced: " << str << "\n";
+			return new QString(QString::fromStdString(str));
 		};
 		parser["NUM"] = [](const peg::SemanticValues& sv) {
 			return QString::fromStdString(sv.token()).toInt();
@@ -200,6 +211,7 @@ public:
 		parser.log = [&str](size_t ln, size_t col, const std::string& err_msg) {
 			QTextStream(stdout) << QLatin1String("Flow value ") << QString::fromStdString(err_msg) << ", line: " << ln << ", col: " << col << endl;
 			QTextStream(stdout) << str.mid(col - 32, 64) << endl;
+			QTextStream(stdout) << str << endl;
 		};
 		parser.parse<FlowValue>(str.toStdString().c_str(), ret);
 		return ret;

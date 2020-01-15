@@ -223,6 +223,44 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function addRequestSkipFilterN(
+		skipIfUrlMatch : String,
+		skipIfMethodMatch : String,
+		skipIfHeaderMatch : Array<String>,
+		onOK : Void -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't to add request filter");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't to add request filter");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "requests_skip_filter",
+					"data" : {
+						"url" : skipIfUrlMatch,
+						"method" : skipIfMethodMatch,
+						"header" : skipIfHeaderMatch
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
 	public static function loadAndCacheUrls(
 		urls : Array<String>,
 		ignoreParameterKeysOnCache : Array<String>,

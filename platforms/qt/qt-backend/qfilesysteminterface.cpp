@@ -8,16 +8,19 @@
 #include <QFile>
 #include <QMimeType>
 #include <QFileInfo>
+
+#ifdef QT_GUI_LIB
 #include <QFileDialog>
+#endif
 
 #ifdef QT_GUI_LIB
 QFileSystemInterface::QFileSystemInterface(ByteCodeRunner *owner, QWidget *window)
 #else
 QFileSystemInterface::QFileSystemInterface(ByteCodeRunner *owner, QObject *window)
 #endif
-     : FileSystemInterface(owner), owner(owner),
+     : FileSystemInterface(owner), owner(owner)
 #ifdef QT_GUI_LIB
-        window(window)
+        , window(window)
 #endif
 {
     mimeDatabase = new QMimeDatabase();
@@ -34,6 +37,7 @@ char* QFileSystemInterface::doResolveRelativePath(std::string &filename, char* b
 
 void QFileSystemInterface::selectAccepted()
 {
+#ifdef QT_GUI_LIB
     QFileDialog *currentDialog = (QFileDialog*)sender();
 
     RUNNER_VAR = owner;
@@ -53,6 +57,7 @@ void QFileSystemInterface::selectAccepted()
 
     RUNNER->ReleaseRoot(selectCallbackId);
     delete currentDialog;
+#endif
 }
 
 void QFileSystemInterface::selectRejected()
