@@ -47,60 +47,60 @@ export {
 
 		TScrollbars(x : TScrollbarStyle, y : TScrollbarStyle);
 
-			TScrollbarStyle(visible : Transform<bool>, thickness : Transform<double>, bar : Tropic, background : Tropic);
+			TScrollbarStyle(visible : Transform<bool>, thickness : Transform<double>, bar : (down : Transform<bool>, hover : Transform<bool>) -> Tropic, background : (down : Transform<bool>, hover : Transform<bool>) -> Tropic);
 
 			standardScrollBar =
 				TScrollbarStyle(
 					const(true),
 					const(if (mobile) 8. else 16.),
-					TBorder4(
+					\__, __ -> TBorder4(
 						2.,
 						TRounded4(2., [Fill(0xeeeeee)], TFillXY())
 					),
-					TRectangle([Fill(0x888888)], TFillXY())
+					\__, __ -> TRectangle([Fill(0x888888)], TFillXY())
 				);
 			invisibleScrollBar =
 				TScrollbarStyle(
 					const(false),
 					zero,
-					TEmpty(),
-					TEmpty()
+					\__, __ -> TEmpty(),
+					\__, __ -> TEmpty()
 				);
 			minimalScrollBarLight =
 				TScrollbarStyle(
 					const(true),
 					const(if (mobile) 8. else 16.),
-					TRectangle([Fill(0xeeeeee)], TFillXY()),
-					TEmpty()
+					\__, __ -> TRectangle([Fill(0xeeeeee)], TFillXY()),
+					\__, __ -> TEmpty()
 				);
 			minimalScrollBarDark =
 				TScrollbarStyle(
 					const(true),
 					const(if (mobile) 8. else 16.),
-					TRectangle([Fill(0x101010)], TFillXY()),
-					TEmpty()
+					\__, __ -> TRectangle([Fill(0x101010)], TFillXY()),
+					\__, __ -> TEmpty()
 				);
 			materialScrollBar =
 				TScrollbarStyle(
 					const(true),
 					const(if (mobile) 8. else 16.),
-					TBorder4(
-						if (mobile) 2. else 4.,
-						TCreate(\ -> {
-							ins = make(false);
-							dwn = make(false);
-
-							TInteractive(
-								[TMouseInside(ins, false), TMouseDownGhost(dwn)],
-								TAlpha(fif(dwn, const(1.0), fif(ins, const(0.8), const(0.6))), TRoundedFull([Fill(0x888888)], TFillXY()))
+					\ins, dwn ->
+						TBorder4(
+							if (mobile) 2. else 4.,
+							TAlpha(
+								fif(dwn, const(1.0), fif(ins, const(0.9), const(0.8))),
+								TRoundedFull([Fill(0x888888), Stroke(white), StrokeOpacity(0.3)], TFillXY())
 							)
-						})
-					),
-					TEmpty()
+						),
+					\ins, dwn ->
+						TAlpha(
+							fselectdelay(fif(fOr(dwn, ins), const(0.7), zero), \v -> if (v == 0.7) 0 else 800),
+							TRectangle([Fill(white), Stroke(0x888888), StrokeOpacity(0.3)], TFillXY())
+						)
 				);
 
 			TScrollBarStyle(visible : Behaviour<bool>, thickness : double, fg : [TGraphicsStyle], bg : [TGraphicsStyle]) -> TScrollbarStyle {
-				TScrollbarStyle(visible, const(thickness), TRectangle(fg, TFillXY()), TRectangle(bg, TFillXY()));
+				TScrollbarStyle(visible, const(thickness), \__, __ -> TRectangle(fg, TFillXY()), \__, __ -> TRectangle(bg, TFillXY()));
 			};
 
 			TScrollBarsStyle(x : TScrollbarStyle, y : TScrollbarStyle) -> TScrollbars { TScrollbars(x, y); };
@@ -1122,7 +1122,7 @@ createTScrollBars(
 			nextDistinct(scrollPosition, updatePoint(getValue(scrollPosition), newCoord));
 		};
 
-		(\ ->
+		(\dwn, ins ->
 			TShowLazy(fand(fless(scale, const(1.)), barStyle.visible), \ -> {
 				translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
 					scl = fgetValue(scale);
@@ -1133,11 +1133,11 @@ createTScrollBars(
 					if (mobile || !expandOnHover)
 						barStyle.thickness
 					else
-						fmultiply(barStyle.thickness, fif(fOr(hover, down0), const(2.0), const(1.0)));
+						fmultiply(barStyle.thickness, fif(fselectdelay(fOr(ins, dwn), \v -> if (v) 0 else 800), const(1.2), const(1.0)));
 
 				makeScrollbarBox = \size -> if (horizontal) TSizedWidthHeight(size, thickness) else TSizedWidthHeight(thickness, size);
 
-				TAvailable(barStyle.bar, makeScrollbarBox(scrollbarLength))
+				TAvailable(barStyle.bar(dwn, ins), makeScrollbarBox(scrollbarLength))
 				|> (\t ->
 					if (mobile)
 						t
@@ -1147,39 +1147,56 @@ createTScrollBars(
 				|> (\t -> TTranslate(translatePoint, t))
 				|> (\t ->
 					TGroup2(
-						TAvailable(barStyle.background, makeScrollbarBox(boxSize))
+						TAvailable(if (mobile || !expandOnHover) barStyle.background(const(false), const(false)) else barStyle.background(dwn, ins), makeScrollbarBox(boxSize))
 						|> (\f -> TCursor(ArrowCursor(), f)),
 						t
 					)
 				)
 				|> (\t -> TFixSize(t, makeScrollbarBox(boxSize)))
 			})
-			|> (\t ->
-					TConstruct(
-						[
-							make2Subscribe(boxSize, contentWH, \boxSz, __ -> {
-								scl = fgetValue(scale);
-								nextDistinct(barVisible, scl < 1.);
-								minBSize = min(24., boxSz / 2.);
-								bSize0 = boxSz * scl;
-								nextDistinct(scrollbarLength, max(bSize0, minBSize));
-								nextDistinct(barGap, min(bSize0 - minBSize, 0.));
-							})
-						],
-						t
-					)
+			|> (\t -> {
+				prevSize = ref 0.0;
+
+				TConstruct(
+					[
+						make2Subscribe(boxSize, contentWH, \boxSz, cSz -> {
+							if (horizontal) {
+								if (cSz.width != ^prevSize) {
+									prevSize := cSz.width;
+									nextDistinct(xMoving, true);
+									nextDistinct(xMoving, false);
+								}
+							} else {
+								if (cSz.height != ^prevSize) {
+									prevSize := cSz.height;
+									nextDistinct(yMoving, true);
+									nextDistinct(yMoving, false);
+								}
+							}
+
+							scl = fgetValue(scale);
+							nextDistinct(barVisible, scl < 1.);
+							minBSize = min(24., boxSz / 2.);
+							bSize0 = boxSz * scl;
+							nextDistinct(scrollbarLength, max(bSize0, minBSize));
+							nextDistinct(barGap, min(bSize0 - minBSize, 0.));
+						})
+					],
+					t
 				)
+			})
 		)
 		|> (\makeBar ->
 			if (mobile) {
-				makeBar();
+				makeBar(const(false), const(false));
 			} else {
 				point0 = make(zeroPoint);
 				pointDelta = ref 0.;
 
-				TIf(enabled,
+				TIf(
+					enabled,
 					TCopySize(
-						makeBar(),
+						makeBar(down0, fthrottle2(hover, 33)),
 						\tr2 -> TInteractive([TMouseDown(down0), TMouseXY(point0), TMouseInside(hover, true)], tr2),
 						false
 					)
@@ -1210,7 +1227,7 @@ createTScrollBars(
 						],
 						f3
 					)),
-					TAlpha(const(0.5), makeBar())
+					TAlpha(const(0.5), makeBar(const(false), const(false)))
 				)
 			}
 		)
@@ -1218,8 +1235,11 @@ createTScrollBars(
 			TFadeInOut(
 				manager,
 				fselectdelay(
-					fOr(fOr(hover, fIsSome(currentInteractive)), fOr(scrollPersistent, fOr(xMoving, yMoving))),
-					\m -> if (m) 0 else 300
+					fOr(
+						fthrottle2(fOr(fOr(hover, down), fselect(currentInteractive, FLift(\ci -> eitherMap(ci, \c -> c, false)))), 33),
+						fOr(scrollPersistent, fOr(xMoving, yMoving))
+					),
+					\m -> if (m) 0 else 500
 				),
 				f2
 			)
@@ -1315,7 +1335,7 @@ TFadeInOut(manager : TManager, fadeIn : Transform<bool>, content : Tropic) -> Tr
 					} else {
 						e = makeTEasing(
 							if (fi) easingEnteringDuration else easingTransitionDuration,
-							if (fi) easingDecelerationCurve else easingAccelerationCurve,
+							easingStandartCurve,
 							manager.deltaTimer
 						);
 						e.start();
