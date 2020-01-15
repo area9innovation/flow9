@@ -1066,6 +1066,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionX(object : Object3D) : Float {
+		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).x");
 	}
 
@@ -1074,6 +1075,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionY(object : Object3D) : Float {
+		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).y");
 	}
 
@@ -1082,6 +1084,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionZ(object : Object3D) : Float {
+		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).z");
 	}
 

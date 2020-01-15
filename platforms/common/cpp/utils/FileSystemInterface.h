@@ -33,6 +33,7 @@ private:
     DECLARE_NATIVE_METHOD(resolveRelativePath)
 
     DECLARE_NATIVE_METHOD(getFileByPath)
+    DECLARE_NATIVE_METHOD(createTempFile)
     DECLARE_NATIVE_METHOD(openFileDialog)
     DECLARE_NATIVE_METHOD(fileName)
     DECLARE_NATIVE_METHOD(fileType)

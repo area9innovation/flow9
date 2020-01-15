@@ -27,12 +27,12 @@ QFileSystemInterface::QFileSystemInterface(ByteCodeRunner *owner, QObject *windo
 }
 
 char* QFileSystemInterface::doResolveRelativePath(std::string &filename, char* buffer) {
-  QString s(filename.c_str());
-  QFileInfo fi(s);
-  s = fi.absoluteFilePath();
-  // QString guarantees that it has zero at the end,
-  // so usage of strcpy is safe.
-  return strcpy(buffer, s.toStdString().c_str());
+    QString s(filename.c_str());
+    QFileInfo fi(s);
+    s = fi.absoluteFilePath();
+    // QString guarantees that it has zero at the end,
+    // so usage of strcpy is safe.
+    return strcpy(buffer, s.toStdString().c_str());
 }
 
 void QFileSystemInterface::selectAccepted()
