@@ -8,13 +8,14 @@ export {
 }
 
 ProcDescr(
-	msg   : string,
+	header: string,
 	prog  : string,
 	args  : [string],
 	dir   : string,
 	stdin : string,
 	verbose : int,
-	output : (string) -> void
+	cout : (string) -> void,
+	msg  : (string) -> void
 );
 
 chainOfProcesses(procs : [ProcDescr]) -> ((() -> void) -> () -> void) {
@@ -24,26 +25,30 @@ chainOfProcesses(procs : [ProcDescr]) -> ((() -> void) -> () -> void) {
 			\acc, proc : ProcDescr -> {
 				\-> {
 					if (proc.verbose > 1) {
-						proc.output("running: " + proc.prog + " " + strGlue(proc.args, " "));
+						proc.msg("running: " + proc.prog + " " + strGlue(proc.args, " "));
 					}
-					if (proc.verbose > 0 && proc.msg != "") {
-						proc.output(proc.msg);
+					if (proc.verbose > 0 && proc.header != "") {
+						proc.msg(proc.header);
 					}
 					start = timestamp();
 					startProcess(proc.prog, proc.args, proc.dir, proc.stdin, 
 						\code, out, err -> {
 							if (proc.verbose > 0 && out != "") {
-								proc.output(out);
+								proc.cout(out);
 							}
-							if (proc.verbose > 0 && err != "") {
-								proc.output("errors:\n" + err);
+							if (err != "") {
+								if (proc.verbose > 0) {
+									proc.msg("errors:\n" + err);
+								}
 								callback();
 							} else if (code != 0) {
-								proc.output("return code: " + i2s(code));
+								if (proc.verbose > 0) {
+									proc.msg("return code: " + i2s(code));
+								}
 								callback();
 							} else {
 								if (proc.verbose > 1) {
-									proc.output("finished in: " + d2st((timestamp() - start) / 1000.0, 2) + "s");
+									proc.msg("finished in: " + d2st((timestamp() - start) / 1000.0, 2) + "s");
 								}
 								acc();
 							}
@@ -66,8 +71,11 @@ buildFiExeFile(cfg : FcCpp2Config, callback : () -> void) -> void {
 	if (cfg.verbose > 1) {
 		println("cpp2 builddir: " + builddir);
 	}
-	default_output = \msg -> fcPrintln(msg, cfg.threadId);
-	build_output = \msg -> {
+	defout = \msg -> {
+		lines = filter(strSplit(msg, "\n"), \line -> line != "");
+		fcPrintln(strGlue(lines, "\n"), cfg.threadId);
+	}
+	buildout = \msg -> {
 		sources = filtermap(
 			strSplit(msg, "\n"), 
 			\line -> {
@@ -83,9 +91,9 @@ buildFiExeFile(cfg : FcCpp2Config, callback : () -> void) -> void {
 	}
 	if (setFileContent(outdir + "/" + target + ".pro", qmake_file)) {
 		chainOfProcesses([
-			ProcDescr("Configuring build for " + cfg.outputFile, "qmake", ["CONFIG+=native_build", "../" + target + ".pro"], builddir, "", cfg.verbose - 1, default_output),
-			ProcDescr("Building " + cfg.outputFile + " ...", "make", ["-j" + i2s(availableProcessors())], builddir, "", cfg.verbose, build_output),
-			ProcDescr("Copying executable " + exe, "cp", [target, exe], builddir, "", cfg.verbose - 1, default_output)],
+			ProcDescr("Configuring build for " + cfg.outputFile, "qmake", ["CONFIG+=native_build", "../" + target + ".pro"], builddir, "", cfg.verbose, defout, defout),
+			ProcDescr("Building " + cfg.outputFile + " ...", "make", ["-j" + i2s(availableProcessors())], builddir, "", cfg.verbose, buildout, defout),
+			ProcDescr("Copying executable " + exe, "cp", [target, exe], builddir, "", cfg.verbose, defout, defout)],
 		)(callback)();
 	} else {
 		fcPrintln("coundn't write a qmake project file " + outdir + "/" + target + " target", cfg.threadId);
