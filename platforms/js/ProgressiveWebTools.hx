@@ -183,6 +183,68 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function setServiceWorkerPreferCachedResources(prefer : Bool, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "set_prefer_cached_resources",
+					"data" : {
+						"value" : prefer
+					}
+				},
+				[messageChannel.port2]
+			);
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function setServiceWorkerCacheStaticResources(cache : Bool, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "set_cache_static_resources",
+					"data" : {
+						"value" : cache
+					}
+				},
+				[messageChannel.port2]
+			);
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
 	public static function addRequestCacheFilterN(
 		cacheIfUrlMatch : String,
 		cacheIfMethodMatch : String,

@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 6;
+var SERVICE_WORKER_VERSION = 7;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -8,14 +8,16 @@ var SHARED_DATA_ENDPOINT = 'share/pwa/data.php';
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
   ".php",
-  ".serverbc"
+  ".serverbc",
+  ".html",
+  ".js"
 ];
 
 var CacheMode = {
   // Respond with cached resources even when online
   PreferCachedResources: false,
   // Cache all static files requests
-  CacheStaticContent: true
+  CacheStaticResources: true
 }
 
 // Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
@@ -164,7 +166,7 @@ self.addEventListener('fetch', function(event) {
       ext = (parts = requestUrl.split("/").pop().split(".")).length > 1 ? parts.pop() : "";
     var name = (parts.length > 0 ? parts.pop() : "");
 
-    return (CacheMode.CacheStaticContent && !isEmpty(ext) && (
+    return (CacheMode.CacheStaticResources && !isEmpty(ext) && (
       !dynamicResourcesExtensions.includes("." + ext) ||
       "stamp.php" == name + "." + ext));
   }
@@ -745,7 +747,15 @@ self.addEventListener('message', function(event) {
       .catch(function() { return { "urls": [], status: "Failed" }; });
   };
 
-  if (event.data.action == "get_cache_version") {
+  if (event.data.action == "set_prefer_cached_resources") {
+	CacheMode.PreferCachedResources = event.data.data.value;
+
+	respond({ status: "OK" });
+  } else if (event.data.action == "set_cache_static_resources") {
+	CacheMode.CacheStaticResources = event.data.data.value;
+
+    respond({ status: "OK" });
+  } else if (event.data.action == "get_cache_version") {
     respond({
       cache_version: SW_CACHE_VERSION
     });
