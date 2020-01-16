@@ -306,7 +306,10 @@ StackSlot FileSystemInterface::createTempFile(RUNNER_ARGS)
         fs.close();
     }
 
-    return RUNNER->AllocNative(new FlowFile(owner, path));
+    FlowFile *flowFile = new FlowFile(owner, path);
+    flowFile->setTemporary(true);
+
+    return RUNNER->AllocNative(flowFile);
 }
 
 StackSlot FileSystemInterface::openFileDialog(RUNNER_ARGS)
