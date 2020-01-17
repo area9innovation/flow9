@@ -98,6 +98,9 @@ static QString compileFlow(int const flowCompiler, QString const & flow, QString
     p.waitForFinished(-1);
     QString output = p.readAllStandardOutput() + p.readAllStandardError();
     qDebug().noquote() << output;
+    if (p.exitCode() != 0) {
+    	cerr << output.toStdString() << endl;
+    }
 
 #ifdef QT_GUI_LIB
     if (p.exitCode() != 0) {
@@ -657,6 +660,7 @@ int main(int argc, char *argv[])
             }
             QString base = compileFlow(flowCompiler, argv[1], flow_path, flowArgs, cgi);
             if (base.length() == 0) {
+            	cerr << "Compilation of " << argv[1] << " with flow path " << flow_path.toStdString() << " and arguments " << flowArgs.join(QLatin1Char(' ')).toStdString() << " failed";
                 return 1;
             }
 
@@ -690,8 +694,10 @@ int main(int argc, char *argv[])
         if (use_jit)
         {
 			FlowJitProgram *jit = loadJitProgram(cerr, bytecodeFile.toStdString(), verbose ? "flowjit" : "", jit_memory_limit);
-            if (!jit)
+            if (!jit) {
+            	cerr << "Loading of bytecode " << bytecodeFile.toStdString() << " to jit failed";
                 return 1;
+            }
 
             FlowRunner.Init(jit);
             FlowRunner.setBytecodeFilename(bytecodeFile.toStdString());
@@ -838,9 +844,16 @@ int main(int argc, char *argv[])
 #endif
 
         rv = app->exec();
+        if (rv == 1) {
+        	cerr << "app->exec() == 1";
+        }
     }
-    else if (cgihost && cgihost->quitPending)
+    else if (cgihost && cgihost->quitPending) {
         rv = cgihost->quitCode;
+        if (rv == 1) {
+        	cerr << "cgihost->quitCode == 1";
+        }
+    }
 
 #ifdef FLOW_DEBUGGER
     if (gdbmi)
@@ -852,6 +865,7 @@ int main(int argc, char *argv[])
 #endif
 
     if (FlowRunner.IsErrorReported()) {
+    	cerr << "FlowRunner.IsErrorReported()";
         rv = 1;
     }
 
