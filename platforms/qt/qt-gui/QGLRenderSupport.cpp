@@ -1363,7 +1363,7 @@ FlowKeyEvent QGLRenderSupport::keyEventToFlowKeyEvent(FlowEvent event, QKeyEvent
     case FlowKey_F10: case FlowKey_F11: case FlowKey_F12:
     case FlowKey_F13: case FlowKey_F14: case FlowKey_F15:
         {
-            char tmp[10];
+            char tmp[16];
             int sz = sprintf(tmp, "F%d", code-FlowKey_F1+1);
             key = parseUtf8(tmp, sz);
             break;
