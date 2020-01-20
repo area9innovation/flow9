@@ -752,7 +752,7 @@ void Debugger::InputThread::run()
             exit(0);
 
         std::string buf;
-        std::cin >> buf;
+        std::getline(std::cin, buf);
 
         setTerminationEnabled(false);
 
@@ -1268,8 +1268,11 @@ bool Debugger::command_break(std::vector<std::string> &tokens, FlowPtr insn)
         sstr << ", fullname=";
         printQuotedString(sstr, chunk ? canonifyFilePath(chunk->line->file->name) : "?");
         sstr << ",line=\"" << (chunk ? chunk->line->line_idx : 0)
-             << "\",times=\"0\",original-location=";
-        printQuotedString(sstr, tokens[1]);
+             << "\",times=\"0\"";
+        if (tokens.size() > 1) {
+        	sstr << ",original-location=";
+        	printQuotedString(sstr, tokens[1]);
+        }
         sstr << "}" << endl;
 
         cout << "=breakpoint-created," << sstr.str() << endl;
