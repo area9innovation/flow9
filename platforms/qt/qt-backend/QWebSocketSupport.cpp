@@ -23,7 +23,7 @@ StackSlot QWebSocketSupport::doOpen(unicode_string url, int callbacksKey)
     });
 
     connect(&websocketNative->websocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
-        [this, websocketNative, callbacksKey](QAbstractSocket::SocketError error){
+        [this, websocketNative, callbacksKey](QAbstractSocket::SocketError /*error*/){
             this->onError(callbacksKey, qt2unicode(websocketNative->websocket.errorString()));
     });
 

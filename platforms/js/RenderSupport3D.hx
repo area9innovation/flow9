@@ -41,6 +41,7 @@ import js.three.ShaderMaterial;
 
 import js.three.Texture;
 import js.three.CubeTexture;
+import js.three.CompressedTexture;
 
 import js.three.Light;
 import js.three.PointLight;
@@ -389,25 +390,47 @@ class RenderSupport3D {
 		new ObjectLoader(stage.loadingManager).load(url, onLoad);
 	}
 
-	public static function load3DTexture(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		var texture : Texture = null;
+
 		var loader : Dynamic =
-			if (StringTools.endsWith(url, ".dds"))
-				untyped __js__("new THREE.DDSLoader(stage.loadingManager)")
-			else if (StringTools.endsWith(url, ".pvr"))
-				untyped __js__("new THREE.PVRLoader(stage.loadingManager)")
-			else
+			if (StringTools.endsWith(url, ".dds")) {
+				texture = new CompressedTexture();
+				untyped __js__("new THREE.DDSLoader(stage.loadingManager)");
+			} else if (StringTools.endsWith(url, ".pvr")) {
+				texture = new CompressedTexture();
+				untyped __js__("new THREE.PVRLoader(stage.loadingManager)");
+			} else {
+				texture = new Texture();
 				new TextureLoader(stage.loadingManager);
+			};
 
-		return loader.load(url, function(texture : Texture) {
-			for (par in parameters) {
-				untyped texture[par[0]] = untyped __js__("eval(par[1])");
-			}
+		untyped texture.load = function() {
+			loader.load(url, function(loadedTexture : Texture) {
+				for (par in parameters) {
+					untyped texture[par[0]] = untyped __js__("eval(par[1])");
+				}
 
-			texture.invalidateTextureStage();
-			texture.emit("loaded");
+				texture.image = loadedTexture.image;
+				texture.format = loadedTexture.format;
+				texture.mipmaps = loadedTexture.mipmaps;
+				texture.minFilter = loadedTexture.minFilter;
+				texture.needsUpdate = true;
 
-			onLoad(texture);
-		});
+				texture.invalidateTextureStage();
+				texture.emit("loaded");
+
+				onLoad(texture);
+			});
+		};
+
+		return texture;
+	}
+
+	public static function load3DTexture(texture : Texture) : Void {
+		if (untyped texture.load != null) {
+			untyped texture.load();
+		}
 	}
 
 	public static function load3DCubeTexture(stage : ThreeJSStage, px : String, nx : String, py : String, ny : String, pz : String, nz : String,

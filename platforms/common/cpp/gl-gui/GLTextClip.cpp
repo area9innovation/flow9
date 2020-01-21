@@ -815,10 +815,6 @@ StackSlot GLTextClip::setTextInput(RUNNER_ARGS)
     RETVOID;
 }
 
-static bool startsWith(const unicode_string& s, const unicode_string& prefix) {
-    return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
-}
-
 StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
 {
     #define SIZE 8
@@ -1012,12 +1008,11 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(idx);
     RUNNER_CheckTag1(TInt, idx);
-    size_t i;
     int idx_v = idx.GetInt();
 
     layoutText();
     Extent::Ptr extent;
-    for (i = text_real_extents.size()-1; i>=0; --i) {
+    for (int i = text_real_extents.size() - 1; i >= 0; --i) {
         extent = text_real_extents[i];
         if (extent->char_idx <= idx_v) break;
     }
@@ -1061,7 +1056,7 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
 
             char_idx = char_indices[glyph_idx];
 
-            if (ext.first->layout->getDirections()[glyph_idx] == RTL)
+            if (ext.first->layout->getDirections()[glyph_idx] == CharDirection::RTL)
                 inGlyphPos = glyphAdv-inGlyphPos;
             if (glyphAdv) {
                 if (inGlyphPos > glyphAdv) inGlyphPos = glyphAdv;
@@ -1437,7 +1432,7 @@ const unicode_string GLTextClip::textFilteredByFlowFilters(const unicode_string 
     return result_str;
 }
 
-const bool GLTextClip::keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent)
+bool GLTextClip::keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent)
 {
     T_TextInputFilters text_input_key_event_filters;
     if (flowKeyEvent.event == FlowKeyDown) {

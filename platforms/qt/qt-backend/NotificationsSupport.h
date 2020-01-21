@@ -65,7 +65,7 @@ public:
         return s;
     }
 
-    QSystemTrayIcon *const getSystemTray();
+    QSystemTrayIcon * getSystemTray();
 
 private:
     SystemTrayIconSingle() { }

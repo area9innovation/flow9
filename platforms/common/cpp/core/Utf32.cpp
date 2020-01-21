@@ -41,7 +41,7 @@ size_t decodeCharsUtf16toUtf32(const uint16_t *input, size_t input_size, uint32_
     uint8_t bytes_expecting=0;
     uint32_t c, acc;
     size_t inpos = 0;
-    for (inpos; inpos < input_size; ++inpos) {
+    for (; inpos < input_size; ++inpos) {
         c = input[inpos];
         if (bytes_expecting) {
             if (c < 0xDC00 || c >= 0xE000) {
@@ -147,15 +147,16 @@ void DecodeUtf16toUtf32::Iterator::refreshState() {
     }
     if (parent->org[pos] >= 0xD800 && parent->org[pos] <= 0xE000) {
         currentCharLen = 2;
-        if (parent->org[pos] >= 0xDC00)
+        if (parent->org[pos] >= 0xDC00) {
             if (pos && parent->org[pos-1] >= 0xD800 && parent->org[pos-1] < 0xDC00) --pos;
             else currentCharLen = 1;
+        }
     } else currentCharLen = 1;
 }
 
 void DecodeUtf16toUtf32::Iterator::decodeChar() {
     size_t outlen, auxlen;
-    if (currentCharLen != (auxlen = decodeCharsUtf16toUtf32(parent->org + pos, currentCharLen, &outbuf, &outlen)) || outlen != 1) {
+    if (size_t(currentCharLen) != (auxlen = decodeCharsUtf16toUtf32(parent->org + pos, currentCharLen, &outbuf, &outlen)) || outlen != 1) {
         // instead of throwing DecodeError
         outbuf = 0xFFFE;
         currentCharLen = 1;

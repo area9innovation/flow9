@@ -479,27 +479,27 @@ class BytecodeWriter {
 //			writeOpcode(output, Bytecode.CVarRef);
 //			output.writeInt31(0);
 //			writeString(output, name);
-		case Field(call, name, pos):
+		case Field(cll, name, pos):
 			var fields = null;
 			if (name != "structname")
-				fields = FlowUtil.untyvar(FlowUtil.getPosition(call).type);
-			encode(output, call, names, false, debug);
+				fields = FlowUtil.untyvar(FlowUtil.getPosition(cll).type);
+			encode(output, cll, names, false, debug);
 			encodeFieldRef(output, pos, fields, name, Bytecode.CField, Bytecode.CFieldName);
 		case RefTo(value, pos):
 			encode(output, value, names, false, debug);
 			writeOpcode(output, Bytecode.CRefTo);
 		case Pointer(index, pos):
 			throw "Not implemented: " + Prettyprint.print(v);
-		case Deref(pointer, pos):
-			encode(output, pointer, names, false, debug);
+		case Deref(pnt, pos):
+			encode(output, pnt, names, false, debug);
 			writeOpcode(output, Bytecode.CDeref);
-		case SetRef(pointer, value, pos):
-			encode(output, pointer, names, false, debug);
+		case SetRef(pnt, value, pos):
+			encode(output, pnt, names, false, debug);
 			encode(output, value, names, false, debug);
 			writeOpcode(output, Bytecode.CSetRef);
-		case SetMutable(pointer, name, value, pos):
-			var fields = FlowUtil.untyvar(FlowUtil.getPosition(pointer).type);
-			encode(output, pointer, names, false, debug);
+		case SetMutable(pnt, name, value, pos):
+			var fields = FlowUtil.untyvar(FlowUtil.getPosition(pnt).type);
+			encode(output, pnt, names, false, debug);
 			encode(output, value, names, false, debug);
 			encodeFieldRef(output, pos, fields, name, Bytecode.CSetMutable, Bytecode.CSetMutableName);
 		case Cast(value, fromtype, totype, pos):
@@ -575,12 +575,12 @@ class BytecodeWriter {
 		case Flow.Closure(body, environment, pos):
 			throw "Not implemented: " + Prettyprint.print(v);
 
-		case Call(closure, arguments, pos):
+		case Call(clos, arguments, pos):
 			writeValues(output, arguments, names);
 
 			var name = null;
 			var struct = false;
-			switch (closure) {
+			switch (clos) {
 			case VarRef(n, p):
 				name = n;
 				var typeDecl = program.userTypeDeclarations.get(n);
@@ -608,7 +608,7 @@ class BytecodeWriter {
 				// Unconditionally add debug info for real calls
 				output.addDebug(FlowUtil.getPosition(v));
 
-				encode(output, closure, names, false, debug);
+				encode(output, clos, names, false, debug);
 
 				var free = false;
 				for (n in names.freeVariablesFound.keys()) {

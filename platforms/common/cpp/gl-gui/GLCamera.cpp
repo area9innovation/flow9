@@ -57,6 +57,7 @@ void GLCamera::notifyEvent(GLCamera::Event ev)
     switch (ev) {
     case RecordStart: tag = "NetStream.Record.Start"; break;
     case RecordStop:  tag = "NetStream.Record.Stop";  break;
+    default: break; // do nothing
     }
 
     args[0] = RUNNER->AllocateString(tag);

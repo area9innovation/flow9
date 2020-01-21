@@ -46,7 +46,7 @@ void AbstractNotificationsSupport::OnRunnerReset(bool inDestructor)
     FBRefreshTokenListener.clear();
 }
 
-void AbstractNotificationsSupport::flowGCObject(GarbageCollectorFn ref)
+void AbstractNotificationsSupport::flowGCObject(GarbageCollectorFn /*ref*/)
 {
 }
 
