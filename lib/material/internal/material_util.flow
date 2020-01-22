@@ -760,17 +760,19 @@ TAnimator(
 	crop = !contains(style, MNoCrop());
 
 	fade = contains(style, MFadeAnimation());
-	scaleAnimation = tryExtractStruct(style, MScaleAnimation([]));
-	rotateAnimation = tryExtractStruct(style, MRotateAnimation([]));
-	translateAnimation = tryExtractStruct(style, MTranslateAnimation(MTop()));
-
 	wh2point = \fn -> fselect(contentWH, FLift(fn));
+	
+	scaleHandler = \sc, t -> {
+		scaleFactor = extractStruct(sc.style, MScaleAnimationCustomFactor(const(Factor(0., 0.)))).factor;
+		center = contains(sc.style, MCenterMode());
+		centerPoint = fselect(contentWH, FLift(\wh -> Point(wh.width / 2., wh.height / 2.)));
+		
+		(if (center) TTranslate(fselect(centerPoint, FLift(\p -> Point(-p.x, -p.y))), t) else t)
+		|> (\t2 -> TScale(flerpFactor(scaleFactor, progress), t2))
+		|> (\t2 -> if (center) TTranslate(centerPoint, t2) else t2)
+	}
 
-	content
-	|> (\t -> TAttachBox(t, contentWH)) 
-	|> (\t -> if (fade) TAlpha(progress, t) else t)
-
-	|> (\t -> eitherMap(translateAnimation, \trans -> {
+	translateHandler = \trans, t -> {
 		position = switch (trans.type) {
 			MTop() : wh2point(\wh -> Point(0., -wh.height));
 			MBottom() : wh2point(\wh -> Point(0., wh.height));
@@ -779,19 +781,9 @@ TAnimator(
 			MTranslatePosition(pos) : pos;
 		}
 		TTranslate(flerpPoint(position, progress), t)
-	}, t))
+	}
 
-	|> (\t -> eitherMap(scaleAnimation, \sc -> {
-		scaleFactor = extractStruct(sc.style, MScaleAnimationCustomFactor(const(Factor(0., 0.)))).factor;
-		center = contains(sc.style, MCenterMode());
-		centerPoint = fselect(contentWH, FLift(\wh -> Point(wh.width / 2., wh.height / 2.)));
-		
-		(if (center) TTranslate(fselect(centerPoint, FLift(\p -> Point(-p.x, -p.y))), t) else t)
-		|> (\t2 -> TScale(flerpFactor(scaleFactor, progress), t2))
-		|> (\t2 -> if (center) TTranslate(centerPoint, t2) else t2)
-	}, t))
-
-	|> (\t -> eitherMap(rotateAnimation, \rot -> {
+	rotateHandler = \rot, t -> {
 		angle = extractStruct(rot.style, MRotateAnimationCustomAngle(const(360.))).angle;
 		center = contains(rot.style, MCenterMode());
 		centerPoint = fselect(contentWH, FLift(\wh -> Point(wh.width / 2., wh.height / 2.)));
@@ -799,11 +791,22 @@ TAnimator(
 		(if (center) TTranslate(fselect(centerPoint, FLift(\p -> Point(-p.x, -p.y))), t) else t)
 		|> (\t2 -> TRotate(fsubselect(angle, FLift(\ang -> flerp(ang, 0., progress))), t2))
 		|> (\t2 -> if (center) TTranslate(centerPoint, t2) else t2)
+	}
 
-	}, t))
-
+	content
+	|> (\t -> TAttachBox(t, contentWH)) 
+	|> (\t -> if (fade) TAlpha(progress, t) else t)
+	|> (\t -> 
+		fold(style, t, \acc, st ->
+			switch (st) {
+				MScaleAnimation(__) : scaleHandler(st, acc);
+				MRotateAnimation(__) : rotateHandler(st, acc); 
+				MTranslateAnimation(__) : translateHandler(st, acc);
+				default : acc 
+			}
+		)
+	)
 	|> (\t -> if (crop) TCrop(const(zeroPoint), contentWH, t) else t)
-	
 	|> (\t ->
 		MEasingAnimation(
 			manager,
