@@ -25,7 +25,7 @@ void AbstractGeolocationSupport::OnRunnerReset(bool inDestructor)
     NativeMethodHost::OnRunnerReset(inDestructor);
 }
 
-void AbstractGeolocationSupport::flowGCObject(GarbageCollectorFn ref)
+void AbstractGeolocationSupport::flowGCObject(GarbageCollectorFn /*ref*/)
 {
 }
 

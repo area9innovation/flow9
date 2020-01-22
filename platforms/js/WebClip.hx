@@ -55,7 +55,7 @@ class WebClip extends NativeWidgetClip {
 			try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report("Can not set RealHTML domain" + e); }
 		}
 
-		initNativeWidget();
+		this.initNativeWidget();
 
 		if (Platform.isIOS) {
 			// To restrict size of iframe
@@ -130,7 +130,7 @@ class WebClip extends NativeWidgetClip {
 	}
 
 	private function applyShrinkToFit() {
-		if (getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
+		if (this.getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
 			var scaleH = nativeWidget.clientHeight / this.htmlPageHeight;
 			var scaleW = nativeWidget.clientWidth / this.htmlPageWidth;
 			var scaleWH = Math.min(1.0, Math.min(scaleH, scaleW));
@@ -156,7 +156,7 @@ class WebClip extends NativeWidgetClip {
 	}
 
 	private function applyNativeWidgetSize() {
-		if (getClipVisible() && nativeWidget != null && iframe != null) {
+		if (this.getClipVisible() && nativeWidget != null && iframe != null) {
 			// Explicitly set w/h (for iOS at least it does not work with "100%")
 			iframe.style.width = nativeWidget.style.width;
 			iframe.style.height = nativeWidget.style.height;
@@ -201,7 +201,7 @@ class WebClip extends NativeWidgetClip {
 			nativeWidget.removeAttribute("tabindex"); // FF set focus to div if it has tabindex
 		}
 
-		if (getClipVisible()) {
+		if (this.getClipVisible()) {
 			if (this.shrinkToFit) {
 				applyShrinkToFit();
 			} else {

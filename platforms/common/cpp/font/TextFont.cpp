@@ -26,6 +26,7 @@ std::string TextFont::weightSuffix() {
     case Bold: return "Bold";
     case ExtraBold: return "ExtraBold";
     case Black: return "Black";
+    default: return "";
     }
 }
 
@@ -34,6 +35,7 @@ std::string TextFont::styleSuffix() {
     case Normal: return "";
     case Italic: return "Italic";
     case Oblique: return "Oblique";
+    default: return "";
     }
 }
 

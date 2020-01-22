@@ -55,7 +55,7 @@ class FlowSprite extends Sprite {
 		};
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			initNativeWidget("img");
+			this.initNativeWidget("img");
 		} else {
 			once("removed", onSpriteRemoved);
 			once("added", onSpriteAdded);
@@ -169,8 +169,8 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		invalidateStage();
-		deleteNativeWidget();
+		this.invalidateStage();
+		this.deleteNativeWidget();
 	}
 
 	private function onError() : Void {
@@ -188,7 +188,7 @@ class FlowSprite extends Sprite {
 		}
 
 		errorFn("Can not load " + url);
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 	}
 
 	private function onLoaded() : Void {
@@ -208,7 +208,7 @@ class FlowSprite extends Sprite {
 					metricsFn(texture.width, texture.height);
 				}
 
-				invalidateTransform('onLoaded');
+				this.invalidateTransform('onLoaded');
 				calculateWidgetBounds();
 
 				loaded = true;
@@ -270,10 +270,10 @@ class FlowSprite extends Sprite {
 			return;
 		}
 
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipID();
+		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 		nativeWidget.onload = onLoaded;
 		nativeWidget.onerror = onError;

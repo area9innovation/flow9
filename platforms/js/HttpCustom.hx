@@ -1,11 +1,10 @@
 class HttpCustom extends haxe.Http {
-	
 	#if (js && !nwjs)
 	var method : String;
 	var availableMethods = ['GET', 'POST', 'DELETE', 'PATCH', 'PUT'];
 
 	var responseHeaders : Array<Array<String>>;
-	
+
 	public var onResponse : Int -> String -> Array<Array<String>> -> Void;
 
 	public override function new( url : String, method : String ) {
@@ -19,7 +18,11 @@ class HttpCustom extends haxe.Http {
 
 	public override function request(?post : Bool) {
 		var me = this;
-		me.responseData = null;
+		#if (haxe_ver >= "4.0.0")
+			me.responseAsString = null;
+		#else
+			me.responseData = null;
+		#end
 		var r = req = js.Browser.createXMLHttpRequest();
 		var onreadystatechange = function(_) {
 			if( r.readyState != 4 )
@@ -39,7 +42,11 @@ class HttpCustom extends haxe.Http {
 			if( s != null )
 				me.onStatus(s);
 			me.req = null;
-			me.responseData = r.responseText;
+			#if (haxe_ver >= "4.0.0")
+				me.responseAsString = r.responseText;
+			#else
+				me.responseData = r.responseText;
+			#end
 			me.responseHeaders =
 				r
 					.getAllResponseHeaders()
@@ -60,7 +67,11 @@ class HttpCustom extends haxe.Http {
 				uri = "";
 			else
 				uri += "&";
-			uri += StringTools.urlEncode(p.param)+"="+StringTools.urlEncode(p.value);
+			#if (haxe_ver >= "4.0.0")
+				uri += StringTools.urlEncode(p.name)+"="+StringTools.urlEncode(p.value);
+			#else
+				uri += StringTools.urlEncode(p.param)+"="+StringTools.urlEncode(p.value);
+			#end
 		}
 		try {
 			if( method != 'GET')
@@ -78,11 +89,21 @@ class HttpCustom extends haxe.Http {
 		}
 		// r.withCredentials = withCredentials;
 		// Handled by HttpSupport.hx
-		if( !Lambda.exists(headers, function(h) return h.header == "Content-Type") && method != 'GET')
-			r.setRequestHeader("Content-Type","application/x-www-form-urlencoded");
 
-		for( h in headers )
-			r.setRequestHeader(h.header,h.value);
+		#if (haxe_ver >= "4.0.0")
+			if( !Lambda.exists(headers, function(h) return h.name == "Content-Type") && method != 'GET')
+				r.setRequestHeader("Content-Type","application/x-www-form-urlencoded");
+
+			for( h in headers )
+				r.setRequestHeader(h.name,h.value);
+		#else
+			if( !Lambda.exists(headers, function(h) return h.header == "Content-Type") && method != 'GET')
+				r.setRequestHeader("Content-Type","application/x-www-form-urlencoded");
+
+			for( h in headers )
+				r.setRequestHeader(h.header,h.value);
+		#end
+
 		r.send(uri);
 		if( !async )
 			onreadystatechange(null);

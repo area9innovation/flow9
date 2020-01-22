@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 5;
+var SERVICE_WORKER_VERSION = 7;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -8,14 +8,16 @@ var SHARED_DATA_ENDPOINT = 'share/pwa/data.php';
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
   ".php",
-  ".serverbc"
+  ".serverbc",
+  ".html",
+  ".js"
 ];
 
 var CacheMode = {
   // Respond with cached resources even when online
   PreferCachedResources: false,
   // Cache all static files requests
-  CacheStaticContent: true
+  CacheStaticResources: true
 }
 
 // Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
@@ -164,7 +166,7 @@ self.addEventListener('fetch', function(event) {
       ext = (parts = requestUrl.split("/").pop().split(".")).length > 1 ? parts.pop() : "";
     var name = (parts.length > 0 ? parts.pop() : "");
 
-    return (CacheMode.CacheStaticContent && !isEmpty(ext) && (
+    return (CacheMode.CacheStaticResources && !isEmpty(ext) && (
       !dynamicResourcesExtensions.includes("." + ext) ||
       "stamp.php" == name + "." + ext));
   }
@@ -318,23 +320,51 @@ self.addEventListener('fetch', function(event) {
       headers.set(key, val);
     });
     headers.set('If-None-Match', etag);
-    return (new Request(requestCloned.url, {
-      method: requestCloned.method,
-      headers: headers,
-      body: requestCloned.body,
-      mode: 'same-origin',
-      credentials: requestCloned.credentials,
-      cache: requestCloned.cache,
-      redirect: requestCloned.redirect,
-      referrer: requestCloned.referrer,
-      integrity: requestCloned.integrity
-    }));
+
+    if (requestCloned.method == "POST") {
+      return requestCloned.blob().then(function(reqBlob) {
+        return (new Request(requestCloned.url, {
+          method: requestCloned.method,
+          headers: headers,
+          body: reqBlob,
+          mode: 'same-origin',
+          credentials: requestCloned.credentials,
+          cache: requestCloned.cache,
+          redirect: requestCloned.redirect,
+          referrer: requestCloned.referrer,
+          integrity: requestCloned.integrity
+        }));
+      }).catch(function() {
+        return (new Request(requestCloned.url, {
+          method: requestCloned.method,
+          headers: headers,
+          mode: 'same-origin',
+          credentials: requestCloned.credentials,
+          cache: requestCloned.cache,
+          redirect: requestCloned.redirect,
+          referrer: requestCloned.referrer,
+          integrity: requestCloned.integrity
+        }));
+      });
+    } else {
+      return Promise.resolve(
+        (new Request(requestCloned.url, {
+          method: requestCloned.method,
+          headers: headers,
+          mode: 'same-origin',
+          credentials: requestCloned.credentials,
+          cache: requestCloned.cache,
+          redirect: requestCloned.redirect,
+          referrer: requestCloned.referrer,
+          integrity: requestCloned.integrity
+        }))
+      );
+    }
   }
 
   // Clean all previous caches for sensitive to timestamp requests
   var cleanTimestampSensitiveRequests = function(originalUrl) {
     var url = new URL(originalUrl);
-
     // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
     return isStampForApplicationJsRequest().then(function() {
       return caches.open(CACHE_NAME).then(function(cache) {
@@ -411,6 +441,7 @@ self.addEventListener('fetch', function(event) {
   }
 
   function fetchResource(requestData, checkIfNotModified) {
+
     var doCacheFn = function(response) {
       var fixedRequest = prepareRequestToCache(requestData);
       var usedCacheName = CACHE_NAME;
@@ -453,7 +484,8 @@ self.addEventListener('fetch', function(event) {
             if (isEmpty(etag)) {
               return doFetchFn();
             } else {
-              return fetch(createIfNoneMatchRequest(requestData, etag)).then(function(response) {
+              return createIfNoneMatchRequest(requestData, etag).then(function(cRequest) {
+                return fetch(cRequest).then(function(response) {
                 if (response.status == 200 && response.type == "basic") {
                   doCacheFn(response);
                   return response.clone();
@@ -462,10 +494,12 @@ self.addEventListener('fetch', function(event) {
                 } else {
                   return response.clone();
                 }
-              });
-            }
-          })
-          .catch(doFetchFn);
+              })
+              .catch(doFetchFn);
+            });
+          }
+        })
+        .catch(doFetchFn);
       } else {
         return doFetchFn();
       }
@@ -713,7 +747,15 @@ self.addEventListener('message', function(event) {
       .catch(function() { return { "urls": [], status: "Failed" }; });
   };
 
-  if (event.data.action == "get_cache_version") {
+  if (event.data.action == "set_prefer_cached_resources") {
+	CacheMode.PreferCachedResources = event.data.data.value;
+
+	respond({ status: "OK" });
+  } else if (event.data.action == "set_cache_static_resources") {
+	CacheMode.CacheStaticResources = event.data.data.value;
+
+    respond({ status: "OK" });
+  } else if (event.data.action == "get_cache_version") {
     respond({
       cache_version: SW_CACHE_VERSION
     });

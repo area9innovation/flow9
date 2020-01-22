@@ -194,7 +194,7 @@ GLTextureBitmap::Ptr loadJPEG(std::string filename, size_t max_load_size)
         jpeg_stdio_src(decoder, fd);
         
         return decodeJPEG(decoder, max_load_size);
-    } catch (DecodeError) {
+    } catch (DecodeError&) {
         return GLTextureBitmap::Ptr();
     }
 }
@@ -211,7 +211,7 @@ GLTextureBitmap::Ptr loadJPEG(const uint8_t *data, unsigned size, size_t max_loa
         get_jpeg_mem_src(decoder, data, size);
 
         return decodeJPEG(decoder, max_load_size);
-    } catch (DecodeError) {
+    } catch (DecodeError&) {
         return GLTextureBitmap::Ptr();
     }
 }
@@ -329,6 +329,7 @@ static GLTextureBitmap::Ptr decodePNG(PNGDecoder &decoder, size_t max_load_size)
             format = GL_LUMINANCE;
             break;
         }
+        /* fall through */
     case PNG_COLOR_TYPE_GRAY_ALPHA:
         format = GL_LUMINANCE_ALPHA;
         break;
@@ -338,6 +339,7 @@ static GLTextureBitmap::Ptr decodePNG(PNGDecoder &decoder, size_t max_load_size)
             format = GL_RGB;
             break;
         }
+        /* fall through */
     case PNG_COLOR_TYPE_RGB_ALPHA:
         format = GL_RGBA;
         break;
@@ -402,7 +404,7 @@ GLTextureBitmap::Ptr loadPNG(std::string filename, size_t max_load_size)
         png_init_io(decoder.png, fd);
         
         return decodePNG(decoder, max_load_size);
-    } catch (DecodeError) {
+    } catch (DecodeError&) {
         return GLTextureBitmap::Ptr();
     }
 }
@@ -421,7 +423,7 @@ GLTextureBitmap::Ptr loadPNG(const uint8_t *data, unsigned size, size_t max_load
         (void)&reader;
 
         return decodePNG(decoder, max_load_size);
-    } catch (DecodeError) {
+    } catch (DecodeError&) {
         return GLTextureBitmap::Ptr();
     }
 }
@@ -658,7 +660,7 @@ GLTextureBitmap::Ptr loadSWF(const uint8_t *data, unsigned size, size_t max_load
         }
 
         return decodeSWF(dptr, dptr+size, max_load_size);
-    } catch (DecodeError) {
+    } catch (DecodeError&) {
         cerr << "SWF decoding failed" << endl;
         return GLTextureBitmap::Ptr();
     }

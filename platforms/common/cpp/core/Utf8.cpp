@@ -318,8 +318,17 @@ std::string stl_vsprintf(const char *fmt, va_list args) {
     }
 }
 
-void printQuotedString(std::ostream &out, const std::string &sv)
+void printQuotedString(std::ostream &out, const std::string &sv, bool print_non_printable)
 {
+	auto output = [print_non_printable, &out](const std::string& s){
+		for (char code : s) {
+			if (print_non_printable || isprint(code)) {
+				out << code;
+			} else {
+				out << std::hex << "\\x" << (int)code << std::dec;
+			}
+		}
+	};
     out << "\"";
 
     unsigned start = 0;
@@ -332,7 +341,8 @@ void printQuotedString(std::ostream &out, const std::string &sv)
         case '\n':
             code = 'n'; break;
         case '\r': {
-            out << sv.substr(start, i-start) << "\\u000d";
+            output(sv.substr(start, i-start));
+            out << "\\u000d";
             start = i + 1;
             goto next;
         }
@@ -342,12 +352,13 @@ void printQuotedString(std::ostream &out, const std::string &sv)
             goto next;
         }
 
-        out << sv.substr(start, i-start) << "\\" << code;
+        output(sv.substr(start, i-start));
+        out << "\\" << code;
         start = i+1;
     next:;
     }
 
-    out << sv.substr(start) << "\"";
+    output(sv.substr(start)); out << "\"";
 }
 
 void printQuotedString2(std::ostream &out, const std::string &sv) {

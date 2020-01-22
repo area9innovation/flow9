@@ -106,12 +106,12 @@ LigatureUtf32Iter& LigatureUtf32Iter::next() {
 }
 
 LigatureUtf32Iter::LigatureUtf32Iter(shared_ptr<Shared> shared, shared_ptr<Utf32InputIterator> cur):
-    shared(shared), cur(cur), nx(cur->clone())
+    cur(cur), nx(cur->clone()), shared(shared)
 {
     yieldSelf();
 }
 LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
-    shared(new LigatureUtf32Iter::Shared()), cur(org.clone()), nx(org.clone())
+    cur(org.clone()), nx(org.clone()), shared(new LigatureUtf32Iter::Shared())
 {
     shared->org = org.clone();
     shared->end = end.clone();
@@ -119,7 +119,7 @@ LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator
 }
 
 LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur):
-    shared(new LigatureUtf32Iter::Shared()), cur(cur.clone()), nx(cur.clone())
+    cur(cur.clone()), nx(cur.clone()), shared(new LigatureUtf32Iter::Shared())
 {
     shared->org = org.clone();
     shared->end = end.clone();
@@ -698,6 +698,8 @@ float GLFont::getKerning(GlyphInfo *prev, GlyphInfo *cur)
 
     return delta.x * em_size_factor;
 #else
+    UNUSED(prev);
+    UNUSED(cur);
     return 0.0f;
 #endif
 }
@@ -758,12 +760,12 @@ GLTextureImage::Ptr GLFont::getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *t
 #endif
 
 int GLTextLayout::getCharGlyphPositionIdx(int charidx) {
-    if (charidx<0 || charidx > endpos->position()) return -1;
+    if (charidx < 0 || charidx > int(endpos->position())) return -1;
     typename std::map<size_t, size_t>::const_iterator it = char_to_glyph_index.find( charidx );
     // For case of ligature
     int delta = 1;
     while (it == char_to_glyph_index.end()) {
-        if (delta>charidx && charidx+delta>=char_indices.size()) return charidx;
+        if (delta > charidx && charidx + delta >= int(char_indices.size())) return charidx;
         it = char_to_glyph_index.find(charidx-delta);
         ++delta;
     }
@@ -925,7 +927,8 @@ void GLTextLayout::buildLayout(shared_ptr<Utf32InputIterator> begin, shared_ptr<
 
     endpos = strIter->clone();
     float cursor = 0.0f;
-    float new_cursor, pos;
+    float new_cursor = 0.0f;
+    float pos = 0.0f;
     this->spacing = spacing;
     info = nullptr;
 

@@ -55,10 +55,12 @@
        provided that the array variable is valid under rule 2.)
  */
 
+#ifndef _INLINE_WRAP
 #ifdef _MSC_VER
     #define _INLINE_WRAP(content) __forceinline content
 #else
     #define _INLINE_WRAP(content) inline content __attribute__((always_inline))
+#endif
 #endif
 
 #define RUNNER pRunner__

@@ -438,7 +438,7 @@ if (a === b) return true;
 		var t : String;
 
 		#if flash
-		t = untyped __typeof__(value);
+		t = untyped JSHaxeSupport.typeof(value);
 		#elseif js
 		t = untyped __js__("typeof")(value);
 		#else
@@ -504,6 +504,30 @@ if (a === b) return true;
 			safe = false;
 		}
 		return safe;
+		#end
+	}
+
+	public static function instanceof(v1 : Dynamic, v2 : Dynamic) : Bool {
+		#if (haxe_ver >= "4.0.0")
+			return js.Syntax.instanceof(v1, v2);
+		#else
+			return untyped __instanceof__(v1, v2);
+		#end
+	}
+
+	public static function typeof(v : Dynamic) : Dynamic {
+		#if (haxe_ver >= "4.0.0")
+			return js.Syntax.typeof(v);
+		#else
+			return untyped __typeof__(v);
+		#end
+	}
+
+	public static function strictEq(v1 : Dynamic, v2 : Dynamic) : Bool {
+		#if (haxe_ver >= "4.0.0")
+			return js.Syntax.strictEq(v1, v2);
+		#else
+			return untyped __strict_eq__(v1, v2);
 		#end
 	}
 }

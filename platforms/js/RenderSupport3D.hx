@@ -41,6 +41,7 @@ import js.three.ShaderMaterial;
 
 import js.three.Texture;
 import js.three.CubeTexture;
+import js.three.CompressedTexture;
 
 import js.three.Light;
 import js.three.PointLight;
@@ -389,25 +390,47 @@ class RenderSupport3D {
 		new ObjectLoader(stage.loadingManager).load(url, onLoad);
 	}
 
-	public static function load3DTexture(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		var texture : Texture = null;
+
 		var loader : Dynamic =
-			if (StringTools.endsWith(url, ".dds"))
-				untyped __js__("new THREE.DDSLoader(stage.loadingManager)")
-			else if (StringTools.endsWith(url, ".pvr"))
-				untyped __js__("new THREE.PVRLoader(stage.loadingManager)")
-			else
+			if (StringTools.endsWith(url, ".dds")) {
+				texture = new CompressedTexture();
+				untyped __js__("new THREE.DDSLoader(stage.loadingManager)");
+			} else if (StringTools.endsWith(url, ".pvr")) {
+				texture = new CompressedTexture();
+				untyped __js__("new THREE.PVRLoader(stage.loadingManager)");
+			} else {
+				texture = new Texture();
 				new TextureLoader(stage.loadingManager);
+			};
 
-		return loader.load(url, function(texture : Texture) {
-			for (par in parameters) {
-				untyped texture[par[0]] = untyped __js__("eval(par[1])");
-			}
+		untyped texture.load = function() {
+			loader.load(url, function(loadedTexture : Texture) {
+				for (par in parameters) {
+					untyped texture[par[0]] = untyped __js__("eval(par[1])");
+				}
 
-			texture.invalidateTextureStage();
-			texture.emit("loaded");
+				texture.image = loadedTexture.image;
+				texture.format = loadedTexture.format;
+				texture.mipmaps = loadedTexture.mipmaps;
+				texture.minFilter = loadedTexture.minFilter;
+				texture.needsUpdate = true;
 
-			onLoad(texture);
-		});
+				texture.invalidateTextureStage();
+				texture.emit("loaded");
+
+				onLoad(texture);
+			});
+		};
+
+		return texture;
+	}
+
+	public static function load3DTexture(texture : Texture) : Void {
+		if (untyped texture.load != null) {
+			untyped texture.load();
+		}
 	}
 
 	public static function load3DCubeTexture(stage : ThreeJSStage, px : String, nx : String, py : String, ny : String, pz : String, nz : String,
@@ -889,13 +912,13 @@ class RenderSupport3D {
 
 	public static function attach3DBoxHelper(stage : ThreeJSStage, object : Object3D) : Void {
 		if (untyped object.boxHelper == null) {
-			if (untyped __instanceof__(object, PointLight)) {
+			if (untyped HaxeRuntime.instanceof(object, PointLight)) {
 				var boxHelper = new PointLightHelper(untyped object, untyped object.distance);
 				untyped boxHelper.disposers = [];
 
 				stage.boxHelpers.push(boxHelper);
 				untyped object.boxHelper = boxHelper;
-			} else if (untyped __instanceof__(object, SpotLight)) {
+			} else if (untyped HaxeRuntime.instanceof(object, SpotLight)) {
 				var boxHelper = new SpotLightHelper(untyped object);
 				untyped boxHelper.disposers = [];
 
@@ -1066,6 +1089,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionX(object : Object3D) : Float {
+		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).x");
 	}
 
@@ -1074,6 +1098,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionY(object : Object3D) : Float {
+		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).y");
 	}
 
@@ -1082,6 +1107,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionZ(object : Object3D) : Float {
+		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).z");
 	}
 
@@ -1650,7 +1676,7 @@ class RenderSupport3D {
 
 	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
 		if (data.length > 0) {
-			var attribute : Dynamic = new BufferAttribute(new js.html.Float32Array(data.length * data[0].length), data[0].length);
+			var attribute : Dynamic = new BufferAttribute(untyped new js.html.Float32Array(data.length * data[0].length), data[0].length);
 
 			for (i in 0...data.length) {
 				if (data[i].length > 0) {

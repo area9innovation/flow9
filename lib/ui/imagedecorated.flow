@@ -101,6 +101,27 @@ calculateAdaptiveCropValues(crop : ImageAdaptiveCrop, formSize : WidthHeight, gi
 	}
 }
 
+pingCropIfSafari(loadingB : DynamicBehaviour<bool>, cropX : DynamicBehaviour<double>) {
+	// Mac Safari has an issue when visual layout does not update sometimes and we get incorrect crop.
+	// This trick fixes it.
+	if (!getValue(loadingB) && macosx() && strContains(toLowerCase(getBrowser()), "safari")) {
+		doPing = ref nop1;
+		doPing := \times -> {
+			delay = 100 - times * 2;
+			if (times > 0) { 
+				timer(delay/2, \ -> {
+					next(cropX, getValue(cropX) + 0.1);
+					timer(delay * 2, \ -> {
+						next(cropX, getValue(cropX) - 0.1);
+						^doPing(times - 1);
+					})
+				})
+			}
+		}
+		^doPing(30);
+	}
+}
+
 // Width and height are serialized on OK click in the image decorations editor. So, we have information about picture size until it is loaded.
 // But we also  have some legacy sources with width = height = 0. The reason is unclear. Probably it was a bug in the editor.
 makeImageDecorated2(
@@ -207,11 +228,14 @@ makeImageDecorated2(
 	applyCrop = eitherMap(cropMB,
 		\c -> \f -> {
 			sc = getValue(replacedImageScale);
-			cropX_ = const(c.x * sc);
+			cropX_ = make(c.x * sc);
 			cropY_ = const(c.y * sc);
 			cropW_ = const(c.width * sc);
 			cropH_ = const(c.height * sc);
-			Crop(cropX_, cropY_, cropW_, cropH_, f);
+			Constructor(
+				Crop(cropX_, cropY_, cropW_, cropH_, f), 
+				\ -> subscribe(pictureIsLoading, \loading -> pingCropIfSafari(pictureIsLoading, cropX_))
+			)
 		},
 		idfn
 	);
@@ -240,21 +264,7 @@ makeImageDecorated2(
 							nextDistinct(cropY, curValues.second);
 							nextDistinct(cropW, curValues.third);
 							nextDistinct(cropH, curValues.fourth);
-
-							// Mac Safari has an issue when visual layout does not update sometimes and we get incorrect crop.
-							// This trick fixes it.
-							 if (macosx() && strContains(toLowerCase(getBrowser()), "safari")) {
-								timer(50, \ -> {
-									next(cropX, getValue(cropX) + 0.1);
-									timer(200, \ -> {
-										next(cropX, getValue(cropX) - 0.1);
-										timer(1000, \ -> {
-											next(cropX, getValue(cropX) + 0.1);
-										})
-									})
-								})
-							}
-
+							pingCropIfSafari(pictureIsLoading, cropX);
 						}).second;
 				}
 			)		

@@ -33,7 +33,7 @@ class DropAreaClip extends NativeWidgetClip {
 			styleChanged = false;
 		}
 
-		initNativeWidget();
+		this.initNativeWidget();
 	}
 
 	public override function updateNativeWidgetStyle() : Void {

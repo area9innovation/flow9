@@ -112,7 +112,7 @@ protected:
     virtual void doStopSound(AbstractSoundChannel *channel);
     virtual float doGetSoundPosition(AbstractSoundChannel *channel);
     
-    virtual void doSetAudioSessionCategory(unicode_string category) {}
+    virtual void doSetAudioSessionCategory(unicode_string /*category*/) {}
     virtual unicode_string doGetAudioSessionCategory() { return parseUtf8("soloambient"); }
 
     void notifyDone(AbstractSoundChannel *channel);
