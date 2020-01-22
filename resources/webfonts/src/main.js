@@ -69,7 +69,15 @@ var font_css = null;
 
 // Assuming all text files aren't too big, so loading whole files.
 
-fs.readFileSync(font_css_fn, 'utf-8').split(/\r?\n/).forEach(function(line) {
+try {
+	var font_css_raw = fs.readFileSync(font_css_fn, 'utf-8');
+} catch (err) {
+	if (err instanceof Error && err.code=='ENOENT') {
+		console.log("No fonts.css defined for this MetaApp, so no fonts could be parsing. Quitting.")
+		process.exit(0);
+	}
+}
+font_css_raw.split(/\r?\n/).forEach(function(line) {
 	var linetrim = line.trim();
 	var linetrimsplit = linetrim.split(/\s+/);
 	if (linetrimsplit.length == 2 && linetrimsplit[0] == '@font-face' && linetrimsplit[1] == '{') {
@@ -99,7 +107,18 @@ fs.readFileSync(font_css_fn, 'utf-8').split(/\r?\n/).forEach(function(line) {
 	}
 });
 
-var font_config = JSON.parse(fs.readFileSync(font_config_fn))
+try {
+	var font_config = JSON.parse(fs.readFileSync(font_config_fn));
+} catch (err) {
+	if (err instanceof Error && err.code=='ENOENT') {
+		console.log("No fontconfig.json defined for this MetaApp, so no place to write metrics to. Quitting.")
+		process.exit(0);
+	}
+}
+if (!font_config['webfontconfig'].hasOwnProperty('custom')) {
+	console.log("No custom fonts defined for application. No metrics to extract. Quitting.")
+	process.exit(0);
+}
 font_config['webfontconfig']['custom']['metrics'] = {};
 
 var safe_letters = get_4form_safe_letters();
