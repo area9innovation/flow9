@@ -179,28 +179,28 @@ class FlowUtil {
                if (a == array && i == index) e else ArrayGet(a, i, pos);
              }
              case VarRef(name, pos): e;
-             case Field(call, name, pos): {
-               var c = mapFlow(call, f);
-               if (c == call) e else Field(c, name, pos);
+             case Field(c, name, pos): {
+               var c = mapFlow(c, f);
+               if (c == c) e else Field(c, name, pos);
              }
              case RefTo(value, pos): {
                var v = mapFlow(value, f);
                if (v == value) e else RefTo(v, pos);
              }
              case Pointer(index, pos): e;
-             case Deref(pointer, pos): {
-               var p = mapFlow(pointer, f);
-               if (p == pointer) e else Deref(p, pos);
+             case Deref(pnt, pos): {
+               var p = mapFlow(pnt, f);
+               if (p == pnt) e else Deref(p, pos);
              }
-             case SetRef(pointer, value, pos): {
-               var p = mapFlow(pointer, f);
+             case SetRef(pnt, value, pos): {
+               var p = mapFlow(pnt, f);
                var v = mapFlow(value, f);
-               if (p == pointer && v == value) e else SetRef(p, v, pos);
+               if (p == pnt && v == value) e else SetRef(p, v, pos);
              }
-             case SetMutable(pointer, field, value, pos): {
-               var p = mapFlow(pointer, f);
+             case SetMutable(pnt, field, value, pos): {
+               var p = mapFlow(pnt, f);
                var v = mapFlow(value, f);
-               if (p == pointer && v == value) e else SetMutable(p, field, v, pos);
+               if (p == pnt && v == value) e else SetMutable(p, field, v, pos);
              }
              case Cast(value, fromtype, totype, pos): {
                var v = mapFlow(value, f);
@@ -371,28 +371,28 @@ class FlowUtil {
                if (a == array && i == index) e else ArrayGet(a, i, pos);
              }
              case VarRef(name, pos): e;
-             case Field(call, name, pos): {
-               var c = mapFlow2(call, f);
-               if (c == call) e else Field(c, name, pos);
+             case Field(c, name, pos): {
+               var c = mapFlow2(c, f);
+               if (c == c) e else Field(c, name, pos);
              }
              case RefTo(value, pos): {
                var v = mapFlow2(value, f);
                if (v == value) e else RefTo(v, pos);
              }
              case Pointer(index, pos): e;
-             case Deref(pointer, pos): {
-               var p = mapFlow2(pointer, f);
-               if (p == pointer) e else Deref(p, pos);
+             case Deref(pnt, pos): {
+               var p = mapFlow2(pnt, f);
+               if (p == pnt) e else Deref(p, pos);
              }
-             case SetRef(pointer, value, pos): {
-               var p = mapFlow2(pointer, f);
+             case SetRef(pnt, value, pos): {
+               var p = mapFlow2(pnt, f);
                var v = mapFlow2(value, f);
-               if (p == pointer && v == value) e else SetRef(p, v, pos);
+               if (p == pnt && v == value) e else SetRef(p, v, pos);
              }
-             case SetMutable(pointer, field, value, pos): {
-               var p = mapFlow2(pointer, f);
+             case SetMutable(pnt, field, value, pos): {
+               var p = mapFlow2(pnt, f);
                var v = mapFlow2(value, f);
-               if (p == pointer && v == value) e else SetMutable(p, field, v, pos);
+               if (p == pnt && v == value) e else SetMutable(p, field, v, pos);
              }
              case Cast(value, fromtype, totype, pos): {
                var v = mapFlow2(value, f);
@@ -552,14 +552,14 @@ class FlowUtil {
     case ArrayGet(array, index, pos): traverseExp(array, f); traverseExp(index, f);
     case VarRef(name, pos):
     case RefTo(value, pos): traverseExp(value, f);
-    case Pointer(pointer, pos):
-    case Deref(pointer, pos): traverseExp(pointer, f);
-    case SetRef(pointer, value, pos): traverseExp(pointer, f); traverseExp(value, f);
-    case SetMutable(pointer, field, value, pos): traverseExp(pointer, f); traverseExp(value, f);
+    case Pointer(pnt, pos):
+    case Deref(pnt, pos): traverseExp(pnt, f);
+    case SetRef(pnt, value, pos): traverseExp(pnt, f); traverseExp(value, f);
+    case SetMutable(pnt, field, value, pos): traverseExp(pnt, f); traverseExp(value, f);
     case Let(name, sigma, value, scope, pos): traverseExp(value, f); if (scope != null) traverseExp(scope, f);
     case Lambda(arguments, type, body, _, pos): traverseExp(body, f);
     case Closure(body, freevars, pos): traverseExp(body, f);
-    case Call(closure, arguments, pos): traverseExp(closure, f); traverseExps(arguments, f);
+    case Call(clos, arguments, pos): traverseExp(clos, f); traverseExps(arguments, f);
     case Sequence(statements, pos): traverseExps(statements, f);
     case If(condition, then, elseExp, pos): 
       traverseExp(condition, f);
@@ -580,7 +580,7 @@ class FlowUtil {
     case GreaterEqual(e1, e2, pos): traverseExp(e1, f); traverseExp(e2, f);
     case And(e1, e2, pos): traverseExp(e1, f); traverseExp(e2, f);
     case Or(e1, e2, pos): traverseExp(e1, f); traverseExp(e2, f);
-    case Field(call, name, pos): traverseExp(call, f);
+    case Field(c, name, pos): traverseExp(c, f);
     case Cast(value, fromtype, totype, pos): traverseExp(value, f);
     case Switch(e, type, cases, p):
       traverseExp(e, f);
@@ -622,14 +622,14 @@ class FlowUtil {
     case ArrayGet(array, index, pos): traverseExp2(array, f); traverseExp2(index, f);
     case VarRef(name, pos):
     case RefTo(value, pos): traverseExp2(value, f);
-    case Pointer(pointer, pos):
-    case Deref(pointer, pos): traverseExp2(pointer, f);
-    case SetRef(pointer, value, pos): traverseExp2(pointer, f); traverseExp2(value, f);
-    case SetMutable(pointer, field, value, pos): traverseExp2(pointer, f); traverseExp2(value, f);
+    case Pointer(pnt, pos):
+    case Deref(pnt, pos): traverseExp2(pnt, f);
+    case SetRef(pnt, value, pos): traverseExp2(pnt, f); traverseExp2(value, f);
+    case SetMutable(pnt, field, value, pos): traverseExp2(pnt, f); traverseExp2(value, f);
     case Let(name, sigma, value, scope, pos): traverseExp2(value, f); if (scope != null) traverseExp2(scope, f);
     case Lambda(arguments, type, body, _, pos): // 
     case Closure(body, freevars, pos):
-    case Call(closure, arguments, pos): traverseExp2(closure, f); traverseExp2s(arguments, f);
+    case Call(clos, arguments, pos): traverseExp2(clos, f); traverseExp2s(arguments, f);
     case Sequence(statements, pos): traverseExp2s(statements, f);
     case If(condition, then, elseExp, pos): 
       traverseExp2(condition, f);
@@ -650,7 +650,7 @@ class FlowUtil {
     case GreaterEqual(e1, e2, pos): traverseExp2(e1, f); traverseExp2(e2, f);
     case And(e1, e2, pos): traverseExp2(e1, f); traverseExp2(e2, f);
     case Or(e1, e2, pos): traverseExp2(e1, f); traverseExp2(e2, f);
-    case Field(call, name, pos): traverseExp2(call, f);
+    case Field(c, name, pos): traverseExp2(c, f);
     case Cast(value, fromtype, totype, pos): traverseExp2(value, f);
     case Switch(e, type, cases, p):
       traverseExp2(e, f);
@@ -690,14 +690,14 @@ class FlowUtil {
     case ArrayGet(array, index, pos): traverseExp3(array, f); traverseExp3(index, f);
     case VarRef(name, pos):
     case RefTo(value, pos): traverseExp3(value, f);
-    case Pointer(pointer, pos):
-    case Deref(pointer, pos): traverseExp3(pointer, f);
-    case SetRef(pointer, value, pos): traverseExp3(pointer, f); traverseExp3(value, f);
-    case SetMutable(pointer, field, value, pos): traverseExp3(pointer, f); traverseExp3(value, f);
+    case Pointer(pnt, pos):
+    case Deref(pnt, pos): traverseExp3(pnt, f);
+    case SetRef(pnt, value, pos): traverseExp3(pnt, f); traverseExp3(value, f);
+    case SetMutable(pnt, field, value, pos): traverseExp3(pnt, f); traverseExp3(value, f);
     case Let(name, sigma, value, scope, pos): traverseExp3(value, f); if (scope != null) traverseExp3(scope, f);
     case Lambda(arguments, type, body, _, pos): traverseExp3(body, f);
     case Closure(body, freevars, pos): traverseExp3(body, f);
-    case Call(closure, arguments, pos): traverseExp3(closure, f); traverseExps3(arguments, f);
+    case Call(clos, arguments, pos): traverseExp3(clos, f); traverseExps3(arguments, f);
     case Sequence(statements, pos): traverseExps3(statements, f);
     case If(condition, then, elseExp, pos): 
       traverseExp3(condition, f);
@@ -718,7 +718,7 @@ class FlowUtil {
     case GreaterEqual(e1, e2, pos): traverseExp3(e1, f); traverseExp3(e2, f);
     case And(e1, e2, pos): traverseExp(e1, f); traverseExp3(e2, f);
     case Or(e1, e2, pos): traverseExp(e1, f); traverseExp3(e2, f);
-    case Field(call, name, pos): traverseExp3(call, f);
+    case Field(c, name, pos): traverseExp3(c, f);
     case Cast(value, fromtype, totype, pos): traverseExp3(value, f);
     case Switch(e, type, cases, p):
       traverseExp3(e, f);

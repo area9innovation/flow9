@@ -2436,7 +2436,6 @@ class RenderSupport {
 		#if flash
 		flash.Lib.current.stage.fullScreenSourceRect = new flash.geom.Rectangle(x, y, w, h);
 		#end
-		return null;
 	}
 
 	public static function resetFullScreenTarget() : Void {

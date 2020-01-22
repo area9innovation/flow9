@@ -2849,7 +2849,8 @@ StackSlot ByteCodeRunner::getCurrentDate(RUNNER_ARGS)
     IGNORE_RUNNER_ARGS;
 
     time_t tv = time_t(GetCurrentTime());
-    struct tm parts = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    struct tm parts;
+    memset(&parts, 0, sizeof(parts));
 
 #ifdef WIN32
     tm *tmp = localtime(&tv);

@@ -913,17 +913,15 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		invalidateInteractive();
 
-		if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
-			nativeWidget.onpointermove = onMouseMove;
-			nativeWidget.onpointerdown = onMouseDown;
-			nativeWidget.onpointerup = onMouseUp;
+		if (Platform.isMobile) {
+			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+				nativeWidget.onpointermove = onMouseMove;
+				nativeWidget.onpointerdown = onMouseDown;
+				nativeWidget.onpointerup = onMouseUp;
 
-			untyped __js__("this.nativeWidget.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+				untyped __js__("this.nativeWidget.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+			}
 
-			nativeWidget.ontouchmove = onMouseMove;
-			nativeWidget.ontouchstart = onMouseDown;
-			nativeWidget.ontouchend = onMouseUp;
-		} else if (Platform.isMobile) {
 			nativeWidget.ontouchmove = onMouseMove;
 			nativeWidget.ontouchstart = onMouseDown;
 			nativeWidget.ontouchend = onMouseUp;

@@ -332,13 +332,13 @@ class HaxeWriter {
 		}
 		case RefTo(value, pos):
 			'HaxeRuntime.ref__(' + compile(value, indent, true) + ')';
-		case Pointer(pointer, pos):
+		case Pointer(pnt, pos):
 			// This is wrong for the serializer in the interpreter, but too much trouble to fix
-			'HaxeRuntime.pointer(' + pointer + ')';
-		case Deref(pointer, pos):
-			'HaxeRuntime.deref__(' + compile(pointer, indent, bracket) + ')';
-		case SetRef(pointer, value, pos): 
-			'HaxeRuntime.setref__(' + compile(pointer, indent, bracket) + ', ' + compile(value, indent, true) + ')';
+			'HaxeRuntime.pointer(' + pnt + ')';
+		case Deref(pnt, pos):
+			'HaxeRuntime.deref__(' + compile(pnt, indent, bracket) + ')';
+		case SetRef(pnt, value, pos): 
+			'HaxeRuntime.setref__(' + compile(pnt, indent, bracket) + ', ' + compile(value, indent, true) + ')';
 		case Let(name, sigma, value, scope, pos):
 			var type = FlowUtil.untyvar(pos.type2);
 			var rt = compileType(type);
@@ -392,10 +392,10 @@ class HaxeWriter {
 			r;
 		case Closure(body, environment, pos):
 			'TODO';
-		case Call(closure, arguments, pos):
-			var c = compile(closure, indent, true);
+		case Call(clos, arguments, pos):
+			var c = compile(clos, indent, true);
 			var needCall = true;
-			switch (closure) {
+			switch (clos) {
 				case VarRef(n, p): {
 					var s = structs.get(n);
 					if (s != null) {
@@ -458,15 +458,15 @@ class HaxeWriter {
 		case GreaterEqual(e1, e2, pos): compare('>= 0', e1, e2, indent);
 		case And(e1, e2, pos):  binop('&&', e1, e2, indent);
 		case Or(e1, e2, pos): binop('||', e1, e2, indent);
-		case Field(call, name, pos): {
+		case Field(cll, name, pos): {
 			if (name == "structname") {
-				'(HaxeRuntime._structnames_.get(' + compile(call, indent, bracket) + '._id))';
+				'(HaxeRuntime._structnames_.get(' + compile(cll, indent, bracket) + '._id))';
 			} else {
-				'(' + compile(call, indent, bracket) + "." + rename(name) + ')';
+				'(' + compile(cll, indent, bracket) + "." + rename(name) + ')';
 			}
 		};
-		case SetMutable(call, name, value, pos): {
-			'(' + compile(call, indent, bracket) + "." + rename(name) +
+		case SetMutable(cll, name, value, pos): {
+			'(' + compile(cll, indent, bracket) + "." + rename(name) +
 				') = (' + compile(value, indent, true) + ")";
 		};
 		case Cast(value, fromtype, totype, pos):
