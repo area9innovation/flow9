@@ -16,7 +16,7 @@ class FlowCanvas extends FlowContainer {
 		super(worldVisible);
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			initNativeWidget('canvas');
+			this.initNativeWidget('canvas');
 			untyped this.isCanvas = true;
 		}
 	}
@@ -35,17 +35,17 @@ class FlowCanvas extends FlowContainer {
 				}
 			}
 
-			updateNativeWidgetTransformMatrix();
-			updateNativeWidgetOpacity();
+			this.updateNativeWidgetTransformMatrix();
+			this.updateNativeWidgetOpacity();
 
-			renderToCanvas(nativeWidget, context, worldTransform.clone().invert());
+			this.renderToCanvas(nativeWidget, context, worldTransform.clone().invert());
 
 			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
 				untyped this.localTransformChanged = true;
 			}
 		}
 
-		updateNativeWidgetDisplay();
+		this.updateNativeWidgetDisplay();
 	}
 
 	public override function createNativeWidget(?tagName : String = "canvas") : Void {

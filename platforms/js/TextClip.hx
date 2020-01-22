@@ -146,7 +146,7 @@ class TextClip extends NativeWidgetClip {
 		style.resolution = 1.0;
 
 		if (RenderSupportJSPixi.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
-			onAdded(function() {
+			this.onAdded(function() {
 				RenderSupportJSPixi.on("resize", updateWidthDelta);
 
 				return function() {
@@ -351,7 +351,7 @@ class TextClip extends NativeWidgetClip {
 
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
-		var alpha = getNativeWidgetAlpha();
+		var alpha = this.getNativeWidgetAlpha();
 
 		if (isInput) {
 			nativeWidget.setAttribute("type", type);
@@ -445,7 +445,7 @@ class TextClip extends NativeWidgetClip {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * getNativeWidgetTransform().d)}px';
+				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
@@ -589,7 +589,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
+			this.initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 		}
 
 		invalidateMetrics();
@@ -690,7 +690,7 @@ class TextClip extends NativeWidgetClip {
 				default : textDirection == 'rtl' ? 1 : 0;
 			};
 
-			textClip.setClipX(anchorX * Math.max(0, getWidgetWidth() - getClipWidth()));
+			textClip.setClipX(anchorX * Math.max(0, this.getWidgetWidth() - getClipWidth()));
 
 			if (style.fontFamily == "Material Icons") {
 				if (style.fontProperties == null) {
@@ -720,7 +720,7 @@ class TextClip extends NativeWidgetClip {
 		if (!doNotInvalidateStage) {
 			if (RenderSupportJSPixi.RendererType != "html") {
 				if (isInput) {
-					setScrollRect(0, 0, getWidth(), getHeight());
+					this.setScrollRect(0, 0, getWidth(), getHeight());
 				}
 			}
 
@@ -908,10 +908,10 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		untyped this.keepNativeWidget = true;
-		updateKeepNativeWidgetChildren();
-		initNativeWidget(multiline ? 'textarea' : 'input');
+		this.updateKeepNativeWidgetChildren();
+		this.initNativeWidget(multiline ? 'textarea' : 'input');
 		isInteractive = true;
-		invalidateInteractive();
+		this.invalidateInteractive();
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
@@ -1358,7 +1358,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		if (RenderSupportJSPixi.RendererType != "html" && !isInput) {
-			deleteNativeWidget();
+			this.deleteNativeWidget();
 		}
 	}
 
@@ -1400,10 +1400,10 @@ class TextClip extends NativeWidgetClip {
 				return;
 			}
 
-			deleteNativeWidget();
+			this.deleteNativeWidget();
 
 			nativeWidget = Browser.document.createElement(tagName);
-			updateClipID();
+			this.updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
 

@@ -7,7 +7,7 @@ class FontLoader {
 	private static var FontLoadingTimeout = 30000; //ms
 
 	public static function loadWebFonts(onDone : Void -> Void) {
-		if (untyped __typeof__(WebFont) != "undefined") {
+		if (untyped HaxeRuntime.typeof(WebFont) != "undefined") {
 			var webfontconfig : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
 			if (webfontconfig != null && Reflect.fields(webfontconfig).length > 0) {
 				webfontconfig.active = onDone;
