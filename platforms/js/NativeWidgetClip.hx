@@ -58,8 +58,8 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function updateNativeWidgetStyle() : Void {
-		nativeWidget.style.width = '${untyped getWidgetWidth()}px';
-		nativeWidget.style.height = '${untyped getWidgetHeight()}px';
+		nativeWidget.style.width = '${this.getWidgetWidth()}px';
+		nativeWidget.style.height = '${this.getWidgetHeight()}px';
 
 		if (RenderSupportJSPixi.RendererType != "html") {
 			var viewBounds = getViewBounds();
