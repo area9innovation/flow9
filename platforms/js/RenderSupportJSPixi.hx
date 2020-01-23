@@ -59,6 +59,8 @@ class RenderSupportJSPixi {
 
 	public static var hadUserInteracted = false;
 
+	public static var WebFontsConfig;
+
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
@@ -428,7 +430,7 @@ class RenderSupportJSPixi {
 		initBrowserWindowEventListeners();
 		initMessageListener();
 		initFullScreenEventListeners();
-		FontLoader.loadWebFonts(StartFlowMain);
+		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
 		initCanvasStackInteractions();
 
@@ -1190,7 +1192,6 @@ class RenderSupportJSPixi {
 					clip.initNativeWidget();
 				}
 
-
 				var nativeWidget : Element = untyped clip.nativeWidget;
 
 				// Create DOM node for access. properties
@@ -1359,12 +1360,12 @@ class RenderSupportJSPixi {
 		var clipGlyphs = textclip.getContentGlyphs();
 		var clipStyle : TextStyle = textclip.getStyle();
 		var leftVal: Float = 0;
-		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified, clipStyle);
-		var rightVal: Float = mtx.width;
+		var mtxWidth: Float = TextClip.measureTextModFrag(clipGlyphs, clipStyle, 0, clipGlyphs.text.length);
+		var rightVal: Float = mtxWidth;
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
-		var localX = Math.min(mtx.width, Math.max(0.0, x - org.x));
-		if (TextClip.getStringDirection(clipGlyphs.modified, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
+		var localX = Math.min(mtxWidth, Math.max(0.0, x - org.x));
+		if (TextClip.getStringDirection(clipGlyphs.text, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
 		var leftPos: Float = 0;
 		var rightPos: Float = clipGlyphs.modified.length;
 		var midVal: Float = -1.0;
@@ -1374,12 +1375,12 @@ class RenderSupportJSPixi {
 			oldPos = midPos;
 			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
 			if (midPos<leftPos) break;
-			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.ceil(leftPos)-Math.floor(leftPos)), clipStyle);
-			midVal = leftVal - mtx.width * (leftPos - Math.floor(leftPos));
-			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
-			midVal += mtx.width;
-			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(midPos), Math.ceil(midPos)-Math.floor(midPos)), clipStyle);
-			midVal += mtx.width * (midPos - Math.floor(midPos));
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(leftPos), Math.ceil(leftPos));
+			midVal = leftVal - mtxWidth * (leftPos - Math.floor(leftPos));
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(leftPos), Math.floor(midPos));
+			midVal += mtxWidth;
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(midPos), Math.ceil(midPos));
+			midVal += mtxWidth * (midPos - Math.floor(midPos));
 			leftPos = midPos;
 			leftVal = midVal;
 		}
