@@ -482,6 +482,10 @@ if (a === b) return true;
 	}
 	#end
 
+	public static function getStructName(id : Int) : String {
+		return _structnames_.get(id);
+	} 
+
 	// Some characters can NOT be represented in UTF-16, believe it or not!
 	public static function wideStringSafe(str : String) : Bool {
 		#if (flash || js)
