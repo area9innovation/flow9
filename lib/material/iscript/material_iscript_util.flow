@@ -225,29 +225,53 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInp
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
 			repeatBehaviourById(manager, descriptor, value)
 		}
-		IScriptSearchBehaviourRecord(descriptor, value) : {
-			runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
-				focusM,
-				\f : MaterialFocus -> {
-					value2 = if (descriptor.name == "mousedown" || descriptor.name == "mouseup") {
-						x = fgetValue(f.position).pos.x + (fgetValue(f.widthHeight).width / 2.);
-						y = fgetValue(f.position).pos.y + (fgetValue(f.widthHeight).height / 2.) - 48.;
-						Point(x, y);
-					} else value;
-					descriptor2 = IScriptBehaviourDescriptor(IScriptComponentDescriptor(f.name, getFullMFocusId(f)), descriptor.name);
-					repeatBehaviourById(manager, descriptor2, value2)
-				},
-				\ -> {
-					iScriptError(manager, "Can't find a focus by path", Some(descriptor.component.id));
-					false
+		IScriptSearchBehaviourRecord(descriptor, startM, value) : {
+			run = \start -> {
+				runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
+					focusM,
+					\f : MaterialFocus -> {
+						value2 = if (descriptor.name == "mousedown" || descriptor.name == "mouseup") {
+							x = fgetValue(f.position).pos.x + (fgetValue(f.widthHeight).width / 2.);
+							y = fgetValue(f.position).pos.y + (fgetValue(f.widthHeight).height / 2.) - 48.;
+							Point(x, y);
+						} else value;
+						descriptor2 = IScriptBehaviourDescriptor(IScriptComponentDescriptor(f.name, getFullMFocusId(f)), descriptor.name);
+						repeatBehaviourById(manager, descriptor2, value2)
+					},
+					\ -> {
+						iScriptError(manager, "Can't find a focus by path", Some(descriptor.component.id));
+						false
+					}
+				);
+				if (countList(descriptor.component.id) == 1) {
+					id = getIscriptIdFromDescriptor(descriptor.component.id);
+					runCommand(getMaterialFocusByUniqueIdRec(start, id))
+				} else {
+					runCommand(getMaterialFocusByPathRec(start, descriptor.component.id))
 				}
-			);
-			if (countList(descriptor.component.id) == 1) {
-				id = getIscriptIdFromDescriptor(descriptor.component.id);
-				runCommand(getMaterialFocusByUniqueIdRec(manager.focus, id))
-			} else {
-				runCommand(getMaterialFocusByPathRec(manager.focus, descriptor.component.id))
-			}
+			};
+			eitherFn(
+				startM,
+				\start0 -> {
+					eitherFn(
+						getMaterialFocusByCondition(
+							manager.focus,
+							getIscriptIdFromDescriptor(start0.id),
+							\ff -> {
+								snap = takeLogicalSnapshot(ff.form);
+								texts = getTextFromIScriptForm(snap);
+								contains(texts, start0.text);
+							}
+						),
+						run,
+						\ -> {
+							iScriptError(manager, "Can't find a focus by path", Some(start0.id));
+							false
+						}
+					)
+				},
+				\ -> run(manager.focus)
+			)
 		}
 		IScriptSearchText(text, id): {
 			runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
@@ -1385,6 +1409,23 @@ getMaterialFocusByUniqueIdRec(focus : MFocusGroup, id : string) -> Maybe<Materia
 					\__ -> None(),
 					\f -> getMaterialFocusByUniqueIdRec(f, id)
 				)
+			)
+		}
+	)
+}
+
+getMaterialFocusByCondition(focus : MFocusGroup, id : string, fn : (MaterialFocus) -> bool) -> Maybe<MFocusGroup> {
+	findInOrder(
+		getValue(focus.iScriptIds),
+		\__, v : MaterialFocus -> {
+			switchMaterialFocus(
+				v,
+				\__ -> None(),
+				\f -> if (fn(f) && eitherMap(f.iScriptId, \isi -> isi == id, false)) {
+					Some(f)
+				} else {
+					getMaterialFocusByCondition(f, id, fn)
+				}
 			)
 		}
 	)

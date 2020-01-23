@@ -12,7 +12,7 @@ export {
 	ISGSingleId(id : string);
 	ISGPathPart(path : [string]);
 
-	IScriptGeneratorAction ::= ISGFindFocus, ISGSetFocusContent, ISGPressButton, ISGCheckBehaviour, ISGSearchText;
+	IScriptGeneratorAction ::= ISGFindFocus, ISGSetFocusContent, ISGPressButton, ISGCheckBehaviour, ISGSearchText, ISGSearchFocusByText;
 
 	ISGFindFocus();
 	ISGSetFocusContent(content : string);
@@ -30,44 +30,56 @@ generateIScriptFromCommands(manager : MaterialManager, input : string) -> void {
 }
 
 generateIScript(manager : MaterialManager, commands : IScriptGenerator) -> [IScriptRecord] {
-	mapConcat(commands.commands, \command -> {
-		path = switch(command.id) {
-			ISGSingleId(id): {a : List<IScriptIdentifier> = Cons(IScriptId(id), EmptyList()); a};
-			ISGPathPart(path): array2list(map(path, \p -> IScriptId(p)));
+	mapConcat(commands.commands, convertCommand)
+}
+
+convertCommand(command : ISGCommand) -> [IScriptRecord] {
+	path = switch(command.id) {
+		ISGSingleId(id): {a : List<IScriptIdentifier> = Cons(IScriptId(id), EmptyList()); a};
+		ISGPathPart(path): array2list(map(path, \p -> IScriptId(p)));
+	}
+	switch(command.action) {
+		ISGFindFocus(): {
+			generateSearchCheckIScriptBehaviour(
+				IScriptComponentDescriptor("", path),
+				"value",
+				false
+			)
 		}
-		switch(command.action) {
-			ISGFindFocus(): {
-				generateSearchCheckIScriptBehaviour(
-					IScriptComponentDescriptor("", path),
-					"value",
-					false
-				)
-			}
-			ISGSetFocusContent(content): {
-				descriptor = IScriptComponentDescriptor("MTextInput", path);
-				concat3(
-					generateMouseClickOnFocusSearch(path),
-					generateSearchKeyboardEventsForText(descriptor, content),
-					generateSearchCheckIScriptBehaviour(descriptor, "content", content)
-				)
-			}
-			ISGPressButton(): {
-				generateMouseClickOnFocusSearch(path)
-			}
-			ISGCheckBehaviour(behaviourName, content): {
-				generateSearchCheckIScriptBehaviour(
-					IScriptComponentDescriptor("", path),
-					behaviourName,
-					content
-				)
-			}
-			ISGSearchText(text): {
-				[
-					IScriptSearchText(text, path)
-				]
-			}
+		ISGSetFocusContent(content): {
+			descriptor = IScriptComponentDescriptor("MTextInput", path);
+			concat3(
+				generateMouseClickOnFocusSearch(path),
+				generateSearchKeyboardEventsForText(descriptor, content),
+				generateSearchCheckIScriptBehaviour(descriptor, "content", content)
+			)
 		}
-	})
+		ISGPressButton(): {
+			generateMouseClickOnFocusSearch(path)
+		}
+		ISGCheckBehaviour(behaviourName, content): {
+			generateSearchCheckIScriptBehaviour(
+				IScriptComponentDescriptor("", path),
+				behaviourName,
+				content
+			)
+		}
+		ISGSearchText(text): {
+			[
+				IScriptSearchText(text, path)
+			]
+		}
+		ISGSearchFocusByText(text, command2): {
+			map(
+				convertCommand(command2), \c -> switch(c) {
+					IScriptSearchBehaviourRecord(__, __, __): IScriptSearchBehaviourRecord(
+						c with start = Some(IScriptSearchText(text, path))
+					);
+					default: c;
+				}
+			)
+		}
+	}
 }
 
 generateSearchCheckIScriptBehaviour(descriptor : IScriptComponentDescriptor, behaviourName : string, content : ?) -> [IScriptSearchBehaviourRecord] {
@@ -76,6 +88,7 @@ generateSearchCheckIScriptBehaviour(descriptor : IScriptComponentDescriptor, beh
 			descriptor,
 			behaviourName
 		),
+		None(),
 		content
 	)]
 }
@@ -87,6 +100,7 @@ generateSearchKeyboardEventsForText(descriptor : IScriptComponentDescriptor, con
 				descriptor,
 				"keydown"
 			),
+			None(),
 			KeyEventRecord(fromCharCode(c), false, false, false, false, 0)
 		)
 	})
@@ -101,6 +115,7 @@ generateMouseClickOnFocusSearch(id : List<IScriptIdentifier>) -> [IScriptSearchB
 				descriptor,
 				"mousedown"
 			),
+			None(),
 			zeroPoint
 		),
 		IScriptSearchBehaviourRecord(
@@ -108,6 +123,7 @@ generateMouseClickOnFocusSearch(id : List<IScriptIdentifier>) -> [IScriptSearchB
 				descriptor,
 				"mouseup"
 			),
+			None(),
 			zeroPoint
 		),
 	]
