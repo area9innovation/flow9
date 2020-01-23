@@ -509,7 +509,11 @@ if (a === b) return true;
 
 	public static function instanceof(v1 : Dynamic, v2 : Dynamic) : Bool {
 		#if (haxe_ver >= "4.0.0")
-			return js.Syntax.instanceof(v1, v2);
+			#if js
+				return js.Syntax.instanceof(v1, v2);
+			#else
+				return Std.downcast(v1, v2) != null;
+			#end
 		#else
 			return untyped __instanceof__(v1, v2);
 		#end
@@ -517,7 +521,12 @@ if (a === b) return true;
 
 	public static function typeof(v : Dynamic) : Dynamic {
 		#if (haxe_ver >= "4.0.0")
-			return js.Syntax.typeof(v);
+			#if js
+				return js.Syntax.typeof(v);
+			#else
+				// TODO: Not sure this is correct
+				return Type.getClass(v);
+			#end
 		#else
 			return untyped __typeof__(v);
 		#end
@@ -525,7 +534,11 @@ if (a === b) return true;
 
 	public static function strictEq(v1 : Dynamic, v2 : Dynamic) : Bool {
 		#if (haxe_ver >= "4.0.0")
-			return js.Syntax.strictEq(v1, v2);
+			#if js
+				return js.Syntax.strictEq(v1, v2);
+			#else
+				return v1 == v2;
+			#end
 		#else
 			return untyped __strict_eq__(v1, v2);
 		#end
