@@ -912,13 +912,13 @@ class RenderSupport3D {
 
 	public static function attach3DBoxHelper(stage : ThreeJSStage, object : Object3D) : Void {
 		if (untyped object.boxHelper == null) {
-			if (untyped __instanceof__(object, PointLight)) {
+			if (untyped HaxeRuntime.instanceof(object, PointLight)) {
 				var boxHelper = new PointLightHelper(untyped object, untyped object.distance);
 				untyped boxHelper.disposers = [];
 
 				stage.boxHelpers.push(boxHelper);
 				untyped object.boxHelper = boxHelper;
-			} else if (untyped __instanceof__(object, SpotLight)) {
+			} else if (untyped HaxeRuntime.instanceof(object, SpotLight)) {
 				var boxHelper = new SpotLightHelper(untyped object);
 				untyped boxHelper.disposers = [];
 
@@ -1676,7 +1676,7 @@ class RenderSupport3D {
 
 	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
 		if (data.length > 0) {
-			var attribute : Dynamic = new BufferAttribute(new js.html.Float32Array(data.length * data[0].length), data[0].length);
+			var attribute : Dynamic = new BufferAttribute(untyped new js.html.Float32Array(data.length * data[0].length), data[0].length);
 
 			for (i in 0...data.length) {
 				if (data[i].length > 0) {

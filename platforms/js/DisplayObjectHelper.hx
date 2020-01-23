@@ -592,9 +592,9 @@ class DisplayObjectHelper {
 			while (obj.children != null && obj.children.length == 1)
 				obj = obj.children[0];
 
-			if (untyped __instanceof__(obj, FlowGraphics)) {
+			if (untyped HaxeRuntime.instanceof(obj, FlowGraphics)) {
 				clip.mask = obj;
-			} else if (untyped __instanceof__(obj, FlowSprite)) {
+			} else if (untyped HaxeRuntime.instanceof(obj, FlowSprite)) {
 				untyped clip.alphaMask = obj;
 			}
 		}
@@ -737,7 +737,7 @@ class DisplayObjectHelper {
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
 	public static function getFirstGraphicsOrSprite(clip : DisplayObject) : DisplayObject {
-		if (untyped clip.clipVisible && (untyped __instanceof__(clip, FlowGraphics) || untyped __instanceof__(clip, FlowSprite)))
+		if (untyped clip.clipVisible && (untyped HaxeRuntime.instanceof(clip, FlowGraphics) || untyped HaxeRuntime.instanceof(clip, FlowSprite)))
 			return clip;
 
 		for (c in getClipChildren(clip)) {
@@ -753,7 +753,7 @@ class DisplayObjectHelper {
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
 	public static function getFirstGraphics(clip : DisplayObject) : DisplayObject {
-		if (untyped __instanceof__(clip, FlowGraphics))
+		if (untyped HaxeRuntime.instanceof(clip, FlowGraphics))
 			return clip;
 
 		for (c in getClipChildren(clip)) {
@@ -1043,7 +1043,7 @@ class DisplayObjectHelper {
 			if (filters != null && filters.length > 0) {
 				var filter = filters[0];
 
-				if (untyped __instanceof__(filter, DropShadowFilter)) {
+				if (untyped HaxeRuntime.instanceof(filter, DropShadowFilter)) {
 					if (untyped BoxShadow || clip.isGraphics()) {
 						applyNativeWidgetBoxShadow(clip, filter);
 					} else {
@@ -1063,7 +1063,7 @@ class DisplayObjectHelper {
 							rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 						)';
 					}
-				} else if (untyped __instanceof__(filter, BlurFilter)) {
+				} else if (untyped HaxeRuntime.instanceof(filter, BlurFilter)) {
 					var nativeWidget : Element = untyped clip.nativeWidget;
 					nativeWidget.style.filter = 'blur(${filter.blur}px)';
 				}
@@ -2052,7 +2052,7 @@ class DisplayObjectHelper {
 
 		untyped clip.viewBounds = viewBounds;
 
-		if ((RenderSupportJSPixi.RendererType != "html" && untyped clip.styleChanged != null) || untyped __instanceof__(clip, DropAreaClip)) {
+		if ((RenderSupportJSPixi.RendererType != "html" && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
 			invalidateTransform(clip, 'invalidateRenderable');
 		}

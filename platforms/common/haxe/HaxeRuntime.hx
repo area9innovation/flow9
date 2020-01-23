@@ -438,7 +438,7 @@ if (a === b) return true;
 		var t : String;
 
 		#if flash
-		t = untyped __typeof__(value);
+		t = untyped JSHaxeSupport.typeof(value);
 		#elseif js
 		t = untyped __js__("typeof")(value);
 		#else

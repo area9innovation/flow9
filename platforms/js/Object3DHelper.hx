@@ -186,7 +186,7 @@ class Object3DHelper {
 
 			for (stage in getStage(parent)) {
 				for (subChild in child.children) {
-					if (untyped __instanceof__(subChild, Camera)) {
+					if (untyped HaxeRuntime.instanceof(subChild, Camera)) {
 						stage.setCamera(cast(subChild, Camera), []);
 						child.remove(subChild);
 						subChild.parent = null;

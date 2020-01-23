@@ -28,10 +28,10 @@ class NativeWidgetClip extends FlowContainer {
 			return;
 		}
 
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipID();
+		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		if (RenderSupportJSPixi.RendererType != "html") {
@@ -42,15 +42,15 @@ class NativeWidgetClip extends FlowContainer {
 			}
 
 			if (parent != null) {
-				addNativeWidget();
+				this.addNativeWidget();
 			} else {
-				once('added', addNativeWidget);
+				once('added', this.addNativeWidget);
 			}
 
-			invalidateStyle();
+			this.invalidateStyle();
 
-			if (!getClipRenderable() && parent != null) {
-				updateNativeWidget();
+			if (!this.getClipRenderable() && parent != null) {
+				this.updateNativeWidget();
 			}
 		}
 
@@ -62,7 +62,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.height = '${this.getWidgetHeight()}px';
 
 		if (RenderSupportJSPixi.RendererType != "html") {
-			var viewBounds = getViewBounds();
+			var viewBounds = this.getViewBounds();
 
 			if (viewBounds != null) {
 				nativeWidget.style.clip = 'rect(
@@ -123,7 +123,7 @@ class NativeWidgetClip extends FlowContainer {
 	public function invalidateStyle() : Void {
 		styleChanged = true;
 
-		invalidateTransform('invalidateStyle');
+		this.invalidateTransform('invalidateStyle');
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {
