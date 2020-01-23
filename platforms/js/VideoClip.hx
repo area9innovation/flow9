@@ -350,8 +350,8 @@ class VideoClip extends FlowContainer {
 		this.invalidateTransform('updateVideoMetrics');
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			videoWidget.style.width = '${untyped getWidth()}px';
-			videoWidget.style.height = '${untyped getHeight()}px';
+			videoWidget.style.width = '${this.getWidth()}px';
+			videoWidget.style.height = '${this.getHeight()}px';
 		} else {
 			videoWidget.width = videoWidget.videoWidth;
 			videoWidget.height = videoWidget.videoHeight;
