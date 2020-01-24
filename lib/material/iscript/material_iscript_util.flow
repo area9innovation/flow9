@@ -221,6 +221,21 @@ getRecordDescriptor(record : IScriptRecord) -> Maybe<IScriptBehaviourDescriptor>
 }
 
 replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInputOutput : bool) -> bool {
+	focusSearch = \runCommand, start, id -> {
+		if (countList(id) == 1) {
+			idStr = getIscriptIdFromDescriptor(id);
+			runCommand(getMaterialFocusByUniqueIdRec(start, idStr))
+		} else {
+			runCommand(getMaterialFocusByPathRec(start, id))
+		}
+	};
+	cantFindError = \id -> {
+		iScriptError(manager, "Can't find a focus by path", Some(id));
+		false
+	};
+	getText = \f -> {
+		getTextFromIScriptForm(takeLogicalSnapshot(f.form));
+	};
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
 			repeatBehaviourById(manager, descriptor, value)
@@ -238,36 +253,21 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInp
 						descriptor2 = IScriptBehaviourDescriptor(IScriptComponentDescriptor(f.name, getFullMFocusId(f)), descriptor.name);
 						repeatBehaviourById(manager, descriptor2, value2)
 					},
-					\ -> {
-						iScriptError(manager, "Can't find a focus by path", Some(descriptor.component.id));
-						false
-					}
+					\ -> cantFindError(descriptor.component.id)
 				);
-				if (countList(descriptor.component.id) == 1) {
-					id = getIscriptIdFromDescriptor(descriptor.component.id);
-					runCommand(getMaterialFocusByUniqueIdRec(start, id))
-				} else {
-					runCommand(getMaterialFocusByPathRec(start, descriptor.component.id))
-				}
+				focusSearch(runCommand, start, descriptor.component.id)
 			};
 			eitherFn(
 				startM,
-				\start0 -> {
+				\start -> {
 					eitherFn(
 						getMaterialFocusByCondition(
 							manager.focus,
-							getIscriptIdFromDescriptor(start0.id),
-							\ff -> {
-								snap = takeLogicalSnapshot(ff.form);
-								texts = getTextFromIScriptForm(snap);
-								contains(texts, start0.text);
-							}
+							getIscriptIdFromDescriptor(start.id),
+							\ff -> contains(getText(ff), start.text)
 						),
 						run,
-						\ -> {
-							iScriptError(manager, "Can't find a focus by path", Some(start0.id));
-							false
-						}
+						\ -> cantFindError(start.id)
 					)
 				},
 				\ -> run(manager.focus)
@@ -277,23 +277,14 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInp
 			runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
 				focusM,
 				\f : MaterialFocus -> {
-					snap = takeLogicalSnapshot(f.form);
-					texts = getTextFromIScriptForm(snap);
+					texts = getText(f);
 					result = contains(texts, text);
 					if (!result) iScriptError(manager, "Can't find text " + text + " in " + toString(texts), Some(id));
 					result
 				},
-				\ -> {
-					iScriptError(manager, "Can't find a focus by path", Some(id));
-					false
-				}
+				\ -> cantFindError(id)
 			);
-			if (countList(id) == 1) {
-				id2 = getIscriptIdFromDescriptor(id);
-				runCommand(getMaterialFocusByUniqueIdRec(manager.focus, id2))
-			} else {
-				runCommand(getMaterialFocusByPathRec(manager.focus, id))
-			}
+			focusSearch(runCommand, manager.focus, id)
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
 			if (handleInputOutput) {
