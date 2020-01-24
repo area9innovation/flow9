@@ -390,7 +390,7 @@ public:
             }
         }
         
-        if ((hit && out || hit == HitTransparent) && predicate(this)) {
+        if (((hit && out) || hit == HitTransparent) && predicate(this)) {
             out->insert(this);
             action(this);
         }

@@ -45,7 +45,7 @@ void QtSound::finished()
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(QtSoundChannel, AbstractSoundChannel)
 
-void QtSoundChannel::beginPlay(float start_pos, bool loop, StackSlot onDone)
+void QtSoundChannel::beginPlay(float /*start_pos*/, bool /*loop*/, StackSlot /*onDone*/)
 {
     // AbstractSoundChannel::beginPlay(start_pos, loop, onDone);
 
@@ -69,7 +69,7 @@ void QtSoundChannel::finished()
     // notifyDone();
 }
 
-void QtSoundChannel::setVolume(float value)
+void QtSoundChannel::setVolume(float /*value*/)
 {
     // if (AudioOutput)
     //     AudioOutput->setVolume(value);

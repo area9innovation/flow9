@@ -25,7 +25,8 @@ export {
 
 	handleIScriptState(manager : MaterialManager) -> () -> void;
 
-	isIScriptUrlParamsSet() -> bool;
+	getMaterialFocusByUniqueIdRec(focus : MFocusGroup, id : string) -> Maybe<MaterialFocus>;
+	getMaterialFocusByPathRec(focus : MFocusGroup, path : List<IScriptIdentifier>) -> Maybe<MaterialFocus>;
 }
 
 stopIScriptReplay(manager : MaterialManager) -> void {
@@ -75,7 +76,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, timeout : double,
 				r.stop,
 				\ -> if (!(^isFinished)) {
 					isFinished := true;
-					onFinished(length(^delays) == 0);
+					onFinished(length(^delays) == 0 && isNone(^deferredFn));
 				},
 				makeSubscribe2(r.value, \ts -> {
 					if (length(^delays) == 0 && isNone(^deferredFn)) {
@@ -223,6 +224,30 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInp
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
 			repeatBehaviourById(manager, descriptor, value)
+		}
+		IScriptSearchBehaviourRecord(descriptor, value) : {
+			runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
+				focusM,
+				\f : MaterialFocus -> {
+					value2 = if (descriptor.name == "mousedown" || descriptor.name == "mouseup") {
+						x = fgetValue(f.position).pos.x + (fgetValue(f.widthHeight).width / 2.);
+						y = fgetValue(f.position).pos.y + (fgetValue(f.widthHeight).height / 2.) - 48.;
+						Point(x, y);
+					} else value;
+					descriptor2 = IScriptBehaviourDescriptor(IScriptComponentDescriptor(f.name, getFullMFocusId(f)), descriptor.name);
+					repeatBehaviourById(manager, descriptor2, value2)
+				},
+				\ -> {
+					iScriptError(manager, "Can't find a focus by path", Some(descriptor.component.id));
+					false
+				}
+			);
+			if (countList(descriptor.component.id) == 1) {
+				id = getIscriptIdFromDescriptor(descriptor.component.id);
+				runCommand(getMaterialFocusByUniqueIdRec(manager.focus, id))
+			} else {
+				runCommand(getMaterialFocusByPathRec(manager.focus, descriptor.component.id))
+			}
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
 			if (handleInputOutput) {
@@ -426,10 +451,11 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 
 	if (getValue(manager.iscript.settings.replayCheckErrors)) { // replay option "Check errors" is on
 		if ((name == "mousedown" || name == "mouseup" || name == "mousemove") && isSameStructType(value, zeroPoint)) {
-			emitMouseEv(name, cast(value : flow -> Point) |> addHeight);
+			point = cast(value : flow -> Point) |> addHeight;
+			emitMouseEv(name, point);
 
 			if (name == "mousedown" && behaviourDescriptor.component.id != makeList()) {
-				eitherMap(
+				eitherFn(
 					maybeBind(
 						getMaterialFocusByIScriptId(manager.focus, behaviourDescriptor.component.id),
 						\foc -> switchMaterialFocus(
@@ -438,8 +464,15 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 							\f -> None()
 						)
 					),
-					\foc -> getValue(foc.down),
-					false
+					\foc -> {
+						down = getValue(foc.down);
+						if (!down) iScriptError(manager, "Mousedown: down is false at " + toString(point), Some(behaviourDescriptor.component.id));
+						down
+					},
+					\ -> {
+						iScriptError(manager, "Mousedown: can't find focus at "+ toString(point), Some(behaviourDescriptor.component.id));
+						false
+					}
 				)
 			} else {
 				true
@@ -1258,17 +1291,16 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 			else
 				compareDialog(b);
 		} else {
-			if (getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "")
+			if (
+				getUrlParameter(UP_ISCRIPTPLAY) != "" ||
+				getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "" ||
+				getUrlParameter(UP_ISCRIPTGENERATEPLAY) != ""
+			)
 				quit(b2i(countA(b, \v -> v.isReplaySuccessful) < length(b)))
 			else
 				compareDialog(b);
 		}
 	}
-}
-
-isIScriptUrlParamsSet() -> bool {
-	isUrlParameterTrue(UP_ISCRIPTRECORD) ||
-	getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != ""
 }
 
 getIScriptScenarioFileName(manager : MaterialManager) -> string {
@@ -1317,4 +1349,56 @@ getIscriptReportResults(results : [IScriptReplayResult]) -> string {
 			]
 		)
 	}), "\n")
+}
+
+getMaterialFocusByUniqueIdRec(focus : MFocusGroup, id : string) -> Maybe<MaterialFocus> {
+	findInOrder(
+		getValue(focus.iScriptIds),
+		\__, v : MaterialFocus -> {
+			eitherFn(
+				maybeBind(v.iScriptId, \isi -> if (isi == id) Some(v) else None()),
+				\result -> Some(result),
+				\ -> switchMaterialFocus(
+					v,
+					\__ -> None(),
+					\f -> getMaterialFocusByUniqueIdRec(f, id)
+				)
+			)
+		}
+	)
+}
+
+getMaterialFocusByPathRec(focus : MFocusGroup, path : List<IScriptIdentifier>) -> Maybe<MaterialFocus> {
+	id = getIscriptIdFromDescriptor(path);
+	eitherFn(
+		lookupTree(getValue(focus.iScriptIds), id),
+		\mf -> {
+			if (countList(path) > 1) {
+				switchMaterialFocus(
+					mf,
+					\__ -> None(),
+					\f -> getMaterialFocusByPathRec(f, tailList(path))
+				)
+			} else {
+				Some(mf)
+			}
+		},
+		\ -> findInOrder(
+			getValue(focus.iScriptIds),
+			\__, v : MaterialFocus -> {
+				switchMaterialFocus(
+					v,
+					\f -> maybeBind(f.iScriptId, \isi -> if (isi == id && countList(path) == 1) Some(f) else None()),
+					\f -> getMaterialFocusByPathRec(f, path)
+				)
+			}
+		)
+	)
+}
+
+getIscriptIdFromDescriptor(path : List<IScriptIdentifier>) -> string {
+	switch(headList(path, IScriptId(""))) {
+		IScriptId(id) : id;
+		default : "";
+	}
 }

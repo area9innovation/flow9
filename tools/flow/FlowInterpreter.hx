@@ -32,8 +32,8 @@ class FlowInterpreter implements Interpreter {
 			+ 'Memory:\n' + memory.serialize() + '\n';
 	}
 
-	function getCell(pointer : Flow) : Flow {
-		return memory.cells[FlowUtilInternal.getAddress(pointer)];
+	function getCell(pnt : Flow) : Flow {
+		return memory.cells[FlowUtilInternal.getAddress(pnt)];
 	}
 	
 	public function gc() : Void {
@@ -343,17 +343,17 @@ class FlowInterpreter implements Interpreter {
 			}
 			return retType(result);
 		case VarRef(name, pos): return retType(getTypeVarRef(name, value, context, false));
-		case Field(call, name, pos):
+		case Field(caller, name, pos):
 			if (debug > 1) trace(indent() + ' --- ' + pp(value) + ' --- ');
 
-			var t = normalise(getType(call), call);
+			var t = normalise(getType(caller), caller);
 			var expected = TTyvar(FlowUtil.mkTyvar(TypeEnvironment.newUnion()));
 			if (! typeEnvironment.subtype(t, expected)) {
 				report('Use . on structs only, not on ' + pt(t), value);
 				return newTyvar();
 			}
 
-			FlowUtil.getPosition(call).type = t;
+			FlowUtil.getPosition(caller).type = t;
 
 			// subtype(t, expected) will give either an error, or, if t is a union,
 			// propagate that to expected, or, if t is flow, leave expected untouched, or,
@@ -367,8 +367,8 @@ class FlowInterpreter implements Interpreter {
 			
 			// check that t is a subtype of field.fromType, i.e., compatible with one or
 			// more of the struct types that this field supports
-			//report('.' + name + ' works on  : ' + pt(field.fromType), call);
-			//report('here it is applied on a : ' + pt(t), call);
+			//report('.' + name + ' works on  : ' + pt(field.fromType), caller);
+			//report('here it is applied on a : ' + pt(t), caller);
 			var from = swap(instantiate1('field ' + name + ' input type', field.fromType));
 			/*old:
 			var u = typeEnvironment.typeMatch(FlowUtil.maxout(t), from);
@@ -380,7 +380,7 @@ class FlowInterpreter implements Interpreter {
 						'Some or all of ' + (t) + ' have no .' + name + ' field';
 						case TStruct(n, args, max): 'Struct ' + pt(t) + ' does not have a .' + name + ' field';
 						default: 'Only use .' + name + ' on structs, not on ' + pt(t);
-						}, call);
+						}, caller);
 				return newTyvar();
 			}
 			*/
@@ -404,10 +404,10 @@ class FlowInterpreter implements Interpreter {
 			if (debug > 1) trace(indent() + '                & output type === ' + pt(tfield));
 			pos.type = tfield;
 			return tfield;
-		case SetMutable(call, name, value, pos):
+		case SetMutable(caller, name, value, pos):
 			if (debug > 1) trace(indent() + ' --- ' + pp(value) + ' --- ');
 
-			var t = normalise(getType(call), call);
+			var t = normalise(getType(caller), caller);
 			var valType = getType(value);
 
 			var expected = TTyvar(FlowUtil.mkTyvar(TypeEnvironment.newUnion()));
@@ -416,7 +416,7 @@ class FlowInterpreter implements Interpreter {
 				return TVoid;
 			}
 
-			FlowUtil.getPosition(call).type = t;
+			FlowUtil.getPosition(caller).type = t;
 
 			// subtype(t, expected) will give either an error, or, if t is a union,
 			// propagate that to expected, or, if t is flow, leave expected untouched, or,
@@ -429,8 +429,8 @@ class FlowInterpreter implements Interpreter {
 
 			// check that t is a subtype of field.fromType, i.e., compatible with one or
 			// more of the struct types that this field supports
-			//report('.' + name + ' works on  : ' + pt(field.fromType), call);
-			//report('here it is applied on a : ' + pt(t), call);
+			//report('.' + name + ' works on  : ' + pt(field.fromType), caller);
+			//report('here it is applied on a : ' + pt(t), caller);
 			var from = swap(instantiate1('field ' + name + ' input type', field.fromTypeMut));
 
 			if (debug > 1) trace(indent() + '    inferred from type before < : ' + pt(t));
@@ -449,7 +449,7 @@ class FlowInterpreter implements Interpreter {
 			pos.type = tfield;
 
 			if (! typeEnvironment.subtype(valType, tfield)) {
-				report(ppMaybe(call, ': ') + 'You cannot assign ' + pt(valType) + ' to a mutable field .'+name+' that takes ' + pt(tfield) + why(), call);
+				report(ppMaybe(caller, ': ') + 'You cannot assign ' + pt(valType) + ' to a mutable field .'+name+' that takes ' + pt(tfield) + why(), caller);
 			}
 			return TVoid;
 		case RefTo(value, pos):
@@ -460,31 +460,31 @@ class FlowInterpreter implements Interpreter {
 			return TReference(alpha);
 		case Pointer(address, pos):
 		 	return TPointer(getType(getCell(value)));
-		case Deref(pointer, pos):
-			var ptrType = getType(pointer);
+		case Deref(pnt, pos):
+			var ptrType = getType(pnt);
 			var result = newTyvar();
 			if (! typeEnvironment.subtype(ptrType, TReference(result))) {
-				report('^ wants a ref, not ' + pt(ptrType), pointer);
+				report('^ wants a ref, not ' + pt(ptrType), pnt);
 			}
 			if (FlowUtil.isFlow(ptrType)) {
-				report(ppMaybe(pointer, ': ') + 'You cannot deref a flow type. Cast it to a ref first', pointer);
+				report(ppMaybe(pnt, ': ') + 'You cannot deref a flow type. Cast it to a ref first', pnt);
 			}
 			return retType(result);
-		case SetRef(pointer, value, pos):
-			var ptrType = getType(pointer);
+		case SetRef(pnt, value, pos):
+			var ptrType = getType(pnt);
 			var valType = getType(value);
 			var alpha = newTyvar();
 			if (! typeEnvironment.subtype(ptrType, TReference(alpha))) {
 				// Happens in this situation: a = false; a := true;
-				report(ppMaybe(pointer, ': ') + pt(ptrType)
+				report(ppMaybe(pnt, ': ') + pt(ptrType)
 					   + ' is not a ref so it cannot be assigned'
-					   + why() + '. Declare X = ref Y rather than X = Y', pointer);
+					   + why() + '. Declare X = ref Y rather than X = Y', pnt);
 			}
 			if (! typeEnvironment.subtype(valType, alpha)) {
-				report(ppMaybe(pointer, ': ') + 'You cannot assign ' + pt(valType) + ' to a ref that takes ' + pt(alpha) + why(), pointer);
+				report(ppMaybe(pnt, ': ') + 'You cannot assign ' + pt(valType) + ' to a ref that takes ' + pt(alpha) + why(), pnt);
 			}
 			if (FlowUtil.isFlow(ptrType)) {
-				report(ppMaybe(pointer, ': ') + 'You cannot assign ' + pt(valType) + ' to a flow type. Cast it to a ref first', pointer);
+				report(ppMaybe(pnt, ': ') + 'You cannot assign ' + pt(valType) + ' to a flow type. Cast it to a ref first', pnt);
 			}
 			return TVoid;
 		case Cast(value, fromtype, totype, pos):
@@ -1205,8 +1205,8 @@ class FlowInterpreter implements Interpreter {
 				}
 			}
 			return code;
-		case Field(call, name, pos): {
-			var v = run(call);
+		case Field(caller, name, pos): {
+			var v = run(caller);
 			switch (v) {
 			case VarRef(sname, p): {
 				var typeDeclaration = userTypeDeclarations.get(sname);
@@ -1238,10 +1238,10 @@ class FlowInterpreter implements Interpreter {
 			}
 			default:
 			}
-			throw error("Field ." + name + " not found in " + Prettyprint.print(v), call);
+			throw error("Field ." + name + " not found in " + Prettyprint.print(v), caller);
 		}
-		case SetMutable(call, name, value, pos): {
-			var v = run(call);
+		case SetMutable(caller, name, value, pos): {
+			var v = run(caller);
 			var val = run(value);
 			switch (v) {
 			case ConstantStruct(sname, args, pos): {
@@ -1257,7 +1257,7 @@ class FlowInterpreter implements Interpreter {
 								return ConstantVoid(pos);
 							}
 
-							throw error("Field ."+name+" is not mutable in "+Prettyprint.print(v),call);
+							throw error("Field ."+name+" is not mutable in "+Prettyprint.print(v),caller);
 						}
 						++i;
 					}
@@ -1266,7 +1266,7 @@ class FlowInterpreter implements Interpreter {
 			}
 			default:
 			}
-			throw error("Field ." + name + " not found in " + Prettyprint.print(v), call);
+			throw error("Field ." + name + " not found in " + Prettyprint.print(v), caller);
 		}
 		case RefTo(value, pos) :
 			var v = run(value);
@@ -1274,10 +1274,10 @@ class FlowInterpreter implements Interpreter {
 			return Pointer(memory.cells.length - 1, pos);
 		case Pointer(index, pos):
 			return code;
-		case Deref(pointer, pos):
-			return getCell(run(pointer));
-		case SetRef(pointer, value, pos):
-			var cell = FlowUtilInternal.getAddress(run(pointer));
+		case Deref(pnt, pos):
+			return getCell(run(pnt));
+		case SetRef(pnt, value, pos):
+			var cell = FlowUtilInternal.getAddress(run(pnt));
 			var val = run(value);
 			// Side-effect!
 			memory.cells[cell] = val;
@@ -1329,12 +1329,12 @@ class FlowInterpreter implements Interpreter {
 			#end
 			var closure = run(clos);
 			switch (closure) {
-			case Closure(lambda, closureEnvironment, pos):
-				switch (lambda) {
+			case Closure(lmbda, closureEnvironment, pos):
+				switch (lmbda) {
 				case Lambda(args, type, body, _, pos):
-					return callLambda(code, lambda, closureEnvironment, args, body, arguments);
+					return callLambda(code, lmbda, closureEnvironment, args, body, arguments);
 				default:
-					throw error("The closure in a call expects a lambda", lambda);
+					throw error("The closure in a call expects a lambda", lmbda);
 				}
 			case VarRef(n, pos):
 				// Evaluate the children
@@ -1943,18 +1943,18 @@ class FlowInterpreter implements Interpreter {
 				env.define(name, variable);
 				return;
 			}
-		case Field(call, name, pos):
-			capture(call, env);
+		case Field(caller, name, pos):
+			capture(caller, env);
 		case RefTo(value, pos):
 			capture(value, env);
 		case Pointer(index, pos):
-		case Deref(pointer, pos):
-			capture(pointer, env);
-		case SetRef(pointer, value, pos):
-			capture(pointer, env);
+		case Deref(pnt, pos):
+			capture(pnt, env);
+		case SetRef(pnt, value, pos):
+			capture(pnt, env);
 			capture(value, env);
-		case SetMutable(pointer, name, value, pos):
-			capture(pointer, env);
+		case SetMutable(pnt, name, value, pos):
+			capture(pnt, env);
 			capture(value, env);
 		case Cast(value, fromtype, totype, pos):
 			capture(value, env);
@@ -1974,8 +1974,8 @@ class FlowInterpreter implements Interpreter {
 		case Closure(body, environment, pos):
 			capture(body, env);
 
-		case Call(closure, arguments, pos):
-			capture(closure, env);
+		case Call(clos, arguments, pos):
+			capture(clos, env);
 			for (a in arguments) {
 				capture(a, env);
 			}

@@ -36,12 +36,12 @@ void QtGeolocationSupport::timerEvent(QTimerEvent *event)
     }
 }
 
-void QtGeolocationSupport::doGeolocationGetCurrentPosition(int callbacksRoot, bool enableHighAccuracy, double timeout, double maximumAge, std::string turnOnGeolocationMessage, std::string okButtonText, std::string cancelButtonText)
+void QtGeolocationSupport::doGeolocationGetCurrentPosition(int callbacksRoot, bool /*enableHighAccuracy*/, double /*timeout*/, double /*maximumAge*/, std::string /*turnOnGeolocationMessage*/, std::string /*okButtonText*/, std::string /*cancelButtonText*/)
 {
     executeOnErrorCallback(callbacksRoot, true, GeolocationErrorPositionUnavailable, "QtByteRunner doesn't support geolocation on desktop");
 }
 
-void QtGeolocationSupport::doGeolocationWatchPosition(int callbacksRoot, bool enableHighAccuracy, double timeout, double maximumAge, std::string turnOnGeolocationMessage, std::string okButtonText, std::string cancelButtonText)
+void QtGeolocationSupport::doGeolocationWatchPosition(int callbacksRoot, bool /*enableHighAccuracy*/, double timeout, double /*maximumAge*/, std::string /*turnOnGeolocationMessage*/, std::string /*okButtonText*/, std::string /*cancelButtonText*/)
 {
     executeOnErrorCallback(callbacksRoot, false, GeolocationErrorPositionUnavailable, "QtByteRunner doesn't support geolocation on desktop");
     int timerId = startTimer(qMax(0.0, timeout));

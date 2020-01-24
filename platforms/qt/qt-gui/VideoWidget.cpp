@@ -52,9 +52,9 @@ VideoSurface::VideoSurface(QObject *parent)
 	, m_contrast(0)
 	, m_hue(0)
 	, m_saturation(0)
+	, m_size(ivec2(0, 0))
 	, m_pixelFormat(QVideoFrame::Format_Invalid)
 	, m_ready(false)
-    , m_size(ivec2(0, 0))
 {
 }
 
@@ -72,7 +72,7 @@ void VideoSurface::setVideoClip(GLVideoClip *videoClip)
 	m_videoClip = videoClip;
 }
 
-QList<QVideoFrame::PixelFormat> VideoSurface::supportedPixelFormats(QAbstractVideoBuffer::HandleType handleType) const
+QList<QVideoFrame::PixelFormat> VideoSurface::supportedPixelFormats(QAbstractVideoBuffer::HandleType /*handleType*/) const
 {
     return QList<QVideoFrame::PixelFormat>() << QVideoFrame::Format_ARGB32;//QVideoFrame::Format_ARGB32_Premultiplied;
 

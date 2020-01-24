@@ -532,7 +532,7 @@ void GarbageCollector::PrintStats(ostream &out, std::string fname, int FirstNewI
         if (write_file)
         {
             BytesByCode[info.stack_buf] += bytes;
-            if (info.generation >= FirstNewID)
+            if (info.generation >= unsigned(FirstNewID))
                 NewBytesByCode[info.stack_buf] += bytes;
         }
     }
@@ -1580,7 +1580,7 @@ FlowPtr GarbageCollector::CollectStruct(FlowPtr ptr, bool closure)
 
     // Copy
     StructDef &def = StructDefs[obj->header.DataValue];
-    assert(def.ByteSize >= sizeof(FlowHeapStruct));
+    assert(unsigned(def.ByteSize) >= sizeof(FlowHeapStruct));
 
     unsigned prefix = closure ? 4 : 0;
     unsigned bytes = def.ByteSize + prefix;

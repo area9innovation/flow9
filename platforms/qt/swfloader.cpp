@@ -183,7 +183,11 @@ static bool LoadFileContent(const char * path_to_swf, Header & hdr, uint8_t * &f
     uint32_t FileLength = ftell(in);
     fseek(in, 0, SEEK_SET);
         
-    fread(&hdr, 1, sizeof(hdr), in);
+    size_t have_read = fread(&hdr, 1, sizeof(hdr), in);
+    if (have_read < sizeof(hdr)) {
+    	// We have read less elements, then required.
+    	return false;
+    }
     
     if (strncmp((const char *)hdr.Signature, "FWS", sizeof(hdr.Signature)) != 0 && strncmp((const char *)hdr.Signature, "CWS", sizeof(hdr.Signature)) != 0)    
          return false;                

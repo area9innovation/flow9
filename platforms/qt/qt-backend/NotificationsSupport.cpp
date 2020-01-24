@@ -61,7 +61,7 @@ void QtNotificationsSupport::doRequestPermissionLocalNotification(int cb_root) {
 
 }
 
-void QtNotificationsSupport::doScheduleLocalNotification(double time, int notificationId, std::string notificationCallbackArgs, std::string notificationTitle, std::string notificationText, bool withSound, bool pinned) {
+void QtNotificationsSupport::doScheduleLocalNotification(double time, int notificationId, std::string notificationCallbackArgs, std::string notificationTitle, std::string notificationText, bool /*withSound*/, bool /*pinned*/) {
 #ifdef QT_GUI_LIB
     if (cgi) return;
     doCancelLocalNotification(notificationId);
@@ -95,7 +95,7 @@ SystemTrayIconSingle::SystemTrayIconSingle(QtNotificationsSupport *notifications
     connect(systemTray, SIGNAL(messageClicked()), notificationsSupport, SLOT(trayMessageClicked()));
 }
 
-QSystemTrayIcon *const SystemTrayIconSingle::getSystemTray() {
+QSystemTrayIcon * SystemTrayIconSingle::getSystemTray() {
     return systemTray;
 }
 #endif

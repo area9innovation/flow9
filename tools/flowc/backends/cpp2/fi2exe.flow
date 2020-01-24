@@ -1,0 +1,102 @@
+import sys/system;
+import sys/target;
+import math/stringmath;
+import tools/flowc/backends/common;
+
+export {
+	buildFiExeFile(cfg : FcCpp2Config, callback : () -> void) -> void;
+}
+
+ProcDescr(
+	header: string,
+	prog  : string,
+	args  : [string],
+	dir   : string,
+	stdin : string,
+	verbose : int,
+	cout : (string) -> void,
+	msg  : (string) -> void
+);
+
+chainOfProcesses(procs : [ProcDescr]) -> ((() -> void) -> () -> void) {
+	\callback -> 
+		fold(reverseA(procs), 
+			\-> callback(), 
+			\acc, proc : ProcDescr -> {
+				\-> {
+					if (proc.verbose > 1) {
+						proc.msg("running: " + proc.prog + " " + strGlue(proc.args, " "));
+					}
+					if (proc.verbose > 0 && proc.header != "") {
+						proc.msg(proc.header);
+					}
+					start = timestamp();
+					startProcess(proc.prog, proc.args, proc.dir, proc.stdin, 
+						\code, out, err -> {
+							if (proc.verbose > 0 && out != "") {
+								proc.cout(out);
+							}
+							if (err != "") {
+								if (proc.verbose > 0) {
+									proc.msg("errors:\n" + err);
+								}
+								callback();
+							} else if (code != 0) {
+								if (proc.verbose > 0) {
+									proc.msg("return code: " + i2s(code));
+								}
+								callback();
+							} else {
+								if (proc.verbose > 1) {
+									proc.msg("finished in: " + d2st((timestamp() - start) / 1000.0, 2) + "s");
+								}
+								acc();
+							}
+						}
+					)
+				}
+			}
+		);
+}
+
+buildFiExeFile(cfg : FcCpp2Config, callback : () -> void) -> void {
+	exe = if (hasTargetName("windows")) changeFileExt(cfg.outputFile, ".exe") else changeFileExt(cfg.outputFile, "");
+	target = changeFileExt(fileNameOnly(exe), "");
+	flowdir = rtrim2(getFlowDir(), "/");
+	outdir = rtrim2(cfg.outputDir, "/");
+	builddir = outdir + "/build";
+	ensureDirectoryExists(builddir);
+	qmake_template = "#include tools/flowc/backends/cpp2/qmake_template.pro";
+	qmake_file = strReplaces(qmake_template, ["%TARGET", target, "%FLOWDIR", flowdir]);
+	if (cfg.verbose > 1) {
+		println("cpp2 builddir: " + builddir);
+	}
+	defout = \msg -> {
+		lines = filter(strSplit(msg, "\n"), \line -> line != "");
+		fcPrintln(strGlue(lines, "\n"), cfg.threadId);
+	}
+	buildout = \msg -> {
+		sources = filtermap(
+			strSplit(msg, "\n"), 
+			\line -> {
+				words = strSplit(line, " ");
+				findmap(words, \word -> 
+					if (!endsWith(word, ".cpp")) None() else {
+						Some("Compiled c++ source: " + word)
+					}
+				)
+			}
+		);
+		fcPrintln(strGlue(sources, "\n"), cfg.threadId);
+	}
+	if (setFileContent(outdir + "/" + target + ".pro", qmake_file)) {
+		chainOfProcesses([
+			ProcDescr("Configuring build for " + cfg.outputFile, "qmake", ["CONFIG+=native_build", "../" + target + ".pro"], builddir, "", cfg.verbose, defout, defout),
+			ProcDescr("Building " + cfg.outputFile + " ...", "make", ["-j" + i2s(availableProcessors())], builddir, "", cfg.verbose, buildout, defout),
+			ProcDescr("Copying executable " + exe, "cp", [target, exe], builddir, "", cfg.verbose, defout, defout)],
+		)(callback)();
+	} else {
+		fcPrintln("coundn't write a qmake project file " + outdir + "/" + target + " target", cfg.threadId);
+		callback();
+	}
+}

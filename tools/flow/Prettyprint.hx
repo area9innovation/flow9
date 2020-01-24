@@ -234,11 +234,11 @@ class Prettyprint {
 			// since otherwise, we needed to have the entire memory map sent into this function.
 			// See FlowInterpreter.replacePointersWithReferences called by FlowInterpreter.toString.
 			'pointer(' + pointer + ')';
-		case Deref(pointer, pos):
-			'^' + prettyprint(pointer, indent, bracket);
-		case SetRef(pointer, value, pos): binop(' := ', pointer, value, indent, bracket);
-		case SetMutable(pointer, field, value, pos):
-			binop(' ::= ', Field(pointer, field, pos), value, indent, bracket);
+		case Deref(p, pos):
+			'^' + prettyprint(p, indent, bracket);
+		case SetRef(p, value, pos): binop(' := ', p, value, indent, bracket);
+		case SetMutable(p, field, value, pos):
+			binop(' ::= ', Field(p, field, pos), value, indent, bracket);
 		
 		case Let(name, sigma, value, scope, pos):
 			tuborg(true, name + (if (sigma != null) ' : ' + prettyprintTypeScheme(sigma) + ' ' else '')
@@ -256,8 +256,8 @@ class Prettyprint {
 			r;
 		case Closure(body, environment, pos):
 			'[|' + prettyprint(body, indent, false) + ' | ' + ppEnvironment(environment) + ' |]';
-		case Call(closure, arguments, pos):
-			var c = prettyprint(closure, indent, true) + '(';
+		case Call(c, arguments, pos):
+			var c = prettyprint(c, indent, true) + '(';
 			var sep = '';
 			for (a in arguments) {
 				c += sep + prettyprint(a, indent, false);
@@ -291,7 +291,7 @@ class Prettyprint {
 		case GreaterEqual(e1, e2, pos): binop('>=', e1, e2, indent, bracket);
 		case And(e1, e2, pos):  binop('&&', e1, e2, indent, bracket);
 		case Or(e1, e2, pos): binop('||', e1, e2, indent, bracket);
-		case Field(call, name, pos): '(' + prettyprint(call, indent, bracket) + "." + name + ')';
+		case Field(c, name, pos): '(' + prettyprint(c, indent, bracket) + "." + name + ')';
 		case Cast(value, fromtype, totype, pos):
 			 'cast(' + prettyprint(value, '', false) + " : "
 					 + prettyprintTypePos(fromtype, null, true) + " to "
@@ -369,13 +369,13 @@ class Prettyprint {
 		case VarRef(name, pos): 'a';
 		case RefTo(value, pos): 'ref';
 		case Pointer(pointer, pos): 'pointer';
-		case Deref(pointer, pos): '^';
-		case SetRef(pointer, value, pos): ':=';
-		case SetMutable(pointer, field, value, pos): '::=';
+		case Deref(pnt, pos): '^';
+		case SetRef(pnt, value, pos): ':=';
+		case SetMutable(pnt, field, value, pos): '::=';
 		case Let(name, sigma, value, scope, pos): '=';
 		case Lambda(arguments, type, body, _, pos): "\\";
 		case Closure(body, environment, pos): "[||]";
-		case Call(closure, arguments, pos): "f()";
+		case Call(clos, arguments, pos): "f()";
 		case Sequence(statements, pos): '{ }';
 		case If(condition, then, elseExp, pos): 'if';
 		case Not(e, pos): '!';
@@ -393,7 +393,7 @@ class Prettyprint {
 		case GreaterEqual(e1, e2, pos): '>=';
 		case And(e1, e2, pos): '&&';
 		case Or(e1, e2, pos): '||';
-		case Field(call, name, pos): ".";
+		case Field(cll, name, pos): ".";
 		case Cast(value, fromtype, totype, pos): 'cast';
 		case Switch(e0, type, cases, p): 'switch';
 		case SimpleSwitch(e0, cases, p): 'sswitch';

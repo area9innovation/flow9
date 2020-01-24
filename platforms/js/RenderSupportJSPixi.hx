@@ -342,7 +342,7 @@ class RenderSupportJSPixi {
 		} else if (RendererType == "auto") {
 			PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth, Browser.window.innerHeight);
 
-			if (untyped __instanceof__(PixiRenderer, WebGLRenderer)) {
+			if (untyped HaxeRuntime.instanceof(PixiRenderer, WebGLRenderer)) {
 				RendererType = "webgl";
 			} else {
 				RendererType = "canvas";
@@ -830,7 +830,7 @@ class RenderSupportJSPixi {
 			if (event.wheelDeltaX != null) { sX = -event.wheelDeltaX / 120; }
 
 			// side scrolling on FF with DOMMouseScroll
-			if (event.axis != null && untyped __strict_eq__(event.axis, event.HORIZONTAL_AXIS)) {
+			if (event.axis != null && untyped HaxeRuntime.strictEq(event.axis, event.HORIZONTAL_AXIS)) {
 				sX = sY;
 				sY = 0.0;
 			}
@@ -1175,29 +1175,35 @@ class RenderSupportJSPixi {
 		EnableFocusFrame = show;
 	}
 
-	public static function setAccessAttributes(clip : Dynamic, attributes : Array<Array<String>>) : Void {
+	public static function setAccessAttributes(clip : DisplayObject, attributes : Array<Array<String>>) : Void {
 		var attributesMap = new Map<String, String>();
 
 		for (kv in attributes) {
 			attributesMap.set(kv[0], kv[1]);
 		}
 
-		if (clip.accessWidget == null) {
+		var accessWidget : AccessWidget = untyped clip.accessWidget;
+
+		if (accessWidget == null) {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
 				if (RendererType == "html") {
-					cast(clip, DisplayObject).initNativeWidget();
+					clip.initNativeWidget();
 				}
 
+
+				var nativeWidget : Element = untyped clip.nativeWidget;
+
 				// Create DOM node for access. properties
-				if (clip.nativeWidget != null) {
-					clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
-					clip.accessWidget.addAccessAttributes(attributesMap);
+				if (nativeWidget != null) {
+					accessWidget = new AccessWidget(clip, nativeWidget);
+					untyped clip.accessWidget = accessWidget;
+					accessWidget.addAccessAttributes(attributesMap);
 				} else {
 					AccessWidget.createAccessWidget(clip, attributesMap);
 				}
 			}
 		} else {
-			clip.accessWidget.addAccessAttributes(attributesMap);
+			accessWidget.addAccessAttributes(attributesMap);
 		}
 	}
 
@@ -1627,7 +1633,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function getFirstVideoWidget(clip : FlowContainer) : Dynamic {
-		if (untyped __instanceof__(clip, VideoClip)) return clip;
+		if (untyped HaxeRuntime.instanceof(clip, VideoClip)) return clip;
 
 		if (clip.children != null) {
 			for (c in clip.children) {
@@ -1859,10 +1865,16 @@ class RenderSupportJSPixi {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (untyped __instanceof__(clip, Element)) {
+		if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
-		} else if (event == "transformchanged") {
+		} else {
+			return addDisplayObjectEventListener(clip, event, fn);
+		}
+	}
+
+	public static function addDisplayObjectEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
+		if (event == "transformchanged") {
 			clip.on("transformchanged", fn);
 			return function() { clip.off("transformchanged", fn); }
 		} else if (event == "resize") {
@@ -1886,11 +1898,11 @@ class RenderSupportJSPixi {
 				}
 			}
 
-			cast(clip, DisplayObject).on("pointerover", checkFn);
-			cast(clip, DisplayObject).invalidateInteractive();
+			clip.on("pointerover", checkFn);
+			clip.invalidateInteractive();
 			return function() {
-				cast(clip, DisplayObject).off("pointerover", checkFn);
-				cast(clip, DisplayObject).invalidateInteractive();
+				clip.off("pointerover", checkFn);
+				clip.invalidateInteractive();
 			};
 		} else if (event == "rollout") {
 			var checkFn = function() {
@@ -1900,24 +1912,24 @@ class RenderSupportJSPixi {
 				}
 			}
 
-			cast(clip, DisplayObject).on("pointerout", checkFn);
-			cast(clip, DisplayObject).invalidateInteractive();
+			clip.on("pointerout", checkFn);
+			clip.invalidateInteractive();
 			return function() {
-				cast(clip, DisplayObject).off("pointerout", checkFn);
-				cast(clip, DisplayObject).invalidateInteractive();
+				clip.off("pointerout", checkFn);
+				clip.invalidateInteractive();
 			};
 		} else if (event == "scroll") {
-			cast(clip, DisplayObject).on("scroll", fn);
-			return function() { cast(clip, DisplayObject).off("scroll", fn); };
+			clip.on("scroll", fn);
+			return function() { clip.off("scroll", fn); };
 		} else if (event == "change") {
-			cast(clip, DisplayObject).on("input", fn);
-			return function() { cast(clip, DisplayObject).off("input", fn); };
+			clip.on("input", fn);
+			return function() { clip.off("input", fn); };
 		} else if (event == "focusin") {
-			cast(clip, DisplayObject).on("focus", fn);
-			return function() { cast(clip, DisplayObject).off("focus", fn); };
+			clip.on("focus", fn);
+			return function() { clip.off("focus", fn); };
 		} else if (event == "focusout") {
-			cast(clip, DisplayObject).on("blur", fn);
-			return function() { cast(clip, DisplayObject).off("blur", fn); };
+			clip.on("blur", fn);
+			return function() { clip.off("blur", fn); };
 		} else if (event == "visible"){
 			clip.on("visible", fn);
 			return function() { clip.off("visible", fn); }
@@ -2082,7 +2094,7 @@ class RenderSupportJSPixi {
 			return null;
 		}
 
-		if (untyped __instanceof__(clip, NativeWidgetClip) || untyped __instanceof__(clip, FlowSprite)) {
+		if (untyped HaxeRuntime.instanceof(clip, NativeWidgetClip) || untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
 			if (untyped clip.worldTransformChanged) {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
@@ -2094,7 +2106,7 @@ class RenderSupportJSPixi {
 			if (local.x >= 0.0 && local.y >= 0.0 && local.x <= clipWidth && local.y <= clipHeight) {
 				return clip;
 			}
-		} else if (untyped __instanceof__(clip, FlowContainer)) {
+		} else if (untyped HaxeRuntime.instanceof(clip, FlowContainer)) {
 			if (untyped clip.worldTransformChanged) {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
@@ -2119,7 +2131,7 @@ class RenderSupportJSPixi {
 					return clipHit;
 				}
 			}
-		} else if (untyped __instanceof__(clip, FlowGraphics)) {
+		} else if (untyped HaxeRuntime.instanceof(clip, FlowGraphics)) {
 			if (hittestGraphics(untyped clip, point, checkAlpha)) {
 				return clip;
 			}
@@ -2339,7 +2351,7 @@ class RenderSupportJSPixi {
 					});
 				}
 
-				if (untyped !__instanceof__(f, DropShadowFilter) && untyped !__instanceof__(f, BlurFilter)) {
+				if (untyped !HaxeRuntime.instanceof(f, DropShadowFilter) && untyped !HaxeRuntime.instanceof(f, BlurFilter)) {
 					untyped clip.glShaders = true;
 				}
 
@@ -2542,7 +2554,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function exitFullScreen(element : Dynamic) {
-		if (untyped __instanceof__(element, js.html.CanvasElement)) {
+		if (untyped HaxeRuntime.instanceof(element, js.html.CanvasElement)) {
 			element = Browser.document;
 		}
 

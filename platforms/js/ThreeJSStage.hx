@@ -77,7 +77,7 @@ class ThreeJSStage extends Container {
 		}
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			initNativeWidget('canvas');
+			this.initNativeWidget('canvas');
 			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupportJSPixi.detectExternalVideoCard(), alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
 		} else {
 			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupportJSPixi.detectExternalVideoCard(), alpha : true, logarithmicDepthBuffer : true});
@@ -128,12 +128,12 @@ class ThreeJSStage extends Container {
 			renderer = null;
 		}
 
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 	}
 
 	public function invalidateStage() {
 		if (RenderSupportJSPixi.RendererType == "html") {
-			invalidateTransform('ThreeJSStage');
+			this.invalidateTransform('ThreeJSStage');
 		} else {
 			DisplayObjectHelper.invalidateStage(this);
 		}
@@ -373,10 +373,10 @@ class ThreeJSStage extends Container {
 			return;
 		}
 
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipID();
+		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 		nativeWidget.style.pointerEvents = 'auto';
 
@@ -411,8 +411,8 @@ class ThreeJSStage extends Container {
 						}
 					}
 
-					updateNativeWidgetTransformMatrix();
-					updateNativeWidgetOpacity();
+					this.updateNativeWidgetTransformMatrix();
+					this.updateNativeWidgetOpacity();
 
 					if (transformControls != null) {
 						scene.add(transformControls);
@@ -433,7 +433,7 @@ class ThreeJSStage extends Container {
 					}
 				}
 
-				updateNativeWidgetDisplay();
+				this.updateNativeWidgetDisplay();
 			}
 		}
 	}

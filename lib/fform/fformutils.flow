@@ -742,6 +742,13 @@ style2characterStyle(s : [?]) -> [CharacterStyle] {
 	))
 }
 
+FParagraphStyle2FTextStyle(style : [FParagraphStyle]) -> [FTextStyle] {
+	filtermap(style, \s -> switch (s) {
+		FTextStyle() : {a : Maybe<FTextStyle> = Some(s); a}
+		default : None()
+	})
+}
+
 FDynamicGroup2DynamicGroup(group : FDynamicGroup2) -> Pair<DynamicGroup2, () -> () -> void> {
 	formChanges : DynamicBehaviour<[GroupChange]> = make([]);
 
@@ -1013,7 +1020,13 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
 	setEscapeHTML(textfield, extractStruct(style, EscapeHTML(false)).escape);
 	setTextDirection(textfield, if (rtl) "rtl" else "ltr");
-	u = makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))();
+	dynColor = tryExtractStruct(style, FDynamicColor(const(-1)));
+	u =
+		eitherFn(
+			dynColor,
+			\dc -> make2Subscribe(text, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
+			makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))
+		);
 
 	disposer = \ -> {
 		u();
@@ -1126,7 +1139,8 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 }
 
 renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult {
-	charStyle = style2characterStyle(style);
+	charStyle = FParagraphStyle2FTextStyle(style);
+
 	d = renderFText(text, charStyle);
 	textfield = d.clips[length(d.clips) - 1];
 	rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
@@ -1163,14 +1177,17 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		}
 	);
 
-	if (contains(style, LeftAlign()))
-		setAutoAlign(textfield, "AutoAlignLeft")
-	else if (contains(style, RightAlign()))
-		setAutoAlign(textfield, "AutoAlignRight")
-	else if (contains(style, CenterAlign()))
-		setAutoAlign(textfield, "AutoAlignCenter")
-	else
-		setAutoAlign(textfield, "AutoAlignNone");
+	autoAlign = 
+		if (contains(style, LeftAlign()))
+			"AutoAlignLeft"
+		else if (contains(style, RightAlign()))
+			"AutoAlignRight"
+		else if (contains(style, CenterAlign()))
+			"AutoAlignCenter"
+		else
+			"AutoAlignNone";
+
+	setAutoAlign(textfield, autoAlign);
 
 	eitherFn(
 		tryExtractStruct(style, ParagraphWidth(const(-1.))),
