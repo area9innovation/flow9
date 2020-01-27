@@ -755,9 +755,18 @@ TAnimator(
 	style : [MAnimatorStyle]) -> Tropic {
 
 	contentWH = makeWH();
+	transformedContentWH = makeWH();
+
 	duration = extractStruct(style, MAnimationDuration(const(0.3))).seconds;
 	progress = extractStruct(style, MExpanderProgress(make(1.))).progress;
-	crop = !contains(style, MNoCrop());
+
+	noCrop = contains(style, MNoCrop());
+	cropByContent = !noCrop && (contains(style, MAnimatorCropByContent()) || exists(style, \st -> switch(st) {
+			MTranslateAnimation(__, st2) : contains(st2, MExpandFromStart());
+			default : false;
+		})
+	);
+	crop = !(noCrop || cropByContent);
 
 	fade = contains(style, MFadeAnimation());
 	wh2point = \fn -> fselect(contentWH, FLift(fn));
@@ -768,9 +777,15 @@ TAnimator(
 		\t, center ->
 			if (!center) fn(t)
 			else
-				TTranslate(fselect(centerPoint, FLift(\p -> Point(-p.x, -p.y))), t)
+				(
+					if (cropByContent) TBorderT(fselect(centerPoint, FLift(\p -> -p.x)), fselect(centerPoint, FLift(\p -> -p.y)), zero, zero, t)
+					else TTranslate(fselect(centerPoint, FLift(\p -> Point(-p.x, -p.y))), t)
+				)
 				|> fn
-				|> (\t2 -> TTranslate(centerPoint, t2))
+				|> (\t2 ->
+					if (cropByContent) TBorderT(fpointX(centerPoint), fpointY(centerPoint), zero, zero, t2)
+					else TTranslate(centerPoint, t2)
+				)
 	}
 	
 	scaleHandler = \sc, t -> {
@@ -793,7 +808,15 @@ TAnimator(
 			MRight() : wh2point(\wh -> Point(wh.width, 0.));
 			MTranslatePosition(pos) : pos;
 		}
-		TTranslate(flerpPoint(position, progress), t)
+		translatePoint = flerpPoint(position, progress);
+
+		if (cropByContent)
+			TFixSize(
+				t,
+				TSized(fselect2(contentWH, translatePoint, FLift2(\wh, p -> WidthHeight(wh.width - abs(p.x), wh.height - abs(p.y)))))
+			)
+		else
+			TTranslate(translatePoint, t)
 	}
 
 	content
@@ -804,12 +827,20 @@ TAnimator(
 			switch (st) {
 				MScaleAnimation(__) : scaleHandler(st, acc);
 				MRotateAnimation(__) : rotateHandler(st, acc); 
-				MTranslateAnimation(__) : translateHandler(st, acc);
+				MTranslateAnimation(__, __) : translateHandler(st, acc);
 				default : acc 
 			}
 		)
 	)
-	|> (\t -> if (crop) TCrop(const(zeroPoint), contentWH, t) else t)
+	|> (\t ->
+			if (noCrop) t
+			else {
+				box = if (cropByContent) transformedContentWH else contentWH;
+				TVisible(
+					fselect(box, FLift(\wh -> wh.width > 0.5 && wh.height > 0.5)),
+					TCrop(const(zeroPoint), box, TAttachBox(t, transformedContentWH))
+				)
+		})
 	|> (\t ->
 		MEasingAnimation(
 			manager,
