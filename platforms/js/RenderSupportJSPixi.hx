@@ -59,7 +59,7 @@ class RenderSupportJSPixi {
 
 	public static var hadUserInteracted = false;
 
-	public static var WebFontsConfig;
+	public static var WebFontsConfig = null;
 
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
