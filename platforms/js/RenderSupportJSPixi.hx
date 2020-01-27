@@ -2779,7 +2779,10 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setAttribute(element : Element, name : String, value : String) : Void {
-		element.setAttribute(name, value);
+		if (name == "innerHTML")
+			element.innerHTML = value
+		else
+			element.setAttribute(name, value);
 	}
 
 	public static function removeAttribute(element : Element, name : String) : Void {
