@@ -868,7 +868,7 @@ function OTC1(fn, fn_name) {
 		case Or(e1, e2, pos): binop('||', e1, e2, indent, buf);
 		case Field(call, name, pos): {
 			if (name == "structname") {
-				buf.add('(HaxeRuntime._structnames_.get(');
+				buf.add('(HaxeRuntime.getStructName(');
 				compileToExpr2(call, indent, buf);
 				buf.add('._id))');
 			} else {
