@@ -59,7 +59,7 @@ class RenderSupportJSPixi {
 
 	public static var hadUserInteracted = false;
 
-	public static var WebFontsConfig;
+	public static var WebFontsConfig = null;
 
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
@@ -1940,14 +1940,16 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
+	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };
-		} else {
+		} else if (RenderSupportJSPixi.RendererType != "html") {
 			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
 			clip.addChild(dropArea);
 			return function() { clip.removeChild(dropArea); };
+		} else {
+			return clip.addFileDropListener(maxFilesCount, mimeTypeRegExpFilter, onDone);
 		}
 	}
 
@@ -2779,7 +2781,10 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setAttribute(element : Element, name : String, value : String) : Void {
-		element.setAttribute(name, value);
+		if (name == "innerHTML")
+			element.innerHTML = value
+		else
+			element.setAttribute(name, value);
 	}
 
 	public static function removeAttribute(element : Element, name : String) : Void {

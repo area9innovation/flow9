@@ -407,7 +407,7 @@ class TextClip extends NativeWidgetClip {
 		if (bochi > eochi || bochi < 0) return -1.0;
 		var advanceCorrection : Float = 0.0;
 
-		advanceCorrection = untyped (getAdvancedWidthsCorrection(tm, style, eochi, egchi, egb)-getAWCorrection(tm, style, bochi, bgchi, bgb)) / UPM * style.fontSize;
+		advanceCorrection = untyped (getAdvancedWidthsCorrection(tm, style, eochi, egchi, egb)-getAdvancedWidthsCorrection(tm, style, bochi, bgchi, bgb)) / UPM * style.fontSize;
 
 		var mtxb : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, bochi), style);
 		var mtxe : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, eochi), style);
