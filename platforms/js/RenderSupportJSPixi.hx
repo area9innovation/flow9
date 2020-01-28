@@ -1940,14 +1940,16 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
+	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };
-		} else {
+		} else if (RenderSupportJSPixi.RendererType != "html") {
 			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
 			clip.addChild(dropArea);
 			return function() { clip.removeChild(dropArea); };
+		} else {
+			return clip.addFileDropListener(maxFilesCount, mimeTypeRegExpFilter, onDone);
 		}
 	}
 
