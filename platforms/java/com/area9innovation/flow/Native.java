@@ -1404,6 +1404,20 @@ public class Native extends NativeHost {
 		return null;
 	}
 
+	public final Object[] keysConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		ArrayList<Object> ret = new ArrayList(); 
+		for (Enumeration<Object> e = concurrentMap.keys(); e.hasMoreElements();) {
+			ret.add(e.nextElement());
+		}
+		return ret.toArray();
+	}
+
+	public final int sizeConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.size();
+	}
+
 	// TODO: why don't we use threadpool here?
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
