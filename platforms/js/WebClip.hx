@@ -125,7 +125,7 @@ class WebClip extends NativeWidgetClip {
 				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
 					iframe.scrolling = "no"; // Obviousely it is flow page.
 				}
-			} catch(e : Dynamic) { Errors.report(e); }
+			} catch(e : Dynamic) { Errors.report(e); ondone(e);}
 		};
 	}
 
