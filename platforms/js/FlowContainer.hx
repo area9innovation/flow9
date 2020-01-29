@@ -160,6 +160,10 @@ class FlowContainer extends Container {
 				this.updateKeepNativeWidgetChildren();
 			}
 
+			if (untyped RenderSupportJSPixi.RendererType != "html" || this.isCanvas) {
+				this.invalidateTransform("removeChild");
+			}
+
 			this.emitEvent("childrenchanged");
 		}
 

@@ -2184,6 +2184,11 @@ class DisplayObjectHelper {
 			RenderSupportJSPixi.PixiRenderer.context.clearRect(0, 0, untyped clip.localBounds.maxX * RenderSupportJSPixi.PixiRenderer.resolution, untyped clip.localBounds.maxY * RenderSupportJSPixi.PixiRenderer.resolution);
 
 			RenderSupportJSPixi.RendererType = 'canvas';
+
+			if (transform != null) {
+				untyped tempWorldAlpha = clip.worldAlpha;
+				untyped clip.worldAlpha = clip.alpha;
+			}
 		}
 
 		if (clip.mask != null)
@@ -2205,7 +2210,6 @@ class DisplayObjectHelper {
 				untyped tempWorldTransform = clip.transform.worldTransform;
 				untyped tempWorldAlpha = clip.worldAlpha;
 				untyped clip.transform.worldTransform = clip.transform.worldTransform.clone().prepend(transform);
-				untyped clip.worldAlpha = clip.alpha;
 			}
 
 			untyped clip.renderCanvas(RenderSupportJSPixi.PixiRenderer);

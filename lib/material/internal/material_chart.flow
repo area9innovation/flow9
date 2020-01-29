@@ -1,12 +1,7 @@
-import material/internal/material_line;
-import material/internal/material_ellipsis;
-import tropic/selecttarray;
+import material/internal/material_dynamic_chart;
 
 export {
 	MChart2T(manager : MaterialManager, parent : MFocusGroup, m : MChart, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
-	stepLength(len : double, isDate : bool) -> double;
-
-	getChartColor(colors : [MColor], i : int) -> MColor;
 }
 
 MChart2T(manager : MaterialManager, parent : MFocusGroup, m : MChart, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -107,7 +102,7 @@ MDrawLineChart2T(
 	chartColors =
 		concat(
 			extractStruct(style, MLinesColors([])).colors,
-			mapi(linesStyle, \i, st -> extractStruct(st, getChartColor(standartChartColors, i)))
+			mapi(linesStyle, \i, st -> extractStruct(st, getChartColor(standartMChartColors, i)))
 		);
 
 	showVericalLines = contains(style, MShowVerticalLines());
@@ -776,38 +771,6 @@ drawLineCharts(manager : MaterialManager, parent : MFocusGroup, data : MChartDat
 	})
 }
 
-getPointNeighbours(r : [double], distDelta : double, i : int, acc1 : [int]) -> [int] {
-	foldi(tail(r), acc1, \k, acc, d ->
-		if ((d + distDelta) > r[i] && (d - distDelta) < r[i] && !contains(acc, k + 1) && (r[k + 1] != -doubleMax))
-			if (k + 1 == i)
-				arrayPush(acc, i)
-			else
-				getPointNeighbours(r, distDelta, k + 1, arrayPush(acc, k + 1))
-		else
-			acc)
-}
-
-stepLength(len : double, isDate : bool) -> double {
-	if (len == 0.0)
-		(if (isDate) msInDay else 0.5)
-	else {
-		lengthLimit = 1.0;
-		lengthDivider = 10.0;
-		lengthDivider2 = 2.0;
-		(if (len > lengthLimit) {
-			generateWhile2(len, \l -> l > lengthLimit, \l -> l / lengthDivider, \l -> l)
-			|> (\f -> pow2(lengthDivider, length(f) - 1))
-			|> (\f -> either(f, 1.0))
-		} else {
-			generateWhile2(len, \l -> l < lengthLimit, \l -> l * lengthDivider, \l -> l)
-			|> (\f -> pow2(lengthDivider, - length(f)))
-			|> (\f -> either(f, 1.0))
-		})
-		|> (\f2 -> if (len / f2 < 2.0) f2 / 2.0 else f2)
-		|> (\f2 -> if (len / f2 < 4.0) f2 / 2.0 else f2)
-	}
-}
-
 showPointHover(manager : MaterialManager, parent : MFocusGroup, hoverPointRadius : double, title : [string], xvalue : string, yvalue : [string], mColor : [MColor],
 	findMTag : () -> Point, px : double, py : [double], chartTextColor : MColor, chartScale : double, valuesLabels : Maybe<bool>, lineLabels : bool,
 	valuesPostfix : string, tooltipValuesPostfix : string, lastChartValues : [bool], renderStyle : [TRenderStyle], lightBackground : bool, chartHeight : double,
@@ -988,94 +951,4 @@ showPointHover(manager : MaterialManager, parent : MFocusGroup, hoverPointRadius
 			)
 		else f
 	)
-}
-
-getFirstControlPoints(rhs : [double]) -> [double] {
-	n = length(rhs);
-	x = ref arrayRepeat(0.0, n); // Solution vector.
-	tmp = ref ^x; // Temp workspace.
-
-	b = ref 2.0;
-	x := replace(^x, 0, rhs[0] / ^b);
-
-	fori(1, n - 1, \i -> {
-		tmp := replace(^tmp, i, 1.0 / ^b);
-		b := (if (i < n - 1) 4.0 else 3.5) - ^tmp[i];
-		x := replace(^x, i, (rhs[i] - ^x[i - 1]) / ^b);
-	});
-
-	fori(1, n - 1, \i -> {
-		x := replace(^x, n - i - 1, ^x[n - i - 1] - ^tmp[n - i] * ^x[n - i]);
-	});
-
-	^x;
-}
-
-getCurveControlPoints(knots : [Point]) -> Pair<[Point], [Point]> {
-	n = length(knots) - 1;
-
-	if (n < 1)
-		Pair([], [])
-	else if (n == 1) {
-		// Special case: Bezier curve should be a straight line.
-		// 3P1 = 2P0 + P3
-		px = (2.0 * knots[0].x + knots[1].x) / 3.0;
-		py = (2.0 * knots[0].y + knots[1].y) / 3.0;
-
-		// P2 = 2P1 – P0
-		Pair([Point(px, py)], [Point(2.0 * px - knots[0].x, 2.0 * py - knots[0].y)])
-	} else {
-		// Calculate first Bezier control points
-		// Right hand side vector
-		rhs = ref arrayRepeat(0.0, n);
-
-		// Set right hand side X values
-		fori(1, n - 2, \i -> {
-			rhs := replace(^rhs, i, 4.0 * knots[i].x + 2.0 * knots[i + 1].x);
-		});
-		rhs := replace(^rhs, 0, knots[0].x + 2.0 * knots[1].x);
-		rhs := replace(^rhs, n - 1, (8.0 * knots[n - 1].x + knots[n].x) / 2.0);
-
-		// Get first control points X-values
-		x = getFirstControlPoints(^rhs);
-
-		// Set right hand side Y values
-		fori(1, n - 2, \i -> {
-			rhs := replace(^rhs, i, 4.0 * knots[i].y + 2.0 * knots[i + 1].y);
-		});
-		rhs := replace(^rhs, 0, knots[0].y + 2.0 * knots[1].y);
-		rhs := replace(^rhs, n - 1, (8.0 * knots[n - 1].y + knots[n].y) / 2.0);
-
-		// Get first control points Y-values
-		y = getFirstControlPoints(^rhs);
-
-		// Fill output arrays.
-		firstControlPoints = ref arrayRepeat(zeroPoint, n);
-		secondControlPoints = ref ^firstControlPoints;
-
-		fori(0, n - 1, \i -> {
-			firstControlPoints := replace(^firstControlPoints, i, Point(x[i], y[i]));
-			if (i < n - 1)
-				secondControlPoints :=
-					replace(^secondControlPoints, i,
-						Point(2.0 * knots[i + 1].x - x[i + 1],
-							2.0 * knots[i + 1].y - y[i + 1]))
-			else
-				secondControlPoints :=
-					replace(^secondControlPoints, i,
-						Point((knots[n].x + x[n - 1]) / 2.0,
-							(knots[n].y + y[n - 1]) / 2.0))
-		});
-
-		Pair(^firstControlPoints, ^secondControlPoints)
-	}
-}
-
-standartChartColors : [MColor] =
-	[MBlue(500), MOrange(500), MGreen(500), MPurple(500), MRed(500), MTeal(500),
-		MLime(500), MBrown(500), MCyan(500)];
-
-getChartColor(colors : [MColor], i : int) -> MColor {
-	(if (length(colors) == 0) standartChartColors else colors)
-		|> (\arr -> arr[i % length(arr)])
 }
