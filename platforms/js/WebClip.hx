@@ -232,6 +232,7 @@ class WebClip extends NativeWidgetClip {
 	public function setDisableOverlay(disable : Bool) : Void {
 		if (disableOverlay && !disable) {
 			nativeWidget.removeChild(disableOverlay);
+			iframe.style.pointerEvents = 'auto';
 		} else if (disable) {
 			if (!disableOverlay) {
 				disableOverlay = Browser.document.createElement("div");
@@ -240,6 +241,7 @@ class WebClip extends NativeWidgetClip {
 
 			disableOverlay.style.display = "block";
 			nativeWidget.appendChild(disableOverlay);
+			iframe.style.pointerEvents = 'none';
 		}
 	}
 
