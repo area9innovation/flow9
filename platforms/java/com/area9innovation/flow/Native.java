@@ -1449,7 +1449,7 @@ public class Native extends NativeHost {
 		}
 	}
 
-	public final Object runProcess(String command, Object[] args, String currentWorkingDirectory,
+	public final Object runSystemProcess(String command, Object[] args, String currentWorkingDirectory,
 					Func1<Object, String> onOut, Func1<Object, String> onErr, Func1<Object, Integer> onExit) {
 		try {
 			String[] cmd = new String[args.length + 1];
