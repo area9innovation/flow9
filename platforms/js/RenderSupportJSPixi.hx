@@ -694,8 +694,8 @@ class RenderSupportJSPixi {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
 			} else {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightdown");
@@ -718,8 +718,8 @@ class RenderSupportJSPixi {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			} else {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightup");
@@ -747,8 +747,8 @@ class RenderSupportJSPixi {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
 			} else {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
 
 				emit("mousemove");
 			}
@@ -793,15 +793,15 @@ class RenderSupportJSPixi {
 				onKeyDownAccessibilityZoom(e);
 			}
 
-			MousePos.x = e.pageX;
-			MousePos.y = e.pageY;
+			MousePos.x = e.clientX;
+			MousePos.y = e.clientY;
 
 			emit("keydown", parseKeyEvent(e));
 		});
 
 		addNonPassiveEventListener(Browser.document.body, "keyup", function(e : Dynamic) {
-			MousePos.x = e.pageX;
-			MousePos.y = e.pageY;
+			MousePos.x = e.clientX;
+			MousePos.y = e.clientY;
 
 			emit("keyup", parseKeyEvent(e));
 		});
