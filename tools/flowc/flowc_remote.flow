@@ -1,3 +1,4 @@
+import math/stringmath;
 import text/serialize;
 import net/http;
 import tools/common/config;
@@ -9,11 +10,11 @@ export {
 		onData: (flow) -> void, 
 		onError : (string) -> void, 
 		onRunComplete : (int) -> void,
-		onServerError : (int) -> void
+		onServerError : (int, string) -> void
 	) -> void;
 }
 
-runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string) -> void, onRunComplete : (int) -> void, onServerError : (int) -> void) -> void {
+runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string) -> void, onRunComplete : (int) -> void, onServerError : (int, string) -> void) -> void {
 	serverUrl = 
 		"http://localhost:" +
 		getConfigParameterDef(conf.config, "server-port", "10001");
@@ -32,12 +33,14 @@ runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string
 			lookupTreeDef(conf.config, "working-dir", cwd)
 		)
 	);
+	start_timestamp = timestamp();
 	serialized_server_job = 
 		isConfigParameterSet(conf.config, "compile-expression") || 
 		isConfigParameterTrue(conf.config, "dump-program");
-	httpCustomRequest(
+	ping_request = isConfigParameterSet(conf.config, "ping");
+	httpCustomRequestWithTimeout(
 		serverUrl,
-		GET(), [], RequestPayload(serialize(patchedConfig)),
+		POST(), [], RequestPayload(serialize(patchedConfig)),
 		\status, data, headers -> {
 			code = status - 200;
 			if (code == 0) {
@@ -50,15 +53,23 @@ runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string
 					}
 				} else {
 					onData(data);
+					if (ping_request) {
+						onData("ping completed in: " + d2st(timestamp() - start_timestamp, 2) + " ms");
+					}
 				}
 				onRunComplete(0);
 			} else if (0 < code && code < 64) {
 				onError("Compilation error " + i2s(code) + "\n" + data);
 				onRunComplete(code);
 			} else {
-				onServerError(status);
+				onServerError(status, data);
 			}
 		},
-		false
+		false,
+		if (ping_request) {
+			s2i(getConfigParameterDef(conf.config, "ping-timeout", "5000")) // ms
+		} else {
+			s2i(getConfigParameterDef(conf.config, "request-timeout", "0")) // ms
+		}
 	)
 }
