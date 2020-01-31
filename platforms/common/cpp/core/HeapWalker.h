@@ -46,14 +46,16 @@ struct FlowVarReference {
         switch (type) {
 #ifdef FLOW_COMPACT_STRUCTS
         case R_FIELD:
-            if (field.def->fn_set(field.obj->Bytes + field.def->offset, val))
+            if (field.def->fn_set(field.obj->Bytes + field.def->offset, val)) {
                 field.runner->RegisterWrite(field.obj);
-            else
+            	*slot = val;
+            	return true;
+            } else {
                 return false;
+            }
 #endif
-        default: *slot = val;
+        default: *slot = val; return true;
         }
-        return true;
     }
 };
 

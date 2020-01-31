@@ -14,11 +14,22 @@ export {
 	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 	keepFormTogether(form : Form) -> bool;
 
-	WigiStoryWidthManager(paragraph : [WigiParagraphWidthManager], width : Behaviour<double>, constructor : () -> () -> void);
-	WigiParagraphWidthManager(storyWidth : Behaviour<double>, width : DynamicBehaviour<double>);
+	WigiStoryWidthManager(
+		paragraphManagers : [WigiParagraphWidthManager],
+		getParagraphManagerAt: (int) -> WigiParagraphWidthManager,
+		width : Behaviour<double>,
+		infoOnly : bool, /* do not control width of paragraphs, just gather their widths */
+		constructor : () -> () -> void,
+	);
+	WigiParagraphWidthManager(
+		storyWidth : Behaviour<double>,
+		width : DynamicBehaviour<double>,
+		infoOnly : bool
+	);
 
-	makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidthManager;
-	dummyWigiParagraphWidthManager = WigiParagraphWidthManager(const(0.0), make(0.0));
+	makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager;
+	dummyWigiParagraphWidthManager = WigiParagraphWidthManager(const(0.0), make(0.0), true);
+	dummyWigiStoryWidthManager = WigiStoryWidthManager([], \__ -> dummyWigiParagraphWidthManager, zero, true, \ -> nop);
 }
 
 // TODO:
@@ -102,6 +113,8 @@ renderParagraph(
 ) -> Form {
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
+	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
+	needIndent = genIndent != 0.0;
 
 	interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
 
@@ -118,10 +131,10 @@ renderParagraph(
 	topLineBaseline = contains(s, TopLineBaseline());
 
 	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
+	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 	isParagraphMarked = containsStruct(s, ParagraphMarked());
-	hasWidthManager = widthManager != dummyWigiParagraphWidthManager;
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// Expand elements into word-units
@@ -135,11 +148,21 @@ renderParagraph(
 
 	renderParaLinesFn = \lines, storyWidth -> renderParaLines(
 		storyWidth, lines, tightWidth, alignment, interlineSpacing,
-		topLineBaseline, interactiveStyles, rtl, isParagraphMarked
+		topLineBaseline, interactiveStyles, rtl, isParagraphMarked, genIndent
 	);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = if (tightWidth && hasWidthManager) {
+	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager) {
+		Select(linesB, \lines -> renderParaLinesFn(lines, getValue(aw)).first);
+	} else if (widthManager.infoOnly) {
+		// in this non-TightWidth case we just inform WidthManager about our width
+		// we will not take story width into account in this case, but use availableWidth as usual
+		Select(linesB, \lines -> {
+			rendered = renderParaLinesFn(lines, getValue(aw));
+			nextDistinct(widthManager.width, rendered.second);
+			rendered.first
+		});
+	} else {
 		Select2(linesB, widthManager.storyWidth, \lines, storyWidth -> {
 			rendered = renderParaLinesFn(
 				lines,
@@ -150,8 +173,6 @@ renderParagraph(
 			deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, rendered.second));
 			rendered.first
 		});
-	} else {
-		Select(linesB, \lines -> renderParaLinesFn(lines, getValue(aw)).first);
 	}
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
@@ -190,14 +211,17 @@ renderParagraph(
 				// Ignore negative widths
 				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
-				newLines = reflowParaWords(words, w, indent);
+				newLines = reflowParaWords(words, w - genIndent, indent, isParagraphMarked);
+				nextDistinct(linesCountB, length(newLines));
 
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				next(linesB, newLines);
 			};
 
 			uns = concatA([
-				[subscribe(aw, \v -> updateFn(v))],
+				[
+					subscribe(aw, \v -> updateFn(v)),
+				],
 				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
 					subscribe2(update, \u -> {
@@ -213,7 +237,7 @@ renderParagraph(
 
 			\ -> applyall(uns)
 		}
-	);
+	)
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -369,9 +393,9 @@ getLineIndent(paraIndent : double, lineIndex : int) -> double {
 }
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
-reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double) -> [ParaLine] {
+reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double, isFirstMark : bool) -> [ParaLine] {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
-	text = reflowParaWords2(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
+	text = reflowParaWords2(words, firstLineWidth, firstLineWidth, [], [], paraIndent, isFirstMark);
 	if (isBiDiEnabled())
 		zipWith(
 			text,
@@ -393,6 +417,7 @@ reflowParaWords2(
 	currentWords : [ParaWord],
 	lines : [ParaLine],
 	paraIndent : double,
+	isFirstMark : bool
 ) -> [ParaLine] {
 	addLine = \cw, indent -> {
 		if (cw != []) arrayPush(lines, ParaLine(cw, indent)) else lines;
@@ -464,7 +489,7 @@ reflowParaWords2(
 
 		switch (word.word : ParaAtomic) {
 			NewLine(): {
-				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 			}
 			LinePart(f, p, e): {
 				width = geParaWordWidth(word);
@@ -473,15 +498,15 @@ reflowParaWords2(
 				if (currentWords == []) {
 					// If it is the first item on the line
 					paraword = makeParaWord2(word, f);
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
 					paraword = makeParaWord2(word, p);
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else {
 					// If it is the last item on the line
 					paraword = makeParaWord2(word, e);
-					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
+					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent, false);
 				}
 			}
 			Space(s): {
@@ -489,10 +514,10 @@ reflowParaWords2(
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = geParaWordWidth(word);
 				if (width < remaining) {
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent, false);
 				} else {
 					detachWord(word, true);
-					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 				}
 			}
 			default: {
@@ -510,7 +535,8 @@ reflowParaWords2(
 				form = getWordForm(word);
 
 				// Number of words that should be on the same line
-				wordsCount = if (keepFormTogether(form)) {
+				keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isFirstMark && i <= 1);
+				wordsCount = if (keepFormTogetherOrWithMark(form, 0)) {
 					iteriUntil(words, \i, _word -> {
 						switch (_word.word) {
 							NewLine(): true;
@@ -521,7 +547,7 @@ reflowParaWords2(
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-								if (keepFormTogether(f) || ^width == 0.0) {
+								if (keepFormTogetherOrWithMark(f, i) || ^width == 0.0) {
 									width := ^width + geParaWordWidth(_word);
 									false;
 								} else {
@@ -546,9 +572,9 @@ reflowParaWords2(
 						));
 					});
 
-					reflowParaWords2(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent);
+					reflowParaWords2(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent, false);
 				} else {
-					reflowParaWords2(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent);
+					reflowParaWords2(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent, false);
 				}
 			}
 		}
@@ -610,22 +636,9 @@ renderParaLines(
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
 	isMarked : bool,
+	generalIndent : double
 ) -> Pair<Form, double> {
 	lasti = length(lines) - 1;
-
-	// we need to find out the width of the longest line (including indent)
-	// to define the width of a paragraph in tightWidth mode
-	// it is possible to do in StartAlign case only because other alignments use fillers
-	width = if (tightWidth && isStartAlignment(alignment)) {
-		fold(lines, 0.0, \acc : double, line : ParaLine -> {
-			optimizedLine = getOptimizedLine(line.words, alignment);
-			metrics = map(optimizedLine, \p -> getValue(p.metrics));
-			lw = line.indent + fold(metrics, 0.0, \ac, m -> ac + m.width);
-			max(acc, lw);
-		});
-	} else {
-		availableWidth
-	}
 
 	a : ParaLineAcc = foldi(lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
@@ -638,7 +651,11 @@ renderParaLines(
 			} else {
 				alignment;
 			}
-		f = RenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, styleTree, rtl, isMarked);
+		f = RenderLine(
+			acc.y, line.words, availableWidth, tightWidth,
+			lineAlignment, line.indent + generalIndent,
+			i, styleTree, rtl, isMarked
+		);
 		nwidth = max(acc.width, f.width);
 		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
 		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
@@ -653,7 +670,7 @@ renderParaLines(
 	});
 
 	Pair(
-		Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) a.width else max(width, a.width), a.y)),
+		Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) a.width else max(availableWidth, a.width), a.y)),
 			Group(list2array(a.lines))
 		)),
 		a.width
@@ -927,15 +944,20 @@ setWordForm(word: ParaWord, form: GhostForm) -> ParaWord {
 	ParaWord(word.word, word.metrics, word.ghosted, form, word.interactivityIdM);
 };
 
-makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidthManager {
-	if (tightWidth) {
-		paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
-		storyWidth = make(0.0);
+makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager {
+	paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
+	storyWidth = make(0.0);
 
-		WigiStoryWidthManager(
-			map(paragraphWidths, \pw -> WigiParagraphWidthManager(storyWidth, pw)),
-			storyWidth,
-			\ -> {
+	paragraphManagers = map(paragraphWidths, \pw -> WigiParagraphWidthManager(storyWidth, pw, infoOnly));
+	WigiStoryWidthManager(
+		paragraphManagers,
+		\i -> elementAt(paragraphManagers, i, dummyWigiParagraphWidthManager),
+		storyWidth,
+		infoOnly,
+		\ -> {
+			if (infoOnly) {
+				nop
+			} else {
 				maxWidth = arrayMaxu(paragraphWidths);
 				uns = [
 					maxWidth.second,
@@ -943,12 +965,6 @@ makeWigiStoryWidthManager(paragraphs : int, tightWidth : bool) -> WigiStoryWidth
 				];
 				\ -> applyall(uns);
 			}
-		)
-	} else {
-		WigiStoryWidthManager(
-			generate(0, paragraphs, \__ -> dummyWigiParagraphWidthManager),
-			zero,
-			\ -> nop
-		)
-	}
+		}
+	)
 }

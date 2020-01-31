@@ -24,8 +24,10 @@ StackManager::~StackManager() {
 
 void StackManager::slotStackInfo(const QString& descr) {
 	stack_->clearContents();
+	QTextStream(stdout) << "Debug info:" << endl << descr << endl;
 	MiResult locals = mi_parse(descr);
 	if (!locals.value() || locals.value()->emptyList()) {
+		QTextStream(stdout) << "empty MiResult" << endl;
 		return;
 	}
 	for (MiResult& frameDescr : locals.value(QLatin1String("stack"))->resList()->list) {

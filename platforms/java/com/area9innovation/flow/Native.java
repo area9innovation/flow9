@@ -1562,9 +1562,9 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final Object getConcurrentHashMap(Object map, Object key) {
+	public final Object getConcurrentHashMap(Object map, Object key, Object defval) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
-		return concurrentMap.get(key);
+		return concurrentMap.containsKey(key) ? concurrentMap.get(key) : defval;
 	}
 
 	public final Boolean containsConcurrentHashMap(Object map, Object key) {
@@ -1581,6 +1581,20 @@ public class Native extends NativeHost {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		concurrentMap.remove(key);
 		return null;
+	}
+
+	public final Object[] keysConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		ArrayList<Object> ret = new ArrayList(); 
+		for (Enumeration<Object> e = concurrentMap.keys(); e.hasMoreElements();) {
+			ret.add(e.nextElement());
+		}
+		return ret.toArray();
+	}
+
+	public final int sizeConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.size();
 	}
 
 	// TODO: why don't we use threadpool here?

@@ -7,6 +7,7 @@ import fusion_utils;
 import fform/renderfform;
 import tropic/tropic_manager;
 import fform/renderform3d;
+import fform/fpdf;
 
 export {
 	// A fixed size, empty block
@@ -203,6 +204,7 @@ export {
 	TRotate90(tropic : Tropic) -> Tropic;
 	// Rotate 90 degrees counter-clockwise, including the sizes
 	TRotate90Left(tropic : Tropic) -> Tropic;
+	TRotate90Right(tropic : Tropic) -> Tropic;
 	// Rotate 180 degrees and translate by size
 	TRotate180(enabled : Transform<bool>, size : Tropic) -> (Tropic) -> Tropic;
 
@@ -305,9 +307,22 @@ export {
 	// Helper for dynamic text
 	TDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic;
 
+	THTMLText(text : string, style : [TCharacterStyle]) -> Tropic;
+	THTMLDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic;
+
 	// TDebug that shows metrics on top of the tropic
 	TDebugMetrics(c : int, tr : Tropic) -> Tropic;
 	TDebugPositionScale(c : int, tr : Tropic) -> Tropic;
+
+	TDebugRed(t : Tropic) -> Tropic { TDebug(red, t); };
+	TDebugGreen(t : Tropic) -> Tropic { TDebug(green, t); };
+	TDebugBlue(t : Tropic) -> Tropic { TDebug(blue, t); };
+	TDebugPurple(t : Tropic) -> Tropic { TDebug(purple, t); };
+
+	TDebugMetricsRed(t : Tropic) -> Tropic { TDebugMetrics(red, t); };
+	TDebugMetricsGreen(t : Tropic) -> Tropic { TDebugMetrics(green, t); };
+	TDebugMetricsBlue(t : Tropic) -> Tropic { TDebugMetrics(blue, t); };
+	TDebugMetricsPurple(t : Tropic) -> Tropic { TDebugMetrics(purple, t); };
 
 	TDebugConstruct(tag : string, tr : Tropic) -> Tropic;
 
@@ -352,6 +367,16 @@ export {
 	// Works only in js with 'html' renderer, for other targets identical to regular clip
 	// WARNING: Doesn't support native widgets making it applicable only to groups of graphical objects
 	TCanvas(content : Tropic) -> Tropic;
+
+
+	loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) -> void;
+
+	TPdfDocumentStyle ::= OnError;
+
+	TPdfDocument(
+		pageCount : int,
+		getPageView : (page : Transform<int>) -> Tropic,
+	);
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -480,7 +505,7 @@ TGrid(c : [[Tropic]]) -> Tropic {
 }
 
 TColsDir(t : [Tropic], isRTL : bool) -> Tropic {
-	if (isRTL) TCols(reverseA(t)) else TCols(t)
+	TCols(if (isRTL) reverseA(t) else t)
 }
 
 TCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
@@ -496,7 +521,7 @@ TCols2A(t1 : Tropic, t2 : Tropic) -> Tropic {
 }
 
 TBaselineColsDir(t : [Tropic], isRTL : bool) -> Tropic {
-	if (isRTL) TBaselineCols(reverseA(t)) else TBaselineCols(t)
+	TBaselineCols(if (isRTL) reverseA(t) else t)
 }
 
 TBaselineCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
@@ -747,23 +772,21 @@ TFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphi
 
 			gstyle = tgraphicsStyle2graphicsStyle(style);
 
-			makeFGraphics = \w, h ->
-				FGraphics(
-					fselect(radius, FLift(\r ->
-						if (r == 0.)
-							rectangle(0., 0., w, h)
-						else
-							perfectRoundedRect(w, h, r)
-					)),
-					const(gstyle)
-				);
+			isconst = b1.xConstant && b1.yConstant;
+			wd = if (isconst) const(fgetValue(b1.metrics.width)) else b1.metrics.width;
+			hgt = if (isconst) const(fgetValue(b1.metrics.height)) else b1.metrics.height;
 
 			TAcc(b1 with form =
 				FGroup([
-					if (b1.xConstant && b1.yConstant)
-						makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
-					else
-						FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
+					FGraphics(
+						fselect3(radius, wd, hgt, \r, w, h ->
+							if (r == 0.)
+								rectangle(0., 0., w, h)
+							else
+								perfectRoundedRect(w, h, r)
+						),
+						const(gstyle)
+					),
 					b1.form
 				], false)
 			)
@@ -783,7 +806,9 @@ TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double,
 				TAcc(b1 with form =
 					FGroup([
 						FGraphics(
-							fselect2(b1.metrics.width, b1.metrics.height, FLift2(\w, h -> customRect(w, h, tl, tr, br, bl, tlRounded, trRounded, brRounded, blRounded))),
+							fselect2(b1.metrics.width, b1.metrics.height, FLift2(\w, h ->
+								customRect(w, h, tl, tr, br, bl, tlRounded, trRounded, brRounded, blRounded)
+							)),
 							const(gstyle)
 						),
 						b1.form
@@ -953,7 +978,7 @@ TFillXHT(hgt : Transform<double>) -> Tropic {
 			zero,
 			const(false),
 			isFConst(x),
-			true,
+			isFConst(hgt),
 			[]
 		)
 	})
@@ -1003,7 +1028,7 @@ TFillWYT(wd : Transform<double>) -> Tropic {
 			zero,
 			const(1.),
 			const(false),
-			true,
+			isFConst(wd),
 			isFConst(y),
 			[]
 		)
@@ -1242,13 +1267,39 @@ TRotate90(tropic : Tropic) -> Tropic {
 	})
 }
 
-TRotate90Left(tropic: Tropic) -> Tropic {
+TRotate90Left(tropic : Tropic) -> Tropic {
 	TransformTAcc(\t2a, p, s, mo -> {
 		bf = t2a(tropic, TParentInfo(p.maxY, p.maxX, p.environment, p.transformMatrix), s, mo);
 
 		TAcc(
 			FRotate(const(-90.), bf.form)
-			|> (\f -> FTranslate(const(0.), bf.metrics.width, f)),
+			|> (\f -> FTranslate(zero, bf.metrics.width, f)),
+			TFormMetrics(
+				bf.metrics.height,
+				bf.metrics.width,
+				bf.metrics.width
+			),
+			bf.minHeight,
+			bf.minWidth,
+			bf.maxHeight,
+			bf.maxWidth,
+			bf.yFillers,
+			bf.xFillers,
+			bf.addFillers,
+			bf.yConstant,
+			bf.xConstant,
+			bf.disposers
+		)
+	})
+}
+
+TRotate90Right(tropic : Tropic) -> Tropic {
+	TransformTAcc(\t2a, p, s, mo -> {
+		bf = t2a(tropic, TParentInfo(p.maxY, p.maxX, p.environment, p.transformMatrix), s, mo);
+
+		TAcc(
+			FRotate(const(90.), bf.form)
+			|> (\f -> FTranslate(bf.metrics.height, zero, f)),
 			TFormMetrics(
 				bf.metrics.height,
 				bf.metrics.width,
@@ -1976,6 +2027,14 @@ TDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic {
 		TParagraph(text, style);
 }
 
+THTMLText(text : string, style : [TCharacterStyle]) -> Tropic {
+	TText(text, replaceStruct(style, EscapeHTML(false)));
+}
+
+THTMLDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic {
+	TDynamicText(text, replaceStruct(style, EscapeHTML(false)));
+}
+
 TDebugMetrics(c : int, tr : Tropic) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b = TDebug(c, tr) |> t2a;
@@ -1983,7 +2042,7 @@ TDebugMetrics(c : int, tr : Tropic) -> Tropic {
 		TAcc(b with form =
 			FGroup2(
 				b.form,
-				FMutable(fselect2(b.metrics.width, b.metrics.height, FLift2(\wd, hgt -> FText(const(d2s(wd) + "x" + d2s(hgt)), [])))),
+				FText(fselect2(b.metrics.width, b.metrics.height, FLift2(\wd, hgt -> d2s(wd) + "x" + d2s(hgt))), []),
 				false
 			)
 		)
@@ -2526,4 +2585,47 @@ TCanvas(content : Tropic) -> Tropic {
 
 		TAcc(b with form = FCanvas(b.form));
 	})
+}
+
+filterFPdfDocumentStyle(style : [TPdfDocumentStyle]) -> [FPdfDocumentStyle] {
+	map(style, \st ->
+		switch (st) {
+			OnError(__): st;
+		}
+	)
+}
+
+loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) {
+	makeTViewFn = \document -> \page -> {
+		availableWH = makeWH();
+		metrics = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
+		tMetrics = TFormMetrics(
+			fselect(metrics, FLift(\m -> m.width)),
+			fselect(metrics, FLift(\m -> m.height)),
+			fselect(metrics, FLift(\m -> m.baseline))
+		);
+
+		TInspect(
+			[
+				IAvailable(availableWH)
+			],
+			TFForm(
+				document.getPageView(page, [FPdfMetrics(metrics)], availableWH),
+				tMetrics
+			)
+		)
+	}
+
+	loadFPdfDocument(
+		url,
+		\fPdfDocument -> {
+			onLoad(
+				TPdfDocument(
+					fPdfDocument.pageCount,
+					makeTViewFn(fPdfDocument)
+				)
+			)
+		},
+		filterFPdfDocumentStyle(style)
+	)
 }

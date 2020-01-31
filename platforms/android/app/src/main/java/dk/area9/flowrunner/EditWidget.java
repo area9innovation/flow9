@@ -10,7 +10,6 @@ import android.text.InputFilter;
 import android.text.InputType;
 import android.text.Spanned;
 import android.text.method.ScrollingMovementMethod;
-import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -246,7 +245,7 @@ class EditWidget extends NativeWidget {
                     }
 
                     if (!readonly) {
-                        ( (EditText)textView ).setSelection(sel_start, sel_stop);
+                        ( (EditText)textView ).setSelection(Math.min(sel_start, text.length()), Math.min(sel_stop, text.length()));
                     }
 
                 textView.setOnFocusChangeListener(new OnFocusChangeListener() {

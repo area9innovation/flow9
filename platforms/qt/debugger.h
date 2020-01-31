@@ -156,6 +156,7 @@ private:
     std::string cur_list_file;
     int cur_list_line;
     int print_length, print_depth;
+    bool shallow_frame_print = true;
 
     void loadFile(const std::string &file);
     void printLines(const std::string &file, int min_line, int max_line);

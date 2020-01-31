@@ -7,6 +7,7 @@ import tools/flowc/type_helpers;
 import tools/flowc/flow_ast_mnemonics;
 import tools/flowc/flowc_println;
 import tools/flowc/typechecker/initorder;
+import tools/flowc/manipulation/common;
 
 export {
 	// Extract the imports of a file
@@ -263,7 +264,7 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 					fcexp = desugarFcExp(dacc, brace);
 					type = FcTypeFunction2(targs, rettype, ci);
 
-					lambda = FcLambda(map(targs, \ta -> resolveFunArg2(dacc.tyvarIdGroup, ta, ci)), fcexp, info());
+					lambda = FcLambda(map(targs, \ta -> resolveFunArg2(dacc.tyvarIdGroup, ta, ci)), fcexp, FcInfo(ref None(), brace.start, brace.end));
 
 					FcFunctionDec(id, Some(lambda), type, info(), info());
 				} else {
@@ -271,7 +272,7 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 					rettype = None();
 					fcexp = desugarFcExp(dacc, expr);
 					type = FcTypeFunction2(targs, rettype, ci);
-					lambda = FcLambda(map(targs, \ta -> resolveFunArg2(dacc.tyvarIdGroup, ta, ci)), fcexp, info());
+					lambda = FcLambda(map(targs, \ta -> resolveFunArg2(dacc.tyvarIdGroup, ta, ci)), fcexp, FcInfo(ref None(), expr.start, expr.end));
 					FcFunctionDec(id, Some(lambda), type, info(), info());
 				}
 				treePushToArrayValue(acc, id, fn);
@@ -286,7 +287,6 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 			targs = if (args == []) [] else desugarArgTypes(dacc, args[0]);
 			rtype = desugarFcType(dacc, rt);
 			type = FcTypeFunction2(targs, rtype, FcInfo2(t.start, t.end));
-
 			treePushToArrayValue(acc, id, FcFunctionDec(id, None(), type, info(), info()));
 		} else {
 			acc;
@@ -831,10 +831,10 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 			FcCallPrim(primop, [acc, desugarFcExp(dacc, left)], finfo());
 		});
 	} else if (st.rule == st_term) {
-		fcexp = desugarFcExp(dacc, get_flow_factor(st));
+		fcexp = desugarFcExp(dacc, get_flow_maybeExp(st));
 		muls = get_flow_multiExp_s(st);
 		fold(muls, fcexp, \acc, mul -> {
-			left = get_flow_factor(mul);
+			left = get_flow_maybeExp(mul);
 			op = get_flow_multiOp(mul);
 			ops = grabSTText(op, info.content);
 			primop = if (ops == "*") FcMulPrim()
@@ -845,6 +845,24 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 					FcMulPrim()
 				};
 			FcCallPrim(primop, [acc, desugarFcExp(dacc, left)], finfo());
+		});
+	} else if (st.rule == st_maybeExp) {
+		fcexp = desugarFcExp(dacc, get_flow_factor(st));
+		maybes = get_flow_maybeOp_s(st);
+		fold(maybes, fcexp, \acc, maybe -> {
+			somest = get_flow_factor(maybe);
+			some = desugarFcExp(dacc, somest);
+			nonest = get_flow_nonefactor(maybe);
+			none = desugarFcExp(dacc, nonest);
+			switch (acc) {
+				FcVar(__, __): {
+					instantiateMaybePrim(dacc, acc, some, none, finfo);
+				}
+				default: {
+					fcPrintln("Expected var on left side of ??", dacc.env.program.acc.config.threadId);
+					acc;
+				}
+			}
 		});
 	} else if (st.rule == st_factor) {
 		if (st.choice == 0) {
@@ -879,7 +897,7 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 				// Call
 				arglist = get_flow_arglist_s(postfix);
 				args = if (arglist == []) [] else desugarArglist(dacc, arglist[0]);
-				desugarFcCall(dacc, FcCall(acc, args, FcInfo(ref None(), postfix.start, postfix.end)));
+				desugarFcCall(dacc, FcCall(acc, args, FcInfo(ref None(), st.start, postfix.end)));
 			} else if (postfix.choice == 1) {
 				id = grabSTText(get_flow_id(postfix), info.content);
 				FcCallPrim(FcFieldPrim(id), [acc], FcInfo(ref None(), postfix.start, postfix.end));
@@ -1022,7 +1040,7 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 		typars = ref makeTree();
 
 		body = FcSwitch(
-				FcVar(varname, finfo()), 
+				FcVar(varname, FcInfo(ref None(), se.start, se.end)), 
 				st3,
 				concatA(map(cases, \c : SyntaxTree -> {
 					struct = if (c.choice == 0) {
@@ -1073,7 +1091,8 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 								switch (uniondef) {
 									None(): {
 										refArrayPush(dacc.errors, FcError("Unknown struct or union '" + struct + "' in switch", [FcPosition(info.flowfile, c.start, c.end)]));
-										[];
+										// Construct a case anyways
+										[FcCase(struct, argnames, body, body.info)];
 									}
 									Some(uf): {
 										// First, expand "local" unions
@@ -1137,7 +1156,6 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 									)
 								});
 								[FcCase(struct, argnames, bb, FcInfo(bb.info.type, c.start, c.end))];
-
 							}
 						}
 
@@ -1720,4 +1738,60 @@ lookupDesugarTypename(dacc : DesugarAcc, typename : FcTypeName) -> FcType {
 		}
 		Some(fs): fs;
 	}
+}
+
+instantiateMaybePrim(dacc : DesugarAcc, var : FcVar, some : FcExp, none : FcExp, info : () -> FcInfo) -> FcExp {
+	// OK, replace <var> ? <some> : <none>
+	// with
+	// switch (<var> : Maybe<?>) {
+	// None(): <none>;
+	// Some(<value>): {<value> = <var>.value; replace <var> with <value> in <some>;}
+
+	valueInfo = info();
+	someValue = FcVar("_value_", valueInfo);
+
+	someReplace = mapFcExp(some, \e -> {
+		switch (e) {
+			FcVar(somevar, __): {
+				if (somevar == var.name) {
+					someValue
+				} else e;
+			}
+			default: e;
+		}
+	});
+
+	info2 = FcInfo2(valueInfo.start, valueInfo.end);
+	valueType = makeFcTyVar2(dacc.tyvarIdGroup, info2);
+
+	someBind = FcLet(
+		someValue.name,
+		valueType,
+		FcCallPrim(
+			FcFieldPrim("value"),
+			[var],
+			info()
+		),
+		someReplace,
+		info(),
+	);
+
+	s = FcSwitch(var,
+		FcTypeName("Maybe", [
+			valueType
+		], info2),
+		[
+			FcCase("Some", [someValue.name], someBind, info()),
+			FcCase("None", [], none, info())
+		],
+		info()
+	);
+	/*
+	println(
+		prettyFcExp(
+			FcPretty(true, true, makeTree(), makeTree()),
+			s
+		)
+	);*/
+	s;
 }

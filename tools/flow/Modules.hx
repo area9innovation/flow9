@@ -104,7 +104,7 @@ class Modules {
 	function desugarDeclaration(decl : Flow) : Flow {
 		return FlowUtil.mapFlow(decl, function(f) {
 			return switch (f) {
-				case Call(closure, arguments, pos) : {
+				case Call(clos, arguments, pos) : {
 					var al = arguments.length;
 					var newArguments =
 						if (al > 0) {
@@ -118,7 +118,7 @@ class Modules {
 									var sourceRef = arguments[1];
 									var newArgs = new FlowArray<Flow>();
 									var newFields = new Map<String, Flow>();
-									var typeName = switch (closure) {
+									var typeName = switch (clos) {
 										case VarRef(name, p) : name;
 										default : "";
 									}
@@ -175,7 +175,7 @@ class Modules {
 							}
 						} else
 							arguments;
-					Call(closure, newArguments, pos);
+					Call(clos, newArguments, pos);
 				}
 				default : f;
 			}

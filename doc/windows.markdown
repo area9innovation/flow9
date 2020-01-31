@@ -21,7 +21,7 @@ Now check that you can compile the compiler:
 # Install VC runtime
 
 Run
-	C:\flow9\platforms\qt\bin\windows\vcredist_x64.exe
+	C:\flow9\platforms\qt\bin\windows\vc_redist.x64.exe
 
 to install the Visual Studio runtime needed for our flow bytecode runner.
 

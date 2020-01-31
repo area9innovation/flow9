@@ -204,14 +204,14 @@ class FlowGraphics extends Graphics {
 		}
 
 		graphicsChanged = true;
-		invalidateTransform('endFill');
+		this.invalidateTransform('endFill');
 
 		if (untyped isMask || this.isCanvas) {
 			if (isNativeWidget) {
-				deleteNativeWidget();
+				this.deleteNativeWidget();
 			}
 		} else if (!isEmpty) {
-			initNativeWidget();
+			this.initNativeWidget();
 		}
 
 		return newGraphics;
@@ -251,7 +251,7 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (width > 0 && height > 0) {
-			radius = Math.abs(radius);
+			radius = Math.abs(Math.min(radius, Math.min(width / 2.0, height / 2.0)));
 
 			if (radius > 0) {
 				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
@@ -378,7 +378,7 @@ class FlowGraphics extends Graphics {
 			isSvg = false;
 
 			if (parent != null) {
-				invalidateStage();
+				this.invalidateStage();
 			}
 
 			return newGraphics;
@@ -388,15 +388,15 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (untyped isMask || this.isCanvas) {
+		if (untyped this.isMask || this.isCanvas || this.isEmpty) {
 			if (isNativeWidget) {
-				deleteNativeWidget();
+				this.deleteNativeWidget();
 			}
 
 			return;
-		} else if (!isEmpty) {
-			initNativeWidget();
 		}
+
+		this.initNativeWidget();
 
 		if (!graphicsChanged) {
 			return;
@@ -644,10 +644,10 @@ class FlowGraphics extends Graphics {
 			return;
 		}
 
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipID();
+		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

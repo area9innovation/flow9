@@ -38,13 +38,33 @@ disabledTextOpacity = 0.5;
 secondaryTextOpacityDark = 0.54;
 disabledTextOpacityDark = 0.38;
 
+getDisabledTextOpacity(dark : bool) -> double {
+	commonMultiplier = \base, new -> new / (1.0 - base);
+	l1 = \base, new -> (new - base); // "/1.0" omitted
+	l2 = \base, new -> (new - 1.0) / base;
+	f = \base, new, text -> { // quadratic interpolation from base opacity and current opacity values
+		commonMultiplier(base, new) * (l1(base, new) - text * l2(base, new));
+	};
+	if (dark) {
+		f(disabledItemOpacityDarkBase, ^disabledItemOpacityDark, disabledTextOpacityDark);
+	} else {
+		f(disabledItemOpacityBase, ^disabledItemOpacity, disabledTextOpacity);
+	};
+}
+
 currentMLang = ref "";
 currentMLangFont = ref "";
 
 MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic {
+	dynamicColor = maybeMap(
+		tryExtractStruct(style, MDynamicColor(const(MWhite()))),
+		\dc -> FDynamicColor(fselect(dc.color, FLift(MColor2int)))
+	);
+
 	textStyle =
 		MTextStyle2CharacterStyleDef(parent, style, Triple(getTextColor(parent), getFontStyle(parent), true))
 		|> (\st -> arrayPush(st, FSetDirection(parent.rtl)))
+		|> (\st -> arrayPushMaybe(st, extractFDynamicColor(style)))
 		|> (\st -> addMLangFontFamily(text, st));
 	TText(text, textStyle)
 }
@@ -62,10 +82,18 @@ MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MPa
 	cropLongWords = extractStructMany(style, CropWords(true));
 
 	concat3(characterStyle, [ParagraphWidth(const(mWidth)), paragraphMargin, interlineSpacing], cropLongWords)
+	|> (\parStyle -> arrayPushMaybe(parStyle, extractFDynamicColor(mTextStyle)))
 	|> (\parStyle : [TParagraphStyle] -> {
 		arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style), parent.rtl))
 	})
 	|> (\parStyle -> TParagraph(text, parStyle))
+}
+
+extractFDynamicColor(style : [MTextStyle]) -> Maybe<FDynamicColor> {
+	maybeMap(
+		tryExtractStruct(style, MDynamicColor(const(MWhite()))),
+		\dc -> FDynamicColor(fselect(dc.color, FLift(MColor2int)))
+	)
 }
 
 extractMTextStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> Triple<MColor, MFontStyle, bool> {
@@ -93,7 +121,7 @@ MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], de
 				if (thirdOfTriple(fontStyle))
 					characterStyle
 				else
-					replaceStruct(characterStyle, FillOpacity(if (firstOfTriple(fontStyle) == black) disabledTextOpacityDark else disabledTextOpacity))
+					replaceStruct(characterStyle, FillOpacity(getDisabledTextOpacity(firstOfTriple(fontStyle) == black)))
 			),
 			Fill(
 				if (thirdOfTriple(fontStyle))
@@ -206,6 +234,7 @@ overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MText
 					MCustomFont(extractStruct(charStyles, fsize).size, extractStruct(charStyles, ffamily).name, font.opacity);
 				}
 				MColor(__, __, __): s;
+				MDynamicColor(__): s;
 				MTextDisabled(): s;
 				Underlined(__): s;
 				EscapeHTML(__): s;

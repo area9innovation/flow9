@@ -1,3 +1,4 @@
+#include <QTextStream>
 #include "tasks/Task.hpp"
 
 #include <stdexcept>
@@ -48,6 +49,9 @@ void Task::slotStart() {
 		proc_.setWorkingDirectory(workingDir_);
 		proc_.start(executor_, args_);
 		pid_ = QString::number(proc_.processId());
+
+		QTextStream(stdout) << "started PID: " << pid_ <<  " -- " << executor_ <<  " " << args_.join(QLatin1String(" ")) <<endl;
+
 		int row = env_.view.flowConfig_.ui.tasksTableWidget->rowCount();
 		env_.view.flowConfig_.ui.tasksTableWidget->insertRow(row);
 		env_.view.flowConfig_.ui.tasksTableWidget->setItem(row, 0, new QTableWidgetItem(pid_));
@@ -90,6 +94,7 @@ void Task::slotReadStdErr() {
 }
 
 void Task::slotProcFinished(int exitCode, QProcess::ExitStatus status) {
+	QTextStream(stdout) << "stopped PID: " << pid_ << endl;
 	emit signalStopped();
 	if (!exitCode && status == QProcess::NormalExit) {
 		callback_();
@@ -99,7 +104,7 @@ void Task::slotProcFinished(int exitCode, QProcess::ExitStatus status) {
 		err += proc_.errorString() + QLatin1String("\n");
 		stderr_(err);
 	}
-	env_.view.taskManager_.remove(pid_);
+	//env_.view.taskManager_.remove(pid_);
 }
 
 QString Task::show() const {

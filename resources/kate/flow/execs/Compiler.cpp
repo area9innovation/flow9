@@ -39,7 +39,7 @@ QString Compiler::invocation() const {
 	switch (type_) {
 	case FLOW:    return QFileInfo(flowdir_ + QLatin1String("/bin/flow")).absoluteFilePath();
 	case FLOWC1:  return QFileInfo(flowdir_ + QLatin1String("/bin/flowc1")).absoluteFilePath();
-	case FLOWC2:  return QFileInfo(flowdir_ + QLatin1String("/tools/flowc/flowc.exe")).absoluteFilePath();
+	case FLOWC2:  return QFileInfo(flowdir_ + QLatin1String("/bin/flowc2")).absoluteFilePath();
 	default:      return QLatin1String();
 	}
 }

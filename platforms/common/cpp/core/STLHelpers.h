@@ -295,7 +295,7 @@ public:
     public:
         // Cycle through all characters and one extra «ending» position.
         virtual Utf32InputIterator &operator ++() {return forward();}
-        virtual Utf32InputIterator &operator ++(int _) {return forward();}
+        virtual Utf32InputIterator &operator ++(int) {return forward();}
         virtual void seekBegin() { pos = 0; };
 
         virtual shared_ptr<Utf32InputIterator> clone();
@@ -308,7 +308,7 @@ public:
     public:
         // Cycle through all characters and one extra «ending» position.
         virtual Utf32InputIterator &operator ++() {return backward();}
-        virtual Utf32InputIterator &operator ++(int _)  {return backward();}
+        virtual Utf32InputIterator &operator ++(int)  {return backward();}
         virtual void seekBegin() { pos = parent->size? parent->size-1 : 0; };
 
         virtual shared_ptr<Utf32InputIterator> clone();
@@ -333,7 +333,7 @@ double GetCurrentTime();
 std::string stl_sprintf(const char *fmt, ...);
 std::string stl_vsprintf(const char *fmt, va_list args);
 
-void printQuotedString(std::ostream &out, const std::string &sv);
+void printQuotedString(std::ostream &out, const std::string &sv, bool print_non_printable = true);
 void printQuotedString2(std::ostream &out, const std::string &sv);
 
 bool split_string(std::vector<std::string> *out,

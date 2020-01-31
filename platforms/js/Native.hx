@@ -428,6 +428,12 @@ class Native {
 		return str.toUpperCase();
 	}
 
+	#if js
+	public static inline function strReplace(str : String, find : String, replace : String) : String {
+		return StringTools.replace(str, find, replace);		
+	}
+	#end
+
 	public static function string2utf8(str : String) : Array<Int> {
 		var bytes = haxe.io.Bytes.ofString(str);
 		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
@@ -595,7 +601,7 @@ class Native {
 	}
 
 	public static inline function deleteNative(clip : Dynamic) : Void {
-		if (clip != null) {
+		if (untyped clip != null && !clip.destroyed) {
 			if (clip.destroy != null) {
 				untyped clip.destroy({children: true, texture: true, baseTexture: true});
 			}
@@ -604,19 +610,21 @@ class Native {
 				clip.parent.removeChild(clip);
 			}
 
-			if (!Platform.isIE && !Platform.isSafari && !Platform.isIOS && untyped clip.nativeWidget != null) {
+			if (!Platform.isIE && untyped clip.nativeWidget != null) {
 				untyped clip.nativeWidget.style.display = 'none';
 			}
 
 			#if js
 			untyped __js__("
-				if (typeof RenderSupportJSPixi !== 'undefined') {
+				if (typeof RenderSupportJSPixi !== 'undefined' && (clip.nativeWidget != null || clip.accessWidget != null)) {
 					RenderSupportJSPixi.once('drawframe', function() {
 						DisplayObjectHelper.deleteNativeWidget(clip);
 					});
 				}
 			");
 			#end
+
+			untyped clip.destroyed = true;
 		}
 	}
 

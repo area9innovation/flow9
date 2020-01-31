@@ -25,7 +25,7 @@ bool GLFilter::flowDestroyObject()
     return true;
 }
 
-float GLFilter::getBlurSigma(const GLTransform &transform, float radius)
+float GLFilter::getBlurSigma(const GLTransform & /*transform*/, float radius)
 {
     if (radius <= 0.0) {
         radius = blur_radius;

@@ -1,0 +1,70 @@
+import preprocessor/preprocessor_pegop;
+import lingo/pegaction;
+import lingo/pegcode/driver;
+
+export {
+	preprocessSource(source : string, info : PreprocessorInfo) -> string;
+
+	Preprocess(blocks : [PreprocessorBlock]);
+		PreprocessorBlock ::= ConditionalBlock, Content;
+			ConditionalBlock(ifBranch: ConditionalPair, elifBranches : [ConditionalPair], elseBranch : [PreprocessorBlock]);
+				ConditionalPair(name : string, blocks : [PreprocessorBlock]);
+
+			Content(content : string);
+
+	PreprocessorInfo(
+		definitions : [string]
+	);
+	makeDummyPreprocessorInfo = \ -> PreprocessorInfo([]);
+}
+
+preprocessSource(source : string, info : PreprocessorInfo) -> string {
+	eitherFn(parseSource(source), \parsed -> {
+			conditionalResolved = resolveConditionalBlocks(parsed.blocks, info.definitions);
+
+			strGlue(map(conditionalResolved, \b -> {
+					switch (b) {
+						Content(c) : c;
+						default : {
+							println("Warning! Preprocessor's block " + toString(b) +  " is not eliminated!");
+							""
+						}
+					}
+				}),
+				""
+			);
+		},
+		\ -> {
+			println("There were errors during preprocessing. Preprocess wasn't done.");
+			source
+		}
+	);
+}
+
+parseSource(source : string) -> Maybe<Preprocess> {
+	res = parsic3(pegOps4Preprocessor, source, defaultPegActions, Preprocess([]));
+
+	if (res.second < strlen(source)) {
+		println(res.third);
+		None();
+	} else
+		Some(res.first);
+}
+
+resolveConditionalBlocks(blocks : [PreprocessorBlock], definitions : [string]) -> [PreprocessorBlock] {
+	mapConcat(blocks, \block -> {
+		switch (block) {
+			Content(__) : [block];
+			ConditionalBlock(ifBranch, elifBranches, elseBranch) : {
+				if (contains(definitions, ifBranch.name))
+					resolveConditionalBlocks(ifBranch.blocks, definitions)
+				else
+					eitherMap(
+						findi(elifBranches, \branch -> contains(definitions, branch.name)),
+						\idx -> resolveConditionalBlocks(elifBranches[idx].blocks, definitions),
+						block.elseBranch
+					);
+			}
+		}
+	})
+}

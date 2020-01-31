@@ -12,14 +12,11 @@ import haxe.extern.EitherType;
 using DisplayObjectHelper;
 
 class FlowCanvas extends FlowContainer {
-	private var offscreenCanvas : Dynamic = untyped __js__("typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(RenderSupportJSPixi.PixiView.width, RenderSupportJSPixi.PixiView.height) : document.createElement('canvas')");
-	private var offscreenContext : Dynamic = null;
-
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			initNativeWidget('canvas');
+			this.initNativeWidget('canvas');
 			untyped this.isCanvas = true;
 		}
 	}
@@ -38,63 +35,17 @@ class FlowCanvas extends FlowContainer {
 				}
 			}
 
-			updateNativeWidgetTransformMatrix();
-			updateNativeWidgetOpacity();
+			this.updateNativeWidgetTransformMatrix();
+			this.updateNativeWidgetOpacity();
 
-			var minX = Math.max(Math.ceil(-localBounds.minX * worldTransform.a), 0.0) * RenderSupportJSPixi.PixiRenderer.resolution;
-			var minY =  Math.max(Math.ceil(-localBounds.minY * worldTransform.d), 0.0) * RenderSupportJSPixi.PixiRenderer.resolution;
-
-			var width = Math.ceil(localBounds.maxX * worldTransform.a) * RenderSupportJSPixi.PixiRenderer.resolution + minX;
-			var height = Math.ceil(localBounds.maxY * worldTransform.d) * RenderSupportJSPixi.PixiRenderer.resolution + minY;
-
-			if (width > 0 && height > 0 && Math.ceil(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution - minX >= 0 && Math.ceil(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution - minY >= 0) {
-				var transform = getNativeWidgetTransform();
-
-				var canvasWidth = Math.ceil(localBounds.maxX * transform.a) + Math.max(Math.ceil(-localBounds.minX * transform.a), 0.0);
-				var canvasHeight = Math.ceil(localBounds.maxY * transform.d) + Math.max(Math.ceil(-localBounds.minY * transform.d), 0.0);
-
-				offscreenCanvas.width = width + worldTransform.tx * RenderSupportJSPixi.PixiRenderer.resolution + 2.0;
-				offscreenCanvas.height = height + worldTransform.ty * RenderSupportJSPixi.PixiRenderer.resolution + 2.0;
-
-				RenderSupportJSPixi.PixiRenderer.context = offscreenContext;
-				RenderSupportJSPixi.PixiRenderer.rootContext = offscreenContext;
-
-				RenderSupportJSPixi.PixiRenderer.view = offscreenCanvas;
-				RenderSupportJSPixi.PixiRenderer.transparent = true;
-				RenderSupportJSPixi.PixiRenderer.roundPixels = true;
-
-				RenderSupportJSPixi.RendererType = 'canvas';
-				RenderSupportJSPixi.PixiRenderer.render(this, null, true, null, false);
-				RenderSupportJSPixi.RendererType = 'html';
-
-				context.clearRect(
-					0,
-					0,
-					canvasWidth,
-					canvasHeight
-				);
-
-				context.drawImage(
-					offscreenCanvas,
-					Math.ceil(worldTransform.tx) * RenderSupportJSPixi.PixiRenderer.resolution - minX,
-					Math.ceil(worldTransform.ty) * RenderSupportJSPixi.PixiRenderer.resolution - minY,
-					width,
-					height,
-					0.0,
-					0.0,
-					canvasWidth,
-					canvasHeight
-				);
-
-				RenderSupportJSPixi.PixiRenderer.view = RenderSupportJSPixi.PixiView;
-			}
+			this.renderToCanvas(nativeWidget, context, worldTransform.clone().invert());
 
 			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
 				untyped this.localTransformChanged = true;
 			}
 		}
 
-		updateNativeWidgetDisplay();
+		this.updateNativeWidgetDisplay();
 	}
 
 	public override function createNativeWidget(?tagName : String = "canvas") : Void {
@@ -104,7 +55,6 @@ class FlowCanvas extends FlowContainer {
 		PixiWorkarounds.workaroundGetContext();
 
 		context = nativeWidget != null ? nativeWidget.getContext('2d', { alpha : true }) : null;
-		offscreenContext = offscreenCanvas != null ? offscreenCanvas.getContext('2d', { alpha : true }) : null;
 
 		if (nativeWidget != null) {
 			nativeWidget.onpointermove = function(e) {
@@ -126,14 +76,6 @@ class FlowCanvas extends FlowContainer {
 
 	public override function destroy(?options : EitherType<Bool, DestroyOptions>) : Void {
 		super.destroy(options);
-
-		if (offscreenCanvas != null) {
-			untyped __js__("delete this.offscreenCanvas");
-		}
-
-		if (offscreenContext != null) {
-			untyped __js__("delete this.offscreenContext");
-		}
 
 		if (context != null) {
 			untyped __js__("delete this.context");

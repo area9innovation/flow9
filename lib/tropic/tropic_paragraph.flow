@@ -22,22 +22,16 @@ export {
 		inspectorM : Maybe<ParaElementInspector>
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector) -> Tropic;
+	getTParaWordText(w: TParaWord) -> string;
 
 
 }
 
 TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> TDynamicParagraph {
 
-	alignment : ParaLineAlignment = fold(s, StartAlign(), \acc, st -> {
-		switch (st : ParagraphStyle) {
-			CenterAlign(): st;
-			Justify(): st;
-			RightAlign(): st;
-			LeftAlign(): st;
-			EndAlign(): st;
-			default: acc;
-		};
-	});
+	alignment : ParaLineAlignment = extractParaLineAlignment(s);
+	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
+	needIndent = genIndent != 0.0;
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 
@@ -54,8 +48,7 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
 
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
-
-	// interactiveStyles = wordsAndStyles.second;
+	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
 	aw = make(0.0);
 	update = make(0);
@@ -71,23 +64,25 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	stackChanges = make([]);
 	initialWords = ref map(^words, translateWord);
 	paragraphWHB = makeWH();
+	paragraphBaselineB = make(0.0);
 
-	contentGroup = TSize(
+	contentGroup = TBaseline(paragraphBaselineB, TSize(
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
-	);
-
+	));
 
 	updateFn = \wi -> {
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 		w = if (isSingleLine) 100000.0 else max(0.0, wi);
-		paragraphSize = reflowTParaWords(
+		paragraphSizeAndBaseline = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
-			topLineBaseline, rtl, containsStruct(s, ParagraphMarked())
+			topLineBaseline, isParagraphRtl(s), containsStruct(s, ParagraphMarked()),
+			genIndent, linesCountB
 		);
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-		nextDistinct(paragraphWHB, paragraphSize);
+		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 	};
 
 	subscribe2dynWord = \w -> if (isSameStructType(NonTextElement(), w.word)) apply0(make2Subscribe2(
@@ -131,12 +126,9 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	}
 
 	tropic = TConstruct(
-		[\ -> {
-			unsub1 = subscribe(aw, updateFn);
-			dynamicWordsUns := map(^words, subscribe2dynWord);
-
-			// When an update from a dynamic element is requested, we do it in the next frame
-			unsub2 = subscribe(update, \u -> {
+		[
+			\-> subscribe(aw, updateFn),
+			\-> subscribe(update, \u -> {
 				if (u == 1) {
 					deferUntilNextFrameRendered(\ -> {
 						next(update, 0);
@@ -144,15 +136,15 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 						updateFn(getValue(aw))
 					})
 				}
-			});
-
+			}),
 			\ -> {
-				unsub1();
-				applyall(^dynamicWordsUns);
-				dynamicWordsUns := [];
-				unsub2();
+				dynamicWordsUns := map(^words, subscribe2dynWord);
+				\ -> {
+					applyall(^dynamicWordsUns);
+					dynamicWordsUns := [];
+				}
 			}
-		}],
+		],
 		TAttachAvailableWidth(
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
 				TBorder(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
@@ -230,17 +222,18 @@ TParaLine(words : [TParaWord], indent : double);
 reflowTParaWords(
 	words : [TParaWord],
 	availableParaWidth : double,
-	paraIndent : double,
+	firstLineIndent : double,
 	tightWidth : bool,
 	alignment: ParaLineAlignment,
 	interlineSpacing : double,
 	topLineBaseline : bool,
-	// styleTree : Tree<int, [TTexFragmentStyle]>,
 	rtl : bool,
-	isMarked : bool
-) -> WidthHeight {
-	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
-	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], paraIndent);
+	isMarked : bool,
+	generalIndent : double,
+	linesCountB : DynamicBehaviour<int>
+) -> Pair<WidthHeight, double> {
+	firstLineWidth = availableParaWidth - generalIndent - getLineIndent(firstLineIndent, 0);
+	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], firstLineIndent, isMarked);
 	paraLines = if (isBiDiEnabled())
 		zipWith(
 			text,
@@ -248,6 +241,8 @@ reflowTParaWords(
 			\l, ws -> TParaLine(ws, l.indent),
 		)
 	else text;
+
+	nextDistinct(linesCountB, length(text));
 
 	TAlignParaLines(
 		availableParaWidth,
@@ -257,7 +252,8 @@ reflowTParaWords(
 		interlineSpacing,
 		topLineBaseline,
 		rtl,
-		isMarked
+		isMarked,
+		generalIndent
 	)
 
 
@@ -271,6 +267,7 @@ reflowTParaWordsRec(
 	currentWords : [TParaWord],
 	lines : [TParaLine],
 	paraIndent : double,
+	isMarked : bool,
 ) -> [TParaLine] {
 	addLine = \cw, indent -> {
 		if (cw != []) arrayPush(lines, TParaLine(cw, indent)) else lines;
@@ -295,7 +292,7 @@ reflowTParaWordsRec(
 
 		switch (word.word : GeneralWrapElement) {
 			NewLine(): {
-				reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+				reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 			}
 			GeneralLinePart(first, mid, end): {
 
@@ -309,15 +306,15 @@ reflowTParaWordsRec(
 				if (currentWords == []) {
 					// If it is the first item on the line
 					paraword = makeLinePartWord(first);
-					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
 					paraword = makeLinePartWord(mid);
-					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
 				} else {
 					// If it is the last item on the line
 					paraword = makeLinePartWord(end);
-					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
+					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent, false);
 				}
 			}
 			GeneralSpace(__): {
@@ -325,10 +322,10 @@ reflowTParaWordsRec(
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = getWordWidth(word);
 				if (width < remaining) {
-					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent);
+					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent, false);
 				} else {
 					detachWord(word, true);
-					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 				}
 			}
 			default: {
@@ -349,7 +346,7 @@ reflowTParaWordsRec(
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-								if (keepWordsTogether(f) || ^width == 0.0) {
+								if ((isMarked && i <= 1) || keepWordsTogether(f) || ^width == 0.0) {
 									width := ^width + getWordWidth(_word);
 									false;
 								} else {
@@ -363,7 +360,7 @@ reflowTParaWordsRec(
 					1;
 				};
 
-				if (^width <= remaining || currentWords == []) { // Overflow situation where a word is longer than the available width
+				if (^width <= remaining || currentWords == []) {
 					_words = subrange(words, 0, wordsCount);
 					_rest = subrange(words, wordsCount, length(words) - wordsCount);
 					newCurrentWords = concat(currentWords, _words);
@@ -373,7 +370,8 @@ reflowTParaWordsRec(
 						remaining - ^width,
 						newCurrentWords,
 						lines,
-						paraIndent
+						paraIndent,
+						false
 					);
 				} else {
 					reflowTParaWordsRec(
@@ -382,7 +380,8 @@ reflowTParaWordsRec(
 						nextLineWidth,
 						[],
 						addLine(currentWords, lineIndent),
-						paraIndent
+						paraIndent,
+						false
 					);
 				}
 			}
@@ -440,23 +439,10 @@ TAlignParaLines(
 	interlineSpacing : double,
 	topLineBaseline : bool,
 	rtl : bool,
-	isMarked : bool
-) -> WidthHeight {
+	isMarked : bool,
+	generalIndent : double
+) -> Pair<WidthHeight, double> {
 	lasti = length(lines) - 1;
-	singleLine = length(lines) == 1;
-
-	// we need to find out the width of the longest line (including indent)
-	// to define the width of a paragraph in tightWidth mode
-	// it is possible to do in StartAlign case only because other alignments use fillers
-	width = if (tightWidth && isStartAlignment(alignment)) {
-		fold(lines, 0.0, \acc : double, line : TParaLine -> {
-			metrics = map(line.words, \p -> p.inspector);
-			lw = line.indent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.size).width);
-			max(acc, lw);
-		});
-	} else {
-		availableWidth
-	}
 
 	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
@@ -469,7 +455,11 @@ TAlignParaLines(
 			} else {
 				alignment;
 			}
-		f = TRenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, rtl, isMarked);
+		f = TRenderLine(
+			acc.y, line.words, availableWidth, tightWidth,
+			lineAlignment, line.indent + generalIndent,
+			i, rtl, isMarked
+		);
 		nwidth = max(acc.width, f.width);
 		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
 		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
@@ -481,8 +471,7 @@ TAlignParaLines(
 			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
 		);
 	});
-
-	if (tightWidth) WidthHeight(a.width, a.y) else WidthHeight(max(width, a.width), a.y);
+	Pair(WidthHeight(if (tightWidth) a.width else max(availableWidth, a.width), a.y), a.baseline);
 }
 
 TParaLineResult(width : double, height : double, baseline : double);

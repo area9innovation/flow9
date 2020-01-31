@@ -32,8 +32,6 @@ class VideoClip extends FlowContainer {
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
-	public static var CanAutoPlay = false;
-
 	private var videoWidget : Dynamic;
 	private var widgetBounds = new Bounds();
 
@@ -100,7 +98,7 @@ class VideoClip extends FlowContainer {
 		videoWidget = Browser.document.createElement("video");
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			initNativeWidget("div");
+			this.initNativeWidget("div");
 			nativeWidget.appendChild(videoWidget);
 		}
 
@@ -132,7 +130,7 @@ class VideoClip extends FlowContainer {
 
 		once("removed", deleteVideoClip);
 
-		if (!startPaused && !CanAutoPlay) {
+		if (!startPaused && !RenderSupportJSPixi.hadUserInteracted) {
 			playFn(false);
 		}
 	}
@@ -170,13 +168,13 @@ class VideoClip extends FlowContainer {
 
 	public function updateNativeWidget() : Void {
 		if (visible) {
-			updateNativeWidgetTransformMatrix();
-			updateNativeWidgetOpacity();
-			updateNativeWidgetMask();
+			this.updateNativeWidgetTransformMatrix();
+			this.updateNativeWidgetOpacity();
+			this.updateNativeWidgetMask();
 			nativeWidget.style.transform = 'none';
 
-			var width = Math.round(getWidth() * untyped this.transform.scale.x);
-			var height = Math.round(getHeight() * untyped this.transform.scale.y);
+			var width = Math.round(this.getWidth() * untyped this.transform.scale.x);
+			var height = Math.round(this.getHeight() * untyped this.transform.scale.y);
 
 			videoWidget.width = width;
 			videoWidget.height = height;
@@ -185,13 +183,18 @@ class VideoClip extends FlowContainer {
 			videoWidget.setAttribute('height', '${height}');
 			videoWidget.style.width = '${width}px';
 			videoWidget.style.height = '${height}px';
+			if (untyped this.transform.scale.x == untyped this.transform.scale.y) {
+				videoWidget.style.objectFit = '';
+			} else {
+				videoWidget.style.objectFit = 'fill';
+			}
 
 			updateSubtitlesClip();
 
-			updateNativeWidgetInteractive();
+			this.updateNativeWidgetInteractive();
 		}
 
-		updateNativeWidgetDisplay();
+		this.updateNativeWidgetDisplay();
 	}
 
 	public function getDescription() : String {
@@ -321,7 +324,7 @@ class VideoClip extends FlowContainer {
 		videoWidget.currentTime = 0;
 		checkTimeRange(videoWidget.currentTime, true);
 
-		invalidateTransform('onMetadataLoaded'); // Update the widget
+		this.invalidateTransform('onMetadataLoaded'); // Update the widget
 
 		if (!videoWidget.autoplay) videoWidget.pause();
 
@@ -344,11 +347,11 @@ class VideoClip extends FlowContainer {
 		metricsFn(videoWidget.videoWidth, videoWidget.videoHeight);
 
 		calculateWidgetBounds();
-		invalidateTransform('updateVideoMetrics');
+		this.invalidateTransform('updateVideoMetrics');
 
 		if (RenderSupportJSPixi.RendererType == "html") {
-			videoWidget.style.width = '${untyped getWidth()}px';
-			videoWidget.style.height = '${untyped getHeight()}px';
+			videoWidget.style.width = '${this.getWidth()}px';
+			videoWidget.style.height = '${this.getHeight()}px';
 		} else {
 			videoWidget.width = videoWidget.videoWidth;
 			videoWidget.height = videoWidget.videoHeight;
@@ -357,7 +360,9 @@ class VideoClip extends FlowContainer {
 	}
 
 	private function onStreamLoaded() : Void {
-		streamStatusListener.map(function (l) { l("NetStream.Play.Start"); });
+		for (l in streamStatusListener) {
+			l("NetStream.Play.Start");
+		}
 	}
 
 	private function onStreamEnded() : Void {
@@ -365,16 +370,22 @@ class VideoClip extends FlowContainer {
 			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
 		}
 
-		streamStatusListener.map(function (l) { l("NetStream.Play.Stop"); });
+		for (l in streamStatusListener) {
+			l("NetStream.Play.Stop");
+		}
 	}
 
 	private function onStreamError() : Void {
-		streamStatusListener.map(function (l) { l("NetStream.Play.StreamNotFound"); });
+		for (l in streamStatusListener) {
+			l("NetStream.Play.StreamNotFound");
+		}
 	}
 
 	private function onStreamPlay() : Void {
 		if (videoWidget != null && !videoWidget.paused) {
-			streamStatusListener.map(function (l) { l("FlowGL.User.Resume"); });
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Resume");
+			}
 
 			playFn(true);
 		}
@@ -382,7 +393,9 @@ class VideoClip extends FlowContainer {
 
 	private function onStreamPause() : Void {
 		if (videoWidget != null && videoWidget.paused) {
-			streamStatusListener.map(function (l) { l("FlowGL.User.Pause"); });
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Pause");
+			}
 
 			playFn(false);
 		}
@@ -504,10 +517,10 @@ class VideoClip extends FlowContainer {
 			return;
 		}
 
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipID();
+		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;

@@ -6,7 +6,7 @@ namespace flow {
 Runner::Runner(const Ui::FlowConfig& ui, QString prog, QString targ, QString flowdir, QString outdir) :
 	target_(ui, prog, targ, flowdir, outdir) {
 	if (!target().exists()) {
-		throw std::runtime_error("program '" + prog.toStdString() + "' doesn't exist");
+		throw std::runtime_error("program '" + target().path().toStdString() + "' doesn't exist");
 	}
 }
 
@@ -40,7 +40,7 @@ QStringList Runner::args(QString execArgs, QString progArgs) const {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << QLatin1String("-jar");
-		args << target().file();
+		args << target().path();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}
@@ -48,14 +48,14 @@ QStringList Runner::args(QString execArgs, QString progArgs) const {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		args << QLatin1String("-jar");
-		args << target().file();
+		args << target().path();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}
 	case Target::NODEJS: {
 		QStringList args;
 		args << execArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
-		args << target().file();
+		args << target().path();
 		args << progArgs.split(QRegExp(QLatin1String("\\s+"))).filter(QRegExp(QLatin1String("^(?!\\s*$).+")));
 		return args;
 	}

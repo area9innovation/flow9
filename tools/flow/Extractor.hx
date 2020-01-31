@@ -121,18 +121,18 @@ class Extractor {
 				if (voices.exists(name)) {
 					report('I cannot extract strings from ' + name + ' if it occurs un-applied', e);
 				}
-			case Field(call, name, pos):
-				traverse(call, voice);
+			case Field(cll, name, pos):
+				traverse(cll, voice);
 			case RefTo(value, pos):
 				traverse(value, voice);
 			case Pointer(index, pos):
-			case Deref(pointer, pos):
-				traverse(pointer, voice);
-			case SetRef(pointer, value, pos):
-				traverse(pointer, voice);
+			case Deref(pnt, pos):
+				traverse(pnt, voice);
+			case SetRef(pnt, value, pos):
+				traverse(pnt, voice);
 				traverse(value, voice);
-			case SetMutable(pointer, field, value, pos):
-				traverse(pointer, voice);
+			case SetMutable(pnt, field, value, pos):
+				traverse(pnt, voice);
 				traverse(value, voice);
 			case Cast(value, fromtype, totype, pos):
 				traverse(value, voice);
@@ -143,8 +143,8 @@ class Extractor {
 				traverse(body, voice);
 			case Closure(body, environment, pos):
 				traverse(body, voice);
-			case Call(closure, arguments, pos):
-				switch (closure) {
+			case Call(clos, arguments, pos):
+				switch (clos) {
 					case VarRef(newname, pos): {
 						if (newname == voice) {
 							strictMatch = true;
@@ -160,7 +160,7 @@ class Extractor {
 					}
 					default:
 						// not a VarRef, so traverse for relevant sub-expressions
-						traverse(closure, voice);
+						traverse(clos, voice);
 						traverseList(arguments, voice);
 				}
 			case Sequence(statements, pos):

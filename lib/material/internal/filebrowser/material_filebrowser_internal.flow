@@ -28,11 +28,12 @@ FilebrowserState(
 	searchTextB : DynamicBehaviour<string>,
 	focusedIdB : DynamicBehaviour<string>,
 	iconSizeB : DynamicBehaviour<double>,
+	thumbnailSize : Transform<double>,
 	contentViewIconsB : DynamicBehaviour<bool>,
 	onClickB : DynamicBehaviour<() -> void>,
 	onRightClickB : DynamicBehaviour<(string, (string) -> void) -> void>,
 	// convert array of "FilesPaths" to array of Pairs of "FilePath" and "FilePreview"
-	getPreviews : ([string]) -> Maybe<DynamicBehaviour<[Pair<string, Material>]>>,
+	getPreviews : ([string], ([Pair<string, Material>]) -> void) -> void,
 	contentSortTypeB : DynamicBehaviour<FBSortType>
 );
 
@@ -57,8 +58,6 @@ FBContentPath(
 
 //
 makeFilebrowserState(styles : [FbMStyle]) -> FilebrowserState {
-	previewCacheB : DynamicBehaviour<[Pair<string, Material>]> = make([]);
-
 	startDir = extractStruct(styles, FbStartDir("DB:/")).dir |> addSlash2pathEnd;
 	limitAccess = extractStruct(styles, FbLimitAccessToUpperFolder(false)).mode;
 	FilebrowserState(
@@ -72,20 +71,11 @@ makeFilebrowserState(styles : [FbMStyle]) -> FilebrowserState {
 		make(""),
 		make(""),
 		make(0.5),
+		const(16.0),
 		make(true),
-		make(\-> {}),
+		make(nop),
 		make(\__, __ -> {}),
-		eitherMap(
-			tryExtractStruct(styles, FbGetFilesPreview(\__, fn -> fn([]))),
-			\fn -> {
-				\files -> {
-					filterNewFiles = filter(files, \f -> !exists(getValue(previewCacheB), \p -> p.first == f));
-					fn.fn(filterNewFiles, \pairs -> nextDistinct(previewCacheB, concat(getValue(previewCacheB), pairs)));
-					Some(previewCacheB);
-				}
-			},
-			\__ -> None()
-		),
+		extractStruct(styles, FbGetFilesPreview(\__, fn -> fn([]))).fn,
 		make(FBSortByName(true))
 	)
 }
@@ -197,11 +187,10 @@ fsCustomElement(state : FilebrowserState, contentM : Material, text : string, to
 						)
 					)
 				else
-					MCols([
-						MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
+					MColsYCenter([
+						MZoomToFill(contentM, TSizedWidthHeight(state.thumbnailSize, state.thumbnailSize), true),
 						TFixed(5.0, 0.0),
-						MCenterYIn(MSelect(hoverB, \ishovered -> MText(text, [if (ishovered) MPurple(500) else MBlack()])), TFixed(iconSize, iconSize)),
-						//TFillXH(23.0)
+						MSelect(hoverB, \ishovered -> MText(text, [if (ishovered) MPurple(500) else MBlack()])),
 					])
 			}
 			|> (\m -> MBorder(6.0, 3.0, 6.0, 3.0, m))
@@ -242,7 +231,7 @@ fsCustomElement(state : FilebrowserState, contentM : Material, text : string, to
 		m
 	))
 	|> (\m -> MSelect(state.contentViewIconsB, \contentViewIcons -> if (!contentViewIcons) MCols2(m, TFillX()) else m))
-	|> (\m -> MBorder(4.0, 4.0, 4.0, 4.0, m));
+	|> (\m -> MBorder4(4.0, m));
 }
 
 // creating material view of the filebrowser element using exists icon (by icon name)
@@ -278,7 +267,7 @@ createFolderUI(state : FilebrowserState, curPath : string, curNameB : DynamicBeh
 }
 
 // creating material view of the file
-createFileUI(state : FilebrowserState, curPath : string, curNameB : DynamicBehaviour<string>, contentsPreviewsBM : Maybe<DynamicBehaviour<[Pair<string, Material>]>>) -> Material {
+createFileUI(state : FilebrowserState, curPath : string, curNameB : DynamicBehaviour<string>, previewsB : Transform<[Pair<string, Material>]>) -> Material {
 	correctedCurPath = addSlash2pathEnd(curPath);
 
 	MSelect(curNameB, \name ->
@@ -291,25 +280,12 @@ createFileUI(state : FilebrowserState, curPath : string, curNameB : DynamicBehav
 
 			defaultContent = MSelect(state.iconSizeB, \iconSize -> MIcon("insert_drive_file", [MIconSize(iconSize), MTeal(500)]));
 
-			tryResolveContent = \-> {
+			fContent = MSelect(previewsB, \previews ->
 				eitherMap(
-					resolveContent2Material(fullName),
-					idfn,
+					find(previews, \p -> p.first == fullName),
+					\p -> p.second,
 					defaultContent
 				)
-			}
-
-			fContent = eitherFn(contentsPreviewsBM,
-				\contentsPreviewsB -> {
-					MSelect(contentsPreviewsB, \contentsPreviews ->
-						eitherMap(
-							find(contentsPreviews, \p -> p.first == fullName),
-							\p -> p.second,
-							defaultContent
-						)
-					)
-				},
-				tryResolveContent
 			);
 
 			fsCustomElement(
@@ -333,18 +309,17 @@ createFileUI(state : FilebrowserState, curPath : string, curNameB : DynamicBehav
 }
 
 // preparing filebrowser content view
-prepareAndGetContentUI(state : FilebrowserState, dirs : [string], files : [string], contentsPreviewsBM : Maybe<DynamicBehaviour<[Pair<string, Material>]>>) -> Material {
+prepareAndGetContentUI(state : FilebrowserState, dirs : [string], files : [string], previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Material {
 	correctCurPath = state.currentPathB |> getValue |> addSlash2pathEnd;
 	curPath = if (strlen(correctCurPath) > 0) strLeft(correctCurPath, strlen(correctCurPath) - 1) else correctCurPath;
 
 	lastSlashIdx = strLastIndexOf(curPath, "/");
 
-
 	backButtonM = if (lastSlashIdx != -1 && contains(dirs, "..") && (!endsWith(correctCurPath, state.limitDir))) {
 			prevPath = if (lastSlashIdx > 0) strLeft(curPath, lastSlashIdx) else "";
 			name = if (endsWith(prevPath, ":")) prevPath + "/" else prevPath + "/";
 
-			Some(fsIconElement(state, "reply", "..", "", const(false), MGrey(300), \-> {}, \-> next(state.currentPathB, name), \-> {}))
+			Some(fsIconElement(state, "reply", "..", "", const(false), MGrey(300), nop, \-> next(state.currentPathB, name), nop))
 		} else {
 			None()
 		}
@@ -352,11 +327,11 @@ prepareAndGetContentUI(state : FilebrowserState, dirs : [string], files : [strin
 	dirs2 = map(dirs, \d -> FBContentPath(correctCurPath, d));
 	files2 = map(files, \f -> FBContentPath(correctCurPath, f));
 
-	getContentUI(state, dirs2, files2, backButtonM, contentsPreviewsBM);
+	getContentUI(state, dirs2, files2, backButtonM, previewsB);
 }
 
 // creating filebrowser content view
-getContentUI(state : FilebrowserState, dirs : [FBContentPath], files : [FBContentPath], backButtonM : Maybe<Material>, contentsPreviewsBM : Maybe<DynamicBehaviour<[Pair<string, Material>]>>) -> Material {
+getContentUI(state : FilebrowserState, dirs : [FBContentPath], files : [FBContentPath], backButtonM : Maybe<Material>, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Material {
 	boxSize = make(zeroWH);
 
 	createItem = \item, isFolder, createUI -> {
@@ -374,7 +349,9 @@ getContentUI(state : FilebrowserState, dirs : [FBContentPath], files : [FBConten
 
 	ffItems = map(
 		files,
-		\item -> createItem(item, false, \nameB -> createFileUI(state, item.dirPath, nameB, contentsPreviewsBM))
+		\item -> createItem(item, false, \nameB -> 
+			createFileUI(state, item.dirPath, nameB, fif(state.contentViewIconsB, previewsB, const([])))
+		)
 	);
 
 	onSortChanged = \ddM, ffM, sType -> {
@@ -421,11 +398,11 @@ getContentUI(state : FilebrowserState, dirs : [FBContentPath], files : [FBConten
 		),
 		[
 			MBoxSize(boxSize),
-			MItemSize(fselect3(boxSize, state.contentViewIconsB, state.iconSizeB, \bs, ic, is -> {
+			MItemSize(fselect4(boxSize, state.contentViewIconsB, state.iconSizeB, state.thumbnailSize, \bs, ic, is, thumbnailSize -> {
 				if (ic)
 					WidthHeight(is + 20., is + 37.)
 				else
-					WidthHeight(bs.width, is + 14.)
+					WidthHeight(bs.width, thumbnailSize + 12.)
 			}))
 		]
 	)
@@ -451,7 +428,9 @@ getLibraryUI(state : FilebrowserState, ext : [string], onUpdate : (Material) -> 
 	deferUntilRender(\->{
 		currentPath = getValue(state.currentPathB);
 		getContentAPI(currentPath, ext, filterFn, \dirs, files -> {
-			next(itemB, prepareAndGetContentUI(state, dirs, if (folderSelection) [] else files, state.getPreviews(map(files, \f -> currentPath + f))));
+			previewsB = make([]);
+			state.getPreviews(map(files, \f -> currentPath + f), \pairs -> nextDistinct(previewsB, pairs));
+			next(itemB, prepareAndGetContentUI(state, dirs, if (folderSelection) [] else files, previewsB));
 			checkWhatIsChanged(currentPath, dirs, files, changesCallback)
 		}, \error -> {
 			next(itemB, MCenter(MText("Error: " + error, [])));
@@ -528,7 +507,7 @@ getSearchResultUI(state : FilebrowserState, searchText : string, ext : [string],
 				else
 					MLines2(
 						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state, dirs, files, None(), None())
+						getContentUI(state, dirs, files, None(), make([]))
 					)
 			)
 		}
@@ -578,7 +557,7 @@ onContentUpdate(state : FilebrowserState, uns : [() -> ()-> void], content : Dyn
 	addCtrlSubscribe = \-> {
 		switch (state.maybeMultiselectB) {
 			Some(ctrlKeyB): makeSubscribe(keyBroadcast.pressed, \ke -> nextDistinct(ctrlKeyB, ke.ctrl));
-			None(): \-> \-> {}
+			None(): \-> nop
 		}
 	};
 
@@ -597,7 +576,7 @@ onContentUpdate(state : FilebrowserState, uns : [() -> ()-> void], content : Dyn
 		),
 		m
 	))
-	|> (\m -> MBorder(4.0, 4.0, 4.0, 4.0, m))
+	|> (\m -> MBorder4(4.0, m))
 	|> (\m -> onUpdate(m));
 }
 
@@ -660,7 +639,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	curPathOutArrB = map(extractStructMany(styles, FbGetCurrentPathB(make(""))), \s -> s.path);
 	doUpdateCallArr =  map(extractStructMany(styles, FbGetContentUpdateFn(\__ -> {})), \s -> s.fn);
 	additionalText = extractStruct(styles, FbAdditionalText("")).text;
-	getRealPath = extractStruct(styles, FbPathProcessing(\p -> p)).func;
+	pathProcessing = extractStruct(styles, FbPathProcessing(\p -> p)).func;
 	folderSelection = contains(styles, FbFolderSelection());
 	initSelection = extractStruct(styles, FbInitialSelection("")).sel;
 	dropFnM = tryExtractStruct(styles, FbDropFileFn(\__ -> {}));
@@ -874,7 +853,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		next(state.currentPathB, path);
 	};
 
-	setSelected = \-> {};
+	setSelected = nop;
 
 	statusPanel = {
 		iconsR = ref [];
@@ -973,9 +952,9 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			OpenExtFBB(func): {
 				action = \-> buttonFunc(
 					\name -> name,
-					\filesNames -> func(map(filesNames, \f -> FbObject(f, fsAPI.convert2realPath(f)))),
+					\filesNames -> func(map(filesNames, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))),
 					\filesNames -> println("Files or folders '" + strGlue(filesNames, "', '") + "' doesn't exists."),
-					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(f, fsAPI.convert2realPath(f)))); }
+					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))); }
 				);
 
 				next(state.onClickB, \-> action());
@@ -1003,18 +982,18 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 					\filesNames -> {
 						withConfirmation2(
 							_("File with specified name has already exist.\nDo you want to rewrite it?"),
-							\-> func(map(filesNames, \f -> FbObject(f, fsAPI.convert2realPath(f)))),
+							\-> func(map(filesNames, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))),
 							onCancelFn
 						)
 					},
 					\filesNames -> {
 						closeMe();
 						func(
-							if (filesNames == []) [FbObject(getValue(state.currentPathB) + getValue(fileNameB) + if (folderSelection) "/" else "", "")]
-							else map(filesNames, \f -> FbObject(f, fsAPI.convert2realPath(f)))
+							if (filesNames == []) [FbObject(pathProcessing(getValue(state.currentPathB) + getValue(fileNameB) + if (folderSelection) "/" else ""), "")]
+							else map(filesNames, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))
 						);
 					},
-					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(f, fsAPI.convert2realPath(f)))); }
+					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))); }
 				);
 
 				next(state.onClickB, \-> action());
@@ -1200,15 +1179,15 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			}
 		),
 		TFixed(8.0, 0.0),
-		MSelect(
+		MShow(state.contentViewIconsB, MSelect(
 			showSliderB,
 			\showSlider -> MIconButton(
 				"linear_scale",
-				\-> next(showSliderB, !showSlider),
+				\-> reverseBehaviour(showSliderB),
 				[MIconButtonBorder(1.0), MIconSize(34.0), if (showSlider) MOrange(500) else MBlack()],
 				[]
 			)
-		),
+		)),
 		TFixed(8.0, 0.0),
 		MFixSize(
 			MMenu(

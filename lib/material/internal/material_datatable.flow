@@ -69,7 +69,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
 
 	widthByContent = contains(style, MWidthByContent());
-	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode()));
+	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
 	isInnerScroll = isSome(innerScroll);
 
 	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
@@ -82,7 +82,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	columnsCount = length(columns);
 	isAnyWidthByContent = widthByContent || any(map(columns, \col -> contains(col.style, MWidthByContent())));
 
-	defaultSorted : MSortingDefault = extractStruct(style, MSortingDefault(make(MSortingParam(0, true))));
+	defaultSorted : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
 	listSortedCallback = extractStruct(style, MListSorted(nop1)).newOrderCallback;
 	sortedByB : DynamicBehaviour<Triple<int, bool, Maybe<MSort>>> = make(Triple(-1, true, None()));
 	sortColumnNumberB = make(-1);
@@ -310,7 +310,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		mapi(columns, \i0, c : MColumnDynamic -> if (replaceHeader) cellBox(i0, true) else {
 			rightAlign = changeBoolIfRTL2(contains(c.style, RightAlign()), p.rtl);
 			sortStyle = if (isSome(reorderList)) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
-			sortable = isNone(reorderList) && (hasExtOrderBy || contains(c.style, MAutoSort()));
+			sortable = isSome(sortStyle) || (isNone(reorderList) && (hasExtOrderBy || contains(c.style, MAutoSort())));
 			i = i0 - headCount + 1;
 
 			makeHeaderTitle = \isSelected : bool ->
@@ -326,24 +326,27 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					)
 				);
 
-			(if (isSome(sortStyle) || sortable) {
+			(if (sortable) {
 				hover = make(false);
 
 				clickColumn = \ -> {
 					sb = fgetValue(sortedByB);
-					asc =
-						if (sb.first == -1)
-							getValue(defaultSorted.sorting).isAsc
-						else if (sb.first == i)
-							!sb.second
-						else
-							false;
-
-					nextDistinct(defaultSorted.sorting, MSortingParam(i, asc));
-					next(sortedByB, Triple(i, asc, sortStyle))
+					
+					if (sb.first == i && sb.second) {
+						nextDistinct(defaultSorted, MSortingParam(-1, false));
+						next(sortedByB, Triple(-1, false, None()))
+					} else {
+						asc =
+							if (sb.first == -1)
+								getValue(defaultSorted).isAsc
+							else
+								sb.first == i;
+						nextDistinct(defaultSorted, MSortingParam(i, asc));
+						next(sortedByB, Triple(i, asc, sortStyle))
+					}
 				};
 
-				if (getValue(defaultSorted.sorting).colIndex == i)
+				if (getValue(defaultSorted).colIndex == i)
 					clickColumn();
 
 				mouseDownAround(manager, None(), make(false), hover, clickColumn,
@@ -515,7 +518,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				// Hotfix : rerender content in the column if rowsCountB changed. 
 				content =
 					if (contains(colStyle, MWidthByContent()))
-						MSelect(cellWs, \cws ->
+						MSelect(fstall(cellWs, 0), \cws ->
 							MAttachWidth(cell, elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0)))
 						)
 					else
@@ -989,17 +992,20 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		|> (\t -> if (separators) TLines2(m2t(MSeparator(true), p), t) else t)
 		// Header
 		|> (\f -> TLines2(tableHeader(headers0, p), f))
-		|> (\t : Tropic -> if (isInnerScroll) {
-				scrollStyle = [
+		|> (\t : Tropic -> eitherMap(innerScroll, \is -> {
+				defaultScrollBarStyle : TScrollbars = extractStruct(is.style, getMaterialScrollBar());
+
+				scrollStyle = concat(is.style, [
 					TScrollInspectShowScrolling(innerScrollVisible0),
 					MScrollPosition(innerScrollPosition),
 					MScrollDisableOutOfBounds(const(true)),
 					TScrollEnabled(innerScrollEnabled),
 					MScrollbars(
-						TScrollbarStyle(getMaterialScrollBar().x with visible = innerScrollEnabled),
-						TScrollbarStyle(getMaterialScrollBar().y with visible = innerScrollEnabled)
-					),
-				];
+						TScrollbarStyle(defaultScrollBarStyle.x with visible = innerScrollEnabled),
+						TScrollbarStyle(defaultScrollBarStyle.y with visible = innerScrollEnabled)
+					)
+				]);
+
 				scroll =
 					if (autoPagination || fgetValue(scrollEnabled)) MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
 					else {
@@ -1008,7 +1014,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					}
 
 				MScroll2T(manager, p, scroll, m2t)
-			} else t)
+			}, t))
 		|> addSeparatedFirstColumn(p, headers0)
 		|> addHeaderActions(p)
 		// Bottom bar
@@ -1040,7 +1046,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							else
 								None();
 
-						nextDistinct(sortedByB, Triple(num, !getValue(defaultSorted.sorting).isAsc, sortColumn));
+						nextDistinct(sortedByB, Triple(num, !getValue(defaultSorted).isAsc, sortColumn));
 					}),
 					\ -> fBidirectionalLink(page, pageNumberB,
 							\pair -> nextDistinct(pageNumberB, pair.first / max(pair.second, 1)),
@@ -1218,6 +1224,15 @@ MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, ro
 				}
 				default: wrapCellContentDef(c);
 			}
+		}
+		MGetFocusGroup(fn): {
+			wrapCellContent(fn(parent))
+		}
+		MGetManager(fn): {
+			wrapCellContent(fn(manager))
+		}
+		MGetMaterial2Tropic(fn): {
+			wrapCellContent(fn(m2t))
 		}
 		default: {
 			wrapCellContentDef(c)

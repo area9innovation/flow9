@@ -174,7 +174,10 @@ void Debugger::intSignalHandler(int)
     instance->SetAsyncInterrupt(true);
 
     char a = 1;
-    ::write(instance->sigintFd[0], &a, sizeof(a));
+    ssize_t written = ::write(instance->sigintFd[0], &a, sizeof(a));
+    if (written == -1) {
+    	// TODO: an error occured
+    }
 }
 #endif
 
@@ -184,7 +187,10 @@ void Debugger::handleSigInt()
 #else
     snInt->setEnabled(false);
     char tmp;
-    ::read(sigintFd[1], &tmp, sizeof(tmp));
+    ssize_t was_read = ::read(sigintFd[1], &tmp, sizeof(tmp));
+    if (was_read == -1) {
+    	// TODO: an error occured
+    }
     snInt->setEnabled(true);
 #endif
 
@@ -266,7 +272,7 @@ bool Debugger::setCommand(Command cmd, FlowPtr insn)
         if (DebugInfo()->chunk_ranges.empty())
             return false;
         cur_line = getLine(insn);
-
+        /* fall through */
     case CMD_STEPI:
         SetTraps(true, check_calls, false);
         break;
@@ -275,7 +281,7 @@ bool Debugger::setCommand(Command cmd, FlowPtr insn)
         if (DebugInfo()->chunk_ranges.empty())
             return false;
         cur_line = getLine(insn);
-
+        /* fall through */
     case CMD_NEXTI:
         SetTraps(true, true, false);
         break;
@@ -630,7 +636,11 @@ void Debugger::printMIFrame(ostream &out, const FlowStackFrame &frame)
                         << "\", value=";
 
                     std::stringstream ss;
-                    getFlowRunner()->PrintData(ss, data_stack()[frame.frame+i], 1, 3);
+                    if (shallow_frame_print) {
+                    	getFlowRunner()->PrintData(ss, data_stack()[frame.frame+i], 1, 3);
+                    } else {
+                    	getFlowRunner()->PrintData(ss, data_stack()[frame.frame+i], print_depth, print_length);
+                    }
                     printQuotedString2(out, ss.str());
 
                     out << "}";
@@ -741,12 +751,8 @@ void Debugger::InputThread::run()
         if (feof(stdin) || ferror(stdin))
             exit(0);
 
-        char buf[65536];
-#ifdef _MSC_VER
-        gets_s(buf, 65536);
-#else
-        gets(buf);
-#endif
+        std::string buf;
+        std::getline(std::cin, buf);
 
         setTerminationEnabled(false);
 
@@ -1089,12 +1095,14 @@ bool Debugger::command_set(std::vector<std::string> &tokens)
         call_depth_check = atoi(tokens[2].c_str());
     else if (cmd == "data-stack-limit")
         data_depth_check = atoi(tokens[2].c_str());
+    else if (cmd == "shallow-frame-print")
+        shallow_frame_print = (tokens[2] == "1");
     else
     {
         cmdError("Unknown option in set: '"+cmd+"'");
         return false;
     }
-
+    debug_out << "Parameter " << cmd << " is set to " << tokens[2] << std::endl;
     return true;
 }
 
@@ -1260,8 +1268,11 @@ bool Debugger::command_break(std::vector<std::string> &tokens, FlowPtr insn)
         sstr << ", fullname=";
         printQuotedString(sstr, chunk ? canonifyFilePath(chunk->line->file->name) : "?");
         sstr << ",line=\"" << (chunk ? chunk->line->line_idx : 0)
-             << "\",times=\"0\",original-location=";
-        printQuotedString(sstr, tokens[1]);
+             << "\",times=\"0\"";
+        if (tokens.size() > 1) {
+        	sstr << ",original-location=";
+        	printQuotedString(sstr, tokens[1]);
+        }
         sstr << "}" << endl;
 
         cout << "=breakpoint-created," << sstr.str() << endl;

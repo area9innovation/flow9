@@ -284,11 +284,11 @@ class TypeEnvironment {
 			}
 			buf.add(RUNION);
 		case TTyvar(ref):
-			var final = findTyvar(ref);
-			if (final.type == null)
+			var finale = findTyvar(ref);
+			if (finale.type == null)
 				return false;
 			buf.add(VAR);
-			buf.add(final.id);
+			buf.add(finale.id);
 		case TBoundTyvar(i):
 			return false;
 		case TFlow:

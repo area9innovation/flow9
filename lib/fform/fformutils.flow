@@ -742,6 +742,13 @@ style2characterStyle(s : [?]) -> [CharacterStyle] {
 	))
 }
 
+FParagraphStyle2FTextStyle(style : [FParagraphStyle]) -> [FTextStyle] {
+	filtermap(style, \s -> switch (s) {
+		FTextStyle() : {a : Maybe<FTextStyle> = Some(s); a}
+		default : None()
+	})
+}
+
 FDynamicGroup2DynamicGroup(group : FDynamicGroup2) -> Pair<DynamicGroup2, () -> () -> void> {
 	formChanges : DynamicBehaviour<[GroupChange]> = make([]);
 
@@ -987,6 +994,14 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 	}
 }
 
+FTextRenderResult(
+	x : Transform<double>,
+	y : Transform<double>,
+	disposers : [() -> void]
+);
+
+emptyFTextRenderResult = FTextRenderResult(zero, zero, []);
+
 renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 	if (isFConst(texts) && length(fgetValue(texts)) < 2) {
 		if (length(fgetValue(texts)) == 1) {
@@ -995,25 +1010,7 @@ renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 			emptyFRenderResult;
 		}
 	} else {
-		clip = makeClip();
-
-		FRenderResult(
-			[clip],
-			[
-				fiteriu(fmap(texts, \t -> renderFText(const(t.text), t.style)), \i, c -> {
-					alive = ref false;
-
-					concat(
-						[
-							makeSubscribe(i, \v -> addChildClipAt(clip, c.clips[0], v, alive))(),
-							\ -> removeChildClip(clip, c.clips[0], alive)
-						],
-						c.disposers
-					)
-				})
-			],
-			[FClipMask()]
-		);
+		renderFParagraphs(texts, style);
 	}
 }
 
@@ -1021,8 +1018,15 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	charStyle = style2characterStyle(style);
 	textfield = makeTextfield(getFontFamily(charStyle));
 	rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
+	setEscapeHTML(textfield, extractStruct(style, EscapeHTML(false)).escape);
 	setTextDirection(textfield, if (rtl) "rtl" else "ltr");
-	u = makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))();
+	dynColor = tryExtractStruct(style, FDynamicColor(const(-1)));
+	u =
+		eitherFn(
+			dynColor,
+			\dc -> make2Subscribe(text, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
+			makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))
+		);
 
 	disposer = \ -> {
 		u();
@@ -1076,17 +1080,58 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 		FRenderResult(
 			[clip],
 			[
-				fiteriu(fmap(texts, \t -> renderFParagraph(const(t.text), replaceStructMany(style, t.style))), \i, c -> {
-					alive = ref false;
+				makeSubscribeUns(texts, \tt -> {
+					lineHeight = ref 0.0;
+
+					d = foldi(tt, emptyFTextRenderResult, \i, acc, t -> {
+						tstyle = replaceStructMany(style, t.style);
+
+						childClip : ref native = ref clip;
+						cx = make(0.0);
+						cy = make(0.0);
+						pm = ParagraphMetrics(\fm -> {
+							deferUntilNextFrameRendered(\ -> next(cx, getTextFieldCharXPosition(^childClip, strlen(t.text))));
+							next(cx, fm.width);
+							next(cy, fm.height);
+						});
+
+						alive = ref false;
+						c = renderFParagraph(const(t.text), replaceStruct(tstyle, pm));
+						childClip := c.clips[0];
+
+						addChildClipAt(clip, ^childClip, i, alive);
+						tm = getTextMetrics(^childClip);
+						lineHeight := tm[0] + tm[1];
+						accY = fmax(fsubtract(acc.y, const(^lineHeight)), zero);
+
+						FTextRenderResult(
+							faddition(acc.x, cx),
+							faddition(accY, cy),
+							concat3(
+								acc.disposers,
+								[
+									make2Subscribe(acc.x, accY, \x, y -> {
+										setClipX(^childClip, x);
+										setClipY(^childClip, y);
+									})(),
+									\ -> {
+										removeChildClip(clip, ^childClip, alive);
+									}
+								],
+								c.disposers
+							)
+						);
+					});
 
 					concat(
+						d.disposers,
 						[
-							makeSubscribe(i, \v -> addChildClipAt(clip, c.clips[0], v, alive))(),
-							\ -> removeChildClip(clip, c.clips[0], alive)
-						],
-						c.disposers
+							make2Subscribe(d.x, d.y, \x, y ->
+								maybeApply(tryExtractStruct(style, ParagraphMetrics(nop1)), \pm -> pm.fn(FormMetrics(x, y, y, y)))
+							)()
+						]
 					)
-				})
+				})()
 			],
 			[FClipMask()]
 		);
@@ -1094,11 +1139,15 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 }
 
 renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult {
-	charStyle = style2characterStyle(style);
+	charStyle = FParagraphStyle2FTextStyle(style);
+
 	d = renderFText(text, charStyle);
 	textfield = d.clips[length(d.clips) - 1];
+	rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
 	disposers = ref [];
 
+	setEscapeHTML(textfield, extractStruct(style, EscapeHTML(false)).escape);
+	setTextDirection(textfield, if (rtl) "rtl" else "ltr");
 	setTextFieldCropWords(textfield, extractStruct(style, CropWords(true)).crop);
 
 	if (js) {
@@ -1128,14 +1177,17 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		}
 	);
 
-	if (contains(style, LeftAlign()))
-		setAutoAlign(textfield, "AutoAlignLeft")
-	else if (contains(style, RightAlign()))
-		setAutoAlign(textfield, "AutoAlignRight")
-	else if (contains(style, CenterAlign()))
-		setAutoAlign(textfield, "AutoAlignCenter")
-	else
-		setAutoAlign(textfield, "AutoAlignNone");
+	autoAlign = 
+		if (contains(style, LeftAlign()))
+			"AutoAlignLeft"
+		else if (contains(style, RightAlign()))
+			"AutoAlignRight"
+		else if (contains(style, CenterAlign()))
+			"AutoAlignCenter"
+		else
+			"AutoAlignNone";
+
+	setAutoAlign(textfield, autoAlign);
 
 	eitherFn(
 		tryExtractStruct(style, ParagraphWidth(const(-1.))),
