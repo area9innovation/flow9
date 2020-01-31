@@ -1,0 +1,141 @@
+import tools/flowc/flowc_local;
+import tools/flowc/flowc_remote;
+import tools/common/logging;
+
+export {
+	// Starts flowc server and keeps it running: 
+	// once it is shut down or hangs it is restarted.
+	runWatchdog(config : CompilerConfig) -> void;
+}
+
+fcWatchdoLog(message : string) -> void {
+	writeLogMessage(message, "flowc_watchdog.log", 256)
+}
+
+fcPingServer(conf : CompilerConfig, onPingSuccess : () -> void, onPingFail : () -> void) -> void {
+	ping_conf = CompilerConfig(conf with
+		config = setTree(conf.config, "ping", "1")
+	);
+	runConfigRemote(ping_conf, 
+		\out -> {
+			if (conf.verbose > 0) {
+				fcWatchdoLog("while pinging flowc server: " + out);
+				println(out)
+			}
+		}, 
+		\err -> {
+			fcWatchdoLog("error while pinging flowc server: " + err);
+			println(err)
+		},
+		\__ -> onPingSuccess(),  
+		\__,__ -> onPingFail()
+	)
+}
+
+FcWatchdog(
+	config : CompilerConfig,
+	server : ref Maybe<native>,
+	running : ref bool,
+);
+
+fcStartServer(watchdog : FcWatchdog, callback : () -> void) -> void {
+	args = map(
+		tree2pairs(
+			setTree(
+				setTree(compilerConfigToTree(watchdog.config), "server-mode", "1"),
+				"watchdog-mode", "0"
+			)
+		), 
+		\p -> p.first + "=" + p.second
+	);
+	watchdog.server := Some(runSystemProcess("flowc1", args, ".", 
+		\out -> {
+			if (out != "Processing 'ping' on server." || watchdog.config.verbose > 0) {
+				println(out);
+			}
+			if (out == "Processing 'watchdog-shutdown' on server.") {
+				watchdog.running := false
+			}
+		},
+		\err -> println(err),
+		\code : int -> {
+			watchdog.server := None(); 
+			fcWatchdoLog("flowc server exited");
+			//callback();
+		}
+	));
+	fcWatchdoLog("flowc server started");
+	callback();
+}
+
+fcStopServer(watchdog : FcWatchdog, callback : () -> void) -> void {
+	watchdog.server := None();
+	stop_conf = CompilerConfig(watchdog.config with
+		config = setTree(watchdog.config.config, "server-shutdown", "2")
+	);
+	runConfigRemote(stop_conf, 
+		\out -> {
+			if (watchdog.config.verbose > 0) {
+				fcWatchdoLog("while stopping flowc server: " + out);
+				println(out)
+			}
+		}, 
+		\err -> {
+			fcWatchdoLog("error while stopping flowc server: " + err);
+			println(err)
+		},
+		\__ -> {
+			fcWatchdoLog("flowc server stopped");
+			println("flowc server stopped");
+			callback()
+		},
+		\code, what -> fcWatchdoLog("error: " + i2s(code) + " " + what)
+	);
+}
+
+runWatchdog(config : CompilerConfig) -> void {
+	fcPingServer(config,
+		\-> println("Flowc server instance is already running. Stop it with 'flowc1 server-shutdown=1' command."),
+		\-> {
+			println("flowc watchdog started");
+			fcWatchdoLog("flowc watchdog started");
+			watchdog = FcWatchdog(config, ref None(), ref true);
+			fcStartServer(watchdog, \ -> fcCheckServerDelay(watchdog));
+		}
+	)
+}
+
+fcCheckServerDelay(watchdog : FcWatchdog) -> void {
+	wait_for = s2i(getConfigParameterDef(watchdog.config.config, "watchdog-period", "10000"));
+	timer(wait_for, \-> 
+		if (^(watchdog.running)) {
+			fcKeepServerRunning(watchdog)
+		} else {
+			fcStopServer(watchdog, \-> {
+				println("flowc watchdog stopped");
+				quit(0);
+			});
+		}
+	)
+}
+
+fcKeepServerRunning(watchdog : FcWatchdog) -> void {
+	check = \ -> fcCheckServerDelay(watchdog);
+	fcPingServer(watchdog.config, 
+		check, 
+		\ -> {
+			msg = "flowc server not responding in " + getConfigParameterDef(watchdog.config.config, "ping-timeout", "5000") + " ms : re-starting it";
+			fcWatchdoLog(msg);
+			println(msg);
+			switch (^(watchdog.server)) {
+				Some(process): 
+					fcStopServer(watchdog, \ -> fcStartServer(watchdog, check));
+					/*{
+						killSystemProcess(process);
+						timer(250, \-> { fcWatchdoLog("flowc server stopped"); fcStartServer(watchdog); })
+				}*/
+				None(): fcStartServer(watchdog, check);
+			}
+		}
+	)
+}
