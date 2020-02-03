@@ -1634,4 +1634,9 @@ public class Native extends NativeHost {
 		threadpool = Executors.newFixedThreadPool(threads);
 		return null;
 	}
+
+	private static final Scanner inputScanner = new Scanner(System.in);
+	public final String readln() {
+		return inputScanner.nextLine();
+	}
 }

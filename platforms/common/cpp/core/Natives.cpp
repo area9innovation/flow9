@@ -3091,6 +3091,14 @@ StackSlot ByteCodeRunner::fileChecksum(RUNNER_ARGS)
 	return RUNNER->AllocateString(parseUtf8(res));
 }
 
+StackSlot ByteCodeRunner::readln(RUNNER_ARGS)
+{
+	IGNORE_RUNNER_ARGS;
+	static std::string line;
+    std::getline(std::cin, line);
+	return RUNNER->AllocateString(parseUtf8(line));
+}
+
 void ByteCodeRunner::NotifyCameraEvent(int code, std::string message, std::string additionalInfo, int width, int height)
 {
     const StackSlot &code_arg = StackSlot::MakeInt(code);
