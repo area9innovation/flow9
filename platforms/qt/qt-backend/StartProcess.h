@@ -59,7 +59,7 @@ private:
     void provideStderr(FlowProcess *p);
     void endProcess(FlowProcess *p, int code);
     DECLARE_NATIVE_METHOD(startProcess);
-    DECLARE_NATIVE_METHOD(runProcess);
+    DECLARE_NATIVE_METHOD(runSystemProcess);
     DECLARE_NATIVE_METHOD(writeProcessStdin);
     DECLARE_NATIVE_METHOD(killProcess);
     DECLARE_NATIVE_METHOD(startDetachedProcess);
