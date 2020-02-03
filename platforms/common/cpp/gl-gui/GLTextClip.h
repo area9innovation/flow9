@@ -189,7 +189,7 @@ public:
     void setEditState(int cursor, int sel_start, int sel_end, bool set_text, unicode_string text, int scroll_pos = -1);
 
     const unicode_string textFilteredByFlowFilters(const unicode_string &str);
-    const bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
+    bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
 
 public:
     DECLARE_NATIVE_METHOD(setTextInput)

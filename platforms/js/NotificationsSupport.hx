@@ -68,7 +68,7 @@ class NotificationsSupport {
 
     private static var onNotificationFBListeners : Array<Dynamic> = [];
     private static var onTokenResreshFBListeners : Array<Dynamic> = [];
-    
+
 
     public function new() {}
 
@@ -80,7 +80,7 @@ class NotificationsSupport {
 
         #if flash
         #elseif js
-        result = untyped __typeof__(Notification) != "undefined" 
+        result = untyped HaxeRuntime.typeof(Notification) != "undefined" 
                 && Notification.permission == GRANTED;
         #end
 
@@ -90,7 +90,7 @@ class NotificationsSupport {
     public static function requestPermissionLocalNotification(cb : Bool -> Void) : Void {
         #if flash
         #elseif js
-        if (untyped __typeof__(Notification) == "undefined") {
+        if (untyped HaxeRuntime.typeof(Notification) == "undefined") {
             cb(false);
             return;
         }
@@ -126,7 +126,7 @@ class NotificationsSupport {
         #if flash
         #elseif js
         // Notificaitons API is not available
-        if (untyped __typeof__(Notification) == "undefined") return;
+        if (untyped HaxeRuntime.typeof(Notification) == "undefined") return;
 
         NotificationsSupport.cancelLocalNotification(notificationId);
         var timer = haxe.Timer.delay(
@@ -193,7 +193,7 @@ class NotificationsSupport {
                     messaging = untyped firebase.messaging();
                     messaging.usePublicVapidKey(untyped vapidKey);
                     if (untyped navigator.serviceWorker) {
-                        untyped navigator.serviceWorker.register('firebase-messaging-sw.js').then(function(registration) {
+                        untyped navigator.serviceWorker.register('js/firebase/firebase-messaging-sw.js').then(function(registration) {
                             messaging.useServiceWorker(registration);
 
                             messaging.onMessage(function(payload) {

@@ -1,6 +1,8 @@
 import js.Browser;
 import js.html.Element;
 import js.html.CanvasElement;
+import js.html.File;
+import js.html.FileList;
 
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
@@ -586,9 +588,9 @@ class DisplayObjectHelper {
 			while (obj.children != null && obj.children.length == 1)
 				obj = obj.children[0];
 
-			if (untyped __instanceof__(obj, FlowGraphics)) {
+			if (untyped HaxeRuntime.instanceof(obj, FlowGraphics)) {
 				clip.mask = obj;
-			} else if (untyped __instanceof__(obj, FlowSprite)) {
+			} else if (untyped HaxeRuntime.instanceof(obj, FlowSprite)) {
 				untyped clip.alphaMask = obj;
 			}
 		}
@@ -731,7 +733,7 @@ class DisplayObjectHelper {
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
 	public static function getFirstGraphicsOrSprite(clip : DisplayObject) : DisplayObject {
-		if (untyped clip.clipVisible && (untyped __instanceof__(clip, FlowGraphics) || untyped __instanceof__(clip, FlowSprite)))
+		if (untyped clip.clipVisible && (untyped HaxeRuntime.instanceof(clip, FlowGraphics) || untyped HaxeRuntime.instanceof(clip, FlowSprite)))
 			return clip;
 
 		for (c in getClipChildren(clip)) {
@@ -747,7 +749,7 @@ class DisplayObjectHelper {
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
 	public static function getFirstGraphics(clip : DisplayObject) : DisplayObject {
-		if (untyped __instanceof__(clip, FlowGraphics))
+		if (untyped HaxeRuntime.instanceof(clip, FlowGraphics))
 			return clip;
 
 		for (c in getClipChildren(clip)) {
@@ -1037,7 +1039,7 @@ class DisplayObjectHelper {
 			if (filters != null && filters.length > 0) {
 				var filter = filters[0];
 
-				if (untyped __instanceof__(filter, DropShadowFilter)) {
+				if (untyped HaxeRuntime.instanceof(filter, DropShadowFilter)) {
 					if (untyped BoxShadow || clip.isGraphics()) {
 						applyNativeWidgetBoxShadow(clip, filter);
 					} else {
@@ -1057,7 +1059,7 @@ class DisplayObjectHelper {
 							rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
 						)';
 					}
-				} else if (untyped __instanceof__(filter, BlurFilter)) {
+				} else if (untyped HaxeRuntime.instanceof(filter, BlurFilter)) {
 					var nativeWidget : Element = untyped clip.nativeWidget;
 					nativeWidget.style.filter = 'blur(${filter.blur}px)';
 				}
@@ -1178,16 +1180,20 @@ class DisplayObjectHelper {
 
 		if (untyped clip.hasMarginGap && clip.parentClip != RenderSupportJSPixi.PixiStage) {
 			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0)) {
-				nativeWidget.style.marginLeft = '${-round(x + getMarginGap() * transform.a)}px';
-				nativeWidget.style.marginRight = '${-round(getMarginGap() * transform.a)}px';
-				nativeWidget.style.marginTop = '${-round(y + getMarginGap() * transform.d)}px';
-				nativeWidget.style.marginBottom = '${-round(getMarginGap() * transform.d)}px';
 
-				nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + getMarginGap() * 2.0)}px';
-				nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + getMarginGap() * 2.0)}px';
+				if (x < 0) {
+					nativeWidget.style.marginLeft = '${-round(x + getMarginGap() * transform.a)}px';
+					nativeWidget.style.marginRight = '${-round(getMarginGap() * transform.a)}px';
+					nativeWidget.style.width = '${round(getWidgetWidth(clip) + x + getMarginGap() * 2.0)}px';
+					x = 0;
+				}
 
-				y = 0;
-				x = 0;
+				if (y < 0) {
+					nativeWidget.style.marginTop = '${-round(y + getMarginGap() * transform.d)}px';
+					nativeWidget.style.marginBottom = '${-round(getMarginGap() * transform.d)}px';
+					nativeWidget.style.height = '${round(getWidgetHeight(clip) + y + getMarginGap() * 2.0)}px';
+					y = 0;
+				}
 			} else {
 				nativeWidget.style.marginLeft = '${-round(getMarginGap() * transform.a)}px';
 				nativeWidget.style.marginRight = '${-round(getMarginGap() * transform.a)}px';
@@ -1455,14 +1461,59 @@ class DisplayObjectHelper {
 				}
 			}
 
-			nativeWidget.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 			nativeWidget.style.pointerEvents = 'auto';
+
+			if (untyped clip.isFileDrop) {
+				nativeWidget.ondragover = function(e) {
+					e.dataTransfer.dropEffect = 'copy';
+					return false;
+				}
+
+				nativeWidget.ondrop = function(e) {
+					e.preventDefault();
+
+					var files : FileList = e.dataTransfer.files;
+					var fileArray : Array<File> = [];
+
+					if (untyped clip.maxFilesCount < 0) {
+						untyped clip.maxFilesCount = files.length;
+					}
+
+					for (idx in 0...Math.floor(Math.min(files.length, untyped clip.maxFilesCount))) {
+						var file : File = files.item(idx);
+
+						if (untyped !clip.regExp.match(file.type)) {
+							untyped clip.maxFilesCount++;
+							continue;
+						}
+
+						fileArray.push(file);
+					}
+
+					untyped clip.onDone(fileArray);
+				}
+
+				nativeWidget.oncontextmenu = function(e) {
+					if (RenderSupportJSPixi.PixiView.oncontextmenu != null) {
+						return RenderSupportJSPixi.PixiView.oncontextmenu(e);
+					} else {
+						return true;
+					}
+				};
+			} else {
+				nativeWidget.oncontextmenu = function (e) {
+					e.stopPropagation();
+					return untyped clip.isInput == true;
+				};
+			}
 		} else {
 			nativeWidget.onmouseover = null;
 			nativeWidget.onmouseout = null;
 			nativeWidget.onpointerover = null;
 			nativeWidget.onpointerout = null;
 			nativeWidget.style.pointerEvents = null;
+			nativeWidget.ondragover = null;
+			nativeWidget.ondrop = null;
 		}
 	}
 
@@ -2042,7 +2093,7 @@ class DisplayObjectHelper {
 
 		untyped clip.viewBounds = viewBounds;
 
-		if ((RenderSupportJSPixi.RendererType != "html" && untyped clip.styleChanged != null) || untyped __instanceof__(clip, DropAreaClip)) {
+		if ((RenderSupportJSPixi.RendererType != "html" && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
 			invalidateTransform(clip, 'invalidateRenderable');
 		}
@@ -2127,6 +2178,11 @@ class DisplayObjectHelper {
 			RenderSupportJSPixi.PixiRenderer.context.clearRect(0, 0, untyped clip.localBounds.maxX * RenderSupportJSPixi.PixiRenderer.resolution, untyped clip.localBounds.maxY * RenderSupportJSPixi.PixiRenderer.resolution);
 
 			RenderSupportJSPixi.RendererType = 'canvas';
+
+			if (transform != null) {
+				untyped tempWorldAlpha = clip.worldAlpha;
+				untyped clip.worldAlpha = clip.alpha;
+			}
 		}
 
 		if (clip.mask != null)
@@ -2148,7 +2204,6 @@ class DisplayObjectHelper {
 				untyped tempWorldTransform = clip.transform.worldTransform;
 				untyped tempWorldAlpha = clip.worldAlpha;
 				untyped clip.transform.worldTransform = clip.transform.worldTransform.clone().prepend(transform);
-				untyped clip.worldAlpha = clip.alpha;
 			}
 
 			untyped clip.renderCanvas(RenderSupportJSPixi.PixiRenderer);
@@ -2176,6 +2231,32 @@ class DisplayObjectHelper {
 			RenderSupportJSPixi.PixiRenderer.roundPixels = tempRoundPixels;
 
 			RenderSupportJSPixi.RendererType = tempRendererType;
+		}
+	}
+
+	public static function addFileDropListener(clip : DisplayObject, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
+		untyped clip.isFileDrop = true;
+		untyped clip.isInteractive = true;
+
+		untyped clip.maxFilesCount = maxFilesCount;
+		untyped clip.regExp = new EReg(mimeTypeRegExpFilter, "g");
+		untyped clip.onDone = onDone;
+
+		invalidateInteractive(clip);
+		invalidateTransform(clip, "addFileDropListener");
+
+		return function() {
+			if (untyped !clip.destroyed) {
+				untyped clip.isFileDrop = false;
+				untyped clip.isInteractive = false;
+
+				untyped clip.maxFilesCount = null;
+				untyped clip.regExp = null;
+				untyped clip.onDone = null;
+
+				invalidateInteractive(clip);
+				invalidateTransform(clip, "addFileDropListener");
+			}
 		}
 	}
 }

@@ -48,6 +48,9 @@ export {
 	// Clean Service Worker cache immediately
 	native cleanServiceWorkerCache : io (callback : (success : bool) -> void) -> void = ProgressiveWebTools.cleanServiceWorkerCache;
 
+	native setServiceWorkerPreferCachedResources : io (prefer : bool, callback : (success : bool) -> void) -> void = ProgressiveWebTools.setServiceWorkerPreferCachedResources;
+	native setServiceWorkerCacheStaticResources : io (cache : bool, callback : (success : bool) -> void) -> void = ProgressiveWebTools.setServiceWorkerCacheStaticResources;
+
 	// By default cached only static resources.
 	// This method allows to add filter to cache dynamic requests.
 	// The request will be cached if (concatinated by AND, None() or empty array - means any value):
@@ -60,6 +63,14 @@ export {
 		methodM : Maybe<RequestMethodBase>,
 		cacheIfParametersMatchM : [KeyValue],
 		ignoreParameterKeysOnCache : [string],
+		onOK : () -> void,
+		onError : (string) -> void
+	) -> void;
+
+	addRequestSkipFilter(
+		urlM : Maybe<string>,
+		methodM : Maybe<RequestMethodBase>,
+		headerMatchM : Maybe<KeyValue>,
 		onOK : () -> void,
 		onError : (string) -> void
 	) -> void;
@@ -113,12 +124,15 @@ export {
 }
 
 defaultServiceWorkerFilePath = "sw.min.js";
-service_worker_version = 4;
+service_worker_version = 7;
 
 enableServiceWorkerCaching(swFileName : string, callback : (bool) -> void) { callback(false) }
 disableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
 checkServiceWorkerEnabledOnly(callback : (bool) -> void) { callback(false) }
 checkServiceWorkerCachingEnabled(swFileName : string, callback : (bool) -> void) { callback(false) }
+setServiceWorkerPreferCachedResources(prefer : bool, callback : (success : bool) -> void) -> void { callback(false) }
+setServiceWorkerCacheStaticResources(cache : bool, callback : (success : bool) -> void) -> void { callback(false) }
+
 cleanServiceWorkerCache(callback : (bool) -> void) { callback(false) }
 loadAndCacheUrls(urls : [string], ignoreParameterKeysOnCache : [string], onOK : () -> void, onError : (string) -> void) -> void { onOK(); }
 checkUrlsInServiceWorkerCache(urls : [string], onOK : ([string]) -> void, onError : (string) -> void) -> void { onOK([]); };
@@ -192,6 +206,14 @@ native addRequestCacheFilterN : io (
 	onError : (string) -> void
 ) -> void = ProgressiveWebTools.addRequestCacheFilterN;
 
+native addRequestSkipFilterN : io (
+	skipIfUrlMatch : string,
+	skipIfMethodMatch : string,
+	skipIfHeaderMatch : [string],
+	onOK : () -> void,
+	onError : (string) -> void
+) -> void = ProgressiveWebTools.addRequestSkipFilterN;
+
 addRequestCacheFilter(
 	cacheIfUrlMatchM : Maybe<string>,
 	cacheIfMethodMatchM : Maybe<RequestMethodBase>,
@@ -211,6 +233,30 @@ addRequestCacheFilter(
 			ignoreParameterKeysOnCacheN = map(ignoreParameterKeysOnCache, toLowerCase);
 
 			addRequestCacheFilterN(strReplace(cacheIfUrlMatch, "//", "/"), cacheIfMethodMatch, cacheIfParametersMatchN, ignoreParameterKeysOnCacheN, onOK, onError);
+		} else {
+			onOK();
+		}
+	);
+}
+
+addRequestSkipFilter(
+	urlM : Maybe<string>,
+	methodM : Maybe<RequestMethodBase>,
+	headerMatchM : Maybe<KeyValue>,
+	onOK : () -> void,
+	onError : (string) -> void
+) -> void {
+	checkServiceWorkerEnabledOnly(
+		\enabled -> if (enabled) {
+			if (urlM == Some(""))
+				onError("Parameter `urlM` can't be empty");
+
+			skipIfUrlMatch = either(urlM, "");
+			skipIfUrlMatch2 = (if (startsWith(skipIfUrlMatch, "/")) "." else "") + skipIfUrlMatch;
+			skipIfMethodMatch = eitherMap(methodM, method2string, "");
+			skipIfHeaderMatch = eitherMap(headerMatchM, \m -> [toLowerCase(m.key), toLowerCase(m.value)], []);
+
+			addRequestSkipFilterN(strReplace(skipIfUrlMatch2, "//", "/"), skipIfMethodMatch, skipIfHeaderMatch, onOK, onError);
 		} else {
 			onOK();
 		}

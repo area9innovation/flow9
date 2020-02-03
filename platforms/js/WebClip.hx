@@ -55,7 +55,7 @@ class WebClip extends NativeWidgetClip {
 			try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report("Can not set RealHTML domain" + e); }
 		}
 
-		initNativeWidget();
+		this.initNativeWidget();
 
 		if (Platform.isIOS) {
 			// To restrict size of iframe
@@ -125,12 +125,12 @@ class WebClip extends NativeWidgetClip {
 				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
 					iframe.scrolling = "no"; // Obviousely it is flow page.
 				}
-			} catch(e : Dynamic) { Errors.report(e); }
+			} catch(e : Dynamic) { Errors.report(e); ondone(e);}
 		};
 	}
 
 	private function applyShrinkToFit() {
-		if (getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
+		if (this.getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
 			var scaleH = nativeWidget.clientHeight / this.htmlPageHeight;
 			var scaleW = nativeWidget.clientWidth / this.htmlPageWidth;
 			var scaleWH = Math.min(1.0, Math.min(scaleH, scaleW));
@@ -156,7 +156,7 @@ class WebClip extends NativeWidgetClip {
 	}
 
 	private function applyNativeWidgetSize() {
-		if (getClipVisible() && nativeWidget != null && iframe != null) {
+		if (this.getClipVisible() && nativeWidget != null && iframe != null) {
 			// Explicitly set w/h (for iOS at least it does not work with "100%")
 			iframe.style.width = nativeWidget.style.width;
 			iframe.style.height = nativeWidget.style.height;
@@ -201,7 +201,7 @@ class WebClip extends NativeWidgetClip {
 			nativeWidget.removeAttribute("tabindex"); // FF set focus to div if it has tabindex
 		}
 
-		if (getClipVisible()) {
+		if (this.getClipVisible()) {
 			if (this.shrinkToFit) {
 				applyShrinkToFit();
 			} else {
@@ -232,6 +232,7 @@ class WebClip extends NativeWidgetClip {
 	public function setDisableOverlay(disable : Bool) : Void {
 		if (disableOverlay && !disable) {
 			nativeWidget.removeChild(disableOverlay);
+			iframe.style.pointerEvents = 'auto';
 		} else if (disable) {
 			if (!disableOverlay) {
 				disableOverlay = Browser.document.createElement("div");
@@ -240,6 +241,7 @@ class WebClip extends NativeWidgetClip {
 
 			disableOverlay.style.display = "block";
 			nativeWidget.appendChild(disableOverlay);
+			iframe.style.pointerEvents = 'none';
 		}
 	}
 

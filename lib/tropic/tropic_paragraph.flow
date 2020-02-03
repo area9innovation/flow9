@@ -48,8 +48,7 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
 
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
-
-	// interactiveStyles = wordsAndStyles.second;
+	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
 	aw = make(0.0);
 	update = make(0);
@@ -78,7 +77,8 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 		w = if (isSingleLine) 100000.0 else max(0.0, wi);
 		paragraphSizeAndBaseline = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
-			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()), genIndent
+			topLineBaseline, isParagraphRtl(s), containsStruct(s, ParagraphMarked()),
+			genIndent, linesCountB
 		);
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
@@ -153,12 +153,7 @@ TRenderParagraph(words : ref [TParaWord], s : [ParagraphStyle], rtl : bool) -> T
 			},
 			aw
 		)
-	)
-	|> (\f -> if (needIndent) {
-		if (rtl) TBorderRight(genIndent)(f) else TBorderLeft(genIndent)(f)
-	 } else {
-		 f
-	 });
+	);
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
@@ -234,9 +229,10 @@ reflowTParaWords(
 	topLineBaseline : bool,
 	rtl : bool,
 	isMarked : bool,
-	generalIndent : double
+	generalIndent : double,
+	linesCountB : DynamicBehaviour<int>
 ) -> Pair<WidthHeight, double> {
-	firstLineWidth = availableParaWidth - getLineIndent(firstLineIndent, 0);
+	firstLineWidth = availableParaWidth - generalIndent - getLineIndent(firstLineIndent, 0);
 	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], firstLineIndent, isMarked);
 	paraLines = if (isBiDiEnabled())
 		zipWith(
@@ -245,6 +241,8 @@ reflowTParaWords(
 			\l, ws -> TParaLine(ws, l.indent),
 		)
 	else text;
+
+	nextDistinct(linesCountB, length(text));
 
 	TAlignParaLines(
 		availableParaWidth,
@@ -445,20 +443,6 @@ TAlignParaLines(
 	generalIndent : double
 ) -> Pair<WidthHeight, double> {
 	lasti = length(lines) - 1;
-	singleLine = length(lines) == 1;
-
-	// we need to find out the width of the longest line (including indent)
-	// to define the width of a paragraph in tightWidth mode
-	// it is possible to do in StartAlign case only because other alignments use fillers
-	width = if (tightWidth && isStartAlignment(alignment)) {
-		fold(lines, 0.0, \acc : double, line : TParaLine -> {
-			metrics = map(line.words, \p -> p.inspector);
-			lw = line.indent + fold(metrics, 0.0, \ac, m -> ac + fgetValue(m.size).width);
-			max(acc, lw);
-		});
-	} else {
-		availableWidth
-	}
 
 	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
@@ -472,7 +456,7 @@ TAlignParaLines(
 				alignment;
 			}
 		f = TRenderLine(
-			acc.y, line.words, width, tightWidth,
+			acc.y, line.words, availableWidth, tightWidth,
 			lineAlignment, line.indent + generalIndent,
 			i, rtl, isMarked
 		);
@@ -487,7 +471,7 @@ TAlignParaLines(
 			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
 		);
 	});
-	Pair(WidthHeight(if (tightWidth) a.width else max(width, a.width), a.y), a.baseline);
+	Pair(WidthHeight(if (tightWidth) a.width else max(availableWidth, a.width), a.y), a.baseline);
 }
 
 TParaLineResult(width : double, height : double, baseline : double);

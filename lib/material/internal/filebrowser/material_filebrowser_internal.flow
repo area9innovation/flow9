@@ -28,6 +28,7 @@ FilebrowserState(
 	searchTextB : DynamicBehaviour<string>,
 	focusedIdB : DynamicBehaviour<string>,
 	iconSizeB : DynamicBehaviour<double>,
+	thumbnailSize : Transform<double>,
 	contentViewIconsB : DynamicBehaviour<bool>,
 	onClickB : DynamicBehaviour<() -> void>,
 	onRightClickB : DynamicBehaviour<(string, (string) -> void) -> void>,
@@ -70,8 +71,9 @@ makeFilebrowserState(styles : [FbMStyle]) -> FilebrowserState {
 		make(""),
 		make(""),
 		make(0.5),
+		const(16.0),
 		make(true),
-		make(\-> {}),
+		make(nop),
 		make(\__, __ -> {}),
 		extractStruct(styles, FbGetFilesPreview(\__, fn -> fn([]))).fn,
 		make(FBSortByName(true))
@@ -185,11 +187,10 @@ fsCustomElement(state : FilebrowserState, contentM : Material, text : string, to
 						)
 					)
 				else
-					MCols([
-						MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
+					MColsYCenter([
+						MZoomToFill(contentM, TSizedWidthHeight(state.thumbnailSize, state.thumbnailSize), true),
 						TFixed(5.0, 0.0),
-						MCenterYIn(MSelect(hoverB, \ishovered -> MText(text, [if (ishovered) MPurple(500) else MBlack()])), TFixed(iconSize, iconSize)),
-						//TFillXH(23.0)
+						MSelect(hoverB, \ishovered -> MText(text, [if (ishovered) MPurple(500) else MBlack()])),
 					])
 			}
 			|> (\m -> MBorder(6.0, 3.0, 6.0, 3.0, m))
@@ -230,7 +231,7 @@ fsCustomElement(state : FilebrowserState, contentM : Material, text : string, to
 		m
 	))
 	|> (\m -> MSelect(state.contentViewIconsB, \contentViewIcons -> if (!contentViewIcons) MCols2(m, TFillX()) else m))
-	|> (\m -> MBorder(4.0, 4.0, 4.0, 4.0, m));
+	|> (\m -> MBorder4(4.0, m));
 }
 
 // creating material view of the filebrowser element using exists icon (by icon name)
@@ -266,7 +267,7 @@ createFolderUI(state : FilebrowserState, curPath : string, curNameB : DynamicBeh
 }
 
 // creating material view of the file
-createFileUI(state : FilebrowserState, curPath : string, curNameB : DynamicBehaviour<string>, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Material {
+createFileUI(state : FilebrowserState, curPath : string, curNameB : DynamicBehaviour<string>, previewsB : Transform<[Pair<string, Material>]>) -> Material {
 	correctedCurPath = addSlash2pathEnd(curPath);
 
 	MSelect(curNameB, \name ->
@@ -314,12 +315,11 @@ prepareAndGetContentUI(state : FilebrowserState, dirs : [string], files : [strin
 
 	lastSlashIdx = strLastIndexOf(curPath, "/");
 
-
 	backButtonM = if (lastSlashIdx != -1 && contains(dirs, "..") && (!endsWith(correctCurPath, state.limitDir))) {
 			prevPath = if (lastSlashIdx > 0) strLeft(curPath, lastSlashIdx) else "";
 			name = if (endsWith(prevPath, ":")) prevPath + "/" else prevPath + "/";
 
-			Some(fsIconElement(state, "reply", "..", "", const(false), MGrey(300), \-> {}, \-> next(state.currentPathB, name), \-> {}))
+			Some(fsIconElement(state, "reply", "..", "", const(false), MGrey(300), nop, \-> next(state.currentPathB, name), nop))
 		} else {
 			None()
 		}
@@ -349,7 +349,9 @@ getContentUI(state : FilebrowserState, dirs : [FBContentPath], files : [FBConten
 
 	ffItems = map(
 		files,
-		\item -> createItem(item, false, \nameB -> createFileUI(state, item.dirPath, nameB, previewsB))
+		\item -> createItem(item, false, \nameB -> 
+			createFileUI(state, item.dirPath, nameB, fif(state.contentViewIconsB, previewsB, const([])))
+		)
 	);
 
 	onSortChanged = \ddM, ffM, sType -> {
@@ -396,11 +398,11 @@ getContentUI(state : FilebrowserState, dirs : [FBContentPath], files : [FBConten
 		),
 		[
 			MBoxSize(boxSize),
-			MItemSize(fselect3(boxSize, state.contentViewIconsB, state.iconSizeB, \bs, ic, is -> {
+			MItemSize(fselect4(boxSize, state.contentViewIconsB, state.iconSizeB, state.thumbnailSize, \bs, ic, is, thumbnailSize -> {
 				if (ic)
 					WidthHeight(is + 20., is + 37.)
 				else
-					WidthHeight(bs.width, is + 14.)
+					WidthHeight(bs.width, thumbnailSize + 12.)
 			}))
 		]
 	)
@@ -555,7 +557,7 @@ onContentUpdate(state : FilebrowserState, uns : [() -> ()-> void], content : Dyn
 	addCtrlSubscribe = \-> {
 		switch (state.maybeMultiselectB) {
 			Some(ctrlKeyB): makeSubscribe(keyBroadcast.pressed, \ke -> nextDistinct(ctrlKeyB, ke.ctrl));
-			None(): \-> \-> {}
+			None(): \-> nop
 		}
 	};
 
@@ -574,7 +576,7 @@ onContentUpdate(state : FilebrowserState, uns : [() -> ()-> void], content : Dyn
 		),
 		m
 	))
-	|> (\m -> MBorder(4.0, 4.0, 4.0, 4.0, m))
+	|> (\m -> MBorder4(4.0, m))
 	|> (\m -> onUpdate(m));
 }
 
@@ -851,7 +853,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		next(state.currentPathB, path);
 	};
 
-	setSelected = \-> {};
+	setSelected = nop;
 
 	statusPanel = {
 		iconsR = ref [];
@@ -1177,15 +1179,15 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			}
 		),
 		TFixed(8.0, 0.0),
-		MSelect(
+		MShow(state.contentViewIconsB, MSelect(
 			showSliderB,
 			\showSlider -> MIconButton(
 				"linear_scale",
-				\-> next(showSliderB, !showSlider),
+				\-> reverseBehaviour(showSliderB),
 				[MIconButtonBorder(1.0), MIconSize(34.0), if (showSlider) MOrange(500) else MBlack()],
 				[]
 			)
-		),
+		)),
 		TFixed(8.0, 0.0),
 		MFixSize(
 			MMenu(

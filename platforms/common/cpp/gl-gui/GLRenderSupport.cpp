@@ -769,8 +769,8 @@ void GLRenderSupport::dispatchKeyEvent(FlowEvent event, unicode_string key,
     case FlowKey_F10: case FlowKey_F11: case FlowKey_F12:
     case FlowKey_F13: case FlowKey_F14: case FlowKey_F15:
         {
-            char tmp[10];
-            int sz = sprintf(tmp, "F%d", code-FlowKey_F1+1);
+            char tmp[16];
+            int sz = sprintf(tmp, "F%i", code - FlowKey_F1 + 1);
             key = parseUtf8(tmp, sz);
             break;
         }
@@ -778,6 +778,7 @@ void GLRenderSupport::dispatchKeyEvent(FlowEvent event, unicode_string key,
     case FlowKey_Numpad_0:;
 #undef SSTR
 #undef CASE
+    default: break; // Do nothing
     }
 
     if (!EventListeners[event].empty())
@@ -1787,34 +1788,34 @@ GLClip* GLRenderSupport::getCurrentFocus()
 
 GLClip* getMinTabIdxClip(GLClip *first, GLClip *second)
 {
-    if (first && second)
+    if (first && second) {
         if (first->getTabIndex() < second->getTabIndex())
             return first;
         else if (first->getTabIndex() != second->getTabIndex())
             return second;
         else
             return NULL;
-
-    if (!first)
+    } else if (!first) {
         return second;
-    else
+    } else {
         return first;
+    }
 }
 
 GLClip* getMaxTabIdxClip(GLClip *first, GLClip *second)
 {
-    if (first && second)
+    if (first && second) {
         if (first->getTabIndex() > second->getTabIndex())
             return first;
         else if (first->getTabIndex() != second->getTabIndex())
            return second;
         else
             return NULL;
-
-    if (!first)
+    } else if (!first) {
         return second;
-    else
+    } else {
         return first;
+    }
 }
 
 void GLRenderSupport::tryFocusNextClip(GLClip *focused, bool direct)

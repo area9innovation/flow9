@@ -81,6 +81,7 @@
 using std::max;
 using std::min;
 
+#ifndef NATIVE_BUILD
 // --profile-bytecode 2000 --url "http://localhost:81/flow/flowrunner.html?name=program" program.bytecode program.debug
 static QString compileFlow(int const flowCompiler, QString const & flow, QString const & flow_path, QStringList const & args, bool /*cgi*/) {
     QFileInfo fileinfo(flow);
@@ -97,6 +98,9 @@ static QString compileFlow(int const flowCompiler, QString const & flow, QString
     p.waitForFinished(-1);
     QString output = p.readAllStandardOutput() + p.readAllStandardError();
     qDebug().noquote() << output;
+    if (p.exitCode() != 0) {
+    	cerr << output.toStdString() << endl;
+    }
 
 #ifdef QT_GUI_LIB
     if (p.exitCode() != 0) {
@@ -105,7 +109,7 @@ static QString compileFlow(int const flowCompiler, QString const & flow, QString
 #endif
     return base;
 }
-
+#endif
 
 static void shift_args(int &argc, char *argv[], int cnt)
 {
@@ -113,6 +117,7 @@ static void shift_args(int &argc, char *argv[], int cnt)
     memmove(argv+1, argv+1+cnt, sizeof(char*)*(argc-1));
 }
 
+#ifdef QT_GUI_LIB
 static void loadFonts(QGLRenderSupport *pRenderer, QDir media_dir) {
     media_dir.setFilter(QDir::Dirs);
 
@@ -124,6 +129,7 @@ static void loadFonts(QGLRenderSupport *pRenderer, QDir media_dir) {
          }
     }
 }
+#endif
 
 #ifdef QT_GUI_LIB
 //TODO: remove it after update to Qt 5.7
@@ -389,6 +395,7 @@ int main(int argc, char *argv[])
         }
     }
 
+#ifdef QT_GUI_LIB
     QSurfaceFormat format;
     format.setDepthBufferSize(24);
     format.setStencilBufferSize(8);
@@ -401,6 +408,7 @@ int main(int argc, char *argv[])
     if (transparent)
         format.setAlphaBufferSize(8);
     QSurfaceFormat::setDefaultFormat(format);
+#endif
 
     // We need to share the OpenGL context for Qt's QVideoWidget (when used)
     // to work, since otherwise QVideoWidget interferes with our own context
@@ -611,8 +619,35 @@ int main(int argc, char *argv[])
 
 #if !COMPILED
 #ifdef NATIVE_BUILD
+    	// Suppress the 'unused variables' warnings
+    	UNUSED(mem_prof_step);
+    	UNUSED(cpu_prof_step);
+    	UNUSED(time_prof_step);
+    	UNUSED(garbage_prof);
+    	UNUSED(coverage_prof);
+    	UNUSED(garbage_stack);
+    	UNUSED(disassemble);
+    	UNUSED(use_jit);
+    	UNUSED(jit_memory_limit);
+    	UNUSED(pdbg);
+
         FlowRunner.Init(load_native_program());
         FlowRunner.setUrl(params);
+        // Here we add all command line arguments of the form: key=value as Url parameters
+        QStringList args = app->arguments();
+        args.removeFirst();
+        for (auto& arg : args) {
+        	if (!arg.startsWith(QLatin1String("--"))) {
+				int equal = arg.indexOf('=');
+				if (equal > 0) {
+					QString key = arg.left(equal);
+					QString value = arg.mid(equal + 1);
+					FlowRunner.setUrlParameter(key, value);
+				} else {
+					FlowRunner.setUrlParameter(arg, QString());
+				}
+        	}
+		}
         FlowRunner.RunMain();
 #else
     if (argc >= 2) {
@@ -625,6 +660,7 @@ int main(int argc, char *argv[])
             }
             QString base = compileFlow(flowCompiler, argv[1], flow_path, flowArgs, cgi);
             if (base.length() == 0) {
+            	cerr << "Compilation of " << argv[1] << " with flow path " << flow_path.toStdString() << " and arguments " << flowArgs.join(QLatin1Char(' ')).toStdString() << " failed";
                 return 1;
             }
 
@@ -658,8 +694,10 @@ int main(int argc, char *argv[])
         if (use_jit)
         {
 			FlowJitProgram *jit = loadJitProgram(cerr, bytecodeFile.toStdString(), verbose ? "flowjit" : "", jit_memory_limit);
-            if (!jit)
+            if (!jit) {
+            	cerr << "Loading of bytecode " << bytecodeFile.toStdString() << " to jit failed";
                 return 1;
+            }
 
             FlowRunner.Init(jit);
             FlowRunner.setBytecodeFilename(bytecodeFile.toStdString());
@@ -806,9 +844,16 @@ int main(int argc, char *argv[])
 #endif
 
         rv = app->exec();
+        if (rv == 1) {
+        	cerr << "app->exec() == 1";
+        }
     }
-    else if (cgihost && cgihost->quitPending)
+    else if (cgihost && cgihost->quitPending) {
         rv = cgihost->quitCode;
+        if (rv == 1) {
+        	cerr << "cgihost->quitCode == 1";
+        }
+    }
 
 #ifdef FLOW_DEBUGGER
     if (gdbmi)
@@ -820,6 +865,7 @@ int main(int argc, char *argv[])
 #endif
 
     if (FlowRunner.IsErrorReported()) {
+    	cerr << "FlowRunner.IsErrorReported()";
         rv = 1;
     }
 

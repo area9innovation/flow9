@@ -427,7 +427,7 @@ std::vector<std::string> split_string(const std::string &str, const std::string 
     return strings;
 }
 
-void GLRenderer::renderShader(GLDrawSurface *main, GLDrawSurface *mask, unsigned program_id, float &time, float &seed)
+void GLRenderer::renderShader(GLDrawSurface *main, GLDrawSurface * /*mask*/, unsigned program_id, float &time, float &seed)
 {
     beginFilter(main, NULL);
 
@@ -1602,7 +1602,7 @@ void GLRenderer::discardUnusedTextures()
 
 
 GLTextureImage::GLTextureImage(ivec2 size, bool flip) :
-    renderer(NULL), texture_id(0), target(GL_TEXTURE_2D), swizzle_rb(false)
+    swizzle_rb(false), renderer(NULL), target(GL_TEXTURE_2D), texture_id(0)
 {
     setSize(size, flip);
 }
@@ -1688,7 +1688,7 @@ bool GLTextureImage::swizzleRB() const
     return swizzle_rb;
 }
 
-GLTextureBitmap::GLTextureBitmap(ivec2 size, GLenum format, bool flip, bool use_mipmaps, bool swizzleRB) :
+GLTextureBitmap::GLTextureBitmap(ivec2 size, GLenum format, bool flip, bool use_mipmaps, bool /*swizzleRB*/) :
     GLTextureImage(size, flip), format(format), use_mipmaps(use_mipmaps)
 {
     bytes_per_pixel = getBytesPerPixel(format);

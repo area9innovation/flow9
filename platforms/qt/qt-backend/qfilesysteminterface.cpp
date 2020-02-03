@@ -8,32 +8,36 @@
 #include <QFile>
 #include <QMimeType>
 #include <QFileInfo>
+
+#ifdef QT_GUI_LIB
 #include <QFileDialog>
+#endif
 
 #ifdef QT_GUI_LIB
 QFileSystemInterface::QFileSystemInterface(ByteCodeRunner *owner, QWidget *window)
 #else
 QFileSystemInterface::QFileSystemInterface(ByteCodeRunner *owner, QObject *window)
 #endif
-     : FileSystemInterface(owner), owner(owner),
+     : FileSystemInterface(owner), owner(owner)
 #ifdef QT_GUI_LIB
-        window(window)
+        , window(window)
 #endif
 {
     mimeDatabase = new QMimeDatabase();
 }
 
 char* QFileSystemInterface::doResolveRelativePath(std::string &filename, char* buffer) {
-  QString s(filename.c_str());
-  QFileInfo fi(s);
-  s = fi.absoluteFilePath();
-  // QString guarantees that it has zero at the end,
-  // so usage of strcpy is safe.
-  return strcpy(buffer, s.toStdString().c_str());
+    QString s(filename.c_str());
+    QFileInfo fi(s);
+    s = fi.absoluteFilePath();
+    // QString guarantees that it has zero at the end,
+    // so usage of strcpy is safe.
+    return strcpy(buffer, s.toStdString().c_str());
 }
 
 void QFileSystemInterface::selectAccepted()
 {
+#ifdef QT_GUI_LIB
     QFileDialog *currentDialog = (QFileDialog*)sender();
 
     RUNNER_VAR = owner;
@@ -53,6 +57,7 @@ void QFileSystemInterface::selectAccepted()
 
     RUNNER->ReleaseRoot(selectCallbackId);
     delete currentDialog;
+#endif
 }
 
 void QFileSystemInterface::selectRejected()
@@ -103,7 +108,7 @@ void QFileSystemInterface::doOpenFileDialog(int maxFilesCount, std::vector<std::
 
     /* Fix for drawing file dialog contents under Linux */
     #ifdef __linux__
-        connect(dialog, &QFileDialog::finished, [=](int v){window->setUpdatesEnabled(true);});
+        connect(dialog, &QFileDialog::finished, [=](int){window->setUpdatesEnabled(true);});
         window->setUpdatesEnabled(false);
     #endif
 

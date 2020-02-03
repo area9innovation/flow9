@@ -20,6 +20,8 @@ class Platform {
 	public static var isWindows : Bool = false;
 	public static var isLinux : Bool = false;
 
+	public static var isDarkMode = false;
+
 	public static var browserMajorVersion : Int = 0;
 
 	public static var SupportsVideoTexture = false;
@@ -33,7 +35,7 @@ class Platform {
 
 	public static var isIEMobile : Bool = ~/iemobile/i.match(Browser.window.navigator.userAgent);
 	public static var isAndroid : Bool = ~/android/i.match(Browser.window.navigator.userAgent);
-	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent) || untyped __typeof__(navigator.standalone) != 'undefined';
+	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent) || untyped HaxeRuntime.typeof(navigator.standalone) != 'undefined';
 	public static var isMobile : Bool = ~/webOS|BlackBerry|Windows Phone/i.match(Browser.window.navigator.userAgent) || isIEMobile || isAndroid || isIOS;
 	public static var isRetinaDisplay : Bool = getIsRetinaDisplay();
 	public static var isHighDensityDisplay : Bool = isRetinaDisplay || getIsHighDensityDisplay();

@@ -123,7 +123,7 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
-			emitEvent("childrenchanged");
+			this.emitEvent("childrenchanged");
 		}
 
 		return newChild;
@@ -138,7 +138,7 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.invalidate();
-			emitEvent("childrenchanged");
+			this.emitEvent("childrenchanged");
 		}
 
 		return newChild;
@@ -149,10 +149,14 @@ class FlowContainer extends Container {
 
 		if (oldChild != null) {
 			if (untyped this.keepNativeWidgetChildren) {
-				updateKeepNativeWidgetChildren();
+				this.updateKeepNativeWidgetChildren();
 			}
 
-			emitEvent("childrenchanged");
+			if (untyped RenderSupportJSPixi.RendererType != "html" || this.isCanvas) {
+				this.invalidateTransform("removeChild");
+			}
+
+			this.emitEvent("childrenchanged");
 		}
 
 		return oldChild;
@@ -174,8 +178,8 @@ class FlowContainer extends Container {
 			if (stageChanged) {
 				stageChanged = false;
 
-				setClipScaleX(RenderSupportJSPixi.getAccessibilityZoom());
-				setClipScaleY(RenderSupportJSPixi.getAccessibilityZoom());
+				this.setClipScaleX(RenderSupportJSPixi.getAccessibilityZoom());
+				this.setClipScaleY(RenderSupportJSPixi.getAccessibilityZoom());
 
 				if (transformChanged) {
 					var bounds = new Bounds();
@@ -184,8 +188,8 @@ class FlowContainer extends Container {
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
 					bounds.maxY = renderer.height;
-					invalidateLocalBounds();
-					invalidateRenderable(bounds);
+					this.invalidateLocalBounds();
+					this.invalidateRenderable(bounds);
 
 					DisplayObjectHelper.lockStage();
 					updateTransform();
@@ -209,8 +213,8 @@ class FlowContainer extends Container {
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;
 				bounds.maxY = renderer.height;
-				invalidateLocalBounds();
-				invalidateRenderable(bounds);
+				this.invalidateLocalBounds();
+				this.invalidateRenderable(bounds);
 			}
 
 			DisplayObjectHelper.lockStage();
@@ -257,14 +261,14 @@ class FlowContainer extends Container {
 			return;
 		}
 
-		deleteNativeWidget();
+		this.deleteNativeWidget();
 
 		nativeWidget = Browser.document.createElement(tagName);
-		updateClipID();
+		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
 		isNativeWidget = true;
 
-		invalidateParentClip();
+		this.invalidateParentClip();
 	}
 }

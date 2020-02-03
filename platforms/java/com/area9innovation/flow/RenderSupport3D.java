@@ -85,7 +85,10 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DScene(Object stage, String url, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DTexture(Object stage, String url, Func1<Object,Object> onLoad, Object[] parameters) {
+	public Object make3DTextureLoader(Object stage, String url, Func1<Object,Object> onLoad, Object[] parameters) {
+		return null;
+	}
+	public Object load3DTexture(Object texture) {
 		return null;
 	}
 	public Object load3DCubeTexture(Object stage, String px, String nx, String py, String ny, String pz, String nz, Func1<Object,Object> onLoad, Object[] parameters) {

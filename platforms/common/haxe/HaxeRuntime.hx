@@ -438,7 +438,7 @@ if (a === b) return true;
 		var t : String;
 
 		#if flash
-		t = untyped __typeof__(value);
+		t = untyped JSHaxeSupport.typeof(value);
 		#elseif js
 		t = untyped __js__("typeof")(value);
 		#else
@@ -482,6 +482,10 @@ if (a === b) return true;
 	}
 	#end
 
+	public static function getStructName(id : Int) : String {
+		return _structnames_.get(id);
+	} 
+
 	// Some characters can NOT be represented in UTF-16, believe it or not!
 	public static function wideStringSafe(str : String) : Bool {
 		#if (flash || js)
@@ -504,6 +508,43 @@ if (a === b) return true;
 			safe = false;
 		}
 		return safe;
+		#end
+	}
+
+	public static function instanceof(v1 : Dynamic, v2 : Dynamic) : Bool {
+		#if (haxe_ver >= "4.0.0")
+			#if js
+				return js.Syntax.instanceof(v1, v2);
+			#else
+				return Std.downcast(v1, v2) != null;
+			#end
+		#else
+			return untyped __instanceof__(v1, v2);
+		#end
+	}
+
+	public static function typeof(v : Dynamic) : Dynamic {
+		#if (haxe_ver >= "4.0.0")
+			#if js
+				return js.Syntax.typeof(v);
+			#else
+				// TODO: Not sure this is correct
+				return Type.getClass(v);
+			#end
+		#else
+			return untyped __typeof__(v);
+		#end
+	}
+
+	public static function strictEq(v1 : Dynamic, v2 : Dynamic) : Bool {
+		#if (haxe_ver >= "4.0.0")
+			#if js
+				return js.Syntax.strictEq(v1, v2);
+			#else
+				return v1 == v2;
+			#end
+		#else
+			return untyped __strict_eq__(v1, v2);
 		#end
 	}
 }
