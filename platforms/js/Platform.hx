@@ -20,6 +20,8 @@ class Platform {
 	public static var isWindows : Bool = false;
 	public static var isLinux : Bool = false;
 
+	public static var isDarkMode = false;
+
 	public static var browserMajorVersion : Int = 0;
 
 	public static var SupportsVideoTexture = false;
