@@ -3760,6 +3760,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, addTakeAudioEventListener, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, md5, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fileChecksum, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, readln, 0);
 
     // optional
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fast_lookupTree, 2);
