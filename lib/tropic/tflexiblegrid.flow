@@ -6,7 +6,7 @@ import form/gui;
 export {
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
 		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, TCropView,
-			CenterAlign, EndAlign, TAnimation, TOrder, TLockWidth, TEnabled, TSetRTL;
+			CenterAlign, EndAlign, TAnimation, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize;
 
 			TWrapNewRow(); // New row should be below all the elements in the previous one
 			TWrapNewColumn(); // New column should be to the right of all the elements in the previous one
@@ -16,6 +16,7 @@ export {
 			TAnimation(deltaTimer : LazyDeltaTimer); // Enables animation
 			TOrder(order : Transform<[int]>); // Set items order
 			TLockWidth(lock : bool); // If true size only grows in height not in width (false for TVertical and true for horizontal grid)
+			TSameSize();
 }
 
 TFlexibleGridItem(t : Tropic, tr : DynamicBehaviour<Point>, wh : DynamicBehaviour<Maybe<WidthHeight>>);
@@ -32,10 +33,15 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	lockWidth = extractStruct(style, TLockWidth(!verticalGrid)).lock;
 
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
+	isSameSize = contains(style, TSameSize());
 
+	sameSizeWH = make(None());
 	contentBaseline = make(0.);
 	stageSizeB = makeWH();
-	itemsB = fmapi(items, \__, it -> TFlexibleGridItem(it, make(zeroPoint), make(None())));
+
+	itemsB = fmapi(items, \__, it -> TFlexibleGridItem(it, make(zeroPoint),
+		if (isSameSize) sameSizeWH else make(None())
+	));
 	contentSize =
 		fselect2(
 			fsubmap(itemsB, \it -> it.wh),
@@ -58,6 +64,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 				)
 			)
 		);
+
 	parameters =
 		BFParameters(
 			wrapNewRow,
@@ -70,6 +77,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 
 	SelectTGroup(itemsB, \idx, __, item -> {
 		TransformTAcc2(\t2a -> {
+				visible = make(false);
 				b1 =
 					eitherMap(
 						animation,
@@ -90,10 +98,25 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 						},
 						TTranslate(item.tr, item.t)
 					)
+					|> (\t -> if (isSameSize) TShow(fstall(visible, 1), t) else t)
 					|> t2a;
 
 				TAcc(
-					b1.form,
+					if (isSameSize)
+						FGroup2(
+							FTranslate(fpointX(item.tr), fpointY(item.tr), FRenderable(visible,
+								FMutable(fselect(sameSizeWH, FLift(\sswh ->
+									eitherMap(sswh,
+										\wh -> FRectangle(wh.width, wh.height, []),
+										FEmpty()
+									)
+								)))
+							)),
+							b1.form,
+							false
+						)
+					else
+						b1.form,
 					TFormMetrics(
 						zero,
 						zero,
@@ -111,9 +134,19 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 					concat(
 						b1.disposers,
 						[
-							make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
-								nextDistinct(item.wh, Some(WidthHeight(_wd, _hgt)))
-							)(),
+							if (isSameSize) {
+								makeSubscribeUns(feq(idx, 0), \b -> {
+									if (b)
+										[make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
+											if (_wd != 0. && _hgt != 0.) nextDistinct(sameSizeWH, Some(WidthHeight(_wd, _hgt)))
+										)()]
+									else
+										[]
+								})()
+							} else
+								make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
+									nextDistinct(item.wh, Some(WidthHeight(_wd, _hgt)))
+								)(),
 							makeSubscribeUns(feq(idx, 0), \b -> {
 								if (b)
 									[fconnect(b1.metrics.baseline, contentBaseline)]
