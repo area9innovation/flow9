@@ -1068,8 +1068,10 @@ class RenderSupportJSPixi {
 
 	public static var Animating = false;
 
-	private static function animate(timestamp : Float) {
-		emit("drawframe", timestamp);
+	private static function animate(?timestamp : Float) {
+		if (timestamp != null) {
+			emit("drawframe", timestamp);
+		}
 
 		if (PageWasHidden) {
 			PageWasHidden = false;
@@ -1119,7 +1121,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static inline function render() : Void {
-		animate(Browser.window.performance.now());
+		animate();
 	}
 
 	public static function forceRender() : Void {
