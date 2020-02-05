@@ -1,86 +1,99 @@
 import server/http;
 import tools/flowc/flowc_local;
-import tools/common/logging;
+import tools/flowc/flowc_lsp;
 
 export {
-	fcRunServer(config : CompilerConfig, threadId : int) -> void;
+	// A language server working over http.
+	fcHttpServer(config : CompilerConfig) -> void;
+
+	// A language server using stdin/stdout to communicate. Usually is invoked as a child process of an IDE.
+	fcProcServer(config : CompilerConfig) -> void;
 }
 
-fcServerLog(message : string) -> void {
-	writeLogMessage(message, "flowc_server.log", 128)
-}
-
-fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
-	if (!isConfigParameterSet(conf.config, "compile-expression")) Pair(conf, nop) else {
-		expr = getConfigParameter(conf.config, "compile-expression");
-		fileinfo = getFcFileInfo(conf.flowfile, conf);
-		file = trimFlowfile(fileinfo.fullpath, conf.includes, getConfigParameterDef(conf.config, "working-dir", ""));
-		file_dir = dirName(fileinfo.fullpath);
-		file_path = file_dir + "/___tmp_expr___.flow";
-		file_str = "import " + file + ";\n\n ___tmpvar___ = " + expr + ";\n\n";
-		setFileContent(file_path, file_str);
-		upd_conf = CompilerConfig(conf with flowfile = "___tmp_expr___.flow");
-		Pair(upd_conf, \ -> {
-			deleteFile(file_path);
-			{}
-		});
+fcProcessRequest(env : FcTypeEnvGlobal, req : string, out_cb : (int, string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
+	switch (fcDecodeRequest(req)) {
+		FcRequestConfig(config): {
+			println("config");
+			start_time = timestamp();
+			pair = fcPrepareConfig(config);
+			conf = pair.first;
+			conf_callback = pair.second;
+			conf_str = foldTree(compilerConfigToTree(conf), "",
+				\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
+			);
+			if (isConfigParameterTrue(config.config, "server-shutdown")) {
+				exit_cb();
+			} else {
+				fcServerLog("Processing request: <" + conf_str + " >");
+				fcPrintln("Processing '" + conf.flowfile + "' on server.", config.threadId);
+				runConfigLocally(conf, env, \code -> {
+					fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
+					conf_callback();
+					out = if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
+						fcBinary(conf.threadId);
+					} else {
+						fcOutput(conf.threadId);
+					}
+					out_cb(code, out);
+					clearFcOutput(conf.threadId);
+					clearTimePhases(conf.threadId);
+					loop_cb();
+				});
+			}
+		}
+		FcRequestJson(json): {
+			println("json");
+			println(json);
+			out_cb(1, "json is not yet implemented");
+			loop_cb();
+		}
+		FcRequestNone(): {
+			out_cb(200, "WARNING: Illegal request.");
+			loop_cb();
+		}
 	}
 }
 
-fcRunServer(config : CompilerConfig, threadId : int) -> void {
+fcProcServer(config : CompilerConfig) -> void { 
+	fcServerLog("Proc server started.");
+	fcRunProcServer(initFcTypeEnvGlobal(), config);
+}
+
+fcRunProcServer(globalEnv : FcTypeEnvGlobal, config : CompilerConfig) -> void {
+	req = fcReadRequest();
+	fcProcessRequest(globalEnv, req, 
+		\__,__ -> {
+			clearFcOutput(config.threadId);
+			clearTimePhases(config.threadId);
+		},
+		\-> fcRunProcServer(globalEnv, config),
+		\-> {
+			fcServerLog("Proc server stopped.");
+			quit(0);
+		}
+	);
+}
+
+fcHttpServer(config : CompilerConfig) -> void {
 	port = s2i(getConfigParameter(config.config, "server-port"));
 	globalEnv = initFcTypeEnvGlobal();
 	server = ref nop;
 	server := createHttpServer(port,
 		\-> {
-			fcServerLog("Server started.");
-			fcPrintln("Server started.", threadId)
+			fcServerLog("Http server started.");
+			fcPrintln("Http server started.", config.threadId)
 		},
 		\request, response -> {
-			requestThreadId = s2i(getThreadId());
-			cf = deserialize(request.body, IllegalStruct());
-			if (cf == IllegalStruct()) {
-				fcServerLog("WARNING: Illegal compilation config.");
-				fcPrintln("WARNING: Illegal compilation config.", requestThreadId);
-				HttpResponse(400, fcOutput(requestThreadId), []) |> response;
-				clearFcOutput(requestThreadId);
-			} else {
-				conf0 : CompilerConfig = cast(cf : flow -> CompilerConfig);
-				conf1 = CompilerConfig(conf0 with threadId = requestThreadId);
-				if (conf1.verbose > 0) {
-					fcPrintln("server cwd: " + strReplace(resolveRelativePath("."), "\\", "/"), conf1.threadId);
-					fcPrintln("objc directory: " + getFlowcObjectFolder(conf1), conf1.threadId);
-				}
-				if (isConfigParameterTrue(conf1.config, "server-shutdown")) {
-					fcPrintln("Server stopped.", conf1.threadId);
-					HttpResponse(200, fcOutput(conf1.threadId), []) |> response;
-					clearFcOutput(conf1.threadId);
+			fcProcessRequest(globalEnv, request.body,
+				\code, output -> HttpResponse(200 + code, output, []) |> response,
+				nop,
+				\-> {
 					^server();
-					fcServerLog("Server stopped.");
+					fcPrintln("Http server stopped.", config.threadId);
+					fcServerLog("Http server stopped.");
 					quit(0);
-				} else {
-					start_time = timestamp();
-					pair = fcPrepareConfig(conf1);
-					conf = pair.first;
-					conf_callback = pair.second;
-					conf_str = foldTree(compilerConfigToTree(conf), "",
-						\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
-					);
-					fcServerLog("Processing request: <" + conf_str + " >");
-					fcPrintln("Processing '" + conf.flowfile + "' on server.", conf1.threadId);
-					runConfigLocally(conf, globalEnv, \code -> {
-						fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
-						conf_callback();
-						if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
-							HttpResponse(200 + code, fcBinary(conf.threadId), []) |> response;
-						} else {
-							HttpResponse(200 + code, fcOutput(conf.threadId), []) |> response;
-						}
-						clearFcOutput(conf.threadId);
-						clearTimePhases(conf.threadId);
-					});
 				}
-			}
+			)
 		}
 	);
 }
