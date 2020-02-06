@@ -1340,6 +1340,9 @@ class RenderSupport3D {
 
 
 	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
+		object.lookAt(new Vector3(x, y, z));
+		object.invalidateStage();
+
 		RenderSupportJSPixi.once("drawframe", function() {
 			object.lookAt(new Vector3(x, y, z));
 			object.invalidateStage();

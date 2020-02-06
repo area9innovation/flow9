@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 7;
+var SERVICE_WORKER_VERSION = 9;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -21,7 +21,7 @@ var CacheMode = {
 }
 
 // Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
-// The structure of `requestsCacheFilter` is
+// The structure of `requestsSkipOnFetch` is
 //  [{
 //    url /*string*/,
 //    methods : [{
@@ -164,11 +164,19 @@ self.addEventListener('fetch', function(event) {
     var requestUrl = (new URL(request.url)).pathname,
       parts,
       ext = (parts = requestUrl.split("/").pop().split(".")).length > 1 ? parts.pop() : "";
+
+    return (CacheMode.CacheStaticResources && !isEmpty(ext) && !dynamicResourcesExtensions.includes("." + ext));
+  }
+
+  var isAppMainRequestFn = function(url) {
+    var requestUrl = (new URL(request.url)).pathname,
+      parts,
+      ext = (parts = requestUrl.split("/").pop().split(".")).length > 1 ? parts.pop() : "";
     var name = (parts.length > 0 ? parts.pop() : "");
 
-    return (CacheMode.CacheStaticResources && !isEmpty(ext) && (
-      !dynamicResourcesExtensions.includes("." + ext) ||
-      "stamp.php" == name + "." + ext));
+    return (!isEmpty(ext) && !isEmpty(name) && (
+      "stamp.php" == name + "." + ext ||
+      "flowjs.html" == name + "." + ext));
   }
 
   // Creation a requestData for GET requests
@@ -189,7 +197,8 @@ self.addEventListener('fetch', function(event) {
         urlNewFull: fixedUrl,
         urlNewToCache: fixedUrlToCache,
         isCustomCaching: (!isEmpty(cacheFilter)),
-        isStaticCaching: isStaticCachingFn(event.request.url),
+        isStaticCaching: isStaticCachingFn(request.url),
+        isAppMainRequest: isAppMainRequestFn(request.url),
         customCacheFilter: cacheFilter,
         originalRequest: request,
         isFileUploading: isFileUploadingRequestFn(request),
@@ -307,6 +316,18 @@ self.addEventListener('fetch', function(event) {
         referrer: requestCloned.referrer,
         integrity: requestCloned.integrity
       }));
+    } else if (requestData.isAppMainRequest) {
+      var requestCloned = requestData.cloneRequest();
+      return (new Request(extractUrlParameters(requestData.urlNewToCache)['baseUrl'], {
+        method: "GET",
+        headers: requestCloned.headers,
+        mode: 'same-origin',
+        credentials: requestCloned.credentials,
+        cache: requestCloned.cache,
+        redirect: requestCloned.redirect,
+        referrer: requestCloned.referrer,
+        integrity: requestCloned.integrity
+      }));
     } else {
       return requestData.cloneRequest();
     }
@@ -377,6 +398,12 @@ self.addEventListener('fetch', function(event) {
     }).catch(function() { return null; });
   }
 
+  var isStampForApplicationJsRequestInner = function(clientUrl) {
+    if (!event.clientId) return false;
+    var url = new URL(clientUrl);
+    return (url.pathname.endsWith("/php/stamp.php") && !isEmpty(url.searchParams.get("file")));
+  }
+
   var isStampForApplicationJsRequest = function() {
     if (!event.clientId) return Promise.reject();
     var url = new URL(event.request.url);
@@ -384,7 +411,7 @@ self.addEventListener('fetch', function(event) {
     return clients.get(event.clientId).then(function(client) {
       var clientUrl = new URL(client.url);
 
-      if (url.pathname.endsWith("/php/stamp.php") && url.searchParams.get("file") == (clientUrl.searchParams.get("name") + ".js"))
+      if (isStampForApplicationJsRequestInner(client.url))
         return Promise.resolve();
       else
         return Promise.reject();
@@ -402,10 +429,15 @@ self.addEventListener('fetch', function(event) {
       (
         // Skip if is not a web resource
         !isStaticCachingFn(request.url) &&
+        // Skip if is not the main app loader
+        !isAppMainRequestFn(request.url) &&
         // Skip GET request which do not match any custom filter
-        (isEmpty(requestData) || !requestData.isCustomCaching)) &&
+        (isEmpty(requestData) || !requestData.isCustomCaching)
+      ) &&
       // Skip POST request which url is not match any filter (without parameters)
-      isEmpty(findCacheFilterSimple(request));
+      isEmpty(findCacheFilterSimple(request)) &&
+      // Skip if it is not app loader
+      !isStampForApplicationJsRequestInner(request.url);
   }
 
   function getResourceFromCache(requestData, ignoreSearch) {
@@ -449,7 +481,7 @@ self.addEventListener('fetch', function(event) {
 
       // Cache the request if it's match any customized filter or
       // automatically cache uncached static resources
-      if (requestData.isCustomCaching || requestData.isStaticCaching) {
+      if (requestData.isCustomCaching || requestData.isStaticCaching || requestData.isAppMainRequest) {
         caches.open(usedCacheName).then(function(cache) {
           cache.put(fixedRequest, response.clone());
 
@@ -465,6 +497,8 @@ self.addEventListener('fetch', function(event) {
     var doFetchFn = function() {
       return fetch(requestData.cloneRequest()).then(function(response) {
         if (response.status == 200 && response.type == "basic") {
+          if (isStampForApplicationJsRequestInner(requestData.originalRequest.url))
+            cleanTimestampSensitiveRequests(requestData.originalRequest.url);
           doCacheFn(response);
         }
 
@@ -485,21 +519,21 @@ self.addEventListener('fetch', function(event) {
               return doFetchFn();
             } else {
               return createIfNoneMatchRequest(requestData, etag).then(function(cRequest) {
-                return fetch(cRequest).then(function(response) {
-                if (response.status == 200 && response.type == "basic") {
-                  doCacheFn(response);
-                  return response.clone();
-                } else if (response.status == 304 && response.type == "basic") {
-                  return responseCache.clone();
-                } else {
-                  return response.clone();
-                }
-              })
-              .catch(doFetchFn);
-            });
-          }
-        })
-        .catch(doFetchFn);
+                  return fetch(cRequest).then(function(response) {
+                    if (response.status == 200 && response.type == "basic") {
+                      doCacheFn(response);
+                      return response.clone();
+                    } else if (response.status == 304 && response.type == "basic") {
+                      return responseCache.clone();
+                    } else {
+                      return response.clone();
+                    }
+                  });
+                })
+                .catch(doFetchFn);
+            }
+          })
+          .catch(doFetchFn);
       } else {
         return doFetchFn();
       }
@@ -597,6 +631,7 @@ self.addEventListener('fetch', function(event) {
               urlNewToCache: fixedUrlToCache,
               isCustomCaching: !isEmpty(cacheFilter),
               isStaticCaching: isStaticCachingFn(event.request.url),
+              isAppMainRequest: isAppMainRequestFn(request.url),
               customCacheFilter: cacheFilter,
               originalRequest: request,
               isFileUploading: urlAndBody.isFileUploading,
@@ -639,7 +674,6 @@ self.addEventListener('fetch', function(event) {
       })
     );
   } else {
-    cleanTimestampSensitiveRequests(event.request.url);
     var requestData = createRequestDataGET(event.request);
 
     if (checkRequestForSkipping(event.request, requestData)) {
@@ -747,12 +781,27 @@ self.addEventListener('message', function(event) {
       .catch(function() { return { "urls": [], status: "Failed" }; });
   };
 
-  if (event.data.action == "set_prefer_cached_resources") {
-	CacheMode.PreferCachedResources = event.data.data.value;
+  if (event.data.action == "add_dynamic_resource_extension") {
+    event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
 
-	respond({ status: "OK" });
+    if (!dynamicResourcesExtensions.includes("." + event.data.data.value)) {
+      dynamicResourcesExtensions.push("." + event.data.data.value);
+    }
+
+    respond({ status: "OK" });
+  } else if (event.data.action == "remove_dynamic_resource_extension") {
+    event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
+
+    if (dynamicResourcesExtensions.includes("." + event.data.data.value)) {
+      dynamicResourcesExtensions.filter(v => v != ("." + event.data.data.value));
+    }
+
+    respond({ status: "OK" });
+  } else if (event.data.action == "set_prefer_cached_resources") {
+    CacheMode.PreferCachedResources = event.data.data.value;
+    respond({ status: "OK" });
   } else if (event.data.action == "set_cache_static_resources") {
-	CacheMode.CacheStaticResources = event.data.data.value;
+    CacheMode.CacheStaticResources = event.data.data.value;
 
     respond({ status: "OK" });
   } else if (event.data.action == "get_cache_version") {
@@ -829,9 +878,9 @@ self.addEventListener('message', function(event) {
     event.data.data.method = event.data.data.method.toLowerCase();
     event.data.data.header = event.data.data.header.map(function(el) { return el.toLowerCase(); });
     if (event.data.data.header.length == 2) {
-      event.data.data.header = { key : event.data.data.header[0], value : event.data.data.header[1] };
+      event.data.data.header = { key: event.data.data.header[0], value: event.data.data.header[1] };
     } else {
-      event.data.data.header = { key : "", value : "" };
+      event.data.data.header = { key: "", value: "" };
     }
 
     var idx1 = requestsSkipOnFetch.findIndex(function(el) { return isEqualStrings(event.data.data.url, el.url); });
