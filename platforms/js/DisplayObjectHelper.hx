@@ -1,6 +1,8 @@
 import js.Browser;
 import js.html.Element;
 import js.html.CanvasElement;
+import js.html.File;
+import js.html.FileList;
 
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
@@ -1465,14 +1467,59 @@ class DisplayObjectHelper {
 				}
 			}
 
-			nativeWidget.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 			nativeWidget.style.pointerEvents = 'auto';
+
+			if (untyped clip.isFileDrop) {
+				nativeWidget.ondragover = function(e) {
+					e.dataTransfer.dropEffect = 'copy';
+					return false;
+				}
+
+				nativeWidget.ondrop = function(e) {
+					e.preventDefault();
+
+					var files : FileList = e.dataTransfer.files;
+					var fileArray : Array<File> = [];
+
+					if (untyped clip.maxFilesCount < 0) {
+						untyped clip.maxFilesCount = files.length;
+					}
+
+					for (idx in 0...Math.floor(Math.min(files.length, untyped clip.maxFilesCount))) {
+						var file : File = files.item(idx);
+
+						if (untyped !clip.regExp.match(file.type)) {
+							untyped clip.maxFilesCount++;
+							continue;
+						}
+
+						fileArray.push(file);
+					}
+
+					untyped clip.onDone(fileArray);
+				}
+
+				nativeWidget.oncontextmenu = function(e) {
+					if (RenderSupportJSPixi.PixiView.oncontextmenu != null) {
+						return RenderSupportJSPixi.PixiView.oncontextmenu(e);
+					} else {
+						return true;
+					}
+				};
+			} else {
+				nativeWidget.oncontextmenu = function (e) {
+					e.stopPropagation();
+					return untyped clip.isInput == true;
+				};
+			}
 		} else {
 			nativeWidget.onmouseover = null;
 			nativeWidget.onmouseout = null;
 			nativeWidget.onpointerover = null;
 			nativeWidget.onpointerout = null;
 			nativeWidget.style.pointerEvents = null;
+			nativeWidget.ondragover = null;
+			nativeWidget.ondrop = null;
 		}
 	}
 
@@ -2137,6 +2184,11 @@ class DisplayObjectHelper {
 			RenderSupportJSPixi.PixiRenderer.context.clearRect(0, 0, untyped clip.localBounds.maxX * RenderSupportJSPixi.PixiRenderer.resolution, untyped clip.localBounds.maxY * RenderSupportJSPixi.PixiRenderer.resolution);
 
 			RenderSupportJSPixi.RendererType = 'canvas';
+
+			if (transform != null) {
+				untyped tempWorldAlpha = clip.worldAlpha;
+				untyped clip.worldAlpha = clip.alpha;
+			}
 		}
 
 		if (clip.mask != null)
@@ -2158,7 +2210,6 @@ class DisplayObjectHelper {
 				untyped tempWorldTransform = clip.transform.worldTransform;
 				untyped tempWorldAlpha = clip.worldAlpha;
 				untyped clip.transform.worldTransform = clip.transform.worldTransform.clone().prepend(transform);
-				untyped clip.worldAlpha = clip.alpha;
 			}
 
 			untyped clip.renderCanvas(RenderSupportJSPixi.PixiRenderer);
@@ -2186,6 +2237,32 @@ class DisplayObjectHelper {
 			RenderSupportJSPixi.PixiRenderer.roundPixels = tempRoundPixels;
 
 			RenderSupportJSPixi.RendererType = tempRendererType;
+		}
+	}
+
+	public static function addFileDropListener(clip : DisplayObject, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
+		untyped clip.isFileDrop = true;
+		untyped clip.isInteractive = true;
+
+		untyped clip.maxFilesCount = maxFilesCount;
+		untyped clip.regExp = new EReg(mimeTypeRegExpFilter, "g");
+		untyped clip.onDone = onDone;
+
+		invalidateInteractive(clip);
+		invalidateTransform(clip, "addFileDropListener");
+
+		return function() {
+			if (untyped !clip.destroyed) {
+				untyped clip.isFileDrop = false;
+				untyped clip.isInteractive = false;
+
+				untyped clip.maxFilesCount = null;
+				untyped clip.regExp = null;
+				untyped clip.onDone = null;
+
+				invalidateInteractive(clip);
+				invalidateTransform(clip, "addFileDropListener");
+			}
 		}
 	}
 }

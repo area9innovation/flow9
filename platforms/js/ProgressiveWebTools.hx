@@ -245,6 +245,68 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function addServiceWorkerDynamicResourcesExtension(extension : String, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "add_dynamic_resource_extension",
+					"data" : {
+						"value" : extension
+					}
+				},
+				[messageChannel.port2]
+			);
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function removeServiceWorkerDynamicResourcesExtension(extension : String, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "remove_dynamic_resource_extension",
+					"data" : {
+						"value" : extension
+					}
+				},
+				[messageChannel.port2]
+			);
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
 	public static function addRequestCacheFilterN(
 		cacheIfUrlMatch : String,
 		cacheIfMethodMatch : String,

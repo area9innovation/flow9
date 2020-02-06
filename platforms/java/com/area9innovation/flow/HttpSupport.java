@@ -4,6 +4,7 @@ import java.util.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.net.URL;
+import java.net.URLConnection;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.io.BufferedReader;
@@ -108,8 +109,8 @@ public class HttpSupport extends NativeHost {
 		}
 	}
 
-	public final Object httpCustomRequestNative(String url, String method, Object[] headers,
-		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async
+	public final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
+		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
 		) {
 		// TODO
 		try {
@@ -138,6 +139,8 @@ public class HttpSupport extends NativeHost {
 			URL obj = new URL(urlWithParams);
 			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
 			con.setRequestMethod(method);
+			con.setConnectTimeout(timeout.intValue());
+			con.setReadTimeout(timeout.intValue());
 
 			// Add headers
 	 		for (Object header : headers) {
@@ -185,6 +188,11 @@ public class HttpSupport extends NativeHost {
         	onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
         }
 		return null;
+	}
+
+	public final Object httpCustomRequestNative(String url, String method, Object[] headers,
+		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
+		return httpCustomRequestWithTimeoutNative(url, method, headers, params, data, onResponse, async, 0);
 	}
 
 	public final Object sendHttpRequestWithAttachments(String url, Object[] headers, Object[] params,

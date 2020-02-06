@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 7;
+var SERVICE_WORKER_VERSION = 8;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -747,7 +747,19 @@ self.addEventListener('message', function(event) {
       .catch(function() { return { "urls": [], status: "Failed" }; });
   };
 
-  if (event.data.action == "set_prefer_cached_resources") {
+  if (event.data.action == "add_dynamic_resource_extension") {
+	if (!dynamicResourcesExtensions.includes("." + event.data.data.value)) {
+		dynamicResourcesExtensions.push("." + event.data.data.value);
+  	}
+
+	respond({ status: "OK" });
+  } else if (event.data.action == "remove_dynamic_resource_extension") {
+	if (dynamicResourcesExtensions.includes("." + event.data.data.value)) {
+		dynamicResourcesExtensions.remove("." + event.data.data.value);
+  	}
+
+    respond({ status: "OK" });
+  } else if (event.data.action == "set_prefer_cached_resources") {
 	CacheMode.PreferCachedResources = event.data.data.value;
 
 	respond({ status: "OK" });
