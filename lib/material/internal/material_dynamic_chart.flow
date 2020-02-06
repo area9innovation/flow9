@@ -76,6 +76,7 @@ MLineChartColumnState(
 	highlight : DynamicBehaviour<bool>,
 	position : Transform<Point>,
 	points : [MChartPoint],
+	rangeGraphics : Maybe<Transform<[StaticGraphicOp]>>,
 	type : MMLineType,
 	curve : bool,
 	lineStyle : [TGraphicsStyle],
@@ -151,7 +152,15 @@ makeMChartAxisState(columns : Transform<[MChartColumn]>, rows : Transform<[MChar
 				)
 			))
 		else
-			fselect(columns, FLift(\cc : [MChartColumn] -> fold(cc, doubleMax, \acc, c -> min(acc, either(minA(filter(c.data, \v -> v != NO_VALUE)), acc)))));
+			fselect(columns, FLift(\cc : [MChartColumn] -> fold(cc, doubleMax, \acc, c -> {
+				range =
+					switch (c) {
+						MLineChartColumn(__, __, columnStyle) : map(extractStruct(columnStyle, MColumnRangeData([])).data, \d -> [d.first, d.second]) |> concatA;
+						default : [];
+					};
+
+				min(acc, either(minA(filter(concat(c.data, range), \v -> v != NO_VALUE)), acc))
+			})));
 	maxValue =
 		if (vertical)
 			fselect2(rows, columns, FLift2(\rr : [MChartRow], cc : [MChartColumn] ->
@@ -163,7 +172,15 @@ makeMChartAxisState(columns : Transform<[MChartColumn]>, rows : Transform<[MChar
 				)
 			))
 		else
-			fselect(columns, FLift(\cc : [MChartColumn] -> fold(cc, NO_VALUE, \acc, c -> max(acc, either(maxA(filter(c.data, \v -> v != NO_VALUE)), acc)))));
+			fselect(columns, FLift(\cc : [MChartColumn] -> fold(cc, NO_VALUE, \acc, c -> {
+				range =
+					switch (c) {
+						MLineChartColumn(__, __, columnStyle) : map(extractStruct(columnStyle, MColumnRangeData([])).data, \d -> [d.first, d.second]) |> concatA;
+						default : [];
+					};
+
+				max(acc, either(maxA(filter(concat(c.data, range), \v -> v != NO_VALUE)), acc));
+			})));
 
 	isDate = extractStruct(style, MAxisIsDate(const(false))).isDate;
 	step =
@@ -364,6 +381,7 @@ makeMChartState(manager : MaterialManager, parent : MFocusGroup, columns : Trans
 								MTooltipValuesPostfix(extractStruct(style, MTooltipValuesPostfix(columnValuesPostfix)).postfix)
 							).postfix;
 						filteredData = filtermapi(data, \j, r -> if (r != NO_VALUE) Some(Pair(j, Point(rr[j].value, r))) else None());
+						rangeData = extractStruct(columnStyle, MColumnRangeData([])).data;
 
 						controlPoints =
 							if (columnIsCurve) {
@@ -489,6 +507,33 @@ makeMChartState(manager : MaterialManager, parent : MFocusGroup, columns : Trans
 									maybeMap(columnOnClick, \c -> \ -> if (fgetValue(c.enabled)) c.onClick(id))
 								)
 							}),
+							if (length(rangeData) == 0)
+								None()
+							else
+								Some(
+									fselect4(
+										mapi(rangeData, \rdi, __ -> xAxisState.value2point(const(rr[rdi].value)))
+										|> fmerge,
+										map(rangeData, \rd -> yAxisState.value2point(const(min(rd.first, rd.second))))
+										|> fmerge,
+										mapi(rangeData, \rdi, __ -> xAxisState.value2point(const(rr[rdi].value)))
+										|> fmerge,
+										map(rangeData, \rd -> yAxisState.value2point(const(max(rd.first, rd.second))))
+										|> fmerge,
+										\minXValues, minYValues, maxXValues, maxYValues -> {
+											concatA([
+												[
+													MoveTo(minXValues[0], minYValues[0])
+												],
+												mapi(subrange(minXValues, 1, length(minXValues)), \rdi, rd -> LineTo(rd, minYValues[rdi + 1])),
+												mapi(reverseA(maxXValues), \rdi, rd -> LineTo(rd, maxYValues[length(maxXValues) - rdi - 1])),
+												[
+													LineTo(minXValues[0], minYValues[0])
+												]
+											])
+										}
+									)
+								),
 							type,
 							columnIsCurve,
 							[MStroke(color), StrokeOpacity(opacity), StrokeWidth(width)],
@@ -918,6 +963,7 @@ drawMChartLegend(state : MChartState, m2t : (Material, MFocusGroup) -> Tropic) -
 							|> (\f -> MAlpha(fif(c.highlight, const(1.0), const(0.5)), f))
 							|> (\f -> MBorder4(4.0, f))
 					)
+					|> MBorderRight(4.0)
 					|> (\f -> MBorder4(-4.0, f)),
 					c.visible,
 					[
@@ -981,10 +1027,17 @@ drawMChartColumns(state : MChartState,  m2t : (Material, MFocusGroup) -> Tropic)
 					|> (\f -> TAlpha(fif(highlight, const(1.0), const(0.2)), f))
 				)
 			}
-			MLineChartColumnState(title, valuesPostfix, valuesLabels, color, hoverEnabled, visible, hover, showValuesOnHover, popup, highlight, position, points, lineType, isCurve, lineStyle, hidePoints, pointRadius, pointStyle): {
+			MLineChartColumnState(title, valuesPostfix, valuesLabels, color, hoverEnabled, visible, hover, showValuesOnHover, popup, highlight, position, points, rangeGraphics, lineType, isCurve, lineStyle, hidePoints, pointRadius, pointStyle): {
 				TShowLazy(
 					visible,
-					\ -> TGroup2(
+					\ -> TGroup([
+						eitherMap(
+							rangeGraphics,
+							\rg -> {
+								TDynamicGraphics(rg, const([MFill(color), FillOpacity(0.25)]))
+							},
+							TEmpty()
+						),
 						TIfLazy(
 							hover,
 							\h ->
@@ -1039,7 +1092,7 @@ drawMChartColumns(state : MChartState,  m2t : (Material, MFocusGroup) -> Tropic)
 								|> (\f -> drawMChartHoverPoint(state, chart, p, f))
 							)
 							|> TGroup
-					)
+					])
 					|> (\f -> TTranslate(position, f))
 					|> (\f -> TAlpha(fif(highlight, const(1.0), const(0.2)), f))
 				)
@@ -1207,7 +1260,7 @@ drawMChartInteractive(state : MChartState) -> Tropic {
 														hit || hittestStaticGraphicShape(data, Point(m.x - position.x, m.y - position.y))
 													);
 												}
-												MLineChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+												MLineChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
 													hittestStaticGraphicShape(
 														GCircle(fgetValue(point.position).x, fgetValue(point.position).y, hoverPointRadius),
 														Point(m.x - position.x, m.y - position.y)
@@ -1733,6 +1786,7 @@ makeMLegacyChartState(manager : MaterialManager, parent : MFocusGroup, data : Tr
 						make(true),
 						const(zeroPoint),
 						points,
+						None(),
 						lineType,
 						isCurve,
 						[MStroke(color), StrokeOpacity(opacity), StrokeWidth(lineWidth)],
