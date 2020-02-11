@@ -72,7 +72,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
 	isInnerScroll = isSome(innerScroll);
 
-	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
+	gluedMode = maybeBind(innerScroll, \is -> switch (is.mode) {
+		MGluedFirstColumnMode(gstyle) : Some(gstyle);
+		default : None()
+	});
+	glued = isSome(gluedMode);
 	lifted = eitherMap(innerScroll, \is -> is.mode == MLiftedFirstColumnMode(), false);
 
 	columns = m.columns
@@ -141,6 +145,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	pageNumber = fFirstOfPair(page);
 	rowsPerPage = fSecondOfPair(page);
+	
+	currentVisibleRowsCount =
+		fselect2(rowsCountB, page, FLift2(\rc, p -> min(p.second, rc - p.first)));
 
 	pageNumberB = make(0);
 
@@ -265,6 +272,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	rowsAvailableHeight =
 		fselect4(rowsPerPage, rowsCountB, showFixedRow, expandRow, \rpp, rc, fr, er ->
 			i2d(min(rpp, rc) + b2i(fr)) * countRowHeight(er)
+		);
+
+	visibleRowsHeight =
+		fselect3(currentVisibleRowsCount, showFixedRow, expandRow, \vrc, fr, er ->
+			i2d(vrc + b2i(fr)) * countRowHeight(er)
 		);
 
 	// Helpers
@@ -607,14 +619,20 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				|> (\t -> TAvailableWidth(t, firstColumnWidth))
 				|> (\t -> TLines2(firstColumnHeader, t))
 				|> (\t ->
-						if (glued)
-							TShow(innerScrollVisible,
-								TCols2(t, TAvailableHeight(
-									MSeparator2T(manager, p, false),
-									faddition(rowsAvailableHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
-								))
-							)
-						else t
+						eitherMap(gluedMode, \gMode ->
+							TGroup2(
+								TShow(innerScrollVisible, t),
+								TShow(
+									extractStruct(gMode, MSeparatorVisible(innerScrollVisible)).visible,
+									TAvailableHeight(
+										MSeparator2T(manager, p, false),
+										faddition(visibleRowsHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
+									)
+								)
+								|> (\sep -> TBorderT(firstColumnWidth, zero, zero, zero, sep))
+							),
+							t
+						)
 				);
 
 			TGroup2(
