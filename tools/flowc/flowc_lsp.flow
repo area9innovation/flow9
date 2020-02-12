@@ -1,6 +1,7 @@
 import tools/common/config;
-import formats/json/json;
 import text/serialize;
+import tools/flowc/flowc_local;
+import tools/flowc/lsp_types;
 
 export {
 
@@ -10,31 +11,477 @@ FcRequest ::= FcRequestConfig, FcRequestJson, FcRequestNone;
 	FcRequestNone : ();
 
 fcDecodeRequest(s : string) -> FcRequest;
-fcReadRequest() -> string;
+fcLspReadRequest() -> Maybe<string>;
+fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json,  out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void;
+}
 
+fcJsonObjectHasField(obj : JsonObject, field : string) -> bool {
+	exists(obj.members, \member -> member.first == field)
 }
 
 fcDecodeRequest(s : string) -> FcRequest {
-	decode_json = \ -> {
-		json = parseJsonSafe(s);
-		switch (json) {
-			JsonObject(__): FcRequestJson(json);
-			JsonArray(__):  FcRequestJson(json);
-			default:        FcRequestNone();
-		}
-	}
-	cf = deserialize(s, IllegalStruct());
-	if (cf == IllegalStruct()) decode_json() else {
-		switch (cf) {
-			CompilerConfig(__,__,__,__,__,__,__): {
-				FcRequestConfig(CompilerConfig(cf with threadId = s2i(getThreadId())));
+	deserialize_conf = \-> {
+		conf = deserialize(s, IllegalStruct());
+		if (conf == IllegalStruct()) FcRequestNone() else {
+			switch (conf) {
+				CompilerConfig(__,__,__,__,__,__,__): {
+					FcRequestConfig(CompilerConfig(conf with threadId = s2i(getThreadId())));
+				}
+				default: FcRequestNone();
 			}
-			default: decode_json();
+		}
+	}
+	json = parseJsonSafe(s);
+	switch (json) {
+		JsonObject(members): {
+			if (fcJsonObjectHasField(json, "jsonrpc") &&
+				fcJsonObjectHasField(json, "method")
+			) {
+				FcRequestJson(json)
+			} else {
+				FcRequestNone();
+			}
+		}
+		default: deserialize_conf();
+	}
+}
+
+FcLspRequestHeader(
+	length : int,  // Content-Length
+	type : string, // Content-Type
+);
+
+fcLspReadHeader() -> Maybe<FcLspRequestHeader> {
+	fold(
+		for([], 
+			\ls -> trim2(lastElement(ls, "1"), " \n\r\t") != "", 
+			\ls -> concat(ls, [trim2(readln(), " \n\r\t")])
+		),
+		Some(FcLspRequestHeader(-1, "")),
+		\acc, line -> maybeBind(acc, \header -> {
+			if (line == "") acc else {
+				key = trim2(takeBefore(line, ":", ""), " ");
+				value = trim2(takeAfter(line, ":", ""), " ");
+				if (key == "Content-Length") {
+					Some(FcLspRequestHeader(header with length = s2i(value)));
+				} else if (key == "Content-Type") {
+					Some(FcLspRequestHeader(header with type = value));
+				} else {
+					None();
+				}
+			}
+		})
+	);
+}
+
+fcLspReadRequest() -> Maybe<string> {
+	maybeBind(fcLspReadHeader(), \header ->
+		if (header.length == -1) {
+			None();
+		} else {
+			Some(for("", \s -> strlen(s) + 1 < header.length, \s -> s + readln() + "\n"));
+		}
+	);
+}
+
+FcLspMethodCall(
+	conf : CompilerConfig,
+	env : FcTypeEnvGlobal,
+	id : Json, 
+	params : Json, 
+	out_cb : (Json) ->  void, 
+	loop_cb : () -> void, 
+	exit_cb : () -> void
+);
+
+fcLspMethods = pairs2tree([
+	Pair("initialize", fcLspInitialize),
+	Pair("initialized", fcLspInitialized),
+	Pair("shutdown", fcLspShutdown),
+	Pair("exit", fcLspExit),
+	Pair("textDocument/didOpen", fcLspTextDocumentDidOpen),
+	Pair("textDocument/didChange", fcLspTextDocumentDidChange),
+	Pair("textDocument/documentSymbol", fcLspTextDocumentDocumentSymbol),
+	Pair("textDocument/declaration", fcLspTextDocumentDeclaration),
+	Pair("textDocument/definition", fcLspTextDocumentDefinition),
+	Pair("textDocument/references", fcLspTextDocumentReferences),
+]);
+
+fcLspClientConf : ref Json = ref JsonObject([]);
+
+fcLspErrorResponse(id : Json, code : int, msg : string) -> Json {
+	JsonObject([Pair("id", id), Pair("jsonrpc", JsonString("2.0")), Pair("result", JsonNull()), 
+		Pair("error", JsonObject(
+				[Pair("code", JsonDouble(i2d(code))), Pair("message", JsonString(msg))]
+			)
+		)
+	]);
+}
+
+fcLspNormalResponse(id : Json, result : Json) -> Json {
+	JsonObject([Pair("id", id), Pair("jsonrpc", JsonString("2.0")), Pair("result", result)]);
+}
+
+fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
+	id = getJsonFieldValue(json, "id", JsonString(""));
+	method = getJsonStringField(json, "method", "");
+	params = getJsonFieldValue(json, "params", JsonObject([]));
+	out_cb = \msg -> {
+		js_out = json2string(msg);
+		str_out_cb("Content-Length:" + i2s(strlen(js_out)) + "\r\n\r\n" + js_out);
+	}
+	if (method == "") {
+		out_cb(fcLspErrorResponse(id, 1, "request method is not set"));
+		loop_cb();
+	} else {
+		switch (lookupTree(fcLspMethods, method)) {
+			Some(m): m(FcLspMethodCall(conf, env, id, params, out_cb, loop_cb, exit_cb));
+			None(): {
+				out_cb(fcLspErrorResponse(id, 1, "request method " + method + " is not found"));
+				loop_cb();
+			}
 		}
 	}
 }
 
-fcReadRequest() -> string {
-	""
+fcLspShutdown(call : FcLspMethodCall) -> void {
+	fcLspClientConf := JsonObject([]);
+	fcClearCache(call.env); // reset module cache
+	call.loop_cb();
 }
 
+fcLspExit(call : FcLspMethodCall) -> void {
+	call.exit_cb();
+}
+
+fcLspInitialized(call: FcLspMethodCall) -> void {
+	call.loop_cb(); // It's a notification, no response.
+}
+
+fcLspInitialize(call: FcLspMethodCall) -> void {
+	fcLspClientConf := call.params;
+	/*{
+		"id":1,
+		"jsonrpc":"2.0",
+		"result":{
+			"capabilities":{
+				"codeActionProvider":true,
+				"completionProvider":{
+					"resolveProvider":false,
+					"triggerCharacters":[".",">",":"]
+				},
+				"declarationProvider":true,
+				"definitionProvider":true,
+				"documentFormattingProvider":true,
+				"documentHighlightProvider":true,
+				"documentOnTypeFormattingProvider":{
+					"firstTriggerCharacter":"\n",
+					"moreTriggerCharacter":[]
+				},
+				"documentRangeFormattingProvider":true,
+				"documentSymbolProvider":true,
+				"executeCommandProvider":{
+					"commands":[
+						"clangd.applyFix","clangd.applyTweak"
+					]
+				},
+				"hoverProvider":true,
+				"referencesProvider":true,
+				"renameProvider":true,
+				"signatureHelpProvider":{
+					"triggerCharacters":["(",","]
+				},
+				"textDocumentSync":2,
+				"typeHierarchyProvider":true,
+				"workspaceSymbolProvider":true
+			}
+		}
+	}
+	*/
+	call.out_cb(fcLspNormalResponse(call.id, 
+		JsonObject([
+			Pair("capabilities", JsonObject([
+					Pair("declarationProvider", JsonBool(true)),
+					Pair("definitionProvider", JsonBool(true)),
+					Pair("referencesProvider", JsonBool(true)),
+					Pair("workspaceSymbolProvider", JsonBool(true)),
+					Pair("documentSymbolProvider", JsonBool(true)),
+				])
+			)
+		])
+	));
+	call.loop_cb();
+}
+
+fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
+	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
+		Some(textitem): {
+			runConfigLocally(
+				CompilerConfig(call.conf with flowfile = textitem.uri.path),
+				call.env, 
+				\code -> {
+					clearFcOutput(call.conf.threadId);
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
+	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
+		Some(textitem): {
+			runConfigLocally(
+				CompilerConfig(call.conf with flowfile = textitem.uri.path),
+				call.env, 
+				\code -> {
+					clearFcOutput(call.conf.threadId);
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
+	switch (json2LspTextDocumentIdentifier(getJsonObjectField(call.params, "textDocument"))) {
+		Some(textid): {
+			runConfigLocally(
+				CompilerConfig(call.conf with 
+					flowfile = textid.uri.path,
+					config = setTree(call.conf.config, "print-outline", "1")
+				),
+				call.env, 
+				\code -> {
+					symbols = fcLspParseSymbols(fcOutput(call.conf.threadId));
+					clearFcOutput(call.conf.threadId);
+					call.out_cb(fcLspNormalResponse(call.id, JsonArray(symbols)));
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text document id is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+/*
+{
+    "id": 6,
+    "jsonrpc": "2.0",
+    "method": "textDocument/declaration",
+    "params": {
+        "position": {
+            "character": 18,
+            "line": 1520
+        },
+        "textDocument": {
+            "uri": "file:///home/dmitry/dev/russell/metamath/mmunif.c"
+        }
+    }
+}
+*/
+
+// /home/dmitry/area9/flow9/tools/flowc/flowc_find.flow:394:8: uses fcSetSkipPrinting
+
+// runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) 
+
+/*
+{
+	"id":6,
+	"jsonrpc":"2.0",
+	"result":[
+		{
+			"range":{
+				"end":{
+					"character":19,
+					"line":134
+				},
+				"start":{
+					"character":5,
+					"line":134
+				}
+			},
+			"uri":"file:///home/dmitry/dev/russell/metamath/mmunif.c"
+		}
+	]
+}
+*/
+
+
+fcLspParseLocations(s : string) -> [Json] {
+	isNum = \st -> st != "" && isDigits(st);
+	filtermap(strSplit(s, "\n"), \l -> {
+		parts = strSplit(l, ":");
+		if (length(parts) < 3 || parts[0] == "" || !isNum(parts[1]) || !isNum(parts[2])) None() else {
+			path = parts[0];
+			sline = s2i(parts[1]) - 1;
+			schar = s2i(parts[2]) - 1;
+			if (length(parts) < 5 || !isNum(parts[3]) || !isNum(parts[4])) {
+				Some(lspLocation2Json(
+					LspLocation(
+						URI("file", URIAuthority("", "", ""), path, "", ""),
+						LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1))
+					)
+				));
+			} else {
+				eline = s2i(parts[3]) - 1;
+				echar = s2i(parts[4]) - 1;
+				Some(lspLocation2Json(
+					LspLocation(
+						URI("file", URIAuthority("", "", ""), path, "", ""),
+						LspRange(LspPosition(sline, schar), LspPosition(eline, echar))
+					)
+				));
+			}
+		}
+	});
+}
+
+// LspTextDocumentSymbol : (name : string, detail : string, kind : int, deprecated : Maybe<bool>, range : LspRange, selectionRange : LspRange, children : [LspTextDocumentSymbol]);
+
+fcLspParseSymbols(s : string) -> [Json] {
+	isNum = \st -> st != "" && isDigits(st);
+	filtermap(strSplit(s, "\n"), \l -> {
+		parts = strSplit(l, ":");
+		if (length(parts) != 4) None() else {
+			path = parts[0];
+			sline = s2i(parts[1]) - 1;
+			schar = s2i(parts[2]) - 1;
+			descr_parts = strSplit(trim(parts[3]), " ");
+			name = descr_parts[1];
+			kind = if (descr_parts[0] == "import") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Module", 0);
+			} else if (descr_parts[0] == "forbid") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Package", 0);
+			} else if (descr_parts[0] == "export") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Namespace", 0);
+			} else if (descr_parts[0] == "struct") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Struct", 0);
+			} else if (descr_parts[0] == "union") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Enum", 0);
+			} else if (descr_parts[0] == "fundef") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Function", 0);
+			} else if (descr_parts[0] == "fundecl") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Interface", 0);
+			} else if (descr_parts[0] == "vardef") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Object", 0);
+			} else if (descr_parts[0] == "vardecl") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Variable", 0);
+			} else if (descr_parts[0] == "natdef") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
+			} else if (descr_parts[0] == "natdecl") {
+				lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
+			} else {
+				0
+			}
+			Some(lspTextDocumentSymbol2Json(
+				LspTextDocumentSymbol(name, "", kind, None(), 
+					LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1)),
+					LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1)), []
+				)
+			));
+		}
+	});
+}
+
+
+fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
+	switch (json2LspTextDocumentPositionParams(call.params)) {
+		Some(textpos): {
+			runConfigLocally(
+				CompilerConfig(call.conf with 
+					flowfile = textpos.textDocument.uri.path,
+					config = mergeTree(call.conf.config, 
+						pairs2tree([
+							Pair("exp-line", i2s(textpos.position.line)), 
+							Pair("exp-column", i2s(textpos.position.character)), 
+							Pair("find-declaration", "1")
+						])
+					)
+				),
+				call.env, 
+				\code -> {
+					locations = fcLspParseLocations(fcOutput(call.conf.threadId));
+					clearFcOutput(call.conf.threadId);
+					call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
+	switch (json2LspTextDocumentPositionParams(call.params)) {
+		Some(textpos): {
+			runConfigLocally(
+				CompilerConfig(call.conf with 
+					flowfile = textpos.textDocument.uri.path,
+					config = mergeTree(call.conf.config, 
+						pairs2tree([
+							Pair("exp-line", i2s(textpos.position.line)), 
+							Pair("exp-column", i2s(textpos.position.character)), 
+							Pair("find-definition", "1")
+						])
+					)
+				),
+				call.env, 
+				\code -> {
+					locations = fcLspParseLocations(fcOutput(call.conf.threadId));
+					clearFcOutput(call.conf.threadId);
+					call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
+	switch (json2LspTextDocumentPositionParams(call.params)) {
+		Some(textpos): {
+			runConfigLocally(
+				CompilerConfig(call.conf with 
+					flowfile = textpos.textDocument.uri.path,
+					config = mergeTree(call.conf.config, 
+						pairs2tree([
+							Pair("exp-line", i2s(textpos.position.line)), 
+							Pair("exp-column", i2s(textpos.position.character)), 
+							Pair("find-uses", "1")
+						])
+					)
+				),
+				call.env, 
+				\code -> {
+					locations = fcLspParseLocations(fcOutput(call.conf.threadId));
+					clearFcOutput(call.conf.threadId);
+					call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}

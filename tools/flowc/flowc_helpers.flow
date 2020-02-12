@@ -30,8 +30,8 @@ export {
 	// Returns a callback for deferred check of dependencies.
 	fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool;
 
-	printLocation(config : CompilerConfig, file : string, start : int, message : string) -> void;
-	makeLocation(config : CompilerConfig, file : string, start : int) -> string;
+	printLocation(config : CompilerConfig, file : string, start : int,end : int, message : string) -> void;
+	makeLocation(config : CompilerConfig, file : string, start : int, end : int) -> string;
 
 	name2FimoduleInFiProgram(prog : FiProgram, flowfile : string, name : string) -> FiModule;
 
@@ -41,6 +41,14 @@ export {
 	fcServerLog(message : string) -> void;
 	// Update a config for 'compile-expression' option
 	fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void>;
+
+	getNameByLineCol(line : int, col : int, src : string) -> string;
+	getNameByPos(pos : int, src : string) -> string;
+	getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2>;
+	getFcInfo2ByPos(pos : int, src : string) -> Maybe<FcInfo2>;
+
+	// Detects if a string is an char, allowed for id in flow.
+	fcIsIdChar(s : string) -> bool;
 }
 
 addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram {
@@ -308,7 +316,7 @@ printFcError(acc : FlowcAcc, error : FcError) -> void {
 			None():  getFcFileInfo(p.file, acc.config).fullpath;
 			Some(m): m.fileinfo.fullpath;
 		}
-		printLocation(acc.config, file, p.start, err);
+		printLocation(acc.config, file, p.start, -1, err);
 	});
 }
 
@@ -416,22 +424,25 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 	changed
 }
 
-printLocation(config : CompilerConfig, file : string, start : int, message : string) -> void {
-	fcPrintln(makeLocation(config, file, start) + " " + message, config.threadId)
+printLocation(config : CompilerConfig, file : string, start : int, end : int, message : string) -> void {
+	fcPrintln(makeLocation(config, file, start, end) + " " + message, config.threadId)
 }
 
-makeLocation(config : CompilerConfig, file : string, start : int) -> string {
+makeLocation(config : CompilerConfig, file : string, start : int, end : int) -> string {
 	if (file == "") "" else {
 		code = getFileContent(file);
 		resolver = makeLineResolver(code);
-		sline = findLine(resolver, start);
-		line_string = i2s(sline.lineno);
-		column_string = i2s(sline.column);
-
-		if (isConfigParameterTrue(config.config, "legacy-format"))
-			file + ":" + line_string + " (" + file + ":" + line_string + ")"
-		else
-			file + ":" + line_string + ":" + column_string + ":"
+		s = findLine(resolver, start);
+		if (isConfigParameterTrue(config.config, "legacy-format")) {
+			file + ":" + i2s(s.lineno) + " (" + file + ":" + i2s(s.lineno) + ")";
+		} else {
+			if (end < 0) {
+				file + ":" + i2s(s.lineno) + ":" + i2s(s.lineIndex + 1) + ":";
+			} else {
+				e = findLine(resolver, end);
+				file + ":" + i2s(s.lineno) + ":" + i2s(s.lineIndex + 1) + ":" + i2s(e.lineno) + ":" + i2s(e.lineIndex + 1) + ":";
+			}
+		}
 	}
 }
 
@@ -482,4 +493,36 @@ fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
 			{}
 		});
 	}
+}
+
+getNameByLineCol(line : int, col : int, src : string) -> string {
+	resolver = makeLineResolver(src);
+	getNameByPos(findLineIndex(resolver, line, col), src);
+}
+
+getNameByPos(pos : int, src : string) -> string {
+	eitherMap(getFcInfo2ByPos(pos, src), \info -> substring(src, info.start, info.end - info.start + 1), "");
+}
+
+getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2> {
+	resolver = makeLineResolver(src);
+	getFcInfo2ByPos(findLineIndex(resolver, line, col), src);
+}
+
+getFcInfo2ByPos(pos : int, src : string) -> Maybe<FcInfo2> {
+	if (pos < 0 || pos >= strlen(src) || !fcIsIdChar(getCharAt(src, pos))) None() else {
+		start = for(pos, 
+			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(src, i - 1)), 
+			\i -> i - 1
+		);
+		end = for(pos, 
+			\i -> if (i + 1 >= strlen(src)) false else fcIsIdChar(getCharAt(src, i + 1)), 
+			\i -> i + 1
+		);
+		if (isDigit(getCharAt(src, start))) None() else Some(FcInfo2(start, end));
+	}
+}
+
+fcIsIdChar(s : string) -> bool {
+	s == "_" || isLetter(s) || isDigit(s);
 }
