@@ -1597,6 +1597,12 @@ public class Native extends NativeHost {
 		return concurrentMap.size();
 	}
 
+	public final Object clearConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.clear();
+		return null;
+	}
+
 	// TODO: why don't we use threadpool here?
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {

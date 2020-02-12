@@ -5,15 +5,18 @@ import tools/flowc/typechecker/typechecker;
 import tools/flowc/flowc_typeverify;
 
 export {
-	// Parse and typecheck this program. Uses recursive parseAndTypecheckFlowFile2() to do the main job
+	// Parse and typecheck a program. Uses recursive doParseAndTypecheckProgram() to do the main job
 	// Returns a pair: a program and an error counter
-	parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> Pair<FiProgram, int>;
+	parseAndTypecheckProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> Pair<FiProgram, int>;
 
-	// Same as 'parseAndTypecheckFlowFile', but skips typecheking phase, do not resolve types, and do not track errors.
-	parseAndDesugarFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FiProgram;
+	// Same as 'parseAndTypecheckProgram', but skips typecheking phase, do not resolve types, and do not track errors.
+	parseAndDesugarProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FiProgram;
+
+	// Same as 'parseAndDesugarProgram', but processes only one file. Errors are suppressed.
+	parseAndDesugarFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FcModule;
 }
 
-parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> Pair<FiProgram, int> {
+parseAndTypecheckProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> Pair<FiProgram, int> {
 	errors = ref 0;
 	acc = prepareInitialFlowcAcc(config);
 	errHandler = \e -> {
@@ -47,7 +50,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 	if (^errors == 0) {
 
 		// Typecheck all files
-		tenv2 = doParseAndTypecheckFlowFile(tenv1, globEnv, modules);
+		tenv2 = doParseAndTypecheckProgram(tenv1, globEnv, modules);
 
 		t2 = timestamp();
 		prog = fctypeenv2fi(tenv2);
@@ -59,7 +62,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 	}
 }
 
-doParseAndTypecheckFlowFile(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>) -> FcTypeEnvProgram {
+doParseAndTypecheckProgram(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>) -> FcTypeEnvProgram {
 	t0 = timestamp();
 	// Find the loaded modules where all dependent files are ready
 	readyForProcessing : [FcPreloadedModule] = filtermap(
@@ -215,7 +218,7 @@ doParseAndTypecheckFlowFile(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, 
 		incrementTimePhase(getTimePhases(tenv4.acc.config.threadId).other, t3);
 
 		// Process what is left
-		doParseAndTypecheckFlowFile(tenv4, globEnv, whatIsLeft)
+		doParseAndTypecheckProgram(tenv4, globEnv, whatIsLeft)
 	}
 }
 
@@ -228,7 +231,7 @@ updateAllImports(imports : [FiImport], modules : Tree<string, FiModule>) -> Set<
 	);
 }
 
-parseAndDesugarFlowFile(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FiProgram {
+parseAndDesugarProgram(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FiProgram {
 	// add 'untyped=1' option to config in order to ignore errors in fc2fimodule function
 	config = CompilerConfig(conf with config = setTree(conf.config, "untyped", "1"));
 	tenv1 = FcTypeEnvProgram(
@@ -251,7 +254,7 @@ parseAndDesugarFlowFile(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file :
 	incrementTimePhase(getTimePhases(tenv1.acc.config.threadId).other, t1);
 
 	// Desugar non-loaded files
-	tenv2 = doParseAndDesugarFlowFile(tenv1, globEnv, modules);
+	tenv2 = doParseAndDesugarProgram(tenv1, globEnv, modules);
 
 	t2 = timestamp();
 	prog = fctypeenv2fi(tenv2);
@@ -260,7 +263,7 @@ parseAndDesugarFlowFile(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file :
 	prog
 }
 
-doParseAndDesugarFlowFile(tenv1: FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>) -> FcTypeEnvProgram {
+doParseAndDesugarProgram(tenv1: FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>) -> FcTypeEnvProgram {
 	config = tenv1.acc.config;
 	t0 = timestamp();
 	// Find the loaded modules where all dependent files are ready
@@ -327,6 +330,19 @@ doParseAndDesugarFlowFile(tenv1: FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pr
 		whatIsLeft = filterTree(preloadedModules, \name, __ -> !containsSet(processedNames, name));
 		incrementTimePhase(getTimePhases(config.threadId).other, t2);
 
-		doParseAndDesugarFlowFile(tenv4, globEnv, whatIsLeft)
+		doParseAndDesugarProgram(tenv4, globEnv, whatIsLeft)
+	}
+}
+
+parseAndDesugarFile(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FcModule {
+	// add 'untyped=1' option to config in order to ignore errors in fc2fimodule function
+	config = CompilerConfig(conf with config = setTree(conf.config, "untyped", "1"));
+	switch (preloadModule(config, globEnv, file)) {
+		FcLoaded(module,__): {
+			fimodule2fc(module, true);
+		}
+		FcParsed(fileinfo, syntaxtree,__,__,__): {
+			desugarFcModule(prepareInitialFlowcAcc(config), initFcTypeEnvLocal(), fileinfo, syntaxtree);
+		}
 	}
 }
