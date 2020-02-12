@@ -602,6 +602,12 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function set3DMaterialColor(material : Material, color : Int) : Void {
+		untyped material.color = new Color(color);
+
+		material.invalidateMaterialStage();
+	}
+
 
 	public static function set3DTextureRotation(object : Texture, rotation : Float) : Void {
 		if (untyped object.rotation != rotation) {

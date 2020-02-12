@@ -122,6 +122,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object set3DMaterialColor(Object object, Integer color) {
+		return null;
+	}
+
 
 	public Object set3DTextureRotation(Object object, Double rotation) {
 		return null;
