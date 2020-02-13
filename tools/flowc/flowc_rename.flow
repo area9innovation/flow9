@@ -2,13 +2,16 @@ import tools/flowc/symbol_nature;
 import tools/flowc/find_occurrences;
 
 export {
-	fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : string, showStopper : (int) -> void) -> void;
+	fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : string) -> void;
 
 	// Performs a renaming refactoring: change all occurences of a selected AST entity with some new name
-	fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, showStopper : (int) -> void) -> void;
+	fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, line : int, col : int) -> void;
+
+	// Performs a renaming refactoring: change all occurences of a selected AST entity with some new name
+	fcFastRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, line : int, col : int) -> void;
 }
 
-fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : string, showStopper : (int) -> void) -> void {
+fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : string) -> void {
 	tests = readDirectory(folder);
 	skipp = getConfigParameter(config.config, "skip");
 	skips = if (skipp == "") [] else map(strSplit(skipp, ","), \t -> "test" + t);
@@ -28,10 +31,9 @@ fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder :
 		}
 	);
 	fcPrintln("Test complete", config.threadId);
-	showStopper(0);
 }
 
-fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, showStopper : (int) -> void) -> void {
+fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, line : int, col : int) -> void {
 	switch (symbolNature(config, globEnv, renameSymbol)) {
 		Some(nature):
 			switch (nature.scope) {
@@ -43,13 +45,12 @@ fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : strin
 					fcModuleRename(config, globEnv, renameSymbol, nature.kind);
 				FcLocalScope():
 					// Symbol is local: not a toplevel
-					fcLocalRename(config, globEnv, renameSymbol, nature.kind);
+					fcLocalRename(config, globEnv, renameSymbol, nature.kind, line, col);
 			}
 		None(): {
 			fcPrintln(renameSymbol + " is not found", config.threadId);
 		}
 	}
-	showStopper(0);
 }
 
 fcGlobalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, defModulePath : string, kind : FcSymbolKind) -> void {
@@ -118,25 +119,17 @@ fcGlobalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol 
 	};
 }
 
-fcLocalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, kind : FcSymbolKind) -> void {
+fcLocalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, kind : FcSymbolKind, line : int, col : int) -> void {
 	file = resolveRelativePath(getCompilationFile(config.config, config.verbose));
 	to = getConfigParameter(config.config, "to");
 	if (to == "") {
 		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
 	} else {
-		line_str = getConfigParameter(config.config, "exp-line");
-		column_str = getConfigParameter(config.config, "exp-column");
-		if (line_str != "" && column_str != "") {
-			line = s2i(line_str) - 1;
-			column = s2i(column_str) - 1;
-			prog_error = parseAndTypecheckProgram(setConfigFlowfile(config, file), globEnv, file);
-			prog = prog_error.first;
-			error = prog_error.second;
-			if (error == 0) {
-				renameLocalSymbolTo(prog, file, line, column, from, kind, to);
-			}
-		} else {
-			fcPrintln("local remaning requires passing varible line and column", config.threadId);
+		prog_error = parseAndTypecheckProgram(setConfigFlowfile(config, file), globEnv, file);
+		prog = prog_error.first;
+		error = prog_error.second;
+		if (error == 0) {
+			renameLocalSymbolTo(prog, file, line - 1, col - 1, from, kind, to);
 		}
 	};
 }
@@ -186,7 +179,7 @@ renameLocalSymbolTo(prog : FiProgram, file : string, line : int, col : int, from
 	module = lookupTreeDef(prog.modules, file, dummyFiModule);
 	occurrences = fcFindLocalOccurrences(module, line, col, from, kind);
 	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
-	code = getFileContent(module.fileinfo.fullpath);
+	code = fiFileInfoSource(module.fileinfo);
 	renamed = completeRenaming(code, from, to, occurrences);
 	if (!setFileContent(module.fileinfo.fullpath, renamed)) {
 		fcPrintln("can't save renamed source file: " + module.fileinfo.fullpath, prog.config.threadId)
@@ -198,7 +191,7 @@ renameModuleSymbolTo(prog : FiProgram, file : string, from : string, kind : FcSy
 	relative = trimFlowfile(file, prog.config.includes, workingDir);
 	switch (lookupTree(prog.modules, relative)) {
 		Some(module): {
-			code = getFileContent(module.fileinfo.fullpath);
+			code = fiFileInfoSource(module.fileinfo);
 			occurences = findOccurencesInFiModule(module, from, kind);
 			renamed = completeRenaming(code, from, to, occurences);
 			path = module.fileinfo.fullpath;
@@ -261,7 +254,7 @@ renameOccurencesInProgram(occurences : Tree<FiModule, Set<int>>, from : string, 
 		makeTree(),
 		\module, occ, acc -> {
 			if (isEmptySet(occ)) acc else {
-				code = getFileContent(module.fileinfo.fullpath);
+				code = fiFileInfoSource(module.fileinfo);
 				renamed = completeRenaming(code, from, to, occ);
 				setTree(acc, module, Pair(code, renamed))
 			}
@@ -285,4 +278,123 @@ completeRenaming(code : string, from : string, to : string, occurences : Set<int
 		}
 	);
 	pair.first + strSubRange(code, pair.second, strlen(code))
+}
+
+//------------------------------------------------------------------------
+
+fcFastRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, line : int, col : int) -> void {
+	switch (fastSymbolNature(config, globEnv, renameSymbol, line, col)) {
+		Some(nature):
+			switch (nature.scope) {
+				FcGlobalScope():
+					// Symbol is global: a toplevel and is exported
+					fcFastGlobalRename(config, globEnv, renameSymbol, nature.module, nature.kind);
+				FcModuleScope():
+					// Symbol is toplevel, but not exported, i.e. module-scope
+					fcFastModuleRename(config, globEnv, renameSymbol, nature.kind);
+				FcLocalScope():
+					// Symbol is local: not a toplevel
+					fcFastLocalRename(config, globEnv, renameSymbol, nature.kind, line, col);
+			}
+		None(): {
+			fcPrintln(renameSymbol + " is not found", config.threadId);
+		}
+	}
+}
+
+
+fcFastGlobalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, defModulePath : string, kind : FcSymbolKind) -> void {
+	ensureIncrementalDirectoryExists(config);
+
+	compute_reacheable = \ -> {
+		// Skip all error messages at parsing/typechecking, because 
+		// occasionaly we can process old/broken/erraneous files.
+		fcSetSkipPrinting(config.threadId, true);
+		fcSetSkipBuffering(config.threadId, true);
+
+		// Find all sources, containing symbol
+		workingDir = getConfigParameterDef(config.config, "working-dir", "");
+		all_sources = findAllSourcesContainingStr(workingDir, renameSymbol, []);
+
+		// Extract those sources, who have a definition module inside inclusions.
+		filterSourcesWhichImportDefinitionModule(config, all_sources, defModulePath)
+	}
+
+	reacheable_sources = if (isConfigParameterSet(config.config, "project")) {
+		project = getConfigParameter(config.config, "project");
+		if (project == "0") {
+			compute_reacheable()
+		} else {
+			strSplit(project, ",")
+		}
+	} else {
+		compute_reacheable()
+	}
+
+	// Produce programs for sources, which contain renameSymbol
+	programs = fold(reacheable_sources, Pair(makeTree(), makeSet()), 
+		\ac, src ->
+			if (containsSet(ac.second, src)) {
+				// Already inside of typechecked programs
+				ac 
+			} else {
+				prog_error = parseAndTypecheckProgram(setConfigFlowfile(config, src), globEnv, src);
+				prog = prog_error.first;
+				error = prog_error.second;
+				if (error == 0)
+					Pair(
+						setTree(ac.first, src, prog),
+						foldTree(
+							prog.modules,
+							ac.second,
+							\__, module, a -> insertSet(a, module.fileinfo.fullpath)
+						)
+					)
+				else ac
+			}
+	).first;
+
+	// Return the normal output mode.
+	fcSetSkipPrinting(config.threadId, false);
+	fcSetSkipBuffering(config.threadId, false);
+
+	renameTo = getConfigParameter(config.config, "to");
+	if (renameTo == "") {
+		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
+	} else {
+		foldTree(programs, makeSet(), \file, prog, ac -> 
+			renameGlobalSymbolTo(prog, renameSymbol, kind, renameTo, ac)
+		);
+		{}
+	};
+}
+
+fcFastLocalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, kind : FcSymbolKind, line : int, col : int) -> void {
+	file = resolveRelativePath(getCompilationFile(config.config, config.verbose));
+	to = getConfigParameter(config.config, "to");
+	if (to == "") {
+		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
+	} else {
+		prog_error = parseAndTypecheckProgram(setConfigFlowfile(config, file), globEnv, file);
+		prog = prog_error.first;
+		error = prog_error.second;
+		if (error == 0) {
+			renameLocalSymbolTo(prog, file, line - 1, col - 1, from, kind, to);
+		}
+	};
+}
+
+fcFastModuleRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, kind : FcSymbolKind) -> void {
+	file = resolveRelativePath(getCompilationFile(config.config, config.verbose));
+	to = getConfigParameter(config.config, "to");
+	if (to == "") {
+		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
+	} else {
+		prog_error = parseAndTypecheckProgram(setConfigFlowfile(config, file), globEnv, file);
+		prog = prog_error.first;
+		error = prog_error.second;
+		if (error == 0) {
+			renameModuleSymbolTo(prog, file, from, kind, to);
+		}
+	};
 }

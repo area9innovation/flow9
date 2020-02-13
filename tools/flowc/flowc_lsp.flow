@@ -106,6 +106,7 @@ fcLspMethods = pairs2tree([
 	Pair("textDocument/definition", fcLspTextDocumentDefinition),
 	Pair("textDocument/references", fcLspTextDocumentReferences),
 	Pair("textDocument/hover", fcLspTextDocumentHover),
+	Pair("textDocument/rename", fcLspTextDocumentRename),
 ]);
 
 fcLspClientConf : ref Json = ref JsonObject([]);
@@ -208,7 +209,8 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 					Pair("workspaceSymbolProvider", JsonBool(true)),
 					Pair("documentSymbolProvider", JsonBool(true)),
 					Pair("documentSymbolProvider", JsonBool(true)),
-					Pair("hoverProvider", JsonBool(true))
+					Pair("hoverProvider", JsonBool(true)),
+					Pair("renameProvider", JsonBool(true))
 				])
 			)
 		])
@@ -509,6 +511,36 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 					hover = LspHover([LspMarkedString("", out)], None());
 					clearFcOutput(call.conf.threadId);
 					call.out_cb(fcLspNormalResponse(call.id, lspHover2Json(hover)));
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
+	switch (json2LspRename(call.params)) {
+		Some(rename): {
+			runConfigLocally(
+				CompilerConfig(call.conf with 
+					flowfile = rename.textDocument.uri.path,
+					config = mergeTree(call.conf.config, 
+						pairs2tree([
+							Pair("exp-line", i2s(rename.position.line)), 
+							Pair("exp-column", i2s(rename.position.character)), 
+							Pair("rename", "1"),
+							Pair("to", rename.newName),
+						])
+					)
+				),
+				call.env, 
+				\code -> {
+					clearFcOutput(call.conf.threadId);
+					call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					call.loop_cb();
 				}
 			);
