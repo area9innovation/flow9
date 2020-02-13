@@ -11,7 +11,6 @@ class FlowFontStyle {
 	private static var flowFontStyles : Map<String, Dynamic>;
 
 	public static function fromFlowFonts(names : String) : FontStyle {
-		flowFontStyles = null;
 		var styles : Dynamic = null;
 
 		for (name in names.split(",")) {
@@ -19,7 +18,7 @@ class FlowFontStyle {
 
 			if (style != null) {
 				if (styles == null) {
-					styles = style;
+					styles = Reflect.copy(style);
 				} else {
 					styles.family += "," + style.family;
 					if (styles.weight == "") styles.weight = style.weight;

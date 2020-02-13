@@ -125,7 +125,7 @@ class WebClip extends NativeWidgetClip {
 				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
 					iframe.scrolling = "no"; // Obviousely it is flow page.
 				}
-			} catch(e : Dynamic) { Errors.report(e); }
+			} catch(e : Dynamic) { Errors.report(e); ondone(e);}
 		};
 	}
 
@@ -232,6 +232,7 @@ class WebClip extends NativeWidgetClip {
 	public function setDisableOverlay(disable : Bool) : Void {
 		if (disableOverlay && !disable) {
 			nativeWidget.removeChild(disableOverlay);
+			iframe.style.pointerEvents = 'auto';
 		} else if (disable) {
 			if (!disableOverlay) {
 				disableOverlay = Browser.document.createElement("div");
@@ -240,6 +241,7 @@ class WebClip extends NativeWidgetClip {
 
 			disableOverlay.style.display = "block";
 			nativeWidget.appendChild(disableOverlay);
+			iframe.style.pointerEvents = 'none';
 		}
 	}
 

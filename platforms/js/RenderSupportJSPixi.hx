@@ -59,6 +59,8 @@ class RenderSupportJSPixi {
 
 	public static var hadUserInteracted = false;
 
+	public static var WebFontsConfig = null;
+
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
@@ -428,7 +430,7 @@ class RenderSupportJSPixi {
 		initBrowserWindowEventListeners();
 		initMessageListener();
 		initFullScreenEventListeners();
-		FontLoader.loadWebFonts(StartFlowMain);
+		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
 		initCanvasStackInteractions();
 
@@ -692,8 +694,8 @@ class RenderSupportJSPixi {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
 			} else {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightdown");
@@ -716,8 +718,8 @@ class RenderSupportJSPixi {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			} else {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightup");
@@ -745,8 +747,8 @@ class RenderSupportJSPixi {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
 			} else {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
 
 				emit("mousemove");
 			}
@@ -791,15 +793,15 @@ class RenderSupportJSPixi {
 				onKeyDownAccessibilityZoom(e);
 			}
 
-			MousePos.x = e.pageX;
-			MousePos.y = e.pageY;
+			MousePos.x = e.clientX;
+			MousePos.y = e.clientY;
 
 			emit("keydown", parseKeyEvent(e));
 		});
 
 		addNonPassiveEventListener(Browser.document.body, "keyup", function(e : Dynamic) {
-			MousePos.x = e.pageX;
-			MousePos.y = e.pageY;
+			MousePos.x = e.clientX;
+			MousePos.y = e.clientY;
 
 			emit("keyup", parseKeyEvent(e));
 		});
@@ -1066,8 +1068,10 @@ class RenderSupportJSPixi {
 
 	public static var Animating = false;
 
-	private static function animate(timestamp : Float) {
-		emit("drawframe", timestamp);
+	private static function animate(?timestamp : Float) {
+		if (timestamp != null) {
+			emit("drawframe", timestamp);
+		}
 
 		if (PageWasHidden) {
 			PageWasHidden = false;
@@ -1117,7 +1121,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static inline function render() : Void {
-		animate(Browser.window.performance.now());
+		animate();
 	}
 
 	public static function forceRender() : Void {
@@ -1189,7 +1193,6 @@ class RenderSupportJSPixi {
 				if (RendererType == "html") {
 					clip.initNativeWidget();
 				}
-
 
 				var nativeWidget : Element = untyped clip.nativeWidget;
 
@@ -1359,12 +1362,12 @@ class RenderSupportJSPixi {
 		var clipGlyphs = textclip.getContentGlyphs();
 		var clipStyle : TextStyle = textclip.getStyle();
 		var leftVal: Float = 0;
-		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified, clipStyle);
-		var rightVal: Float = mtx.width;
+		var mtxWidth: Float = TextClip.measureTextModFrag(clipGlyphs, clipStyle, 0, clipGlyphs.text.length);
+		var rightVal: Float = mtxWidth;
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
-		var localX = Math.min(mtx.width, Math.max(0.0, x - org.x));
-		if (TextClip.getStringDirection(clipGlyphs.modified, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
+		var localX = Math.min(mtxWidth, Math.max(0.0, x - org.x));
+		if (TextClip.getStringDirection(clipGlyphs.text, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
 		var leftPos: Float = 0;
 		var rightPos: Float = clipGlyphs.modified.length;
 		var midVal: Float = -1.0;
@@ -1374,12 +1377,12 @@ class RenderSupportJSPixi {
 			oldPos = midPos;
 			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
 			if (midPos<leftPos) break;
-			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.ceil(leftPos)-Math.floor(leftPos)), clipStyle);
-			midVal = leftVal - mtx.width * (leftPos - Math.floor(leftPos));
-			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
-			midVal += mtx.width;
-			mtx = pixi.core.text.TextMetrics.measureText(clipGlyphs.modified.substr(Math.floor(midPos), Math.ceil(midPos)-Math.floor(midPos)), clipStyle);
-			midVal += mtx.width * (midPos - Math.floor(midPos));
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(leftPos), Math.ceil(leftPos));
+			midVal = leftVal - mtxWidth * (leftPos - Math.floor(leftPos));
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(leftPos), Math.floor(midPos));
+			midVal += mtxWidth;
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(midPos), Math.ceil(midPos));
+			midVal += mtxWidth * (midPos - Math.floor(midPos));
 			leftPos = midPos;
 			leftVal = midVal;
 		}
@@ -1939,14 +1942,16 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
+	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };
-		} else {
+		} else if (RenderSupportJSPixi.RendererType != "html") {
 			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
 			clip.addChild(dropArea);
 			return function() { clip.removeChild(dropArea); };
+		} else {
+			return clip.addFileDropListener(maxFilesCount, mimeTypeRegExpFilter, onDone);
 		}
 	}
 
@@ -2778,7 +2783,10 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setAttribute(element : Element, name : String, value : String) : Void {
-		element.setAttribute(name, value);
+		if (name == "innerHTML")
+			element.innerHTML = value
+		else
+			element.setAttribute(name, value);
 	}
 
 	public static function removeAttribute(element : Element, name : String) : Void {

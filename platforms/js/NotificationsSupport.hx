@@ -68,7 +68,7 @@ class NotificationsSupport {
 
     private static var onNotificationFBListeners : Array<Dynamic> = [];
     private static var onTokenResreshFBListeners : Array<Dynamic> = [];
-    
+
 
     public function new() {}
 
@@ -193,7 +193,7 @@ class NotificationsSupport {
                     messaging = untyped firebase.messaging();
                     messaging.usePublicVapidKey(untyped vapidKey);
                     if (untyped navigator.serviceWorker) {
-                        untyped navigator.serviceWorker.register('firebase-messaging-sw.js').then(function(registration) {
+                        untyped navigator.serviceWorker.register('js/firebase/firebase-messaging-sw.js').then(function(registration) {
                             messaging.useServiceWorker(registration);
 
                             messaging.onMessage(function(payload) {

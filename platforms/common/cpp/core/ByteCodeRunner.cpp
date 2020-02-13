@@ -3331,7 +3331,7 @@ bool ByteCodeRunner::PrintData(ostream &out, const StackSlot &slot, int max_dept
         unicode_string tmp = GetString(slot);
         if (max_count > 0 && tmp.size() > unsigned(5*max_count))
             tmp = tmp.substr(0,max_count*5) + parseUtf8("...");
-        printQuotedString(out, encodeUtf8(tmp), false);
+        printQuotedString(out, encodeUtf8(tmp), true);
         break;
     }
     case TArray:
