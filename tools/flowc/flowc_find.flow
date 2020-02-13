@@ -148,32 +148,6 @@ findFiExpInProgramAtLineCol(prog : FiProgram, file : string, line : int, col : i
 	Pair(mfiexp, text);
 }
 
-findFiExpInModuleAtLineCol(module : FiModule, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
-	code = getFileContent(module.fileinfo.fullpath);
-	resolver = makeLineResolver(code);
-	linestart = findLineIndex(resolver, line, 0);
-	linetext = findLine(resolver, linestart).line;
-	charsToColumn = goToColumn(linetext, col);
-	// This is the text before the point
-	text = strLeft(linetext, charsToColumn);
-	index = linestart + charsToColumn;
-	starts2types = fold(
-		module.globalVars,
-		fold(
-			module.natives,
-			fold(
-				module.functions, 
-				makeTree(), 
-				\acc, fun -> start2ExpForTypes(fun.lambda, acc, wantType)
-			),
-			\acc, nat -> start2ExpForTypes(nat.fallbackLambda, acc, wantType)
-		),
-		\acc, gv -> start2ExpForTypes(gv.value, acc, wantType)
-	);
-	mfiexp = treeIntervalSearch(starts2types, index);
-	Pair(mfiexp, text);
-}
-
 // Given this line, find the index of this column (considering 4-char tab indentation)
 goToColumn(line : string, col : int) -> int {
 	leadingTabs = countLineIndentation(line);
@@ -645,13 +619,10 @@ fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, l
 				None(): {
 					maybeApply(
 						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
-						\loaded -> {
-							p = findFiExpInModuleAtLineCol(loaded.module, line, col, true);
-							switch (p.first) {
-								Some(e): fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()) + "\n" + p.second, config.threadId);
-								None(): { }
-							}
-						}
+						\loaded ->
+							maybeApply(findFiExpInModuleAtLineCol(loaded.module, line, col, true), 
+								\e -> fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()), config.threadId)
+							)
 					);
 				}
 			}
@@ -660,8 +631,25 @@ fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, l
 	}
 }
 
-// All available info about named declaration.
-//fcCacheNamed2s(named : FcCacheNamed) -> string;
+findFiExpInModuleAtLineCol(module : FiModule, line : int, col : int, wantType : bool) -> Maybe<FiExp> {
+	code = getFileContent(module.fileinfo.fullpath);
+	resolver = makeLineResolver(code);
+	index = findLineIndex(resolver, line, col);
+	starts2types = fold(
+		module.globalVars,
+		fold(
+			module.natives,
+			fold(
+				module.functions, 
+				makeTree(), 
+				\acc, fun -> start2ExpForTypes(fun.lambda, acc, wantType)
+			),
+			\acc, nat -> start2ExpForTypes(nat.fallbackLambda, acc, wantType)
+		),
+		\acc, gv -> start2ExpForTypes(gv.value, acc, wantType)
+	);
+	treeIntervalSearch(starts2types, index);
+}
 
 fcCacheNamed2s(cached : FcCacheNamed) -> string {
 	symbol = cached.named;
