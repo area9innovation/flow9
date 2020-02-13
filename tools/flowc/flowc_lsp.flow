@@ -105,6 +105,7 @@ fcLspMethods = pairs2tree([
 	Pair("textDocument/declaration", fcLspTextDocumentDeclaration),
 	Pair("textDocument/definition", fcLspTextDocumentDefinition),
 	Pair("textDocument/references", fcLspTextDocumentReferences),
+	Pair("textDocument/hover", fcLspTextDocumentHover),
 ]);
 
 fcLspClientConf : ref Json = ref JsonObject([]);
@@ -206,6 +207,8 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 					Pair("referencesProvider", JsonBool(true)),
 					Pair("workspaceSymbolProvider", JsonBool(true)),
 					Pair("documentSymbolProvider", JsonBool(true)),
+					Pair("documentSymbolProvider", JsonBool(true)),
+					Pair("hoverProvider", JsonBool(true))
 				])
 			)
 		])
@@ -475,6 +478,37 @@ fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 					locations = fcLspParseLocations(fcOutput(call.conf.threadId));
 					clearFcOutput(call.conf.threadId);
 					call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
+	switch (json2LspTextDocumentPositionParams(call.params)) {
+		Some(textpos): {
+			runConfigLocally(
+				CompilerConfig(call.conf with 
+					flowfile = textpos.textDocument.uri.path,
+					config = mergeTree(call.conf.config, 
+						pairs2tree([
+							Pair("exp-line", i2s(textpos.position.line)), 
+							Pair("exp-column", i2s(textpos.position.character)), 
+							Pair("symbol-info", "1")
+						])
+					)
+				),
+				call.env, 
+				\code -> {
+					out = fcOutput(call.conf.threadId);
+					hover = LspHover([LspMarkedString("", out)], None());
+					clearFcOutput(call.conf.threadId);
+					call.out_cb(fcLspNormalResponse(call.id, lspHover2Json(hover)));
 					call.loop_cb();
 				}
 			);
