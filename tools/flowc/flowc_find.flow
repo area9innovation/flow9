@@ -13,6 +13,9 @@ export {
 
 	// Uses global cache for lookups.
 	fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
+
+	// Find a type info for a symbol at given position.
+	fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
 }
 
 handleFindOptions(file : string, prog : FiProgram) -> void {
@@ -48,7 +51,7 @@ handleFindOptions(file : string, prog : FiProgram) -> void {
 
 findDefDeclByLineCol(file : string, prog : FiProgram, line : int, col : int) -> void {
 	config = prog.config;
-	found = findFiExpAtLineCol(prog, file, line, col, true);
+	found = findFiExpInProgramAtLineCol(prog, file, line, col, true);
 	switch (found.first) {
 		Some(e):
 			if (isConfigParameterTrue(config.config, "find-type")) {
@@ -87,7 +90,7 @@ findDefDeclByLineCol(file : string, prog : FiProgram, line : int, col : int) -> 
 }
 
 findLocalExpType(prog : FiProgram, file : string, line : int, col : int) -> void {
-	mexp : Maybe<FiExp> = findFiExpAtLineCol(prog, file, line, col, true).first;
+	mexp : Maybe<FiExp> = findFiExpInProgramAtLineCol(prog, file, line, col, true).first;
 	switch (mexp) {
 		Some(e): fcPrintln("Type=" + prettyFiType(FcPretty(false, true, makeTree(), makeTree()), fiExpType(e), makeSet()), prog.config.threadId);
 		None(): {
@@ -96,7 +99,7 @@ findLocalExpType(prog : FiProgram, file : string, line : int, col : int) -> void
 	}
 }
 
-findFiExpAtLineCol(prog : FiProgram, file : string, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
+findFiExpInProgramAtLineCol(prog : FiProgram, file : string, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
 	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
 	filepath = findFlowPath(file, true, prog.config.includes, workingDir);
 	code = getFileContent(filepath);
@@ -142,6 +145,32 @@ findFiExpAtLineCol(prog : FiProgram, file : string, line : int, col : int, wantT
 			None();
 		}
 	}
+	Pair(mfiexp, text);
+}
+
+findFiExpInModuleAtLineCol(module : FiModule, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
+	code = getFileContent(module.fileinfo.fullpath);
+	resolver = makeLineResolver(code);
+	linestart = findLineIndex(resolver, line, 0);
+	linetext = findLine(resolver, linestart).line;
+	charsToColumn = goToColumn(linetext, col);
+	// This is the text before the point
+	text = strLeft(linetext, charsToColumn);
+	index = linestart + charsToColumn;
+	starts2types = fold(
+		module.globalVars,
+		fold(
+			module.natives,
+			fold(
+				module.functions, 
+				makeTree(), 
+				\acc, fun -> start2ExpForTypes(fun.lambda, acc, wantType)
+			),
+			\acc, nat -> start2ExpForTypes(nat.fallbackLambda, acc, wantType)
+		),
+		\acc, gv -> start2ExpForTypes(gv.value, acc, wantType)
+	);
+	mfiexp = treeIntervalSearch(starts2types, index);
 	Pair(mfiexp, text);
 }
 
@@ -422,7 +451,7 @@ addFictiveFiModuleFromFcModule(env : FcTypeEnvProgram, module : FcModule) -> FcT
 }
 
 findCompletion(prog : FiProgram, file : string, line : int, col : int) -> void {
-	context = findFiExpAtLineCol(prog, file, line, col, false);
+	context = findFiExpInProgramAtLineCol(prog, file, line, col, false);
 	mexp : Maybe<FiExp> = context.first;
 	switch (mexp) {
 		Some(e): {
@@ -572,98 +601,73 @@ fcFindLocalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : str
 }
 
 fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
+	print_location = \module, nature, pos -> 
+		printLocation(config, module.fileinfo.fullpath, pos, pos + strlen(nature.name), " uses " + nature.name);
+	module_uses = \module, nature -> 
+		iterSet(
+			fcFastFindOccurrencesInFiModule(config, globEnv, module, nature),
+			\pos -> print_location(module, nature, pos)
+		);
 	switch (fastSymbolNature(config, globEnv, name, line, col)) {
 		Some(nature): {
 			switch (nature.scope) {
 				FcGlobalScope(): {
-					// Global name
-					fcFastGlobalUses(config, globEnv, nature);
+					fcIterCache(globEnv, \m -> module_uses(m, nature));
 				}
 				FcModuleScope(): {
-					// module-scope name
 					maybeApply(
 						fcLoadFromCache(globEnv, nature.module), 
-						\loaded -> fcFastModuleUses(config, globEnv, loaded.module, nature)
+						\loaded -> module_uses(loaded.module, nature)
 					);
 				}
 				FcLocalScope(): {
-					fcServerLog("processing local uses: " + nature2s(nature));
-					if (isNone(fcLoadFromCache(globEnv, getTargetModuleName(config)))) {
-						fcServerLog("module " + config.flowfile + " is not loaded");
-					}
-					// local name
 					maybeApply(
 						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
-						\loaded -> fcFastLocalUses(config, loaded.module, nature, line, col)
+						\loaded -> iterSet(
+							fcFindLocalOccurrences(loaded.module, line, col, nature.name, nature.kind), 
+							\pos -> print_location(loaded.module, nature, pos)
+						)
 					);
 				}
 			}
 		}
-		None(): { 
-			fcServerLog("unknown nature of symbol: " + name);
+		None(): { }
+	}
+}
+
+fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
+	switch (fastSymbolNature(config, globEnv, name, line, col)) {
+		Some(nature): {
+			switch (nature.cached) {
+				Some(cached): {
+					fcPrintln(fcCacheNamed2s(cached), config.threadId);
+				}
+				None(): {
+					maybeApply(
+						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
+						\loaded -> {
+							p = findFiExpInModuleAtLineCol(loaded.module, line, col, true);
+							switch (p.first) {
+								Some(e): fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()) + "\n" + p.second, config.threadId);
+								None(): { }
+							}
+						}
+					);
+				}
+			}
 		}
+		None(): { }
 	}
 }
 
-fcFastGlobalUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, nature : FcSymbolNature) -> void {
-	fcIterCache(globEnv, \m -> fcFastModuleUses(config, globEnv, m, nature));
-}
+// All available info about named declaration.
+//fcCacheNamed2s(named : FcCacheNamed) -> string;
 
-fcFastModuleUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule, nature : FcSymbolNature) -> void {
-	iterSet(
-		fcFastFindOccurrencesInFiModule(config, globEnv, module, nature),
-		\pos -> printLocation(config, module.fileinfo.fullpath, pos, pos + strlen(nature.name), " uses " + nature.name)
-	);
-}
-
-/*
-	FcSymbolNature(
-		name   : string,
-		module : string,       // module, where a symbol is defined
-		scope  : FcSymbolScope, // scope (global, module or local)
-		kind   : FcSymbolKind   // kind (name, type or field)
-	);
-
-	// Enumeration type for classes of renamed entities: var/function names, types and struct fields
-	FcSymbolKind ::= FcVarSymbol, FcTypeSymbol, FcFieldSymbol;
-		FcVarSymbol();
-		FcTypeSymbol();
-		FcFieldSymbol(struct : string);
-
-	// Enumeration type for classes of symbol visibility scope.
-	FcSymbolScope ::= FcGlobalScope, FcModuleScope, FcLocalScope;
-		FcGlobalScope();
-		FcModuleScope();
-		FcLocalScope();
-*/
-
-nature2s(n : FcSymbolNature) -> string {
-	"name: " + n.name + ", " + 
-	"mod: " + n.module + "," +
-	"scope: " + scope2s(n.scope) + ", " +
-	"kind: " + kind2s(n.kind);
-}
-
-kind2s(k : FcSymbolKind) -> string {
-	switch (k) {
-		FcVarSymbol(): "var";
-		FcTypeSymbol(): "type";
-		FcFieldSymbol(s): "field of " + s;
-	}
-}
-
-scope2s(s : FcSymbolScope) -> string {
-	switch (s) {
-		FcGlobalScope(): "global";
-		FcModuleScope(): "module";
-		FcLocalScope():  "local";
-	}
-}
-
-
-fcFastLocalUses(config: CompilerConfig, module : FiModule, nature : FcSymbolNature, line : int, col : int) -> void {
-	iterSet(
-		fcFindLocalOccurrences(module, line, col, nature.name, nature.kind), 
-		\pos -> printLocation(config, module.fileinfo.fullpath, pos + 1, pos + strlen(nature.name) + 1, " uses " + nature.name)
-	);
+fcCacheNamed2s(cached : FcCacheNamed) -> string {
+	symbol = cached.named;
+	decl = switch (symbol) {
+		FiStructOrUnion(): prettyFiStructOrUnion(FcPretty(true, true, makeTree(), makeTree()), symbol, makeSet());
+		FiDeclaration(): prettyFiDeclaration(dummyPretty, symbol, makeSet());
+	};
+	(if (cached.exported) "exported in" else "local in") + " module " + cached.module + "\n\n" + decl;
 }
