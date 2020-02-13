@@ -178,30 +178,27 @@ allP0(promises : [Promise<?, ??>], idx : int, acc : List<?>, fulfill : ([?]) -> 
 
 parallelP(promises : [Promise<?, ??>]) -> Promise<[?], ??> {
 	count = ref 0;
-
-	resultsR = ref map(promises, \__ -> None());
-	errorR = ref None();
+	lengthP = length(promises);
+	resultsR = ref generate(0, lengthP, \__ -> None());
+	isDone = ref false;
 
 	Promise(
 		\fulfill : ([?]) -> void, reject : (??) -> void -> {
 			if (promises == []) {
 				fulfill([])
 			} else {
-				onDoneFn = \-> {
+				onDoneFn = \errorM -> {
 					count := ^count + 1;
-					if (^count == length(promises)) {
+					if (^count == lengthP && isNone(errorM) && exists(^resultsR, isNone)) {
+						println("WARNING: Wrong overall number of parallelP callbacks.");
+					}
+
+					if (isSome(errorM) || !exists(^resultsR, isNone)) {
 						// all promises processed (either fulfilled or rejected)
-						errorM : Maybe<??> = ^errorR;
-						switch (errorM) {
+						isDone := true;
+						switch (errorM : Maybe<??>) {
 							Some(error): reject(error);
-							None(): {
-								results = ^resultsR;
-								results2 = filtermap(results, idfn);
-
-								assert(length(results) == length(results2), "Parallel promises failed."); //  Maybe both fulfilled and rejected was called for some stupid promise
-
-								fulfill(results2);
-							}
+							None(): fulfill(filtermap(^resultsR, idfn));
 						}
 					}
 				}
@@ -209,12 +206,15 @@ parallelP(promises : [Promise<?, ??>]) -> Promise<[?], ??> {
 				iteri(promises, \i, promise -> {
 					doneP(promise,
 						\result : ? -> {
-							resultsR := replace(^resultsR, i, Some(result));
-							onDoneFn();
+							if (!^isDone) {
+								resultsR := replace(^resultsR, i, Some(result));
+								onDoneFn(None());
+							}
 						},
 						\error : ?? -> {
-							errorR := Some(error);
-							onDoneFn();
+							if (!^isDone) {
+								onDoneFn(Some(error));
+							}
 						}
 					)
 				})
