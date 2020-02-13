@@ -9,42 +9,62 @@ export {
 	fcProcServer(config : CompilerConfig) -> void;
 }
 
+fcDecodeConfigRequest(s : string) -> Maybe<CompilerConfig> {
+	conf = deserialize(s, IllegalStruct());
+	if (conf == IllegalStruct()) None() else {
+		switch (conf) {
+			CompilerConfig(__,__,__,__,__,__,__): {
+				Some(CompilerConfig(conf with threadId = s2i(getThreadId())));
+			}
+			default: None();
+		}
+	}
+}
+
 fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : string, out_cb : (int, string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
-	switch (fcDecodeRequest(req)) {
-		FcRequestConfig(config): {
-			start_time = timestamp();
-			pair = fcPrepareConfig(config);
-			conf = pair.first;
-			conf_callback = pair.second;
-			conf_str = foldTree(compilerConfigToTree(conf), "",
-				\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
-			);
-			if (isConfigParameterTrue(config.config, "server-shutdown")) {
-				exit_cb();
-			} else {
-				fcServerLog("Processing http request: <" + conf_str + " >");
-				fcPrintln("Processing '" + conf.flowfile + "' on http server.", config.threadId);
-				runConfigLocally(conf, env, \code -> {
-					fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
-					conf_callback();
-					out = if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
-						fcBinary(conf.threadId);
-					} else {
-						fcOutput(conf.threadId);
-					}
-					out_cb(code, out);
-					clearFcOutput(conf.threadId);
-					clearTimePhases(conf.threadId);
-					loop_cb();
-				});
+	if (startsWith(req, "config_")) {
+		encoded_conf = substring(req, 7, strlen(req) - 7);
+		switch (fcDecodeConfigRequest(encoded_conf)) {
+			Some(config): {
+				start_time = timestamp();
+				pair = fcPrepareConfig(config);
+				conf = pair.first;
+				conf_callback = pair.second;
+				conf_str = foldTree(compilerConfigToTree(conf), "",
+					\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
+				);
+				if (isConfigParameterTrue(config.config, "server-shutdown")) {
+					exit_cb();
+				} else {
+					fcServerLog("Processing http request: <" + conf_str + " >");
+					fcPrintln("Processing '" + conf.flowfile + "' on http server.", config.threadId);
+					runConfigLocally(conf, env, \code -> {
+						fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
+						conf_callback();
+						out = if (isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression")) {
+							fcBinary(conf.threadId);
+						} else {
+							fcOutput(conf.threadId);
+						}
+						out_cb(code, out);
+						clearFcOutput(conf.threadId);
+						clearTimePhases(conf.threadId);
+						loop_cb();
+					});
+				}
+			}
+			None(): {
+				out_cb(200, "WARNING: Illegal request.");
+				loop_cb();
 			}
 		}
-		FcRequestJson(json): {
-			fcLspProcessRequest(serverConf, env, json, \msg -> out_cb(0, msg), loop_cb, exit_cb);
-		}
-		FcRequestNone(): {
+	} else {
+		json = fcDecodeJsonRequest(req);
+		if (json == JsonNull()) {
 			out_cb(200, "WARNING: Illegal request.");
 			loop_cb();
+		} else {
+			fcLspProcessRequest(serverConf, env, json, \msg -> out_cb(0, msg), loop_cb, exit_cb);
 		}
 	}
 }
