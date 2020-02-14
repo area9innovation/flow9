@@ -610,12 +610,21 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DShapeBufferGeometry(Object[] data, Func2<Integer, Integer, Object[]> addGroups) {
+		return null;
+	}
+
 
 	public Object add3DBufferGeometryAttribute(Object geometry, String name, Object[] data) {
 		return null;
 	}
 	public Object[] get3DBufferGeometryAttribute(Object geometry, String name) {
 		return new Object[0];
+	}
+
+
+	public Object make3DShapeGeometry(Object[] data) {
+		return null;
 	}
 
 

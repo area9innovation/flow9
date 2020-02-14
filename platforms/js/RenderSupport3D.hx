@@ -28,6 +28,9 @@ import js.three.ConeGeometry;
 import js.three.CylinderGeometry;
 import js.three.SphereGeometry;
 
+import js.three.Shape;
+import js.three.ShapeGeometry;
+
 import js.three.BufferGeometry;
 import js.three.SphereBufferGeometry;
 import js.three.BoxBufferGeometry;
@@ -1683,6 +1686,20 @@ class RenderSupport3D {
 		return g;
 	}
 
+	public static function make3DShapeBufferGeometry(path : Array<Float>, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var shape = new Shape();
+
+		shape.moveTo(path[0], path[1]);
+		for (i in 1...Math.floor(path.length / 2)) {
+			shape.lineTo(path[i * 2], path[i * 2 + 1]);
+		};
+		shape.lineTo(path[0], path[1]);
+
+		var g : BufferGeometry = untyped __js__("new THREE.ShapeBufferGeometry(shape)");
+		untyped g.addGroups = addGroups;
+		return g;
+	}
+
 	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
 		if (data.length > 0) {
 			var attribute : Dynamic = new BufferAttribute(untyped new js.html.Float32Array(data.length * data[0].length), data[0].length);
@@ -1723,6 +1740,18 @@ class RenderSupport3D {
 		}
 
 		return data;
+	}
+
+	public static function make3DShapeGeometry(path : Array<Float>) : Geometry {
+		var shape = new Shape();
+
+		shape.moveTo(path[0], path[1]);
+		for (i in 1...Math.floor(path.length / 2)) {
+			shape.lineTo(path[i * 2], path[i * 2 + 1]);
+		};
+		shape.lineTo(path[0], path[1]);
+
+		return new ShapeGeometry(shape);
 	}
 
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
