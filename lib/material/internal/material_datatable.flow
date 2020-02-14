@@ -72,7 +72,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
 	isInnerScroll = isSome(innerScroll);
 
-	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
+	gluedMode = maybeBind(innerScroll, \is -> switch (is.mode) {
+		MGluedFirstColumnMode(gstyle) : Some(gstyle);
+		default : None()
+	});
+	glued = isSome(gluedMode);
 	lifted = eitherMap(innerScroll, \is -> is.mode == MLiftedFirstColumnMode(), false);
 
 	columns = m.columns
@@ -230,7 +234,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	
 	innerScrollEnabled = if (fullWidth) fless(screenW, faddition(minWidthsSum, const(2. * externalBorder))) else const(true);
 	innerScrollVisible0 = make(false);
-	innerScrollVisible = fand(innerScrollEnabled, innerScrollVisible0);
+	innerScrollVisible = fstall(fand(innerScrollEnabled, innerScrollVisible0), 0);
 	innerScrollPosition = makePoint();
 
 	expandRow =
@@ -453,7 +457,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			expandContent(headers0, er)
 			|> (\headers ->
 				if (lifted) colsTail(headers)
-				else if (glued)	concat([TShow(fthrottle(fnot(innerScrollVisible), 1), colsHead(headers) |> TCols)], colsTail(headers))
+				else if (glued)	concat([TShow(fnot(innerScrollVisible), colsHead(headers) |> TCols)], colsTail(headers))
 				else headers
 			)
 			|> (\t -> TColsDir(t, p.rtl))
@@ -522,8 +526,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			else {
 				colStyle = columns[i].style;
 				box = cellBox(i, false);
-				// TODO : improve
-				// Hotfix : rerender content in the column if rowsCountB changed. 
 				content =
 					if (contains(colStyle, MWidthByContent()))
 						MSelect(fstall(cellWs, 0), \cws ->
@@ -615,18 +617,24 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				|> (\t -> TAvailableWidth(t, firstColumnWidth))
 				|> (\t -> TLines2(firstColumnHeader, t))
 				|> (\t ->
-						if (glued)
-							TShow(innerScrollVisible,
-								TCols2(t, TAvailableHeight(
-									MSeparator2T(manager, p, false),
-									faddition(visibleRowsHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
-								))
-							)
-						else t
+						eitherMap(gluedMode, \gMode ->
+							TGroup2(
+								TShow(innerScrollVisible, t),
+								TShow(
+									extractStruct(gMode, MSeparatorVisible(innerScrollVisible)).visible,
+									TAvailableHeight(
+										MSeparator2T(manager, p, false),
+										faddition(visibleRowsHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
+									)
+								)
+								|> (\sep -> TBorderT(firstColumnWidth, zero, zero, zero, sep))
+							),
+							t
+						)
 				);
 
 			TGroup2(
-				if (glued) TBorderT(fdelay(fif(innerScrollVisible, firstColumnWidth, zero), 0), zero, zero, zero, table) else table,
+				if (glued) TBorderT(fif(innerScrollVisible, firstColumnWidth, zero), zero, zero, zero, table) else table,
 				firstColumn
 			)
 		} else table;

@@ -602,6 +602,12 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function set3DMaterialColor(material : Material, color : Int) : Void {
+		untyped material.color = new Color(color);
+
+		material.invalidateMaterialStage();
+	}
+
 
 	public static function set3DTextureRotation(object : Texture, rotation : Float) : Void {
 		if (untyped object.rotation != rotation) {
@@ -1808,6 +1814,7 @@ class RenderSupport3D {
 
 	public static function set3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String, value : String) : Void {
 		untyped material.uniforms[uniform].value = __js__("eval(value)");
+		material.invalidateMaterialStage();
 	}
 
 	public static function get3DShaderMaterialUniformValue(material : ShaderMaterial, uniform : String) : String {

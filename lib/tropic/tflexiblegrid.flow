@@ -40,7 +40,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	stageSizeB = makeWH();
 
 	itemsB =
-		fmapi(items, \__, it -> TFlexibleGridItem(it, make(zeroPoint),
+		fmap(items, \it -> TFlexibleGridItem(it, make(zeroPoint),
 			if (isSameSize) sameSizeWH else make(None())
 		));
 
@@ -136,59 +136,47 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			disposers
 		);
 
+	SelectTGroupFixed(itemsB, \idx, __, item ->
+		TransformTAcc2(\t2a -> {
+			visible = make(false);
+			b1 =
+				item2Tropic(item)
+				|> (\t -> if (isSameSize) TShow(fstall(visible, 1), t) else t)
+				|> t2a;
 
-	(if (isSameSize)
-		TSelect(itemsB, \items0 ->
-			mapi(items0, \id, item ->
-				TransformTAcc2(\t2a -> {
-					visible = make(false);
-					b1 =
-						item2Tropic(item)
-						|> (\t -> TShow(fstall(visible, 1), t))
-						|> t2a;
+			form =
+				if (isSameSize)
+					FGroup2(
+						FTranslate(fpointX(item.tr), fpointY(item.tr), FRenderable(visible, FAlpha(const(0.01), 
+							FGraphics(
+								fselect(sameSizeWH, FLift(\sswh -> eitherMap(sswh, \wh ->
+									[GRect(0.0, 0.0, wh.width, wh.height)],
+									[]
+								))),
+								const([Fill(white)])
+							)
+						))),
+						b1.form,
+						false
+					)
+				else 
+					b1.form;
 
-					form =
-						FGroup2(
-							FTranslate(fpointX(item.tr), fpointY(item.tr), FRenderable(visible, FAlpha(const(0.01), 
-								FGraphics(
-									fselect(sameSizeWH, FLift(\sswh -> eitherMap(sswh, \wh ->
-										[GRect(0.0, 0.0, wh.width, wh.height)],
-										[]
-									))),
-									const([Fill(white)])
-								)
-							))),
-							b1.form,
-							false
-						);
-
-					disposers =
-						concat(
-							b1.disposers,
-							if (id == 0) [
-								make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
-									if (_wd != 0. && _hgt != 0.) nextDistinct(sameSizeWH, Some(WidthHeight(_wd, _hgt)))
-								)(),
-								fconnect(b1.metrics.baseline, contentBaseline)
-							]
-							else []
-						);
-
-					form2TAcc(form, disposers)
-				})
-			)
-			|> TGroup
-		)
-	else
-		SelectTGroup(itemsB, \idx, __, item ->
-			TransformTAcc2(\t2a -> {
-				b1 =
-					item2Tropic(item)
-					|> t2a;
-
-				disposers =
-					concat(
-						b1.disposers,
+			disposers =
+				concat(
+					b1.disposers,
+					if (isSameSize) {
+						[
+							makeSubscribeUns(feq(idx, 0), \b -> {
+								if (b) [
+									make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
+										if (_wd != 0. && _hgt != 0.) nextDistinct(sameSizeWH, Some(WidthHeight(_wd, _hgt)))
+									)(),
+									fconnect(b1.metrics.baseline, contentBaseline)
+								] else []
+							})()
+						]
+					} else {
 						[
 							make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
 								nextDistinct(item.wh, Some(WidthHeight(_wd, _hgt)))
@@ -200,11 +188,11 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 									[]
 							})()
 						]
-					);
+					}
+				);
 
-				form2TAcc(b1.form, disposers)
-			})
-		)
+			form2TAcc(form, disposers)
+		})
 	)
 	|> (\f ->
 		TransformTAcc2(\t2a -> {
@@ -260,7 +248,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	|> (\f -> {
 		itemTranslations =
 			fselect2(
-				fsubmap(eitherMap(order, \or -> forder(itemsB, or.order), itemsB), \it -> it.wh),
+				fsubmap(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB), \it -> it.wh),
 				ftransistor(gridEnabled, stageSizeB),
 				FLift2(\itemsSizes, stageSize -> {
 					if (!contains(itemsSizes, None())) {
@@ -274,31 +262,32 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			|> (\tr -> eitherMap(order, \or -> fdeorder(tr, or.order), tr));
 
 		TConstruct(
-			[
-				if (isSameSize)
-					makeSubscribe(
-						itemTranslations,
-						\tr  -> {
-							gridItems = fgetValue(itemsB);
-							iteri(tr, \i, p ->
-								if (length(gridItems) > i) {
-									nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
-								}
-							);
-						}
-					)
-				else
-					make2Subscribe(
-						itemTranslations,
-						itemsB,
-						\tr, gridItems -> {
-							iteri(tr, \i, p ->
-								if (length(gridItems) > i) {
-									nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
-								}
-							);
-						}
-					)
+			if (isSameSize) {
+				applyTranslationsTrigger = make(false);
+				[
+					makeSubscribe(itemTranslations, \__ -> reverseBehaviour(applyTranslationsTrigger)),
+					makeSubscribe(itemsB, \__ -> reverseBehaviour(applyTranslationsTrigger)),
+
+					makeSubscribe(applyTranslationsTrigger, \__ -> {
+						gridItems = fgetValue(itemsB);
+						iteri(fgetValue(itemTranslations), \i, p ->
+							if (length(gridItems) > i) {
+								nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
+							}
+						);
+					})
+				]
+			} else [
+				make2Subscribe(
+					itemTranslations,
+					itemsB,
+					\tr, gridItems -> 
+						iteri(tr, \i, p ->
+							if (length(gridItems) > i) {
+								nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
+							}
+						)
+				)
 			],
 			f
 		)
@@ -598,4 +587,18 @@ checkBFMaxRows(state : BFState, block : BFBlock, point : Point, par : BFParamete
 		},
 		true
 	)
+}
+
+SelectTGroupFixed(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
+	if (isUrlParameterTrue("check_same_item"))
+		SelectTGroup(values, makeTropicFn)
+	else
+		TIf(
+			flessi(flength(values), const(ARRAY_DIFF_TRESHOLD)),
+			SelectTGroup(values, makeTropicFn),
+			TSelect(values, \vals ->
+				mapi(vals, \i, v -> makeTropicFn(const(i), i, v))
+				|> TGroup
+			)
+		)
 }
