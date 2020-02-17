@@ -6,6 +6,7 @@ import js.three.Fog;
 import js.three.Color;
 import js.three.Vector2;
 import js.three.Vector3;
+import js.three.Face3;
 import js.three.Euler;
 import js.three.Quaternion;
 import js.three.Matrix4;
@@ -1751,7 +1752,38 @@ class RenderSupport3D {
 		};
 		shape.lineTo(path[0], path[1]);
 
-		return new ShapeGeometry(shape);
+		var g = new ShapeGeometry(shape);
+
+		g.computeFaceNormals();
+		g.computeVertexNormals();
+
+		return g;
+	}
+
+	public static function make3DShapeGeometry3D(path : Array<Float>) : Geometry {
+		var g = new Geometry();
+		var points = [];
+
+		for (i in 0...Math.floor(path.length / 3)) {
+			g.vertices.push(new Vector3(path[i * 3], path[i * 3 + 1], path[i * 3 + 2]));
+			points.push(
+				new Vector2(
+					Math.atan2(path[i * 3 + 1], Math.sqrt(path[i * 3] * path[i * 3] + path[i * 3 + 2] * path[i * 3 + 2])),
+					Math.atan2(-path[i * 3 + 2], path[i * 3])
+				)
+			);
+		}
+
+		var triangles : Array<Array<Float>> = untyped __js__("THREE.ShapeUtils.triangulateShape(points, [])");
+
+		for (i in 0...triangles.length) {
+			g.faces.push(new Face3(triangles[i][0], triangles[i][1], triangles[i][2]));
+		}
+
+		g.computeFaceNormals();
+		g.computeVertexNormals();
+
+		return g;
 	}
 
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {

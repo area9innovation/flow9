@@ -627,6 +627,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DShapeGeometry3D(Object[] data) {
+		return null;
+	}
+
 
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
 		return null;
