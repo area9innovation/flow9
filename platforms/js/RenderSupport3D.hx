@@ -1744,20 +1744,13 @@ class RenderSupport3D {
 	}
 
 	public static function make3DShapeGeometry(path : Array<Float>) : Geometry {
-		var shape = new Shape();
+		var points = [];
 
-		shape.moveTo(path[0], path[1]);
-		for (i in 1...Math.floor(path.length / 2)) {
-			shape.lineTo(path[i * 2], path[i * 2 + 1]);
+		for (i in 0...Math.floor(path.length / 2)) {
+			points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
 		};
-		shape.lineTo(path[0], path[1]);
 
-		var g = new ShapeGeometry(shape);
-
-		g.computeFaceNormals();
-		g.computeVertexNormals();
-
-		return g;
+		return new ShapeGeometry(new Shape(points));
 	}
 
 	public static function make3DShapeGeometry3D(path : Array<Float>) : Geometry {
