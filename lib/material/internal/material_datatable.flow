@@ -88,7 +88,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	defaultSorted : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
 	listSortedCallback = extractStruct(style, MListSorted(nop1)).newOrderCallback;
-	sortedByB : DynamicBehaviour<Triple<int, bool, Maybe<MSort>>> = make(Triple(-1, true, None()));
+	sortedByB : DynamicBehaviour<MDataTableSorting> = make(MDataTableSorting(-1, true, None()));
 	sortColumnNumberB = make(-1);
 	sortUpdating = tryExtractStruct(style, MUpdateSorting(0));
 
@@ -96,31 +96,31 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	maybeApply(sortUpdating, \su -> updateTrigger(updatingTrigger, su.delay));
 
 	sortingResult = fsubselect(rows, FLift(\rws : [[Material]] ->
-		fselect2(sortedByB, updatingTrigger, FLift2(\sb : Triple<int, bool, Maybe<MSort>>, __ -> {
+		fselect2(sortedByB, updatingTrigger, FLift2(\sb : MDataTableSorting, __ -> {
 			sorted =
-				if (sb.first >= 0 && sb.first < (columnsCount - (b2i(showRowNumbers) + b2i(isSome(checkboxSelection)))) && !hasExtOrderBy)
+				if (sb.column >= 0 && sb.column < (columnsCount - (b2i(showRowNumbers) + b2i(isSome(checkboxSelection)))) && !hasExtOrderBy)
 					eitherFn(
-						sb.third,
-						\sc ->
+						sb.sortInfo,
+						\sInfo ->
 							mergeSort(
 								enumFromTo(0, length(rws) - 1),
 								\a, b ->
-									if (sb.second) sc.colCompares(a, b)
-									else sc.colCompares(b, a)
+									if (sb.ascending) sInfo.colCompares(a, b)
+									else sInfo.colCompares(b, a)
 							),
 						\ ->
 							map(
 								sortCustom(
 									mapi(rws, \j, r ->
 										Pair({
-											cellM = r[sb.first];
+											cellM = r[sb.column];
 											switch (cellM) {
 												MMutable(mutContent): fgetValue(mutContent);
 												TMutable(mutContent): fgetValue(mutContent);
 												default: cellM
 											}
 										}, j)),
-									firstOfPair, sb.second
+									firstOfPair, sb.ascending
 								),
 								secondOfPair
 							)
@@ -344,17 +344,17 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				clickColumn = \ -> {
 					sb = fgetValue(sortedByB);
 					
-					if (sb.first == i && sb.second) {
+					if (sb.column == i && sb.ascending) {
 						nextDistinct(defaultSorted, MSortingParam(-1, false));
-						next(sortedByB, Triple(-1, false, None()))
+						next(sortedByB, MDataTableSorting(-1, false, None()))
 					} else {
 						asc =
-							if (sb.first == -1)
+							if (sb.column == -1)
 								getValue(defaultSorted).isAsc
 							else
-								sb.first == i;
+								sb.column == i;
 						nextDistinct(defaultSorted, MSortingParam(i, asc));
-						next(sortedByB, Triple(i, asc, sortStyle))
+						next(sortedByB, MDataTableSorting(i, asc, sortStyle))
 					}
 				};
 
@@ -363,8 +363,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 				mouseDownAround(manager, None(), make(false), hover, clickColumn,
 					TIfLazy2(
-						fselect(sortedByB, FLift(\sb : Triple<int, bool, Maybe<MSort>> -> sb.first == i)),
-						\sb ->
+						fselect(sortedByB, FLift(\sb : MDataTableSorting -> sb.column == i)),
+						\isSorting ->
 							TIfLazy2(
 								hover,
 								\h ->
@@ -372,8 +372,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 										[
 											makeHeaderTitle(h)
 												|> (\t -> TBorderDir(0.0, 0.0, 4.0, 0.0, t, p.rtl)),
-											if (sb)
-												TIfLazy2(fselect(sortedByB, FLift(secondOfTriple)), \sb0 ->
+											if (isSorting)
+												TIfLazy2(fselect(sortedByB, FLift(\sb -> sb.ascending)), \sb0 ->
 													MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", [MIconSize(15.)]),
 													true
 												)
@@ -1055,14 +1055,14 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 						maybeApply(currentPage, \cp -> nextDistinct(cp.page, pg.first / max(pg.second, 1)));
 					}),
-					\ -> fBidirectionalLink(sortedByB, sortColumnNumberB, \sb -> nextDistinct(sortColumnNumberB, sb.first), \num -> {
+					\ -> fBidirectionalLink(sortedByB, sortColumnNumberB, \sb -> nextDistinct(sortColumnNumberB, sb.column), \num -> {
 						sortColumn =
 							if (num >= 0 && isNone(reorderList))
 								tryExtractStruct(columns[num].style, MSort(\__, __ -> 0))
 							else
 								None();
 
-						nextDistinct(sortedByB, Triple(num, !getValue(defaultSorted).isAsc, sortColumn));
+						nextDistinct(sortedByB, MDataTableSorting(num, !getValue(defaultSorted).isAsc, sortColumn));
 					}),
 					\ -> fBidirectionalLink(page, pageNumberB,
 							\pair -> nextDistinct(pageNumberB, pair.first / max(pair.second, 1)),
@@ -1319,3 +1319,9 @@ updateTrigger(trigger : DynamicBehaviour<bool>, delay : int) -> void {
 		updateTrigger(trigger, delay)
 	})
 }
+
+MDataTableSorting(
+	column : int,
+	ascending : bool,
+	sortInfo : Maybe<MSort>
+);
