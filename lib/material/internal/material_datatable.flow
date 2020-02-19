@@ -80,11 +80,16 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	lifted = eitherMap(innerScroll, \is -> is.mode == MLiftedFirstColumnMode(), false);
 
 	columns = m.columns
-		|> (\arr -> if (widthByContent) map(arr, \col -> MColumnDynamic(col.header, col.tooltip, col.width, arrayPush(col.style, MWidthByContent()))) else arr)
-		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContent()])], arr) else arr)
+		|> (\arr -> map(arr, \col ->
+			if (widthByContent || contains(col.style, MWidthByContent()))
+				MColumnDynamic(col with style = arrayPush(col.style, MWidthByContentLimited(-1., -1.)))
+			else col
+		))
+		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContentLimited(-1., -1.)])], arr) else arr)
 		|> (\arr -> if (isSome(checkboxSelection)) concat([MColumn("", "", floor(checkboxColumnWidth), [MMaxWidth(floor(checkboxColumnWidth))])], arr) else arr);
 	columnsCount = length(columns);
-	isAnyWidthByContent = widthByContent || any(map(columns, \col -> contains(col.style, MWidthByContent())));
+	isWidthByContent = \col : MColumnDynamic -> containsStruct(col.style, MWidthByContentLimited(-1., -1.));
+	isAnyWidthByContent = widthByContent || any(map(columns, isWidthByContent));
 
 	defaultSorted : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
 	listSortedCallback = extractStruct(style, MListSorted(nop1)).newOrderCallback;
@@ -165,7 +170,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		fselect(rowsCountB, FLift(\rc ->
 			generate(0, rc + b2i(isSome(fixedRow)), \__ ->
 				generate(0, columnsCount, \i ->
-					if (!widthByContent && !contains(columns[i].style, MWidthByContent())) make(0.)
+					if (!isWidthByContent(columns[i])) make(0.)
 					else if (isCheckboxColumn(i)) make(checkboxColumnWidth)
 					else make(^tropicFillersMax)
 				)
@@ -174,7 +179,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	columnWidths : [Transform<double>] =
 		generate(0, columnsCount, \i ->
-			if (widthByContent || contains(columns[i].style, MWidthByContent()))
+			eitherMap(
+				tryExtractStruct(columns[i].style, MWidthByContentLimited(-1., -1.)), \mwc ->
 				fsubselect(cellWs, FLift(\cWs ->
 					fsubselect(page, FLift(\pg ->
 						fsubselect(sortingResult, FLift(\srt ->	{
@@ -191,16 +197,21 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 								fmaxA(
 									map(currentRows, \row -> elementAt(row, i, make(0.))),
 									i2d(columns[i].width)
-								),
+								)
+								|> (\colW -> fselect(colW, FLift(\cw ->
+										if (mwc.maxWidth == -1.) max(cw, mwc.minWidth)
+										else forceRange(cw, mwc.minWidth, mwc.maxWidth)
+									))),
 								const(cellBorder)
 							)
 						}))
 					))
-				))
-			else if (fullWidth)
+				)),
+			if (fullWidth)
 				make(minWidths[i])
 			else
 				const(minWidths[i])
+			)
 		);
 
 	headCount = 1 + b2i(showRowNumbers) + b2i(isSome(checkboxSelection));
@@ -524,18 +535,21 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			if (i >= columnsCount)
 				TEmpty()
 			else {
-				colStyle = columns[i].style;
 				box = cellBox(i, false);
 				content =
-					if (contains(colStyle, MWidthByContent()))
-						MSelect(fstall(cellWs, 0), \cws ->
-							MAttachWidth(cell, elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0)))
-						)
+					if (isWidthByContent(columns[i]))
+						MSelect(fstall(cellWs, 0), \cws -> {
+							widthInspector = elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0));
+							if (isUrlParameterTrue("new"))
+								MInspect([IMaxWidth(widthInspector)], cell)
+							else
+								MAttachWidth(cell, widthInspector)
+						})
 					else
 						cell;
 
 				MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
-				|> alignCellContent(colStyle, box)
+				|> alignCellContent(columns[i].style, box)
 			}
 		})
 	};
@@ -944,7 +958,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 							miw =
 								mapi(columns, \i, c -> {
-									if (contains(c.style, MWidthByContent()))
+									if (isWidthByContent(c))
 										colWs[i]
 									else
 										minWidths[i]
@@ -958,7 +972,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 							maw =
 								mapi(columns, \i, c -> {
-									if (contains(c.style, MWidthByContent()))
+									if (isWidthByContent(c))
 										colWs[i]
 									else {
 										w = extractStruct(c.style, MMaxWidth(-1)).width;
