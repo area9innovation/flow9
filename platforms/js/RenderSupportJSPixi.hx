@@ -403,7 +403,19 @@ class RenderSupportJSPixi {
 		}
 	}
 
+	private static function checkManifestOrientation() {
+		var manifest : Dynamic = Browser.document.querySelector('link[rel=\"manifest\"]');
+
+		if (manifest != null) {
+			var manifestJson =  haxe.Http.requestUrl(manifest.href);
+			trace(manifestJson);
+		}
+	}
+
 	private static function initPixiRenderer() {
+		if (Util.getParameter("pwa") == "1") {
+			checkManifestOrientation();
+		}
 		disablePixiPlugins();
 
 		if (untyped PIXI.VERSION != "4.8.2") {
