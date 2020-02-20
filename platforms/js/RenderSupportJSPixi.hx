@@ -408,8 +408,9 @@ class RenderSupportJSPixi {
 
 		if (manifest != null) {
 			var manifestJson = haxe.Json.parse(haxe.Http.requestUrl(manifest.href));
+			trace(manifestJson);
 
-			if (manifestJson['orientation'] == 'landscape') {
+			if (untyped manifestJson['orientation'] == 'landscape') {
 				untyped __js__("screen.orientation.lock('landscape')");
 			}
 		}
