@@ -307,7 +307,7 @@ class RenderSupportJSPixi {
 		backingStoreRatio = getBackingStoreRatio();
 
 		if (PixiRenderer != null) {
-			if (untyped PixiRenderer.gl != null) {
+			if (untyped PixiRenderer.gl != null && PixiRenderer.gl.destroy != null) {
 				untyped PixiRenderer.gl.destroy();
 			}
 
