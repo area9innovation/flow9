@@ -682,4 +682,12 @@ public class RenderSupport3D extends NativeHost {
 	public Object[] convert3DVectorToStageCoordinates(Object stage, Double x, Double y, Double z) {
 		return new Object[0];
 	}
+
+	public Object make3DLOD() {
+		return null;
+	}
+
+	public Object add3DLODLevel(Object lod, Integer level, Object object) {
+		return null;
+	}
 }
