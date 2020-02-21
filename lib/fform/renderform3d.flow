@@ -9,7 +9,7 @@ export {
 
 	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
 		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled, F3DAttachTransformControls, F3DCameraDistance,
-			F3DOrbitControlsParameters, F3DLoading;
+			F3DOrbitControlsParameters, F3DLoading, F3DGetLoadingManager;
 
 			F3DIgnoreMouseEvents();
 			F3DExportScene(fn : ref Maybe<(includeCamera : bool) -> string>);
@@ -18,6 +18,11 @@ export {
 			F3DCameraDistance(min : double, max : double); // min = 0.0, max = 1000.0 by default
 			F3DOrbitControlsParameters(parameters : [KeyValue]);
 			F3DLoading(loading : DynamicBehaviour<bool>);
+			F3DGetLoadingManager(fn : (loadingManager : F3DLoadingManager) -> void);
+
+		F3DLoadingManager(
+			load : (url : string, onLoad : () -> void) -> void
+		);
 
 	F3DObject ::= F3DScene, F3DMutable, F3DName, F3DVisible, F3DAlpha, F3DLocalPosition, F3DLocalRotation, F3DLocalScale, F3DLookAt, F3DLocalMatrix, F3DWorldMatrix, F3DOnLoad,
 		F3DInspectLocalRotation, F3DInspectLocalPosition, F3DInspectLocalScale, F3DInspectWorldPosition, F3DInspectStagePosition,
@@ -163,7 +168,7 @@ export {
 				F3DMaterialDisplacementTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>, bias : Transform<double>);
 				F3DMaterialBumpTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>);
 
-					F3DTexture ::= F3DTextureLoader, F3DCubeTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset;
+					F3DTexture ::= F3DTextureLoader, F3DCubeTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset, F3DTextureMutable;
 
 						F3DTextureLoader(url : string, onLoad : () -> void, enabled : Transform<bool>, parameters : [KeyValue]);
 						F3DCubeTextureLoader(
@@ -178,8 +183,9 @@ export {
 						);
 						F3DDataTexture(data : [int], width : int, height : int, parameters : [KeyValue]);
 						F3DFFormTexture(fform : FForm, parameters : [KeyValue]);
-						F3DTextureRotation(material : F3DTexture, rotation : Transform<double>);
-						F3DTextureOffset(material : F3DTexture, point : Transform<Point>);
+						F3DTextureRotation(texture : F3DTexture, rotation : Transform<double>);
+						F3DTextureOffset(texture : F3DTexture, point : Transform<Point>);
+						F3DTextureMutable(texture : Transform<F3DTexture>);
 
 
 				F3DMaterialOpacity(material : F3DMaterial, opacity : Transform<double>);
@@ -216,6 +222,13 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 			maybeApply(
 				tryExtractStruct(style, F3DAttachTransformControls(ref nop2)),
 				\es -> es.fn := \c, b -> if (b) attach3DTransformControls(clip, c) else detach3DTransformControls(clip, c)
+			);
+			maybeApply(tryExtractStruct(style, F3DGetLoadingManager(nop1)), \glm ->
+				glm.fn(
+					F3DLoadingManager(
+						\url, onLoad -> load3DTexture(make3DTextureLoader(clip, url, \__ -> onLoad(), [])),
+					)
+				)
 			);
 
 			onDoneCounter : ref int = ref 0;
@@ -1733,6 +1746,20 @@ renderF3DTexture(texture : F3DTexture, state : F3DRenderState, onStart : (native
 			);
 
 			r;
+		}
+		F3DTextureMutable(innerTexture) : {
+			onDonePad = ref None();
+
+			[
+				makeSubscribeUns(innerTexture, \t ->
+					renderF3DTexture(
+						t,
+						state,
+						onStart,
+						\ -> onlyOnce(onDonePad, onDone)
+					)
+				)()
+			]
 		}
 	}
 }
