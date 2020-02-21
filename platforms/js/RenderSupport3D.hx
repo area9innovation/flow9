@@ -13,6 +13,7 @@ import js.three.Matrix4;
 
 import js.three.Object3D;
 import js.three.Mesh;
+import js.three.LOD;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
@@ -1979,5 +1980,13 @@ class RenderSupport3D {
 			( vector.x * widthHalf ) + widthHalf,
 			( -vector.y * heightHalf ) + heightHalf
 		];
+	}
+
+	public static function make3DLOD() : LOD {
+		return new LOD();
+	}
+
+	public static function add3DLODLevel(lod : LOD, level : Float, object : Object3D) : Void {
+		lod.addLevel(object, level);
 	}
 }
