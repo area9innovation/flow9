@@ -6,12 +6,14 @@ import js.three.Fog;
 import js.three.Color;
 import js.three.Vector2;
 import js.three.Vector3;
+import js.three.Face3;
 import js.three.Euler;
 import js.three.Quaternion;
 import js.three.Matrix4;
 
 import js.three.Object3D;
 import js.three.Mesh;
+import js.three.LOD;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
@@ -297,19 +299,19 @@ class RenderSupport3D {
 	}
 
 	public static function set3DStageOnStart(stage : ThreeJSStage, onStart : Void -> Void) : Void  {
-		stage.loadingManager.onStart = onStart;
+		ThreeJSStage.loadingManager.onStart = onStart;
 	}
 
 	public static function set3DStageOnError(stage : ThreeJSStage, onError : Void -> Void) : Void  {
-		stage.loadingManager.onError = onError;
+		ThreeJSStage.loadingManager.onError = onError;
 	}
 
 	public static function set3DStageOnLoad(stage : ThreeJSStage, onLoad : Void -> Void) : Void  {
-		stage.loadingManager.onLoad = onLoad;
+		ThreeJSStage.loadingManager.onLoad = onLoad;
 	}
 
 	public static function set3DStageOnProgress(stage : ThreeJSStage, onProgress : String -> Int -> Int -> Void) : Void {
-		stage.loadingManager.onProgress = untyped onProgress;
+		ThreeJSStage.loadingManager.onProgress = untyped onProgress;
 	}
 
 	public static function set3DSceneBackground(scene : Scene, background : Dynamic) : Void {
@@ -343,11 +345,11 @@ class RenderSupport3D {
 
 		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
 			untyped __js__("
-				new THREE.MTLLoader(stage.loadingManager)
+				new THREE.MTLLoader(ThreeJSStage.loadingManager)
 					.load(mtlUrl, function (materials) {
 						materials.preload();
 
-						new THREE.OBJLoader(stage.loadingManager)
+						new THREE.OBJLoader(ThreeJSStage.loadingManager)
 							.setMaterials(materials)
 							.load(objUrl, onLoadFn);
 					})
@@ -360,9 +362,9 @@ class RenderSupport3D {
 					\".then((module2) => {\",
 					\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
 					\".then((module3) => {\",
-					\"new module.MTLLoader(stage.loadingManager)\",
+					\"new module.MTLLoader(ThreeJSStage.loadingManager)\",
 					\".load(mtlUrl, function(materials) {\",
-					\"new module2.OBJLoader2(stage.loadingManager)\",
+					\"new module2.OBJLoader2(ThreeJSStage.loadingManager)\",
 					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
 					\".load(objUrl, onLoadFn);\",
 					\"});\",
@@ -376,7 +378,7 @@ class RenderSupport3D {
 
 	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
 		untyped __js__("
-			new THREE.GLTFLoader(stage.loadingManager)
+			new THREE.GLTFLoader(ThreeJSStage.loadingManager)
 				.load(url, function (gltf) {
 					onLoad(
 						gltf.animations, // Array<THREE.AnimationClip>
@@ -390,7 +392,7 @@ class RenderSupport3D {
 	}
 
 	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
-		new ObjectLoader(stage.loadingManager).load(url, onLoad);
+		new ObjectLoader(ThreeJSStage.loadingManager).load(url, onLoad);
 	}
 
 	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
@@ -399,33 +401,45 @@ class RenderSupport3D {
 		var loader : Dynamic =
 			if (StringTools.endsWith(url, ".dds")) {
 				texture = new CompressedTexture();
-				untyped __js__("new THREE.DDSLoader(stage.loadingManager)");
+				untyped __js__("new THREE.DDSLoader(ThreeJSStage.loadingManager)");
 			} else if (StringTools.endsWith(url, ".pvr")) {
 				texture = new CompressedTexture();
-				untyped __js__("new THREE.PVRLoader(stage.loadingManager)");
+				untyped __js__("new THREE.PVRLoader(ThreeJSStage.loadingManager)");
 			} else {
 				texture = new Texture();
-				new TextureLoader(stage.loadingManager);
+				new TextureLoader(ThreeJSStage.loadingManager);
 			};
 
-		untyped texture.load = function() {
-			loader.load(url, function(loadedTexture : Texture) {
-				for (par in parameters) {
-					untyped texture[par[0]] = untyped __js__("eval(par[1])");
-				}
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
-				texture.image = loadedTexture.image;
-				texture.format = loadedTexture.format;
-				texture.mipmaps = loadedTexture.mipmaps;
-				texture.minFilter = loadedTexture.minFilter;
-				texture.needsUpdate = true;
+		var onLoadFn = function(loadedTexture : Texture) {
+			loadingCache.set(url, loadedTexture);
 
-				texture.invalidateTextureStage();
-				texture.emit("loaded");
+			for (par in parameters) {
+				untyped texture[par[0]] = untyped __js__("eval(par[1])");
+			}
 
-				onLoad(texture);
-			});
+			texture.image = loadedTexture.image;
+			texture.format = loadedTexture.format;
+			texture.mipmaps = loadedTexture.mipmaps;
+			texture.minFilter = loadedTexture.minFilter;
+			texture.needsUpdate = true;
+
+			texture.invalidateTextureStage();
+			texture.emit("loaded");
+
+			onLoad(texture);
+		}
+
+		var onLoad = function() {
+			if (loadingCache.exists(url)) {
+				onLoadFn(loadingCache[url]);
+			} else {
+				loader.load(url, onLoadFn);
+			}
 		};
+
+		untyped texture.load = onLoad;
 
 		return texture;
 	}
@@ -439,7 +453,7 @@ class RenderSupport3D {
 	public static function load3DCubeTexture(stage : ThreeJSStage, px : String, nx : String, py : String, ny : String, pz : String, nz : String,
 		onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
 
-		return untyped new CubeTextureLoader(stage.loadingManager).load([px, nx, py, ny, pz, nz], function(texture) {
+		return untyped new CubeTextureLoader(ThreeJSStage.loadingManager).load([px, nx, py, ny, pz, nz], function(texture) {
 			for (par in parameters) {
 				untyped texture[par[0]] = untyped __js__("eval(par[1])");
 			}
@@ -1743,15 +1757,39 @@ class RenderSupport3D {
 	}
 
 	public static function make3DShapeGeometry(path : Array<Float>) : Geometry {
-		var shape = new Shape();
+		var points = [];
 
-		shape.moveTo(path[0], path[1]);
-		for (i in 1...Math.floor(path.length / 2)) {
-			shape.lineTo(path[i * 2], path[i * 2 + 1]);
+		for (i in 0...Math.floor(path.length / 2)) {
+			points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
 		};
-		shape.lineTo(path[0], path[1]);
 
-		return new ShapeGeometry(shape);
+		return new ShapeGeometry(new Shape(points));
+	}
+
+	public static function make3DShapeGeometry3D(path : Array<Float>) : Geometry {
+		var g = new Geometry();
+		var points = [];
+
+		for (i in 0...Math.floor(path.length / 3)) {
+			g.vertices.push(new Vector3(path[i * 3], path[i * 3 + 1], path[i * 3 + 2]));
+			points.push(
+				new Vector2(
+					Math.atan2(path[i * 3 + 1], Math.sqrt(path[i * 3] * path[i * 3] + path[i * 3 + 2] * path[i * 3 + 2])),
+					Math.atan2(-path[i * 3 + 2], path[i * 3])
+				)
+			);
+		}
+
+		var triangles : Array<Array<Float>> = untyped __js__("THREE.ShapeUtils.triangulateShape(points, [])");
+
+		for (i in 0...triangles.length) {
+			g.faces.push(new Face3(triangles[i][0], triangles[i][1], triangles[i][2]));
+		}
+
+		g.computeFaceNormals();
+		g.computeVertexNormals();
+
+		return g;
 	}
 
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
@@ -1942,5 +1980,13 @@ class RenderSupport3D {
 			( vector.x * widthHalf ) + widthHalf,
 			( -vector.y * heightHalf ) + heightHalf
 		];
+	}
+
+	public static function make3DLOD() : LOD {
+		return new LOD();
+	}
+
+	public static function add3DLODLevel(lod : LOD, level : Float, object : Object3D) : Void {
+		lod.addLevel(object, level);
 	}
 }

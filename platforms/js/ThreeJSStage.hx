@@ -33,7 +33,7 @@ class ThreeJSStage extends Container {
 	public var transformControls : Dynamic;
 	public var boxHelpers : Array<Object3D> = [];
 	public var objectCache : Array<Object3D> = [];
-	public var loadingManager = new LoadingManager();
+	public static var loadingManager : LoadingManager = null;
 	public var interactiveObjects : Array<Object3D> = [];
 	private var interactiveObjectsMouseOver : Array<Object3D> = [];
 
@@ -63,6 +63,11 @@ class ThreeJSStage extends Container {
 
 	public function new(width : Float, height : Float) {
 		super();
+
+		if (ThreeJSStage.loadingManager == null) {
+			ThreeJSStage.loadingManager = new LoadingManager();
+			untyped ThreeJSStage.loadingManager.cache = new Map<String, Dynamic>();
+		}
 
 		widgetWidth = width;
 		widgetHeight = height;
