@@ -6,7 +6,7 @@ export {
 	fcHttpServer(config : CompilerConfig) -> void;
 
 	// A language server using stdin/stdout to communicate. Usually is invoked as a child process of an IDE.
-	fcProcServer(config : CompilerConfig) -> void;
+	fcConsoleServer(config : CompilerConfig) -> void;
 }
 
 fcDecodeConfigRequest(s : string) -> Maybe<CompilerConfig> {
@@ -36,7 +36,6 @@ fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : strin
 				if (isConfigParameterTrue(config.config, "server-shutdown")) {
 					exit_cb();
 				} else {
-					fcServerLog("Processing http request: <" + conf_str + " >");
 					fcPrintln("Processing '" + conf.flowfile + "' on http server.", config.threadId);
 					runConfigLocally(conf, env, \code -> {
 						fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
@@ -61,7 +60,7 @@ fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : strin
 	} else {
 		json = fcDecodeJsonRequest(req);
 		if (json == JsonNull()) {
-			out_cb(200, "WARNING: Illegal request.");
+			out_cb(200, "WARNING: Illegal request");
 			loop_cb();
 		} else {
 			fcLspProcessRequest(serverConf, env, json, \msg -> out_cb(0, msg), loop_cb, exit_cb);
@@ -69,32 +68,31 @@ fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : strin
 	}
 }
 
-fcProcServer(config : CompilerConfig) -> void { 
-	fcServerLog("Proc server started.");
+fcConsoleServer(config : CompilerConfig) -> void { 
+	fcServerLog("Console server started.");
 	fcSetSkipPrinting(config.threadId, true);
-	fcRunProcServer(initFcTypeEnvGlobal(), config);
+	fcRunConsoleServer(initFcTypeEnvGlobal(), config);
 }
 
-	// Runs asynchronous task in a new thread passing it's ID as an argument as well as a callback
-	// to return a result in the end. Will call onDone when task is finished and send result to the main thread.
-	//native concurrentAsyncCallback : (task : (threadId : string, callback : (?) -> void) -> void, onDone : (?) -> void) -> void = Native.concurrentAsyncCallback;
-
-fcRunProcServer(env : FcTypeEnvGlobal, config : CompilerConfig) -> void {
+fcRunConsoleServer(env : FcTypeEnvGlobal, config : CompilerConfig) -> void {
 	switch (fcLspReadRequest()) {
 		Some(req): {
-			fcServerLog("Processing proc request: <" + strReplaces(req, ["\n", "", "\r", "", "\t", " "]) + " >");
-			fcProcessRequest(config, env, req, 
-				\__, msg -> println(msg),
-				\-> fcRunProcServer(env, config),
+			fcServerLog("Request: " + strReplaces(req.request, ["\n", "\\n", "\r", "\\r", "\t", "\\t"]));
+			fcProcessRequest(config, env, req.json, 
+				\__, msg -> {
+					fcServerLog("Response: " + strReplaces(msg, ["\n", "\\n", "\r", "\\r", "\t", "\\t"]));
+					print(msg);
+				},
+				\-> fcRunConsoleServer(env, config),
 				\-> {
-					fcServerLog("Proc server stopped.");
+					fcServerLog("Console server stopped.");
 					quit(0);
 				}
 			);
 		}
 		None(): {
 			fcServerLog("Failed to read a request.");
-			fcRunProcServer(env, config);
+			fcRunConsoleServer(env, config);
 		}
 	}
 }
