@@ -4,10 +4,15 @@ import tools/flowc/flowc_remote;
 import tools/flowc/lsp_types;
 
 export {
-
-fcDecodeJsonRequest(s : string) -> Json;
-fcLspReadRequest() -> Maybe<string>;
-fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json,  out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void;
+	fcDecodeJsonRequest(s : string) -> Json;
+	fcLspReadRequest() -> Maybe<FcLspRequest>;
+	FcLspRequest(
+		request : string, // the whole request string
+		length : int,  // Content-Length
+		type : string, // Content-Type
+		json : string  // the Json description of request
+	);
+	fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json,  out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void;
 }
 
 fcJsonObjectHasField(obj : JsonObject, field : string) -> bool {
@@ -30,42 +35,33 @@ fcDecodeJsonRequest(s : string) -> Json {
 	}
 }
 
-FcLspRequestHeader(
-	length : int,  // Content-Length
-	type : string, // Content-Type
-);
-
-fcLspReadHeader() -> Maybe<FcLspRequestHeader> {
-	fold(
-		for([], 
-			\ls -> trim2(lastElement(ls, "1"), " \n\r\t") != "", 
-			\ls -> concat(ls, [trim2(readln(), " \n\r\t")])
-		),
-		Some(FcLspRequestHeader(-1, "")),
-		\acc, line -> maybeBind(acc, \header -> {
-			if (line == "") acc else {
-				key = trim2(takeBefore(line, ":", ""), " ");
-				value = trim2(takeAfter(line, ":", ""), " ");
-				if (key == "Content-Length") {
-					Some(FcLspRequestHeader(header with length = s2i(value)));
-				} else if (key == "Content-Type") {
-					Some(FcLspRequestHeader(header with type = value));
-				} else {
-					None();
-				}
+fcLspReadRequest() -> Maybe<FcLspRequest> {
+	header = readUntil("\r\n\r\n"); // \r\n\r\n is included into header
+	lines = filtermap(strSplit(header, "\n"), \line -> {
+		trimmed = trim2(line, " \r\n\t");
+		if (trimmed != "") Some(line) else None();
+	});
+	key_value = pairs2tree(map(lines, \line -> {
+			key_val = strSplit(line, ":");
+			if (length(key_val) == 1) {
+				Pair(line, line);
+			} else {
+				Pair(trim2(key_val[0], " \t\n\r"), trim2(key_val[1], " \t\n\r"));
 			}
-		})
-	);
-}
-
-fcLspReadRequest() -> Maybe<string> {
-	maybeBind(fcLspReadHeader(), \header ->
-		if (header.length == -1) {
-			None();
-		} else {
-			Some(for("", \s -> strlen(s) + 1 < header.length, \s -> s + readln() + "\n"));
+	}));
+	switch (lookupTree(key_value, "Content-Length")) {
+		Some(len): {
+			fcServerLog("Content-Length: " + i2s(s2i(len)));
+			json = readBytes(s2i(len));
+			Some(FcLspRequest(
+				header + json,
+				s2i(len), 
+				lookupTreeDef(key_value, "Content-Type", ""),
+				json
+			));
 		}
-	);
+		None(): None();
+	}
 }
 
 FcLspMethodCall(
@@ -96,7 +92,7 @@ fcLspMethods = pairs2tree([
 fcLspClientConf : ref Json = ref JsonObject([]);
 
 fcLspErrorResponse(id : Json, code : int, msg : string) -> Json {
-	JsonObject([Pair("id", id), Pair("jsonrpc", JsonString("2.0")), Pair("result", JsonNull()), 
+	JsonObject([Pair("jsonrpc", JsonString("2.0")), Pair("id", id), Pair("result", JsonNull()), 
 		Pair("error", JsonObject(
 				[Pair("code", JsonDouble(i2d(code))), Pair("message", JsonString(msg))]
 			)
@@ -105,7 +101,7 @@ fcLspErrorResponse(id : Json, code : int, msg : string) -> Json {
 }
 
 fcLspNormalResponse(id : Json, result : Json) -> Json {
-	JsonObject([Pair("id", id), Pair("jsonrpc", JsonString("2.0")), Pair("result", result)]);
+	JsonObject([Pair("jsonrpc", JsonString("2.0")), Pair("id", id), Pair("result", result)]);
 }
 
 fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
@@ -114,7 +110,7 @@ fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, s
 	params = getJsonFieldValue(json, "params", JsonObject([]));
 	out_cb = \msg -> {
 		js_out = json2string(msg);
-		str_out_cb("Content-Length:" + i2s(strlen(js_out)) + "\r\n\r\n" + js_out);
+		str_out_cb("Content-Length: " + i2s(strlen(js_out)) + "\r\n\r\n" + js_out);
 	}
 	if (method == "") {
 		out_cb(fcLspErrorResponse(id, 1, "request method is not set"));
@@ -146,44 +142,6 @@ fcLspInitialized(call: FcLspMethodCall) -> void {
 
 fcLspInitialize(call: FcLspMethodCall) -> void {
 	fcLspClientConf := call.params;
-	/*{
-		"id":1,
-		"jsonrpc":"2.0",
-		"result":{
-			"capabilities":{
-				"codeActionProvider":true,
-				"completionProvider":{
-					"resolveProvider":false,
-					"triggerCharacters":[".",">",":"]
-				},
-				"declarationProvider":true,
-				"definitionProvider":true,
-				"documentFormattingProvider":true,
-				"documentHighlightProvider":true,
-				"documentOnTypeFormattingProvider":{
-					"firstTriggerCharacter":"\n",
-					"moreTriggerCharacter":[]
-				},
-				"documentRangeFormattingProvider":true,
-				"documentSymbolProvider":true,
-				"executeCommandProvider":{
-					"commands":[
-						"clangd.applyFix","clangd.applyTweak"
-					]
-				},
-				"hoverProvider":true,
-				"referencesProvider":true,
-				"renameProvider":true,
-				"signatureHelpProvider":{
-					"triggerCharacters":["(",","]
-				},
-				"textDocumentSync":2,
-				"typeHierarchyProvider":true,
-				"workspaceSymbolProvider":true
-			}
-		}
-	}
-	*/
 	call.out_cb(fcLspNormalResponse(call.id, 
 		JsonObject([
 			Pair("capabilities", JsonObject([
@@ -264,50 +222,6 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 	}
 }
 
-/*
-{
-    "id": 6,
-    "jsonrpc": "2.0",
-    "method": "textDocument/declaration",
-    "params": {
-        "position": {
-            "character": 18,
-            "line": 1520
-        },
-        "textDocument": {
-            "uri": "file:///home/dmitry/dev/russell/metamath/mmunif.c"
-        }
-    }
-}
-*/
-
-// /home/dmitry/area9/flow9/tools/flowc/flowc_find.flow:394:8: uses fcSetSkipPrinting
-
-// runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) 
-
-/*
-{
-	"id":6,
-	"jsonrpc":"2.0",
-	"result":[
-		{
-			"range":{
-				"end":{
-					"character":19,
-					"line":134
-				},
-				"start":{
-					"character":5,
-					"line":134
-				}
-			},
-			"uri":"file:///home/dmitry/dev/russell/metamath/mmunif.c"
-		}
-	]
-}
-*/
-
-
 fcLspParseLocations(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
 	filtermap(strSplit(s, "\n"), \l -> {
@@ -337,24 +251,22 @@ fcLspParseLocations(s : string) -> [Json] {
 	});
 }
 
-// LspTextDocumentSymbol : (name : string, detail : string, kind : int, deprecated : Maybe<bool>, range : LspRange, selectionRange : LspRange, children : [LspTextDocumentSymbol]);
-
 fcLspParseSymbols(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
 	filtermap(strSplit(s, "\n"), \l -> {
 		parts = strSplit(l, ":");
-		if (length(parts) != 4) None() else {
+		if (length(parts) != 6) None() else {
 			path = parts[0];
 			sline = s2i(parts[1]) - 1;
-			schar = s2i(parts[2]) - 1;
-			descr_parts = strSplit(trim(parts[3]), " ");
+			scol  = s2i(parts[2]) - 1;
+			eline = s2i(parts[3]) - 1;
+			ecol  = s2i(parts[4]) - 1;
+			descr_parts = strSplit(trim(parts[5]), " ");
 			name = descr_parts[1];
 			kind = if (descr_parts[0] == "import") {
 				lookupTreeDef(fcLspSymbolKindName2id, "Module", 0);
 			} else if (descr_parts[0] == "forbid") {
 				lookupTreeDef(fcLspSymbolKindName2id, "Package", 0);
-			} else if (descr_parts[0] == "export") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Namespace", 0);
 			} else if (descr_parts[0] == "struct") {
 				lookupTreeDef(fcLspSymbolKindName2id, "Struct", 0);
 			} else if (descr_parts[0] == "union") {
@@ -374,16 +286,11 @@ fcLspParseSymbols(s : string) -> [Json] {
 			} else {
 				0
 			}
-			Some(lspTextDocumentSymbol2Json(
-				LspTextDocumentSymbol(name, "", kind, None(), 
-					LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1)),
-					LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1)), []
-				)
-			));
+			range = LspRange(LspPosition(sline, scol), LspPosition(eline, ecol));
+			Some(lspTextDocumentSymbol2Json(LspTextDocumentSymbol(name, "", kind, false, range, range, [])));
 		}
 	});
 }
-
 
 fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {

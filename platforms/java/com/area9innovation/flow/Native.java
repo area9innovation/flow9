@@ -1641,8 +1641,53 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	private static final Scanner inputScanner = new Scanner(System.in);
-	public final String readln() {
-		return inputScanner.nextLine();
+	public final String readBytes(int n) {
+		byte[] input = new byte[n];
+		try {
+			System.in.read(input);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return new String(input);
+	}
+
+	public final String readUntil(String str_pattern) {
+		byte[] pattern = str_pattern.getBytes();
+		ArrayList<Byte> line = new ArrayList<Byte>();
+		int pos = 0;
+		try {
+			while (true) {
+				int ch = System.in.read();
+				line.add(Byte.valueOf((byte)ch));
+				if (ch == pattern[pos]) {
+					pos += 1;
+					if (pos == pattern.length) {
+						break;
+					}
+				} else {
+					pos = 0;
+				}
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		byte[] bytes = new byte[line.size()];
+		for (int i = 0; i < line.size(); ++ i) {
+			bytes[i] = line.get(i).byteValue();
+		}
+		return new String(bytes);
+	}
+
+	public final Object print(String s) {
+		try{
+			synchronized (System.out) {
+				PrintStream out = new PrintStream(System.out, true, "UTF-8");
+				out.print(s);
+				out.flush();
+			}
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+		}
+		return null;
 	}
 }
