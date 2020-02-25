@@ -25,7 +25,7 @@ fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder :
 				starttime = timestamp();
 				prog_error = parseAndTypecheckProgram(setConfigFlowfile(config, file), globEnv, file);
 				prog = prog_error.first;
-				if (prog_error.second == 0) testRenameGlobalSymbols(prog, file);
+				if (prog_error.second == 0) testRenameGlobalSymbols(globEnv, prog, file);
 				fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n", config.threadId);
 			}
 		}
@@ -113,7 +113,7 @@ fcGlobalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol 
 		fcPrintln("Provide rename=<symbol> with to=<renamed>", config.threadId);
 	} else {
 		foldTree(programs, makeSet(), \file, prog, ac -> 
-			renameGlobalSymbolTo(prog, renameSymbol, kind, renameTo, ac)
+			renameGlobalSymbolTo(globEnv, prog, renameSymbol, kind, renameTo, ac)
 		);
 		{}
 	};
@@ -129,7 +129,7 @@ fcLocalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string,
 		prog = prog_error.first;
 		error = prog_error.second;
 		if (error == 0) {
-			renameLocalSymbolTo(prog, file, line - 1, col - 1, from, kind, to);
+			renameLocalSymbolTo(globEnv, prog, file, line - 1, col - 1, from, kind, to);
 		}
 	};
 }
@@ -144,16 +144,16 @@ fcModuleRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string
 		prog = prog_error.first;
 		error = prog_error.second;
 		if (error == 0) {
-			renameModuleSymbolTo(prog, file, from, kind, to);
+			renameModuleSymbolTo(globEnv, prog, file, from, kind, to);
 		}
 	};
 }
 
-renameGlobalSymbolTo(prog : FiProgram, from : string, kind : FcSymbolKind, to : string, processed : Set<string>) -> Set<string> {
+renameGlobalSymbolTo(env : FcTypeEnvGlobal, prog : FiProgram, from : string, kind : FcSymbolKind, to : string, processed : Set<string>) -> Set<string> {
 	if (containsSet(processed, prog.config.flowfile)) processed else {
 		config = prog.config;
-		occurences = findOccurencesInFiProgram(prog, from, kind, processed);
-		renamed = renameOccurencesInProgram(occurences, from, to);
+		occurences = findOccurencesInFiProgram(env, prog, from, kind, processed);
+		renamed = renameOccurencesInProgram(env, occurences, from, to);
 		insertSet(
 			foldTree(renamed, 
 				processed,
@@ -175,24 +175,24 @@ renameGlobalSymbolTo(prog : FiProgram, from : string, kind : FcSymbolKind, to : 
 	}
 }
 
-renameLocalSymbolTo(prog : FiProgram, file : string, line : int, col : int, from : string, kind : FcSymbolKind, to : string) -> void {
+renameLocalSymbolTo(env : FcTypeEnvGlobal, prog : FiProgram, file : string, line : int, col : int, from : string, kind : FcSymbolKind, to : string) -> void {
 	module = lookupTreeDef(prog.modules, file, dummyFiModule);
-	occurrences = fcFindLocalOccurrences(module, line, col, from, kind);
+	occurrences = fcFindLocalOccurrences(env, module, line, col, from, kind);
 	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
-	code = fiFileInfoSource(module.fileinfo);
+	code = fcFileSource(env, module.fileinfo.fullpath);
 	renamed = completeRenaming(code, from, to, occurrences);
 	if (!setFileContent(module.fileinfo.fullpath, renamed)) {
 		fcPrintln("can't save renamed source file: " + module.fileinfo.fullpath, prog.config.threadId)
 	}
 }
 
-renameModuleSymbolTo(prog : FiProgram, file : string, from : string, kind : FcSymbolKind, to : string) -> void {
+renameModuleSymbolTo(env : FcTypeEnvGlobal, prog : FiProgram, file : string, from : string, kind : FcSymbolKind, to : string) -> void {
 	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
 	relative = trimFlowfile(file, prog.config.includes, workingDir);
 	switch (lookupTree(prog.modules, relative)) {
 		Some(module): {
-			code = fiFileInfoSource(module.fileinfo);
-			occurences = findOccurencesInFiModule(module, from, kind);
+			code = fcFileSource(env, module.fileinfo.fullpath);
+			occurences = findOccurencesInFiModule(env, module, from, kind);
 			renamed = completeRenaming(code, from, to, occurences);
 			path = module.fileinfo.fullpath;
 			if (!setFileContent(path, renamed)) {
@@ -205,14 +205,14 @@ renameModuleSymbolTo(prog : FiProgram, file : string, from : string, kind : FcSy
 	}
 }
 
-testRenameGlobalSymbols(prog : FiProgram, flowfile : string) -> void {
+testRenameGlobalSymbols(env : FcTypeEnvGlobal, prog : FiProgram, flowfile : string) -> void {
 	config = prog.config;
 	test = strReplace(strRight(flowfile, strLastIndexOf(flowfile, "/") + 1), ".flow", "");
 	switch (parseTestNames(getConfigParameter(config.config, "test-rename-froms"), test)) {
 		Some(from): {
 			switch (parseTestNames(getConfigParameter(config.config, "test-rename-tos"), test)) {
 				Some(to): {
-					renameGlobalSymbolTo(prog, from, FcVarSymbol(), to, makeSet()); {}
+					renameGlobalSymbolTo(env, prog, from, FcVarSymbol(), to, makeSet()); {}
 				}
 				None(): fcPrintln("Config parameter 'test-rename-tos' should include an entry for file: " + test, prog.config.threadId);
 			}
@@ -247,13 +247,13 @@ outputRenamedModule(path : string, code : string, config : CompilerConfig) -> vo
 	}
 }
 
-renameOccurencesInProgram(occurences : Tree<FiModule, Set<int>>, from : string, to : string) -> Tree<FiModule, Pair<string, string>> {
+renameOccurencesInProgram(env : FcTypeEnvGlobal, occurences : Tree<FiModule, Set<int>>, from : string, to : string) -> Tree<FiModule, Pair<string, string>> {
 	foldTree(
 		occurences,
 		makeTree(),
 		\module, occ, acc -> {
 			if (isEmptySet(occ)) acc else {
-				code = fiFileInfoSource(module.fileinfo);
+				code = fcFileSource(env, module.fileinfo.fullpath);
 				renamed = completeRenaming(code, from, to, occ);
 				setTree(acc, module, Pair(code, renamed))
 			}
@@ -290,7 +290,7 @@ fcFastRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, l
 			Some(nature): {
 				module_rename = \module -> {
 					occurences = fcFastFindOccurrencesInFiModule(config, globEnv, module, nature);
-					renamed = completeRenaming(fiFileInfoSource(module.fileinfo), from, to, occurences);
+					renamed = completeRenaming(fcFileSource(globEnv, module.fileinfo.fullpath), from, to, occurences);
 					path = module.fileinfo.fullpath;
 					if (!setFileContent(path, renamed)) {
 						fcPrintln("can't save renamed source file: " + path, config.threadId)
@@ -311,7 +311,7 @@ fcFastRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, l
 							fcLoadFromCache(globEnv, nature.module),
 							\loaded -> {
 								occurences = fcFastFindOccurrencesInFiModule(config, globEnv, loaded.module, nature);
-								renamed = completeRenaming(fiFileInfoSource(loaded.module.fileinfo), from, to, occurences);
+								renamed = completeRenaming(fcFileSource(globEnv, loaded.module.fileinfo.fullpath), from, to, occurences);
 								path = loaded.module.fileinfo.fullpath;
 								if (!setFileContent(path, renamed)) {
 									fcPrintln("can't save renamed source file: " + path, config.threadId)

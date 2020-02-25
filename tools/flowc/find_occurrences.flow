@@ -2,17 +2,17 @@ import tools/flowc/symbol_nature;
 
 export {
 	// Finds all positions, where 'name' occurs in all program modules. 
-	findOccurencesInFiProgram(prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>>;
+	findOccurencesInFiProgram(env : FcTypeEnvGlobal, prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>>;
 
 	// Finds all positions, where 'name' occurs in a given module. 
-	findOccurencesInFiModule(module : FiModule, name : string, kind : FcSymbolKind) -> Set<int>;
+	findOccurencesInFiModule(env : FcTypeEnvGlobal, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int>;
 	// Fast version - uses cache
 	fcFastFindOccurrencesInFiModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule, nature : FcSymbolNature) -> Set<int>;
 	// Fast version - uses cache
 	//fcFastFindUsesInFiModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule, nature : FcSymbolNature) -> Set<int>;
 
 	// Finds all positions, where 'name' from a given line-column occurs in a given module, taking into accout a local scope. 
-	fcFindLocalOccurrences(module : FiModule, line : int, col : int, name : string, kind : FcSymbolKind) -> Set<int>;
+	fcFindLocalOccurrences(env : FcTypeEnvGlobal, module : FiModule, line : int, col : int, name : string, kind : FcSymbolKind) -> Set<int>;
 
 	// Finds all sources, containing 'str'. 
 	findAllSourcesContainingStr(dir : string, str : string, acc : [string]) -> [string];
@@ -21,18 +21,18 @@ export {
 	filterSourcesWhichImportDefinitionModule(config : CompilerConfig, all_sources : [string], defModulePath : string) -> [string];
 }
 
-findOccurencesInFiProgram(prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>> {
+findOccurencesInFiProgram(env : FcTypeEnvGlobal, prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>> {
 	foldTree(prog.modules, makeTree(), 
 		\__, module, acc -> {
 			fullpath = module.fileinfo.fullpath;
 			if (containsSet(processed, fullpath)) acc else {
-				setTree(acc, module, findOccurencesInFiModule(module, name, kind))
+				setTree(acc, module, findOccurencesInFiModule(env, module, name, kind))
 			}
 		}
 	)
 }
 
-findOccurencesInFiModule(module : FiModule, name : string, kind : FcSymbolKind) -> Set<int> {
+findOccurencesInFiModule(env : FcTypeEnvGlobal, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int> {
 	mod_starts2fiall = fimoduleStarts2fiall(module);
 
 	name_resolver = \handler -> mapTree(mod_starts2fiall, \entities -> foldSet(entities, makeSet(), \a, fiall -> handler(fiall, a)));
@@ -43,7 +43,7 @@ findOccurencesInFiModule(module : FiModule, name : string, kind : FcSymbolKind) 
 		FcTypeSymbol():        name_resolver(fiall2typeNames);
 		FcFieldSymbol(struct): field_resolver(fiall2fieldNames, struct);
 	}
-	mod_code = fiFileInfoSource(module.fileinfo);
+	mod_code = fcFileSource(env, module.fileinfo.fullpath);
 	computeOccurencesFromTree(mod_code, name, mod_starts2names, strlen(mod_code))
 }
 
@@ -108,8 +108,8 @@ getAllSourceDependencies(file : string, config : CompilerConfig, acc : Set<strin
 	} 
 }
 
-fcFindLocalOccurrences(module : FiModule, line : int, col : int, name : string, kind : FcSymbolKind) -> Set<int> {
-	code = fiFileInfoSource(module.fileinfo);
+fcFindLocalOccurrences(env : FcTypeEnvGlobal, module : FiModule, line : int, col : int, name : string, kind : FcSymbolKind) -> Set<int> {
+	code = fcFileSource(env, module.fileinfo.fullpath);
 	resolver = makeLineResolver(code);
 	maps = fcStart2ExprOrDecl(module, name);
 	index = findLineIndex(resolver, line, col);
@@ -430,7 +430,7 @@ fcFastFindOccurrencesInFiModule(config : CompilerConfig, globEnv : FcTypeEnvGlob
 			),
 			\i, j -> i - j
 		);
-	src = fiFileInfoSource(module.fileinfo);
+	src = fcFileSource(globEnv, module.fileinfo.fullpath);
 	switch (nature.kind) {
 		FcVarSymbol(): 
 			fold(decls, makeSet(), \acc, d -> fcFastFindVarNameInFiExp(fiDeclExp(d), name, d.defiStart, src, add_decl(acc, d)));

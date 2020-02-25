@@ -74,7 +74,7 @@ fastSymbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : stri
 		None(): {
 			fcModule = parseAndDesugarFile(config, globEnv, config.flowfile);
 			fiModule = fcmodule2fiWithErrorHandler(initFcTypeEnvLocal(), fcModule, nop2);
-			switch (fastGuessSymbolFieldOrVar(config, fiModule, name, line, col)) {
+			switch (fastGuessSymbolFieldOrVar(globEnv, config, fiModule, name, line, col)) {
 				Some(kind) : {
 					scope : FcSymbolScope = switch (kind) {
 						FcVarSymbol(): FcLocalScope();
@@ -105,6 +105,7 @@ symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string
 		line_str = getConfigParameter(config.config, "exp-line");
 		column_str = getConfigParameter(config.config, "exp-column");
 		findSymbolNature(
+			globEnv,
 			prog, 
 			config.flowfile,
 			symbol, 
@@ -116,7 +117,7 @@ symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string
 	}
 }
 
-findSymbolNature(prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolNature> {
+findSymbolNature(env : FcTypeEnvGlobal, prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolNature> {
 	decl2module = \decl : FiDeclaration -> {
 		mod_name = switch (decl) {
 			FiFunctionDec(name, __, __, __, __):       lookupTreeDef(prog.names.function2module, name, "");
@@ -182,7 +183,7 @@ findSymbolNature(prog : FiProgram, file : string, symbol : string, line : int, c
 						}
 						None(): {
 							// May be a variable/function or a field name.
-							switch (guessSymbolFieldOrVar(prog, file, symbol, line, col)) {
+							switch (guessSymbolFieldOrVar(env, prog, file, symbol, line, col)) {
 								Some(kind) : {
 									scope : FcSymbolScope = switch (kind) {
 										FcVarSymbol(): FcLocalScope();
@@ -206,13 +207,13 @@ findSymbolNature(prog : FiProgram, file : string, symbol : string, line : int, c
 	}
 }
 
-guessSymbolFieldOrVar(prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
+guessSymbolFieldOrVar(env : FcTypeEnvGlobal, prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
 	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
 	relative = trimFlowfile(file, prog.config.includes, workingDir);
 	switch (lookupTree(prog.modules, relative)) {
 		Some(module): {
 			starts2fiall = fimoduleStarts2fiall(module);
-			code = fiFileInfoSource(module.fileinfo);
+			code = fcFileSource(env, module.fileinfo.fullpath);
 			resolver = makeLineResolver(code);
 			index = findLineIndex(resolver, line, col);
 			switch (treeIntervalSearch(starts2fiall, index)) {
@@ -266,9 +267,9 @@ guessSymbolFieldOrVar(prog : FiProgram, file : string, symbol : string, line : i
 	}
 }
 
-fastGuessSymbolFieldOrVar(config : CompilerConfig, module : FiModule, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
+fastGuessSymbolFieldOrVar(env : FcTypeEnvGlobal, config : CompilerConfig, module : FiModule, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
 	starts2fiall = fimoduleStarts2fiall(module);
-	code = getFileContent(module.fileinfo.fullpath);
+	code = fcFileSource(env, module.fileinfo.fullpath);
 	resolver = makeLineResolver(code);
 	index = findLineIndex(resolver, line, col);
 	switch (treeIntervalSearch(starts2fiall, index)) {
