@@ -14,7 +14,9 @@ export {
 
 	// A global environment for a batch compilation of several programs 
 	FcTypeEnvGlobal(
-		moduleCache : ref Tree<string, FcLoaded>
+		moduleCache : native,
+		nameCache : native,
+		sourceCache : native // Sources of files as strings
 	);
 
 	// A single program typing environment
@@ -60,19 +62,75 @@ export {
 		debugIndentation : ref string,
 	);
 
-	initFcTypeEnvLocal() -> FcTypeEnvLocal {
-		FcTypeEnvLocal(ref makeList(), ref makeList(), ref makeTree(), ref makeTree(), makeTree(), ref makeSet(), ref 0, ref "")
-	}
+	initFcTypeEnvLocal() -> FcTypeEnvLocal;
+	initFcTypeEnvGlobal() -> FcTypeEnvGlobal;
 
-	fcLoadFromCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcLoaded> {
-		lookupTree(^(env.moduleCache), name)
-	}
+	fcLoadFromCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcLoaded>;
+	fcRemoveFromCache(env : FcTypeEnvGlobal, name : string) -> void;
+	fcAddToCache(env : FcTypeEnvGlobal, name : string, loaded : FcLoaded) -> void;
+	fcClearCache(env : FcTypeEnvGlobal) -> void;
+	fcIterCache(env : FcTypeEnvGlobal, fn : (FiModule) -> void) -> void;
 
-	fcRemoveFromCache(env : FcTypeEnvGlobal, name : string) -> void {
-		env.moduleCache := removeFromTree(^(env.moduleCache), name)
-	}
+	FiNamed ::= FiDeclaration, FiStructOrUnion;
 
-	fcAddToCache(env : FcTypeEnvGlobal, name : string, loaded : FcLoaded) -> void {
-		env.moduleCache := setTree(^(env.moduleCache), name, loaded)
+	// Cached toplevel entities, including struct/union names
+	FcCacheNamed(
+		named : FiNamed,
+		module : string, // name of a module of origin
+		exported : bool,
+	);
+
+	// Lookup a cached entity: a struct, union, global var, function or native.
+	fcLookupNameInCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcCacheNamed>;
+
+	// Lookups a cached file source, if not found - loads and stores.
+	fcFileSource(env : FcTypeEnvGlobal, path : string) -> string;
+}
+
+initFcTypeEnvLocal() -> FcTypeEnvLocal {
+	FcTypeEnvLocal(ref makeList(), ref makeList(), ref makeTree(), ref makeTree(), makeTree(), ref makeSet(), ref 0, ref "")
+}
+
+initFcTypeEnvGlobal() -> FcTypeEnvGlobal {
+	FcTypeEnvGlobal(initConcurrentHashMap(), initConcurrentHashMap(), initConcurrentHashMap());
+}
+
+fcLoadFromCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcLoaded> {
+	getConcurrentHashMap(env.moduleCache, name, None());
+}
+
+fcRemoveFromCache(env : FcTypeEnvGlobal, name : string) -> void {
+	removeConcurrentHashMap(env.moduleCache, name);
+}
+
+fcAddToCache(env : FcTypeEnvGlobal, name : string, loaded : FcLoaded) -> void {
+	setConcurrentHashMap(env.moduleCache, name, Some(loaded));
+	module = loaded.module;
+	exports = buildSet(module.exports);
+	wrap = \n -> Some(FcCacheNamed(n, module.fileinfo.flowfile, containsSet(exports, n.name)));
+	iter(module.structs, \s -> setConcurrentHashMap(env.nameCache, s.name, wrap(s)));
+	iter(module.unions, \u -> setConcurrentHashMap(env.nameCache, u.name, wrap(u)));
+	iter(module.functions, \f -> setConcurrentHashMap(env.nameCache, f.name, wrap(f)));
+	iter(module.globalVars, \v -> setConcurrentHashMap(env.nameCache, v.name, wrap(v)));
+	iter(module.natives, \n -> setConcurrentHashMap(env.nameCache, n.name, wrap(n)));
+}
+
+fcClearCache(env : FcTypeEnvGlobal) -> void {
+	clearConcurrentHashMap(env.moduleCache);
+	clearConcurrentHashMap(env.nameCache);
+}
+
+fcIterCache(env : FcTypeEnvGlobal, fn : (FiModule) -> void) -> void {
+	iter(valuesConcurrentHashMap(env.moduleCache), \m -> maybeApply(m, \loaded -> fn(loaded.module)));
+}
+
+fcLookupNameInCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcCacheNamed> {
+	getConcurrentHashMap(env.nameCache, name, None());
+}
+
+fcFileSource(env : FcTypeEnvGlobal, path : string) -> string {
+	if (!containsConcurrentHashMap(env.sourceCache, path)) {
+		setConcurrentHashMap(env.sourceCache, path, getFileContent(path))
 	}
+	getConcurrentHashMap(env.sourceCache, path, "");
 }

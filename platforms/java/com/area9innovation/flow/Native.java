@@ -1597,6 +1597,12 @@ public class Native extends NativeHost {
 		return concurrentMap.size();
 	}
 
+	public final Object clearConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.clear();
+		return null;
+	}
+
 	// TODO: why don't we use threadpool here?
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
@@ -1632,6 +1638,66 @@ public class Native extends NativeHost {
 
 	public final Object setThreadPoolSize(int threads) {
 		threadpool = Executors.newFixedThreadPool(threads);
+		return null;
+	}
+
+	public final String readBytes(int n) {
+		byte[] input = new byte[n];
+		try {
+			System.in.read(input);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		try {
+			return new String(input, "UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+			return new String();
+		}
+	}
+
+	public final String readUntil(String str_pattern) {
+		byte[] pattern = str_pattern.getBytes();
+		ArrayList<Byte> line = new ArrayList<Byte>();
+		int pos = 0;
+		try {
+			while (true) {
+				int ch = System.in.read();
+				line.add(Byte.valueOf((byte)ch));
+				if (ch == pattern[pos]) {
+					pos += 1;
+					if (pos == pattern.length) {
+						break;
+					}
+				} else {
+					pos = 0;
+				}
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		byte[] bytes = new byte[line.size()];
+		for (int i = 0; i < line.size(); ++ i) {
+			bytes[i] = line.get(i).byteValue();
+		}
+		try {
+			return new String(bytes, "UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+			return new String();
+		}
+	}
+
+	public final Object print(String s) {
+		try{
+			synchronized (System.out) {
+				PrintStream out = new PrintStream(System.out, true, "UTF-8");
+				out.print(s);
+				out.flush();
+			}
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+		}
 		return null;
 	}
 }

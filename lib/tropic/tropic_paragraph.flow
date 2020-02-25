@@ -70,7 +70,7 @@ TRenderParagraph(
 	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
 
 	stackChanges = make([]);
-	initialWords = ref map(^words, translateWord);
+	initialWords = ref map(^words, \w -> translateWord(w, genIndent));
 	paragraphWHB = makeWH();
 	paragraphBaselineB = make(0.0);
 
@@ -78,6 +78,7 @@ TRenderParagraph(
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
 	));
+	rtl = isParagraphRtl(s);
 
 	updateFn = \wi, alignWidthM -> {
 		// Ignore negative widths
@@ -85,7 +86,7 @@ TRenderParagraph(
 		w = if (isSingleLine) 100000.0 else max(0.0, wi);
 		paragraphSizeAndBaseline = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
-			topLineBaseline, isParagraphRtl(s), containsStruct(s, ParagraphMarked()),
+			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
 			genIndent, linesCountB, alignWidthM
 		);
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
@@ -118,7 +119,7 @@ TRenderParagraph(
 			dynamicWordsUns := insertArray(^dynamicWordsUns, idx + i, subscribe2dynWord(newWord));
 			dynArrayPush(
 				stackChanges,
-				TGroupAdd(translateWord(newWord), idx + i)
+				TGroupAdd(translateWord(newWord, genIndent), idx + i)
 			);
 		});
 		executeReflow();
@@ -167,7 +168,11 @@ TRenderParagraph(
 			},
 			awB
 		)
-	);
+	) |> if (needIndent) {
+		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent) 
+	} else {
+		idfn
+	};
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
@@ -247,7 +252,7 @@ reflowTParaWords(
 	linesCountB : DynamicBehaviour<int>,
 	alignWidthM : Maybe<double>
 ) -> Pair<WidthHeight, double> {
-	firstLineWidth = availableParaWidth - generalIndent - getLineIndent(firstLineIndent, 0);
+	firstLineWidth = availableParaWidth - getLineIndent(firstLineIndent, 0);
 	text = reflowTParaWordsRec(words, firstLineWidth, firstLineWidth, [], [], firstLineIndent, isMarked);
 	paraLines = if (rtl)
 		zipWith(
@@ -474,7 +479,7 @@ TAlignParaLines(
 			}
 		f = TRenderLine(
 			acc.y, line.words, availableWidth,
-			lineAlignment, line.indent + generalIndent,
+			lineAlignment, line.indent, generalIndent,
 			i, rtl, isMarked, alignWidthM
 		);
 		nwidth = max(acc.width, f.width);
@@ -501,6 +506,7 @@ TRenderLine(
 	width : double,
 	alignment : ParaLineAlignment,
 	lineIndent: double,
+	generalIndent : double,
 	lineNumber : int,
 	rtl : bool,
 	isMarked : bool,
@@ -544,7 +550,7 @@ TRenderLine(
 		dy = if (elemBaseline > 0.) max(lineAsc - elemBaseline, 0.0) else 0.0;
 		yOffset = y + dy;
 		nextDistinct(inspector.y, yOffset);
-		nextDistinct(inspector.x, ^alignmentOffset);
+		nextDistinct(inspector.x, ^alignmentOffset + generalIndent);
 		nextDistinct(inspector.lineHeight, lineHeight);
 		nextDistinct(inspector.lineNumber, lineNumber);
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
@@ -603,8 +609,11 @@ TApplyDynamicStyles(
 	});
 }
 
-translateWord(word : TParaWord) -> Tropic {
-	TTranslate(fpoint(word.inspector.x, word.inspector.y), word.ghostView);
+translateWord(word : TParaWord, genIndent : double) -> Tropic {
+	TTranslate(
+		fpoint(fsubtract(word.inspector.x, const(genIndent)), word.inspector.y),
+		word.ghostView
+	);
 }
 
 isTParaWordEmpty(w: TParaWord) -> bool {

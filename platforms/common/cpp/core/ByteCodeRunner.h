@@ -1366,6 +1366,9 @@ private:
     static StackSlot addTakeAudioEventListener(ByteCodeRunner*,StackSlot*);
     static StackSlot md5(ByteCodeRunner*,StackSlot*);
 	static StackSlot fileChecksum(ByteCodeRunner*,StackSlot*);
+	static StackSlot readBytes(ByteCodeRunner*,StackSlot*);
+	static StackSlot readUntil(ByteCodeRunner*,StackSlot*);
+	static StackSlot print(ByteCodeRunner*,StackSlot*);
 private:
     static StackSlot fast_lookupTree(ByteCodeRunner*,StackSlot*);
     static StackSlot fast_setTree(ByteCodeRunner*,StackSlot*);
