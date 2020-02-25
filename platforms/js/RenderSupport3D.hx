@@ -13,6 +13,8 @@ import js.three.Matrix4;
 
 import js.three.Object3D;
 import js.three.Mesh;
+import js.three.Line;
+import js.three.Points;
 import js.three.LOD;
 
 import js.three.Camera;
@@ -29,6 +31,8 @@ import js.three.RingGeometry;
 import js.three.ConeGeometry;
 import js.three.CylinderGeometry;
 import js.three.SphereGeometry;
+import js.three.EdgesGeometry;
+import js.three.WireframeGeometry;
 
 import js.three.Shape;
 import js.three.ShapeGeometry;
@@ -40,6 +44,8 @@ import js.three.BufferAttribute;
 
 import js.three.Material;
 import js.three.MeshBasicMaterial;
+import js.three.LineBasicMaterial;
+import js.three.PointsMaterial;
 import js.three.MeshStandardMaterial;
 import js.three.MeshNormalMaterial;
 import js.three.ShaderMaterial;
@@ -78,7 +84,7 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 6) {
+				if (jscounter > 7) {
 					cb();
 				}
 			}
@@ -96,6 +102,12 @@ class RenderSupport3D {
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
 				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/modifiers/TessellateModifier.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
@@ -396,52 +408,64 @@ class RenderSupport3D {
 	}
 
 	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
-		var texture : Texture = null;
-
-		var loader : Dynamic =
-			if (StringTools.endsWith(url, ".dds")) {
-				texture = new CompressedTexture();
-				untyped __js__("new THREE.DDSLoader(ThreeJSStage.loadingManager)");
-			} else if (StringTools.endsWith(url, ".pvr")) {
-				texture = new CompressedTexture();
-				untyped __js__("new THREE.PVRLoader(ThreeJSStage.loadingManager)");
-			} else {
-				texture = new Texture();
-				new TextureLoader(ThreeJSStage.loadingManager);
-			};
-
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
-		var onLoadFn = function(loadedTexture : Texture) {
-			loadingCache.set(url, loadedTexture);
-
-			for (par in parameters) {
-				untyped texture[par[0]] = untyped __js__("eval(par[1])");
-			}
-
-			texture.image = loadedTexture.image;
-			texture.format = loadedTexture.format;
-			texture.mipmaps = loadedTexture.mipmaps;
-			texture.minFilter = loadedTexture.minFilter;
-			texture.needsUpdate = true;
-
-			texture.invalidateTextureStage();
-			texture.emit("loaded");
-
-			onLoad(texture);
-		}
-
-		var onLoad = function() {
-			if (loadingCache.exists(url)) {
-				onLoadFn(loadingCache[url]);
+		if (loadingCache.exists(url)) {
+			var texture : Texture = loadingCache[url];
+			if (untyped texture.loaded) {
+				onLoad(texture);
 			} else {
-				loader.load(url, onLoadFn);
+				texture.once("loaded", function() {
+					onLoad(texture);
+				});
 			}
-		};
+			return texture;
+		} else {
+			var texture : Texture = null;
 
-		untyped texture.load = onLoad;
+			var loader : Dynamic =
+				if (StringTools.endsWith(url, ".dds")) {
+					texture = new CompressedTexture();
+					untyped __js__("new THREE.DDSLoader(ThreeJSStage.loadingManager)");
+				} else if (StringTools.endsWith(url, ".pvr")) {
+					texture = new CompressedTexture();
+					untyped __js__("new THREE.PVRLoader(ThreeJSStage.loadingManager)");
+				} else {
+					texture = new Texture();
+					new TextureLoader(ThreeJSStage.loadingManager);
+				};
 
-		return texture;
+			untyped texture.loaded = false;
+			loadingCache.set(url, texture);
+
+			var onLoadFn = function(loadedTexture : Texture) {
+				untyped loadedTexture.loaded = true;
+				loadingCache.set(url, loadedTexture);
+
+				for (par in parameters) {
+					untyped texture[par[0]] = untyped __js__("eval(par[1])");
+				}
+
+				texture.image = loadedTexture.image;
+				texture.format = loadedTexture.format;
+				texture.mipmaps = loadedTexture.mipmaps;
+				texture.minFilter = loadedTexture.minFilter;
+				texture.needsUpdate = true;
+
+				texture.invalidateTextureStage();
+				texture.emit("loaded");
+
+				onLoad(texture);
+			}
+
+			var onLoad = function() {
+				loader.load(url, onLoadFn);
+			};
+
+			untyped texture.load = onLoad;
+
+			return texture;
+		}
 	}
 
 	public static function load3DTexture(texture : Texture) : Void {
@@ -518,22 +542,18 @@ class RenderSupport3D {
 			untyped material.transparent = true;
 
 			if (untyped material.uniforms != null) {
-				untyped material.uniforms.map = {
-					type : 't',
-					value : map
+				if (untyped material.uniforms.map != null) {
+					untyped material.uniforms.map = map;
 				}
 
-				untyped material.uniforms.mapResolution = {
-					type : 'v2',
-					value : new Vector2(0.0, 0.0)
-				}
-
-				if (map.image == null) {
-					map.once("loaded", function() {
+				if (untyped material.uniforms.mapResolution != null) {
+					if (map.image == null) {
+						map.once("loaded", function() {
+							untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+						});
+					} else {
 						untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
-					});
-				} else {
-					untyped material.uniforms.mapResolution.value = new Vector2(map.image.naturalWidth, map.image.naturalHeight);
+					}
 				}
 			}
 
@@ -548,22 +568,18 @@ class RenderSupport3D {
 			untyped material.transparent = true;
 
 			if (untyped material.uniforms != null) {
-				untyped material.uniforms.alphaMap = {
-					type : 't',
-					value : alphaMap
+				if (untyped material.uniforms.alphaMap != null) {
+					untyped material.uniforms.alphaMap.value = alphaMap;
 				}
 
-				untyped material.uniforms.alphaMapResolution = {
-					type : 'v2',
-					value : new Vector2(0.0, 0.0)
-				}
-
-				if (alphaMap.image == null) {
-					alphaMap.once("loaded", function() {
+				if (untyped material.uniforms.alphaMapResolution != null) {
+					if (alphaMap.image == null) {
+						alphaMap.once("loaded", function() {
+							untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+						});
+					} else {
 						untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
-					});
-				} else {
-					untyped material.uniforms.alphaMapResolution.value = new Vector2(alphaMap.image.naturalWidth, alphaMap.image.naturalHeight);
+					}
 				}
 			}
 
@@ -597,7 +613,7 @@ class RenderSupport3D {
 			untyped material.opacity = opacity;
 			untyped material.transparent = true;
 
-			if (untyped material.uniforms != null) {
+			if (untyped material.uniforms != null && material.uniforms.iOpacity != null) {
 				untyped material.uniforms.iOpacity.value = opacity;
 			}
 
@@ -611,7 +627,7 @@ class RenderSupport3D {
 
 			untyped material.visible = visible;
 
-			if (untyped material.uniforms != null) {
+			if (untyped material.uniforms != null && material.uniforms.iVisible != null) {
 				untyped material.uniforms.iVisible.value = visible;
 			}
 
@@ -1763,7 +1779,9 @@ class RenderSupport3D {
 			points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
 		};
 
-		return new ShapeGeometry(new Shape(points));
+		var g =  new ShapeGeometry(new Shape(points));
+
+		return g;
 	}
 
 	public static function make3DShapeGeometry3D(path : Array<Float>) : Geometry {
@@ -1786,14 +1804,77 @@ class RenderSupport3D {
 			g.faces.push(new Face3(triangles[i][0], triangles[i][1], triangles[i][2]));
 		}
 
-		g.computeFaceNormals();
-		g.computeVertexNormals();
+		return g;
+	}
+
+	public static function make3DVertexGeometry(vertices : Array<Float>) : Geometry {
+		var g = new Geometry();
+
+		for (i in 0...Math.floor(vertices.length / 3)) {
+			g.vertices.push(new Vector3(vertices[i * 3], vertices[i * 3 + 1], 0));
+		}
 
 		return g;
 	}
 
+	public static function make3DVertexGeometry3D(vertices : Array<Float>) : Geometry {
+		var g = new Geometry();
+
+		for (i in 0...Math.floor(vertices.length / 3)) {
+			g.vertices.push(new Vector3(vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]));
+		}
+
+		return g;
+	}
+
+	public static function make3DEdgesGeometry(geometry : Geometry) : Geometry {
+		return untyped new EdgesGeometry(untyped geometry, 1);
+	}
+
+	public static function make3DWireframeGeometry(geometry : Geometry) : Geometry {
+		return untyped new WireframeGeometry(untyped geometry);
+	}
+
+
+	public static function modify3DGeometryVertices(geometry : Geometry, modifyFn : (Array<Float>) -> Array<Float>) : Geometry {
+		for (i in 0...geometry.vertices.length) {
+			geometry.vertices[i].fromArray(modifyFn(geometry.vertices[i].toArray()));
+		}
+
+		return geometry;
+	}
+
+	public static function tesselate3DGeometry(geometry : Geometry, distance : Float, iterations : Int) : Geometry {
+		var m = untyped __js__("new THREE.TessellateModifier(distance)");
+		for (i in 0...iterations) {
+			m.modify(geometry);
+		}
+
+		return geometry;
+	}
+
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
 		var material = new MeshBasicMaterial(untyped {color : new Color(color)});
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
+	}
+
+	public static function make3DLineBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		var material = new LineBasicMaterial(untyped {color : new Color(color)});
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
+	}
+
+	public static function make3DPointsMaterial(color : Int, size : Float, parameters : Array<Array<String>>) : Material {
+		var material = new PointsMaterial(untyped {color : new Color(color), size : size});
 
 		for (par in parameters) {
 			untyped material[par[0]] = untyped __js__("eval(par[1])");
@@ -1826,50 +1907,74 @@ class RenderSupport3D {
 		var material : Dynamic = null;
 		var uniformsObject : Dynamic = haxe.Json.parse(uniforms);
 
-		uniformsObject.iResolution = {
-			type : 'v2',
-			value : new Vector2(stage.getWidth(), stage.getHeight())
-		};
-
-		uniformsObject.iAspectRatio = {
-			type : 'f',
-			value : stage.getHeight() / stage.getWidth()
-		};
-
-		uniformsObject.iTime = {
-			type : 'f',
-			value : Browser.window.performance.now() / 1000.0
-		};
-
-		uniformsObject.iOpacity = {
-			type : 'f',
-			value : 1.0
-		};
-
-		uniformsObject.iVisible = {
-			type : 'f',
-			value : true
-		};
-
 		if (vertexShader != "") {
 			if (fragmentShader != "") {
-				material = new ShaderMaterial(untyped {
+				material = new ShaderMaterial({
 					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 					fragmentShader: fragmentShader
 				});
 			} else {
-				material = new ShaderMaterial(untyped {
+				material = new ShaderMaterial({
 					uniforms: uniformsObject,
 					vertexShader: vertexShader,
 				});
 			}
 		} else {
-			material = new ShaderMaterial(untyped {
+			material = new ShaderMaterial({
 				uniforms: uniformsObject,
 				fragmentShader: fragmentShader
 			});
 		}
+
+		Object3DHelper.onMaterialAdded(material, function() {
+			var iTimeFn = function() {
+				uniformsObject.iTime.value = Browser.window.performance.now() / 1000.0;
+			};
+
+			var iAspectRatioFn = function() {
+				uniformsObject.iAspectRatio.value = stage.getHeight() / stage.getWidth();
+			};
+
+			var iResolutionFn = function() {
+				uniformsObject.iResolution.value = new Vector2(stage.getWidth(), stage.getHeight());
+			};
+
+			if (uniformsObject.iTime != null) {
+				iTimeFn();
+				stage.on("drawframe", iTimeFn);
+			}
+
+			if (uniformsObject.iAspectRatio != null) {
+				iAspectRatioFn();
+				stage.on("resize", iAspectRatioFn);
+			}
+
+			if (uniformsObject.iResolution != null) {
+				iResolutionFn();
+				stage.on("resize", iResolutionFn);
+			}
+
+			if (uniformsObject.iOpacity != null) {
+				uniformsObject.iOpacity.value = material.opacity != null ? material.opacity : 1.0;
+			}
+
+			if (uniformsObject.iVisible != null) {
+				uniformsObject.iVisible.value = material.visible != null ? material.visible : true;
+			}
+
+			return function() {
+				if (uniformsObject.iTime != null) {
+					stage.off("drawframe", iTimeFn);
+				}
+				if (uniformsObject.iAspectRatio != null) {
+					stage.off("resize", iAspectRatioFn);
+				}
+				if (uniformsObject.iResolution != null) {
+					stage.off("resize", iResolutionFn);
+				}
+			};
+		});
 
 		for (par in parameters) {
 			untyped material[par[0]] = untyped __js__("eval(par[1])");
@@ -1900,6 +2005,56 @@ class RenderSupport3D {
 		}
 
 		var mesh = new Mesh(geometry, untyped materials.length == 1 ? materials[0] : materials);
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
+
+		untyped mesh.materials = materials;
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function make3DLine(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Line {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
+			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
+			}
+		}
+
+		var mesh = new Line(geometry, untyped materials.length == 1 ? materials[0] : materials);
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
+
+		untyped mesh.materials = materials;
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function make3DPoints(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Points {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
+			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
+			}
+		}
+
+		var mesh = new Points(geometry, untyped materials.length == 1 ? materials[0] : materials);
 
 		for (material in materials) {
 			untyped material.parent = mesh;

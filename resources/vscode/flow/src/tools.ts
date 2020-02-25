@@ -35,7 +35,7 @@ export function shutdownFlowc() {
 }
 
 export function launchFlowc(projectRoot: string) {
-    return run_cmd("flowc1", projectRoot, ["server-mode=1"], (s) => {
+    return run_cmd("flowc1", projectRoot, ["server-mode=http"], (s) => {
         console.log(s);
     }, []);
 }

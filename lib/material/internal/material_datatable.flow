@@ -82,13 +82,13 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	columns = m.columns
 		|> (\arr -> map(arr, \col ->
 			if (widthByContent || contains(col.style, MWidthByContent()))
-				MColumnDynamic(col with style = arrayPush(col.style, MWidthByContentLimited(-1., -1.)))
+				MColumnDynamic(col with style = arrayPush(col.style, MWidthByContentLimited(const(-1.), const(-1.))))
 			else col
 		))
-		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContentLimited(-1., -1.)])], arr) else arr)
+		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContentLimited(const(-1.), const(-1.))])], arr) else arr)
 		|> (\arr -> if (isSome(checkboxSelection)) concat([MColumn("", "", floor(checkboxColumnWidth), [MMaxWidth(floor(checkboxColumnWidth))])], arr) else arr);
 	columnsCount = length(columns);
-	isWidthByContent = \col : MColumnDynamic -> containsStruct(col.style, MWidthByContentLimited(-1., -1.));
+	isWidthByContent = \col : MColumnDynamic -> containsStruct(col.style, MWidthByContentLimited(const(-1.), const(-1.)));
 	isAnyWidthByContent = widthByContent || any(map(columns, isWidthByContent));
 
 	defaultSorted : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
@@ -164,7 +164,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	fullWidthAdvanced = contains(style, MFullWidthAdvanced());
 	fullWidth = contains(style, MFullWidth()) || fullWidthAdvanced;
 
-	minWidths = map(columns, \c -> i2d(c.width) + cellBorder);
+	minWidths = map(columns, \c -> fselect(c.width, FLift(\w -> i2d(w) + cellBorder)));
 
 	cellWs : Transform<[[DynamicBehaviour<double>]]> =
 		fselect(rowsCountB, FLift(\rc ->
@@ -178,9 +178,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		));
 
 	columnWidths : [Transform<double>] =
-		generate(0, columnsCount, \i ->
+		mapi(columns, \i, col ->
 			eitherMap(
-				tryExtractStruct(columns[i].style, MWidthByContentLimited(-1., -1.)), \mwc ->
+				tryExtractStruct(col.style, MWidthByContentLimited(const(-1.), const(-1.))), \mwc ->
 				fsubselect(cellWs, FLift(\cWs ->
 					fsubselect(page, FLift(\pg ->
 						fsubselect(sortingResult, FLift(\srt ->	{
@@ -193,24 +193,24 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									map(subrange(srt, pg.first, pg.second), \idx -> elementAt(cWs, idx, []))
 								);
 
-							faddition(
-								fmaxA(
-									map(currentRows, \row -> elementAt(row, i, make(0.))),
-									i2d(columns[i].width)
-								)
-								|> (\colW -> fselect(colW, FLift(\cw ->
-										if (mwc.maxWidth == -1.) max(cw, mwc.minWidth)
-										else forceRange(cw, mwc.minWidth, mwc.maxWidth)
-									))),
-								const(cellBorder)
+							(
+								if (length(currentRows) != 0)
+									fmaxA(map(currentRows, \row -> elementAt(row, i, make(0.))), 0.)
+								else
+									fi2d(col.width)
 							)
+							|> (\colW -> fselect3(colW, mwc.minWidth, mwc.maxWidth, \cw, minW, maxW ->
+									if (maxW == -1.) max(cw, minW)
+									else forceRange(cw, minW, maxW)
+								))
+							|> (\colW -> faddition(colW, const(cellBorder)))
 						}))
 					))
 				)),
 			if (fullWidth)
-				make(minWidths[i])
+				make(fgetValue(minWidths[i]))
 			else
-				const(minWidths[i])
+				minWidths[i]
 			)
 		);
 
@@ -241,7 +241,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		else
 			^prevER) |> (\f -> {prevER := f; f});
 
-	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else const(dsum(minWidths));
+	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else fsum(minWidths);
 	
 	innerScrollEnabled = if (fullWidth) fless(screenW, faddition(minWidthsSum, const(2. * externalBorder))) else const(true);
 	innerScrollVisible0 = make(false);
@@ -539,13 +539,13 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				box = cellBox(i, false);
 				content =
 					eitherMap(
-						tryExtractStruct(colStyle, MWidthByContentLimited(-1., -1.)), \wbcl ->
+						tryExtractStruct(colStyle, MWidthByContentLimited(const(-1.), const(-1.))), \wbcl ->
 						MSelect(fstall(cellWs, 0), \cws -> {
 							widthInspector = elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0));
-							if (wbcl.maxWidth != -1.)
-								MInspect([IMaxWidth(widthInspector)], cell)
-							else
+							if (fgetValue(wbcl.maxWidth) == -1.)
 								MAttachWidth(cell, widthInspector)
+							else
+								MInspect([IMaxWidth(widthInspector)], cell)
 						}),
 						cell
 					);
@@ -955,7 +955,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						[],
 
 					if (fullWidth && !widthByContent && length(columnWidths) > 0) [
-						make3Subscribe(screenW, expandRow, fmerge(columnWidths), \width, er, colWs -> {
+						make4Subscribe(screenW, expandRow, fmerge(columnWidths), fmerge(minWidths), \width, er, colWs, minWs -> {
 							cutFirstColumn = \arr : [flow] -> if (lifted || glued) colsTail(arr) else arr;
 
 							miw =
@@ -963,7 +963,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									if (isWidthByContent(c))
 										colWs[i]
 									else
-										minWidths[i]
+										minWs[i]
 								})
 								|> (\arr ->
 									mapSplitWithoutHead(arr, er,
@@ -981,10 +981,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 										if (w == -1)
 											-1.
-										else if (w < c.width)
-											i2d(c.width) + cellBorder
 										else
-											i2d(w) + cellBorder
+											max(i2d(w) + cellBorder, minWs[i])
 									}
 								})
 								|> (\arr ->
@@ -999,7 +997,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									miw,
 									maw,
 									max(width - externalBorder * 2. - reorderIconSpace, getValue(footerMinWidth))
-									- if (glued) fgetValue(fsum(colsHead(columnWidths))) else 0.
+									- if (glued) dsum(colsHead(colWs)) else 0.
 								);
 
 							iteri(
