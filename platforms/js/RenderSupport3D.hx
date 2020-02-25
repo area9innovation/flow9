@@ -13,6 +13,7 @@ import js.three.Matrix4;
 
 import js.three.Object3D;
 import js.three.Mesh;
+import js.three.Line;
 import js.three.LOD;
 
 import js.three.Camera;
@@ -29,6 +30,8 @@ import js.three.RingGeometry;
 import js.three.ConeGeometry;
 import js.three.CylinderGeometry;
 import js.three.SphereGeometry;
+import js.three.EdgesGeometry;
+import js.three.WireframeGeometry;
 
 import js.three.Shape;
 import js.three.ShapeGeometry;
@@ -40,6 +43,7 @@ import js.three.BufferAttribute;
 
 import js.three.Material;
 import js.three.MeshBasicMaterial;
+import js.three.LineBasicMaterial;
 import js.three.MeshStandardMaterial;
 import js.three.MeshNormalMaterial;
 import js.three.ShaderMaterial;
@@ -78,7 +82,7 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 6) {
+				if (jscounter > 7) {
 					cb();
 				}
 			}
@@ -96,6 +100,12 @@ class RenderSupport3D {
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
 				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/examples/js/modifiers/TessellateModifier.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 
@@ -1763,7 +1773,9 @@ class RenderSupport3D {
 			points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
 		};
 
-		return new ShapeGeometry(new Shape(points));
+		var g =  new ShapeGeometry(new Shape(points));
+
+		return g;
 	}
 
 	public static function make3DShapeGeometry3D(path : Array<Float>) : Geometry {
@@ -1786,14 +1798,47 @@ class RenderSupport3D {
 			g.faces.push(new Face3(triangles[i][0], triangles[i][1], triangles[i][2]));
 		}
 
-		g.computeFaceNormals();
-		g.computeVertexNormals();
-
 		return g;
+	}
+
+	public static function make3DEdgesGeometry(geometry : Geometry) : Geometry {
+		return untyped new EdgesGeometry(untyped geometry, 1);
+	}
+
+	public static function make3DWireframeGeometry(geometry : Geometry) : Geometry {
+		return untyped new WireframeGeometry(untyped geometry);
+	}
+
+
+	public static function modify3DGeometryVertices(geometry : Geometry, modifyFn : (Array<Float>) -> Array<Float>) : Geometry {
+		for (i in 0...geometry.vertices.length) {
+			geometry.vertices[i].fromArray(modifyFn(geometry.vertices[i].toArray()));
+		}
+
+		return geometry;
+	}
+
+	public static function tesselate3DGeometry(geometry : Geometry, distance : Float, iterations : Int) : Geometry {
+		var m = untyped __js__("new THREE.TessellateModifier(distance)");
+		for (i in 0...iterations) {
+			m.modify(geometry);
+		}
+
+		return geometry;
 	}
 
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
 		var material = new MeshBasicMaterial(untyped {color : new Color(color)});
+
+		for (par in parameters) {
+			untyped material[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return material;
+	}
+
+	public static function make3DLineBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		var material = new LineBasicMaterial(untyped {color : new Color(color)});
 
 		for (par in parameters) {
 			untyped material[par[0]] = untyped __js__("eval(par[1])");
@@ -1900,6 +1945,31 @@ class RenderSupport3D {
 		}
 
 		var mesh = new Mesh(geometry, untyped materials.length == 1 ? materials[0] : materials);
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
+
+		untyped mesh.materials = materials;
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function make3DLine(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Line {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
+			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
+			}
+		}
+
+		var mesh = new Line(geometry, untyped materials.length == 1 ? materials[0] : materials);
 
 		for (material in materials) {
 			untyped material.parent = mesh;
