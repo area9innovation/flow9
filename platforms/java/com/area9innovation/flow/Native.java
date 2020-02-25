@@ -1648,7 +1648,12 @@ public class Native extends NativeHost {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		return new String(input);
+		try {
+			return new String(input, "UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+			return new String();
+		}
 	}
 
 	public final String readUntil(String str_pattern) {
@@ -1675,7 +1680,12 @@ public class Native extends NativeHost {
 		for (int i = 0; i < line.size(); ++ i) {
 			bytes[i] = line.get(i).byteValue();
 		}
-		return new String(bytes);
+		try {
+			return new String(bytes, "UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+			return new String();
+		}
 	}
 
 	public final Object print(String s) {
