@@ -631,8 +631,28 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DWireframeGeometry(Object geometry) {
+		return null;
+	}
+
+	public Object modify3DGeometryVertices(Object geometry, Func1<Object[], Object[]> modifyFn) {
+		return null;
+	}
+
+	public Object make3DEdgesGeometry(Object geometry) {
+		return null;
+	}
+
+	public Object tesselate3DGeometry(Object geometry, Double distance, Integer iterations) {
+		return null;
+	}
+
 
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DLineBasicMaterial(Integer color, Object[] parameters) {
 		return null;
 	}
 
@@ -659,6 +679,10 @@ public class RenderSupport3D extends NativeHost {
 
 
 	public Object make3DMesh(Object geometry, Object[] materials, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DLine(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}
 
