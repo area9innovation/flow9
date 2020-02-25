@@ -63,7 +63,8 @@ MTreeState(
 	color : MColor,
 	multiSelection : bool,
 	showSeparators : bool,
-	dragDropState : Maybe<MTreeDragDropState<?>>
+	dragDropState : Maybe<MTreeDragDropState<?>>,
+	lazyScrollMode : Maybe<MTreeLazyScrollModeState>
 );
 
 MTreeDragDropState(
@@ -72,6 +73,12 @@ MTreeDragDropState(
 	content2id : (content : ?) -> int,
 	id2content : (id : int) -> Maybe<?>,
 	current : DynamicBehaviour<Maybe<(MFocusGroup) -> Tropic>>
+);
+
+MTreeLazyScrollModeState(
+	enabled : Transform<bool>,
+	scrollWH : DynamicBehaviour<WidthHeight>,
+	scrollPositionScale : DynamicBehaviour<PositionScale>
 );
 
 fSelectionIndexes(children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
@@ -269,6 +276,28 @@ MTreeOrderNode2MTreeNode(node : MTreeOrderNode<?>, tree : Transform<Tree<?, [MTr
 	);
 }
 
+applyMTreeLazyScrollMode(state : MTreeState<?>) -> (Tropic) -> Tropic {
+	\node ->
+		eitherMap(state.lazyScrollMode, \lsm -> {
+			nodePosScale = make(zeroPositionScale);
+			showItem = make(false);
+			if (fgetValue(lsm.enabled))
+				node
+				|> (\t -> TShow(showItem, t))
+				|> (\t -> TPositionScale(nodePosScale, t))
+				|> (\t -> TConstruct([
+						make3SubscribeTrigger(fnot(showItem), lsm.scrollWH, fstall(nodePosScale, 0), lsm.scrollPositionScale, \swh, ps, sps -> {
+							y = ps.pos.y - sps.pos.y;
+							if (y >= 0. && y < swh.height) nextDistinct(showItem, true);
+						})
+					], t))
+			else
+				node
+			},
+			node
+		)
+} 
+
 makeMTreeDragDropState(
 	manager : MaterialManager,
 	order : DynamicBehaviour<[MTreeOrderNode<?>]>,
@@ -309,7 +338,15 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 	loadLazy = tryExtractStruct(m.style, MTreeLazyLoad(0, None()));
 	lazyLoadState = maybeMap(loadLazy, makeMTreeLazyLoadState);
 
-	lazyScrollMode = tryExtractStruct(m.style, MTreeLazyScrollMode(const(true)));
+	lazyScrollMode =
+		maybeMap(
+			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true))),
+			\lsm -> MTreeLazyScrollModeState(
+				lsm.enabled,
+				makeWH(),
+				make(zeroPositionScale)
+			)
+		);
 
 	dragDropStateM =
 		eitherFn(
@@ -351,29 +388,9 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			extractStruct(m.style, getPrimaryColor(parent)),
 			isSome(multiSelection),
 			showSeparators,
-			dragDropStateM
+			dragDropStateM,
+			lazyScrollMode
 		);
-
-	scrollPositionScale = make(zeroPositionScale);
-	scrollWH = makeWH();
-
-	applyLazyScrollMode = \node -> {
-		nodePosScale = make(zeroPositionScale);
-		showItem = make(false);
-
-		if (eitherMap(lazyScrollMode, \lsm -> fgetValue(lsm.enabled), false))
-			node
-			|> (\t -> TShow(showItem, t))
-			|> (\t -> TPositionScale(nodePosScale, t))
-			|> (\t -> TConstruct([
-					make3SubscribeTrigger(fnot(showItem), scrollWH, fstall(nodePosScale, 0), scrollPositionScale, \swh, ps, sps -> {
-						y = ps.pos.y - sps.pos.y;
-						if (y >= 0. && y < swh.height) nextDistinct(showItem, true);
-					})
-				], t))
-		else
-			node
-	}
 
 	TIf(
 		flessi(flength(children.first), const(ARRAY_DIFF_TRESHOLD)),
@@ -391,13 +408,10 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 						farray(index),
 						m2t,
 						const(showSeparators),
-						loadLazy,
-						lazyScrollMode,
-						scrollWH,
-						scrollPositionScale
+						loadLazy
 					)
 				)
-				|> applyLazyScrollMode
+				|> applyMTreeLazyScrollMode(state)
 		),
 		TSelect(
 			fmap(children.first, \c : MTreeNode<?> -> c.content),
@@ -412,13 +426,10 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 						farray(const(i)),
 						m2t,
 						const(showSeparators),
-						loadLazy,
-						lazyScrollMode,
-						scrollWH,
-						scrollPositionScale
+						loadLazy
 					)
 				)
-				|> applyLazyScrollMode
+				|> applyMTreeLazyScrollMode(state)
 			)
 			|> TLines
 		)
@@ -545,10 +556,13 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			mtree
 		)
 	)
-	|> (\mtree ->
-		if (isSome(lazyScrollMode))
-			TPositionScale(scrollPositionScale, MScroll2T(manager, parent, MScroll(mtree, TFillXY(), [MScrollWidthHeight(makeWH(), scrollWH)]), m2t))
-		else mtree
+	|> (\mtree : Tropic ->
+		eitherMap(state.lazyScrollMode, \lsm ->
+			TPositionScale(lsm.scrollPositionScale,
+				MScroll2T(manager, parent, MScroll(mtree, TFillXY(), [MScrollWidthHeight(makeWH(), lsm.scrollWH)]), m2t)
+			),
+			mtree
+		)
 	)
 }
 
@@ -618,8 +632,7 @@ DropOperation ::= DropAbove, DropBelow, DropInside;
 	DropInside();
 
 MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<?>, m : MTreeNode<?>, treeIndex : Transform<[int]>,
-	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>, loadLazy : Maybe<MTreeLazyLoad>,
-	lazyScrollMode : Maybe<MTreeLazyScrollMode>, scrollWH: Transform<WidthHeight>, scrollPositionScale : Transform<PositionScale>) -> Tropic {
+	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>, loadLazy : Maybe<MTreeLazyLoad>) -> Tropic {
 
 	lazyLoadState = maybeMap(loadLazy, makeMTreeLazyLoadState);
 
@@ -674,24 +687,6 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 			}
 		}
 	}));
-
-	applyLazyScrollMode = \node -> {
-		nodePosScale = make(zeroPositionScale);
-		showItem = make(false);
-
-		if (eitherMap(lazyScrollMode, \lsm -> fgetValue(lsm.enabled), false))
-			node
-			|> (\t -> TShow(showItem, t))
-			|> (\t -> TPositionScale(nodePosScale, t))
-			|> (\t -> TConstruct([
-					make3SubscribeTrigger(fnot(showItem), scrollWH, fstall(nodePosScale, 0), scrollPositionScale, \swh, ps, sps -> {
-						y = ps.pos.y - sps.pos.y;
-						if (y >= 0. && y < swh.height) nextDistinct(showItem, true);
-					})
-				], t))
-		else
-			node
-	}
 
 	TLinesDir([
 		(\p -> MComponent2T(
@@ -849,13 +844,10 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 									flessi(index, fadditioni(childrenLength, const(-1)))
 								else
 									const(false),
-								loadLazy,
-								lazyScrollMode,
-								scrollWH,
-								scrollPositionScale
+								loadLazy
 							)
 						})
-						|> applyLazyScrollMode
+						|> applyMTreeLazyScrollMode(state)
 					}
 				),
 				TSelect(
@@ -874,13 +866,10 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 									flessi(const(i), fadditioni(childrenLength, const(-1)))
 								else
 									const(false),
-								loadLazy,
-								lazyScrollMode,
-								scrollWH,
-								scrollPositionScale
+								loadLazy
 							)
 						)
-						|> applyLazyScrollMode
+						|> applyMTreeLazyScrollMode(state)
 					)
 					|> TLines
 				)
