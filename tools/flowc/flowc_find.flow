@@ -5,7 +5,7 @@ import tools/flowc/find_occurrences;
 import lingo/linecolumn;
 
 export {
-	handleFindOptions(flowfile : string, prog : FiProgram) -> void;
+	handleFindOptions(env : FcTypeEnvGlobal, flowfile : string, prog : FiProgram) -> void;
 	findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, symbol : string) -> void;
 
 	// Prints all locations of a symbol. In case symbol is local or struct field, line number and column are used to identify it.
@@ -18,12 +18,12 @@ export {
 	fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
 }
 
-handleFindOptions(file : string, prog : FiProgram) -> void {
+handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> void {
 	config = prog.config;
 
 	dumpIds = getConfigParameter(config.config, "dump-ids");
 	if (dumpIds != "") {
-		dumpFcProgramIds(prog, dumpIds);
+		dumpFcProgramIds(env, prog, dumpIds);
 	}
 
 	if (getConfigParameter(config.config, "dump-counts") != "") {
@@ -34,7 +34,7 @@ handleFindOptions(file : string, prog : FiProgram) -> void {
 	col = getConfigParameter(config.config, "exp-column");
 	if (isAnyConfigParametersSet(config.config, ["find-type", "find-definition", "find-declaration", "find-uses"])) {
 		if (line != "" && col != "") {
-			findDefDeclByLineCol(file, prog, s2i(line) - 1, s2i(col) - 1);
+			findDefDeclByLineCol(env, file, prog, s2i(line) - 1, s2i(col) - 1);
 		} else {
 			fcPrintln("Expect exp-line and exp-column arguments", config.threadId);
 		}
@@ -49,7 +49,7 @@ handleFindOptions(file : string, prog : FiProgram) -> void {
 	}
 }
 
-findDefDeclByLineCol(file : string, prog : FiProgram, line : int, col : int) -> void {
+findDefDeclByLineCol(env : FcTypeEnvGlobal, file : string, prog : FiProgram, line : int, col : int) -> void {
 	config = prog.config;
 	found = findFiExpInProgramAtLineCol(prog, file, line, col, true);
 	switch (found.first) {
@@ -62,14 +62,14 @@ findDefDeclByLineCol(file : string, prog : FiProgram, line : int, col : int) -> 
 						module = name2FimoduleInFiProgram(prog, file, name);
 						if (isConfigParameterTrue(config.config, "find-definition")) {
 							switch (lookupTree(prog.names.toplevel, name)) {
-								Some(decl): printLocation(config, module.fileinfo, decl.defiStart, decl.defiStart + strlen(name), "");
+								Some(decl): printLocation(config, env, module.fileinfo, decl.defiStart, decl.defiStart + strlen(name), "");
 								None(): {
 									fcPrintln("Could not find global name in " + file + " at line " + i2s(line + 1) + " col " + i2s(col + 1), config.threadId);
 								}
 							}
 						} else if (isConfigParameterTrue(config.config, "find-declaration")) {
 							switch (lookupTree(prog.names.toplevel, name)) {
-								Some(decl): printLocation(config, module.fileinfo, decl.declStart, decl.declStart + strlen(name), "");
+								Some(decl): printLocation(config, env, module.fileinfo, decl.declStart, decl.declStart + strlen(name), "");
 								None(): {
 									fcPrintln("Could not find global name in " + file + " at line " + i2s(line + 1) + " col " + i2s(col + 1), config.threadId);
 								}
@@ -193,7 +193,7 @@ nameAndFcType(name : string, type : FcType) -> string {
 	)
 }
 
-dumpFcProgramIds(prog : FiProgram, file : string) -> void {
+dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void {
 	ids = foldTree(prog.modules, [], \modname, module : FiModule, acc -> {
 		pc = FcPretty(true, true, makeTree(), makeTree());
 		pt = \t -> prettyFiType(pc, t, makeSet());
@@ -201,7 +201,7 @@ dumpFcProgramIds(prog : FiProgram, file : string) -> void {
 		allIds = isConfigParameterTrue(prog.config.config, "dump-ids-all");
 
 		pathParts = ["file " + module.fileinfo.flowfile]; //], strSplit(module.flowfile, "/")));
-		content = fiFileInfoSource(module.fileinfo);
+		content = fcFileSource(env, module.fileinfo.fullpath);
 		resolver = makeLineResolver(content);
 
 		fl = \pos -> {
@@ -262,19 +262,19 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, n
 					fileinfo = loaded.module.fileinfo;
 					proc_decl = \dec, def -> {
 						if (getConfigParameter(config.config, "find-definition") != "") {
-							printLocation(config, fileinfo, def, def + strlen(name), "");
+							printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
 						} else if (getConfigParameter(config.config, "find-declaration") != "") {
-							printLocation(config, fileinfo, dec, dec + strlen(name), "");
+							printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
 						} else if (getConfigParameter(config.config, "find-defdecl") != "") {
-							printLocation(config, fileinfo, def, def + strlen(name), "");
+							printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
 							if (dec != def) {
-								printLocation(config, fileinfo, dec, dec + strlen(name), "");
+								printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
 							}
 						}
 					}
 					switch (symbol.named) {
-						FiTypeStruct(__,__,__, start): printLocation(config, fileinfo, start, start + strlen(name), "");
-						FiTypeUnion(__,__,__, start):  printLocation(config, fileinfo, start, start + strlen(name), "");
+						FiTypeStruct(__,__,__, start): printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
+						FiTypeUnion(__,__,__, start):  printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
 						FiFunctionDec(__,__,__, dec, def): proc_decl(dec, def);
 						FiGlobalVar(__,__,__, dec, def): proc_decl(dec, def);
 						FiNativeDec(__,__,__,__,__, dec, def): proc_decl(dec, def);
@@ -296,7 +296,7 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, n
 			);
 			modules = preloadModules(config, globEnv, file, \err -> refArrayPush(errors, err)); // Skip error messages
 			tenv2 = findDefinitionInFcModules(tenv1, globEnv, modules, name, file);
-			iter(^errors, \err -> printFcError(tenv2.acc, err))
+			iter(^errors, \err -> printFcError(tenv2.acc, globEnv, err))
 		}
 	}
 }
@@ -323,7 +323,7 @@ findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pr
 			mergeIncremental2TypeEnvProgram(acc, globEnv, module)
 		});
 
-		if (!findDefDeclInFlowcAcc(tenv1.acc, file, symbol)) {
+		if (!findDefDeclInFlowcAcc(globEnv, tenv1.acc, file, symbol)) {
 
 			// proceed with modules that are ready 
 			parsed : [FcParsed] = filtermap(readyForProcessing, \preloaded -> 
@@ -336,7 +336,7 @@ findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pr
 			desugared : [FcModule] = concurrent(true, map(parsed, \p -> \ -> desugarFcModule(tenv1.acc, initFcTypeEnvLocal(), p.fileinfo, p.syntaxtree)));
 			tenv2 = fold(desugared, tenv1, \acc, module -> addFictiveFiModuleFromFcModule(addDesugaredModuleToGlobal(acc, module), module));
 
-			if (!findDefDeclInFlowcAcc(tenv2.acc, file, symbol)) {
+			if (!findDefDeclInFlowcAcc(globEnv, tenv2.acc, file, symbol)) {
 				findDefinitionInFcModules(tenv2, globEnv, preloadedModules, symbol, file)
 			} else {
 				tenv2
@@ -347,19 +347,19 @@ findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pr
 	}
 }
 
-findDefDeclInFlowcAcc(prog : FlowcAcc, flowfile : string, definition : string) -> bool {
+findDefDeclInFlowcAcc(env : FcTypeEnvGlobal, prog : FlowcAcc, flowfile : string, definition : string) -> bool {
 	config = prog.config;
 	module = name2FimoduleInFlowcAcc(prog, flowfile, definition);
 	switch (lookupTree(prog.names.toplevel, definition)) {
 		Some(d): {
 			switch (d) {
 				FcFunctionDec(__, __, __, declInfo, defiInfo): 
-					printDefDeclLocation(config, module, definition, declInfo, defiInfo, "");
+					printDefDeclLocation(env, config, module, definition, declInfo, defiInfo, "");
 				FcGlobalVar(__, value, declInfo, defiInfo): {
-					printDefDeclLocation(config, module, definition, declInfo, defiInfo, eitherMap(value, \e -> " = " + prettyFcExp(dummyPretty, e), ""));
+					printDefDeclLocation(env, config, module, definition, declInfo, defiInfo, eitherMap(value, \e -> " = " + prettyFcExp(dummyPretty, e), ""));
 				}
 				FcNativeDec(__, __, __, __, __, info): 
-					printDefDeclLocation(config, module, definition, info, info, "");
+					printDefDeclLocation(env, config, module, definition, info, info, "");
 			}
 			true
 		}
@@ -375,13 +375,13 @@ findDefDeclInFlowcAcc(prog : FlowcAcc, flowfile : string, definition : string) -
 
 			switch (lookupTree(prog.names.structs, definition)) {
 				Some(struct): {
-					printLocation(config, module.fileinfo, struct.info.start, struct.info.start + strlen(definition), pt(struct)); 
+					printLocation(config, env, module.fileinfo, struct.info.start, struct.info.start + strlen(definition), pt(struct)); 
 					true
 				}
 				None(): {
 					switch (lookupTree(prog.names.unions, definition)) {
 						Some(union): {
-							printLocation(config, module.fileinfo, union.info.start, union.info.start + strlen(definition), pt(union)); 
+							printLocation(config, env, module.fileinfo, union.info.start, union.info.start + strlen(definition), pt(union)); 
 							true
 						}
 						None(): 
@@ -393,16 +393,16 @@ findDefDeclInFlowcAcc(prog : FlowcAcc, flowfile : string, definition : string) -
 	}
 }
 
-printDefDeclLocation(config : CompilerConfig, module : FiModule, symbol : string, declInfo : FcInfo, defiInfo : FcInfo, details : string) -> void {
+printDefDeclLocation(env : FcTypeEnvGlobal, config : CompilerConfig, module : FiModule, symbol : string, declInfo : FcInfo, defiInfo : FcInfo, details : string) -> void {
 	typeMessage = nameAndFcType(symbol, either(^(defiInfo.type), either(^(declInfo.type), dummyType))) + details;
 	if (getConfigParameter(config.config, "find-definition") != "") {
-		printLocation(config, module.fileinfo, defiInfo.start, defiInfo.start + strlen(symbol), typeMessage);
+		printLocation(config, env, module.fileinfo, defiInfo.start, defiInfo.start + strlen(symbol), typeMessage);
 	} else if (getConfigParameter(config.config, "find-declaration") != "") {
-		printLocation(config, module.fileinfo, declInfo.start, declInfo.start + strlen(symbol), typeMessage);
+		printLocation(config, env, module.fileinfo, declInfo.start, declInfo.start + strlen(symbol), typeMessage);
 	} else if (getConfigParameter(config.config, "find-defdecl") != "") {
-		printLocation(config, module.fileinfo, defiInfo.start, defiInfo.start + strlen(symbol), typeMessage);
+		printLocation(config, env, module.fileinfo, defiInfo.start, defiInfo.start + strlen(symbol), typeMessage);
 		if (defiInfo.start != declInfo.start) {
-			printLocation(config, module.fileinfo, declInfo.start, declInfo.start + strlen(symbol), typeMessage);
+			printLocation(config, env, module.fileinfo, declInfo.start, declInfo.start + strlen(symbol), typeMessage);
 		}
 	} else { 
 		fcPrintln("Something went wrong: this should never happen", config.threadId);
@@ -419,7 +419,7 @@ addFictiveFiModuleFromFcModule(env : FcTypeEnvProgram, module : FcModule) -> FcT
 		env with acc = FlowcAcc(
 			acc with modules = setTree(acc.modules, module.fileinfo.flowfile,
 				FiModule(dummyFiModule with 
-					fileinfo = FiFileInfo(info.flowfile, info.trampstamp, info.fullpath, info.md5sum, "", info.filesize, timestamp())
+					fileinfo = FiFileInfo(info.flowfile, info.trampstamp, info.fullpath, info.md5sum, info.filesize, timestamp())
 				)
 			)
 		)
@@ -522,10 +522,10 @@ fcFindGlobalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 
 	locations = foldTree(programs, Pair(makeSet(), makeSet()), \file, prog, ac -> {
 			if (containsSet(ac.first, prog.config.flowfile)) ac else {
-				processed = foldTree(findOccurencesInFiProgram(prog, symbol, kind, ac.first), ac, \module, occurrences, a ->
+				processed = foldTree(findOccurencesInFiProgram(globEnv, prog, symbol, kind, ac.first), ac, \module, occurrences, a ->
 					if (containsSet(a.first, module.fileinfo.flowfile)) a else {
 						locations = foldSet(occurrences, a.second, \aa, occ -> 
-							insertSet(aa, makeLocation(config, module.fileinfo, occ, occ + strlen(symbol)))
+							insertSet(aa, makeLocation(config, globEnv, module.fileinfo, occ, occ + strlen(symbol)))
 						);
 						Pair(insertSet(a.first, module.fileinfo.flowfile), locations)
 					}
@@ -544,8 +544,8 @@ fcFindModuleUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 	if (error == 0) {
 		module = lookupTreeDef(prog.modules, getTargetModuleName(config), dummyFiModule);
 		iterSet(
-			findOccurencesInFiModule(module, symbol, kind), 
-			\pos -> printLocation(config, module.fileinfo, pos, pos + strlen(symbol), " uses " + symbol)
+			findOccurencesInFiModule(globEnv, module, symbol, kind), 
+			\pos -> printLocation(config, globEnv, module.fileinfo, pos, pos + strlen(symbol), " uses " + symbol)
 		);
 	}
 }
@@ -562,11 +562,11 @@ fcFindLocalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : str
 		relative = trimFlowfile(file, config.includes, workingDir);
 		switch (lookupTree(prog.modules, relative)) {
 			Some(module): {
-				code = fiFileInfoSource(module.fileinfo);
+				code = fcFileSource(globEnv, module.fileinfo.fullpath);
 				resolver = makeLineResolver(code);
 				iterSet(
-					fcFindLocalOccurrences(module, line, col, symbol, kind),
-					\pos -> printLocation(config, module.fileinfo, pos, pos + strlen(symbol), " uses " + symbol)
+					fcFindLocalOccurrences(globEnv, module, line, col, symbol, kind),
+					\pos -> printLocation(config, globEnv, module.fileinfo, pos, pos + strlen(symbol), " uses " + symbol)
 				);
 			}
 			None(): {
@@ -580,7 +580,7 @@ fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 	switch (fastSymbolNature(config, globEnv, name, line, col)) {
 		Some(nature): {
 			print_location = \module, pos -> 
-				printLocation(config, module.fileinfo, pos, pos + strlen(nature.name), " uses " + nature.name);
+				printLocation(config, globEnv, module.fileinfo, pos, pos + strlen(nature.name), " uses " + nature.name);
 			module_uses = \module -> 
 				iterSet(
 					fcFastFindOccurrencesInFiModule(config, globEnv, module, nature),
@@ -600,14 +600,15 @@ fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 					maybeApply(
 						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
 						\loaded -> iterSet(
-							fcFindLocalOccurrences(loaded.module, line, col, nature.name, nature.kind), 
+							fcFindLocalOccurrences(globEnv, loaded.module, line, col, nature.name, nature.kind), 
 							\pos -> print_location(loaded.module, pos + 1)
 						)
 					);
 				}
 			}
 		}
-		None(): { }
+		None(): { 
+		}
 	}
 }
 
@@ -622,7 +623,7 @@ fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, l
 					maybeApply(
 						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
 						\loaded ->
-							maybeApply(findFiExpInModuleAtLineCol(loaded.module, line, col, true), 
+							maybeApply(findFiExpInModuleAtLineCol(globEnv, loaded.module, line, col, true), 
 								\e -> fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()), config.threadId)
 							)
 					);
@@ -633,8 +634,8 @@ fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, l
 	}
 }
 
-findFiExpInModuleAtLineCol(module : FiModule, line : int, col : int, wantType : bool) -> Maybe<FiExp> {
-	code = fiFileInfoSource(module.fileinfo);
+findFiExpInModuleAtLineCol(env : FcTypeEnvGlobal, module : FiModule, line : int, col : int, wantType : bool) -> Maybe<FiExp> {
+	code = fcFileSource(env, module.fileinfo.fullpath);
 	resolver = makeLineResolver(code);
 	index = findLineIndex(resolver, line, col);
 	starts2types = fold(
