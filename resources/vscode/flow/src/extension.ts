@@ -80,12 +80,18 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// If the extension is launched in debug mode then the debug server options are used
 	// Otherwise the run options are used
-	let serverOptions: ServerOptions = {
-        command: 'flowc1',
-        args: ['server-mode=console']
-		//run : { module: serverModule, transport: TransportKind.ipc },
-		//debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
-	}
+    let serverOptions: ServerOptions;
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+            serverOptions = {
+                command: 'flowc1',
+                args: ['server-mode=console']
+            }
+        } else {
+            serverOptions = {
+		        run : { module: serverModule, transport: TransportKind.ipc },
+		        debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
+            }
+        }
 
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
