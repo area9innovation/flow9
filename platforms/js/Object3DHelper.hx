@@ -94,6 +94,30 @@ class Object3DHelper {
 		on(parent, event, disp);
 	}
 
+	public static function emitMaterial(parent : Material, event : String) : Void {
+		parent.dispatchEvent({ type : event });
+		parent.dispatchEvent({ type : "change" });
+	}
+
+	public static function onMaterial(parent : Material, event : String, fn : Void -> Void) : Void {
+		parent.addEventListener(event, untyped fn);
+	}
+
+	public static function offMaterial(parent : Material, event : String, fn : Void -> Void) : Void {
+		parent.removeEventListener(event, untyped fn);
+	}
+
+	public static function onceMaterial(parent : Material, event : String, fn : Void -> Void) : Void {
+		var disp : Void -> Void = null;
+		disp = function() {
+			offMaterial(parent, event, fn);
+			offMaterial(parent, event, disp);
+		};
+
+		onMaterial(parent, event, fn);
+		onMaterial(parent, event, disp);
+	}
+
 
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
@@ -198,6 +222,18 @@ class Object3DHelper {
 				}
 			}
 
+			if (untyped child.material != null) {
+				if (untyped child.material.length != null) {
+					var material : Array<Material> = untyped child.material;
+
+					for (mat in material) {
+						emitMaterial(mat, "added");
+					}
+				} else {
+					emitMaterial(untyped child.material, "added");
+				}
+			}
+
 			if (invalidate) {
 				emitEvent(child, "added");
 				emitEvent(parent, "box");
@@ -261,6 +297,18 @@ class Object3DHelper {
 		child.parent = null;
 
 		update3DChildren(parent);
+
+		if (untyped child.material != null) {
+			if (untyped child.material.length != null) {
+				var material : Array<Material> = untyped child.material;
+
+				for (mat in material) {
+					emitMaterial(mat, "removed");
+				}
+			} else {
+				emitMaterial(untyped child.material, "removed");
+			}
+		}
 
 		if (invalidate) {
 			emitEvent(parent, "box");
@@ -357,5 +405,27 @@ class Object3DHelper {
 		}
 
 		return children;
+	}
+
+	public static function onMaterialAdded(clip : Material, fn : Void -> (Void -> Void)) : Void {
+		var disp = function () {};
+
+		if (untyped clip.parent == null) {
+			onceMaterial(clip, "added", function () {
+				disp = fn();
+
+				onceMaterial(clip, "removed", function () {
+					disp();
+					onMaterialAdded(clip, fn);
+				});
+			});
+		} else {
+			disp = fn();
+
+			onceMaterial(clip, "removed", function () {
+				disp();
+				onMaterialAdded(clip, fn);
+			});
+		}
 	}
 }

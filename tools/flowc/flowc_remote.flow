@@ -1,6 +1,7 @@
 import text/serialize;
 import net/http;
 import tools/common/config;
+import tools/flowc/flowc_local;
 
 export {
 	// Run a task, described by a config, on a remote flowc server
@@ -11,6 +12,23 @@ export {
 		onRunComplete : (int) -> void,
 		onServerError : (int) -> void
 	) -> void;
+
+	// Try to run config remote, in case it fails run locally.
+	runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void;
+}
+
+runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
+	if (isConfigParameterFalse(config.config, "server") || !java) {
+		runConfigLocally(config, globalEnv, onRunComplete);
+	} else {
+		runConfigRemote(
+			config, 
+			\msg -> fcPrintln(msg, config.threadId), 
+			\msg -> fcPrintln(msg, config.threadId), 
+			onRunComplete, 
+			\__ -> runConfigLocally(config, globalEnv, onRunComplete)
+		)
+	}
 }
 
 runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string) -> void, onRunComplete : (int) -> void, onServerError : (int) -> void) -> void {
@@ -37,7 +55,7 @@ runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string
 		isConfigParameterTrue(conf.config, "dump-program");
 	httpCustomRequest(
 		serverUrl,
-		GET(), [], RequestPayload(serialize(patchedConfig)),
+		GET(), [], RequestPayload("config_" + serialize(patchedConfig)),
 		\status, data, headers -> {
 			code = status - 200;
 			if (code == 0) {

@@ -307,7 +307,7 @@ class RenderSupportJSPixi {
 		backingStoreRatio = getBackingStoreRatio();
 
 		if (PixiRenderer != null) {
-			if (untyped PixiRenderer.gl != null) {
+			if (untyped PixiRenderer.gl != null && PixiRenderer.gl.destroy != null) {
 				untyped PixiRenderer.gl.destroy();
 			}
 
@@ -403,7 +403,23 @@ class RenderSupportJSPixi {
 		}
 	}
 
+	private static function checkPWAManifest() {
+		var manifest : Dynamic = Browser.document.querySelector('link[rel=\"manifest\"]');
+
+		if (manifest != null) {
+			var manifestJson = haxe.Json.parse(haxe.Http.requestUrl(manifest.href));
+			trace(manifestJson);
+
+			if (untyped manifestJson['orientation'] == 'landscape') {
+				untyped __js__("screen.orientation.lock('landscape')");
+			}
+		}
+	}
+
 	private static function initPixiRenderer() {
+		if (Util.getParameter("pwa") == "1") {
+			checkPWAManifest();
+		}
 		disablePixiPlugins();
 
 		if (untyped PIXI.VERSION != "4.8.2") {
@@ -1823,7 +1839,7 @@ class RenderSupportJSPixi {
 				case 226: if (shift) "|" else "\\";
 
 				default: {
-					var keyUTF = String.fromCharCode(charCode);
+					var keyUTF = charCode >= 0 ? String.fromCharCode(charCode) : "";
 
 					if (modifierStatePresent(e, "CapsLock")) {
 						if (e.getModifierState("CapsLock"))

@@ -610,6 +610,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DShapeBufferGeometry(Object[] data, Func2<Integer, Integer, Object[]> addGroups) {
+		return null;
+	}
+
 
 	public Object add3DBufferGeometryAttribute(Object geometry, String name, Object[] data) {
 		return null;
@@ -619,7 +623,48 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
+	public Object make3DShapeGeometry(Object[] data) {
+		return null;
+	}
+
+	public Object make3DVertexGeometry(Object[] vertices) {
+		return null;
+	}
+
+	public Object make3DShapeGeometry3D(Object[] data) {
+		return null;
+	}
+
+	public Object make3DVertexGeometry3D(Object[] vertices) {
+		return null;
+	}
+
+	public Object make3DWireframeGeometry(Object geometry) {
+		return null;
+	}
+
+	public Object modify3DGeometryVertices(Object geometry, Func1<Object[], Object[]> modifyFn) {
+		return null;
+	}
+
+	public Object make3DEdgesGeometry(Object geometry) {
+		return null;
+	}
+
+	public Object tesselate3DGeometry(Object geometry, Double distance, Integer iterations) {
+		return null;
+	}
+
+
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DLineBasicMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DPointsMaterial(Integer color, Double size, Object[] parameters) {
 		return null;
 	}
 
@@ -649,6 +694,14 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DLine(Object geometry, Object[] materials, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DPoints(Object geometry, Object[] materials, Object[] parameters) {
+		return null;
+	}
+
 
 	public Object set3DAnimationDuration(Object animation, Double duration) {
 		return null;
@@ -668,5 +721,13 @@ public class RenderSupport3D extends NativeHost {
 	}
 	public Object[] convert3DVectorToStageCoordinates(Object stage, Double x, Double y, Double z) {
 		return new Object[0];
+	}
+
+	public Object make3DLOD() {
+		return null;
+	}
+
+	public Object add3DLODLevel(Object lod, Integer level, Object object) {
+		return null;
 	}
 }

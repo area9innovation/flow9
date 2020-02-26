@@ -128,24 +128,31 @@ interface CompilerEntity {
 
 function extractEntities(compilerResult): CompilerEntity[]  {
 	if (compilerResult.status == 0) {
-		const line_regexp = /^(.*):(\d+):(\d+):\s*(.*)\s*$/;
+		const line1_regexp = /^(.*):(\d+):(\d+):(\d+):(\d+):\s*(.*)\s*$/;
+		const line2_regexp = /^(.*):(\d+):(\d+):\s*(.*)\s*$/;
 		let lines = flatten(compilerResult.output.filter(x => x != null)
 											.map(x => x.split("\n")));
 		let results: CompilerEntity[] = []
 		for (let l of lines) {
-			const matched = l.match(line_regexp);
-			if (matched) {
-				const line = Number.parseInt(matched[2]) - 1;
-				const start = Number.parseInt(matched[3]) - 1;
-				const result = { file : matched[1], line : line, column : start, 
-					entity : matched.length > 4 ? matched[4] : ""};
+			const matched1 = l.match(line1_regexp);
+			if (matched1) {
+				const line = Number.parseInt(matched1[2]) - 1;
+				const start = Number.parseInt(matched1[3]) - 1;
+				const result = { file : matched1[1], line : line, column : start, 
+					entity : matched1.length > 6 ? matched1[6] : ""};
+				results.push(result);
+			}
+			const matched2 = l.match(line2_regexp);
+			if (matched2) {
+				const line = Number.parseInt(matched2[2]) - 1;
+				const start = Number.parseInt(matched2[3]) - 1;
+				const result = { file : matched2[1], line : line, column : start, 
+					entity : matched2.length > 4 ? matched2[4] : ""};
 				results.push(result);
 			}
 		}
-
 		return results;
 	}
-
 	return [];
 }
 
