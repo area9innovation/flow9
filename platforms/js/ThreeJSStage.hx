@@ -173,7 +173,7 @@ class ThreeJSStage extends Container {
 			camera
 		);
 
-		for (ob in raycaster.intersectObjects(interactiveObjects)) {
+		for (ob in raycaster.intersectObjects(interactiveObjects, true)) {
 			var object = ob.object;
 
 			if (handledObjects.indexOf(object) == -1) {

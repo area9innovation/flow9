@@ -79,7 +79,7 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DObject(Object stage, String objUrl, String mtlUrl, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad) {
+	public Object load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad, Func1<String,Object> onError) {
 		return null;
 	}
 	public Object load3DScene(Object stage, String url, Func1<Object,Object> onLoad) {
@@ -614,6 +614,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DBufferFromGeometry(Object geometry, Object[] parameters) {
+		return null;
+	}
+
 
 	public Object add3DBufferGeometryAttribute(Object geometry, String name, Object[] data) {
 		return null;
@@ -623,7 +627,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object make3DShapeGeometry(Object[] data) {
+	public Object make3DShapeGeometry(Object[] pathes) {
 		return null;
 	}
 
@@ -631,7 +635,7 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object make3DShapeGeometry3D(Object[] data) {
+	public Object make3DShapeGeometry3D(Object[] path) {
 		return null;
 	}
 
@@ -728,6 +732,18 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object add3DLODLevel(Object lod, Integer level, Object object) {
+		return null;
+	}
+
+	public Object export3DGLTFObject(Object object, Func1<String, Object> exportFn, Object[] parameters) {
+		return null;
+	}
+
+	public Object set3DObjectParameters(Object object, Object[] parameters) {
+		return null;
+	}
+
+	public Object set3DObjectMaterialParameters(Object object, Object[] parameters) {
 		return null;
 	}
 }

@@ -77,6 +77,18 @@ using Object3DHelper;
 using Texture3DHelper;
 
 class RenderSupport3D {
+	private static var scriptsToLoad = [
+		'js/threejs/examples/js/loaders/MTLLoader.js',
+		'js/threejs/examples/js/loaders/OBJLoader.js',
+		'js/threejs/examples/js/modifiers/TessellateModifier.js',
+		'js/threejs/examples/js/loaders/DDSLoader.js',
+		'js/threejs/examples/js/loaders/PVRLoader.js',
+		'js/threejs/examples/js/loaders/GLTFLoader.js',
+		'js/threejs/examples/js/controls/OrbitControls.js',
+		'js/threejs/examples/js/controls/TransformControls.js',
+		'js/threejs/examples/js/exporters/GLTFExporter.js'
+	];
+
 	public static function load3DLibraries(cb : Void -> Void) : Void {
 		if (untyped __js__("typeof THREE === 'undefined'")) {
 			var head = Browser.document.getElementsByTagName('head')[0];
@@ -84,7 +96,7 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 7) {
+				if (jscounter > scriptsToLoad.length - 1) {
 					cb();
 				}
 			}
@@ -93,53 +105,13 @@ class RenderSupport3D {
 			node.setAttribute("type","text/javascript");
 			node.setAttribute("src", 'js/threejs/build/three.min.js');
 			node.onload = function() {
-				var node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/MTLLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/modifiers/TessellateModifier.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/DDSLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/PVRLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/GLTFLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/controls/OrbitControls.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/controls/TransformControls.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
+				for (url in scriptsToLoad) {
+					var node = Browser.document.createElement('script');
+					node.setAttribute("type","text/javascript");
+					node.setAttribute("src", url);
+					node.onload = onloadFn;
+					head.appendChild(node);
+				}
 			};
 			head.appendChild(node);
 		} else {
@@ -388,10 +360,26 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
-		untyped __js__("
-			new THREE.GLTFLoader(ThreeJSStage.loadingManager)
-				.load(url, function (gltf) {
+	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void, onError : String -> Void) : Void {
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
+
+		if (loadingCache.exists(url)) {
+			var gltf = loadingCache[url];
+
+			onLoad(
+				gltf.animations, // Array<THREE.AnimationClip>
+				gltf.scene, // THREE.Scene
+				gltf.scenes, // Array<THREE.Scene>
+				gltf.cameras, // Array<THREE.Camera>
+				gltf.asset // Object
+			);
+		} else {
+			var loader : Dynamic = untyped __js__("new THREE.GLTFLoader(ThreeJSStage.loadingManager)");
+			loader.load(
+				url,
+				function (gltf) {
+					loadingCache.set(url, gltf);
+
 					onLoad(
 						gltf.animations, // Array<THREE.AnimationClip>
 						gltf.scene, // THREE.Scene
@@ -399,8 +387,11 @@ class RenderSupport3D {
 						gltf.cameras, // Array<THREE.Camera>
 						gltf.asset // Object
 					);
-				});
-		");
+				},
+				function() {},
+				onError
+			);
+		}
 	}
 
 	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
@@ -411,8 +402,14 @@ class RenderSupport3D {
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
 		if (loadingCache.exists(url)) {
-			var texture = loadingCache[url];
-			onLoad(texture);
+			var texture : Texture = loadingCache[url];
+			if (untyped texture.loaded) {
+				onLoad(texture);
+			} else {
+				texture.once("loaded", function() {
+					onLoad(texture);
+				});
+			}
 			return texture;
 		} else {
 			var texture : Texture = null;
@@ -429,7 +426,11 @@ class RenderSupport3D {
 					new TextureLoader(ThreeJSStage.loadingManager);
 				};
 
+			untyped texture.loaded = false;
+			loadingCache.set(url, texture);
+
 			var onLoadFn = function(loadedTexture : Texture) {
+				untyped loadedTexture.loaded = true;
 				loadingCache.set(url, loadedTexture);
 
 				for (par in parameters) {
@@ -449,11 +450,7 @@ class RenderSupport3D {
 			}
 
 			var onLoad = function() {
-				if (loadingCache.exists(url)) {
-					onLoadFn(loadingCache[url]);
-				} else {
-					loader.load(url, onLoadFn);
-				}
+				loader.load(url, onLoadFn);
 			};
 
 			untyped texture.load = onLoad;
@@ -1057,18 +1054,32 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
-		if (untyped object.materials != null && object.materials.length > 0 && object.materials[0].opacity != alpha) {
-			var materials : Array<Dynamic> = untyped object.materials;
+		if (untyped object.material != null || (object.materials != null && object.materials.length > 0)) {
+			var material = untyped object.materials != null && object.materials.length > 0 ? object.materials[0] : object.material;
+			if (untyped material.opacity != alpha) {
+				if (untyped object.materials != null && object.materials.length > 0) {
+					var materials : Array<Dynamic> = untyped object.materials;
 
-			for (material in materials) {
-				material.transparent = true;
-				material.opacity = alpha;
+					for (material in materials) {
+						material.transparent = true;
+						material.opacity = alpha;
+					}
+				}
+
+				if (untyped object.material != null) {
+					untyped object.material.transparent = true;
+					untyped object.material.opacity = alpha;
+				}
+
+				object.broadcastEvent("visiblechanged");
+				object.emitEvent("change");
+
+				object.invalidateStage();
 			}
-
-			object.broadcastEvent("visiblechanged");
-			object.emitEvent("change");
-
-			object.invalidateStage();
+		} else if (object.children != null && object.children.length > 0) {
+			for (child in object.children) {
+				set3DObjectAlpha(child, alpha);
+			}
 		}
 	}
 
@@ -1724,6 +1735,16 @@ class RenderSupport3D {
 		return g;
 	}
 
+	public static function make3DBufferFromGeometry(geometry : Geometry, parameters : Array<Array<String>>) : BufferGeometry {
+		var bufferGeometry = new BufferGeometry().fromGeometry(geometry);
+
+		for (par in parameters) {
+			untyped bufferGeometry[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return bufferGeometry;
+	}
+
 	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
 		if (data.length > 0) {
 			var attribute : Dynamic = new BufferAttribute(untyped new js.html.Float32Array(data.length * data[0].length), data[0].length);
@@ -1766,16 +1787,23 @@ class RenderSupport3D {
 		return data;
 	}
 
-	public static function make3DShapeGeometry(path : Array<Float>) : Geometry {
-		var points = [];
+	public static function make3DShapeGeometry(pathes : Array<Array<Float>>) : Geometry {
+		var shape : Geometry = null;
+		for (path in pathes) {
+			var points = [];
 
-		for (i in 0...Math.floor(path.length / 2)) {
-			points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
-		};
+			for (i in 0...Math.floor(path.length / 2)) {
+				points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
+			};
 
-		var g =  new ShapeGeometry(new Shape(points));
+			if (shape == null) {
+				shape = new ShapeGeometry(new Shape(points));
+			} else {
+				shape.merge(new ShapeGeometry(new Shape(points)), new Matrix4());
+			}
+		}
 
-		return g;
+		return shape;
 	}
 
 	public static function make3DShapeGeometry3D(path : Array<Float>) : Geometry {
@@ -2137,5 +2165,65 @@ class RenderSupport3D {
 
 	public static function add3DLODLevel(lod : LOD, level : Float, object : Object3D) : Void {
 		lod.addLevel(object, level);
+	}
+
+	public static function export3DGLTFObject(object : Object3D, exportFn : String -> Void, parameters : Array<Array<String>>) : Void {
+		var parObject : Dynamic = {};
+		for (par in parameters) {
+			untyped parObject[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		var exportFn2 = function(gltf) {
+			exportFn(parObject.binary ? gltf : haxe.Json.stringify(gltf));
+		}
+
+		untyped __js__("new THREE.GLTFExporter().parse(object, exportFn2, parObject)");
+	}
+
+	public static function set3DObjectParameters(object : Object3D, parameters : Array<Array<String>>) : Object3D {
+		for (par in parameters) {
+			untyped object[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		if (object.children != null && object.children.length > 0) {
+			for (child in object.children) {
+				set3DObjectParameters(child, parameters);
+			}
+		}
+
+		return object;
+	}
+
+	public static function set3DObjectMaterialParameters(object : Object3D, parameters : Array<Array<String>>) : Object3D {
+		if (untyped object.material != null || (object.materials != null && object.materials.length > 0)) {
+			if (untyped object.materials != null && object.materials.length > 0) {
+				var materials : Array<Dynamic> = untyped object.materials;
+
+				for (material in materials) {
+					for (par in parameters) {
+						untyped material[par[0]] = untyped __js__("eval(par[1])");
+					}
+				}
+			}
+
+			if (untyped object.material != null) {
+				for (par1 in parameters) {
+					untyped object.material[par1[0]] = untyped __js__("eval(par1[1])");
+				}
+			}
+
+			object.broadcastEvent("visiblechanged");
+			object.emitEvent("change");
+
+			object.invalidateStage();
+		}
+
+		if (object.children != null && object.children.length > 0) {
+			for (child in object.children) {
+				set3DObjectMaterialParameters(child, parameters);
+			}
+		}
+
+		return object;
 	}
 }
