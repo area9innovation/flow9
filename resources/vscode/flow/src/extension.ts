@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
-	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic, NotificationType0
+	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic, NotificationType0, RevealOutputChannelOn
 } from 'vscode-languageclient';
 import * as tools from "./tools";
 import * as updater from "./updater";
@@ -93,17 +93,23 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
+    let channel = vscode.window.createOutputChannel("flow");
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
-		documentSelector: [{scheme: 'file', language: 'flow'}],
+        documentSelector: [{scheme: 'file', language: 'flow'}],
+        outputChannel: channel,
+        revealOutputChannelOn: RevealOutputChannelOn.Info
 	}
 
-	// launch flowc server at startup
-	tools.launchFlowc(getFlowRoot());
+    // launch flowc server at startup
+    if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+        tools.launchFlowc(getFlowRoot());
+    }
 
 	// Create the language client and start the client.
-	client = new LanguageClient('flowLanguageServer', 'Flow Language Server', serverOptions, clientOptions);
+    client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
+    channel.show();
 	// Start the client. This will also launch the server
 	client.start();
 
