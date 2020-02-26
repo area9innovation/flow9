@@ -153,7 +153,19 @@ public class HttpSupport extends NativeHost {
 	 		// Add data
 			if (data != null) {
 				con.setDoOutput(true);
-				con.addRequestProperty("Content-Type", "application/" + method);
+
+				// If we already set this through a header, no need to override it
+				Boolean hasContentType = false;
+				for (Object header : headers) {
+					Object [] heads = (Object []) header;
+					String key = (String) heads[0];
+					if (key == "Content-Type") {
+						hasContentType = true;
+					}
+				}
+				if (!hasContentType) {
+					con.addRequestProperty("Content-Type", "application/" + method);
+				}
 				con.setRequestProperty("Content-Length", Integer.toString(data.length()));
 				try {
 					byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), data);
@@ -180,6 +192,12 @@ public class HttpSupport extends NativeHost {
 
 			// TODO: implement properly
 			Object[] responseHeaders = new Object[0];
+			/*
+			Map<String, List<String>> respHeaders = con.getHeaderFields();
+	        for (Map.Entry<String,List<String>> entry : respHeaders.entrySet()) {
+				System.out.println(entry.getKey());
+				System.out.println(entry.getValue());
+			}*/
 
 			onResponse.invoke(responseCode, response.toString(), responseHeaders);
         } catch (MalformedURLException e) {
