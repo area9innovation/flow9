@@ -411,14 +411,8 @@ class RenderSupport3D {
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
 		if (loadingCache.exists(url)) {
-			var texture : Texture = loadingCache[url];
-			if (untyped texture.loaded) {
-				onLoad(texture);
-			} else {
-				texture.once("loaded", function() {
-					onLoad(texture);
-				});
-			}
+			var texture = loadingCache[url];
+			onLoad(texture);
 			return texture;
 		} else {
 			var texture : Texture = null;
@@ -435,11 +429,7 @@ class RenderSupport3D {
 					new TextureLoader(ThreeJSStage.loadingManager);
 				};
 
-			untyped texture.loaded = false;
-			loadingCache.set(url, texture);
-
 			var onLoadFn = function(loadedTexture : Texture) {
-				untyped loadedTexture.loaded = true;
 				loadingCache.set(url, loadedTexture);
 
 				for (par in parameters) {
@@ -459,7 +449,11 @@ class RenderSupport3D {
 			}
 
 			var onLoad = function() {
-				loader.load(url, onLoadFn);
+				if (loadingCache.exists(url)) {
+					onLoadFn(loadingCache[url]);
+				} else {
+					loader.load(url, onLoadFn);
+				}
 			};
 
 			untyped texture.load = onLoad;
