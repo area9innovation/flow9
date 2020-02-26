@@ -627,7 +627,15 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DVertexGeometry(Object[] vertices) {
+		return null;
+	}
+
 	public Object make3DShapeGeometry3D(Object[] data) {
+		return null;
+	}
+
+	public Object make3DVertexGeometry3D(Object[] vertices) {
 		return null;
 	}
 
@@ -653,6 +661,10 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object make3DLineBasicMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DPointsMaterial(Integer color, Double size, Object[] parameters) {
 		return null;
 	}
 
@@ -683,6 +695,10 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object make3DLine(Object geometry, Object[] materials, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DPoints(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}
 

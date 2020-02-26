@@ -119,6 +119,8 @@ class ThreeJSStage extends Container {
 		if (camera != null) {
 			camera.emit("change");
 		}
+
+		this.emit("resize");
 	}
 
 	public function destroyRenderer() : Void {
@@ -290,6 +292,8 @@ class ThreeJSStage extends Container {
 			return;
 		}
 
+		this.emit("drawframe");
+
 		if (transformControls != null) {
 			scene.add(transformControls);
 		}
@@ -404,6 +408,8 @@ class ThreeJSStage extends Container {
 		if (RenderSupportJSPixi.RendererType == "html") {
 			if (isNativeWidget) {
 				if (visible && camera != null && scene != null && getWidth() > 0 && getHeight() > 0) {
+					this.emit("drawframe");
+
 					if (DisplayObjectHelper.DebugUpdate) {
 						untyped this.nativeWidget.setAttribute("update", Std.int(this.nativeWidget.getAttribute("update")) + 1);
 						if (untyped this.from) {
