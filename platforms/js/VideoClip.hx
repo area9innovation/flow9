@@ -55,6 +55,9 @@ class VideoClip extends FlowContainer {
 
 		if (playingVideosFiltered.length > 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
+			for (v in playingVideosFiltered) {
+				v.invalidateTransform();
+			}
 			return true;
 		}
 
