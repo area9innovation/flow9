@@ -33,7 +33,7 @@ class ThreeJSStage extends Container {
 	public var transformControls : Dynamic;
 	public var boxHelpers : Array<Object3D> = [];
 	public var objectCache : Array<Object3D> = [];
-	public var loadingManager = new LoadingManager();
+	public static var loadingManager : LoadingManager = null;
 	public var interactiveObjects : Array<Object3D> = [];
 	private var interactiveObjectsMouseOver : Array<Object3D> = [];
 
@@ -63,6 +63,11 @@ class ThreeJSStage extends Container {
 
 	public function new(width : Float, height : Float) {
 		super();
+
+		if (ThreeJSStage.loadingManager == null) {
+			ThreeJSStage.loadingManager = new LoadingManager();
+			untyped ThreeJSStage.loadingManager.cache = new Map<String, Dynamic>();
+		}
 
 		widgetWidth = width;
 		widgetHeight = height;
@@ -114,6 +119,8 @@ class ThreeJSStage extends Container {
 		if (camera != null) {
 			camera.emit("change");
 		}
+
+		this.emit("resize");
 	}
 
 	public function destroyRenderer() : Void {
@@ -285,6 +292,8 @@ class ThreeJSStage extends Container {
 			return;
 		}
 
+		this.emit("drawframe");
+
 		if (transformControls != null) {
 			scene.add(transformControls);
 		}
@@ -399,6 +408,8 @@ class ThreeJSStage extends Container {
 		if (RenderSupportJSPixi.RendererType == "html") {
 			if (isNativeWidget) {
 				if (visible && camera != null && scene != null && getWidth() > 0 && getHeight() > 0) {
+					this.emit("drawframe");
+
 					if (DisplayObjectHelper.DebugUpdate) {
 						untyped this.nativeWidget.setAttribute("update", Std.int(this.nativeWidget.getAttribute("update")) + 1);
 						if (untyped this.from) {

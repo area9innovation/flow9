@@ -3091,6 +3091,52 @@ StackSlot ByteCodeRunner::fileChecksum(RUNNER_ARGS)
 	return RUNNER->AllocateString(parseUtf8(res));
 }
 
+StackSlot ByteCodeRunner::readBytes(RUNNER_ARGS)
+{
+	RUNNER_PopArgs1(n);
+	RUNNER_CheckTag(TInt, n);
+	int len = n.GetInt();
+	char buffer[len];
+    std::cin.read(buffer, len);
+	return RUNNER->AllocateString(parseUtf8(std::string(buffer)));
+}
+
+StackSlot ByteCodeRunner::readUntil(RUNNER_ARGS)
+{
+	RUNNER_PopArgs1(p);
+	RUNNER_CheckTag(TString, p);
+	std::string pattern = encodeUtf8(RUNNER->GetString(p));
+	std::ostringstream buffer;
+	unsigned int pos = 0;
+	char ch = '\0';
+	while (std::cin.get(ch)) {
+		buffer << ch;
+		if (ch == pattern[pos]) {
+			pos += 1;
+			if (pos == pattern.size()) {
+				break;
+			}
+		} else {
+			pos = 0;
+		}
+	}
+	return RUNNER->AllocateString(parseUtf8(buffer.str()));
+}
+
+StackSlot ByteCodeRunner::print(RUNNER_ARGS)
+{
+	RUNNER_PopArgs1(object);
+
+    if (object.IsString())
+        RUNNER->flow_out << encodeUtf8(RUNNER->GetString(object));
+    else
+        RUNNER->PrintData(RUNNER->flow_out, object);
+
+    RUNNER->flow_out << std::flush;
+
+    RETVOID;
+}
+
 void ByteCodeRunner::NotifyCameraEvent(int code, std::string message, std::string additionalInfo, int width, int height)
 {
     const StackSlot &code_arg = StackSlot::MakeInt(code);

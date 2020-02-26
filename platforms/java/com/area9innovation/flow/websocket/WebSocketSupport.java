@@ -40,7 +40,8 @@ public class WebSocketSupport extends NativeHost{
 
     public Boolean send(Object webSocketClient, String message) {
         WebSocketClient client = (WebSocketClient) webSocketClient;
-        boolean isConnected = client.getReadyState() == WebSocket.READYSTATE.OPEN;
+		
+        boolean isConnected = client.getReadyState() == org.java_websocket.enums.ReadyState.OPEN;
         if (isConnected)
             client.send(message);
         return isConnected;
