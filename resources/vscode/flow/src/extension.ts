@@ -82,8 +82,8 @@ export function activate(context: vscode.ExtensionContext) {
 	// Otherwise the run options are used
     let serverOptions: ServerOptions;
     if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
-            serverOptions = {
-                command: 'flowc1',
+		serverOptions = {
+                command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
                 args: ['server-mode=console']
             }
         } else {
