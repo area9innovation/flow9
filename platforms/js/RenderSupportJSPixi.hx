@@ -1839,7 +1839,7 @@ class RenderSupportJSPixi {
 				case 226: if (shift) "|" else "\\";
 
 				default: {
-					var keyUTF = String.fromCharCode(charCode);
+					var keyUTF = charCode >= 0 ? String.fromCharCode(charCode) : "";
 
 					if (modifierStatePresent(e, "CapsLock")) {
 						if (e.getModifierState("CapsLock"))
