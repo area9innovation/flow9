@@ -209,7 +209,7 @@ renderParagraph(
 		\ -> {
 			updateFn = \wi-> {
 				// Ignore negative widths
-				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
 				newLines = reflowParaWords(words, w, indent, isParagraphMarked);
 				nextDistinct(linesCountB, length(newLines));
@@ -630,7 +630,7 @@ keepFormTogether(form : Form) -> bool {
 	};
 }
 
-ParaLineAcc(lines : List<Form>, width : double, y : double, baseline : double);
+ParaLineAcc(lines : List<(double)->Form>, width : double, y : double, baseline : double);
 
 // renders lines and returns resulting forms along with their tight width at the rendering time
 renderParaLines(
@@ -658,7 +658,7 @@ renderParaLines(
 				alignment;
 			}
 		f = RenderLine(
-			acc.y, line.words, availableWidth, tightWidth,
+			acc.y, line.words, tightWidth,
 			lineAlignment, line.indent,
 			i, styleTree, rtl, isMarked
 		);
@@ -668,22 +668,23 @@ renderParaLines(
 		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
 		nbaseline = f.baseline;
 		ParaLineAcc(
-			Cons(Size2(const(zeroWH), f.form), acc.lines),
+			Cons(f.form, acc.lines),
 			nwidth,
 			nheight,
 			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
 		);
 	});
 
+	aWidth = if (tightWidth) a.width else max(availableWidth, a.width);
 	Pair(
-		Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) a.width else max(availableWidth, a.width), a.y)),
-			Group(list2array(a.lines))
+		Baseline(const(a.baseline), Size2(const(WidthHeight(aWidth, a.y)),
+			Group(list2array(mapList(a.lines, \l -> Size2(const(zeroWH), l(aWidth)))))
 		)),
 		a.width
 	);
 }
 
-ParaLineResult(form : Form, width : double, height : double, baseline : double);
+ParaLineResult(form : (double) -> Form, width : double, height : double, baseline : double);
 OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
 
 getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [OptimizedLineElement]{
@@ -699,7 +700,6 @@ getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [Optimize
 RenderLine(
 	y : double,
 	words : [ParaWord],
-	width : double,
 	tightWidth : bool,
 	alignment : ParaLineAlignment,
 	lineIndent: double,
@@ -715,75 +715,77 @@ RenderLine(
 	lineHeight = fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + m.height - m.baseline));
 
 	// Alignment offset
-	startOffset = if (rtl) max(width - lineWidth, 0.) else 0.;
-	endOffset = if (rtl) 0. else max(0., width - lineWidth);
-	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
-		LeftAlign(): if (rtl) endOffset else startOffset;
-		RightAlign(): if (rtl) startOffset else endOffset;
-		CenterAlign(): max(0.0, (width - lineWidth) / 2.0);
-		StartAlign(): startOffset;
-		EndAlign(): endOffset;
-		Justify(): 0.0;
-	} + (if (rtl) 0. else lineIndent);
-	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && length(optimizedLine) > 1) {
-		nwords = length(optimizedLine);
-		remaining = (width - lineWidth);
-		min(10.0, remaining / i2d(nwords - 1));
-	} else 0.0;
+	lo = \width -> {
+		startOffset = if (rtl) width - lineWidth else 0.;
+		endOffset = if (rtl) 0.0 else width - lineWidth;
+		alignmentOffset = ref switch (alignment : ParaLineAlignment) {
+			LeftAlign(): if (rtl) endOffset else max(0.0, startOffset);
+			RightAlign(): if (rtl) min(0.0, startOffset) else endOffset;
+			CenterAlign(): max(0.0, (width - lineWidth) / 2.0);
+			StartAlign(): startOffset;
+			EndAlign(): endOffset;
+			Justify(): 0.0;
+		} + (if (rtl) 0. else lineIndent);
+		// Inter-word spacing for justification
+		interWord = if (alignment == Justify() && length(optimizedLine) > 1) {
+			nwords = length(optimizedLine);
+			remaining = (width - lineWidth);
+			min(10.0, remaining / i2d(nwords - 1));
+		} else 0.0;
 
-	// The width and the individual forms
-	lo : [Form] = filtermapi(optimizedLine, \i : int, elem : OptimizedLineElement -> {
-		f = elem.f;
-		m = getValue(elem.metrics);
-		dy = max(lineAsc - m.baseline, 0.0);
-		applyStylesAndOffset = \fm : Form -> eitherMap(
-			elem.interactivityIdM,
-			\id -> applyIntStylesAndHighlighting(
-				fm,
-				lookupTreeDef(interactiveStyles, id, []),
-				^alignmentOffset,
-				y,
-				dy,
-				m.width,
-				lineHeight,
-				interWord
-			),
-			Translate(const(^alignmentOffset), const(y + dy), fm)
-		);
+		// The width and the individual forms
+		Group(filtermapi(optimizedLine, \i : int, elem : OptimizedLineElement -> {
+			f = elem.f;
+			m = getValue(elem.metrics);
+			dy = max(lineAsc - m.baseline, 0.0);
+			applyStylesAndOffset = \fm : Form -> eitherMap(
+				elem.interactivityIdM,
+				\id -> applyIntStylesAndHighlighting(
+					fm,
+					lookupTreeDef(interactiveStyles, id, []),
+					^alignmentOffset,
+					y,
+					dy,
+					m.width,
+					lineHeight,
+					interWord
+				),
+				Translate(const(^alignmentOffset), const(y + dy), fm)
+			);
 
-		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
+			justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 
-		r = switch (f : GhostForm) {
-			Empty(): None();
-			Ghost(xc, yc, fm): {
-				nextDistinct(xc, ^alignmentOffset);
-				nextDistinct(yc, y + dy);
-				Some(applyStylesAndOffset(Empty()));
+			r = switch (f : GhostForm) {
+				Empty(): None();
+				Ghost(xc, yc, fm): {
+					nextDistinct(xc, ^alignmentOffset);
+					nextDistinct(yc, y + dy);
+					Some(applyStylesAndOffset(Empty()));
+				}
+				InspectGhost(inspector, fm): {
+					nextDistinct(inspector.x, ^alignmentOffset);
+					nextDistinct(inspector.y, y + dy);
+					nextDistinct(inspector.size, WidthHeight(m.width, m.height));
+					nextDistinct(inspector.lineHeight, lineHeight);
+					nextDistinct(inspector.lineNumber, lineNumber);
+					Some(applyStylesAndOffset(Empty()));
+				}
+				CoordinateInspectElement(inspector, fm): {
+					fo = applyStylesAndOffset(fm);
+					nextDistinct(inspector.x, ^alignmentOffset);
+					nextDistinct(inspector.y, y + dy);
+					nextDistinct(inspector.size, WidthHeight(m.width, m.height));
+					nextDistinct(inspector.lineHeight, lineHeight);
+					nextDistinct(inspector.lineNumber, lineNumber);
+					Some(fo);
+				}
+				default: Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
 			}
-			InspectGhost(inspector, fm): {
-				nextDistinct(inspector.x, ^alignmentOffset);
-				nextDistinct(inspector.y, y + dy);
-				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, lineHeight);
-				nextDistinct(inspector.lineNumber, lineNumber);
-				Some(applyStylesAndOffset(Empty()));
-			}
-			CoordinateInspectElement(inspector, fm): {
-				fo = applyStylesAndOffset(fm);
-				nextDistinct(inspector.x, ^alignmentOffset);
-				nextDistinct(inspector.y, y + dy);
-				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, lineHeight);
-				nextDistinct(inspector.lineNumber, lineNumber);
-				Some(fo);
-			}
-			default: Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
-		}
-		alignmentOffset := ^alignmentOffset + if (m.width > 0.0) m.width + justifyOffset else 0.0;
-		r;
-	});
-	ParaLineResult(Group(lo), lineWidth, lineHeight, y + lineAsc);
+			alignmentOffset := ^alignmentOffset + if (m.width > 0.0) m.width + justifyOffset else 0.0;
+			r;
+		}));
+	}
+	ParaLineResult(lo, lineWidth, lineHeight, y + lineAsc);
 }
 
 applyIntStylesAndHighlighting(
