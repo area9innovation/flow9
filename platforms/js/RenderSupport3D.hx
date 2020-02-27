@@ -77,6 +77,7 @@ using Object3DHelper;
 using Texture3DHelper;
 
 class RenderSupport3D {
+	private static var scriptsVersion = "?2";
 	private static var scriptsToLoad = [
 		'js/threejs/examples/js/loaders/MTLLoader.js',
 		'js/threejs/examples/js/loaders/OBJLoader.js',
@@ -108,7 +109,7 @@ class RenderSupport3D {
 				for (url in scriptsToLoad) {
 					var node = Browser.document.createElement('script');
 					node.setAttribute("type","text/javascript");
-					node.setAttribute("src", url);
+					node.setAttribute("src", url + scriptsVersion);
 					node.onload = onloadFn;
 					head.appendChild(node);
 				}
@@ -312,10 +313,6 @@ class RenderSupport3D {
 	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
 		var onLoadFn = function(obj : Dynamic) {
 			RenderSupportJSPixi.once("drawframe", function() {
-				for (geometry in Object3DHelper.get3DObjectAllGeometries(obj)) {
-					geometry.computeVertexNormals();
-				}
-
 				if (obj.name == "" && obj.uuid != null) {
 					obj.name = obj.uuid;
 				}
@@ -378,6 +375,9 @@ class RenderSupport3D {
 			loader.load(
 				url,
 				function (gltf) {
+					if (untyped gltf.scene.children != null && gltf.scene.children.length == 1) {
+						untyped gltf.scene = gltf.scene.children[0];
+					}
 					loadingCache.set(url, gltf);
 
 					onLoad(
@@ -692,14 +692,14 @@ class RenderSupport3D {
 
 
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
-		object.addEventListener(event, untyped cb);
+		object.onValue(event, untyped cb);
 
 		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout") && object.interactive == null){
 			set3DObjectInteractive(object, true);
 		}
 
 		return function() {
-			object.removeEventListener(event, untyped cb);
+			object.offValue(event, untyped cb);
 		};
 	}
 
@@ -1029,7 +1029,7 @@ class RenderSupport3D {
 		if (object.name != name) {
 			object.name = name;
 
-			object.emitEvent("namechange");
+			object.invalidateStage();
 		}
 	}
 
@@ -1039,11 +1039,7 @@ class RenderSupport3D {
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (object.visible != visible) {
-			object.invalidateStage();
 			object.visible = visible;
-
-			object.broadcastEvent("visiblechanged");
-			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -1071,9 +1067,6 @@ class RenderSupport3D {
 					untyped object.material.opacity = alpha;
 				}
 
-				object.broadcastEvent("visiblechanged");
-				object.emitEvent("change");
-
 				object.invalidateStage();
 			}
 		} else if (object.children != null && object.children.length > 0) {
@@ -1091,9 +1084,6 @@ class RenderSupport3D {
 		if (object.castShadow != castShadow) {
 			object.castShadow = castShadow;
 
-			object.broadcastEvent("shadowchanged");
-			object.emitEvent("change");
-
 			object.invalidateStage();
 		}
 	}
@@ -1105,9 +1095,6 @@ class RenderSupport3D {
 	public static function set3DObjectReceiveShadow(object : Object3D, receiveShadow : Bool) : Void {
 		if (object.receiveShadow != receiveShadow) {
 			object.receiveShadow = receiveShadow;
-
-			object.broadcastEvent("shadowchanged");
-			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -1121,9 +1108,6 @@ class RenderSupport3D {
 		if (object.frustumCulled != frustumCulled) {
 			object.frustumCulled = frustumCulled;
 
-			object.broadcastEvent("frustumchanged");
-			object.emitEvent("change");
-
 			object.invalidateStage();
 		}
 	}
@@ -1133,7 +1117,6 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionX(object : Object3D) : Float {
-		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).x");
 	}
 
@@ -1142,7 +1125,6 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionY(object : Object3D) : Float {
-		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).y");
 	}
 
@@ -1151,7 +1133,6 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionZ(object : Object3D) : Float {
-		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).z");
 	}
 
@@ -1159,9 +1140,7 @@ class RenderSupport3D {
 		if (object.position.x != x) {
 			object.position.x = x;
 
-			object.broadcastEvent("position");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1170,9 +1149,7 @@ class RenderSupport3D {
 		if (object.position.y != y) {
 			object.position.y = y;
 
-			object.broadcastEvent("position");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1181,9 +1158,7 @@ class RenderSupport3D {
 		if (object.position.z != z) {
 			object.position.z = z;
 
-			object.broadcastEvent("position");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1208,10 +1183,7 @@ class RenderSupport3D {
 		if (object.rotation.x != x) {
 			object.rotation.x = x;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("rotation");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1222,10 +1194,7 @@ class RenderSupport3D {
 		if (object.rotation.y != y) {
 			object.rotation.y = y;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("rotation");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1236,10 +1205,7 @@ class RenderSupport3D {
 		if (object.rotation.z != z) {
 			object.rotation.z = z;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("rotation");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1262,10 +1228,7 @@ class RenderSupport3D {
 		if (object.scale.x != x) {
 			object.scale.x = x;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("scale");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1274,10 +1237,7 @@ class RenderSupport3D {
 		if (object.scale.y != y) {
 			object.scale.y = y;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("scale");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1286,10 +1246,7 @@ class RenderSupport3D {
 		if (object.scale.z != z) {
 			object.scale.z = z;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("scale");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1435,12 +1392,10 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
-		object.updateMatrix();
 		return object.matrix.toArray();
 	}
 
 	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
-		object.updateMatrixWorld(true);
 		return object.matrixWorld.toArray();
 	}
 
@@ -1451,8 +1406,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectWorldPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1462,8 +1417,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectStagePositionListener(stage : ThreeJSStage, object : Object3D, cb : Float -> Float -> Void) : Void -> Void {
@@ -1474,15 +1429,15 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
+		object.onValue("matrix", fn);
 		if (stage.camera != null) {
-			stage.camera.addEventListener("change", fn);
+			stage.camera.onValue("matrix", fn);
 		}
 
 		return function() {
-			object.removeEventListener("change", fn);
+			object.offValue("matrix", fn);
 			if (stage.camera != null) {
-				stage.camera.removeEventListener("change", fn);
+				stage.camera.offValue("matrix", fn);
 			}
 		};
 	}
@@ -1494,8 +1449,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectLocalScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1505,8 +1460,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectBoundingBoxListener(object : Object3D, cb : (Array<Array<Float>>) -> Void) : Void -> Void {
@@ -1516,8 +1471,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("childrenchanged", fn);
+		return function() { object.offValue("childrenchanged", fn); };
 	}
 
 	public static function add3DObjectLocalMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
@@ -1527,8 +1482,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectWorldMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
@@ -1538,8 +1493,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 
@@ -1608,15 +1563,11 @@ class RenderSupport3D {
 	public static function set3DLightColor(object : Light, color : Int) : Void {
 		object.color = new Color(color);
 
-		object.broadcastEvent("change"); // TODO:
-
 		object.invalidateStage();
 	}
 
 	public static function set3DLightIntensity(object : Light, intensity : Float) : Void {
 		object.intensity = intensity;
-
-		object.broadcastEvent("change"); // TODO:
 
 		object.invalidateStage();
 	}
@@ -1624,15 +1575,11 @@ class RenderSupport3D {
 	public static function set3DLightDistance(object : PointLight, distance : Float) : Void {
 		object.distance = distance;
 
-		object.broadcastEvent("change"); // TODO:
-
 		object.invalidateStage();
 	}
 
 	public static function set3DLightAngle(object : SpotLight, angle : Float) : Void {
 		object.angle = angle * 0.0174532925 /*radians*/;
-
-		object.broadcastEvent("change"); // TODO:
 
 		object.invalidateStage();
 	}
@@ -1640,15 +1587,11 @@ class RenderSupport3D {
 	public static function set3DLightPenumbra(object : SpotLight, penumbra : Float) : Void {
 		object.penumbra = penumbra;
 
-		object.broadcastEvent("change"); // TODO:
-
 		object.invalidateStage();
 	}
 
 	public static function set3DLightDecay(object : PointLight, decay : Float) : Void {
 		object.decay = decay;
-
-		object.broadcastEvent("change"); // TODO:
 
 		object.invalidateStage();
 	}
@@ -2149,8 +2092,6 @@ class RenderSupport3D {
 		var heightHalf = stage.getHeight() / 2;
 
 		var vector = new Vector3(x, y, z);
-		stage.camera.updateMatrix();
-		stage.camera.updateMatrixWorld(true);
 		vector.project(stage.camera);
 
 		return [
@@ -2211,9 +2152,6 @@ class RenderSupport3D {
 					untyped object.material[par1[0]] = untyped __js__("eval(par1[1])");
 				}
 			}
-
-			object.broadcastEvent("visiblechanged");
-			object.emitEvent("change");
 
 			object.invalidateStage();
 		}

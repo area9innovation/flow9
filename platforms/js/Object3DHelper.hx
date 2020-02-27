@@ -14,6 +14,8 @@ class Object3DHelper {
 		}
 
 		if (getClipWorldVisible(object)) {
+			emit(object, "change");
+
 			for (stage in getStage(object)) {
 				stage.invalidateStage();
 			}
@@ -72,7 +74,6 @@ class Object3DHelper {
 
 	public static function emit(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 	}
 
 	public static function on(parent : Object3D, event : String, fn : Void -> Void) : Void {
@@ -81,6 +82,40 @@ class Object3DHelper {
 
 	public static function off(parent : Object3D, event : String, fn : Void -> Void) : Void {
 		parent.removeEventListener(event, untyped fn);
+	}
+
+	public static function updateBroadcastable(parent : Object3D, ?broadcastable : Bool) {
+		if (!broadcastable) {
+			broadcastable = untyped parent.listeners && parent.listeners("matrix").length;
+
+			for (child in parent.children) {
+				if (untyped child.broadcastable) {
+					broadcastable = true;
+				}
+			}
+		}
+
+		if (untyped parent.broadcastable != broadcastable) {
+			untyped parent.broadcastable = broadcastable;
+
+			if (parent.parent != null) {
+				updateBroadcastable(parent.parent, broadcastable);
+			}
+		}
+	}
+
+	public static function onValue(parent : Object3D, event : String, fn : Dynamic -> Void) : Void {
+		parent.addEventListener(event, fn);
+		if (event == "matrix") {
+			updateBroadcastable(parent, true);
+		}
+	}
+
+	public static function offValue(parent : Object3D, event : String, fn : Dynamic -> Void) : Void {
+		parent.removeEventListener(event, fn);
+		if (event == "matrix") {
+			updateBroadcastable(parent, false);
+		}
 	}
 
 	public static function once(parent : Object3D, event : String, fn : Void -> Void) : Void {
@@ -96,7 +131,6 @@ class Object3DHelper {
 
 	public static function emitMaterial(parent : Material, event : String) : Void {
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 	}
 
 	public static function onMaterial(parent : Material, event : String, fn : Void -> Void) : Void {
@@ -120,8 +154,11 @@ class Object3DHelper {
 
 
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
+		if (untyped !parent.broadcastable) {
+			return;
+		}
+
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 
 		var children : Array<Dynamic> = untyped parent.children;
 		if (children != null) {
@@ -133,7 +170,6 @@ class Object3DHelper {
 
 	public static function emitEvent(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 
 		if (parent.parent != null) {
 			emitEvent(parent.parent, event);
@@ -236,14 +272,7 @@ class Object3DHelper {
 
 			if (invalidate) {
 				emitEvent(child, "added");
-				emitEvent(parent, "box");
 				emitEvent(parent, "childrenchanged");
-
-				broadcastEvent(child, "position");
-				broadcastEvent(child, "scale");
-				broadcastEvent(child, "rotation");
-
-				emitEvent(parent, "change");
 
 				invalidateStage(parent);
 			}
@@ -311,10 +340,7 @@ class Object3DHelper {
 		}
 
 		if (invalidate) {
-			emitEvent(parent, "box");
 			emitEvent(parent, "childrenchanged");
-
-			emitEvent(parent, "change");
 			emitEvent(child, "removed");
 
 			invalidateStage(parent);
@@ -327,10 +353,7 @@ class Object3DHelper {
 		}
 
 		if (invalidate) {
-			emitEvent(parent, "box");
 			emitEvent(parent, "childrenchanged");
-
-			emitEvent(parent, "change");
 
 			invalidateStage(parent);
 		}

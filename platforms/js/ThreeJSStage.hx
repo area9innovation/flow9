@@ -117,6 +117,7 @@ class ThreeJSStage extends Container {
 		this.renderer.setPixelRatio(RenderSupportJSPixi.backingStoreRatio);
 
 		if (camera != null) {
+			camera.broadcastEvent("matrix");
 			camera.emit("change");
 		}
 
@@ -173,7 +174,7 @@ class ThreeJSStage extends Container {
 			camera
 		);
 
-		for (ob in raycaster.intersectObjects(interactiveObjects, true)) {
+		for (ob in raycaster.intersectObjects(interactiveObjects)) {
 			var object = ob.object;
 
 			if (handledObjects.indexOf(object) == -1) {
@@ -185,12 +186,12 @@ class ThreeJSStage extends Container {
 
 				if (untyped !object.inside) {
 					untyped object.inside = true;
-					object.emitEvent("mouseover");
+					object.emit("mouseover");
 				}
 
 				newInteractiveObjectsMouseOver.push(object);
 
-				object.emitEvent(event.type);
+				object.emit(event.type);
 				object.invalidateStage();
 			}
 		};
@@ -198,7 +199,7 @@ class ThreeJSStage extends Container {
 		for (ob in interactiveObjectsMouseOver) {
 			if (newInteractiveObjectsMouseOver.indexOf(ob) < 0) {
 				untyped ob.inside = false;
-				ob.emitEvent("mouseout");
+				ob.emit("mouseout");
 			}
 		}
 
