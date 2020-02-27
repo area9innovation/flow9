@@ -49,6 +49,9 @@ public class RenderSupport3D extends NativeHost {
 	public Object make3DStage(Double width, Double height) {
 		return null;
 	}
+	public Object dispose3DStage(Object stage) {
+		return null;
+	}
 	public Object make3DScene() {
 		return null;
 	}
@@ -720,6 +723,9 @@ public class RenderSupport3D extends NativeHost {
 		return no_op;
 	}
 
+	public Object enable3DStageObjectCache(Object stage) {
+		return null;
+	}
 	public Object clear3DStageObjectCache(Object stage) {
 		return null;
 	}

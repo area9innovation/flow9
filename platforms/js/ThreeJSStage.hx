@@ -33,6 +33,7 @@ class ThreeJSStage extends Container {
 	public var transformControls : Dynamic;
 	public var boxHelpers : Array<Object3D> = [];
 	public var objectCache : Array<Object3D> = [];
+	public var objectCacheEnabled : Bool = false;
 	public static var loadingManager : LoadingManager = null;
 	public var interactiveObjects : Array<Object3D> = [];
 	private var interactiveObjectsMouseOver : Array<Object3D> = [];
@@ -78,7 +79,7 @@ class ThreeJSStage extends Container {
 
 	private function initRenderer() {
 		if (this.renderer != null) {
-			destroyRenderer();
+			dispose();
 		}
 
 		if (RenderSupportJSPixi.RendererType == "html") {
@@ -124,7 +125,14 @@ class ThreeJSStage extends Container {
 		this.emit("resize");
 	}
 
-	public function destroyRenderer() : Void {
+	public function dispose() : Void {
+		boxHelpers = null;
+		objectCache = null;
+		objectCacheEnabled = false;
+		interactiveObjects = null;
+		interactiveObjectsMouseOver = null;
+		raycaster = null;
+
 		RenderSupportJSPixi.off("resize", updatePixelRatio);
 
 		if (orbitControls != null) {
@@ -134,6 +142,25 @@ class ThreeJSStage extends Container {
 		if (renderer != null) {
 			renderer.dispose();
 			renderer = null;
+		}
+
+		if (scene != null) {
+			scene.dispose();
+			scene = null;
+		}
+
+		if (camera != null) {
+			camera.dispose();
+		}
+
+		if (orbitControls != null) {
+			orbitControls.dispose();
+			orbitControls = null;
+		}
+
+		if (transformControls != null) {
+			transformControls.dispose();
+			transformControls = null;
 		}
 
 		this.deleteNativeWidget();

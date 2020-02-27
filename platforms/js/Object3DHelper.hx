@@ -4,6 +4,7 @@ import js.three.Texture;
 import js.three.Box3;
 import js.three.Camera;
 import js.three.Geometry;
+import js.three.Scene;
 
 using DisplayObjectHelper;
 
@@ -150,6 +151,28 @@ class Object3DHelper {
 		onMaterial(parent, event, disp);
 	}
 
+	public static function disposeMaterial(material : Material) : Void {
+		emitMaterial(material, "removed");
+
+		if (untyped material.map != null) {
+			untyped material.map.dispose();
+		}
+
+		if (untyped material.alphaMap != null) {
+			untyped material.alphaMap.dispose();
+		}
+
+		if (untyped material.bumpMap != null) {
+			untyped material.bumpMap.dispose();
+		}
+
+		if (untyped material.displacementMap != null) {
+			untyped material.displacementMap.dispose();
+		}
+
+		material.dispose();
+	}
+
 
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
 		if (untyped !parent.broadcastable) {
@@ -283,7 +306,9 @@ class Object3DHelper {
 		}
 
 		for (stage in getStage(parent)) {
-			untyped stage.objectCache.push(child);
+			if (stage.objectCacheEnabled) {
+				stage.objectCache.push(child);
+			}
 
 			if (invalidate) { // Do no lose transform controls if it isn't the last operation
 				RenderSupport3D.detach3DTransformControls(stage, child);
@@ -325,23 +350,13 @@ class Object3DHelper {
 
 		update3DChildren(parent);
 
-		if (untyped child.material != null) {
-			if (untyped child.material.length != null) {
-				var material : Array<Material> = untyped child.material;
-
-				for (mat in material) {
-					emitMaterial(mat, "removed");
-				}
-			} else {
-				emitMaterial(untyped child.material, "removed");
-			}
-		}
-
 		if (invalidate) {
 			emitEvent(parent, "childrenchanged");
 			emitEvent(child, "removed");
 
 			invalidateStage(parent);
+
+			dispose(child, false);
 		}
 	}
 
@@ -363,12 +378,8 @@ class Object3DHelper {
 		}
 
 		if (checkObjectCache) {
-			var stage = getStage(parent);
-
-			if (stage.length > 0) {
-				var objectCache : Array<Object3D> = untyped stage[0].objectCache;
-
-				for (child in objectCache) {
+			for (stage in getStage(parent)) {
+				for (child in stage.objectCache) {
 					var object = get3DObjectByUUID(child, id, false);
 
 					if (object.length > 0) {
@@ -447,6 +458,33 @@ class Object3DHelper {
 				disp();
 				onMaterialAdded(clip, fn);
 			});
+		}
+	}
+
+	public static function dispose(object : Object3D, ?disposeChildren : Bool = false) {
+		if (untyped disposeChildren && object.children != null && object.children.length > 0) {
+			var children : Array<Object3D> = untyped object.children;
+			for (child in children) {
+				dispose(child);
+			}
+		}
+
+		if (untyped object.materials != null && object.materials.length > 0) {
+			var materials : Array<Material> = untyped object.materials;
+
+			for (mat in materials) {
+				disposeMaterial(mat);
+			}
+		} else if (untyped object.material != null) {
+			disposeMaterial(untyped object.material);
+		}
+
+		if (untyped object.geometry != null) {
+			untyped object.geometry.dispose();
+		}
+
+		if (untyped object.dispose != null) {
+			untyped object.dispose();
 		}
 	}
 }

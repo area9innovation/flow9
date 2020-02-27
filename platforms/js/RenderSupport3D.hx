@@ -77,6 +77,8 @@ using Object3DHelper;
 using Texture3DHelper;
 
 class RenderSupport3D {
+	private static var LOADING_CACHE_ENABLED = true;
+
 	private static var scriptsVersion = "?2";
 	private static var scriptsToLoad = [
 		'js/threejs/examples/js/loaders/MTLLoader.js',
@@ -273,6 +275,10 @@ class RenderSupport3D {
 		return new ThreeJSStage(width, height);
 	}
 
+	public static function dispose3DStage(stage : ThreeJSStage) : Void {
+		RenderSupportJSPixi.once("drawframe", stage.dispose);
+	}
+
 	public static function make3DScene() : Scene {
 		var scene = new Scene();
 		scene.name = "Group";
@@ -360,7 +366,7 @@ class RenderSupport3D {
 	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void, onError : String -> Void) : Void {
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
-		if (loadingCache.exists(url)) {
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
 			var gltf = loadingCache[url];
 
 			onLoad(
@@ -378,7 +384,9 @@ class RenderSupport3D {
 					if (untyped gltf.scene.children != null && gltf.scene.children.length == 1) {
 						untyped gltf.scene = gltf.scene.children[0];
 					}
-					loadingCache.set(url, gltf);
+					if (LOADING_CACHE_ENABLED) {
+						loadingCache.set(url, gltf);
+					}
 
 					onLoad(
 						gltf.animations, // Array<THREE.AnimationClip>
@@ -401,7 +409,7 @@ class RenderSupport3D {
 	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
-		if (loadingCache.exists(url)) {
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
 			var texture : Texture = loadingCache[url];
 			if (untyped texture.loaded) {
 				for (par1 in parameters) {
@@ -433,11 +441,15 @@ class RenderSupport3D {
 				};
 
 			untyped texture.loaded = false;
-			loadingCache.set(url, texture);
+			if (LOADING_CACHE_ENABLED) {
+				loadingCache.set(url, texture);
+			}
 
 			var onLoadFn = function(loadedTexture : Texture) {
 				untyped loadedTexture.loaded = true;
-				loadingCache.set(url, loadedTexture);
+				if (LOADING_CACHE_ENABLED) {
+					loadingCache.set(url, loadedTexture);
+				}
 
 				for (par3 in parameters) {
 					untyped texture[par3[0]] = untyped __js__("eval(par3[1])");
@@ -452,6 +464,7 @@ class RenderSupport3D {
 
 				texture.invalidateTextureStage();
 				texture.emit("loaded");
+				texture.dispose();
 
 				onLoad(texture);
 			}
@@ -535,6 +548,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialMap(material : Material, map : Texture) : Void {
 		if (untyped material.map != map) {
+			if (untyped material.map != null) {
+				untyped material.map.dispose();
+			}
+
 			untyped map.parent = material;
 			untyped material.map = map;
 			untyped material.transparent = true;
@@ -561,6 +578,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialAlphaMap(material : Material, alphaMap : Texture) : Void {
 		if (untyped material.alphaMap != alphaMap) {
+			if (untyped material.alphaMap != null) {
+				untyped material.alphaMap.dispose();
+			}
+
 			untyped alphaMap.parent = material;
 			untyped material.alphaMap = alphaMap;
 			untyped material.transparent = true;
@@ -587,6 +608,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialDisplacementMap(material : Material, displacementMap : Texture, displacementScale : Float, displacementBias : Float) : Void {
 		if (untyped material.displacementMap != displacementMap) {
+			if (untyped material.displacementMap != null) {
+				untyped material.displacementMap.dispose();
+			}
+
 			untyped displacementMap.parent = material;
 			untyped material.displacementMap = displacementMap;
 			untyped material.displacementScale = displacementScale;
@@ -598,6 +623,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialBumpMap(material : Material, bumpMap : Texture, bumpScale : Float) : Void {
 		if (untyped material.bumpMap != bumpMap) {
+			if (untyped material.bumpMap != null) {
+				untyped material.bumpMap.dispose();
+			}
+
 			untyped bumpMap.parent = material;
 			untyped material.bumpMap = bumpMap;
 			untyped material.bumpScale = bumpScale;
@@ -1692,6 +1721,7 @@ class RenderSupport3D {
 
 	public static function make3DBufferFromGeometry(geometry : Geometry, parameters : Array<Array<String>>) : BufferGeometry {
 		var bufferGeometry = new BufferGeometry().fromGeometry(geometry);
+		geometry.dispose();
 
 		for (par in parameters) {
 			untyped bufferGeometry[par[0]] = untyped __js__("eval(par[1])");
@@ -2091,6 +2121,10 @@ class RenderSupport3D {
 		});
 
 		return stopFn;
+	}
+
+	public static function enable3DStageObjectCache(stage : ThreeJSStage) : Void {
+		stage.objectCacheEnabled = true;
 	}
 
 	public static function clear3DStageObjectCache(stage : ThreeJSStage) : Void {
