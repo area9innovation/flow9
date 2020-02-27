@@ -404,9 +404,15 @@ class RenderSupport3D {
 		if (loadingCache.exists(url)) {
 			var texture : Texture = loadingCache[url];
 			if (untyped texture.loaded) {
+				for (par1 in parameters) {
+					untyped texture[par1[0]] = untyped __js__("eval(par1[1])");
+				}
 				onLoad(texture);
 			} else {
 				texture.once("loaded", function() {
+					for (par2 in parameters) {
+						untyped texture[par2[0]] = untyped __js__("eval(par2[1])");
+					}
 					onLoad(texture);
 				});
 			}
@@ -433,8 +439,9 @@ class RenderSupport3D {
 				untyped loadedTexture.loaded = true;
 				loadingCache.set(url, loadedTexture);
 
-				for (par in parameters) {
-					untyped texture[par[0]] = untyped __js__("eval(par[1])");
+				for (par3 in parameters) {
+					untyped texture[par3[0]] = untyped __js__("eval(par3[1])");
+					untyped loadedTexture[par3[0]] = texture[par3[0]];
 				}
 
 				texture.image = loadedTexture.image;
