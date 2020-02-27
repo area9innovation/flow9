@@ -100,7 +100,14 @@ export function activate(context: vscode.ExtensionContext) {
 		// Register the server for plain text documents
         documentSelector: [{scheme: 'file', language: 'flow'}],
         outputChannel: channel,
-        revealOutputChannelOn: RevealOutputChannelOn.Info
+        revealOutputChannelOn: RevealOutputChannelOn.Info,
+        uriConverters: {
+            // FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
+            //        the "workaround" below disables temporarily the encoding until decoding
+            //        is implemented properly in clangd
+            code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
+            protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
+        }
 	}
 
     // launch flowc server at startup
