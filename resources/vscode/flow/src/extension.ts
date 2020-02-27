@@ -80,11 +80,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// If the extension is launched in debug mode then the debug server options are used
 	// Otherwise the run options are used
-    let serverOptions: ServerOptions;
+    let serverOptions: ServerOptions; 
     if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
 		serverOptions = {
                 command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
-                args: ['server-mode=console']
+                args: ['server-mode=console'],
+                options: { detached: false }
             }
         } else {
             serverOptions = {
@@ -130,7 +131,12 @@ export function deactivate() {
         child.kill('SIGKILL'); 
         if (os.platform() == "win32")
             spawn("taskkill", ["/pid", child.pid, '/f', '/t']);
-	});
+    });
+    client.sendNotification("exit");
+    if (!client) {
+		return undefined;
+	}
+	return client.stop();
 }
 
 export async function updateFlowRepo() {
