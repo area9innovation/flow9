@@ -13,12 +13,10 @@ class Object3DHelper {
 			untyped object.updateProjectionMatrix();
 		}
 
-		if (getClipWorldVisible(object)) {
-			emit(object, "change");
+		emit(object, "change");
 
-			for (stage in getStage(object)) {
-				stage.invalidateStage();
-			}
+		for (stage in getStage(object)) {
+			stage.invalidateStage();
 		}
 	}
 

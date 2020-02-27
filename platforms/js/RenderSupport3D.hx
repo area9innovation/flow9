@@ -608,6 +608,10 @@ class RenderSupport3D {
 				untyped material.uniforms.iOpacity.value = opacity;
 			}
 
+			if (untyped material.parent != null) {
+				untyped material.parent.alpha = opacity;
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
@@ -1046,13 +1050,14 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectAlpha(object : Object3D) : Float {
-		return untyped object.materials != null && object.materials.length > 0 ? object.materials[0] : 0.0;
+		return untyped object.alpha != null ? object.alpha : object.materials != null && object.materials.length > 0 ? object.materials[0] : 0.0;
 	}
 
 	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
 		if (untyped object.material != null || (object.materials != null && object.materials.length > 0)) {
-			var material = untyped object.materials != null && object.materials.length > 0 ? object.materials[0] : object.material;
-			if (untyped material.opacity != alpha) {
+			if (untyped object.alpha != alpha) {
+				untyped object.alpha == alpha;
+
 				if (untyped object.materials != null && object.materials.length > 0) {
 					var materials : Array<Dynamic> = untyped object.materials;
 
