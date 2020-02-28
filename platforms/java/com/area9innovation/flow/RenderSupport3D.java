@@ -82,8 +82,8 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DObject(Object stage, String objUrl, String mtlUrl, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Object load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad, Func1<String,Object> onError) {
-		return null;
+	public Func0<Object> load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad, Func1<String,Object> onError) {
+		return no_op;
 	}
 	public Object load3DScene(Object stage, String url, Func1<Object,Object> onLoad) {
 		return null;
@@ -91,8 +91,8 @@ public class RenderSupport3D extends NativeHost {
 	public Object make3DTextureLoader(Object stage, String url, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;
 	}
-	public Object load3DTexture(Object texture) {
-		return null;
+	public Func0<Object> load3DTexture(Object texture) {
+		return no_op;
 	}
 	public Object load3DCubeTexture(Object stage, String px, String nx, String py, String ny, String pz, String nz, Func1<Object,Object> onLoad, Object[] parameters) {
 		return null;

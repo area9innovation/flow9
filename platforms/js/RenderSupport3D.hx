@@ -363,7 +363,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void, onError : String -> Void) : Void {
+	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void, onError : String -> Void) : Void -> Void {
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
 		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
@@ -376,29 +376,42 @@ class RenderSupport3D {
 				gltf.cameras, // Array<THREE.Camera>
 				gltf.asset // Object
 			);
+
+			return function() {};
 		} else {
+			var cancelled = false;
 			var loader : Dynamic = untyped __js__("new THREE.GLTFLoader(ThreeJSStage.loadingManager)");
 			loader.load(
 				url,
 				function (gltf) {
-					if (untyped gltf.scene.children != null && gltf.scene.children.length == 1) {
-						untyped gltf.scene = gltf.scene.children[0];
-					}
-					if (LOADING_CACHE_ENABLED) {
-						loadingCache.set(url, gltf);
-					}
+					if (!cancelled) {
+						if (untyped gltf.scene.children != null && gltf.scene.children.length == 1) {
+							untyped gltf.scene = gltf.scene.children[0];
+						}
+						if (LOADING_CACHE_ENABLED) {
+							loadingCache.set(url, gltf);
+						}
 
-					onLoad(
-						gltf.animations, // Array<THREE.AnimationClip>
-						gltf.scene, // THREE.Scene
-						gltf.scenes, // Array<THREE.Scene>
-						gltf.cameras, // Array<THREE.Camera>
-						gltf.asset // Object
-					);
+						onLoad(
+							gltf.animations, // Array<THREE.AnimationClip>
+							gltf.scene, // THREE.Scene
+							gltf.scenes, // Array<THREE.Scene>
+							gltf.cameras, // Array<THREE.Camera>
+							gltf.asset // Object
+						);
+					}
 				},
 				function() {},
-				onError
+				function(e) {
+					if (!cancelled) {
+						onError(e);
+					}
+				}
 			);
+
+			return function() {
+				cancelled = true;
+			};
 		}
 	}
 
@@ -427,7 +440,6 @@ class RenderSupport3D {
 			return texture;
 		} else {
 			var texture : Texture = null;
-
 			var loader : Dynamic =
 				if (StringTools.endsWith(url, ".dds")) {
 					texture = new CompressedTexture();
@@ -441,32 +453,37 @@ class RenderSupport3D {
 				};
 
 			untyped texture.loaded = false;
+
 			if (LOADING_CACHE_ENABLED) {
 				loadingCache.set(url, texture);
 			}
 
 			var onLoadFn = function(loadedTexture : Texture) {
-				untyped loadedTexture.loaded = true;
-				if (LOADING_CACHE_ENABLED) {
-					loadingCache.set(url, loadedTexture);
+				if (untyped !texture.cancelled) {
+					untyped loadedTexture.loaded = true;
+					if (LOADING_CACHE_ENABLED) {
+						loadingCache.set(url, loadedTexture);
+					}
+
+					for (par3 in parameters) {
+						untyped texture[par3[0]] = untyped __js__("eval(par3[1])");
+						untyped loadedTexture[par3[0]] = texture[par3[0]];
+					}
+
+					texture.image = loadedTexture.image;
+					texture.format = loadedTexture.format;
+					texture.mipmaps = loadedTexture.mipmaps;
+					texture.minFilter = loadedTexture.minFilter;
+					texture.needsUpdate = true;
+
+					texture.invalidateTextureStage();
+					texture.emit("loaded");
+					texture.dispose();
+
+					onLoad(texture);
+				} else {
+					loadingCache.remove(url);
 				}
-
-				for (par3 in parameters) {
-					untyped texture[par3[0]] = untyped __js__("eval(par3[1])");
-					untyped loadedTexture[par3[0]] = texture[par3[0]];
-				}
-
-				texture.image = loadedTexture.image;
-				texture.format = loadedTexture.format;
-				texture.mipmaps = loadedTexture.mipmaps;
-				texture.minFilter = loadedTexture.minFilter;
-				texture.needsUpdate = true;
-
-				texture.invalidateTextureStage();
-				texture.emit("loaded");
-				texture.dispose();
-
-				onLoad(texture);
 			}
 
 			var onLoad = function() {
@@ -479,9 +496,15 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function load3DTexture(texture : Texture) : Void {
+	public static function load3DTexture(texture : Texture) : Void -> Void {
 		if (untyped texture.load != null) {
 			untyped texture.load();
+
+			return function() {
+				untyped texture.cancelled = true;
+			};
+		} else {
+			return function() {};
 		}
 	}
 
@@ -654,8 +677,6 @@ class RenderSupport3D {
 
 	public static function set3DMaterialVisible(material : Material, visible : Bool) : Void {
 		if (untyped material.visible != visible) {
-			material.invalidateMaterialStage();
-
 			untyped material.visible = visible;
 
 			if (untyped material.uniforms != null && material.uniforms.iVisible != null) {
