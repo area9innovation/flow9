@@ -14,10 +14,12 @@ class Object3DHelper {
 			untyped object.updateProjectionMatrix();
 		}
 
-		emit(object, "change");
+		if (untyped getClipWorldVisible(object) && object.alpha != 0) {
+			emit(object, "change");
 
-		for (stage in getStage(object)) {
-			stage.invalidateStage();
+			for (stage in getStage(object)) {
+				stage.invalidateStage();
+			}
 		}
 	}
 
@@ -175,7 +177,7 @@ class Object3DHelper {
 
 
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
-		if (untyped !parent.broadcastable) {
+		if (untyped !parent.broadcastable || parent.alpha == 0 || !getClipWorldVisible(parent)) {
 			return;
 		}
 
@@ -244,6 +246,8 @@ class Object3DHelper {
 			if (childrenMap.get(index) != null) {
 				remove3DChild(parent, childrenMap.get(index), false);
 			}
+
+			updateAlpha(child);
 
 			childrenMap.set(index, child);
 			child.parent = parent;
@@ -485,6 +489,21 @@ class Object3DHelper {
 
 		if (untyped object.dispose != null) {
 			untyped object.dispose();
+		}
+	}
+
+	public static function updateAlpha(object : Object3D) {
+		if (untyped object.materials != null && object.materials.length > 0) {
+			var materials : Array<Material> = untyped object.materials;
+
+			untyped object.alpha = 0;
+			for (mat in materials) {
+				if (untyped mat.opacity > object.alpha) {
+					untyped object.alpha = mat.opacity;
+				}
+			}
+		} else if (untyped object.material != null) {
+			untyped object.alpha = object.material.opacity;
 		}
 	}
 }

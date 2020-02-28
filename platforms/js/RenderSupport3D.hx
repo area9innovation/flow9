@@ -1113,7 +1113,7 @@ class RenderSupport3D {
 	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
 		if (untyped object.material != null || (object.materials != null && object.materials.length > 0)) {
 			if (untyped object.alpha != alpha) {
-				untyped object.alpha == alpha;
+				untyped object.alpha = alpha;
 
 				if (untyped object.materials != null && object.materials.length > 0) {
 					var materials : Array<Dynamic> = untyped object.materials;
