@@ -608,6 +608,11 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DCylinderBufferGeometry(Double radiusTop, Double radiusBottom, Double height, Integer radialSegments,
+		Integer heightSegments, Boolean openEnded, Double thetaStart, Double thetaLength, Func2<Integer, Integer, Object[]> addGroups) {
+		return null;
+	}
+
 	public Object make3DBoxBufferGeometry(Double width, Double height, Double depth, Integer widthSegments, Integer heightSegments,
 		Integer depthSegments, Func2<Integer, Integer, Object[]> addGroups) {
 		return null;
@@ -698,6 +703,10 @@ public class RenderSupport3D extends NativeHost {
 
 
 	public Object make3DMesh(Object geometry, Object[] materials, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DInstancedMesh(Object geometry, Object[] materials, Object[] parameters, Integer count, Func2<Interger, Object, Object> fn) {
 		return null;
 	}
 

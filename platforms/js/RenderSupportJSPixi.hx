@@ -607,8 +607,6 @@ class RenderSupportJSPixi {
 				return;
 			}
 		}
-
-		Errors.report("Warning: unknown message source");
 	}
 
 	private static inline function getScreenSize() {

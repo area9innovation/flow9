@@ -39,6 +39,7 @@ import js.three.ShapeGeometry;
 
 import js.three.BufferGeometry;
 import js.three.SphereBufferGeometry;
+import js.three.CylinderBufferGeometry;
 import js.three.BoxBufferGeometry;
 import js.three.BufferAttribute;
 
@@ -77,7 +78,7 @@ using Object3DHelper;
 using Texture3DHelper;
 
 class RenderSupport3D {
-	private static var LOADING_CACHE_ENABLED = true;
+	public static var LOADING_CACHE_ENABLED = true;
 
 	private static var scriptsVersion = "?2";
 	private static var scriptsToLoad = [
@@ -318,16 +319,14 @@ class RenderSupport3D {
 
 	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
 		var onLoadFn = function(obj : Dynamic) {
-			RenderSupportJSPixi.once("drawframe", function() {
-				if (obj.name == "" && obj.uuid != null) {
-					obj.name = obj.uuid;
-				}
+			if (obj.name == "" && obj.uuid != null) {
+				obj.name = obj.uuid;
+			}
 
-				Object3DHelper.invalidateStage(obj);
-				Object3DHelper.emit(obj, "loaded");
+			Object3DHelper.invalidateStage(obj);
+			Object3DHelper.emit(obj, "loaded");
 
-				onLoad(obj);
-			});
+			onLoad(obj);
 		}
 
 		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
@@ -420,6 +419,10 @@ class RenderSupport3D {
 	}
 
 	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		if (ThreeJSStage.loadingManager == null) {
+			return new Texture();
+		}
+
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
 		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
@@ -860,6 +863,10 @@ class RenderSupport3D {
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
+		if (stage.transformControls == null) {
+			stage.createTransformControls();
+		}
+
 		if (stage.transformControls != null) {
 			if (untyped object.transformControls != null) {
 				if (untyped object.transformControls.object != null) {
@@ -1099,34 +1106,27 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
-		if (object.visible != visible) {
-			object.visible = visible;
+		if (untyped object._visible != visible) {
+			untyped object._visible = visible;
 
+			object.updateVisible();
 			object.invalidateStage();
 		}
 	}
 
 	public static function get3DObjectAlpha(object : Object3D) : Float {
-		return untyped object.alpha != null ? object.alpha : object.materials != null && object.materials.length > 0 ? object.materials[0] : 0.0;
+		return untyped object.alpha != null ? object.alpha :
+			object.material != null ? object.material.length != null && object.material.length > 0 ? object.material[0].opacity : object.material.opacity : 0.0;
 	}
 
 	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
-		if (untyped object.material != null || (object.materials != null && object.materials.length > 0)) {
+		if (untyped object.material != null) {
 			if (untyped object.alpha != alpha) {
 				untyped object.alpha = alpha;
 
-				if (untyped object.materials != null && object.materials.length > 0) {
-					var materials : Array<Dynamic> = untyped object.materials;
-
-					for (material in materials) {
-						material.transparent = true;
-						material.opacity = alpha;
-					}
-				}
-
-				if (untyped object.material != null) {
-					untyped object.material.transparent = true;
-					untyped object.material.opacity = alpha;
+				for (material in object.getMaterials()) {
+					material.transparent = true;
+					material.opacity = alpha;
 				}
 
 				object.invalidateStage();
@@ -1406,10 +1406,12 @@ class RenderSupport3D {
 		object.lookAt(new Vector3(x, y, z));
 		object.invalidateStage();
 
-		RenderSupportJSPixi.once("drawframe", function() {
-			object.lookAt(new Vector3(x, y, z));
-			object.invalidateStage();
-		});
+		for (stage in object.getStage()) {
+			stage.once("drawframe", function() {
+				object.lookAt(new Vector3(x, y, z));
+				object.invalidateStage();
+			});
+		}
 	}
 
 	public static function set3DObjectLocalMatrix(object : Object3D, matrix : Array<Float>) : Void {
@@ -1474,6 +1476,9 @@ class RenderSupport3D {
 
 	public static function add3DObjectWorldPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
+			if (untyped object.isInstance) {
+				object.updateMatrixWorld(true);
+			}
 			cb(get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
 		};
 
@@ -1485,6 +1490,9 @@ class RenderSupport3D {
 
 	public static function add3DObjectStagePositionListener(stage : ThreeJSStage, object : Object3D, cb : Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
+			if (untyped object.isInstance) {
+				object.updateMatrixWorld(true);
+			}
 			var sc = convert3DVectorToStageCoordinates(stage, get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
 			cb(sc[0], sc[1]);
 		};
@@ -1550,6 +1558,9 @@ class RenderSupport3D {
 
 	public static function add3DObjectWorldMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
+			if (untyped object.isInstance) {
+				object.updateMatrixWorld(true);
+			}
 			cb(get3DObjectWorldMatrix(object));
 		};
 
@@ -1711,11 +1722,17 @@ class RenderSupport3D {
 	}
 
 	public static function set3DGeometryMatrix(geometry : Geometry, matrix : Array<Float>) : Void {
-		geometry.applyMatrix(new Matrix4().fromArray(matrix));
+		untyped geometry.applyMatrix4(new Matrix4().fromArray(matrix));
 	}
 
 	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
 		var g = new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		untyped g.addGroups = addGroups;
+		return g;
+	}
+
+	public static function make3DCylinderBufferGeometry(radiusTop : Float, radiusBottom : Float, height : Float, radialSegments : Int, heightSegments : Int, openEnded : Bool, thetaStart : Float, thetaLength : Float, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new CylinderBufferGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
 		untyped g.addGroups = addGroups;
 		return g;
 	}
@@ -1992,15 +2009,9 @@ class RenderSupport3D {
 			}
 
 			return function() {
-				if (uniformsObject.iTime != null) {
-					stage.off("drawframe", iTimeFn);
-				}
-				if (uniformsObject.iAspectRatio != null) {
-					stage.off("resize", iAspectRatioFn);
-				}
-				if (uniformsObject.iResolution != null) {
-					stage.off("resize", iResolutionFn);
-				}
+				stage.off("drawframe", iTimeFn);
+				stage.off("resize", iAspectRatioFn);
+				stage.off("resize", iResolutionFn);
 			};
 		});
 
@@ -2038,7 +2049,43 @@ class RenderSupport3D {
 			untyped material.parent = mesh;
 		}
 
-		untyped mesh.materials = materials;
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function make3DInstancedMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>, count : Int, fn : (Int, Object3D) -> Void) : Mesh {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
+			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
+			}
+		}
+
+		var mesh : Dynamic = untyped __js__("new THREE.InstancedMesh(geometry, materials.length == 1 ? materials[0] : materials, count)");
+		untyped mesh.instanceObjects = [];
+		set3DObjectInteractive(mesh, true);
+
+		for (i in 0...count) {
+			var o = new Object3D();
+			o.parent = mesh;
+			untyped o.isInstance = true;
+			fn(i, o);
+			o.updateMatrix();
+			mesh.setMatrixAt(i, o.matrix);
+			o.on("change", function() {
+				mesh.setMatrixAt(i, o.matrix);
+			});
+			untyped mesh.instanceObjects.push(o);
+		}
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
 
 		for (par in parameters) {
 			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
@@ -2063,8 +2110,6 @@ class RenderSupport3D {
 			untyped material.parent = mesh;
 		}
 
-		untyped mesh.materials = materials;
-
 		for (par in parameters) {
 			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
 		}
@@ -2087,8 +2132,6 @@ class RenderSupport3D {
 		for (material in materials) {
 			untyped material.parent = mesh;
 		}
-
-		untyped mesh.materials = materials;
 
 		for (par in parameters) {
 			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
@@ -2203,20 +2246,10 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectMaterialParameters(object : Object3D, parameters : Array<Array<String>>) : Object3D {
-		if (untyped object.material != null || (object.materials != null && object.materials.length > 0)) {
-			if (untyped object.materials != null && object.materials.length > 0) {
-				var materials : Array<Dynamic> = untyped object.materials;
-
-				for (material in materials) {
-					for (par in parameters) {
-						untyped material[par[0]] = untyped __js__("eval(par[1])");
-					}
-				}
-			}
-
-			if (untyped object.material != null) {
-				for (par1 in parameters) {
-					untyped object.material[par1[0]] = untyped __js__("eval(par1[1])");
+		if (untyped object.material != null) {
+			for (material in object.getMaterials()) {
+				for (par in parameters) {
+					untyped material[par[0]] = untyped __js__("eval(par[1])");
 				}
 			}
 

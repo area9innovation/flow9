@@ -132,6 +132,9 @@ class ThreeJSStage extends Container {
 		interactiveObjects = null;
 		interactiveObjectsMouseOver = null;
 		raycaster = null;
+		if (!RenderSupport3D.LOADING_CACHE_ENABLED) {
+			ThreeJSStage.loadingManager = null;
+		}
 
 		RenderSupportJSPixi.off("resize", updatePixelRatio);
 
@@ -202,7 +205,7 @@ class ThreeJSStage extends Container {
 		);
 
 		for (ob in raycaster.intersectObjects(interactiveObjects)) {
-			var object = ob.object;
+			var object = untyped ob.instanceId != null && ob.object.instanceObjects != null ? ob.object.instanceObjects[ob.instanceId] : ob.object;
 
 			if (handledObjects.indexOf(object) == -1) {
 				handledObjects.push(object);
@@ -233,7 +236,7 @@ class ThreeJSStage extends Container {
 		interactiveObjectsMouseOver = newInteractiveObjectsMouseOver;
 	}
 
-	private function createTransformControls() {
+	public function createTransformControls() {
 		if (scene != null && transformControls != null) {
 			untyped scene.transformControls = null;
 		}
@@ -273,7 +276,6 @@ class ThreeJSStage extends Container {
 		this.camera = camera;
 
 		createOrbitControls();
-		createTransformControls();
 		addEventListeners();
 
 		untyped orbitControls.parameters = parameters;
@@ -360,6 +362,7 @@ class ThreeJSStage extends Container {
 		if (widgetWidth != width) {
 			widgetWidth = width;
 			renderer.setSize(width, getHeight());
+			this.emit("resize");
 			invalidateStage();
 		}
 	}
@@ -368,6 +371,7 @@ class ThreeJSStage extends Container {
 		if (widgetHeight != height) {
 			widgetHeight = height;
 			renderer.setSize(getWidth(), height);
+			this.emit("resize");
 			invalidateStage();
 		}
 	}
