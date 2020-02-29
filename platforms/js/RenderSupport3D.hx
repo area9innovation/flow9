@@ -2056,7 +2056,7 @@ class RenderSupport3D {
 		return mesh;
 	}
 
-	public static function make3DInstancedMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>, count : Int, fn : (Int, Object3D) -> Void) : Mesh {
+	public static function make3DInstancedMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>, count : Int, fn : Int -> Object3D -> Void) : Mesh {
 		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
 			untyped geometry.clearGroups();
 			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
