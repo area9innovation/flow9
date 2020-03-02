@@ -706,7 +706,7 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object make3DInstancedMesh(Object geometry, Object[] materials, Object[] parameters, Integer count, Func2<Interger, Object, Object> fn) {
+	public Object make3DInstancedMesh(Object geometry, Object[] materials, Object[] parameters, Integer count, Func2<Integer, Object, Object> fn) {
 		return null;
 	}
 
