@@ -618,7 +618,7 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object make3DShapeBufferGeometry(Object[] data, Func2<Integer, Integer, Object[]> addGroups) {
+	public Object make3DShapeBufferGeometry(Object[] pathes, Func2<Integer, Integer, Object[]> addGroups) {
 		return null;
 	}
 
@@ -664,6 +664,10 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object tesselate3DGeometry(Object geometry, Double distance, Integer iterations) {
+		return null;
+	}
+
+	public Object simplify3DGeometry(Object geometry, Func1<Integer, Integer> countFn) {
 		return null;
 	}
 

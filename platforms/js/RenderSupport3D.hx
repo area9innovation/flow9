@@ -85,6 +85,7 @@ class RenderSupport3D {
 		'js/threejs/examples/js/loaders/MTLLoader.js',
 		'js/threejs/examples/js/loaders/OBJLoader.js',
 		'js/threejs/examples/js/modifiers/TessellateModifier.js',
+		'js/threejs/examples/js/modifiers/SimplifyModifier.js',
 		'js/threejs/examples/js/loaders/DDSLoader.js',
 		'js/threejs/examples/js/loaders/PVRLoader.js',
 		'js/threejs/examples/js/loaders/GLTFLoader.js',
@@ -1743,28 +1744,21 @@ class RenderSupport3D {
 		return g;
 	}
 
-	public static function make3DShapeBufferGeometry(path : Array<Float>, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
-		var shape = new Shape();
-
-		shape.moveTo(path[0], path[1]);
-		for (i in 1...Math.floor(path.length / 2)) {
-			shape.lineTo(path[i * 2], path[i * 2 + 1]);
-		};
-		shape.lineTo(path[0], path[1]);
-
-		var g : BufferGeometry = untyped __js__("new THREE.ShapeBufferGeometry(shape)");
-		untyped g.addGroups = addGroups;
-		return g;
+	public static function make3DShapeBufferGeometry(pathes : Array<Array<Float>>, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		return make3DBufferFromGeometry(make3DShapeGeometry(pathes), null, addGroups);
 	}
 
-	public static function make3DBufferFromGeometry(geometry : Geometry, parameters : Array<Array<String>>) : BufferGeometry {
+	public static function make3DBufferFromGeometry(geometry : Geometry, ?parameters : Array<Array<String>>, ?addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
 		var bufferGeometry = new BufferGeometry().fromGeometry(geometry);
 		geometry.dispose();
 
-		for (par in parameters) {
-			untyped bufferGeometry[par[0]] = untyped __js__("eval(par[1])");
+		if (parameters != null) {
+			for (par in parameters) {
+				untyped bufferGeometry[par[0]] = untyped __js__("eval(par[1])");
+			}
 		}
 
+		untyped bufferGeometry.addGroups = addGroups;
 		return bufferGeometry;
 	}
 
@@ -1896,6 +1890,16 @@ class RenderSupport3D {
 		}
 
 		return geometry;
+	}
+
+	public static function simplify3DGeometry(geometry : Geometry, countFn : Int -> Int) : Geometry {
+		var m = untyped __js__("new THREE.SimplifyModifier()");
+
+		return m.modify(
+			geometry,
+			countFn(geometry.vertices != null ? geometry.vertices.length :
+				untyped geometry.index != null ? geometry.index.count : geometry.attributes.position.count)
+		);
 	}
 
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
@@ -2036,7 +2040,7 @@ class RenderSupport3D {
 	public static function make3DMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Mesh {
 		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
 			untyped geometry.clearGroups();
-			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index != null ? geometry.index.count : geometry.attributes.position.count, materials.length);
 
 			for (group in groups) {
 				untyped geometry.addGroup(group[0], group[1], group[2]);
