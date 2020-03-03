@@ -45,7 +45,7 @@ class RenderSupportJSPixi {
 	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
-	public static var DropCurrentFocusOnDown : Bool;
+	public static var DropCurrentFocusOnMouse : Bool;
 	// Renders in a higher resolution backing store and then scales it down with css (e.g., ratio = 2 for retina displays)
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
@@ -669,13 +669,15 @@ class RenderSupportJSPixi {
 			Browser.document.activeElement.blur();
 	}
 
-	private static function setDropCurrentFocusOnDown(drop : Bool) : Void {
-		if (DropCurrentFocusOnDown != drop) {
-			DropCurrentFocusOnDown = drop;
+	private static function setDropCurrentFocusOnMouse(drop : Bool) : Void {
+		if (DropCurrentFocusOnMouse != drop) {
+			DropCurrentFocusOnMouse = drop;
+
+			var event_name = Platform.isMobile ? "touchend" : "mousedown";
 			if (drop)
-				on("mousedown", dropCurrentFocus);
+				on(event_name, dropCurrentFocus);
 			else
-				off("mousedown", dropCurrentFocus);
+				off(event_name, dropCurrentFocus);
 		}
 	}
 
@@ -826,7 +828,7 @@ class RenderSupportJSPixi {
 		on("mouseup", function (e) { MouseUpReceived = true; });
 
 		switchFocusFramesShow(false);
-		setDropCurrentFocusOnDown(true);
+		setDropCurrentFocusOnMouse(true);
 	}
 
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
