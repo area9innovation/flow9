@@ -71,7 +71,7 @@ See the Material demo, as well as Material test programs to learn how to use Mat
 
 	c:\flow9> flowcpp demos/demos.flow
 
-	c:\flow9> flowcpp lib/material/tests/material_test.flow
+	c:\flow9> flowcpp material/tests/material_test.flow
 
 Also, check out the 7 GUIs challenge in `demos/7guis`. Those examples exist in many other languages,
 so that is a good way to compare and contrast.
