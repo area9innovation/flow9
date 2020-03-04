@@ -1416,13 +1416,13 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectLocalMatrix(object : Object3D, matrix : Array<Float>) : Void {
-		object.matrix.fromArray(matrix);
+		new Matrix4().fromArray(matrix).decompose(object.position, object.quaternion, new Vector3());
 		object.invalidateStage();
 	}
 
+	// TODO: TEST
 	public static function set3DObjectWorldMatrix(object : Object3D, matrix : Array<Float>) : Void {
-		object.matrixWorld.fromArray(matrix);
-		object.invalidateStage();
+		set3DObjectLocalMatrix(object, new Matrix4().fromArray(matrix).multiply(untyped object.parent.matrixWorld.getInverse(new Matrix4())).toArray());
 	}
 
 
