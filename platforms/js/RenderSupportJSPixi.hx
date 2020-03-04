@@ -687,8 +687,12 @@ class RenderSupportJSPixi {
 
 	public static var MouseUpReceived : Bool = true;
 
-	private static function addNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+	public static function addNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
 		untyped __js__("element.addEventListener(event, fn, { passive : false })");
+	}
+
+	public static function removeNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.removeEventListener(event, fn, { passive : false })");
 	}
 
 	private static inline function initPixiStageEventListeners() {

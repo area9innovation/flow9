@@ -178,29 +178,54 @@ class ThreeJSStage extends Container {
 	}
 
 	private function addEventListeners() {
-		untyped renderer.eventElement.removeEventListener("mousedown", onMouseEvent);
-		untyped renderer.eventElement.addEventListener("mousedown", onMouseEvent);
+		if (Platform.isMobile) {
+			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
+			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
 
-		untyped renderer.eventElement.removeEventListener("mouseup", onMouseEvent);
-		untyped renderer.eventElement.addEventListener("mouseup", onMouseEvent);
+			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchend", onMouseEvent);
+			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchend", onMouseEvent);
 
-		untyped renderer.eventElement.removeEventListener("mousemove", onMouseEvent);
-		untyped renderer.eventElement.addEventListener("mousemove", onMouseEvent);
+			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchmove", onMouseEvent);
+			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchmove", onMouseEvent);
+		} else {
+			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "mousedown", onMouseEvent);
+			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "mousedown", onMouseEvent);
+
+			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "mouseup", onMouseEvent);
+			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "mouseup", onMouseEvent);
+
+			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
+			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
+		}
 	}
 
-	public function onMouseEvent(event : Dynamic, ?object : Object3D) : Void {
+	var prevMousePos = null;
+
+	public function onMouseEvent(event : Dynamic) : Void {
 		if ((orbitControls != null && !orbitControls.enabled) || interactiveObjects.length == 0) {
 			return;
 		}
 
 		var newInteractiveObjectsMouseOver = [];
 		var handledObjects = new Array<Dynamic>();
+		var mousePos = new Vector2(
+			((event.touches != null && event.touches.length >= 1 ? event.touches[0] : event).pageX / getWidth() / RenderSupportJSPixi.backingStoreRatio) * 2.0 - 1.0,
+			-((event.touches != null && event.touches.length >= 1 ? event.touches[0] : event).pageY / getHeight() / RenderSupportJSPixi.backingStoreRatio) * 2.0 + 1.0
+		);
+
+		if ((prevMousePos != null && mousePos.equals(prevMousePos)) || (mousePos.x == 0 && mousePos.y == 0)) {
+			for (object in interactiveObjectsMouseOver) {
+				object.emit(event.type);
+				object.invalidateStage();
+			}
+
+			return;
+		} else {
+			prevMousePos = mousePos;
+		}
 
 		raycaster.setFromCamera(
-			new Vector2(
-				(event.pageX / getWidth() / RenderSupportJSPixi.backingStoreRatio) * 2.0 - 1.0,
-				-(event.pageY / getHeight() / RenderSupportJSPixi.backingStoreRatio) * 2.0 + 1.0
-			),
+			mousePos,
 			camera
 		);
 
@@ -275,8 +300,8 @@ class ThreeJSStage extends Container {
 	public function setCamera(camera : Camera, parameters : Array<Array<String>>) {
 		this.camera = camera;
 
-		createOrbitControls();
 		addEventListeners();
+		createOrbitControls();
 
 		untyped orbitControls.parameters = parameters;
 

@@ -759,7 +759,7 @@ class RenderSupport3D {
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
 		object.onValue(event, untyped cb);
 
-		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout") && object.interactive == null){
+		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout" || event == "touchstart" || event == "touchmove" || event == "touchend") && object.interactive == null){
 			set3DObjectInteractive(object, true);
 		}
 
@@ -1429,6 +1429,11 @@ class RenderSupport3D {
 	public static function set3DObjectInteractive(object : Object3D, interactive : Bool) : Void {
 		if (untyped object.interactive != interactive) {
 			untyped object.interactive = interactive;
+
+			if (untyped interactive && object.isInstance && object.parent != null) {
+				set3DObjectInteractive(object.parent, true);
+			}
+
 			object.invalidateStage();
 
 			for (stage in object.getStage()) {
@@ -2072,7 +2077,6 @@ class RenderSupport3D {
 
 		var mesh : Dynamic = untyped __js__("new THREE.InstancedMesh(geometry, materials.length == 1 ? materials[0] : materials, count)");
 		untyped mesh.instanceObjects = [];
-		set3DObjectInteractive(mesh, true);
 
 		for (i in 0...count) {
 			var o = new Object3D();
