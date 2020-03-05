@@ -2401,6 +2401,10 @@ class RenderSupportJSPixi {
 		return new BlurFilter(spread, 4, backingStoreRatio, 5);
 	}
 
+	public static function makeBackdropBlur(spread : Float) : Dynamic {
+		return new BlurBackdropFilter(spread);
+	}
+
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {
 		return new DropShadowFilter(angle, distance, radius, color, alpha);
 	}
