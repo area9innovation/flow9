@@ -9,6 +9,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 	zorder = getValue(manager.manager.zorder);
 	disableOnDragging = contains(m.style, MDisableOnDragging());
 
+	tooltipGap = 8.;
 	hover = make(false);
 	enabled =
 		extractStruct(m.style, MEnabled(const(true))).enabled
@@ -22,14 +23,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 	lightBackground = extractStruct(m.style, MLightBackground(getLightBackground(parent))).light;
 	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(MGrey(if (lightBackground) 600 else 200))]));
 
-	tooltipAlign =
-		concatA([
-			extractStructMany(m.style, MBottom()),
-			extractStructMany(m.style, MTop()),
-			extractStructMany(m.style, MLeft()),
-			extractStructMany(m.style, MRight())
-		])
-		|> (\f -> if (length(f) > 0) f[0] else MBottom());
+	tooltipAlign = extractStruct(m.style, MTooltipAlignment(MBottom())).type;
 	translatePosition = extractStruct(m.style, MTranslatePosition(const(zeroPoint))).point;
 
 	TConstruct(
@@ -39,13 +33,9 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 					[
 						interruptibleDeferUntilNextFrameRendered(\ -> {
 							MComponentGroup(
-								MBorder(
-									8.0,
-									4.0,
-									8.0,
-									4.0,
-									m.tooltip
-								),
+								m.tooltip
+								|> MBorderLeftRight(8.)
+								|> MBorderTopBottom(4.),
 								[
 									MFocusName("MTooltip"),
 									UpdateMaterialTheme(\t ->
@@ -57,18 +47,18 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 								]
 							)
 							|> (\f -> {
-								bwh = getValue(buttonWH);
-								cwh = makeWH();
+								tooltipWH = makeWH();
 
 								RenderMPopup(
 									manager,
 									parent,
 									MPopup(
-										[[MAttachBox(f, cwh)]],
+										[[MAttachBox(f, tooltipWH)]],
 										fselect2(positionScale, translatePosition, FLift2(\ps : PositionScale, tr : Point ->
 											PositionScale(Point(ps.pos.x + tr.x, ps.pos.y + tr.y), ps.scale))
 										),
 										[
+											RMOutterBorder(tooltipGap),
 											RMAlphaAnimation(),
 											openMenu,
 											MSameZorder(true),
@@ -78,25 +68,33 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 											RMNoSnapSize(),
 											MElevation(zero),
 											RMOffset(
-												fselect(
-													cwh,
-													FLift(
-														\wh -> {
-															WH = switch (tooltipAlign) {
-																MBottom() :
-																	WidthHeight((bwh.width - wh.width) / 2., bwh.height + 8.);
-																MTop() :
-																	WidthHeight((bwh.width - wh.width) / 2., -wh.height - 8.);
-																MLeft() :
-																	WidthHeight(-wh.width - 8., (bwh.height - wh.height) / 2.);
-																default :
-																	WidthHeight(bwh.width + 8., (bwh.height - wh.height) / 2.);
-															};
-
-															Pair(WH, 0.)
-														}
-													)
-												)
+												fsubselect2(tooltipWH, buttonWH, \twh, bwh -> {
+													top = const(WidthHeight((bwh.width - twh.width) / 2., -twh.height - tooltipGap));
+													bottom = const(WidthHeight((bwh.width - twh.width) / 2., bwh.height + tooltipGap));
+													left = const(WidthHeight(-twh.width - tooltipGap, (bwh.height - twh.height) / 2.));
+													right = const(WidthHeight(bwh.width + tooltipGap, (bwh.height - twh.height) / 2.));
+													switch (tooltipAlign) {
+														MTop() : top;
+														MBottom() : bottom;
+														MLeft() : left;
+														MRight() : right;
+														MTryTopFirst() :
+															fif(
+																fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
+																top,
+																bottom
+															);
+														MTryBottomFirst() :
+															fif(
+																fselect2(positionScale, manager.stageWH, FLift2(\ps : PositionScale, sWH ->
+																	ps.pos.y + bwh.height > sWH.height - twh.height - tooltipGap)
+																), 
+																top,
+																bottom
+															)
+													}
+												})
+												|> (\offset -> fpair(offset, const(0.)))
 											),
 											MRippleShape("MTooltip")
 										]
@@ -117,7 +115,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 			\ -> \ -> next(openMenu.opened, false)
 		],
 		(if (!mobile)
-			TInteractive([TMouseInside(hover, false)], m2t(m.box, parent))
+			TInteractive([TMouseInside(hover, contains(m.style, MBlockHover()))], m2t(m.box, parent))
 		else
 			TCopySize(
 				m2t(m.box, parent),

@@ -554,7 +554,7 @@ integer (which corrseponds to `int` in `exp` rule), the second one is the array 
 (which corresponds to `sub*` in the `exp` rule), so we can just fold them this way:
 
 	buildSub(xs : [flow]) {
-		fold(xs[1], xs[0], \x, acc -> Sub(x, acc))
+		fold(xs[1], xs[0], \acc, x -> Sub(acc, x))
 	}
 
 This function will produce Sub(Sub(Int(1), Int(2)), Int(3)) for the given example which can be evaluated as

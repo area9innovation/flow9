@@ -233,8 +233,8 @@ THREE.OrbitControls = function ( object, domElement, eventElement ) {
 				lastQuaternion.copy( scope.object.quaternion );
 				zoomChanged = false;
 
-				Object3DHelper.broadcastEvent(object, "position");
-				Object3DHelper.broadcastEvent(object, "rotation");
+				Object3DHelper.broadcastEvent(object, "matrix");
+				Object3DHelper.emitEvent(object, "change");
 				Object3DHelper.invalidateStage(object);
 
 				return true;

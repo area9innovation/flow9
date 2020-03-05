@@ -515,7 +515,7 @@ finds their maximum size, and returns a new `Tropic` where they are centered in 
 		)
 	}
 
-See example 57 in `sandbox/tropic/test_tropic.flow`. It is hard to make a layout loop in `Tropic`,
+It is hard to make a layout loop in `Tropic`,
 unless you have one in a `TForm`, `TFormIn`, `TAttach` or with a behaviour loop triggering problems
 in `TSelect` that might have side-effects.
 

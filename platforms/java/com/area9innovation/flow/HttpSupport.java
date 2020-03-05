@@ -112,7 +112,6 @@ public class HttpSupport extends NativeHost {
 	public final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
 		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
 		) {
-		// TODO
 		try {
 			// Add parameters
 			String urlParameters = "";
@@ -153,7 +152,6 @@ public class HttpSupport extends NativeHost {
 	 		// Add data
 			if (data != null) {
 				con.setDoOutput(true);
-				con.addRequestProperty("Content-Type", "application/" + method);
 				con.setRequestProperty("Content-Length", Integer.toString(data.length()));
 				try {
 					byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), data);
@@ -178,10 +176,19 @@ public class HttpSupport extends NativeHost {
 			}
 			in.close();
 
-			// TODO: implement properly
-			Object[] responseHeaders = new Object[0];
+			ArrayList<Object[]> responseHeaders = new ArrayList();
+			Map<String, List<String>> respHeaders = con.getHeaderFields();
+	        for (Map.Entry<String, List<String>> entry : respHeaders.entrySet()) {
+				List<String> values = entry.getValue();
+				String value = "";
+				if (!values.isEmpty()) {
+					value = values.get(0);
+				}
+				String[] kv = {entry.getKey(), value};
+				responseHeaders.add(kv);
+			}
 
-			onResponse.invoke(responseCode, response.toString(), responseHeaders);
+			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
         } catch (MalformedURLException e) {
         	onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
         } catch (IOException e) {

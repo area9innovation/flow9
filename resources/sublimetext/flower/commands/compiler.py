@@ -12,8 +12,10 @@ DEFINITION_REGEX = re.compile(
     r"^.*\((?P<path>.*?):(?P<line>\d+)@(?P<bytes>\d+\-\d+)\)\s*\=\s*(?P<msg>[\w\W]+)",
     re.MULTILINE
 )
+# Old version, changed 26.02.2020
+# r"(?P<path>.*?):(?P<line>\d+):(?P<col>\d+):(?P<msg>[\w\W]+)(?=\d+\.\d+s)",
 DEFINITIONC_REGEX = re.compile(
-    r"(?P<path>.*?):(?P<line>\d+):(?P<col>\d+):(?P<msg>[\w\W]+)(?=\d+\.\d+s)",
+    r"(?P<path>.*?):(?P<line>\d+):(?:\d+:){3}\s*(?P<msg>.+)\s*",
     re.MULTILINE
 )
 
