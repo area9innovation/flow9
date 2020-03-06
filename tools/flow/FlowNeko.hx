@@ -922,7 +922,7 @@ class FlowNeko extends Options {
 			var args = [mainfileName, "-main", "SwfRunner", "-swf", swf, "-swf-version", "11", "-swf-lib", swffileName,
 			          "-swf-lib", resourceFile, 
 			          "-resource",  fontNames + "@fontnames",
-			          "-swf-header", "1024:600:30:FFFFFF", "-D", "jsruntime",
+			          "-swf-header", "1024:600:30:FFFFFF", "-D", "jsruntime", "-D", "no-deprecation-warnings",
 			          '-cp', root+'/platforms/nekocompiler', '-cp', root, '-cp', '.'
 			          ];
 			if (debug > 0) {

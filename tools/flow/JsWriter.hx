@@ -114,7 +114,7 @@ class JsOverlayGroup {
 
 		Profiler.get().profileStart("Compile haXe");
 
-		var args = ["-js", flowNativesJSFile, flowJSProgramHaxeFile, "-D", "jsruntime", "-cp", "platforms/js", "-cp", "platforms/common/haxe", "-lib", "pixijs", "-D", "js-classic"];
+		var args = ["-js", flowNativesJSFile, flowJSProgramHaxeFile, "-D", "jsruntime", "-D", "no-deprecation-warnings", "-cp", "platforms/js", "-cp", "platforms/common/haxe", "-lib", "pixijs", "-D", "js-classic"];
 		for (a in extra_args)
 			args.push(a);
 

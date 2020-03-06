@@ -156,7 +156,23 @@ export {
 		DCount(property : DPropertyU);
 
 
-	makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) -> void, onError : (string) -> void) -> void;
+	makeODataRequest(
+		host : string,
+		jwt : string,
+		query : DQuery,
+		callback : (Json) -> void,
+		onError : (string) -> void
+	) -> void;
+	// Tagget query is used to terminate odata request processing.
+	// Tag should consist only of a-z A-Z 0-9 - _ .		r'^[0-9A-Za-z_\-.]+$'
+	makeTaggedODataRequest(
+		host : string,
+		jwt : string,
+		query : DQuery,
+		queryTag : string,
+		callback : (Json) -> void,
+		onError : (string) -> void
+	) -> void;
 	// Calls onError if whole batch or at least one of subrequests has failed
 	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void;
 	makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void;
@@ -168,6 +184,19 @@ export {
 	specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResource;
 	makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json>;
 	json2ResourceValue(json : Json) -> DResourceValue;
+
+	// Area9 specific function (move to another place?)
+	// Kills all currently running sql server processes associated with jwt and queryTag
+	// callback returns a number of terminated processes
+	// terminated request will fail with error
+	// Termination and error return is not guaranteed
+	abortODataRequests(
+		host : string,
+		jwt : string,
+		queryTag : string,
+		callback : (int) -> void,
+		onError : (string) -> void
+	) -> void;
 
 
 	/*
@@ -746,10 +775,27 @@ makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([
 
 makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void {
 	callback2 = \data, headers -> callback(parseBatchResponse(data, headers));
-	makeODataRequest2(host, jwt, DBatchQuery(queries), callback2, onError)
+	makeODataRequest2(host, jwt, DBatchQuery(queries), "", callback2, onError)
 }
 
-makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) -> void, onError : (string) -> void) -> void {
+makeODataRequest(
+	host : string,
+	jwt : string,
+	query : DQuery,
+	callback : (Json) -> void,
+	onError : (string) -> void
+) -> void {
+	makeTaggedODataRequest(host, jwt, query, "", callback, onError);
+}
+
+makeTaggedODataRequest(
+	host : string,
+	jwt : string,
+	query : DQuery,
+	queryTag : string,
+	callback : (Json) -> void,
+	onError : (string) -> void
+) -> void {
 	callback2 = \data, headers -> {
 		isBatch = isSameStructType(query, DBatchQuery([]));
 		result = if (isBatch) {
@@ -765,10 +811,17 @@ makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) 
 		}
 		callback(result)
 	}
-	makeODataRequest2(host, jwt, query, callback2, onError)
+	makeODataRequest2(host, jwt, query, queryTag, callback2, onError)
 }
 
-makeODataRequest2(host : string, jwt : string, query : DQuery, callback : (string, [KeyValue]) -> void, onError : (string) -> void) -> void {
+makeODataRequest2(
+	host : string,
+	jwt : string,
+	query : DQuery,
+	queryTag : string,
+	callback : (string, [KeyValue]) -> void,
+	onError : (string) -> void
+) -> void {
 	if (isUrlParameterTrue("odataDQuery")) println(query);
 	q = buildODataQuery(query);
 	method = q.method;
@@ -790,7 +843,8 @@ makeODataRequest2(host : string, jwt : string, query : DQuery, callback : (strin
 		KeyValue("Accept", accept),
 		KeyValue("Authorization", "Bearer " + jwt),
 		KeyValue("Content-Type", contentType)
-	] |> (\acc -> ifArrayPush(acc, isBatch, KeyValue("Prefer", "continue-on-error=true")));
+	] |> (\acc -> ifArrayPush(acc, isBatch, KeyValue("Prefer", "continue-on-error=true")))
+	|> (\acc -> ifArrayPush(acc, queryTag != "", KeyValue("X-Request-Tag", queryTag)));
 
 	httpCustomRequest(
 		host + q.resource,
@@ -805,7 +859,7 @@ makeODataRequest2(host : string, jwt : string, query : DQuery, callback : (strin
 			}
 		},
 		true
-	)
+	);
 }
 
 parseBatchResponse(response : string, respHeaders : [KeyValue]) -> [DResponse] {
@@ -823,4 +877,34 @@ parseBatchResponse(response : string, respHeaders : [KeyValue]) -> [DResponse] {
 			DGoodResponse(json)
 		}
 	})
+}
+
+abortODataRequests(
+	host : string,
+	jwt : string,
+	queryTag : string,
+	callback : (int) -> void,
+	onError : (string) -> void
+) -> void {
+	headers : [KeyValue] = [
+		KeyValue("Accept", "application/json"),
+		KeyValue("Authorization", "Bearer " + jwt),
+		KeyValue("Content-Type", "application/json")
+	];
+
+	httpCustomRequest(
+		host + "?operation=kill&request_tag=" + queryTag,
+		GET(),
+		headers,
+		RequestPayload(""),
+		\status, respData, respHeaders -> {
+			if (isErrorStatus(status)) {
+				onError(respData)
+			} else {
+				terminatedThreadsCount = s2i(respData);
+				callback(terminatedThreadsCount)
+			}
+		},
+		true
+	);
 }
