@@ -1062,6 +1062,10 @@ class DisplayObjectHelper {
 				} else if (untyped HaxeRuntime.instanceof(filter, BlurFilter)) {
 					var nativeWidget : Element = untyped clip.nativeWidget;
 					nativeWidget.style.filter = 'blur(${filter.blur}px)';
+				} else if (untyped HaxeRuntime.instanceof(filter, BlurBackdropFilter)) {
+					var nativeWidget : Element = untyped clip.nativeWidget;
+					nativeWidget.style.setProperty('backdrop-filter', 'blur(${filter.spread}px)');
+					nativeWidget.style.setProperty('-webkit-backdrop-filter', 'blur(${filter.spread}px)');
 				}
 			}
 		}
