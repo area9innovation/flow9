@@ -369,7 +369,7 @@ class PixiWorkarounds {
 
 	public static function workaroundGetContext() : Void {
 		untyped __js__("
-			if (RenderSupportJSPixi.RendererType == 'html') {
+			if (RenderSupport.RendererType == 'html') {
 				Element.prototype.getContext = function(a, b) { return { imageSmoothingEnabled : true }; };
 			} else {
 				Element.prototype.getContext = null;
@@ -1012,7 +1012,7 @@ class PixiWorkarounds {
 
 						this.emit('transformchanged');
 
-						if (RenderSupportJSPixi.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1025,7 +1025,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
+					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
@@ -1050,8 +1050,8 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						if (RenderSupportJSPixi.RendererType == 'html') {
-							if (RenderSupportJSPixi.LayoutText || this.isCanvas) {
+						if (RenderSupport.RendererType == 'html') {
+							if (RenderSupport.LayoutText || this.isCanvas) {
 								this.textClipChanged = true;
 								this.layoutText();
 							} else if (this.children.length > 0) {
@@ -1074,7 +1074,7 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupportJSPixi.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html') {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1089,7 +1089,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupportJSPixi.RendererType == 'html' && this.localTransformChanged) {
+					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {

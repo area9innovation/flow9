@@ -1,2504 +1,2652 @@
-#if js
 import js.Browser;
-import FlowFontStyle;
-import RenderSupportJSPixi;
-#end
+import js.html.Element;
+import js.html.IFrameElement;
 
-#if js
-enum GraphOp {
-	MoveTo(x : Float, y : Float);
-	LineTo(x : Float, y : Float);
-	CurveTo(x : Float, y : Float, cx : Float, cy : Float);
-}
-#end
+import pixi.core.display.DisplayObject;
+import pixi.core.display.Bounds;
+import pixi.core.renderers.Detector;
+import pixi.core.renderers.canvas.CanvasRenderer;
+import pixi.core.renderers.webgl.WebGLRenderer;
+import pixi.core.renderers.webgl.filters.Filter;
+import pixi.core.math.Point;
+import pixi.core.text.TextStyle;
 
-#if flash
-import flash.desktop.Clipboard;
-import flash.desktop.ClipboardFormats;
-import flash.events.Event;
-#end
+import pixi.loaders.Loader;
+
+import MacroUtils;
+import Platform;
+import ProgressiveWebTools;
+import BlurFilter;
+
+using DisplayObjectHelper;
 
 class RenderSupport {
-	#if js
-	static var CurrentClip : Dynamic;
-	static var TempClip : Dynamic;
-	static var ImageCache : Map<String,Dynamic>;
-	static var PendingImages : Map<String, Array< Dynamic > >;
+	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
+	public static var RenderContainers : Bool = Util.getParameter("containers") == "1";
+	public static var FiltersEnabled : Bool = Util.getParameter("filters") != "0";
 
-	private static var typekitTryCount : Int = 0;
+	public static var PixiView : Dynamic;
+	public static var PixiStage : FlowContainer = new FlowContainer(true);
+	public static var PixiRenderer : Dynamic;
 
-	private static var MouseX : Float;
-	private static var MouseY : Float;
+	public static var TouchPoints : Dynamic;
+	public static var MousePos : Point = new Point(0.0, 0.0);
+	public static var PixiStageChanged : Bool = true;
+	private static var TransformChanged : Bool = true;
+	private static var isEmulating : Bool = false;
+	private static var AnimationFrameId : Int = -1;
+	private static var PageWasHidden = false;
 
-	static var AriaClips : Array<Dynamic>; // Clips which have WAI ARIA role
-	static var AriaDialogsStack : Array<Dynamic>; // The last added is the current modal dialog.
+	// Renderer options
+	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
+	public static var EnableFocusFrame : Bool = false;
+	/* Antialiasing doesn't work correctly on mobile devices */
+	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
+	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
-	private static var StageScale : Float;
+	public static var DropCurrentFocusOnMouse : Bool;
+	// Renders in a higher resolution backing store and then scales it down with css (e.g., ratio = 2 for retina displays)
+	// Resolution < 1.0 makes web fonts too blurry
+	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
+	public static var backingStoreRatio : Float = getBackingStoreRatio();
+	public static var browserZoom : Float = 1.0;
 
-	private static inline var WebClipInitSize = 100.0;
-	#end
+	// In fact that is needed for android to have dimensions without screen keyboard
+	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
+	private static var WindowTopHeightPortrait : Int = -1;
+	private static var WindowTopHeightLandscape : Int = -1;
 
-	#if flash
-	private static var pictureCache: PictureCache;
-	private static var pictureSizeCache : Map<String,Array<Float>>; // [width, height]
-	static var mouseHidden : Bool;
-	private static var finegrainMouseWheelCbs : Array<Float->Float->Void>;
-	private static var UrlHashListeners : Array<String -> Void>;
-	#end
+	public static var hadUserInteracted = false;
 
-	public function new() {
-		#if flash
-		oldinit();
-		#end
+	public static var WebFontsConfig = null;
+
+	private static var RenderSupportInitialised : Bool = init();
+
+	public function new() {}
+
+	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
+	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+		PixiStage.on(event, fn, context);
 	}
 
-	#if js
-	private static function loadWebFonts() {
-		var webfontconfig : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
-
-		Reflect.setField(webfontconfig, "active", function() { Errors.print("Web fonts are loaded");});
-		Reflect.setField(webfontconfig, "loading", function() { Errors.print("Loading web fonts...");});
-
-		WebFont.load(webfontconfig);
+	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
+	public static inline function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+		PixiStage.off(event, fn, context);
 	}
 
-	public static function __init__() {
-		if (Util.getParameter("oldjs") == "1") {
-			oldinit();
-		} else {
-			untyped __js__ ("window.RenderSupport = window.RenderSupportJSPixi");
+	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
+	public static inline function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+		PixiStage.once(event, fn, context);
+	}
+
+	public static inline function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
+		return PixiStage.emit(event, a1, a2, a3, a4, a5);
+	}
+
+	public static function setRendererType(rendererType : String) : Void {
+		if (RendererType != rendererType) {
+			RendererType = rendererType;
+			RoundPixels = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
+			Antialias = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" :
+				!Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+
+			untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+
+			PixiWorkarounds.workaroundGetContext();
+
+			createPixiRenderer();
 		}
 	}
-	#end
 
-	private static function oldinit() {
-		#if js
+	public static function getRendererType() : String {
+		return RendererType;
+	}
 
-		// Hide splash
-		haxe.Timer.delay( function() {Browser.document.body.style.backgroundImage = "none"; }, 100);
-		var indicator : Dynamic = Browser.document.getElementById("loading_js_indicator");
-		if (null != indicator) indicator.style.display = "none";
+	private static function roundPlus(x : Float, n : Int) : Float {
+		var m = Math.pow(10, n);
+		return Math.fround(x * m) / m;
+	}
 
-		prepareCurrentClip();
-		makeTempClip();
-		startMouseListening();
-		ImageCache = new Map();
-		PendingImages = new Map();
-		StageScale = 1.0;
+	private static var accessibilityZoom : Float = Std.parseFloat(Native.getKeyValue("accessibility_zoom", "1.0"));
+	private static var accessibilityZoomValues : Array<Float> = [0.25, 0.33, 0.5, 0.66, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0];
 
-		if ("1" == Util.getParameter("svg")) {
-			Errors.print("Using SVG rendering");
-			Graphics.svg = true;
-		} else {
-			Errors.print("Using HTML 5 rendering");
-			Graphics.svg = false;
+	public static function getAccessibilityZoom() : Float {
+		return RendererType == "html" && accessibilityZoom > 0.0 ? accessibilityZoom : 1.0;
+	}
+
+	public static function setAccessibilityZoom(zoom : Float) : Void {
+		if (accessibilityZoom != zoom) {
+			accessibilityZoom = zoom;
+			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
+
+			PixiStage.broadcastEvent("resize", backingStoreRatio);
+			InvalidateLocalStages();
+
+			showAccessibilityZoomTooltip();
+		}
+	}
+
+	private static var accessibilityZoomTooltip : Dynamic;
+
+	public static function showAccessibilityZoomTooltip() : Void {
+		if (accessibilityZoomTooltip != null) {
+			Browser.document.body.removeChild(accessibilityZoomTooltip);
+			accessibilityZoomTooltip = null;
 		}
 
-		loadWebFonts();
+		if (browserZoom != 1.0) {
+			return;
+		}
 
-		AriaClips = new Array<Dynamic>();
-		AriaDialogsStack = new Array<Dynamic>();
+		var p = Browser.document.createElement("p");
+		Browser.document.body.appendChild(p);
 
-		addGlobalKeyHandlers();
+		p.classList.add('nativeWidget');
+		p.classList.add('textWidget');
+		p.textContent = "Zoom: " + Math.round(accessibilityZoom * 100) + "%";
+		p.style.fontSize = "12px";
+		p.style.zIndex = "1000";
+		p.style.background = "#424242";
+		p.style.color = "#FFFFFF";
+		p.style.padding = "8px";
+		p.style.paddingTop = "4px";
+		p.style.paddingBottom = "4px";
+		p.style.borderRadius = "4px";
+		p.style.left = "50%";
+		p.style.top = "8px";
+		p.style.transform = "translate(-50%, 0)";
 
-		attachEventListener(getStage(), "focusin", function() { // Tracking the active element
-			// FF doesnot call this but it draws outline correctly - wraps nested elements
-            var selected = Browser.document.activeElement;
-           	if (selected != null && selected.getAttribute("role") != null) { // Update metrics for outline
-           		var h = getElementHeight(selected);
-           		var w = getElementWidth(selected);
-           		var global_scale = getGlobalScale(selected);
-				h = h / global_scale.scale_y;
-           		w = w / global_scale.scale_x;
-				selected.style.height = "" + h + "px";
-           		selected.style.width = "" + w + "px";
-           	}
+		accessibilityZoomTooltip = p;
+
+		Native.timer(2000, function() {
+			if (accessibilityZoomTooltip != null && accessibilityZoomTooltip == p) {
+				accessibilityZoomTooltip = null;
+				Browser.document.body.removeChild(p);
+			}
 		});
+	}
 
-		// Init listener for cross-domain calls
-		var receiveMessage = function(e : Dynamic) {
-			var hasNestedWindow : Dynamic = null;
-			hasNestedWindow = function(iframe : Dynamic, win : Dynamic) {
-				try {
-					if (iframe.contentWindow == win) return true;
-					var iframes : Dynamic = iframe.contentWindow.document.getElementsByTagName("iframe");
-					for (i in 0...iframes.length) if (hasNestedWindow(iframes[i], win)) return true;
-				} catch( e: Dynamic) { Errors.print(e); /* Likely Cross-Domain restriction */ }
+	public static function onKeyDownAccessibilityZoom(e : Dynamic) : Void {
+		if (browserZoom != 1.0) {
+			return;
+		}
 
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (e.which == '61' || e.which == "107" || e.which == "187") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+			} else if (e.which == '173' || e.which == "109" || e.which == "189") {
+				e.preventDefault();
+				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+			}
+		}
+	}
+
+	private static var onMouseWheelAccessibilityZoomEnabled = true;
+
+	public static function onMouseWheelAccessibilityZoom(e : Dynamic, dx : Float, dy : Float) : Bool {
+		if (browserZoom != 1.0 || Platform.isMacintosh) {
+			return false;
+		}
+
+		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (dy > 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a < b && a > getAccessibilityZoom() ? a : b; }, 5.0));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			} else if (dy < 0) {
+				e.preventDefault();
+
+				if (onMouseWheelAccessibilityZoomEnabled) {
+					onMouseWheelAccessibilityZoomEnabled = false;
+					setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
+					once("drawframe", function() {
+						onMouseWheelAccessibilityZoomEnabled = true;
+					});
+				}
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static function getBackingStoreRatio() : Float {
+		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
+			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
+		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
+
+		if (browserZoom != 1.0) {
+			accessibilityZoom = 1.0;
+			Native.setKeyValue("accessibility_zoom", "1.0");
+		}
+
+		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
+			ratio *= browserZoom;
+		}
+
+		return Math.max(roundPlus(ratio, 2), 1.0);
+	}
+
+	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
+		untyped __js__("setTimeout(fn, time)");
+	}
+
+	private static function preventDefaultFileDrop() {
+		Browser.window.ondragover = Browser.window.ondrop =
+			function (event) {
+				if (event.dataTransfer.dropEffect != "copy")
+					event.dataTransfer.dropEffect = "none";
+
+				event.preventDefault();
 				return false;
 			}
+	}
 
-			var content_win = e.source;
-			var all_iframes = Browser.document.getElementsByTagName("iframe");
+	//
+	//	Pixi renderer initialization
+	//
+	public static function init() : Bool {
+		if (Util.getParameter("oldjs") != "1") {
+			initPixiRenderer();
+		} else {
+			defer(StartFlowMain);
+		}
 
-			for (i in 0...all_iframes.length) {
-				var f : Dynamic = all_iframes[i];
-				if (hasNestedWindow(f, content_win)) {
-					f.callflow(["postMessage", e.data]);
-					return;
-				}
+		return true;
+	}
+
+	private static function printOptionValues() : Void {
+		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
+	}
+
+	public static function detectExternalVideoCard() : Bool {
+		var canvas = Browser.document.createElement('canvas');
+		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
+
+		if (gl == null) {
+			return false;
+		}
+
+		var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+		var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+		var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+
+		return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
+	}
+
+	private static function disablePixiPlugins() {
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.accessibility");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.tilingSprite");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.mesh");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.particle");
+		untyped __js__("delete PIXI.CanvasRenderer.__plugins.prepare");
+
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.accessibility");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.extract");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.tilingSprite");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.mesh");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.particle");
+		untyped __js__("delete PIXI.WebGLRenderer.__plugins.prepare");
+
+		// Destroy default pixi ticker
+		untyped PIXI.ticker.shared.autoStart = false;
+		untyped PIXI.ticker.shared.stop();
+		untyped PIXI.ticker.shared.destroy();
+	}
+
+	private static function createPixiRenderer() {
+		backingStoreRatio = getBackingStoreRatio();
+
+		if (PixiRenderer != null) {
+			if (untyped PixiRenderer.gl != null && PixiRenderer.gl.destroy != null) {
+				untyped PixiRenderer.gl.destroy();
 			}
 
-			Errors.report("Warning: unknown message source");
+			PixiRenderer.destroy();
 		}
 
-		Browser.window.addEventListener('message', receiveMessage);
-
-		#elseif flash
-
-		builtinFonts = new Map();
-		builtinFonts.set("Roboto", true);
-		builtinFonts.set("RobotoMedium", true);
-		builtinFonts.set("MaterialIcons", true);
-
-		// Check if we have a resource with the font names. If so, register all of those
-		var fonts = haxe.Resource.getString("fontnames");
-		if (fonts != null) {
-			for (font in fonts.split("\n")) {
-				if (font != "") {
-					builtinFonts.set(font, true);
-				}
-			}
-		}
-		mouseHidden = false;
-		if (pictureCache == null) {
-			pictureCache = new PictureCache();
-			pictureSizeCache = new Map();
-		}
-		finegrainMouseWheelCbs = new Array();
-		if (flash.external.ExternalInterface.available) {
-			flash.external.ExternalInterface.addCallback("onJsScroll", onJsScroll);
+		if (PixiView != null && PixiView.parentNode != null) {
+			PixiView.parentNode.removeChild(PixiView);
 		}
 
-		getStage().stageFocusRect = false;
-
-		WebClipListeners = new Array<Dynamic>();
-		updateBrowserZoom();
-
-		// URL hash handlers
-		UrlHashListeners = new Array<String -> Void>();
-		if (flash.external.ExternalInterface.available) {
-			flash.external.ExternalInterface.addCallback("onhashchanged", function(hash : String) {
-				for (cb in UrlHashListeners) cb(hash);
-			});
+		if (RendererType == "html") {
+			PixiView = Browser.document.createElement('div');
+			PixiView.tabIndex = 1;
+			PixiView.style.background = "white";
+		} else if (PixiView != null && PixiView.tagName.toLowerCase() == 'div') {
+			PixiView = null;
 		}
 
-		addPasteClipboardListener(getStage());
-/*
-		flash.system.IME.enabled = true;
-
-		var on_ime_composition = function(e) {
-			// should be called when IME panel is closed
-			Native.println("on_ime_composition! ");
+		var options = {
+			antialias : Antialias,
+			transparent : TransparentBackground,
+			backgroundColor : TransparentBackground ? 0 : 0xFFFFFF,
+			preserveDrawingBuffer : false,
+			resolution : backingStoreRatio,
+			roundPixels : RoundPixels,
+			autoResize : true,
+			view : PixiView
 		};
 
-		flash.system.System.ime.addEventListener(flash.events.IMEEvent.IME_COMPOSITION, on_ime_composition);
+		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
+			PixiRenderer = new WebGLRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
 
-		try {
-			flash.system.IME.conversionMode = flash.system.IMEConversionMode.CHINESE;
-		} catch (e : Dynamic) {
-			Native.println("crash " + e);
+			RendererType = "webgl";
+		} else if (RendererType == "auto") {
+			PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth, Browser.window.innerHeight);
+
+			if (untyped HaxeRuntime.instanceof(PixiRenderer, WebGLRenderer)) {
+				RendererType = "webgl";
+			} else {
+				RendererType = "canvas";
+			}
+		} else if (RendererType == "html") {
+			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+		} else {
+			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+
+			RendererType = "canvas";
 		}
 
-		//flash.system.IME.conversionMode = flash.system.IMEConversionMode.CHINESE;
-		Native.println("supported " +  flash.system.IME.isSupported);
-		Native.println("enabled " +  flash.system.IME.enabled);
-		Native.println("has ime " +  flash.system.Capabilities.hasIME);
-		Native.println("conversion mode " + flash.system.IME.conversionMode);
-*/
-		#end
+		if (RendererType == "canvas") {
+			untyped PixiRenderer.context.fillStyle = "white";
+			untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
+			untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
+
+			var tempPlugins = untyped WebGLRenderer.__plugins;
+			untyped WebGLRenderer.__plugins = [];
+
+			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
+				transparent : true,
+				autoResize : false,
+				antialias : Antialias,
+				roundPixels : RoundPixels
+			});
+
+			untyped WebGLRenderer.__plugins = tempPlugins;
+		} else if (RendererType == "webgl") {
+			untyped PixiRenderer.gl.viewport(0, 0, untyped PixiRenderer.gl.drawingBufferWidth, untyped PixiRenderer.gl.drawingBufferHeight);
+			untyped PixiRenderer.gl.clearColor(1.0, 1.0, 1.0, 1.0);
+			untyped PixiRenderer.gl.clear(untyped PixiRenderer.gl.COLOR_BUFFER_BIT);
+		} else if (RendererType == "html") {
+			untyped PixiRenderer.plugins.interaction.removeEvents();
+			untyped PixiRenderer.plugins.interaction.interactionDOMElement = PixiView;
+		}
+
+		PixiView = PixiRenderer.view;
+		// Make absolute position for canvas for Safari to fix fullscreen API
+		if (Platform.isSafari) {
+			PixiView.style.position = "absolute";
+			PixiView.style.top = "0px";
+		}
+
+		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
+		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
+
+		// Enable browser canvas rendered image smoothing
+		var ctx = untyped PixiRenderer.context;
+		if (ctx != null) {
+			ctx.mozImageSmoothingEnabled = true;
+			ctx.webkitImageSmoothingEnabled = true;
+			ctx.imageSmoothingQuality = if (Platform.isChrome) "high" else "medium";
+			ctx.msImageSmoothingEnabled = true;
+			ctx.imageSmoothingEnabled = true;
+		}
+	}
+
+	private static function checkPWAManifest() {
+		var manifest : Dynamic = Browser.document.querySelector('link[rel=\"manifest\"]');
+
+		if (manifest != null) {
+			var manifestJson = haxe.Json.parse(haxe.Http.requestUrl(manifest.href));
+			trace(manifestJson);
+
+			if (untyped manifestJson['orientation'] == 'landscape') {
+				untyped __js__("screen.orientation.lock('landscape')");
+			}
+		}
+	}
+
+	private static function initPixiRenderer() {
+		if (Util.getParameter("pwa") == "1") {
+			checkPWAManifest();
+		}
+		disablePixiPlugins();
+
+		if (untyped PIXI.VERSION != "4.8.2") {
+			untyped __js__("document.location.reload(true)");
+		}
+
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+
+		PixiWorkarounds.workaroundGetContext();
+		PixiWorkarounds.workaroundTextMetrics();
+
+		PixiWorkarounds.workaroundRendererDestroy();
+		PixiWorkarounds.workaroundProcessInteractive();
+
+		if (Platform.isIE) {
+			PixiWorkarounds.workaroundIEArrayFromMethod();
+			PixiWorkarounds.workaroundIECustomEvent();
+		}
+
+		createPixiRenderer();
+
+		preventDefaultFileDrop();
+		initPixiStageEventListeners();
+		initBrowserWindowEventListeners();
+		initMessageListener();
+		initFullScreenEventListeners();
+		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMain);
+		initClipboardListeners();
+		initCanvasStackInteractions();
+
+		printOptionValues();
+
+		render();
+		requestAnimationFrame();
+	}
+
+	//
+	//	Browser window events
+	//
+	private static inline function initBrowserWindowEventListeners() {
+		calculateMobileTopHeight();
+		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
+		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
+		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+	}
+
+	private static inline function isPortaitOrientation() {
+		return Browser.window.matchMedia("(orientation: portrait)").matches;
+	}
+
+	private static inline function calculateMobileTopHeight() {
+		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
+
+		// Calculate top height only once for each orientation
+		if (isPortaitOrientation()) {
+			if (WindowTopHeightPortrait == -1)
+				WindowTopHeightPortrait = topHeight;
+		} else {
+			if (WindowTopHeightLandscape == -1)
+				WindowTopHeightLandscape = topHeight;
+		}
+	}
+
+	private static inline function initCanvasStackInteractions() {
+		var onmove = function(e) {
+			var localStages = PixiStage.children;
+			var currentInteractiveLayerZorder = 0;
+
+			var i = localStages.length - 1;
+			while(i > 0) {
+				if (untyped localStages[i].view.style.pointerEvents == "all") {
+					currentInteractiveLayerZorder = i;
+				}
+
+				i--;
+			}
+
+			if (currentInteractiveLayerZorder == 0)
+				return;
+
+			var pos = Util.getPointerEventPosition(e);
+
+			i = localStages.length - 1;
+			while(i > currentInteractiveLayerZorder) {
+				if (getClipAt(localStages[i], pos, true, true) != null &&
+					untyped localStages[i].view.style.pointerEvents != "all") {
+
+					untyped localStages[i].view.style.pointerEvents = "all";
+					untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
+
+					untyped RenderSupport.PixiRenderer.view = untyped localStages[i].view;
+
+					if (e.type == "touchstart") {
+						emitMouseEvent(PixiStage, "mousedown", pos.x, pos.y);
+						emitMouseEvent(PixiStage, "mouseup", pos.x, pos.y);
+					}
+
+					return;
+				}
+
+				i--;
+			}
+
+			if (getClipAt(localStages[currentInteractiveLayerZorder], pos, true, true) == null) {
+				untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
+			}
+		};
+
+		Browser.document.addEventListener('mousemove', onmove, false);
+		if (Native.isTouchScreen())
+			Browser.document.addEventListener('touchstart', onmove, false);
+	}
+
+	private static inline function getMobileTopHeight() {
+		if (isPortaitOrientation()) {
+			return WindowTopHeightPortrait;
+		} else {
+			return WindowTopHeightLandscape;
+		}
+	}
+
+	private static inline function initClipboardListeners() {
+		var handler = function handlePaste (e : Dynamic) {
+			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
+				Native.clipboardData = untyped Browser.window.clipboardData.getData('Text');
+				Native.clipboardDataHtml = ""; // IE does not support HTML from clipboard
+			} else if (e.clipboardData && e.clipboardData.getData) {
+				Native.clipboardData = e.clipboardData.getData('text/plain');
+				Native.clipboardDataHtml = e.clipboardData.getData('text/html');
+			} else {
+				Native.clipboardData = "";
+				Native.clipboardDataHtml = "";
+			}
+
+			var files : Array<Dynamic> = new Array<Dynamic>();
+			if (!Platform.isIE && !Platform.isEdge)
+				for (i in 0...e.clipboardData.files.length) {
+					files[i] = e.clipboardData.files[i];
+				}
+
+			emit("paste", files);
+		};
+
+		Browser.document.addEventListener('paste', handler, false);
+	}
+
+	private static inline function initMessageListener() {
+		Browser.window.addEventListener('message', receiveWindowMessage, false);
+	}
+
+	private static inline function initFullScreenEventListeners() {
+		if (untyped Browser.document.body.requestFullscreen != null)
+			Browser.document.addEventListener('fullscreenchange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.mozRequestFullScreen != null)
+			Browser.document.addEventListener('mozfullscreenchange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.webkitRequestFullscreen != null)
+			Browser.document.addEventListener('webkitfullscreenchange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.msRequestFullscreen != null)
+			Browser.document.addEventListener('MSFullscreenChange', fullScreenTrigger, false);
+		else if (untyped Browser.document.body.webkitEnterFullScreen != null)
+			Browser.document.addEventListener('webkitfullscreenchange', fullScreenTrigger, false);
+	}
+
+	private static function receiveWindowMessage(e : Dynamic) {
+		emit("message", e);
+
+		var hasNestedWindow : Dynamic = null;
+		hasNestedWindow = function(iframe : IFrameElement, win : js.html.Window) {
+			try {
+				if (iframe.contentWindow == win) return true;
+				var iframes = iframe.contentWindow.document.getElementsByTagName("iframe");
+				for (i in 0...iframes.length) if (hasNestedWindow(iframes[i], win)) return true;
+			} catch(e : Dynamic) { Errors.print(e); /* Likely Cross-Domain restriction */ }
+
+			return false;
+		}
+
+		var content_win = e.source;
+		var all_iframes = Browser.document.getElementsByTagName("iframe");
+
+		for (i in 0...all_iframes.length) {
+			var f : js.html.Node = all_iframes[i];
+			if (hasNestedWindow(f, content_win)) {
+				untyped f.callflow(["postMessage", e.data]);
+				return;
+			}
+		}
+	}
+
+	private static inline function getScreenSize() {
+		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
+			var is_portrait = isPortaitOrientation();
+			return is_portrait ?
+				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
+				{ height : Browser.window.screen.width, width : Browser.window.screen.height};
+		} else {
+			return { width : Browser.window.screen.width, height : Browser.window.screen.height};
+		}
+	}
+
+	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
+		backingStoreRatio = getBackingStoreRatio();
+
+		if (backingStoreRatio != PixiRenderer.resolution) {
+			createPixiRenderer();
+		} else {
+			var win_width = e.target.innerWidth;
+			var win_height = e.target.innerHeight;
+
+			if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
+				calculateMobileTopHeight();
+
+				// Still send whole window size - without reducing by screen kbd
+				// for flow does not resize the stage. The stage will be
+				// scrolled by this renderer if needed or by the browser when it is supported.
+				// Assume that WindowTopHeight is equal for both landscape and portrait and
+				// browser window is fullscreen
+				var screen_size = getScreenSize();
+				win_width = screen_size.width;
+				win_height = screen_size.height - cast getMobileTopHeight();
+
+				if (Platform.isAndroid) {
+					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
+					// Assume other mobile browsers do it theirselves
+					ensureCurrentInputVisible(); // Test overlap and shift if needed
+				}
+			}
+
+			PixiView.width = win_width * backingStoreRatio;
+			PixiView.height = win_height * backingStoreRatio;
+
+			PixiView.style.width = win_width;
+			PixiView.style.height = win_height;
+
+			PixiRenderer.resize(win_width, win_height);
+		}
+
+		PixiStage.broadcastEvent("resize", backingStoreRatio);
+		InvalidateLocalStages();
+
+		// Render immediately - Avoid flickering on Safari and some other cases
+		render();
+	}
+
+	private static function dropCurrentFocus() : Void {
+		if (Browser.document.activeElement != null && !isEmulating)
+			Browser.document.activeElement.blur();
+	}
+
+	private static function setDropCurrentFocusOnMouse(drop : Bool) : Void {
+		if (DropCurrentFocusOnMouse != drop) {
+			DropCurrentFocusOnMouse = drop;
+
+			var event_name = Platform.isMobile ? "touchend" : "mousedown";
+			if (drop)
+				on(event_name, dropCurrentFocus);
+			else
+				off(event_name, dropCurrentFocus);
+		}
+	}
+
+	private static function pixiStageOnMouseMove() : Void {
+		if (!isEmulating) switchFocusFramesShow(false);
+	}
+
+	public static var MouseUpReceived : Bool = true;
+
+	public static function addNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.addEventListener(event, fn, { passive : false })");
+	}
+
+	public static function removeNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.removeEventListener(event, fn, { passive : false })");
+	}
+
+	private static inline function initPixiStageEventListeners() {
+		var onpointerdown = function(e : Dynamic) {
+			// Prevent default drop focus on canvas
+			// Works incorrectly in Edge
+			e.preventDefault();
+
+			if (e.touches != null) {
+				TouchPoints = e.touches;
+				emit("touchstart");
+
+				if (e.touches.length == 1) {
+					MousePos.x = e.touches[0].pageX;
+					MousePos.y = e.touches[0].pageY;
+
+					if (MouseUpReceived) emit("mousedown");
+				} else if (e.touches.length > 1) {
+					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+				}
+			} else {
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
+
+				if (e.which == 3 || e.button == 2) {
+					emit("mouserightdown");
+				} else if (e.which == 2 || e.button == 1) {
+					emit("mousemiddledown");
+				} else {
+					if (MouseUpReceived) emit("mousedown");
+				}
+			}
+		};
+
+		var onpointerup = function(e : Dynamic) {
+			if (e.touches != null) {
+				TouchPoints = e.touches;
+				emit("touchend");
+
+				GesturesDetector.endPinch();
+
+				if (e.touches.length == 0) {
+					if (!MouseUpReceived) emit("mouseup");
+				}
+			} else {
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
+
+				if (e.which == 3 || e.button == 2) {
+					emit("mouserightup");
+				} else if (e.which == 2 || e.button == 1) {
+					emit("mousemiddleup");
+				} else {
+					if (!MouseUpReceived) emit("mouseup");
+				}
+			}
+		};
+
+		var onpointermove = function(e : Dynamic) {
+			if (e.touches != null) {
+				e.preventDefault();
+
+				TouchPoints = e.touches;
+				emit("touchmove");
+
+				if (e.touches.length == 1) {
+					MousePos.x = e.touches[0].pageX;
+					MousePos.y = e.touches[0].pageY;
+
+					emit("mousemove");
+				} else if (e.touches.length > 1) {
+					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+				}
+			} else {
+				MousePos.x = e.clientX;
+				MousePos.y = e.clientY;
+
+				emit("mousemove");
+			}
+		};
+
+		var onpointerout = function(e : Dynamic) {
+			if (e.relatedTarget == Browser.document.documentElement) {
+				if (!MouseUpReceived) emit("mouseup");
+			}
+		};
+
+		if (Platform.isMobile) {
+			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+				addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
+				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
+				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+			}
+
+			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
+		} else if (Platform.isSafari) {
+			addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
+		} else if (Platform.isIE) {
+			Browser.document.body.onpointerdown = onpointerdown;
+			Browser.document.body.onpointerup = onpointerup;
+			Browser.document.body.onpointermove = onpointermove;
+			Browser.document.body.onpointerout = onpointerout;
+		} else {
+			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
+			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
+			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+		}
+
+		addNonPassiveEventListener(Browser.document.body, "keydown", function(e : Dynamic) {
+			if (RendererType == "html") {
+				onKeyDownAccessibilityZoom(e);
+			}
+
+			MousePos.x = e.clientX;
+			MousePos.y = e.clientY;
+
+			emit("keydown", parseKeyEvent(e));
+		});
+
+		addNonPassiveEventListener(Browser.document.body, "keyup", function(e : Dynamic) {
+			MousePos.x = e.clientX;
+			MousePos.y = e.clientY;
+
+			emit("keyup", parseKeyEvent(e));
+		});
+
+		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
+
+		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
+		on("mouseup", function (e) { MouseUpReceived = true; });
+
+		switchFocusFramesShow(false);
+		setDropCurrentFocusOnMouse(true);
+	}
+
+	private static function setStageWheelHandler(listener : Point -> Void) : Void {
+		var event_name = untyped __js__("'onwheel' in document.createElement('div') ? 'wheel' : // Modern browsers support 'wheel'
+			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
+			'DOMMouseScroll'; // let's assume that remaining browsers are older Firefox");
+
+
+		var wheel_cb = function(event) {
+			var sX = 0.0, sY = 0.0,	// spinX, spinY
+				pX = 0.0, pY = 0.0;	// pixelX, pixelY
+
+			// Legacy
+			if (event.detail != null) { sY = event.detail; }
+			if (event.wheelDelta != null) { sY = -event.wheelDelta / 120; }
+			if (event.wheelDeltaY != null) { sY = -event.wheelDeltaY / 120; }
+			if (event.wheelDeltaX != null) { sX = -event.wheelDeltaX / 120; }
+
+			// side scrolling on FF with DOMMouseScroll
+			if (event.axis != null && untyped HaxeRuntime.strictEq(event.axis, event.HORIZONTAL_AXIS)) {
+				sX = sY;
+				sY = 0.0;
+			}
+
+			pX = sX * PIXEL_STEP;
+			pY = sY * PIXEL_STEP;
+
+			if (event.deltaY != null) { pY = event.deltaY; }
+			if (event.deltaX != null) { pX = event.deltaX; }
+
+			if ((pX != 0.0 || pY != 0.0) && event.deltaMode != null) {
+				if (event.deltaMode == 1) {	// delta in LINE units
+					pX *= LINE_HEIGHT;
+					pY *= LINE_HEIGHT;
+				} else { // delta in PAGE units
+					pX *= PAGE_HEIGHT;
+					pY *= PAGE_HEIGHT;
+				}
+			}
+
+			// Fall-back if spin cannot be determined
+			if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
+			if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+
+			if (event.shiftKey != null && event.shiftKey && sX == 0.0) {
+				sX = sY;
+				sY = 0.0;
+			}
+
+			if (RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
+				listener(new Point(-sX, -sY));
+			}
+
+			return false;
+		};
+
+		Browser.window.addEventListener(event_name, wheel_cb, false);
+		if ( event_name == "DOMMouseScroll" ) {
+			Browser.window.addEventListener("MozMousePixelScroll", wheel_cb, false);
+		}
+	}
+
+
+	private static function emitForInteractives(clip : DisplayObject, event : String) : Void {
+		if (clip.interactive)
+			clip.emit(event);
+
+		if (untyped clip.children != null) {
+			var childs : Array<DisplayObject> = untyped clip.children;
+			for (c in childs) {
+				emitForInteractives(c, event);
+			}
+		}
+	}
+
+	public static function provideEvent(e : js.html.Event) {
+		try {
+			if (Platform.isIE) {
+				PixiView.dispatchEvent(untyped __js__("new CustomEvent(e.type, e)"));
+			} else {
+				PixiView.dispatchEvent(untyped __js__("new e.constructor(e.type, e)"));
+			}
+		} catch (er : Dynamic) {
+			Errors.report("Error in provideEvent: " + er);
+		}
+	}
+
+	public static function emulateMouseClickOnClip(clip : DisplayObject) : Void {
+		var b = clip.getBounds();
+		MousePos = clip.toGlobal(new Point( b.width / 2.0, b.height / 2.0));
+
+		// Expicitly emulate user action with mouse
+		emulateEvent("mousemove");
+		emulateEvent("mouseover", 100, clip);
+		emulateEvent("mousedown", 400);
+		emulateEvent("mouseup", 500);
+		emulateEvent("mouseout", 600, clip);
+	}
+
+	private static function forceRollOverRollOutUpdate() : Void {
+		if (RendererType != "html") {
+			untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
+			untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
+		}
+	}
+
+	public static function emitMouseEvent(clip : DisplayObject, event : String, x : Float, y : Float) : Void {
+		MousePos.x = x;
+		MousePos.y = y;
+
+		if (event == "mousemove") {
+			var me = {
+				clientX : Std.int(x),
+				clientY : Std.int(y),
+			};
+
+			var e = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent('pointermove', me)")
+				: new js.html.PointerEvent("pointermove", me);
+
+			Browser.window.document.dispatchEvent(e);
+			forceRollOverRollOutUpdate();
+		}
+
+		if (Util.isMouseEventName(event)) {
+			emit(event);
+		} else {
+			clip.emit(event);
+		}
+	}
+
+	public static function emitKeyEvent(clip : DisplayObject, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
+		var activeElement = Browser.document.activeElement;
+
+		var ke = {key : key, ctrl : ctrl, shift : shift, alt : alt, meta : meta, keyCode : keyCode, preventDefault : function () {}};
+		emit(event, ke);
+
+		if (activeElement.tagName.toLowerCase() == "input" || activeElement.tagName.toLowerCase() == "textarea") {
+			var ke = {key : key, ctrlKey : ctrl, shiftKey : shift, altKey : alt, metaKey : meta, keyCode : keyCode};
+
+			if ((event == "keydown" || event == "keypress") && (key.length == 1 || keyCode == 8/*backspace*/ || keyCode == 46/*delete*/)) {
+				var selectionStart = untyped activeElement.selectionStart != null ? untyped activeElement.selectionStart : untyped activeElement.value.length;
+				var selectionEnd = untyped activeElement.selectionEnd != null ? untyped activeElement.selectionEnd : untyped activeElement.value.length;
+
+				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
+
+				if (selectionStart == selectionEnd) {
+					untyped activeElement.value =
+						keyCode == 8 ? untyped activeElement.value.substr(0, selectionStart - 1) + untyped activeElement.value.substr(selectionStart) :
+						keyCode == 46 ? untyped activeElement.value.substr(0, selectionStart) + untyped activeElement.value.substr(selectionStart + 1) :
+						untyped activeElement.value.substr(0, selectionStart) + key + untyped activeElement.value.substr(selectionStart);
+				} else {
+					untyped activeElement.value =
+						keyCode == 8 || keyCode == 46 ? untyped activeElement.value.substr(0, selectionStart) + untyped activeElement.value.substr(selectionEnd) :
+						untyped activeElement.value.substr(0, selectionStart) + key + untyped activeElement.value.substr(selectionEnd);
+				}
+
+				var ie : Dynamic = untyped __js__("{
+					data : activeElement.value,
+					inputType : 'insertText',
+					isComposing : false,
+					bubbles : true,
+					composed : true,
+					isTrusted : true
+				}");
+
+				activeElement.dispatchEvent(Platform.isIE || Platform.isEdge ? untyped __js__("new CustomEvent('input', ie)") : untyped __js__("new InputEvent('input', ie)"));
+			} else {
+				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
+			}
+		}
+	}
+
+	private static function emulateEvent(event : String, delay : Int = 10, clip : DisplayObject = null) : Void {
+		defer(function() {
+			isEmulating = true;
+
+			if (event == "mouseover" || event == "mouseout") {
+				if (clip != null)
+					emitForInteractives(clip, event);
+			} else {
+				emit(event);
+			}
+
+			isEmulating = false;
+		}, delay);
+	}
+
+	public static function ensureCurrentInputVisible() : Void {
+		var focused_node = Browser.document.activeElement;
+		if (focused_node != null) {
+			var node_name : String = focused_node.nodeName;
+			node_name = node_name.toLowerCase();
+			if (node_name == "input" || node_name == "textarea") {
+				//ios doesn't update window height when virtual keyboard is shown
+				var visibleAreaHeight = if (Platform.isIOS) Browser.window.innerHeight / 4 else Browser.window.innerHeight;
+				var rect = focused_node.getBoundingClientRect();
+				if (rect.bottom > visibleAreaHeight) { // Overlaped by screen keyboard
+					if (Platform.isIOS) {
+						Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
+					} else {
+						var mainStage = PixiStage.children[0];
+						mainStage.y = visibleAreaHeight - rect.bottom;
+						var onblur : Dynamic;
+						onblur = function() {
+							mainStage.y = 0;
+							focused_node.removeEventListener("blur", onblur);
+						};
+						focused_node.addEventListener("blur", onblur);
+					}
+				}
+			}
+		}
+	}
+
+	private static var FocusFramesShown = null;
+	private static function switchFocusFramesShow(toShowFrames : Bool) : Void {
+		if (FocusFramesShown != toShowFrames) {
+			FocusFramesShown = toShowFrames;
+			// Interrupt of executing that not handle repeatable pressing tab key when focus frames are shown
+			var pixijscss : js.html.CSSStyleSheet = null;
+
+			// Get flowpixijs.css
+			for (css in Browser.document.styleSheets) {
+				if (css.href != null && css.href.indexOf("flowjspixi.css") >= 0) pixijscss = untyped css;
+			}
+
+			if (pixijscss != null) {
+				var newRuleIndex = 0;
+				if (!toShowFrames) {
+					pixijscss.insertRule(".focused { border: none !important; box-shadow: none !important; }", newRuleIndex);
+					off("mousemove", pixiStageOnMouseMove); // Remove mouse event listener that not handle it always when focus frames are hidden
+				} else {
+					pixijscss.deleteRule(newRuleIndex);
+					on("mousemove", pixiStageOnMouseMove);
+				}
+			}
+		}
+	}
+
+	private static inline var FlowMainFunction = #if (flow_main) MacroUtils.parseDefine("flow_main") #else "flow_main" #end ;
+	private static function StartFlowMain() {
+		Errors.print("Starting flow main.");
+		untyped Browser.window[FlowMainFunction]();
+	}
+
+	private static var rendering = false;
+
+	private static function requestAnimationFrame() {
+		Browser.window.cancelAnimationFrame(AnimationFrameId);
+		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
+	}
+
+	public static var Animating = false;
+
+	private static function animate(?timestamp : Float) {
+		if (timestamp != null) {
+			emit("drawframe", timestamp);
+		}
+
+		if (PageWasHidden) {
+			PageWasHidden = false;
+			InvalidateLocalStages();
+		} else if (Browser.document.hidden) {
+			PageWasHidden = true;
+		}
+
+		if (VideoClip.NeedsDrawing() || PixiStageChanged) {
+			Animating = true;
+			PixiStageChanged = false;
+
+			if (RendererType == "html") {
+				TransformChanged = false;
+
+				AccessWidget.updateAccessTree();
+
+				for (child in PixiStage.children) {
+					untyped child.render(untyped PixiRenderer);
+				}
+			} else {
+				TransformChanged = false;
+
+				if (RendererType == "canvas") {
+					for (child in PixiStage.children) {
+						untyped child.updateView();
+					}
+				}
+
+				AccessWidget.updateAccessTree();
+
+				for (child in PixiStage.children) {
+					untyped child.render(untyped PixiRenderer);
+				}
+			}
+
+			untyped PixiRenderer._lastObjectRendered = PixiStage;
+			PixiStageChanged = false; // to protect against recursive invalidations
+			Animating = false;
+
+			emit("stagechanged", timestamp);
+		} else {
+			AccessWidget.updateAccessTree();
+		}
+
+		requestAnimationFrame();
+	}
+
+	public static inline function render() : Void {
+		animate();
+	}
+
+	public static function forceRender() : Void {
+		for (child in PixiStage.getClipChildren()) {
+			child.invalidateTransform("forceRender", true);
+		}
+
+		render();
+	}
+
+	public static function addPasteEventListener(fn : Array<Dynamic> -> Void) : Void -> Void {
+		on("paste", fn);
+		return function() { off("paste", fn); };
+	}
+
+	public static function addMessageEventListener(fn : String -> String -> Void) : Void -> Void {
+		var handler = function(e) {
+			if (untyped __js__('typeof e.data == "string"'))
+				fn(e.data, e.origin);
+		};
+
+		on("message", handler);
+		return function() { off("message", handler); };
+	}
+
+	public static function InvalidateLocalStages() {
+		for (child in PixiStage.children) {
+			child.invalidateTransform('InvalidateLocalStages', true);
+		}
+
+		render();
 	}
 
 	public static function getPixelsPerCm() : Float {
-		return 96.0/2.54;
+		return 96.0 / 2.54;
+	}
+
+	public static function getBrowserZoom() : Float {
+		return browserZoom;
+	}
+
+	public static function isDarkMode() : Bool {
+		return Platform.isDarkMode;
 	}
 
 	public static function setHitboxRadius(radius : Float) : Bool {
 		return false;
 	}
 
-	#if flash
-	public static function onJsScroll(dx : Float, dy : Float) {
-		for (cb in finegrainMouseWheelCbs) {
-			cb(dx, dy);
-		}
+	public static function setAccessibilityEnabled(enabled : Bool) : Void {
+		AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
 	}
 
-	private static function addPasteClipboardListener(clip : Dynamic) {
-		var pasteFromClipboard = function(e)  {
-			if(Clipboard.generalClipboard.hasFormat(ClipboardFormats.TEXT_FORMAT)) {
-                Native.clipboardData = Clipboard.generalClipboard.getData(ClipboardFormats.TEXT_FORMAT);
-            } else if(Clipboard.generalClipboard.hasFormat(ClipboardFormats.HTML_FORMAT)) {
-                Native.clipboardData = Clipboard.generalClipboard.getData(ClipboardFormats.HTML_FORMAT);
-            } else {
-				Native.clipboardData = "";
-			}
-		};
-
-		clip.addEventListener(Event.PASTE, pasteFromClipboard); //Ctrl+V on stage
-	}
-	#end
-
-	#if js
-	// JavaScript specific private methods
-	private static function hideWaitMessage() : Void {
-		try {
-			Browser.document.getElementById("wait_message").style.display = "none";
-		} catch (e : Dynamic) {
-
-		}
+	public static function setEnableFocusFrame(show : Bool) : Void {
+		EnableFocusFrame = show;
 	}
 
-	private static inline function updateCSSTransform(clip : Dynamic) {
-		var transform =  "translate(" + clip.x + "px," + clip.y + "px) scale(" + clip.scale_x + "," +
-			clip.scale_y + ") rotate(" + clip.rot + "deg)";
-		clip.style.WebkitTransform = transform;
-		clip.style.msTransform = transform;
-		clip.style.transform = transform;
-	}
+	public static function setAccessAttributes(clip : DisplayObject, attributes : Array<Array<String>>) : Void {
+		var attributesMap = new Map<String, String>();
 
-	private static function isFirefox() : Bool {
-		var useragent : String = Browser.window.navigator.userAgent;
-		return useragent.indexOf("Firefox") >= 0;
-	}
-
-	private static function isWinFirefox() : Bool {
-		var useragent : String = Browser.window.navigator.userAgent;
-		return useragent.indexOf("Firefox") >= 0 && useragent.indexOf("Windows") >= 0;
-	}
-
-	private static function isTouchScreen() : Bool {
-		return Native.isTouchScreen();
-	}
-
-	private static function addGlobalKeyHandlers() {
-		attachEventListener(getStage(), "keydown", function(e) {
-			if (e.which == 13 || e.which == 32 || e.which == 113) { // Enter || space || F2 (some screenreaders catch #13 and #32)
-				var active = untyped Browser.document.activeElement;
-				if (active != null && isAriaClip(active)){
-					simulateClickForClip(active);
-                }
-            } else if (e.ctrlKey && e.which == 38 /*up*/) {
-            	if (StageScale < 2.0) {
-            		StageScale = 2.0;
-            		Browser.document.body.style.overflow = "auto"; // Show scrollbars
-            		setClipScaleX(CurrentClip, StageScale); setClipScaleY(CurrentClip, StageScale);
-            	}
-        	} else if (e.ctrlKey && e.which == 40 /*dn*/) {
-        		if (StageScale > 1.0) {
-            		StageScale = 1.0;
-            		Browser.document.body.scrollLeft = Browser.document.body.scrollTop = 0;
-            		Browser.document.body.style.overflow = "hidden";
-            		setClipScaleX(CurrentClip, StageScale); setClipScaleY(CurrentClip, StageScale);
-            	}
-        	}
-		});
-	}
-
-	private static function isAriaClip(clip : Dynamic) : Bool {
-		var role = clip.getAttribute("role");
-		return role == "button" || role == "checkbox" || role == "dialog";
-	}
-
-	private static function addAriaClip(clip : Dynamic) : Void {
-		var role = clip.getAttribute("role");
-		if (role == "dialog") {
-			AriaDialogsStack.push(clip);
-		} else {
-			AriaClips.push(clip);
-		}
-	}
-
-	private static function removeAriaClip(clip : Dynamic) : Void {
-		var role = clip.getAttribute("role");
-		if (role == "dialog") {
-			AriaDialogsStack.remove(clip);
-		} else {
-			AriaClips.remove(clip);
-		}
-	}
-
-	private static function simulateClickForClip(clip : Dynamic) : Void {
-		MouseX = getElementX(clip) + 2.0;
-		MouseY = getElementY(clip) + 2.0;
-		var stage = getStage();
-		if (stage.flowmousedown != null) stage.flowmousedown();
-		if (stage.flowmouseup != null) stage.flowmouseup();
-	}
-
-	private static function prepareCurrentClip() : Void
-	{
-		CurrentClip = js.Browser.document.getElementById("flow");
-
-		CurrentClip.x = CurrentClip.y = CurrentClip.rot = 0;
-		CurrentClip.scale_x = CurrentClip.scale_y = 1.0;
-		// The same for stage to have the same behaviour like for other clips
-		var stage = getStage();
-		stage.x = stage.y = stage.rot = 0;
-		stage.scale_x = stage.scale_y = 1.0;
-
-		//
-		// For Chrome and FF sometimes there are
-		// issues for canvas rendering. Ugly workaraund
-		// for that is to hide and show each 1/2 sec to
-		// force redrawing
-		if ("1" == Util.getParameter("forceredraw")) { // It looks like with CSS transform it is useless
-			Errors.report("Turning on workaround for Chrome & FF rendering issue");
-			var needs_redraw = false;
-			var redraw_timer = new haxe.Timer(500);
-
-			redraw_timer.run = function() {
-				if (needs_redraw) {
-					CurrentClip.style.display='none';
-					CurrentClip.offsetHeight; // no need to store this anywhere, the reference is enough
-					CurrentClip.style.display='block';
-					needs_redraw = false;
-				}
-			}
-
-			CurrentClip.addEventListener("DOMNodeInserted", function() { needs_redraw = true; }, true);
-		}
-	}
-
-	private static function makeTempClip()
-	{
-		TempClip = makeClip();
-		TempClip.setAttribute("aria-hidden", "true"); // Disable reading by AT tools
-		TempClip.style.opacity = 0.0;
-		TempClip.style.zIndex = -1000;
-		js.Browser.document.body.appendChild(TempClip);
-	}
-
-	private static inline function attachEventListener(item : Dynamic, event : String, cb : Dynamic) : Void
-	{
-		if (isFirefox() && event == "mousewheel")
-			item.addEventListener("DOMMouseScroll", cb, true)
-		else if (item.addEventListener)
-			item.addEventListener(event, cb, true);
-		else if (untyped item.attachEvent)
-			if (item == Browser.window)
-				untyped Browser.document.attachEvent("on" + event, cb);
-			else
-				item.attachEvent("on" + event, cb);
-
-	}
-
-	private static inline function detachEventListener(item : Dynamic, event : String, cb : Dynamic) : Void
-	{
-		item.removeEventListener(event, cb, false);
-	}
-
-	private static function startMouseListening()
-	{
-		if (!isTouchScreen()) {
-			attachEventListener(Browser.window,
-				"mousemove",
-				function(e) {
-					MouseX = untyped e.clientX + Browser.window.pageXOffset;
-					MouseY = untyped e.clientY + Browser.window.pageYOffset;
-				} );
-		} else {
-			attachEventListener(Browser.window,
-				"touchmove",
-				function(e) {
-					if ( e.touches.length != 1) return; // Only one finger
-					MouseX = untyped e.touches[0].clientX + Browser.window.pageXOffset;
-					MouseY = untyped e.touches[0].clientY + Browser.window.pageYOffset;
-				} );
-			attachEventListener(Browser.window, // There may be touchstart without touchmove before
-				"touchstart",
-				function(e) {
-					if ( e.touches.length != 1) return; // Only one finger
-					MouseX = untyped e.touches[0].clientX + Browser.window.pageXOffset;
-					MouseY = untyped e.touches[0].clientY + Browser.window.pageYOffset;
-				} );
-		}
-	}
-
-	// Cross brouser text selection disabling
-	private static function setSelectable(element : Dynamic, selectable : Bool) : Void
-	{
-		if (selectable) {
-			element.style.WebkitUserSelect = "text";
-			element.style.MozUserSelect = "text";
-			element.style.MsUserSelect = "text";
-		} else {
-			element.style.WebkitUserSelect = "none";
-			element.style.MozUserSelect = "none";
-			element.style.MsUserSelect = "none";
-		}
-	}
-
-	private static function getElementWidth(el : Dynamic) : Float
-	{
-		var width : Dynamic = el.getBoundingClientRect().width;
-		var childs : Array<Dynamic> = el.children;
-
-		if (childs == null) return width;
-
-		for (c in childs) {
-			var cw = getElementWidth(c) + (c.x != null ? c.x : 0.0);
-			if (cw > width) width = cw;
+		for (kv in attributes) {
+			attributesMap.set(kv[0], kv[1]);
 		}
 
-		return width;
-	}
+		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
-	private static function getElementHeight(el : Dynamic) : Float {
-		var height : Dynamic = el.getBoundingClientRect().height;
-		var childs : Array<Dynamic> = el.children;
-
-		if (childs == null) return height;
-
-		for (c in childs) {
-			var ch = getElementHeight(c) + (c.y != null ? c.y : 0.0);
-			if (ch > height) height = ch;
-		}
-
-		return height;
-	}
-
-	private static function getElementX( el : Dynamic) : Float {
-		if (el == Browser.window) return 0;
-		var rect : Dynamic = el.getBoundingClientRect();
-		return rect.left;
-	}
-
-	private static function getElementY( el : Dynamic) : Float {
-		if (el == Browser.window) return 0;
-		var rect : Dynamic = el.getBoundingClientRect();
-		return rect.top;
-	}
-
-	private static function getGlobalScale( el : Dynamic) : Dynamic {
-		var scale : Dynamic = {scale_x : 1.0, scale_y : 1.0};
-
-		while (el != null && el.scale_x != null && el.scale_y != null) {
-			scale.scale_x *= el.scale_x;
-			scale.scale_y *= el.scale_y;
-			el = el.parentNode;
-		}
-
-		return scale;
-	}
-
-	private static function makeCanvasWH(w : Int, h : Int) : Dynamic {
-		var canvas : Dynamic = Browser.document.createElement("canvas");
-		canvas.height = h;
-		canvas.width = w;
-		canvas.x0 = canvas.y0 = 0.0;
-		return canvas;
-	}
-
-	public static function makeCSSColor(color : Int, alpha : Float) : Dynamic
-	{
-		return "rgba(" + ((color >> 16) & 255)  + "," + ((color >> 8) & 255) + "," + (color & 255) + "," + (alpha) + ")" ;
-	}
-
-	private static function loadImage(clip : Dynamic, url : String, error_cb : Dynamic, metricsFn : Dynamic) : Void
-	{
-		var image_loaded = function(cl : Dynamic, mFn : Dynamic, img : Dynamic) {
-				mFn(img.width, img.height);
-				cl.appendChild(img.cloneNode(false));
-		};
-
-		if (ImageCache.exists(url)) {
-			image_loaded(clip, metricsFn, ImageCache.get(url));
-		} else if ( PendingImages.exists(url) ) {
-			PendingImages.get(url).push( {c: clip, m: metricsFn, e : error_cb } ); // Add new listener
-		} else {
-			PendingImages.set(url, [{c: clip, m: metricsFn, e : error_cb }]);
-
-			var img = untyped __js__ ("new Image()");
-
-			img.onload = function() {
-				ImageCache.set(url, img);
-
-				var listeners : Array<Dynamic> = PendingImages.get(url);
-
-				for (i in 0...listeners.length) {
-					var listener = listeners[i];
-					image_loaded(listener.c, listener.m, img);
+		if (accessWidget == null) {
+			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
+				if (RendererType == "html") {
+					clip.initNativeWidget();
 				}
 
-				PendingImages.remove(url);
-			};
+				var nativeWidget : Element = untyped clip.nativeWidget;
 
-			img.onerror = function() {
-				var listeners : Array<Dynamic> = PendingImages.get(url);
-				for (i in 0...listeners.length)
-					listeners[i].e();
-				PendingImages.remove(url);
-			};
-
-			img.src = url + "?" + StringTools.htmlEscape("" + Date.now().getTime()); // Force onload event
-		}
-	}
-
-	private static function loadSWF(clip : Dynamic, url : String, error_cb : Dynamic, metricsFn : Dynamic) : Void
-	{
-		// Due to crossdomain restrictions only relative links are allowed for SWFs
-		// Try to convert absolute url to relative
-		// It is supposed that currentdomain/path.swf is accessible for http://www.domain/path.swf
-		if (StringTools.startsWith(url, "http://www")) {
-			var domain_and_path = url.substr(7);
-			url = domain_and_path.substr(domain_and_path.indexOf("/"));
-		}
-
-		var swf : Dynamic = Browser.document.createElement("OBJECT");
-		swf.type = "application/x-shockwave-flash";
-		swf.data = url + "?" + StringTools.htmlEscape("" + Date.now().getTime()); // Force onload event;
-		clip.appendChild(swf);
-
-		var load_time = Date.now().getTime();
-		var try_swf_access = null;
-		try_swf_access = function() {
-			if ((Date.now().getTime() - load_time) > 5000)  {
-				error_cb();
-				return;
-			}
-
-			if (swf == null || swf.TGetProperty == null) {
-				haxe.Timer.delay(try_swf_access, 450); // Try again
-				return;
-			}
-
-			var width = 4.0 / 3.0 * swf.TGetProperty("/", 8); // pt -> px
-			var height = 4.0 / 3.0 * swf.TGetProperty("/", 9);
-
-			swf.style.width = "" + width + "px";
-			swf.style.height = "" + height + "px";
-
-			metricsFn(width, height);
-		}
-
-		haxe.Timer.delay( try_swf_access, 450 );
-	}
-	#end // #if js
-
-	// Exported methods
-	// setAccessAttributes(clip, type {"button" | "live" | "checkbox"}, description, tooltip, tabindex)
-	// native setAccessAttributes : io (native, type : string, description : string, tooltip : string, tabindex : int) -> void = RenderSupport.setAccessAttributes;
-
-	static public function setAccessCallback(clip : Dynamic, callback : Void -> Void) : Void { /* STUB */ }
-
-	#if flash
-	static private var UpdateAccessTimer : haxe.Timer;
-	#end
-	static public function setAccessAttributes(clip : Dynamic, properties : Array<Array<String>>) : Void {
-		#if js
-			var setClipRole = function(role : String) {
-				if (role == "live") {
-					clip.setAttribute("aria-live", "polite");
-					clip.setAttribute("relevant", "additions");
-					clip.setAttribute("role", "aria-live");
+				// Create DOM node for access. properties
+				if (nativeWidget != null) {
+					accessWidget = new AccessWidget(clip, nativeWidget);
+					untyped clip.accessWidget = accessWidget;
+					accessWidget.addAccessAttributes(attributesMap);
 				} else {
-					clip.setAttribute("role", role);
+					AccessWidget.createAccessWidget(clip, attributesMap);
 				}
 			}
+		} else {
+			accessWidget.addAccessAttributes(attributesMap);
+		}
+	}
 
-			for (p in properties) {
-				var key = p[0]; var value : String = p[1];
-				if (key == "role") {
-					setClipRole(value);
-				} else if (key == "tooltip") {
-					clip.setAttribute("title", value);
-				} else if (key == "tabindex" && Std.parseInt(value) >= 0) {
-					if (clip.input) clip.children[0].setAttribute("tabindex", Std.parseInt(value)) else clip.setAttribute("tabindex", Std.parseInt(value));
-				} else if (key == "description") {
-					clip.setAttribute("aria-label", value);
-				} else if (key == "state") {
-					if (value == "checked") clip.setAttribute("aria-checked", "true");
-					else if (value == "unchecked") clip.setAttribute("aria-checked", "false");
-				} else if (key == "selectable") {
-					setSelectable(clip, "true" == value);
-				}
+	public static function removeAccessAttributes(clip : Dynamic) : Void {
+		if (clip.accessWidget != null) {
+			AccessWidget.removeAccessWidget(clip.accessWidget);
+		}
+	}
+
+	public static function setAccessCallback(clip : Dynamic, callback : Void -> Void) : Void {
+		clip.accessCallback = callback;
+	}
+
+	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
+		if (clip.nativeWidget != null && clip.shouldPreventFromBlur != null) {
+			clip.shouldPreventFromBlur = true;
+		}
+
+		var children : Array<Dynamic> = untyped clip.children;
+		if (children != null) {
+			for (child in children) {
+				setShouldPreventFromBlur(child);
 			}
-		#elseif flash
-			var setClipDescription = function(descr : String) {
-				if (flash.accessibility.Accessibility.active)
-				{
-					if (UpdateAccessTimer != null)
-						UpdateAccessTimer.stop();
-
-					UpdateAccessTimer = haxe.Timer.delay( function() {
-						flash.accessibility.Accessibility.updateProperties();
-					}, 1000 );
-
-					// To inspect these tags, consider
-					// http://accessibility.linuxfoundation.org/a11yweb/util/accprobe/
-
-					var ap = new flash.accessibility.AccessibilityProperties();
-					ap.description = descr;
-					clip.accessibilityProperties = ap;
-				}
-			}
-
-			for (p in properties) {
-				var key = p[0]; var value = p[1];
-				if (key == "description") {
-					setClipDescription(value);
-				}
-			}
-
-		#end
-
+		}
 	}
 
 	// native currentClip : () -> flow = FlashSupport.currentClip;
-	public static function currentClip() : Dynamic  {
-		#if js
-			return CurrentClip;
-		#elseif flash
-			return flash.Lib.current;
-		#else
-	     	return null;
-		#end
+	public static function currentClip() : DisplayObject {
+		return PixiStage;
 	}
 
-	// native enableResize() -> void;
+	public static function mainRenderClip() : FlowContainer {
+		if (PixiStage.children.length == 0) {
+			var stage = new FlowContainer();
+			addChild(PixiStage, stage);
+
+			return stage;
+		} else {
+			return cast(PixiStage.children[0], FlowContainer);
+		}
+	}
+
 	public static function enableResize() : Void {
-		#if js
-			hideWaitMessage(); // The first flow render() was called -> hide message
-		#elseif flash
-			var stage = flash.Lib.current.stage;
-			stage.scaleMode = flash.display.StageScaleMode.NO_SCALE;
-			stage.align = flash.display.StageAlign.TOP_LEFT;
-		#end
+		// The first flow render call. Hide loading progress indicator.
+		Browser.document.body.style.backgroundImage = "none";
+		var indicator = Browser.document.getElementById("loading_js_indicator");
+		if (indicator != null) {
+			Browser.document.body.removeChild(indicator);
+		}
 	}
 
 	public static function getStageWidth() : Float {
-		#if js
-			return Browser.window.innerWidth; // IE 9+ supports this (but not in quirks mode!)
-		#elseif flash
-			return flash.Lib.current.stage.stageWidth;
-		#else
-			return 0.0;
-		#end
+		return PixiRenderer.width / backingStoreRatio / getAccessibilityZoom();
 	}
 
 	public static function getStageHeight() : Float {
-		#if js
-			return  Browser.window.innerHeight;
-		#elseif flash
-			return flash.Lib.current.stage.stageHeight;
-		#else
-			return 0.0;
-		#end
+		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
-	// native makeTextfield : (fontfamily : String) -> native
-	public static function makeTextField(fontfamily : String) : Dynamic  {
-		#if js
-			var field : Dynamic = makeClip();
-			TempClip.appendChild(field); // To have width and height field must be visible
-			return field;
-		#elseif flash
-			var textfield = new flash.text.TextField();
-			textfield.selectable = false;
-			textfield.sharpness = -400;
-			textfield.antiAliasType = flash.text.AntiAliasType.ADVANCED;
-			textfield.gridFitType = flash.text.GridFitType.NONE;
-			textfield.autoSize = flash.text.TextFieldAutoSize.LEFT;
-			textfield.multiline = true;
-			textfield.x = -2;
-			textfield.y = -2;
-			return textfield;
-		#else
-			return null;
-		#end
+	public static function makeTextField(fontFamily : String) : TextClip {
+		return new TextClip();
 	}
 
-	#if js
-	private static function setStyleByFlowFont(style : Dynamic, fontfamily : String) : Void {
-		var fs : FontStyle = FlowFontStyle.fromFlowFont(fontfamily);
-		if (fs != null) {
-			style.fontFamily = fs.family;
-			style.fontWeight = fs.weight;
-			style.fontStyle = fs.style;
-		} else {
-			style.fontFamily = fontfamily;
-		}
-	}
-	#end
-
-	public static function setTextAndStyle(
-		textfield : Dynamic, text : String, fontfamily : String,
-		fontsize : Float, fontweight : Int, fontslope : String,
-		fillcolour : Int, fillopacity : Float, letterspacing : Float,
-		backgroundcolour : Int, backgroundopacity : Float
-	) : Dynamic  {
-		#if js
-			// Make font smaller to look as flash one.
-			// It seems flash font engine use special spacing or weight
-			fontsize = fontsize * 0.97;
-			var style = if (textfield.input) textfield.children[0].style else textfield.style;
-			setStyleByFlowFont(style, fontfamily);
-
-			style.fontSize = "" + Math.floor( fontsize ) + "px";
-			style.opacity = "" + fillopacity;
-			style.color = "#" + StringTools.hex(fillcolour, 6);
-			style.fontWeight = fontweight;
-			style.fontStyle = fontslope;
-			if (letterspacing != 0)
-				style.letterSpacing = "" + letterspacing + "px";
-
-			if (backgroundopacity != 0.0)
-				style.backgroundColor = "#" + StringTools.hex(backgroundcolour, 6);
-
-			textfield.font_size = fontsize; // Store it to scale later
-
-			if (textfield.input) {
-				if (textfield.children[0].value != text) textfield.children[0].value = text;
-			} else {
-				if (textfield.innerHTML != text)
-					textfield.innerHTML = text;
-
-				patchTextFormatting(textfield);
-			}
-			return null;
-		#elseif flash
-			// Special flash names for fonts
-			if (fontfamily == "sans-serif") fontfamily = "_sans";
-
-			// Set the embedded flag for the fonts we recognize as built-in
-			textfield.embedFonts = isEmbeddedFont(fontfamily);
-
-			if (textfield.type == TextFieldType.INPUT) {
-				setHtmlText(textfield, text, fontfamily, fontsize, letterspacing);
-
-				setTextColors(textfield, fillcolour, fillopacity, backgroundcolour, backgroundopacity);
-			} else {
-				setTextColors(textfield, fillcolour, fillopacity, backgroundcolour, backgroundopacity);
-
-				setHtmlText(textfield, text, fontfamily, fontsize, letterspacing);
-			}
-			return null;
-		#else
-			return null;
-		#end
+	public static function setTextAndStyle(clip : TextClip, text : String, fontFamily : String, fontSize : Float, fontWeight : Int, fontSlope : String,
+		fillColor : Int, fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
+		clip.setTextAndStyle(text, fontFamily, fontSize, fontWeight, fontSlope,
+			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
 	}
 
-	public static function setTextDirection(textfield : Dynamic, direction : String) : Void {
-		#if js
-			var input_ = textfield.input ? textfield.children[0] : textfield;
-			input_.style.direction = switch (direction) {
-				case "RTL" : "rtl";
-				case "rtl" : "rtl";
-				default : "ltr";
-			}
-		#elseif flash
-			// Not sure there are things to do, hence flash target is obsolete.
-		#end
+	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
+		clip.setEscapeHTML(escapeHTML);
 	}
 
-	#if flash
-	private static function isEmbeddedFont(fontfamily : String) {
-		// Special cases for a few universal fonts, which are not embedded
-		// if (fontfamily != "_sans" && fontfamily != "Courier") return true;
-
-		return builtinFonts.get(fontfamily) == true;
-	}
-	#end
-
-	#if js
-	private static function patchTextFormatting(node : Dynamic) : Void {
-		if (node.tagName == "FONT") {
-			node.style.fontSize = node.size + "px";
-			node.size = "";
-			setStyleByFlowFont(node.style, node.face);
-			node.face = "";
-		}
-
-		var childs : Array<Dynamic> = node.children;
-		if (childs.length == 0) {
-			node.innerHTML = StringTools.replace(node.innerHTML , " ", "&nbsp;");
-			node.innerHTML = StringTools.replace(node.innerHTML, "\n", "<br>");
-		} else {
-			for (c in childs) patchTextFormatting(c);
-		}
-	}
-	#end
-
-	#if flash
-	private static function setTextColors(textfield : Dynamic, fillcolour : Int, fillopacity : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
-		// TODO: Use a tag for this instead. Requires hex printing
-			textfield.textColor = fillcolour;
-			if (fillopacity != 1.0) textfield.alpha = fillopacity;
-
-			if (backgroundopacity != 0.0) {
-				textfield.backgroundColor = backgroundcolour;
-				textfield.background = true;
-			}
+	public static function setAdvancedText(clip : TextClip, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {
+		// NOP
 	}
 
-	private static function setHtmlText(textfield : Dynamic, text : String, fontfamily : String, fontsize : Float, letterspacing : Float) : Void {
-		var letterspacingParameter : String = "";
-
-		if (letterspacing != 0) {
-			letterspacingParameter = ' letterspacing="' + letterspacing + '"';
-		}
-
-		if (text == "") {  // trick for initialization by empty string:
-			var html = '<font face="' + fontfamily + '" size="' + fontsize + '"' + letterspacingParameter + '>' + ' ' + '</font>';
-			textfield.htmlText = html;
-			textfield.setSelection(textfield.length, textfield.length);
-			textfield.text = "";
-		} else {
-			var html = '<font face="' + fontfamily + '" size="' + fontsize + '"' + letterspacingParameter + '>' + text + '</font>';
-			if (textfield.htmlText != html) { textfield.htmlText = html; }
-		}
-	}
-	#end
-
-	static public var builtinFonts : Map<String, Bool>;
-
-	public static function setAdvancedText(textfield : Dynamic, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void  {
-		#if flash
-			textfield.sharpness = sharpness;
-
-			if (antialiastype == 0)
-				textfield.antiAliasType = flash.text.AntiAliasType.NORMAL;
-			else if (antialiastype == 1)
-				textfield.antiAliasType = flash.text.AntiAliasType.ADVANCED;
-
-			if (gridfittype == 0)
-				textfield.gridFitType = flash.text.GridFitType.NONE;
-			else if (gridfittype == 1)
-				textfield.gridFitType = flash.text.GridFitType.PIXEL;
-			else if (gridfittype == 2)
-				textfield.gridFitType = flash.text.GridFitType.SUBPIXEL;
-		#end
+	public static function makeVideo(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) : DisplayObject {
+		return new VideoClip(metricsFn, playFn, durationFn, positionFn);
 	}
 
-	public static function makeVideo(width : Int, height : Int, metricsFn : Int -> Int -> Void, durationFn : Float -> Void) : Array<Dynamic> {
-		#if flash
-			var strictSize = width != 0 && height != 0;
-			try {
-				var vid = new flash.media.Video(width, height);
-				var nc = new flash.net.NetConnection();
-				nc.connect(null);
-				var ns = new flash.net.NetStream(nc);
-
-				if (strictSize)
-					metricsFn(width, height);
-
-				ns.client = {
-					//This event is triggered after a call to play()
-					onMetaData: function (o) {
-						if (!strictSize) {
-							try {
-								if (o != null && o.width != 0) {
-									vid.width = o.width;
-								}
-								if (o != null && o.height != 0) {
-									vid.height = o.height;
-								}
-								metricsFn(cast(vid.width), cast(vid.height));
-							} catch (e:Dynamic) {}
-						}
-
-						try {
-							if (o != null && o.duration != 0)
-								durationFn(cast(o.duration+0.0));
-						} catch (e : Dynamic) {}
-					},
-					// Prevent error #2044: Unhandled AsyncErrorEvent
-					onCuePoint: function (o) { },
-					onXMPData: function (o) { }
-				}
-
-				vid.attachNetStream(ns);
-				vid.smoothing = true;
-				return [ns, vid];
-			} catch (e : Dynamic) {
-				return [null, null];
-			}
-		#elseif js
-			var ve : Dynamic = Browser.document.createElement("VIDEO");
-			if (width > 0.0) ve.width = width;
-			if (height > 0.0) ve.height = height;
-			ve.addEventListener('loadedmetadata', function(e : Dynamic) {
-  				durationFn(ve.duration);
-  				metricsFn(ve.videoWidth, ve.videoHeight);
-			}, false);
-			return [ve, ve];
-		#else
-			return [null, null];
-		#end
+	public static function setVideoVolume(clip : VideoClip, volume : Float) : Void {
+		clip.setVolume(volume);
 	}
 
-	public static function setVideoVolume(str: Dynamic, volume : Float) : Void {
-		#if js
-			str.volume = volume;
-		#elseif flash
-			var stream: flash.net.NetStream = str;
-			stream.soundTransform = new flash.media.SoundTransform(volume);
-		#end
+	public static function setVideoLooping(clip : VideoClip, loop : Bool) : Void {
+		clip.setLooping(loop);
 	}
 
-	public static function setVideoLooping(str: Dynamic, loop : Bool) : Void {
+	public static function setVideoControls(clip : VideoClip, controls : Dynamic) : Void {
 		// STUB; only implemented in C++/OpenGL
 	}
 
-	public static function setVideoControls(str: Dynamic, controls : Dynamic) : Void {
-		// STUB; only implemented in C++/OpenGL
+	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String,
+		fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
+		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
 	}
 
-	public static function setVideoSubtitle(str: Dynamic, text : String, size : Float, color : Int) : Void {
-		// STUB; only implemented in C++/OpenGL
+	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
+		clip.setPlaybackRate(rate);
 	}
 
-	public static function playVideo(str : Dynamic, filename : String, startPaused : Bool) : Void {
-		#if js
-			str.src = filename;
-			if (!startPaused) str.play();
-		#elseif flash
-			var stream : flash.net.NetStream = str;
-			stream.play(filename);
-			if (startPaused)
-				stream.pause();
-		#end
+	public static function setVideoTimeRange(clip: VideoClip, start : Float, end : Float) : Void {
+		clip.setTimeRange(start, end);
 	}
 
-	public static function seekVideo(str : Dynamic, seek : Float) : Void  {
-		#if js
-			str.currentTime = seek;
-		#elseif flash
-			var stream : flash.net.NetStream = str;
-			stream.seek(seek);
-		#end
+	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool) : Void {
+		vc.playVideo(filename, startPaused);
 	}
 
-	public static function getVideoPosition(str : Dynamic) : Float  {
-		#if flash
-			var stream : flash.net.NetStream = str;
-			return stream.time;
-		#elseif js
-			return str.currentTime;
-		#else
-			return 0.0;
-		#end
+	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
+		vc.playVideoFromMediaStream(mediaStream, startPaused);
 	}
 
-	public static function pauseVideo(str : Dynamic) : Void {
-		#if js
-			str.pause();
-		#elseif flash
-			var stream : flash.net.NetStream = str;
-			stream.pause();
-		#end
+	public static function seekVideo(clip : VideoClip, seek : Float) : Void {
+		clip.setCurrentTime(seek);
 	}
 
-	public static function resumeVideo(str : Dynamic) : Void {
-		#if js
-			str.play();
-		#elseif flash
-			var stream : flash.net.NetStream = str;
-			stream.resume();
-		#end
+	public static function getVideoPosition(clip : VideoClip) : Float {
+		return clip.getCurrentTime();
 	}
 
-	public static function closeVideo(str : Dynamic) : Void {
-		#if js
-		#elseif flash
-			var stream : flash.net.NetStream = str;
-			stream.close();
-		#end
+	public static function getVideoCurrentFrame(clip : VideoClip) : String {
+		return clip.getCurrentFrame();
 	}
 
-	public static function getTextFieldWidth(textfield : Dynamic) : Float {
-		#if js
-			if (textfield.input == true)
-				return textfield.width;
-			else
-				return textfield.offsetWidth;
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.width - 4.0;
-		#else
-			return 0.0;
-		#end
+	public static function pauseVideo(clip : VideoClip) : Void {
+		clip.pauseVideo();
 	}
 
-	public static function setTextFieldWidth(textfield : Dynamic, width : Float) : Void {
-		#if js
-			if (textfield.input) {
-				textfield.width = width;
-				textfield.children[0].style.width = "" + width + "px";
-			}
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			textfield.width = width + 4.0;
-		#end
+	public static function resumeVideo(clip : VideoClip) : Void {
+		clip.resumeVideo();
 	}
 
-	public static function getTextFieldHeight(textfield : Dynamic) : Float {
-		#if js
-			if (textfield.input == true)
-				return textfield.height;
-			else
-				return textfield.offsetHeight;
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.height - 4.0;
-		#else
-			return 0.0;
-		#end
+	public static function closeVideo(clip : VideoClip) : Void {
+		// NOP for this target
 	}
 
-	public static function setTextFieldHeight(textfield : Dynamic, height : Float) : Void {
-		#if js
-			if (textfield.input) {
-				textfield.height = height;
-				textfield.children[0].style.height = "" + height + "px";
-			}
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			textfield_.height = height + 4.0;
-		#end
+	public static function getTextFieldCharXPosition(textclip : TextClip, charIdx: Int) : Float {
+		return textclip.getCharXPosition(charIdx);
 	}
 
-	public static function setAutoAlign(textfield : Dynamic, autoalign : String) : Void {
-		#if js
-			var input_ = textfield.input ? textfield.children[0] : textfield;
-			input_.style.textAlign = switch (autoalign) {
-				case "AutoAlignLeft" : "left";
-				case "AutoAlignRight" : "right";
-				case "AutoAlignCenter" : "center";
-				case "AutoAlignNone" : "none";
-				default : "left";
-			}
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			if (autoalign == "AutoAlignLeft") {
-				textfield_.autoSize = flash.text.TextFieldAutoSize.LEFT;
-			} else if (autoalign == "AutoAlignRight") {
-				textfield_.autoSize = flash.text.TextFieldAutoSize.RIGHT;
-			} else if (autoalign == "AutoAlignCenter") {
-				textfield_.autoSize = flash.text.TextFieldAutoSize.CENTER;
-			} else if (autoalign == "AutoAlignNone") {
-				textfield_.autoSize = flash.text.TextFieldAutoSize.NONE;
-			} else {
-				Errors.report("Unknown AutoAlign type: " + autoalign);
-			}
-		#end
-	}
-
-	public static function setTextInput(textfield : Dynamic) : Void  {
-		#if js
-			var input : Dynamic = Browser.document.createElement("INPUT");
-			input.type = "text";
-			textfield.input = true;
-			textfield.appendChild(input);
-		#elseif flash
-			textfield.tabEnabled = true;
-			textfield.selectable = true;
-			textfield.wordWrap = true; // wordWrap is the same as fixed width
-			textfield.multiline = false; // multiline allows growing in height
-			textfield.alwaysShowSelection = true;
-			textfield.type = flash.text.TextFieldType.INPUT;
-		#end
-	}
-
-	public static function setTextInputType(textfield : Dynamic, type : String) : Void {
-		#if js
-			if (textfield.input) {
-				textfield.children[0].type = type;
-			}
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			switch (type.toLowerCase()) {
-				case "password": textfield_.displayAsPassword = true;
-				case "number": textfield_.restrict = "0-9\\-\\.\\+"; //number type in js allow to use "+" in input
-				case "tel": textfield_.restrict = "0-9\\+"; //should we allow ".", " ", "/", "(", ")", "-" ?
-				case "text": textfield_.restrict = null;
-				case "url": textfield_.restrict = null;
-				case "email": textfield_.restrict = null;
-				case "search": textfield_.restrict = null;
-			}
-		#end
-	}
-
-	#if flash
-	private static var TextInputFilters : Map< flash.text.TextField, Array<String -> Bool> > = new Map< flash.text.TextField, Array<String -> Bool> >();
-	public static function addTextInputFilter(textfield : Dynamic, filter : String -> Bool) : Void -> Void {
-		var old_content = textfield.text;
-		var cb = function(e : Dynamic) {
-			var t = textfield.text;
-			var filters : Array<String -> Bool> = TextInputFilters[textfield];
-			for (f in filters)
-				if (!f(t)) {
-					textfield.text = old_content;
-					return;
-				}
-			old_content = t;
+	public static function findTextFieldCharByPosition(textclip : TextClip, x: Float, y: Float) : Int {
+		/* Assuming exact glyph codes used to form each clip's text. */
+		var EPSILON = 0.1; // Why not, pixel precision assumed.
+		var clip = getClipAt(textclip, new Point(x, y));
+		try {
+			textclip = cast(clip, TextClip);
+		} catch(exc: String) {
+			clip = textclip;
 		};
-
-		if (!TextInputFilters.exists(textfield)) {
-			TextInputFilters.set(textfield, new Array());
-			textfield.addEventListener("change", cb);
+		if (textclip == null) return -1;
+		var clipGlyphs = textclip.getContentGlyphs();
+		var clipStyle : TextStyle = textclip.getStyle();
+		var leftVal: Float = 0;
+		var mtxWidth: Float = TextClip.measureTextModFrag(clipGlyphs, clipStyle, 0, clipGlyphs.text.length);
+		var rightVal: Float = mtxWidth;
+		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
+		var org = clip.toGlobal(new Point(0.0, 0.0));
+		var localX = Math.min(mtxWidth, Math.max(0.0, x - org.x));
+		if (TextClip.getStringDirection(clipGlyphs.text, textclip.getTextDirection()) == "rtl") localX = rightVal - localX;
+		var leftPos: Float = 0;
+		var rightPos: Float = clipGlyphs.modified.length;
+		var midVal: Float = -1.0;
+		var midPos: Float = -1;
+		var oldPos: Float = rightPos;
+		while (Math.abs(localX-midVal) >= EPSILON && Math.round(midPos) != Math.round(oldPos)) {
+			oldPos = midPos;
+			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
+			if (midPos<leftPos) break;
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(leftPos), Math.ceil(leftPos));
+			midVal = leftVal - mtxWidth * (leftPos - Math.floor(leftPos));
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(leftPos), Math.floor(midPos));
+			midVal += mtxWidth;
+			mtxWidth = TextClip.measureTextModFrag(clipGlyphs, clipStyle, Math.floor(midPos), Math.ceil(midPos));
+			midVal += mtxWidth * (midPos - Math.floor(midPos));
+			leftPos = midPos;
+			leftVal = midVal;
 		}
-
-		TextInputFilters[textfield].push(filter);
-
-		return function() {
-			TextInputFilters[textfield].remove(filter);
-			if (TextInputFilters[textfield].length == 0) {
-				TextInputFilters.remove(textfield);
-				textfield.removeEventListener("change", cb);
-			}
-		};
-	}
-	#end
-
-	public static function setTabIndex(textfield : Dynamic, index : Int) : Void {
-		#if js
-			if (index >= 0) {
-				if (textfield.input) textfield.children[0].setAttribute("tabindex", index) else textfield.setAttribute("tabindex", index);
-			}
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			textfield_.tabIndex = index;
-		#end
-	}
-
-	public static function setTabEnabled(textfield : Dynamic, enabled : Bool) : Void {
-		#if js
-			// stub;
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			textfield_.tabEnabled = enabled;
-		#end
-	}
-
-	public static function getContent(textfield : Dynamic) : String {
-		#if js
-			if (textfield.input)
-				return textfield.children[0].value;
+		var mappingOffset = 0.0;
+		for (i in 0...Math.round(midPos)) {
+			if (i < Math.ceil(midPos)-1)
+				mappingOffset += clipGlyphs.difPositionMapping[i];
 			else
-				return textfield.innerHTML;
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-
-			var t = textfield_.text;
-			t = StringTools.replace(t, "\r\n", "\n");
-			t = StringTools.replace(t, "\r", "\n");
-
-			return t;
-		#else
-			return "";
-		#end
-	}
-
-	public static function getCursorPosition(textfield : Dynamic) : Int {
-		#if flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.caretIndex;
-		#elseif js
-			return getCaret(textfield.children[0]);
-		#else
-			return 0;
-		#end
-	}
-
-	#if js
-	static function getCaret(el : Dynamic) : Int {
-		if (untyped el.selectionStart) {
-			return el.selectionStart;
-		} else if (untyped Browser.document.selection) {
-			el.focus();
-
-			var r : Dynamic = untyped Browser.document.selection.createRange();
-			if (r == null) {
-				return 0;
-			}
-
-			var re = el.createTextRange();
-			var rc = re.duplicate();
-			re.moveToBookmark(r.getBookmark());
-			untyped rc.setEndPoint('EndToStart', re);
-			return rc.text.length;
+				mappingOffset += clipGlyphs.difPositionMapping[i] * (midPos-Math.floor(midPos));
 		}
+		return Math.round(midPos + mappingOffset) + textclip.charIdx;
+	}
+
+	public static function getTextFieldWidth(clip : TextClip) : Float {
+		return untyped clip.isInput ? clip.getWidth() : clip.getClipWidth();
+	}
+
+	public static function setTextFieldWidth(clip : TextClip, width : Float) : Void {
+		// NOTE : It is called by flow only for textinputs
+		clip.setWidth(width);
+	}
+
+	public static function getTextFieldHeight(clip : TextClip) : Float {
+		return untyped clip.isInput ? clip.getHeight() : clip.getClipHeight();
+	}
+
+	public static function setTextFieldHeight(clip : TextClip, height : Float) : Void {
+		// This check is needed for cases when we get zero height for input field. Flash and cpp
+		// ignore height (flash ignores it at all, cpp takes it into account only when input has
+		// has a focus), so we have to have some workaround here.
+		// TODO: Find a better fix
+		if (height > 0.0)
+			clip.setHeight(height);
+	}
+
+	public static function setTextFieldCropWords(clip : TextClip, crop : Bool) : Void {
+		clip.setCropWords(crop);
+	}
+
+	public static function setTextFieldCursorColor(clip : TextClip, color : Int, opacity : Float) : Void {
+		clip.setCursorColor(color, opacity);
+	}
+
+	public static function setTextFieldCursorWidth(clip : TextClip, width : Float) : Void {
+		clip.setCursorWidth(width);
+	}
+
+	public static function setTextEllipsis(clip : TextClip, lines : Int, cb : Bool -> Void) : Void {
+		clip.setEllipsis(lines, cb);
+	}
+
+	public static function setTextFieldInterlineSpacing(clip : TextClip, spacing : Float) : Void {
+		clip.setInterlineSpacing(spacing);
+	}
+
+	public static function setTextDirection(clip : TextClip, direction : String) : Void {
+		clip.setTextDirection(direction);
+	}
+
+	public static function setAutoAlign(clip : TextClip, autoalign : String) : Void {
+		clip.setAutoAlign(autoalign);
+	}
+
+	public static function setTextInput(clip : TextClip) : Void {
+		clip.setTextInput();
+	}
+
+	public static function setTextInputType(clip : TextClip, type : String) : Void {
+		clip.setTextInputType(type);
+	}
+
+	public static function setTextInputAutoCompleteType(clip : TextClip, type : String) : Void {
+		clip.setTextInputAutoCompleteType(type);
+	}
+
+	public static function setTextInputStep(clip : TextClip, step : Float) : Void {
+		clip.setTextInputStep(step);
+	}
+
+	public static function setTabIndex(clip : TextClip, index : Int) : Void {
+		clip.setTabIndex(index);
+	}
+
+	public static function setTabEnabled(enabled : Bool) : Void {
+		// STUB; usefull only in flash
+	}
+
+	public static function getContent(clip : TextClip) : String {
+		return clip.getContent();
+	}
+
+	public static function getCursorPosition(clip : TextClip) : Int {
+		return clip.getCursorPosition();
+	}
+
+	public static function getFocus(clip : NativeWidgetClip) : Bool {
+		return clip.getFocus();
+	}
+
+	public static function getScrollV(clip : TextClip) : Int {
 		return 0;
 	}
 
-	#end
-
-	public static function getFocus(clip : Dynamic) : Bool {
-		#if flash
-			return flash.Lib.current.stage.focus == clip;
-		#elseif js
-			var item = clip.input ? clip.children[0] : clip.focus();
-			return Browser.document.activeElement == item;
-		#else
-			return false;
-		#end
+	public static function setScrollV(clip : TextClip, suggestedPosition : Int) : Void {
 	}
 
-	public static function getScrollV(textfield : Dynamic) : Int {
-		#if flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.scrollV;
-		#else
-			return 0;
-		#end
+	public static function getBottomScrollV(clip : TextClip) : Int {
+		return 0;
 	}
 
-    public static function setScrollV(textfield : Dynamic, suggestedPosition : Int) : Void {
-		#if js
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			var numLines = textfield_.numLines;
-
-			var positivePosition = if (suggestedPosition < 1) 1 else suggestedPosition;
-			var newPosition = if (positivePosition > numLines) numLines else positivePosition;
-
-			textfield_.scrollV = newPosition;
-		#end
+	public static function getNumLines(clip : TextClip) : Int {
+		return 0;
 	}
 
-	public static function getBottomScrollV(textfield : Dynamic) : Int {
-		#if flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.bottomScrollV;
-		#else
-			return 0;
-		#end
-	}
-
-	public static function getNumLines(textfield : Dynamic) : Int {
-		#if flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.numLines;
-		#else
-			return 0;
-		#end
-	}
-
-	public static function setFocus(clip : Dynamic, focus : Bool) : Void {
-		#if js
-			// Focusing on something from an event handler that,
-			// itself, grants focus, is always problematic.
-			// The general solution is to set focus after a timeout:
-			haxe.Timer.delay( function() {
-				var item = clip.input ? clip.children[0] : clip;
-				if (focus) item.focus() else item.blur();
-			}, 10);
-		#elseif flash
-			if (focus) {
-				flash.Lib.current.stage.focus = clip;
-				try {
-					var textfield : flash.text.TextField = cast(clip);
-					textfield.setSelection(0, textfield.length);
-				} catch (e : Dynamic) {
-					// This is fine, we want to be able to set the focus to other things than textfields
-					// to make sure we keep focus inside Flash even when a Textinput with focus is
-					// removed
-				}
-			} else {
-				if (flash.Lib.current.stage.focus == clip)
-					flash.Lib.current.stage.focus = null;
-			}
-		#end
-	}
-
-	public static function setMultiline(clip : Dynamic, multiline : Bool) : Void {
-		#if js
-		if (clip.input && multiline && !clip.multiline) {
-			clip.removeChild(clip.children[0]); // Replace input with textarea
-			var textarea : Dynamic = Browser.document.createElement("TEXTAREA");
-			if (clip.width) textarea.style.width = "" + clip.width + "px";
-			if (clip.height) textarea.style.height = "" + clip.height + "px";
-			clip.appendChild(textarea);
-			clip.multiline = true;
+	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
+		AccessWidget.updateAccessTree();
+		if (focus) {
+			render();
 		}
-		#elseif flash
-			var textfield : flash.text.TextField = cast(clip);
-			textfield.multiline = multiline;
-		#end
+
+		clip.setClipFocus(focus);
 	}
 
-	public static function setWordWrap(clip : Dynamic, wordWrap : Bool) : Void {
-		#if js
-		#elseif flash
-			var textfield : flash.text.TextField = cast(clip);
-			textfield.wordWrap = wordWrap;
-		#end
+	public static function setMultiline(clip : TextClip, multiline : Bool) : Void {
+		clip.setMultiline(multiline);
 	}
 
-	public static function setDoNotInvalidateStage(clip : Dynamic, value : Bool) : Void {
+	public static function setWordWrap(clip : TextClip, wordWrap : Bool) : Void {
+		clip.setWordWrap(wordWrap);
 	}
 
-	public static function getSelectionStart(textfield : Dynamic) : Int {
-		#if flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.selectionBeginIndex;
-		#elseif js
-			return (textfield.input == true) ? textfield.children[0].selectionStart : 0;
-		#else
-			return 0;
-		#end
+	public static function setDoNotInvalidateStage(clip : TextClip, dontInvalidate : Bool) : Void {
+		clip.setDoNotInvalidateStage(dontInvalidate);
 	}
 
-	public static function getSelectionEnd(textfield : Dynamic) : Int {
-		#if flash
-			var textfield_ : flash.text.TextField = textfield;
-			return textfield_.selectionEndIndex;
-		#elseif js
-			return (textfield.input == true) ? textfield.children[0].selectionEnd : 0;
-		#else
-			return 0;
-		#end
+	public static function getSelectionStart(clip : TextClip) : Int {
+		return clip.getSelectionStart();
 	}
 
-	public static function setSelection(textfield : Dynamic, start : Int, end : Int) : Void {
-		#if js
-			if (textfield.input == true) {
-				haxe.Timer.delay( function() { // Workaround for Chrome to not fire blur event
-					if (Browser.document.activeElement == textfield.children[0])
-						textfield.children[0].setSelectionRange(start, end);
-				}, 120 );
-		}
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			textfield_.setSelection(start, end);
-		#end
+	public static function getSelectionEnd(clip : TextClip) : Int {
+		return clip.getSelectionEnd();
 	}
 
-	public static function setReadOnly(textfield: Dynamic, readOnly: Bool) : Void {
-		#if js
-		if (textfield.input == true)
-			textfield.children[0].disabled = readOnly;
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			textfield_.type = readOnly ? flash.text.TextFieldType.DYNAMIC : flash.text.TextFieldType.INPUT;
-		#end
+	public static function setSelection(clip : TextClip, start : Int, end : Int) : Void {
+		clip.setSelection(start, end);
 	}
 
-	public static function setMaxChars(textfield : Dynamic, maxChars : Int) : Void {
-		#if js
-			if (textfield.input)
-				textfield.children[0].maxLength = maxChars;
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			textfield_.maxChars = maxChars;
-		#end
+	public static function setReadOnly(clip: TextClip, readOnly: Bool) : Void {
+		clip.setReadOnly(readOnly);
 	}
 
-	// native addChild : (parent : native, child : native) -> void
-	public static function addChild(parent : Dynamic, child : Dynamic) : Void {
-		#if js
-			if (child == null || parent == null) return; // Just skip this case to avoid exception for video etc.
-			parent.appendChild(child);
-
-			if (isAriaClip(child))	addAriaClip(child);
-		#elseif flash
-			parent.addChild(child);
-		#end
+	public static function setMaxChars(clip : TextClip, maxChars : Int) : Void {
+		clip.setMaxChars(maxChars);
 	}
 
-	// native removeChild : (parent : native, child : native) -> void
+	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
+		return clip.addTextInputFilter(filter);
+	}
+
+	public static function addTextInputKeyEventFilter(clip : TextClip, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
+		if (event == "keydown")
+			return clip.addTextInputKeyDownEventFilter(filter);
+		else
+			return clip.addTextInputKeyUpEventFilter(filter);
+	}
+
+	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
+		parent.addChild(child);
+	}
+
+	public static function addChildAt(parent : FlowContainer, child : Dynamic, id : Int) : Void {
+		parent.addChildAt(child, id);
+	}
+
 	public static function removeChild(parent : Dynamic, child : Dynamic) : Void {
-		#if js
-			try {
-				if (isAriaClip(child))	removeAriaClip(child);
-
-				parent.removeChild(child);
-			} catch (e : Dynamic) {
-				// allow removing something that was already removed or similar corner-case errors
-			}
-		#elseif flash
-			var parent_ : flash.display.Sprite = parent;
-			try {
-				parent_.removeChild(child);
-			} catch (e : Dynamic) {
-				// allow removing something that was already removed or similar corner-case errors
-			}
-		#end
-	}
-
-	public static function makeClip() : Dynamic  {
-		#if js
-			var clip : Dynamic = Browser.document.createElement("div");
-
-			// Position and scaling members
-			clip.x = 0.0;
-			clip.y = 0.0;
-			clip.scale_x = 1.0;
-			clip.scale_y = 1.0;
-			clip.rot = 0.0;
-
-			return clip;
-		#elseif flash
-			var s = new flash.display.Sprite();
-			s.mouseEnabled = false;
-			// s.mouseChildren = false; This is too much, and we can not get it to work
-			return s;
-		#else
-			return null;
-		#end
-	}
-
-    public static function setClipCallstack(clip : Dynamic, callstack : Dynamic) : Void {
-        // stub
-    }
-
-	public static function setClipX(clip : Dynamic, x : Float) : Void {
-		#if js
-			if (clip.x != x) {
-				clip.x = x;
-				updateCSSTransform(clip);
-			}
-		#elseif flash
-			var parent : flash.display.DisplayObject = clip;
-			if (Reflect.hasField(parent, "htmlText")) x -= 2.0; // Textfields need a -2.0 offset
-			if (parent.x != x)  parent.x = x;
-		#end
-	}
-
-	public static function setClipY(clip : Dynamic, y : Float) : Void {
-		#if js
-			if (clip.y != y) {
-				clip.y = y;
-				updateCSSTransform(clip);
-			}
-		#elseif flash
-			var parent : flash.display.DisplayObject = clip;
-			if (Reflect.hasField(parent, "htmlText")) y -= 2.0;
-			if (parent.y != y) parent.y = y;
-		#end
-	}
-
-	public static function setClipScaleX(clip : Dynamic, scale_x : Float) : Void {
-		#if js
-			if (clip.iframe != null) { // Not scale but resize it
-				if (isIOS())
-					clip.style.width = scale_x * WebClipInitSize + "px";
-				clip.iframe.width = scale_x * WebClipInitSize;
-			} else {
-				if (clip.scale_x != scale_x) {
-					clip.scale_x = scale_x;
-					updateCSSTransform(clip);
-				}
-			}
-		#elseif flash
-			var parent : flash.display.DisplayObject = clip;
-			if (parent.scaleX != scale_x )  parent.scaleX = scale_x;
-		#end
-	}
-
-	public static function setClipScaleY(clip : Dynamic, scale_y : Float) : Void {
-		#if js
-			if (clip.iframe != null) {
-				if (isIOS())
-					clip.style.height = scale_y * WebClipInitSize + "px";
-				clip.iframe.height = scale_y * WebClipInitSize;
-			} else {
-				if (clip.scale_y != scale_y) {
-					clip.scale_y = scale_y;
-					updateCSSTransform(clip);
-				}
-			}
-		#elseif flash
-			var parent : flash.display.DisplayObject = clip;
-			if (parent.scaleY != scale_y )  parent.scaleY = scale_y;
-		#end
-	}
-
-	public static function setClipRotation(clip : Dynamic, r : Float) : Void {
-		#if js
-		if (r != clip.rot) {
-			clip.rot = r;
-			updateCSSTransform(clip);
+		if (parent.removeElementChild != null) {
+			parent.removeElementChild(child);
+		} else if (child.parent == parent || child.parentElement == parent) {
+			parent.removeChild(child);
 		}
-		#elseif flash
-			var parent : flash.display.DisplayObject = clip;
-			if (parent.rotation != r)  parent.rotation = r;
-		#end
 	}
 
-	public static function setClipAlpha(clip : Dynamic, a : Float) : Void {
-		#if js
-			clip.style.opacity = a;
-			if (a <= 0.01) // hide clip
-				clip.className = "hiddenByAlpha";
-			else if (clip.className == "hiddenByAlpha")
-				clip.className = "";
-
-		#elseif flash
-			var parent : flash.display.DisplayObject = clip;
-			if (parent.alpha != a)  parent.alpha = a;
-		#end
+	public static function removeChildren(parent : FlowContainer) : Void {
+		for (child in parent.children) {
+			parent.removeChild(child);
+		}
 	}
 
-	public static function setClipMask(clip : Dynamic, mask : Dynamic) : Void {
-		#if js
-			mask.style.display = "none"; // Just hide mask
-		#elseif flash
-			var clip_ : flash.display.DisplayObject = clip;
-			var mask_ : flash.display.DisplayObject = mask;
-			clip_.cacheAsBitmap = true; // needed for correct masking
-			mask_.cacheAsBitmap = true;
-			clip_.mask = mask_;
-		#end
+	public static function makeClip() : FlowContainer {
+		return new FlowContainer();
 	}
 
-	public static function getStage() : Dynamic  {
-		#if js
-			return Browser.window;
-		#elseif flash
-			return flash.Lib.current.stage;
-		#else
-			return null;
-		#end
+	public static function makeCanvasClip() : FlowCanvas {
+		return new FlowCanvas();
 	}
 
-	public static function addKeyEventListener(
-		clip : Dynamic,
-		event : String,
-		fn : String -> Bool -> Bool -> Bool -> Bool -> Int -> (Void -> Void) -> Void) : Void -> Void {
+	public static function setClipCallstack(clip : DisplayObject, callstack : Dynamic) : Void {
+		// stub
+	}
 
-		#if js
-			// See
-			// http://unixpapa.com/js/key.html
-			var keycb = function(e) {
-					var shift = e.shiftKey;
-					var alt = e.altKey;
-					var ctrl = e.ctrlKey;
-					var meta = e.metaKey;
-					var s : String = "";
+	public static function setClipX(clip : DisplayObject, x : Float) : Void {
+		clip.setClipX(x);
+	}
 
-					if (e.which == 13) {
-						var active = untyped Browser.document.activeElement;
-						if (active != null && isAriaClip(active)) return; // Donot call cb if there is selected item
-						s = "enter";
-					} else if (e.which == 27)
-						s = "esc";
-					else if (e.which == 9)
-						s = "tab";
-					else if (e.which == 16) // Modifier flag also will be set
-						s = "shift";
-					else if (e.which == 17) // Modifier flag also will be set
-						s = "ctrl";
-					else if (e.which == 18) // Modifier flag also will be set
-						s = "alt";
-					//TODO: support meta
-					//else if (e.which == ??)
-					//	s = "??"
-					else if (e.which == 37)
-						s = "left";
-					else if (e.which == 38)
-						s = "up";
-					else if (e.which == 39)
-						s = "right";
-					else if (e.which == 40)
-						s = "down";
-					else if (e.which == 46)
-						s = "delete";
-					else if (e.which >= 112 && e.which <= 123)
-						s = "F" + (e.which - 111);
-					else
-						s = String.fromCharCode(e.which);
+	public static function setClipY(clip : DisplayObject, y : Float) : Void {
+		clip.setClipY(y);
+	}
 
-					fn(s, ctrl, shift, alt, meta, e.keyCode, untyped e.preventDefault.bind(e));
-				}
+	public static function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
+		clip.setClipScaleX(scale);
+	}
 
-				attachEventListener(clip, event, keycb);
+	public static function setClipScaleY(clip : DisplayObject, scale : Float) : Void {
+		clip.setClipScaleY(scale);
+	}
 
-			return function() {
-				detachEventListener(clip, event, keycb);
+	public static function setClipRotation(clip : DisplayObject, r : Float) : Void {
+		clip.setClipRotation(r * 0.0174532925 /*radians*/);
+	}
+
+	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
+		if (clip.parent != null) {
+			var a = clip.worldTransform;
+			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
+		} else {
+			return [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+		}
+	}
+
+	public static function deferUntilRender(fn : Void -> Void) : Void {
+		once("drawframe", fn);
+	}
+
+	public static function interruptibleDeferUntilRender(fn0 : Void -> Void) : Void -> Void {
+		var alive = true;
+		var fn = function() {
+			if (alive) {
+				fn0();
 			}
-		#elseif flash
-			var cs = haxe.CallStack.callStack();
-			var clip_ : flash.display.InteractiveObject = clip;
-			var eventname = event;
-			if (event == "keydown" || event == "keyup") {
-				var keyevent = if (event == "keydown") {
-					flash.events.KeyboardEvent.KEY_DOWN;
-				} else {
-					flash.events.KeyboardEvent.KEY_UP;
+		}
+
+		once("drawframe", fn);
+		return function() {
+			alive = false;
+			off("drawframe", fn);
+		};
+	}
+
+	public static function setClipAlpha(clip : DisplayObject, a : Float) : Void {
+		clip.setClipAlpha(a);
+	}
+
+	private static function getFirstVideoWidget(clip : FlowContainer) : Dynamic {
+		if (untyped HaxeRuntime.instanceof(clip, VideoClip)) return clip;
+
+		if (clip.children != null) {
+			for (c in clip.children) {
+				var video = getFirstVideoWidget(untyped c);
+				if (video != null) return video;
+			}
+		}
+
+		return null;
+	}
+
+	public static function setClipMask(clip : FlowContainer, mask : Dynamic) : Void {
+		clip.setClipMask(mask);
+	}
+
+	public static function setClipViewBounds(clip : NativeWidgetClip, minX : Float, minY : Float, maxX : Float, maxY : Float) : Void {
+		var bounds = new Bounds();
+
+		bounds.minX = minX;
+		bounds.minY = minY;
+		bounds.maxX = maxX;
+		bounds.maxY = maxY;
+
+		clip.setViewBounds(bounds);
+	}
+
+	public static function setClipWidth(clip : NativeWidgetClip, width : Float) : Void {
+		clip.setWidth(width);
+	}
+
+	public static function setClipHeight(clip : NativeWidgetClip, height : Float) : Void {
+		clip.setHeight(height);
+	}
+
+	public static function getClipWidth(clip : NativeWidgetClip) : Float {
+		return clip.getWidth();
+	}
+
+	public static function getClipHeight(clip : NativeWidgetClip) : Float {
+		return clip.getHeight();
+	}
+
+	public static function setClipResolution(clip : TextClip, resolution : Float) : Void {
+		clip.setResolution(resolution);
+	}
+
+	public static function startProfile(name : String) : Void {
+		Browser.console.profile(name);
+	}
+
+	public static function endProfile() : Void {
+		Browser.console.profileEnd();
+	}
+
+	public static function getStage() : Dynamic {
+		return PixiStage;
+	}
+
+	private static function modifierStatePresent(e : Dynamic, m : String) : Bool {
+		return e.getModifierState != null && e.getModifierState(m) != null;
+	}
+
+	// See
+	// http://unixpapa.com/js/key.html
+	public static function parseKeyEvent(e : Dynamic) : Dynamic {
+		var shift = false;
+		var alt = false;
+		var ctrl = false;
+		var meta = false;
+		var charCode = -1;
+		var s : String = "";
+
+		if (modifierStatePresent(e, "Shift")) {
+			shift = e.getModifierState("Shift");
+		} else if (e.shiftKey != null) {
+			shift = e.shiftKey;
+		}
+
+		if (modifierStatePresent(e, "Alt")) {
+			alt = e.getModifierState("Alt");
+		} else if (e.altKey != null) {
+			alt = e.altKey;
+		} else if (modifierStatePresent(e, "AltGraph")) {
+			alt = e.getModifierState("AltGraph");
+		}
+
+		if (modifierStatePresent(e, "Control")) {
+			ctrl = e.getModifierState("Control");
+		} else if (e.ctrlKey != null) {
+			ctrl = e.ctrlKey;
+		}
+
+		if (modifierStatePresent(e, "Meta")) {
+			meta = e.getModifierState("Meta");
+		} else if (modifierStatePresent(e, "OS")) {
+			meta = e.getModifierState("OS");
+		} else if (e.metaKey != null) {
+			meta = e.metaKey;
+		}
+
+		// Swap meta with ctrl for macOS
+		if (Platform.isMacintosh) {
+			var buf : Bool = meta;
+			meta = ctrl;
+			ctrl = buf;
+		}
+
+		if (e.charCode != null && e.charCode > 0) {
+			charCode = e.charCode;
+		} else if (e.which != null) {
+			charCode = e.which;
+		} else if (e.keyCode != null) {
+			charCode = e.keyCode;
+		}
+
+		if (e.key != null && (Std.string(e.key).length == 1 || e.key == "Meta")) {
+			s = if (e.key == "Meta") Platform.isMacintosh ? "ctrl" : "meta" else e.key;
+		} else if (e.code != null && (Std.string(e.code).length == 1 || e.key == "MetaLeft" || e.key == "MetaRight")) {
+			s = if (e.code == "MetaLeft" || e.code == "MetaRight") Platform.isMacintosh ? "ctrl" : "meta" else e.code;
+		} else if (charCode >= 96 && charCode <= 105) {
+			s = Std.string(charCode - 96);
+		} else if (charCode >= 112 && charCode <= 123) {
+			s = "F" + (charCode - 111);
+		} else {
+			s = switch (charCode) {
+				case 13:
+					// TODO: uncomment when it is fully supported
+					//if (untyped Browser.document.activeElement != null) return; // Donot call cb if there is selected item
+					"enter";
+				case 27: "esc";
+				case 8: "backspace";
+				case 9: {
+					switchFocusFramesShow(EnableFocusFrame);
+
+					"tab";
 				}
-				var keycb = function(e : flash.events.KeyboardEvent) {
-					if (clip == null) {
-						return;
-					}
-					var s = '';
-					var shift = e.shiftKey;
-					var alt = e.altKey;
-					var ctrl = e.ctrlKey;
-					var meta = false; //TODO: There is no metaKey in flash.events.KeyboardEvent. Add support via keyCode?
-					if (e.charCode != 0) {
-						if (e.keyCode < 32
-							// Can be sent with ctrl or shift down, except for some special keys
-							&& e.keyCode != 8 // Delete
-							&& e.keyCode != 9 // Tab
-							&& e.keyCode != 13 // Return
-							&& e.keyCode != 27 // Escape
-						) {
-							s = String.fromCharCode(e.charCode + 96);
-							ctrl = true;
-						} else {
-							if (e.charCode == 13) {
-								s = "enter";
-							} else if (e.charCode == 27) {
-								s = "esc";
-							} else if (e.charCode == 9) {
-								s = "tab";
-							} else if (e.charCode == 8) {
-								s = "backspace";
-							} else if (e.keyCode == 46) {
-								s = "delete";
-							} else if (e.keyCode == 45) {
-								s = "insert";
-							} else if (e.keyCode == 36) {
-								s = "home";
-							} else if (e.keyCode == 35) {
-								s = "end";
-							} else if (e.keyCode == 33) {
-								s = "page up";
-							} else if (e.keyCode == 34) {
-								s = "page down";
-							} else {
-								s = String.fromCharCode(e.charCode);
-								if (flash.ui.Keyboard.capsLock) {
-									if (shift) s = s.toLowerCase() else s = s.toUpperCase();
-								}
-							}
-						}
+				case 12: "clear";
+				case 16: "shift";
+				case 17: Platform.isMacintosh ? "meta" : "ctrl";
+				case 18: "alt";
+				case 19: "pause/break";
+				case 20: "capslock";
+				case 33: "pageup";
+				case 34: "pagedown";
+				case 35: "end";
+				case 36: "home";
+				case 37: "left";
+				case 38: "up";
+				case 39: "right";
+				case 40: "down";
+				case 45: "insert";
+				case 46: "delete";
+				case 48: if (shift) ")" else "0";
+				case 49: if (shift) "!" else "1";
+				case 50: if (shift) "@" else "2";
+				case 51: if (shift) "#" else "3";
+				case 52: if (shift) "$" else "4";
+				case 53: if (shift) "%" else "5";
+				case 54: if (shift) "^" else "6";
+				case 55: if (shift) "&" else "7";
+				case 56: if (shift) "*" else "8";
+				case 57: if (shift) "(" else "9";
+				case 91: Platform.isMacintosh ? "ctrl" : "meta";
+				case 92: "meta";
+				case 93: Platform.isMacintosh ? "ctrl" : "context";
+				case 106: "*";
+				case 107: "+";
+				case 109: "-";
+				case 110: ".";
+				case 111: "/";
+				case 144: "numlock";
+				case 145: "scrolllock";
+				case 186: if (shift) ":" else ";";
+				case 187: if (shift) "+" else "=";
+				case 188: if (shift) "<" else ",";
+				case 189: if (shift) "_" else "-";
+				case 190: if (shift) ">" else ".";
+				case 191: if (shift) "?" else "/";
+				case 192: if (shift) "~" else "`";
+				case 219: if (shift) "{" else "[";
+				case 220: if (shift) "|" else "\\";
+				case 221: if (shift) "}" else "]";
+				case 222: if (shift) "\"" else "'";
+				case 226: if (shift) "|" else "\\";
+
+				default: {
+					var keyUTF = charCode >= 0 ? String.fromCharCode(charCode) : "";
+
+					if (modifierStatePresent(e, "CapsLock")) {
+						if (e.getModifierState("CapsLock"))
+							keyUTF.toUpperCase();
+						else
+							keyUTF.toLowerCase();
 					} else {
-						// Special cases: Get ctrl and shift to work on a mac
-						if (e.keyCode == 16) {
-							shift = true;
-							s = "shift";
-						} else if (e.keyCode == 17) {
-							ctrl = true;
-							s = "ctrl";
-						} else if (112 <= e.keyCode && e.keyCode <= 123) {
-							// Function keys
-							s = "F" + (e.keyCode - 111);
-						} else switch (e.keyCode) {
-							case 33: s = "page up";
-							case 34: s = "page down";
-							case 35: s = "end";
-							case 36: s = "home";
-							case 37: s = "left";
-							case 38: s = "up";
-							case 39: s = "right";
-							case 40: s = "down";
-							case 45: s = "insert";
-							case 46: s = "delete";
-						}
+						keyUTF;
 					}
-					var nop = function(){};
-					try {
-						fn(s, ctrl, shift, alt, meta, e.keyCode, nop);
-					} catch (e : Dynamic) {
-						var stackAsString = Assert.callStackToString(cs);
-						var actualStack = Assert.callStackToString(haxe.CallStack.callStack());
-						var eventDescription = "Event = " + eventname + " s = " + s + " ctrl = " + ctrl + " shift = " + shift + " alt = " + alt + " meta = " + meta + " keyCode = " + e.keyCode;
-						var crashInfo = eventDescription + " " + e + "\nStack at handler registering:\n" + stackAsString + "\nStack:\n" + actualStack;
-						Native.println("FATAL ERROR: Key handler reported: " + crashInfo);
-						Assert.printStack(e);
-						Native.callFlowCrashHandlers("[KeyEvent Handler]: " + crashInfo);
-					}
+
 				}
-
-				enableMouseEvents(clip_);
-
-				clip_.addEventListener(keyevent, keycb);
-				return function() {
-					if (clip_ != null) clip_.removeEventListener(eventname, keycb);
-					clip_ = null;
-				};
-			} else {
-				Errors.report("Unknown event");
-				return function() {};
 			}
-		#else
-			return function() {};
-		#end
+		}
+
+		return {
+			key : s,
+			ctrl : ctrl,
+			shift : shift,
+			alt : alt,
+			meta : meta,
+			keyCode : e.keyCode,
+			preventDefault : e.preventDefault.bind(e)
+		}
 	}
 
-	public static function addStreamStatusListener(clip : Dynamic, fn : String -> Void) : Void -> Void {
-		#if flash
-			var clip_ : flash.net.NetStream = clip;
-			var cb = function(e : flash.events.NetStatusEvent) {
-				fn(e.info.code);
-			};
-			clip_.addEventListener(flash.events.NetStatusEvent.NET_STATUS, cb);
-			return function() {
-				clip_.removeEventListener(flash.events.NetStatusEvent.NET_STATUS, cb);
-			};
-		#else
-			var on_start = function() { fn("NetStream.Play.Start"); };
-			var on_stop = function() { fn("NetStream.Play.Stop"); };
-			var on_not_found = function() { fn("NetStream.Play.StreamNotFound"); };
-			clip.addEventListener("loadeddata", on_start);
-			clip.addEventListener("ended", on_stop);
-			clip.addEventListener("error", on_not_found);
-			return function() {
-				clip.removeEventListener("loadeddata", on_start);
-				clip.removeEventListener("ended", on_stop);
-				clip.removeEventListener("error", on_not_found);
-			};
-		#end
+	public static function addKeyEventListener(clip : DisplayObject, event : String,
+		fn : String -> Bool -> Bool -> Bool -> Bool -> Int -> (Void -> Void) -> Bool) : Void -> Void {
+		var keycb = function(ke) {
+			fn(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode, ke.preventDefault);
+		}
+
+		on(event, keycb);
+		return function() { off(event, keycb); }
+	}
+
+	public static function addStreamStatusListener(clip : VideoClip, fn : String -> Void) : Void -> Void {
+		return clip.addStreamStatusListener(fn);
+	}
+
+	public static function addVideoSource(clip : VideoClip, src : String, type : String) : Void {
+		clip.addVideoSource(src, type);
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		#if js
-			var eventname : String = "";
-			if (event == "click") {
-				eventname = "click";
-			} else if (event == "mousedown") {
-				eventname = "mousedown";
-			} else if (event == "mouseup") {
-				eventname = "mouseup";
-			} else if (event == "mousemove") {
-				eventname = "mousemove";
-			} else if (event == "mouseenter") {
-				eventname = "mouseover";
-			} else if (event == "mouseleave") {
-				eventname = "mouseout";
-			} else if (event == "rollover") {
-				eventname = "mouseover";
-			} else if (event == "rollout") {
-				eventname = "mouseout";
-			} else if (event == "change") {
-				eventname = "input";
-			} else if (event == "focusin") {
-				eventname = "focus";
-			} else if (event == "focusout") {
-				eventname = "blur";
-			} else if (event == "resize") {
-				attachEventListener(Browser.window, "resize", fn);
-				return function() {
-					detachEventListener(Browser.window, "resize", fn);
-				}
-			} else if (event == "scroll") {
-				eventname = "scroll";
-			} else {
-				Errors.report("Unknown event");
-				return function () { };
-			}
-
-			if ( isTouchScreen() && (eventname == "mousedown" || eventname == "mouseup") ) {
-				if (eventname == "mousedown") {
-					var touchstartWrapper = function(e)  {
-						if (e.touches.length != 1) return;
-						fn();
-					}
-					attachEventListener( clip, "touchstart", touchstartWrapper);
-					return function () { detachEventListener(clip, eventname, touchstartWrapper); };
-				} else {
-					var touchendWrapper = function(e)  {
-						if (e.touches.length != 0) return;
-						fn();
-					}
-					attachEventListener( clip, "touchend", touchendWrapper);
-					return function () { detachEventListener(clip, eventname, touchendWrapper); };
-				}
-			} else {
-				attachEventListener( clip, eventname, fn );
-				// Store listeners for stage to simulate ckicks later
-				if (clip == Browser.window) {
-					if (eventname == "mousedown") clip.flowmousedown = fn;
-					else if (eventname == "mouseup") clip.flowmouseup = fn;
-				}
-
-				return function () { detachEventListener(clip, eventname, fn); };
-			}
-		#elseif flash
-			var clip_ : flash.display.InteractiveObject = clip;
-			var cs = haxe.CallStack.callStack();
-			enableMouseEvents(clip_);
-			var cb = function(e) {
-				try {
-					fn();
-				} catch (e : Dynamic) {
-					var stackAsString = Assert.callStackToString(cs);
-					var actualStack = Assert.callStackToString(haxe.CallStack.callStack());
-					var crashInfo = "Event = " + event + " " + e + "\nStack at event registering:\n" + stackAsString + "\nStack:\n" + actualStack;
-					Native.println("FATAL ERROR: Event handler reported: " + crashInfo);
-					Assert.printStack(e);
-					Native.callFlowCrashHandlers("[Event Handler]: " + crashInfo);
-				}
-			};
-			var eventname = event;
-			if (event == "click") {
-				eventname = flash.events.MouseEvent.CLICK;
-			} else if (event == "mousedown") {
-				eventname = flash.events.MouseEvent.MOUSE_DOWN;
-			} else if (event == "mouseup") {
-				eventname = flash.events.MouseEvent.MOUSE_UP;
-			} else if (event == "mousemove") {
-				eventname = flash.events.MouseEvent.MOUSE_MOVE;
-			} else if (event == "mouseenter") {
-				eventname = flash.events.MouseEvent.MOUSE_OVER;
-			} else if (event == "mouseleave") {
-				eventname = flash.events.MouseEvent.MOUSE_OUT;
-			} else if (event == "rollover") {
-				eventname = flash.events.MouseEvent.ROLL_OVER;
-			} else if (event == "rollout") {
-				eventname = flash.events.MouseEvent.ROLL_OUT;
-			} else if (event == "change") {
-				eventname = flash.events.Event.CHANGE;
-			} else if (event == "scroll") {
-				eventname = flash.events.Event.SCROLL;
-			} else if (event == "focusin") {
-				eventname = flash.events.FocusEvent.FOCUS_IN;
-			} else if (event == "focusout") {
-				eventname = flash.events.FocusEvent.FOCUS_OUT;
-			} else if (event == "resize") {
-				var stage = flash.Lib.current.stage;
-				stage.addEventListener(flash.events.Event.RESIZE, cb);
-				return function() {
-					stage.removeEventListener(eventname, cb);
-				};
-			} else {
-				Errors.report("Unknown event");
-			}
-
-			clip_.addEventListener(eventname, cb);
-
-			return function() {
-				clip_.removeEventListener(eventname, cb);
-			};
-		#else
-			return function() {};
-		#end
+		if (untyped HaxeRuntime.instanceof(clip, Element)) {
+			clip.addEventListener(event, fn);
+			return function() { if (clip != null) clip.removeEventListener(event, fn); }
+		} else {
+			return addDisplayObjectEventListener(clip, event, fn);
+		}
 	}
 
-	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
-		return function () { };
+	public static function addDisplayObjectEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
+		if (event == "transformchanged") {
+			clip.on("transformchanged", fn);
+			return function() { clip.off("transformchanged", fn); }
+		} else if (event == "resize") {
+			on("resize", fn);
+			return function() { off("resize", fn); }
+		} else if (event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup"
+			|| event == "touchstart" || event == "touchmove" || event == "touchend") {
+			on(event, fn);
+			return function() { off(event, fn); }
+		} else if (event == "mouserightdown" || event == "mouserightup") {
+			// When we register a right-click handler, we turn off the browser context menu.
+			PixiView.oncontextmenu = function (e) { e.stopPropagation(); return false; };
+
+			on(event, fn);
+			return function() { off(event, fn); }
+		} else if (event == "rollover") {
+			var checkFn = function() {
+				if (untyped !clip.pointerOver) {
+					untyped clip.pointerOver = true;
+					fn();
+				}
+			}
+
+			clip.on("pointerover", checkFn);
+			clip.invalidateInteractive();
+			return function() {
+				clip.off("pointerover", checkFn);
+				clip.invalidateInteractive();
+			};
+		} else if (event == "rollout") {
+			var checkFn = function() {
+				if (untyped clip.pointerOver) {
+					untyped clip.pointerOver = false;
+					fn();
+				}
+			}
+
+			clip.on("pointerout", checkFn);
+			clip.invalidateInteractive();
+			return function() {
+				clip.off("pointerout", checkFn);
+				clip.invalidateInteractive();
+			};
+		} else if (event == "scroll") {
+			clip.on("scroll", fn);
+			return function() { clip.off("scroll", fn); };
+		} else if (event == "change") {
+			clip.on("input", fn);
+			return function() { clip.off("input", fn); };
+		} else if (event == "focusin") {
+			clip.on("focus", fn);
+			return function() { clip.off("focus", fn); };
+		} else if (event == "focusout") {
+			clip.on("blur", fn);
+			return function() { clip.off("blur", fn); };
+		} else if (event == "visible"){
+			clip.on("visible", fn);
+			return function() { clip.off("visible", fn); }
+		} else {
+			Errors.report("Unknown event: " + event);
+			return function() {};
+		}
+	}
+
+	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
+		if (Platform.isMobile) {
+			return function() { };
+		} else if (RenderSupport.RendererType != "html") {
+			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
+
+			clip.addChild(dropArea);
+			return function() { clip.removeChild(dropArea); };
+		} else {
+			return clip.addFileDropListener(maxFilesCount, mimeTypeRegExpFilter, onDone);
+		}
 	}
 
 	public static function addVirtualKeyboardHeightListener(fn : Float -> Void) : Void -> Void {
-		return function () { };
+		return function() {};
 	}
 
-	public static function addMouseWheelEventListener(clip : Dynamic, fn : Float -> Void) : Void -> Void {
-		#if js
-			var wheel_cb = function(event) {
-				var delta = 0.0;
-
-				// Crossbrowser delta
-				if (event.wheelDelta != null) {
-					delta = event.wheelDelta / 120;
-				} else if (event.detail != null) {
-					delta = -event.detail / 3;
-				}
-
-				if (event.preventDefault != null) // Stop default scrolling
-						 event.preventDefault();
-
-				fn(delta);
-			}
-
-			untyped attachEventListener( Browser.window, "mousewheel", wheel_cb );
-			return function() { detachEventListener( Browser.window, "mousewheel", wheel_cb); }
-		#elseif flash
-			var clip_ : flash.display.InteractiveObject = clip;
-			var cb = function(e) {
-				fn(e.delta);
+	public static function addExtendedEventListener(clip : Dynamic, event : String, fn : Array<Dynamic> -> Void) : Void -> Void {
+		if (event == "childfocused") {
+			var parentFn = function(child : Dynamic) {
+				var bounds = child.getBounds(true);
+				var localPosition = clip.toLocal(new Point(bounds.x, bounds.y));
+				fn([localPosition.x, localPosition.y, bounds.width, bounds.height]);
 			};
-			var eventname = flash.events.MouseEvent.MOUSE_WHEEL;
-			enableMouseEvents(clip_);
-			clip_.addEventListener(eventname, cb);
-			return function() {
-				clip_.removeEventListener(eventname, cb);
-			};
-		#else
+
+			clip.on(event, parentFn);
+			return function() { clip.off(event, parentFn); }
+		} else {
+			Errors.report("Unknown event: " + event);
 			return function() {};
-		#end
-	}
-
-	public static function addFinegrainMouseWheelEventListener(clip : Dynamic, f : Float->Float->Void) : Void->Void {
-		#if flash
-		var clip_ : flash.display.InteractiveObject = clip;
-		enableMouseEvents(clip_);
-		finegrainMouseWheelCbs.push(f);
-		//Errors.print("Registered FineGrain. n=" + finegrainMouseWheelCbs.length);
-		return function() {
-			var result = finegrainMouseWheelCbs.remove(f);
-			//Errors.print("Unregistered FineGrain. n=" + finegrainMouseWheelCbs.length);
-			result;
 		}
-		#else
-		return addMouseWheelEventListener(clip, function(delta) { f(delta, 0); });
-		#end
 	}
 
-	private static function hasChild(clip : Dynamic, child : Dynamic) : Bool {
-		var childs : Array<Dynamic> = clip.children;
+	public static function addDrawFrameEventListener(fn : Float -> Void) : Void -> Void {
+		on("drawframe", fn);
+		return function() { off("drawframe", fn); };
+	}
 
-		if (childs != null) {
-			for (c in childs) {
-				if (c == child) return true;
-				if (hasChild(c, child)) return true;
+	// Reasonable defaults
+	private static var PIXEL_STEP = 10;
+	private static var LINE_HEIGHT = 40;
+	private static var PAGE_HEIGHT = 800;
+
+	public static function addMouseWheelEventListener(clip : Dynamic, fn : Float -> Float -> Void) : Void -> Void {
+		var cb = function (p) { fn(p.x, p.y); };
+		on("mousewheel", cb);
+		return function() { off("mousewheel", cb); };
+	}
+
+	public static function addFinegrainMouseWheelEventListener(clip : Dynamic, f : Float -> Float -> Void) : Void -> Void {
+		return addMouseWheelEventListener(clip, f);
+	}
+
+	public static function getMouseX(?clip : DisplayObject) : Float {
+		if (clip == null || clip == PixiStage)
+			return MousePos.x;
+		else
+			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x');
+	}
+
+	public static function getMouseY(?clip : DisplayObject) : Float {
+		if (clip == null || clip == PixiStage)
+			return MousePos.y;
+		else
+			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y');
+	}
+
+	public static function getTouchPoints(?clip : DisplayObject) : Array<Array<Float>> {
+		var touches = [];
+
+		for (i in 0...TouchPoints.length) {
+			touches.push([TouchPoints[i].pageX, TouchPoints[i].pageY]);
+		}
+
+		if (clip != null && clip != PixiStage) {
+			return Lambda.array(Lambda.map(touches, function(t : Dynamic) {
+				t = untyped __js__('clip.toLocal(new PIXI.Point(t[0], t[1]), null, null, true)');
+				return [t.x, t.y];
+			}));
+		} else {
+			return touches;
+		}
+	}
+
+	public static function setMouseX(x : Float) {
+		MousePos.x = x;
+	}
+
+	public static function setMouseY(y : Float) {
+		MousePos.y = y;
+	}
+
+	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
+		if (!clip.getClipRenderable() || clip.parent == null) {
+			return false;
+		}
+
+		clip.invalidateLocalBounds();
+
+		var point = new Point(x, y);
+		return hittestMask(clip.parent, point) && doHitTest(clip, point);
+	}
+
+	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
+		if (untyped clip.viewBounds != null) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var viewBounds = untyped clip.viewBounds;
+
+			return viewBounds.minX <= local.x && viewBounds.minY <= local.y && viewBounds.maxX >= local.x && viewBounds.maxY >= local.y;
+		} else if (untyped clip.scrollRect != null && !hittestGraphics(untyped clip.scrollRect, point)) {
+			return false;
+		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
+			return false;
+		} else {
+			return clip.parent == null || hittestMask(clip.parent, point);
+		}
+	}
+
+	private static function hittestGraphics(clip : FlowGraphics, point : Point, ?checkAlpha : Bool = false) : Bool {
+		var graphicsData : Array<Dynamic> = clip.graphicsData;
+
+		if (graphicsData == null || graphicsData.length == 0) {
+			return false;
+		}
+
+		var data = graphicsData[0];
+
+		if (data.fill && data.shape != null && (!checkAlpha || data.fillAlpha > 0)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+
+			return data.shape.contains(local.x, local.y);
+		} else {
+			return false;
+		}
+	}
+
+	private static function doHitTest(clip : DisplayObject, point : Point) : Bool {
+		return getClipAt(clip, point, false) != null;
+	}
+
+	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Bool = false) : DisplayObject {
+		if (!clip.getClipRenderable() || untyped clip.isMask) {
+			return null;
+		} else if (checkMask && !hittestMask(clip, point)) {
+			return null;
+		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
+			return null;
+		}
+
+		if (untyped HaxeRuntime.instanceof(clip, NativeWidgetClip) || untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var clipWidth = untyped clip.getWidth();
+			var clipHeight = untyped clip.getHeight();
+
+			if (local.x >= 0.0 && local.y >= 0.0 && local.x <= clipWidth && local.y <= clipHeight) {
+				return clip;
+			}
+		} else if (untyped HaxeRuntime.instanceof(clip, FlowContainer)) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var localBounds = untyped clip.localBounds;
+
+			if (local.x < localBounds.minX && local.y < localBounds.minY && local.x >= localBounds.maxX && local.y >= localBounds.maxY) {
+				return null;
+			}
+
+			var children : Array<DisplayObject> = untyped clip.children;
+			var i = children.length - 1;
+
+			while (i >= 0) {
+				var child = children[i];
+				i--;
+
+				var clipHit = getClipAt(child, point, false, checkAlpha);
+
+				if (clipHit != null) {
+					return clipHit;
+				}
+			}
+		} else if (untyped HaxeRuntime.instanceof(clip, FlowGraphics)) {
+			if (hittestGraphics(untyped clip, point, checkAlpha)) {
+				return clip;
 			}
 		}
 
-		return false;
+		return null;
 	}
 
-	#if js
-	private static function isIOS() : Bool {
-		return  Browser.window.navigator.userAgent.indexOf("iPhone") != -1 ||
-				Browser.window.navigator.userAgent.indexOf("iPad") != -1 ||
-				Browser.window.navigator.userAgent.indexOf("iPod") != -1;
-	}
-	#end
-
-	public static function getMouseX(clip : Dynamic) : Float {
-		#if js
-			var gs = getGlobalScale(clip);
-			return (MouseX - getElementX(clip)) / gs.scale_x;
-		#elseif flash
-			var clip_ : flash.display.DisplayObject = clip;
-			return clip_.mouseX;
-		#else
-			return 0.0;
-		#end
+	public static function makeGraphics() : FlowGraphics {
+		return new FlowGraphics();
 	}
 
-	public static function getMouseY(clip : Dynamic) : Float {
-		#if js
-			var gs = getGlobalScale(clip);
-			return (MouseY - getElementY(clip)) / gs.scale_y;
-		#elseif flash
-			var clip_ : flash.display.DisplayObject = clip;
-			return clip_.mouseY;
-		#else
-			return 0.0;
-		#end
+	public static function getGraphics(parent : FlowContainer) : FlowGraphics {
+		var clip = new FlowGraphics();
+		addChild(parent, clip);
+		return clip;
 	}
 
-	public static function hittest(clip : Dynamic, x : Float, y : Float) : Bool {
-		#if js
-			var hitted = Browser.document.elementFromPoint(Math.round(x), Math.round(y));
-			return (hitted == clip) || hasChild(clip, hitted);
-		#elseif flash
-			var clip_ : flash.display.DisplayObject = clip;
-			return clip_.hitTestPoint(x, y, true);
-		#else
-			return false;
-		#end
+	public static function clearGraphics(graphics : FlowGraphics) : Void {
+		graphics.clear();
 	}
 
-	public static function getGraphics(clip : Dynamic) : Dynamic  {
-		#if js
-			return new Graphics(clip);
-		#elseif flash
-			return clip.graphics;
-		#else
-			return null;
-		#end
+	public static function setLineStyle(graphics : FlowGraphics, width : Float, color : Int, opacity : Float) : Void {
+		graphics.lineStyle(width, removeAlphaChannel(color), opacity);
 	}
 
-	public static function setLineStyle(graphics : Dynamic, width : Float, color : Int, opacity : Float) : Void {
-		#if js
-			graphics.setLineStyle(width, color, opacity);
-		#elseif flash
-			graphics.lineStyle(width, color, opacity);
-		#end
-	}
-
-	public static function setLineStyle2(graphics : Dynamic, width : Float, color : Int, opacity : Float, pixelHinting : Bool) : Void {
-		#if js
-			graphics.setLineStyle(width, color, opacity);
-		#elseif flash
-			graphics.lineStyle(width, color, opacity, pixelHinting);
-		#end
-	}
-
-	public static function beginFill(graphics : Dynamic, color : Int, opacity : Float) : Void {
-		#if js
-			graphics.setSolidFill(color, opacity);
-		#elseif flash
-			graphics.beginFill(color, opacity);
-		#end
+	public static function beginFill(graphics : FlowGraphics, color : Int, opacity : Float) : Void {
+		graphics.beginFill(removeAlphaChannel(color), opacity);
 	}
 
 	// native beginLineGradientFill : (graphics : native, colors : [int], alphas: [double], offsets: [double], matrix : native) -> void = RenderSupport.beginFill;
-	public static function beginGradientFill(graphics : Dynamic, colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
-		#if js
-			graphics.setGradientFill(colors, alphas, offsets, matrix);
-		#elseif flash
-			var gradientType = flash.display.GradientType.LINEAR;
-			if (type == "radial")
-				gradientType = flash.display.GradientType.RADIAL;
-			var matrix_ : flash.geom.Matrix = matrix;
-			for (i in 0...offsets.length)
-				offsets[i] = Math.round(255.0 * offsets[i]);
-
-			graphics.beginGradientFill(gradientType, colors, alphas, offsets, matrix_);
-		#end
+	public static function beginGradientFill(graphics : FlowGraphics, colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
+		graphics.beginGradientFill(colors, alphas, offsets, matrix, type);
 	}
 
 	// native setLineGradientStroke : (graphics : native, colors : [int], alphas: [double], offsets: [double]) -> void = RenderSupport.beginFill;
-	public static function setLineGradientStroke(graphics : Dynamic, colours : Array<Int>, alphas : Array<Float>, offsets : Array<Float>, matrix : Dynamic) : Void {
-		#if js
-		#elseif flash
-			var matrix_ : flash.geom.Matrix = matrix;
-			for (i in 0...offsets.length)
-				offsets[i] = Math.round(255.0 * offsets[i]);
-
-			graphics.lineGradientStyle(flash.display.GradientType.LINEAR,
-				colours, alphas, offsets, matrix_);
-		#end
+	public static function setLineGradientStroke(graphics : FlowGraphics, colours : Array<Int>, alphas : Array<Float>, offsets : Array<Float>, matrix : Dynamic) : Void {
+		graphics.lineGradientStroke(colours, alphas, offsets, matrix);
 	}
 
 	public static function makeMatrix(width : Float, height : Float, rotation : Float, xOffset : Float, yOffset : Float) : Dynamic {
-		#if js
-			return [ width, height, rotation, xOffset, yOffset ];
-		#elseif flash
-			var matrix = new flash.geom.Matrix();
-			matrix.createGradientBox(width, height, Math.PI * rotation / 180.0 , xOffset, yOffset);
-			return matrix;
-		#else
-			return null;
-		#end
+		return { width : width, height : height, rotation : rotation, xOffset : xOffset, yOffset : yOffset };
 	}
 
-	public static function moveTo(graphics : Dynamic, x : Float, y : Float) : Void {
-		#if js
-			graphics.addGraphOp(MoveTo(x, y));
-		#elseif flash
-			graphics.moveTo(x, y);
-		#end
+	public static function moveTo(graphics : FlowGraphics, x : Float, y : Float) : Void {
+		graphics.moveTo(x, y);
 	}
 
-	public static function lineTo(graphics : Dynamic, x : Float, y : Float) : Void {
-		#if js
-			graphics.addGraphOp(LineTo(x, y));
-		#elseif flash
-			graphics.lineTo(x, y);
-		#end
+	public static function lineTo(graphics : FlowGraphics, x : Float, y : Float) : Void {
+		graphics.lineTo(x, y);
 	}
 
-	public static function curveTo(graphics : Dynamic, cx : Float, cy : Float, x : Float, y : Float) : Void {
-		#if js
-			graphics.addGraphOp(CurveTo(x, y, cx, cy));
-		#elseif flash
-			graphics.curveTo(cx, cy, x, y);
-		#end
+	public static function curveTo(graphics : FlowGraphics, cx : Float, cy : Float, x : Float, y : Float) : Void {
+		graphics.quadraticCurveTo(cx, cy, x, y);
 	}
 
-	public static function endFill(graphics : Dynamic) : Void {
-		#if js
-			graphics.render();
-		#elseif flash
-			graphics.endFill();
-		#end
+	public static function makeCSSColor(color : Int, alpha : Float) : Dynamic {
+		return "rgba(" + ((color >> 16) & 255) + "," + ((color >> 8) & 255) + "," + (color & 255) + "," + (alpha) + ")" ;
 	}
 
-	//native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void,
-	// errorFn : (string) -> void, onlyDownload : bool) -> native = RenderSupport.makePicture;
+	public static function endFill(graphics : FlowGraphics) : Void {
+		graphics.endFill();
+	}
+
+	public static function drawRect(graphics : FlowGraphics, x : Float, y : Float, width : Float, height : Float) : Void {
+		graphics.drawRect(x, y, width, height);
+	}
+
+	public static function drawRoundedRect(graphics : FlowGraphics, x : Float, y : Float, width : Float, height : Float, radius : Float) : Void {
+		graphics.drawRoundedRect(x, y, width, height, radius);
+	}
+
+	public static function drawEllipse(graphics : FlowGraphics, x : Float, y : Float, width : Float, height : Float) : Void {
+		graphics.drawEllipse(x, y, width, height);
+	}
+
+	public static function drawCircle(graphics : FlowGraphics, x : Float, y : Float, radius : Float) : Void {
+		graphics.drawCircle(x, y, radius);
+	}
+
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
-		#if js
-			var error_cb = function() {
-				errorFn("Error while loading image " + url);
-			};
+		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
+	}
 
-			var clip = makeClip();
-			clip.setAttribute("role", "img"); // WAI-ARIA role
-
-			if (url.substr(url.length - 3, 3).toLowerCase() == "swf") {
-				var loaad_swf_if_no_png = function() {
-					loadSWF(clip, url, error_cb, metricsFn);
-				}
-
-				loadImage(clip, StringTools.replace(url, ".swf", ".png"), loaad_swf_if_no_png, metricsFn);
-			} else {
-				loadImage(clip, url, error_cb, metricsFn);
-			}
-
-			return clip;
-		#elseif flash
-			var reportError = function(s) {
-				errorFn(s);
-			}
-
-			var cachedPicture : flash.display.BitmapData = pictureCache.get(url);
-			if (cachedPicture != null) {
-				try {
-					var bmp : flash.display.Bitmap = new flash.display.Bitmap(cachedPicture);
-					bmp.smoothing = true;
-					metricsFn(bmp.width, bmp.height);
-					return bmp;
-				} catch ( unknown : Dynamic ) {
-					pictureCache.remove(url);
-					trace("Error during restoring image " + url + " from cache : " + Std.string(unknown));
-				}
-			}
-			var cachedPictureSize : Array<Float> = pictureSizeCache.get(url);
-			if (cachedPictureSize != null) {
-				metricsFn(cachedPictureSize[0], cachedPictureSize[1]);
-			}
-
-			var loader = new flash.display.Loader();
-			var dis = loader.contentLoaderInfo;
-			var request = new flash.net.URLRequest(url);
-			dis.addEventListener(flash.events.IOErrorEvent.IO_ERROR, function (event : flash.events.IOErrorEvent) {
-				reportError("[ERROR] IO Error with '" + url + "': " + event.text);
-			});
-			dis.addEventListener(flash.events.SecurityErrorEvent.SECURITY_ERROR, function (event : flash.events.SecurityErrorEvent) {
-				reportError("[ERROR] Security Error with " + url + ": " + event.text);
-			});
-
-			dis.addEventListener(flash.events.Event.COMPLETE, function(event : flash.events.Event) {
-				var loader : flash.display.Loader = event.target.loader;
-				var width, height;
-
-				try {
-					var content : Dynamic = loader.content;
-					width = content.width;
-					height = content.height;
-
-					if (Std.is(content, flash.display.Bitmap)) {
-						// Bitmaps are not smoothed per default when loading. We take care of that here
-						var image : flash.display.Bitmap = cast loader.content;
-						image.smoothing = true;
-						if (cache == true) {
-							pictureCache.set(url, image.bitmapData);
-						}
-					} else {
-						var className:String = untyped __global__["flash.utils.getQualifiedClassName"](content);
-						if (className == "flash.display::AVM1Movie") {
-							var pwidth = content.width;
-							var pheight = content.height;
-							var transparent = true;
-							var bmpData : flash.display.BitmapData = new flash.display.BitmapData(pwidth, pheight, transparent, 0);
-							bmpData.draw(content);
-							if (cache == true) {
-								pictureCache.set(url, bmpData);
-							}
-						} else {
-							pictureSizeCache.set(url, [width, height]);
-						}
-					}
-				} catch (e: Dynamic) {
-					// When running locally, security errors can be called when we access the content
-					// of loaded files, so in that case, we have lost, and can not use nice smoothing
-					// There is a way, though, to obtain valid metrics of just loaded picture, so let's do that
-					width = loader.contentLoaderInfo.width;
-					height = loader.contentLoaderInfo.height;
-				}
-				metricsFn(width, height);
-			});
-
-			try {
-				//# 33872. Solution from internet works. Let it be as before (i.e. not specified = false) for swf files which are more dangerous
-				loader.load(request, new flash.system.LoaderContext(url.substr(url.length - 3, 3).toLowerCase() != "swf"));
-			} catch (e : Dynamic) {
-				reportError("[ERROR] Loading Error with " + url + ": " + e);
-			}
-			return loader;
-		#else
-			return null;
-		#end
+	public static function cursor2css(cursor : String) : String {
+		return switch (cursor) {
+			case "arrow": "default";
+			case "auto": "auto";
+			case "finger": "pointer";
+			case "move": "move" ;
+			case "text": "text";
+			case "crosshair" : "crosshair";
+			case "help" : "help";
+			case "wait" : "wait";
+			case "context-menu" : "context-menu";
+			case "progress" : "progress";
+			case "copy" : "copy";
+			case "not-allowed" : "not-allowed";
+			case "all-scroll" : "all-scroll";
+			case "col-resize" : "col-resize";
+			case "row-resize" : "row-resize";
+			case "n-resize" : "n-resize";
+			case "e-resize" : "e-resize";
+			case "s-resize" : "s-resize";
+			case "w-resize" : "w-resize";
+			case "ne-resize" : "ne-resize";
+			case "nw-resize" : "nw-resize";
+			case "sw-resize" : "sw-resize";
+			case "ew-resize" : "ew-resize";
+			case "ns-resize" : "ns-resize";
+			case "nesw-resize" : "nesw-resize";
+			case "nwse-resize" : "nwse-resize";
+			case "zoom-in" : "zoom-in";
+			case "zoom-out" : "zoom-out";
+			case "grab" : "grab";
+			case "grabbing" : "grabbing";
+			default: "inherit";
+		};
 	}
 
 	public static function setCursor(cursor : String) : Void {
-		#if js
-			var css_cursor =
-				switch (cursor) {
-					case "arrow": "default";
-					case "auto": "auto";
-					case "finger": "pointer";
-					case "move": "move" ;
-					case "text": "text";
-					default: "default";
-				}
-
-			Browser.document.body.style.cursor = css_cursor;
-		#elseif flash
-			if (cursor != "none") {
-				flash.ui.Mouse.show();
-				mouseHidden = false;
-				switch (cursor) {
-					case "arrow": flash.ui.Mouse.cursor = flash.ui.MouseCursor.ARROW;
-					case "auto": flash.ui.Mouse.cursor = flash.ui.MouseCursor.AUTO;
-					case "finger": flash.ui.Mouse.cursor = flash.ui.MouseCursor.BUTTON;
-					case "move": flash.ui.Mouse.cursor = flash.ui.MouseCursor.HAND;
-					case "text": flash.ui.Mouse.cursor = flash.ui.MouseCursor.IBEAM;
-				}
-			} else {
-				flash.ui.Mouse.hide();
-				mouseHidden = true;
-			}
-		#end
+		PixiView.style.cursor = cursor2css(cursor);
 	}
 
 	public static function getCursor() : String {
-		#if js
-			return switch (Browser.document.body.style.cursor) {
-				case "default": "arrow";
-				case "auto": "auto";
-				case "pointer": "finger";
-				case "move": "move" ;
-				case "text": "text";
-				default: "default";
-			}
-		#elseif flash
-			if (mouseHidden) {
-					return "none";
-			}
-			var mouse = flash.ui.Mouse.cursor;
-			return switch (mouse) {
-				case flash.ui.MouseCursor.ARROW: "arrow";
-				case flash.ui.MouseCursor.AUTO: "auto";
-				case flash.ui.MouseCursor.BUTTON: "finger";
-				case flash.ui.MouseCursor.HAND: "move";
-				case flash.ui.MouseCursor.IBEAM: "text";
-				default: "auto";
-				};
-		#else
-			return "auto";
-		#end
+		return switch (PixiView.style.cursor) {
+			case "default": "arrow";
+			case "auto": "auto";
+			case "pointer": "finger";
+			case "move": "move" ;
+			case "text": "text";
+			default: "default";
+		}
 	}
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
-	public static function addFilters(clip : Dynamic, filters : Array<Dynamic>) : Void{
-		#if js
-			var filters_value = filters.join(" ");
-			clip.style.WebkitFilter = filters_value;
-			// clip.style.filter = filters_value; // Only for webkit for now
-		#elseif flash
-			var clip_ : flash.display.DisplayObject = clip;
-			clip.filters = filters;
-		#end
+	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
+		if (!FiltersEnabled) {
+			return;
+		}
+
+		if (RendererType == "html") {
+			untyped clip.filterPadding = 0.0;
+			var filterCount = 0;
+
+			clip.off("childrenchanged", clip.invalidateTransform);
+
+			untyped clip.filters = filters.filter(function(f) {
+				if (f == null) {
+					return false;
+				} else if (f.padding != null) {
+					untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
+					filterCount++;
+				}
+
+				return true;
+			});
+			untyped clip.filterPadding = clip.filterPadding * filterCount;
+			if (untyped clip.updateNativeWidgetGraphicsData != null) {
+				untyped clip.updateNativeWidgetGraphicsData();
+			}
+
+			if (clip.filters.length > 0) {
+				clip.updateEmitChildrenChanged();
+				clip.on("childrenchanged", clip.invalidateTransform);
+			}
+
+			clip.initNativeWidget();
+
+			var children : Array<DisplayObject> = untyped clip.children;
+			if (children != null) {
+				for (child in children) {
+					child.invalidateTransform('addFilters -> child');
+				}
+			}
+
+			clip.invalidateTransform('addFilters');
+		} else {
+			untyped clip.filterPadding = 0.0;
+			untyped clip.glShaders = false;
+
+			var filterCount = 0;
+
+			filters = filters.filter(function(f) {
+				if (f == null) {
+					return false;
+				}
+
+				if (f.padding != null) {
+					untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
+					filterCount++;
+				}
+
+				if (f.uniforms != null && (f.uniforms.time != null || f.uniforms.seed != null || f.uniforms.bounds != null)) {
+					var fn = function () {
+						if (f.uniforms.time != null) {
+							f.uniforms.time = f.uniforms.time == null ? 0.0 : f.uniforms.time + 0.01;
+						}
+
+						if (f.uniforms.seed != null) {
+							f.uniforms.seed = Math.random();
+						}
+
+						if (f.uniforms.bounds != null) {
+							var bounds = clip.getBounds(true);
+
+							f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
+						}
+
+						clip.invalidateStage();
+					};
+
+					clip.onAdded(function () {
+						PixiStage.on("drawframe", fn);
+
+						return function () { PixiStage.off("drawframe", fn); };
+					});
+				}
+
+				if (untyped !HaxeRuntime.instanceof(f, DropShadowFilter) && untyped !HaxeRuntime.instanceof(f, BlurFilter)) {
+					untyped clip.glShaders = true;
+				}
+
+				return true;
+			});
+
+			untyped clip.filterPadding = clip.filterPadding * filterCount;
+			clip.filters = filters.length > 0 ? filters : null;
+
+			if (RendererType == "canvas") {
+				untyped clip.canvasFilters = clip.filters;
+			}
+		}
 	}
 
 	public static function makeBevel(angle : Float, distance : Float, radius : Float, spread : Float,
-							color1 : Int, alpha1 : Float, color2 : Int, alpha2 : Float, inside : Bool) : Dynamic  {
-		#if js
-			// There is no built in bevel and custom filters are not supported by default
-			return "drop-shadow(-1px -1px #888888)";
-		#elseif flash
-			return new flash.filters.BevelFilter(distance, angle, color1, alpha1, color2,
-					alpha2, radius, radius, spread, 1,
-					inside ? flash.filters.BitmapFilterType.INNER : flash.filters.BitmapFilterType.OUTER
-				);
-		#end
-      return null;
+							color1 : Int, alpha1 : Float, color2 : Int, alpha2 : Float, inside : Bool) : Dynamic {
+		return null;
 	}
 
 	public static function makeBlur(radius : Float, spread : Float) : Dynamic {
-		#if js
-			return "blur(" + radius + "px)";
-		#elseif flash
-			return new flash.filters.BlurFilter(radius, radius, Math.floor(spread));
-		#end
-      return null;
+		return new BlurFilter(spread, 4, backingStoreRatio, 5);
 	}
 
-	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,
-							color : Int, alpha : Float, inside : Bool) : Dynamic  {
-		#if js
-			return "drop-shadow(" + (Math.cos(angle) * distance) + "px " +
-				 (Math.sin(angle) * distance) + "px " + radius + "px " + spread + "px " +
-				 makeCSSColor(color, alpha) + ")";
-		#elseif flash
-			return new flash.filters.DropShadowFilter(distance, angle, color, alpha, radius, radius, spread, 1, inside);
-		#end
-      return null;
+	public static function makeBackdropBlur(spread : Float) : Dynamic {
+		return new BlurBackdropFilter(spread);
 	}
 
-	public static function makeGlow(radius : Float, spread : Float, color : Int, alpha : Float, inside : Bool) : Dynamic  {
-		#if js
-			return "";
-		#elseif flash
-			return new flash.filters.GlowFilter(color, alpha, radius, radius, cast(spread), 1, inside, false);
-		#end
-      return null;
+	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {
+		return new DropShadowFilter(angle, distance, radius, color, alpha);
 	}
 
-	public static function setScrollRect(clip : Dynamic, left : Float, top : Float, width : Float, height : Float) : Void  {
-		#if js
-			// Update position right here
-			clip.style.top = "" + (-top) + "px";
-			clip.style.left = "" + (-left) + "px";
-
-			// Set rect clipping
-			clip.rect_top = top;
-			clip.rect_left = left;
-			clip.rect_right = left + width;
-			clip.rect_bottom = top + height;
-			clip.style.clip = "rect(" + clip.rect_top  + "px," +
-				clip.rect_right + "px," + clip.rect_bottom  + "px," +
-				clip.rect_left + "px)";
-		#elseif flash
-			var clip_ : flash.display.DisplayObject = clip;
-			clip_.scrollRect = new flash.geom.Rectangle(left, top, width, height);
-			// Save current focus
-			var stage = getStage();
-			var focus = stage.focus;
-			// BUG: If we do not do this, it does not work. Flash simply
-			// does not refresh correctly.
-			clip_.visible = false;
-			clip_.visible = true;
-			// We have to restore focus if we lost it
-			if ((focus != null) && (stage.focus == null)) stage.focus = focus;
-		#end
+	public static function makeGlow(radius : Float, spread : Float, color : Int, alpha : Float, inside : Bool) : Dynamic {
+		return null;
 	}
 
-	public static function getTextMetrics(textfield : Dynamic) : Array<Float> {
-		#if js
-			var font_size = 16.0;
-			if (textfield.font_size != null) font_size = textfield.font_size;
-			var ascent = 0.9 * font_size;
-			var descent = 0.1 * font_size;
-			var leading = 0.15 * font_size;
-			return [ascent, descent, leading];
-		#elseif flash
-			var textfield_ : flash.text.TextField = textfield;
-			var metrics : flash.text.TextLineMetrics = textfield_.getLineMetrics(0);
-			return [metrics.ascent, metrics.descent, metrics.leading];
-		#else
-			return [0.0, 0.0, 0.0];
-		#end
-	}
+	public static function makeShader(vertex : Array<String>, fragment : Array<String>, uniforms : Array<Array<String>>) : Filter {
+		var v = StringTools.replace(vertex.join(""), "a_VertexPos", "aVertexPosition");
+		v = StringTools.replace(v, "a_VertexTexCoord", "aTextureCoord");
+		v = StringTools.replace(v, "v_texCoord", "vTextureCoord");
+		v = StringTools.replace(v, "u_cmatrix", "projectionMatrix");
+		v = StringTools.replace(v, "s_tex", "uSampler");
+		v = StringTools.replace(v, "texture(", "texture2D(");
+		v = StringTools.replace(v, "in ", "varying ");
+		v = StringTools.replace(v, "out ", "varying ");
+		v = StringTools.replace(v, "frag_highp", "highp");
 
-	public static function makeBitmap() : Dynamic  {
-		#if js
-			return null;
-		#elseif flash
-			return new flash.display.Bitmap(null, flash.display.PixelSnapping.ALWAYS, true);
-		#end
-      return null;
-	}
+		var f = StringTools.replace(fragment.join(""), "a_VertexPos", "aVertexPosition");
+		f = StringTools.replace(f, "a_VertexTexCoord", "aTextureCoord");
+		f = StringTools.replace(f, "v_texCoord", "vTextureCoord");
+		f = StringTools.replace(f, "u_cmatrix", "projectionMatrix");
+		f = StringTools.replace(f, "s_tex", "uSampler");
+		f = StringTools.replace(f, "texture(", "texture2D(");
+		f = StringTools.replace(f, "in ", "varying ");
+		f = StringTools.replace(f, "out ", "varying ");
+		f = StringTools.replace(f, "frag_highp", "highp");
 
-	public static function bitmapDraw(bitmap : Dynamic, clip : Dynamic, width : Int, height : Int) : Void {
-		#if js
-		#elseif flash
-			var bitmap_ : flash.display.Bitmap = bitmap;
-			var clip_ : flash.display.DisplayObject = clip;
-			var bmpData = new flash.display.BitmapData(width, height, true, 0);
-			bmpData.draw(clip_);
-			bitmap_.bitmapData = bmpData;
-		#end
-	}
+		var u : Dynamic = {};
 
-	public static function addPasteEventListener(callback : Array<Dynamic> -> Void) : (Void -> Void) {
-		return function() {};
-	}
-
-	public static function getClipVisible(clip : Dynamic) : Bool {
-		#if flash
-			if (clip == null) return false;
-			var stage = getStage();
-			var p : flash.display.DisplayObject = clip;
-			while (p != null && p != stage) {
-				if (!p.visible) {
-				   return false;
-				}
-				p = p.parent;
-			}
-			return true;
-		#elseif js
-			if (clip == null) return false;
-			var p : Dynamic = clip;
-			var stage = getStage();
-			while (p != null && p != stage ) {
-				if (p.style != null && p.style.display == "none")
-				   return false;
-				p = p.parentNode;
-			}
-			return true;
-		#else
-			return true;
-		#end
-	}
-
-	public static function setClipVisible(clip : Dynamic, vis : Bool) : Void {
-		#if flash
-			var clip_ : flash.display.DisplayObject = clip;
-			if (clip_.visible != vis) {
-				clip_.visible = vis;
-			}
-		#elseif js
-			clip.style.display = vis ? '' : "none";
-		#end
-	}
-
-	public static function setFullScreenTarget(clip:Dynamic) : Void {
-		#if flash
-		var target:flash.display.DisplayObject = clip;
-		flash.Lib.current.stage.fullScreenSourceRect  = target.getBounds(flash.Lib.current.stage);
-		#else
-		// happily doing nothing
-		#end
-	}
-
-	public static function setFullScreenRectangle(x:Float, y:Float, w:Float, h:Float) : Void {
-		#if flash
-		flash.Lib.current.stage.fullScreenSourceRect = new flash.geom.Rectangle(x, y, w, h);
-		#end
-	}
-
-	public static function resetFullScreenTarget() : Void {
-		#if flash
-		flash.Lib.current.stage.fullScreenSourceRect = null;
-		#end
-	}
-
-	public static function toggleFullScreen(fs:Bool) : Void {
-		#if flash
-		var state = flash.Lib.current.stage.displayState;
-		if (state == flash.display.StageDisplayState.FULL_SCREEN) {
-			flash.Lib.current.stage.displayState = flash.display.StageDisplayState.NORMAL;
-		} else {
-			flash.Lib.current.stage.displayState = flash.display.StageDisplayState.FULL_SCREEN;
+		for (uniform in uniforms) {
+			untyped __js__("u[uniform[0]] = { type : uniform[1], value : JSON.parse(uniform[2]) }");
 		}
-		#else
-			// may be it's possible to toggle F11 from js
-		#end
+
+		u.u_out_pixel_size = {
+			type : "vec2",
+			value : [1, 1]
+		};
+
+		u.u_out_offset = {
+			type : "vec2",
+			value : [0, 0]
+		};
+
+		u.u_in_pixel_size = {
+			type : "vec2",
+			value : [1, 1]
+		};
+
+		u.u_in_offset = {
+			type : "vec2",
+			value : [0, 0]
+		};
+
+		return new Filter(v, f, u);
 	}
 
-	public static function setFullScreen(fs : Bool) : Void {
-		// Not implemented
+	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
+		clip.setScrollRect(left, top, width, height);
+	}
+
+	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
+		clip.setContentRect(width, height);
+	}
+
+	public static function listenScrollRect(clip : FlowContainer, cb : Float -> Float -> Void) : Void -> Void {
+		return clip.listenScrollRect(cb);
+	}
+
+	public static function getTextMetrics(clip : TextClip) : Array<Float> {
+		return clip.getTextMetrics();
+	}
+
+	public static function makeBitmap() : Dynamic {
+		return null;
+	}
+
+	public static function bitmapDraw(bitmap : Dynamic, clip : DisplayObject, width : Int, height : Int) : Void {
+	}
+
+	public static function getClipVisible(clip : DisplayObject) : Bool {
+		return clip.getClipVisible();
+	}
+
+	public static function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
+		return clip.setClipVisible(visible);
+	}
+
+	public static function getClipRenderable(clip : DisplayObject) : Bool {
+		return clip.getClipRenderable();
+	}
+
+	public static function setClipCursor(clip : DisplayObject, cursor : String) : Void {
+		clip.setClipCursor(cursor2css(cursor));
+	}
+
+	public static function setClipDebugInfo(clip : DisplayObject, key : String, value : Dynamic) : Void {
+		untyped clip.info = HaxeRuntime.typeOf(value).toString();
+	}
+
+	public static function fullScreenTrigger() {
+		IsFullScreen = isFullScreen();
+		emit("fullscreen", IsFullScreen);
+	}
+
+	public static function fullWindowTrigger(fw : Bool) {
+		IsFullWindow = fw;
+		emit("fullwindow", fw);
+	}
+
+	private static var FullWindowTargetClip : DisplayObject = null;
+	public static function setFullWindowTarget(clip : DisplayObject) : Void {
+		if (FullWindowTargetClip != clip) {
+			if (IsFullWindow && FullWindowTargetClip != null) {
+				toggleFullWindow(false);
+				FullWindowTargetClip = clip;
+
+				if (clip != null) {
+					toggleFullWindow(true);
+				}
+			} else {
+				FullWindowTargetClip = clip;
+			}
+		}
+	}
+
+	public static function setFullScreenRectangle(x : Float, y : Float, w : Float, h : Float) : Void {
+	}
+
+	public static function resetFullWindowTarget() : Void {
+		setFullWindowTarget(null);
+	}
+
+	private static var regularStageChildren : Array<DisplayObject> = null;
+	private static var regularFullScreenClipParent : Dynamic = null;
+	public static var IsFullScreen : Bool = false;
+	public static var IsFullWindow : Bool = false;
+	public static function toggleFullWindow(fw : Bool) : Void {
+		if (FullWindowTargetClip != null && IsFullWindow != fw) {
+			var mainStage : FlowContainer = cast(PixiStage.children[0], FlowContainer);
+
+			if (fw) {
+				setShouldPreventFromBlur(FullWindowTargetClip);
+
+				for (child in mainStage.children) {
+					child.setClipVisible(false);
+				}
+
+				regularFullScreenClipParent = FullWindowTargetClip.parent;
+				mainStage.addChild(FullWindowTargetClip);
+			} else {
+				regularFullScreenClipParent.addChild(FullWindowTargetClip);
+				regularFullScreenClipParent = null;
+
+				for (child in mainStage.children) {
+					child.setClipVisible(true);
+				}
+			}
+
+			fullWindowTrigger(fw);
+		}
+	}
+
+	public static function requestFullScreen(element : Dynamic) {
+		if (element.requestFullscreen != null)
+			element.requestFullscreen();
+		else if (element.mozRequestFullScreen != null)
+			element.mozRequestFullScreen();
+		else if (element.webkitRequestFullscreen != null)
+			element.webkitRequestFullscreen();
+		else if (element.msRequestFullscreen != null)
+			element.msRequestFullscreen();
+		else if (element.webkitEnterFullScreen != null)
+			element.webkitEnterFullScreen();
+	}
+
+	public static function exitFullScreen(element : Dynamic) {
+		if (untyped HaxeRuntime.instanceof(element, js.html.CanvasElement)) {
+			element = Browser.document;
+		}
+
+		if (IsFullScreen) {
+			if (element.exitFullscreen != null)
+				element.exitFullscreen();
+			else if (element.mozCancelFullScreen != null)
+				element.mozCancelFullScreen();
+			else if (element.webkitExitFullscreen != null)
+				element.webkitExitFullscreen();
+			else if (element.msExitFullscreen != null)
+				element.msExitFullscreen();
+		}
+	}
+
+	public static function toggleFullScreen(fs : Bool) : Void {
+		if (!hadUserInteracted) return;
+
+		if (RendererType == "html") {
+			if (fs)
+				requestFullScreen(Browser.document.body);
+			else
+				exitFullScreen(Browser.document);
+		} else {
+			if (fs)
+				requestFullScreen(PixiView);
+			else
+				exitFullScreen(PixiView);
+		}
 	}
 
 	public static function onFullScreen(fn : Bool -> Void) : Void -> Void {
-		#if flash
-		var cb = function(e:flash.events.FullScreenEvent) {
-			fn(e.fullScreen);
-		};
-		flash.Lib.current.stage.addEventListener(flash.events.FullScreenEvent.FULL_SCREEN, cb);
-		return function() {
-			flash.Lib.current.stage.removeEventListener(flash.events.FullScreenEvent.FULL_SCREEN, cb);
-		}
-		#else
-		return function() {};
-		#end
+		on("fullscreen", fn);
+		return function () { off("fullscreen", fn); };
 	}
 
 	public static function isFullScreen() : Bool {
-		#if flash
-		return flash.Lib.current.stage.displayState == flash.display.StageDisplayState.FULL_SCREEN;
-		#else
-		return false;
-		#end
+		return untyped Browser.document.fullScreen ||
+			untyped Browser.document.mozFullScreen ||
+			untyped Browser.document.webkitIsFullScreen ||
+			untyped Browser.document.fullscreenElement != null ||
+			untyped Browser.document.msFullscreenElement != null ||
+			FullWindowTargetClip != null &&
+			FullWindowTargetClip.nativeWidget != null &&
+			FullWindowTargetClip.nativeWidget.webkitDisplayingFullscreen;
+	}
+
+	public static function onFullWindow(onChange : Bool -> Void) : Void -> Void {
+		on("fullwindow", onChange);
+		return function() { off("fullwindow", onChange); }
+	}
+
+	public static function isFullWindow() : Bool {
+		return IsFullWindow;
 	}
 
 	public static function setWindowTitle(title : String) : Void {
-		#if flash
-		if (flash.external.ExternalInterface.available) {
-			flash.external.ExternalInterface.call("setWindowTitle", title);
-		}
-		#elseif js
 		Browser.document.title = title;
-		#end
 	}
 
 	public static function setFavIcon(url : String) : Void {
-		#if flash
-		if (flash.external.ExternalInterface.available) {
-			flash.external.ExternalInterface.call("setFavIcon", url);
-		}
-		#elseif js
 		var head = Browser.document.getElementsByTagName('head')[0];
 		var oldNode = Browser.document.getElementById('dynamic-favicon');
 		var node = Browser.document.createElement('link');
@@ -2510,611 +2658,249 @@ class RenderSupport {
 			head.removeChild(oldNode);
 		}
 		head.appendChild(node);
-		#end
 	}
 
 	public static function takeSnapshot(path : String) : Void {
-		// Empty for these targets
+		takeSnapshotBox(path, 0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+	}
+
+	public static function takeSnapshotBox(path : String, x : Int, y : Int, w : Int, h : Int) : Void {
+		try {
+			var base64 = getSnapshotBox(x, y, w, h).split(",")[1];
+			var base64bytes = [];
+
+			untyped __js__("
+				const sliceSize = 512;
+				const byteCharacters = atob(base64);
+
+				for (var offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+					const slice = byteCharacters.slice(offset, offset + sliceSize);
+
+					const byteNumbers = new Array(slice.length);
+					for (var i = 0; i < slice.length; i++) {
+						byteNumbers[i] = slice.charCodeAt(i);
+					}
+
+					const byteArray = new Uint8Array(byteNumbers);
+					base64bytes.push(byteArray);
+				}
+			");
+
+			FlowFileSystem.saveFileClient(path, base64bytes, "image/png");
+		} catch(e : Dynamic) {}
+	}
+
+	public static function getSnapshot() : String {
+		return getSnapshotBox(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+	}
+
+	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
+		var child : FlowContainer = untyped PixiStage.children[0];
+
+		if (child == null) {
+			return "";
+		}
+
+		untyped RenderSupport.LayoutText = true;
+		child.setScrollRect(x, y, w, h);
+
+		render();
+
+		try {
+			var img = PixiRenderer.plugins.extract.base64(PixiStage);
+			child.removeScrollRect();
+			untyped RenderSupport.LayoutText = false;
+
+			render();
+
+			return img;
+		} catch(e : Dynamic) {
+			child.removeScrollRect();
+			untyped RenderSupport.LayoutText = false;
+
+			render();
+
+			return 'error';
+		}
+	}
+
+	public static function compareImages(image1 : String, image2 : String, cb : String -> Void) : Void {
+		if (untyped __js__("typeof resemble === 'undefined'")) {
+			var head = Browser.document.getElementsByTagName('head')[0];
+			var node = Browser.document.createElement('script');
+			node.setAttribute("type","text/javascript");
+			node.setAttribute("src", 'js/resemble.js');
+			node.onload = function() {
+				compareImages(image1, image2, cb);
+			};
+			head.appendChild(node);
+		} else {
+			untyped __js__("
+				resemble(image1)
+				.compareTo(image2)
+				.setReturnEarlyThreshold(Platform.isIE?10:0)
+				.ignoreAntialiasing()
+				.outputSettings({
+					errorType: 'movementDifferenceIntensity',
+				})
+				.onComplete(function(data) {
+					cb(JSON.stringify(data));
+				});
+			");
+		}
 	}
 
 	public static function getScreenPixelColor(x : Int, y : Int) : Int {
-		#if flash
-			var bmd : flash.display.BitmapData = new flash.display.BitmapData( getStage().stageWidth, getStage().stageHeight );
-			bmd.draw( getStage() );
-			var b : flash.display.Bitmap = new flash.display.Bitmap(bmd);
-			return b.bitmapData.getPixel(x,y);
-		#else
-			return 0;
-		#end
+		var data = PixiView.getContext2d().getImageData(x * backingStoreRatio, y * backingStoreRatio, 1, 1).data;
+
+		var rgb = data[0];
+		rgb = (rgb << 8) + data[1];
+		rgb = (rgb << 8) + data[2];
+
+		return rgb;
 	}
-
-	#if flash
-	private static var WebClipListeners : Array<Dynamic>;
-
-	private static inline function fixIframeMetrics() : Void {
-		for (cb in WebClipListeners) cb(null);
-	}
-
-	private static var BrowserZoom : Float = 1.0;
-
-	private static function updateBrowserZoom() : Void {
-		// using jquery insetad of simple innerWidth to support IE8
-		if (flash.external.ExternalInterface.available) {
-			var innerWidth = flash.external.ExternalInterface.call("eval", "$(window).width()");
-			var current_zoom = flash.Lib.current.stage.stageWidth /* That is not changed on zooming by user */ / innerWidth;
-			if (current_zoom != BrowserZoom) {
-				BrowserZoom = current_zoom;
-				fixIframeMetrics();
-			}
-			haxe.Timer.delay(updateBrowserZoom, 1000);
-		}
-	}
-	#end
 
 	//
 	// cb - callback in the flow code which accepts [flow]
 	// To call it in the embedded HTML use frameElement.callflow([args]))
 	// Default web clip size = 100x100. Scale clip to resize
-	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool) : Dynamic {
-		// Note: ondone is not used for now for these targets
-		// Reliable way to detect error is needed.
-
-		#if flash
-		var bridge_clip : flash.display.Sprite = makeClip();
-		if (!flash.external.ExternalInterface.available) {
-			return bridge_clip;
-		}
-		var iframe_id = flash.external.ExternalInterface.call("makeWebClip", url, domain, reloadBlock);
-		bridge_clip.name = iframe_id; // id is a string
-
-		// Register callback to call flow from JS
-		flash.external.ExternalInterface.addCallback("callFlowForIframe_" + iframe_id, function(args : Dynamic) {
-			// We have {0 : value0, 1 : value1 ...} here for JS array
-			// Not an Array<Dynamic>
-			var arr_args = []; var i = 0;
-			do { if (args[i] != null) arr_args.push(args[i]); } while (args[i++] != null);
-			return cb(arr_args);
-		} );
-
-		var top_left = new flash.geom.Point();
-		var bottom_right = new flash.geom.Point();
-
-		var test_top_left = new flash.geom.Point();
-		var test_bottom_right = new flash.geom.Point(100.0, 100.0);
-		var visible = bridge_clip.visible;
-
-		var fix_iframe_metrics = function(e : Dynamic) {
-			var new_top_left = bridge_clip.localToGlobal(test_top_left);
-			var new_bottom_right = bridge_clip.localToGlobal(test_bottom_right);
-			new_top_left.x /= BrowserZoom; new_top_left.y /= BrowserZoom;
-			new_bottom_right.x /= BrowserZoom; new_bottom_right.y /= BrowserZoom;
-
-			if ((!top_left.equals(new_top_left) || !new_bottom_right.equals(bottom_right)) && bridge_clip.visible) {
-				top_left = new_top_left;
-				bottom_right = new_bottom_right;
-				flash.external.ExternalInterface.call("setWebClipMetrics",
-					iframe_id, top_left.x, top_left.y,
-					bottom_right.x - top_left.x, bottom_right.y - top_left.y);
-			}
-			if (bridge_clip.visible != visible)
-			{
-				visible = bridge_clip.visible;
-				if (bridge_clip.visible) {
-					flash.external.ExternalInterface.call("setWebClipMetrics",
-						iframe_id, top_left.x, top_left.y,
-						bottom_right.x - top_left.x, bottom_right.y - top_left.y);
-				}
-				else {
-					flash.external.ExternalInterface.call("setWebClipMetrics",
-						iframe_id, top_left.x, top_left.y,
-						0, 0);
-				}
-			}
-		};
-
-		var on_load = function(e : Dynamic) {
-			ondone("OK");
-		}
-
-		var on_removed = function(e : Dynamic) {
-			flash.external.ExternalInterface.call("removeWebClip", bridge_clip.name);
-			WebClipListeners.remove(fix_iframe_metrics);
-		}
-
-		bridge_clip.addEventListener(flash.events.Event.REMOVED_FROM_STAGE, on_removed);
-		bridge_clip.addEventListener(flash.events.Event.ENTER_FRAME, fix_iframe_metrics);
-		bridge_clip.addEventListener(flash.events.Event.ADDED_TO_STAGE, on_load);
-		WebClipListeners.push(fix_iframe_metrics);
-
-		return bridge_clip;
-		#elseif js
-		var clip = makeClip();
-		if (isIOS()) {
-			clip.style.webkitOverflowScrolling = 'touch';
-			clip.style.overflowY = "scroll";
-		}
-		try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report(e); }
-		var iframe : Dynamic = Browser.document.createElement("iframe");
-		iframe.width = iframe.height = WebClipInitSize;
-		iframe.src = url;
-		iframe.allowFullscreen = true;
-		iframe.frameBorder = "no";
-		clip.appendChild(iframe);
-		clip.iframe = iframe;
-		iframe.callflow = cb; // Store for crossdomain calls
-		iframe.onload = function() {
-			try {
-				ondone("OK");
-				iframe.contentWindow.callflow = cb;
-				if (iframe.contentWindow.pushCallflowBuffer) iframe.contentWindow.pushCallflowBuffer();
-			} catch(e : Dynamic) { Errors.report(e); }
-		};
-		return clip;
-		#end
-      return null;
+	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool) : WebClip {
+		return new WebClip(url, domain, useCache, reloadBlock, cb, ondone, shrinkToFit);
 	}
 
-	public static function webClipHostCall(clip : Dynamic, name : String, args : Array<String>) : String {
-		#if flash
-		if (!flash.external.ExternalInterface.available) return null;
-		return flash.external.ExternalInterface.call("webClipHostCall", clip.name, name, args);
-		#elseif js
-		return untyped clip.iframe.contentWindow[name].apply(clip.iframe.contentWindow, args);
-		#end
-	  return "";
+	public static function webClipHostCall(clip : WebClip, name : String, args : Array<String>) : String {
+		return clip.hostCall(name, args);
 	}
 
-	public static function setWebClipSandBox(clip : Dynamic, value : String) : Void {
-		#if js
-		clip.iframe.sandbox = value;
-		#end
+	public static function setWebClipSandBox(clip : WebClip, value : String) : Void {
+		clip.setSandBox(value);
 	}
 
-	public static function setWebClipDisabled(clip : Dynamic, value : Bool) : Void {
-		//TODO : Implement
+	public static function setWebClipDisabled(clip : WebClip, disabled : Bool) : Void {
+		clip.setDisableOverlay(disabled);
 	}
 
 	public static function webClipEvalJS(clip : Dynamic, code : String) : Dynamic {
-      return null;
+		clip.evalJS(code);
+		return null;
 	}
 
-	public static function setWebClipZoomable(clip : Dynamic, zoomable : Bool) : Void {
-		// NOP for these targets
+	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {
+		return new HTMLStage(width, height);
 	}
 
-	public static function setWebClipDomains(clip : Dynamic, domains : Array<String>) : Void {
-		// NOP for these targets
+	public static function createElement(tagName : String) : Element {
+		return Browser.document.createElementNS(
+				if (tagName.toLowerCase() == "svg" || tagName.toLowerCase() == "path" || tagName.toLowerCase() == "g") {
+					"http://www.w3.org/2000/svg";
+				} else {
+					"http://www.w3.org/1999/xhtml";
+				},
+				tagName
+			);
+	}
+
+	public static function createTextNode(text : String) : js.html.Text {
+		return Browser.document.createTextNode(text);
+	}
+
+	public static function changeNodeValue(element : Element, value : String) : Void {
+		element.nodeValue = value;
+	}
+
+	public static function setAttribute(element : Element, name : String, value : String) : Void {
+		if (name == "innerHTML")
+			element.innerHTML = value
+		else
+			element.setAttribute(name, value);
+	}
+
+	public static function removeAttribute(element : Element, name : String) : Void {
+		element.removeAttribute(name);
+	}
+
+	public static function appendChild(element : Dynamic, child : Element) : Void {
+		element.appendChild(child);
+	}
+
+	public static function insertBefore(element : Dynamic, child : Element, reference : Element) : Void {
+		element.insertBefore(child, reference);
+	}
+
+	public static function removeElementChild(element : Dynamic, child : Element) : Void {
+		removeChild(element, child);
 	}
 
 	public static function getNumberOfCameras() : Int {
-		#if js
-		#elseif flash
-			return Camera.getNumberOfCameras();
-		#end
-	  return 0;
+		return 0;
 	}
 
 	public static function getCameraInfo(id : Int) : String {
-		#if js
-		#elseif flash
-			var camera : flash.media.Camera = flash.media.Camera.getCamera(id+"");
-			if (camera == null) {
-		    	return "";
-			}else{
-		    	camera.setMode(64000, 48000, 2400, false);
-		    	return "FRONT;"+camera.width+";"+camera.height+";"+flash.media.Camera.names[id];
-			}
-		#end
-	  return "";
+		return "";
 	}
 
-	public static function makeCamera(uri : String, camID : Int, camWidth : Int, camHeight : Int, camFps : Float, vidWidth : Int, vidHeight : Int, recordMode : Int, cbOnReadyForRecording : Dynamic -> Void, cbOnFailed : String -> Void) :  Array<Dynamic> {
-		#if js
-			return [null, null];
-		#elseif flash
-			try {
-				var nc = new flash.net.NetConnection();
-				var vid : flash.media.Video = new flash.media.Video();
-				var ns : flash.net.NetStream = null;
-
-				// 1. Start camera and microphone
-				// 2. Set values for camera and microphone
-				var camera : flash.media.Camera = CameraHx.startCamera(camID, camWidth, camHeight, camFps);
-				var microphone : flash.media.Microphone = CameraHx.startMicrophone();
-
-				// 3. if needed show video from camera
-				if ((vidWidth > 0)&&(vidHeight > 0)) {
-					vid = new flash.media.Video(vidWidth, vidHeight);
-					vid.attachCamera(camera);
-				}
-				// 4. attach to the record stream video and/or audio
-				if (uri != "") {
-					nc.connect(uri);
-					var checkConnection = function(event:flash.events.NetStatusEvent) {
-						if(event.info.code == "NetConnection.Connect.Success")
-						{
-							ns = new flash.net.NetStream(nc);
-							// attach the camera and microphone to the server
-							if ((recordMode == 2)||(recordMode == 3)) {
-								ns.attachCamera(camera);
-							}
-							if ((recordMode == 1)||(recordMode == 3)) {
-								ns.attachAudio(microphone);
-							}
-							// set the buffer time to 3 seconds to buffer 3 seconds of video
-							// data for better performance and higher quality video
-							ns.bufferTime = 3;
-							// add custom metadata to the header of the .flv file
-							var metaData:Dynamic = {};
-							Reflect.setField(metaData, "description", "Recorded using Area9 Camera API.");
-							ns.send("@setDataFrame", "onMetaData", metaData);
-							cbOnReadyForRecording(ns);
-						}
-						if(event.info.code == "NetConnection.Connect.Failed")
-						{
-							cbOnFailed(event.info.code);
-						}
-					};
-					nc.addEventListener(flash.events.NetStatusEvent.NET_STATUS, checkConnection);
-				} else {
-					cbOnFailed("Media server URL is empty.");
-				}
-				return [ns, vid];
-			} catch (e : Dynamic) {
-				return [null, null];
-			}
-		#else
-			return [null, null];
-		#end
+	public static function makeCamera(uri : String, camID : Int, camWidth : Int, camHeight : Int, camFps : Float, vidWidth : Int, vidHeight : Int, recordMode : Int, cbOnReadyForRecording : Dynamic -> Void, cbOnFailed : String -> Void) : Array<Dynamic> {
+		return [null, null];
 	}
 
 	public static function startRecord(str : Dynamic, filename : String, mode : String) : Void {
-		#if js
-		#elseif flash
-			var stream : flash.net.NetStream = str;
-			stream.publish(filename, mode);
-		#end
 	}
 
 	public static function stopRecord(str : Dynamic) : Void {
-		#if js
-		#elseif flash
-			var stream : flash.net.NetStream = str;
-			stream.publish(null);
-		#end
 	}
 
 	public static function cameraTakePhoto(cameraId : Int, additionalInfo : String, desiredWidth : Int, desiredHeight : Int, compressQuality : Int, fileName : String, fitMode : Int) : Void {
 		// not implemented yet for js/flash
 	}
 
-	public static function cameraTakeVideo(cameraId : Int, additionalInfo : String, duration : Int, size : Int, quality : Int, fileName : String) : Void {
-		// not implemented yet for js/flash
-	}
-
 	public static function addGestureListener(event : String, cb : Int -> Float -> Float -> Float -> Float -> Bool) : Void -> Void {
-		// NOP
-		return function() {};
+		if (event == "pinch") {
+			return GesturesDetector.addPinchListener(cb);
+		} else {
+			return function() {};
+		}
 	}
 
-	public static function setInterfaceOrientation(orientation : String) : Void {
+	public static function setWebClipZoomable(clip : WebClip, zoomable : Bool) : Void {
 		// NOP for these targets
 	}
 
-	#if flash
-	private static inline function enableMouseEvents(clip : flash.display.InteractiveObject) : Void {
-		if (clip != flash.Lib.current.stage) {
-			clip.mouseEnabled = true;
-			// clip.mouseChildren = true; // This does not work
+	public static function setWebClipDomains(clip : WebClip, domains : Array<String>) : Void {
+		// NOP for these targets
+	}
+
+	public static function setInterfaceOrientation(orientation : String) : Void {
+		var screen : Dynamic = Browser.window.screen;
+		if (screen != null && screen.orientation != null && screen.orientation.lock != null) {
+			if (orientation != "none") {
+				screen.orientation.lock(orientation);
+			} else {
+				screen.orientation.unlock();
+			}
 		}
 	}
-	#end
 
 	public static function setUrlHash(hash : String) : Void {
-		#if flash
-		if (flash.external.ExternalInterface.available)
-			flash.external.ExternalInterface.call("setLocationHash", hash);
-		#elseif js
 		Browser.window.location.hash = hash;
-		#end
 	}
 
 	public static function getUrlHash() : String {
-		#if flash
-		if (flash.external.ExternalInterface.available)
-			return flash.external.ExternalInterface.call("getLocationHash");
-		#elseif js
-		return js.Browser.window.location.hash;
-		#end
-		return "";
+		return Browser.window.location.hash;
 	}
 
 	public static function addUrlHashListener(cb : String -> Void) : Void -> Void {
-		#if flash
-		UrlHashListeners.push(cb);
-		return function() { UrlHashListeners.remove(cb); };
-		#elseif js
 		var wrapper = function(e) { cb(Browser.window.location.hash); }
 		untyped Browser.window.addEventListener("hashchange", wrapper);
 		return function() { untyped Browser.window.removeEventListener("hashchange", wrapper); };
-		#end
-		return function() {};
 	}
 
 	public static function setGlobalZoomEnabled(enabled : Bool) : Void {
 		// NOP
 	}
-}
 
-#if flash
-class PictureCache {
-	private var pictureMap : Map<String,flash.display.BitmapData>;
-	private var pictureLRU : LRU;
-	private var cachedPixels : Int;
-	private var maxCachedPixels : Int;	//appr. 7000 * 7000 pixels - 190Mb approx. ?
-	private var debug : Bool;
-
-	public function new() {
-		pictureMap = new Map<String,flash.display.BitmapData>();
-		pictureLRU = new LRU();
-		cachedPixels = 0;
-		maxCachedPixels = 50000000;
-		debug = false;
-		var imagePixels = Util.getParameter("imagepixels");
-		if (imagePixels != null) {
-			debug = true;
-			var n = Std.parseInt(imagePixels);
-			if (n>1) {
-				maxCachedPixels = n;
-			}
-		}
-	}
-
-	public function set(url : String, b : flash.display.BitmapData) : Void {
-		if (this.get(url) != null) {
-			// There's no need to do anything else here, because we have this picture in the cache already
-			return;
-		}
-
-		pictureMap.set(url, b);
-		pictureLRU.set(url);
-		cachedPixels += b.width * b.height;
-		if (debug) trace("Added picture: " + url + " ("+b.width * b.height+").");
-
-		while (cachedPixels > maxCachedPixels) {
-			var removeUrl = pictureLRU.removeLRU();
-			if (removeUrl == null) break;
-			var rb = pictureMap.get(removeUrl);
-			var removedSize = rb.width * rb.height;
-
-			cachedPixels -= removedSize;
-			pictureMap.remove(removeUrl);
-			if (debug) trace("Removing picture: " + removeUrl + " ("+ removedSize +").");
-		}
-
-		if (debug) trace("Total pixels: "+cachedPixels+" / "+maxCachedPixels+" = "+(cachedPixels*100.0)/maxCachedPixels+"%");
-	}
-
-	public function get(url : String) : flash.display.BitmapData {
-		var b = pictureMap.get(url);
-		if (b != null) pictureLRU.set(url);
-		return b;
-	}
-
-	public function remove(url : String) : Void {
-		pictureMap.remove(url);
-		pictureLRU.remove(url);
+	public static inline function removeAlphaChannel(color : Int) : Int {
+		// a lot of Graphics functions do not work correctly if color has alpha channel
+		// (all other targets ignore it as well)
+		return color & 0xFFFFFF;
 	}
 }
-#end
-
-#if js
-// Emulates flash graphics.
-private class Graphics {
-	var graphOps : Array<GraphOp>;
-
-	var strokeWidth : Float;
-	var strokeColor : Int;
-	var strokeOpacity : Float;
-
-	var fillColor : Int;
-	var fillOpacity : Float;
-	var fillGradientColors : Array<Int>;
-	var fillGradientAlphas : Array<Float>;
-	var fillGradientOffsets : Array<Float>;
-	var fillGradientMatrix : Dynamic;
-	var fillGradientType : String;
-
-	var owner : Dynamic;
-
-	public static var svg : Bool;
-
-	public function new(clip : Dynamic) {
-		owner = clip;
-		graphOps = new Array<GraphOp>();
-		strokeOpacity = fillOpacity = 0.0;
-		strokeWidth = 0.0;
-	}
-
-	public function addGraphOp(op : GraphOp) {
-		graphOps.push(op);
-	}
-
-	public function setLineStyle(width : Float, color : Int, opacity : Float) {
-		strokeWidth = width; strokeColor = color; strokeOpacity = opacity;
-	}
-
-	public function setSolidFill(color : Int, opacity : Float) {
-		fillColor = color; fillOpacity = opacity;
-	}
-
-	public function setGradientFill(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) {
-		fillGradientColors = colors; fillGradientAlphas = alphas; fillGradientOffsets = offsets;
-		fillGradientMatrix = matrix; fillGradientType = type;
-	}
-
-	private function measure() : Dynamic {
-		var max_x = Math.NEGATIVE_INFINITY, max_y = Math.NEGATIVE_INFINITY;
-		var min_x = Math.POSITIVE_INFINITY, min_y = Math.POSITIVE_INFINITY;
-
-		for (i in 0...graphOps.length) {
-			var op = graphOps[i];
-			switch (op) {
-				case MoveTo(x, y):
-					if (x > max_x) max_x = x; if (x < min_x) min_x = x; if (y > max_y) max_y = y; if (y < min_y) min_y = y;
-				case LineTo(x, y):
-					if (i == 0) max_x = max_y = min_x = min_y = 0.0; // asssume moveto 0.0
-					if (x > max_x) max_x = x; if (x < min_x) min_x = x; if (y > max_y) max_y = y; if (y < min_y) min_y = y;
-				case CurveTo(x, y, cx, cy):
-					if (i == 0) max_x = max_y = min_x = min_y = 0.0; // asssume moveto 0.0
-					if (x > max_x) max_x = x; if (x < min_x) min_x = x; if (y > max_y) max_y = y;  if (y < min_y) min_y = y;
-					if (cx > max_x) max_x = cx; if (cx < min_x) min_x = cx; if (cy > max_y) max_y = cy;  if (cy < min_y) min_y = cy;
-			}
-		}
-
-		return {x0 : min_x, y0 : min_y, x1 : max_x + strokeWidth, y1 : max_y + strokeWidth};
-	}
-
-	private static inline var svgns = "http://www.w3.org/2000/svg";
-	private function createSVGElement(name : String, attrs : Array<Dynamic> ) : Dynamic {
-		var element : Dynamic = untyped Browser.document.createElementNS(svgns, name);
-		for (a in attrs)
-             element.setAttribute(a.n, a.v);
-        return element;
-	}
-
-	private function addSVGGradient(svg : Dynamic, id : String) {
-		var defs = createSVGElement("defs", []);
-		svg.appendChild(defs);
-
-		var width : Float = fillGradientMatrix[0]; var height : Float = fillGradientMatrix[1];
-		var rotation : Float = fillGradientMatrix[2]; var xOffset : Float = fillGradientMatrix[3];
-		var yOffset : Float = fillGradientMatrix[4];
-
-		var grad = createSVGElement("linearGradient", [{n : "id", v : id},
-			{n : "x1", v : xOffset}, {n : "y1", v : yOffset},
-			{n : "x2", v : width * Math.cos(rotation / 180.0 * Math.PI)},
-			{n : "y2", v : height * Math.sin(rotation / 180.0 * Math.PI)}]);
-
-		defs.appendChild(grad);
-
-		for (i in 0...fillGradientColors.length) {
-			var stop_pt = createSVGElement("stop", [
-				{n : "offset", v : "" + (fillGradientOffsets[i] * 100.0) + "%" },
-				{n : "stop-color", v : RenderSupport.makeCSSColor(fillGradientColors[i], fillGradientAlphas[i]) }
-			]);
-			grad.appendChild(stop_pt);
-		}
-	}
-
-	private function renderSVG() {
-		var wh = measure();
-		var svg = createSVGElement('svg', [{n : "xmlns", v : svgns},  {n : "version", v : "1.1"}/*, {n : "width", v : wh.x1}, {n : "height", v : wh.y1}*/]);
-
-		var path_data = "";
-		// Render path
-		for (op in graphOps) {
-			switch (op) {
-				case MoveTo(x, y): path_data += "M " + x + " " + y + " ";
-				case LineTo(x, y): path_data += "L " + x + " " + y + " ";
-				case CurveTo(x, y, cx, cy): path_data += "S " + cx + " " + cy + " " + x + " " + y + " ";
-			}
-		}
-
-		var svgpath_attr =  [{n : "d", v : path_data}];
-
-		if (strokeOpacity != 0.0)
-			svgpath_attr.push({n : "stroke", v : RenderSupport.makeCSSColor(strokeColor, strokeOpacity)});
-
-		if (fillOpacity != 0.0) {
-			svgpath_attr.push({n : "fill", v : RenderSupport.makeCSSColor(fillColor, fillOpacity)});
-		} else if (fillGradientColors != null) {
-			var id = "grad" + Date.now().getTime();
-			addSVGGradient(svg, id);
-			svgpath_attr.push({n : "fill", v : "url(#" + id + ")"});
-		} else {
-			svgpath_attr.push({n : "fill", v : RenderSupport.makeCSSColor(0xFFFFFF, 0.0)});
-		}
-
-		svgpath_attr.push({n : "transform", v: "translate(" + (-wh.x0) + "," + (-wh.y0) + ")"});
-
-		var svgpath = createSVGElement("path",svgpath_attr);
-
-		svg.setAttribute("width", wh.x1-wh.x0 );
-		svg.setAttribute("height", wh.y1-wh.y0 );
-
-		svg.appendChild(svgpath);
-
-		svg.style.left = "" + wh.x0 + "px";
-		svg.style.top = "" + wh.y0 + "px";
-
-		owner.appendChild(svg);
-	}
-
-	private function renderCanvas() {
-		var wh = measure();
-
-		var canvas : Dynamic = Browser.document.createElement("CANVAS");
-		var ctx = canvas.getContext("2d");
-		owner.appendChild(canvas);
-
-		canvas.height = wh.y1 - wh.y0;
-		canvas.width = wh.x1 - wh.x0;
-		canvas.style.top = "" + wh.y0 + "px";
-		canvas.style.left = "" + wh.x0 + "px";
-		canvas.x0 = wh.x0; canvas.y0 = wh.y0;
-		canvas.style.width = "" + (wh.x1 - wh.x0) + "px"; // This fixes non-integer metrics
-		canvas.style.height = "" + (wh.y1 - wh.y0) + "px";
-
-		if (strokeOpacity != 0.0) {
-			ctx.lineWidth = strokeWidth;
-			ctx.strokeStyle = RenderSupport.makeCSSColor(strokeColor, strokeOpacity);
-		}
-
-		if (fillOpacity != 0.0) {
-			ctx.fillStyle = RenderSupport.makeCSSColor(fillColor, fillOpacity);
-		}
-
-		if (fillGradientColors != null) {
-			var width : Float = fillGradientMatrix[0]; var height : Float = fillGradientMatrix[1];
-			var rotation : Float = fillGradientMatrix[2]; var xOffset : Float = fillGradientMatrix[3];
-			var yOffset : Float = fillGradientMatrix[4];
-
-			var gradient = ctx.createLinearGradient(xOffset, yOffset, width * Math.cos(rotation / 180.0 * Math.PI), height * Math.sin(rotation / 180.0 * Math.PI));
-
-			for (i in 0...fillGradientColors.length)
-				gradient.addColorStop(fillGradientOffsets[i], RenderSupport.makeCSSColor(fillGradientColors[i], fillGradientAlphas[i]) );
-
-			ctx.fillStyle = gradient;
-		}
-
-
-		// Render path
-		ctx.translate(-wh.x0, -wh.y0); // (x0, y0) -> (0, 0)
-		ctx.beginPath();
-		ctx.moveTo(0.0, 0.0);
-		for (op in graphOps) {
-			switch (op) {
-				case MoveTo(x, y): ctx.moveTo(x, y);
-				case LineTo(x, y): ctx.lineTo(x, y);
-				case CurveTo(x, y, cx, cy): ctx.quadraticCurveTo(cx, cy, x, y);
-			}
-		}
-
-		if (fillOpacity != 0.0 || fillGradientColors != null) {
-			ctx.closePath();
-			ctx.fill();
-		}
-
-		if (strokeOpacity != 0.0) ctx.stroke();
-	}
-
-	public function render() {
-		if (svg) {
-			renderSVG();
-		} else {
-			renderCanvas();
-		}
-	}
-}
-#end

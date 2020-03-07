@@ -54,7 +54,7 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			this.initNativeWidget("img");
 		} else {
 			once("removed", onSpriteRemoved);
@@ -192,13 +192,13 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onLoaded() : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
+		RenderSupport.once("drawframe", function() {
 			if (disposed) {
 				return;
 			}
 
 			try {
-				if (RenderSupportJSPixi.RendererType == "html") {
+				if (RenderSupport.RendererType == "html") {
 					if (nativeWidget == null) {
 						return;
 					}
@@ -284,7 +284,7 @@ class FlowSprite extends Sprite {
 	}
 
 	public function calculateWidgetBounds() : Void {
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {
