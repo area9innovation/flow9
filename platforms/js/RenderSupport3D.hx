@@ -39,6 +39,7 @@ import js.three.ShapeGeometry;
 
 import js.three.BufferGeometry;
 import js.three.SphereBufferGeometry;
+import js.three.CylinderBufferGeometry;
 import js.three.BoxBufferGeometry;
 import js.three.BufferAttribute;
 
@@ -77,6 +78,22 @@ using Object3DHelper;
 using Texture3DHelper;
 
 class RenderSupport3D {
+	public static var LOADING_CACHE_ENABLED = true;
+
+	private static var scriptsVersion = "?2";
+	private static var scriptsToLoad = [
+		'js/threejs/examples/js/loaders/MTLLoader.js',
+		'js/threejs/examples/js/loaders/OBJLoader.js',
+		'js/threejs/examples/js/modifiers/TessellateModifier.js',
+		'js/threejs/examples/js/modifiers/SimplifyModifier.js',
+		'js/threejs/examples/js/loaders/DDSLoader.js',
+		'js/threejs/examples/js/loaders/PVRLoader.js',
+		'js/threejs/examples/js/loaders/GLTFLoader.js',
+		'js/threejs/examples/js/controls/OrbitControls.js',
+		'js/threejs/examples/js/controls/TransformControls.js',
+		'js/threejs/examples/js/exporters/GLTFExporter.js'
+	];
+
 	public static function load3DLibraries(cb : Void -> Void) : Void {
 		if (untyped __js__("typeof THREE === 'undefined'")) {
 			var head = Browser.document.getElementsByTagName('head')[0];
@@ -84,7 +101,7 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 7) {
+				if (jscounter > scriptsToLoad.length - 1) {
 					cb();
 				}
 			}
@@ -93,53 +110,13 @@ class RenderSupport3D {
 			node.setAttribute("type","text/javascript");
 			node.setAttribute("src", 'js/threejs/build/three.min.js');
 			node.onload = function() {
-				var node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/MTLLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/OBJLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/modifiers/TessellateModifier.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/DDSLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/PVRLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/loaders/GLTFLoader.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/controls/OrbitControls.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
-
-				node = Browser.document.createElement('script');
-				node.setAttribute("type","text/javascript");
-				node.setAttribute("src", 'js/threejs/examples/js/controls/TransformControls.js');
-				node.onload = onloadFn;
-				head.appendChild(node);
+				for (url in scriptsToLoad) {
+					var node = Browser.document.createElement('script');
+					node.setAttribute("type","text/javascript");
+					node.setAttribute("src", url + scriptsVersion);
+					node.onload = onloadFn;
+					head.appendChild(node);
+				}
 			};
 			head.appendChild(node);
 		} else {
@@ -300,6 +277,10 @@ class RenderSupport3D {
 		return new ThreeJSStage(width, height);
 	}
 
+	public static function dispose3DStage(stage : ThreeJSStage) : Void {
+		RenderSupportJSPixi.once("drawframe", stage.dispose);
+	}
+
 	public static function make3DScene() : Scene {
 		var scene = new Scene();
 		scene.name = "Group";
@@ -339,20 +320,14 @@ class RenderSupport3D {
 
 	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
 		var onLoadFn = function(obj : Dynamic) {
-			RenderSupportJSPixi.once("drawframe", function() {
-				for (geometry in Object3DHelper.get3DObjectAllGeometries(obj)) {
-					geometry.computeVertexNormals();
-				}
+			if (obj.name == "" && obj.uuid != null) {
+				obj.name = obj.uuid;
+			}
 
-				if (obj.name == "" && obj.uuid != null) {
-					obj.name = obj.uuid;
-				}
+			Object3DHelper.invalidateStage(obj);
+			Object3DHelper.emit(obj, "loaded");
 
-				Object3DHelper.invalidateStage(obj);
-				Object3DHelper.emit(obj, "loaded");
-
-				onLoad(obj);
-			});
+			onLoad(obj);
 		}
 
 		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
@@ -388,19 +363,56 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
-		untyped __js__("
-			new THREE.GLTFLoader(ThreeJSStage.loadingManager)
-				.load(url, function (gltf) {
-					onLoad(
-						gltf.animations, // Array<THREE.AnimationClip>
-						gltf.scene, // THREE.Scene
-						gltf.scenes, // Array<THREE.Scene>
-						gltf.cameras, // Array<THREE.Camera>
-						gltf.asset // Object
-					);
-				});
-		");
+	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void, onError : String -> Void) : Void -> Void {
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
+
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
+			var gltf = loadingCache[url];
+
+			onLoad(
+				gltf.animations, // Array<THREE.AnimationClip>
+				gltf.scene, // THREE.Scene
+				gltf.scenes, // Array<THREE.Scene>
+				gltf.cameras, // Array<THREE.Camera>
+				gltf.asset // Object
+			);
+
+			return function() {};
+		} else {
+			var cancelled = false;
+			var loader : Dynamic = untyped __js__("new THREE.GLTFLoader(ThreeJSStage.loadingManager)");
+			loader.load(
+				url,
+				function (gltf) {
+					if (!cancelled) {
+						if (untyped gltf.scene.children != null && gltf.scene.children.length == 1) {
+							untyped gltf.scene = gltf.scene.children[0];
+						}
+						if (LOADING_CACHE_ENABLED) {
+							loadingCache.set(url, gltf);
+						}
+
+						onLoad(
+							gltf.animations, // Array<THREE.AnimationClip>
+							gltf.scene, // THREE.Scene
+							gltf.scenes, // Array<THREE.Scene>
+							gltf.cameras, // Array<THREE.Camera>
+							gltf.asset // Object
+						);
+					}
+				},
+				function() {},
+				function(e) {
+					if (!cancelled) {
+						onError(e);
+					}
+				}
+			);
+
+			return function() {
+				cancelled = true;
+			};
+		}
 	}
 
 	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
@@ -408,21 +420,30 @@ class RenderSupport3D {
 	}
 
 	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
+		if (ThreeJSStage.loadingManager == null) {
+			return new Texture();
+		}
+
 		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
 
-		if (loadingCache.exists(url)) {
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
 			var texture : Texture = loadingCache[url];
 			if (untyped texture.loaded) {
+				for (par1 in parameters) {
+					untyped texture[par1[0]] = untyped __js__("eval(par1[1])");
+				}
 				onLoad(texture);
 			} else {
 				texture.once("loaded", function() {
+					for (par2 in parameters) {
+						untyped texture[par2[0]] = untyped __js__("eval(par2[1])");
+					}
 					onLoad(texture);
 				});
 			}
 			return texture;
 		} else {
 			var texture : Texture = null;
-
 			var loader : Dynamic =
 				if (StringTools.endsWith(url, ".dds")) {
 					texture = new CompressedTexture();
@@ -436,26 +457,37 @@ class RenderSupport3D {
 				};
 
 			untyped texture.loaded = false;
-			loadingCache.set(url, texture);
+
+			if (LOADING_CACHE_ENABLED) {
+				loadingCache.set(url, texture);
+			}
 
 			var onLoadFn = function(loadedTexture : Texture) {
-				untyped loadedTexture.loaded = true;
-				loadingCache.set(url, loadedTexture);
+				if (untyped !texture.cancelled) {
+					untyped loadedTexture.loaded = true;
+					if (LOADING_CACHE_ENABLED) {
+						loadingCache.set(url, loadedTexture);
+					}
 
-				for (par in parameters) {
-					untyped texture[par[0]] = untyped __js__("eval(par[1])");
+					for (par3 in parameters) {
+						untyped texture[par3[0]] = untyped __js__("eval(par3[1])");
+						untyped loadedTexture[par3[0]] = texture[par3[0]];
+					}
+
+					texture.image = loadedTexture.image;
+					texture.format = loadedTexture.format;
+					texture.mipmaps = loadedTexture.mipmaps;
+					texture.minFilter = loadedTexture.minFilter;
+					texture.needsUpdate = true;
+
+					texture.invalidateTextureStage();
+					texture.emit("loaded");
+					texture.dispose();
+
+					onLoad(texture);
+				} else {
+					loadingCache.remove(url);
 				}
-
-				texture.image = loadedTexture.image;
-				texture.format = loadedTexture.format;
-				texture.mipmaps = loadedTexture.mipmaps;
-				texture.minFilter = loadedTexture.minFilter;
-				texture.needsUpdate = true;
-
-				texture.invalidateTextureStage();
-				texture.emit("loaded");
-
-				onLoad(texture);
 			}
 
 			var onLoad = function() {
@@ -468,9 +500,15 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function load3DTexture(texture : Texture) : Void {
+	public static function load3DTexture(texture : Texture) : Void -> Void {
 		if (untyped texture.load != null) {
 			untyped texture.load();
+
+			return function() {
+				untyped texture.cancelled = true;
+			};
+		} else {
+			return function() {};
 		}
 	}
 
@@ -537,6 +575,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialMap(material : Material, map : Texture) : Void {
 		if (untyped material.map != map) {
+			if (untyped material.map != null) {
+				untyped material.map.dispose();
+			}
+
 			untyped map.parent = material;
 			untyped material.map = map;
 			untyped material.transparent = true;
@@ -563,6 +605,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialAlphaMap(material : Material, alphaMap : Texture) : Void {
 		if (untyped material.alphaMap != alphaMap) {
+			if (untyped material.alphaMap != null) {
+				untyped material.alphaMap.dispose();
+			}
+
 			untyped alphaMap.parent = material;
 			untyped material.alphaMap = alphaMap;
 			untyped material.transparent = true;
@@ -589,6 +635,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialDisplacementMap(material : Material, displacementMap : Texture, displacementScale : Float, displacementBias : Float) : Void {
 		if (untyped material.displacementMap != displacementMap) {
+			if (untyped material.displacementMap != null) {
+				untyped material.displacementMap.dispose();
+			}
+
 			untyped displacementMap.parent = material;
 			untyped material.displacementMap = displacementMap;
 			untyped material.displacementScale = displacementScale;
@@ -600,6 +650,10 @@ class RenderSupport3D {
 
 	public static function set3DMaterialBumpMap(material : Material, bumpMap : Texture, bumpScale : Float) : Void {
 		if (untyped material.bumpMap != bumpMap) {
+			if (untyped material.bumpMap != null) {
+				untyped material.bumpMap.dispose();
+			}
+
 			untyped bumpMap.parent = material;
 			untyped material.bumpMap = bumpMap;
 			untyped material.bumpScale = bumpScale;
@@ -617,14 +671,16 @@ class RenderSupport3D {
 				untyped material.uniforms.iOpacity.value = opacity;
 			}
 
+			if (untyped material.parent != null) {
+				untyped material.parent.alpha = opacity;
+			}
+
 			material.invalidateMaterialStage();
 		}
 	}
 
 	public static function set3DMaterialVisible(material : Material, visible : Bool) : Void {
 		if (untyped material.visible != visible) {
-			material.invalidateMaterialStage();
-
 			untyped material.visible = visible;
 
 			if (untyped material.uniforms != null && material.uniforms.iVisible != null) {
@@ -701,14 +757,14 @@ class RenderSupport3D {
 
 
 	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
-		object.addEventListener(event, untyped cb);
+		object.onValue(event, untyped cb);
 
-		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout") && object.interactive == null){
+		if (untyped (event == "mousedown" || event == "mouseup" || event == "mousemove" || event == "mouseover" || event == "mouseout" || event == "touchstart" || event == "touchmove" || event == "touchend") && object.interactive == null){
 			set3DObjectInteractive(object, true);
 		}
 
 		return function() {
-			object.removeEventListener(event, untyped cb);
+			object.offValue(event, untyped cb);
 		};
 	}
 
@@ -808,6 +864,10 @@ class RenderSupport3D {
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
+		if (stage.transformControls == null) {
+			stage.createTransformControls();
+		}
+
 		if (stage.transformControls != null) {
 			if (untyped object.transformControls != null) {
 				if (untyped object.transformControls.object != null) {
@@ -1038,7 +1098,7 @@ class RenderSupport3D {
 		if (object.name != name) {
 			object.name = name;
 
-			object.emitEvent("namechange");
+			object.invalidateStage();
 		}
 	}
 
@@ -1047,34 +1107,35 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
-		if (object.visible != visible) {
-			object.invalidateStage();
-			object.visible = visible;
+		if (untyped object._visible != visible) {
+			untyped object._visible = visible;
 
-			object.broadcastEvent("visiblechanged");
-			object.emitEvent("change");
-
+			object.updateVisible();
 			object.invalidateStage();
 		}
 	}
 
 	public static function get3DObjectAlpha(object : Object3D) : Float {
-		return untyped object.materials != null && object.materials.length > 0 ? object.materials[0] : 0.0;
+		return untyped object.alpha != null ? object.alpha :
+			object.material != null ? object.material.length != null && object.material.length > 0 ? object.material[0].opacity : object.material.opacity : 0.0;
 	}
 
 	public static function set3DObjectAlpha(object : Object3D, alpha : Float) : Void {
-		if (untyped object.materials != null && object.materials.length > 0 && object.materials[0].opacity != alpha) {
-			var materials : Array<Dynamic> = untyped object.materials;
+		if (untyped object.material != null) {
+			if (untyped object.alpha != alpha) {
+				untyped object.alpha = alpha;
 
-			for (material in materials) {
-				material.transparent = true;
-				material.opacity = alpha;
+				for (material in object.getMaterials()) {
+					material.transparent = true;
+					material.opacity = alpha;
+				}
+
+				object.invalidateStage();
 			}
-
-			object.broadcastEvent("visiblechanged");
-			object.emitEvent("change");
-
-			object.invalidateStage();
+		} else if (object.children != null && object.children.length > 0) {
+			for (child in object.children) {
+				set3DObjectAlpha(child, alpha);
+			}
 		}
 	}
 
@@ -1085,9 +1146,6 @@ class RenderSupport3D {
 	public static function set3DObjectCastShadow(object : Object3D, castShadow : Bool) : Void {
 		if (object.castShadow != castShadow) {
 			object.castShadow = castShadow;
-
-			object.broadcastEvent("shadowchanged");
-			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -1101,9 +1159,6 @@ class RenderSupport3D {
 		if (object.receiveShadow != receiveShadow) {
 			object.receiveShadow = receiveShadow;
 
-			object.broadcastEvent("shadowchanged");
-			object.emitEvent("change");
-
 			object.invalidateStage();
 		}
 	}
@@ -1116,9 +1171,6 @@ class RenderSupport3D {
 		if (object.frustumCulled != frustumCulled) {
 			object.frustumCulled = frustumCulled;
 
-			object.broadcastEvent("frustumchanged");
-			object.emitEvent("change");
-
 			object.invalidateStage();
 		}
 	}
@@ -1128,7 +1180,6 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionX(object : Object3D) : Float {
-		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).x");
 	}
 
@@ -1137,7 +1188,6 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionY(object : Object3D) : Float {
-		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).y");
 	}
 
@@ -1146,7 +1196,6 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectWorldPositionZ(object : Object3D) : Float {
-		object.updateMatrixWorld(true);
 		return untyped __js__("new THREE.Vector3().setFromMatrixPosition(object.matrixWorld).z");
 	}
 
@@ -1154,9 +1203,7 @@ class RenderSupport3D {
 		if (object.position.x != x) {
 			object.position.x = x;
 
-			object.broadcastEvent("position");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1165,9 +1212,7 @@ class RenderSupport3D {
 		if (object.position.y != y) {
 			object.position.y = y;
 
-			object.broadcastEvent("position");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1176,9 +1221,7 @@ class RenderSupport3D {
 		if (object.position.z != z) {
 			object.position.z = z;
 
-			object.broadcastEvent("position");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1203,10 +1246,7 @@ class RenderSupport3D {
 		if (object.rotation.x != x) {
 			object.rotation.x = x;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("rotation");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1217,10 +1257,7 @@ class RenderSupport3D {
 		if (object.rotation.y != y) {
 			object.rotation.y = y;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("rotation");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1231,10 +1268,7 @@ class RenderSupport3D {
 		if (object.rotation.z != z) {
 			object.rotation.z = z;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("rotation");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1257,10 +1291,7 @@ class RenderSupport3D {
 		if (object.scale.x != x) {
 			object.scale.x = x;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("scale");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1269,10 +1300,7 @@ class RenderSupport3D {
 		if (object.scale.y != y) {
 			object.scale.y = y;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("scale");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1281,10 +1309,7 @@ class RenderSupport3D {
 		if (object.scale.z != z) {
 			object.scale.z = z;
 
-			object.broadcastEvent("position");
-			object.broadcastEvent("scale");
-			object.emitEvent("change");
-
+			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
 	}
@@ -1382,26 +1407,33 @@ class RenderSupport3D {
 		object.lookAt(new Vector3(x, y, z));
 		object.invalidateStage();
 
-		RenderSupportJSPixi.once("drawframe", function() {
-			object.lookAt(new Vector3(x, y, z));
-			object.invalidateStage();
-		});
+		for (stage in object.getStage()) {
+			stage.once("drawframe", function() {
+				object.lookAt(new Vector3(x, y, z));
+				object.invalidateStage();
+			});
+		}
 	}
 
 	public static function set3DObjectLocalMatrix(object : Object3D, matrix : Array<Float>) : Void {
-		object.matrix.fromArray(matrix);
+		new Matrix4().fromArray(matrix).decompose(object.position, object.quaternion, new Vector3());
 		object.invalidateStage();
 	}
 
+	// TODO: TEST
 	public static function set3DObjectWorldMatrix(object : Object3D, matrix : Array<Float>) : Void {
-		object.matrixWorld.fromArray(matrix);
-		object.invalidateStage();
+		set3DObjectLocalMatrix(object, new Matrix4().fromArray(matrix).multiply(untyped object.parent.matrixWorld.getInverse(new Matrix4())).toArray());
 	}
 
 
 	public static function set3DObjectInteractive(object : Object3D, interactive : Bool) : Void {
 		if (untyped object.interactive != interactive) {
 			untyped object.interactive = interactive;
+
+			if (untyped interactive && object.isInstance && object.parent != null) {
+				set3DObjectInteractive(object.parent, true);
+			}
+
 			object.invalidateStage();
 
 			for (stage in object.getStage()) {
@@ -1430,12 +1462,10 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalMatrix(object : Object3D) : Array<Float> {
-		object.updateMatrix();
 		return object.matrix.toArray();
 	}
 
 	public static function get3DObjectWorldMatrix(object : Object3D) : Array<Float> {
-		object.updateMatrixWorld(true);
 		return object.matrixWorld.toArray();
 	}
 
@@ -1446,38 +1476,44 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectWorldPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
+			if (untyped object.isInstance) {
+				object.updateMatrixWorld(true);
+			}
 			cb(get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
 		};
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectStagePositionListener(stage : ThreeJSStage, object : Object3D, cb : Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
+			if (untyped object.isInstance) {
+				object.updateMatrixWorld(true);
+			}
 			var sc = convert3DVectorToStageCoordinates(stage, get3DObjectWorldPositionX(object), get3DObjectWorldPositionY(object), get3DObjectWorldPositionZ(object));
 			cb(sc[0], sc[1]);
 		};
 
 		fn(0);
 
-		object.addEventListener("change", fn);
+		object.onValue("matrix", fn);
 		if (stage.camera != null) {
-			stage.camera.addEventListener("change", fn);
+			stage.camera.onValue("matrix", fn);
 		}
 
 		return function() {
-			object.removeEventListener("change", fn);
+			object.offValue("matrix", fn);
 			if (stage.camera != null) {
-				stage.camera.removeEventListener("change", fn);
+				stage.camera.offValue("matrix", fn);
 			}
 		};
 	}
@@ -1489,8 +1525,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectLocalScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
@@ -1500,8 +1536,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectBoundingBoxListener(object : Object3D, cb : (Array<Array<Float>>) -> Void) : Void -> Void {
@@ -1511,8 +1547,8 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("childrenchanged", fn);
+		return function() { object.offValue("childrenchanged", fn); };
 	}
 
 	public static function add3DObjectLocalMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
@@ -1522,19 +1558,22 @@ class RenderSupport3D {
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 	public static function add3DObjectWorldMatrixListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
+			if (untyped object.isInstance) {
+				object.updateMatrixWorld(true);
+			}
 			cb(get3DObjectWorldMatrix(object));
 		};
 
 		fn(0);
 
-		object.addEventListener("change", fn);
-		return function() { object.removeEventListener("change", fn); };
+		object.onValue("matrix", fn);
+		return function() { object.offValue("matrix", fn); };
 	}
 
 
@@ -1603,15 +1642,11 @@ class RenderSupport3D {
 	public static function set3DLightColor(object : Light, color : Int) : Void {
 		object.color = new Color(color);
 
-		object.broadcastEvent("change"); // TODO:
-
 		object.invalidateStage();
 	}
 
 	public static function set3DLightIntensity(object : Light, intensity : Float) : Void {
 		object.intensity = intensity;
-
-		object.broadcastEvent("change"); // TODO:
 
 		object.invalidateStage();
 	}
@@ -1619,15 +1654,11 @@ class RenderSupport3D {
 	public static function set3DLightDistance(object : PointLight, distance : Float) : Void {
 		object.distance = distance;
 
-		object.broadcastEvent("change"); // TODO:
-
 		object.invalidateStage();
 	}
 
 	public static function set3DLightAngle(object : SpotLight, angle : Float) : Void {
 		object.angle = angle * 0.0174532925 /*radians*/;
-
-		object.broadcastEvent("change"); // TODO:
 
 		object.invalidateStage();
 	}
@@ -1635,15 +1666,11 @@ class RenderSupport3D {
 	public static function set3DLightPenumbra(object : SpotLight, penumbra : Float) : Void {
 		object.penumbra = penumbra;
 
-		object.broadcastEvent("change"); // TODO:
-
 		object.invalidateStage();
 	}
 
 	public static function set3DLightDecay(object : PointLight, decay : Float) : Void {
 		object.decay = decay;
-
-		object.broadcastEvent("change"); // TODO:
 
 		object.invalidateStage();
 	}
@@ -1701,11 +1728,17 @@ class RenderSupport3D {
 	}
 
 	public static function set3DGeometryMatrix(geometry : Geometry, matrix : Array<Float>) : Void {
-		geometry.applyMatrix(new Matrix4().fromArray(matrix));
+		untyped geometry.applyMatrix4(new Matrix4().fromArray(matrix));
 	}
 
 	public static function make3DSphereBufferGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
 		var g = new SphereBufferGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+		untyped g.addGroups = addGroups;
+		return g;
+	}
+
+	public static function make3DCylinderBufferGeometry(radiusTop : Float, radiusBottom : Float, height : Float, radialSegments : Int, heightSegments : Int, openEnded : Bool, thetaStart : Float, thetaLength : Float, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var g = new CylinderBufferGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
 		untyped g.addGroups = addGroups;
 		return g;
 	}
@@ -1716,18 +1749,22 @@ class RenderSupport3D {
 		return g;
 	}
 
-	public static function make3DShapeBufferGeometry(path : Array<Float>, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
-		var shape = new Shape();
+	public static function make3DShapeBufferGeometry(pathes : Array<Array<Float>>, addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		return make3DBufferFromGeometry(make3DShapeGeometry(pathes), null, addGroups);
+	}
 
-		shape.moveTo(path[0], path[1]);
-		for (i in 1...Math.floor(path.length / 2)) {
-			shape.lineTo(path[i * 2], path[i * 2 + 1]);
-		};
-		shape.lineTo(path[0], path[1]);
+	public static function make3DBufferFromGeometry(geometry : Geometry, ?parameters : Array<Array<String>>, ?addGroups : Int -> Int -> Array<Array<Int>>) : BufferGeometry {
+		var bufferGeometry = new BufferGeometry().fromGeometry(geometry);
+		geometry.dispose();
 
-		var g : BufferGeometry = untyped __js__("new THREE.ShapeBufferGeometry(shape)");
-		untyped g.addGroups = addGroups;
-		return g;
+		if (parameters != null) {
+			for (par in parameters) {
+				untyped bufferGeometry[par[0]] = untyped __js__("eval(par[1])");
+			}
+		}
+
+		untyped bufferGeometry.addGroups = addGroups;
+		return bufferGeometry;
 	}
 
 	public static function add3DBufferGeometryAttribute(geometry : BufferGeometry, name : String, data : Array<Array<Float>>) : Void {
@@ -1772,16 +1809,23 @@ class RenderSupport3D {
 		return data;
 	}
 
-	public static function make3DShapeGeometry(path : Array<Float>) : Geometry {
-		var points = [];
+	public static function make3DShapeGeometry(pathes : Array<Array<Float>>) : Geometry {
+		var shape : Geometry = null;
+		for (path in pathes) {
+			var points = [];
 
-		for (i in 0...Math.floor(path.length / 2)) {
-			points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
-		};
+			for (i in 0...Math.floor(path.length / 2)) {
+				points.push(new Vector2(path[i * 2], path[i * 2 + 1]));
+			};
 
-		var g =  new ShapeGeometry(new Shape(points));
+			if (shape == null) {
+				shape = new ShapeGeometry(new Shape(points));
+			} else {
+				shape.merge(new ShapeGeometry(new Shape(points)), new Matrix4());
+			}
+		}
 
-		return g;
+		return shape;
 	}
 
 	public static function make3DShapeGeometry3D(path : Array<Float>) : Geometry {
@@ -1851,6 +1895,16 @@ class RenderSupport3D {
 		}
 
 		return geometry;
+	}
+
+	public static function simplify3DGeometry(geometry : Geometry, countFn : Int -> Int) : Geometry {
+		var m = untyped __js__("new THREE.SimplifyModifier()");
+
+		return m.modify(
+			geometry,
+			countFn(geometry.vertices != null ? geometry.vertices.length :
+				untyped geometry.index != null ? geometry.index.count : geometry.attributes.position.count)
+		);
 	}
 
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
@@ -1964,15 +2018,9 @@ class RenderSupport3D {
 			}
 
 			return function() {
-				if (uniformsObject.iTime != null) {
-					stage.off("drawframe", iTimeFn);
-				}
-				if (uniformsObject.iAspectRatio != null) {
-					stage.off("resize", iAspectRatioFn);
-				}
-				if (uniformsObject.iResolution != null) {
-					stage.off("resize", iResolutionFn);
-				}
+				stage.off("drawframe", iTimeFn);
+				stage.off("resize", iAspectRatioFn);
+				stage.off("resize", iResolutionFn);
 			};
 		});
 
@@ -1997,7 +2045,7 @@ class RenderSupport3D {
 	public static function make3DMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Mesh {
 		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
 			untyped geometry.clearGroups();
-			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index != null ? geometry.index.count : geometry.attributes.position.count, materials.length);
 
 			for (group in groups) {
 				untyped geometry.addGroup(group[0], group[1], group[2]);
@@ -2010,7 +2058,42 @@ class RenderSupport3D {
 			untyped material.parent = mesh;
 		}
 
-		untyped mesh.materials = materials;
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function make3DInstancedMesh(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>, count : Int, fn : Int -> Object3D -> Void) : Mesh {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
+			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
+			}
+		}
+
+		var mesh : Dynamic = untyped __js__("new THREE.InstancedMesh(geometry, materials.length == 1 ? materials[0] : materials, count)");
+		untyped mesh.instanceObjects = [];
+
+		for (i in 0...count) {
+			var o = new Object3D();
+			o.parent = mesh;
+			untyped o.isInstance = true;
+			fn(i, o);
+			o.updateMatrix();
+			mesh.setMatrixAt(i, o.matrix);
+			o.on("change", function() {
+				mesh.setMatrixAt(i, o.matrix);
+			});
+			untyped mesh.instanceObjects.push(o);
+		}
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
 
 		for (par in parameters) {
 			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
@@ -2035,8 +2118,6 @@ class RenderSupport3D {
 			untyped material.parent = mesh;
 		}
 
-		untyped mesh.materials = materials;
-
 		for (par in parameters) {
 			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
 		}
@@ -2059,8 +2140,6 @@ class RenderSupport3D {
 		for (material in materials) {
 			untyped material.parent = mesh;
 		}
-
-		untyped mesh.materials = materials;
 
 		for (par in parameters) {
 			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
@@ -2116,6 +2195,10 @@ class RenderSupport3D {
 		return stopFn;
 	}
 
+	public static function enable3DStageObjectCache(stage : ThreeJSStage) : Void {
+		stage.objectCacheEnabled = true;
+	}
+
 	public static function clear3DStageObjectCache(stage : ThreeJSStage) : Void {
 		if (stage.objectCache != null) {
 			stage.objectCache = new Array<Object3D>();
@@ -2127,8 +2210,6 @@ class RenderSupport3D {
 		var heightHalf = stage.getHeight() / 2;
 
 		var vector = new Vector3(x, y, z);
-		stage.camera.updateMatrix();
-		stage.camera.updateMatrixWorld(true);
 		vector.project(stage.camera);
 
 		return [
@@ -2143,5 +2224,52 @@ class RenderSupport3D {
 
 	public static function add3DLODLevel(lod : LOD, level : Float, object : Object3D) : Void {
 		lod.addLevel(object, level);
+	}
+
+	public static function export3DGLTFObject(object : Object3D, exportFn : String -> Void, parameters : Array<Array<String>>) : Void {
+		var parObject : Dynamic = {};
+		for (par in parameters) {
+			untyped parObject[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		var exportFn2 = function(gltf) {
+			exportFn(parObject.binary ? gltf : haxe.Json.stringify(gltf));
+		}
+
+		untyped __js__("new THREE.GLTFExporter().parse(object, exportFn2, parObject)");
+	}
+
+	public static function set3DObjectParameters(object : Object3D, parameters : Array<Array<String>>) : Object3D {
+		for (par in parameters) {
+			untyped object[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		if (object.children != null && object.children.length > 0) {
+			for (child in object.children) {
+				set3DObjectParameters(child, parameters);
+			}
+		}
+
+		return object;
+	}
+
+	public static function set3DObjectMaterialParameters(object : Object3D, parameters : Array<Array<String>>) : Object3D {
+		if (untyped object.material != null) {
+			for (material in object.getMaterials()) {
+				for (par in parameters) {
+					untyped material[par[0]] = untyped __js__("eval(par[1])");
+				}
+			}
+
+			object.invalidateStage();
+		}
+
+		if (object.children != null && object.children.length > 0) {
+			for (child in object.children) {
+				set3DObjectMaterialParameters(child, parameters);
+			}
+		}
+
+		return object;
 	}
 }

@@ -45,7 +45,7 @@ class RenderSupportJSPixi {
 	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
-	public static var DropCurrentFocusOnDown : Bool;
+	public static var DropCurrentFocusOnMouse : Bool;
 	// Renders in a higher resolution backing store and then scales it down with css (e.g., ratio = 2 for retina displays)
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
@@ -607,8 +607,6 @@ class RenderSupportJSPixi {
 				return;
 			}
 		}
-
-		Errors.report("Warning: unknown message source");
 	}
 
 	private static inline function getScreenSize() {
@@ -671,13 +669,15 @@ class RenderSupportJSPixi {
 			Browser.document.activeElement.blur();
 	}
 
-	private static function setDropCurrentFocusOnDown(drop : Bool) : Void {
-		if (DropCurrentFocusOnDown != drop) {
-			DropCurrentFocusOnDown = drop;
+	private static function setDropCurrentFocusOnMouse(drop : Bool) : Void {
+		if (DropCurrentFocusOnMouse != drop) {
+			DropCurrentFocusOnMouse = drop;
+
+			var event_name = Platform.isMobile ? "touchend" : "mousedown";
 			if (drop)
-				on("mousedown", dropCurrentFocus);
+				on(event_name, dropCurrentFocus);
 			else
-				off("mousedown", dropCurrentFocus);
+				off(event_name, dropCurrentFocus);
 		}
 	}
 
@@ -687,8 +687,12 @@ class RenderSupportJSPixi {
 
 	public static var MouseUpReceived : Bool = true;
 
-	private static function addNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+	public static function addNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
 		untyped __js__("element.addEventListener(event, fn, { passive : false })");
+	}
+
+	public static function removeNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.removeEventListener(event, fn, { passive : false })");
 	}
 
 	private static inline function initPixiStageEventListeners() {
@@ -828,7 +832,7 @@ class RenderSupportJSPixi {
 		on("mouseup", function (e) { MouseUpReceived = true; });
 
 		switchFocusFramesShow(false);
-		setDropCurrentFocusOnDown(true);
+		setDropCurrentFocusOnMouse(true);
 	}
 
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
@@ -1839,7 +1843,7 @@ class RenderSupportJSPixi {
 				case 226: if (shift) "|" else "\\";
 
 				default: {
-					var keyUTF = String.fromCharCode(charCode);
+					var keyUTF = charCode >= 0 ? String.fromCharCode(charCode) : "";
 
 					if (modifierStatePresent(e, "CapsLock")) {
 						if (e.getModifierState("CapsLock"))
@@ -2395,6 +2399,10 @@ class RenderSupportJSPixi {
 
 	public static function makeBlur(radius : Float, spread : Float) : Dynamic {
 		return new BlurFilter(spread, 4, backingStoreRatio, 5);
+	}
+
+	public static function makeBackdropBlur(spread : Float) : Dynamic {
+		return new BlurBackdropFilter(spread);
 	}
 
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {

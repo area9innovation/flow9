@@ -37,8 +37,12 @@ MDynamicMenu2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicMenu
 	buttonWH = makeWH();
 	positionScale = make(zeroPositionScale);
 
+	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
+	openOnClick = contains(m.style, MOpenOnClick());
+	longTouch = tryExtractStruct(m.style, MLongTouchDelay(0));
+
 	(\p ->
-		MMenuButton2T(manager, p, m.button, m2t, openMenu, extractStruct(m.style, MEnabled(const(true))).enabled, contains(m.style, MOpenOnClick()))
+		MMenuButton2T(manager, p, m.button, m2t, openMenu, enabled, openOnClick, longTouch)
 		|> (\f -> MPositionScaleAttachBox(positionScale, buttonWH, f, openMenu.opened))
 		|> (\f -> MAddLabelAndLeftIcon(manager, p, f, m.style, openMenu.opened, 12.))
 		|> (\f ->
@@ -132,58 +136,74 @@ fgetShortcuts(items : Transform<[MMenuLine]>) -> Transform<[MShortcut]> {
 
 
 MMenuButton2T(
-	manager : MaterialManager, parent : MFocusGroup,
-	button : Material, m2t : (Material, MFocusGroup) -> Tropic,
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	button : Material,
+	m2t : (Material, MFocusGroup) -> Tropic,
 	openMenu : MOpenMenu,
-	enabled : Transform<bool>, openOnClick : bool
-) -> Tropic {
+	enabled : Transform<bool>,
+	openOnClick : bool,
+	longTouch : Maybe<MLongTouchDelay>) -> Tropic {
+
+	extendState = \state, open ->
+		replaceStruct(state, MEnabled(enabled))
+		|> (\st -> eitherMap(longTouch, \lt -> concat(st, [lt, MOnLongTouch(open)]), st));
 
 	switch (button) {
 		MTextButton(text, onClick, style, state): {
+			open = \ -> {
+				onClick();
+				reverseBehaviour(openMenu.opened)
+			}
 			MTextButton2T(
 				manager,
 				parent,
 				MTextButton(
 					text,
-					\ -> {
-						onClick();
-						reverseBehaviour(openMenu.opened)
-					},
+					eitherMap(longTouch, \__-> nop, open),
 					style,
-					replaceStruct(state, MEnabled(enabled))
+					extendState(state, open)
 				),
 				m2t
 			)
 		}
 		MIconButton(name, onClick, style, state): {
+			open = \ -> {
+				opened = getValue(openMenu.opened);
+				onClick();
+				nextDistinct(openMenu.opened, !opened)
+			}
 			MIconButton2T(
 				manager,
 				parent,
 				MIconButton(
 					name,
-					\ -> {
-						opened = getValue(openMenu.opened);
-						onClick();
-						nextDistinct(openMenu.opened, !opened)
-					},
+					eitherMap(longTouch, \__-> nop, open),
 					style,
-					replaceStruct(state, MEnabled(enabled))
+					extendState(state, open)
 				),
 				m2t
 			)
 		}
 		default: {
-			if (openOnClick) {
+			if (openOnClick || isSome(longTouch)) {
 				buttonWH = makeWH();
 				isRect = fselect(buttonWH, FLift(\wh -> abs(1. - wh.width / wh.height) > 0.5));
 				focusState =
-					[
-						MEnabled(enabled),
-						MOnClick(\ -> reverseBehaviour(openMenu.opened)),
-						MRippleType(fif(isRect, const(MRippleFill()), const(MRippleCenter()))),
-						MHighlightOnFocus(const(true)),
-						MRippleShape("")
-					];
+					concat(
+						[
+							MEnabled(enabled),
+							MRippleType(fif(isRect, const(MRippleFill()), const(MRippleCenter()))),
+							MHighlightOnFocus(const(true)),
+							MRippleShape("")
+						],
+						eitherMap(longTouch, \lt -> [
+								lt,
+								MOnLongTouch(\ -> reverseBehaviour(openMenu.opened))
+							],
+							[MOnClick(\ -> reverseBehaviour(openMenu.opened))]
+						)
+					);
 
 				MComponent2T(
 					manager,
@@ -525,7 +545,7 @@ MDropDownMenu2T(
 		eitherFn(
 			customButton,
 			\cb ->
-				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true),
+				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true, None()),
 			\ -> {
 				lItems = length(items);
 
@@ -711,7 +731,7 @@ MMultiSelectDropDown2T(
 		eitherMap(
 			customButton,
 			\cb ->
-				MMenuButton2T(manager, parent, cb.button, m2t, MOpenMenu(opened), enabled, true),
+				MMenuButton2T(manager, parent, cb.button, m2t, MOpenMenu(opened), enabled, true, None()),
 			defMenuButton
 		)
 		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)

@@ -599,14 +599,13 @@ StackSlot ByteCodeRunner::NativeStrlen(RUNNER_ARGS)
 
 int ByteCodeRunner::strRangeIndexOf(const unicode_char *pstr, const unicode_char *psub, unsigned l1, unsigned l2, unsigned start, unsigned end)
 {
-    if (!pstr)
-        return -1;
-
     if (end > l1)
         end = l1;
 
     if (l2 == 0) {
         return 0;
+	} else if (!pstr) {
+		return -1;
     } else if (l2 > end - start) {
         return -1;
     } else if (l2 == 1) {

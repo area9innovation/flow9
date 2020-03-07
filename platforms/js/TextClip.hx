@@ -1318,7 +1318,8 @@ class TextClip extends NativeWidgetClip {
 		if (isInput && type == "password") {
 			return getBulletsString(this.text);
 		} else  {
-			return getActualGlyphsString(this.text);
+			//return getActualGlyphsString(this.text);  // Maybe worth to return this line for C++ target instead next one which is good for JS target.
+			return TextMappedModification.createInvariantForString(this.text);
 		}
 	}
 

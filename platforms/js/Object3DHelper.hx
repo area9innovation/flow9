@@ -4,6 +4,7 @@ import js.three.Texture;
 import js.three.Box3;
 import js.three.Camera;
 import js.three.Geometry;
+import js.three.Scene;
 
 using DisplayObjectHelper;
 
@@ -13,7 +14,9 @@ class Object3DHelper {
 			untyped object.updateProjectionMatrix();
 		}
 
-		if (getClipWorldVisible(object)) {
+		if (untyped getClipWorldVisible(object)) {
+			emit(object, "change");
+
 			for (stage in getStage(object)) {
 				stage.invalidateStage();
 			}
@@ -59,20 +62,25 @@ class Object3DHelper {
 	}
 
 	public static inline function getStage(object : Object3D) : Array<ThreeJSStage> {
-		if (object.parent == null) {
+		if (untyped object.stage != null) {
+			return [untyped object.stage];
+		} else if (object.parent == null) {
+			return [];
+		} else {
+			for (stage in getStage(object.parent)) {
+				untyped object.stage = stage;
+			}
+
 			if (untyped object.stage != null) {
 				return [untyped object.stage];
 			} else {
 				return [];
 			}
-		} else {
-			return getStage(object.parent);
 		}
 	}
 
 	public static function emit(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 	}
 
 	public static function on(parent : Object3D, event : String, fn : Void -> Void) : Void {
@@ -81,6 +89,40 @@ class Object3DHelper {
 
 	public static function off(parent : Object3D, event : String, fn : Void -> Void) : Void {
 		parent.removeEventListener(event, untyped fn);
+	}
+
+	public static function updateBroadcastable(parent : Object3D, ?broadcastable : Bool = false) {
+		if (!broadcastable) {
+			broadcastable = untyped (parent.listeners != null && parent.listeners("matrix").length > 0) || parent.parent == null;
+
+			for (child in parent.children) {
+				if (untyped child.broadcastable) {
+					broadcastable = true;
+				}
+			}
+		}
+
+		if (untyped parent.broadcastable != broadcastable) {
+			untyped parent.broadcastable = broadcastable;
+
+			if (parent.parent != null) {
+				updateBroadcastable(parent.parent, broadcastable);
+			}
+		}
+	}
+
+	public static function onValue(parent : Object3D, event : String, fn : Dynamic -> Void) : Void {
+		parent.addEventListener(event, fn);
+		if (event == "matrix") {
+			updateBroadcastable(parent, true);
+		}
+	}
+
+	public static function offValue(parent : Object3D, event : String, fn : Dynamic -> Void) : Void {
+		parent.removeEventListener(event, fn);
+		if (event == "matrix") {
+			updateBroadcastable(parent, false);
+		}
 	}
 
 	public static function once(parent : Object3D, event : String, fn : Void -> Void) : Void {
@@ -96,7 +138,6 @@ class Object3DHelper {
 
 	public static function emitMaterial(parent : Material, event : String) : Void {
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 	}
 
 	public static function onMaterial(parent : Material, event : String, fn : Void -> Void) : Void {
@@ -118,12 +159,44 @@ class Object3DHelper {
 		onMaterial(parent, event, disp);
 	}
 
+	public static function disposeMaterial(material : Material) : Void {
+		emitMaterial(material, "removed");
+
+		if (untyped material.map != null) {
+			untyped material.map.dispose();
+		}
+
+		if (untyped material.alphaMap != null) {
+			untyped material.alphaMap.dispose();
+		}
+
+		if (untyped material.bumpMap != null) {
+			untyped material.bumpMap.dispose();
+		}
+
+		if (untyped material.displacementMap != null) {
+			untyped material.displacementMap.dispose();
+		}
+
+		material.dispose();
+	}
+
 
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
+		if (untyped !parent.broadcastable || !getClipWorldVisible(parent)) {
+			return;
+		}
+
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 
 		var children : Array<Dynamic> = untyped parent.children;
+		if (children != null) {
+			for (c in children) {
+				broadcastEvent(c, event);
+			}
+		}
+
+		children = untyped parent.instanceObjects;
 		if (children != null) {
 			for (c in children) {
 				broadcastEvent(c, event);
@@ -133,7 +206,6 @@ class Object3DHelper {
 
 	public static function emitEvent(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
-		parent.dispatchEvent({ type : "change" });
 
 		if (parent.parent != null) {
 			emitEvent(parent.parent, event);
@@ -188,6 +260,8 @@ class Object3DHelper {
 				remove3DChild(parent, childrenMap.get(index), false);
 			}
 
+			updateAlpha(child);
+
 			childrenMap.set(index, child);
 			child.parent = parent;
 
@@ -234,16 +308,12 @@ class Object3DHelper {
 				}
 			}
 
+			updateBroadcastable(child);
+			updateVisible(child);
+
 			if (invalidate) {
 				emitEvent(child, "added");
-				emitEvent(parent, "box");
 				emitEvent(parent, "childrenchanged");
-
-				broadcastEvent(child, "position");
-				broadcastEvent(child, "scale");
-				broadcastEvent(child, "rotation");
-
-				emitEvent(parent, "change");
 
 				invalidateStage(parent);
 			}
@@ -255,11 +325,14 @@ class Object3DHelper {
 			return;
 		}
 
-		for (stage in getStage(parent)) {
-			untyped stage.objectCache.push(child);
+		for (stage in getStage(child)) {
+			if (stage.objectCacheEnabled) {
+				stage.objectCache.push(child);
+			}
 
 			if (invalidate) { // Do no lose transform controls if it isn't the last operation
 				RenderSupport3D.detach3DTransformControls(stage, child);
+				untyped child.stage = null;
 			}
 
 			if (untyped child.interactive && stage.interactiveObjects.indexOf(child) >= 0) {
@@ -298,26 +371,13 @@ class Object3DHelper {
 
 		update3DChildren(parent);
 
-		if (untyped child.material != null) {
-			if (untyped child.material.length != null) {
-				var material : Array<Material> = untyped child.material;
-
-				for (mat in material) {
-					emitMaterial(mat, "removed");
-				}
-			} else {
-				emitMaterial(untyped child.material, "removed");
-			}
-		}
-
 		if (invalidate) {
-			emitEvent(parent, "box");
 			emitEvent(parent, "childrenchanged");
-
-			emitEvent(parent, "change");
 			emitEvent(child, "removed");
 
 			invalidateStage(parent);
+
+			dispose(child, false);
 		}
 	}
 
@@ -327,10 +387,7 @@ class Object3DHelper {
 		}
 
 		if (invalidate) {
-			emitEvent(parent, "box");
 			emitEvent(parent, "childrenchanged");
-
-			emitEvent(parent, "change");
 
 			invalidateStage(parent);
 		}
@@ -342,12 +399,8 @@ class Object3DHelper {
 		}
 
 		if (checkObjectCache) {
-			var stage = getStage(parent);
-
-			if (stage.length > 0) {
-				var objectCache : Array<Object3D> = untyped stage[0].objectCache;
-
-				for (child in objectCache) {
+			for (stage in getStage(parent)) {
+				for (child in stage.objectCache) {
 					var object = get3DObjectByUUID(child, id, false);
 
 					if (object.length > 0) {
@@ -427,5 +480,88 @@ class Object3DHelper {
 				onMaterialAdded(clip, fn);
 			});
 		}
+	}
+
+	public static function dispose(object : Object3D, ?disposeChildren : Bool = false) {
+		emit(object, "mouseout");
+
+		if (untyped disposeChildren && object.children != null && object.children.length > 0) {
+			var children : Array<Object3D> = untyped object.children;
+			for (child in children) {
+				dispose(child);
+			}
+			untyped object.children = null;
+		}
+
+		if (untyped object.instanceObjects != null && object.instanceObjects.length > 0) {
+			var children : Array<Object3D> = untyped object.instanceObjects;
+			for (child in children) {
+				dispose(child);
+			}
+			untyped object.instanceObjects = null;
+		}
+
+		for (material in getMaterials(object)) {
+			disposeMaterial(material);
+		}
+
+		if (untyped object.geometry != null) {
+			untyped object.geometry.dispose();
+			untyped object.geometry.addGroups = null;
+		}
+
+		if (untyped object.dispose != null) {
+			untyped object.dispose();
+		}
+	}
+
+	public static function updateAlpha(object : Object3D) {
+		untyped object.alpha = 0;
+
+		for (material in getMaterials(object)) {
+			if (untyped material.opacity > object.alpha) {
+				untyped object.alpha = material.opacity;
+			}
+		}
+	}
+
+	public static function updateVisible(object : Object3D) {
+		if (untyped object._visible == null) {
+			untyped object._visible = true;
+		}
+
+		var worldVisible = untyped object._visible && (object.parent != null && object.parent.visible);
+
+		if (untyped object.visible != worldVisible) {
+			untyped object.visible = worldVisible;
+
+			if (untyped object.children != null) {
+				var children : Array<Object3D> = untyped object.children;
+
+				for (child in children) {
+					updateVisible(child);
+				}
+			}
+
+			if (untyped object.instanceObjects != null) {
+				var children : Array<Object3D> = untyped object.instanceObjects;
+
+				for (child in children) {
+					updateVisible(child);
+				}
+			}
+		}
+	}
+
+	public static function getMaterials(object : Object3D) : Array<Material> {
+		if (untyped object.material != null) {
+			if (untyped object.material.length != null) {
+				return untyped object.material;
+			} else {
+				return [untyped object.material];
+			}
+		}
+
+		return [];
 	}
 }
