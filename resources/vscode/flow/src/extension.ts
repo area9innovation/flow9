@@ -200,33 +200,35 @@ function handleConfigurationUpdates(e: vscode.ConfigurationChangeEvent) {
 	}
 }
 
-function resolveProjectRoot(projectRoot: string, documentUri: vscode.Uri): string {
-    if (projectRoot) {
-        // first, check if we are asked to use one specific workspace folder
-        if (vscode.workspace.workspaceFolders) {
-            for (let wf of vscode.workspace.workspaceFolders) 
-                if (wf.name == projectRoot)
-                    return wf.uri.fsPath;
-        }
-        // then, see if this is an absolute path
-        if (path.isAbsolute(projectRoot))
-            return projectRoot;
-        // finally, try to resolve path against first wsfolder
-        if (vscode.workspace.workspaceFolders) {
-            let resolvedPath = path.join(vscode.workspace.rootPath, projectRoot)
-            if (fs.existsSync(resolvedPath))
-                return resolvedPath;
-        }
-    }
-    // either projectRoot is not set or we did not find a way to use it
-    let wsfolder = vscode.workspace.getWorkspaceFolder(documentUri);
-    if (wsfolder) 
-        return wsfolder.uri.fsPath;
-    else
-        // rootPath is deprecated but points to first wsFolder, and can be undefined if no 
-        // folder is opened
-        return vscode.workspace.rootPath ? vscode.workspace.rootPath : 
-            path.dirname(documentUri.fsPath);
+const homedir = process.env[(process.platform == "win32") ? "USERPROFILE" : "HOME"];
+
+function expandHomeDir(p : string) : string {
+	if (!p) return p;
+	if (p == "~") return homedir;
+	if (p.slice(0, 2) != "~/") return p;
+	return path.join(homedir, p.slice(2));
+}
+
+function getPath(uri : string | vscode.Uri) : string {
+	return expandHomeDir(uri instanceof vscode.Uri ? uri.fsPath : uri.startsWith("file://") ? vscode.Uri.parse(uri).fsPath : uri);
+}
+
+function resolveProjectRoot(uri : string | vscode.Uri) : string {
+	const config = vscode.workspace.getConfiguration("flow");
+
+	if (uri != null) {
+		let dir = uri != null ? getPath(uri) : path.resolve(getPath(config.get("projectRoot")), "flow.config");
+
+		while (dir != path.resolve(dir, "..")) {
+			dir = path.resolve(dir, "..");
+
+			if (fs.existsSync(path.resolve(dir, "flow.config"))) {
+				return dir;
+			}
+		}
+	}
+
+	return getPath(config.get("root"));
 }
 
 interface CommandWithArgs { 
@@ -285,7 +287,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         flowChannel.show(true);
         let config = vscode.workspace.getConfiguration("flow");
         let flowpath: string = getFlowRoot();
-        let rootPath = resolveProjectRoot(config.get("projectRoot"), document.uri);
+        let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
         let matcher = getMatcher(command.matcher);
