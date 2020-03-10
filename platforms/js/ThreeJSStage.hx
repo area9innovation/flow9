@@ -281,6 +281,7 @@ class ThreeJSStage extends Container {
 			}
 		});
 
+		addEventListeners();
 		invalidateStage();
 	}
 
