@@ -68,6 +68,8 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 
 	// For tracking the size of files
 	sizeTracker = ref makeSizeTracker();
+	sourceMap = ref makeList();
+	currentLine = ref 1;
 
 	// Generating JS code for all declarations.
 	fcVerbose(cfg, 0, "Generating JS code for declarations...");
@@ -124,6 +126,28 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 
 					// TODO Support for dead code elimination required.
 					tl = fiJsCompileToplevel(cfg, gctx, v, id, "", None());
+
+					if (cfg.debug && !cfg.beautify && !cfg.compress && tl != "") {
+						code = fcFileSource(env, module.fileinfo.fullpath);
+						resolver = makeLineResolver(code);
+						s = findLine(resolver, if (v.defiStart > 0) v.defiStart else v.declStart);
+
+						sourceMap :=
+							Cons(
+								FiJsMapping(
+									v.name,
+									module.fileinfo.fullpath,
+									s.lineno,
+									s.lineIndex,
+									^currentLine,
+									0,
+								),
+								^sourceMap
+							);
+
+						currentLine := ^currentLine + length(strSplit(tl, "\n"));
+					}
+
 					moduleSize := ^moduleSize + strlen(tl);
 					Cons(if (tl == "" || !cfg.debug) "" else "\n", Cons(tl, l));
 				});
@@ -151,7 +175,7 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 			if (cfg.beautify && !cfg.compress)
 				fiJsBeautify(cfg, ovl, callback)
 			else
-				if (cfg.compress) fiJsCompress(cfg, ovl, callback) else callback()
+				if (cfg.compress) fiJsCompress(cfg, ovl, callback) else fiAssembleSourceMapFile(cfg, ovl, headerCode, runtimeContents, ^sourceMap, callback);
 		} else {
 			fcPrintln("'" + cfg.outputfile + "' is NOT generated.", cfg.threadId);
 			callback();

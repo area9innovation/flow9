@@ -15,10 +15,20 @@ import sys/system;
 export {
 	fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, code : List<string>, callback : (runtimeContent : string) -> void) -> void;
 	fiAssembleJsFile(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, code : List<string>) -> void;
+	fiAssembleSourceMapFile(cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, sourceMap : List<FiJsMapping>, callback : () -> void) -> void;
 	fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) -> List<string>;
 	fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : () -> void) -> void;
 	fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : () -> void) -> void;
 	fiEnsureModulesDirectory(cfg : FiJsConfig) -> void;
+
+	FiJsMapping(
+		name : string,
+		source : string,
+		originalLine : int,
+		originalColumn : int,
+		generatedLine : int,
+		generatedColumn : int,
+	);
 }
 
 fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, code : List<string>, callback : (runtimeContent : string) -> void) {
@@ -230,6 +240,47 @@ fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeCont
 		rModuleName = cfg.modules + "/R." + if (cfg.jsmode == TS_MODE) "ts" else "js";
 		ovl.beautifyList ::= arrayPush(ovl.beautifyList, rModuleName);
 		saveFileContent(rModuleName, rModule, cfg.threadId);
+	}
+}
+
+fiAssembleSourceMapFile(cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, sourceMap : List<FiJsMapping>, callback : () -> void) {
+	if (cfg.debug && !cfg.beautify && !cfg.compress && countList(sourceMap) > 0) {
+		hasRequire = ovl.requireList != [];
+		headerLines = b2i(i2b(strlen(fcJsStrict(cfg)))) + b2i(ovl.requireList != []) + length(strSplit(headerCode + runtimeContent, "\n"));
+		sourceMapJsonFile = resolveRelativePath(strSplit(cfg.outputfile, ".")[0] + ".flow.map");
+		sourceMapJson = array2json(list2array(sourceMap), \m -> {
+			"{
+				\"generated\" : {
+					\"line\":" + i2s(headerLines + m.generatedLine) + ",
+					\"column\":" + i2s(m.generatedColumn) + "
+				},
+				\"source\" : \"file://" + m.source + "\",
+				\"original\": {
+					\"line\":" + i2s(m.originalLine) + ",
+					\"column\":" + i2s(m.originalColumn) + "
+				},
+				\"name\": \"" + m.name + "\"
+			}"
+		});
+		saveFileContent(sourceMapJsonFile, sourceMapJson, cfg.threadId);
+		startProcess(
+			"node",
+			[
+				"assemble_source_map.js",
+				resolveRelativePath(cfg.outputfile),
+				sourceMapJsonFile,
+				resolveRelativePath(cfg.outputfile) + ".map"
+			],
+			getFlowDir() + "tools/source_map/",
+			"",
+			\errorcode, stdout, stderr -> {
+				fcPrintln(stdout, cfg.threadId);
+				fcPrintln(stderr, cfg.threadId);
+				callback();
+			}
+		);
+	} else {
+		callback();
 	}
 }
 
