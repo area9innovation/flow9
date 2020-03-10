@@ -1766,7 +1766,8 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     }
 
     public synchronized void cbPrintHTML(String html) {
-        flowPrintingSupport.printHTML(html);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP)
+            flowPrintingSupport.printHTML(html);
     }
 
     public synchronized void cbPrintURL(String url) {
