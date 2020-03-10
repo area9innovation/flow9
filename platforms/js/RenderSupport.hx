@@ -405,23 +405,7 @@ class RenderSupport {
 		}
 	}
 
-	private static function checkPWAManifest() {
-		var manifest : Dynamic = Browser.document.querySelector('link[rel=\"manifest\"]');
-
-		if (manifest != null) {
-			var manifestJson = haxe.Json.parse(haxe.Http.requestUrl(manifest.href));
-			trace(manifestJson);
-
-			if (untyped manifestJson['orientation'] == 'landscape') {
-				untyped __js__("screen.orientation.lock('landscape')");
-			}
-		}
-	}
-
 	private static function initPixiRenderer() {
-		if (Util.getParameter("pwa") == "1") {
-			checkPWAManifest();
-		}
 		disablePixiPlugins();
 
 		if (untyped PIXI.VERSION != "4.8.2") {
