@@ -403,23 +403,7 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	private static function checkPWAManifest() {
-		var manifest : Dynamic = Browser.document.querySelector('link[rel=\"manifest\"]');
-
-		if (manifest != null) {
-			var manifestJson = haxe.Json.parse(haxe.Http.requestUrl(manifest.href));
-			trace(manifestJson);
-
-			if (untyped manifestJson['orientation'] == 'landscape') {
-				untyped __js__("screen.orientation.lock('landscape')");
-			}
-		}
-	}
-
 	private static function initPixiRenderer() {
-		if (Util.getParameter("pwa") == "1") {
-			checkPWAManifest();
-		}
 		disablePixiPlugins();
 
 		if (untyped PIXI.VERSION != "4.8.2") {
@@ -2399,6 +2383,10 @@ class RenderSupportJSPixi {
 
 	public static function makeBlur(radius : Float, spread : Float) : Dynamic {
 		return new BlurFilter(spread, 4, backingStoreRatio, 5);
+	}
+
+	public static function makeBackdropBlur(spread : Float) : Dynamic {
+		return new BlurBackdropFilter(spread);
 	}
 
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {

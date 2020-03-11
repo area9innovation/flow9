@@ -178,6 +178,9 @@ class ThreeJSStage extends Container {
 	}
 
 	private function addEventListeners() {
+		RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.domElement, "pointerover", onMouseEvent);
+		RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.domElement, "pointerout", onMouseEvent);
+
 		if (Platform.isMobile) {
 			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
 			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
@@ -239,12 +242,14 @@ class ThreeJSStage extends Container {
 					return;
 				}
 
-				if (untyped !object.inside) {
-					untyped object.inside = true;
-					object.emit("mouseover");
+				if (untyped object.inside != (event.name != "pointerout")) {
+					untyped object.inside = event.name != "pointerout";
+					object.emit(event.name != "pointerout" ? "mouseover" : "mouseout");
 				}
 
-				newInteractiveObjectsMouseOver.push(object);
+				if (untyped object.inside) {
+					newInteractiveObjectsMouseOver.push(object);
+				}
 
 				object.emit(event.type);
 				object.invalidateStage();
@@ -281,6 +286,7 @@ class ThreeJSStage extends Container {
 			}
 		});
 
+		addEventListeners();
 		invalidateStage();
 	}
 
