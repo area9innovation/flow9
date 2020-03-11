@@ -14,6 +14,7 @@
 #import "iosMediaStreamSupport.h"
 #import "iosWebRTCSupport.h"
 #import "iosMediaRecorderSupport.h"
+#import "iosPrintingSupport.h"
 #ifdef BYTECODE_FILE
 #import "AppleStorePurchase.h"
 #endif
@@ -45,6 +46,7 @@ class iosFileSystemInterface;
     iosWebRTCSupport * WebRTC;
     iosMediaRecorderSupport * MediaRecorder;
 #endif
+    iosPrintingSupport * Printing;
     FileLocalStore     * LocalStore;
     iosFileSystemInterface * FSInterface;
     
