@@ -339,12 +339,15 @@ class RenderSupport {
 			view : PixiView
 		};
 
+		var width : Int = Browser.window.innerWidth;
+		var height : Int = Browser.window.innerHeight;
+
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
-			PixiRenderer = new WebGLRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+			PixiRenderer = new WebGLRenderer(width, height, options);
 
 			RendererType = "webgl";
 		} else if (RendererType == "auto") {
-			PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth, Browser.window.innerHeight);
+			PixiRenderer = Detector.autoDetectRenderer(options, width, height);
 
 			if (untyped HaxeRuntime.instanceof(PixiRenderer, WebGLRenderer)) {
 				RendererType = "webgl";
@@ -352,9 +355,9 @@ class RenderSupport {
 				RendererType = "canvas";
 			}
 		} else if (RendererType == "html") {
-			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+			PixiRenderer = new CanvasRenderer(width, height, options);
 		} else {
-			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+			PixiRenderer = new CanvasRenderer(width, height, options);
 
 			RendererType = "canvas";
 		}
@@ -453,7 +456,7 @@ class RenderSupport {
 	}
 
 	private static inline function isPortaitOrientation() {
-		return Browser.window.matchMedia("(orientation: portrait)").matches;
+		return Browser.window.matchMedia("(orientation: portrait)").matches || (Platform.isAndroid && Browser.window.orientation == 0);
 	}
 
 	private static inline function calculateMobileTopHeight() {
@@ -467,6 +470,20 @@ class RenderSupport {
 			if (WindowTopHeightLandscape == -1)
 				WindowTopHeightLandscape = topHeight;
 		}
+	}
+
+	public static function getSafeArea() : Array<Float> {
+		var l = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sal"));
+		var t = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sat"));
+		var r = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sar"));
+		var b = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sab"));
+
+		return [
+			Math.isNaN(l) ? 0.0 : l,
+			Math.isNaN(t) ? 0.0 : t,
+			Math.isNaN(r) ? 0.0 : r,
+			Math.isNaN(b) ? 0.0 : b
+		];
 	}
 
 	private static inline function initCanvasStackInteractions() {
