@@ -10,8 +10,8 @@ class ProgressiveWebTools {
 		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches) {
 			var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
-			if (viewport != null) {
-				viewport.setAttribute("viewport-fit", "cover");
+			if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit") < 0) {
+				viewport.setAttribute("content", viewport.getAttribute("content") + ",viewport-fit=cover");
 			}
 		}
 	}
