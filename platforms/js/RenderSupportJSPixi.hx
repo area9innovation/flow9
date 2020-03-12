@@ -623,7 +623,7 @@ class RenderSupportJSPixi {
 				// browser window is fullscreen
 				var screen_size = getScreenSize();
 				win_width = screen_size.width;
-				win_height = screen_size.height - (Platform.isIOS && ProgressiveWebTools.isRunningPWA() ? cast getMobileTopHeight() : 0.0);
+				win_height = screen_size.height - (Platform.isIOS && ProgressiveWebTools.isRunningPWA() ? 0.0 : cast getMobileTopHeight());
 
 				if (Platform.isAndroid) {
 					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
