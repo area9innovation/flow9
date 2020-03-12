@@ -278,7 +278,7 @@ class RenderSupport3D {
 	}
 
 	public static function dispose3DStage(stage : ThreeJSStage) : Void {
-		RenderSupportJSPixi.once("drawframe", stage.dispose);
+		RenderSupport.once("drawframe", stage.dispose);
 	}
 
 	public static function make3DScene() : Scene {
@@ -556,8 +556,8 @@ class RenderSupport3D {
 		var container = new FlowCanvas();
 
 		container.addChild(clip);
-		RenderSupportJSPixi.mainRenderClip().addChild(container);
-		RenderSupportJSPixi.render();
+		RenderSupport.mainRenderClip().addChild(container);
+		RenderSupport.render();
 
 		var texture = new Texture(untyped container.nativeWidget);
 		texture.needsUpdate = true;
@@ -566,8 +566,8 @@ class RenderSupport3D {
 			untyped texture[par[0]] = untyped __js__("eval(par[1])");
 		}
 
-		RenderSupportJSPixi.mainRenderClip().removeChild(container);
-		RenderSupportJSPixi.render();
+		RenderSupport.mainRenderClip().removeChild(container);
+		RenderSupport.render();
 
 		return texture;
 	}
@@ -813,8 +813,8 @@ class RenderSupport3D {
 			untyped ev.deltaX = x;
 			untyped ev.deltaY = y;
 		} else {
-			untyped ev.pageX = x * RenderSupportJSPixi.backingStoreRatio;
-			untyped ev.pageY = y * RenderSupportJSPixi.backingStoreRatio;
+			untyped ev.pageX = x * RenderSupport.backingStoreRatio;
+			untyped ev.pageY = y * RenderSupport.backingStoreRatio;
 		}
 
 		untyped stage.renderer.eventElement.dispatchEvent(ev);
@@ -831,8 +831,8 @@ class RenderSupport3D {
 
 		ev.touches = Lambda.array(Lambda.map(points, function(p) {
 			return {
-				pageX : p[0] * RenderSupportJSPixi.backingStoreRatio,
-				pageY : p[1] * RenderSupportJSPixi.backingStoreRatio
+				pageX : p[0] * RenderSupport.backingStoreRatio,
+				pageY : p[1] * RenderSupport.backingStoreRatio
 			}
 		}));
 
@@ -2175,14 +2175,14 @@ class RenderSupport3D {
 		};
 
 		var playFn = function() {
-			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+			RenderSupport.off('drawframe', drawFrameFn);
 			action.play();
-			RenderSupportJSPixi.on('drawframe', drawFrameFn);
+			RenderSupport.on('drawframe', drawFrameFn);
 		}
 
 		var stopFn = function() {
 			action.stop();
-			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+			RenderSupport.off('drawframe', drawFrameFn);
 		}
 
 		playFn();

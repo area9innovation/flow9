@@ -29,27 +29,28 @@ public class FlowPrintingSupport {
 
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     public void printHTML(String html) {
-        WebView webView = new WebView(flowRunnerActivity);
-        webView.setWebViewClient(new WebViewClient() {
+        flowRunnerActivity.runOnUiThread(() -> {
+            WebView webView = new WebView(flowRunnerActivity);
+            webView.setWebViewClient(new WebViewClient() {
 
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return false;
-            }
+                public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                    return false;
+                }
 
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                PrintManager printManager = (PrintManager) flowRunnerActivity.getSystemService(Context.PRINT_SERVICE);
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                    PrintManager printManager = (PrintManager) flowRunnerActivity.getSystemService(Context.PRINT_SERVICE);
 
-                PrintDocumentAdapter printAdapter = webView.createPrintDocumentAdapter("HTMLDocumentAdapter");
-                printManager.print("PrintHTMLJob", printAdapter, new PrintAttributes.Builder().build());
-            }
+                    PrintDocumentAdapter printAdapter = webView.createPrintDocumentAdapter("HTMLDocumentAdapter");
+                    printManager.print("PrintHTMLJob", printAdapter, new PrintAttributes.Builder().build());
+                }
+            });
+            webView.loadDataWithBaseURL(null, html, "text/HTML", "UTF-8", null);
         });
-        webView.loadDataWithBaseURL(null, html, "text/HTML", "UTF-8", null);
     }
 
     @RequiresApi(api = Build.VERSION_CODES.KITKAT)
     public void printURL(String url) {
-
         PrintDocumentAdapter pda = new PrintDocumentAdapter() {
 
             @Override

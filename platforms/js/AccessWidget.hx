@@ -205,7 +205,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateDisplay() : Void {
-		if (RenderSupportJSPixi.RendererType != "html") {
+		if (RenderSupport.RendererType != "html") {
 			updateTransform();
 
 			for (child in children) {
@@ -215,7 +215,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateTransform() : Void {
-		if (RenderSupportJSPixi.RendererType != "html" && accessWidget != null) {
+		if (RenderSupport.RendererType != "html" && accessWidget != null) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
@@ -502,7 +502,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			return;
 		}
 
@@ -545,12 +545,12 @@ class AccessWidget extends EventEmitter {
 				this.element.addEventListener("focus", function () {
 					focused = true;
 
-					if (RenderSupportJSPixi.Animating) {
-						RenderSupportJSPixi.once("stagechanged", function() { if (focused) this.element.focus(); });
+					if (RenderSupport.Animating) {
+						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
 						return;
 					}
 
-					if (RenderSupportJSPixi.RendererType == "html") {
+					if (RenderSupport.RendererType == "html") {
 						if (parent != null) {
 							var accessWidget = parent.getNextAccessWidget();
 
@@ -558,7 +558,7 @@ class AccessWidget extends EventEmitter {
 								untyped accessWidget.clip.keepNativeWidget = true;
 								accessWidget.clip.updateKeepNativeWidgetChildren();
 
-								RenderSupportJSPixi.render();
+								RenderSupport.render();
 							}
 
 							accessWidget = parent.getPreviousAccessWidget();
@@ -567,7 +567,7 @@ class AccessWidget extends EventEmitter {
 								untyped accessWidget.clip.keepNativeWidget = true;
 								accessWidget.clip.updateKeepNativeWidgetChildren();
 
-								RenderSupportJSPixi.render();
+								RenderSupport.render();
 							}
 						}
 					}
@@ -583,20 +583,20 @@ class AccessWidget extends EventEmitter {
 
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
-					if (untyped RenderSupportJSPixi.Animating || clip.preventBlur) {
-						RenderSupportJSPixi.once("stagechanged", function() { if (focused) this.element.focus(); });
+					if (untyped RenderSupport.Animating || clip.preventBlur) {
+						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
 						return;
 					}
 
-					RenderSupportJSPixi.once("drawframe", function() {
+					RenderSupport.once("drawframe", function() {
 						focused = false;
 						clip.emit("blur");
 
-						if (RenderSupportJSPixi.RendererType == "html") {
+						if (RenderSupport.RendererType == "html") {
 							untyped clip.keepNativeWidget = clip.isInput == true;
 							clip.updateKeepNativeWidgetChildren();
 
-							RenderSupportJSPixi.render();
+							RenderSupport.render();
 
 							if (parent != null) {
 								var accessWidget = parent.getNextAccessWidget();
@@ -605,7 +605,7 @@ class AccessWidget extends EventEmitter {
 									untyped accessWidget.clip.keepNativeWidget = accessWidget.clip.isInput == true;
 									accessWidget.clip.updateKeepNativeWidgetChildren();
 
-									RenderSupportJSPixi.render();
+									RenderSupport.render();
 								}
 
 								accessWidget = parent.getPreviousAccessWidget();
@@ -614,7 +614,7 @@ class AccessWidget extends EventEmitter {
 									untyped accessWidget.clip.keepNativeWidget = accessWidget.clip.isInput == true;
 									accessWidget.clip.updateKeepNativeWidgetChildren();
 
-									RenderSupportJSPixi.render();
+									RenderSupport.render();
 								}
 							}
 						}
@@ -689,7 +689,7 @@ class AccessWidget extends EventEmitter {
 	public function set_role(role : String) : String {
 		element.setAttribute("role", role);
 
-		if (RenderSupportJSPixi.RendererType == "html" && accessRoleMap.get(role) != null &&
+		if (RenderSupport.RendererType == "html" && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
@@ -717,7 +717,7 @@ class AccessWidget extends EventEmitter {
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
 					} else {
-						RenderSupportJSPixi.emulateMouseClickOnClip(clip);
+						RenderSupport.emulateMouseClickOnClip(clip);
 					}
 				}
 			};
@@ -729,23 +729,23 @@ class AccessWidget extends EventEmitter {
 
 				if (e.touches != null) {
 					if (e.touches.length == 1) {
-						RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
-						RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+						RenderSupport.MousePos.x = e.touches[0].pageX;
+						RenderSupport.MousePos.y = e.touches[0].pageY;
 
-						if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
 					} else if (e.touches.length > 1) {
 						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 					}
 				} else {
-					RenderSupportJSPixi.MousePos.x = e.pageX;
-					RenderSupportJSPixi.MousePos.y = e.pageY;
+					RenderSupport.MousePos.x = e.pageX;
+					RenderSupport.MousePos.y = e.pageY;
 
 					if (e.which == 3 || e.button == 2) {
-						RenderSupportJSPixi.PixiStage.emit("mouserightdown");
+						RenderSupport.PixiStage.emit("mouserightdown");
 					} else if (e.which == 2 || e.button == 1) {
-						RenderSupportJSPixi.PixiStage.emit("mousemiddledown");
+						RenderSupport.PixiStage.emit("mousemiddledown");
 					} else {
-						if (RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mousedown");
+						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
 					}
 				}
 
@@ -758,15 +758,15 @@ class AccessWidget extends EventEmitter {
 					GesturesDetector.endPinch();
 
 					if (e.touches.length == 0) {
-						if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 					}
 				} else {
 					if (e.which == 3 || e.button == 2) {
-						RenderSupportJSPixi.PixiStage.emit("mouserightup");
+						RenderSupport.PixiStage.emit("mouserightup");
 					} else if (e.which == 2 || e.button == 1) {
-						RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+						RenderSupport.PixiStage.emit("mousemiddleup");
 					} else {
-						if (!RenderSupportJSPixi.MouseUpReceived) RenderSupportJSPixi.PixiStage.emit("mouseup");
+						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 					}
 				}
 
@@ -986,9 +986,9 @@ class AccessWidget extends EventEmitter {
 	public static function addAccessWidgetWithoutNodeindex(accessWidget : AccessWidget, parent : DisplayObject) : Void {
 		if (parent == null) {
 			return;
-		} else if (parent == RenderSupportJSPixi.PixiStage || (untyped parent.accessWidget != null && untyped parent.accessWidget.parent != null)) {
-			var id = parent == RenderSupportJSPixi.PixiStage ? AccessWidget.tree.nextId : untyped parent.accessWidget.parent.nextId;
-			var tree = parent == RenderSupportJSPixi.PixiStage ? AccessWidget.tree : untyped parent.accessWidget.parent;
+		} else if (parent == RenderSupport.PixiStage || (untyped parent.accessWidget != null && untyped parent.accessWidget.parent != null)) {
+			var id = parent == RenderSupport.PixiStage ? AccessWidget.tree.nextId : untyped parent.accessWidget.parent.nextId;
+			var tree = parent == RenderSupport.PixiStage ? AccessWidget.tree : untyped parent.accessWidget.parent;
 
 			if (accessWidget.parent != null) {
 				accessWidget.parent.id = id;
@@ -1049,7 +1049,7 @@ class AccessWidget extends EventEmitter {
 			}
 		}
 
-		if (!tree.childrenChanged && (!childrenChanged || RenderSupportJSPixi.RendererType != "html")) {
+		if (!tree.childrenChanged && (!childrenChanged || RenderSupport.RendererType != "html")) {
 			return tree.childrenTabIndex;
 		}
 
@@ -1064,7 +1064,7 @@ class AccessWidget extends EventEmitter {
 
 			childrenChanged = childrenChanged || child.childrenChanged;
 
-			if (!child.childrenChanged && !child.changed && (!childrenChanged || RenderSupportJSPixi.RendererType != "html")) {
+			if (!child.childrenChanged && !child.changed && (!childrenChanged || RenderSupport.RendererType != "html")) {
 				tree.childrenTabIndex = child.childrenTabIndex;
 				continue;
 			}
@@ -1072,7 +1072,7 @@ class AccessWidget extends EventEmitter {
 			var accessWidget = child.accessWidget;
 
 			if (accessWidget != null && accessWidget.element != null) {
-				if (RenderSupportJSPixi.RendererType != "html") {
+				if (RenderSupport.RendererType != "html") {
 					if (child.changed) {
 						try {
 							if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {

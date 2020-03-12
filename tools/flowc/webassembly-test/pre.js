@@ -3727,12 +3727,12 @@ FontLoader.loadDFonts = function(onDone) {
 	loader.once("complete",onDone);
 	loader.load();
 };
-var _$RenderSupportJSPixi_NativeWidgetClip = function() {
+var _$RenderSupport_NativeWidgetClip = function() {
 	PIXI.Container.call(this);
 };
-_$RenderSupportJSPixi_NativeWidgetClip.__name__ = true;
-_$RenderSupportJSPixi_NativeWidgetClip.__super__ = PIXI.Container;
-_$RenderSupportJSPixi_NativeWidgetClip.prototype = $extend(PIXI.Container.prototype,{
+_$RenderSupport_NativeWidgetClip.__name__ = true;
+_$RenderSupport_NativeWidgetClip.__super__ = PIXI.Container;
+_$RenderSupport_NativeWidgetClip.prototype = $extend(PIXI.Container.prototype,{
 	getWidth: function() {
 		return 0.0;
 	}
@@ -3759,11 +3759,11 @@ _$RenderSupportJSPixi_NativeWidgetClip.prototype = $extend(PIXI.Container.protot
 		this.nativeWidget = window.document.createElement(node_name);
 		window.document.body.appendChild(this.nativeWidget);
 		this.nativeWidget.style.position = "fixed";
-		RenderSupportJSPixi.registerNativeWidgetClip(this);
+		RenderSupport.registerNativeWidgetClip(this);
 	}
 	,deleteNativeWidget: function() {
 		window.document.body.removeChild(this.nativeWidget);
-		RenderSupportJSPixi.unregisterNativeWidgetClip(this);
+		RenderSupport.unregisterNativeWidgetClip(this);
 		this.nativeWidget = null;
 	}
 	,addNativeEventListener: function(event,fn) {
@@ -3794,9 +3794,9 @@ _$RenderSupportJSPixi_NativeWidgetClip.prototype = $extend(PIXI.Container.protot
 			if(this.nativeWidget.exitFullScreen != null) this.nativeWidget.exitFullScreen(); else if(this.nativeWidget.mozExitFullScreen != null) this.nativeWidget.mozExitFullScreen(); else if(this.nativeWidget.webkitExitFullScreen != null) this.nativeWidget.webkitExitFullScreen();
 		}
 	}
-	,__class__: _$RenderSupportJSPixi_NativeWidgetClip
+	,__class__: _$RenderSupport_NativeWidgetClip
 });
-var _$RenderSupportJSPixi_TextField = function() {
+var _$RenderSupport_TextField = function() {
 	this.TextInputFiltersInitialized = false;
 	this.TextInputFilters = [];
 	this.background = null;
@@ -3809,16 +3809,16 @@ var _$RenderSupportJSPixi_TextField = function() {
 	this.fontSize = 16.0;
 	this.fieldWidth = null;
 	this.fieldHeight = null;
-	_$RenderSupportJSPixi_NativeWidgetClip.call(this);
+	_$RenderSupport_NativeWidgetClip.call(this);
 };
-_$RenderSupportJSPixi_TextField.__name__ = true;
-_$RenderSupportJSPixi_TextField.__super__ = _$RenderSupportJSPixi_NativeWidgetClip;
-_$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_NativeWidgetClip.prototype,{
+_$RenderSupport_TextField.__name__ = true;
+_$RenderSupport_TextField.__super__ = _$RenderSupport_NativeWidgetClip;
+_$RenderSupport_TextField.prototype = $extend(_$RenderSupport_NativeWidgetClip.prototype,{
 	updateNativeWidget: function() {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.updateNativeWidget.call(this);
+		_$RenderSupport_NativeWidgetClip.prototype.updateNativeWidget.call(this);
 		if(this.nativeWidget != null && this.worldVisible) {
-			var one = this.toGlobal(_$RenderSupportJSPixi_TextField.One);
-			var zerro = this.toGlobal(_$RenderSupportJSPixi_TextField.Zerro);
+			var one = this.toGlobal(_$RenderSupport_TextField.One);
+			var zerro = this.toGlobal(_$RenderSupport_TextField.Zerro);
 			var scale_y = one.y - zerro.y;
 			this.nativeWidget.style.fontSize = "" + this.fontSize * scale_y + "px";
 		}
@@ -3870,12 +3870,12 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 		this.createNativeWidget("input");
 		this.nativeWidget.style.zIndex = -1;
 		this.nativeWidget.onfocus = function(e) {
-			RenderSupportJSPixi.PixiStageChanged = true;
+			RenderSupport.PixiStageChanged = true;
 			_g.hideGLText();
 			_g.nativeWidget.style.zIndex = 1;
 		};
 		this.nativeWidget.onblur = function(e1) {
-			RenderSupportJSPixi.PixiStageChanged = true;
+			RenderSupport.PixiStageChanged = true;
 			if(_g.nativeWidget.type == "password") _g.setGLText(_g.getBulletsString(_g.nativeWidget.value.length)); else _g.setGLText(_g.nativeWidget.value);
 			_g.showGLText();
 			_g.nativeWidget.style.zIndex = -1;
@@ -4069,15 +4069,15 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 			this.background = rect;
 		}
 	}
-	,__class__: _$RenderSupportJSPixi_TextField
+	,__class__: _$RenderSupport_TextField
 });
-var _$RenderSupportJSPixi_VideoClip = function(width,height,metricsFn,durationFn) {
+var _$RenderSupport_VideoClip = function(width,height,metricsFn,durationFn) {
 	this.StartPaused = false;
 	this.SpriteCreated = false;
 	this.videoHeight = 0;
 	this.videoWidth = 0;
 	var _g = this;
-	_$RenderSupportJSPixi_NativeWidgetClip.call(this);
+	_$RenderSupport_NativeWidgetClip.call(this);
 	this.createNativeWidget("video");
 	var strict_size = width > 0.0 && height > 0.0;
 	if(strict_size) {
@@ -4095,7 +4095,7 @@ var _$RenderSupportJSPixi_VideoClip = function(width,height,metricsFn,durationFn
 			metricsFn(_g.videoWidth,_g.videoHeight);
 			_g.updateNativeWidget();
 		}
-		if(_$RenderSupportJSPixi_VideoClip.UsePixiTextures && !_g.SpriteCreated) {
+		if(_$RenderSupport_VideoClip.UsePixiTextures && !_g.SpriteCreated) {
 			var video_texture = PIXI.Texture.fromVideo(_g.nativeWidget);
 			var video_sprite = new PIXI.Sprite(video_texture);
 			video_sprite.width = _g.videoWidth;
@@ -4108,23 +4108,23 @@ var _$RenderSupportJSPixi_VideoClip = function(width,height,metricsFn,durationFn
 		}
 	},false);
 };
-_$RenderSupportJSPixi_VideoClip.__name__ = true;
-_$RenderSupportJSPixi_VideoClip.NeedsDrawing = function() {
-	return _$RenderSupportJSPixi_VideoClip.UsePixiTextures && _$RenderSupportJSPixi_VideoClip.VideosOnStage > 0;
+_$RenderSupport_VideoClip.__name__ = true;
+_$RenderSupport_VideoClip.NeedsDrawing = function() {
+	return _$RenderSupport_VideoClip.UsePixiTextures && _$RenderSupport_VideoClip.VideosOnStage > 0;
 };
-_$RenderSupportJSPixi_VideoClip.__super__ = _$RenderSupportJSPixi_NativeWidgetClip;
-_$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_NativeWidgetClip.prototype,{
+_$RenderSupport_VideoClip.__super__ = _$RenderSupport_NativeWidgetClip;
+_$RenderSupport_VideoClip.prototype = $extend(_$RenderSupport_NativeWidgetClip.prototype,{
 	updateNativeWidget: function() {
-		if(!_$RenderSupportJSPixi_VideoClip.UsePixiTextures) _$RenderSupportJSPixi_NativeWidgetClip.prototype.updateNativeWidget.call(this); else if(this.parent == null && this.nativeWidget.parentNode != null) this.deleteNativeWidget();
+		if(!_$RenderSupport_VideoClip.UsePixiTextures) _$RenderSupport_NativeWidgetClip.prototype.updateNativeWidget.call(this); else if(this.parent == null && this.nativeWidget.parentNode != null) this.deleteNativeWidget();
 	}
 	,createNativeWidget: function(node) {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.createNativeWidget.call(this,node);
-		if(_$RenderSupportJSPixi_VideoClip.UsePixiTextures) this.nativeWidget.style.display = "none";
-		++_$RenderSupportJSPixi_VideoClip.VideosOnStage;
+		_$RenderSupport_NativeWidgetClip.prototype.createNativeWidget.call(this,node);
+		if(_$RenderSupport_VideoClip.UsePixiTextures) this.nativeWidget.style.display = "none";
+		++_$RenderSupport_VideoClip.VideosOnStage;
 	}
 	,deleteNativeWidget: function() {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.deleteNativeWidget.call(this);
-		--_$RenderSupportJSPixi_VideoClip.VideosOnStage;
+		_$RenderSupport_NativeWidgetClip.prototype.deleteNativeWidget.call(this);
+		--_$RenderSupport_VideoClip.VideosOnStage;
 	}
 	,getDescription: function() {
 		return "VideoClip (url = " + Std.string(this.nativeWidget.url) + ")";
@@ -4175,9 +4175,9 @@ _$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_Native
 	,getHeight: function() {
 		return this.videoHeight;
 	}
-	,__class__: _$RenderSupportJSPixi_VideoClip
+	,__class__: _$RenderSupport_VideoClip
 });
-var _$RenderSupportJSPixi_DebugClipsTree = function() {
+var _$RenderSupport_DebugClipsTree = function() {
 	this.UpdateTimer = null;
 	this.ClipBoundsRect = null;
 	this.DebugWin = null;
@@ -4203,12 +4203,12 @@ var _$RenderSupportJSPixi_DebugClipsTree = function() {
 	this.ClipBoundsRect.style.backgroundColor = "rgba(255, 0, 0, 0.5)";
 	window.document.body.appendChild(this.ClipBoundsRect);
 };
-_$RenderSupportJSPixi_DebugClipsTree.__name__ = true;
-_$RenderSupportJSPixi_DebugClipsTree.getInstance = function() {
-	if(_$RenderSupportJSPixi_DebugClipsTree.instance == null) _$RenderSupportJSPixi_DebugClipsTree.instance = new _$RenderSupportJSPixi_DebugClipsTree();
-	return _$RenderSupportJSPixi_DebugClipsTree.instance;
+_$RenderSupport_DebugClipsTree.__name__ = true;
+_$RenderSupport_DebugClipsTree.getInstance = function() {
+	if(_$RenderSupport_DebugClipsTree.instance == null) _$RenderSupport_DebugClipsTree.instance = new _$RenderSupport_DebugClipsTree();
+	return _$RenderSupport_DebugClipsTree.instance;
 };
-_$RenderSupportJSPixi_DebugClipsTree.prototype = {
+_$RenderSupport_DebugClipsTree.prototype = {
 	setClipBoundsRect: function(bounds) {
 		this.ClipBoundsRect.style.left = bounds.x;
 		this.ClipBoundsRect.style.top = bounds.y;
@@ -4310,61 +4310,61 @@ _$RenderSupportJSPixi_DebugClipsTree.prototype = {
 			ul.style.display = "none";
 		}
 	}
-	,__class__: _$RenderSupportJSPixi_DebugClipsTree
+	,__class__: _$RenderSupport_DebugClipsTree
 };
-var RenderSupportJSPixi = function() { };
-RenderSupportJSPixi.__name__ = true;
-RenderSupportJSPixi.isFirefox = function() {
+var RenderSupport = function() { };
+RenderSupport.__name__ = true;
+RenderSupport.isFirefox = function() {
 	var useragent = window.navigator.userAgent.toLowerCase();
 	return useragent.indexOf("firefox") >= 0;
 };
-RenderSupportJSPixi.defer = function(fn,time) {
+RenderSupport.defer = function(fn,time) {
 	if(time == null) time = 10;
 	haxe_Timer.delay(fn,time);
 };
-RenderSupportJSPixi.registerNativeWidgetClip = function(clip) {
-	RenderSupportJSPixi.NativeWidgetClips.push(clip);
+RenderSupport.registerNativeWidgetClip = function(clip) {
+	RenderSupport.NativeWidgetClips.push(clip);
 };
-RenderSupportJSPixi.unregisterNativeWidgetClip = function(clip) {
-	HxOverrides.remove(RenderSupportJSPixi.NativeWidgetClips,clip);
+RenderSupport.unregisterNativeWidgetClip = function(clip) {
+	HxOverrides.remove(RenderSupport.NativeWidgetClips,clip);
 };
-RenderSupportJSPixi.registerAccessWidgetClip = function(clip) {
-	RenderSupportJSPixi.AccessWidgetClips.push(clip);
+RenderSupport.registerAccessWidgetClip = function(clip) {
+	RenderSupport.AccessWidgetClips.push(clip);
 };
-RenderSupportJSPixi.unregisterAccessWidgetClip = function(clip) {
-	HxOverrides.remove(RenderSupportJSPixi.AccessWidgetClips,clip);
+RenderSupport.unregisterAccessWidgetClip = function(clip) {
+	HxOverrides.remove(RenderSupport.AccessWidgetClips,clip);
 };
-RenderSupportJSPixi.init = function() {
-	if(Util.getParameter("oldjs") != "1") RenderSupportJSPixi.initPixiRenderer(); else RenderSupportJSPixi.defer(RenderSupportJSPixi.StartFlowMain);
+RenderSupport.init = function() {
+	if(Util.getParameter("oldjs") != "1") RenderSupport.initPixiRenderer(); else RenderSupport.defer(RenderSupport.StartFlowMain);
 	return true;
 };
-RenderSupportJSPixi.printOptionValues = function() {
-	if(RenderSupportJSPixi.DebugMode) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
-	if(RenderSupportJSPixi.CacheTextsAsBitmap) Errors.print("Caches all textclips as bitmap is turned on");
+RenderSupport.printOptionValues = function() {
+	if(RenderSupport.DebugMode) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
+	if(RenderSupport.CacheTextsAsBitmap) Errors.print("Caches all textclips as bitmap is turned on");
 };
-RenderSupportJSPixi.initPixiRenderer = function() {
-	var options = { antialias : RenderSupportJSPixi.Antialias, transparent : false, backgroundColor : 16777215, preserveDrawingBuffer : false};
-	if(RenderSupportJSPixi.RendererType == "auto") RenderSupportJSPixi.PixiRenderer = PIXI.autoDetectRenderer(window.innerWidth,window.innerHeight,options); else if(RenderSupportJSPixi.RendererType == "webgl") RenderSupportJSPixi.PixiRenderer = new PIXI.WebGLRenderer(window.innerWidth,window.innerHeight,options); else RenderSupportJSPixi.PixiRenderer = new PIXI.CanvasRenderer(window.innerWidth,window.innerHeight,options);
-	window.document.body.appendChild(RenderSupportJSPixi.PixiRenderer.view);
-	RenderSupportJSPixi.initPixiStageEventListeners();
-	RenderSupportJSPixi.initBrowserWindowEventListeners();
-	FontLoader.LoadFonts(RenderSupportJSPixi.UseDFont,RenderSupportJSPixi.StartFlowMain);
-	RenderSupportJSPixi.initClipboardListeners();
-	_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap = RenderSupportJSPixi.CacheTextsAsBitmap;
-	_$RenderSupportJSPixi_VideoClip.UsePixiTextures = RenderSupportJSPixi.UseVideoTextures;
-	RenderSupportJSPixi.printOptionValues();
-	if(RenderSupportJSPixi.PixiRenderer.plugins != null && RenderSupportJSPixi.PixiRenderer.plugins.accessibility != null) {
-		RenderSupportJSPixi.PixiRenderer.plugins.accessibility.destroy();
-		RenderSupportJSPixi.PixiRenderer.plugins.accessibility = null;
+RenderSupport.initPixiRenderer = function() {
+	var options = { antialias : RenderSupport.Antialias, transparent : false, backgroundColor : 16777215, preserveDrawingBuffer : false};
+	if(RenderSupport.RendererType == "auto") RenderSupport.PixiRenderer = PIXI.autoDetectRenderer(window.innerWidth,window.innerHeight,options); else if(RenderSupport.RendererType == "webgl") RenderSupport.PixiRenderer = new PIXI.WebGLRenderer(window.innerWidth,window.innerHeight,options); else RenderSupport.PixiRenderer = new PIXI.CanvasRenderer(window.innerWidth,window.innerHeight,options);
+	window.document.body.appendChild(RenderSupport.PixiRenderer.view);
+	RenderSupport.initPixiStageEventListeners();
+	RenderSupport.initBrowserWindowEventListeners();
+	FontLoader.LoadFonts(RenderSupport.UseDFont,RenderSupport.StartFlowMain);
+	RenderSupport.initClipboardListeners();
+	_$RenderSupport_TextField.cacheTextsAsBitmap = RenderSupport.CacheTextsAsBitmap;
+	_$RenderSupport_VideoClip.UsePixiTextures = RenderSupport.UseVideoTextures;
+	RenderSupport.printOptionValues();
+	if(RenderSupport.PixiRenderer.plugins != null && RenderSupport.PixiRenderer.plugins.accessibility != null) {
+		RenderSupport.PixiRenderer.plugins.accessibility.destroy();
+		RenderSupport.PixiRenderer.plugins.accessibility = null;
 	}
-	window.requestAnimationFrame(RenderSupportJSPixi.animate);
+	window.requestAnimationFrame(RenderSupport.animate);
 };
-RenderSupportJSPixi.initBrowserWindowEventListeners = function() {
-	RenderSupportJSPixi.WindowTopHeight = window.screen.height - window.innerHeight;
-	window.addEventListener("resize",RenderSupportJSPixi.onBrowserWindowResize);
-	window.addEventListener("message",RenderSupportJSPixi.receiveWindowMessage);
+RenderSupport.initBrowserWindowEventListeners = function() {
+	RenderSupport.WindowTopHeight = window.screen.height - window.innerHeight;
+	window.addEventListener("resize",RenderSupport.onBrowserWindowResize);
+	window.addEventListener("message",RenderSupport.receiveWindowMessage);
 };
-RenderSupportJSPixi.initClipboardListeners = function() {
+RenderSupport.initClipboardListeners = function() {
 	var handler;
 	var handlePaste = function(e) {
 		if(window.clipboardData && window.clipboardData.getData) NativeHx.clipboardData = window.clipboardData.getData("Text"); else if(e.clipboardData && e.clipboardData.getData) NativeHx.clipboardData = e.clipboardData.getData("text/plain"); else NativeHx.clipboardData = "";
@@ -4372,7 +4372,7 @@ RenderSupportJSPixi.initClipboardListeners = function() {
 	handler = handlePaste;
 	window.document.addEventListener("paste",handler,false);
 };
-RenderSupportJSPixi.receiveWindowMessage = function(e) {
+RenderSupport.receiveWindowMessage = function(e) {
 	var hasNestedWindow = null;
 	hasNestedWindow = function(iframe,win) {
 		try {
@@ -4405,67 +4405,67 @@ RenderSupportJSPixi.receiveWindowMessage = function(e) {
 	}
 	Errors.report("Warning: unknow message source");
 };
-RenderSupportJSPixi.onBrowserWindowResize = function(e) {
-	RenderSupportJSPixi.PixiStageChanged = true;
-	RenderSupportJSPixi.PixiStageSizeChanged = true;
-	if(RenderSupportJSPixi.isAndroid) RenderSupportJSPixi.PixiRenderer.resize(window.screen.width,window.screen.height - RenderSupportJSPixi.WindowTopHeight); else RenderSupportJSPixi.PixiRenderer.resize(window.innerWidth,window.innerHeight);
+RenderSupport.onBrowserWindowResize = function(e) {
+	RenderSupport.PixiStageChanged = true;
+	RenderSupport.PixiStageSizeChanged = true;
+	if(RenderSupport.isAndroid) RenderSupport.PixiRenderer.resize(window.screen.width,window.screen.height - RenderSupport.WindowTopHeight); else RenderSupport.PixiRenderer.resize(window.innerWidth,window.innerHeight);
 	var _g = 0;
-	var _g1 = RenderSupportJSPixi.PixiStageEventListeners.get("resize");
+	var _g1 = RenderSupport.PixiStageEventListeners.get("resize");
 	while(_g < _g1.length) {
 		var l = _g1[_g];
 		++_g;
 		l();
 	}
 };
-RenderSupportJSPixi.dropCurrentFocus = function() {
+RenderSupport.dropCurrentFocus = function() {
 	if(window.document.activeElement != null) window.document.activeElement.blur();
 };
-RenderSupportJSPixi.nativeWidgetsOnMouseDown = function() {
+RenderSupport.nativeWidgetsOnMouseDown = function() {
 	var _g = 0;
-	var _g1 = RenderSupportJSPixi.NativeWidgetClips;
+	var _g1 = RenderSupport.NativeWidgetClips;
 	while(_g < _g1.length) {
 		var c = _g1[_g];
 		++_g;
-		c.onStageMouseDown(RenderSupportJSPixi.MousePos);
+		c.onStageMouseDown(RenderSupport.MousePos);
 	}
 };
-RenderSupportJSPixi.initPixiStageEventListeners = function() {
-	RenderSupportJSPixi.PixiStageEventListeners = new haxe_ds_StringMap();
+RenderSupport.initPixiStageEventListeners = function() {
+	RenderSupport.PixiStageEventListeners = new haxe_ds_StringMap();
 	var mdl = [];
-	RenderSupportJSPixi.PixiStageEventListeners.set("mousedown",mdl);
+	RenderSupport.PixiStageEventListeners.set("mousedown",mdl);
 	var mml = [];
-	RenderSupportJSPixi.PixiStageEventListeners.set("mousemove",mml);
+	RenderSupport.PixiStageEventListeners.set("mousemove",mml);
 	var mul = [];
-	RenderSupportJSPixi.PixiStageEventListeners.set("mouseup",mul);
+	RenderSupport.PixiStageEventListeners.set("mouseup",mul);
 	var value = [];
-	RenderSupportJSPixi.PixiStageEventListeners.set("resize",value);
+	RenderSupport.PixiStageEventListeners.set("resize",value);
 	if(NativeHx.isTouchScreen()) {
-		RenderSupportJSPixi.setStagePointerHandler("touchstart",mdl);
-		RenderSupportJSPixi.setStagePointerHandler("touchmove",mml);
-		RenderSupportJSPixi.setStagePointerHandler("touchend",mul);
+		RenderSupport.setStagePointerHandler("touchstart",mdl);
+		RenderSupport.setStagePointerHandler("touchmove",mml);
+		RenderSupport.setStagePointerHandler("touchend",mul);
 	} else {
-		RenderSupportJSPixi.setStagePointerHandler("mousedown",mdl);
-		RenderSupportJSPixi.setStagePointerHandler("mousemove",mml);
-		RenderSupportJSPixi.setStagePointerHandler("mouseup",mul);
-		RenderSupportJSPixi.setStagePointerHandler("mouseout",mul);
+		RenderSupport.setStagePointerHandler("mousedown",mdl);
+		RenderSupport.setStagePointerHandler("mousemove",mml);
+		RenderSupport.setStagePointerHandler("mouseup",mul);
+		RenderSupport.setStagePointerHandler("mouseout",mul);
 	}
 	mdl.push(function() {
-		RenderSupportJSPixi.MouseUpReceived = false;
+		RenderSupport.MouseUpReceived = false;
 	});
 	mul.push(function() {
-		RenderSupportJSPixi.MouseUpReceived = true;
+		RenderSupport.MouseUpReceived = true;
 	});
-	mdl.push(RenderSupportJSPixi.nativeWidgetsOnMouseDown);
-	mdl.push(RenderSupportJSPixi.dropCurrentFocus);
+	mdl.push(RenderSupport.nativeWidgetsOnMouseDown);
+	mdl.push(RenderSupport.dropCurrentFocus);
 };
-RenderSupportJSPixi.setStagePointerHandler = function(event,listeners) {
+RenderSupport.setStagePointerHandler = function(event,listeners) {
 	var cb;
 	switch(event) {
 	case "touchstart":case "touchmove":
 		cb = function(e) {
 			if(e.touches.length == 1) {
-				RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
-				RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+				RenderSupport.MousePos.x = e.touches[0].pageX;
+				RenderSupport.MousePos.y = e.touches[0].pageY;
 				var _g = 0;
 				while(_g < listeners.length) {
 					var l = listeners[_g];
@@ -4489,7 +4489,7 @@ RenderSupportJSPixi.setStagePointerHandler = function(event,listeners) {
 		break;
 	case "mouseout":
 		cb = function(e2) {
-			if(RenderSupportJSPixi.MouseUpReceived) return;
+			if(RenderSupport.MouseUpReceived) return;
 			var _g2 = 0;
 			while(_g2 < listeners.length) {
 				var l2 = listeners[_g2];
@@ -4500,8 +4500,8 @@ RenderSupportJSPixi.setStagePointerHandler = function(event,listeners) {
 		break;
 	default:
 		cb = function(e3) {
-			RenderSupportJSPixi.MousePos.x = e3.pageX;
-			RenderSupportJSPixi.MousePos.y = e3.pageY;
+			RenderSupport.MousePos.x = e3.pageX;
+			RenderSupport.MousePos.y = e3.pageY;
 			var _g3 = 0;
 			while(_g3 < listeners.length) {
 				var l3 = listeners[_g3];
@@ -4510,9 +4510,9 @@ RenderSupportJSPixi.setStagePointerHandler = function(event,listeners) {
 			}
 		};
 	}
-	RenderSupportJSPixi.PixiRenderer.view.addEventListener(event,cb);
+	RenderSupport.PixiRenderer.view.addEventListener(event,cb);
 };
-RenderSupportJSPixi.emitForInteractives = function(clip,event) {
+RenderSupport.emitForInteractives = function(clip,event) {
 	if(clip.interactive) clip.emit(event);
 	if(clip.children != null) {
 		var childs = clip.children;
@@ -4520,48 +4520,48 @@ RenderSupportJSPixi.emitForInteractives = function(clip,event) {
 		while(_g < childs.length) {
 			var c = childs[_g];
 			++_g;
-			RenderSupportJSPixi.emitForInteractives(c,event);
+			RenderSupport.emitForInteractives(c,event);
 		}
 	}
 };
-RenderSupportJSPixi.emulateMouseClickOnClip = function(clip) {
+RenderSupport.emulateMouseClickOnClip = function(clip) {
 	var b = clip.getBounds();
-	RenderSupportJSPixi.MousePos = clip.toGlobal(new PIXI.Point(b.width / 2.0,b.height / 2.0));
-	RenderSupportJSPixi.defer(function() {
+	RenderSupport.MousePos = clip.toGlobal(new PIXI.Point(b.width / 2.0,b.height / 2.0));
+	RenderSupport.defer(function() {
 		var _g = 0;
-		var _g1 = RenderSupportJSPixi.PixiStageEventListeners.get("mousemove");
+		var _g1 = RenderSupport.PixiStageEventListeners.get("mousemove");
 		while(_g < _g1.length) {
 			var l = _g1[_g];
 			++_g;
 			l();
 		}
 	});
-	RenderSupportJSPixi.defer(function() {
-		RenderSupportJSPixi.emitForInteractives(clip,"mouseover");
+	RenderSupport.defer(function() {
+		RenderSupport.emitForInteractives(clip,"mouseover");
 	},100);
-	RenderSupportJSPixi.defer(function() {
+	RenderSupport.defer(function() {
 		var _g2 = 0;
-		var _g11 = RenderSupportJSPixi.PixiStageEventListeners.get("mousedown");
+		var _g11 = RenderSupport.PixiStageEventListeners.get("mousedown");
 		while(_g2 < _g11.length) {
 			var l1 = _g11[_g2];
 			++_g2;
 			l1();
 		}
 	},400);
-	RenderSupportJSPixi.defer(function() {
+	RenderSupport.defer(function() {
 		var _g3 = 0;
-		var _g12 = RenderSupportJSPixi.PixiStageEventListeners.get("mouseup");
+		var _g12 = RenderSupport.PixiStageEventListeners.get("mouseup");
 		while(_g3 < _g12.length) {
 			var l2 = _g12[_g3];
 			++_g3;
 			l2();
 		}
 	},500);
-	RenderSupportJSPixi.defer(function() {
-		RenderSupportJSPixi.emitForInteractives(clip,"mouseout");
+	RenderSupport.defer(function() {
+		RenderSupport.emitForInteractives(clip,"mouseout");
 	},600);
 };
-RenderSupportJSPixi.ensureCurrentInputVisible = function() {
+RenderSupport.ensureCurrentInputVisible = function() {
 	var focused_node = window.document.activeElement;
 	if(focused_node != null) {
 		var node_name = focused_node.nodeName;
@@ -4569,62 +4569,62 @@ RenderSupportJSPixi.ensureCurrentInputVisible = function() {
 		if(node_name == "input" || node_name == "textarea") {
 			var rect = focused_node.getBoundingClientRect();
 			if(rect.bottom > window.innerHeight) {
-				RenderSupportJSPixi.PixiStage.y = window.innerHeight - rect.bottom;
-				RenderSupportJSPixi.PixiStageChanged = true;
+				RenderSupport.PixiStage.y = window.innerHeight - rect.bottom;
+				RenderSupport.PixiStageChanged = true;
 			}
 		}
 	}
 };
-RenderSupportJSPixi.StartFlowMain = function() {
+RenderSupport.StartFlowMain = function() {
 	Errors.print("Starting flow main.");
 	window.flow_main();
 };
-RenderSupportJSPixi.animate = function(timestamp) {
-	window.requestAnimationFrame(RenderSupportJSPixi.animate);
-	if(RenderSupportJSPixi.PixiStageChanged && RenderSupportJSPixi.StageChangedTimestamp < 0) RenderSupportJSPixi.StageChangedTimestamp = timestamp;
-	if(RenderSupportJSPixi.PixiStageChanged && timestamp - RenderSupportJSPixi.StageChangedTimestamp >= 40.0 || _$RenderSupportJSPixi_VideoClip.UsePixiTextures && _$RenderSupportJSPixi_VideoClip.VideosOnStage > 0 || RenderSupportJSPixi.PixiStageSizeChanged) {
-		RenderSupportJSPixi.PixiStageChanged = false;
-		RenderSupportJSPixi.StageChangedTimestamp = -1.0;
-		if(RenderSupportJSPixi.isAndroid && RenderSupportJSPixi.PixiStageSizeChanged) RenderSupportJSPixi.PixiStage.y = 0.0;
-		RenderSupportJSPixi.PixiRenderer.render(RenderSupportJSPixi.PixiStage);
-		RenderSupportJSPixi.updateNativeWidgets();
-		if(RenderSupportJSPixi.DebugMode) {
-			RenderSupportJSPixi.updateAccessWidgets();
-			RenderSupportJSPixi.updatePixiCanvasAccessElements();
+RenderSupport.animate = function(timestamp) {
+	window.requestAnimationFrame(RenderSupport.animate);
+	if(RenderSupport.PixiStageChanged && RenderSupport.StageChangedTimestamp < 0) RenderSupport.StageChangedTimestamp = timestamp;
+	if(RenderSupport.PixiStageChanged && timestamp - RenderSupport.StageChangedTimestamp >= 40.0 || _$RenderSupport_VideoClip.UsePixiTextures && _$RenderSupport_VideoClip.VideosOnStage > 0 || RenderSupport.PixiStageSizeChanged) {
+		RenderSupport.PixiStageChanged = false;
+		RenderSupport.StageChangedTimestamp = -1.0;
+		if(RenderSupport.isAndroid && RenderSupport.PixiStageSizeChanged) RenderSupport.PixiStage.y = 0.0;
+		RenderSupport.PixiRenderer.render(RenderSupport.PixiStage);
+		RenderSupport.updateNativeWidgets();
+		if(RenderSupport.DebugMode) {
+			RenderSupport.updateAccessWidgets();
+			RenderSupport.updatePixiCanvasAccessElements();
 		}
-		if(RenderSupportJSPixi.isAndroid && RenderSupportJSPixi.PixiStageSizeChanged) RenderSupportJSPixi.ensureCurrentInputVisible();
-		RenderSupportJSPixi.PixiStageSizeChanged = false;
-		if(RenderSupportJSPixi.ShowDebugClipsTree) _$RenderSupportJSPixi_DebugClipsTree.getInstance().updateTree(RenderSupportJSPixi.PixiStage);
+		if(RenderSupport.isAndroid && RenderSupport.PixiStageSizeChanged) RenderSupport.ensureCurrentInputVisible();
+		RenderSupport.PixiStageSizeChanged = false;
+		if(RenderSupport.ShowDebugClipsTree) _$RenderSupport_DebugClipsTree.getInstance().updateTree(RenderSupport.PixiStage);
 	}
 };
-RenderSupportJSPixi.updateNativeWidgets = function() {
-	var len = RenderSupportJSPixi.NativeWidgetClips.length;
+RenderSupport.updateNativeWidgets = function() {
+	var len = RenderSupport.NativeWidgetClips.length;
 	var _g = 0;
 	while(_g < len) {
 		var i = _g++;
-		RenderSupportJSPixi.NativeWidgetClips[len - 1 - i].updateNativeWidget();
+		RenderSupport.NativeWidgetClips[len - 1 - i].updateNativeWidget();
 	}
 };
-RenderSupportJSPixi.updateAccessWidgets = function() {
-	var len = RenderSupportJSPixi.AccessWidgetClips.length;
+RenderSupport.updateAccessWidgets = function() {
+	var len = RenderSupport.AccessWidgetClips.length;
 	var _g = 0;
 	while(_g < len) {
 		var i = _g++;
-		RenderSupportJSPixi.AccessWidgetClips[len - 1 - i].updateAccessWidget();
+		RenderSupport.AccessWidgetClips[len - 1 - i].updateAccessWidget();
 	}
 };
-RenderSupportJSPixi.updatePixiCanvasAccessElements = function() {
-	RenderSupportJSPixi.PixiRenderer.view.innerHTML = "";
-	if(RenderSupportJSPixi.UpdatePixiCanvasAccessElementsTimer != null) RenderSupportJSPixi.UpdatePixiCanvasAccessElementsTimer.stop();
-	RenderSupportJSPixi.UpdatePixiCanvasAccessElementsTimer = haxe_Timer.delay(function() {
-		RenderSupportJSPixi.doUpdatePixiCanvasAccessElements(RenderSupportJSPixi.PixiStage);
+RenderSupport.updatePixiCanvasAccessElements = function() {
+	RenderSupport.PixiRenderer.view.innerHTML = "";
+	if(RenderSupport.UpdatePixiCanvasAccessElementsTimer != null) RenderSupport.UpdatePixiCanvasAccessElementsTimer.stop();
+	RenderSupport.UpdatePixiCanvasAccessElementsTimer = haxe_Timer.delay(function() {
+		RenderSupport.doUpdatePixiCanvasAccessElements(RenderSupport.PixiStage);
 	},1000);
 };
-RenderSupportJSPixi.doUpdatePixiCanvasAccessElements = function(clip) {
+RenderSupport.doUpdatePixiCanvasAccessElements = function(clip) {
 	if(clip.isInput != null && clip.isInput() == false) {
 		var p = window.document.createElement("p");
 		p.innerHTML = clip.getContent();
-		RenderSupportJSPixi.PixiRenderer.view.appendChild(p);
+		RenderSupport.PixiRenderer.view.appendChild(p);
 		return;
 	}
 	if(clip.children != null && clip.children.length > 0) {
@@ -4633,20 +4633,20 @@ RenderSupportJSPixi.doUpdatePixiCanvasAccessElements = function(clip) {
 		while(_g < childs.length) {
 			var c = childs[_g];
 			++_g;
-			RenderSupportJSPixi.doUpdatePixiCanvasAccessElements(c);
+			RenderSupport.doUpdatePixiCanvasAccessElements(c);
 		}
 	}
 };
-RenderSupportJSPixi.InvalidateStage = function() {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.InvalidateStage = function() {
+	RenderSupport.PixiStageChanged = true;
 };
-RenderSupportJSPixi.getPixelsPerCm = function() {
+RenderSupport.getPixelsPerCm = function() {
 	return 37.795275590551178;
 };
-RenderSupportJSPixi.setHitboxRadius = function(radius) {
+RenderSupport.setHitboxRadius = function(radius) {
 	return false;
 };
-RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
+RenderSupport.addAccessAttributes = function(clip,attributes) {
 	var _g = 0;
 	while(_g < attributes.length) {
 		var kv = attributes[_g];
@@ -4664,7 +4664,7 @@ RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
 				clip.accessWidget.style.borderStyle = "none";
 				clip.accessWidget.style.pointerEvents = "none";
 				clip.accessWidget.onclick = function() {
-					if(clip.accessCallback != null) clip.accessCallback(); else RenderSupportJSPixi.emulateMouseClickOnClip(clip);
+					if(clip.accessCallback != null) clip.accessCallback(); else RenderSupport.emulateMouseClickOnClip(clip);
 				};
 				clip.accessWidget.onfocus = function() {
 					clip.accessWidget.style.borderStyle = "solid";
@@ -4691,10 +4691,10 @@ RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
 		}
 	}
 };
-RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
-	if(!RenderSupportJSPixi.DebugMode) return;
+RenderSupport.setAccessAttributes = function(clip,attributes) {
+	if(!RenderSupport.DebugMode) return;
 	if(clip.accessWidget == null) {
-		RenderSupportJSPixi.PixiStageChanged = true;
+		RenderSupport.PixiStageChanged = true;
 		var accessWidget = window.document.createElement("div");
 		accessWidget.style.pointerEvents = "none";
 		accessWidget.style.position = "fixed";
@@ -4703,7 +4703,7 @@ RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
 		clip.updateAccessWidget = function() {
 			if(clip.parent == null) {
 				window.document.body.removeChild(clip.accessWidget);
-				RenderSupportJSPixi.unregisterAccessWidgetClip(clip);
+				RenderSupport.unregisterAccessWidgetClip(clip);
 			} else if(clip.worldVisible) {
 				var bounds = clip.getBounds();
 				clip.accessWidget.style.display = "block";
@@ -4713,182 +4713,182 @@ RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
 				clip.accessWidget.style.height = "" + bounds.height + "px";
 			} else clip.accessWidget.style.display = "none";
 		};
-		RenderSupportJSPixi.registerAccessWidgetClip(clip);
+		RenderSupport.registerAccessWidgetClip(clip);
 	}
-	RenderSupportJSPixi.addAccessAttributes(clip,attributes);
+	RenderSupport.addAccessAttributes(clip,attributes);
 };
-RenderSupportJSPixi.currentClip = function() {
-	return RenderSupportJSPixi.PixiStage;
+RenderSupport.currentClip = function() {
+	return RenderSupport.PixiStage;
 };
-RenderSupportJSPixi.hideFlowJSLoadingIndicator = function() {
+RenderSupport.hideFlowJSLoadingIndicator = function() {
 	window.document.body.style.backgroundImage = "none";
 	var indicator = window.document.getElementById("loading_js_indicator");
 	if(null != indicator) indicator.style.display = "none";
 };
-RenderSupportJSPixi.enableResize = function() {
-	RenderSupportJSPixi.hideFlowJSLoadingIndicator();
+RenderSupport.enableResize = function() {
+	RenderSupport.hideFlowJSLoadingIndicator();
 };
-RenderSupportJSPixi.getStageWidth = function() {
-	return RenderSupportJSPixi.PixiRenderer.width;
+RenderSupport.getStageWidth = function() {
+	return RenderSupport.PixiRenderer.width;
 };
-RenderSupportJSPixi.getStageHeight = function() {
-	return RenderSupportJSPixi.PixiRenderer.height;
+RenderSupport.getStageHeight = function() {
+	return RenderSupport.PixiRenderer.height;
 };
-RenderSupportJSPixi.makeTextField = function() {
-	if(RenderSupportJSPixi.UseDFont) return new _$RenderSupportJSPixi_DFontText(); else return new _$RenderSupportJSPixi_PixiText();
+RenderSupport.makeTextField = function() {
+	if(RenderSupport.UseDFont) return new _$RenderSupport_DFontText(); else return new _$RenderSupport_PixiText();
 };
-RenderSupportJSPixi.setTextAndStyle = function(textfield,text,fontfamily,fontsize,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity,forTextinput) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setTextAndStyle = function(textfield,text,fontfamily,fontsize,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity,forTextinput) {
+	RenderSupport.PixiStageChanged = true;
 	textfield.setTextAndStyle(text,fontfamily,fontsize,fillcolor,fillopacity,backgroundcolour,backgroundopacity);
 };
-RenderSupportJSPixi.setAdvancedText = function(textfield,sharpness,antialiastype,gridfittype) {
+RenderSupport.setAdvancedText = function(textfield,sharpness,antialiastype,gridfittype) {
 };
-RenderSupportJSPixi.makeVideo = function(width,height,metricsFn,durationFn) {
-	var vc = new _$RenderSupportJSPixi_VideoClip(width,height,metricsFn,durationFn);
+RenderSupport.makeVideo = function(width,height,metricsFn,durationFn) {
+	var vc = new _$RenderSupport_VideoClip(width,height,metricsFn,durationFn);
 	return [vc,vc];
 };
-RenderSupportJSPixi.setVideoVolume = function(str,volume) {
+RenderSupport.setVideoVolume = function(str,volume) {
 	str.setVolume(volume);
 };
-RenderSupportJSPixi.setVideoLooping = function(str,loop) {
+RenderSupport.setVideoLooping = function(str,loop) {
 };
-RenderSupportJSPixi.setVideoControls = function(str,controls) {
+RenderSupport.setVideoControls = function(str,controls) {
 };
-RenderSupportJSPixi.setVideoSubtitle = function(str,text,size,color) {
+RenderSupport.setVideoSubtitle = function(str,text,size,color) {
 };
-RenderSupportJSPixi.playVideo = function(vc,filename,startPaused) {
+RenderSupport.playVideo = function(vc,filename,startPaused) {
 	vc.playVideo(filename,startPaused);
 };
-RenderSupportJSPixi.seekVideo = function(str,seek) {
+RenderSupport.seekVideo = function(str,seek) {
 	str.setCurrentTime(seek);
 };
-RenderSupportJSPixi.getVideoPosition = function(str) {
+RenderSupport.getVideoPosition = function(str) {
 	return str.getCurrentTime();
 };
-RenderSupportJSPixi.pauseVideo = function(str) {
+RenderSupport.pauseVideo = function(str) {
 	str.pauseVideo();
 };
-RenderSupportJSPixi.resumeVideo = function(str) {
+RenderSupport.resumeVideo = function(str) {
 	str.resumeVideo();
 };
-RenderSupportJSPixi.closeVideo = function(str) {
+RenderSupport.closeVideo = function(str) {
 };
-RenderSupportJSPixi.getTextFieldWidth = function(textfield) {
+RenderSupport.getTextFieldWidth = function(textfield) {
 	return textfield.getWidth();
 };
-RenderSupportJSPixi.setTextFieldWidth = function(textfield,width) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setTextFieldWidth = function(textfield,width) {
+	RenderSupport.PixiStageChanged = true;
 	textfield.setWidth(width);
 };
-RenderSupportJSPixi.getTextFieldHeight = function(textfield) {
+RenderSupport.getTextFieldHeight = function(textfield) {
 	return textfield.getHeight();
 };
-RenderSupportJSPixi.setTextFieldHeight = function(textfield,height) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setTextFieldHeight = function(textfield,height) {
+	RenderSupport.PixiStageChanged = true;
 	if(height > 0.0) textfield.setHeight(height);
 };
-RenderSupportJSPixi.setAutoAlign = function(textfield,autoalign) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setAutoAlign = function(textfield,autoalign) {
+	RenderSupport.PixiStageChanged = true;
 	textfield.setAutoAlign(autoalign);
 };
-RenderSupportJSPixi.setTextInput = function(textfield) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setTextInput = function(textfield) {
+	RenderSupport.PixiStageChanged = true;
 	textfield.setTextInput();
 };
-RenderSupportJSPixi.setTextInputType = function(textfield,type) {
+RenderSupport.setTextInputType = function(textfield,type) {
 	textfield.setTextInputType(type);
 };
-RenderSupportJSPixi.setTabIndex = function(textfield,index) {
+RenderSupport.setTabIndex = function(textfield,index) {
 	textfield.setTabIndex(index);
 };
-RenderSupportJSPixi.getContent = function(textfield) {
+RenderSupport.getContent = function(textfield) {
 	return textfield.getContent();
 };
-RenderSupportJSPixi.getCursorPosition = function(textfield) {
+RenderSupport.getCursorPosition = function(textfield) {
 	return textfield.getCursorPosition();
 };
-RenderSupportJSPixi.getFocus = function(clip) {
+RenderSupport.getFocus = function(clip) {
 	return clip.getFocus();
 };
-RenderSupportJSPixi.getScrollV = function(textfield) {
+RenderSupport.getScrollV = function(textfield) {
 	return 0;
 };
-RenderSupportJSPixi.setScrollV = function(textfield,suggestedPosition) {
+RenderSupport.setScrollV = function(textfield,suggestedPosition) {
 };
-RenderSupportJSPixi.getBottomScrollV = function(textfield) {
+RenderSupport.getBottomScrollV = function(textfield) {
 	return 0;
 };
-RenderSupportJSPixi.getNumLines = function(textfield) {
+RenderSupport.getNumLines = function(textfield) {
 	return 0;
 };
-RenderSupportJSPixi.setFocus = function(textfield,focus) {
+RenderSupport.setFocus = function(textfield,focus) {
 	textfield.setFocus(focus);
 };
-RenderSupportJSPixi.setMultiline = function(textfield,multiline) {
+RenderSupport.setMultiline = function(textfield,multiline) {
 	if(multiline) {
-		RenderSupportJSPixi.PixiStageChanged = true;
+		RenderSupport.PixiStageChanged = true;
 		textfield.setMultiline();
 	}
 };
-RenderSupportJSPixi.setWordWrap = function(textfield,wordWrap) {
+RenderSupport.setWordWrap = function(textfield,wordWrap) {
 	textfield.setWordWrap();
 };
-RenderSupportJSPixi.getSelectionStart = function(textfield) {
+RenderSupport.getSelectionStart = function(textfield) {
 	return textfield.getSelectionStart();
 };
-RenderSupportJSPixi.getSelectionEnd = function(textfield) {
+RenderSupport.getSelectionEnd = function(textfield) {
 	return textfield.getSelectionEnd();
 };
-RenderSupportJSPixi.setSelection = function(textfield,start,end) {
+RenderSupport.setSelection = function(textfield,start,end) {
 	textfield.setSelection(start,end);
 };
-RenderSupportJSPixi.setReadOnly = function(textfield,readOnly) {
+RenderSupport.setReadOnly = function(textfield,readOnly) {
 	textfield.setReadOnly(readOnly);
 };
-RenderSupportJSPixi.setMaxChars = function(textfield,maxChars) {
+RenderSupport.setMaxChars = function(textfield,maxChars) {
 	textfield.setMaxChars(maxChars);
 };
-RenderSupportJSPixi.addTextInputFilter = function(textfield,filter) {
+RenderSupport.addTextInputFilter = function(textfield,filter) {
 	return textfield.addTextInputFilter(filter);
 };
-RenderSupportJSPixi.addChild = function(parent,child) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.addChild = function(parent,child) {
+	RenderSupport.PixiStageChanged = true;
 	parent.addChild(child);
 };
-RenderSupportJSPixi.removeChild = function(parent,child) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.removeChild = function(parent,child) {
+	RenderSupport.PixiStageChanged = true;
 	parent.removeChild(child);
 };
-RenderSupportJSPixi.makeClip = function() {
+RenderSupport.makeClip = function() {
 	return new PIXI.Container();
 };
-RenderSupportJSPixi.setClipCallstack = function(clip,callstack) {
+RenderSupport.setClipCallstack = function(clip,callstack) {
 };
-RenderSupportJSPixi.setClipX = function(clip,x) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipX = function(clip,x) {
+	RenderSupport.PixiStageChanged = true;
 	clip.x = x;
 };
-RenderSupportJSPixi.setClipY = function(clip,y) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipY = function(clip,y) {
+	RenderSupport.PixiStageChanged = true;
 	clip.y = y;
 };
-RenderSupportJSPixi.setClipScaleX = function(clip,scale_x) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipScaleX = function(clip,scale_x) {
+	RenderSupport.PixiStageChanged = true;
 	clip.scale.x = scale_x;
 };
-RenderSupportJSPixi.setClipScaleY = function(clip,scale_y) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipScaleY = function(clip,scale_y) {
+	RenderSupport.PixiStageChanged = true;
 	clip.scale.y = scale_y;
 };
-RenderSupportJSPixi.setClipRotation = function(clip,r) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipRotation = function(clip,r) {
+	RenderSupport.PixiStageChanged = true;
 	clip.rotation = r * 0.0174532925;
 };
-RenderSupportJSPixi.setClipAlpha = function(clip,a) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipAlpha = function(clip,a) {
+	RenderSupport.PixiStageChanged = true;
 	clip.alpha = a;
 };
-RenderSupportJSPixi.getDisplayObjectGraphics = function(clip) {
+RenderSupport.getDisplayObjectGraphics = function(clip) {
 	if(clip.graphics != null) return clip.graphics;
 	if(clip.children == null) return null;
 	var _g = 0;
@@ -4896,20 +4896,20 @@ RenderSupportJSPixi.getDisplayObjectGraphics = function(clip) {
 	while(_g < _g1.length) {
 		var c = _g1[_g];
 		++_g;
-		var g = RenderSupportJSPixi.getDisplayObjectGraphics(c);
+		var g = RenderSupport.getDisplayObjectGraphics(c);
 		if(g != null) return g;
 	}
 	return null;
 };
-RenderSupportJSPixi.setClipMask = function(clip,mask) {
-	RenderSupportJSPixi.PixiStageChanged = true;
-	clip.mask = RenderSupportJSPixi.getDisplayObjectGraphics(mask);
+RenderSupport.setClipMask = function(clip,mask) {
+	RenderSupport.PixiStageChanged = true;
+	clip.mask = RenderSupport.getDisplayObjectGraphics(mask);
 	if(clip.mask == null) mask.visible = false;
 };
-RenderSupportJSPixi.getStage = function() {
-	return RenderSupportJSPixi.PixiStage;
+RenderSupport.getStage = function() {
+	return RenderSupport.PixiStage;
 };
-RenderSupportJSPixi.addKeyEventListener = function(clip,event,fn) {
+RenderSupport.addKeyEventListener = function(clip,event,fn) {
 	var keycb = function(e) {
 		var shift = e.shiftKey;
 		var alt = e.altKey;
@@ -4959,14 +4959,14 @@ RenderSupportJSPixi.addKeyEventListener = function(clip,event,fn) {
 		window.removeEventListener(event,keycb);
 	};
 };
-RenderSupportJSPixi.addStreamStatusListener = function(clip,fn) {
+RenderSupport.addStreamStatusListener = function(clip,fn) {
 	return clip.addStreamStatusListener(fn);
 };
-RenderSupportJSPixi.addEventListener = function(clip,event,fn) {
+RenderSupport.addEventListener = function(clip,event,fn) {
 	if(event == "resize" || event == "mousedown" || event == "mousemove" || event == "mouseup") {
-		RenderSupportJSPixi.PixiStageEventListeners.get(event).push(fn);
+		RenderSupport.PixiStageEventListeners.get(event).push(fn);
 		return function() {
-			var _this = RenderSupportJSPixi.PixiStageEventListeners.get(event);
+			var _this = RenderSupport.PixiStageEventListeners.get(event);
 			HxOverrides.remove(_this,fn);
 		};
 	} else if(event == "rollover") {
@@ -4993,14 +4993,14 @@ RenderSupportJSPixi.addEventListener = function(clip,event,fn) {
 		};
 	}
 };
-RenderSupportJSPixi.addMouseWheelEventListener = function(clip,fn) {
+RenderSupport.addMouseWheelEventListener = function(clip,fn) {
 	var wheel_cb = function(event) {
 		var delta = 0.0;
 		if(event.wheelDelta != null) delta = event.wheelDelta / 120; else if(event.detail != null) delta = -event.detail / 3;
 		if(event.preventDefault != null) event.preventDefault();
 		fn(delta);
 	};
-	if(!RenderSupportJSPixi.isFirefox()) {
+	if(!RenderSupport.isFirefox()) {
 		window.addEventListener("mousewheel",wheel_cb);
 		return function() {
 			window.removeEventListener("mousewheel",wheel_cb);
@@ -5012,18 +5012,18 @@ RenderSupportJSPixi.addMouseWheelEventListener = function(clip,fn) {
 		};
 	}
 };
-RenderSupportJSPixi.addFinegrainMouseWheelEventListener = function(clip,f) {
-	return RenderSupportJSPixi.addMouseWheelEventListener(clip,function(delta) {
+RenderSupport.addFinegrainMouseWheelEventListener = function(clip,f) {
+	return RenderSupport.addMouseWheelEventListener(clip,function(delta) {
 		f(delta,0);
 	});
 };
-RenderSupportJSPixi.getMouseX = function(clip) {
-	if(clip == RenderSupportJSPixi.PixiStage) return RenderSupportJSPixi.MousePos.x; else return clip.toLocal(RenderSupportJSPixi.MousePos).x;
+RenderSupport.getMouseX = function(clip) {
+	if(clip == RenderSupport.PixiStage) return RenderSupport.MousePos.x; else return clip.toLocal(RenderSupport.MousePos).x;
 };
-RenderSupportJSPixi.getMouseY = function(clip) {
-	if(clip == RenderSupportJSPixi.PixiStage) return RenderSupportJSPixi.MousePos.y; else return clip.toLocal(RenderSupportJSPixi.MousePos).y;
+RenderSupport.getMouseY = function(clip) {
+	if(clip == RenderSupport.PixiStage) return RenderSupport.MousePos.y; else return clip.toLocal(RenderSupport.MousePos).y;
 };
-RenderSupportJSPixi.hittestGraphics = function(g,global) {
+RenderSupport.hittestGraphics = function(g,global) {
 	var graphicsData = g.graphicsData;
 	var local = g.toLocal(global);
 	var _g = 0;
@@ -5034,11 +5034,11 @@ RenderSupportJSPixi.hittestGraphics = function(g,global) {
 	}
 	return false;
 };
-RenderSupportJSPixi.dohittest = function(clip,global) {
+RenderSupport.dohittest = function(clip,global) {
 	if(!clip.worldVisible || clip.isMask) return false;
-	if(clip.mask != null && !RenderSupportJSPixi.hittestGraphics(clip.mask,global)) return false;
+	if(clip.mask != null && !RenderSupport.hittestGraphics(clip.mask,global)) return false;
 	if(clip.graphicsData != null) {
-		if(RenderSupportJSPixi.hittestGraphics(clip,global)) return true;
+		if(RenderSupport.hittestGraphics(clip,global)) return true;
 	} else if(clip.texture != null) {
 		var w = clip.texture.frame.width;
 		var h = clip.texture.frame.height;
@@ -5056,61 +5056,61 @@ RenderSupportJSPixi.dohittest = function(clip,global) {
 		while(_g < childs.length) {
 			var c = childs[_g];
 			++_g;
-			if(RenderSupportJSPixi.dohittest(c,global)) return true;
+			if(RenderSupport.dohittest(c,global)) return true;
 		}
 	}
 	return false;
 };
-RenderSupportJSPixi.clipOnTheStage = function(clip) {
-	return clip == RenderSupportJSPixi.PixiStage || clip.parent != null;
+RenderSupport.clipOnTheStage = function(clip) {
+	return clip == RenderSupport.PixiStage || clip.parent != null;
 };
-RenderSupportJSPixi.hittest = function(clip,x,y) {
-	if(!(clip == RenderSupportJSPixi.PixiStage || clip.parent != null)) return false;
+RenderSupport.hittest = function(clip,x,y) {
+	if(!(clip == RenderSupport.PixiStage || clip.parent != null)) return false;
 	var global = new PIXI.Point(x,y);
 	clip.updateTransform();
 	var parent = clip.parent;
 	while(parent != null) {
-		if(parent.mask != null && !RenderSupportJSPixi.hittestGraphics(parent.mask,global)) return false;
+		if(parent.mask != null && !RenderSupport.hittestGraphics(parent.mask,global)) return false;
 		parent = parent.parent;
 	}
-	return RenderSupportJSPixi.dohittest(clip,global);
+	return RenderSupport.dohittest(clip,global);
 };
-RenderSupportJSPixi.getGraphics = function(clip) {
+RenderSupport.getGraphics = function(clip) {
 	var g = new PIXI.Graphics();
-	RenderSupportJSPixi.moveTo(g,0.0,0.0);
+	RenderSupport.moveTo(g,0.0,0.0);
 	clip.addChild(g);
 	clip.graphics = g;
 	return g;
 };
-RenderSupportJSPixi.setLineStyle = function(graphics,width,color,opacity) {
+RenderSupport.setLineStyle = function(graphics,width,color,opacity) {
 	graphics.lineStyle(width,color,opacity);
 };
-RenderSupportJSPixi.setLineStyle2 = function(graphics,width,color,opacity,pixelHinting) {
-	RenderSupportJSPixi.setLineStyle(graphics,width,color,opacity);
+RenderSupport.setLineStyle2 = function(graphics,width,color,opacity,pixelHinting) {
+	RenderSupport.setLineStyle(graphics,width,color,opacity);
 };
-RenderSupportJSPixi.beginFill = function(graphics,color,opacity) {
+RenderSupport.beginFill = function(graphics,color,opacity) {
 	graphics.beginFill(color,opacity);
 };
-RenderSupportJSPixi.beginGradientFill = function(graphics,colors,alphas,offsets,matrix,type) {
-	RenderSupportJSPixi.beginFill(graphics,colors[0],alphas[0]);
+RenderSupport.beginGradientFill = function(graphics,colors,alphas,offsets,matrix,type) {
+	RenderSupport.beginFill(graphics,colors[0],alphas[0]);
 };
-RenderSupportJSPixi.setLineGradientStroke = function(graphics,colours,alphas,offsets,matrix) {
-	RenderSupportJSPixi.setLineStyle(graphics,1.0,colours[0],alphas[0]);
+RenderSupport.setLineGradientStroke = function(graphics,colours,alphas,offsets,matrix) {
+	RenderSupport.setLineStyle(graphics,1.0,colours[0],alphas[0]);
 };
-RenderSupportJSPixi.makeMatrix = function(width,height,rotation,xOffset,yOffset) {
+RenderSupport.makeMatrix = function(width,height,rotation,xOffset,yOffset) {
 	return null;
 };
-RenderSupportJSPixi.moveTo = function(graphics,x,y) {
+RenderSupport.moveTo = function(graphics,x,y) {
 	graphics.moveTo(x,y);
 	graphics.pen_x = x;
 	graphics.pen_y = y;
 };
-RenderSupportJSPixi.lineTo = function(graphics,x,y) {
+RenderSupport.lineTo = function(graphics,x,y) {
 	graphics.lineTo(x,y);
 	graphics.pen_x = x;
 	graphics.pen_y = y;
 };
-RenderSupportJSPixi.curveTo = function(graphics,cx,cy,x,y) {
+RenderSupport.curveTo = function(graphics,cx,cy,x,y) {
 	x += 0.01;
 	y += 0.01;
 	var qcx1 = graphics.pen_x + 0.66666666666666663 * (cx - graphics.pen_x);
@@ -5121,10 +5121,10 @@ RenderSupportJSPixi.curveTo = function(graphics,cx,cy,x,y) {
 	graphics.pen_x = x;
 	graphics.pen_y = y;
 };
-RenderSupportJSPixi.endFill = function(graphics) {
+RenderSupport.endFill = function(graphics) {
 	graphics.endFill();
 };
-RenderSupportJSPixi.makePicture = function(url,cache,metricsFn,errorFn,onlyDownload) {
+RenderSupport.makePicture = function(url,cache,metricsFn,errorFn,onlyDownload) {
 	if(StringTools.endsWith(url,".swf")) url = StringTools.replace(url,".swf",".png");
 	var texture = PIXI.Texture.fromImage(url);
 	var sprite = new PIXI.Sprite(texture);
@@ -5135,7 +5135,7 @@ RenderSupportJSPixi.makePicture = function(url,cache,metricsFn,errorFn,onlyDownl
 	if(texture.baseTexture.hasLoaded) report_metrics(); else texture.on("update",report_metrics);
 	return sprite;
 };
-RenderSupportJSPixi.setCursor = function(clip,cursor) {
+RenderSupport.setCursor = function(clip,cursor) {
 	var css_cursor;
 	switch(cursor) {
 	case "arrow":
@@ -5158,7 +5158,7 @@ RenderSupportJSPixi.setCursor = function(clip,cursor) {
 	}
 	window.document.body.style.cursor = css_cursor;
 };
-RenderSupportJSPixi.getCursor = function(clip) {
+RenderSupport.getCursor = function(clip) {
 	var _g = window.document.body.style.cursor;
 	switch(_g) {
 	case "default":
@@ -5175,22 +5175,22 @@ RenderSupportJSPixi.getCursor = function(clip) {
 		return "default";
 	}
 };
-RenderSupportJSPixi.addFilters = function(clip,filters) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.addFilters = function(clip,filters) {
+	RenderSupport.PixiStageChanged = true;
 	filters = filters.filter(function(f) {
 		return f != null;
 	});
 	if(filters.length > 0) clip.filters = filters; else clip.filters = null;
 };
-RenderSupportJSPixi.makeBevel = function(angle,distance,radius,spread,color1,alpha1,color2,alpha2,inside) {
+RenderSupport.makeBevel = function(angle,distance,radius,spread,color1,alpha1,color2,alpha2,inside) {
 	return null;
 };
-RenderSupportJSPixi.makeBlur = function(radius,spread) {
+RenderSupport.makeBlur = function(radius,spread) {
 	var b = new PIXI.filters.BlurFilter();
 	b.blur = spread;
 	return b;
 };
-RenderSupportJSPixi.makeDropShadow = function(angle,distance,radius,spread,color,alpha,inside) {
+RenderSupport.makeDropShadow = function(angle,distance,radius,spread,color,alpha,inside) {
 	var ds = new PIXI.filters.DropShadowFilter();
 	ds.angle = angle;
 	ds.distance = distance;
@@ -5199,99 +5199,99 @@ RenderSupportJSPixi.makeDropShadow = function(angle,distance,radius,spread,color
 	ds.blur = spread;
 	return ds;
 };
-RenderSupportJSPixi.makeGlow = function(radius,spread,color,alpha,inside) {
-	var glow = new PIXI.AbstractFilter(_$RenderSupportJSPixi_Shaders.VertexSrc.join("\n"),_$RenderSupportJSPixi_Shaders.GlowFragmentSrc.join("\n"),{ });
+RenderSupport.makeGlow = function(radius,spread,color,alpha,inside) {
+	var glow = new PIXI.AbstractFilter(_$RenderSupport_Shaders.VertexSrc.join("\n"),_$RenderSupport_Shaders.GlowFragmentSrc.join("\n"),{ });
 	return glow;
 };
-RenderSupportJSPixi.setScrollRect = function(clip,left,top,width,height) {
+RenderSupport.setScrollRect = function(clip,left,top,width,height) {
 };
-RenderSupportJSPixi.makeGraphicsRect = function(width,height) {
+RenderSupport.makeGraphicsRect = function(width,height) {
 	var g = new PIXI.Graphics();
 	g.beginFill(16777215);
 	g.drawRect(0.0,0.0,width,height);
 	g.endFill();
 	return g;
 };
-RenderSupportJSPixi.getTextMetrics = function(textfield) {
+RenderSupport.getTextMetrics = function(textfield) {
 	return textfield.getTextMetrics();
 };
-RenderSupportJSPixi.makeBitmap = function() {
+RenderSupport.makeBitmap = function() {
 	return null;
 };
-RenderSupportJSPixi.bitmapDraw = function(bitmap,clip,width,height) {
+RenderSupport.bitmapDraw = function(bitmap,clip,width,height) {
 };
-RenderSupportJSPixi.getClipVisible = function(clip) {
+RenderSupport.getClipVisible = function(clip) {
 	return clip.worldVisible;
 };
-RenderSupportJSPixi.setClipVisible = function(clip,vis) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipVisible = function(clip,vis) {
+	RenderSupport.PixiStageChanged = true;
 	clip.visible = vis;
 };
-RenderSupportJSPixi.setFullScreenTarget = function(clip) {
-	if(js_Boot.__instanceof(clip,_$RenderSupportJSPixi_VideoClip)) RenderSupportJSPixi.FullScreenTargetClip = clip;
+RenderSupport.setFullScreenTarget = function(clip) {
+	if(js_Boot.__instanceof(clip,_$RenderSupport_VideoClip)) RenderSupport.FullScreenTargetClip = clip;
 };
-RenderSupportJSPixi.setFullScreenRectangle = function(x,y,w,h) {
+RenderSupport.setFullScreenRectangle = function(x,y,w,h) {
 };
-RenderSupportJSPixi.resetFullScreenTarget = function() {
-	RenderSupportJSPixi.FullScreenTargetClip = null;
+RenderSupport.resetFullScreenTarget = function() {
+	RenderSupport.FullScreenTargetClip = null;
 };
-RenderSupportJSPixi.toggleFullScreen = function() {
-	if(RenderSupportJSPixi.FullScreenTargetClip != null) {
-		if(RenderSupportJSPixi.IsFullScreen) RenderSupportJSPixi.FullScreenTargetClip.exitFullScreen(); else RenderSupportJSPixi.FullScreenTargetClip.requestFullScreen();
-		RenderSupportJSPixi.IsFullScreen = !RenderSupportJSPixi.IsFullScreen;
+RenderSupport.toggleFullScreen = function() {
+	if(RenderSupport.FullScreenTargetClip != null) {
+		if(RenderSupport.IsFullScreen) RenderSupport.FullScreenTargetClip.exitFullScreen(); else RenderSupport.FullScreenTargetClip.requestFullScreen();
+		RenderSupport.IsFullScreen = !RenderSupport.IsFullScreen;
 	}
 };
-RenderSupportJSPixi.onFullScreen = function(fn) {
+RenderSupport.onFullScreen = function(fn) {
 	return function() {
 	};
 };
-RenderSupportJSPixi.isFullScreen = function() {
-	return RenderSupportJSPixi.IsFullScreen;
+RenderSupport.isFullScreen = function() {
+	return RenderSupport.IsFullScreen;
 };
-RenderSupportJSPixi.setWindowTitle = function(title) {
+RenderSupport.setWindowTitle = function(title) {
 	window.document.title = title;
 };
-RenderSupportJSPixi.takeSnapshot = function(path) {
+RenderSupport.takeSnapshot = function(path) {
 };
-RenderSupportJSPixi.getScreenPixelColor = function(x,y) {
+RenderSupport.getScreenPixelColor = function(x,y) {
 	return 0;
 };
-RenderSupportJSPixi.makeWebClip = function(url,domain,useCache,reloadBlock,cb,ondone) {
-	return new _$RenderSupportJSPixi_WebClip(url,domain,useCache,reloadBlock,cb,ondone);
+RenderSupport.makeWebClip = function(url,domain,useCache,reloadBlock,cb,ondone) {
+	return new _$RenderSupport_WebClip(url,domain,useCache,reloadBlock,cb,ondone);
 };
-RenderSupportJSPixi.webClipHostCall = function(clip,name,args) {
+RenderSupport.webClipHostCall = function(clip,name,args) {
 	return clip.hostCall(name,args);
 };
-RenderSupportJSPixi.getNumberOfCameras = function() {
+RenderSupport.getNumberOfCameras = function() {
 	return 0;
 };
-RenderSupportJSPixi.getCameraInfo = function(id) {
+RenderSupport.getCameraInfo = function(id) {
 	return "";
 };
-RenderSupportJSPixi.makeCamera = function(uri,camID,camWidth,camHeight,camFps,vidWidth,vidHeight,recordMode,cbOnReadyForRecording,cbOnFailed) {
+RenderSupport.makeCamera = function(uri,camID,camWidth,camHeight,camFps,vidWidth,vidHeight,recordMode,cbOnReadyForRecording,cbOnFailed) {
 	return [null,null];
 };
-RenderSupportJSPixi.startRecord = function(str,filename,mode) {
+RenderSupport.startRecord = function(str,filename,mode) {
 };
-RenderSupportJSPixi.stopRecord = function(str) {
+RenderSupport.stopRecord = function(str) {
 };
-RenderSupportJSPixi.cameraTakePhoto = function(cameraId,additionalInfo,desiredWidth,desiredHeight,compressQuality,fileName) {
+RenderSupport.cameraTakePhoto = function(cameraId,additionalInfo,desiredWidth,desiredHeight,compressQuality,fileName) {
 };
-RenderSupportJSPixi.addGestureListener = function(event,cb) {
+RenderSupport.addGestureListener = function(event,cb) {
 	return function() {
 	};
 };
-RenderSupportJSPixi.setWebClipZoomable = function(clip,zoomable) {
+RenderSupport.setWebClipZoomable = function(clip,zoomable) {
 };
-RenderSupportJSPixi.setInterfaceOrientation = function(orientation) {
+RenderSupport.setInterfaceOrientation = function(orientation) {
 };
-RenderSupportJSPixi.setUrlHash = function(hash) {
+RenderSupport.setUrlHash = function(hash) {
 	window.location.hash = hash;
 };
-RenderSupportJSPixi.getUrlHash = function() {
+RenderSupport.getUrlHash = function() {
 	return window.location.hash;
 };
-RenderSupportJSPixi.addUrlHashListener = function(cb) {
+RenderSupport.addUrlHashListener = function(cb) {
 	var wrapper = function(e) {
 		cb(window.location.hash);
 	};
@@ -5300,12 +5300,12 @@ RenderSupportJSPixi.addUrlHashListener = function(cb) {
 		window.removeEventListener("hashchanged",wrapper);
 	};
 };
-RenderSupportJSPixi.setGlobalZoomEnabled = function(enabled) {
+RenderSupport.setGlobalZoomEnabled = function(enabled) {
 };
-var _$RenderSupportJSPixi_WebClip = function(url,domain,useCache,reloadBlock,cb,ondone) {
+var _$RenderSupport_WebClip = function(url,domain,useCache,reloadBlock,cb,ondone) {
 	this.iframe = null;
 	var _g = this;
-	_$RenderSupportJSPixi_NativeWidgetClip.call(this);
+	_$RenderSupport_NativeWidgetClip.call(this);
 	if(domain != "") try {
 		window.document.domain = domain;
 	} catch( e ) {
@@ -5314,7 +5314,7 @@ var _$RenderSupportJSPixi_WebClip = function(url,domain,useCache,reloadBlock,cb,
 		Errors.report("Can not set RealHTML domain" + Std.string(e));
 	}
 	this.createNativeWidget("div");
-	if(_$RenderSupportJSPixi_WebClip.isIOS()) {
+	if(_$RenderSupport_WebClip.isIOS()) {
 		this.nativeWidget.style.webkitOverflowScrolling = "touch";
 		this.nativeWidget.style.overflowY = "scroll";
 	}
@@ -5328,10 +5328,10 @@ var _$RenderSupportJSPixi_WebClip = function(url,domain,useCache,reloadBlock,cb,
 	this.iframe.onload = function() {
 		try {
 			ondone("OK");
-			if(_$RenderSupportJSPixi_WebClip.isIOS() && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) _g.iframe.scrolling = "no";
+			if(_$RenderSupport_WebClip.isIOS() && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) _g.iframe.scrolling = "no";
 			_g.iframe.contentWindow.callflow = cb;
 			if(_g.iframe.contentWindow.pushCallflowBuffer) _g.iframe.contentWindow.pushCallflowBuffer();
-			if(_$RenderSupportJSPixi_WebClip.isIOS() && _g.iframe.contentWindow.setSplashScreen != null) _g.iframe.scrolling = "no";
+			if(_$RenderSupport_WebClip.isIOS() && _g.iframe.contentWindow.setSplashScreen != null) _g.iframe.scrolling = "no";
 		} catch( e1 ) {
 			haxe_CallStack.lastException = e1;
 			if (e1 instanceof js__$Boot_HaxeError) e1 = e1.val;
@@ -5339,13 +5339,13 @@ var _$RenderSupportJSPixi_WebClip = function(url,domain,useCache,reloadBlock,cb,
 		}
 	};
 };
-_$RenderSupportJSPixi_WebClip.__name__ = true;
-_$RenderSupportJSPixi_WebClip.isIOS = function() {
+_$RenderSupport_WebClip.__name__ = true;
+_$RenderSupport_WebClip.isIOS = function() {
 	var ua = window.navigator.userAgent;
 	return ua.indexOf("iPhone") != -1 || ua.indexOf("iPad") != -1 || ua.indexOf("iPod") != -1;
 };
-_$RenderSupportJSPixi_WebClip.__super__ = _$RenderSupportJSPixi_NativeWidgetClip;
-_$RenderSupportJSPixi_WebClip.prototype = $extend(_$RenderSupportJSPixi_NativeWidgetClip.prototype,{
+_$RenderSupport_WebClip.__super__ = _$RenderSupport_NativeWidgetClip;
+_$RenderSupport_WebClip.prototype = $extend(_$RenderSupport_NativeWidgetClip.prototype,{
 	appendReloadBlock: function() {
 		var _g = this;
 		var div = window.document.createElement("div");
@@ -5374,7 +5374,7 @@ _$RenderSupportJSPixi_WebClip.prototype = $extend(_$RenderSupportJSPixi_NativeWi
 		this.nativeWidget.appendChild(div);
 	}
 	,updateNativeWidget: function() {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.updateNativeWidget.call(this);
+		_$RenderSupport_NativeWidgetClip.prototype.updateNativeWidget.call(this);
 		if(this.worldVisible && this.nativeWidget != null) {
 			this.iframe.style.width = this.nativeWidget.style.width;
 			this.iframe.style.height = this.nativeWidget.style.height;
@@ -5400,7 +5400,7 @@ _$RenderSupportJSPixi_WebClip.prototype = $extend(_$RenderSupportJSPixi_NativeWi
 		}
 		return null;
 	}
-	,__class__: _$RenderSupportJSPixi_WebClip
+	,__class__: _$RenderSupport_WebClip
 });
 var FlowFontStyle = function() { };
 FlowFontStyle.__name__ = true;
@@ -5409,18 +5409,18 @@ FlowFontStyle.fromFlowFont = function(name) {
 	var style = Reflect.field(FlowFontStyle.flowFontStyles,name.toLowerCase());
 	if(style != null) return style; else return { family : name, weight : "", size : 0.0, style : "normal"};
 };
-var _$RenderSupportJSPixi_PixiText = function() {
+var _$RenderSupport_PixiText = function() {
 	this.pixi_text = null;
-	_$RenderSupportJSPixi_TextField.call(this);
+	_$RenderSupport_TextField.call(this);
 	this.pixi_text = new PIXI.Text("");
-	if(_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap) this.pixi_text.cacheAsBitmap = true;
+	if(_$RenderSupport_TextField.cacheTextsAsBitmap) this.pixi_text.cacheAsBitmap = true;
 	this.addChild(this.pixi_text);
 };
-_$RenderSupportJSPixi_PixiText.__name__ = true;
-_$RenderSupportJSPixi_PixiText.__super__ = _$RenderSupportJSPixi_TextField;
-_$RenderSupportJSPixi_PixiText.prototype = $extend(_$RenderSupportJSPixi_TextField.prototype,{
+_$RenderSupport_PixiText.__name__ = true;
+_$RenderSupport_PixiText.__super__ = _$RenderSupport_TextField;
+_$RenderSupport_PixiText.prototype = $extend(_$RenderSupport_TextField.prototype,{
 	setTextAndStyle: function(text,fontfamily,fontsize,fillcolor,fillopacity,backgroundcolour,backgroundopacity) {
-		_$RenderSupportJSPixi_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fillcolor,fillopacity,backgroundcolour,backgroundopacity);
+		_$RenderSupport_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fillcolor,fillopacity,backgroundcolour,backgroundopacity);
 		var style = { font : this.getFontString(fontfamily,fontsize < 0.6?0.6:fontsize), fill : "#" + StringTools.hex(fillcolor,6)};
 		this.pixi_text.text = text;
 		this.pixi_text.style = style;
@@ -5441,9 +5441,9 @@ _$RenderSupportJSPixi_PixiText.prototype = $extend(_$RenderSupportJSPixi_TextFie
 	,setWordWrapWidth: function(wrap_width) {
 		this.pixi_text.style.wordWrapWidth = wrap_width;
 	}
-	,__class__: _$RenderSupportJSPixi_PixiText
+	,__class__: _$RenderSupport_PixiText
 });
-var _$RenderSupportJSPixi_DFontText = function() {
+var _$RenderSupport_DFontText = function() {
 	this.fontfamily = "Book";
 	this.clipWidth = 0.0;
 	this.baseline = 14.4;
@@ -5451,18 +5451,18 @@ var _$RenderSupportJSPixi_DFontText = function() {
 	this.text = "";
 	this.wordWrapWidth = -1.0;
 	this.wordWrap = false;
-	_$RenderSupportJSPixi_TextField.call(this);
+	_$RenderSupport_TextField.call(this);
 };
-_$RenderSupportJSPixi_DFontText.__name__ = true;
-_$RenderSupportJSPixi_DFontText.getDFontInfo = function(fontfamily) {
+_$RenderSupport_DFontText.__name__ = true;
+_$RenderSupport_DFontText.getDFontInfo = function(fontfamily) {
 	return DFontText.dfont_table[fontfamily];
 };
-_$RenderSupportJSPixi_DFontText.__super__ = _$RenderSupportJSPixi_TextField;
-_$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextField.prototype,{
+_$RenderSupport_DFontText.__super__ = _$RenderSupport_TextField;
+_$RenderSupport_DFontText.prototype = $extend(_$RenderSupport_TextField.prototype,{
 	setTextAndStyle: function(text,fontfamily,fontsize,fillcolor,fillopacity,backgroundcolour,backgroundopacity) {
-		_$RenderSupportJSPixi_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fillcolor,fillopacity,backgroundcolour,backgroundopacity);
-		if(_$RenderSupportJSPixi_DFontText.getDFontInfo(fontfamily) == null) {
-			var met = _$RenderSupportJSPixi_DFontText.getDFontInfo("Book");
+		_$RenderSupport_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fillcolor,fillopacity,backgroundcolour,backgroundopacity);
+		if(_$RenderSupport_DFontText.getDFontInfo(fontfamily) == null) {
+			var met = _$RenderSupport_DFontText.getDFontInfo("Book");
 			if(met != null) {
 				Errors.print("Trying to render DFont " + fontfamily + " which is not loaded. Will use default font");
 				DFontText.dfont_table[fontfamily] = met;
@@ -5472,7 +5472,7 @@ _$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextFi
 				return;
 			}
 		}
-		var metrics = _$RenderSupportJSPixi_DFontText.getDFontInfo(fontfamily);
+		var metrics = _$RenderSupport_DFontText.getDFontInfo(fontfamily);
 		this.style.font = this.getFontString(fontfamily,fontsize);
 		if(fillcolor != 0) this.style.tint = fillcolor; else this.style.tint = 65793;
 		if(this.nativeWidget != null && this.nativeWidget.type == "password") this.text = this.getBulletsString(text.length); else this.text = text;
@@ -5484,8 +5484,8 @@ _$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextFi
 		return fontsize + "px " + fontfamily;
 	}
 	,getTextMetrics: function() {
-		var metrics = _$RenderSupportJSPixi_DFontText.getDFontInfo(this.fontfamily);
-		if(metrics == null) return _$RenderSupportJSPixi_TextField.prototype.getTextMetrics.call(this);
+		var metrics = _$RenderSupport_DFontText.getDFontInfo(this.fontfamily);
+		if(metrics == null) return _$RenderSupport_TextField.prototype.getTextMetrics.call(this);
 		return [metrics.ascender * this.fontSize,metrics.descender * this.fontSize,0.15 * this.fontSize];
 	}
 	,getWidth: function() {
@@ -5522,9 +5522,9 @@ _$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextFi
 					var word = _g3[_g2];
 					++_g2;
 					var clip = new DFontText(word,this.style);
-					if(_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap) {
+					if(_$RenderSupport_TextField.cacheTextsAsBitmap) {
 						clip.cacheAsBitmap = true;
-						clip.children = _$RenderSupportJSPixi_DFontText.emptyChilds;
+						clip.children = _$RenderSupport_DFontText.emptyChilds;
 					}
 					var word_width = clip.getTextDimensions().width;
 					if(x > 0.0 && x + word_width > this.wordWrapWidth) {
@@ -5544,9 +5544,9 @@ _$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextFi
 			}
 		} else {
 			var c = new DFontText(this.text,this.style);
-			if(_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap) {
+			if(_$RenderSupport_TextField.cacheTextsAsBitmap) {
 				c.cacheAsBitmap = true;
-				c.children = _$RenderSupportJSPixi_DFontText.emptyChilds;
+				c.children = _$RenderSupport_DFontText.emptyChilds;
 			}
 			c.y = this.baseline;
 			c.alpha = this.fillOpacity;
@@ -5555,10 +5555,10 @@ _$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextFi
 		}
 		this.setTextBackground();
 	}
-	,__class__: _$RenderSupportJSPixi_DFontText
+	,__class__: _$RenderSupport_DFontText
 });
-var _$RenderSupportJSPixi_Shaders = function() { };
-_$RenderSupportJSPixi_Shaders.__name__ = true;
+var _$RenderSupport_Shaders = function() { };
+_$RenderSupport_Shaders.__name__ = true;
 var haxe_IMap = function() { };
 haxe_IMap.__name__ = true;
 var haxe_ds_IntMap = function() {
@@ -6159,7 +6159,7 @@ if(Array.prototype.filter == null) Array.prototype.filter = function(f1) {
 	return a1;
 };
 if(Util.getParameter("oldjs") == "1") RenderSupportHx.oldinit(); else {
-	window.RenderSupportHx = window.RenderSupportJSPixi;
+	window.RenderSupportHx = window.RenderSupport;
 }
 var __map_reserved = {}
 var ArrayBuffer = $global.ArrayBuffer || js_html_compat_ArrayBuffer;
@@ -6178,35 +6178,35 @@ haxe_crypto_Base64.BYTES = haxe_io_Bytes.ofString(haxe_crypto_Base64.CHARS);
 js_Boot.__toStr = {}.toString;
 RenderSupportHx.typekitTryCount = 0;
 RenderSupportHx.WebClipInitSize = 100.0;
-_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap = false;
-_$RenderSupportJSPixi_TextField.Zerro = new PIXI.Point(0.0,0.0);
-_$RenderSupportJSPixi_TextField.One = new PIXI.Point(1.0,1.0);
-_$RenderSupportJSPixi_VideoClip.UsePixiTextures = false;
-_$RenderSupportJSPixi_VideoClip.VideosOnStage = 0;
-RenderSupportJSPixi.PixiStage = new PIXI.Container();
-RenderSupportJSPixi.NativeWidgetClips = [];
-RenderSupportJSPixi.AccessWidgetClips = [];
-RenderSupportJSPixi.MousePos = new PIXI.Point(0.0,0.0);
-RenderSupportJSPixi.PixiStageChanged = true;
-RenderSupportJSPixi.PixiStageSizeChanged = false;
-RenderSupportJSPixi.DebugMode = Util.getParameter("rendebug") == "1" && !NativeHx.isTouchScreen() || Util.getParameter("rendebug") == "2";
-RenderSupportJSPixi.UseDFont = Util.getParameter("dfont") != "0" && Util.getParameter("lang") != "zh";
-RenderSupportJSPixi.ShowDebugClipsTree = Util.getParameter("clipstree") == "1";
-RenderSupportJSPixi.CacheTextsAsBitmap = Util.getParameter("cachetext") == "1";
-RenderSupportJSPixi.Antialias = Util.getParameter("antialias") != null?Util.getParameter("antialias") == "1":!NativeHx.isTouchScreen();
-RenderSupportJSPixi.RendererType = Util.getParameter("renderer") != null?Util.getParameter("renderer"):window.useRenderer;
-RenderSupportJSPixi.UseVideoTextures = Util.getParameter("videotexture") != "0";
-RenderSupportJSPixi.isAndroid = window.navigator.userAgent.toLowerCase().indexOf("android") >= 0;
-RenderSupportJSPixi.RenderSupportJSPixiInitialised = RenderSupportJSPixi.init();
-RenderSupportJSPixi.MouseUpReceived = false;
-RenderSupportJSPixi.FlowMainFunction = "flow_main";
-RenderSupportJSPixi.StageChangedTimestamp = -1.0;
-RenderSupportJSPixi.sharedText = new PIXI.Text("");
-RenderSupportJSPixi.IsFullScreen = false;
-_$RenderSupportJSPixi_DFontText.defaultFontFamily = "Book";
-_$RenderSupportJSPixi_DFontText.emptyChilds = [];
-_$RenderSupportJSPixi_Shaders.GlowFragmentSrc = ["precision lowp float;","varying vec2 vTextureCoord;","varying vec4 vColor;","uniform sampler2D uSampler;","void main() {","vec4 sum = vec4(0);","vec2 texcoord = vTextureCoord;","for(int xx = -4; xx <= 4; xx++) {","for(int yy = -3; yy <= 3; yy++) {","float dist = sqrt(float(xx*xx) + float(yy*yy));","float factor = 0.0;","if (dist == 0.0) {","factor = 2.0;","} else {","factor = 2.0/abs(float(dist));","}","sum += texture2D(uSampler, texcoord + vec2(xx, yy) * 0.002) * factor;","}","}","gl_FragColor = sum * 0.025 + texture2D(uSampler, texcoord);","}"];
-_$RenderSupportJSPixi_Shaders.VertexSrc = ["attribute vec2 aVertexPosition;","attribute vec2 aTextureCoord;","attribute vec4 aColor;","uniform mat3 projectionMatrix;","varying vec2 vTextureCoord;","varying vec4 vColor;","void main(void)","{","gl_Position = vec4((projectionMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);","vTextureCoord = aTextureCoord;","vColor = vec4(aColor.rgb * aColor.a, aColor.a);","}"];
+_$RenderSupport_TextField.cacheTextsAsBitmap = false;
+_$RenderSupport_TextField.Zerro = new PIXI.Point(0.0,0.0);
+_$RenderSupport_TextField.One = new PIXI.Point(1.0,1.0);
+_$RenderSupport_VideoClip.UsePixiTextures = false;
+_$RenderSupport_VideoClip.VideosOnStage = 0;
+RenderSupport.PixiStage = new PIXI.Container();
+RenderSupport.NativeWidgetClips = [];
+RenderSupport.AccessWidgetClips = [];
+RenderSupport.MousePos = new PIXI.Point(0.0,0.0);
+RenderSupport.PixiStageChanged = true;
+RenderSupport.PixiStageSizeChanged = false;
+RenderSupport.DebugMode = Util.getParameter("rendebug") == "1" && !NativeHx.isTouchScreen() || Util.getParameter("rendebug") == "2";
+RenderSupport.UseDFont = Util.getParameter("dfont") != "0" && Util.getParameter("lang") != "zh";
+RenderSupport.ShowDebugClipsTree = Util.getParameter("clipstree") == "1";
+RenderSupport.CacheTextsAsBitmap = Util.getParameter("cachetext") == "1";
+RenderSupport.Antialias = Util.getParameter("antialias") != null?Util.getParameter("antialias") == "1":!NativeHx.isTouchScreen();
+RenderSupport.RendererType = Util.getParameter("renderer") != null?Util.getParameter("renderer"):window.useRenderer;
+RenderSupport.UseVideoTextures = Util.getParameter("videotexture") != "0";
+RenderSupport.isAndroid = window.navigator.userAgent.toLowerCase().indexOf("android") >= 0;
+RenderSupport.RenderSupportInitialised = RenderSupport.init();
+RenderSupport.MouseUpReceived = false;
+RenderSupport.FlowMainFunction = "flow_main";
+RenderSupport.StageChangedTimestamp = -1.0;
+RenderSupport.sharedText = new PIXI.Text("");
+RenderSupport.IsFullScreen = false;
+_$RenderSupport_DFontText.defaultFontFamily = "Book";
+_$RenderSupport_DFontText.emptyChilds = [];
+_$RenderSupport_Shaders.GlowFragmentSrc = ["precision lowp float;","varying vec2 vTextureCoord;","varying vec4 vColor;","uniform sampler2D uSampler;","void main() {","vec4 sum = vec4(0);","vec2 texcoord = vTextureCoord;","for(int xx = -4; xx <= 4; xx++) {","for(int yy = -3; yy <= 3; yy++) {","float dist = sqrt(float(xx*xx) + float(yy*yy));","float factor = 0.0;","if (dist == 0.0) {","factor = 2.0;","} else {","factor = 2.0/abs(float(dist));","}","sum += texture2D(uSampler, texcoord + vec2(xx, yy) * 0.002) * factor;","}","}","gl_FragColor = sum * 0.025 + texture2D(uSampler, texcoord);","}"];
+_$RenderSupport_Shaders.VertexSrc = ["attribute vec2 aVertexPosition;","attribute vec2 aTextureCoord;","attribute vec4 aColor;","uniform mat3 projectionMatrix;","varying vec2 vTextureCoord;","varying vec4 vColor;","void main(void)","{","gl_Position = vec4((projectionMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);","vTextureCoord = aTextureCoord;","vColor = vec4(aColor.rgb * aColor.a, aColor.a);","}"];
 Test40602FlowJsProgram.globals__ = (function($this) {
 	var $r;
 	HaxeRuntime._structnames_ = new haxe_ds_IntMap();
