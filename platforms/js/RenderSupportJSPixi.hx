@@ -338,7 +338,7 @@ class RenderSupportJSPixi {
 		};
 
 		var width : Int = Browser.window.innerWidth;
-		var height : Int = Browser.window.innerHeight + getSafeArea()[1];
+		var height : Int = Browser.window.innerHeight + (getSafeArea()[1] > 0 ? getSafeArea()[1] + getSafeArea()[3] : 0.0);
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
@@ -640,7 +640,7 @@ class RenderSupportJSPixi {
 				// browser window is fullscreen
 				var screen_size = getScreenSize();
 				win_width = screen_size.width;
-				win_height = screen_size.height + getSafeArea()[1] - cast getMobileTopHeight();
+				win_height = screen_size.height + (getSafeArea()[1] > 0 ? getSafeArea()[1] + getSafeArea()[3] : 0.0) - cast getMobileTopHeight();
 
 				if (Platform.isAndroid) {
 					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
