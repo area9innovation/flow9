@@ -454,7 +454,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function isPortaitOrientation() {
-		return Browser.window.matchMedia("(orientation: portrait)").matches;
+		return Browser.window.matchMedia("(orientation: portrait)").matches || (Platform.isAndroid && Browser.window.orientation == 0);
 	}
 
 	private static inline function calculateMobileTopHeight() {
