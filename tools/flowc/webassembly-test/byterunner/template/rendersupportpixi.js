@@ -3596,34 +3596,34 @@ GesturesDetector.addPinchListener = function(cb) {
 		HxOverrides.remove(GesturesDetector.PinchListeners,cb);
 	};
 };
-var _$RenderSupportJSPixi_FlowContainer = function() {
+var _$RenderSupport_FlowContainer = function() {
 	this.boundsHeight = 0.0;
 	this.boundsWidth = 0.0;
 	var _g = this;
 	PIXI.Container.call(this);
 	this.on("childrenchanged",function() {
-		if(_g.parent != null) _g.parent.emit("childrenchanged"); else if(_g == RenderSupportJSPixi.PixiStage) RenderSupportJSPixi.PixiStageChanged = true;
+		if(_g.parent != null) _g.parent.emit("childrenchanged"); else if(_g == RenderSupport.PixiStage) RenderSupport.PixiStageChanged = true;
 	});
-	this.on("transformchanged",RenderSupportJSPixi.InvalidateStage);
-	this.on("graphicschanged",RenderSupportJSPixi.InvalidateStage);
+	this.on("transformchanged",RenderSupport.InvalidateStage);
+	this.on("graphicschanged",RenderSupport.InvalidateStage);
 };
-_$RenderSupportJSPixi_FlowContainer.__name__ = true;
-_$RenderSupportJSPixi_FlowContainer.getFirstGraphicsOrSprite = function(clip) {
-	if((clip instanceof _$RenderSupportJSPixi_FlowGraphics) || (clip instanceof _$RenderSupportJSPixi_FlowSprite)) return clip;
+_$RenderSupport_FlowContainer.__name__ = true;
+_$RenderSupport_FlowContainer.getFirstGraphicsOrSprite = function(clip) {
+	if((clip instanceof _$RenderSupport_FlowGraphics) || (clip instanceof _$RenderSupport_FlowSprite)) return clip;
 	if(clip.children != null) {
 		var _g = 0;
 		var _g1 = clip.children;
 		while(_g < _g1.length) {
 			var c = _g1[_g];
 			++_g;
-			var g = _$RenderSupportJSPixi_FlowContainer.getFirstGraphicsOrSprite(c);
+			var g = _$RenderSupport_FlowContainer.getFirstGraphicsOrSprite(c);
 			if(g != null) return g;
 		}
 	}
 	return null;
 };
-_$RenderSupportJSPixi_FlowContainer.__super__ = PIXI.Container;
-_$RenderSupportJSPixi_FlowContainer.prototype = $extend(PIXI.Container.prototype,{
+_$RenderSupport_FlowContainer.__super__ = PIXI.Container;
+_$RenderSupport_FlowContainer.prototype = $extend(PIXI.Container.prototype,{
 	addChild: function(child) {
 		var addedChild = PIXI.Container.prototype.addChild.call(this,child);
 		if(addedChild != null) {
@@ -3742,7 +3742,7 @@ _$RenderSupportJSPixi_FlowContainer.prototype = $extend(PIXI.Container.prototype
 		} else {
 			this.setClipX(this.x - left);
 			this.setClipY(this.y - top);
-			this.scrollRect = new _$RenderSupportJSPixi_FlowGraphics();
+			this.scrollRect = new _$RenderSupport_FlowGraphics();
 			this.addChild(this.scrollRect);
 			this.setClipMask(this.scrollRect);
 		}
@@ -3764,14 +3764,14 @@ _$RenderSupportJSPixi_FlowContainer.prototype = $extend(PIXI.Container.prototype
 		var _g = this;
 		if(maskContainer != this.scrollRect) this.removeScrollRect();
 		this.mask = null;
-		if(RenderSupportJSPixi.RendererType == "webgl") {
-			this.mask = _$RenderSupportJSPixi_FlowContainer.getFirstGraphicsOrSprite(maskContainer);
+		if(RenderSupport.RendererType == "webgl") {
+			this.mask = _$RenderSupport_FlowContainer.getFirstGraphicsOrSprite(maskContainer);
 			if(this.mask == null) maskContainer.visible = false;
 		} else {
 			this.alphaMask = null;
 			var obj = maskContainer;
 			while(obj.children != null && obj.children.length == 1) obj = obj.children[0];
-			if((obj instanceof _$RenderSupportJSPixi_FlowGraphics)) this.mask = obj; else this.alphaMask = maskContainer;
+			if((obj instanceof _$RenderSupport_FlowGraphics)) this.mask = obj; else this.alphaMask = maskContainer;
 		}
 		if(this.mask != null) this.mask.once("removed",function() {
 			_g.mask = null;
@@ -3781,14 +3781,14 @@ _$RenderSupportJSPixi_FlowContainer.prototype = $extend(PIXI.Container.prototype
 		});
 		this.emit("graphicschanged");
 	}
-	,__class__: _$RenderSupportJSPixi_FlowContainer
+	,__class__: _$RenderSupport_FlowContainer
 });
-var _$RenderSupportJSPixi_NativeWidgetClip = function() {
-	_$RenderSupportJSPixi_FlowContainer.call(this);
+var _$RenderSupport_NativeWidgetClip = function() {
+	_$RenderSupport_FlowContainer.call(this);
 };
-_$RenderSupportJSPixi_NativeWidgetClip.__name__ = true;
-_$RenderSupportJSPixi_NativeWidgetClip.__super__ = _$RenderSupportJSPixi_FlowContainer;
-_$RenderSupportJSPixi_NativeWidgetClip.prototype = $extend(_$RenderSupportJSPixi_FlowContainer.prototype,{
+_$RenderSupport_NativeWidgetClip.__name__ = true;
+_$RenderSupport_NativeWidgetClip.__super__ = _$RenderSupport_FlowContainer;
+_$RenderSupport_NativeWidgetClip.prototype = $extend(_$RenderSupport_FlowContainer.prototype,{
 	getWidth: function() {
 		return 0.0;
 	}
@@ -3816,11 +3816,11 @@ _$RenderSupportJSPixi_NativeWidgetClip.prototype = $extend(_$RenderSupportJSPixi
 		this.nativeWidget = window.document.createElement(node_name);
 		if(parentNode != null) parentNode.appendChild(this.nativeWidget); else window.document.body.appendChild(this.nativeWidget);
 		this.nativeWidget.style.position = "fixed";
-		RenderSupportJSPixi.PixiStage.on("drawframe",$bind(this,this.updateNativeWidget));
+		RenderSupport.PixiStage.on("drawframe",$bind(this,this.updateNativeWidget));
 		this.on("removed",$bind(this,this.deleteNativeWidget));
 	}
 	,deleteNativeWidget: function() {
-		RenderSupportJSPixi.PixiStage.off("drawframe",$bind(this,this.updateNativeWidget));
+		RenderSupport.PixiStage.off("drawframe",$bind(this,this.updateNativeWidget));
 		if(this.nativeWidget != null) {
 			if(this.nativeWidget.parentNode != null) this.nativeWidget.parentNode.removeChild(this.nativeWidget);
 			delete nativeWidget;
@@ -3836,55 +3836,55 @@ _$RenderSupportJSPixi_NativeWidgetClip.prototype = $extend(_$RenderSupportJSPixi
 		return this.nativeWidget != null && window.document.activeElement == this.nativeWidget;
 	}
 	,requestFullScreen: function() {
-		if(this.nativeWidget != null) RenderSupportJSPixi.requestFullScreen(this.nativeWidget);
+		if(this.nativeWidget != null) RenderSupport.requestFullScreen(this.nativeWidget);
 	}
 	,exitFullScreen: function() {
-		if(this.nativeWidget != null) RenderSupportJSPixi.exitFullScreen(this.nativeWidget);
+		if(this.nativeWidget != null) RenderSupport.exitFullScreen(this.nativeWidget);
 	}
-	,__class__: _$RenderSupportJSPixi_NativeWidgetClip
+	,__class__: _$RenderSupport_NativeWidgetClip
 });
-var _$RenderSupportJSPixi_VideoClip = function(metricsFn,playFn,durationFn,positionFn) {
+var _$RenderSupport_VideoClip = function(metricsFn,playFn,durationFn,positionFn) {
 	this.fontFamily = "";
 	this.endTime = 0;
 	this.startTime = 0;
 	this.StartPaused = false;
 	this.VideoSprite = null;
-	_$RenderSupportJSPixi_NativeWidgetClip.call(this);
+	_$RenderSupport_NativeWidgetClip.call(this);
 	this.createNativeWidget("video");
-	_$RenderSupportJSPixi_VideoClip.VideosOnStage.push(this);
+	_$RenderSupport_VideoClip.VideosOnStage.push(this);
 	this.metricsFn = metricsFn;
 	this.playFn = playFn;
 	this.durationFn = durationFn;
 	this.positionFn = positionFn;
 	this.nativeWidget.addEventListener("loadedmetadata",$bind(this,this.metadataLoadedHandler),false);
 	if(Platform.isIOS) {
-		this.nativeWidget.addEventListener("webkitbeginfullscreen",RenderSupportJSPixi.fullScreenTrigger,false);
-		this.nativeWidget.addEventListener("webkitendfullscreen",RenderSupportJSPixi.fullScreenTrigger,false);
+		this.nativeWidget.addEventListener("webkitbeginfullscreen",RenderSupport.fullScreenTrigger,false);
+		this.nativeWidget.addEventListener("webkitendfullscreen",RenderSupport.fullScreenTrigger,false);
 	}
-	this.nativeWidget.addEventListener("fullscreenchange",RenderSupportJSPixi.fullScreenTrigger,false);
-	this.nativeWidget.addEventListener("webkitfullscreenchange",RenderSupportJSPixi.fullScreenTrigger,false);
-	this.nativeWidget.addEventListener("mozfullscreenchange",RenderSupportJSPixi.fullScreenTrigger,false);
-	if(!_$RenderSupportJSPixi_VideoClip.UsePixiTextures) this.nativeWidget.addTextTrack("subtitles","","en");
+	this.nativeWidget.addEventListener("fullscreenchange",RenderSupport.fullScreenTrigger,false);
+	this.nativeWidget.addEventListener("webkitfullscreenchange",RenderSupport.fullScreenTrigger,false);
+	this.nativeWidget.addEventListener("mozfullscreenchange",RenderSupport.fullScreenTrigger,false);
+	if(!_$RenderSupport_VideoClip.UsePixiTextures) this.nativeWidget.addTextTrack("subtitles","","en");
 };
-_$RenderSupportJSPixi_VideoClip.__name__ = true;
-_$RenderSupportJSPixi_VideoClip.NeedsDrawing = function() {
-	return _$RenderSupportJSPixi_VideoClip.UsePixiTextures && Lambda.exists(_$RenderSupportJSPixi_VideoClip.VideosOnStage,function(v) {
+_$RenderSupport_VideoClip.__name__ = true;
+_$RenderSupport_VideoClip.NeedsDrawing = function() {
+	return _$RenderSupport_VideoClip.UsePixiTextures && Lambda.exists(_$RenderSupport_VideoClip.VideosOnStage,function(v) {
 		return !v.nativeWidget.paused;
 	});
 };
-_$RenderSupportJSPixi_VideoClip.__super__ = _$RenderSupportJSPixi_NativeWidgetClip;
-_$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_NativeWidgetClip.prototype,{
+_$RenderSupport_VideoClip.__super__ = _$RenderSupport_NativeWidgetClip;
+_$RenderSupport_VideoClip.prototype = $extend(_$RenderSupport_NativeWidgetClip.prototype,{
 	metadataLoadedHandler: function() {
 		this.durationFn(this.nativeWidget.duration);
 		this.metricsFn(this.nativeWidget.videoWidth,this.nativeWidget.videoHeight);
 		this.nativeWidget.width = this.nativeWidget.videoWidth;
 		this.nativeWidget.height = this.nativeWidget.videoHeight;
 		this.checkTimeRange(this.nativeWidget.currentTime,true);
-		RenderSupportJSPixi.PixiStageChanged = true;
-		if(_$RenderSupportJSPixi_VideoClip.UsePixiTextures) this.createVideoSprite();
+		RenderSupport.PixiStageChanged = true;
+		if(_$RenderSupport_VideoClip.UsePixiTextures) this.createVideoSprite();
 	}
 	,updateNativeWidget: function() {
-		if(!_$RenderSupportJSPixi_VideoClip.UsePixiTextures) _$RenderSupportJSPixi_NativeWidgetClip.prototype.updateNativeWidget.call(this);
+		if(!_$RenderSupport_VideoClip.UsePixiTextures) _$RenderSupport_NativeWidgetClip.prototype.updateNativeWidget.call(this);
 		if(!this.nativeWidget.paused) this.checkTimeRange(this.nativeWidget.currentTime,true);
 	}
 	,checkTimeRange: function(currentTime,videoResponse) {
@@ -3905,26 +3905,26 @@ _$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_Native
 		}
 	}
 	,createNativeWidget: function(node) {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.createNativeWidget.call(this,node);
-		if(_$RenderSupportJSPixi_VideoClip.UsePixiTextures) this.nativeWidget.style.display = "none";
+		_$RenderSupport_NativeWidgetClip.prototype.createNativeWidget.call(this,node);
+		if(_$RenderSupport_VideoClip.UsePixiTextures) this.nativeWidget.style.display = "none";
 	}
 	,deleteNativeWidget: function() {
-		HxOverrides.remove(_$RenderSupportJSPixi_VideoClip.VideosOnStage,this);
+		HxOverrides.remove(_$RenderSupport_VideoClip.VideosOnStage,this);
 		this.deleteVideoSprite();
 		this.deleteSubtitlesClip();
 		this.nativeWidget.removeEventListener("loadedmetadata",$bind(this,this.metadataLoadedHandler));
 		if(Platform.isIOS) {
-			this.nativeWidget.removeEventListener("webkitbeginfullscreen",RenderSupportJSPixi.fullScreenTrigger);
-			this.nativeWidget.removeEventListener("webkitendfullscreen",RenderSupportJSPixi.fullScreenTrigger);
+			this.nativeWidget.removeEventListener("webkitbeginfullscreen",RenderSupport.fullScreenTrigger);
+			this.nativeWidget.removeEventListener("webkitendfullscreen",RenderSupport.fullScreenTrigger);
 		}
-		this.nativeWidget.removeEventListener("fullscreenchange",RenderSupportJSPixi.fullScreenTrigger);
-		this.nativeWidget.removeEventListener("webkitfullscreenchange",RenderSupportJSPixi.fullScreenTrigger);
-		this.nativeWidget.removeEventListener("mozfullscreenchange",RenderSupportJSPixi.fullScreenTrigger);
+		this.nativeWidget.removeEventListener("fullscreenchange",RenderSupport.fullScreenTrigger);
+		this.nativeWidget.removeEventListener("webkitfullscreenchange",RenderSupport.fullScreenTrigger);
+		this.nativeWidget.removeEventListener("mozfullscreenchange",RenderSupport.fullScreenTrigger);
 		this.nativeWidget.autoplay = false;
 		this.nativeWidget.pause();
 		this.nativeWidget.src = "";
 		this.nativeWidget.load();
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.deleteNativeWidget.call(this);
+		_$RenderSupport_NativeWidgetClip.prototype.deleteNativeWidget.call(this);
 	}
 	,getDescription: function() {
 		if(this.nativeWidget != null) return "VideoClip (url = " + Std.string(this.nativeWidget.url) + ")"; else return "";
@@ -3956,7 +3956,7 @@ _$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_Native
 		this.nativeWidget.playbackRate = rate;
 	}
 	,setVideoSubtitleClip: function(text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity) {
-		if(_$RenderSupportJSPixi_VideoClip.UsePixiTextures) {
+		if(_$RenderSupport_VideoClip.UsePixiTextures) {
 			if(this.fontFamily != fontfamily && fontfamily != "") {
 				this.fontFamily = fontfamily;
 				this.deleteSubtitlesClip();
@@ -3973,7 +3973,7 @@ _$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_Native
 	}
 	,createSubtitlesClip: function() {
 		if(this.textField == null) {
-			this.textField = RenderSupportJSPixi.makeTextField(this.fontFamily);
+			this.textField = RenderSupport.makeTextField(this.fontFamily);
 			this.addChild(this.textField);
 		}
 	}
@@ -3984,13 +3984,13 @@ _$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_Native
 		}
 	}
 	,deleteSubtitlesClip: function() {
-		if(_$RenderSupportJSPixi_VideoClip.UsePixiTextures) {
+		if(_$RenderSupport_VideoClip.UsePixiTextures) {
 			this.removeChild(this.textField);
 			this.textField = null;
 		} else if(this.nativeWidget != null) this.nativeWidget.textTracks[0].mode = "disabled";
 	}
 	,createVideoSprite: function() {
-		if(this.videoSprite == null && RenderSupportJSPixi.RendererType != "webgl") {
+		if(this.videoSprite == null && RenderSupport.RendererType != "webgl") {
 			var video_texture = PIXI.Texture.fromVideo(this.nativeWidget);
 			video_texture.baseTexture.autoPlay = this.nativeWidget.autoplay;
 			if(!this.nativeWidget.autoplay) video_texture.baseTexture.source.pause();
@@ -4064,9 +4064,9 @@ _$RenderSupportJSPixi_VideoClip.prototype = $extend(_$RenderSupportJSPixi_Native
 	,getHeight: function() {
 		return this.nativeWidget.height;
 	}
-	,__class__: _$RenderSupportJSPixi_VideoClip
+	,__class__: _$RenderSupport_VideoClip
 });
-var _$RenderSupportJSPixi_DebugClipsTree = function() {
+var _$RenderSupport_DebugClipsTree = function() {
 	this.UpdateTimer = null;
 	this.ClipBoundsRect = null;
 	this.DebugWin = null;
@@ -4116,12 +4116,12 @@ var _$RenderSupportJSPixi_DebugClipsTree = function() {
 	}
 	while(this.TreeDiv.firstChild != null) this.TreeDiv.removeChild(this.TreeDiv.firstChild);
 };
-_$RenderSupportJSPixi_DebugClipsTree.__name__ = true;
-_$RenderSupportJSPixi_DebugClipsTree.getInstance = function() {
-	if(_$RenderSupportJSPixi_DebugClipsTree.instance == null) _$RenderSupportJSPixi_DebugClipsTree.instance = new _$RenderSupportJSPixi_DebugClipsTree();
-	return _$RenderSupportJSPixi_DebugClipsTree.instance;
+_$RenderSupport_DebugClipsTree.__name__ = true;
+_$RenderSupport_DebugClipsTree.getInstance = function() {
+	if(_$RenderSupport_DebugClipsTree.instance == null) _$RenderSupport_DebugClipsTree.instance = new _$RenderSupport_DebugClipsTree();
+	return _$RenderSupport_DebugClipsTree.instance;
 };
-_$RenderSupportJSPixi_DebugClipsTree.prototype = {
+_$RenderSupport_DebugClipsTree.prototype = {
 	setClipBoundsRect: function(bounds) {
 		this.ClipBoundsRect.style.left = bounds.x;
 		this.ClipBoundsRect.style.top = bounds.y;
@@ -4233,7 +4233,7 @@ _$RenderSupportJSPixi_DebugClipsTree.prototype = {
 			ul.style.display = "none";
 		}
 	}
-	,__class__: _$RenderSupportJSPixi_DebugClipsTree
+	,__class__: _$RenderSupport_DebugClipsTree
 };
 var FontLoader = function() { };
 FontLoader.__name__ = true;
@@ -4368,7 +4368,7 @@ FontLoader.loadDFonts = function(onDone,downloadTextures) {
 			var page1 = texture_pages[_g11];
 			++_g11;
 			DFontText.addTexture2Loader(page1.fontname,FontLoader.getDFontInfo(page1.fontname),page1.page,function() {
-				RenderSupportJSPixi.PixiStageChanged = true;
+				RenderSupport.PixiStageChanged = true;
 			},loader);
 		}
 		loader.load();
@@ -4382,7 +4382,7 @@ FontLoader.loadDFonts = function(onDone,downloadTextures) {
 FontLoader.getDFontInfo = function(fontfamily) {
 	return DFontText.dfont_table[fontfamily];
 };
-var _$RenderSupportJSPixi_TextField = function() {
+var _$RenderSupport_TextField = function() {
 	this.preFocus = false;
 	this.accessWidget = null;
 	this.TextInputKeyUpFilters = [];
@@ -4421,10 +4421,10 @@ var _$RenderSupportJSPixi_TextField = function() {
 	this.fontSize = 0.0;
 	this.fontFamily = "";
 	this.text = "";
-	_$RenderSupportJSPixi_NativeWidgetClip.call(this);
+	_$RenderSupport_NativeWidgetClip.call(this);
 };
-_$RenderSupportJSPixi_TextField.__name__ = true;
-_$RenderSupportJSPixi_TextField.getBulletsString = function(l) {
+_$RenderSupport_TextField.__name__ = true;
+_$RenderSupport_TextField.getBulletsString = function(l) {
 	var bullet = String.fromCharCode(8226);
 	var i = 0;
 	var ret = "";
@@ -4435,8 +4435,8 @@ _$RenderSupportJSPixi_TextField.getBulletsString = function(l) {
 	}
 	return ret;
 };
-_$RenderSupportJSPixi_TextField.__super__ = _$RenderSupportJSPixi_NativeWidgetClip;
-_$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_NativeWidgetClip.prototype,{
+_$RenderSupport_TextField.__super__ = _$RenderSupport_NativeWidgetClip;
+_$RenderSupport_TextField.prototype = $extend(_$RenderSupport_NativeWidgetClip.prototype,{
 	preOnFocus: function() {
 		var _g = this;
 		if(this.isInput()) {
@@ -4449,13 +4449,13 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 		}
 	}
 	,createNativeWidget: function(nodeName) {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.createNativeWidget.call(this,nodeName);
-		if(Platform.isIE || Platform.isEdge) RenderSupportJSPixi.PixiStage.on("preonfocus",$bind(this,this.preOnFocus));
+		_$RenderSupport_NativeWidgetClip.prototype.createNativeWidget.call(this,nodeName);
+		if(Platform.isIE || Platform.isEdge) RenderSupport.PixiStage.on("preonfocus",$bind(this,this.preOnFocus));
 	}
 	,deleteNativeWidget: function() {
-		if(Platform.isIE || Platform.isEdge) RenderSupportJSPixi.PixiStage.off("preonfocus",$bind(this,this.preOnFocus));
+		if(Platform.isIE || Platform.isEdge) RenderSupport.PixiStage.off("preonfocus",$bind(this,this.preOnFocus));
 		if(!this.shouldPreventFromBlur && window.document.activeElement == this.nativeWidget) this.nativeWidget.blur();
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.deleteNativeWidget.call(this);
+		_$RenderSupport_NativeWidgetClip.prototype.deleteNativeWidget.call(this);
 	}
 	,updateNativeWidget: function() {
 		if(this.worldVisible) {
@@ -4498,17 +4498,17 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 			this.nativeWidget.type = this.type;
 			if(this.accessWidget != null && this.accessWidget.autocomplete != null && this.accessWidget.autocomplete != "") this.nativeWidget.autocomplete = this.accessWidget.autocomplete; else if(this.type == "password" && this.nativeWidget.autocomplete == "") this.nativeWidget.autocomplete = "new-password";
 			this.nativeWidget.value = this.text;
-			this.nativeWidget.style.color = RenderSupportJSPixi.makeCSSColor(this.fillColor,this.fillOpacity);
-			this.nativeWidget.style.letterSpacing = (RenderSupportJSPixi.UseDFont?this.letterSpacing + 0.022:this.letterSpacing) + "px";
+			this.nativeWidget.style.color = RenderSupport.makeCSSColor(this.fillColor,this.fillOpacity);
+			this.nativeWidget.style.letterSpacing = (RenderSupport.UseDFont?this.letterSpacing + 0.022:this.letterSpacing) + "px";
 			this.nativeWidget.style.fontFamily = this.fontStyle.family;
 			if(this.fontWeight > 0) this.nativeWidget.style.fontWeight = this.fontWeight; else this.nativeWidget.style.fontWeight = this.fontStyle.weight;
 			if(this.fontSlope != "") this.nativeWidget.style.fontStyle = this.fontSlope; else this.nativeWidget.style.fontStyle = this.fontStyle.style;
 			this.nativeWidget.style.fontSize = this.fontSize * this.worldTransform.d + "px";
 			this.nativeWidget.style.lineHeight = (this.fontSize * 1.2 + this.interlineSpacing) * this.worldTransform.d + "px";
-			this.nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(this.backgroundColor,this.backgroundOpacity);
+			this.nativeWidget.style.backgroundColor = RenderSupport.makeCSSColor(this.backgroundColor,this.backgroundOpacity);
 			this.nativeWidget.style.cursor = "text";
 			if(this.preFocus && this.multiline && Platform.isEdge) this.nativeWidget.style.opacity = 1; else this.nativeWidget.style.opacity = this.fillOpacity * this.worldAlpha;
-			if(this.cursorColor >= 0) this.nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(this.cursorColor,this.cursorOpacity);
+			if(this.cursorColor >= 0) this.nativeWidget.style.caretColor = RenderSupport.makeCSSColor(this.cursorColor,this.cursorOpacity);
 			this.nativeWidget.readOnly = this.readOnly;
 			if(this.maxChars >= 0) this.nativeWidget.maxLength = this.maxChars;
 			if(this.tabIndex >= 0) this.nativeWidget.tabIndex = this.tabIndex;
@@ -4551,7 +4551,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 			this.removeChild(this.children[i]);
 			i--;
 		}
-		var lines = (this.isInput() && this.type == "password"?_$RenderSupportJSPixi_TextField.getBulletsString(this.text.length):this.text).split("\n");
+		var lines = (this.isInput() && this.type == "password"?_$RenderSupport_TextField.getBulletsString(this.text.length):this.text).split("\n");
 		this.clipWidth = 0.0;
 		this.clipHeight = 0.0;
 		var _g = 0;
@@ -4656,7 +4656,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 		if(this.backgroundOpacity > 0.0) {
 			if(this.background != null) this.removeChild(this.background);
 			var text_bounds = this.getLocalBounds();
-			this.background = new _$RenderSupportJSPixi_FlowGraphics();
+			this.background = new _$RenderSupport_FlowGraphics();
 			this.background.beginFill(this.backgroundColor,this.backgroundOpacity);
 			this.background.drawRect(0.0,0.0,text_bounds.width,text_bounds.height);
 			this.background.endFill();
@@ -4755,15 +4755,15 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 		if(hasChanges) this.emit("input");
 	}
 	,onMouseMove: function(e) {
-		RenderSupportJSPixi.provideEvent(e);
+		RenderSupport.provideEvent(e);
 	}
 	,onMouseDown: function(e) {
 		if(this.isNativeWidgetShown()) {
 			this.checkPositionSelection();
 			return;
 		}
-		this.nativeWidget.readOnly = this.shouldPreventFromFocus = RenderSupportJSPixi.getClipAt(new PIXI.Point(e.pageX,e.pageY)) != this;
-		RenderSupportJSPixi.provideEvent(e);
+		this.nativeWidget.readOnly = this.shouldPreventFromFocus = RenderSupport.getClipAt(new PIXI.Point(e.pageX,e.pageY)) != this;
+		RenderSupport.provideEvent(e);
 		if((Platform.isIE || Platform.isEdge) && !this.shouldPreventFromFocus) {
 			this.preOnFocus();
 			this.nativeWidget.focus();
@@ -4771,7 +4771,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 	}
 	,onMouseUp: function(e) {
 		if(this.isNativeWidgetShown()) this.checkPositionSelection();
-		RenderSupportJSPixi.provideEvent(e);
+		RenderSupport.provideEvent(e);
 		this.shouldPreventFromFocus = false;
 	}
 	,onFocus: function(e) {
@@ -4782,7 +4782,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 				return;
 			}
 			this.emit("focus");
-			if(this.parent != null) RenderSupportJSPixi.emitEvent(this.parent,"childfocused",this);
+			if(this.parent != null) RenderSupport.emitEvent(this.parent,"childfocused",this);
 			this.updateNativeWidgetStyle();
 		}
 	}
@@ -4826,7 +4826,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 	}
 	,onKeyDown: function(e) {
 		if(this.TextInputKeyDownFilters.length > 0) {
-			var ke = RenderSupportJSPixi.parseKeyEvent(e);
+			var ke = RenderSupport.parseKeyEvent(e);
 			var _g = 0;
 			var _g1 = this.TextInputKeyDownFilters;
 			while(_g < _g1.length) {
@@ -4834,7 +4834,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 				++_g;
 				if(!f(ke.key,ke.ctrl,ke.shift,ke.alt,ke.meta,ke.keyCode)) {
 					ke.preventDefault();
-					RenderSupportJSPixi.PixiStage.emit("keydown",ke);
+					RenderSupport.PixiStage.emit("keydown",ke);
 					break;
 				}
 			}
@@ -4843,7 +4843,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 	}
 	,onKeyUp: function(e) {
 		if(this.TextInputKeyUpFilters.length > 0) {
-			var ke = RenderSupportJSPixi.parseKeyEvent(e);
+			var ke = RenderSupport.parseKeyEvent(e);
 			var _g = 0;
 			var _g1 = this.TextInputKeyUpFilters;
 			while(_g < _g1.length) {
@@ -4851,7 +4851,7 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 				++_g;
 				if(!f(ke.key,ke.ctrl,ke.shift,ke.alt,ke.meta,ke.keyCode)) {
 					ke.preventDefault();
-					RenderSupportJSPixi.PixiStage.emit("keyup",ke);
+					RenderSupport.PixiStage.emit("keyup",ke);
 					break;
 				}
 			}
@@ -4956,46 +4956,46 @@ _$RenderSupportJSPixi_TextField.prototype = $extend(_$RenderSupportJSPixi_Native
 		return [ascent,descent,leading];
 	}
 	,getLocalBounds: function() {
-		if(this.isInput() && this.fieldHeight > 0.0 && this.fieldWidth > 0.0) return new PIXI.Rectangle(0.0,0.0,this.fieldWidth,this.fieldHeight); else return _$RenderSupportJSPixi_NativeWidgetClip.prototype.getLocalBounds.call(this);
+		if(this.isInput() && this.fieldHeight > 0.0 && this.fieldWidth > 0.0) return new PIXI.Rectangle(0.0,0.0,this.fieldWidth,this.fieldHeight); else return _$RenderSupport_NativeWidgetClip.prototype.getLocalBounds.call(this);
 	}
 	,getBounds: function(skipUpdate,rect) {
 		if(rect == null && this.isInput() && this.fieldHeight > 0.0 && this.fieldWidth > 0.0) {
 			var lt = this.toGlobal(new PIXI.Point(0.0,0.0));
 			var rb = this.toGlobal(new PIXI.Point(this.fieldWidth,this.fieldHeight));
 			return new PIXI.Rectangle(lt.x,lt.y,rb.x - lt.x,rb.y - lt.y);
-		} else return _$RenderSupportJSPixi_NativeWidgetClip.prototype.getBounds.call(this,skipUpdate,rect);
+		} else return _$RenderSupport_NativeWidgetClip.prototype.getBounds.call(this,skipUpdate,rect);
 	}
 	,calculateBounds: function() {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.calculateBounds.call(this);
+		_$RenderSupport_NativeWidgetClip.prototype.calculateBounds.call(this);
 		if(this.isInput() && this.fieldHeight > 0.0 && this.fieldWidth > 0.0) this._bounds.addFrame(this.transform,0.0,0.0,this.fieldWidth,this.fieldHeight);
 	}
-	,__class__: _$RenderSupportJSPixi_TextField
+	,__class__: _$RenderSupport_TextField
 });
-var RenderSupportJSPixi = function() { };
-RenderSupportJSPixi.__name__ = true;
-RenderSupportJSPixi.getBackingStoreRatio = function() {
+var RenderSupport = function() { };
+RenderSupport.__name__ = true;
+RenderSupport.getBackingStoreRatio = function() {
 	if(Util.getParameter("resolution") != null) return Std.parseFloat(Util.getParameter("resolution")); else if(window.devicePixelRatio != null) return Math.max(window.devicePixelRatio,1.0); else return 1.0;
 };
-RenderSupportJSPixi.defer = function(fn,time) {
+RenderSupport.defer = function(fn,time) {
 	if(time == null) time = 10;
 	haxe_Timer.delay(fn,time);
 };
-RenderSupportJSPixi.preventDefaultFileDrop = function() {
+RenderSupport.preventDefaultFileDrop = function() {
 	window.ondragover = window.ondrop = function(event) {
 		if(event.dataTransfer.dropEffect != "copy") event.dataTransfer.dropEffect = "none";
 		event.preventDefault();
 		return false;
 	};
 };
-RenderSupportJSPixi.init = function() {
-	if(Util.getParameter("oldjs") != "1") RenderSupportJSPixi.initPixiRenderer(); else RenderSupportJSPixi.defer(RenderSupportJSPixi.StartFlowMain);
+RenderSupport.init = function() {
+	if(Util.getParameter("oldjs") != "1") RenderSupport.initPixiRenderer(); else RenderSupport.defer(RenderSupport.StartFlowMain);
 	return true;
 };
-RenderSupportJSPixi.printOptionValues = function() {
-	if(RenderSupportJSPixi.AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
-	if(RenderSupportJSPixi.CacheTextsAsBitmap) Errors.print("Caches all textclips as bitmap is turned on");
+RenderSupport.printOptionValues = function() {
+	if(RenderSupport.AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
+	if(RenderSupport.CacheTextsAsBitmap) Errors.print("Caches all textclips as bitmap is turned on");
 };
-RenderSupportJSPixi.workaroundIEArrayFromMethod = function() {
+RenderSupport.workaroundIEArrayFromMethod = function() {
 	
 		if (!Array.from) {
 			Array.from = (function () {
@@ -5074,7 +5074,7 @@ RenderSupportJSPixi.workaroundIEArrayFromMethod = function() {
 			}());
 		}
 };
-RenderSupportJSPixi.workaroundIECustomEvent = function() {
+RenderSupport.workaroundIECustomEvent = function() {
 	
 		if ( typeof window.CustomEvent !== 'function' ) {
 			function CustomEvent ( event, params ) {
@@ -5094,10 +5094,10 @@ RenderSupportJSPixi.workaroundIECustomEvent = function() {
 			window.CustomEvent = CustomEvent;
 		};;
 };
-RenderSupportJSPixi.workaroundDOMOverOutEventsTransparency = function() {
+RenderSupport.workaroundDOMOverOutEventsTransparency = function() {
 	
 		var binder = function(fn) {
-			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
+			return fn.bind(RenderSupport.PixiRenderer.plugins.interaction);
 		}
 
 		var emptyFn = function() {};
@@ -5137,50 +5137,50 @@ RenderSupportJSPixi.workaroundDOMOverOutEventsTransparency = function() {
 				binder(old_pointer_out)(e);
 		});;
 };
-RenderSupportJSPixi.initPixiRenderer = function() {
-	if(PIXI.VERSION[0] > 3) RenderSupportJSPixi.workaroundDOMOverOutEventsTransparency();
+RenderSupport.initPixiRenderer = function() {
+	if(PIXI.VERSION[0] > 3) RenderSupport.workaroundDOMOverOutEventsTransparency();
 	if(Platform.isIE) {
-		RenderSupportJSPixi.workaroundIEArrayFromMethod();
-		RenderSupportJSPixi.workaroundIECustomEvent();
+		RenderSupport.workaroundIEArrayFromMethod();
+		RenderSupport.workaroundIECustomEvent();
 	}
-	RenderSupportJSPixi.backingStoreRatio = RenderSupportJSPixi.getBackingStoreRatio();
-	var options = { antialias : RenderSupportJSPixi.Antialias, transparent : false, backgroundColor : 16777215, preserveDrawingBuffer : false, resolution : RenderSupportJSPixi.backingStoreRatio, roundPixels : RenderSupportJSPixi.RoundPixels, autoResize : true};
-	if(RenderSupportJSPixi.RendererType != null && RenderSupportJSPixi.RendererType == "webgl") RenderSupportJSPixi.PixiRenderer = new PIXI.WebGLRenderer(window.innerWidth,window.innerHeight,options); else if(RenderSupportJSPixi.RendererType != null && RenderSupportJSPixi.RendererType == "auto") {
-		RenderSupportJSPixi.PixiRenderer = PIXI.autoDetectRenderer(window.innerWidth,window.innerHeight,options);
-		if((RenderSupportJSPixi.PixiRenderer instanceof PIXI.WebGLRenderer)) RenderSupportJSPixi.RendererType = "webgl"; else RenderSupportJSPixi.RendererType = "canvas";
+	RenderSupport.backingStoreRatio = RenderSupport.getBackingStoreRatio();
+	var options = { antialias : RenderSupport.Antialias, transparent : false, backgroundColor : 16777215, preserveDrawingBuffer : false, resolution : RenderSupport.backingStoreRatio, roundPixels : RenderSupport.RoundPixels, autoResize : true};
+	if(RenderSupport.RendererType != null && RenderSupport.RendererType == "webgl") RenderSupport.PixiRenderer = new PIXI.WebGLRenderer(window.innerWidth,window.innerHeight,options); else if(RenderSupport.RendererType != null && RenderSupport.RendererType == "auto") {
+		RenderSupport.PixiRenderer = PIXI.autoDetectRenderer(window.innerWidth,window.innerHeight,options);
+		if((RenderSupport.PixiRenderer instanceof PIXI.WebGLRenderer)) RenderSupport.RendererType = "webgl"; else RenderSupport.RendererType = "canvas";
 	} else {
-		RenderSupportJSPixi.PixiRenderer = new PIXI.CanvasRenderer(window.innerWidth,window.innerHeight,options);
-		RenderSupportJSPixi.RendererType = "canvas";
+		RenderSupport.PixiRenderer = new PIXI.CanvasRenderer(window.innerWidth,window.innerHeight,options);
+		RenderSupport.RendererType = "canvas";
 	}
-	RenderSupportJSPixi.PixiRenderer.maskManager.enableScissor = false;
-	window.document.body.appendChild(RenderSupportJSPixi.PixiRenderer.view);
-	RenderSupportJSPixi.preventDefaultFileDrop();
-	RenderSupportJSPixi.initPixiStageEventListeners();
-	RenderSupportJSPixi.initBrowserWindowEventListeners();
-	RenderSupportJSPixi.initFullScreenEventListeners();
-	FontLoader.LoadFonts(RenderSupportJSPixi.UseDFont,RenderSupportJSPixi.StartFlowMain);
-	RenderSupportJSPixi.initClipboardListeners();
-	_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap = RenderSupportJSPixi.CacheTextsAsBitmap;
-	_$RenderSupportJSPixi_VideoClip.UsePixiTextures = RenderSupportJSPixi.UseVideoTextures && Platform.SupportsVideoTexture;
-	RenderSupportJSPixi.printOptionValues();
-	if(RenderSupportJSPixi.PixiRenderer.plugins != null && RenderSupportJSPixi.PixiRenderer.plugins.accessibility != null) {
-		RenderSupportJSPixi.PixiRenderer.plugins.accessibility.destroy();
-		RenderSupportJSPixi.PixiRenderer.plugins.accessibility = null;
+	RenderSupport.PixiRenderer.maskManager.enableScissor = false;
+	window.document.body.appendChild(RenderSupport.PixiRenderer.view);
+	RenderSupport.preventDefaultFileDrop();
+	RenderSupport.initPixiStageEventListeners();
+	RenderSupport.initBrowserWindowEventListeners();
+	RenderSupport.initFullScreenEventListeners();
+	FontLoader.LoadFonts(RenderSupport.UseDFont,RenderSupport.StartFlowMain);
+	RenderSupport.initClipboardListeners();
+	_$RenderSupport_TextField.cacheTextsAsBitmap = RenderSupport.CacheTextsAsBitmap;
+	_$RenderSupport_VideoClip.UsePixiTextures = RenderSupport.UseVideoTextures && Platform.SupportsVideoTexture;
+	RenderSupport.printOptionValues();
+	if(RenderSupport.PixiRenderer.plugins != null && RenderSupport.PixiRenderer.plugins.accessibility != null) {
+		RenderSupport.PixiRenderer.plugins.accessibility.destroy();
+		RenderSupport.PixiRenderer.plugins.accessibility = null;
 	}
 	if(Platform.isSafari) {
-		RenderSupportJSPixi.PixiRenderer.view.style.position = "absolute";
-		RenderSupportJSPixi.PixiRenderer.view.style.top = "0px";
+		RenderSupport.PixiRenderer.view.style.position = "absolute";
+		RenderSupport.PixiRenderer.view.style.top = "0px";
 	}
 	window.document.body.selfZOrder = 0;
-	RenderSupportJSPixi.requestAnimationFrame();
+	RenderSupport.requestAnimationFrame();
 };
-RenderSupportJSPixi.initBrowserWindowEventListeners = function() {
-	RenderSupportJSPixi.WindowTopHeight = RenderSupportJSPixi.getScreenSize().height - window.innerHeight;
-	window.addEventListener("resize",RenderSupportJSPixi.onBrowserWindowResize,false);
-	window.addEventListener("message",RenderSupportJSPixi.receiveWindowMessage);
-	window.addEventListener("focus",RenderSupportJSPixi.requestAnimationFrame,false);
+RenderSupport.initBrowserWindowEventListeners = function() {
+	RenderSupport.WindowTopHeight = RenderSupport.getScreenSize().height - window.innerHeight;
+	window.addEventListener("resize",RenderSupport.onBrowserWindowResize,false);
+	window.addEventListener("message",RenderSupport.receiveWindowMessage);
+	window.addEventListener("focus",RenderSupport.requestAnimationFrame,false);
 };
-RenderSupportJSPixi.initClipboardListeners = function() {
+RenderSupport.initClipboardListeners = function() {
 	var handler;
 	var handlePaste = function(e) {
 		if(window.clipboardData && window.clipboardData.getData) {
@@ -5193,21 +5193,21 @@ RenderSupportJSPixi.initClipboardListeners = function() {
 			NativeHx.clipboardData = "";
 			NativeHx.clipboardDataHtml = "";
 		}
-		RenderSupportJSPixi.PixiStage.emit("paste");
+		RenderSupport.PixiStage.emit("paste");
 	};
 	handler = handlePaste;
 	window.document.addEventListener("paste",handler,false);
 };
-RenderSupportJSPixi.initFullScreenEventListeners = function() {
+RenderSupport.initFullScreenEventListeners = function() {
 	var _g = 0;
 	var _g1 = ["fullscreenchange","mozfullscreenchange","webkitfullscreenchange","MSFullscreenChange"];
 	while(_g < _g1.length) {
 		var e = _g1[_g];
 		++_g;
-		window.document.addEventListener(e,RenderSupportJSPixi.fullScreenTrigger,false);
+		window.document.addEventListener(e,RenderSupport.fullScreenTrigger,false);
 	}
 };
-RenderSupportJSPixi.receiveWindowMessage = function(e) {
+RenderSupport.receiveWindowMessage = function(e) {
 	var hasNestedWindow = null;
 	hasNestedWindow = function(iframe,win) {
 		try {
@@ -5240,127 +5240,127 @@ RenderSupportJSPixi.receiveWindowMessage = function(e) {
 	}
 	Errors.report("Warning: unknown message source");
 };
-RenderSupportJSPixi.getScreenSize = function() {
+RenderSupport.getScreenSize = function() {
 	if(Platform.isIOS && Platform.isChrome) {
 		var is_portrait = window.innerWidth < window.innerHeight;
 		if(is_portrait) return { width : window.screen.width, height : window.screen.height}; else return { height : window.screen.width, width : window.screen.height};
 	} else return { width : window.screen.width, height : window.screen.height};
 };
-RenderSupportJSPixi.onBrowserWindowResize = function(e) {
-	RenderSupportJSPixi.PixiStageChanged = true;
-	var options_antialias = RenderSupportJSPixi.Antialias;
+RenderSupport.onBrowserWindowResize = function(e) {
+	RenderSupport.PixiStageChanged = true;
+	var options_antialias = RenderSupport.Antialias;
 	var options_transparent = false;
 	var options_backgroundColor = 16777215;
 	var options_preserveDrawingBuffer = false;
-	var options_resolution = RenderSupportJSPixi.backingStoreRatio;
-	var options_roundPixels = RenderSupportJSPixi.RoundPixels;
+	var options_resolution = RenderSupport.backingStoreRatio;
+	var options_roundPixels = RenderSupport.RoundPixels;
 	var options_autoResize = true;
-	RenderSupportJSPixi.backingStoreRatio = RenderSupportJSPixi.getBackingStoreRatio();
-	RenderSupportJSPixi.PixiRenderer.resolution = RenderSupportJSPixi.backingStoreRatio;
-	PIXI.Filter.resolution = RenderSupportJSPixi.backingStoreRatio;
-	RenderSupportJSPixi.PixiRenderer.plugins.interaction.resolution = RenderSupportJSPixi.backingStoreRatio;
+	RenderSupport.backingStoreRatio = RenderSupport.getBackingStoreRatio();
+	RenderSupport.PixiRenderer.resolution = RenderSupport.backingStoreRatio;
+	PIXI.Filter.resolution = RenderSupport.backingStoreRatio;
+	RenderSupport.PixiRenderer.plugins.interaction.resolution = RenderSupport.backingStoreRatio;
 	var win_width = e.target.innerWidth;
 	var win_height = e.target.innerHeight;
 	if(Platform.isAndroid || Platform.isIOS && Platform.isChrome) {
-		var screen_size = RenderSupportJSPixi.getScreenSize();
+		var screen_size = RenderSupport.getScreenSize();
 		win_width = screen_size.width;
-		win_height = screen_size.height - RenderSupportJSPixi.WindowTopHeight;
+		win_height = screen_size.height - RenderSupport.WindowTopHeight;
 		if(Platform.isAndroid) {
-			RenderSupportJSPixi.PixiStage.y = 0.0;
-			RenderSupportJSPixi.ensureCurrentInputVisible();
+			RenderSupport.PixiStage.y = 0.0;
+			RenderSupport.ensureCurrentInputVisible();
 		}
 	}
-	RenderSupportJSPixi.PixiRenderer.resize(win_width,win_height);
-	RenderSupportJSPixi.broadcastEvent(RenderSupportJSPixi.PixiStage,"resize",RenderSupportJSPixi.backingStoreRatio);
+	RenderSupport.PixiRenderer.resize(win_width,win_height);
+	RenderSupport.broadcastEvent(RenderSupport.PixiStage,"resize",RenderSupport.backingStoreRatio);
 };
-RenderSupportJSPixi.dropCurrentFocus = function() {
-	if(window.document.activeElement != null && !RenderSupportJSPixi.isEmulating) window.document.activeElement.blur();
+RenderSupport.dropCurrentFocus = function() {
+	if(window.document.activeElement != null && !RenderSupport.isEmulating) window.document.activeElement.blur();
 };
-RenderSupportJSPixi.setDropCurrentFocusOnDown = function(drop) {
-	if(RenderSupportJSPixi.DropCurrentFocusOnDown != drop) {
-		RenderSupportJSPixi.DropCurrentFocusOnDown = drop;
-		if(drop) RenderSupportJSPixi.PixiStage.on("mousedown",RenderSupportJSPixi.dropCurrentFocus); else RenderSupportJSPixi.PixiStage.off("mousedown",RenderSupportJSPixi.dropCurrentFocus);
+RenderSupport.setDropCurrentFocusOnDown = function(drop) {
+	if(RenderSupport.DropCurrentFocusOnDown != drop) {
+		RenderSupport.DropCurrentFocusOnDown = drop;
+		if(drop) RenderSupport.PixiStage.on("mousedown",RenderSupport.dropCurrentFocus); else RenderSupport.PixiStage.off("mousedown",RenderSupport.dropCurrentFocus);
 	}
 };
-RenderSupportJSPixi.pixiStageOnMouseMove = function() {
-	if(!RenderSupportJSPixi.isEmulating) RenderSupportJSPixi.switchFocusFramesShow(false);
+RenderSupport.pixiStageOnMouseMove = function() {
+	if(!RenderSupport.isEmulating) RenderSupport.switchFocusFramesShow(false);
 };
-RenderSupportJSPixi.initPixiStageEventListeners = function() {
+RenderSupport.initPixiStageEventListeners = function() {
 	if(window.navigator.msPointerEnabled) {
-		RenderSupportJSPixi.setStagePointerHandler("MSPointerDown",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousedown");
+		RenderSupport.setStagePointerHandler("MSPointerDown",function() {
+			RenderSupport.PixiStage.emit("mousedown");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("MSPointerUp",function() {
-			RenderSupportJSPixi.PixiStage.emit("mouseup");
+		RenderSupport.setStagePointerHandler("MSPointerUp",function() {
+			RenderSupport.PixiStage.emit("mouseup");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("MSPointerMove",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousemove");
+		RenderSupport.setStagePointerHandler("MSPointerMove",function() {
+			RenderSupport.PixiStage.emit("mousemove");
 		});
 	}
 	if(NativeHx.isTouchScreen()) {
-		RenderSupportJSPixi.setStagePointerHandler("touchstart",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousedown");
+		RenderSupport.setStagePointerHandler("touchstart",function() {
+			RenderSupport.PixiStage.emit("mousedown");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("touchend",function() {
-			RenderSupportJSPixi.PixiStage.emit("mouseup");
+		RenderSupport.setStagePointerHandler("touchend",function() {
+			RenderSupport.PixiStage.emit("mouseup");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("touchmove",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousemove");
+		RenderSupport.setStagePointerHandler("touchmove",function() {
+			RenderSupport.PixiStage.emit("mousemove");
 		});
 	}
 	if(!Platform.isMobile) {
-		RenderSupportJSPixi.setStagePointerHandler("mousedown",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousedown");
+		RenderSupport.setStagePointerHandler("mousedown",function() {
+			RenderSupport.PixiStage.emit("mousedown");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mouseup",function() {
-			RenderSupportJSPixi.PixiStage.emit("mouseup");
+		RenderSupport.setStagePointerHandler("mouseup",function() {
+			RenderSupport.PixiStage.emit("mouseup");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mouserightdown",function() {
-			RenderSupportJSPixi.PixiStage.emit("mouserightdown");
+		RenderSupport.setStagePointerHandler("mouserightdown",function() {
+			RenderSupport.PixiStage.emit("mouserightdown");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mouserightup",function() {
-			RenderSupportJSPixi.PixiStage.emit("mouserightup");
+		RenderSupport.setStagePointerHandler("mouserightup",function() {
+			RenderSupport.PixiStage.emit("mouserightup");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mousemiddledown",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousemiddledown");
+		RenderSupport.setStagePointerHandler("mousemiddledown",function() {
+			RenderSupport.PixiStage.emit("mousemiddledown");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mousemiddleup",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousemiddleup");
+		RenderSupport.setStagePointerHandler("mousemiddleup",function() {
+			RenderSupport.PixiStage.emit("mousemiddleup");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mousemove",function() {
-			RenderSupportJSPixi.PixiStage.emit("mousemove");
+		RenderSupport.setStagePointerHandler("mousemove",function() {
+			RenderSupport.PixiStage.emit("mousemove");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mouseout",function() {
-			RenderSupportJSPixi.PixiStage.emit("mouseup");
+		RenderSupport.setStagePointerHandler("mouseout",function() {
+			RenderSupport.PixiStage.emit("mouseup");
 		});
-		RenderSupportJSPixi.setStagePointerHandler("mouseout",function() {
-			RenderSupportJSPixi.PixiStage.emit("mouseup");
+		RenderSupport.setStagePointerHandler("mouseout",function() {
+			RenderSupport.PixiStage.emit("mouseup");
 		});
 		window.document.body.addEventListener("keydown",function(e) {
-			RenderSupportJSPixi.PixiStage.emit("keydown",RenderSupportJSPixi.parseKeyEvent(e));
+			RenderSupport.PixiStage.emit("keydown",RenderSupport.parseKeyEvent(e));
 		});
 		window.document.body.addEventListener("keyup",function(e1) {
-			RenderSupportJSPixi.PixiStage.emit("keyup",RenderSupportJSPixi.parseKeyEvent(e1));
+			RenderSupport.PixiStage.emit("keyup",RenderSupport.parseKeyEvent(e1));
 		});
 	}
-	RenderSupportJSPixi.PixiStage.on("mousedown",function() {
-		RenderSupportJSPixi.MouseUpReceived = false;
+	RenderSupport.PixiStage.on("mousedown",function() {
+		RenderSupport.MouseUpReceived = false;
 	});
-	RenderSupportJSPixi.PixiStage.on("mouseup",function() {
-		RenderSupportJSPixi.MouseUpReceived = true;
+	RenderSupport.PixiStage.on("mouseup",function() {
+		RenderSupport.MouseUpReceived = true;
 	});
-	RenderSupportJSPixi.switchFocusFramesShow(false);
-	RenderSupportJSPixi.setDropCurrentFocusOnDown(true);
+	RenderSupport.switchFocusFramesShow(false);
+	RenderSupport.setDropCurrentFocusOnDown(true);
 };
-RenderSupportJSPixi.setStagePointerHandler = function(event,listener) {
+RenderSupport.setStagePointerHandler = function(event,listener) {
 	var cb;
 	switch(event) {
 	case "touchstart":case "touchmove":case "MSPointerDown":case "MSPointerMove":
 		cb = function(e) {
 			if(e.touches != null) {
 				if(e.touches.length == 1) {
-					RenderSupportJSPixi.MousePos.x = e.touches[0].pageX;
-					RenderSupportJSPixi.MousePos.y = e.touches[0].pageY;
+					RenderSupport.MousePos.x = e.touches[0].pageX;
+					RenderSupport.MousePos.y = e.touches[0].pageY;
 					listener();
 				} else if(e.touches.length == 2) GesturesDetector.processPinch(new PIXI.Point(e.touches[0].pageX,e.touches[0].pageY),new PIXI.Point(e.touches[1].pageX,e.touches[1].pageY));
 			}
@@ -5374,7 +5374,7 @@ RenderSupportJSPixi.setStagePointerHandler = function(event,listener) {
 		break;
 	case "mouseout":
 		cb = function(e2) {
-			if(RenderSupportJSPixi.MouseUpReceived) return;
+			if(RenderSupport.MouseUpReceived) return;
 			var checkElement = function(el) {
 				if(el != null) {
 					var tagName = el.tagName.toLowerCase();
@@ -5388,38 +5388,38 @@ RenderSupportJSPixi.setStagePointerHandler = function(event,listener) {
 		break;
 	case "mousedown":case "mouseup":
 		cb = function(e3) {
-			if(e3.target == RenderSupportJSPixi.PixiRenderer.view) e3.preventDefault();
-			RenderSupportJSPixi.MousePos.x = e3.pageX;
-			RenderSupportJSPixi.MousePos.y = e3.pageY;
+			if(e3.target == RenderSupport.PixiRenderer.view) e3.preventDefault();
+			RenderSupport.MousePos.x = e3.pageX;
+			RenderSupport.MousePos.y = e3.pageY;
 			if(e3.which == 1 || e3.button == 0) listener();
 		};
 		break;
 	case "mouserightdown":case "mouserightup":
 		if(event == "mouserightdown") event = "mousedown"; else event = "mouseup";
 		cb = function(e4) {
-			RenderSupportJSPixi.MousePos.x = e4.pageX;
-			RenderSupportJSPixi.MousePos.y = e4.pageY;
+			RenderSupport.MousePos.x = e4.pageX;
+			RenderSupport.MousePos.y = e4.pageY;
 			if(e4.which == 3 || e4.button == 2) listener();
 		};
 		break;
 	case "mousemiddledown":case "mousemiddleup":
 		if(event == "mousemiddledown") event = "mousedown"; else event = "mouseup";
 		cb = function(e5) {
-			RenderSupportJSPixi.MousePos.x = e5.pageX;
-			RenderSupportJSPixi.MousePos.y = e5.pageY;
+			RenderSupport.MousePos.x = e5.pageX;
+			RenderSupport.MousePos.y = e5.pageY;
 			if(e5.which == 2 || e5.button == 1) listener();
 		};
 		break;
 	default:
 		cb = function(e6) {
-			RenderSupportJSPixi.MousePos.x = e6.pageX;
-			RenderSupportJSPixi.MousePos.y = e6.pageY;
+			RenderSupport.MousePos.x = e6.pageX;
+			RenderSupport.MousePos.y = e6.pageY;
 			listener();
 		};
 	}
-	if(event == "mouseout") window.document.body.addEventListener(event,cb); else RenderSupportJSPixi.PixiRenderer.view.addEventListener(event,cb);
+	if(event == "mouseout") window.document.body.addEventListener(event,cb); else RenderSupport.PixiRenderer.view.addEventListener(event,cb);
 };
-RenderSupportJSPixi.emitForInteractives = function(clip,event) {
+RenderSupport.emitForInteractives = function(clip,event) {
 	if(clip.interactive) clip.emit(event);
 	if(clip.children != null) {
 		var childs = clip.children;
@@ -5427,39 +5427,39 @@ RenderSupportJSPixi.emitForInteractives = function(clip,event) {
 		while(_g < childs.length) {
 			var c = childs[_g];
 			++_g;
-			RenderSupportJSPixi.emitForInteractives(c,event);
+			RenderSupport.emitForInteractives(c,event);
 		}
 	}
 };
-RenderSupportJSPixi.provideEvent = function(e) {
+RenderSupport.provideEvent = function(e) {
 	try {
-		if(Platform.isIE) RenderSupportJSPixi.PixiRenderer.view.dispatchEvent(new CustomEvent(e.type, e)); else RenderSupportJSPixi.PixiRenderer.view.dispatchEvent(new e.constructor(e.type, e));
+		if(Platform.isIE) RenderSupport.PixiRenderer.view.dispatchEvent(new CustomEvent(e.type, e)); else RenderSupport.PixiRenderer.view.dispatchEvent(new e.constructor(e.type, e));
 	} catch( er ) {
 		haxe_CallStack.lastException = er;
 		if (er instanceof js__$Boot_HaxeError) er = er.val;
 		Errors.report("Error in provideEvent: " + Std.string(er));
 	}
 };
-RenderSupportJSPixi.emulateMouseClickOnClip = function(clip) {
+RenderSupport.emulateMouseClickOnClip = function(clip) {
 	var b = clip.getBounds();
-	RenderSupportJSPixi.MousePos = clip.toGlobal(new PIXI.Point(b.width / 2.0,b.height / 2.0));
-	RenderSupportJSPixi.emulateEvent("mousemove");
-	RenderSupportJSPixi.emulateEvent("mouseover",100,clip);
-	RenderSupportJSPixi.emulateEvent("mousedown",400);
-	RenderSupportJSPixi.emulateEvent("mouseup",500);
-	RenderSupportJSPixi.emulateEvent("mouseout",600,clip);
+	RenderSupport.MousePos = clip.toGlobal(new PIXI.Point(b.width / 2.0,b.height / 2.0));
+	RenderSupport.emulateEvent("mousemove");
+	RenderSupport.emulateEvent("mouseover",100,clip);
+	RenderSupport.emulateEvent("mousedown",400);
+	RenderSupport.emulateEvent("mouseup",500);
+	RenderSupport.emulateEvent("mouseout",600,clip);
 };
-RenderSupportJSPixi.emulateEvent = function(event,delay,clip) {
+RenderSupport.emulateEvent = function(event,delay,clip) {
 	if(delay == null) delay = 10;
-	RenderSupportJSPixi.defer(function() {
-		RenderSupportJSPixi.isEmulating = true;
-		if(event == "mousemove" || event == "mousedown" || event == "mouseup") RenderSupportJSPixi.PixiStage.emit(event); else if(event == "mouseover" || event == "mouseout") {
-			if(clip != null) RenderSupportJSPixi.emitForInteractives(clip,event);
+	RenderSupport.defer(function() {
+		RenderSupport.isEmulating = true;
+		if(event == "mousemove" || event == "mousedown" || event == "mouseup") RenderSupport.PixiStage.emit(event); else if(event == "mouseover" || event == "mouseout") {
+			if(clip != null) RenderSupport.emitForInteractives(clip,event);
 		}
-		RenderSupportJSPixi.isEmulating = false;
+		RenderSupport.isEmulating = false;
 	},delay);
 };
-RenderSupportJSPixi.ensureCurrentInputVisible = function() {
+RenderSupport.ensureCurrentInputVisible = function() {
 	var focused_node = window.document.activeElement;
 	if(focused_node != null) {
 		var node_name = focused_node.nodeName;
@@ -5467,15 +5467,15 @@ RenderSupportJSPixi.ensureCurrentInputVisible = function() {
 		if(node_name == "input" || node_name == "textarea") {
 			var rect = focused_node.getBoundingClientRect();
 			if(rect.bottom > window.innerHeight) {
-				RenderSupportJSPixi.PixiStage.y = window.innerHeight - rect.bottom;
-				RenderSupportJSPixi.PixiStageChanged = true;
+				RenderSupport.PixiStage.y = window.innerHeight - rect.bottom;
+				RenderSupport.PixiStageChanged = true;
 			}
 		}
 	}
 };
-RenderSupportJSPixi.switchFocusFramesShow = function(toShowFrames) {
-	if(RenderSupportJSPixi.FocusFramesShown != toShowFrames) {
-		RenderSupportJSPixi.FocusFramesShown = toShowFrames;
+RenderSupport.switchFocusFramesShow = function(toShowFrames) {
+	if(RenderSupport.FocusFramesShown != toShowFrames) {
+		RenderSupport.FocusFramesShown = toShowFrames;
 		var pixijscss = null;
 		var _g = 0;
 		var _g1 = window.document.styleSheets;
@@ -5488,47 +5488,47 @@ RenderSupportJSPixi.switchFocusFramesShow = function(toShowFrames) {
 			var newRuleIndex = 0;
 			if(!toShowFrames) {
 				pixijscss.insertRule(".focused { border: none !important; box-shadow: none !important; }",newRuleIndex);
-				RenderSupportJSPixi.PixiStage.off("mousemove",RenderSupportJSPixi.pixiStageOnMouseMove);
+				RenderSupport.PixiStage.off("mousemove",RenderSupport.pixiStageOnMouseMove);
 			} else {
 				pixijscss.deleteRule(newRuleIndex);
-				RenderSupportJSPixi.PixiStage.on("mousemove",RenderSupportJSPixi.pixiStageOnMouseMove);
+				RenderSupport.PixiStage.on("mousemove",RenderSupport.pixiStageOnMouseMove);
 			}
 		}
 	}
 };
-RenderSupportJSPixi.StartFlowMain = function() {
+RenderSupport.StartFlowMain = function() {
 	Errors.print("Starting flow main.");
 	window.flow_main();
 };
-RenderSupportJSPixi.requestAnimationFrame = function() {
-	window.cancelAnimationFrame(RenderSupportJSPixi.AnimationFrameId);
-	RenderSupportJSPixi.AnimationFrameId = window.requestAnimationFrame(RenderSupportJSPixi.animate);
+RenderSupport.requestAnimationFrame = function() {
+	window.cancelAnimationFrame(RenderSupport.AnimationFrameId);
+	RenderSupport.AnimationFrameId = window.requestAnimationFrame(RenderSupport.animate);
 };
-RenderSupportJSPixi.animate = function(timestamp) {
-	RenderSupportJSPixi.PixiStage.emit("drawframe",timestamp);
-	if(RenderSupportJSPixi.PixiStageChanged || _$RenderSupportJSPixi_VideoClip.NeedsDrawing()) {
-		RenderSupportJSPixi.PixiRenderer.render(RenderSupportJSPixi.PixiStage);
-		RenderSupportJSPixi.PixiStageChanged = false;
-		if(RenderSupportJSPixi.ShowDebugClipsTree) _$RenderSupportJSPixi_DebugClipsTree.getInstance().updateTree(RenderSupportJSPixi.PixiStage);
+RenderSupport.animate = function(timestamp) {
+	RenderSupport.PixiStage.emit("drawframe",timestamp);
+	if(RenderSupport.PixiStageChanged || _$RenderSupport_VideoClip.NeedsDrawing()) {
+		RenderSupport.PixiRenderer.render(RenderSupport.PixiStage);
+		RenderSupport.PixiStageChanged = false;
+		if(RenderSupport.ShowDebugClipsTree) _$RenderSupport_DebugClipsTree.getInstance().updateTree(RenderSupport.PixiStage);
 	}
-	RenderSupportJSPixi.requestAnimationFrame();
+	RenderSupport.requestAnimationFrame();
 };
-RenderSupportJSPixi.addPasteEventListener = function(fn) {
-	RenderSupportJSPixi.PixiStage.on("paste",fn);
+RenderSupport.addPasteEventListener = function(fn) {
+	RenderSupport.PixiStage.on("paste",fn);
 	return function() {
-		RenderSupportJSPixi.PixiStage.off("paste",fn);
+		RenderSupport.PixiStage.off("paste",fn);
 	};
 };
-RenderSupportJSPixi.InvalidateStage = function() {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.InvalidateStage = function() {
+	RenderSupport.PixiStageChanged = true;
 };
-RenderSupportJSPixi.getPixelsPerCm = function() {
+RenderSupport.getPixelsPerCm = function() {
 	return 37.795275590551178;
 };
-RenderSupportJSPixi.setHitboxRadius = function(radius) {
+RenderSupport.setHitboxRadius = function(radius) {
 	return false;
 };
-RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
+RenderSupport.addAccessAttributes = function(clip,attributes) {
 	var _g = 0;
 	while(_g < attributes.length) {
 		var kv = attributes[_g];
@@ -5538,17 +5538,17 @@ RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
 		switch(key) {
 		case "role":
 			clip.accessWidget.setAttribute("role",val);
-			if(RenderSupportJSPixi.accessRoleMap.get(val) == "button") {
+			if(RenderSupport.accessRoleMap.get(val) == "button") {
 				clip.accessWidget.onclick = (function() {
 					return function() {
-						if(clip.accessCallback != null) clip.accessCallback(); else RenderSupportJSPixi.emulateMouseClickOnClip(clip);
+						if(clip.accessCallback != null) clip.accessCallback(); else RenderSupport.emulateMouseClickOnClip(clip);
 					};
 				})();
 				var onFocus = [clip.accessWidget.onfocus];
 				var onBlur = [clip.accessWidget.onblur];
 				clip.accessWidget.onfocus = (function(onFocus) {
 					return function(e) {
-						RenderSupportJSPixi.defer((function(onFocus) {
+						RenderSupport.defer((function(onFocus) {
 							return function() {
 								if(onFocus[0] != null) onFocus[0](e);
 								clip.accessWidget.classList.add("focused");
@@ -5558,7 +5558,7 @@ RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
 				})(onFocus);
 				clip.accessWidget.onblur = (function(onBlur) {
 					return function(e1) {
-						RenderSupportJSPixi.defer((function(onBlur) {
+						RenderSupport.defer((function(onBlur) {
 							return function() {
 								if(onBlur[0] != null) onBlur[0](e1);
 								clip.accessWidget.classList.remove("focused");
@@ -5583,8 +5583,8 @@ RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
 			break;
 		case "zorder":
 			clip.accessWidget.selfZOrder = Std.parseInt(val);
-			if(RenderSupportJSPixi.DebugAccessOrder) clip.accessWidget.setAttribute("selfzorder",val);
-			RenderSupportJSPixi.updateAccessWidgetZOrder(clip.accessWidget);
+			if(RenderSupport.DebugAccessOrder) clip.accessWidget.setAttribute("selfzorder",val);
+			RenderSupport.updateAccessWidgetZOrder(clip.accessWidget);
 			break;
 		case "id":
 			clip.accessWidget.id = val;
@@ -5601,14 +5601,14 @@ RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
 		case "nodeindex":
 			var nodeindex_strings = new EReg(" ","g").split(val);
 			clip.accessWidget.nodeindex = [];
-			if(RenderSupportJSPixi.DebugAccessOrder) clip.accessWidget.setAttribute("nodeindex",val);
+			if(RenderSupport.DebugAccessOrder) clip.accessWidget.setAttribute("nodeindex",val);
 			var _g2 = 0;
 			var _g1 = nodeindex_strings.length;
 			while(_g2 < _g1) {
 				var i = _g2++;
 				clip.accessWidget.nodeindex = clip.accessWidget.nodeindex.concat([Std.parseInt(nodeindex_strings[i])]);
 			}
-			if(clip.accessWidget.parentNode) RenderSupportJSPixi.addNode(clip.accessWidget.parentNode,clip.accessWidget);
+			if(clip.accessWidget.parentNode) RenderSupport.addNode(clip.accessWidget.parentNode,clip.accessWidget);
 			break;
 		case "tabindex":
 			clip.accessWidget.tabIndex = Std.parseInt(val);
@@ -5621,23 +5621,23 @@ RenderSupportJSPixi.addAccessAttributes = function(clip,attributes) {
 		}
 	}
 };
-RenderSupportJSPixi.setAccessibilityEnabled = function(enabled) {
-	RenderSupportJSPixi.AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
+RenderSupport.setAccessibilityEnabled = function(enabled) {
+	RenderSupport.AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
 };
-RenderSupportJSPixi.setEnableFocusFrame = function(show) {
-	RenderSupportJSPixi.EnableFocusFrame = show;
+RenderSupport.setEnableFocusFrame = function(show) {
+	RenderSupport.EnableFocusFrame = show;
 };
-RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
-	if(!RenderSupportJSPixi.AccessibilityEnabled) return;
+RenderSupport.setAccessAttributes = function(clip,attributes) {
+	if(!RenderSupport.AccessibilityEnabled) return;
 	if(clip.accessWidget == null) {
 		if(clip.nativeWidget != null) {
 			clip.accessWidget = clip.nativeWidget;
-			RenderSupportJSPixi.addAccessAttributes(clip,attributes);
+			RenderSupport.addAccessAttributes(clip,attributes);
 		} else {
-			RenderSupportJSPixi.PixiStageChanged = true;
+			RenderSupport.PixiStageChanged = true;
 			var tagName = "div";
 			if(attributes.length > 0 && attributes[0][0] == "role") {
-				var mapval = RenderSupportJSPixi.accessRoleMap.get(attributes[0][1]);
+				var mapval = RenderSupport.accessRoleMap.get(attributes[0][1]);
 				if(mapval != null) tagName = mapval;
 			}
 			var _g = 0;
@@ -5649,7 +5649,7 @@ RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
 			clip.accessWidget = window.document.createElement(tagName);
 			clip.accessWidget.addEventListener("focus",function() {
 				clip.emit("focus");
-				if(clip.parent != null) RenderSupportJSPixi.emitEvent(clip.parent,"childfocused",clip);
+				if(clip.parent != null) RenderSupport.emitEvent(clip.parent,"childfocused",clip);
 			});
 			clip.accessWidget.addEventListener("blur",function() {
 				clip.emit("blur");
@@ -5660,7 +5660,7 @@ RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
 				if(clip.worldVisible && clip.accessWidget.zOrder >= max_zorder) clip.accessWidget.style.display = "block"; else clip.accessWidget.style.display = "none";
 			};
 			clip.accessWidget.updateDisplay = updateDisplay;
-			RenderSupportJSPixi.addAccessAttributes(clip,attributes);
+			RenderSupport.addAccessAttributes(clip,attributes);
 			if(tagName == "button") {
 				if(clip.accessWidget.getAttribute("aria-label") == null) clip.accessWidget.setAttribute("aria-label","");
 				clip.accessWidget.classList.add("accessButton");
@@ -5672,12 +5672,12 @@ RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
 			} else if(tagName == "form") clip.accessWidget.onsubmit = function() {
 				return false;
 			}; else clip.accessWidget.classList.add("accessElement");
-			RenderSupportJSPixi.addNode(window.document.body,clip.accessWidget);
+			RenderSupport.addNode(window.document.body,clip.accessWidget);
 			clip.updateAccessWidget = function() {
 				if(clip.accessWidget != null) {
 					if(clip.worldVisible) {
 						var max_zorder1 = window.document.body.zOrder;
-						if(RenderSupportJSPixi.DebugAccessOrder) {
+						if(RenderSupport.DebugAccessOrder) {
 							var bounds = clip.getBounds(true);
 							clip.accessWidget.style.left = "" + bounds.x + "px";
 							clip.accessWidget.style.top = "" + bounds.y + "px";
@@ -5689,24 +5689,24 @@ RenderSupportJSPixi.setAccessAttributes = function(clip,attributes) {
 				}
 			};
 			clip.deleteAccessWidget = function() {
-				RenderSupportJSPixi.PixiStage.off("drawframe",clip.updateAccessWidget);
+				RenderSupport.PixiStage.off("drawframe",clip.updateAccessWidget);
 				if(clip.accessWidget != null && clip.accessWidget.parentNode != null) {
 					var parentNode = clip.accessWidget.parentNode;
 					parentNode.removeChild(clip.accessWidget);
 					delete clip.accessWidget;
 					clip.accessWidget = null;
-					RenderSupportJSPixi.updateAccessWidgetZOrder(parentNode);
+					RenderSupport.updateAccessWidgetZOrder(parentNode);
 				}
 			};
-			RenderSupportJSPixi.PixiStage.on("drawframe",clip.updateAccessWidget);
+			RenderSupport.PixiStage.on("drawframe",clip.updateAccessWidget);
 			clip.on("removed",clip.deleteAccessWidget);
 		}
-	} else RenderSupportJSPixi.addAccessAttributes(clip,attributes);
+	} else RenderSupport.addAccessAttributes(clip,attributes);
 };
-RenderSupportJSPixi.setAccessCallback = function(clip,callback) {
+RenderSupport.setAccessCallback = function(clip,callback) {
 	clip.accessCallback = callback;
 };
-RenderSupportJSPixi.setShouldPreventFromBlur = function(clip) {
+RenderSupport.setShouldPreventFromBlur = function(clip) {
 	if(clip.nativeWidget != null && clip.shouldPreventFromBlur != null) clip.shouldPreventFromBlur = true;
 	var children = clip.children;
 	if(children != null) {
@@ -5714,11 +5714,11 @@ RenderSupportJSPixi.setShouldPreventFromBlur = function(clip) {
 		while(_g < children.length) {
 			var child = children[_g];
 			++_g;
-			RenderSupportJSPixi.setShouldPreventFromBlur(child);
+			RenderSupport.setShouldPreventFromBlur(child);
 		}
 	}
 };
-RenderSupportJSPixi.updateAccessWidgetZOrder = function(accessWidget) {
+RenderSupport.updateAccessWidgetZOrder = function(accessWidget) {
 	if(accessWidget != null && accessWidget.selfZOrder != null) {
 		var previousZOrder = accessWidget.zOrder;
 		accessWidget.zOrder = accessWidget.selfZOrder;
@@ -5731,14 +5731,14 @@ RenderSupportJSPixi.updateAccessWidgetZOrder = function(accessWidget) {
 				if(accessWidget.zOrder < child.zOrder) accessWidget.zOrder = child.zOrder;
 			}
 		}
-		if(RenderSupportJSPixi.DebugAccessOrder) {
+		if(RenderSupport.DebugAccessOrder) {
 			accessWidget.setAttribute("zorder",accessWidget.zOrder);
 			accessWidget.setAttribute("selfzorder",accessWidget.selfZOrder);
 		}
-		if(previousZOrder != accessWidget.zOrder && accessWidget != window.document.body) RenderSupportJSPixi.updateAccessWidgetZOrder(accessWidget.parentNode); else RenderSupportJSPixi.updateAccessWidgetsDisplay(accessWidget,window.document.body.zOrder);
+		if(previousZOrder != accessWidget.zOrder && accessWidget != window.document.body) RenderSupport.updateAccessWidgetZOrder(accessWidget.parentNode); else RenderSupport.updateAccessWidgetsDisplay(accessWidget,window.document.body.zOrder);
 	}
 };
-RenderSupportJSPixi.updateAccessWidgetsDisplay = function(accessWidget,max_zorder) {
+RenderSupport.updateAccessWidgetsDisplay = function(accessWidget,max_zorder) {
 	var children = accessWidget.children;
 	if(children != null) {
 		var _g = 0;
@@ -5747,39 +5747,39 @@ RenderSupportJSPixi.updateAccessWidgetsDisplay = function(accessWidget,max_zorde
 			++_g;
 			if(child.updateDisplay != null) {
 				child.updateDisplay(max_zorder);
-				RenderSupportJSPixi.updateAccessWidgetsDisplay(child,max_zorder);
+				RenderSupport.updateAccessWidgetsDisplay(child,max_zorder);
 			}
 		}
 	}
 };
-RenderSupportJSPixi.currentClip = function() {
-	return RenderSupportJSPixi.PixiStage;
+RenderSupport.currentClip = function() {
+	return RenderSupport.PixiStage;
 };
-RenderSupportJSPixi.hideFlowJSLoadingIndicator = function() {
+RenderSupport.hideFlowJSLoadingIndicator = function() {
 	window.document.body.style.backgroundImage = "none";
 	var indicator = window.document.getElementById("loading_js_indicator");
 	if(null != indicator) indicator.style.display = "none";
 };
-RenderSupportJSPixi.enableResize = function() {
-	RenderSupportJSPixi.hideFlowJSLoadingIndicator();
+RenderSupport.enableResize = function() {
+	RenderSupport.hideFlowJSLoadingIndicator();
 };
-RenderSupportJSPixi.getStageWidth = function() {
-	return RenderSupportJSPixi.PixiRenderer.width / RenderSupportJSPixi.backingStoreRatio;
+RenderSupport.getStageWidth = function() {
+	return RenderSupport.PixiRenderer.width / RenderSupport.backingStoreRatio;
 };
-RenderSupportJSPixi.getStageHeight = function() {
-	return RenderSupportJSPixi.PixiRenderer.height / RenderSupportJSPixi.backingStoreRatio;
+RenderSupport.getStageHeight = function() {
+	return RenderSupport.PixiRenderer.height / RenderSupport.backingStoreRatio;
 };
-RenderSupportJSPixi.makeTextField = function(fontFamily) {
-	if(RenderSupportJSPixi.UseDFont && FontLoader.hasDFont(fontFamily)) return new _$RenderSupportJSPixi_DFontText(); else return new _$RenderSupportJSPixi_PixiText();
+RenderSupport.makeTextField = function(fontFamily) {
+	if(RenderSupport.UseDFont && FontLoader.hasDFont(fontFamily)) return new _$RenderSupport_DFontText(); else return new _$RenderSupport_PixiText();
 };
-RenderSupportJSPixi.capitalize = function(s) {
+RenderSupport.capitalize = function(s) {
 	return HxOverrides.substr(s,0,1).toUpperCase() + HxOverrides.substr(s,1,s.length - 1);
 };
-RenderSupportJSPixi.recognizeBuiltinFont = function(fontfamily,fontweight,fontslope) {
-	if(StringTools.startsWith(fontfamily,"'Material Icons")) return "MaterialIcons"; else if(StringTools.startsWith(fontfamily,"'DejaVu Sans")) return "DejaVuSans"; else if(StringTools.startsWith(fontfamily,"'Franklin Gothic")) if(fontslope == "italic") return "Italic"; else if(fontweight == 700) return "Bold"; else return "Book"; else if(StringTools.startsWith(fontfamily,"Roboto")) return fontfamily + RenderSupportJSPixi.intFontWeight2StrSuffix(fontweight) + (fontslope == "normal"?"":HxOverrides.substr(fontslope,0,1).toUpperCase() + HxOverrides.substr(fontslope,1,fontslope.length - 1));
+RenderSupport.recognizeBuiltinFont = function(fontfamily,fontweight,fontslope) {
+	if(StringTools.startsWith(fontfamily,"'Material Icons")) return "MaterialIcons"; else if(StringTools.startsWith(fontfamily,"'DejaVu Sans")) return "DejaVuSans"; else if(StringTools.startsWith(fontfamily,"'Franklin Gothic")) if(fontslope == "italic") return "Italic"; else if(fontweight == 700) return "Bold"; else return "Book"; else if(StringTools.startsWith(fontfamily,"Roboto")) return fontfamily + RenderSupport.intFontWeight2StrSuffix(fontweight) + (fontslope == "normal"?"":HxOverrides.substr(fontslope,0,1).toUpperCase() + HxOverrides.substr(fontslope,1,fontslope.length - 1));
 	return "";
 };
-RenderSupportJSPixi.intFontWeight2StrSuffix = function(w) {
+RenderSupport.intFontWeight2StrSuffix = function(w) {
 	if(w <= 500) {
 		if(w <= 300) {
 			if(w <= 100) return "Thin"; else if(w <= 200) return "Ultra Light"; else return "Light";
@@ -5788,112 +5788,112 @@ RenderSupportJSPixi.intFontWeight2StrSuffix = function(w) {
 		if(w <= 600) return "Semi Bold"; else return "Bold";
 	} else if(w <= 800) return "Extra Bold"; else return "Black";
 };
-RenderSupportJSPixi.setTextAndStyle = function(textfield,text,fontfamily,fontsize,fontweight,fontslope,fillcolour,fillopacity,letterspacing,backgroundcolour,backgroundopacity,forTextinput) {
+RenderSupport.setTextAndStyle = function(textfield,text,fontfamily,fontsize,fontweight,fontslope,fillcolour,fillopacity,letterspacing,backgroundcolour,backgroundopacity,forTextinput) {
 	var maybeBuiltin;
-	if(fontweight > 0 || fontslope != "") maybeBuiltin = RenderSupportJSPixi.recognizeBuiltinFont(fontfamily,fontweight,fontslope); else maybeBuiltin = fontfamily;
+	if(fontweight > 0 || fontslope != "") maybeBuiltin = RenderSupport.recognizeBuiltinFont(fontfamily,fontweight,fontslope); else maybeBuiltin = fontfamily;
 	if(maybeBuiltin != "") fontfamily = maybeBuiltin;
 	textfield.setTextAndStyle(text,fontfamily,fontsize,fontweight,fontslope,fillcolour,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
 };
-RenderSupportJSPixi.setAdvancedText = function(textfield,sharpness,antialiastype,gridfittype) {
+RenderSupport.setAdvancedText = function(textfield,sharpness,antialiastype,gridfittype) {
 };
-RenderSupportJSPixi.makeVideo = function(metricsFn,playFn,durationFn,positionFn) {
-	return new _$RenderSupportJSPixi_VideoClip(metricsFn,playFn,durationFn,positionFn);
+RenderSupport.makeVideo = function(metricsFn,playFn,durationFn,positionFn) {
+	return new _$RenderSupport_VideoClip(metricsFn,playFn,durationFn,positionFn);
 };
-RenderSupportJSPixi.setVideoVolume = function(str,volume) {
+RenderSupport.setVideoVolume = function(str,volume) {
 	str.setVolume(volume);
 };
-RenderSupportJSPixi.setVideoLooping = function(str,loop) {
+RenderSupport.setVideoLooping = function(str,loop) {
 	str.setLooping(loop);
 };
-RenderSupportJSPixi.setVideoControls = function(str,controls) {
+RenderSupport.setVideoControls = function(str,controls) {
 };
-RenderSupportJSPixi.setVideoSubtitle = function(str,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity) {
+RenderSupport.setVideoSubtitle = function(str,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity) {
 	str.setVideoSubtitle(text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
 };
-RenderSupportJSPixi.setVideoPlaybackRate = function(str,rate) {
+RenderSupport.setVideoPlaybackRate = function(str,rate) {
 	str.setPlaybackRate(rate);
 };
-RenderSupportJSPixi.setVideoTimeRange = function(str,start,end) {
+RenderSupport.setVideoTimeRange = function(str,start,end) {
 	str.setTimeRange(start,end);
 };
-RenderSupportJSPixi.playVideo = function(vc,filename,startPaused) {
+RenderSupport.playVideo = function(vc,filename,startPaused) {
 	vc.playVideo(filename,startPaused);
 };
-RenderSupportJSPixi.seekVideo = function(str,seek) {
+RenderSupport.seekVideo = function(str,seek) {
 	str.setCurrentTime(seek);
 };
-RenderSupportJSPixi.getVideoPosition = function(str) {
+RenderSupport.getVideoPosition = function(str) {
 	return str.getCurrentTime();
 };
-RenderSupportJSPixi.pauseVideo = function(str) {
+RenderSupport.pauseVideo = function(str) {
 	str.pauseVideo();
 };
-RenderSupportJSPixi.resumeVideo = function(str) {
+RenderSupport.resumeVideo = function(str) {
 	str.resumeVideo();
 };
-RenderSupportJSPixi.closeVideo = function(str) {
+RenderSupport.closeVideo = function(str) {
 };
-RenderSupportJSPixi.getTextFieldWidth = function(textfield) {
+RenderSupport.getTextFieldWidth = function(textfield) {
 	return textfield.getWidth();
 };
-RenderSupportJSPixi.setTextFieldWidth = function(textfield,width) {
+RenderSupport.setTextFieldWidth = function(textfield,width) {
 	textfield.setWidth(width);
 };
-RenderSupportJSPixi.getTextFieldHeight = function(textfield) {
+RenderSupport.getTextFieldHeight = function(textfield) {
 	return textfield.getHeight();
 };
-RenderSupportJSPixi.setTextFieldHeight = function(textfield,height) {
+RenderSupport.setTextFieldHeight = function(textfield,height) {
 	if(height > 0.0) textfield.setHeight(height);
 };
-RenderSupportJSPixi.setTextFieldCropWords = function(textfield,crop) {
+RenderSupport.setTextFieldCropWords = function(textfield,crop) {
 	textfield.setCropWords(crop);
 };
-RenderSupportJSPixi.setTextFieldCursorColor = function(textfield,color,opacity) {
+RenderSupport.setTextFieldCursorColor = function(textfield,color,opacity) {
 	textfield.setCursorColor(color,opacity);
 };
-RenderSupportJSPixi.setTextFieldCursorWidth = function(textfield,width) {
+RenderSupport.setTextFieldCursorWidth = function(textfield,width) {
 	textfield.setCursorWidth(width);
 };
-RenderSupportJSPixi.setTextFieldInterlineSpacing = function(textfield,spacing) {
+RenderSupport.setTextFieldInterlineSpacing = function(textfield,spacing) {
 	textfield.setInterlineSpacing(spacing);
 };
-RenderSupportJSPixi.setAutoAlign = function(textfield,autoalign) {
+RenderSupport.setAutoAlign = function(textfield,autoalign) {
 	textfield.setAutoAlign(autoalign);
 };
-RenderSupportJSPixi.setTextInput = function(textfield) {
+RenderSupport.setTextInput = function(textfield) {
 	textfield.setTextInput();
 };
-RenderSupportJSPixi.setTextInputType = function(textfield,type) {
+RenderSupport.setTextInputType = function(textfield,type) {
 	textfield.setTextInputType(type);
 };
-RenderSupportJSPixi.setTabIndex = function(textfield,index) {
+RenderSupport.setTabIndex = function(textfield,index) {
 	textfield.setTabIndex(index);
 };
-RenderSupportJSPixi.setTabEnabled = function(enabled) {
+RenderSupport.setTabEnabled = function(enabled) {
 };
-RenderSupportJSPixi.getContent = function(textfield) {
+RenderSupport.getContent = function(textfield) {
 	return textfield.getContent();
 };
-RenderSupportJSPixi.getCursorPosition = function(textfield) {
+RenderSupport.getCursorPosition = function(textfield) {
 	return textfield.getCursorPosition();
 };
-RenderSupportJSPixi.getFocus = function(clip) {
+RenderSupport.getFocus = function(clip) {
 	return clip.getFocus();
 };
-RenderSupportJSPixi.getScrollV = function(textfield) {
+RenderSupport.getScrollV = function(textfield) {
 	return 0;
 };
-RenderSupportJSPixi.setScrollV = function(textfield,suggestedPosition) {
+RenderSupport.setScrollV = function(textfield,suggestedPosition) {
 };
-RenderSupportJSPixi.getBottomScrollV = function(textfield) {
+RenderSupport.getBottomScrollV = function(textfield) {
 	return 0;
 };
-RenderSupportJSPixi.getNumLines = function(textfield) {
+RenderSupport.getNumLines = function(textfield) {
 	return 0;
 };
-RenderSupportJSPixi.setFocus = function(clip,focus) {
-	if(clip.setFocus != null) clip.setFocus(focus); else if(RenderSupportJSPixi.AccessibilityEnabled) {
-		var accessWidget = RenderSupportJSPixi.findAccessibleChild(clip);
+RenderSupport.setFocus = function(clip,focus) {
+	if(clip.setFocus != null) clip.setFocus(focus); else if(RenderSupport.AccessibilityEnabled) {
+		var accessWidget = RenderSupport.findAccessibleChild(clip);
 		if(accessWidget == null) return;
 		if(accessWidget.getAttribute("tabindex") == null || accessWidget.getAttribute("tabindex").charAt(0) == "-" || accessWidget.disabled != false) accessWidget = accessWidget.querySelector("*[tabindex]:not([disabled]):not([tabindex^='-'])") || accessWidget;
 		if(focus && accessWidget != null && $bind(accessWidget,accessWidget.focus) != null) accessWidget.focus(); else if(!focus && accessWidget != null && $bind(accessWidget,accessWidget.blur) != null) accessWidget.blur(); else {
@@ -5902,55 +5902,55 @@ RenderSupportJSPixi.setFocus = function(clip,focus) {
 		}
 	}
 };
-RenderSupportJSPixi.setMultiline = function(textfield,multiline) {
+RenderSupport.setMultiline = function(textfield,multiline) {
 	textfield.setMultiline(multiline);
 };
-RenderSupportJSPixi.setWordWrap = function(textfield,wordWrap) {
+RenderSupport.setWordWrap = function(textfield,wordWrap) {
 	textfield.setWordWrap(wordWrap);
 };
-RenderSupportJSPixi.getSelectionStart = function(textfield) {
+RenderSupport.getSelectionStart = function(textfield) {
 	return textfield.getSelectionStart();
 };
-RenderSupportJSPixi.getSelectionEnd = function(textfield) {
+RenderSupport.getSelectionEnd = function(textfield) {
 	return textfield.getSelectionEnd();
 };
-RenderSupportJSPixi.setSelection = function(textfield,start,end) {
+RenderSupport.setSelection = function(textfield,start,end) {
 	textfield.setSelection(start,end);
 };
-RenderSupportJSPixi.setReadOnly = function(textfield,readOnly) {
+RenderSupport.setReadOnly = function(textfield,readOnly) {
 	textfield.setReadOnly(readOnly);
 };
-RenderSupportJSPixi.setMaxChars = function(textfield,maxChars) {
+RenderSupport.setMaxChars = function(textfield,maxChars) {
 	textfield.setMaxChars(maxChars);
 };
-RenderSupportJSPixi.addTextInputFilter = function(textfield,filter) {
+RenderSupport.addTextInputFilter = function(textfield,filter) {
 	return textfield.addTextInputFilter(filter);
 };
-RenderSupportJSPixi.addTextInputKeyEventFilter = function(textfield,event,filter) {
+RenderSupport.addTextInputKeyEventFilter = function(textfield,event,filter) {
 	if(event == "keydown") return textfield.addTextInputKeyDownEventFilter(filter); else return textfield.addTextInputKeyUpEventFilter(filter);
 };
-RenderSupportJSPixi.getAccessElement = function(clip) {
+RenderSupport.getAccessElement = function(clip) {
 	if(clip.accessWidget != null) return clip.accessWidget; else if(clip.nativeWidget != null) return clip.nativeWidget; else return null;
 };
-RenderSupportJSPixi.addAccessChild = function(parent,clip) {
-	var parentWidget = RenderSupportJSPixi.findParentAccessibleWidget(parent);
+RenderSupport.addAccessChild = function(parent,clip) {
+	var parentWidget = RenderSupport.findParentAccessibleWidget(parent);
 	var accessElement;
 	if(clip.accessWidget != null) accessElement = clip.accessWidget; else if(clip.nativeWidget != null) accessElement = clip.nativeWidget; else accessElement = null;
 	if(parentWidget != null) {
-		if(accessElement != null) RenderSupportJSPixi.addNode(parentWidget,accessElement); else {
+		if(accessElement != null) RenderSupport.addNode(parentWidget,accessElement); else {
 			var children = clip.children;
 			if(children != null) {
 				var _g = 0;
 				while(_g < children.length) {
 					var childclip = children[_g];
 					++_g;
-					RenderSupportJSPixi.addAccessChild(parent,childclip);
+					RenderSupport.addAccessChild(parent,childclip);
 				}
 			}
 		}
 	}
 };
-RenderSupportJSPixi.getNextAccessElement = function(parent,currentChild) {
+RenderSupport.getNextAccessElement = function(parent,currentChild) {
 	return Lambda.find(Array.from(parent.children),function(childclip) {
 		if(currentChild != childclip && currentChild.nodeindex) {
 			if(childclip.nodeindex) {
@@ -5967,22 +5967,22 @@ RenderSupportJSPixi.getNextAccessElement = function(parent,currentChild) {
 		} else return false;
 	});
 };
-RenderSupportJSPixi.findParentAccessible = function(clip) {
+RenderSupport.findParentAccessible = function(clip) {
 	if(clip == null) return null;
 	var accessElement;
 	if(clip.accessWidget != null) accessElement = clip.accessWidget; else if(clip.nativeWidget != null) accessElement = clip.nativeWidget; else accessElement = null;
 	if(accessElement != null) return clip;
-	return RenderSupportJSPixi.findParentAccessible(clip.parent);
+	return RenderSupport.findParentAccessible(clip.parent);
 };
-RenderSupportJSPixi.findParentAccessibleWidget = function(clip) {
+RenderSupport.findParentAccessibleWidget = function(clip) {
 	if(clip == null) return null;
 	var accessElement;
 	if(clip.accessWidget != null) accessElement = clip.accessWidget; else if(clip.nativeWidget != null) accessElement = clip.nativeWidget; else accessElement = null;
 	if(accessElement != null) return accessElement;
-	return RenderSupportJSPixi.findParentAccessibleWidget(clip.parent);
+	return RenderSupport.findParentAccessibleWidget(clip.parent);
 };
-RenderSupportJSPixi.findAccessibleChild = function(clip) {
-	var accessElement = RenderSupportJSPixi.getAccessElement(clip);
+RenderSupport.findAccessibleChild = function(clip) {
+	var accessElement = RenderSupport.getAccessElement(clip);
 	if(accessElement != null) return accessElement;
 	var children = clip.children;
 	if(children != null) {
@@ -5990,17 +5990,17 @@ RenderSupportJSPixi.findAccessibleChild = function(clip) {
 		while(_g < children.length) {
 			var childclip = children[_g];
 			++_g;
-			var childElement = RenderSupportJSPixi.findAccessibleChild(childclip);
+			var childElement = RenderSupport.findAccessibleChild(childclip);
 			if(childElement != null) return childElement;
 		}
 	}
 	return null;
 };
-RenderSupportJSPixi.emitEvent = function(parent,event,value) {
+RenderSupport.emitEvent = function(parent,event,value) {
 	parent.emit(event,value);
-	if(parent.parent != null) RenderSupportJSPixi.emitEvent(parent.parent,event,value);
+	if(parent.parent != null) RenderSupport.emitEvent(parent.parent,event,value);
 };
-RenderSupportJSPixi.broadcastEvent = function(parent,event,value) {
+RenderSupport.broadcastEvent = function(parent,event,value) {
 	parent.emit(event,value);
 	if(parent.children != null) {
 		var children = parent.children;
@@ -6008,19 +6008,19 @@ RenderSupportJSPixi.broadcastEvent = function(parent,event,value) {
 		while(_g < children.length) {
 			var c = children[_g];
 			++_g;
-			RenderSupportJSPixi.broadcastEvent(c,event,value);
+			RenderSupport.broadcastEvent(c,event,value);
 		}
 	}
-	if(parent.mask != null) RenderSupportJSPixi.broadcastEvent(parent.mask,event,value);
+	if(parent.mask != null) RenderSupport.broadcastEvent(parent.mask,event,value);
 };
-RenderSupportJSPixi.addChild = function(parent,child) {
+RenderSupport.addChild = function(parent,child) {
 	parent.addChild(child);
-	if(RenderSupportJSPixi.AccessibilityEnabled) RenderSupportJSPixi.addAccessChild(parent,child);
+	if(RenderSupport.AccessibilityEnabled) RenderSupport.addAccessChild(parent,child);
 };
-RenderSupportJSPixi.removeChild = function(parent,child) {
+RenderSupport.removeChild = function(parent,child) {
 	parent.removeChild(child);
 };
-RenderSupportJSPixi.parentNodeIndex = function(parent,child) {
+RenderSupport.parentNodeIndex = function(parent,child) {
 	var res = false;
 	if(!child.contains(parent) && parent.nodeindex != null && child.nodeindex != null && parent.nodeindex.length != 0 && child.nodeindex.length >= parent.nodeindex.length) {
 		res = true;
@@ -6036,7 +6036,7 @@ RenderSupportJSPixi.parentNodeIndex = function(parent,child) {
 	}
 	return res;
 };
-RenderSupportJSPixi.equalNodeIndex = function(parent,child) {
+RenderSupport.equalNodeIndex = function(parent,child) {
 	var res = false;
 	if(parent.nodeindex != null && child.nodeindex != null && parent.nodeindex.length != 0 && child.nodeindex.length == parent.nodeindex.length) {
 		res = true;
@@ -6052,17 +6052,17 @@ RenderSupportJSPixi.equalNodeIndex = function(parent,child) {
 	}
 	return res;
 };
-RenderSupportJSPixi.addNode = function(parent,child) {
+RenderSupport.addNode = function(parent,child) {
 	try {
-		var nextAccessChild = RenderSupportJSPixi.getNextAccessElement(parent,child);
+		var nextAccessChild = RenderSupport.getNextAccessElement(parent,child);
 		var previousParentNode = child.parentNode;
 		if(nextAccessChild != null) {
-			if(RenderSupportJSPixi.parentNodeIndex(nextAccessChild,child)) {
-				if(RenderSupportJSPixi.equalNodeIndex(nextAccessChild,child)) {
+			if(RenderSupport.parentNodeIndex(nextAccessChild,child)) {
+				if(RenderSupport.equalNodeIndex(nextAccessChild,child)) {
 					if(nextAccessChild.nextSibling == null) parent.appendChild(child); else parent.insertBefore(child,nextAccessChild.nextSibling);
-				} else RenderSupportJSPixi.addNode(nextAccessChild,child);
+				} else RenderSupport.addNode(nextAccessChild,child);
 			} else {
-				if(RenderSupportJSPixi.DebugAccessOrder && parent != window.document.body && !RenderSupportJSPixi.parentNodeIndex(parent,child)) {
+				if(RenderSupport.DebugAccessOrder && parent != window.document.body && !RenderSupport.parentNodeIndex(parent,child)) {
 					console.log("Wrong accessWidget parentNode nodeindex");
 					console.log(parent);
 					console.log(child);
@@ -6070,7 +6070,7 @@ RenderSupportJSPixi.addNode = function(parent,child) {
 				parent.insertBefore(child,nextAccessChild);
 			}
 		} else {
-			if(RenderSupportJSPixi.DebugAccessOrder && parent != window.document.body && !RenderSupportJSPixi.parentNodeIndex(parent,child)) {
+			if(RenderSupport.DebugAccessOrder && parent != window.document.body && !RenderSupport.parentNodeIndex(parent,child)) {
 				console.log("Wrong accessWidget parentNode nodeindex");
 				console.log(parent);
 				console.log(child);
@@ -6078,24 +6078,24 @@ RenderSupportJSPixi.addNode = function(parent,child) {
 			parent.appendChild(child);
 		}
 		if(child.parentNode == parent) {
-			if(previousParentNode != child.parentNode) RenderSupportJSPixi.updateAccessWidgetZOrder(previousParentNode);
-			RenderSupportJSPixi.updateAccessWidgetZOrder(child);
+			if(previousParentNode != child.parentNode) RenderSupport.updateAccessWidgetZOrder(previousParentNode);
+			RenderSupport.updateAccessWidgetZOrder(child);
 		}
 	} catch( e ) {
 		haxe_CallStack.lastException = e;
 		if (e instanceof js__$Boot_HaxeError) e = e.val;
-		if(RenderSupportJSPixi.DebugAccessOrder && parent != window.document.body && !RenderSupportJSPixi.parentNodeIndex(parent,child)) {
+		if(RenderSupport.DebugAccessOrder && parent != window.document.body && !RenderSupport.parentNodeIndex(parent,child)) {
 			console.log("Wrong accessWidget parentNode nodeindex");
 			console.log(parent);
 			console.log(child);
 		}
-		if(parent.parentNode != null) RenderSupportJSPixi.addNode(parent.parentNode,child); else RenderSupportJSPixi.addNode(window.document.body,child);
+		if(parent.parentNode != null) RenderSupport.addNode(parent.parentNode,child); else RenderSupport.addNode(window.document.body,child);
 	}
 };
-RenderSupportJSPixi.makeClip = function() {
-	return new _$RenderSupportJSPixi_FlowContainer();
+RenderSupport.makeClip = function() {
+	return new _$RenderSupport_FlowContainer();
 };
-RenderSupportJSPixi.addMetricsListener = function(clip,fn) {
+RenderSupport.addMetricsListener = function(clip,fn) {
 	var func = function() {
 		fn(clip.boundsWidth,clip.boundsHeight);
 	};
@@ -6105,11 +6105,11 @@ RenderSupportJSPixi.addMetricsListener = function(clip,fn) {
 		clip.off("metricschanged",func);
 	};
 };
-RenderSupportJSPixi.addGlobalTransformListener = function(clip,fn) {
-	var prev_tr = RenderSupportJSPixi.getGlobalTransform(clip);
+RenderSupport.addGlobalTransformListener = function(clip,fn) {
+	var prev_tr = RenderSupport.getGlobalTransform(clip);
 	fn(prev_tr);
 	var func = function() {
-		var tr = RenderSupportJSPixi.getGlobalTransform(clip);
+		var tr = RenderSupport.getGlobalTransform(clip);
 		if(prev_tr != tr) fn(tr);
 	};
 	clip.on("transformchanged",func);
@@ -6117,7 +6117,7 @@ RenderSupportJSPixi.addGlobalTransformListener = function(clip,fn) {
 		clip.off("transformchanged",func);
 	};
 };
-RenderSupportJSPixi.addTransformListener = function(clip,fn) {
+RenderSupport.addTransformListener = function(clip,fn) {
 	var func = function() {
 		fn(clip.x,clip.y,clip.scale.x,clip.scale.y);
 	};
@@ -6127,70 +6127,70 @@ RenderSupportJSPixi.addTransformListener = function(clip,fn) {
 		clip.off("transformchanged",func);
 	};
 };
-RenderSupportJSPixi.setClipCallstack = function(clip,callstack) {
+RenderSupport.setClipCallstack = function(clip,callstack) {
 };
-RenderSupportJSPixi.setClipX = function(clip,x) {
+RenderSupport.setClipX = function(clip,x) {
 	clip.setClipX(x);
 };
-RenderSupportJSPixi.setClipY = function(clip,y) {
+RenderSupport.setClipY = function(clip,y) {
 	clip.setClipY(y);
 };
-RenderSupportJSPixi.setClipScaleX = function(clip,scale) {
+RenderSupport.setClipScaleX = function(clip,scale) {
 	clip.setClipScaleX(scale);
 };
-RenderSupportJSPixi.setClipScaleY = function(clip,scale) {
+RenderSupport.setClipScaleY = function(clip,scale) {
 	clip.setClipScaleY(scale);
 };
-RenderSupportJSPixi.setClipRotation = function(clip,r) {
+RenderSupport.setClipRotation = function(clip,r) {
 	clip.setClipRotation(r * 0.0174532925);
 };
-RenderSupportJSPixi.getGlobalTransform = function(clip) {
+RenderSupport.getGlobalTransform = function(clip) {
 	if(clip.parent != null && clip.renderable) {
 		var a = clip.worldTransform;
 		return [a.a,a.b,a.c,a.d,a.tx,a.ty];
 	} else return [1.0,0.0,0.0,1.0,0.0,0.0];
 };
-RenderSupportJSPixi.deferUntilRender = function(fn) {
-	RenderSupportJSPixi.PixiStage.once("drawframe",fn);
+RenderSupport.deferUntilRender = function(fn) {
+	RenderSupport.PixiStage.once("drawframe",fn);
 };
-RenderSupportJSPixi.setClipAlpha = function(clip,a) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipAlpha = function(clip,a) {
+	RenderSupport.PixiStageChanged = true;
 	clip.alpha = a;
 };
-RenderSupportJSPixi.getFirstVideoWidget = function(clip) {
-	if((clip instanceof _$RenderSupportJSPixi_VideoClip)) return clip;
+RenderSupport.getFirstVideoWidget = function(clip) {
+	if((clip instanceof _$RenderSupport_VideoClip)) return clip;
 	if(clip.children != null) {
 		var _g = 0;
 		var _g1 = clip.children;
 		while(_g < _g1.length) {
 			var c = _g1[_g];
 			++_g;
-			var video = RenderSupportJSPixi.getFirstVideoWidget(c);
+			var video = RenderSupport.getFirstVideoWidget(c);
 			if(video != null) return video;
 		}
 	}
 	return null;
 };
-RenderSupportJSPixi.setClipMask = function(clip,mask) {
+RenderSupport.setClipMask = function(clip,mask) {
 	clip.setClipMask(mask);
 };
-RenderSupportJSPixi.getStage = function() {
-	return RenderSupportJSPixi.PixiStage;
+RenderSupport.getStage = function() {
+	return RenderSupport.PixiStage;
 };
-RenderSupportJSPixi.modifierStatePresent = function(e,m) {
+RenderSupport.modifierStatePresent = function(e,m) {
 	return e.getModifierState != null && e.getModifierState(m) != null;
 };
-RenderSupportJSPixi.parseKeyEvent = function(e) {
+RenderSupport.parseKeyEvent = function(e) {
 	var shift = false;
 	var alt = false;
 	var ctrl = false;
 	var meta = false;
 	var charCode = -1;
 	var s = "";
-	if(RenderSupportJSPixi.modifierStatePresent(e,"Shift")) shift = e.getModifierState("Shift"); else if(e.shiftKey != null) shift = e.shiftKey;
-	if(RenderSupportJSPixi.modifierStatePresent(e,"Alt")) alt = e.getModifierState("Alt"); else if(e.altKey != null) alt = e.altKey; else if(RenderSupportJSPixi.modifierStatePresent(e,"AltGraph")) alt = e.getModifierState("AltGraph");
-	if(RenderSupportJSPixi.modifierStatePresent(e,"Control")) ctrl = e.getModifierState("Control"); else if(e.ctrlKey != null) ctrl = e.ctrlKey;
-	if(RenderSupportJSPixi.modifierStatePresent(e,"Meta")) meta = e.getModifierState("Meta"); else if(RenderSupportJSPixi.modifierStatePresent(e,"OS")) meta = e.getModifierState("OS"); else if(e.metaKey != null) meta = e.metaKey;
+	if(RenderSupport.modifierStatePresent(e,"Shift")) shift = e.getModifierState("Shift"); else if(e.shiftKey != null) shift = e.shiftKey;
+	if(RenderSupport.modifierStatePresent(e,"Alt")) alt = e.getModifierState("Alt"); else if(e.altKey != null) alt = e.altKey; else if(RenderSupport.modifierStatePresent(e,"AltGraph")) alt = e.getModifierState("AltGraph");
+	if(RenderSupport.modifierStatePresent(e,"Control")) ctrl = e.getModifierState("Control"); else if(e.ctrlKey != null) ctrl = e.ctrlKey;
+	if(RenderSupport.modifierStatePresent(e,"Meta")) meta = e.getModifierState("Meta"); else if(RenderSupport.modifierStatePresent(e,"OS")) meta = e.getModifierState("OS"); else if(e.metaKey != null) meta = e.metaKey;
 	if(Platform.isMacintosh) {
 		var buf = meta;
 		meta = ctrl;
@@ -6212,8 +6212,8 @@ RenderSupportJSPixi.parseKeyEvent = function(e) {
 		s = "backspace";
 		break;
 	case 9:
-		RenderSupportJSPixi.switchFocusFramesShow(RenderSupportJSPixi.EnableFocusFrame);
-		if(Platform.isIE || Platform.isEdge) RenderSupportJSPixi.PixiStage.emit("preonfocus");
+		RenderSupport.switchFocusFramesShow(RenderSupport.EnableFocusFrame);
+		if(Platform.isIE || Platform.isEdge) RenderSupport.PixiStage.emit("preonfocus");
 		s = "tab";
 		break;
 	case 12:
@@ -6362,40 +6362,40 @@ RenderSupportJSPixi.parseKeyEvent = function(e) {
 		break;
 	default:
 		var keyUTF = String.fromCharCode(charCode);
-		if(RenderSupportJSPixi.modifierStatePresent(e,"CapsLock")) {
+		if(RenderSupport.modifierStatePresent(e,"CapsLock")) {
 			if(e.getModifierState("CapsLock")) s = keyUTF.toUpperCase(); else s = keyUTF.toLowerCase();
 		} else s = keyUTF;
 	}
 	return { key : s, ctrl : ctrl, shift : shift, alt : alt, meta : meta, keyCode : e.keyCode, preventDefault : e.preventDefault.bind(e)};
 };
-RenderSupportJSPixi.addKeyEventListener = function(clip,event,fn) {
+RenderSupport.addKeyEventListener = function(clip,event,fn) {
 	var keycb = function(ke) {
 		fn(ke.key,ke.ctrl,ke.shift,ke.alt,ke.meta,ke.keyCode,ke.preventDefault);
 	};
-	RenderSupportJSPixi.PixiStage.on(event,keycb);
+	RenderSupport.PixiStage.on(event,keycb);
 	return function() {
-		RenderSupportJSPixi.PixiStage.off(event,keycb);
+		RenderSupport.PixiStage.off(event,keycb);
 	};
 };
-RenderSupportJSPixi.addStreamStatusListener = function(clip,fn) {
+RenderSupport.addStreamStatusListener = function(clip,fn) {
 	return clip.addStreamStatusListener(fn);
 };
-RenderSupportJSPixi.addEventListener = function(clip,event,fn) {
+RenderSupport.addEventListener = function(clip,event,fn) {
 	if(event == "resize") {
-		RenderSupportJSPixi.PixiStage.on("resize",fn);
+		RenderSupport.PixiStage.on("resize",fn);
 		return function() {
-			RenderSupportJSPixi.PixiStage.off("resize",fn);
+			RenderSupport.PixiStage.off("resize",fn);
 		};
 	} else if(event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup") {
-		RenderSupportJSPixi.PixiStage.on(event,fn);
+		RenderSupport.PixiStage.on(event,fn);
 		return function() {
-			RenderSupportJSPixi.PixiStage.off(event,fn);
+			RenderSupport.PixiStage.off(event,fn);
 		};
 	} else if(event == "mouserightdown" || event == "mouserightup") {
 		var blockContextMenuFn = function() {
 			return false;
 		};
-		RenderSupportJSPixi.PixiRenderer.view.oncontextmenu = blockContextMenuFn;
+		RenderSupport.PixiRenderer.view.oncontextmenu = blockContextMenuFn;
 		var dropareas = window.document.getElementsByClassName("droparea");
 		var _g = 0;
 		while(_g < dropareas.length) {
@@ -6403,9 +6403,9 @@ RenderSupportJSPixi.addEventListener = function(clip,event,fn) {
 			++_g;
 			droparea.oncontextmenu = blockContextMenuFn;
 		}
-		RenderSupportJSPixi.PixiStage.on(event,fn);
+		RenderSupport.PixiStage.on(event,fn);
 		return function() {
-			RenderSupportJSPixi.PixiStage.off(event,fn);
+			RenderSupport.PixiStage.off(event,fn);
 		};
 	} else if(event == "rollover") {
 		clip.interactive = true;
@@ -6445,12 +6445,12 @@ RenderSupportJSPixi.addEventListener = function(clip,event,fn) {
 		};
 	}
 };
-RenderSupportJSPixi.addFileDropListener = function(clip,maxFilesCount,mimeTypeRegExpFilter,onDone) {
+RenderSupport.addFileDropListener = function(clip,maxFilesCount,mimeTypeRegExpFilter,onDone) {
 	var regExp = new EReg(mimeTypeRegExpFilter,"g");
 	var dropArea = window.document.createElement("div");
 	dropArea.className = "droparea";
 	dropArea.style.position = "absolute";
-	dropArea.oncontextmenu = RenderSupportJSPixi.PixiRenderer.view.oncontextmenu;
+	dropArea.oncontextmenu = RenderSupport.PixiRenderer.view.oncontextmenu;
 	clip.updateNativeWidget = function() {
 		if(clip.worldVisible) {
 			var bounds = clip.getBounds();
@@ -6462,7 +6462,7 @@ RenderSupportJSPixi.addFileDropListener = function(clip,maxFilesCount,mimeTypeRe
 	};
 	clip.createNativeWidget = function() {
 		window.document.body.appendChild(dropArea);
-		RenderSupportJSPixi.PixiStage.on("drawframe",clip.updateNativeWidget);
+		RenderSupport.PixiStage.on("drawframe",clip.updateNativeWidget);
 	};
 	clip.deleteNativeWidget = function() {
 		try {
@@ -6471,7 +6471,7 @@ RenderSupportJSPixi.addFileDropListener = function(clip,maxFilesCount,mimeTypeRe
 			haxe_CallStack.lastException = e;
 			if (e instanceof js__$Boot_HaxeError) e = e.val;
 		}
-		RenderSupportJSPixi.PixiStage.off("drawframe",clip.updateNativeWidget);
+		RenderSupport.PixiStage.off("drawframe",clip.updateNativeWidget);
 	};
 	if(clip.parent != null) clip.createNativeWidget(); else clip.on("added",function() {
 		clip.createNativeWidget;
@@ -6479,9 +6479,9 @@ RenderSupportJSPixi.addFileDropListener = function(clip,maxFilesCount,mimeTypeRe
 	clip.on("removed",function() {
 		clip.deleteNativeWidget;
 	});
-	dropArea.onmousemove = RenderSupportJSPixi.provideEvent;
-	dropArea.onmousedown = RenderSupportJSPixi.provideEvent;
-	dropArea.onmouseup = RenderSupportJSPixi.provideEvent;
+	dropArea.onmousemove = RenderSupport.provideEvent;
+	dropArea.onmousedown = RenderSupport.provideEvent;
+	dropArea.onmouseup = RenderSupport.provideEvent;
 	dropArea.ondragover = function(event) {
 		event.dataTransfer.dropEffect = "copy";
 		return false;
@@ -6506,7 +6506,7 @@ RenderSupportJSPixi.addFileDropListener = function(clip,maxFilesCount,mimeTypeRe
 	};
 	return clip.deleteNativeWidget;
 };
-RenderSupportJSPixi.addExtendedEventListener = function(clip,event,fn) {
+RenderSupport.addExtendedEventListener = function(clip,event,fn) {
 	if(event == "childfocused") {
 		var parentFn = function(child) {
 			var bounds = child.getBounds(true);
@@ -6523,13 +6523,13 @@ RenderSupportJSPixi.addExtendedEventListener = function(clip,event,fn) {
 		};
 	}
 };
-RenderSupportJSPixi.addDrawFrameEventListener = function(fn) {
-	RenderSupportJSPixi.PixiStage.on("drawframe",fn);
+RenderSupport.addDrawFrameEventListener = function(fn) {
+	RenderSupport.PixiStage.on("drawframe",fn);
 	return function() {
-		RenderSupportJSPixi.PixiStage.off("drawframe",fn);
+		RenderSupport.PixiStage.off("drawframe",fn);
 	};
 };
-RenderSupportJSPixi.addMouseWheelEventListener = function(clip,fn) {
+RenderSupport.addMouseWheelEventListener = function(clip,fn) {
 	var event_name = 'onwheel' in document.createElement('div') ? 'wheel' : // Modern browsers support 'wheel'
 			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
 			'DOMMouseScroll'; // let's assume that remaining browsers are older Firefox;
@@ -6547,17 +6547,17 @@ RenderSupportJSPixi.addMouseWheelEventListener = function(clip,fn) {
 			sX = sY;
 			sY = 0.0;
 		}
-		pX = sX * RenderSupportJSPixi.PIXEL_STEP;
-		pY = sY * RenderSupportJSPixi.PIXEL_STEP;
+		pX = sX * RenderSupport.PIXEL_STEP;
+		pY = sY * RenderSupport.PIXEL_STEP;
 		if(event.deltaY != null) pY = event.deltaY;
 		if(event.deltaX != null) pX = event.deltaX;
 		if((pX != 0.0 || pY != 0.0) && event.deltaMode != null) {
 			if(event.deltaMode == 1) {
-				pX *= RenderSupportJSPixi.LINE_HEIGHT;
-				pY *= RenderSupportJSPixi.LINE_HEIGHT;
+				pX *= RenderSupport.LINE_HEIGHT;
+				pY *= RenderSupport.LINE_HEIGHT;
 			} else {
-				pX *= RenderSupportJSPixi.PAGE_HEIGHT;
-				pY *= RenderSupportJSPixi.PAGE_HEIGHT;
+				pX *= RenderSupport.PAGE_HEIGHT;
+				pY *= RenderSupport.PAGE_HEIGHT;
 			}
 		}
 		if(pX != 0.0 && sX == 0.0) if(pX < 1.0) sX = -1.0; else sX = 1.0;
@@ -6576,22 +6576,22 @@ RenderSupportJSPixi.addMouseWheelEventListener = function(clip,fn) {
 		if(event_name == "DOMMouseScroll") window.removeEventListener("MozMousePixelScroll",wheel_cb);
 	};
 };
-RenderSupportJSPixi.addFinegrainMouseWheelEventListener = function(clip,f) {
-	return RenderSupportJSPixi.addMouseWheelEventListener(clip,f);
+RenderSupport.addFinegrainMouseWheelEventListener = function(clip,f) {
+	return RenderSupport.addMouseWheelEventListener(clip,f);
 };
-RenderSupportJSPixi.getMouseX = function(clip) {
-	if(clip == RenderSupportJSPixi.PixiStage) return RenderSupportJSPixi.MousePos.x; else return clip.toLocal(RenderSupportJSPixi.MousePos).x;
+RenderSupport.getMouseX = function(clip) {
+	if(clip == RenderSupport.PixiStage) return RenderSupport.MousePos.x; else return clip.toLocal(RenderSupport.MousePos).x;
 };
-RenderSupportJSPixi.getMouseY = function(clip) {
-	if(clip == RenderSupportJSPixi.PixiStage) return RenderSupportJSPixi.MousePos.y; else return clip.toLocal(RenderSupportJSPixi.MousePos).y;
+RenderSupport.getMouseY = function(clip) {
+	if(clip == RenderSupport.PixiStage) return RenderSupport.MousePos.y; else return clip.toLocal(RenderSupport.MousePos).y;
 };
-RenderSupportJSPixi.setMouseX = function(x) {
-	RenderSupportJSPixi.MousePos.x = x;
+RenderSupport.setMouseX = function(x) {
+	RenderSupport.MousePos.x = x;
 };
-RenderSupportJSPixi.setMouseY = function(y) {
-	RenderSupportJSPixi.MousePos.y = y;
+RenderSupport.setMouseY = function(y) {
+	RenderSupport.MousePos.y = y;
 };
-RenderSupportJSPixi.hittestGraphics = function(g,global) {
+RenderSupport.hittestGraphics = function(g,global) {
 	var graphicsData = g.graphicsData;
 	if(graphicsData == null || graphicsData.length == 0) return false;
 	var data = graphicsData[0];
@@ -6601,11 +6601,11 @@ RenderSupportJSPixi.hittestGraphics = function(g,global) {
 	}
 	return false;
 };
-RenderSupportJSPixi.dohittest = function(clip,global) {
+RenderSupport.dohittest = function(clip,global) {
 	if(!clip.worldVisible || clip.isMask) return false;
-	if(clip.mask != null && !RenderSupportJSPixi.hittestGraphics(clip.mask,global)) return false;
+	if(clip.mask != null && !RenderSupport.hittestGraphics(clip.mask,global)) return false;
 	if(clip.graphicsData != null) {
-		if(RenderSupportJSPixi.hittestGraphics(clip,global)) return true;
+		if(RenderSupport.hittestGraphics(clip,global)) return true;
 	} else if(clip.texture != null) {
 		var w = clip.texture.frame.width;
 		var h = clip.texture.frame.height;
@@ -6623,83 +6623,83 @@ RenderSupportJSPixi.dohittest = function(clip,global) {
 		while(_g < childs.length) {
 			var c = childs[_g];
 			++_g;
-			if(RenderSupportJSPixi.dohittest(c,global)) return true;
+			if(RenderSupport.dohittest(c,global)) return true;
 		}
 	}
 	return false;
 };
-RenderSupportJSPixi.clipOnTheStage = function(clip) {
-	return clip == RenderSupportJSPixi.PixiStage || clip.parent != null;
+RenderSupport.clipOnTheStage = function(clip) {
+	return clip == RenderSupport.PixiStage || clip.parent != null;
 };
-RenderSupportJSPixi.getClipAt = function(p,parent) {
-	if(parent == null) parent = RenderSupportJSPixi.PixiStage;
+RenderSupport.getClipAt = function(p,parent) {
+	if(parent == null) parent = RenderSupport.PixiStage;
 	var cnt = parent.children.length;
 	var _g = 0;
 	while(_g < cnt) {
 		var i = _g++;
 		var child = parent.children[cnt - i - 1];
-		if(child.visible && (child.mask == null || RenderSupportJSPixi.hittestGraphics(child.mask,p)) && !child.isMask && child.getBounds().contains(p.x,p.y)) {
-			if((child instanceof _$RenderSupportJSPixi_TextField)) return child; else if(child.graphicsData != null && child.graphicsData.length > 0 && child.graphicsData[0].fillAlpha > 0) {
-				if(RenderSupportJSPixi.hittestGraphics(child,p)) return child;
+		if(child.visible && (child.mask == null || RenderSupport.hittestGraphics(child.mask,p)) && !child.isMask && child.getBounds().contains(p.x,p.y)) {
+			if((child instanceof _$RenderSupport_TextField)) return child; else if(child.graphicsData != null && child.graphicsData.length > 0 && child.graphicsData[0].fillAlpha > 0) {
+				if(RenderSupport.hittestGraphics(child,p)) return child;
 			} else if(child.texture != null) return child; else if(child.children != null) {
-				var r = RenderSupportJSPixi.getClipAt(p,child);
+				var r = RenderSupport.getClipAt(p,child);
 				if(r != null) return r;
 			}
 		}
 	}
 	return null;
 };
-RenderSupportJSPixi.hittest = function(clip,x,y) {
-	if(!(clip == RenderSupportJSPixi.PixiStage || clip.parent != null)) return false;
+RenderSupport.hittest = function(clip,x,y) {
+	if(!(clip == RenderSupport.PixiStage || clip.parent != null)) return false;
 	var global = new PIXI.Point(x,y);
 	clip.updateTransform();
 	var parent = clip.parent;
 	while(parent != null) {
-		if(parent.mask != null && !RenderSupportJSPixi.hittestGraphics(parent.mask,global)) return false;
+		if(parent.mask != null && !RenderSupport.hittestGraphics(parent.mask,global)) return false;
 		parent = parent.parent;
 	}
-	return RenderSupportJSPixi.dohittest(clip,global);
+	return RenderSupport.dohittest(clip,global);
 };
-RenderSupportJSPixi.getGraphics = function(parent) {
-	var clip = new _$RenderSupportJSPixi_FlowGraphics();
-	RenderSupportJSPixi.addChild(parent,clip);
+RenderSupport.getGraphics = function(parent) {
+	var clip = new _$RenderSupport_FlowGraphics();
+	RenderSupport.addChild(parent,clip);
 	return clip;
 };
-RenderSupportJSPixi.setLineStyle = function(graphics,width,color,opacity) {
+RenderSupport.setLineStyle = function(graphics,width,color,opacity) {
 	graphics.lineStyle(width,color & 16777215,opacity);
 };
-RenderSupportJSPixi.setLineStyle2 = function(graphics,width,color,opacity,pixelHinting) {
-	RenderSupportJSPixi.setLineStyle(graphics,width,color & 16777215,opacity);
+RenderSupport.setLineStyle2 = function(graphics,width,color,opacity,pixelHinting) {
+	RenderSupport.setLineStyle(graphics,width,color & 16777215,opacity);
 };
-RenderSupportJSPixi.beginFill = function(graphics,color,opacity) {
+RenderSupport.beginFill = function(graphics,color,opacity) {
 	graphics.beginFill(color & 16777215,opacity);
 };
-RenderSupportJSPixi.beginGradientFill = function(graphics,colors,alphas,offsets,matrix,type) {
-	RenderSupportJSPixi.beginFill(graphics,0,1.0);
+RenderSupport.beginGradientFill = function(graphics,colors,alphas,offsets,matrix,type) {
+	RenderSupport.beginFill(graphics,0,1.0);
 	graphics.gradient_data = { colors : colors, alphas : alphas, offsets : offsets, matrix : matrix, type : type};
 };
-RenderSupportJSPixi.setLineGradientStroke = function(graphics,colours,alphas,offsets,matrix) {
-	RenderSupportJSPixi.setLineStyle(graphics,1.0,colours[0] & 16777215,alphas[0]);
+RenderSupport.setLineGradientStroke = function(graphics,colours,alphas,offsets,matrix) {
+	RenderSupport.setLineStyle(graphics,1.0,colours[0] & 16777215,alphas[0]);
 };
-RenderSupportJSPixi.makeMatrix = function(width,height,rotation,xOffset,yOffset) {
+RenderSupport.makeMatrix = function(width,height,rotation,xOffset,yOffset) {
 	return { width : width, height : height, rotation : rotation, xOffset : xOffset, yOffset : yOffset};
 };
-RenderSupportJSPixi.moveTo = function(graphics,x,y) {
+RenderSupport.moveTo = function(graphics,x,y) {
 	graphics.moveTo(x,y);
 };
-RenderSupportJSPixi.lineTo = function(graphics,x,y) {
+RenderSupport.lineTo = function(graphics,x,y) {
 	graphics.lineTo(x,y);
 };
-RenderSupportJSPixi.curveTo = function(graphics,cx,cy,x,y) {
+RenderSupport.curveTo = function(graphics,cx,cy,x,y) {
 	graphics.quadraticCurveTo(cx,cy,x,y);
 };
-RenderSupportJSPixi.makeCSSColor = function(color,alpha) {
+RenderSupport.makeCSSColor = function(color,alpha) {
 	return "rgba(" + (color >> 16 & 255) + "," + (color >> 8 & 255) + "," + (color & 255) + "," + alpha + ")";
 };
-RenderSupportJSPixi.trimFloat = function(f,min,max) {
+RenderSupport.trimFloat = function(f,min,max) {
 	if(f < min) return min; else if(f > max) return max; else return f;
 };
-RenderSupportJSPixi.endFill = function(graphics) {
+RenderSupport.endFill = function(graphics) {
 	graphics.endFill();
 	if(graphics.gradient_data != null) {
 		var canvas;
@@ -6715,7 +6715,7 @@ RenderSupportJSPixi.endFill = function(graphics) {
 		var _g = graphics.gradient_data.colors.length;
 		while(_g1 < _g) {
 			var i = _g1++;
-			gradient.addColorStop(RenderSupportJSPixi.trimFloat(graphics.gradient_data.offsets[i],0.0,1.0),RenderSupportJSPixi.makeCSSColor(graphics.gradient_data.colors[i],graphics.gradient_data.alphas[i]));
+			gradient.addColorStop(RenderSupport.trimFloat(graphics.gradient_data.offsets[i],0.0,1.0),RenderSupport.makeCSSColor(graphics.gradient_data.colors[i],graphics.gradient_data.alphas[i]));
 		}
 		ctx.fillStyle = gradient;
 		ctx.fillRect(0.0,0.0,bounds.width,bounds.height);
@@ -6727,10 +6727,10 @@ RenderSupportJSPixi.endFill = function(graphics) {
 		});
 	}
 };
-RenderSupportJSPixi.makePicture = function(url,cache,metricsFn,errorFn,onlyDownload) {
-	return new _$RenderSupportJSPixi_FlowSprite(url,cache,metricsFn,errorFn,onlyDownload);
+RenderSupport.makePicture = function(url,cache,metricsFn,errorFn,onlyDownload) {
+	return new _$RenderSupport_FlowSprite(url,cache,metricsFn,errorFn,onlyDownload);
 };
-RenderSupportJSPixi.setCursor = function(cursor) {
+RenderSupport.setCursor = function(cursor) {
 	var css_cursor;
 	switch(cursor) {
 	case "arrow":
@@ -6828,7 +6828,7 @@ RenderSupportJSPixi.setCursor = function(cursor) {
 	}
 	window.document.body.style.cursor = css_cursor;
 };
-RenderSupportJSPixi.getCursor = function() {
+RenderSupport.getCursor = function() {
 	var _g = window.document.body.style.cursor;
 	switch(_g) {
 	case "default":
@@ -6845,9 +6845,9 @@ RenderSupportJSPixi.getCursor = function() {
 		return "default";
 	}
 };
-RenderSupportJSPixi.addFilters = function(clip,filters) {
-	RenderSupportJSPixi.PixiStageChanged = true;
-	if(RenderSupportJSPixi.RendererType == "canvas") {
+RenderSupport.addFilters = function(clip,filters) {
+	RenderSupport.PixiStageChanged = true;
+	if(RenderSupport.RendererType == "canvas") {
 		filters = filters.filter(function(f) {
 			return f != null && 
 					((typeof PIXI.filters.DropShadowFilter != "undefined") && (f instanceof PIXI.filters.DropShadowFilter)) ||
@@ -6862,135 +6862,135 @@ RenderSupportJSPixi.addFilters = function(clip,filters) {
 		if(filters.length > 0) clip.filters = filters; else clip.filters = null;
 	}
 };
-RenderSupportJSPixi.makeBevel = function(angle,distance,radius,spread,color1,alpha1,color2,alpha2,inside) {
+RenderSupport.makeBevel = function(angle,distance,radius,spread,color1,alpha1,color2,alpha2,inside) {
 	return null;
 };
-RenderSupportJSPixi.makeBlur = function(radius,spread) {
+RenderSupport.makeBlur = function(radius,spread) {
 	return new PIXI.filters.BlurFilter(spread);
 };
-RenderSupportJSPixi.makeDropShadow = function(angle,distance,radius,spread,color,alpha,inside) {
+RenderSupport.makeDropShadow = function(angle,distance,radius,spread,color,alpha,inside) {
 	return new PIXI.filters.DropShadowFilter(angle,distance,radius,color,alpha);
 };
-RenderSupportJSPixi.makeGlow = function(radius,spread,color,alpha,inside) {
-	return new PIXI.Filter(_$RenderSupportJSPixi_Shaders.VertexSrc.join("\n"),_$RenderSupportJSPixi_Shaders.GlowFragmentSrc.join("\n"),{ });
+RenderSupport.makeGlow = function(radius,spread,color,alpha,inside) {
+	return new PIXI.Filter(_$RenderSupport_Shaders.VertexSrc.join("\n"),_$RenderSupport_Shaders.GlowFragmentSrc.join("\n"),{ });
 };
-RenderSupportJSPixi.setScrollRect = function(clip,left,top,width,height) {
+RenderSupport.setScrollRect = function(clip,left,top,width,height) {
 	clip.setScrollRect(left,top,width,height);
 };
-RenderSupportJSPixi.makeGraphicsRect = function(width,height) {
-	var g = new _$RenderSupportJSPixi_FlowGraphics();
+RenderSupport.makeGraphicsRect = function(width,height) {
+	var g = new _$RenderSupport_FlowGraphics();
 	g.beginFill(16777215);
 	g.drawRect(0.0,0.0,width,height);
 	g.endFill();
 	return g;
 };
-RenderSupportJSPixi.getTextMetrics = function(textfield) {
+RenderSupport.getTextMetrics = function(textfield) {
 	return textfield.getTextMetrics();
 };
-RenderSupportJSPixi.makeBitmap = function() {
+RenderSupport.makeBitmap = function() {
 	return null;
 };
-RenderSupportJSPixi.bitmapDraw = function(bitmap,clip,width,height) {
+RenderSupport.bitmapDraw = function(bitmap,clip,width,height) {
 };
-RenderSupportJSPixi.getClipVisible = function(clip) {
+RenderSupport.getClipVisible = function(clip) {
 	return clip.worldVisible;
 };
-RenderSupportJSPixi.setClipVisible = function(clip,vis) {
-	RenderSupportJSPixi.PixiStageChanged = true;
+RenderSupport.setClipVisible = function(clip,vis) {
+	RenderSupport.PixiStageChanged = true;
 	clip.visible = vis;
 };
-RenderSupportJSPixi.fullScreenTrigger = function() {
-	RenderSupportJSPixi.IsFullScreen = RenderSupportJSPixi.isFullScreen();
-	RenderSupportJSPixi.PixiStage.emit("fullscreen",RenderSupportJSPixi.IsFullScreen);
+RenderSupport.fullScreenTrigger = function() {
+	RenderSupport.IsFullScreen = RenderSupport.isFullScreen();
+	RenderSupport.PixiStage.emit("fullscreen",RenderSupport.IsFullScreen);
 };
-RenderSupportJSPixi.fullWindowTrigger = function(fw) {
-	RenderSupportJSPixi.IsFullWindow = fw;
-	RenderSupportJSPixi.PixiStage.emit("fullwindow",fw);
+RenderSupport.fullWindowTrigger = function(fw) {
+	RenderSupport.IsFullWindow = fw;
+	RenderSupport.PixiStage.emit("fullwindow",fw);
 };
-RenderSupportJSPixi.setFullWindowTarget = function(clip) {
-	if(RenderSupportJSPixi.FullWindowTargetClip != clip) {
-		if(RenderSupportJSPixi.IsFullWindow && RenderSupportJSPixi.FullWindowTargetClip != null) {
-			RenderSupportJSPixi.toggleFullWindow(false);
-			RenderSupportJSPixi.FullWindowTargetClip = clip;
-			if(clip != null) RenderSupportJSPixi.toggleFullWindow(true);
-		} else RenderSupportJSPixi.FullWindowTargetClip = clip;
+RenderSupport.setFullWindowTarget = function(clip) {
+	if(RenderSupport.FullWindowTargetClip != clip) {
+		if(RenderSupport.IsFullWindow && RenderSupport.FullWindowTargetClip != null) {
+			RenderSupport.toggleFullWindow(false);
+			RenderSupport.FullWindowTargetClip = clip;
+			if(clip != null) RenderSupport.toggleFullWindow(true);
+		} else RenderSupport.FullWindowTargetClip = clip;
 	}
 };
-RenderSupportJSPixi.setFullScreenRectangle = function(x,y,w,h) {
+RenderSupport.setFullScreenRectangle = function(x,y,w,h) {
 };
-RenderSupportJSPixi.resetFullWindowTarget = function() {
-	RenderSupportJSPixi.setFullWindowTarget(null);
+RenderSupport.resetFullWindowTarget = function() {
+	RenderSupport.setFullWindowTarget(null);
 };
-RenderSupportJSPixi.toggleFullWindow = function(fw) {
-	if(RenderSupportJSPixi.FullWindowTargetClip != null && RenderSupportJSPixi.IsFullWindow != fw) {
-		RenderSupportJSPixi.PixiStageChanged = true;
-		if((RenderSupportJSPixi.FullWindowTargetClip instanceof _$RenderSupportJSPixi_VideoClip)) {
-			if(fw) RenderSupportJSPixi.requestFullScreen(RenderSupportJSPixi.FullWindowTargetClip.nativeWidget); else RenderSupportJSPixi.exitFullScreen(RenderSupportJSPixi.FullWindowTargetClip.nativeWidget);
+RenderSupport.toggleFullWindow = function(fw) {
+	if(RenderSupport.FullWindowTargetClip != null && RenderSupport.IsFullWindow != fw) {
+		RenderSupport.PixiStageChanged = true;
+		if((RenderSupport.FullWindowTargetClip instanceof _$RenderSupport_VideoClip)) {
+			if(fw) RenderSupport.requestFullScreen(RenderSupport.FullWindowTargetClip.nativeWidget); else RenderSupport.exitFullScreen(RenderSupport.FullWindowTargetClip.nativeWidget);
 			return;
 		}
 		if(fw) {
-			RenderSupportJSPixi.regularStageChildren = RenderSupportJSPixi.PixiStage.children;
-			RenderSupportJSPixi.setShouldPreventFromBlur(RenderSupportJSPixi.FullWindowTargetClip);
-			RenderSupportJSPixi.PixiStage.children = [];
-			RenderSupportJSPixi.regularFullScreenClipParent = RenderSupportJSPixi.FullWindowTargetClip.parent;
-			RenderSupportJSPixi.PixiStage.addChild(RenderSupportJSPixi.FullWindowTargetClip);
-			var _clip_visible = RenderSupportJSPixi.FullWindowTargetClip.visible;
+			RenderSupport.regularStageChildren = RenderSupport.PixiStage.children;
+			RenderSupport.setShouldPreventFromBlur(RenderSupport.FullWindowTargetClip);
+			RenderSupport.PixiStage.children = [];
+			RenderSupport.regularFullScreenClipParent = RenderSupport.FullWindowTargetClip.parent;
+			RenderSupport.PixiStage.addChild(RenderSupport.FullWindowTargetClip);
+			var _clip_visible = RenderSupport.FullWindowTargetClip.visible;
 			var _g = 0;
-			var _g1 = RenderSupportJSPixi.regularStageChildren;
+			var _g1 = RenderSupport.regularStageChildren;
 			while(_g < _g1.length) {
 				var child = _g1[_g];
 				++_g;
 				child._flow_visible = child.visible;
 				child.visible = false;
 			}
-			RenderSupportJSPixi.FullWindowTargetClip.visible = _clip_visible;
-			RenderSupportJSPixi.FullWindowTargetClip.updateTransform();
-		} else if(RenderSupportJSPixi.regularFullScreenClipParent != null && RenderSupportJSPixi.regularStageChildren.length != 0) {
+			RenderSupport.FullWindowTargetClip.visible = _clip_visible;
+			RenderSupport.FullWindowTargetClip.updateTransform();
+		} else if(RenderSupport.regularFullScreenClipParent != null && RenderSupport.regularStageChildren.length != 0) {
 			var _g2 = 0;
-			var _g11 = RenderSupportJSPixi.regularStageChildren;
+			var _g11 = RenderSupport.regularStageChildren;
 			while(_g2 < _g11.length) {
 				var child1 = _g11[_g2];
 				++_g2;
 				child1.visible = child1._flow_visible;
 			}
-			RenderSupportJSPixi.PixiStage.children = RenderSupportJSPixi.regularStageChildren;
-			RenderSupportJSPixi.regularFullScreenClipParent.addChild(RenderSupportJSPixi.FullWindowTargetClip);
+			RenderSupport.PixiStage.children = RenderSupport.regularStageChildren;
+			RenderSupport.regularFullScreenClipParent.addChild(RenderSupport.FullWindowTargetClip);
 		}
-		RenderSupportJSPixi.fullWindowTrigger(fw);
+		RenderSupport.fullWindowTrigger(fw);
 	}
 };
-RenderSupportJSPixi.requestFullScreen = function(element) {
+RenderSupport.requestFullScreen = function(element) {
 	if($bind(element,element.requestFullscreen) != null) element.requestFullscreen(); else if(element.mozRequestFullScreen != null) element.mozRequestFullScreen(); else if(element.webkitRequestFullscreen != null) element.webkitRequestFullscreen(); else if(element.msRequestFullscreen != null) element.msRequestFullscreen(); else if(element.webkitEnterFullScreen != null) element.webkitEnterFullScreen();
 };
-RenderSupportJSPixi.exitFullScreen = function(element) {
+RenderSupport.exitFullScreen = function(element) {
 	if((element instanceof HTMLCanvasElement)) element = window.document;
 	if(element.exitFullscreen != null) element.exitFullscreen(); else if(element.mozCancelFullScreen != null) element.mozCancelFullScreen(); else if(element.webkitExitFullscreen != null) element.webkitExitFullscreen(); else if(element.msExitFullscreen != null) element.msExitFullscreen();
 };
-RenderSupportJSPixi.toggleFullScreen = function(fs) {
-	if(fs) RenderSupportJSPixi.requestFullScreen(RenderSupportJSPixi.PixiRenderer.view); else RenderSupportJSPixi.exitFullScreen(RenderSupportJSPixi.PixiRenderer.view);
+RenderSupport.toggleFullScreen = function(fs) {
+	if(fs) RenderSupport.requestFullScreen(RenderSupport.PixiRenderer.view); else RenderSupport.exitFullScreen(RenderSupport.PixiRenderer.view);
 };
-RenderSupportJSPixi.onFullScreen = function(fn) {
-	RenderSupportJSPixi.PixiStage.on("fullscreen",fn);
+RenderSupport.onFullScreen = function(fn) {
+	RenderSupport.PixiStage.on("fullscreen",fn);
 	return function() {
-		RenderSupportJSPixi.PixiStage.off("fullscreen",fn);
+		RenderSupport.PixiStage.off("fullscreen",fn);
 	};
 };
-RenderSupportJSPixi.isFullScreen = function() {
-	return window.document.fullScreen || (window.document.mozFullScreen || (window.document.webkitIsFullScreen || (window.document.fullscreenElement != null || (window.document.msFullscreenElement != null || RenderSupportJSPixi.FullWindowTargetClip != null && RenderSupportJSPixi.FullWindowTargetClip.nativeWidget != null && RenderSupportJSPixi.FullWindowTargetClip.nativeWidget.webkitDisplayingFullscreen))));
+RenderSupport.isFullScreen = function() {
+	return window.document.fullScreen || (window.document.mozFullScreen || (window.document.webkitIsFullScreen || (window.document.fullscreenElement != null || (window.document.msFullscreenElement != null || RenderSupport.FullWindowTargetClip != null && RenderSupport.FullWindowTargetClip.nativeWidget != null && RenderSupport.FullWindowTargetClip.nativeWidget.webkitDisplayingFullscreen))));
 };
-RenderSupportJSPixi.onFullWindow = function(onChange) {
-	RenderSupportJSPixi.PixiStage.on("fullwindow",onChange);
+RenderSupport.onFullWindow = function(onChange) {
+	RenderSupport.PixiStage.on("fullwindow",onChange);
 	return function() {
-		RenderSupportJSPixi.PixiStage.off("fullwindow",onChange);
+		RenderSupport.PixiStage.off("fullwindow",onChange);
 	};
 };
-RenderSupportJSPixi.isFullWindow = function() {
-	return RenderSupportJSPixi.IsFullWindow;
+RenderSupport.isFullWindow = function() {
+	return RenderSupport.IsFullWindow;
 };
-RenderSupportJSPixi.setWindowTitle = function(title) {
+RenderSupport.setWindowTitle = function(title) {
 	window.document.title = title;
 };
-RenderSupportJSPixi.setFavIcon = function(url) {
+RenderSupport.setFavIcon = function(url) {
 	var head = window.document.getElementsByTagName("head")[0];
 	var oldNode = window.document.getElementById("dynamic-favicon");
 	var node = window.document.createElement("link");
@@ -7001,63 +7001,63 @@ RenderSupportJSPixi.setFavIcon = function(url) {
 	if(oldNode != null) head.removeChild(oldNode);
 	head.appendChild(node);
 };
-RenderSupportJSPixi.takeSnapshot = function(path) {
+RenderSupport.takeSnapshot = function(path) {
 };
-RenderSupportJSPixi.getScreenPixelColor = function(x,y) {
-	var data = RenderSupportJSPixi.PixiRenderer.view.getContext("2d",null).getImageData(x * RenderSupportJSPixi.backingStoreRatio,y * RenderSupportJSPixi.backingStoreRatio,1,1).data;
+RenderSupport.getScreenPixelColor = function(x,y) {
+	var data = RenderSupport.PixiRenderer.view.getContext("2d",null).getImageData(x * RenderSupport.backingStoreRatio,y * RenderSupport.backingStoreRatio,1,1).data;
 	var rgb = data[0];
 	rgb = (rgb << 8) + data[1];
 	rgb = (rgb << 8) + data[2];
 	return rgb;
 };
-RenderSupportJSPixi.makeWebClip = function(url,domain,useCache,reloadBlock,cb,ondone,shrinkToFit) {
-	return new _$RenderSupportJSPixi_WebClip(url,domain,useCache,reloadBlock,cb,ondone,shrinkToFit);
+RenderSupport.makeWebClip = function(url,domain,useCache,reloadBlock,cb,ondone,shrinkToFit) {
+	return new _$RenderSupport_WebClip(url,domain,useCache,reloadBlock,cb,ondone,shrinkToFit);
 };
-RenderSupportJSPixi.webClipHostCall = function(clip,name,args) {
+RenderSupport.webClipHostCall = function(clip,name,args) {
 	return clip.hostCall(name,args);
 };
-RenderSupportJSPixi.setWebClipSandBox = function(clip,value) {
+RenderSupport.setWebClipSandBox = function(clip,value) {
 	clip.setSandBox(value);
 };
-RenderSupportJSPixi.setWebClipDisabled = function(clip,disabled) {
+RenderSupport.setWebClipDisabled = function(clip,disabled) {
 	clip.setDisableOverlay(disabled);
 };
-RenderSupportJSPixi.webClipEvalJS = function(clip,code) {
+RenderSupport.webClipEvalJS = function(clip,code) {
 	clip.evalJS(code);
 	return null;
 };
-RenderSupportJSPixi.getNumberOfCameras = function() {
+RenderSupport.getNumberOfCameras = function() {
 	return 0;
 };
-RenderSupportJSPixi.getCameraInfo = function(id) {
+RenderSupport.getCameraInfo = function(id) {
 	return "";
 };
-RenderSupportJSPixi.makeCamera = function(uri,camID,camWidth,camHeight,camFps,vidWidth,vidHeight,recordMode,cbOnReadyForRecording,cbOnFailed) {
+RenderSupport.makeCamera = function(uri,camID,camWidth,camHeight,camFps,vidWidth,vidHeight,recordMode,cbOnReadyForRecording,cbOnFailed) {
 	return [null,null];
 };
-RenderSupportJSPixi.startRecord = function(str,filename,mode) {
+RenderSupport.startRecord = function(str,filename,mode) {
 };
-RenderSupportJSPixi.stopRecord = function(str) {
+RenderSupport.stopRecord = function(str) {
 };
-RenderSupportJSPixi.cameraTakePhoto = function(cameraId,additionalInfo,desiredWidth,desiredHeight,compressQuality,fileName,fitMode) {
+RenderSupport.cameraTakePhoto = function(cameraId,additionalInfo,desiredWidth,desiredHeight,compressQuality,fileName,fitMode) {
 };
-RenderSupportJSPixi.addGestureListener = function(event,cb) {
+RenderSupport.addGestureListener = function(event,cb) {
 	if(event == "pinch") return GesturesDetector.addPinchListener(cb); else return function() {
 	};
 };
-RenderSupportJSPixi.setWebClipZoomable = function(clip,zoomable) {
+RenderSupport.setWebClipZoomable = function(clip,zoomable) {
 };
-RenderSupportJSPixi.setInterfaceOrientation = function(orientation) {
+RenderSupport.setInterfaceOrientation = function(orientation) {
 	var screen = window.screen;
 	if(screen != null && screen.orientation != null && screen.orientation.lock != null) screen.orientation.lock(orientation);
 };
-RenderSupportJSPixi.setUrlHash = function(hash) {
+RenderSupport.setUrlHash = function(hash) {
 	window.location.hash = hash;
 };
-RenderSupportJSPixi.getUrlHash = function() {
+RenderSupport.getUrlHash = function() {
 	return window.location.hash;
 };
-RenderSupportJSPixi.addUrlHashListener = function(cb) {
+RenderSupport.addUrlHashListener = function(cb) {
 	var wrapper = function(e) {
 		cb(window.location.hash);
 	};
@@ -7066,12 +7066,12 @@ RenderSupportJSPixi.addUrlHashListener = function(cb) {
 		window.removeEventListener("hashchange",wrapper);
 	};
 };
-RenderSupportJSPixi.setGlobalZoomEnabled = function(enabled) {
+RenderSupport.setGlobalZoomEnabled = function(enabled) {
 };
-RenderSupportJSPixi.removeAlphaChannel = function(color) {
+RenderSupport.removeAlphaChannel = function(color) {
 	return color & 16777215;
 };
-var _$RenderSupportJSPixi_FlowGraphics = function() {
+var _$RenderSupport_FlowGraphics = function() {
 	this.boundsHeight = 0.0;
 	this.boundsWidth = 0.0;
 	this.penY = 0.0;
@@ -7079,14 +7079,14 @@ var _$RenderSupportJSPixi_FlowGraphics = function() {
 	var _g = this;
 	PIXI.Graphics.call(this);
 	this.on("childrenchanged",function() {
-		if(_g.parent != null) _g.parent.emit("childrenchanged"); else if(_g == RenderSupportJSPixi.PixiStage) RenderSupportJSPixi.PixiStageChanged = true;
+		if(_g.parent != null) _g.parent.emit("childrenchanged"); else if(_g == RenderSupport.PixiStage) RenderSupport.PixiStageChanged = true;
 	});
-	this.on("transformchanged",RenderSupportJSPixi.InvalidateStage);
-	this.on("graphicschanged",RenderSupportJSPixi.InvalidateStage);
+	this.on("transformchanged",RenderSupport.InvalidateStage);
+	this.on("graphicschanged",RenderSupport.InvalidateStage);
 };
-_$RenderSupportJSPixi_FlowGraphics.__name__ = true;
-_$RenderSupportJSPixi_FlowGraphics.__super__ = PIXI.Graphics;
-_$RenderSupportJSPixi_FlowGraphics.prototype = $extend(PIXI.Graphics.prototype,{
+_$RenderSupport_FlowGraphics.__name__ = true;
+_$RenderSupport_FlowGraphics.__super__ = PIXI.Graphics;
+_$RenderSupport_FlowGraphics.prototype = $extend(PIXI.Graphics.prototype,{
 	moveTo: function(x,y) {
 		var newGraphics = PIXI.Graphics.prototype.moveTo.call(this,x,y);
 		this.penX = x;
@@ -7247,7 +7247,7 @@ _$RenderSupportJSPixi_FlowGraphics.prototype = $extend(PIXI.Graphics.prototype,{
 		} else {
 			this.setClipX(this.x - left);
 			this.setClipY(this.y - top);
-			this.scrollRect = new _$RenderSupportJSPixi_FlowGraphics();
+			this.scrollRect = new _$RenderSupport_FlowGraphics();
 			this.addChild(this.scrollRect);
 			this.setClipMask(this.scrollRect);
 		}
@@ -7269,14 +7269,14 @@ _$RenderSupportJSPixi_FlowGraphics.prototype = $extend(PIXI.Graphics.prototype,{
 		var _g = this;
 		if(maskContainer != this.scrollRect) this.removeScrollRect();
 		this.mask = null;
-		if(RenderSupportJSPixi.RendererType == "webgl") {
-			this.mask = _$RenderSupportJSPixi_FlowContainer.getFirstGraphicsOrSprite(maskContainer);
+		if(RenderSupport.RendererType == "webgl") {
+			this.mask = _$RenderSupport_FlowContainer.getFirstGraphicsOrSprite(maskContainer);
 			if(this.mask == null) maskContainer.visible = false;
 		} else {
 			this.alphaMask = null;
 			var obj = maskContainer;
 			while(obj.children != null && obj.children.length == 1) obj = obj.children[0];
-			if((obj instanceof _$RenderSupportJSPixi_FlowGraphics)) this.mask = obj; else this.alphaMask = maskContainer;
+			if((obj instanceof _$RenderSupport_FlowGraphics)) this.mask = obj; else this.alphaMask = maskContainer;
 		}
 		if(this.mask != null) this.mask.once("removed",function() {
 			_g.mask = null;
@@ -7286,9 +7286,9 @@ _$RenderSupportJSPixi_FlowGraphics.prototype = $extend(PIXI.Graphics.prototype,{
 		});
 		this.emit("graphicschanged");
 	}
-	,__class__: _$RenderSupportJSPixi_FlowGraphics
+	,__class__: _$RenderSupport_FlowGraphics
 });
-var _$RenderSupportJSPixi_FlowSprite = function(url,cache,metricsFn,errorFn,onlyDownload) {
+var _$RenderSupport_FlowSprite = function(url,cache,metricsFn,errorFn,onlyDownload) {
 	this.retries = 0;
 	this.onlyDownload = false;
 	this.cache = false;
@@ -7306,25 +7306,25 @@ var _$RenderSupportJSPixi_FlowSprite = function(url,cache,metricsFn,errorFn,only
 	this.on("removed",$bind(this,this.onRemoved));
 	this.on("added",$bind(this,this.onAdded));
 	this.on("childrenchanged",$bind(this,this.onChildrenChanged));
-	this.on("transformchanged",RenderSupportJSPixi.InvalidateStage);
-	this.on("graphicschanged",RenderSupportJSPixi.InvalidateStage);
+	this.on("transformchanged",RenderSupport.InvalidateStage);
+	this.on("graphicschanged",RenderSupport.InvalidateStage);
 };
-_$RenderSupportJSPixi_FlowSprite.__name__ = true;
-_$RenderSupportJSPixi_FlowSprite.pushTextureToCache = function(texture) {
+_$RenderSupport_FlowSprite.__name__ = true;
+_$RenderSupport_FlowSprite.pushTextureToCache = function(texture) {
 	if(texture != null && texture.baseTexture != null && texture.baseTexture.imageUrl != null) {
 		var url = texture.baseTexture.imageUrl;
 		if(url != null) {
-			if(_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.exists(url)) {
-				var value = _$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.get(url) + 1;
-				_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.set(url,value);
+			if(_$RenderSupport_FlowSprite.cachedImagesUrls.exists(url)) {
+				var value = _$RenderSupport_FlowSprite.cachedImagesUrls.get(url) + 1;
+				_$RenderSupport_FlowSprite.cachedImagesUrls.set(url,value);
 			} else {
-				_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.set(url,1);
-				if(Lambda.count(_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls) > 50) {
-					var $it0 = _$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.keys();
+				_$RenderSupport_FlowSprite.cachedImagesUrls.set(url,1);
+				if(Lambda.count(_$RenderSupport_FlowSprite.cachedImagesUrls) > 50) {
+					var $it0 = _$RenderSupport_FlowSprite.cachedImagesUrls.keys();
 					while( $it0.hasNext() ) {
 						var k = $it0.next();
-						if(Lambda.count(_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls) > 50) {
-							_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.remove(k);
+						if(Lambda.count(_$RenderSupport_FlowSprite.cachedImagesUrls) > 50) {
+							_$RenderSupport_FlowSprite.cachedImagesUrls.remove(k);
 							PIXI.Texture.removeFromCache(url);
 							PIXI.BaseTexture.removeFromCache(url);
 						} else return;
@@ -7334,16 +7334,16 @@ _$RenderSupportJSPixi_FlowSprite.pushTextureToCache = function(texture) {
 		}
 	}
 };
-_$RenderSupportJSPixi_FlowSprite.removeTextureFromCache = function(texture) {
+_$RenderSupport_FlowSprite.removeTextureFromCache = function(texture) {
 	if(texture != null && texture.baseTexture != null && texture.baseTexture.imageUrl != null) {
 		var url = texture.baseTexture.imageUrl;
 		if(url != null) {
-			if(_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.exists(url)) {
-				if(_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.get(url) > 1 || texture.width * texture.height < 250000) {
-					var value = _$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.get(url) - 1;
-					_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.set(url,value);
+			if(_$RenderSupport_FlowSprite.cachedImagesUrls.exists(url)) {
+				if(_$RenderSupport_FlowSprite.cachedImagesUrls.get(url) > 1 || texture.width * texture.height < 250000) {
+					var value = _$RenderSupport_FlowSprite.cachedImagesUrls.get(url) - 1;
+					_$RenderSupport_FlowSprite.cachedImagesUrls.set(url,value);
 				} else {
-					_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls.remove(url);
+					_$RenderSupport_FlowSprite.cachedImagesUrls.remove(url);
 					PIXI.Texture.removeFromCache(url);
 					PIXI.BaseTexture.removeFromCache(url);
 				}
@@ -7351,8 +7351,8 @@ _$RenderSupportJSPixi_FlowSprite.removeTextureFromCache = function(texture) {
 		}
 	}
 };
-_$RenderSupportJSPixi_FlowSprite.__super__ = PIXI.Sprite;
-_$RenderSupportJSPixi_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
+_$RenderSupport_FlowSprite.__super__ = PIXI.Sprite;
+_$RenderSupport_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
 	onAdded: function() {
 		var _g = this;
 		if(!this.loaded) {
@@ -7369,7 +7369,7 @@ _$RenderSupportJSPixi_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
 		}
 	}
 	,onRemoved: function() {
-		if(this.loaded && this.texture != null) _$RenderSupportJSPixi_FlowSprite.removeTextureFromCache(this.texture);
+		if(this.loaded && this.texture != null) _$RenderSupport_FlowSprite.removeTextureFromCache(this.texture);
 		this.texture = PIXI.Texture.EMPTY;
 	}
 	,onChildrenChanged: function() {
@@ -7377,14 +7377,14 @@ _$RenderSupportJSPixi_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
 	}
 	,onDispose: function() {
 		this.renderable = false;
-		if(this.loaded && this.texture != null) _$RenderSupportJSPixi_FlowSprite.removeTextureFromCache(this.texture);
+		if(this.loaded && this.texture != null) _$RenderSupport_FlowSprite.removeTextureFromCache(this.texture);
 		this.loaded = false;
 		if(this.parent != null) this.loadTexture(); else this.texture = PIXI.Texture.EMPTY;
 		this.emit("graphicschanged");
 	}
 	,onError: function() {
 		this.renderable = false;
-		if(this.loaded && this.texture != null) _$RenderSupportJSPixi_FlowSprite.removeTextureFromCache(this.texture);
+		if(this.loaded && this.texture != null) _$RenderSupport_FlowSprite.removeTextureFromCache(this.texture);
 		this.loaded = false;
 		this.texture = PIXI.Texture.EMPTY;
 		this.errorFn("Can not load " + this.url);
@@ -7395,7 +7395,7 @@ _$RenderSupportJSPixi_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
 			this.emit("graphicschanged");
 			this.renderable = true;
 			this.loaded = true;
-			_$RenderSupportJSPixi_FlowSprite.pushTextureToCache(this.texture);
+			_$RenderSupport_FlowSprite.pushTextureToCache(this.texture);
 		} catch( e ) {
 			haxe_CallStack.lastException = e;
 			if (e instanceof js__$Boot_HaxeError) e = e.val;
@@ -7528,7 +7528,7 @@ _$RenderSupportJSPixi_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
 		} else {
 			this.setClipX(this.x - left);
 			this.setClipY(this.y - top);
-			this.scrollRect = new _$RenderSupportJSPixi_FlowGraphics();
+			this.scrollRect = new _$RenderSupport_FlowGraphics();
 			this.addChild(this.scrollRect);
 			this.setClipMask(this.scrollRect);
 		}
@@ -7550,14 +7550,14 @@ _$RenderSupportJSPixi_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
 		var _g = this;
 		if(maskContainer != this.scrollRect) this.removeScrollRect();
 		this.mask = null;
-		if(RenderSupportJSPixi.RendererType == "webgl") {
-			this.mask = _$RenderSupportJSPixi_FlowContainer.getFirstGraphicsOrSprite(maskContainer);
+		if(RenderSupport.RendererType == "webgl") {
+			this.mask = _$RenderSupport_FlowContainer.getFirstGraphicsOrSprite(maskContainer);
 			if(this.mask == null) maskContainer.visible = false;
 		} else {
 			this.alphaMask = null;
 			var obj = maskContainer;
 			while(obj.children != null && obj.children.length == 1) obj = obj.children[0];
-			if((obj instanceof _$RenderSupportJSPixi_FlowGraphics)) this.mask = obj; else this.alphaMask = maskContainer;
+			if((obj instanceof _$RenderSupport_FlowGraphics)) this.mask = obj; else this.alphaMask = maskContainer;
 		}
 		if(this.mask != null) this.mask.once("removed",function() {
 			_g.mask = null;
@@ -7567,16 +7567,16 @@ _$RenderSupportJSPixi_FlowSprite.prototype = $extend(PIXI.Sprite.prototype,{
 		});
 		this.emit("graphicschanged");
 	}
-	,__class__: _$RenderSupportJSPixi_FlowSprite
+	,__class__: _$RenderSupport_FlowSprite
 });
-var _$RenderSupportJSPixi_WebClip = function(url,domain,useCache,reloadBlock,cb,ondone,shrinkToFit) {
+var _$RenderSupport_WebClip = function(url,domain,useCache,reloadBlock,cb,ondone,shrinkToFit) {
 	this.shrinkToFit = null;
 	this.htmlPageHeight = null;
 	this.htmlPageWidth = null;
 	this.disableOverlay = null;
 	this.iframe = null;
 	var _g = this;
-	_$RenderSupportJSPixi_NativeWidgetClip.call(this);
+	_$RenderSupport_NativeWidgetClip.call(this);
 	if(domain != "") try {
 		window.document.domain = domain;
 	} catch( e ) {
@@ -7622,9 +7622,9 @@ var _$RenderSupportJSPixi_WebClip = function(url,domain,useCache,reloadBlock,cb,
 		}
 	};
 };
-_$RenderSupportJSPixi_WebClip.__name__ = true;
-_$RenderSupportJSPixi_WebClip.__super__ = _$RenderSupportJSPixi_NativeWidgetClip;
-_$RenderSupportJSPixi_WebClip.prototype = $extend(_$RenderSupportJSPixi_NativeWidgetClip.prototype,{
+_$RenderSupport_WebClip.__name__ = true;
+_$RenderSupport_WebClip.__super__ = _$RenderSupport_NativeWidgetClip;
+_$RenderSupport_WebClip.prototype = $extend(_$RenderSupport_NativeWidgetClip.prototype,{
 	appendReloadBlock: function() {
 		var _g = this;
 		var div = window.document.createElement("div");
@@ -7681,7 +7681,7 @@ _$RenderSupportJSPixi_WebClip.prototype = $extend(_$RenderSupportJSPixi_NativeWi
 		}
 	}
 	,updateNativeWidget: function() {
-		_$RenderSupportJSPixi_NativeWidgetClip.prototype.updateNativeWidget.call(this);
+		_$RenderSupport_NativeWidgetClip.prototype.updateNativeWidget.call(this);
 		if(this.nativeWidget != null && this.nativeWidget.getAttribute("tabindex") != null) {
 			this.iframe.setAttribute("tabindex",this.nativeWidget.getAttribute("tabindex"));
 			this.nativeWidget.removeAttribute("tabindex");
@@ -7730,7 +7730,7 @@ _$RenderSupportJSPixi_WebClip.prototype = $extend(_$RenderSupportJSPixi_NativeWi
 	,evalJS: function(code) {
 		if(this.iframe.contentWindow != null) this.iframe.contentWindow.postMessage(code,"*");
 	}
-	,__class__: _$RenderSupportJSPixi_WebClip
+	,__class__: _$RenderSupport_WebClip
 });
 var FlowFontStyle = function() { };
 FlowFontStyle.__name__ = true;
@@ -7749,23 +7749,23 @@ FlowFontStyle.fromFlowFont = function(name) {
 	var style = Reflect.field(FlowFontStyle.flowFontStyles,name.toLowerCase());
 	if(style != null) return style; else return { family : name, weight : "", size : 0.0, style : "normal"};
 };
-var _$RenderSupportJSPixi_PixiText = function() {
-	_$RenderSupportJSPixi_TextField.call(this);
+var _$RenderSupport_PixiText = function() {
+	_$RenderSupport_TextField.call(this);
 };
-_$RenderSupportJSPixi_PixiText.__name__ = true;
-_$RenderSupportJSPixi_PixiText.__super__ = _$RenderSupportJSPixi_TextField;
-_$RenderSupportJSPixi_PixiText.prototype = $extend(_$RenderSupportJSPixi_TextField.prototype,{
+_$RenderSupport_PixiText.__name__ = true;
+_$RenderSupport_PixiText.__super__ = _$RenderSupport_TextField;
+_$RenderSupport_PixiText.prototype = $extend(_$RenderSupport_TextField.prototype,{
 	setTextAndStyle: function(text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity) {
 		var from_flow_style = FlowFontStyle.fromFlowFont(fontfamily);
-		_$RenderSupportJSPixi_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
+		_$RenderSupport_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
 		this.style = { fontSize : fontsize < 0.6?0.6:fontsize, fill : "#" + StringTools.hex(fillcolor & 16777215,6), letterSpacing : letterspacing, fontFamily : from_flow_style.family, fontWeight : fontweight > 0?"" + fontweight:from_flow_style.weight, fontStyle : fontslope != ""?fontslope:from_flow_style.style, padding : fontfamily == "MS Gothic"?2:0};
 		if(this.interlineSpacing != 0) this.style.lineHeight = fontsize * 1.1 + this.interlineSpacing;
-		this.metrics = _$RenderSupportJSPixi_DFontText.getDFontInfo(fontfamily);
+		this.metrics = _$RenderSupport_DFontText.getDFontInfo(fontfamily);
 		if(this.metrics != null) {
 			var pixi_font_metrics = { ascent : this.metrics.ascender * fontsize, descent : -this.metrics.descender * fontsize, fontSize : (this.metrics.ascender - this.metrics.descender) * fontsize};
 			PIXI.Text.fontPropertiesCache[PIXI.Text.getFontStyle(this.style)] = pixi_font_metrics;
 		}
-		_$RenderSupportJSPixi_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
+		_$RenderSupport_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
 	}
 	,layoutText: function() {
 		this.removeScrollRect();
@@ -7824,34 +7824,34 @@ _$RenderSupportJSPixi_PixiText.prototype = $extend(_$RenderSupportJSPixi_TextFie
 		pixi_text.text = text;
 		pixi_text.style = style;
 		pixi_text.alpha = this.fillOpacity;
-		if(_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap) pixi_text.cacheAsBitmap = true;
+		if(_$RenderSupport_TextField.cacheTextsAsBitmap) pixi_text.cacheAsBitmap = true;
 		return pixi_text;
 	}
 	,getTextClipMetrics: function(clip) {
 		return PIXI.TextMetrics.measureText(clip.text,clip.style);
 	}
-	,__class__: _$RenderSupportJSPixi_PixiText
+	,__class__: _$RenderSupport_PixiText
 });
-var _$RenderSupportJSPixi_DFontText = function() {
-	_$RenderSupportJSPixi_TextField.call(this);
+var _$RenderSupport_DFontText = function() {
+	_$RenderSupport_TextField.call(this);
 };
-_$RenderSupportJSPixi_DFontText.__name__ = true;
-_$RenderSupportJSPixi_DFontText.getDFontInfo = function(fontfamily) {
+_$RenderSupport_DFontText.__name__ = true;
+_$RenderSupport_DFontText.getDFontInfo = function(fontfamily) {
 	return DFontText.dfont_table[fontfamily];
 };
-_$RenderSupportJSPixi_DFontText.getFirstDFontFamily = function() {
+_$RenderSupport_DFontText.getFirstDFontFamily = function() {
 	return Object.keys(DFontText.dfont_table)[0];
 };
-_$RenderSupportJSPixi_DFontText.__super__ = _$RenderSupportJSPixi_TextField;
-_$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextField.prototype,{
+_$RenderSupport_DFontText.__super__ = _$RenderSupport_TextField;
+_$RenderSupport_DFontText.prototype = $extend(_$RenderSupport_TextField.prototype,{
 	setTextAndStyle: function(text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity) {
 		if(Platform.isFirefox && text.length * fontsize > 32765.0) {
 			var len = Math.floor(32765.0 / fontsize);
 			text = HxOverrides.substr(text,0,len);
 		}
-		if(_$RenderSupportJSPixi_DFontText.getDFontInfo(fontfamily) == null) {
-			var defaultFontFamily = _$RenderSupportJSPixi_DFontText.getFirstDFontFamily();
-			var met = _$RenderSupportJSPixi_DFontText.getDFontInfo(defaultFontFamily);
+		if(_$RenderSupport_DFontText.getDFontInfo(fontfamily) == null) {
+			var defaultFontFamily = _$RenderSupport_DFontText.getFirstDFontFamily();
+			var met = _$RenderSupport_DFontText.getDFontInfo(defaultFontFamily);
 			if(met != null) {
 				Errors.print("Trying to render DFont " + fontfamily + " which is not loaded. Will use default font");
 				DFontText.dfont_table[fontfamily] = met;
@@ -7861,27 +7861,27 @@ _$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextFi
 				return;
 			}
 		}
-		this.metrics = _$RenderSupportJSPixi_DFontText.getDFontInfo(fontfamily);
+		this.metrics = _$RenderSupport_DFontText.getDFontInfo(fontfamily);
 		this.style.font = fontsize + "px " + fontfamily;
 		if(fillcolor != 0) this.style.tint = fillcolor; else this.style.tint = 65793;
 		this.style.letterSpacing = letterspacing;
-		_$RenderSupportJSPixi_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
+		_$RenderSupport_TextField.prototype.setTextAndStyle.call(this,text,fontfamily,fontsize,fontweight,fontslope,fillcolor,fillopacity,letterspacing,backgroundcolour,backgroundopacity);
 	}
 	,makeTextClip: function(text,style) {
 		var clip = new DFontText(text,style);
-		clip.resolution = RenderSupportJSPixi.PixiRenderer.resolution;
+		clip.resolution = RenderSupport.PixiRenderer.resolution;
 		clip.on("resize",function(ratio) {
 			clip.resolution = ratio;
 		});
 		clip.alpha = this.fillOpacity;
-		if(_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap) clip.cacheAsBitmap = true;
+		if(_$RenderSupport_TextField.cacheTextsAsBitmap) clip.cacheAsBitmap = true;
 		return clip;
 	}
 	,getTextClipMetrics: function(clip) {
 		return clip.getTextDimensions();
 	}
 	,getTextMetrics: function() {
-		if(this.metrics == null) return _$RenderSupportJSPixi_TextField.prototype.getTextMetrics.call(this); else return [(this.metrics.line_height + this.metrics.descender) * this.fontSize,this.metrics.descender * this.fontSize,0.15 * this.fontSize];
+		if(this.metrics == null) return _$RenderSupport_TextField.prototype.getTextMetrics.call(this); else return [(this.metrics.line_height + this.metrics.descender) * this.fontSize,this.metrics.descender * this.fontSize,0.15 * this.fontSize];
 	}
 	,getWidth: function() {
 		if(this.fieldWidth > 0.0 && this.isInput()) return this.fieldWidth; else return this.clipWidth;
@@ -7889,10 +7889,10 @@ _$RenderSupportJSPixi_DFontText.prototype = $extend(_$RenderSupportJSPixi_TextFi
 	,getHeight: function() {
 		if(this.fieldHeight > 0.0 && this.isInput()) return this.fieldHeight; else return this.clipHeight;
 	}
-	,__class__: _$RenderSupportJSPixi_DFontText
+	,__class__: _$RenderSupport_DFontText
 });
-var _$RenderSupportJSPixi_Shaders = function() { };
-_$RenderSupportJSPixi_Shaders.__name__ = true;
+var _$RenderSupport_Shaders = function() { };
+_$RenderSupport_Shaders.__name__ = true;
 var haxe_IMap = function() { };
 haxe_IMap.__name__ = true;
 var haxe_ds_IntMap = function() {
@@ -8520,7 +8520,7 @@ if(Array.prototype.filter == null) Array.prototype.filter = function(f1) {
 	return a1;
 };
 if(Util.getParameter("oldjs") == "1") RenderSupportHx.oldinit(); else {
-	window.RenderSupportHx = window.RenderSupportJSPixi;
+	window.RenderSupportHx = window.RenderSupport;
 }
 var __map_reserved = {}
 var ArrayBuffer = $global.ArrayBuffer || js_html_compat_ArrayBuffer;
@@ -8563,44 +8563,44 @@ GesturesDetector.PinchInitialDistance = 1.0;
 GesturesDetector.PinchListeners = [];
 GesturesDetector.CurrentPinchScaleFactor = 1.0;
 GesturesDetector.CurrentPinchFocus = { x : 0.0, y : 0.0};
-_$RenderSupportJSPixi_VideoClip.UsePixiTextures = false;
-_$RenderSupportJSPixi_VideoClip.VideosOnStage = [];
+_$RenderSupport_VideoClip.UsePixiTextures = false;
+_$RenderSupport_VideoClip.VideosOnStage = [];
 FontLoader.DFontVersionExpected = 4;
 FontLoader.DFonts = new haxe_ds_StringMap();
-_$RenderSupportJSPixi_TextField.cacheTextsAsBitmap = false;
-RenderSupportJSPixi.PixiStage = new _$RenderSupportJSPixi_FlowContainer();
-RenderSupportJSPixi.MousePos = new PIXI.Point(0.0,0.0);
-RenderSupportJSPixi.PixiStageChanged = true;
-RenderSupportJSPixi.isEmulating = false;
-RenderSupportJSPixi.AnimationFrameId = -1;
-RenderSupportJSPixi.AccessibilityEnabled = false;
-RenderSupportJSPixi.EnableFocusFrame = false;
-RenderSupportJSPixi.ShowDebugClipsTree = Util.getParameter("clipstree") == "1";
-RenderSupportJSPixi.CacheTextsAsBitmap = Util.getParameter("cachetext") == "1";
-RenderSupportJSPixi.DebugAccessOrder = Util.getParameter("accessorder") == "1";
-RenderSupportJSPixi.Antialias = Util.getParameter("antialias") != null?Util.getParameter("antialias") == "1":!NativeHx.isTouchScreen();
-RenderSupportJSPixi.RoundPixels = Util.getParameter("roundpixels") != null?Util.getParameter("roundpixels") != "0":true;
-RenderSupportJSPixi.RendererType = Util.getParameter("renderer") != null?Util.getParameter("renderer"):window.useRenderer;
-RenderSupportJSPixi.UseVideoTextures = Util.getParameter("videotexture") != "0";
-RenderSupportJSPixi.backingStoreRatio = RenderSupportJSPixi.getBackingStoreRatio();
-RenderSupportJSPixi.UseDFont = Util.getParameter("dfont") != "0";
-RenderSupportJSPixi.RenderSupportJSPixiInitialised = RenderSupportJSPixi.init();
-RenderSupportJSPixi.RequestAnimationFrameId = -1;
-RenderSupportJSPixi.FONT_THIN = 100;
-RenderSupportJSPixi.FONT_ULTRA_LIGHT = 200;
-RenderSupportJSPixi.FONT_LIGHT = 300;
-RenderSupportJSPixi.FONT_BOOK = 400;
-RenderSupportJSPixi.FONT_MEDIUM = 500;
-RenderSupportJSPixi.FONT_SEMI_BOLD = 600;
-RenderSupportJSPixi.FONT_BOLD = 700;
-RenderSupportJSPixi.FONT_EXTRA_BOLD = 800;
-RenderSupportJSPixi.FONT_BLACK = 900;
-RenderSupportJSPixi.FONT_NORMAL = "normal";
-RenderSupportJSPixi.FONT_ITALIC = "italic";
-RenderSupportJSPixi.FONT_OBLIQUE = "oblique";
-RenderSupportJSPixi.MouseUpReceived = false;
-RenderSupportJSPixi.FlowMainFunction = "flow_main";
-RenderSupportJSPixi.accessRoleMap = (function($this) {
+_$RenderSupport_TextField.cacheTextsAsBitmap = false;
+RenderSupport.PixiStage = new _$RenderSupport_FlowContainer();
+RenderSupport.MousePos = new PIXI.Point(0.0,0.0);
+RenderSupport.PixiStageChanged = true;
+RenderSupport.isEmulating = false;
+RenderSupport.AnimationFrameId = -1;
+RenderSupport.AccessibilityEnabled = false;
+RenderSupport.EnableFocusFrame = false;
+RenderSupport.ShowDebugClipsTree = Util.getParameter("clipstree") == "1";
+RenderSupport.CacheTextsAsBitmap = Util.getParameter("cachetext") == "1";
+RenderSupport.DebugAccessOrder = Util.getParameter("accessorder") == "1";
+RenderSupport.Antialias = Util.getParameter("antialias") != null?Util.getParameter("antialias") == "1":!NativeHx.isTouchScreen();
+RenderSupport.RoundPixels = Util.getParameter("roundpixels") != null?Util.getParameter("roundpixels") != "0":true;
+RenderSupport.RendererType = Util.getParameter("renderer") != null?Util.getParameter("renderer"):window.useRenderer;
+RenderSupport.UseVideoTextures = Util.getParameter("videotexture") != "0";
+RenderSupport.backingStoreRatio = RenderSupport.getBackingStoreRatio();
+RenderSupport.UseDFont = Util.getParameter("dfont") != "0";
+RenderSupport.RenderSupportInitialised = RenderSupport.init();
+RenderSupport.RequestAnimationFrameId = -1;
+RenderSupport.FONT_THIN = 100;
+RenderSupport.FONT_ULTRA_LIGHT = 200;
+RenderSupport.FONT_LIGHT = 300;
+RenderSupport.FONT_BOOK = 400;
+RenderSupport.FONT_MEDIUM = 500;
+RenderSupport.FONT_SEMI_BOLD = 600;
+RenderSupport.FONT_BOLD = 700;
+RenderSupport.FONT_EXTRA_BOLD = 800;
+RenderSupport.FONT_BLACK = 900;
+RenderSupport.FONT_NORMAL = "normal";
+RenderSupport.FONT_ITALIC = "italic";
+RenderSupport.FONT_OBLIQUE = "oblique";
+RenderSupport.MouseUpReceived = false;
+RenderSupport.FlowMainFunction = "flow_main";
+RenderSupport.accessRoleMap = (function($this) {
 	var $r;
 	var _g = new haxe_ds_StringMap();
 	if(__map_reserved.button != null) _g.setReserved("button","button"); else _g.h["button"] = "button";
@@ -8619,17 +8619,17 @@ RenderSupportJSPixi.accessRoleMap = (function($this) {
 	$r = _g;
 	return $r;
 }(this));
-RenderSupportJSPixi.PIXEL_STEP = 10;
-RenderSupportJSPixi.LINE_HEIGHT = 40;
-RenderSupportJSPixi.PAGE_HEIGHT = 800;
-RenderSupportJSPixi.sharedText = new PIXI.Text("");
-RenderSupportJSPixi.IsFullScreen = false;
-RenderSupportJSPixi.IsFullWindow = false;
-_$RenderSupportJSPixi_FlowSprite.MAX_CHACHED_IMAGES = 50;
-_$RenderSupportJSPixi_FlowSprite.cachedImagesUrls = new haxe_ds_StringMap();
-_$RenderSupportJSPixi_DFontText.FireFoxMaxTextWidth = 32765.0;
-_$RenderSupportJSPixi_Shaders.GlowFragmentSrc = ["precision lowp float;","varying vec2 vTextureCoord;","varying vec4 vColor;","uniform sampler2D uSampler;","void main() {","vec4 sum = vec4(0);","vec2 texcoord = vTextureCoord;","for(int xx = -4; xx <= 4; xx++) {","for(int yy = -3; yy <= 3; yy++) {","float dist = sqrt(float(xx*xx) + float(yy*yy));","float factor = 0.0;","if (dist == 0.0) {","factor = 2.0;","} else {","factor = 2.0/abs(float(dist));","}","sum += texture2D(uSampler, texcoord + vec2(xx, yy) * 0.002) * factor;","}","}","gl_FragColor = sum * 0.025 + texture2D(uSampler, texcoord);","}"];
-_$RenderSupportJSPixi_Shaders.VertexSrc = ["attribute vec2 aVertexPosition;","attribute vec2 aTextureCoord;","attribute vec4 aColor;","uniform mat3 projectionMatrix;","varying vec2 vTextureCoord;","varying vec4 vColor;","void main(void)","{","gl_Position = vec4((projectionMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);","vTextureCoord = aTextureCoord;","vColor = vec4(aColor.rgb * aColor.a, aColor.a);","}"];
+RenderSupport.PIXEL_STEP = 10;
+RenderSupport.LINE_HEIGHT = 40;
+RenderSupport.PAGE_HEIGHT = 800;
+RenderSupport.sharedText = new PIXI.Text("");
+RenderSupport.IsFullScreen = false;
+RenderSupport.IsFullWindow = false;
+_$RenderSupport_FlowSprite.MAX_CHACHED_IMAGES = 50;
+_$RenderSupport_FlowSprite.cachedImagesUrls = new haxe_ds_StringMap();
+_$RenderSupport_DFontText.FireFoxMaxTextWidth = 32765.0;
+_$RenderSupport_Shaders.GlowFragmentSrc = ["precision lowp float;","varying vec2 vTextureCoord;","varying vec4 vColor;","uniform sampler2D uSampler;","void main() {","vec4 sum = vec4(0);","vec2 texcoord = vTextureCoord;","for(int xx = -4; xx <= 4; xx++) {","for(int yy = -3; yy <= 3; yy++) {","float dist = sqrt(float(xx*xx) + float(yy*yy));","float factor = 0.0;","if (dist == 0.0) {","factor = 2.0;","} else {","factor = 2.0/abs(float(dist));","}","sum += texture2D(uSampler, texcoord + vec2(xx, yy) * 0.002) * factor;","}","}","gl_FragColor = sum * 0.025 + texture2D(uSampler, texcoord);","}"];
+_$RenderSupport_Shaders.VertexSrc = ["attribute vec2 aVertexPosition;","attribute vec2 aTextureCoord;","attribute vec4 aColor;","uniform mat3 projectionMatrix;","varying vec2 vTextureCoord;","varying vec4 vColor;","void main(void)","{","gl_Position = vec4((projectionMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);","vTextureCoord = aTextureCoord;","vColor = vec4(aColor.rgb * aColor.a, aColor.a);","}"];
 RendersupportpixiFlowJsProgram.globals__ = (function($this) {
 	var $r;
 	HaxeRuntime._structnames_ = new haxe_ds_IntMap();
@@ -9576,4 +9576,4 @@ var $b3={__v:$B()}
 flow_main=function(){
 return null;
 }
-if (typeof RenderSupportHx == 'undefined' && typeof RenderSupportJSPixi == 'undefined') flow_main();
+if (typeof RenderSupportHx == 'undefined' && typeof RenderSupport == 'undefined') flow_main();

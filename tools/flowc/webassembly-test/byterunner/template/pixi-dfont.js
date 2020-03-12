@@ -1,5 +1,5 @@
 // INCREMENT THE VERSION WHEN MAKE ANY CHANGES HERE
-// Requres the version to be incremented in RenderSupportJSPixi.hx class FontLoader : DFontVersionExpected
+// Requres the version to be incremented in RenderSupport.hx class FontLoader : DFontVersionExpected
 var DFONT_VERSION = 4;
 
 function init_dfont_data(fontname, metrics) {
