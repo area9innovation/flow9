@@ -178,9 +178,6 @@ class ThreeJSStage extends Container {
 	}
 
 	private function addEventListeners() {
-		RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.domElement, "pointerover", onMouseEvent);
-		RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.domElement, "pointerout", onMouseEvent);
-
 		if (Platform.isMobile) {
 			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
 			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
@@ -199,6 +196,9 @@ class ThreeJSStage extends Container {
 
 			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
 			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
+
+			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.domElement, "pointerover", onMouseEvent);
+			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.domElement, "pointerout", onMouseEvent);
 		}
 	}
 
@@ -242,22 +242,25 @@ class ThreeJSStage extends Container {
 					return;
 				}
 
-				if (untyped object.inside != (event.name != "pointerout")) {
-					untyped object.inside = event.name != "pointerout";
-					object.emit(event.name != "pointerout" ? "mouseover" : "mouseout");
+				if (untyped object.inside != (event.type != "pointerout")) {
+					untyped object.inside = event.type != "pointerout";
+					object.emit(event.type != "pointerout" ? "mouseover" : "mouseout");
 				}
 
 				if (untyped object.inside) {
 					newInteractiveObjectsMouseOver.push(object);
 				}
 
-				object.emit(event.type);
+				if (event.type != "pointerover" && event.type != "pointerout") {
+					object.emit(event.type);
+				}
+
 				object.invalidateStage();
 			}
 		};
 
 		for (ob in interactiveObjectsMouseOver) {
-			if (newInteractiveObjectsMouseOver.indexOf(ob) < 0) {
+			if (untyped ob.inside && newInteractiveObjectsMouseOver.indexOf(ob) < 0) {
 				untyped ob.inside = false;
 				ob.emit("mouseout");
 			}
