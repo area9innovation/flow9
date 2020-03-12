@@ -337,12 +337,15 @@ class RenderSupportJSPixi {
 			view : PixiView
 		};
 
+		var width : Int = Browser.window.innerWidth;
+		var height : Int = Browser.window.innerHeight + getSafeArea()[1];
+
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
-			PixiRenderer = new WebGLRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+			PixiRenderer = new WebGLRenderer(width, height, options);
 
 			RendererType = "webgl";
 		} else if (RendererType == "auto") {
-			PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth, Browser.window.innerHeight);
+			PixiRenderer = Detector.autoDetectRenderer(options, width, height);
 
 			if (untyped HaxeRuntime.instanceof(PixiRenderer, WebGLRenderer)) {
 				RendererType = "webgl";
@@ -350,9 +353,9 @@ class RenderSupportJSPixi {
 				RendererType = "canvas";
 			}
 		} else if (RendererType == "html") {
-			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+			PixiRenderer = new CanvasRenderer(width, height, options);
 		} else {
-			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+			PixiRenderer = new CanvasRenderer(width, height, options);
 
 			RendererType = "canvas";
 		}
@@ -465,6 +468,20 @@ class RenderSupportJSPixi {
 			if (WindowTopHeightLandscape == -1)
 				WindowTopHeightLandscape = topHeight;
 		}
+	}
+
+	public static function getSafeArea() : Array<Float> {
+		var l = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sal"));
+		var t = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sat"));
+		var r = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sar"));
+		var b = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sab"));
+
+		return [
+			Math.isNaN(l) ? 0.0 : l,
+			Math.isNaN(t) ? 0.0 : t,
+			Math.isNaN(r) ? 0.0 : r,
+			Math.isNaN(b) ? 0.0 : b
+		];
 	}
 
 	private static inline function initCanvasStackInteractions() {
@@ -623,7 +640,7 @@ class RenderSupportJSPixi {
 				// browser window is fullscreen
 				var screen_size = getScreenSize();
 				win_width = screen_size.width;
-				win_height = screen_size.height - (Platform.isIOS && ProgressiveWebTools.isRunningPWA() ? 0.0 : cast getMobileTopHeight());
+				win_height = screen_size.height + getSafeArea()[1] - cast getMobileTopHeight();
 
 				if (Platform.isAndroid) {
 					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
