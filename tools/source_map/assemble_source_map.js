@@ -18,7 +18,7 @@ if (process.argv.length > 4) {
 		consumer.eachMapping((m) => {
 			map.addMapping({
 				"name" : m.name,
-				"source" : m.source.replace("file://", ""),
+				"source" : "file://" + m.source.replace("file://", ""),
 				"generated" : {
 					"line" : m.generatedLine,
 					"column" : m.generatedLine
@@ -31,6 +31,7 @@ if (process.argv.length > 4) {
 		})
 
 		for (const r in content) {
+			content[r].source = "file://" + content[r].source.replace("file://", "");
 			// console.log(content[r]);
 			map.addMapping(content[r]);
 		}
