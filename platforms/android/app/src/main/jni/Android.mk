@@ -75,6 +75,7 @@ LOCAL_SRC_FILES += \
     utils/flowfilestruct.cpp \
     utils/FileLocalStore.cpp \
     utils/FileSystemInterface.cpp \
+    utils/PrintingSupport.cpp \
     utils/MediaStreamSupport.cpp \
     utils/WebRTCSupport.cpp \
     utils/MediaRecorderSupport.cpp \

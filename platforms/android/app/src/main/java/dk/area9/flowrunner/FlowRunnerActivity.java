@@ -357,6 +357,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
         FlowWebSocketSupport flowWebSocketSupport = new FlowWebSocketSupport(wrapper);
         wrapper.setFlowWebSocketSupport(flowWebSocketSupport);
 
+
+        FlowPrintingSupport flowPrintingSupport = new FlowPrintingSupport(this);
+        wrapper.setFlowPrintingSupport(flowPrintingSupport);
+
         createContentView();
         
         menu_anchor = new View(this);
