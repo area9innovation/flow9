@@ -15,7 +15,7 @@ class FlowCanvas extends FlowContainer {
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			this.initNativeWidget('canvas');
 			untyped this.isCanvas = true;
 		}
@@ -51,26 +51,26 @@ class FlowCanvas extends FlowContainer {
 	public override function createNativeWidget(?tagName : String = "canvas") : Void {
 		super.createNativeWidget(tagName);
 
-		RenderSupportJSPixi.RendererType = 'canvas';
+		RenderSupport.RendererType = 'canvas';
 		PixiWorkarounds.workaroundGetContext();
 
 		context = nativeWidget != null ? nativeWidget.getContext('2d', { alpha : true }) : null;
 
 		if (nativeWidget != null) {
 			nativeWidget.onpointermove = function(e) {
-				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerMove(e);
-				nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
+				RenderSupport.PixiRenderer.plugins.interaction.onPointerMove(e);
+				nativeWidget.style.cursor = RenderSupport.PixiView.style.cursor;
 			};
 			nativeWidget.onpointerover = function(e) {
-				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver(e);
+				RenderSupport.PixiRenderer.plugins.interaction.onPointerOver(e);
 			};
 			nativeWidget.onpointerout = function(e) {
-				RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut(e);
+				RenderSupport.PixiRenderer.plugins.interaction.onPointerOut(e);
 			};
 			nativeWidget.style.pointerEvents = 'auto';
 		}
 
-		RenderSupportJSPixi.RendererType = 'html';
+		RenderSupport.RendererType = 'html';
 		PixiWorkarounds.workaroundGetContext();
 	}
 
