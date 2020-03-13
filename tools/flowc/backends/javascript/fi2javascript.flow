@@ -8,15 +8,16 @@ import tools/flowc/incremental/fitype;
 import lingo/flow/javascript_keywords;
 
 export {
-	fi2javascript(program : FiProgram, cfg : FiJsConfig, callback : () -> void) -> void;
+	fi2javascript(program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig, callback : () -> void) -> void;
 }
 
-fi2javascript(orig_program : FiProgram, cfg : FiJsConfig, callback : ()  -> void) -> void {
+fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig, callback : ()  -> void) -> void {
 
 	program = if (isConfigParameterTrue(orig_program.config.config, "optimize")) {
 		makeBool = \v -> { e : FiExp = FiBool(v, -1); e };
 		optimizeCode(
 			orig_program,
+			env,
 			cfg.flowfile, 
 			pairs2tree([Pair("js", makeBool(true)), Pair("cpp", makeBool(false))])
 		)
@@ -67,6 +68,8 @@ fi2javascript(orig_program : FiProgram, cfg : FiJsConfig, callback : ()  -> void
 
 	// For tracking the size of files
 	sizeTracker = ref makeSizeTracker();
+	sourceMap = ref makeList();
+	currentLine = ref 1;
 
 	// Generating JS code for all declarations.
 	fcVerbose(cfg, 0, "Generating JS code for declarations...");
@@ -123,6 +126,28 @@ fi2javascript(orig_program : FiProgram, cfg : FiJsConfig, callback : ()  -> void
 
 					// TODO Support for dead code elimination required.
 					tl = fiJsCompileToplevel(cfg, gctx, v, id, "", None());
+
+					if (cfg.sourcemap && !cfg.beautify && !cfg.compress && tl != "") {
+						code = fcFileSource(env, module.fileinfo.fullpath);
+						resolver = makeLineResolver(code);
+						s = findLine(resolver, if (v.defiStart > 0) v.defiStart else v.declStart);
+
+						sourceMap :=
+							Cons(
+								FiJsMapping(
+									v.name,
+									module.fileinfo.fullpath,
+									s.lineno,
+									s.lineIndex,
+									^currentLine,
+									0,
+								),
+								^sourceMap
+							);
+
+						currentLine := ^currentLine + length(strSplit(tl, "\n"));
+					}
+
 					moduleSize := ^moduleSize + strlen(tl);
 					Cons(if (tl == "" || !cfg.debug) "" else "\n", Cons(tl, l));
 				});
@@ -149,8 +174,12 @@ fi2javascript(orig_program : FiProgram, cfg : FiJsConfig, callback : ()  -> void
 			// Beautify and compress are mutually exclusive
 			if (cfg.beautify && !cfg.compress)
 				fiJsBeautify(cfg, ovl, callback)
+			else if (cfg.compress)
+				fiJsCompress(cfg, ovl, callback)
+			else if (cfg.sourcemap)
+				fiAssembleSourceMapFile(cfg, ovl, headerCode, runtimeContents, ^sourceMap, callback)
 			else
-				if (cfg.compress) fiJsCompress(cfg, ovl, callback) else callback()
+				callback();
 		} else {
 			fcPrintln("'" + cfg.outputfile + "' is NOT generated.", cfg.threadId);
 			callback();

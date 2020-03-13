@@ -68,7 +68,7 @@ class WebClip extends NativeWidgetClip {
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
 
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			iframe.className = 'nativeWidget';
 			iframe.style.pointerEvents = 'auto';
 		}
@@ -93,7 +93,7 @@ class WebClip extends NativeWidgetClip {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
 
-				if (RenderSupportJSPixi.RendererType != "html") {
+				if (RenderSupport.RendererType != "html") {
 					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
 					if (Native.isTouchScreen()) {
 						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
@@ -166,24 +166,24 @@ class WebClip extends NativeWidgetClip {
 
 	private function onContentMouseMove(e : Dynamic) {
 		var iframeZorder : Int = Math.floor(Std.parseInt(nativeWidget.style.zIndex) / 1000);
-		var localStages = RenderSupportJSPixi.PixiStage.children;
+		var localStages = RenderSupport.PixiStage.children;
 		var i = localStages.length - 1;
 
 		while (i > iframeZorder) {
 			var pos = Util.getPointerEventPosition(e);
 
-			RenderSupportJSPixi.MousePos.x = pos.x;
-			RenderSupportJSPixi.MousePos.y = pos.y;
+			RenderSupport.MousePos.x = pos.x;
+			RenderSupport.MousePos.y = pos.y;
 
-			if (RenderSupportJSPixi.getClipAt(localStages[i], RenderSupportJSPixi.MousePos, true, true) != null) {
+			if (RenderSupport.getClipAt(localStages[i], RenderSupport.MousePos, true, true) != null) {
 				untyped localStages[i].view.style.pointerEvents = "all";
 				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
 
-				untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
+				untyped RenderSupport.PixiRenderer.view = untyped localStages[i].view;
 
 				if (e.type == "touchstart") {
-					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mousedown", pos.x, pos.y);
-					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mouseup", pos.x, pos.y);
+					RenderSupport.emitMouseEvent(RenderSupport.PixiStage, "mousedown", pos.x, pos.y);
+					RenderSupport.emitMouseEvent(RenderSupport.PixiStage, "mouseup", pos.x, pos.y);
 				}
 
 				return;
@@ -232,6 +232,7 @@ class WebClip extends NativeWidgetClip {
 	public function setDisableOverlay(disable : Bool) : Void {
 		if (disableOverlay && !disable) {
 			nativeWidget.removeChild(disableOverlay);
+			iframe.style.pointerEvents = 'auto';
 		} else if (disable) {
 			if (!disableOverlay) {
 				disableOverlay = Browser.document.createElement("div");
@@ -240,6 +241,7 @@ class WebClip extends NativeWidgetClip {
 
 			disableOverlay.style.display = "block";
 			nativeWidget.appendChild(disableOverlay);
+			iframe.style.pointerEvents = 'none';
 		}
 	}
 

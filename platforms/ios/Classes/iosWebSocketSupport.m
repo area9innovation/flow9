@@ -28,9 +28,9 @@
     self.onError(error);
 }
 
-- (void)webSocket:(SRWebSocket *)webSocket didCloseWithCode:(NSInteger)code reason:(NSString *)reason wasClean:(BOOL)wasClean
+- (void)webSocket:(SRWebSocket *)webSocket didCloseWithCode:(NSInteger)code reason:(nullable NSString *)reason wasClean:(BOOL)wasClean
 {
-   self.onClose(code, reason, wasClean);
+    self.onClose(code, reason ?: @"", wasClean);
 }
 
 @end

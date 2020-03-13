@@ -25,6 +25,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	order = tryExtractStruct(m.style, MListReorder(make([]), const(false)));
 	maxHeight = tryExtractStruct(m.style, MMaxHeight(tabsPanelHeight));
 	tabsHeight = make(eitherMap(maxHeight, \mh -> mh.height, tabsPanelHeight));
+	tabsAlign = extractStruct(m.style, MTabsAlign(StartAlign())).direction;
 	noDispose = contains(m.style, MNoDispose());
 	noDimming = contains(m.style, MTabsNoDimming());
 	preRender = contains(m.style, MPreRender());
@@ -126,9 +127,9 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 					focusState = replaceStructMany(tb.style, [onClick, AccessRole("tab"), MRippleType(const(MRippleFill()))]);
 					tabIcon = tryExtractStruct(tb.style, MTabIcon(TEmpty()));
 
-					TSelect(tb.text, \txt ->
+					TSelect2(tb.text, tabsWidths, \txt, tws ->
 						if (txt != "")
-							MTabsText(manager, p2, txt, tabMinWidth, showTooltip, tabsFontStyle, itemsColor, m2t)
+							MTabsText(manager, p2, txt, tabMinWidth, tws[i]-bordersGap, showTooltip, tabsFontStyle, itemsColor, m2t)
 							|> TBorderTopBottom(2.)
 						else if (leftAlignIcon) TFillX()
 						else TEmpty()
@@ -248,7 +249,13 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 			|> (\t -> TAttachAvailableWidth(t, stageWidth))
 			|> (\t : Tropic -> if (plusButton != TEmpty()) m2t(MCols2A(t, plusButton |> MCenterY), p) else t)
 			|> (\t -> TFrame(0., 0., tabsBgStyle, t))
-			|> (\t -> TAlignStartDir(t, p.rtl))
+			|> (\t -> switch (tabsAlign) {
+				StartAlign() : TAlignStartDir(t, p.rtl);
+				EndAlign() : TAlignEndDir(t, p.rtl);
+				LeftAlign() : TAlignLeft(t);
+				RightAlign() : TAlignRight(t);
+				CenterAlign() : TTweak([TAlign(const(0.5), const(0.0))], t, TFillX());
+			})
 			|> (\t ->
 				TConstruct(
 					[
@@ -354,6 +361,7 @@ MTabsText(
 	parent : MFocusGroup,
 	text : string,
 	minWidth : double,
+	width : double,
 	showTooltip : MShowTooltip,
 	tabsFontStyle : MFontStyle,
 	itemsColor : Maybe<MColor>,
@@ -366,11 +374,21 @@ MTabsText(
 		Some(color): Some(color);
 		None(): None();
 	}
-	style : [MTextStyle] = maybeArrayPush([tabsFontStyle], itemsColor2);
+	customFont = MFontStyle2MCustomFontDefault(parent, tabsFontStyle);
+	style : [MTextStyle] = maybeArrayPush([customFont], itemsColor2);
+	textMetrics = getTropicMetrics(MText2T(parent, toUpperCase(text), style));
 
-	if (textLen < floor(minWidth / 14.))
-		TCenterX(MText2T(parent, toUpperCase(text), style))
-	else {
+	scaledSizes = collectorLoop(
+		customFont.size - dfloor(customFont.size/2.0) * b2d(isUrlParameterTrue("7629")),
+		\sz -> sz+1.0,
+		\sz -> sz <= customFont.size && textMetrics.width * sz < max(width, minWidth) * customFont.size,
+		idfn
+	);
+	scaledSize = lastElement(scaledSizes, customFont.size + 1.0);
+	if (scaledSize <= customFont.size) {
+		scaledStyle : [MTextStyle] = maybeArrayPush([MCustomFont(customFont with size=scaledSize)], itemsColor2);
+		TCenterX(MText2T(parent, toUpperCase(text), scaledStyle))
+	} else {
 		newText = splitText(toUpperCase(text));
 
 		if (newText.second != "") {

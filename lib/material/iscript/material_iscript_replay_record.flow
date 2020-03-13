@@ -17,7 +17,7 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 	addHeight = \pnt -> Point(pnt.x, pnt.y + if (isIScriptEnabled(manager)) 48.0 else 0.0);
 	checkStr =
 		if (getValue(manager.iscript.settings.replayCheckErrors))
-			">> Check " + componentName + " " + name + " value " + toString(value)
+			">> Emit " + componentName + " " + name + " value " + toString(value)
 		else
 			">> Replay " + componentName + " " + name + " value " + toString(value);
 
@@ -73,12 +73,6 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 		} else if ((name == "keypress" || name == "keydown" || name == "keyup") && isSameStructType(value, KeyEventRecord("", false, false, false, false, 0))) {
 			kst = cast(value : flow -> KeyEventRecord);
 
-			iScriptInfo(
-				manager,
-				checkStr,
-				Some(behaviourDescriptor.component.id)
-			);
-
 			isFocused = if (name == "keydown") {
 				eitherMap(
 					getMaterialFocusByIScriptId(manager.focus, behaviourDescriptor.component.id),
@@ -86,7 +80,7 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 						switchMaterialFocus(
 							foc,
 							\f -> {
-								Some(getValue(f.focused))
+								Some(f.focused)
 							},
 							\f -> {
 								None()
@@ -99,15 +93,21 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 				None()
 			};
 			emitKey = \ -> {
+				iScriptInfo(
+					manager,
+					checkStr,
+					Some(behaviourDescriptor.component.id)
+				);
 				emitKeyEvent(currentClip(), name, kst.utf, kst.ctrl, kst.shift, kst.alt, kst.meta, kst.keycode);
 				true
 			}
 			eitherFn(
 				isFocused,
 				\focused -> {
-					if (focused) {
+					if (getValue(focused)) {
 						emitKey()
 					} else {
+						iScriptError(manager, "Text input is not focused", Some(behaviourDescriptor.component.id));
 						false
 					}
 				},
@@ -249,13 +249,11 @@ replayGeneratedRecord(
 		iScriptError(manager, "Can't find a focus by path", Some(id));
 		false
 	};
-	getText = \f -> {
-		getTextFromIScriptForm(takeLogicalSnapshot(f.form));
-	};
-	switch(record) {
-		IScriptSearchBehaviourRecord(descriptor, startM, value) : {
-			iScriptInfo(manager, "Searching starting node " + toString(startM), Some(descriptor.component.id));
-			run = \start -> {
+	getText = \f -> map(getTextFromIScriptForm(takeLogicalSnapshot(f.form)), trim);
+	replayRecordCommand = \rec, start -> {
+		switch(rec : IScriptGeneratedRecordCommand) {
+			IScriptSearchBehaviourRecord(descriptor, value) : {
+				iScriptInfo(manager, "Searching starting node " + toString(start.name), Some(descriptor.component.id));
 				runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
 					focusM,
 					\f : MaterialFocus -> {
@@ -270,43 +268,62 @@ replayGeneratedRecord(
 					\ -> cantFindError(descriptor.component.id)
 				);
 				focusSearch(runCommand, start, descriptor.component.id)
-			};
+			}
+			IScriptSearchText(text, id): {
+				iScriptInfo(manager, "Searching text '" + text + "'", Some(id));
+				runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
+					focusM,
+					\f : MaterialFocus -> {
+						texts = getText(f);
+						result = contains(texts, text);
+						if (!result) iScriptError(manager, "Can't find text '" + text + "' in " + toString(texts), Some(id));
+						result
+					},
+					\ -> cantFindError(id)
+				);
+				focusSearch(runCommand, start, id)
+			}
+			IScriptCountChildren(target, num): {
+				iScriptInfo(manager, "Counting children", Some(target));
+				eitherFn(
+					getMaterialFocusByCondition(
+						start,
+						getIscriptIdFromDescriptor(target),
+						\__ -> true
+					),
+					\f -> {
+						children = length(getTreeKeys(getValue(f.focusIds)));
+						result = num == children;
+						if (!result) iScriptError(manager, "Expected " + i2s(num) + ", got " + i2s(children) + " children", Some(target));
+						result
+					},
+					\ -> cantFindError(target)
+				);
+			}
+		}
+	};
+	switch(record : IScriptGeneratedRecord) {
+		IScriptGeneratedStart(start, command): {
+			iScriptInfo(manager, "Searching start " + toString(start), None());
 			eitherFn(
-				startM,
-				\start -> {
-					eitherFn(
-						getMaterialFocusByCondition(
-							manager.focus,
-							getIscriptIdFromDescriptor(start.id),
-							\ff -> contains(getText(ff), start.text)
-						),
-						run,
-						\ -> cantFindError(start.id)
-					)
-				},
-				\ -> run(manager.focus)
+				getMaterialFocusByCondition(
+					manager.focus,
+					getIscriptIdFromDescriptor(start.id),
+					\ff -> contains(getText(ff), start.text)
+				),
+				\f -> replayRecordCommand(command, f),
+				\ -> cantFindError(start.id)
 			)
-		}
-		IScriptSearchText(text, id): {
-			iScriptInfo(manager, "Searching text " + text, Some(id));
-			runCommand = \focusM : Maybe<MaterialFocus> -> eitherFn(
-				focusM,
-				\f : MaterialFocus -> {
-					texts = getText(f);
-					result = contains(texts, text);
-					if (!result) iScriptError(manager, "Can't find text " + text + " in " + toString(texts), Some(id));
-					result
-				},
-				\ -> cantFindError(id)
-			);
-			focusSearch(runCommand, manager.focus, id)
-		}
+		};
+		IScriptSearchBehaviourRecord(__, __): replayRecordCommand(record, manager.focus);
+		IScriptSearchText(__, __): replayRecordCommand(record, manager.focus);
+		IScriptCountChildren(__, __): replayRecordCommand(record, manager.focus);
 	}
 }
 
 getMaterialFocusByUniqueIdRec(focus : MFocusGroup, id : string) -> Maybe<MaterialFocus> {
 	findInOrder(
-		getValue(focus.iScriptIds),
+		getValue(focus.focusIds),
 		\__, v : MaterialFocus -> {
 			eitherFn(
 				maybeBind(v.iScriptId, \isi -> if (isi == id) Some(v) else None()),
@@ -323,12 +340,12 @@ getMaterialFocusByUniqueIdRec(focus : MFocusGroup, id : string) -> Maybe<Materia
 
 getMaterialFocusByCondition(focus : MFocusGroup, id : string, fn : (MaterialFocus) -> bool) -> Maybe<MFocusGroup> {
 	findInOrder(
-		getValue(focus.iScriptIds),
+		getValue(focus.focusIds),
 		\__, v : MaterialFocus -> {
 			switchMaterialFocus(
 				v,
 				\__ -> None(),
-				\f -> if (fn(f) && eitherMap(f.iScriptId, \isi -> isi == id, false)) {
+				\f -> if (fn(f) && (eitherMap(f.iScriptId, \isi -> isi == id, false) || f.name == id)) {
 					Some(f)
 				} else {
 					getMaterialFocusByCondition(f, id, fn)

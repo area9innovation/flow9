@@ -3331,7 +3331,7 @@ bool ByteCodeRunner::PrintData(ostream &out, const StackSlot &slot, int max_dept
         unicode_string tmp = GetString(slot);
         if (max_count > 0 && tmp.size() > unsigned(5*max_count))
             tmp = tmp.substr(0,max_count*5) + parseUtf8("...");
-        printQuotedString(out, encodeUtf8(tmp), false);
+        printQuotedString(out, encodeUtf8(tmp), true);
         break;
     }
     case TArray:
@@ -3760,6 +3760,9 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, addTakeAudioEventListener, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, md5, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fileChecksum, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, readBytes, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, readUntil, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, print, 1);
 
     // optional
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fast_lookupTree, 2);

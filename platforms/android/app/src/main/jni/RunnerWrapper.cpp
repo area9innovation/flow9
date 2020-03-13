@@ -256,6 +256,8 @@ static jfieldID c_ptr_field = NULL;
 	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V") \
 	CALLBACK(cbOpenFileDialog, "(I[Ljava/lang/String;I)V") \
 	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;") \
+	CALLBACK(cbPrintHTML, "(Ljava/lang/String;)V") \
+	CALLBACK(cbPrintURL, "(Ljava/lang/String;)V") \
 	CALLBACK(cbShowSoftKeyboard, "()V") \
 	CALLBACK(cbHideSoftKeyboard, "()V")
 
@@ -912,7 +914,7 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverOpenFileDialogRe
 AndroidRunnerWrapper::AndroidRunnerWrapper(JNIEnv *env, jobject owner_obj)
     : env(env), owner(owner_obj),
       runner(), renderer(this), http(this), sound(this), localytics(this), purchase(this), notifications(this), store(&runner),
-      geolocation(this), fsinterface(this), mediaStream(this), webrtcSupport(this), mediaRecorder(this), websockets(this)
+      geolocation(this), fsinterface(this), printing(this), mediaStream(this), webrtcSupport(this), mediaRecorder(this), websockets(this)
 {
     bytecode_ok = main_ok = false;
     flow_time_profiling_enabled = false;
@@ -2674,3 +2676,31 @@ std::string AndroidFileSystemInterface::doFileType(const StackSlot &file)
     env->DeleteLocalRef(filepath);
     return mimetype;
 }
+
+AndroidPrintingSupport::AndroidPrintingSupport(AndroidRunnerWrapper *owner) : PrintingSupport(&owner->runner), owner(owner)
+{
+
+}
+
+void AndroidPrintingSupport::doPrintHTMLDocument(unicode_string html)
+{
+    JNIEnv *env = owner->env;
+    jstring html_s = string2jni(env, html);
+
+    env->CallVoidMethod(owner->owner, cbPrintHTML, html_s);
+
+    env->DeleteLocalRef(html_s);
+    owner->eatExceptions();
+}
+
+void AndroidPrintingSupport::doPrintDocumentFromURL(unicode_string url)
+{
+    JNIEnv *env = owner->env;
+    jstring url_s = string2jni(env, url);
+
+    env->CallVoidMethod(owner->owner, cbPrintURL, url_s);
+
+    env->DeleteLocalRef(url_s);
+    owner->eatExceptions();
+}
+

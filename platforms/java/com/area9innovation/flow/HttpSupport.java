@@ -4,6 +4,7 @@ import java.util.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.net.URL;
+import java.net.URLConnection;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.io.BufferedReader;
@@ -108,10 +109,9 @@ public class HttpSupport extends NativeHost {
 		}
 	}
 
-	public final Object httpCustomRequestNative(String url, String method, Object[] headers,
-		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async
+	public final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
+		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
 		) {
-		// TODO
 		try {
 			// Add parameters
 			String urlParameters = "";
@@ -138,6 +138,8 @@ public class HttpSupport extends NativeHost {
 			URL obj = new URL(urlWithParams);
 			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
 			con.setRequestMethod(method);
+			con.setConnectTimeout(timeout.intValue());
+			con.setReadTimeout(timeout.intValue());
 
 			// Add headers
 	 		for (Object header : headers) {
@@ -150,7 +152,6 @@ public class HttpSupport extends NativeHost {
 	 		// Add data
 			if (data != null) {
 				con.setDoOutput(true);
-				con.addRequestProperty("Content-Type", "application/" + method);
 				con.setRequestProperty("Content-Length", Integer.toString(data.length()));
 				try {
 					byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), data);
@@ -175,16 +176,30 @@ public class HttpSupport extends NativeHost {
 			}
 			in.close();
 
-			// TODO: implement properly
-			Object[] responseHeaders = new Object[0];
+			ArrayList<Object[]> responseHeaders = new ArrayList();
+			Map<String, List<String>> respHeaders = con.getHeaderFields();
+	        for (Map.Entry<String, List<String>> entry : respHeaders.entrySet()) {
+				List<String> values = entry.getValue();
+				String value = "";
+				if (!values.isEmpty()) {
+					value = values.get(0);
+				}
+				String[] kv = {entry.getKey(), value};
+				responseHeaders.add(kv);
+			}
 
-			onResponse.invoke(responseCode, response.toString(), responseHeaders);
+			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
         } catch (MalformedURLException e) {
         	onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
         } catch (IOException e) {
         	onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
         }
 		return null;
+	}
+
+	public final Object httpCustomRequestNative(String url, String method, Object[] headers,
+		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
+		return httpCustomRequestWithTimeoutNative(url, method, headers, params, data, onResponse, async, 0);
 	}
 
 	public final Object sendHttpRequestWithAttachments(String url, Object[] headers, Object[] params,

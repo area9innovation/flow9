@@ -38,6 +38,8 @@
 }
 
 - (void) renderFrameImage: (CGImageRef) cgi {
+    if (!VideoTextureBitmap)
+        return;
     CGRect text_rect = CGRectMake(0, 0, CGBitmapContextGetWidth(RenderingContext), CGBitmapContextGetHeight(RenderingContext));
     CGContextDrawImage(RenderingContext, text_rect, cgi);
     VideoTextureBitmap->invalidate();

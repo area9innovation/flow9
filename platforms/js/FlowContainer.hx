@@ -37,11 +37,11 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = (RenderSupportJSPixi.RendererType == "html" && RenderSupportJSPixi.RenderContainers) || worldVisible;
+		isNativeWidget = (RenderSupport.RendererType == "html" && RenderSupport.RenderContainers) || worldVisible;
 
 		if (worldVisible) {
 			nativeWidget = Browser.document.body;
-		} else if (RenderSupportJSPixi.RendererType == "html") {
+		} else if (RenderSupport.RendererType == "html") {
 			createNativeWidget();
 		}
 	}
@@ -52,7 +52,7 @@ class FlowContainer extends Container {
 		}
 
 		if (zorder == 1) {
-			view = RenderSupportJSPixi.PixiView;
+			view = RenderSupport.PixiView;
 			context = view.getContext("2d", { alpha: false });
 			return;
 		}
@@ -67,7 +67,7 @@ class FlowContainer extends Container {
 		updateView(zorder);
 		onResize();
 
-		RenderSupportJSPixi.on("resize", onResize);
+		RenderSupport.on("resize", onResize);
 		on("removed", destroyView);
 	}
 
@@ -92,7 +92,7 @@ class FlowContainer extends Container {
 	}
 
 	private function destroyView() : Void {
-		RenderSupportJSPixi.off("resize", onResize);
+		RenderSupport.off("resize", onResize);
 
 		if (view.parentNode == Browser.document.body) {
 			Browser.document.body.removeChild(view);
@@ -103,15 +103,15 @@ class FlowContainer extends Container {
 	}
 
 	private function onResize() : Void {
-		if (view == RenderSupportJSPixi.PixiRenderer.view) {
+		if (view == RenderSupport.PixiRenderer.view) {
 			return;
 		}
 
-		view.width = RenderSupportJSPixi.PixiView.width;
-		view.height = RenderSupportJSPixi.PixiView.height;
+		view.width = RenderSupport.PixiView.width;
+		view.height = RenderSupport.PixiView.height;
 
-		view.style.width = view.width / RenderSupportJSPixi.backingStoreRatio + "px";
-		view.style.height = view.height / RenderSupportJSPixi.backingStoreRatio + "px";
+		view.style.width = view.width / RenderSupport.backingStoreRatio + "px";
+		view.style.height = view.height / RenderSupport.backingStoreRatio + "px";
 	}
 
 	public override function addChild<T:DisplayObject>(child : T) : T {
@@ -126,7 +126,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -145,7 +145,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -160,7 +160,7 @@ class FlowContainer extends Container {
 				this.updateKeepNativeWidgetChildren();
 			}
 
-			if (untyped RenderSupportJSPixi.RendererType != "html" || this.isCanvas) {
+			if (untyped RenderSupport.RendererType != "html" || this.isCanvas) {
 				this.invalidateTransform("removeChild");
 			}
 
@@ -176,22 +176,22 @@ class FlowContainer extends Container {
 				stage.invalidateStage();
 			} else {
 				stageChanged = true;
-				RenderSupportJSPixi.PixiStageChanged = true;
+				RenderSupport.PixiStageChanged = true;
 			}
 		}
 	}
 
 	public function render(renderer : CanvasRenderer) {
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			if (stageChanged) {
 				stageChanged = false;
 
-				this.setClipScaleX(RenderSupportJSPixi.getAccessibilityZoom());
-				this.setClipScaleY(RenderSupportJSPixi.getAccessibilityZoom());
+				this.setClipScaleX(RenderSupport.getAccessibilityZoom());
+				this.setClipScaleY(RenderSupport.getAccessibilityZoom());
 
 				if (transformChanged) {
 					var bounds = new Bounds();
-					untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
+					untyped RenderSupport.PixiStage.localBounds = bounds;
 					bounds.minX = 0;
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
@@ -216,7 +216,7 @@ class FlowContainer extends Container {
 
 			if (transformChanged) {
 				var bounds = new Bounds();
-				untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
+				untyped RenderSupport.PixiStage.localBounds = bounds;
 				bounds.minX = 0;
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;

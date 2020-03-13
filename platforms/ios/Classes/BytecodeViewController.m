@@ -120,11 +120,14 @@ static NSMutableArray * currentAutocompletionURLs = [[NSMutableArray alloc] init
     return rows != 0 ? rows : 1;
 }
 
-- (NSString *)pickerView:(UIPickerView *)pickerView titleForRow:(NSInteger)row forComponent:(NSInteger)component {
-    if ([CachedBytecodes count] == 0)
-        return @"No downloaded bytecode files";
-    
-    return [CachedBytecodes objectAtIndex: row];
+- (NSAttributedString *)pickerView:(UIPickerView *)pickerView attributedTitleForRow:(NSInteger)row forComponent:(NSInteger)component
+{
+    NSString *title = @"No downloaded bytecode files";
+    if ([CachedBytecodes count])
+        title = [CachedBytecodes objectAtIndex: row];
+    NSAttributedString *attString = [[NSAttributedString alloc] initWithString:title attributes:@{NSForegroundColorAttributeName:[UIColor blackColor]}];
+
+    return attString;
 }
 
 - (void)pickerView:(UIPickerView *)pickerView didSelectRow:(NSInteger)row inComponent:(NSInteger)component {

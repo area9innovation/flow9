@@ -19,6 +19,8 @@ class PDF {
 			node.setAttribute("src", 'js/pdf.js/pdf.min.js');
 			node.onload = onLoad;
 			head.appendChild(node);
+		} else {
+			cb();
 		}
 	}
 

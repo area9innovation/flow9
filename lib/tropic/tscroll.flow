@@ -9,7 +9,7 @@ export {
 
 	TScrollStyle ::= TScrollSetPosition, TScrollBound, TScrollInspectVisible, TScrollEnabled, TScrollDontHandle, TScrollPersistent,
 		TScrollDisableMouseWheel, TReverseMouseWheel, TScrollDisableOutOfBounds, TScrollKeysEnabled, TScrollbarsVisible,
-		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarLeft, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
+		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
 		TScrollbarsAdditionalBox, TScrollbarOverlapContent;
@@ -111,7 +111,7 @@ export {
 		TExpandOnHover(expand : bool);
 
 		TScrollBarTop();
-		TScrollBarLeft();
+		TScrollBarStart();
 
 		TScrollCropByContent();
 		TScrollOutOfBounds(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>);
@@ -203,6 +203,8 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	// Mouse down of the bars
 	downXBar = make(false);
 	downYBar = make(false);
+
+	scrollBoxHover = make(false);
 
 	showScrolling =
 		fthrottleNextFrame(fselect2(contentWH, boxWH0, FLift2(\cwh, bwh ->
@@ -347,7 +349,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					|> (\f2 ->
 						arrayPush(
 							f2,
-							makeSubscribe(currentInteractive, \ci -> {
+							makeSubscribe2(currentInteractive, \ci -> {
 								eitherFn(
 									ci,
 									\bl -> {
@@ -507,7 +509,8 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 								false
 							}
 						}),
-						MouseUp(\__ -> { nextDistinct(currentInteractive, None()); false })
+						MouseUp(\__ -> { nextDistinct(currentInteractive, None()); false }),
+						TMouseInside(scrollBoxHover, false)
 					],
 					TRectangle(interactiveRectangleStyle, TSized(boxWH))
 				),
@@ -528,6 +531,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 							downYBar,
 							xMoving,
 							yMoving,
+							scrollBoxHover,
 							TRectangle(interactiveRectangleStyle, TSized(fwhaddition(boxWH, scrollBarsAdditionalBox)))
 						)
 					)
@@ -1073,6 +1077,7 @@ createTScrollBars(
 	downYBar : DynamicBehaviour<bool>,
 	xMoving : DynamicBehaviour<bool>,
 	yMoving : DynamicBehaviour<bool>,
+	scrollBoxHover : Transform<bool>,
 	tr : Tropic
 ) -> Tropic {
 	// Expand scrollbars when on hover
@@ -1098,7 +1103,7 @@ createTScrollBars(
 			if (horizontal)
 				\f2 -> if (contains(style, TScrollBarTop())) f2 else TLines2(TFillY(), f2)
 			else
-				\f2 -> if (changeBoolIfRTL2(contains(style, TScrollBarLeft()), isRTL)) f2 else TCols2(TFillX(), f2);
+				\f2 -> if (contains(style, TScrollBarStart()) != isRTL) f2 else TCols2(TFillX(), f2);
 
 		sizeFn = if (horizontal) fwidth else fheight;
 		coord2point = \c -> if (horizontal) Point(c, 0.) else Point(0., c);
@@ -1124,7 +1129,23 @@ createTScrollBars(
 
 		(\dwn, ins ->
 			TShowLazy(fand(fless(scale, const(1.)), barStyle.visible), \ -> {
+				prevPosition = ref if (horizontal) getValue(scrollPosition).x else getValue(scrollPosition).y;
+
 				translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
+					if (horizontal) {
+						if (sp.x != ^prevPosition) {
+							prevPosition := sp.x;
+							nextDistinct(xMoving, true);
+							nextDistinct(xMoving, false);
+						}
+					} else {
+						if (sp.y != ^prevPosition) {
+							prevPosition := sp.y;
+							nextDistinct(yMoving, true);
+							nextDistinct(yMoving, false);
+						}
+					}
+
 					scl = fgetValue(scale);
 					coord2point(if (boxSz > 0.) point2coord(sp) * scl * (boxSz + gap) / boxSz else 0.)
 				});
@@ -1154,30 +1175,10 @@ createTScrollBars(
 				)
 				|> (\t -> TFixSize(t, makeScrollbarBox(boxSize)))
 			})
-			|> (\t -> {
-				prevSize = ref 0.0;
-
+			|> (\t ->
 				TConstruct(
 					[
-						\ -> {
-							prevSize := if (horizontal) fgetValue(contentWH).width else fgetValue(contentWH).height;
-							nop;
-						},
 						make2Subscribe(boxSize, contentWH, \boxSz, cSz -> {
-							if (horizontal) {
-								if (cSz.width != ^prevSize) {
-									prevSize := cSz.width;
-									nextDistinct(xMoving, true);
-									nextDistinct(xMoving, false);
-								}
-							} else {
-								if (cSz.height != ^prevSize) {
-									prevSize := cSz.height;
-									nextDistinct(yMoving, true);
-									nextDistinct(yMoving, false);
-								}
-							}
-
 							scl = fgetValue(scale);
 							nextDistinct(barVisible, scl < 1.);
 							minBSize = min(24., boxSz / 2.);
@@ -1188,7 +1189,7 @@ createTScrollBars(
 					],
 					t
 				)
-			})
+			)
 		)
 		|> (\makeBar ->
 			if (mobile) {
@@ -1240,7 +1241,7 @@ createTScrollBars(
 				manager,
 				fselectdelay(
 					fOr(
-						fthrottle2(fOr(fOr(hover, down), fselect(currentInteractive, FLift(\ci -> eitherMap(ci, \c -> c, false)))), 33),
+						fthrottle2(fOr(scrollBoxHover, fOr(fOr(hover, down), fselect(currentInteractive, FLift(\ci -> eitherMap(ci, \c -> c, false))))), 33),
 						fOr(scrollPersistent, fOr(xMoving, yMoving))
 					),
 					\m -> if (m) 0 else 500

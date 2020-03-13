@@ -13,6 +13,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	cellBorder = 16.;
 	externalBorder = 16.;
 
+	enabled = extractStruct(style, MEnabled(const(true)));
 	reorderList = tryExtractStruct(style, MListReorder(make([]), const(false)));
 	isReorderEnabled = eitherMap(reorderList, \rl : MListReorder -> fgetValue(rl.enabled), false);
 	reorderShowIcon = !contains(style, MListReorderHideIcon());
@@ -31,7 +32,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	replaceHeader = contains(headerActions.style, MReplaceHeader());
 
 	currentPage = tryExtractStruct(style, MCurrentPage(make(0)));
-	scrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
+	rowsBoxScrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
 
 	selection : MListSelection =
 		extractStruct(style, MListSelection(
@@ -57,7 +58,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	checkboxBorder = \rh -> forceRange((rh - 24.) / 2., 0., 12.);
 	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + standardIconSize - cellBorder;
 
-	headerStyle = tryExtractStruct(style, MHeaderStyle([], [], []));
+	defaultHS = MHeaderStyle([], [], []);
+	headerStyle = tryExtractStruct(style, defaultHS);
 	rowBackgroundStyle = tryExtractStruct(style, MRowBackgroundStyle(\__ -> []));
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle> = tryExtractStruct(style, MSelectedBackgroundStyle([]));
 	hasExtOrderBy = contains(style, MExternalSort());
@@ -72,19 +74,28 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
 	isInnerScroll = isSome(innerScroll);
 
-	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
+	gluedMode = maybeBind(innerScroll, \is -> switch (is.mode) {
+		MGluedFirstColumnMode(gstyle) : Some(gstyle);
+		default : None()
+	});
+	glued = isSome(gluedMode);
 	lifted = eitherMap(innerScroll, \is -> is.mode == MLiftedFirstColumnMode(), false);
 
 	columns = m.columns
-		|> (\arr -> if (widthByContent) map(arr, \col -> MColumnDynamic(col.header, col.tooltip, col.width, arrayPush(col.style, MWidthByContent()))) else arr)
-		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContent()])], arr) else arr)
+		|> (\arr -> map(arr, \col ->
+			if (widthByContent || contains(col.style, MWidthByContent()))
+				MColumnDynamic(col with style = arrayPush(col.style, MWidthByContentLimited(const(-1.), const(-1.))))
+			else col
+		))
+		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContentLimited(const(-1.), const(-1.))])], arr) else arr)
 		|> (\arr -> if (isSome(checkboxSelection)) concat([MColumn("", "", floor(checkboxColumnWidth), [MMaxWidth(floor(checkboxColumnWidth))])], arr) else arr);
 	columnsCount = length(columns);
-	isAnyWidthByContent = widthByContent || any(map(columns, \col -> contains(col.style, MWidthByContent())));
+	isWidthByContent = \col : MColumnDynamic -> containsStruct(col.style, MWidthByContentLimited(const(-1.), const(-1.)));
+	isAnyWidthByContent = widthByContent || any(map(columns, isWidthByContent));
 
 	defaultSorted : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
 	listSortedCallback = extractStruct(style, MListSorted(nop1)).newOrderCallback;
-	sortedByB : DynamicBehaviour<Triple<int, bool, Maybe<MSort>>> = make(Triple(-1, true, None()));
+	sortedByB : DynamicBehaviour<MDataTableSorting> = make(MDataTableSorting(-1, true, None()));
 	sortColumnNumberB = make(-1);
 	sortUpdating = tryExtractStruct(style, MUpdateSorting(0));
 
@@ -92,31 +103,31 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	maybeApply(sortUpdating, \su -> updateTrigger(updatingTrigger, su.delay));
 
 	sortingResult = fsubselect(rows, FLift(\rws : [[Material]] ->
-		fselect2(sortedByB, updatingTrigger, FLift2(\sb : Triple<int, bool, Maybe<MSort>>, __ -> {
+		fselect2(sortedByB, updatingTrigger, FLift2(\sb : MDataTableSorting, __ -> {
 			sorted =
-				if (sb.first >= 0 && sb.first < (columnsCount - (b2i(showRowNumbers) + b2i(isSome(checkboxSelection)))) && !hasExtOrderBy)
+				if (sb.column >= 0 && sb.column < (columnsCount - (b2i(showRowNumbers) + b2i(isSome(checkboxSelection)))) && !hasExtOrderBy)
 					eitherFn(
-						sb.third,
-						\sc ->
+						sb.sortInfo,
+						\sInfo ->
 							mergeSort(
 								enumFromTo(0, length(rws) - 1),
 								\a, b ->
-									if (sb.second) sc.colCompares(a, b)
-									else sc.colCompares(b, a)
+									if (sb.ascending) sInfo.colCompares(a, b)
+									else sInfo.colCompares(b, a)
 							),
 						\ ->
 							map(
 								sortCustom(
 									mapi(rws, \j, r ->
 										Pair({
-											cellM = r[sb.first];
+											cellM = r[sb.column];
 											switch (cellM) {
 												MMutable(mutContent): fgetValue(mutContent);
 												TMutable(mutContent): fgetValue(mutContent);
 												default: cellM
 											}
 										}, j)),
-									firstOfPair, sb.second
+									firstOfPair, sb.ascending
 								),
 								secondOfPair
 							)
@@ -141,6 +152,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	pageNumber = fFirstOfPair(page);
 	rowsPerPage = fSecondOfPair(page);
+	
+	currentVisibleRowsCount =
+		fselect2(rowsCountB, page, FLift2(\rc, p -> min(p.second, rc - p.first)));
 
 	pageNumberB = make(0);
 
@@ -152,13 +166,13 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	fullWidthAdvanced = contains(style, MFullWidthAdvanced());
 	fullWidth = contains(style, MFullWidth()) || fullWidthAdvanced;
 
-	minWidths = map(columns, \c -> i2d(c.width) + cellBorder);
+	minWidths = map(columns, \c -> fselect(c.width, FLift(\w -> i2d(w) + cellBorder)));
 
 	cellWs : Transform<[[DynamicBehaviour<double>]]> =
 		fselect(rowsCountB, FLift(\rc ->
 			generate(0, rc + b2i(isSome(fixedRow)), \__ ->
 				generate(0, columnsCount, \i ->
-					if (!widthByContent && !contains(columns[i].style, MWidthByContent())) make(0.)
+					if (!isWidthByContent(columns[i])) make(0.)
 					else if (isCheckboxColumn(i)) make(checkboxColumnWidth)
 					else make(^tropicFillersMax)
 				)
@@ -166,8 +180,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		));
 
 	columnWidths : [Transform<double>] =
-		generate(0, columnsCount, \i ->
-			if (widthByContent || contains(columns[i].style, MWidthByContent()))
+		mapi(columns, \i, col ->
+			eitherMap(
+				tryExtractStruct(col.style, MWidthByContentLimited(const(-1.), const(-1.))), \mwc ->
 				fsubselect(cellWs, FLift(\cWs ->
 					fsubselect(page, FLift(\pg ->
 						fsubselect(sortingResult, FLift(\srt ->	{
@@ -180,20 +195,25 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									map(subrange(srt, pg.first, pg.second), \idx -> elementAt(cWs, idx, []))
 								);
 
-							faddition(
-								fmaxA(
-									map(currentRows, \row -> elementAt(row, i, make(0.))),
-									i2d(columns[i].width)
-								),
-								const(cellBorder)
+							(
+								if (length(currentRows) != 0)
+									fmaxA(map(currentRows, \row -> elementAt(row, i, make(0.))), 0.)
+								else
+									fi2d(col.width)
 							)
+							|> (\colW -> fselect3(colW, mwc.minWidth, mwc.maxWidth, \cw, minW, maxW ->
+									if (maxW == -1.) max(cw, minW)
+									else forceRange(cw, minW, maxW)
+								))
+							|> (\colW -> faddition(colW, const(cellBorder)))
 						}))
 					))
-				))
-			else if (fullWidth)
-				make(minWidths[i])
+				)),
+			if (fullWidth)
+				make(fgetValue(minWidths[i]))
 			else
-				const(minWidths[i])
+				minWidths[i]
+			)
 		);
 
 	headCount = 1 + b2i(showRowNumbers) + b2i(isSome(checkboxSelection));
@@ -223,11 +243,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		else
 			^prevER) |> (\f -> {prevER := f; f});
 
-	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else const(dsum(minWidths));
+	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else fsum(minWidths);
 	
 	innerScrollEnabled = if (fullWidth) fless(screenW, faddition(minWidthsSum, const(2. * externalBorder))) else const(true);
 	innerScrollVisible0 = make(false);
-	innerScrollVisible = fand(innerScrollEnabled, innerScrollVisible0);
+	innerScrollVisible = fstall(fand(innerScrollEnabled, innerScrollVisible0), 0);
 	innerScrollPosition = makePoint();
 
 	expandRow =
@@ -267,6 +287,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			i2d(min(rpp, rc) + b2i(fr)) * countRowHeight(er)
 		);
 
+	visibleRowsHeight =
+		fselect3(currentVisibleRowsCount, showFixedRow, expandRow, \vrc, fr, er ->
+			i2d(vrc + b2i(fr)) * countRowHeight(er)
+		);
+
 	// Helpers
 
 	makeChkbox = \p, trigger, en, onClk, h -> {
@@ -285,7 +310,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	alignCellContent = \colstyle : [MColumnStyle], box : Tropic ->
 		\content : Tropic -> {
-			right = changeBoolIfRTL2(contains(colstyle, RightAlign()), parent.rtl);
+			right = (contains(colstyle, RightAlign()) != (parent.rtl && !isUrlParameterTrue("new"))) || contains(colstyle, if (parent.rtl) StartAlign() else EndAlign());
 			center = contains(colstyle, CenterAlign());
 			TCopySize(
 				box,
@@ -308,7 +333,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	headerTitles = \p ->
 		mapi(columns, \i0, c : MColumnDynamic -> if (replaceHeader) cellBox(i0, true) else {
-			rightAlign = changeBoolIfRTL2(contains(c.style, RightAlign()), p.rtl);
+			colHeaderStyle = tryExtractStruct(concat(c.style, eitherMap(headerStyle, \e -> [e], [])), defaultHS);
+			rightAlign = (contains(c.style, RightAlign()) != (parent.rtl && !isUrlParameterTrue("new"))) || contains(c.style, if (parent.rtl) StartAlign() else EndAlign());
 			sortStyle = if (isSome(reorderList)) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
 			sortable = isSome(sortStyle) || (isNone(reorderList) && (hasExtOrderBy || contains(c.style, MAutoSort())));
 			i = i0 - headCount + 1;
@@ -320,7 +346,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						p,
 						MEllipsisText(
 							header,
-							eitherMap(headerStyle, \hs -> hs.textStyle, [if (isSelected) MCaptionColumnSelected() else MCaptionColumn()])
+							eitherMap(colHeaderStyle, \hs -> hs.textStyle, [if (isSelected) MCaptionColumnSelected() else MCaptionColumn()])
 						),
 						m2t
 					)
@@ -332,17 +358,17 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				clickColumn = \ -> {
 					sb = fgetValue(sortedByB);
 					
-					if (sb.first == i && sb.second) {
-						nextDistinct(defaultSorted, MSortingParam(-1, false));
-						next(sortedByB, Triple(-1, false, None()))
+					if (sb.column == i && !sb.ascending) {
+						nextDistinct(defaultSorted, MSortingParam(-1, true));
+						next(sortedByB, MDataTableSorting(-1, false, None()))
 					} else {
 						asc =
-							if (sb.first == -1)
+							if (sb.column == -1)
 								getValue(defaultSorted).isAsc
 							else
-								sb.first == i;
+								sb.column != i;
 						nextDistinct(defaultSorted, MSortingParam(i, asc));
-						next(sortedByB, Triple(i, asc, sortStyle))
+						next(sortedByB, MDataTableSorting(i, asc, sortStyle))
 					}
 				};
 
@@ -351,8 +377,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 				mouseDownAround(manager, None(), make(false), hover, clickColumn,
 					TIfLazy2(
-						fselect(sortedByB, FLift(\sb : Triple<int, bool, Maybe<MSort>> -> sb.first == i)),
-						\sb ->
+						fselect(sortedByB, FLift(\sb : MDataTableSorting -> sb.column == i)),
+						\isSorting ->
 							TIfLazy2(
 								hover,
 								\h ->
@@ -360,13 +386,13 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 										[
 											makeHeaderTitle(h)
 												|> (\t -> TBorderDir(0.0, 0.0, 4.0, 0.0, t, p.rtl)),
-											if (sb)
-												TIfLazy2(fselect(sortedByB, FLift(secondOfTriple)), \sb0 ->
+											if (isSorting)
+												TIfLazy2(fselect(sortedByB, FLift(\sb -> sb.ascending)), \sb0 ->
 													MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", [MIconSize(15.)]),
 													true
 												)
 											else if (h)
-												MIcon2T(p, "arrow_downward", [MIconSize(15.), FillOpacity(0.24)])
+												MIcon2T(p, "arrow_upward", [MIconSize(15.), FillOpacity(0.24)])
 											else
 												TFixed(16., 0.)
 										]
@@ -445,7 +471,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			expandContent(headers0, er)
 			|> (\headers ->
 				if (lifted) colsTail(headers)
-				else if (glued)	concat([TShow(fthrottle(fnot(innerScrollVisible), 1), colsHead(headers) |> TCols)], colsTail(headers))
+				else if (glued)	concat([TShow(fnot(innerScrollVisible), colsHead(headers) |> TCols)], colsTail(headers))
 				else headers
 			)
 			|> (\t -> TColsDir(t, p.rtl))
@@ -514,15 +540,18 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			else {
 				colStyle = columns[i].style;
 				box = cellBox(i, false);
-				// TODO : improve
-				// Hotfix : rerender content in the column if rowsCountB changed. 
 				content =
-					if (contains(colStyle, MWidthByContent()))
-						MSelect(fstall(cellWs, 0), \cws ->
-							MAttachWidth(cell, elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0)))
-						)
-					else
-						cell;
+					eitherMap(
+						tryExtractStruct(colStyle, MWidthByContentLimited(const(-1.), const(-1.))), \wbcl ->
+						MSelect(fstall(cellWs, 0), \cws -> {
+							widthInspector = elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0));
+							if (fgetValue(wbcl.maxWidth) == -1.)
+								MAttachWidth(cell, widthInspector)
+							else
+								MInspect([IMaxWidth(widthInspector)], cell)
+						}),
+						cell
+					);
 
 				MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
 				|> alignCellContent(colStyle, box)
@@ -587,7 +616,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
 							TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
 						),
-						scrollPosition,
+						rowsBoxScrollPosition,
 						MScrollBound(const(false), const(false))
 					]), m2t))
 				|> (\t -> eitherMap(fixedRow, \fr -> {
@@ -607,18 +636,24 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				|> (\t -> TAvailableWidth(t, firstColumnWidth))
 				|> (\t -> TLines2(firstColumnHeader, t))
 				|> (\t ->
-						if (glued)
-							TShow(innerScrollVisible,
-								TCols2(t, TAvailableHeight(
-									MSeparator2T(manager, p, false),
-									faddition(rowsAvailableHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
-								))
-							)
-						else t
+						eitherMap(gluedMode, \gMode ->
+							TGroup2(
+								TShow(innerScrollVisible, t),
+								TShow(
+									extractStruct(gMode, MSeparatorVisible(innerScrollVisible)).visible,
+									TAvailableHeight(
+										MSeparator2T(manager, p, false),
+										faddition(visibleRowsHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
+									)
+								)
+								|> (\sep -> TBorderT(firstColumnWidth, zero, zero, zero, sep))
+							),
+							t
+						)
 				);
 
 			TGroup2(
-				if (glued) TBorderT(fdelay(fif(innerScrollVisible, firstColumnWidth, zero), 0), zero, zero, zero, table) else table,
+				if (glued) TBorderT(fif(innerScrollVisible, firstColumnWidth, zero), zero, zero, zero, table) else table,
 				firstColumn
 			)
 		} else table;
@@ -665,7 +700,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					[TFillX()],
 					if (length(pagination.rowsPerPage) > 1)
 						[
-							MText2T(p2, "Rows per Page:", [MCaption()])
+							MText2T(p2, _("Rows per Page:"), [MCaption()])
 							|> TCenterY
 							|> (\t -> TBorder(8., 0., 16., 0., t)),
 							MDropDown2T(
@@ -834,7 +869,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 											[MSideBorders(const(0.))],
 											eitherMap(selectedBgStyle, v2a, [])
 										),
-										[selection, selectionEnabled, onClick, MListReorder(listSort, const(false)), scrollPosition, TScrollEnabled(scrollEnabled),
+										[selection, selectionEnabled, onClick, MListReorder(listSort, const(false)), rowsBoxScrollPosition, TScrollEnabled(scrollEnabled),
 											MScrollbars(
 												TScrollbarStyle(getMaterialScrollBar().x with visible = scrollEnabled),
 												TScrollbarStyle(getMaterialScrollBar().y with visible = scrollEnabled)
@@ -923,15 +958,15 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						[],
 
 					if (fullWidth && !widthByContent && length(columnWidths) > 0) [
-						make3Subscribe(screenW, expandRow, fmerge(columnWidths), \width, er, colWs -> {
+						make4Subscribe(screenW, expandRow, fmerge(columnWidths), fmerge(minWidths), \width, er, colWs, minWs -> {
 							cutFirstColumn = \arr : [flow] -> if (lifted || glued) colsTail(arr) else arr;
 
 							miw =
 								mapi(columns, \i, c -> {
-									if (contains(c.style, MWidthByContent()))
+									if (isWidthByContent(c))
 										colWs[i]
 									else
-										minWidths[i]
+										minWs[i]
 								})
 								|> (\arr ->
 									mapSplitWithoutHead(arr, er,
@@ -942,17 +977,15 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 							maw =
 								mapi(columns, \i, c -> {
-									if (contains(c.style, MWidthByContent()))
+									if (isWidthByContent(c))
 										colWs[i]
 									else {
 										w = extractStruct(c.style, MMaxWidth(-1)).width;
 
 										if (w == -1)
 											-1.
-										else if (w < c.width)
-											i2d(c.width) + cellBorder
 										else
-											i2d(w) + cellBorder
+											max(i2d(w) + cellBorder, minWs[i])
 									}
 								})
 								|> (\arr ->
@@ -967,7 +1000,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									miw,
 									maw,
 									max(width - externalBorder * 2. - reorderIconSpace, getValue(footerMinWidth))
-									- if (glued) fgetValue(fsum(colsHead(columnWidths))) else 0.
+									- if (glued) dsum(colsHead(colWs)) else 0.
 								);
 
 							iteri(
@@ -1007,7 +1040,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				]);
 
 				scroll =
-					if (autoPagination || fgetValue(scrollEnabled)) MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
+					if (autoPagination || (!anyTypePagination && fgetValue(scrollEnabled)))
+						MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
 					else {
 						contentHeight = make(0.);
 						MScroll(MAttachHeight(t, contentHeight), TFillXHT(contentHeight), scrollStyle)
@@ -1033,20 +1067,24 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						maybeApply(singleSelection, \ss -> nextDistinct(ss.selected, if (length(ar) > 0) ar[0] else -1));
 						maybeApply(multiSelection, \ms -> nextDistinct(ms.selected, buildSet(ar)));
 					}),
-					make2Subscribe(page, expandRow, \pg, er -> {
-						if (anyTypePagination)
-							nextDistinct(scrollPosition.position, Point(0., i2d(pg.first) * countRowHeight(er)));
 
-						maybeApply(currentPage, \cp -> nextDistinct(cp.page, pg.first / max(pg.second, 1)));
-					}),
-					\ -> fBidirectionalLink(sortedByB, sortColumnNumberB, \sb -> nextDistinct(sortColumnNumberB, sb.first), \num -> {
+					\ -> fBidirectionalLink(
+						fpair(page, expandRow),
+						fpair(rowsBoxScrollPosition.position, expandRow),
+						\pair -> if (anyTypePagination)
+							nextDistinct(rowsBoxScrollPosition.position, Point(0., i2d(pair.first.first) * countRowHeight(pair.second))),
+						\pair ->
+							updatePageNumber(floor(pair.first.y) / floor(countRowHeight(pair.second)))
+					),
+
+					\ -> fBidirectionalLink(sortedByB, sortColumnNumberB, \sb -> nextDistinct(sortColumnNumberB, sb.column), \num -> {
 						sortColumn =
 							if (num >= 0 && isNone(reorderList))
 								tryExtractStruct(columns[num].style, MSort(\__, __ -> 0))
 							else
 								None();
 
-						nextDistinct(sortedByB, Triple(num, !getValue(defaultSorted).isAsc, sortColumn));
+						nextDistinct(sortedByB, MDataTableSorting(num, !getValue(defaultSorted).isAsc, sortColumn));
 					}),
 					\ -> fBidirectionalLink(page, pageNumberB,
 							\pair -> nextDistinct(pageNumberB, pair.first / max(pair.second, 1)),
@@ -1081,7 +1119,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									make2Subscribe(cp.page, rowsCountB, \pg, rowsCount -> {
 										rpp = fgetValue(rowsPerPage);
 										updatePageNumber(max(0, min(pg * rpp, rowsCount -1)))
-									})
+									}),
+									\ -> fconnectSelect(page, cp.page, \pg -> pg.first / max(pg.second, 1))
 								],
 								f2
 							),
@@ -1127,6 +1166,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			parent,
 			"MDynamicDataTable",
 			[
+				enabled,
 				IScriptBehaviour("current_page", pageNumberB, ISInputValue([], "int", true)),
 				IScriptBehaviour("sort_by", sortColumnNumberB, ISInputValue(map(columns, \c -> fgetValue(c.header)), "index", true))
 			],
@@ -1214,6 +1254,9 @@ MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, ro
 		MClickable(m, onClick): {
 			clickable(manager, parent, wrapCellContent(m), onClick)
 		}
+		MInteractive(interactivity, m): {
+			TInteractive(interactivity, wrapCellContent(m))
+		}
 		MInspect(inspectors, m): {
 			TInspect(inspectors, wrapCellContent(m))
 		}
@@ -1300,3 +1343,9 @@ updateTrigger(trigger : DynamicBehaviour<bool>, delay : int) -> void {
 		updateTrigger(trigger, delay)
 	})
 }
+
+MDataTableSorting(
+	column : int,
+	ascending : bool,
+	sortInfo : Maybe<MSort>
+);

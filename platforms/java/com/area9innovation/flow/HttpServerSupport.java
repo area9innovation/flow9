@@ -45,6 +45,7 @@ public class HttpServerSupport extends NativeHost
 					server.createContext("/", new EchoHandler(onMessage));
 
 				server.start();
+				onOpen.invoke();
 
 				return server;
 			}

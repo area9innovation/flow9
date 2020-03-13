@@ -7,6 +7,13 @@ class ProgressiveWebTools {
 	public function new() {}
 
 	public static function __init__() {
+		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches) {
+			var viewport = Browser.document.querySelector('meta[name="viewport"]');
+
+			if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit") < 0) {
+				viewport.setAttribute("content", viewport.getAttribute("content") + ",viewport-fit=cover");
+			}
+		}
 	}
 
 	public static var globalRegistration : Dynamic = null;
@@ -234,6 +241,68 @@ class ProgressiveWebTools {
 					"action" : "set_cache_static_resources",
 					"data" : {
 						"value" : cache
+					}
+				},
+				[messageChannel.port2]
+			);
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function addServiceWorkerDynamicResourcesExtension(extension : String, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "add_dynamic_resource_extension",
+					"data" : {
+						"value" : extension
+					}
+				},
+				[messageChannel.port2]
+			);
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function removeServiceWorkerDynamicResourcesExtension(extension : String, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "remove_dynamic_resource_extension",
+					"data" : {
+						"value" : extension
 					}
 				},
 				[messageChannel.port2]

@@ -616,8 +616,8 @@ class Native {
 
 			#if js
 			untyped __js__("
-				if (typeof RenderSupportJSPixi !== 'undefined' && (clip.nativeWidget != null || clip.accessWidget != null)) {
-					RenderSupportJSPixi.once('drawframe', function() {
+				if (typeof RenderSupport !== 'undefined' && (clip.nativeWidget != null || clip.accessWidget != null)) {
+					RenderSupport.once('drawframe', function() {
 						DisplayObjectHelper.deleteNativeWidget(clip);
 					});
 				}
