@@ -450,6 +450,7 @@ class AccessWidget extends EventEmitter {
 		"listitem" => "button",
 		"menuitem" => "button",
 		"tab" => "button",
+		"slider" => "button",
 		"banner" => "header",
 		"main" => "section",
 		"navigation" => "nav",
