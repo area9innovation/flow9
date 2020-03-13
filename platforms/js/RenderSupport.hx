@@ -473,17 +473,23 @@ class RenderSupport {
 	}
 
 	public static function getSafeArea() : Array<Float> {
-		var l = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sal"));
-		var t = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sat"));
-		var r = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sar"));
-		var b = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sab"));
+		var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
-		return [
-			Math.isNaN(l) ? 0.0 : l,
-			Math.isNaN(t) ? 0.0 : t,
-			Math.isNaN(r) ? 0.0 : r,
-			Math.isNaN(b) ? 0.0 : b
-		];
+		if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit=content") >= 0) {
+			var l = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sal"));
+			var t = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sat"));
+			var r = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sar"));
+			var b = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sab"));
+
+			return [
+				Math.isNaN(l) ? 0.0 : l,
+				Math.isNaN(t) ? 0.0 : t,
+				Math.isNaN(r) ? 0.0 : r,
+				Math.isNaN(b) ? 0.0 : b
+			];
+		} else {
+			return [0.0, 0.0, 0.0, 0.0];
+		}
 	}
 
 	private static inline function initCanvasStackInteractions() {
