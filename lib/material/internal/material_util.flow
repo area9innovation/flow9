@@ -787,6 +787,8 @@ TAnimator(
 			default : false;
 		}
 	);
+	cropW = make(false);
+	cropH = make(false);
 
 	fade = contains(style, MFadeAnimation());
 	wh2point = \fn -> fselect(contentWH, FLift(fn));
@@ -830,13 +832,38 @@ TAnimator(
 		}
 		translatePoint = flerpPoint(position, progress);
 
-		if (cropByContent)
-			TFixSize(
+		if (cropByContent) {
+			t2 =
 				if (contains(trans.style, MExpandFromStart())) t
-				else TTranslate(translatePoint, t),
-				TSized(fselect2(contentWH, translatePoint, FLift2(\wh, p -> WidthHeight(wh.width - abs(p.x), wh.height - abs(p.y)))))
-			)
-		else
+				else TTranslate(translatePoint, t);
+
+			TransformTAcc2(\t2a -> {
+				b = t2a(t2);
+				xTranslation = fneq(fpointX(position), 0.);
+				yTranslation = fneq(fpointY(position), 0.);
+				TAcc(
+					b with metrics = TFormMetrics(
+						fif(
+							xTranslation,
+							fselect2(contentWH, translatePoint, FLift2(\wh, p -> wh.width - abs(p.x))),
+							b.metrics.width,
+						),
+						fif(
+							yTranslation,
+							fselect2(contentWH, translatePoint, FLift2(\wh, p -> wh.height - abs(p.y))),
+							b.metrics.height
+						),
+						b.metrics.baseline
+					),
+					disposers = concat(
+						b.disposers, [
+							makeSubscribe(xTranslation, \x -> if (x) nextDistinct(cropW, true))(),
+							makeSubscribe(yTranslation, \y -> if (y) nextDistinct(cropH, true))()
+						]
+					)
+				)
+			})
+		} else
 			TTranslate(translatePoint, t)
 	}
 
@@ -859,8 +886,10 @@ TAnimator(
 				transformedContentWH = makeWH();
 				TVisible(
 					fselect(transformedContentWH, FLift(\wh -> wh.width > 0.5 && wh.height > 0.5)),
-					TCrop(const(zeroPoint), transformedContentWH, TAttachBox(t, transformedContentWH))
+					TAttachBox(t, transformedContentWH)
 				)
+				|> (\t2 -> TIf(cropH, TCropHeight(t2, fheight(transformedContentWH)), t2))
+				|> (\t2 -> TIf(cropW, TCropWidth(t2, fwidth(transformedContentWH)), t2))
 			} else {
 				TVisible(
 					fselect(contentWH, FLift(\wh -> wh.width > 0.5 && wh.height > 0.5)),
