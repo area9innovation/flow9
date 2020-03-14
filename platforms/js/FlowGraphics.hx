@@ -19,9 +19,10 @@ class FlowGraphics extends Graphics {
 
 	private var pen = new Point(0.0, 0.0);
 	private var localBounds = new Bounds();
-	private var graphicsBounds = new Bounds();
-	private var _bounds = new Bounds();
 	private var widgetBounds = new Bounds();
+	private var _bounds = new Bounds();
+	public var filterPadding = 0.0;
+	private var graphicsBounds = new Bounds();
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
@@ -34,10 +35,13 @@ class FlowGraphics extends Graphics {
 	private var accessWidget : AccessWidget;
 
 	public var isEmpty : Bool = true;
+	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
-	public var isNativeWidget : Bool;
+	public var isNativeWidget : Bool = false;
+	public var keepNativeWidget : Bool = false;
+	public var keepNativeWidgetChildren : Bool = false;
+	public var hasMask : Bool = false;
 
-	public var filterPadding = 0.0;
 	public var left = 0.0;
 	public var top = 0.0;
 
@@ -206,7 +210,7 @@ class FlowGraphics extends Graphics {
 		graphicsChanged = true;
 		this.invalidateTransform('endFill');
 
-		if (untyped isMask || this.isCanvas) {
+		if (this.isMask || this.isCanvas) {
 			if (isNativeWidget) {
 				this.deleteNativeWidget();
 			}
@@ -299,12 +303,12 @@ class FlowGraphics extends Graphics {
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		rect = localBounds.getRectangle(rect);
 
-		var filterPadding = untyped this.filterPadding;
-
-		rect.x -= filterPadding;
-		rect.y -= filterPadding;
-		rect.width += filterPadding * 2.0;
-		rect.height += filterPadding * 2.0;
+		if (this.filterPadding != 0.0) {
+			rect.x -= this.filterPadding;
+			rect.y -= this.filterPadding;
+			rect.width += this.filterPadding * 2.0;
+			rect.height += this.filterPadding * 2.0;
+		}
 
 		return rect;
 	}
@@ -388,7 +392,7 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (untyped this.isMask || this.isCanvas || this.isEmpty) {
+		if (this.isMask || this.isCanvas || this.isEmpty) {
 			if (isNativeWidget) {
 				this.deleteNativeWidget();
 			}
@@ -412,7 +416,7 @@ class FlowGraphics extends Graphics {
 				nativeWidget.style.border = null;
 				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.borderImage = null;
-			} else if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
+			} else if (graphicsData.length != 1 || isSvg || this.hasMask) {
 				nativeWidget.style.borderRadius = null;
 				if (Platform.isIE) {
 					nativeWidget.style.background = '';

@@ -13,13 +13,12 @@ class DropAreaClip extends NativeWidgetClip {
 	private var regExp : EReg;
 	private var onDone : Array<Dynamic> -> Void;
 
-	public var keepNativeWidget = true;
-
 	public var isInteractive : Bool = true;
 
 	public function new(maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) {
 		super();
 
+		this.keepNativeWidget = true;
 		this.maxFilesCount = maxFilesCount;
 		this.regExp = new EReg(mimeTypeRegExpFilter, "g");
 		this.onDone = onDone;

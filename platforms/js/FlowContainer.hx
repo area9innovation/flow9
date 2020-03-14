@@ -25,11 +25,16 @@ class FlowContainer extends Container {
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
+	public var filterPadding = 0.0;
 
 	public var nativeWidget : Dynamic;
 	public var accessWidget : AccessWidget;
 
+	public var isCanvas : Bool = false;
+	public var isSvg : Bool = false;
 	public var isNativeWidget : Bool = false;
+	public var keepNativeWidget : Bool = false;
+	public var keepNativeWidgetChildren : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
@@ -60,7 +65,7 @@ class FlowContainer extends Container {
 		view = cast(Browser.document.createElement('canvas'), CanvasElement);
 
 		view.style.zIndex = 1000 * (zorder - 1) + AccessWidget.zIndexValues.canvas + "";
-		untyped view.style.pointerEvents = "none";
+		view.style.pointerEvents = "none";
 
 		context = view.getContext("2d", { alpha : true });
 
@@ -116,7 +121,7 @@ class FlowContainer extends Container {
 
 	public override function addChild<T:DisplayObject>(child : T) : T {
 		if (child.parent != null) {
-			untyped child.parent.removeChild(child);
+			child.parent.removeChild(child);
 		}
 
 		var newChild = super.addChild(child);
@@ -135,7 +140,7 @@ class FlowContainer extends Container {
 
 	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
 		if (child.parent != null) {
-			untyped child.parent.removeChild(child);
+			child.parent.removeChild(child);
 		}
 
 		var newChild = super.addChildAt(child, index > children.length ? children.length : index);
@@ -156,11 +161,11 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			if (untyped this.keepNativeWidgetChildren) {
+			if (this.keepNativeWidgetChildren) {
 				this.updateKeepNativeWidgetChildren();
 			}
 
-			if (untyped RenderSupport.RendererType != "html" || this.isCanvas) {
+			if (RenderSupport.RendererType != "html" || this.isCanvas) {
 				this.invalidateTransform("removeChild");
 			}
 
@@ -191,7 +196,7 @@ class FlowContainer extends Container {
 
 				if (transformChanged) {
 					var bounds = new Bounds();
-					untyped RenderSupport.PixiStage.localBounds = bounds;
+					RenderSupport.PixiStage.localBounds = bounds;
 					bounds.minX = 0;
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
@@ -216,7 +221,7 @@ class FlowContainer extends Container {
 
 			if (transformChanged) {
 				var bounds = new Bounds();
-				untyped RenderSupport.PixiStage.localBounds = bounds;
+				RenderSupport.PixiStage.localBounds = bounds;
 				bounds.minX = 0;
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;
@@ -234,13 +239,11 @@ class FlowContainer extends Container {
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		rect = localBounds.getRectangle(rect);
 
-		var filterPadding = untyped this.filterPadding;
-
-		if (filterPadding != null) {
-			rect.x -= filterPadding;
-			rect.y -= filterPadding;
-			rect.width += filterPadding * 2.0;
-			rect.height += filterPadding * 2.0;
+		if (this.filterPadding != 0.0) {
+			rect.x -= this.filterPadding;
+			rect.y -= this.filterPadding;
+			rect.width += this.filterPadding * 2.0;
+			rect.height += this.filterPadding * 2.0;
 		}
 
 		return rect;
