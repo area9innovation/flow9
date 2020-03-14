@@ -65,7 +65,7 @@ class FlowContainer extends Container {
 		view = cast(Browser.document.createElement('canvas'), CanvasElement);
 
 		view.style.zIndex = 1000 * (zorder - 1) + AccessWidget.zIndexValues.canvas + "";
-		view.style.pointerEvents = "none";
+		untyped view.style.pointerEvents = "none";
 
 		context = view.getContext("2d", { alpha : true });
 
