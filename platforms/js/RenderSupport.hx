@@ -2496,7 +2496,7 @@ class RenderSupport {
 	}
 
 	public static function getClipVisible(clip : DisplayObject) : Bool {
-		return clip.getClipRenderable();
+		return clip.getClipVisible();
 	}
 
 	public static function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
