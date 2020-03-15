@@ -514,4 +514,8 @@ class ThreeJSStage extends Container {
 			}
 		}
 	}
+
+	public function getSupportedExtensions() : Array<String> {
+		return this.renderer.getContext().getSupportedExtensions();
+	}
 }

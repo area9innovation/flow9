@@ -990,7 +990,7 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
-		untyped this.keepNativeWidget = true;
+		this.keepNativeWidget = true;
 		this.updateKeepNativeWidgetChildren();
 		this.initNativeWidget(multiline ? 'textarea' : 'input');
 		isInteractive = true;

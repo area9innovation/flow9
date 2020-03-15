@@ -9,8 +9,6 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
 
-	public var keepNativeWidget : Bool = true;
-
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
 	}
@@ -55,6 +53,7 @@ class WebClip extends NativeWidgetClip {
 			try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report("Can not set RealHTML domain" + e); }
 		}
 
+		this.keepNativeWidget = true;
 		this.initNativeWidget();
 
 		if (Platform.isIOS) {

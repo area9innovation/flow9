@@ -124,6 +124,10 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function get3DSupportedExtensions(stage : ThreeJSStage) : Array<String> {
+		return stage.getSupportedExtensions();
+	}
+
 	public static function add3DChild(parent : Object3D, child : Object3D) : Void {
 		parent.add3DChild(child);
 	}

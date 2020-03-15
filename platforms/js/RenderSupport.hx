@@ -475,7 +475,7 @@ class RenderSupport {
 	public static function getSafeArea() : Array<Float> {
 		var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
-		if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit=content") >= 0) {
+		if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit=cover") >= 0) {
 			var l = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sal"));
 			var t = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sat"));
 			var r = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sar"));

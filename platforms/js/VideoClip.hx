@@ -28,8 +28,6 @@ class VideoClip extends FlowContainer {
 	private var textField : TextClip;
 	private var loaded : Bool = false;
 
-	public var keepNativeWidget : Bool = true;
-
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
 	private var videoWidget : Dynamic;
@@ -67,6 +65,7 @@ class VideoClip extends FlowContainer {
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
 		super();
 
+		this.keepNativeWidget = true;
 		this.metricsFn = metricsFn;
 		this.playFn = playFn;
 		this.durationFn = durationFn;
