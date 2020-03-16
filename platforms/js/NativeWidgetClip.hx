@@ -34,7 +34,7 @@ class NativeWidgetClip extends FlowContainer {
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
-		if (RenderSupportJSPixi.RendererType != "html") {
+		if (RenderSupport.RendererType != "html") {
 			if (accessWidget == null) {
 				accessWidget = new AccessWidget(this, nativeWidget);
 			} else {
@@ -61,7 +61,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.width = '${this.getWidgetWidth()}px';
 		nativeWidget.style.height = '${this.getWidgetHeight()}px';
 
-		if (RenderSupportJSPixi.RendererType != "html") {
+		if (RenderSupport.RendererType != "html") {
 			var viewBounds = this.getViewBounds();
 
 			if (viewBounds != null) {
@@ -81,7 +81,7 @@ class NativeWidgetClip extends FlowContainer {
 		if (nativeWidget != null) {
 			if (untyped nativeWidget.parentNode == null && !this.destroyed && this.focusRetries < 3) {
 				focusRetries++;
-				RenderSupportJSPixi.once("drawframe", function() { setFocus(focus); });
+				RenderSupport.once("drawframe", function() { setFocus(focus); });
 
 				return true;
 			}
@@ -110,13 +110,13 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function requestFullScreen() : Void {
 		if (nativeWidget != null) {
-			RenderSupportJSPixi.requestFullScreen(nativeWidget);
+			RenderSupport.requestFullScreen(nativeWidget);
 		}
 	}
 
 	public function exitFullScreen() : Void {
 		if (nativeWidget != null) {
-			RenderSupportJSPixi.exitFullScreen(nativeWidget);
+			RenderSupport.exitFullScreen(nativeWidget);
 		}
 	}
 

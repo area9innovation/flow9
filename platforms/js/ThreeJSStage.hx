@@ -82,16 +82,16 @@ class ThreeJSStage extends Container {
 			dispose();
 		}
 
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			this.initNativeWidget('canvas');
-			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupportJSPixi.detectExternalVideoCard(), alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
+			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupport.detectExternalVideoCard(), alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
 		} else {
-			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupportJSPixi.detectExternalVideoCard(), alpha : true, logarithmicDepthBuffer : true});
+			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupport.detectExternalVideoCard(), alpha : true, logarithmicDepthBuffer : true});
 		}
 
 		updatePixelRatio();
 
-		RenderSupportJSPixi.on("resize", updatePixelRatio);
+		RenderSupport.on("resize", updatePixelRatio);
 
 		untyped this.renderer.eventElement = Browser.document.createElement('div');
 
@@ -115,7 +115,7 @@ class ThreeJSStage extends Container {
 	}
 
 	private function updatePixelRatio() : Void {
-		this.renderer.setPixelRatio(RenderSupportJSPixi.backingStoreRatio);
+		this.renderer.setPixelRatio(RenderSupport.backingStoreRatio);
 
 		if (camera != null) {
 			camera.broadcastEvent("matrix");
@@ -136,10 +136,10 @@ class ThreeJSStage extends Container {
 			ThreeJSStage.loadingManager = null;
 		}
 
-		RenderSupportJSPixi.off("resize", updatePixelRatio);
+		RenderSupport.off("resize", updatePixelRatio);
 
 		if (orbitControls != null) {
-			RenderSupportJSPixi.off("drawframe", orbitControls.update);
+			RenderSupport.off("drawframe", orbitControls.update);
 		}
 
 		if (renderer != null) {
@@ -170,7 +170,7 @@ class ThreeJSStage extends Container {
 	}
 
 	public function invalidateStage() {
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			this.invalidateTransform('ThreeJSStage');
 		} else {
 			DisplayObjectHelper.invalidateStage(this);
@@ -179,23 +179,26 @@ class ThreeJSStage extends Container {
 
 	private function addEventListeners() {
 		if (Platform.isMobile) {
-			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
-			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
+			RenderSupport.removeNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.eventElement, "touchstart", onMouseEvent);
 
-			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchend", onMouseEvent);
-			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchend", onMouseEvent);
+			RenderSupport.removeNonPassiveEventListener(untyped renderer.eventElement, "touchend", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.eventElement, "touchend", onMouseEvent);
 
-			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "touchmove", onMouseEvent);
-			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "touchmove", onMouseEvent);
+			RenderSupport.removeNonPassiveEventListener(untyped renderer.eventElement, "touchmove", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.eventElement, "touchmove", onMouseEvent);
 		} else {
-			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "mousedown", onMouseEvent);
-			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "mousedown", onMouseEvent);
+			RenderSupport.removeNonPassiveEventListener(untyped renderer.eventElement, "mousedown", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.eventElement, "mousedown", onMouseEvent);
 
-			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "mouseup", onMouseEvent);
-			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "mouseup", onMouseEvent);
+			RenderSupport.removeNonPassiveEventListener(untyped renderer.eventElement, "mouseup", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.eventElement, "mouseup", onMouseEvent);
 
-			RenderSupportJSPixi.removeNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
-			RenderSupportJSPixi.addNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
+			RenderSupport.removeNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
+
+			RenderSupport.removeNonPassiveEventListener(untyped renderer.domElement, "pointerover", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.domElement, "pointerout", onMouseEvent);
 		}
 	}
 
@@ -209,8 +212,8 @@ class ThreeJSStage extends Container {
 		var newInteractiveObjectsMouseOver = [];
 		var handledObjects = new Array<Dynamic>();
 		var mousePos = new Vector2(
-			((event.touches != null && event.touches.length >= 1 ? event.touches[0] : event).pageX / getWidth() / RenderSupportJSPixi.backingStoreRatio) * 2.0 - 1.0,
-			-((event.touches != null && event.touches.length >= 1 ? event.touches[0] : event).pageY / getHeight() / RenderSupportJSPixi.backingStoreRatio) * 2.0 + 1.0
+			((event.touches != null && event.touches.length >= 1 ? event.touches[0] : event).pageX / getWidth() / RenderSupport.backingStoreRatio) * 2.0 - 1.0,
+			-((event.touches != null && event.touches.length >= 1 ? event.touches[0] : event).pageY / getHeight() / RenderSupport.backingStoreRatio) * 2.0 + 1.0
 		);
 
 		if ((prevMousePos != null && mousePos.equals(prevMousePos)) || (mousePos.x == 0 && mousePos.y == 0)) {
@@ -239,20 +242,25 @@ class ThreeJSStage extends Container {
 					return;
 				}
 
-				if (untyped !object.inside) {
-					untyped object.inside = true;
-					object.emit("mouseover");
+				if (untyped object.inside != (event.type != "pointerout")) {
+					untyped object.inside = event.type != "pointerout";
+					object.emit(event.type != "pointerout" ? "mouseover" : "mouseout");
 				}
 
-				newInteractiveObjectsMouseOver.push(object);
+				if (untyped object.inside) {
+					newInteractiveObjectsMouseOver.push(object);
+				}
 
-				object.emit(event.type);
+				if (event.type != "pointerover" && event.type != "pointerout") {
+					object.emit(event.type);
+				}
+
 				object.invalidateStage();
 			}
 		};
 
 		for (ob in interactiveObjectsMouseOver) {
-			if (newInteractiveObjectsMouseOver.indexOf(ob) < 0) {
+			if (untyped ob.inside && newInteractiveObjectsMouseOver.indexOf(ob) < 0) {
 				untyped ob.inside = false;
 				ob.emit("mouseout");
 			}
@@ -287,12 +295,12 @@ class ThreeJSStage extends Container {
 
 	private function createOrbitControls() {
 		if (orbitControls != null) {
-			RenderSupportJSPixi.off("drawframe", orbitControls.update);
+			RenderSupport.off("drawframe", orbitControls.update);
 		}
 
 		if (camera != null) {
 			orbitControls = untyped __js__("new THREE.OrbitControls(this.camera, this.renderer.domElement, this.renderer.eventElement)");
-			RenderSupportJSPixi.on("drawframe", orbitControls.update);
+			RenderSupport.on("drawframe", orbitControls.update);
 		}
 
 		invalidateStage();
@@ -373,7 +381,7 @@ class ThreeJSStage extends Container {
 
 		ctx.globalAlpha = this.worldAlpha;
 		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
-		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth() * RenderSupportJSPixi.backingStoreRatio, getHeight() * RenderSupportJSPixi.backingStoreRatio, 0, 0, getWidth() * resolution, getHeight() * resolution);
+		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth() * RenderSupport.backingStoreRatio, getHeight() * RenderSupport.backingStoreRatio, 0, 0, getWidth() * resolution, getHeight() * resolution);
 	}
 
 	public function getWidth() : Float {
@@ -463,7 +471,7 @@ class ThreeJSStage extends Container {
 	}
 
 	public function updateNativeWidget() : Void {
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			if (isNativeWidget) {
 				if (visible && camera != null && scene != null && getWidth() > 0 && getHeight() > 0) {
 					this.emit("drawframe");
@@ -505,5 +513,9 @@ class ThreeJSStage extends Container {
 				this.updateNativeWidgetDisplay();
 			}
 		}
+	}
+
+	public function getSupportedExtensions() : Array<String> {
+		return this.renderer.getContext().getSupportedExtensions();
 	}
 }

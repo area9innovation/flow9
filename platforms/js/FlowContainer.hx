@@ -25,11 +25,16 @@ class FlowContainer extends Container {
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
+	public var filterPadding = 0.0;
 
 	public var nativeWidget : Dynamic;
 	public var accessWidget : AccessWidget;
 
+	public var isCanvas : Bool = false;
+	public var isSvg : Bool = false;
 	public var isNativeWidget : Bool = false;
+	public var keepNativeWidget : Bool = false;
+	public var keepNativeWidgetChildren : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
@@ -37,11 +42,11 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = (RenderSupportJSPixi.RendererType == "html" && RenderSupportJSPixi.RenderContainers) || worldVisible;
+		isNativeWidget = (RenderSupport.RendererType == "html" && RenderSupport.RenderContainers) || worldVisible;
 
 		if (worldVisible) {
 			nativeWidget = Browser.document.body;
-		} else if (RenderSupportJSPixi.RendererType == "html") {
+		} else if (RenderSupport.RendererType == "html") {
 			createNativeWidget();
 		}
 	}
@@ -52,7 +57,7 @@ class FlowContainer extends Container {
 		}
 
 		if (zorder == 1) {
-			view = RenderSupportJSPixi.PixiView;
+			view = RenderSupport.PixiView;
 			context = view.getContext("2d", { alpha: false });
 			return;
 		}
@@ -67,7 +72,7 @@ class FlowContainer extends Container {
 		updateView(zorder);
 		onResize();
 
-		RenderSupportJSPixi.on("resize", onResize);
+		RenderSupport.on("resize", onResize);
 		on("removed", destroyView);
 	}
 
@@ -92,7 +97,7 @@ class FlowContainer extends Container {
 	}
 
 	private function destroyView() : Void {
-		RenderSupportJSPixi.off("resize", onResize);
+		RenderSupport.off("resize", onResize);
 
 		if (view.parentNode == Browser.document.body) {
 			Browser.document.body.removeChild(view);
@@ -103,20 +108,20 @@ class FlowContainer extends Container {
 	}
 
 	private function onResize() : Void {
-		if (view == RenderSupportJSPixi.PixiRenderer.view) {
+		if (view == RenderSupport.PixiRenderer.view) {
 			return;
 		}
 
-		view.width = RenderSupportJSPixi.PixiView.width;
-		view.height = RenderSupportJSPixi.PixiView.height;
+		view.width = RenderSupport.PixiView.width;
+		view.height = RenderSupport.PixiView.height;
 
-		view.style.width = view.width / RenderSupportJSPixi.backingStoreRatio + "px";
-		view.style.height = view.height / RenderSupportJSPixi.backingStoreRatio + "px";
+		view.style.width = view.width / RenderSupport.backingStoreRatio + "px";
+		view.style.height = view.height / RenderSupport.backingStoreRatio + "px";
 	}
 
 	public override function addChild<T:DisplayObject>(child : T) : T {
 		if (child.parent != null) {
-			untyped child.parent.removeChild(child);
+			child.parent.removeChild(child);
 		}
 
 		var newChild = super.addChild(child);
@@ -126,7 +131,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -135,7 +140,7 @@ class FlowContainer extends Container {
 
 	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
 		if (child.parent != null) {
-			untyped child.parent.removeChild(child);
+			child.parent.removeChild(child);
 		}
 
 		var newChild = super.addChildAt(child, index > children.length ? children.length : index);
@@ -145,7 +150,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupportJSPixi.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -156,11 +161,11 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
-			if (untyped this.keepNativeWidgetChildren) {
+			if (this.keepNativeWidgetChildren) {
 				this.updateKeepNativeWidgetChildren();
 			}
 
-			if (untyped RenderSupportJSPixi.RendererType != "html" || this.isCanvas) {
+			if (RenderSupport.RendererType != "html" || this.isCanvas) {
 				this.invalidateTransform("removeChild");
 			}
 
@@ -176,22 +181,22 @@ class FlowContainer extends Container {
 				stage.invalidateStage();
 			} else {
 				stageChanged = true;
-				RenderSupportJSPixi.PixiStageChanged = true;
+				RenderSupport.PixiStageChanged = true;
 			}
 		}
 	}
 
 	public function render(renderer : CanvasRenderer) {
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			if (stageChanged) {
 				stageChanged = false;
 
-				this.setClipScaleX(RenderSupportJSPixi.getAccessibilityZoom());
-				this.setClipScaleY(RenderSupportJSPixi.getAccessibilityZoom());
+				this.setClipScaleX(RenderSupport.getAccessibilityZoom());
+				this.setClipScaleY(RenderSupport.getAccessibilityZoom());
 
 				if (transformChanged) {
 					var bounds = new Bounds();
-					untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
+					RenderSupport.PixiStage.localBounds = bounds;
 					bounds.minX = 0;
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
@@ -216,7 +221,7 @@ class FlowContainer extends Container {
 
 			if (transformChanged) {
 				var bounds = new Bounds();
-				untyped RenderSupportJSPixi.PixiStage.localBounds = bounds;
+				RenderSupport.PixiStage.localBounds = bounds;
 				bounds.minX = 0;
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;
@@ -234,13 +239,11 @@ class FlowContainer extends Container {
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		rect = localBounds.getRectangle(rect);
 
-		var filterPadding = untyped this.filterPadding;
-
-		if (filterPadding != null) {
-			rect.x -= filterPadding;
-			rect.y -= filterPadding;
-			rect.width += filterPadding * 2.0;
-			rect.height += filterPadding * 2.0;
+		if (this.filterPadding != 0.0) {
+			rect.x -= this.filterPadding;
+			rect.y -= this.filterPadding;
+			rect.width += this.filterPadding * 2.0;
+			rect.height += this.filterPadding * 2.0;
 		}
 
 		return rect;

@@ -39,7 +39,7 @@ class PdfClip extends FlowCanvas {
 			updateNativeWidgetOpacity();
 
 			if (pageChanged) {
-				renderView(nativeWidget.getContext("2d"), RenderSupportJSPixi.backingStoreRatio);
+				renderView(nativeWidget.getContext("2d"), RenderSupport.backingStoreRatio);
 			}
 
 			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
@@ -60,10 +60,10 @@ class PdfClip extends FlowCanvas {
 		localBounds.maxX = viewport.width;
 		localBounds.maxY = viewport.height;
 
-		renderWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * localTransform.a * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minX * localTransform.a * RenderSupportJSPixi.backingStoreRatio), 0.0)}');
-		renderWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * localTransform.d * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minY * localTransform.d * RenderSupportJSPixi.backingStoreRatio), 0.0)}');
-		renderWidget.style.width = '${Math.ceil(localBounds.maxX * localTransform.a * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minX * localTransform.a * RenderSupportJSPixi.backingStoreRatio), 0.0)}px';
-		renderWidget.style.height = '${Math.ceil(localBounds.maxY * localTransform.d * RenderSupportJSPixi.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minY * localTransform.d * RenderSupportJSPixi.backingStoreRatio), 0.0)}px';
+		renderWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * localTransform.a * RenderSupport.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minX * localTransform.a * RenderSupport.backingStoreRatio), 0.0)}');
+		renderWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * localTransform.d * RenderSupport.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minY * localTransform.d * RenderSupport.backingStoreRatio), 0.0)}');
+		renderWidget.style.width = '${Math.ceil(localBounds.maxX * localTransform.a * RenderSupport.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minX * localTransform.a * RenderSupport.backingStoreRatio), 0.0)}px';
+		renderWidget.style.height = '${Math.ceil(localBounds.maxY * localTransform.d * RenderSupport.backingStoreRatio) + Math.max(Math.ceil(-localBounds.minY * localTransform.d * RenderSupport.backingStoreRatio), 0.0)}px';
 
 		renderPage();
 	}
@@ -75,14 +75,14 @@ class PdfClip extends FlowCanvas {
 			} else {
 				renderTask = page.render({
 					canvasContext: renderContext,
-					viewport: page.getViewport({ scale: pageScale * RenderSupportJSPixi.backingStoreRatio })
+					viewport: page.getViewport({ scale: pageScale * RenderSupport.backingStoreRatio })
 				});
 
 				var taskPromise : Promise<Dynamic> = renderTask.promise;
 				taskPromise.then(function(e : Dynamic) {
 					renderTask = null;
 					invalidateTransform();
-					untyped this.nativeWidgetBoundsChanged = RenderSupportJSPixi.RendererType == "html";
+					untyped this.nativeWidgetBoundsChanged = RenderSupport.RendererType == "html";
 				}).catchError(function(e : Dynamic) {
 					renderTask = null;
 					renderPage();
@@ -92,7 +92,7 @@ class PdfClip extends FlowCanvas {
 	}
 
 	private function renderView(ctx : Dynamic, resolution : Float) {
-		if (RenderSupportJSPixi.RendererType != "html") {
+		if (RenderSupport.RendererType != "html") {
 			ctx.globalAlpha = this.worldAlpha;
 			ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
 		}

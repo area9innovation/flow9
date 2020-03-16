@@ -16,6 +16,7 @@
 #include "utils/WebRTCSupport.h"
 #include "utils/MediaRecorderSupport.h"
 #include "utils/AbstractWebSocketSupport.h"
+#include "utils/PrintingSupport.h"
 
 #include <jni.h>
 
@@ -377,6 +378,16 @@ protected:
     std::string doFileType(const StackSlot &file);
 };
 
+class AndroidPrintingSupport : public PrintingSupport {
+    AndroidRunnerWrapper *owner;
+public:
+    AndroidPrintingSupport(AndroidRunnerWrapper *owner);
+
+protected:
+    void doPrintHTMLDocument(unicode_string html);
+    void doPrintDocumentFromURL(unicode_string url);
+};
+
 class AndroidRunnerWrapper {
     friend class AndroidRenderSupport;
     friend class AndroidHttpSupport;
@@ -391,6 +402,7 @@ class AndroidRunnerWrapper {
     friend class AndroidMediaRecorderSupport;
     friend class AndroidWebSocketSupport;
     friend class AndroidFileSystemInterface;
+    friend class AndroidPrintingSupport;
 
     // These must be updated on every outermost java->c++ boundary
     JNIEnv *env;
@@ -413,6 +425,7 @@ class AndroidRunnerWrapper {
     AndroidWebSocketSupport websockets;
     FileLocalStore store;
     AndroidFileSystemInterface fsinterface;
+    AndroidPrintingSupport printing;
 
     jboolean finishLoadBytecode();
 
@@ -444,6 +457,7 @@ public:
     AndroidMediaRecorderSupport *getMediaRecorder() { return &mediaRecorder; }
     AndroidWebSocketSupport *getWebSockets() { return &websockets; }
     AndroidFileSystemInterface *getFSInterface() { return &fsinterface; }
+    AndroidPrintingSupport *getPrinting() { return &printing; }
 
     void setStorePath(jstring fname);
     void setTmpPath(jstring fname);
