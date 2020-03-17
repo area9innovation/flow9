@@ -49,16 +49,9 @@ export {
 			MResizerMaxHeight(height : Transform<double>);
 			MResizerPercent(percent : DynamicBehaviour<double>);
 
-	TSizeAnimation(
-		manager : MaterialManager,
-		parent : MFocusGroup,
-		content : Tropic,
-		style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]
-	) -> Tropic;
-
 	MSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material;
-	MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material;
-	MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material;
+	MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
+	MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
 
 	MBorderAnimation(
 		left : Transform<double>,
@@ -425,130 +418,99 @@ MAnimatedHide(show : Transform<bool>, content : Material, durationM : Maybe<Tran
 	}))
 }
 
-TSizeAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Tropic {
-	contentWH = makeWH();
-	easedWH = makeWH();
-
-	MEasingAnimation(
-		manager,
-		parent,
-		const(0.3),
-		const(easingFastOutSlowIn),
-		contentWH,
-		\wh ->
-			Some(Pair(getValue(easedWH), wh)),
-		\wh, v ->
-			nextDistinct(
-				easedWH,
-				WidthHeight(
-					lerp(wh.first.width, wh.second.width, v),
-					lerp(wh.first.height, wh.second.height, v)
-				)
-			),
-		style,
-		TFixSize(
-			TInspect([ISize(contentWH)], content),
-			TSized(easedWH)
-		)
-	)
-}
-
 MSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material {
-	contentWH = makeWH();
-	easedWH = makeWH();
+	triggerWH = makeWH();
+	easedWidth = make(0.0);
+	easedHeight = make(0.0);
+	animating = extractStruct(style, MAnimating(make(false))).animating;
 	autoStart = contains(style, MAutoStart());
 
 	MMEasingAnimation(
 		const(0.3),
 		const(easingFastOutSlowIn),
-		contentWH,
+		triggerWH,
 		\wh ->
-			Some(Pair(getValue(easedWH), wh)),
-		\wh, v ->
-			nextDistinct(
-				easedWH,
-				WidthHeight(
-					lerp(wh.first.width, wh.second.width, v),
-					lerp(wh.first.height, wh.second.height, v)
-				)
-			),
-		style,
-		MCropSize(
-			TSized(easedWH),
-			MInspect(
-				[ISize(contentWH)],
-				MConstruct(
-					[\ -> { nextDistinct(easedWH, if (autoStart) zeroWH else getValue(contentWH)); nop; }],
-					content
-				)
+			Some(Pair(WidthHeight(getValue(easedWidth), getValue(easedHeight)), wh)),
+		\wh, v -> {
+			nextDistinct(easedWidth, lerp(wh.first.width, wh.second.width, v));
+			nextDistinct(easedHeight, lerp(wh.first.height, wh.second.height, v));
+		},
+		replaceStruct(style, MAnimating(animating)),
+		MTransformTAcc2(\m2a -> {
+			b = m2a(content);
+			disposers = [fconnect(fwidthheight(b.metrics.width, b.metrics.height), triggerWH)];
+
+			nextDistinct(easedWidth, if (autoStart) 0.0 else getValue(triggerWH).width);
+			nextDistinct(easedHeight, if (autoStart) 0.0 else getValue(triggerWH).height);
+
+			TAcc(b with
+				form = FCrop(zero, zero, fif(animating, easedWidth, b.metrics.width), fif(animating, easedHeight, b.metrics.height), b.form),
+				metrics = TFormMetrics(fif(animating, easedWidth, b.metrics.width), fif(animating, easedHeight, b.metrics.height), b.metrics.baseline),
+				disposers = concat(b.disposers, disposers)
 			)
-		)
+		})
 	)
 }
 
-MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material {
-	contentWH = makeWH();
-	easedWH = makeWH();
+MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
+	triggerWidth = make(0.0);
+	easedWidth = make(0.0);
+	animating = extractStruct(style, MAnimating(make(false))).animating;
 	autoStart = contains(style, MAutoStart());
 
 	MMEasingAnimation(
 		const(0.3),
 		const(easingFastOutSlowIn),
-		contentWH,
-		\wh ->
-			Some(Pair(getValue(easedWH), wh)),
-		\wh, v ->
-			nextDistinct(
-				easedWH,
-				WidthHeight(
-					lerp(wh.first.width, wh.second.width, v),
-					wh.second.height
-				)
-			),
-		style,
-		MCropSize(
-			TSized(easedWH),
-			MInspect(
-				[ISize(contentWH)],
-				MConstruct(
-					[\ -> { nextDistinct(easedWH, if (autoStart) zeroWH else getValue(contentWH)); nop; }],
-					content
-				)
+		triggerWidth,
+		\wd ->
+			Some(Pair(getValue(easedWidth), wd)),
+		\wd, v -> {
+			nextDistinct(easedWidth, lerp(wd.first, wd.second, v));
+		},
+		replaceStruct(style, MAnimating(animating)),
+		MTransformTAcc2(\m2a -> {
+			b = m2a(content);
+			disposers = [fconnect(b.metrics.width, triggerWidth)];
+
+			nextDistinct(easedWidth, if (autoStart) 0.0 else getValue(triggerWidth));
+
+			TAcc(b with
+				form = FCrop(zero, zero, fif(animating, easedWidth, b.metrics.width), b.metrics.height, b.form),
+				metrics = TFormMetrics(fif(animating, easedWidth, b.metrics.width), b.metrics.height, b.metrics.baseline),
+				disposers = concat(b.disposers, disposers)
 			)
-		)
+		})
 	)
 }
 
-MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material {
-	contentWH = makeWH();
-	easedWH = makeWH();
+MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
+	triggerHeight = make(0.0);
+	easedHeight = make(0.0);
+	animating = extractStruct(style, MAnimating(make(false))).animating;
 	autoStart = contains(style, MAutoStart());
 
 	MMEasingAnimation(
 		const(0.3),
 		const(easingFastOutSlowIn),
-		contentWH,
-		\wh ->
-			Some(Pair(getValue(easedWH), wh)),
-		\wh, v ->
-			nextDistinct(
-				easedWH,
-				WidthHeight(
-					wh.second.width,
-					lerp(wh.first.height, wh.second.height, v)
-				)
-			),
-		style,
-		MCropSize(
-			TSized(easedWH),
-			MInspect(
-				[ISize(contentWH)],
-				MConstruct(
-					[\ -> { nextDistinct(easedWH, if (autoStart) zeroWH else getValue(contentWH)); nop; }],
-					content
-				)
+		triggerHeight,
+		\hgt ->
+			Some(Pair(getValue(easedHeight), hgt)),
+		\hgt, v -> {
+			nextDistinct(easedHeight, lerp(hgt.first, hgt.second, v));
+		},
+		replaceStruct(style, MAnimating(animating)),
+		MTransformTAcc2(\m2a -> {
+			b = m2a(content);
+			disposers = [fconnect(b.metrics.height, triggerHeight)];
+
+			nextDistinct(easedHeight, if (autoStart) 0.0 else getValue(triggerHeight));
+
+			TAcc(b with
+				form = FCrop(zero, zero, b.metrics.width, fif(animating, easedHeight, b.metrics.height), b.form),
+				metrics = TFormMetrics(b.metrics.width, fif(animating, easedHeight, b.metrics.height), b.metrics.baseline),
+				disposers = concat(b.disposers, disposers)
 			)
-		)
+		})
 	)
 }
 
@@ -652,8 +614,10 @@ MBorderAnimation(
 }
 
 MShowAnimation(show : Transform<bool>, content : Material, style : [MEasingAnimationStyle<bool>]) -> Material {
-	contentWH = makeWH();
-	easedWH = makeWH();
+	contentWidth = make(0.0);
+	contentHeight = make(0.0);
+	easedWidth = make(0.0);
+	easedHeight = make(0.0);
 	easedAlpha = make(0.0);
 	autoStart = contains(style, MAutoStart());
 	animating = extractStruct(style, MAnimating(make(false))).animating;
@@ -661,9 +625,7 @@ MShowAnimation(show : Transform<bool>, content : Material, style : [MEasingAnima
 	MConstruct(
 		[
 			\ -> {
-				nextDistinct(easedAlpha, b2d(if (autoStart) !fgetValue(show) else fgetValue(show)));
-				nextDistinct(easedWH, if (autoStart) zeroWH else getValue(contentWH));
-
+				next(easedAlpha, b2d(if (autoStart) !fgetValue(show) else fgetValue(show)));
 				nop;
 			}
 		],
@@ -674,11 +636,13 @@ MShowAnimation(show : Transform<bool>, content : Material, style : [MEasingAnima
 			\p -> Some(p),
 			\p, v -> {
 				nextDistinct(
-					easedWH,
-					WidthHeight(
-						lerp(getValue(easedWH).width, if (p) getValue(contentWH).width else 0.0, v),
-						lerp(getValue(easedWH).height, if (p) getValue(contentWH).height else 0.0, v)
-					)
+					easedWidth,
+					lerp(getValue(easedWidth), if (p) getValue(contentWidth) else 0.0, v)
+				);
+
+				nextDistinct(
+					easedHeight,
+					lerp(getValue(easedHeight), if (p) getValue(contentHeight) else 0.0, v)
 				);
 
 				nextDistinct(
@@ -689,24 +653,27 @@ MShowAnimation(show : Transform<bool>, content : Material, style : [MEasingAnima
 			replaceStruct(style, MAnimating(animating)),
 			MShow(
 				fneq(easedAlpha, 0.0),
-				MCropSize(
-					TSized(fif(animating, easedWH, contentWH)),
-					MInspect(
-						[ISize(contentWH)],
-						MAlpha(
-							easedAlpha,
-							content
-						)
+				MTransformTAcc2(\m2a -> {
+					b = m2a(content);
+					disposers = [fconnect(b.metrics.width, contentWidth), fconnect(b.metrics.height, contentHeight)];
+
+					nextDistinct(easedWidth, if (autoStart) 0.0 else getValue(contentWidth));
+					nextDistinct(easedHeight, if (autoStart) 0.0 else getValue(contentHeight));
+
+					TAcc(b with
+						form = FAlpha(easedAlpha, b.form),
+						metrics = TFormMetrics(fif(animating, easedWidth, b.metrics.width), fif(animating, easedHeight, b.metrics.height), b.metrics.baseline),
+						disposers = concat(b.disposers, disposers)
 					)
-				)
+				})
 			)
 		)
 	);
 }
 
 MShowAnimationWidth(show : Transform<bool>, content : Material, style : [MEasingAnimationStyle<bool>]) -> Material {
-	contentWH = makeWH();
-	easedWH = makeWH();
+	contentWidth = make(0.0);
+	easedWidth = make(0.0);
 	easedAlpha = make(0.0);
 	autoStart = contains(style, MAutoStart());
 	animating = extractStruct(style, MAnimating(make(false))).animating;
@@ -714,9 +681,7 @@ MShowAnimationWidth(show : Transform<bool>, content : Material, style : [MEasing
 	MConstruct(
 		[
 			\ -> {
-				nextDistinct(easedAlpha, b2d(if (autoStart) !fgetValue(show) else fgetValue(show)));
-				nextDistinct(easedWH, if (autoStart) zeroWH else getValue(contentWH));
-
+				next(easedAlpha, b2d(if (autoStart) !fgetValue(show) else fgetValue(show)));
 				nop;
 			}
 		],
@@ -727,11 +692,8 @@ MShowAnimationWidth(show : Transform<bool>, content : Material, style : [MEasing
 			\p -> Some(p),
 			\p, v -> {
 				nextDistinct(
-					easedWH,
-					WidthHeight(
-						lerp(getValue(easedWH).width, if (p) getValue(contentWH).width else 0.0, v),
-						if (p) getValue(contentWH).height else 0.0
-					)
+					easedWidth,
+					lerp(getValue(easedWidth), if (p) getValue(contentWidth) else 0.0, v)
 				);
 
 				nextDistinct(
@@ -742,24 +704,26 @@ MShowAnimationWidth(show : Transform<bool>, content : Material, style : [MEasing
 			replaceStruct(style, MAnimating(animating)),
 			MShow(
 				fneq(easedAlpha, 0.0),
-				MCropSize(
-					TSized(fif(animating, easedWH, contentWH)),
-					MInspect(
-						[ISize(contentWH)],
-						MAlpha(
-							easedAlpha,
-							content
-						)
+				MTransformTAcc2(\m2a -> {
+					b = m2a(content);
+					disposers = [fconnect(b.metrics.width, contentWidth)];
+
+					nextDistinct(easedWidth, if (autoStart) 0.0 else getValue(contentWidth));
+
+					TAcc(b with
+						form = FAlpha(easedAlpha, b.form),
+						metrics = TFormMetrics(fif(animating, easedWidth, b.metrics.width), b.metrics.height, b.metrics.baseline),
+						disposers = concat(b.disposers, disposers)
 					)
-				)
+				})
 			)
 		)
 	);
 }
 
 MShowAnimationHeight(show : Transform<bool>, content : Material, style : [MEasingAnimationStyle<bool>]) -> Material {
-	contentWH = makeWH();
-	easedWH = makeWH();
+	contentHeight = make(0.0);
+	easedHeight = make(0.0);
 	easedAlpha = make(0.0);
 	autoStart = contains(style, MAutoStart());
 	animating = extractStruct(style, MAnimating(make(false))).animating;
@@ -767,9 +731,7 @@ MShowAnimationHeight(show : Transform<bool>, content : Material, style : [MEasin
 	MConstruct(
 		[
 			\ -> {
-				nextDistinct(easedAlpha, b2d(if (autoStart) !fgetValue(show) else fgetValue(show)));
-				nextDistinct(easedWH, if (autoStart) zeroWH else getValue(contentWH));
-
+				next(easedAlpha, b2d(if (autoStart) !fgetValue(show) else fgetValue(show)));
 				nop;
 			}
 		],
@@ -780,11 +742,8 @@ MShowAnimationHeight(show : Transform<bool>, content : Material, style : [MEasin
 			\p -> Some(p),
 			\p, v -> {
 				nextDistinct(
-					easedWH,
-					WidthHeight(
-						if (p) getValue(contentWH).width else 0.0,
-						lerp(getValue(easedWH).height, if (p) getValue(contentWH).height else 0.0, v)
-					)
+					easedHeight,
+					lerp(getValue(easedHeight), if (p) getValue(contentHeight) else 0.0, v)
 				);
 
 				nextDistinct(
@@ -795,16 +754,18 @@ MShowAnimationHeight(show : Transform<bool>, content : Material, style : [MEasin
 			replaceStruct(style, MAnimating(animating)),
 			MShow(
 				fneq(easedAlpha, 0.0),
-				MCropSize(
-					TSized(fif(animating, easedWH, contentWH)),
-					MInspect(
-						[ISize(contentWH)],
-						MAlpha(
-							easedAlpha,
-							content
-						)
+				MTransformTAcc2(\m2a -> {
+					b = m2a(content);
+					disposers = [fconnect(b.metrics.height, contentHeight)];
+
+					nextDistinct(easedHeight, if (autoStart) 0.0 else getValue(contentHeight));
+
+					TAcc(b with
+						form = FAlpha(easedAlpha, b.form),
+						metrics = TFormMetrics(b.metrics.width, fif(animating, easedHeight, b.metrics.height), b.metrics.baseline),
+						disposers = concat(b.disposers, disposers)
 					)
-				)
+				})
 			)
 		)
 	);
