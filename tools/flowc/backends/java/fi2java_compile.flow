@@ -221,6 +221,7 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 	max_code_size = ref 0;
 	max_code_size_lines = ref 0;
 	max_code_size_fun = ref "";
+	config = gctx.program.config;
 
 	iter(gctx.csm_list, \csm -> {
 		module_path = pathCombine(output_dir, "Module_" + csm.id + ".java");
@@ -284,6 +285,9 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 							max_code_size_lines := lines;
 							max_code_size_fun := name;
 						}
+						if (size >= 65536 && isConfigParameterTrue(config.config, "java-method-size-stats")) {
+							fcPrintln("Function: " + ^max_code_lines_fun + " size: " + i2s(^max_code_lines_size) + " >= 65536", config.threadId);
+						}
 						pushstr(code);
 					}
 					FiGlobalVar(name, expr, type, __, __): {
@@ -318,7 +322,6 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 			writeJavaSource(gctx, module_path, javaList2String(module_text, "}\n"));
 		}
 	});
-	config = gctx.program.config;
 	if (isConfigParameterTrue(config.config, "java-method-size-stats")) {
 		fcPrintln("Max code lines: " + i2s(^max_code_lines) + " at function " + ^max_code_lines_fun + ", size: " + i2s(^max_code_lines_size), config.threadId);
 		fcPrintln("Max code size: " + i2s(^max_code_size) + " at function " + ^max_code_size_fun + " , lines: " + i2s(^max_code_size_lines), config.threadId);
@@ -346,15 +349,37 @@ generateJavaInitCode(gctx : JavaGlobalContext, struct_list : [string]) -> void {
 		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + " = new Module_" + csm.id + "(this);\n")
 	);
 
-	// All structs array
-	pushstr("\tstatic final private Struct[] struct_list = {\n");
-		pushstr(strGlue(struct_list, ",\n"));
-	pushstr("\t};\n");
+	if (length(struct_list) < 128) {
+		// All structs array
+		pushstr("\tstatic final private Struct[] struct_list = {\n");
+		pushstr(strGlue(struct_list, ",\n") + "\n");
+		pushstr("\t};\n");
 
-	// Constructor
-	pushstr("\tpublic Main(String[] args) {\n");
-	pushstr("\t\tsuper(struct_list, args);\n");
-	pushstr("\t}\n");
+		// Constructor
+		pushstr("\tpublic Main(String[] args) {\n");
+		pushstr("\t\tsuper(struct_list, args);\n");
+		pushstr("\t}\n");
+	} else {
+		struct_list_chunks = splitByNumber(struct_list, 128);
+		// All structs array
+		iteri(struct_list_chunks, \i, chunk -> {
+			pushstr("\tstatic final private Struct[] struct_list_" + i2s(i) + " = {\n");
+			pushstr(strGlue(chunk, ",\n") + "\n");
+			pushstr("\t};\n");
+		});
+		pushstr("\tstatic private final Struct[] struct_list() {\n");
+		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
+		pushstr("\t\tint k = 0;\n");
+		iteri(struct_list_chunks, \i, __ ->
+			pushstr("\t\tfor (Struct s : struct_list_" + i2s(i) + ") structs[k++] = s;\n")
+		);
+		pushstr("\t\treturn structs;\n");
+		pushstr("\t}\n");
+		// Constructor
+		pushstr("\tpublic Main(String[] args) {\n");
+		pushstr("\t\tsuper(struct_list(), args);\n");
+		pushstr("\t}\n");
+	}
 
 	pushstr(javaList2String(gctx.wrapper_code, ""));
 
