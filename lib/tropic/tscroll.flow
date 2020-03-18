@@ -12,7 +12,7 @@ export {
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
-		TScrollbarsAdditionalBox, TScrollbarOverlapContent;
+		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -38,6 +38,8 @@ export {
 		TScrollKeysEnabled(enabled : Transform<bool>);
 		TKeyFilter(fn : (key : KeyEvent) -> bool);
 		TScrollbarsVisible(x : DynamicBehaviour<bool>, y : DynamicBehaviour<bool>);
+
+		TScrollAxisEnabled(x : Transform<bool>, y : Transform<bool>);
 
 		// If false - hides scrollbars if no scroll is happening
 		// true by default
@@ -678,6 +680,10 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	reverseWheel = contains(style, TReverseMouseWheel());
 	disableOutOfBounds = extractStruct(style, TScrollDisableOutOfBounds(const(false))).disable;
 
+	axisEnabled = extractStruct(style, TScrollAxisEnabled(const(true), const(true)));
+	xEnabled = axisEnabled.x;
+	yEnabled = axisEnabled.y;
+
 	keysEnabled = extractStruct(style, TScrollKeysEnabled(const(false))).enabled;
 	keyFilter = extractStruct(style, TKeyFilter(\__ -> true)).fn;
 
@@ -775,10 +781,10 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		if (getValue(moving) && isCurrentInteractionItemId(manager, scrollId) && getValue(manager.dragging) == -1) {
 			sp = getValue(scrollPosition);
 
-			dx = ^startPoint.x - getValue(currentPoint).x;
+			dx = if (fgetValue(xEnabled)) ^startPoint.x - getValue(currentPoint).x else 0.;
 			nx = sp.x + dx;
 
-			dy = ^startPoint.y - getValue(currentPoint).y;
+			dy = if (fgetValue(yEnabled)) ^startPoint.y - getValue(currentPoint).y else 0.;
 			ny = sp.y + dy;
 
 			newX =
@@ -863,9 +869,26 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	}
 
 	scrollStep = 20.;
-	changeDirection = \ke -> if (js) ke.shift else ke.alt;
 	inside = make(false);
 	mouseWheelPos = ref None();
+	
+	changeDirection = \ke -> if (js) ke.shift else ke.alt;
+	handlePageKeys = \ke, xfn, yfn -> {
+		sp = getValue(scrollPosition);
+		if (changeDirection(ke)) {
+			if (fgetValue(xEnabled)) {
+				nextDistinct(scrollPosition, Point(xfn(sp), sp.y));
+				true
+			} else
+				false
+		} else {
+			if (fgetValue(yEnabled)) {
+				nextDistinct(scrollPosition, Point(sp.x, yfn(sp)));
+				true
+			} else
+				false
+		}
+	}
 
 	// Interactives for mouse and keyboard handling
 	TInteractive(
@@ -873,50 +896,44 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 			TMouseInside(inside, false),
 			KeyDown2(\handled, ke -> {
 				if (fgetValue(keysEnabled) && !handled && !hasKeyboardFocus() && getValue(inside) && keyFilter(ke)) {
-					if (ke.utf == "up") {
+					println(ke);
+					println(handled);
+					if (ke.utf == "up" && fgetValue(yEnabled)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStep)));
 						true
-					} else if (ke.utf == "down") {
+					} else if (ke.utf == "down" && fgetValue(yEnabled)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStep, fgetValue(maxWH).height)));
 						true
-					} else if (ke.utf == "left") {
+					} else if (ke.utf == "left" && fgetValue(xEnabled)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStep), sp.y));
 						true
-					} else if (ke.utf == "right") {
+					} else if (ke.utf == "right" && fgetValue(xEnabled)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(min(sp.x + scrollStep, fgetValue(maxWH).width), sp.y));
 						true
 					} else if (ke.keycode == KEY_PAGEUP) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(max(0., sp.x - fgetValue(boxWH).width), sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - fgetValue(boxWH).height)));
-						true
+						handlePageKeys(ke,
+							\sp -> max(0., sp.x - fgetValue(boxWH).width),
+							\sp -> max(0., sp.y - fgetValue(boxWH).height)
+						)
 					} else if (ke.keycode == KEY_PAGEDOWN) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(min(sp.x + fgetValue(boxWH).width, fgetValue(maxWH).width), sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, min(sp.y + fgetValue(boxWH).height, fgetValue(maxWH).height)));
-						true
+						handlePageKeys(ke,
+							\sp -> min(sp.x + fgetValue(boxWH).width, fgetValue(maxWH).width),
+							\sp -> min(sp.y + fgetValue(boxWH).height, fgetValue(maxWH).height)
+						)
 					} else if (ke.keycode == KEY_HOME) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(0., sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, 0.));
-						true
+						handlePageKeys(ke,
+							\__ -> 0.,
+							\__ -> 0.
+						)
 					} else if (ke.keycode == KEY_END) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(fgetValue(maxWH).width, sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, fgetValue(maxWH).height));
-						true
+						handlePageKeys(ke,
+							\__ -> fgetValue(maxWH).width,
+							\__ -> fgetValue(maxWH).height
+						)
 					} else {
 						false
 					}
@@ -969,9 +986,9 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 					manager,
 					tr,
 					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
-						deltaTimer, reverseWheel, speedX, speedY,xMoving, yMoving, true),
+						deltaTimer, reverseWheel, speedX, speedY, xEnabled, xMoving, true),
 					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
-						deltaTimer, reverseWheel, speedX, speedY, xMoving, yMoving, false)
+						deltaTimer, reverseWheel, speedX, speedY, yEnabled, yMoving, false)
 				)
 			])
 	)
@@ -1000,8 +1017,8 @@ TScrollMouseWheelCallback(
 	reverseWheel : bool,
 	speedX : ref [double],
 	speedY : ref [double],
-	xMoving : DynamicBehaviour<bool>,
-	yMoving : DynamicBehaviour<bool>,
+	axisEnabled : Transform<bool>,
+	axisMoving : DynamicBehaviour<bool>,
 	horizontal : bool
 ) -> (double) -> bool {
 	uns = initUnsM();
@@ -1013,53 +1030,58 @@ TScrollMouseWheelCallback(
 		speedX := [];
 		speedY := [];
 
-		sp = getValue(scrollPosition);
-		spV = if (horizontal) sp.x else sp.y;
-		bound = fgetValue(if (horizontal) scrollBound.y else scrollBound.x);
+		if (fgetValue(axisEnabled)) {
 
-		delta = -d * 100. * if (!reverseWheel) 1. else -1.;
+			sp = getValue(scrollPosition);
+			spV = if (horizontal) sp.x else sp.y;
+			bound = fgetValue(if (horizontal) scrollBound.y else scrollBound.x);
 
-		newV =
-			if (bound)
-				min(
-					max(spV + delta, 0.),
-					if (horizontal)
-						fgetValue(maxWH).width
-					else
-						fgetValue(maxWH).height
-				)
-			else
-				spV + delta;
+			delta = -d * 100. * if (!reverseWheel) 1. else -1.;
 
-		updateScrollPosition = \v -> {
-			nextDistinct(scrollPosition, if (horizontal) Point(v, getValue(scrollPosition).y) else Point(getValue(scrollPosition).x, v));
-			// Emit mousemove to update hovers and tooltips
-			emitMouseEvent(getStage(), "mousemove", getMouseX(getStage()), getMouseY(getStage()));
-		}
+			newV =
+				if (bound)
+					min(
+						max(spV + delta, 0.),
+						if (horizontal)
+							fgetValue(maxWH).width
+						else
+							fgetValue(maxWH).height
+					)
+				else
+					spV + delta;
 
-		if (newV != spV || eitherMap(^mousePos, \mp -> mp == currentMousePos, false)) {
-			mousePos := Some(currentMousePos);
-			easing = makeTEasing(easingTransitionDuration, easingStandartCurve, deltaTimer);
+			updateScrollPosition = \v -> {
+				nextDistinct(scrollPosition, if (horizontal) Point(v, getValue(scrollPosition).y) else Point(getValue(scrollPosition).x, v));
+				// Emit mousemove to update hovers and tooltips
+				emitMouseEvent(getStage(), "mousemove", getMouseX(getStage()), getMouseY(getStage()));
+			}
 
-			setUnsM(
-				uns,
-				[
-					makeSubscribe2(easing.percent, \p -> updateScrollPosition(lerp(spV, newV, p)))(),
-					easing.stop,
-					\ -> updateScrollPosition(newV),
-					interruptibleTimer(floor(easingTransitionDuration * 1000.0), \ -> dispUnsM(uns)),
-					\ -> next(if (horizontal) xMoving else yMoving, false)
-				]
-				|> (\u -> \ -> applyall(u))
-			);
+			if (newV != spV || eitherMap(^mousePos, \mp -> mp == currentMousePos, false)) {
+				mousePos := Some(currentMousePos);
+				easing = makeTEasing(easingTransitionDuration, easingStandartCurve, deltaTimer);
 
-			next(if (horizontal) xMoving else yMoving, true);
-			easing.start();
+				setUnsM(
+					uns,
+					[
+						makeSubscribe2(easing.percent, \p -> updateScrollPosition(lerp(spV, newV, p)))(),
+						easing.stop,
+						\ -> updateScrollPosition(newV),
+						interruptibleTimer(floor(easingTransitionDuration * 1000.0), \ -> dispUnsM(uns)),
+						\ -> next(axisMoving, false)
+					]
+					|> (\u -> \ -> applyall(u))
+				);
 
-			true
+				next(axisMoving, true);
+				easing.start();
+
+				true
+			} else {
+				mousePos := None();
+				false
+			}
 		} else {
 			mousePos := None();
-
 			false
 		}
 	}
@@ -1084,6 +1106,7 @@ createTScrollBars(
 	expandOnHover = extractStruct(style, TExpandOnHover(false)).expand;
 	barstyles = extractStruct(style, TScrollbars(standardScrollBar, standardScrollBar));
 	enabled = fand(extractStruct(style, TScrollEnabled(const(true))).enabled, extractStruct(style, TEnabled(const(true))).enabled);
+	axisEnabled = extractStruct(style, TScrollAxisEnabled(enabled, enabled));
 	scrollBarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
 	scrollPersistent = extractStruct(style, TScrollPersistent(const(false))).persistent;
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
@@ -1097,6 +1120,7 @@ createTScrollBars(
 
 		barStyle = if (horizontal) barstyles.x else barstyles.y;
 		barVisible = if (horizontal) scrollBarsVisible.x else scrollBarsVisible.y;
+		axEnabled = if (horizontal) axisEnabled.x else axisEnabled.y;
 		down0 = if (horizontal) downXBar else downYBar;
 
 		checkAlign =
@@ -1128,7 +1152,7 @@ createTScrollBars(
 		};
 
 		(\dwn, ins ->
-			TShowLazy(fand(fless(scale, const(1.)), barStyle.visible), \ -> {
+			TShowLazy(fand(axEnabled, fand(fless(scale, const(1.)), barStyle.visible)), \ -> {
 				prevPosition = ref if (horizontal) getValue(scrollPosition).x else getValue(scrollPosition).y;
 
 				translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
