@@ -9,6 +9,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object[] get3DSupportedExtensions(Object stage) {
+		return new Object[0];
+	}
+
 	public Object add3DChild(Object parent, Object child) {
 		return null;
 	}

@@ -69,7 +69,6 @@ fcLspReadRequest() -> Maybe<FcLspRequest> {
 	}));
 	switch (lookupTree(key_value, "Content-Length")) {
 		Some(len): {
-			fcServerLog("Content-Length: " + i2s(s2i(len)));
 			json = readBytes(s2i(len));
 			Some(FcLspRequest(
 				header + json,
@@ -182,7 +181,7 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textitem): {
 			runConfig(
-				CompilerConfig(call.conf with flowfile = textitem.uri.path),
+				CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textitem.uri.path)),
 				call.env, 
 				\code -> {
 					clearFcOutput(call.conf.threadId);
@@ -201,7 +200,7 @@ fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textitem): {
 			runConfig(
-				CompilerConfig(call.conf with flowfile = textitem.uri.path),
+				CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textitem.uri.path)),
 				call.env, 
 				\code -> {
 					clearFcOutput(call.conf.threadId);
@@ -221,7 +220,7 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 		Some(textid): {
 			runConfig(
 				CompilerConfig(call.conf with 
-					flowfile = textid.uri.path,
+					flowfile = fcCorrectUriPath(textid.uri.path),
 					config = setTree(call.conf.config, "print-outline", "1")
 				),
 				call.env, 
@@ -242,72 +241,82 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 
 fcLspParseLocations(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
-	filtermap(strSplit(s, "\n"), \l -> {
-		parts = strSplit(l, ":");
-		if (length(parts) < 3 || parts[0] == "" || !isNum(parts[1]) || !isNum(parts[2])) None() else {
-			path = parts[0];
-			sline = s2i(parts[1]) - 1;
-			schar = s2i(parts[2]) - 1;
-			if (length(parts) < 5 || !isNum(parts[3]) || !isNum(parts[4])) {
-				Some(lspLocation2Json(
-					LspLocation(
-						URI("file", URIAuthority("", "", ""), path, "", ""),
-						LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1))
-					)
-				));
-			} else {
-				eline = s2i(parts[3]) - 1;
-				echar = s2i(parts[4]) - 1;
-				Some(lspLocation2Json(
-					LspLocation(
-						URI("file", URIAuthority("", "", ""), path, "", ""),
-						LspRange(LspPosition(sline, schar), LspPosition(eline, echar))
-					)
-				));
-			}
-		}
-	});
+	filtermap(strSplit(s, "\n"), \l -> maybeMap(fcLspParseLocation(l), \p -> lspLocation2Json(p.first)));
 }
 
 fcLspParseSymbols(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
-	filtermap(strSplit(s, "\n"), \l -> {
-		parts = strSplit(l, ":");
-		if (length(parts) != 6) None() else {
-			path = parts[0];
-			sline = s2i(parts[1]) - 1;
-			scol  = s2i(parts[2]) - 1;
-			eline = s2i(parts[3]) - 1;
-			ecol  = s2i(parts[4]) - 1;
-			descr_parts = strSplit(trim(parts[5]), " ");
-			name = descr_parts[1];
-			kind = if (descr_parts[0] == "import") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Module", 0);
-			} else if (descr_parts[0] == "forbid") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Package", 0);
-			} else if (descr_parts[0] == "struct") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Struct", 0);
-			} else if (descr_parts[0] == "union") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Enum", 0);
-			} else if (descr_parts[0] == "fundef") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Function", 0);
-			} else if (descr_parts[0] == "fundecl") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Interface", 0);
-			} else if (descr_parts[0] == "vardef") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Object", 0);
-			} else if (descr_parts[0] == "vardecl") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Variable", 0);
-			} else if (descr_parts[0] == "natdef") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
-			} else if (descr_parts[0] == "natdecl") {
-				lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
+	filtermap(strSplit(s, "\n"), \l -> 
+		maybeBind(fcLspParseLocation(l), \p -> {
+			loc = p.first;
+			descr_parts = strSplit(trim(p.second), " ");
+
+			if (length(descr_parts) == 1) {
+				Some(lspTextDocumentSymbol2Json(LspTextDocumentSymbol(p.second, "", 0, false, loc.range, loc.range, [])))
+			} else if (length(descr_parts) > 1) {
+				name = descr_parts[1];
+				kind = if (descr_parts[0] == "import") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Module", 0);
+				} else if (descr_parts[0] == "forbid") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Package", 0);
+				} else if (descr_parts[0] == "struct") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Struct", 0);
+				} else if (descr_parts[0] == "union") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Enum", 0);
+				} else if (descr_parts[0] == "fundef") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Function", 0);
+				} else if (descr_parts[0] == "fundecl") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Interface", 0);
+				} else if (descr_parts[0] == "vardef") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Object", 0);
+				} else if (descr_parts[0] == "vardecl") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Variable", 0);
+				} else if (descr_parts[0] == "natdef") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
+				} else if (descr_parts[0] == "natdecl") {
+					lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
+				} else {
+					0
+				}
+				Some(lspTextDocumentSymbol2Json(LspTextDocumentSymbol(name, "", kind, false, loc.range, loc.range, [])));
 			} else {
-				0
+				None();
 			}
-			range = LspRange(LspPosition(sline, scol), LspPosition(eline, ecol));
-			Some(lspTextDocumentSymbol2Json(LspTextDocumentSymbol(name, "", kind, false, range, range, [])));
+		})
+	);
+}
+
+fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
+	isNum = \st -> st != "" && isDigits(st);
+	parts0 = strSplit(s, ":");
+	if (length(parts0) < 3 || strContains(s, "Error: ")) None() else {
+		// Windows path may start with C:/... and 
+		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) parts0 else {
+			concat(["/" + parts0[0] + ":" + parts0[1]], tailFrom(parts0, 2));
 		}
-	});
+		if (length(parts) < 3 || parts[0] == "" || !isNum(parts[1]) || !isNum(parts[2])) {
+			None() ;
+		} else {
+			path = strReplace(parts[0], "\\", "/");
+			sline = s2i(parts[1]) - 1;
+			schar = s2i(parts[2]) - 1;
+			if (length(parts) < 5 || !isNum(parts[3]) || !isNum(parts[4])) {
+				Some(Pair(LspLocation(
+					URI("file", URIAuthority("", "", ""), path, "", ""),
+					LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1))
+					), trim(parts[3]))
+				);
+			} else {
+				eline = s2i(parts[3]) - 1;
+				echar = s2i(parts[4]) - 1;
+				Some(Pair(LspLocation(
+					URI("file", URIAuthority("", "", ""), path, "", ""),
+					LspRange(LspPosition(sline, schar), LspPosition(eline, echar))
+					), trim(parts[5]))
+				);
+			}
+		}
+	}
 }
 
 fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
@@ -315,7 +324,7 @@ fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 		Some(textpos): {
 			runConfig(
 				CompilerConfig(call.conf with 
-					flowfile = textpos.textDocument.uri.path,
+					flowfile = fcCorrectUriPath(textpos.textDocument.uri.path),
 					config = mergeTree(call.conf.config, 
 						pairs2tree([
 							Pair("exp-line", i2s(textpos.position.line)), 
@@ -327,6 +336,11 @@ fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 				call.env, 
 				\code -> {
 					locations = fcLspParseLocations(fcOutput(call.conf.threadId));
+					iter(locations, \loc -> {
+						println("loc: " + json2string(loc));
+						fcShortServerLog("loc: " + json2string(loc));
+						fcShortServerLog("out:\n" + fcOutput(call.conf.threadId));
+					});
 					clearFcOutput(call.conf.threadId);
 					call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
 					call.loop_cb();
@@ -345,7 +359,7 @@ fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
 		Some(textpos): {
 			runConfig(
 				CompilerConfig(call.conf with 
-					flowfile = textpos.textDocument.uri.path,
+					flowfile = fcCorrectUriPath(textpos.textDocument.uri.path),
 					config = mergeTree(call.conf.config, 
 						pairs2tree([
 							Pair("exp-line", i2s(textpos.position.line)), 
@@ -375,7 +389,7 @@ fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 		Some(textpos): {
 			runConfig(
 				CompilerConfig(call.conf with 
-					flowfile = textpos.textDocument.uri.path,
+					flowfile = fcCorrectUriPath(textpos.textDocument.uri.path),
 					config = mergeTree(call.conf.config, 
 						pairs2tree([
 							Pair("exp-line", i2s(textpos.position.line)), 
@@ -405,7 +419,7 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 		Some(textpos): {
 			runConfig(
 				CompilerConfig(call.conf with 
-					flowfile = textpos.textDocument.uri.path,
+					flowfile = fcCorrectUriPath(textpos.textDocument.uri.path),
 					config = mergeTree(call.conf.config, 
 						pairs2tree([
 							Pair("exp-line", i2s(textpos.position.line)), 
@@ -436,7 +450,7 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 		Some(rename): {
 			runConfig(
 				CompilerConfig(call.conf with 
-					flowfile = rename.textDocument.uri.path,
+					flowfile = fcCorrectUriPath(rename.textDocument.uri.path),
 					config = mergeTree(call.conf.config, 
 						pairs2tree([
 							Pair("exp-line", i2s(rename.position.line)), 
@@ -457,6 +471,26 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
 			call.loop_cb();
+		}
+	}
+}
+
+/*
+ When URI parser parses something like: 
+	file:///c:/Users/dmitr/area9/flow9/tools/flowc
+ it outputs path as: 
+	/c:/Users/dmitr/area9/flow9/tools/flowc
+ which is wrong in windows, first slash must be removed.
+*/
+fcCorrectUriPath(path : string) -> string {
+	if (!startsWith(path, "/") || !hasTargetName("windows")) path else {
+		path1 = strRight(path, 1);
+		// Detect c:, d:, etc.
+		if (isLetter(getCharAt(path1, 0)) && getCharAt(path1, 1) == ":") {
+			path1
+		} else {
+			// keep original path
+			path
 		}
 	}
 }

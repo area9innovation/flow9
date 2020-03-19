@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
-	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic, NotificationType0
+	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic, NotificationType0, RevealOutputChannelOn
 } from 'vscode-languageclient';
 import * as tools from "./tools";
 import * as updater from "./updater";
@@ -74,22 +74,47 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// If the extension is launched in debug mode then the debug server options are used
 	// Otherwise the run options are used
-	let serverOptions: ServerOptions = {
-		run : { module: serverModule, transport: TransportKind.ipc },
-		debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
-	}
+    let serverOptions: ServerOptions;
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+		serverOptions = {
+                command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
+                args: ['server-mode=console'],
+                options: { 
+                    cwd: vscode.workspace.getConfiguration("flow").get("consoleServerDir"),
+                    detached: false 
+                }
+            }
+        } else {
+            serverOptions = {
+		        run : { module: serverModule, transport: TransportKind.ipc },
+		        debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
+            }
+        }
 
+    let channel = vscode.window.createOutputChannel("flow");
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
-		documentSelector: [{scheme: 'file', language: 'flow'}],
+        documentSelector: [{scheme: 'file', language: 'flow'}],
+        outputChannel: channel,
+        revealOutputChannelOn: RevealOutputChannelOn.Info,
+        uriConverters: {
+            // FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
+            //        the "workaround" below disables temporarily the encoding until decoding
+            //        is implemented properly in clangd
+            code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
+            protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
+        }
 	}
 
-	// launch flowc server at startup
-	tools.launchFlowc(getFlowRoot());
+    // launch flowc server at startup
+    if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+        tools.launchFlowc(getFlowRoot());
+    }
 
 	// Create the language client and start the client.
-	client = new LanguageClient('flowLanguageServer', 'Flow Language Server', serverOptions, clientOptions);
+    client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
+    channel.show();
 	// Start the client. This will also launch the server
 	client.start();
 
@@ -110,7 +135,12 @@ export function deactivate() {
         child.kill('SIGKILL'); 
         if (os.platform() == "win32")
             spawn("taskkill", ["/pid", child.pid, '/f', '/t']);
-	});
+    });
+    client.sendNotification("exit");
+    if (!client) {
+		return undefined;
+	}
+	return client.stop();
 }
 
 export async function updateFlowRepo() {
@@ -164,33 +194,35 @@ function handleConfigurationUpdates(e: vscode.ConfigurationChangeEvent) {
 	}
 }
 
-function resolveProjectRoot(projectRoot: string, documentUri: vscode.Uri): string {
-    if (projectRoot) {
-        // first, check if we are asked to use one specific workspace folder
-        if (vscode.workspace.workspaceFolders) {
-            for (let wf of vscode.workspace.workspaceFolders) 
-                if (wf.name == projectRoot)
-                    return wf.uri.fsPath;
-        }
-        // then, see if this is an absolute path
-        if (path.isAbsolute(projectRoot))
-            return projectRoot;
-        // finally, try to resolve path against first wsfolder
-        if (vscode.workspace.workspaceFolders) {
-            let resolvedPath = path.join(vscode.workspace.rootPath, projectRoot)
-            if (fs.existsSync(resolvedPath))
-                return resolvedPath;
-        }
-    }
-    // either projectRoot is not set or we did not find a way to use it
-    let wsfolder = vscode.workspace.getWorkspaceFolder(documentUri);
-    if (wsfolder) 
-        return wsfolder.uri.fsPath;
-    else
-        // rootPath is deprecated but points to first wsFolder, and can be undefined if no 
-        // folder is opened
-        return vscode.workspace.rootPath ? vscode.workspace.rootPath : 
-            path.dirname(documentUri.fsPath);
+const homedir = process.env[(process.platform == "win32") ? "USERPROFILE" : "HOME"];
+
+function expandHomeDir(p : string) : string {
+	if (!p) return p;
+	if (p == "~") return homedir;
+	if (p.slice(0, 2) != "~/") return p;
+	return path.join(homedir, p.slice(2));
+}
+
+function getPath(uri : string | vscode.Uri) : string {
+	return expandHomeDir(uri instanceof vscode.Uri ? uri.fsPath : uri.startsWith("file://") ? vscode.Uri.parse(uri).fsPath : uri);
+}
+
+function resolveProjectRoot(uri : string | vscode.Uri) : string {
+	const config = vscode.workspace.getConfiguration("flow");
+
+	if (uri != null) {
+		let dir = uri != null ? getPath(uri) : path.resolve(getPath(config.get("projectRoot")), "flow.config");
+
+		while (dir != path.resolve(dir, "..")) {
+			dir = path.resolve(dir, "..");
+
+			if (fs.existsSync(path.resolve(dir, "flow.config"))) {
+				return dir;
+			}
+		}
+	}
+
+	return getPath(config.get("root"));
 }
 
 interface CommandWithArgs { 
@@ -243,8 +275,8 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         flowChannel.clear();
         flowChannel.show(true);
         let config = vscode.workspace.getConfiguration("flow");
-        let flowpath: string = config.get("root");
-        let rootPath = resolveProjectRoot(config.get("projectRoot"), document.uri);
+        let flowpath: string = getFlowRoot();
+        let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
         let matcher = getMatcher(command.matcher);

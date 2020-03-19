@@ -21,8 +21,12 @@ export {
 			F3DGetLoadingManager(fn : (loadingManager : F3DLoadingManager) -> void);
 
 		F3DLoadingManager(
-			load : (url : string, onLoad : () -> void) -> void
+			load : (url : string, onLoad : () -> void) -> void,
+			ddsSupported : () -> bool,
+			pvrSupported : () -> bool
 		);
+
+		emptyF3DLoadingManager = F3DLoadingManager(\__, __ -> {}, \ -> false, \ -> false);
 
 	F3DObject ::= F3DScene, F3DSceneDeferred, F3DMutable, F3DConstruct, F3DName, F3DVisible, F3DAlpha, F3DLocalPosition, F3DLocalRotation, F3DLocalScale, F3DLookAt, F3DLocalMatrix, F3DWorldMatrix, F3DOnLoad,
 		F3DInspectLocalRotation, F3DInspectLocalPosition, F3DInspectLocalScale, F3DInspectWorldPosition, F3DInspectStagePosition,
@@ -202,9 +206,11 @@ export {
 				F3DMaterialDisplacementTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>, bias : Transform<double>);
 				F3DMaterialBumpTexture(material : F3DMaterial, texture : F3DTexture, scale : Transform<double>);
 
-					F3DTexture ::= F3DTextureLoader, F3DCubeTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset, F3DTextureMutable, F3DTextureConstruct;
+					F3DTexture ::= F3DTextureLoader, F3DTexturesLoader, F3DCubeTextureLoader, F3DDataTexture, F3DFFormTexture, F3DTextureRotation, F3DTextureOffset, F3DTextureMutable, F3DTextureConstruct;
 
 						F3DTextureLoader(url : string, onLoad : () -> void, enabled : Transform<bool>, parameters : [KeyValue]);
+						// Picks one or other depending on supported by device format
+						F3DTexturesLoader(image : string, dds : string, pvr : string, onLoad : () -> void, enabled : Transform<bool>, parameters : [KeyValue]);
 						F3DCubeTextureLoader(
 							px : string,
 							nx : string,
@@ -244,7 +250,8 @@ F3DRenderState(
 	wh : Transform<WidthHeight>,
 	stage : native,
 	transformControlsEnabled : Transform<bool>,
-	loading : Transform<bool>
+	loading : Transform<bool>,
+	supportedExtensions : [string]
 );
 
 F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm {
@@ -258,6 +265,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 					nextDistinct(isLoading, true);
 
 					clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
+					supportedExtensions = get3DSupportedExtensions(clip);
 					transformControlsEnabled = extractStruct(style, F3DTransformControlsEnabled(const(false))).enabled;
 					maybeApply(
 						tryExtractStruct(style, F3DAttachTransformControls(ref nop2)),
@@ -267,6 +275,10 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 						glm.fn(
 							F3DLoadingManager(
 								\url, onLoad -> load3DTexture(make3DTextureLoader(clip, url, \__ -> onLoad(), [])) |> ignore,
+								\ -> contains(supportedExtensions, "WEBGL_compressed_texture_s3tc") ||
+									contains(supportedExtensions, "WEBKIT_WEBGL_compressed_texture_s3tc"),
+								\ -> contains(supportedExtensions, "WEBGL_compressed_texture_pvrtc") ||
+									contains(supportedExtensions, "WEBKIT_WEBGL_compressed_texture_pvrtc")
 							)
 						)
 					);
@@ -328,7 +340,8 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 											wh,
 											clip,
 											const(false),
-											isLoading
+											isLoading,
+											supportedExtensions
 										),
 										\c -> {
 											cameraDistance = extractStruct(style, F3DCameraDistance(0.0, 1000.0));
@@ -353,7 +366,8 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 											wh,
 											clip,
 											transformControlsEnabled,
-											isLoading
+											isLoading,
+											supportedExtensions
 										),
 										\s -> {
 											set3DScene(clip, s);
@@ -425,7 +439,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 												}
 											}
 
-											false;
+											^handled3DMouseDown;
 										}),
 										TouchMove(\mi -> {
 											emit3DTouchEvent(
@@ -434,7 +448,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 												map(mi.points, \p -> [p.x, p.y])
 											);
 
-											false;
+											^handled3DMouseMove;
 										}),
 										TouchEnd(\mi -> {
 											emit3DTouchEvent(
@@ -443,7 +457,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 												map(mi.points, \p -> [p.x, p.y])
 											);
 
-											false;
+											^handled3DMouseUp;
 										})
 									]
 									|> (\ev ->
@@ -465,7 +479,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 															}
 														}
 
-														false;
+														^handled3DMouseDown;
 													}),
 													MouseUp(\mi -> {
 														emit3DMouseEvent(
@@ -475,7 +489,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 															mi().y
 														);
 
-														false;
+														^handled3DMouseUp;
 													}),
 													MouseMiddleDown(\mi -> {
 														if (mi.inside()) {
@@ -531,7 +545,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 															);
 														}
 
-														false;
+														^handled3DMouseMove;
 													})
 												]
 											)
@@ -2138,6 +2152,48 @@ renderF3DTexture(texture : F3DTexture, state : F3DRenderState, onStart : (native
 	switch (texture : F3DTexture) {
 		F3DTextureLoader(url, onLoad, enabled, parameters) : {
 			t = make3DTextureLoader(state.stage, url, \__ -> onLoad(), map(parameters, \v -> [v.key, v.value]));
+			loading = ref false;
+
+			concat3(
+				onStart(t),
+				[
+					makeSubscribeUns(enabled, \en -> {
+						if (!^loading && en) {
+							loading := true;
+							[load3DTexture(t)]
+						} else {
+							[]
+						}
+					})()
+				],
+				onDone()
+			);
+		}
+		F3DTexturesLoader(image, dds, pvr, onLoad, enabled, parameters) : {
+			ddsSupported = dds != "" && (contains(state.supportedExtensions, "WEBGL_compressed_texture_s3tc") ||
+				contains(state.supportedExtensions, "WEBKIT_WEBGL_compressed_texture_s3tc"));
+			pvrSupported = pvr != "" && (contains(state.supportedExtensions, "WEBGL_compressed_texture_pvrtc") ||
+				contains(state.supportedExtensions, "WEBKIT_WEBGL_compressed_texture_pvrtc"));
+
+			t =
+				make3DTextureLoader(
+					state.stage,
+					if (ddsSupported) dds else if (pvrSupported) pvr else image,
+					\__ -> onLoad(),
+					map(
+						concat(
+							if (!pvrSupported && !ddsSupported)
+								[
+									KeyValue("wrapT", "THREE.RepeatWrapping"),
+									KeyValue("repeat", "new THREE.Vector2(1, -1)")
+								]
+							else
+								[],
+							parameters
+						),
+						\v -> [v.key, v.value]
+					)
+				);
 			loading = ref false;
 
 			concat3(
