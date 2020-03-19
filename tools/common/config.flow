@@ -7,8 +7,14 @@ import lingo/flow/javascript_cli_params;
 // Use compilerconfig.flow to get a useful, easy-to-use configuration,
 // and then functions here to work with it
 export {
-	// Reads any local flow.config file for options
-	parseFlowConfig() -> Tree<string, string>;
+	// Parses config file as a string for options
+	parseFlowConfig(config : string) -> Tree<string, string>;
+
+	// Finds directory, containing 'flow.config' file upwards from the given directory. Empty string means no such directory.
+	findFlowConfigDir(dir : string) -> string;
+
+	// Finds 'flow.config' file upwards from the given directory and returns its content. Returns empty string if there's no such file.
+	findFlowConfig(dir : string) -> string;
 
 	// Read config parameter.
 	// Priority (increasing):
@@ -73,61 +79,87 @@ export {
     // Finds the directory of flow itself. Is not very clever
 	getFlowDir() -> string;
 
+	fcDirName(path : string) -> string;
+
 	setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig;
 }
 
-getFlowDir() {
-	// Use the path of the executable
-	appPath = strReplace(getApplicationPath(), "\\", "/");
-	flowDefDir = if (strContains(appPath, "/platforms/qt")) {
-		takeBefore(appPath, "/platforms/qt", appPath) + "/"
-	} else if (strContains(appPath, "flow9/platforms/java")) {
-		takeBefore(appPath, "platforms/java", appPath)
-	} else if (strContains(appPath, "tools/flowc/")) {
-		takeBefore(appPath, "tools/flowc/", appPath)
-	} else if (strContains(appPath, "flow9/bin/")) {
-		takeBefore(appPath, "bin/", appPath)
-	} else if (strContains(appPath, "bin/")) {
-		takeBefore(appPath, "bin/", appPath)
-	} else {
-		println("WARNING: Could not determine the flow directory.");
-		println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
-	    "../flow9/";
-	}
-	binDir = getUrlParameter("bin-dir");
-    flowdir = if (binDir == "") {
-        flowDefDir
-    } else {
-		if (endsWith(binDir, "bin/") || endsWith(binDir, "bin\\"))
-			substring(binDir, 0, strlen(binDir)-4)
-		else
-			substring(binDir, 0, strlen(binDir)-3);
+fcFlowDir : ref Maybe<string> = ref None();
+
+getFlowDir() -> string {
+	init_dir = \-> {
+		// Use the path of the executable
+		appPath = strReplace(getApplicationPath(), "\\", "/");
+		flowDefDir = if (strContains(appPath, "/platforms/qt")) {
+			takeBefore(appPath, "/platforms/qt", appPath) + "/"
+		} else if (strContains(appPath, "flow9/platforms/java")) {
+			takeBefore(appPath, "platforms/java", appPath)
+		} else if (strContains(appPath, "tools/flowc/")) {
+			takeBefore(appPath, "tools/flowc/", appPath)
+		} else if (strContains(appPath, "flow9/bin/")) {
+			takeBefore(appPath, "bin/", appPath)
+		} else if (strContains(appPath, "bin/")) {
+			takeBefore(appPath, "bin/", appPath)
+		} else {
+			println("WARNING: Could not determine the flow directory.");
+			println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
+			"../flow9/";
+		}
+		binDir = getUrlParameter("bin-dir");
+		flowdir = if (binDir == "") {
+			flowDefDir
+		} else {
+			if (endsWith(binDir, "bin/") || endsWith(binDir, "bin\\"))
+				substring(binDir, 0, strlen(binDir)-4)
+			else
+				substring(binDir, 0, strlen(binDir)-3);
+		}
+		strReplace(flowdir, "\\", "/");
     }
-    strReplace(flowdir, "\\", "/")
+    onlyOnce(fcFlowDir, init_dir);
 }
 
-parseFlowConfig() -> Tree<string, string> {
-	if (fileExists("flow.config")) {
-		config = getFileContent("flow.config");
-		lines = strSplit(config, "\n");
-		fold(lines, makeTree(), \acc, l -> {
-			// Skip comment lines in flow.config
-			if (!startsWith(ltrim2(l, " \t"), "#")) {
-				opts = strSplit(l, "=");
-				if (length(opts) == 2) {
-					opt = trim2(opts[0], " \t\u000d");
-					val = trim2(opts[1], " \t\u000d");
-					val1 = if (opt == "resource-file") {
-							val2 = if (endsWith(val, ".swf")) val
-								else val + ".swf";
-							if (strFindFirstOf(val2, "/\\") != -1) val2
-							else "resources/" + val2
-						} else val;
-					setTree(acc, opt, val1)
-				} else acc;
+findFlowConfig(dir : string) -> string {
+	conf_dir = findFlowConfigDir(dir);
+	if (conf_dir == "") "" else  getFileContent(conf_dir + "/flow.config");
+}
+
+fcDirName(path : string) -> string {
+	path1 = strReplace(path, "\\", "/");
+	if (!strContains(path1, "/")) "" else {
+		strLeft(path1, strLastIndexOf(path1, "/"));
+	}
+}
+
+findFlowConfigDir(d : string) -> string {
+	dir = rtrim2(d, "/");
+	if (fileExists(dir + "/flow.config")) dir else {
+		// Check for root directory or c:/ in windows
+		if (dir == "" || (strlen(dir) <= 3 && isLetter(getCharAt(dir, 0)) && getCharAt(dir, 1) == ":")) "" else {
+			findFlowConfigDir(fcDirName(dir));
+		}
+	}
+}
+
+parseFlowConfig(config : string) -> Tree<string, string> {
+	lines = strSplit(config, "\n");
+	fold(lines, makeTree(), \acc, l -> {
+		// Skip comment lines in flow.config
+		if (!startsWith(ltrim2(l, " \t"), "#")) {
+			opts = strSplit(l, "=");
+			if (length(opts) == 2) {
+				opt = trim2(opts[0], " \t\u000d");
+				val = trim2(opts[1], " \t\u000d");
+				val1 = if (opt == "resource-file") {
+						val2 = if (endsWith(val, ".swf")) val
+							else val + ".swf";
+						if (strFindFirstOf(val2, "/\\") != -1) val2
+						else "resources/" + val2
+					} else val;
+				setTree(acc, opt, val1)
 			} else acc;
-		});
-	} else makeTree();
+		} else acc;
+	});
 }
 
 getConfigParameterDef(config : Tree<string, string>, paramName : string, defValue : string) -> string {
