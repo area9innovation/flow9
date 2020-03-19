@@ -1759,6 +1759,21 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nDeliverOpenFileDialogResult(long ptr, int callbackRoot, String[] filePaths);
 
+    private FlowPrintingSupport flowPrintingSupport = null;
+
+    public void setFlowPrintingSupport(FlowPrintingSupport flowPrintingSupport) {
+        this.flowPrintingSupport = flowPrintingSupport;
+    }
+
+    public synchronized void cbPrintHTML(String html) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP)
+            flowPrintingSupport.printHTML(html);
+    }
+
+    public synchronized void cbPrintURL(String url) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT)
+            flowPrintingSupport.printURL(url);
+    }
 
     private SoftKeyboardSupport softKeyboardSupport = null;
 

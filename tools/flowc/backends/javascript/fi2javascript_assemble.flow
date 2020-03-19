@@ -2,6 +2,7 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/javascript/fi2javascript_defines;
 import tools/flowc/backends/javascript/fi2javascript_utils;
 import tools/flowc/backends/javascript/fi2javascript_webfont;
+import tools/flowc/backends/javascript/fi2javascript_sourcemap;
 import tools/flowc/incremental/fiprogram;
 import ds/list;
 import text/blueprint;
@@ -39,7 +40,7 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 		});
 
 		class = "FlowJsProgram";
-		jsfile = class + if (cfg.jsmode == TS_MODE) ".ts" else ".js";
+		jsfile = cfg.outputfile;
 		hx = class + ".hx";
 
 		cls = "\nclass " + class + " {
@@ -62,13 +63,15 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 		commonSrcDir = getFlowDir() + "platforms/common/haxe";
 		hxparams =
 			if (cfg.jsmode == NODEJS_MODE && cfg.webmodule)
-				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D flow_webmodule", "-D js-classic", "-lib node-express"]
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-D no-deprecation-warnings", "-lib hxnodejs", "-D flow_nodejs", "-D flow_webmodule", "-D js-classic", "-lib node-express"]
 			else if (cfg.jsmode == NODEJS_MODE)
-				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D js-classic"]
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-D no-deprecation-warnings", "-lib hxnodejs", "-D flow_nodejs", "-D js-classic"]
 			else if (cfg.jsmode == NWJS_MODE)
-				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-lib hxnodejs", "-D nwjs", "-D js-classic"]
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-D no-deprecation-warnings", "-lib hxnodejs", "-D nwjs", "-D js-classic"]
+			else if (cfg.sourcemap)
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-debug", "-D jsruntime", "-D no-deprecation-warnings", "-D js-classic"]
 			else
-				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-D js-classic"];
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-D no-deprecation-warnings", "-D js-classic"];
 
 		tmpfiles = ref [];
 		hxparams1 = if (containsSet(ovl.nativeClasses, "RenderSupport") && cfg.jsmode != NODEJS_MODE) {
@@ -149,9 +152,7 @@ fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeCont
 	hasRequire = ovl.requireList != [];
 	haxeRuntimeModule =
 		"define('haxeruntime', [], function() {\n" + fcJsStrict(cfg) +
-	(if (cfg.jsmode == TS_MODE) runtimeContent
-		// Due to moduling. Otherwise, with return{RenderSupport:RenderSupport} haxeruntime.RenderSupport != haxeruntime.RenderSupportJSPixi
-		else strReplace(runtimeContent, "window.RenderSupport = window.RenderSupportJSPixi;", "RenderSupport = RenderSupportJSPixi;")) +
+	runtimeContent +
 	"\n  return {\n" +
 	"    RuntimeType: RuntimeType,\n"+
 	"    HaxeRuntime: HaxeRuntime,\n"+
@@ -334,9 +335,9 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 	fcVerbose(cfg, 1, "Assembling done.");
 
 	fcVerbose(cfg, 1, "Saving output file...");
-	saveFileContent((if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile, fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + generatedContent, cfg.threadId);
+	saveFileContent((if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile, fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, cfg.threadId);
 	if (cfg.code) {
-		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + generatedContent, cfg.threadId);
+		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + "\n" + generatedContent, cfg.threadId);
 	}
 	fcVerbose(cfg, 1, "File saved.");
 	jsmode = fiJavascriptMode(cfg);
@@ -480,8 +481,4 @@ fiEnsureModulesDirectory(cfg : FiJsConfig) -> void {
 		ensureDirectoryExists(cfg.modules);
 	} else { "" }
 	{}
-}
-
-fcJsStrict(cfg : FiJsConfig) {
-	if ((cfg.jsmode == STANDARD_ES6) || (cfg.jsmode == NODEJS_MODE) || (cfg.jsmode == NWJS_MODE)) "'use strict';\n" else "";
 }

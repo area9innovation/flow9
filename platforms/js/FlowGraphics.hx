@@ -19,9 +19,10 @@ class FlowGraphics extends Graphics {
 
 	private var pen = new Point(0.0, 0.0);
 	private var localBounds = new Bounds();
-	private var graphicsBounds = new Bounds();
-	private var _bounds = new Bounds();
 	private var widgetBounds = new Bounds();
+	private var _bounds = new Bounds();
+	public var filterPadding = 0.0;
+	private var graphicsBounds = new Bounds();
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
@@ -34,10 +35,13 @@ class FlowGraphics extends Graphics {
 	private var accessWidget : AccessWidget;
 
 	public var isEmpty : Bool = true;
+	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
-	public var isNativeWidget : Bool;
+	public var isNativeWidget : Bool = false;
+	public var keepNativeWidget : Bool = false;
+	public var keepNativeWidgetChildren : Bool = false;
+	public var hasMask : Bool = false;
 
-	public var filterPadding = 0.0;
 	public var left = 0.0;
 	public var top = 0.0;
 
@@ -64,7 +68,7 @@ class FlowGraphics extends Graphics {
 
 		isSvg = true;
 
-		lineStyle(lineWidth, RenderSupportJSPixi.removeAlphaChannel(colors[0]), alphas[0]);
+		lineStyle(lineWidth, RenderSupport.removeAlphaChannel(colors[0]), alphas[0]);
 	}
 
 	public override function moveTo(x : Float, y : Float) : Graphics {
@@ -121,14 +125,14 @@ class FlowGraphics extends Graphics {
 
 		calculateGraphicsBounds();
 
-		if (strokeGradient != null && RenderSupportJSPixi.RendererType == "html") {
+		if (strokeGradient != null && RenderSupport.RendererType == "html") {
 			untyped data.gradient = strokeGradient;
 			untyped data.strokeGradient = strokeGradient.type == 'radial' ?
 				"radial-gradient(" :
 				"linear-gradient(" + (strokeGradient.matrix.rotation + 90.0) + 'deg, ';
 
 			for (i in 0...strokeGradient.colors.length) {
-				untyped data.strokeGradient += RenderSupportJSPixi.makeCSSColor(strokeGradient.colors[i], strokeGradient.alphas[i]) + ' ' +
+				untyped data.strokeGradient += RenderSupport.makeCSSColor(strokeGradient.colors[i], strokeGradient.alphas[i]) + ' ' +
 					trimFloat(strokeGradient.offsets[i], 0.0, 1.0) * (strokeGradient.type == 'radial' ? 70.0 : 100.0) + '%' +
 					(i != strokeGradient.colors.length - 1 ? ', ' : '');
 			}
@@ -137,14 +141,14 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (fillGradient != null) {
-			if (RenderSupportJSPixi.RendererType == "html") {
+			if (RenderSupport.RendererType == "html") {
 				untyped data.gradient = fillGradient;
 				untyped data.fillGradient = fillGradient.type == 'radial' ?
 					"radial-gradient(" :
 					"linear-gradient(" + (fillGradient.matrix.rotation + 90.0) + 'deg, ';
 
 				for (i in 0...fillGradient.colors.length) {
-					untyped data.fillGradient += RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i]) + ' ' +
+					untyped data.fillGradient += RenderSupport.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i]) + ' ' +
 						trimFloat(fillGradient.offsets[i], 0.0, 1.0) * (fillGradient.type == 'radial' ? 70.0 : 100.0) + '%' +
 						(i != fillGradient.colors.length - 1 ? ', ' : '');
 				}
@@ -177,7 +181,7 @@ class FlowGraphics extends Graphics {
 				for (i in 0...fillGradient.colors.length) {
 					gradient.addColorStop(
 						trimFloat(fillGradient.offsets[i], 0.0, 1.0),
-						RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i])
+						RenderSupport.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i])
 					);
 				}
 
@@ -206,7 +210,7 @@ class FlowGraphics extends Graphics {
 		graphicsChanged = true;
 		this.invalidateTransform('endFill');
 
-		if (untyped isMask || this.isCanvas) {
+		if (this.isMask || this.isCanvas) {
 			if (isNativeWidget) {
 				this.deleteNativeWidget();
 			}
@@ -299,12 +303,12 @@ class FlowGraphics extends Graphics {
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		rect = localBounds.getRectangle(rect);
 
-		var filterPadding = untyped this.filterPadding;
-
-		rect.x -= filterPadding;
-		rect.y -= filterPadding;
-		rect.width += filterPadding * 2.0;
-		rect.height += filterPadding * 2.0;
+		if (this.filterPadding != 0.0) {
+			rect.x -= this.filterPadding;
+			rect.y -= this.filterPadding;
+			rect.width += this.filterPadding * 2.0;
+			rect.height += this.filterPadding * 2.0;
+		}
 
 		return rect;
 	}
@@ -388,7 +392,7 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (untyped this.isMask || this.isCanvas || this.isEmpty) {
+		if (this.isMask || this.isCanvas || this.isEmpty) {
 			if (isNativeWidget) {
 				this.deleteNativeWidget();
 			}
@@ -412,7 +416,7 @@ class FlowGraphics extends Graphics {
 				nativeWidget.style.border = null;
 				nativeWidget.style.borderRadius = null;
 				nativeWidget.style.borderImage = null;
-			} else if (graphicsData.length != 1 || isSvg || untyped this.hasMask) {
+			} else if (graphicsData.length != 1 || isSvg || this.hasMask) {
 				nativeWidget.style.borderRadius = null;
 				if (Platform.isIE) {
 					nativeWidget.style.background = '';
@@ -486,7 +490,7 @@ class FlowGraphics extends Graphics {
 							var stop = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'stop');
 
 							stop.setAttribute("offset", '' + trimFloat(gradient.offsets[i], 0.0, 1.0) * 100.0 + '%');
-							stop.setAttribute("style", 'stop-color:' + RenderSupportJSPixi.makeCSSColor(gradient.colors[i], gradient.alphas[i]));
+							stop.setAttribute("style", 'stop-color:' + RenderSupport.makeCSSColor(gradient.colors[i], gradient.alphas[i]));
 
 							linearGradient.appendChild(stop);
 						}
@@ -509,7 +513,7 @@ class FlowGraphics extends Graphics {
 						if (untyped data.fillGradient != null) {
 							element.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 						} else if (data.fill != null && data.fillAlpha > 0) {
-							element.setAttribute("fill", RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha));
+							element.setAttribute("fill", RenderSupport.makeCSSColor(data.fillColor, data.fillAlpha));
 						} else {
 							element.setAttribute("fill", "none");
 						}
@@ -518,7 +522,7 @@ class FlowGraphics extends Graphics {
 							element.setAttribute("stroke", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 							element.setAttribute("stroke-width", Std.string(data.lineWidth));
 						} else if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-							element.setAttribute("stroke", RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
+							element.setAttribute("stroke", RenderSupport.makeCSSColor(data.lineColor, data.lineAlpha));
 							element.setAttribute("stroke-width", Std.string(data.lineWidth));
 						} else {
 							element.setAttribute("stroke", "none");
@@ -579,7 +583,7 @@ class FlowGraphics extends Graphics {
 
 				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
 					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
-						nativeWidget.style.border = '${data.lineWidth}px solid ' + (untyped data.strokeGradient != null ? '' : RenderSupportJSPixi.makeCSSColor(data.lineColor, data.lineAlpha));
+						nativeWidget.style.border = '${data.lineWidth}px solid ' + (untyped data.strokeGradient != null ? '' : RenderSupport.makeCSSColor(data.lineColor, data.lineAlpha));
 					} else {
 						nativeWidget.style.border = null;
 					}
@@ -587,14 +591,14 @@ class FlowGraphics extends Graphics {
 					if (data.fill != null && data.fillAlpha > 0) {
 						if (widgetBounds.getBoundsWidth() <= 2.0) {
 							nativeWidget.style.border = null;
-							nativeWidget.style.borderLeft = '${widgetBounds.getBoundsWidth()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+							nativeWidget.style.borderLeft = '${widgetBounds.getBoundsWidth()}px solid ' + RenderSupport.makeCSSColor(data.fillColor, data.fillAlpha);
 							nativeWidget.style.background = null;
 						} else if (widgetBounds.getBoundsHeight() <= 2.0) {
 							nativeWidget.style.border = null;
-							nativeWidget.style.borderTop = '${widgetBounds.getBoundsHeight()}px solid ' + RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+							nativeWidget.style.borderTop = '${widgetBounds.getBoundsHeight()}px solid ' + RenderSupport.makeCSSColor(data.fillColor, data.fillAlpha);
 							nativeWidget.style.background = null;
 						} else {
-							nativeWidget.style.background = RenderSupportJSPixi.makeCSSColor(data.fillColor, data.fillAlpha);
+							nativeWidget.style.background = RenderSupport.makeCSSColor(data.fillColor, data.fillAlpha);
 						}
 					} else {
 						nativeWidget.style.background = null;

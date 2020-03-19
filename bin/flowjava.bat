@@ -38,7 +38,9 @@ cd %~dp0..\platforms\java
 popd
 
 rem Generate the Java for our program
-call %~dp0/flow --java %~dp0/../javagen %*
+call %~dp0/flowc1 java=%~dp0/../javagen %*
+
+rem call %~dp0/flow --java %~dp0/../javagen %*
 
 cd %~dp0..
 

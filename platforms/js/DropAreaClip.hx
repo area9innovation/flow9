@@ -13,13 +13,12 @@ class DropAreaClip extends NativeWidgetClip {
 	private var regExp : EReg;
 	private var onDone : Array<Dynamic> -> Void;
 
-	public var keepNativeWidget = true;
-
 	public var isInteractive : Bool = true;
 
 	public function new(maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) {
 		super();
 
+		this.keepNativeWidget = true;
 		this.maxFilesCount = maxFilesCount;
 		this.regExp = new EReg(mimeTypeRegExpFilter, "g");
 		this.onDone = onDone;
@@ -29,7 +28,7 @@ class DropAreaClip extends NativeWidgetClip {
 		widgetBounds.maxX = 0;
 		widgetBounds.maxY = 0;
 
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			styleChanged = false;
 		}
 
@@ -60,23 +59,23 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.ondragover = onDragOver;
 		nativeWidget.ondrop = onDrop;
 		nativeWidget.onmousedown = onMouseDown;
-		if (RenderSupportJSPixi.RendererType != "html") {
+		if (RenderSupport.RendererType != "html") {
 			nativeWidget.onmousemove = onMouseMove;
 
-			nativeWidget.onpointerover = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOver(e); };
-			nativeWidget.onpointerout = function(e) { RenderSupportJSPixi.PixiRenderer.plugins.interaction.onPointerOut(e); };
+			nativeWidget.onpointerover = function(e) { RenderSupport.PixiRenderer.plugins.interaction.onPointerOver(e); };
+			nativeWidget.onpointerout = function(e) { RenderSupport.PixiRenderer.plugins.interaction.onPointerOut(e); };
 		}
 		nativeWidget.style.pointerEvents = "auto";
 
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			nativeWidget.style.height = "inherit";
 			nativeWidget.style.width = "inherit";
 		}
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {
-		if (RenderSupportJSPixi.PixiView.oncontextmenu != null) {
-			return RenderSupportJSPixi.PixiView.oncontextmenu(event);
+		if (RenderSupport.PixiView.oncontextmenu != null) {
+			return RenderSupport.PixiView.oncontextmenu(event);
 		} else {
 			return true;
 		}
@@ -115,7 +114,7 @@ class DropAreaClip extends NativeWidgetClip {
 	}
 
 	private function onMouseMove(e : Dynamic) {
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
+		nativeWidget.style.cursor = RenderSupport.PixiView.style.cursor;
 	}
 
 	public override function calculateWidgetBounds() : Void {

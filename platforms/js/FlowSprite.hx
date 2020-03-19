@@ -28,11 +28,17 @@ class FlowSprite extends Sprite {
 	private var localBounds = new Bounds();
 	private var widgetBounds = new Bounds();
 	private var _bounds = new Bounds();
+	public var filterPadding = 0.0;
 
 	private var nativeWidget : Dynamic;
 	private var accessWidget : AccessWidget;
 
+	public var isEmpty : Bool = true;
+	public var isCanvas : Bool = false;
+	public var isSvg : Bool = false;
 	public var isNativeWidget : Bool = false;
+	public var keepNativeWidget : Bool = false;
+	public var keepNativeWidgetChildren : Bool = false;
 	private var disposed : Bool = false;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
@@ -54,7 +60,7 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			this.initNativeWidget("img");
 		} else {
 			once("removed", onSpriteRemoved);
@@ -192,13 +198,13 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onLoaded() : Void {
-		RenderSupportJSPixi.once("drawframe", function() {
+		RenderSupport.once("drawframe", function() {
 			if (disposed) {
 				return;
 			}
 
 			try {
-				if (RenderSupportJSPixi.RendererType == "html") {
+				if (RenderSupport.RendererType == "html") {
 					if (nativeWidget == null) {
 						return;
 					}
@@ -242,7 +248,16 @@ class FlowSprite extends Sprite {
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		return localBounds.getRectangle(rect);
+		rect = localBounds.getRectangle(rect);
+
+		if (this.filterPadding != 0.0) {
+			rect.x -= this.filterPadding;
+			rect.y -= this.filterPadding;
+			rect.width += this.filterPadding * 2.0;
+			rect.height += this.filterPadding * 2.0;
+		}
+
+		return rect;
 	}
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
@@ -284,7 +299,7 @@ class FlowSprite extends Sprite {
 	}
 
 	public function calculateWidgetBounds() : Void {
-		if (RenderSupportJSPixi.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {
