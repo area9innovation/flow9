@@ -330,142 +330,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	expandContent = \cells : [Tropic], er : int -> map(splitWithoutHead(cells, er), TLines);
 
 	// Header
-
-	headerTitles = \p ->
-		mapi(columns, \i0, c : MColumnDynamic -> if (replaceHeader) cellBox(i0, true) else {
-			colHeaderStyle = tryExtractStruct(concat(c.style, eitherMap(headerStyle, \e -> [e], [])), defaultHS);
-			rightAlign = (contains(c.style, RightAlign()) != (parent.rtl && !isUrlParameterTrue("new"))) || contains(c.style, if (parent.rtl) StartAlign() else EndAlign());
-			sortStyle = if (isSome(reorderList)) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
-			sortable = isSome(sortStyle) || (isNone(reorderList) && (hasExtOrderBy || contains(c.style, MAutoSort())));
-			i = i0 - headCount + 1;
-
-			makeHeaderTitle = \isSelected : bool ->
-				TSelect(c.header, \header ->
-					MEllipsisText2T(
-						manager,
-						p,
-						MEllipsisText(
-							header,
-							eitherMap(colHeaderStyle, \hs -> hs.textStyle, [if (isSelected) MCaptionColumnSelected() else MCaptionColumn()])
-						),
-						m2t
-					)
-				);
-
-			(if (sortable) {
-				hover = make(false);
-
-				clickColumn = \ -> {
-					sb = fgetValue(sortedByB);
-					
-					if (sb.column == i && !sb.ascending) {
-						nextDistinct(defaultSorted, MSortingParam(-1, true));
-						next(sortedByB, MDataTableSorting(-1, false, None()))
-					} else {
-						asc =
-							if (sb.column == -1)
-								getValue(defaultSorted).isAsc
-							else
-								sb.column != i;
-						nextDistinct(defaultSorted, MSortingParam(i, asc));
-						next(sortedByB, MDataTableSorting(i, asc, sortStyle))
-					}
-				};
-
-				if (getValue(defaultSorted).colIndex == i)
-					clickColumn();
-
-				mouseDownAround(manager, None(), make(false), hover, clickColumn,
-					TIfLazy2(
-						fselect(sortedByB, FLift(\sb : MDataTableSorting -> sb.column == i)),
-						\isSorting ->
-							TIfLazy2(
-								hover,
-								\h ->
-									TCols(
-										[
-											makeHeaderTitle(h)
-												|> (\t -> TBorderDir(0.0, 0.0, 4.0, 0.0, t, p.rtl)),
-											if (isSorting)
-												TIfLazy2(fselect(sortedByB, FLift(\sb -> sb.ascending)), \sb0 ->
-													MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", [MIconSize(15.)]),
-													true
-												)
-											else if (h)
-												MIcon2T(p, "arrow_upward", [MIconSize(15.), FillOpacity(0.24)])
-											else
-												TFixed(16., 0.)
-										]
-											|> (\f2 -> if (rightAlign) reverseA(f2) else f2)
-									),
-								false
-							),
-						false
-					)
-				)
-			} else
-				makeHeaderTitle(false)
-			)
-			|> (\f2 : Tropic ->
-				if (c.tooltip == const(""))
-					f2
-				else
-					MTooltip2T(manager, p, MTooltip(f2, MSelect(c.tooltip, \t -> MText(t, [MTooltipDesktop(), sameLightMColor(p)])), [MBlockHover()]), m2t)
-			)
-			|> (\t -> if (isCheckboxColumn(i0)) {
-					selAll = make(false);
-					selPage =
-						fselect3(
-							fif(scrollEnabled, fselect(rowsCountB, FLift(\rc -> Pair(0, rc))), page),
-							sortingResult,
-							fsubselect(selectionEnabled.enabled, FLift(fmerge)),
-							\pg, sr, en ->
-								fold(
-									subrange(sr, pg.first, min(pg.second, length(sr))),
-									[], \acc, j ->
-										ifArrayPush(
-											acc, 
-											elementAt(en, j, true), 
-											j
-										)
-								)
-						);
-
-					makeChkbox(p, selAll,
-						if (selection.multiple)
-							fand(selection.enabled, fselect(selPage, FLift(\pg -> length(pg) > 0)))
-						else
-							const(false),
-						\ -> nextDistinct(selection.selected,
-							if (getValue(selAll))
-								concat(getValue(selection.selected), fgetValue(selPage)) |> uniq
-							else 
-								filter(getValue(selection.selected), \x -> !contains(fgetValue(selPage), x))
-						),
-						true
-					)
-					|> (\t2 ->
-						if (selection.multiple)
-							TConstruct(
-								[
-									make2Subscribe(selection.selected, selPage, \sel, pg ->
-										nextDistinct(
-											selAll,
-											length(pg) != 0 && length(sel) >= length(pg)
-												&& forall(pg, \j -> contains(sel, j))
-										)
-									)
-								],
-								t2
-							)
-						else
-							t2
-					)
-				} else t
-			)
-			|> alignCellContent(c.style, cellBox(i0, true))
-		});
-
 	tableHeader = \headers0, p ->
 		TSelect(expandRow, \er ->
 			expandContent(headers0, er)
@@ -781,7 +645,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	|> (\t -> TAttachMinWidth(t, footerMinWidth));
 
 	(\p -> {
-		headers0 = headerTitles(p);
+		headers0 = MDataTableTitles(
+			manager, p, columns, replaceHeader, defaultHS, headerStyle, cellBox, alignCellContent, isSome(reorderList),
+			sortedByB, defaultSorted, hasExtOrderBy, headCount, isCheckboxColumn, scrollEnabled, rowsCountB, page,
+			sortingResult, makeChkbox, selection, selectionEnabled, m2t
+		);
 
 		// Data rows
 		MSelect2T(manager, p, "MDynamicDataTableLines", [], expandRow, \er, p2 ->
@@ -1184,6 +1052,167 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		else if (fullWidth) TAttachWidth2(TFillX(), screenW, t)
 		else t
 	)
+}
+
+MDataTableTitles(
+	manager : MaterialManager,
+	p : MFocusGroup,
+	columns : [MColumnDynamic],
+	replaceHeader : bool,
+	defaultHS : MHeaderStyle,
+	headerStyle : Maybe<MHeaderStyle>,
+	cellBox : (int, bool) -> Tropic,
+	alignCellContent : ([MColumnStyle], Tropic) -> (Tropic) -> Tropic,
+	isReorder : bool,
+	sortedByB : DynamicBehaviour<MDataTableSorting>,
+	defaultSorted : DynamicBehaviour<MSortingParam>,
+	hasExtOrderBy : bool,
+	headCount : int,
+	isCheckboxColumn : (int) -> bool,
+	scrollEnabled : Transform<bool>,
+	rowsCountB : Transform<int>,
+	page : DynamicBehaviour<Pair<int, int>>,
+	sortingResult : Transform<[int]>,
+	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, bool) -> Tropic,
+	selection : MListSelection,
+	selectionEnabled : MListSelectionEnabled,
+
+
+	m2t : (Material, MFocusGroup) -> Tropic
+) -> [Tropic] {
+	mapi(columns, \i0, c : MColumnDynamic -> if (replaceHeader) cellBox(i0, true) else {
+		colHeaderStyle = tryExtractStruct(concat(c.style, eitherMap(headerStyle, \e -> [e], [])), defaultHS);
+		rightAlign = (contains(c.style, RightAlign()) != (p.rtl && !isUrlParameterTrue("new"))) || contains(c.style, if (p.rtl) StartAlign() else EndAlign());
+		sortStyle = if (isReorder) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
+		sortable = isSome(sortStyle) || (!isReorder && (hasExtOrderBy || contains(c.style, MAutoSort())));
+		i = i0 - headCount + 1;
+
+		makeHeaderTitle = \isSelected : bool ->
+			TSelect(c.header, \header ->
+				MEllipsisText2T(
+					manager,
+					p,
+					MEllipsisText(
+						header,
+						eitherMap(colHeaderStyle, \hs -> hs.textStyle, [if (isSelected) MCaptionColumnSelected() else MCaptionColumn()])
+					),
+					m2t
+				)
+			);
+
+		(if (sortable) {
+			hover = make(false);
+
+			clickColumn = \ -> {
+				sb = fgetValue(sortedByB);
+				
+				if (sb.column == i && !sb.ascending) {
+					nextDistinct(defaultSorted, MSortingParam(-1, true));
+					next(sortedByB, MDataTableSorting(-1, false, None()))
+				} else {
+					asc =
+						if (sb.column == -1)
+							getValue(defaultSorted).isAsc
+						else
+							sb.column != i;
+					nextDistinct(defaultSorted, MSortingParam(i, asc));
+					next(sortedByB, MDataTableSorting(i, asc, sortStyle))
+				}
+			};
+
+			if (getValue(defaultSorted).colIndex == i)
+				clickColumn();
+
+			mouseDownAround(manager, None(), make(false), hover, clickColumn,
+				TIfLazy2(
+					fselect(sortedByB, FLift(\sb : MDataTableSorting -> sb.column == i)),
+					\isSorting ->
+						TIfLazy2(
+							hover,
+							\h ->
+								TCols(
+									[
+										makeHeaderTitle(h)
+											|> (\t -> TBorderDir(0.0, 0.0, 4.0, 0.0, t, p.rtl)),
+										if (isSorting)
+											TIfLazy2(fselect(sortedByB, FLift(\sb -> sb.ascending)), \sb0 ->
+												MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", [MIconSize(15.)]),
+												true
+											)
+										else if (h)
+											MIcon2T(p, "arrow_upward", [MIconSize(15.), FillOpacity(0.24)])
+										else
+											TFixed(16., 0.)
+									]
+										|> (\f2 -> if (rightAlign) reverseA(f2) else f2)
+								),
+							false
+						),
+					false
+				)
+			)
+		} else
+			makeHeaderTitle(false)
+		)
+		|> (\f2 : Tropic ->
+			if (c.tooltip == const(""))
+				f2
+			else
+				MTooltip2T(manager, p, MTooltip(f2, MSelect(c.tooltip, \t -> MText(t, [MTooltipDesktop(), sameLightMColor(p)])), [MBlockHover()]), m2t)
+		)
+		|> (\t -> if (isCheckboxColumn(i0)) {
+				selAll = make(false);
+				selPage =
+					fselect3(
+						fif(scrollEnabled, fselect(rowsCountB, FLift(\rc -> Pair(0, rc))), page),
+						sortingResult,
+						fsubselect(selectionEnabled.enabled, FLift(fmerge)),
+						\pg, sr, en ->
+							fold(
+								subrange(sr, pg.first, min(pg.second, length(sr))),
+								[], \acc, j ->
+									ifArrayPush(
+										acc, 
+										elementAt(en, j, true), 
+										j
+									)
+							)
+					);
+
+				makeChkbox(p, selAll,
+					if (selection.multiple)
+						fand(selection.enabled, fselect(selPage, FLift(\pg -> length(pg) > 0)))
+					else
+						const(false),
+					\ -> nextDistinct(selection.selected,
+						if (getValue(selAll))
+							concat(getValue(selection.selected), fgetValue(selPage)) |> uniq
+						else 
+							filter(getValue(selection.selected), \x -> !contains(fgetValue(selPage), x))
+					),
+					true
+				)
+				|> (\t2 ->
+					if (selection.multiple)
+						TConstruct(
+							[
+								make2Subscribe(selection.selected, selPage, \sel, pg ->
+									nextDistinct(
+										selAll,
+										length(pg) != 0 && length(sel) >= length(pg)
+											&& forall(pg, \j -> contains(sel, j))
+									)
+								)
+							],
+							t2
+						)
+					else
+						t2
+				)
+			} else t
+		)
+		|> alignCellContent(c.style, cellBox(i0, true))
+	});
 }
 
 MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, rowHeight : double, box : Tropic, crop : bool, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
