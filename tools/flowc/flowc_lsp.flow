@@ -215,10 +215,38 @@ fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 	}
 }
 
+fcLspFileConfig(def : CompilerConfig, file : string) -> CompilerConfig {
+	cwd_dir = strReplace(resolveRelativePath("."), "\\", "/");
+	file_dir = dirName(file);
+	conf_dir = findFlowConfigDir(file_dir);
+	if (conf_dir == "") def else {
+		switch (getCompilerConfig(file_dir)) {
+			Some(conf): {
+				if (conf_dir == "") def else {
+					CompilerConfig(conf with 
+						includes = uniq(concat(def.includes, map(conf.includes, \inc ->
+							if (isAbsolutePath(inc)) inc else {
+								if (inc == ".") {
+									conf_dir;
+								} else {
+									conf_dir + "/" + inc;
+								}
+							}
+						))),
+						config = setTree(combineConfigsOverride(conf.config, def.config), "working-dir", cwd_dir),
+						flowfile = file
+					);
+				}
+			}
+			Failed(msg): def;
+		}
+	}
+}
+
 fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentIdentifier(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textid): {
-			conf = CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textid.uri.path));
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textid.uri.path));
 			runConfig(
 				CompilerConfig(conf with config = setTree(conf.config, "print-outline", "1")),
 				call.env, 
@@ -226,7 +254,7 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
-						call.out_cb(fcLspErrorResponse(call.id, 1, fcFormLspError(out)));
+						call.out_cb(fcLspErrorResponse(call.id, 1, out));
 					} else {
 						symbols = fcLspParseSymbols(out);
 						call.out_cb(fcLspNormalResponse(call.id, JsonArray(symbols)));
@@ -325,7 +353,7 @@ fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
 fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			conf = CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textpos.textDocument.uri.path));
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textpos.textDocument.uri.path));
 			runConfig(
 				CompilerConfig(conf with
 					config = mergeTree(conf.config, 
@@ -341,14 +369,9 @@ fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
-						call.out_cb(fcLspErrorResponse(call.id, 1, fcFormLspError(out)));
+						call.out_cb(fcLspErrorResponse(call.id, 1, out));
 					} else {
 						locations = fcLspParseLocations(out);
-						iter(locations, \loc -> {
-							println("loc: " + json2string(loc));
-							fcServerLog("loc: " + json2string(loc), call.conf);
-							fcServerLog("out:\n" + out, call.conf);
-						});
 						call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
 					}
 					call.loop_cb();
@@ -365,7 +388,7 @@ fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			conf = CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textpos.textDocument.uri.path));
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textpos.textDocument.uri.path));
 			runConfig(
 				CompilerConfig(conf with
 					config = mergeTree(conf.config, 
@@ -381,7 +404,7 @@ fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
-						call.out_cb(fcLspErrorResponse(call.id, 1, fcFormLspError(out)));
+						call.out_cb(fcLspErrorResponse(call.id, 1, out));
 					} else {
 						locations = fcLspParseLocations(out);
 						call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
@@ -400,7 +423,7 @@ fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
 fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			conf = CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textpos.textDocument.uri.path));
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textpos.textDocument.uri.path));
 			runConfig(
 				CompilerConfig(conf with
 					config = mergeTree(conf.config, 
@@ -416,7 +439,7 @@ fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
-						call.out_cb(fcLspErrorResponse(call.id, 1, fcFormLspError(out)));
+						call.out_cb(fcLspErrorResponse(call.id, 1, out));
 					} else {
 						locations = fcLspParseLocations(out);
 						call.out_cb(fcLspNormalResponse(call.id, JsonArray(locations)));
@@ -435,7 +458,7 @@ fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			conf = CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textpos.textDocument.uri.path));
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textpos.textDocument.uri.path));
 			runConfig(
 				CompilerConfig(conf with
 					config = mergeTree(conf.config, 
@@ -451,7 +474,7 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
-						call.out_cb(fcLspErrorResponse(call.id, 1, fcFormLspError(out)));
+						call.out_cb(fcLspErrorResponse(call.id, 1, out));
 					} else {
 						hover = LspHover([LspMarkedString("", out)], None());
 						call.out_cb(fcLspNormalResponse(call.id, lspHover2Json(hover)));
@@ -470,7 +493,7 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 	switch (json2LspRename(call.params)) {
 		Some(rename): {
-			conf = CompilerConfig(call.conf with flowfile = fcCorrectUriPath(rename.textDocument.uri.path));
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(rename.textDocument.uri.path));
 			runConfig(
 				CompilerConfig(conf with
 					config = mergeTree(conf.config, 
@@ -487,7 +510,7 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
-						call.out_cb(fcLspErrorResponse(call.id, 1, fcFormLspError(out)));
+						call.out_cb(fcLspErrorResponse(call.id, 1, out));
 					} else {
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					}
@@ -524,15 +547,8 @@ fcCorrectUriPath(path : string) -> string {
 
 fcDetectLspError(out : string, conf : CompilerConfig) -> bool {
 	ret = strContains(out, "Error: ") || strContains(out, "Fail: ");
-	if (ret) {
-		fcServerLog("EROOR out:\n" + out, conf);
-	} else {
-		fcServerLog("NORM out:\n" + out, conf);
+	if (ret && isConfigParameterTrue(conf.config, "debug")) {
+		fcServerLog("ERROR: " + out, conf);
 	}
 	ret
-}
-
-fcFormLspError(out : string) -> string {
-	out
-	//strGlue(filter(strSplit(out, "\n"), \line -> !startsWith(line,  "Fail: ")), "\n");
 }
