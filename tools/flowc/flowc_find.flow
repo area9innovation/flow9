@@ -257,6 +257,7 @@ dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void
 findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string) -> void {
 	switch (fcLookupNameInCache(globEnv, name)) {
 		Some(symbol): {
+			//fcServerLog("name: " + name + " is chached");
 			switch (fcLoadFromCache(globEnv, symbol.module)) {
 				Some(loaded): {
 					fileinfo = loaded.module.fileinfo;
@@ -272,6 +273,7 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, n
 							}
 						}
 					}
+					//fcServerLog("module: " + symbol.module + " is chached");
 					switch (symbol.named) {
 						FiTypeStruct(__,__,__, start): printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
 						FiTypeUnion(__,__,__, start):  printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
@@ -280,12 +282,18 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, n
 						FiNativeDec(__,__,__,__,__, dec, def): proc_decl(dec, def);
 					}
 				}
-				None(): { 
+				None(): {
+					fcServerLog("module: " + symbol.module + " is not chached", config);
 					fcPrintln(file + ": Could not find " + name, config.threadId);
 				}
 			}
 		}
 		None(): {
+			fcServerLog("name: " + name + " is not chached", config);
+			fcPrintln("Complile file " + file + " please", config.threadId);
+			fcPrintln("Fail: findDefDecl for " + name, config.threadId);
+			deferred(\-> { parseAndTypecheckProgram(config, globEnv, config.flowfile); { } });
+			/*
 			errors = ref [];
 			tenv1 = FcTypeEnvProgram(
 				prepareInitialFlowcAcc(config),
@@ -296,7 +304,8 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, n
 			);
 			modules = preloadModules(config, globEnv, file, \err -> refArrayPush(errors, err)); // Skip error messages
 			tenv2 = findDefinitionInFcModules(tenv1, globEnv, modules, name, file);
-			iter(^errors, \err -> printFcError(tenv2.acc, globEnv, err))
+			iter(^errors, \err -> printFcError(tenv2.acc, globEnv, err));
+			*/
 		}
 	}
 }
@@ -395,6 +404,9 @@ findDefDeclInFlowcAcc(env : FcTypeEnvGlobal, prog : FlowcAcc, flowfile : string,
 
 printDefDeclLocation(env : FcTypeEnvGlobal, config : CompilerConfig, module : FiModule, symbol : string, declInfo : FcInfo, defiInfo : FcInfo, details : string) -> void {
 	typeMessage = nameAndFcType(symbol, either(^(defiInfo.type), either(^(declInfo.type), dummyType))) + details;
+	
+	fcServerLog("found defdecl: " + symbol + ": " + typeMessage, config);
+	
 	if (getConfigParameter(config.config, "find-definition") != "") {
 		printLocation(config, env, module.fileinfo, defiInfo.start, defiInfo.start + strlen(symbol), typeMessage);
 	} else if (getConfigParameter(config.config, "find-declaration") != "") {
@@ -608,6 +620,9 @@ fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 			}
 		}
 		None(): { 
+			fcPrintln("Complile file " + config.flowfile + " please", config.threadId);
+			fcPrintln("Fail: fcFastFindUses for " + name, config.threadId);
+			deferred(\-> { parseAndTypecheckProgram(config, globEnv, config.flowfile); { } });
 		}
 	}
 }
@@ -617,9 +632,25 @@ fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, l
 		Some(nature): {
 			switch (nature.cached) {
 				Some(cached): {
+					//fcServerLog("found symbol nature: " + fcSymbolNature2s(nature));
 					fcPrintln(fcCacheNamed2s(cached), config.threadId);
 				}
 				None(): {
+					/*fcServerLog("loading module " + getTargetModuleName(config) + " from cache ...");
+					switch (fcLoadFromCache(globEnv, getTargetModuleName(config))) {
+						Some(loaded): {
+							fcServerLog("looking for expression at line: " + i2s(line) + ", col: " + i2s(col) + " in " + getTargetModuleName(config));
+							switch (findFiExpInModuleAtLineCol(globEnv, loaded.module, line, col, true)) {
+								Some(e): fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()), config.threadId);
+								None(): {
+									fcServerLog("expression at line: " + i2s(line) + ", col: " + i2s(col) + " in " + getTargetModuleName(config) + " is NOT found");
+								}
+							}
+						}
+						None(): {
+							fcServerLog("module " + getTargetModuleName(config) + " is NOT found");
+						}
+					}*/
 					maybeApply(
 						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
 						\loaded ->
@@ -630,7 +661,12 @@ fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, l
 				}
 			}
 		}
-		None(): { }
+		None(): { 
+			fcServerLog("no symbol nature for " + name + " at line: " + i2s(line) + ", col: " + i2s(col) + " in " + getTargetModuleName(config), config);
+			fcPrintln("Complile file " + config.flowfile + " please", config.threadId);
+			fcPrintln("Fail: fcSymbolInfo for " + name, config.threadId);
+			deferred(\-> { parseAndTypecheckProgram(config, globEnv, config.flowfile); { } });
+		}
 	}
 }
 

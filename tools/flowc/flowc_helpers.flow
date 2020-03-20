@@ -38,10 +38,11 @@ export {
 	name2FimoduleInFlowcAcc(prog : FlowcAcc, flowfile : string, name : string) -> FiModule;
 
 	// Dump a message to a server log
-	fcServerLog(message : string) -> void;
+	fcServerLog(message : string, conf : CompilerConfig) -> void;
 	// Update a config for 'compile-expression' option
 	fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void>;
 
+	getNameByLineColFromFile(line : int, col : int, file : string) -> string;
 	getNameByLineCol(line : int, col : int, src : string) -> string;
 	getNameByPos(pos : int, src : string) -> string;
 	getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2>;
@@ -317,7 +318,7 @@ printFcError(acc : FlowcAcc, env : FcTypeEnvGlobal, error : FcError) -> void {
 			None():  fcfileinfo2fi(getFcFileInfo(p.file, acc.config));
 			Some(m): m.fileinfo;
 		}
-		printLocation(acc.config, env, fileinfo, p.start, -1, err);
+		printLocation(acc.config, env, fileinfo, p.start, -1, "Error: " + err);
 	});
 }
 
@@ -426,7 +427,8 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 }
 
 printLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileInfo, start : int, end : int, message : string) -> void {
-	fcPrintln(makeLocation(config, env, fileinfo, start, end) + " " + message, config.threadId)
+	location = makeLocation(config, env, fileinfo, start, end) + " " + message;
+	fcPrintln(location, config.threadId);
 }
 
 makeLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileInfo, start : int, end : int) -> string {
@@ -475,8 +477,19 @@ name2FimoduleInFlowcAcc(prog : FlowcAcc, flowfile : string, name : string) -> Fi
 	lookupTreeDef(prog.modules, modname, dummyFiModule)
 }
 
-fcServerLog(message : string) -> void {
-	writeLogMessage(message, "flowc_server.log", 128)
+fcServerLog(message : string, conf : CompilerConfig) -> void {
+	log_file = getConfigParameterDef(conf.config, "server-log", getFlowDir() + "/.log/flowc_server.log");
+	log_dir = fcDirName(log_file);
+	if (log_dir != "") {
+		err = ensureDirectoryExists(log_dir);
+		if (err != "") {
+			fcPrintln(err, conf.threadId);
+		}
+	}
+	if (log_file != "") {
+		log_size = s2i(getConfigParameterDef(conf.config, "server-log-size", "128"));
+		writeLogMessage(message, log_file, log_size);
+	}
 }
 
 fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
@@ -494,6 +507,10 @@ fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
 			{}
 		});
 	}
+}
+
+getNameByLineColFromFile(line : int, col : int, file : string) -> string {
+	getNameByLineCol(line, col, getFileContent(file));
 }
 
 getNameByLineCol(line : int, col : int, src : string) -> string {

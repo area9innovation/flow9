@@ -6,10 +6,10 @@ export {
 	indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]>;
 	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool>;
 	indexJavaGlobals(gctx : JavaGlobalContext) -> void;
-	generateJavaStructList(gctx : JavaGlobalContext) -> string;
+	generateJavaStructList(gctx : JavaGlobalContext) -> [string];
 	generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void;
 	generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void;
-	generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void;
+	generateJavaInitCode(gctx : JavaGlobalContext, struct_list : [string]) -> void;
 	javaList2String(lst : ref List<string>, endstr : string) -> string;
 	writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void;
 }
@@ -214,6 +214,15 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 	pushgstr = \s -> rlistPush(gctx.main_file_text, s);
 	pushistr = \s -> rlistPush(gctx.init_code, s);
 
+	// Statistics of method sizes.
+	max_code_lines = ref 0;
+	max_code_lines_size = ref 0;
+	max_code_lines_fun = ref "";
+	max_code_size = ref 0;
+	max_code_size_lines = ref 0;
+	max_code_size_fun = ref "";
+	config = gctx.program.config;
+
 	iter(gctx.csm_list, \csm -> {
 		module_path = pathCombine(output_dir, "Module_" + csm.id + ".java");
 		if (usePreviouslyGeneratedModules(gctx, csm.module, module_path)) {
@@ -264,6 +273,21 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 				switch (decl : FiDeclaration) {
 					FiFunctionDec(name, lambda, type, __, __): {
 						code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+						lines = strCountOf(code, "\n");
+						size = strlen(code);
+						if (lines > ^max_code_lines) {
+							max_code_lines := lines;
+							max_code_lines_size := size;
+							max_code_lines_fun := name;
+						}
+						if (size > ^max_code_size) {
+							max_code_size := size;
+							max_code_size_lines := lines;
+							max_code_size_fun := name;
+						}
+						if (size >= 65536 && isConfigParameterTrue(config.config, "java-method-size-stats")) {
+							fcPrintln("Function: " + name + " size: " + i2s(size) + " >= 65536", config.threadId);
+						}
 						pushstr(code);
 					}
 					FiGlobalVar(name, expr, type, __, __): {
@@ -298,12 +322,16 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 			writeJavaSource(gctx, module_path, javaList2String(module_text, "}\n"));
 		}
 	});
+	if (isConfigParameterTrue(config.config, "java-method-size-stats")) {
+		fcPrintln("Max code lines: " + i2s(^max_code_lines) + " at function " + ^max_code_lines_fun + ", size: " + i2s(^max_code_lines_size), config.threadId);
+		fcPrintln("Max code size: " + i2s(^max_code_size) + " at function " + ^max_code_size_fun + " , lines: " + i2s(^max_code_size_lines), config.threadId);
+	}
 }
 
-generateJavaStructList(gctx : JavaGlobalContext) -> string {
+generateJavaStructList(gctx : JavaGlobalContext) -> [string] {
 	pushstr = \s -> rlistPush(gctx.main_file_text, s);
 	pushstr("\tstatic final Object[] arr_empty = new Object[0];\n");
-	inits = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
+	foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
 		if (length(sdata.fields) == 0) {
 			pushstr("\tstatic final SingletonStruct str_" + sname + " = SingletonStruct.make(" + i2s(sdata.id) + ",\"" + sname + "\");\n");
 			arrayPush(acc, "\t\t\tstr_" + sname);
@@ -311,37 +339,96 @@ generateJavaStructList(gctx : JavaGlobalContext) -> string {
 			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
 		}
 	});
-	strGlue(inits, ",\n");
 }
 
-generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void {
+generateJavaInitCode(gctx : JavaGlobalContext, struct_list : [string]) -> void {
 	pushstr = \s -> rlistPush(gctx.main_file_text, s);
 
-	// constructor
-	inits = fold(gctx.csm_list, makeList(), \acc, csm -> {
-		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + ";\n");
-		Cons("\t\tm_" + csm.id + " = new Module_" + csm.id + "(this);\n", acc);
-	});
+	// Module initializers
+	iter(gctx.csm_list, \csm ->
+		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + " = new Module_" + csm.id + "(this);\n")
+	);
 
-	pushstr("\tpublic Main(String[] args) {\n");
-	pushstr("\t\tsuper(new Struct[] {\n");
-	pushstr(struct_list);
-	pushstr("\n\t\t}, args);\n");
-	pushstr(list2string(inits));
-	pushstr(javaList2String(gctx.ctor_code, ""));
-	pushstr("\t}\n");
+	if (length(struct_list) < 128) {
+		// All structs array
+		pushstr("\tstatic final private Struct[] struct_list = {\n");
+		pushstr(strGlue(struct_list, ",\n") + "\n");
+		pushstr("\t};\n");
+
+		// Constructor
+		pushstr("\tpublic Main(String[] args) {\n");
+		pushstr("\t\tsuper(struct_list, args);\n");
+		pushstr("\t}\n");
+	} else {
+		struct_list_chunks = splitByNumber(struct_list, 128);
+		// All structs array
+		iteri(struct_list_chunks, \i, chunk -> {
+			pushstr("\tstatic final private Struct[] struct_list_" + i2s(i) + " = {\n");
+			pushstr(strGlue(chunk, ",\n") + "\n");
+			pushstr("\t};\n");
+		});
+		pushstr("\tstatic private final Struct[] struct_list() {\n");
+		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
+		pushstr("\t\tint k = 0;\n");
+		iteri(struct_list_chunks, \i, __ ->
+			pushstr("\t\tfor (Struct s : struct_list_" + i2s(i) + ") structs[k++] = s;\n")
+		);
+		pushstr("\t\treturn structs;\n");
+		pushstr("\t}\n");
+		// Constructor
+		pushstr("\tpublic Main(String[] args) {\n");
+		pushstr("\t\tsuper(struct_list(), args);\n");
+		pushstr("\t}\n");
+	}
 
 	pushstr(javaList2String(gctx.wrapper_code, ""));
 
 	// init function
-	host_init = foldTree(gctx.uses_host, makeList(), \host, v, acc -> {
+	host_inits = list2array(foldTree(gctx.uses_host, makeList(), \host, v, acc -> {
 		pushstr("\t" + host + " h_" + host + ";\n");
 		Cons("\t\th_" + host + " = super.getNativeHost(" + host + ".class);\n", acc);
-	});
+	}));
 
-	pushstr("\tprivate void init() {\n");
-	pushstr(list2string(host_init));
-	pushstr(javaList2String(gctx.init_code, ""));
+	if (length(host_inits) < 32) {
+		pushstr("\tfinal private void init_hosts() {\n");
+		pushstr(concatStrings(host_inits));
+		pushstr("\t}\n");
+	} else {
+		host_init_chuncks = splitByNumber(host_inits, 32);
+		iteri(host_init_chuncks, \i, chunk -> {
+			pushstr("\tfinal private void init_hosts_" + i2s(i) + "() {\n");
+			pushstr(concatStrings(chunk));
+			pushstr("\t}\n");
+		});
+		pushstr("\tfinal private void init_hosts() {\n");
+		iteri(host_init_chuncks, \i, __ ->
+			pushstr("\t\tinit_hosts_" + i2s(i) + "();\n")
+		);
+		pushstr("\t}\n");
+	}
+
+	init_code = list2array(^(gctx.init_code));
+	if (length(init_code) < 32) {
+		pushstr("\tfinal private void init_code() {\n");
+		pushstr(concatStrings(init_code));
+		pushstr("\t}\n");
+	} else {
+		init_code_chuncks = splitByNumber(init_code, 32);
+		iteri(init_code_chuncks, \i, chunk -> {
+			pushstr("\tfinal private void init_code_" + i2s(i) + "() {\n");
+			pushstr(concatStrings(chunk));
+			pushstr("\t}\n");
+		});
+		pushstr("\tfinal private void init_code() {\n");
+		iteri(init_code_chuncks, \i, __ ->
+			pushstr("\t\tinit_code_" + i2s(i) + "();\n")
+		);
+		pushstr("\t}\n");
+	}
+
+	pushstr("\tfinal private void init() {\n");
+	pushstr("\t\tinit_hosts();\n");
+	pushstr("\t\tinit_code();\n");
 	pushstr("\t}\n");
 
 	// main function

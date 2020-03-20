@@ -9,7 +9,7 @@ choice.
 1.  [Environment configuration](#environment-configuration)
 2.  [Backend](#backend)
     - [MySQL](#mysql)
-    - [PHP5.6](#php5.6)
+    - [PHP7.2](#php7.2)
     - [Apache2](#apache2)
 3.  [Clone the repositories](#clone-the-repositories)
 4.  [Install `Haxe`](#install-haxe)
@@ -59,12 +59,12 @@ sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | s
 ```
 More details on mysql setup can be found in `flow9/doc/mysql.markdown`
 
-## PHP5.6
+## PHP7.2
 Set up PHP:
 ```bash
 sudo add-apt-repository ppa:ondrej/php
 sudo apt update
-sudo apt install -y php5.6 php5.6-mysql php-gettext php5.6-mbstring php-xdebug libapache2-mod-php5.6 php5.6-xml php5.6-zip php5.6-mcrypt
+sudo apt install -y php7.2 php7.2-mysql php-gettext php7.2-mbstring php-xdebug libapache2-mod-php7.2 php7.2-xml php7.2-zip php7.2-mcrypt
 sudo update-alternatives --config php
 ```
 ## Apache2

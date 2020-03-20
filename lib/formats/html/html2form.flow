@@ -55,6 +55,8 @@ export {
 		virtualScreenInfoM : Maybe<VirtualScreenInfo>
 	) -> Pair<Form, (Form) -> Form>;
 
+	getHtmlPictureMagnifyCustom(form : Form, popup : Form, zoomBtn : Form, closeBtn : Form) -> Pair<Form, (Form) -> Form>;
+
 	parseCssStyles(cs : HTMLStyle, cssStyles : string) -> HTMLStyle;
 }
 
@@ -642,6 +644,52 @@ getHtmlPictureMagnifyWithCloseButton(
 	} // else
 }
 
+getHtmlPictureMagnifyCustom(form : Form, popup : Form, zoomBtn : Form, closeBtn : Form) -> Pair<Form, (Form) -> Form> {
+
+	closeFullscreen = ref nop;
+
+	zobuttonWHB = makeWH();
+	zoomedFormWHB = makeWH();
+	availWidthB = make(0.0);
+
+	zoomedView = Cols([
+		Available2(zoomedFormWHB, resizeToUseWidthHeight(popup)),
+		Inspect([ISize(zobuttonWHB)], SimpleButton(
+			AdaptiveScale(closeBtn),
+			AdaptiveScale(closeBtn),
+			"",
+			\-> ^closeFullscreen()
+		))
+	])
+	|> Center
+	|> (\f -> Inspect([AvailableWidth(availWidthB)], f))
+	|> (\f -> Constructor(f, \ -> connectSelect2Distinctu(
+		zobuttonWHB,
+		availWidthB,
+		zoomedFormWHB,
+		\buttonWH, __ ->
+			WidthHeight(getStageWidth() - buttonWH.width, getStageHeight())
+	)));
+
+	postCropTransfrom = \f -> {
+		formSize = makeWH();
+		Group([
+			Inspect([ISize(formSize)], f),
+			Available2(
+				formSize,
+				Align2(1., 0., AbstractButton(
+					zoomBtn,
+					\ -> closeFullscreen := showModal(zoomedView),
+					if (mobile) [ButtonGhosted()] else []
+				))
+			)
+		])
+	};
+
+	resultForm = Disposer(postCropTransfrom(form), ^closeFullscreen);
+	Pair(resultForm, postCropTransfrom)
+}
+
 getDefaultFontStyle(special : [HTMLSpecial]) {
 	fold(special, [FontFamily("Roboto"), FontSize(18.0)], \acc, s -> {
 		switch (s : HTMLSpecial) {
@@ -1155,7 +1203,16 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				pictureUrl = getXmlAttribute(attrs, "src", "");
 				mediaCollector = extractStruct(special, HTMLMediaCollector(ref [])).acc;
 				mediaCollector := arrayPush(^mediaCollector, pictureUrl);
-				p2 = Picture(pictureUrl, [OnLoaded(\-> {nextDistinct(pictureLoadBeh, 1)}), OnLoadingError(\__ -> {nextDistinct(pictureLoadBeh, 1)})]);
+				p2 = Picture(pictureUrl, [
+					OnLoaded(\-> { 
+						nextDistinct(pictureLoadBeh, 1);
+						println("OnLoaded");
+					}), 
+					OnLoadingError(\__ -> {
+						nextDistinct(pictureLoadBeh, 1);
+						println("OnLoadingError");
+					})
+				]);
 
 				maxw = getXmlAttribute(attrs, "max-width", "");
 				p1 = if (strlen(maxw) > 0) shrinkToFit(s2d(maxw), 2000.0, p2) else p2;
@@ -1185,17 +1242,21 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					}
 				);
 
-				p_fixed = Select(pictureLoadBeh, \flag -> if (flag != 0) p_zoomed else {
-					recW = 40.0;
-					recH = 40.0;
+				p_fixed = 
 					Group([
-						Graphics(
-							concat(rectangle(0.0, 0.0, recW, recH), [LineTo(recW, recH), MoveTo(0.0, recH), LineTo(recW, 0.0)]),
-							[Stroke(red)]
-						),
-						Available2(const(WidthHeight(recW, recH)), Align2(0.5, 0.5, resizeToWidth(recW, Paragraph([TextFragment("Image\nloading...", [])], [CenterAlign()]))))
-					])
-				});
+						p_zoomed,
+						Select(pictureLoadBeh, \flag -> if (flag != 0) Empty() else {
+							recW = 40.0;
+							recH = 40.0;
+							Group([
+								Graphics(
+									concat(rectangle(0.0, 0.0, recW, recH), [LineTo(recW, recH), MoveTo(0.0, recH), LineTo(recW, 0.0)]),
+									[Stroke(red)]
+								),
+								Available2(const(WidthHeight(recW, recH)), Align2(0.5, 0.5, resizeToWidth(recW, Paragraph([TextFragment("Image\nloading...", [])], [CenterAlign()]))))
+							])
+						})
+					]);
 
 				p = if (strlen(p_caption) == 0) {
 						p_fixed
