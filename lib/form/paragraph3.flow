@@ -45,6 +45,20 @@ possible, and because rendering words in the same sprite improves the interword 
 */
 
 
+// How extra space of paragraph line will be spread:
+// start — added at start of first word;
+// justify — equally distributed between words or added at the end(!) of the only word or last line;
+// end=1-start-justify — what's left will be at end of the line.
+// We might store start and end, but even this variant seems symmetrical,
+// the used one is more useful for calculations.
+GeneralAlignment(
+	start : double,
+	justify : double
+);
+
+startAlign = GeneralAlignment(0.0, 0.0);
+endAlign = GeneralAlignment(1.0, 0.0);
+
 // Intermediately used typed as a union of ParagraphElement and WrapElement and ParaOneWord
 ParaElement ::= ParagraphElement, WrapElement, ParaAtomic;
 
@@ -73,6 +87,17 @@ ParaWord(
 	form: GhostForm,
 	interactivityIdM : Maybe<int>
 );
+
+toGeneralAlignment(rtl: bool, alignment: ParaLineAlignment) {
+	switch (alignment) {
+		StartAlign(): startAlign;
+		EndAlign(): endAlign;
+		LeftAlign(): if (rtl) endAlign else startAlign;
+		RightAlign(): if (rtl) startAlign else endAlign;
+		CenterAlign(): GeneralAlignment(0.5, 0.0);
+		Justify(): GeneralAlignment(0.0, 1.0);
+	}
+}
 
 makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement> {
 	mapList(fragments.elements, \elem -> general2WrapElement(elem, fragments.style))
@@ -112,7 +137,7 @@ renderParagraph(
 	widthManager : WigiParagraphWidthManager
 ) -> Form {
 
-	alignment : ParaLineAlignment = extractParaLineAlignment(s);
+	alignment : GeneralAlignment = toGeneralAlignment(rtl, extractParaLineAlignment(s));
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
 	needIndent = genIndent != 0.0;
 
@@ -143,6 +168,9 @@ renderParagraph(
 	words : [ParaWord] = map(list2array(glued), makeParaWord);
 
 	aw = make(0.0);
+	width = if (widthManager == dummyWigiParagraphWidthManager) make(100000.0) else widthManager.width;
+	next(width, 100000.0);
+	height = make(0.0);
 	update = make(0);
 	linesB : DynamicBehaviour<[ParaLine]> = make([]);
 
@@ -151,16 +179,18 @@ renderParagraph(
 		topLineBaseline, interactiveStyles, rtl, isParagraphMarked
 	);
 
+	maxW = renderParaLinesFn(
+		reflowParaWords(words, 100000.0, indent, isParagraphMarked),
+		100000.0
+	).second;
+
 	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager) {
-		Select(linesB, \lines -> renderParaLinesFn(lines, getValue(aw)).first);
-	} else if (widthManager.infoOnly) {
-		// in this non-TightWidth case we just inform WidthManager about our width
-		// we will not take story width into account in this case, but use availableWidth as usual
+	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager || widthManager.infoOnly) {
 		Select(linesB, \lines -> {
 			rendered = renderParaLinesFn(lines, getValue(aw));
-			nextDistinct(widthManager.width, rendered.second);
-			rendered.first
+			nextDistinct(width, rendered.second);
+			nextDistinct(height, rendered.third);
+			rendered.first;
 		});
 	} else {
 		Select2(linesB, widthManager.storyWidth, \lines, storyWidth -> {
@@ -170,7 +200,10 @@ renderParagraph(
 			);
 			// we have to notify story about changes in our width.
 			// it could alter widthManager.storyWidth if we are new winner so we have to defer
-			deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, rendered.second));
+			deferUntilNextFrameRendered(\->{
+				nextDistinct(width, rendered.second);
+				nextDistinct(height, rendered.third);
+			});
 			rendered.first
 		});
 	}
@@ -197,20 +230,31 @@ renderParagraph(
 		})
 	));
 
+	size = make(WidthHeight(maxW, 0.0));
 	Constructor(
-		Inspect(
-			[AvailableWidth2(aw)],
-			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
-				Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
-			} else {
-				contentGroup;
-			}
-		),
+		{
+			inspector = Inspect(
+				[AvailableWidth(aw)], 
+				if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
+					Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
+				} else {
+					contentGroup;
+				}
+			)
+			// Available2, Size2 — neither works, extra space allocated,
+			// invalid behaviour, visible only when other fillers present in TCols.
+			/*Select(aw, \awv -> {
+				if (awv < maxW) inspector else Size2(size, inspector);
+			})*/
+			inspector;
+		},
 		\ -> {
 			updateFn = \wi-> {
 				// Ignore negative widths
 				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
-				w = if (isSingleLine) 100000.0 else max(0.0, wi);
+				w = if (isSingleLine) 100000.0 else max(0.0, min(maxW, wi));
+				nextDistinct(size, WidthHeight(w, 0.0));
+				next(size, WidthHeight(w+1.5, getValue(height)));
 				newLines = reflowParaWords(words, w, indent, isParagraphMarked);
 				nextDistinct(linesCountB, length(newLines));
 
@@ -412,7 +456,7 @@ reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : do
 	else text;
 }
 
-geParaWordWidth(word : ParaWord) -> double {
+getParaWordWidth(word : ParaWord) -> double {
 	getValue(word.metrics).width;
 };
 
@@ -499,8 +543,8 @@ reflowParaWords2(
 				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
 			}
 			LinePart(f, p, e): {
-				width = geParaWordWidth(word);
-				nextWordWidth = if (rest != []) geParaWordWidth(rest[0]) else 0.0;
+				width = getParaWordWidth(word);
+				nextWordWidth = if (rest != []) getParaWordWidth(rest[0]) else 0.0;
 
 				if (currentWords == []) {
 					// If it is the first item on the line
@@ -519,7 +563,7 @@ reflowParaWords2(
 			Space(s): {
 				// LSTSBU-454
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
-				width = geParaWordWidth(word);
+				width = getParaWordWidth(word);
 				if (width < remaining) {
 					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent, false);
 				} else {
@@ -555,7 +599,7 @@ reflowParaWords2(
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
 								if (keepFormTogetherOrWithMark(f, i) || ^width == 0.0) {
-									width := ^width + geParaWordWidth(_word);
+									width := ^width + getParaWordWidth(_word);
 									false;
 								} else {
 									true
@@ -564,7 +608,7 @@ reflowParaWords2(
 						};
 					});
 				} else {
-					width := geParaWordWidth(word);
+					width := getParaWordWidth(word);
 					1;
 				};
 
@@ -630,160 +674,155 @@ keepFormTogether(form : Form) -> bool {
 	};
 }
 
-ParaLineAcc(lines : List<Form>, width : double, y : double, baseline : double);
+ParaLineAcc(lines : List<Form>, y : double, baseline : double);
 
 // renders lines and returns resulting forms along with their tight width at the rendering time
 renderParaLines(
 	availableWidth : double,
 	lines : [ParaLine],
 	tightWidth : bool,
-	alignment: ParaLineAlignment,
+	alignment: GeneralAlignment,
 	interlineSpacing : double,
 	topLineBaseline : bool,
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
 	isMarked : bool
-) -> Pair<Form, double> {
+) -> Triple<Form, double, double> {
 	lasti = length(lines) - 1;
 
-	a : ParaLineAcc = foldi(lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
-		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
-		lastLine = i == lasti;
+	// TODO: If the line ends with NewLine (which we do not track here), we should consider it a last line and not justify.
+	getLineAlignment = \i -> if (i == lasti)
 		// On the last line, we do not justify.
-		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
-		lineAlignment =
-			if (alignment == Justify() && lastLine) {
-				StartAlign()
-			} else {
-				alignment;
-			}
+		// Also if the line is single with TightWidth, any alignment is equal to StartAlign.
+		GeneralAlignment(alignment with justify=0.0)
+	else
+		alignment;
+
+	optzds = mapi(lines, \i, line -> getOptimizedLine(line.words, getLineAlignment(i)));
+	mtcs = mapi(optzds, \i, optzd -> measureLine(optzd, lines[i].indent));
+	longestLineWidth = fold(mtcs, 0.0, \acc, mtc -> max(acc, mtc.width));
+	width = if (tightWidth) longestLineWidth else max(availableWidth, longestLineWidth);
+	a : ParaLineAcc = foldi(optzds, ParaLineAcc(EmptyList(), 0.0, 0.0), \i : int, acc : ParaLineAcc, optzd : [OptimizedLineElement] -> {
 		f = RenderLine(
-			acc.y, line.words, availableWidth, tightWidth,
-			lineAlignment, line.indent,
+			acc.y, optzd, width, mtcs[i],
+			getLineAlignment(i), lines[i].indent,
 			i, styleTree, rtl, isMarked
 		);
-		nwidth = max(acc.width, f.width);
-		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
-		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
-		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
-		nbaseline = f.baseline;
+		nheight = acc.y + mtcs[i].height + if (i==lasti) 0.0 else interlineSpacing;
 		ParaLineAcc(
-			Cons(Size2(const(zeroWH), f.form), acc.lines),
-			nwidth,
+			Cons(Size2(const(zeroWH), f), acc.lines),
 			nheight,
-			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
+			if (i == 0 || !topLineBaseline) acc.y+mtcs[i].asc else acc.baseline
 		);
 	});
 
-	Pair(
-		Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) a.width else max(availableWidth, a.width), a.y)),
-			Group(list2array(a.lines))
-		)),
-		a.width
+	Triple(
+		Baseline(
+			const(a.baseline),
+			Size2(
+				const(WidthHeight(width, a.y)),
+				Group(list2array(a.lines))
+			),
+		),
+		longestLineWidth, a.y
 	);
 }
 
-ParaLineResult(form : Form, width : double, height : double, baseline : double);
+ParaLineMetrics(width : double, height : double, asc : double);
 OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
 
-getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [OptimizedLineElement]{
-	if (!isBiDiEnabled() && alignment != Justify()) {
+getOptimizedLine(words : [ParaWord], alignment : GeneralAlignment) -> [OptimizedLineElement]{
+	if (!isBiDiEnabled() && equalDoubles(alignment.justify, 0.0)) {
 		optimizeLine(words);
 	} else {
 		map(words, \w -> OptimizedLineElement(w.form, w.metrics, w.interactivityIdM));
 	};
 }
 
+measureLine(words : [OptimizedLineElement], lineIndent: double) -> ParaLineMetrics {
+	metrics = map(words, \p -> getValue(p.metrics));
+	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
+	ParaLineMetrics(
+		lineIndent + fold(metrics, 0.0, \ac, m -> ac + m.width), // this is real width of the line at the moment.
+		fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + m.height - m.baseline)),
+		lineAsc
+	)
+}
+
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
 // Send out the result, width, height
 RenderLine(
 	y : double,
-	words : [ParaWord],
+	optimizedLine : [OptimizedLineElement],
 	width : double,
-	tightWidth : bool,
-	alignment : ParaLineAlignment,
+	lineMetrics: ParaLineMetrics,
+	alignment : GeneralAlignment,
 	lineIndent: double,
 	lineNumber : int,
 	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
 	isMarked
-) -> ParaLineResult {
-	optimizedLine = getOptimizedLine(words, alignment);
-	metrics = map(optimizedLine, \p -> getValue(p.metrics));
-	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + m.width); // this is real width of the line at the moment.
-	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
-	lineHeight = fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + m.height - m.baseline));
-
+) -> Form {
 	// Alignment offset
-	startOffset = if (rtl) max(width - lineWidth, 0.) else 0.;
-	endOffset = if (rtl) 0. else max(0., width - lineWidth);
-	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
-		LeftAlign(): if (rtl) endOffset else startOffset;
-		RightAlign(): if (rtl) startOffset else endOffset;
-		CenterAlign(): max(0.0, (width - lineWidth) / 2.0);
-		StartAlign(): startOffset;
-		EndAlign(): endOffset;
-		Justify(): 0.0;
-	} + (if (rtl) 0. else lineIndent);
+	dWidth = max(0.0, width - lineMetrics.width);
+	startOffset = dWidth*alignment.start + lineIndent;
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && length(optimizedLine) > 1) {
-		nwords = length(optimizedLine);
-		remaining = (width - lineWidth);
-		min(10.0, remaining / i2d(nwords - 1));
-	} else 0.0;
-
+	nwords = length(optimizedLine);
+	interWord = if (nwords <= 1) 0.0 else
+		min(10.0, dWidth * alignment.justify / i2d(nwords - 1));
+	x = ref if (rtl) dWidth-startOffset-interWord*i2d(nwords-1) else startOffset;
+	
 	// The width and the individual forms
 	lo : [Form] = filtermapi(optimizedLine, \i : int, elem : OptimizedLineElement -> {
-		f = elem.f;
 		m = getValue(elem.metrics);
-		dy = max(lineAsc - m.baseline, 0.0);
+		dy = max(lineMetrics.asc - m.baseline, 0.0);
 		applyStylesAndOffset = \fm : Form -> eitherMap(
 			elem.interactivityIdM,
 			\id -> applyIntStylesAndHighlighting(
 				fm,
 				lookupTreeDef(interactiveStyles, id, []),
-				^alignmentOffset,
+				^x,
 				y,
 				dy,
 				m.width,
-				lineHeight,
+				lineMetrics.height,
 				interWord
 			),
-			Translate(const(^alignmentOffset), const(y + dy), fm)
+			Translate(const(^x), const(y + dy), fm)
 		);
 
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 
-		r = switch (f : GhostForm) {
+		r = switch (elem.f : GhostForm) {
 			Empty(): None();
 			Ghost(xc, yc, fm): {
-				nextDistinct(xc, ^alignmentOffset);
+				nextDistinct(xc, ^x);
 				nextDistinct(yc, y + dy);
 				Some(applyStylesAndOffset(Empty()));
 			}
 			InspectGhost(inspector, fm): {
-				nextDistinct(inspector.x, ^alignmentOffset);
+				nextDistinct(inspector.x, ^x);
 				nextDistinct(inspector.y, y + dy);
 				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, lineHeight);
+				nextDistinct(inspector.lineHeight, lineMetrics.height);
 				nextDistinct(inspector.lineNumber, lineNumber);
 				Some(applyStylesAndOffset(Empty()));
 			}
 			CoordinateInspectElement(inspector, fm): {
 				fo = applyStylesAndOffset(fm);
-				nextDistinct(inspector.x, ^alignmentOffset);
+				nextDistinct(inspector.x, ^x);
 				nextDistinct(inspector.y, y + dy);
 				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, lineHeight);
+				nextDistinct(inspector.lineHeight, lineMetrics.height);
 				nextDistinct(inspector.lineNumber, lineNumber);
 				Some(fo);
 			}
-			default: Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
+			default: Some(applyStylesAndOffset(cast(elem.f : GhostForm -> Form)))
 		}
-		alignmentOffset := ^alignmentOffset + if (m.width > 0.0) m.width + justifyOffset else 0.0;
+		x := ^x + if (m.width > 0.0) m.width + justifyOffset else 0.0;
 		r;
 	});
-	ParaLineResult(Group(lo), lineWidth, lineHeight, y + lineAsc);
+	Group(lo);
 }
 
 applyIntStylesAndHighlighting(
