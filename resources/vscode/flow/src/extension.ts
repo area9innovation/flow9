@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
-	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic, NotificationType0, RevealOutputChannelOn
+    LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RevealOutputChannelOn,
 } from 'vscode-languageclient';
 import * as tools from "./tools";
 import * as updater from "./updater";
@@ -324,13 +324,25 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         let matcher = getMatcher(command.matcher);
         flowChannel.appendLine("Current directory: " + rootPath);
         flowChannel.appendLine("Running " + command.cmd + " " + command.args.join(" "));
-        tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
-            if (counter == current) {// if there is a newer job, ignoring ones pending
-                flowChannel.append(s.toString());
-                diagnostics = diagnostics.concat(parseAndCollectDiagnostics(s.toString(), matcher));
-                flowDiagnosticCollection.set(diagnostics); // update upon every line
-            }
-        }, childProcesses);
+        if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+            client.sendRequest("workspace/executeCommand", {
+                    command : "compile", 
+                    arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath]
+                }
+            ).then(
+                (out : any) => {
+                     flowChannel.appendLine(out);
+                }
+            );
+        } else {
+            tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
+                if (counter == current) {// if there is a newer job, ignoring ones pending
+                    flowChannel.append(s.toString());
+                    diagnostics = diagnostics.concat(parseAndCollectDiagnostics(s.toString(), matcher));
+                    flowDiagnosticCollection.set(diagnostics); // update upon every line
+                }
+            }, childProcesses);
+        }
     });
 }
 
