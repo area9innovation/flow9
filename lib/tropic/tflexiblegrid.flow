@@ -2,11 +2,13 @@ import tropic/selecttarray;
 import tropic/tropic_gui;
 import ui/animate/teasing;
 import form/gui;
+import tropic/tropic2form;
 
 export {
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
 		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, TCropView,
-			CenterAlign, EndAlign, TAnimation, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector;
+			CenterAlign, EndAlign, TAnimation, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector,
+			TFillersSupport;
 
 			TWrapNewRow(); // New row should be below all the elements in the previous one
 			TWrapNewColumn(); // New column should be to the right of all the elements in the previous one
@@ -16,12 +18,36 @@ export {
 			TAnimation(deltaTimer : LazyDeltaTimer); // Enables animation
 			TOrder(order : Transform<[int]>); // Set items order
 			TLockWidth(lock : bool); // If true size only grows in height not in width (false for TVertical and true for horizontal grid)
-			TSameSize(); // Some optimization for performance boosting in case of same sized items 
+			TSameSize(); // Some optimization for performance boosting in case of same sized items
+			TFillersSupport(); // Allow items size to grow by available, (ignores TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, TLockWidth, alignment)
 
 			TFlexibleGridContentSizeInspector(wh : DynamicBehaviour<WidthHeight>);
 }
 
-TFlexibleGridItem(t : Tropic, tr : DynamicBehaviour<Point>, wh : DynamicBehaviour<Maybe<WidthHeight>>);
+TFlexibleGridItem(
+	id : int,
+	t : Tropic,
+	tr : DynamicBehaviour<Transform<Point>>,
+	wh : DynamicBehaviour<WidthHeight>,
+	minWH : DynamicBehaviour<WidthHeight>,
+	maxWH : DynamicBehaviour<WidthHeight>,
+	fillers : Transform<Point>,
+	av : DynamicBehaviour<Transform<WidthHeight>>
+);
+
+TFlexibleGridConstantItem(
+	id : int,
+	t : Tropic,
+	tr : DynamicBehaviour<Transform<Point>>,
+	wh : Transform<WidthHeight>,
+	minWH : Transform<WidthHeight>,
+	maxWH : Transform<WidthHeight>,
+	fillers : Transform<Point>,
+	av : DynamicBehaviour<Transform<WidthHeight>>
+);
+
+emptyTFlexibleGridItem = TFlexibleGridItem(-1, TEmpty(), make(const(zeroPoint)), makeWH(), makeWH(), makeWH(), const(zeroPoint), make(const(zeroWH)));
+flexibleGridItemId = ref 0;
 
 TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic {
 	wrapNewRow = contains(style, TWrapNewRow());
@@ -34,58 +60,50 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	maxRows = maybeMap(tryExtractStruct(style, TMaxRows(0)), \mr -> mr.rows);
 	lockWidth = extractStruct(style, TLockWidth(!verticalGrid)).lock;
 	contentSizeInspector = tryExtractStruct(style, TFlexibleGridContentSizeInspector(makeWH()));
+	fillersSupport = contains(style, TFillersSupport());
 
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
 	isSameSize = contains(style, TSameSize());
 
-	sameSizeWH : DynamicBehaviour<Maybe<WidthHeight>> = make(None());
+	sameSizeWH : DynamicBehaviour<WidthHeight> = make(zeroWH);
+	sameSizeMinWH : DynamicBehaviour<WidthHeight> = make(zeroWH);
+	sameSizeMaxWH : DynamicBehaviour<WidthHeight> = make(zeroWH);
 	contentBaseline = make(0.);
 	stageSizeB = makeWH();
 
 	itemsB =
-		fmap(items, \it -> TFlexibleGridItem(it, make(zeroPoint),
-			if (isSameSize) sameSizeWH else make(None())
-		));
+		fmap(items, \it -> {
+			flexibleGridItemId := ^flexibleGridItemId + 1;
+
+			TFlexibleGridItem(
+				^flexibleGridItemId,
+				it,
+				make(const(zeroPoint)),
+				if (isSameSize) sameSizeWH else make(zeroWH),
+				if (isSameSize) sameSizeMinWH else make(zeroWH),
+				if (isSameSize) sameSizeMaxWH else make(zeroWH),
+				const(Point(1.0, 0.0)),
+				make(const(zeroWH))
+			)
+		});
 
 	contentSize =
-		if (isSameSize)
-			fselect(
-				fsubmap(itemsB, \it : TFlexibleGridItem -> fpair(it.tr, it.wh)),
-				FLift(\pairs : [Pair<Point, Maybe<WidthHeight>>] -> {
-					fold(pairs, Pair(zeroWH, zeroWH), \acc : Pair, v ->
-						Pair(
-							WidthHeight(
-								max(acc.first.width, either(v.second, WidthHeight(0., 0.)).width + v.first.x),
-								max(acc.first.height, either(v.second, WidthHeight(0., 0.)).height + v.first.y)
-							),
-							WidthHeight(
-								max(acc.second.width, either(v.second, WidthHeight(0., 0.)).width),
-								max(acc.second.height, either(v.second, WidthHeight(0., 0.)).height)
-							)
+		fselect(
+			fsubmap(itemsB, \it : TFlexibleGridItem -> fpair(fsubselect(it.tr, idfn |> FLift), it.wh)),
+			FLift(\pairs : [Pair<Point, WidthHeight>] -> {
+				fold(pairs, Pair(zeroWH, zeroWH), \acc : Pair, v ->
+					Pair(
+						WidthHeight(
+							max(acc.first.width, v.second.width + v.first.x),
+							max(acc.first.height, v.second.height + v.first.y)
+						),
+						WidthHeight(
+							max(acc.second.width, v.second.width),
+							max(acc.second.height, v.second.height)
 						)
 					)
-				})
-			)
-		else fselect2(
-			fsubmap(itemsB, \it -> it.wh),
-			fsubmap(itemsB, \it -> it.tr),
-			FLift2(\wh, tr ->
-				foldi(wh, Pair(zeroWH, zeroWH), \i, acc : Pair, v ->
-					if (i < length(tr))
-						Pair(
-							WidthHeight(
-								max(acc.first.width, either(v, WidthHeight(0., 0.)).width + tr[i].x),
-								max(acc.first.height, either(v, WidthHeight(0., 0.)).height + tr[i].y)
-							),
-							WidthHeight(
-								max(acc.second.width, either(v, WidthHeight(0., 0.)).width),
-								max(acc.second.height, either(v, WidthHeight(0., 0.)).height)
-							)
-						)
-					else
-						acc
 				)
-			)
+			})
 		);
 
 	parameters =
@@ -98,25 +116,64 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			lockWidth
 		);
 
-	item2Tropic = \item : TFlexibleGridItem ->
-		eitherMap(
-			animation,
-			\a -> {
-				pos = make(getValue(item.tr));
-
-				TEasingAnimation(
-					a.deltaTimer,
-					0.2,
-					CubicBezierEasing(0.4, 0.0, 0.2, 1.0),
-					item.tr,
-					\tr -> Some(Pair(getValue(pos), tr)),
-					\__ -> {},
-					\tr, p -> nextDistinct(pos, Point(lerp(tr.first.x, tr.second.x, p), lerp(tr.first.y, tr.second.y, p))),
-					TTranslate(pos, item.t)
+	item2Tropic = \item : TFlexibleGridItem, isFirst : Transform<bool> ->
+		TIfLazy(isFirst, \b -> {
+			TInspect(
+				if (b) {
+					if (fillersSupport)
+						[ISize(item.wh), IMinSize(item.minWH), IMaxSize(item.maxWH), IBaseline(contentBaseline)]
+					else
+						[ISize(item.wh), IBaseline(contentBaseline)];
+				} else if (isSameSize) {
+					[];
+				} else {
+					if (fillersSupport)
+						[ISize(item.wh), IMinSize(item.minWH), IMaxSize(item.maxWH)]
+					else
+						[ISize(item.wh)];
+				},
+				item.t
+			)
+			|> (\f ->
+				if (isSameSize) {
+					visible = make(false);
+					TRenderable(visible, TShow(fstall(visible, 1), f));
+				} else {
+					f;
+				}
+			)
+		})
+		|> (\f ->
+			if (fillersSupport)
+				TAvailable(
+					f,
+					TSized(fsubselect(item.av, idfn |> FLift))
 				)
-				|> TOnConstruct(\ -> nextDistinct(pos, getValue(item.tr)))
-			},
-			TTranslate(item.tr, item.t)
+			else
+				f
+		)
+		|> (\tropic ->
+			eitherMap(
+				animation,
+				\a -> {
+					pos = make(zeroPoint);
+					trigger = ffuse(fsubselect(item.tr, idfn |> FLift));
+
+					TEasingAnimation(
+						a.deltaTimer,
+						0.2,
+						CubicBezierEasing(0.4, 0.0, 0.2, 1.0),
+						trigger.first,
+						\tr -> if (getValue(pos) != tr) Some(Pair(getValue(pos), tr)) else None(),
+						\tr -> nextDistinct(pos, tr.second),
+						\tr, p -> nextDistinct(pos, Point(lerp(tr.first.x, tr.second.x, p), lerp(tr.first.y, tr.second.y, p))),
+						TTranslate(pos, tropic)
+					)
+					|> (\f -> TConstruct(trigger.second, f))
+					|> TOnConstruct(\ -> nextDistinct(pos, fgetValue(getValue(item.tr))))
+				},
+				TTranslate(fsubselect(item.tr, idfn |> FLift), tropic)
+			)
 		);
 
 	form2TAcc = \form, disposers ->
@@ -139,64 +196,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			disposers
 		);
 
-	SelectTGroupFixed(itemsB, \idx, __, item ->
-		TransformTAcc2(\t2a -> {
-			visible = make(false);
-			b1 =
-				item2Tropic(item)
-				|> (\t -> if (isSameSize) TShow(fstall(visible, 1), t) else t)
-				|> t2a;
-
-			form =
-				if (isSameSize)
-					FGroup2(
-						FTranslate(fpointX(item.tr), fpointY(item.tr), FRenderable(visible, FAlpha(const(0.01), 
-							FGraphics(
-								fselect(sameSizeWH, FLift(\sswh -> eitherMap(sswh, \wh ->
-									[GRect(0.0, 0.0, wh.width, wh.height)],
-									[]
-								))),
-								const([Fill(white)])
-							)
-						))),
-						b1.form,
-						false
-					)
-				else 
-					b1.form;
-
-			disposers =
-				concat(
-					b1.disposers,
-					if (isSameSize) {
-						[
-							makeSubscribeUns(feq(idx, 0), \b -> {
-								if (b) [
-									make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
-										if (_wd != 0. && _hgt != 0.) nextDistinct(sameSizeWH, Some(WidthHeight(_wd, _hgt)))
-									)(),
-									fconnect(b1.metrics.baseline, contentBaseline)
-								] else []
-							})()
-						]
-					} else {
-						[
-							make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
-								nextDistinct(item.wh, Some(WidthHeight(_wd, _hgt)))
-							)(),
-							makeSubscribeUns(feq(idx, 0), \b -> {
-								if (b)
-									[fconnect(b1.metrics.baseline, contentBaseline)]
-								else
-									[]
-							})()
-						]
-					}
-				);
-
-			form2TAcc(form, disposers)
-		})
-	)
+	SelectTGroupFixed(itemsB, \idx, __, item -> item2Tropic(item, feq(idx, 0)))
 	|> (\f ->
 		TransformTAcc2(\t2a -> {
 				b1 = f |> t2a;
@@ -248,53 +248,73 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 					f
 			}
 	)
-	|> (\f -> {
-		itemTranslations =
-			fselect2(
-				fsubmap(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB), \it -> it.wh),
-				ftransistor(gridEnabled, stageSizeB),
-				FLift2(\itemsSizes, stageSize -> {
-					if (!contains(itemsSizes, None())) {
-						blocks = map(itemsSizes, \sz -> either(sz, WidthHeight(0., 0.)) |> (\wh -> BFBlock(wh.width, wh.height)));
-						bfFit(stageSize, blocks, parameters)
-					} else {
-						[];
-					}
-				})
-			)
-			|> (\tr -> eitherMap(order, \or -> fdeorder(tr, or.order), tr));
-
-		TConstruct(
-			if (isSameSize) {
-				applyTranslationsTrigger = make(false);
+	|> (\f ->
+		if (fillersSupport) {
+			TConstruct(
 				[
-					makeSubscribe(itemTranslations, \__ -> reverseBehaviour(applyTranslationsTrigger)),
-					makeSubscribe(itemsB, \__ -> reverseBehaviour(applyTranslationsTrigger)),
-
-					makeSubscribe(applyTranslationsTrigger, \__ -> {
-						gridItems = fgetValue(itemsB);
-						iteri(fgetValue(itemTranslations), \i, p ->
-							if (length(gridItems) > i) {
-								nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
-							}
-						);
-					})
-				]
-			} else [
-				make2Subscribe(
-					itemTranslations,
-					itemsB,
-					\tr, gridItems -> 
-						iteri(tr, \i, p ->
-							if (length(gridItems) > i) {
-								nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
-							}
+					if (isSameSize)
+						make3Subscribe2(
+							fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB)),
+							sameSizeMinWH,
+							ftransistor(gridEnabled, stageSizeB),
+							\itms, __, stageSize -> fitTFlexibleGrid(itms, stageSize.width)
 						)
+					else
+						make2Subscribe2(
+							fsubmap(
+								fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB)),
+								\it -> fpair(const(it), it.minWH)
+							),
+							ftransistor(gridEnabled, stageSizeB),
+							\itms, stageSize -> fitTFlexibleGrid(map(itms, firstOfPair), stageSize.width)
+						)
+				],
+				f
+			)
+		} else {
+			itemTranslations =
+				fselect2(
+					fsubmap(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB), \it -> it.wh),
+					ftransistor(gridEnabled, stageSizeB),
+					FLift2(\itemsSizes, stageSize -> {
+						blocks = map(itemsSizes, \wh -> BFBlock(wh.width, wh.height));
+						bfFit(stageSize, blocks, parameters);
+					})
 				)
-			],
-			f
-		)
-	})
+				|> (\tr -> eitherMap(order, \or -> fdeorder(tr, or.order), tr));
+
+			TConstruct(
+				if (isSameSize) {
+					applyTranslationsTrigger = make(false);
+					[
+						makeSubscribe(itemTranslations, \__ -> reverseBehaviour(applyTranslationsTrigger)),
+						makeSubscribe(itemsB, \__ -> reverseBehaviour(applyTranslationsTrigger)),
+
+						makeSubscribe(applyTranslationsTrigger, \__ -> {
+							gridItems = fgetValue(itemsB);
+							iteri(fgetValue(itemTranslations), \i, p ->
+								if (length(gridItems) > i) {
+									nextDistinct(gridItems[i].tr, const(either(p, Point(0., 0.))));
+								}
+							);
+						})
+					]
+				} else [
+					make2Subscribe(
+						itemTranslations,
+						itemsB,
+						\tr, gridItems ->
+							iteri(tr, \i, p ->
+								if (length(gridItems) > i) {
+									nextDistinct(gridItems[i].tr, const(either(p, Point(0., 0.))));
+								}
+							)
+					)
+				],
+				f
+			)
+		}
+	)
 	|> (\f -> eitherMap(contentSizeInspector, \inspector ->
 			TConstruct([
 				makeSubscribe2(contentSize, \cz -> nextDistinct(inspector.wh, cz.first))
@@ -321,6 +341,108 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			)
 		}
 	)
+}
+
+foldBinary(a : [?], fn : (e1 : ?, e2 : ?) -> ?) -> ? {
+	if (length(a) == 2) {
+		fn(a[0], a[1]);
+	} else if (length(a) < 2) {
+		a[0]
+	} else {
+		fn(foldBinary(subrange(a, 0, length(a) / 2), fn), foldBinary(subrange(a, length(a) / 2, length(a) - length(a) / 2), fn));
+	}
+}
+
+TFlexibleGridItem2TFlexibleGridConstantItem(t : TFlexibleGridItem) -> TFlexibleGridConstantItem {
+	TFlexibleGridConstantItem(
+		t.id,
+		t.t,
+		t.tr,
+		t.wh,
+		t.minWH,
+		t.maxWH,
+		t.fillers,
+		t.av
+	)
+}
+
+mergeTFlexibleGridConstantItems(t1 : TFlexibleGridConstantItem, t2 : TFlexibleGridConstantItem) -> TFlexibleGridConstantItem {
+	tr = make(const(zeroPoint));
+	av = make(const(zeroWH));
+
+	da = distributeAsks(
+		fpointX(t1.fillers),
+		fpointX(t2.fillers),
+		fwidth(t1.minWH),
+		fwidth(t2.minWH),
+		fwidth(t1.maxWH),
+		fwidth(t2.maxWH),
+		fwidth(fsubselect(av, idfn |> FLift)),
+		const(true),
+		const(true)
+	);
+
+	uns = ref nop;
+	uns := subscribe2(tr, \__ -> {
+		next(t1.av, fwh(da.first, fheight(t1.minWH)));
+		next(t2.av, fwh(da.second, fheight(t2.minWH)));
+
+		next(t1.tr, fsubselect(tr, idfn |> FLift));
+		next(t2.tr, fsubselect(tr, FLift(\p -> fpoint(faddition(fpointX(p), da.first), fpointY(p)))));
+
+		^uns();
+		uns := nop;
+	});
+
+	flexibleGridItemId := ^flexibleGridItemId + 1;
+
+	TFlexibleGridConstantItem(
+		^flexibleGridItemId,
+		TEmpty(),
+		tr,
+		fwh(
+			faddition(fwidth(t1.wh), fwidth(t2.wh)),
+			fmax(fheight(t1.wh), fheight(t2.wh))
+		),
+		fwh(
+			faddition(fwidth(t1.minWH), fwidth(t2.minWH)),
+			fmax(fheight(t1.minWH), fheight(t2.minWH))
+		),
+		fwh(
+			faddition(fwidth(t1.maxWH), fwidth(t2.maxWH)),
+			fmax(fheight(t1.maxWH), fheight(t2.maxWH))
+		),
+		fpoint(
+			faddition(fpointX(t1.fillers), fpointX(t2.fillers)),
+			faddition(fpointY(t1.fillers), fpointY(t2.fillers))
+		),
+		av
+	);
+}
+
+fitTFlexibleGrid(items : [TFlexibleGridItem], size : double) -> void {
+	currentPoint = ref zeroPoint;
+	currentLine = ref [];
+
+	iter(items, \it -> {
+		if (^currentPoint.x + fgetValue(fwidth(it.minWH)) < size || length(^currentLine) == 0) {
+			currentLine := arrayPush(^currentLine, it);
+			currentPoint := Point(^currentPoint.x + fgetValue(fwidth(it.minWH)), ^currentPoint.y);
+		} else {
+			t = foldBinary(map(^currentLine, TFlexibleGridItem2TFlexibleGridConstantItem), mergeTFlexibleGridConstantItems);
+			next(t.av, const(WidthHeight(size, fgetValue(fheight(t.minWH)))));
+			next(t.tr, const(Point(0.0, ^currentPoint.y)));
+
+			currentLine := [it];
+			currentPoint := Point(fgetValue(fwidth(it.minWH)), ^currentPoint.y + fgetValue(fheight(t.minWH)));
+		}
+	});
+
+	if (length(^currentLine) > 0) {
+		t = foldBinary(map(^currentLine, TFlexibleGridItem2TFlexibleGridConstantItem), mergeTFlexibleGridConstantItems);
+		next(t.av, const(WidthHeight(size, fgetValue(fheight(t.minWH)))));
+		next(t.tr, const(Point(0.0, ^currentPoint.y)));
+	}
 }
 
 BFBlock(w : double, h : double);
