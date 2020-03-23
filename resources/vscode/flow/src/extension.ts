@@ -175,6 +175,7 @@ export async function updateFlowRepo() {
     if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
         client.stop().then(
            () => {
+                client.sendNotification("exit");
                 flowRepoUpdateChannel.appendLine("Done.");
                 pullAndStartServer(git);
             }
