@@ -171,8 +171,22 @@ export async function updateFlowRepo() {
     flowRepoUpdateChannel.show(true);
     flowRepoUpdateChannel.appendLine("Updating flow repository at " + flowRoot);
     flowRepoUpdateChannel.append("Shutting down flowc server... ");
-    tools.shutdownFlowcSync();
-    flowRepoUpdateChannel.appendLine("Done.");
+
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        client.stop().then(
+           () => {
+                flowRepoUpdateChannel.appendLine("Done.");
+                pullAndStartServer(git);
+            }
+        )
+    } else {
+        tools.shutdownFlowcSync();
+        flowRepoUpdateChannel.appendLine("Done.");
+        pullAndStartServer(git);
+    }    
+}
+
+async function pullAndStartServer(git) {
     flowRepoUpdateChannel.appendLine("Starting git pull --rebase... ");
     try {
         const pullResult = await git.pull('origin', 'master', {'--rebase' : 'true'});
@@ -184,7 +198,14 @@ export async function updateFlowRepo() {
     }
 
     flowRepoUpdateChannel.append("Starting flowc server... ");
-    tools.launchFlowc(getFlowRoot());
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        client.start();
+        client.onReady().then(() => {
+            sendOutlineEnabledUpdate();
+        });
+    } else {
+        tools.launchFlowc(getFlowRoot());
+    }
     flowRepoUpdateChannel.appendLine("Done.");
 }
 
