@@ -44,7 +44,7 @@ reconstructed on each reflow, because we combine them together to have as few sp
 possible, and because rendering words in the same sprite improves the interword spacing.
 */
 
-LARGE = 100000.0;
+INF_METRICS = 100000.0;
 
 // Intermediately used typed as a union of ParagraphElement and WrapElement and ParaOneWord
 ParaElement ::= ParagraphElement, WrapElement, ParaAtomic;
@@ -108,6 +108,14 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> Wrap
 	}
 }
 
+// Longest line width and all lines optimized
+getOptimizedLines(lines : [ParaLine], alignment : Maybe<double>) -> Pair<double, [OptimizedLine]> {
+	lasti = length(lines) - 1;
+	// None() for Justify, last line alignment overridden.
+	optzds = mapi(lines, \i, line -> getOptimizedLine(line, i != lasti && alignment==None()));
+	Pair(fold(optzds, 0.0, \acc, optzd -> max(acc, optzd.metrics.width)), optzds)
+}
+
 renderParagraph(
 	p : [ParagraphElement],
 	s : [ParagraphStyle],
@@ -153,35 +161,25 @@ renderParagraph(
 	words : [ParaWord] = map(list2array(glued), makeParaWord);
 
 	aw = make(0.0);
-	width = if (widthManager == dummyWigiParagraphWidthManager) make(LARGE) else widthManager.width;
-	// height = make(0.0);
+	width = if (widthManager == dummyWigiParagraphWidthManager) make(INF_METRICS) else widthManager.width;
 	update = make(0);
 	linesB : DynamicBehaviour<[ParaLine]> = make([]);
 
-	optFn = \lines -> {
-		lasti = length(lines) - 1;
-		// None() for Justify, last line alignment overridden.
-		optzds = mapi(lines, \i, line -> getOptimizedLine(line, i != lasti && alignment==None()));
-		Pair(fold(optzds, 0.0, \acc, optzd -> max(acc, optzd.metrics.width)), optzds)
-	}
-
 	renderParaLinesFn = \lines, storyWidth -> {
-		optInfo = optFn(lines);
-		longestLineWidth = fold(optInfo.second, 0.0, \acc, line -> max(acc, line.metrics.width));
+		optInfo = getOptimizedLines(lines, alignment);
 		renderParaLines(
 			storyWidth, optInfo.first, optInfo.second, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, interactiveStyles, rtl, isParagraphMarked
 		);
 	}
 
-	maxW = optFn(reflowParaWords(words, LARGE, indent, isParagraphMarked)).first;
+	maxW = getOptimizedLines(reflowParaWords(words, INF_METRICS, indent, isParagraphMarked), alignment).first;
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
 	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager || widthManager.infoOnly) {
 		Select(linesB, \lines -> {
 			rendered = renderParaLinesFn(lines, getValue(aw));
 			nextDistinct(width, rendered.size.width);
-			// nextDistinct(height, rendered.size.height);
 			rendered.form;
 		});
 	} else {
@@ -194,7 +192,6 @@ renderParagraph(
 			// it could alter widthManager.storyWidth if we are new winner so we have to defer
 			deferUntilNextFrameRendered(\-> {
 				nextDistinct(width, rendered.size.width);
-				// nextDistinct(height, rendered.size.height);
 			});
 			rendered.form
 		});
@@ -235,7 +232,7 @@ renderParagraph(
 			updateFn = \wi-> {
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
-				w = if (isSingleLine) LARGE else max(0.0, min(maxW, wi));
+				w = if (isSingleLine) INF_METRICS else max(0.0, min(maxW, wi));
 				newLines = reflowParaWords(words, w, indent, isParagraphMarked);
 				nextDistinct(linesCountB, length(newLines));
 
@@ -732,10 +729,10 @@ RenderLine(
 	dWidth = max(0.0, width - optimizedLine.metrics.width);
 	startOffset = dWidth*either(alignment, 0.0) + optimizedLine.indent;
 	// Inter-word spacing for justification
-	nwords = length(optimizedLine.words);
-	interWord = if (nwords <= 1) 0.0 else
-		min(10.0, dWidth * b2d(alignment == None()) / i2d(nwords - 1));
-	x = ref if (rtl) dWidth - startOffset - interWord * i2d(nwords - 1) else startOffset;
+	wordsCount = length(optimizedLine.words);
+	interWord = if (wordsCount <= 1) 0.0 else
+		min(10.0, dWidth * b2d(alignment == None()) / i2d(wordsCount - 1));
+	x = ref if (rtl) dWidth - startOffset - interWord * i2d(wordsCount - 1) else startOffset;
 	
 	// The width and the individual forms
 	lo : [Form] = filtermapi(optimizedLine.words, \i : int, elem : OptimizedLineElement -> {
