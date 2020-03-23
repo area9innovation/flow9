@@ -104,6 +104,7 @@ fcLspMethods = pairs2tree([
 	Pair("textDocument/references", fcLspTextDocumentReferences),
 	Pair("textDocument/hover", fcLspTextDocumentHover),
 	Pair("textDocument/rename", fcLspTextDocumentRename),
+	Pair("workspace/executeCommand", fcLspWorkspaceExecuteCommand),
 ]);
 
 fcLspClientConf : ref Json = ref JsonObject([]);
@@ -170,7 +171,10 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 					Pair("documentSymbolProvider", JsonBool(true)),
 					Pair("documentSymbolProvider", JsonBool(true)),
 					Pair("hoverProvider", JsonBool(true)),
-					Pair("renameProvider", JsonBool(true))
+					Pair("renameProvider", JsonBool(true)),
+					Pair("executeCommandProvider", 
+						JsonObject([Pair("commands", JsonArray([JsonString("compile")]))])
+					)
 				])
 			)
 		])
@@ -521,6 +525,44 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 		}
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspWorkspaceExecuteCommand(call: FcLspMethodCall) -> void {
+	switch (json2LspExecuteCommandParams(call.params)) {
+		Some(commandParams): {
+			if (commandParams.command == "compile") {
+				if (length(commandParams.arguments) == 0) {
+					call.out_cb(fcLspErrorResponse(call.id, 1, "no file for compilation is provided"));
+					call.loop_cb();
+				} else {
+					switch (commandParams.arguments[0]) {
+						JsonString(file): {
+							conf = fcLspFileConfig(call.conf, fcCorrectUriPath(file));
+							runConfig(conf, call.env, 
+								\code -> {
+									out = fcOutput(call.conf.threadId);
+									clearFcOutput(call.conf.threadId);
+									call.out_cb(fcLspNormalResponse(call.id, JsonString(out)));
+									call.loop_cb();
+								}
+							);
+						}
+						default: {
+							call.out_cb(fcLspErrorResponse(call.id, 1, "file name for compilation must be a string"));
+							call.loop_cb();
+						}
+					}
+				}
+			} else {
+				call.out_cb(fcLspErrorResponse(call.id, 1, "command " + commandParams.command + " is unknown"));
+				call.loop_cb();
+			}
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "ExecuteCommand request is illegal"));
 			call.loop_cb();
 		}
 	}
