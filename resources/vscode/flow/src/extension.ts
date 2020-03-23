@@ -170,9 +170,30 @@ export async function updateFlowRepo() {
     }
     flowRepoUpdateChannel.show(true);
     flowRepoUpdateChannel.appendLine("Updating flow repository at " + flowRoot);
-    flowRepoUpdateChannel.append("Shutting down flowc server... ");
-    tools.shutdownFlowcSync();
-    flowRepoUpdateChannel.appendLine("Done.");
+
+    let shutdown_http_and_pull = () => {
+        if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+            flowRepoUpdateChannel.append("Shutting down HTTP flowc server... ");
+            tools.shutdownFlowcSync();
+            flowRepoUpdateChannel.appendLine("HTTP server is shutdown.");
+        }
+        pullAndStartServer(git);
+    }
+
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        flowRepoUpdateChannel.append("Shutting down LSP flowc server... ");
+        client.stop().then(
+           () => {
+                flowRepoUpdateChannel.appendLine("LSP server is shutdown.");
+                shutdown_http_and_pull();
+           }
+        );
+    } else {
+        shutdown_http_and_pull();
+    }
+}
+
+async function pullAndStartServer(git) {
     flowRepoUpdateChannel.appendLine("Starting git pull --rebase... ");
     try {
         const pullResult = await git.pull('origin', 'master', {'--rebase' : 'true'});
@@ -183,9 +204,19 @@ export async function updateFlowRepo() {
         vscode.window.showInformationMessage("Flow repository pull failed.");
     }
 
-    flowRepoUpdateChannel.append("Starting flowc server... ");
-    tools.launchFlowc(getFlowRoot());
-    flowRepoUpdateChannel.appendLine("Done.");
+    if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+        flowRepoUpdateChannel.append("Starting HTTP flowc server... ");
+        tools.launchFlowc(getFlowRoot());
+        flowRepoUpdateChannel.appendLine("HTTP server is started.");
+    }
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        flowRepoUpdateChannel.append("Starting LSP flowc server... ");
+        client.start();
+        client.onReady().then(() => {
+            sendOutlineEnabledUpdate();
+        });
+        flowRepoUpdateChannel.appendLine("LSP server is started.");
+    } 
 }
 
 function sendOutlineEnabledUpdate() {
