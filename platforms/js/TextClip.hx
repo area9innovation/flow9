@@ -119,6 +119,8 @@ class UnicodeTranslation {
 }
 
 class TextClip extends NativeWidgetClip {
+	private var widgetMaxWidth = 0.0;
+
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
 	public var charIdx : Int = 0;
@@ -1296,6 +1298,11 @@ class TextClip extends NativeWidgetClip {
 		return (widgetWidth > 0 ? widgetWidth : getClipWidth()) + widthDelta;
 	}
 
+	public function getMaxWidth() : Float {
+		updateTextMetrics();
+		return metrics != null ? untyped metrics.maxWidth : 0;
+	}
+
 	public override function getHeight() : Float {
 		return widgetHeight > 0 ? widgetHeight : getClipHeight();
 	}
@@ -1410,6 +1417,15 @@ class TextClip extends NativeWidgetClip {
 			} else {
 				metrics = TextMetrics.measureText(text, style);
 			}
+
+			metrics.maxWidth = 0.0;
+			var lineWidths : Array<Float> = metrics.lineWidths;
+
+			for (lineWidth in lineWidths) {
+				metrics.maxWidth += lineWidth;
+			}
+
+			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 	}
 

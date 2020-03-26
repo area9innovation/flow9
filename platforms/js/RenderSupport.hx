@@ -1434,6 +1434,10 @@ class RenderSupport {
 		return untyped clip.isInput ? clip.getWidth() : clip.getClipWidth();
 	}
 
+	public static function getTextFieldMaxWidth(clip : TextClip) : Float {
+		return clip.getMaxWidth();
+	}
+
 	public static function setTextFieldWidth(clip : TextClip, width : Float) : Void {
 		// NOTE : It is called by flow only for textinputs
 		clip.setWidth(width);
