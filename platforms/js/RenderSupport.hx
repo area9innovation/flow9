@@ -2720,14 +2720,14 @@ class RenderSupport {
 
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
-			child.removeScrollRect();
+			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
 			untyped RenderSupport.LayoutText = false;
 
 			render();
 
 			return img;
 		} catch(e : Dynamic) {
-			child.removeScrollRect();
+			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
 			untyped RenderSupport.LayoutText = false;
 
 			render();
