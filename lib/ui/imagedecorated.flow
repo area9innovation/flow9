@@ -2,6 +2,7 @@ import text/serialize;
 import formats/html/html;
 import formats/html/html2form;
 import form/paragraph;
+import form/paragraphalignments;
 import ui/imagedecoratedstructs;
 import form/form;
 import ui/activityindicator;
@@ -17,7 +18,7 @@ import ui/activityindicator;
 */
 export {
 
-	verticalAlign2d(va : VerticalAlign) -> double;
+	verticalAlign2d(va : VerticalAlignment) -> double;
 
 	makeImageDecorated2(
 		filename : string,
@@ -78,8 +79,8 @@ export {
 	) -> [StaticGraphicOp];
 }
 
-verticalAlign2d(va : VerticalAlign) -> double {
-	switch(ib.vAlign) {
+verticalAlign2d(va : VerticalAlignment) -> double {
+	switch(va) {
 		TopAlign(): 0.0;
 		CenterAlign(): 0.5;
 		BottomAlign(): 1.0;
@@ -162,10 +163,10 @@ makeImageDecorated2(
 	replacedImageScale = make(1.0);
 
 	splittedDecorations = splitImageDecorations(noScalingDecorations, decorations);
-	preZoomDecorations = splittedDecorations.first;
-	postZoomDecorations = splittedDecorations.second;
-	sizeIndependentDecorations = splittedDecorations.third;
-	cropMB = splittedDecorations.fourth;
+	preZoomDecorations = splittedDecorations.preZoom;
+	postZoomDecorations = splittedDecorations.postZoom;
+	sizeIndependentDecorations = splittedDecorations.sizeIndependent;
+	cropMB = splittedDecorations.crop;
 	postZoomCrop = if (preScaleCrop) None() else cropMB;
 
 	pictureWithZoomableDecorations = Group([
@@ -375,18 +376,20 @@ makeImageTextBox(iTextBox : ImageTextBox, width : double, height : double) -> Fo
 }
 
 makeImageParagraphBox(ib : ImageParagraphBox) -> Form {
-	recW = iTextBox.rectangle.width;
-	recH = iTextBox.rectangle.height;
-	hAlignN = switch(commonAlignment2abs(ib.hAlign, getDefaultRtl())) {
+	recW = ib.rectangle.width;
+	recH = ib.rectangle.height;
+	hAlignN = switch(ib.hAlign) {
 		LeftAlign(): 0.0;
 		CenterAlign(): 0.5;
 		RightAlign(): 1.0;
+		StartAlign(): b2d(getDefaultRtl());
+		EndAlign(): b2d(!getDefaultRtl());
 	};
 	Group([
 		makeImageRectangle(ib.rectangle, 0.0, 0.0),  // Only first parameter effective in the case, same for ImageTextBox.
 		Translate(
-			const(iTextBox.rectangle.x),
-			const(iTextBox.rectangle.y),
+			const(ib.rectangle.x),
+			const(ib.rectangle.y),
 			Available(
 				const(recW), const(recH),
 				Align2(hAlignN, verticalAlign2d(ib.vAlign), Paragraph(
@@ -462,7 +465,7 @@ makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : doub
 						[ makeImageTextBox(d, _width, _height) ]
 					}
 					ImageParagraphBox(label, hAlign, vAlign, rect) : {
-						makeImageParagraphBox(d);
+						[ makeImageParagraphBox(d) ];
 					}
 					ImageDimmer(type, lt, rb, dimmerColor, borderColor, dimmerOpacity, borderOpacity) : {
 						shape = makeDimmerShape(type, lt, rb);
@@ -618,13 +621,13 @@ splitImageDecorations(
 {
 	graphics = \q : ImageDecoration4, d : PreAndPostZoomDecoration -> {
 		if (noScaleDecorations)
-			ImageDecoration4(q.preZoom, arrayPush(q.postZoom, d), q.sizeIndependen, q.crop)
+			ImageDecoration4(q.preZoom, arrayPush(q.postZoom, d), q.sizeIndependent, q.crop)
 		else
-			ImageDecoration4(arrayPush(q.preZoom, d), q.postZoom, q.sizeIndependen, q.crop);
+			ImageDecoration4(arrayPush(q.preZoom, d), q.postZoom, q.sizeIndependent, q.crop);
 	}
 
 	independent = \q : ImageDecoration4, d : SizeIndependentDecoration -> {
-		ImageDecoration4(q.preZoom, q.postZoom, arrayPush(q.sizeIndependen, d), q.crop);
+		ImageDecoration4(q.preZoom, q.postZoom, arrayPush(q.sizeIndependent, d), q.crop);
 	}
 
 	fold(decorations, ImageDecoration4([], [], [], None()),
@@ -650,13 +653,13 @@ splitImageDecorations(
 			ImageAltText(__, __): independent(acc, d);
 			ImageShadow() : independent(acc, d);
 			ImageLabel2(__, __, __, __, __, __, __, __):
-				ImageDecoration4(acc.first, arrayPush(acc.second, d), acc.third, acc.fourth);
+				ImageDecoration4(acc.preZoom, arrayPush(acc.postZoom, d), acc.sizeIndependent, acc.crop);
 			ImageCrop(x, y, w, h):
-				ImageDecoration4(acc.first, acc.second, acc.third, Some(d));
+				ImageDecoration4(acc.preZoom, acc.postZoom, acc.sizeIndependent, Some(d));
 			ImageAdaptiveCrop(__, __, __, __, __): acc;
 			ImageAdaptiveCropTweaks(__): acc; 
 			ImageDimmer(__, __, __, __, __, __, __):
-				ImageDecoration4(arrayPush(acc.first, d), acc.second, acc.third, acc.fourth);
+				ImageDecoration4(arrayPush(acc.preZoom, d), acc.postZoom, acc.sizeIndependent, acc.crop);
 		}
 	})
 }
@@ -769,7 +772,7 @@ makePostZoomDecorationsAdder(
 		}
 		ImageParagraphBox(label, halign, valign, rec) : {
 			if (noScaleDecorations)
-				Scale(scale, scale, makeImageTextBox(d))
+				Scale(scale, scale, makeImageParagraphBox(d))
 			else
 				Empty()
 		}
