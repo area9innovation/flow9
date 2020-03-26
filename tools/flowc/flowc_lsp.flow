@@ -104,6 +104,7 @@ fcLspMethods = pairs2tree([
 	Pair("textDocument/references", fcLspTextDocumentReferences),
 	Pair("textDocument/hover", fcLspTextDocumentHover),
 	Pair("textDocument/rename", fcLspTextDocumentRename),
+	Pair("workspace/executeCommand", fcLspWorkspaceExecuteCommand),
 ]);
 
 fcLspClientConf : ref Json = ref JsonObject([]);
@@ -146,6 +147,7 @@ fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, s
 fcLspShutdown(call : FcLspMethodCall) -> void {
 	fcLspClientConf := JsonObject([]);
 	fcClearCache(call.env); // reset module cache
+	call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 	call.loop_cb();
 }
 
@@ -169,7 +171,10 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 					Pair("documentSymbolProvider", JsonBool(true)),
 					Pair("documentSymbolProvider", JsonBool(true)),
 					Pair("hoverProvider", JsonBool(true)),
-					Pair("renameProvider", JsonBool(true))
+					Pair("renameProvider", JsonBool(true)),
+					Pair("executeCommandProvider", 
+						JsonObject([Pair("commands", JsonArray([JsonString("compile")]))])
+					)
 				])
 			)
 		])
@@ -180,8 +185,9 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textitem): {
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textitem.uri.path));
 			runConfig(
-				CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textitem.uri.path)),
+				CompilerConfig(conf with config = setTree(conf.config, "update-cache", "1")),
 				call.env, 
 				\code -> {
 					clearFcOutput(call.conf.threadId);
@@ -199,14 +205,8 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textitem): {
-			runConfig(
-				CompilerConfig(call.conf with flowfile = fcCorrectUriPath(textitem.uri.path)),
-				call.env, 
-				\code -> {
-					clearFcOutput(call.conf.threadId);
-					call.loop_cb();
-				}
-			);
+			// No actions yet. TODO: fast compilation for error messages?
+			call.loop_cb();
 		}
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
@@ -476,8 +476,12 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 					if (fcDetectLspError(out, call.conf)) {
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
-						hover = LspHover([LspMarkedString("", out)], None());
-						call.out_cb(fcLspNormalResponse(call.id, lspHover2Json(hover)));
+						if (isNotSpace(out)) {
+							hover = LspHover([LspMarkedString("", out)], None());
+							call.out_cb(fcLspNormalResponse(call.id, lspHover2Json(hover)));
+						} else {
+							call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
+						}
 					}
 					call.loop_cb();
 				}
@@ -520,6 +524,63 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 		}
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspWorkspaceExecuteCommand(call: FcLspMethodCall) -> void {
+	switch (json2LspExecuteCommandParams(call.params)) {
+		Some(commandParams): {
+			if (commandParams.command == "compile") {
+				if (length(commandParams.arguments) == 0) {
+					call.out_cb(fcLspErrorResponse(call.id, 1, "no file for compilation is provided"));
+					call.loop_cb();
+				} else {
+					file = ref "";
+					params = filtermap(commandParams.arguments, \arg -> 
+						switch (arg) {
+							JsonString(str): {
+								opt_val = strSplit(str, "=");
+								if (length(opt_val) == 0) None() else
+								if (length(opt_val) == 1) { file := opt_val[0]; None(); } else {
+									opt = opt_val[0];
+									val = opt_val[1];
+									if (opt == "file") {
+										file := val;
+										None();
+									} else {
+										Some(Pair(opt, val));
+									}
+								}
+							}
+							default: None();
+						}
+					);
+					if (^file == "") {
+						call.out_cb(fcLspErrorResponse(call.id, 1, "no file for compilation"));
+						call.loop_cb();
+					} else {
+						conf = fcLspFileConfig(call.conf, fcCorrectUriPath(^file));
+						runConfig(
+							CompilerConfig(conf with config = mergeTree(conf.config, pairs2tree(params))), 
+							call.env, 
+							\code -> {
+								out = fcOutput(call.conf.threadId);
+								clearFcOutput(call.conf.threadId);
+								call.out_cb(fcLspNormalResponse(call.id, JsonString(out)));
+								call.loop_cb();
+							}
+						);
+					}
+				}
+			} else {
+				call.out_cb(fcLspErrorResponse(call.id, 1, "command " + commandParams.command + " is unknown"));
+				call.loop_cb();
+			}
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "ExecuteCommand request is illegal"));
 			call.loop_cb();
 		}
 	}
