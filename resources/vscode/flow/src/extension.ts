@@ -108,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
     // launch flowc server at startup
-    if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+    if (vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
         tools.launchFlowc(getFlowRoot());
     }
 
@@ -166,7 +166,7 @@ export async function updateFlowRepo() {
     flowRepoUpdateChannel.appendLine("Updating flow repository at " + flowRoot);
 
     let shutdown_http_and_pull = () => {
-        if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+        if (vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
             flowRepoUpdateChannel.append("Shutting down HTTP flowc server... ");
             tools.shutdownFlowcSync();
             flowRepoUpdateChannel.appendLine("HTTP server is shutdown.");
@@ -198,7 +198,7 @@ async function pullAndStartServer(git) {
         vscode.window.showInformationMessage("Flow repository pull failed.");
     }
 
-    if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+    if (vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
         flowRepoUpdateChannel.append("Starting HTTP flowc server... ");
         tools.launchFlowc(getFlowRoot());
         flowRepoUpdateChannel.appendLine("HTTP server is started.");
@@ -314,6 +314,9 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         flowChannel.appendLine("Current directory: " + rootPath);
         flowChannel.appendLine("Running " + command.cmd + " " + command.args.join(" "));
         if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+            if (!vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
+                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performace it is recommended to switch HTTP server on.");
+            }
             client.sendRequest("workspace/executeCommand", {
                     command : "compile", 
                     arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath]
@@ -363,7 +366,7 @@ function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile:
     CommandWithArgs
 {
     let compiler = compilerHint ? compilerHint : getFlowCompiler();
-    let compilerServer = vscode.workspace.getConfiguration("flow").get("useCompilerServer");
+    let compilerServer = vscode.workspace.getConfiguration("flow").get("useHttpServer");
     let serverArgs = (compiler.startsWith("flowc") && !compilerServer) ?
         ["server=0"] : [];
     if (compiler == "nekocompiler") {

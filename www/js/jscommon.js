@@ -272,7 +272,7 @@ function loadFavicon(url) {
 }
 
 function loadExternalResources() {
-	loadCSSFileInternal("flowjspixi.css?8");
+	loadCSSFileInternal("flowjspixi.css?9");
 }
 
 var overlayLoadTimestamp = "";
