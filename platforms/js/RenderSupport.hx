@@ -854,6 +854,11 @@ class RenderSupport {
 			var sX = 0.0, sY = 0.0,	// spinX, spinY
 				pX = 0.0, pY = 0.0;	// pixelX, pixelY
 
+			// prevents swipe back for Safari
+			if (Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+				event.preventDefault();
+			}
+
 			// Legacy
 			if (event.detail != null) { sY = event.detail; }
 			if (event.wheelDelta != null) { sY = -event.wheelDelta / 120; }
