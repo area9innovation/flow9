@@ -1425,7 +1425,7 @@ class TextClip extends NativeWidgetClip {
 				metrics.maxWidth += lineWidth;
 			}
 
-			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth) + 1.0;
 		}
 	}
 
