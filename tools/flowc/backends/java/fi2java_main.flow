@@ -3,26 +3,16 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/java/fi2java_defines;
 
 export {
-	generateJavaMainCode(gctx : JavaGlobalContext) -> void;
+	generateJavaMain(gctx : JavaGlobalContext) -> void;
+	generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void;
 }
 
-generateJavaMainCode(gctx : JavaGlobalContext) -> void {
+generateJavaMain(gctx : JavaGlobalContext) -> void {
 	main_file_text = gctx.header_generator(timestamp());
 	pushstr = \s -> rlistPush(main_file_text, s);
 	config = gctx.program.config;
 
 	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Main extends FlowRuntime {\n");
-	
-	pushstr("\n\t// Singleton structs\n");
-	pushstr("\tstatic final Object[] arr_empty = new Object[0];\n");
-	singleton_struct_list = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
-		if (length(sdata.fields) == 0) {
-			pushstr("\tstatic final SingletonStruct str_" + sname + " = SingletonStruct.make(" + i2s(sdata.id) + ",\"" + sname + "\");\n");
-			arrayPush(acc, "\t\t\tstr_" + sname);
-		} else {
-			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
-		}
-	});
 
 	// Module initializers
 	pushstr("\n\t// Modules\n");
@@ -30,15 +20,22 @@ generateJavaMainCode(gctx : JavaGlobalContext) -> void {
 		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + " = new Module_" + csm.id + "(this);\n")
 	);
 	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
-		fcPrintln("Main singleton structs: " + i2s(length(singleton_struct_list)), config.threadId);
 		fcPrintln("Main modules: " + i2s(length(gctx.csm_list)), config.threadId);
 	}
 
-	pushstr("\n\t// Singleton structs array\n");
-	if (length(singleton_struct_list) < 128) {
+	struct_list = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
+		if (length(sdata.fields) == 0) {
+			arrayPush(acc, "\t\t\tSingletonStructs.str_" + sname);
+		} else {
+			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
+		}
+	});
+
+	pushstr("\n\t// Structs array\n");
+	if (length(struct_list) < 128) {
 		// All structs array
 		pushstr("\tstatic final private Struct[] struct_list = {\n");
-		pushstr(strGlue(singleton_struct_list, ",\n") + "\n");
+		pushstr(strGlue(struct_list, ",\n") + "\n");
 		pushstr("\t};\n");
 
 		// Constructor
@@ -46,17 +43,17 @@ generateJavaMainCode(gctx : JavaGlobalContext) -> void {
 		pushstr("\t\tsuper(struct_list, args);\n");
 		pushstr("\t}\n");
 	} else {
-		singleton_struct_list_chunks = splitByNumber(singleton_struct_list, 128);
+		struct_list_chunks = splitByNumber(struct_list, 128);
 		// All structs array
-		iteri(singleton_struct_list_chunks, \i, chunk -> {
+		iteri(struct_list_chunks, \i, chunk -> {
 			pushstr("\tstatic final private Struct[] struct_list_" + i2s(i) + " = {\n");
 			pushstr(strGlue(chunk, ",\n") + "\n");
 			pushstr("\t};\n");
 		});
 		pushstr("\tstatic private final Struct[] struct_list() {\n");
-		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(singleton_struct_list)) + "];\n");
+		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
 		pushstr("\t\tint k = 0;\n");
-		iteri(singleton_struct_list_chunks, \i, __ ->
+		iteri(struct_list_chunks, \i, __ ->
 			pushstr("\t\tfor (Struct s : struct_list_" + i2s(i) + ") structs[k++] = s;\n")
 		);
 		pushstr("\t\treturn structs;\n");
@@ -154,4 +151,26 @@ generateJavaMainCode(gctx : JavaGlobalContext) -> void {
 
 	main_fname = pathCombine(gctx.package_path, "Main.java");
 	writeJavaSource(gctx, main_fname, javaList2String(main_file_text, "}\n"));
+}
+
+generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void {
+	code = gctx.header_generator(timestamp());
+	pushstr = \s -> rlistPush(code, s);
+	config = gctx.program.config;
+
+	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class SingletonStructs {\n");
+
+	pushstr("\n\t// Singleton structs\n");
+	pushstr("\tstatic final Object[] arr_empty = new Object[0];\n");
+	num_singleton_structs = foldTree(gctx.cstructs, 0, \sname, struct : JavaStruct, acc ->
+		if (length(struct.fields) != 0) acc else {
+			pushstr("\tstatic final SingletonStruct str_" + sname + " = SingletonStruct.make(" + i2s(struct.id) + ",\"" + sname + "\");\n");
+			acc + 1
+		}
+	);
+	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
+		fcPrintln("Singleton structs: " + i2s(num_singleton_structs), config.threadId);
+	}
+	fname = pathCombine(gctx.package_path, "SingletonStructs.java");
+	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
 }
