@@ -6,7 +6,6 @@ export {
 	indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]>;
 	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool>;
 	indexJavaGlobals(gctx : JavaGlobalContext) -> void;
-	//generateJavaStructList(gctx : JavaGlobalContext) -> [string];
 	generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void;
 	generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void;
 	generateJavaInitCode(gctx : JavaGlobalContext) -> void;
@@ -138,9 +137,7 @@ indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pai
 }
 
 indexJavaGlobals(gctx : JavaGlobalContext) -> void {
-	pushstr = \s -> rlistPush(gctx.main_file_text, s);
 	pushistr = \s -> rlistPush(gctx.init_code, s);
-
 	iter(gctx.csm_list, \csm -> {
 		iter(csm.decl_order, \decl -> {
 			switch (decl : FiDeclaration) {
@@ -170,8 +167,8 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 									);
 									tstr = wrapper_t.second;
 
-									pushstr("\tfinal " + tstr + " nw_" + name + " = " + wrapper_t.first + ";\n");
-									pushstr("\t" + tstr + " n_" + name + " = nw_" + name + ";\n");
+									rlistPush(gctx.native_wrapper_code, "\tfinal " + tstr + " nw_" + name + " = " + wrapper_t.first + ";\n");
+									rlistPush(gctx.native_wrapper_code, "\t" + tstr + " n_" + name + " = nw_" + name + ";\n");
 
 									ginfo = JavaGlobalInfo("n_" + name, csm, type, true);
 									gctx.globals ::= setTree(gctx.globals, name, ginfo);
@@ -341,7 +338,7 @@ generateJavaStructList(gctx : JavaGlobalContext) -> [string] {
 }
 
 generateJavaInitCode(gctx : JavaGlobalContext) -> void {
-	struct_list = generateJavaStructList(gctx);
+	singleton_struct_list = generateJavaStructList(gctx);
 	pushstr = \s -> rlistPush(gctx.main_file_text, s);
 	config = gctx.program.config;
 
@@ -350,14 +347,14 @@ generateJavaInitCode(gctx : JavaGlobalContext) -> void {
 		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + " = new Module_" + csm.id + "(this);\n")
 	);
 	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
-		fcPrintln("Main structs: " + i2s(length(struct_list)), config.threadId);
+		fcPrintln("Main singleton structs: " + i2s(length(singleton_struct_list)), config.threadId);
 		fcPrintln("Main modules: " + i2s(length(gctx.csm_list)), config.threadId);
 	}
 
-	if (length(struct_list) < 128) {
+	if (length(singleton_struct_list) < 128) {
 		// All structs array
 		pushstr("\tstatic final private Struct[] struct_list = {\n");
-		pushstr(strGlue(struct_list, ",\n") + "\n");
+		pushstr(strGlue(singleton_struct_list, ",\n") + "\n");
 		pushstr("\t};\n");
 
 		// Constructor
@@ -365,17 +362,17 @@ generateJavaInitCode(gctx : JavaGlobalContext) -> void {
 		pushstr("\t\tsuper(struct_list, args);\n");
 		pushstr("\t}\n");
 	} else {
-		struct_list_chunks = splitByNumber(struct_list, 128);
+		singleton_struct_list_chunks = splitByNumber(singleton_struct_list, 128);
 		// All structs array
-		iteri(struct_list_chunks, \i, chunk -> {
+		iteri(singleton_struct_list_chunks, \i, chunk -> {
 			pushstr("\tstatic final private Struct[] struct_list_" + i2s(i) + " = {\n");
 			pushstr(strGlue(chunk, ",\n") + "\n");
 			pushstr("\t};\n");
 		});
 		pushstr("\tstatic private final Struct[] struct_list() {\n");
-		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
+		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(singleton_struct_list)) + "];\n");
 		pushstr("\t\tint k = 0;\n");
-		iteri(struct_list_chunks, \i, __ ->
+		iteri(singleton_struct_list_chunks, \i, __ ->
 			pushstr("\t\tfor (Struct s : struct_list_" + i2s(i) + ") structs[k++] = s;\n")
 		);
 		pushstr("\t\treturn structs;\n");
@@ -386,7 +383,17 @@ generateJavaInitCode(gctx : JavaGlobalContext) -> void {
 		pushstr("\t}\n");
 	}
 
-	pushstr(javaList2String(gctx.wrapper_code, ""));
+	wrappers = list2array(^(gctx.wrapper_code));
+	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
+		fcPrintln("Main wrappers: " + i2s(length(wrappers)), config.threadId);
+	}
+	pushstr(concatStrings(wrappers));
+
+	native_wrappers = list2array(^(gctx.native_wrapper_code));
+	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
+		fcPrintln("Main native wrappers: " + i2s(length(native_wrappers)), config.threadId);
+	}
+	pushstr(concatStrings(native_wrappers));
 
 	// init function
 	host_inits = list2array(foldTree(gctx.uses_host, makeList(), \host, v, acc -> {
@@ -1729,4 +1736,3 @@ writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void {
 	setFileContent(path, src);
 	{}
 }
-
