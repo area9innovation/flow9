@@ -148,7 +148,7 @@ void FlowView::initActions() {
     connect(menu_->menu(), SIGNAL(aboutToShow()), this, SLOT(showMenu()));
 
     lookupDef_ = menu_->menu()->addAction(QLatin1String("lookup_flow_definition"), flowManager_, SLOT(slotLookupDefinition()));
-    lookupDef_->setShortcut(QKeySequence(QLatin1String("F12")));
+    //lookupDef_->setShortcut(QKeySequence(QLatin1String("F12")));
 
     lookupType_ = menu_->menu()->addAction(QLatin1String("lookup_flow_type"), flowManager_, SLOT(slotLookupType()));
     //a->setShortcut(QKeySequence(QLatin1String("Shift+T")));

@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
-	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic, NotificationType0, RevealOutputChannelOn
+    LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RevealOutputChannelOn,
 } from 'vscode-languageclient';
 import * as tools from "./tools";
 import * as updater from "./updater";
@@ -108,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
     // launch flowc server at startup
-    if (vscode.workspace.getConfiguration("flow").get("useCompilerServer")) {
+    if (vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
         tools.launchFlowc(getFlowRoot());
     }
 
@@ -164,9 +164,30 @@ export async function updateFlowRepo() {
     }
     flowRepoUpdateChannel.show(true);
     flowRepoUpdateChannel.appendLine("Updating flow repository at " + flowRoot);
-    flowRepoUpdateChannel.append("Shutting down flowc server... ");
-    tools.shutdownFlowcSync();
-    flowRepoUpdateChannel.appendLine("Done.");
+
+    let shutdown_http_and_pull = () => {
+        if (vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
+            flowRepoUpdateChannel.append("Shutting down HTTP flowc server... ");
+            tools.shutdownFlowcSync();
+            flowRepoUpdateChannel.appendLine("HTTP server is shutdown.");
+        }
+        pullAndStartServer(git);
+    }
+
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        flowRepoUpdateChannel.append("Shutting down LSP flowc server... ");
+        client.stop().then(
+           () => {
+                flowRepoUpdateChannel.appendLine("LSP server is shutdown.");
+                shutdown_http_and_pull();
+           }
+        );
+    } else {
+        shutdown_http_and_pull();
+    }
+}
+
+async function pullAndStartServer(git) {
     flowRepoUpdateChannel.appendLine("Starting git pull --rebase... ");
     try {
         const pullResult = await git.pull('origin', 'master', {'--rebase' : 'true'});
@@ -177,9 +198,19 @@ export async function updateFlowRepo() {
         vscode.window.showInformationMessage("Flow repository pull failed.");
     }
 
-    flowRepoUpdateChannel.append("Starting flowc server... ");
-    tools.launchFlowc(getFlowRoot());
-    flowRepoUpdateChannel.appendLine("Done.");
+    if (vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
+        flowRepoUpdateChannel.append("Starting HTTP flowc server... ");
+        tools.launchFlowc(getFlowRoot());
+        flowRepoUpdateChannel.appendLine("HTTP server is started.");
+    }
+    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        flowRepoUpdateChannel.append("Starting LSP flowc server... ");
+        client.start();
+        client.onReady().then(() => {
+            sendOutlineEnabledUpdate();
+        });
+        flowRepoUpdateChannel.appendLine("LSP server is started.");
+    } 
 }
 
 function sendOutlineEnabledUpdate() {
@@ -282,13 +313,28 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         let matcher = getMatcher(command.matcher);
         flowChannel.appendLine("Current directory: " + rootPath);
         flowChannel.appendLine("Running " + command.cmd + " " + command.args.join(" "));
-        tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
-            if (counter == current) {// if there is a newer job, ignoring ones pending
-                flowChannel.append(s.toString());
-                diagnostics = diagnostics.concat(parseAndCollectDiagnostics(s.toString(), matcher));
-                flowDiagnosticCollection.set(diagnostics); // update upon every line
+        if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+            if (!vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
+                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performace it is recommended to switch HTTP server on.");
             }
-        }, childProcesses);
+            client.sendRequest("workspace/executeCommand", {
+                    command : "compile", 
+                    arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath]
+                }
+            ).then(
+                (out : any) => {
+                     flowChannel.appendLine(out);
+                }
+            );
+        } else {
+            tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
+                if (counter == current) {// if there is a newer job, ignoring ones pending
+                    flowChannel.append(s.toString());
+                    diagnostics = diagnostics.concat(parseAndCollectDiagnostics(s.toString(), matcher));
+                    flowDiagnosticCollection.set(diagnostics); // update upon every line
+                }
+            }, childProcesses);
+        }
     });
 }
 
@@ -320,7 +366,7 @@ function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile:
     CommandWithArgs
 {
     let compiler = compilerHint ? compilerHint : getFlowCompiler();
-    let compilerServer = vscode.workspace.getConfiguration("flow").get("useCompilerServer");
+    let compilerServer = vscode.workspace.getConfiguration("flow").get("useHttpServer");
     let serverArgs = (compiler.startsWith("flowc") && !compilerServer) ?
         ["server=0"] : [];
     if (compiler == "nekocompiler") {
