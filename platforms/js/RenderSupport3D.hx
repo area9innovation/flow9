@@ -14,6 +14,7 @@ import js.three.Matrix4;
 import js.three.Object3D;
 import js.three.Mesh;
 import js.three.Line;
+import js.three.LineSegments;
 import js.three.Points;
 import js.three.LOD;
 
@@ -2094,6 +2095,29 @@ class RenderSupport3D {
 			});
 			untyped mesh.instanceObjects.push(o);
 		}
+
+		for (material in materials) {
+			untyped material.parent = mesh;
+		}
+
+		for (par in parameters) {
+			untyped mesh[par[0]] = untyped __js__("eval(par[1])");
+		}
+
+		return mesh;
+	}
+
+	public static function make3DLineSegments(geometry : Geometry, materials : Array<Material>, parameters : Array<Array<String>>) : Line {
+		if (untyped geometry.clearGroups != null && geometry.addGroups != null) {
+			untyped geometry.clearGroups();
+			var groups : Array<Array<Int>> = untyped geometry.addGroups(geometry.index.count, materials.length);
+
+			for (group in groups) {
+				untyped geometry.addGroup(group[0], group[1], group[2]);
+			}
+		}
+
+		var mesh = new LineSegments(geometry, untyped materials.length == 1 ? materials[0] : materials);
 
 		for (material in materials) {
 			untyped material.parent = mesh;

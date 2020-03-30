@@ -722,6 +722,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DLineSegments(Object geometry, Object[] materials, Object[] parameters) {
+		return null;
+	}
+
 	public Object make3DPoints(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}
