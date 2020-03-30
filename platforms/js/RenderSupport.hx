@@ -2718,6 +2718,7 @@ class RenderSupport {
 		}
 
 		untyped RenderSupport.LayoutText = true;
+		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
 		render();
