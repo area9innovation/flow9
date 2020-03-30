@@ -618,84 +618,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			None();
 
 	// Autocomplete
-	preparedSentenceMatcher = extractStruct(style, MPreparedSentenceMatcher(const(dummySentenceMatcher)));
-	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, simpleSentenceMatcher));
-
-	matchers =
-		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
-			[preparedSentenceMatcher.matcher]
-		} else {
-			map(extractStruct(style, MDictionary([])).dictionaries, \mdictionary ->
-				sentenceMatcher.matcher(filter(concatA(map(strSplit(mdictionary, "\n"), \s -> strSplit(s, fromCharCode(0x000D)))), \s -> strlen(s) > 0))
-				|> const
-			)
-		};
-
-	autocomplete =
-		if (matchers != []) {
-			composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
-
-			setWord = \word : string -> {
-					newContent = composeContentFn(word, getValue(content), getValue(position));
-					next(content, newContent);
-
-					cw = getCurrentWordPosition(getValue(content), getValue(position), [newContent]);
-					newPosition = forceRange(firstOfPair(cw) + strlen(newContent), 0, strlen(getValue(content)));
-					nextDistinct(position, newPosition);
-					nextDistinct(selection, newPosition);
-
-					if (!multiline) nextDistinct(mfocus.focused, false);
-			}
-
-			sentences = make([]);
-
-			inLine =
-				maybeMap(
-					tryExtractStruct(style, MSuggestionInLine(false)),
-					\inline -> MAutoCompleteInLineState(
-						fselect(sentences, FLift(\sent -> {
-							cont = getValue(content);
-							findmap(sent, \s ->
-								if (startsWith(toLowerCase(s.sentence), toLowerCase(cont)))
-									Some(Pair(s.sentence, strRight(s.sentence, strlen(cont))))
-								else None()
-							)
-						})),
-						inline.showPopup
-					)
-				);
-
-			Some(
-				MInputAutocompleteState(
-					matchers,
-					sentenceMatcher,
-					extractStructMany(style, TCompletionFn(\__, __, __ -> TEmpty()))
-					|> (\f ->
-						if (length(f) > 0)
-							MCompletionFn(f[0].fn)
-						else
-							eitherFn(
-								tryExtractStruct(style, MCompletionFn(\__, __, __ -> TEmpty())),
-								idfn,
-								\ -> defaultCompletionFn(manager, parent, style)
-							)
-					),
-					sentences,
-					make(-1),
-					contains(style, MShowAllOnEmpty()),
-					extractStruct(style, MMaxResults(10)).results,
-					contains(style, MAutoSelect()),
-					extractStruct(style, MIncludeSpaces(!multiline)).includeSpaces,
-					tryExtractStruct(style, MCurrentMatches(nop1)),
-					extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
-					setWord,
-					iScriptBehaviours.isTextInputInPopup,
-					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
-					inLine
-				)
-			)
-		} else
-			None();
+	autocomplete = makeMAutoCompleteState(manager, mfocus, iScriptBehaviours, style, multiline, backgroundFill);
 
 	// Content functions
 	clearContent = \focused : bool -> {
@@ -1112,6 +1035,97 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	)
 }
 
+makeMAutoCompleteState(
+	manager : MaterialManager,
+	mfocus : MFocus, 
+	iScriptBehaviours : MTextEditorIScriptBehaviours,
+	style : [MAutoCompleteStyle],
+	multiline : bool,
+	backgroundFill : MInputBackgroundStyle) -> Maybe<MInputAutocompleteState> {
+
+	preparedSentenceMatcher = extractStruct(style, MPreparedSentenceMatcher(const(dummySentenceMatcher)));
+	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, simpleSentenceMatcher));
+
+	matchers =
+		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
+			[preparedSentenceMatcher.matcher]
+		} else {
+			map(extractStruct(style, MDictionary([])).dictionaries, \mdictionary ->
+				sentenceMatcher.matcher(filter(concatA(map(strSplit(mdictionary, "\n"), \s -> strSplit(s, fromCharCode(0x000D)))), \s -> strlen(s) > 0))
+				|> const
+			)
+		};
+	
+	if (matchers != []) {
+		content = iScriptBehaviours.content;
+		position = iScriptBehaviours.position;
+		selection = iScriptBehaviours.selection;
+
+		composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
+
+		setWord = \word : string -> {
+				newContent = composeContentFn(word, getValue(content), getValue(position));
+				next(content, newContent);
+
+				cw = getCurrentWordPosition(getValue(content), getValue(position), [newContent]);
+				newPosition = forceRange(firstOfPair(cw) + strlen(newContent), 0, strlen(getValue(content)));
+				nextDistinct(position, newPosition);
+				nextDistinct(selection, newPosition);
+
+				if (!multiline) nextDistinct(mfocus.focused, false);
+		}
+
+		sentences = make([]);
+
+		inLine =
+			maybeMap(
+				tryExtractStruct(style, MSuggestionInLine(false)),
+				\inline -> MAutoCompleteInLineState(
+					fselect(sentences, FLift(\sent -> {
+						cont = getValue(content);
+						findmap(sent, \s ->
+							if (startsWith(toLowerCase(s.sentence), toLowerCase(cont)))
+								Some(Pair(s.sentence, strRight(s.sentence, strlen(cont))))
+							else None()
+						)
+					})),
+					inline.showPopup
+				)
+			);
+
+		Some(
+			MInputAutocompleteState(
+				matchers,
+				sentenceMatcher,
+				extractStructMany(style, TCompletionFn(\__, __, __ -> TEmpty()))
+				|> (\f ->
+					if (length(f) > 0)
+						MCompletionFn(f[0].fn)
+					else
+						eitherFn(
+							tryExtractStruct(style, MCompletionFn(\__, __, __ -> TEmpty())),
+							idfn,
+							\ -> defaultCompletionFn(manager, mfocus.parent, style)
+						)
+				),
+				sentences,
+				make(-1),
+				contains(style, MShowAllOnEmpty()),
+				extractStruct(style, MMaxResults(10)).results,
+				contains(style, MAutoSelect()),
+				extractStruct(style, MIncludeSpaces(!multiline)).includeSpaces,
+				tryExtractStruct(style, MCurrentMatches(nop1)),
+				extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
+				setWord,
+				iScriptBehaviours.isTextInputInPopup,
+				extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
+				inLine
+			)
+		)
+	} else
+		None();
+}
+
 makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MAutoCompleteStyle],
 	state : [MTextInputState]) -> MTextEditorIScriptBehaviours {
 	dynamicSize = contains(style, MDynamicSize());
@@ -1296,46 +1310,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 
 	lines : DynamicBehaviour<[MTextInputLine]> = make([]);
 
-	linesCache = ref Triple(-1., false, makeTree());
-
-	content2lines = \c : string, sp : bool, wd : double -> {
-		map(strSplit(c, "\n"), \l ->
-			Pair(
-				l,
-				eitherFn(
-					if (wd != firstOfTriple(^linesCache))
-						None()
-					else
-						lookupTree(thirdOfTriple(^linesCache), l),
-					idfn,
-					\ ->
-						if (inputState.wordWrap)
-							getSplittedByWidthString(l, wd - 2., textStyle, [CropWords(true)]
-								|> (\f -> if (readOnly) arrayPush(f, ShiftLongWords()) else f))
-							|> concatA
-							|> (\f -> map(f, \f0 -> Pair(strlen(f0), f0)))
-						else
-							[Pair(strlen(l), l)]
-				)
-			)
-		)
-		|> (\l -> {
-			linesCache := Triple(wd, sp, pairs2tree(l));
-			map(l, secondOfPair);
-		})
-		|> (\splitted : [[Pair<int, string>]] ->
-			mapi(splitted, \i, l ->
-				mapi(if (length(l) > 0) l else [Pair(0, "")], \j, ns -> {
-					addN = (i < length(splitted) - 1 && j == length(l) - 1);
-					visibleText = (if (sp) secondOfPair(ns) else concatStrings(generate(0, firstOfPair(ns), \__ -> "\u2022")));
-
-					MTextInputLine(visibleText + "\n", secondOfPair(ns), firstOfPair(ns), addN)
-				})
-			)
-			|> concatA
-		)
-		|> (\l -> nextDistinct(lines, l))
-	};
+	content2lines = MTextEditorContent2Lines(inputState, lines, textStyle);
 
 	resetCursor = \ -> if (fgetValue(focused)) {
 		nextDistinct(cursorVisible, false);
@@ -2082,6 +2057,53 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 		handleMouseUp,
 		subs
 	);
+}
+
+MTextEditorContent2Lines(
+	inputState : MInputState,
+	lines : DynamicBehaviour<[MTextInputLine]>,
+	textStyle : [CharacterStyle]) -> (string, bool, double) -> void {
+
+	linesCache = ref Triple(-1., false, makeTree());
+
+	\c : string, sp : bool, wd : double -> {
+		map(strSplit(c, "\n"), \l ->
+			Pair(
+				l,
+				eitherFn(
+					if (wd != firstOfTriple(^linesCache))
+						None()
+					else
+						lookupTree(thirdOfTriple(^linesCache), l),
+					idfn,
+					\ ->
+						if (inputState.wordWrap)
+							getSplittedByWidthString(l, wd - 2., textStyle, [CropWords(true)]
+								|> (\f -> if (inputState.readOnly) arrayPush(f, ShiftLongWords()) else f))
+							|> concatA
+							|> (\f -> map(f, \f0 -> Pair(strlen(f0), f0)))
+						else
+							[Pair(strlen(l), l)]
+				)
+			)
+		)
+		|> (\l -> {
+			linesCache := Triple(wd, sp, pairs2tree(l));
+			map(l, secondOfPair);
+		})
+		|> (\splitted : [[Pair<int, string>]] ->
+			mapi(splitted, \i, l ->
+				mapi(if (length(l) > 0) l else [Pair(0, "")], \j, ns -> {
+					addN = (i < length(splitted) - 1 && j == length(l) - 1);
+					visibleText = (if (sp) secondOfPair(ns) else concatStrings(generate(0, firstOfPair(ns), \__ -> "\u2022")));
+
+					MTextInputLine(visibleText + "\n", secondOfPair(ns), firstOfPair(ns), addN)
+				})
+			)
+			|> concatA
+		)
+		|> (\l -> nextDistinct(lines, l))
+	}
 }
 
 makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
