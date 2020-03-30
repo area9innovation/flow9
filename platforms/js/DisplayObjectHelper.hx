@@ -1095,7 +1095,8 @@ class DisplayObjectHelper {
 
 			if (svgs.length > 0) {
 				var svg = svgs[0];
-				var clipFilter : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "filter");
+				var elementId = untyped svg.parentNode.getAttribute('id');
+				var clipFilter : Element = untyped svg.getElementById(elementId + "filter");
 
 				if (clipFilter != null && clipFilter.parentNode != null) {
 					clipFilter.parentNode.removeChild(clipFilter);
@@ -1126,16 +1127,13 @@ class DisplayObjectHelper {
 				feOffset.setAttribute("dy", '${untyped Math.sin(filter.angle) * filter.distance}');
 
 				var feGaussianBlur = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feGaussianBlur');
-				feGaussianBlur.setAttribute("result", "blurOut");
+				if (!Platform.isSafari) {
+					feGaussianBlur.setAttribute("result", "blurOut");
+				}
 				feGaussianBlur.setAttribute("in", "offOut");
 				feGaussianBlur.setAttribute("stdDeviation", '${untyped filter.blur}');
 
-				var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
-				feBlend.setAttribute("in2", "blurOut");
-				feBlend.setAttribute("in", "SourceGraphic");
-				feBlend.setAttribute("mode", "normal");
-
-				clipFilter.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "filter");
+				clipFilter.setAttribute('id', elementId + "filter");
 				clipFilter.setAttribute('x', '${untyped -clip.filterPadding}');
 				clipFilter.setAttribute('y', '${untyped -clip.filterPadding}');
 				clipFilter.setAttribute('width', '${untyped getWidgetWidth(clip) + clip.filterPadding}');
@@ -1144,14 +1142,41 @@ class DisplayObjectHelper {
 				clipFilter.appendChild(feColorMatrix);
 				clipFilter.appendChild(feOffset);
 				clipFilter.appendChild(feGaussianBlur);
-				clipFilter.appendChild(feBlend);
+
+				if (!Platform.isSafari) {
+					var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
+					feBlend.setAttribute("in2", "blurOut");
+					feBlend.setAttribute("in", "SourceGraphic");
+					feBlend.setAttribute("mode", "normal");
+
+
+					clipFilter.appendChild(feBlend);
+				}
 
 				defs.insertBefore(clipFilter, defs.firstChild);
 				svg.insertBefore(defs, svg.firstChild);
 
+				var blendGroup = untyped svg.getElementById(elementId + "blend");
+				if (Platform.isSafari) {
+					if (blendGroup == null) {
+						blendGroup = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
+						blendGroup.setAttribute('id', elementId + "blend");
+						svg.appendChild(blendGroup);
+					}
+
+					for (child in blendGroup.childNodes) {
+						clipFilter.removeChild(untyped child);
+					}
+				}
+
 				for (child in svg.childNodes) {
-					if (untyped child.tagName.toLowerCase() != "defs") {
-						untyped child.setAttribute("filter", 'url(#' + untyped svg.parentNode.getAttribute('id') + "filter)");
+					if (untyped child.tagName.toLowerCase() != "defs" && child.getAttribute('id') != elementId + "blend") {
+						if (Platform.isSafari) {
+							untyped child.removeAttribute("filter");
+							blendGroup.appendChild(child.cloneNode());
+						}
+
+						untyped child.setAttribute("filter", 'url(#' + elementId + "filter)");
 
 						parent.once("clearfilter", function() { if (untyped child != null) untyped child.removeAttribute("filter"); });
 					}
@@ -1309,7 +1334,8 @@ class DisplayObjectHelper {
 			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
 			for (svg in svgs) {
-				var clipMask : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+				var elementId = untyped svg.parentNode.getAttribute('id');
+				var clipMask : Element = untyped svg.getElementById(elementId + "mask");
 
 				if (clipMask != null && clipMask.parentNode != null) {
 					clipMask.parentNode.removeChild(clipMask);
@@ -1328,7 +1354,7 @@ class DisplayObjectHelper {
 				image.setAttribute('href', alphaMask.url);
 				var transform = prependInvertedMatrix(untyped clip.alphaMask.worldTransform, clip.worldTransform);
 				image.setAttribute('transform', 'matrix(${transform.a} ${transform.b} ${transform.c} ${transform.d} ${transform.tx} ${transform.ty})');
-				clipMask.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "mask");
+				clipMask.setAttribute('id', elementId + "mask");
 				clipMask.setAttribute('mask-type', 'alpha');
 
 				clipMask.appendChild(image);
@@ -1336,7 +1362,7 @@ class DisplayObjectHelper {
 				svg.insertBefore(defs, svg.firstChild);
 
 				for (child in svg.childNodes) {
-					untyped child.setAttribute("mask", 'url(#' + untyped svg.parentNode.getAttribute('id') + "mask)");
+					untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
 				}
 			}
 		} else if (viewBounds != null) {
@@ -1375,7 +1401,8 @@ class DisplayObjectHelper {
 
 					if (Platform.isIE || svgs.length == 1) {
 						for (svg in svgs) {
-							var clipMask : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+							var elementId = untyped svg.parentNode.getAttribute('id');
+							var clipMask : Element = untyped svg.getElementById(elementId + "mask");
 
 							if (clipMask != null && clipMask.parentNode != null) {
 								clipMask.parentNode.removeChild(clipMask);
@@ -1399,14 +1426,14 @@ class DisplayObjectHelper {
 							path.setAttribute('transform', 'matrix(1 0 0 1
 								${untyped -Std.int(svg.parentNode.style.marginLeft.substring(0, svg.parentNode.style.marginLeft.length - 2)) - Std.int(svg.parentNode.style.left.substring(0, svg.parentNode.style.left.length - 2))}
 								${untyped -Std.int(svg.parentNode.style.marginTop.substring(0, svg.parentNode.style.marginTop.length - 2)) - Std.int(svg.parentNode.style.top.substring(0, svg.parentNode.style.top.length - 2))})');
-							clipMask.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "mask");
+							clipMask.setAttribute('id', elementId + "mask");
 
 							clipMask.appendChild(path);
 							defs.insertBefore(clipMask, defs.firstChild);
 							svg.insertBefore(defs, svg.firstChild);
 
 							for (child in svg.childNodes) {
-								untyped child.setAttribute("mask", 'url(#' + untyped svg.parentNode.getAttribute('id') + "mask)");
+								untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
 							}
 						}
 					} else {

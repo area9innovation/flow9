@@ -206,7 +206,7 @@ void DebugView::setDebugEnabled(bool enable) {
 }
 
 void DebugView::slotClearMarks() {
-    foreach (KTextEditor::Document* doc, kateApp_->documents()) {
+    for (KTextEditor::Document* doc : kateApp_->documents()) {
         if (KTextEditor::MarkInterface* iface = qobject_cast<KTextEditor::MarkInterface*>(doc)) {
             const QHash<int, KTextEditor::Mark*> marks = iface->marks();
             QHashIterator<int, KTextEditor::Mark*> i(marks);

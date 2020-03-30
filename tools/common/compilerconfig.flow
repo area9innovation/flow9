@@ -3,8 +3,8 @@ import tools/common/pathutil;
 import lingo/flow/fail;
 
 export {
-	// Reads compiler options from config file and url parameters.
-	getCompilerConfig : ()->Fail<CompilerConfig>;
+	// Reads compiler options from config file (relative to given dir) and url parameters.
+	getCompilerConfig(dir : string) -> Fail<CompilerConfig>;
 	
 	// Read a compilefile and for each line make a config, combined with a given one.
 	readConfigsFormCompileFile(config : CompilerConfig, compilefile : string) -> [CompilerConfig];
@@ -18,10 +18,18 @@ export {
 
 	// Trims a config.flowfile so that it gives a valid module name.
 	getTargetModuleName(config : CompilerConfig) -> string;
+
+	// Prints only those config key-value pairs, which differ from the default config for a given file.
+	nonDefaultCompilerConfigToString(config : CompilerConfig) -> string;
 }
 
-getCompilerConfig() {
-	configFile = combineConfigsOverride(getAllUrlConfig(), parseFlowConfig());
+getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
+	conf_dir = findFlowConfigDir(dir);
+	configFile = if (conf_dir == "") {
+		getAllUrlConfig();
+	} else {
+		combineConfigsOverride(getAllUrlConfig(), parseFlowConfig(getFileContent(conf_dir + "/flow.config")));
+	}
 
 	v = getUrlParameterDef("verbose", "0");
 	verbose = if (isDigits(v)) s2i(v) else 0;
@@ -340,5 +348,43 @@ makeRelativePath(file : string) -> string {
 }
 
 getTargetModuleName(config : CompilerConfig) -> string {
-	trimFlowfile(config.flowfile, config.includes, getConfigParameterDef(config.config, "working-dir", ""))
+	trimFlowfile(config.flowfile, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
+}
+
+nonDefaultCompilerConfigToString(config : CompilerConfig) -> string {
+	path = findFlowPath(config.flowfile, true, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
+	def_params = switch (getCompilerConfig(fcDirName(path))) {
+		Some(conf): compilerConfigToTree(conf);
+		Fail(): makeTree();
+	}
+	params = tree2pairs(compilerConfigToTree(config));
+	file = ref "";
+	proc_file = \p -> {
+		if (p.first == "flowfile" || p.first == "file") {
+			if (^file == "") {
+				file := p.second;
+			}
+			false;
+		} else if (p.second == "") {
+			if (^file == "") {
+				file := p.first;
+			}
+			false;
+		} else {
+			true;
+		}
+	}
+	non_default = filter(params, \p ->
+		switch (lookupTree(def_params, p.first)) {
+			Some(val):
+				if (!proc_file(p)) false else {
+					p.second != val;
+				}
+			None(): {
+				proc_file(p);
+			}
+		}
+	);
+	"file=" + ^file + ", " +
+	strGlue(map(non_default, \p -> p.first + "=" + p.second), ", ");
 }
