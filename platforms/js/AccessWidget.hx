@@ -250,7 +250,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function isFocusable() : Bool {
-		return accessWidget.enabled && accessWidget.element != null && accessWidget.clip != null
+		return accessWidget != null && accessWidget.enabled && accessWidget.element != null && accessWidget.clip != null
 			&& accessWidget.clip.getClipVisible() && accessWidget.element.tabIndex >= 0;
 	}
 
@@ -259,7 +259,7 @@ class AccessWidgetTree extends EventEmitter {
 			for (i in -1...nextId) {
 				var child = children.get(i);
 
-				if (child != null && child.accessWidget != null) {
+				if (child != null) {
 					if (child.isFocusable()) {
 						return child.accessWidget;
 					} else {
@@ -278,10 +278,10 @@ class AccessWidgetTree extends EventEmitter {
 
 	public function getLastAccessWidget() : AccessWidget {
 		if (parent != null) {
-			for (i in nextId...-1) {
-				var child = children.get(i);
+			for (i in 1...(nextId + 1)) {
+				var child = children.get(nextId - i);
 
-				if (child != null && child.accessWidget != null) {
+				if (child != null) {
 					if (child.isFocusable()) {
 						return child.accessWidget;
 					} else {
@@ -300,27 +300,25 @@ class AccessWidgetTree extends EventEmitter {
 
 	public function getPreviousAccessWidget() : AccessWidget {
 		if (parent != null) {
-			for (i in (id - 1)...-1) {
-				var child = parent.children.get(i);
+			if (id != -1) {
+				for (i in 1...(id + 2)) {
+					var child = parent.children.get(id - i);
 
-				if (child != null && child.accessWidget != null) {
-					var accessWidget = child.getLastAccessWidget();
+					if (child != null) {
+						var accessWidget = child.getLastAccessWidget();
 
-					if (accessWidget != null) {
-						return accessWidget;
-					}
+						if (accessWidget != null) {
+							return accessWidget;
+						}
 
-					if (child.isFocusable()) {
-						return child.accessWidget;
+						if (child.isFocusable()) {
+							return child.accessWidget;
+						}
 					}
 				}
 			}
 
-			if (parent.accessWidget != null) {
-				return parent.getPreviousAccessWidget();
-			} else {
-				return null;
-			}
+			return parent.getPreviousAccessWidget();
 		}
 
 		return null;
@@ -331,7 +329,7 @@ class AccessWidgetTree extends EventEmitter {
 			for (i in (id + 1)...parent.nextId) {
 				var child = parent.children.get(i);
 
-				if (child != null && child.accessWidget != null) {
+				if (child != null) {
 					var accessWidget = child.getFirstAccessWidget();
 
 					if (accessWidget != null) {
@@ -344,11 +342,7 @@ class AccessWidgetTree extends EventEmitter {
 				}
 			}
 
-			if (parent.accessWidget != null) {
-				return parent.getNextAccessWidget();
-			} else {
-				return null;
-			}
+			return parent.getNextAccessWidget();
 		}
 
 		return null;

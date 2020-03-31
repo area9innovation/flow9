@@ -1091,12 +1091,12 @@ class DisplayObjectHelper {
 		}
 
 		if (nativeWidget != null) {
-			var svgs : Array<Element> = untyped nativeWidget.getElementsByTagName("svg");
+			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
 			if (svgs.length > 0) {
 				var svg = svgs[0];
 				var elementId = untyped svg.parentNode.getAttribute('id');
-				var clipFilter : Element = untyped svg.getElementById(elementId + "filter");
+				var clipFilter : Element = Browser.document.getElementById(elementId + "filter");
 
 				if (clipFilter != null && clipFilter.parentNode != null) {
 					clipFilter.parentNode.removeChild(clipFilter);
@@ -1108,7 +1108,9 @@ class DisplayObjectHelper {
 					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'filter');
 
 				for (child in clipFilter.childNodes) {
-					clipFilter.removeChild(untyped child);
+					if (child.parentNode == clipFilter) {
+						clipFilter.removeChild(child);
+					}
 				}
 
 				var feColorMatrix = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feColorMatrix');
@@ -1123,15 +1125,15 @@ class DisplayObjectHelper {
 				var feOffset = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feOffset');
 				feOffset.setAttribute("result", "offOut");
 				feOffset.setAttribute("in", "matrixOut");
-				feOffset.setAttribute("dx", '${untyped Math.cos(filter.angle) * filter.distance}');
-				feOffset.setAttribute("dy", '${untyped Math.sin(filter.angle) * filter.distance}');
+				feOffset.setAttribute("dx", '${Math.cos(filter.angle) * filter.distance}');
+				feOffset.setAttribute("dy", '${Math.sin(filter.angle) * filter.distance}');
 
 				var feGaussianBlur = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feGaussianBlur');
 				if (!Platform.isSafari) {
 					feGaussianBlur.setAttribute("result", "blurOut");
 				}
 				feGaussianBlur.setAttribute("in", "offOut");
-				feGaussianBlur.setAttribute("stdDeviation", '${untyped filter.blur}');
+				feGaussianBlur.setAttribute("stdDeviation", '${filter.blur}');
 
 				clipFilter.setAttribute('id', elementId + "filter");
 				clipFilter.setAttribute('x', '${untyped -clip.filterPadding}');
@@ -1156,7 +1158,7 @@ class DisplayObjectHelper {
 				defs.insertBefore(clipFilter, defs.firstChild);
 				svg.insertBefore(defs, svg.firstChild);
 
-				var blendGroup = untyped svg.getElementById(elementId + "blend");
+				var blendGroup = Browser.document.getElementById(elementId + "blend");
 				if (Platform.isSafari) {
 					if (blendGroup == null) {
 						blendGroup = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
@@ -1165,7 +1167,9 @@ class DisplayObjectHelper {
 					}
 
 					for (child in blendGroup.childNodes) {
-						clipFilter.removeChild(untyped child);
+						if (child.parentNode == blendGroup) {
+							blendGroup.removeChild(child);
+						}
 					}
 				}
 
@@ -1178,15 +1182,15 @@ class DisplayObjectHelper {
 
 						untyped child.setAttribute("filter", 'url(#' + elementId + "filter)");
 
-						parent.once("clearfilter", function() { if (untyped child != null) untyped child.removeAttribute("filter"); });
+						parent.once("clearfilter", function() { if (child != null) untyped child.removeAttribute("filter"); });
 					}
 				}
 			} else {
 				nativeWidget.style.boxShadow = '
-					${untyped Math.cos(filter.angle) * filter.distance}px
-					${untyped Math.sin(filter.angle) * filter.distance}px
-					${untyped filter.blur}px
-					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+					${Math.cos(filter.angle) * filter.distance}px
+					${Math.sin(filter.angle) * filter.distance}px
+					${filter.blur}px
+					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
 				';
 
 				parent.once("clearfilter", function() { if (nativeWidget != null) nativeWidget.style.boxShadow = null; });

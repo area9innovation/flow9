@@ -188,6 +188,9 @@ public class RenderSupport3D extends NativeHost {
 	public Object clear3DTransformControls(Object object) {
 		return null;
 	}
+	public Object set3DOrbitControlsEnabled(Object object, Boolean enabled) {
+		return null;
+	}
 	public Boolean is3DTransformControlsAttached(Object stage, Object object) {
 		return false;
 	}
@@ -719,6 +722,10 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object make3DLine(Object geometry, Object[] materials, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DLineSegments(Object geometry, Object[] materials, Object[] parameters) {
 		return null;
 	}
 
