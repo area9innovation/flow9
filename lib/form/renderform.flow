@@ -234,7 +234,1835 @@ decreaseFilesCount(alreadyDecreased, filesCount) {
 
 // Render a form with the given space available
 renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tabOrder: [int]) -> RenderResult {
-	emptyRenderResult;
+	res = switch (rform : Form) {
+	Empty(): {
+		emptyRenderResult;
+	}
+	Constructor(form, construct): {
+		uns = construct();
+		d = renderForm(form, available, zorder, tabOrder);
+		RenderResult(d.clips, d.widthHeight, d.baseline, d.pending, arrayPush(d.disposers, uns), d.capabilities);
+	}
+	Create2(current, fn): {
+		current := fn();
+		d = renderForm(^current, available, zorder, tabOrder);
+		RenderResult(d.clips, d.widthHeight, d.baseline, d.pending, d.disposers, d.capabilities);
+	}
+	Text(text, style): {
+		if (!js && extractStruct(style, EscapeHTML(false)).escape) {
+			renderText(text |> escapeHtml, style, available, zorder, tabOrder)
+		} else if (js && getRendererType() != "html" && !extractStruct(style, EscapeHTML(false)).escape) {
+			texts = html2text(text, style);
+
+			if (length(texts) == 0) {
+				renderText("", style, available, zorder, tabOrder);
+			} else if (length(texts) == 1) {
+				renderText(texts[0].text, texts[0].style, available, zorder, tabOrder);
+			} else {
+				renderTexts(texts, available, zorder, tabOrder);
+			}
+		} else {
+			renderText(text, style, available, zorder, tabOrder)
+		}
+	}
+	Picture(url_, style): {
+		if (downloadPictures && strlen(url_) > 0) {
+			cache = ref true;
+			onlydl = ref false;
+			errhndlr = ref \e -> {};
+			onLoaded = ref nop;
+			realSizeFn = ref nop1;
+			iter(style, \s -> switch(s : PictureStyle) {
+				DontCache(): cache := false;
+				OnlyDownloadToCache(): onlydl := true;
+				OnLoadingError(fn): errhndlr := fn;
+				OnLoaded(fn) : onLoaded := {
+					prevOnLoaded = ^onLoaded;
+					\->{
+						prevOnLoaded();
+						fn();
+					}
+				};
+				InspectRealSize(fn): realSizeFn := fn;
+			});
+			widthHeight = make(zeroWH);
+			baseline = make(0.0);
+			pending = make(1);
+			alreadyDecreased = make(false); //Let's use separate variable as pending mcould be updated outside the scope
+			increaseFilesCount(loadingContentFilesCount);
+			url = applyMediaPathMapping(url_);
+			picture = makePicture(addServerPathIfRelative(url), ^cache, \w, h -> {
+				CachedPicturesSizes := setTree(^CachedPicturesSizes, url, WidthHeight(w, h));
+				nextDistinct(widthHeight, WidthHeight(w, h));
+				nextDistinct(baseline, h);
+				decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
+				nextDistinct(pending, 0);
+				^realSizeFn(WidthHeight(w, h));
+				^onLoaded();
+			}, \e -> {
+				CachedPicturesSizes := setTree(^CachedPicturesSizes, url, zeroWH);
+				^errhndlr(e);
+				decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
+				nextDistinct(pending, 0);
+				if (e != "") {
+					println(e);
+				}
+			}, ^onlydl);
+
+			RenderResult(
+				[picture], widthHeight, baseline, pending,
+				[\ -> {
+					//Decrease loading files count if Form is closed until onOK or onError has happened.
+					decreaseFilesCount(alreadyDecreased, loadingContentFilesCount); //deleteNative(picture);
+				}],
+				ClipCapabilities(true, false, false, false, false)
+			)
+		} else {
+			// This branch is a special one. We need it only to increase LR/probe rendering speed
+			// when regression testing tool is applied to really big product to look for memory leaks
+			// [Investigate] do we need to call one of the following functions
+			//onError = extractStruct(style, OnLoadingError(nop1)).fn;
+			//onError("download_pictures=0");
+			//onLoaded = extractStruct(style, OnLoaded(nop)).fn;
+			//onLoaded();
+			emptyRenderResult
+		}
+	}
+	Camera(filename, parameters, listeners, controls): {
+		vidWidth = ref 1;
+		vidHeight = ref 1;
+		camWidth = ref 640;
+		camHeight = ref 480;
+		camFps = ref 30.0;
+		camID = ref 0;
+		recordMode = ref 3;
+		rtmpServerUri = ref "";
+		errhndlr = ref \msg -> {};
+
+		iter(parameters, \p -> switch (p : RecordParameter) {
+			VideoSize(vw, vh) : {
+				vidWidth := vw;
+				vidHeight := vh;
+			};
+			RTMPServer(uri) : {
+				rtmpServerUri := uri;
+			};
+			CameraSize(cw, ch, cf) : {
+				camWidth := cw;
+				camHeight := ch;
+				camFps := cf;
+			};
+			CameraID(id) : {
+				camID := id;
+			};
+			SoundOnly() : {
+				recordMode := 1;
+			};
+			OnConnectingError(fn): {
+				errhndlr := fn;
+			};
+		});
+
+		pending = make(1);
+		widthHeight = make(WidthHeight(i2d(^vidWidth), i2d(^vidHeight)));
+
+		video = ref [];
+
+		cbOnReadyForRecording = \ns -> {
+			video := replace(^video, 0, ns);
+			nextDistinct(pending, 0);
+		};
+
+		cbOnFailed = \msg -> {
+			^errhndlr(msg);
+			nextDistinct(pending, 0);
+		};
+
+		video := makeCamera(^rtmpServerUri, ^camID, ^camWidth, ^camHeight, ^camFps, ^vidWidth, ^vidHeight, ^recordMode, cbOnReadyForRecording, cbOnFailed);
+
+		disposers2 = map(controls, \c -> switch (c: RecordControl) {
+			Recording(status): {
+				subscribe2(status, \record -> {
+					if (record) {
+						startRecord(^video[0], filename, "record");
+					} else {
+						stopRecord(^video[0]);
+					}
+				});
+			}
+		});
+
+		RenderResult([^video[1]], widthHeight, const(i2d(^vidHeight)), pending, [\ -> {
+			applyall(disposers2);
+			closeVideo(^video[0]);
+			deleteNative(^video[0]);
+		}], ClipCapabilities(true, false, false, false, false));
+	}
+	Graphics(path, style): {
+		// Make a clip and get the graphics
+		clip = makeClip();
+		setClipDebugInfo(clip, "form", rform);
+		size = renderGraphics(clip, path, style);
+
+		widthHeight = const(size);
+		RenderResult([clip], widthHeight, const(size.height), const(0), [\ -> { deleteNative(clip); }], allClipCapabilities);
+	}
+	Translate(x, y, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		fn = \clip -> {
+			xsub = subscribe(x, \xc -> setClipX(clip, xc));
+			ysub = subscribe(y, \yc -> setClipY(clip, yc));
+			[ xsub, ysub ]
+		};
+		attachChildAndCapability(rform, d, d.capabilities.move,
+			ClipCapabilities(false, d.capabilities.filters,
+				d.capabilities.interactive,
+				false, d.capabilities.alpha), fn
+		);
+	}
+	Border(left, top, right, bottom, form): {
+		awh = selectu(available, \wh -> WidthHeight(
+			max(0.0, wh.width - (left + right)),
+			max(0.0, wh.height - (top + bottom))
+		));
+		d = renderForm(form, awh.first, zorder, tabOrder);
+
+		baseline = selectu(d.baseline, \b -> {
+			b + top
+		});
+
+		widthHeight = selectu(d.widthHeight, \wh -> {
+			WidthHeight(wh.width + left + right,
+					wh.height + top + bottom)
+		});
+
+		fn = \clip -> {
+			if (left != 0.0) {
+				setClipX(clip, left);
+			}
+			if (top != 0.0) {
+				setClipY(clip, top);
+			};
+			[];
+		};
+
+		attachChildAndCapability(
+			rform,
+			RenderResult(
+				d.clips, widthHeight.first, baseline.first, d.pending,
+				concat(d.disposers, [ awh.second, baseline.second, widthHeight.second ]),
+				d.capabilities),
+			d.capabilities.move,
+			ClipCapabilities(false, d.capabilities.filters, d.capabilities.interactive, false, d.capabilities.alpha),
+			fn
+		);
+	}
+	Scale(x, y, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		widthHeight = select3u(d.widthHeight, x, y, \wh, xs, ys -> {
+			WidthHeight(wh.width * xs, wh.height * ys)
+		});
+		baseline = select2u(d.baseline, y, \b, ys -> {
+			b * ys
+		});
+		fn = \clip -> {
+			xsub = subscribe(x, \xs -> setClipScaleX(clip, xs));
+			ysub = subscribe(y, \ys -> setClipScaleY(clip, ys));
+			[ xsub, ysub ];
+		}
+		attachChildAndCapability(
+			rform,
+			RenderResult(d.clips, widthHeight.first, baseline.first, d.pending,
+				concat(d.disposers, [widthHeight.second, baseline.second]), d.capabilities),
+			d.capabilities.scale,
+			ClipCapabilities(d.capabilities.move, d.capabilities.filters, false, false, d.capabilities.alpha), fn
+		);
+	}
+	Rotate(degrees, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		// TODO: Check if the child can be rotated
+		clip = makeClip();
+		setClipDebugInfo(clip, "form", rform);
+		degsub = subscribe(degrees, \de -> setClipRotation(clip, de));
+		attachChildren(clip, d.clips, d.widthHeight, d.baseline, d.pending, arrayPush(d.disposers, \ -> { degsub(); deleteNative(clip); }), d.capabilities);
+	}
+	Alpha(alpha, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		fn = \clip -> {
+			[subscribe(alpha, \a -> setClipAlpha(clip, a))];
+		}
+		attachChildAndCapability(rform, d, d.capabilities.alpha,
+			ClipCapabilities(d.capabilities.move, d.capabilities.filters, d.capabilities.interactive, d.capabilities.scale, false), fn
+		);
+	}
+	Visible(visible, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		widthHeight = select2u(d.widthHeight, visible, \wh, v -> {
+			if (v == 0) {
+				zeroWH
+			} else {
+				wh
+			}
+		});
+		baseline = select2u(d.baseline, visible, \b, v -> {
+			if (v == 0) 0.0 else b;
+		});
+		fn = \clip -> {
+			u = subscribe(visible, \v -> {
+				setClipVisible(clip, v != 0)
+			});
+			[ u ]
+		}
+		attachChildAndCapability(
+			rform,
+			RenderResult(d.clips, widthHeight.first, baseline.first, d.pending,
+				concat(d.disposers, [widthHeight.second, baseline.second]), d.capabilities),
+				d.capabilities.alpha,
+				ClipCapabilities(d.capabilities.move, d.capabilities.filters, d.capabilities.interactive, d.capabilities.scale, false), fn
+		);
+	}
+	Available2(awh, form): {
+		renderForm(form, awh, zorder, tabOrder);
+	}
+	Size2(wh, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		baseline = selectu(wh, \m -> m.height);
+		RenderResult(d.clips, wh, baseline.first, d.pending, arrayPush(d.disposers, baseline.second), d.capabilities);
+	}
+	SetPending(pen, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		RenderResult(d.clips, d.widthHeight, d.baseline, pen, d.disposers, d.capabilities);
+	}
+	Baseline(baseline, form): {
+		d = renderForm(form, available, zorder, tabOrder);
+		RenderResult(d.clips, d.widthHeight, baseline, d.pending, d.disposers, d.capabilities);
+	}
+	Group(forms) : {
+		results : [RenderResult] = mapi(forms, \i, form -> {
+			renderForm(form, available, arrayPush(zorder, i), arrayPush(tabOrder, i));
+		});
+		whu = selectMergeu(map(results, \r -> r.widthHeight), zeroSize, \rwh, lwh -> {
+			WidthHeight(max(rwh.width, lwh.width), max(rwh.height, lwh.height))
+		});
+		widthHeight = whenSizeChangedu(whu.first);
+
+		baseline = arrayMaxu(map(results, \r -> r.baseline));
+
+		pending = arrayISumu(map(results, \r -> r.pending));
+
+		clips = concatA(map(results, \r -> r.clips));
+
+		disposers = concatA(map(results, \r -> r.disposers));
+		disps = concat(disposers, [whu.second, widthHeight.second, baseline.second, pending.second]);
+
+		RenderResult(
+			clips, widthHeight.first, baseline.first, pending.first,
+			[\ -> applyall(disps)],
+			sharedCapabilities(results)
+		);
+	}
+	Grid(cells): {
+		renderGrid(cells, zorder, tabOrder);
+	}
+	Mutable2(behaviour, stack): {
+		widthHeight = make(zeroWH);
+		baseline = make(0.0);
+		// TODO: Maybe use an array of disposers here?
+		old = ref nop;
+		clip = makeClip();
+		setClipCallstack(clip, stack);
+		setClipDebugInfo(clip, "form", rform);
+		nested = ref 0;
+		pending = make(0);
+		dodisplay = \form -> {
+			// Block post-destroy calls
+			if (^nested == 0) {
+				nested := 1;
+				^old();
+				result = optimizeAndRenderForm(clip, form, available, zorder, tabOrder);
+				cw = connectDistinct(result.widthHeight, widthHeight);
+				cb = connectDistinct(result.baseline, baseline);
+				cp = connectDistinct(result.pending, pending);
+
+				// Useful hack to see rerender problems
+				if (showRedraw) {
+					g = getGraphics(clip);
+
+					setLineStyle(g, 1.0, floor(random() * i2d(0xffffff)), 1.0);
+					moveTo(g, 0.0, 0.0);
+					lineTo(g, getValue(result.widthHeight).width, getValue(result.widthHeight).height);
+					endFill(g);
+				}
+
+				disposers = result.disposers;
+				// println(length(disposers));
+				old := \ -> { cw(); cb(); cp(); applyall(disposers); }
+				// If re-entrant destroy pending, finish it
+				if (^nested < 0) {
+					^old();
+					deleteNative(clip);
+				} else {
+					nested := 0;
+				}
+			}
+		};
+		unsub = subscribe(behaviour, \form -> {
+			// Postpone re-entrant updates if necessary
+			if (^nested > 0)
+				deferred(\ -> {
+					impersonateCallstackItem(stack, 1);
+					dodisplay(form);
+				})
+			else {
+				impersonateCallstackItem(stack, 1);
+				dodisplay(form);
+			}
+		});
+		RenderResult([clip], widthHeight, baseline, pending, [\ -> {
+			unsub();
+			if (^nested == 0) {
+				impersonateCallstackItem(stack, 1);
+				^old();
+				deleteNative(clip);
+			}
+			nested := -1;
+		}], allClipCapabilities);
+	}
+	Switch(index, cases) : {
+		selForm = \i -> elementAt(cases, i, Empty());
+		if (isConst(index)) {
+			renderForm(selForm(getValue(index)), available, zorder, tabOrder);
+		} else {
+			widthHeight = make(zeroWH);
+			baseline = make(0.0);
+			pending = make(0);
+			// TODO: Consider to make this an array of disposers
+			old = ref nop;
+			oldCase = ref -1;
+			clip = makeClip();
+			setClipDebugInfo(clip, "form", rform);
+			unsub = subscribe(index, \i -> {
+				if (i != ^oldCase) {
+					^old(); old := nop;
+					newform = selForm(i);
+					result = optimizeAndRenderForm(clip, newform, available, zorder, tabOrder);
+					oldCase := i;
+					cw = connect(result.widthHeight, widthHeight);
+					cb = connect(result.baseline, baseline);
+					cp = connect(result.pending, pending);
+					disposers = result.disposers;
+					old := \ -> { cw(); cp(); cb(); applyall(disposers); }
+				}
+			});
+			RenderResult([clip], widthHeight, baseline, pending, [\ -> { unsub(); ^old(); deleteNative(clip); }], allClipCapabilities);
+		}
+	}
+
+	FullWindow(fullscreen, form) : {
+		resize = ref nop;
+		availUns = ref nop;
+
+		containerAvailable = make(zeroWH);
+		containerWH = make(zeroWH);
+
+		disconnectAvail = ref connect(available, containerAvailable);
+
+		f = renderForm(form, containerAvailable, zorder, tabOrder);
+
+		disconnectWH = ref connect(f.widthHeight, containerWH);
+		tmpAvailable = ref getValue(containerAvailable);
+
+		container = makeClip();
+
+		uns = subscribe2(fullscreen, \fs -> {
+			setFullWindowTarget(container);
+
+			^disconnectWH();
+			^disconnectAvail();
+			^resize();
+			^availUns();
+
+			if (fs) {
+				tmpAvailable := getValue(available);
+
+				next(containerAvailable, WidthHeight(getStageWidth(), getStageHeight()));
+				resize := monitorResize(containerAvailable);
+
+				toggleFullWindow(fs);
+			} else {
+				toggleFullWindow(fs);
+				next(cast(available : Behaviour -> DynamicBehaviour), ^tmpAvailable);
+				disconnectAvail := connect(available, containerAvailable);
+				disconnectWH := connect(f.widthHeight, containerWH);
+			}
+		});
+
+		attachChildAndCapability(
+			rform,
+			attachChildren(
+				container,
+				f.clips,
+				containerWH,
+				f.baseline,
+				f.pending,
+				arrayPush(f.disposers, \ -> {
+					^disconnectWH();
+					^disconnectAvail();
+					^resize();
+					^availUns();
+					uns();
+					resetFullWindowTarget();
+					deleteNative(container);
+				}),
+				f.capabilities
+			),
+			false,
+			ClipCapabilities(false, false, false, false, false),
+			\__ -> []
+		);
+	}
+
+	FullScreen(fs, form): {
+		fw = make(false);
+		nextDistinct(fs, false);
+
+		isCurrentClip = ref false;
+
+		renderForm(Constructor(FullWindow(fw, form), \ -> {
+			fsListener = onFullScreen(\change -> {
+				if (^isCurrentClip) {
+					if (!change) {
+						nextDistinct(fs, change);
+					}
+
+					isCurrentClip := change;
+					nextDistinct(fw, change);
+				}
+			});
+
+			uns = subscribe2(fs, \fsc -> {
+				isCurrentClip := true;
+
+				toggleFullScreen(fsc);
+
+				// For targets without fullscreen available
+				if (targetNoFullscreen())
+					nextDistinct(fw, fsc);
+			});
+			\ -> {
+				fsListener();
+				uns();
+			}
+		}), available, zorder, tabOrder);
+	}
+
+	Interactive(listeners, form) : {
+		d = renderForm(form, available, zorder, tabOrder);
+
+		clipalive = ref true;
+		fn = \clip -> {
+			stage = getStage();
+			disposers = map(listeners, \l -> handleRealEvents(l, clip, clipalive, stage, zorder, true, false));
+			arrayPush(disposers,
+				\ -> { clipalive := false; }
+			);
+		};
+
+		needMove = fold(listeners, false, \acc, l -> {
+			switch (l : EventHandler) {
+				MouseMove2(mfn): true;
+				default: acc;
+			}
+		});
+
+		attachChildAndCapability(rform, d,
+			d.capabilities.interactive && (!needMove || d.capabilities.move),
+			ClipCapabilities(d.capabilities.move, d.capabilities.filters, false, d.capabilities.scale, d.capabilities.alpha), fn
+		);
+	}
+
+	TextInput(state, listeners, stateaccess): {
+		fontFamily = {
+			style = fold(state, [], \acc, s ->
+				switch (s : TextInputState) {
+					Content(c, style): style;
+					default: acc;
+				}
+			);
+			getFontFamily(style)
+		};
+
+		textfield = makeTextfield(fontFamily);
+		setTextDirection(textfield, if (getDefaultRtl()) "rtl" else "ltr");
+		setTextFieldCropWords(textfield, true);
+		alive = ref true;
+		// Convert to an input box
+		setTextInput(textfield);
+
+		if (^accessibilityEnabled) {
+			setAccessAttributes(textfield, [["zorder", toString(zorder[0])]]);
+		}
+
+		h = getTextFieldHeight(textfield);
+
+		widthHeight = make(WidthHeight(
+			getTextFieldWidth(textfield), h
+		));
+
+		baseline = const(h); // Not accurate, but we can not ask for this from text inputs
+
+		// Initial state
+		state_disposers = ref [];
+		defineTextInputState(textfield, state, widthHeight, state_disposers);
+
+		getModel = \ -> {
+			if (^alive) {
+				TextInputModel(
+					getContent(textfield) /* |> htmlUnescapeStr */,
+					getTextFieldWidth(textfield),
+					getTextFieldHeight(textfield),
+					getCursorPosition(textfield),
+					Selection(getSelectionStart(textfield), getSelectionEnd(textfield)),
+					getFocus(textfield),
+					Some(ScrollInfo(
+						getScrollV(textfield),
+						getBottomScrollV(textfield),
+						getNumLines(textfield)
+					))
+				);
+			} else {
+				TextInputModel("", 0.0, 0.0, 0, Selection(-1, -1), false, None());
+			}
+		}
+		sendModelEvent = \fn -> { \ -> fn(getModel()); }
+		sendFocusEvent = idfn;
+
+		// Events
+		disposers1 = map(listeners, \l -> switch (l : TextInputEvent) {
+			TextChange(fn): addEventListener(textfield, "change", sendModelEvent(fn));
+			TextScroll(fn): addEventListener(textfield, "scroll", sendModelEvent(fn));
+			FocusIn(fn): addEventListener(textfield, "focusin", sendFocusEvent(fn));
+			FocusOut(fn): addEventListener(textfield, "focusout", sendFocusEvent(fn));
+		});
+
+		// State access
+		disposers2 = map(stateaccess, \s -> switch (s : StateAccess) {
+			StateChanger(stateBehaviour): {
+				subscribe(stateBehaviour, \t -> {
+					defineTextInputState(textfield, t, widthHeight, state_disposers);
+				});
+			}
+			StateQuery(reader): {
+				reader(getModel);
+				nop;
+			}
+			StateQuery2(reader): {
+				reader := getModel;
+				nop;
+			}
+		});
+
+		disposers3 = map(state, \s -> switch (s : TextInputState) {
+			EatKeyDownOnFocus() : {
+				fn2 = \handled, e -> {
+					if (!handled) {
+						// If we have focus, eat it
+						getFocus(textfield)
+					} else handled;
+				};
+				stage = getStage();
+				handleZorderedKeyDownEvent(stage, zorder, fn2);
+			}
+			default: nop;
+		});
+
+		RenderResult([textfield], widthHeight, baseline, const(0), [\ -> {
+			applyall(^state_disposers);
+			applyall(disposers1);
+			applyall(disposers2);
+			applyall(disposers3);
+			// If we have focus, be sure to move it to something else in order not to lose it
+			if (flash && getFocus(textfield)) {
+				setFocus(currentClip(), true);
+			}
+			deleteNative(textfield);
+			alive := false;
+		}], ClipCapabilities(true, false, true, false, false));
+	}
+	Video(filename, parameters, listeners, controls): {
+		w = ref 0.;
+		h = ref 0.;
+		looping = ref false;
+
+		startPaused = ref false;
+
+		errhndlr = ref nop;
+
+		startOffset = ref 0.0; // 0.0 is default; code for set and unset values are equal
+		endOffset = ref 0.0; // 0.0 is default; special code for nonzero values
+
+		iter(parameters, \p -> switch (p : VideoParameter) {
+			VideoSize(vw, vh) : {
+				w := i2d(vw);
+				h := i2d(vh);
+			};
+			LoopPlayback(): {
+				looping := true;
+			};
+			NoAutoPlay(): {
+				startPaused := true;
+			};
+			OnVideoLoadingError(fn): {
+				errhndlr := fn;
+			};
+			StreamStartOffset(offset) : {
+				startOffset := max(0.0, offset);
+			};
+			StreamEndOffset(offset) : {
+				endOffset := max(0.0, offset);
+			}
+		});
+
+		widthHeight = make(WidthHeight(^w, ^h));
+		baseline = make(^h);
+
+		pending = make(1);
+		alreadyDecreased = make(false); //Let's use separate variable as pending could be updated outside the scope
+		if (!cpp) {
+			//Loading error is not reported under cpp
+			increaseFilesCount(loadingContentFilesCount);
+		}
+		duration = make(0.0);
+
+		metricsFn = \vw, vh -> {
+			nextDistinct(widthHeight, WidthHeight(vw, vh));
+			nextDistinct(baseline, vh);
+
+			if (!cpp) {
+				decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
+				nextDistinct(pending, 0);
+			};
+		};
+		durationFn = \len -> {
+			nextDistinct(duration, len);
+			startOffset := min(^startOffset, len);
+			if (^endOffset > 0.0) {
+				endOffset := min(^endOffset, len);
+			}
+		}
+
+		video = makeVideo(metricsFn, nop1, durationFn, nop1);
+
+		// Events
+		is_playing = make(false);
+		cur_position = make(^startOffset);
+
+		stopReplayHandler = \stopBeforeEnd -> {
+			if (^looping) {
+				if (!targetVideoLooping()) {
+					seekVideo(video, ^startOffset);
+					// js pauses video when it reaches end
+					if (js && getValue(is_playing)) {
+						resumeVideo(video);
+					}
+					nextDistinct(cur_position, ^startOffset);
+				}
+			} else {
+				if (stopBeforeEnd) {
+					pauseVideo(video);
+				}
+				nextDistinct(is_playing, false);
+			}
+		}
+
+		if (^looping && targetVideoLooping())
+			setVideoLooping(video, true);
+
+		disposer = addStreamStatusListener(video, \code -> {
+			if (code == "NetStream.Play.StreamNotFound") {
+				^errhndlr();
+				if (!cpp) {
+					decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
+					nextDistinct(pending, 0);
+				}
+			} else if (code == "NetStream.Play.Start") {
+				if (!^startPaused)
+					nextDistinct(is_playing, true);
+			} else if (code == "NetStream.Play.Stop") {
+				stopReplayHandler(false);
+			} else if (code == "FlowGL.User.Pause") {
+				nextDistinct(is_playing, false);
+			} else if (code == "FlowGL.User.Resume") {
+				nextDistinct(is_playing, true);
+			} else if (code == "FlowGL.User.Stop") {
+				nextDistinct(is_playing, false);
+				nextDistinct(cur_position, ^startOffset);
+			} else if (code == "FlowGL.User.Seek") {
+				nextDistinct(cur_position, getVideoPosition(video));
+			}
+		});
+
+		sizeDisposer =
+			if (^w > 0. || ^h > 0.) {
+				subscribe(widthHeight, \wh -> {
+					if (^w > 0. && wh.width > 0.)
+						setClipScaleX(video, ^w / wh.width);
+
+					if (^h > 0. && wh.height > 0.)
+						setClipScaleY(video, ^h / wh.height);
+				});
+			} else {
+				nop;
+			};
+
+		position_timer_set = ref false;
+		position_timer = ref 1000;
+
+		disposers1 = map(listeners, \l -> switch (l : VideoStreamEvent) {
+			SynchroCalls(onstart, onstop): {
+				user_stop = ref false;
+				addStreamStatusListener(video, \code -> {
+					if (code == "NetStream.Play.StreamNotFound") {
+						onstart();
+						timer(1000, onstop); // emulate 1-second playback
+					} else if (code == "NetStream.Play.Start") {
+						onstart();
+					} else if (code == "NetStream.Play.Stop") {
+						if (!^looping) onstop();
+					} else if (code == "FlowGL.User.Stop") {
+						onstop();
+						user_stop := true;
+					} else if (code == "FlowGL.User.Resume") {
+						if (^user_stop) onstart();
+						user_stop := false;
+					}
+				});
+			}
+			StreamStatus(fn): addStreamStatusListener(video, fn);
+			PlayerLength(bvr): connectDistinct(duration, bvr);
+			PlayerIsPlaying(bvr): connect(is_playing, bvr);
+			PlayerPosition(bvr,delay): {
+				if (delay > 0) {
+					position_timer_set := true;
+					position_timer := min(^position_timer, delay);
+				}
+				connectDistinct(cur_position, bvr);
+			}
+			PlayerPosition2(bvr,tmr): {
+				sub1 = subscribe2(tmr, \time -> {
+					nextDistinct(cur_position, getVideoPosition(video));
+				});
+				sub2 = connectDistinct(cur_position, bvr);
+				\ -> {
+					sub1(); sub2();
+				}
+			}
+		});
+
+		kill_timer = ref nop;
+
+		if (^position_timer_set || ^endOffset > 0.0) {
+			tmr = controlledTimer(^position_timer, is_playing);
+			sub1 = subscribe2(tmr.value, \time -> {
+				position = getVideoPosition(video);
+				nextDistinct(cur_position, position);
+				if (^endOffset > 0.0 && position >= ^endOffset) {
+					stopReplayHandler(true);
+				}
+			});
+			kill_timer := \ -> { tmr.dispose(); sub1(); }
+		}
+
+		hasFullScreen = ref false;
+		isFullscreen = make(false);
+
+		mediaStream = ref None();
+
+
+		disposers2 = map(controls, \c -> switch (c: VideoControl) {
+			PlayerPause(isPaused): {
+				startPaused := getValue(isPaused);
+				unlink = bidirectionalLink(isPaused, is_playing, \paused -> !paused, \playing -> !playing);
+
+				uns = subscribe2(isPaused, \isP -> {
+					if (isP) {
+						pauseVideo(video);
+					} else {
+						startPaused := false;
+						resumeVideo(video);
+					}
+				});
+
+				\ -> {
+					unlink();
+					uns();
+				}
+			}
+			PlayerSeek(seekPosition): {
+				subscribe2(seekPosition, \pos -> {
+					seekVideo(video, pos);
+					nextDistinct(cur_position, pos);
+				});
+			}
+			PlayerVolume(vol): {
+				subscribe(vol, \v -> setVideoVolume(video, v));
+			}
+			VideoFullScreen(stateInitializer): {
+				hasFullScreen := true;
+				stateInitializer(isFullscreen);
+				uns1 = onFullScreen(\fs -> nextDistinct(isFullscreen, fs));
+				uns2 = subscribe2(isFullscreen, \isF -> {
+					setFullWindowTarget(video);
+					toggleFullWindow(isF);
+				});
+				\ -> {
+					uns1();
+					uns2();
+				}
+			}
+			VideoPlayerControls(vctl): {
+				if (targetVideoControls()) setVideoControls(video, vctl);
+				nop
+			}
+			VideoPlayerSubtitles(subtitle): {
+				subscribe(subtitle, \info -> {
+					if (targetVideoControls()) {
+						definedTextStyle = getDefinedTextStyle(info.style);
+						setVideoSubtitle(video, info.text, definedTextStyle.fontFamily, definedTextStyle.fontSize, definedTextStyle.fontWeight,
+							definedTextStyle.fontSlope, definedTextStyle.fillColor, definedTextStyle.fillOpacity, definedTextStyle.letterSpacing,
+							definedTextStyle.backgroundColor, definedTextStyle.backgroundOpacity
+						);
+					}
+				});
+			}
+			MediaStream(ms): {
+				mediaStream := Some(ms);
+				nop
+			}
+		});
+		eitherFn(^mediaStream,
+			\ms -> playVideoFromMediaStream(video, ms, ^startPaused),
+			\ -> playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), ^startPaused)
+		);
+
+		RenderResult([video], if (^w > 0. || ^h > 0.) const(WidthHeight(^w, ^h)) else widthHeight, if (^w > 0. || ^h > 0.) const(^h) else baseline, pending, [\ -> {
+			if (!cpp) {
+				//Decrease loading files count if Form is closed until onOK or onError has happened.
+				decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
+			}
+			closeVideo(video);
+			nextDistinct(is_playing, false);
+			if (^hasFullScreen) resetFullWindowTarget();
+			sizeDisposer();
+			disposer();
+			applyall(disposers1);
+			^kill_timer();
+			applyall(disposers2);
+			deleteNative(video);
+		}], ClipCapabilities(true, false, false, false, false));
+	}
+	Mask2(form, mask, stack): {
+		clip = makeClip();
+		setClipCallstack(clip, stack);
+		setClipDebugInfo(clip, "form", rform);
+		d1 = renderForm(form, available, zorder, tabOrder);
+		r1 = attachChildren(clip, d1.clips, d1.widthHeight, d1.baseline, d1.pending, d1.disposers, d1.capabilities);
+
+		maskClip = makeClip();
+		setClipCallstack(maskClip, stack);
+		setClipDebugInfo(maskClip, "form", rform);
+		d2 = renderForm(mask, available, zorder, tabOrder);
+		r2 = attachChildren(maskClip, d2.clips, d2.widthHeight, d2.baseline, d2.pending, d2.disposers, d2.capabilities);
+
+		setClipMask(clip, maskClip);
+
+		pu = select2u(r1.pending, r2.pending, \p1, p2 -> p1 + p2);
+
+		pudis = pu.second;
+
+		RenderResult([maskClip, clip], d2.widthHeight, d2.baseline, pu.first, concat3(r1.disposers, r2.disposers, [\ -> {
+			pudis();
+			deleteNative(clip);
+			deleteNative(maskClip);
+		}]), ClipCapabilities(true, false, false, true, false));
+	}
+	Filter2(filters, form, stack) : {
+		d = renderForm(form, available, zorder, tabOrder);
+		if (targetNoFilters()) {
+			// Not supported
+			d;
+		} else if (getRendererType() == "html") {
+			fold(filters, d, \acc, f -> {
+				fn = \clip -> {
+					fils = switch(f : Filters) {
+						Bevel(params): {
+							angle = ref 45.0;
+							distance = ref 3.0;
+							radius = ref 3.0;
+							spread = ref 1.0;
+							color1 = ref 0xffffff;
+							alpha1 = ref 1.0;
+							color2 = ref 0x000000;
+							alpha2 = ref 1.0;
+							inner = ref true;
+							iter(params, \p -> switch (p : BevelParameter) {
+								Placement(a, ds): { angle := a; distance := ds; }
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+								Color(c, a): { color1 := c; alpha1 := a; }
+								ShadowColor(c, a): { color2 := c; alpha2 := a; }
+								Inner(i): inner := i;
+							});
+							makeBevel(^angle, ^distance, ^radius, ^spread, ^color1, ^alpha1, ^color2, ^alpha2, ^inner) |> Some;
+						}
+						DropShadow(params): {
+							angle = ref 45.0;
+							distance = ref 4.0;
+							radius = ref 4.0;
+							spread = ref 1.0;
+							color = ref 0x000000;
+							alpha = ref 1.0;
+							inner = ref false;
+							iter(params, \p -> switch (p : DropShadowParameter) {
+								Placement(a, ds): { angle := a; distance := ds; }
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+								Color(c, a): { color := c; alpha := a; }
+								Inner(i): inner := i;
+							});
+							makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+						}
+						Blur(params): {
+							radius = ref 3.0;
+							spread = ref 1.0;
+							iter(params, \p -> switch (p : BlurParameter) {
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+							});
+							makeBlur(^radius, ^spread) |> Some;
+						}
+						BackdropBlur(params): {
+							if (js) {
+								spread = extractStruct(params, Spread(1.)).radius;
+								makeBackdropBlur(spread) |> Some
+							} else None()
+						}
+						Glow(params): {
+							radius = ref 4.0;
+							spread = ref 1.0;
+							color = ref 0x000000;
+							alpha = ref 1.0;
+							inner = ref false;
+							iter(params, \p -> switch (p : GlowParameter) {
+								Radius(r): radius := r;
+								Spread(s): spread := s;
+								Color(c, a): { color := c; alpha := a; }
+								Inner(i): inner := i;
+							});
+							makeGlow(^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+						}
+						Shader(vertex, fragment, uniforms) : {
+							makeShader(
+								strSplitLeave(strReplace(vertex, "\t", ""), "\n"),
+								strSplitLeave(strReplace(fragment, "\t", ""), "\n"),
+								map(uniforms, \u -> [u.name, u.type, u.value])
+							) |> Some;
+						}
+					};
+					eitherMap(fils, \fls -> {
+						setClipCallstack(clip, stack);
+						addFilters(clip, [fls]);
+
+						\ -> deleteNative(fls)
+					}, nop) |> v2a
+				}
+				attachChildAndCapability(rform, acc, acc.capabilities.filters,
+					ClipCapabilities(acc.capabilities.move, false, acc.capabilities.interactive, acc.capabilities.scale, acc.capabilities.alpha), fn
+				);
+			});
+		} else {
+			fn = \clip -> {
+				fils = filtermap(filters, \f -> switch(f : Filters) {
+					Bevel(params): {
+						angle = ref 45.0;
+						distance = ref 3.0;
+						radius = ref 3.0;
+						spread = ref 1.0;
+						color1 = ref 0xffffff;
+						alpha1 = ref 1.0;
+						color2 = ref 0x000000;
+						alpha2 = ref 1.0;
+						inner = ref true;
+						iter(params, \p -> switch (p : BevelParameter) {
+							Placement(a, ds): { angle := a; distance := ds; }
+							Radius(r): radius := r;
+							Spread(s): spread := s;
+							Color(c, a): { color1 := c; alpha1 := a; }
+							ShadowColor(c, a): { color2 := c; alpha2 := a; }
+							Inner(i): inner := i;
+						});
+						makeBevel(^angle, ^distance, ^radius, ^spread, ^color1, ^alpha1, ^color2, ^alpha2, ^inner) |> Some;
+					}
+					DropShadow(params): {
+						angle = ref 45.0;
+						distance = ref 4.0;
+						radius = ref 4.0;
+						spread = ref 1.0;
+						color = ref 0x000000;
+						alpha = ref 1.0;
+						inner = ref false;
+						iter(params, \p -> switch (p : DropShadowParameter) {
+							Placement(a, ds): { angle := a; distance := ds; }
+							Radius(r): radius := r;
+							Spread(s): spread := s;
+							Color(c, a): { color := c; alpha := a; }
+							Inner(i): inner := i;
+						});
+						makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+					}
+					Blur(params): {
+						radius = ref 3.0;
+						spread = ref 1.0;
+						iter(params, \p -> switch (p : BlurParameter) {
+							Radius(r): radius := r;
+							Spread(s): spread := s;
+						});
+						makeBlur(^radius, ^spread) |> Some;
+					}
+					BackdropBlur(params) : None();
+					Glow(params): {
+						radius = ref 4.0;
+						spread = ref 1.0;
+						color = ref 0x000000;
+						alpha = ref 1.0;
+						inner = ref false;
+						iter(params, \p -> switch (p : GlowParameter) {
+							Radius(r): radius := r;
+							Spread(s): spread := s;
+							Color(c, a): { color := c; alpha := a; }
+							Inner(i): inner := i;
+						});
+						makeGlow(^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+					}
+					Shader(vertex, fragment, uniforms) : {
+						makeShader(
+							strSplitLeave(strReplace(vertex, "\t", ""), "\n"),
+							strSplitLeave(strReplace(fragment, "\t", ""), "\n"),
+							map(uniforms, \u -> [u.name, u.type, u.value])
+						) |> Some;
+					}
+				});
+				setClipCallstack(clip, stack);
+				addFilters(clip, fils);
+
+				[\ -> { iter(fils, deleteNative); }]
+			}
+			attachChildAndCapability(rform, d, d.capabilities.filters,
+				ClipCapabilities(d.capabilities.move, false, d.capabilities.interactive, d.capabilities.scale, d.capabilities.alpha), fn
+			);
+		}
+	}
+	Cursor(shape, form) : {
+		if (js) {
+			d = renderForm(form, available, zorder, tabOrder);
+
+			attachChildAndCapability(
+				rform,
+				d,
+				false,
+				d.capabilities,
+				\clip -> {
+					switch (shape : CursorShape2) {
+						CursorShape(): {
+							setClipCursor(clip, getCursorShapeName(shape));
+							[];
+						}
+						DynamicCursor(shape2): {
+							[makeSubscribe(shape2, \sh -> setClipCursor(clip, getCursorShapeName(sh)))()];
+						}
+					}
+				}
+			);
+		} else {
+			clip = makeClip();
+			setClipDebugInfo(clip, "form", rform);
+
+			cursorListeners = makeGlobalCursorListeners(shape, const(zorder));
+
+			d = renderForm(
+				Interactive(
+					cursorListeners.first,
+					form
+				),
+				available,
+				zorder,
+				tabOrder
+			);
+
+			attachChildren(clip, d.clips, d.widthHeight, d.baseline, d.pending,
+				arrayPush(d.disposers, \ -> { cursorListeners.second(); deleteNative(clip); }),
+				allClipCapabilities);
+		}
+	}
+	Inspect(inspectors, form): {
+		// Set up inspection before constructing the child
+		unsubs1 = filtermap(inspectors, \i -> switch (i : Inspector) {
+			IAvailable2(wh): Some(connect(available, wh));
+			AvailableWidth2(w): Some(subscribe(available, \awh -> nextDistinct(w, awh.width)));
+			AvailableHeight(h): Some(subscribe(available, \awh -> nextDistinct(h, awh.height)));
+			default: None();
+		});
+
+		d = renderForm(form, available, zorder, tabOrder);
+		widthHeight : Behaviour<WidthHeight> = d.widthHeight;
+		unsubs2 = filtermap(inspectors, \i -> switch (i : Inspector) {
+			Width(w): Some(subscribe(widthHeight, \wh -> nextDistinct(w, wh.width)));
+			Height(h): Some(subscribe(widthHeight, \wh -> nextDistinct(h, wh.height)));
+			AvailableWidth(w): Some(subscribe(available, \awh -> nextDistinct(w, awh.width)));
+			ISize(wh): Some(connect(widthHeight, wh));
+			IMetrics(m): {
+				// TODO: Figure out dHeight as well!
+				metrics = makeDisposable(select2u(widthHeight, d.baseline, \wh, b -> FormMetrics(wh.width, wh.height, b, 0.0)));
+				uns = connectDistinct(metrics.value, m);
+				Some(\ -> {
+					metrics.dispose();
+					uns();
+				})
+			}
+			IAvailable(wh): Some(connect(available, wh));
+			AvailableHeight(wh): None();
+			AvailableWidth2(wh): None();
+			IAvailable2(wh): None();
+			IPending(p): Some(subscribe(d.pending, \pn -> nextDistinct(p, pn)));
+			ITag(id): None();
+			ITransformMatrix(setfn): {
+				fn = if (length(d.clips) > 0) {
+					\ -> { getGlobalTransform(d.clips[0]); }
+				} else {
+					getDummyTransformMatrix
+				}
+				deferUntilNextFrameRendered(\ -> setfn(fn)); // Defer to have form built and transforms calculated
+				None()
+			}
+		});
+
+		RenderResult(d.clips, widthHeight, d.baseline, d.pending, concat3(d.disposers, unsubs1, unsubs2), d.capabilities);
+	}
+	Crop2(left, top, cwidth, cheight, form, stack): {
+		d = renderForm(form, available, zorder, tabOrder);
+		// TODO: Find out if the child supports clipping
+		clip = makeClip();
+		setClipCallstack(clip, stack);
+		setClipDebugInfo(clip, "form", rform);
+		u = select4u(left, top, cwidth, cheight, \l, t, w, h -> {
+			setScrollRect(clip, l, t, w, h);
+		}).second;
+		baseline = make(0.0);
+		widthHeight = select2u(cwidth, cheight, \w,h -> {
+			nextDistinct(baseline, h);
+			WidthHeight(w, h)
+		});
+		disp = widthHeight.second;
+		// Opengl target forbids using any transformation natives on the same clip as setScrollRect
+		caps = ClipCapabilities(false, false, false, false, true);
+		attachChildren(
+			clip, d.clips, widthHeight.first, baseline, d.pending,
+			arrayPush(d.disposers, \->{ u(); disp(); deleteNative(clip); }),
+			caps
+		);
+	}
+	Access(properties, form) : {
+		role = ref "";
+		description = ref "";
+		stateForSubscription = ref None();
+		enabledForSubscription = ref None();
+		unsubscribe_state = ref nop;
+		unsubscribe_enabled = ref nop;
+		tabindex = ref None();
+		groupId = ref "";
+		access_child_selected_fn = ref None();
+		focused_behaviour = ref None();
+		shortcut = ref "";
+		customTabOrder = ref None();
+		customZorder = ref None();
+		accessAttributes : ref [Pair<string, Behaviour<string>>] = ref [];
+		accessCallback : ref () -> void = ref nop;
+
+		// Grab attributes from Access parameters
+		attributes : ref [[string]] = ref filtermap(properties, \p -> {
+			switch (p : AccessProperty) {
+				AccessRole(r) : { role := r; None() }
+				AccessDescription(ds): { description := ds; Some(["description", ds]); }
+				AccessTabindex(ti): {
+					r : [string] = ["tabindex", i2s(ti)];
+					tabindex := if (js && ti >= 0) None() else Some(r);
+					None()
+				}
+				AccessKbdShortcutString(s) : { shortcut := s; None() }
+				AccessState(st): { stateForSubscription := Some(st); Some(["state", getValue(st)]) }
+				AccessSelectable(): { Some(["selectable", "true"]) }
+				AccessCallback(cb): { accessCallback := cb; None() }
+				AccessGroup(newGroupId): { groupId := newGroupId; None() }
+				AccessChildSelected(acsFn) : { access_child_selected_fn := Some(acsFn); None() }
+				AccessFocused(focused) : { focused_behaviour := Some(focused); None() }
+				AccessEnabled(en): { enabledForSubscription := Some(en); Some(["enabled", toString(getValue(en))]) }
+				AccessAttribute(name, value): {
+					refArrayPush(accessAttributes, Pair(name, value)); None()
+				}
+				AccessTabOrder(to): {
+					customTabOrder := Some(to);
+					Some(["nodeindex", strGlue(map(getValue(to), i2s), " ")]);
+				}
+				AccessZorder(zo): {
+					customZorder := Some(zo);
+					Some(["zorder", toString(getValue(zo))])
+				}
+			}
+		});
+
+		ownTabOrder : [int] = if (^groupId == "") tabOrder else {
+			eitherMap(lookupTree(^groupTabOrders, ^groupId),
+				\groupTo -> {
+					// adding own's tabOrder as a unique identifier
+					concat(groupTo.first, tabOrder);
+				},
+				tabOrder
+			)
+		}
+
+		// All TextInputs should have corresponding role. No need to specify it in other places
+		if (isSameStructType(form, TextInput([], [], []))) {
+			role := "textbox";
+		}
+		// avoid creating unnecessary empty elements in the hierarchy
+		skipMakingElement = ^role == "";
+		if (^role != "") attributes := concat([["role", ^role]], ^attributes); // "role" should be first and will affect element's tag
+
+		if (^groupId != "") {
+			// if it's first form from the group which is rendered, save current tabOrder
+			curPair = lookupTreeDef(^groupTabOrders, ^groupId, Pair(tabOrder, []));
+			// increasing reference count for this group by adding current form's tabOrder
+			groupTabOrders := setTree(^groupTabOrders, ^groupId, Pair(curPair.first, arrayPush(curPair.second, tabOrder)));
+		}
+		groupToDisposer : [ () -> void ] = if (^groupId == "") [ ] else {
+			[ \ -> {
+				maybeApply(lookupTree(^groupTabOrders, ^groupId),
+					\desPair -> if (length(desPair.second) == 1) {
+						groupTabOrders := removeFromTree(^groupTabOrders, ^groupId);
+					} else {
+						// decreasing reference count for this group
+						groupTabOrders := setTree(^groupTabOrders, ^groupId, Pair(desPair.first, removeFirst(desPair.second, tabOrder)));
+					}
+				);
+			}]
+		}
+
+		// Attach focus even listeners
+		set_focus_subscription_fn = \clip -> {
+			// Focus listeners
+			focused_uns = switch(^focused_behaviour) {
+				Some(b) : if (^accessibilityEnabled) {
+					focusGate = make(true);
+					switchFocus = \focus -> {
+						nextDistinct(focusGate, false);
+						nextDistinct(b, focus);
+						nextDistinct(focusGate, true);
+					};
+
+					ignoreGate = ignoreu(focusGate, b);
+
+					[
+						subscribe(ignoreGate.value, \v -> setFocus(clip, v)),
+						addEventListener(clip, "focusin", \ -> switchFocus(true)),
+						addEventListener(clip, "focusout", \ -> switchFocus(false)),
+						ignoreGate.dispose
+					];
+				} else [];
+				None() : [];
+			};
+
+			// Child focus listener
+			child_focused_uns = switch(^access_child_selected_fn) {
+				Some(fn) : [addExtendedEventListener(clip, "childfocused", \args : [flow]-> {
+					a0 = flow2d(args[0]);
+					a1 = flow2d(args[1]);
+					a2 = flow2d(args[2]);
+					a3 = flow2d(args[3]);
+					fn(Point(a0, a1), WidthHeight(a2, a3))
+				})];
+				None() : [];
+			}
+
+			\ -> applyall(concat(focused_uns, child_focused_uns));
+		};
+
+		// We just override any access attributes of children
+		fn = \clip -> {
+			dispNodeIndex =
+				eitherFn(
+					^customTabOrder,
+					\to -> {
+						[subscribe2(to, \to0 -> setAccessAttributes(clip, [["nodeindex", strGlue(map(to0, i2s), " ")]]))]
+					},
+					\ -> {
+						[]
+					}
+				);
+
+			// Only topmost accessible clips will be available:
+			dispZorder =
+				eitherFn(
+					^customZorder,
+					\cz -> {
+						[subscribe2(cz, \zo -> setAccessAttributes(clip, [["zorder", toString(zo)]]))]
+					},
+					\ -> {
+						[]
+					}
+				);
+
+			dispAccessAttributes =
+				map(
+					^accessAttributes,
+					\aa -> {
+						refArrayPush(attributes, [aa.first, getValue(aa.second)]);
+
+						subscribe2(aa.second, \v -> setAccessAttributes(clip, [[aa.first, v]]))
+					}
+				);
+
+			setAccessAttributes(clip, ^attributes);
+			setAccessCallback(clip, ^accessCallback);
+
+			maybeApply(^stateForSubscription, \st -> {
+				unsubscribe_state := subscribe2(st, \s -> { setAccessAttributes(clip, [ ["state", s] ]) });
+			});
+
+			// TO DO : optimise for const behaviour
+			maybeApply(^enabledForSubscription, \en -> {
+				unsubscribe_enabled := subscribe2(en, \e -> { setAccessAttributes(clip, [ ["enabled", toString(e)] ]) });
+			});
+
+			concatA([
+				if (^role == "button" && ^shortcut != "" && ^description != "") {
+					dispKeyboardShortcut = addKeyboardShortcut(^shortcut, ^description);
+					[\ -> { ^unsubscribe_state(); ^unsubscribe_enabled(); dispKeyboardShortcut()}]
+				} else {
+					[\ -> { ^unsubscribe_state(); ^unsubscribe_enabled(); } ];
+				},
+				dispNodeIndex,
+				dispZorder,
+				dispAccessAttributes,
+				groupToDisposer,
+				[ set_focus_subscription_fn(clip) ]
+			])
+		}
+		dontChangeChildrenFn = \clip -> [ ];
+
+		onlyFocusFn = \clip -> [set_focus_subscription_fn(clip)];
+
+		// there are some Access forms with only TabIndex set around a syled button.
+		// such Access forms should not have their own clip(HTML element)
+		makeAccessClip = ^role != "" && !contains(["button", "checkbox", "textbox", "video", "iframe"], ^role)
+			|| isSome(^access_child_selected_fn);
+		d = renderForm(form, available, zorder, ownTabOrder);
+
+		if (makeAccessClip) {
+			childRenderResult = attachChildAndCapability(rform, d, true, d.capabilities, dontChangeChildrenFn);
+			// making parent element with accesibility features around children
+			attachChildAndCapability(rform, childRenderResult, false, d.capabilities, fn);
+		} else {
+			// overriding children's accessibility attributes
+			attachChildAndCapability(rform, d, true, d.capabilities, if (skipMakingElement) onlyFocusFn else fn);
+		}
+	}
+	RealHTML2(url, wh, style): {
+		update_cached_content = ref true;
+		domain = ref "";
+		flow_callback = ref \args -> { "" };
+		hostcall_setter = ref \fn -> { };
+		eval_js_setters : ref [((string) -> string) -> void] = ref [];
+		on_error = ref \s : string -> { };
+		on_page_loaded = ref nop;
+		reload_block = ref false;
+		zoom_enabled = ref const(false);
+		mouse_disabled = ref const(false);
+		sandbox = ref None();
+		whitelist_domains = ref [];
+		shrink2fit = ref false;
+		viewBounds = ref None();
+
+		iter(style, \s -> {
+			switch (s : RealHTMLStyle) {
+				UpdateCachedContent(u): update_cached_content := u;
+				OverridePageDomain(d): domain := d;
+				FlowCallback(cb): flow_callback := cb;
+				PageHostcallSetter(fn): hostcall_setter := fn;
+				PageEvalJS(fn): eval_js_setters := arrayPush(^eval_js_setters, fn);
+				OnError(fn): on_error := fn;
+				OnPageLoaded(fn): on_page_loaded := fn;
+				ZoomEnabled(zoom): zoom_enabled := zoom;
+				ReloadBlock(show) : reload_block := show;
+				MouseDisabled(disabled) : mouse_disabled := disabled;
+				SandBoxJS(sboxes) : sandbox := Some(
+					strGlue(map(sboxes, \s_ ->
+						switch (s_ : SandBoxJSStyle) {
+							AllowSameOrigin()    : "allow-same-origin";
+							AllowTopNavigation() : "allow-top-navigation";
+							AllowForms()         : "allow-forms";
+							AllowScripts()       : "allow-scripts";
+						}
+					), " ")
+				);
+				WhitelistDomains(domains) : whitelist_domains := domains;
+				RealHtmlShrink2Fit(): shrink2fit := true;
+				ViewBounds(bounds): viewBounds := Some(bounds);
+			}
+		});
+
+		callback = \args : [string] -> ^flow_callback(args);
+		ondone = \s : string -> if (s == "OK") ^on_page_loaded() else ^on_error(s);
+
+		bridge_clip = makeWebClip(url, ^domain, !^update_cached_content, ^reload_block, callback, ondone, ^shrink2fit);
+
+		switch (^sandbox : Maybe) {
+			Some(sb) : setWebClipSandBox(bridge_clip, sb);
+			default: {};
+		}
+
+		setWebClipDomains(bridge_clip, ^whitelist_domains);
+
+		if (^accessibilityEnabled) {
+			setAccessAttributes(bridge_clip, [["zorder", toString(zorder[0])]]);
+		}
+
+		^hostcall_setter(\name, args -> webClipHostCall(bridge_clip, name, args));
+		iter(^eval_js_setters, \eval_js_setter -> {
+			eval_js_setter(\code -> webClipEvalJS(bridge_clip, code));
+		});
+
+		u2 = subscribe(^zoom_enabled, \zoom -> setWebClipZoomable(bridge_clip, zoom));
+		u3 = makeSubscribe(^mouse_disabled, \disabled -> setWebClipDisabled(bridge_clip, disabled))();
+		u4 = eitherMap(^viewBounds, \vb -> makeSubscribe(vb, \b -> setClipViewBounds(bridge_clip, b.minX, b.minY, b.maxX, b.maxY))(), nop);
+
+		baseline = make(0.0);
+		u1 = subscribe(wh, \whv -> {
+				nextDistinct(baseline, whv.height);
+				setClipWidth(bridge_clip, whv.width);
+				setClipHeight(bridge_clip, whv.height);
+			});
+		RenderResult([bridge_clip], wh, baseline, const(0), [\ -> { u1(); u2(); u3(); u4(); deleteNative(bridge_clip); }],
+			ClipCapabilities(true, false, true, false, true)
+		);
+	}
+	ControlFocus(focus, form): {
+		f = renderForm(form, available, zorder, tabOrder);
+		newFocus = getUrlParameter("setFocus") == "";
+		uns = subscribe(focus, \fc -> {
+			// setFocus native isn't implemented in cpp yet
+			if (newFocus) {
+				if (js || (!cpp && isSameStructType(form, TextInput([], [], []))))
+					// platforms should gracefully fallback if focus is applied to a wrong element
+					setFocus(f.clips[0], fc);
+			} else
+			if (!cpp && isSameStructType(form, TextInput([], [], []))) {
+				//The function is applied to entity which is not Text for some reason. Changed condition of ad hoc fix from || to &&
+				setFocus(f.clips[0], fc);
+			}
+		});
+		RenderResult(
+			f.clips,
+			f.widthHeight,
+			f.baseline,
+			f.pending,
+			arrayPush(f.disposers, uns),
+			f.capabilities
+		);
+	}
+	NativeForm(__, metrics, __, fn): {
+		r = fn(available, zorder, tabOrder);
+
+		widthHeight = make(zeroWH);
+		baseline = make(0.);
+
+		RenderResult(
+			r.clips,
+			widthHeight,
+			baseline,
+			const(0),
+			[
+				r.dispose,
+				subscribe(metrics, \met -> {
+					nextDistinct(baseline, met.baseline);
+					nextDistinct(widthHeight, WidthHeight(met.width, met.height))
+				})
+			],
+			ClipCapabilities(false, false, false, false, false)
+		);
+	}
+	DynamicGroup2(stackChanges, combiner, currentStack, stack) : {
+		parentClip = makeClip();
+
+		setClipCallstack(parentClip, stack);
+		setClipDebugInfo(parentClip, "form", rform);
+
+		childItems : DynamicBehaviour<[DynamicGroupItem]> = make([]);
+
+		handleAdd = \form : Form, z : int -> {
+			itemIndex : DynamicBehaviour<int> =
+				make(z);
+
+			itemPosition : DynamicBehaviour<double> =
+				make(0.0);
+
+			childrenAfter : [DynamicGroupItem] =
+				tailFrom(getValue(childItems), z);
+
+			iter(childrenAfter, \item : DynamicGroupItem ->
+				iter(item.renderResult.clips, \child ->
+					removeChild(parentClip, child)
+				)
+			);
+
+			childResult : RenderResult =
+				renderForm(
+					if (combiner == LinesCombiner() || combiner == ColsCombiner()) {
+
+						previousItem : Disposable<Behaviour<DynamicGroupItem>> =
+							select2u(childItems, itemIndex, \ti, i ->
+								elementAt(ti, i - 1, zeroDynamicGroupItem)
+							)
+								|> toDisposable;
+
+						previousItemPosition : Disposable<Behaviour<double>> =
+							subselectSafe(
+								previousItem.value,
+								\prevItem ->
+									positionDynamicGroupItem(
+										prevItem,
+										combiner
+									)
+							);
+
+						Constructor(
+							Translate(
+								if (combiner == ColsCombiner()) {
+									itemPosition;
+								} else {
+									const(0.0);
+								},
+								if (combiner == LinesCombiner()) {
+									itemPosition;
+								} else {
+									const(0.0);
+								},
+								form
+							),
+							\ -> {
+								disconnect : () -> void =
+									connect(
+										previousItemPosition.value,
+										itemPosition
+									);
+								\ -> {
+									disconnect();
+									previousItemPosition.dispose();
+									previousItem.dispose();
+								}
+							}
+						)
+					} else {
+						form;
+					},
+					available,
+					arrayPush(zorder, z),
+					arrayPush(tabOrder, z)
+				);
+
+			childItem : DynamicGroupItem =
+				DynamicGroupItem(
+					childResult,
+					itemIndex,
+					itemPosition
+				);
+
+			iter(
+				concat([childItem], childrenAfter),
+				\item : DynamicGroupItem ->
+					iter(item.renderResult.clips, \clip ->
+						addChild(parentClip, clip)
+					)
+			);
+
+			next(
+				childItems,
+				insertArray(
+					getValue(childItems),
+					z,
+					childItem
+				)
+			);
+
+			iteri(
+				tailFrom(getValue(childItems), z + 1),
+				\i, item -> next(item.index, i + z + 1)
+			);
+		};
+
+		handleDelete = \z : int -> if (existsIndex( getValue(childItems), z )) {
+
+			iter(
+				( getValue(childItems)[z] ).renderResult.clips,
+				\clip -> removeChild(parentClip, clip)
+			);
+
+			applyall(
+				( getValue(childItems)[z] ).renderResult.disposers
+			);
+
+			iteri(
+				tailFrom(getValue(childItems), z + 1),
+				\i, item -> next(item.index, i + z)
+			);
+
+			next(
+				childItems,
+				removeIndex( getValue(childItems), z )
+			);
+		}
+
+		handleMove = \from, to -> {
+			toFixed = forceRange(to, 0, length( getValue(childItems) ) - 1);
+
+			if (existsIndex(getValue(childItems), from) && from != toFixed) {
+				childrenFixedOrder : [DynamicGroupItem] =
+					moveElement( getValue(childItems), from, toFixed );
+
+				childrenChanged : [DynamicGroupItem] =
+					tailFrom(childrenFixedOrder, min(from, toFixed));
+
+				iter(childrenChanged, \item : DynamicGroupItem->
+					iter(item.renderResult.clips, \clip ->
+						removeChild(parentClip, clip)
+					)
+				);
+
+				iter(childrenChanged, \item : DynamicGroupItem->
+					iter(item.renderResult.clips, \clip ->
+						addChild(parentClip, clip)
+					)
+				);
+
+				next(childItems, childrenFixedOrder);
+
+				iteri(
+					getValue(childItems),
+					\index, item ->
+						nextDistinct(item.index, index)
+				);
+			}
+		}
+
+		iteri(getValue(currentStack), \i, f -> handleAdd(f, i));
+
+		handleChange = \change : GroupChange ->
+			switch (change : GroupChange) {
+				GroupAdd(form, z) : {
+					next(currentStack, insertArray(getValue(currentStack), z, form));
+					handleAdd(form, z);
+				}
+				GroupDelete(z) : {
+					next(currentStack, removeIndex(getValue(currentStack), z));
+					handleDelete(z);
+				}
+				GroupMove(from, to) : {
+					currentStackValue = getValue(currentStack);
+					toFixed = forceRange(to, 0, length(currentStackValue) - 1);
+
+					if (existsIndex(currentStackValue, from) && from != toFixed) {
+						next(
+							currentStack,
+							moveElement(currentStackValue, from, toFixed)
+						);
+
+						handleMove(from, toFixed);
+					}
+				}
+			};
+
+		unchange =
+			subscribe(stackChanges, \changes -> {
+				iter(changes, handleChange);
+				nextDistinct(stackChanges, []);
+			});
+
+		whu : Disposable<Behaviour<WidthHeight>> =
+			subselectArray(
+				childItems,
+				\item : DynamicGroupItem ->
+					item.renderResult.widthHeight,
+				\whs : [Behaviour<WidthHeight>] ->
+					selectMergeu(whs, zeroSize, \rwh, lwh ->
+						WidthHeight(
+							max(rwh.width, lwh.width),
+							max(rwh.height, lwh.height)
+						)
+					)
+			);
+
+		widthHeight : Disposable<Behaviour<WidthHeight>> =
+			whenSizeChangedu(whu.value)
+				|> toDisposable;
+
+		baseline : Disposable<Behaviour<double>> =
+			subselectArray(
+				childItems,
+				\item -> item.renderResult.baseline,
+				arrayMaxu
+			);
+
+		pending : Disposable<Behaviour<int>> =
+			subselectArray(
+				childItems,
+				\item -> item.renderResult.pending,
+				arrayISumu
+			);
+
+		disposeGroup =
+			\ -> {
+				unchange();
+				whu.dispose();
+				widthHeight.dispose();
+				baseline.dispose();
+				pending.dispose();
+
+				iter(getValue(childItems), \item ->
+					iter(item.renderResult.clips,
+						\clip -> removeChild(parentClip, clip)
+					)
+				);
+
+				iter(
+					getValue(childItems),
+					\item -> applyall(item.renderResult.disposers)
+				);
+				next(childItems, []);
+
+				deleteNative(parentClip);
+			};
+
+		RenderResult(
+			[parentClip],
+			widthHeight.value,
+			baseline.value,
+			pending.value,
+			[disposeGroup],
+			allClipCapabilities
+		);
+	}
+	}
+
+	res;
 }
 
 toDisposable(
