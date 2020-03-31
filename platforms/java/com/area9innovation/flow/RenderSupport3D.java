@@ -188,6 +188,9 @@ public class RenderSupport3D extends NativeHost {
 	public Object clear3DTransformControls(Object object) {
 		return null;
 	}
+	public Object set3DOrbitControlsEnabled(Object object, Boolean enabled) {
+		return null;
+	}
 	public Boolean is3DTransformControlsAttached(Object stage, Object object) {
 		return false;
 	}

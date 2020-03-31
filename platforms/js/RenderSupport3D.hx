@@ -914,6 +914,14 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function set3DOrbitControlsEnabled(stage : ThreeJSStage, enabled : Bool) : Void {
+		stage.orbitControlsEnabled = enabled;
+
+		if (stage.orbitControls != null) {
+			stage.orbitControls.enabled = enabled;
+		}
+	}
+
 	public static function is3DTransformControlsAttached(stage : ThreeJSStage, object : Object3D) : Bool {
 		if (stage.transformControls != null) {
 			return stage.transformControls.object == object;
