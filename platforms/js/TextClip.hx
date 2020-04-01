@@ -164,8 +164,6 @@ class TextClip extends NativeWidgetClip {
 	public var isInteractive : Bool = false;
 
 	private var baselineWidget : Dynamic;
-	private var widthDelta : Float = 0.0;
-	private var fontDelta : Float = 0.0;
 
 	private var doNotRemap : Bool = false;
 
@@ -173,16 +171,6 @@ class TextClip extends NativeWidgetClip {
 		super(worldVisible);
 
 		style.resolution = 1.0;
-
-		if (RenderSupport.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
-			this.onAdded(function() {
-				RenderSupport.on("resize", updateWidthDelta);
-
-				return function() {
-					RenderSupport.off("resize", updateWidthDelta);
-				}
-			});
-		}
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -443,6 +431,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function updateNativeWidgetStyle() : Void {
+		if (metrics == null && !isInput && escapeHTML) {
+			return;
+		}
+
 		super.updateNativeWidgetStyle();
 		var alpha = this.getNativeWidgetAlpha();
 
@@ -487,13 +479,19 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.color = style.fill;
 			}
 		} else {
-			var textContent = getContentGlyphs().modified;
-			var newTextContent = adaptWhitespaces(textContent);
-
 			if (escapeHTML) {
-				nativeWidget.textContent = newTextContent;
+				var textContent = "";
+
+				var textLines : Array<String> = metrics.lines;
+				for (line in textLines) {
+					textContent = textContent + line + "\n";
+				}
+
+				nativeWidget.textContent = textContent;
+				nativeWidget.style.whiteSpace = null;
 			} else {
-				nativeWidget.innerHTML = newTextContent;
+				nativeWidget.innerHTML = this.text;
+				nativeWidget.style.whiteSpace = "normal";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
@@ -503,7 +501,7 @@ class TextClip extends NativeWidgetClip {
 				}
 			}
 
-			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
+			nativeWidget.style.direction = switch (this.textDirection) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
 				default : null;
@@ -517,7 +515,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontFamily = RenderSupport.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupport.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupport.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
-		nativeWidget.style.fontSize = '${style.fontSize + fontDelta}px';
+		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupport.RendererType != "html" || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
@@ -607,46 +605,6 @@ class TextClip extends NativeWidgetClip {
 			return "Black";
 	}
 
-	private function updateWidthDelta() {
-		if (untyped RenderSupport.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome) && !this.destroyed) {
-			var zoomFactor = RenderSupport.browserZoom;
-
-			updateTextMetrics();
-
-			if (zoomFactor < 1.0 && metrics != null && metrics.lines != null && metrics.lines.length > 0) {
-				var fontSize = style.fontSize;
-				var wordWrapWidth = style.wordWrapWidth;
-				widthDelta = 0.0;
-				metrics = null;
-				var wd = getClipWidth();
-				var text = this.text;
-
-				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, Platform.isSafari ? 10.0 : 6.0));
-				style.wordWrapWidth = 2048.0;
-				var lines : Array<Dynamic> = metrics.lines;
-				var newWidthDelta = Math.NEGATIVE_INFINITY;
-
-				for (line in lines) {
-					this.text = line;
-					metrics = null;
-					newWidthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd), newWidthDelta);
-				}
-
-				widthDelta = newWidthDelta;
-				fontDelta = -fontSize / 120.0 / zoomFactor;
-
-				style.fontSize = fontSize;
-				style.wordWrapWidth = wordWrapWidth;
-				this.text = text;
-			} else {
-				widthDelta = 0.0;
-				fontDelta = 0.0;
-			}
-
-			invalidateMetrics();
-		}
-	}
-
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 		fontFamilies = fontWeight > 0 || fontSlope != ""
@@ -692,7 +650,6 @@ class TextClip extends NativeWidgetClip {
 		if (this.escapeHTML != escapeHTML) {
 			this.escapeHTML = escapeHTML;
 			invalidateMetrics();
-			updateWidthDelta();
 		}
 	}
 
@@ -866,7 +823,6 @@ class TextClip extends NativeWidgetClip {
 			style.wordWrap = wordWrap;
 
 			invalidateMetrics();
-			updateWidthDelta();
 		}
 	}
 
@@ -880,7 +836,6 @@ class TextClip extends NativeWidgetClip {
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
-		updateWidthDelta();
 	}
 
 	public function setCropWords(cropWords : Bool) : Void {
@@ -889,7 +844,6 @@ class TextClip extends NativeWidgetClip {
 			style.breakWords = cropWords;
 
 			invalidateMetrics();
-			updateWidthDelta();
 		}
 	}
 
@@ -1295,7 +1249,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return (widgetWidth > 0 ? widgetWidth : getClipWidth()) + widthDelta;
+		return (widgetWidth > 0 ? widgetWidth : getClipWidth());
 	}
 
 	public function getMaxWidth() : Float {
@@ -1412,10 +1366,8 @@ class TextClip extends NativeWidgetClip {
 			if (!escapeHTML) {
 				metrics = TextMetrics.measureText(untyped __js__("this.text.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
 				measureHTMLWidth();
-			} else if (isStringRtl(text)) {
-				metrics = TextMetrics.measureText(adaptWhitespaces(getContentGlyphs().text), style);
 			} else {
-				metrics = TextMetrics.measureText(text, style);
+				metrics = TextMetrics.measureText(adaptWhitespaces(getContentGlyphs().text), style);
 			}
 
 			metrics.maxWidth = 0.0;
@@ -1438,6 +1390,9 @@ class TextClip extends NativeWidgetClip {
 		var textNodeMetrics : Dynamic = null;
 
 		updateNativeWidgetStyle();
+		if (style.wordWrapWidth != null && style.wordWrapWidth > 0) {
+			nativeWidget.style.width = '${style.wordWrapWidth}px';
+		}
 
 		if (nativeWidget.parentNode == null) {
 			Browser.document.body.appendChild(nativeWidget);
@@ -1447,12 +1402,14 @@ class TextClip extends NativeWidgetClip {
 			textNodeMetrics = getTextNodeMetrics(nativeWidget);
 		}
 
-		if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
-			return;
+		if (textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
+			var textNodeWidth = textNodeMetrics.width / worldTransform.a;
+			metrics.width = textNodeWidth;
 		}
 
-		if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
-			metrics.width = textNodeMetrics.width;
+		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0) {
+			var textNodeHeight = textNodeMetrics.height / worldTransform.d;
+			metrics.height = textNodeHeight;
 		}
 
 		if (RenderSupport.RendererType != "html" && !isInput) {
