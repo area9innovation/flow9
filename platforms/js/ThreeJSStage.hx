@@ -61,6 +61,7 @@ class ThreeJSStage extends Container {
 	private var accessWidget : AccessWidget;
 
 	public var isNativeWidget : Bool = false;
+	public var orbitControlsEnabled : Bool = true;
 
 	public function new(width : Float, height : Float) {
 		super();
@@ -285,7 +286,7 @@ class ThreeJSStage extends Container {
 
 		transformControls.addEventListener('dragging-changed', function (event) {
 			if (orbitControls != null) {
-				untyped orbitControls.enabled = !event.value;
+				untyped orbitControls.enabled = !event.value && orbitControlsEnabled;
 			}
 		});
 
@@ -300,6 +301,7 @@ class ThreeJSStage extends Container {
 
 		if (camera != null) {
 			orbitControls = untyped __js__("new THREE.OrbitControls(this.camera, this.renderer.domElement, this.renderer.eventElement)");
+			orbitControls.enabled = orbitControlsEnabled;
 			RenderSupport.on("drawframe", orbitControls.update);
 		}
 
