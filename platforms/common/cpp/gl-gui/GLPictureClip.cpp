@@ -69,7 +69,7 @@ void GLPictureClip::setDownloaded()
 void GLPictureClip::setImage(GLTextureBitmap::Ptr image)
 {
     vec2 imageSize = vec2(image->getSize());
-#ifdef ANDROID
+#ifdef __ANDROID__
     this->imageGrid = {{image}};
 #else
     if (imageSize.x < MAX_TEXTURE_SIDE && imageSize.y < MAX_TEXTURE_SIDE) {
