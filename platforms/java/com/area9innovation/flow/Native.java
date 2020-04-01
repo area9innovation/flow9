@@ -1447,6 +1447,15 @@ public class Native extends NativeHost {
 				onExit.invoke(-200);
 			}
 		}
+
+		public int waitFor() {
+			try {
+				return process.waitFor();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+				return 1;
+			}
+		}
 	}
 
 	public final Object runSystemProcess(String command, Object[] args, String currentWorkingDirectory,
@@ -1457,7 +1466,6 @@ public class Native extends NativeHost {
 			for (int i = 0; i < args.length; i++) {
 				cmd[i+1] = (String)args[i];
 			}
-
 			ProcessStarter runner = new ProcessStarter(cmd, currentWorkingDirectory, onOut, onErr, onExit);
 			Future future = threadpool.submit(runner);
 
@@ -1466,6 +1474,28 @@ public class Native extends NativeHost {
 			onErr.invoke("while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
 			onExit.invoke(-200);
 			return null;
+		}
+	}
+
+	public final int execSystemProcess(String command, Object[] args, String currentWorkingDirectory,
+					Func1<Object, String> onOut, Func1<Object, String> onErr) {
+		try {
+			String[] cmd = new String[args.length + 1];
+			cmd[0] = command;
+			for (int i = 0; i < args.length; i++) {
+				cmd[i+1] = (String)args[i];
+			}
+			ProcessStarter runner = new ProcessStarter(cmd, currentWorkingDirectory, onOut, onErr, 
+				new Func1<Object, Integer>()  {
+					@Override
+					public Object invoke(Integer code) { return null; }
+				}
+			);
+			runner.run();
+			return runner.waitFor();
+		} catch (Exception ex) {
+			onErr.invoke("while execution of:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			return 1;
 		}
 	}
 
