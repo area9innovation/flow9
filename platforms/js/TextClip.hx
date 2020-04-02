@@ -132,7 +132,6 @@ class TextClip extends NativeWidgetClip {
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = '';
-	private var updateTextDirection : Bool = true;
 	private var escapeHTML : Bool = true;
 	private var style : Dynamic = new TextStyle();
 
