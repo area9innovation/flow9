@@ -19,11 +19,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	reorderShowIcon = !contains(style, MListReorderHideIcon());
 	// Reserved space for column with drag&drop reorder icon. Icon added at function MListLine2T
 	reorderIconSpace = if (isReorderEnabled && reorderShowIcon) 40. else 0.;
-	paginationDef = MPagination(make(0), []);
-	pagination = if (isSome(reorderList)) paginationDef else extractStruct(style, paginationDef);
-	isEmptyPagination = pagination.rowsPerPage == [];
-	autoPagination = isNone(reorderList) && isEmptyPagination && contains(style, MPaginationAutoScaling());
-	anyTypePagination = !isEmptyPagination || autoPagination;
 
 	singleSelection = tryExtractStruct(style, MSingleSelection(make(-1)));
 	multiSelection = tryExtractStruct(style, MMultiSelection(make(makeSet())));
@@ -31,7 +26,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	headerActions = extractStruct(style, MHeaderActions(TEmpty(), []));
 	replaceHeader = contains(headerActions.style, MReplaceHeader());
 
-	currentPage = tryExtractStruct(style, MCurrentPage(make(0)));
 	rowsBoxScrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
 
 	selection : MListSelection =
@@ -64,7 +58,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle> = tryExtractStruct(style, MSelectedBackgroundStyle([]));
 	hasExtOrderBy = contains(style, MExternalSort());
 	crop = !contains(style, MNoCrop());
-	goToIndex = tryExtractStruct(style, MGoToIndex(make(-1)));
 	fixedRow = tryExtractStruct(style, MFixedRow(const(false), [], []));
 	showFixedRow = eitherMap(fixedRow, \fr -> fr.show, const(false));
 	showRowNumbers = contains(style, MShowRowNumbers());
@@ -140,23 +133,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	rowsCountB = flength(rows);
 
-	
-
-	page = make(Pair(0, 0));
-
-	updatePageNumber = \newPageNumber ->
-		nextDistinct(page, Pair(newPageNumber, getValue(page).second));
-
-	updateRowsPerPage = \newRowsPerPage ->
-		nextDistinct(page, Pair(getValue(page).first, newRowsPerPage));
-
-	pageNumber = fFirstOfPair(page);
-	rowsPerPage = fSecondOfPair(page);
+	paginationState = makeMPaginationState(style);
+	page = paginationState.page;
 	
 	currentVisibleRowsCount =
 		fselect2(rowsCountB, page, FLift2(\rc, p -> min(p.second, rc - p.first)));
-
-	pageNumberB = make(0);
 
 	// Width handling
 
@@ -262,8 +243,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	separators = !contains(style, MNoSeparators());
 	separatorsHeight = b2d(separators);
 
-	noFooter = contains(style, MNoFooter()) && !anyTypePagination;
-	hideAutoPaginationFooter = contains(style, MHideAutoPaginationFooter());
+	noFooter = contains(style, MNoFooter()) && !paginationState.anyType;
 	footerHeight = if (noFooter) 0. else 56.;
 	footerMinWidth = make(0.);
 	tableHeight = make(0.);
@@ -283,7 +263,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	);
 
 	rowsAvailableHeight =
-		fselect4(rowsPerPage, rowsCountB, showFixedRow, expandRow, \rpp, rc, fr, er ->
+		fselect4(paginationState.rowsPerPage, rowsCountB, showFixedRow, expandRow, \rpp, rc, fr, er ->
 			i2d(min(rpp, rc) + b2i(fr)) * countRowHeight(er)
 		);
 
@@ -547,15 +527,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		footer = MDTFooter(
 			manager,
 			p,
-			page,
-			updatePageNumber,
-			updateRowsPerPage,
-			rowsPerPage,
 			rowsCountB,
-			pagination,
-			anyTypePagination,
-			isEmptyPagination,
-			hideAutoPaginationFooter,
+			paginationState,
 			scrollEnabled,
 			noFooter,
 			footerHeight,
@@ -645,7 +618,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									\ -> fconnect(sortingResult, listSort),
 								]
 								|> (\arr -> maybeArrayPush(arr,
-										maybeMap(mRowsPerPage, \mrpp -> \ -> fconnect(rowsPerPage, mrpp.rowsPerPage)))),
+										maybeMap(mRowsPerPage, \mrpp -> \ -> fconnect(paginationState.rowsPerPage, mrpp.rowsPerPage)))),
 								MDynamicList2T(
 									manager,
 									p2,
@@ -707,9 +680,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		|> (\f -> TAvailableHeight(f, rowsAvailableHeight))
 		|> (\f -> TConstruct(
 				concat(
-					if (isEmptyPagination) [
+					if (paginationState.isEmpty) [
 						makeSubscribeUns(
-						fOr(const(autoPagination), scrollEnabled),
+						fOr(const(paginationState.auto), scrollEnabled),
 						\v ->
 							if (v)
 								[make4Subscribe(
@@ -739,7 +712,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 											);
 								})()]
 							else
-								[makeSubscribe(rowsCountB, updateRowsPerPage)()]
+								[makeSubscribe(rowsCountB, paginationState.updateRowsPerPage)()]
 					)] else
 						[],
 
@@ -805,7 +778,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				)
 		)
 		|> (\t -> TAttachAvailableHeight(t, rowsBoxH))
-		|> (if (!anyTypePagination && isFConst(m.rows) && !fgetValue(scrollEnabled) && isFConst(expandRow))
+		|> (if (!paginationState.anyType && isFConst(m.rows) && !fgetValue(scrollEnabled) && isFConst(expandRow))
 				makeTropicConstantHeight(Some(i2d(fgetValue(rowsCountB)) * countRowHeight(fgetValue(expandRow))))
 			else idfn)
 		|> (\t -> if (separators) TLines2(m2t(MSeparator(true), p), t) else t)
@@ -826,7 +799,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				]);
 
 				scroll =
-					if (autoPagination || (!anyTypePagination && fgetValue(scrollEnabled)))
+					if (paginationState.auto || (!paginationState.anyType && fgetValue(scrollEnabled)))
 						MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
 					else {
 						contentHeight = make(0.);
@@ -848,38 +821,34 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				f)
 		|> (\f ->
 			TConstruct(
-				[
-					makeSubscribe(selection.selected, \ar -> {
-						maybeApply(singleSelection, \ss -> nextDistinct(ss.selected, if (length(ar) > 0) ar[0] else -1));
-						maybeApply(multiSelection, \ms -> nextDistinct(ms.selected, buildSet(ar)));
-					}),
+				concat(
+					[
+						makeSubscribe(selection.selected, \ar -> {
+							maybeApply(singleSelection, \ss -> nextDistinct(ss.selected, if (length(ar) > 0) ar[0] else -1));
+							maybeApply(multiSelection, \ms -> nextDistinct(ms.selected, buildSet(ar)));
+						}),
 
-					\ -> fBidirectionalLink(
-						fpair(page, expandRow),
-						fpair(rowsBoxScrollPosition.position, expandRow),
-						\pair -> if (anyTypePagination)
-							nextDistinct(rowsBoxScrollPosition.position, Point(0., i2d(pair.first.first) * countRowHeight(pair.second))),
-						\pair ->
-							updatePageNumber(floor(pair.first.y) / floor(countRowHeight(pair.second)))
-					),
+						\ -> fBidirectionalLink(
+							fpair(page, expandRow),
+							fpair(rowsBoxScrollPosition.position, expandRow),
+							\pair -> if (paginationState.anyType)
+								nextDistinct(rowsBoxScrollPosition.position, Point(0., i2d(pair.first.first) * countRowHeight(pair.second))),
+							\pair ->
+								paginationState.updatePageNumber(floor(pair.first.y) / floor(countRowHeight(pair.second)))
+						),
 
-					\ -> fBidirectionalLink(sortedByB, sortColumnNumberB, \sb -> nextDistinct(sortColumnNumberB, sb.column), \num -> {
-						sortColumn =
-							if (num >= 0 && isNone(reorderList))
-								tryExtractStruct(columns[num].style, MSort(\__, __ -> 0))
-							else
-								None();
+						\ -> fBidirectionalLink(sortedByB, sortColumnNumberB, \sb -> nextDistinct(sortColumnNumberB, sb.column), \num -> {
+							sortColumn =
+								if (num >= 0 && isNone(reorderList))
+									tryExtractStruct(columns[num].style, MSort(\__, __ -> 0))
+								else
+									None();
 
-						nextDistinct(sortedByB, MDataTableSorting(num, !getValue(defaultSorted).isAsc, sortColumn));
-					}),
-					\ -> fBidirectionalLink(page, pageNumberB,
-							\pair -> nextDistinct(pageNumberB, pair.first / max(pair.second, 1)),
-							\num -> {
-								rpp = fgetValue(rowsPerPage);
-								rowsCount = fgetValue(rowsCountB);
-								updatePageNumber(forceRange(num * rpp, 0, rowsCount - 1))
-							})
-				]
+							nextDistinct(sortedByB, MDataTableSorting(num, !getValue(defaultSorted).isAsc, sortColumn));
+						}),
+					],
+					paginationState.subs(rowsCountB, sortingResult)
+				)
 				|> (\f2 ->
 					eitherMap(
 						singleSelection,
@@ -895,54 +864,18 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							concat([makeSubscribe(ms.selected, \ar -> nextDistinct(selection.selected, set2array(ar)))], f2),
 						f2
 					)
-				)
-				|> (\f2 ->
-					eitherMap(
-						currentPage,
-						\cp ->
-							concat(
-								[
-									make2Subscribe(cp.page, rowsCountB, \pg, rowsCount -> {
-										rpp = fgetValue(rowsPerPage);
-										updatePageNumber(max(0, min(pg * rpp, rowsCount -1)))
-									}),
-									\ -> fconnectSelect(page, cp.page, \pg -> pg.first / max(pg.second, 1))
-								],
-								f2
-							),
-						f2
-					)
-				)
-				|> (\f2 ->
-					eitherMap(
-						goToIndex,
-						\gti ->
-							concat(
-								[
-									make2Subscribe(gti.index, rowsCountB, \ind, rowsCount ->
-										fromArrayIndex([ind],  Pair(0, rowsCount), rowsCount, fgetValue(sortingResult))
-										|> (\f3 -> if (length(f3) > 0) {
-												rpp = fgetValue(rowsPerPage);
-												updatePageNumber(if (rpp == 0) 0 else f3[0] / rpp * rpp)
-											})
-									)
-								],
-								f2
-							),
-						f2
-					)
 				),
 				f
 			)
 		)
 		|> (\t -> TAvailableWidth(t, if (isInnerScroll) fmin(screenW, tableWidth(expandRow)) else tableWidth(expandRow)))
 		|> (\t -> if (fullWidthAdvanced) TTweak([TSnapSize(8., -1., false)], t, TEmpty()) else t)
-		|> (if (!anyTypePagination && isFConst(m.rows) && !fgetValue(scrollEnabled)) makeTropicConstantHeight(None()) else idfn)
+		|> (if (!paginationState.anyType && isFConst(m.rows) && !fgetValue(scrollEnabled)) makeTropicConstantHeight(None()) else idfn)
 		|> (if (fullWidth || isAnyWidthByContent || isInnerScroll || !isDefExpandRow) idfn else makeTropicConstantWidth(None()))
 		|> (\t ->
 			if (fullWidth) {
-				table = if (autoPagination || fgetValue(scrollEnabled)) t else TAttachHeight(t, tableHeight);
-				box = if (autoPagination || fgetValue(scrollEnabled)) TFillXY() else TFillXHT(tableHeight);
+				table = if (paginationState.auto || fgetValue(scrollEnabled)) t else TAttachHeight(t, tableHeight);
+				box = if (paginationState.auto || fgetValue(scrollEnabled)) TFillXY() else TFillXHT(tableHeight);
 				MScroll2T(manager, p, MScroll(table, box, [MScrollCropByContent()]), m2t)
 			} else t)
 	})
@@ -953,7 +886,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			"MDynamicDataTable",
 			[
 				enabled,
-				IScriptBehaviour("current_page", pageNumberB, ISInputValue([], "int", true)),
+				IScriptBehaviour("current_page", paginationState.pageNumber, ISInputValue([], "int", true)),
 				IScriptBehaviour("sort_by", sortColumnNumberB, ISInputValue(map(columns, \c -> fgetValue(c.header)), "index", true))
 			],
 			f
@@ -965,6 +898,104 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		else t
 	)
 }
+
+makeMPaginationState(style : [MDataTableStyle]) -> MPaginationState {
+	reorderList = tryExtractStruct(style, MListReorder(make([]), const(false)));
+	currentPage = tryExtractStruct(style, MCurrentPage(make(0)));
+	goToIndex = tryExtractStruct(style, MGoToIndex(make(-1)));
+	paginationDef = MPagination(make(0), []);
+	pagination = if (isSome(reorderList)) paginationDef else extractStruct(style, paginationDef);
+	isEmpty = pagination.rowsPerPage == [];
+	auto = isNone(reorderList) && isEmpty && contains(style, MPaginationAutoScaling());
+	anyType = !isEmpty || auto;
+
+	hideAutoPaginationFooter = contains(style, MHideAutoPaginationFooter());
+
+	page = make(Pair(0, 0));
+
+	updatePageNumber = \newPageNumber ->
+		nextDistinct(page, Pair(newPageNumber, getValue(page).second));
+
+	updateRowsPerPage = \newRowsPerPage ->
+		nextDistinct(page, Pair(getValue(page).first, newRowsPerPage));
+
+	pageNumber = make(0);
+	rowsPerPage = fSecondOfPair(page);
+
+	subs = \rowsCountB, sortingResult -> [
+		\ -> fBidirectionalLink(page, pageNumber,
+			\pair -> nextDistinct(pageNumber, pair.first / max(pair.second, 1)),
+			\num -> {
+				rpp = fgetValue(rowsPerPage);
+				rowsCount = fgetValue(rowsCountB);
+				updatePageNumber(forceRange(num * rpp, 0, rowsCount - 1))
+			})
+		]
+		|> (\sbs ->
+			eitherMap(
+				currentPage,
+				\cp ->
+					concat(
+						[
+							make2Subscribe(cp.page, rowsCountB, \pg, rowsCount -> {
+								rpp = fgetValue(rowsPerPage);
+								updatePageNumber(max(0, min(pg * rpp, rowsCount -1)))
+							}),
+							\ -> fconnectSelect(page, cp.page, \pg -> pg.first / max(pg.second, 1))
+						],
+						sbs
+					),
+				sbs
+			)
+		)
+		|> (\sbs ->
+			eitherMap(
+				goToIndex,
+				\gti ->
+					concat(
+						[
+							make2Subscribe(gti.index, rowsCountB, \ind, rowsCount ->
+								fromArrayIndex([ind],  Pair(0, rowsCount), rowsCount, fgetValue(sortingResult))
+								|> (\f3 -> if (length(f3) > 0) {
+										rpp = fgetValue(rowsPerPage);
+										updatePageNumber(if (rpp == 0) 0 else f3[0] / rpp * rpp)
+									})
+							)
+						],
+						sbs
+					),
+				sbs
+			)
+		);
+
+	MPaginationState(
+		pagination,
+		page,
+		pageNumber,
+		rowsPerPage,
+		updatePageNumber,
+		updateRowsPerPage,
+		anyType,
+		auto,
+		isEmpty,
+		hideAutoPaginationFooter,
+		subs
+	)
+}
+
+MPaginationState(
+	pagination : MPagination,
+	page : DynamicBehaviour<Pair<int, int>>,
+	pageNumber : DynamicBehaviour<int>,
+	rowsPerPage : Transform<int>,
+	updatePageNumber : (int) -> void,
+	updateRowsPerPage : (int) -> void,
+	anyType : bool,
+	auto : bool,
+	isEmpty : bool,
+	hideAutoPaginationFooter : bool,
+	subs : (Transform<int>, Transform<[int]>) -> [() -> () -> void]
+);
 
 MDTTitles(
 	manager : MaterialManager,
@@ -1128,15 +1159,8 @@ MDTTitles(
 MDTFooter(
 	manager : MaterialManager,
 	parent : MFocusGroup,
-	page : DynamicBehaviour<Pair<int, int>>,
-	updatePageNumber : (int) -> void,
-	updateRowsPerPage : (int) -> void,
-	rowsPerPage : Transform<int>,
 	rowsCountB : Transform<int>,
-	pagination : MPagination,
-	anyTypePagination : bool,
-	isEmptyPagination : bool,
-	hideAutoPaginationFooter : bool,
+	paginationState : MPaginationState,
 	scrollEnabled : Transform<bool>,
 	noFooter : bool,
 	footerHeight : double,
@@ -1144,10 +1168,12 @@ MDTFooter(
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
 
+	pagination = paginationState.pagination;
+	page = paginationState.page;
 	fixPaginationCurrent = \current -> forceRange(current, 0, length(pagination.rowsPerPage) - 1);
 	
 	footer =
-		if (anyTypePagination)
+		if (paginationState.anyType)
 			MSelect2T(manager, parent, "MDynamicDataTableFooter", [], rowsCountB, \rowsCount, p2 -> {
 				makeFooterButton = \title : string, makeUpdatedRow : (Pair<int, int>) -> int, makeEnabled : (Pair<int, int>) -> bool ->
 					MIconButton2T(
@@ -1155,7 +1181,7 @@ MDTFooter(
 						p2,
 						MIconButton(
 							title,
-							\ -> updatePageNumber(makeUpdatedRow(getValue(page))),
+							\ -> paginationState.updatePageNumber(makeUpdatedRow(getValue(page))),
 							[],
 							[MEnabled(fselect(page, FLift(makeEnabled)))]
 						),
@@ -1166,12 +1192,12 @@ MDTFooter(
 				showFooter =
 					eitherMap(minA(pagination.rowsPerPage),
 						\rpp -> const(rowsCount >= rpp),
-						fOr(const(!hideAutoPaginationFooter), fselect(rowsPerPage, FLift(\rpp -> rowsCount > rpp)))
+						fOr(const(!paginationState.hideAutoPaginationFooter), fselect(paginationState.rowsPerPage, FLift(\rpp -> rowsCount > rpp)))
 					);
 
-				if (!isEmptyPagination) {
+				if (!paginationState.isEmpty) {
 					selectedRowsPerPage = fixPaginationCurrent(getValue(pagination.current));
-					updateRowsPerPage(pagination.rowsPerPage[selectedRowsPerPage])
+					paginationState.updateRowsPerPage(pagination.rowsPerPage[selectedRowsPerPage])
 				};
 
 				
@@ -1196,7 +1222,7 @@ MDTFooter(
 							|> (\f2 ->
 								TConstruct([
 									makeSubscribe2(pagination.current, \c ->
-										updateRowsPerPage(pagination.rowsPerPage[c])
+										paginationState.updateRowsPerPage(pagination.rowsPerPage[c])
 									)
 								], f2)
 							)
@@ -1222,7 +1248,7 @@ MDTFooter(
 							\__ -> 0,
 							\pg -> pg.first > 0
 						)
-							|> hideIfLittlePages(rowsCount, rowsPerPage),
+							|> hideIfLittlePages(rowsCount, paginationState.rowsPerPage),
 						makeFooterButton(
 							"navigate_before",
 							\pg -> max(pg.first - pg.second, 0),
@@ -1238,7 +1264,7 @@ MDTFooter(
 							\pg -> (rowsCount - 1) / pg.second * pg.second,
 							\pg -> pg.first + pg.second < rowsCount
 						)
-							|> hideIfLittlePages(rowsCount, rowsPerPage)
+							|> hideIfLittlePages(rowsCount, paginationState.rowsPerPage)
 					]
 				])
 				|> (\t -> TColsDir(t, parent.rtl))
