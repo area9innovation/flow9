@@ -434,7 +434,7 @@ protected:
 
     void removePictureFromPending(GLPictureClip *clip);
 
-    virtual bool loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img);
+    virtual bool loadStubPicture(unicode_string url, shared_ptr<GLTextureBitmap> &img);
 
     static StackSlot removeListener(ByteCodeRunner*, StackSlot*, void*);
 
