@@ -174,7 +174,7 @@ class TextClip extends NativeWidgetClip {
 
 		style.resolution = 1.0;
 		style.wordWrap = false;
-		style.wordWrapWidth = 4096.0;
+		style.wordWrapWidth = 2048.0;
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -500,8 +500,8 @@ class TextClip extends NativeWidgetClip {
 					default : null;
 				}
 			} else {
-				nativeWidget.innerHTML = this.contentGlyphs.text;
-				nativeWidget.style.whiteSpace = "normal";
+				nativeWidget.innerHTML = this.contentGlyphs.modified;
+				nativeWidget.style.whiteSpace = "pre-wrap";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
@@ -844,7 +844,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 4096.0;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -1382,12 +1382,12 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
-				metrics = TextMetrics.measureText(untyped __js__("this.contentGlyphs.text.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
+				metrics = TextMetrics.measureText(untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
 				if (RenderSupport.RendererType == "html") {
 					measureHTMLWidth();
 				}
 			} else {
-				metrics = TextMetrics.measureText(this.contentGlyphs.text, style);
+				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
 			}
 
 			metrics.maxWidth = 0.0;
@@ -1413,7 +1413,7 @@ class TextClip extends NativeWidgetClip {
 		if (style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0) {
 			nativeWidget.style.width = '${style.wordWrapWidth}px';
 		} else {
-			nativeWidget.style.width = '4096px';
+			nativeWidget.style.width = 'max-content';
 		}
 
 		if (nativeWidget.parentNode == null) {
@@ -1429,9 +1429,13 @@ class TextClip extends NativeWidgetClip {
 			metrics.width = textNodeWidth;
 		}
 
-		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0) {
-			var textNodeHeight = textNodeMetrics.height / worldTransform.d;
-			metrics.height = textNodeHeight;
+		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0 && worldTransform.d > 0) {
+			var currentLines = Math.round(metrics.height / worldTransform.d / metrics.lineHeight);
+			var textNodeLines = Math.round(textNodeMetrics.height / metrics.lineHeight);
+
+			if (textNodeLines > 0 && textNodeLines != currentLines) {
+				metrics.height = metrics.height * currentLines / textNodeLines;
+			}
 		}
 
 		if (RenderSupport.RendererType != "html" && !isInput) {
