@@ -136,7 +136,6 @@ class TextClip extends NativeWidgetClip {
 	private var type : String = 'text';
 	private var autocomplete : String = '';
 	private var step : Float = 1.0;
-	private var wordWrap : Bool = false;
 	private var doNotInvalidateStage : Bool = false;
 	private var cropWords : Bool = false;
 	private var autoAlign : String = 'AutoAlignNone';
@@ -171,6 +170,8 @@ class TextClip extends NativeWidgetClip {
 		super(worldVisible);
 
 		style.resolution = 1.0;
+		style.wordWrap = false;
+		style.wordWrapWidth = 4096.0;
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -517,7 +518,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontStyle = RenderSupport.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupport.RendererType != "html" || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
-		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
+		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
@@ -630,7 +631,7 @@ class TextClip extends NativeWidgetClip {
 		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
-		if (this.textDirection == '') this.textDirection = getStringDirection(this.text, '');
+		this.textDirection = getStringDirection(this.text, this.textDirection);
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
@@ -666,7 +667,7 @@ class TextClip extends NativeWidgetClip {
 			var modification : TextMappedModification = getContentGlyphs();
 			var text = modification.modified;
 			var chrIdx: Int = 0;
-			var texts = wordWrap ? [[text]] : checkTextLength(text);
+			var texts = style.wordWrap ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
 				textClip = createTextClip(
@@ -818,8 +819,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public  function setWordWrap(wordWrap : Bool) : Void {
-		if (this.wordWrap != wordWrap) {
-			this.wordWrap = wordWrap;
+		if (style.wordWrap != wordWrap) {
 			style.wordWrap = wordWrap;
 
 			invalidateMetrics();
@@ -833,7 +833,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 4096.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -1390,8 +1390,10 @@ class TextClip extends NativeWidgetClip {
 		var textNodeMetrics : Dynamic = null;
 
 		updateNativeWidgetStyle();
-		if (style.wordWrapWidth != null && style.wordWrapWidth > 0) {
+		if (style.wordWrapWidth != null && style.wrap && style.wordWrapWidth > 0) {
 			nativeWidget.style.width = '${style.wordWrapWidth}px';
+		} else {
+			nativeWidget.style.width = '4096px';
 		}
 
 		if (nativeWidget.parentNode == null) {
