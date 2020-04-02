@@ -123,6 +123,8 @@ class TextClip extends NativeWidgetClip {
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
+	private var contentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
+	private var contentGlyphsDirection : String = '';
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
 	private var backgroundOpacity : Float = 0.0;
@@ -136,7 +138,6 @@ class TextClip extends NativeWidgetClip {
 	private var type : String = 'text';
 	private var autocomplete : String = '';
 	private var step : Float = 1.0;
-	private var wordWrap : Bool = false;
 	private var doNotInvalidateStage : Bool = false;
 	private var cropWords : Bool = false;
 	private var autoAlign : String = 'AutoAlignNone';
@@ -164,8 +165,6 @@ class TextClip extends NativeWidgetClip {
 	public var isInteractive : Bool = false;
 
 	private var baselineWidget : Dynamic;
-	private var widthDelta : Float = 0.0;
-	private var fontDelta : Float = 0.0;
 
 	private var doNotRemap : Bool = false;
 
@@ -173,16 +172,8 @@ class TextClip extends NativeWidgetClip {
 		super(worldVisible);
 
 		style.resolution = 1.0;
-
-		if (RenderSupport.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome)) {
-			this.onAdded(function() {
-				RenderSupport.on("resize", updateWidthDelta);
-
-				return function() {
-					RenderSupport.off("resize", updateWidthDelta);
-				}
-			});
-		}
+		style.wordWrap = false;
+		style.wordWrapWidth = 2048.0;
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -443,12 +434,17 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function updateNativeWidgetStyle() : Void {
+		if (metrics == null && !isInput && escapeHTML) {
+			return;
+		}
+
 		super.updateNativeWidgetStyle();
 		var alpha = this.getNativeWidgetAlpha();
 
 		if (isInput) {
 			nativeWidget.setAttribute("type", type);
 			nativeWidget.value = text;
+			nativeWidget.style.whiteSpace = "pre-wrap";
 			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 			nativeWidget.readOnly = readOnly;
 
@@ -487,13 +483,25 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.color = style.fill;
 			}
 		} else {
-			var textContent = getContentGlyphs().modified;
-			var newTextContent = adaptWhitespaces(textContent);
-
 			if (escapeHTML) {
-				nativeWidget.textContent = newTextContent;
+				var textContent = "";
+
+				var textLines : Array<String> = metrics.lines;
+				for (line in textLines) {
+					textContent = textContent + line + "\n";
+				}
+
+				nativeWidget.textContent = textContent;
+				nativeWidget.style.whiteSpace = "pre";
+
+				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+					case 'RTL' : 'rtl';
+					case 'rtl' : 'rtl';
+					default : null;
+				}
 			} else {
-				nativeWidget.innerHTML = newTextContent;
+				nativeWidget.innerHTML = this.contentGlyphs.modified;
+				nativeWidget.style.whiteSpace = "pre-wrap";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
@@ -501,12 +509,12 @@ class TextClip extends NativeWidgetClip {
 						child.className = "inlineWidget";
 					}
 				}
-			}
 
-			nativeWidget.style.direction = switch (getStringDirection(textContent, textDirection)) {
-				case 'RTL' : 'rtl';
-				case 'rtl' : 'rtl';
-				default : null;
+				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+					case 'RTL' : 'rtl';
+					case 'rtl' : 'rtl';
+					default : null;
+				}
 			}
 
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
@@ -517,9 +525,9 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontFamily = RenderSupport.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupport.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupport.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
-		nativeWidget.style.fontSize = '${style.fontSize + fontDelta}px';
+		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupport.RendererType != "html" || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
-		nativeWidget.wrap = wordWrap ? 'soft' : 'off';
+		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
@@ -607,46 +615,6 @@ class TextClip extends NativeWidgetClip {
 			return "Black";
 	}
 
-	private function updateWidthDelta() {
-		if (untyped RenderSupport.RendererType == "html" && !Platform.isMobile && (Platform.isSafari || Platform.isChrome) && !this.destroyed) {
-			var zoomFactor = RenderSupport.browserZoom;
-
-			updateTextMetrics();
-
-			if (zoomFactor < 1.0 && metrics != null && metrics.lines != null && metrics.lines.length > 0) {
-				var fontSize = style.fontSize;
-				var wordWrapWidth = style.wordWrapWidth;
-				widthDelta = 0.0;
-				metrics = null;
-				var wd = getClipWidth();
-				var text = this.text;
-
-				style.fontSize = Math.ceil(Math.max(fontSize * zoomFactor, Platform.isSafari ? 10.0 : 6.0));
-				style.wordWrapWidth = 2048.0;
-				var lines : Array<Dynamic> = metrics.lines;
-				var newWidthDelta = Math.NEGATIVE_INFINITY;
-
-				for (line in lines) {
-					this.text = line;
-					metrics = null;
-					newWidthDelta = Math.max(Math.ceil(Math.ceil(getClipWidth() / zoomFactor) - wd), newWidthDelta);
-				}
-
-				widthDelta = newWidthDelta;
-				fontDelta = -fontSize / 120.0 / zoomFactor;
-
-				style.fontSize = fontSize;
-				style.wordWrapWidth = wordWrapWidth;
-				this.text = text;
-			} else {
-				widthDelta = 0.0;
-				fontDelta = 0.0;
-			}
-
-			invalidateMetrics();
-		}
-	}
-
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 		fontFamilies = fontWeight > 0 || fontSlope != ""
@@ -672,7 +640,9 @@ class TextClip extends NativeWidgetClip {
 		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
-		if (this.textDirection == '') this.textDirection = getStringDirection(this.text, '');
+		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
+		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
+
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
@@ -692,7 +662,6 @@ class TextClip extends NativeWidgetClip {
 		if (this.escapeHTML != escapeHTML) {
 			this.escapeHTML = escapeHTML;
 			invalidateMetrics();
-			updateWidthDelta();
 		}
 	}
 
@@ -706,10 +675,10 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipVisible(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = getContentGlyphs();
+			var modification : TextMappedModification = this.contentGlyphs;
 			var text = modification.modified;
 			var chrIdx: Int = 0;
-			var texts = wordWrap ? [[text]] : checkTextLength(text);
+			var texts = style.wordWrap ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
 				textClip = createTextClip(
@@ -861,12 +830,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public  function setWordWrap(wordWrap : Bool) : Void {
-		if (this.wordWrap != wordWrap) {
-			this.wordWrap = wordWrap;
+		if (style.wordWrap != wordWrap) {
 			style.wordWrap = wordWrap;
 
 			invalidateMetrics();
-			updateWidthDelta();
 		}
 	}
 
@@ -880,7 +847,6 @@ class TextClip extends NativeWidgetClip {
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
-		updateWidthDelta();
 	}
 
 	public function setCropWords(cropWords : Bool) : Void {
@@ -889,7 +855,6 @@ class TextClip extends NativeWidgetClip {
 			style.breakWords = cropWords;
 
 			invalidateMetrics();
-			updateWidthDelta();
 		}
 	}
 
@@ -928,6 +893,7 @@ class TextClip extends NativeWidgetClip {
 	public function setTextDirection(textDirection : String) : Void {
 		if (this.textDirection != textDirection) {
 			this.textDirection = textDirection.toLowerCase();
+			this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 
 			invalidateStyle();
 			invalidateMetrics();
@@ -936,7 +902,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextDirection() : String {
-		return this.textDirection;
+		return this.textDirection != '' ? this.textDirection : this.contentGlyphsDirection;
 	}
 
 	public function setResolution(resolution : Float) : Void {
@@ -1231,6 +1197,8 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		this.text = newValue;
+		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
+		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 		emit('input', newValue);
 	}
 
@@ -1295,7 +1263,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return (widgetWidth > 0 ? widgetWidth : getClipWidth()) + widthDelta;
+		return (widgetWidth > 0 ? widgetWidth : getClipWidth());
 	}
 
 	public function getMaxWidth() : Float {
@@ -1322,11 +1290,15 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getContentGlyphs() : TextMappedModification {
+		return this.contentGlyphs;
+	}
+
+	private function applyTextMappedModification(text : String) : TextMappedModification {
 		if (isInput && type == "password") {
-			return getBulletsString(this.text);
-		} else  {
+			return getBulletsString(text);
+		} else {
 			//return getActualGlyphsString(this.text);  // Maybe worth to return this line for C++ target instead next one which is good for JS target.
-			return TextMappedModification.createInvariantForString(this.text);
+			return TextMappedModification.createInvariantForString(text);
 		}
 	}
 
@@ -1410,12 +1382,12 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
-				metrics = TextMetrics.measureText(untyped __js__("this.text.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
-				measureHTMLWidth();
-			} else if (isStringRtl(text)) {
-				metrics = TextMetrics.measureText(adaptWhitespaces(getContentGlyphs().text), style);
+				metrics = TextMetrics.measureText(untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
+				if (RenderSupport.RendererType == "html") {
+					measureHTMLWidth();
+				}
 			} else {
-				metrics = TextMetrics.measureText(text, style);
+				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
 			}
 
 			metrics.maxWidth = 0.0;
@@ -1438,6 +1410,11 @@ class TextClip extends NativeWidgetClip {
 		var textNodeMetrics : Dynamic = null;
 
 		updateNativeWidgetStyle();
+		if (style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0) {
+			nativeWidget.style.width = '${style.wordWrapWidth}px';
+		} else {
+			nativeWidget.style.width = 'max-content';
+		}
 
 		if (nativeWidget.parentNode == null) {
 			Browser.document.body.appendChild(nativeWidget);
@@ -1447,12 +1424,18 @@ class TextClip extends NativeWidgetClip {
 			textNodeMetrics = getTextNodeMetrics(nativeWidget);
 		}
 
-		if (textNodeMetrics.width == null || textNodeMetrics.width <= 0) {
-			return;
+		if (textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
+			var textNodeWidth = textNodeMetrics.width / worldTransform.a;
+			metrics.width = textNodeWidth;
 		}
 
-		if (textNodeMetrics.width > metrics.width + DisplayObjectHelper.TextGap || textNodeMetrics.width < metrics.width - DisplayObjectHelper.TextGap) {
-			metrics.width = textNodeMetrics.width;
+		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0 && worldTransform.d > 0) {
+			var currentLines = Math.round(metrics.height / worldTransform.d / metrics.lineHeight);
+			var textNodeLines = Math.round(textNodeMetrics.height / metrics.lineHeight);
+
+			if (textNodeLines > 0 && textNodeLines != currentLines) {
+				metrics.height = metrics.height * currentLines / textNodeLines;
+			}
 		}
 
 		if (RenderSupport.RendererType != "html" && !isInput) {
