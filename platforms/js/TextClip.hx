@@ -123,6 +123,8 @@ class TextClip extends NativeWidgetClip {
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
+	private var contentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
+	private var contentGlyphsDirection : String = '';
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
 	private var backgroundOpacity : Float = 0.0;
@@ -130,6 +132,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = '';
+	private var updateTextDirection : Bool = true;
 	private var escapeHTML : Bool = true;
 	private var style : Dynamic = new TextStyle();
 
@@ -490,8 +493,14 @@ class TextClip extends NativeWidgetClip {
 
 				nativeWidget.textContent = textContent;
 				nativeWidget.style.whiteSpace = null;
+
+				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+					case 'RTL' : 'rtl';
+					case 'rtl' : 'rtl';
+					default : null;
+				}
 			} else {
-				nativeWidget.innerHTML = this.text;
+				nativeWidget.innerHTML = this.contentGlyphs.text;
 				nativeWidget.style.whiteSpace = "normal";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
@@ -500,12 +509,12 @@ class TextClip extends NativeWidgetClip {
 						child.className = "inlineWidget";
 					}
 				}
-			}
 
-			nativeWidget.style.direction = switch (this.textDirection) {
-				case 'RTL' : 'rtl';
-				case 'rtl' : 'rtl';
-				default : null;
+				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+					case 'RTL' : 'rtl';
+					case 'rtl' : 'rtl';
+					default : null;
+				}
 			}
 
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
@@ -631,7 +640,9 @@ class TextClip extends NativeWidgetClip {
 		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
-		this.textDirection = getStringDirection(this.text, this.textDirection);
+		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
+		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
+
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
@@ -664,7 +675,7 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipVisible(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = getContentGlyphs();
+			var modification : TextMappedModification = this.contentGlyphs;
 			var text = modification.modified;
 			var chrIdx: Int = 0;
 			var texts = style.wordWrap ? [[text]] : checkTextLength(text);
@@ -882,6 +893,7 @@ class TextClip extends NativeWidgetClip {
 	public function setTextDirection(textDirection : String) : Void {
 		if (this.textDirection != textDirection) {
 			this.textDirection = textDirection.toLowerCase();
+			this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 
 			invalidateStyle();
 			invalidateMetrics();
@@ -890,7 +902,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextDirection() : String {
-		return this.textDirection;
+		return this.textDirection != '' ? this.textDirection : this.contentGlyphsDirection;
 	}
 
 	public function setResolution(resolution : Float) : Void {
@@ -1185,6 +1197,8 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		this.text = newValue;
+		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
+		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 		emit('input', newValue);
 	}
 
@@ -1276,11 +1290,15 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getContentGlyphs() : TextMappedModification {
+		return this.contentGlyphs;
+	}
+
+	private function applyTextMappedModification(text : String) : TextMappedModification {
 		if (isInput && type == "password") {
-			return getBulletsString(this.text);
-		} else  {
+			return getBulletsString(text);
+		} else {
 			//return getActualGlyphsString(this.text);  // Maybe worth to return this line for C++ target instead next one which is good for JS target.
-			return TextMappedModification.createInvariantForString(this.text);
+			return TextMappedModification.createInvariantForString(text);
 		}
 	}
 
@@ -1364,10 +1382,12 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
-				metrics = TextMetrics.measureText(untyped __js__("this.text.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
-				measureHTMLWidth();
+				metrics = TextMetrics.measureText(untyped __js__("this.contentGlyphs.text.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
+				if (RenderSupport.RendererType == "html") {
+					measureHTMLWidth();
+				}
 			} else {
-				metrics = TextMetrics.measureText(adaptWhitespaces(getContentGlyphs().text), style);
+				metrics = TextMetrics.measureText(this.contentGlyphs.text, style);
 			}
 
 			metrics.maxWidth = 0.0;
@@ -1390,7 +1410,7 @@ class TextClip extends NativeWidgetClip {
 		var textNodeMetrics : Dynamic = null;
 
 		updateNativeWidgetStyle();
-		if (style.wordWrapWidth != null && style.wrap && style.wordWrapWidth > 0) {
+		if (style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0) {
 			nativeWidget.style.width = '${style.wordWrapWidth}px';
 		} else {
 			nativeWidget.style.width = '4096px';
