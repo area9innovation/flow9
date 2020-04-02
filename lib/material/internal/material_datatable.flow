@@ -140,7 +140,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	rowsCountB = flength(rows);
 
-	fixPaginationCurrent = \current -> forceRange(current, 0, length(pagination.rowsPerPage) - 1);
+	
 
 	page = make(Pair(0, 0));
 
@@ -537,118 +537,30 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			)
 		else t;
 
-	footer = \p -> (
-		if (anyTypePagination)
-			MSelect2T(manager, p, "MDynamicDataTableFooter", [], rowsCountB, \rowsCount, p2 -> {
-				makeFooterButton = \title : string, makeUpdatedRow : (Pair<int, int>) -> int, makeEnabled : (Pair<int, int>) -> bool ->
-					MIconButton2T(
-						manager,
-						p2,
-						MIconButton(
-							title,
-							\ -> updatePageNumber(makeUpdatedRow(getValue(page))),
-							[],
-							[MEnabled(fselect(page, FLift(makeEnabled)))]
-						),
-						m2t
-					)
-					|> TCenterY;
-
-				showFooter =
-					eitherMap(minA(pagination.rowsPerPage),
-						\rpp -> const(rowsCount >= rpp),
-						fOr(const(!hideAutoPaginationFooter), fselect(rowsPerPage, FLift(\rpp -> rowsCount > rpp)))
-					);
-
-				if (!isEmptyPagination) {
-					selectedRowsPerPage = fixPaginationCurrent(getValue(pagination.current));
-					updateRowsPerPage(pagination.rowsPerPage[selectedRowsPerPage])
-				};
-
-				
-				concatA([
-					[TFillX()],
-					if (length(pagination.rowsPerPage) > 1)
-						[
-							MText2T(p2, _("Rows per Page:"), [MCaption()])
-							|> TCenterY
-							|> (\t -> TBorder(8., 0., 16., 0., t)),
-							MDropDown2T(
-								manager,
-								p2,
-								MDropDown(
-									pagination.current,
-									"",
-									map(pagination.rowsPerPage, toString),
-									[MDataTableFooter(), MCroppedButton()]
-								),
-								m2t
-							)
-							|> (\f2 ->
-								TConstruct([
-									makeSubscribe2(pagination.current, \c ->
-										updateRowsPerPage(pagination.rowsPerPage[c])
-									)
-								], f2)
-							)
-							|> TCenterY
-							|> TBorderRight(16.)
-						]
-					else
-						[],
-
-					[
-						TSelect(page, \pg -> {
-							text =  formatString(
-								if (p.rtl) _("%1 of %2-%3") else _("%3-%2 of %1"),
-								[i2s(rowsCount), i2s(max(min(pg.first + pg.second, rowsCount), 0)), i2s(min(pg.first + 1, rowsCount))]
-							);
-
-							MText2T(p2, text, [MCaption()])
-						})
-							|> TCenterY
-							|> TBorderRight(16.),
-						makeFooterButton(
-							"first_page",
-							\__ -> 0,
-							\pg -> pg.first > 0
-						)
-							|> hideIfLittlePages(rowsCount, rowsPerPage),
-						makeFooterButton(
-							"navigate_before",
-							\pg -> max(pg.first - pg.second, 0),
-							\pg -> pg.first > 0
-						),
-						makeFooterButton(
-							"navigate_next",
-							\pg -> min(pg.first + pg.second, rowsCount - if (fgetValue(scrollEnabled)) pg.second else 0),
-							\pg -> (rowsCount > 0) && (pg.first + pg.second < rowsCount)
-						),
-						makeFooterButton(
-							"last_page",
-							\pg -> (rowsCount - 1) / pg.second * pg.second,
-							\pg -> pg.first + pg.second < rowsCount
-						)
-							|> hideIfLittlePages(rowsCount, rowsPerPage)
-					]
-				])
-				|> (\t -> TColsDir(t, p.rtl))
-				|> (\t -> TAvailableHeight(t, const(footerHeight)))
-				|> makeTropicConstantHeight(footerHeight |> Some)
-				|> (\t -> TShowLazy(showFooter, \ -> t))
-			})
-		else if (noFooter)
-			TEmpty()
-		else
-			TFixed(0., footerHeight)
-	)
-	|> (\t -> TAttachMinWidth(t, footerMinWidth));
-
 	(\p -> {
-		headers0 = MDataTableTitles(
+		headers0 = MDTTitles(
 			manager, p, columns, replaceHeader, defaultHS, headerStyle, cellBox, alignCellContent, isSome(reorderList),
 			sortedByB, defaultSorted, hasExtOrderBy, headCount, isCheckboxColumn, scrollEnabled, rowsCountB, page,
 			sortingResult, makeChkbox, selection, selectionEnabled, m2t
+		);
+
+		footer = MDTFooter(
+			manager,
+			p,
+			page,
+			updatePageNumber,
+			updateRowsPerPage,
+			rowsPerPage,
+			rowsCountB,
+			pagination,
+			anyTypePagination,
+			isEmptyPagination,
+			hideAutoPaginationFooter,
+			scrollEnabled,
+			noFooter,
+			footerHeight,
+			footerMinWidth,
+			m2t
 		);
 
 		// Data rows
@@ -926,7 +838,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		|> addSeparatedFirstColumn(p, headers0)
 		|> addHeaderActions(p)
 		// Bottom bar
-		|> (\f : Tropic -> TLines2(f, footer(p)))
+		|> (\f : Tropic -> TLines2(f, footer))
 		// Card
 		|> (\f ->
 			if (contains(style, MInCard())) {
@@ -1054,7 +966,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	)
 }
 
-MDataTableTitles(
+MDTTitles(
 	manager : MaterialManager,
 	p : MFocusGroup,
 	columns : [MColumnDynamic],
@@ -1076,8 +988,6 @@ MDataTableTitles(
 	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, bool) -> Tropic,
 	selection : MListSelection,
 	selectionEnabled : MListSelectionEnabled,
-
-
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> [Tropic] {
 	mapi(columns, \i0, c : MColumnDynamic -> if (replaceHeader) cellBox(i0, true) else {
@@ -1213,6 +1123,136 @@ MDataTableTitles(
 		)
 		|> alignCellContent(c.style, cellBox(i0, true))
 	});
+}
+
+MDTFooter(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	page : DynamicBehaviour<Pair<int, int>>,
+	updatePageNumber : (int) -> void,
+	updateRowsPerPage : (int) -> void,
+	rowsPerPage : Transform<int>,
+	rowsCountB : Transform<int>,
+	pagination : MPagination,
+	anyTypePagination : bool,
+	isEmptyPagination : bool,
+	hideAutoPaginationFooter : bool,
+	scrollEnabled : Transform<bool>,
+	noFooter : bool,
+	footerHeight : double,
+	footerMinWidth : DynamicBehaviour<double>,
+	m2t : (Material, MFocusGroup) -> Tropic
+) -> Tropic {
+
+	fixPaginationCurrent = \current -> forceRange(current, 0, length(pagination.rowsPerPage) - 1);
+	
+	footer =
+		if (anyTypePagination)
+			MSelect2T(manager, parent, "MDynamicDataTableFooter", [], rowsCountB, \rowsCount, p2 -> {
+				makeFooterButton = \title : string, makeUpdatedRow : (Pair<int, int>) -> int, makeEnabled : (Pair<int, int>) -> bool ->
+					MIconButton2T(
+						manager,
+						p2,
+						MIconButton(
+							title,
+							\ -> updatePageNumber(makeUpdatedRow(getValue(page))),
+							[],
+							[MEnabled(fselect(page, FLift(makeEnabled)))]
+						),
+						m2t
+					)
+					|> TCenterY;
+
+				showFooter =
+					eitherMap(minA(pagination.rowsPerPage),
+						\rpp -> const(rowsCount >= rpp),
+						fOr(const(!hideAutoPaginationFooter), fselect(rowsPerPage, FLift(\rpp -> rowsCount > rpp)))
+					);
+
+				if (!isEmptyPagination) {
+					selectedRowsPerPage = fixPaginationCurrent(getValue(pagination.current));
+					updateRowsPerPage(pagination.rowsPerPage[selectedRowsPerPage])
+				};
+
+				
+				concatA([
+					[TFillX()],
+					if (length(pagination.rowsPerPage) > 1)
+						[
+							MText2T(p2, _("Rows per Page:"), [MCaption()])
+							|> TCenterY
+							|> (\t -> TBorder(8., 0., 16., 0., t)),
+							MDropDown2T(
+								manager,
+								p2,
+								MDropDown(
+									pagination.current,
+									"",
+									map(pagination.rowsPerPage, toString),
+									[MDataTableFooter(), MCroppedButton()]
+								),
+								m2t
+							)
+							|> (\f2 ->
+								TConstruct([
+									makeSubscribe2(pagination.current, \c ->
+										updateRowsPerPage(pagination.rowsPerPage[c])
+									)
+								], f2)
+							)
+							|> TCenterY
+							|> TBorderRight(16.)
+						]
+					else
+						[],
+
+					[
+						TSelect(page, \pg -> {
+							text =  formatString(
+								if (parent.rtl) _("%1 of %2-%3") else _("%3-%2 of %1"),
+								[i2s(rowsCount), i2s(max(min(pg.first + pg.second, rowsCount), 0)), i2s(min(pg.first + 1, rowsCount))]
+							);
+
+							MText2T(p2, text, [MCaption()])
+						})
+							|> TCenterY
+							|> TBorderRight(16.),
+						makeFooterButton(
+							"first_page",
+							\__ -> 0,
+							\pg -> pg.first > 0
+						)
+							|> hideIfLittlePages(rowsCount, rowsPerPage),
+						makeFooterButton(
+							"navigate_before",
+							\pg -> max(pg.first - pg.second, 0),
+							\pg -> pg.first > 0
+						),
+						makeFooterButton(
+							"navigate_next",
+							\pg -> min(pg.first + pg.second, rowsCount - if (fgetValue(scrollEnabled)) pg.second else 0),
+							\pg -> (rowsCount > 0) && (pg.first + pg.second < rowsCount)
+						),
+						makeFooterButton(
+							"last_page",
+							\pg -> (rowsCount - 1) / pg.second * pg.second,
+							\pg -> pg.first + pg.second < rowsCount
+						)
+							|> hideIfLittlePages(rowsCount, rowsPerPage)
+					]
+				])
+				|> (\t -> TColsDir(t, parent.rtl))
+				|> (\t -> TAvailableHeight(t, const(footerHeight)))
+				|> makeTropicConstantHeight(footerHeight |> Some)
+				|> (\t -> TShowLazy(showFooter, \ -> t))
+			})
+		else if (noFooter)
+			TEmpty()
+		else
+			TFixed(0., footerHeight);
+
+	footer
+	|> (\t -> TAttachMinWidth(t, footerMinWidth));
 }
 
 MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, rowHeight : double, box : Tropic, crop : bool, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
