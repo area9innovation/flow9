@@ -94,7 +94,14 @@ var urlAddBaseLocation = function(url) {
 var extractUrlParameters = function(url) {
   var urlSplitted = url.split("?");
   if (urlSplitted.length > 1) {
-    return { baseUrl: urlSplitted[0], parameters: urlSplitted.slice(1).join("?").split("&") };
+    // let's fix the url parameters (if url has multiply `?` - change all `?` -> `&`)
+    //  and then split it by `&`
+    var parameters2 = urlSplitted.slice(1).join("&").split("&");
+    // Then, if the url has only one value after the `?`, without `=`, let's add a default key-value like `special_case_key=special_case_value`
+    if (parameters2.length == 1 && !parameters2[0].includes("=")) {
+      parameters2.unshift("special_case_key=special_case_value");
+    }
+    return { baseUrl: urlSplitted[0], parameters: parameters2 };
   } else {
     return { baseUrl: url, parameters: [] };
   }
