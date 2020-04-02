@@ -359,110 +359,37 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		})
 	};
 
-
-	addSeparatedFirstColumn = \p, headers0 -> \table ->
-		if (glued || lifted) {
-
-			implementExpandRow = \isHeader ->
-				\t -> TBorderT(zero, zero, zero, fselect(expandRow, FLift(\er -> lineHeight(isHeader) * (i2d(er - 1)))), t);
-
-			firstColumnWidth = arrayPush(colsHead(columnWidths), const(externalBorder)) |> fsum;
-
-			firstColumnHeader =
-				(
-					if (lifted) TFixed(0., lineHeight(true))
-					else colsHead(headers0) |> TCols |> TBorderLeft(externalBorder)
-				)
-				|> implementExpandRow(true);
-
-			cells =
-				fselect2(sorting.result, rows, FLift2(\sortRes, rws -> {
-					map(sortRes, \i -> elementAt(rws, i, []))
-					|> (\arr -> eitherMap(fixedRow, \fr -> concat([fr.cols], arr), arr))
-					|> (\arr -> mapi(arr, \i0, row -> {
-						i = i0 - b2i(isSome(fixedRow));
-						makeCells(p, i, row)
-						|> colsHead
-						|> TCols
-						|> (\t ->
-							if (lifted)
-								TAlpha(fselect(innerScrollPosition, FLift(\isp -> max(0.5, 1. - abs(isp.x) / 100.))), t)
-								|> TBorderBottom(rowHeight)
-							else t
-						)
-						|> implementExpandRow(false)
-						|> TBorderLeft(externalBorder)
-						|> (\t -> if (glued)
-								eitherMap(rowBackgroundStyle, \rb -> if (i == -1) t else
-									TIfLazy2(
-										fselect(selection.selected, FLift(\arr2 -> contains(arr2, sortRes[i]))),
-										\v -> if (v && isSome(selectedBgStyle)) TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, []), t)
-											else TFrame(0., 0., rb.fn(sortRes[i]), t),
-										false
-									), t
-								)
-							else t
-						)
-						|> (\t -> if (glued)
-							MComponent2T(manager, p, "MDataTableLine" + i2s(i), [
-								MOnClick(\ -> if (fgetValue(onClick.enabled)) onClick.onClick(i)),
-								MRippleType(const(MRippleFill())),
-								clickEnabled
-							], \__ -> t, m2t) else t)
-						|> (\t -> if (separators && glued) TLines2(t, MSeparator2T(manager, p, true)) else t)
-					}))
-				}));
-
-			firstColumn =
-				TSelect(eitherMap(fixedRow, \__ -> fselect(cells, FLift(tail)), cells), TLines)
-				|> (\t -> MScroll2T(manager, p, MScroll(t, TFillXY(), [
-						MScrollCropByContent(),
-						TScrollEnabled(const(false)),
-						MScrollbars(
-							TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
-							TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
-						),
-						rowsBoxScrollPosition,
-						MScrollBound(const(false), const(false))
-					]), m2t))
-				|> (\t -> eitherMap(fixedRow, \fr -> {
-						bStyle =
-							filtermap(fr.style, \st -> switch (st) {
-								TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
-								default : None()
-							});
-
-						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
-						|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
-						|> (\t2 -> TShow(fr.show, t2))
-						|> (\t2 -> TLines2(t2, t))
-					}, t))
-				|> (\t -> TAvailableHeight(t, rowsAvailableHeight))
-				|> (\t -> if (separators && glued) TLines2(MSeparator2T(manager, p, true), t) else t)
-				|> (\t -> TAvailableWidth(t, firstColumnWidth))
-				|> (\t -> TLines2(firstColumnHeader, t))
-				|> (\t ->
-						eitherMap(gluedMode, \gMode ->
-							TGroup2(
-								TShow(innerScrollVisible, t),
-								TShow(
-									extractStruct(gMode, MSeparatorVisible(innerScrollVisible)).visible,
-									TAvailableHeight(
-										MSeparator2T(manager, p, false),
-										faddition(visibleRowsHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
-									)
-								)
-								|> (\sep -> TBorderT(firstColumnWidth, zero, zero, zero, sep))
-							),
-							t
-						)
-				);
-
-			TGroup2(
-				if (glued) TBorderT(fif(innerScrollVisible, firstColumnWidth, zero), zero, zero, zero, table) else table,
-				firstColumn
-			)
-		} else table;
+	addSeparatedFirstColumn = \p, headers0 ->
+		MDTFirstColumn(
+			manager,
+			p,
+			headers0,
+			columnWidths,
+			sorting,
+			rows,
+			glued,
+			lifted,
+			gluedMode,
+			expandRow,
+			lineHeight,
+			externalBorder,
+			rowHeight,
+			fixedRow,
+			makeCells,
+			colsHead,
+			rowsBoxScrollPosition,
+			innerScrollPosition,
+			innerScrollVisible,
+			rowBackgroundStyle,
+			selectedBgStyle,
+			selection,
+			separators,
+			onClick,
+			clickEnabled,
+			visibleRowsHeight,
+			rowsAvailableHeight,
+			m2t
+		);
 
 	addHeaderActions = \p -> \t : Tropic ->
 		if (headerActions.actions != TEmpty())
@@ -1187,6 +1114,141 @@ MDTTitles(
 		)
 		|> alignCellContent(c.style, cellBox(i0, true))
 	});
+}
+
+MDTFirstColumn(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	headers0 : [Tropic],
+	columnWidths : [Transform<double>],
+	sorting : MSortingState,
+	rows : Transform<[[Material]]>,
+	glued : bool,
+	lifted : bool,
+	gluedMode : Maybe<[MGluedFirstColumnModeStyle]>,
+	expandRow : Transform<int>,
+	lineHeight : (bool) -> double,
+	externalBorder : double,
+	rowHeight : double,
+	fixedRow : Maybe<MFixedRow>,
+	makeCells : (MFocusGroup, int, [Material]) -> [Tropic],
+	colsHead : ([flow]) -> [flow],
+	rowsBoxScrollPosition : TScrollPosition,
+	innerScrollPosition : Transform<Point>,
+	innerScrollVisible : Transform<bool>,
+	rowBackgroundStyle : Maybe<MRowBackgroundStyle>,
+	selectedBgStyle : Maybe<MSelectedBackgroundStyle>,
+	selection : MListSelection,
+	separators : bool,
+	onClick : MOnListClick,
+	clickEnabled : MClickEnabled,
+	visibleRowsHeight : Transform<double>,
+	rowsAvailableHeight : Transform<double>,
+	m2t : (Material, MFocusGroup) -> Tropic
+) -> (Tropic) -> Tropic {
+	\table ->
+		if (glued || lifted) {
+
+			implementExpandRow = \isHeader ->
+				\t -> TBorderT(zero, zero, zero, fselect(expandRow, FLift(\er -> lineHeight(isHeader) * (i2d(er - 1)))), t);
+
+			firstColumnWidth = arrayPush(colsHead(columnWidths), const(externalBorder)) |> fsum;
+
+			firstColumnHeader =
+				(
+					if (lifted) TFixed(0., lineHeight(true))
+					else colsHead(headers0) |> TCols |> TBorderLeft(externalBorder)
+				)
+				|> implementExpandRow(true);
+
+			cells =
+				fselect2(sorting.result, rows, FLift2(\sortRes, rws -> {
+					map(sortRes, \i -> elementAt(rws, i, []))
+					|> (\arr -> eitherMap(fixedRow, \fr -> concat([fr.cols], arr), arr))
+					|> (\arr -> mapi(arr, \i0, row -> {
+						i = i0 - b2i(isSome(fixedRow));
+						makeCells(parent, i, row)
+						|> colsHead
+						|> TCols
+						|> (\t ->
+							if (lifted)
+								TAlpha(fselect(innerScrollPosition, FLift(\isp -> max(0.5, 1. - abs(isp.x) / 100.))), t)
+								|> TBorderBottom(rowHeight)
+							else t
+						)
+						|> implementExpandRow(false)
+						|> TBorderLeft(externalBorder)
+						|> (\t -> if (glued)
+								eitherMap(rowBackgroundStyle, \rb -> if (i == -1) t else
+									TIfLazy2(
+										fselect(selection.selected, FLift(\arr2 -> contains(arr2, sortRes[i]))),
+										\v -> if (v && isSome(selectedBgStyle)) TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, []), t)
+											else TFrame(0., 0., rb.fn(sortRes[i]), t),
+										false
+									), t
+								)
+							else t
+						)
+						|> (\t -> if (glued)
+							MComponent2T(manager, parent, "MDataTableLine" + i2s(i), [
+								MOnClick(\ -> if (fgetValue(onClick.enabled)) onClick.onClick(i)),
+								MRippleType(const(MRippleFill())),
+								clickEnabled
+							], \__ -> t, m2t) else t)
+						|> (\t -> if (separators && glued) TLines2(t, MSeparator2T(manager, parent, true)) else t)
+					}))
+				}));
+
+			firstColumn =
+				TSelect(eitherMap(fixedRow, \__ -> fselect(cells, FLift(tail)), cells), TLines)
+				|> (\t -> MScroll2T(manager, parent, MScroll(t, TFillXY(), [
+						MScrollCropByContent(),
+						TScrollEnabled(const(false)),
+						MScrollbars(
+							TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
+							TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
+						),
+						rowsBoxScrollPosition,
+						MScrollBound(const(false), const(false))
+					]), m2t))
+				|> (\t -> eitherMap(fixedRow, \fr -> {
+						bStyle =
+							filtermap(fr.style, \st -> switch (st) {
+								TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
+								default : None()
+							});
+
+						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
+						|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
+						|> (\t2 -> TShow(fr.show, t2))
+						|> (\t2 -> TLines2(t2, t))
+					}, t))
+				|> (\t -> TAvailableHeight(t, rowsAvailableHeight))
+				|> (\t -> if (separators && glued) TLines2(MSeparator2T(manager, parent, true), t) else t)
+				|> (\t -> TAvailableWidth(t, firstColumnWidth))
+				|> (\t -> TLines2(firstColumnHeader, t))
+				|> (\t ->
+						eitherMap(gluedMode, \gMode ->
+							TGroup2(
+								TShow(innerScrollVisible, t),
+								TShow(
+									extractStruct(gMode, MSeparatorVisible(innerScrollVisible)).visible,
+									TAvailableHeight(
+										MSeparator2T(manager, parent, false),
+										faddition(visibleRowsHeight, fselect(expandRow, FLift(\er -> lineHeight(true) * i2d(er))))
+									)
+								)
+								|> (\sep -> TBorderT(firstColumnWidth, zero, zero, zero, sep))
+							),
+							t
+						)
+				);
+
+			TGroup2(
+				if (glued) TBorderT(fif(innerScrollVisible, firstColumnWidth, zero), zero, zero, zero, table) else table,
+				firstColumn
+			)
+		} else table
 }
 
 MDTFooter(
