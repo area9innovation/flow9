@@ -491,7 +491,7 @@ class TextClip extends NativeWidgetClip {
 				}
 
 				nativeWidget.textContent = textContent;
-				nativeWidget.style.whiteSpace = null;
+				nativeWidget.style.whiteSpace = "pre";
 
 				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
 					case 'RTL' : 'rtl';
