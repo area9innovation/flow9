@@ -1394,7 +1394,7 @@ bool GLRenderSupport::resolvePicture(unicode_string url, std::string filename)
     return resolvePicture(url, bmp);
 }
 
-bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img)
+bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureBitmap> &img)
 {
     if (!img || !img->isBitmap() || !img->isStub() || !PictureFiles.count(url))
         return false;
