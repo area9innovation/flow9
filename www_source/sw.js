@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 9;
+var SERVICE_WORKER_VERSION = 10;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -17,7 +17,9 @@ var CacheMode = {
   // Respond with cached resources even when online
   PreferCachedResources: false,
   // Cache all static files requests
-  CacheStaticResources: true
+  CacheStaticResources: true,
+  // In offline use only cached requests
+  UseOnlyCacheInOffline: false
 }
 
 // Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
@@ -44,6 +46,18 @@ var requestsSkipOnFetch = [];
 //    }]
 //  }]
 var requestsCacheFilter = [];
+
+var isOnline = true;
+
+function checkOnlineStatus() {
+  if (navigator.onLine === false) {
+    if (isOnline) console.info("Applilcation switched to OFFLINE mode.");
+    isOnline = false;
+  } else {
+    if (!isOnline) console.info("Applilcation returned back to ONLINE mode.");
+    isOnline = true;
+  }
+}
 
 function initializeCacheStorage() {
   return caches.open(CACHE_NAME)
@@ -541,7 +555,9 @@ self.addEventListener('fetch', function(event) {
   }
 
   function buildResponse(requestData) {
-    if (CacheMode.PreferCachedResources) {
+    if (CacheMode.UseOnlyCacheInOffline && !isOnline) {
+      return getCachedResource(requestData);
+    } else if (CacheMode.PreferCachedResources) {
       return getCachedResource(requestData).catch(function() {
         return fetchResource(requestData, false);
       });
@@ -657,6 +673,8 @@ self.addEventListener('fetch', function(event) {
       method,
     },
   } = event;
+
+  checkOnlineStatus();
 
   if (url.match(SHARED_DATA_ENDPOINT)) {
     event.respondWith(
@@ -785,7 +803,7 @@ self.addEventListener('message', function(event) {
     event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
 
     if (!dynamicResourcesExtensions.includes("." + event.data.data.value)) {
-      dynamicResourcesExtensions.push("." + event.data.data.value);
+      dynamicResourcesExtensions = dynamicResourcesExtensions.push("." + event.data.data.value);
     }
 
     respond({ status: "OK" });
@@ -793,7 +811,7 @@ self.addEventListener('message', function(event) {
     event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
 
     if (dynamicResourcesExtensions.includes("." + event.data.data.value)) {
-      dynamicResourcesExtensions.filter(v => v != ("." + event.data.data.value));
+      dynamicResourcesExtensions = dynamicResourcesExtensions.filter(v => v != ("." + event.data.data.value));
     }
 
     respond({ status: "OK" });
@@ -916,6 +934,9 @@ self.addEventListener('message', function(event) {
     checkUrlsInCache(event.data.data.urls).then(respond);
   } else if (event.data.action == "get_service_worker_version") {
     respond({ data: SERVICE_WORKER_VERSION });
+  } else if (event.data.action == "set_use_cache_only_in_offline") {
+    CacheMode.UseOnlyCacheInOffline = event.data.enabled;
+    respond({ status: "OK" });
   } else {
     respond({ status: "Failed", error: "Unknown operation: " + event.data.action });
   }
