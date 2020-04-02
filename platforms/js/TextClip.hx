@@ -444,6 +444,7 @@ class TextClip extends NativeWidgetClip {
 		if (isInput) {
 			nativeWidget.setAttribute("type", type);
 			nativeWidget.value = text;
+			nativeWidget.style.whiteSpace = "pre-wrap";
 			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 			nativeWidget.readOnly = readOnly;
 
