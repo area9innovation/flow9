@@ -278,6 +278,7 @@ bool GLRenderSupport::initGLContext(unsigned root_fb_id)
         return false;
 
     FontLibrary->setMaxTextureSize(Renderer->getMaxTextureSize());
+    GLPictureClip::setMaxTextureSize(Renderer->getMaxTextureSize());
     return true;
 }
 
@@ -1383,38 +1384,12 @@ bool GLRenderSupport::resolvePicture(unicode_string url, std::string filename)
     if (!data.load_file(filename))
         return resolvePictureError(url, parseUtf8("Image file not found: ") + url);
 
-    GLTextureBitmap::Ptr bmp = loadImageAuto(data.data(), data.size(), 256*256);
+    GLTextureBitmap::Ptr bmp = loadImageAuto(data.data(), data.size());
 
     if (!bmp)
         return resolvePictureError(url, parseUtf8("Could not decode image: ") + url);
 
-    if (bmp->isStub())
-        PictureFiles[url] = filename;
-
     return resolvePicture(url, bmp);
-}
-
-bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureBitmap> &img)
-{
-    if (!img || !img->isBitmap() || !img->isStub() || !PictureFiles.count(url))
-        return false;
-
-    StaticBuffer data;
-    if (!data.load_file(PictureFiles[url]))
-        return false;
-
-    GLTextureBitmap::Ptr bmp = loadImageAuto(data.data(), data.size());
-
-    if (!bmp)
-    {
-        cerr << "Could not lazy-load picture: " << PictureFiles[url] << endl;
-        return false;
-    }
-
-    // Supply the image data
-    static_cast<GLTextureBitmap*>(img.get())->share(bmp);
-
-    return true;
 }
 
 bool GLRenderSupport::resolvePicture(unicode_string url, const uint8_t *data, unsigned size)

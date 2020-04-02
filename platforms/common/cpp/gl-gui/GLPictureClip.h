@@ -11,11 +11,12 @@ using namespace std;
 class GLPictureClip : public GLClip
 {
 protected:
+    static int MaxTextureSize;
+
     unicode_string name;
     bool only_download, pending;
 
-    GLTextureBitmap::Ptr image;
-    vector<vector<GLTextureImage::Ptr>> imageGrid;
+    vector<vector<GLTextureBitmap::Ptr>> imageGrid;
 
     // ROOTS:
     StackSlot size_callback;
@@ -29,6 +30,7 @@ protected:
     void renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box);
 
 public:
+    static void setMaxTextureSize(int size);
     GLPictureClip(GLRenderSupport *owner, unicode_string name);
 
     bool isOnlyDownload() { return only_download; }
@@ -43,8 +45,9 @@ public:
     DEFINE_FLOW_NATIVE_OBJECT(GLPictureClip, GLClip);
     
 private:
-    void splitTextureByMaxSize(GLTextureBitmap::Ptr image, int maxTextureSize);
+    void setTextureGrid(GLTextureBitmap::Ptr image);
     vec2 computeImageGridSize();
+    void checkNeedsSplitTexture();
     GLTextureBitmap::Ptr cropTextureBitmap(GLTextureBitmap::Ptr image, vec2 offset, vec2 size);
 };
 

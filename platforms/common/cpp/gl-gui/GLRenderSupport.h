@@ -274,7 +274,6 @@ private:
     typedef STL_HASH_MAP<unicode_string, weak_ptr<GLTextureBitmap> > T_PictureCache;
     T_PictureCache PictureCache;
     STL_HASH_SET<unicode_string> DownloadedPictures;
-    STL_HASH_MAP<unicode_string, std::string> PictureFiles;
 
     // Fonts
     shared_ptr<GLFontLibrary> FontLibrary;
@@ -433,8 +432,6 @@ protected:
     bool resolvePictureDownloaded(unicode_string url);
 
     void removePictureFromPending(GLPictureClip *clip);
-
-    virtual bool loadStubPicture(unicode_string url, shared_ptr<GLTextureBitmap> &img);
 
     static StackSlot removeListener(ByteCodeRunner*, StackSlot*, void*);
 
