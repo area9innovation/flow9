@@ -810,7 +810,7 @@ self.addEventListener('message', function(event) {
     event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
 
     if (!dynamicResourcesExtensions.includes("." + event.data.data.value)) {
-      dynamicResourcesExtensions = dynamicResourcesExtensions.push("." + event.data.data.value);
+      dynamicResourcesExtensions.push("." + event.data.data.value);
     }
 
     respond({ status: "OK" });
