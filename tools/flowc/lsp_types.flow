@@ -12,6 +12,7 @@ LspPosition : (line : int, character : int);
 LspRange : (start : LspPosition, end : LspPosition);
 LspLocation : (uri : URI, range : LspRange);
 LspCommand : (title : string, command : string, arguments : [Json]);
+LspTextEdit : (range: LspRange, newText: string);
 LspTextDocumentIdentifier : (uri : URI);
 LspTextDocumentItem : (uri : URI, languageId : string, version : string, text : string);
 LspTextDocumentPositionParams : (textDocument : LspTextDocumentIdentifier, position : LspPosition);
@@ -21,6 +22,27 @@ LspHover : (contents : [LspMarkedString], range : Maybe<LspRange>);
 LspMarkedString : (language : string, value : string);
 LspRename : (textDocument : LspTextDocumentIdentifier, position : LspPosition, newName : string);
 LspExecuteCommandParams : (command : string, arguments: [Json]);
+LspCompletionContext : (triggerKind : int,  triggerCharacter : string);
+LspCompletionParams : (textDocument : LspTextDocumentIdentifier, position : LspPosition, context : LspCompletionContext);
+LspCompletionList : (isIncomplete : bool, items : [LspCompletionItem]);
+LspCompletionItem : (
+	label: string,
+	kind: int,
+	tags: [int], // in 3.15 LSP standard only one tag: Deprecated = 1 is specified.
+	detail: string,
+	documentation: string,
+	deprecated: bool,
+	preselect: bool,
+	sortText: string,
+	filterText: string,
+	insertText: string,
+	insertTextFormat: int, // PlainText = 1, Snippet = 2
+	textEdit: Maybe<LspTextEdit>,
+	additionalTextEdits: [LspTextEdit],
+	commitCharacters: [string],
+	command: Maybe<LspCommand>,
+	data: Json
+);
 
 lspPosition2Json(pos : LspPosition) -> Json;
 lspRange2Json(range : LspRange) -> Json;
@@ -32,6 +54,8 @@ lspTextDocumentPositionParams2Json(params : LspTextDocumentPositionParams) -> Js
 lspTextDocumentSymbol2Json(symbol : LspTextDocumentSymbol) -> Json;
 lspMarkedString2Json(str : LspMarkedString) -> Json;
 lspHover2Json(hover : LspHover) -> Json;
+lspTextEdit2Json(edit : LspTextEdit) -> Json;
+lspCompletionList2Json(list : LspCompletionList) -> Json;
 
 json2LspPosition(json : Json) -> Maybe<LspPosition>;
 json2LspRange(json : Json) -> Maybe<LspRange>;
@@ -42,7 +66,9 @@ json2LspTextDocumentItem(json : Json) -> Maybe<LspTextDocumentItem>;
 json2LspTextDocumentPositionParams(json : Json) -> Maybe<LspTextDocumentPositionParams>;
 json2LspRename(json : Json) -> Maybe<LspRename>;
 json2LspExecuteCommandParams(json : Json) -> Maybe<LspExecuteCommandParams>;
+json2LspCompletionParams(json : Json) -> Maybe<LspCompletionParams>;
 
+// 0 stands for no kin
 fcLspSymbolKindName2id = pairs2tree([
 	Pair("File", 1),       Pair("Module", 2),      Pair("Namespace", 3), Pair("Package", 4),     Pair("Class", 5),
 	Pair("Method", 6),     Pair("Property", 7),    Pair("Field", 8),     Pair("Constructor", 9), Pair("Enum", 10),
@@ -50,6 +76,15 @@ fcLspSymbolKindName2id = pairs2tree([
 	Pair("Number", 16),    Pair("Boolean", 17),    Pair("Array", 18),    Pair("Object", 19),     Pair("Key", 20),
 	Pair("Null", 21),      Pair("EnumMember", 22), Pair("Struct", 23),   Pair("Event", 24),      Pair("Operator", 25),
 	Pair("TypeParameter", 26),
+]);
+
+// 0 stands for no kind
+fcLspCompletionItemKind2id = pairs2tree([
+	Pair("Text", 1),       Pair("Method", 2),      Pair("Function", 3),   Pair("Constructor", 4), Pair("Field", 5),
+	Pair("Variable", 6),   Pair("Class", 7),       Pair("Interface", 8),  Pair("Module", 9),      Pair("Property", 10),
+	Pair("Unit", 11),      Pair("Value", 12),      Pair("Enum", 13),      Pair("Keyword", 14),    Pair("Snippet", 15),
+	Pair("Color", 16),     Pair("File", 17),       Pair("Reference", 18), Pair("Folder", 19),     Pair("EnumMember", 20),
+	Pair("Constant", 21),  Pair("Struct", 22),     Pair("Event", 23),     Pair("Operator", 24),   Pair("TypeParameter", 25)
 ]);
 
 fcLspSymbolKindId2Name = ["", 
@@ -133,6 +168,41 @@ lspHover2Json(hover : LspHover) -> Json {
 	JsonObject(properties1);
 }
 
+lspTextEdit2Json(edit : LspTextEdit) -> Json {
+	JsonObject([
+		Pair("range", lspRange2Json(edit.range)),
+		Pair("newText", JsonString(edit.newText)),
+	]);
+}
+
+lspCompletionItem2Json(item : LspCompletionItem) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("label", JsonString(item.label))),
+		if (item.kind == 0) None() else Some(Pair("kind", JsonString(i2s(item.kind)))),
+		Some(Pair("tags", JsonArray(map(item.tags, \tag -> JsonString(i2s(tag)))))),
+		Some(Pair("detail", JsonString(item.detail))),
+		Some(Pair("documentation", JsonString(item.documentation))),
+		Some(Pair("deprecated", JsonBool(item.deprecated))),
+		Some(Pair("preselect", JsonBool(item.preselect))),
+		Some(Pair("sortText", JsonString(item.sortText))),
+		Some(Pair("filterText", JsonString(item.filterText))),
+		Some(Pair("insertText", JsonString(item.insertText))),
+		Some(Pair("insertTextFormat", JsonString(i2s(item.insertTextFormat)))),
+		maybeMap(item.textEdit, \edit -> Pair("textEdit", lspTextEdit2Json(edit))),
+		Some(Pair("additionalTextEdits", JsonArray(map(item.additionalTextEdits, lspTextEdit2Json)))),
+		Some(Pair("commitCharacters", JsonArray(map(item.commitCharacters, \ch -> JsonString(ch))))),
+		maybeMap(item.command, \command -> Pair("command", lspCommand2Json(command))),
+		if (item.data == JsonNull()) None() else Some(Pair("data", item.data))
+	], idfn));
+}
+
+lspCompletionList2Json(list : LspCompletionList) -> Json {
+	JsonObject([
+		Pair("isIncomplete", JsonBool(list.isIncomplete)),
+		Pair("items", JsonArray(map(list.items, lspCompletionItem2Json)))
+	]);
+}
+
 json2LspPosition(json : Json) -> Maybe<LspPosition> {
 	line = getJsonIntField(json, "line", -1);
 	char = getJsonIntField(json, "character", -1);
@@ -202,3 +272,19 @@ json2LspExecuteCommandParams(json : Json) -> Maybe<LspExecuteCommandParams> {
 		Some(LspExecuteCommandParams(command, args));
 	}
 }
+
+json2LspCompletionParams(json : Json) -> Maybe<LspCompletionParams> {
+	maybeMap(json2LspTextDocumentPositionParams(json), \pos -> {
+			context = getJsonObjectField(json, "context");
+			LspCompletionParams(
+				pos.textDocument, 
+				pos.position, 
+				LspCompletionContext(
+					getJsonIntField(context, "triggerKind", 0), 
+					getJsonStringField(context, "triggerCharacter", "")
+				)
+			);
+		}
+	);
+}
+
