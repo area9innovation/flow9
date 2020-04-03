@@ -8,6 +8,7 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageWidth : Dynamic = null;
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
+	private var hideHorizontalScroll : Dynamic = null;
 
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
@@ -46,7 +47,7 @@ class WebClip extends NativeWidgetClip {
 		nativeWidget.appendChild(div);
 	}
 
-	public function new(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool) {
+	public function new(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool, hideHorizontalScroll : Bool) {
 		super();
 
 		if (domain != "") {
@@ -63,6 +64,7 @@ class WebClip extends NativeWidgetClip {
 		}
 
 		this.shrinkToFit = shrinkToFit;
+		this.hideHorizontalScroll = hideHorizontalScroll;
 
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
@@ -97,6 +99,10 @@ class WebClip extends NativeWidgetClip {
 					if (Native.isTouchScreen()) {
 						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
 					}
+				}
+
+				if (hideHorizontalScroll) {
+					untyped iframeDocument.body.style["overflow-x"] = "hidden";
 				}
 
 				if (shrinkToFit) {
