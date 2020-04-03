@@ -14,10 +14,6 @@ GLPictureClip::GLPictureClip(GLRenderSupport *owner, unicode_string name) :
     pending = true;
 }
 
-int GLPictureClip::MaxTextureSize = -1;
-
-void GLPictureClip::setMaxTextureSize(int size) { MaxTextureSize = size; };
-
 void GLPictureClip::flowGCObject(GarbageCollectorFn ref)
 {
     GLClip::flowGCObject(ref);
@@ -70,7 +66,7 @@ void GLPictureClip::setDownloaded()
 
 void GLPictureClip::setImage(GLTextureBitmap::Ptr image)
 {
-    setTextureGrid(image);
+    this->image = image;
     
     wipeFlags(WipeGraphicsChanged);
 
@@ -86,21 +82,20 @@ void GLPictureClip::setImage(GLTextureBitmap::Ptr image)
     size_callback = error_callback = StackSlot::MakeVoid();
 }
 
-void GLPictureClip::setTextureGrid(GLTextureBitmap::Ptr image) {
-    vec2 imageSize = vec2(image->getSize());
-    if (MaxTextureSize == -1 || imageSize.x < MaxTextureSize && imageSize.y < MaxTextureSize) {
-        this->imageGrid = {{image}}; // If no MaxTextureSize was set, then split texture later on render
-    } else {
-        this->imageGrid = {};
-        for (int i = 0; i * MaxTextureSize < imageSize.y; i++) {
-            this->imageGrid.push_back(vector<GLTextureBitmap::Ptr>());
+void GLPictureClip::splitTextureByMaxSize(GLTextureBitmap::Ptr image, int maxTextureSize) {
+    if (!imageGrid.empty())
+        return;
 
-            for (int j = 0; j * MaxTextureSize < imageSize.x; j++) {
-                vec2 offset(j * MaxTextureSize, i * MaxTextureSize);
-                vec2 size(
-                        std::min<unsigned int>(MaxTextureSize, imageSize.x - offset.x),
-                        std::min<unsigned int>(MaxTextureSize, imageSize.y - offset.y)
-                );
+    vec2 imageSize = vec2(image->getSize());
+    if (imageSize.x < maxTextureSize && imageSize.y < maxTextureSize) {
+        this->imageGrid = {{image}};
+    } else {
+        for (int i = 0; i * maxTextureSize < imageSize.y; i++) {
+            this->imageGrid.push_back(vector<GLTextureImage::Ptr>());
+
+            for (int j = 0; j * maxTextureSize < imageSize.x; j++) {
+                vec2 offset(j * maxTextureSize, i * maxTextureSize);
+                vec2 size(std::min<unsigned int>(maxTextureSize, imageSize.x - offset.x), std::min<unsigned int>(maxTextureSize, imageSize.y - offset.y));
 
                 this->imageGrid[i].push_back(cropTextureBitmap(image, offset, size));
             }
@@ -133,40 +128,24 @@ GLTextureBitmap::Ptr GLPictureClip::cropTextureBitmap(GLTextureBitmap::Ptr image
     return cellImage;
 }
 
-vec2 GLPictureClip::computeImageGridSize() {
-    if (!imageGrid.empty()) {
-        vec2 size = vec2(0,0);
-        for (int i = 0; i < this->imageGrid.size(); i++) {
-            size.y += this->imageGrid[i][0]->getSize().y;
-        }
-        for (int i = 0; i < this->imageGrid[0].size(); i++) {
-            size.x += this->imageGrid[0][i]->getSize().x;
-        }
-
-        return size;
-    }
-
-    return vec2(0,0);
-}
-
-void GLPictureClip::checkNeedsSplitTexture() {
-    if (!imageGrid.empty() && imageGrid.size() == 1 && imageGrid[0].size() == 1 &&
-        (imageGrid[0][0]->getSize().x > MaxTextureSize || imageGrid[0][0]->getSize().y > MaxTextureSize)) {
-        setTextureGrid(imageGrid[0][0]);
-    }
-}
-
 void GLPictureClip::computeBBoxSelf(GLBoundingBox &bbox, const GLTransform &transform)
 {
     GLClip::computeBBoxSelf(bbox, transform);
-    if (!imageGrid.empty()) {
-        bbox |= transform * GLBoundingBox(vec2(0,0), vec2(computeImageGridSize()));
+    if (image) {
+        bbox |= transform * GLBoundingBox(vec2(0,0), vec2(image->getSize()));
     }
 }
 
 void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box)
 {
-    checkNeedsSplitTexture();
+    // Actually painting - force lazy-loaded pictures
+    if (image && image->isStub() && !owner->loadStubPicture(name, image)) {
+        cerr << "Could not force lazy-loaded picture." << endl;
+        image.reset();
+    }
+
+    int maxTextureSize = renderer->getMaxTextureSize();
+    splitTextureByMaxSize(image, maxTextureSize);
 
     surface->makeCurrent();
 
@@ -176,7 +155,7 @@ void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, co
         
     for (int i = 0; i < imageGrid.size(); i++) {
         for (int j = 0; j < imageGrid[i].size(); j++) {
-            vec2 offset(MaxTextureSize * j, MaxTextureSize * i);
+            vec2 offset(maxTextureSize * j, maxTextureSize * i);
             imageGrid[i][j]->drawRect(renderer, offset, offset + vec2(imageGrid[i][j]->getSize()));
         }
     }
