@@ -42,7 +42,7 @@ public class RenderSupport extends NativeHost {
 	public Object currentClip() {
 		return null;
 	}
-	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
+	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit, Boolean hideHorizontalScroll) {
 		return null;
 	}
 	public String webClipHostCall(Object clip,String fn,Object[] args) {
@@ -353,6 +353,9 @@ public class RenderSupport extends NativeHost {
 		return null;
 	}
 	public Object makeBlur(double a,double b) {
+		return null;
+	}
+	public Object makeBackdropBlur(double a) {
 		return null;
 	}
 	public Object makeGlow(double a,double b,int c, double d,boolean e) {

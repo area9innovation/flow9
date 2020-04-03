@@ -1162,7 +1162,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLVideoClip, addStreamStatusListener, 2);
 
     // Web Clip
-    TRY_USE_NATIVE_METHOD(GLRenderSupport, makeWebClip, 7);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makeWebClip, 8);
     TRY_USE_OBJECT_METHOD(GLWebClip, webClipHostCall, 3);
     TRY_USE_OBJECT_METHOD(GLWebClip, webClipEvalJS, 2);
     TRY_USE_OBJECT_METHOD(GLWebClip, setWebClipZoomable, 2);
@@ -1394,7 +1394,7 @@ bool GLRenderSupport::resolvePicture(unicode_string url, std::string filename)
     return resolvePicture(url, bmp);
 }
 
-bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img)
+bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureBitmap> &img)
 {
     if (!img || !img->isBitmap() || !img->isStub() || !PictureFiles.count(url))
         return false;
