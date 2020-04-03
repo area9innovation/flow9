@@ -142,6 +142,7 @@ enum FlowScreenRotation {
 };
 
 class GLTextureImage;
+class GLTextureBitmap;
 class GLClip;
 class GLRenderer;
 class GLPictureClip;
@@ -270,10 +271,9 @@ private:
     void notifyFullWindow(bool fw);
 
     // Pictures
-    typedef STL_HASH_MAP<unicode_string, weak_ptr<GLTextureImage> > T_PictureCache;
+    typedef STL_HASH_MAP<unicode_string, weak_ptr<GLTextureBitmap> > T_PictureCache;
     T_PictureCache PictureCache;
     STL_HASH_SET<unicode_string> DownloadedPictures;
-    STL_HASH_MAP<unicode_string, std::string> PictureFiles;
 
     // Fonts
     shared_ptr<GLFontLibrary> FontLibrary;
@@ -426,14 +426,12 @@ protected:
 
     bool resolvePicture(unicode_string url, std::string filename);
     bool resolvePicture(unicode_string url, const uint8_t *data, unsigned size);
-    bool resolvePicture(unicode_string url, shared_ptr<GLTextureImage> image);
+    bool resolvePicture(unicode_string url, shared_ptr<GLTextureBitmap> image);
 
     // If all pending instances are download_only, resolves them and returns true
     bool resolvePictureDownloaded(unicode_string url);
 
     void removePictureFromPending(GLPictureClip *clip);
-
-    virtual bool loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img);
 
     static StackSlot removeListener(ByteCodeRunner*, StackSlot*, void*);
 

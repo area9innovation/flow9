@@ -56,3 +56,158 @@ better in many situations.
 
 This is a static graph we build to track type-relationships between structs,
 unions and fields.
+
+
+## Idea about doing fields as overloading instead
+
+### Level 1 inference
+
+Foo(foo : int);
+Bar(foo : int);
+
+foofighter(f : Foo) {
+	acc + f.foo
+}
+
+### Level 2 inference
+
+Level 2:
+Foo(foo : int);
+Bar(foo : int);
+
+foofighter(fs : [Foo]) {
+	fold(fs, 0, \acc, foo -> {
+		acc + foo.foo
+	})
+}
+
+### Level 3 inference
+
+Union ::= Foo, Bar;
+	Foo(foo : int);
+	Bar(foo : int);
+
+foofighter(fs) {
+	fold(fs, 0, \acc, foo -> {
+		acc + foo.foo
+	})
+}
+
+### Level 4 inference
+
+// Union ::= Foo, Bar; // This is implicit in some sense
+	Foo(foo : int);
+	Bar(foo : int);
+
+foofighter(fs) {
+	fold(fs, 0, \acc, foo -> {
+		acc + foo.foo
+		acc + foo'field(foo)
+	})
+}
+
+### Level 5 inference
+
+Foo(foo : int);
+Bar(foo : double);
+
+foofighter(fs : [Foo]) {
+	fold(fs, 0, \acc, foo -> {
+		acc + foo.foo
+		acc + foo'field(foo)
+	})
+}
+
+### Level 6 inference
+
+Foo(foo : int);
+Bar(foo : double);
+
+foofighter(f) {
+	0 + f.foo
+}
+
+### Level 7 inference
+
+
+Foo(foo : int);
+Bar(foo : double);
+
+foofighter(fs) {
+	fold(fs, 0, \acc, foo -> {
+		acc + foo.foo
+		acc + foo'field(foo)
+	})
+}
+
+### Notes on how to do it
+
+First, we implicitly construct functions that extract the field value
+from each struct:
+
+	foo(a : Foo) -> int; // Mangled also known as foo'Foo
+	foo(a : Bar) -> int; // Mangled also known as foo'Bar
+
+Now, to check type "a.foo", think of it as "foo(a)". Then we introduce a new construct
+
+	GOverloadedFunction(name : string, oneOf : Set:<string>);
+
+which represents a function type of an overloaded name, but we do not know which yet.
+
+So when we see
+
+	foo(a)
+
+we run:
+
+foo_type = typecheck(foo);
+
+println(foo_type)
+	
+	GOverloadedFunction("foo", ["foo'Foo", "foo'Bar"])
+
+
+instance_alpha_arg = mkTyvar();
+instance_alpha_return = mkTyvar();
+instance_call_type = GFunction([instance_alpha_arg], instance_alpha_return);
+
+	less_or_equal(instance_call_type, foo_type, pos)
+
+
+--
+
+Code generation should look up what function to call based on how
+the overloading was resolved.
+
+plus_Int(int, int) -> int
+plus_Double(double, double) -> double
+plus_String(string, string) -> string
+
+--
+
+	GOverloadedFunction(foo, [foo_Foo, Foo_Bar]);
+
+foo_type = typecheck(foo(a));
+
+alpha_foo <= GOverloadedFunction(foo, [foo_Foo, foo_Bar]);
+
+println(foo_type)
+	GFunction(
+		[
+			alpha_arg0
+		],
+		int
+	)
+
+--
+
+Plus(a : int, b : int) -> int;
+Plus(a : int, b : double) -> double;
+
+Plus_int_int
+Plus_int_double
+
+
+Plus : GOverloadedFunction(plus, [Plus_int_int, Plus_int_double])
+
+

@@ -278,6 +278,7 @@ bool GLRenderSupport::initGLContext(unsigned root_fb_id)
         return false;
 
     FontLibrary->setMaxTextureSize(Renderer->getMaxTextureSize());
+    GLPictureClip::setMaxTextureSize(Renderer->getMaxTextureSize());
     return true;
 }
 
@@ -1250,7 +1251,7 @@ StackSlot GLRenderSupport::makePicture(RUNNER_ARGS)
     // Try using an already loaded picture
     T_PictureCache::iterator cit = PictureCache.find(url);
     if (cit != PictureCache.end()) {
-        GLTextureImage::Ptr img = cit->second.lock();
+        GLTextureBitmap::Ptr img = cit->second.lock();
         if (img) {
             pclip->setImage(img);
             return retval;
@@ -1345,7 +1346,7 @@ bool GLRenderSupport::resolvePictureDownloaded(unicode_string url)
     return true;
 }
 
-bool GLRenderSupport::resolvePicture(unicode_string url, shared_ptr<GLTextureImage> image)
+bool GLRenderSupport::resolvePicture(unicode_string url, shared_ptr<GLTextureBitmap> image)
 {
     if (image->getSize().x <= 0 || image->getSize().y <= 0)
         return resolvePictureError(url, parseUtf8("Empty picture."));
@@ -1383,38 +1384,12 @@ bool GLRenderSupport::resolvePicture(unicode_string url, std::string filename)
     if (!data.load_file(filename))
         return resolvePictureError(url, parseUtf8("Image file not found: ") + url);
 
-    GLTextureBitmap::Ptr bmp = loadImageAuto(data.data(), data.size(), 256*256);
+    GLTextureBitmap::Ptr bmp = loadImageAuto(data.data(), data.size());
 
     if (!bmp)
         return resolvePictureError(url, parseUtf8("Could not decode image: ") + url);
 
-    if (bmp->isStub())
-        PictureFiles[url] = filename;
-
-    return resolvePicture(url, static_pointer_cast<GLTextureImage>(bmp));
-}
-
-bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img)
-{
-    if (!img || !img->isBitmap() || !img->isStub() || !PictureFiles.count(url))
-        return false;
-
-    StaticBuffer data;
-    if (!data.load_file(PictureFiles[url]))
-        return false;
-
-    GLTextureBitmap::Ptr bmp = loadImageAuto(data.data(), data.size());
-
-    if (!bmp)
-    {
-        cerr << "Could not lazy-load picture: " << PictureFiles[url] << endl;
-        return false;
-    }
-
-    // Supply the image data
-    static_cast<GLTextureBitmap*>(img.get())->share(bmp);
-
-    return true;
+    return resolvePicture(url, bmp);
 }
 
 bool GLRenderSupport::resolvePicture(unicode_string url, const uint8_t *data, unsigned size)
@@ -1424,7 +1399,7 @@ bool GLRenderSupport::resolvePicture(unicode_string url, const uint8_t *data, un
     if (!bmp)
         return resolvePictureError(url, parseUtf8("Could not decode image: ") + url);
 
-    return resolvePicture(url, static_pointer_cast<GLTextureImage>(bmp));
+    return resolvePicture(url, bmp);
 }
 
 void GLRenderSupport::updateAccessibleClips()

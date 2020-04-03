@@ -3,6 +3,8 @@
 #include "core/GarbageCollector.h"
 #include "core/RunnerMacros.h"
 
+#include <algorithm>
+
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLPictureClip, GLClip);
 
 GLPictureClip::GLPictureClip(GLRenderSupport *owner, unicode_string name) :
@@ -11,6 +13,10 @@ GLPictureClip::GLPictureClip(GLRenderSupport *owner, unicode_string name) :
     size_callback = error_callback = StackSlot::MakeVoid();
     pending = true;
 }
+
+int GLPictureClip::MaxTextureSize = -1;
+
+void GLPictureClip::setMaxTextureSize(int size) { MaxTextureSize = size; };
 
 void GLPictureClip::flowGCObject(GarbageCollectorFn ref)
 {
@@ -62,13 +68,14 @@ void GLPictureClip::setDownloaded()
     size_callback = error_callback = StackSlot::MakeVoid();
 }
 
-void GLPictureClip::setImage(GLTextureImage::Ptr image)
+void GLPictureClip::setImage(GLTextureBitmap::Ptr image)
 {
-    this->image = image;
+    setTextureGrid(image);
+    
     wipeFlags(WipeGraphicsChanged);
 
     if (!size_callback.IsVoid()) {
-        ivec2 size = image->getSize();
+        ivec2 size = ivec2(image->getSize());
 
         RUNNER_VAR = getFlowRunner();
         RUNNER->EvalFunction(size_callback, 2, StackSlot::MakeDouble(size.x), StackSlot::MakeDouble(size.y));
@@ -79,33 +86,102 @@ void GLPictureClip::setImage(GLTextureImage::Ptr image)
     size_callback = error_callback = StackSlot::MakeVoid();
 }
 
+void GLPictureClip::setTextureGrid(GLTextureBitmap::Ptr image) {
+    vec2 imageSize = vec2(image->getSize());
+    if (MaxTextureSize == -1 || imageSize.x < MaxTextureSize && imageSize.y < MaxTextureSize) {
+        this->imageGrid = {{image}}; // If no MaxTextureSize was set, then split texture later on render
+    } else {
+        this->imageGrid = {};
+        for (int i = 0; i * MaxTextureSize < imageSize.y; i++) {
+            this->imageGrid.push_back(vector<GLTextureBitmap::Ptr>());
+
+            for (int j = 0; j * MaxTextureSize < imageSize.x; j++) {
+                vec2 offset(j * MaxTextureSize, i * MaxTextureSize);
+                vec2 size(
+                        std::min<unsigned int>(MaxTextureSize, imageSize.x - offset.x),
+                        std::min<unsigned int>(MaxTextureSize, imageSize.y - offset.y)
+                );
+
+                this->imageGrid[i].push_back(cropTextureBitmap(image, offset, size));
+            }
+        }
+    }
+}
+
+GLTextureBitmap::Ptr GLPictureClip::cropTextureBitmap(GLTextureBitmap::Ptr image, vec2 offset, vec2 size) {
+    vec2 imageSize = vec2(image->getSize());
+    bool isSolidCopy = imageSize.x == size.x;
+    
+    GLTextureBitmap::Ptr cellImage(new GLTextureBitmap(ivec2(size), image->getDataFormat()));
+    uint8_t* cellData = cellImage->getDataPtr();
+    unsigned int cellDataSize = size.x * size.y * image->getBytesPerPixel();
+    
+    uint8_t* data = image->getDataPtr();
+    
+    if (isSolidCopy) {
+        unsigned long offsetBytes = offset.y*imageSize.x*image->getBytesPerPixel();
+        memcpy(cellData, data + offsetBytes, cellDataSize);
+    } else {
+        unsigned long imageCellLineDataSize = size.x * image->getBytesPerPixel();
+        unsigned long imageLineDataSize = imageSize.x * image->getBytesPerPixel();
+        unsigned long startOffset = offset.y * imageLineDataSize + offset.x * image->getBytesPerPixel();
+        for (int line = 0; line < size.y; line++) {
+            memcpy(cellData + line * imageCellLineDataSize, data + startOffset + line * imageLineDataSize, imageCellLineDataSize);
+        }
+    }
+    
+    return cellImage;
+}
+
+vec2 GLPictureClip::computeImageGridSize() {
+    if (!imageGrid.empty()) {
+        vec2 size = vec2(0,0);
+        for (int i = 0; i < this->imageGrid.size(); i++) {
+            size.y += this->imageGrid[i][0]->getSize().y;
+        }
+        for (int i = 0; i < this->imageGrid[0].size(); i++) {
+            size.x += this->imageGrid[0][i]->getSize().x;
+        }
+
+        return size;
+    }
+
+    return vec2(0,0);
+}
+
+void GLPictureClip::checkNeedsSplitTexture() {
+    if (!imageGrid.empty() && imageGrid.size() == 1 && imageGrid[0].size() == 1 &&
+        (imageGrid[0][0]->getSize().x > MaxTextureSize || imageGrid[0][0]->getSize().y > MaxTextureSize)) {
+        setTextureGrid(imageGrid[0][0]);
+    }
+}
+
 void GLPictureClip::computeBBoxSelf(GLBoundingBox &bbox, const GLTransform &transform)
 {
     GLClip::computeBBoxSelf(bbox, transform);
-
-    if (image)
-        bbox |= transform * GLBoundingBox(vec2(0,0), vec2(image->getSize()));
+    if (!imageGrid.empty()) {
+        bbox |= transform * GLBoundingBox(vec2(0,0), vec2(computeImageGridSize()));
+    }
 }
 
 void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box)
 {
-    // Actually painting - force lazy-loaded pictures
-    if (image && image->isStub() && !owner->loadStubPicture(name, image)) {
-        cerr << "Could not force lazy-loaded picture." << endl;
-        image.reset();
+    checkNeedsSplitTexture();
+
+    surface->makeCurrent();
+
+    renderer->beginDrawFancy(vec4(0,0,0,0), true);
+
+    glVertexAttrib4f(GLRenderer::AttrVertexColor, global_alpha, global_alpha, global_alpha, global_alpha);
+        
+    for (int i = 0; i < imageGrid.size(); i++) {
+        for (int j = 0; j < imageGrid[i].size(); j++) {
+            vec2 offset(MaxTextureSize * j, MaxTextureSize * i);
+            imageGrid[i][j]->drawRect(renderer, offset, offset + vec2(imageGrid[i][j]->getSize()));
+        }
     }
 
-    if (image) {
-        surface->makeCurrent();
-
-        renderer->beginDrawFancy(vec4(0,0,0,0), true);
-
-        glVertexAttrib4f(GLRenderer::AttrVertexColor, global_alpha, global_alpha, global_alpha, global_alpha);
-
-        image->drawRect(renderer, vec2(0,0), vec2(image->getSize()));
-
-        renderer->reportGLErrors("GLPictureClip::renderInner post image");
-    }
+    renderer->reportGLErrors("GLPictureClip::renderInner post image");
 
     GLClip::renderInner(renderer, surface, clip_box);
 }
