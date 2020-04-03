@@ -105,6 +105,7 @@ fcLspMethods = pairs2tree([
 	Pair("textDocument/references", fcLspTextDocumentReferences),
 	Pair("textDocument/hover", fcLspTextDocumentHover),
 	Pair("textDocument/rename", fcLspTextDocumentRename),
+	Pair("textDocument/completion", fcLspTextDocumentCompletion),
 	Pair("workspace/executeCommand", fcLspWorkspaceExecuteCommand),
 ]);
 
@@ -176,6 +177,13 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 					Pair("renameProvider", JsonBool(true)),
 					Pair("executeCommandProvider", 
 						JsonObject([Pair("commands", JsonArray([JsonString("compile")]))])
+					),
+					Pair("completionProvider", 
+						JsonObject([
+							Pair("triggerCharacters", JsonArray([JsonString(".")])),
+							Pair("allCommitCharacters", JsonArray([])),
+							Pair("resolveProvider", JsonBool(false)),
+						])
 					)
 				])
 			)
@@ -526,6 +534,74 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 		}
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+/*
+LspCompletionList : (isIncomplete : bool, items : [LspCompletionItem]);
+LspCompletionItem : (
+	label: string,
+	kind: int,
+	tags: [int], // Values: Deprecated=1
+	detail: string,
+	documentation: string,
+	deprecated: bool,
+	preselect: bool,
+	sortText: string,
+	filterText: string,
+	insertText: string,
+	insertTextFormat: int, // Value: PlainText=1, Snippet=2
+	textEdit: Maybe<LspTextEdit>,
+	additionalTextEdits: [LspTextEdit],
+	commitCharacters: [string],
+	command: Maybe<LspCommand>,
+	data: Json
+);
+*/
+
+parseLspCompetionList(out : string) -> LspCompletionList {
+	//LspCompletionItem("", 0, [], "", "", false, false, "", "", "", 1, None(), [], [], None(), JsonNull());
+	LspCompletionList(true, []);
+}
+
+fcLspTextDocumentCompletion(call: FcLspMethodCall) -> void {
+	switch (json2LspCompletionParams(call.params)) {
+		Some(completion): {
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(completion.textDocument.uri.path));
+			runConfig(
+				CompilerConfig(conf with
+					config = mergeTree(conf.config, 
+						pairs2tree([
+							Pair("exp-line", i2s(completion.position.line)), 
+							Pair("exp-column", i2s(completion.position.character)), 
+							Pair("completion", "1"),
+							Pair("completion-kind", i2s(completion.context.triggerKind)),
+							Pair("completion-character", completion.context.triggerCharacter),
+						])
+					)
+				),
+				call.env, 
+				\code -> {
+					out = fcOutput(call.conf.threadId);
+					clearFcOutput(call.conf.threadId);
+					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							list = parseLspCompetionList(out);
+							call.out_cb(fcLspNormalResponse(call.id, lspCompletionList2Json(list)));
+						} else {
+							call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
+						}
+					}
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "completion params are invalid: " + json2string(call.params)));
 			call.loop_cb();
 		}
 	}
