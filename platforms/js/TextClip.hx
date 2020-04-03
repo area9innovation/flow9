@@ -484,16 +484,20 @@ class TextClip extends NativeWidgetClip {
 			}
 		} else {
 			if (escapeHTML) {
-				var textContent = "";
+				if (Platform.isIE && style.fontFamily == "Material Icons") {
+					nativeWidget.textContent = this.contentGlyphs.modified;
+				} else {
+					var textContent = "";
 
-				var textLines : Array<String> = metrics.lines;
-				for (line in textLines) {
-					textContent = textContent + line + "\n";
+					var textLines : Array<String> = metrics.lines;
+					for (line in textLines) {
+						textContent = textContent + line + "\n";
+					}
+
+					nativeWidget.textContent = textContent;
 				}
 
-				nativeWidget.textContent = textContent;
 				nativeWidget.style.whiteSpace = "pre";
-
 				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
@@ -1397,7 +1401,7 @@ class TextClip extends NativeWidgetClip {
 				metrics.maxWidth += lineWidth;
 			}
 
-			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth) + 1.0;
+			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 	}
 
@@ -1408,33 +1412,47 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		var textNodeMetrics : Dynamic = null;
+		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
+		var parentNode : Dynamic = nativeWidget.parentNode;
+		var nextSibling : Dynamic = nativeWidget.nextSibling;
 
 		updateNativeWidgetStyle();
-		if (style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0) {
+		var tempDisplay = nativeWidget.style.display;
+		if (!Platform.isIE) {
+			nativeWidget.style.display = null;
+		}
+
+		if (wordWrap) {
 			nativeWidget.style.width = '${style.wordWrapWidth}px';
 		} else {
 			nativeWidget.style.width = 'max-content';
 		}
 
-		if (nativeWidget.parentNode == null) {
-			Browser.document.body.appendChild(nativeWidget);
-			textNodeMetrics = getTextNodeMetrics(nativeWidget);
-			Browser.document.body.removeChild(nativeWidget);
+		Browser.document.body.appendChild(nativeWidget);
+		textNodeMetrics = getTextNodeMetrics(nativeWidget);
+		if (parentNode != null) {
+			if (nextSibling == null || nextSibling.parentNode != parentNode) {
+				parentNode.appendChild(nativeWidget);
+			} else {
+				parentNode.insertBefore(nativeWidget, nextSibling);
+			}
 		} else {
-			textNodeMetrics = getTextNodeMetrics(nativeWidget);
+			Browser.document.body.removeChild(nativeWidget);
 		}
 
-		if (textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
-			var textNodeWidth = textNodeMetrics.width / worldTransform.a;
+		nativeWidget.style.display = tempDisplay;
+
+		if (!wordWrap && textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
+			var textNodeWidth = textNodeMetrics.width;
 			metrics.width = textNodeWidth;
 		}
 
-		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0 && worldTransform.d > 0) {
-			var currentLines = Math.round(metrics.height / worldTransform.d / metrics.lineHeight);
+		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0) {
 			var textNodeLines = Math.round(textNodeMetrics.height / metrics.lineHeight);
+			var currentLines = Math.round(metrics.height / metrics.lineHeight);
 
-			if (textNodeLines > 0 && textNodeLines != currentLines) {
-				metrics.height = metrics.height * currentLines / textNodeLines;
+			if (currentLines > 0 && textNodeLines != currentLines) {
+				metrics.height = metrics.height * textNodeLines / currentLines;
 			}
 		}
 
