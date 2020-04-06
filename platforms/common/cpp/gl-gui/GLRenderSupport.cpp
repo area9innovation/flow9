@@ -1162,7 +1162,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLVideoClip, addStreamStatusListener, 2);
 
     // Web Clip
-    TRY_USE_NATIVE_METHOD(GLRenderSupport, makeWebClip, 7);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makeWebClip, 8);
     TRY_USE_OBJECT_METHOD(GLWebClip, webClipHostCall, 3);
     TRY_USE_OBJECT_METHOD(GLWebClip, webClipEvalJS, 2);
     TRY_USE_OBJECT_METHOD(GLWebClip, setWebClipZoomable, 2);
@@ -1250,7 +1250,7 @@ StackSlot GLRenderSupport::makePicture(RUNNER_ARGS)
     // Try using an already loaded picture
     T_PictureCache::iterator cit = PictureCache.find(url);
     if (cit != PictureCache.end()) {
-        GLTextureImage::Ptr img = cit->second.lock();
+        GLTextureBitmap::Ptr img = cit->second.lock();
         if (img) {
             pclip->setImage(img);
             return retval;
@@ -1345,7 +1345,7 @@ bool GLRenderSupport::resolvePictureDownloaded(unicode_string url)
     return true;
 }
 
-bool GLRenderSupport::resolvePicture(unicode_string url, shared_ptr<GLTextureImage> image)
+bool GLRenderSupport::resolvePicture(unicode_string url, shared_ptr<GLTextureBitmap> image)
 {
     if (image->getSize().x <= 0 || image->getSize().y <= 0)
         return resolvePictureError(url, parseUtf8("Empty picture."));
@@ -1391,10 +1391,10 @@ bool GLRenderSupport::resolvePicture(unicode_string url, std::string filename)
     if (bmp->isStub())
         PictureFiles[url] = filename;
 
-    return resolvePicture(url, static_pointer_cast<GLTextureImage>(bmp));
+    return resolvePicture(url, bmp);
 }
 
-bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img)
+bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureBitmap> &img)
 {
     if (!img || !img->isBitmap() || !img->isStub() || !PictureFiles.count(url))
         return false;
@@ -1424,7 +1424,7 @@ bool GLRenderSupport::resolvePicture(unicode_string url, const uint8_t *data, un
     if (!bmp)
         return resolvePictureError(url, parseUtf8("Could not decode image: ") + url);
 
-    return resolvePicture(url, static_pointer_cast<GLTextureImage>(bmp));
+    return resolvePicture(url, bmp);
 }
 
 void GLRenderSupport::updateAccessibleClips()

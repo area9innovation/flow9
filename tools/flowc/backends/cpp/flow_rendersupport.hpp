@@ -83,8 +83,8 @@ void setSelection(const native& , const int start, const int end) { FLOW_ABORT }
 void setTabIndex(const native& , const int ) { FLOW_ABORT }
 void setTextDirection(const native& clip, const flow::string& direction) { FLOW_ABORT }
 void setTextAndStyle(const native& textfield, const flow::string& text, const flow::string& fontfamily, const double fontsize,
-	const int fontweight, const flow::string& fontslope, 
-	const int fillcolour, const double fillopacity, const int letterspacing, 
+	const int fontweight, const flow::string& fontslope,
+	const int fillcolour, const double fillopacity, const int letterspacing,
 	const int backgroundcolour, const double backgroundopacity, const bool forTextinput) { FLOW_ABORT }
 void setTextFieldHeight(const native& clip, const double width) { FLOW_ABORT }
 void setTextFieldWidth(const native& clip, const double width) { FLOW_ABORT }
@@ -93,8 +93,8 @@ void setTextInput(const native& ) { FLOW_ABORT }
 struct PlayerControl;
 void setVideoControls(const native& clip, const flow::array<PlayerControl>& ctl) { FLOW_ABORT }
 void setVideoLooping(const native& clip, const bool looping) { FLOW_ABORT }
-void setVideoSubtitle(const native& clip, const flow::string& text, const flow::string& fontfamily, const double fontsize, 
-	const int fontweight, const flow::string& fontslope, 
+void setVideoSubtitle(const native& clip, const flow::string& text, const flow::string& fontfamily, const double fontsize,
+	const int fontweight, const flow::string& fontslope,
 	const int fillcolour, const double fillopacity, const int letterspacing, const int backgroundcolour, const double backgroundopacity) { FLOW_ABORT }
 void setVideoVolume(const native& clip, const double volume) { FLOW_ABORT }
 void setWebClipDisabled(const native& , const bool ) { FLOW_ABORT }
@@ -107,7 +107,7 @@ void timer(const int , const std::function<void()>& ) { FLOW_ABORT }
 void toggleFullWindow(const bool fs) { FLOW_ABORT }
 
 void impersonateCallstackItem(const native& item, const int flags) { /*FLOW_ABORT*/ }
-native makeWebClip(const flow::string&, const flow::string&, const bool, const bool, const std::function<flow_t(flow::array<flow_t>)>&, const std::function<void(flow::string)>&, const bool) { FLOW_ABORT }
+native makeWebClip(const flow::string&, const flow::string&, const bool, const bool, const std::function<flow_t(flow::array<flow_t>)>&, const std::function<void(flow::string)>&, const bool, const bool) { FLOW_ABORT }
 void setAccessAttributes(const native& clip, const flow::array<flow::array<flow_t>>& properties) { FLOW_ABORT }
 flow_t webClipEvalJS(const native& , const flow::string& ) { FLOW_ABORT }
 flow_t webClipHostCall(const native& , const flow::string& , const flow::array<flow_t>& ) { FLOW_ABORT }
