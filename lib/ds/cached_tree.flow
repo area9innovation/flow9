@@ -4,6 +4,7 @@ import fusion;
 export {
 	// Given a dynamic array of values, construct a factory that can produce a tree of it
 	getCachedTree(data : Transform<[?]>, getKey : (?) -> ??) -> CachedTree<??, ?>;
+	getCachedTreeArray(data : Transform<[?]>, getKey : (?) -> ??) -> CachedTreeArray<??, ?>;
 
 	CachedTree(
 		// When you need a tree of the data, call this. It will cache the tree when possible
@@ -15,6 +16,40 @@ export {
 		// helper to be used inside MConstruct to construct/descruct
 		constructor : () -> () -> void
 	);
+
+	CachedTreeArray(
+		getTree : () -> Tree<?, [??]>,
+		clear : () -> void,
+		dispose : () -> void,
+		constructor : () -> () -> void
+	);
+}
+
+connect2dataFn(data : Transform<[?]>, us : ref List<() -> void>, hasData : ref bool, cachedTreeAction : () -> void) -> void {
+	us := fsubscribe(data, \__ -> {
+		hasData := false;
+		cachedTreeAction();
+	});
+}
+
+disposeFn(hasData : ref bool, cachedTreeAction : () -> void, us : ref List<() -> void>) -> void {
+	hasData := false;
+	cachedTreeAction();
+	callList(^us);
+	us := makeList();
+}
+
+clearFn(hasData : ref bool, cachedTreeAction : () -> void) -> void {
+	hasData := false;
+	cachedTreeAction();
+}
+
+constructorFn(us : ref List<() -> void>, connect2data : () -> void, dispose : () -> void) -> () -> void {
+	// if we already connected then no need to connect again
+	if (isEmptyList(^us)) {
+		connect2data()
+	}
+	dispose
 }
 
 getCachedTree(data : Transform<[?]>, getKey : (?) -> ??) -> CachedTree<??, ?> {
@@ -23,19 +58,9 @@ getCachedTree(data : Transform<[?]>, getKey : (?) -> ??) -> CachedTree<??, ?> {
 
 	us = ref makeList();
 
-	connect2data = \ -> {
-		us := fsubscribe(data, \__ -> {
-			hasData := false;
-			cachedTree := makeTree();
-		});
-	}
+	connect2data = \ -> connect2dataFn(data, us, hasData, \-> cachedTree := makeTree());
 
-	dispose = \ -> {
-		hasData := false;
-		cachedTree := makeTree();
-		callList(^us);
-		us := makeList();
-	}
+	dispose = \ -> disposeFn(hasData, \-> cachedTree := makeTree(), us);
 
 	// we connect it to be immediately available for use
 	connect2data();
@@ -51,17 +76,38 @@ getCachedTree(data : Transform<[?]>, getKey : (?) -> ??) -> CachedTree<??, ?> {
 			}
 			^cachedTree
 		},
-		\ -> {
-			hasData := false;
-			cachedTree := makeTree();
-		},
+		\ -> clearFn(hasData, \ -> cachedTree := makeTree()),
 		dispose,
+		\ -> constructorFn(us, connect2data, dispose)
+	)
+}
+
+getCachedTreeArray(data : Transform<[?]>, getKey : (?) -> ??) -> CachedTreeArray<??, ?> {
+	hasData = ref false;
+	cachedTreeArray = ref makeTree();
+
+	us = ref makeList();
+
+	connect2data = \ -> connect2dataFn(data, us, hasData, \-> cachedTreeArray := makeTree());
+
+	dispose = \ -> disposeFn(hasData, \-> cachedTreeArray := makeTree(), us);
+
+	// we connect it to be immediately available for use
+	connect2data();
+
+	CachedTreeArray(
 		\ -> {
-			// if we already connected then no need to connect again
-			if (isEmptyList(^us)) {
-				connect2data()
+			if (!^hasData) {
+				cdata = fgetValue(data);
+				cachedTreeArray := fold(cdata, makeTree(), \acc, d -> {
+					treePushToArrayUnique(acc, getKey(d), d);
+				});
+				hasData := true;
 			}
-			dispose
-		}
+			^cachedTreeArray
+		},
+		\ -> clearFn(hasData, \ -> cachedTreeArray := makeTree()),
+		dispose,
+		\ -> constructorFn(us, connect2data, dispose)
 	)
 }
