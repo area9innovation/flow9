@@ -2781,8 +2781,8 @@ class RenderSupport {
 	// cb - callback in the flow code which accepts [flow]
 	// To call it in the embedded HTML use frameElement.callflow([args]))
 	// Default web clip size = 100x100. Scale clip to resize
-	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool, hideHorizontalScroll : Bool) : WebClip {
-		return new WebClip(url, domain, useCache, reloadBlock, cb, ondone, shrinkToFit, hideHorizontalScroll);
+	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool) : WebClip {
+		return new WebClip(url, domain, useCache, reloadBlock, cb, ondone, shrinkToFit);
 	}
 
 	public static function webClipHostCall(clip : WebClip, name : String, args : Array<String>) : String {

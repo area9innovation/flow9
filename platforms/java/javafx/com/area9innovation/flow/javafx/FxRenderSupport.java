@@ -440,7 +440,7 @@ public class FxRenderSupport extends RenderSupport {
 		return stage_clip;
 	}
 	@Override
-	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit, Boolean hideHorizontalScroll) {
+	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
 		System.out.println("makeWebClip not implemented");
 		return new Clip();
 	}
