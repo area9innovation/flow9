@@ -239,7 +239,6 @@ public class HttpSupport extends NativeHost {
 			Func0<Object> onOpen,
 			Func1<Object, String> onData,
 			Func1<Object, String> onError, 
-			Func2<Boolean, String, Integer> onSelect,
 			Func2<Object, Double, Double> onProgress) {
 		// TODO
 		System.out.println("uploadNativeFile not implemented");
