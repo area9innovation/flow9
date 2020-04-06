@@ -153,8 +153,8 @@ void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, co
 
     glVertexAttrib4f(GLRenderer::AttrVertexColor, global_alpha, global_alpha, global_alpha, global_alpha);
         
-    for (int i = 0; i < imageGrid.size(); i++) {
-        for (int j = 0; j < imageGrid[i].size(); j++) {
+    for (unsigned int i = 0; i < imageGrid.size(); i++) {
+        for (unsigned int j = 0; j < imageGrid[i].size(); j++) {
             vec2 offset(maxTextureSize * j, maxTextureSize * i);
             imageGrid[i][j]->drawRect(renderer, offset, offset + vec2(imageGrid[i][j]->getSize()));
         }
