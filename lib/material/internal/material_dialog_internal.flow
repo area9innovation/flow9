@@ -3,9 +3,9 @@ import material/internal/material_movable;
 import material/internal/tropic_size_util;
 
 export {
-	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle, MDialogCloseButton,
+	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle, 
 		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
-		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent,
+		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent, MDialogCloseButton,
 		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MDialogCloseOnForceRender, MAddSafeArea;
 
 		// These are very commonly recommended
@@ -16,6 +16,7 @@ export {
 		MDialogScrollStyle(style : [MScrollStyle]);
 		MDialogKeyEventBlock();
 		MDialogActions(actions : [Material]);
+		MDialogActionsCondensed(); // Decreases border between content and actions
 
 		MDialogCustomFrame(start : double, top : double, end : double, bottom : double, frame : Material);
 		MDialogNoCenter();
@@ -165,6 +166,7 @@ renderMDialog2(
 	actionsW = make(0.);
 	contentW = make(0.);
 	titleW = make(0.);
+	titleCloseW = make(0.);
 
 	boxW = make(0.);
 	boxH = make(0.);
@@ -202,6 +204,11 @@ renderMDialog2(
 								MEllipsisText(ttl.title, [MTitle(), MShowTooltip(const(true))]),
 								m2t
 							)
+							// MParagraph2T( // TODO: Change ellipsis to paragraph
+							// 	p,
+							// 	ttl.title,
+							// 	[MTitle(), ParagraphMargin(0.0, 0.0)]
+							// )
 							|> (\t ->
 								eitherMap(
 									customFrame,
@@ -217,15 +224,9 @@ renderMDialog2(
 				eitherMap(
 					closeButton,
 					\cb ->
-						TGroup2(
-							TAttachWidth(t, titleW),
-							TCols2(TFillX(), TBorder4(8., m2t(cb.close, p)))
-							|> (\t2 ->
-								TAvailableWidth(
-									t2,
-									fmaxA([titleW, contentW, fsubtract(actionsW, eitherMap(customFrame, \cf -> const(cf.end), zero))], 0.)
-								)
-							)
+						TAvailableWidth(
+							TBaselineCols2(TAlignLeft(TAttachWidth(t, titleW)), TAttachWidth(m2t(cb.close, p), titleCloseW)),
+							fsubtract(fmax(contentW, actionsW), eitherMap(customFrame, \cf -> const(cf.end), zero))
 						),
 					TAttachWidth(t, titleW)
 				)
@@ -270,23 +271,31 @@ renderMDialog2(
 			eitherMap(
 				actions,
 				\act -> {
+					actionsBorderLeft = if (contains(act.actions, TFillX()) || contains(style, MDialogActionsNoEndAlign())) 16.0 else 0.0;
+
+					availMinW =
+						fsubtract(
+							faddition(
+								fmax(contentW, faddition(titleW, titleCloseW)),
+								eitherMap(customFrame, \cf -> const(if (fullScreen && cf.end > 0.0) 8.0 else cf.end), zero)
+							),
+							const(actionsBorderLeft)
+						);
+
+					availMaxW =
+						fsubtract(
+							availW,
+							const(actionsBorderLeft + eitherMap(customFrame, \cf -> cf.start + cf.end, 0.0))
+						);
+
 					TFlexibleGrid(
 						const(map(act.actions, \ac -> m2t(MBorderEnd(8.)(ac), p))),
 						if (contains(style, MDialogActionsNoEndAlign()))
-							[TBaselineAlign(), TFillersSupport()]
+							[TBaselineAlign(), TFillersSupport(), TAvailableMinMax(availMinW, availMaxW)]
 						else
-							[EndAlign(), TBaselineAlign(), TFillersSupport()]
+							[EndAlign(), TBaselineAlign(), TFillersSupport(), TAvailableMinMax(availMinW, availMaxW)]
 					)
-					|> TBorderLeft(if (contains(act.actions, TFillX()) || contains(style, MDialogActionsNoEndAlign())) 16.0 else 0.0)
-					|> (\f ->
-						TAvailableWidth(
-							f,
-							faddition(
-								fmax(contentW, titleW),
-								eitherMap(customFrame, \cf -> const(if (fullScreen && cf.end > 0.0) 8.0 else cf.end), zero)
-							)
-						)
-					)
+					|> TBorderLeft(actionsBorderLeft)
 					|> TBorderTopBottom(8.)
 					|> (\t -> TAttachWidth(t, actionsW))
 					|> (\t -> eitherMap(customFrame, \cf -> TBorderDir(cf.start, 0.0, if (fullScreen) max(cf.end - 8.0, 0.0) else 0.0, 0.0, t, isRTL), t))
@@ -304,7 +313,7 @@ renderMDialog2(
 						cf.start,
 						cf.top,
 						cf.end,
-						if (isSome(actions)) 24. else cf.bottom,
+						if (isNone(actions)) cf.bottom else if (contains(style, MDialogActionsCondensed())) 0. else 24.,
 						t,
 						isRTL
 					),
@@ -504,11 +513,6 @@ renderMDialog2(
 			)
 		)
 	})
-	|> (\t ->
-		if (noAnimation || nonModal)
-			t
-		else
-			TGroup2(t, TVisible(fneq(easing.percent, 1.), TFillXY() |> disableBelow(!nonModal)))) // blocks clicks while animation
 	|> (\t ->
 		if (!fullWindow || resizable) {
 			t

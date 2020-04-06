@@ -81,11 +81,6 @@ public class FlowFileSystem extends NativeHost {
 			return "";
 		}
 	}
-	public Func0<Object> uploadNativeFile(Object a, String b, Object[] c, Func0<Object> d, Func1<Object, String> e, Func1<Object, String> f, 
-					Func2<Object, Double, Double> g, Func0<Object> h) {
-		System.out.println("Not implemented: uploadNativeFile");
-		return null;
-	}
 
     public Object openFileDialog(Integer maxFiles, Object[] fileTypes, Func1<Object, Object[]> callback) {
 		return null;

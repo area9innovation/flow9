@@ -19,7 +19,6 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var MarginGap : Float = 0.5;
-	public static var TextGap = Platform.isMacintosh ? 3.0 : 1.0;
 
 	private static var InvalidateStage : Bool = true;
 
@@ -378,7 +377,7 @@ class DisplayObjectHelper {
 
 			clip.scale.x = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0 && getClipChildren(clip).length > 16) {
+			if (RenderSupport.RendererType == "html" && scale != 1.0) {
 				initNativeWidget(clip);
 			}
 
@@ -392,7 +391,7 @@ class DisplayObjectHelper {
 
 			clip.scale.y = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0 && getClipChildren(clip).length > 16) {
+			if (RenderSupport.RendererType == "html" && scale != 1.0) {
 				initNativeWidget(clip);
 			}
 
@@ -1091,11 +1090,12 @@ class DisplayObjectHelper {
 		}
 
 		if (nativeWidget != null) {
-			var svgs : Array<Element> = untyped nativeWidget.getElementsByTagName("svg");
+			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
 			if (svgs.length > 0) {
 				var svg = svgs[0];
-				var clipFilter : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "filter");
+				var elementId = untyped svg.parentNode.getAttribute('id');
+				var clipFilter : Element = Browser.document.getElementById(elementId + "filter");
 
 				if (clipFilter != null && clipFilter.parentNode != null) {
 					clipFilter.parentNode.removeChild(clipFilter);
@@ -1107,7 +1107,9 @@ class DisplayObjectHelper {
 					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'filter');
 
 				for (child in clipFilter.childNodes) {
-					clipFilter.removeChild(untyped child);
+					if (child.parentNode == clipFilter) {
+						clipFilter.removeChild(child);
+					}
 				}
 
 				var feColorMatrix = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feColorMatrix');
@@ -1122,20 +1124,17 @@ class DisplayObjectHelper {
 				var feOffset = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feOffset');
 				feOffset.setAttribute("result", "offOut");
 				feOffset.setAttribute("in", "matrixOut");
-				feOffset.setAttribute("dx", '${untyped Math.cos(filter.angle) * filter.distance}');
-				feOffset.setAttribute("dy", '${untyped Math.sin(filter.angle) * filter.distance}');
+				feOffset.setAttribute("dx", '${Math.cos(filter.angle) * filter.distance}');
+				feOffset.setAttribute("dy", '${Math.sin(filter.angle) * filter.distance}');
 
 				var feGaussianBlur = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feGaussianBlur');
-				feGaussianBlur.setAttribute("result", "blurOut");
+				if (!Platform.isSafari) {
+					feGaussianBlur.setAttribute("result", "blurOut");
+				}
 				feGaussianBlur.setAttribute("in", "offOut");
-				feGaussianBlur.setAttribute("stdDeviation", '${untyped filter.blur}');
+				feGaussianBlur.setAttribute("stdDeviation", '${filter.blur}');
 
-				var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
-				feBlend.setAttribute("in2", "blurOut");
-				feBlend.setAttribute("in", "SourceGraphic");
-				feBlend.setAttribute("mode", "normal");
-
-				clipFilter.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "filter");
+				clipFilter.setAttribute('id', elementId + "filter");
 				clipFilter.setAttribute('x', '${untyped -clip.filterPadding}');
 				clipFilter.setAttribute('y', '${untyped -clip.filterPadding}');
 				clipFilter.setAttribute('width', '${untyped getWidgetWidth(clip) + clip.filterPadding}');
@@ -1144,24 +1143,53 @@ class DisplayObjectHelper {
 				clipFilter.appendChild(feColorMatrix);
 				clipFilter.appendChild(feOffset);
 				clipFilter.appendChild(feGaussianBlur);
-				clipFilter.appendChild(feBlend);
+
+				if (!Platform.isSafari) {
+					var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
+					feBlend.setAttribute("in2", "blurOut");
+					feBlend.setAttribute("in", "SourceGraphic");
+					feBlend.setAttribute("mode", "normal");
+
+
+					clipFilter.appendChild(feBlend);
+				}
 
 				defs.insertBefore(clipFilter, defs.firstChild);
 				svg.insertBefore(defs, svg.firstChild);
 
-				for (child in svg.childNodes) {
-					if (untyped child.tagName.toLowerCase() != "defs") {
-						untyped child.setAttribute("filter", 'url(#' + untyped svg.parentNode.getAttribute('id') + "filter)");
+				var blendGroup = Browser.document.getElementById(elementId + "blend");
+				if (Platform.isSafari) {
+					if (blendGroup == null) {
+						blendGroup = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
+						blendGroup.setAttribute('id', elementId + "blend");
+						svg.appendChild(blendGroup);
+					}
 
-						parent.once("clearfilter", function() { if (untyped child != null) untyped child.removeAttribute("filter"); });
+					for (child in blendGroup.childNodes) {
+						if (child.parentNode == blendGroup) {
+							blendGroup.removeChild(child);
+						}
+					}
+				}
+
+				for (child in svg.childNodes) {
+					if (untyped child.tagName.toLowerCase() != "defs" && child.getAttribute('id') != elementId + "blend") {
+						if (Platform.isSafari) {
+							untyped child.removeAttribute("filter");
+							blendGroup.appendChild(child.cloneNode());
+						}
+
+						untyped child.setAttribute("filter", 'url(#' + elementId + "filter)");
+
+						parent.once("clearfilter", function() { if (child != null) untyped child.removeAttribute("filter"); });
 					}
 				}
 			} else {
 				nativeWidget.style.boxShadow = '
-					${untyped Math.cos(filter.angle) * filter.distance}px
-					${untyped Math.sin(filter.angle) * filter.distance}px
-					${untyped filter.blur}px
-					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${untyped filter.alpha})
+					${Math.cos(filter.angle) * filter.distance}px
+					${Math.sin(filter.angle) * filter.distance}px
+					${filter.blur}px
+					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
 				';
 
 				parent.once("clearfilter", function() { if (nativeWidget != null) nativeWidget.style.boxShadow = null; });
@@ -1309,7 +1337,8 @@ class DisplayObjectHelper {
 			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
 
 			for (svg in svgs) {
-				var clipMask : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+				var elementId = untyped svg.parentNode.getAttribute('id');
+				var clipMask : Element = untyped svg.getElementById(elementId + "mask");
 
 				if (clipMask != null && clipMask.parentNode != null) {
 					clipMask.parentNode.removeChild(clipMask);
@@ -1328,7 +1357,7 @@ class DisplayObjectHelper {
 				image.setAttribute('href', alphaMask.url);
 				var transform = prependInvertedMatrix(untyped clip.alphaMask.worldTransform, clip.worldTransform);
 				image.setAttribute('transform', 'matrix(${transform.a} ${transform.b} ${transform.c} ${transform.d} ${transform.tx} ${transform.ty})');
-				clipMask.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "mask");
+				clipMask.setAttribute('id', elementId + "mask");
 				clipMask.setAttribute('mask-type', 'alpha');
 
 				clipMask.appendChild(image);
@@ -1336,7 +1365,7 @@ class DisplayObjectHelper {
 				svg.insertBefore(defs, svg.firstChild);
 
 				for (child in svg.childNodes) {
-					untyped child.setAttribute("mask", 'url(#' + untyped svg.parentNode.getAttribute('id') + "mask)");
+					untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
 				}
 			}
 		} else if (viewBounds != null) {
@@ -1375,7 +1404,8 @@ class DisplayObjectHelper {
 
 					if (Platform.isIE || svgs.length == 1) {
 						for (svg in svgs) {
-							var clipMask : Element = untyped svg.getElementById(untyped svg.parentNode.getAttribute('id') + "mask");
+							var elementId = untyped svg.parentNode.getAttribute('id');
+							var clipMask : Element = untyped svg.getElementById(elementId + "mask");
 
 							if (clipMask != null && clipMask.parentNode != null) {
 								clipMask.parentNode.removeChild(clipMask);
@@ -1399,14 +1429,14 @@ class DisplayObjectHelper {
 							path.setAttribute('transform', 'matrix(1 0 0 1
 								${untyped -Std.int(svg.parentNode.style.marginLeft.substring(0, svg.parentNode.style.marginLeft.length - 2)) - Std.int(svg.parentNode.style.left.substring(0, svg.parentNode.style.left.length - 2))}
 								${untyped -Std.int(svg.parentNode.style.marginTop.substring(0, svg.parentNode.style.marginTop.length - 2)) - Std.int(svg.parentNode.style.top.substring(0, svg.parentNode.style.top.length - 2))})');
-							clipMask.setAttribute('id', untyped svg.parentNode.getAttribute('id') + "mask");
+							clipMask.setAttribute('id', elementId + "mask");
 
 							clipMask.appendChild(path);
 							defs.insertBefore(clipMask, defs.firstChild);
 							svg.insertBefore(defs, svg.firstChild);
 
 							for (child in svg.childNodes) {
-								untyped child.setAttribute("mask", 'url(#' + untyped svg.parentNode.getAttribute('id') + "mask)");
+								untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
 							}
 						}
 					} else {
@@ -1754,11 +1784,7 @@ class DisplayObjectHelper {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
 		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) : getWidth(clip);
 
-		if (untyped clip.style != null && !clip.isInput) {
-			return Math.ceil(untyped clip.style.letterSpacing != null ? widgetWidth + clip.style.letterSpacing + TextGap : widgetWidth + TextGap);
-		} else {
-			return widgetWidth;
-		}
+		return widgetWidth;
 	}
 
 	public static function getHeight(clip : DisplayObject) : Float {

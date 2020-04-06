@@ -91,7 +91,7 @@ class HttpSupport {
 	}
 
 	#if (js && (flow_nodejs || nwjs))
-	private static function parseUrlToNodeOptions(url : String) : HttpsRequestOptions {
+	private static function parseUrlToNodeOptions(url : String, ?request : Dynamic = null) : HttpsRequestOptions {
 		var options = Url.parse(url);
 
 		var port 	 = Std.parseInt(options.port);
@@ -101,12 +101,12 @@ class HttpSupport {
 			port = protocol == "https:" ? 443 : 80;
 		}
 
-		if (protocol == null && untyped request != undefined) {
-			protocol = untyped request.protocol + ":";
+		if (protocol == null && request != null) {
+			protocol = request.protocol + ":";
 		}
 
-		if (hostname == null && untyped request != undefined) {
-			hostname = untyped request.hostname;
+		if (hostname == null && request != null) {
+			hostname = request.hostname;
 		}
 
 		return {
@@ -121,10 +121,10 @@ class HttpSupport {
 	#end
 
 	public static function httpRequest(url : String, post : Bool, headers : Array<Array<String>>,
-		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void, onStatusFn : Int -> Void) : Void {
+		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void, onStatusFn : Int -> Void, ?request : Dynamic = null) : Void {
 		#if flow_nodejs
 
-		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
+		var options : HttpsRequestOptions = parseUrlToNodeOptions(url, request);
 
 		options.method = post ? "POST" : "GET";
 		options.headers = {};
@@ -152,7 +152,7 @@ class HttpSupport {
 
 			if (response.statusCode == 301) {
 				// We have to redirect to the correct Location url
-				httpRequest(untyped response.headers.location, post, headers, params, onDataFn, onErrorFn, onStatusFn);
+				httpRequest(untyped response.headers.location, post, headers, params, onDataFn, onErrorFn, onStatusFn, request);
 
 				return;
 			}
@@ -171,8 +171,6 @@ class HttpSupport {
 					onErrorFn(rawData);
 			});
 		};
-
-		var request = null;
 		if (options.protocol == "https:") {
 			request = Https.request(options, responseHandler);
 		} else {
@@ -289,7 +287,7 @@ class HttpSupport {
 	}
 
 	public static function httpCustomRequestNative(url : String, method : String, headers : Array<Array<String>>,
-		params: Array<Array<String>>, data : String, onResponseFn : Int -> String -> Array<Array<String>> -> Void, async : Bool) : Void {
+		params: Array<Array<String>>, data : String, onResponseFn : Int -> String -> Array<Array<String>> -> Void, async : Bool, ?request : Dynamic = null) : Void {
 
 		if ((method == 'DELETE' || method == 'PATCH' || method == "PUT") && !Lambda.exists(headers, function(h) return h[0] == "If-Match")) {
 			headers.push(["If-Match", "*"]);
@@ -306,14 +304,14 @@ class HttpSupport {
 			return;
 		}
 
-		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
+		var options : HttpsRequestOptions = parseUrlToNodeOptions(url, request);
 
 		options.method = method;
 		options.headers = {};
 
-		headers.map(function(pair) {
+		for (pair in headers) {
 			options.headers[pair[0]] = pair[1];
-		});
+		}
 
 		if (options.headers["Content-Type"] == null) {
 			options.headers["Content-Type"] = "application/x-www-form-urlencoded";
@@ -321,12 +319,12 @@ class HttpSupport {
 
 		if (data == "") {
 			var queryString = "";
-			params.map(function(pair) {
+			for (pair in params) {
 				var key = pair[0];
 				var val = pair[1];
 
 				queryString += key + "=" + Querystring.escape(val) + "&";
-			});
+			}
 
 			queryString = queryString.substr(0, queryString.length - 1);
 
@@ -338,15 +336,15 @@ class HttpSupport {
 
 			if (response.statusCode == 301) {
 				// We have to redirect to the correct Location url
-				httpCustomRequestNative(untyped response.headers.location, method, headers, params, data, onResponseFn, async);
+				httpCustomRequestNative(untyped response.headers.location, method, headers, params, data, onResponseFn, async, request);
 
 				return;
 			}
 
 			var responseHeaders : Array<Array<String>> = new Array();
-			response.headers.keys().map(function (key) {
+			for (key in response.headers.keys()) {
 				responseHeaders.push([key, response.headers[key]]);
-			});
+			}
 
 			var rawData = "";
 			response.on('error', function(error) {
@@ -358,7 +356,6 @@ class HttpSupport {
 			});
 		};
 
-		var request = null;
 		if (options.protocol == "https:") {
 			request = Https.request(options, responseHandler);
 		} else {

@@ -355,6 +355,9 @@ public class RenderSupport extends NativeHost {
 	public Object makeBlur(double a,double b) {
 		return null;
 	}
+	public Object makeBackdropBlur(double a) {
+		return null;
+	}
 	public Object makeGlow(double a,double b,int c, double d,boolean e) {
 		return null;
 	}
