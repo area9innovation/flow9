@@ -3,8 +3,8 @@ import tools/flowc/incremental/fiprettyprint;
 import tools/flowc/incremental/fi_helpers;
 
 export {
-	codeCompletion(prog : FiProgram, e : FiExp, line : int, character : int) -> void;
-	codeCompleteName(prog : FiProgram, name : string, line : int, character : int) -> void;
+	codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, e : FiExp, line : int, character : int) -> void;
+	codeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, character : int) -> void;
 }
 
 /*
@@ -17,29 +17,29 @@ TODO:
 - types
 */
 
-codeCompletion(prog : FiProgram, e : FiExp, line : int, character : int) -> void {
-	completions = doCodeCompletion(prog, e, makeList());
+codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, e : FiExp, line : int, character : int) -> void {
+	completions = doCodeCompletion(config, globEnv, e, makeList());
 	printCodeCompletions(completions, line, character);
 }
 
-codeCompleteName(prog : FiProgram, name : string, line : int, character : int) -> void {
-	completions = doCodeCompleteName(prog, name, makeList());
+codeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, character : int) -> void {
+	completions = doCodeCompleteName(config, globEnv, name, makeList());
 	printCodeCompletions(completions, line, character);
 }
 
-doCodeCompletion(prog : FiProgram, ex : FiExp, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+doCodeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, ex : FiExp, acc : List<CodeCompletion>) -> List<CodeCompletion> {
 	def = \ -> {
-		fcPrintln("TODO: Complete " + prettyFiExp(FcPretty(true, true, makeTree(), makeTree()), ex), prog.config.threadId);
+		fcPrintln("TODO: Complete " + prettyFiExp(FcPretty(true, true, makeTree(), makeTree()), ex), config.threadId);
 		println(ex);
 		acc;
 	}
 	acc2 = switch (ex) {
 		FiLambda(args, body, type, start): def();
 		FiCall(f, args, type, start): {
-			doCodeCompletion(prog, f, acc);
+			doCodeCompletion(config, globEnv, f, acc);
 		}
 		FiVar(name, type, start): {
-			doCodeCompleteName(prog, name, acc);
+			doCodeCompleteName(config, globEnv, name, acc);
 		}
 		FiLet(name, type, e1, e2, type2, start): def();
 		FiIf(e1, e2, e3, type, start): def();
@@ -56,58 +56,58 @@ doCodeCompletion(prog : FiProgram, ex : FiExp, acc : List<CodeCompletion>) -> Li
 		FiUnsafe(name, fallback, type, start): def();
 	}
 
-	codeCompleteType(prog, fiExpType(ex), acc2);
+	codeCompleteType(config, globEnv, fiExpType(ex), acc2);
 }
 
-doCodeCompleteName(prog : FiProgram, name : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+doCodeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
 
-	acc1 = foldTree(prog.names.structs, acc, \s, ts, acc0 -> {
-		if (startsWith(s, name)) {
-			Cons(
-				CodeCompletion(
-					s,
-					CompletionConstructor(),
-					prettyFiStructOrUnion(conf, ts, makeSet()),
-					"struct"
-				),
-				acc0
-			)
-		} else acc0
-	});
-
-	acc2 = foldTree(prog.names.unions, acc1, \s, ts, acc0 -> {
-		if (startsWith(s, name)) {
-			Cons(
-				CodeCompletion(
-					s,
-					CompletionConstructor(),
-					prettyFiStructOrUnion(conf, ts, makeSet()),
-					"union"
-				),
-				acc0
-			)
-		} else acc0
-	});
-
-	acc3 = foldTree(prog.names.toplevel, acc2, \s, ts : FiDeclaration, acc0 -> {
-		if (startsWith(s, name)) {
-			Cons(
-				CodeCompletion(
-					s,
-					CompletionFunction(), // TODO: It might be variable?
-					prettyFiType(conf, ts.type, makeSet()),
-					""	// TODO: Maybe we can use something from the doc backend to grab comments
-				),
-				acc0
-			)
-		} else acc0;
-	});
-
-	acc3;
+	mapList(
+		fcFilterNameCache(globEnv, \cached -> startsWith(cached.named.name, name)),
+		\cached -> {
+			named = cached.named;
+			switch (named) {
+				FiTypeStruct(nm,__,__,__): 
+					CodeCompletion(
+						nm,
+						CompletionConstructor(),
+						prettyFiStructOrUnion(conf, named, makeSet()),
+						"struct"
+					);
+				FiTypeUnion(nm,__,__,__): 
+					CodeCompletion(
+						nm,
+						CompletionConstructor(),
+						prettyFiStructOrUnion(conf, named, makeSet()),
+						"union"
+					);
+				FiFunctionDec(nm,__,type,__,__): 
+					CodeCompletion(
+						nm,
+						CompletionFunction(),
+						prettyFiType(conf, type, makeSet()),
+						"function"
+					);
+				FiGlobalVar(nm,__,type,__,__):
+					CodeCompletion(
+						nm,
+						CompletionVariable(),
+						prettyFiType(conf, type, makeSet()),
+						"variable"
+					);
+				FiNativeDec(nm,__,type,__,__,__,__): 
+					CodeCompletion(
+						nm,
+						CompletionFunction(),
+						prettyFiType(conf, type, makeSet()),
+						"native"
+					);
+			}
+		}
+	);
 }
 
-codeCompleteType(prog : FiProgram, type : FiType, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+codeCompleteType(config : CompilerConfig, globEnv : FcTypeEnvGlobal, type : FiType, acc : List<CodeCompletion>) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
 	switch (type) {
 		FiTypeArray(t): {acc}
@@ -122,31 +122,30 @@ codeCompleteType(prog : FiProgram, type : FiType, acc : List<CodeCompletion>) ->
 		FiTypeVoid(): {acc}
 		FiTypeNative(): {acc}
 		FiTypeName(name, typeparameters): {
-			foldTree(prog.names.structs, acc, \s, ts, acc0 -> {
-				if (s == name) {
-					// OK, complete the field names
-					// Somehow, we should give this high priority
-					fold(ts.args, acc0, \acc1, arg : FiStructArg -> {
-						Cons(
-							CodeCompletion(
-								"." + arg.name,
-								CompletionField(),
-								prettyFiType(conf, arg.type, makeSet()),
-								"", // Maybe have the entire struct here?
-							),
-							acc1
-						)
-					}); 
-				} else acc0
-			});
-
-/*			
-			traverseInOrder(prog.names.unions, \s, ts -> {
-				if (s == name) {
-					// TODO: Here we can traverse the structs and find the fields that all have in common
-					println(s + " : " + prettyFiStructOrUnion(conf, ts, makeSet()))
+			switch (fcLookupNameInCache(globEnv, name)) {
+				Some(cached):  {
+					switch (cast(cached.named : FiNamed -> FiStructOrUnion)) {
+						FiTypeStruct(__,__, args,__): {
+							fold(args, acc, \ac, arg ->
+								Cons(
+									CodeCompletion(
+										"." + arg.name,
+										CompletionField(),
+										prettyFiType(conf, arg.type, makeSet()),
+										"field", // Maybe have the entire struct here?
+									),
+									ac
+								)
+							);
+						}
+						FiTypeUnion(__,__,__,__): {
+							// TODO: Here we can traverse the structs and find the fields that all have in common
+							acc;
+						}
+					}
 				}
-			});*/
+				None(): acc;
+			}
 		}
 	}
 }

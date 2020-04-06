@@ -6,6 +6,7 @@ import lingo/linecolumn;
 
 export {
 	handleFindOptions(env : FcTypeEnvGlobal, flowfile : string, prog : FiProgram) -> void;
+
 	findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, symbol : string) -> void;
 
 	// Uses global cache for lookups.
@@ -13,6 +14,9 @@ export {
 
 	// Find a type info for a symbol at given position.
 	fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
+
+	// Output a set of suggestions for auto completion at given position.
+	fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void;
 }
 
 handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> void {
@@ -26,22 +30,11 @@ handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> voi
 	if (getConfigParameter(config.config, "dump-counts") != "") {
 		dumpProgramCounts(prog);
 	}
-
-	line = getConfigParameter(config.config, "exp-line");
-	col = getConfigParameter(config.config, "exp-column");
-
-	if (isConfigParameterTrue(config.config, "complete")) {
-		if (line != "" && col != "") {
-			findCompletion(prog, file, s2i(line) - 1, s2i(col) - 1);
-		} else {
-			fcPrintln("Fail: Expect exp-line and exp-column arguments", config.threadId);
-		}
-	}
 }
 
-findFiExpInProgramAtLineCol(prog : FiProgram, file : string, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
-	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
-	filepath = findFlowPath(file, true, prog.config.includes, workingDir);
+findFiExpAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, file : string, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	filepath = findFlowPath(file, true, config.includes, workingDir);
 	code = getFileContent(filepath);
 	resolver = makeLineResolver(code);
 
@@ -51,8 +44,9 @@ findFiExpInProgramAtLineCol(prog : FiProgram, file : string, line : int, col : i
 	// This is the text before the point
 	text = strLeft(linetext, charsToColumn);
 
-	mfiexp = switch (lookupTree(prog.modules, strReplace(file, ".flow", ""))) {
-		Some(module): {
+	mfiexp = switch (fcLoadFromCache(env, file)) {
+		Some(loaded): {
+			module = loaded.module;
 			index = linestart + charsToColumn;
 
 			starts2types = fold(
@@ -86,6 +80,20 @@ findFiExpInProgramAtLineCol(prog : FiProgram, file : string, line : int, col : i
 		}
 	}
 	Pair(mfiexp, text);
+}
+
+fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void {
+	context = findFiExpAtLineCol(config, globEnv, file, line, col, false);
+	mexp : Maybe<FiExp> = context.first;
+	switch (mexp) {
+		Some(e): {
+			codeCompletion(config, globEnv, e, line, col);
+		}
+		None(): {
+			before = trim2(context.second, " \t\n;");
+			codeCompleteName(config, globEnv, before, line, col);
+		}
+	}
 }
 
 // Given this line, find the index of this column (considering 4-char tab indentation)
@@ -253,20 +261,6 @@ doFindDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string,
 			} else {
 				fcPrintln("Fail: cound not find definition/declaration for " + name, config.threadId);
 			}
-		}
-	}
-}
-
-findCompletion(prog : FiProgram, file : string, line : int, col : int) -> void {
-	context = findFiExpInProgramAtLineCol(prog, file, line, col, false);
-	mexp : Maybe<FiExp> = context.first;
-	switch (mexp) {
-		Some(e): {
-			codeCompletion(prog, e, line, col);
-		}
-		None(): {
-			before = trim2(context.second, " \t\n;");
-			codeCompleteName(prog, before, line, col);
 		}
 	}
 }
