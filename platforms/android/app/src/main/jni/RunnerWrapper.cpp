@@ -1364,7 +1364,7 @@ void AndroidTextureImage::loadData() {
 }
 
 AndroidTextureImage::AndroidTextureImage(AndroidRunnerWrapper *owner, ivec2 size, jobject bmp)
-    : GLTextureImage(size), owner(owner), bitmap(owner->env->NewGlobalRef(bmp))
+    : GLTextureBitmap(size, GL_RGBA, false, false), owner(owner), bitmap(owner->env->NewGlobalRef(bmp))
 {
 }
 
@@ -1376,7 +1376,7 @@ AndroidTextureImage::~AndroidTextureImage()
 jboolean AndroidRenderSupport::resolvePictureBitmap(jstring url, jobject bitmap, jint w, jint h)
 {
     JNIEnv *env = owner->env;
-    GLTextureImage::Ptr ptr(new AndroidTextureImage(owner, ivec2(w,h), bitmap));
+    GLTextureBitmap::Ptr ptr(new AndroidTextureImage(owner, ivec2(w,h), bitmap));
     return (jboolean) resolvePicture(jni2unicode(env, url), ptr);
 }
 

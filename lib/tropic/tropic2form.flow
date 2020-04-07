@@ -24,36 +24,31 @@ export {
 	tropic2nativeForm(b : Tropic, sheet : Stylesheet) -> Form;
 }
 
-tropic2form(b : Tropic, sheet : Stylesheet) -> Form {
-	availableWH = makeWH();
-
-	context = TParentInfo(
+makeContext(availableWH : Transform<WidthHeight>) -> TParentInfo {
+	TParentInfo(
 		fwidth(availableWH),
 		fheight(availableWH),
 		makeTree(),
 		const(zeroTransformMatrix)
 	);
+}
 
-	tropic2fformWithContext(b, sheet, context, availableWH)
+tropic2form(b : Tropic, sheet : Stylesheet) -> Form {
+	availableWH = makeWH();
+
+	tropic2fformWithContext(b, sheet, makeContext(availableWH), availableWH)
 	|> fform2form
 	|> (\f -> Inspect([IAvailable(availableWH)], f))
 }
 
 tropic2fform(b : Tropic, sheet : Stylesheet, availableWH : Transform<WidthHeight>) -> FForm {
-	context = TParentInfo(
-		fwidth(availableWH),
-		fheight(availableWH),
-		makeTree(),
-		const(zeroTransformMatrix)
-	);
-
 	ot = optimizeTropic(resolveTropicCss(b, sheet));
 	form = make(FEmpty());
 
 	FConstructor(
 		FMutable(form),
 		\ -> {
-			ba = tropic2Acc(ot, context, sheet, false);
+			ba = tropic2Acc(ot, makeContext(availableWH), sheet, false);
 			next(form, ba.form);
 
 			\ -> applyall(ba.disposers)
@@ -65,17 +60,10 @@ tropic2fformTranslated(b : Tropic, sheet : Stylesheet) -> FForm {
 	availableWH = makeWH();
 	transformMatrix = make(getDummyTransformMatrix());
 
-	context = TParentInfo(
-		fwidth(availableWH),
-		fheight(availableWH),
-		makeTree(),
-		transformMatrix
-	);
-
 	transformMatrixFn = ref \ -> TransformMatrix(1., 0., 0., 1., 0., 0.);
 
 	FConstructor(
-		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, context, availableWH),
+		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, makeContext(availableWH), availableWH),
 		\ -> {
 			// Repeatable timer to check transform matrix every new frame
 			drawFrameDeltaTimer = makeDrawFrameEventListener();
@@ -102,17 +90,10 @@ tropic2formTranslated(b : Tropic, sheet : Stylesheet) -> Form {
 	availableWH = makeWH();
 	transformMatrix = make(getDummyTransformMatrix());
 
-	context = TParentInfo(
-		fwidth(availableWH),
-		fheight(availableWH),
-		makeTree(),
-		transformMatrix
-	);
-
 	transformMatrixFn = ref \ -> TransformMatrix(1., 0., 0., 1., 0., 0.);
 
 	FConstructor(
-		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, context, availableWH),
+		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, makeContext(availableWH), availableWH),
 		\ -> {
 			// Repeatable timer to check transform matrix every new frame
 			drawFrameDeltaTimer = makeDrawFrameEventListener();
@@ -923,16 +904,21 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					metricsOnly
 				);
 
+			maxWidth = fmin(bf1.maxWidth, bf2.maxWidth);
+			minWidth = fmax(bf1.minWidth, fmin(maxWidth, bf2.minWidth));
+			maxHeight = fmin(bf1.maxHeight, bf2.maxHeight);
+			minHeight = fmax(bf1.minHeight, fmin(maxHeight, bf2.minHeight));
+
 			TAcc(
 				if (metricsOnly)
 					FEmpty()
 				else
 					bf1.form,
 				bf1.metrics,
-				fmax(bf1.minWidth, bf2.minWidth),
-				fmax(bf1.minHeight, bf2.minHeight),
-				fmin(bf1.maxWidth, bf2.maxWidth),
-				fmin(bf1.maxHeight, bf2.maxHeight),
+				minWidth,
+				minHeight,
+				maxWidth,
+				maxHeight,
 				bf2.xFillers,
 				bf2.yFillers,
 				bf2.addFillers,
@@ -2099,7 +2085,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			)
 		}
 		TParagraph(text, style): {
-			metrics = make(FormMetrics(0., 0., 0., 0.));
+			metrics = make(FFormMetrics(0., 0., 0., 0.));
 			charStyle : [FParagraphStyle] = tparagraphStyle2charStyle(style);
 
 			parWidth = extractStruct(style, ParagraphWidth(const(-1.))).width;
@@ -2130,7 +2116,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			}
 
 			nonLegacyParaBehaviour = isUrlParameterSet("parablk");
-			wd = if (nonLegacyParaBehaviour || parRightAlign || parCenterAlign) parWidthB else fselect(metrics, FLift(\met -> met.width));
+			isFullWidth = nonLegacyParaBehaviour || parRightAlign || parCenterAlign;
+			wd = if (isFullWidth) parWidthB else fselect(metrics, FLift(\met -> met.width));
 			hgt = fselect(metrics, FLift(\met -> met.height + parMargin.top + parMargin.bottom));
 
 			TAcc(
@@ -2145,7 +2132,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				),
 				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), zero, wd),
 				hgt,
-				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(^tropicFillersMax), wd),
+				fif(
+					fselect(parWidth, FLift(\pw -> pw < 0.)),
+					if (isFullWidth)
+						const(^tropicFillersMax)
+					else
+						fselect(metrics, FLift(\met -> met.maxWidth)),
+					wd
+				),
 				hgt,
 				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(1.), zero),
 				zero,
@@ -3198,10 +3192,6 @@ distributeAsks(
 			}
 		}
 	)
-}
-
-fpreventNanOrInf(b : Transform<double>) -> Transform<double> {
-	fselect(b, FLift(\v -> if (isNanOrInf(v)) 0.0 else v));
 }
 
 // TDynamicGroup tools

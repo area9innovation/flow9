@@ -55,6 +55,19 @@ export {
 		virtualScreenInfoM : Maybe<VirtualScreenInfo>
 	) -> Pair<Form, (Form) -> Form>;
 
+	getHtmlPictureMagnifyCustom(
+		form : Form,
+		popup : Form,
+		maxw : Maybe<double>,
+		scale : Maybe<double>,
+		backgroundColor : Maybe<Color>,
+		zoomBtnFormFn : (() -> void) -> Form,
+		zoomBtnAlign : Corner,
+		closeBtnFormFn : (() -> void) -> Form,
+		closeBtnAlign : int,
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>
+	) -> Pair<Form, (Form) -> Form>;
+
 	parseCssStyles(cs : HTMLStyle, cssStyles : string) -> HTMLStyle;
 }
 
@@ -149,9 +162,9 @@ html2form(s : string, stylesheet : Tree<string, HTMLStyle>, special : [HTMLSpeci
 
 	makeForm : ()->Form = \ -> {
 		addInspect = \f ->{
-            f2 : Form = Inspect([AvailableWidth2(aw)], f);
-            f2;
-        };
+			f2 : Form = Inspect([AvailableWidth2(aw)], f);
+			f2;
+		};
 		fold(
 			nodes,
 			[],
@@ -293,6 +306,235 @@ getHtmlPictureMagnify2(
 	getHtmlPictureMagnifyWithCloseButton(fullForm, scaledForm, p_caption, stylesheet, maxw, scale, extraZoom, eitherMap(backgroundColor, \color -> Some(Color(color, 0.5)), None()), -1, \__ -> Empty(), None());
 }
 
+openMagnifyWindow(
+	form : Form,
+	p_caption : string,
+	stylesheet : Tree<string, HTMLStyle>,
+	maxw : Maybe<double>,
+	scale : Maybe<double>,
+	backgroundColor : Maybe<Color>,
+	closeButtonAlign : int,
+	closeButtonFormFn : (() -> void) -> Form,
+	replaceCross : bool,
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+	closeMagnify : () -> void
+) -> () -> void {
+
+	awh = makeWH();
+	whP = makeWH();
+	whSP = makeWH();
+	whC = makeWH();
+	windowSize = makeWH();
+	borderWidth = 5.0;
+	minCaptionHeight = 20.0;
+	minScale = 1.33;
+	maxArea = 0.8;
+
+	magnifySize = \wh_, whP_, whC_ -> {
+		maxHeight = (wh_.height * maxArea) - max(minCaptionHeight, whC_.height) - borderWidth * 3.0;
+		maxWidth = (wh_.width * maxArea) - borderWidth * 2.0;
+
+		if (maxHeight < 0.0 || maxWidth < 0.0) {
+			WidthHeight(0.0, 0.0)
+		} else if ( isSome(maxw) || isSome(scale) ) {
+			sd = (if (isSome(maxw) && whP_.width > 0.0 && either(maxw, 0.0) / whP_.width > 1.0) either(maxw, 0.0) / whP_.width else 1.0) * either(scale, 1.0);
+			sc = if (1.0 / sd < minScale) minScale else 1.0 / sd;
+			WidthHeight(min(maxWidth, whP_.width * sd * sc), min(maxHeight, whP_.height * sd * sc))
+		} else {
+			WidthHeight(maxWidth, maxHeight)
+		}
+	};
+
+	wh = makeWH();
+	background = Select(wh, \wh_ -> Rectangle(wh_.width, wh_.height, [Fill(white)]));
+
+	captionAWH = makeWH();
+	textW = make(0.0);
+	caption = Constructor(
+		Offset(
+			borderWidth, borderWidth,
+			Available2(
+				captionAWH,
+				Align(
+					0.0, 0.5,
+					Inspect(
+						[ISize(whC)],
+						renderHtmlXml(XmlText(p_caption), textW, stylesheet, [StartAlign()], [HTMLDefaultFont([FontSize(16.0)])])
+					)
+				)
+			)
+		),
+		\ -> {
+			uns0 = connectSelect2Distinctu(wh, whC, captionAWH, \wh_, whC_ -> {
+				WidthHeight(
+					wh_.width - minCaptionHeight - borderWidth * 3.0,
+					max(minCaptionHeight, whC_.height)
+				);
+			});
+			uns1 = connectSelectDistinctu(wh, textW, \wh_ -> wh_.width - minCaptionHeight - borderWidth * 3.0);
+			\ -> {
+				uns0();
+				uns1();
+			}
+		}
+	);
+
+	crossX = make(0.0);
+	crossAWH = makeWH();
+	cross = Constructor(
+		Translate(
+			crossX, const(borderWidth),
+			Available2(
+				crossAWH,
+				if (replaceCross) closeButtonFormFn(closeMagnify) else SimpleButton2(
+					shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/zoom/X_normal.png", [])),
+					"esc",
+					\ -> closeMagnify(),
+					[
+						BtnHoveredForm(shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/zoom/X_hover.png", []))),
+						BtnPressedForm(shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/zoom/X_push.png", [])))
+					]
+				) |> Center
+			)
+		),
+		\ -> {
+			uns0 = connectSelectDistinctu(wh, crossX, \wh_ -> wh_.width - borderWidth * 2.0 - minCaptionHeight);
+			uns1 = connectSelectDistinctu(whC, crossAWH, \size -> WidthHeight(minCaptionHeight, max(minCaptionHeight, size.height)));
+			\ -> {
+				uns0();
+				uns1();
+			}
+		}
+	);
+
+	contentAWH = makeWH();
+	contentY = make(0.0);
+	toFitWH = makeWH();
+	content = Constructor(
+		Translate(
+			const(borderWidth), contentY,
+			Background([Fill(0xffffff), Stroke(0xdedddb), StrokeWidth(1.0)],
+				Available2(
+					contentAWH,
+					Inspect(
+						[ISize(whSP)],
+						resizeToFitWHB2(
+							toFitWH,
+							const(true),
+							Inspect(
+								[ISize(whP)],
+								form
+							),
+							1.0
+						)
+					) |> Center
+				)
+			)
+		),
+		\ -> {
+			uns0 = connectSelect2Distinctu(wh, whC, contentAWH, \wh_, whC_ -> {
+				WidthHeight(
+					wh_.width - borderWidth * 2.0,
+					wh_.height - max(minCaptionHeight, whC_.height) - borderWidth * 3.0
+				)
+			});
+			uns1 = connectSelectDistinctu(whC, contentY, \whC_ -> max(minCaptionHeight, whC_.height) + borderWidth * 2.0);
+			uns2 = eitherFn(
+				virtualScreenInfoM,
+				\vsi -> {
+					awhVsB = makeWH();
+					unsVs1 = connectSelect3Distinctu(vsi.size, vsi.position, awh, awhVsB, \s, ps, awh_ -> WidthHeight(
+						min(s.width * ps.scale.x, awh_.width),
+						min(s.height * ps.scale.y, awh_.height)
+					));
+					unsVs2 = connectSelect3Distinctu(awhVsB, whP, whC, toFitWH, magnifySize);
+					\-> {
+						unsVs2();
+						unsVs1();
+					};
+				},
+				\-> connectSelect3Distinctu(awh, whP, whC, toFitWH, magnifySize)
+			);
+			\ -> {
+				uns0();
+				uns1();
+				uns2();
+			}
+		}
+	);
+
+	addCloseButton = \f, top, right -> {
+		btn = closeButtonFormFn(closeMagnify);
+		lines = if (right) {
+			formwh = makeWH();
+			[Inspect([ISize(formwh)], f), Available2(formwh, Align2(1., 0., btn))]
+		} else [f, btn];
+		Lines(if (top) reverseA(lines) else lines);
+	};
+
+	popupWithCloseButtonVariants = map([
+		Pair(false, true),
+		Pair(true, true),
+		Pair(true, false),
+		Pair(false, false),
+	], \v -> \f -> addCloseButton(f, v.first, v.second));
+
+	magnifyWindow = SimpleMovable(Constructor(
+		Group([
+			background,
+			cross,
+			caption,
+			content
+		])
+		|> ShadowAround
+		|> elementAt(popupWithCloseButtonVariants, closeButtonAlign, idfn)
+		|> (\f -> Cursor(FingerCursor(), f))
+		|> (\f -> Inspect([ISize(windowSize), IAvailable(awh)], f)),
+		\ -> {
+			connectSelect2Distinctu(whSP, whC, wh, \whSP_, whC_ -> {
+				WidthHeight(
+					max(whSP_.width + borderWidth * 2.0, 200.0),
+					max(whSP_.height + max(minCaptionHeight, whC_.height) + borderWidth * 3.0, 200.0)
+				)
+			});
+		}
+	));
+
+	backgroundFrm = \-> {
+		bawh = eitherMap(virtualScreenInfoM, \vsi-> cloneBehaviour(vsi.size), makeWH());
+		Interactive(
+			[
+				RollOver(\gmi -> {}),
+				MouseUp2(\__, mi -> if (mi().inside) {
+					closeMagnify();
+					true
+				} else {
+					false
+				})
+			],
+			Inspect([IAvailable(bawh)], Select(bawh, \avl -> Rectangle(
+				avl.width,
+				avl.height,
+				eitherMap(
+					backgroundColor,
+					\colwithop -> [Fill(colwithop.color), FillOpacity(colwithop.alpha)],
+					[Fill(0xffffffff), FillOpacity(0.0)]
+				)
+			)))
+		);
+	};
+
+	screenRenderer = getScreenPopupRenderer(virtualScreenInfoM, render);
+	screenRenderer(eitherFn(
+		virtualScreenInfoM,
+		\info -> CropPopupByVirtualScreenBox(info, Group([
+			Interactive([MouseDown2(\__, mi2 -> mi2.inside()), MouseMove2(\__, mi2 -> mi2().inside)], backgroundFrm()),
+			CenterPopupByVirtualScreenBox(info, magnifyWindow, windowSize)
+		])),
+		\-> Group([backgroundFrm(), MouseUD2Catcher(Empty()), Center(magnifyWindow)])
+	));
+}
+
 getHtmlPictureMagnifyWithCloseButton(
 	fullForm : Form,
 	scaledForm : Form,
@@ -359,16 +601,6 @@ getHtmlPictureMagnifyWithCloseButton(
 
 		cursorPicturePlus = Group([plusHintWindow.first, Scale(iconScale, iconScale, Picture("images/zoom/magnifier_cursor_plus.png", []))]);
 
-		awh = makeWH();
-		whP = makeWH();
-		whSP = makeWH();
-		whC = makeWH();
-		windowSize = makeWH();
-		borderWidth = 5.0;
-		minCaptionHeight = 20.0;
-		minScale = 1.33;
-		maxArea = 0.8;
-
 		closeMagnifyWindow = ref nop;
 		magnifyWindowVisible = make(false);
 		closeMagnify = \ -> {
@@ -376,195 +608,6 @@ getHtmlPictureMagnifyWithCloseButton(
 			next(plusCursorVisible, false);
 			^closeMagnifyWindow();
 			closeMagnifyWindow := nop;
-		}
-
-		popupWithCloseButtonVariants = [
-			\f -> Lines([f, Align2(1., 0., closeButtonFormFn(closeMagnify))]),
-			\f -> Lines([Align2(1., 0., closeButtonFormFn(closeMagnify)), f]),
-			\f -> Lines([closeButtonFormFn(closeMagnify), f]),
-			\f -> Lines([f, closeButtonFormFn(closeMagnify)]),
-		];
-
-		magnifySize = \wh_, whP_, whC_ -> {
-			maxHeight = (wh_.height * maxArea) - max(minCaptionHeight, whC_.height) - borderWidth * 3.0;
-			maxWidth = (wh_.width * maxArea) - borderWidth * 2.0;
-
-			if (maxHeight < 0.0 || maxWidth < 0.0) {
-				WidthHeight(0.0, 0.0)
-			} else if ( isSome(maxw) || isSome(scale) ) {
-				sd = (if (isSome(maxw) && whP_.width > 0.0 && either(maxw, 0.0) / whP_.width > 1.0) either(maxw, 0.0) / whP_.width else 1.0) * either(scale, 1.0);
-				sc = if (1.0 / sd < minScale) minScale else 1.0 / sd;
-				WidthHeight(min(maxWidth, whP_.width * sd * sc), min(maxHeight, whP_.height * sd * sc))
-			} else {
-				WidthHeight(maxWidth, maxHeight)
-			}
-		};
-
-		screenRenderer = getScreenPopupRenderer(virtualScreenInfoM, render);
-		getMagnifyWindow = \ -> {
-			wh = makeWH();
-			background = Select(wh, \wh_ -> Rectangle(wh_.width, wh_.height, [Fill(white)]));
-
-			captionAWH = makeWH();
-			textW = make(0.0);
-			caption = Constructor(
-				Offset(
-					borderWidth, borderWidth,
-					Available2(
-						captionAWH,
-						Align(
-							0.0, 0.5,
-							Inspect(
-								[ISize(whC)],
-								renderHtmlXml(XmlText(p_caption), textW, stylesheet, [StartAlign()], [HTMLDefaultFont([FontSize(16.0)])])
-							)
-						)
-					)
-				),
-				\ -> {
-					uns0 = connectSelect2Distinctu(wh, whC, captionAWH, \wh_, whC_ -> {
-						WidthHeight(
-							wh_.width - minCaptionHeight - borderWidth * 3.0,
-							max(minCaptionHeight, whC_.height)
-						);
-					});
-					uns1 = connectSelectDistinctu(wh, textW, \wh_ -> wh_.width - minCaptionHeight - borderWidth * 3.0);
-					\ -> {
-						uns0();
-						uns1();
-					}
-				}
-			);
-
-			crossX = make(0.0);
-			crossAWH = makeWH();
-			cross = Constructor(
-				Translate(
-					crossX, const(borderWidth),
-					Available2(
-						crossAWH,
-						SimpleButton2(
-							shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/zoom/X_normal.png", [])),
-							"esc",
-							\ -> closeMagnify(),
-							[
-								BtnHoveredForm(shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/zoom/X_hover.png", []))),
-								BtnPressedForm(shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/zoom/X_push.png", [])))
-							]
-						) |> Center
-					)
-				),
-				\ -> {
-					uns0 = connectSelectDistinctu(wh, crossX, \wh_ -> wh_.width - borderWidth * 2.0 - minCaptionHeight);
-					uns1 = connectSelectDistinctu(whC, crossAWH, \size -> WidthHeight(minCaptionHeight, max(minCaptionHeight, size.height)));
-					\ -> {
-						uns0();
-						uns1();
-					}
-				}
-			);
-
-			contentAWH = makeWH();
-			contentY = make(0.0);
-			toFitWH = makeWH();
-			content = Constructor(
-				Translate(
-					const(borderWidth), contentY,
-					Background([Fill(0xffffff), Stroke(0xdedddb), StrokeWidth(1.0)],
-						Available2(
-							contentAWH,
-							Inspect(
-								[ISize(whSP)],
-								resizeToFitWHB2(
-									toFitWH,
-									const(true),
-									Inspect(
-										[ISize(whP)],
-										fullForm
-									),
-									1.0
-								)
-							) |> Center
-						)
-					)
-				),
-				\ -> {
-					uns0 = connectSelect2Distinctu(wh, whC, contentAWH, \wh_, whC_ -> {
-						WidthHeight(
-							wh_.width - borderWidth * 2.0,
-							wh_.height - max(minCaptionHeight, whC_.height) - borderWidth * 3.0
-						)
-					});
-					uns1 = connectSelectDistinctu(whC, contentY, \whC_ -> max(minCaptionHeight, whC_.height) + borderWidth * 2.0);
-					uns2 = eitherFn(
-						virtualScreenInfoM,
-						\vsi -> {
-							awhVsB = makeWH();
-							unsVs1 = connectSelect3Distinctu(vsi.size, vsi.position, awh, awhVsB, \s, ps, awh_ -> WidthHeight(
-								min(s.width * ps.scale.x, awh_.width),
-								min(s.height * ps.scale.y, awh_.height)
-							));
-							unsVs2 = connectSelect3Distinctu(awhVsB, whP, whC, toFitWH, magnifySize);
-							\-> {
-								unsVs2();
-								unsVs1();
-							};
-						},
-						\-> connectSelect3Distinctu(awh, whP, whC, toFitWH, magnifySize)
-					);
-					\ -> {
-						uns0();
-						uns1();
-						uns2();
-					}
-				}
-			);
-
-			Constructor(
-				Group([
-					background,
-					cross,
-					caption,
-					content
-				])
-				|> ShadowAround
-				|> elementAt(popupWithCloseButtonVariants, closeButtonAlign, idfn)
-				|> (\f -> Cursor(FingerCursor(), f))
-				|> (\f -> Inspect([ISize(windowSize), IAvailable(awh)], f)),
-				\ -> {
-					connectSelect2Distinctu(whSP, whC, wh, \whSP_, whC_ -> {
-						WidthHeight(
-							max(whSP_.width + borderWidth * 2.0, 200.0),
-							max(whSP_.height + max(minCaptionHeight, whC_.height) + borderWidth * 3.0, 200.0)
-						)
-					});
-				}
-			);
-		}
-		inspectedAvailB = makeWH();
-
-		backgroundFrm = \-> {
-			bawh = eitherMap(virtualScreenInfoM, \vsi-> cloneBehaviour(vsi.size), makeWH());
-			Interactive(
-				[
-					RollOver(\gmi -> {}),
-					MouseUp2(\__, mi -> if (mi().inside) {
-						closeMagnify();
-						true
-					} else {
-						false
-					})
-				],
-				Inspect([IAvailable(bawh)], Select(bawh, \avl -> Rectangle(
-					avl.width,
-					avl.height,
-					eitherMap(
-						backgroundColor,
-						\colwithop -> [Fill(colwithop.color), FillOpacity(colwithop.alpha)],
-						[Fill(0xffffffff), FillOpacity(0.0)]
-					)
-				)))
-			);
 		}
 
 		cursorB = make(DefaultCursor());
@@ -577,15 +620,7 @@ getHtmlPictureMagnifyWithCloseButton(
 							next(magnifyWindowVisible, true);
 							next(plusCursorVisible, false);
 							next(plusBubbleVisible, false);
-							magnifyWindow = SimpleMovable(getMagnifyWindow());
-							closeMagnifyWindow := screenRenderer(eitherFn(
-								virtualScreenInfoM,
-								\info -> CropPopupByVirtualScreenBox(info, Group([
-									Interactive([MouseDown2(\__, mi2 -> mi2.inside()), MouseMove2(\__, mi2 -> mi2().inside)], backgroundFrm()),
-									CenterPopupByVirtualScreenBox(info, magnifyWindow, windowSize)
-								])),
-								\-> Group([backgroundFrm(), MouseUD2Catcher(Empty()), Center(magnifyWindow)])
-							));
+							closeMagnifyWindow := openMagnifyWindow(fullForm, p_caption, stylesheet, maxw, scale, backgroundColor, closeButtonAlign, closeButtonFormFn, false, virtualScreenInfoM, closeMagnify);
 							true
 						} else {
 							false
@@ -640,6 +675,45 @@ getHtmlPictureMagnifyWithCloseButton(
 
 		Pair(form, idfn)
 	} // else
+}
+
+getHtmlPictureMagnifyCustom(
+	fullForm : Form,
+	scaledForm : Form,
+	maxw : Maybe<double>,
+	scale : Maybe<double>,
+	backgroundColor : Maybe<Color>,
+	zoomBtnFormFn : (() -> void) -> Form,
+	zoomBtnAlign : Corner,
+	closeBtnFormFn : (() -> void) -> Form,
+	closeBtnAlign : int,
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>
+) -> Pair<Form, (Form) -> Form> {
+
+	closeMagnifyWindow = ref nop;
+	magnifyWindowVisible = make(false);
+	closeMagnify = \ -> {
+		next(magnifyWindowVisible, false);
+		^closeMagnifyWindow();
+		closeMagnifyWindow := nop;
+	};
+
+	postCropTransfrom = \f -> {
+		formSize = makeWH();
+		Group([
+			Inspect([ISize(formSize)], f),
+			Available2(
+				formSize,
+				alignCorner(zoomBtnAlign, zoomBtnFormFn(\ -> {
+					next(magnifyWindowVisible, true);
+					closeMagnifyWindow := openMagnifyWindow(fullForm, "", TreeEmpty(), maxw, scale, backgroundColor, closeBtnAlign, closeBtnFormFn, true, virtualScreenInfoM, closeMagnify);
+				}))
+			)
+		]);
+	};
+
+	resultForm = Disposer(postCropTransfrom(scaledForm), closeMagnify);
+	Pair(resultForm, postCropTransfrom)
 }
 
 getDefaultFontStyle(special : [HTMLSpecial]) {
@@ -1155,7 +1229,16 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				pictureUrl = getXmlAttribute(attrs, "src", "");
 				mediaCollector = extractStruct(special, HTMLMediaCollector(ref [])).acc;
 				mediaCollector := arrayPush(^mediaCollector, pictureUrl);
-				p2 = Picture(pictureUrl, [OnLoaded(\-> {nextDistinct(pictureLoadBeh, 1)}), OnLoadingError(\__ -> {nextDistinct(pictureLoadBeh, 1)})]);
+				p2 = Picture(pictureUrl, [
+					OnLoaded(\-> { 
+						nextDistinct(pictureLoadBeh, 1);
+						println("OnLoaded");
+					}), 
+					OnLoadingError(\__ -> {
+						nextDistinct(pictureLoadBeh, 1);
+						println("OnLoadingError");
+					})
+				]);
 
 				maxw = getXmlAttribute(attrs, "max-width", "");
 				p1 = if (strlen(maxw) > 0) shrinkToFit(s2d(maxw), 2000.0, p2) else p2;
@@ -1185,17 +1268,21 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					}
 				);
 
-				p_fixed = Select(pictureLoadBeh, \flag -> if (flag != 0) p_zoomed else {
-					recW = 40.0;
-					recH = 40.0;
+				p_fixed = 
 					Group([
-						Graphics(
-							concat(rectangle(0.0, 0.0, recW, recH), [LineTo(recW, recH), MoveTo(0.0, recH), LineTo(recW, 0.0)]),
-							[Stroke(red)]
-						),
-						Available2(const(WidthHeight(recW, recH)), Align2(0.5, 0.5, resizeToWidth(recW, Paragraph([TextFragment("Image\nloading...", [])], [CenterAlign()]))))
-					])
-				});
+						p_zoomed,
+						Select(pictureLoadBeh, \flag -> if (flag != 0) Empty() else {
+							recW = 40.0;
+							recH = 40.0;
+							Group([
+								Graphics(
+									concat(rectangle(0.0, 0.0, recW, recH), [LineTo(recW, recH), MoveTo(0.0, recH), LineTo(recW, 0.0)]),
+									[Stroke(red)]
+								),
+								Available2(const(WidthHeight(recW, recH)), Align2(0.5, 0.5, resizeToWidth(recW, Paragraph([TextFragment("Image\nloading...", [])], [CenterAlign()]))))
+							])
+						})
+					]);
 
 				p = if (strlen(p_caption) == 0) {
 						p_fixed

@@ -854,6 +854,11 @@ class RenderSupport {
 			var sX = 0.0, sY = 0.0,	// spinX, spinY
 				pX = 0.0, pY = 0.0;	// pixelX, pixelY
 
+			// prevents swipe back for Safari
+			if (Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+				event.preventDefault();
+			}
+
 			// Legacy
 			if (event.detail != null) { sY = event.detail; }
 			if (event.wheelDelta != null) { sY = -event.wheelDelta / 120; }
@@ -1427,6 +1432,10 @@ class RenderSupport {
 
 	public static function getTextFieldWidth(clip : TextClip) : Float {
 		return untyped clip.isInput ? clip.getWidth() : clip.getClipWidth();
+	}
+
+	public static function getTextFieldMaxWidth(clip : TextClip) : Float {
+		return clip.getMaxWidth();
 	}
 
 	public static function setTextFieldWidth(clip : TextClip, width : Float) : Void {
@@ -2709,20 +2718,21 @@ class RenderSupport {
 		}
 
 		untyped RenderSupport.LayoutText = true;
+		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
 		render();
 
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
-			child.removeScrollRect();
+			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
 			untyped RenderSupport.LayoutText = false;
 
 			render();
 
 			return img;
 		} catch(e : Dynamic) {
-			child.removeScrollRect();
+			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
 			untyped RenderSupport.LayoutText = false;
 
 			render();

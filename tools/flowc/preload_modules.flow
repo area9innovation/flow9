@@ -19,6 +19,9 @@ export {
 
 	// Preloads only one module.
 	preloadModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FcPreloadedModule;
+
+	// Loads incremental modules, which are not yet cached. Used to fill up cache with ready files.
+	loadIncrementalModulesToCache(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> void;
 }
 
 FcImport2(flowfile : string, fromfile : string, start : int, end : int);
@@ -204,6 +207,36 @@ reparseOutdatedModule(flowfile : string, config : CompilerConfig, env : FcTypeEn
 preloadModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FcPreloadedModule {
 	workingDir = getConfigParameterDef(config.config, "working-dir", "");
 	flowfile = trimFlowfile(file, config.includes, workingDir);
-	fileinfo = getFcFileInfo(flowfile, config);
 	parseFlowFileOrLoadCached(config, globEnv, flowfile, "", 0, 0).first;
+}
+
+loadIncrementalModulesToCache(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> void {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	flowfile = trimFlowfile(file, config.includes, workingDir);
+	doLoadIncrementalModulesToCache(config, globEnv, makeSet1(flowfile), makeSet());
+}
+
+doLoadIncrementalModulesToCache(config : CompilerConfig, globEnv : FcTypeEnvGlobal, to_load : Set<string>, prev_loaded : Set<string>) -> void {
+	// Load the incremental in parallel.
+	// Loaded modules will be automatically placed in chache by 'preloadIncrementalModule' function,
+	// so there's no need to return then explicitly.
+	loaded : [FcLoaded] = filtermap(
+		concurrent(true, filtermap(set2array(to_load), \file ->
+			switch (fcLoadFromCache(globEnv, file)) {
+				None(): Some(\ -> preloadIncrementalModule(config, globEnv, file).module);
+				Some(__): None();
+			}
+		)), 
+		idfn
+	);
+	next_loaded = mergeSets(prev_loaded, buildSet(map(loaded, \l -> l.module.fileinfo.flowfile)));
+
+	// Find all the new imports in loaded files
+	new_to_load = differenceSets(
+		fold(loaded, makeSet(), \acc, l -> fold(l.module.imports, acc, \ac, im -> insertSet(ac, im.flowfile))),
+		next_loaded
+	);
+	if (sizeSet(new_to_load) > 0) {
+		doLoadIncrementalModulesToCache(config, globEnv, new_to_load, next_loaded);
+	}
 }
