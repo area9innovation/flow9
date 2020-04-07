@@ -159,7 +159,7 @@ class RenderSupport {
 		return null;
 	}
 
-	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool, hideHorizontalScroll : Bool) : Dynamic {
+	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool) : Dynamic {
 		return null;
 	}
 

@@ -58,7 +58,7 @@ using std::flush;
 # define IOSCPP11 0
 #endif
 
-#if (defined(__cplusplus) && (__cplusplus != 1 && _cpluspus >= 201103L || IOSCPP11)) || defined(_MSC_VER)
+#if defined(__cplusplus) || defined(_MSC_VER)
 # define C11 1
 #else
 # define C11 0
