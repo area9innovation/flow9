@@ -324,52 +324,64 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		var onLoadFn = function(obj : Dynamic) {
-			if (obj.name == "" && obj.uuid != null) {
-				obj.name = obj.uuid;
-			}
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
 
-			Object3DHelper.invalidateStage(obj);
-			Object3DHelper.emit(obj, "loaded");
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(objUrl + mtlUrl)) {
+			var obj = loadingCache[objUrl + mtlUrl];
 
 			onLoad(obj);
-		}
-
-		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
-			untyped __js__("
-				new THREE.MTLLoader(ThreeJSStage.loadingManager)
-					.load(mtlUrl, function (materials) {
-						materials.preload();
-
-						new THREE.OBJLoader(ThreeJSStage.loadingManager)
-							.setMaterials(materials)
-							.load(objUrl, onLoadFn);
-					})
-			");
 		} else {
-			untyped __js__("
-				eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
-					\".then((module) => {\",
-					\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
-					\".then((module2) => {\",
-					\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
-					\".then((module3) => {\",
-					\"new module.MTLLoader(ThreeJSStage.loadingManager)\",
-					\".load(mtlUrl, function(materials) {\",
-					\"new module2.OBJLoader2(ThreeJSStage.loadingManager)\",
-					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
-					\".load(objUrl, onLoadFn);\",
-					\"});\",
-					\"});\",
-					\"});\",
-					\"})\"
-				))
-			");
+			var onLoadFn = function(obj : Dynamic) {
+				if (obj.name == "" && obj.uuid != null) {
+					obj.name = obj.uuid;
+				}
+
+				Object3DHelper.invalidateStage(obj);
+				Object3DHelper.emit(obj, "loaded");
+
+				if (LOADING_CACHE_ENABLED) {
+					loadingCache.set(objUrl + mtlUrl, obj);
+				}
+
+				onLoad(obj);
+			}
+
+			if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
+				untyped __js__("
+					new THREE.MTLLoader(ThreeJSStage.loadingManager)
+						.load(mtlUrl, function (materials) {
+							materials.preload();
+
+							new THREE.OBJLoader(ThreeJSStage.loadingManager)
+								.setMaterials(materials)
+								.load(objUrl, onLoadFn);
+						})
+				");
+			} else {
+				untyped __js__("
+					eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
+						\".then((module) => {\",
+						\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
+						\".then((module2) => {\",
+						\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
+						\".then((module3) => {\",
+						\"new module.MTLLoader(ThreeJSStage.loadingManager)\",
+						\".load(mtlUrl, function(materials) {\",
+						\"new module2.OBJLoader2(ThreeJSStage.loadingManager)\",
+						\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
+						\".load(objUrl, onLoadFn);\",
+						\"});\",
+						\"});\",
+						\"});\",
+						\"})\"
+					))
+				");
+			}
 		}
 	}
 
 	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void, onError : String -> Void) : Void -> Void {
-		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
 
 		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
 			var gltf = loadingCache[url];
@@ -421,15 +433,25 @@ class RenderSupport3D {
 	}
 
 	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
-		new ObjectLoader(ThreeJSStage.loadingManager).load(url, onLoad);
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
+			onLoad(loadingCache[url]);
+		} else {
+			var onLoadFn = function(obj : Dynamic) {
+				if (LOADING_CACHE_ENABLED) {
+					loadingCache.set(url, obj);
+				}
+
+				onLoad(obj);
+			}
+
+			new ObjectLoader(ThreeJSStage.loadingManager).load(url, onLoadFn);
+		}
 	}
 
 	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
-		if (ThreeJSStage.loadingManager == null) {
-			return new Texture();
-		}
-
-		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
 
 		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
 			var texture : Texture = loadingCache[url];
@@ -1116,11 +1138,12 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectVisible(object : Object3D) : Bool {
-		return object.visible;
+		return untyped object._visible != null ? object._visible : object.visible;
 	}
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (untyped object._visible != visible) {
+			object.invalidateStage();
 			untyped object._visible = visible;
 
 			object.updateVisible();
