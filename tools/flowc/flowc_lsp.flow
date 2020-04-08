@@ -25,8 +25,6 @@ import tools/flowc/lsp_types;
 */
 
 export {
-	initFcLspEnv() -> FcLspEnv;
-
 	fcDecodeJsonRequest(s : string) -> Json;
 	fcLspReadRequest() -> Maybe<FcLspRequest>;
 	FcLspRequest(
@@ -35,24 +33,7 @@ export {
 		type : string, // Content-Type
 		json : string  // the Json description of request
 	);
-	fcLspProcessRequest(
-		conf : CompilerConfig, 
-		globEnv : FcTypeEnvGlobal, 
-		lspEnv : FcLspEnv,
-		json : Json,  
-		out_cb : (string) -> void, 
-		loop_cb : () -> void, 
-		exit_cb : () -> void
-	) -> void;
-}
-
-FcLspEnv(
-	// Mapping from a file name to a current file contensts with local changes, not saved 
-	changes : Tree<string, ref string>
-);
-
-initFcLspEnv() -> FcLspEnv {
-	FcLspEnv(makeTree());
+	fcLspProcessRequest(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, json : Json, out_cb : (string) -> void, loop_cb : () -> void, exit_cb : () -> void) -> void;
 }
 
 fcDecodeJsonRequest(s : string) -> Json {
@@ -102,7 +83,6 @@ fcLspReadRequest() -> Maybe<FcLspRequest> {
 FcLspMethodCall(
 	conf : CompilerConfig,
 	globEnv : FcTypeEnvGlobal,
-	lspEnv : FcLspEnv,
 	id : Json, 
 	params : Json, 
 	out_cb : (Json) ->  void, 
@@ -143,15 +123,7 @@ fcLspNormalResponse(id : Json, result : Json) -> Json {
 	JsonObject([Pair("jsonrpc", JsonString("2.0")), Pair("id", id), Pair("result", result)]);
 }
 
-fcLspProcessRequest(
-	conf : CompilerConfig, 
-	globEnv : FcTypeEnvGlobal, 
-	lspEnv : FcLspEnv,
-	json : Json, 
-	str_out_cb : (string) ->  void, 
-	loop_cb : () -> void, 
-	exit_cb : () -> void
-) -> void {
+fcLspProcessRequest(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
 	id = getJsonFieldValue(json, "id", JsonString(""));
 	method = getJsonStringField(json, "method", "");
 	params = getJsonFieldValue(json, "params", JsonObject([]));
@@ -165,7 +137,7 @@ fcLspProcessRequest(
 		loop_cb();
 	} else {
 		switch (lookupTree(fcLspMethods, method)) {
-			Some(m): m(FcLspMethodCall(conf, globEnv, lspEnv, id, params, out_cb, loop_cb, exit_cb));
+			Some(m): m(FcLspMethodCall(conf, globEnv, id, params, out_cb, loop_cb, exit_cb));
 			None(): {
 				out_cb(fcLspErrorResponse(id, 1, "request method " + method + " is not found"));
 				loop_cb();
@@ -243,7 +215,10 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 	switch (json2LspDidChangeTextDocumentParams(call.params)) {
 		Some(params): {
-			// No actions yet. TODO: fast compilation for error messages?
+			path = fcCorrectUriPath(params.textDocument.uri.path);
+			contents = fcFileSource(call.globEnv, path);
+			changed = fold(params.contentChanges, contents, \acc, changes -> fcApplyContentChangeEvent(changes, acc, call.conf));
+			fcSetFileSource(call.globEnv, path, changed);
 			call.loop_cb();
 		}
 		None(): {
@@ -253,10 +228,32 @@ fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 	}
 }
 
+fcApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string, conf : CompilerConfig) -> string {
+	if (changeEvent.range.start.line != -1) {
+		resolver = makeLineResolver(src);
+		start = findLineIndex(resolver, changeEvent.range.start.line, changeEvent.range.start.character);
+		end = findLineIndex(resolver, changeEvent.range.end.line, changeEvent.range.end.character);
+		
+		fcDebugLog("to change: " + substring(src, start, end - start), conf);
+		fcDebugLog("in line: " + findLine(resolver, start).line, conf);
+		
+		before = substring(src, 0, start);
+		after = substring(src, end, strlen(src) - end);
+		src1 = before + changeEvent.text + after;
+		resolver1 = makeLineResolver(src1);
+		fcDebugLog("changed line: " + findLine(resolver1, start).line, conf);
+		src;
+	} else {
+		// changed file is passed as a whole.
+		fcUnescapeString(changeEvent.text);
+	}
+}
+
 fcLspTextDocumentDidSave(call: FcLspMethodCall) -> void {
 	switch (json2LspDidSaveTextDocumentParams(call.params)) {
 		Some(params): {
-			// No actions yet. TODO: fast compilation for error messages?
+			path = fcCorrectUriPath(params.textDocument.uri.path);
+			fcLoadFileSource(call.globEnv, path);
 			call.loop_cb();
 		}
 		None(): {
