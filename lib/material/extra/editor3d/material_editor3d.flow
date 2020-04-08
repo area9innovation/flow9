@@ -6,7 +6,7 @@ export {
 
 		M3DEditorStyle ::= M3DEditorCamera, M3DEditorCameraPosition, M3DEditorStageSize, M3DEditorScene, M3DEditorTree, M3DEditorTreeOrder, M3DEditorSelected,
 			M3DEditorAxesVisible, M3DEditorGridVisible, M3DEditorBoxesVisible, M3DEditorInteractive,
-			M3DEditorLoadFn, M3DEditorSaveFn, M3DEditorExportFn, M3DEditorPropertiesFn, M3DEditorParseFn, F3DStageStyle;
+			M3DEditorLoadFn, M3DEditorSaveFn, M3DEditorExportFn, M3DEditorObjectPropertiesFn, M3DEditorGeometryPropertiesFn, M3DEditorMaterialPropertiesFn, M3DEditorParseFn, F3DStageStyle;
 
 			M3DEditorCamera(camera : F3DObject); // Editor initial camera
 			M3DEditorCameraPosition(position : DynamicBehaviour<Point3D>); // Get or set camera position
@@ -25,14 +25,18 @@ export {
 			M3DEditorLoadFn(fn : ((sceneJson : string) -> void) -> void); // Fn called in "Open Scene" menu item, default is openFileDialog
 			M3DEditorSaveFn(fn : (sceneJson : string) -> void); // Fn called in "Save Scene" menu item, default is saveFileClient
 			M3DEditorExportFn(fn : ref Maybe<(includeCamera : bool) -> string>); // Fn to obtain current scene Json
-			M3DEditorPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain properties for any 3d object
+			M3DEditorObjectPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain properties for any 3d object
+			M3DEditorGeometryPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain geometry properties for any 3d object
+			M3DEditorMaterialPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain material properties for any 3d object
 			M3DEditorParseFn(fn : (scene : F3DNative) -> F3DNative); // Fn called after parsing currently loaded scene
 
 	M3DEditor(
 		menu : MMenuPanel,
 		stage : Material,
 		tree : MTree,
-		properties : Material
+		objectProperties : Material,
+		geometryProperties : Material,
+		materialProperties : Material
 	);
 }
 
@@ -54,7 +58,9 @@ M3DEditorState(
 	loadFn : ((sceneJson : string) -> void) -> void,
 	saveFn : (sceneJson : string) -> void,
 	exportFn : ref Maybe<(includeCamera : bool) -> string>,
-	propertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
+	objectPropertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
+	geometryPropertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
+	materialPropertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
 	parseFn : (F3DNative) -> F3DNative,
 	mutable ignoreUndo : bool
 );
@@ -101,10 +107,22 @@ makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEd
 			M3DEditorExportFn(ref None())
 		).fn;
 
-	propertiesFn =
+	objectPropertiesFn =
 		extractStruct(
 			style,
-			M3DEditorPropertiesFn(ref None())
+			M3DEditorObjectPropertiesFn(ref None())
+		).fn;
+
+	geometryPropertiesFn =
+		extractStruct(
+			style,
+			M3DEditorGeometryPropertiesFn(ref None())
+		).fn;
+
+	materialPropertiesFn =
+		extractStruct(
+			style,
+			M3DEditorMaterialPropertiesFn(ref None())
 		).fn;
 
 	parseFn =
@@ -136,7 +154,9 @@ makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEd
 		loadFn,
 		saveFn,
 		exportFn,
-		propertiesFn,
+		objectPropertiesFn,
+		geometryPropertiesFn,
+		materialPropertiesFn,
 		parseFn,
 		false
 	)
@@ -153,7 +173,9 @@ M3DEditorStyle2F3DStageStyle(style : [M3DEditorStyle]) -> [F3DStageStyle] {
 
 makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor {
 	state = makeM3DEditorState(manager, style);
-	state.propertiesFn := Some(\obj -> F3DObjectProperties(state, obj));
+	state.objectPropertiesFn := Some(\obj -> F3DObjectProperties(state, obj));
+	state.geometryPropertiesFn := Some(\obj -> F3DGeometryProperties(state, obj));
+	state.materialPropertiesFn := Some(\obj -> F3DMaterialProperties(state, obj));
 	cameraDistance = extractStruct(style, F3DCameraDistance(0.0, 1000.0));
 
 	scene =
@@ -561,13 +583,55 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 			]
 		);
 
-	properties =
+	objectProperties =
 		MSelect(state.selected, \o ->
 			eitherMap(
 				o,
 				\c ->
 					eitherMap(
-						^(state.propertiesFn),
+						^(state.objectPropertiesFn),
+						\fn ->
+							map(fn(c), \p ->
+								MProportionBaselineCols([
+									Pair(const(0.25), MGroup2(TFillX(), MText(p.first + ": ", []))),
+									Pair(const(0.75), p.second)
+								])
+							)
+							|> MLinesYCenter,
+						TEmpty()
+					),
+				TEmpty()
+			)
+		);
+
+	geometryProperties =
+		MSelect(state.selected, \o ->
+			eitherMap(
+				o,
+				\c ->
+					eitherMap(
+						^(state.geometryPropertiesFn),
+						\fn ->
+							map(fn(c), \p ->
+								MProportionBaselineCols([
+									Pair(const(0.25), MGroup2(TFillX(), MText(p.first + ": ", []))),
+									Pair(const(0.75), p.second)
+								])
+							)
+							|> MLinesYCenter,
+						TEmpty()
+					),
+				TEmpty()
+			)
+		);
+
+	materialProperties =
+		MSelect(state.selected, \o ->
+			eitherMap(
+				o,
+				\c ->
+					eitherMap(
+						^(state.materialPropertiesFn),
 						\fn ->
 							map(fn(c), \p ->
 								MProportionBaselineCols([
@@ -586,7 +650,9 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 		menu,
 		stage,
 		tree,
-		properties
+		objectProperties,
+		geometryProperties,
+		materialProperties
 	);
 }
 
@@ -1463,6 +1529,36 @@ F3DObjectProperties(state : M3DEditorState, object : native) -> [Pair<string, Ma
 		else
 			a
 	)
+}
+
+F3DGeometryProperties(state : M3DEditorState, object : native) -> [Pair<string, Material>] {
+	type = get3DObjectType(object);
+
+	[
+		Pair(
+			"Type",
+			MTextInput(make(type), [MCondensed(true), ReadOnly(true)], [])
+		),
+		Pair(
+			"UUID",
+			MTextInput(make(get3DObjectId(object)), [MCondensed(true), ReadOnly(true)], [])
+		)
+	]
+}
+
+F3DMaterialProperties(state : M3DEditorState, object : native) -> [Pair<string, Material>] {
+	type = get3DObjectType(object);
+
+	[
+		Pair(
+			"Type",
+			MTextInput(make(type), [MCondensed(true), ReadOnly(true)], [])
+		),
+		Pair(
+			"UUID",
+			MTextInput(make(get3DObjectId(object)), [MCondensed(true), ReadOnly(true)], [])
+		)
+	]
 }
 
 appendF3DUndo(state : M3DEditorState) -> void {
