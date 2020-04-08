@@ -25,6 +25,8 @@ import tools/flowc/lsp_types;
 */
 
 export {
+	initFcLspEnv() -> FcLspEnv;
+
 	fcDecodeJsonRequest(s : string) -> Json;
 	fcLspReadRequest() -> Maybe<FcLspRequest>;
 	FcLspRequest(
@@ -33,15 +35,24 @@ export {
 		type : string, // Content-Type
 		json : string  // the Json description of request
 	);
-	fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json,  out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void;
-	FcLspEnv(
-		// Mapping from a file name to a current file contensts with local changes, not saved 
-		changes : Tree<string, string>
-	);
+	fcLspProcessRequest(
+		conf : CompilerConfig, 
+		globEnv : FcTypeEnvGlobal, 
+		lspEnv : FcLspEnv,
+		json : Json,  
+		out_cb : (string) -> void, 
+		loop_cb : () -> void, 
+		exit_cb : () -> void
+	) -> void;
 }
 
-fcJsonObjectHasField(obj : JsonObject, field : string) -> bool {
-	exists(obj.members, \member -> member.first == field)
+FcLspEnv(
+	// Mapping from a file name to a current file contensts with local changes, not saved 
+	changes : Tree<string, ref string>
+);
+
+initFcLspEnv() -> FcLspEnv {
+	FcLspEnv(makeTree());
 }
 
 fcDecodeJsonRequest(s : string) -> Json {
@@ -90,7 +101,8 @@ fcLspReadRequest() -> Maybe<FcLspRequest> {
 
 FcLspMethodCall(
 	conf : CompilerConfig,
-	env : FcTypeEnvGlobal,
+	globEnv : FcTypeEnvGlobal,
+	lspEnv : FcLspEnv,
 	id : Json, 
 	params : Json, 
 	out_cb : (Json) ->  void, 
@@ -131,7 +143,15 @@ fcLspNormalResponse(id : Json, result : Json) -> Json {
 	JsonObject([Pair("jsonrpc", JsonString("2.0")), Pair("id", id), Pair("result", result)]);
 }
 
-fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
+fcLspProcessRequest(
+	conf : CompilerConfig, 
+	globEnv : FcTypeEnvGlobal, 
+	lspEnv : FcLspEnv,
+	json : Json, 
+	str_out_cb : (string) ->  void, 
+	loop_cb : () -> void, 
+	exit_cb : () -> void
+) -> void {
 	id = getJsonFieldValue(json, "id", JsonString(""));
 	method = getJsonStringField(json, "method", "");
 	params = getJsonFieldValue(json, "params", JsonObject([]));
@@ -145,7 +165,7 @@ fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, s
 		loop_cb();
 	} else {
 		switch (lookupTree(fcLspMethods, method)) {
-			Some(m): m(FcLspMethodCall(conf, env, id, params, out_cb, loop_cb, exit_cb));
+			Some(m): m(FcLspMethodCall(conf, globEnv, lspEnv, id, params, out_cb, loop_cb, exit_cb));
 			None(): {
 				out_cb(fcLspErrorResponse(id, 1, "request method " + method + " is not found"));
 				loop_cb();
@@ -156,7 +176,7 @@ fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, s
 
 fcLspShutdown(call : FcLspMethodCall) -> void {
 	fcLspClientConf := JsonObject([]);
-	fcClearCache(call.env); // reset module cache
+	fcClearCache(call.globEnv); // reset module cache
 	call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 	call.loop_cb();
 }
@@ -206,7 +226,7 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textitem.uri.path));
 			runConfig(
 				CompilerConfig(conf with config = setTree(conf.config, "update-cache", "1")),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					clearFcOutput(call.conf.threadId);
 					call.loop_cb();
@@ -280,7 +300,7 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textid.uri.path));
 			runConfig(
 				CompilerConfig(conf with config = setTree(conf.config, "print-outline", "1")),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -395,7 +415,7 @@ fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -430,7 +450,7 @@ fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -465,7 +485,7 @@ fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -500,7 +520,7 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -541,7 +561,7 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -578,7 +598,7 @@ fcLspTextDocumentCompletion(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -643,7 +663,7 @@ fcLspWorkspaceExecuteCommand(call: FcLspMethodCall) -> void {
 						conf = fcLspFileConfig(call.conf, fcCorrectUriPath(^file));
 						runConfig(
 							CompilerConfig(conf with config = mergeTree(conf.config, pairs2tree(params))), 
-							call.env, 
+							call.globEnv, 
 							\code -> {
 								out = fcOutput(call.conf.threadId);
 								clearFcOutput(call.conf.threadId);
