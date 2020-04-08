@@ -46,6 +46,10 @@ LspCompletionItem : (
 	command: Maybe<LspCommand>,
 	data: Json
 );
+LspVersionedTextDocumentIdentifier : (uri : URI, version : string);
+LspDidChangeTextDocumentParams : (textDocument : LspVersionedTextDocumentIdentifier, contentChanges : [LspTextDocumentContentChangeEvent]);
+LspTextDocumentContentChangeEvent : (range : LspRange, rangeLength : int, text : string);
+LspDidSaveTextDocumentParams : (textDocument : LspTextDocumentIdentifier, text : string);
 
 lspPosition2Json(pos : LspPosition) -> Json;
 lspRange2Json(range : LspRange) -> Json;
@@ -70,6 +74,10 @@ json2LspTextDocumentPositionParams(json : Json) -> Maybe<LspTextDocumentPosition
 json2LspRename(json : Json) -> Maybe<LspRename>;
 json2LspExecuteCommandParams(json : Json) -> Maybe<LspExecuteCommandParams>;
 json2LspCompletionParams(json : Json) -> Maybe<LspCompletionParams>;
+json2LspVersionedTextDocumentIdentifier(json : Json) -> Maybe<LspVersionedTextDocumentIdentifier>;
+json2LspDidChangeTextDocumentParams(json : Json) -> Maybe<LspDidChangeTextDocumentParams>;
+json2LspTextDocumentContentChangeEvent(json : Json) -> Maybe<LspTextDocumentContentChangeEvent>;
+json2LspDidSaveTextDocumentParams(json : Json) -> Maybe<LspDidSaveTextDocumentParams>;
 
 // 0 stands for no kin
 fcLspSymbolKindName2id = pairs2tree([
@@ -291,3 +299,45 @@ json2LspCompletionParams(json : Json) -> Maybe<LspCompletionParams> {
 	);
 }
 
+json2LspVersionedTextDocumentIdentifier(json : Json) -> Maybe<LspVersionedTextDocumentIdentifier> {
+	uri = getJsonStringField(json, "uri", "");
+	version = getJsonStringField(json, "verison", "");
+	if (uri == "" || version == "") None() else Some(LspVersionedTextDocumentIdentifier(parseURI(uri), version));
+}
+
+json2LspDidChangeTextDocumentParams(json : Json) -> Maybe<LspDidChangeTextDocumentParams> {
+	maybeMap(json2LspVersionedTextDocumentIdentifier(getJsonObjectField(json, "textDocument")), \textDocument ->
+		LspDidChangeTextDocumentParams(textDocument, 
+			filtermap(getJsonArrayField(json, "contentChanges"), json2LspTextDocumentContentChangeEvent)
+		)
+	);
+}
+
+json2LspTextDocumentContentChangeEvent(json : Json) -> Maybe<LspTextDocumentContentChangeEvent> {
+	if (!jsonObjectHasMember(json, "text")) None() else {
+		text = getJsonStringField(json, "text", "");
+		range = json2LspRange(getJsonObjectField(json, "range"));
+		rangeLength = getJsonStringField(json, "rangeLength", "");
+		Some(LspTextDocumentContentChangeEvent(
+			switch (range) {
+				Some(r): r;
+				None(): LspRange(LspPosition(-1, -1), LspPosition(-1, -1));
+			},
+			if (rangeLength == "") -1 else s2i(rangeLength),
+			text
+		))
+	}
+}
+
+json2LspDidSaveTextDocumentParams(json : Json) -> Maybe<LspDidSaveTextDocumentParams> {
+	maybeMap(json2LspTextDocumentIdentifier(getJsonObjectField(json, "textDocument")), \textDocument ->
+		LspDidSaveTextDocumentParams(textDocument, getJsonStringField(json, "text", ""))
+	);
+}
+
+jsonObjectHasMember(json : Json, member : string) -> bool {
+	switch (json) {
+		JsonObject(members): exists(members, \p -> p.first == member);
+		default: false;
+	}
+}
