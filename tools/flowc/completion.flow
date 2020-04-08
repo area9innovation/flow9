@@ -1,10 +1,11 @@
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/incremental/fiprettyprint;
 import tools/flowc/incremental/fi_helpers;
+import tools/flowc/flowc_helpers;
 
 export {
 	codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, e : FiExp, line : int, character : int) -> void;
-	codeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, character : int) -> void;
+	codeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, linetext : string, line : int, character : int) -> void;
 }
 
 /*
@@ -19,12 +20,31 @@ TODO:
 
 codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, e : FiExp, line : int, character : int) -> void {
 	completions = doCodeCompletion(config, globEnv, e, makeList());
-	printCodeCompletions(completions, line, character);
+	printCodeCompletions(config, completions, line, character, 1);
 }
 
-codeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, character : int) -> void {
-	completions = doCodeCompleteName(config, globEnv, name, makeList());
-	printCodeCompletions(completions, line, character);
+codeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, linetext : string, line : int, character : int) -> void {
+	prefix = trimCompletionPrefix(character, linetext, config);
+	if (prefix.first != "") {
+		completions = doCodeCompletePrefix(config, globEnv, prefix.first, makeList());
+		printCodeCompletions(config, completions, line, character, prefix.second);
+	}
+}
+
+trimCompletionPrefix(col : int, linetext : string, config : CompilerConfig) -> Pair<string, int> {
+	if (col < 0 || col > strlen(linetext)) Pair("", 0) else {
+		start = for(col,
+			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(linetext, i - 1)), 
+			\i -> i - 1
+		);
+		end = for(col, 
+			\i -> if (i + 1 >= strlen(linetext)) false else fcIsIdChar(getCharAt(linetext, i + 1)), 
+			\i -> i + 1
+		);
+		if (isDigit(getCharAt(linetext, start))) Pair("", 0) else {
+			Pair(substring(linetext, start, col - start), end - col + 1);
+		}
+	}
 }
 
 doCodeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, ex : FiExp, acc : List<CodeCompletion>) -> List<CodeCompletion> {
@@ -39,7 +59,7 @@ doCodeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, ex : FiExp,
 			doCodeCompletion(config, globEnv, f, acc);
 		}
 		FiVar(name, type, start): {
-			doCodeCompleteName(config, globEnv, name, acc);
+			doCodeCompletePrefix(config, globEnv, name, acc);
 		}
 		FiLet(name, type, e1, e2, type2, start): def();
 		FiIf(e1, e2, e3, type, start): def();
@@ -59,12 +79,15 @@ doCodeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, ex : FiExp,
 	codeCompleteType(config, globEnv, fiExpType(ex), acc2);
 }
 
-doCodeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+doCodeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, prefix : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
-
+	file = trimFlowfile(config.flowfile, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
+	reduce_name = \nm -> substring(nm, strlen(prefix), strlen(nm) - strlen(prefix));
 	mapList(
-		fcFilterNameCache(globEnv, \cached -> startsWith(cached.named.name, name)),
-		\cached -> {
+		fcFilterNameCacheList(globEnv, \cached -> 
+			startsWith(cached.named.name, prefix) && (cached.exported || cached.module == file)
+		),
+		\cached : FcCacheNamed -> {
 			named = cached.named;
 			switch (named) {
 				FiTypeStruct(nm,__,__,__): 
@@ -72,35 +95,40 @@ doCodeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : st
 						nm,
 						CompletionConstructor(),
 						prettyFiStructOrUnion(conf, named, makeSet()),
-						"struct"
+						"struct",
+						reduce_name(nm),
 					);
 				FiTypeUnion(nm,__,__,__): 
 					CodeCompletion(
 						nm,
 						CompletionConstructor(),
 						prettyFiStructOrUnion(conf, named, makeSet()),
-						"union"
+						"union",
+						reduce_name(nm)
 					);
 				FiFunctionDec(nm,__,type,__,__): 
 					CodeCompletion(
 						nm,
 						CompletionFunction(),
 						prettyFiType(conf, type, makeSet()),
-						"function"
+						"function",
+						reduce_name(nm)
 					);
 				FiGlobalVar(nm,__,type,__,__):
 					CodeCompletion(
 						nm,
 						CompletionVariable(),
 						prettyFiType(conf, type, makeSet()),
-						"variable"
+						"variable",
+						reduce_name(nm)
 					);
 				FiNativeDec(nm,__,type,__,__,__,__): 
 					CodeCompletion(
 						nm,
 						CompletionFunction(),
 						prettyFiType(conf, type, makeSet()),
-						"native"
+						"native",
+						reduce_name(nm)
 					);
 			}
 		}
@@ -129,10 +157,11 @@ codeCompleteType(config : CompilerConfig, globEnv : FcTypeEnvGlobal, type : FiTy
 							fold(args, acc, \ac, arg ->
 								Cons(
 									CodeCompletion(
-										"." + arg.name,
+										arg.name,
 										CompletionField(),
 										prettyFiType(conf, arg.type, makeSet()),
 										"field", // Maybe have the entire struct here?
+										"." + arg.name,
 									),
 									ac
 								)
@@ -161,6 +190,8 @@ CodeCompletion(
 	detail : string,
 	// Any documentation we would want
 	documentation : string,
+	// What is actually be inserted at the cursor position
+	insertText : string
 );
 
 CodeCompletionKind ::= CompletionText, 
@@ -196,7 +227,7 @@ CodeCompletionKind ::= CompletionText,
 	export const TypeParameter = 25;
 */
 
-codeCompletion2json(c : CodeCompletion, line : int, character : int) -> Json {
+codeCompletion2json(c : CodeCompletion, line : int, character : int, len : int) -> Json {
 	JsonObject([
 		Pair("label", JsonString(c.label)),
 		Pair("textEdit", JsonObject([
@@ -207,10 +238,10 @@ codeCompletion2json(c : CodeCompletion, line : int, character : int) -> Json {
 				])),
 				Pair("end", JsonObject([
 					Pair("line", JsonDouble(i2d(line))),
-					Pair("character", JsonDouble(i2d(character + 1))),
+					Pair("character", JsonDouble(i2d(character + len))),
 				])),
 			])),
-			Pair("newText", JsonString(c.label))
+			Pair("newText", JsonString(c.insertText))
 		])),
 		Pair("documentation", JsonString(c.documentation)),
 		Pair("kind", JsonDouble(i2d(switch (c.kind) {
@@ -224,18 +255,20 @@ codeCompletion2json(c : CodeCompletion, line : int, character : int) -> Json {
 		// TODO: Define a fixed priority for types, and then the string
 		Pair("sortText", JsonString(c.label)),
 		Pair("detail", JsonString(c.detail)),
+		Pair("insertText", JsonString(c.insertText)),
 	])
 }
 
-printCodeCompletions(c : List<CodeCompletion>, line : int, character : int) -> void {
+printCodeCompletions(config : CompilerConfig, c : List<CodeCompletion>, line : int, character : int, len : int) -> void {
 	allCompletions = list2array(c);
 	completions = subrange(allCompletions, 0, 100);
 	result = JsonObject([
 		Pair("isIncomplete", JsonBool(length(completions) != length(allCompletions))),
 		Pair("items", JsonArray(
-			map(completions, \cm -> codeCompletion2json(cm, line, character))
+			map(completions, \cm -> codeCompletion2json(cm, line, character, len))
 		))
 	]);
 
-	println("completion: " + json2string(result));
+	fcPrintln("completion[" + json2string(result) + "]completion", config.threadId);
 }
+
