@@ -63,7 +63,7 @@ enum FlowCameraMode {
 - (void)textViewDidChangeSelection:(FlowUITextView *)textView;
 @end
 
-@interface WebViewDelegate : NSObject <WKUIDelegate, WKNavigationDelegate> {
+@interface WebViewDelegate : NSObject <WKNavigationDelegate> {
 @private
     iosGLRenderSupport * owner;
     NSMutableDictionary * WebViewInnerDomains;

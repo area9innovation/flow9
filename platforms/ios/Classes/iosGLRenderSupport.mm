@@ -324,11 +324,6 @@
     } else if ([self isFlowAppURL:url]) {
         [ [UIApplication sharedApplication] openURL: url ];
         decisionHandler(WKNavigationActionPolicyCancel);
-    } else if ([absolute_url rangeOfString: @"player.vimeo.com"].location != NSNotFound) {
-        NSString* js = @"var meta = document.createElement('meta'); meta.setAttribute('name', 'viewport'); meta.setAttribute('content', 'width=device-width'); document.getElementsByTagName('head')[0].appendChild(meta);";
-        WKUserScript* script = [[WKUserScript alloc] initWithSource:js injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:YES];
-        [webView.configuration.userContentController addUserScript:script];
-        decisionHandler(WKNavigationActionPolicyAllow);
     } else {
         if ( [absolute_url rangeOfString: @"external_browser="].location != NSNotFound ) {
             if ([absolute_url rangeOfString: @"external_browser=0"].location != NSNotFound) {
@@ -378,12 +373,6 @@
             [webView evaluateJavaScript: @"document.addEventListener('click', function() {} )"  completionHandler: nil];
         }
     }];
-    
-    // spetial case : video from the vimeo server.
-    if ([webView.URL.absoluteString rangeOfString: @"player.vimeo.com"].location != NSNotFound) {
-        UIScrollView *scroll = webView.scrollView;
-        [scroll setZoomScale: (webView.bounds.size.width/scroll.contentSize.width) animated: NO];
-    }
 }
 
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
@@ -1397,9 +1386,8 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     LogI(@"Create WKWebView for URL %@", rq_url);
     WKWebView * web_view = [[WKWebView alloc] init];
     web_view.navigationDelegate = commonWebViewDelegate;
-    web_view.UIDelegate = commonWebViewDelegate;
     web_view.configuration.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
-    web_view.configuration.allowsInlineMediaPlayback = YES;
+    web_view.configuration.allowsInlineMediaPlayback = YES; // Doesn't work for WKWebView - use video playsinline attribute only
     web_view.configuration.ignoresViewportScaleLimits = YES;
     web_view.customUserAgent = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
     
