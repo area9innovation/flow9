@@ -81,6 +81,7 @@ enum FlowCameraMode {
 }
 - (id) initWithOwner: (iosGLRenderSupport *) ownr;
 -(UIView*)viewForZoomingInScrollView:(UIScrollView *)scrollView;
+-(void)scrollViewWillBeginZooming:(UIScrollView*)scrollView withView: (UIView*) view;
 -(void) dealloc;
 @end
 

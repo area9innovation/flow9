@@ -410,6 +410,10 @@
 {
     return nil;
 }
+
+-(void)scrollViewWillBeginZooming:(UIScrollView*)scrollView withView: (UIView*) view {
+    scrollView.pinchGestureRecognizer.enabled = NO;
+}
 @end
 
 @interface UIImage (fixOrientation)
