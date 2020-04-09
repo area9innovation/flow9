@@ -10,7 +10,6 @@
 #import "URLLoader.h"
 #import <MediaPlayer/MediaPlayer.h>
 #import <WebKit/WebKit.h>
-#import "CordovaViewController.h"
 #import "FlowVideoPlayerController.h"
 
 #import "FlowAVPlayerView.h"
@@ -64,7 +63,7 @@ enum FlowCameraMode {
 - (void)textViewDidChangeSelection:(FlowUITextView *)textView;
 @end
 
-@interface WebViewDelegate : NSObject <UIWebViewDelegate, WKNavigationDelegate> {
+@interface WebViewDelegate : NSObject <WKUIDelegate, WKNavigationDelegate> {
 @private
     iosGLRenderSupport * owner;
     NSMutableDictionary * WebViewInnerDomains;
@@ -73,7 +72,7 @@ enum FlowCameraMode {
 }
 
 - (id) initWithOwner: (iosGLRenderSupport *) ownr;
-- (BOOL)webView:(UIWebView *)web_view shouldStartLoadWithRequest:(NSURLRequest *)request navigationType:(UIWebViewNavigationType)nt;
+- (BOOL)webView:(WKWebView *)web_view shouldStartLoadWithRequest:(NSURLRequest *)request navigationType:(WKNavigationType)nt;
 @end
 
 @interface WebScrollViewDelegate : NSObject <UIScrollViewDelegate> {
@@ -137,7 +136,6 @@ public:
     std::map<GLClip*, UIView*> NativeWidgets;
     std::map<UIView*, GLClip*> NativeWidgetClips;
     
-    std::map<UIView*, CordovaViewController *> CDVViewControllers;
     std::map<UIView*, FlowVideoPlayerController *> FlowVideoPlayerControllers;
     
     FlowUITextView * activeTextWidget;
@@ -247,8 +245,6 @@ private:
     WebScrollViewDelegate * commonWebScrollViewDelegate;
     ImagePickerControllerDelegate * commonImagePickerControllerDelegate;
     AudioRecordControlDelegate * commonAudioRecordControllerDelegate;
-
-    CordovaViewController* viewController;
   
     FlowUIOrientation flowUIOrientation;
     
@@ -260,9 +256,6 @@ private:
     
     BOOL hasFullScreenTarget;
     float FullScreenTargetCenterX, FullScreenTargetCenterY, FullScreenTargetScaleFactor;
-    
-    BOOL useWKWebView;
-    BOOL useCordova;
     
     std::string lastCameraAdditionalArgs;
     
