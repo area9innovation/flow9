@@ -99,13 +99,6 @@ class RenderSupport3D {
 		if (untyped __js__("typeof THREE === 'undefined'")) {
 			var head = Browser.document.getElementsByTagName('head')[0];
 			var jscounter = 0;
-			var onloadFn = function() {
-				jscounter++;
-
-				if (jscounter > scriptsToLoad.length - 1) {
-					cb();
-				}
-			}
 
 			var node = Browser.document.createElement('script');
 			node.setAttribute("type","text/javascript");
@@ -115,7 +108,15 @@ class RenderSupport3D {
 					var node = Browser.document.createElement('script');
 					node.setAttribute("type","text/javascript");
 					node.setAttribute("src", url + scriptsVersion);
-					node.onload = onloadFn;
+					node.onload = function() {
+						jscounter++;
+
+						if (jscounter > scriptsToLoad.length - 1) {
+							cb();
+						}
+
+						head.removeChild(node);
+					}
 					head.appendChild(node);
 				}
 			};
@@ -283,7 +284,7 @@ class RenderSupport3D {
 	}
 
 	public static function dispose3DStage(stage : ThreeJSStage) : Void {
-		RenderSupport.once("drawframe", stage.dispose);
+		stage.dispose();
 	}
 
 	public static function make3DScene() : Scene {
@@ -341,6 +342,7 @@ class RenderSupport3D {
 
 				if (LOADING_CACHE_ENABLED) {
 					loadingCache.set(objUrl + mtlUrl, obj);
+					obj.cacheId = objUrl + mtlUrl;
 				}
 
 				onLoad(obj);
@@ -400,13 +402,16 @@ class RenderSupport3D {
 			var loader : Dynamic = untyped __js__("new THREE.GLTFLoader(ThreeJSStage.loadingManager)");
 			loader.load(
 				url,
-				function (gltf) {
+				function (gltf : Dynamic) {
 					if (!cancelled) {
-						if (untyped gltf.scene.children != null && gltf.scene.children.length == 1) {
-							untyped gltf.scene = gltf.scene.children[0];
+						if (gltf.scene.children != null && gltf.scene.children.length == 1) {
+							gltf.scene = gltf.scene.children[0];
 						}
+
 						if (LOADING_CACHE_ENABLED) {
 							loadingCache.set(url, gltf);
+							gltf.cacheId = url;
+							gltf.scene.cacheId = url;
 						}
 
 						onLoad(
@@ -441,6 +446,7 @@ class RenderSupport3D {
 			var onLoadFn = function(obj : Dynamic) {
 				if (LOADING_CACHE_ENABLED) {
 					loadingCache.set(url, obj);
+					obj.cacheId = url;
 				}
 
 				onLoad(obj);
@@ -487,6 +493,7 @@ class RenderSupport3D {
 
 			if (LOADING_CACHE_ENABLED) {
 				loadingCache.set(url, texture);
+				untyped texture.cacheId = url;
 			}
 
 			var onLoadFn = function(loadedTexture : Texture) {
@@ -494,6 +501,7 @@ class RenderSupport3D {
 					untyped loadedTexture.loaded = true;
 					if (LOADING_CACHE_ENABLED) {
 						loadingCache.set(url, loadedTexture);
+						untyped loadedTexture.cacheId = url;
 					}
 
 					for (par3 in parameters) {

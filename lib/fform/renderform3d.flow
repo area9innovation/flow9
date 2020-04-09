@@ -584,17 +584,19 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		F3DScene(objects) : {
 			scene = make3DScene();
 			onDoneCounter : ref int = ref 0;
+			loadingFinished = ref false;
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
 
-				if (^onDoneCounter == length(fgetValue(objects))) {
+				if (!^loadingFinished && ^onDoneCounter == length(fgetValue(objects))) {
+					loadingFinished := true;
 					onDone();
 				} else {
 					[]
 				}
 			}
 
-			concat(
+			concat3(
 				onStart(scene),
 				[
 					fiteriu(objects, \index, o -> {
@@ -612,21 +614,40 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 							innerOnDone
 						)
 					})
-				]
+				],
+				if (!^loadingFinished && length(fgetValue(objects)) == 0) {
+					loadingFinished := true;
+					onDone();
+				} else {
+					[]
+				}
 			)
 		}
 		F3DSceneDeferred(objects, delay, duration) : {
 			scene = make3DScene();
 			onDoneCounter : ref int = ref 0;
+			loadingFinished = ref false;
+			uns = ref [];
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
 
-				if (^onDoneCounter == length(fgetValue(objects))) {
+				if (!^loadingFinished && ^onDoneCounter == length(fgetValue(objects))) {
+					loadingFinished := true;
 					onDone();
 				} else {
 					[]
 				}
 			}
+
+			uns :=
+				[
+					interruptibleTimer(fgetValue(delay) + fgetValue(duration), \ -> {
+						if (!^loadingFinished && length(fgetValue(objects)) == 0) {
+							loadingFinished := true;
+							uns := onDone();
+						}
+					})
+				];
 
 			concat(
 				onStart(scene),
@@ -667,7 +688,11 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 									|> (\f -> \ -> applyall(f))
 								)
 							]
-					})
+					}),
+					\ -> {
+						applyall(^uns);
+						uns := [];
+					}
 				]
 			)
 		}
@@ -1491,17 +1516,30 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		}
 		F3DNativeScene(scene, objects) : {
 			onDoneCounter : ref int = ref 0;
+			loadingFinished = ref false;
+			uns = ref [];
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
 
-				if (^onDoneCounter == length(fgetValue(objects))) {
+				if (!^loadingFinished && ^onDoneCounter == length(fgetValue(objects))) {
+					loadingFinished := true;
 					onDone();
 				} else {
 					[]
 				}
 			}
 
-			concat3(
+			uns :=
+				[
+					interruptibleTimer(33, \ -> {
+						if (!^loadingFinished && length(get3DObjectChildren(scene)) == 0) {
+							loadingFinished := true;
+							uns := onDone();
+						}
+					})
+				];
+
+			concat(
 				onStart(scene),
 				[
 					fiteriu(objects, \index, o -> {
@@ -1519,12 +1557,11 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 							innerOnDone
 						)
 					}),
-				],
-				if (length(fgetValue(objects)) == 0) {
-					onDone();
-				} else {
-					[];
+					\ -> {
+						applyall(^uns);
+						uns := [];
 				}
+				]
 			)
 		}
 		F3DJsonObject(json) : {
@@ -2357,7 +2394,8 @@ parseF3DNativeObject(object : native, state : F3DRenderState) -> Pair<F3DNative,
 					})();
 				}
 			}),
-			\ -> ^uns()
+			\ -> ^uns(),
+			\ -> next(children, [])
 		]
 	)
 }
