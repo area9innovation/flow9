@@ -430,7 +430,7 @@ class Native {
 
 	#if js
 	public static inline function strReplace(str : String, find : String, replace : String) : String {
-		return StringTools.replace(str, find, replace);		
+		return StringTools.replace(str, find, replace);
 	}
 	#end
 
@@ -475,6 +475,28 @@ class Native {
 		while (Reflect.hasField(p, "head")) {
 			result[cnt] = p.head;
 			cnt -= 1;
+			p = p.tail;
+		}
+		return result;
+	}
+
+	public static function list2arrayReverse(h : Dynamic) : Array<Dynamic> {
+		var cnt = 0;
+		var p: Dynamic = h;
+		while (Reflect.hasField(p, "head")) {
+			cnt += 1;
+			p = p.tail;
+		}
+		if (cnt == 0) {
+		  return untyped Array(0);
+		}
+		var result = untyped Array(cnt);
+
+		p = h;
+		cnt = 0;
+		while (Reflect.hasField(p, "head")) {
+			result[cnt] = p.head;
+			cnt += 1;
 			p = p.tail;
 		}
 		return result;
@@ -1773,7 +1795,7 @@ class Native {
 	 		var o = haxe.Json.parse(json);
 			return object2JsonStructs(o);
 		} catch (e : Dynamic) {
-			return makeStructValue("JsonDouble", [0.0], null); 
+			return makeStructValue("JsonDouble", [0.0], null);
 		}
 	}
 	#end
