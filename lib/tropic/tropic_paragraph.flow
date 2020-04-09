@@ -26,10 +26,6 @@ export {
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
-
-	countAndUnion(count : int, union : countAndWords);
-	countAndWords(count : int, words : [indexAndWord]);
-	indexAndWord(index : int, word : TParaWord);
 }
 
 TRenderParagraph(
@@ -86,19 +82,19 @@ TRenderParagraph(
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 		w = if (isSingleLine) 100000.0 else max(0.0, wi);
-		paragraphSizeBaselineAndWords = reflowTParaWords(
+		paragraphSizeBaselineAndChanges = reflowTParaWords(
 			words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
 			genIndent, linesCountB, alignWidthM
 		);
-		paragraphSizeAndBaseline = paragraphSizeBaselineAndWords.first;
+		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.first;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
-		iter(paragraphSizeBaselineAndWords.second, \newWord -> {
+		iter(paragraphSizeBaselineAndChanges.second, \change -> {
 			dynArrayPush(
 				stackChanges,
-				TGroupReplace(translateWord(newWord.word, genIndent), newWord.index)
+				TGroupReplace(translateWord(change.word, genIndent), change.wordIndex)
 			);
 		});
 initialWords := makeInitialWords();
@@ -223,6 +219,7 @@ spaceStr : string = " ";
 zeroSpaceStr : string = "\u200b";
 
 TParaLine(words : [TParaWord], indent : double);
+WordsChanges(word : TParaWord, wordIndex : int);
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
 reflowTParaWords(
@@ -238,7 +235,7 @@ reflowTParaWords(
 	generalIndent : double,
 	linesCountB : DynamicBehaviour<int>,
 	alignWidthM : Maybe<double>
-) -> Pair<Pair<WidthHeight, double>, [indexAndWord]> {
+) -> Pair<Pair<WidthHeight, double>, [WordsChanges]> {
 	firstLineWidth = availableParaWidth - getLineIndent(firstLineIndent, 0);
 	textAndChanges = reflowTParaWordsRec(^words, firstLineWidth, firstLineWidth, [], [], firstLineIndent, isMarked, []);
 	text = textAndChanges.first;
@@ -267,31 +264,8 @@ words := concatA(words1);
 		alignWidthM
 	);
 
-	changes = textAndChanges.second;
-	wordsChanges = foldi(paraLines, countAndUnion(0, countAndWords(0, [])), \i, acc, line -> {
-		countAndUnion(
-			acc.count + length(line.words) - 1,
-			{
-				lineIndex = acc.union.count;
-				if (i == changes[lineIndex].line) {
-					wordLineIndex : int = changes[lineIndex].word;
-					wordIndex = acc.count + wordLineIndex;
-					countAndWords(
-						acc.union.count + 1,
-						arrayPush(
-							acc.union.words,
-							indexAndWord(acc.count + wordLineIndex, line.words[wordLineIndex])
-						)
-					);
-				} else acc.union
-			}
-		)
-	});
-
-	Pair(widthAndBaseline, wordsChanges.union.words);
+	Pair(widthAndBaseline, textAndChanges.second);
 }
-
-lineAndWordIndexes(line : int, word : int);
 
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
@@ -302,8 +276,8 @@ reflowTParaWordsRec(
 	lines : [TParaLine],
 	paraIndent : double,
 	isMarked : bool,
-	wordsChanges : [lineAndWordIndexes]
-) -> Pair<[TParaLine], [lineAndWordIndexes]> {
+	wordsChanges : [WordsChanges]
+) -> Pair<[TParaLine], [WordsChanges]> {
 	addLine = \cw, indent -> {
 		if (cw != []) arrayPush(lines, TParaLine(cw, indent)) else lines;
 	}
@@ -338,7 +312,7 @@ reflowTParaWordsRec(
 				width = getWordWidth(word);
 				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
 
-				nextWordsChanges = arrayPush(wordsChanges, lineAndWordIndexes(lineIndex, length(currentWords)));
+				wordIndex = fold(lines, 0, \acc, line -> acc + length(line.words)) + length(currentWords);
 				if (currentWords == []) {
 					// If it is the first item on the line
 					paraword = makeLinePartWord(first);
@@ -350,7 +324,13 @@ reflowTParaWordsRec(
 						lines,
 						paraIndent,
 						false,
-						nextWordsChanges
+						arrayPush(
+							wordsChanges,
+							WordsChanges(
+								paraword,
+								wordIndex
+							)
+						)
 					);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
@@ -363,7 +343,13 @@ reflowTParaWordsRec(
 						lines,
 						paraIndent,
 						false,
-						nextWordsChanges
+						arrayPush(
+							wordsChanges,
+							WordsChanges(
+								paraword,
+								wordIndex
+							)
+						)
 					);
 				} else {
 					// If it is the last item on the line
@@ -376,7 +362,13 @@ reflowTParaWordsRec(
 						addLine(arrayPush(currentWords, paraword), lineIndent),
 						paraIndent,
 						false,
-						nextWordsChanges
+						arrayPush(
+							wordsChanges,
+							WordsChanges(
+								paraword,
+								wordIndex
+							)
+						)
 					);
 				}
 			}
