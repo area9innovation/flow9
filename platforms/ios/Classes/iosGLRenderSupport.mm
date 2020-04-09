@@ -1403,11 +1403,14 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     web_view.configuration.ignoresViewportScaleLimits = YES;
     web_view.customUserAgent = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
     
-    NSDictionary * user_info = @{ @"webView" : web_view, @"domain" : (rq_url && rq_url.host)? rq_url.host: @"" };
+    widget = web_view;
+    
+    NSDictionary * user_info = @{ @"webView" : widget, @"domain" : (rq_url && rq_url.host)? rq_url.host: @"" };
     [[NSNotificationCenter defaultCenter] postNotificationName: @"addInnerDomain" object: nil userInfo: user_info];
+    [commonWebViewDelegate addInnerDomain: rq_url.host forWebView: widget]; // Add the main frame
     
     [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
-    [WidgetsView addSubview:web_view];
+    [WidgetsView addSubview:widget];
     
     return true;
 }
