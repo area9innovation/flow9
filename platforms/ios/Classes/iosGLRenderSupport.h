@@ -207,6 +207,7 @@ protected:
     virtual StackSlot webClipHostCall(GLWebClip */*clip*/, const unicode_string &/*name*/, const StackSlot &/*args*/);
     virtual StackSlot setWebClipZoomable(GLWebClip */*clip*/, const StackSlot &/*args*/);
     virtual StackSlot setWebClipDomains(GLWebClip */*clip*/, const StackSlot &/*args*/);
+    virtual StackSlot webClipEvalJS(GLWebClip* /*clip*/, const unicode_string& /*js*/);
     StackSlot jsstring2stackslot(NSString * str);
     
     void doRequestRedraw();

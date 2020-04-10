@@ -1419,7 +1419,7 @@ StackSlot iosGLRenderSupport::webClipHostCall(GLWebClip *clip, const unicode_str
     
     WKWebView * web_view = (WKWebView*)view;
     [web_view evaluateJavaScript: fn_str completionHandler: nil];
-    return StackSlot::MakeVoid(); // Cannnot get return value synchroneously
+    RETVOID; // Cannnot get return value synchroneously
 }
 
 StackSlot iosGLRenderSupport::setWebClipZoomable(GLWebClip *clip, const StackSlot &args) {
@@ -1446,6 +1446,15 @@ StackSlot iosGLRenderSupport::setWebClipDomains(GLWebClip *clip, const StackSlot
         NSString* domain = UNICODE2NS( RUNNER->GetString( RUNNER->GetArraySlot(domains, i)));
         [commonWebViewDelegate addInnerDomain:domain forWebView:view];
     }
+    
+    RETVOID;
+}
+
+StackSlot iosGLRenderSupport::webClipEvalJS(GLWebClip* clip, const unicode_string& js) {
+    UIView * view = (UIView*)NativeWidgets[clip];
+    
+    WKWebView * web_view = (WKWebView*)view;
+    [web_view evaluateJavaScript: UNICODE2NS(js) completionHandler: nil];
     
     RETVOID;
 }
