@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 10;
+var SERVICE_WORKER_VERSION = 11;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -209,7 +209,7 @@ self.addEventListener('fetch', function(event) {
 
     if (request.method == "GET") {
       var cacheFilter = findCacheFilter(fixedUrl, request.method, false);
-      var fixedUrlToCache = request.url;
+      var fixedUrlToCache = fixedUrl;
       if (!isEmpty(cacheFilter)) {
         fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
       }
