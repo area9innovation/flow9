@@ -609,4 +609,16 @@ class Object3DHelper {
 
 		return [];
 	}
+
+	public static inline function invalidateObject3DMatrix(object : Object3D) : Void {
+		untyped object.matrixChanged = true;
+	}
+
+	public static inline function updateObject3DMatrix(object : Object3D) : Void {
+		if (untyped object.matrixChanged) {
+			untyped object.matrixChanged = false;
+			object.updateMatrix();
+			object.updateMatrixWorld(true);
+		}
+	}
 }

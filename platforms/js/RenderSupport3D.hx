@@ -1220,6 +1220,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalPositionX(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.position.x;
 	}
 
@@ -1228,6 +1229,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalPositionY(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.position.y;
 	}
 
@@ -1236,6 +1238,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalPositionZ(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.position.z;
 	}
 
@@ -1247,6 +1250,7 @@ class RenderSupport3D {
 		if (object.position.x != x) {
 			object.position.x = x;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1256,6 +1260,7 @@ class RenderSupport3D {
 		if (object.position.y != y) {
 			object.position.y = y;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1265,6 +1270,7 @@ class RenderSupport3D {
 		if (object.position.z != z) {
 			object.position.z = z;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1273,14 +1279,17 @@ class RenderSupport3D {
 
 
 	public static function get3DObjectRotationX(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.rotation.x / 0.0174532925 /*degrees*/;
 	}
 
 	public static function get3DObjectLocalRotationY(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.rotation.y / 0.0174532925 /*degrees*/;
 	}
 
 	public static function get3DObjectLocalRotationZ(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.rotation.z / 0.0174532925 /*degrees*/;
 	}
 
@@ -1290,6 +1299,7 @@ class RenderSupport3D {
 		if (object.rotation.x != x) {
 			object.rotation.x = x;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1301,6 +1311,7 @@ class RenderSupport3D {
 		if (object.rotation.y != y) {
 			object.rotation.y = y;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1312,6 +1323,7 @@ class RenderSupport3D {
 		if (object.rotation.z != z) {
 			object.rotation.z = z;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1320,14 +1332,17 @@ class RenderSupport3D {
 
 
 	public static function get3DObjectLocalScaleX(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.scale.x;
 	}
 
 	public static function get3DObjectLocalScaleY(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.scale.y;
 	}
 
 	public static function get3DObjectLocalScaleZ(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.scale.z;
 	}
 
@@ -1335,6 +1350,7 @@ class RenderSupport3D {
 		if (object.scale.x != x) {
 			object.scale.x = x;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1344,6 +1360,7 @@ class RenderSupport3D {
 		if (object.scale.y != y) {
 			object.scale.y = y;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1353,6 +1370,7 @@ class RenderSupport3D {
 		if (object.scale.z != z) {
 			object.scale.z = z;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
