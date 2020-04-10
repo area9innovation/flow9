@@ -72,9 +72,9 @@ serialize(v) {
 }
 
 deserializeArray(s : string, start : int, options: [DeserializeOptions]) -> Triple<flow, int, string> {
-	t = deserializeListUntil(s, start+1, "]", options);
+	t = deserializeListUntil(s, "]", options, Triple(makeList(), start+1, ""));
 
-	Triple(t with first = ^(t.first) |> list2arrayReverse)
+	Triple(t with first = t.first |> list2array)
 }
 
 findNextNonSpaceCharIndex(s : string, start : int) {
@@ -91,31 +91,28 @@ findNextNonSpaceCharIndex(s : string, start : int) {
 }
 
 // Values separated by , until the endChar character comes. Returns the value, the remaining string, and any errors
-deserializeListUntil(s : string, start : int, endChar : string, options: [DeserializeOptions]) -> Triple<ref List<flow>, int, string> {
+deserializeListUntil(s : string, endChar : string, options: [DeserializeOptions], acc : Triple<List<flow>, int, string>) -> Triple<List<flow>, int, string> {
+	start = acc.second;
 	if (getCharAt(s, start) == endChar) {
-		Triple(ref makeList(), start + 1, "");
+		Triple(acc.first, start + 1, "");
 	} else {
 		head : Triple<flow, int, string> = deserializeNext(s, start, options);
 		nextCharIdx = findNextNonSpaceCharIndex(s, head.second);
 		nextChar = getCharAt(s, nextCharIdx);
 		if (nextChar == endChar) {
-			Triple(ref makeList1(head.first), nextCharIdx + 1, head.third);
+			Triple(Cons(head.first, acc.first), nextCharIdx + 1, head.third);
 		} else if (nextChar == ",") {
-			more : Triple<ref List<flow>, int, string> = deserializeListUntil(s, nextCharIdx + 1, endChar, options);
-			if (more.third != "") {
-				// There is a problem
-				more;
-			} else {
-				rlistPush(more.first, head.first);
-				more;
-			}
+			deserializeListUntil(
+				s, endChar, options,
+				Triple(Cons(head.first, acc.first), nextCharIdx + 1, acc.third)
+			)
 		} else {
 			nearestString = substring(s, start, nextCharIdx - start + 1);
 			sLen = strlen(s);
 			errMsg = "Expected , or " + endChar;
 			maybeApply(extractStruct(options, DeserializeOptionFailProc(None())).onFailProc, \proc -> proc(s, nextCharIdx, errMsg));
 			// There is a bug! We expected , or ]. Just ignore
-			Triple(ref makeList(), nextCharIdx, errMsg);
+			Triple(acc.first, nextCharIdx, errMsg);
 		}
 	}
 }
@@ -238,11 +235,11 @@ deserializeStruct(s : string, start : int, options: [DeserializeOptions]) -> Tri
 	} else {
 		throwErrors = extractStruct(options, DeserializeOptionThrowErrors(false)).opt;
 		name = rtrim2(strSubRange(s, start, paren), " \n\t");
-		args = deserializeListUntil(s, paren + 1, ")", options);
+		args = deserializeListUntil(s, ")", options, Triple(makeList(), paren + 1, ""));
 		if (args.third != "") {
 			// There is a problem
 			Triple(flow(IllegalStruct()), args.second, args.third)
-		} else if (throwErrors && containsList(^(args.first), IllegalStruct())) {
+		} else if (throwErrors && containsList(args.first, IllegalStruct())) {
 			Triple(flow(IllegalStruct()), args.second, "Struct member is IllegalStruct");
 		} else {
 			fixup : Maybe<([flow]) -> Triple<flow, int, string>> = fold(options, None(), \acc, option -> {
@@ -274,9 +271,9 @@ deserializeStruct(s : string, start : int, options: [DeserializeOptions]) -> Tri
 			});
 
 			switch (fixup) {
-				Some(v): v(^(args.first) |> list2arrayReverse);
+				Some(v): v(args.first |> list2array);
 				None(): {
-					e = makeStructValue(name, ^(args.first) |> list2arrayReverse, IllegalStruct());
+					e = makeStructValue(name, args.first |> list2array, IllegalStruct());
 					if (e == IllegalStruct()) {
 							println("Error: Could not make struct " + name + " when deserializing: " + substring(s, start, 100));
 						if (throwErrors) {

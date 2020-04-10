@@ -480,28 +480,6 @@ class Native {
 		return result;
 	}
 
-	public static function list2arrayReverse(h : Dynamic) : Array<Dynamic> {
-		var cnt = 0;
-		var p: Dynamic = h;
-		while (Reflect.hasField(p, "head")) {
-			cnt += 1;
-			p = p.tail;
-		}
-		if (cnt == 0) {
-		  return untyped Array(0);
-		}
-		var result = untyped Array(cnt);
-
-		p = h;
-		cnt = 0;
-		while (Reflect.hasField(p, "head")) {
-			result[cnt] = p.head;
-			cnt += 1;
-			p = p.tail;
-		}
-		return result;
-	}
-
 	public static inline function bitXor(a : Int, b : Int) : Int {
 		return a ^ b;
 	}
