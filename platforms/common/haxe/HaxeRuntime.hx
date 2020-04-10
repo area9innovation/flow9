@@ -351,7 +351,7 @@ if (a === b) return true;
 				return true;
 			}
 			case RTInt: return typeOf(value) == RTDouble; // There are only numbers for JS and Flash runtime. Check if integer?
-			case RTRefTo(reftype): switch (typeOf(value)) {case RTRefTo(t): return isValueFitInType(reftype, value.__v); default: return false; };
+			case RTRefTo(reftype): switch (typeOf(value)) {case RTRefTo(t): return isValueFitInType(reftype, value.__v); default: return false; }; 
 			case RTUnknown: return true;
 			case RTStruct(name): switch (typeOf(value)) { case RTStruct(n): return name == "" || n == name; default: return false; };
 			default: return typeOf(value) == type;
@@ -388,7 +388,7 @@ if (a === b) return true;
 
 
 	#if js
-	// Use these when sure args types and count is correct and struct exists
+	// Use these when sure args types and count is correct and struct exists 
 	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
 		var sid  = _structids_.get(n);
 		var o = {
@@ -484,7 +484,7 @@ if (a === b) return true;
 
 	public static function getStructName(id : Int) : String {
 		return _structnames_.get(id);
-	}
+	} 
 
 	// Some characters can NOT be represented in UTF-16, believe it or not!
 	public static function wideStringSafe(str : String) : Bool {

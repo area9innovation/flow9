@@ -430,7 +430,7 @@ class Native {
 
 	#if js
 	public static inline function strReplace(str : String, find : String, replace : String) : String {
-		return StringTools.replace(str, find, replace);
+		return StringTools.replace(str, find, replace);		
 	}
 	#end
 
@@ -1773,7 +1773,7 @@ class Native {
 	 		var o = haxe.Json.parse(json);
 			return object2JsonStructs(o);
 		} catch (e : Dynamic) {
-			return makeStructValue("JsonDouble", [0.0], null);
+			return makeStructValue("JsonDouble", [0.0], null); 
 		}
 	}
 	#end
