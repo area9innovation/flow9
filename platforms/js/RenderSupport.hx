@@ -2797,9 +2797,8 @@ class RenderSupport {
 		clip.setDisableOverlay(disabled);
 	}
 
-	public static function webClipEvalJS(clip : Dynamic, code : String) : Dynamic {
-		clip.evalJS(code);
-		return null;
+	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
+		cb(clip.evalJS(code));
 	}
 
 	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {

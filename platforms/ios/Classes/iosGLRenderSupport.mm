@@ -1393,8 +1393,8 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     web_view.configuration.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
     web_view.configuration.allowsInlineMediaPlayback = YES; // Doesn't work for WKWebView - use video playsinline attribute only
     web_view.configuration.ignoresViewportScaleLimits = YES;
-    web_view.customUserAgent = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
-    
+    NSString* custom_ua = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
+    web_view.customUserAgent = custom_ua;
     widget = web_view;
     
     NSDictionary * user_info = @{ @"webView" : widget, @"domain" : (rq_url && rq_url.host)? rq_url.host: @"" };
@@ -1450,11 +1450,18 @@ StackSlot iosGLRenderSupport::setWebClipDomains(GLWebClip *clip, const StackSlot
     RETVOID;
 }
 
-StackSlot iosGLRenderSupport::webClipEvalJS(GLWebClip* clip, const unicode_string& js) {
-    UIView * view = (UIView*)NativeWidgets[clip];
+StackSlot iosGLRenderSupport::webClipEvalJS(GLWebClip* clip, const unicode_string& js, StackSlot& cb) {
+    RUNNER_VAR = getFlowRunner();
+    int cb_id = RUNNER->RegisterRoot(cb);
     
+    UIView * view = (UIView*)NativeWidgets[clip];
     WKWebView * web_view = (WKWebView*)view;
-    [web_view evaluateJavaScript: UNICODE2NS(js) completionHandler: nil];
+    [web_view evaluateJavaScript: UNICODE2NS(js) completionHandler: ^void(id o, NSError * e) {
+        RUNNER_VAR = getFlowRunner();
+        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+        RUNNER->EvalFunction(RUNNER->LookupRoot(cb_id), 1, RUNNER->AllocateString(NS2UNICODE((NSString*)o)));
+        RUNNER->ReleaseRoot(cb_id);
+    }];
     
     RETVOID;
 }

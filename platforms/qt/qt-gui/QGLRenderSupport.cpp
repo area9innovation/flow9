@@ -801,19 +801,22 @@ StackSlot QGLRenderSupport::webClipHostCall(GLWebClip * clip, const unicode_stri
     return getFlowRunner()->AllocateString("");
 }
 
-StackSlot QGLRenderSupport::webClipEvalJS(GLWebClip * clip, const unicode_string &code) {
+StackSlot QGLRenderSupport::webClipEvalJS(GLWebClip * clip, const unicode_string &code, StackSlot& cb) {
     QWidget *widget = NativeWidgets[clip];
     QWebEngineView *web_view = qobject_cast<QWebEngineView*>(widget);
 
     if (web_view) {
         QWebEnginePage * page = web_view->page();
         QString js = unicode2qt(code);
+
         page->runJavaScript(js, [this](const QVariant &var) {
-            return variant2slot(var);
+            RUNNER_VAR = getFlowRunner();
+            WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+            RUNNER->EvalFunction(cb, 1, variant2slot(var));
         });
     }
 
-    return getFlowRunner()->AllocateString("");
+    RETVOID;
 }
 
 StackSlot QGLRenderSupport::variant2slot(QVariant var) {

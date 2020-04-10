@@ -54,7 +54,7 @@ public class RenderSupport extends NativeHost {
 	public Object setWebClipDisabled(Object clip,boolean value) {
 		return null;
 	}
-	public String webClipEvalJS(Object clip,String code) {
+	public Object webClipEvalJS(Object clip,String code, Func1<Object,String> cb) {
 		return null;
 	}
 	public Object setWebClipZoomable(Object clip,Boolean zoomable) {
