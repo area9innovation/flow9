@@ -164,21 +164,51 @@ class Object3DHelper {
 
 		if (untyped material.map != null) {
 			untyped material.map.dispose();
+
+			if (untyped material.map.cacheId != null) {
+				var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+				loadingCache.remove(untyped material.map.cacheId);
+				untyped material.map.cacheId = null;
+		}
 		}
 
 		if (untyped material.alphaMap != null) {
 			untyped material.alphaMap.dispose();
+
+			if (untyped material.alphaMap.cacheId != null) {
+				var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+				loadingCache.remove(untyped material.alphaMap.cacheId);
+				untyped material.alphaMap.cacheId = null;
+		}
 		}
 
 		if (untyped material.bumpMap != null) {
 			untyped material.bumpMap.dispose();
+
+			if (untyped material.bumpMap.cacheId != null) {
+				var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+				loadingCache.remove(untyped material.bumpMap.cacheId);
+				untyped material.bumpMap.cacheId = null;
+		}
 		}
 
 		if (untyped material.displacementMap != null) {
 			untyped material.displacementMap.dispose();
+
+			if (untyped material.displacementMap.cacheId != null) {
+				var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+				loadingCache.remove(untyped material.displacementMap.cacheId);
+				untyped material.displacementMap.cacheId = null;
+		}
 		}
 
 		material.dispose();
+
+		if (untyped material.cacheId != null) {
+			var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+			loadingCache.remove(untyped material.cacheId);
+			untyped material.cacheId = null;
+		}
 	}
 
 
@@ -338,6 +368,12 @@ class Object3DHelper {
 			if (untyped child.interactive && stage.interactiveObjects.indexOf(child) >= 0) {
 				stage.interactiveObjects.remove(child);
 			}
+
+			if (untyped child.interactive && stage.interactiveObjectsMouseOver.indexOf(child) >= 0) {
+				untyped child.inside = false;
+				emit(child, "mouseout");
+				stage.interactiveObjectsMouseOver.remove(child);
+			}
 		}
 
 		var childrenMap = get3DChildrenMap(parent);
@@ -482,21 +518,24 @@ class Object3DHelper {
 		}
 	}
 
-	public static function dispose(object : Object3D, ?disposeChildren : Bool = false) {
-		emit(object, "mouseout");
+	public static function dispose(object : Object3D, ?disposeChildren : Bool = true) {
+		if (untyped object.inside) {
+			untyped object.inside = false;
+			emit(object, "mouseout");
+		}
 
 		if (untyped disposeChildren && object.children != null && object.children.length > 0) {
 			var children : Array<Object3D> = untyped object.children;
 			for (child in children) {
-				dispose(child);
+				dispose(child, disposeChildren);
 			}
 			untyped object.children = null;
 		}
 
-		if (untyped object.instanceObjects != null && object.instanceObjects.length > 0) {
+		if (untyped disposeChildren && object.instanceObjects != null && object.instanceObjects.length > 0) {
 			var children : Array<Object3D> = untyped object.instanceObjects;
 			for (child in children) {
-				dispose(child);
+				dispose(child, disposeChildren);
 			}
 			untyped object.instanceObjects = null;
 		}
@@ -512,6 +551,12 @@ class Object3DHelper {
 
 		if (untyped object.dispose != null) {
 			untyped object.dispose();
+		}
+
+		if (untyped object.cacheId != null) {
+			var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+			loadingCache.remove(untyped object.cacheId);
+			untyped object.cacheId = null;
 		}
 	}
 

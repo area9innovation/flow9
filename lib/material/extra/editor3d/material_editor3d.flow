@@ -165,12 +165,12 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 						uns = ref nop;
 						uns := makeSubscribe2(state.loading, \l -> {
 							if (!l) {
-								next(state.tree, farray(makeF3DTree(state, c)));
+								next(state.tree, farray(makeF3DTree(state, c, const(true))));
 								^uns();
 							}
 						})();
 					} else {
-						next(state.tree, farray(makeF3DTree(state, c)));
+						next(state.tree, farray(makeF3DTree(state, c, const(true))));
 					}
 
 					state.parseFn(c)
@@ -614,10 +614,12 @@ printF3DChildren(id : string, object : F3DNative) -> F3DNative {
 makeF3DTreeNode(
 	state : M3DEditorState,
 	clip : native,
-	children : Transform<[MTreeNode]>
-) -> MTreeNode {
+	children : (isVisible : Transform<bool>)  -> Transform<[MTreeNode<string>]>,
+	visibleEnabled : Transform<bool>,
+) -> MTreeNode<string> {
 	sel = make(is3DTransformControlsAttached(state.stage, clip));
 	name = make(get3DObjectName(clip));
+	isVisible = make(get3DObjectVisible(clip));
 
 	MTreeNode(
 		get3DObjectId(clip),
@@ -649,20 +651,29 @@ makeF3DTreeNode(
 							}
 						})
 					],
-					MCheckBox(
-						TEmpty(),
-						make(get3DObjectVisible(clip)),
+					MConstruct(
 						[
-							MIconButtonBorder(6.0),
-							MIconSize(16.0),
-							MOnNewValue(\v -> {
-								if (v != get3DObjectVisible(clip)) {
-									appendF3DUndo(state);
-								}
+							\ -> {
+								nextDistinct(isVisible, get3DObjectVisible(clip));
+								nop;
+							}
+						],
+						MCheckBox(
+							TEmpty(),
+							isVisible,
+							[
+								MIconButtonBorder(6.0),
+								MIconSize(16.0),
+								MOnNewValue(\v -> {
+									if (v != get3DObjectVisible(clip)) {
+										appendF3DUndo(state);
+									}
 
-								set3DObjectVisible(clip, v);
-							})
-						]
+									set3DObjectVisible(clip, v);
+								}),
+								MEnabled(visibleEnabled)
+							]
+						)
 					)
 				),
 				MIf(
@@ -709,7 +720,7 @@ makeF3DTreeNode(
 					)
 				)
 			]),
-		children,
+		children(fand(visibleEnabled, isVisible)),
 		[
 			MExpanded(make(true)),
 			MTreeNodeCustomHighlighter(\wh -> MSelect(state.manager.white, \w -> TFrame(0., 4., [MFill(if (w) MGrey(300) else MGrey(700))], TSized(wh)))),
@@ -720,8 +731,9 @@ makeF3DTreeNode(
 
 makeF3DTree(
 	state : M3DEditorState,
-	object : F3DNative
-) -> Transform<MTreeNode> {
+	object : F3DNative,
+	visibleEnabled : Transform<bool>
+) -> Transform<MTreeNode<string>> {
 	switch (object : F3DNative) {
 		F3DNativeScene(clip, items): {
 			map(get3DObjectStage(clip), \s -> {
@@ -729,7 +741,7 @@ makeF3DTree(
 				enable3DStageObjectCache(state.stage);
 			});
 
-			const(makeF3DTreeNode(state, clip, fsubmap(items, \it -> makeF3DTree(state, it))));
+			const(makeF3DTreeNode(state, clip, \isVisible -> fsubmap(items, \it -> makeF3DTree(state, it, isVisible)), visibleEnabled));
 		}
 		F3DNativeObject(clip): {
 			map(get3DObjectStage(clip), \s -> {
@@ -737,13 +749,13 @@ makeF3DTree(
 				enable3DStageObjectCache(state.stage);
 			});
 
-			const(makeF3DTreeNode(state, clip, const([])));
+			const(makeF3DTreeNode(state, clip, \isVisible -> const([]), visibleEnabled));
 		}
 		F3DNativeMutable(innerObject): {
-			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, it)));
+			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, it, visibleEnabled)));
 		}
 		F3DNativeOnLoad(innerObject, onLoad): {
-			makeF3DTree(state, innerObject)
+			makeF3DTree(state, innerObject, visibleEnabled)
 		}
 	}
 }
