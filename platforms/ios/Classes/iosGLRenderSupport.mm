@@ -1376,13 +1376,14 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     [widget release];
     
     NSString * ns_url = UNICODE2NS( web_clip->getUrl() );
-    // Allow # char
-    ns_url = (NSString *)CFURLCreateStringByAddingPercentEscapes(NULL, (CFStringRef)ns_url, CFSTR("%#"), NULL, kCFStringEncodingUTF8);
-    [ns_url autorelease];
-	
+    
+    NSURL* baseResourceUrl = [[[NSBundle mainBundle] resourceURL] URLByAppendingPathComponent:@"www"];
+    bool isLocalFile = [ns_url hasPrefix:@"./"];
     NSURL * rq_url = nil;
-    if ([ns_url hasPrefix:@"./"] || ![URLLoader hasConnection])
+    if (isLocalFile)
         // File should be in the app bundle on the www folder
+        rq_url = [NSURL URLWithString:ns_url relativeToURL:baseResourceUrl];
+    else if (![URLLoader hasConnection])
         rq_url = [NSURL URLWithString:ns_url];
     else
         rq_url = [NSURL URLWithString: ns_url relativeToURL: [URLLoader getBaseURL]];
@@ -1401,7 +1402,11 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     [[NSNotificationCenter defaultCenter] postNotificationName: @"addInnerDomain" object: nil userInfo: user_info];
     [commonWebViewDelegate addInnerDomain: rq_url.host forWebView: widget]; // Add the main frame
     
-    [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
+    if (isLocalFile) {
+        [web_view loadFileURL:rq_url allowingReadAccessToURL:baseResourceUrl];
+    } else {
+        [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
+    }
     [WidgetsView addSubview:widget];
     
     return true;
