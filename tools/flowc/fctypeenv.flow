@@ -82,9 +82,15 @@ export {
 
 	// Lookup a cached entity: a struct, union, global var, function or native.
 	fcLookupNameInCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcCacheNamed>;
+	fcFilterNameCacheList(env : FcTypeEnvGlobal, fn : (FcCacheNamed) -> bool) -> List<FcCacheNamed>;
+	fcFilterNameCacheArray(env : FcTypeEnvGlobal, fn : (FcCacheNamed) -> bool) -> [FcCacheNamed];
 
 	// Lookups a cached file source, if not found - loads and stores.
 	fcFileSource(env : FcTypeEnvGlobal, path : string) -> string;
+	// Stores a certain string as a source for some path.
+	fcSetFileSource(env : FcTypeEnvGlobal, path : string, src : string) -> void;
+	// Loads file source from filesystem. May be used to undo fcSetFileSource function.
+	fcLoadFileSource(env : FcTypeEnvGlobal, path : string) -> void;
 }
 
 initFcTypeEnvLocal() -> FcTypeEnvLocal {
@@ -128,9 +134,48 @@ fcLookupNameInCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcCacheNamed>
 	getConcurrentHashMap(env.nameCache, name, None());
 }
 
+fcFilterNameCacheList(env : FcTypeEnvGlobal, fn : (FcCacheNamed) -> bool) -> List<FcCacheNamed> {
+	filtermapList(array2list(valuesConcurrentHashMap(env.nameCache)), \n -> 
+		maybeBind(n, \cached -> if (fn(cached)) Some(cached) else None())
+	);
+}
+
+fcFilterNameCacheArray(env : FcTypeEnvGlobal, fn : (FcCacheNamed) -> bool) -> [FcCacheNamed] {
+	filtermap(valuesConcurrentHashMap(env.nameCache), \n -> 
+		maybeBind(n, \cached -> if (fn(cached)) Some(cached) else None())
+	);
+}
+
+FcCachedSource(
+	text : string,
+	modified : double
+);
+
 fcFileSource(env : FcTypeEnvGlobal, path : string) -> string {
 	if (!containsConcurrentHashMap(env.sourceCache, path)) {
-		setConcurrentHashMap(env.sourceCache, path, getFileContent(path))
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(getFileContent(path), fileModified(path)));
 	}
-	getConcurrentHashMap(env.sourceCache, path, "");
+	cached = getConcurrentHashMap(env.sourceCache, path, FcCachedSource("", 0.0));
+	modified = fileModified(path);
+	if (cached.modified != modified) {
+		// Reload outdated source.
+		text = getFileContent(path);
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, modified));
+		text;
+	} else {
+		cached.text;
+	}
+}
+
+fcSetFileSource(env : FcTypeEnvGlobal, path : string, text : string) -> void {
+	if (!containsConcurrentHashMap(env.sourceCache, path)) {
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, fileModified(path)));
+	} else {
+		cached = getConcurrentHashMap(env.sourceCache, path, FcCachedSource("", 0.0));
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, cached.modified));
+	}
+}
+
+fcLoadFileSource(env : FcTypeEnvGlobal, path : string) -> void {
+	setConcurrentHashMap(env.sourceCache, path, FcCachedSource(getFileContent(path), fileModified(path)));
 }
