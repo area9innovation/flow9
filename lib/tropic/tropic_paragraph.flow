@@ -86,13 +86,13 @@ TRenderParagraph(
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
 			genIndent, linesCountB, alignWidthM
 		);
-		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.first;
+		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 
 		// need to update words to show hyphenation point
-		changes = paragraphSizeBaselineAndChanges.second;
+		changes = paragraphSizeBaselineAndChanges.words;
 		iteri(changes.words, \i, word -> {
 			dynArrayPush(
 				stackChanges,
@@ -220,11 +220,12 @@ spaceStr : string = " ";
 zeroSpaceStr : string = "\u200b";
 
 TParaLine(words : [TParaWord], indent : double);
+// To remember changed in reflowTParaWords words and thier indexes
 WordsAndIndexes(words : [TParaWord], indexes : [int]);
-
-makeRest(array : [?], count : int) -> [?] {
-	subrange(array, count, length(array) - count);
-}
+// Return type for reflowTParaWordsRec
+LinesAndWords(lines : [TParaLine], words : WordsAndIndexes);
+// Return type for reflowTParaWords
+metricsAndWords(metrics : Pair<WidthHeight, double>, words : WordsAndIndexes);
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
 reflowTParaWords(
@@ -240,10 +241,11 @@ reflowTParaWords(
 	generalIndent : double,
 	linesCountB : DynamicBehaviour<int>,
 	alignWidthM : Maybe<double>
-) -> Pair<Pair<WidthHeight, double>, WordsAndIndexes> {
+) -> metricsAndWords {
 	firstLineWidth = availableParaWidth - getLineIndent(firstLineIndent, 0);
 	textAndChanges = reflowTParaWordsRec(
-		WordsAndIndexes(words, generate(0, length(words), idfn)),
+		words,
+		0,
 		firstLineWidth,
 		firstLineWidth,
 		[],
@@ -252,7 +254,7 @@ reflowTParaWords(
 		isMarked,
 		WordsAndIndexes([], [])
 	);
-	text = textAndChanges.first;
+	text = textAndChanges.lines;
 	paraLines = if (rtl)
 		zipWith(
 			text,
@@ -276,12 +278,13 @@ reflowTParaWords(
 		alignWidthM
 	);
 
-	Pair(widthAndBaseline, textAndChanges.second);
+	metricsAndWords(widthAndBaseline, textAndChanges.words);
 }
 
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
-	wordsAndIndexes : WordsAndIndexes,
+	words : [TParaWord],
+	currentWordIndex : int,
 	availableWidth : double,
 	remaining : double,
 	currentWords : [TParaWord],
@@ -289,7 +292,7 @@ reflowTParaWordsRec(
 	paraIndent : double,
 	isMarked : bool,
 	wordsChanges : WordsAndIndexes
-) -> Pair<[TParaLine], WordsAndIndexes> {
+) -> LinesAndWords {
 	addLine = \cw, indent -> {
 		if (cw != []) arrayPush(lines, TParaLine(cw, indent)) else lines;
 	}
@@ -302,20 +305,29 @@ reflowTParaWordsRec(
 	lineIndent = getLineIndent(paraIndent, lineIndex);
 	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, lineIndex + 1);
 
-	words = wordsAndIndexes.words;
-	indexes = wordsAndIndexes.indexes;
 	if (words == []) {
-		Pair(addLine(currentWords, lineIndent), wordsChanges)
+		LinesAndWords(addLine(currentWords, lineIndent), wordsChanges)
 	} else {
 		word = words[0];
 		detachWord(word, false);
-		rest = WordsAndIndexes(makeRest(words, 1), makeRest(indexes, 1));
+		rest = tailFrom(words, 1);
+		nextWordIndex = currentWordIndex + 1;
 
 		getWordWidth = \word1 -> getValue(word1.inspector.size).width;
 
 		switch (word.word : GeneralWrapElement) {
 			NewLine(): {
-				reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false, wordsChanges);
+				reflowTParaWordsRec(
+					rest,
+					nextWordIndex,
+					nextLineWidth,
+					nextLineWidth,
+					[],
+					addLine(currentWords, lineIndent),
+					paraIndent,
+					false,
+					wordsChanges
+				);
 			}
 			GeneralLinePart(first, mid, end): {
 
@@ -324,12 +336,12 @@ reflowTParaWordsRec(
 					TParaWord(word with ghostView = newView);
 				};
 				width = getWordWidth(word);
-				nextWordWidth = if (rest.words != []) getWordWidth(rest.words[0]) else 0.0;
+				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
 
 				addChange = \paraword -> {
 					WordsAndIndexes(
 						arrayPush(wordsChanges.words, paraword),
-						arrayPush(wordsChanges.indexes, indexes[0])
+						arrayPush(wordsChanges.indexes, currentWordIndex)
 					)
 				};
 				if (currentWords == []) {
@@ -337,6 +349,7 @@ reflowTParaWordsRec(
 					paraword = makeLinePartWord(first);
 					reflowTParaWordsRec(
 						rest,
+						nextWordIndex,
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, paraword),
@@ -350,6 +363,7 @@ reflowTParaWordsRec(
 					paraword = makeLinePartWord(mid);
 					reflowTParaWordsRec(
 						rest,
+						nextWordIndex,
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, paraword),
@@ -363,6 +377,7 @@ reflowTParaWordsRec(
 					paraword = makeLinePartWord(end);
 					reflowTParaWordsRec(
 						rest,
+						nextWordIndex,
 						nextLineWidth,
 						nextLineWidth,
 						[],
@@ -378,10 +393,30 @@ reflowTParaWordsRec(
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = getWordWidth(word);
 				if (width < remaining) {
-					reflowTParaWordsRec(rest, availableWidth, remaining - width, arrayPush(currentWords, word), lines, paraIndent, false, wordsChanges);
+					reflowTParaWordsRec(
+						rest,
+						nextWordIndex,
+						availableWidth,
+						remaining - width,
+						arrayPush(currentWords, word),
+						lines,
+						paraIndent,
+						false,
+						wordsChanges
+					);
 				} else {
 					detachWord(word, true);
-					reflowTParaWordsRec(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false, wordsChanges);
+					reflowTParaWordsRec(
+						rest,
+						nextWordIndex,
+						nextLineWidth,
+						nextLineWidth,
+						[],
+						addLine(currentWords, lineIndent),
+						paraIndent,
+						false,
+						wordsChanges
+					);
 				}
 			}
 			default: {
@@ -417,12 +452,13 @@ reflowTParaWordsRec(
 				};
 
 				if (^width <= remaining || currentWords == []) {
-					_words = subrange(words, 0, wordsCount);
-					_rest = WordsAndIndexes(makeRest(words, wordsCount), makeRest(indexes, wordsCount));
+					_words = take(words, wordsCount);
+					_rest = tailFrom(words, wordsCount);
 
 					newCurrentWords = concat(currentWords, _words);
 					reflowTParaWordsRec(
 						_rest,
+						currentWordIndex + wordsCount,
 						availableWidth,
 						remaining - ^width,
 						newCurrentWords,
@@ -433,7 +469,8 @@ reflowTParaWordsRec(
 					);
 				} else {
 					reflowTParaWordsRec(
-						wordsAndIndexes,
+						words,
+						currentWordIndex,
 						nextLineWidth,
 						nextLineWidth,
 						[],
