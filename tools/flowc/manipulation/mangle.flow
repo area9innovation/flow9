@@ -186,7 +186,7 @@ specializeEntity(
 specializeFunctionBody(f : FiFunctionDec, mangledName : string, typars : Tree<string, FiType>, 
 	polymorphics : Tree<string, FiType>, mangle : bool) 
 {
-	functionType = instantiateFiTypeFunctionTypars(f.type, typars, mangle);
+	functionType = instantiateFiTypeFunctionTypars(polymorphics, f.type, typars, mangle);
 	body = instantiateFiLambdaTypars(f.lambda, typars, polymorphics, makeSet(), mangle);
 	FiFunctionDec(mangledName, body, functionType, f.declStart, f.defiStart);
 }
@@ -196,7 +196,7 @@ specializeFunction(f : FiFunctionDec, mangledName : string, typars : Tree<string
 	polymorphics : Tree<string, FiType>, mangle : bool) {
 
 	// always instantiating without mangle first time to detect unbound parameters correctly
-	draftType = instantiateFiTypeFunctionTypars(f.type, typars, false);
+	draftType = instantiateFiTypeFunctionTypars(polymorphics, f.type, typars, false);
 	// if function parameters are fully specialized, detect unbound type params inside function body
 	// and replace with flow
 	if (fiTypeFullyDefined(draftType)) {
@@ -248,7 +248,7 @@ specializeFiNativeDec(
 		specializations,
 		\mangledName, typars -> {
 			FiNativeDec(mangledName, n.io, 
-				instantiateFiTypeTypars(n.type, typars, mangle),
+				instantiateFiTypeTypars(polymorphics, n.type, typars, mangle),
 				n.nativeName,
 				instantiateFiExpTypars(n.fallbackLambda, typars, polymorphics, makeSet(), mangle), 
 				n.declStart, n.defiStart
@@ -273,7 +273,7 @@ specializationFiTypeStruct(
 				map(struct_.args, \sa -> {
 					FiStructArg(
 						sa.name,
-						instantiateFiTypeTypars(sa.type, typars, mangleFields),
+						instantiateFiTypeTypars(polymorphics, sa.type, typars, mangleFields),
 						sa.ismutable
 					)
 				}),
@@ -301,7 +301,7 @@ specializationFiTypeUnion(
 				map(union.typenames, \tn -> {
 					// instantiating using union type parameters - i.e. List<T>(EmptyList, Cons<T>)
 					// is in fact List<T>(EmptyList<T>, Cons<T>)
-					cast(instantiateFiTypeTypars(FiTypeName(tn.name, union.typeparameters), typars, mangle) : FiType -> FiTypeName)
+					cast(instantiateFiTypeTypars(polymorphics, FiTypeName(tn.name, union.typeparameters), typars, mangle) : FiType -> FiTypeName)
 				}),
 				union.start
 			)
@@ -313,7 +313,7 @@ specializeGlobalVar(v : FiGlobalVar, polymorphics : Tree<string, FiType>) -> FiG
 	FiGlobalVar(
 		v.name,
 		instantiateFiExpTypars(v.value, makeTree(), polymorphics, makeSet(), true),
-		instantiateFiTypeTypars(v.type, makeTree(), true),
+		instantiateFiTypeTypars(polymorphics, v.type, makeTree(), true),
 		v.declStart,
 		v.defiStart
 	);
@@ -329,7 +329,7 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 			FiCall(
 				instantiateFiExpTypars(fn, typars, polymorphic, bound, mangle), 
 				map(args, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)), 
-				instantiateFiTypeTypars(type, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
 				start
 			);
 		}
@@ -338,10 +338,10 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 		FiLet(name, type, e1, e2, type2, start): {
 			FiLet(
 				name,
-				instantiateFiTypeTypars(type, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
 				instantiateFiExpTypars(e1, typars, polymorphic, bound, mangle), 
 				instantiateFiExpTypars(e2, typars, polymorphic, insertSet(bound, name), mangle), 
-				instantiateFiTypeTypars(type2, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type2, typars, mangle), 
 				start
 			);
 		}
@@ -350,44 +350,44 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 				instantiateFiExpTypars(e1, typars, polymorphic, bound, mangle), 
 				instantiateFiExpTypars(e2, typars, polymorphic, bound, mangle), 
 				instantiateFiExpTypars(e3, typars, polymorphic, bound, mangle), 
-				instantiateFiTypeTypars(type, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
 				start
 			);
 		}
 		FiSwitch(x, switchType, cases, type, start):  {
 			FiSwitch(
 				instantiateFiVarTypars(x, typars, polymorphic, bound, mangle),
-				instantiateFiTypeTypars(switchType, typars, mangle),
+				instantiateFiTypeTypars(polymorphic, switchType, typars, mangle),
 				map(cases, \c -> {
-					structType = instantiateFiTypeTypars(FiTypeName(c.struct, getTypars(switchType)), typars, mangle);
+					structType = instantiateFiTypeTypars(polymorphic, FiTypeName(c.struct, getTypars(switchType)), typars, mangle);
 					FiCase(getTypeName(structType), c.argNames, 
 						instantiateFiExpTypars(c.body, typars, polymorphic, 
 							fold(c.argNames, bound, \acc, a -> insertSet(acc, a)), mangle),
 						c.start
 					);
 				}), 
-				instantiateFiTypeTypars(type, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
 				start
 			);
 		}
 		FiCast(e, tFrom, tTo, type, start):  {
 			FiCast(
 				instantiateFiExpTypars(e, typars, polymorphic, bound, mangle), 
-				instantiateFiTypeTypars(tFrom, typars, mangle), 
-				instantiateFiTypeTypars(tTo, typars, mangle), 
-				instantiateFiTypeTypars(type, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, tFrom, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, tTo, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
 				start
 			);
 		}
 		FiSeq(es, type, start):  {
 			FiSeq(
 				map(es, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)), 
-				instantiateFiTypeTypars(type, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
 				start
 			);
 		}
 		FiCallPrim(op, es, type, start): {
-			instantiatedType = instantiateFiTypeTypars(type, typars, mangle);
+			instantiatedType = instantiateFiTypeTypars(polymorphic, type, typars, mangle);
 			instantiatedOp = switch (op) {
 				FcStructPrim(name): 
 					FcStructPrim(
@@ -397,12 +397,12 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 					);
 				FcCreateClosurePrim(structName, lambdaName): {
 					lambdaType = cast(type : FiType -> FiTypeFunction);
-					instantiatedLambdaType = instantiateFiTypeFunctionTypars(lambdaType, typars, false);
+					instantiatedLambdaType = instantiateFiTypeFunctionTypars(polymorphic, lambdaType, typars, false);
 					instantiatedClosureType = lastElement(instantiatedLambdaType.args, FiFunArg("", FiTypeVoid())).type;
 
 					FcCreateClosurePrim(
 						if (mangle && containsKeyTree(polymorphic, structName)) {
-							cast(mangleType(instantiatedClosureType) : FiType -> FiTypeName).name
+							cast(mangleType(polymorphic, instantiatedClosureType) : FiType -> FiTypeName).name
 						} else structName,
 						if (mangle && containsKeyTree(polymorphic, lambdaName)) {
 							mangleName(lambdaName, instantiatedLambdaType);
@@ -425,11 +425,11 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 		FiBool(b, start): f;
 		FiRequire(flowfile, e, type, start): {
 			FiRequire(flowfile, instantiateFiExpTypars(e, typars, polymorphic, bound, mangle), 
-				instantiateFiTypeTypars(type, typars, mangle), start);
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), start);
 		}
 		FiUnsafe(name, fallback, type, start): {
 			FiUnsafe(name, instantiateFiExpTypars(fallback, typars, polymorphic, bound, mangle), 
-				instantiateFiTypeTypars(type, typars, mangle), start);
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle), start);
 		}
 	}
 }
@@ -438,31 +438,31 @@ instantiateFiVarTypars(v : FiVar, typars : Tree<string, FiType>, polymorphic : T
 	bound : Set<string>, mangle : bool) -> FiVar {
 
 	mangled = if (mangle && !containsSet(bound, v.name) && containsKeyTree(polymorphic, v.name)) {
-		mangleName(v.name, instantiateFiTypeTypars(v.type, typars, false))
+		mangleName(v.name, instantiateFiTypeTypars(polymorphic, v.type, typars, false))
 	} else 
 		v.name;
 	
-	FiVar(mangled, instantiateFiTypeTypars(v.type, typars, mangle), v.start);
+	FiVar(mangled, instantiateFiTypeTypars(polymorphic, v.type, typars, mangle), v.start);
 }
 
 instantiateFiLambdaTypars(f : FiLambda, typars : Tree<string, FiType>, polymorphic : Tree<string, FiType>,
 	bound : Set<string>, mangle : bool) -> FiLambda {
 	FiLambda(
-		map(f.args, \a -> FiFunArg(a.name, instantiateFiTypeTypars(a.type, typars, mangle))), 
+		map(f.args, \a -> FiFunArg(a.name, instantiateFiTypeTypars(polymorphic, a.type, typars, mangle))), 
 		instantiateFiExpTypars(f.body, typars, polymorphic, 
 			fold(f.args, bound, \acc, a -> insertSet(acc, a.name)),
 			mangle), 
-		instantiateFiTypeFunctionTypars(f.type, typars, mangle), 
+		instantiateFiTypeFunctionTypars(polymorphic, f.type, typars, mangle), 
 		f.start
 	);
 }
 
-mangleType(type : FiType) -> FiType {
+mangleType(polymorphic : Tree<string, FiType>, type : FiType) -> FiType {
 	switch (type) {
-		FiTypeArray(t): FiTypeArray(mangleType(t));
-		FiTypeFunction(args, returnType): FiTypeFunction(map(args, \a -> FiFunArg(a.name, mangleType(a.type))),
-			mangleType(returnType));
-		FiTypeRef(t):  FiTypeRef(mangleType(t));
+		FiTypeArray(t): FiTypeArray(mangleType(polymorphic, t));
+		FiTypeFunction(args, returnType): FiTypeFunction(map(args, \a -> FiFunArg(a.name, mangleType(polymorphic, a.type))),
+			mangleType(polymorphic, returnType));
+		FiTypeRef(t):  FiTypeRef(mangleType(polymorphic, t));
 		FiTypeParameter(n): FiTypeParameter(n); // should not happen
 		FiTypeBool(): type;
 		FiTypeInt(): type;
@@ -471,20 +471,25 @@ mangleType(type : FiType) -> FiType {
 		FiTypeFlow(): type;
 		FiTypeVoid(): type;
 		FiTypeNative(): type;
-		FiTypeName(name, typeparameters): 
+		FiTypeName(name, typeparameters): {
+			if (containsKeyTree(polymorphic, name)) {
 				FiTypeName(mangleName(name, type), []);
+			} else {
+				FiTypeName(name, map(typeparameters, \tp -> mangleType(polymorphic, tp)));
+			}
+		}
 	}
 }
 
-instantiateFiTypeTypars(type : FiType, typars : Tree<string, FiType>, mangle : bool) -> FiType {
+instantiateFiTypeTypars(polymorphic : Tree<string, FiType>, type : FiType, typars : Tree<string, FiType>, mangle : bool) -> FiType {
 	switch (type) {
-		FiTypeArray(t): FiTypeArray(instantiateFiTypeTypars(t, typars, mangle));
-		FiTypeFunction(args, returnType): instantiateFiTypeFunctionTypars(type, typars, mangle);
-		FiTypeRef(t):  FiTypeRef(instantiateFiTypeTypars(t, typars, mangle));
+		FiTypeArray(t): FiTypeArray(instantiateFiTypeTypars(polymorphic, t, typars, mangle));
+		FiTypeFunction(args, returnType): instantiateFiTypeFunctionTypars(polymorphic, type, typars, mangle);
+		FiTypeRef(t):  FiTypeRef(instantiateFiTypeTypars(polymorphic, t, typars, mangle));
 		FiTypeParameter(n): {
 			resolved = lookupTreeDef(typars, n, type);
 			if (mangle && resolved != type) 
-				mangleType(resolved)
+				mangleType(polymorphic, resolved)
 			else
 				resolved;
 		}
@@ -496,20 +501,20 @@ instantiateFiTypeTypars(type : FiType, typars : Tree<string, FiType>, mangle : b
 		FiTypeVoid(): type;
 		FiTypeNative(): type;
 		FiTypeName(name, typeparameters): {
-			instance = instantiateFiTypeNameTypars(type, typars, mangle);
-			if (mangle) mangleType(instance) else instance;
+			instance = instantiateFiTypeNameTypars(polymorphic, type, typars, mangle);
+			if (mangle) mangleType(polymorphic, instance) else instance;
 		}
 	}
 }
 
-instantiateFiTypeFunctionTypars(fn : FiTypeFunction, typars : Tree<string, FiType>, mangle : bool) -> FiTypeFunction {
+instantiateFiTypeFunctionTypars(polymorphic : Tree<string, FiType>, fn : FiTypeFunction, typars : Tree<string, FiType>, mangle : bool) -> FiTypeFunction {
 	FiTypeFunction(map(fn.args, \a -> {
-			FiFunArg(a.name, instantiateFiTypeTypars(a.type, typars, mangle))
-		}), instantiateFiTypeTypars(fn.returnType, typars, mangle));
+			FiFunArg(a.name, instantiateFiTypeTypars(polymorphic, a.type, typars, mangle))
+		}), instantiateFiTypeTypars(polymorphic, fn.returnType, typars, mangle));
 }
 
-instantiateFiTypeNameTypars(tn : FiTypeName, typars : Tree<string, FiType>, mangle : bool) -> FiTypeName {
+instantiateFiTypeNameTypars(polymorphic : Tree<string, FiType>, tn : FiTypeName, typars : Tree<string, FiType>, mangle : bool) -> FiTypeName {
 	// when instantiating type parameters inside a type, mangling is always false
 	// we need to mangle type name as a whole
-	FiTypeName(tn.name, map(tn.typeparameters, \tp -> instantiateFiTypeTypars(tp, typars, false)));
+	FiTypeName(tn.name, map(tn.typeparameters, \tp -> instantiateFiTypeTypars(polymorphic, tp, typars, false)));
 }
