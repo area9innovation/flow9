@@ -333,18 +333,23 @@ fiTypeIsBasic(t : FiType) -> bool {
 	}
 }
 
-// converts a tree of arrays into a single array using array if keys specified 
-concatArrayTree(keys : [?], tree : Tree<?, [??]>) -> [??] {
-	lst = fold(keys, makeList(), \l, k -> switch (lookupTree(tree, k)) {
-		None(): l;
-		Some(vv): fold(vv, l, \acc, v -> Cons(v, acc));
-	});
-	list2array(lst);
+overrideWithSpecialization(original : [?], getKey : (?) -> ??, overrides : Tree<??, [?]>) -> [?] {
+	if (isEmptyTree(overrides)) original
+	else {
+		fold(original, [], \acc, orig -> {
+			key = getKey(orig);
+			over = getTreeArrayValue(overrides, key);
+			if (over == []) {
+				concat(acc, [orig])
+			} else concat(acc, over)
+		})
+	}
 }
 
 // remove items from tree if they are present in the other tree
 filterTreeByExclusionTree(tree : Tree<?, ??>, excluded : Tree<?, ???>) -> Tree<?, ??> {
-	filterTree(tree, \k, __ -> !containsKeyTree(excluded, k));
+	if (isEmptyTree(excluded)) tree
+	else filterTree(tree, \k, __ -> !containsKeyTree(excluded, k));
 }
 
 specializeProgramModule(program : FiProgram, moduleName : string, polymorphics : Tree<string, FiType>,
@@ -363,6 +368,7 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 				} else acc;
 			});
 
+			// A list of specializations for each struct we should specialize
 			expandedStructs : Tree<string, [FiTypeStruct]> = fold(m.structs, makeTree(), \acc, s -> {
 				if (containsKeyTree(polymorphics, s.name)) {
 					r = specializationFiTypeStruct(s, polymorphics, specializations, true);
@@ -370,6 +376,7 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 				} else acc;
 			});
 
+			// A list of specializations for each union we should specialize
 			expandedUnions : Tree<string, [FiTypeUnion]> = fold(m.unions, makeTree(), \acc, u -> {
 				if (containsKeyTree(polymorphics, u.name)) {
 					r = specializationFiTypeUnion(u, polymorphics, specializations, true);
@@ -377,6 +384,7 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 				} else acc;
 			});
 
+			// A list of specializations for each natives we should specialize
 			expandedNatives : Tree<string, [FiNativeDec]> = fold(m.natives, makeTree(), \acc, n -> {
 				if (containsKeyTree(polymorphics, n.name)) {
 					r = specializeFiNativeDec(n, polymorphics, specializations, true);
@@ -384,19 +392,26 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 				} else acc;
 			});
 
+			// Our globals are specialized here
 			convertedVars : [FiGlobalVar] = map(m.globalVars, \v -> specializeGlobalVar(v, polymorphics));
 
 			// computing init order according to original init order
 			expandedInitOrderList = fold(m.initOrder, makeList(), \l, k -> {
-				if (containsKeyTree(expandedFunctions, k)) {
-					Cons(map(lookupTreeDef(expandedFunctions, k, []), \f -> f.name), l);
-				} else if (containsKeyTree(expandedStructs, k)) {
-					Cons(map(lookupTreeDef(expandedStructs, k, []), \s -> s.name), l); 
-				} else if (containsKeyTree(expandedUnions, k)) {
-					Cons(map(lookupTreeDef(expandedUnions, k, []), \u -> u.name), l);
-				} else if (containsKeyTree(expandedNatives, k)) {
-					Cons(map(lookupTreeDef(expandedNatives, k, []), \n -> n.name), l);
-				} else Cons([k], l);
+				if (containsKeyTree(polymorphics, k)) {
+					// If specialized, expand to the corresponding mangled names
+					if (containsKeyTree(expandedFunctions, k)) {
+						Cons(map(lookupTreeDef(expandedFunctions, k, []), \f -> f.name), l);
+					} else if (containsKeyTree(expandedStructs, k)) {
+						Cons(map(lookupTreeDef(expandedStructs, k, []), \s -> s.name), l); 
+					} else if (containsKeyTree(expandedUnions, k)) {
+						Cons(map(lookupTreeDef(expandedUnions, k, []), \u -> u.name), l);
+					} else if (containsKeyTree(expandedNatives, k)) {
+						Cons(map(lookupTreeDef(expandedNatives, k, []), \n -> n.name), l);
+					} else Cons([k], l);
+				} else {
+					// Not specialized, so just keep it as is
+					Cons([k], l);
+				}
 			});
 
 			// creating a new FiModule
@@ -407,11 +422,11 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 				m.exports,
 				// making sure we are listing replacement entities in the same order
 				// as they were listed originally
-				concatArrayTree(map(m.structs, \s -> s.name), expandedStructs),
-				concatArrayTree(map(m.unions, \u -> u.name), expandedUnions),
-				concatArrayTree(map(m.functions, \f -> f.name), expandedFunctions),
+				overrideWithSpecialization(m.structs, \s -> s.name, expandedStructs),
+				overrideWithSpecialization(m.unions, \u -> u.name, expandedUnions),
+				overrideWithSpecialization(m.functions, \f -> f.name, expandedFunctions),
 				convertedVars,
-				concatArrayTree(map(m.natives, \n -> n.name), expandedNatives),
+				overrideWithSpecialization(m.natives, \n -> n.name, expandedNatives),
 				foldList(expandedInitOrderList, [], \ll, l -> concat(l, ll)),
 				m.stringIncludes,
 				m.start, m.end,
