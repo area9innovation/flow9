@@ -257,13 +257,17 @@ class VideoClip extends FlowContainer {
 		}
 
 		createSubtitlesClip();
-		textField.setTextAndStyle(' ' + text + ' ', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		
+		textField.setAutoAlign('AutoAlignCenter');
+		textField.setNeedBaseline(false);
+		textField.setTextAndStyle(' ' + text + '\u00A0', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
 		updateSubtitlesClip();
 	}
 
 	private function createSubtitlesClip() : Void {
 		if (textField == null) {
 			textField = new TextClip();
+			textField.setWordWrap(true);
 			addChild(textField);
 		};
 	}
@@ -273,6 +277,9 @@ class VideoClip extends FlowContainer {
 			if (videoWidget.width == 0) {
 				textField.setClipVisible(false);
 			} else {
+				textField.setWidth(0.0);
+				textField.setWidth(Math.min(textField.getWidth(), videoWidget.width));
+
 				textField.setClipVisible(true);
 				textField.setClipX((videoWidget.width - textField.getWidth()) / 2.0);
 				textField.setClipY(videoWidget.height - textField.getHeight() - 2.0);

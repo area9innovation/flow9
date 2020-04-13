@@ -14,6 +14,7 @@ protected:
     unicode_string name;
     bool only_download, pending;
 
+    GLTextureBitmap::Ptr image;
     vector<vector<GLTextureImage::Ptr>> imageGrid;
 
     // ROOTS:
@@ -42,6 +43,7 @@ public:
     DEFINE_FLOW_NATIVE_OBJECT(GLPictureClip, GLClip);
     
 private:
+    void splitTextureByMaxSize(GLTextureBitmap::Ptr image, int maxTextureSize);
     vec2 computeImageGridSize();
     GLTextureBitmap::Ptr cropTextureBitmap(GLTextureBitmap::Ptr image, vec2 offset, vec2 size);
 };

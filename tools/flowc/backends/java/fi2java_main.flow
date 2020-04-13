@@ -5,6 +5,7 @@ import tools/flowc/backends/java/fi2java_defines;
 export {
 	generateJavaMain(gctx : JavaGlobalContext) -> void;
 	generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void;
+	generateJavaStructs(gctx : JavaGlobalContext) -> void;
 }
 
 generateJavaMain(gctx : JavaGlobalContext) -> void {
@@ -23,49 +24,10 @@ generateJavaMain(gctx : JavaGlobalContext) -> void {
 		fcPrintln("Main modules: " + i2s(length(gctx.csm_list)), config.threadId);
 	}
 
-	struct_list = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
-		if (length(sdata.fields) == 0) {
-			arrayPush(acc, "\t\t\tSingletonStructs.str_" + sname);
-		} else {
-			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
-		}
-	});
-	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
-		fcPrintln("Main structs: " + i2s(length(struct_list)), config.threadId);
-	}
-
-	pushstr("\n\t// Structs array\n");
-	if (length(struct_list) < 128) {
-		// All structs array
-		pushstr("\tstatic final private Struct[] struct_list = {\n");
-		pushstr(strGlue(struct_list, ",\n") + "\n");
-		pushstr("\t};\n");
-
-		// Constructor
-		pushstr("\tpublic Main(String[] args) {\n");
-		pushstr("\t\tsuper(struct_list, args);\n");
-		pushstr("\t}\n");
-	} else {
-		struct_list_chunks = splitByNumber(struct_list, 128);
-		// All structs array
-		iteri(struct_list_chunks, \i, chunk -> {
-			pushstr("\tstatic final private Struct[] struct_list_" + i2s(i) + " = {\n");
-			pushstr(strGlue(chunk, ",\n") + "\n");
-			pushstr("\t};\n");
-		});
-		pushstr("\tstatic private final Struct[] struct_list() {\n");
-		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
-		pushstr("\t\tint k = 0;\n");
-		iteri(struct_list_chunks, \i, __ ->
-			pushstr("\t\tfor (Struct s : struct_list_" + i2s(i) + ") structs[k++] = s;\n")
-		);
-		pushstr("\t\treturn structs;\n");
-		pushstr("\t}\n");
-		// Constructor
-		pushstr("\tpublic Main(String[] args) {\n");
-		pushstr("\t\tsuper(struct_list(), args);\n");
-		pushstr("\t}\n");
-	}
+	// Constructor
+	pushstr("\tpublic Main(String[] args) {\n");
+	pushstr("\t\tsuper(Structs.structList(), args);\n");
+	pushstr("\t}\n");
 
 	wrappers = list2array(^(gctx.wrapper_code));
 	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
@@ -175,5 +137,63 @@ generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void {
 		fcPrintln("Singleton structs: " + i2s(num_singleton_structs), config.threadId);
 	}
 	fname = pathCombine(gctx.package_path, "SingletonStructs.java");
+	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
+}
+
+generateJavaStructs(gctx : JavaGlobalContext) -> void {
+	code = gctx.header_generator(timestamp());
+	pushstr = \s -> rlistPush(code, s);
+	config = gctx.program.config;
+
+	struct_list = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
+		if (length(sdata.fields) == 0) {
+			arrayPush(acc, "\t\t\tSingletonStructs.str_" + sname);
+		} else {
+			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
+		}
+	});
+	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
+		fcPrintln("Main structs: " + i2s(length(struct_list)), config.threadId);
+	}
+	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Structs {\n");
+	pushstr("\n\t// Structs array\n");
+	if (length(struct_list) < 512) {
+		// All structs array
+		pushstr("\tstatic final private Struct[] struct_list = {\n");
+		pushstr(strGlue(struct_list, ",\n") + "\n");
+		pushstr("\t};\n");
+
+		pushstr("\tstatic final Struct[] structList() {\n");
+		pushstr("\t\treturn struct_list;\n");
+		pushstr("\t}\n");
+	} else {
+		struct_list_chunks = splitByNumber(struct_list, 512);
+		// All structs array
+		iteri(struct_list_chunks, \i, chunk -> generateJavaStructsChunk(gctx, chunk, i));
+		pushstr("\tstatic final Struct[] structList() {\n");
+		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
+		pushstr("\t\tint k = 0;\n");
+		iteri(struct_list_chunks, \i, __ ->
+			pushstr("\t\tfor (Struct s : Structs_" + i2s(i) +  ".structList()) structs[k++] = s;\n")
+		);
+		pushstr("\t\treturn structs;\n");
+		pushstr("\t}\n");
+	}
+	fname = pathCombine(gctx.package_path, "Structs.java");
+	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
+}
+
+generateJavaStructsChunk(gctx : JavaGlobalContext, chunk : [string], i : int) -> void {
+	code = gctx.header_generator(timestamp());
+	pushstr = \s -> rlistPush(code, s);
+	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Structs_" + i2s(i) + " {\n");
+	pushstr("\n\t// Structs array - " + i2s(i) + "th part \n");
+	pushstr("\tstatic final private Struct[] struct_list = {\n");
+	pushstr(strGlue(chunk, ",\n") + "\n");
+	pushstr("\t};\n");
+	pushstr("\tstatic final Struct[] structList() {\n");
+	pushstr("\t\treturn struct_list;\n");
+	pushstr("\t}\n");
+	fname = pathCombine(gctx.package_path, "Structs_" + i2s(i) + ".java");
 	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
 }

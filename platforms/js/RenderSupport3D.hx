@@ -99,13 +99,6 @@ class RenderSupport3D {
 		if (untyped __js__("typeof THREE === 'undefined'")) {
 			var head = Browser.document.getElementsByTagName('head')[0];
 			var jscounter = 0;
-			var onloadFn = function() {
-				jscounter++;
-
-				if (jscounter > scriptsToLoad.length - 1) {
-					cb();
-				}
-			}
 
 			var node = Browser.document.createElement('script');
 			node.setAttribute("type","text/javascript");
@@ -115,7 +108,15 @@ class RenderSupport3D {
 					var node = Browser.document.createElement('script');
 					node.setAttribute("type","text/javascript");
 					node.setAttribute("src", url + scriptsVersion);
-					node.onload = onloadFn;
+					node.onload = function() {
+						jscounter++;
+
+						if (jscounter > scriptsToLoad.length - 1) {
+							cb();
+						}
+
+						head.removeChild(node);
+					}
 					head.appendChild(node);
 				}
 			};
@@ -283,7 +284,7 @@ class RenderSupport3D {
 	}
 
 	public static function dispose3DStage(stage : ThreeJSStage) : Void {
-		RenderSupport.once("drawframe", stage.dispose);
+		stage.dispose();
 	}
 
 	public static function make3DScene() : Scene {
@@ -324,52 +325,65 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(stage : ThreeJSStage, objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		var onLoadFn = function(obj : Dynamic) {
-			if (obj.name == "" && obj.uuid != null) {
-				obj.name = obj.uuid;
-			}
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
 
-			Object3DHelper.invalidateStage(obj);
-			Object3DHelper.emit(obj, "loaded");
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(objUrl + mtlUrl)) {
+			var obj = loadingCache[objUrl + mtlUrl];
 
 			onLoad(obj);
-		}
-
-		if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
-			untyped __js__("
-				new THREE.MTLLoader(ThreeJSStage.loadingManager)
-					.load(mtlUrl, function (materials) {
-						materials.preload();
-
-						new THREE.OBJLoader(ThreeJSStage.loadingManager)
-							.setMaterials(materials)
-							.load(objUrl, onLoadFn);
-					})
-			");
 		} else {
-			untyped __js__("
-				eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
-					\".then((module) => {\",
-					\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
-					\".then((module2) => {\",
-					\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
-					\".then((module3) => {\",
-					\"new module.MTLLoader(ThreeJSStage.loadingManager)\",
-					\".load(mtlUrl, function(materials) {\",
-					\"new module2.OBJLoader2(ThreeJSStage.loadingManager)\",
-					\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
-					\".load(objUrl, onLoadFn);\",
-					\"});\",
-					\"});\",
-					\"});\",
-					\"})\"
-				))
-			");
+			var onLoadFn = function(obj : Dynamic) {
+				if (obj.name == "" && obj.uuid != null) {
+					obj.name = obj.uuid;
+				}
+
+				Object3DHelper.invalidateStage(obj);
+				Object3DHelper.emit(obj, "loaded");
+
+				if (LOADING_CACHE_ENABLED) {
+					loadingCache.set(objUrl + mtlUrl, obj);
+					obj.cacheId = objUrl + mtlUrl;
+				}
+
+				onLoad(obj);
+			}
+
+			if (Platform.isIE || Platform.isEdge || Platform.isMobile) {
+				untyped __js__("
+					new THREE.MTLLoader(ThreeJSStage.loadingManager)
+						.load(mtlUrl, function (materials) {
+							materials.preload();
+
+							new THREE.OBJLoader(ThreeJSStage.loadingManager)
+								.setMaterials(materials)
+								.load(objUrl, onLoadFn);
+						})
+				");
+			} else {
+				untyped __js__("
+					eval(\"import('./js/threejs/examples/jsm/loaders/MTLLoader.js')\".concat(
+						\".then((module) => {\",
+						\"import('./js/threejs/examples/jsm/loaders/OBJLoader2.js')\",
+						\".then((module2) => {\",
+						\"import('./js/threejs/examples/jsm/loaders/obj2/bridge/MtlObjBridge.js')\",
+						\".then((module3) => {\",
+						\"new module.MTLLoader(ThreeJSStage.loadingManager)\",
+						\".load(mtlUrl, function(materials) {\",
+						\"new module2.OBJLoader2(ThreeJSStage.loadingManager)\",
+						\".addMaterials(module3.MtlObjBridge.addMaterialsFromMtlLoader(materials))\",
+						\".load(objUrl, onLoadFn);\",
+						\"});\",
+						\"});\",
+						\"});\",
+						\"})\"
+					))
+				");
+			}
 		}
 	}
 
 	public static function load3DGLTFObject(stage : ThreeJSStage, url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void, onError : String -> Void) : Void -> Void {
-		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
 
 		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
 			var gltf = loadingCache[url];
@@ -388,13 +402,16 @@ class RenderSupport3D {
 			var loader : Dynamic = untyped __js__("new THREE.GLTFLoader(ThreeJSStage.loadingManager)");
 			loader.load(
 				url,
-				function (gltf) {
+				function (gltf : Dynamic) {
 					if (!cancelled) {
-						if (untyped gltf.scene.children != null && gltf.scene.children.length == 1) {
-							untyped gltf.scene = gltf.scene.children[0];
+						if (gltf.scene.children != null && gltf.scene.children.length == 1) {
+							gltf.scene = gltf.scene.children[0];
 						}
+
 						if (LOADING_CACHE_ENABLED) {
 							loadingCache.set(url, gltf);
+							gltf.cacheId = url;
+							gltf.scene.cacheId = url;
 						}
 
 						onLoad(
@@ -421,15 +438,26 @@ class RenderSupport3D {
 	}
 
 	public static function load3DScene(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void) : Void {
-		new ObjectLoader(ThreeJSStage.loadingManager).load(url, onLoad);
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
+
+		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
+			onLoad(loadingCache[url]);
+		} else {
+			var onLoadFn = function(obj : Dynamic) {
+				if (LOADING_CACHE_ENABLED) {
+					loadingCache.set(url, obj);
+					obj.cacheId = url;
+				}
+
+				onLoad(obj);
+			}
+
+			new ObjectLoader(ThreeJSStage.loadingManager).load(url, onLoadFn);
+		}
 	}
 
 	public static function make3DTextureLoader(stage : ThreeJSStage, url : String, onLoad : Dynamic -> Void, parameters : Array<Array<String>>) : Texture {
-		if (ThreeJSStage.loadingManager == null) {
-			return new Texture();
-		}
-
-		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager.cache;
+		var loadingCache : Map<String, Dynamic> = untyped ThreeJSStage.loadingManager == null ? [] : ThreeJSStage.loadingManager.cache;
 
 		if (LOADING_CACHE_ENABLED && loadingCache.exists(url)) {
 			var texture : Texture = loadingCache[url];
@@ -465,6 +493,7 @@ class RenderSupport3D {
 
 			if (LOADING_CACHE_ENABLED) {
 				loadingCache.set(url, texture);
+				untyped texture.cacheId = url;
 			}
 
 			var onLoadFn = function(loadedTexture : Texture) {
@@ -472,6 +501,7 @@ class RenderSupport3D {
 					untyped loadedTexture.loaded = true;
 					if (LOADING_CACHE_ENABLED) {
 						loadingCache.set(url, loadedTexture);
+						untyped loadedTexture.cacheId = url;
 					}
 
 					for (par3 in parameters) {
@@ -1116,11 +1146,12 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectVisible(object : Object3D) : Bool {
-		return object.visible;
+		return untyped object._visible != null ? object._visible : object.visible;
 	}
 
 	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
 		if (untyped object._visible != visible) {
+			object.invalidateStage();
 			untyped object._visible = visible;
 
 			object.updateVisible();
@@ -1189,6 +1220,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalPositionX(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.position.x;
 	}
 
@@ -1197,6 +1229,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalPositionY(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.position.y;
 	}
 
@@ -1205,6 +1238,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectLocalPositionZ(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.position.z;
 	}
 
@@ -1216,6 +1250,7 @@ class RenderSupport3D {
 		if (object.position.x != x) {
 			object.position.x = x;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1225,6 +1260,7 @@ class RenderSupport3D {
 		if (object.position.y != y) {
 			object.position.y = y;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1234,6 +1270,7 @@ class RenderSupport3D {
 		if (object.position.z != z) {
 			object.position.z = z;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1242,14 +1279,17 @@ class RenderSupport3D {
 
 
 	public static function get3DObjectRotationX(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.rotation.x / 0.0174532925 /*degrees*/;
 	}
 
 	public static function get3DObjectLocalRotationY(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.rotation.y / 0.0174532925 /*degrees*/;
 	}
 
 	public static function get3DObjectLocalRotationZ(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.rotation.z / 0.0174532925 /*degrees*/;
 	}
 
@@ -1259,6 +1299,7 @@ class RenderSupport3D {
 		if (object.rotation.x != x) {
 			object.rotation.x = x;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1270,6 +1311,7 @@ class RenderSupport3D {
 		if (object.rotation.y != y) {
 			object.rotation.y = y;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1281,6 +1323,7 @@ class RenderSupport3D {
 		if (object.rotation.z != z) {
 			object.rotation.z = z;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1289,14 +1332,17 @@ class RenderSupport3D {
 
 
 	public static function get3DObjectLocalScaleX(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.scale.x;
 	}
 
 	public static function get3DObjectLocalScaleY(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.scale.y;
 	}
 
 	public static function get3DObjectLocalScaleZ(object : Object3D) : Float {
+		object.updateObject3DMatrix();
 		return object.scale.z;
 	}
 
@@ -1304,6 +1350,7 @@ class RenderSupport3D {
 		if (object.scale.x != x) {
 			object.scale.x = x;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1313,6 +1360,7 @@ class RenderSupport3D {
 		if (object.scale.y != y) {
 			object.scale.y = y;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}
@@ -1322,6 +1370,7 @@ class RenderSupport3D {
 		if (object.scale.z != z) {
 			object.scale.z = z;
 
+			object.invalidateObject3DMatrix();
 			object.broadcastEvent("matrix");
 			object.invalidateStage();
 		}

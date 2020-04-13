@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 10;
+var SERVICE_WORKER_VERSION = 11;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -94,7 +94,14 @@ var urlAddBaseLocation = function(url) {
 var extractUrlParameters = function(url) {
   var urlSplitted = url.split("?");
   if (urlSplitted.length > 1) {
-    return { baseUrl: urlSplitted[0], parameters: urlSplitted.slice(1).join("?").split("&") };
+    // let's fix the url parameters (if url has multiply `?` - change all `?` -> `&`)
+    //  and then split it by `&`
+    var parameters2 = urlSplitted.slice(1).join("&").split("&");
+    // Then, if the url has only one value after the `?`, without `=`, let's add a default key-value like `special_case_key=special_case_value`
+    if (parameters2.length == 1 && !parameters2[0].includes("=")) {
+      parameters2.unshift("special_case_key=special_case_value");
+    }
+    return { baseUrl: urlSplitted[0], parameters: parameters2 };
   } else {
     return { baseUrl: url, parameters: [] };
   }
@@ -202,7 +209,7 @@ self.addEventListener('fetch', function(event) {
 
     if (request.method == "GET") {
       var cacheFilter = findCacheFilter(fixedUrl, request.method, false);
-      var fixedUrlToCache = request.url;
+      var fixedUrlToCache = fixedUrl;
       if (!isEmpty(cacheFilter)) {
         fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
       }
@@ -803,7 +810,7 @@ self.addEventListener('message', function(event) {
     event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
 
     if (!dynamicResourcesExtensions.includes("." + event.data.data.value)) {
-      dynamicResourcesExtensions = dynamicResourcesExtensions.push("." + event.data.data.value);
+      dynamicResourcesExtensions.push("." + event.data.data.value);
     }
 
     respond({ status: "OK" });
