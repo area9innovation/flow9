@@ -1,4 +1,5 @@
-#import <MobileCoreServices/MobileCoreServices.h>
+#import <CoreServices/CoreServices.h>
+#import <CoreServices/UTCoreTypes.h>
 
 #import "iosGLRenderSupport.h"
 
@@ -11,7 +12,6 @@
 #import <objc/runtime.h>
 #include "core/RunnerMacros.h"
 #import "iosAppDelegate.h"
-#import <MobileCoreServices/UTCoreTypes.h>
 #import "EAGLViewController.h"
 #import <CoreText/CoreText.h>
 #import "DeviceInfo.h"
