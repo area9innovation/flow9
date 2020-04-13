@@ -1164,7 +1164,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     // Web Clip
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeWebClip, 7);
     TRY_USE_OBJECT_METHOD(GLWebClip, webClipHostCall, 3);
-    TRY_USE_OBJECT_METHOD(GLWebClip, webClipEvalJS, 2);
+    TRY_USE_OBJECT_METHOD(GLWebClip, webClipEvalJS, 3);
     TRY_USE_OBJECT_METHOD(GLWebClip, setWebClipZoomable, 2);
     TRY_USE_OBJECT_METHOD(GLWebClip, setWebClipDomains, 2);
 
