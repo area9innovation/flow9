@@ -8,31 +8,24 @@ export {
 }
 
 // Find what polymorhic types are used for each name
-collect_polymorphic_entities(program : FiProgram) -> Tree<string, FiType> {
+collect_polymorphic_entities(program : FiProgram, onlyBasicSpecializations : bool) -> Tree<string, FiType> {
 	fold(program.traversal, makeTree(), \acc, m -> 
-		collect_polymorphic_entities_module(acc, program, m));
+		collect_polymorphic_entities_module(acc, program, onlyBasicSpecializations, m));
 }
 
-add_polymorphic_entity(acc : Tree<string, FiType>, program : FiProgram, name : string, type : FiType) -> Tree<string, FiType> {
-	typars = fiCollectTypars(program, type, makeSet());
-	if (!isEmptySet(typars)) 
-		setTree(acc, name, type) 
-	else acc
-}
-
-collect_polymorphic_entities_module(acc : Tree<string, FiType>, program : FiProgram, moduleName : string) 
+collect_polymorphic_entities_module(acc : Tree<string, FiType>, program : FiProgram, onlyBasicSpecializations : bool, moduleName : string) 
 	-> Tree<string, FiType> {
 	switch (lookupTree(program.modules, moduleName)) {
 		None(): acc;
 		Some(m): {
 			functions = fold(m.functions, acc, \acc0, f -> add_polymorphic_entity(acc0, program, f.name, f.type));
-			natives = fold(m.natives, functions, \acc0, f -> add_polymorphic_entity(acc0, program, f.name, f.type));
-			structs = fold(m.structs, natives, \acc0, s -> {
+			natives = if (onlyBasicSpecializations) functions else fold(m.natives, functions, \acc0, f -> add_polymorphic_entity(acc0, program, f.name, f.type));
+			structs = if (onlyBasicSpecializations) natives else fold(m.structs, natives, \acc0, s -> {
 				if (length(s.typars) > 0) // structs are polymorphic iff typars are not empty
 					setTree(acc0, s.name, FiTypeName(s.name, s.typars)) 
 				else acc0
 			});
-			unions = fold(m.unions, structs, \acc0, u -> 
+			unions = if (onlyBasicSpecializations) structs else fold(m.unions, structs, \acc0, u -> 
 				if (length(u.typeparameters) > 0) { // unions are polymorphic iff typars are not empty
 					strcts = fold(u.typenames, acc0, \acc1, tn -> setTree(acc1, tn.name, 
 						FiTypeName(tn.name, u.typeparameters))); // list structs with union's type parameter list
@@ -40,19 +33,18 @@ collect_polymorphic_entities_module(acc : Tree<string, FiType>, program : FiProg
 					setTree(strcts, u.name, FiTypeName(u.name, u.typeparameters)) 
 				} else acc0
 			);
-			globals = fold(m.globalVars, unions, \acc0, g -> 
+			globals = if (onlyBasicSpecializations) unions else fold(m.globalVars, unions, \acc0, g -> 
 				add_polymorphic_entity(acc0, program, g.name, g.type));
 			globals;
 		}
 	}
 }
 
-insertTreeSet(tree : Tree<string, Set<FiType>>, k : string, v : FiType) {
-	if (fiTypeFullyDefined(v)) {
-		values = lookupTreeDef(tree, k, makeSet());
-		setTree(tree, k, insertSet(values, v));
-	} else
-		tree;
+add_polymorphic_entity(acc : Tree<string, FiType>, program : FiProgram, name : string, type : FiType) -> Tree<string, FiType> {
+	typars = fiCollectTypars(program, type, makeSet());
+	if (!isEmptySet(typars)) 
+		setTree(acc, name, type) 
+	else acc
 }
 
 find_type_specializations(type : FiType, polymorphics : Tree<string, FiType>, acc : Tree<string, Set<FiType>>) ->
@@ -236,7 +228,7 @@ do_find_specialization_modules(m : FiModule, polymorphics : Tree<string, FiType>
 
 specializeProgram(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool) -> FiProgram {
 	fcVerbose(cfg, 0, "Specializing - looking for polymorphic entities");
-	polymorphics0 = collect_polymorphic_entities(program);
+	polymorphics0 = collect_polymorphic_entities(program, onlyBasicSpecializations);
 
 	// For JS, we only specialize some polymorphism
 	polymorphics = if (onlyBasicSpecializations) filterTree(polymorphics0, \fn, type -> {
@@ -370,26 +362,23 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 			});
 
 			expandedStructs : Tree<string, [FiTypeStruct]> = fold(m.structs, makeTree(), \acc, s -> {
-				r = specializationFiTypeStruct(s, polymorphics, specializations, true);
-/*                if (length(r) > 1) {
-					println(r);
-				}*/
+				r = if (containsKeyTree(polymorphics, s.name)) {
+					specializationFiTypeStruct(s, polymorphics, specializations, true);
+				} else [s];
 				setTree(acc, s.name, r);
 			});
 
 			expandedUnions : Tree<string, [FiTypeUnion]> = fold(m.unions, makeTree(), \acc, u -> {
-				r = specializationFiTypeUnion(u, polymorphics, specializations, true);
-/*                if (length(r) > 1) {
-				   println(r);
-				}*/
+				r = if (containsKeyTree(polymorphics, u.name)) {
+					specializationFiTypeUnion(u, polymorphics, specializations, true);
+				} else [u];
 				setTree(acc, u.name, r);
 			});
 
 			expandedNatives : Tree<string, [FiNativeDec]> = fold(m.natives, makeTree(), \acc, n -> {
-				r = specializeFiNativeDec(n, polymorphics, specializations, true);
-/*                if (length(r) > 1) {
-				   println(r);
-				}*/
+				r = if (containsKeyTree(polymorphics, n.name)) {
+					specializeFiNativeDec(n, polymorphics, specializations, true);
+				} else [n];
 				setTree(acc, n.name, r);
 			});
 
@@ -469,3 +458,12 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 		}
 	}
 }
+
+insertTreeSet(tree : Tree<string, Set<FiType>>, k : string, v : FiType) {
+	if (fiTypeFullyDefined(v)) {
+		values = lookupTreeDef(tree, k, makeSet());
+		setTree(tree, k, insertSet(values, v));
+	} else
+		tree;
+}
+
