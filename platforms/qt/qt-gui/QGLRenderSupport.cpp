@@ -809,7 +809,7 @@ StackSlot QGLRenderSupport::webClipEvalJS(GLWebClip * clip, const unicode_string
         QWebEnginePage * page = web_view->page();
         QString js = unicode2qt(code);
 
-        page->runJavaScript(js, [this](const QVariant &var) {
+        page->runJavaScript(js, [this, cb](const QVariant &var) {
             RUNNER_VAR = getFlowRunner();
             WITH_RUNNER_LOCK_DEFERRED(RUNNER);
             RUNNER->EvalFunction(cb, 1, variant2slot(var));
