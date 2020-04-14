@@ -324,7 +324,7 @@ class VideoClip extends FlowContainer {
 					function(e) {
 						playFn(false);
 					}
-				)
+				);
 			} else {
 				playingVideos.push(this);
 			}
