@@ -17,7 +17,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	state = makeMDataTableState(m, manager, parent, m2t, rowsCountB, paginationState, sorting);
 
-	enabled = extractStruct(style, MEnabled(const(true)));
 	reorderList = tryExtractStruct(style, MListReorder(make([]), const(false)));
 	isReorderEnabled = eitherMap(reorderList, \rl : MListReorder -> fgetValue(rl.enabled), false);
 	reorderShowIcon = !contains(style, MListReorderHideIcon());
@@ -466,7 +465,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			parent,
 			"MDynamicDataTable",
 			[
-				enabled,
+				MEnabled(state.enabled),
 				IScriptBehaviour("current_page", paginationState.pageNumber, ISInputValue([], "int", true)),
 				IScriptBehaviour("sort_by", sorting.sortColumnNumber, ISInputValue(map(state.columns, \c -> fgetValue(c.header)), "index", true))
 			],
@@ -507,6 +506,7 @@ MDTState(
 	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, bool) -> Tropic,
 	makeCells : (MFocusGroup, int, [Material]) -> [Tropic],
 	cellBox : (int, bool) -> Tropic,
+	enabled : Transform<bool>,
 	subs : [() -> () -> void],
 	m2t : (Material, MFocusGroup) -> Tropic
 );
@@ -524,6 +524,8 @@ makeMDataTableState(
 
 	cellBorder = 16.;
 	externalBorder = 16.;
+
+	enabled = extractStruct(style, MEnabled(const(true))).enabled;
 
 	rowHeight = extractStruct(style, MRowHeight(if (extractStruct(style, MCondensed(false)).condensed) 32. else 48.)).height;
 	headerActions = extractStruct(style, MHeaderActions(TEmpty(), []));
@@ -754,6 +756,7 @@ makeMDataTableState(
 		makeChkbox,
 		makeCells,
 		cellBox,
+		enabled,
 		subs,
 		m2t
 	)
@@ -993,7 +996,8 @@ makeMInnerScrollState(
 		visibilityInspector = make(false);
 		visible = fstall(fand(enabled, visibilityInspector), 0);
 		position = makePoint();
-		MInnerScrollState(lifted, glued, gluedStyle, enabled, visibilityInspector, visible, position, is.style)
+		uiEnabled = fand(enabled, extractStruct(style, MEnabled(const(true))).enabled);
+		MInnerScrollState(lifted, glued, gluedStyle, uiEnabled, visibilityInspector, visible, position, is.style)
 	});
 }
 
@@ -1033,12 +1037,11 @@ MDTTitles(
 			clickColumn = \checkIsCurrent -> sorting.onColumnClick(i, sortStyle, checkIsCurrent);
 			clickColumn(true);
 
-			mouseDownAround(state.manager, None(), make(false), hover, \ -> clickColumn(false),
 				TIfLazy2(
 					fselect(sorting.sortedBy, FLift(\sb : MDataTableSorting -> sb.column == i)),
 					\isSorting ->
 						TIfLazy2(
-							hover,
+							fand(state.enabled, hover),
 							\h ->
 								TCols(
 									[
@@ -1060,7 +1063,11 @@ MDTTitles(
 						),
 					false
 				)
-			)
+				|> (\t -> mouseOnDownAroundCommon(state.manager, [
+						THovering(hover),
+						MOnClick(\ -> clickColumn(false)),
+						TEnabled(state.enabled)
+					], t))
 		} else
 			makeHeaderTitle(false)
 		)
@@ -1219,6 +1226,7 @@ MDTFirstColumn(
 						|> (\t2 -> TShow(fr.show, t2))
 						|> (\t2 -> TLines2(t2, t))
 					}, t))
+				|> (\t -> TAlpha(fif(parent.enabled, const(1.), const(if (getLightBackground(parent)) 0.26 else 0.3)), t))
 				|> (\t -> TAvailableHeight(t, rowsAvailableHeight))
 				|> (\t -> if (state.separators && is.glued) TLines2(MSeparator2T(state.manager, parent, true), t) else t)
 				|> (\t -> TAvailableWidth(t, firstColumnWidth))
