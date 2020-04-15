@@ -4,8 +4,7 @@ import tools/flowc/incremental/fi_helpers;
 import tools/flowc/flowc_helpers;
 
 export {
-	codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, e : FiExp, line : int, character : int) -> void;
-	codeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, linetext : string, line : int, character : int) -> void;
+	codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, linetext : string, line : int, character : int) -> void;
 }
 
 /*
@@ -18,69 +17,76 @@ TODO:
 - types
 */
 
-codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, e : FiExp, line : int, character : int) -> void {
-	completions = doCodeCompletion(config, globEnv, e, makeList());
-	printCodeCompletions(config, completions, line, character, 1);
-}
-
-codeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, linetext : string, line : int, character : int) -> void {
-	prefix = trimCompletionPrefix(character, linetext, config);
-	fcDebugLog("completion prefix: '" + prefix.first + "', " + i2s(prefix.second), config);
-	if (prefix.first != "") {
-		completions = doCodeCompletePrefix(config, globEnv, prefix.first, makeList());
-		printCodeCompletions(config, completions, line, character, prefix.second);
+codeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, linetext : string, line : int, character : int) -> void {
+	fcDebugLog("completion prefix: " + fcCompletionContext2s(fcGetCompletionContext(character, linetext, config)), config);
+	switch (fcGetCompletionContext(character, linetext, config)) {
+		FcCompletionPrefix(prefix, postfix): {
+			completions = codeCompletePrefix(config, globEnv, prefix, makeList());
+			printCodeCompletions(config, completions, line, character, strlen(postfix));
+		}
+		FcCompletionField(field, prefix, postfix): {
+			completions = codeCompleteField(config, globEnv, field, prefix, makeList());
+			printCodeCompletions(config, completions, line, character, strlen(postfix))
+		}
+		FcCompletionNone(): { }
 	}
 }
 
-trimCompletionPrefix(col : int, linetext : string, config : CompilerConfig) -> Pair<string, int> {
-	if (col < 0 || col > strlen(linetext)) Pair("", 0) else {
-		start = for(col,
+FcCompletionContext ::= FcCompletionPrefix, FcCompletionField, FcCompletionNone;
+	FcCompletionField (
+		field : string, // in case of struct field completion
+		prefix : string,
+		postfix : string
+	);
+	FcCompletionPrefix(
+		prefix : string,
+		postfix : string
+	);
+	FcCompletionNone();
+
+fcCompletionContext2s(context : FcCompletionContext) -> string {
+	switch (context) {
+		FcCompletionField(field, prefix, postfix):
+			"field: '" + field + ", prefix: " + prefix + ", postfix: " + postfix;
+		FcCompletionPrefix(prefix, postfix):
+			"prefix: " + prefix + ", postfix: " + postfix;
+		FcCompletionNone():
+			"no completion";
+	}
+}
+
+fcGetCompletionContext(col : int, linetext : string, config : CompilerConfig) -> FcCompletionContext {
+	if (col < 0 || col > strlen(linetext)) FcCompletionNone() else {
+		pref = for(col,
 			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(linetext, i - 1)), 
 			\i -> i - 1
 		);
-		end = for(col, 
-			\i -> if (i + 1 >= strlen(linetext)) false else fcIsIdChar(getCharAt(linetext, i + 1)), 
-			\i -> i + 1
-		);
-		if (isDigit(getCharAt(linetext, start))) Pair("", 0) else {
-			Pair(substring(linetext, start, col - start), end - col + 1);
+		prefix = substring(linetext, pref, col - pref);
+		if (prefix == "" || isDigit(getCharAt(prefix, 0))) FcCompletionNone() else {
+			end = for(col, 
+				\i -> if (i + 1 >= strlen(linetext)) false else fcIsIdChar(getCharAt(linetext, i + 1)), 
+				\i -> i + 1
+			);
+			postfix = substring(linetext, col, end - col);
+			if (pref > 1 && getCharAt(linetext, pref - 1) == "." && fcIsIdChar(getCharAt(linetext, pref - 2))) { 
+				field_start = for(pref - 2,
+					\i -> if (i <= 0) false else fcIsIdChar(getCharAt(linetext, i - 1)), 
+					\i -> i - 1
+				);
+				field = substring(linetext, field_start, pref - field_start - 1);
+				FcCompletionField(field, prefix, postfix);
+			} else {
+				FcCompletionPrefix(prefix, postfix);
+			}
 		}
 	}
 }
 
-doCodeCompletion(config : CompilerConfig, globEnv : FcTypeEnvGlobal, ex : FiExp, acc : List<CodeCompletion>) -> List<CodeCompletion> {
-	def = \ -> {
-		fcPrintln("TODO: Complete " + prettyFiExp(FcPretty(true, true, makeTree(), makeTree()), ex), config.threadId);
-		println(ex);
-		acc;
-	}
-	acc2 = switch (ex) {
-		FiLambda(args, body, type, start): def();
-		FiCall(f, args, type, start): {
-			doCodeCompletion(config, globEnv, f, acc);
-		}
-		FiVar(name, type, start): {
-			doCodeCompletePrefix(config, globEnv, name, acc);
-		}
-		FiLet(name, type, e1, e2, type2, start): def();
-		FiIf(e1, e2, e3, type, start): def();
-		FiSwitch(x, switchType, cases, type, start): def();
-		FiCast(e, tFrom, tTo, type, start): def();
-		FiSeq(es, type, start): def();
-		FiCallPrim(op, es, type, start): def();
-		FiVoid(start): def();
-		FiDouble(d, start): def();
-		FiInt(i, start): def();
-		FiString(s, start): def();
-		FiBool(b, start): def();
-		FiRequire(flowfile, e, type, start): def();
-		FiUnsafe(name, fallback, type, start): def();
-	}
-
-	codeCompleteType(config, globEnv, fiExpType(ex), acc2);
+codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, field : string, prefix : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+	makeList(); // TODO: implement
 }
 
-doCodeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, prefix : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+codeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, prefix : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
 	file = trimFlowfile(config.flowfile, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
 	reduce_name = \nm -> substring(nm, strlen(prefix), strlen(nm) - strlen(prefix));
