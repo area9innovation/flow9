@@ -127,6 +127,14 @@ class ThreeJSStage extends Container {
 	}
 
 	public function dispose() : Void {
+		for (object in objectCache) {
+			Object3DHelper.dispose(object);
+		}
+
+		for (object in interactiveObjects) {
+			Object3DHelper.dispose(object);
+		}
+
 		boxHelpers = [];
 		objectCache = [];
 		objectCacheEnabled = false;
@@ -289,21 +297,19 @@ class ThreeJSStage extends Container {
 
 		if (camera != null) {
 			transformControls = untyped __js__("new THREE.TransformControls(this.camera, this.renderer.domElement, this.renderer.eventElement)");
-			untyped transformControls.transformControls = transformControls;
+			transformControls.addEventListener('dragging-changed', function (event) {
+				if (orbitControls != null) {
+					untyped orbitControls.enabled = !event.value && orbitControlsEnabled;
+				}
+			});
+
+			addEventListeners();
+			invalidateStage();
 		}
 
 		if (scene != null) {
 			untyped scene.transformControls = transformControls;
 		}
-
-		transformControls.addEventListener('dragging-changed', function (event) {
-			if (orbitControls != null) {
-				untyped orbitControls.enabled = !event.value && orbitControlsEnabled;
-			}
-		});
-
-		addEventListeners();
-		invalidateStage();
 	}
 
 	private function createOrbitControls() {

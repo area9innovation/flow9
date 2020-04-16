@@ -147,7 +147,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectChildren(object : Object3D) : Array<Object3D> {
-		return object.children.copy();
+		return Lambda.array(Lambda.filter(object.children, function(v) { return untyped v; }));
 	}
 
 	public static function get3DObjectJSON(object : Object3D, includeCamera : Bool) : String {
@@ -218,7 +218,7 @@ class RenderSupport3D {
 		});
 
 		for (child in objChildren) {
-			if (child[1] != null) {
+			if (child[1] != null && child[2] != null) {
 				RenderSupport3D.apply3DObjectStateFromObject(child[2], child[1], stage);
 				object.add3DChildAt(child[2], child[0]);
 			}
