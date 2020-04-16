@@ -183,7 +183,6 @@ class ProgressiveWebTools {
 			};
 
 			untyped navigator.serviceWorker.controller.postMessage({"action" : "clean_cache_storage"}, [messageChannel.port2]);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -214,7 +213,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -245,7 +243,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -276,7 +273,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -307,7 +303,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
