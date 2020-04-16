@@ -53,6 +53,11 @@ export {
 
 	// Detects if a string is an char, allowed for id in flow.
 	fcIsIdChar(s : string) -> bool;
+
+	// Approximate borders of toplevel function/global variable expressions.
+	// Returns a tree: a toplevel name is mapped onto a pair of start-end, 
+	// of corresponding expression "{ ... }" in braces.
+	fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>>;
 }
 
 addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram {
@@ -412,7 +417,9 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 		check_imports = exists(module.imports, \imp ->
 			switch (fcLoadFromCache(globEnv, imp.flowfile)) {
 				Some(cachedInc): {
-					module.fileinfo.lastupdate < cachedInc.module.fileinfo.lastupdate || cachedInc.dependencyChanged();
+					cachedInc.outdated || 
+					module.fileinfo.lastupdate < cachedInc.loaded.module.fileinfo.lastupdate || 
+					cachedInc.loaded.dependencyChanged();
 				}
 				None(): {
 					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there", config.threadId); true; 
@@ -579,4 +586,65 @@ getFcInfo2ByPos2(pos : int, allowed : string, src : string) -> Maybe<FcInfo2> {
 
 fcIsIdChar(s : string) -> bool {
 	s == "_" || isLetter(s) || isDigit(s);
+}
+
+fcMatchingBrackets(src : string) -> [Pair<int,int>] {
+	fold(enumFromTo(0, strlen(src) - 1), Triple([], -1, 0), \acc, i ->
+		if (getCharAt(src, i) == "{") {
+			if (acc.third == 0) {
+				Triple(acc.first, i, 1);
+			} else {
+				Triple(acc.first, acc.second, acc.third + 1);
+			}
+		} else if (getCharAt(src, i) == "}") {
+			if (acc.third == 1) {
+				Triple(concat(acc.first, [Pair(acc.second, i)]), -1, 0);
+			} else {
+				Triple(acc.first, acc.second, acc.third - 1);
+			}
+		} else {
+			acc;
+		}
+	).first;
+}
+
+forwardUntil(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src)) -1 else
+	if (pred(getCharAt(src, i))) i else
+	forwardUntil(src, i + 1, pred);
+}
+
+backwardUntil(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src)) -1 else
+	if (pred(getCharAt(src, i))) i else
+	backwardUntil(src, i - 1, pred);
+}
+
+forwardWhile(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src) || !pred(getCharAt(src, i))) -1 else
+	if (!pred(getCharAt(src, i + 1))) i else
+	forwardWhile(src, i + 1, pred);
+}
+
+backwardWhile(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src) || !pred(getCharAt(src, i))) -1 else
+	if (!pred(getCharAt(src, i - 1))) i else
+	backwardWhile(src, i - 1, pred);
+}
+
+fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>> {
+	fold(fcMatchingBrackets(src), makeTree(), \acc, pair -> {
+		border = max(
+			backwardUntil(src, pair.first, \s -> s == "="), 
+			backwardUntil(src, pair.first, \s -> s == "(")
+		);
+		if (border == -1) acc else { 
+			id_end = backwardUntil(src, border, fcIsIdChar);
+			id_beg = backwardWhile(src, id_end, fcIsIdChar);
+			if (id_end == -1 || id_beg == -1) acc else {
+				name = substring(src, id_beg, id_end - id_beg + 1);
+				setTree(acc, name, pair);
+			}
+		}
+	});
 }

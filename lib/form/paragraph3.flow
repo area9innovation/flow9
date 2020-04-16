@@ -119,6 +119,7 @@ renderParagraph(
 	interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
+	interLineHighlighting = containsStruct(s, InterlineHighlighting());
 
 	tightWidth = contains(s, TightWidth());
 
@@ -148,7 +149,8 @@ renderParagraph(
 
 	renderParaLinesFn = \lines, storyWidth -> renderParaLines(
 		storyWidth, lines, tightWidth, alignment, interlineSpacing,
-		topLineBaseline, interactiveStyles, rtl, isParagraphMarked
+		topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
+		interLineHighlighting
 	);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
@@ -642,7 +644,8 @@ renderParaLines(
 	topLineBaseline : bool,
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
-	isMarked : bool
+	isMarked : bool,
+	interLineHighlighting : bool
 ) -> Pair<Form, double> {
 	lasti = length(lines) - 1;
 	a : ParaLineAcc = foldi(lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
@@ -660,12 +663,17 @@ renderParaLines(
 			acc.y, line.words, availableWidth, tightWidth,
 			lineAlignment, line.indent,
 			i, styleTree, rtl, isMarked,
-			if (lastLine) 0.0 else interlineSpacing
+			if (interLineHighlighting) {
+				if (i == 0) 0. else - interlineSpacing / 2.0
+			} else 0.0,
+			if (interLineHighlighting){
+				if (lastLine || i == 0) interlineSpacing / 2.0 else interlineSpacing
+			} else 0.0
 		);
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
 			max(acc.width, f.width),
-			acc.y + f.height,
+			acc.y + f.height + if (lastLine) 0. else interlineSpacing,
 			if (i == 0 || !topLineBaseline) f.baseline else acc.baseline
 		);
 	});
@@ -702,13 +710,14 @@ RenderLine(
 	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
 	isMarked : bool,
+	highLightOffset : double,
 	interlineSpacing : double
 ) -> ParaLineResult {
 	optimizedLine = getOptimizedLine(words, alignment);
 	metrics = map(optimizedLine, \p -> getValue(p.metrics));
 	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + m.width); // this is real width of the line at the moment.
 	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
-	lineHeight = interlineSpacing + fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + m.height - m.baseline));
+	lineHeight = fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + m.height - m.baseline));
 
 	// Alignment offset
 	startOffset = if (rtl) max(width - lineWidth, 0.) else 0.;
@@ -743,7 +752,9 @@ RenderLine(
 				dy,
 				m.width,
 				lineHeight,
-				interWord
+				interWord,
+				highLightOffset,
+				interlineSpacing
 			),
 			Translate(const(^alignmentOffset), const(y + dy), fm)
 		);
@@ -791,6 +802,8 @@ applyIntStylesAndHighlighting(
 	width : double,
 	height : double,
 	interWord : double,
+	highLightOffset : double,
+	interlineSpacing : double,
 ) -> Form {
 	getStyleForBackgroundFromCharStyle = \s -> eitherMap(
 		tryExtractStruct(s, BackgroundFill(white)),
@@ -803,7 +816,7 @@ applyIntStylesAndHighlighting(
 
 	makeBackRect = \defStyle, dynStyle -> Rectangle(
 		width + interWord,
-		height + 0.2,
+		height + interlineSpacing + 0.1,
 		replaceStructMany(
 			getStyleForBackgroundFromCharStyle(defStyle),
 			getStyleForBackgroundFromCharStyle(dynStyle)
@@ -847,7 +860,7 @@ applyIntStylesAndHighlighting(
 	modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
 
 	Group([
-		Translate(const(xOffset - interWord / 2.), const(yOffset), textAndBackPair.second),
+		Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
 		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm),
 	]);
 }
