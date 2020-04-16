@@ -81,7 +81,7 @@ export {
 		F3DSceneLoader(url : string);
 		F3DChildren(object : F3DObject, fn : (F3DNative) -> void);
 
-		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable, F3DNativeOnLoad;
+		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable, F3DNativeOnLoad, F3DEmpty;
 			F3DNativeObject(object : native);
 			F3DNativeScene(scene : native, objects : Transform<[F3DNative]>);
 			F3DNativeMutable(object : Transform<F3DNative>);
@@ -1401,13 +1401,19 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		}
 		F3DLoader(objUrl, mtlUrl) : {
 			uns = ref [];
+			destroyed = ref false;
 
 			load3DObject(state.stage, objUrl, mtlUrl, \obj -> {
-				uns := concat(onStart(obj), onDone());
+				if (!^destroyed) {
+					uns := concat(onStart(obj), onDone());
+				}
 			});
 
 			[
-				\ -> dispUnsA(uns)
+				\ -> {
+					destroyed := true;
+					dispUnsA(uns);
+				}
 			]
 		}
 		F3DGLTFLoader(url, onAnimation, onError) : {
@@ -1513,6 +1519,7 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		F3DNativeScene(scene, objects) : {
 			onDoneCounter : ref int = ref 0;
 			loadingFinished = ref false;
+			destroyed = ref false;
 			uns = ref [];
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
@@ -1538,7 +1545,10 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 			concat(
 				onStart(scene),
 				[
-					fiteriu(objects, \index, o -> {
+					\ -> {
+						destroyed := true;
+					},
+					fiteriu(fthrottleUntilNextFrameRendered(objects), \index, o -> {
 						render3dform(
 							o,
 							state,
@@ -1547,7 +1557,10 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 									addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
 									[
 										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
-										\ -> remove3DChild(scene, c)
+										\ -> {
+											if (!^destroyed && !contains(fgetValue(objects), o))
+												remove3DChild(scene, c)
+										}
 									]
 								),
 							innerOnDone
@@ -1556,7 +1569,7 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 					\ -> {
 						applyall(^uns);
 						uns := [];
-				}
+					}
 				]
 			)
 		}
