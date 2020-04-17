@@ -1,0 +1,81 @@
+import material/measing;
+export {
+	MTicker(content : Material, style : [MTickerStyle]) -> Material;
+
+	MTickerStyle ::= MTickerBox, MTickerType, MDuration, MBezier, MDelay, MTickerMoveOnHover, MTickerMargin;
+		MTickerBox(box : Material);
+		MTickerMoveOnHover();
+		MTickerMargin(margin : double);
+		MTickerType(type : MTickerTypes);
+		MTickerTypes ::= MTickerLoop, MTickerBounce, MTickerJump;
+			MTickerLoop();
+			MTickerBounce();
+			MTickerJump();
+}
+
+MTicker(content : Material, style : [MTickerStyle]) -> Material {
+	availableWidth = make(0.);
+	box = extractStruct(style, MTickerBox(TFillXY())).box |> (\m -> MAttachWidth(m, availableWidth));
+	type = extractStruct(style, MTickerType(MTickerBounce())).type;
+	duration = extractStruct(style, MDuration(const(1.)));
+	bezier = extractStruct(style, MBezier(const(CubicBezierEasing(0.5, 0.5, 0.5, 0.5))));
+	delay = extractStruct(style, MDelay(0.));
+	margin = extractStruct(style, MTickerMargin(8.)).margin;
+
+	moveOnHover = contains(style, MTickerMoveOnHover());
+	
+	width = make(0.);
+	progress = make(0.);
+	hovered = make(true);
+	deferUntilRender(\ -> next(hovered, false));
+
+	content
+	|> MBorderLeftRight(margin)
+	|> (\m -> MAttachWidth(m, width))
+	|> (\m -> switch (type) {
+			MTickerLoop(): MGroup2(
+				MTranslate(
+					fselect2(width, progress, FLift2(\w, p ->
+						Point(-w * p, 0.)
+					)),
+					m
+				),
+				MTranslate(
+					fselect2(width, progress, FLift2(\w, p ->
+						Point(w * (1. - p), 0.)
+					)),
+					m
+				)
+			);
+			default :
+				MTranslate(
+					fselect3(width, availableWidth, progress, \w, avW, p ->
+						Point(-(w - avW) * p, 0.)
+					),
+					m
+				);
+		})
+	|> (\m -> MCropSize(box, m))
+	|> (\m -> MMEasingAnimation(
+		const(1.),
+		const(CubicBezierEasing(0.5, 0.5, 0.5, 0.5)),
+		const(true),
+		\t -> {
+			switch (type) {
+				MTickerBounce() : Some(Pair(t, true));
+				MTickerLoop() : Some(Pair(t, false));
+				MTickerJump() : Some(Pair(t, false));
+			}
+		},
+		\info, p -> next(progress, if (info.second) 1. - abs(2. * p - 1.) else p), [
+			MLoop(\t -> Some(t)),
+			MAutoStart(),
+			MFreezeAnimation(if (moveOnHover) fnot(hovered) else const(false)),
+			duration,
+			bezier,
+			delay
+		],
+		m
+	))
+	|> (\m -> if (moveOnHover) MComponent([THovering(hovered)], \__ -> m) else m)
+}

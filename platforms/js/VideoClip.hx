@@ -1,5 +1,6 @@
 import js.Browser;
 import js.html.Element;
+import js.Promise;
 
 import pixi.core.display.Bounds;
 import pixi.core.display.DisplayObject;
@@ -27,8 +28,8 @@ class VideoClip extends FlowContainer {
 	private var fontFamily : String = '';
 	private var textField : TextClip;
 	private var loaded : Bool = false;
-
-	public var keepNativeWidget : Bool = true;
+	private var subtitleAlignBottom : Bool = false;
+	private var autoPlay : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
@@ -67,6 +68,7 @@ class VideoClip extends FlowContainer {
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
 		super();
 
+		this.keepNativeWidget = true;
 		this.metricsFn = metricsFn;
 		this.playFn = playFn;
 		this.durationFn = durationFn;
@@ -97,6 +99,7 @@ class VideoClip extends FlowContainer {
 	private function createVideoClip(filename : String, startPaused : Bool) : Void {
 		deleteVideoClip();
 
+		autoPlay = !startPaused;
 		addVideoSource(filename, "");
 		videoWidget = Browser.document.createElement("video");
 
@@ -106,7 +109,6 @@ class VideoClip extends FlowContainer {
 		}
 
 		videoWidget.crossOrigin = Util.determineCrossOrigin(filename);
-		videoWidget.autoplay = !startPaused;
 		videoWidget.className = 'nativeWidget';
 		videoWidget.setAttribute('playsinline', true);
 		videoWidget.style.pointerEvents = 'none';
@@ -115,13 +117,8 @@ class VideoClip extends FlowContainer {
 			videoWidget.appendChild(source);
 		}
 
-		if (videoWidget.autoplay) {
-			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
-		}
-
 		if (RenderSupport.RendererType != "html") {
 			videoTexture = Texture.fromVideo(videoWidget);
-			untyped videoTexture.baseTexture.autoPlay = !startPaused;
 			untyped videoTexture.baseTexture.autoUpdate = false;
 			videoSprite = new Sprite(videoTexture);
 			untyped videoSprite._visible = true;
@@ -132,15 +129,10 @@ class VideoClip extends FlowContainer {
 		createFullScreenListeners();
 
 		once("removed", deleteVideoClip);
-
-		if (!startPaused && !RenderSupport.hadUserInteracted) {
-			playFn(false);
-		}
 	}
 
 	private function deleteVideoClip() : Void {
 		if (videoWidget != null) {
-			videoWidget.autoplay = false;
 			pauseVideo();
 
 			// Force video unload
@@ -236,11 +228,11 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function setVideoSubtitle(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
-		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool) : Void {
 		if (text == '') {
 			deleteSubtitlesClip();
 		} else {
-			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity, alignBottom);
 		};
 	}
 
@@ -251,20 +243,26 @@ class VideoClip extends FlowContainer {
 	}
 
 	private function setVideoSubtitleClip(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
-		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool) : Void {
 		if (fontFamily != fontfamily && fontfamily != '') {
 			fontFamily = fontfamily;
 			deleteSubtitlesClip();
 		}
 
 		createSubtitlesClip();
-		textField.setTextAndStyle(' ' + text + ' ', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+
+		textField.setAutoAlign('AutoAlignCenter');
+		textField.setNeedBaseline(false);
+		textField.setTextAndStyle(' ' + text + '\u00A0', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		subtitleAlignBottom = alignBottom;
+
 		updateSubtitlesClip();
 	}
 
 	private function createSubtitlesClip() : Void {
 		if (textField == null) {
 			textField = new TextClip();
+			textField.setWordWrap(true);
 			addChild(textField);
 		};
 	}
@@ -274,9 +272,12 @@ class VideoClip extends FlowContainer {
 			if (videoWidget.width == 0) {
 				textField.setClipVisible(false);
 			} else {
+				textField.setWidth(0.0);
+				textField.setWidth(Math.min(textField.getWidth(), videoWidget.width));
+
 				textField.setClipVisible(true);
 				textField.setClipX((videoWidget.width - textField.getWidth()) / 2.0);
-				textField.setClipY(videoWidget.height - textField.getHeight() - 2.0);
+				textField.setClipY(videoWidget.height - textField.getHeight() - 2.0 + (subtitleAlignBottom ? this.y : 0.0));
 
 				textField.invalidateTransform("updateSubtitlesClip");
 			}
@@ -308,14 +309,25 @@ class VideoClip extends FlowContainer {
 	public function pauseVideo() : Void {
 		if (loaded && !videoWidget.paused) {
 			videoWidget.pause();
-			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
+			playingVideos.remove(this);
 		}
 	}
 
 	public function resumeVideo() : Void {
 		if (loaded && videoWidget.paused) {
-			videoWidget.play();
-			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
+			var playPromise : Promise<Dynamic> = videoWidget.play();
+			if (playPromise != null) {
+				playPromise.then(
+					function(arg : Dynamic) {
+						playingVideos.push(this);
+					},
+					function(e) {
+						playFn(false);
+					}
+				);
+			} else {
+				playingVideos.push(this);
+			}
 		}
 	}
 
@@ -328,8 +340,6 @@ class VideoClip extends FlowContainer {
 		checkTimeRange(videoWidget.currentTime, true);
 
 		this.invalidateTransform('onMetadataLoaded'); // Update the widget
-
-		if (!videoWidget.autoplay) videoWidget.pause();
 
 		if (textField != null) {
 			if (RenderSupport.RendererType != "html" && getChildIndex(videoSprite) > getChildIndex(textField)) {
@@ -344,6 +354,12 @@ class VideoClip extends FlowContainer {
 		}
 
 		loaded = true;
+
+		if (autoPlay) {
+			resumeVideo();
+		} else {
+			videoWidget.pause();
+		}
 	}
 
 	private function updateVideoMetrics() {
@@ -369,8 +385,8 @@ class VideoClip extends FlowContainer {
 	}
 
 	private function onStreamEnded() : Void {
-		if (!videoWidget.autoplay) {
-			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
+		if (!videoWidget.loop) {
+			playingVideos.remove(this);
 		}
 
 		for (l in streamStatusListener) {

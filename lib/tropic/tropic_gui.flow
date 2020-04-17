@@ -23,6 +23,9 @@ export {
 	TSizedHeight(width : double, height : Transform<double>) -> Tropic;
 	TSizedWidthHeight(width : Transform<double>, height : Transform<double>) -> Tropic;
 
+	TSizedX(width : Transform<double>) -> Tropic;
+	TSizedY(height : Transform<double>) -> Tropic;
+
 	// Bunch of helpers to inspect sizes. Consider using TInspect also.
 
 	TAttachBox(t : Tropic, box : DynamicBehaviour<WidthHeight>) -> Tropic;
@@ -325,9 +328,6 @@ export {
 
 	TDebugConstruct(tag : string, tr : Tropic) -> Tropic;
 
-	// Hide tropic if available size is less than tropic metrics
-	TIfFits(tr : Tropic) -> Tropic;
-
 	TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic;
 
 	TEvenGrid(content : [[Tropic]]) -> Tropic;
@@ -346,6 +346,9 @@ export {
 	// Helpers to make Tropic not transparent for events
 	disableMouseWheelBelow(content : Tropic) -> Tropic;
 	disableInteractivesBelow(content : Tropic) -> Tropic;
+
+	// Helper to create event blocker layer above element
+	blockInteractives(content : Tropic) -> Tropic;
 
 	// Helpers to make checkered graphics
 	TCheckeredRectangle(style1 : [TGraphicsStyle], style2 : [TGraphicsStyle], content : Tropic) -> Tropic;
@@ -376,6 +379,24 @@ export {
 		pageCount : int,
 		getPageView : (page : Transform<int>) -> Tropic,
 	);
+
+	// TShow that doesn't shrink in size after content is hidden
+	// Has empty size initially if content is hidden
+	TShowKeepMetrics(show : Transform<bool>, content : Tropic) -> Tropic;
+
+	// Shows fullSizeContent only if available space is greater than minimum size required to show it,
+	// Otherwise shows reducedSizeContent
+	TIfFits(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic;
+	TIfFitsWidth(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic;
+	TIfFitsHeight(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic;
+
+	// Shows content only if available space is greater than minimum size required to show it
+	TShowIfFits(content : Tropic) -> Tropic;
+	TShowIfFitsWidth(content : Tropic) -> Tropic;
+	TShowIfFitsHeight(content : Tropic) -> Tropic;
+
+	// Detect is tropic inside viewbox
+	TRenderable(renderable : DynamicBehaviour<bool>, t : Tropic) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -401,6 +422,14 @@ TSizedHeight(width : double, height : Transform<double>) -> Tropic {
 
 TSizedWidthHeight(width : Transform<double>, height : Transform<double>) -> Tropic {
 	TBorderT(width, height, zero, zero, TEmpty())
+}
+
+TSizedX(width : Transform<double>) -> Tropic {
+	TSizedWidth(width, 0.0);
+}
+
+TSizedY(height : Transform<double>) -> Tropic {
+	TSizedHeight(0.0, height);
 }
 
 TRectangle(style : [TGraphicsStyle], size : Tropic) -> Tropic {
@@ -2060,39 +2089,6 @@ TDebugConstruct(tag : string, tr : Tropic) -> Tropic {
 	)
 }
 
-TIfFits(tr : Tropic) -> Tropic {
-	TransformTAcc(\t2a, pi, ss, mo -> {
-		b = t2a(tr, pi, ss, mo);
-		visible =
-			fselect2(
-				fwidthheight(pi.maxX, pi.maxY),
-				fwidthheight(b.metrics.width, b.metrics.height),
-				FLift2(\a, m -> {
-					m.width <= a.width && m.height <= a.height
-				})
-			);
-
-		TAcc(
-			FMutable(fif(visible, const(b.form), const(FEmpty()))),
-			TFormMetrics(
-				fif(visible, b.metrics.width, zero),
-				fif(visible, b.metrics.height, zero),
-				fif(visible, b.metrics.baseline, zero)
-			),
-			zero,
-			zero,
-			b.maxWidth,
-			b.maxHeight,
-			const(1.),
-			const(1.),
-			b.addFillers,
-			b.xConstant && isFConst(visible),
-			b.yConstant && isFConst(visible),
-			b.disposers
-		)
-	});
-}
-
 TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic {
 	\tr -> TConstruct(
 		[
@@ -2341,25 +2337,28 @@ disableMouseWheelBelow(content : Tropic) -> Tropic {
 }
 
 disableInteractivesBelow(content : Tropic) -> Tropic {
-	TCopySize(
-		content,
-		\tr ->
-			TInteractive(
-				[
-					MouseDown(\mi -> mi.inside()),
-					MouseRightDown(\mi -> mi.inside()),
-					MouseMiddleDown(\mi -> mi.inside()),
-					MouseUp(\mi -> mi().inside),
-					MouseMove(\mi -> mi().inside),
-					TouchStart(\mi -> !exists(mi.inside, \m -> !m())),
-					TouchMove(\mi -> !exists(mi.inside, \m -> !m())),
-					TouchEnd(\mi -> !exists(mi.inside, \m -> !m())),
-					RollOver(nop1),
-					RollOut(nop1)
-				],
-				TRectangle(interactiveRectangleStyle, tr)
-			),
-		false
+	TCopySize(content, interactivesBlockerLayer, false)
+}
+
+blockInteractives(content : Tropic) -> Tropic {
+	TCopySize(content, interactivesBlockerLayer, true)
+}
+
+interactivesBlockerLayer(tr : Tropic) -> Tropic {
+	TInteractive(
+		[
+			MouseDown(\mi -> mi.inside()),
+			MouseRightDown(\mi -> mi.inside()),
+			MouseMiddleDown(\mi -> mi.inside()),
+			MouseUp(\mi -> mi().inside),
+			MouseMove(\mi -> mi().inside),
+			TouchStart(\mi -> length(mi.inside) > 0 && !exists(mi.inside, \m -> !m())),
+			TouchMove(\mi -> length(mi.inside) > 0 && !exists(mi.inside, \m -> !m())),
+			TouchEnd(\mi -> length(mi.inside) > 0 && !exists(mi.inside, \m -> !m())),
+			RollOver(nop1),
+			RollOut(nop1)
+		],
+		TRectangle(interactiveRectangleStyle, tr)
 	)
 }
 
@@ -2601,4 +2600,124 @@ loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDoc
 		},
 		filterFPdfDocumentStyle(style)
 	)
+}
+
+TShowKeepMetrics(show : Transform<bool>, content : Tropic) -> Tropic {
+	TransformTAcc(\t2a, parent, ss, mo -> {
+		b = t2a(TShow(fselectWithLast(show, FusionOr()), content), parent, ss, mo);
+
+		TAcc(
+			b with form = FShow(show, b.form)
+		)
+	})
+}
+
+TIfFits(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic {
+	TransformTAcc(\t2a, parent, ss, mo -> {
+			b = t2a(fullSizeContent, parent, ss, mo);
+
+			ifAvailable =
+				fand(
+					fnot(fless(parent.maxX, b.minWidth)),
+					fnot(fless(parent.maxY, b.minHeight))
+				);
+
+			b2 = t2a(TShowKeepMetrics(fnot(ifAvailable), reducedSizeContent), parent, ss, mo);
+
+			TAcc(
+				FMutable(fif(ifAvailable, const(b.form), const(b2.form))),
+				TFormMetrics(
+					fif(ifAvailable, b.metrics.width, b2.metrics.width),
+					fif(ifAvailable, b.metrics.height, b2.metrics.height),
+					fif(ifAvailable, b.metrics.baseline, b2.metrics.baseline)
+				),
+				fmin(b.minWidth, b2.minWidth),
+				fmin(b.minHeight, b2.minWidth),
+				b.maxWidth,
+				b.maxHeight,
+				fmax(fif(ifAvailable, b.xFillers, b2.xFillers), const(1.0)),
+				fmax(fif(ifAvailable, b.yFillers, b2.yFillers), const(1.0)),
+				const(false),
+				false,
+				false,
+				concat(b.disposers, b2.disposers)
+			)
+		}
+	)
+}
+
+TIfFitsWidth(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic {
+	TransformTAcc(\t2a, parent, ss, mo -> {
+			b = t2a(fullSizeContent, parent, ss, mo);
+
+			ifAvailable = fnot(fless(parent.maxX, b.minWidth));
+
+			b2 = t2a(TShowKeepMetrics(fnot(ifAvailable), reducedSizeContent), parent, ss, mo);
+
+			TAcc(
+				FMutable(fif(ifAvailable, const(b.form), const(b2.form))),
+				TFormMetrics(
+					fif(ifAvailable, b.metrics.width, b2.metrics.width),
+					fif(ifAvailable, b.metrics.height, b2.metrics.height),
+					fif(ifAvailable, b.metrics.baseline, b2.metrics.baseline)
+				),
+				fmin(b.minWidth, b2.minWidth),
+				fif(ifAvailable, b.minHeight, b2.minHeight),
+				b.maxWidth,
+				fif(ifAvailable, b.maxHeight, b2.maxHeight),
+				fmax(fif(ifAvailable, b.xFillers, b2.xFillers), const(1.0)),
+				fif(ifAvailable, b.yFillers, b2.yFillers),
+				const(false),
+				false,
+				false,
+				concat(b.disposers, b2.disposers)
+			)
+		}
+	)
+}
+
+TIfFitsHeight(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic {
+	TransformTAcc(\t2a, parent, ss, mo -> {
+			b = t2a(fullSizeContent, parent, ss, mo);
+
+			ifAvailable = fnot(fless(parent.maxY, b.minHeight));
+
+			b2 = t2a(TShowKeepMetrics(fnot(ifAvailable), reducedSizeContent), parent, ss, mo);
+
+			TAcc(
+				FMutable(fif(ifAvailable, const(b.form), const(b2.form))),
+				TFormMetrics(
+					fif(ifAvailable, b.metrics.width, b2.metrics.width),
+					fif(ifAvailable, b.metrics.height, b2.metrics.height),
+					fif(ifAvailable, b.metrics.baseline, b2.metrics.baseline)
+				),
+				fif(ifAvailable, b.minWidth, b2.minWidth),
+				fmin(b.minHeight, b2.minHeight),
+				fif(ifAvailable, b.maxWidth, b2.maxWidth),
+				b.maxHeight,
+				fif(ifAvailable, b.xFillers, b2.xFillers),
+				fmax(fif(ifAvailable, b.yFillers, b2.yFillers), const(1.0)),
+				const(false),
+				false,
+				false,
+				concat(b.disposers, b2.disposers)
+			)
+		}
+	)
+}
+
+TShowIfFits(content : Tropic) -> Tropic {
+	TIfFits(content, TEmpty())
+}
+
+TShowIfFitsWidth(content : Tropic) -> Tropic {
+	TIfFitsWidth(content, TEmpty())
+}
+
+TShowIfFitsHeight(content : Tropic) -> Tropic {
+	TIfFitsHeight(content, TEmpty())
+}
+
+TRenderable(renderable : DynamicBehaviour<bool>, t : Tropic) -> Tropic {
+	TransformTAcc2(\t2a -> t2a(t) |> (\b -> TAcc(b with form = FRenderable(renderable, b.form))))
 }

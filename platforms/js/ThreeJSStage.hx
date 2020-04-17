@@ -36,7 +36,7 @@ class ThreeJSStage extends Container {
 	public var objectCacheEnabled : Bool = false;
 	public static var loadingManager : LoadingManager = null;
 	public var interactiveObjects : Array<Object3D> = [];
-	private var interactiveObjectsMouseOver : Array<Object3D> = [];
+	public var interactiveObjectsMouseOver : Array<Object3D> = [];
 
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
@@ -61,6 +61,7 @@ class ThreeJSStage extends Container {
 	private var accessWidget : AccessWidget;
 
 	public var isNativeWidget : Bool = false;
+	public var orbitControlsEnabled : Bool = true;
 
 	public function new(width : Float, height : Float) {
 		super();
@@ -126,12 +127,28 @@ class ThreeJSStage extends Container {
 	}
 
 	public function dispose() : Void {
-		boxHelpers = null;
-		objectCache = null;
+		for (object in objectCache) {
+			Object3DHelper.dispose(object);
+		}
+
+		for (object in interactiveObjects) {
+			Object3DHelper.dispose(object);
+		}
+
+		boxHelpers = [];
+		objectCache = [];
 		objectCacheEnabled = false;
-		interactiveObjects = null;
-		interactiveObjectsMouseOver = null;
+		interactiveObjects = [];
+		interactiveObjectsMouseOver = [];
 		raycaster = null;
+
+		if (ThreeJSStage.loadingManager != null) {
+			ThreeJSStage.loadingManager.onStart = function() {};
+			ThreeJSStage.loadingManager.onProgress = function(__, __, __) {};
+			ThreeJSStage.loadingManager.onLoad = function() {};
+			ThreeJSStage.loadingManager.onError = function() {};
+		}
+
 		if (!RenderSupport3D.LOADING_CACHE_ENABLED) {
 			ThreeJSStage.loadingManager = null;
 		}
@@ -142,18 +159,17 @@ class ThreeJSStage extends Container {
 			RenderSupport.off("drawframe", orbitControls.update);
 		}
 
-		if (renderer != null) {
-			renderer.dispose();
-			renderer = null;
-		}
-
 		if (scene != null) {
-			scene.dispose();
+			Object3DHelper.dispose(scene);
 			scene = null;
 		}
 
+		// Chrome Inspect Three.js extension support
+		untyped __js__("window.scene = null;");
+
 		if (camera != null) {
-			camera.dispose();
+			Object3DHelper.dispose(camera);
+			camera = null;
 		}
 
 		if (orbitControls != null) {
@@ -164,6 +180,11 @@ class ThreeJSStage extends Container {
 		if (transformControls != null) {
 			transformControls.dispose();
 			transformControls = null;
+		}
+
+		if (renderer != null) {
+			renderer.dispose();
+			renderer = null;
 		}
 
 		this.deleteNativeWidget();
@@ -276,21 +297,19 @@ class ThreeJSStage extends Container {
 
 		if (camera != null) {
 			transformControls = untyped __js__("new THREE.TransformControls(this.camera, this.renderer.domElement, this.renderer.eventElement)");
-			untyped transformControls.transformControls = transformControls;
+			transformControls.addEventListener('dragging-changed', function (event) {
+				if (orbitControls != null) {
+					untyped orbitControls.enabled = !event.value && orbitControlsEnabled;
+				}
+			});
+
+			addEventListeners();
+			invalidateStage();
 		}
 
 		if (scene != null) {
 			untyped scene.transformControls = transformControls;
 		}
-
-		transformControls.addEventListener('dragging-changed', function (event) {
-			if (orbitControls != null) {
-				untyped orbitControls.enabled = !event.value;
-			}
-		});
-
-		addEventListeners();
-		invalidateStage();
 	}
 
 	private function createOrbitControls() {
@@ -300,6 +319,7 @@ class ThreeJSStage extends Container {
 
 		if (camera != null) {
 			orbitControls = untyped __js__("new THREE.OrbitControls(this.camera, this.renderer.domElement, this.renderer.eventElement)");
+			orbitControls.enabled = orbitControlsEnabled;
 			RenderSupport.on("drawframe", orbitControls.update);
 		}
 
@@ -513,5 +533,9 @@ class ThreeJSStage extends Container {
 				this.updateNativeWidgetDisplay();
 			}
 		}
+	}
+
+	public function getSupportedExtensions() : Array<String> {
+		return this.renderer.getContext().getSupportedExtensions();
 	}
 }

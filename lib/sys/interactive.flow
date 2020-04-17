@@ -20,12 +20,21 @@ getTouchPoints(clip : native) -> [[double]] {
 	[[getMouseX(clip), getMouseY(clip)]]
 }
 
-native getClipVisible : (native) -> bool = RenderSupport.getClipVisible;
 native hittest : io (clip : native, x : double, y : double) -> bool = RenderSupport.hittest;
 native addMouseWheelEventListener : io (clip : native, cb : (delta : double) -> void) -> (() -> void) = RenderSupport.addMouseWheelEventListener;
 
 handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : native, zorder : [int], doHittest : bool, doRespectHandled : bool) -> () -> void {
 	getMouseInfo : () -> MouseInfo = \ -> {
+		if (^clipalive && getClipRenderable(clip)) {
+			MouseInfo(
+				getMouseX(clip), getMouseY(clip),
+				doHittest && hittest(clip, getMouseX(stage), getMouseY(stage)));
+		} else {
+			emptyMouseInfo
+		}
+	}
+
+	getMouseUpInfo : () -> MouseInfo = \ -> {
 		if (^clipalive && getClipVisible(clip)) {
 			MouseInfo(
 				getMouseX(clip), getMouseY(clip),
@@ -36,14 +45,14 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 	}
 
 	getTouchInfo : () -> TouchInfo = \ -> {
-		if (^clipalive && getClipVisible(clip)) {
+		if (^clipalive && getClipRenderable(clip)) {
 			TouchInfo(
 				map(getTouchPoints(clip), \tp -> {
 					Point(tp[0], tp[1]);
 				}),
 				map(getTouchPoints(stage), \tp -> {
 					\ -> {
-						^clipalive && doHittest && getClipVisible(clip) && hittest(clip, tp[0], tp[1]);
+						^clipalive && doHittest && getClipRenderable(clip) && hittest(clip, tp[0], tp[1]);
 					}
 				})
 			);
@@ -52,9 +61,23 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 		}
 	}
 
-	sendMouseEvent = \fn : (() -> MouseInfo) -> void -> {
-		\ -> if (^clipalive && getClipVisible(clip)) fn(getMouseInfo)
+	getTouchEndInfo : () -> TouchInfo = \ -> {
+		if (^clipalive && getClipVisible(clip)) {
+			TouchInfo(
+				map(getTouchPoints(clip), \tp -> {
+					Point(tp[0], tp[1]);
+				}),
+				map(getTouchPoints(stage), \tp -> {
+					\ -> {
+						^clipalive && doHittest && getClipRenderable(clip) && hittest(clip, tp[0], tp[1]);
+					}
+				})
+			);
+		} else {
+			emptyTouchInfo
+		}
 	}
+
 	addKeyVisFilter = \fn : (handled : bool, KeyEvent) -> bool -> {
 		\handled : bool, kfn : KeyEvent -> {
 			if (^clipalive && getClipVisible(clip)) fn(handled, kfn) else handled
@@ -63,9 +86,9 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 
 	miDownHandler = \fn : (handled : bool, mi : MouseDownInfo) -> bool -> {
 		\handled : bool, mi : GetMouseInfo -> {
-			if (^clipalive && !(handled && doRespectHandled) && getClipVisible(clip)) {
+			if (^clipalive && !(handled && doRespectHandled) && getClipRenderable(clip)) {
 				mdi = MouseDownInfo(getMouseX(clip), getMouseY(clip), \ -> {
-					^clipalive && doHittest && getClipVisible(clip) && hittest(clip, getMouseX(stage), getMouseY(stage))
+					^clipalive && doHittest && getClipRenderable(clip) && hittest(clip, getMouseX(stage), getMouseY(stage))
 				});
 				fn(handled, mdi)
 			} else handled
@@ -90,17 +113,17 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 
 	switch (l : EventHandler) {
 		MouseDown2(fn): handleZorderedDownEvent(stage, zorder, GetMouseInfo(getMouseInfo), miDownHandler(fn));
-		MouseUp2(fn): handleZorderedUpEvent(stage, zorder, GetMouseInfo(getMouseInfo), miHandler(fn));
+		MouseUp2(fn): handleZorderedUpEvent(stage, zorder, GetMouseInfo(getMouseUpInfo), miHandler(fn));
 		MouseRightDown2(fn): handleZorderedRightDownEvent(stage, zorder, GetMouseInfo(getMouseInfo), miDownHandler(fn));
-		MouseRightUp2(fn): handleZorderedRightUpEvent(stage, zorder, GetMouseInfo(getMouseInfo), miHandler(fn));
+		MouseRightUp2(fn): handleZorderedRightUpEvent(stage, zorder, GetMouseInfo(getMouseUpInfo), miHandler(fn));
 		MouseMiddleDown2(fn): handleZorderedMiddleDownEvent(stage, zorder, GetMouseInfo(getMouseInfo), miDownHandler(fn));
-		MouseMiddleUp2(fn): handleZorderedMiddleUpEvent(stage, zorder, GetMouseInfo(getMouseInfo), miHandler(fn));
+		MouseMiddleUp2(fn): handleZorderedMiddleUpEvent(stage, zorder, GetMouseInfo(getMouseUpInfo), miHandler(fn));
 		MouseMove2(fn): handleZorderedMoveEvent(stage, zorder, GetMouseInfo(getMouseInfo), miHandler(fn));
 		RollOver(fn): {
-			addEventListener(clip, "rollover", sendMouseEvent(fn));
+			addEventListener(clip, "rollover", \ -> if (^clipalive && getClipVisible(clip)) fn(getMouseInfo));
 		}
 		RollOut(fn): {
-			addEventListener(clip, "rollout", sendMouseEvent(fn));
+			addEventListener(clip, "rollout", \ -> if (^clipalive) fn(getMouseInfo));
 		}
 		FileDrop(maxFilesCount, mimeTypeFilter, onDone): {
 			addFileDropListener(clip, maxFilesCount, mimeTypeFilter, onDone);
@@ -108,7 +131,7 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 		MouseWheel(fn): {
 			addMouseWheelEventListener(clip,
 				\deltay -> {
-					if (^clipalive && getClipVisible(clip))
+					if (^clipalive && getClipRenderable(clip))
 						fn(\ -> MouseWheelInfo(
 							0.0, deltay,
 							doHittest && hittest(clip, getMouseX(stage), getMouseY(stage))));
@@ -124,14 +147,14 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 					doHittest && hittest(clip, getMouseX(stage), getMouseY(stage)))
 			}),
 			\handled : bool, gm : GetMouseWheelInfo -> {
-				if (^clipalive && getClipVisible(clip)) fn(handled, gm.fn) else handled
+				if (^clipalive && getClipRenderable(clip)) fn(handled, gm.fn) else handled
 			}
 		);
 		KeyDown2(fn): handleZorderedKeyDownEvent(stage, zorder, addKeyVisFilter(fn));
 		KeyUp2(fn): handleZorderedKeyUpEvent(stage, zorder, addKeyVisFilter(fn));
 		TouchStart2(fn): handleZorderedTouchStartEvent(stage, zorder, GetTouchInfo(getTouchInfo), miTouchHandler(fn));
 		TouchMove2(fn): handleZorderedTouchMoveEvent(stage, zorder, GetTouchInfo(getTouchInfo), miTouchHandler(fn));
-		TouchEnd2(fn): handleZorderedTouchEndEvent(stage, zorder, GetTouchInfo(getTouchInfo), miTouchHandler(fn));
+		TouchEnd2(fn): handleZorderedTouchEndEvent(stage, zorder, GetTouchInfo(getTouchEndInfo), miTouchHandler(fn));
 		PinchGesture(fn): {
 			// Does not support IgnoreHitTest so far
 			prevX = ref 0.0;
@@ -150,7 +173,7 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 			};
 
 			handleZorderedDownEvent(stage, zorder, GetMouseInfo(getMouseInfo), \handled, gm -> {
-				if (^clipalive && isNone(^pinchCapture) && getClipVisible(clip) && gm.fn().inside) pinchCapture := Some(cb);
+				if (^clipalive && isNone(^pinchCapture) && getClipRenderable(clip) && gm.fn().inside) pinchCapture := Some(cb);
 				handled
 			});
 		}
@@ -158,7 +181,7 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 			// Does not support IgnoreHitTest so far
 			cb = \x, y, vx, vy -> { fn(vx, vy) };
 			handleZorderedDownEvent(stage, zorder, GetMouseInfo(getMouseInfo), \handled, gm -> {
-				if (^clipalive && isNone(^swipeCapture) && getClipVisible(clip) && gm.fn().inside) swipeCapture := Some(cb);
+				if (^clipalive && isNone(^swipeCapture) && getClipRenderable(clip) && gm.fn().inside) swipeCapture := Some(cb);
 				handled
 			});
 		}
@@ -167,7 +190,7 @@ handleRealEvents(l : EventHandler, clip : native, clipalive : ref bool, stage : 
 			cb = \state, x, y, dx, dy -> { fn(state, dx, dy) };
 			handleZorderedDownEvent(stage, zorder, GetMouseInfo(getMouseInfo), \handled, gm -> {
 				// Capture pan event
-				if (^clipalive && isNone(^panCapture) && getClipVisible(clip) && gm.fn().inside && fn(GestureStateBegin(), 0.0, 0.0) /* can handle now */)
+				if (^clipalive && isNone(^panCapture) && getClipRenderable(clip) && gm.fn().inside && fn(GestureStateBegin(), 0.0, 0.0) /* can handle now */)
 					panCapture := Some(cb);
 				handled
 			});

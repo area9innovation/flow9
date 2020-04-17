@@ -22,7 +22,7 @@
 
 class AndroidRunnerWrapper;
 
-class AndroidTextureImage : public GLTextureImage {
+class AndroidTextureImage : public GLTextureBitmap {
     AndroidRunnerWrapper *owner;
     jobject bitmap;
 

@@ -218,7 +218,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         Log.i(Utils.LOG_TAG, "Store path = " + getDir("store", MODE_PRIVATE).getAbsolutePath());
         Log.i(Utils.LOG_TAG, "Tmp dir path = " + tmp_dir.getAbsolutePath());
              
-        wrapper.setDPI((int)((metrics.xdpi + metrics.ydpi) / 2.0f));
+        wrapper.setDPI(metrics.densityDpi);
         wrapper.setDensity(metrics.density);
         wrapper.setScreenWidthHeight(metrics.widthPixels, metrics.heightPixels);
         

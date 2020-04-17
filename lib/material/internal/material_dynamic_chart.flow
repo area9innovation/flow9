@@ -1042,7 +1042,7 @@ drawMChartColumns(state : MChartState, m2t : (Material, MFocusGroup) -> Tropic) 
 							hover,
 							\h ->
 								makeLineByTypeT(
-									fconcatA(fdelayUntilNextFrameRendered(fmerge(map(points, \p -> p.graphicsData)))),
+									fconcatA(fthrottleUntilNextFrameRendered(fmerge(map(points, \p -> p.graphicsData)))),
 									const(lineType),
 									const(isCurve),
 									if (h)
@@ -1254,8 +1254,73 @@ drawMChartInteractive(state : MChartState) -> Tropic {
 	currentPoint : ref Maybe<MChartPoint> = ref None();
 	currentCursor = make(DefaultCursor());
 
+	handleMouseMove = \m -> {
+		prevCurrentPoint = ^currentPoint;
+		currentPoint := None();
+
+		hh = fold(fgetValue(state.columns), false, \hit, chart ->
+			hit ||
+				(getValue(chart.visible) && getValue(chart.highlight) && fold(chart.points, hit, \hit2, point -> {
+					if (!hit2) {
+						position = fgetValue(chart.position);
+						hit3 =
+							switch (chart) {
+								MBarChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+									fold(fgetValue(point.graphicsData), hit2, \hit3, data ->
+										hit || hittestStaticGraphicShape(data, Point(m.x - position.x, m.y - position.y))
+									);
+								}
+								MLineChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+									hittestStaticGraphicShape(
+										GCircle(fgetValue(point.position).x, fgetValue(point.position).y, hoverPointRadius),
+										Point(m.x - position.x, m.y - position.y)
+									);
+								}
+							};
+
+						if (hit3) {
+							eitherFn(
+								prevCurrentPoint,
+								\p -> {
+									if (p == point) {
+										currentPoint := prevCurrentPoint;
+									} else {
+										nextDistinct(point.hover, true);
+										currentPoint := Some(point);
+									}
+								},
+								\ -> {
+									nextDistinct(point.hover, true);
+									currentPoint := Some(point);
+								}
+							)
+						}
+
+						hit3;
+					} else {
+						hit2;
+					}
+				}))
+		);
+
+		nextDistinct(currentCursor, if (hh) FingerCursor() else DefaultCursor());
+
+		if (^currentPoint != prevCurrentPoint) {
+			maybeApply(prevCurrentPoint, \d -> nextDistinct(d.hover, false));
+		}
+
+		hh;
+	}
+
 	TInteractive(
 		[
+			TouchStart2(\h, ti -> {
+				if (!h && exists(ti.inside, apply0)) {
+					handleMouseMove(Point(ti.points[0].x, ti.points[0].y))
+				} else {
+					h;
+				}
+			}),
 			MouseDown2(\h, mi -> {
 				if (!h && mi.inside()) {
 					maybeApply(^currentPoint, \d -> nextDistinct(d.down, true));
@@ -1273,61 +1338,7 @@ drawMChartInteractive(state : MChartState) -> Tropic {
 					m = mi();
 
 					if (m.inside) {
-						prevCurrentPoint = ^currentPoint;
-						currentPoint := None();
-
-						hh = fold(fgetValue(state.columns), false, \hit, chart ->
-							hit ||
-								(getValue(chart.visible) && getValue(chart.highlight) && fold(chart.points, hit, \hit2, point -> {
-									if (!hit2) {
-										position = fgetValue(chart.position);
-										hit3 =
-											switch (chart) {
-												MBarChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __): {
-													fold(fgetValue(point.graphicsData), hit2, \hit3, data ->
-														hit || hittestStaticGraphicShape(data, Point(m.x - position.x, m.y - position.y))
-													);
-												}
-												MLineChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
-													hittestStaticGraphicShape(
-														GCircle(fgetValue(point.position).x, fgetValue(point.position).y, hoverPointRadius),
-														Point(m.x - position.x, m.y - position.y)
-													);
-												}
-											};
-
-										if (hit3) {
-											eitherFn(
-												prevCurrentPoint,
-												\p -> {
-													if (p == point) {
-														currentPoint := prevCurrentPoint;
-													} else {
-														nextDistinct(point.hover, true);
-														currentPoint := Some(point);
-													}
-												},
-												\ -> {
-													nextDistinct(point.hover, true);
-													currentPoint := Some(point);
-												}
-											)
-										}
-
-										hit3;
-									} else {
-										hit2;
-									}
-								}))
-						);
-
-						nextDistinct(currentCursor, if (hh) FingerCursor() else DefaultCursor());
-
-						if (^currentPoint != prevCurrentPoint) {
-							maybeApply(prevCurrentPoint, \d -> nextDistinct(d.hover, false));
-						}
-
-						hh;
+						handleMouseMove(Point(m.x, m.y))
 					} else {
 						maybeApply(^currentPoint, \d -> nextDistinct(d.hover, false));
 						currentPoint := None();

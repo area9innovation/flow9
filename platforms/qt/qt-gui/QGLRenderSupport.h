@@ -172,7 +172,7 @@ protected:
     bool doCreateVideoWidget(QWidget *&widget, GLVideoClip *video_clip);
     bool doCreateWebWidget(QWidget *&widget, GLWebClip *video_clip);
     StackSlot webClipHostCall(GLWebClip * clip, const unicode_string &name, const StackSlot & args);
-    StackSlot webClipEvalJS(GLWebClip * clip, const unicode_string &code);
+    StackSlot webClipEvalJS(GLWebClip * clip, const unicode_string &code, StackSlot& cb);
     StackSlot variant2slot(QVariant var);
     void callflow(QWebEngineView * web_view, QVariantList args);
     friend class QWebViewDelegate;

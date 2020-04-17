@@ -183,7 +183,6 @@ class ProgressiveWebTools {
 			};
 
 			untyped navigator.serviceWorker.controller.postMessage({"action" : "clean_cache_storage"}, [messageChannel.port2]);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -214,7 +213,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -245,7 +243,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -276,7 +273,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -307,7 +303,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -479,6 +474,34 @@ class ProgressiveWebTools {
 
 			untyped navigator.serviceWorker.controller.postMessage({
 					"action" : "get_service_worker_version"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function setUseOnlyCacheInOffline(enabled : Bool, onOK : Void -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't change the cache parameter");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't change the cache parameter");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "set_use_cache_only_in_offline",
+					"enabled" : enabled
 				},
 				[messageChannel.port2]
 			);

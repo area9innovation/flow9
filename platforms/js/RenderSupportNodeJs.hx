@@ -171,9 +171,7 @@ class RenderSupport {
 		return "";
 	}
 
-	public static function webClipEvalJS(clip : Dynamic, code : String) : Dynamic {
-		return null;
-	}
+	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {}
 
 	public static function setWebClipDomains(clip : Dynamic, domains : Array<String>) : Void {}
 

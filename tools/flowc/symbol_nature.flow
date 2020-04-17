@@ -14,9 +14,9 @@ export {
 
 	// Enumeration type for classes of renamed entities: var/function names, types and struct fields
 	FcSymbolKind ::= FcVarSymbol, FcTypeSymbol, FcFieldSymbol;
-		FcVarSymbol();
-		FcTypeSymbol();
-		FcFieldSymbol(struct : string);
+		FcVarSymbol(type : FiType);
+		FcTypeSymbol(type : FiType);
+		FcFieldSymbol(structType : FiTypeName, fieldType : FiType);
 
 	// Enumeration type for classes of symbol visibility scope.
 	FcSymbolScope ::= FcGlobalScope, FcModuleScope, FcLocalScope;
@@ -32,7 +32,7 @@ export {
 	// 1) first: symbol is global, i.e. may be shared with other modules (stays in export)
 	// 2) second: symbol is local, i.e. is defined in a scope of some expression
 	// When symbol is not global or local, it is a toplevel, but not exported: module-scope
-	symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string) -> Maybe<FcSymbolNature>;
+	//symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string) -> Maybe<FcSymbolNature>;
 	fcSymbolNature2s(n : FcSymbolNature) -> string;
 
 	// Uses global name cache
@@ -40,6 +40,9 @@ export {
 
 	// Markup all syntactic structures in AST with their starts.
 	fimoduleStarts2fiall(module : FiModule) -> Tree<int, Set<FiAll>>;
+
+	// Markup all syntactic topleve declarations in AST with their starts.
+	fimoduleStarts2finamed(module : FiModule) -> Tree<int, FiNamed>; 
 
 	// Returns the underlying typename, unwrapping it from functions and refs.
 	unrollTypeToTypeName(type : FiType) -> string;
@@ -56,17 +59,25 @@ fastSymbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : stri
 		Some(symbol): {
 			switch (symbol.named) {
 				FiDeclaration(): {
+					decl = cast(symbol.named : FiNamed -> FiDeclaration);
 					if (symbol.exported) {
-						Some(FcSymbolNature(name, symbol.module, FcGlobalScope(), FcVarSymbol(), Some(symbol)));
+						Some(FcSymbolNature(name, symbol.module, FcGlobalScope(), FcVarSymbol(decl.type), Some(symbol)));
 					} else {
-						Some(FcSymbolNature(name, symbol.module, FcModuleScope(), FcVarSymbol(), Some(symbol)));
+						Some(FcSymbolNature(name, symbol.module, FcModuleScope(), FcVarSymbol(decl.type), Some(symbol)));
 					}
 				}
 				FiStructOrUnion(): {
+					structOrUnion = cast(symbol.named : FiNamed -> FiStructOrUnion);
+					type = FiTypeName(structOrUnion.name, 
+						switch (structOrUnion) { 
+							FiTypeStruct(__, tps, __,__): tps;
+							FiTypeUnion(__, tps, __,__): tps;
+						}
+					);
 					if (symbol.exported) {
-						Some(FcSymbolNature(name, symbol.module, FcGlobalScope(), FcTypeSymbol(), Some(symbol)));
+						Some(FcSymbolNature(name, symbol.module, FcGlobalScope(), FcTypeSymbol(type), Some(symbol)));
 					} else {
-						Some(FcSymbolNature(name, symbol.module, FcModuleScope(), FcTypeSymbol(), Some(symbol)));
+						Some(FcSymbolNature(name, symbol.module, FcModuleScope(), FcTypeSymbol(type), Some(symbol)));
 					}
 				}
 			}
@@ -77,10 +88,10 @@ fastSymbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : stri
 			switch (fastGuessSymbolFieldOrVar(globEnv, config, fiModule, name, line, col)) {
 				Some(kind) : {
 					scope : FcSymbolScope = switch (kind) {
-						FcVarSymbol(): FcLocalScope();
-						FcTypeSymbol(): FcLocalScope();
-						FcFieldSymbol(struct_name): {
-							switch (fcLookupNameInCache(globEnv, struct_name)) {
+						FcVarSymbol(__): FcLocalScope();
+						FcTypeSymbol(__): FcLocalScope();
+						FcFieldSymbol(structType, fieldType): {
+							switch (fcLookupNameInCache(globEnv, structType.name)) {
 								Some(struct): {
 									if (struct.exported) FcGlobalScope() else FcModuleScope();
 								}
@@ -95,7 +106,7 @@ fastSymbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : stri
 		}
 	}
 }
-
+/*
 symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string) -> Maybe<FcSymbolNature> {
 	ensureIncrementalDirectoryExists(config);
 	prog_error = parseAndTypecheckProgram(config, globEnv, config.flowfile);
@@ -186,10 +197,10 @@ findSymbolNature(env : FcTypeEnvGlobal, prog : FiProgram, file : string, symbol 
 							switch (guessSymbolFieldOrVar(env, prog, file, symbol, line, col)) {
 								Some(kind) : {
 									scope : FcSymbolScope = switch (kind) {
-										FcVarSymbol(): FcLocalScope();
-										FcTypeSymbol(): FcLocalScope();
-										FcFieldSymbol(struct): {
-											module = struct2module(struct);
+										FcVarSymbol(__): FcLocalScope();
+										FcTypeSymbol(__): FcLocalScope();
+										FcFieldSymbol(structType, structName): {
+											module = struct2module(structType.name);
 											if (exists(module.exports, \n -> n == struct)) {
 												FcGlobalScope()
 											} else {
@@ -255,80 +266,73 @@ guessSymbolFieldOrVar(env : FcTypeEnvGlobal, prog : FiProgram, file : string, sy
 					)
 				}
 				None(): {
-					fcPrintln("program entity " + symbol + " at " + i2s(line) + " line and " + i2s(col) + " column is not found", prog.config.threadId);
+					//fcPrintln("program entity " + symbol + " at " + i2s(line) + " line and " + i2s(col) + " column is not found", prog.config.threadId);
 					None();
 				}
 			}
 		}
 		None(): {
-			fcPrintln("module = " + relative + " not found", prog.config.threadId);
+			//fcPrintln("module = " + relative + " not found", prog.config.threadId);
 			None();
 		}
 	}
 }
-
+*/
 fastGuessSymbolFieldOrVar(env : FcTypeEnvGlobal, config : CompilerConfig, module : FiModule, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
 	starts2fiall = fimoduleStarts2fiall(module);
 	code = fcFileSource(env, module.fileinfo.fullpath);
 	resolver = makeLineResolver(code);
 	index = findLineIndex(resolver, line, col);
-	switch (treeIntervalSearch(starts2fiall, index)) {
-		Some(fiallSet): {
+	maybeBind(treeIntervalSearch(starts2fiall, index),
+		\fiallSet -> {
 			accum : Maybe<FcSymbolKind> = None();
 			foldSet(fiallSet, accum, \acc, fiall ->
 				switch (acc) {
 					Some(__): acc;
 					None(): {
 						switch (fiall) {
-							FiVar(name,__,__): {
-								fcServerLog("observing var: " + name);
-								if (name == symbol) Some(FcVarSymbol()) else acc;
+							FiVar(name,type,__): {
+								if (name == symbol) Some(FcVarSymbol(type)) else acc;
 							}
-							FiCallPrim(op, es, __, __): {
-								name = if (length(es) > 0) unrollTypeToTypeName(fiExpType(es[0])) else "";
-								if (name == "") acc else {
-									switch (op) {
-										FcFieldPrim(field): {
-											fcServerLog("observing field: " + field);
-											if (field == symbol) Some(FcFieldSymbol(name)) else acc
+							FiCallPrim(op, es, f_tp, __): {
+								if (length(es) == 0) acc else {
+									//name = if (length(es) > 0) unrollTypeToTypeName(fiExpType(es[0])) else "";
+									s_tp = fiExpType(es[0]);
+									//if (!unrolledNameIsEq(s_tp, name)) acc else {
+										switch (s_tp) {
+											FiTypeName(__, typars): {
+												switch (op) {
+													FcFieldPrim(field): {
+														if (field == symbol) Some(FcFieldSymbol(s_tp, f_tp)) else acc
+													}
+													FcSetMutablePrim(field): {
+														if (field == symbol) Some(FcFieldSymbol(s_tp, f_tp)) else acc
+													}
+													default: acc;
+												}
+											}
+											default: acc;
 										}
-										FcSetMutablePrim(field): {
-											fcServerLog("observing field: " + field);
-											if (field == symbol) Some(FcFieldSymbol(name)) else acc
-										}
-										default: {
-											fcServerLog("observing ELSE 2)...");
-											acc
-										}
-									}
+									//}
 								}
 							}
-							FiLet(name,__,__,__,__,__): {
-								if (name == symbol) Some(FcVarSymbol()) else acc;
+							FiLet(name,type,__,__,__,__): {
+								if (name == symbol) Some(FcVarSymbol(type)) else acc;
 							}
-							FiTypeStruct(struct, __, args, __): {
-								fcServerLog("observing struct: " + struct);
-								if (exists(args, \arg -> arg.name == symbol)) {
-									Some(FcFieldSymbol(struct));
-								} else {
-									acc;
+							FiTypeStruct(struct, typars, args, __): {
+								switch (find(args, \arg -> arg.name == symbol)) {
+									Some(arg):
+										Some(FcFieldSymbol(FiTypeName(struct, typars), arg.type));
+									None(): acc;
 								}
 							}
-							default: {
-								fcServerLog("observing ELSE 1)...");
-								acc;
-							}
+							default: acc;
 						}
 					}
 				}
 			)
 		}
-		None(): {
-			fcPrintln("program entity " + symbol + " at " + i2s(line) + " line and " + i2s(col) + " column is not found", config.threadId);
-			fcServerLog("program entity " + symbol + " at " + i2s(line) + " line and " + i2s(col) + " column is not found");
-			None();
-		}
-	}
+	);
 }
 
 
@@ -348,6 +352,28 @@ fimoduleStarts2fiall(module : FiModule) -> Tree<int, Set<FiAll>> {
 			\a, struct -> start2fiall(struct, a)
 		), 
 		\a, union ->start2fiall(union, a)
+	)
+}
+
+fimoduleStarts2finamed(module : FiModule) -> Tree<int, FiNamed> {
+	add_named = \named, s, ac -> {
+		if (s >= 0) setTree(ac, s, named) else ac;
+	}
+	fold(module.unions, 
+		fold(module.structs, 
+			fold(module.natives, 
+				fold(module.globalVars, 
+					fold(module.functions, 
+						makeTree(), 
+						\a, fn -> add_named(fn, fn.defiStart, a)
+					), 
+					\a, gv -> add_named(gv, gv.defiStart, a)
+				), 
+				\a, nt -> add_named(nt, nt.defiStart, a)
+			), 
+			\a, struct -> add_named(struct, struct.start, a)
+		), 
+		\a, union ->add_named(union, union.start, a)
 	)
 }
 
@@ -441,9 +467,9 @@ fcSymbolNature2s(n : FcSymbolNature) -> string {
 
 fcSymbolKind2s(k : FcSymbolKind) -> string {
 	switch (k) {
-		FcVarSymbol(): "var/func";
-		FcTypeSymbol(): "type";
-		FcFieldSymbol(s): "field of " + s;
+		FcVarSymbol(tp): "var/func: " + prettyFiType(dummyPretty, tp, makeSet());
+		FcTypeSymbol(tp): "type: " + prettyFiType(dummyPretty, tp, makeSet());
+		FcFieldSymbol(s_tp, f_tp): "field of " + s_tp.name + ": " + prettyFiType(dummyPretty, f_tp, makeSet());
 	}
 }
 
