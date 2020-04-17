@@ -207,11 +207,19 @@ do_find_specialization_modules_js(m : FiModule, polymorphics : Tree<string, FiTy
 		found;
 }
 
-specializeProgramJS(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool) -> FiProgram {
+specializeProgramJS(cfg : FcCommonConfig, program0 : FiProgram, onlyBasicSpecializations : bool) -> FiProgram {
 	fcVerbose(cfg, 0, "Specializing - looking for polymorphic entities");
-	//program = convertTopLevelLambdas(program0);
+	program = convertTopLevelLambdas(program0);
 	t00 = timestamp();
-	polymorphics = collect_polymorphic_entities_js(program, onlyBasicSpecializations);
+	polymorphics0 = collect_polymorphic_entities_js(program, onlyBasicSpecializations);
+
+	// For JS, we only specialize some polymorphism
+	polymorphics = if (onlyBasicSpecializations) filterTree(polymorphics0, \fn, type -> {
+		switch (type) {
+			FiTypeFunction(args, rt): true;
+			default: false;
+		}
+	}) else polymorphics0;
 
 	printStat = \prefix : string, size : int, ms : int -> {
 		fcVerbose(cfg, 0, prefix + ". size: " + i2s(size) + ", " + i2s(ms) + " ms");
@@ -360,47 +368,41 @@ specializeProgramModuleJS(program : FiProgram, moduleName : string, polymorphics
 }
 
 convertTopLevelLambdas(f : FiProgram) -> FiProgram {
-	f
-// 	FiProgram(
-// 		f with modules = mapTree(f.modules, \m : FiModule -> {
-// 			p : Pair<List<FiGlobalVar>, List<FiFunctionDec>> = fold(
-// 				m.globalVars,
-// 				Pair(makeList(), array2list(m.functions)),
-// 				\acc, g : FiGlobalVar -> {
-// 					switch (g.type : FiType) {
-// 						FiTypeFunction(args, returnType): {
-// 							switch (g.value : FiExp) {
-// 								FiLambda(args1, body, type, start): {
-// 									// Pair(
-// 									// 	acc.first,
-// 									// 	Cons(
-// 									// 		FiFunctionDec(
-// 									// 			g.name,
-// 									// 			g.value,
-// 									// 			g.type,
-// 									// 			start,
-// 									// 			start
-// 									// 		),
-// 									// 		acc.second
-// 									// 	)
-// 									// )
-// 									Pair(Cons(g, acc.first), acc.second)
-// 								}
-// 								default: Pair(Cons(g, acc.first), acc.second);
-// 							}
-// 						}
-// 						default: Pair(Cons(g, acc.first), acc.second);
-// 					}
-// 				}
-// 			);
+	FiProgram(
+		f with modules = mapTree(f.modules, \m : FiModule -> {
+			p : Pair<List<FiGlobalVar>, List<FiFunctionDec>> = fold(
+				m.globalVars,
+				Pair(makeList(), array2list(m.functions)),
+				\acc, g : FiGlobalVar -> {
+					switch (g.type : FiType) {
+						FiTypeFunction(args, returnType): {
+							switch (g.value : FiExp) {
+								FiLambda(args1, body, type, start): {
+									Pair(
+										acc.first,
+										Cons(
+											FiFunctionDec(
+												g.name,
+												g.value,
+												g.type,
+												start,
+												start
+											),
+											acc.second
+										)
+									)
+								}
+								default: Pair(Cons(g, acc.first), acc.second);
+							}
+						}
+						default: Pair(Cons(g, acc.first), acc.second);
+					}
+				}
+			);
 
-// 			globalVars = list2array(p.first);
-// 			functions = list2array(p.second);
-
-// 			FiModule(
-// 				m with globalVars = globalVars, functions = functions
-// 			)
-// 		})
-// 	)
-//
+			FiModule(
+				m with globalVars = list2array(p.first), functions = list2array(p.second)
+			)
+		})
+	)
 }
