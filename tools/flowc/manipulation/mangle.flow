@@ -21,7 +21,7 @@ export {
 		n : FiNativeDec,
 		polymorphics : Tree<string, FiType>,
 		specializations : Tree<string, Set<FiType>>,
-		mangle : bool		
+		mangle : bool
 	) -> [FiNativeDec];
 
 	specializationFiTypeStruct(
@@ -38,6 +38,13 @@ export {
 		mangle : bool
 	) -> [FiTypeUnion];
 
+	specializeFiglobalVar(
+		v : FiGlobalVar,
+		polymorphics : Tree<string, FiType>,
+		specializations : Tree<string, Set<FiType>>,
+		mangle : bool
+	) -> [FiGlobalVar];
+
 	// only mangles type in initializer - there should not be any unbound parameters
 	specializeGlobalVar(
 		v : FiGlobalVar,
@@ -52,7 +59,7 @@ mangleSuffix(f : FiType) -> string {
 	jsmangling = true;
 	suffix = switch (f) {
 		FiTypeArray(t): (if (jsmangling) "" else "a" + mangleSuffix(t));
-		FiTypeFunction(args, returnType): "c" + i2s(length(args)) + superglue(args, \a -> mangleSuffix(a.type), "") 
+		FiTypeFunction(args, returnType): "c" + i2s(length(args)) + superglue(args, \a -> mangleSuffix(a.type), "")
 			+ if (jsmangling) "" else mangleSuffix(returnType);
 		FiTypeRef(t): if (jsmangling) "" else "r" + mangleSuffix(t);
 		FiTypeParameter(n): {
@@ -130,10 +137,10 @@ mangleName(name : string, t : FiType) -> string {
 		//printCallstack();
 	}*/
 	switch (t) {
-		FiTypeName(n, tps): 
-			if (n == name && length(tps) == 0) 
+		FiTypeName(n, tps):
+			if (n == name && length(tps) == 0)
 				name
-			else	
+			else
 				doMangleName(name, t);
 		default:
 			doMangleName(name, t);
@@ -173,21 +180,25 @@ specializeEntity(
 	switch (mpoly) {
 		None(): [constructSpecialized(entityName, makeTree())]; // no specialization occurs - but maybe it is needed further down
 		Some(poly): {
-			specs = lookupTreeDef(specializations, entityName, makeSet());
-			// map of mangled name -> specialization - used to remove specializations resulting in the same mangled name
-			// allows mangling to work as a merging transformation too
-			uniqueSpecs = foldSet(specs, makeTree(), \tree, s -> setTree(tree, mangleName(entityName, s), s));
-			convertTreeToArray(uniqueSpecs, \mangled, s : FiType -> {
-				typars = fiMatchTypars(poly, s, makeTree());
-				constructSpecialized(mangled, typars);
-			});
+			specs : Set<FiType> = lookupTreeDef(specializations, entityName, makeSet());
+			if (isEmptySet(specs)) {
+				[constructSpecialized(entityName, makeTree())]
+			 } else {
+				// map of mangled name -> specialization - used to remove specializations resulting in the same mangled name
+				// allows mangling to work as a merging transformation too
+				uniqueSpecs = foldSet(specs, makeTree(), \tree, s -> setTree(tree, mangleName(entityName, s), s));
+				convertTreeToArray(uniqueSpecs, \mangled, s : FiType -> {
+					typars = fiMatchTypars(poly, s, makeTree());
+					constructSpecialized(mangled, typars);
+				});
+			 }
 		}
 	}
 }
 
 // specializes function body and creates new FiFunctionDec
-specializeFunctionBody(f : FiFunctionDec, mangledName : string, typars : Tree<string, FiType>, 
-	polymorphics : Tree<string, FiType>, mangle : bool) 
+specializeFunctionBody(f : FiFunctionDec, mangledName : string, typars : Tree<string, FiType>,
+	polymorphics : Tree<string, FiType>, mangle : bool)
 {
 	functionType = instantiateFiTypeFunctionTypars(polymorphics, f.type, typars, mangle);
 	body = instantiateFiLambdaTypars(f.lambda, typars, polymorphics, makeSet(), mangle);
@@ -195,7 +206,7 @@ specializeFunctionBody(f : FiFunctionDec, mangledName : string, typars : Tree<st
 }
 
 // specializes function and deals with unbound type parameters inside
-specializeFunction(f : FiFunctionDec, mangledName : string, typars : Tree<string, FiType>, 
+specializeFunction(f : FiFunctionDec, mangledName : string, typars : Tree<string, FiType>,
 	polymorphics : Tree<string, FiType>, mangle : bool) {
 
 	// always instantiating without mangle first time to detect unbound parameters correctly
@@ -250,10 +261,10 @@ specializeFiNativeDec(
 		polymorphics,
 		specializations,
 		\mangledName, typars -> {
-			FiNativeDec(mangledName, n.io, 
+			FiNativeDec(mangledName, n.io,
 				instantiateFiTypeTypars(polymorphics, n.type, typars, mangle),
 				n.nativeName,
-				instantiateFiExpTypars(n.fallbackLambda, typars, polymorphics, makeSet(), mangle), 
+				instantiateFiExpTypars(n.fallbackLambda, typars, polymorphics, makeSet(), mangle),
 				n.declStart, n.defiStart
 			)
 		});
@@ -271,7 +282,7 @@ specializationFiTypeStruct(
 		specializations,
 		\mangledName, typars -> {
 			FiTypeStruct(
-				if (mangleFields) mangledName else struct_.name, 
+				if (mangleFields) mangledName else struct_.name,
 				[], // empty as all parameters are specialized
 				map(struct_.args, \sa -> {
 					FiStructArg(
@@ -286,7 +297,6 @@ specializationFiTypeStruct(
 	);
 }
 
-
 specializationFiTypeUnion(
 	union : FiTypeUnion,
 	polymorphics : Tree<string, FiType>,
@@ -299,7 +309,7 @@ specializationFiTypeUnion(
 		specializations,
 		\mangledName, typars -> {
 			FiTypeUnion(
-				mangledName, 
+				mangledName,
 				[], // empty as all type parameters are specialized
 				map(union.typenames, \tn -> {
 					// instantiating using union type parameters - i.e. List<T>(EmptyList, Cons<T>)
@@ -310,6 +320,27 @@ specializationFiTypeUnion(
 			)
 		},
 	);
+}
+
+specializeFiglobalVar(
+	v : FiGlobalVar,
+	polymorphics : Tree<string, FiType>,
+	specializations : Tree<string, Set<FiType>>,
+	mangle : bool
+) -> [FiGlobalVar] {
+	specializeEntity(
+		v.name,
+		polymorphics,
+		specializations,
+		\mangledName, typars -> {
+			FiGlobalVar(
+				v.name,
+				instantiateFiExpTypars(v.value, typars, polymorphics, makeSet(), true),
+				instantiateFiTypeTypars(polymorphics, v.type, typars, true),
+				v.declStart,
+				v.defiStart
+			);
+		});
 }
 
 specializeGlobalVar(v : FiGlobalVar, polymorphics : Tree<string, FiType>) -> FiGlobalVar {
@@ -330,30 +361,30 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 			instantiateFiLambdaTypars(f, typars, polymorphic, bound, mangle);
 		FiCall(fn, args, type, start): {
 			FiCall(
-				instantiateFiExpTypars(fn, typars, polymorphic, bound, mangle), 
-				map(args, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)), 
-				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
+				instantiateFiExpTypars(fn, typars, polymorphic, bound, mangle),
+				map(args, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)),
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle),
 				start
 			);
 		}
-		FiVar(name, type, start): 
+		FiVar(name, type, start):
 			instantiateFiVarTypars(f, typars, polymorphic, bound, mangle);
 		FiLet(name, type, e1, e2, type2, start): {
 			FiLet(
 				name,
-				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
-				instantiateFiExpTypars(e1, typars, polymorphic, bound, mangle), 
-				instantiateFiExpTypars(e2, typars, polymorphic, insertSet(bound, name), mangle), 
-				instantiateFiTypeTypars(polymorphic, type2, typars, mangle), 
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle),
+				instantiateFiExpTypars(e1, typars, polymorphic, bound, mangle),
+				instantiateFiExpTypars(e2, typars, polymorphic, insertSet(bound, name), mangle),
+				instantiateFiTypeTypars(polymorphic, type2, typars, mangle),
 				start
 			);
 		}
 		FiIf(e1, e2, e3, type, start):  {
 			FiIf(
-				instantiateFiExpTypars(e1, typars, polymorphic, bound, mangle), 
-				instantiateFiExpTypars(e2, typars, polymorphic, bound, mangle), 
-				instantiateFiExpTypars(e3, typars, polymorphic, bound, mangle), 
-				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
+				instantiateFiExpTypars(e1, typars, polymorphic, bound, mangle),
+				instantiateFiExpTypars(e2, typars, polymorphic, bound, mangle),
+				instantiateFiExpTypars(e3, typars, polymorphic, bound, mangle),
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle),
 				start
 			);
 		}
@@ -363,36 +394,36 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 				instantiateFiTypeTypars(polymorphic, switchType, typars, mangle),
 				map(cases, \c -> {
 					structType = instantiateFiTypeTypars(polymorphic, FiTypeName(c.struct, getTypars(switchType)), typars, mangle);
-					FiCase(getTypeName(structType), c.argNames, 
-						instantiateFiExpTypars(c.body, typars, polymorphic, 
+					FiCase(getTypeName(structType), c.argNames,
+						instantiateFiExpTypars(c.body, typars, polymorphic,
 							fold(c.argNames, bound, \acc, a -> insertSet(acc, a)), mangle),
 						c.start
 					);
-				}), 
-				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
+				}),
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle),
 				start
 			);
 		}
 		FiCast(e, tFrom, tTo, type, start):  {
 			FiCast(
-				instantiateFiExpTypars(e, typars, polymorphic, bound, mangle), 
-				instantiateFiTypeTypars(polymorphic, tFrom, typars, mangle), 
-				instantiateFiTypeTypars(polymorphic, tTo, typars, mangle), 
-				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
+				instantiateFiExpTypars(e, typars, polymorphic, bound, mangle),
+				instantiateFiTypeTypars(polymorphic, tFrom, typars, mangle),
+				instantiateFiTypeTypars(polymorphic, tTo, typars, mangle),
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle),
 				start
 			);
 		}
 		FiSeq(es, type, start):  {
 			FiSeq(
-				map(es, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)), 
-				instantiateFiTypeTypars(polymorphic, type, typars, mangle), 
+				map(es, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)),
+				instantiateFiTypeTypars(polymorphic, type, typars, mangle),
 				start
 			);
 		}
 		FiCallPrim(op, es, type, start): {
 			instantiatedType = instantiateFiTypeTypars(polymorphic, type, typars, mangle);
 			instantiatedOp = switch (op) {
-				FcStructPrim(name): 
+				FcStructPrim(name):
 					FcStructPrim(
 						if (mangle && containsKeyTree(polymorphic, name)) {
 							cast(instantiatedType : FiType -> FiTypeName).name;
@@ -416,7 +447,7 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 			}
 			FiCallPrim(
 				instantiatedOp,
-				map(es, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)), 
+				map(es, \a -> instantiateFiExpTypars(a, typars, polymorphic, bound, mangle)),
 				instantiatedType,
 				start
 			);
@@ -424,14 +455,14 @@ instantiateFiExpTypars(f : FiExp, typars : Tree<string, FiType>, polymorphic : T
 		FiVoid(start): f;
 		FiDouble(d, start): f;
 		FiInt(i, start): f;
-		FiString(s, start): f; 
+		FiString(s, start): f;
 		FiBool(b, start): f;
 		FiRequire(flowfile, e, type, start): {
-			FiRequire(flowfile, instantiateFiExpTypars(e, typars, polymorphic, bound, mangle), 
+			FiRequire(flowfile, instantiateFiExpTypars(e, typars, polymorphic, bound, mangle),
 				instantiateFiTypeTypars(polymorphic, type, typars, mangle), start);
 		}
 		FiUnsafe(name, fallback, type, start): {
-			FiUnsafe(name, instantiateFiExpTypars(fallback, typars, polymorphic, bound, mangle), 
+			FiUnsafe(name, instantiateFiExpTypars(fallback, typars, polymorphic, bound, mangle),
 				instantiateFiTypeTypars(polymorphic, type, typars, mangle), start);
 		}
 	}
@@ -442,20 +473,20 @@ instantiateFiVarTypars(v : FiVar, typars : Tree<string, FiType>, polymorphic : T
 
 	mangled = if (mangle && !containsSet(bound, v.name) && containsKeyTree(polymorphic, v.name)) {
 		mangleName(v.name, instantiateFiTypeTypars(polymorphic, v.type, typars, false))
-	} else 
+	} else
 		v.name;
-	
+
 	FiVar(mangled, instantiateFiTypeTypars(polymorphic, v.type, typars, mangle), v.start);
 }
 
 instantiateFiLambdaTypars(f : FiLambda, typars : Tree<string, FiType>, polymorphic : Tree<string, FiType>,
 	bound : Set<string>, mangle : bool) -> FiLambda {
 	FiLambda(
-		map(f.args, \a -> FiFunArg(a.name, instantiateFiTypeTypars(polymorphic, a.type, typars, mangle))), 
-		instantiateFiExpTypars(f.body, typars, polymorphic, 
+		map(f.args, \a -> FiFunArg(a.name, instantiateFiTypeTypars(polymorphic, a.type, typars, mangle))),
+		instantiateFiExpTypars(f.body, typars, polymorphic,
 			fold(f.args, bound, \acc, a -> insertSet(acc, a.name)),
-			mangle), 
-		instantiateFiTypeFunctionTypars(polymorphic, f.type, typars, mangle), 
+			mangle),
+		instantiateFiTypeFunctionTypars(polymorphic, f.type, typars, mangle),
 		f.start
 	);
 }
@@ -491,7 +522,7 @@ instantiateFiTypeTypars(polymorphic : Tree<string, FiType>, type : FiType, typar
 		FiTypeRef(t):  FiTypeRef(instantiateFiTypeTypars(polymorphic, t, typars, mangle));
 		FiTypeParameter(n): {
 			resolved = lookupTreeDef(typars, n, type);
-			if (mangle && resolved != type) 
+			if (mangle && resolved != type)
 				mangleType(polymorphic, resolved)
 			else
 				resolved;
