@@ -1335,8 +1335,8 @@ class RenderSupport {
 	}
 
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String,
-		fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
-		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool) : Void {
+		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity, alignBottom);
 	}
 
 	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
@@ -2781,8 +2781,8 @@ class RenderSupport {
 	// cb - callback in the flow code which accepts [flow]
 	// To call it in the embedded HTML use frameElement.callflow([args]))
 	// Default web clip size = 100x100. Scale clip to resize
-	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool, hideHorizontalScroll : Bool) : WebClip {
-		return new WebClip(url, domain, useCache, reloadBlock, cb, ondone, shrinkToFit, hideHorizontalScroll);
+	public static function makeWebClip(url : String, domain : String, useCache : Bool, reloadBlock : Bool, cb : Array<String> -> String, ondone : String -> Void, shrinkToFit : Bool) : WebClip {
+		return new WebClip(url, domain, useCache, reloadBlock, cb, ondone, shrinkToFit);
 	}
 
 	public static function webClipHostCall(clip : WebClip, name : String, args : Array<String>) : String {
@@ -2797,9 +2797,8 @@ class RenderSupport {
 		clip.setDisableOverlay(disabled);
 	}
 
-	public static function webClipEvalJS(clip : Dynamic, code : String) : Dynamic {
-		clip.evalJS(code);
-		return null;
+	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
+		cb(clip.evalJS(code));
 	}
 
 	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {

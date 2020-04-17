@@ -440,7 +440,7 @@ public class FxRenderSupport extends RenderSupport {
 		return stage_clip;
 	}
 	@Override
-	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit, Boolean hideHorizontalScroll) {
+	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
 		System.out.println("makeWebClip not implemented");
 		return new Clip();
 	}
@@ -1281,7 +1281,7 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
-								  int backgroundColour,double backgroundOpacity) {
+								  int backgroundColour,double backgroundOpacity, boolean alignBottom) {
 		System.out.println("setVideoSubtitle not implemented");
 		return null;
 	}
