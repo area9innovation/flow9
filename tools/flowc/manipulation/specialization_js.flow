@@ -188,6 +188,7 @@ do_find_specialization_modules_js(m : FiModule, polymorphics : Tree<string, FiTy
 
 	step2 = fold(m.globalVars, step1, \acc0, g ->
 		find_free_vars_with_types_multiple_js(g.value, makeSet(), acc0, polymorphics));
+
 	step3 = fold(m.natives, step2, \acc0, n ->
 		find_type_specializations_js(n.type, polymorphics, acc0));
 
@@ -206,15 +207,20 @@ do_find_specialization_modules_js(m : FiModule, polymorphics : Tree<string, FiTy
 		found;
 }
 
-specializeProgramJS(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool) -> FiProgram {
+specializeProgramJS(cfg : FcCommonConfig, program0 : FiProgram, onlyBasicSpecializations : bool) -> FiProgram {
 	fcVerbose(cfg, 0, "Specializing - looking for polymorphic entities");
+	program = convertTopLevelLambdas(program0);
 	t00 = timestamp();
 	polymorphics0 = collect_polymorphic_entities_js(program, onlyBasicSpecializations);
 
 	// For JS, we only specialize some polymorphism
 	polymorphics = if (onlyBasicSpecializations) filterTree(polymorphics0, \fn, type -> {
-		shouldThisTypeBeSpecializedJS(type);
+		switch (type) {
+			FiTypeFunction(args, rt): true;
+			default: false;
+		}
 	}) else polymorphics0;
+
 	printStat = \prefix : string, size : int, ms : int -> {
 		fcVerbose(cfg, 0, prefix + ". size: " + i2s(size) + ", " + i2s(ms) + " ms");
 	}
@@ -222,27 +228,16 @@ specializeProgramJS(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpeciali
 
 	fcVerbose(cfg, 0, "Specializing - collecting specializations");
 	t0 = timestamp();
-	specializations0 = find_specializations_js(program, polymorphics, makeTree());
-
-	specializations = if (false && onlyBasicSpecializations) {
-		// Second, get rid of specializations that are not basic
-		// Unfortunately, this does not work in the specialization
-		// code such that we can keep the original one. Right now,
-		// it is all or nothing
-		mapTree2(specializations0, \fn, types -> {
-			pt = lookupTreeDef(polymorphics, fn, FiTypeVoid());
-			filterSet(types, \t -> {
-				shouldThisSpecializationBeKeptJS(pt, t)
-			})
-		})
-	} else specializations0;
+	specializations = find_specializations_js(program, polymorphics, makeTree());
 	printStat("specializations", sizeTree(specializations), round(timestamp() - t0));
 
 	if (false) {
+		println("Found specializations:");
 		traverseInOrder(specializations, \n, types -> {
 			pt = lookupTreeDef(polymorphics, n, FiTypeVoid());
 			println(n + " : " + prettyFiType(dummyPretty, pt, makeSet()) + " as " + superglue(set2array(types), \t -> prettyFiType(dummyPretty, t, makeSet()), ", "));
 		});
+		println("");
 	}
 
 	fcVerbose(cfg, 0, "Specializing - generating specialized entity declarations");
@@ -255,61 +250,6 @@ specializeProgramJS(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpeciali
 	fcVerbose(cfg, 0, "Specialization finished.");
 
 	result;
-}
-
-shouldThisTypeBeSpecializedJS(t : FiType) -> bool {
-	switch (t) {
-		FiTypeFunction(args, rt): {
-			// TODO: If there is exactly one polymorphic arg type
-			// that does not exist in the output, we are good
-			true;
-		}
-		default: false;
-	}
-}
-
-shouldThisSpecializationBeKeptJS(pt : FiType, ct : FiType) -> bool {
-	switch (pt) {
-		FiTypeFunction(pargs, prt): {
-			switch (ct) {
-				FiTypeFunction(cargs, crt): {
-					foldi(pargs, true, \i, acc, parg -> {
-						acc && shouldThisSpecializationBeKeptJS(parg.type, cargs[i].type)
-					}) && shouldThisSpecializationBeKeptJS(crt, crt)
-				}
-				default: false;
-			}
-		}
-		FiTypeParameter(tp): {
-			// We only keep basic type specializations
-			fiTypeIsBasic(ct);
-		}
-		FiTypeArray(pat): {
-			switch (ct) {
-				FiTypeArray(cat): shouldThisSpecializationBeKeptJS(pat, cat);
-				default: false;
-			}
-		}
-		FiTypeRef(prt): {
-			switch (ct) {
-				FiTypeRef(crt): shouldThisSpecializationBeKeptJS(prt, crt);
-				default: false;
-			}
-		}
-		FiTypeBool(): true;
-		FiTypeInt(): true;
-		FiTypeDouble(): true;
-		FiTypeString(): true;
-		FiTypeFlow(): true;
-		FiTypeVoid(): true;
-		FiTypeNative(): true;
-		FiTypeName(pn, ptypar): {
-			switch (ct) {
-				FiTypeName(cn, ctypar): forall(ctypar, fiTypeIsBasic);
-				default: false;
-			}
-		}
-	}
 }
 
 overrideWithSpecializationJS(original : [?], getKey : (?) -> ??, overrides : Tree<??, [?]>) -> [?] {
@@ -425,4 +365,37 @@ specializeProgramModuleJS(program : FiProgram, moduleName : string, polymorphics
 			);
 		}
 	}
+}
+
+convertTopLevelLambdas(f : FiProgram) -> FiProgram {
+	provcessVar = \acc : Pair<List<FiGlobalVar>, List<FiFunctionDec>>, g : FiGlobalVar -> {
+		switch (g.type : FiType) {
+			FiTypeFunction(args, returnType): {
+				switch (g.value : FiExp) {
+					FiLambda(args1, body, type, start): {
+						Pair(
+							acc.first,
+							Cons(FiFunctionDec(g.name, g.value, g.type, start, start), acc.second)
+						)
+					}
+					default: Pair(Cons(g, acc.first), acc.second);
+				}
+			}
+			default: Pair(Cons(g, acc.first), acc.second);
+		}
+	}
+
+	FiProgram(
+		f with modules = mapTree(f.modules, \m : FiModule -> {
+			p : Pair<List<FiGlobalVar>, List<FiFunctionDec>> = fold(
+				m.globalVars,
+				Pair(makeList(), array2list(m.functions)),
+				provcessVar
+			);
+
+			FiModule(
+				m with globalVars = list2array(p.first), functions = list2array(p.second)
+			)
+		})
+	)
 }
