@@ -1,6 +1,7 @@
 import tools/flowc/backends/common;
 import tools/flowc/backends/bytecode/fi2bytecode_defines;
 import tools/flowc/backends/bytecode/fi2bytecode_bytecode;
+import tools/flowc/backends/bytecode/fi2bytecode_debug;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/incremental/fi_helpers;
 import lingo/flow/bytecode;
@@ -11,10 +12,6 @@ export {
 	fiBcCollectBcStructs(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, program : FiProgram, extStructTypes : bool, pc : ref int) -> FiBcStructs;
 	fiMakeLineBytecode(place : string, cfg : FcBytecodeConfig, sctx : FiBcScopeContext, start : int, code : [BytecodeOrChunks], pc : int)  -> BytecodeChunks;
 	fiBcGetGlobals(decls : [Pair<string, [FiDeclaration]>]) -> Tree<string, int>;
-	fiBcDebugAddPosition(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, pc : int, pos : int, isStart : bool, comment : BcDebugKind) -> void;
-
-	fiBcDebugAddFunction(cfg : FcBytecodeConfig, pc : int, name : string) -> void;
-	fiBcDebugAddLocal(cfg : FcBytecodeConfig, pc : int, type : int, id : int, name : string) -> void;
 
 	fiBcString2Hex(s : string) -> string;
 	fiMaxPosition(e : FiExp) -> int;
@@ -151,7 +148,7 @@ fiFlowc2StructDefs(
 				Pair(field.name, mtc);
 			});
 
-			fiBcDebugAddPosition(cfg, ctx, ^pc, struct.start, false, DebugPosStruct());
+			fiBcDebugAddPosition(cfg, ^pc, struct.start, false, DebugPosStruct());
 
 			structCode = fiMakeBytecode([CStructDef(id, sname, sargs)]);
 			code = arrayPush(acc.bytecode, structCode);
@@ -182,55 +179,6 @@ fiBcGetGlobals(decls) {
 			Pair(id + 1, tr);
 		})
 	}).second;
-}
-
-fiBcMakeDebugInfoPositionKey(ctx : FiBcGlobalContext, file : string, pos : int, isStart : bool, comment : BcDebugKind) -> string {
-	if (comment != DebugPosEnd()) {
-		line = switch(lookupTree(ctx.resolvers, file)) {
-			Some(r) : findLineOnly(r, iabs(pos));
-			None() : {
-				fcPrintln("cannot find resolver for file: " + file, ctx.program.config.threadId);
-				pos;
-			}
-		}
-		file + ":" + i2s(line) + (if (isStart) "S" else "")
-	} else {
-		file + ":" + i2s(pos)
-	}
-}
-
-fiBcDebugAddPosition(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, pc : int, pos : int, isStart : bool, comment : BcDebugKind) -> void {
-	if (cfg.debug) {
-		file = ctx.file;
-		key = fiBcMakeDebugInfoPositionKey(ctx, file, pos, isStart, comment);
-		switch (lookupTree(cfg.debugInfoPositions, key)) {
-			None(): {
-				p = BCDPosition(pc, if (comment == DebugPosEnd()) file + "--end--" else file, pos, comment);
-				cfg.debugInfoPositions ::= setTree(cfg.debugInfoPositions, key, p);
-			}
-			Some(infoPos): {
-				if (infoPos.pc > pc) {
-					p = BCDPosition(pc, if (comment == DebugPosEnd()) file + "--end--" else file, pos, comment);
-					cfg.debugInfoPositions ::= setTree(cfg.debugInfoPositions, key, p);
-				}
-			}
-		}
-	}
-}
-
-fiBcDebugAddFunction(cfg, pc, name) {
-	if (cfg.debug) {
-		pushDList(cfg.debugInfoFunctions, BCDFunction(pc, name));
-		{}
-	}
-}
-
-fiBcDebugAddLocal(cfg, pc, type, id, name) {
-	if (cfg.debug) {
-		pushDList(cfg.debugInfoLocals, BCDLocal(pc, type, id, name));
-		{}
-	}
-
 }
 
 fiBcString2Hex(s) {
