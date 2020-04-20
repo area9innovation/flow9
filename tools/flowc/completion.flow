@@ -28,7 +28,7 @@ fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : strin
 	switch (fcGetCompletionContext(code, index, config)) {
 		Some(context): {
 			fcDebugLog("completion context: " + fcCompletionContext2s(context), config);
-			completions = if (context.fields == []) {
+			completions = if (context.components == []) {
 				codeCompletePrefix(config, globEnv, context.prefix);
 			} else {
 				codeCompleteField(config, globEnv, context, file);
@@ -39,19 +39,19 @@ fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : strin
 	}
 }
 
-FcCompletionField(
+FcCompletionComponent(
 	name : string,
 	start : int
 );
 
 FcCompletionContext(
-	fields : [FcCompletionField], // in case of struct field completion
+	components : [FcCompletionComponent], // in case of struct field completion
 	prefix : string,
 	postfix : string
 );
 
 fcCompletionContext2s(context : FcCompletionContext) -> string {
-	"fields=[" + strGlue(map(context.fields, \f -> f.name), ".") + "], prefix='" + context.prefix + "', postfix='" + context.postfix + "'";
+	"components=[" + strGlue(map(context.components, \f -> f.name), ".") + "], prefix='" + context.prefix + "', postfix='" + context.postfix + "'";
 }
 
 fcGetCompletionContext(code : string, index : int, config : CompilerConfig) -> Maybe<FcCompletionContext> {
@@ -72,14 +72,14 @@ fcGetCompletionContext(code : string, index : int, config : CompilerConfig) -> M
 	}
 }
 
-fcGetCompletionFields(index : int, code : string, acc : [FcCompletionField], config : CompilerConfig) -> [FcCompletionField] {
+fcGetCompletionFields(index : int, code : string, acc : [FcCompletionComponent], config : CompilerConfig) -> [FcCompletionComponent] {
 	if (index > 1 && getCharAt(code, index - 1) == "." && fcIsIdChar(getCharAt(code, index - 2))) { 
 		field_start = for(index - 2,
 			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(code, i - 1)), 
 			\i -> i - 1
 		);
 		field = substring(code, field_start, index - field_start - 1);
-		fcGetCompletionFields(field_start, code, concat([FcCompletionField(field, field_start)], acc), config);
+		fcGetCompletionFields(field_start, code, concat([FcCompletionComponent(field, field_start)], acc), config);
 	} else {
 		acc;
 	}
@@ -89,7 +89,7 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 	 switch (fcLoadFromCache(globEnv, getTargetModuleName(config))) {
 		Some(cached): {
 			module = cached.loaded.module;
-			var_index = context.fields[0].start;
+			var_index = context.components[0].start;
 			src = fcFileSource(globEnv, module.fileinfo.fullpath);
 			switch(find(tree2pairs(fcApproxToplevels(src)), \p -> p.second.first < var_index && var_index < p.second.second)) {
 				Some(scope): {
@@ -104,7 +104,7 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 								FiNativeDec(__,__,__,__,fb,__,__): fb;
 							}
 							mapping = fcLocalVars2types(toplevel, globEnv);
-							switch (lookupTree(mapping, context.fields[0].name)) {
+							switch (lookupTree(mapping, context.components[0].name)) {
 								Some(types): {
 									fcDebugLog("codeCompleteField: X, types=" + i2s(sizeSet(types)), config);
 									foldSet(types, makeList(), \acc, type -> {
@@ -113,7 +113,7 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 									});
 								}
 								None(): {
-									fcDebugLog("codeCompleteField: variable '" + context.fields[0].name + "' is not found", config);
+									fcDebugLog("codeCompleteField: variable '" + context.components[0].name + "' is not found", config);
 									makeList();
 								}
 							}
@@ -140,8 +140,8 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 fcCompleteFieldViaType(config : CompilerConfig, env : FcTypeEnvGlobal, type : FiType, context : FcCompletionContext, i : int, acc : List<CodeCompletion>) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
 	proc_struct = \ac, struct -> {
-		if (i < length(context.fields)) {
-			field = context.fields[i].name;
+		if (i < length(context.components)) {
+			field = context.components[i].name;
 			switch (find(struct.args, \arg -> arg.name == field)) {
 				Some(arg): fcCompleteFieldViaType(config, env, arg.type, context, i + 1, ac);
 				None(): ac;
