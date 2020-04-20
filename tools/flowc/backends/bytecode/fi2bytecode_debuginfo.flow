@@ -40,30 +40,23 @@ diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>,
 
 		lineResolverM : Maybe<LineResolver> = lookupTree(resolvers, file);
 		lineResolverM ?? {
-			// TODO: Grab all the positions and turn into lines like this:
-
 			// Extract all positions in the file we have to resolve to line:col pars
 			positions : Set<int> = foldList(poss, makeSet(), \acc, pos : BCDPosition -> {
-				insertSet(acc, pos.pos)
+				insertSet(acc, iabs(pos.pos))
 			});
 
-			lineCols = buildLineCols(lineResolverM, positions);
+			// Convert all positions to line,col pairs
+			lineCols : Tree<int, Pair<int, int>> = buildLineCols(lineResolverM, positions);
 
-			// <pc> <file> <line> <col>
-			// 492 C:\flow9\lib\dynamic.flow 65 0
+			fileDebugInfo = list2string(foldSet(positions, makeList(), \acc, pos -> {
+				// <pc> <file> <line> <col>
+				// 492 C:\flow9\lib\dynamic.flow 65 0
 
-			// We have collisions: The same bytecode can correspond to multiple nodes
+				// address = (if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc));
 
-			/*
-			address = (if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc));
-			line = (address + " ") 
-				+ filename) 
-				+ " " + i2s(lineCol.first) + " " 
-				+ i2s(lineCol.second)) 
-				+ (if (isDebugVerbose) " " + toString(v.comment) else "") 
-				+ "\n";
-			*/
-			fileDebugInfo = "<pc> " + filename + " <line> <col>\n";
+				lc = lookupTreeDef(lineCols, pos, Pair(0, 0));
+				Cons(i2s(pos) + " " + filename + " " + i2s(lc.first) + " " + i2s(lc.second) + "\n", acc);
+			}));
 			cfg.debugInfo.positions := Cons(fileDebugInfo, ^(cfg.debugInfo.positions));
 		} : {
 			println("Invariant broken: Could not find resolver for " + file);
@@ -121,12 +114,13 @@ fcBcMakeDebugInfo(cfg : FcBytecodeConfig) -> string {
 	//    position file line token-index/column
 	positions : string = 
 		concatStrings(list2array(^(debugInfo.positions)))
-		+ i2s(^(debugInfo.endByte)) + " --end-- 0 -1";
+		+ (if (^(debugInfo.endByte) != 0) {
+			i2s(^(debugInfo.endByte)) + " --end-- 0 -1\n"
+		} else "");
 
 	// Third part of the debug info are local variables
 	//    L position type id name
 	// Types: 0 for local variables, 1 for function arguments, 2 for bound variables (free variables in closures)
-
 	fcVerbose(cfg, 1, "Preparing locals...");
 	sorted = list2sortedArray(^(debugInfo.locals), \p -> p.pc);
 	locals : string = list2string(fold(
@@ -142,56 +136,29 @@ fcBcMakeDebugInfo(cfg : FcBytecodeConfig) -> string {
 	list2string(Cons(locals, Cons("\n", Cons(positions, Cons("\n", Cons(functions, makeList()))))));
 }
 
-/*
-
-fold(
-			mergeSort(getTreeValues(cfg.debugInfoPositions), \a : BCDPosition, b : BCDPosition -> {
-				if (a.pc == b.pc) 0	else if (a.pc < b.pc) -1 else 1;
-			}),
-			makeList(),
-			\acc, v : BCDPosition -> {
-				filename = switch (lookupTree(ctx.program.modules, v.file)) {
-					Some(m) : {
-						m.fileinfo.fullpath;
-					}
-					None() : v.file
-				}
-
-				lineCol = switch(lookupTree(ctx.resolvers, v.file)) {
-					Some(r) : {
-						// Here we use iabs() function as a workaround for
-						// desugaring of switch cases with variables.
-						// Refer to desugar.flow:989
-						lc = findLineRaw(r, iabs(v.pos));
-						Pair(lc.lineno, lc.column);
-					}
-					None() : Pair(v.pos, 0);
-				}
-
-				address = (if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc));
-				line = (address + " ") 
-					+ (resolveRelativePath(filename)) 
-					+ " " + i2s(lineCol.first) + " " 
-					+ (if (filename == "--end--") "-1" else i2s(lineCol.second)) 
-					+ (if (isDebugVerbose) " " + toString(v.comment) else "") 
-					+ "\n";
-				Cons(line, acc)
-			}
-		);
-
-		positions = list2string(lines);
-
-	*/
-	
 list2sortedArray(list : List<?>, key : (?) -> ??) -> [?] {
-	t : Tree<??, [?]> = foldList(list, makeTree(), \acc, e -> {
-		treePushToArrayValue(acc, key(e), e)
+	t : Tree<??, Set<?>> = foldList(list, makeTree(), \acc, e -> {
+		insertMultimap(acc, key(e), e)
 	});
-	concatA(getTreeValues(t));
-}	
-
-// For a set of positions, construct the line-columns for them all
-buildLineCols(lineResolve : LineResolver, positions : Set<int>) -> Tree<int, LineColumn> {
-	makeTree();
+	concatA(map(getTreeValues(t), set2array));
 }
 
+// For a set of positions, construct the line-columns for them all
+buildLineCols(lineResolver : LineResolver, positions : Set<int>) -> Tree<int, Pair<int, int>> {
+	foldSet(positions, Pair(makeTree(), 0), \acc : Pair<Tree<int, Pair<int, int>>, int>, p : int -> {
+		line = findLineWithPos(lineResolver.linestarts, acc.second, p);
+		lineend = elementAt(lineResolver.linestarts, line, 0);
+		col = p - lineResolver.linestarts[line];
+		lc = Pair(line + 1, col);
+		Pair(setTree(acc.first, p, lc), line)
+	}).first;
+}
+
+findLineWithPos(linestarts : [int], line : int, pos : int) -> int {
+	if (line + 1 < length(linestarts)) {
+		lineStart = linestarts[line + 1];
+		if (pos > lineStart) {
+			findLineWithPos(linestarts, line + 1, pos);
+		} else line;
+	} else line;
+}
