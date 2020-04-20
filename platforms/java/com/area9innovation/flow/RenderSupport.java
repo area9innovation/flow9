@@ -42,7 +42,7 @@ public class RenderSupport extends NativeHost {
 	public Object currentClip() {
 		return null;
 	}
-	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit, Boolean hideHorizontalScroll) {
+	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
 		return null;
 	}
 	public String webClipHostCall(Object clip,String fn,Object[] args) {
@@ -54,7 +54,7 @@ public class RenderSupport extends NativeHost {
 	public Object setWebClipDisabled(Object clip,boolean value) {
 		return null;
 	}
-	public String webClipEvalJS(Object clip,String code) {
+	public Object webClipEvalJS(Object clip,String code, Func1<Object,String> cb) {
 		return null;
 	}
 	public Object setWebClipZoomable(Object clip,Boolean zoomable) {
@@ -313,7 +313,7 @@ public class RenderSupport extends NativeHost {
 	}
 	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
-								  int backgroundColour,double backgroundOpacity) {
+								  int backgroundColour,double backgroundOpacity, boolean alignBottom) {
 		return null;
 	}
 	public Object setVideoPlaybackRate(Object tf, Double rate) {

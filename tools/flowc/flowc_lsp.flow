@@ -1,3 +1,5 @@
+import math/uuid;
+import ds/trie;
 import tools/common/config;
 import text/serialize;
 import text/utf8;
@@ -20,6 +22,8 @@ import tools/flowc/lsp_types;
 	- textDocument/references
 	- textDocument/hover
 	- textDocument/rename
+	- textDocument/completion
+	- workspace/executeCommand
 */
 
 export {
@@ -31,25 +35,13 @@ export {
 		type : string, // Content-Type
 		json : string  // the Json description of request
 	);
-	fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json,  out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void;
-}
-
-fcJsonObjectHasField(obj : JsonObject, field : string) -> bool {
-	exists(obj.members, \member -> member.first == field)
+	fcLspProcessRequest(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, json : Json, out_cb : (string) -> void, loop_cb : () -> void, exit_cb : () -> void) -> void;
 }
 
 fcDecodeJsonRequest(s : string) -> Json {
 	json = parseJsonSafe(s);
 	switch (json) {
-		JsonObject(members): {
-			if (fcJsonObjectHasField(json, "jsonrpc") &&
-				fcJsonObjectHasField(json, "method")
-			) {
-				json
-			} else {
-				JsonNull();
-			}
-		}
+		JsonObject(members): if (fcJsonObjectHasField(json, "jsonrpc")) json else JsonNull();
 		default: JsonNull();
 	}
 }
@@ -84,7 +76,7 @@ fcLspReadRequest() -> Maybe<FcLspRequest> {
 
 FcLspMethodCall(
 	conf : CompilerConfig,
-	env : FcTypeEnvGlobal,
+	globEnv : FcTypeEnvGlobal,
 	id : Json, 
 	params : Json, 
 	out_cb : (Json) ->  void, 
@@ -99,56 +91,88 @@ fcLspMethods = pairs2tree([
 	Pair("exit", fcLspExit),
 	Pair("textDocument/didOpen", fcLspTextDocumentDidOpen),
 	Pair("textDocument/didChange", fcLspTextDocumentDidChange),
+	Pair("textDocument/didSave", fcLspTextDocumentDidSave),
 	Pair("textDocument/documentSymbol", fcLspTextDocumentDocumentSymbol),
 	Pair("textDocument/declaration", fcLspTextDocumentDeclaration),
 	Pair("textDocument/definition", fcLspTextDocumentDefinition),
 	Pair("textDocument/references", fcLspTextDocumentReferences),
 	Pair("textDocument/hover", fcLspTextDocumentHover),
 	Pair("textDocument/rename", fcLspTextDocumentRename),
+	Pair("textDocument/completion", fcLspTextDocumentCompletion),
 	Pair("workspace/executeCommand", fcLspWorkspaceExecuteCommand),
 ]);
 
-fcLspClientConf : ref Json = ref JsonObject([]);
+FcLspServerState(
+	mutable clientConf : Json,
+	mutable currId : int,
+	mutable requests : Tree<Json, LspRequestMessage>
+);
+
+fcLspServerState = FcLspServerState(JsonNull(), 1, makeTree());
 
 fcLspErrorResponse(id : Json, code : int, msg : string) -> Json {
-	JsonObject([Pair("jsonrpc", JsonString("2.0")), Pair("id", id), Pair("result", JsonNull()), 
-		Pair("error", JsonObject(
-				[Pair("code", JsonDouble(i2d(code))), Pair("message", JsonString(msg))]
-			)
-		)
-	]);
+	lspResponseMessage2Json(LspResponseMessage("2.0", id, JsonNull(), 
+		Some(LspResponseError(code, msg, JsonNull()))
+	));
 }
 
 fcLspNormalResponse(id : Json, result : Json) -> Json {
-	JsonObject([Pair("jsonrpc", JsonString("2.0")), Pair("id", id), Pair("result", result)]);
+	lspResponseMessage2Json(LspResponseMessage("2.0", id, result, None()));
 }
 
-fcLspProcessRequest(conf : CompilerConfig, env : FcTypeEnvGlobal, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
-	id = getJsonFieldValue(json, "id", JsonString(""));
-	method = getJsonStringField(json, "method", "");
-	params = getJsonFieldValue(json, "params", JsonObject([]));
+fcLspProcessRequest(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
 	out_cb = \msg -> {
 		js_len = strlen(expandUtf8(json2string(msg)));
 		js_out = json2string(msg);
 		str_out_cb("Content-Length: " + i2s(js_len) + "\r\n\r\n" + js_out);
 	}
-	if (method == "") {
-		out_cb(fcLspErrorResponse(id, 1, "request method is not set"));
-		loop_cb();
-	} else {
-		switch (lookupTree(fcLspMethods, method)) {
-			Some(m): m(FcLspMethodCall(conf, env, id, params, out_cb, loop_cb, exit_cb));
-			None(): {
-				out_cb(fcLspErrorResponse(id, 1, "request method " + method + " is not found"));
+	switch (json2LspRequestMessage(json)) {
+		Some(request): {
+			if (request.method == "") {
+				out_cb(fcLspErrorResponse(request.id, 1, "request method is not set"));
 				loop_cb();
+			} else {
+				switch (lookupTree(fcLspMethods, request.method)) {
+					Some(m): m(FcLspMethodCall(conf, globEnv, request.id, request.params, out_cb, loop_cb, exit_cb));
+					None(): {
+						out_cb(fcLspErrorResponse(request.id, 1, "request method " + request.method + " is not found"));
+						loop_cb();
+					}
+				}
+			}
+		}
+		None(): {
+			switch (json2LspResponseMessage(json)) {
+				Some(response): {
+					// TODO: handle properly
+					switch (lookupTree(fcLspServerState.requests, response.id)) {
+						Some(request): {
+							fcDebugLog("response to the request: " + 
+								json2string(lspRequestMessage2Json(request)) + ":\n" + 
+								json2string(lspResponseMessage2Json(response))
+								, conf
+							);
+						}
+						None(): {
+							fcDebugLog("unknown request: " + json2string(response.id), conf);
+						}
+					}
+					loop_cb();
+				}
+				None(): {
+					out_cb(fcLspErrorResponse(getJsonFieldValue(json, "id", JsonNull()), 1, "illegal request '" + json2string(json) + "'"));
+					loop_cb();
+				}
 			}
 		}
 	}
 }
 
 fcLspShutdown(call : FcLspMethodCall) -> void {
-	fcLspClientConf := JsonObject([]);
-	fcClearCache(call.env); // reset module cache
+	fcLspServerState.clientConf ::= JsonNull();
+	fcLspServerState.currId ::= 1;
+	fcLspServerState.requests ::= makeTree();
+	fcClearCache(call.globEnv); // reset module cache
 	call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 	call.loop_cb();
 }
@@ -157,12 +181,50 @@ fcLspExit(call : FcLspMethodCall) -> void {
 	call.exit_cb();
 }
 
+/*
+LspDocumentFilter : (
+	language : string, // A language id, like `typescript`.
+	scheme : string, // A Uri [scheme](#Uri.scheme), like `file` or `untitled`.
+	/**
+	 * A glob pattern, like `*.{ts,js}`.
+	 *
+	 * Glob patterns can have the following syntax:
+	 * - `*` to match one or more characters in a path segment
+	 * - `?` to match on one character in a path segment
+	 * - `**` to match any number of path segments, including none
+	 * - `{}` to group conditions (e.g. `**​/*.{ts,js}` matches all TypeScript and JavaScript files)
+	 * - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
+	 * - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
+	 * /
+	pattern : string
+);
+LspTextDocumentChangeRegistrationOptions : (
+	documentSelector: [LspDocumentFilter], // A document selector to identify the scope of the registration.
+	syncKind : int // None = 0, Full = 1, Incremental = 2
+);
+*/
+
 fcLspInitialized(call: FcLspMethodCall) -> void {
+	if (getJsonBoolField(fcGetJsonNestedField(fcLspServerState.clientConf, ["capabilities", "workspace", "didChangeConfiguration"]), "dynamicRegistration", false)) {
+		request = LspRequestMessage("2.0", JsonDouble(i2d(fcLspServerState.currId)), "client/registerCapability", 
+			lspRegistrationParams2Json(LspRegistrationParams([
+				LspRegistration(makeUuid(), "textDocument/didChange", 
+					lspTextDocumentChangeRegistrationOptions2Json(
+						LspTextDocumentChangeRegistrationOptions([LspDocumentFilter("flow", "file", "*.{flow}")], 1)
+					)
+				)
+			]))
+		);
+		//fcDebugLog("didChangeConfiguration dynamic config: \n" + json2string(lspRequestMessage2Json(request)), call.conf);
+		fcLspServerState.requests ::= setTree(fcLspServerState.requests, request.id, request);
+		fcLspServerState.currId ::= fcLspServerState.currId + 1;
+		call.out_cb(lspRequestMessage2Json(request));
+	}
 	call.loop_cb(); // It's a notification, no response.
 }
 
 fcLspInitialize(call: FcLspMethodCall) -> void {
-	fcLspClientConf := call.params;
+	fcLspServerState.clientConf ::= call.params;
 	call.out_cb(fcLspNormalResponse(call.id, 
 		JsonObject([
 			Pair("capabilities", JsonObject([
@@ -176,6 +238,20 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 					Pair("renameProvider", JsonBool(true)),
 					Pair("executeCommandProvider", 
 						JsonObject([Pair("commands", JsonArray([JsonString("compile")]))])
+					),
+					Pair("completionProvider", 
+						JsonObject([
+							Pair("triggerCharacters", JsonArray([JsonString(".")])),
+							Pair("allCommitCharacters", JsonArray([])),
+							Pair("resolveProvider", JsonBool(false)),
+							Pair("workDoneProgress", JsonBool(false))
+						])
+					),
+					Pair("textDocumentSync",
+						JsonObject([
+							Pair("openClose", JsonBool(true)),
+							Pair("change", JsonDouble(2.0))
+						])
 					)
 				])
 			)
@@ -187,13 +263,27 @@ fcLspInitialize(call: FcLspMethodCall) -> void {
 fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textitem): {
-			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textitem.uri.path));
+			path = fcCorrectUriPath(textitem.uri.path);
+			conf = fcLspFileConfig(call.conf, path);
 			runConfig(
 				CompilerConfig(conf with config = setTree(conf.config, "update-cache", "1")),
-				call.env, 
+				call.globEnv, 
 				\code -> {
-					clearFcOutput(call.conf.threadId);
-					call.loop_cb();
+					if (code != 0) call.loop_cb() else {
+						runConfig(
+							CompilerConfig(conf with config = mergeTree(conf.config, 
+								pairs2tree([
+									Pair("did-open", path),
+									Pair("did-open-text", textitem.text)
+								])
+							)),
+							call.globEnv, 
+							\code_ -> {
+								clearFcOutput(call.conf.threadId);
+								call.loop_cb();
+							}
+						);
+					}
 				}
 			);
 		}
@@ -205,10 +295,45 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 }
 
 fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
-	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
-		Some(textitem): {
-			// No actions yet. TODO: fast compilation for error messages?
+	switch (json2LspDidChangeTextDocumentParams(call.params)) {
+		Some(params): {
+			path = fcCorrectUriPath(params.textDocument.uri.path);
+			conf = fcLspFileConfig(call.conf, path);
+			runConfig(
+				CompilerConfig(conf with config = mergeTree(conf.config, 
+					pairs2tree([
+						Pair("did-change", path),
+						Pair("did-change-json", json2string(call.params)),
+					])
+				)),
+				call.globEnv, 
+				\code_ -> {
+					clearFcOutput(call.conf.threadId);
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			fcDebugLog("Failed to load a file " + json2string(call.params) + " ", call.conf);
+			call.out_cb(fcLspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
 			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentDidSave(call: FcLspMethodCall) -> void {
+	switch (json2LspDidSaveTextDocumentParams(call.params)) {
+		Some(params): {
+			path = fcCorrectUriPath(params.textDocument.uri.path);
+			conf = fcLspFileConfig(call.conf, path);
+			runConfig(
+				CompilerConfig(conf with config = setTree(conf.config, "did-save", path)),
+				call.globEnv, 
+				\code_ -> {
+					clearFcOutput(call.conf.threadId);
+					call.loop_cb();
+				}
+			);
 		}
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
@@ -251,7 +376,7 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(textid.uri.path));
 			runConfig(
 				CompilerConfig(conf with config = setTree(conf.config, "print-outline", "1")),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -366,7 +491,7 @@ fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -401,7 +526,7 @@ fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -436,7 +561,7 @@ fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -471,10 +596,11 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
+					//fcDebugLog("out:\n" + out + "\n", call.conf);
 					if (fcDetectLspError(out, call.conf)) {
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
@@ -511,7 +637,7 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 						])
 					)
 				),
-				call.env, 
+				call.globEnv, 
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
@@ -526,6 +652,52 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 		}
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
+			call.loop_cb();
+		}
+	}
+}
+
+fcLspTextDocumentCompletion(call: FcLspMethodCall) -> void {
+	switch (json2LspCompletionParams(call.params)) {
+		Some(completion): {
+			conf = fcLspFileConfig(call.conf, fcCorrectUriPath(completion.textDocument.uri.path));
+			fcDebugLog("completion: " + json2string(call.params), call.conf);
+			runConfig(
+				CompilerConfig(conf with
+					config = mergeTree(conf.config, 
+						pairs2tree([
+							Pair("exp-line", i2s(completion.position.line)), 
+							Pair("exp-column", i2s(completion.position.character)), 
+							Pair("complete", "1"),
+							Pair("complete-kind", i2s(completion.context.triggerKind)),
+							Pair("complete-character", completion.context.triggerCharacter),
+						])
+					)
+				),
+				call.globEnv, 
+				\code -> {
+					out = fcOutput(call.conf.threadId);
+					clearFcOutput(call.conf.threadId);
+					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							list = takeBefore(takeAfter(out, "completion[", ""), "]completion", "");
+							if (list != "") {
+								call.out_cb(fcLspNormalResponse(call.id, parseJsonSafe(list)));
+							} else {
+								call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
+							}
+						} else {
+							call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
+						}
+					}
+					call.loop_cb();
+				}
+			);
+		}
+		None(): {
+			call.out_cb(fcLspErrorResponse(call.id, 1, "completion params are invalid: " + json2string(call.params)));
 			call.loop_cb();
 		}
 	}
@@ -566,7 +738,7 @@ fcLspWorkspaceExecuteCommand(call: FcLspMethodCall) -> void {
 						conf = fcLspFileConfig(call.conf, fcCorrectUriPath(^file));
 						runConfig(
 							CompilerConfig(conf with config = mergeTree(conf.config, pairs2tree(params))), 
-							call.env, 
+							call.globEnv, 
 							\code -> {
 								out = fcOutput(call.conf.threadId);
 								clearFcOutput(call.conf.threadId);
@@ -584,26 +756,6 @@ fcLspWorkspaceExecuteCommand(call: FcLspMethodCall) -> void {
 		None(): {
 			call.out_cb(fcLspErrorResponse(call.id, 1, "ExecuteCommand request is illegal"));
 			call.loop_cb();
-		}
-	}
-}
-
-/*
- When URI parser parses something like: 
-	file:///c:/Users/dmitr/area9/flow9/tools/flowc
- it outputs path as: 
-	/c:/Users/dmitr/area9/flow9/tools/flowc
- which is wrong in windows, first slash must be removed.
-*/
-fcCorrectUriPath(path : string) -> string {
-	if (!startsWith(path, "/") || !hasTargetName("windows")) path else {
-		path1 = strRight(path, 1);
-		// Detect c:, d:, etc.
-		if (isLetter(getCharAt(path1, 0)) && getCharAt(path1, 1) == ":") {
-			path1
-		} else {
-			// keep original path 
-			path
 		}
 	}
 }

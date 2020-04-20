@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 10;
+var SERVICE_WORKER_VERSION = 11;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -209,7 +209,7 @@ self.addEventListener('fetch', function(event) {
 
     if (request.method == "GET") {
       var cacheFilter = findCacheFilter(fixedUrl, request.method, false);
-      var fixedUrlToCache = request.url;
+      var fixedUrlToCache = fixedUrl;
       if (!isEmpty(cacheFilter)) {
         fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
       }
@@ -810,7 +810,7 @@ self.addEventListener('message', function(event) {
     event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
 
     if (!dynamicResourcesExtensions.includes("." + event.data.data.value)) {
-      dynamicResourcesExtensions = dynamicResourcesExtensions.push("." + event.data.data.value);
+      dynamicResourcesExtensions.push("." + event.data.data.value);
     }
 
     respond({ status: "OK" });
