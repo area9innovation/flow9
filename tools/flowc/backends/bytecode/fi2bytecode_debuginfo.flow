@@ -3,8 +3,8 @@ import tools/flowc/backends/bytecode/fi2bytecode_defines;
 
 export {
 	// Start producing debug info for this file
-	diBcDebugStartFile(cfg : FcBytecodeConfig, file : string) -> void;
-	diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string) -> void;
+	diBcDebugStartFile(cfg : FcBytecodeConfig) -> void;
+	diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string, path : string) -> void;
 
 	// Add explanation for this point in the bytecode for this file to the debug info
 	// pc is bytecode position. pos is source file position. isStart is set for
@@ -26,17 +26,17 @@ export {
 	fcBcMakeDebugInfo(cfg : FcBytecodeConfig) -> string;
 }
 
-diBcDebugStartFile(cfg : FcBytecodeConfig, file : string) -> void {
+diBcDebugStartFile(cfg : FcBytecodeConfig) -> void {
 	if (cfg.debug) {
 		cfg.debugInfo.currentPositions := makeList();
 	}
 }
 
-diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string) -> void {
+diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string, path : string) -> void {
 	if (cfg.debug) {
-		filename = resolveRelativePath(file);
-
 		poss : List<BCDPosition> = ^(cfg.debugInfo.currentPositions);
+
+		filepath = resolveRelativePath(path);
 
 		lineResolverM : Maybe<LineResolver> = lookupTree(resolvers, file);
 		lineResolverM ?? {
@@ -48,14 +48,14 @@ diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>,
 			// Convert all positions to line,col pairs
 			lineCols : Tree<int, Pair<int, int>> = buildLineCols(lineResolverM, positions);
 
-			fileDebugInfo = list2string(foldSet(positions, makeList(), \acc, pos -> {
+			fileDebugInfo = list2string(foldList(poss, makeList(), \acc, pos : BCDPosition -> {
 				// <pc> <file> <line> <col>
 				// 492 C:\flow9\lib\dynamic.flow 65 0
 
 				// address = (if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc));
 
-				lc = lookupTreeDef(lineCols, pos, Pair(0, 0));
-				Cons(i2s(pos) + " " + filename + " " + i2s(lc.first) + " " + i2s(lc.second) + "\n", acc);
+				lc = lookupTreeDef(lineCols, iabs(pos.pos), Pair(0, 0));
+				Cons(i2s(pos.pc) + " " + filepath + " " + i2s(lc.first) + " " + i2s(lc.second) + "\n", acc);
 			}));
 			cfg.debugInfo.positions := Cons(fileDebugInfo, ^(cfg.debugInfo.positions));
 		} : {
@@ -147,7 +147,6 @@ list2sortedArray(list : List<?>, key : (?) -> ??) -> [?] {
 buildLineCols(lineResolver : LineResolver, positions : Set<int>) -> Tree<int, Pair<int, int>> {
 	foldSet(positions, Pair(makeTree(), 0), \acc : Pair<Tree<int, Pair<int, int>>, int>, p : int -> {
 		line = findLineWithPos(lineResolver.linestarts, acc.second, p);
-		lineend = elementAt(lineResolver.linestarts, line, 0);
 		col = p - lineResolver.linestarts[line];
 		lc = Pair(line + 1, col);
 		Pair(setTree(acc.first, p, lc), line)
@@ -156,9 +155,12 @@ buildLineCols(lineResolver : LineResolver, positions : Set<int>) -> Tree<int, Pa
 
 findLineWithPos(linestarts : [int], line : int, pos : int) -> int {
 	if (line + 1 < length(linestarts)) {
-		lineStart = linestarts[line + 1];
-		if (pos > lineStart) {
+		lineStart = linestarts[line];
+		lineEnd = linestarts[line + 1];
+		if (lineStart <= pos && pos < lineEnd) {
+			line
+		} else {
 			findLineWithPos(linestarts, line + 1, pos);
-		} else line;
+		}
 	} else line;
 }
