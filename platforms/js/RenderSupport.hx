@@ -1334,9 +1334,11 @@ class RenderSupport {
 		// STUB; only implemented in C++/OpenGL
 	}
 
-	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String,
-		fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool, escapeHTML : Bool) : Void {
-		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity, alignBottom, escapeHTML);
+	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
+		fontslope : String, fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
+		alignBottom : Bool, bottomBorder : Float, escapeHTML : Bool) : Void {
+		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour,
+			backgroundopacity, alignBottom, bottomBorder, escapeHTML);
 	}
 
 	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
