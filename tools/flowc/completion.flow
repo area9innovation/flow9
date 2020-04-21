@@ -12,7 +12,6 @@ export {
 /*
 TODO:
 - Function/struct arguments
-- import paths
 - export section can complete functions in the body
 - switch can expand to cases
 - local variables
@@ -33,7 +32,7 @@ fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : strin
 					codeCompleteName(config, globEnv, context.prefix);
 				}
 				FcCompletionField(): {
-					codeCompleteField(config, globEnv, context, file);
+					codeCompleteField(config, globEnv, context);
 				}
 				FcCompletionImport(): {
 					dir_path = strGlue(map(context.components, \cmp -> cmp.name), "/");
@@ -92,20 +91,23 @@ fcGetCompletionContext(code : string, index : int, config : CompilerConfig) -> M
 			if (fields != []) {
 				Some(FcCompletionContext(fields, prefix, postfix, FcCompletionField()));
 			} else {
-				check_import_kw = \ind -> {
+				check_keyword = \ind -> {
 					keyword_end = backwardUntil(code, ind - 1, fcIsIdChar);
 					keyword_beg = backwardWhile(code, keyword_end, fcIsIdChar);
-					keyword_end != -1 && keyword_beg != -1 && substring(code, keyword_beg, keyword_end - keyword_beg + 1) == "import";
+					if (keyword_end == -1 || keyword_beg == -1) false else {
+						keyword = substring(code, keyword_beg, keyword_end - keyword_beg + 1);
+						(keyword == "import" || keyword == "forbid");
+					}
 				}
 				imports = fcGetCompletionComponents(pref, code, [], config, "/");
 				if (imports != []) {
-					if (check_import_kw(imports[0].start - 1)) {
+					if (check_keyword(imports[0].start - 1)) {
 						Some(FcCompletionContext(imports, prefix, postfix, FcCompletionImport()));
 					} else {
 						None();
 					}
 				} else {
-					if (check_import_kw(pref)) {
+					if (check_keyword(pref)) {
 						Some(FcCompletionContext([], prefix, postfix, FcCompletionImport()));
 					} else {
 						if (prefix == "") None() else {
@@ -131,10 +133,11 @@ fcGetCompletionComponents(index : int, code : string, acc : [FcCompletionCompone
 	}
 }
 
-codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : FcCompletionContext, file : string) -> List<CodeCompletion> {
-	 switch (fcLoadFromCache(globEnv, getTargetModuleName(config))) {
-		Some(cached): {
-			module = cached.loaded.module;
+codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : FcCompletionContext) -> List<CodeCompletion> {
+	file = getTargetModuleName(config);
+	switch (fcLoadFromCache(globEnv, file)) {
+		Some(mod_cached): {
+			module = mod_cached.loaded.module;
 			var_index = context.components[0].start;
 			src = fcFileSource(globEnv, module.fileinfo.fullpath);
 			switch(find(tree2pairs(fcApproxToplevels(src)), \p -> p.second.first < var_index && var_index < p.second.second)) {
@@ -152,34 +155,36 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 							mapping = fcLocalVars2types(toplevel, globEnv);
 							switch (lookupTree(mapping, context.components[0].name)) {
 								Some(types): {
-									fcDebugLog("codeCompleteField: X, types=" + i2s(sizeSet(types)), config);
 									foldSet(types, makeList(), \acc, type -> {
 										fcDebugLog("type=" + prettyFiType(dummyPretty, type, makeSet()), config);
 										fcCompleteFieldViaType(config, globEnv, type, context, 1, acc)
 									});
 								}
 								None(): {
-									fcDebugLog("codeCompleteField: variable '" + context.components[0].name + "' is not found", config);
-									makeList();
+									switch (fcLookupNameInCache(globEnv, context.components[0].name)) {
+										Some(name_cached): {
+											named = name_cached.named;
+											if (!(name_cached.exported || name_cached.module == file)) makeList() else {
+												switch (named) {
+													FiGlobalVar(__,__,type,__,__): {
+														fcCompleteFieldViaType(config, globEnv, type, context, 1, makeList());
+													}
+													default: makeList();
+												}
+											}
+										}
+										None(): makeList();
+									}
 								}
 							}
 						}
-						None(): {
-							fcDebugLog("codeCompleteField: toplevel '" + name + "' is not found in cache", config);
-							makeList();
-						}
+						None(): makeList();
 					}
 				}
-				None(): {
-					fcDebugLog("codeCompleteField: toplevel for variable is not found", config);
-					makeList();
-				}
+				None(): makeList();
 			}
 		}
-		None(): {
- 			fcDebugLog("codeCompleteField: No module with name: " + getTargetModuleName(config), config);
-			makeList();
-		}
+		None(): makeList();
 	}
 }
 
