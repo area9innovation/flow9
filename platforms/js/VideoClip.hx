@@ -228,11 +228,11 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function setVideoSubtitle(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
-		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool) : Void {
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool, escapeHTML : Bool) : Void {
 		if (text == '') {
 			deleteSubtitlesClip();
 		} else {
-			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity, alignBottom);
+			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity, alignBottom, escapeHTML);
 		};
 	}
 
@@ -243,7 +243,7 @@ class VideoClip extends FlowContainer {
 	}
 
 	private function setVideoSubtitleClip(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
-		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool) : Void {
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool, escapeHTML : Bool) : Void {
 		if (fontFamily != fontfamily && fontfamily != '') {
 			fontFamily = fontfamily;
 			deleteSubtitlesClip();
@@ -254,6 +254,7 @@ class VideoClip extends FlowContainer {
 		textField.setAutoAlign('AutoAlignCenter');
 		textField.setNeedBaseline(false);
 		textField.setTextAndStyle(' ' + text + '\u00A0', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		textField.setEscapeHTML(escapeHTML);
 		subtitleAlignBottom = alignBottom;
 
 		updateSubtitlesClip();

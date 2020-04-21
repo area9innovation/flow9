@@ -313,7 +313,7 @@ public class RenderSupport extends NativeHost {
 	}
 	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
-								  int backgroundColour,double backgroundOpacity, boolean alignBottom) {
+								  int backgroundColour,double backgroundOpacity, boolean alignBottom, boolean escapeHTML) {
 		return null;
 	}
 	public Object setVideoPlaybackRate(Object tf, Double rate) {
