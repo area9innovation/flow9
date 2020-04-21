@@ -24,10 +24,11 @@ fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : strin
 	code = fcFileSource(globEnv, filepath);
 	resolver = makeLineResolver(code);
 	index = findLineIndex(resolver, line, col);
+	module = getTargetModuleName(config); 
 	switch (fcGetCompletionContext(code, index, config)) {
 		Some(context): {
-			fcDebugLog("completion context: " + fcCompletionContext2s(context), config);
-			completions = switch (context.kind) {
+			//fcDebugLog("completion context: " + fcCompletionContext2s(context), config);
+			all_completions = switch (context.kind) {
 				FcCompletionName(): {
 					codeCompleteName(config, globEnv, context.prefix);
 				}
@@ -38,10 +39,15 @@ fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : strin
 					dir_path = strGlue(map(context.components, \cmp -> cmp.name), "/");
 					fold(config.includes, makeList(), \acc, inc -> {
 						path = (if (endsWith(inc, "/")) inc else inc + "/") + dir_path;
-						codeCompleteImport(config, globEnv, path, context.prefix, acc)
+						codeCompleteImport(config, globEnv, path, context.prefix, acc, file)
 					});
 				}
 			}
+			completions = filterList(all_completions, \comp -> 
+				eitherMap(fcLoadFromCache(globEnv, comp.module), \cached ->
+					!containsSet(cached.loaded.module.allImports, module)
+				,false)
+			);
 			printCodeCompletions(config, completions, line, col, strlen(context.prefix), strlen(context.postfix));
 		}
 		None(): { }
@@ -157,7 +163,7 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 								Some(types): {
 									foldSet(types, makeList(), \acc, type -> {
 										fcDebugLog("type=" + prettyFiType(dummyPretty, type, makeSet()), config);
-										fcCompleteFieldViaType(config, globEnv, type, context, 1, acc)
+										fcCompleteFieldViaType(config, globEnv, type, context, 1, acc, file)
 									});
 								}
 								None(): {
@@ -167,7 +173,7 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 											if (!(name_cached.exported || name_cached.module == file)) makeList() else {
 												switch (named) {
 													FiGlobalVar(__,__,type,__,__): {
-														fcCompleteFieldViaType(config, globEnv, type, context, 1, makeList());
+														fcCompleteFieldViaType(config, globEnv, type, context, 1, makeList(), name_cached.module);
 													}
 													default: makeList();
 												}
@@ -188,27 +194,19 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 	}
 }
 
-fcCompleteFieldViaType(config : CompilerConfig, env : FcTypeEnvGlobal, type : FiType, context : FcCompletionContext, i : int, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+fcCompleteFieldViaType(config : CompilerConfig, env : FcTypeEnvGlobal, type : FiType, context : FcCompletionContext, i : int, acc : List<CodeCompletion>, module : string) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
 	proc_struct = \ac, struct -> {
 		if (i < length(context.components)) {
 			field = context.components[i].name;
 			switch (find(struct.args, \arg -> arg.name == field)) {
-				Some(arg): fcCompleteFieldViaType(config, env, arg.type, context, i + 1, ac);
+				Some(arg): fcCompleteFieldViaType(config, env, arg.type, context, i + 1, ac, module);
 				None(): ac;
 			}
 		} else {
 			fold(struct.args, ac, \a, arg ->
 				if (!startsWith(arg.name, context.prefix)) a else 
-				Cons(
-					CodeCompletion(
-						arg.name,
-						CompletionField(),
-						prettyFiType(conf, arg.type, makeSet()),
-						"field", // Maybe have the entire struct here?
-					),
-					a
-				)
+				Cons(CodeCompletion(arg.name, CompletionField(), prettyFiType(conf, arg.type, makeSet()), "field", module), a)
 			);
 		}
 	}
@@ -271,40 +269,15 @@ codeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, prefix : st
 			named = cached.named;
 			switch (named) {
 				FiTypeStruct(nm,__,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionConstructor(),
-						prettyFiStructOrUnion(conf, named, makeSet()),
-						"struct"
-					);
+					CodeCompletion(nm, CompletionConstructor(), prettyFiStructOrUnion(conf, named, makeSet()), "struct", cached.module);
 				FiTypeUnion(nm,__,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionConstructor(),
-						prettyFiStructOrUnion(conf, named, makeSet()),
-						"union"
-					);
+					CodeCompletion(nm, CompletionConstructor(), prettyFiStructOrUnion(conf, named, makeSet()), "union", cached.module);
 				FiFunctionDec(nm,__,type,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionFunction(),
-						prettyFiType(conf, type, makeSet()),
-						"function"
-					);
+					CodeCompletion(nm, CompletionFunction(), prettyFiType(conf, type, makeSet()), "function", cached.module);
 				FiGlobalVar(nm,__,type,__,__):
-					CodeCompletion(
-						nm,
-						CompletionVariable(),
-						prettyFiType(conf, type, makeSet()),
-						"variable"
-					);
+					CodeCompletion(nm, CompletionVariable(), prettyFiType(conf, type, makeSet()), "variable", cached.module);
 				FiNativeDec(nm,__,type,__,__,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionFunction(),
-						prettyFiType(conf, type, makeSet()),
-						"native"
-					);
+					CodeCompletion(nm, CompletionFunction(), prettyFiType(conf, type, makeSet()), "native", cached.module);
 			}
 		}
 	);
@@ -325,15 +298,15 @@ fcDirectoryContainsFlowSources(d : string) -> bool {
 	} 
 }
 
-codeCompleteImport(config : CompilerConfig, globEnv : FcTypeEnvGlobal, path : string, prefix : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+codeCompleteImport(config : CompilerConfig, globEnv : FcTypeEnvGlobal, path : string, prefix : string, acc : List<CodeCompletion>, file : string) -> List<CodeCompletion> {
 	if (!isDirectory(path)) acc else {
 		fold(readDirectory(path), acc, \ac, nm ->
 			if (!startsWith(nm, prefix)) ac else {
 				name = (if (endsWith(path, "/")) path else path + "/") + nm;
 				if (fcDirectoryContainsFlowSources(name)) {
-					Cons(CodeCompletion(nm, CompletionFolder(), "directory", "folder"), ac)
+					Cons(CodeCompletion(nm, CompletionFolder(), "directory", "folder", file), ac)
 				} else if (fileExists(name) && endsWith(name, ".flow")) {
-					Cons(CodeCompletion(strLeft(nm, strlen(nm) - 5) + ";", CompletionModule(), "module", "module"), ac)
+					Cons(CodeCompletion(strLeft(nm, strlen(nm) - 5) + ";", CompletionModule(), "module", "module", file), ac)
 				} else {
 					ac;
 				}
@@ -350,7 +323,9 @@ CodeCompletion(
 	// What type or symbol information
 	detail : string,
 	// Any documentation we would want
-	documentation : string
+	documentation : string,
+	// Module of origin for a current label
+	module : string
 );
 
 CodeCompletionKind ::= CompletionText, 
