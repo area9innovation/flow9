@@ -1409,7 +1409,6 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     web_view.configuration.allowsInlineMediaPlayback = YES; // Doesn't work for WKWebView - use video playsinline attribute only
     web_view.configuration.ignoresViewportScaleLimits = YES;
     [web_view.configuration.userContentController addScriptMessageHandler:[[FlowWKMessageHandler alloc] initWithOwner:this] name:@"flow"];
-    [web_view.configuration.preferences setValue:@TRUE forKey:@"allowFileAccessFromFileURLs"];
     NSString* custom_ua = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
     web_view.customUserAgent = custom_ua;
     widget = web_view;
