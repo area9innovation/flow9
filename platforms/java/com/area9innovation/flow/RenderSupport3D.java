@@ -26,7 +26,7 @@ public class RenderSupport3D extends NativeHost {
 	public Object[] get3DObjectChildren(Object object) {
 		return new Object[0];
 	}
-	public String get3DObjectJSON(Object object) {
+	public String get3DObjectJSON(Object object, boolean includeCamera) {
 		return "";
 	}
 
@@ -63,19 +63,6 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object set3DStageOnLoad(Object stage, Func1<Object,Object> onLoad) {
-		return null;
-	}
-	public Object set3DStageOnError(Object stage, Func1<Object,Object> onError) {
-		return null;
-	}
-	public Object set3DStageOnStart(Object stage, Func1<Object,Object> onStart) {
-		return null;
-	}
-	public Object set3DStageOnProgress(Object stage, Func3<String,Integer,Integer,Object> onProgress) {
-		return null;
-	}
-
 	public Object set3DSceneBackground(Object scene, Object background) {
 		return null;
 	}
@@ -86,7 +73,7 @@ public class RenderSupport3D extends NativeHost {
 	public Object load3DObject(Object stage, String objUrl, String mtlUrl, Func1<Object,Object> onLoad) {
 		return null;
 	}
-	public Func0<Object> load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad, Func1<String,Object> onError) {
+	public Func0<Object> load3DGLTFObject(Object stage, String url, Func5<Object,Object[],Object,Object[],Object[],Object> onLoad, Func1<Object,String> onError) {
 		return no_op;
 	}
 	public Object load3DScene(Object stage, String url, Func1<Object,Object> onLoad) {
@@ -271,13 +258,6 @@ public class RenderSupport3D extends NativeHost {
 	public String get3DObjectType(Object object) {
 		return "";
 	}
-	public Object get3DObjectStage(Object object) {
-		return null;
-	}
-	public Object get3DStageScene(Object stage) {
-		return null;
-	}
-
 	public String get3DObjectName(Object object) {
 		return "";
 	}
@@ -570,7 +550,7 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 
-	public Object make3DPlaneGeometry(Double width, Double height, Double depth,
+	public Object make3DPlaneGeometry(Double width, Double height,
 		Integer widthSegments, Integer heightSegments) {
 		return null;
 	}
@@ -611,21 +591,21 @@ public class RenderSupport3D extends NativeHost {
 
 
 	public Object make3DSphereBufferGeometry(Double radius, Integer widthSegments, Integer heightSegments,
-		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength, Func2<Integer, Integer, Object[]> addGroups) {
+		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength, Func2<Object[], Integer, Integer> addGroups) {
 		return null;
 	}
 
 	public Object make3DCylinderBufferGeometry(Double radiusTop, Double radiusBottom, Double height, Integer radialSegments,
-		Integer heightSegments, Boolean openEnded, Double thetaStart, Double thetaLength, Func2<Integer, Integer, Object[]> addGroups) {
+		Integer heightSegments, Boolean openEnded, Double thetaStart, Double thetaLength, Func2<Object[], Integer, Integer> addGroups) {
 		return null;
 	}
 
 	public Object make3DBoxBufferGeometry(Double width, Double height, Double depth, Integer widthSegments, Integer heightSegments,
-		Integer depthSegments, Func2<Integer, Integer, Object[]> addGroups) {
+		Integer depthSegments, Func2<Object[], Integer, Integer> addGroups) {
 		return null;
 	}
 
-	public Object make3DShapeBufferGeometry(Object[] pathes, Func2<Integer, Integer, Object[]> addGroups) {
+	public Object make3DShapeBufferGeometry(Object[] pathes, Func2<Object[], Integer, Integer> addGroups) {
 		return null;
 	}
 
@@ -717,7 +697,7 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object make3DInstancedMesh(Object geometry, Object[] materials, Object[] parameters, Integer count, Func2<Integer, Object, Object> fn) {
+	public Object make3DInstancedMesh(Object geometry, Object[] materials, Object[] parameters, Integer count, Func2<Object,Integer,Object> fn) {
 		return null;
 	}
 
@@ -761,11 +741,11 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object add3DLODLevel(Object lod, Integer level, Object object) {
+	public Object add3DLODLevel(Object lod, Double level, Object object) {
 		return null;
 	}
 
-	public Object export3DGLTFObject(Object object, Func1<String, Object> exportFn, Object[] parameters) {
+	public Object export3DGLTFObject(Object object, Func1<Object, String> exportFn, Object[] parameters) {
 		return null;
 	}
 
