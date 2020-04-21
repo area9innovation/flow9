@@ -3,7 +3,7 @@ import tools/flowc/backends/bytecode/fi2bytecode_defines;
 
 export {
 	// Start producing debug info for this file
-	diBcDebugStartFile(cfg : FcBytecodeConfig) -> void;
+	diBcDebugStartFile(cfg : FcBytecodeConfig, file : string) -> void;
 	diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string, path : string) -> void;
 
 	// Add explanation for this point in the bytecode for this file to the debug info
@@ -26,14 +26,16 @@ export {
 	fcBcMakeDebugInfo(cfg : FcBytecodeConfig) -> string;
 }
 
-diBcDebugStartFile(cfg : FcBytecodeConfig) -> void {
+diBcDebugStartFile(cfg : FcBytecodeConfig, file : string) -> void {
 	if (cfg.debug) {
+		// println("Start " + file);
 		cfg.debugInfo.currentPositions := makeList();
 	}
 }
 
 diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string, path : string) -> void {
 	if (cfg.debug) {
+		// println("End " + file);
 		poss : List<BCDPosition> = ^(cfg.debugInfo.currentPositions);
 
 		filepath = resolveRelativePath(path);
@@ -48,14 +50,56 @@ diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>,
 			// Convert all positions to line,col pairs
 			lineCols : Tree<int, Pair<int, int>> = buildLineCols(lineResolverM, positions);
 
-			fileDebugInfo = list2string(foldList(poss, makeList(), \acc, pos : BCDPosition -> {
+			// Filter out duplicates from each line
+
+			posPerLine : Tree<Pair<int, bool>, BCDPosition> = foldList(poss, makeTree(), \acc, pos -> {
+				key = Pair(lookupTreeDef(lineCols, iabs(pos.pos), Pair(0, 0)).first, switch (pos.comment) {
+					DebugPosFunction(__, __): false;
+					default: true;
+				});
+				value = lookupTree(acc, key);
+				switch (value) {
+					None(): setTree(acc, key, pos);
+					Some(v): {
+						// We keep the first on each line
+						if (v.pos < pos.pos) {
+							acc;
+						} else {
+							setTree(acc, key, pos);
+						}
+					}
+				}
+			})
+
+			// Visit all remaining sites in bytecode position order
+
+			lineOrder : Tree<int, BCDPosition> = 
+				if (true) {
+					// If we want to keep all positions
+					foldList(poss, makeTree(), \acc, pos -> {
+						key = pos.pc;
+						if (containsKeyTree(acc, key)) acc
+						else setTree(acc, key, pos)
+					});
+				} else {
+					// If we want to keep the reduced set
+					foldTree(posPerLine, makeTree(), \__, pos, acc -> {
+						key = pos.pc;
+						if (containsKeyTree(acc, key)) acc
+						else setTree(acc, key, pos)
+					});
+				}
+
+			fileDebugInfo = list2string(foldTree(lineOrder, makeList(), \__ : int, pos : BCDPosition, acc -> {
 				// <pc> <file> <line> <col>
 				// 492 C:\flow9\lib\dynamic.flow 65 0
 
-				// address = (if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc));
-
+				address = (if (cfg.debugVerbose) i2s(pos.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(pos.pc)), "0", 8) + "]" else i2s(pos.pc));
 				lc = lookupTreeDef(lineCols, iabs(pos.pos), Pair(0, 0));
-				Cons(i2s(pos.pc) + " " + filepath + " " + i2s(lc.first) + " " + i2s(lc.second) + "\n", acc);
+				Cons(
+					address + " " + filepath + " " + i2s(lc.first) + " " + i2s(lc.second) 
+					+ (if (cfg.debugVerbose) " " + toString(pos.comment) else "")
+					+ "\n", acc);
 			}));
 			cfg.debugInfo.positions := Cons(fileDebugInfo, ^(cfg.debugInfo.positions));
 		} : {
