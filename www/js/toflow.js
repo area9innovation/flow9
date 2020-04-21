@@ -50,7 +50,9 @@ function callflow_winapp(args) {
 }
 
 function is_flow_ios_native() {
-	return navigator.userAgent.match(/(iPad|iPhone|iPod)/g) &&
+	return (navigator.userAgent.match(/(iPad|iPhone|iPod)/g) ||
+			navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1 &&
+			!window.MSStream) &&
 		window.webkit && window.webkit.messageHandlers;
 }
 

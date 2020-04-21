@@ -63,7 +63,11 @@ function getOs() {
 	} else if (navigator.appVersion.indexOf("Android") != -1) {
 		return "Android,other";
 	} else if (navigator.platform.indexOf("Mac") != -1) {
-		return "MacOSX,other";
+		if (navigator.maxTouchPoints > 1 && !window.MSStream) {
+			return "iOS,other"; // Some iPad has MacIntel platform with conforming userAgent
+		} else {
+			return "MacOSX,other";
+		}
 	} else {
 		return "other,other";
 	}
