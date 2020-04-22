@@ -11,7 +11,7 @@ Goals:
 Use
 ---
 
-Install Java Runtime 1.8 or later in a 64-bit version and python 3.
+Install OpenJDK 14 or later in a 64-bit version and python 3.
 Python 3 is necessary to run the flowc1 launching script. Then use
 
 	flowc1
