@@ -638,3 +638,5 @@ If we put the data that we created above into this table, then the values ​​
 In fact, this behavior is obvious and expected.
 To prevent this from happening, make sure that your server is running in the UTC+0 zone, and that the `select utc_timestamp;` and `select current_timestamp;` sql requests show the same time.
 Another option to avoid this error regarding database architecture: we can use `utc_timestamp` instead of `current_timestamp` for all fields that automatically generate values.
+
+Such an error is unlikely if you are using a remote database or docker container
