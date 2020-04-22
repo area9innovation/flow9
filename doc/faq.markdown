@@ -595,7 +595,7 @@ The second case can be fixed by moving Some(v) out of the loop :)
 Some kind of mistakes
 --------
 
-#### Why can we get different times for the same moment
+#### Why can we get different time values for the same moment
 
 In most cases, we will not get such an effect in productive databases.
 This is most likely to happen during the development process when our database server uses the local time zone.
