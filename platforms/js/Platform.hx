@@ -39,6 +39,7 @@ class Platform {
 	public static var isMobile : Bool = ~/webOS|BlackBerry|Windows Phone/i.match(Browser.window.navigator.userAgent) || isIEMobile || isAndroid || isIOS;
 	public static var isRetinaDisplay : Bool = getIsRetinaDisplay();
 	public static var isHighDensityDisplay : Bool = isRetinaDisplay || getIsHighDensityDisplay();
+	public static var isWKWebView : Bool = isIOS && untyped window.webkit && untyped window.webkit.messageHandlers;
 
 	public static var isMacintosh : Bool = ~/Mac/i.match(Browser.window.navigator.platform);
 	public static var isWindows : Bool = ~/Win/i.match(Browser.window.navigator.platform);
