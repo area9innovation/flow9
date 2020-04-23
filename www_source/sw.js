@@ -51,10 +51,10 @@ var isOnline = true;
 
 function checkOnlineStatus() {
   if (navigator.onLine === false) {
-    if (isOnline) console.info("Applilcation switched to OFFLINE mode.");
+    if (isOnline) console.info("Application switched to OFFLINE mode.");
     isOnline = false;
   } else {
-    if (!isOnline) console.info("Applilcation returned back to ONLINE mode.");
+    if (!isOnline) console.info("Application returned back to ONLINE mode.");
     isOnline = true;
   }
 }
