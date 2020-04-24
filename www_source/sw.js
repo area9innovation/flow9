@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 11;
+var SERVICE_WORKER_VERSION = 12;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -46,6 +46,14 @@ var requestsSkipOnFetch = [];
 //    }]
 //  }]
 var requestsCacheFilter = [];
+
+// Stats about how SW processed request from the last application start
+var requestsCount = {
+  fromNetwork: 0,
+  fromCache:0,
+  skipped: 0,
+  failed: 0
+}
 
 var isOnline = true;
 
@@ -195,9 +203,19 @@ self.addEventListener('fetch', function(event) {
       ext = (parts = requestUrl.split("/").pop().split(".")).length > 1 ? parts.pop() : "";
     var name = (parts.length > 0 ? parts.pop() : "");
 
-    return (!isEmpty(ext) && !isEmpty(name) && (
+    var res = (!isEmpty(ext) && !isEmpty(name) && (
       "stamp.php" == name + "." + ext ||
       "flowjs.html" == name + "." + ext));
+
+    if (res) {
+      requestsCount.fromNetwork = 0;
+      requestsCount.fromCache = 0;
+      requestsCount.skipped = 0;
+      requestsCount.failed = 0;
+
+    }
+
+    return res;
   }
 
   // Creation a requestData for GET requests
@@ -472,6 +490,8 @@ self.addEventListener('fetch', function(event) {
             return Promise.reject();
           }
 
+          requestsCount.fromCache++;
+
           sendMessageToClient(event, {
             msg: "Responded with cache:",
             url: requestData.originalRequest.url,
@@ -523,14 +543,16 @@ self.addEventListener('fetch', function(event) {
           doCacheFn(response);
         }
 
+        requestsCount.fromNetwork++;
         return response.clone();
-      });
+      })
+      .catch(function() { requestsCount.failed++; return Promise.reject(); });
     };
 
     if (requestData.isFileUploading) {
       // We can't to clone file uploading request, so we processing it as is, without caching
       return fetch(requestData.cloneRequest())
-        .then(function(response) { return response.clone(); });
+        .then(function(response) { requestsCount.fromNetwork++; return response.clone(); });
     } else {
       if (checkIfNotModified) {
         return getCachedResource(requestData)
@@ -563,14 +585,14 @@ self.addEventListener('fetch', function(event) {
 
   function buildResponse(requestData) {
     if (CacheMode.UseOnlyCacheInOffline && !isOnline) {
-      return getCachedResource(requestData);
+      return getCachedResource(requestData).catch(function() { requestsCount.failed++; return Promise.reject(); });;
     } else if (CacheMode.PreferCachedResources) {
       return getCachedResource(requestData).catch(function() {
         return fetchResource(requestData, false);
       });
     } else {
       return fetchResource(requestData, true).catch(function() {
-        return getCachedResource(requestData);
+        return getCachedResource(requestData).catch(function() { requestsCount.failed++; return Promise.reject(); });;
       });
     }
   };
@@ -702,6 +724,7 @@ self.addEventListener('fetch', function(event) {
     var requestData = createRequestDataGET(event.request);
 
     if (checkRequestForSkipping(event.request, requestData)) {
+      requestsCount.skipped++;
       return;
     } else {
       event.respondWith(makeResponse(event.request, requestData));
@@ -944,6 +967,8 @@ self.addEventListener('message', function(event) {
   } else if (event.data.action == "set_use_cache_only_in_offline") {
     CacheMode.UseOnlyCacheInOffline = event.data.enabled;
     respond({ status: "OK" });
+  } else if (event.data.action == "get_requests_stats") {
+    respond({ data: requestsCount });
   } else {
     respond({ status: "Failed", error: "Unknown operation: " + event.data.action });
   }
