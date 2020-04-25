@@ -2630,17 +2630,10 @@ class RenderSupport {
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!hadUserInteracted) return;
 
-		if (RendererType == "html") {
-			if (fs)
-				requestFullScreen(Browser.document.body);
-			else
-				exitFullScreen(Browser.document);
-		} else {
-			if (fs)
-				requestFullScreen(PixiView);
-			else
-				exitFullScreen(PixiView);
-		}
+		if (fs)
+			requestFullScreen(Browser.document.body);
+		else
+			exitFullScreen(Browser.document);
 	}
 
 	public static function onFullScreen(fn : Bool -> Void) : Void -> Void {
