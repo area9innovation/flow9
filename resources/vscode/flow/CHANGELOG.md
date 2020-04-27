@@ -130,3 +130,7 @@
 ## 0.3.6
  - small crash in language server fixed
  - fix syntax highlighting in strings with %
+
+## 0.4.3
+ - a new LSP server (native flowc) is added.
+ - area9 logo is added

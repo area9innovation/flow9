@@ -6,52 +6,78 @@ import tools/flowc/symbol_nature;
 
 export {
 	// Output a set of suggestions for auto completion at given position.
-	fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void;
+	fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, line : int, col : int, kind : int, char : string) -> void;
 }
 
 /*
 TODO:
 - Function/struct arguments
-- import paths
 - export section can complete functions in the body
 - switch can expand to cases
 - local variables
 - types
 */
 
-fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void {
+fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, line : int, col : int, kind : int, char : string) -> void {
+	module = getTargetModuleName(config); 
 	workingDir = getConfigParameterDef(config.config, "working-dir", "");
-	filepath = findFlowPath(file, true, config.includes, workingDir);
+	filepath = findFlowPath(module, true, config.includes, workingDir);
 	code = fcFileSource(globEnv, filepath);
 	resolver = makeLineResolver(code);
 	index = findLineIndex(resolver, line, col);
 	switch (fcGetCompletionContext(code, index, config)) {
 		Some(context): {
-			fcDebugLog("completion context: " + fcCompletionContext2s(context), config);
-			completions = if (context.fields == []) {
-				codeCompletePrefix(config, globEnv, context.prefix);
-			} else {
-				codeCompleteField(config, globEnv, context, file);
+			//fcDebugLog("completion context: " + fcCompletionContext2s(context), config);
+			all_completions = switch (context.kind) {
+				FcCompletionName(): {
+					codeCompleteName(config, globEnv, context.prefix);
+				}
+				FcCompletionField(): {
+					codeCompleteField(config, globEnv, context);
+				}
+				FcCompletionImport(): {
+					dir_path = strGlue(map(context.components, \cmp -> cmp.name), "/");
+					fold(config.includes, makeList(), \acc, inc -> {
+						path = (if (endsWith(inc, "/")) inc else inc + "/") + dir_path;
+						codeCompleteImport(config, globEnv, path, context.prefix, acc, module)
+					});
+				}
 			}
-			printCodeCompletions(config, completions, line, col, strlen(context.postfix));
+			completions = filterList(all_completions, \comp ->
+				eitherMap(fcLoadFromCache(globEnv, comp.module), \cached ->
+					!containsSet(cached.loaded.module.allImports, module)
+				,false)
+			);
+			printCodeCompletions(config, completions, line, col, strlen(context.prefix), strlen(context.postfix));
 		}
 		None(): { }
 	}
 }
 
-FcCompletionField(
+FcCompletionKind ::= FcCompletionName, FcCompletionField, FcCompletionImport;
+	FcCompletionName();
+	FcCompletionField();
+	FcCompletionImport();
+
+FcCompletionComponent(
 	name : string,
 	start : int
 );
 
 FcCompletionContext(
-	fields : [FcCompletionField], // in case of struct field completion
+	components : [FcCompletionComponent], // in case of struct field completion
 	prefix : string,
-	postfix : string
+	postfix : string,
+	kind : FcCompletionKind
 );
 
 fcCompletionContext2s(context : FcCompletionContext) -> string {
-	"fields=[" + strGlue(map(context.fields, \f -> f.name), ".") + "], prefix='" + context.prefix + "', postfix='" + context.postfix + "'";
+	"kind=" + (switch (context.kind) {
+		FcCompletionName(): "name";
+		FcCompletionField(): "field";
+		FcCompletionImport(): "import";
+	}) +
+	", components=[" + strGlue(map(context.components, \f -> f.name), ".") + "], prefix='" + context.prefix + "', postfix='" + context.postfix + "'";
 }
 
 fcGetCompletionContext(code : string, index : int, config : CompilerConfig) -> Maybe<FcCompletionContext> {
@@ -61,35 +87,64 @@ fcGetCompletionContext(code : string, index : int, config : CompilerConfig) -> M
 			\i -> i - 1
 		);
 		prefix = substring(code, pref, index - pref);
-		if ((prefix == ""  && getCharAt(code, index - 1) != ".") || isDigit(getCharAt(prefix, 0))) None() else {
+		if ((prefix == ""  && getCharAt(code, index - 1) != "." && getCharAt(code, index - 1) != "/") || isDigit(getCharAt(prefix, 0))) None() else {
 			end = for(index, 
 				\i -> if (i + 1 >= strlen(code)) false else fcIsIdChar(getCharAt(code, i + 1)), 
 				\i -> i + 1
 			);
 			postfix = substring(code, index, end - index);
-			Some(FcCompletionContext(fcGetCompletionFields(pref, code, [], config), prefix, postfix));
+			fields = fcGetCompletionComponents(pref, code, [], config, ".");
+			if (fields != []) {
+				Some(FcCompletionContext(fields, prefix, postfix, FcCompletionField()));
+			} else {
+				check_keyword = \ind -> {
+					keyword_end = backwardUntil(code, ind - 1, fcIsIdChar);
+					keyword_beg = backwardWhile(code, keyword_end, fcIsIdChar);
+					if (keyword_end == -1 || keyword_beg == -1) false else {
+						keyword = substring(code, keyword_beg, keyword_end - keyword_beg + 1);
+						(keyword == "import" || keyword == "forbid");
+					}
+				}
+				imports = fcGetCompletionComponents(pref, code, [], config, "/");
+				if (imports != []) {
+					if (check_keyword(imports[0].start - 1)) {
+						Some(FcCompletionContext(imports, prefix, postfix, FcCompletionImport()));
+					} else {
+						None();
+					}
+				} else {
+					if (check_keyword(pref)) {
+						Some(FcCompletionContext([], prefix, postfix, FcCompletionImport()));
+					} else {
+						if (prefix == "") None() else {
+							Some(FcCompletionContext([], prefix, postfix, FcCompletionName()));
+						}
+					}
+				}
+			}
 		}
 	}
 }
 
-fcGetCompletionFields(index : int, code : string, acc : [FcCompletionField], config : CompilerConfig) -> [FcCompletionField] {
-	if (index > 1 && getCharAt(code, index - 1) == "." && fcIsIdChar(getCharAt(code, index - 2))) { 
+fcGetCompletionComponents(index : int, code : string, acc : [FcCompletionComponent], config : CompilerConfig, delim : string) -> [FcCompletionComponent] {
+	if (index > 1 && getCharAt(code, index - 1) == delim && fcIsIdChar(getCharAt(code, index - 2))) { 
 		field_start = for(index - 2,
 			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(code, i - 1)), 
 			\i -> i - 1
 		);
 		field = substring(code, field_start, index - field_start - 1);
-		fcGetCompletionFields(field_start, code, concat([FcCompletionField(field, field_start)], acc), config);
+		fcGetCompletionComponents(field_start, code, concat([FcCompletionComponent(field, field_start)], acc), config, delim);
 	} else {
 		acc;
 	}
 }
 
-codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : FcCompletionContext, file : string) -> List<CodeCompletion> {
-	 switch (fcLoadFromCache(globEnv, getTargetModuleName(config))) {
-		Some(cached): {
-			module = cached.loaded.module;
-			var_index = context.fields[0].start;
+codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : FcCompletionContext) -> List<CodeCompletion> {
+	file = getTargetModuleName(config);
+	switch (fcLoadFromCache(globEnv, file)) {
+		Some(mod_cached): {
+			module = mod_cached.loaded.module;
+			var_index = context.components[0].start;
 			src = fcFileSource(globEnv, module.fileinfo.fullpath);
 			switch(find(tree2pairs(fcApproxToplevels(src)), \p -> p.second.first < var_index && var_index < p.second.second)) {
 				Some(scope): {
@@ -104,61 +159,54 @@ codeCompleteField(config : CompilerConfig, globEnv : FcTypeEnvGlobal, context : 
 								FiNativeDec(__,__,__,__,fb,__,__): fb;
 							}
 							mapping = fcLocalVars2types(toplevel, globEnv);
-							switch (lookupTree(mapping, context.fields[0].name)) {
+							switch (lookupTree(mapping, context.components[0].name)) {
 								Some(types): {
-									//fcDebugLog("codeCompleteField: X, types=" + i2s(sizeSet(types)), config);
 									foldSet(types, makeList(), \acc, type -> {
-										//fcDebugLog("type=" + prettyFiType(dummyPretty, type, makeSet()), config);
-										fcCompleteFieldViaType(config, globEnv, type, context, 1, acc)
+										fcDebugLog("type=" + prettyFiType(dummyPretty, type, makeSet()), config);
+										fcCompleteFieldViaType(config, globEnv, type, context, 1, acc, file)
 									});
 								}
 								None(): {
-									//fcDebugLog("codeCompleteField: A", config);
-									makeList();
+									switch (fcLookupNameInCache(globEnv, context.components[0].name)) {
+										Some(name_cached): {
+											named = name_cached.named;
+											if (!(name_cached.exported || name_cached.module == file)) makeList() else {
+												switch (named) {
+													FiGlobalVar(__,__,type,__,__): {
+														fcCompleteFieldViaType(config, globEnv, type, context, 1, makeList(), name_cached.module);
+													}
+													default: makeList();
+												}
+											}
+										}
+										None(): makeList();
+									}
 								}
 							}
 						}
-						None(): {
-							//fcDebugLog("codeCompleteField: B", config);
-							makeList();
-						}
+						None(): makeList();
 					}
 				}
-				None(): {
-					//fcDebugLog("codeCompleteField: C", config);
-					makeList();
-				}
+				None(): makeList();
 			}
 		}
-		None(): {
- 			//fcDebugLog("codeCompleteField: D", config);
-			makeList();
-		}
+		None(): makeList();
 	}
 }
 
-fcCompleteFieldViaType(config : CompilerConfig, env : FcTypeEnvGlobal, type : FiType, context : FcCompletionContext, i : int, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+fcCompleteFieldViaType(config : CompilerConfig, env : FcTypeEnvGlobal, type : FiType, context : FcCompletionContext, i : int, acc : List<CodeCompletion>, module : string) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
 	proc_struct = \ac, struct -> {
-		if (i < length(context.fields)) {
-			field = context.fields[i].name;
+		if (i < length(context.components)) {
+			field = context.components[i].name;
 			switch (find(struct.args, \arg -> arg.name == field)) {
-				Some(arg): fcCompleteFieldViaType(config, env, arg.type, context, i + 1, ac);
+				Some(arg): fcCompleteFieldViaType(config, env, arg.type, context, i + 1, ac, module);
 				None(): ac;
 			}
 		} else {
 			fold(struct.args, ac, \a, arg ->
 				if (!startsWith(arg.name, context.prefix)) a else 
-				Cons(
-					CodeCompletion(
-						"." + arg.name,
-						CompletionField(),
-						prettyFiType(conf, arg.type, makeSet()),
-						"field", // Maybe have the entire struct here?
-						substring(arg.name, strlen(context.prefix), strlen(arg.name) - strlen(context.prefix)),
-					),
-					a
-				)
+				Cons(CodeCompletion(arg.name, CompletionField(), prettyFiType(conf, arg.type, makeSet()), "field", module), a)
 			);
 		}
 	}
@@ -210,10 +258,9 @@ fcDoLocalVars2types(ex : FiExp, env : FcTypeEnvGlobal, acc : Tree<string, Set<Fi
 	}
 }
 
-codeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, prefix : string) -> List<CodeCompletion> {
+codeCompleteName(config : CompilerConfig, globEnv : FcTypeEnvGlobal, prefix : string) -> List<CodeCompletion> {
 	conf = FcPretty(true, true, makeTree(), makeTree());
 	file = trimFlowfile(config.flowfile, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
-	reduce_name = \nm -> substring(nm, strlen(prefix), strlen(nm) - strlen(prefix));
 	mapList(
 		fcFilterNameCacheList(globEnv, \cached -> 
 			startsWith(cached.named.name, prefix) && (cached.exported || cached.module == file)
@@ -222,48 +269,50 @@ codeCompletePrefix(config : CompilerConfig, globEnv : FcTypeEnvGlobal, prefix : 
 			named = cached.named;
 			switch (named) {
 				FiTypeStruct(nm,__,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionConstructor(),
-						prettyFiStructOrUnion(conf, named, makeSet()),
-						"struct",
-						reduce_name(nm),
-					);
+					CodeCompletion(nm, CompletionConstructor(), prettyFiStructOrUnion(conf, named, makeSet()), "struct", cached.module);
 				FiTypeUnion(nm,__,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionConstructor(),
-						prettyFiStructOrUnion(conf, named, makeSet()),
-						"union",
-						reduce_name(nm)
-					);
+					CodeCompletion(nm, CompletionConstructor(), prettyFiStructOrUnion(conf, named, makeSet()), "union", cached.module);
 				FiFunctionDec(nm,__,type,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionFunction(),
-						prettyFiType(conf, type, makeSet()),
-						"function",
-						reduce_name(nm)
-					);
+					CodeCompletion(nm, CompletionFunction(), prettyFiType(conf, type, makeSet()), "function", cached.module);
 				FiGlobalVar(nm,__,type,__,__):
-					CodeCompletion(
-						nm,
-						CompletionVariable(),
-						prettyFiType(conf, type, makeSet()),
-						"variable",
-						reduce_name(nm)
-					);
+					CodeCompletion(nm, CompletionVariable(), prettyFiType(conf, type, makeSet()), "variable", cached.module);
 				FiNativeDec(nm,__,type,__,__,__,__): 
-					CodeCompletion(
-						nm,
-						CompletionFunction(),
-						prettyFiType(conf, type, makeSet()),
-						"native",
-						reduce_name(nm)
-					);
+					CodeCompletion(nm, CompletionFunction(), prettyFiType(conf, type, makeSet()), "native", cached.module);
 			}
 		}
 	);
+}
+
+fcDirectoryContainsFlowSources(d : string) -> bool {
+	dir = if (endsWith(d, "/")) d else d + "/";
+	if (!isDirectory(dir)) false else {
+		exists(readDirectory(dir), \nm -> {
+				name = dir + nm;
+				if (isDirectory(name)) {
+					fcDirectoryContainsFlowSources(name);
+				} else {
+					endsWith(name, ".flow");
+				}
+			}
+		);
+	} 
+}
+
+codeCompleteImport(config : CompilerConfig, globEnv : FcTypeEnvGlobal, path : string, prefix : string, acc : List<CodeCompletion>, file : string) -> List<CodeCompletion> {
+	if (!isDirectory(path)) acc else {
+		fold(readDirectory(path), acc, \ac, nm ->
+			if (!startsWith(nm, prefix)) ac else {
+				name = (if (endsWith(path, "/")) path else path + "/") + nm;
+				if (fcDirectoryContainsFlowSources(name)) {
+					Cons(CodeCompletion(nm, CompletionFolder(), "directory", "folder", file), ac)
+				} else if (fileExists(name) && endsWith(name, ".flow")) {
+					Cons(CodeCompletion(strLeft(nm, strlen(nm) - 5) + ";", CompletionModule(), "module", "module", file), ac)
+				} else {
+					ac;
+				}
+			}
+		);
+	} 
 }
 
 CodeCompletion(
@@ -275,13 +324,13 @@ CodeCompletion(
 	detail : string,
 	// Any documentation we would want
 	documentation : string,
-	// What is actually be inserted at the cursor position
-	insertText : string
+	// Module of origin for a current label
+	module : string
 );
 
 CodeCompletionKind ::= CompletionText, 
 	CompletionFunction, CompletionConstructor, CompletionField,
-	CompletionVariable, CompletionFolder;
+	CompletionVariable, CompletionFolder, CompletionModule;
 
 	CompletionText();
 	CompletionFunction();
@@ -289,12 +338,12 @@ CodeCompletionKind ::= CompletionText,
 	CompletionField();
 	CompletionVariable();
 	CompletionFolder();
+	CompletionModule();
 
 /*
 	export const Method = 2;
 	export const Class = 7;
 	export const Interface = 8;
-	export const Module = 9;
 	export const Property = 10;
 	export const Unit = 11;
 	export const Value = 12;
@@ -312,21 +361,21 @@ CodeCompletionKind ::= CompletionText,
 	export const TypeParameter = 25;
 */
 
-codeCompletion2json(c : CodeCompletion, line : int, character : int, len : int) -> Json {
+codeCompletion2json(c : CodeCompletion, line : int, character : int, prefix_len : int, postfix_len : int) -> Json {
 	JsonObject([
 		Pair("label", JsonString(c.label)),
 		Pair("textEdit", JsonObject([
 			Pair("range", JsonObject([
 				Pair("start", JsonObject([
 					Pair("line", JsonDouble(i2d(line))),
-					Pair("character", JsonDouble(i2d(character))),
+					Pair("character", JsonDouble(i2d(character - prefix_len))),
 				])),
 				Pair("end", JsonObject([
 					Pair("line", JsonDouble(i2d(line))),
-					Pair("character", JsonDouble(i2d(character + len))),
+					Pair("character", JsonDouble(i2d(character + postfix_len))),
 				])),
 			])),
-			Pair("newText", JsonString(c.insertText))
+			Pair("newText", JsonString(c.label))
 		])),
 		//Pair("documentation", JsonString(c.documentation)),
 		Pair("kind", JsonDouble(i2d(switch (c.kind) {
@@ -336,21 +385,22 @@ codeCompletion2json(c : CodeCompletion, line : int, character : int, len : int) 
 			CompletionField(): 5;
 			CompletionVariable(): 6;
 			CompletionFolder(): 19;
+			CompletionModule(): 9;
 		}))),
 		// TODO: Define a fixed priority for types, and then the string
 		Pair("sortText", JsonString(c.label)),
 		Pair("detail", JsonString(c.detail)),
-		Pair("insertText", JsonString(c.insertText)),
+		Pair("insertText", JsonString(c.label)),
 	])
 }
 
-printCodeCompletions(config : CompilerConfig, c : List<CodeCompletion>, line : int, character : int, len : int) -> void {
+printCodeCompletions(config : CompilerConfig, c : List<CodeCompletion>, line : int, character : int, prefix_len : int, postfix_len : int) -> void {
 	allCompletions = list2array(c);
 	completions = subrange(allCompletions, 0, 100);
 	result = JsonObject([
 		Pair("isIncomplete", JsonBool(length(completions) != length(allCompletions))),
 		Pair("items", JsonArray(
-			map(completions, \cm -> codeCompletion2json(cm, line, character, len))
+			map(completions, \cm -> codeCompletion2json(cm, line, character, prefix_len, postfix_len))
 		))
 	]);
 

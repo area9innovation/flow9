@@ -510,4 +510,34 @@ class ProgressiveWebTools {
 		}
 		#end
 	}
+
+	public static function getServiceWorkerRequestsStatsN(onOK : Array<Int> -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't get requests stats");
+				} else {
+					onOK([
+						event.data.data.fromNetwork,
+						event.data.data.fromCache,
+						event.data.data.skipped,
+						event.data.data.failed
+					]);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_requests_stats"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
 }

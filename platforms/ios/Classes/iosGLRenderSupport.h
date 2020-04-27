@@ -111,6 +111,17 @@ enum FlowCameraMode {
 + (UIImage *) resizeImage: (UIImage *) img toDesiredWidth: (int) reqWidth andDesiredHeight: (int) reqHeight withFitMode : (int) imgFitMode;
 @end
 
+@interface FlowWKMessageHandler : NSObject<WKScriptMessageHandler> {
+@private
+    iosGLRenderSupport* owner;
+}
+
+- (id) initWithOwner: (iosGLRenderSupport*) ownr;
+- (void)userContentController:(WKUserContentController *)userContentController
+didReceiveScriptMessage:(WKScriptMessage *)message;
+
+@end
+
 @interface AudioRecordControlDelegate : NSObject <AVAudioRecorderDelegate> {
 @private
     iosGLRenderSupport * owner;
