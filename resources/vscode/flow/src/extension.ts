@@ -132,7 +132,7 @@ function setClient(context: vscode.ExtensionContext, kind : LspKind) {
                     break;
                 }
                 case LspKind.JS: {
-                    console.log('Js LSP server is started');
+                    console.log('Legcay JS LSP server is started');
                     lspServerStatusBarItem.text = ""; 
                     lspServerStatusBarItem.hide();
                     serverOptions = {
@@ -395,7 +395,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
                     break;
                 }
                 case LspKind.JS: {
-                    flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using JS LSP server");
+                    flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using legacy JS LSP server");
                     run_separately();
                     break;
                 }
