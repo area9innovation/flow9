@@ -13,6 +13,8 @@ import {
 import * as tools from "./tools";
 import * as updater from "./updater";
 import * as meta from '../package.json';
+import * as simplegit from 'simple-git/promise';
+//import { performance } from 'perf_hooks';
 
 interface ProblemMatcher {
     name: string,
@@ -277,7 +279,7 @@ function runCurrentFile() {
             args : [flowpath],
             matcher: 'flowc'
         }
-    });
+    }, false);
 }
 
 function getMatcher(name: string) {
@@ -291,10 +293,15 @@ function getMatcher(name: string) {
 function compileCurrentFile(compilerHint: string) {
     processFile(function(flowBinPath, flowpath) { 
         return getCompilerCommand(compilerHint, flowBinPath, flowpath);
-    });
+    }, true);
 }
 
-function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs) {
+function getFlowRoot(): string {
+    let config = vscode.workspace.getConfiguration("flow");
+    return config.get("root");
+}
+
+function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean) {
     let document = vscode.window.activeTextEditor.document;
     document.save().then(() => {
         if (null == flowChannel) {
@@ -305,28 +312,32 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         let current = ++counter;
         flowChannel.clear();
         flowChannel.show(true);
-        let config = vscode.workspace.getConfiguration("flow");
         let flowpath: string = getFlowRoot();
         let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
         let matcher = getMatcher(command.matcher);
         flowChannel.appendLine("Current directory: " + rootPath);
-        flowChannel.appendLine("Running " + command.cmd + " " + command.args.join(" "));
-        if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        if (use_lsp && vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+            flowChannel.appendLine("Compiling " + getPath(document.uri) + " using LSP server");
             if (!vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
                 flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performace it is recommended to switch HTTP server on.");
             }
+            //let start = performance.now();
             client.sendRequest("workspace/executeCommand", {
                     command : "compile", 
                     arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath]
                 }
             ).then(
                 (out : any) => {
-                     flowChannel.appendLine(out);
+                    //flowChannel.appendLine("Execution of a request took " + (performance.now() - start) + " milliseconds.")
+                    flowChannel.appendLine(out);
+                    diagnostics = diagnostics.concat(parseAndCollectDiagnostics(out.toString(), matcher));
+                    flowDiagnosticCollection.set(diagnostics); // update upon every line
                 }
             );
         } else {
+            flowChannel.appendLine("Running " + command.cmd + " " + command.args.join(" "));
             tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
                 if (counter == current) {// if there is a newer job, ignoring ones pending
                     flowChannel.append(s.toString());

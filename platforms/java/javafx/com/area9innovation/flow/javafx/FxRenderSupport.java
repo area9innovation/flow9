@@ -1281,7 +1281,8 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
-								  int backgroundColour,double backgroundOpacity, boolean alignBottom) {
+								  int backgroundColour, double backgroundOpacity, boolean alignBottom,
+								  double bottomBorder, boolean escapeHTML) {
 		System.out.println("setVideoSubtitle not implemented");
 		return null;
 	}

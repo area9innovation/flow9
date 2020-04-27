@@ -12,6 +12,8 @@ import java.io.DataOutputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 @SuppressWarnings("unchecked")
 public class HttpSupport extends NativeHost {
@@ -28,17 +30,26 @@ public class HttpSupport extends NativeHost {
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
-	 			urlParameters = urlParameters + key + "=" + value; // URLEncoder.encode(value, charset);
+	 			urlParameters = urlParameters + this.encodeUrlParameter(key, value);
 			}
 
 			HttpURLConnection con = null;
+
+			String urlWithParams = url;
+			if (!urlParameters.isEmpty()) {
+				if (url.contains("?")) {
+					urlWithParams += "&" + urlParameters;
+				} else {
+					urlWithParams += "?" + urlParameters;
+				}
+			}
+			URL obj = new URL(urlWithParams);
 
 			if (post) {
 				// POST
 				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
 				int postDataLength = postData.length;
 
-				URL obj = new URL(url);
 				con = (HttpURLConnection) obj.openConnection();
 				con.setDoOutput(true); // Triggers POST.
 				con.setRequestMethod("POST");
@@ -52,15 +63,6 @@ public class HttpSupport extends NativeHost {
 				}
 			} else {
 				// GET
-				String urlWithParams = url;
-				if (!urlParameters.isEmpty()) {
-					if (url.contains("?")) {
-						urlWithParams += "&" + urlParameters;
-					} else {
-						urlWithParams += "?" + urlParameters;
-					}
-				}
-				URL obj = new URL(urlWithParams);
 				con = (HttpURLConnection) obj.openConnection();
 				con.setRequestMethod("GET");
 			}
@@ -123,7 +125,7 @@ public class HttpSupport extends NativeHost {
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
-	 			urlParameters += key + "=" + value; // URLEncoder.encode(value, charset);
+	 			urlParameters = urlParameters + this.encodeUrlParameter(key, value);
 			}
 
 			String urlWithParams = url;
@@ -135,7 +137,7 @@ public class HttpSupport extends NativeHost {
 				}
 			}
 
-			URL obj = new URL(urlWithParams);
+			URL obj = new URL(urlWithParams);	
 			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
 			con.setRequestMethod(method);
 			con.setConnectTimeout(timeout.intValue());
@@ -195,6 +197,18 @@ public class HttpSupport extends NativeHost {
         	onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
         }
 		return null;
+	}
+
+	private final String encodeUrlParameter(String key, String value) {
+		try {
+			String encodedKey = URLEncoder.encode(key, StandardCharsets.UTF_8.toString()).replace("+", "%20");
+			String encodedValue = URLEncoder.encode(value, StandardCharsets.UTF_8.toString()).replace("+", "%20");
+			String parameter = encodedKey + "=" + encodedValue;
+			return parameter;
+		} catch (IOException e) {
+			System.out.println("Error during encoing parameters: " + e);
+			return "";
+		}
 	}
 
 	public final Object httpCustomRequestNative(String url, String method, Object[] headers,

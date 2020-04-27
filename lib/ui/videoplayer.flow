@@ -84,12 +84,12 @@ getXmlNodeBeginEndAttributes(node : XmlNode) -> Maybe<Pair<int, int>> {
 	}
 }
 
-parseXmlCC(n, ccsref, fontSize) {
+parseXmlCC(n, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity) {
 	switch(n : XmlNode) {
 		XmlElement(tag, __, __) : {
 			_tag = toLowerCase(tag);
 			if (_tag == "tt") {
-				parseTTML1(n, ccsref, fontSize);
+				parseTTML1(n, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity);
 			} else if (_tag == "transcript") {
 				parseTRANSCRIPT(n, ccsref);
 			}
@@ -102,7 +102,7 @@ parseXmlCC(n, ccsref, fontSize) {
 // This is "Timed Text Markup Language 1 (TTML1)"
 // Reference: http://www.w3.org/TR/ttml1/
 // parse Xml file with Close Captions (subtitles). parsing ex.: <p begin="00:00:00.10" dur="00:00:01.08">Author's Tone</p>
-parseTTML1(xn, ccsref : ref [ClosedCaption], fontSize : ref double) {
+parseTTML1(xn, ccsref : ref [ClosedCaption], fontSize : ref double, fontFamily : ref string, color : ref int, opacity : ref double, bgColor : ref int, bgOpacity : ref double) {
 	switch (xn : XmlNode) {
 		XmlElement(tag, attributes, children) : {
 			tagNormalized = toLowerCase(tag);
@@ -135,14 +135,52 @@ parseTTML1(xn, ccsref : ref [ClosedCaption], fontSize : ref double) {
 					}
 				})
 			} else if (tagNormalized == "style") {
+				parseColor = \s ->
+					if (startsWith(s, "0x")) substring(s, 2, 6) |> parseHex
+					else if (startsWith(s, "#")) substring(s, 1, 6) |> parseHex
+					else s2i(s);
+
+				tryParseOpacity = \s, op -> {
+					len = strlen(s);
+					if (len > 8) {
+						op := i2d(strRight(s, len - 2) |> parseHex) / 255.;
+					}
+				}
+
 				// #41620
 				fs = getXmlAttribute(attributes, "tts:fontSize", "");
-				if (fs != "") {
+				if (fs != "" && isDouble(fs)) {
 					fontSize := min(40.0, max(6.0, s2d(fs))); //some protection from incorrect values
 				}
 
+				ff = getXmlAttribute(attributes, "tts:fontFamily", "");
+				if (ff != "") {
+					fontFamily := ff
+				}
+
+				col = getXmlAttribute(attributes, "tts:color", "");
+				if (col != "") {
+					color := parseColor(col);
+					tryParseOpacity(col, opacity)
+				}
+
+				op = getXmlAttribute(attributes, "tts:opacity", "");
+				if (op != "" && isDouble(op)) {
+					opacity := s2d(op)
+				}
+
+				bgCol = getXmlAttribute(attributes, "tts:backgroundColor", "");
+				if (bgCol != "") {
+					bgColor := parseColor(bgCol);
+					tryParseOpacity(bgCol, bgOpacity)
+				}
+
+				bgOp = getXmlAttribute(attributes, "tts:backgroundOpacity", "");
+				if (bgOp != "" && isDouble(bgOp)) {
+					bgOpacity := s2d(bgOp)
+				}
 			}
-			iter(children, \cxn -> parseTTML1(cxn, ccsref, fontSize) );
+			iter(children, \cxn -> parseTTML1(cxn, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity) );
 		}
 		XmlText(__):{}
 	}
@@ -202,6 +240,11 @@ loadCaptionsFile(captionsFile:string,
 {
 	closedCaptions = ref [];
 	fontSize = ref 24.0;
+	fontFamily = ref "";
+	color = ref white;
+	opacity = ref 1.;
+	bgColor = ref black;
+	bgOpacity = ref 1.;
 	currentCC : DynamicBehaviour<ClosedCaption> = make(dummyCC);
 	isSupportedFormat = make(true);
 
@@ -238,7 +281,7 @@ loadCaptionsFile(captionsFile:string,
 					XmlElement(tag, __, __) : {
 						_tag = toLowerCase(tag);
 						if (_tag == "tt" || _tag == "transcript") {
-							parseXmlCC(parsed, closedCaptions, fontSize);
+							parseXmlCC(parsed, closedCaptions, fontSize, fontFamily, color, opacity, bgColor, bgOpacity);
 							startSubs();
 							nextDistinct(currentCC, findCurrentCC(trunc(getValue(curPlayedTime)*1000.0)));
 							next(loadingError, false);
@@ -269,7 +312,12 @@ loadCaptionsFile(captionsFile:string,
 				else
 					VideoSubtitle("Unsupported file format.", [FontSize(15.), Fill(0xee0000), BackgroundFill(black)])
 			} else {
-				VideoSubtitle(ccc.text, [FontSize(^fontSize), Fill(0xFFFFFF), BackgroundFill(black)])
+				style =
+					concat(
+						[FontSize(^fontSize), Fill(^color), FillOpacity(^opacity), BackgroundFill(^bgColor), BackgroundFillOpacity(^bgOpacity)],
+						if (^fontFamily == "") [] else [FontFamily(^fontFamily)]
+					);
+				VideoSubtitle(ccc.text, style)
 			}
 		})
 	} else {

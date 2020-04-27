@@ -5,7 +5,7 @@
 pushd .
 pushd .
 
-for /d %%i in ("%ProgramFiles%\Java\jdk1.8*") do (set Located=%%i)
+for /d %%i in ("%ProgramFiles%\Java\jdk1.14*") do (set Located=%%i)
 rem check if JDK was located
 if "%Located%"=="" goto else
 rem if JDK located display message to user
