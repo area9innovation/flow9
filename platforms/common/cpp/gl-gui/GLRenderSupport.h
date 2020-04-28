@@ -389,7 +389,7 @@ protected:
     virtual void doDestroyNativeWidget(GLClip*) {}
     virtual void doReshapeNativeWidget(GLClip* /*owner*/, const GLBoundingBox& /*bbox*/, float /*scale*/, float /*alpha*/) {}
     virtual StackSlot webClipHostCall(GLWebClip* /*clip*/, const unicode_string& /*name*/, const StackSlot& /*args*/) { return StackSlot::MakeVoid(); }
-    virtual StackSlot webClipEvalJS(GLWebClip* /*clip*/, const unicode_string& /*name*/) { return StackSlot::MakeVoid(); }
+    virtual StackSlot webClipEvalJS(GLWebClip* /*clip*/, const unicode_string& /*name*/, StackSlot& /*cb*/) { return StackSlot::MakeVoid(); }
     virtual StackSlot setWebClipZoomable(GLWebClip* /*clip*/, const StackSlot& /*args*/) { return StackSlot::MakeVoid(); }
     virtual StackSlot setWebClipDomains(GLWebClip* /*clip*/, const StackSlot& /*args*/) { return StackSlot::MakeVoid(); }
 

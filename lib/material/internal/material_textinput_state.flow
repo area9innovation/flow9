@@ -72,7 +72,7 @@ export {
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
-		leftIcon : string,
+		leftIcon : MLeftIcon,
 		leftButton : Maybe<MLeftCustomButton>,
 		editIcon : Maybe<DynamicBehaviour<bool>>,
 		rightButton : Maybe<Transform<string>>,
@@ -118,7 +118,8 @@ export {
 		setWord : (word : string) -> void,
 		isTextInputInPopup : bool,
 		placementType : MSuggestionsPlacementType,
-		inLine : Maybe<MAutoCompleteInLineState>
+		inLine : Maybe<MAutoCompleteInLineState>,
+		updateDelay : int
 	);
 
 	MAutoCompleteInLineState(
@@ -466,7 +467,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	showClearIcon = (mClearIcon.onFocus || mClearIcon.onHover) && !readOnly;
 
 	// Left icon
-	leftIconName = extractStruct(style, MLeftIcon("", [])).icon;
+	leftIcon = extractStruct(style, MLeftIcon("", []));
 
 	// Left Button
 	leftButtonDef =
@@ -618,8 +619,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			None();
 
 	// Autocomplete
+	startSearch = extractStruct(style, MAutoCompleteStartSearch(0, 0));
 	preparedSentenceMatcher = extractStruct(style, MPreparedSentenceMatcher(const(dummySentenceMatcher)));
-	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, simpleSentenceMatcher));
+	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, makeAutocompleteMatcher(startSearch.minChars)));
 
 	matchers =
 		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
@@ -691,7 +693,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					setWord,
 					iScriptBehaviours.isTextInputInPopup,
 					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
-					inLine
+					inLine,
+					startSearch.wait
 				)
 			)
 		} else
@@ -742,6 +745,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		foc;
 	}
 
+	autocompleteHandlerUns = initUnsM();
 	updateFocusContent = \c : string, foc : bool, mtch : [SentenceMatcher] -> {
 		maybeApply(editIcon, \ei -> nextDistinct(ei, !foc));
 		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, foc || c != ""));
@@ -795,7 +799,14 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						|> cm.fn
 				);
 
-				nextDistinct(ac.sentences, newSentences)
+				updateFn = \ -> nextDistinct(ac.sentences, newSentences);
+
+				dispUnsM(autocompleteHandlerUns);
+
+				if (ac.updateDelay == 0 || length(newSentences) == 0)
+					updateFn()
+				else
+					setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, updateFn))
 			},
 		);
 
@@ -1080,7 +1091,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		align,
 		iconSize,
 		iconBorders,
-		leftIconName,
+		leftIcon,
 		leftButton,
 		editIcon,
 		rightButton,
@@ -2579,4 +2590,14 @@ addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic
 			),
 			t
 		)
+}
+
+makeAutocompleteMatcher(minChars : int) ->
+	(matcher : SentenceMatcher, input : string, maxHits : int, prefix : bool, exhaustive : bool, position : int) -> [SentenceMatch] {
+
+	if (minChars == 0) simpleSentenceMatcher 
+	else \matcher, input, maxHits, prefix, exhaustive, position -> {
+		if (strlen(input) < minChars) []
+		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
+	}
 }

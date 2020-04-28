@@ -1111,7 +1111,11 @@ class Native {
 		return "";
 	}
 	public static function captureStringCallstack() : Dynamic {
+		#if js
+		return StringTools.replace(StringTools.replace(untyped __js__("new Error().stack"), "    at ", ""), "Error\n", "");
+		#else
 		return Assert.callStackToString(haxe.CallStack.callStack());
+		#end
 	}
 	public static function captureCallstackItem(index : Int) : Dynamic {
 		return null;

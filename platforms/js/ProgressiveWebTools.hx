@@ -183,7 +183,6 @@ class ProgressiveWebTools {
 			};
 
 			untyped navigator.serviceWorker.controller.postMessage({"action" : "clean_cache_storage"}, [messageChannel.port2]);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -214,7 +213,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -245,7 +243,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -276,7 +273,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -307,7 +303,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -507,6 +502,36 @@ class ProgressiveWebTools {
 			untyped navigator.serviceWorker.controller.postMessage({
 					"action" : "set_use_cache_only_in_offline",
 					"enabled" : enabled
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function getServiceWorkerRequestsStatsN(onOK : Array<Int> -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't get requests stats");
+				} else {
+					onOK([
+						event.data.data.fromNetwork,
+						event.data.data.fromCache,
+						event.data.data.skipped,
+						event.data.data.failed
+					]);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_requests_stats"
 				},
 				[messageChannel.port2]
 			);

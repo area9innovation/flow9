@@ -1,0 +1,401 @@
+import tools/flowc/incremental/fitype;
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/mangle;
+import tools/flowc/manipulation/specialization;
+
+export {
+	specializeProgramJS(cfg: FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool) -> FiProgram;
+}
+
+// Find what polymorhic types are used for each name
+collect_polymorphic_entities_js(program : FiProgram, onlyBasicSpecializations : bool) -> Tree<string, FiType> {
+	fold(program.traversal, makeTree(), \acc, m ->
+		collect_polymorphic_entities_module_js(acc, program, onlyBasicSpecializations, m));
+}
+
+collect_polymorphic_entities_module_js(acc : Tree<string, FiType>, program : FiProgram, onlyBasicSpecializations : bool, moduleName : string)
+	-> Tree<string, FiType> {
+	switch (lookupTree(program.modules, moduleName)) {
+		None(): acc;
+		Some(m): {
+			functions = fold(m.functions, acc, \acc0, f -> add_polymorphic_entity_js(acc0, program, f.name, f.type));
+			natives = if (onlyBasicSpecializations) functions else fold(m.natives, functions, \acc0, f -> add_polymorphic_entity_js(acc0, program, f.name, f.type));
+			structs = if (onlyBasicSpecializations) natives else fold(m.structs, natives, \acc0, s -> {
+				if (length(s.typars) > 0) // structs are polymorphic iff typars are not empty
+					setTree(acc0, s.name, FiTypeName(s.name, s.typars))
+				else acc0
+			});
+			unions = if (onlyBasicSpecializations) structs else fold(m.unions, structs, \acc0, u ->
+				if (length(u.typeparameters) > 0) { // unions are polymorphic iff typars are not empty
+					strcts = fold(u.typenames, acc0, \acc1, tn -> setTree(acc1, tn.name,
+						FiTypeName(tn.name, u.typeparameters))); // list structs with union's type parameter list
+						// TODO: support partial struct specialization : U<?, ??> ::= A(), B<??>
+					setTree(strcts, u.name, FiTypeName(u.name, u.typeparameters))
+				} else acc0
+			);
+			globals = fold(m.globalVars, unions, \acc0, g -> add_polymorphic_entity_js(acc0, program, g.name, g.type));
+			globals;
+		}
+	}
+}
+
+add_polymorphic_entity_js(acc : Tree<string, FiType>, program : FiProgram, name : string, type : FiType) -> Tree<string, FiType> {
+	typars = fiCollectTypars(program, type, makeSet());
+	if (!isEmptySet(typars))
+		setTree(acc, name, type)
+	else acc
+}
+
+find_type_specializations_js(type : FiType, polymorphics : Tree<string, FiType>, acc : Tree<string, Set<FiType>>) ->
+	Tree<string, Set<FiType>> {
+	switch (type) {
+		FiTypeArray(t): find_type_specializations_js(t, polymorphics, acc);
+		FiTypeFunction(args, returnType):
+			fold(args, find_type_specializations_js(returnType, polymorphics, acc), \acc0, a ->
+				find_type_specializations_js(a.type, polymorphics, acc0));
+		FiTypeRef(t): find_type_specializations_js(t, polymorphics, acc);
+		FiTypeParameter(n): acc;
+		FiTypeBool(): acc;
+		FiTypeInt(): acc;
+		FiTypeDouble(): acc;
+		FiTypeString(): acc;
+		FiTypeFlow(): acc;
+		FiTypeVoid(): acc;
+		FiTypeNative(): acc;
+		FiTypeName(name, typeparameters): {
+			fold(typeparameters,
+				if (containsKeyTree(polymorphics, name))
+					insertTreeSet(acc, name, type) else acc,
+				\acc0, tp -> find_type_specializations_js(tp, polymorphics, acc0)
+			);
+		}
+	}
+}
+
+/**
+ * This does 2 things:
+ * 1. collect all variable references of the given named global entities (functions and global vars)
+ * 2. collect all type references to the given named types - structs and unions
+ * those live in the same namespace, so they are returned together
+ */
+find_free_vars_with_types_multiple_js(expr : FiExp, bound : Set<string>, free : Tree<string, Set<FiType>>,
+	polymorphics : Tree<string, FiType>) -> Tree<string, Set<FiType>> {
+	fold_freevars = \es, b, f -> fold(es, f, \acc, e -> find_free_vars_with_types_multiple_js(e, b, acc, polymorphics));
+	addTypeRef = \f, t -> find_type_specializations_js(t, polymorphics, f);
+	switch (expr) {
+		// for lambda, dig into body but mark parameters as bound
+		FiLambda(args, e, __, __): {
+			find_free_vars_with_types_multiple_js(e,
+				fold(args, bound, \b, a -> insertSet(b, a.name)), // local params override global object names
+				fold(args, free, \f, a -> addTypeRef(f, a.type)), // extracting type references from parameters
+				polymorphics);
+		}
+		FiCall(f, es, type, __):   {
+			argTypes = fold(es, addTypeRef(free, type), \fr, e -> addTypeRef(fr, fiExpType(e)));
+			fold_freevars(es, bound,
+				find_free_vars_with_types_multiple_js(f, bound, argTypes, polymorphics)
+			);
+		}
+		FiVar(x, xtype, __): {
+			_free = addTypeRef(free, xtype);
+			if (containsSet(bound, x) || !containsKeyTree(polymorphics, x))
+				_free
+			else
+				insertTreeSet(_free, x, xtype);
+		}
+		FiLet(x, type, e1, e2, type2, __):
+			find_free_vars_with_types_multiple_js(
+				e2,
+				insertSet(bound, x),
+				find_free_vars_with_types_multiple_js(e1, bound,
+					addTypeRef(addTypeRef(free, type), type2),
+				polymorphics),
+			polymorphics);
+		FiIf(e1, e2, e3, type, __):     fold_freevars([e1, e2, e3], bound, addTypeRef(free, type));
+		FiSwitch(e, type, cs, __, __):  {
+			typars = getTypars(type); // 1. get type parameters from the switch variable type
+			// 2. apply all of those to each of the struct options
+			freeWithCases = fold(cs, free, \f, c -> addTypeRef(f, FiTypeName(c.struct, typars)));
+			fold(cs,
+				find_free_vars_with_types_multiple_js(
+					e,
+					bound,
+					addTypeRef(freeWithCases, type),
+					polymorphics
+				),
+				\acc, c -> find_free_vars_with_types_multiple_js(c.body, bound, acc, polymorphics)
+			);
+		}
+		FiCast(e, tFrom, tTo, __, __):    find_free_vars_with_types_multiple_js(e, bound,
+			addTypeRef(addTypeRef(free, tFrom), tTo), polymorphics);
+		FiSeq(es, __, __):            fold_freevars(es, bound, free);
+		FiCallPrim(op, es, type, __):  {
+			_free = switch (op) {
+				FcCreateClosurePrim(structName, lambdaName): {
+					if (containsSet(bound, lambdaName) || !containsKeyTree(polymorphics, lambdaName))
+						free
+					else
+						insertTreeSet(free, lambdaName, type);
+				}
+				default: free;
+			}
+			fold_freevars(es, bound, addTypeRef(_free, type));
+		}
+		FiString(__, __):             free;
+		FiBool(__, __):               free;
+		FiDouble(__, __):             free;
+		FiVoid(__):                   free;
+		FiInt(__, __):                free;
+		FiRequire(__, e, __, __):     find_free_vars_with_types_multiple_js(e, bound, free, polymorphics);
+		FiUnsafe(__, fb, __, __):     find_free_vars_with_types_multiple_js(fb, bound, free, polymorphics);
+	}
+}
+
+// Find all specializations for each name that exist
+find_specializations_js(
+	program : FiProgram,
+	polymorphics : Tree<string, FiType>,
+	seed : Tree<string, Set<FiType>>
+) -> Tree<string, Set<FiType>> {
+	found = fold(program.traversal, seed, \acc, m ->
+		find_specializations_module_js(acc, program, polymorphics, m)
+	);
+
+	if (!equalTrees(seed, found))
+		find_specializations_js(program, polymorphics, found)
+	else
+		found;
+}
+
+find_specializations_module_js(acc : Tree<string, Set<FiType>>, program : FiProgram, polymorphics : Tree<string, FiType>,
+	moduleName : string ) -> Tree<string, Set<FiType>> {
+	switch (lookupTree(program.modules, moduleName)) {
+		None(): acc;
+		Some(m): {
+			do_find_specialization_modules_js(m, polymorphics, acc);
+		}
+	}
+}
+
+do_find_specialization_modules_js(m : FiModule, polymorphics : Tree<string, FiType>, found : Tree<string, Set<FiType>>) {
+	expandedFunctions = concatA(map(m.functions,
+		\f -> {
+			specializeFiFunctionDec(f, polymorphics, found, false); })
+	);
+	step1 = fold(concat(m.functions, expandedFunctions), found, \acc0, f ->
+		find_free_vars_with_types_multiple_js(f.lambda, makeSet(), acc0, polymorphics));
+
+	step2 = fold(m.globalVars, step1, \acc0, g ->
+		find_free_vars_with_types_multiple_js(g.value, makeSet(), acc0, polymorphics));
+
+	step3 = fold(m.natives, step2, \acc0, n ->
+		find_type_specializations_js(n.type, polymorphics, acc0));
+
+	expandedNatives = concatA(map(m.natives,
+		\n -> specializeFiNativeDec(n, polymorphics, step3, false))
+	);
+	step4 = fold(concat(m.natives, expandedNatives), step3, \acc0, n ->
+		find_free_vars_with_types_multiple_js(n.fallbackLambda, makeSet(),
+			find_type_specializations_js(n.type, polymorphics, acc0),
+			polymorphics)
+	);
+
+	if (!equalTrees(step4, found))
+		do_find_specialization_modules_js(m, polymorphics, step4)
+	else
+		found;
+}
+
+specializeProgramJS(cfg : FcCommonConfig, program0 : FiProgram, onlyBasicSpecializations : bool) -> FiProgram {
+	fcVerbose(cfg, 0, "Specializing - looking for polymorphic entities");
+	program = convertTopLevelLambdas(program0);
+	t00 = timestamp();
+	polymorphics0 = collect_polymorphic_entities_js(program, onlyBasicSpecializations);
+
+	// For JS, we only specialize some polymorphism
+	polymorphics = if (onlyBasicSpecializations) filterTree(polymorphics0, \fn, type -> {
+		switch (type) {
+			FiTypeFunction(args, rt): true;
+			default: false;
+		}
+	}) else polymorphics0;
+
+	printStat = \prefix : string, size : int, ms : int -> {
+		fcVerbose(cfg, 0, prefix + ". size: " + i2s(size) + ", " + i2s(ms) + " ms");
+	}
+	printStat("polymorphics", sizeTree(polymorphics), round(timestamp() - t00));
+
+	fcVerbose(cfg, 0, "Specializing - collecting specializations");
+	t0 = timestamp();
+	specializations = find_specializations_js(program, polymorphics, makeTree());
+	printStat("specializations", sizeTree(specializations), round(timestamp() - t0));
+
+	if (false) {
+		println("Found specializations:");
+		traverseInOrder(specializations, \n, types -> {
+			pt = lookupTreeDef(polymorphics, n, FiTypeVoid());
+			println(n + " : " + prettyFiType(dummyPretty, pt, makeSet()) + " as " + superglue(set2array(types), \t -> prettyFiType(dummyPretty, t, makeSet()), ", "));
+		});
+		println("");
+	}
+
+	fcVerbose(cfg, 0, "Specializing - generating specialized entity declarations");
+	t1 = timestamp();
+	modules = length(program.traversal);
+	result = foldi(program.traversal, program, \i, acc, m -> {
+		specializeProgramModuleJS(acc, m, polymorphics, specializations);
+	});
+	printStat("all modules", modules, round(timestamp() - t1));
+	fcVerbose(cfg, 0, "Specialization finished.");
+
+	result;
+}
+
+overrideWithSpecializationJS(original : [?], getKey : (?) -> ??, overrides : Tree<??, [?]>) -> [?] {
+	if (isEmptyTree(overrides)) original
+	else {
+		fold(original, [], \acc, orig -> {
+			key = getKey(orig);
+			over = getTreeArrayValue(overrides, key);
+			if (over == []) {
+				concat(acc, [orig])
+			} else concat(acc, over)
+		})
+	}
+}
+
+specializeProgramModuleJS(program : FiProgram, moduleName : string, polymorphics : Tree<string, FiType>,
+	specializations : Tree<string, Set<FiType>>) -> FiProgram {
+	switch (lookupTree(program.modules, moduleName)) {
+		None(): program;
+		Some(m): {
+			// Build maps for original {functions, structs, unions} to arrays of specialized {functions, structs, unions}
+			expandedFunctions : Tree<string, [FiFunctionDec]> = fold(m.functions, makeTree(), \acc, f -> {
+				r = specializeFiFunctionDec(f, polymorphics, specializations, true);
+/*                if (r != [f]) {
+					println(r);
+				}*/
+				setTree(acc, f.name, r);
+			});
+
+			// A list of specializations for each natives we should specialize
+			expandedNatives : Tree<string, [FiNativeDec]> = fold(m.natives, makeTree(), \acc, n -> {
+				r = specializeFiNativeDec(n, polymorphics, specializations, true);
+				setTree(acc, n.name, r);
+			});
+
+			// Our globals are specialized here
+			convertedVars : [FiGlobalVar] = map(m.globalVars, \v -> specializeGlobalVar(v, polymorphics));
+
+			// computing init order according to original init order
+			expandedInitOrderList = fold(m.initOrder, makeList(), \l, k -> {
+				if (containsKeyTree(polymorphics, k)) {
+					// If specialized, expand to the corresponding mangled names
+
+					eitherFn(
+						lookupTree(expandedFunctions, k),
+						\functions -> Cons(map(functions, \f -> f.name), l),
+						\-> {
+							eitherFn(
+								lookupTree(expandedNatives, k),
+								\natives -> Cons(map(natives, \n -> n.name), l),
+								\-> Cons([k], l)
+							)
+						}
+					)
+				} else {
+					// Not specialized, so just keep it as is
+					Cons([k], l);
+				}
+			});
+
+			// creating a new FiModule
+			module = FiModule(
+				m.fileinfo,
+				m.imports,
+				m.forbids,
+				m.exports,
+				// making sure we are listing replacement entities in the same order
+				// as they were listed originally
+				m.structs,
+				m.unions,
+				overrideWithSpecializationJS(m.functions, \f -> f.name, expandedFunctions),
+				convertedVars,
+				overrideWithSpecializationJS(m.natives, \n -> n.name, expandedNatives),
+				foldList(expandedInitOrderList, [], \ll, l -> concat(l, ll)),
+				m.stringIncludes,
+				m.start, m.end,
+				m.allImports,
+				false
+			);
+
+			// generating an updated FiProgram with all updated name lookups
+			FiProgram(
+				program.config,
+				setTree(program.modules, moduleName, module),
+				program.traversal,
+				FiGlobalNames(
+					program.names.struct2module,
+					program.names.union2module,
+					foldArrayTree(
+						expandedFunctions,
+						program.names.function2module,
+						\__, f, acc -> setTree(acc, f.name, moduleName)
+					),
+					program.names.globalVar2module,
+					foldArrayTree(
+						expandedNatives,
+						program.names.native2module,
+						\__, n, acc -> setTree(acc, n.name, moduleName)
+					),
+					program.names.structs,
+					program.names.unions,
+					foldArrayTree(expandedNatives,
+						foldArrayTree(expandedFunctions,
+							fold(convertedVars,
+								program.names.toplevel,
+								\acc : Tree<string, FiDeclaration>, v -> setTree(acc, v.name, v)
+							),
+							\__, f, acc -> setTree(acc, f.name, f)
+						),
+						\__, n, acc0 -> setTree(acc0, n.name, n)
+					)
+				)
+			);
+		}
+	}
+}
+
+convertTopLevelLambdas(f : FiProgram) -> FiProgram {
+	provcessVar = \acc : Pair<List<FiGlobalVar>, List<FiFunctionDec>>, g : FiGlobalVar -> {
+		switch (g.type : FiType) {
+			FiTypeFunction(args, returnType): {
+				switch (g.value : FiExp) {
+					FiLambda(args1, body, type, start): {
+						Pair(
+							acc.first,
+							Cons(FiFunctionDec(g.name, g.value, g.type, start, start), acc.second)
+						)
+					}
+					default: Pair(Cons(g, acc.first), acc.second);
+				}
+			}
+			default: Pair(Cons(g, acc.first), acc.second);
+		}
+	}
+
+	FiProgram(
+		f with modules = mapTree(f.modules, \m : FiModule -> {
+			p : Pair<List<FiGlobalVar>, List<FiFunctionDec>> = fold(
+				m.globalVars,
+				Pair(makeList(), array2list(m.functions)),
+				provcessVar
+			);
+
+			FiModule(
+				m with globalVars = list2array(p.first), functions = list2array(p.second)
+			)
+		})
+	)
+}

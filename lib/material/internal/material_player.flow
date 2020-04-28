@@ -24,13 +24,18 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				], true)
 				|> MEnabled;
 
+			mPlayerControls = extractStruct(m.style, MPlayerControls([VolumeControl()])).controls;
+
 			controls : [PlayerControl] = concat(
-				extractStruct(m.style, MPlayerControls([VolumeControl()])).controls,
+				MPlayerControls2PlayerControls(mPlayerControls),
 				extractStruct(m.style, FVideoControls([VolumeControl()])).controls
 			);
 			volumeControl = contains(controls, VolumeControl());
 			fullScreenControl = contains(controls, FullScreenPlayer());
 			playbackRateControl = !android() && contains(controls, PlaybackRateControl());
+			subtitlesControl = contains(mPlayerControls, SubtitlesControl());
+			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
+
 			streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
 
 			playing = extractStruct(m.style, FVideoPlay(make(false))).play;
@@ -64,6 +69,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			volumeSliderDown = make(false);
 			playbackRateSelected = make(3);
 			showProgressCircle = make(true);
+			subtitlesVisible = make(true);
+			subtitlesEnabled = const(isSome(subtitles));
 
 			uns = initUnsM();
 
@@ -84,6 +91,14 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							OnVideoLoadingError(\ -> nextDistinct(videoHasErrors, true)),
 							StreamStatus(\s -> {nextDistinct(showProgressCircle, false); streamStatus(s)})
 						]
+					)
+				)
+				|> (\st ->
+					eitherMap(subtitles, \sbtl ->
+						replaceStruct(st,
+							FVideoSubtitles(fif(subtitlesVisible, sbtl.subtitles, const(VideoSubtitle("", []))))
+						),
+						st
 					)
 				)
 				|> (\st -> ifArrayPush(
@@ -150,8 +165,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						video
 					)
 				)
-				|> addTBackground(backgroundColor)
-				;
+				|> addTBackground(backgroundColor);
 
 			slider = \p ->
 				MSlider2T(
@@ -196,6 +210,11 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					enabled.enabled
 				else
 					fand(fOr(volumeSliderVisible, volumeSliderDown), enabled.enabled);
+			
+			panelFillerW = make(0.);
+			overlapMode =
+				if (mobile) const(false)
+				else fselect(showVolumeSlider, FLift(\__ -> getValue(panelFillerW) <= 0.));
 
 			volumeControlButton = \p ->
 				if (volumeControl)
@@ -248,6 +267,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							m2t
 						)
 						|> (\t -> TBorder(-20., 0., -2., 0., t))
+						|> TFixWidth(TSizedWidth(fif(overlapMode, zero, const(60.)), 0.))
 						|> (\t -> TShow(showVolumeSlider, t))
 					)
 					|> (\volumeSlider ->
@@ -271,7 +291,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						else
 							[MTextDisabled()]
 					)
-				);
+				)
+				|> (\t -> TVisible(fnot(fand(overlapMode, showVolumeSlider)), t));
 
 			playbackRateControlButton = \p ->
 				if (playbackRateControl)
@@ -279,7 +300,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						manager,
 						p,
 						MMenu(
-							MIconButton("settings", nop,  [], []),
+							MIconButton("settings", nop,  [MIconButtonBorder(4.)], []),
 							[
 								MMenuSingleLine("0.25", []),
 								MMenuSingleLine("0.5", []),
@@ -297,6 +318,42 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							]
 						),
 						m2t
+					)
+					|> v2a
+				else
+					[];
+
+			subtitlesButton = \p ->
+				if (subtitlesControl)
+					TCopySize(
+						MIconToggle2T(manager, p, MIconToggle("subtitles", [MIconButtonBorder(4.)], [
+							MToggleValue(subtitlesVisible),
+							MEnabled(subtitlesEnabled)
+						]), m2t),
+						\tr ->
+							TRectangle([MFill(MRed(500))], TFillXH(2.))
+							|> (\t -> TShow(fand(subtitlesVisible, subtitlesEnabled), t))
+							|> TBorderLeftRight(6.)
+							|> (\t -> TAvailable(t, tr))
+							|> TBorderBottom(4.)
+							|> TAlignBottom,
+						true
+					)
+					|> (\t -> 
+						MTooltip2T(
+							manager,
+							p,
+							MTooltip(
+								t,
+								MText(_("Subtitles"), []),
+								[
+									MTooltipAlignment(MTop()),
+									MLightBackground(!getLightBackground(parent)),
+									MEnabled(subtitlesEnabled)
+								]
+							),
+							m2t
+						)
 					)
 					|> v2a
 				else
@@ -334,9 +391,10 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							volumeControlButton(p),
 							[
 								timeLabel(p),
-								TFillX(),
+								TAttachWidth(TFillX(), panelFillerW)
 							],
 							playbackRateControlButton(p),
+							subtitlesButton(p),
 							fullScreenControlButton(p)
 						]
 						|> concatA
@@ -377,7 +435,10 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				TConstruct(
 					[
 						\ -> fconnect(fdivide(visiblePosition, visibleDuration), sliderPosition),
-						\ -> fconnect(faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start), position),
+						makeSubscribe(
+							faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start),
+							\pos -> if (pos <= fgetValue(duration)) nextDistinct(position, pos)
+						),
 						\ -> fconnect2Select(
 							eitherMap(fullscreen, \fs -> fif(fs, availableH, fheight(m.wh)), fheight(m.wh)),
 							controlsWH,
@@ -455,4 +516,13 @@ MVideoPlayer2MRealHTML(url : string, parent : MFocusGroup, m : MVideoPlayer, m2t
 	);
 
 	m2t(MRealHTML(url, m.wh, style), parent)
+}
+
+MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerControl] {
+	filtermap(mPlayerControls, \cntr : MPlayerControl ->
+		switch (cntr) {
+			BasicPlayerControl(): {a : Maybe<PlayerControl> = Some(cntr); a};
+			default : None();
+		}
+	)
 }

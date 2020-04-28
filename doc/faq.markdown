@@ -591,3 +591,52 @@ In the first case if v is none, we don't need to run through the array at all, s
 	eitherMap(m, \v -> filter(arr, \a -> a == v), [])
 
 The second case can be fixed by moving Some(v) out of the loop :)
+
+Some kind of mistakes
+--------
+
+#### Why can we get different time values for the same moment
+
+In most cases, we will not get such an effect in productive databases.
+This is most likely to happen during the development process when our database server uses the local time zone.
+Let's look at one of the probable reasons for this.
+
+Basically, data is generated in one of the following places:  
+1) On the client side, when we fill out the structures to send them to the server  
+2) On the server side (for example, fields with the `default` property in the database).
+
+In the first case, we will get the date and time of the client, in the second case we will have server time.
+As we can guess, when our zone is not UTC+0, we can get different times for each of these cases.
+
+For example, we have a structure that is filled and sent to the database
+
+	SomeDataStructure(
+		id,                       // id : int,
+		userId,                   // userId : int,
+			...
+		stamp2time(timestamp()),  // created : Time,
+			...
+	)
+
+The `timestamp` function creates a timestamp using the averaged GMT of UTC+0 and, if we apply the `time2string` function to it, we get a string representing our local time, which consider our time zone.
+But, if we use `time2stringUtc`, we get the time for the UTC+0 zone, i.e. not considering our location.
+The `stamp2time` function does just that - it uses `time2stringUtc` to convert `timestamp` to a string without regard to the time zone.
+And this is in a certain sense correct, if we do not need information about the zone in which the event occurred, then the zone can be safely cut off, stored in UTC+0 format and then transferred to the client, converted to its time zone.
+
+Now imagine that in our database there is such a table
+
+	create table some_database_table(
+		id int(11) not null auto_increment,
+		user_id int(11),
+			...
+		created timestamp not null,
+		updated timestamp not null default current_timestamp on update current_timestamp,
+			...
+	)
+
+If we put the data that we created above into this table, then the values ​​of the `created` and` updated` fields will diverge to the value corresponding to the time zone in which the database server is located (+3 hours for me).
+In fact, this behavior is obvious and expected.
+To prevent this from happening, make sure that your server is running in the UTC+0 zone, and that the `select utc_timestamp;` and `select current_timestamp;` sql requests show the same time.
+Another option to avoid this error regarding database architecture: we can use `utc_timestamp` instead of `current_timestamp` for all fields that automatically generate values.
+
+Such an error is unlikely if you are using a remote database or docker container
