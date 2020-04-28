@@ -37,8 +37,7 @@ let counter = 0; // used to silence not finished jobs when new ones got started
 let flowDiagnosticCollection : vscode.DiagnosticCollection = null;
 let problemMatchers: ProblemMatcher[] = meta['contributes'].problemMatchers;
 
-let httpServerStatusBarItem: vscode.StatusBarItem;
-let lspServerStatusBarItem: vscode.StatusBarItem;
+let serverStatusBarItem: vscode.StatusBarItem;
 let httpServer = null;
 let clientKind = LspKind.None;
 
@@ -48,10 +47,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Use the console to output diagnostic information (console.log) and errors (console.error)
     // This line of code will only be executed once when your extension is activated
     console.log('Flow extension active');
-    httpServerStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    lspServerStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    context.subscriptions.push(httpServerStatusBarItem);
-    context.subscriptions.push(lspServerStatusBarItem);
+    serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    context.subscriptions.push(serverStatusBarItem);
     
     context.subscriptions.push(vscode.commands.registerCommand('flow.compile', compile));
     context.subscriptions.push(vscode.commands.registerCommand('flow.GetFlowCompiler', getFlowCompilerFamily));
@@ -68,32 +65,30 @@ export function activate(context: vscode.ExtensionContext) {
     flowChannel.show();
 
     // Create a client
-    if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+    if (vscode.workspace.getConfiguration("flow").get("lspFlowServer")) {
         setClient(context, LspKind.Flow);
     } else {
         setClient(context, LspKind.JS);
     }
 
     // launch flowc server at startup
-    if (vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
+    if (vscode.workspace.getConfiguration("flow").get("autostartHttpServer")) {
         startHttpServer();
     }
 
     updater.checkForUpdate();
     updater.setupUpdateChecker();
-    httpServerStatusBarItem.show();
+    serverStatusBarItem.show();
 }
 
 function startHttpServer() {
     if (httpServer == null) {
-        console.log('Http server is started');
         httpServer = tools.launchFlowcHttpServer(getFlowRoot(), showHttpServerOnline, showHttpServerOffline);
     }
 }
 
 function stopHttpServer() {
     if (httpServer) {
-        console.log('Http server is shut down');
         tools.shutdownFlowcHttpServer();
     }
     httpServer = null;
@@ -118,23 +113,25 @@ function setClient(context: vscode.ExtensionContext, kind : LspKind) {
             let serverOptions: ServerOptions;
             switch (clientKind) {
                 case LspKind.Flow: {
-                    console.log('Native flowc LSP server is started');
-                    lspServerStatusBarItem.text = `$(sync) flow: native LSP`; 
-                    lspServerStatusBarItem.show();
+                    if (serverStatusBarItem.text.indexOf("online") != -1) {
+                        serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`;
+                    } else {
+                        serverStatusBarItem.text = `$(vm-outline) flow http server: offline (lsp)`;
+                    }
+                    serverStatusBarItem.show();
                     serverOptions = {
                         command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
                         args: ['server-mode=console'],
-                        options: { 
-                            cwd: vscode.workspace.getConfiguration("flow").get("consoleServerDir"),
-                            detached: false 
-                        }
+                        options: { detached: false }
                     }
                     break;
                 }
                 case LspKind.JS: {
-                    console.log('Legcay JS LSP server is started');
-                    lspServerStatusBarItem.text = ""; 
-                    lspServerStatusBarItem.hide();
+                    if (serverStatusBarItem.text.indexOf("online") != -1) {
+                        serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`;
+                    } else {
+                        serverStatusBarItem.text = `$(vm-outline) flow http server: offline (legacy lsp)`;
+                    }
                     serverOptions = {
                         run : { module: serverModule, transport: TransportKind.ipc },
                         debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
@@ -169,11 +166,21 @@ function setClient(context: vscode.ExtensionContext, kind : LspKind) {
 }
 
 function showHttpServerOnline() { 
-    httpServerStatusBarItem.text = `$(vm-active) flow: http server is online`; 
+    //'flow http server online (lsp)' vs. 'flow http server online (legacy lsp)'
+    if (serverStatusBarItem.text.indexOf("legacy") == -1) {
+        serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`; 
+    } else {
+        serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`; 
+    }
 }
 
 function showHttpServerOffline() { 
-    httpServerStatusBarItem.text = `$(vm-outline) flow: http server is offline`; 
+    //'flow http server online (lsp)' vs. 'flow http server online (legacy lsp)'
+    if (serverStatusBarItem.text.indexOf("legacy") == -1) {
+        serverStatusBarItem.text = `$(vm-outline) flow: http server: offline (lsp)`; 
+    } else {
+        serverStatusBarItem.text = `$(vm-outline) flow: http server: offline (legacy lsp)`; 
+    }
 }
 
 // this method is called when your extension is deactivated
@@ -362,7 +369,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
         let matcher = getMatcher(command.matcher);
-        flowChannel.appendLine("Current directory: " + rootPath);
+        flowChannel.appendLine("Current directory '" + rootPath + "'");
         let run_separately = () => {
             tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
                 if (counter == current) {// if there is a newer job, ignoring ones pending
@@ -435,9 +442,7 @@ function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile:
     CommandWithArgs
 {
     let compiler = compilerHint ? compilerHint : getFlowCompiler();
-    let compilerServer = vscode.workspace.getConfiguration("flow").get("useHttpServer");
-    let serverArgs = (compiler.startsWith("flowc") && !compilerServer) ?
-        ["server=0"] : [];
+    let serverArgs = (compiler.startsWith("flowc") && !httpServer) ? ["server=0"] : [];
     if (compiler == "nekocompiler") {
         return { cmd: "neko", args: [
             path.join(flowbinpath, "flow.n"), flowfile, "--dontlink"
