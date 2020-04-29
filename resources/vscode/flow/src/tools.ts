@@ -24,30 +24,19 @@ export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
   return spawnSync(cmd, args, { cwd: wd, shell: true, encoding: "utf8" });
 }
 
-export function shutdownFlowcSync() {
-  return run_cmd_sync("flowc1", "", ["server-shutdown=1"]);
+export function shutdownFlowcHttpServerSync() {
+    return run_cmd_sync("flowc1", "", ["server-shutdown=1"]);
 }
 
-export function shutdownFlowc() {
-  run_cmd(
-    "flowc1",
-    "",
-    ["server-shutdown=1"],
-    s => {
-      console.log(s);
-    },
-    []
-  );
+export function shutdownFlowcHttpServer() {
+    run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
 }
 
-export function launchFlowc(projectRoot: string) {
-  return run_cmd(
-    "flowc1",
-    projectRoot,
-    ["server-mode=http"],
-    s => {
-      console.log(s);
-    },
-    []
-  );
+export function launchFlowcHttpServer(projectRoot: string, on_start : () => void, on_stop : () => void) {
+    on_start();
+    let httpServer = run_cmd("flowc1", projectRoot, ["server-mode=http"], (s) => { console.log(s); }, []);
+    httpServer.addListener("close", (code: number, signal: string) => { on_stop() });
+    httpServer.addListener("disconnect", () => { on_stop() });
+    httpServer.addListener("exit", (code: number, signal: string) => { on_stop() });
+    return httpServer
 }

@@ -1344,9 +1344,9 @@ class RenderSupport {
 
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
 		fontslope : String, fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
-		alignBottom : Bool, bottomBorder : Float, escapeHTML : Bool) : Void {
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, escapeHTML : Bool) : Void {
 		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour,
-			backgroundopacity, alignBottom, bottomBorder, escapeHTML);
+			backgroundopacity, alignBottom, bottomBorder, scaleMode, escapeHTML);
 	}
 
 	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
