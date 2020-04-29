@@ -1833,8 +1833,7 @@ class Native {
 				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
 			}
 
-			var o = haxe.Json.parse(json);
-			return object2JsonStructsTune(o);
+			return object2JsonStructsTune(haxe.Json.parse(json));
 		} catch (e : Dynamic) {
 			untyped console.log("parseJson ERROR " + e);
 			return makeStructValue("JsonDouble", [0.0], null);
