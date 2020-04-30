@@ -14,6 +14,7 @@ import * as tools from "./tools";
 import * as updater from "./updater";
 import * as meta from '../package.json';
 import * as simplegit from 'simple-git/promise';
+import { BuildTaskProvider, RunTaskProvider } from './taskProviders';
 //import { performance } from 'perf_hooks';
 
 interface ProblemMatcher {
@@ -40,6 +41,8 @@ let problemMatchers: ProblemMatcher[] = meta['contributes'].problemMatchers;
 let serverStatusBarItem: vscode.StatusBarItem;
 let httpServer = null;
 let clientKind = LspKind.None;
+let buildTaskProvider: vscode.Disposable | undefined;
+let runTaskProvider: vscode.Disposable | undefined;
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -75,6 +78,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (vscode.workspace.getConfiguration("flow").get("autostartHttpServer")) {
         startHttpServer();
     }
+
+    buildTaskProvider = vscode.tasks.registerTaskProvider(BuildTaskProvider.scriptType, new BuildTaskProvider(vscode.workspace.rootPath));
+    runTaskProvider = vscode.tasks.registerTaskProvider(RunTaskProvider.scriptType, new RunTaskProvider(vscode.workspace.rootPath));
 
     updater.checkForUpdate();
     updater.setupUpdateChecker();
@@ -194,6 +200,12 @@ export function deactivate() {
         if (os.platform() == "win32")
             spawn("taskkill", ["/pid", child.pid, '/f', '/t']);
     });
+    if (buildTaskProvider) {
+		buildTaskProvider.dispose();
+    }
+    if (runTaskProvider) {
+		runTaskProvider.dispose();
+	}
     if (!client) {
         return undefined;
     } else {
