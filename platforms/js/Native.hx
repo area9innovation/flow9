@@ -1821,24 +1821,79 @@ class Native {
 		return "";
 	}
 
-	public static function parseJson(json : String) : Dynamic {
-	 	try {
-			if (Native.sidJsonArray == null) {
-				Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
-				Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
-				Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
-				Native.sidJsonBool = HaxeRuntime._structids_.get("JsonBool");
-				Native.sidPair = HaxeRuntime._structids_.get("Pair");
-				Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
-				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
-			}
+	// public static function parseJson(json : String) : Dynamic {
+	//  	try {
+	// 		if (Native.sidJsonArray == null) {
+	// 			Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
+	// 			Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
+	// 			Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
+	// 			Native.sidJsonBool = HaxeRuntime._structids_.get("JsonBool");
+	// 			Native.sidPair = HaxeRuntime._structids_.get("Pair");
+	// 			Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
+	// 			Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+	// 		}
+	// 		return object2JsonStructsTune(haxe.Json.parse(json));
+	// 	} catch (e : Dynamic) {
+	// 		untyped console.log("parseJson ERROR " + e);
+	// 		return makeStructValue("JsonDouble", [0.0], null);
+	// 	}
+	// }
 
-			return object2JsonStructsTune(haxe.Json.parse(json));
-		} catch (e : Dynamic) {
-			untyped console.log("parseJson ERROR " + e);
-			return makeStructValue("JsonDouble", [0.0], null);
-		}
-	}
+	public static function parseJson(json : String) : Dynamic {
+		try {
+		   if (Native.sidJsonArray == null) {
+			   Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
+			   Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
+			   Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
+			   Native.sidJsonBool = HaxeRuntime._structids_.get("JsonBool");
+			   Native.sidPair = HaxeRuntime._structids_.get("Pair");
+			   Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
+			   Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+		   }
+		   untyped __js__("return JSON.parse(json,
+			function(k, v) {
+				var t = typeof v;
+				   if (t == 'string' ) {
+					   var o2 = { _id : Native.sidJsonString};
+					   o2[HaxeRuntime._structargs_.h[Native.sidJsonString][0]] = v;
+					   return o2;
+				   } else if (t == 'number') {
+					   var o3 = { _id : Native.sidJsonDouble};
+					   o3[HaxeRuntime._structargs_.h[Native.sidJsonDouble][0]] = v;
+					   return o3;
+				   } else if (t == 'boolean') {
+					   var o4 = { _id : Native.sidJsonBool};
+					   o4[HaxeRuntime._structargs_.h[Native.sidJsonBool][0]] = v;
+					   return o4;
+				   } else {
+						if (Array.isArray(v)) {
+							var o1 = { _id : Native.sidJsonArray};
+							o1[HaxeRuntime._structargs_.h[Native.sidJsonArray][0]] = v;
+							return o1;
+						} else if(v === null) {
+							return Native.jsonNull;
+						} else {
+							var mappedFields = [];
+							for(var f in v) {
+								var a2 = v[f];
+								var o5 = { _id : Native.sidPair};
+								o5[HaxeRuntime._structargs_.h[Native.sidPair][0]] = f;
+								o5[HaxeRuntime._structargs_.h[Native.sidPair][1]] = a2;
+								mappedFields.push(o5);
+							}
+							var o6 = { _id : Native.sidJsonObject};
+							o6[HaxeRuntime._structargs_.h[Native.sidJsonObject][0]] = mappedFields;
+							return o6;
+						}
+					}
+			});");
+
+		   return "";
+	   } catch (e : Dynamic) {
+		   untyped console.log("parseJson ERROR " + e);
+		   return makeStructValue("JsonDouble", [0.0], null);
+	   }
+   }
 	#end
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
