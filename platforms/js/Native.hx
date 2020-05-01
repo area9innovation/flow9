@@ -1752,20 +1752,20 @@ class Native {
 	// we will create flow objects using several "sid"
 	// they obtained from HaxeRuntime._structids_ / HaxeRuntime._structargs_
 	// so we cache them in order to not make local vars (they would increase load on GC)
-	static var sidJsonArray;
-	static var sidJsonArrayVal;
-	static var sidJsonString;
-	static var sidJsonStringVal;
-	static var sidJsonDouble;
-	static var sidJsonDoubleVal;
-	static var sidJsonBool;
-	static var sidJsonBoolVal;
-	static var jsonNull;
-	static var sidPair;
-	static var sidPairFirst;
-	static var sidPairSecond;
-	static var sidJsonObject;
-	static var sidJsonObjectFields;
+	static var sidJsonArray : String;
+	static var sidJsonArrayVal : String;
+	static var sidJsonString : String;
+	static var sidJsonStringVal : String;
+	static var sidJsonDouble : String;
+	static var sidJsonDoubleVal : String;
+	static var sidJsonBool : String;
+	static var sidJsonBoolVal : String;
+	static var jsonNull : String;
+	static var sidPair : String;
+	static var sidPairFirst : String;
+	static var sidPairSecond : String;
+	static var sidJsonObject : String;
+	static var sidJsonObjectFields : String;
 
 	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
 	private static function object2JsonStructs(o : Dynamic) : Dynamic {
