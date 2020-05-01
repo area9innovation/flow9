@@ -1749,6 +1749,9 @@ class Native {
 	}
 
 	#if js
+	// we will create flow objects using several "sid"
+	// they obtained from HaxeRuntime._structids_ / HaxeRuntime._structargs_
+	// so we cache them in order to not make local vars (they would increase load on GC)
 	static var sidJsonArray;
 	static var sidJsonArrayVal;
 	static var sidJsonString;
