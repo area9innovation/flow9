@@ -1749,29 +1749,6 @@ class Native {
 	}
 
 	#if js
-	private static function object2JsonStructs(o : Dynamic) : Dynamic {
-		if (untyped __js__("Array.isArray(o)")) {
-			return HaxeRuntime.fastMakeStructValue("JsonArray", map(o, object2JsonStructs));
-		} else {
-			var t = untyped __js__ ("typeof o");
-
-			if ( t == "string" ) {
-				return HaxeRuntime.fastMakeStructValue("JsonString", o);
-			} else if ( t == "number" ) {
-				return HaxeRuntime.fastMakeStructValue("JsonDouble", o);
-			} else if (t == "boolean") {
-				return HaxeRuntime.fastMakeStructValue("JsonBool", o);
-			} else if (o == null) {
-				return makeStructValue("JsonNull", [], null);
-			} else {
-				var fields : Array<String> = untyped __js__ ("Object.getOwnPropertyNames(o)");
-				for (i in 0...fields.length)
-					fields[i] = HaxeRuntime.fastMakeStructValue2("Pair", fields[i], object2JsonStructs( untyped __js__ ("o[fields[i]]") ));
-				return HaxeRuntime.fastMakeStructValue("JsonObject", fields);
-			}
-		}
-	}
-
 	static var sidJsonArray;
 	static var sidJsonArrayVal;
 	static var sidJsonString;
@@ -1787,57 +1764,97 @@ class Native {
 	static var sidJsonObject;
 	static var sidJsonObjectFields;
 
-	private static function object2JsonStructsTune(o : Dynamic) : Dynamic {
+	private static function object2JsonStructs(o : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
-			var a1 = Native.map(o,Native.object2JsonStructsTune);
-			var o1 = { _id : Native.sidJsonArray};
-			o1[HaxeRuntime._structargs_.h[Native.sidJsonArray][0]] = a1;
-			return o1;
+			var a1 = Native.map(o,Native.object2JsonStructs);
+			var obj = { _id : Native.sidJsonArray};
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
 		} else {
 			var t = typeof o;
-			if(t == \"string\") {
-				var o2 = { _id : Native.sidJsonString};
-				o2[Native.sidJsonStringVal] = o;
-				return o2;
-			} else if(t == \"number\") {
-				var o3 = { _id : Native.sidJsonDouble};
-				o3[Native.sidJsonDoubleVal] = o;
-				return o3;
-			} else if(t == \"boolean\") {
-				var o4 = { _id : Native.sidJsonBool};
-				o4[Native.sidJsonBoolVal] = o;
-				return o4;
-			} else if(o == null) {
-				return Native.jsonNull;
-			} else {
-				var mappedFields = [];
-				for(var f in o) {
-					var a2 = Native.object2JsonStructsTune(o[f]);
-					var o5 = { _id : Native.sidPair};
-					o5[Native.sidPairFirst] = f;
-					o5[Native.sidPairSecond] = a2;
-					mappedFields.push(o5);
-				}
-				var o6 = { _id : Native.sidJsonObject};
-				o6[Native.sidJsonObjectFields] = mappedFields;
-				return o6;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString};
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble};
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean':
+					var obj = { _id : Native.sidJsonBool};
+					obj[Native.sidJsonBoolVal] = o;
+					return obj;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = [];
+						for(var f in o) {
+							var a2 = Native.object2JsonStructs(o[f]);
+							var obj = { _id : Native.sidPair};
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields.push(obj);
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
 			}
 		}");
 
 		return "";
 	}
 
-	public static function parseJson(json : String) : Dynamic {
-		try {
-			return object2JsonStructs(haxe.Json.parse(json));
-		} catch (e : Dynamic) {
-			untyped console.log("parseJson ERROR " + e);
-			return makeStructValue("JsonDouble", [0.0], null);
-		}
+	private static function object2JsonStructs_FF(o : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var a1 = Native.map(o,Native.object2JsonStructs_FF);
+			var obj = { _id : Native.sidJsonArray};
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString};
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble};
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean':
+					var obj = { _id : Native.sidJsonBool};
+					obj[Native.sidJsonBoolVal] = o;
+					return obj;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = Object.getOwnPropertyNames(o);
+						for(var i=0; i< mappedFields.length; i++) {
+							var f = mappedFields[i];
+							var a2 = Native.object2JsonStructs_FF(o[f]);
+							var obj = { _id : Native.sidPair};
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields[i] = obj;
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
 	}
 
-	public static function parseJsonTuned(json : String) : Dynamic {
+	private static var parseJsonFirstCall = true;
+	public static function parseJson(json : String) : Dynamic {
 		try {
 			if (parseJsonFirstCall) {
 				untyped Native.sidJsonArray = HaxeRuntime._structids_.h["JsonArray"];
@@ -1860,121 +1877,14 @@ class Native {
 				untyped Native.sidJsonObjectFields = HaxeRuntime._structargs_.h[Native.sidJsonObject][0];
 
 				untyped Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
-			   parseJsonFirstCall = false;
+				parseJsonFirstCall = false;
 		   }
 
-		   return object2JsonStructsTune(haxe.Json.parse(json));
+		   return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
 	   } catch (e : Dynamic) {
-		   untyped console.log("parseJson ERROR " + e);
 		   return makeStructValue("JsonDouble", [0.0], null);
 	   }
 	}
-
-	private static var parseJsonFirstCall = true;
-	public static function parseJsonReviewer(json : String) : Dynamic {
-		try {
-		   if (parseJsonFirstCall) {
-				untyped Native.sidJsonArray = HaxeRuntime._structids_.h["JsonArray"];
-				untyped Native.sidJsonArrayVal = HaxeRuntime._structargs_.h[Native.sidJsonArray][0];
-
-				untyped Native.sidJsonString = HaxeRuntime._structids_.h["JsonString"];
-				untyped Native.sidJsonStringVal = HaxeRuntime._structargs_.h[Native.sidJsonString][0];
-
-				untyped Native.sidJsonDouble = HaxeRuntime._structids_.h["JsonDouble"];
-				untyped Native.sidJsonDoubleVal = HaxeRuntime._structargs_.h[Native.sidJsonDouble][0];
-
-				untyped Native.sidJsonBool = HaxeRuntime._structids_.h["JsonBool"];
-				untyped Native.sidJsonBoolVal = HaxeRuntime._structargs_.h[Native.sidJsonBool][0];
-
-				untyped Native.sidPair = HaxeRuntime._structids_.h["Pair"];
-				untyped Native.sidPairFirst = HaxeRuntime._structargs_.h[Native.sidPair][0];
-				untyped Native.sidPairSecond = HaxeRuntime._structargs_.h[Native.sidPair][1];
-
-				untyped Native.sidJsonObject = HaxeRuntime._structids_.h["JsonObject"];
-				untyped Native.sidJsonObjectFields = HaxeRuntime._structargs_.h[Native.sidJsonObject][0];
-
-				untyped Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
-			   parseJsonFirstCall = false;
-		   }
-
-		   untyped __js__("
-			return JSON.parse(json,
-			function(k, v) {
-				var t = typeof v;
-				var flowFields = this['flowFields'];
-				if (flowFields === undefined) {
-					flowFields = [];
-					this['flowFields'] = flowFields;
-				}
-
-				if (t == 'string' ) {
-					var obj = { _id : Native.sidJsonString};
-					obj[Native.sidJsonStringVal] = v;
-
-					var pair = { _id : Native.sidPair };
-					pair[Native.sidPairFirst] = k;
-					pair[Native.sidPairSecond] = obj;
-					flowFields.push(pair);
-					return obj;
-				} else if (t == 'number') {
-					var obj = { _id : Native.sidJsonDouble};
-					obj[Native.sidJsonDoubleVal] = v;
-
-					var pair = { _id : Native.sidPair };
-					pair[Native.sidPairFirst] = k;
-					pair[Native.sidPairSecond] = obj;
-					flowFields.push(pair);
-					return obj;
-				} else if (t == 'boolean') {
-					var obj = { _id : Native.sidJsonBool};
-					obj[Native.sidJsonBoolVal] = v;
-
-					var pair = { _id : Native.sidPair };
-					pair[Native.sidPairFirst] = k;
-					pair[Native.sidPairSecond] = obj;
-					flowFields.push(pair);
-					return obj;
-				} else {
-					if (Array.isArray(v)) {
-						var obj = { _id : Native.sidJsonArray};
-						obj[Native.sidJsonArrayVal] = v;
-
-						var pair = { _id : Native.sidPair };
-						pair[Native.sidPairFirst] = k;
-						pair[Native.sidPairSecond] = obj;
-						flowFields.push(pair);
-
-						return obj;
-					} else if(v === null) {
-						var pair = { _id : Native.sidPair };
-						pair[Native.sidPairFirst] = k;
-						pair[Native.sidPairSecond] = Native.jsonNull;
-						flowFields.push(pair);
-
-						return Native.jsonNull;
-					} else {
-						var obj = { _id : Native.sidJsonObject};
-						var objectFlowFields = v['flowFields'];
-						obj[Native.sidJsonObjectFields] = objectFlowFields || [];
-
-						var pair = { _id : Native.sidPair };
-						pair[Native.sidPairFirst] = k;
-						pair[Native.sidPairSecond] = obj;
-						flowFields.push(pair);
-
-						return obj;
-					}
-				}
-			});");
-
-		   return "";
-	   } catch (e : Dynamic) {
-		   untyped console.log("parseJson ERROR " + e);
-		   untyped console.log("  json: " + json);
-
-		   return makeStructValue("JsonDouble", [0.0], null);
-	   }
-   }
 	#end
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
