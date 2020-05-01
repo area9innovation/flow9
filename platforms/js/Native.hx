@@ -1764,6 +1764,7 @@ class Native {
 	static var sidJsonObject;
 	static var sidJsonObjectFields;
 
+	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
 	private static function object2JsonStructs(o : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
@@ -1808,6 +1809,7 @@ class Native {
 		return "";
 	}
 
+	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
 	private static function object2JsonStructs_FF(o : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
