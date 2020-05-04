@@ -35,20 +35,11 @@ public class HttpSupport extends NativeHost {
 
 			HttpURLConnection con = null;
 
-			String urlWithParams = url;
-			if (!urlParameters.isEmpty()) {
-				if (url.contains("?")) {
-					urlWithParams += "&" + urlParameters;
-				} else {
-					urlWithParams += "?" + urlParameters;
-				}
-			}
-			URL obj = new URL(urlWithParams);
-
 			if (post) {
 				// POST
 				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
 				int postDataLength = postData.length;
+				URL obj = new URL(url);
 
 				con = (HttpURLConnection) obj.openConnection();
 				con.setDoOutput(true); // Triggers POST.
@@ -62,6 +53,15 @@ public class HttpSupport extends NativeHost {
 					wr.write(postData);
 				}
 			} else {
+				String urlWithParams = url;
+				if (!urlParameters.isEmpty()) {
+					if (url.contains("?")) {
+						urlWithParams += "&" + urlParameters;
+					} else {
+						urlWithParams += "?" + urlParameters;
+					}
+				}
+				URL obj = new URL(urlWithParams);				
 				// GET
 				con = (HttpURLConnection) obj.openConnection();
 				con.setRequestMethod("GET");
