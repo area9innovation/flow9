@@ -28,6 +28,10 @@ export function shutdownFlowcHttpServerSync() {
     return run_cmd_sync("flowc1", "", ["server-shutdown=1"]);
 }
 
+export function checFlowcHttpServerIsOnline(): boolean {
+    return run_cmd_sync("flowc1", "", []).stdout.toString().indexOf("Processing '' on http server") != -1;
+}
+
 export function shutdownFlowcHttpServer() {
     run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
 }

@@ -47,7 +47,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Use the console to output diagnostic information (console.log) and errors (console.error)
     // This line of code will only be executed once when your extension is activated
     console.log('Flow extension active');
-    serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	serverStatusBarItem.command = 'flow.toggleHttpServer';
     context.subscriptions.push(serverStatusBarItem);
     
     context.subscriptions.push(vscode.commands.registerCommand('flow.compile', compile));
@@ -56,7 +57,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('flow.run', runCurrentFile));
     context.subscriptions.push(vscode.commands.registerCommand('flow.updateFlowRepo', () => { updateFlowRepo(context); }));
     context.subscriptions.push(vscode.commands.registerCommand('flow.startHttpServer', startHttpServer));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setClient(context, LspKind.Flow); }));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setClient(context, LspKind.JS); }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates));
@@ -79,6 +81,14 @@ export function activate(context: vscode.ExtensionContext) {
     updater.checkForUpdate();
     updater.setupUpdateChecker();
     serverStatusBarItem.show();
+}
+
+function toggleHttpServer() {
+    if (httpServer == null) {
+		startHttpServer();
+    } else {
+		stopHttpServer();
+	}
 }
 
 function startHttpServer() {
