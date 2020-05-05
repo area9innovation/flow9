@@ -3,7 +3,7 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
@@ -15,6 +15,7 @@ import * as updater from "./updater";
 import * as meta from '../package.json';
 import * as simplegit from 'simple-git/promise';
 //import { performance } from 'perf_hooks';
+const isPortReachable = require('is-port-reachable');
 
 interface ProblemMatcher {
     name: string,
@@ -38,7 +39,9 @@ let flowDiagnosticCollection : vscode.DiagnosticCollection = null;
 let problemMatchers: ProblemMatcher[] = meta['contributes'].problemMatchers;
 
 let serverStatusBarItem: vscode.StatusBarItem;
-let httpServer = null;
+
+let httpServer : ChildProcess;
+let httpServerOnline : boolean = false;
 let clientKind = LspKind.None;
 
 // this method is called when your extension is activated
@@ -64,7 +67,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates));
 
     flowChannel = vscode.window.createOutputChannel("Flow");
-    flowChannel.show();
+	flowChannel.show();
+
+	checkHttpServerStatus(true);
+	setInterval(checkHttpServerStatus, 3000, false);
 
     // Create a client
     if (vscode.workspace.getConfiguration("flow").get("lspFlowServer")) {
@@ -73,18 +79,36 @@ export function activate(context: vscode.ExtensionContext) {
         setClient(context, LspKind.JS);
     }
 
-    // launch flowc server at startup
-    if (vscode.workspace.getConfiguration("flow").get("autostartHttpServer")) {
-        startHttpServer();
-    }
-
     updater.checkForUpdate();
     updater.setupUpdateChecker();
     serverStatusBarItem.show();
 }
 
+function checkHttpServerStatus(initial : boolean) {
+	const port = vscode.workspace.getConfiguration("flow").get("portOfHttpServer");
+	isPortReachable(port, {host: 'localhost'}).then(
+		(reacheable : boolean) => {
+			if (reacheable) {
+				showHttpServerOnline();
+				httpServerOnline = true;
+			} else {
+				httpServer = null;
+				httpServerOnline = false;
+				showHttpServerOffline();
+				if (initial) {
+					// launch flowc server at startup
+					let autostart = vscode.workspace.getConfiguration("flow").get("autostartHttpServer");
+					if (autostart) {
+						startHttpServer();
+					}
+				}
+			}
+		}
+	);
+}
+
 function toggleHttpServer() {
-    if (httpServer == null) {
+    if (!httpServerOnline) {
 		startHttpServer();
     } else {
 		stopHttpServer();
@@ -98,10 +122,7 @@ function startHttpServer() {
 }
 
 function stopHttpServer() {
-    if (httpServer) {
-        tools.shutdownFlowcHttpServer();
-    }
-    httpServer = null;
+    tools.shutdownFlowcHttpServer();
 }
 
 function setClient(context: vscode.ExtensionContext, kind : LspKind) {
