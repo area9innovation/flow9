@@ -223,7 +223,7 @@ function showHttpServerOffline() {
 export function deactivate() {
 	// First, shutdown Flowc server, if it is owned by current vscode instance
 	if (httpServer) {
-    	tools.shutdownFlowcHttpServer();
+		tools.shutdownFlowcHttpServer();
 		httpServer = null;
 	}
     // kill all child processed we launched
