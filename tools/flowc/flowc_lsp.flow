@@ -181,29 +181,6 @@ fcLspExit(call : FcLspMethodCall) -> void {
 	call.exit_cb();
 }
 
-/*
-LspDocumentFilter : (
-	language : string, // A language id, like `typescript`.
-	scheme : string, // A Uri [scheme](#Uri.scheme), like `file` or `untitled`.
-	/**
-	 * A glob pattern, like `*.{ts,js}`.
-	 *
-	 * Glob patterns can have the following syntax:
-	 * - `*` to match one or more characters in a path segment
-	 * - `?` to match on one character in a path segment
-	 * - `**` to match any number of path segments, including none
-	 * - `{}` to group conditions (e.g. `**​/*.{ts,js}` matches all TypeScript and JavaScript files)
-	 * - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
-	 * - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
-	 * /
-	pattern : string
-);
-LspTextDocumentChangeRegistrationOptions : (
-	documentSelector: [LspDocumentFilter], // A document selector to identify the scope of the registration.
-	syncKind : int // None = 0, Full = 1, Incremental = 2
-);
-*/
-
 fcLspInitialized(call: FcLspMethodCall) -> void {
 	if (getJsonBoolField(fcGetJsonNestedField(fcLspServerState.clientConf, ["capabilities", "workspace", "didChangeConfiguration"]), "dynamicRegistration", false)) {
 		request = LspRequestMessage("2.0", JsonDouble(i2d(fcLspServerState.currId)), "client/registerCapability", 
@@ -215,7 +192,6 @@ fcLspInitialized(call: FcLspMethodCall) -> void {
 				)
 			]))
 		);
-		//fcDebugLog("didChangeConfiguration dynamic config: \n" + json2string(lspRequestMessage2Json(request)), call.conf);
 		fcLspServerState.requests ::= setTree(fcLspServerState.requests, request.id, request);
 		fcLspServerState.currId ::= fcLspServerState.currId + 1;
 		call.out_cb(lspRequestMessage2Json(request));
@@ -274,12 +250,19 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 							CompilerConfig(conf with config = mergeTree(conf.config, 
 								pairs2tree([
 									Pair("did-open", path),
-									Pair("did-open-text", textitem.text)
+									Pair("did-open-text", textitem.text),
+									Pair("check-syntax", "2"),
 								])
 							)),
 							call.globEnv, 
 							\code_ -> {
+								out = fcOutput(call.conf.threadId);
 								clearFcOutput(call.conf.threadId);
+								diagnostics = fcLspParseErrors(out, call.conf);
+								notification = LspNotificationMessage("2.0", "textDocument/publishDiagnostics", 
+									lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(textitem.uri, "", diagnostics))
+								);
+								call.out_cb(lspNotificationMessage2Json(notification));
 								call.loop_cb();
 							}
 						);
@@ -294,9 +277,28 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 	}
 }
 
+fcLspParseErrors(s : string, conf : CompilerConfig) -> [LspDiagnostic] {
+	err_lines = filtermap(strSplit(s, "\n"), \l -> fcLspParseLocation(l, true));
+	fold(err_lines, [], \acc, p -> {
+		loc = p.first; msg = p.second;
+		diag = LspDiagnostic(loc.range, 1, "", "flowc", msg, [], []);
+		acc1 = if (strContains(msg, "Error: ")) {
+			concat(acc, [diag]);
+		} else if (acc != []) {
+			last = lastElement(acc, diag);
+			replace(acc, length(acc) - 1, LspDiagnostic(last with 
+				relatedInformation = concat(last.relatedInformation, [LspDiagnosticRelatedInformation(loc, "")])
+			));
+		} else {
+			acc;
+		}
+		acc1
+	});
+}
+
 fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 	switch (json2LspDidChangeTextDocumentParams(call.params)) {
-		Some(params): {
+		Some(params): { 
 			path = fcCorrectUriPath(params.textDocument.uri.path);
 			conf = fcLspFileConfig(call.conf, path);
 			runConfig(
@@ -304,11 +306,18 @@ fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 					pairs2tree([
 						Pair("did-change", path),
 						Pair("did-change-json", json2string(call.params)),
+						Pair("check-syntax", "2"),
 					])
 				)),
 				call.globEnv, 
 				\code_ -> {
+					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
+					diagnostics = fcLspParseErrors(out, call.conf);
+					notification = LspNotificationMessage("2.0", "textDocument/publishDiagnostics", 
+						lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(params.textDocument.uri, "", diagnostics))
+					);
+					call.out_cb(lspNotificationMessage2Json(notification));
 					call.loop_cb();
 				}
 			);
@@ -398,14 +407,13 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 }
 
 fcLspParseLocations(s : string) -> [Json] {
-	isNum = \st -> st != "" && isDigits(st);
-	filtermap(strSplit(s, "\n"), \l -> maybeMap(fcLspParseLocation(l), \p -> lspLocation2Json(p.first)));
+	filtermap(strSplit(s, "\n"), \l -> maybeMap(fcLspParseLocation(l, false), \p -> lspLocation2Json(p.first)));
 }
 
 fcLspParseSymbols(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
 	filtermap(strSplit(s, "\n"), \l -> 
-		maybeBind(fcLspParseLocation(l), \p -> {
+		maybeBind(fcLspParseLocation(l, false), \p -> {
 			loc = p.first;
 			descr_parts = strSplit(trim(p.second), " ");
 
@@ -444,10 +452,10 @@ fcLspParseSymbols(s : string) -> [Json] {
 	);
 }
 
-fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
+fcLspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, string>> {
 	isNum = \st -> st != "" && isDigits(st);
 	parts0 = strSplit(s, ":");
-	if (length(parts0) < 3 || strContains(s, "Error: ") || strContains(s, "Fail: ")) None() else {
+	if (length(parts0) < 3 || (!admit_errors && (strContains(s, "Error: ") || strContains(s, "Fail: ")))) None() else {
 		// Windows path may start with C:/... and 
 		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) parts0 else {
 			concat(["/" + parts0[0] + ":" + parts0[1]], tailFrom(parts0, 2));
@@ -462,7 +470,7 @@ fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
 				Some(Pair(LspLocation(
 					URI("file", URIAuthority("", "", ""), path, "", ""),
 					LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1))
-					), trim(parts[3]))
+					), trim(strGlue(tailFrom(parts, 3), ":")))
 				);
 			} else {
 				eline = s2i(parts[3]) - 1;
@@ -470,7 +478,7 @@ fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
 				Some(Pair(LspLocation(
 					URI("file", URIAuthority("", "", ""), path, "", ""),
 					LspRange(LspPosition(sline, schar), LspPosition(eline, echar))
-					), trim(parts[5]))
+					), trim(strGlue(tailFrom(parts, 5), ":")))
 				);
 			}
 		}

@@ -10,7 +10,7 @@ export {
 	parseAndTypecheckProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> Pair<FiProgram, int>;
 
 	// Same as 'parseAndTypecheckProgram', but skips typecheking phase, do not resolve types, and do not track errors.
-	parseAndDesugarProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FiProgram;
+	parseAndDesugarProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, skip_errors : bool) -> FiProgram;
 
 	// Same as 'parseAndDesugarProgram', but processes only one file. Errors are suppressed.
 	parseAndDesugarFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FcModule;
@@ -23,7 +23,7 @@ parseAndTypecheckProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fil
 			errors := ^errors + 1;
 			if (!isConfigParameterTrue(config.config, "no-errors")) {
 				if (^errors < 200) {
-					printFcError(acc, globEnv, err)
+					printFcError(acc.config, globEnv, err)
 				} else if (^errors == 200) {
 					fcPrintln("Too many errors. Ignoring the rest", config.threadId);
 				}
@@ -233,14 +233,27 @@ updateAllImports(imports : [FiImport], modules : Tree<string, FiModule>) -> Set<
 	);
 }
 
-parseAndDesugarProgram(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FiProgram {
+parseAndDesugarProgram(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, skip_errors : bool) -> FiProgram {
 	// add 'untyped=1' option to config in order to ignore errors in fc2fimodule function
 	config = CompilerConfig(conf with config = setTree(conf.config, "untyped", "1"));
+
+	errors = ref 0;
+	errHandler = \err -> {
+		errors := ^errors + 1;
+		if (!isConfigParameterTrue(config.config, "no-errors")) {
+			if (^errors < 200) {
+				printFcError(conf, globEnv, err)
+			} else if (^errors == 200) {
+				fcPrintln("Too many errors. Ignoring the rest", config.threadId);
+			}
+		}
+	};
+
 	tenv1 = FcTypeEnvProgram(
 		prepareInitialFlowcAcc(config),
 		makeTree(),
-		nop1,
-		ref 0,
+		if (skip_errors) nop1 else errHandler,
+		if (skip_errors) ref 0 else errors,
 		ref makeTree(),
 		emptyGSubtypeGraph()
 	);
@@ -339,12 +352,15 @@ doParseAndDesugarProgram(tenv1: FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pre
 parseAndDesugarFile(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FcModule {
 	// add 'untyped=1' option to config in order to ignore errors in fc2fimodule function
 	config = CompilerConfig(conf with config = setTree(conf.config, "untyped", "1"));
-	switch (preloadModule(config, globEnv, file)) {
-		FcLoaded(module,__): {
-			fimodule2fc(module, true);
+	fileinfo1 = getFcFileInfo(file, config);
+	fileinfo = FcFileInfo(fileinfo1 with content = fcFileSource(globEnv, fileinfo1.fullpath));
+	pair = parseFlowfile(config, fileinfo, "");
+	switch (pair.second) {
+		None(): {
+			desugarFcModule(prepareInitialFlowcAcc(config), initFcTypeEnvLocal(), fileinfo, pair.first.syntaxtree);
 		}
-		FcParsed(fileinfo, syntaxtree,__,__,__): {
-			desugarFcModule(prepareInitialFlowcAcc(config), initFcTypeEnvLocal(), fileinfo, syntaxtree);
+		Some(err): {
+			FcModule(fileinfo, [], [], makeSet(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), [], [], [err], 0, false, -1, -1, makeSet());
 		}
 	}
 }
