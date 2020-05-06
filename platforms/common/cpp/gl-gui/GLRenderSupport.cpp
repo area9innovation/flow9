@@ -1158,7 +1158,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoTimeRange, 3);
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoLooping, 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoControls, 2);
-    TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoSubtitle, 14);
+    TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoSubtitle, 15);
     TRY_USE_OBJECT_METHOD(GLVideoClip, addStreamStatusListener, 2);
 
     // Web Clip
