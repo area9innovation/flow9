@@ -1752,19 +1752,21 @@ class Native {
 	// we will create flow objects using several "sid"
 	// they obtained from HaxeRuntime._structids_ / HaxeRuntime._structargs_
 	// so we cache them in order to not make local vars (they would increase load on GC)
-	static var sidJsonArray : String;
+	static var sidJsonArray : Int;
 	static var sidJsonArrayVal : String;
-	static var sidJsonString : String;
+	static var sidJsonString : Int;
 	static var sidJsonStringVal : String;
-	static var sidJsonDouble : String;
+	static var sidJsonDouble : Int;
 	static var sidJsonDoubleVal : String;
-	static var sidJsonBool : String;
-	static var sidJsonBoolVal : String;
-	static var jsonNull : String;
-	static var sidPair : String;
+
+	static var jsonBoolTrue : Dynamic;
+	static var jsonBoolFalse : Dynamic;
+	static var jsonNull : Dynamic;
+
+	static var sidPair : Int;
 	static var sidPairFirst : String;
 	static var sidPairSecond : String;
-	static var sidJsonObject : String;
+	static var sidJsonObject : Int;
 	static var sidJsonObjectFields : String;
 
 	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
@@ -1772,24 +1774,21 @@ class Native {
 		untyped __js__("
 		if (Array.isArray(o)) {
 			var a1 = Native.map(o,Native.object2JsonStructs);
-			var obj = { _id : Native.sidJsonArray};
+			var obj = { _id : Native.sidJsonArray };
 			obj[Native.sidJsonArrayVal] = a1;
 			return obj;
 		} else {
 			var t = typeof o;
 			switch (t) {
 				case 'string':
-					var obj = { _id : Native.sidJsonString};
+					var obj = { _id : Native.sidJsonString };
 					obj[Native.sidJsonStringVal] = o;
 					return obj;
 				case 'number':
-					var obj = { _id : Native.sidJsonDouble};
+					var obj = { _id : Native.sidJsonDouble };
 					obj[Native.sidJsonDoubleVal] = o;
 					return obj;
-				case 'boolean':
-					var obj = { _id : Native.sidJsonBool};
-					obj[Native.sidJsonBoolVal] = o;
-					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
 				default:
 					if(o == null) {
 						return Native.jsonNull;
@@ -1797,7 +1796,7 @@ class Native {
 						var mappedFields = [];
 						for(var f in o) {
 							var a2 = Native.object2JsonStructs(o[f]);
-							var obj = { _id : Native.sidPair};
+							var obj = { _id : Native.sidPair };
 							obj[Native.sidPairFirst] = f;
 							obj[Native.sidPairSecond] = a2;
 							mappedFields.push(obj);
@@ -1824,17 +1823,14 @@ class Native {
 			var t = typeof o;
 			switch (t) {
 				case 'string':
-					var obj = { _id : Native.sidJsonString};
+					var obj = { _id : Native.sidJsonString };
 					obj[Native.sidJsonStringVal] = o;
 					return obj;
 				case 'number':
-					var obj = { _id : Native.sidJsonDouble};
+					var obj = { _id : Native.sidJsonDouble };
 					obj[Native.sidJsonDoubleVal] = o;
 					return obj;
-				case 'boolean':
-					var obj = { _id : Native.sidJsonBool};
-					obj[Native.sidJsonBoolVal] = o;
-					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
 				default:
 					if(o == null) {
 						return Native.jsonNull;
@@ -1843,7 +1839,7 @@ class Native {
 						for(var i=0; i< mappedFields.length; i++) {
 							var f = mappedFields[i];
 							var a2 = Native.object2JsonStructs_FF(o[f]);
-							var obj = { _id : Native.sidPair};
+							var obj = { _id : Native.sidPair };
 							obj[Native.sidPairFirst] = f;
 							obj[Native.sidPairSecond] = a2;
 							mappedFields[i] = obj;
@@ -1862,26 +1858,26 @@ class Native {
 	public static function parseJson(json : String) : Dynamic {
 		try {
 			if (parseJsonFirstCall) {
-				untyped Native.sidJsonArray = HaxeRuntime._structids_.h["JsonArray"];
-				untyped Native.sidJsonArrayVal = HaxeRuntime._structargs_.h[Native.sidJsonArray][0];
+				Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
+				Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
 
-				untyped Native.sidJsonString = HaxeRuntime._structids_.h["JsonString"];
-				untyped Native.sidJsonStringVal = HaxeRuntime._structargs_.h[Native.sidJsonString][0];
+				Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
+				Native.sidJsonStringVal = HaxeRuntime._structargs_.get(Native.sidJsonString)[0];
 
-				untyped Native.sidJsonDouble = HaxeRuntime._structids_.h["JsonDouble"];
-				untyped Native.sidJsonDoubleVal = HaxeRuntime._structargs_.h[Native.sidJsonDouble][0];
+				Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
+				Native.sidJsonDoubleVal = HaxeRuntime._structargs_.get(Native.sidJsonDouble)[0];
 
-				untyped Native.sidJsonBool = HaxeRuntime._structids_.h["JsonBool"];
-				untyped Native.sidJsonBoolVal = HaxeRuntime._structargs_.h[Native.sidJsonBool][0];
+				Native.jsonBoolTrue = HaxeRuntime.fastMakeStructValue("JsonBool", true);
+				Native.jsonBoolFalse = HaxeRuntime.fastMakeStructValue("JsonBool", false);
 
-				untyped Native.sidPair = HaxeRuntime._structids_.h["Pair"];
-				untyped Native.sidPairFirst = HaxeRuntime._structargs_.h[Native.sidPair][0];
-				untyped Native.sidPairSecond = HaxeRuntime._structargs_.h[Native.sidPair][1];
+				Native.sidPair = HaxeRuntime._structids_.get("Pair");
+				Native.sidPairFirst = HaxeRuntime._structargs_.get(Native.sidPair)[0];
+				Native.sidPairSecond = HaxeRuntime._structargs_.get(Native.sidPair)[1];
 
-				untyped Native.sidJsonObject = HaxeRuntime._structids_.h["JsonObject"];
-				untyped Native.sidJsonObjectFields = HaxeRuntime._structargs_.h[Native.sidJsonObject][0];
+				Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
+				Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
 
-				untyped Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
 				parseJsonFirstCall = false;
 		   }
 
