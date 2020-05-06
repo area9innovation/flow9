@@ -2,6 +2,7 @@
 
 import tropic/tropic;
 import ds/array_diff;
+import ds/dynamic_array;
 import algorithms;
 
 export {
@@ -12,6 +13,11 @@ export {
 	SelectTCols(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic;
 	SelectTColsA(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic;
 	SelectTGroup(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic;
+
+	SelectTDynamicLines(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic;
+	SelectTDynamicCols(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic;
+	SelectTDynamicColsA(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic;
+	SelectTDynamicGroup(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic;
 }
 
 SelectTLines(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
@@ -111,6 +117,78 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 
 				old := l;
 			})
+		],
+		TDynamicGroup2(
+			stackChanges,
+			ref [],
+			combiner
+		)
+	)
+}
+
+SelectTDynamicLines(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
+	SelectTDynamicArray(values, makeTropicFn, TLinesCombiner());
+}
+
+SelectTDynamicCols(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
+	SelectTDynamicArray(values, makeTropicFn, TColsCombiner());
+}
+
+SelectTDynamicColsA(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
+	SelectTDynamicArray(values, makeTropicFn, TColsACombiner());
+}
+
+SelectTDynamicGroup(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
+	SelectTDynamicArray(values, makeTropicFn, TGroupCombiner());
+}
+
+SelectTDynamicArray(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic, combiner : TCombiner) -> Tropic {
+	stackChanges = make([]);
+	old = ref [];
+	indexes : ref [DynamicBehaviour<int>] = ref [];
+	ids : ref [int] = ref [];
+
+	getNextId = \ -> fold(sort(^ids), -1, \acc, id -> if (id == acc + 1) id else acc) + 1;
+
+	TConstruct(
+		[
+			\ -> subscribeDynamicArray(values, \op ->
+				switch (op) {
+					HeckelInsert(y, v): {
+						println("insert " + i2s(y) + " " + toString(v));
+
+						index = make(y);
+						id = getNextId();
+
+						indexes := insertArray(^indexes, y, index);
+						fori(y + 1, length(^indexes) - 1, \i -> next(^indexes[i], i));
+						ids := insertArray(^ids, y, id);
+
+						// println(map(^indexes, getValue));
+
+						// fselect to block any changes to index
+						next(stackChanges, arrayPush(getValue(stackChanges), TGroupAdd(makeTropicFn(fselect(index, idfn |> FLift), id, v), y)));
+					}
+					HeckelMove(f, t): {
+						indexes := moveElement(^indexes, f, t);
+						fori(min(f, t), length(^indexes) - 1, \i -> next(^indexes[i], i));
+						ids := moveElement(^ids, f, t);
+
+						next(stackChanges, arrayPush(getValue(stackChanges), TGroupMove(f, t)));
+					}
+					HeckelDelete(y): {
+						println("remove " + i2s(y));
+
+						indexes := removeIndex(^indexes, y);
+						fori(y, length(^indexes) - 1, \i -> next(^indexes[i], i));
+						ids := removeIndex(^ids, y);
+
+						// println(map(^indexes, getValue));
+
+						next(stackChanges, arrayPush(getValue(stackChanges), TGroupDelete(y)));
+					}
+				}
+			)
 		],
 		TDynamicGroup2(
 			stackChanges,

@@ -1,6 +1,7 @@
 import rendersupport3d;
 import fform/renderfform;
 import fusion_utils;
+import ds/dynamic_array;
 
 export {
 	Point3D(x : double, y : double, z : double);
@@ -81,10 +82,9 @@ export {
 		F3DSceneLoader(url : string);
 		F3DChildren(object : F3DObject, fn : (F3DNative) -> void);
 
-		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable, F3DNativeOnLoad, F3DEmpty;
+		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeOnLoad, F3DEmpty;
 			F3DNativeObject(object : native);
-			F3DNativeScene(scene : native, objects : Transform<[F3DNative]>);
-			F3DNativeMutable(object : Transform<F3DNative>);
+			F3DNativeScene(scene : native, children : DynamicArray<F3DNative>);
 			F3DNativeOnLoad(object : F3DNative, onLoad : (native) -> void);
 
 		F3DJsonObject(json : string);
@@ -741,20 +741,6 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 			);
 
 			r;
-		}
-		F3DNativeMutable(innerObject) : {
-			onDonePad = ref None();
-
-			[
-				makeSubscribeUns(innerObject, \obj ->
-					render3dform(
-						obj,
-						state,
-						onStart,
-						\ -> onlyOnce(onDonePad, onDone)
-					)
-				)()
-			]
 		}
 		F3DNativeOnLoad(innerObject, innerOnLoad) : {
 			r = render3dform(
@@ -1497,13 +1483,9 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 				innerObject,
 				state,
 				\clip -> {
-					parsedClip = parseF3DNativeObject(clip, state);
-					fn(parsedClip.first);
+					fn(parseF3DNativeObject(clip, state));
 
-					concat(
-						onStart(clip),
-						parsedClip.second
-					);
+					onStart(clip);
 				},
 				onDone
 			);
@@ -1516,7 +1498,7 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 				onDone()
 			)
 		}
-		F3DNativeScene(scene, objects) : {
+		F3DNativeScene(scene, children) : {
 			onDoneCounter : ref int = ref 0;
 			loadingFinished = ref false;
 			destroyed = ref false;
@@ -1524,7 +1506,7 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
 
-				if (!^loadingFinished && ^onDoneCounter == length(fgetValue(objects))) {
+				if (!^loadingFinished && ^onDoneCounter == sizeDynamicArray(children)) {
 					loadingFinished := true;
 					onDone();
 				} else {
@@ -1548,27 +1530,28 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 					\ -> {
 						destroyed := true;
 					},
-					fiteriu(fthrottleUntilNextFrameRendered(objects), \index, o -> {
-						render3dform(
-							o,
-							state,
-							\c ->
-								if (contains(fgetValue(objects), o))
-									concat(
-										addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
-										[
-											makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
-											\ -> {
-												if (!^destroyed && !contains(fgetValue(objects), o))
-													remove3DChild(scene, c)
-											}
-										]
-									)
-								else
-									[],
-							innerOnDone
-						)
-					}),
+					listenDynamicArray(
+						mapDynamicArray(
+							children,
+							\o ->
+								render3dform(
+									o,
+									state,
+									\c -> {
+										add3DChild(scene, c);
+
+										concat(
+											addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
+											[
+												\ -> remove3DChild(scene, c)
+											]
+										)
+									},
+									innerOnDone
+								)
+						),
+						\__ -> {}
+					),
 					\ -> {
 						applyall(^uns);
 						uns := [];
@@ -2387,30 +2370,23 @@ renderF3DTexture(texture : F3DTexture, state : F3DRenderState, onStart : (native
 	}
 }
 
-parseF3DNativeObject(object : native, state : F3DRenderState) -> Pair<F3DNative, [() -> void]> {
-	children = make(map(get3DObjectChildren(object), get3DObjectId));
-	outputChildren = make([]);
+parseF3DNativeObject(object : native, state : F3DRenderState) -> F3DNative {
+	children = makeDynamicArray([]);
 	uns = ref nop;
 
-	Pair(
-		F3DNativeScene(object, outputChildren),
-		[
-			add3DEventListener(object, "childrenchanged", \ -> {
-				^uns();
-
-				if (!fgetValue(state.loading)) {
-					uns := interruptibleTimer(33, \ -> nextDistinct(children, map(get3DObjectChildren(object), get3DObjectId)));
-				} else {
-					uns := makeSubscribe2(state.loading, \l -> if (!l) {
-						^uns();
-						uns := interruptibleTimer(33, \ -> nextDistinct(children, map(get3DObjectChildren(object), get3DObjectId)));
-					})();
-				}
-			}),
-			\ -> ^uns(),
-			\ -> next(children, []),
-			fconnect(fmapu(children, \c -> parseF3DNativeObject(get3DObjectById(state.stage, c)[0], state)), outputChildren)
-		]
+	F3DNativeScene(
+		object,
+		constructDynamicArray(
+			children,
+			[
+				\ -> {
+					nextDynamicArray(children, map(get3DObjectChildren(object), \o -> parseF3DNativeObject(o, state)));
+					\ -> nextDynamicArray(children, []);
+				},
+				\ -> add3DChildAddedListener(object, \i, c -> insertDynamicArray(children, i, parseF3DNativeObject(c, state))),
+				\ -> add3DChildRemovedListener(object, \i -> deleteDynamicArray(children, i))
+			]
+		)
 	)
 }
 

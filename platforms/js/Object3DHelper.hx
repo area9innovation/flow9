@@ -92,7 +92,7 @@ class Object3DHelper {
 	}
 
 	public static function updateBroadcastable(parent : Object3D, ?broadcastable : Bool = false) {
-		if (!broadcastable) {
+		if (!broadcastable && parent.children != null) {
 			broadcastable = untyped (parent.listeners != null && parent.listeners("matrix").length > 0) || parent.parent == null;
 
 			for (child in parent.children) {
@@ -242,57 +242,20 @@ class Object3DHelper {
 		}
 	}
 
-	public static function get3DChildrenMap(parent : Object3D) : Map<Int, Object3D> {
-		if (untyped parent.childrenMap == null) {
-			untyped parent.childrenMap = new Map<Int, Object3D>();
-		}
-
-		return untyped parent.childrenMap;
-	}
-
-	public static function update3DChildren(parent : Object3D) : Void {
-		var childrenMap = get3DChildrenMap(parent);
-
-		parent.children = [for (value in childrenMap.iterator()) value];
-	}
-
 	public static function add3DChild(parent : Object3D, child : Object3D, ?invalidate : Bool = true) : Void {
-		var childrenMap = get3DChildrenMap(parent);
-
-		if (child.parent != null) {
-			if (child.parent == parent) {
-				return;
-			}
-
-			remove3DChild(child.parent, child, false);
-		}
-
-		var index = 0;
-
-		for (k in childrenMap.keys()) {
-			if (k >= index) {
-				index = k + 1;
-			}
-		}
-
-		add3DChildAt(parent, child, index, invalidate);
+		add3DChildAt(parent, child, parent.children.length);
 	}
 
 	public static function add3DChildAt(parent : Object3D, child : Object3D, index : Int, ?invalidate : Bool = true) : Void {
-		if (child.parent != null) {
-			remove3DChild(child.parent, child, false);
-		}
-
-		var childrenMap = get3DChildrenMap(parent);
-
-		if (childrenMap.get(index) != child) {
-			if (childrenMap.get(index) != null) {
-				remove3DChild(parent, childrenMap.get(index), false);
-			}
-
+		if (parent.children.length <= index || parent.children[index] != child) {
 			updateAlpha(child);
 
-			childrenMap.set(index, child);
+			if (child.parent != null && child.parent != parent) {
+				remove3DChild(child.parent, child);
+			}
+
+			parent.children.remove(child);
+			parent.children.insert(index, child);
 			child.parent = parent;
 
 			// Apply object world transform while adding to new parent
@@ -309,8 +272,6 @@ class Object3DHelper {
 				RenderSupport3D.set3DObjectWorldRotationY(child, RenderSupport3D.get3DObjectLocalRotationY(child));
 				RenderSupport3D.set3DObjectWorldRotationZ(child, RenderSupport3D.get3DObjectLocalRotationZ(child));
 			}
-
-			update3DChildren(parent);
 
 			for (stage in getStage(parent)) {
 				for (subChild in child.children) {
@@ -344,6 +305,7 @@ class Object3DHelper {
 			if (invalidate) {
 				emitEvent(child, "added");
 				emitEvent(parent, "childrenchanged");
+				parent.dispatchEvent(untyped { type : "child_added", index : index, object : child });
 
 				invalidateStage(parent);
 			}
@@ -376,14 +338,6 @@ class Object3DHelper {
 			}
 		}
 
-		var childrenMap = get3DChildrenMap(parent);
-
-		for (k in childrenMap.keys()) {
-			if (childrenMap.get(k) == child) {
-				childrenMap.remove(k);
-			}
-		}
-
 		// Save object world transform while removing from parent
 
 		if (untyped child.saveWorldTransform) {
@@ -402,13 +356,13 @@ class Object3DHelper {
 			untyped child.worldTransformSaved = true;
 		}
 
-		parent.remove(child);
+		var index = parent.children.indexOf(child);
+		parent.children.splice(index, 1);
 		child.parent = null;
-
-		update3DChildren(parent);
 
 		if (invalidate) {
 			emitEvent(parent, "childrenchanged");
+			parent.dispatchEvent(untyped { type : "child_removed", index : index });
 			emitEvent(child, "removed");
 
 			invalidateStage(parent);

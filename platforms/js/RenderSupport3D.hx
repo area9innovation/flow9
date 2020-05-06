@@ -179,14 +179,7 @@ class RenderSupport3D {
 
 		copyObjectProperties(object, obj);
 
-		obj.childrenMap = new Array<Array<Dynamic>>();
-
-		var objectChildren : Map<Int, Object3D> = object.get3DChildrenMap();
-		var objChildren : Array<Array<Dynamic>> = obj.childrenMap;
-
-		for (key in objectChildren.keys()) {
-			objChildren.push([key, get3DObjectState(objectChildren.get(key))]);
-		}
+		obj.children = Lambda.array(Lambda.map(object.children, function(v) { return get3DObjectState(v); }));
 
 		return haxe.Json.stringify(obj);
 	}
@@ -210,18 +203,14 @@ class RenderSupport3D {
 		object.invalidateStage();
 		copyObjectProperties(obj, object);
 
-		var objectChildren : Map<Int, Object3D> = object.get3DChildrenMap();
-		var objChildren : Array<Array<Dynamic>> = obj.childrenMap.map(function(child) {
-			var childObj = haxe.Json.parse(child[1]);
+		var objChildren : Array<String> = obj.children;
 
-			return untyped [child[0], childObj, get3DObjectById(stage[0], get3DObjectId(childObj))[0]];
-		});
+		for (v in objChildren) {
+			var childObj = haxe.Json.parse(v);
+			var child = get3DObjectById(stage[0], get3DObjectId(childObj))[0];
+			RenderSupport3D.apply3DObjectStateFromObject(child, childObj, stage);
 
-		for (child in objChildren) {
-			if (child[1] != null && child[2] != null) {
-				RenderSupport3D.apply3DObjectStateFromObject(child[2], child[1], stage);
-				object.add3DChildAt(child[2], child[0]);
-			}
+			object.add3DChild(child);
 		}
 
 		object.invalidateStage();
@@ -231,7 +220,7 @@ class RenderSupport3D {
 		untyped __js__("
 			for (var property in object1) {
 				if (typeof object1[property] != 'undefined' && typeof object1[property] != 'function'
-					&& property != 'children' && property != 'geometry' && property != 'childrenMap'
+					&& property != 'children' && property != 'geometry'
 					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
 					&& property != 'material' && property != 'broadcastable' && property != 'inside' && property != 'updateProjectionMatrix') {
 
@@ -901,6 +890,30 @@ class RenderSupport3D {
 		untyped stage.renderer.eventElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
 
 		stage.invalidateStage();
+	}
+
+	static function add3DChildAddedListener(object : Object3D, cb : Int -> Object3D -> Void) : Void -> Void {
+		var fn =  function (e : Dynamic) {
+			cb(e.index, e.object);
+		};
+
+		object.addEventListener("child_added", fn);
+
+		return function() {
+			object.removeEventListener("child_added", fn);
+		};
+	}
+
+	static function add3DChildRemovedListener(object : Object3D, cb : Int -> Void) : Void -> Void {
+		var fn =  function (e : Dynamic) {
+			cb(e.index);
+		};
+
+		object.addEventListener("child_removed", fn);
+
+		return function() {
+			object.removeEventListener("child_removed", fn);
+		};
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {

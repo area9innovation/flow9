@@ -166,6 +166,13 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object add3DChildAddedListener(Object object, Func2<Integer,Object,Object> cb) {
+		return null;
+	}
+	public Object add3DChildRemovedListener(Object object, Func1<Integer,Object> cb) {
+		return null;
+	}
+
 	public Object attach3DTransformControls(Object stage, Object object) {
 		return null;
 	}
