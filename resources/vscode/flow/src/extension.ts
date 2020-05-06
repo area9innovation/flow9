@@ -116,13 +116,18 @@ function toggleHttpServer() {
 }
 
 function startHttpServer() {
-    if (httpServer == null) {
-        httpServer = tools.launchFlowcHttpServer(getFlowRoot(), showHttpServerOnline, showHttpServerOffline);
+    if (!httpServerOnline) {
+		httpServer = tools.launchFlowcHttpServer(getFlowRoot(), showHttpServerOnline, showHttpServerOffline);
+		httpServerOnline = true;
     }
 }
 
 function stopHttpServer() {
-    tools.shutdownFlowcHttpServer();
+	if (httpServerOnline) {
+		tools.shutdownFlowcHttpServer();
+		httpServer = null;
+		httpServerOnline = false;
+	}
 }
 
 function setClient(context: vscode.ExtensionContext, kind : LspKind) {
@@ -216,9 +221,11 @@ function showHttpServerOffline() {
 
 // this method is called when your extension is deactivated
 export function deactivate() {
-	// First, shutdown Flowc server
-    tools.shutdownFlowcHttpServer();
-    httpServer = null;
+	// First, shutdown Flowc server, if it is owned by current vscode instance
+	if (httpServer) {
+    	tools.shutdownFlowcHttpServer();
+		httpServer = null;
+	}
     // kill all child processed we launched
     childProcesses.forEach(child => { 
         child.kill('SIGKILL'); 
@@ -257,7 +264,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
 
     let shutdown_http_and_pull = (kind : LspKind) => {
         let startHttp = false;
-        if (httpServer) {
+        if (httpServerOnline) {
             startHttp = true;
             flowRepoUpdateChannel.append("Shutting down HTTP flowc server... ");
             stopHttpServer();
@@ -411,7 +418,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
             }, childProcesses);
         }
         if (use_lsp) {
-            if (!httpServer) {
+            if (!httpServerOnline) {
                 flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on.");
             }
             switch (clientKind) {
@@ -473,7 +480,7 @@ function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile:
     CommandWithArgs
 {
     let compiler = compilerHint ? compilerHint : getFlowCompiler();
-    let serverArgs = (compiler.startsWith("flowc") && !httpServer) ? ["server=0"] : [];
+    let serverArgs = (compiler.startsWith("flowc") && !httpServerOnline) ? ["server=0"] : [];
     if (compiler == "nekocompiler") {
         return { cmd: "neko", args: [
             path.join(flowbinpath, "flow.n"), flowfile, "--dontlink"
