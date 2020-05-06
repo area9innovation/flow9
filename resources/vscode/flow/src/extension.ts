@@ -412,7 +412,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         }
         if (use_lsp) {
             if (!httpServer) {
-                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performace it is recommended to switch HTTP server on.");
+                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on.");
             }
             switch (clientKind) {
                 case LspKind.Flow: {
