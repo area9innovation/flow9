@@ -4,10 +4,10 @@ import math/math; // dround
 import rendersupport; // makeTextfield, setTextAndStyle, getTextFieldHeight
 import runtime; // urlParameter funcs
 import ds/treeutils;
-import formats/html/font2html;
 import fusion;
 import text/unicodecharacters;
 import net/urlhash;
+import lib/fonts_repo;
 
 export {
 	getUniversalFont() -> FontFamily;
@@ -60,6 +60,7 @@ export {
 
 	getNativeLangFromBCP(bcpLang : string) -> string;
 
+	getMappedFontFamily(style : [CharacterStyle]) -> string;
 	// Hence arabic letters look smaller, we need adjust relative scale for readability.
 	getFontRelativeMultiplier() -> double;
 
@@ -87,7 +88,6 @@ bidiSupport: ref Maybe<bool> = ref None();
 isCJKLang() -> bool {
 	^cjkLang
 }
-
 
 getUniversalFont() -> FontFamily {
 	// [-Revise-] Maybe this can be improved
@@ -241,19 +241,20 @@ getMappedFont_cache_key = ref Pair("", -1.0);
 getMappedFont_cache_value = ref Pair("", -1.0);
 
 getMappedFont(family : string, size : double) {
-	if (family != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
+	ffamily = if (family == "") defaultFontFamily_ else family;
+	if (ffamily != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
 		mappedFont =
-			if (family == "MaterialIcons" || (family == "'Material Icons'")) {
+			if (ffamily == "MaterialIcons" || (ffamily == "'Material Icons'")) {
 				Pair("MaterialIcons", size)
 			} else {
-		 		(^getMappedFontFn)(family, size);
+		 		(^getMappedFontFn)(ffamily, size);
 			}
-		getMappedFont_cache_key := Pair(family, size);
+		getMappedFont_cache_key := Pair(ffamily, size);
 		getMappedFont_cache_value := mappedFont;
 	}
 
 	if (debugFontMapping) {
-		println("zz mapped font: " + "'"+family+"' -> " + toString(^getMappedFont_cache_value));
+		println("zz mapped font: " + "'"+ffamily+"' -> " + toString(^getMappedFont_cache_value));
 	}
 
 	^getMappedFont_cache_value
@@ -452,11 +453,11 @@ roundFontSize(size : double) -> double {
 }
 
 fm_calculateTextMetrics(text, family, size) {
-	htmlFont = font2htmlFont(family);
-	families = htmlFont2familiesString(htmlFont);
+	htmlFont = fontName2fontFace(family);
+	families = fontFace2familiesString(htmlFont);
 	textField = makeTextfield(families);
 	setTextDirection(textField, if (getDefaultRtl()) "rtl" else "ltr");
-	setTextAndStyle(textField, text, families, size, htmlFont2weight(htmlFont), htmlFont2slope(htmlFont), 0x000000, 1.0, 0.0, 0x000000, 0.0);
+	setTextAndStyle(textField, text, families, size, fontFace2weight(htmlFont), fontFace2slope(htmlFont), 0x000000, 1.0, 0.0, 0x000000, 0.0);
 	fieldH = getTextFieldHeight(textField);
 	deleteNative(textField);
 	fieldH
@@ -509,11 +510,24 @@ updateFontMappingFunction(langM : Maybe<string>) -> void {
 }
 
 
+//In case of change update getCharacterStyleFromWigiTextStyle
+defaultFontFamily_ = "Roboto";
+defaultFontSize_ = 11.0;
+
 _fontmapping_boot_ = {
 	updateFontMappingFunction(None());
 	0;
 };
 
+getMappedFontFamily(style : [CharacterStyle]) -> string {
+	family = fold(style, defaultFontFamily_, \acc, s -> {
+		switch (s) {
+			FontFamily(name): name;
+			default: acc;
+		}
+	});
+	getMappedFont(family, defaultFontSize_).first
+}
 
 getFontRelativeMultiplier() -> double {
 	if (getLang() == "ar") relativeScaleArabicMultiplier else 1.0;
