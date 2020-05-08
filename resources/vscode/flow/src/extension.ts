@@ -12,7 +12,6 @@ import {
 } from 'vscode-languageclient';
 import * as tools from "./tools";
 import * as updater from "./updater";
-import * as meta from '../package.json';
 import * as simplegit from 'simple-git/promise';
 //import { performance } from 'perf_hooks';
 const isPortReachable = require('is-port-reachable');
