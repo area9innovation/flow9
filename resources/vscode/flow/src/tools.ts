@@ -28,7 +28,7 @@ export function shutdownFlowcHttpServerSync() {
 }
 
 export function shutdownFlowcHttpServer() {
-    run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
+    return run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
 }
 
 export function launchFlowcHttpServer(projectRoot: string, on_start : () => void, on_stop : () => void) {

@@ -124,8 +124,7 @@ function startHttpServer() {
 
 function stopHttpServer() {
 	if (httpServerOnline) {
-		tools.shutdownFlowcHttpServer();
-		httpServer = null;
+		tools.shutdownFlowcHttpServer().on("exit", (code, msg) => httpServer = null);
 		httpServerOnline = false;
 	}
 }
@@ -223,8 +222,7 @@ function showHttpServerOffline() {
 export function deactivate() {
 	// First, shutdown Flowc server, if it is owned by current vscode instance
 	if (httpServer) {
-		tools.shutdownFlowcHttpServer();
-		httpServer = null;
+		tools.shutdownFlowcHttpServer().on("exit", (code, msg) => httpServer = null);
 	}
     // kill all child processed we launched
     childProcesses.forEach(child => { 
