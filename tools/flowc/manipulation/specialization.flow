@@ -4,7 +4,7 @@ import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/mangle;
 
 export {
-	specializeProgram(cfg: FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool) -> FiProgram;
+	specializeProgram(cfg: FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool, jsmangling : bool) -> FiProgram;
 	insertTreeSet(tree : Tree<string, Set<FiType>>, k : string, v : FiType) -> Tree<string, Set<FiType>>;
 	fiTypeIsBasic(t : FiType) -> bool;
 }
@@ -155,31 +155,31 @@ find_free_vars_with_types_multiple(expr : FiExp, bound : Set<string>, free : Tre
 
 // Find all specializations for each name that exist
 find_specializations(program : FiProgram, polymorphics : Tree<string, FiType>,
-	seed : Tree<string, Set<FiType>>) ->
+	seed : Tree<string, Set<FiType>>, jsmangling : bool) ->
 		Tree<string, Set<FiType>> {
 	found = fold(program.traversal, seed, \acc, m ->
-		find_specializations_module(acc, program, polymorphics, m));
+		find_specializations_module(acc, program, polymorphics, m, jsmangling));
 
 	if (!equalTrees(seed, found))
-		find_specializations(program, polymorphics, found)
+		find_specializations(program, polymorphics, found, jsmangling)
 	else
 		found;
 }
 
 find_specializations_module(acc : Tree<string, Set<FiType>>, program : FiProgram, polymorphics : Tree<string, FiType>,
-	moduleName : string ) -> Tree<string, Set<FiType>> {
+	moduleName : string, jsmangling : bool) -> Tree<string, Set<FiType>> {
 	switch (lookupTree(program.modules, moduleName)) {
 		None(): acc;
 		Some(m): {
-			do_find_specialization_modules(m, polymorphics, acc);
+			do_find_specialization_modules(m, polymorphics, acc, jsmangling);
 		}
 	}
 }
 
-do_find_specialization_modules(m : FiModule, polymorphics : Tree<string, FiType>, found : Tree<string, Set<FiType>>) {
+do_find_specialization_modules(m : FiModule, polymorphics : Tree<string, FiType>, found : Tree<string, Set<FiType>>, jsmangling : bool) {
 	expandedFunctions = concatA(map(m.functions,
 		\f -> {
-			specializeFiFunctionDec(f, polymorphics, found, false); })
+			specializeFiFunctionDec(f, polymorphics, found, false, jsmangling); })
 	);
 	step1 = fold(concat(m.functions, expandedFunctions), found, \acc0, f ->
 		find_free_vars_with_types_multiple(f.lambda, makeSet(), acc0, polymorphics));
@@ -188,12 +188,12 @@ do_find_specialization_modules(m : FiModule, polymorphics : Tree<string, FiType>
 	step3 = fold(m.natives, step2, \acc0, n ->
 		find_type_specializations(n.type, polymorphics, acc0));
 	expandedStructs = concatA(map(m.structs,
-		\s -> specializationFiTypeStruct(s, polymorphics, found, false)));
+		\s -> specializationFiTypeStruct(s, polymorphics, found, false, jsmangling)));
 	step4 = fold(concat(m.structs, expandedStructs), step3, \acc0, s -> {
 			fold(s.args, acc0, \acc1, f -> find_type_specializations(f.type, polymorphics, acc1))
 	});
 	expandedNatives = concatA(map(m.natives,
-		\n -> specializeFiNativeDec(n, polymorphics, step4, false))
+		\n -> specializeFiNativeDec(n, polymorphics, step4, false, jsmangling))
 	);
 	step5 = fold(concat(m.natives, expandedNatives), step4, \acc0, n ->
 		find_free_vars_with_types_multiple(n.fallbackLambda, makeSet(),
@@ -222,12 +222,12 @@ do_find_specialization_modules(m : FiModule, polymorphics : Tree<string, FiType>
 	});
 
 	if (!equalTrees(step7, found))
-		do_find_specialization_modules(m, polymorphics, step7)
+		do_find_specialization_modules(m, polymorphics, step7, jsmangling)
 	else
 		found;
 }
 
-specializeProgram(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool) -> FiProgram {
+specializeProgram(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool, jsmangling : bool) -> FiProgram {
 	fcVerbose(cfg, 0, "Specializing - looking for polymorphic entities");
 	polymorphics0 = collect_polymorphic_entities(program, onlyBasicSpecializations);
 
@@ -237,7 +237,7 @@ specializeProgram(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpecializa
 	}) else polymorphics0;
 
 	fcVerbose(cfg, 0, "Specializing - collecting specializations");
-	specializations0 = find_specializations(program, polymorphics, makeTree());
+	specializations0 = find_specializations(program, polymorphics, makeTree(), jsmangling);
 
 	specializations = if (false && onlyBasicSpecializations) {
 		// Second, get rid of specializations that are not basic
@@ -261,7 +261,7 @@ specializeProgram(cfg : FcCommonConfig, program : FiProgram, onlyBasicSpecializa
 
 	fcVerbose(cfg, 0, "Specializing - generating specialized entity declarations");
 	result = fold(program.traversal, program, \acc, m ->
-		specializeProgramModule(acc, m, polymorphics, specializations));
+		specializeProgramModule(acc, m, polymorphics, specializations, jsmangling));
 
 	fcVerbose(cfg, 0, "Specialization finished.");
 
@@ -354,13 +354,13 @@ filterTreeByExclusionTree(tree : Tree<?, ??>, excluded : Tree<?, ???>) -> Tree<?
 }
 
 specializeProgramModule(program : FiProgram, moduleName : string, polymorphics : Tree<string, FiType>,
-	specializations : Tree<string, Set<FiType>>) -> FiProgram {
+	specializations : Tree<string, Set<FiType>>, jsmangling : bool) -> FiProgram {
 	switch (lookupTree(program.modules, moduleName)) {
 		None(): program;
 		Some(m): {
 			// Build maps for original {functions, structs, unions} to arrays of specialized {functions, structs, unions}
 			expandedFunctions : Tree<string, [FiFunctionDec]> = fold(m.functions, makeTree(), \acc, f -> {
-				r = specializeFiFunctionDec(f, polymorphics, specializations, true);
+				r = specializeFiFunctionDec(f, polymorphics, specializations, true, jsmangling);
 /*                if (r != [f]) {
 					println(r);
 				}*/
@@ -370,7 +370,7 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 			// A list of specializations for each struct we should specialize
 			expandedStructs : Tree<string, [FiTypeStruct]> = fold(m.structs, makeTree(), \acc, s -> {
 				if (containsKeyTree(polymorphics, s.name)) {
-					r = specializationFiTypeStruct(s, polymorphics, specializations, true);
+					r = specializationFiTypeStruct(s, polymorphics, specializations, true, jsmangling);
 					setTree(acc, s.name, r);
 				} else acc;
 			});
@@ -378,19 +378,19 @@ specializeProgramModule(program : FiProgram, moduleName : string, polymorphics :
 			// A list of specializations for each union we should specialize
 			expandedUnions : Tree<string, [FiTypeUnion]> = fold(m.unions, makeTree(), \acc, u -> {
 				if (containsKeyTree(polymorphics, u.name)) {
-					r = specializationFiTypeUnion(u, polymorphics, specializations, true);
+					r = specializationFiTypeUnion(u, polymorphics, specializations, true, jsmangling);
 					setTree(acc, u.name, r);
 				} else acc;
 			});
 
 			// A list of specializations for each natives we should specialize
 			expandedNatives : Tree<string, [FiNativeDec]> = fold(m.natives, makeTree(), \acc, n -> {
-				r = specializeFiNativeDec(n, polymorphics, specializations, true);
+				r = specializeFiNativeDec(n, polymorphics, specializations, true, jsmangling);
 				setTree(acc, n.name, r);
 			});
 
 			// Our globals are specialized here
-			convertedVars : [FiGlobalVar] = map(m.globalVars, \v -> specializeGlobalVar(v, polymorphics));
+			convertedVars : [FiGlobalVar] = map(m.globalVars, \v -> specializeGlobalVar(v, polymorphics, jsmangling));
 
 			// computing init order according to original init order
 			expandedInitOrderList = fold(m.initOrder, makeList(), \l, k -> {

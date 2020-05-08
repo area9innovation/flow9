@@ -1,15 +1,16 @@
 import ui/fontmapping; // getMappedFont
 import net/picutil;
 import form/graphicstransforms;
+import fform/fform;
+import fonts_repo;
+import dynamic;
 
 export {
 	ClipCapabilities(move : bool, filters : bool, interactive : bool, scale : bool, alpha : bool);
 
 	DefinedTextStyle(
-		fontFamily : string,
+		face : FontFace,
 		fontSize : double,
-		fontWeight : int,
-		fontSlope : string,
 		fillColor : int,
 		fillOpacity : double,
 		letterSpacing : double,
@@ -29,7 +30,9 @@ export {
 		capabilities : ClipCapabilities
 	);
 
-	getFontFamily(style : [CharacterStyle]) -> string;
+	// Behaviour-based styles (i.e. FDynamicColor) aren't applied.
+	makeStyledTextfield(text : string, style : [FTextStyle]) -> native;
+
 	calculateDefaultTextBackgroundColorOpacity(style : [CharacterStyle]) -> double;
 	getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle;
 	defineTextStyle : (textfield : native, text : string, style : [CharacterStyle]) -> void;
@@ -47,17 +50,14 @@ export {
 	getVimeoURL(url : string) -> Maybe<string>;
 }
 
-//In case of change update getCharacterStyleFromWigiTextStyle
-defaultFontFamily_ = "Roboto";
-
-getFontFamily(style : [CharacterStyle]) -> string {
-	family = fold(style, defaultFontFamily_, \acc, s -> {
-		switch (s : CharacterStyle) {
-			FontFamily(name): name;
-			default: acc;
-		}
-	});
-	getMappedFont(family, 11.0).first
+makeStyledTextfield(text : string, style : [FTextStyle]) -> native {
+	cs = style2characterStyle(style);
+	r = makeTextfield(getMappedFontFamily(cs));
+	rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
+	setEscapeHTML(r, extractStruct(style, EscapeHTML(false)).escape);
+	setTextDirection(r, if (rtl) "rtl" else "ltr");
+	defineTextStyle(r, text, cs);
+	r
 }
 
 getCachedPictureSize(url : string) -> Maybe<WidthHeight> {
@@ -70,9 +70,9 @@ calculateDefaultTextBackgroundColorOpacity(style : [CharacterStyle]) -> double {
 
 getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle {
 	// Set up the style
-	fontfamily = ref defaultFontFamily_;
+	fontfamily = ref "";  // Mapping will override it to the default.
 	fontweight = ref 400;
-	fontslope = ref "";
+	fontslope = ref FONT_SLOPE_NORMAL;
 	fontsize = ref 11.0;
 	fillcolour = ref 0x000000;
 	fillopacity = ref 1.0;
@@ -85,16 +85,7 @@ getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle {
 	specifiedSharpness = ref false;
 	iter(style, \s -> {
 		switch (s : CharacterStyle) {
-			FontFamily(name) : {
-				if (!js && ios()) {
-					fontfamily := name;
-				} else {
-					htmlFont = font2htmlFont(name);
-					fontfamily := htmlFont2familiesString(htmlFont);
-					fontweight := htmlFont2weight(htmlFont);
-					fontslope := htmlFont2slope(htmlFont);
-				}
-			}
+			FontFamily(name) : fontfamily := name;
 			FontSize(size) : fontsize := size;
 			Fill(col): fillcolour := col;
 			FillOpacity(op): fillopacity := op;
@@ -110,9 +101,14 @@ getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle {
 			default : {}
 		}
 	});
-	mappedFonts = map(strSplit(^fontfamily, ","), \family -> getMappedFont(family, ^fontsize));
-	fontfamily := strGlue(map(mappedFonts, firstOfPair), ",");
-	fontsize := mappedFonts[0].second;
+
+	mappedFont = getMappedFont(^fontfamily, ^fontsize);
+	fontFace = fontName2fontFace(mappedFont.first);
+	if (js || !ios()) {
+		fontweight := fontFace2weight(fontFace);
+		fontslope := fontFace2slope(fontFace);
+	}
+	fontsize := mappedFont.second;
 
 	// 21273
 	if (!^specifiedSharpness && flash && (^fontsize > 20.0)) {
@@ -136,10 +132,8 @@ getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle {
 	};
 
 	DefinedTextStyle(
-		^fontfamily,
+		FontFace(fontFace with weight=^fontweight, slope=^fontslope),
 		^fontsize,
-		^fontweight,
-		^fontslope,
 		^fillcolour,
 		^fillopacity,
 		^letterspacing,
@@ -157,10 +151,10 @@ defineTextStyle(textfield, text, style) {
 	setTextAndStyle(
 		textfield,
 		text,
-		definedTextStyle.fontFamily,
+		definedTextStyle.face.family,
 		definedTextStyle.fontSize,
-		definedTextStyle.fontWeight,
-		definedTextStyle.fontSlope,
+		definedTextStyle.face.weight,
+		definedTextStyle.face.slope,
 		definedTextStyle.fillColor,
 		definedTextStyle.fillOpacity,
 		definedTextStyle.letterSpacing,
