@@ -95,12 +95,12 @@ dynamicSelectionIndexes2(index : Transform<[int]>, children : DynamicArray<MTree
 	)
 }
 
-fItemsLength(children : DynamicArray<MTreeNode<?>>) -> Transform<int> {
-	fselect(fsubmap(children |> transformDynamicArray, \c -> fItemsLength2(c.children)), sum |> FLift)
+unwrapMTreeNodes(order : DynamicArray<MTreeNode<?>>) -> DynamicArray<MTreeNode<?>> {
+	mergeDynamicArray(mapDynamicArray(order, \o -> concatDynamicArray(makeDynamicArray([o]), unwrapMTreeNodes(o.children))))
 }
 
-fItemsLength2(children : DynamicArray<MTreeNode<?>>) -> Transform<int> {
-	fadditioni(fselect(fsubmap(children |> transformDynamicArray, \c -> fItemsLength2(c.children)), sum |> FLift), const(1))
+lengthMTreeNodes(children : DynamicArray<MTreeNode<?>>) -> Transform<int> {
+	lengthDynamicArray(unwrapMTreeNodes(children));
 }
 
 MTreeNodes2MTreeOrderNodes(nodes : DynamicArray<MTreeNode<?>>) -> DynamicArray<MTreeOrderNode<?>> {
@@ -109,6 +109,10 @@ MTreeNodes2MTreeOrderNodes(nodes : DynamicArray<MTreeNode<?>>) -> DynamicArray<M
 
 MTreeNode2MTreeOrderNode(node : MTreeNode<?>) -> MTreeOrderNode<?> {
 	MTreeOrderNode(node.content, mapDynamicArray(node.children, MTreeNode2MTreeOrderNode))
+}
+
+unwrapMTreeOrderNodes(order : DynamicArray<MTreeOrderNode<?>>) -> DynamicArray<MTreeOrderNode<?>> {
+	mergeDynamicArray(mapDynamicArray(order, \o -> concatDynamicArray(makeDynamicArray([o]), unwrapMTreeOrderNodes(o.children))))
 }
 
 moveMTreeOrderNode(nodes : DynamicArray<MTreeOrderNode<?>>, id1 : ?, id2 : ?, dropOperation : DropOperation) -> void {
@@ -408,11 +412,9 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			\ms ->
 				TConstruct(
 					[
-						\ -> fBidirectionalLink(
-							filtersubmapDynamicArray(state.selected, \s -> findiDynamicArray(state.items, \i -> i == s))
-							|> transformDynamicArray,
-							filtersubmapDynamicArray(ms.selected, \s -> elementAtDynamicArray(state.items, const(s)))
-							|> transformDynamicArray,
+						\ -> bidirectionalLinkDynamicArray(
+							filtersubmapDynamicArray(state.selected, \s -> findiDynamicArray(state.items, \i -> i == s)),
+							filtersubmapDynamicArray(ms.selected, \s -> elementAtDynamicArray(state.items, const(s))),
 							\s -> nextDynamicArray(ms.selected, s),
 							\s -> nextDynamicArray(state.selected, s)
 						)
@@ -428,13 +430,25 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 				state.dragDropState,
 				\dragDropState -> {
 					order = MTreeNodes2MTreeOrderNodes(m.children);
+					orderA = unwrapMTreeOrderNodes(order);
 
-					[
-						\ -> listenDynamicArray2(order, \__ -> {
-							nextDynamicArray(dragDropState.order, getDynamicArrayValue(order));
-							maybeApply(dragDropState.onChange, \oc -> oc(getDynamicArrayValue(order)));
-						})
-					]
+					concat(
+						[
+							\ -> listen2DynamicArray(order, \__ -> {
+								nextDynamicArray(dragDropState.order, getDynamicArrayValue(order));
+							})
+						],
+						eitherFn(
+							dragDropState.onChange,
+							\oc ->
+								[
+									\ -> listen2DynamicArray(orderA, \__ -> {
+										oc(getDynamicArrayValue(order));
+									})
+								],
+							\ -> []
+						)
+					)
 				},
 				[]
 			),
@@ -446,7 +460,7 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			itemsLength,
 			\il ->
 				TConstruct(
-					[ \ -> fconnect(fItemsLength(children), il.length) ],
+					[ \ -> fconnect(lengthMTreeNodes(children), il.length) ],
 					mtree
 				),
 			mtree
