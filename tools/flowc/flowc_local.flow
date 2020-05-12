@@ -245,12 +245,33 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 	line = s2i(getConfigParameterDef(config.config, "exp-line", "-1"));
 	col = s2i(getConfigParameterDef(config.config, "exp-column", "-1"));
 	renameSymbol = getConfigParameter(config.config, "rename");
+	// The current state of source file (in editor) may have changes, which make it
+	// different from the file on the hard disk and which are tracked in cache.
+	// This function returns updated current FiFileInfo
+	current_fileinfo = \-> {
+		fileinfo = getFcFileInfo(file, config);
+		curr_content = fcFileSource(globalEnv, fileinfo.fullpath);
+		FcFileInfo(fileinfo with content = curr_content);
+	}
+	check_syntax = \level -> {
+		if (level == "3") {
+			parseAndDesugarProgram(config, globalEnv, config.flowfile, false); { }
+		} else if (level == "2") {
+			module = parseAndDesugarFile(config, globalEnv, config.flowfile);
+			iter(module.errors, \err -> printFcError(config, globalEnv, err));
+		} else if (level == "1") {
+			switch (parseFlowfile(config, current_fileinfo(), "").second) {
+				Some(err): printFcError(config, globalEnv, err);
+				None(): { }
+			}
+		} else { }
+	}
 	if (renameSymbol != "") {
 		if (renameSymbol != "1") {
 			fcFastRename(config, globalEnv, renameSymbol, line, col);
 		} else {
 			if (line != -1 && col != -1) {
-				name = getNameByLineColFromFile(line, col, file);
+				name = getNameByLineCol(line, col, current_fileinfo().content);
 				fcFastRename(config, globalEnv, name, line, col);
 			} else {
 				fcPrintln("Expect exp-line and exp-column arguments", config.threadId);
@@ -288,7 +309,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 					findDefDecl(config, globalEnv, file, findSymbol);
 				} else {
 					if (line != -1 && col != -1) {
-						name = getNameByLineColFromFile(line, col, file);
+						name = getNameByLineCol(line, col, current_fileinfo().content);
 						findDefDecl(config, globalEnv, file, name);
 					} else {
 						fcPrintln("find-defdecl: Expect exp-line and exp-column arguments", config.threadId);
@@ -302,7 +323,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 						fcFastFindUses(config, globalEnv, findUses, line, col);
 					} else {
 						if (line != -1 && col != -1) {
-							name = getNameByLineColFromFile(line, col, file);
+							name = getNameByLineCol(line, col, current_fileinfo().content);
 							fcFastFindUses(config, globalEnv, name, line, col);
 						} else {
 							fcPrintln("find-uses: Expect exp-line and exp-column arguments", config.threadId);
@@ -323,6 +344,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 					} else {
 						fcPrintln("did-open: Options 'did-open-text' must be provided", config.threadId);
 					}
+					check_syntax(getConfigParameter(config.config, "check-syntax"));
 					onRunComplete(0);
 				} else if (isConfigParameterSet(config.config, "did-change")) {
 					json = getConfigParameter(config.config, "did-change-json");
@@ -337,6 +359,10 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 							fcPrintln("did-change: An option 'did-change-json' must be a vaid Json-encoded LSP DidChangeTextDocimentParams", config.threadId);
 						}
 					}
+					check_syntax(getConfigParameter(config.config, "check-syntax"));
+					onRunComplete(0);
+				} else if (isConfigParameterSet(config.config, "check-syntax")) {
+					check_syntax(getConfigParameter(config.config, "check-syntax"));
 					onRunComplete(0);
 				} else if (isConfigParameterSet(config.config, "did-save")) {
 					path = getConfigParameter(config.config, "did-save");
@@ -357,7 +383,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 						fcSymbolInfo(config, globalEnv, symbol, line, col);
 					} else {
 						if (line != -1 && col != -1) {
-							name = getNameByLineColFromFile(line, col, file);
+							name = getNameByLineCol(line, col, current_fileinfo().content);
 							fcSymbolInfo(config, globalEnv, name, line, col);
 						} else {
 							fcPrintln("symbol-info: Expect exp-line and exp-column arguments", config.threadId);
