@@ -135,13 +135,13 @@ public class HttpSupport extends NativeHost {
 				this.addHeaders(con, headers);
 				con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 				con.setRequestProperty("charset", "utf-8");
-				con.setRequestMethod("POST");
-				con.setDoOutput(true);
+				con.setRequestMethod(method);
+				con.setDoOutput(true);	
 				con.setRequestProperty("Content-Length", Integer.toString(postDataLength));
 				con.setUseCaches(false);
 				try(DataOutputStream wr = new DataOutputStream(con.getOutputStream())) {
 					wr.write(postData);
-				}				
+				}
 			} else {
 				String urlWithParams = url;
 				if (!urlParameters.isEmpty()) {
@@ -155,6 +155,7 @@ public class HttpSupport extends NativeHost {
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
 				con.setRequestMethod(method);
+				con.setDoOutput(true);				
 			}
 			con.setConnectTimeout(timeout.intValue());
 			con.setReadTimeout(timeout.intValue());
