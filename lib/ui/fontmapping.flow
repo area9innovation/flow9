@@ -62,11 +62,14 @@ export {
 	getNativeLangFromBCP(bcpLang : string) -> string;
 
 	getMappedFontFamily(style : [CharacterStyle]) -> string;
-	// Hence arabic letters look smaller, we need adjust relative scale for readability.
-	getFontRelativeMultiplier() -> double;
 
-	// Also, some other styles could be adjusted.
-	overrideCharacterStylePerAlphabet(text: string, styles: [CharacterStyle]) -> [CharacterStyle];
+	// Hence arabic letters look smaller, we need adjust relative scale and
+	// some other styles for readability.
+	// TODO maybe introduce a native that will do a full string scan to detect an alphabet.
+	detectAlphabet(text : string) -> string;
+	getAlphabetScaling(alphabet : string, fontFamily : string) -> double;
+	apply2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> [CharacterStyle];
+	applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterStyle];
 
 	// Reverse array for RTL layout
 	arrayRTL(arr : [?]) -> [?];
@@ -77,7 +80,7 @@ addMappedFontsPad : ref Maybe<bool> = ref None();
 addMappedFonts = \ -> onlyOnce(addMappedFontsPad, \ -> getRendererType() == "html" && isUrlParameterTrue("add_fonts"));
 debugFontMapping = isUrlParameterTrue("debugfontmapping");
 
-relativeScaleArabicMultiplier = 1.4;
+relativeScaleArabicMultiplier = 1.4;  // TODO generalize introducing a mapping alphabet→coeficient.
 
 isChinese(lang) {
 	lang == "zh" || lang == "zz"
@@ -530,21 +533,35 @@ getMappedFontFamily(style : [CharacterStyle]) -> string {
 	getMappedFont(family, defaultFontSize_).first
 }
 
-getFontRelativeMultiplier() -> double {
-	if (getLang() == "ar") relativeScaleArabicMultiplier else 1.0;
+detectAlphabet(text : string) -> string {
+	getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1))
 }
 
-overrideCharacterStylePerAlphabet(text: string, styles: [CharacterStyle]) -> [CharacterStyle] {
-	alphabet = getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1));
+getAlphabetScaling(alphabet : string, fontFamily : string) -> double {
 	if (alphabet == "arb") {
-		map(styles, \s -> {
-			switch (s) {
-				FontSize(v): FontSize(v * 1.4);
-				FontFamily(f): if (f=="RobotoMedium") FontFamily("RobotoBold") else s;
-				default: s;
-			}
-		})
-	} else styles
+		// TODO per family scaling ratio.
+		1.4
+	} else 1.0
+}
+
+get2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> double {
+	ffam = extractStruct(styles, FontFamily(defaultFontFamily_)).name;
+	max(getAlphabetScaling(alphabet1, ffam), getAlphabetScaling(alphabet2, ffam))
+}
+
+apply2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> [CharacterStyle] {
+	fsz = extractStruct(styles, FontSize(defaultFontSize_)).size;
+	fontSize = fsz * get2AlphabetsScaling(alphabet1, alphabet2, styles);
+	replaceStruct(styles, FontSize(fontSize))
+}
+
+applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterStyle] {
+	ffam = extractStruct(styles, FontFamily(defaultFontFamily_)).name;
+	fsz = extractStruct(styles, FontSize(defaultFontSize_)).size;
+	ratio = getAlphabetScaling(alphabet, ffam);
+	fontSize = fsz * getAlphabetScaling(alphabet, ffam);
+	fontFamily = if (alphabet == "arb" && ffam == "RobotoMedium") "RobotoBold" else ffam;
+	replaceStruct(replaceStruct(styles, FontFamily(fontFamily)), FontSize(fontSize))
 }
 
 arrayRTL(arr : [?]) -> [?] {
