@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 12;
+var SERVICE_WORKER_VERSION = 13;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -379,7 +379,10 @@ self.addEventListener('fetch', function(event) {
     requestCloned.headers.forEach(function(val, key) {
       headers.set(key, val);
     });
+    // For standard cache logic
     headers.set('If-None-Match', etag);
+    // And special case, for header forwarding through CDN
+    headers.set('X-If-None-Match', etag);
 
     if (requestCloned.method == "POST") {
       return requestCloned.blob().then(function(reqBlob) {
