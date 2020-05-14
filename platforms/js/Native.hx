@@ -46,7 +46,7 @@ class Native {
 		#elseif (js && flow_nodejs && flow_webmodule)
 			webModuleResponseText += arg + "\n";
 		#elseif js
-			untyped console.log(s);
+			untyped console.log(arg);
 		#else
 			Errors.report(s);
 		#end
