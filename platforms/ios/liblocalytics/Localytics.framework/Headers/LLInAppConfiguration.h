@@ -14,6 +14,9 @@
 
 @class UIImage;
 
+/**
+ * The In-App's configuration object used to define certain properties that can be modified on an In-App message.
+ */
 @interface LLInAppConfiguration : NSObject
 
 /** The location of the dismiss button on an In-App message */
@@ -22,12 +25,42 @@
 @property (nonatomic, strong, nullable) UIImage *dismissButtonImage;
 /** The hidden state of the dismiss button on an In-App message */
 @property (nonatomic, assign) BOOL dismissButtonHidden;
-/** The aspect ratio of the In-App msg.  This property is only relevant for center In-App messages */
+/**
+ Set the aspect ratio for this In-App.  The aspect ratio should be a float value representing a ratio of height to width (example 9:16 display is 0.56).
+ Accepted values must be greater than 0. This property is only relevant for Center and Banner In-App messages.
+ */
 @property (nonatomic, assign) CGFloat aspectRatio;
+
+/**
+ Set the aspect ratio for this In-App.  The aspect ratio should be a float value representing a ratio of width to height (example 16:9 display is 1.77).
+ Accepted values must be greater than 0. This property is only relevant for Center and Banner In-App messages.
+ */
+@property (nonatomic, assign) CGFloat widthToHeightRatio;
 /** The offset of the In-App msg.  This property is only relevant for top or bottom banner In-App messages */
 @property (nonatomic, assign) CGFloat offset;
-/** The transparency of the background behind the In-App msg. Must be between 0 and 1. Relevant for center and full-screen In-App messages */
+/**
+ * Set the background alpha for this in-app.  The background alpha should be a float value
+ * representing the desired transparency for the backdrop of the creative.
+ *
+ * Accepted values must be greater than 0 and less than 1.
+ *
+ * This property is only relevant for <strong>center</strong> and <strong>full
+ * screen</strong> in-app Campaigns
+ *
+ * @param backgroundAlpha a float value greater than 0 and less than 1
+ *                        representing the transparency of the campaign backdrop.
+ */
 @property (nonatomic, assign) CGFloat backgroundAlpha;
+/** AutoHide Home Screen Indicator */
+@property (nonatomic, assign) BOOL autoHideHomeScreenIndicator;
+/** The screen area covered by the In-app.
+ * NO - Within Safe Area
+ * YES - Covers Entire Screen and html needs to handle notch and screen curvature.
+ */
+@property (nonatomic, assign) BOOL notchFullScreen;
+
+/** The percentage of the in-app video that needs to be watched before sending a video event */
+@property(nonatomic, assign) CGFloat videoConversionPercentage;
 
 /** Returns whether this is a center In-App message.
  @return YES if this is a center In-App message, NO otherwise

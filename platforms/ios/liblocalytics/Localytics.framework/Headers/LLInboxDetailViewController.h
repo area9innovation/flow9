@@ -45,4 +45,9 @@
  */
 @property (nonatomic, assign) BOOL deleteInNavBar;
 
+/**
+ * The string to use to indicate the "Delete" action to the user. The default value is "Delete"
+ */
+@property (nonatomic, strong, nullable) NSString *deleteActionText;
+
 @end

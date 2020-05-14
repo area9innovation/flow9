@@ -73,6 +73,11 @@
 @property (nonatomic, assign) BOOL enableSwipeDelete;
 
 /**
+ * The string to use to indicate the "Delete" action to the user. The default value is "Delete"
+ */
+@property (nonatomic, strong, nullable) NSString *deleteActionText;
+
+/**
  * Flag indicating whether delete should be implemented as a navigation item on the detail view controller.
  */
 @property (nonatomic, assign) BOOL enableDetailViewDelete;
