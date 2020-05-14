@@ -1,10 +1,9 @@
 import math/uuid;
-import ds/trie;
+import formats/lsp;
 import tools/common/config;
 import text/serialize;
 import text/utf8;
 import tools/flowc/flowc_remote;
-import tools/flowc/lsp_types;
 
 /*
  This module implements a request processing function for the language Server Protocol (LSP)
@@ -41,7 +40,7 @@ export {
 fcDecodeJsonRequest(s : string) -> Json {
 	json = parseJsonSafe(s);
 	switch (json) {
-		JsonObject(members): if (fcJsonObjectHasField(json, "jsonrpc")) json else JsonNull();
+		JsonObject(members): if (jsonObjectHasField(json, "jsonrpc")) json else JsonNull();
 		default: JsonNull();
 	}
 }
@@ -181,31 +180,8 @@ fcLspExit(call : FcLspMethodCall) -> void {
 	call.exit_cb();
 }
 
-/*
-LspDocumentFilter : (
-	language : string, // A language id, like `typescript`.
-	scheme : string, // A Uri [scheme](#Uri.scheme), like `file` or `untitled`.
-	/**
-	 * A glob pattern, like `*.{ts,js}`.
-	 *
-	 * Glob patterns can have the following syntax:
-	 * - `*` to match one or more characters in a path segment
-	 * - `?` to match on one character in a path segment
-	 * - `**` to match any number of path segments, including none
-	 * - `{}` to group conditions (e.g. `**​/*.{ts,js}` matches all TypeScript and JavaScript files)
-	 * - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
-	 * - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
-	 * /
-	pattern : string
-);
-LspTextDocumentChangeRegistrationOptions : (
-	documentSelector: [LspDocumentFilter], // A document selector to identify the scope of the registration.
-	syncKind : int // None = 0, Full = 1, Incremental = 2
-);
-*/
-
 fcLspInitialized(call: FcLspMethodCall) -> void {
-	if (getJsonBoolField(fcGetJsonNestedField(fcLspServerState.clientConf, ["capabilities", "workspace", "didChangeConfiguration"]), "dynamicRegistration", false)) {
+	if (getJsonBoolField(getJsonNestedField(fcLspServerState.clientConf, ["capabilities", "workspace", "didChangeConfiguration"]), "dynamicRegistration", false)) {
 		request = LspRequestMessage("2.0", JsonDouble(i2d(fcLspServerState.currId)), "client/registerCapability", 
 			lspRegistrationParams2Json(LspRegistrationParams([
 				LspRegistration(makeUuid(), "textDocument/didChange", 
@@ -215,7 +191,6 @@ fcLspInitialized(call: FcLspMethodCall) -> void {
 				)
 			]))
 		);
-		//fcDebugLog("didChangeConfiguration dynamic config: \n" + json2string(lspRequestMessage2Json(request)), call.conf);
 		fcLspServerState.requests ::= setTree(fcLspServerState.requests, request.id, request);
 		fcLspServerState.currId ::= fcLspServerState.currId + 1;
 		call.out_cb(lspRequestMessage2Json(request));
@@ -274,12 +249,15 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 							CompilerConfig(conf with config = mergeTree(conf.config, 
 								pairs2tree([
 									Pair("did-open", path),
-									Pair("did-open-text", textitem.text)
+									Pair("did-open-text", textitem.text),
+									Pair("check-syntax", "2"),
 								])
 							)),
 							call.globEnv, 
 							\code_ -> {
+								out = fcOutput(call.conf.threadId);
 								clearFcOutput(call.conf.threadId);
+								call.out_cb(fcLspErrorDiagnostics(textitem.uri, out, call.conf));
 								call.loop_cb();
 							}
 						);
@@ -294,9 +272,36 @@ fcLspTextDocumentDidOpen(call: FcLspMethodCall) -> void {
 	}
 }
 
+fcLspErrorDiagnostics(file : URI, s : string, conf : CompilerConfig) -> Json {
+	lspNotificationMessage2Json(LspNotificationMessage("2.0", "textDocument/publishDiagnostics", 
+		lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(file, "", fcLspParseErrors(s, conf)))
+	));
+}
+
+fcLspParseErrors(s : string, conf : CompilerConfig) -> [LspDiagnostic] {
+	if (!strContains(s, "Error: ")) [] else {
+		err_lines = filtermap(strSplit(s, "\n"), \l -> fcLspParseLocation(l, true));
+		fold(err_lines, [], \acc, p -> {
+			loc = p.first; msg = p.second;
+			diag = LspDiagnostic(loc.range, 1, "", "flowc", msg, [], []);
+			acc1 = if (strContains(msg, "Error: ")) {
+				concat(acc, [diag]);
+			} else if (acc != []) {
+				last = lastElement(acc, diag);
+				replace(acc, length(acc) - 1, LspDiagnostic(last with 
+					relatedInformation = concat(last.relatedInformation, [LspDiagnosticRelatedInformation(loc, "")])
+				));
+			} else {
+				acc;
+			}
+			acc1
+		});
+	}
+}
+
 fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 	switch (json2LspDidChangeTextDocumentParams(call.params)) {
-		Some(params): {
+		Some(params): { 
 			path = fcCorrectUriPath(params.textDocument.uri.path);
 			conf = fcLspFileConfig(call.conf, path);
 			runConfig(
@@ -304,11 +309,14 @@ fcLspTextDocumentDidChange(call: FcLspMethodCall) -> void {
 					pairs2tree([
 						Pair("did-change", path),
 						Pair("did-change-json", json2string(call.params)),
+						Pair("check-syntax", "2"),
 					])
 				)),
 				call.globEnv, 
 				\code_ -> {
+					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
+					call.out_cb(fcLspErrorDiagnostics(params.textDocument.uri, out, call.conf));
 					call.loop_cb();
 				}
 			);
@@ -381,6 +389,7 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspErrorDiagnostics(textid.uri, out, call.conf));
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
 						symbols = fcLspParseSymbols(out);
@@ -398,14 +407,13 @@ fcLspTextDocumentDocumentSymbol(call: FcLspMethodCall) -> void {
 }
 
 fcLspParseLocations(s : string) -> [Json] {
-	isNum = \st -> st != "" && isDigits(st);
-	filtermap(strSplit(s, "\n"), \l -> maybeMap(fcLspParseLocation(l), \p -> lspLocation2Json(p.first)));
+	filtermap(strSplit(s, "\n"), \l -> maybeMap(fcLspParseLocation(l, false), \p -> lspLocation2Json(p.first)));
 }
 
 fcLspParseSymbols(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
 	filtermap(strSplit(s, "\n"), \l -> 
-		maybeBind(fcLspParseLocation(l), \p -> {
+		maybeBind(fcLspParseLocation(l, false), \p -> {
 			loc = p.first;
 			descr_parts = strSplit(trim(p.second), " ");
 
@@ -414,25 +422,25 @@ fcLspParseSymbols(s : string) -> [Json] {
 			} else if (length(descr_parts) > 1) {
 				name = descr_parts[1];
 				kind = if (descr_parts[0] == "import") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Module", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Module", 0);
 				} else if (descr_parts[0] == "forbid") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Package", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Package", 0);
 				} else if (descr_parts[0] == "struct") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Struct", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Struct", 0);
 				} else if (descr_parts[0] == "union") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Enum", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Enum", 0);
 				} else if (descr_parts[0] == "fundef") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Function", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Function", 0);
 				} else if (descr_parts[0] == "fundecl") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Interface", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Interface", 0);
 				} else if (descr_parts[0] == "vardef") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Object", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Object", 0);
 				} else if (descr_parts[0] == "vardecl") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Variable", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Variable", 0);
 				} else if (descr_parts[0] == "natdef") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Method", 0);
 				} else if (descr_parts[0] == "natdecl") {
-					lookupTreeDef(fcLspSymbolKindName2id, "Method", 0);
+					lookupTreeDef(lspSymbolKindName2id, "Method", 0);
 				} else {
 					0
 				}
@@ -444,10 +452,10 @@ fcLspParseSymbols(s : string) -> [Json] {
 	);
 }
 
-fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
+fcLspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, string>> {
 	isNum = \st -> st != "" && isDigits(st);
 	parts0 = strSplit(s, ":");
-	if (length(parts0) < 3 || strContains(s, "Error: ") || strContains(s, "Fail: ")) None() else {
+	if (length(parts0) < 3 || (!admit_errors && (strContains(s, "Error: ") || strContains(s, "Fail: ")))) None() else {
 		// Windows path may start with C:/... and 
 		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) parts0 else {
 			concat(["/" + parts0[0] + ":" + parts0[1]], tailFrom(parts0, 2));
@@ -461,8 +469,8 @@ fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
 			if (length(parts) < 5 || !isNum(parts[3]) || !isNum(parts[4])) {
 				Some(Pair(LspLocation(
 					URI("file", URIAuthority("", "", ""), path, "", ""),
-					LspRange(LspPosition(sline, schar), LspPosition(sline, schar + 1))
-					), trim(parts[3]))
+					LspRange(LspPosition(sline, schar), LspPosition(sline, schar))
+					), trim(strGlue(tailFrom(parts, 3), ":")))
 				);
 			} else {
 				eline = s2i(parts[3]) - 1;
@@ -470,7 +478,7 @@ fcLspParseLocation(s : string) -> Maybe<Pair<LspLocation, string>> {
 				Some(Pair(LspLocation(
 					URI("file", URIAuthority("", "", ""), path, "", ""),
 					LspRange(LspPosition(sline, schar), LspPosition(eline, echar))
-					), trim(parts[5]))
+					), trim(strGlue(tailFrom(parts, 5), ":")))
 				);
 			}
 		}
@@ -496,6 +504,7 @@ fcLspTextDocumentDeclaration(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspErrorDiagnostics(textpos.textDocument.uri, out, call.conf));
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
 						locations = fcLspParseLocations(out);
@@ -531,6 +540,7 @@ fcLspTextDocumentDefinition(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspErrorDiagnostics(textpos.textDocument.uri, out, call.conf));
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
 						locations = fcLspParseLocations(out);
@@ -566,6 +576,7 @@ fcLspTextDocumentReferences(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspErrorDiagnostics(textpos.textDocument.uri, out, call.conf));
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
 						locations = fcLspParseLocations(out);
@@ -600,8 +611,8 @@ fcLspTextDocumentHover(call: FcLspMethodCall) -> void {
 				\code -> {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
-					//fcDebugLog("out:\n" + out + "\n", call.conf);
 					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspErrorDiagnostics(textpos.textDocument.uri, out, call.conf));
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
 						if (isNotSpace(out)) {
@@ -642,6 +653,7 @@ fcLspTextDocumentRename(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspErrorDiagnostics(rename.textDocument.uri, out, call.conf));
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
@@ -679,6 +691,7 @@ fcLspTextDocumentCompletion(call: FcLspMethodCall) -> void {
 					out = fcOutput(call.conf.threadId);
 					clearFcOutput(call.conf.threadId);
 					if (fcDetectLspError(out, call.conf)) {
+						call.out_cb(fcLspErrorDiagnostics(completion.textDocument.uri, out, call.conf));
 						call.out_cb(fcLspNormalResponse(call.id, JsonNull()));
 					} else {
 						if (isNotSpace(out)) {
@@ -735,13 +748,15 @@ fcLspWorkspaceExecuteCommand(call: FcLspMethodCall) -> void {
 						call.out_cb(fcLspErrorResponse(call.id, 1, "no file for compilation"));
 						call.loop_cb();
 					} else {
-						conf = fcLspFileConfig(call.conf, fcCorrectUriPath(^file));
+						path = fcCorrectUriPath(^file);
+						conf = fcLspFileConfig(call.conf, path);
 						runConfig(
 							CompilerConfig(conf with config = mergeTree(conf.config, pairs2tree(params))), 
 							call.globEnv, 
 							\code -> {
 								out = fcOutput(call.conf.threadId);
 								clearFcOutput(call.conf.threadId);
+								call.out_cb(fcLspErrorDiagnostics(parseURI(path), out, call.conf));
 								call.out_cb(fcLspNormalResponse(call.id, JsonString(out)));
 								call.loop_cb();
 							}
