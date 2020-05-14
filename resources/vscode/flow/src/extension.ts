@@ -12,7 +12,6 @@ import {
 } from 'vscode-languageclient';
 import * as tools from "./tools";
 import * as updater from "./updater";
-import * as meta from '../package.json';
 import * as simplegit from 'simple-git/promise';
 //import { performance } from 'perf_hooks';
 const isPortReachable = require('is-port-reachable');
@@ -35,8 +34,6 @@ let client: LanguageClient = null;
 let flowChannel : vscode.OutputChannel = null;
 let flowRepoUpdateChannel : vscode.OutputChannel = null;
 let counter = 0; // used to silence not finished jobs when new ones got started
-let flowDiagnosticCollection : vscode.DiagnosticCollection = null;
-let problemMatchers: ProblemMatcher[] = meta['contributes'].problemMatchers;
 
 let serverStatusBarItem: vscode.StatusBarItem;
 
@@ -369,14 +366,6 @@ function runCurrentFile() {
     }, false);
 }
 
-function getMatcher(name: string) {
-    let found = problemMatchers.find((val, idx, obj) => {
-        return val.name == name;
-    });
-    // fallback to flowc matcher if not found
-    return found ? found : (name != "flowc" ? getMatcher("flowc") : found);
-}
-
 function compileCurrentFile(compilerHint: string) {
     processFile(function(flowBinPath, flowpath) { 
         return getCompilerCommand(compilerHint, flowBinPath, flowpath);
@@ -391,12 +380,6 @@ function getFlowRoot(): string {
 function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean) {
     let document = vscode.window.activeTextEditor.document;
     document.save().then(() => {
-        if (flowDiagnosticCollection) {
-            flowDiagnosticCollection.clear();
-        } else {
-            flowDiagnosticCollection = vscode.languages.createDiagnosticCollection("flow");
-        }
-        let diagnostics: [vscode.Uri, vscode.Diagnostic[] | undefined][] = [];
         let current = ++counter;
         flowChannel.clear();
         flowChannel.show(true);
@@ -404,14 +387,12 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
-        let matcher = getMatcher(command.matcher);
         flowChannel.appendLine("Current directory '" + rootPath + "'");
         let run_separately = () => {
             tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
-                if (counter == current) {// if there is a newer job, ignoring ones pending
+                // if there is a newer job, ignoring ones pending
+                if (counter == current) {
                     flowChannel.append(s.toString());
-                    diagnostics = diagnostics.concat(parseAndCollectDiagnostics(s.toString(), matcher));
-                    flowDiagnosticCollection.set(diagnostics); // update upon every line
                 }
             }, childProcesses);
         }
@@ -429,10 +410,11 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
                         }
                     ).then(
                         (out : any) => {
-                            //flowChannel.appendLine("Execution of a request took " + (performance.now() - start) + " milliseconds.")
-                            flowChannel.appendLine(out);
-                            diagnostics = diagnostics.concat(parseAndCollectDiagnostics(out.toString(), matcher));
-                            flowDiagnosticCollection.set(diagnostics); // update upon every line
+                            // if there is a newer job, ignoring ones pending
+                            if (counter == current) {
+                                //flowChannel.appendLine("Execution of a request took " + (performance.now() - start) + " milliseconds.")
+                                flowChannel.appendLine(out);
+                            }
                         }
                     );
                     break;
@@ -448,30 +430,6 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
             run_separately();
         }
     });
-}
-
-function parseAndCollectDiagnostics(s: string, matcher: ProblemMatcher) {
-    const lines = s.split("\n");
-    const diags = lines.map((line, index, lns): [vscode.Uri, vscode.Diagnostic[] | undefined] => {
-        const matched = line.trim().match(matcher.pattern.regexp);
-        if (matched) {
-            const col = Number.parseInt(matched[matcher.pattern.column]) - 1;
-            const l = Number.parseInt(matched[matcher.pattern.line]) - 1;
-            const diagnostic: vscode.Diagnostic = {
-                code: '',
-                message: matched[matcher.pattern.message],
-                range: new vscode.Range(new vscode.Position(l, col), new vscode.Position(l, col)),
-                severity: vscode.DiagnosticSeverity.Error,
-                source: '',
-                relatedInformation: []
-            }
-            return [vscode.Uri.file(matched[matcher.pattern.file]), [diagnostic]];
-        } else
-            return [undefined, undefined];
-    });
-    return diags.filter((v, index, lll) => {
-        return v[0] != undefined;
-    })
 }
 
 function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile: string): 

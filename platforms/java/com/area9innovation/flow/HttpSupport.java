@@ -135,6 +135,8 @@ public class HttpSupport extends NativeHost {
 				this.addHeaders(con, headers);
 				con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 				con.setRequestProperty("charset", "utf-8");
+				con.setRequestMethod(method);
+				con.setDoOutput(true);	
 				con.setRequestProperty("Content-Length", Integer.toString(postDataLength));
 				con.setUseCaches(false);
 				try(DataOutputStream wr = new DataOutputStream(con.getOutputStream())) {
@@ -152,9 +154,9 @@ public class HttpSupport extends NativeHost {
 				URL obj = new URL(urlWithParams);
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
+				con.setRequestMethod(method);
+				con.setDoOutput(true);				
 			}
-			con.setDoOutput(true);
-			con.setRequestMethod(method);
 			con.setConnectTimeout(timeout.intValue());
 			con.setReadTimeout(timeout.intValue());
 
