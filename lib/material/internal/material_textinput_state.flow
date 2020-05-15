@@ -621,7 +621,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	// Autocomplete
 	startSearch = extractStruct(style, MAutoCompleteStartSearch(0, 0));
 	preparedSentenceMatcher = extractStruct(style, MPreparedSentenceMatcher(const(dummySentenceMatcher)));
-	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, makeMatcher(startSearch.minChars)));
+	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, makeAutocompleteMatcher(startSearch.minChars)));
 
 	matchers =
 		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
@@ -762,51 +762,71 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						c
 					};
 
-				allCompl =
-					fold(mtch, [], \acc, matcher ->
-						concat(acc,
-							if (ac.showAllOnEmpty && isSome(popup) && c2 == "")
-								map(filter(matcher.sentences, \s -> s != ""), \s -> SentenceHit(matcher, s, 0., makeSet()))
-							else
-								ac.sentenceMatcher.fn(matcher, c2, intMax, true, false, getValue(position))
-						)
-					);
+				showAll = ac.showAllOnEmpty && isSome(popup) && c2 == "";
+				chunkSize = getUrlParameterDef("chunkSize", "5000") |> s2i;
+				simultaneous = max(length(mtch) / chunkSize, 50);
+				mapAsyncParallelChunked(
+					mtch, chunkSize, simultaneous,
+					\chunk, fulfill, __ -> {
+						mapConcat(
+							chunk,
+							\matcher -> {
+								if (showAll)
+									filtermap(
+										matcher.sentences, 
+										\s -> {
+											if (s != "") Some(SentenceHit(matcher, s, 0., makeSet()))
+											else None()
+										}
+									)
+								else
+									ac.sentenceMatcher.fn(matcher, c2, intMax, true, false, getValue(position))
+							}
+						) |> fulfill
+					},
+					\allCompl -> {
+						compl = mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score));
 
-				compl = mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score));
+						newSentences =
+							if (isSome(popup)) {
+								if (ac.maxResults >= 0)
+									subrange(compl, 0, ac.maxResults)
+								else
+									compl;
+							} else {
+								suggest = find(compl, \v -> startsWith(toLowerCase(v.sentence), toLowerCase(c2)));
 
-				newSentences =
-					if (isSome(popup)) {
-						if (ac.maxResults >= 0)
-							subrange(compl, 0, ac.maxResults)
+								eitherMap(suggest, \sg -> [sg], [])
+							};
+
+						maybeApply(
+							ac.currentMatches,
+							\cm ->
+								map(newSentences, \ns -> {
+									sen = ns.sentence;
+									dictId = findiDef(mtch, \mch -> contains(mch.sentences, sen), -1);
+									senId = if (dictId >= 0) findiDef(mtch[dictId].sentences, \sn -> sn == sen, -1) else -1;
+
+									Triple(dictId, senId, ns)
+								})
+								|> cm.fn
+						);
+
+						updateFn = \ -> nextDistinct(ac.sentences, newSentences);
+
+						dispUnsM(autocompleteHandlerUns);
+
+						if (ac.updateDelay == 0 || length(newSentences) == 0)
+							updateFn()
 						else
-							compl;
-					} else {
-						suggest = find(compl, \v -> startsWith(toLowerCase(v.sentence), toLowerCase(c2)));
+							setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, updateFn))
 
-						eitherMap(suggest, \sg -> [sg], [])
-					};
-
-				maybeApply(
-					ac.currentMatches,
-					\cm ->
-						map(newSentences, \ns -> {
-							sen = ns.sentence;
-							dictId = findiDef(mtch, \mch -> contains(mch.sentences, sen), -1);
-							senId = if (dictId >= 0) findiDef(mtch[dictId].sentences, \sn -> sn == sen, -1) else -1;
-
-							Triple(dictId, senId, ns)
-						})
-						|> cm.fn
+					},
+					\localError -> {
+						println(_("Something goes wrong building completions."));
+						println(localError);
+					}
 				);
-
-				updateFn = \ -> nextDistinct(ac.sentences, newSentences);
-
-				dispUnsM(autocompleteHandlerUns);
-
-				if (ac.updateDelay == 0 || length(newSentences) == 0)
-					updateFn()
-				else
-					setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, updateFn))
 			},
 		);
 
@@ -2334,7 +2354,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 									filterKey;
 								}),
 								FCharacterStyle(fselect(inputState.textStyle, FLift(\ts : [MTextStyle] -> MTextStyle2CharacterStyle(parent, ts)))),
-								FSetDirection(parent.rtl)
+								SetRTL(parent.rtl)
 							],
 							eitherMap(
 								inputState.autoCompleteType,
@@ -2592,7 +2612,7 @@ addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic
 		)
 }
 
-makeMatcher(minChars : int) ->
+makeAutocompleteMatcher(minChars : int) ->
 	(matcher : SentenceMatcher, input : string, maxHits : int, prefix : bool, exhaustive : bool, position : int) -> [SentenceMatch] {
 
 	if (minChars == 0) simpleSentenceMatcher 

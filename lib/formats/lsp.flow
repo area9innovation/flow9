@@ -1,8 +1,7 @@
-import ds/trie;
 import formats/json/json;
 import formats/uri2/uri2;
 import lingo/linecolumn;
-import tools/flowc/util;
+import string_utils;
 
 /*
  This module describes basic structures and encoding/decoding functions for the language Server Protocol (LSP)
@@ -12,6 +11,7 @@ import tools/flowc/util;
 export {
 
 LspRequestMessage : (jsonrpc: string, id : Json, method : string, params : Json);
+LspNotificationMessage : (jsonrpc: string, method : string, params : Json);
 LspResponseMessage : (jsonrpc: string, id: Json, result : Json, error : Maybe<LspResponseError>);
 LspResponseError : (code : int, message: string, data : Json);
 
@@ -81,8 +81,20 @@ LspTextDocumentChangeRegistrationOptions : (
 	documentSelector: [LspDocumentFilter], // A document selector to identify the scope of the registration.
 	syncKind : int // None = 0, Full = 1, Incremental = 2
 );
+LspDiagnostic(
+	range : LspRange, // The range at which the message applies.
+	severity : int,   // None = 0 (non-standard, ommited),  Error = 1, Warning = 2, Information = 3, Hint = 4
+	code : string,    // The diagnostic's code, which might appear in the user interface.
+	source : string,  // A human-readable string describing the source of this diagnostic, e.g. 'typescript' or 'super lint'.
+	message : string, // The diagnostic's message.
+	tags : [int],     // DiagnosticTag: Unnecessary = 1, Deprecated = 2
+	relatedInformation : [LspDiagnosticRelatedInformation]
+);
+LspDiagnosticRelatedInformation(location: LspLocation, message: string);
+LspPublishDiagnosticsParams(uri : URI, version : string, diagnostics : [LspDiagnostic]);
 
 lspRequestMessage2Json(request : LspRequestMessage) -> Json;
+lspNotificationMessage2Json(request : LspNotificationMessage) -> Json;
 lspResponseMessage2Json(response : LspResponseMessage) -> Json;
 lspResponseError2Json(error : LspResponseError) -> Json;
 
@@ -103,6 +115,9 @@ lspRegistrationParams2Json(params : LspRegistrationParams) -> Json;
 lspDocumentFilter2Json(documentFilter : LspDocumentFilter) -> Json;
 lspTextDocumentContentChangeEvent2Json(event : LspTextDocumentContentChangeEvent) -> Json;
 lspTextDocumentChangeRegistrationOptions2Json(options : LspTextDocumentChangeRegistrationOptions) -> Json;
+lspDiagnostic2Json(diag : LspDiagnostic) -> Json;
+lspDiagnosticRelatedInformation2Json(diag : LspDiagnosticRelatedInformation) -> Json;
+lspPublishDiagnosticsParams2Json(params : LspPublishDiagnosticsParams) -> Json;
 
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage>;
 json2LspResponseMessage(json : Json) -> Maybe<LspResponseMessage>;
@@ -123,8 +138,8 @@ json2LspDidChangeTextDocumentParams(json : Json) -> Maybe<LspDidChangeTextDocume
 json2LspTextDocumentContentChangeEvent(json : Json) -> Maybe<LspTextDocumentContentChangeEvent>;
 json2LspDidSaveTextDocumentParams(json : Json) -> Maybe<LspDidSaveTextDocumentParams>;
 
-// 0 stands for no kin
-fcLspSymbolKindName2id = pairs2tree([
+// 0 stands for no kind
+lspSymbolKindName2id = pairs2tree([
 	Pair("File", 1),       Pair("Module", 2),      Pair("Namespace", 3), Pair("Package", 4),     Pair("Class", 5),
 	Pair("Method", 6),     Pair("Property", 7),    Pair("Field", 8),     Pair("Constructor", 9), Pair("Enum", 10),
 	Pair("Interface", 11), Pair("Function", 12),   Pair("Variable", 13), Pair("Constant", 14),   Pair("String", 15),
@@ -134,7 +149,7 @@ fcLspSymbolKindName2id = pairs2tree([
 ]);
 
 // 0 stands for no kind
-fcLspCompletionItemKind2id = pairs2tree([
+lspCompletionItemKind2id = pairs2tree([
 	Pair("Text", 1),       Pair("Method", 2),      Pair("Function", 3),   Pair("Constructor", 4), Pair("Field", 5),
 	Pair("Variable", 6),   Pair("Class", 7),       Pair("Interface", 8),  Pair("Module", 9),      Pair("Property", 10),
 	Pair("Unit", 11),      Pair("Value", 12),      Pair("Enum", 13),      Pair("Keyword", 14),    Pair("Snippet", 15),
@@ -142,7 +157,7 @@ fcLspCompletionItemKind2id = pairs2tree([
 	Pair("Constant", 21),  Pair("Struct", 22),     Pair("Event", 23),     Pair("Operator", 24),   Pair("TypeParameter", 25)
 ]);
 
-fcLspSymbolKindId2Name = ["", 
+lspSymbolKindId2Name = ["", 
 	"File",      "Module",     "Namespace", "Package",     "Class",
 	"Method",    "Property",   "Field",     "Constructor", "Enum", 
 	"Interface", "Function",   "Variable",  "Constant",    "String",
@@ -180,18 +195,20 @@ LspCompletionItemKind ::=
 	LspCompletionItemConstant(); LspCompletionItemStruct(); LspCompletionItemEvent(); LspCompletionItemOperator(); LspCompletionItemTypeParameter();
 
 lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string;
-fcCorrectUriPath(path : string) -> string;
-
-fcJsonObjectHasField(json : Json, member : string) -> bool;
-fcGetJsonStringArrayField(json: Json, field: string) -> [JsonString];
-fcGetJsonNestedField(json: Json, fields: [string]) -> Json;
-
 }
 
 lspRequestMessage2Json(request : LspRequestMessage) -> Json {
 	JsonObject([
 		Pair("jsonrpc", JsonString(request.jsonrpc)),
 		Pair("id", request.id),
+		Pair("method", JsonString(request.method)),
+		Pair("params", request.params),
+	]);
+}
+
+lspNotificationMessage2Json(request : LspNotificationMessage) -> Json {
+	JsonObject([
+		Pair("jsonrpc", JsonString(request.jsonrpc)),
 		Pair("method", JsonString(request.method)),
 		Pair("params", request.params),
 	]);
@@ -356,6 +373,35 @@ lspTextDocumentChangeRegistrationOptions2Json(options : LspTextDocumentChangeReg
 	]);
 }
 
+lspDiagnostic2Json(diag : LspDiagnostic) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("range", lspRange2Json(diag.range))),
+		if (diag.severity == 0) None() else Some(Pair("severity", JsonString(i2s(diag.severity)))),
+		if (diag.code == "") None() else Some(Pair("severity", JsonString(diag.code))),
+		if (diag.source == "") None() else Some(Pair("source", JsonString(diag.source))),
+		Some(Pair("message", JsonString(diag.message))),
+		if (diag.tags == []) None() else Some(Pair("tags", JsonArray(map(diag.tags, \tag -> JsonString(i2s(tag)))))),
+		if (diag.relatedInformation == []) None() else Some(Pair("relatedInformation", 
+			JsonArray(map(diag.relatedInformation, lspDiagnosticRelatedInformation2Json))
+		)),
+	], idfn));
+}
+
+lspDiagnosticRelatedInformation2Json(diag : LspDiagnosticRelatedInformation) -> Json {
+	JsonObject([
+		Pair("location", lspLocation2Json(diag.location)),
+		Pair("message", JsonString(diag.message))
+	]);
+}
+
+lspPublishDiagnosticsParams2Json(params : LspPublishDiagnosticsParams) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("uri", JsonString(uri2string(params.uri)))),
+		if (params.version == "") None() else Some(Pair("version", JsonString(params.version))),
+		Some(Pair("diagnostics", JsonArray(map(params.diagnostics, lspDiagnostic2Json))))
+	], idfn));
+}
+
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage> {
 	jsonrpc = getJsonStringField(json, "jsonrpc", "");
 	id = getJsonFieldValue(json, "id", JsonNull());
@@ -487,7 +533,7 @@ json2LspTextDocumentContentChangeEvent(json : Json) -> Maybe<LspTextDocumentCont
 			Some(LspTextDocumentContentChangeEvent(LspRange(LspPosition(-1, -1), LspPosition(-1, -1)), strlen(text), text));
 		}
 		default: {
-			if (!fcJsonObjectHasField(json, "text")) None() else {
+			if (!jsonObjectHasField(json, "text")) None() else {
 				text = getJsonStringField(json, "text", "");
 				range = json2LspRange(getJsonObjectField(json, "range"));
 				rangeLength = getJsonStringField(json, "rangeLength", "");
@@ -511,7 +557,7 @@ json2LspDidSaveTextDocumentParams(json : Json) -> Maybe<LspDidSaveTextDocumentPa
 }
 
 lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string {
-	patch = fcUnescapeString(changeEvent.text);
+	patch = unescapeStr(changeEvent.text);
 	if (changeEvent.range.start.line != -1) {
 		resolver = makeLineResolver(src);
 		start = findLineIndex(resolver, changeEvent.range.start.line, changeEvent.range.start.character);
@@ -523,48 +569,5 @@ lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src 
 	} else {
 		// changed file is passed as a whole.
 		patch;
-	}
-}
-
-/*
- When URI parser parses something like: 
-	file:///c:/Users/dmitr/area9/flow9/tools/flowc
- it outputs path as: 
-	/c:/Users/dmitr/area9/flow9/tools/flowc
- which is wrong in windows, first slash must be removed.
-*/
-fcCorrectUriPath(path : string) -> string {
-	if (!startsWith(path, "/") || !hasTargetName("windows")) path else {
-		// Detect c:, d:, C:, D:, etc.
-		drive = getCharAt(path, 1);
-		if (isLetter(drive) && getCharAt(path, 2) == ":") {
-			// Convert C: to c:
-			toLowerCase(drive) + ":" + strRight(path, 3);
-		} else {
-			// keep original path 
-			path
-		}
-	}
-}
-
-fcJsonObjectHasField(json : Json, member : string) -> bool {
-	switch (json) {
-		JsonObject(members): exists(members, \p -> p.first == member);
-		default: false;
-	}
-}
-
-fcGetJsonStringArrayField(json: Json, field: string) -> [JsonString] {
-	filtermap(getJsonArrayField(json, field), \m -> 
-		switch (m) {
-			JsonString(__): Some(m);
-			default: None();
-		}
-	);
-}
-
-fcGetJsonNestedField(json: Json, fields: [string]) -> Json {
-	if (fields == []) json else {
-		fcGetJsonNestedField(getJsonObjectField(json, fields[0]), tail(fields));
 	}
 }

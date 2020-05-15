@@ -5,78 +5,13 @@ export {
 }
 
 fcPrintOutline(config : CompilerConfig, globEnv : FcTypeEnvGlobal) -> void {
-	parsed = parseFlowFileOrLoadCached(config, globEnv, config.flowfile, "", 0, 0);
-	fcacc = prepareInitialFlowcAcc(config);
-	if (parsed.second == dummyFcError) {
-		imports = switch (parsed.first) {
-			FcParsed(fileinfo, syntaxtree, __, __, __): {
-				fcmodule = desugarFcModule(fcacc, initFcTypeEnvLocal(), fileinfo, syntaxtree);
-				fcPrintOutlineOfFcModule(config, globEnv, fcmodule);
-				map(fcmodule.imports, \imp -> imp.flowfile);
-			}
-			FcLoaded(fimodule, __): {
-				fcPrintOutlineOfFiModule(config, globEnv, fimodule);
-				map(fimodule.imports, \imp -> imp.flowfile);
-			}
-		}
+	module = parseAndDesugarFile(config, globEnv, config.flowfile);
+	iter(module.errors, \err -> printFcError(config, globEnv, err));
+	if (module.errors == []) {
+		fcPrintOutlineOfFcModule(config, globEnv, module);
 		// Load to cache all imported incrementals.
-		deferred(\-> iter(imports, \imp -> loadIncrementalModulesToCache(config, globEnv, imp)));
-	} else {
-		printFcError(fcacc, globEnv, parsed.second);
+		deferred(\-> iter(module.imports, \imp -> loadIncrementalModulesToCache(config, globEnv, imp.flowfile)));
 	}
-}
-
-fcPrintOutlineOfFiModule(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule) -> void {
-	fileinfo = module.fileinfo;
-	code = fcFileSource(env, fileinfo.fullpath);
-	declStarts =
-	fold(module.functions,
-		fold(module.globalVars,
-			fold(module.natives,
-				makeTree(),
-				\acc, nat -> setTree(acc, nat.name, nat.declStart)
-			),
-			\acc, var -> setTree(acc, var.name, var.declStart)
-		),
-		\acc, fun -> setTree(acc, fun.name, fun.declStart)
-	);
-	print_id = \pos, msg -> {
-		switch (getFcInfo2ByPos(pos + 7, code)) {
-			Some(i): printLocation(config, env, fileinfo, i.start, i.end, msg);
-			None():  printLocation(config, env, fileinfo, pos, -1, msg);
-		}
-	};
-	print_path = \pos, msg -> {
-		switch (getFcInfo2ByPos2(pos, "/\\.-", code)) {
-			Some(i): printLocation(config, env, fileinfo, i.start, i.end, msg);
-			None():  printLocation(config, env, fileinfo, pos, -1, msg);
-		}
-	};
-	iter(module.imports, \imp -> print_path(imp.start, "import " + imp.flowfile));
-	iter(module.forbids, \fbd -> print_path(fbd.start, "forbid " + fbd.flowfile));
-	iter(module.structs, \str -> print_id(str.start, "struct " + str.name));
-	iter(module.unions,  \uni -> print_id(uni.start, "union " + uni.name));
-
-	iter(module.functions, \fun -> {
-		print_id(fun.defiStart, "fundef " + fun.name);
-		if (fun.declStart != fun.defiStart) {
-			print_id(fun.declStart, "fundecl " + fun.name);
-		}
-	});
-
-	iter(module.globalVars, \var -> {
-		print_id(var.defiStart, "vardef " + var.name);
-		if (var.declStart != var.defiStart) {
-			print_id(var.declStart, "vardecl " + var.name);
-		}
-	});
-
-	iter(module.natives, \nat -> {
-		print_id(nat.defiStart, "natdef " + nat.name);
-		if (nat.declStart != nat.defiStart) {
-			print_id(nat.declStart, "natdecl " + nat.name);
-		}
-	});
 }
 
 fcPrintOutlineOfFcModule(config : CompilerConfig, env : FcTypeEnvGlobal, module : FcModule) -> void {

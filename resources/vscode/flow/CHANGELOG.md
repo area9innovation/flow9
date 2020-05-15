@@ -134,3 +134,12 @@
 ## 0.4.3
  - a new LSP server (native flowc) is added.
  - area9 logo is added
+
+## 0.4.4
+ - commands to start/stop http server are added.
+ - commands to choose flow/JS LSP server are added.
+ - status of http and LSP servers are added to statusbar.
+
+## 0.4.5
+ - instant syntax check at typing is implemented. 
+ 

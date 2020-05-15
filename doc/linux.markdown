@@ -67,6 +67,22 @@ sudo apt update
 sudo apt install -y php7.2 php7.2-mysql php-gettext php7.2-mbstring php-xdebug libapache2-mod-php7.2 php7.2-xml php7.2-zip php7.2-mcrypt
 sudo update-alternatives --config php
 ```
+
+when switching from older php version:
+```bash
+sudo a2dismod php5.6
+sudo a2enmod php7.2
+sudo service apache2 restart
+```
+
+also copying libraries config from php5.6 might be required
+```bash
+sudo cp /etc/php/5.6/apache2/conf.d/* /etc/php/7.2/apache2/conf.d
+```
+
+if php7.2 is not available, 7.0 version/libs work too.
+
+
 ## Apache2
 Install and configure apache2:
 ```bash
