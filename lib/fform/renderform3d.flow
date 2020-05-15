@@ -382,7 +382,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 												es.fn := Some(\includeCamera -> get3DObjectJSON(s, includeCamera))
 											);
 
-											addF3DMouseListeners(clip, s, transformControlsEnabled);
+											[addF3DMouseListeners(clip, s, transformControlsEnabled)];
 										},
 										innerOnDone
 									)
@@ -606,12 +606,12 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 								o,
 								state,
 								\c ->
-									concat(
-										addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
+									arrayPush(
 										[
 											makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
 											\ -> remove3DChild(scene, c)
-										]
+										],
+										addF3DMouseListeners(state.stage, c, state.transformControlsEnabled)
 									),
 								innerOnDone
 							)
@@ -664,12 +664,12 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 									o,
 									state,
 									\c ->
-										concat(
-											addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
+										arrayPush(
 											[
 												makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
 												\ -> remove3DChild(scene, c)
-											]
+											],
+											addF3DMouseListeners(state.stage, c, state.transformControlsEnabled)
 										),
 									innerOnDone
 								)
@@ -680,12 +680,12 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 											o,
 											state,
 											\c ->
-												concat(
-													addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
+												arrayPush(
 													[
 														makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
 														\ -> remove3DChild(scene, c)
-													]
+													],
+													addF3DMouseListeners(state.stage, c, state.transformControlsEnabled)
 												),
 											innerOnDone
 										)
@@ -1520,7 +1520,6 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		F3DNativeScene(scene, children) : {
 			onDoneCounter : ref int = ref 0;
 			loadingFinished = ref false;
-			destroyed = ref false;
 			uns = ref [];
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
@@ -1546,9 +1545,6 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 			concat(
 				onStart(scene),
 				[
-					\ -> {
-						destroyed := true;
-					},
 					iteriuDynamicArray(
 						children,
 						\index, o ->
@@ -1556,12 +1552,12 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 								o,
 								state,
 								\c ->
-									concat(
-										addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
+									arrayPush(
 										[
 											makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
-											\ -> remove3DChild(scene, c)
-										]
+											\ -> if (!exists(getDynamicArrayValue(children), \oo -> oo == o)) remove3DChild(scene, c)
+										],
+										addF3DMouseListeners(state.stage, c, state.transformControlsEnabled)
 									),
 								innerOnDone
 							)
@@ -2416,32 +2412,28 @@ parseF3DNativeObject(object : native, state : F3DRenderState) -> F3DNative {
 	)
 }
 
-addF3DMouseListeners(stage : native, object : native, transformControlsEnabled : Transform<bool>) -> [() -> void] {
-	if (transformControlsEnabled != const(false)) {
-		children = get3DObjectChildren(object);
+addF3DMouseListeners(stage : native, object : native, transformControlsEnabled : Transform<bool>) -> () -> void {
+	makeSubscribeUns(transformControlsEnabled, \en ->
+		if (en) {
+			disposers = ref map(get3DObjectChildren(object), \c -> addF3DMouseListeners(stage, c, transformControlsEnabled));
 
-		if (length(children) > 0) {
-			concatA(map(children, \c -> addF3DMouseListeners(stage, c, transformControlsEnabled)))
-		} else {
 			[
-				makeSubscribeUns(transformControlsEnabled, \en ->
-					if (en)
-						[
-							add3DEventListener(object, "mousedown", \ -> {
-								if (!^handled3DMouseDown) {
-									handled3DMouseDown := true;
-									deferred(\ -> handled3DMouseDown := false);
+				add3DEventListener(object, "mousedown", \ -> {
+					if (!^handled3DMouseDown) {
+						handled3DMouseDown := true;
+						deferred(\ -> handled3DMouseDown := false);
 
-									attach3DTransformControls(stage, object);
-								}
-							})
-						]
-					else
-						[]
-				)()
+						attach3DTransformControls(stage, object);
+					}
+				}),
+				add3DChildAddedListener(object, \i, c -> disposers := insertArray(^disposers, i, addF3DMouseListeners(stage, c, transformControlsEnabled))),
+				add3DChildRemovedListener(object, \i -> { ^disposers[i](); disposers := removeIndex(^disposers, i); }),
+				\ -> {
+					applyall(^disposers);
+				}
 			]
+		} else {
+			[];
 		}
-	} else {
-		[]
-	}
+	)()
 }
