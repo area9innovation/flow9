@@ -200,6 +200,27 @@ We have a beta backend for this. See `tools/flowc/backends/wasm/readme.md`. Unfo
 all speed tests show that JS is faster, even for integer-only code. WebAssembly has to be
 considered a young technology. Maybe it will be faster in the future.
 
+Java backend
+------------
+
+Flow program may be translated to java with setting the java option to an output directory like:
+
+	flowc java=src program.flow
+
+In case you want to build a jar archive, you can use jar=1 or jar=name.jar option to build a jar target.
+In case jar=1 the name of a program will be used as a name of the jar file. Example:
+
+	flowc jar=1 program.flow
+
+If you want to make a library instead of runnable program, you can specify the interface functions of a
+library with java-library option (the second variant will build library.jar from library.flow):
+
+	flowc java=src java-library=fun1,fun2,fun3  library.flow
+	flowc jar=1 java-library=fun1,fun2,fun3  library.flow
+
+Here fun1,fun2,fun3 are functions, which are used in a library interface. Data types (namely structs)
+stay in the library and the naming conventions convert a struct Data (flow) into Struct_Data (java).
+The classes for structs may be explored in the jar file.
 
 Testing C++ backend
 -------------------
