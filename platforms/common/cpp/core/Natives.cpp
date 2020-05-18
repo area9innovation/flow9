@@ -3094,10 +3094,15 @@ StackSlot ByteCodeRunner::readBytes(RUNNER_ARGS)
 {
 	RUNNER_PopArgs1(n);
 	RUNNER_CheckTag(TInt, n);
-	int len = n.GetInt();
-	char buffer[len];
-    std::cin.read(buffer, len);
-	return RUNNER->AllocateString(parseUtf8(std::string(buffer)));
+	std::string str;
+	getline(std::cin, str);
+
+	unsigned int len = n.GetInt();
+	if (str.size() != len) {
+		cerr << "Expected " << len << " bytes, got " << str.size() << " bytes" << std::endl;
+	}
+
+	return RUNNER->AllocateString(parseUtf8(str));
 }
 
 StackSlot ByteCodeRunner::readUntil(RUNNER_ARGS)
