@@ -1620,7 +1620,7 @@ StackSlot ByteCodeRunner::setFileContent(RUNNER_ARGS)
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -1651,7 +1651,7 @@ StackSlot ByteCodeRunner::setFileContentUTF16(RUNNER_ARGS)
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -1697,7 +1697,7 @@ StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(in
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
