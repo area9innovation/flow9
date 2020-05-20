@@ -1674,7 +1674,14 @@ public class Native extends NativeHost {
 	public final String readBytes(int n) {
 		byte[] input = new byte[n];
 		try {
-			System.in.read(input);
+			int have_read = 0;
+			while (have_read < n) {
+				int read_bytes = System.in.read(input, have_read, n - have_read);
+				if (read_bytes == -1) {
+					break;
+				}
+				have_read += read_bytes;
+			}
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
