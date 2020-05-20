@@ -1,0 +1,198 @@
+import sys/system;
+import tools/flowc/flowc_helpers;
+
+export {
+	// Runs REPL loop for flow. Console help is available by 'help' command.
+	fcReplLoop(config : CompilerConfig) -> void;
+}
+
+fcReplLoop(config : CompilerConfig) -> void {
+	code = if (config.flowfile == "") "" else {
+		getFcFileInfo(config.flowfile, config).content
+	}
+	for(
+		FcReplEnv(code, makeTree()),
+		\env -> true,
+		\env -> fcReplLoopStep(config, env)
+	);
+	{}
+}
+
+FcReplCommand ::= FcReplEval, FcReplAdd, FcReplDel, FcReplSave;
+	FcReplEval(expr : string);
+	FcReplAdd(name : string, code : string);
+	FcReplDel(name : string);
+	FcReplSave(file : string);
+
+FcReplEnv(
+	code : string,
+	pieces : Tree<string, string>
+);
+
+fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
+	print("> ");
+	args = filtermap(strSplit(trim2(readUntil("\n"), " \r\t\n"), " "), \arg -> 
+		if (isNotSpace(arg)) Some(trim2(arg, " \r\n\t")) else None()
+	);
+	read_code = \-> {
+		readUntil(if (hasTargetName("windows")) "\r\n\r\n" else "\n\n");
+	}
+	if (length(args) == 0) {
+		fcReplReadCommand(config, env);
+	} else {
+		comm = args[0];
+		if (comm == "help") {
+			details = if (length(args) == 1) "" else args[1];
+			println(fcReplPrintHelp(details));
+			fcReplReadCommand(config, env);
+		} else
+		if (comm == "exit") {
+			println("Bye."); 
+			quit(0); 
+			fcReplReadCommand(config, env);
+		} else
+		if (comm == "show") {
+			if (length(args) == 1) {
+				println("show command must take an argument: the name of a code piece");
+			} else {
+				if (args[1] == "all") {
+					println(fcReplJoinCode(env));
+				} else {
+					switch (lookupTree(env.pieces, args[1])) {
+						Some(code): println(code);
+						None(): println("There's no piece of code with the name " + args[1]);
+					}
+				}
+			}
+			fcReplReadCommand(config, env);
+		} else
+		if (comm == "eval") {
+			FcReplEval(read_code()); 
+		} else if (comm == "add") {
+			if (length(args) == 1) {
+				println("add command must take an argument: the name of a code piece");
+				fcReplReadCommand(config, env);
+			} else {
+				switch (lookupTree(env.pieces, args[1])) {
+					Some(__): {
+						println("A piece of code with the name " + args[1] + " already exists");
+						fcReplReadCommand(config, env);
+					}
+					None(): FcReplAdd(args[1], read_code()); 
+				}
+			}
+		} else if (comm == "del") {
+			if (length(args) == 1) {
+				println("del command must take an argument: the name of a code piece");
+				fcReplReadCommand(config, env);
+			} else {
+				switch (lookupTree(env.pieces, args[1])) {
+					Some(__): FcReplDel(args[1]); 
+					None(): {
+						println("There's no piece of code with the name " + args[1]);
+						fcReplReadCommand(config, env);
+					}
+				}
+			}
+		} else if (comm == "save") {
+			if (length(args) == 1) {
+				println("save command must take an argument: the name of a file");
+				fcReplReadCommand(config, env);
+			} else {
+				FcReplSave(args[1]);
+			}
+		} else {
+			println("unknown command: " + comm);
+			fcReplReadCommand(config, env);
+		}
+	}
+}
+
+fcReplLoopStep(config : CompilerConfig, env : FcReplEnv) -> FcReplEnv {
+	switch (fcReplReadCommand(config, env)) {
+		FcReplEval(expr): {
+			fcEvalReplEnv(config, env, expr);
+		}
+		FcReplAdd(name, code): {
+			FcReplEnv(env with pieces = setTree(env.pieces, name, code));
+		}
+		FcReplDel(name): {
+			FcReplEnv(env with pieces = removeFromTree(env.pieces, name));
+		}
+		FcReplSave(file): {
+			setFileContent(file, fcReplJoinCode(env));
+			env;
+		}
+	}
+}
+
+fcEvalReplEnv(config : CompilerConfig, env : FcReplEnv, expr : string) -> FcReplEnv {
+	code = "import runtime;\n\n" + fcReplJoinCode(env) + "\n" + 
+		"main() -> void {" + 
+		"\tprintln(" + expr + ");\n" +
+		"}\n\n";
+	setFileContent("___tmp___.flow", code);
+	print_out = \out -> if (strContains(out, "Error:")) println(out);
+	compile = execSystemProcess("flowc1", ["jar=1", "___tmp___.flow"], ".", print_out, println);
+	if (compile == 0) {
+		execSystemProcess("java", ["-jar", "___tmp___.jar"], ".", println, println);
+		{ }
+	}
+	deleteFile("___tmp___.flow");
+	deleteFile("___tmp___.jar");
+	env
+}
+
+fcReplJoinCode(env : FcReplEnv) -> string {
+	(if (env.code == "") "" else env.code + "\n\n") + 
+	concatStrings(map(tree2pairs(env.pieces), \p -> p.second));
+}
+
+fcReplPrintHelp(details : string) -> string {
+	if (details == "add") {
+		"Adding a piece of code.\n" +
+		"-----------------------\n" +
+		"To add a piece of code enter the command:\n" +
+		"> add <name>\n" +
+		"where <name> is the name of a function/variable/struct/union/etc.\n" + 
+		"then press enter and start input of code.\n" + 
+		"The empty line (double enter) will be considered the end of the code.\n";
+	} else if (details == "del") {
+		"Deleting a piece of code.\n" +
+		"-------------------------\n" +
+		"To delete a piece of code enter the command:\n" +
+		"> del <name>\n" +
+		"where <name> is the name of a function/variable/struct/union/etc. added at some previous steps\n";
+	} else if (details == "eval") {
+		"Evaluate an expression.\n" +
+		"-----------------------\n" +
+		"To evaluate an expression enter the command:\n" +
+		"> eval \n" +
+		"and press enter. After that the stage of code of the expression input begins.\n" +
+		"The empty line (double enter) means the end of the input.\n";
+	} else if (details == "save") {
+		"Save entered code as a file.\n" +
+		"----------------------------\n" +
+		"To save all entered code use the command:\n" +
+		"> save <file>\n" +
+		"where <file> is the name of the file, where to the code is saved.\n";
+	} else if (details == "show") {
+		"Show a piece of code.\n" +
+		"----------------------------\n" +
+		"To show previously entered piece of code use the command:\n" +
+		"> show <name>\n" +
+		"where <name> is the name of a function/variable/struct/union/etc. added at some previous steps.\n" +
+		"You can use 'show all' command to see the whole source code, including the original file source.";
+	} else {
+		"Flowc REPL commands:\n" +
+		"--------------------\n" +
+		"help           - print this message\n" +
+		"help <command> - print the help on a specific command\n" +
+		"exit           - exit from the interpreter\n" +
+		"eval           - eval an expression\n" +
+		"add <name>     - add a named code fragment \n" +
+		"show <name>    - show a named code fragment \n" +
+		"del <name>     - delete a named code fragment \n" +
+		"save <file>    - save to a file \n";
+	}
+}
