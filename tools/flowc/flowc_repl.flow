@@ -11,21 +11,23 @@ fcReplLoop(config : CompilerConfig) -> void {
 		getFcFileInfo(config.flowfile, config).content
 	}
 	for(
-		FcReplEnv(code, makeTree()),
+		FcReplEnv(code, [], makeTree()),
 		\env -> true,
 		\env -> fcReplLoopStep(config, env)
 	);
 	{}
 }
 
-FcReplCommand ::= FcReplEval, FcReplAdd, FcReplDel, FcReplSave;
+FcReplCommand ::= FcReplEval, FcReplAdd, FcReplDel, FcReplSave, FcReplImport;
 	FcReplEval(expr : string);
 	FcReplAdd(name : string, code : string);
 	FcReplDel(name : string);
 	FcReplSave(file : string);
+	FcReplImport(file : string);
 
 FcReplEnv(
 	code : string,
+	imports : [string],
 	pieces : Tree<string, string>
 );
 
@@ -101,6 +103,13 @@ fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
 			} else {
 				FcReplSave(args[1]);
 			}
+		} else if (comm == "import") {
+			if (length(args) == 1) {
+				println("import command must take an argument: the name of a file");
+				fcReplReadCommand(config, env);
+			} else {
+				FcReplImport(args[1]);
+			}
 		} else {
 			println("unknown command: " + comm);
 			fcReplReadCommand(config, env);
@@ -123,6 +132,9 @@ fcReplLoopStep(config : CompilerConfig, env : FcReplEnv) -> FcReplEnv {
 			setFileContent(file, fcReplJoinCode(env));
 			env;
 		}
+		FcReplImport(file): {
+			FcReplEnv(env with imports = concat(env.imports, [file]));
+		}
 	}
 }
 
@@ -144,6 +156,11 @@ fcEvalReplEnv(config : CompilerConfig, env : FcReplEnv, expr : string) -> FcRepl
 }
 
 fcReplJoinCode(env : FcReplEnv) -> string {
+	(if (env.imports == []) "" else {
+		strGlue(map(env.imports, \imp -> "import " + 
+			(if (endsWith(imp, ";")) imp else imp + ";")
+		), "\n") + "\n"
+	}) +
 	(if (env.code == "") "" else env.code + "\n\n") + 
 	concatStrings(map(tree2pairs(env.pieces), \p -> p.second));
 }
@@ -182,17 +199,24 @@ fcReplPrintHelp(details : string) -> string {
 		"To show previously entered piece of code use the command:\n" +
 		"> show <name>\n" +
 		"where <name> is the name of a function/variable/struct/union/etc. added at some previous steps.\n" +
-		"You can use 'show all' command to see the whole source code, including the original file source.";
+		"You can use 'show all' command to see the whole source code, including the original file source.\n";
+	} else if (details == "import") {
+		"Add an import.\n" +
+		"----------------------------\n" +
+		"To add an imported module use command:\n" +
+		"> import <module>\n" +
+		"where <module> is the name of a module.\n";
 	} else {
 		"Flowc REPL commands:\n" +
 		"--------------------\n" +
-		"help           - print this message\n" +
-		"help <command> - print the help on a specific command\n" +
-		"exit           - exit from the interpreter\n" +
-		"eval           - eval an expression\n" +
-		"add <name>     - add a named code fragment \n" +
-		"show <name>    - show a named code fragment \n" +
-		"del <name>     - delete a named code fragment \n" +
-		"save <file>    - save to a file \n";
+		"help            - print this message\n" +
+		"help <command>  - print the help on a specific command\n" +
+		"exit            - exit from the interpreter\n" +
+		"eval            - eval an expression\n" +
+		"add <name>      - add a named code fragment \n" +
+		"show <name>     - show a named code fragment \n" +
+		"del <name>      - delete a named code fragment \n" +
+		"save <file>     - save to a file \n";
+		"import <module> - add an import \n";
 	}
 }
