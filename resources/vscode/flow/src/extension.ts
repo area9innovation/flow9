@@ -59,6 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('flow.startHttpServer', startHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setClient(context, LspKind.Flow); }));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setClient(context, LspKind.JS); }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates));
@@ -102,6 +103,15 @@ function checkHttpServerStatus(initial : boolean) {
 			}
 		}
 	);
+}
+
+function flowConsole() {
+	let file = getPath(vscode.window.activeTextEditor.document.uri);
+	let dir = path.dirname(file);
+	let terminal = vscode.window.createTerminal("Flow console");
+	terminal.sendText("cd " + dir, true);
+	terminal.sendText("flowc1 repl=1 file=" + file, true);
+	terminal.show();
 }
 
 function toggleHttpServer() {
