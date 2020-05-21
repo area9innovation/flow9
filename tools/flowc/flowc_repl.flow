@@ -18,8 +18,9 @@ fcReplLoop(config : CompilerConfig) -> void {
 	quit(0);
 }
 
-FcReplCommand ::= FcReplEval, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplExit;
+FcReplCommand ::= FcReplEval, FcReplExec, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplExit;
 	FcReplEval(expr : string);
+	FcReplExec(code : string);
 	FcReplAdd(name : string, code : string);
 	FcReplDel(name : string);
 	FcReplSave(file : string);
@@ -51,7 +52,7 @@ fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
 			println(fcReplPrintHelp(details));
 			fcReplReadCommand(config, env);
 		} else if (comm == "exit") {
-			println("Bye!!");
+			println("Bye.");
 			FcReplExit();
 		} else if (comm == "show") {
 			if (length(args) == 1) {
@@ -69,6 +70,8 @@ fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
 			fcReplReadCommand(config, env);
 		} else if (comm == "eval") {
 			FcReplEval(fcReadCode()); 
+		} else if (comm == "exec") {
+			FcReplExec(fcReadCode()); 
 		} else if (comm == "add") {
 			if (length(args) == 1) {
 				println("add command must take an argument: the name of a code piece");
@@ -118,7 +121,10 @@ fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
 fcReplLoopStep(config : CompilerConfig, env : FcReplEnv) -> FcReplEnv {
 	switch (fcReplReadCommand(config, env)) {
 		FcReplEval(expr): {
-			fcEvalReplEnv(config, env, expr);
+			fcReplRun(config, env, fcReplWrapExpr(expr));
+		}
+		FcReplExec(code): {
+			fcReplRun(config, env, code);
 		}
 		FcReplAdd(name, code): {
 			FcReplEnv(env with pieces = setTree(env.pieces, name, code));
@@ -148,13 +154,28 @@ fcDeleteGently(file : string) -> void {
 	}
 }
 
-fcEvalReplEnv(config : CompilerConfig, env : FcReplEnv, expr : string) -> FcReplEnv {
-	code = "import runtime;\n\n" + fcReplJoinCode(env) + "\n" + 
-		"main() -> void {" + 
-		"\tprintln(" + expr + ");\n" +
-		"\tquit(0);\n" +
-		"}\n\n";
-	setFileContent("___tmp___.flow", code);
+fcReplPrepareExpr(expr : string) -> string {
+	expr0 = trim2(expr, " \n\r\t");
+	expr1 = if (!endsWith(expr0, ";")) expr0 else strLeft(expr0, strlen(expr0) - 1);
+	expr2 = if (!startsWith(expr1, "println(")) expr1 else 
+		strRight(strLeft(expr1, strlen(expr1) - 1), 8);
+	expr3 = if (!startsWith(expr2, "print(")) expr2 else 
+		strRight(strLeft(expr2, strlen(expr2) - 1), 6);
+	expr3;
+}
+
+fcReplWrapExpr(expr : string) -> string {
+	"\tprintln(" + fcReplPrepareExpr(expr) + ");\n";
+}
+
+fcReplRun(config : CompilerConfig, env : FcReplEnv, code : string) -> FcReplEnv {
+	prog_code = 
+		"import runtime;\n\n" + 
+		fcReplJoinCode(env) + "\n" + 
+		"main() -> void {\n" + 
+		(if (code != "" && !endsWith(code, ";")) code + ";" else code) + 
+		"\nquit(0);\n}\n\n";
+	setFileContent("___tmp___.flow", prog_code);
 	print_out = \out -> if (strContains(out, "Error:")) println(out);
 	engine = getConfigParameterDef(config.config, "repl-engine", "bc");
 	flowc = "flowc1" + (if (hasTargetName("windows")) ".bat" else "");
@@ -221,6 +242,13 @@ fcReplPrintHelp(details : string) -> string {
 		"The other way to enter an expression is just start typing it, so by default what is on\n"+
 		"the console is considered an expression to evaluate\n" +
 		"The empty line (double enter) means the end of the input.\n";
+	} else if (details == "exec") {
+		"Execute a code.\n" +
+		"-----------------------\n" +
+		"To execute a piece of code the command:\n" +
+		"\t> exec \n" +
+		"and press enter. After that the stage of code of the code input begins.\n" +
+		"The empty line (double enter) means the end of the input.\n";
 	} else if (details == "save") {
 		"Save entered code as a file.\n" +
 		"----------------------------\n" +
@@ -247,6 +275,7 @@ fcReplPrintHelp(details : string) -> string {
 		"help <command>  - print the help on a specific command\n" +
 		"exit            - exit from the interpreter\n" +
 		"eval            - eval an expression\n" +
+		"exec            - execute some code\n" +
 		"add <name>      - add a named code fragment \n" +
 		"show <name>     - show a named code fragment \n" +
 		"del <name>      - delete a named code fragment \n" +
