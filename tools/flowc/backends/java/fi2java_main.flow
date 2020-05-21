@@ -1,14 +1,14 @@
 import math/hash;
 import tools/flowc/backends/common;
-import tools/flowc/backends/java/fi2java_defines;
+import tools/flowc/backends/java/fi2java_compile;
 
 export {
-	generateJavaMain(gctx : JavaGlobalContext) -> void;
+	generateJavaMain(gctx : JavaGlobalContext, cfg : FiJavaConfig) -> void;
 	generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void;
 	generateJavaStructs(gctx : JavaGlobalContext) -> void;
 }
 
-generateJavaMain(gctx : JavaGlobalContext) -> void {
+generateJavaMain(gctx : JavaGlobalContext, cfg : FiJavaConfig) -> void {
 	main_file_text = gctx.header_generator(timestamp());
 	pushstr = \s -> rlistPush(main_file_text, s);
 	config = gctx.program.config;
@@ -97,25 +97,62 @@ generateJavaMain(gctx : JavaGlobalContext) -> void {
 	pushstr("\t\tinit_code();\n");
 	pushstr("\t}\n");
 
-	// main function
-	pushstr("\tprotected void main() {\n");
-	pushstr("\t\tinit();\n");
+	if (isEmptySet(cfg.javaLibrary)) {
+		// main function
+		pushstr("\tprotected void main() {\n");
+		pushstr("\t\tinit();\n");
 
-	switch (lookupTree(gctx.globalFuncs, "main")) {
-		Some(finfo):
-			pushstr("\t\tm_" + finfo.csmodule.id + "." + finfo.name + "();\n");
-		None():
-			fail0("No main function");
+		switch (lookupTree(gctx.globalFuncs, "main")) {
+			Some(finfo):
+				pushstr("\t\tm_" + finfo.csmodule.id + "." + finfo.name + "();\n");
+			None():
+				fail0("No main function");
+		}
+		pushstr("\t}\n");
+
+		// program entry point
+		pushstr("\tpublic static void main(String[] args) {\n");
+		pushstr("\t\tMain runner = new Main(args);\n");
+		pushstr("\t\trunner.start(null);\n");
+		pushstr("\t}\n");
+	} else {
+		// main function - does only initialization. 
+		// Overrides abstract FlowRuntime method.
+		pushstr("\tprotected void main() {\n");
+		pushstr("\t\tinit();\n");
+		pushstr("\t}\n");
+
+		iterSet(cfg.javaLibrary, \name ->
+			switch (lookupTree(gctx.globalFuncs, name)) {
+				Some(finfo): pushstr(javaInterfaceWrapper(name, gctx, finfo));
+				None(): fail0("No function " + name);
+			}
+		);
+
+		// program initialization
+		pushstr("\tprivate static Main runner = null;\n\n");
+		pushstr("\tpublic static void init(String[] args) {\n");
+		pushstr("\t\trunner = new Main(args);\n");
+		pushstr("\t\trunner.start(null);\n");
+		pushstr("\t}\n");
 	}
-	pushstr("\t}\n");
-	
-	pushstr("\tpublic static void main(String[] args) {\n");
-	pushstr("\t\tMain runner = new Main(args);\n");
-	pushstr("\t\trunner.start(null);\n");
-	pushstr("\t}\n");
 
 	main_fname = pathCombine(gctx.package_path, "Main.java");
 	writeJavaSource(gctx, main_fname, javaList2String(main_file_text, "}\n"));
+}
+
+javaInterfaceWrapper(name : string, gctx : JavaGlobalContext, finfo : JavaGlobalInfo) -> string {
+	switch (finfo.type) {
+		FiTypeFunction(arg_types, ret_type): {
+			arg_names = mapi(arg_types, \j, t -> type2javaObjType(gctx, t.type, false, false, false) + " a" + i2s(j));
+			arg_uses = mapi(arg_types, \j, t -> "a" + i2s(j));
+			ret_typestr = type2javaObjType(gctx, ret_type, false, false, false);
+			"\tstatic public " + ret_typestr + " " + name + "(" + strGlue(arg_names, ", ") + ") {\n" +
+			"\t\treturn runner.m_" + finfo.csmodule.id + "." + finfo.name + "(" + strGlue(arg_uses, ", ") + ")" + ";\n" +
+			"\t}\n";
+		}
+		default: fail0(name + "must be a function");
+	}
 }
 
 generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void {
