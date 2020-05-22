@@ -1420,7 +1420,7 @@ public class FxRenderSupport extends RenderSupport {
 	}
 
 	@Override
-	public Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload) {
+	public Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload, String altText) {
 		CachedPicture img = img_cache.get(name);
 
 		if (img == null) {

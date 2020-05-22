@@ -362,7 +362,7 @@ public class RenderSupport extends NativeHost {
 	public Object makeGlow(double a,double b,int c, double d,boolean e) {
 		return null;
 	}
-	public Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e) {
+	public Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e, String alt) {
 		return null;
 	}
 	public Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {
