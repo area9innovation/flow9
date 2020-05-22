@@ -1010,7 +1010,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     // Root
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeClip, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeTextField, 1);
-    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 5);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 6);
     TRY_USE_NATIVE_METHOD_NAME(GLRenderSupport, makePicture4, "makePicture", 4);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeVideo, 4);
 

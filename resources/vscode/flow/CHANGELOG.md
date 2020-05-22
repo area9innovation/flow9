@@ -143,3 +143,5 @@
 ## 0.4.5
  - instant syntax check at typing is implemented. 
  
+## 0.4.6
+ - flow interactive console is added. 
