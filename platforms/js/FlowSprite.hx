@@ -23,6 +23,7 @@ class FlowSprite extends Sprite {
 	private var metricsFn : Float -> Float -> Void;
 	private var errorFn : String -> Void;
 	private var onlyDownload : Bool = false;
+	private var altText : String = "";
 	private var retries : Int = 0;
 
 	private var localBounds = new Bounds();
@@ -44,7 +45,7 @@ class FlowSprite extends Sprite {
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
 
-	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) {
+	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) {
 		super();
 
 		visible = false;
@@ -55,6 +56,7 @@ class FlowSprite extends Sprite {
 		this.metricsFn = metricsFn;
 		this.errorFn = errorFn;
 		this.onlyDownload = onlyDownload;
+		this.altText = altText;
 
 		if (StringTools.endsWith(url, ".swf")) {
 			url = StringTools.replace(url, ".swf", ".png");
@@ -294,6 +296,7 @@ class FlowSprite extends Sprite {
 		nativeWidget.onerror = onError;
 		nativeWidget.src = url;
 		nativeWidget.style.visibility = 'hidden';
+		nativeWidget.alt = altText;
 
 		isNativeWidget = true;
 	}
