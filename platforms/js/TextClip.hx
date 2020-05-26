@@ -457,7 +457,11 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.step = step;
 			}
 
-			nativeWidget.autocomplete = autocomplete;
+			if (autocomplete != '') {
+				nativeWidget.setAttribute('autocomplete', autocomplete);
+			} else {
+				nativeWidget.removeAttribute('autocomplete');
+			}
 
 			if (maxChars >= 0) {
 				nativeWidget.maxLength = maxChars;
