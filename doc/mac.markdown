@@ -106,8 +106,8 @@ You will be prompted to enter the desired haxelib path. Please specify the haxel
 Then install the required libraries:
 
     haxelib install format
-    haxelib install pixijs 4.7.1
-    (or a newer edition)
+    haxelib install pixijs 4.8.4
+    (pixijs version 5 isn't supported)
 
 ## Install Neko 2.0.0
 
