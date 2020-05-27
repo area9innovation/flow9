@@ -393,8 +393,13 @@ class PixiWorkarounds {
 				// (toDataURI, getImageData functions)
 				if (fontProperties.fontSize === 0)
 				{
-					fontProperties.fontSize = style.fontSize;
-					fontProperties.ascent = style.fontSize;
+					let fontScale = 1;
+					if (Platform.isSamsung) {
+						const defaultFontSize = 16;
+						const currentFontSize = parseInt(window.getComputedStyle(document.body).getPropertyValue('font-size'));
+						fontScale = currentFontSize / defaultFontSize;
+					}
+					fontProperties.fontSize = fontProperties.ascent = style.fontSize * fontScale;
 				}
 
 				const context = canvas.getContext('2d');
