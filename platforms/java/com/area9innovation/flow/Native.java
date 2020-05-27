@@ -1747,7 +1747,4 @@ public class Native extends NativeHost {
 	public final double maxMemory() {
 		return (double)(Runtime.getRuntime().maxMemory());
 	}
-	public final double usedMemory() {
-		return (double)(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory());
-	}
 }
