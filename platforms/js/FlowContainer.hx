@@ -29,6 +29,7 @@ class FlowContainer extends Container {
 
 	public var nativeWidget : Dynamic;
 	public var accessWidget : AccessWidget;
+	public var tagName : String;
 
 	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
@@ -274,7 +275,7 @@ class FlowContainer extends Container {
 
 		this.deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(tagName);
+		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 

@@ -1509,7 +1509,7 @@ class TextClip extends NativeWidgetClip {
 
 			this.deleteNativeWidget();
 
-			nativeWidget = Browser.document.createElement(tagName);
+			nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 			this.updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
