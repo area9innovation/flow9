@@ -1737,4 +1737,17 @@ public class Native extends NativeHost {
 		}
 		return null;
 	}
+
+	public final String totalMemory() {
+		return String.valueOf(Runtime.getRuntime().totalMemory());
+	}
+	public final String freeMemory() {
+		return String.valueOf(Runtime.getRuntime().freeMemory());
+	}
+	public final String maxMemory() {
+		return String.valueOf(Runtime.getRuntime().maxMemory());
+	}
+	public final String usedMemory() {
+		return String.valueOf(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory());
+	}
 }
