@@ -1,0 +1,113 @@
+import math/math;
+import net/url_parameter;
+import material/material_gui;
+
+export {
+	materialLog(s : string, level : MaterialLogLevel) -> void;
+		MaterialLogLevel ::= MaterialError, MaterialWarning, MaterialInfo, MaterialDebug;
+			MaterialError();
+			MaterialWarning();
+			MaterialInfo();
+			MaterialDebug();
+
+	materialLogFn(fn : () -> ?, level : MaterialLogLevel, defFn : () -> ?) -> ?;
+	isMaterialLogLevelEnabled(level : MaterialLogLevel) -> bool;
+
+	firstLineOfCallStack(cs : string) -> string;
+	lastLineOfCallStack(cs : string) -> string;
+	getCallstackEntryPoint(cs : string) -> string;
+
+	MCallstack(m : Material) -> Material;
+	MConstructD(constructors : [() -> () -> void], m : Material) -> Material;
+}
+
+debugMaterialLevel = s2i(getUrlParameterDef("debug_material", "0"));
+debugMaterialEnabled = debugMaterialLevel > 0;
+
+materialLog(s : string, level : MaterialLogLevel) -> void {
+	materialLogFn(\ -> println(s), level, nop)
+}
+
+materialLogFn(fn : () -> ?, level : MaterialLogLevel, defFn : () -> ?) -> ? {
+	if (debugMaterialEnabled) {
+		if (isMaterialLogLevelEnabled(level))
+			fn()
+		else
+			defFn();
+	} else {
+		defFn();
+	}
+}
+
+MaterialLogLevel2i(level : MaterialLogLevel) -> int {
+	switch (level) {
+		MaterialError(): 1;
+		MaterialWarning(): 2;
+		MaterialInfo(): 3;
+		MaterialDebug(): 4;
+	}
+}
+
+isMaterialLogLevelEnabled(level : MaterialLogLevel) -> bool {
+	MaterialLogLevel2i(level) <= debugMaterialLevel
+}
+
+firstLineOfCallStack(cs : string) -> string {
+	firstElement(filter(strSplit(cs, "\n"), \s -> toLowerCase(s) |> (\ls -> strlen(ls) > 3 && !strContains(ls, "webfont")
+		&& !strContains(ls, "startflowmain") && !strContains(ls, "callstack") && !strContains(ls, "showmdialog") && !strContains(ls, "<native>"))), "")
+}
+
+lastLineOfCallStack(cs : string) -> string {
+	lastElement(filter(strSplit(cs, "\n"), \s -> toLowerCase(s) |> (\ls -> strlen(ls) > 3 && !strContains(ls, "webfont")
+		&& !strContains(ls, "startflowmain") && !strContains(ls, "callstack") && !strContains(ls, "showmdialog") && !strContains(ls, "<native>"))), "")
+}
+
+getCallstackEntryPoint(cs : string) -> string {
+	if (cpp)
+		firstLineOfCallStack(cs)
+		|> (\fcs ->
+			strSplit(fcs, " ")
+			|> (\fcsSplit -> strGlue(subrange(fcsSplit, max(0, length(fcsSplit) - 3), length(fcsSplit)), " "))
+		)
+	else
+		lastLineOfCallStack(cs);
+}
+
+MCallstack(m : Material) -> Material {
+	if (isMaterialLogLevelEnabled(MaterialError())) {
+		color = randomMColor();
+		cs = captureStringCallstack();
+		fcs = getCallstackEntryPoint(cs);
+
+		if (strlen(fcs) > 3)
+			MCopySize(
+				m,
+				\sz ->
+					MGroup2(
+						TRounded(4.0, 4.0, 4.0, 4.0, [MStroke(color)], sz |> TBorderBottom(-1.0) |> TBorderRight(-1.0)),
+						MFrame(
+							0.0,
+							4.0,
+							[MFill(MRedA(400))],
+							MBorder(
+								2.0, 0.0, 2.0, 0.0,
+								MClickable(
+									MText(fcs, [MTextMColor(color), MOverline()]),
+									\ -> iter(concat3(["---"], strSplit(cs, "\n"), ["---"]), println)
+								)
+							)
+						)
+					),
+				true
+			)
+		else
+			m;
+	} else {
+		m;
+	};
+}
+
+MConstructD(constructors : [() -> () -> void], m : Material) -> Material {
+	MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t -> TConstruct(constructors, m2t(m, p))))
+	|> MCallstack
+}
