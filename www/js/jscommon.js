@@ -81,6 +81,10 @@ function getBrowser() {
 	return BrowserDetect.browser + " " + BrowserDetect.version;
 }
 
+function getDeviceType() {
+	return BrowserDetect.device.type;
+}
+
 function getVersion() {
 	return ""; // Stub for getVersion from js/flowswf.js
 }
@@ -96,6 +100,7 @@ var BrowserDetect = {
 		this.browser = browser.name;
 		this.version = browser.version;
 		this.OS = parser.getOS().name;
+		this.device = parser.getDevice();
 	}
 };
 BrowserDetect.init();
