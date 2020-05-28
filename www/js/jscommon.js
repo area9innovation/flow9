@@ -177,6 +177,9 @@ if (scriptName.length > 4 && scriptName.substring(0, 4) == "http") {
 
 if (typeof htmlBundle == "undefined") {
 	if (scriptName != "") {
+		if (document.documentMode && typeof document.documentMode === 'number' && document.documentMode < 11) {
+			document.body.appendChild(document.createTextNode("Internet Explore is running in Document Mode " + document.documentMode + ". Version 11 or newer is required."));
+		}
 		if (slave != "") {
 			loadJSFileInternal("js/toflow.js");
 			window.addEventListener('message', function (e) {
