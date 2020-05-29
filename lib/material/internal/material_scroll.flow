@@ -171,8 +171,8 @@ extractTScrollStyle(style : [flow]) -> [TScrollStyle] {
 	)
 }
 
-MRecyclerGridContainer(id : int, row : int, column : int, material : Material, size : DynamicBehaviour<WidthHeight>, position : DynamicBehaviour<Point>, mutable cached : Maybe<Tropic>);
-emptyMRecyclerGridContainer = MRecyclerGridContainer(-1, -1, -1, TEmpty(), makeWH(), makePoint(), None());
+MRecyclerGridContainer(row : int, column : int, material : Material, size : DynamicBehaviour<WidthHeight>, position : DynamicBehaviour<Point>, mutable cached : Maybe<Tropic>);
+emptyMRecyclerGridContainer = MRecyclerGridContainer(-1, -1, TEmpty(), makeWH(), makePoint(), None());
 
 boundsOverlap(bounds1 : Bounds, bounds2 : Bounds) -> bool {
 	max(bounds1.minX, bounds1.maxX) >= min(bounds2.minX, bounds2.maxX) &&
@@ -216,7 +216,8 @@ updateMRecyclerGridContainers2(
 	lastColumn : Maybe<int>,
 	availableWH : WidthHeight
 ) -> void {
-	if (length(containers) > row && length(containers[row]) > column && eitherMap(lastRow, \lr -> lr >= row, true) && eitherMap(lastColumn, \lc -> lc >= column, true)) {
+	if (length(containers) > row && length(containers[row]) > column &&
+		eitherMap(lastRow, \lr -> lr > row || (lr == row && eitherMap(lastColumn, \lc -> lc >= column, true)), true)) {
 		container = containers[row][column];
 		next(container.position, position);
 
@@ -400,23 +401,23 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 	initWH = fselect2(contentSize, m.items, FLift2(\cs, it -> WidthHeight(cs.width / i2d(max(either(maxA(map(it, length)), 0), 1)), cs.height / i2d(max(length(it), 1)))));
 	availableWH = fselect2(scrollSize.box, m.items, FLift2(\cs, it -> WidthHeight(cs.width / i2d(max(either(maxA(map(it, length)), 0), 1)), cs.height / i2d(max(length(it), 1)))));
 	items =
-		fguard(
-			fsubmapi(fsplit2d(m.items), \row, mi ->
-				fsubmapi(mi, \column, it ->
-					fselect2(row, column, FLift2(\r, c ->
+		selectDynamicArray(
+			fmapi(fsplit2d(m.items), \row, mi ->
+				selectDynamicArray(
+					fmapi(mi, \column, it ->
 						MRecyclerGridContainer(
-							r * 10000 + c,
-							r,
-							c,
+							row,
+							column,
 							it,
 							either(sameSize, makeWH()),
 							makePoint(),
 							None()
 						)
-					))
+					),
+					idfn
 				)
 			),
-			make([])
+			idfn
 		);
 	position = extractStruct(m.style, MScrollPosition(makePoint())).position;
 	getScrollBounds = \p, bwh -> {
@@ -427,63 +428,34 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 			dceil(p.y / bwh.height + 1.1) * bwh.height
 		);
 	}
-	scrollBounds = fthrottleUntilNextFrameRendered(fselect2(position, scrollSize.box, getScrollBounds |> FLift2));
+	scrollBounds = fselect2(position, scrollSize.box, getScrollBounds |> FLift2);
 	scrollPercent = tryExtractStruct(m.style, TScrollPercent(makePoint()));
 	cachedPercent = ref zeroPoint;
 
-	containers : DynamicBehaviour<[MRecyclerGridId]> = make([]);
+	containers : DynamicArray<MRecyclerGridId> = makeDynamicArray([]);
 	needsUpdate = make(true);
 	contentSizeNeedsUpdate = make(true);
 
-	scrollToItemEnabled = ref true;
-	scrollToItemUns = ref nop;
+	scrollToItemPending = ref None();
 	maybeApply(
 		tryExtractStruct(m.style, MScrollToItem(ref nop2)),
 		\msti -> {
 			msti.fn := \r, c -> {
-				^scrollToItemUns();
-				scrollToItemUns := nop;
-
-				if (^scrollToItemEnabled && r >= 0 && c >= 0) {
-					itms = getValue(items.first);
-
-					if (length(itms) > r && length(itms[r]) > c) {
-						if (contains(getValue(containers), MRecyclerGridId(r, c))) {
-							next(position, getValue(itms[r][c].position));
-						} else {
-							scrollToFn = \ -> {
-								next(
-									containers,
-									mapi(itms, \i, rr -> filtermapi(rr, \j, cc -> if (r > i || (r == i && c >= j)) Some(MRecyclerGridId(i, j)) else None()))
-									|> concatA
-								);
-
-								updateMRecyclerGridContainers(itms, Some(r), Some(c), fgetValue(initWH));
-								nextDistinct(position, getValue(itms[r][c].position));
-							};
-
-							if (getValue(needsUpdate) || getValue(contentSizeNeedsUpdate)) {
-								scrollToItemUns := fwhen(fnot(fOr(needsUpdate, contentSizeNeedsUpdate)), scrollToFn);
-							} else {
-								scrollToFn();
-							}
-						}
-					}
-				}
+				scrollToItemPending := Some(Pair(r, c));
+				next(needsUpdate, true);
+				next(contentSizeNeedsUpdate, true);
 			}
 		}
 	);
 
-	SelectTGroup(
+	SelectTDynamicGroup(
 		containers,
 		\index, __, id ->
 			TSelect(
-				fthrottleUntilNextFrameRendered(fselect(items.first, FLift(\it ->
-					if (length(it) > id.row && length(it[id.row]) > id.column)
-						it[id.row][id.column]
-					else
-						emptyMRecyclerGridContainer
-				))),
+				fsubselect(
+					elementAtDynamicArrayDef(items, const(id.row), makeDynamicArray([])),
+					FLift(\el -> elementAtDynamicArrayDef(el, const(id.column),emptyMRecyclerGridContainer))
+				),
 				\c : MRecyclerGridContainer -> {
 					wh = makeWH();
 
@@ -509,7 +481,7 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 										c.cached,
 										\tcached -> tcached,
 										\ -> {
-											tcached : Tropic = MComponentGroup2T(manager, parent, "MRecyclerGridItem", [MFocusId(const(c.id))], \p -> m2t(c.material, p));
+											tcached : Tropic = MComponentGroup2T(manager, parent, "MRecyclerGridItem", [], \p -> m2t(c.material, p));
 											c.cached ::= Some(tcached);
 											tcached;
 										}
@@ -562,48 +534,69 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 	|> (\f ->
 		TConstruct(
 			[
-				items.second,
-				\ -> {
-					scrollToItemEnabled := true;
-
-					\ -> {
-						^scrollToItemUns();
-						scrollToItemUns := nop;
-						scrollToItemEnabled := false;
-					}
-				},
+				// items.second,
 				\ -> {
 					manager.manager.deltaTimer.attach();
 					manager.manager.deltaTimer.detach;
 				},
-				make2Subscribe(
-					fselectWithLast(flength(items.first), FLift2(\prevLen, curLen -> {
-						if (prevLen > curLen) {
-							next(contentSizeNeedsUpdate, true);
-						}
+				makeSubscribe(
+					fthrottleUntilNextFrameRendered(fpair(
+						fselectWithLast(lengthDynamicArray(items), FLift2(\prevLen, curLen -> {
+							if (prevLen > curLen) {
+								next(contentSizeNeedsUpdate, true);
+							}
 
-						curLen;
-					})),
-					scrollBounds,
-					\__, __ -> next(needsUpdate, true)
+							curLen;
+						})),
+						scrollBounds
+					)),
+					\__ -> next(needsUpdate, true)
 				),
 				makeSubscribe(manager.manager.deltaTimer.timer, \__ -> {
 					if (getValue(needsUpdate)) {
-						it = getValue(items.first);
+						next(needsUpdate, false);
+
+						it = map(getDynamicArrayValue(items), getDynamicArrayValue);
 						if (getValue(contentSizeNeedsUpdate)) {
 							next(contentSizeNeedsUpdate, false);
 							next(contentSize, getMRecyclerGridContentSize(it));
 						}
-						sb = fgetValue(scrollBounds);
 
-						next(needsUpdate, false);
+						eitherFn(
+							^scrollToItemPending,
+							\sti -> {
+								r = sti.first;
+								c = sti.second;
 
-						newContainers = filterVisibleMRecyclerGridContainers(it, sb, fgetValue(initWH));
-						nextDistinct(containers, newContainers);
+								if (contains(getDynamicArrayValue(containers), MRecyclerGridId(r, c))) {
+									updateMRecyclerGridContainers(it, Some(r), Some(c), fgetValue(initWH));
 
-						maybeApply(scrollPercent, \sp -> {
-							next(sp.percent, ^cachedPercent);
-						});
+									if (getValue(position) == getValue(it[r][c].position)) {
+										scrollToItemPending := None();
+									} else {
+										next(position, getValue(it[r][c].position));
+										next(needsUpdate, true);
+									}
+								} else {
+									nextDynamicArray(
+										containers,
+										mapi(it, \i, rr -> filtermapi(rr, \j, cc -> if (r > i || (r == i && c >= j)) Some(MRecyclerGridId(i, j)) else None()))
+										|> concatA
+									);
+									next(needsUpdate, true);
+								}
+							},
+							\ -> {
+								sb = fgetValue(scrollBounds);
+
+								newContainers = filterVisibleMRecyclerGridContainers(it, sb, fgetValue(initWH));
+								nextDynamicArray(containers, newContainers);
+
+								maybeApply(scrollPercent, \sp -> {
+									next(sp.percent, ^cachedPercent);
+								});
+							}
+						);
 					}
 				})
 			]
