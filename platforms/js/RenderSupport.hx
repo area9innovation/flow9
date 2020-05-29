@@ -1268,7 +1268,19 @@ class RenderSupport {
 	}
 
 	public static function setClipTagName(clip : Dynamic, tagName : String) : Void {
-		clip.tagName = tagName;
+		if (clip.nativeWidget != null) {
+			clip.nativeWidget = null;
+			clip.tagName = tagName;
+			clip.createNativeWidget(tagName);
+
+			if (clip.updateNativeWidgetStyle != null) {
+				clip.updateNativeWidgetStyle();
+			}
+
+			DisplayObjectHelper.invalidateTransform(clip);
+		} else {
+			clip.tagName = tagName;
+		}
 	}
 
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
