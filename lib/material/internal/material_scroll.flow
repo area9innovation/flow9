@@ -216,7 +216,7 @@ updateMRecyclerGridContainers2(
 	lastColumn : Maybe<int>,
 	availableWH : WidthHeight
 ) -> void {
-	if (length(containers) > row && length(containers[row]) > column && eitherMap(lastRow, \lr -> lr >= row, true) && eitherMap(lastColumn, \lc -> lc >= column, true)) {
+	if (length(containers) > row && length(containers[row]) > column && eitherMap(lastRow, \lr -> lr > row || (lr == row && eitherMap(lastColumn, \lc -> lc >= column, true)), true)) {
 		container = containers[row][column];
 		next(container.position, position);
 
@@ -419,15 +419,16 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 			make([])
 		);
 	position = extractStruct(m.style, MScrollPosition(makePoint())).position;
-	getScrollBounds = \p, bwh -> {
+	scrollBounds = fselect3(position, contentSize, scrollSize.box, \p0, cwh, bwh -> {
+		p = Point(min(p0.x, cwh.width - bwh.width), min(p0.y, cwh.height - bwh.height));
+
 		Bounds(
 			dfloor(p.x / bwh.width - 0.1) * bwh.width,
 			dfloor(p.y / bwh.height - 0.1) * bwh.height,
 			dceil(p.x / bwh.width + 1.1) * bwh.width,
 			dceil(p.y / bwh.height + 1.1) * bwh.height
 		);
-	}
-	scrollBounds = fthrottleUntilNextFrameRendered(fselect2(position, scrollSize.box, getScrollBounds |> FLift2));
+	});
 	scrollPercent = tryExtractStruct(m.style, TScrollPercent(makePoint()));
 	cachedPercent = ref zeroPoint;
 
@@ -435,41 +436,14 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 	needsUpdate = make(true);
 	contentSizeNeedsUpdate = make(true);
 
-	scrollToItemEnabled = ref true;
-	scrollToItemUns = ref nop;
+	scrollToItemPending = ref None();
 	maybeApply(
 		tryExtractStruct(m.style, MScrollToItem(ref nop2)),
 		\msti -> {
 			msti.fn := \r, c -> {
-				^scrollToItemUns();
-				scrollToItemUns := nop;
-
-				if (^scrollToItemEnabled && r >= 0 && c >= 0) {
-					itms = getValue(items.first);
-
-					if (length(itms) > r && length(itms[r]) > c) {
-						if (contains(getValue(containers), MRecyclerGridId(r, c))) {
-							next(position, getValue(itms[r][c].position));
-						} else {
-							scrollToFn = \ -> {
-								next(
-									containers,
-									mapi(itms, \i, rr -> filtermapi(rr, \j, cc -> if (r > i || (r == i && c >= j)) Some(MRecyclerGridId(i, j)) else None()))
-									|> concatA
-								);
-
-								updateMRecyclerGridContainers(itms, Some(r), Some(c), fgetValue(initWH));
-								nextDistinct(position, getValue(itms[r][c].position));
-							};
-
-							if (getValue(needsUpdate) || getValue(contentSizeNeedsUpdate)) {
-								scrollToItemUns := fwhen(fnot(fOr(needsUpdate, contentSizeNeedsUpdate)), scrollToFn);
-							} else {
-								scrollToFn();
-							}
-						}
-					}
-				}
+				scrollToItemPending := Some(Pair(r, c));
+				next(needsUpdate, true);
+				next(contentSizeNeedsUpdate, true);
 			}
 		}
 	);
@@ -564,46 +538,70 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 			[
 				items.second,
 				\ -> {
-					scrollToItemEnabled := true;
-
-					\ -> {
-						^scrollToItemUns();
-						scrollToItemUns := nop;
-						scrollToItemEnabled := false;
-					}
-				},
-				\ -> {
 					manager.manager.deltaTimer.attach();
 					manager.manager.deltaTimer.detach;
 				},
-				make2Subscribe(
-					fselectWithLast(flength(items.first), FLift2(\prevLen, curLen -> {
-						if (prevLen > curLen) {
-							next(contentSizeNeedsUpdate, true);
-						}
+				makeSubscribe(
+					fthrottleUntilNextFrameRendered(fpair(
+						fselectWithLast(flength(items.first), FLift2(\prevLen, curLen -> {
+							if (prevLen > curLen) {
+								next(contentSizeNeedsUpdate, true);
+							}
 
-						curLen;
-					})),
-					scrollBounds,
-					\__, __ -> next(needsUpdate, true)
+							curLen;
+						})),
+						scrollBounds
+					)),
+					\__ -> next(needsUpdate, true)
 				),
 				makeSubscribe(manager.manager.deltaTimer.timer, \__ -> {
 					if (getValue(needsUpdate)) {
+						next(needsUpdate, false);
+
 						it = getValue(items.first);
 						if (getValue(contentSizeNeedsUpdate)) {
 							next(contentSizeNeedsUpdate, false);
 							next(contentSize, getMRecyclerGridContentSize(it));
 						}
-						sb = fgetValue(scrollBounds);
 
-						next(needsUpdate, false);
+						eitherFn(
+							^scrollToItemPending,
+							\sti -> {
+								r = sti.first;
+								c = sti.second;
 
-						newContainers = filterVisibleMRecyclerGridContainers(it, sb, fgetValue(initWH));
-						nextDistinct(containers, newContainers);
+								if (length(it) <= r || length(it[r]) <= c) {
+									scrollToItemPending := None();
+								} else if (contains(getValue(containers), MRecyclerGridId(r, c))) {
+									updateMRecyclerGridContainers(it, Some(r), Some(c), fgetValue(initWH));
 
-						maybeApply(scrollPercent, \sp -> {
-							next(sp.percent, ^cachedPercent);
-						});
+									if (getValue(position) == getValue(it[r][c].position)) {
+										scrollToItemPending := None();
+									} else {
+										next(position, getValue(it[r][c].position));
+										next(needsUpdate, true);
+									}
+								} else {
+									next(
+										containers,
+										mapi(it, \i, rr -> filtermapi(rr, \j, cc -> if (r > i || (r == i && c >= j)) Some(MRecyclerGridId(i, j)) else None()))
+										|> concatA
+									);
+
+									next(needsUpdate, true);
+								}
+							},
+							\ -> {
+								sb = fgetValue(scrollBounds);
+
+								newContainers = filterVisibleMRecyclerGridContainers(it, sb, fgetValue(initWH));
+								nextDistinct(containers, newContainers);
+
+								maybeApply(scrollPercent, \sp -> {
+									next(sp.percent, ^cachedPercent);
+								});
+							}
+						);
 					}
 				})
 			]
