@@ -570,8 +570,8 @@ breakTextFragment(
 		}
 	};
 
-	makeTextFn = \indexing, t -> {
-		toInspectingElementIfNecessary(indexing, indexing, GeneralText(t))
+	makeTextFn = \indexing, t, s -> {
+		toInspectingElementIfNecessary(indexing, indexing, GeneralText(t, s))
 	};
 
 	textLen = strlen(text);
@@ -583,6 +583,7 @@ breakTextFragment(
 	hyphenPos : ref Pair<int, bool> = ref Pair(-1, false);     // pair of next pos of hyphen and soft sign
 	chrCatPos = ref (if (isBiDiEnabled()) -1 else textLen);    // next pos of split in respect of characters' categories
 	wordAlphabet : ref string = ref("");
+	spellLastPosM : ref Maybe<Pair<int, SymbolAtPositionType>> = ref None();
 
 	remapMinusOne = \p -> if (p >= 0) p else textLen;
 	loop1 : ref (int, int, List<GeneralWrapElement>) -> List<GeneralWrapElement> = ref \i, indexing, acc -> EmptyList();
@@ -631,18 +632,25 @@ breakTextFragment(
 			else
 				noBiDiPositions;
 
-			keyPosM = fold(positions, None(), \pos : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
-				if (currPos.first >= textLen) {
-					pos
-				} else {
-					switch(pos) {
-						None(): Some(currPos);
-						Some(p): {
-							Some(if (p.first <= currPos.first) p else currPos)
+			findPos = \isNextFun -> {
+				fold(positions, None(), \pos : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
+					if (isNextFun(currPos)) {
+						pos
+					} else {
+						switch(pos) {
+							None(): Some(currPos);
+							Some(p): {
+								Some(if (p.first <= currPos.first) p else currPos)
+							}
 						}
 					}
-				}
-			});
+				})
+			}
+
+			keyPosM = findPos(\pos -> pos.first >= textLen);
+			spellNextPosM = findPos(\pos -> pos.second != PositionLineBreak() &&
+				(pos.first >= textLen || pos.second != PositionSpace() && pos.second != PositionCharCat())
+			);
 
 			//Do not replace with eitherFn - tail recursion optimization will not happen
 			switch(keyPosM : Maybe<Pair<int, SymbolAtPositionType>>) {
@@ -662,7 +670,7 @@ breakTextFragment(
 							// the space from the original string to this guy.
 							space = GeneralSpace(makeSpaceText(), ^wordAlphabet, "");
 							wordAlphabet := "";
-							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
+							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space);
 						}
 						PositionAllowBreakAfter() : {
 							space = GeneralSpace(if (isCJKLang()) "" else makeSpaceText(), ^wordAlphabet, "");
@@ -680,7 +688,7 @@ breakTextFragment(
 							wordAlphabet := getUnicodeAlphabet(getCharCodeAt(text, keyPos));
 							// Used only for case break happens immediately after current position
 							// not to remake current implementation.
-							makeTextFn(indexing, getCharAt(text, keyPos));
+							makeTextFn(indexing, getCharAt(text, keyPos), "");
 						}
 					};
 					spaceAcc = switch(acc) {
@@ -709,6 +717,10 @@ breakTextFragment(
 								default: Cons(keyFragment, spaceAcc);
 							}
 						}
+
+						if (spellNextPosM == keyPosM) {
+							spellLastPosM := spellNextPosM;
+						};
 						^loop1(i + 1, indexing + 1, newAcc);
 					} else if (keyPos == textLen - 1) {
 						word = substring(text, i, keyPos - i); //println("word:" + word);
@@ -717,23 +729,77 @@ breakTextFragment(
 						//So, recursive call will return Cons(makeTextFn(word), acc) in
 						//Cons(keyFragment, breakTextFragment(word, style, moreLineBreaks, indexing, acc));
 						//So, refactored as
-						Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc));
+						iSpell = eitherMap(^spellLastPosM, \pos -> pos.first + 1, i);
+						spellWord = strReplace(
+							substring(
+								text,
+								iSpell,
+								eitherMap(
+									spellNextPosM,
+									\pos -> pos.first - iSpell,
+									keyPos - i
+								)
+							),
+							softBreakSymbol,
+							""
+						);
+
+						Cons(keyFragment, Cons(makeTextFn(indexing, word, spellWord), spaceAcc));
 						//to make the function tail recursive
 					} else {
-						doNotSkipSymbolDelta = if (doNotSkipSymbolDeltaOnLang(posType == PositionAllowBreakAfter()) || posType == PositionCharCat()) 1 else 0;
-						word = substring(text, i, keyPos - i + doNotSkipSymbolDelta); //println("word:" + word);
+						doNotSkipSymbolDelta = \pos -> if (doNotSkipSymbolDeltaOnLang(pos == PositionAllowBreakAfter()) || pos == PositionCharCat()) 1 else 0;
+						word = substring(text, i, keyPos - i + doNotSkipSymbolDelta(posType)); //println("word:" + word);
+
+						doNotSkipSymbolDeltaSpell = eitherMap(
+							spellNextPosM,
+							\pos -> doNotSkipSymbolDelta(pos.second),
+							0
+						);
+						iSpell = eitherMap(^spellLastPosM, \pos -> pos.first + 1, i);
+						spellWord = strReplace(
+							substring(
+								text,
+								iSpell,
+								eitherMap(
+									spellNextPosM,
+									\pos -> pos.first - iSpell + doNotSkipSymbolDeltaSpell,
+									keyPos - i + doNotSkipSymbolDelta(posType)
+								)
+							),
+							softBreakSymbol,
+							""
+						);
+
+						if (spellNextPosM == keyPosM) {
+							spellLastPosM := spellNextPosM;
+						}
 						^loop1(
 							keyPos + 1,
 							indexing + keyPosRelative + 1,
 							if (posType == PositionCharCat())
-								Cons(makeTextFn(indexing, word), spaceAcc)
+								Cons(makeTextFn(indexing, word, spellWord), spaceAcc)
 							else
-								Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc))
+								Cons(keyFragment, Cons(makeTextFn(indexing, word, spellWord), spaceAcc))
 						)
 					}
 				}
 				None() : {
-					Cons(makeTextFn(indexing, strRight(text, i)), acc)
+					iSpell = eitherMap(^spellLastPosM, \pos -> pos.first + 1, i);
+					spellWord = strReplace(
+						substring(
+							text,
+							iSpell,
+							eitherMap(
+								spellNextPosM,
+								\pos -> pos.first - iSpell,
+								textLen - i
+							)
+						),
+						softBreakSymbol,
+						""
+					);
+
+					Cons(makeTextFn(indexing, strRight(text, i), spellWord), acc)
 				}
 			}
 		}
@@ -761,7 +827,7 @@ makeLetterSpacingForWord(w : GeneralWrapElement) -> GeneralWrapElement {
 			inspector,
 			makeLetterSpacingForWord(word)
 		);
-		GeneralText(txt) : GeneralText(txt + "\u200b");
+		GeneralText(txt, spellTxt) : GeneralText(txt + "\u200b", spellTxt +  "\u200b");
 		default : w
 	}
 }
