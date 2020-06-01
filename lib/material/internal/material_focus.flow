@@ -1,7 +1,7 @@
 import material/material;
 import material/internal/material_iscript_internal;
 import sys/speechsynthesis;
-import material/internal/mlog;
+import material/internal/material_debug;
 
 export {
 	// when a modal dialog comes, use this to increase the z-order
@@ -44,8 +44,7 @@ export {
 	filterIScriptIdentifierWithoutFormPosition(id : List<IScriptIdentifier>) -> List<IScriptIdentifier>;
 	filterIScriptIdentifierOnlyFormPosition(id : List<IScriptIdentifier>) -> List<IScriptFormPosition>;
 
-	MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, keyOnClick : Maybe<(bool) -> void>,
-		accessRole : string, shortcut : string, oneWayConnection : Maybe<bool>, accessAttributes : [FAccessAttribute]) -> Tropic;
+	MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, properties : [FAccessProperty]) -> Tropic;
 
 	mClickButton(manager : MaterialManager, name : string) -> void;
 
@@ -885,116 +884,45 @@ getFFormById(f : FForm, id : List<IScriptFormPosition>) -> Transform<Maybe<FForm
 	}
 }
 
-MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, keyOnClick : Maybe<(bool) -> void>, accessRole : string,
-	shortcut : string, oneWayConnection : Maybe<bool>, accessAttributes : [FAccessAttribute]) -> Tropic {
-
+MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, properties : [FAccessProperty]) -> Tropic {
 	if (focus.focusEnabled == const(false) || (!^fAccessibilityEnabled && !cpp) || (mobile && !js) ||
-		switchMaterialFocus(focus, \f -> fgetValue(f.parent.id) == -2, \f -> eitherMap(f.parent, \p -> fgetValue(p.id) == -2, false)))
+		switchMaterialFocus(focus, \f -> fgetValue(f.parent.id) == -2, \f -> eitherMap(f.parent, \p -> fgetValue(p.id) == -2, false))) {
 		content
-	else
+	} else {
+		accessRole = extractStruct(properties, AccessRole("")).role;
+
 		switchMaterialFocus(
 			focus,
 			\f ->
-				eitherFn(
-					oneWayConnection,
-					\owc -> {
-						focused = make(false);
-						accessEnabled = if (owc) fmin(f.focusEnabled, fnot(f.focused)) else f.focusEnabled;
-
-						TConstruct(
-							[
-								makeSubscribe(focused, \foc -> if (foc) nextDistinct(f.focused, true) else if (!owc)
-									deferred(\ -> if (getValue(f.focused)) nextDistinct(focused, true))),
-								makeSubscribe(f.focused, \foc -> if (foc) nextDistinct(focused, true))
-							],
-							TAccess(
-								[
-									FAccessZorder(f.parent.zorder),
-									AccessRole(accessRole),
-									AccessFocused(focused),
-									FAccessEnabled(accessEnabled),
-									FAccessTabOrder(f.tabOrder)
-								]
-								|> (\f3 ->
-									eitherMap(
-										keyOnClick,
-										\koc ->
-											arrayPush(
-												f3,
-												AccessCallback(\ -> {
-													koc(true);
-													koc(false);
-												})
-											),
-										f3
-									)
+				TAccess(
+					(if (accessRole != "")
+						[
+							FAccessZorder(f.parent.zorder),
+							AccessFocused(f.focused),
+							FAccessEnabled(f.focusEnabled),
+							FAccessTabOrder(f.tabOrder)
+						]
+					else
+						[
+							FAccessZorder(f.parent.zorder),
+							AccessRole("group"),
+							FAccessTabOrder(f.tabOrder)
+						])
+					|> (\f3 ->
+						if (isUrlParameterTrue("accessorder"))
+							concat(
+									f3,
+									[
+										FAccessAttribute("aria-roledescription", const(f.name)),
+										FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
+									]
 								)
-								|> (\f3 ->
-									if (isUrlParameterTrue("accessorder"))
-										concat(
-											f3,
-											[
-												FAccessAttribute("aria-roledescription", const(f.name)),
-												FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
-											]
-										)
-									else
-										f3
-								)
-								|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
-								|> (\f3 -> concat(f3, accessAttributes))
-								|> (\f3 -> if (shortcut != "") arrayPush(f3, AccessKbdShortcutString(shortcut)) else f3),
-								content
-							)
-						)
-					},
-					\ ->
-						TAccess(
-							(if (accessRole != "")
-								[
-									FAccessZorder(f.parent.zorder),
-									AccessRole(accessRole),
-									AccessFocused(f.focused),
-									FAccessEnabled(f.focusEnabled),
-									FAccessTabOrder(f.tabOrder)
-								]
-							else
-								[
-									FAccessZorder(f.parent.zorder),
-									AccessRole("group"),
-									FAccessTabOrder(f.tabOrder)
-								])
-							|> (\f3 ->
-								eitherMap(
-									keyOnClick,
-									\koc ->
-										arrayPush(
-											f3,
-											AccessCallback(\ -> {
-												koc(true);
-												koc(false);
-											})
-										),
-									f3
-								)
-							)
-							|> (\f3 ->
-								if (isUrlParameterTrue("accessorder"))
-									concat(
-											f3,
-											[
-												FAccessAttribute("aria-roledescription", const(f.name)),
-												FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
-											]
-										)
-								else
-									f3
-							)
-							|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
-							|> (\f3 -> concat(f3, accessAttributes))
-							|> (\f3 -> if (shortcut != "") arrayPush(f3, AccessKbdShortcutString(shortcut)) else f3),
-							content
-						)
+						else
+							f3
+					)
+					|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
+					|> (\f3 -> concat(f3, properties)),
+					content
 				)
 				|> (\accessForm ->
 					if (^mSpeechAccessiblityEnabled) {
@@ -1033,7 +961,6 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 					(if (accessRole != "")
 						[
 							FAccessZorder(f.zorder),
-							AccessRole(accessRole),
 							FAccessEnabled(f.focusEnabled),
 							FAccessVisible(f.isInitialized),
 							FAccessTabOrder(f.tabOrder)
@@ -1046,20 +973,6 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 							FAccessTabOrder(f.tabOrder)
 						])
 					|> (\f3 ->
-						eitherMap(
-							keyOnClick,
-							\koc ->
-								arrayPush(
-									f3,
-									AccessCallback(\ -> {
-										koc(true);
-										koc(false);
-									})
-								),
-							f3
-						)
-					)
-					|> (\f3 ->
 						if (isUrlParameterTrue("accessorder"))
 							concat(
 								f3,
@@ -1071,10 +984,11 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 						else
 							f3
 					)
-					|> (\f3 -> concat(f3, accessAttributes)),
+					|> (\f3 -> concat(f3, properties)),
 					content
 				)
 		)
+	}
 }
 
 MComponent2TAccessibilityTabindex(manager : MaterialManager, f : MFocus, accessProperties : [FAccessProperty]) -> [FAccessProperty] {

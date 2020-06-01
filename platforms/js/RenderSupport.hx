@@ -472,6 +472,11 @@ class RenderSupport {
 		}
 	}
 
+	public static function setApplicationLanguage(languageCode : String) {
+		Browser.document.documentElement.setAttribute("lang", languageCode);
+		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
+	}
+
 	public static function getSafeArea() : Array<Float> {
 		var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
@@ -1260,6 +1265,22 @@ class RenderSupport {
 
 	public static function setAccessCallback(clip : Dynamic, callback : Void -> Void) : Void {
 		clip.accessCallback = callback;
+	}
+
+	public static function setClipTagName(clip : Dynamic, tagName : String) : Void {
+		if (clip.nativeWidget != null) {
+			clip.nativeWidget = null;
+			clip.tagName = tagName;
+			clip.createNativeWidget(tagName);
+
+			if (clip.updateNativeWidgetStyle != null) {
+				clip.updateNativeWidgetStyle();
+			}
+
+			DisplayObjectHelper.invalidateTransform(clip);
+		} else {
+			clip.tagName = tagName;
+		}
 	}
 
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {

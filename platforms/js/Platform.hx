@@ -12,6 +12,7 @@ class Platform {
 	public static var isIE : Bool = false;
 	public static var isEdge : Bool = false;
 	public static var isFirefox : Bool = false;
+	public static var isSamsung : Bool = false;
 	public static var isMobile : Bool = false;
 	public static var isRetinaDisplay : Bool = false;
 	public static var isHighDensityDisplay : Bool = false;
@@ -32,6 +33,7 @@ class Platform {
 	public static var isIE : Bool = ~/MSIE|Trident/i.match(Browser.window.navigator.userAgent);
 	public static var isEdge : Bool = ~/Edge/i.match(Browser.window.navigator.userAgent);
 	public static var isFirefox : Bool = ~/firefox/i.match(Browser.window.navigator.userAgent);
+	public static var isSamsung : Bool = ~/samsungbrowser/i.match(Browser.window.navigator.userAgent);
 
 	public static var isIEMobile : Bool = ~/iemobile/i.match(Browser.window.navigator.userAgent);
 	public static var isAndroid : Bool = ~/android/i.match(Browser.window.navigator.userAgent);

@@ -457,11 +457,7 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.step = step;
 			}
 
-			if (autocomplete != '') {
-				nativeWidget.setAttribute('autocomplete', autocomplete);
-			} else {
-				nativeWidget.removeAttribute('autocomplete');
-			}
+			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
 
 			if (maxChars >= 0) {
 				nativeWidget.maxLength = maxChars;
@@ -1513,7 +1509,7 @@ class TextClip extends NativeWidgetClip {
 
 			this.deleteNativeWidget();
 
-			nativeWidget = Browser.document.createElement(tagName);
+			nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 			this.updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
