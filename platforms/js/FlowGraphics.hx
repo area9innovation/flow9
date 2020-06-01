@@ -503,7 +503,7 @@ class FlowGraphics extends Graphics {
 								svg.removeChild(svg.lastElementChild);
 							}
 
-							element = svg.addElementNS('path');
+							element = svg.addElementNS(tagName);
 						} else {
 							element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
 							svg.appendChild(element);
