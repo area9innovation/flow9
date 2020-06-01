@@ -2606,8 +2606,12 @@ class RenderSupport {
 				regularFullScreenClipParent = FullWindowTargetClip.parent;
 				mainStage.addChild(FullWindowTargetClip);
 			} else {
-				regularFullScreenClipParent.addChild(FullWindowTargetClip);
-				regularFullScreenClipParent = null;
+				if (regularFullScreenClipParent != null) {
+					regularFullScreenClipParent.addChild(FullWindowTargetClip);
+					regularFullScreenClipParent = null;
+				} else {
+					mainStage.removeChild(FullWindowTargetClip);
+				}
 
 				for (child in mainStage.children) {
 					child.setClipVisible(true);
