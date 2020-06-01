@@ -168,7 +168,7 @@ public class RenderSupport extends NativeHost {
 	public Func0<Object> addFileDropListener(Object clib, Integer maxFilesCount, String mimeTypeRegExFilter, Func1<Object,Object[]> onDone) {
 		return null;
 	}
-	public Func0<Object> addVirtualKeyboardHeightListener(Func0<Object> fn) {
+	public Func0<Object> addVirtualKeyboardHeightListener(Func1<Object, Double> fn) {
 		return null;
 	}
 	public Func0<Object> addKeyEventListener(Object stg, String event, Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>> cb) {
@@ -435,6 +435,14 @@ public class RenderSupport extends NativeHost {
 		return null;
 	}
 	public Object compareImages(String image1, String image2, Func1<Object, String> cb) {
+		return null;
+	}
+
+	public Func0<Object> addUrlHashListener(Func1<Object,String> cb) {
+		return no_op;
+	}
+
+	public Object takeSnapshot(String path) {
 		return null;
 	}
 }

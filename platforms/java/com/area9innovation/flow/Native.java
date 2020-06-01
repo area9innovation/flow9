@@ -81,8 +81,8 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final String hostCall(String name, Object[] args) {
-		return "";
+	public final Object hostCall(String name, Object[] args) {
+		return null;
 	}
 
 	public final Object failWithError(String msg) {
@@ -125,6 +125,19 @@ public class Native extends NativeHost {
 			return "";
 		} catch (IOException e) {
 			return "";
+		}
+	}
+
+	public final Object getClipboardToCB(Func1<Object, String> cb) {
+		try {
+			Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+			String data = (String) clipboard.getData(DataFlavor.stringFlavor);
+			cb.invoke(data);
+			return null;
+		} catch (UnsupportedFlavorException e) {
+			return null;
+		} catch (IOException e) {
+			return null;
 		}
 	}
 
