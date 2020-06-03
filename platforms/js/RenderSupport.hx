@@ -1962,32 +1962,39 @@ class RenderSupport {
 
 			on(event, fn);
 			return function() { off(event, fn); }
-		} else if (event == "rollover") {
-			var checkFn = function() {
-				if (untyped !clip.pointerOver) {
-					untyped clip.pointerOver = true;
-					fn();
-				}
-			}
-
-			clip.on("pointerover", checkFn);
+		} else if (event == "pointerdown") {
+			clip.on("pointerdown", fn);
 			clip.invalidateInteractive();
 			return function() {
-				clip.off("pointerover", checkFn);
+				clip.off("pointerdown", fn);
 				clip.invalidateInteractive();
 			};
-		} else if (event == "rollout") {
-			var checkFn = function() {
-				if (untyped clip.pointerOver) {
-					untyped clip.pointerOver = false;
-					fn();
-				}
-			}
-
-			clip.on("pointerout", checkFn);
+		} else if (event == "pointerup") {
+			clip.on("pointerup", fn);
 			clip.invalidateInteractive();
 			return function() {
-				clip.off("pointerout", checkFn);
+				clip.off("pointerup", fn);
+				clip.invalidateInteractive();
+			};
+		} else if (event == "pointermove") {
+			clip.on("pointermove", fn);
+			clip.invalidateInteractive();
+			return function() {
+				clip.off("pointermove", fn);
+				clip.invalidateInteractive();
+			};
+		} else if (event == "rollover" || event == "pointerover") {
+			clip.on("pointerover", fn);
+			clip.invalidateInteractive();
+			return function() {
+				clip.off("pointerover", fn);
+				clip.invalidateInteractive();
+			};
+		} else if (event == "rollout" || event == "pointerout") {
+			clip.on("pointerout", fn);
+			clip.invalidateInteractive();
+			return function() {
+				clip.off("pointerout", fn);
 				clip.invalidateInteractive();
 			};
 		} else if (event == "scroll") {
@@ -2067,6 +2074,8 @@ class RenderSupport {
 	public static function getMouseX(?clip : DisplayObject) : Float {
 		if (clip == null || clip == PixiStage)
 			return MousePos.x;
+		else if (untyped clip.MousePos != null)
+			return untyped clip.MousePos.x;
 		else
 			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x');
 	}
@@ -2074,6 +2083,8 @@ class RenderSupport {
 	public static function getMouseY(?clip : DisplayObject) : Float {
 		if (clip == null || clip == PixiStage)
 			return MousePos.y;
+		else if (untyped clip.MousePos != null)
+			return untyped clip.MousePos.y;
 		else
 			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y');
 	}

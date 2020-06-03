@@ -240,7 +240,9 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
-		clip.interactive = untyped clip.scrollRectListener != null || clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null || clip.isInteractive;
+		clip.interactive = untyped clip.scrollRectListener != null || clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 ||
+			clip.listeners("pointerdown").length > 0 || clip.listeners("pointerup").length > 0 || clip.listeners("pointermove").length > 0 ||
+			clip.cursor != null || clip.isInteractive;
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
@@ -1489,15 +1491,144 @@ class DisplayObjectHelper {
 		}
 
 		if (clip.interactive) {
+			var onpointerdown = function(e : Dynamic) {
+				// Prevent default drop focus on canvas
+				// Works incorrectly in Edge
+				// e.preventDefault();
+
+				if (e.touches != null) {
+					untyped clip.TouchPoints = e.touches;
+					clip.emit("touchstart");
+
+					if (e.touches.length == 1) {
+						untyped RenderSupport.MousePos = new Point(e.touches[0].pageX, e.touches[0].pageY);
+						untyped clip.MousePos = new Point(e.touches[0].offsetX, e.touches[0].offsetY);
+
+						if (untyped !clip.pointerDown) {
+							untyped clip.pointerDown = true;
+							clip.emit("pointerdown");
+
+							untyped clip.MousePos = null;
+						}
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else {
+					untyped RenderSupport.MousePos = new Point(e.pageX, e.pageY);
+					untyped clip.MousePos = new Point(e.offsetX, e.offsetY);
+
+					if (e.which == 3 || e.button == 2) {
+						clip.emit("pointerrightdown");
+					} else if (e.which == 2 || e.button == 1) {
+						clip.emit("pointermiddledown");
+					} else {
+						if (untyped !clip.pointerDown) {
+							untyped clip.pointerDown = true;
+							clip.emit("pointerdown");
+						}
+					}
+
+					untyped clip.MousePos = null;
+				}
+
+				// e.stopPropagation();
+			};
+
+			var onpointerup = function(e : Dynamic) {
+				if (e.touches != null) {
+					untyped clip.TouchPoints = e.touches;
+					clip.emit("touchend");
+
+					GesturesDetector.endPinch();
+
+					if (e.touches.length == 0) {
+						if (untyped clip.pointerDown) {
+							untyped clip.pointerDown = false;
+							clip.emit("pointerup");
+
+							untyped clip.MousePos = null;
+						}
+					}
+				} else {
+					untyped RenderSupport.MousePos = new Point(e.pageX, e.pageY);
+					untyped clip.MousePos = new Point(e.offsetX, e.offsetY);
+
+					if (e.which == 3 || e.button == 2) {
+						clip.emit("pointerrightup");
+					} else if (e.which == 2 || e.button == 1) {
+						clip.emit("pointermiddleup");
+					} else {
+						if (untyped clip.pointerDown) {
+							untyped clip.pointerDown = false;
+							clip.emit("pointerup");
+						}
+					}
+
+					untyped clip.MousePos = null;
+				}
+
+				// e.stopPropagation();
+			};
+
+			var onpointermove = function(e : Dynamic) {
+				if (e.touches != null) {
+					e.preventDefault();
+
+					untyped clip.TouchPoints = e.touches;
+					clip.emit("touchmove");
+
+					if (e.touches.length == 1) {
+						untyped RenderSupport.MousePos = new Point(e.touches[0].pageX, e.touches[0].pageY);
+						untyped clip.MousePos = new Point(e.touches[0].offsetX, e.touches[0].offsetY);
+
+						clip.emit("pointermove");
+
+						untyped clip.MousePos = null;
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else {
+					untyped RenderSupport.MousePos = new Point(e.pageX, e.pageY);
+					untyped clip.MousePos = new Point(e.offsetX, e.offsetY);
+
+					clip.emit("pointermove");
+
+					untyped clip.MousePos = null;
+				}
+
+				// e.stopPropagation();
+			};
+
+			var onpointerover = function() {
+				if (untyped !clip.pointerOver) {
+					untyped clip.pointerOver = true;
+					clip.emit("pointerover");
+				}
+			}
+
+			var onpointerout = function() {
+				if (untyped clip.pointerOver) {
+					untyped clip.pointerOver = false;
+					clip.emit("pointerout");
+				}
+			}
+
+
 			if (Platform.isSafari || Platform.isMobile) {
 				if (nativeWidget.style.onmouseover == null) {
-					nativeWidget.onmouseover = function() { clip.emit("pointerover"); }
-					nativeWidget.onmouseout = function() { clip.emit("pointerout"); }
+					nativeWidget.onmouseover = onpointerover;
+					nativeWidget.onmouseout = onpointerout;
+					nativeWidget.onmousedown = onpointerdown;
+					nativeWidget.onmouseup = onpointerup;
+					nativeWidget.onmousemove = onpointermove;
 				}
 			} else {
 				if (nativeWidget.style.onpointerover == null) {
-					nativeWidget.onpointerover = function() { clip.emit("pointerover"); }
-					nativeWidget.onpointerout = function() { clip.emit("pointerout"); }
+					nativeWidget.onpointerover = onpointerover;
+					nativeWidget.onpointerout = onpointerout;
+					nativeWidget.onpointerdown = onpointerdown;
+					nativeWidget.onpointerup = onpointerup;
+					nativeWidget.onpointermove = onpointermove;
 				}
 			}
 
@@ -1542,15 +1673,25 @@ class DisplayObjectHelper {
 				};
 			} else {
 				nativeWidget.oncontextmenu = function (e) {
-					e.stopPropagation();
-					return untyped clip.isInput == true;
+					if (RenderSupport.PixiView.oncontextmenu != null) {
+						return RenderSupport.PixiView.oncontextmenu(e);
+					} else {
+						e.stopPropagation();
+						return untyped clip.isInput == true;
+					}
 				};
 			}
 		} else {
 			nativeWidget.onmouseover = null;
 			nativeWidget.onmouseout = null;
+			nativeWidget.onmousedown = null;
+			nativeWidget.onmouserup = null;
+			nativeWidget.onmousemove = null;
 			nativeWidget.onpointerover = null;
 			nativeWidget.onpointerout = null;
+			nativeWidget.onpointerdown = null;
+			nativeWidget.onpointerup = null;
+			nativeWidget.onpointermove = null;
 			nativeWidget.style.pointerEvents = null;
 			nativeWidget.ondragover = null;
 			nativeWidget.ondrop = null;
