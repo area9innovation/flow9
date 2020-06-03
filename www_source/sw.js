@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 14;
+var SERVICE_WORKER_VERSION = 15;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -34,23 +34,41 @@ var CacheMode = {
 var requestsSkipOnFetch = [];
 
 // Here we store filters, which contains rules `Which` and `How` to cache dynamic requests
-// The structure of `requestsCacheFilter` is
+// The structure of `requestsCacheFilterSimple` is
 //  [{
-//    url /*string*/,
-//    methods : [{
-//      method /*string*/,
-//      parameters : [{
-//        keyValues : [{ key /*string*/, value /*string*/ }],
-//        ignoreKeys : [ /*string*/ ]
+//    url: /*string*/,
+//    methods: [{
+//      method: /*string*/,
+//      parameters: [{
+//        keyValues: [{ key: /*string*/, value: /*string*/ }],
+//        ignoreKeys: [ /*string*/ ]
 //      }]
 //    }]
 //  }]
-var requestsCacheFilter = [];
+var requestsCacheFilterSimple = [];
+
+// The `requestsCacheFilterExternal` are the same as `requestsCacheFilterSimple`, but for
+//  external components, which provides it own js scripts to process the requests
+// The structure of `requestsCacheFilterExternal` is
+//  [{
+//    name: /*string*/,
+//    filters: [{    
+//      url /*string*/,
+//      methods : [{
+//        method: /*string*/,
+//        parameters : [{
+//          keyValues : [{ key /*string*/, value /*string*/ }],
+//          ignoreKeys : [ /*string*/ ]
+//        }]
+//      }]
+//    }]
+//  }]
+var requestsCacheFilterExternal = [];
 
 // Stats about how SW processed request from the last application start
 var requestsCount = {
   fromNetwork: 0,
-  fromCache:0,
+  fromCache: 0,
   skipped: 0,
   failed: 0
 }
@@ -143,11 +161,34 @@ var sendMessageToClient = function(event, data) {
   }, 5);
 };
 
+var cleanServiceWorkerCache = function() {
+  caches.delete(rangeResourceCache);
+  console.log("cache cleared", rangeResourceCache);
+
+  return caches.keys().then(function(keyList) {
+    return Promise.all(keyList.map(function(key) {
+      if (CACHE_NAME != key && SHARED_DATA_ENDPOINT != key) {
+        console.log("cache cleared", key);
+        return caches.delete(key);
+      }
+    }));
+  });
+};
+
 self.addEventListener('install', function(event) {
+  self.skipWaiting();
+
   // Perform install steps
   event.waitUntil(
     initializeCacheStorage()
   );
+});
+
+self.addEventListener('activate', function(event) {
+  // this cache is only for session
+  cleanServiceWorkerCache();
+
+  event.waitUntil(clients.claim());
 });
 
 self.addEventListener('fetch', function(event) {
@@ -213,7 +254,6 @@ self.addEventListener('fetch', function(event) {
       requestsCount.fromCache = 0;
       requestsCount.skipped = 0;
       requestsCount.failed = 0;
-
     }
 
     return res;
@@ -225,15 +265,24 @@ self.addEventListener('fetch', function(event) {
     var urlSplitted = extractUrlParameters(fixedUrl);
     var requestUrl = urlSplitted.baseUrl;
     var glueSymb = "?";
+    var usedCacheName = CACHE_NAME;
 
     if (request.method == "GET") {
       var cacheFilter = findCacheFilter(fixedUrl, request.method, false);
       var fixedUrlToCache = fixedUrl;
       if (!isEmpty(cacheFilter)) {
-        fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
+        if (cacheFilter.isSimple) {
+          fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
+          usedCacheName = CACHE_NAME_DYNAMIC;
+        } else {
+          if (!isEmpty(cacheFilter.onNewUrlString))
+            fixedUrl = cacheFilter.onNewUrlString(request, fixedUrl);
+          fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
+          usedCacheName = "flow-" + cacheFilter.name + "-cache";
+        }
       }
 
-      return requestData = {
+      return {
         urlNewFull: fixedUrl,
         urlNewToCache: fixedUrlToCache,
         isCustomCaching: (!isEmpty(cacheFilter)),
@@ -242,6 +291,7 @@ self.addEventListener('fetch', function(event) {
         customCacheFilter: cacheFilter,
         originalRequest: request,
         isFileUploading: isFileUploadingRequestFn(request),
+        usedCacheName: usedCacheName,
         cloneRequest: function() { return request.clone(); }
       };
     } else {
@@ -288,14 +338,106 @@ self.addEventListener('fetch', function(event) {
     method = method.toLowerCase();
     var urlParams = extractUrlParameters(fixedUrl).parameters;
 
-    var cFilters = requestsCacheFilter.map(function(elUrl) {
+    var cFilters = findCacheFilterExternal(fixedUrl, method, urlParams, checkWithoutParameters);
+    if (!isEmpty(cFilters) && cFilters.length > 0 && !isEmpty(cFilters[0])) {
+      return cFilters[0];
+    } else {
+      cFilters = findCacheFilterSimple(fixedUrl, method, urlParams, checkWithoutParameters);
+      if (!isEmpty(cFilters) && cFilters.length > 0 && !isEmpty(cFilters[0])) {
+        return cFilters[0];
+      } else {
+        return undefined;
+      }
+    }
+  }
+
+  var findCacheFilterExternal = function(fixedUrl, method, urlParams, checkWithoutParameters) {
+    return requestsCacheFilterExternal.map(function(elComp) {
+        return elComp.filters.map(function(elFilter) {
+            // Does url matched
+            if (elFilter.url == "" || fixedUrl.startsWith(elFilter.url.toLowerCase())) {
+              methods = elFilter.methods.map(function(elMethod) {
+                  // Does method matched
+                  if (elMethod.method == "" || elMethod.method.toLowerCase() == method) {
+                    if (elMethod.parameters.length == 0 || checkWithoutParameters) {
+                      return [{
+                        method: elMethod.method,
+                        parameters: [],
+                        ignoreKeys: [],
+                        isSimple: false,
+                        name: elComp.name,
+                        onNewUrlString: elMethod.onNewUrlStringDefault
+                      }];
+                    } else {
+                      var checkRequestParameters = function(parameter) {
+                        return parameter.keyValues.every(function(keyValue) {
+                          var pair = (keyValue.key + "=" + keyValue.value);
+                          return (urlParams.findIndex(function(up) {
+                            return (pair == up);
+                          }) != -1);
+                        });
+                      };
+
+                      return elMethod.parameters.filter(function(parameter) {
+                          return parameter.keyValues.length == 0 || checkRequestParameters(parameter);
+                        })
+                        .map(function(parameter) {
+                          return {
+                            method: elMethod.method,
+                            parameters: parameter.keyValues,
+                            ignoreKeys: parameter.ignoreKeys,
+                            isSimple: false,
+                            name: elComp.name,
+                            onNewUrlString: parameter.onNewUrlString
+                          };
+                        });
+                    }
+                  }
+                })
+                .filter(function(elMethod) { return elMethod != undefined; })
+                .flat();
+
+              if (methods.length > 0) {
+                return methods.map(function(elMethod) {
+                  return {
+                    url: elFilter.url,
+                    method: elMethod.method,
+                    parameters: elMethod.parameters,
+                    ignoreKeys: elMethod.ignoreKeys,
+                    isSimple: false,
+                    name: elMethod.name,
+                    onNewUrlString: elMethod.onNewUrlString
+                  };
+                });
+              } else {
+                return undefined;
+              }
+            } else {
+              return undefined;
+            }
+          })
+          .filter(function(el1) { return el1 != undefined; })
+          .flat();
+      })
+      .filter(function(el1) { return el1 != undefined; })
+      .flat();
+  }
+
+  var findCacheFilterSimple = function(fixedUrl, method, urlParams, checkWithoutParameters) {
+    return requestsCacheFilterSimple.map(function(elUrl) {
         // Does url matched
         if (elUrl.url == "" || fixedUrl.startsWith(elUrl.url)) {
           methods = elUrl.methods.map(function(elMethod) {
               // Does method matched
               if (elMethod.method == "" || elMethod.method == method) {
                 if (elMethod.parameters.length == 0 || checkWithoutParameters) {
-                  return [{ method: elMethod.method, parameters: [], ignoreKeys: [] }];
+                  return [{
+                    method: elMethod.method,
+                    parameters: [],
+                    ignoreKeys: [],
+                    isSimple: true,
+                    name: ""
+                  }];
                 } else {
                   var checkRequestParameters = function(parameter) {
                     return parameter.keyValues.every(function(keyValue) {
@@ -310,7 +452,13 @@ self.addEventListener('fetch', function(event) {
                       return parameter.keyValues.length == 0 || checkRequestParameters(parameter);
                     })
                     .map(function(parameter) {
-                      return { method: elMethod.method, parameters: parameter.keyValues, ignoreKeys: parameter.ignoreKeys };
+                      return {
+                        method: elMethod.method,
+                        parameters: parameter.keyValues,
+                        ignoreKeys: parameter.ignoreKeys,
+                        isSimple: true,
+                        name: ""
+                      };
                     });
                 }
               }
@@ -320,7 +468,14 @@ self.addEventListener('fetch', function(event) {
 
           if (methods.length > 0) {
             return methods.map(function(elMethod) {
-              return { url: elUrl.url, method: elMethod.method, parameters: elMethod.parameters, ignoreKeys: elMethod.ignoreKeys };
+              return {
+                url: elUrl.url,
+                method: elMethod.method,
+                parameters: elMethod.parameters,
+                ignoreKeys: elMethod.ignoreKeys,
+                isSimple: true,
+                name: ""
+              };
             });
           } else {
             return undefined;
@@ -331,13 +486,10 @@ self.addEventListener('fetch', function(event) {
       })
       .filter(function(el1) { return el1 != undefined; })
       .flat();
-
-    if (cFilters.length > 0) return cFilters[0];
-    else return undefined;
   }
 
   // Searching the filter to which the request is match (without parameters)
-  var findCacheFilterSimple = function(request) {
+  var findCacheFilterWithoutParameters = function(request) {
     var fixedUrl = urlAddBaseLocation(request.url);
     return findCacheFilter(fixedUrl, request.method, true);
   }
@@ -478,7 +630,7 @@ self.addEventListener('fetch', function(event) {
         (isEmpty(requestData) || !requestData.isCustomCaching)
       ) &&
       // Skip POST request which url is not match any filter (without parameters)
-      isEmpty(findCacheFilterSimple(request)) &&
+      isEmpty(findCacheFilterWithoutParameters(request)) &&
       // Skip if it is not app loader
       !isStampForApplicationJsRequestInner(request.url);
   }
@@ -521,13 +673,11 @@ self.addEventListener('fetch', function(event) {
 
     var doCacheFn = function(response) {
       var fixedRequest = prepareRequestToCache(requestData);
-      var usedCacheName = CACHE_NAME;
-      if (requestData.isCustomCaching) usedCacheName = CACHE_NAME_DYNAMIC;
 
       // Cache the request if it's match any customized filter or
       // automatically cache uncached static resources
       if (requestData.isCustomCaching || requestData.isStaticCaching || requestData.isAppMainRequest) {
-        caches.open(usedCacheName).then(function(cache) {
+        caches.open(requestData.usedCacheName).then(function(cache) {
           cache.put(fixedRequest, response.clone());
 
           sendMessageToClient(event, {
@@ -541,16 +691,16 @@ self.addEventListener('fetch', function(event) {
 
     var doFetchFn = function() {
       return fetch(requestData.cloneRequest()).then(function(response) {
-        if (response.status == 200 && response.type == "basic") {
-          if (isStampForApplicationJsRequestInner(requestData.originalRequest.url))
-            cleanTimestampSensitiveRequests(requestData.originalRequest.url);
-          doCacheFn(response);
-        }
+          if (response.status == 200 && response.type == "basic") {
+            if (isStampForApplicationJsRequestInner(requestData.originalRequest.url))
+              cleanTimestampSensitiveRequests(requestData.originalRequest.url);
+            doCacheFn(response);
+          }
 
-        requestsCount.fromNetwork++;
-        return response.clone();
-      })
-      .catch(function() { requestsCount.failed++; return Promise.reject(); });
+          requestsCount.fromNetwork++;
+          return response.clone();
+        })
+        .catch(function() { requestsCount.failed++; return Promise.reject(); });
     };
 
     if (requestData.isFileUploading) {
@@ -671,8 +821,18 @@ self.addEventListener('fetch', function(event) {
           .then(function(urlAndBody) {
             var cacheFilter = findCacheFilter(urlAndBody.urlNewFull, request.method, false);
             var fixedUrlToCache = urlAndBody.urlNewFull;
+            var usedCacheName = CACHE_NAME;
+
             if (!isEmpty(cacheFilter)) {
-              fixedUrlToCache = filterUrlParameters(urlAndBody.urlNewFull, cacheFilter.ignoreKeys);
+              if (cacheFilter.isSimple) {
+                fixedUrlToCache = filterUrlParameters(fixedUrlToCache, cacheFilter.ignoreKeys);
+                usedCacheName = CACHE_NAME_DYNAMIC;
+              } else {
+                if (!isEmpty(cacheFilter.onNewUrlString))
+                  fixedUrlToCache = cacheFilter.onNewUrlString(request, fixedUrlToCache);
+                fixedUrlToCache = filterUrlParameters(fixedUrlToCache, cacheFilter.ignoreKeys);
+                usedCacheName = "flow-" + cacheFilter.name + "-cache";
+              }
             }
 
             return {
@@ -684,6 +844,7 @@ self.addEventListener('fetch', function(event) {
               customCacheFilter: cacheFilter,
               originalRequest: request,
               isFileUploading: urlAndBody.isFileUploading,
+              usedCacheName: usedCacheName,
               cloneRequest: function() { return request.clone(); }
             };
           });
@@ -736,34 +897,6 @@ self.addEventListener('fetch', function(event) {
   }
 });
 
-var cleanServiceWorkerCache = function() {
-  caches.delete(rangeResourceCache);
-  console.log("cache cleared", rangeResourceCache);
-
-  return caches.keys().then(function(keyList) {
-    return Promise.all(keyList.map(function(key) {
-      if (CACHE_NAME != key && SHARED_DATA_ENDPOINT != key) {
-        console.log("cache cleared", key);
-        return caches.delete(key);
-      }
-    }));
-  });
-};
-
-self.addEventListener('install', event => {
-  self.skipWaiting();
-
-  event.waitUntil(Promise.resolve());
-});
-
-self.addEventListener('activate', function(event) {
-  // this cache is only for session
-  cleanServiceWorkerCache();
-
-  event.waitUntil(clients.claim());
-});
-
-// Currently not used
 self.addEventListener('message', function(event) {
   var respond = function(data) {
     if (event.ports.length > 0) {
@@ -834,7 +967,7 @@ self.addEventListener('message', function(event) {
   };
 
   if (event.data.action == "add_dynamic_resource_extension") {
-    event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
+    event.data.data.value = (event.data.data.value.startsWith(".") ? event.data.data.value.substr(1) : event.data.data.value).toLowerCase();
 
     if (!dynamicResourcesExtensions.includes("." + event.data.data.value)) {
       dynamicResourcesExtensions.push("." + event.data.data.value);
@@ -842,7 +975,7 @@ self.addEventListener('message', function(event) {
 
     respond({ status: "OK" });
   } else if (event.data.action == "remove_dynamic_resource_extension") {
-    event.data.data.value = (event.data.data.value.startsWith(".")?event.data.data.value.substr(1):event.data.data.value).toLowerCase();
+    event.data.data.value = (event.data.data.value.startsWith(".") ? event.data.data.value.substr(1) : event.data.data.value).toLowerCase();
 
     if (dynamicResourcesExtensions.includes("." + event.data.data.value)) {
       dynamicResourcesExtensions = dynamicResourcesExtensions.filter(v => v != ("." + event.data.data.value));
@@ -886,21 +1019,21 @@ self.addEventListener('message', function(event) {
     //event.data.data.cacheIfParametersMatch = event.data.data.cacheIfParametersMatch.map(function(el) { return el .toLowerCase();; });
     event.data.data.ignoreParameterKeysOnCache = event.data.data.ignoreParameterKeysOnCache.map(function(el) { return el.toLowerCase(); });
 
-    var idx1 = requestsCacheFilter.findIndex(function(el) { return isEqualStrings(event.data.data.cacheIfUrlMatch, el.url); });
+    var idx1 = requestsCacheFilterSimple.findIndex(function(el) { return isEqualStrings(event.data.data.cacheIfUrlMatch, el.url); });
     if (idx1 == -1) {
-      requestsCacheFilter.push({ url: getNotEmptyString(event.data.data.cacheIfUrlMatch), methods: [] });
-      idx1 = requestsCacheFilter.length - 1;
+      requestsCacheFilterSimple.push({ url: getNotEmptyString(event.data.data.cacheIfUrlMatch), methods: [] });
+      idx1 = requestsCacheFilterSimple.length - 1;
     }
 
-    var idx2 = requestsCacheFilter[idx1].methods.findIndex(function(el) {
+    var idx2 = requestsCacheFilterSimple[idx1].methods.findIndex(function(el) {
       return isEqualStrings(event.data.data.method, el.method);
     });
     if (idx2 == -1) {
-      requestsCacheFilter[idx1].methods.push({ method: getNotEmptyString(event.data.data.method), parameters: [] });
-      idx2 = requestsCacheFilter[idx1].methods.length - 1;
+      requestsCacheFilterSimple[idx1].methods.push({ method: getNotEmptyString(event.data.data.method), parameters: [] });
+      idx2 = requestsCacheFilterSimple[idx1].methods.length - 1;
     }
 
-    var idx3 = requestsCacheFilter[idx1].methods[idx2].parameters.findIndex(function(els) {
+    var idx3 = requestsCacheFilterSimple[idx1].methods[idx2].parameters.findIndex(function(els) {
       if (els.keyValues.length == event.data.data.cacheIfParametersMatch.length) {
         return event.data.data.cacheIfParametersMatch.every(function(pair) {
           return (pair.length == 2 && els.keyValues.findIndex(function(kv) {
@@ -913,12 +1046,12 @@ self.addEventListener('message', function(event) {
     });
 
     if (idx3 == -1) {
-      requestsCacheFilter[idx1].methods[idx2].parameters.push({
+      requestsCacheFilterSimple[idx1].methods[idx2].parameters.push({
         keyValues: event.data.data.cacheIfParametersMatch.map(function(pair) { return { key: pair[0], value: pair[1] }; }),
         ignoreKeys: event.data.data.ignoreParameterKeysOnCache
       });
     } else {
-      requestsCacheFilter[idx1].methods[idx2].parameters[idx3] = {
+      requestsCacheFilterSimple[idx1].methods[idx2].parameters[idx3] = {
         keyValues: event.data.data.cacheIfParametersMatch.map(function(pair) { return { key: pair[0], value: pair[1] }; }),
         ignoreKeys: event.data.data.ignoreParameterKeysOnCache
       };
