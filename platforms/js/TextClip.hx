@@ -1178,6 +1178,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
+		nativeWidget.scrollIntoView();
 		var newValue : String = nativeWidget.value;
 
 		if (maxChars > 0) {

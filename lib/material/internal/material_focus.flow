@@ -16,15 +16,17 @@ export {
 		active : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>, keepFocus : bool, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>,
 		iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, fn : (MFocus) -> Tropic) -> Tropic;
 	addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
-		horizontal : Maybe<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>,
-		behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>, iScriptId : Maybe<string>,
-		tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
+		horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
+		enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
+		iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
+		fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
 
 	// yield focus to the next/previous focus id. 'gotonext' gives the direction.
 	yieldFocus(manager : MaterialManager, gotonext : bool) -> void;
 	yieldFocusVH(manager : MaterialManager, gotonext : bool, vertical : bool) -> void;
 	resetMFocus(manager : MaterialManager) -> void;
 	previousMFocus(manager : MaterialManager) -> void;
+	scrollIntoView(focus : MaterialFocus) -> void;
 
 	getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
 	getPreviousFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
@@ -409,9 +411,10 @@ addMaterialFocusId(
 }
 
 addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
-	horizontal : Maybe<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,  enabled : Transform<bool>, focusEnabled : Transform<bool>,
-	behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>, iScriptId : Maybe<string>,
-	tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
+	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>, 
+	enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
+	iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
+	fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
 	defaultFocusId = make(-1);
 	focusId = either(tabOrder, defaultFocusId);
 	focusedId = make(-1);
@@ -466,6 +469,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				active,
 				fselect(pi.transformMatrix, getTransformPositionScale |> FLift),
 				fsubselect2(boxWidth, boxHeight, \w, h -> fwidthheight(w, h)),
+				scrollInfo,
 				rtl,
 				theme,
 				behavioursWithFocusedId,
@@ -525,6 +529,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 								\fc -> {
 									if (fgetValue(fc.focusEnabled)) {
 										nextDistinct(fc.focused, true);
+										scrollIntoView(fc);
 									} else {
 										nextDistinct(fc.focused, false);
 										deferred(\ -> next(f.focusedId, -1));
@@ -532,6 +537,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 								},
 								\fc -> {
 									nextDistinct(fc.focused, true);
+									scrollIntoView(fc);
 								}
 							));
 
@@ -796,6 +802,50 @@ resetMFocus(manager : MaterialManager) -> void {
 
 previousMFocus(manager : MaterialManager) -> void {
 	maybeApply(getPreviousFocusedItem(manager), \f -> nextDistinct(f.focused, true));
+}
+
+scrollIntoView(focus : MaterialFocus) -> void {
+	switchMaterialFocus(
+		focus,
+		\f -> {
+			scrollIntoView2(f.parent, fgetValue(f.position) |> PositionScale2Point, fgetValue(f.widthHeight))
+		},
+		\f -> {
+			maybeApply(f.parent, \p -> scrollIntoView2(p, fgetValue(f.position) |> PositionScale2Point, fgetValue(f.widthHeight)));
+		}
+	)
+}
+
+scrollIntoView2(parent : MFocusGroup, position : Point, widthHeight : WidthHeight) -> void {
+	eitherFn(
+		parent.scrollInfo,
+		\si -> {
+			pp = fgetValue(parent.position) |> PositionScale2Point;
+			sp = getValue(si.position);
+			cwh = fgetValue(si.contentWH);
+			bwh = fgetValue(parent.widthHeight);
+
+			p1 =
+				Point(
+					max(min(position.x - pp.x + sp.x, cwh.width - bwh.width), 0.0),
+					max(min(position.y - pp.y + sp.y, cwh.height - bwh.height), 0.0)
+				);
+			p2 =
+				Point(
+					max(min(position.x + widthHeight.width - pp.x + sp.x - bwh.width, cwh.width - bwh.width), 0.0),
+					max(min(position.y + widthHeight.height - pp.y + sp.y - bwh.height, cwh.height - bwh.height), 0.0)
+				);
+			p = Point(max(min(sp.x, max(p1.x, p2.x)), min(p1.x, p2.x)), max(min(sp.y, max(p1.y, p2.y)), min(p1.y, p2.y)));
+			d = Point(getValue(si.position).x - p.x, getValue(si.position).y - p.y);
+
+			nextDistinct(si.position, p);
+
+			maybeApply(parent.parent, \par -> scrollIntoView2(par, Point(position.x - d.x, position.y - d.y), widthHeight));
+		},
+		\ -> {
+			maybeApply(parent.parent, \par -> scrollIntoView2(par, position, widthHeight));
+		}
+	);
 }
 
 getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus> {
