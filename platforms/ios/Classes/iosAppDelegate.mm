@@ -4,7 +4,7 @@
 #import <iostream>
 
 #ifdef HOCKEY_APP_ID
-#import <HockeySDK/HockeySDK.h>
+//#import <HockeySDK/HockeySDK.h>
 #endif
 
 #ifdef LOCALYTICS_APP_KEY
@@ -121,9 +121,9 @@ using namespace std;
 #endif
 
 #ifdef HOCKEY_APP_ID
-    [[BITHockeyManager sharedHockeyManager] configureWithIdentifier: HOCKEY_APP_ID];
-    [[BITHockeyManager sharedHockeyManager] startManager];
-    [[BITHockeyManager sharedHockeyManager].authenticator authenticateInstallation];
+//    [[BITHockeyManager sharedHockeyManager] configureWithIdentifier: HOCKEY_APP_ID];
+//    [[BITHockeyManager sharedHockeyManager] startManager];
+//    [[BITHockeyManager sharedHockeyManager].authenticator authenticateInstallation];
 #endif
     // Crashes handling is enabled by default
     

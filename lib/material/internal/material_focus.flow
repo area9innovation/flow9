@@ -1,7 +1,7 @@
 import material/material;
 import material/internal/material_iscript_internal;
 import sys/speechsynthesis;
-import material/internal/mlog;
+import material/internal/material_debug;
 
 export {
 	// when a modal dialog comes, use this to increase the z-order
@@ -16,15 +16,17 @@ export {
 		active : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>, keepFocus : bool, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>,
 		iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, fn : (MFocus) -> Tropic) -> Tropic;
 	addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
-		horizontal : Maybe<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>,
-		behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>, iScriptId : Maybe<string>,
-		tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
+		horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
+		enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
+		iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
+		fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
 
 	// yield focus to the next/previous focus id. 'gotonext' gives the direction.
 	yieldFocus(manager : MaterialManager, gotonext : bool) -> void;
 	yieldFocusVH(manager : MaterialManager, gotonext : bool, vertical : bool) -> void;
 	resetMFocus(manager : MaterialManager) -> void;
 	previousMFocus(manager : MaterialManager) -> void;
+	scrollIntoView(focus : MaterialFocus) -> void;
 
 	getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
 	getPreviousFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
@@ -44,8 +46,7 @@ export {
 	filterIScriptIdentifierWithoutFormPosition(id : List<IScriptIdentifier>) -> List<IScriptIdentifier>;
 	filterIScriptIdentifierOnlyFormPosition(id : List<IScriptIdentifier>) -> List<IScriptFormPosition>;
 
-	MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, keyOnClick : Maybe<(bool) -> void>,
-		accessRole : string, shortcut : string, oneWayConnection : Maybe<bool>, accessAttributes : [FAccessAttribute]) -> Tropic;
+	MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, properties : [FAccessProperty]) -> Tropic;
 
 	mClickButton(manager : MaterialManager, name : string) -> void;
 
@@ -410,9 +411,10 @@ addMaterialFocusId(
 }
 
 addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
-	horizontal : Maybe<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,  enabled : Transform<bool>, focusEnabled : Transform<bool>,
-	behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>, iScriptId : Maybe<string>,
-	tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
+	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>, 
+	enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
+	iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
+	fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
 	defaultFocusId = make(-1);
 	focusId = either(tabOrder, defaultFocusId);
 	focusedId = make(-1);
@@ -467,6 +469,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				active,
 				fselect(pi.transformMatrix, getTransformPositionScale |> FLift),
 				fsubselect2(boxWidth, boxHeight, \w, h -> fwidthheight(w, h)),
+				scrollInfo,
 				rtl,
 				theme,
 				behavioursWithFocusedId,
@@ -526,6 +529,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 								\fc -> {
 									if (fgetValue(fc.focusEnabled)) {
 										nextDistinct(fc.focused, true);
+										scrollIntoView(fc);
 									} else {
 										nextDistinct(fc.focused, false);
 										deferred(\ -> next(f.focusedId, -1));
@@ -533,6 +537,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 								},
 								\fc -> {
 									nextDistinct(fc.focused, true);
+									scrollIntoView(fc);
 								}
 							));
 
@@ -799,6 +804,50 @@ previousMFocus(manager : MaterialManager) -> void {
 	maybeApply(getPreviousFocusedItem(manager), \f -> nextDistinct(f.focused, true));
 }
 
+scrollIntoView(focus : MaterialFocus) -> void {
+	switchMaterialFocus(
+		focus,
+		\f -> {
+			scrollIntoView2(f.parent, fgetValue(f.position) |> PositionScale2Point, fgetValue(f.widthHeight))
+		},
+		\f -> {
+			maybeApply(f.parent, \p -> scrollIntoView2(p, fgetValue(f.position) |> PositionScale2Point, fgetValue(f.widthHeight)));
+		}
+	)
+}
+
+scrollIntoView2(parent : MFocusGroup, position : Point, widthHeight : WidthHeight) -> void {
+	eitherFn(
+		parent.scrollInfo,
+		\si -> {
+			pp = fgetValue(parent.position) |> PositionScale2Point;
+			sp = getValue(si.position);
+			cwh = fgetValue(si.contentWH);
+			bwh = fgetValue(parent.widthHeight);
+
+			p1 =
+				Point(
+					max(min(position.x - pp.x + sp.x, cwh.width - bwh.width), 0.0),
+					max(min(position.y - pp.y + sp.y, cwh.height - bwh.height), 0.0)
+				);
+			p2 =
+				Point(
+					max(min(position.x + widthHeight.width - pp.x + sp.x - bwh.width, cwh.width - bwh.width), 0.0),
+					max(min(position.y + widthHeight.height - pp.y + sp.y - bwh.height, cwh.height - bwh.height), 0.0)
+				);
+			p = Point(max(min(sp.x, max(p1.x, p2.x)), min(p1.x, p2.x)), max(min(sp.y, max(p1.y, p2.y)), min(p1.y, p2.y)));
+			d = Point(getValue(si.position).x - p.x, getValue(si.position).y - p.y);
+
+			nextDistinct(si.position, p);
+
+			maybeApply(parent.parent, \par -> scrollIntoView2(par, Point(position.x - d.x, position.y - d.y), widthHeight));
+		},
+		\ -> {
+			maybeApply(parent.parent, \par -> scrollIntoView2(par, position, widthHeight));
+		}
+	);
+}
+
 getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus> {
 	fgetValue(getCurrentFocusedItemBehaviour(manager));
 }
@@ -885,116 +934,45 @@ getFFormById(f : FForm, id : List<IScriptFormPosition>) -> Transform<Maybe<FForm
 	}
 }
 
-MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, keyOnClick : Maybe<(bool) -> void>, accessRole : string,
-	shortcut : string, oneWayConnection : Maybe<bool>, accessAttributes : [FAccessAttribute]) -> Tropic {
-
+MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, properties : [FAccessProperty]) -> Tropic {
 	if (focus.focusEnabled == const(false) || (!^fAccessibilityEnabled && !cpp) || (mobile && !js) ||
-		switchMaterialFocus(focus, \f -> fgetValue(f.parent.id) == -2, \f -> eitherMap(f.parent, \p -> fgetValue(p.id) == -2, false)))
+		switchMaterialFocus(focus, \f -> fgetValue(f.parent.id) == -2, \f -> eitherMap(f.parent, \p -> fgetValue(p.id) == -2, false))) {
 		content
-	else
+	} else {
+		accessRole = extractStruct(properties, AccessRole("")).role;
+
 		switchMaterialFocus(
 			focus,
 			\f ->
-				eitherFn(
-					oneWayConnection,
-					\owc -> {
-						focused = make(false);
-						accessEnabled = if (owc) fmin(f.focusEnabled, fnot(f.focused)) else f.focusEnabled;
-
-						TConstruct(
-							[
-								makeSubscribe(focused, \foc -> if (foc) nextDistinct(f.focused, true) else if (!owc)
-									deferred(\ -> if (getValue(f.focused)) nextDistinct(focused, true))),
-								makeSubscribe(f.focused, \foc -> if (foc) nextDistinct(focused, true))
-							],
-							TAccess(
-								[
-									FAccessZorder(f.parent.zorder),
-									AccessRole(accessRole),
-									AccessFocused(focused),
-									FAccessEnabled(accessEnabled),
-									FAccessTabOrder(f.tabOrder)
-								]
-								|> (\f3 ->
-									eitherMap(
-										keyOnClick,
-										\koc ->
-											arrayPush(
-												f3,
-												AccessCallback(\ -> {
-													koc(true);
-													koc(false);
-												})
-											),
-										f3
-									)
+				TAccess(
+					(if (accessRole != "")
+						[
+							FAccessZorder(f.parent.zorder),
+							AccessFocused(f.focused),
+							FAccessEnabled(f.focusEnabled),
+							FAccessTabOrder(f.tabOrder)
+						]
+					else
+						[
+							FAccessZorder(f.parent.zorder),
+							AccessRole("group"),
+							FAccessTabOrder(f.tabOrder)
+						])
+					|> (\f3 ->
+						if (isUrlParameterTrue("accessorder"))
+							concat(
+									f3,
+									[
+										FAccessAttribute("aria-roledescription", const(f.name)),
+										FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
+									]
 								)
-								|> (\f3 ->
-									if (isUrlParameterTrue("accessorder"))
-										concat(
-											f3,
-											[
-												FAccessAttribute("aria-roledescription", const(f.name)),
-												FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
-											]
-										)
-									else
-										f3
-								)
-								|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
-								|> (\f3 -> concat(f3, accessAttributes))
-								|> (\f3 -> if (shortcut != "") arrayPush(f3, AccessKbdShortcutString(shortcut)) else f3),
-								content
-							)
-						)
-					},
-					\ ->
-						TAccess(
-							(if (accessRole != "")
-								[
-									FAccessZorder(f.parent.zorder),
-									AccessRole(accessRole),
-									AccessFocused(f.focused),
-									FAccessEnabled(f.focusEnabled),
-									FAccessTabOrder(f.tabOrder)
-								]
-							else
-								[
-									FAccessZorder(f.parent.zorder),
-									AccessRole("group"),
-									FAccessTabOrder(f.tabOrder)
-								])
-							|> (\f3 ->
-								eitherMap(
-									keyOnClick,
-									\koc ->
-										arrayPush(
-											f3,
-											AccessCallback(\ -> {
-												koc(true);
-												koc(false);
-											})
-										),
-									f3
-								)
-							)
-							|> (\f3 ->
-								if (isUrlParameterTrue("accessorder"))
-									concat(
-											f3,
-											[
-												FAccessAttribute("aria-roledescription", const(f.name)),
-												FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
-											]
-										)
-								else
-									f3
-							)
-							|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
-							|> (\f3 -> concat(f3, accessAttributes))
-							|> (\f3 -> if (shortcut != "") arrayPush(f3, AccessKbdShortcutString(shortcut)) else f3),
-							content
-						)
+						else
+							f3
+					)
+					|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
+					|> (\f3 -> concat(f3, properties)),
+					content
 				)
 				|> (\accessForm ->
 					if (^mSpeechAccessiblityEnabled) {
@@ -1033,7 +1011,6 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 					(if (accessRole != "")
 						[
 							FAccessZorder(f.zorder),
-							AccessRole(accessRole),
 							FAccessEnabled(f.focusEnabled),
 							FAccessVisible(f.isInitialized),
 							FAccessTabOrder(f.tabOrder)
@@ -1046,20 +1023,6 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 							FAccessTabOrder(f.tabOrder)
 						])
 					|> (\f3 ->
-						eitherMap(
-							keyOnClick,
-							\koc ->
-								arrayPush(
-									f3,
-									AccessCallback(\ -> {
-										koc(true);
-										koc(false);
-									})
-								),
-							f3
-						)
-					)
-					|> (\f3 ->
 						if (isUrlParameterTrue("accessorder"))
 							concat(
 								f3,
@@ -1071,10 +1034,11 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 						else
 							f3
 					)
-					|> (\f3 -> concat(f3, accessAttributes)),
+					|> (\f3 -> concat(f3, properties)),
 					content
 				)
 		)
+	}
 }
 
 MComponent2TAccessibilityTabindex(manager : MaterialManager, f : MFocus, accessProperties : [FAccessProperty]) -> [FAccessProperty] {
