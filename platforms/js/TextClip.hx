@@ -1150,6 +1150,10 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		invalidateMetrics();
+
+		if (Platform.isMobile) {
+			Native.timer(500, RenderSupport.ensureCurrentInputVisible);
+		}
 	}
 
 	private function onBlur(e : Event) : Void {
@@ -1178,7 +1182,6 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
-		nativeWidget.scrollIntoView();
 		var newValue : String = nativeWidget.value;
 
 		if (maxChars > 0) {
@@ -1213,6 +1216,10 @@ class TextClip extends NativeWidgetClip {
 		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
 		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 		emit('input', newValue);
+
+		if (Platform.isMobile) {
+			RenderSupport.ensureCurrentInputVisible();
+		}
 	}
 
 	private function onScroll(e : Dynamic) {

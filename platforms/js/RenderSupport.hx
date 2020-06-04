@@ -1056,28 +1056,59 @@ class RenderSupport {
 		}, delay);
 	}
 
+	public static var ensureCurrentInputVisibleHelper : Element = null;
+
+	public static function enableEnsureCurrentInputVisible() : Void {
+		if (Platform.isMobile && ensureCurrentInputVisibleHelper == null) {
+			ensureCurrentInputVisibleHelper = Browser.document.createElement("div");
+
+			ensureCurrentInputVisibleHelper.style.top = '0px';
+			ensureCurrentInputVisibleHelper.style.left = '0px';
+			ensureCurrentInputVisibleHelper.style.width = '10000px';
+			ensureCurrentInputVisibleHelper.style.height = '10000px';
+			ensureCurrentInputVisibleHelper.style.position = 'absolute';
+
+			Browser.document.body.appendChild(ensureCurrentInputVisibleHelper);
+			Browser.document.body.style.overflow = "scroll";
+		}
+	}
+
+	public static function disableEnsureCurrentInputVisible() : Void {
+		if (ensureCurrentInputVisibleHelper != null) {
+			Browser.document.body.removeChild(ensureCurrentInputVisibleHelper);
+			ensureCurrentInputVisibleHelper = null;
+			Browser.window.scrollTo(0, 0);
+			Browser.document.body.style.overflow = "hidden";
+		}
+	}
+
 	public static function ensureCurrentInputVisible() : Void {
-		var focused_node = Browser.document.activeElement;
-		if (focused_node != null) {
-			var node_name : String = focused_node.nodeName;
-			node_name = node_name.toLowerCase();
-			if (node_name == "input" || node_name == "textarea") {
-				//ios doesn't update window height when virtual keyboard is shown
-				var visibleAreaHeight = if (Platform.isIOS) Browser.window.innerHeight / 4 else Browser.window.innerHeight;
-				var rect = focused_node.getBoundingClientRect();
-				if (rect.bottom > visibleAreaHeight) { // Overlaped by screen keyboard
-					if (Platform.isIOS) {
-						Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
-					} else {
-						var mainStage = PixiStage.children[0];
-						mainStage.y = visibleAreaHeight - rect.bottom;
-						var onblur : Dynamic;
-						onblur = function() {
-							mainStage.y = 0;
-							focused_node.removeEventListener("blur", onblur);
-						};
-						focused_node.addEventListener("blur", onblur);
-					}
+		if (Platform.isMobile) {
+			var focusedNode = Browser.document.activeElement;
+			if (focusedNode != null) {
+				var nodeName : String = focusedNode.nodeName.toLowerCase();
+
+				if (nodeName == "input" || nodeName == "textarea") {
+					Browser.window.scrollTo(0, 0);
+					enableEnsureCurrentInputVisible();
+
+					var rect = focusedNode.getBoundingClientRect();
+					var el = Browser.document.createElement("div");
+					el.style.top = '${rect.top}px';
+					el.style.left = '${rect.left}px';
+					el.style.width = '16px';
+					el.style.height = '16px';
+
+					Browser.document.body.appendChild(el);
+					el.scrollIntoView(untyped { "block" : if (Platform.isIOS) "center" else "nearest", "inline" : "nearest", "behavior" : "smooth" });
+					Browser.document.body.removeChild(el);
+
+					var onblur : Dynamic;
+					onblur = function() {
+						disableEnsureCurrentInputVisible();
+						focusedNode.removeEventListener("blur", onblur);
+					};
+					focusedNode.addEventListener("blur", onblur);
 				}
 			}
 		}

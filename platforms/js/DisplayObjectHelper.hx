@@ -853,6 +853,10 @@ class DisplayObjectHelper {
 							untyped clip.updateBaselineWidget();
 						}
 
+						if (untyped Platform.isMobile && clip.isInput && clip.isFocused) {
+							RenderSupport.ensureCurrentInputVisible();
+						}
+
 						updateNativeWidgetFilters(clip);
 					}
 
