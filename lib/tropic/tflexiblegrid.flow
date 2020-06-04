@@ -71,7 +71,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 		else if (contains(style, EndAlign()))
 			EndAlign()
 		else
-			LeftAlign();
+			StartAlign();
 	alignBaselines = contains(style, TBaselineAlign());
 
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
@@ -121,7 +121,8 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			isSome(order),
 			verticalGrid,
 			maxRows,
-			lockWidth
+			lockWidth,
+			isRTL
 		);
 
 	item2Tropic = \item : TFlexibleGridItem, isFirst : Transform<bool> ->
@@ -230,7 +231,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 				TCenterY(f)
 			else
 				TCenterX(f)
-		} else if (alignment == EndAlign()) {
+		} else if (((!isRTL || verticalGrid) && alignment == EndAlign()) || (isRTL && !verticalGrid && alignment == StartAlign())) {
 			if (verticalGrid)
 				TAlignBottom(f)
 			else
@@ -251,7 +252,8 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 							fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB)),
 							sameSizeMinWH,
 							fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(availableMinMax.min, availableMinMax.max))),
-							\itms, __, stageSize -> fitTFlexibleGrid(itms, stageSize.first, stageSize.second, verticalGrid, alignment, alignBaselines, maxRows)
+							\itms, __, stageSize ->
+								fitTFlexibleGrid(itms, stageSize.first, stageSize.second, verticalGrid, alignment, alignBaselines, maxRows, isRTL)
 						)
 					else
 						make2Subscribe2(
@@ -260,7 +262,8 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 								\it -> fpair(const(it), fpair(it.minWH, it.maxWH))
 							),
 							fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(availableMinMax.min, availableMinMax.max))),
-							\itms, stageSize -> fitTFlexibleGrid(map(itms, firstOfPair), stageSize.first, stageSize.second, verticalGrid, alignment, alignBaselines, maxRows)
+							\itms, stageSize ->
+								fitTFlexibleGrid(map(itms, firstOfPair), stageSize.first, stageSize.second, verticalGrid, alignment, alignBaselines, maxRows, isRTL)
 						)
 				],
 				f
@@ -543,7 +546,16 @@ mergeTFlexibleGridConstantItemsVertical(t1 : TFlexibleGridConstantItem, t2 : TFl
 	);
 }
 
-fitTFlexibleGrid(items : [TFlexibleGridItem], sizeMin : double, sizeMax : double, vertical : bool, alignment : CommonAlignment, alignBaselines : bool, maxRows : Maybe<int>) -> void {
+fitTFlexibleGrid(
+	items : [TFlexibleGridItem],
+	sizeMin : double,
+	sizeMax : double,
+	vertical : bool,
+	alignment : CommonAlignment,
+	alignBaselines : bool,
+	maxRows : Maybe<int>,
+	isRTL : bool
+) -> void {
 	currentPoint = ref const(zeroPoint);
 	currentLine = ref [];
 	availableSize = make(const(sizeMin));
@@ -557,7 +569,7 @@ fitTFlexibleGrid(items : [TFlexibleGridItem], sizeMin : double, sizeMax : double
 						if (vertical)
 							mergeTFlexibleGridConstantItemsVertical(t1, t2)
 						else
-							mergeTFlexibleGridConstantItemsHorizontal(t1, t2, alignBaselines)
+							mergeTFlexibleGridConstantItemsHorizontal(if (isRTL) t1 else t2, if (isRTL) t2 else t1, alignBaselines)
 				);
 
 			if (vertical) {
@@ -588,7 +600,7 @@ fitTFlexibleGrid(items : [TFlexibleGridItem], sizeMin : double, sizeMax : double
 						fmax(
 							if (alignment == CenterAlign())
 								fdivide(fsubtract(fsubselect(availableSize, idfn |> FLift), fwidth(t.wh)), const(2.0))
-							else if (alignment == EndAlign())
+							else if ((!isRTL && alignment == EndAlign()) || (isRTL && alignment == StartAlign()))
 								fsubtract(fsubselect(availableSize, idfn |> FLift), fwidth(t.wh))
 							else
 								zero,
@@ -642,7 +654,8 @@ BFParameters(
 	ordered : bool,
 	vertical : bool,
 	maxRows : Maybe<int>,
-	lockWidth : bool
+	lockWidth : bool,
+	isRTL : bool
 );
 
 bfFit(stageSize : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Point>] {
@@ -694,7 +707,26 @@ bfFitBlocks(line : [Point], size : WidthHeight, blocks : [BFBlock], par : BFPara
 		} else {
 			state;
 		}
-	});
+	})
+	|> (\state -> {
+		if (!par.vertical && par.isRTL) {
+			dx = foldTree(state.p, size.width, \__, p, acc -> min(acc, size.width - p.second.x - p.first.w));
+
+			BFState(state with
+				p = mapTree(state.p, \p ->
+					Pair(
+						p.first,
+						Point(
+							size.width - p.second.x - p.first.w - dx,
+							p.second.y
+						)
+					)
+				)
+			);
+		} else {
+			state;
+		}
+	})
 }
 
 bfFindNode(i : int, state : BFState, block : BFBlock, par : BFParameters) -> BFState {
