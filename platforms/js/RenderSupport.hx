@@ -453,6 +453,14 @@ class RenderSupport {
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
 		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+
+		// Make additional resize for mobile fullscreen mode
+		if (Platform.isMobile) {
+			on("fullscreen", function(isFullScreen) {
+				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
+				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
 	}
 
 	private static inline function isPortaitOrientation() {
@@ -2606,8 +2614,12 @@ class RenderSupport {
 				regularFullScreenClipParent = FullWindowTargetClip.parent;
 				mainStage.addChild(FullWindowTargetClip);
 			} else {
-				regularFullScreenClipParent.addChild(FullWindowTargetClip);
-				regularFullScreenClipParent = null;
+				if (regularFullScreenClipParent != null) {
+					regularFullScreenClipParent.addChild(FullWindowTargetClip);
+					regularFullScreenClipParent = null;
+				} else {
+					mainStage.removeChild(FullWindowTargetClip);
+				}
 
 				for (child in mainStage.children) {
 					child.setClipVisible(true);

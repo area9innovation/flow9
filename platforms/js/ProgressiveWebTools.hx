@@ -104,22 +104,22 @@ class ProgressiveWebTools {
 					callback(false);
 				}
 
-				untyped Promise.race(untyped registrations.map(function(registration) {
+				if (untyped registrations.filter(function(registration) {
 					if (untyped registration.active == null) {
-						return Promise.reject();
+						return false;
 					}
 
 					if (untyped registration.active.scriptURL == (registration.scope + swFileName)) {
 						globalRegistration = registration;
-						return Promise.resolve();
+						return true;
 					} else {
-						return Promise.reject();
+						return false;
 					}
-				})).then(function() {
+				}).length > 0) {
 					callback(true);
-				}, function() {
+				} else {
 					callback(false);
-				});
+				}
 			}, function(err) {
 				callback(false);
 			});
