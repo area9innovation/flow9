@@ -709,6 +709,7 @@ bool ByteCodeRunner::DoSubstring(StackSlot *pdata, int idx, int len)
     return true;
 }
 
+// This comment is just updating timespamp of the branch, may be removed successfully
 StackSlot ByteCodeRunner::strGlue(RUNNER_ARGS)
 {
 	RUNNER_PopArgs2(arr, sep);
