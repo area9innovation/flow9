@@ -27,6 +27,7 @@ export {
 	resetMFocus(manager : MaterialManager) -> void;
 	previousMFocus(manager : MaterialManager) -> void;
 	scrollIntoView(focus : MaterialFocus) -> void;
+	scrollIntoView2(parent : MFocusGroup, transformMatrix : TransformMatrix, widthHeight : WidthHeight) -> void;
 
 	getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
 	getPreviousFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
@@ -313,7 +314,7 @@ addMaterialFocusId(
 				focused,
 				active,
 				selected,
-				fselect(pi.transformMatrix, getTransformPositionScale |> FLift),
+				pi.transformMatrix,
 				fsubselect2(boxWidth, boxHeight, \w, h -> fwidthheight(w, h)),
 				make(true),
 				behavioursWithFocusedId
@@ -467,7 +468,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				const(false),
 				focused,
 				active,
-				fselect(pi.transformMatrix, getTransformPositionScale |> FLift),
+				pi.transformMatrix,
 				fsubselect2(boxWidth, boxHeight, \w, h -> fwidthheight(w, h)),
 				scrollInfo,
 				rtl,
@@ -658,7 +659,7 @@ calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, v
 	if (currentFocus == newFocus) {
 		-doubleMax
 	} else {
-		currentFocusPosition = fgetValue(currentFocus.position).pos;
+		currentFocusPosition = applyTransformMatrix(fgetValue(currentFocus.transformMatrix), zeroPoint);
 		currentFocusWidthHeight = fgetValue(currentFocus.widthHeight);
 		currentFocusPoint =
 			Point(
@@ -666,7 +667,7 @@ calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, v
 				currentFocusPosition.y + currentFocusWidthHeight.height / 2.
 			);
 
-		newFocusPosition = fgetValue(newFocus.position).pos;
+		newFocusPosition = applyTransformMatrix(fgetValue(newFocus.transformMatrix), zeroPoint);
 		newFocusWidthHeight = fgetValue(newFocus.widthHeight);
 		newFocusPoint =
 			Point(
@@ -808,42 +809,46 @@ scrollIntoView(focus : MaterialFocus) -> void {
 	switchMaterialFocus(
 		focus,
 		\f -> {
-			scrollIntoView2(f.parent, fgetValue(f.position) |> PositionScale2Point, fgetValue(f.widthHeight))
+			scrollIntoView2(f.parent, fgetValue(f.transformMatrix), fgetValue(f.widthHeight))
 		},
 		\f -> {
-			maybeApply(f.parent, \p -> scrollIntoView2(p, fgetValue(f.position) |> PositionScale2Point, fgetValue(f.widthHeight)));
+			maybeApply(f.parent, \p -> scrollIntoView2(p, fgetValue(f.transformMatrix), fgetValue(f.widthHeight)));
 		}
 	)
 }
 
-scrollIntoView2(parent : MFocusGroup, position : Point, widthHeight : WidthHeight) -> void {
+scrollIntoView2(parent : MFocusGroup, transformMatrix : TransformMatrix, widthHeight : WidthHeight) -> void {
 	eitherFn(
 		parent.scrollInfo,
 		\si -> {
-			pp = fgetValue(parent.position) |> PositionScale2Point;
-			sp = getValue(si.position);
-			cwh = fgetValue(si.contentWH);
-			bwh = fgetValue(parent.widthHeight);
+			if (fgetValue(si.enabled)) {
+				tm = fgetValue(parent.transformMatrix);
+				position = transformMatrix |> getTransformPosition;
+				pp = tm |> getTransformPosition;
+				sp = getValue(si.position);
+				cwh = fgetValue(si.contentWH);
+				bwh = fgetValue(parent.widthHeight);
 
-			p1 =
-				Point(
-					max(min(position.x - pp.x + sp.x, cwh.width - bwh.width), 0.0),
-					max(min(position.y - pp.y + sp.y, cwh.height - bwh.height), 0.0)
-				);
-			p2 =
-				Point(
-					max(min(position.x + widthHeight.width - pp.x + sp.x - bwh.width, cwh.width - bwh.width), 0.0),
-					max(min(position.y + widthHeight.height - pp.y + sp.y - bwh.height, cwh.height - bwh.height), 0.0)
-				);
-			p = Point(max(min(sp.x, max(p1.x, p2.x)), min(p1.x, p2.x)), max(min(sp.y, max(p1.y, p2.y)), min(p1.y, p2.y)));
-			d = Point(getValue(si.position).x - p.x, getValue(si.position).y - p.y);
+				p1 =
+					Point(
+						max(min(position.x - pp.x + sp.x, cwh.width - bwh.width), 0.0),
+						max(min(position.y - pp.y + sp.y, cwh.height - bwh.height), 0.0)
+					);
+				p2 =
+					Point(
+						max(min(position.x + widthHeight.width - pp.x + sp.x - bwh.width, cwh.width - bwh.width), 0.0),
+						max(min(position.y + widthHeight.height - pp.y + sp.y - bwh.height, cwh.height - bwh.height), 0.0)
+					);
+				p = Point(max(min(sp.x, max(p1.x, p2.x)), min(p1.x, p2.x)), max(min(sp.y, max(p1.y, p2.y)), min(p1.y, p2.y)));
+				d = Point(getValue(si.position).x - p.x, getValue(si.position).y - p.y);
 
-			nextDistinct(si.position, p);
+				nextDistinct(si.position, p);
 
-			maybeApply(parent.parent, \par -> scrollIntoView2(par, Point(position.x - d.x, position.y - d.y), widthHeight));
+				// maybeApply(parent.parent, \par -> scrollIntoView2(par, Point(position.x - d.x, position.y - d.y), widthHeight));
+			}
 		},
 		\ -> {
-			maybeApply(parent.parent, \par -> scrollIntoView2(par, position, widthHeight));
+			maybeApply(parent.parent, \par -> scrollIntoView2(par, transformMatrix, widthHeight));
 		}
 	);
 }
