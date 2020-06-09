@@ -232,17 +232,21 @@ class FlowFileSystem {
 			js.Browser.document.body.removeChild(jsFileInput);
 		};
 
-		//workaround for case when cancel was pressed and onchange isn't fired
+		// workaround for case when cancel was pressed and onchange isn't fired
 		var onFocus : Dynamic = null;
 		onFocus = function(e : Dynamic) {
 			js.Browser.window.removeEventListener("focus", onFocus);
+			js.Browser.window.removeEventListener("mousemove", onFocus);
+			js.Browser.window.removeEventListener("pointermove", onFocus);
 
-			//onfocus is fired before the change of jsFileInput value
+			// onfocus is fired before the change of jsFileInput value
 			haxe.Timer.delay(function() {
 				jsFileInput.dispatchEvent(new js.html.Event("change"));
 			}, 500);
 		}
 		js.Browser.window.addEventListener("focus", onFocus);
+		js.Browser.window.addEventListener("mousemove", onFocus);
+		js.Browser.window.addEventListener("pointermove", onFocus);
 
 		jsFileInput.click();
 		#end
