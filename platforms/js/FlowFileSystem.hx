@@ -219,7 +219,7 @@ class FlowFileSystem {
 		jsFileInput.value = ""; // force onchange event for the same path
 
 		jsFileInput.onchange = function(e : Dynamic) {
-			jsFileInput.onchange = null;
+			if (!Platform.isMobile) jsFileInput.onchange = null;
 
 			var files : js.html.FileList = jsFileInput.files;
 
@@ -232,17 +232,26 @@ class FlowFileSystem {
 			js.Browser.document.body.removeChild(jsFileInput);
 		};
 
-		//workaround for case when cancel was pressed and onchange isn't fired
-		var onFocus : Dynamic = null;
-		onFocus = function(e : Dynamic) {
-			js.Browser.window.removeEventListener("focus", onFocus);
-
-			//onfocus is fired before the change of jsFileInput value
-			haxe.Timer.delay(function() {
+		// workaround for case when cancel was pressed and onchange isn't fired
+		if (Platform.isMobile) {
+			var onTouchEnd : Dynamic = null;
+			onTouchEnd = function(e : Dynamic) {
+				js.Browser.window.removeEventListener("touchend", onTouchEnd);
 				jsFileInput.dispatchEvent(new js.html.Event("change"));
-			}, 500);
+			}
+			js.Browser.window.addEventListener("touchend", onTouchEnd);
+		} else {
+			var onFocus : Dynamic = null;
+			onFocus = function(e : Dynamic) {
+				js.Browser.window.removeEventListener("focus", onFocus);
+
+				// onfocus is fired before the change of jsFileInput value
+				haxe.Timer.delay(function() {
+					jsFileInput.dispatchEvent(new js.html.Event("change"));
+				}, 500);
+			}
+			js.Browser.window.addEventListener("focus", onFocus);
 		}
-		js.Browser.window.addEventListener("focus", onFocus);
 
 		jsFileInput.click();
 		#end
