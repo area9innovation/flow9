@@ -21,6 +21,8 @@ export {
 		manager : MaterialManager,
 		getNewNode : (cb : (newNode : MTreeEditorNode<?, ??>) -> void) -> void,
 		node2material : (node : MTreeEditorNode<?, ??>, titleInput : Material) -> Material,
+		toolbarAdditionalItems : [Material],
+		toolbarStyle : [MMenuPanelStyle],
 		selected : DynamicBehaviour<Set<[int]>>,
 		selectedIndex : DynamicBehaviour<int>,
 		expanded : DynamicBehaviour<Set<[int]>>,
@@ -38,14 +40,13 @@ export {
 	makeMTreeEditor(
 		manager : MaterialManager,
 		tree : MTreeEditorNode<?, ??>,
-		getNewId : (cb : (id : ?) -> void) -> void,
-		getNewContent : (cb : (content : ??) -> void) -> void,
+		getNewNode : (cb : (MTreeEditorNode<?, ??>) -> void) -> void,
 		style : [MTreeEditorStyle<?, ??>]
 	) -> MTreeEditor<?, ??>;
 
-		MTreeEditorStyle<?, ??> ::= MTreeStyle, MGetNewMTreeEditorNode, MGetMTreeEditorNodeMaterial;
-			MGetNewMTreeEditorNode(fn : (cb : (MTreeEditorNode<?, ??>) -> void) -> void);
-			MGetMTreeEditorNodeMaterial(fn : (node : MTreeEditorNode<?, ??>, titleInput : Material) -> Material);
+		MTreeEditorStyle<?, ??> ::= MTreeStyle, MTreeEditorNodeMaterial, MTreeEditorToolbar;
+			MTreeEditorNodeMaterial(fn : (node : MTreeEditorNode<?, ??>, titleInput : Material) -> Material);
+			MTreeEditorToolbar(additionalItems : [Material], style : [MMenuPanelStyle]);
 }
 
 makeMTreeEditorNode(id : ?, content : ??) -> MTreeEditorNode<?, ??> {
@@ -66,21 +67,19 @@ makeMTreeEditorNode(id : ?, content : ??) -> MTreeEditorNode<?, ??> {
 makeMTreeEditor(
 	manager : MaterialManager,
 	tree : MTreeEditorNode<?, ??>,
-	getNewId : (cb : (id : ?) -> void) -> void,
-	getNewContent : (cb : (content : ??) -> void) -> void,
+	getNewNode : (cb : (MTreeEditorNode<?, ??>) -> void) -> void,
 	style : [MTreeEditorStyle<?, ??>]
 ) -> MTreeEditor<?, ??> {
 	state =
 		MTreeEditorState(
 			manager,
+			getNewNode,
 			extractStruct(
 				style,
-				MGetNewMTreeEditorNode(\cb -> getNewId(\id -> getNewContent(\content -> cb(makeMTreeEditorNode(id, content)))))
+				MTreeEditorNodeMaterial(\node, titleInput -> titleInput)
 			).fn,
-			extractStruct(
-				style,
-				MGetMTreeEditorNodeMaterial(\node, titleInput -> titleInput)
-			).fn,
+			extractStruct(style, MTreeEditorToolbar([], [])).additionalItems,
+			extractStruct(style, MTreeEditorToolbar([], [])).style,
 			extractStruct(style, MTreeSelection(make(makeSet()))).selected,
 			extractStruct(style, MSingleSelection(make(-1))).selected,
 			extractStruct(style, MTreeExpanded(make(makeSet()))).expanded,
@@ -121,7 +120,7 @@ makeMTreeEditor(
 	}
 
 	mkTooltip = \hint, key -> MTooltipText(const(hint + " (" + key + ")"));
-	swapSelectedLO = \ids : [int] -> {
+	swapSelectedMTreeEditorNode = \ids : [int] -> {
 		swapMTreeEditorNodeAtId(state, tree, getSelected(), ids, selectAndFocusItem);
 	}
 
@@ -199,7 +198,7 @@ makeMTreeEditor(
 				}
 			},
 			[],
-			[MShortcut(enterShortcut), mkTooltip(_("Add Learning Objective"), enterShortcut)]
+			[MShortcut(enterShortcut), mkTooltip(_("Add Next"), enterShortcut)]
 		),
 		MIconButton(
 			"library_add",
@@ -208,7 +207,7 @@ makeMTreeEditor(
 				createMTreeEditorNodeAtId(state, tree, ids, selectAndFocusItem);
 			},
 			[],
-			[MShortcut(ctrlEnterShortcut), mkTooltip(_("Add Sub Learning Objective"), ctrlEnterShortcut)]
+			[MShortcut(ctrlEnterShortcut), mkTooltip(_("Add Child"), ctrlEnterShortcut)]
 		),
 		MIconButton(
 			"delete",
@@ -230,7 +229,7 @@ makeMTreeEditor(
 			"arrow_upward",
 			\ -> {
 				selFn = if (fgetValue(isSelectedFirstElement)) getSelectedParent else getSelectedPrevious;
-				swapSelectedLO(selFn(getSelected()));
+				swapSelectedMTreeEditorNode(selFn(getSelected()));
 			},
 			[],
 			[
@@ -244,7 +243,7 @@ makeMTreeEditor(
 			"arrow_downward",
 			\ -> {
 				sel = if (fgetValue(isSelectedLastElement)) getSelectedParent(getSelected()) else getSelected();
-				swapSelectedLO(getSelectedNext(sel));
+				swapSelectedMTreeEditorNode(getSelectedNext(sel));
 			},
 			[],
 			[
@@ -258,9 +257,9 @@ makeMTreeEditor(
 			"arrow_back",
 			\ -> {
 				if(fgetValue(isSelectedChild)) {
-					swapSelectedLO(getSelectedNext(getSelectedParent(getSelected())))
+					swapSelectedMTreeEditorNode(getSelectedNext(getSelectedParent(getSelected())))
 				} else {
-					showMSnackbar(state.manager, _("You cannot move this learning objective further up."), [])
+					showMSnackbar(state.manager, _("You cannot move this node further up."), [])
 				}
 			},
 			[],
@@ -273,7 +272,7 @@ makeMTreeEditor(
 		),
 		MIconButton(
 			"arrow_forward",
-			\ -> swapSelectedLO(getSelectedLastChild(getSelectedPrevious(getSelected()))),
+			\ -> swapSelectedMTreeEditorNode(getSelectedLastChild(getSelectedPrevious(getSelected()))),
 			[],
 			[
 				MShortcut(if (getDefaultRtl()) ctrlLeftShortcut else ctrlRightShortcut),
@@ -288,8 +287,14 @@ makeMTreeEditor(
 		state,
 		tree,
 		MMenuPanel(
-			menuItems,
-			[MMenuPanelBackground(MGrey(200)), MClickEnabled(state.insideFocus)]
+			concat(
+				menuItems,
+				state.toolbarAdditionalItems
+			),
+			replaceStructMany(
+				[MMenuPanelBackground(MGrey(200)), MClickEnabled(state.insideFocus)],
+				state.toolbarStyle
+			)
 		),
 		MConstruct(
 			[
@@ -357,6 +362,7 @@ makeMTreeEditor(
 					)
 				)
 			)
+			|> MCallstack
 		)
 	)
 }
@@ -501,13 +507,13 @@ createMTreeEditorNodeAtId(state : MTreeEditorState<?, ??>, node : MTreeEditorNod
 		MaterialError()
 	);
 
-	state.getNewNode(\newLo -> {
-		insertMTreeEditorNodeAtId(state, node, newLo, id, cb);
+	state.getNewNode(\newNode -> {
+		insertMTreeEditorNodeAtId(state, node, newNode, id, cb);
 	});
 }
 
 
-insertMTreeEditorNodeAtId(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, newLo : MTreeEditorNode, id : [int], cb : (MTreeEditorNode) -> void) -> void {
+insertMTreeEditorNodeAtId(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, newNode : MTreeEditorNode, id : [int], cb : (MTreeEditorNode) -> void) -> void {
 	materialLog(
 		"insertMTreeEditorNodeAtId: " + toString(id),
 		MaterialError()
@@ -515,16 +521,16 @@ insertMTreeEditorNodeAtId(state : MTreeEditorState<?, ??>, node : MTreeEditorNod
 
 	if (length(id) > 1) {
 		if (length(getValue(node.children)) > id[0]) {
-			insertMTreeEditorNodeAtId(state, getValue(node.children)[id[0]], newLo, tail(id), cb);
+			insertMTreeEditorNodeAtId(state, getValue(node.children)[id[0]], newNode, tail(id), cb);
 		} else {
-			state.getNewNode(\newLoParent -> {
-				next(node.children, insertArray(getValue(node.children), id[0], newLoParent));
-				insertMTreeEditorNodeAtId(state, newLoParent, newLo, tail(id), cb);
+			state.getNewNode(\newNodeParent -> {
+				next(node.children, insertArray(getValue(node.children), id[0], newNodeParent));
+				insertMTreeEditorNodeAtId(state, newNodeParent, newNode, tail(id), cb);
 			});
 		}
 	} else if (length(id) > 0) {
-		next(node.children, insertArray(getValue(node.children), id[0], newLo));
-		cb(newLo);
+		next(node.children, insertArray(getValue(node.children), id[0], newNode));
+		cb(newNode);
 	}
 }
 
