@@ -1,0 +1,594 @@
+import material/material2tropic;
+import material/material_snackbar;
+
+export {
+	MTreeEditorNode(
+		id : ?,
+		expanded : DynamicBehaviour<bool>,
+		selected : DynamicBehaviour<bool>,
+		focused : DynamicBehaviour<bool>,
+		focusedId : DynamicBehaviour<int>,
+		textSelection : DynamicBehaviour<Pair<int, int>>,
+		childSelected : DynamicBehaviour<bool>,
+		title : DynamicBehaviour<string>,
+		content : ??,
+		children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>
+	);
+
+	makeMTreeEditorNode(id : ?, content : ??) -> MTreeEditorNode<?, ??>;
+
+	MTreeEditorState(
+		manager : MaterialManager,
+		getNewNode : (cb : (newNode : MTreeEditorNode<?, ??>) -> void) -> void,
+		node2material : (node : MTreeEditorNode<?, ??>, titleInput : Material) -> Material,
+		selected : DynamicBehaviour<Set<[int]>>,
+		selectedIndex : DynamicBehaviour<int>,
+		expanded : DynamicBehaviour<Set<[int]>>,
+		itemsLength : DynamicBehaviour<int>,
+		insideFocus : Transform<bool>
+	);
+
+	MTreeEditor(
+		state : MTreeEditorState<?, ??>,
+		tree : MTreeEditorNode<?, ??>,
+		toolbar : MMenuPanel,
+		view : Material
+	);
+
+	makeMTreeEditor(
+		manager : MaterialManager,
+		tree : MTreeEditorNode<?, ??>,
+		getNewId : (cb : (id : ?) -> void) -> void,
+		getNewContent : (cb : (content : ??) -> void) -> void,
+		style : [MTreeEditorStyle<?, ??>]
+	) -> MTreeEditor<?, ??>;
+
+		MTreeEditorStyle<?, ??> ::= MTreeStyle, MGetNewMTreeEditorNode, MGetMTreeEditorNodeMaterial;
+			MGetNewMTreeEditorNode(fn : (cb : (MTreeEditorNode<?, ??>) -> void) -> void);
+			MGetMTreeEditorNodeMaterial(fn : (node : MTreeEditorNode<?, ??>, titleInput : Material) -> Material);
+}
+
+makeMTreeEditorNode(id : ?, content : ??) -> MTreeEditorNode<?, ??> {
+	MTreeEditorNode(
+		id,
+		make(true),
+		make(false),
+		make(false),
+		make(-1),
+		make(Pair(-1, -1)),
+		make(false),
+		make(""),
+		content,
+		make([])
+	)
+}
+
+makeMTreeEditor(
+	manager : MaterialManager,
+	tree : MTreeEditorNode<?, ??>,
+	getNewId : (cb : (id : ?) -> void) -> void,
+	getNewContent : (cb : (content : ??) -> void) -> void,
+	style : [MTreeEditorStyle<?, ??>]
+) -> MTreeEditor<?, ??> {
+	state =
+		MTreeEditorState(
+			manager,
+			extractStruct(
+				style,
+				MGetNewMTreeEditorNode(\cb -> getNewId(\id -> getNewContent(\content -> cb(makeMTreeEditorNode(id, content)))))
+			).fn,
+			extractStruct(
+				style,
+				MGetMTreeEditorNodeMaterial(\node, titleInput -> titleInput)
+			).fn,
+			extractStruct(style, MTreeSelection(make(makeSet()))).selected,
+			extractStruct(style, MSingleSelection(make(-1))).selected,
+			extractStruct(style, MTreeExpanded(make(makeSet()))).expanded,
+			extractStruct(style, MItemsLength(make(0))).length,
+			make(true)
+		);
+
+	getSelectedId = \s -> eitherMap(popMinSet(s), \sel -> tail(sel.value), []);
+	getSelected = \ -> getSelectedId(getValue(state.selected));
+	getSelectedParent = \s -> subrange(s, 0, length(s) - 1);
+	getSelectedChild = \s -> arrayPush(s, 0);
+	getSelectedLastChild = \s -> arrayPush(s, eitherMap(getMTreeEditorNodeByPath(tree, s), \node -> length(getValue(node.children)), -1) + 1);
+	getSelectedPrevious = \s -> replace(s, length(s) - 1, max(lastElement(s, 1) - 1, 0));
+	getSelectedNext = \s -> replace(s, length(s) - 1, lastElement(s, -1) + 1);
+
+	isSelected = fselect(state.selected, FLift(\s -> length(getSelectedId(s)) > 0));
+	isSelectedChild = fselect(state.selected, FLift(\s -> length(getSelectedId(s)) > 1));
+	isSelectedFirstElement = fselect(state.selected, FLift(\s -> lastElement(getSelectedId(s), -1) == 0));
+	isSelectedLastElement = fselect(state.selected, FLift(\s ->
+		lastElement(getSelectedId(s), -1) == eitherMap(getMTreeEditorNodeByPath(tree, getSelectedParent(getSelectedId(s))), \node -> length(getValue(node.children)), -1) - 1));
+
+	clearEmptyItems = \rootNode -> {
+		filterMTreeEditorNode(tree, \node -> node == rootNode
+			|| getValue(node.title) != ""
+			|| getValue(node.focused)
+			|| length(getValue(node.children)) > 0
+	// 		|| length(getValue(node.content)) > 0
+		);
+	}
+
+	selectAndFocusItem = \node -> {
+		clearEmptyItems(node);
+		nextDistinct(node.selected, true);
+		deferUntilRender(\ -> {
+			// In JS, we have to wait otherwise, it does not work
+			nextDistinct(node.focused, true);
+		})
+	}
+
+	mkTooltip = \hint, key -> MTooltipText(const(hint + " (" + key + ")"));
+	swapSelectedLO = \ids : [int] -> {
+		swapMTreeEditorNodeAtId(state, tree, getSelected(), ids, selectAndFocusItem);
+	}
+
+	moveSelectionUp = \ -> {
+		if (getValue(state.selectedIndex) > 0) {
+			nextDistinct(state.selectedIndex, getValue(state.selectedIndex) - 1);
+		}
+	}
+	moveSelectionDown = \ -> {
+		if (getValue(state.selectedIndex) < getValue(state.itemsLength) - 1) {
+			nextDistinct(state.selectedIndex, getValue(state.selectedIndex) + 1);
+		}
+	}
+	moveSelectionLeft = \ -> {
+		if (length(getSelected()) > 1) {
+			nextDistinct(state.selected, makeSet1(concat([0], subrange(getSelected(), 0, length(getSelected()) - 1))));
+		} else {
+			nextDistinct(state.selectedIndex, 0);
+		}
+	}
+	moveSelectionRight = \ -> {
+		maybeApply(getMTreeEditorNodeByPath(tree, getSelectedChild(getSelected())), \node -> nextDistinct(node.selected, true));
+	}
+
+	toggleSelectedExpanded = \ -> {
+		if (fgetValue(isSelected) && containsSet(getValue(state.expanded), getSelected())) {
+			nextDistinct(state.expanded, removeSet(getValue(state.expanded), getSelected()))
+		} else {
+			nextDistinct(state.expanded, insertSet(getValue(state.expanded), getSelected()));
+		}
+	}
+
+	keypress = makeTKey(
+		\k -> fgetValue(state.insideFocus)
+		&& (
+			(contains(["up", "down", "left", "right", "F2"], k.utf) && !k.ctrl) ||
+			(contains(["home", "end"], k.utf) && !k.ctrl && !k.shift) ||
+			k.utf == " "
+		)
+	);
+
+	enterShortcut = "Enter";
+	ctrlEnterShortcut = "Ctrl+Enter";
+	ctrlUpShortcut = "Ctrl+Up";
+	ctrlDownShortcut = "Ctrl+Down";
+	ctrlLeftShortcut = "Ctrl+Left";
+	ctrlRightShortcut = "Ctrl+Right";
+
+	menuItems = [
+		MSeparator(false),
+		MIconButton(
+			"add_box",
+			\ -> {
+				active = eitherMap(
+					getMTreeEditorNodeByPath(tree, getSelected()),
+					\node -> {
+						if (getValue(node.title) == "" /* && length(getValue(node.content)) == 0 */) {
+							// do not add row if we already have an empty row
+							false;
+						} else if (getValue(node.focused)) {
+							// OK, end editing, and we do not want to add a new topic
+							next(node.focused, false);
+							false;
+						} else {
+							// do not add row if we have focus on element that reacts on enter key
+							getValue(node.focusedId) < 3;
+						}
+					},
+					true
+				);
+
+				if (active) {
+					ids = if (length(getSelected()) < 1) [0] else getSelectedNext(getSelected());
+					createMTreeEditorNodeAtId(state, tree, ids, selectAndFocusItem);
+				}
+			},
+			[],
+			[MShortcut(enterShortcut), mkTooltip(_("Add Learning Objective"), enterShortcut)]
+		),
+		MIconButton(
+			"library_add",
+			\ -> {
+				ids = if (length(getSelected()) < 1) [0] else getSelectedChild(getSelected());
+				createMTreeEditorNodeAtId(state, tree, ids, selectAndFocusItem);
+			},
+			[],
+			[MShortcut(ctrlEnterShortcut), mkTooltip(_("Add Sub Learning Objective"), ctrlEnterShortcut)]
+		),
+		MIconButton(
+			"delete",
+			\ -> {
+				// If there is edit focus, we do not delete
+				mNode = getMTreeEditorNodeByPath(tree, getSelected());
+				doDelete = switch (mNode) {
+					None(): true;
+					Some(node): !getValue(node.focused);
+				}
+				if (doDelete) {
+					removeMTreeEditorNodeAtId(tree, getSelected(), nop1)
+				}
+			},
+			[],
+			[MShortcut("delete"), MEnabled(isSelected), mkTooltip(_("Delete"), "Del")]
+		),
+		MIconButton(
+			"arrow_upward",
+			\ -> {
+				selFn = if (fgetValue(isSelectedFirstElement)) getSelectedParent else getSelectedPrevious;
+				swapSelectedLO(selFn(getSelected()));
+			},
+			[],
+			[
+				MShortcut(ctrlUpShortcut),
+				MShortcutPreventDefault(),
+				MEnabled(fif(isSelectedFirstElement, isSelectedChild, isSelected)),
+				mkTooltip(_("Move Up"), ctrlUpShortcut)
+			]
+		),
+		MIconButton(
+			"arrow_downward",
+			\ -> {
+				sel = if (fgetValue(isSelectedLastElement)) getSelectedParent(getSelected()) else getSelected();
+				swapSelectedLO(getSelectedNext(sel));
+			},
+			[],
+			[
+				MShortcut(ctrlDownShortcut),
+				MShortcutPreventDefault(),
+				MEnabled(fif(isSelectedLastElement, isSelectedChild, isSelected)),
+				mkTooltip(_("Move Down"), ctrlDownShortcut)
+			]
+		),
+		MIconButton(
+			"arrow_back",
+			\ -> {
+				if(fgetValue(isSelectedChild)) {
+					swapSelectedLO(getSelectedNext(getSelectedParent(getSelected())))
+				} else {
+					showMSnackbar(state.manager, _("You cannot move this learning objective further up."), [])
+				}
+			},
+			[],
+			[
+				MShortcut(if (getDefaultRtl()) ctrlRightShortcut else ctrlLeftShortcut),
+				MShortcutPreventDefault(),
+				mkTooltip(_("Decrease Indent"), if (getDefaultRtl()) ctrlRightShortcut else ctrlLeftShortcut),
+				MEnabled(fselect(state.selected, FLift(\s -> length(getSelectedParent(getSelectedId(s))) > 1))),
+			]
+		),
+		MIconButton(
+			"arrow_forward",
+			\ -> swapSelectedLO(getSelectedLastChild(getSelectedPrevious(getSelected()))),
+			[],
+			[
+				MShortcut(if (getDefaultRtl()) ctrlLeftShortcut else ctrlRightShortcut),
+				MShortcutPreventDefault(),
+				MEnabled(fnot(isSelectedFirstElement)),
+				mkTooltip(_("Increase Indent"), if (getDefaultRtl()) ctrlLeftShortcut else ctrlRightShortcut)
+			]
+		)
+	];
+
+	MTreeEditor(
+		state,
+		tree,
+		MMenuPanel(
+			menuItems,
+			[MMenuPanelBackground(MGrey(200)), MClickEnabled(state.insideFocus)]
+		),
+		MConstruct(
+			[
+				makeSubscribe2(keypress.pressed, \k -> {
+					if (!k.ctrl) {
+						if (k.utf == "up") {
+							moveSelectionUp();
+						} else if (k.utf == "down") {
+							moveSelectionDown();
+						} else if (k.utf == "left") {
+							maybeApply(getMTreeEditorNodeByPath(tree, getSelected()), \node -> {
+								if (!getValue(node.focused)) {
+									moveSelectionLeft();
+								}
+							});
+						} else if (k.utf == "right") {
+							maybeApply(getMTreeEditorNodeByPath(tree, getSelected()), \node -> {
+								if (!getValue(node.focused)) {
+									moveSelectionRight();
+								}
+							});
+						} else if (k.utf == "home") {
+							maybeApply(getMTreeEditorNodeByPath(tree, getSelected()), \node -> {
+								nextDistinct(node.textSelection, Pair(0, 0));
+								nextDistinct(node.focused, true);
+							});
+						} else if (k.utf == "end") {
+							maybeApply(getMTreeEditorNodeByPath(tree, getSelected()), \node -> {
+								nextDistinct(node.textSelection, Pair(-1, -1));
+								nextDistinct(node.focused, true);
+							});
+						} else if (k.utf == "F2") {
+							maybeApply(getMTreeEditorNodeByPath(tree, getSelected()), \node -> {
+								if (getValue(node.focused)) {
+									nextDistinct(node.focused, false);
+								} else {
+									nextDistinct(node.textSelection, if (js) Pair(0, -1) else Pair(-1, 0));
+									nextDistinct(node.focused, true);
+								}
+							});
+						}
+					}
+					if (k.utf == " ") {
+						toggleSelectedExpanded();
+					}
+				})
+			],
+			MInteractive(
+				[keypress],
+				MTree(
+					const([MTreeEditorNode2MTreeNode(state, tree)]),
+					replaceStructMany(
+						filtermap(style, \st ->
+							switch (st : MTreeEditorStyle<?, ??>) {
+								MTreeStyle(): Some(st);
+								default: None();
+							}
+						),
+						[
+							MTreeSelection(state.selected),
+							MTreeExpanded(state.expanded),
+							MItemsLength(state.itemsLength),
+							MSingleSelection(state.selectedIndex),
+						]
+					)
+				)
+			)
+		)
+	)
+}
+
+MTreeEditorNode2MTreeNode(state : MTreeEditorState<?, ??>, node : MTreeEditorNode<?, ??>) -> MTreeNode<?> {
+	MTreeNode(
+		node.id,
+		\t -> {
+			position = make(getValue(node.textSelection).first);
+			selection = make(getValue(node.textSelection).second);
+
+			titleInput =
+				MTextInput(
+					node.title,
+					[
+						MCondensed(true),
+						MShowUnderline(false),
+						MDynamicTextStyle(fselect(node.childSelected, FLift(\childSelected -> if (childSelected) [MBodyBold()] else [])))
+					],
+					[
+						TTextInputPosition(position),
+						TTextInputSelection(selection),
+						MEatKeyDown(\ke -> {
+							ke.utf == "enter" || !ke.ctrl && (ke.utf == "left" || ke.utf == "right" || ke.keycode == 32)
+						}),
+						MFocused(node.focused),
+						MInputProcessKeyDown(\ke -> {
+							// Should this key be handled by this input?
+							getValue(node.focused)
+								&& (ke.utf != "enter" || js) 	// In JS, we have to allow enter
+								&& ke.utf != "insert"
+								&& (ke.keycode != 32 || !ke.ctrl);
+						}),
+						FAccessAttribute("name", const(toString(node.id))),
+					]
+				);
+
+			MGetFocusGroup(\fg ->
+				MConstruct(
+					[
+						\-> connect(fg.focusedId, node.focusedId),
+						\ -> fBidirectionalLink(
+							node.focused,
+							node.selected,
+							\f -> if (f) nextDistinct(node.selected, true),
+							\s -> if (!s) nextDistinct(node.focused, false)
+						),
+						\ -> fBidirectionalLink(
+							fpair(position, selection),
+							node.textSelection,
+							\ts -> {
+								nextDistinct(node.textSelection, ts);
+							},
+							\ts -> {
+								nextDistinct(position, if (ts.first < 0) strlen(getValue(node.title)) else ts.first);
+								nextDistinct(selection, if (ts.second < 0) strlen(getValue(node.title)) else ts.second);
+							}
+						)
+					],
+					state.node2material(node, titleInput)
+				)
+			);
+		},
+		fselect(node.children, FLift(\children -> map(children, \l -> MTreeEditorNode2MTreeNode(state, l)))),
+		[MSelected(node.selected), MExpanded(node.expanded), MChildSelected(node.childSelected), MShortHighlighter(), MFocusEnabled(const(false))]
+	)
+}
+
+getMTreeEditorNodeByPath(node : MTreeEditorNode, path : [int]) -> Maybe<MTreeEditorNode> {
+	if (length(path) > 1) {
+		index = path[0];
+		if (index < length(getValue(node.children))) {
+			getMTreeEditorNodeByPath(getValue(node.children)[index], tail(path));
+		} else {
+			None()
+		}
+	} else if (length(path) == 1) {
+		index = path[0];
+		if (index < length(getValue(node.children))) {
+			Some(getValue(node.children)[index])
+		} else {
+			None()
+		}
+	} else {
+		None()
+	}
+}
+
+getMTreeEditorNodeById(node : MTreeEditorNode, id : ?) -> Maybe<MTreeEditorNode<?, ??>> {
+	getMTreeEditorNodeBy(node, \l -> l.id == id)
+}
+
+getMTreeEditorNodePathById(node : MTreeEditorNode, id : int) -> [int] {
+	getMTreeEditorNodePathById2([Pair(node, 0)], id);
+}
+
+getMTreeEditorNodePathById2(nodes : [Pair<MTreeEditorNode, int>], id : int) -> [int] {
+	cur = nodes[0];
+	ch = getValue(cur.first.children);
+	if (existsIndex(ch, cur.second)) {
+		if (ch[cur.second].id == id) {
+			reverseA(map(nodes, secondOfPair)); //OK
+		} else {
+			getMTreeEditorNodePathById2(concat([Pair(ch[cur.second], 0)], nodes), id); //down
+		}
+	} else {
+		rest = tail(nodes);
+		if (length(rest) == 0) {
+			[] //fail
+		} else {
+			getMTreeEditorNodePathById2(concat([Pair(rest[0].first, rest[0].second + 1)], tail(rest)), id); //right
+		}
+	}
+}
+
+getMTreeEditorNodeBy(node : MTreeEditorNode, fn : (MTreeEditorNode) -> bool) -> Maybe<MTreeEditorNode> {
+	if (fn(node)) {
+		Some(node)
+	} else {
+		fold(getValue(node.children), None(), \acc, child -> {
+			if (isSome(acc)) {
+				// already found
+				acc
+			} else {
+				getMTreeEditorNodeBy(child, fn)
+			}
+		})
+	}
+}
+
+getAllMTreeEditorNodeBy(node : MTreeEditorNode, fn : (MTreeEditorNode) -> bool) -> [MTreeEditorNode] {
+	getAllMTreeEditorNodeBy0(node, fn, []);
+}
+
+getAllMTreeEditorNodeBy0(node : MTreeEditorNode, fn : (MTreeEditorNode) -> bool, acc : [MTreeEditorNode]) -> [MTreeEditorNode] {
+	fold(getValue(node.children), ifArrayPush(acc, fn(node), node), \acc_, child -> getAllMTreeEditorNodeBy0(child, fn, acc_));
+}
+
+createMTreeEditorNodeAtId(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, id : [int], cb : (MTreeEditorNode) -> void) -> void {
+	materialLog(
+		"createMTreeEditorNodeAtId: " + toString(id),
+		MaterialError()
+	);
+
+	state.getNewNode(\newLo -> {
+		insertMTreeEditorNodeAtId(state, node, newLo, id, cb);
+	});
+}
+
+
+insertMTreeEditorNodeAtId(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, newLo : MTreeEditorNode, id : [int], cb : (MTreeEditorNode) -> void) -> void {
+	materialLog(
+		"insertMTreeEditorNodeAtId: " + toString(id),
+		MaterialError()
+	);
+
+	if (length(id) > 1) {
+		if (length(getValue(node.children)) > id[0]) {
+			insertMTreeEditorNodeAtId(state, getValue(node.children)[id[0]], newLo, tail(id), cb);
+		} else {
+			state.getNewNode(\newLoParent -> {
+				next(node.children, insertArray(getValue(node.children), id[0], newLoParent));
+				insertMTreeEditorNodeAtId(state, newLoParent, newLo, tail(id), cb);
+			});
+		}
+	} else if (length(id) > 0) {
+		next(node.children, insertArray(getValue(node.children), id[0], newLo));
+		cb(newLo);
+	}
+}
+
+removeMTreeEditorNodeAtId(node : MTreeEditorNode, id : [int], cb : (MTreeEditorNode) -> void) -> void {
+	materialLog(
+		"removeMTreeEditorNodeAtId: " + toString(id),
+		MaterialError()
+	);
+
+	if (length(id) > 0 && length(getValue(node.children)) > id[0]) {
+		if (length(id) == 1 && length(getValue(node.children)) > id[0]) {
+			item = getValue(node.children)[id[0]];
+			next(node.children, removeIndex(getValue(node.children), id[0]));
+			cb(item);
+		} else {
+			removeMTreeEditorNodeAtId(getValue(node.children)[id[0]], tail(id), cb);
+		}
+	}
+}
+
+swapMTreeEditorNodeAtId(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, id1 : [int], id2 : [int], cb : (MTreeEditorNode) -> void) -> void {
+	materialLog(
+		"swapMTreeEditorNodeAtId: " + toString(id1) + " " + toString(id2),
+		MaterialError()
+	);
+
+	if (id1 != id2) {
+		id1length = length(id1);
+		id2length = length(id2);
+
+		if (id1length == id2length && subrange(id1, 0, id1length - 1) == subrange(id2, 0, id2length - 1)) {
+			if (id1length == 1) {
+				item = getValue(node.children)[id1[0]];
+				next(node.children, insertArray(removeIndex(getValue(node.children), id1[0]), id2[0], item));
+				cb(item);
+			} else {
+				swapMTreeEditorNodeAtId(state, getValue(node.children)[id1[0]], tail(id1), tail(id2), cb);
+			}
+		} else {
+			removeMTreeEditorNodeAtId(node, id1, \item -> {
+				maybeApply(getMTreeEditorNodeByPath(node, id1), \l -> nextDistinct(l.expanded, true));
+				insertMTreeEditorNodeAtId(state, node, item, id2, cb);
+			});
+		}
+	}
+}
+
+filterMTreeEditorNode(node : MTreeEditorNode, cb : (MTreeEditorNode) -> bool) -> void {
+	iter(getValue(node.children), \child -> {
+		filterMTreeEditorNode(child, cb);
+		if (!cb(child)) {
+			nextDistinct(node.children, removeFirst(getValue(node.children), child));
+		}
+	});
+}
+
+isMTreeEditorNodeFocused(node : MTreeEditorNode) -> bool {
+	getValue(node.focused) || exists(fgetValue(node.children), \c -> isMTreeEditorNodeFocused(c))
+}
+
+countMTreeEditorNodesSize0(nodes : [MTreeEditorNode]) {
+	fold(nodes, 1, \acc, node -> acc + countMTreeEditorNodesSize0(getValue(node.children)));
+}
+
+countMTreeEditorNodesSize(nodes : [MTreeEditorNode]) {
+	countMTreeEditorNodesSize0(nodes) - 1;
+}
