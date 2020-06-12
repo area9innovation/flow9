@@ -1,0 +1,69 @@
+import material/material_ui;
+
+export {
+	MInputChips(style : [MInputChipsStyle]) -> Material;
+
+	// MWidth is for MAutoComplete
+	MInputChipsStyle ::= MWidth, MInputChipsMaxWidth, MSelectedInputChips, MInputChipsLeftCaption, MCustomChipStyle;
+		MSelectedInputChips(items : DynamicBehaviour<[string]>);
+		MInputChipsLeftCaption(caption : Material);
+		MInputChipsMaxWidth(width : Transform<double>);
+		MCustomChipStyle(style : [MChipStyle]);
+}
+
+MInputChips(style : [MInputChipsStyle]) -> Material {
+	selectedItems = extractStruct(style, MSelectedInputChips(make([]))).items;
+	caption = extractStruct(style, MInputChipsLeftCaption(TEmpty())).caption;
+	width = extractStruct(style, MWidth(-1.));
+	maxWidth = tryExtractStruct(style, MInputChipsMaxWidth(const(-1.)));
+	chipStyle = extractStruct(style, MCustomChipStyle([])).style;
+
+	text = make("");
+	focused = make(false);
+	position = make(0);
+	leftWidth = make(0.);
+	avWidth = make(0.);
+
+	materialize = \elem -> MChip(elem, concat([
+		MNewChip(),
+		MCloseButton(),
+		MOnClose(\ -> {nextDistinct(selectedItems, removeAll(fgetValue(selectedItems), elem)); true})
+	], chipStyle));
+
+	chips =
+		MReorderCols(selectedItems, materialize, [MNoScroll()])
+		|> (\m -> MShow(fneq(selectedItems, []), m))
+		|> (\m -> MScroll(m, TFillXY(), [
+			MScrollCropByContent(),
+			MScrollFadeContent(white, 40.),
+			MScrollbars(
+				invisibleScrollBar,
+				invisibleScrollBar
+			),
+			TScrollDisableOutOfBounds(const(true))
+		]));
+
+	MGetManager(\manager -> {
+		defFn = defaultCompletionFn(manager, manager.focus, []).fn;
+		MAutoComplete(text, generate(0, 20, \i -> "content" + i2s(i)), [
+			width,
+			MTextInputOutOfPopup(),
+			MCompletionFn(\match, selected, setWord -> defFn(match, selected, \word -> {
+				setWord(word);
+				if (!contains(getValue(selectedItems), word.sentence)) dynArrayPush(selectedItems, word.sentence);
+				deferUntilNextFrameRendered(\ -> {
+					next(text, "");
+					next(position, 0);
+					next(focused, true);
+				})
+			})),
+			MPopupCustomOffset(fnegate(leftWidth)),
+		], [MFocused(focused), TTextInputPosition(position)])
+	})
+	|> (\m -> MAvailable(m, TFillWYT(fsubtract(avWidth, leftWidth))))
+	|> MSetMinWidth2(const(96.))
+	|> (\m -> MBaselineCols2(MAttachWidth(MBaselineCols2(caption, chips), leftWidth), m))
+	|> (\m -> MAttachAvailableWidth(m, avWidth))
+	|> (\m -> eitherMap(maxWidth, \mw -> MAvailable(m, TFillWYT(mw.width)), m))
+	|> (\m -> MFrame(0., 0., [MFill(MWhite())], m))
+}
