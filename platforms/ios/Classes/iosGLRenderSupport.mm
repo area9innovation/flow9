@@ -196,8 +196,9 @@
         int maxLength = clip->getMaxChars();
         if (maxLength > 0 && newText.length > maxLength) return NO;
         
-        NSString* filteredText =
-            UNICODE2NS( clip->textFilteredByFlowFilters(NS2UNICODE(newText)) );
+        
+        unicode_string filteredUText = clip->textFilteredByFlowFilters(NS2UNICODE(newText));
+        NSString* filteredText = UNICODE2NS(filteredUText);
         
         bool equals = [newText isEqualToString:filteredText];
         bool doReplaceText = !equals || clip->isPassword();
