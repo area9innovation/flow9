@@ -26,6 +26,47 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 	leftWidth = make(0.);
 	avWidth = make(0.);
 
+	fullWidth = make(0.);
+	acPosScale = make(zeroPositionScale);
+	icPosScale = make(zeroPositionScale);
+
+	autoComplete =
+		MGetManager(\manager -> {
+			defFn = defaultCompletionFn(manager, manager.focus, []).fn;
+			MSelect(items, \itms ->
+				MAutoComplete(text, itms, concat(
+					[
+						width,
+						MTextInputOutOfPopup(),
+						MCompletionFn(\match, selected, setWord -> defFn(match, selected, \word -> {
+							setWord(word);
+							if (!contains(getValue(selectedItems), word.sentence)) dynArrayPush(selectedItems, word.sentence);
+							deferUntilNextFrameRendered(\ -> {
+								next(text, "");
+								next(position, 0);
+								next(focused, true);
+							})
+						})),
+						MSentenceMatcher(buildSentenceMatcher, \matcher, input, maxHits, prefix, exhaustive, pos -> {
+							filteredMatcher = SentenceMatcher(matcher with sentences = filter(matcher.sentences, \sentence -> !contains(getValue(selectedItems), sentence)));
+							simpleSentenceMatcher(filteredMatcher, input, maxHits, prefix, exhaustive, pos);
+						}),
+					], 
+					if (multiline) [
+						MPopupCustomOffset(fselect2(icPosScale, acPosScale, FLift2(\icps, acps -> icps.pos.x / icps.scale.x - acps.pos.x / acps.scale.x))),
+						MPopupCustomWidth(fullWidth)
+					]
+					else [MPopupCustomOffset(fnegate(leftWidth))]
+				),
+				[MFocused(focused), TTextInputPosition(position)]
+			))
+		})
+		|> (\m ->
+			if (multiline) MPositionScale(acPosScale, m)
+			else MAvailable(m, TFillWYT(fsubtract(avWidth, leftWidth)))
+		)
+		|> MSetMinWidth2(const(96.));
+
 	materialize = \elem -> MChip(elem, concat([
 		MNewChip(),
 		MCloseButton(),
@@ -34,12 +75,10 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 
 	chipsGrid =
 		if (multiline) {
-			gridAvailW = make(0.);
 			MFlexibleGrid(
-				fmap(selectedItems, materialize),
-				[MLockWidth(false), TFillersSupport(), TAvailableMinMax(zero, gridAvailW)]
+				farrayPush(fmap(selectedItems, materialize), const(autoComplete)),
+				[TFillersSupport()]
 			)
-			|> (\m -> MAttachAvailableWidth(m, gridAvailW))
 		} else {
 			MReorderCols(selectedItems, materialize, [MNoScroll()])
 			|> (\m -> MShow(fneq(selectedItems, []), m))
@@ -55,37 +94,15 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 			),
 			TScrollDisableOutOfBounds(const(true))
 		]);
-
-	MGetManager(\manager -> {
-		defFn = defaultCompletionFn(manager, manager.focus, []).fn;
-		MSelect(items, \itms ->
-			MAutoComplete(text, itms, [
-				width,
-				MTextInputOutOfPopup(),
-				MCompletionFn(\match, selected, setWord -> defFn(match, selected, \word -> {
-					setWord(word);
-					if (!contains(getValue(selectedItems), word.sentence)) dynArrayPush(selectedItems, word.sentence);
-					deferUntilNextFrameRendered(\ -> {
-						next(text, "");
-						next(position, 0);
-						next(focused, true);
-					})
-				})),
-				MPopupCustomOffset(fnegate(leftWidth)),
-				MSentenceMatcher(buildSentenceMatcher, \matcher, input, maxHits, prefix, exhaustive, pos -> {
-					filteredMatcher = SentenceMatcher(matcher with sentences = filter(matcher.sentences, \sentence -> !contains(getValue(selectedItems), sentence)));
-					simpleSentenceMatcher(filteredMatcher, input, maxHits, prefix, exhaustive, pos);
-				})
-			], [MFocused(focused), TTextInputPosition(position)]
-		))
-	})
-	|> (\m -> MAvailable(m, TFillWYT(fsubtract(avWidth, leftWidth))))
-	|> MSetMinWidth2(const(96.))
-	|> (\m -> MBaselineCols2(MAttachWidth(MBaselineCols2(caption, chips), leftWidth), m))
+	
+	MBaselineCols2(caption, chips)
+	|> (\m -> MAttachWidth(m, leftWidth))
+	|> (\m -> if (multiline) MAttachWidth(m, fullWidth) else MBaselineCols2(m, autoComplete))
 	|> (\m -> MAttachAvailableWidth(m, avWidth))
 	|> (\m -> eitherMap(maxWidth, \mw -> MAvailable(m, TFillWYT(mw.width)), m))
 	|> (\m -> MFrame(0., 0., [MFill(MWhite())], m))
 	|> (\m -> MConstruct([makeSubscribe2(items, \itms ->
 			nextDistinct(selectedItems, filter(getValue(selectedItems), \it -> contains(itms, it)))
 		)], m))
+	|> (\m -> if (multiline) MPositionScale(icPosScale, m) else m)
 }
