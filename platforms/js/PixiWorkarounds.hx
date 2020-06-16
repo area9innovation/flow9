@@ -401,7 +401,7 @@ class PixiWorkarounds {
 				context.font = font;
 				let widthContext = context;
 
-				const ieWidthMulti = Platform.isIE ? 100 : 1;
+				let widthMulti = Platform.isIE ? 100 : 1;
 				if (Platform.isIE) {
 					// In IE, CanvasRenderingContext2D measure text with integer preceision
 					// it leads to cumulative errors in flow
@@ -412,9 +412,23 @@ class PixiWorkarounds {
 						widthCanvas = PIXI.TextMetrics._widthCanvas;
 					}
 					let clonedStyle = style.clone();
-					clonedStyle.fontSize *= ieWidthMulti;
+					clonedStyle.fontSize *= widthMulti;
 					widthContext = widthCanvas.getContext('2d');
 					widthContext.font = clonedStyle.toFontString();
+				} else if (Platform.isSamsung) {
+					const defaultFontSize = 16;
+					const currentFontSize = parseInt(window.getComputedStyle(document.body).getPropertyValue('font-size'));
+					const fontScale = currentFontSize / defaultFontSize;
+					const scaledFontSize = style.fontSize * fontScale;
+					fontProperties.fontSize = fontProperties.ascent = scaledFontSize;
+
+					let contextFontSize = /[\\d\\.]+px/.exec(widthContext.font);
+					if (contextFontSize) {
+						contextFontSize = parseFloat(contextFontSize[0]);
+						if (contextFontSize) {
+							widthMulti = contextFontSize / scaledFontSize;
+						}
+					}
 				}
 
 				const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
@@ -432,7 +446,7 @@ class PixiWorkarounds {
 						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
 						lineWidth += spacesCount * spaceWidth;
 					} else {
-						lineWidth = widthContext.measureText(lines[i]).width / ieWidthMulti;
+						lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
 					}
 					lineWidth += (lines[i].length - 1) * style.letterSpacing;
 

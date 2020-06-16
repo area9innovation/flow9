@@ -1,4 +1,5 @@
 import material/material_dialog;
+import material/material_snackbar;
 import material/internal/material_reorder;
 import ui/animate/teasing;
 import form/realhtmlworkaround;
@@ -45,6 +46,7 @@ export {
 
 	// index - position in array, id - unique identifier
 	SelectMLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
+	SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMColsA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMGroup(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
@@ -84,7 +86,7 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MChangeOnClick;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MChangeOnClick, MInputInspector;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -93,6 +95,7 @@ export {
 		MItemsLimit(limit : int);
 		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
 		MChangeOnClick(); // Changes selected only when click on autocomplete item.
+		MInputInspector(text : DynamicBehaviour<string>); // Intended for MAutoComplete case.
 
 	MCollapsingBox(
 		content : Material,
@@ -110,6 +113,16 @@ export {
 
 	MPictureFill(picURL : string, style : [MPictureStyle]) -> Material;
 	MPictureFit(picURL : string, style : [MPictureStyle]) -> Material;
+
+	MTabs(tabs : [MTab], selected : DynamicBehaviour<int>, style : [MTabsStyle]) -> Material {
+		MDynamicTabs(const(tabs), selected, style)
+		|> MCallstack;
+	};
+
+	MDataTable(columns : [MColumnDynamic], rows : [[Material]], style : [MDataTableStyle]) -> Material {
+		MDynamicDataTable(columns, const(rows), style)
+		|> MCallstack;
+	};
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -323,6 +336,16 @@ SelectMLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>,
 	)
 }
 
+SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
+	MGetManager(\manager ->
+		MGetFocusGroup(\parent ->
+			MGetMaterial2Tropic(\m2t ->
+				SelectMLines2AT(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
+			)
+		)
+	)
+}
+
 SelectMCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
 	MGetManager(\manager ->
 		MGetFocusGroup(\parent ->
@@ -519,8 +542,13 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				makeSubscribe(fands(states.isReady, false), \isReady ->
 					if (isReady) synchrocallEx.onStart()
 				),
-				// sum all audio lengths
-				\-> fconnect(fsum(states.length), lenEx),
+				// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
+				\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
+						if (all(map(lens, \l -> l > 0.0)))
+							dsum(lens)
+						else
+							0.0
+					}),
 				// set possition
 				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
 				// not make2Subscribe(currIndexB, playEx) due to looping in 1-element array
@@ -718,12 +746,18 @@ MDropDownOrAutoComplete(
 			);
 
 		MConstruct(
-			[\ -> {
-				eitherMap(multiSelection,
-					\ms -> bidirectionalLink(ms.selected, selectedStrB, idxs2string, string2idxsMulti),
-					bidirectionalLink(selected, selectedStrB, \idx -> idxs2string([idx]), \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str))
+			[
+				\ ->
+					eitherMap(multiSelection,
+						\ms -> bidirectionalLink(ms.selected, selectedStrB, idxs2string, string2idxsMulti),
+						bidirectionalLink(selected, selectedStrB, \idx -> idxs2string([idx]), \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str))
+					),
+				eitherMap(
+					tryExtractStruct(style, MInputInspector(make(""))),
+					\insp -> makeSubscribe(selectedStrB, \str -> nextDistinct(insp.text, str)),
+					\ -> nop
 				)
-			}],
+			],
 			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
 		)
 	}

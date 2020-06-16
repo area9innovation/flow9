@@ -21,8 +21,6 @@ export {
 	TextInput2FTextInput(textInput : TextInput) -> Pair<FTextInput, () -> () -> void>;
 	FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> void>;
 
-	style2characterStyle(s : [?]) -> [CharacterStyle];
-
 	renderFGraphics(path : Transform<[StaticGraphicOp]>, style : Transform<[GraphicsStyle]>) -> FRenderResult;
 	renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult;
 	renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult;
@@ -270,6 +268,8 @@ AccessProperties2FAccessProperties(prop : [AccessProperty]) -> [FAccessProperty]
 			AccessSelectable() : arrayPush(acc, p);
 			AccessState(__) : arrayPush(acc, p);
 			AccessZorder(zOrder) : arrayPush(acc, FAccessZorder(zOrder));
+			TagName(__) : arrayPush(acc, p);
+			LangAttribute(__) : arrayPush(acc, p);
 		}
 	)
 }
@@ -356,6 +356,12 @@ FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProp
 				);
 			}
 			FAccessVisible(__): {
+				acc;
+			}
+			TagName(__): {
+				acc;
+			}
+			LangAttribute(__): {
 				acc;
 			}
 		}
@@ -724,24 +730,6 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 	)
 }
 
-style2characterStyle(s : [?]) -> [CharacterStyle] {
-	concatA(map(
-		[
-			FontFamily(""),
-			FontSize(0.),
-			Fill(0),
-			FillOpacity(0.),
-			BackgroundFill(0),
-			BackgroundFillOpacity(0.),
-			LetterSpacing(0.),
-			Sharpness(0, FontAntiAliasNormal(), FontGridFitNone()),
-			Underlined([]),
-			EscapeHTML(false)
-		],
-		\st -> extractStructMany(s, st)
-	))
-}
-
 FParagraphStyle2FTextStyle(style : [FParagraphStyle]) -> [FTextStyle] {
 	filtermap(style, \s -> switch (s) {
 		FTextStyle() : {a : Maybe<FTextStyle> = Some(s); a}
@@ -1026,20 +1014,23 @@ renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 
 renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	charStyle = style2characterStyle(style);
-	textfield = makeTextfield(getFontFamily(charStyle));
-	rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
-	setEscapeHTML(textfield, extractStruct(style, EscapeHTML(false)).escape);
-	setTextDirection(textfield, if (rtl) "rtl" else "ltr");
-	dynColor = tryExtractStruct(style, FDynamicColor(const(-1)));
-	u =
+	textfield = makeStyledTextfield(fgetValue(text), style);
+	u1 =
 		eitherFn(
-			dynColor,
+			tryExtractStruct(style, FDynamicColor(const(-1))),
 			\dc -> make2Subscribe(text, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
 			makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))
 		);
+	u2 =
+		eitherMap(
+			tryExtractStruct(style, LangAttribute(const(""))),
+			\la -> makeSubscribe(la.languageCode, \code -> setAccessAttributes(textfield, [["lang", code]]))(),
+			nop
+		);
 
 	disposer = \ -> {
-		u();
+		u1();
+		u2();
 
 		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
 		if (flash && getFocus(textfield)) {
@@ -1156,7 +1147,7 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 
 	d = renderFText(text, charStyle);
 	textfield = d.clips[length(d.clips) - 1];
-	rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
+	rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 	disposers = ref [];
 
 	setEscapeHTML(textfield, extractStruct(style, EscapeHTML(false)).escape);
@@ -1544,6 +1535,19 @@ addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) 
 					}
 					FAccessVisible(__): {
 						acc;
+					}
+					TagName(tagName): {
+						setClipTagName(clip, tagName);
+
+						acc;
+					}
+					LangAttribute(languageCode): {
+						uns = makeSubscribe2(languageCode, \code -> setAccessAttributes(clip, [["lang", code]]));
+
+						Pair(
+							setTree(acc.first, "lang", \ -> fgetValue(languageCode)),
+							arrayPush(acc.second, uns)
+						)
 					}
 				}
 			}

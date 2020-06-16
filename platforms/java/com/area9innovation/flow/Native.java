@@ -81,8 +81,8 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final String hostCall(String name, Object[] args) {
-		return "";
+	public final Object hostCall(String name, Object[] args) {
+		return null;
 	}
 
 	public final Object failWithError(String msg) {
@@ -125,6 +125,19 @@ public class Native extends NativeHost {
 			return "";
 		} catch (IOException e) {
 			return "";
+		}
+	}
+
+	public final Object getClipboardToCB(Func1<Object, String> cb) {
+		try {
+			Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+			String data = (String) clipboard.getData(DataFlavor.stringFlavor);
+			cb.invoke(data);
+			return null;
+		} catch (UnsupportedFlavorException e) {
+			return null;
+		} catch (IOException e) {
+			return null;
 		}
 	}
 
@@ -1674,7 +1687,14 @@ public class Native extends NativeHost {
 	public final String readBytes(int n) {
 		byte[] input = new byte[n];
 		try {
-			System.in.read(input);
+			int have_read = 0;
+			while (have_read < n) {
+				int read_bytes = System.in.read(input, have_read, n - have_read);
+				if (read_bytes == -1) {
+					break;
+				}
+				have_read += read_bytes;
+			}
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -1729,5 +1749,15 @@ public class Native extends NativeHost {
 			e.printStackTrace();
 		}
 		return null;
+	}
+
+	public final double totalMemory() {
+		return (double)(Runtime.getRuntime().totalMemory());
+	}
+	public final double freeMemory() {
+		return (double)(Runtime.getRuntime().freeMemory());
+	}
+	public final double maxMemory() {
+		return (double)(Runtime.getRuntime().maxMemory());
 	}
 }

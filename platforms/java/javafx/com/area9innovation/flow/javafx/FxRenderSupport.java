@@ -1282,7 +1282,7 @@ public class FxRenderSupport extends RenderSupport {
 	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour, double backgroundOpacity, boolean alignBottom,
-								  double bottomBorder, boolean escapeHTML) {
+								  double bottomBorder, boolean scaleMode, double scaleModeMin, double scaleModeMax, boolean escapeHTML) {
 		System.out.println("setVideoSubtitle not implemented");
 		return null;
 	}
@@ -1420,7 +1420,7 @@ public class FxRenderSupport extends RenderSupport {
 	}
 
 	@Override
-	public Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload) {
+	public Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload, String altText) {
 		CachedPicture img = img_cache.get(name);
 
 		if (img == null) {

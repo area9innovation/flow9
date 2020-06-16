@@ -196,8 +196,9 @@
         int maxLength = clip->getMaxChars();
         if (maxLength > 0 && newText.length > maxLength) return NO;
         
-        NSString* filteredText =
-            UNICODE2NS( clip->textFilteredByFlowFilters(NS2UNICODE(newText)) );
+        
+        unicode_string filteredUText = clip->textFilteredByFlowFilters(NS2UNICODE(newText));
+        NSString* filteredText = UNICODE2NS(filteredUText);
         
         bool equals = [newText isEqualToString:filteredText];
         bool doReplaceText = !equals || clip->isPassword();
@@ -1391,12 +1392,13 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     
     NSString * ns_url = UNICODE2NS( web_clip->getUrl() );
     
-    NSURL* baseResourceUrl = [[[NSBundle mainBundle] resourceURL] URLByAppendingPathComponent:@"www"];
+    NSURL* baseResourceUrl = [[NSBundle mainBundle] resourceURL];
+    NSURL* baseResourceWwwUrl = [baseResourceUrl URLByAppendingPathComponent:@"www"];
     bool isLocalFile = [ns_url hasPrefix:@"./"];
     NSURL * rq_url = nil;
     if (isLocalFile)
         // File should be in the app bundle on the www folder
-        rq_url = [NSURL URLWithString:ns_url relativeToURL:baseResourceUrl];
+        rq_url = [NSURL URLWithString:ns_url relativeToURL:baseResourceWwwUrl];
     else if (![URLLoader hasConnection])
         rq_url = [NSURL URLWithString:ns_url];
     else
@@ -1408,6 +1410,7 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     web_view.configuration.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
     web_view.configuration.allowsInlineMediaPlayback = YES; // Doesn't work for WKWebView - use video playsinline attribute only
     web_view.configuration.ignoresViewportScaleLimits = YES;
+    [web_view.configuration.preferences setValue:@YES forKey:@"allowFileAccessFromFileURLs"];
     [web_view.configuration.userContentController addScriptMessageHandler:[[FlowWKMessageHandler alloc] initWithOwner:this] name:@"flow"];
     NSString* custom_ua = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
     web_view.customUserAgent = custom_ua;
@@ -1418,7 +1421,7 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     [commonWebViewDelegate addInnerDomain: rq_url.host forWebView: widget]; // Add the main frame
     
     if (isLocalFile) {
-        [web_view loadFileURL:rq_url allowingReadAccessToURL:baseResourceUrl];
+        [web_view loadFileURL:rq_url allowingReadAccessToURL:[baseResourceUrl URLByDeletingLastPathComponent]];
     } else {
         [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
     }

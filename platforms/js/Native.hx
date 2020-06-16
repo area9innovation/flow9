@@ -430,7 +430,7 @@ class Native {
 
 	#if js
 	public static inline function strReplace(str : String, find : String, replace : String) : String {
-		return StringTools.replace(str, find, replace);		
+		return StringTools.replace(str, find, replace);
 	}
 	#end
 
@@ -818,12 +818,8 @@ class Native {
 		#if (flow_nodejs || nwjs)
 		return false;
 		#else
-		return isMobile() || untyped __js__("(('ontouchstart' in window) || (window.DocumentTouch && document instanceof DocumentTouch) || window.matchMedia('(pointer: coarse)').matches)");
+		return Platform.isMobile || untyped __js__("(('ontouchstart' in window) || (window.DocumentTouch && document instanceof DocumentTouch) || window.matchMedia('(pointer: coarse)').matches)");
 		#end
-	}
-
-	public static function isMobile() : Bool {
-		return untyped __js__("/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Windows Phone/i.test(navigator.userAgent)");
 	}
 	#end
 
@@ -853,7 +849,7 @@ class Native {
 			Browser.document.body.appendChild(testdiv);
 			var dpi = testdiv.offsetHeight * js.Browser.window.devicePixelRatio;
 			Browser.document.body.removeChild(testdiv);
-			if (!isMobile()) {
+			if (!Platform.isMobile) {
 				return "js,pixi,dpi=" + dpi;
 			} else {
 				return "js,pixi,mobile,dpi=" + dpi;
@@ -1749,35 +1745,141 @@ class Native {
 	}
 
 	#if js
-	private static function object2JsonStructs(o : Dynamic) : Dynamic {
-		if (untyped __js__("Array.isArray(o)")) {
-			return HaxeRuntime.fastMakeStructValue("JsonArray", map(o, object2JsonStructs));
-		} else {
-			var t = untyped __js__ ("typeof o");
+	// we will create flow objects using several "sid"
+	// they obtained from HaxeRuntime._structids_ / HaxeRuntime._structargs_
+	// so we cache them in order to not make local vars (they would increase load on GC)
+	static var sidJsonArray : Int;
+	static var sidJsonArrayVal : String;
+	static var sidJsonString : Int;
+	static var sidJsonStringVal : String;
+	static var sidJsonDouble : Int;
+	static var sidJsonDoubleVal : String;
 
-			if ( t == "string" ) {
-				return HaxeRuntime.fastMakeStructValue("JsonString", o);
-			} else if ( t == "number" ) {
-				return HaxeRuntime.fastMakeStructValue("JsonDouble", o);
-			} else if (t == "boolean") {
-				return HaxeRuntime.fastMakeStructValue("JsonBool", o);
-			} else if (o == null) {
-				return makeStructValue("JsonNull", [], null);
-			} else {
-				var fields : Array<String> = untyped __js__ ("Object.getOwnPropertyNames(o)");
-				for (i in 0...fields.length)
-					fields[i] = HaxeRuntime.fastMakeStructValue2("Pair", fields[i], object2JsonStructs( untyped __js__ ("o[fields[i]]") ));
-				return HaxeRuntime.fastMakeStructValue("JsonObject", fields);
+	static var jsonBoolTrue : Dynamic;
+	static var jsonBoolFalse : Dynamic;
+	static var jsonNull : Dynamic;
+
+	static var sidPair : Int;
+	static var sidPairFirst : String;
+	static var sidPairSecond : String;
+	static var sidJsonObject : Int;
+	static var sidJsonObjectFields : String;
+
+	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
+	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var a1 = Native.map(o,Native.object2JsonStructs);
+			var obj = { _id : Native.sidJsonArray };
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString };
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble };
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = [];
+						for(var f in o) {
+							var a2 = Native.object2JsonStructs(o[f]);
+							var obj = { _id : Native.sidPair };
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields.push(obj);
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
 			}
-		}
+		}");
+
+		return "";
 	}
 
+	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
+	private static function object2JsonStructs_FF(o : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var a1 = Native.map(o,Native.object2JsonStructs_FF);
+			var obj = { _id : Native.sidJsonArray};
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString };
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble };
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = Object.getOwnPropertyNames(o);
+						for(var i=0; i< mappedFields.length; i++) {
+							var f = mappedFields[i];
+							var a2 = Native.object2JsonStructs_FF(o[f]);
+							var obj = { _id : Native.sidPair };
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields[i] = obj;
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
+	}
+
+	private static var parseJsonFirstCall = true;
 	public static function parseJson(json : String) : Dynamic {
-	 	try {
-	 		var o = haxe.Json.parse(json);
-			return object2JsonStructs(o);
+		try {
+			if (parseJsonFirstCall) {
+				Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
+				Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
+
+				Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
+				Native.sidJsonStringVal = HaxeRuntime._structargs_.get(Native.sidJsonString)[0];
+
+				Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
+				Native.sidJsonDoubleVal = HaxeRuntime._structargs_.get(Native.sidJsonDouble)[0];
+
+				Native.jsonBoolTrue = HaxeRuntime.fastMakeStructValue("JsonBool", true);
+				Native.jsonBoolFalse = HaxeRuntime.fastMakeStructValue("JsonBool", false);
+
+				Native.sidPair = HaxeRuntime._structids_.get("Pair");
+				Native.sidPairFirst = HaxeRuntime._structargs_.get(Native.sidPair)[0];
+				Native.sidPairSecond = HaxeRuntime._structargs_.get(Native.sidPair)[1];
+
+				Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
+				Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
+
+				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+				parseJsonFirstCall = false;
+			}
+
+			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
 		} catch (e : Dynamic) {
-			return makeStructValue("JsonDouble", [0.0], null); 
+			return makeStructValue("JsonDouble", [0.0], null);
 		}
 	}
 	#end

@@ -453,6 +453,14 @@ class RenderSupport {
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
 		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+
+		// Make additional resize for mobile fullscreen mode
+		if (Platform.isMobile) {
+			on("fullscreen", function(isFullScreen) {
+				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
+				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
 	}
 
 	private static inline function isPortaitOrientation() {
@@ -470,6 +478,11 @@ class RenderSupport {
 			if (WindowTopHeightLandscape == -1)
 				WindowTopHeightLandscape = topHeight;
 		}
+	}
+
+	public static function setApplicationLanguage(languageCode : String) {
+		Browser.document.documentElement.setAttribute("lang", languageCode);
+		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
 	}
 
 	public static function getSafeArea() : Array<Float> {
@@ -1262,6 +1275,22 @@ class RenderSupport {
 		clip.accessCallback = callback;
 	}
 
+	public static function setClipTagName(clip : Dynamic, tagName : String) : Void {
+		if (clip.nativeWidget != null) {
+			clip.nativeWidget = null;
+			clip.tagName = tagName;
+			clip.createNativeWidget(tagName);
+
+			if (clip.updateNativeWidgetStyle != null) {
+				clip.updateNativeWidgetStyle();
+			}
+
+			DisplayObjectHelper.invalidateTransform(clip);
+		} else {
+			clip.tagName = tagName;
+		}
+	}
+
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
 		if (clip.nativeWidget != null && clip.shouldPreventFromBlur != null) {
 			clip.shouldPreventFromBlur = true;
@@ -1344,9 +1373,9 @@ class RenderSupport {
 
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
 		fontslope : String, fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
-		alignBottom : Bool, bottomBorder : Float, escapeHTML : Bool) : Void {
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
 		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour,
-			backgroundopacity, alignBottom, bottomBorder, escapeHTML);
+			backgroundopacity, alignBottom, bottomBorder, scaleMode, scaleModeMin, scaleModeMax, escapeHTML);
 	}
 
 	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
@@ -2265,8 +2294,8 @@ class RenderSupport {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
-		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
+	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
+		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
 	}
 
 	public static function cursor2css(cursor : String) : String {
@@ -2585,8 +2614,12 @@ class RenderSupport {
 				regularFullScreenClipParent = FullWindowTargetClip.parent;
 				mainStage.addChild(FullWindowTargetClip);
 			} else {
-				regularFullScreenClipParent.addChild(FullWindowTargetClip);
-				regularFullScreenClipParent = null;
+				if (regularFullScreenClipParent != null) {
+					regularFullScreenClipParent.addChild(FullWindowTargetClip);
+					regularFullScreenClipParent = null;
+				} else {
+					mainStage.removeChild(FullWindowTargetClip);
+				}
 
 				for (child in mainStage.children) {
 					child.setClipVisible(true);

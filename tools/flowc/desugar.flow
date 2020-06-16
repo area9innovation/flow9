@@ -62,6 +62,7 @@ DesugarAcc(
 	tyvarIdGroup : IdGroup,
 	errors : ref [FcError],
 	stringIncludes : ref [string],
+	supressUnknownType : bool
 );
 
 desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, st : SyntaxTree) -> FcModule {
@@ -138,7 +139,8 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 	);
 
 	// OK, we construct a new tyvar group factory
-	dacc0 = DesugarAcc(fileinfo, facc.names, makeTree(), makeTree(), false, dummyFcTypeEnv, makeIdGroup(facc.tyvarIdFactory), errors, ref []);
+	dacc0 = DesugarAcc(fileinfo, facc.names, makeTree(), makeTree(), false, dummyFcTypeEnv, makeIdGroup(facc.tyvarIdFactory), errors, ref [],
+		isConfigParameterTrue(facc.config.config, "supress-unknown-type"));
 
 	// Find all struct defs
 	structs : Tree<string, FcTypeStruct> = fold(toplevels, makeTree(), \acc, t -> {
@@ -207,7 +209,7 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 		}
 	});
 
-	dacc1 = DesugarAcc(fileinfo, facc.names, structs, makeTree(), false, dacc0.env, dacc0.tyvarIdGroup, dacc0.errors, dacc0.stringIncludes);
+	dacc1 = DesugarAcc(fileinfo, facc.names, structs, makeTree(), false, dacc0.env, dacc0.tyvarIdGroup, dacc0.errors, dacc0.stringIncludes, dacc0.supressUnknownType);
 
 	// Find all unions, but keep them named, and unresolved
 	unions : Tree<string, FcTypeUnion> = fold(toplevels, makeTree(), \acc, t -> {
@@ -224,7 +226,7 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 		} else acc;
 	});
 
-	dacc = DesugarAcc(fileinfo, facc.names, structs, unions, true, dacc1.env, dacc1.tyvarIdGroup, dacc1.errors, dacc1.stringIncludes);
+	dacc = DesugarAcc(fileinfo, facc.names, structs, unions, true, dacc1.env, dacc1.tyvarIdGroup, dacc1.errors, dacc1.stringIncludes, dacc1.supressUnknownType);
 
 	// Collect all definitions and declaration of each function
 	functions1 : Tree<string, [FcFunctionDec]> = fold(toplevels, makeTree(), \acc, t -> {
@@ -915,9 +917,11 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 					None() : {
 						switch (lookupTree(dacc.names.structs, sourceType)) {
 							None() : {
-								refArrayPush(dacc.errors, FcError("Unknown struct type " + sourceType, [
-									FcPosition(dacc.fileinfo.flowfile, postfix.start, postfix.end),
-								]));
+								if (!dacc.supressUnknownType) {
+									refArrayPush(dacc.errors, FcError("Unknown struct type " + sourceType, [
+										FcPosition(dacc.fileinfo.flowfile, postfix.start, postfix.end),
+									]));
+								}
 								FcCall(acc, [], FcInfo(ref None(), postfix.start, postfix.end))
 							}
 							Some(sourceStructDef) : FcCall(acc, constructStructArgs(dacc, sourceStructDef.args, finfo, postfix), FcInfo(ref None(), postfix.start, postfix.end));
@@ -1090,9 +1094,12 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 
 								switch (uniondef) {
 									None(): {
-										refArrayPush(dacc.errors, FcError("Unknown struct or union '" + struct + "' in switch", [FcPosition(info.flowfile, c.start, c.end)]));
+										if (!dacc.supressUnknownType) {
+											refArrayPush(dacc.errors, FcError("Unknown struct or union '" + struct + "' in switch", [FcPosition(info.flowfile, c.start, c.end)]));
+										}
 										// Construct a case anyways
-										[FcCase(struct, argnames, body, body.info)];
+										x : [FcCase] = [FcCase(struct, argnames, body, body.info)];
+										x;
 									}
 									Some(uf): {
 										// First, expand "local" unions
@@ -1724,7 +1731,9 @@ lookupDesugarTypename(dacc : DesugarAcc, typename : FcTypeName) -> FcType {
 											FcError(m, [FcPosition(dacc.fileinfo.flowfile, typename.info.start, typename.info.end)])
 										);
 									}
-									error("Unknown type name " + typename.name);
+									if (!dacc.supressUnknownType) {
+										error("Unknown type name " + typename.name);
+									}
 									typename;
 								}
 								Some(m): m;

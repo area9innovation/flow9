@@ -30,6 +30,9 @@ class VideoClip extends FlowContainer {
 	private var loaded : Bool = false;
 	private var subtitleAlignBottom : Bool = false;
 	private var subtitleBottomBorder : Float = 2.0;
+	private var subtitlesScaleMode : Bool = false;
+	private var subtitlesScaleModeMin : Float = -1.0;
+	private var subtitlesScaleModeMax : Float = -1.0;
 	private var autoPlay : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
@@ -230,12 +233,12 @@ class VideoClip extends FlowContainer {
 
 	public function setVideoSubtitle(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
 		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
-		alignBottom : Bool, bottomBorder : Float, escapeHTML : Bool) : Void {
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
 		if (text == '') {
 			deleteSubtitlesClip();
 		} else {
 			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity,
-				alignBottom, bottomBorder, escapeHTML);
+				alignBottom, bottomBorder, scaleMode, scaleModeMin, scaleModeMax, escapeHTML);
 		};
 	}
 
@@ -247,7 +250,7 @@ class VideoClip extends FlowContainer {
 
 	private function setVideoSubtitleClip(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
 		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
-		alignBottom : Bool, bottomBorder : Float, escapeHTML : Bool) : Void {
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
 		if (fontFamily != fontfamily && fontfamily != '') {
 			fontFamily = fontfamily;
 			deleteSubtitlesClip();
@@ -261,6 +264,9 @@ class VideoClip extends FlowContainer {
 		textField.setEscapeHTML(escapeHTML);
 		subtitleAlignBottom = alignBottom;
 		if (bottomBorder >= 0) subtitleBottomBorder = bottomBorder;
+		subtitlesScaleMode = scaleMode;
+		subtitlesScaleModeMin = scaleModeMin;
+		subtitlesScaleModeMax = scaleModeMax;
 
 		updateSubtitlesClip();
 	}
@@ -278,12 +284,26 @@ class VideoClip extends FlowContainer {
 			if (videoWidget.width == 0) {
 				textField.setClipVisible(false);
 			} else {
-				textField.setWidth(0.0);
-				textField.setWidth(Math.min(textField.getWidth(), videoWidget.width));
-
 				textField.setClipVisible(true);
-				textField.setClipX((videoWidget.width - textField.getWidth()) / 2.0);
-				textField.setClipY(videoWidget.height - textField.getHeight() - subtitleBottomBorder + (subtitleAlignBottom ? this.y : 0.0));
+
+				var xScale = if (subtitlesScaleMode) untyped this.transform.scale.x else 1.0;
+				var yScale = if (subtitlesScaleMode) untyped this.transform.scale.y else 1.0;
+				if (subtitlesScaleModeMin != -1.0) {
+					xScale = Math.max(xScale, subtitlesScaleModeMin);
+					yScale = Math.max(yScale, subtitlesScaleModeMin);
+				}
+				if (subtitlesScaleModeMax != -1.0) {
+					xScale = Math.min(xScale, subtitlesScaleModeMax);
+					yScale = Math.min(yScale, subtitlesScaleModeMax);
+				}
+				textField.setClipScaleX(xScale);
+				textField.setClipScaleY(yScale);
+
+				textField.setWidth(0.0);
+				textField.setWidth(Math.min(textField.getWidth(), videoWidget.width / xScale));
+
+				textField.setClipX((videoWidget.width - textField.getWidth() * xScale) / 2.0);
+				textField.setClipY(videoWidget.height - textField.getHeight() * yScale - subtitleBottomBorder * yScale + (subtitleAlignBottom ? this.y : 0.0));
 
 				textField.invalidateTransform("updateSubtitlesClip");
 			}

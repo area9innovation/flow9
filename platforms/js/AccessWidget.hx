@@ -11,8 +11,6 @@ import pixi.core.math.Point;
 using DisplayObjectHelper;
 
 class AccessWidgetTree extends EventEmitter {
-	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
-
 	@:isVar public var id(get, set) : Int;
 	@:isVar public var accessWidget(get, set) : AccessWidget;
 	@:isVar public var parent(get, set) : AccessWidgetTree;
@@ -230,7 +228,7 @@ class AccessWidgetTree extends EventEmitter {
 					}
 				}
 
-				if (DebugAccessOrder) {
+				if (DisplayObjectHelper.DebugAccessOrder) {
 					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
 					nativeWidget.setAttribute("zorder", '${zorder}');
 					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
@@ -451,6 +449,7 @@ class AccessWidget extends EventEmitter {
 		"contentinfo" => "footer",
 		"form" => "form",
 		"textbox" => "input",
+		"switch" => "button"
 	];
 
 	public static var zIndexValues = {
@@ -1039,7 +1038,7 @@ class AccessWidget extends EventEmitter {
 		if (tree == null) {
 			tree = AccessWidget.tree;
 
-			if (AccessWidgetTree.DebugAccessOrder && tree.childrenChanged) {
+			if (DisplayObjectHelper.DebugAccessOrder && tree.childrenChanged) {
 				printTree();
 			}
 		}

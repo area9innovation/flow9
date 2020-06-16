@@ -1,13 +1,14 @@
 import sys/target;
+import string_utils;
 import form/form;
 import math/math; // dround
 import rendersupport; // makeTextfield, setTextAndStyle, getTextFieldHeight
 import runtime; // urlParameter funcs
 import ds/treeutils;
-import formats/html/font2html;
 import fusion;
 import text/unicodecharacters;
 import net/urlhash;
+import fonts_repo;
 
 export {
 	getUniversalFont() -> FontFamily;
@@ -60,22 +61,24 @@ export {
 
 	getNativeLangFromBCP(bcpLang : string) -> string;
 
-	// Hence arabic letters look smaller, we need adjust relative scale for readability.
-	getFontRelativeMultiplier() -> double;
+	getMappedFontFamily(style : [CharacterStyle]) -> string;
 
-	// Also, some other styles could be adjusted.
-	overrideCharacterStylePerAlphabet(text: string, styles: [CharacterStyle]) -> [CharacterStyle];
+	// Hence arabic letters look smaller, we need adjust relative scale and
+	// some other styles for readability.
+	// TODO maybe introduce a native that will do a full string scan to detect an alphabet.
+	detectAlphabet(text : string) -> string;
+	getAlphabetScaling(alphabet : string, fontFamily : string) -> double;
+	apply2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> [CharacterStyle];
+	applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterStyle];
 
 	// Reverse array for RTL layout
 	arrayRTL(arr : [?]) -> [?];
 	arrayRTL2(isRTL : bool) -> ([?]) -> [?];
 }
 
-addMappedFontsPad : ref Maybe<bool> = ref None();
-addMappedFonts = \ -> onlyOnce(addMappedFontsPad, \ -> getRendererType() == "html" && isUrlParameterTrue("add_fonts"));
 debugFontMapping = isUrlParameterTrue("debugfontmapping");
 
-relativeScaleArabicMultiplier = 1.4;
+relativeScaleArabicMultiplier = 1.4;  // TODO generalize introducing a mapping alphabet→coeficient.
 
 isChinese(lang) {
 	lang == "zh" || lang == "zz"
@@ -87,7 +90,6 @@ bidiSupport: ref Maybe<bool> = ref None();
 isCJKLang() -> bool {
 	^cjkLang
 }
-
 
 getUniversalFont() -> FontFamily {
 	// [-Revise-] Maybe this can be improved
@@ -178,13 +180,13 @@ arabicFontParams : () -> Triple<string, string, double> = \ -> {
 			Triple("Tahoma", "Tahoma", 1.0)
 		}
 	} else if (android()) {
-		Triple("Tahoma", "Tahoma", if (addMappedFonts() || !js) 1.0 else 0.95)
+		Triple("Tahoma", "Tahoma", 1.0)
 	} else if (linux()) {
 		Triple("DejaVu Sans", "DejaVu Sans", 0.835)
 	} else if (ios()) {
-		Triple("GeezaPro", "GeezaPro", if (addMappedFonts() || !js) 1.0 else 0.95)
+		Triple("GeezaPro", "GeezaPro", 1.0)
 	} else if (macosx()) {
-		Triple("Tahoma", "Tahoma", if (addMappedFonts()) 1.0 else 0.95)
+		Triple("Tahoma", "Tahoma", 1.0)
 	} else {
 		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
 	}
@@ -200,13 +202,13 @@ hebrewFontParams : Triple<string, string, double> = {
 			Triple("Tahoma", "Tahoma", 1.0)
 		}
 	} else if (android()) {
-		Triple("Tahoma", "Tahoma", if (addMappedFonts() || !js) 1.0 else 0.95)
+		Triple("Tahoma", "Tahoma", 1.0)
 	} else if (linux()) {
 		Triple("DejaVu Sans", "DejaVu Sans", 0.835)
 	} else if (ios()) {
-		Triple("GeezaPro", "GeezaPro", if (addMappedFonts() || !js) 1.0 else 0.95)
+		Triple("GeezaPro", "GeezaPro", 1.0)
 	} else if (macosx()) {
-		Triple("Tahoma", "Tahoma", if (addMappedFonts()) 1.0 else 0.95)
+		Triple("Tahoma", "Tahoma", 1.0)
 	} else {
 		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
 	}
@@ -232,6 +234,10 @@ getChineseFontMinimal() -> FontFamily {
 	FontFamily(chineseFontParams.second)
 }
 
+//In case of change update getCharacterStyleFromWigiTextStyle
+defaultFontFamily_ = "Roboto";
+defaultFontSize_ = 11.0;
+defaultFontOverride_ = eitherGetUrlValidParameter("defaultFont", isValidIdentifier, idfn, defaultFontFamily_);
 
 getMappedFontFn : ref (string, double) -> Pair<string, double> =
 	ref \family, size -> Pair(family, size);
@@ -241,19 +247,20 @@ getMappedFont_cache_key = ref Pair("", -1.0);
 getMappedFont_cache_value = ref Pair("", -1.0);
 
 getMappedFont(family : string, size : double) {
-	if (family != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
+	ffamily = if (family != "" && family != defaultFontFamily_) family else defaultFontOverride_;
+	if (ffamily != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
 		mappedFont =
-			if (family == "MaterialIcons" || (family == "'Material Icons'")) {
+			if (ffamily == "MaterialIcons" || (ffamily == "'Material Icons'")) {
 				Pair("MaterialIcons", size)
 			} else {
-		 		(^getMappedFontFn)(family, size);
+		 		(^getMappedFontFn)(ffamily, size);
 			}
-		getMappedFont_cache_key := Pair(family, size);
+		getMappedFont_cache_key := Pair(ffamily, size);
 		getMappedFont_cache_value := mappedFont;
 	}
 
 	if (debugFontMapping) {
-		println("zz mapped font: " + "'"+family+"' -> " + toString(^getMappedFont_cache_value));
+		println("zz mapped font: " + "'"+ffamily+"' -> " + toString(^getMappedFont_cache_value));
 	}
 
 	^getMappedFont_cache_value
@@ -292,6 +299,7 @@ setLangCore(lang0 : string) -> void{
 		cjkLang := isChinese(lang) || lang == "ja" || lang == "ko" || lang == "ar" || lang == "he" || lang == "yi";
 		updateFontMappingFunction(Some(lang));
 		next(currentLang, lang);
+		setApplicationLanguage(lang);
 	}
 	bidiSupport := None();
 }
@@ -334,7 +342,7 @@ setDefaultFontMappingFnHelper(mapping : [Pair<string, string>]) -> (string, doub
 		\family, size -> Pair(family, size)
 	} else {
 		\family, size -> Pair(
-			eitherMap(lookupTree(directTree, family), \ff -> if (addMappedFonts()) family + "," + ff else ff, family),
+			eitherMap(lookupTree(directTree, family), \ff -> if (js) family + "," + ff else ff, family),
 			size
 		)
 	}
@@ -363,13 +371,16 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 		else if (lang == "ar") { // enable font mapping for arabic
 			font = arabicFontParams().first;
 			makeFontMedium = \font1 -> font1 + "Medium";
-			makeFontItalic = \font1 -> font1 + "Italic";
+			makeFontSloped = \fam -> {
+				slopedStr = if (startsWith(fam, "DejaVu Sans") || startsWith(fam, "DejaVuSans")) "Oblique" else "Italic";
+				fam + slopedStr
+			}
 			makeFontBold = \font1 -> font1 + "Bold";
 			makePairs = \font1, font2 -> {[
 				Pair(font1, font2),
 				Pair(makeFontMedium(font1), makeFontBold(font2)),
-				Pair(makeFontItalic(font1), makeFontItalic(font2)),
-				Pair(makeFontBold(font1), makeFontBold(font2)),
+				Pair(makeFontSloped(font1), makeFontSloped(font2)),
+				Pair(makeFontSloped(makeFontMedium(font1)), makeFontSloped(makeFontBold(font2))),
 			]};
 
 			mapper = setDefaultFontMappingFnHelper(concat(
@@ -380,10 +391,10 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 				},
 				[
 					Pair("Book", font),
-					Pair("Medium", makeFontBold(font)),
-					Pair("MediumItalic", makeFontItalic(font)),
-					Pair("Italic", makeFontItalic(font))
-				]
+					Pair("Bold", makeFontBold(font)),
+					Pair("BoldItalic", makeFontSloped(makeFontBold(font))),
+					Pair("Italic", makeFontSloped(font))
+				],
 			));
 			mapper(family, size) |> (\fm -> Triple(fm.first, fm.first, arabicFontParams().third))
 		} else if (lang == "he")
@@ -452,11 +463,11 @@ roundFontSize(size : double) -> double {
 }
 
 fm_calculateTextMetrics(text, family, size) {
-	htmlFont = font2htmlFont(family);
-	families = htmlFont2familiesString(htmlFont);
+	htmlFont = fontName2fontFace(family);
+	families = fontFace2familiesString(htmlFont);
 	textField = makeTextfield(families);
 	setTextDirection(textField, if (getDefaultRtl()) "rtl" else "ltr");
-	setTextAndStyle(textField, text, families, size, htmlFont2weight(htmlFont), htmlFont2slope(htmlFont), 0x000000, 1.0, 0.0, 0x000000, 0.0);
+	setTextAndStyle(textField, text, families, size, fontFace2weight(htmlFont), fontFace2slope(htmlFont), 0x000000, 1.0, 0.0, 0x000000, 0.0);
 	fieldH = getTextFieldHeight(textField);
 	deleteNative(textField);
 	fieldH
@@ -514,22 +525,51 @@ _fontmapping_boot_ = {
 	0;
 };
 
-
-getFontRelativeMultiplier() -> double {
-	if (getLang() == "ar") relativeScaleArabicMultiplier else 1.0;
+getMappedFontFamily(style : [CharacterStyle]) -> string {
+	family = fold(style, defaultFontFamily_, \acc, s -> {
+		switch (s) {
+			FontFamily(name): name;
+			default: acc;
+		}
+	});
+	getMappedFont(family, defaultFontSize_).first
 }
 
-overrideCharacterStylePerAlphabet(text: string, styles: [CharacterStyle]) -> [CharacterStyle] {
-	alphabet = getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1));
+detectAlphabet(text : string) -> string {
+	getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1))
+}
+
+getAlphabetScaling(alphabet : string, fontFamily : string) -> double {
+	isScheherazade = startsWith(fontFamily, "Scheherazade");
 	if (alphabet == "arb") {
-		map(styles, \s -> {
-			switch (s) {
-				FontSize(v): FontSize(v * 1.4);
-				FontFamily(f): if (f=="RobotoMedium") FontFamily("RobotoBold") else s;
-				default: s;
-			}
-		})
-	} else styles
+		if (isScheherazade) {
+			2.5
+		} else 1.4
+	} else {
+		if (isScheherazade) {
+			1.5
+		} else 1.0
+	}
+}
+
+get2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> double {
+	ffam = extractStruct(styles, FontFamily(defaultFontFamily_)).name;
+	max(getAlphabetScaling(alphabet1, ffam), getAlphabetScaling(alphabet2, ffam))
+}
+
+apply2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> [CharacterStyle] {
+	fsz = extractStruct(styles, FontSize(defaultFontSize_)).size;
+	fontSize = fsz * get2AlphabetsScaling(alphabet1, alphabet2, styles);
+	replaceStruct(styles, FontSize(fontSize))
+}
+
+applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterStyle] {
+	ffam = extractStruct(styles, FontFamily(defaultFontFamily_)).name;
+	fsz = extractStruct(styles, FontSize(defaultFontSize_)).size;
+	ratio = getAlphabetScaling(alphabet, ffam);
+	fontSize = fsz * getAlphabetScaling(alphabet, ffam);
+	fontFamily = if (alphabet == "arb" && ffam == "RobotoMedium") "RobotoBold" else ffam;
+	replaceStructMany(styles, [FontFamily(fontFamily), FontSize(fontSize)])
 }
 
 arrayRTL(arr : [?]) -> [?] {

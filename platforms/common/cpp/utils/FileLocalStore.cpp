@@ -162,7 +162,7 @@ StackSlot FileLocalStore::setKeyValue(RUNNER_ARGS)
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
