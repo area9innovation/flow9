@@ -31,14 +31,15 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 	MSplitter(
 		TFillXY(),
 		(\p ->
-			MTabs(
+			MDynamicTabs(
 				[
 					MTab(MIScriptStack(manager, m2t), const(_("Script")), []),
 					MTab(MInputOutputValues(manager, m2t), const(_("Input/Output")), []),
 					MTab(MAliases(manager, m2t), const(_("Aliases")), []),
 					MTab(MFocusTree(manager, m2t), const(_("UI Tree")), []),
 					MTab(MIScriptErrors(manager, m2t), const(_("Errors")), [])
-				],
+				]
+				|> const,
 				make(0),
 				[]
 			)
@@ -184,7 +185,27 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 
 											]
 										else
-											[]
+											[],
+										[
+											MSeparatorLine(),
+											MMenuSingleLine(
+												"Generate iscript",
+												[
+													MOnClick(\ ->
+														openFileDialog(1, ["*.iscriptg"], \s -> if (length(s) > 0) {
+															readFileClient(
+																s[0],
+																"text",
+																\data : string -> {
+																	generateIScriptFromCommands(manager, data);
+																},
+																nop1
+															);
+														} else {})
+													),
+												]
+											)
+										]
 									]),
 									[MOpenOnClick(), MEnabled(isIScriptStoppedB(manager))]
 								)
@@ -212,7 +233,22 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 								],
 								MCols2(
 									MText("Subscribers: ", []),
-									MSelect(getCurrentSubscribersCountBehaviour(), \t -> MText(i2s(t), []))
+									MSelect(
+										{
+											pscb = ref 0;
+											cts = ref 0.0;
+											fselect(getCurrentSubscribersCountBehaviour(), FLift(\scb -> {
+												ts = timestamp();
+												if (ts - ^cts > 33.0) {
+													cts := ts;
+													pscb := scb;
+												}
+
+												^pscb;
+											}));
+										},
+										\t -> MText(i2s(t), [])
+									)
 								)
 							)
 						),
@@ -250,7 +286,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 											eitherMap(
 												focM,
 												\foc -> {
-													pos : Point = fgetValue(foc.position).pos;
+													pos : Point = applyTransformMatrix(fgetValue(foc.transformMatrix), zeroPoint);
 													IScriptId2s(getFullMFocusId(foc)) + " " + toString(pos)
 												},
 												"-"
@@ -600,15 +636,24 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 					maybeApply(
 						iScriptFromUrlEncode(manager, message),
 						\parameters -> {
-							nextDistinct(manager.iscript.showPanel, true);
+							if (!getValue(manager.iscript.showPanel)) {
+								nextDistinct(manager.iscript.showPanel, true);
+								fixAllIScriptUniqueIds(manager.focus);
+							}
 							setIScriptState(manager, IScriptReplaying(onIScriptReplayFinish(
 								manager,
 								\b -> {
-									result = json2string(JsonObject([
-										Pair("callid", JsonString(parameters.first)),
-										Pair("status", JsonString(if (fold(b, true, \acc, replay -> acc && replay.isReplaySuccessful)) "OK" else "ERROR")),
-										Pair("errors", JsonString(headList(getValue(manager.iscript.errors), IScriptError("", None())).error))
-									]));
+									status = fold(b, true, \acc, replay -> acc && replay.isReplaySuccessful);
+									errors = map(uniq(list2array(getValue(manager.iscript.errors))), \e -> JsonString(toString(e)));
+									result = json2string(JsonObject(
+										concatA([
+											[
+												Pair("callid", JsonString(parameters.first)),
+												Pair("status", JsonString(if (status) "OK" else "ERROR"))
+											],
+											if (status) [] else [Pair("errors", JsonArray(errors))]
+										])
+									));
 									hostCall("window.postMessage", [result, origin]);
 									if (parameters.second) {
 										showLogicalScreenshotCompareDialog(

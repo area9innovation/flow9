@@ -11,8 +11,11 @@ private:
     std::ifstream file;
     std::string _filepath;
     std::streampos _offset, _end;
+
+    bool temporary = false;
 public:
     FlowFile(ByteCodeRunner *owner, std::string filepath);
+    ~FlowFile();
 
     DEFINE_FLOW_NATIVE_OBJECT(FlowFile, FlowNativeObject)
 
@@ -32,6 +35,8 @@ public:
 
     static std::streampos getFileSize(std::string filepath);
     static double getFileLastModified(std::string filepath);
+
+    void setTemporary(bool value);
 };
 
 #endif // FLOWFILESTRUCT_H

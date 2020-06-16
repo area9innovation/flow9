@@ -1,12 +1,13 @@
 import material/internal/material_ellipsis;
 import material/internal/material_movable;
+import material/internal/material_component;
 import material/internal/tropic_size_util;
 
 export {
-	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle, MDialogCloseButton,
-		MDialogNoAnimation, MDialogFullScreen, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
-		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent,
-		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign;
+	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
+		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
+		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent, MDialogCloseButton,
+		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MDialogCloseOnForceRender, MAddSafeArea;
 
 		// These are very commonly recommended
 		MDialogTitle(title : string);
@@ -16,12 +17,16 @@ export {
 		MDialogScrollStyle(style : [MScrollStyle]);
 		MDialogKeyEventBlock();
 		MDialogActions(actions : [Material]);
+		MDialogActionsCondensed(); // Decreases border between content and actions
 
 		MDialogCustomFrame(start : double, top : double, end : double, bottom : double, frame : Material);
 		MDialogNoCenter();
 		MDialogCloseButton(close : Material); // it looks like not too "Material"
 		MDialogNoAnimation();
 		MDialogFullScreen();
+		// Hide all clips outside and below dialog
+		// Defaults to true in js with MDialogUseFrame and MDialogFullScreen styles present
+		MDialogFullWindow(fullWindow : bool);
 		MDialogClickOutToClose();
 		// e.g. useful for MTimePicker and similar, close dialog and act as a "cancel" button
 		MDialogClickOutToCancel(pickerValue : DynamicBehaviour<flow>);
@@ -40,6 +45,8 @@ export {
 		MDialogOnClose(onClose : () -> void);
 		MDialogActionsNoEndAlign();
 
+		MDialogCloseOnForceRender();
+
 		MDialogPopupStyle ::= MDialogPopupCanClose, MDialogPopupSaveEnabled, MDialogPopupNotResize, MDialogPopupOnClose, MDialogPopupFullScreen;
 			MDialogPopupCanClose(canCloseCheck : () -> bool);
 			MDialogPopupSaveEnabled(enabled : Transform<bool>);
@@ -54,6 +61,21 @@ export {
 
 	renderMDialog2(manager : MaterialManager, closeWhen : Transform<bool>, style : [MDialogStyle], content : Material,
 		m2t : (Material, MFocusGroup) -> Tropic, renderFn : (Tropic) -> () -> void) -> void;
+
+	renderMSnackbar(manager : MaterialManager, text : string, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn : (Tropic) -> () -> void) -> void;
+	// MTextVisible is for snackbar action, should not be raised (restricted to one action only);
+	MSnackbarStyle ::= MTextButton, MMaxLines, MSnackbarVisible, MWidth, MColor, MSnackbarTextColor, MSnackbarAutoDisappear,
+		MSnackbarAutoDisappearTime, MSnackbarNoButton, MSnackbarAlignLeft, MSnackBarOffset, MSnackbarFadeAnimation, CommonAlignment, MSnackbarOnDisappear;
+		// MSnackbarVisible can be used for getting of current snackbar state and for its closing, but not for showing of snackbar;
+		MSnackbarVisible(visible : DynamicBehaviour<bool>);
+		MSnackbarTextColor(color : MColor);
+		MSnackbarAutoDisappear(enabled : bool);
+		MSnackbarAutoDisappearTime(ms : int);
+		MSnackbarNoButton();
+		MSnackbarAlignLeft(left : bool); // TODO : get rid of
+		MSnackBarOffset(offset : Point);
+		MSnackbarFadeAnimation(fade : bool); // Change in/out animation type
+		MSnackbarOnDisappear(fn : () -> void);
 }
 
 renderMDialog2(
@@ -66,6 +88,7 @@ renderMDialog2(
 
 	us = ref [];
 	disp = \ -> dispUnsA(us);
+	closeOnForceRender = contains(style, MDialogCloseOnForceRender());
 
 	focusedBeforeDialog =
 		if (contains(style, MDialogFocusOnPrevious())) {
@@ -94,6 +117,8 @@ renderMDialog2(
 	scrolls = contains(style, MDialogScroll());
 	scrollStyle = extractStruct(style, MDialogScrollStyle([]));
 	fullScreen = contains(style, MDialogFullScreen());
+	useFrame = contains(style, MDialogUseFrame());
+	fullWindow = extractStruct(style, MDialogFullWindow(fullScreen && useFrame && js)).fullWindow;
 	blockKeyboardEvents = contains(style, MDialogKeyEventBlock());
 	clickOutToClose = contains(style, MDialogClickOutToClose());
 	clickOutToCancel = tryExtractStruct(style, MDialogClickOutToCancel(make(false)));
@@ -108,13 +133,14 @@ renderMDialog2(
 	nonModal = contains(style, MDialogNonModal());
 	sameZorder = extractStruct(style, MSameZorder(nonModal)).same;
 	zUns = if (sameZorder) nop else pushZorder(manager);
+	zorder = fgetValue(manager.manager.zorder);
 
 	onClose = extractStruct(style, MDialogOnClose(nop)).onClose;
 	name = "MDialog";
 	dialogMinWidth = 280.;
 
 	customFrame =
-		if (contains(style, MDialogUseFrame()))
+		if (useFrame)
 			MDialogCustomFrame(24., 24., 24., 24.,
 				TShadowShape(
 					manager.focus,
@@ -140,11 +166,13 @@ renderMDialog2(
 	noAnimation = noCenter || isSome(draggable) || contains(style, MDialogNoAnimation()) || !manager.theme.enableAnimations;
 	easing = if (noAnimation) EasingAnimation(nop, const(1.)) else makeEasing(0.6, easingStandartCurve, managerTimer(manager), nop);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
+	cs = if (isMaterialLogLevelEnabled(MaterialError())) captureStringCallstack() else "";
 
 	dialogResizableMinSize = 24.;
 	actionsW = make(0.);
 	contentW = make(0.);
 	titleW = make(0.);
+	titleCloseW = make(0.);
 
 	boxW = make(0.);
 	boxH = make(0.);
@@ -154,7 +182,7 @@ renderMDialog2(
 	(\p -> {
 		isRTL = p.rtl;
 
-		dialogTitle =
+		dialogTitle : Tropic =
 			eitherFn(
 				customTitle,
 				\t ->
@@ -182,11 +210,16 @@ renderMDialog2(
 								MEllipsisText(ttl.title, [MTitle(), MShowTooltip(const(true))]),
 								m2t
 							)
+							// MParagraph2T( // TODO: Change ellipsis to paragraph
+							// 	p,
+							// 	ttl.title,
+							// 	[MTitle(), ParagraphMargin(0.0, 0.0)]
+							// )
 							|> (\t ->
 								eitherMap(
 									customFrame,
 									\cf ->
-										TBorderRTL(0., 0., 0., cf.top, t, isRTL),
+										TBorderDir(0., 0., 0., cf.top, t, isRTL),
 									t
 								)
 							),
@@ -197,21 +230,15 @@ renderMDialog2(
 				eitherMap(
 					closeButton,
 					\cb ->
-						TGroup2(
-							TAttachWidth(t, titleW),
-							TCols2(TFillX(), TBorder4(8., m2t(cb.close, p)))
-							|> (\t2 ->
-								TAvailableWidth(
-									t2,
-									fmaxA([titleW, contentW, fsubtract(actionsW, eitherMap(customFrame, \cf -> const(cf.end), zero))], 0.)
-								)
-							)
+						TAvailableWidth(
+							TBaselineCols2(TAlignLeft(TAttachWidth(t, titleW)), TAttachWidth(m2t(cb.close, p), titleCloseW)),
+							fsubtract(fmax(contentW, actionsW), eitherMap(customFrame, \cf -> const(cf.end), zero))
 						),
-					t
+					TAttachWidth(t, titleW)
 				)
 			);
 
-		contentM =
+		contentM : Tropic =
 			(if (content != TEmpty() && content != MEmpty())
 				content
 				|> (\m -> if (fullScreen) MGroup2(TFillXY(), m) else m)
@@ -250,72 +277,56 @@ renderMDialog2(
 			eitherMap(
 				actions,
 				\act -> {
-					actionsAv =
+					actionsBorderLeft = if (contains(act.actions, TFillX()) || contains(style, MDialogActionsNoEndAlign())) 16.0 else 0.0;
+
+					availMinW =
+						fsubtract(
+							faddition(
+								fmax(contentW, faddition(titleW, titleCloseW)),
+								eitherMap(customFrame, \cf -> const(if (fullScreen && cf.end > 0.0) 8.0 else cf.end), zero)
+							),
+							const(actionsBorderLeft)
+						);
+
+					availMaxW =
 						fsubtract(
 							availW,
-							eitherMap(customFrame, \cf -> const(if (fullScreen) max(cf.end + cf.start - 8.0, 0.0) else cf.start), zero)
+							const(actionsBorderLeft + eitherMap(customFrame, \cf -> cf.start + cf.end, 0.0))
 						);
-					actionsBox = makeWH();
-					actionsLeftAlign = contains(act.actions, TFillX()) || contains(style, MDialogActionsNoEndAlign());
 
-					MCols2A(
-						if (actionsLeftAlign) TFixed(16.0, 0.0) else TFillX(),
-						map(act.actions, MBorderEnd(8.))
-						|> MBaselineColsA
-						|> MBorderTopBottom(8.)
-						|> (\t -> MAttachBox(t, actionsBox))
-					)
-					|> (\m ->
-						if (scrolls)
-							MScroll2T(
-								manager,
-								p,
-								MScroll(
-									m,
-									TFillXHT(fheight(actionsBox)),
-									[]
-								),
-								m2t
-							)
+					TFlexibleGrid(
+						const(map(act.actions, \ac -> m2t(MBorderEnd(8.)(ac), p))),
+						if (contains(style, MDialogActionsNoEndAlign()))
+							[TBaselineAlign(), TFillersSupport(), TAvailableMinMax(availMinW, availMaxW)]
 						else
-							m2t(m, p)
+							[EndAlign(), TBaselineAlign(), TFillersSupport(), TAvailableMinMax(availMinW, availMaxW)]
 					)
-					|> (\t ->
-						TAvailableWidth(
-							t,
-							fmax(
-								faddition(
-									fmax(contentW, titleW),
-									eitherMap(customFrame, \cf -> const(if (fullScreen && cf.end > 0.0) 8.0 else cf.end), zero)
-								),
-								fmin(fwidth(actionsBox), actionsAv)
-							)
-						)
-					)
+					|> TBorderLeft(actionsBorderLeft)
+					|> TBorderTopBottom(8.)
 					|> (\t -> TAttachWidth(t, actionsW))
-					|> (\t -> eitherMap(customFrame, \cf -> TBorderRTL(cf.start, 0.0, if (fullScreen) max(cf.end - 8.0, 0.0) else 0.0, 0.0, t, isRTL), t))
+					|> (\t -> eitherMap(customFrame, \cf -> TBorderDir(cf.start, 0.0, if (fullScreen) max(cf.end - 8.0, 0.0) else 0.0, 0.0, t, isRTL), t))
 				},
 				TEmpty()
 			);
 
 
-		TLines2RTL(dialogTitle, contentM, isRTL)
-		|> (\t ->
+		TLines2Dir(dialogTitle, contentM, isRTL)
+		|> (\t : Tropic ->
 			eitherMap(
 				customFrame,
 				\cf ->
-					TBorderRTL(
+					TBorderDir(
 						cf.start,
 						cf.top,
 						cf.end,
-						if (isSome(actions)) 24. else cf.bottom,
+						if (isNone(actions)) cf.bottom else if (contains(style, MDialogActionsCondensed())) 0. else 24.,
 						t,
 						isRTL
 					),
 				t
 			)
 		)
-		|> (\t -> TLines2RTL(t, actionsM, isRTL))
+		|> (\t -> TLines2Dir(t, actionsM, isRTL))
 		|> (\t -> TAttachWidthHeight(t, boxW, boxH))
 		|> (\t ->
 			if (clickOutToClose || isSome(clickOutToCancel))
@@ -424,6 +435,7 @@ renderMDialog2(
 			))
 		|> (\t -> TAttachAvailableWidth(t, availW))
 		|> (\t -> TBorder(sideBorder, sideBorder, sideBorder, sideBorder, t))
+		|> (\t : Tropic -> if (extractStruct(style, MAddSafeArea(true)).add) m2t(MSafeArea(t), p) else t)
 		|> (\t ->
 			TGroup2( // click events shall not pass
 				TInteractive(
@@ -507,22 +519,63 @@ renderMDialog2(
 			)
 		)
 	})
+	|> (\f ->
+		if (isMaterialLogLevelEnabled(MaterialError()) && strlen(cs) > 3) {
+			color = randomMColor();
+
+			TCopySize(
+				f,
+				\sz ->
+					TGroup2(
+						TRounded(4.0, 4.0, 4.0, 4.0, [MStroke(color)], sz |> TBorderBottom(-1.0) |> TBorderRight(-1.0)),
+						TFrame(
+							0.0,
+							4.0,
+							[MFill(color)],
+							TBorder(
+								2.0, 0.0, 2.0, 0.0,
+								MComponent2T(
+									manager,
+									manager.focus,
+									"MDialogCallstack",
+									[
+										MOnClick(\ -> iter(concat3([">>>"], strSplit(cs, "\n"), ["<<<"]), println)),
+										MTooltipText(const("Click to print callstack to the console")),
+										MRippleType(MRippleFill() |> const)
+									],
+									\__ -> MText2T(manager.focus, getCallstackEntryPoint(cs), [MTextMColor(color), MOverline()]),
+									m2t
+								)
+							)
+						)
+					),
+				true
+			);
+		} else {
+			f;
+		}
+	)
 	|> (\t ->
-		if (noAnimation || nonModal)
+		if (!fullWindow || resizable) {
 			t
-		else
-			TGroup2(t, TVisible(fneq(easing.percent, 1.), TFillXY() |> disableBelow(!nonModal)))) // blocks clicks while animation
-	|> (\t ->
-		if (true || !fullScreen || resizable)
-			t
-		else if (noAnimation && isFConst(hideDialog)) // Disabled due to nested fullscreen dialogs bug
-			TFullWindow(make(true), t)
-		else {
+		} else {
 			fw = make(false);
 
+			keysCapture = extractStruct(manager.style, MCaptureKeys(\__ -> TEmpty())).capture(manager);
+			mouseCapture = extractStruct(manager.style, MCaptureMouse(\__ -> TEmpty())).capture(manager);
+			longTouchCapture = extractStruct(manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(manager);
+
 			TConstruct(
-				[\ -> fconnect(fand(feq(easing.percent, 1.), fnot(hideDialog)), fw)],
-				TFullWindow(fw, t)
+				[\ -> fconnect(fand(fand(feq(easing.percent, 1.), fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), feq(manager.manager.zorder, zorder))), fw)],
+				TFullWindow(
+					fw,
+					TGroup([
+						TShow(fw, keysCapture),
+						TShow(fw, mouseCapture),
+						t,
+						TShow(fw, longTouchCapture)
+					])
+				)
 			)
 		})
 	|> (\t ->
@@ -530,7 +583,7 @@ renderMDialog2(
 			[
 				subscribe2(manager.forceRender, \__ -> {
 					disp();
-					renderMDialog2(manager, closeWhen, style, content, m2t, renderFn)
+					if (!closeOnForceRender) renderMDialog2(manager, closeWhen, style, content, m2t, renderFn)
 				}),
 				u1,
 				zUns,
@@ -549,4 +602,103 @@ renderMDialog2(
 
 	if (!noAnimation)
 		easing.start();
+}
+
+snackbarDisp = initUnsM();
+
+renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn  : (Tropic) -> () -> void) -> void {
+	closeSnackbar = \ -> maybeApply(^snackbarDisp, \fn -> {
+		snackbarDisp := None();
+		fn();
+		maybeApply(tryExtractStruct(style, MSnackbarOnDisappear(nop)), \d -> d.fn());
+	});
+	closeSnackbar();
+
+	maxLines = extractStruct(style, MMaxLines(10)).lines;
+	text =
+		if (maxLines < 0) text0
+		else concatStrings(take(strSplitLeave(text0, "\n"), maxLines * 2 - 1));
+
+	lightBackground = getLightBackground(manager.focus);
+	bgColor =
+		either(
+			tryExtractStruct(style, MBlack()),
+			MBackgroundColor(!lightBackground)
+		);
+	textColor : MColor =
+		eitherMap(
+			tryExtractStruct(style, MSnackbarTextColor(MBlack())),
+			\tc -> tc.color,
+			MDefaultTextColor(!lightBackground)
+		);
+
+	autoDisappear = extractStruct(style, MSnackbarAutoDisappear(true)).enabled;
+	autoDisappearTime = extractStruct(style, MSnackbarAutoDisappearTime(6000)).ms;
+
+	alignment = eitherMap(
+		tryExtractStruct(style, MSnackbarAlignLeft(true)),
+		\align -> if (align.left) LeftAlign() else RightAlign(),
+		extractCommonAlignment(style)
+	);
+	offset = extractStruct(style, MSnackBarOffset(zeroPoint)).offset;
+	width = extractStruct(style, MWidth(568.0)).width;
+	minWidth = 240.;
+	visible = extractStruct(style, MSnackbarVisible(make(false))).visible;
+	progress = make(0.);
+	fadeAnimation = extractStruct(style, MSnackbarFadeAnimation(offset.y != 0.)).fade;
+
+	customButton = tryExtractStruct(style, MTextButton("", nop, [], []));
+	button =
+		either(customButton,
+			if (contains(style, MSnackbarNoButton())) TEmpty()
+			else MIconButton("clear", closeSnackbar, [textColor], [])
+		)
+		|> MCenterY |> MBorderLeft(8.0);
+
+	snackBar =
+		MParagraph(text, [textColor, MBody()])
+		|> MBorderTopBottom(16.)
+		|> MCenterY
+		|> (\t -> MGroup2(t, TFixed(minWidth, 0.)))
+		|> (\t -> MBaselineCols2(t, button))
+		|> (\t -> MBorderA(16., 0., 8., 0., t))
+		|> (\t -> m2t(t, manager.focus))
+		|> (\t -> TAvailable(t, if (width == -1.) TFillX() else TFillMax(width, 0.)))
+		|> (\t -> MShapeFrame(manager.focus, [MFill(bgColor)], t, "MSnackbar"))
+		|> (\t -> TShadowShape(manager.focus, const(6.0), t, RectangleShape("MSnackbar")))
+		|> (\t -> TBorder4(24.0, t))
+		|> (\t -> TTranslate(const(offset), t))
+		|> (\t ->
+			if (fadeAnimation)
+				MEasingAnimation(
+					manager,
+					manager.focus,
+					const(0.3),
+					const(easingFastOutSlowIn),
+					visible,
+					\v -> Some(v),
+					\v, prc ->
+						nextDistinct(progress, if (v) prc else 1.0 - prc),
+					[],
+					TLet("bar", TAlpha(progress, t), TCenterIn(TScale(ffactor2(flerp(0.9, 1., progress)), TDisplay("bar")), TGhost("bar")))
+				)
+			else
+				TAnimatedExpander(manager, manager.focus, t, visible, [MNoCrop(), MExpanderProgress(progress), MExpandFromStart()])
+		)
+		|> TAlignBottom
+		|> TAlignHorizontalDir(alignment, manager.focus.rtl)
+		|> (\t -> TConstruct([\ -> subscribe2(visible, \v -> if (!v) closeSnackbar())], t));
+
+	renderDisp = renderFn(snackBar);
+	nextDistinct(visible, true);
+	timerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
+
+	setUnsM(
+		snackbarDisp,
+		\ -> {
+			timerDisp();
+			timer(300, renderDisp);
+			nextDistinct(visible, false);
+		}
+	)
 }

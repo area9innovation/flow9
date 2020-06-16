@@ -166,7 +166,7 @@ class Native {
 					Browser.document.body.removeChild(textArea);
 				} else {
 					untyped setTimeout(function () {
-						copyAction(textArea); 
+						copyAction(textArea);
 						Browser.document.body.removeChild(textArea);
 					}, 0);
 				}
@@ -367,7 +367,7 @@ class Native {
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
 		/*
 		  Searching within a range suggest that we can stop searching inside long string after end position.
-		  This makes searching a bit faster. But JavaScript has no means for this. 
+		  This makes searching a bit faster. But JavaScript has no means for this.
 		  We have only way to do this - make a copy of string within the range and search there.
 		  It is significantly faster for a long string comparing to simple `indexOf()` for whole string.
 		  But copying is not free. Since copy is linear in general and search is linear in general too,
@@ -412,6 +412,14 @@ class Native {
 		#end
 	}
 
+	public static inline function cloneString(str : String) : String {
+		#if js
+		return untyped (' ' + str).slice(1);
+		#else
+		return str;
+		#end
+	}
+
 	public static inline function toLowerCase(str : String) : String {
 		return str.toLowerCase();
 	}
@@ -420,7 +428,13 @@ class Native {
 		return str.toUpperCase();
 	}
 
-	public static function string2utf8(str : String) : Array<Int> {		
+	#if js
+	public static inline function strReplace(str : String, find : String, replace : String) : String {
+		return StringTools.replace(str, find, replace);
+	}
+	#end
+
+	public static function string2utf8(str : String) : Array<Int> {
 		var bytes = haxe.io.Bytes.ofString(str);
 		var a : Array<Int> = [for (i in 0...bytes.length) bytes.get(i)];
 		return a;
@@ -587,7 +601,7 @@ class Native {
 	}
 
 	public static inline function deleteNative(clip : Dynamic) : Void {
-		if (clip != null) {
+		if (untyped clip != null && !clip.destroyed) {
 			if (clip.destroy != null) {
 				untyped clip.destroy({children: true, texture: true, baseTexture: true});
 			}
@@ -595,6 +609,22 @@ class Native {
 			if (clip.parent != null && clip.parent.removeChild != null) {
 				clip.parent.removeChild(clip);
 			}
+
+			if (!Platform.isIE && untyped clip.nativeWidget != null) {
+				untyped clip.nativeWidget.style.display = 'none';
+			}
+
+			#if js
+			untyped __js__("
+				if (typeof RenderSupport !== 'undefined' && (clip.nativeWidget != null || clip.accessWidget != null)) {
+					RenderSupport.once('drawframe', function() {
+						DisplayObjectHelper.deleteNativeWidget(clip);
+					});
+				}
+			");
+			#end
+
+			untyped clip.destroyed = true;
 		}
 	}
 
@@ -610,7 +640,7 @@ class Native {
 
 	#if js
 	private static var DeferQueue : Array< Void -> Void > = new Array();
-	private static function defer(cb : Void -> Void) : Void {
+	public static function defer(cb : Void -> Void) : Void {
 		if (DeferQueue.length == 0) {
 			var fn = function() {
 				for (f in DeferQueue) f();
@@ -769,7 +799,7 @@ class Native {
 
 	public static function getUrlParameter(name : String) : String {
 		var value = "";
-	
+
 	#if (js && flow_nodejs && flow_webmodule)
 		if (untyped request.method == "GET") {
 			value = untyped request.query[name];
@@ -779,7 +809,7 @@ class Native {
 	#else
 		value = Util.getParameter(name);
 	#end
-		
+
 		return value != null ? value : "";
 	}
 
@@ -788,12 +818,8 @@ class Native {
 		#if (flow_nodejs || nwjs)
 		return false;
 		#else
-		return isMobile() || untyped __js__("(('ontouchstart' in window) || (window.DocumentTouch && document instanceof DocumentTouch) || window.matchMedia('(pointer: coarse)').matches)");
+		return Platform.isMobile || untyped __js__("(('ontouchstart' in window) || (window.DocumentTouch && document instanceof DocumentTouch) || window.matchMedia('(pointer: coarse)').matches)");
 		#end
-	}
-
-	public static function isMobile() : Bool {
-		return untyped __js__("/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Windows Phone/i.test(navigator.userAgent)");
 	}
 	#end
 
@@ -823,7 +849,7 @@ class Native {
 			Browser.document.body.appendChild(testdiv);
 			var dpi = testdiv.offsetHeight * js.Browser.window.devicePixelRatio;
 			Browser.document.body.removeChild(testdiv);
-			if (!isMobile()) {
+			if (!Platform.isMobile) {
 				return "js,pixi,dpi=" + dpi;
 			} else {
 				return "js,pixi,mobile,dpi=" + dpi;
@@ -1081,7 +1107,11 @@ class Native {
 		return "";
 	}
 	public static function captureStringCallstack() : Dynamic {
+		#if js
+		return StringTools.replace(StringTools.replace(untyped __js__("new Error().stack"), "    at ", ""), "Error\n", "");
+		#else
 		return Assert.callStackToString(haxe.CallStack.callStack());
+		#end
 	}
 	public static function captureCallstackItem(index : Int) : Dynamic {
 		return null;
@@ -1102,6 +1132,10 @@ class Native {
 
 	public static inline function makeStructValue(name : String, args : Array<Dynamic>, default_value : Dynamic) : Dynamic {
 		return HaxeRuntime.makeStructValue(name, args, default_value);
+	}
+
+	public static function extractStructArguments(value : Dynamic) :  Array<Dynamic> {
+		return HaxeRuntime.extractStructArguments(value);
 	}
 
 	public static function quit(c : Int) : Void {
@@ -1623,7 +1657,7 @@ class Native {
 					}
 				};
 
-				Browser.window.addEventListener("mousemove", mouseMoveActiveFn);
+				Browser.window.addEventListener("pointermove", mouseMoveActiveFn);
 				Browser.window.addEventListener("videoplaying", mouseMoveActiveFn);
 				Browser.window.addEventListener("focus", mouseMoveActiveFn);
 				Browser.window.addEventListener("blur", mouseMoveActiveFn);
@@ -1632,7 +1666,7 @@ class Native {
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutActiveId)");
-					Browser.window.removeEventListener("mousemove", mouseMoveActiveFn);
+					Browser.window.removeEventListener("pointermove", mouseMoveActiveFn);
 					Browser.window.removeEventListener("videoplaying", mouseMoveActiveFn);
 					Browser.window.removeEventListener("focus", mouseMoveActiveFn);
 					Browser.window.removeEventListener("blur", mouseMoveActiveFn);
@@ -1665,14 +1699,14 @@ class Native {
 					}
 				};
 
-				Browser.window.addEventListener("mousemove", mouseMoveIdleFn);
+				Browser.window.addEventListener("pointermove", mouseMoveIdleFn);
 				Browser.window.addEventListener("videoplaying", mouseMoveIdleFn);
 				Browser.window.addEventListener("focus", mouseMoveIdleFn);
 				Browser.window.addEventListener("blur", mouseMoveIdleFn);
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutIdleId)");
-					Browser.window.removeEventListener("mousemove", mouseMoveIdleFn);
+					Browser.window.removeEventListener("pointermove", mouseMoveIdleFn);
 					Browser.window.removeEventListener("videoplaying", mouseMoveIdleFn);
 					Browser.window.removeEventListener("focus", mouseMoveIdleFn);
 					Browser.window.removeEventListener("blur", mouseMoveIdleFn);
@@ -1705,6 +1739,150 @@ class Native {
 	public static function md5(content : String) : String {
 		return JsMd5.encode(content);
 	}
+
+	public static function getCharAt(s : String, i : Int) : String {
+		return s.charAt(i);
+	}
+
+	#if js
+	// we will create flow objects using several "sid"
+	// they obtained from HaxeRuntime._structids_ / HaxeRuntime._structargs_
+	// so we cache them in order to not make local vars (they would increase load on GC)
+	static var sidJsonArray : Int;
+	static var sidJsonArrayVal : String;
+	static var sidJsonString : Int;
+	static var sidJsonStringVal : String;
+	static var sidJsonDouble : Int;
+	static var sidJsonDoubleVal : String;
+
+	static var jsonBoolTrue : Dynamic;
+	static var jsonBoolFalse : Dynamic;
+	static var jsonNull : Dynamic;
+
+	static var sidPair : Int;
+	static var sidPairFirst : String;
+	static var sidPairSecond : String;
+	static var sidJsonObject : Int;
+	static var sidJsonObjectFields : String;
+
+	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
+	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var a1 = Native.map(o,Native.object2JsonStructs);
+			var obj = { _id : Native.sidJsonArray };
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString };
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble };
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = [];
+						for(var f in o) {
+							var a2 = Native.object2JsonStructs(o[f]);
+							var obj = { _id : Native.sidPair };
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields.push(obj);
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
+	}
+
+	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
+	private static function object2JsonStructs_FF(o : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var a1 = Native.map(o,Native.object2JsonStructs_FF);
+			var obj = { _id : Native.sidJsonArray};
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString };
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble };
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = Object.getOwnPropertyNames(o);
+						for(var i=0; i< mappedFields.length; i++) {
+							var f = mappedFields[i];
+							var a2 = Native.object2JsonStructs_FF(o[f]);
+							var obj = { _id : Native.sidPair };
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields[i] = obj;
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
+	}
+
+	private static var parseJsonFirstCall = true;
+	public static function parseJson(json : String) : Dynamic {
+		try {
+			if (parseJsonFirstCall) {
+				Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
+				Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
+
+				Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
+				Native.sidJsonStringVal = HaxeRuntime._structargs_.get(Native.sidJsonString)[0];
+
+				Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
+				Native.sidJsonDoubleVal = HaxeRuntime._structargs_.get(Native.sidJsonDouble)[0];
+
+				Native.jsonBoolTrue = HaxeRuntime.fastMakeStructValue("JsonBool", true);
+				Native.jsonBoolFalse = HaxeRuntime.fastMakeStructValue("JsonBool", false);
+
+				Native.sidPair = HaxeRuntime._structids_.get("Pair");
+				Native.sidPairFirst = HaxeRuntime._structargs_.get(Native.sidPair)[0];
+				Native.sidPairSecond = HaxeRuntime._structargs_.get(Native.sidPair)[1];
+
+				Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
+				Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
+
+				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+				parseJsonFirstCall = false;
+			}
+
+			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
+		} catch (e : Dynamic) {
+			return makeStructValue("JsonDouble", [0.0], null);
+		}
+	}
+	#end
 
 	public static function concurrentAsync(fine : Bool, tasks : Array < Void -> Dynamic >, cb : Array < Dynamic >) : Void {
 		#if js

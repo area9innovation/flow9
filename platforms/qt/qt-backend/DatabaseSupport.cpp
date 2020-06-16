@@ -199,9 +199,14 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         resultRows          // result of a single sql from a query
     );
 
+    // Tell last result it's not last anymore
+    if (last_result)
+        last_result->releaseLast();
+
     int nqueries = RUNNER->GetArraySize(rawqueries);
     queriesResults = RUNNER->AllocateArray(nqueries);
     int nresults = 0;
+    int validQueries = 0;
     for (int i = 0; i < nqueries; i++) {
         StackSlot querySlot = RUNNER->GetArraySlot(rawqueries, i);
         QString queryString = RUNNER->GetQString(querySlot);
@@ -214,6 +219,9 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         QString err_msg = query->lastError().text().trimmed();
         if (err_msg.length()) {
             last_error = err_msg;
+            break;
+        } else {
+            validQueries++;
         }
 
         int resultsCnt = 0;
@@ -251,9 +259,9 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
     }
 
     resultArr = RUNNER->AllocateArray(nresults);
-    for (int i = 0, n = 0; i < nqueries; i++) {
+    for (int i = 0, n = 0; i < validQueries; i++) {
         StackSlot qResults = RUNNER->GetArraySlot(queriesResults, i);
-        for (int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
+        for (unsigned int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
             RUNNER->SetArraySlot(resultArr, n, RUNNER->GetArraySlot(qResults, c));
         }
     }
@@ -376,7 +384,7 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
             case QVariant::Int:
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
-            case QMetaType::Char:    // it's tinyint
+            case QVariant::Char:    // it's tinyint
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
             case QVariant::UInt:

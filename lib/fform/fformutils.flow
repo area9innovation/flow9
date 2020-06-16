@@ -1,6 +1,7 @@
 import fform/fform;
 import render;
 import fusion_utils;
+import form/formmetrics;
 
 export {
 	addChildClip(parent : native, child : native, alive : ref bool) -> void;
@@ -20,9 +21,7 @@ export {
 	TextInput2FTextInput(textInput : TextInput) -> Pair<FTextInput, () -> () -> void>;
 	FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> void>;
 
-	style2characterStyle(s : [?]) -> [CharacterStyle];
-
-	renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult;
+	renderFGraphics(path : Transform<[StaticGraphicOp]>, style : Transform<[GraphicsStyle]>) -> FRenderResult;
 	renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult;
 	renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult;
 	renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult;
@@ -30,14 +29,26 @@ export {
 
 	fform2s(rform : FForm, level : int) -> string;
 
-	FClipCapabilities(move : bool, filters : bool, interactive : bool, scale : bool, alpha : bool);
-	allFClipCapabilities = FClipCapabilities(true, true, true, true, true);
+	FClipCapability ::= FClipMove, FClipScale, FClipRotate, FClipAlpha, FClipVisible, FClipInteractive, FClipMask, FClipFilters, FClipAccess, FClipCursor;
+		FClipMove();
+		FClipScale();
+		FClipRotate();
+		FClipAlpha();
+		FClipVisible();
+		FClipInteractive();
+		FClipMask();
+		FClipFilters();
+		FClipAccess();
+		FClipCursor();
 
-	FRenderResult(clips : [native], disposers : [() -> void], capabilities : FClipCapabilities);
-	emptyFRenderResult = FRenderResult([], [], allFClipCapabilities);
+	// capabilities tell if some capability is already used on this clip
+	// For example FClipMove tells that setClipX has been already used on the clip
+	// and you have to create new one to be able to apply setClipX on top of it
+	FRenderResult(clips : [native], disposers : [() -> void], capabilities : [FClipCapability]);
+	emptyFRenderResult = FRenderResult([], [], []);
 
 	extractFAccessProperties(style : [flow]) -> [FAccessProperty];
-	addFAccessProperties(properties : [FAccessProperty], zorder : [int]) -> (native) -> () -> void;
+	addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) -> (native) -> () -> void;
 }
 
 addChildClip(parent : native, child : native, alive : ref bool) -> void {
@@ -126,7 +137,24 @@ fform2form(fform : FForm) -> Form {
 			}
 		}
 		FParagraph(__, __) : FParagraph2Form(fform);
-		FGraphics(path, style) : Graphics(path, style);
+		FGraphics(path, style) : {
+			fm = make(FormMetrics(0., 0., 0., 0.));
+
+			NativeForm(
+				fform,
+				fm,
+				\ -> Empty(),
+				\av, zo, to -> {
+					d = renderFGraphics(path, style);
+					u = make2Subscribe(path, style, \p, s -> next(fm, getStaticFormSize2(Graphics(p, s), false)))();
+
+					NativeRenderResult(
+						d.clips,
+						\ -> applyall(arrayPush(d.disposers, u))
+					)
+				}
+			);
+		}
 		FTranslate(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Translate(x0, y0, fform2form(form))));
 		FScale(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Scale(x0, y0, fform2form(form))));
 		FRotate(degree, form) : switchTransform(degree, \dg -> Rotate(dg, fform2form(form)));
@@ -161,6 +189,7 @@ fform2form(fform : FForm) -> Form {
 		FConstructor(form, fn) : Constructor(fform2form(form), fn);
 		FCreate2(current, fn) : Create2(ref fform2form(^current), \ -> fform2form(fn()));
 		FFullWindow(fullscreen, available, form) : FullWindow(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
+		FFullScreen(fullscreen, available, form) : FullScreen(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
 		FBaseline(b, form) : Baseline(b, fform2form(form));
 		FSize2(s, form) : Size2(s, fform2form(form));
 		FAvailable2(a, form) : Available2(a, fform2form(form));
@@ -172,13 +201,14 @@ fform2form(fform : FForm) -> Form {
 		FVideo(__, __, __) : FVideo2Video(fform) |> (\f -> Constructor(f.first, f.second));
 		FNativeForm(init, metrics, ff, fn): NativeForm(init, metrics, \ -> fform2form(ff()), fn);
 		FTextInput(__, __, __) : FTextInput2TextInput(fform) |> (\f -> Constructor(f.first, f.second));
+		FCanvas(content) : fform2form(content);
 	}
 }
 
 form2fform(_form : Form) -> FForm {
 	switch (_form : Form) {
 		Text(text, style) : FText(const(text), style);
-		Graphics(path, style) : FGraphics(path, style);
+		Graphics(path, style) : FGraphics(const(path), const(style));
 		Translate(x, y, form) : FTranslate(x, y, form2fform(form));
 		Scale(x, y, form) : FScale(x, y, form2fform(form));
 		Rotate(deg, form) : FRotate(deg, form2fform(form));
@@ -196,6 +226,7 @@ form2fform(_form : Form) -> FForm {
 		Picture(url, s) : FPicture(url, make(zeroWH), s);
 		Constructor(form, fn) : FConstructor(form2fform(form), fn);
 		FullWindow(fw, form) : FFullWindow(fw, make(zeroWH), form2fform(form));
+		FullScreen(fs, form) : FFullScreen(fs, make(zeroWH), form2fform(form));
 		Baseline(b, form) : FBaseline(b, form2fform(form));
 		Size2(s, form) : FSize2(s, form2fform(form));
 		Available2(a, form) : FAvailable2(a, form2fform(form));
@@ -237,6 +268,8 @@ AccessProperties2FAccessProperties(prop : [AccessProperty]) -> [FAccessProperty]
 			AccessSelectable() : arrayPush(acc, p);
 			AccessState(__) : arrayPush(acc, p);
 			AccessZorder(zOrder) : arrayPush(acc, FAccessZorder(zOrder));
+			TagName(__) : arrayPush(acc, p);
+			LangAttribute(__) : arrayPush(acc, p);
 		}
 	)
 }
@@ -323,6 +356,12 @@ FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProp
 				);
 			}
 			FAccessVisible(__): {
+				acc;
+			}
+			TagName(__): {
+				acc;
+			}
+			LangAttribute(__): {
 				acc;
 			}
 		}
@@ -691,22 +730,11 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 	)
 }
 
-style2characterStyle(s : [?]) -> [CharacterStyle] {
-	concatA(map(
-		[
-			FontFamily(""),
-			FontSize(0.),
-			Fill(0),
-			FillOpacity(0.),
-			BackgroundFill(0),
-			BackgroundFillOpacity(0.),
-			LetterSpacing(0.),
-			Sharpness(0, FontAntiAliasNormal(), FontGridFitNone()),
-			Underlined([]),
-			EscapeHTML(false)
-		],
-		\st -> extractStructMany(s, st)
-	))
+FParagraphStyle2FTextStyle(style : [FParagraphStyle]) -> [FTextStyle] {
+	filtermap(style, \s -> switch (s) {
+		FTextStyle() : {a : Maybe<FTextStyle> = Some(s); a}
+		default : None()
+	})
 }
 
 FDynamicGroup2DynamicGroup(group : FDynamicGroup2) -> Pair<DynamicGroup2, () -> () -> void> {
@@ -778,8 +806,17 @@ FParagraph2Form(fParagraph : FParagraph) -> Form {
 			fParagraph.text,
 			eitherFn(
 				tryExtractStruct(fParagraph.style, ParagraphMetrics(nop1)),
-				\pm -> replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {pm.fn(m); nextDistinct(met, m); nextDistinct(wh, WidthHeight(m.width, m.height))})),
-				\ -> replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {nextDistinct(met, m); nextDistinct(wh, WidthHeight(m.width, m.height))}))
+				\pm ->
+					replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {
+						pm.fn(m);
+						nextDistinct(met, FormMetrics(m.width, m.height, m.baseline, m.height));
+						nextDistinct(wh, WidthHeight(m.width, m.height));
+					})),
+				\ ->
+					replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {
+						nextDistinct(met, FormMetrics(m.width, m.height, m.baseline, m.height));
+						nextDistinct(wh, WidthHeight(m.width, m.height));
+					}))
 			)
 		);
 
@@ -810,142 +847,158 @@ FParagraph2Form(fParagraph : FParagraph) -> Form {
 	)
 }
 
-renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult {
+renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[GraphicsStyle]>) -> FRenderResult {
 	if (js) {
 		clip = makeGraphics();
-		setClipDebugInfo(clip, "form", FGraphics(path, style));
+		setClipDebugInfo(clip, "form", FGraphics(path0, style0));
 
-		fillcolour = ref None();
-		fillopacity = ref 1.0;
-		gradientFill = ref None();
-		gradientType = ref "linear";
-		strokecolour = ref None();
-		strokeopacity = ref 1.0;
-		strokewidth = ref 1.0;
-		strokeLineGradient = ref None();
+		u = make2Subscribe(path0, style0, \path, style -> {
+			clearGraphics(clip);
 
-		iter(style, \s : GraphicsStyle ->
-			switch (s : GraphicsStyle) {
-				Fill(col): fillcolour := Some(col);
-				FillOpacity(op): fillopacity := op;
-				GradientFill(c, rotation): gradientFill := Some(s);
-				RadialGradient(): gradientType := "radial";
-				Stroke(colour): strokecolour := Some(colour);
-				StrokeOpacity(opacity): strokeopacity := opacity;
-				StrokeWidth(width): strokewidth := width;
-				StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+			fillcolour = ref None();
+			fillopacity = ref 1.0;
+			gradientFill = ref None();
+			gradientType = ref "linear";
+			strokecolour = ref None();
+			strokeopacity = ref 1.0;
+			strokewidth = ref 1.0;
+			strokeLineGradient = ref None();
+
+			iter(style, \s : GraphicsStyle ->
+				switch (s : GraphicsStyle) {
+					Fill(col): fillcolour := Some(col);
+					FillOpacity(op): fillopacity := op;
+					GradientFill(c, rotation): gradientFill := Some(s);
+					RadialGradient(): gradientType := "radial";
+					Stroke(colour): strokecolour := Some(colour);
+					StrokeOpacity(opacity): strokeopacity := opacity;
+					StrokeWidth(width): strokewidth := width;
+					StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+				}
+			);
+
+			matrix = if (isSome(^strokeLineGradient) || isSome(^gradientFill)) {
+				updateQRange = \acc : Quadruple<double, double, double, double>, x : double, y : double -> {
+					Quadruple(
+						min(x, acc.first),
+						max(x, acc.second),
+						min(y, acc.third),
+						max(y, acc.fourth),
+					)
+				}
+
+				m = fold(path, Quadruple(doubleMax, doubleMin, doubleMax, doubleMin), \acc : Quadruple<double, double, double, double>, op : StaticGraphicOp ->
+					switch (op : StaticGraphicOp) {
+						MoveTo(x, y) : updateQRange(acc, x, y);
+						LineTo(x, y) : updateQRange(acc, x, y);
+						CubicBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
+						QuadraticBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
+						ClosePath(): acc;
+						GRect(x, y, w, h): {
+							updateQRange(updateQRange(acc, x, y), x + w, y + h);
+						}
+						GRoundedRect(x, y, w, h, __): {
+							updateQRange(updateQRange(acc, x, y), x + w, y + h);
+						}
+						GEllipse(x, y, w, h): {
+							updateQRange(updateQRange(acc, x - w, y - h), x + w, y + h);
+						}
+						GCircle(x, y, r): {
+							updateQRange(updateQRange(acc, x - r, y - r), x + r, y + r);
+						}
+					}
+				);
+
+				Some(\r -> makeMatrix(abs(m.second - m.first), abs(m.fourth - m.third), r, m.first, m.third))
+			} else {
+				None()
 			}
-		);
 
-		matrix = if (isSome(^strokeLineGradient) || isSome(^gradientFill)) {
-			updateQRange = \acc : Quadruple<double, double, double, double>, x : double, y : double -> {
-				Quadruple(
-					min(x, acc.first),
-					max(x, acc.second),
-					min(y, acc.third),
-					max(y, acc.fourth),
-				)
-			}
+			maybeApply(^fillcolour, \fc : int -> beginFill(clip, fc, ^fillopacity));
+			maybeApply(^strokecolour, \sc : int -> setLineStyle(clip, ^strokewidth, sc, ^strokeopacity));
+			maybeApply(^strokeLineGradient, \sg : StrokeLineGradient-> {
+				colors = map(sg.points, \c -> c.color);
+				alphas = map(sg.points, \c -> c.alpha);
+				offsets = map(sg.points, \c -> c.offset);
+				maybeApply(matrix, \m -> setLineGradientStroke(clip, colors, alphas, offsets, m(sg.rotation)));
+			});
+			maybeApply(^gradientFill, \gf : GradientFill -> {
+				colors = map(gf.points, \c -> c.color);
+				alphas = map(gf.points, \c -> c.alpha);
+				offsets = map(gf.points, \c -> c.offset);
+				maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
+			});
 
-			m = fold(path, Quadruple(doubleMax, doubleMin, doubleMax, doubleMin), \acc : Quadruple<double, double, double, double>, op : StaticGraphicOp ->
+			// Render the path
+			needClose = ref false;
+			moveTo(clip, 0.0, 0.0);
+
+			iter(if (js && length(path) == 1) path else deconstructGraphicsPath(path), \op : StaticGraphicOp ->
 				switch (op : StaticGraphicOp) {
-					MoveTo(x, y) : updateQRange(acc, x, y);
-					LineTo(x, y) : updateQRange(acc, x, y);
-					CubicBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
-					QuadraticBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
-					ClosePath(): acc;
-					GRect(x, y, w, h): {
-						updateQRange(updateQRange(acc, x, y), x + w, y + h);
+					MoveTo(x, y) : {
+						moveTo(clip, x, y);
 					}
-					GRoundedRect(x, y, w, h, __): {
-						updateQRange(updateQRange(acc, x, y), x + w, y + h);
+					LineTo(x, y) : {
+						needClose := true;
+						lineTo(clip, x, y);
 					}
-					GEllipse(x, y, w, h): {
-						updateQRange(updateQRange(acc, x - w, y - h), x + w, y + h);
+					CubicBezierTo(x, y, cx, cy): {
+						needClose := true;
+						curveTo(clip, cx, cy, x, y);
 					}
-					GCircle(x, y, r): {
-						updateQRange(updateQRange(acc, x - r, y - r), x + r, y + r);
+					QuadraticBezierTo(x, y, cx, cy): {
+						needClose := true;
+						curveTo(clip, cx, cy, x, y);
+					}
+					ClosePath(): {
+						needClose := false;
+						endFill(clip);
+					}
+					GRect(x, y, width, height): {
+						needClose := false;
+						drawRect(clip, x, y, width, height);
+					}
+					GRoundedRect(x, y, width, height, radius): {
+						needClose := false;
+						drawRoundedRect(clip, x, y, width, height, radius);
+					}
+					GEllipse(x, y, width, height): {
+						needClose := false;
+						drawEllipse(clip, x, y, width, height);
+					}
+					GCircle(x, y, radius): {
+						needClose := false;
+						drawCircle(clip, x, y, radius);
 					}
 				}
 			);
 
-			Some(\r -> makeMatrix(abs(m.second - m.first), abs(m.fourth - m.third), r, m.first, m.third))
-		} else {
-			None()
-		}
-
-		maybeApply(^fillcolour, \fc : int -> beginFill(clip, fc, ^fillopacity));
-		maybeApply(^strokecolour, \sc : int -> setLineStyle(clip, ^strokewidth, sc, ^strokeopacity));
-		maybeApply(^strokeLineGradient, \sg : StrokeLineGradient-> {
-			colors = map(sg.points, \c -> c.color);
-			alphas = map(sg.points, \c -> c.alpha);
-			offsets = map(sg.points, \c -> c.offset);
-			maybeApply(matrix, \m -> setLineGradientStroke(clip, colors, alphas, offsets, m(sg.rotation)));
-		});
-		maybeApply(^gradientFill, \gf : GradientFill -> {
-			colors = map(gf.points, \c -> c.color);
-			alphas = map(gf.points, \c -> c.alpha);
-			offsets = map(gf.points, \c -> c.offset);
-			maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
-		});
-
-		// Render the path
-		needClose = ref false;
-		moveTo(clip, 0.0, 0.0);
-
-		iter(if (cpp) deconstructGraphicsPath(path) else path, \op : StaticGraphicOp ->
-			switch (op : StaticGraphicOp) {
-				MoveTo(x, y) : {
-					moveTo(clip, x, y);
-				}
-				LineTo(x, y) : {
-					needClose := true;
-					lineTo(clip, x, y);
-				}
-				CubicBezierTo(x, y, cx, cy): {
-					needClose := true;
-					curveTo(clip, cx, cy, x, y);
-				}
-				QuadraticBezierTo(x, y, cx, cy): {
-					needClose := true;
-					curveTo(clip, cx, cy, x, y);
-				}
-				ClosePath(): {
-					needClose := false;
-					endFill(clip);
-				}
-				GRect(x, y, width, height): {
-					needClose := false;
-					drawRect(clip, x, y, width, height);
-				}
-				GRoundedRect(x, y, width, height, radius): {
-					needClose := false;
-					drawRoundedRect(clip, x, y, width, height, radius);
-				}
-				GEllipse(x, y, width, height): {
-					needClose := false;
-					drawEllipse(clip, x, y, width, height);
-				}
-				GCircle(x, y, radius): {
-					needClose := false;
-					drawCircle(clip, x, y, radius);
-				}
+			if (^needClose) {
+				endFill(clip);
 			}
-		);
 
-		if (^needClose) {
-			endFill(clip);
-		}
+		})();
 
-		FRenderResult([clip], [\ -> deleteNative(clip)], allFClipCapabilities)
+		FRenderResult([clip], [u, \ -> deleteNative(clip)], [])
 	} else {
 		clip = makeClip();
-		setClipDebugInfo(clip, "form", FGraphics(path, style));
-		renderGraphics(clip, path, style) |> ignore;
+		setClipDebugInfo(clip, "form", FGraphics(path0, style0));
+		u = make2Subscribe(path0, style0, \path, style -> {
+			renderGraphics(clip, path, style) |> ignore;
+		})();
 
-		FRenderResult([clip], [\ -> deleteNative(clip)], allFClipCapabilities)
+		FRenderResult([clip], [u, \ -> deleteNative(clip)], [])
 	}
 }
+
+FTextRenderResult(
+	x : Transform<double>,
+	maxX : Transform<double>,
+	y : Transform<double>,
+	disposers : [() -> void]
+);
+
+emptyFTextRenderResult = FTextRenderResult(zero, zero, zero, []);
 
 renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 	if (isFConst(texts) && length(fgetValue(texts)) < 2) {
@@ -955,37 +1008,29 @@ renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 			emptyFRenderResult;
 		}
 	} else {
-		clip = makeClip();
-
-		FRenderResult(
-			[clip],
-			[
-				fiteriu(fmap(texts, \t -> renderFText(const(t.text), t.style)), \i, c -> {
-					alive = ref false;
-
-					concat(
-						[
-							makeSubscribe(i, \v -> addChildClipAt(clip, c.clips[0], v, alive))(),
-							\ -> removeChildClip(clip, c.clips[0], alive)
-						],
-						c.disposers
-					)
-				})
-			],
-			FClipCapabilities(false, false, true, false, true)
-		);
+		renderFParagraphs(texts, style);
 	}
 }
 
 renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	charStyle = style2characterStyle(style);
-	textfield = makeTextfield(getFontFamily(charStyle));
-	rtl = extractStruct(style, FSetRTL(getDefaultRtl())).rtl;
-	setTextDirection(textfield, if (rtl) "rtl" else "ltr");
-	u = makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))();
+	textfield = makeStyledTextfield(fgetValue(text), style);
+	u1 =
+		eitherFn(
+			tryExtractStruct(style, FDynamicColor(const(-1))),
+			\dc -> make2Subscribe(text, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
+			makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))
+		);
+	u2 =
+		eitherMap(
+			tryExtractStruct(style, LangAttribute(const(""))),
+			\la -> makeSubscribe(la.languageCode, \code -> setAccessAttributes(textfield, [["lang", code]]))(),
+			nop
+		);
 
 	disposer = \ -> {
-		u();
+		u1();
+		u2();
 
 		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
 		if (flash && getFocus(textfield)) {
@@ -994,8 +1039,6 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 
 		deleteNative(textfield);
 	}
-
-	caps = FClipCapabilities(true, false, true, false, true);
 
 	eitherFn(
 		tryExtractStruct(style, Underlined([])),
@@ -1006,20 +1049,22 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 
 			urr =
 				renderFGraphics(
-					[
+					const([
 						MoveTo(0., hgt),
 						LineTo(wd, hgt),
-					],
-					if (uStyle != [])
-						uStyle
-					else
-						[Stroke(extractStruct(style, Fill(0x000000)).color)]
+					]),
+					const(
+						if (uStyle != [])
+							uStyle
+						else
+							[Stroke(extractStruct(style, Fill(0x000000)).color)]
+					)
 				);
 
-			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), caps)
+			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), [FClipMask()])
 		},
 		\ ->
-			FRenderResult([textfield], [disposer], caps)
+			FRenderResult([textfield], [disposer], [FClipMask()])
 	)
 }
 
@@ -1036,29 +1081,77 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 		FRenderResult(
 			[clip],
 			[
-				fiteriu(fmap(texts, \t -> renderFParagraph(const(t.text), replaceStructMany(style, t.style))), \i, c -> {
-					alive = ref false;
+				makeSubscribeUns(texts, \tt -> {
+					lineHeight = ref 0.0;
+
+					d = foldi(tt, emptyFTextRenderResult, \i, acc, t -> {
+						tstyle = replaceStructMany(style, t.style);
+
+						childClip : ref native = ref clip;
+						cx = make(0.0);
+						cmx = make(0.0);
+						cy = make(0.0);
+						pm = ParagraphMetrics(\fm -> {
+							deferUntilNextFrameRendered(\ -> next(cx, getTextFieldCharXPosition(^childClip, strlen(t.text))));
+							next(cx, fm.width);
+							next(cmx, fm.maxWidth);
+							next(cy, fm.height);
+						});
+
+						alive = ref false;
+						c = renderFParagraph(const(t.text), replaceStruct(tstyle, pm));
+						childClip := c.clips[0];
+
+						addChildClipAt(clip, ^childClip, i, alive);
+						tm = getTextMetrics(^childClip);
+						lineHeight := tm[0] + tm[1];
+						accY = fmax(fsubtract(acc.y, const(^lineHeight)), zero);
+
+						FTextRenderResult(
+							faddition(acc.x, cx),
+							faddition(acc.maxX, cmx),
+							faddition(accY, cy),
+							concat3(
+								acc.disposers,
+								[
+									make2Subscribe(acc.x, accY, \x, y -> {
+										setClipX(^childClip, x);
+										setClipY(^childClip, y);
+									})(),
+									\ -> {
+										removeChildClip(clip, ^childClip, alive);
+									}
+								],
+								c.disposers
+							)
+						);
+					});
 
 					concat(
+						d.disposers,
 						[
-							makeSubscribe(i, \v -> addChildClipAt(clip, c.clips[0], v, alive))(),
-							\ -> removeChildClip(clip, c.clips[0], alive)
-						],
-						c.disposers
+							make3Subscribe(d.x, d.y, d.maxX, \x, y, mx ->
+								maybeApply(tryExtractStruct(style, ParagraphMetrics(nop1)), \pm -> pm.fn(FFormMetrics(x, y, y, mx)))
+							)()
+						]
 					)
-				})
+				})()
 			],
-			FClipCapabilities(false, false, true, false, true)
+			[FClipMask()]
 		);
 	}
 }
 
 renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult {
-	charStyle = style2characterStyle(style);
+	charStyle = FParagraphStyle2FTextStyle(style);
+
 	d = renderFText(text, charStyle);
 	textfield = d.clips[length(d.clips) - 1];
+	rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 	disposers = ref [];
 
+	setEscapeHTML(textfield, extractStruct(style, EscapeHTML(false)).escape);
+	setTextDirection(textfield, if (rtl) "rtl" else "ltr");
 	setTextFieldCropWords(textfield, extractStruct(style, CropWords(true)).crop);
 
 	if (js) {
@@ -1070,11 +1163,11 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 			tryExtractStruct(style, ParagraphMetrics(nop1)),
 			\fn -> \ ->
 				fn.fn(
-					FormMetrics(
+					FFormMetrics(
 						getTextFieldWidth(textfield),
 						getTextFieldHeight(textfield),
 						getTextMetrics(textfield)[0],
-						getTextFieldHeight(textfield)
+						getTextFieldMaxWidth(textfield)
 					)
 				),
 			nop
@@ -1088,14 +1181,17 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		}
 	);
 
-	if (contains(style, LeftAlign()))
-		setAutoAlign(textfield, "AutoAlignLeft")
-	else if (contains(style, RightAlign()))
-		setAutoAlign(textfield, "AutoAlignRight")
-	else if (contains(style, CenterAlign()))
-		setAutoAlign(textfield, "AutoAlignCenter")
-	else
-		setAutoAlign(textfield, "AutoAlignNone");
+	autoAlign =
+		if (contains(style, LeftAlign()))
+			"AutoAlignLeft"
+		else if (contains(style, RightAlign()))
+			"AutoAlignRight"
+		else if (contains(style, CenterAlign()))
+			"AutoAlignCenter"
+		else
+			"AutoAlignNone";
+
+	setAutoAlign(textfield, autoAlign);
 
 	eitherFn(
 		tryExtractStruct(style, ParagraphWidth(const(-1.))),
@@ -1225,6 +1321,11 @@ fform2s(rform : FForm, level : int) -> string {
 			fform2s(form, level + 1) + "\n" +
 			generateSpaces + ")"
 		}
+		FFullScreen(fullscreen, wh, form) : {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
 		FInteractive(listeners, form) : {
 			generateSpaces + structName + "\n" +
 			fform2s(form, level + 1) + "\n" +
@@ -1282,12 +1383,17 @@ fform2s(rform : FForm, level : int) -> string {
 		FTextInput(content, wh, style): {
 			generateSpaces + structName + stringEncodeFix(getValue(content)) + ")"
 		}
-      	FSetPending(pen, form): fform2s(form, level);
-      	FNativeForm(__, __, ff, __): {
-      		generateSpaces + structName + "\n" +
+		FSetPending(pen, form): fform2s(form, level);
+		FNativeForm(__, __, ff, __): {
+			generateSpaces + structName + "\n" +
 			fform2s(ff(), level + 1) + "\n" +
 			generateSpaces + ")"
-      	}
+		}
+		FCanvas(content): {
+			generateSpaces + structName + "\n" +
+			fform2s(content, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
 	}
 }
 
@@ -1300,12 +1406,17 @@ extractFAccessProperties(style : [flow]) -> [FAccessProperty] {
 	})
 }
 
-addFAccessProperties(properties : [FAccessProperty], zorder : [int]) -> (native) -> () -> void {
+addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) -> (native) -> () -> void {
 	\clip -> {
 		accessVisible = extractStruct(properties, FAccessVisible(const(true))).visible;
 		accessCallback = ref None();
 
-		fold(properties, Pair(makeTree1("zorder", \ -> i2s(zorder[0])), []),
+		fold(
+			properties,
+			Pair(
+				makeTree1("zorder", \ -> i2s(fgetValue(zorder)[0])),
+				[]
+			),
 			\acc : Pair<Tree<string, () -> string>, [() -> () -> void]>, p -> {
 				switch (p : FAccessProperty) {
 					AccessRole(r): {
@@ -1425,8 +1536,22 @@ addFAccessProperties(properties : [FAccessProperty], zorder : [int]) -> (native)
 					FAccessVisible(__): {
 						acc;
 					}
+					TagName(tagName): {
+						setClipTagName(clip, tagName);
+
+						acc;
+					}
+					LangAttribute(languageCode): {
+						uns = makeSubscribe2(languageCode, \code -> setAccessAttributes(clip, [["lang", code]]));
+
+						Pair(
+							setTree(acc.first, "lang", \ -> fgetValue(languageCode)),
+							arrayPush(acc.second, uns)
+						)
+					}
+				}
 			}
-		})
+		)
 		|> (\attributes : Pair<Tree<string, () -> string>, [() -> () -> void]> -> {
 			uns =
 				makeSubscribeUns(accessVisible, \av ->

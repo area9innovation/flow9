@@ -1,3 +1,4 @@
+import sys/concurrent;
 import fs/filesystem;
 import ds/tree;
 import net/url_parameter;
@@ -6,8 +7,14 @@ import lingo/flow/javascript_cli_params;
 // Use compilerconfig.flow to get a useful, easy-to-use configuration,
 // and then functions here to work with it
 export {
-	// Reads any local flow.config file for options
-	parseFlowConfig() -> Tree<string, string>;
+	// Parses config file as a string for options
+	parseFlowConfig(config : string) -> Tree<string, string>;
+
+	// Finds directory, containing 'flow.config' file upwards from the given directory. Empty string means no such directory.
+	findFlowConfigDir(dir : string) -> string;
+
+	// Finds 'flow.config' file upwards from the given directory and returns its content. Returns empty string if there's no such file.
+	findFlowConfig(dir : string) -> string;
 
 	// Read config parameter.
 	// Priority (increasing):
@@ -20,6 +27,10 @@ export {
     isConfigParameterTrue : (config : Tree<string, string>, param : string)->bool;
     isConfigParameterFalse : (config : Tree<string, string>, param : string)->bool;
     isConfigParameterSet : (config : Tree<string, string>, param : string)->bool;
+    isAnyConfigParametersTrue : (config : Tree<string, string>, params : [string])->bool;
+    areAllConfigParametersTrue : (config : Tree<string, string>, params : [string])->bool;
+    isAnyConfigParametersSet : (config : Tree<string, string>, params : [string])->bool;
+    areAllConfigParametersSet : (config : Tree<string, string>, params : [string])->bool;
 
     getConfigParameterInt(config : Tree<string, string>, paramName : string, defValue : int) -> int;
 
@@ -59,66 +70,97 @@ export {
         verbose : int,
         jsParams : JSCliParams,
 
-        config : Tree<string, string>
+        config : Tree<string, string>,
+        threadId : int, // stores the id of a thread, responsible for a task (in parallel mode)
     );
     compilerConfigFromConfig : (config : Tree<string, string>) -> CompilerConfig;
     compilerConfigToTree : (config : CompilerConfig) -> Tree<string, string>;
+    compilerConfigToString(config : CompilerConfig) -> string;
 
     // Finds the directory of flow itself. Is not very clever
 	getFlowDir() -> string;
 
+	fcDirName(path : string) -> string;
+
 	setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig;
 }
 
-getFlowDir() {
-	// Use the path of the executabe
-	appPath = strReplace(getApplicationPath(), "\\", "/");
-	flowDefDir = if (strContains(appPath, "/platforms/qt")) {
-		takeBefore(appPath, "/platforms/qt", appPath) + "/"
-	} else if (strContains(appPath, "flow9/platforms/java")) {
-		takeBefore(appPath, "platforms/java", appPath)
-	} else if (strContains(appPath, "tools/flowcompiler/")) {
-		takeBefore(appPath, "tools/flowcompiler/", appPath)
-	} else if (strContains(appPath, "tools/flowc/")) {
-		takeBefore(appPath, "tools/flowc/", appPath)
-	} else {
-		println("WARNING: Could not determine the flow directory.");
-		println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
-	    "../flow9/";
-	}
-	binDir = getUrlParameter("bin-dir");
-    if (binDir == "") {
-        flowDefDir
-    } else {
-		if (endsWith(binDir, "bin/") || endsWith(binDir, "bin\\"))
-			substring(binDir, 0, strlen(binDir)-4)
-		else
-			substring(binDir, 0, strlen(binDir)-3);
+fcFlowDir : ref Maybe<string> = ref None();
+
+getFlowDir() -> string {
+	init_dir = \-> {
+		// Use the path of the executable
+		appPath = strReplace(getApplicationPath(), "\\", "/");
+		flowDefDir = if (strContains(appPath, "/platforms/qt")) {
+			takeBefore(appPath, "/platforms/qt", appPath) + "/"
+		} else if (strContains(appPath, "flow9/platforms/java")) {
+			takeBefore(appPath, "platforms/java", appPath)
+		} else if (strContains(appPath, "tools/flowc/")) {
+			takeBefore(appPath, "tools/flowc/", appPath)
+		} else if (strContains(appPath, "flow9/bin/")) {
+			takeBefore(appPath, "bin/", appPath)
+		} else if (strContains(appPath, "bin/")) {
+			takeBefore(appPath, "bin/", appPath)
+		} else {
+			println("WARNING: Could not determine the flow directory.");
+			println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
+			"../flow9/";
+		}
+		binDir = getUrlParameter("bin-dir");
+		flowdir = if (binDir == "") {
+			flowDefDir
+		} else {
+			if (endsWith(binDir, "bin/") || endsWith(binDir, "bin\\"))
+				substring(binDir, 0, strlen(binDir)-4)
+			else
+				substring(binDir, 0, strlen(binDir)-3);
+		}
+		strReplace(flowdir, "\\", "/");
     }
+    onlyOnce(fcFlowDir, init_dir);
 }
 
-parseFlowConfig() -> Tree<string, string> {
-	if (fileExists("flow.config")) {
-		config = getFileContent("flow.config");
-		lines = strSplit(config, "\n");
-		fold(lines, makeTree(), \acc, l -> {
-			// Skip comment lines in flow.config
-			if (!startsWith(ltrim2(l, " \t"), "#")) {
-				opts = strSplit(l, "=");
-				if (length(opts) == 2) {
-					opt = trim2(opts[0], " \t\u000d");
-					val = trim2(opts[1], " \t\u000d");
-					val1 = if (opt == "resource-file") {
-							val2 = if (endsWith(val, ".swf")) val
-								else val + ".swf";
-							if (strFindFirstOf(val2, "/\\") != -1) val2
-							else "resources/" + val2
-						} else val;
-					setTree(acc, opt, val1)
-				} else acc;
+findFlowConfig(dir : string) -> string {
+	conf_dir = findFlowConfigDir(dir);
+	if (conf_dir == "") "" else  getFileContent(conf_dir + "/flow.config");
+}
+
+fcDirName(path : string) -> string {
+	path1 = strReplace(path, "\\", "/");
+	if (!strContains(path1, "/")) "" else {
+		strLeft(path1, strLastIndexOf(path1, "/"));
+	}
+}
+
+findFlowConfigDir(d : string) -> string {
+	dir = rtrim2(d, "/");
+	if (fileExists(dir + "/flow.config")) dir else {
+		// Check for root directory or c:/ in windows
+		if (dir == "" || (strlen(dir) <= 3 && isLetter(getCharAt(dir, 0)) && getCharAt(dir, 1) == ":")) "" else {
+			findFlowConfigDir(fcDirName(dir));
+		}
+	}
+}
+
+parseFlowConfig(config : string) -> Tree<string, string> {
+	lines = strSplit(config, "\n");
+	fold(lines, makeTree(), \acc, l -> {
+		// Skip comment lines in flow.config
+		if (!startsWith(ltrim2(l, " \t"), "#")) {
+			opts = strSplit(l, "=");
+			if (length(opts) == 2) {
+				opt = trim2(opts[0], " \t\u000d");
+				val = trim2(opts[1], " \t\u000d");
+				val1 = if (opt == "resource-file") {
+						val2 = if (endsWith(val, ".swf")) val
+							else val + ".swf";
+						if (strFindFirstOf(val2, "/\\") != -1) val2
+						else "resources/" + val2
+					} else val;
+				setTree(acc, opt, val1)
 			} else acc;
-		});
-	} else makeTree();
+		} else acc;
+	});
 }
 
 getConfigParameterDef(config : Tree<string, string>, paramName : string, defValue : string) -> string {
@@ -143,6 +185,21 @@ isConfigParameterTrue(config, param)
 isConfigParameterFalse(config, param) 
     isParameterFalse(getConfigParameter(config, param));
 
+isAnyConfigParametersTrue(config : Tree<string, string>, params : [string]) -> bool {
+	exists(params, \param -> isConfigParameterTrue(config, param));
+}
+
+areAllConfigParametersTrue(config : Tree<string, string>, params : [string]) -> bool {
+	forall(params, \param -> isConfigParameterTrue(config, param));
+}
+
+isAnyConfigParametersSet(config : Tree<string, string>, params : [string]) -> bool {
+	exists(params, \param -> isConfigParameterSet(config, param));
+}
+
+areAllConfigParametersSet(config : Tree<string, string>, params : [string]) -> bool {
+	forall(params, \param -> isConfigParameterSet(config, param));
+}
 
 setConfigParameter(conf, key, value)
     compilerConfigFromConfig(setTree(conf.config, key, value));
@@ -224,6 +281,8 @@ compilerConfigFromConfig(config) {
 			isConfigParameterTrue(config, "readable"),
 			//beautify : bool,
 			isConfigParameterTrue(config, "readable"),
+			//sourcemap : bool,
+			isConfigParameterTrue(config, "js-source-map"),
 			//verbose : int,
 			verboseLevel,
 			//nwjs : bool
@@ -233,10 +292,12 @@ compilerConfigFromConfig(config) {
 			// dcePreservedNames : Set<string>,
 			dcePreservedNames,
 			isConfigParameterTrue(config, "dce-remove-main"),
+			getConfigParameter(config, "jslibraryobject"),
 			isConfigParameterTrue(config, "call-main")
 		),
 		//config : Tree<string, string>
-		config
+		config,
+		s2i(getThreadId()) // current thread id
 	);
 }
 
@@ -248,11 +309,21 @@ compilerConfigToTree(config : CompilerConfig) -> Tree<string, string> {
 		),
 		getConstConfig([
 			Pair("flowfile", config.flowfile),
-			Pair("include", strGlue(config.includes, ",")),
-			Pair("obj", strGlue(config.objectFolders, ",")),
-			Pair("verbose", i2s(config.verbose))
+			Pair("includes", strGlue(config.includes, ",")),
+			Pair("objectFolders", strGlue(config.objectFolders, ",")),
+			Pair("verbose", i2s(config.verbose)),
+			Pair("threadId", i2s(config.threadId)),
 		])
 	)
+}
+
+compilerConfigToString(config : CompilerConfig) -> string {
+	"flowfile=" + config.flowfile + ", " +
+	"verbose=" + i2s(config.verbose) + ", " +
+	"includes=[" + strGlue(config.includes, ",") + "], " +
+	"objectFolders=[" + strGlue(config.objectFolders, ",") + "], " +
+	"threadId=" + i2s(config.threadId) + ", " +
+	strGlue(map(tree2pairs(config.config), \p -> p.first + "=" + p.second), ", ");
 }
 
 jsCliParamsToTree(params : JSCliParams) -> Tree<string, string> {
@@ -270,6 +341,7 @@ jsCliParamsToTree(params : JSCliParams) -> Tree<string, string> {
 		Pair("isTypeScript", b2s(params.isTypeScript)),
 		Pair("readable", b2s(params.readable)),
 		Pair("beautify", b2s(params.beautify)),
+		Pair("sourcemap", b2s(params.sourcemap)),
 		Pair("jsverbose", i2s(params.verbose)),
 		Pair("nwjsmode", b2s(params.nwjs)),
 		Pair("fontconfig", params.fontconfig),
@@ -279,13 +351,6 @@ jsCliParamsToTree(params : JSCliParams) -> Tree<string, string> {
 	])
 }
 
-setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig {
-	CompilerConfig(
-		flowfile, 
-		config.includes,
-		config.objectFolders,
-		config.verbose,
-		config.jsParams,
-		config.config
-	)
+setConfigFlowfile(conf : CompilerConfig, file : string) -> CompilerConfig {
+	CompilerConfig(conf with flowfile = file)
 }

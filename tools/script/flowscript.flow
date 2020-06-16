@@ -1,0 +1,318 @@
+import tools/script/library;
+import tools/flowc/incremental/fi2flowsrc;
+
+/*
+TODO:
+
+- Lift next occurences of "foo := <exp>" to fselect() on foo where we replace occurences
+  of foo with arg name
+
+- Do implicit conversions, also of lambdas
+
+- Do lifting of quoted code to lambdas
+
+- Finish recursive processing
+
+- Handle globals?
+
+- Build runner to display result
+
+- Fix return type of functions from flow to something else
+
+- Save result in nice file
+*/
+
+// This will do all the rewrites we need on a given module.
+processFiModule(library : LibraryRewrites, m : FiModule) -> FiModule {
+	FiModule(
+		m with functions = map(m.functions, \f : FiFunctionDec -> {
+			processFiFunction(library, f);
+		})
+	)
+}
+
+processFiFunction(library : LibraryRewrites, f : FiFunctionDec) -> FiFunctionDec {
+	// Traverse the body and extract implicitly defined variables
+	names = extractFiExpBehaviours(makeTree(), f.lambda);
+	
+	lib = LibraryRewrites(library with env = names);
+
+	lambda : FiLambda = processFiLambda(lib, FiTypeName("Material", []), f.lambda);
+
+	// OK, build the behaviours
+	// TODO: We do it in reverse order. Sopmething we might have to fix.
+	behaviours = foldTree(names, lambda.body, \name, val, acc -> {
+		FiLet(
+			name, 
+			FiTypeName("DynamicBehaviour", [fiExpType(val)]),
+			FiCall(FiVar("make", FiTypeFlow(), 0), [val], FiTypeFlow(), 0),
+			acc,
+			FiTypeName("Material", []),
+			0
+		)
+	});
+
+	FiFunctionDec(f with
+		lambda = FiLambda(lambda with body = behaviours)
+	)
+}
+
+// Find the first sites of "foo := 0" and extract those
+extractFiExpBehaviours(acc : Tree<string, FiExp>, ex : FiExp) -> Tree<string, FiExp> {
+	switch (ex) {
+		FiConst(): acc;
+		FiCallPrim(op, args, __, __): {
+			acc0 = extractFiExpsBehaviours(acc, args);
+			if (op == FcAssignPrim()) {
+				var = switch (args[0]) {
+					FiVar(n, __, __): n;
+					default: "";
+				}
+				if (containsKeyTree(acc0, var)) acc
+				else setTree(acc0, var, args[1]);
+ 			} else acc0;
+		}
+		FiLambda(args, body, type, start): extractFiExpBehaviours(acc, body);
+		FiCall(f, args, type, start): extractFiExpsBehaviours(acc, arrayPush(args, f));
+		FiVar(name, type, start): acc;
+		FiLet(name, type, e1, e2, type2, start): extractFiExpsBehaviours(acc, [e1, e2]);
+		FiIf(e1, e2, e3, type, start): extractFiExpsBehaviours(acc, [e1, e2, e3]);
+		FiSwitch(x, switchType, cases, type, start): {
+			fold(cases, acc, \acc0, case -> {
+				extractFiExpBehaviours(acc0, case.body);
+			})
+		}
+		FiCast(e, tFrom, tTo, type, start): extractFiExpBehaviours(acc, e);
+		FiSeq(es, type, start): extractFiExpsBehaviours(acc, es);
+		FiRequire(flowfile, e, type, start): extractFiExpBehaviours(acc, e);
+		FiUnsafe(name, fallback, type, start): extractFiExpBehaviours(acc, fallback);
+	}
+}
+
+extractFiExpsBehaviours(acc : Tree<string, FiExp>, es : [FiExp]) -> Tree<string, FiExp> {
+	fold(es, acc, extractFiExpBehaviours)
+}
+
+// Apply prototypes and conversions to this FiExp
+processFiExp(library : LibraryRewrites, expect : FiType, e : FiExp) -> FiExp {
+	todo = \ -> {
+		println("TODO Process: " + toString(e) + " as " + toString(expect));
+		e;
+	}
+	r = switch (e) {
+		FiVar(name, type, start): e;
+		FiCall(f, args, type, start): {
+			switch (f) {
+				FiVar(fn, vt, vs): {
+					proto = lookupTree(library.prototypes, fn);
+					switch (proto) {
+						None(): {
+							// Normal call. Just do kids
+							argTypes = getLibraryArgTypes(library, fn);
+							FiCall(f, mapi(args, \i, a -> {
+								argtype = elementAt(argTypes, i, FiTypeFlow());
+								processFiExp(library, argtype, a)
+							}), type, start);
+						}
+						Some(pro): {
+							// What type is the result?
+							argTypes = getLibraryArgTypes(library, pro.name);
+							// Is this a single array?
+							arrayType = extractArrayType(argTypes);
+
+							def = \ -> {
+								// OK, convert arguments and add default arguments
+								FiCall(FiVar(pro.name, vt, vs),
+									mapi(pro.args, \i, arg -> {
+										if (i < length(args)) {
+											// Find definition of this guy and do the right thing
+											argtype = elementAt(argTypes, i, FiTypeFlow());
+											processFiExp(library, argtype, args[i])
+										} else {
+											pro.args[i]
+										}
+									}), type, start
+								)
+							}
+
+							switch (arrayType) {
+								None(): def();
+								Some(at): {
+									if (length(args) != 1) {
+										// OK, we lift all args to an array
+										FiCall(
+											FiVar(pro.name, vt, vs),
+											[FiCallPrim(
+												FcArrayPrim(),
+												map(args, \a -> {
+													processFiExp(library, at, a)
+												}),
+												FiTypeArray(at),
+												start
+											)],
+											type, start
+										)
+									} else {
+										def();
+									}
+								}
+							}
+						}
+					}
+				}
+				default: todo();
+			}
+		}
+
+		FiLambda(args, body, type, start): todo();
+		FiLet(name, type, e1, e2, type2, start): todo();
+		FiIf(e1, e2, e3, type, start): todo();
+		FiSwitch(x, switchType, cases, type, start): todo();
+		FiCast(ec, tFrom, tTo, type, start): todo();
+		FiSeq(es, type, start): todo();
+		FiCallPrim(op, es, type, start): {
+			rec = \ts -> {
+				FiCallPrim(op, mapi(es, \i, ex -> processFiExp(library, elementAt(ts, i, FiTypeFlow()), ex)), type, start);
+			}
+			switch (op) {
+				FcAssignPrim(): {
+					varname = switch (es[0]) {
+						FiVar(n, __, __): n;
+						default: "";
+					}
+					known = lookupTree(library.env, varname);
+					switch (known) {
+						None(): {
+							// OK, unknown, so just keep it
+							rec([]);
+						}
+						Some(def): {
+							if (es[1] == def) {
+								es[0];
+							} else {
+								// TODO: Replace all occurences of "varname" with a argname,
+								// and convert the FiCallPrim to a lambda with that argname
+								// and a fselect.
+								println("Lift this to FRP: " + toString(es[1]));
+								rec([]);
+							}
+						}
+					}
+				}
+				FcOrPrim(): rec([FiTypeBool(), FiTypeBool()]);
+				FcAndPrim(): rec([FiTypeBool(), FiTypeBool()]);
+				FcNotPrim(): rec([FiTypeBool()]);
+				FcEqPrim(): rec([]);
+				FcNePrim(): rec([]);
+				FcLePrim(): rec([]);
+				FcGePrim(): rec([]);
+				FcLtPrim(): rec([]);
+				FcGtPrim(): rec([]);
+				FcPlusPrim(): rec([expect, expect]);
+				FcMinusPrim(): rec([expect, expect]);
+				FcMulPrim(): rec([expect, expect]);
+				FcDivPrim(): rec([expect, expect]);
+				FcModPrim(): rec([expect, expect]);
+				FcNegPrim(): rec([expect]);
+				FcArrayPrim(): {
+					println("TODO: Extract array type");
+					rec([]);
+				}
+				default: todo();
+			}
+		}
+
+		FiVoid(start): e;
+		FiDouble(d, start): e;
+		FiInt(i, start): e;
+		FiString(s, start): e;
+		FiBool(b, start): e;
+
+		FiRequire(flowfile, er, type, start): todo();
+		FiUnsafe(name, fallback, type, start): todo();
+	}
+
+	resType = fiExpType(r);
+	if (resType != expect) {
+		conversions = getTreeArrayValue(library.typeConversions, expect);
+
+		converter = find(conversions, \c -> c.from == resType);
+		switch (converter) {
+			None(): {
+				switch (expect) {
+					FiTypeFunction(fargs, fret): {
+						println("TODO: Do we need to lift this to a lambda? " + toString(expect) + " from\n" + toString(r));
+						r;
+					}
+					default: {
+						r;
+					}
+				}
+			}
+			Some(c): {
+				println("TODO: Apply converter " + toString(c) + " for " + toString(r));
+				r;
+			}
+		}
+	} else {
+		r;
+	}
+}
+
+getLibraryArgTypes(library : LibraryRewrites, name : string) -> [FiType] {
+	resType = lookupTree(library.names.toplevel, name);
+	switch (resType) {
+		None(): {
+			structType = lookupTree(library.names.structs, name);
+			switch (structType) {
+				None(): [];
+				Some(st): map(st.args, \a : FiStructArg -> a.type);
+			}
+		}
+		Some(rt): {
+			switch (rt.type) {
+				FiTypeFunction(fargs, __): map(fargs, \a : FiFunArg -> a.type);
+				default: {
+					println("TODO: Find args for " + name);
+					[];
+				}
+			}
+		}
+	}
+}
+
+extractArrayType(ts : [FiType]) -> Maybe<FiType> {
+	if (length(ts) != 1) None()
+	else switch (ts[0]) {
+		FiTypeArray(at): Some(at);
+		default: None();
+	}
+}
+
+processFiLambda(library : LibraryRewrites, expect : FiType, l : FiLambda) -> FiLambda {
+	FiLambda(
+		l with
+		body = processFiExp(library, expect, l.body)
+	)
+}
+
+main() {
+	file = getUrlParameterDef("file", "tools/script/test/1_counter.flow");
+	// file = getUrlParameterDef("file", "tools/script/test/2_temperature.flow");
+	// file = getUrlParameterDef("file", "tools/script/test/3_flight.flow");
+	files = loadFiModules(makeEmptyFcTypeEnv(), file, \e -> {
+		println(e);
+	});
+
+	// Parse the library
+	rewrites = getLibrary();
+
+	traverseInOrder(files, \f, module -> {
+		processed = processFiModule(rewrites, module);
+		println(f);
+		println(fimodule2flowsrc(module));
+		println("becomes");
+		println(fimodule2flowsrc(processed));
+	});
+	quit(0);
+}

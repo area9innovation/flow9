@@ -58,6 +58,7 @@ void FlowNativeObject::autoRegisterValue() const {
     assert(id_slot.IsVoid());
     FlowNativeObject *obj = const_cast<FlowNativeObject*>(this);
     StackSlot nv = owner->AllocNativeObj(getFlowValueType()->WrapNativePointer(owner, obj));
+    UNUSED(nv);
     assert(id_slot.IsNative() && id_slot.GetNativeValId() == nv.GetNativeValId() && !id_tag);
 }
 
@@ -91,8 +92,8 @@ NativeMethodHost::~NativeMethodHost() {
 
 static void ClipLenToRange(int pidx, unsigned *plen, unsigned size) {
     // Range too long, or overflow even?
-    int end = pidx + *plen;
-    if (end > size || end < 0)
+    int end = pidx + int(*plen);
+    if (end > int(size) || end < 0)
         *plen = size - pidx;
 }
 
@@ -285,7 +286,7 @@ StackSlot ByteCodeRunner::deleteNative(RUNNER_ARGS)
     RETVOID;
 }
 
-StackSlot ByteCodeRunner::removePlatformEventListener(RUNNER_ARGS, void * data)
+StackSlot ByteCodeRunner::removePlatformEventListener(RUNNER_ARGS, void *)
 {
     const StackSlot *slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 2);
     PlatformEvent event = (PlatformEvent)slot[0].GetInt();
@@ -338,7 +339,7 @@ bool ByteCodeRunner::NotifyPlatformEvent(PlatformEvent event) {
     return cancelled;
 }
 
-StackSlot ByteCodeRunner::removeCustomFileTypeHandler(RUNNER_ARGS, void * data)
+StackSlot ByteCodeRunner::removeCustomFileTypeHandler(RUNNER_ARGS, void *)
 {
     const StackSlot *slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 2);
     int cb_root = slot[0].GetInt();
@@ -566,7 +567,7 @@ StackSlot ByteCodeRunner::subrange(RUNNER_ARGS)
     unsigned arr_len = RUNNER->GetArraySize(arr);
     unsigned len_int = len.GetInt();
 
-    if (unlikely(idx.GetInt() < 0 || len_int < 1) || idx.GetInt() >= arr_len) {
+    if (unlikely(idx.GetInt() < 0 || len_int < 1) || unsigned(idx.GetInt()) >= arr_len) {
         return StackSlot::MakeEmptyArray();
     }
 
@@ -598,17 +599,13 @@ StackSlot ByteCodeRunner::NativeStrlen(RUNNER_ARGS)
 
 int ByteCodeRunner::strRangeIndexOf(const unicode_char *pstr, const unicode_char *psub, unsigned l1, unsigned l2, unsigned start, unsigned end)
 {
-    if (!pstr)
-        return -1;
-
-    if (start < 0)
-        start = 0;
-
     if (end > l1)
         end = l1;
 
     if (l2 == 0) {
         return 0;
+	} else if (!pstr) {
+		return -1;
     } else if (l2 > end - start) {
         return -1;
     } else if (l2 == 1) {
@@ -1386,7 +1383,7 @@ bool ByteCodeRunner::isValueFitInType(RUNNER_VAR, const std::vector<FieldType> &
             if (unlikely(!value.IsArray())) return false;
             FieldType arrtype = type[ti];
             if (arrtype != FTFlow) { // Type is not Flow
-                for (int i = 0; i < RUNNER->GetArraySize(value); ++i)
+                for (unsigned int i = 0; i < RUNNER->GetArraySize(value); ++i)
                     if (unlikely(!isValueFitInType(RUNNER, type, RUNNER->GetArraySlot(value, i), ti))) return false;
             }
             return true;
@@ -1430,13 +1427,39 @@ StackSlot ByteCodeRunner::makeStructValue(RUNNER_ARGS)
     return arr;
 }
 
+StackSlot ByteCodeRunner::extractStructArguments(RUNNER_ARGS)
+{
+    StackSlot &flow_struct = RUNNER_ARG(0);
+    if (!flow_struct.IsStruct()) {
+        return StackSlot::MakeEmptyArray();
+    }
+    int size = RUNNER->GetStructSize(flow_struct);
+    StackSlot arrslot = RUNNER->AllocateUninitializedArray(size); // ALLOC
+
+    if (RUNNER->IsErrorReported())
+        return StackSlot::MakeEmptyArray();
+
+    StackSlot *arr = (StackSlot*)MEMORY->GetRawPointer(arrslot.GetInternalArrayPtr(), size*STACK_SLOT_SIZE, true);
+    for (int i = 0; i < size; i++)
+        arr[i] = RUNNER->GetStructSlot(flow_struct, i);
+
+    return arrslot;
+}
+
+StackSlot ByteCodeRunner::getDataTagForValue(RUNNER_ARGS)
+{
+	UNUSED(RUNNER);
+    StackSlot &value = RUNNER_ARG(0);
+    return StackSlot::MakeInt(value.GetType());
+}
+
 bool ByteCodeRunner::VerifyStruct(const StackSlot &arr, int struct_id)
 {
     if (unsigned(struct_id) >= StructDefs.size())
         return false;
 
     StructDef *def = &StructDefs[struct_id];
-    if (GetArraySize(arr) != def->FieldsCount)
+    if (GetArraySize(arr) != unsigned(def->FieldsCount))
         return false;
 
     for (int i = 0; i < def->FieldsCount; ++i) {
@@ -1597,7 +1620,7 @@ StackSlot ByteCodeRunner::setFileContent(RUNNER_ARGS)
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -1628,7 +1651,7 @@ StackSlot ByteCodeRunner::setFileContentUTF16(RUNNER_ARGS)
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -1637,14 +1660,14 @@ StackSlot ByteCodeRunner::setFileContentUTF16(RUNNER_ARGS)
 }
 
 void unicodeProcessor(int nbytes, const unicode_char * pdata, uint8_t * bytes) {
-    for (unsigned i = 0; i < nbytes; i++) {
+    for (unsigned i = 0; i < unsigned(nbytes); i++) {
         unicode_char data = pdata[i/2];
         bytes[i] = ((i%2 == 0)? data : (data>>8));
     }
 }
 
 void bytesProcessor(int nbytes, const unicode_char * pdata, uint8_t * bytes) {
-    for (unsigned i = 0; i < nbytes; i++) {
+    for (unsigned i = 0; i < unsigned(nbytes); i++) {
         unicode_char data = pdata[i];
         bytes[i] = data % 256;
     }
@@ -1674,7 +1697,7 @@ StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(in
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -1689,6 +1712,12 @@ StackSlot ByteCodeRunner::setFileContentBinary(RUNNER_ARGS) {
 
 StackSlot ByteCodeRunner::setFileContentBytes(RUNNER_ARGS) {
     return setFileContentHelper(RUNNER, pRunnerArgs__, &bytesProcessor);
+}
+
+StackSlot ByteCodeRunner::getBytecodeFilename(RUNNER_ARGS)
+{
+	UNUSED(pRunnerArgs__);
+    return RUNNER->AllocateString(parseUtf8(RUNNER->BytecodeFilename));
 }
 
 StackSlot ByteCodeRunner::loaderUrl(RUNNER_ARGS)
@@ -2712,7 +2741,7 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
 
 #ifdef FLOW_MMAP_HEAP
     bool input_mapped = RUNNER->IsMappedArea(RUNNER->GetStringAddr(input));
-    bool enough_free = (RUNNER->MapStringPtr - RUNNER->MapAreaBase) >= STACK_SLOT_SIZE*slot_budget;
+    bool enough_free = unsigned(RUNNER->MapStringPtr - RUNNER->MapAreaBase) >= STACK_SLOT_SIZE * unsigned(slot_budget);
 
     if (input_mapped && enough_free && !has_fixups)
     {
@@ -2819,7 +2848,8 @@ StackSlot ByteCodeRunner::getCurrentDate(RUNNER_ARGS)
     IGNORE_RUNNER_ARGS;
 
     time_t tv = time_t(GetCurrentTime());
-    struct tm parts = {0};
+    struct tm parts;
+    memset(&parts, 0, sizeof(parts));
 
 #ifdef WIN32
     tm *tmp = localtime(&tv);
@@ -2913,6 +2943,8 @@ StackSlot ByteCodeRunner::find(RUNNER_ARGS)
 
 StackSlot ByteCodeRunner::getTotalMemoryUsed(RUNNER_ARGS)
 {
+	UNUSED(RUNNER);
+	UNUSED(pRunnerArgs__);
     return StackSlot::MakeDouble((FlowDouble)(RUNNER->GetMemory()->GetMemSize() + StaticBuffer::total_memory()));
 }
 
@@ -2944,7 +2976,7 @@ void ByteCodeRunner::callFlowCrashHandlers(std::string msg)
         EvalFunction(LookupRoot(*it), 1, msg_str);
 }
 
-StackSlot ByteCodeRunner::removeCameraEventListener(RUNNER_ARGS, void * data)
+StackSlot ByteCodeRunner::removeCameraEventListener(RUNNER_ARGS, void *)
 {
     const StackSlot *slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 1);
     int cb_root = slot[0].GetInt();
@@ -2959,7 +2991,7 @@ StackSlot ByteCodeRunner::removeCameraEventListener(RUNNER_ARGS, void * data)
     RETVOID;
 }
 
-StackSlot ByteCodeRunner::removeCameraVideoEventListener(RUNNER_ARGS, void * data)
+StackSlot ByteCodeRunner::removeCameraVideoEventListener(RUNNER_ARGS, void *)
 {
     const StackSlot *slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 1);
     int cb_root = slot[0].GetInt();
@@ -2974,7 +3006,7 @@ StackSlot ByteCodeRunner::removeCameraVideoEventListener(RUNNER_ARGS, void * dat
     RETVOID;
 }
 
-StackSlot ByteCodeRunner::removeTakeAudioEventListener(RUNNER_ARGS, void * data)
+StackSlot ByteCodeRunner::removeTakeAudioEventListener(RUNNER_ARGS, void *)
 {
     const StackSlot *slot = RUNNER->GetClosureSlotPtr(RUNNER_CLOSURE, 1);
     int cb_root = slot[0].GetInt();
@@ -3058,6 +3090,57 @@ StackSlot ByteCodeRunner::fileChecksum(RUNNER_ARGS)
 	return RUNNER->AllocateString(parseUtf8(res));
 }
 
+StackSlot ByteCodeRunner::readBytes(RUNNER_ARGS)
+{
+	RUNNER_PopArgs1(n);
+	RUNNER_CheckTag(TInt, n);
+	std::string str;
+	getline(std::cin, str);
+
+	unsigned int len = n.GetInt();
+	if (str.size() != len) {
+		cerr << "Expected " << len << " bytes, got " << str.size() << " bytes" << std::endl;
+	}
+
+	return RUNNER->AllocateString(parseUtf8(str));
+}
+
+StackSlot ByteCodeRunner::readUntil(RUNNER_ARGS)
+{
+	RUNNER_PopArgs1(p);
+	RUNNER_CheckTag(TString, p);
+	std::string pattern = encodeUtf8(RUNNER->GetString(p));
+	std::ostringstream buffer;
+	unsigned int pos = 0;
+	char ch = '\0';
+	while (std::cin.get(ch)) {
+		buffer << ch;
+		if (ch == pattern[pos]) {
+			pos += 1;
+			if (pos == pattern.size()) {
+				break;
+			}
+		} else {
+			pos = 0;
+		}
+	}
+	return RUNNER->AllocateString(parseUtf8(buffer.str()));
+}
+
+StackSlot ByteCodeRunner::print(RUNNER_ARGS)
+{
+	RUNNER_PopArgs1(object);
+
+    if (object.IsString())
+        RUNNER->flow_out << encodeUtf8(RUNNER->GetString(object));
+    else
+        RUNNER->PrintData(RUNNER->flow_out, object);
+
+    RUNNER->flow_out << std::flush;
+
+    RETVOID;
+}
+
 void ByteCodeRunner::NotifyCameraEvent(int code, std::string message, std::string additionalInfo, int width, int height)
 {
     const StackSlot &code_arg = StackSlot::MakeInt(code);
@@ -3066,7 +3149,7 @@ void ByteCodeRunner::NotifyCameraEvent(int code, std::string message, std::strin
     const StackSlot &width_arg = StackSlot::MakeInt(width);
     const StackSlot &height_arg = StackSlot::MakeInt(height);
 
-    for(int i = 0; i < CameraEventListeners.size(); i++)
+    for(unsigned int i = 0; i < CameraEventListeners.size(); i++)
     {
         EvalFunction(LookupRoot(CameraEventListeners[i]), 5, code_arg, message_arg, additionalInfo_arg, width_arg, height_arg);
     }
@@ -3082,7 +3165,7 @@ void ByteCodeRunner::NotifyCameraEventVideo(int code, std::string message, std::
     const StackSlot &duration_arg = StackSlot::MakeInt(duration);
     const StackSlot &size_arg = StackSlot::MakeInt(size);
 
-    for(int i = 0; i < CameraVideoEventListeners.size(); i++)
+    for(unsigned int i = 0; i < CameraVideoEventListeners.size(); i++)
     {
         EvalFunction(LookupRoot(CameraVideoEventListeners[i]), 7, code_arg, message_arg, additionalInfo_arg, width_arg, height_arg, duration_arg, size_arg);
     }
@@ -3388,7 +3471,9 @@ bool ExtendedDebugInfo::load_file(const std::string &fname)
 
     while (!feof(f))
     {
-        fgets(line, sizeof(line), f);
+        if(!fgets(line, sizeof(line), f)) {
+        	break;
+        }
         if (feof(f) || line[0] == '\n' || line[0] == '\0')
             break;
 
@@ -3407,7 +3492,9 @@ bool ExtendedDebugInfo::load_file(const std::string &fname)
 
     while (!feof(f))
     {
-        fgets(line, sizeof(line), f);
+        if (!fgets(line, sizeof(line), f)) {
+        	break;
+        }
         if (feof(f) || line[0] == '\n' || line[0] == '\0')
             break;
 
@@ -3426,7 +3513,9 @@ bool ExtendedDebugInfo::load_file(const std::string &fname)
 
     while (!feof(f))
     {
-        fgets(line, sizeof(line), f);
+        if (!fgets(line, sizeof(line), f)) {
+        	break;
+        }
         if (feof(f) || line[0] == '\n' || line[0] == '\0')
             break;
 

@@ -1,0 +1,747 @@
+import math/geometry;
+import loop;
+import algorithms;
+
+export {
+	/*
+		https://github.com/mapbox/delaunator
+		Flow Implementation
+
+		ISC License
+
+		Copyright (c) 2017, Mapbox
+
+		Permission to use, copy, modify, and/or distribute this software for any purpose
+		with or without fee is hereby granted, provided that the above copyright notice
+		and this permission notice appear in all copies.
+
+		THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+		REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+		FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+		INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+		OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+		TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+		THIS SOFTWARE.
+	*/
+
+	makeDelanuator(points : [Point]) -> Delanuator;
+	getDelanuatorTriangles(delanuator : Delanuator) -> Set<Triangle>;
+	addDelanuatorPoint(delanuator : Delanuator, point : Point) -> void;
+	findDelanuatorTriangle(delanuator : Delanuator, point : Point) -> Maybe<Triangle>;
+
+		Triangle(a : Point, b : Point, c : Point);
+
+	Delanuator(
+		state : DelanuatorState,
+		update : () -> void,
+		hashKey : (x : double, y : double) -> int,
+		legalize : (a : int) -> int,
+		link : (a : int, b : int) -> void,
+		addTriangle : (i0 : int, i1 : int, i2 : int, a : int, b : int, c : int) -> int,
+		mutable triangles : Maybe<Set<Triangle>>
+	);
+
+	DelanuatorState(
+		mutable coords : [double],
+		mutable triangles : [ref int],
+		mutable trianglesLen : int,
+		mutable halfedges : [ref int],
+		mutable hashSize : int,
+		mutable hull : [int],
+		mutable hullNext : [ref int],
+		mutable hullPrev : [ref int],
+		mutable hullTri : [ref int],
+		mutable hullHash : [ref int],
+		mutable hullStart : int,
+		mutable ids : [ref int],
+		mutable dists : [ref double],
+		mutable cx : double,
+		mutable cy : double
+	);
+}
+
+EPSILON = dpow(2.0, -52.0);
+EDGE_STACK = generate(0, 256, \__ -> ref -1);
+
+makeDelanuatorState(initCoords : [double], points : [Point]) -> DelanuatorState {
+	coords = concat(initCoords, map(points, \p -> [p.x, p.y]) |> concatA);
+	n = length(coords) / 2;
+	maxTriangles = max(2 * n - 5, 0);
+	hashSize = ceil(sqrt(i2d(n)));
+
+	DelanuatorState(
+		coords,
+		generate(0, maxTriangles * 3, \__ -> ref 0),
+		-1,
+		generate(0, maxTriangles * 3, \__ -> ref 0),
+		hashSize,
+		[],
+		generate(0, n, \__ -> ref 0),
+		generate(0, n, \__ -> ref 0),
+		generate(0, n, \__ -> ref 0),
+		generate(0, hashSize, \__ -> ref -1),
+		-1,
+		generate(0, n, \__ -> ref -1),
+		generate(0, n, \__ -> ref -1.0),
+		-1.0,
+		-1.0
+	)
+}
+
+makeDelanuator(points : [Point]) -> Delanuator {
+	state = makeDelanuatorState([], points);
+
+	hashKey = \x, y -> {
+		floor(pseudoAngleDelanuator(x - state.cx, y - state.cy) * i2d(state.hashSize)) % state.hashSize;
+	}
+
+	link = \a, b -> {
+		state.halfedges[a] := b;
+
+		if (b != -1) {
+			state.halfedges[b] := a;
+		}
+	}
+
+	addTriangle = \i0 : int, i1 : int, i2 : int, a : int, b : int, c : int -> {
+		t = state.trianglesLen;
+
+		state.triangles[t] := i0;
+		state.triangles[t + 1] := i1;
+		state.triangles[t + 2] := i2;
+
+		link(t, a);
+		link(t + 1, b);
+		link(t + 2, c);
+
+		state.trianglesLen ::= t + 3;
+
+		t;
+	}
+
+	legalize = \aa -> {
+		i = ref 0;
+        ar = ref 0;
+		a = ref aa;
+
+		condition = ref true;
+
+		break = \ -> {
+			condition := false;
+		}
+
+        while(
+			\ -> ^condition,
+			\ -> {
+				b = ^(state.halfedges[^a]);
+				a0 = ^a - ^a % 3;
+				ar := a0 + (^a + 2) % 3;
+
+				if (b == -1) {
+					if (^i == 0) {
+						break();
+					} else {
+						i := ^i - 1;
+						a := ^(EDGE_STACK[^i]);
+					}
+				} else {
+					b0 = b - b % 3;
+					al = a0 + (^a + 1) % 3;
+					bl = b0 + (b + 2) % 3;
+
+					p0 = ^(state.triangles[^ar]);
+					pr = ^(state.triangles[^a]);
+					pl = ^(state.triangles[al]);
+					p1 = ^(state.triangles[bl]);
+
+					illegal = inCircleDelanuator(
+						state.coords[2 * p0], state.coords[2 * p0 + 1],
+						state.coords[2 * pr], state.coords[2 * pr + 1],
+						state.coords[2 * pl], state.coords[2 * pl + 1],
+						state.coords[2 * p1], state.coords[2 * p1 + 1]);
+
+					if (illegal) {
+						state.triangles[^a] := p1;
+						state.triangles[b] := p0;
+
+						hbl = ^(state.halfedges[bl]);
+
+						if (hbl == -1) {
+							e = ref state.hullStart;
+
+							condition2 = ref true;
+
+							break2 = \ -> {
+								condition2 := false;
+							}
+
+							doWhile(
+								\ -> {
+									if (^(state.hullTri[^e]) == bl) {
+										state.hullTri[^e] := ^a;
+										break2();
+									} else {
+										e := ^(state.hullPrev[^e]);
+									}
+								},
+								\ -> ^condition2 && ^e != state.hullStart
+							)
+						}
+
+						if (^condition) {
+							link(^a, hbl);
+							link(b, ^(state.halfedges[^ar]));
+							link(^ar, bl);
+
+							br = b0 + (b + 1) % 3;
+
+							if (^i < length(EDGE_STACK)) {
+								EDGE_STACK[^i] := br;
+								i := ^i + 1;
+							}
+						}
+					} else {
+						if (^i == 0) {
+							break();
+						} else {
+							i := ^i - 1;
+							a := ^(EDGE_STACK[^i]);
+						}
+					}
+				}
+			}
+		);
+
+        ^ar;
+	};
+
+	update = \ -> {
+        n = length(state.coords) / 2;
+
+        minX = ref doubleMax;
+        minY = ref doubleMax;
+        maxX = ref -doubleMax;
+        maxY = ref -doubleMax;
+
+		iter(enumFromTo(0, n - 1), \i -> {
+			x = state.coords[2 * i];
+            y = state.coords[2 * i + 1];
+            if (x < ^minX) minX := x;
+            if (y < ^minY) minY := y;
+            if (x > ^maxX) maxX := x;
+            if (y > ^maxY) maxY := y;
+            state.ids[i] := i;
+		});
+
+        cx = (^minX + ^maxX) / 2.0;
+        cy = (^minY + ^maxY) / 2.0;
+
+        minDist = ref doubleMax;
+        i0 = ref 0;
+		i1 = ref 0;
+		i2 = ref 0;
+
+		iter(enumFromTo(0, n - 1), \i -> {
+			d = distDelanuator(cx, cy, state.coords[2 * i], state.coords[2 * i + 1]);
+
+            if (d < ^minDist) {
+                i0 := i;
+                minDist := d;
+            }
+		});
+
+        i0x = ref state.coords[2 * ^i0];
+        i0y = ref state.coords[2 * ^i0 + 1];
+
+        minDist := doubleMax;
+
+		iter(enumFromTo(0, n - 1), \i -> {
+			if (i != ^i0) {
+				d = distDelanuator(^i0x, ^i0y, state.coords[2 * i], state.coords[2 * i + 1]);
+
+				if (d < ^minDist && d > 0.0) {
+					i1 := i;
+					minDist := d;
+				}
+			}
+		});
+
+        i1x = ref state.coords[2 * ^i1];
+        i1y = ref state.coords[2 * ^i1 + 1];
+
+        minRadius = ref doubleMax;
+
+		iter(enumFromTo(0, n - 1), \i -> {
+			if (i != ^i0 && i != ^i1) {
+				r = circumradiusDelanuator(^i0x, ^i0y, ^i1x, ^i1y, state.coords[2 * i], state.coords[2 * i + 1]);
+
+				if (r < ^minRadius) {
+					i2 := i;
+					minRadius := r;
+				}
+			}
+		});
+
+        i2x = ref state.coords[2 * ^i2];
+        i2y = ref state.coords[2 * ^i2 + 1];
+
+        if (^minRadius == doubleMax) {
+			iter(enumFromTo(0, n - 1), \i -> {
+				c0 = state.coords[2 * i] - state.coords[0];
+
+				if (c0 != 0.0) {
+					state.dists[i] := c0;
+				} else {
+					state.dists[i] := state.coords[2 * i + 1] - state.coords[1];
+				}
+			});
+
+            quicksortDelanuator(state.ids, state.dists, 0, n - 1);
+            hull = ref generate(0, n, \__ -> -1);
+            j = ref 0;
+			d0 = ref -doubleMax;
+
+			iter(enumFromTo(0, n - 1), \i -> {
+				id = ^(state.ids[i]);
+
+                if (^(state.dists[id]) > ^d0) {
+                    hull := replace(^hull, ^j, id);
+					j := ^j + 1;
+                    d0 := ^(state.dists[id]);
+                }
+			});
+
+            state.hull ::= subrange(^hull, 0, ^j);
+            state.triangles ::= [];
+            state.halfedges ::= [];
+        } else {
+			if (orientDelanuator(^i0x, ^i0y, ^i1x, ^i1y, ^i2x, ^i2y)) {
+				i = ^i1;
+				x = ^i1x;
+				y = ^i1y;
+				i1 := ^i2;
+				i1x := ^i2x;
+				i1y := ^i2y;
+				i2 := i;
+				i2x := x;
+				i2y := y;
+			}
+
+			center = circumcenterDelanuator(^i0x, ^i0y, ^i1x, ^i1y, ^i2x, ^i2y);
+			state.cx ::= center.x;
+			state.cy ::= center.y;
+
+			iter(enumFromTo(0, n - 1), \i -> {
+				state.dists[i] := distDelanuator(state.coords[2 * i], state.coords[2 * i + 1], center.x, center.y);
+			});
+
+			quicksortDelanuator(state.ids, state.dists, 0, n - 1);
+
+			state.hullStart ::= ^i0;
+			hullSize = ref 3;
+
+			state.hullNext[^i0] := ^i1;
+			state.hullPrev[^i2] := ^i1;
+
+			state.hullNext[^i1] := ^i2;
+			state.hullPrev[^i0] := ^i2;
+
+			state.hullNext[^i2] := ^i0;
+			state.hullPrev[^i1] := ^i0;
+
+			state.hullTri[^i0] := 0;
+			state.hullTri[^i1] := 1;
+			state.hullTri[^i2] := 2;
+
+			state.hullHash ::= generate(0, length(state.hullHash), \__ -> ref -1);
+			state.hullHash[hashKey(^i0x, ^i0y)] := ^i0;
+			state.hullHash[hashKey(^i1x, ^i1y)] := ^i1;
+			state.hullHash[hashKey(^i2x, ^i2y)] := ^i2;
+
+			state.trianglesLen ::= 0;
+			addTriangle(^i0, ^i1, ^i2, -1, -1, -1) |> ignore;
+
+			xp = ref 0.0;
+			yp = ref 0.0;
+
+			iter(enumFromTo(0, length(state.ids) - 1), \k -> {
+				i = ^(state.ids[k]);
+			    x = state.coords[2 * i];
+			    y = state.coords[2 * i + 1];
+
+			    if (k <= 0 || abs(x - ^xp) > EPSILON || abs(y - ^yp) > EPSILON) {
+					xp := x;
+					yp := y;
+
+					if (i != ^i0 || i != ^i1 || i != ^i2) {
+						start = ref 0;
+						key = hashKey(x, y);
+
+						condition = ref true;
+						break = \ -> {
+							condition := false;
+						}
+
+						iter(enumFromTo(0, state.hashSize - 1), \j -> {
+							if (^condition) {
+								start := ^(state.hullHash[(key + j) % state.hashSize]);
+								if (^start != -1 && ^start != ^(state.hullNext[^start])) {
+									break();
+								}
+							}
+						});
+
+						start := ^(state.hullPrev[^start]);
+						e = ref ^start;
+						q = ref 0;
+
+						condition := true;
+
+						while(
+							\ -> {
+								if (^condition) {
+									q := ^(state.hullNext[^e]);
+								}
+
+								^condition && !orientDelanuator(x, y, state.coords[2 * ^e], state.coords[2 * ^e + 1], state.coords[2 * ^q], state.coords[2 * ^q + 1])
+							},
+							\ -> {
+								e := ^q;
+								if (^e == ^start) {
+									e := -1;
+									break();
+								}
+							}
+						)
+
+						if (^e != -1) {
+							t = ref addTriangle(^e, i, ^(state.hullNext[^e]), -1, -1, ^(state.hullTri[^e]));
+
+							state.hullTri[i] := legalize(^t + 2);
+							state.hullTri[^e] := ^t;
+							hullSize := ^hullSize + 1;
+
+							nn = ref ^(state.hullNext[^e]);
+
+							while(
+								\ -> {
+									q := ^(state.hullNext[^nn]);
+									orientDelanuator(x, y, state.coords[2 * ^nn], state.coords[2 * ^nn + 1], state.coords[2 * ^q], state.coords[2 * ^q + 1])
+								},
+								\ -> {
+									t := addTriangle(^nn, i, ^q, ^(state.hullTri[i]), -1, ^(state.hullTri[^nn]));
+									state.hullTri[i] := legalize(^t + 2);
+									state.hullNext[^nn] := ^nn;
+									hullSize := ^hullSize - 1;
+									nn := ^q;
+								}
+							);
+
+							if (^e == ^start) {
+								while(
+									\ -> {
+										q := ^(state.hullPrev[^e]);
+										orientDelanuator(x, y, state.coords[2 * ^q], state.coords[2 * ^q + 1], state.coords[2 * ^e], state.coords[2 * ^e + 1])
+									},
+									\ -> {
+										t := addTriangle(^q, i, ^e, -1, ^(state.hullTri[^e]), ^(state.hullTri[^q]));
+										legalize(^t + 2) |> ignore;
+										state.hullTri[^q] := ^t;
+										state.hullNext[^e] := ^e;
+										hullSize := ^hullSize - 1;
+										e := ^q;
+									}
+								);
+							}
+
+							state.hullStart ::= ^e;
+
+							state.hullPrev[i] := ^e;
+							state.hullNext[^e] := i;
+
+							state.hullPrev[^nn] := i;
+							state.hullNext[i] := ^nn;
+
+							state.hullHash[hashKey(x, y)] := i;
+							state.hullHash[hashKey(state.coords[2 * ^e], state.coords[2 * ^e + 1])] := ^e;
+						}
+					}
+				}
+			});
+
+			state.hull ::= generate(0, ^hullSize, \__ -> -1);
+			e = ref state.hullStart;
+
+			iter(enumFromTo(0, ^hullSize), \i -> {
+				state.hull ::= replace(state.hull, i, ^e);
+			    e := ^(state.hullNext[^e]);
+			});
+
+			state.triangles ::= subrange(state.triangles, 0, state.trianglesLen);
+			state.halfedges ::= subrange(state.halfedges, 0, state.trianglesLen);
+		}
+    }
+
+	update();
+
+	Delanuator(
+		state,
+		update,
+		hashKey,
+		legalize,
+		link,
+		addTriangle,
+		None()
+	)
+}
+
+pseudoAngleDelanuator(dx : double, dy : double) -> double {
+    p = dx / (abs(dx) + abs(dy));
+	(if (dy > 0.0) 3.0 - p else 1.0 + p) / 4.0;
+}
+
+distDelanuator(ax : double, ay : double, bx : double, by : double) -> double {
+    dx = ax - bx;
+    dy = ay - by;
+    dx * dx + dy * dy;
+}
+
+orientDelanuatorIfSure(px : double, py : double, rx : double, ry : double, qx : double, qy : double) -> double {
+    l = (ry - py) * (qx - px);
+	r = (rx - px) * (qy - py);
+    if (abs(l - r) >= 0.00000000000000033306690738754716 * abs(l + r)) l - r else 0.0;
+}
+
+orientDelanuator(rx : double, ry : double, qx : double, qy : double, px : double, py : double) -> bool {
+	orientDelanuatorIfSure(px, py, rx, ry, qx, qy) < 0.0 ||
+        orientDelanuatorIfSure(rx, ry, qx, qy, px, py) < 0.0 ||
+        orientDelanuatorIfSure(qx, qy, px, py, rx, ry) < 0.0;
+}
+
+inCircleDelanuator(ax : double, ay : double, bx : double, by : double, cx : double, cy : double, px : double, py : double) -> bool {
+    dx = ax - px;
+    dy = ay - py;
+    ex = bx - px;
+    ey = by - py;
+    fx = cx - px;
+    fy = cy - py;
+
+    ap = dx * dx + dy * dy;
+    bp = ex * ex + ey * ey;
+    cp = fx * fx + fy * fy;
+
+    (dx * (ey * cp - bp * fy) -
+		dy * (ex * cp - bp * fx) +
+		ap * (ex * fy - ey * fx)) < 0.0;
+}
+
+circumradiusDelanuator(ax : double, ay : double, bx : double, by : double, cx : double, cy : double) -> double {
+    dx = bx - ax;
+    dy = by - ay;
+    ex = cx - ax;
+    ey = cy - ay;
+
+    bl = dx * dx + dy * dy;
+    cl = ex * ex + ey * ey;
+    d = 0.5 / (dx * ey - dy * ex);
+
+    x = (ey * bl - dy * cl) * d;
+    y = (dx * cl - ex * bl) * d;
+
+    x * x + y * y;
+}
+
+circumcenterDelanuator(ax : double, ay : double, bx : double, by : double, cx : double, cy : double) -> Point {
+    dx = bx - ax;
+    dy = by - ay;
+    ex = cx - ax;
+    ey = cy - ay;
+
+    bl = dx * dx + dy * dy;
+    cl = ex * ex + ey * ey;
+    d = 0.5 / (dx * ey - dy * ex);
+
+    x = ax + (ey * bl - dy * cl) * d;
+    y = ay + (dx * cl - ex * bl) * d;
+
+    Point(x, y);
+}
+
+quicksortDelanuator(ids : [ref int], dists : [ref double], left : int, right : int) -> void {
+	if (right - left <= 20) {
+		iter(enumFromTo(left + 1, right), \i -> {
+			temp = ^(ids[i]);
+            tempDist = dists[temp];
+            j = ref i - 1;
+
+			while(
+				\ -> ^j >= left && dists[^(ids[^j])] > tempDist,
+				\ -> {
+					j := ^j - 1;
+					ids[^j + 2] := ^(ids[^j + 1]);
+				}
+			);
+
+            ids[^j + 1] := temp;
+		});
+    } else {
+        median = (left + right) / 2;
+        i = ref left + 1;
+        j = ref right;
+
+        swapRefIndex(ids, median, ^i);
+		if (^(dists[^(ids[left])]) > ^(dists[^(ids[right])])) swapRefIndex(ids, left, right);
+		if (^(dists[^(ids[^i])]) > ^(dists[^(ids[right])])) swapRefIndex(ids, ^i, right);
+		if (^(dists[^(ids[left])]) > ^(dists[^(ids[^i])])) swapRefIndex(ids, left, ^i);
+
+        temp = ^(ids[^i]);
+        tempDist = ^(dists[temp]);
+
+		while(
+			\ -> ^j >= ^i,
+			\ -> {
+				doWhile(
+					\ -> i := ^i + 1,
+					\ -> ^(dists[^(ids[^i])]) < tempDist
+				);
+
+				doWhile(
+					\ -> j := ^j - 1,
+					\ -> ^(dists[^(ids[^j])]) > tempDist
+				);
+
+				if (^j >= ^i) {
+					swapRefIndex(ids, ^i, ^j);
+				}
+			}
+		);
+
+        ids[left + 1] := ^(ids[^j]);
+        ids[^j] := temp;
+
+        if (right - ^i + 1 >= ^j - left) {
+			quicksortDelanuator(ids, dists, ^i, right);
+            quicksortDelanuator(ids, dists, left, ^j - 1);
+        } else {
+			quicksortDelanuator(ids, dists, left, ^j - 1);
+            quicksortDelanuator(ids, dists, ^i, right);
+        }
+    }
+}
+
+swapRefIndex(a : [ref ?], index1 : int, index2 : int) -> void {
+	tmp = ^(a[index1]);
+	a[index1] := ^(a[index2]);
+	a[index2] := tmp;
+}
+
+getDelanuatorTriangles(delanuator : Delanuator) -> Set<Triangle> {
+	eitherFn(
+		delanuator.triangles,
+		idfn,
+		\ -> {
+			triangles = buildSet(map(enumFromTo(0, length((delanuator.state).triangles) / 3 - 1), \i -> {
+				t = [(delanuator.state).triangles[i * 3], (delanuator.state).triangles[i * 3 + 1], (delanuator.state).triangles[i * 3 + 2]];
+
+				a = Point((delanuator.state).coords[^(t[0]) * 2], (delanuator.state).coords[^(t[0]) * 2 + 1]);
+				b = Point((delanuator.state).coords[^(t[1]) * 2], (delanuator.state).coords[^(t[1]) * 2 + 1]);
+				c = Point((delanuator.state).coords[^(t[2]) * 2], (delanuator.state).coords[^(t[2]) * 2 + 1]);
+
+				if (a > b) {
+					if (b > c) {
+						Triangle(c, b, a);
+					} else if (c > a) {
+						Triangle(b, a, c);
+					} else {
+						Triangle(b, c, a);
+					}
+				} else {
+					if (b < c) {
+						Triangle(a, b, c);
+					} else if (c > a) {
+						Triangle(a, c, b);
+					} else {
+						Triangle(c, a, b);
+					}
+				}
+			}));
+
+			delanuator.triangles ::= Some(triangles);
+
+			triangles;
+		}
+	)
+}
+
+addDelanuatorPoint(delanuator : Delanuator, point : Point) -> void {
+	applyDelanuatorState(delanuator, makeDelanuatorState((delanuator.state).coords, [point]));
+	delanuator.triangles ::= None();
+}
+
+removeDelanuatorPoint(delanuator : Delanuator, point : Point) -> void {
+	points = filtermap(enumFromTo(0, length((delanuator.state).coords) / 2 - 1), \i -> {
+		c = [(delanuator.state).coords[i * 2], (delanuator.state).coords[i * 2 + 1]];
+
+		if (c[0] == point.x && c[1] == point.y)
+			None()
+		else
+			Some(Point(c[0], c[1]));
+	});
+	applyDelanuatorState(delanuator, makeDelanuatorState([], points));
+	delanuator.triangles ::= None();
+}
+
+applyDelanuatorState(delanuator : Delanuator, delanuatorState : DelanuatorState) -> void {
+	(delanuator.state).coords ::= delanuatorState.coords;
+	(delanuator.state).triangles ::= delanuatorState.triangles;
+	(delanuator.state).trianglesLen ::= delanuatorState.trianglesLen;
+	(delanuator.state).halfedges ::= delanuatorState.halfedges;
+	(delanuator.state).hashSize ::= delanuatorState.hashSize;
+	(delanuator.state).hull ::= delanuatorState.hull;
+	(delanuator.state).hullNext ::= delanuatorState.hullNext;
+	(delanuator.state).hullPrev ::= delanuatorState.hullPrev;
+	(delanuator.state).hullTri ::= delanuatorState.hullTri;
+	(delanuator.state).hullHash ::= delanuatorState.hullHash;
+	(delanuator.state).hullStart ::= delanuatorState.hullStart;
+	(delanuator.state).ids ::= delanuatorState.ids;
+	(delanuator.state).dists ::= delanuatorState.dists;
+	(delanuator.state).cx ::= delanuatorState.cx;
+	(delanuator.state).cy ::= delanuatorState.cy;
+
+	delanuator.update();
+}
+
+findDelanuatorTriangle(delanuator : Delanuator, point : Point) -> Maybe<Triangle> {
+	a = getDelanuatorTriangles(delanuator);
+	b =
+		getDelanuatorTriangles(
+			makeDelanuator(
+				arrayPush(
+					map(enumFromTo(0, length((delanuator.state).coords) / 2 - 1), \i ->
+						Point((delanuator.state).coords[i * 2], (delanuator.state).coords[i * 2 + 1])
+					),
+					point
+				)
+			)
+		);
+
+	fold(set2array(differenceSets(a, b)), None(), \acc, t -> {
+		if (isPointInsideTriangle(point, t)) {
+			Some(t);
+		} else {
+			acc;
+		}
+	});
+}
+
+isPointInsideTriangle(point : Point, triangle : Triangle) {
+	signFn = \p1, p2, p3 -> {
+		(p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+	}
+
+	d1 = signFn(point, triangle.a, triangle.b);
+    d2 = signFn(point, triangle.b, triangle.c);
+    d3 = signFn(point, triangle.c, triangle.a);
+
+   	!(((d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0)) && ((d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0)));
+}

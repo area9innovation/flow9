@@ -68,6 +68,11 @@ public class FlowFileSystem extends NativeHost {
 		double d = file.lastModified() / 1000;
 		return Math.round(d) * 1000;
 	}
+	public double fileModifiedPrecise(String path) {
+		File file = new File(path);
+		return file.lastModified();
+	}
+
 	public String resolveRelativePath(String path) {
 		File file = new File(path);
 		try {
@@ -76,21 +81,38 @@ public class FlowFileSystem extends NativeHost {
 			return "";
 		}
 	}
-	public Func0<Object> uploadNativeFile(Object a, String b, Object[] c, Func0<Object> d, Func1<Object, String> e, Func1<Object, String> f, 
-					Func2<Object, Double, Double> g, Func0<Object> h) {
-		System.out.println("Not implemented: uploadNativeFile");
-		return null;
-	}
 
     public Object openFileDialog(Integer maxFiles, Object[] fileTypes, Func1<Object, Object[]> callback) {
-	return null;
+		return null;
     }
 
     public String fileName(Object file) {
-	return "";
+		return "";
     }
 
     public Object readFile(Object file, String as, Func1<Object,String> onData, Func1<Object, String> onError) {
-	return null;
+		return null;
     }
+
+    public Object readFileEnc(Object file, String as, String enc, Func1<Object,String> onData, Func1<Object, String> onError) {
+		return null;
+    }
+
+    public Object saveFileClient(String filename, String data, String type) {
+		return null;
+	}
+
+	public Object getFileByPath(String path) {
+		return null;
+	}
+
+	public Object fileSizeNative(Object file) {
+		File _file = (File)file;
+		return _file.length();
+	}
+	public double fileModifiedNative(Object file) {
+		File _file = (File)file;
+		double d = _file.lastModified() / 1000;
+		return Math.round(d) * 1000;
+	}
 }

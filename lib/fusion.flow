@@ -10,7 +10,7 @@ import math/geometry;
 // the transform into a real behaviour.
 export {
 	// Example: fselect(b, FLift(\bv -> whatever));
-	// fselect and friends are distinct.
+	// fselect and friends are distinct for output value.
 	fselect : (b : Transform<??>, fn : FFn<??, ?>) -> Transform<?>;
 	fselect2 : (b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Transform<?>;
 	fselect3(v1 : Transform<??>, v2 : Transform<???>, v3 : Transform<????>, fn : (??, ???, ????) -> ?) -> Transform<?>;
@@ -30,12 +30,15 @@ export {
 	fsubselect : (b : Transform<??>, fn : FFn<??, Transform<?>>) -> Transform<?>;
 	fsubselect2 : (b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> Transform<?>) -> Transform<?>;
 
-	// disp is called after last unsubcription from b Transform
-	fdisposable(b : Transform<?>, disp : () -> void) -> Transform<?>;
+	// disposer is called after last unsubcription from b Transform
+	fdisposable(b : Transform<?>, disposer : () -> void) -> Transform<?>;
+	fconstructable(b : Transform<?>, constructor : () -> () -> void) -> Transform<?>;
 
 	// Converts a Transform to a Behaviour, along with any unsubscribers
 	fuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> void]>;
-	ffuseinit(b : Transform<?>, init : DynamicBehaviour<?>) -> Pair<Behaviour<?>, () -> () -> void>;
+	// Uses init as additional layer to prevent multiple Transform function calls. Do not forget use fguard.second into MConstruct.
+	// If t is Behaviour itself, just returns it.
+	fguard(t : Transform<?>, init : DynamicBehaviour<?>) -> Pair<Behaviour<?>, () -> () -> void>;
 	fsubscribe(t : Transform<?>, fn : (?) -> void) -> List<() -> void>;
 	fsubscribe2(t : Transform<?>, fn : (?) -> void) -> List<() -> void>;
 
@@ -109,9 +112,9 @@ export {
 	isFConst(t : Transform<?>) -> bool;
 
 	// Do not construct FSelect and friends directly - use the functions above instead.
-	Transform<?> ::= ConstBehaviour<?>, DynamicBehaviour<?>, FSelect<?>, FSelect2<?>, FSubSelect<?>, 
+	Transform<?> ::= ConstBehaviour<?>, DynamicBehaviour<?>, FSelect<?>, FSelect2<?>, FSubSelect<?>,
 		// To ensure that behaviour is a subtype, we explicitly list it as well
-		Behaviour<?>, FDisposable<?>;
+		Behaviour<?>, FConstructable<?>;
 
 	// Common functions. Use FLift for other functions
 	faddition(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double>;
@@ -152,6 +155,8 @@ export {
 	fif(b1 : Transform<bool>, then1 : Transform<?>, else1 : Transform<?>) -> Transform<?>;
 	feq(b : Transform<?>, v : ?) -> Transform<bool>;
 	fneq(a : Transform<?>, v : ?) -> Transform<bool>;
+	fequal(a : Transform<?>, b : Transform<?>) -> Transform<bool>;
+	fnotequal(a : Transform<?>, b : Transform<?>) -> Transform<bool>;
 	fnot(b : Transform<bool>) -> Transform<bool>;
 	fand(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fOr(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
@@ -180,6 +185,7 @@ export {
 	fmergeTree(v : Tree<??, Transform<?>>) -> Transform<Tree<??, ?>>;
 	fsum(v : [Transform<double>]) -> Transform<double>;
 	fsumi(v : [Transform<int>]) -> Transform<int>;
+	faverage(a : [Transform<double>]) -> Transform<double>;
 	ftransistor(g : Transform<bool>, v: Transform<?>) -> Transform<?>;
 	fthrottle(v : Transform<?>, samplingRate : int) -> Transform<?>;
 	fthrottle2(v : Transform<?>, maxDelta : int) -> Transform<?>;
@@ -245,7 +251,7 @@ FBehaviour<?> ::= FDestroyed, FInitialized<?>;
 FSelect(b : Transform<flow>, fn : FFn<flow, ?>, mutable beh : FBehaviour<?>);
 FSelect2(b1 : Transform<flow>, b2 : Transform<flow>, fn : FFn2<flow, flow, ?>, mutable beh : FBehaviour<?>);
 FSubSelect(b : Transform<flow>, fn : FFn<flow, Transform<?>>, mutable beh : FBehaviour<?>);
-FDisposable(b : Transform<?>, disp : () -> void, mutable beh : FBehaviour<?>);
+FConstructable(b : Transform<?>, constructor : () -> () -> void, mutable beh : FBehaviour<?>);
 
 fselect(b : Transform<??>, fn : FFn<??, ?>) -> Transform<?> {
 	switch (b : Transform<??>) {
@@ -329,10 +335,17 @@ fsubselect(b : Transform<??>, fn : FFn<??, Transform<?>>) -> Transform<?> {
 	}
 }
 
-fdisposable(b : Transform<?>, disp : () -> void) -> Transform<?> {
+fdisposable(b : Transform<?>, disposer : () -> void) -> Transform<?> {
 	switch (b) {
 		ConstBehaviour(v): b;
-		default: FDisposable(b, disp, FDestroyed());
+		default: FConstructable(b, \ -> disposer, FDestroyed());
+	}
+}
+
+fconstructable(b : Transform<?>, constructor : () -> () -> void) -> Transform<?> {
+	switch (b) {
+		ConstBehaviour(v): b;
+		default: FConstructable(b, constructor, FDestroyed());
 	}
 }
 
@@ -442,7 +455,7 @@ fuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> void]> {
 	Pair(firstOfPair(r), [\ -> ds()]);
 }
 
-ffuseinit(t : Transform<?>, init : DynamicBehaviour<?>) -> Pair<Behaviour<?>, () -> () -> void> {
+fguard(t : Transform<?>, init : DynamicBehaviour<?>) -> Pair<Behaviour<?>, () -> () -> void> {
 	switch (t : Transform<?>) {
 		ConstBehaviour(v): Pair(t, \ -> nop);
 		DynamicBehaviour(v, s): Pair(t, \ -> nop);
@@ -477,7 +490,9 @@ makeSubscribe(t : Transform<?>, fn : (?) -> void) -> () -> () -> void {
 	\ -> {
 		r = doFuse(t);
 		u = subscribe(firstOfPair(r), fn);
-		\ -> {u(); secondOfPair(r)()}
+		// Extract to avoid keeping too big a closure
+		disp = secondOfPair(r);
+		\ -> {u(); disp()}
 	}
 }
 
@@ -485,7 +500,8 @@ makeSubscribe2(t : Transform<?>, fn : (?) -> void) -> () -> () -> void {
 	\ -> {
 		r = doFuse(t);
 		u = subscribe2(firstOfPair(r), fn);
-		\ -> {u(); secondOfPair(r)();}
+		disp = secondOfPair(r);
+		\ -> {u(); disp();}
 	}
 }
 
@@ -725,13 +741,13 @@ fgetValue(t : Transform<?>) -> ? {
 				FInitialized(__, __, dyn): getValue(dyn);
 				FDestroyed(): fgetValue(instantiateFn(fn)(fgetValue(b)));
 			}
-		FDisposable(b, disp, beh):
+		FConstructable(b, constructor, beh):
 			switch (beh) {
 				FInitialized(__, __, dyn): getValue(dyn);
 				FDestroyed(): {
+					d = constructor();
 					r = fgetValue(b);
-					// In case we called some instantianted functions
-					disp();
+					d();
 					r;
 				}
 			}
@@ -745,7 +761,7 @@ fgetDynamicBehaviours(t : Transform<?>) -> [DynamicBehaviour] {
 		FSelect(b, f1, __): fgetDynamicBehaviours(b);
 		FSelect2(b1, b2, f1, __): concat(fgetDynamicBehaviours(b1), fgetDynamicBehaviours(b2));
 		FSubSelect(b, f1, __): fgetDynamicBehaviours(b);
-		FDisposable(b, __, __): fgetDynamicBehaviours(b);
+		FConstructable(b, __, __): fgetDynamicBehaviours(b);
 	}
 }
 
@@ -1043,18 +1059,19 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 				}
 			}
 		}
-		FDisposable(b, disposer, beh): {
+		FConstructable(b, constructor, beh): {
 			switch (beh) {
 				FInitialized(subs, disp, dyn): {
 					subs := ^subs + 1;
 					Pair(dyn, disp);
 				}
 				FDestroyed(): {
+					d = constructor();
 					cb = doFuseDynamic(b);
 
 					subs = ref 1;
 					dyn = firstOfPair(cb);
-					disp = \ -> {subs := ^subs - 1; if (^subs == 0) {secondOfPair(cb)(); disposer(); t.beh ::= FDestroyed();}};
+					disp = \ -> {subs := ^subs - 1; if (^subs == 0) {secondOfPair(cb)(); d(); t.beh ::= FDestroyed();}};
 
 					t.beh ::= FInitialized(subs, disp, dyn);
 					Pair(dyn, disp);
@@ -1089,7 +1106,7 @@ transform2string(s : Transform<?>) -> string {
 			// "subselect(" + transform2string(b) + ", " + ffn2string(fn) + ")";
 			transform2string(b) + "=>" + transform2string(instantiateFn(fn)(fgetValue(b))); // ffn2string(fn);
 		}
-		FDisposable(b, __, __): transform2string(b);
+		FConstructable(b, __, __): transform2string(b);
 	}
 }
 
@@ -1110,14 +1127,15 @@ transformLength(s : Transform<?>) -> int {
 		FSubSelect(b, fn, __): {
 			transformLength(b) + transformLength(instantiateFn(fn)(fgetValue(b)));
 		}
-		FDisposable(b, disp, beh): {
-			r = transformLength(b);
-
+		FConstructable(b, constructor, beh): {
 			if (beh == FDestroyed()) {
-				disp();
+				d = constructor();
+				r = transformLength(b);
+				d();
+				r;
+			} else {
+				transformLength(b);
 			}
-
-			r;
 		}
 	}
 }
@@ -1542,6 +1560,14 @@ fneq(b : Transform<?>, v : ?) -> Transform<bool> {
 	}
 }
 
+fequal(a : Transform<?>, b : Transform<?>) {
+	fselect2(a, b, FLift2(\va, vb -> va == vb))
+}
+
+fnotequal(a : Transform<?>, b : Transform<?>) {
+	fselect2(a, b, FLift2(\va, vb -> va != vb))
+}
+
 fnot(b : Transform<bool>) -> Transform<bool> {
 	feq(b, false)
 }
@@ -1640,11 +1666,9 @@ fconnect2Select(t1 : Transform<?>, t2 : Transform<??>, v : DynamicBehaviour<???>
 	make2Subscribe(t1, t2, \v1, v2 -> nextDistinct(v, fn(v1, v2)))();
 }
 
-fmerge(v : [Transform<?>]) -> Transform<[?]> {
-	if (length(v) > 0)
-		fold(tail(v), fselect(v[0], FLift(\v1 -> [v1])), \acc, v1 ->
-			fselect2(acc, v1, FLift2(\acc0, v0 -> arrayPush(acc0, v0)))
-		)
+fmerge(a : [Transform<?>]) -> Transform<[?]> {
+	if (length(a) > 0)
+		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [v], r)), const([]))
 	else
 		ConstBehaviour([])
 }
@@ -1652,29 +1676,39 @@ fmerge(v : [Transform<?>]) -> Transform<[?]> {
 fmergeTree(tree : Tree<??, Transform<?>>) -> Transform<Tree<??, ?>> {
 	if (sizeTree(tree) > 0)
 		fselect(
-			foldTree(tree, const([]), \k, val, acc : Transform<[Pair<??,?>]> -> fselect2(acc, val, FLift2(\a, v -> arrayPush(a, Pair(k, v))))),
+			foldTreeBinary(tree, \k, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [Pair(k, v)], r)), const([])),
 			pairs2tree |> FLift
 		)
 	else
 		ConstBehaviour(makeTree())
 }
 
-fsum(v : [Transform<double>]) -> Transform<double> {
-	if (length(v) > 0)
-		fold(tail(v), fselect(v[0], FIdentity()), \acc, v1 ->
-			faddition(acc, v1)
-		)
+fsum(a : [Transform<double>]) -> Transform<double> {
+	if (length(a) > 0)
+		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), const(0.0))
 	else
-		zero
+		ConstBehaviour(0.0)
 }
 
-fsumi(v : [Transform<int>]) -> Transform<int> {
-	if (length(v) > 0)
-		fold(tail(v), fselect(v[0], FIdentity()), \acc, v1 ->
-			fadditioni(acc, v1)
-		)
+fsumi(a : [Transform<int>]) -> Transform<int> {
+	if (length(a) > 0)
+		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), const(0))
 	else
-		const(0)
+		ConstBehaviour(0)
+}
+
+faverage(a : [Transform<double>]) -> Transform<double> {
+	if (length(a) > 0)
+		foldTreeBinary(
+			pairs2tree(mapi(a, \k, v -> Pair(k, Pair(1, v)))),
+			\__, vv : Pair<int, Transform<double>>, ll : Pair<int, Transform<double>>, rr : Pair<int, Transform<double>> -> {
+				Pair(ll.first + vv.first + rr.first, fselect3(ll.second, vv.second, rr.second, \l, v, r -> l + v + r));
+			},
+			Pair(0, const(0.0))
+		)
+		|> (\t -> fdivide(t.second, const(i2d(t.first))))
+	else
+		ConstBehaviour(0.0)
 }
 
 ftransistor(g : Transform<bool>, v: Transform<?>) -> Transform<?> {

@@ -2,56 +2,48 @@ import tools/flowc/symbol_nature;
 
 export {
 	// Finds all positions, where 'name' occurs in all program modules. 
-	findOccurencesInFiProgram(prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>>;
+	findOccurencesInFiProgram(env : FcTypeEnvGlobal, prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>>;
 
 	// Finds all positions, where 'name' occurs in a given module. 
-	findOccurencesInFiModule(prog : FiProgram, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int>;
+	findOccurencesInFiModule(env : FcTypeEnvGlobal, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int>;
+	// Fast version - uses cache
+	fcFastFindOccurrencesInFiModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule, nature : FcSymbolNature) -> Set<int>;
+	// Fast version - uses cache
+	//fcFastFindUsesInFiModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule, nature : FcSymbolNature) -> Set<int>;
+
+	// Finds all positions, where 'name' from a given line-column occurs in a given module, taking into accout a local scope. 
+	fcFindLocalOccurrences(env : FcTypeEnvGlobal, module : FiModule, line : int, col : int, name : string, kind : FcSymbolKind) -> Set<int>;
 
 	// Finds all sources, containing 'str'. 
 	findAllSourcesContainingStr(dir : string, str : string, acc : [string]) -> [string];
 
 	// Leave only those modules, which transitevely include a 'defModulePath'. 
 	filterSourcesWhichImportDefinitionModule(config : CompilerConfig, all_sources : [string], defModulePath : string) -> [string];
-
-	// Finds all positions, where 'name' from a given line-column occurs in a given module, taking into accout a local scope. 
-	fcFindLocalOccurrences(prog : FiProgram, file : string, line : int, col : int, name : string, kind : FcSymbolKind) -> Maybe<Set<int>>;
-
-	// Returns all var names, whcih occur in a given entity.
-	fiall2varNames(e : FiAll, acc : Set<string>) -> Set<string>;
-
-	// Returns all field names, whcih occur in a given entity.
-	fiall2fieldNames(e : FiAll, struct : string, acc : Set<string>) -> Set<string>;
-
-	// Returns all type names, whcih occur in a given entity.
-	fiall2typeNames(e : FiAll, acc : Set<string>) -> Set<string>;
-
-	// Filters out all positions of a 'name' from a 'starts2names' tree, taking into account an 'upper_boundary'.
-	computeOccurencesFromTree(code : string, name : string, starts2names : Tree<int, Set<string>>, upper_boundary : int) -> Set<int>;
 }
 
-findOccurencesInFiProgram(prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>> {
+findOccurencesInFiProgram(env : FcTypeEnvGlobal, prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>> {
 	foldTree(prog.modules, makeTree(), 
 		\__, module, acc -> {
 			fullpath = module.fileinfo.fullpath;
 			if (containsSet(processed, fullpath)) acc else {
-				setTree(acc, module, findOccurencesInFiModule(prog, module, name, kind))
+				setTree(acc, module, findOccurencesInFiModule(env, module, name, kind))
 			}
 		}
 	)
 }
 
-findOccurencesInFiModule(prog : FiProgram, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int> {
+findOccurencesInFiModule(env : FcTypeEnvGlobal, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int> {
 	mod_starts2fiall = fimoduleStarts2fiall(module);
 
 	name_resolver = \handler -> mapTree(mod_starts2fiall, \entities -> foldSet(entities, makeSet(), \a, fiall -> handler(fiall, a)));
 	field_resolver = \handler, struct -> mapTree(mod_starts2fiall, \entities -> foldSet(entities, makeSet(), \a, fiall -> handler(fiall, struct, a)));
 
 	mod_starts2names = switch (kind) {
-		FcNameSymbol():        name_resolver(fiall2varNames);
-		FcTypeSymbol():        name_resolver(fiall2typeNames);
-		FcFieldSymbol(struct): field_resolver(fiall2fieldNames, struct);
+		FcVarSymbol(__):         name_resolver(fiall2varNames);
+		FcTypeSymbol(__):        name_resolver(fiall2typeNames);
+		FcFieldSymbol(struct, __): field_resolver(fiall2fieldNames, struct.name);
 	}
-	mod_code = getFileContent(module.fileinfo.fullpath);
+	mod_code = fcFileSource(env, module.fileinfo.fullpath);
 	computeOccurencesFromTree(mod_code, name, mod_starts2names, strlen(mod_code))
 }
 
@@ -116,49 +108,32 @@ getAllSourceDependencies(file : string, config : CompilerConfig, acc : Set<strin
 	} 
 }
 
-fcFindLocalOccurrences(prog : FiProgram, file : string, line : int, col : int, name : string, kind : FcSymbolKind) -> Maybe<Set<int>> {
-	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
-	relative = trimFlowfile(file, prog.config.includes, workingDir);
-	switch (lookupTree(prog.modules, relative)) {
-		Some(module): {
-			code = getFileContent(module.fileinfo.fullpath);
-			resolver = makeLineResolver(code);
-			maps = fcStart2ExprOrDecl(module, name);
-			index = findLineIndex(resolver, line, col);
-			switch (treeIntervalSearch(maps.start2expr, index)) {
-				Some(ex): {
-					switch (treeIntervalSearch(maps.start2decl, index)) {
-						Some(decl): {
-							declStarts = getTreeKeys(maps.start2decl);
-							occurrences = addStartsForNameInInterval(
-								name, 
-								Pair(decl.defiStart, upperBoundary(decl.defiStart, declStarts, strlen(code))),
-								code, 
-								addStartsForNameInInterval(
-									name, 
-									Pair(decl.declStart, upperBoundary(decl.declStart, declStarts, strlen(code))),
-									code, 
-									findLocalOccurrences(ex, name, kind, code, declStarts)
-								)
-							);
-							Some(occurrences);
-						}
-						None(): {
-							fcPrintln("couldn't declaration for expression at index: " + i2s(index));
-							None();
-						}
-					}
+fcFindLocalOccurrences(env : FcTypeEnvGlobal, module : FiModule, line : int, col : int, name : string, kind : FcSymbolKind) -> Set<int> {
+	code = fcFileSource(env, module.fileinfo.fullpath);
+	resolver = makeLineResolver(code);
+	maps = fcStart2ExprOrDecl(module, name);
+	index = findLineIndex(resolver, line, col);
+	switch (treeIntervalSearch(maps.start2expr, index)) {
+		Some(ex): {
+			switch (treeIntervalSearch(maps.start2decl, index)) {
+				Some(decl): {
+					declStarts = getTreeKeys(maps.start2decl);
+					addStartsForNameInInterval(
+						name, 
+						Pair(decl.defiStart, upperBoundary(decl.defiStart, declStarts, strlen(code))),
+						code, 
+						addStartsForNameInInterval(
+							name, 
+							Pair(decl.declStart, upperBoundary(decl.declStart, declStarts, strlen(code))),
+							code, 
+							findLocalOccurrences(ex, name, kind, code, declStarts)
+						)
+					);
 				}
-				None(): {
-					fcPrintln("couldn't find expression at index: " + i2s(index));
-					None();
-				}
+				None(): makeSet();
 			}
 		}
-		None(): {
-			fcPrintln("module = " + relative + " not found");
-			None();
-		}
+		None(): makeSet();
 	}
 }
 
@@ -243,19 +218,16 @@ findLocalOccurrences(ex : FiExpOrCase, from : string, kind : FcSymbolKind, code 
 	name_resolver = \handler -> mapTree(starts2fiall, \entities -> foldSet(entities, makeSet(), \a, fiall -> handler(fiall, a)));
 
 	starts2names = switch (kind) {
-		FcNameSymbol():        name_resolver(fiall2varNames);
-		FcTypeSymbol():        name_resolver(fiall2typeNames);
-		FcFieldSymbol(__): {
-			fcPrintln("makes no sense to do a local renaming of struct field");
-			makeTree();
-		}
+		FcVarSymbol(__):     name_resolver(fiall2varNames);
+		FcTypeSymbol(__):    name_resolver(fiall2typeNames);
+		FcFieldSymbol(__,__): makeTree();
 	}
-	if (sizeTree(starts2names) > 0) {
+	if (sizeTree(starts2names) == 0) makeSet() else {
 		starts = getTreeKeys(starts2fiall);
 		max_start = starts[length(starts) - 1];
 		upper_boundary = upperBoundary(max_start, all_starts, strlen(code));
 		computeOccurencesFromTree(code, from, starts2names, upper_boundary)
-	} else makeSet()
+	}
 }
 
 upperBoundary(k : int, starts : [int], max_start : int) -> int {
@@ -306,7 +278,6 @@ addStartsForNameInInterval(name : string, interval : Pair<int, int>, code : stri
 	end = interval.second;
 	string_interval = strSubRange(code, begin, end);
 	name_starts = multipleStrIndexOf(string_interval, name);
-	alphanum = \char -> isDigit(char) || isLetter(char) || char == "_";
 	name_len = strlen(name);
 	fold(
 		name_starts,
@@ -314,7 +285,7 @@ addStartsForNameInInterval(name : string, interval : Pair<int, int>, code : stri
 		\a, s -> {
 			prev_char = if (s == 0) "" else getCharAt(string_interval, s - 1);
 			next_char = if (s + 1 == strlen(string_interval)) "" else getCharAt(string_interval, s + name_len);
-			if (!alphanum(prev_char) && !alphanum(next_char)) insertSet(a, s + begin - 1) else a
+			if (!fcIsIdChar(prev_char) && !fcIsIdChar(next_char)) insertSet(a, s + begin - 1) else a
 		}
 	)
 }
@@ -443,4 +414,110 @@ fitype2names(type : FiType, acc : Set<string>) -> Set<string> {
 		FiTypeFunction(args, rt):
 			fitype2names(rt, fold(args, acc, \a, arg -> fitype2names(arg.type, a)));
 	}
+}
+
+// ------------------------------------------------
+
+fcFastFindOccurrencesInFiModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule, nature : FcSymbolNature) -> Set<int> {
+	name = nature.name;
+	decls = fiModuleDecls(module);
+	add_decl = \ac, d -> if (d.name == name) insertSet(insertSet(ac, d.declStart), d.defiStart) else ac;
+	get_points = \types -> 
+		mergeSort(
+			concat(
+				fold(decls, [], \a, d -> concat(a, [d.declStart, d.defiStart])),
+				fold(types, [], \a, d -> concat(a, [d.start])),
+			),
+			\i, j -> i - j
+		);
+	src = fcFileSource(globEnv, module.fileinfo.fullpath);
+	switch (nature.kind) {
+		FcVarSymbol(__): 
+			fold(decls, makeSet(), \acc, d -> fcFastFindVarNameInFiExp(fiDeclExp(d), name, d.defiStart, src, add_decl(acc, d)));
+		FcTypeSymbol(__): {
+			types = fiModuleStructsAndUnions(module);
+			points = get_points(types);
+			fold(decls,
+				fold(types, makeSet(), 
+					\acc, t -> fcFindOccurrences(t.start, points, src, name, false, acc)
+				),
+				\acc, d -> fcFastFindTypeNameInFiExp(fiDeclExp(d), name, d.defiStart, src, add_decl(acc, d))
+			);
+		}
+		FcFieldSymbol(struct, __): {
+			types = fiModuleStructsAndUnions(module);
+			points = get_points(types);
+			fold(decls,
+				fold(types, makeSet(), 
+					\acc, t -> if (t.name != struct.name) acc else fcFindOccurrences(t.start, points, src, name, false, acc)
+				),
+				\acc, d -> fcFastFindFieldNameInFiExp(fiDeclExp(d), struct.name, name, d.defiStart, src, add_decl(acc, d))
+			);
+		}
+	}
+}
+
+fcFindOccurrences(pos : int, points : [int], src : string, name : string, use_lower : bool, acc : Set<int>) -> Set<int> {
+	occ1 = \-> {
+		lower = fold(points, 0, \ac, i -> if (ac < i && i < pos) i else ac);
+		map(multipleStrIndexOf(substring(src, lower, pos - lower), name), \i -> i + lower);
+	}
+	occ2 = \-> {
+		upper = fold(points, strlen(src) - 1, \ac, i -> if (pos < i && i < ac) i else ac);
+		map(multipleStrIndexOf(substring(src, pos + 1, upper - pos - 1), name), \i -> i + pos + 1);
+	}
+	occ3 = switch (getFcInfo2ByPos(pos, src)) {
+		Some(info): 
+			if (substring(src, info.start, info.end - info.start + 1) == name) [info.start] else [];
+		None(): [];
+	}
+	occurrences = if (use_lower) {
+		concat3(occ1(), occ2(), occ3);
+	} else {
+		concat(occ2(), occ3);
+	}
+	fold(occurrences, acc, \ac, i -> insertSet(ac, i));
+}
+
+fcFastFindVarNameInFiExp(ex : FiExpOrCase, name : string, parent : int, src : string, acc : Set<int>) -> Set<int> {
+	children = fiExpOrCaseChildren(ex);
+	nacc = switch (ex) {
+		FiVar(n, __, pos): 
+			if (n != name) acc else {
+				points = concat([parent], map(children, \ch -> ch.start));
+				fcFindOccurrences(pos, points, src, name, true, acc);
+			}
+		default: acc;
+	};
+	fold(children, nacc, \ac, ch -> fcFastFindVarNameInFiExp(ch, name, ex.start, src, ac));
+}
+
+fcFastFindTypeNameInFiExp(ex : FiExpOrCase, name : string, parent : int, src : string, acc : Set<int>) -> Set<int> {
+	children = fiExpOrCaseChildren(ex);
+	nacc = if (!exists(fiExpOrCaseTypes(ex), \tp -> fiTypeContainsName(tp, name))) acc else {
+		points = concat([parent], map(children, \ch -> ch.start));
+		fcFindOccurrences(ex.start, points, src, name, true, acc);
+	}
+	fold(children, nacc, \ac, ch -> fcFastFindTypeNameInFiExp(ch, name, ex.start, src, ac));
+}
+
+fcFastFindFieldNameInFiExp(ex : FiExpOrCase, struct : string, name : string, parent : int, src : string, acc : Set<int>) -> Set<int> { 
+	children = fiExpOrCaseChildren(ex);
+	check_struct = \es -> length(es) > 0 && unrollTypeToTypeName(fiExpType(es[0])) == struct;
+	check_field = \n, es, pos -> {
+		if (!check_struct(es) || n != name) acc else {
+			points = concat([parent], map(children, \ch -> ch.start));
+			fcFindOccurrences(pos, points, src, name, true, acc);
+		}
+	}
+	nacc = switch (ex) {
+		FiCallPrim(op, es, __, pos):
+			switch (op) {
+				FcFieldPrim(n): check_field(n, es, pos);
+				FcSetMutablePrim(n): check_field(n, es, pos);
+				default: acc;
+			}
+		default: acc;
+	};
+	fold(children, nacc, \ac, ch -> fcFastFindFieldNameInFiExp(ch, struct, name, ex.start, src, ac));
 }

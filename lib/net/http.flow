@@ -39,6 +39,16 @@ export {
 		onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
 		async : bool
 	) -> void;
+	// This version currently implemented only in java backend
+	httpCustomRequestWithTimeout(
+		url : string,
+		method : RequestMethod,
+		headers : [KeyValue],
+		data : RequestData,
+		onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+		async : bool,
+		timeout : int
+	) -> void;
 
 	// Here and below. onProgress callback receives (done, total) parameters, so progress is done/total.
 	// downloadFile usually does not invoke onProgress(total, total) when download is over.
@@ -128,6 +138,28 @@ native httpCustomRequestNative : io (url : string,
 	async : bool
 ) -> void = HttpSupport.httpCustomRequestNative;
 
+// This version currently implemented only in java backend
+native httpCustomRequestWithTimeoutNative : io (url : string,
+	method : string,
+	headers : [[string]],
+	parameters : [[string]],
+	data : string,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [[string]]) -> void,
+	async : bool,
+	timeout : int
+) -> void = HttpSupport.httpCustomRequestWithTimeoutNative;
+
+httpCustomRequestWithTimeoutNative (url : string,
+	method : string,
+	headers : [[string]],
+	parameters : [[string]],
+	data : string,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [[string]]) -> void,
+	async : bool,
+	timeout : int
+) -> void {
+	httpCustomRequestNative(url, method, headers, parameters, data, onResponse, async);
+}
 
 native doPreloadMediaUrl : io (url : string, onSuccess : () -> void, onError : (string) -> void) -> void = HttpSupport.preloadMediaUrl;
 
@@ -218,6 +250,18 @@ httpCustomRequest(url : string,
 	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
 	async : bool
 ) -> void {
+	// Timeout 0 means no real timeout - it will wait for the response infinitely.
+	httpCustomRequestWithTimeout(url, method, headers, data, onResponse, async, 0)
+}
+
+httpCustomRequestWithTimeout(url : string,
+	method : RequestMethod,
+	headers : [KeyValue],
+	data : RequestData,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+	async : bool,
+	timeout : int
+) -> void {
 	isPHPRequest = endsWith(url, ".php");
 	noCacheTimestamp = KeyValue("t", d2s(timestamp()));
 	params = switch(data : RequestData) {
@@ -251,23 +295,44 @@ httpCustomRequest(url : string,
 			} else url;
 		}
 
-	httpCustomRequestNative(
-		fixedUrl,
-		methodName2,
-		map(headers, \header -> [header.key, header.value]),
-		map(params, \param -> [param.key, param.value]),
-		payload,
-		\responseStatus, responseData, responseHeaders -> {
-			runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+	if (timeout == 0) {
+		httpCustomRequestNative(
+			fixedUrl,
+			methodName2,
+			map(headers, \header -> [header.key, header.value]),
+			map(params, \param -> [param.key, param.value]),
+			payload,
+			\responseStatus, responseData, responseHeaders -> {
+				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
 
-			onResponse(
-				responseStatus,
-				responseData,
-				map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
-			);
-		},
-		async
-	)
+				onResponse(
+					responseStatus,
+					responseData,
+					map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
+				);
+			},
+			async
+		)
+	} else {
+		httpCustomRequestWithTimeoutNative(
+			fixedUrl,
+			methodName2,
+			map(headers, \header -> [header.key, header.value]),
+			map(params, \param -> [param.key, param.value]),
+			payload,
+			\responseStatus, responseData, responseHeaders -> {
+				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+
+				onResponse(
+					responseStatus,
+					responseData,
+					map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
+				);
+			},
+			async,
+			timeout
+		)
+	}
 }
 
 preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void {
@@ -284,18 +349,22 @@ uploadFile(url, params, headers, fileTypes, listeners) {
 	onOpen = extractStruct(listeners, UploadOpen(nop));
 	onProgress = extractStruct(listeners, UploadProgress(nop2));
 	onSelect = extractStruct(listeners, UploadSelect(\name, size -> {true}));
+	onSelectUnfit = extractStruct(listeners, UploadSelectUnfit(nop));
 	onCancel = extractStruct(listeners, UploadCancel(nop));
 
 	openFileDialog(1, fileTypes, \files -> {
 		if (length(files) > 0) {
-			onSelect.onSelect(fileNameClient(files[0]), trunc(fileSizeClient(files[0])));
-			uploadClientFile(
-				files[0], 
-				url, 
-				params,
-				headers,
-				[onData, onError, onOpen, onProgress]
-			) |> ignore;
+			if (onSelect.onSelect(fileNameClient(files[0]), trunc(fileSizeClient(files[0])))) {
+				uploadClientFile(
+					files[0], 
+					url, 
+					params,
+					headers,
+					[onData, onError, onOpen, onProgress]
+				) |> ignore;
+			} else {
+				onSelectUnfit.onSelectUnfit();
+			}
 		} else {
 			onCancel.onCancel();
 		}

@@ -5,12 +5,11 @@ import java.util.ArrayList;
 import android.content.Context;
 import android.os.Handler;
 import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
-import android.text.Spanned;
+import android.text.TextWatcher;
 import android.text.method.ScrollingMovementMethod;
-import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -27,12 +26,12 @@ import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 
 class EditWidget extends NativeWidget {
     EditWidget(FlowWidgetGroup group, long id) { super(group, id); }
-    
+
     @NonNull
     public TextView getText() {
         return (TextView)view;
     }
-   
+
     public void destroy() {
         if (group.isInFocus(this)) {
             group.dropFocus();
@@ -41,7 +40,7 @@ class EditWidget extends NativeWidget {
 
         super.destroy();
     }
-    
+
     protected View createView() {
         TextView textView;
         if (readonly) {
@@ -49,6 +48,34 @@ class EditWidget extends NativeWidget {
             textView.setTextIsSelectable(true);
         } else {
             textView = new MyEditText(group.getContext());
+
+            textView.addTextChangedListener(new TextWatcher() {
+                String previousText = "";
+
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+                }
+
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {
+
+                }
+
+                @Override
+                public void afterTextChanged(Editable s) {
+                    String oldText = textView.getText().toString();
+                    String newText = group.getWrapper().textIsAcceptedByFlowFilters(id, oldText);
+                    if (previousText.equals(newText) || newText.equals(oldText)) {
+                        return;
+                    }
+                    previousText = newText;
+                    int sel_start = textView.getSelectionStart();
+                    int sel_end = textView.getSelectionEnd();
+                    textView.setText(newText);
+                    ( (EditText)textView ).setSelection(Math.min(sel_start, newText.length()), Math.min(sel_end, newText.length()));
+                }
+            });
         }
 
         textView.setBackground(null);
@@ -57,18 +84,18 @@ class EditWidget extends NativeWidget {
 
         return textView;
     }
-    
+
     private class MyEditText extends EditText {
         MyEditText(Context context) { super(context); }
-        
+
         protected void onSelectionChanged(int start, int end) {
             reportChange(null);
         }
-        
+
         protected void onTextChanged (@NonNull CharSequence text, int start, int before, int after) {
             reportChange(text.toString());
         }
-        
+
         public boolean onKeyUp(int keyCode, KeyEvent event) {
             if (!multiline && keyCode == KeyEvent.KEYCODE_ENTER) {
                 sendReturnKey();
@@ -76,16 +103,16 @@ class EditWidget extends NativeWidget {
             }
             return super.onKeyUp(keyCode, event);
         }
-        
+
         public void onEditorAction (int actionCode) {
             if (!multiline && actionCode == EditorInfo.IME_ACTION_DONE) {
                 sendReturnKey();
                 dropFocus();
                 return;
-            }                
+            }
             super.onEditorAction(actionCode);
         }
-        
+
         private void sendReturnKey() {
             FlowRunnerWrapper wrapper = group.getWrapper();
             String key = "enter";
@@ -153,7 +180,7 @@ class EditWidget extends NativeWidget {
             InputMethodManager.HIDE_NOT_ALWAYS
         );
     }
-    
+
     private String text;
     private float native_font_size;
     private int text_color;
@@ -169,7 +196,7 @@ class EditWidget extends NativeWidget {
     private int sel_start, sel_stop;
 
     private boolean in_change = false;
-    
+
     protected void doRequestLayout() {
         super.doRequestLayout();
     }
@@ -184,7 +211,7 @@ class EditWidget extends NativeWidget {
         }
         super.beforeLayout();
     }
-    
+
     private void reportChange(String text) {
         long idv;
         int cursor, start, end;
@@ -202,9 +229,9 @@ class EditWidget extends NativeWidget {
         end = Math.max(sel_start,sel_stop);
 
         // This must not be inside synchronized, or it can deadlock
-        group.getWrapper().deliverEditStateUpdate(idv, cursor, start, end, text);        
+        group.getWrapper().deliverEditStateUpdate(idv, cursor, start, end, text);
     }
-    
+
     @NonNull
     private Runnable create_cb = new Runnable() {
         public void run() {
@@ -246,7 +273,7 @@ class EditWidget extends NativeWidget {
                     }
 
                     if (!readonly) {
-                        ( (EditText)textView ).setSelection(sel_start, sel_stop);
+                        ( (EditText)textView ).setSelection(Math.min(sel_start, text.length()), Math.min(sel_stop, text.length()));
                     }
 
                 textView.setOnFocusChangeListener(new OnFocusChangeListener() {
@@ -290,7 +317,7 @@ class EditWidget extends NativeWidget {
             }
         }
     };
-    
+
     public void configure(
             @NonNull String text, float font_size, int font_color,
             boolean multiline, boolean readonly, float line_spacing,
@@ -313,47 +340,15 @@ class EditWidget extends NativeWidget {
         } else {
             this.alignment = Gravity.NO_GRAVITY;
         }
-        
+
         filters.clear();
         if (max_size > 0) {
             filters.add(new InputFilter.LengthFilter(max_size));
         }
-        
-        filters.add(
-                new InputFilter() {
-                    @Nullable
-                    @Override
-                    public CharSequence filter(@NonNull CharSequence source, int start,
-                                               int end, @NonNull Spanned dest, int dstart, int dend) {
-                        if (in_change) return null;
-
-                        // Exit here to avoid crashes connected with focus change on keyboard Done button press
-                        // Normally, when Done button pressed source is empty
-                        if (source.length() == 0)
-                            return null;
-                        
-                        String source_str = source.toString();
-                        String dest_str = dest.toString();
-                        
-                        StringBuilder b = new StringBuilder(dest_str);
-                        b.replace(dstart, dend, source_str.substring(start, end));
-
-                        String newText =
-                            group
-                                .getWrapper()
-                                .textIsAcceptedByFlowFilters(id, b.toString());
-
-                        if (b.toString().equals(newText))
-                            return null;
-
-                        return newText;
-                    }
-                }
-        );
 
         input_type = 0;
         if (text_input_type.equals("number")) {
-            input_type = InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL 
+            input_type = InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
                             | InputType.TYPE_NUMBER_FLAG_SIGNED;
             if (text_input_type.equals("password"))
                 input_type |= InputType.TYPE_NUMBER_VARIATION_PASSWORD;
@@ -371,7 +366,7 @@ class EditWidget extends NativeWidget {
             if (text_input_type.equals("password"))
                 input_type |= InputType.TYPE_TEXT_VARIATION_PASSWORD;
         }
-        
+
         ime_options = EditorInfo.IME_FLAG_NO_EXTRACT_UI;
         if (!multiline)
             ime_options |= EditorInfo.IME_ACTION_DONE;
@@ -389,9 +384,9 @@ class EditWidget extends NativeWidget {
         } else {
             sel_start = sel_stop = 0;
         }
-        
+
         pad_bottom = multiline ? 0 : 30;
-        
+
         group.post(create_cb);
     }
 }

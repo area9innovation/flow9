@@ -123,6 +123,7 @@ void GLVideoClip::notify(GLVideoClip::StateChangeEvent event, int64_t value, int
 
             break;
         }
+        default: break; // do nothing
     }
 }
 
@@ -209,6 +210,7 @@ void GLVideoClip::nextStateEvent()
 
             break;
         }
+        default: break; // do nothing
     }
 }
 
@@ -562,7 +564,7 @@ StackSlot GLVideoClip::setVideoControls(RUNNER_ARGS)
 
     controls = 0;
 
-    for (int i = 0; i < RUNNER->GetArraySize(ctls); i++)
+    for (unsigned int i = 0; i < RUNNER->GetArraySize(ctls); i++)
     {
         const StackSlot &obj = RUNNER->GetArraySlot(ctls, i);
         RUNNER_CheckTag1(TStruct, obj);

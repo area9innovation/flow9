@@ -2,8 +2,9 @@ import material/extra/feedback/parse_form;
 import material/internal/material_edit_grid;
 
 export {
-	IScriptForm ::= FForm, ISTranslate, ISScale, ISRotate, ISAlpha, ISAvailable2, ISSize2, ISSetPending, ISBaseline, ISGroup, ISGroup2, ISDecorator2,
-		ISBorder, ISMask2, ISFilter2, ISCrop2, ISAccess, ISFullWindow, ISSetPending, ISDynamicGroup2, ISMForm;
+	IScriptForm ::= FForm, ISTranslate, ISScale, ISRotate, ISAlpha, ISAvailable2, ISSize2, ISBaseline, ISGroup, ISGroup2, ISDecorator2,
+		ISBorder, ISMask2, ISFilter2, ISCrop2, ISAccess, ISFullWindow, ISFullScreen, ISSetPending, ISDynamicGroup2, ISMForm,
+		ISGraphics, ISCanvas, ISText, ISParagraph;
 
 		ISTranslate : (x : double, y : double, form : IScriptForm);
 		ISScale : (x : double, y : double, form : IScriptForm);
@@ -23,9 +24,14 @@ export {
 		ISCrop2 : (left : double, top : double, width : double, height : double, form : IScriptForm);
 		ISAccess : (id : List<IScriptIdentifier>, form : IScriptForm);
 		ISFullWindow : (fullscreen : bool, available : WidthHeight, form : IScriptForm);
+		ISFullScreen : (fullscreen : bool, available : WidthHeight, form : IScriptForm);
 		ISSetPending : (pending : int, form : IScriptForm);
 		ISDynamicGroup2(stackChanges : [FGroupChange], currentStack : [IScriptForm]);
 		ISMForm : (form : PForm);
+		ISGraphics : (path : [StaticGraphicOp], style : [GraphicsStyle]);
+		ISCanvas : (content : IScriptForm);
+		ISText(text : string, style : [FTextStyle]);
+		ISParagraph(text : string, style : [FParagraphStyle]);
 
 	takeLogicalSnapshot(f : FForm) -> IScriptForm;
 	deserializeLogicalSnapshot(manager : MaterialManager, serializeForm : string, inputs : bool, m2t : (Material, MFocusGroup) -> Tropic) -> FForm;
@@ -36,9 +42,45 @@ export {
 	isOutputNameUnique(manager : MaterialManager, name : string) -> bool;
 	isInputNameUnique(manager : MaterialManager, name : string) -> bool;
 	outputNameNotUniqueMsg(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
+
+	getTextFromIScriptForm(f : IScriptForm) -> [string];
 }
 
 _ct(b : Transform<?>) -> ? {fgetValue(b);}
+
+getTextFromIScriptForm(f : IScriptForm) -> [string] {
+	switch (f : IScriptForm) {
+		ISText(text, characterStyle) : if (!contains(characterStyle, FontFamily("MaterialIcons"))) [text] else [];
+		ISParagraph(text, style) : [text];
+		FForm(): getTextFromIScriptForm(f);
+		FPicture(url, sz, s) : [];
+		FVideo(url, wh, style): [];
+		FRealHTML(url, wh, style): [];
+		FEmpty() : [];
+		ISGraphics(path, style): [];
+		ISCanvas(content): getTextFromIScriptForm(content);
+		ISBorder(left, top, right, bottom, form): getTextFromIScriptForm(form);
+		ISTranslate(x, y, form): getTextFromIScriptForm(form);
+		ISScale(x, y, form): getTextFromIScriptForm(form);
+		ISRotate(degree, form): getTextFromIScriptForm(form);
+		ISAlpha(alpha, form): getTextFromIScriptForm(form);
+		ISMask2(main1, mask): getTextFromIScriptForm(main1);
+		ISGroup(layers, zorder): mapConcat(layers, getTextFromIScriptForm);
+		ISGroup2(layer1, layer2, zorder): concat(getTextFromIScriptForm(layer1), getTextFromIScriptForm(layer2));
+		ISDecorator2(layer, decorators, above): getTextFromIScriptForm(layer);
+		ISAvailable2(widthHeight, form): getTextFromIScriptForm(form);
+		ISSize2(widthHeight, form): getTextFromIScriptForm(form);
+		ISSetPending(pending, form): getTextFromIScriptForm(form);
+		ISBaseline(baseline, form): getTextFromIScriptForm(form);
+		ISFilter2(filters, form): getTextFromIScriptForm(form);
+		ISCrop2(left, top, width, height, form): getTextFromIScriptForm(form);
+		ISFullWindow(fullscreen, available, form): getTextFromIScriptForm(form);
+		ISFullScreen(fullscreen, available, form): getTextFromIScriptForm(form);
+		ISAccess(tabOrder, form): getTextFromIScriptForm(form);
+		ISDynamicGroup2(stackChanges, currentStack): mapConcat(currentStack, getTextFromIScriptForm);
+		ISMForm(form): [];
+	}
+}
 
 takeLogicalSnapshot(f : FForm) -> IScriptForm {
 	switch (f : FForm) {
@@ -46,10 +88,10 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 		FBorder(left, top, right, bottom, form): ISBorder(left, top, right, bottom, takeLogicalSnapshot(form));
 		FConstructor(form, fn): takeLogicalSnapshot(form);
 		FCreate2(current, fn): takeLogicalSnapshot(if (^current != FEmpty()) ^current else fn());
-		FText(text, characterStyle) : FText(const(fgetValue(text)), characterStyle);
+		FText(text, characterStyle) : ISText(_ct(text), characterStyle);
 		FParagraph(text, style) : {
-			FParagraph(
-				text,
+			ISParagraph(
+				_ct(text),
 				fold(style, [], \acc, st -> {
 					switch (st) {
 						ParagraphMetrics(__): acc;
@@ -60,7 +102,7 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 				})
 			)
 		}
-		FGraphics(p, s) : f;
+		FGraphics(p, s) : ISGraphics(fgetValue(p), fgetValue(s));
 		FPicture(url, sz, s) : {
 			filteredStyle = filter(s, \style -> {
 				switch (style : PictureStyle) {
@@ -69,6 +111,7 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 					InspectRealSize(__) : false;
 					DontCache() : true;
 					OnlyDownloadToCache() : true;
+					AltText(__) : true;
 				}
 			});
 			FPicture(url, make(getValue(sz)), filteredStyle)
@@ -122,6 +165,11 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 				ISFullWindow(true, _ct(av), takeLogicalSnapshot(form))
 			else
 				takeLogicalSnapshot(form);
+		FFullScreen(fullscreen, av, form):
+			if (getValue(fullscreen))
+				ISFullScreen(true, _ct(av), takeLogicalSnapshot(form))
+			else
+				takeLogicalSnapshot(form);
 		FRealHTML(url, wh, style):
 			FRealHTML(
 				url,
@@ -132,7 +180,7 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 						OverridePageDomain(__): arrayPush(acc, st);
 						ZoomEnabled(enabled): arrayPush(acc, ZoomEnabled(const(getValue(enabled))));
 						ReloadBlock(__): arrayPush(acc, st);
-						MouseDisabled(disabled): arrayPush(acc, MouseDisabled(const(getValue(disabled))));
+						MouseDisabled(disabled): arrayPush(acc, MouseDisabled(const(fgetValue(disabled))));
 						SandBoxJS(__): arrayPush(acc, st);
 						default: acc;
 					}
@@ -159,8 +207,9 @@ takeLogicalSnapshot(f : FForm) -> IScriptForm {
 				})
 			);
 		FTextInput(__, __, __): FEmpty(); //TODO:
-		FMForm(form): ISMForm(takeSnapshot(form) |> form2PForm);
+		FMForm(form): ISMForm(takeFormSnapshot(form) |> form2PForm);
 		FNativeForm(__, __, fform, __): takeLogicalSnapshot(fform());
+		FCanvas(content): ISCanvas(takeLogicalSnapshot(content));
 	}
 }
 
@@ -176,258 +225,342 @@ _eqd(a : double, b : double) -> bool {
 diffLogicalSnapshots(f1 : IScriptForm, f2 : IScriptForm) -> [DistinctIScriptForms] {
 	switch (f1 : IScriptForm) {
 		FEmpty() : [];
-		ISBorder(left, top, right, bottom, form): {
-			switch (f2 : IScriptForm) {
-				ISBorder(left2, top2, right2, bottom2, form2): {
-					if (_eqd(left, left2) && _eqd(top, top2) && _eqd(right, right2) && _eqd(bottom, bottom2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
-		}
-		ISTranslate(x, y, form): {
-			switch (f2 : IScriptForm) {
-				ISTranslate(x2, y2, form2): {
-					if (_eqd(x, x2) && _eqd(y, y2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
-		}
-		ISScale(x, y, form): {
-			switch (f2 : IScriptForm) {
-				ISScale(x2, y2, form2): {
-					if (_eqd(x, x2) && _eqd(y, y2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
+		ISText(text, characterStyle) : [];
+		ISParagraph(text, style) : [];
+		ISGraphics(path, style): diffLogicalSnapshotsISGraphics(f1, f2);
+		ISCanvas(content): diffLogicalSnapshotsISCanvas(f1, f2);
+		ISBorder(left, top, right, bottom, form): diffLogicalSnapshotsISBorder(f1, f2);
+		ISTranslate(x, y, form): diffLogicalSnapshotsISTranslate(f1, f2);
+		ISScale(x, y, form): diffLogicalSnapshotsISScale(f1, f2);
+		ISRotate(degree, form): diffLogicalSnapshotsISRotate(f1, f2);
+		ISAlpha(alpha, form): diffLogicalSnapshotsISAlpha(f1, f2);
+		ISMask2(main1, mask): diffLogicalSnapshotsISMask2(f1, f2);
+		ISGroup(layers, zorder): diffLogicalSnapshotsISGroup(f1, f2);
+		ISGroup2(layer1, layer2, zorder):diffLogicalSnapshotsISGroup2(f1, f2);
+		ISDecorator2(layer, decorators, above): diffLogicalSnapshotsISDecorator2(f1, f2);
+		ISAvailable2(widthHeight, form): diffLogicalSnapshotsISAvailable2(f1, f2);
+		ISSize2(widthHeight, form): diffLogicalSnapshotsISSize2(f1, f2);
+		ISSetPending(pending, form): diffLogicalSnapshotsISSetPending(f1, f2);
+		ISBaseline(baseline, form): diffLogicalSnapshotsISBaseline(f1, f2);
+		ISFilter2(filters, form): diffLogicalSnapshotsISFilter2(f1, f2);
+		ISCrop2(left, top, width, height, form): diffLogicalSnapshotsISCrop2(f1, f2);
+		ISFullWindow(fullscreen, available, form): diffLogicalSnapshotsISFullWindow(f1, f2);
+		ISFullScreen(fullscreen, available, form): diffLogicalSnapshotsISFullScreen(f1, f2);
+		ISAccess(tabOrder, form): diffLogicalSnapshotsISAccess(f1, f2);
+		ISDynamicGroup2(stackChanges, currentStack): diffLogicalSnapshotsISDynamicGroup2(f1, f2);
+		ISMForm(form): diffLogicalSnapshotsISMForm(f1, f2);
+		FForm(): diffLogicalSnapshotsFForm(f1, f2);
+	}
+}
 
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+diffLogicalSnapshotsISGraphics(f1 : ISGraphics, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISGraphics(path2, style2): {
+			if (length(f1.path) == length(path2) && !contains(mapi(f1.path, \i, p -> diffIGraphicOp(p, path2[i])), false) && sort(f1.style) == sort(style2))
+				[]
+			else
+				[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISRotate(degree, form): {
-			switch (f2 : IScriptForm) {
-				ISRotate(degree2, form2): {
-					if (_eqd(degree, degree2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISAlpha(alpha, form): {
-			switch (f2 : IScriptForm) {
-				ISAlpha(alpha2, form2): {
-					if (_eqd(alpha, alpha2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISCanvas(f1 : ISCanvas, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISCanvas(content2): {
+			diffLogicalSnapshots(f1.content, content2);
 		}
-		ISMask2(main1, mask): {
-			switch (f2 : IScriptForm) {
-				ISMask2(main2, mask2): {
-					concat(diffLogicalSnapshots(main1, main2), diffLogicalSnapshots(mask, mask2));
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISGroup(layers, zorder): {
-			switch (f2 : IScriptForm) {
-				ISGroup(layers2, zorder2): {
-					if (zorder == zorder2)
-						concatA(mapi(layers, \i, l -> diffLogicalSnapshots(l, layers2[i])))
-					else
-						[DistinctIScriptForms(f1, f2, concatA(mapi(layers, \i, l -> diffLogicalSnapshots(l, layers2[i]))))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISBorder(f1 : ISBorder, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISBorder(left2, top2, right2, bottom2, form2): {
+			if (_eqd(f1.left, left2) && _eqd(f1.top, top2) && _eqd(f1.right, right2) && _eqd(f1.bottom, bottom2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
 		}
-		ISGroup2(layer1, layer2, zorder): {
-			switch (f2 : IScriptForm) {
-				ISGroup2(layer12, layer22, zorder2): {
-					if (zorder == zorder2)
-						concat(diffLogicalSnapshots(layer1, layer12), diffLogicalSnapshots(layer2, layer22))
-					else
-						[DistinctIScriptForms(f1, f2, concat(diffLogicalSnapshots(layer1, layer12), diffLogicalSnapshots(layer2, layer22)))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISDecorator2(layer, decorators, above): {
-			switch (f2 : IScriptForm) {
-				ISDecorator2(layer2, decorators2, above2): {
-					if (above == above2)
-						concat(diffLogicalSnapshots(layer, layer2), concatA(mapi(decorators, \i, d -> diffLogicalSnapshots(d, decorators2[i]))))
-					else
-						[DistinctIScriptForms(f1, f2, concat(diffLogicalSnapshots(layer, layer2),
-							concatA(mapi(decorators, \i, d -> diffLogicalSnapshots(d, decorators2[i])))))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISTranslate(f1 : ISTranslate, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISTranslate(x2, y2, form2): {
+			if (_eqd(f1.x, x2) && _eqd(f1.y, y2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
 		}
-		ISAvailable2(widthHeight, form): {
-			switch (f2 : IScriptForm) {
-				ISAvailable2(widthHeight2, form2): {
-					if (_eqd(widthHeight.width, widthHeight2.width) && _eqd(widthHeight.height, widthHeight2.height))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISSize2(widthHeight, form): {
-			switch (f2 : IScriptForm) {
-				ISSize2(widthHeight2, form2): {
-					if (_eqd(widthHeight.width, widthHeight2.width) && _eqd(widthHeight.height, widthHeight2.height))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISScale(f1 : ISScale, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISScale(x2, y2, form2): {
+			if (_eqd(f1.x, x2) && _eqd(f1.y, y2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+
 		}
-		ISSetPending(pending, form): {
-			switch (f2 : IScriptForm) {
-				ISSetPending(pending2, form2): {
-					if (pending == pending2)
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISBaseline(baseline, form): {
-			switch (f2 : IScriptForm) {
-				ISBaseline(baseline2, form2): {
-					if (_eqd(baseline, baseline2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISRotate(f1 : ISRotate, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISRotate(degree2, form2): {
+			if (_eqd(f1.degree, degree2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
 		}
-		ISFilter2(filters, form): {
-			switch (f2 : IScriptForm) {
-				ISFilter2(filters2, form2): {
-					if (sort(filters) == sort(filters2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISCrop2(left, top, width, height, form): {
-			switch (f2 : IScriptForm) {
-				ISCrop2(left2, top2, width2, height2, form2): {
-					if (_eqd(left, left2) && _eqd(top, top2) && _eqd(width, width2) && _eqd(height, height2))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISAlpha(f1 : ISAlpha, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISAlpha(alpha2, form2): {
+			if (_eqd(f1.alpha, alpha2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
 		}
-		ISFullWindow(fullscreen, available, form): {
-			switch (f2 : IScriptForm) {
-				ISFullWindow(fullscreen2, available2, form2): {
-					if (fullscreen == fullscreen2 && _eqd(available.width, available2.width) && _eqd(available.height, available2.height))
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISAccess(tabOrder, form): {
-			switch (f2 : IScriptForm) {
-				ISAccess(tabOrder2, form2): {
-					if (tabOrder == tabOrder2)
-						diffLogicalSnapshots(form, form2)
-					else
-						[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(form, form2))];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISMask2(f1 : ISMask2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISMask2(main2, mask2): {
+			concat(diffLogicalSnapshots(f1.main, main2), diffLogicalSnapshots(f1.mask, mask2));
 		}
-		ISDynamicGroup2(stackChanges, currentStack): {
-			switch (f2 : IScriptForm) {
-				ISDynamicGroup2(stackChanges2, currentStack2): {
-					concatA(mapi(currentStack, \i, s -> diffLogicalSnapshots(s, currentStack2[i])))
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
-		ISMForm(form): {
-			switch (f2 : IScriptForm) {
-				ISMForm(form2): {
-					if (form == form2)
-						[]
-					else
-						[DistinctIScriptForms(f1, f2, [])];
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+	}
+}
+
+diffLogicalSnapshotsISGroup(f1 : ISGroup, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISGroup(layers2, zorder2): {
+			if (f1.zorder == zorder2)
+				concatA(mapi(f1.layers, \i, l -> diffLogicalSnapshots(l, layers2[i])))
+			else
+				[DistinctIScriptForms(f1, f2, concatA(mapi(f1.layers, \i, l -> diffLogicalSnapshots(l, layers2[i]))))];
 		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISGroup2(f1 : ISGroup2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISGroup2(layer12, layer22, zorder2): {
+			if (f1.zorder == zorder2)
+				concat(diffLogicalSnapshots(f1.layer1, layer12), diffLogicalSnapshots(f1.layer2, layer22))
+			else
+				[DistinctIScriptForms(f1, f2, concat(diffLogicalSnapshots(f1.layer1, layer12), diffLogicalSnapshots(f1.layer2, layer22)))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISDecorator2(f1 : ISDecorator2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISDecorator2(layer2, decorators2, above2): {
+			if (f1.above == above2)
+				concat(diffLogicalSnapshots(f1.layer1, layer2), concatA(mapi(f1.decorators, \i, d -> diffLogicalSnapshots(d, decorators2[i]))))
+			else
+				[DistinctIScriptForms(f1, f2, concat(diffLogicalSnapshots(f1.layer1, layer2),
+					concatA(mapi(f1.decorators, \i, d -> diffLogicalSnapshots(d, decorators2[i])))))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISAvailable2(f1 : ISAvailable2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISAvailable2(widthHeight2, form2): {
+			if (_eqd(f1.widthHeight.width, widthHeight2.width) && _eqd(f1.widthHeight.height, widthHeight2.height))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISSize2(f1 : ISSize2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISSize2(widthHeight2, form2): {
+			if (_eqd(f1.widthHeight.width, widthHeight2.width) && _eqd(f1.widthHeight.height, widthHeight2.height))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISSetPending(f1 : ISSetPending, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISSetPending(pending2, form2): {
+			if (f1.pending == pending2)
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISBaseline(f1 : ISBaseline, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISBaseline(baseline2, form2): {
+			if (_eqd(f1.baseline, baseline2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISFilter2(f1 : ISFilter2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISFilter2(filters2, form2): {
+			if (sort(f1.filters) == sort(filters2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISCrop2(f1 : ISCrop2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISCrop2(left2, top2, width2, height2, form2): {
+			if (_eqd(f1.left, left2) && _eqd(f1.top, top2) && _eqd(f1.width, width2) && _eqd(f1.height, height2))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISFullWindow(f1 : ISFullWindow, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISFullWindow(fullscreen2, available2, form2): {
+			if (f1.fullscreen == fullscreen2 && _eqd(f1.available.width, available2.width) && _eqd(f1.available.height, available2.height))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISFullScreen(f1 : ISFullScreen, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISFullScreen(fullscreen2, available2, form2): {
+			if (f1.fullscreen == fullscreen2 && _eqd(f1.available.width, available2.width) && _eqd(f1.available.height, available2.height))
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISAccess(f1 : ISAccess, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISAccess(tabOrder2, form2): {
+			if (f1.id == tabOrder2)
+				diffLogicalSnapshots(f1.form, form2)
+			else
+				[DistinctIScriptForms(f1, f2, diffLogicalSnapshots(f1.form, form2))];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISDynamicGroup2(f1 : ISDynamicGroup2, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISDynamicGroup2(stackChanges2, currentStack2): {
+			concatA(mapi(f1.currentStack, \i, s -> diffLogicalSnapshots(s, currentStack2[i])))
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsISMForm(f1 : ISMForm, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
+		ISMForm(form2): {
+			if (f1.form == form2)
+				[]
+			else
+				[DistinctIScriptForms(f1, f2, [])];
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
+		}
+	}
+}
+
+diffLogicalSnapshotsFForm(f1 : FForm, f2 : IScriptForm) -> [DistinctIScriptForms] {
+	switch (f2 : IScriptForm) {
 		FForm(): {
-			switch (f2 : IScriptForm) {
-				FForm(): {
-					map(diffSFForms(fform2sfform(f1, false), fform2sfform(f2, false)), DistinctSFForms2DistinctIScriptForms);
-				}
-				default: {
-					[DistinctIScriptForms(f1, f2, [])];
-				}
-			}
+			map(diffSFForms(fform2sfform(f1, false), fform2sfform(f2, false)), DistinctSFForms2DistinctIScriptForms);
+		}
+		default: {
+			[DistinctIScriptForms(f1, f2, [])];
 		}
 	}
 }
@@ -439,6 +572,8 @@ DistinctSFForms2DistinctIScriptForms(d : DistinctSFForms) -> DistinctIScriptForm
 IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, MFocusGroup) -> Tropic, id : List<IScriptIdentifier>, inputs : bool) -> FForm {
 	switch (f : IScriptForm) {
 		FEmpty() : f;
+		ISText(text, characterStyle) : FText(make(text), characterStyle);
+		ISParagraph(text, style) : FParagraph(make(text), style);
 		ISBorder(left, top, right, bottom, form): FBorder(left |> number2double, top |> number2double, right |> number2double, bottom |> number2double,
 			IScriptForm2FForm(manager, form, m2t, id, inputs));
 		ISTranslate(x, y, form): FTranslate(x |> const, y |> const,
@@ -477,11 +612,15 @@ IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, M
 			IScriptForm2FForm(manager, form, m2t, id, inputs));
 		ISFullWindow(fullscreen, available, form) : FFullWindow(fullscreen |> make, available |> make,
 			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISFullScreen(fullscreen, available, form) : FFullScreen(fullscreen |> make, available |> make,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
 		ISAccess(tabOrder, form) :
 			IScriptForm2FForm(manager, form, m2t, concatList(tabOrder, Cons(IScriptFormPosition(0), makeList())), inputs);
 		ISDynamicGroup2(stackChanges, currentStack):
 			FDynamicGroup2(make(stackChanges), make(map(currentStack, \cs -> IScriptForm2FForm(manager, cs, m2t, id, inputs))), captureCallstack());
 		ISMForm(form) : FMForm(form |> pForm2Form);
+		ISGraphics(path, style): FGraphics(const(path), const(style));
+		ISCanvas(content): FCanvas(IScriptForm2FForm(manager, content, m2t, id, inputs));
 		FParagraph(text, style): f; //TODO:
 		FText(textT, style): {
 			text = fgetValue(textT);
@@ -664,6 +803,8 @@ IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, M
 			IScriptForm2FForm(manager, form, m2t, id, inputs));
 		FFullWindow(fw, av, form): FFullWindow(fw, av,
 			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FFullScreen(fw, av, form): FFullScreen(fw, av,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
 		FDynamicGroup2(stackChanges, currentStack, stack):
 			FDynamicGroup2(stackChanges, make(map(getValue(currentStack), \cs -> IScriptForm2FForm(manager, cs, m2t, id, inputs))), stack);
 		FRealHTML(__, __, __): f;
@@ -671,6 +812,7 @@ IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, M
 		FTextInput(__, __, __): f;
 		FMForm(__) : f;
 		FNativeForm(__, __, __, __): f;
+		FCanvas(content) : f;
 	}
 }
 

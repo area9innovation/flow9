@@ -1,0 +1,1957 @@
+import material/internal/material_line;
+import material/internal/material_ellipsis;
+import material/internal/material_button;
+import material/internal/material_slider;
+import tropic/selecttarray;
+
+export {
+	MDynamicChart2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicChart, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+
+	stepLength(len : double, isDate : bool) -> double;
+	getChartColor(colors : [MColor], i : int) -> MColor;
+	getPointNeighbours(r : [double], distDelta : double, i : int, acc1 : [int]) -> [int];
+	getFirstControlPoints(rhs : [double]) -> [double];
+	getCurveControlPoints(knots : [Point]) -> Pair<[Point], [Point]>;
+
+	standartMChartColors : [MColor] =
+		[MBlue(500), MOrange(500), MGreen(500), MPurple(500), MRed(500), MTeal(500),
+			MLime(500), MCyan(500)];
+
+	MLegacyChart2T(manager : MaterialManager, parent : MFocusGroup, m : MChart, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+NO_VALUE = -doubleMax;
+
+MChartState(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+
+	chartWH : DynamicBehaviour<WidthHeight>,
+	positionScale : DynamicBehaviour<PositionScale>,
+
+	title : string,
+	subtitle : string,
+	textColor : MColor,
+	escapeHTML : bool,
+	inCard : bool,
+	showLegend : bool,
+	valuesPostfix : string,
+	emptyMessage : Material,
+
+	xAxisState : MChartAxisState,
+	yAxisState : MChartAxisState,
+
+	columns : Transform<[MChartColumnState]>
+);
+
+MChartColumnState ::= MBarChartColumnState, MLineChartColumnState;
+
+MBarChartColumnState(
+	title : string,
+	valuesPostfix : string,
+	valuesLabels : DynamicBehaviour<Maybe<bool>>,
+	color : MColor,
+	hoverEnabled : Transform<bool>,
+	visible : DynamicBehaviour<bool>,
+	hover : DynamicBehaviour<bool>,
+	showValuesOnHover : Transform<bool>,
+	popup : DynamicBehaviour<bool>,
+	highlight : DynamicBehaviour<bool>,
+	position : Transform<Point>,
+	points : [MChartPoint],
+	style : [TGraphicsStyle],
+	barWidth : MBarWidth,
+);
+
+MLineChartColumnState(
+	title : string,
+	valuesPostfix : string,
+	valuesLabels : DynamicBehaviour<Maybe<bool>>,
+	color : MColor,
+	hoverEnabled : Transform<bool>,
+	visible : DynamicBehaviour<bool>,
+	hover : DynamicBehaviour<bool>,
+	showValuesOnHover : Transform<bool>,
+	popup : DynamicBehaviour<bool>,
+	highlight : DynamicBehaviour<bool>,
+	position : Transform<Point>,
+	points : [MChartPoint],
+	rangeGraphics : Maybe<Transform<[StaticGraphicOp]>>,
+	type : MMLineType,
+	typeChanges : MLineTypeChanges,
+	curve : bool,
+	lineStyle : [TGraphicsStyle],
+	hidePoints : bool,
+	pointRadius : double,
+	pointStyle : [TGraphicsStyle]
+);
+
+emptyMChartColumnState = MBarChartColumnState("", "", make(None()), MWhite(), const(false), make(false), make(false), const(false), make(false), make(false), const(zeroPoint), [], [], MBarWidth(0.0, 0.0));
+
+MLinePart(
+	points : [MChartPoint],
+	type : MMLineType
+);
+
+MChartPoint(
+	id : int,
+	title : string,
+	value : Point,
+	position : Transform<Point>,
+	graphicsData : Transform<[StaticGraphicOp]>,
+	hover : DynamicBehaviour<bool>,
+	down : DynamicBehaviour<bool>,
+	hoverData : Transform<[MChartHoverData]>,
+	pointLabel : Maybe<Pair<string, [TParagraphStyle]>>,
+	pointMarker : Maybe<Material>,
+	onClick : Maybe<() -> void>
+);
+
+MChartHoverData(
+	id : int,
+	title : string,
+	value : string,
+	color : MColor
+);
+
+Range(min : ?, max : ?);
+
+MChartAxisState(
+	caption : Transform<string>,
+	isDate : Transform<bool>,
+	visible : Transform<bool>,
+	step : Transform<double>,
+	scope : Range<Transform<double>>,
+	scale : Transform<double>,
+	zoom : Range<DynamicBehaviour<double>>,
+	zoomEnabled : Transform<bool>,
+	center : Transform<double>,
+	centerVisible : Transform<bool>,
+	axisVisible : Transform<bool>,
+
+	valuesVisible : Transform<bool>,
+	valuesOnAxis : Transform<bool>,
+	valuesVertical : Transform<bool>,
+	valuesTranslate : Transform<Point>,
+	valuesStyle : Transform<[[MTextStyle]]>,
+
+	values : Transform<[double]>,
+	value2point : (Transform<double>) -> Transform<double>,
+	value2text : (Transform<double>) -> Transform<string>
+);
+
+MDynamicChart2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicChart, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	state = makeMChartState(manager, parent, m.columns, m.rows, m.style);
+
+	drawMChart(state, m2t);
+}
+
+makeMChartAxisState(columns : Transform<[MChartColumn]>, rows : Transform<[MChartRow]>, style : [MAxisStyle], chartWH : Transform<WidthHeight>, vertical : bool) -> MChartAxisState {
+	minValue =
+		if (vertical)
+			fselect2(rows, columns, FLift2(\rr : [MChartRow], cc : [MChartColumn] ->
+				fold(
+					filtermapi(rr, \i, r -> if (r.value != NO_VALUE && exists(cc, \c -> c.data[i] != NO_VALUE)) Some(r) else None()),
+					doubleMax,
+					\acc, r ->
+						min(acc, r.value)
+				)
+			))
+		else
+			fselect(columns, FLift(\cc : [MChartColumn] -> fold(cc, doubleMax, \acc, c -> {
+				range =
+					switch (c) {
+						MLineChartColumn(__, __, columnStyle) : map(extractStruct(columnStyle, MColumnRangeData([])).data, \d -> [d.first, d.second]) |> concatA;
+						default : [];
+					};
+
+				min(acc, either(minA(filter(concat(c.data, range), \v -> v != NO_VALUE)), acc))
+			})));
+	maxValue =
+		if (vertical)
+			fselect2(rows, columns, FLift2(\rr : [MChartRow], cc : [MChartColumn] ->
+				fold(
+					filtermapi(rr, \i, r -> if (r.value != NO_VALUE && exists(cc, \c -> c.data[i] != NO_VALUE)) Some(r) else None()),
+					NO_VALUE,
+					\acc, r ->
+						max(acc, r.value)
+				)
+			))
+		else
+			fselect(columns, FLift(\cc : [MChartColumn] -> fold(cc, NO_VALUE, \acc, c -> {
+				range =
+					switch (c) {
+						MLineChartColumn(__, __, columnStyle) : map(extractStruct(columnStyle, MColumnRangeData([])).data, \d -> [d.first, d.second]) |> concatA;
+						default : [];
+					};
+
+				max(acc, either(maxA(filter(concat(c.data, range), \v -> v != NO_VALUE)), acc));
+			})));
+
+	isDate = extractStruct(style, MAxisIsDate(const(false))).isDate;
+	step =
+		extractStruct(
+			style,
+			MAxisGridStep(
+				fif(
+					fand(const(vertical), fnot(isDate)),
+					const(1.0),
+					fselect2(fsubtract(maxValue, minValue), isDate, FLift2(\v, id -> stepLength(v, id)))
+				)
+			)
+		).step;
+	stepDelta = if (vertical) 1.0 else 0.25;
+
+	minValueRound =
+		fselect2(minValue, step, FLift2(\mv, st ->
+			if (mv < 0.0)
+				dceil(-mv / st + stepDelta) * -st
+			else
+				dfloor(mv / st - stepDelta) * st
+		));
+	maxValueRound =
+		fselect2(maxValue, step, FLift2(\mv, st ->
+			if (mv < 0.0)
+				dfloor(-mv / st - stepDelta) * -st
+			else
+				dceil(mv / st + stepDelta) * st
+		));
+
+	zoom = Range(make(0.0), make(1.0));
+	scope = extractStruct(style, MAxisGridScope(minValueRound, maxValueRound))
+		|> (\f -> Range(faddition(f.min, fmultiply(fsubtract(f.max, f.min), zoom.min)), faddition(f.min, fmultiply(fsubtract(f.max, f.min), zoom.max))));
+	zoomEnabled = extractStruct(style, MAxisGridZoomEnabled(const(false))).enabled;
+	center = extractStruct(style, MAxisGridCenter(const(0.0))).center;
+	centerVisible = fselect3(scope.min, scope.max, center, \vmin, vmax, vcenter -> vcenter >= vmin && vcenter <= vmax);
+	axisVisible = extractStruct(style, MAxisLineVisible(const(true))).visible;
+
+	values = fselect3(scope.min, scope.max, step, \vmin, vmax, vstep ->
+		generateWhile2(if (vmin < 0.0) dceil(-vmin / vstep) * -vstep else dfloor(vmin / vstep) * vstep, \i -> i <= vmax, \i -> i + vstep, idfn)
+	);
+	scale = fdivide(if (vertical) fwidth(chartWH) else fheight(chartWH), fsubtract(scope.max, scope.min));
+	value2point =
+		if (vertical)
+			\v : Transform<double> ->
+				fmultiply(fsubtract(v, scope.min), scale)
+		else
+			\v : Transform<double> ->
+				fmultiply(fsubtract(scope.max, v), scale);
+	value2text =
+		if (vertical)
+			\v : Transform<double> ->
+				fselect3(v, isDate, rows, \vv, id, rr ->
+					fold(rr, if (id) getDateString(stamp2date(vv), false, false, false) else d2st(vv, 2), \acc, r -> if (equalDoubles(r.value, vv)) r.name else acc)
+				)
+		else
+			\v : Transform<double> ->
+				fselect2(v, isDate, FLift2(\vv, id -> if (id) getDateString(stamp2date(vv), false, false, false) else d2st(vv, 2)));
+
+	MChartAxisState(
+		extractStruct(style, MAxisCaption(const(""))).caption,
+		isDate,
+		extractStruct(style, MAxisGridVisible(const(false))).visible,
+		step,
+		scope,
+		scale,
+		zoom,
+		zoomEnabled,
+		center,
+		centerVisible,
+		axisVisible,
+
+		extractStruct(style, MAxisValuesVisible(const(true))).visible,
+		extractStruct(style, MAxisValuesOnAxis(const(false))).onAxis,
+		extractStruct(style, MAxisValuesVertical(const(false))).vertical,
+		extractStruct(style, MAxisValuesTranslate(const(zeroPoint))).translate,
+		extractStruct(style, MAxisValuesStyle(const([]))).style,
+
+		values,
+		value2point,
+		value2text
+	);
+}
+
+makeMChartState(manager : MaterialManager, parent : MFocusGroup, columns : Transform<[MChartColumn]>, rows : Transform<[MChartRow]>, style : [MDynamicChartStyle]) -> MChartState {
+	chartWH = makeWH();
+	positionScale = make(zeroPositionScale);
+
+	axesStyle = extractStruct(style, MAxesStyle([], []));
+	xAxisState = makeMChartAxisState(columns, rows, axesStyle.x, chartWH, true);
+	yAxisState = makeMChartAxisState(columns, rows, axesStyle.y, chartWH, false);
+
+	title = extractStruct(style, MChartTitle("")).title;
+	subtitle = extractStruct(style, MChartSubtitle("")).subtitle;
+	textColor = contrastingMColor(parent);
+	escapeHTML = extractStruct(style, EscapeHTML(true)).escape;
+	inCard = contains(style, MInCard());
+	isCurve = contains(style, MChartCurve());
+	showLegend = !contains(style, MHideLegend());
+	hidePoints = contains(style, MHidePoints());
+	hideHover = contains(style, MHideValueHover());
+	valuesPostfix = extractStruct(style, MValuesPostfix("")).postfix;
+	valuesLabels = maybeMap(tryExtractStruct(style, MValuesLabels(false)), \vl -> vl.withPostfix);
+	emptyMessage = extractStruct(style, MEmptyMessage(MText(_("No Data"), [MTitle()]))).message;
+	lineLabels = contains(style, MLineLabels());
+	barWidth = extractStruct(style, MBarWidth(4., 1.));
+
+	barCount = \to -> flength(ffilter(if (to >= 0) fsubrange(columns, const(0), const(to)) else columns, \c -> c.structname == "MBarChartColumn"));
+
+	makePointLabel = \name, filteredData, j, value, pointLabelM, pointLabelStyle ->
+		maybeMap(
+			pointLabelM,
+			\pointLabel ->
+				Pair(pointLabel.getLabel(value.y), pointLabelStyle)
+		)
+		|> (\pointLabel ->
+			if (lineLabels && j == length(filteredData) - 1)
+				eitherFn(
+					pointLabel,
+					\pl -> Some(Pair(pl.first + " " + name, pl.second)),
+					\ -> Some(Pair(name, pointLabelStyle))
+				)
+			else
+				pointLabel
+		);
+
+	columnsState =
+		fsubmapi(columns, \ii, cc -> {
+			fselect2(ii, rows, FLift2(\i, rr -> {
+				switch (cc : MChartColumn) {
+					MBarChartColumn(name, data, columnStyle): {
+						columnBarWidth = extractStruct(columnStyle, barWidth);
+						color = extractStruct(columnStyle, getChartColor(standartMChartColors, i));
+						opacity = extractStruct(columnStyle, FillOpacity(1.0)).opacity;
+						visible = extractStruct(columnStyle, MColumnVisible(make(true))).visible;
+						pointLabelM = tryExtractStruct(columnStyle, MPointLabel(\__ -> ""));
+						pointLabelStyle = extractStruct(columnStyle, MPointLabelStyle([MFill(color)])).style;
+						columnHideHover = hideHover || contains(columnStyle, MHideValueHover());
+						columnShowValuesOnHover = extractStruct(columnStyle, MColumnShowValuesOnHover(const(false))).show;
+						columnOnClick = tryExtractStruct(columnStyle, MOnListClick(const(false), nop1));
+						columnValuesLabels = eitherMap(tryExtractStruct(columnStyle, MValuesLabels(false)), \vl -> Some(vl.withPostfix), valuesLabels);
+						columnValuesPostfix = extractStruct(columnStyle, MValuesPostfix(valuesPostfix)).postfix;
+						columnTooltipValuesPostfix =
+							extractStruct(
+								columnStyle,
+								MTooltipValuesPostfix(extractStruct(style, MTooltipValuesPostfix(columnValuesPostfix)).postfix)
+							).postfix;
+						filteredData = filtermapi(data, \j, r -> if (r != NO_VALUE) Some(Pair(j, Point(rr[j].value, r))) else None());
+
+						MBarChartColumnState(
+							name,
+							columnValuesPostfix,
+							make(columnValuesLabels),
+							color,
+							const(!columnHideHover),
+							visible,
+							make(false),
+							columnShowValuesOnHover,
+							make(false),
+							make(true),
+							fpoint(
+								fmultiply(
+									faddition(fsubtract(fi2d(barCount(i)), fdivide(fi2d(barCount(-1)), const(2.0))), const(0.5)),
+									const(columnBarWidth.width + columnBarWidth.gapWidth)
+								),
+								const(0.0)
+							),
+							mapi(filteredData, \j, vv -> {
+								id = vv.first;
+								value = vv.second;
+
+								pointx = xAxisState.value2point(const(value.x));
+								pointy = yAxisState.value2point(const(value.y));
+
+								pointLabel = makePointLabel(name, filteredData, j, value, pointLabelM, pointLabelStyle);
+
+								MChartPoint(
+									id,
+									fgetValue(xAxisState.value2text(const(value.x))),
+									value,
+									fpoint(pointx, pointy),
+									fselect3(
+										pointx,
+										pointy,
+										fheight(chartWH),
+										\px, py, hgt -> rectangle(px - columnBarWidth.width / 2., py, columnBarWidth.width, hgt - py)
+									),
+									make(false),
+									make(false),
+									const([MChartHoverData(i, name, fgetValue(yAxisState.value2text(const(value.y))) + columnTooltipValuesPostfix, color)]),
+									pointLabel,
+									None(),
+									maybeMap(columnOnClick, \c -> \ -> if (fgetValue(c.enabled)) c.onClick(id))
+								)
+							}),
+							[MFill(color), FillOpacity(opacity), StrokeOpacity(0.)],
+							columnBarWidth
+						)
+					}
+					MLineChartColumn(name, data, columnStyle): {
+						color = extractStruct(columnStyle, getChartColor(standartMChartColors, i));
+						opacity = extractStruct(columnStyle, FillOpacity(1.0)).opacity;
+						visible = extractStruct(columnStyle, MColumnVisible(make(true))).visible;
+						width = extractStruct(columnStyle, MWidth(2.0)).width;
+						type = extractStruct(columnStyle, MLineType(MLineSolid())).type;
+						typeChanges = extractStruct(columnStyle, MLineTypeChanges([]));
+						pointLabelM = tryExtractStruct(columnStyle, MPointLabel(\__ -> ""));
+						pointMarkerM = tryExtractStruct(columnStyle, MPointMarker(\__, __ -> TEmpty()));
+						pointLabelStyle = extractStruct(columnStyle, MPointLabelStyle([MFill(color)])).style;
+						columnIsCurve = isCurve || contains(columnStyle, MChartCurve());
+						columnHidePoints = hidePoints || contains(columnStyle, MHidePoints());
+						columnHideHover = hideHover || contains(columnStyle, MHideValueHover());
+						columnShowValuesOnHover = extractStruct(columnStyle, MColumnShowValuesOnHover(const(false))).show;
+						columnOnClick = tryExtractStruct(columnStyle, MOnListClick(const(false), nop1));
+						columnValuesLabels = eitherMap(tryExtractStruct(style, MValuesLabels(false)), \vl -> Some(vl.withPostfix), valuesLabels);
+						columnValuesPostfix = extractStruct(columnStyle, MValuesPostfix(valuesPostfix)).postfix;
+						columnTooltipValuesPostfix =
+							extractStruct(
+								columnStyle,
+								MTooltipValuesPostfix(extractStruct(style, MTooltipValuesPostfix(columnValuesPostfix)).postfix)
+							).postfix;
+						filteredData = filtermapi(data, \j, r -> if (r != NO_VALUE) Some(Pair(j, Point(rr[j].value, r))) else None());
+						rangeData = extractStruct(columnStyle, MColumnRangeData([])).data;
+
+						controlPoints =
+							if (columnIsCurve) {
+								getCurveControlPoints(map(filteredData, \fd -> fd.second));
+							} else {
+								Pair([], []);
+							};
+
+						MLineChartColumnState(
+							name,
+							columnValuesPostfix,
+							make(columnValuesLabels),
+							color,
+							const(!columnHideHover),
+							visible,
+							make(false),
+							columnShowValuesOnHover,
+							make(false),
+							make(true),
+							const(zeroPoint),
+							mapi(filteredData, \j, vv -> {
+								id = vv.first;
+								value = vv.second;
+
+								dataRow = concat([value.x], map(fgetValue(columns), \c -> c.data[id]));
+
+								pointx = xAxisState.value2point(const(value.x));
+								pointy = yAxisState.value2point(const(value.y));
+
+								pointLabel = makePointLabel(name, filteredData, j, value, pointLabelM, pointLabelStyle);
+								pointMarker =
+									maybeMap(
+										pointMarkerM,
+										\pointMarker -> pointMarker.getMarker(i, value.y)
+									);
+
+								MChartPoint(
+									id,
+									fgetValue(xAxisState.value2text(const(value.x))),
+									value,
+									fpoint(pointx, pointy),
+									if (j == 0) {
+										fselect2(
+											pointx,
+											pointy,
+											FLift2(\px, py -> [MoveTo(px, py), LineTo(px, py)])
+										)
+									} else if (columnIsCurve) {
+										a : Transform<[StaticGraphicOp]> = fselect4(
+											pointx,
+											pointy,
+											xAxisState.value2point(const(controlPoints.first[j - 1].x + (controlPoints.second[j - 1].x - controlPoints.first[j - 1].x) * 3.0 / 2.0)),
+											yAxisState.value2point(const(controlPoints.first[j - 1].y + (controlPoints.second[j - 1].y - controlPoints.first[j - 1].y) * 3.0 / 2.0)),
+											\px, py, xc, yc -> [CubicBezierTo(px, py, xc, yc)]
+										);
+										a
+									} else {
+										fselect2(
+											pointx,
+											pointy,
+											FLift2(\px, py -> [LineTo(px, py)])
+										)
+									},
+									make(false),
+									make(false),
+									fselect(yAxisState.scale, FLift(\v ->
+										map(getPointNeighbours(dataRow, 4.0 / v, i + 1, []), \pn -> {
+											hoverColumn = fgetValue(columns)[pn - 1];
+
+											switch (hoverColumn : MChartColumn) {
+												MBarChartColumn(__, __, hoverColumnStyle): {
+													hoverColumnColor = extractStruct(hoverColumnStyle, getChartColor(standartMChartColors, pn - 1));
+													hoverColumnValuesPostfix = extractStruct(hoverColumnStyle, MValuesPostfix(valuesPostfix)).postfix;
+													hoverColumnTooltipValuesPostfix =
+														extractStruct(
+															hoverColumnStyle,
+															MTooltipValuesPostfix(extractStruct(style, MTooltipValuesPostfix(hoverColumnValuesPostfix)).postfix)
+														).postfix;
+
+													MChartHoverData(
+														pn - 1,
+														hoverColumn.name,
+														fgetValue(yAxisState.value2text(const(dataRow[pn]))) + hoverColumnTooltipValuesPostfix,
+														hoverColumnColor
+													);
+												}
+												MLineChartColumn(__, __, hoverColumnStyle): {
+													hoverColumnColor = extractStruct(hoverColumnStyle, getChartColor(standartMChartColors, pn - 1));
+													hoverColumnValuesPostfix = extractStruct(hoverColumnStyle, MValuesPostfix(valuesPostfix)).postfix;
+													hoverColumnTooltipValuesPostfix =
+														extractStruct(
+															hoverColumnStyle,
+															MTooltipValuesPostfix(extractStruct(style, MTooltipValuesPostfix(hoverColumnValuesPostfix)).postfix)
+														).postfix;
+
+													MChartHoverData(
+														pn - 1,
+														hoverColumn.name,
+														fgetValue(yAxisState.value2text(const(dataRow[pn]))) + hoverColumnTooltipValuesPostfix,
+														hoverColumnColor
+													);
+												}
+											}
+										})
+									)),
+									pointLabel,
+									pointMarker,
+									maybeMap(columnOnClick, \c -> \ -> if (fgetValue(c.enabled)) c.onClick(id))
+								)
+							}),
+							if (length(rangeData) == 0)
+								None()
+							else
+								Some(
+									fselect4(
+										mapi(rangeData, \rdi, __ -> xAxisState.value2point(const(rr[rdi].value)))
+										|> fmerge,
+										map(rangeData, \rd -> yAxisState.value2point(const(min(rd.first, rd.second))))
+										|> fmerge,
+										mapi(rangeData, \rdi, __ -> xAxisState.value2point(const(rr[rdi].value)))
+										|> fmerge,
+										map(rangeData, \rd -> yAxisState.value2point(const(max(rd.first, rd.second))))
+										|> fmerge,
+										\minXValues, minYValues, maxXValues, maxYValues -> {
+											concatA([
+												[
+													MoveTo(minXValues[0], minYValues[0])
+												],
+												mapi(subrange(minXValues, 1, length(minXValues)), \rdi, rd -> LineTo(rd, minYValues[rdi + 1])),
+												mapi(reverseA(maxXValues), \rdi, rd -> LineTo(rd, maxYValues[length(maxXValues) - rdi - 1])),
+												[
+													LineTo(minXValues[0], minYValues[0])
+												]
+											])
+										}
+									)
+								),
+							type,
+							typeChanges,
+							columnIsCurve,
+							[MStroke(color), StrokeOpacity(opacity), StrokeWidth(width)],
+							columnHidePoints,
+							width,
+							[MFill(color), FillOpacity(opacity)]
+						);
+					}
+				}
+			}));
+		});
+
+	MChartState(
+		manager,
+		parent,
+
+		chartWH,
+		positionScale,
+
+		title,
+		subtitle,
+		textColor,
+		escapeHTML,
+		inCard,
+		showLegend,
+		valuesPostfix,
+		emptyMessage,
+
+		xAxisState,
+		yAxisState,
+
+		columnsState
+	);
+}
+
+drawMChart(state : MChartState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	TIfLazy(fgreateri(flength(state.columns), const(0)), \hasData ->
+		if (hasData)
+			TGroup([
+				drawMChartLines(state),
+				drawMChartColumns(state, m2t),
+				drawMChartAxes(state, m2t),
+				drawMChartInteractive(state)
+			])
+			|> (\f -> TCrop(const(Point(-8.0, -8.0)), fselect(state.chartWH, FLift(\wh -> WidthHeight(wh.width + 16.0, wh.height + 16.0))), f))
+			|> (\f -> TBorder4(-8.0, f))
+			|> (\f -> TFixSize(f, TFillXY()))
+			|> (\f -> TInspect([IAvailable(state.chartWH)], f))
+			|> (\f -> TPositionScale(state.positionScale, f))
+			|> TCanvas
+			|> (\f -> drawMChartXAxisLegend(state, f, m2t))
+			|> (\f -> drawMChartYAxisLegend(state, f, m2t))
+			|> (\f -> TProportionCols([Pair(const(3.0), f), Pair(const(1.0), drawMChartLegend(state, m2t))]))
+			|> TBorderTop(20.0)
+		else
+			m2t(state.emptyMessage, state.parent)
+			|> TCenter
+	)
+	|> (\f -> TLines2(drawMChartTitle(state, m2t), f))
+	|> (\f -> TBorder(8.0, 16.0, 8.0, 16.0, f))
+	|> (\f ->
+		if (state.inCard)
+			TFrame(0.0, 2.0, [Fill(if (getLightBackground(state.parent)) white else 0x424242)], f)
+			|> (\f2 -> TShadow(state.parent, const(2.0), f2))
+		else
+			f
+	)
+}
+
+drawMChartTitle(state : MChartState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	makeTitle = \text, fontStyle : MFontStyle ->
+		 if (text != "")
+		 	MEllipsisText2T(
+		 		state.manager,
+		 		state.parent,
+		 		MEllipsisText(
+					 text,
+					 [
+						fontStyle,
+						state.textColor,
+						MShowTooltip(const(true)),
+						EscapeHTML(state.escapeHTML)
+					]
+				),
+		 		m2t
+		 	)
+			|> (\f2 -> TBorder(8.0, 0.0, 8.0, 0.0, f2))
+		else
+			TEmpty();
+
+	TLines2(
+		makeTitle(state.title, MHeadline()),
+		makeTitle(state.subtitle, MSubheading())
+	)
+	|> TBorderBottom(if (state.title != "" || state.subtitle != "") 16.0 else 0.0)
+}
+
+drawMChartAxes(state : MChartState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	axesLinesStyle = [Stroke(contrastingColor(state.parent)), StrokeOpacity(0.5), StrokeWidth(1.0)];
+
+	TGroup([
+		TShowLazy(fand(state.xAxisState.axisVisible, state.xAxisState.centerVisible), \ ->
+			TDynamicGraphics(
+				fselect2(fheight(state.chartWH), state.xAxisState.value2point(state.xAxisState.center), FLift2(\hgt, xcenter ->
+					[
+						MoveTo(xcenter, 0.0),
+						LineTo(xcenter, hgt)
+					]
+				)),
+				const(axesLinesStyle)
+			)
+		),
+		TShowLazy(fand(state.yAxisState.axisVisible, state.yAxisState.centerVisible), \ ->
+			TDynamicGraphics(
+				fselect2(fwidth(state.chartWH), state.yAxisState.value2point(state.yAxisState.center), FLift2(\wd, ycenter ->
+					[
+						MoveTo(0.0, ycenter),
+						LineTo(wd, ycenter)
+					]
+				)),
+				const(axesLinesStyle)
+			)
+		)
+	])
+}
+
+drawMChartXAxisLegend(state : MChartState, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	values = \ ->
+		TShowLazy(state.xAxisState.valuesVisible, \ ->
+			SelectTGroup(fsubrange(state.xAxisState.values, const(1), fsubtracti(flength(state.xAxisState.values), const(2))), \i, __, d -> {
+				TSelect2(
+					state.xAxisState.value2text(const(d)),
+					felementAt(state.xAxisState.valuesStyle, i, const([MCaption(), state.textColor, EscapeHTML(state.escapeHTML)])),
+					\text, style : [MEllipsisTextStyle] ->
+						MEllipsisText2T(
+							state.manager,
+							state.parent,
+							MEllipsisText(
+								text,
+								concat(
+									style,
+									[
+										MShowTooltip(const(true))
+									]
+								)
+							),
+							m2t
+						)
+				)
+				|> (\f -> TBorder(12.0, 8.0, 12.0, 8.0, f))
+				|> (\f -> TIfLazy(state.xAxisState.valuesVertical, \xiv -> if (xiv) TRotate90Left(f) else f))
+				|> (\f -> TShiftScale(fif(state.xAxisState.valuesVertical, const(Factor(0.6, 0.0)), const(Factor(0.5, 0.0))), f))
+				|> (\f -> TTranslate(fpoint(state.xAxisState.value2point(const(d)), zero), f))
+				|> (\f -> TTranslate(state.xAxisState.valuesTranslate, f))
+			})
+		);
+
+	caption = \ ->
+		TSelect(state.xAxisState.caption, \c ->
+			if (c != "")
+				MEllipsisText2T(
+					state.manager,
+					state.parent,
+					MEllipsisText(
+						c,
+						[
+							MBody(),
+							state.textColor,
+							MShowTooltip(const(true)),
+							EscapeHTML(state.escapeHTML)
+						]
+					),
+					m2t
+				)
+				|> TCenterX
+			else
+				TEmpty()
+		);
+
+	slider = \ ->
+		TShowLazy(state.xAxisState.zoomEnabled, \ ->
+			MSlider2T(
+				state.manager,
+				state.parent,
+				MSlider(
+					make(0.0),
+					[
+						MSliderChooseRange(state.xAxisState.zoom.min, state.xAxisState.zoom.max),
+						MCustomThumb(\d, f ->
+							TRounded(2.0, 2.0, 2.0, 2.0, [MFill(getAccentColor(state.parent))], TFixed(8.0, 16.0))
+							|> (\f2 -> TScale(fif(d, const(Factor(1.25, 1.25)), const(Factor(1.0, 1.0))), f2))
+							|> (\f2 -> TTranslate(fif(d, const(Point(-2.5, 10.0)), const(Point(-2.0, 8.0))), f2))
+						)
+					]
+				),
+				m2t
+			)
+			|> TBorderRight(-4.0)
+		);
+
+	TIfLazy(fand(state.yAxisState.centerVisible, state.xAxisState.valuesOnAxis), \v ->
+		if (v)
+			TCopySize2(
+				caption(),
+				\cSz, cTr ->
+					TLines2(
+						TGroup2(
+							TLines2(
+								content,
+								slider()
+							),
+							TTranslate(
+								fselect2(fheight(state.chartWH), state.yAxisState.value2point(state.yAxisState.center), FLift2(\hgt, ycenter ->
+									Point(0.0, min(max(ycenter, 0.0), hgt))
+								)),
+								TGroup2(
+									cTr
+									|> (\f -> TBorder(0.0, 8.0, 0.0, 8.0, f)),
+									values()
+									|> (\f2 -> TShiftScale(const(Factor(0.0, 1.0)), f2))
+								)
+							)
+						),
+						cSz
+					)
+			)
+		else
+			TLines([
+				content,
+				slider(),
+				values(),
+				caption()
+			])
+	)
+}
+
+drawMChartYAxisLegend(state : MChartState, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	caption = \ ->
+		TSelect(state.yAxisState.caption, \c ->
+			if (c != "")
+				MEllipsisText2T(
+					state.manager,
+					state.parent,
+					MEllipsisText(
+						c,
+						[
+							MBody(),
+							state.textColor,
+							MShowTooltip(const(true)),
+							EscapeHTML(state.escapeHTML)
+						]
+					),
+					m2t
+				)
+				|> TRotate90Left
+				|> TCenterY
+				|> (\f -> TAvailableHeight(f, fheight(state.chartWH)))
+			else
+				TEmpty()
+		);
+
+	values = \ ->
+		TShowLazy(
+			state.yAxisState.valuesVisible,
+			\ ->
+				SelectTGroup(state.yAxisState.values, \__, __, d -> {
+					TSelect(state.yAxisState.value2text(const(d)), \text ->
+						MEllipsisText2T(
+							state.manager,
+							state.parent,
+							MEllipsisText(
+								text + state.valuesPostfix,
+								[
+									MCaption(),
+									state.textColor,
+									MShowTooltip(const(true)),
+									EscapeHTML(state.escapeHTML)
+								]
+							),
+							m2t
+						)
+					)
+					|> (\f -> TBorder(12.0, 8.0, 12.0, 8.0, f))
+					|> (\f -> TShiftScale(fif(fand(state.xAxisState.centerVisible, state.yAxisState.valuesOnAxis), const(Factor(0.0, 0.5)), const(Factor(1.0, 0.5))), f))
+					|> (\f -> TTranslate(fpoint(zero, state.yAxisState.value2point(const(d))), f))
+					|> (\f -> TTranslate(state.yAxisState.valuesTranslate, f))
+				})
+		);
+
+	slider = \ ->
+		TShowLazy(state.yAxisState.zoomEnabled, \ ->
+			MSlider2T(
+				state.manager,
+				state.parent,
+				MSlider(
+					make(0.0),
+					[
+						MSliderChooseRange(state.yAxisState.zoom.min, state.yAxisState.zoom.max),
+						MCustomThumb(\d, f ->
+							TRounded(2.0, 2.0, 2.0, 2.0, [MFill(getAccentColor(state.parent))], TFixed(8.0, 16.0))
+							|> (\f2 -> TScale(fif(d, const(Factor(1.25, 1.25)), const(Factor(1.0, 1.0))), f2))
+							|> (\f2 -> TTranslate(fif(d, const(Point(-2.5, 10.0)), const(Point(-2.0, 8.0))), f2))
+						)
+					]
+				),
+				m2t
+			)
+			|> TRotate90Left
+			|> TBorderTop(-18.0)
+			|> TBorderBottom(-14.0)
+			|> (\f -> TAvailableHeight(f, fheight(state.chartWH)))
+		);
+
+	TIfLazy(fand(state.xAxisState.centerVisible, state.yAxisState.valuesOnAxis), \v ->
+		if (v)
+			TCopySize2(
+				caption(),
+				\cSz, cTr ->
+					TCols2(
+						cSz,
+						TGroup2(
+							TCols2(
+								slider(),
+								content
+							),
+							TTranslate(
+								fselect2(fwidth(state.chartWH), state.xAxisState.value2point(state.xAxisState.center), FLift2(\wd, xcenter ->
+									Point(min(max(xcenter, 0.0), wd), 0.0)
+								)),
+								TGroup2(
+									values(),
+									cTr
+									|> (\f -> TBorder(12.0, 0.0, 12.0, 0.0, f))
+									|> (\f2 -> TShiftScale(const(Factor(1.0, 0.0)), f2))
+								)
+							)
+						)
+					)
+			)
+		else
+			TCols([
+				caption(),
+				values()
+				|> (\f -> TShiftScale(const(Factor(-1.0, 0.0)), f)),
+				slider(),
+				content
+			])
+	)
+}
+
+drawMChartLines(state : MChartState) -> Tropic {
+	gridLinesStyle = [Stroke(contrastingColor(state.parent)), StrokeOpacity(0.14), StrokeWidth(1.0)];
+
+	TGroup2(
+		TShowLazy(state.xAxisState.visible, \ ->
+			TDynamicGraphics(
+				fsubmap(state.xAxisState.values, \d ->
+					fselect2(fheight(state.chartWH), state.xAxisState.value2point(const(d)), FLift2(\hgt, v ->
+						[
+							MoveTo(v, 0.0),
+							LineTo(v, hgt)
+						]
+					))
+				)
+				|> fconcatA,
+				const(gridLinesStyle)
+			)
+		),
+		TShowLazy(state.yAxisState.visible, \ ->
+			TDynamicGraphics(
+				fsubmap(state.yAxisState.values, \d ->
+					fselect2(fwidth(state.chartWH), state.yAxisState.value2point(const(d)), FLift2(\wd, v ->
+						[
+							MoveTo(0.0, v),
+							LineTo(wd, v)
+						]
+					))
+				)
+				|> fconcatA,
+				const(gridLinesStyle)
+			)
+		)
+	);
+}
+
+drawMChartLegend(state : MChartState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	if (state.showLegend)
+		SelectTLines(state.columns, \__, __, c -> {
+			MCheckBox2T(
+				state.manager,
+				state.parent,
+				MCheckBox(
+					MComponent(
+						[
+							// MOnClick(\ -> next(c.highlight, !fgetValue(c.highlight))),
+							MOnClick(\ -> {
+								changed = ref false;
+
+								iter(fgetValue(state.columns), \cc -> {
+									currentColumn = cc == c;
+
+									if (getValue(cc.highlight) != currentColumn) {
+										changed := true;
+										next(cc.highlight, currentColumn);
+									}
+								});
+
+								if (!^changed) {
+									iter(fgetValue(state.columns), \cc -> nextDistinct(cc.highlight, true));
+								}
+							}),
+							THovering(c.hover),
+							MHighlightOnHover(const(true)),
+							MHighlightOnFocus(const(true)),
+							MRippleType(const(MRippleFill()))
+						],
+						\__ ->
+							MEllipsisText(
+								c.title,
+								[
+									MSubheading(),
+									state.textColor,
+									MShowTooltip(const(true)),
+									EscapeHTML(state.escapeHTML)
+								]
+							)
+							|> (\f -> MAlpha(fif(c.highlight, const(1.0), const(0.5)), f))
+							|> (\f -> MBorder4(4.0, f))
+					)
+					|> MBorderRight(4.0)
+					|> (\f -> MBorder4(-4.0, f)),
+					c.visible,
+					[
+						c.color,
+						MIconSize(20.0)
+					]
+				),
+				m2t
+			)
+			|> TBorderTop(-2.0)
+			|> TBorderBottom(-6.0)
+		})
+		|> (\f ->
+			TCopySize2(
+				f,
+				\sz, tr ->
+					MScroll2T(
+						state.manager,
+						state.parent,
+						MScroll(
+							tr,
+							TGroup2(
+								TMinimumGroup2(
+									TWidth(sz),
+									TFillX()
+								),
+								TFillY()
+							),
+							[
+								TScrollBound(const(true), const(true))
+							]
+						),
+						m2t
+					)
+			)
+		)
+		|> (\f -> TBorder(16.0, -8.0, 16.0, 16.0, f))
+	else
+		TEmpty();
+}
+
+drawMChartColumns(state : MChartState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	hoverPointRadius = 8.0;
+
+	SelectTGroup(state.columns, \__, __, chart -> {
+		switch (chart : MChartColumnState) {
+			MBarChartColumnState(title, valuesPostfix, valuesLabels, color, hoverEnabled, visible, hover, showValuesOnHover, popup, highlight, position, points, style, barWidth): {
+				TShowLazy(
+					visible,
+					\ -> map(points, \p ->
+						TGroup([
+							TDynamicGraphics(p.graphicsData, const(style)),
+							TShowLazy(fOr(p.down, fOr(hover, fOr(p.hover, popup))), \ -> TDynamicGraphics(p.graphicsData, const([Fill(contrastingColor(state.parent)), FillOpacity(0.2)]))),
+							TShowLazy(p.down, \ -> TDynamicGraphics(p.graphicsData, const([Fill(contrastingColor(state.parent)), FillOpacity(0.2)])))
+						])
+						|> (\f -> drawMChartValueLabel(state, chart, p, f))
+						|> (\f -> drawMChartHoverPoint(state, chart, p, f, m2t))
+					)
+					|> TGroup
+					|> (\f -> TTranslate(position, f))
+					|> (\f -> TAlpha(fif(highlight, const(1.0), const(0.2)), f))
+				)
+			}
+			MLineChartColumnState(title, valuesPostfix, valuesLabels, color, hoverEnabled, visible, hover, showValuesOnHover, popup, highlight, position, points, rangeGraphics, lineType, lineTypeChanges, isCurve, lineStyle, hidePoints, pointRadius, pointStyle): {
+				typeChanges = sortCustom(lineTypeChanges.changes, \change -> change.index, true);
+				parts = createLineParts(typeChanges, points, lineType);
+
+				makePartLine = \part ->
+					TIfLazy(hover, \h ->
+						makeLineByTypeT(
+							fconcatA(fthrottleUntilNextFrameRendered(fmerge(map(part.points, \p -> p.graphicsData)))),
+							const(part.type),
+							const(isCurve),
+							if (h)
+								const(
+									replaceStructMany(
+										lineStyle,
+										[
+											StrokeWidth(extractStruct(lineStyle, StrokeWidth(1.0)).width * 1.5)
+										]
+									)
+								)
+							else
+								const(lineStyle)
+						)
+					);
+
+				TShowLazy(
+					visible,
+					\ -> TGroup([
+						eitherMap(
+							rangeGraphics,
+							\rg -> {
+								TDynamicGraphics(rg, const([MFill(color), FillOpacity(0.25)]))
+							},
+							TEmpty()
+						),
+
+						map(parts, makePartLine) |> TGroup,
+
+						if (hidePoints)
+							TEmpty()
+						else
+							map(points, \p ->
+								TTranslate(
+									p.position,
+									TScale(
+										fif(
+											p.down,
+											if (isSome(p.onClick))
+												const(Factor(2.0, 2.0))
+											else
+												const(Factor(1.0, 1.0)),
+											if (isSome(p.pointMarker))
+												const(Factor(1.0, 1.0))
+											else
+												fif(fand(chart.hoverEnabled, fOr(p.hover, fOr(hover, popup))), const(Factor(1.5, 1.5)), const(Factor(1.0, 1.0)))
+										),
+										eitherFn(
+											p.pointMarker,
+											\pointMarker ->
+												TShiftScale(const(Factor(0.5, 0.5)), m2t(pointMarker, state.parent)),
+											\ ->
+												TTranslate(
+													const(Point(-pointRadius, -pointRadius)),
+													TCircle(pointRadius, pointStyle)
+												)
+										)
+									)
+								)
+								|> (\f -> drawMChartValueLabel(state, chart, p, f))
+								|> (\f -> drawMChartHoverPoint(state, chart, p, f, m2t))
+							)
+							|> TGroup
+					])
+					|> (\f -> TTranslate(position, f))
+					|> (\f -> TAlpha(fif(highlight, const(1.0), const(0.2)), f))
+				)
+			}
+		}
+	})
+}
+
+drawMChartValueLabel(state : MChartState, chart : MChartColumnState, point : MChartPoint, content : Tropic) -> Tropic {
+	TMutable(feitherMap(
+		fif(
+			fand(chart.showValuesOnHover, chart.hover),
+			const(Some(false)),
+			chart.valuesLabels
+		),
+		\withPostfix ->
+			TGroup2(
+				content,
+				MText2T(
+					state.parent,
+					d2st(point.value.y, 2) + if (withPostfix) chart.valuesPostfix else "",
+					[MCaptionSolid(), MTextMColor(chart.color), EscapeHTML(state.escapeHTML)]
+				)
+				|> (\f -> TFrame(2.0, 4.0, [MFill(chart.color)], f))
+				|> (\f -> TShiftScale(const(Factor(0.5, 1.0)), f))
+				|> (\f -> TTranslate(fselect(point.position, FLift(\p -> Point(p.x, p.y - 8.0))), f))
+			),
+		const(content)
+	))
+	|> (\f ->
+		eitherMap(
+			point.pointLabel,
+			\pointLabel -> {
+				TGroup2(
+					f,
+					TParagraph(const(pointLabel.first), pointLabel.second)
+					|> (\f2 -> TShiftScale(const(Factor(0.5, 1.0)), f2))
+					|> (\f2 -> TTranslate(fselect2(point.position, chart.valuesLabels, FLift2(\p, vl -> Point(p.x, p.y - 8.0 - 16.0 * b2d(isSome(vl))))), f2))
+				)
+			},
+			f
+		)
+	)
+}
+
+drawMChartHoverPoint(state : MChartState, chart : MChartColumnState, point : MChartPoint, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	hoverPointRadius = 8.0;
+
+	TConstruct(
+		[
+			makeSubscribeUns(chart.hoverEnabled, \he ->
+				if (he)
+					[
+						makeSubscribeUns(fgreateri(flength(point.hoverData), const(0)), \hoverEnabled ->
+							if (hoverEnabled)
+								[
+									makeSubscribeUns(point.hover, \hover ->
+										if (hover) {
+											boxWH = makeWH();
+											dpiScale = extractStruct(state.manager.manager.renderStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
+
+											[
+												TLines2(
+													MText2T(
+														state.parent,
+														point.title,
+														[MBodyBold(), state.textColor, EscapeHTML(state.escapeHTML)]
+													)
+													|> TBorderBottom(8.),
+													SelectTLines(
+														fsubfilter(
+															fselect2(point.hoverData, state.columns, FLift2(\hd, c ->
+																map(hd, \d ->
+																	Triple(d, elementAt(c, d.id, emptyMChartColumnState).popup, elementAt(c, d.id, emptyMChartColumnState).highlight)
+																)
+															)),
+															\d -> d.third
+														),
+														\__, __, d ->
+															TConstruct(
+																[
+																	\ -> {
+																		nextDistinct(d.second, true);
+																		\ -> nextDistinct(d.second, false);
+																	}
+																],
+																TLines2(
+																	MText2T(state.parent, d.first.title, [MListBody(), state.textColor, EscapeHTML(state.escapeHTML)])
+																	|> (\t -> TBorder(0., 8., 0., 4., t)),
+																	MText2T(state.parent, d.first.value, [MHeadline(), d.first.color, EscapeHTML(state.escapeHTML)])
+																)
+															)
+													)
+												)
+												|> (\f2 -> TFrame(16.0, 2.0, [Fill(if (state.textColor == MWhite()) 0x424242 else white)], f2))
+												|> (\f2 -> TShadow(state.parent, const(8.0), f2))
+												|> (\f2 -> TBorder(16.0, 16.0, 0.0, 0.0, f2))
+												|> (\f2 -> TInspect([ISize(boxWH)], f2))
+												|> (\f2 ->
+													TScale(
+														fselect2(
+															state.positionScale,
+															dpiScale,
+															FLift2(\ps, dsc -> Factor(ps.scale.x / dsc.x, ps.scale.y / dsc.y))
+														),
+														f2
+													)
+												)
+												|> (\f2 ->
+													TTranslate(
+														fselect5(
+															state.positionScale, point.position, boxWH, state.manager.stageWH, dpiScale,
+															\ps, p, bwh, swh, dsc ->
+																Point(
+																	min(
+																		max((ps.pos.x + p.x) * ps.scale.x / dsc.x, 8.0),
+																		swh.width - bwh.width * ps.scale.x / dsc.x - 8.0
+																	),
+																	min(
+																		max((ps.pos.y + p.y) * ps.scale.y / dsc.y, 8.0),
+																		swh.height - bwh.height * ps.scale.y / dsc.y - 8.0
+																	)
+																)
+														),
+														f2
+													)
+												)
+												|> (\f2 -> MShowAnimation(const(true), f2, [MAutoStart()]))
+												|> (\f2 -> m2t(f2, state.parent))
+												|> (\f2 -> trender(f2, state.manager.manager.renderStyle))
+											]
+										} else {
+											[]
+										}
+									)()
+								]
+							else
+								[]
+						)()
+					]
+					|> (\subs ->
+						eitherMap(
+							point.onClick,
+							\onClick ->
+								arrayPush(subs, make2Subscribe2(point.hover, point.down, \h, d -> if (h && d) onClick())()),
+							subs
+						)
+					)
+				else
+					[]
+			)
+		],
+		content
+	)
+}
+
+drawMChartInteractive(state : MChartState) -> Tropic {
+	hoverPointRadius = 8.0;
+	currentPoint : ref Maybe<MChartPoint> = ref None();
+	currentCursor = make(DefaultCursor());
+
+	handleMouseMove = \m -> {
+		prevCurrentPoint = ^currentPoint;
+		currentPoint := None();
+
+		hh = fold(fgetValue(state.columns), false, \hit, chart ->
+			hit ||
+				(getValue(chart.visible) && getValue(chart.highlight) && fold(chart.points, hit, \hit2, point -> {
+					if (!hit2) {
+						position = fgetValue(chart.position);
+						hit3 =
+							switch (chart) {
+								MBarChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+									fold(fgetValue(point.graphicsData), hit2, \hit3, data ->
+										hit || hittestStaticGraphicShape(data, Point(m.x - position.x, m.y - position.y))
+									);
+								}
+								MLineChartColumnState(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+									hittestStaticGraphicShape(
+										GCircle(fgetValue(point.position).x, fgetValue(point.position).y, hoverPointRadius),
+										Point(m.x - position.x, m.y - position.y)
+									);
+								}
+							};
+
+						if (hit3) {
+							eitherFn(
+								prevCurrentPoint,
+								\p -> {
+									if (p == point) {
+										currentPoint := prevCurrentPoint;
+									} else {
+										nextDistinct(point.hover, true);
+										currentPoint := Some(point);
+									}
+								},
+								\ -> {
+									nextDistinct(point.hover, true);
+									currentPoint := Some(point);
+								}
+							)
+						}
+
+						hit3;
+					} else {
+						hit2;
+					}
+				}))
+		);
+
+		nextDistinct(currentCursor, if (hh) FingerCursor() else DefaultCursor());
+
+		if (^currentPoint != prevCurrentPoint) {
+			maybeApply(prevCurrentPoint, \d -> nextDistinct(d.hover, false));
+		}
+
+		hh;
+	}
+
+	TInteractive(
+		[
+			TouchStart2(\h, ti -> {
+				if (!h && exists(ti.inside, apply0)) {
+					handleMouseMove(Point(ti.points[0].x, ti.points[0].y))
+				} else {
+					h;
+				}
+			}),
+			MouseDown2(\h, mi -> {
+				if (!h && mi.inside()) {
+					maybeApply(^currentPoint, \d -> nextDistinct(d.down, true));
+					isSome(^currentPoint);
+				} else {
+					h;
+				}
+			}),
+			MouseUp2(\h, mi -> {
+				maybeApply(^currentPoint, \d -> nextDistinct(d.down, false));
+				h || isSome(^currentPoint);
+			}),
+			MouseMove2(\h, mi -> {
+				if (!h) {
+					m = mi();
+
+					if (m.inside) {
+						handleMouseMove(Point(m.x, m.y))
+					} else {
+						maybeApply(^currentPoint, \d -> nextDistinct(d.hover, false));
+						currentPoint := None();
+
+						h;
+					}
+				} else {
+					h;
+				}
+			})
+		],
+		TCursor(
+			DynamicCursor(currentCursor),
+			TRectangle(interactiveRectangleStyle, TSized(state.chartWH))
+		)
+	)
+}
+
+hittestStaticGraphicShape(shape : StaticGraphicOp, point : Point) -> bool {
+	switch (shape : StaticGraphicOp) {
+		GRect(x, y, width, height): {
+			x <= point.x && x + width >= point.x && y <= point.y && y + height >= point.y;
+		}
+		GRoundedRect(x, y, width, height, radius): {
+			x <= point.x && x + width >= point.x && y <= point.y && y + height >= point.y;
+		}
+		GEllipse(x, y, width, height): {
+			dx = abs(x - point.x);
+			dy = abs(y - point.y);
+
+			1.0 >= dx * dx / width * width + dy * dy / height * height;
+		}
+		GCircle(x, y, radius): {
+			dx = abs(x - point.x);
+			dy = abs(y - point.y);
+
+			radius > sqrt(dx * dx + dy * dy);
+		}
+		default: {
+			false;
+		}
+	}
+}
+
+getPointNeighbours(r : [double], distDelta : double, i : int, acc1 : [int]) -> [int] {
+	foldi(tail(r), acc1, \k, acc, d ->
+		if ((d + distDelta) > r[i] && (d - distDelta) < r[i] && !contains(acc, k + 1) && (r[k + 1] != NO_VALUE))
+			if (k + 1 == i)
+				arrayPush(acc, i)
+			else
+				getPointNeighbours(r, distDelta, k + 1, arrayPush(acc, k + 1))
+		else
+			acc)
+}
+
+stepLength(len : double, isDate : bool) -> double {
+	if (len == 0.0)
+		(if (isDate) msInDay else 0.5)
+	else {
+		lengthLimit = 1.0;
+		lengthDivider = 10.0;
+		lengthDivider2 = 2.0;
+		(if (len > lengthLimit) {
+			generateWhile2(len, \l -> l > lengthLimit, \l -> l / lengthDivider, \l -> l)
+			|> (\f -> pow2(lengthDivider, length(f) - 1))
+			|> (\f -> either(f, 1.0))
+		} else {
+			generateWhile2(len, \l -> l < lengthLimit, \l -> l * lengthDivider, \l -> l)
+			|> (\f -> pow2(lengthDivider, - length(f)))
+			|> (\f -> either(f, 1.0))
+		})
+		|> (\f2 -> if (len / f2 < 2.0) f2 / 2.0 else f2)
+		|> (\f2 -> if (len / f2 < 4.0) f2 / 2.0 else f2)
+	}
+}
+
+getFirstControlPoints(rhs : [double]) -> [double] {
+	n = length(rhs);
+	x = ref arrayRepeat(0.0, n); // Solution vector.
+	tmp = ref ^x; // Temp workspace.
+
+	b = ref 2.0;
+	x := replace(^x, 0, rhs[0] / ^b);
+
+	fori(1, n - 1, \i -> {
+		tmp := replace(^tmp, i, 1.0 / ^b);
+		b := (if (i < n - 1) 4.0 else 3.5) - ^tmp[i];
+		x := replace(^x, i, (rhs[i] - ^x[i - 1]) / ^b);
+	});
+
+	fori(1, n - 1, \i -> {
+		x := replace(^x, n - i - 1, ^x[n - i - 1] - ^tmp[n - i] * ^x[n - i]);
+	});
+
+	^x;
+}
+
+getCurveControlPoints(knots : [Point]) -> Pair<[Point], [Point]> {
+	n = length(knots) - 1;
+
+	if (n < 1)
+		Pair([], [])
+	else if (n == 1) {
+		// Special case: Bezier curve should be a straight line.
+		// 3P1 = 2P0 + P3
+		px = (2.0 * knots[0].x + knots[1].x) / 3.0;
+		py = (2.0 * knots[0].y + knots[1].y) / 3.0;
+
+		// P2 = 2P1 – P0
+		Pair([Point(px, py)], [Point(2.0 * px - knots[0].x, 2.0 * py - knots[0].y)])
+	} else {
+		// Calculate first Bezier control points
+		// Right hand side vector
+		rhs = ref arrayRepeat(0.0, n);
+
+		// Set right hand side X values
+		fori(1, n - 2, \i -> {
+			rhs := replace(^rhs, i, 4.0 * knots[i].x + 2.0 * knots[i + 1].x);
+		});
+		rhs := replace(^rhs, 0, knots[0].x + 2.0 * knots[1].x);
+		rhs := replace(^rhs, n - 1, (8.0 * knots[n - 1].x + knots[n].x) / 2.0);
+
+		// Get first control points X-values
+		x = getFirstControlPoints(^rhs);
+
+		// Set right hand side Y values
+		fori(1, n - 2, \i -> {
+			rhs := replace(^rhs, i, 4.0 * knots[i].y + 2.0 * knots[i + 1].y);
+		});
+		rhs := replace(^rhs, 0, knots[0].y + 2.0 * knots[1].y);
+		rhs := replace(^rhs, n - 1, (8.0 * knots[n - 1].y + knots[n].y) / 2.0);
+
+		// Get first control points Y-values
+		y = getFirstControlPoints(^rhs);
+
+		// Fill output arrays.
+		firstControlPoints = ref arrayRepeat(zeroPoint, n);
+		secondControlPoints = ref ^firstControlPoints;
+
+		fori(0, n - 1, \i -> {
+			firstControlPoints := replace(^firstControlPoints, i, Point(x[i], y[i]));
+			if (i < n - 1)
+				secondControlPoints :=
+					replace(^secondControlPoints, i,
+						Point(2.0 * knots[i + 1].x - x[i + 1],
+							2.0 * knots[i + 1].y - y[i + 1]))
+			else
+				secondControlPoints :=
+					replace(^secondControlPoints, i,
+						Point((knots[n].x + x[n - 1]) / 2.0,
+							(knots[n].y + y[n - 1]) / 2.0))
+		});
+
+		Pair(^firstControlPoints, ^secondControlPoints)
+	}
+}
+
+getChartColor(colors : [MColor], i : int) -> MColor {
+	(if (length(colors) == 0) standartMChartColors else colors)
+		|> (\arr -> arr[i % length(arr)])
+}
+
+TShiftScale(factor : Transform<Factor>, form : Tropic) -> Tropic {
+	TCopySize2(form, \sz, tr -> TShift(tr, TScale(factor, sz)));
+}
+
+MLegacyChart2T(manager : MaterialManager, parent : MFocusGroup, m : MChart, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	state = makeMLegacyChartState(manager, parent, const(m.data), m.style);
+
+	drawMChart(state, m2t)
+	|> (\f ->
+		eitherMap(
+			tryExtractStruct(m.style, WidthHeight(-1., -1.)),
+			\ff ->
+				if (ff.width > 0.0) {
+					if (ff.height > 0.0) {
+						TAvailable(f, TSized(const(ff)));
+					} else {
+						TAvailableWidth(f, const(ff.width));
+					}
+				} else if (ff.height > 0.0) {
+					TAvailableHeight(f, const(ff.height));
+				} else {
+					f;
+				},
+			f
+		)
+	)
+}
+
+makeMLegacyChartState(manager : MaterialManager, parent : MFocusGroup, data : Transform<MChartData>, style : [MChartStyle]) -> MChartState {
+	chartWH = makeWH();
+	positionScale = make(zeroPositionScale);
+
+	title = extractStruct(style, MChartTitle("")).title;
+	subtitle = extractStruct(style, MChartSubtitle("")).subtitle;
+	textColor = contrastingMColor(parent);
+	escapeHTML = extractStruct(style, EscapeHTML(true)).escape;
+	inCard = contains(style, MInCard());
+	isCurve = contains(style, MChartCurve());
+	showLegend = !contains(style, MHideLegend());
+	hidePoints = contains(style, MHidePoints());
+	hideHover = contains(style, MHideValueHover());
+	valuesPostfix = extractStruct(style, MValuesPostfix("")).postfix;
+	tooltipValuesPostfix = extractStruct(style, MTooltipValuesPostfix(valuesPostfix)).postfix;
+	type = const(extractStruct(style, MChartType([])).chartType);
+	center = Pair(const(extractStruct(style, MXAxisValuesMove(0.0)).value), const(extractStruct(style, MYAxisValuesMove(0.0)).value));
+	valuesLabels = maybeMap(tryExtractStruct(style, MValuesLabels(false)), \vl -> vl.withPostfix);
+	emptyMessage = extractStruct(style, MEmptyMessage(MText(_("No Data"), [MTitle()]))).message;
+	lineLabels = contains(style, MLineLabels());
+	barWidth = extractStruct(style, MBarWidth(4., 1.));
+	onClick = extractStruct(style, MOnChartClick([])).click;
+
+	linesStyles = extractStruct(style, MChartLinesStyle([])).style;
+	linesColors =
+		concat(
+			extractStruct(style, MLinesColors([])).colors,
+			mapi(linesStyles, \i, st -> extractStruct(st, getChartColor(standartMChartColors, i)))
+		);
+	linesVisible = [];//map(extractStruct(style, MChartVisible([])).visible, \v -> make(v));
+
+	verticalLines = const(contains(style, MShowVerticalLines()));
+	horizontalLines = const(contains(style, MShowHorizontalLines()));
+
+	xAxisIsDate = const(contains(style, MXAxisIsDate()));
+	xAxisVertical = const(contains(style, MXAxisVertical()));
+	xAxisValuesVisible = const(true);//const(!contains(style, MHideXAxisValues()));
+	xAxisValuesOnLines = const(false);//const(contains(style, MXAxisValuesOnLines()));
+	xAxisCaption = fselect(data, FLift(\d -> elementAt(d.columns, 0, "")));
+		// eitherFn(
+		// 	tryExtractStruct(style, MXAxisCaption("")),
+		// 	\c -> const(c.caption),
+		// 	\ -> fselect(data, FLift(\d -> elementAt(d.columns, 0, "")))
+		// );
+
+	xAxisValuesStyle = const([]);//const(extractStruct(style, MXAxisValuesStyle([])).style);
+	yAxisValuesVisible = const(!contains(style, MHideYAxisValues()));
+	yAxisValuesOnLines = const(contains(style, MYAxisValuesOnLines()));
+	yAxisCaption = const(extractStruct(style, MYAxisCaption("")).caption);
+
+	chartData =
+		fselect2(data, xAxisIsDate, FLift2(\d : MChartData, xid -> {
+			maxDataLength = either(maxA(map(d.data, length)), 0);
+
+			MChartData(
+				generate(0, max(maxDataLength, length(d.columns)), \j -> elementAt(d.columns, j, "")),
+				d.rows,
+				generate(0, max(length(d.data), length(d.rows)), \i ->
+					generate(0, max(maxDataLength, length(d.columns)), \j ->
+						if (length(d.data) > i && length(d.data[i]) > j) {
+							if (xid && j == 0) date2stamp(stamp2date(d.data[i][j])) else d.data[i][j];
+						} else {
+							if (j == 0) i2d(i + 1) else 0.0;
+						}
+					)
+				)
+			)
+		}));
+	chartDataRows : Transform<[Pair<double, string>]> = fselect(chartData, FLift(\d : MChartData -> mapi(d.data, \i, dd -> Pair(dd[0], d.rows[i]))));
+
+	dataV = fgetValue(chartData).data;
+
+	xMin = either(minA(map(dataV, \r -> r[0])), 0.0);
+	xMax = either(maxA(map(dataV, \r -> r[0])), 0.0);
+
+	yMin = either(minA(map(dataV, \r -> either(minA(map(tail(r), \ry -> if (ry != NO_VALUE) ry else doubleMax)), 0.0))), 0.0);
+	yMax = either(maxA(map(dataV, \r -> either(maxA(tail(r)), 1.0))), 0.0);
+
+	xAxisGridStep = const(extractStruct(style, MXAxisGridStep(1.0)).step);
+	yAxisGridStep = const(extractStruct(style, MYAxisGridStep(stepLength(yMax - yMin, false))).step);
+
+	xAxisScope =
+		extractStruct(
+			style,
+			MXAxisScope(
+				if (xMin < 0.0)
+					dceil(-xMin / fgetValue(xAxisGridStep) + 1.0) * -fgetValue(xAxisGridStep)
+				else
+					dfloor(xMin / fgetValue(xAxisGridStep) - 1.0) * fgetValue(xAxisGridStep),
+				dceil(xMax / fgetValue(xAxisGridStep) + 1.0) * fgetValue(xAxisGridStep)
+			)
+		)
+		|> (\xAxisScope -> Range(const(xAxisScope.xAxisMin), const(xAxisScope.xAxisMax)));
+	yAxisScope =
+		extractStruct(
+			style,
+			MYAxisScope(
+				if (yMin < 0.0)
+					dceil(-yMin / fgetValue(yAxisGridStep) + 0.25) * -fgetValue(yAxisGridStep)
+				else
+					dfloor(yMin / fgetValue(yAxisGridStep) - 0.25) * fgetValue(yAxisGridStep),
+				dceil(yMax / fgetValue(yAxisGridStep) + 0.25) * fgetValue(yAxisGridStep)
+			)
+		)
+		|> (\yAxisScope -> Range(const(yAxisScope.yAxisMin), const(yAxisScope.yAxisMax)));
+
+	xAxisScale = fdivide(fwidth(chartWH), fsubtract(xAxisScope.max, xAxisScope.min));
+	yAxisScale = fdivide(fheight(chartWH), fsubtract(yAxisScope.max, yAxisScope.min));
+
+	xAxisValue2Point = \v : Transform<double> -> fmultiply(fsubtract(v, xAxisScope.min), xAxisScale);
+	yAxisValue2Point = \v : Transform<double> -> fmultiply(fsubtract(yAxisScope.max, v), yAxisScale);
+
+	xAxisValue2Text = \v : Transform<double> -> fselect3(chartDataRows, v, xAxisIsDate, \d, vv, xid ->
+		eitherFn(
+			find(d, \dd -> dd.first == vv),
+			\dd -> dd.second,
+			\ ->
+				if (xid)
+					getDateString(stamp2date(vv), false, false, false)
+				else
+					d2st(vv, 2)
+		)
+	);
+	yAxisValue2Text = \v : Transform<double> -> fselect(v, FLift(\vv -> d2st(vv, 2)));
+
+	xAxisVisible =
+		fselect3(xAxisScope.min, xAxisScope.max, center.first, \xmin, xmax, xcenter ->
+			xcenter >= xmin && xcenter <= xmax
+		);
+	yAxisVisible =
+		fselect3(yAxisScope.min, yAxisScope.max, center.second, \ymin, ymax, ycenter ->
+			ycenter >= ymin && ycenter <= ymax
+		);
+
+	xAxisValues =
+		fselect3(xAxisScope.min, xAxisScope.max, xAxisGridStep, \xmin, xmax, step ->
+			generateWhile2(xmin, \i -> i <= xmax, \i -> i + step, idfn)
+		);
+	yAxisValues =
+		fselect3(yAxisScope.min, yAxisScope.max, yAxisGridStep, \ymin, ymax, step ->
+			generateWhile2(ymin, \i -> i <= ymax, \i -> i + step, idfn),
+		);
+
+	xAxisValuesTranslate = extractStruct(style, MXAxisValuesTranslate(const(Point(0.0, 0.0)))).point;
+	yAxisValuesTranslate = const(Point(0.0, 0.0));//extractStruct(style, MYAxisValuesTranslate(const(Point(0.0, 0.0)))).point;
+
+	columns =
+		fselect3(data, type, xAxisIsDate, \d, t, xid -> {
+			barCount = countA(t, eq(MBarChart())) - 1;
+
+			generate(1, length(d.data[0]), \i -> {
+				columnTitle = d.columns[i];
+				barChart = elementAt(t, i - 1, MLineChart()) == MBarChart();
+				filteredData = filtermapi(d.data, \j, r -> if (r[i] != NO_VALUE) Some(Pair(j, Point(r[0], r[i]))) else None());
+				color = getChartColor(linesColors, i - 1);
+				lineStyle = if (length(linesStyles) > 0) linesStyles[(i - 1) % length(linesStyles)] else [];
+				opacity = extractStruct(lineStyle, FillOpacity(1.0)).opacity;
+				pointLabelM = tryExtractStruct(lineStyle, MPointLabel(\__ -> ""));
+				pointMarkerM = tryExtractStruct(lineStyle, MPointMarker(\__, __ -> TEmpty()));
+				pointLabelStyle = extractStruct(lineStyle, MPointLabelStyle([MFill(color)])).style;
+
+				controlPoints =
+					if (!barChart && isCurve) {
+						getCurveControlPoints(map(filteredData, \fd -> fd.second));
+					} else {
+						Pair([], []);
+					};
+
+				points =
+					mapi(filteredData, \j, dd -> {
+						id = dd.first;
+						value = dd.second;
+						pointx = xAxisValue2Point(const(value.x));
+						pointy = yAxisValue2Point(const(value.y));
+
+						pointLabel =
+							maybeMap(
+								pointLabelM,
+								\pointLabel ->
+									Pair(pointLabel.getLabel(value.y), pointLabelStyle)
+							)
+							|> (\pointLabel ->
+								if (lineLabels && j == length(filteredData) - 1)
+									eitherFn(
+										pointLabel,
+										\pl -> Some(Pair(pl.first + " " + columnTitle, pl.second)),
+										\ -> Some(Pair(columnTitle, pointLabelStyle))
+									)
+								else
+									pointLabel
+							);
+						pointMarker =
+							maybeMap(
+								pointMarkerM,
+								\pointMarker -> pointMarker.getMarker(i, value.y)
+							);
+
+						MChartPoint(
+							id,
+							if (length(d.rows) > id)
+								d.rows[id]
+							else if (xid)
+								getDateString(stamp2date(value.x), false, false, false)
+							else
+								d2st(value.x, 2),
+							value,
+							fpoint(pointx, pointy),
+							if (barChart) {
+								fselect3(
+									pointx,
+									pointy,
+									fheight(chartWH),
+									\px, py, hgt -> rectangle(px - barWidth.width / 2., py, barWidth.width, hgt - py)
+								)
+							} else if (j == 0) {
+								fselect2(
+									pointx,
+									pointy,
+									FLift2(\px, py -> [MoveTo(px, py), LineTo(px, py)])
+								)
+							} else if (isCurve) {
+								a : Transform<[StaticGraphicOp]> = fselect4(
+									pointx,
+									pointy,
+									xAxisValue2Point(const(controlPoints.first[j - 1].x + (controlPoints.second[j - 1].x - controlPoints.first[j - 1].x) * 3.0 / 2.0)),
+									yAxisValue2Point(const(controlPoints.first[j - 1].y + (controlPoints.second[j - 1].y - controlPoints.first[j - 1].y) * 3.0 / 2.0)),
+									\px, py, xc, yc -> [CubicBezierTo(px, py, xc, yc)]
+								);
+								a
+							} else {
+								fselect2(
+									pointx,
+									pointy,
+									FLift2(\px, py -> [LineTo(px, py)])
+								)
+							},
+							make(false),
+							make(false),
+							if (barChart) {
+								const([MChartHoverData(i - 1, columnTitle, d2st(value.y, 2) + tooltipValuesPostfix, getChartColor(linesColors, i - 1))])
+							} else {
+								fselect(yAxisScale, FLift(\v ->
+									map(getPointNeighbours(d.data[id], 6.0 / v, i, []), \pn ->
+										MChartHoverData(pn - 1, d.columns[pn], d2st(d.data[id][pn], 2) + tooltipValuesPostfix, getChartColor(linesColors, pn - 1))
+									)
+								))
+							},
+							pointLabel,
+							pointMarker,
+							if (length(onClick) > i - 1) {
+								Some(\ -> onClick[i - 1](id))
+							} else {
+								None();
+							}
+						)
+					});
+
+				if (barChart) {
+					MBarChartColumnState(
+						columnTitle,
+						valuesPostfix,
+						make(valuesLabels),
+						color,
+						const(true),
+						elementAt(linesVisible, i - 1, make(true)),
+						make(false),
+						const(false),
+						make(false),
+						make(true),
+						const(
+							Point(
+								(i2d(countA(subrange(t, 0, i - 1), \ct -> ct == MBarChart())) - i2d(barCount) / 2.) * (barWidth.width + barWidth.gapWidth),
+								0.0
+							)
+						),
+						points,
+						[MFill(color), FillOpacity(opacity), StrokeOpacity(0.)],
+						barWidth
+					)
+				} else {
+					lineWidth = extractStruct(lineStyle, MWidth(2.0)).width;
+					lineType = extractStruct(lineStyle, MLineType(MLineSolid())).type;
+
+					MLineChartColumnState(
+						columnTitle,
+						valuesPostfix,
+						make(valuesLabels),
+						color,
+						const(true),
+						elementAt(linesVisible, i - 1, make(true)),
+						make(false),
+						const(false),
+						make(false),
+						make(true),
+						const(zeroPoint),
+						points,
+						None(),
+						lineType,
+						MLineTypeChanges([]),
+						isCurve,
+						[MStroke(color), StrokeOpacity(opacity), StrokeWidth(lineWidth)],
+						hidePoints || contains(lineStyle, MHidePoints()),
+						lineWidth,
+						[MFill(color), FillOpacity(opacity)]
+					);
+				}
+			})
+		});
+
+	MChartState(
+		manager,
+		parent,
+
+		chartWH,
+		positionScale,
+
+		title,
+		subtitle,
+		textColor,
+		escapeHTML,
+		inCard,
+		showLegend,
+		valuesPostfix,
+		emptyMessage,
+
+		MChartAxisState(
+			xAxisCaption,
+			xAxisIsDate,
+			verticalLines,
+			xAxisGridStep,
+			xAxisScope,
+			xAxisScale,
+			Range(make(0.0), make(1.0)),
+			const(false),
+			center.first,
+			xAxisVisible,
+			const(true),
+
+			xAxisValuesVisible,
+			fand(
+				xAxisValuesOnLines,
+				xAxisVisible
+			),
+			xAxisVertical,
+			xAxisValuesTranslate,
+			xAxisValuesStyle,
+
+			xAxisValues,
+			xAxisValue2Point,
+			xAxisValue2Text
+		),
+
+		MChartAxisState(
+			yAxisCaption,
+			const(false),
+			horizontalLines,
+			yAxisGridStep,
+			yAxisScope,
+			yAxisScale,
+			Range(make(0.0), make(1.0)),
+			const(false),
+			center.second,
+			yAxisVisible,
+			const(true),
+
+			yAxisValuesVisible,
+			yAxisValuesOnLines,
+			const(false),
+			yAxisValuesTranslate,
+			const([]),
+
+			yAxisValues,
+			yAxisValue2Point,
+			yAxisValue2Text
+		),
+
+		columns
+	);
+}
+
+createLineParts(changes : [MLineTypeChange], points0 : [MChartPoint], defType : MMLineType) -> [MLinePart] {
+	points =
+		if (length(points0) == 0) []
+		else {
+			firstPoint = points0[0];
+			MChartPoint(firstPoint with graphicsData =
+				fselect(firstPoint.position, FLift(\pos -> [MoveTo(pos.x, pos.y)])),
+			)
+			|> (\fp -> concat([fp], tail(points0)))
+		}
+
+	if (length(changes) == 0) [MLinePart(points, defType)]
+	else {
+		changePoint = changes[0];
+		changePointIdx = changePoint.index;
+		if (changePointIdx >= length(points)) [MLinePart(points, defType)]
+		else concat(
+			[MLinePart(take(points, changePointIdx + 1), defType)],
+			createLineParts(
+				map(tail(changes), \ch -> MLineTypeChange(ch.index - changePointIdx, ch.type)),
+				tailFrom(points, changePointIdx),
+				changePoint.type
+			)
+		)
+	}
+}

@@ -6,7 +6,7 @@
 #include <iostream>
 
 QGLTextEdit::QGLTextEdit(QGLRenderSupport * owner_, QWidget *parent, GLTextClip * text_clip_) :
-    QTextEdit(parent), owner(owner_), text_clip(text_clip_)
+    QTextEdit(parent), text_clip(text_clip_), owner(owner_)
 {
     QGLTextEdit::setViewportMargins(-4, -3, 4, 3);
     QGLTextEdit::setFrameStyle(QFrame::NoFrame);
@@ -203,6 +203,7 @@ void QGLTextEdit::onTextChange() {
         case GLTextClip::AlignRight:
             QGLTextEdit::setAlignment(Qt::AlignRight | Qt::AlignTop);
             break;
+        default: break;
     }
 
     QTextEdit::blockSignals(false);

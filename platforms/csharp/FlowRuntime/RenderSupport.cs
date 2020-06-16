@@ -194,9 +194,6 @@ namespace Area9Innovation.Flow
 		public virtual Object setWordWrap(Object stg, bool val) {
 			return null;
 		}
-		public virtual Object setDoNotInvalidateStage(Object stg, bool val) {
-			return null;
-		}
 		public Object setNumeric(Object stg, bool val) {
 			return setTextInputType(stg, "number");
 		}
@@ -309,7 +306,7 @@ namespace Area9Innovation.Flow
 		public virtual Object makeGlow(double a,double b,int c, double d,bool e) {
 			return null;
 		}
-		public virtual Object makePicture(String a,bool b,Func2 c,Func1 d,bool e) {
+		public virtual Object makePicture(String a,bool b,Func2 c,Func1 d,bool e, String alt) {
 			return null;
 		}
 		public virtual Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1 n,Func1 s) {

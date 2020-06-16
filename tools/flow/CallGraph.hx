@@ -255,17 +255,17 @@ class CallGraph {
 				traverse(index, out);
 			case VarRef(name, pos):
 				out.push(VarUse(name));
-			case Field(call, name, pos):
-				traverse(call, out);
+			case Field(cll, name, pos):
+				traverse(cll, out);
 			case RefTo(value, pos):
 				traverse(value, out);
 			case Pointer(index, pos):
-			case Deref(pointer, pos):
-				traverse(pointer, out);
-			case SetRef(pointer, value, pos):
-				traverse2(pointer, value, e, out);
-			case SetMutable(pointer, field, value, pos):
-				traverse2(pointer, value, e, out);
+			case Deref(pnt, pos):
+				traverse(pnt, out);
+			case SetRef(pnt, value, pos):
+				traverse2(pnt, value, e, out);
+			case SetMutable(pnt, field, value, pos):
+				traverse2(pnt, value, e, out);
 			case Cast(value, fromtype, totype, pos):
 				traverse(value, out);
 				traverseType(fromtype, out);
@@ -285,11 +285,11 @@ class CallGraph {
 				traverseType(type, out);
 			case Closure(body, environment, pos):
 				traverse(body, out);
-			case Flow.Call(closure, arguments, pos):
-				switch (closure) {
+			case Flow.Call(clos, arguments, pos):
+				switch (clos) {
 					case VarRef(n, pos) :
 						out.push(Call(n));
-					default: traverse(closure, out);
+					default: traverse(clos, out);
 					};
 				traverseList(arguments, e, out);
 			case Sequence(statements, pos):

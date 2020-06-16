@@ -1,24 +1,26 @@
 import tools/flowc/flowc_typecheck;
+import tools/flowc/incremental/fi2flowsrc;
 
 export {
 
-	// Description of a symbol (lexical uint) in flow source: 
-	// -- its scope (global, module or local)
-	// -- its kind (name, type or field)
+	// Description of a symbol (lexical uint) in flow source.
 	FcSymbolNature(
-		scope : FcSymbolScope,
-		kind : FcSymbolKind
+		name   : string,
+		module : string,        // module, where a symbol is defined
+		scope  : FcSymbolScope, // scope (global, module or local)
+		kind   : FcSymbolKind,  // kind (name, type or field)
+		cached : Maybe<FcCacheNamed>
 	);
 
 	// Enumeration type for classes of renamed entities: var/function names, types and struct fields
-	FcSymbolKind ::= FcNameSymbol, FcTypeSymbol, FcFieldSymbol;
-		FcNameSymbol();
-		FcTypeSymbol();
-		FcFieldSymbol(struct : string);
+	FcSymbolKind ::= FcVarSymbol, FcTypeSymbol, FcFieldSymbol;
+		FcVarSymbol(type : FiType);
+		FcTypeSymbol(type : FiType);
+		FcFieldSymbol(structType : FiTypeName, fieldType : FiType);
 
 	// Enumeration type for classes of symbol visibility scope.
 	FcSymbolScope ::= FcGlobalScope, FcModuleScope, FcLocalScope;
-		FcGlobalScope(defModulePath : string);
+		FcGlobalScope();
 		FcModuleScope();
 		FcLocalScope();
 
@@ -30,27 +32,91 @@ export {
 	// 1) first: symbol is global, i.e. may be shared with other modules (stays in export)
 	// 2) second: symbol is local, i.e. is defined in a scope of some expression
 	// When symbol is not global or local, it is a toplevel, but not exported: module-scope
-	symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string) -> Maybe<FcSymbolNature>;
+	//symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string) -> Maybe<FcSymbolNature>;
+	fcSymbolNature2s(n : FcSymbolNature) -> string;
+
+	// Uses global name cache
+	fastSymbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> Maybe<FcSymbolNature>;
 
 	// Markup all syntactic structures in AST with their starts.
 	fimoduleStarts2fiall(module : FiModule) -> Tree<int, Set<FiAll>>;
+
+	// Markup all syntactic topleve declarations in AST with their starts.
+	fimoduleStarts2finamed(module : FiModule) -> Tree<int, FiNamed>; 
 
 	// Returns the underlying typename, unwrapping it from functions and refs.
 	unrollTypeToTypeName(type : FiType) -> string;
 
 	// Maps start positions to the appropriate program entities.
 	start2fiall(fiany : FiAll, acc : Tree<int, Set<FiAll>>) -> Tree<int, Set<FiAll>>;
+
+	fiExpOrCaseChildren(ex : FiExpOrCase) -> [FiExpOrCase];
+	fiExpOrCaseTypes(ex : FiExpOrCase) -> [FiType];
 }
 
+fastSymbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> Maybe<FcSymbolNature> {
+	switch (fcLookupNameInCache(globEnv, name)) {
+		Some(symbol): {
+			switch (symbol.named) {
+				FiDeclaration(): {
+					decl = cast(symbol.named : FiNamed -> FiDeclaration);
+					if (symbol.exported) {
+						Some(FcSymbolNature(name, symbol.module, FcGlobalScope(), FcVarSymbol(decl.type), Some(symbol)));
+					} else {
+						Some(FcSymbolNature(name, symbol.module, FcModuleScope(), FcVarSymbol(decl.type), Some(symbol)));
+					}
+				}
+				FiStructOrUnion(): {
+					structOrUnion = cast(symbol.named : FiNamed -> FiStructOrUnion);
+					type = FiTypeName(structOrUnion.name, 
+						switch (structOrUnion) { 
+							FiTypeStruct(__, tps, __,__): tps;
+							FiTypeUnion(__, tps, __,__): tps;
+						}
+					);
+					if (symbol.exported) {
+						Some(FcSymbolNature(name, symbol.module, FcGlobalScope(), FcTypeSymbol(type), Some(symbol)));
+					} else {
+						Some(FcSymbolNature(name, symbol.module, FcModuleScope(), FcTypeSymbol(type), Some(symbol)));
+					}
+				}
+			}
+		}
+		None(): {
+			fcModule = parseAndDesugarFile(config, globEnv, config.flowfile);
+			fiModule = fcmodule2fiWithErrorHandler(initFcTypeEnvLocal(), fcModule, nop2);
+			switch (fastGuessSymbolFieldOrVar(globEnv, config, fiModule, name, line, col)) {
+				Some(kind) : {
+					scope : FcSymbolScope = switch (kind) {
+						FcVarSymbol(__): FcLocalScope();
+						FcTypeSymbol(__): FcLocalScope();
+						FcFieldSymbol(structType, fieldType): {
+							switch (fcLookupNameInCache(globEnv, structType.name)) {
+								Some(struct): {
+									if (struct.exported) FcGlobalScope() else FcModuleScope();
+								}
+								None(): FcModuleScope();
+							}
+						}
+					}
+					Some(FcSymbolNature(name, config.flowfile, scope, kind, None()));
+				}
+				None(): None();
+			}
+		}
+	}
+}
+/*
 symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string) -> Maybe<FcSymbolNature> {
 	ensureIncrementalDirectoryExists(config);
-	prog_error = parseAndTypecheckFlowFile(config, globEnv, config.flowfile);
+	prog_error = parseAndTypecheckProgram(config, globEnv, config.flowfile);
 	prog = prog_error.first;
 	error = prog_error.second;
 	if (error == 0) {
 		line_str = getConfigParameter(config.config, "exp-line");
 		column_str = getConfigParameter(config.config, "exp-column");
 		findSymbolNature(
+			globEnv,
 			prog, 
 			config.flowfile,
 			symbol, 
@@ -62,7 +128,7 @@ symbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string
 	}
 }
 
-findSymbolNature(prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolNature> {
+findSymbolNature(env : FcTypeEnvGlobal, prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolNature> {
 	decl2module = \decl : FiDeclaration -> {
 		mod_name = switch (decl) {
 			FiFunctionDec(name, __, __, __, __):       lookupTreeDef(prog.names.function2module, name, "");
@@ -85,58 +151,64 @@ findSymbolNature(prog : FiProgram, file : string, symbol : string, line : int, c
 	switch (lookupTree(prog.names.toplevel, symbol)) {
 		Some(decl): {
 			module = decl2module(decl);
-			Some(FcSymbolNature(
+			Some(FcSymbolNature(symbol, 
+				module.fileinfo.flowfile,
 				if (exists(module.exports, \n -> n == symbol)) {
-					FcGlobalScope(module.fileinfo.fullpath);
+					FcGlobalScope();
 				} else {
 					FcModuleScope()
 				},
-				FcNameSymbol()
+				FcVarSymbol(),
+				None()
 			));
 		}
 		None(): 
 			switch (lookupTree(prog.names.structs, symbol)) {
 				Some(struct): {
 					module = type2module(struct);
-					Some(FcSymbolNature(
+					Some(FcSymbolNature(symbol, 
+						module.fileinfo.flowfile,
 						if (exists(module.exports, \n -> n == symbol)) {
-							FcGlobalScope(module.fileinfo.fullpath)
+							FcGlobalScope()
 						} else {
 							FcModuleScope()
 						}, 
-						FcTypeSymbol()
+						FcTypeSymbol(),
+						None()
 					));
 				}
 				None(): 
 					switch (lookupTree(prog.names.unions, symbol)) {
 						Some(union): {
 							module = type2module(union);
-							Some(FcSymbolNature(
+							Some(FcSymbolNature(symbol,
+								module.fileinfo.flowfile,
 								if (exists(module.exports, \n -> n == symbol)) {
-									FcGlobalScope(module.fileinfo.fullpath)
+									FcGlobalScope()
 								} else {
 									FcModuleScope()
 								}, 
-								FcTypeSymbol()
+								FcTypeSymbol(),
+								None()
 							));
 						}
 						None(): {
 							// May be a variable/function or a field name.
-							switch (guessSymbolFieldOrVar(prog, file, symbol, line, col)) {
+							switch (guessSymbolFieldOrVar(env, prog, file, symbol, line, col)) {
 								Some(kind) : {
 									scope : FcSymbolScope = switch (kind) {
-										FcNameSymbol():  FcLocalScope();
-										FcTypeSymbol():  FcLocalScope();
-										FcFieldSymbol(struct): {
-											module = struct2module(struct);
+										FcVarSymbol(__): FcLocalScope();
+										FcTypeSymbol(__): FcLocalScope();
+										FcFieldSymbol(structType, structName): {
+											module = struct2module(structType.name);
 											if (exists(module.exports, \n -> n == struct)) {
-												FcGlobalScope(module.fileinfo.fullpath)
+												FcGlobalScope()
 											} else {
 												FcModuleScope()
 											};
 										}
 									}
-									Some(FcSymbolNature(scope, kind))
+									Some(FcSymbolNature(symbol, file, scope, kind, None()))
 								}
 								None(): None();
 							}
@@ -146,13 +218,13 @@ findSymbolNature(prog : FiProgram, file : string, symbol : string, line : int, c
 	}
 }
 
-guessSymbolFieldOrVar(prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
+guessSymbolFieldOrVar(env : FcTypeEnvGlobal, prog : FiProgram, file : string, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
 	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
 	relative = trimFlowfile(file, prog.config.includes, workingDir);
 	switch (lookupTree(prog.modules, relative)) {
 		Some(module): {
 			starts2fiall = fimoduleStarts2fiall(module);
-			code = getFileContent(module.fileinfo.fullpath);
+			code = fcFileSource(env, module.fileinfo.fullpath);
 			resolver = makeLineResolver(code);
 			index = findLineIndex(resolver, line, col);
 			switch (treeIntervalSearch(starts2fiall, index)) {
@@ -164,7 +236,7 @@ guessSymbolFieldOrVar(prog : FiProgram, file : string, symbol : string, line : i
 							None(): {
 								switch (fiall) {
 									FiVar(name,__,__):
-										if (name == symbol) Some(FcNameSymbol()) else acc;
+										if (name == symbol) Some(FcVarSymbol()) else acc;
 									FiCallPrim(op, es, __, __): {
 										name = if (length(es) > 0) unrollTypeToTypeName(fiExpType(es[0])) else "";
 										if (name == "") acc else {
@@ -176,6 +248,9 @@ guessSymbolFieldOrVar(prog : FiProgram, file : string, symbol : string, line : i
 												default: acc;
 											}
 										}
+									}
+									FiLet(name,__,__,__,__,__): {
+										if (name == symbol) Some(FcVarSymbol()) else acc;
 									}
 									FiTypeStruct(struct, __, args, __): {
 										if (exists(args, \arg -> arg.name == symbol)) {
@@ -191,17 +266,75 @@ guessSymbolFieldOrVar(prog : FiProgram, file : string, symbol : string, line : i
 					)
 				}
 				None(): {
-					fcPrintln("program entity " + symbol + " at " + i2s(line) + " line and " + i2s(col) + " column is not found");
+					//fcPrintln("program entity " + symbol + " at " + i2s(line) + " line and " + i2s(col) + " column is not found", prog.config.threadId);
 					None();
 				}
 			}
 		}
 		None(): {
-			fcPrintln("module = " + relative + " not found");
+			//fcPrintln("module = " + relative + " not found", prog.config.threadId);
 			None();
 		}
 	}
 }
+*/
+fastGuessSymbolFieldOrVar(env : FcTypeEnvGlobal, config : CompilerConfig, module : FiModule, symbol : string, line : int, col : int) -> Maybe<FcSymbolKind> {
+	starts2fiall = fimoduleStarts2fiall(module);
+	code = fcFileSource(env, module.fileinfo.fullpath);
+	resolver = makeLineResolver(code);
+	index = findLineIndex(resolver, line, col);
+	maybeBind(treeIntervalSearch(starts2fiall, index),
+		\fiallSet -> {
+			accum : Maybe<FcSymbolKind> = None();
+			foldSet(fiallSet, accum, \acc, fiall ->
+				switch (acc) {
+					Some(__): acc;
+					None(): {
+						switch (fiall) {
+							FiVar(name,type,__): {
+								if (name == symbol) Some(FcVarSymbol(type)) else acc;
+							}
+							FiCallPrim(op, es, f_tp, __): {
+								if (length(es) == 0) acc else {
+									//name = if (length(es) > 0) unrollTypeToTypeName(fiExpType(es[0])) else "";
+									s_tp = fiExpType(es[0]);
+									//if (!unrolledNameIsEq(s_tp, name)) acc else {
+										switch (s_tp) {
+											FiTypeName(__, typars): {
+												switch (op) {
+													FcFieldPrim(field): {
+														if (field == symbol) Some(FcFieldSymbol(s_tp, f_tp)) else acc
+													}
+													FcSetMutablePrim(field): {
+														if (field == symbol) Some(FcFieldSymbol(s_tp, f_tp)) else acc
+													}
+													default: acc;
+												}
+											}
+											default: acc;
+										}
+									//}
+								}
+							}
+							FiLet(name,type,__,__,__,__): {
+								if (name == symbol) Some(FcVarSymbol(type)) else acc;
+							}
+							FiTypeStruct(struct, typars, args, __): {
+								switch (find(args, \arg -> arg.name == symbol)) {
+									Some(arg):
+										Some(FcFieldSymbol(FiTypeName(struct, typars), arg.type));
+									None(): acc;
+								}
+							}
+							default: acc;
+						}
+					}
+				}
+			)
+		}
+	);
+}
+
 
 fimoduleStarts2fiall(module : FiModule) -> Tree<int, Set<FiAll>> {
 	fold(module.unions, 
@@ -219,6 +352,28 @@ fimoduleStarts2fiall(module : FiModule) -> Tree<int, Set<FiAll>> {
 			\a, struct -> start2fiall(struct, a)
 		), 
 		\a, union ->start2fiall(union, a)
+	)
+}
+
+fimoduleStarts2finamed(module : FiModule) -> Tree<int, FiNamed> {
+	add_named = \named, s, ac -> {
+		if (s >= 0) setTree(ac, s, named) else ac;
+	}
+	fold(module.unions, 
+		fold(module.structs, 
+			fold(module.natives, 
+				fold(module.globalVars, 
+					fold(module.functions, 
+						makeTree(), 
+						\a, fn -> add_named(fn, fn.defiStart, a)
+					), 
+					\a, gv -> add_named(gv, gv.defiStart, a)
+				), 
+				\a, nt -> add_named(nt, nt.defiStart, a)
+			), 
+			\a, struct -> add_named(struct, struct.start, a)
+		), 
+		\a, union ->add_named(union, union.start, a)
 	)
 }
 
@@ -256,5 +411,72 @@ unrollTypeToTypeName(type : FiType) -> string {
 		FiTypeFunction(__, tp): unrollTypeToTypeName(tp);
 		FiTypeRef(tp):          unrollTypeToTypeName(tp);
 		default:                "";
+	}
+}
+
+fiExpOrCaseChildren(ex : FiExpOrCase) -> [FiExpOrCase] {
+	switch (ex) {
+		FiLambda(__, e, __, __): [e];
+		FiCall(f, es, __, __): concat([f], es);
+		FiLet(__, __, e1, e2, __, __): [e1, e2];
+		FiIf(e1, e2, e3, __, __): [e1, e2, e3];
+		FiSwitch(e, __, cs, __, __): concat([e], cs);
+		FiCase(__, __, e, __): [e];
+		FiCast(e, __, __, __, __): [e];
+		FiSeq(es, __, __): es;
+		FiCallPrim(__, es, __, __): es;
+		FiVar(__, __,__):  [];
+		FiString(__, __):  [];
+		FiBool(__, __):    [];
+		FiDouble(__, __):  [];
+		FiVoid(__):        [];
+		FiInt(__, __):     [];
+        FiRequire(__, e, __, __): [e];
+        FiUnsafe(__, fb, __, __): [fb];
+	}
+}
+
+fiExpOrCaseTypes(ex : FiExpOrCase) -> [FiType] {
+	switch (ex) {
+		FiLambda(__,__, t, __): [t];
+		FiCall(__, __, t, __): [t];
+		FiLet(__, t1, __, __, t2, __): [t1, t2];
+		FiIf(___, __, __, t, __): [t];
+		FiSwitch(__, t1, __, t2, __): [t1, t2];
+		FiCase(s,__, e,__): [FiTypeName(s, [])];
+		FiCast(__, t1, t2, t3, __): [t1, t2, t3];
+		FiSeq(__, t, __): [t];
+		FiCallPrim(__, __, t, __): [t];
+		FiVar(__, __,__):  [];
+		FiString(__, __):  [];
+		FiBool(__, __):    [];
+		FiDouble(__, __):  [];
+		FiVoid(__):        [];
+		FiInt(__, __):     [];
+        FiRequire(__,__, t, __): [t];
+        FiUnsafe(__,__, t, __): [t];
+	}
+}
+
+fcSymbolNature2s(n : FcSymbolNature) -> string {
+	"name: " + n.name + ", " + 
+	"mod: " + n.module + ", " +
+	"scope: " + fcSymbolScope2s(n.scope) + ", " +
+	"kind: " + fcSymbolKind2s(n.kind);
+}
+
+fcSymbolKind2s(k : FcSymbolKind) -> string {
+	switch (k) {
+		FcVarSymbol(tp): "var/func: " + prettyFiType(dummyPretty, tp, makeSet());
+		FcTypeSymbol(tp): "type: " + prettyFiType(dummyPretty, tp, makeSet());
+		FcFieldSymbol(s_tp, f_tp): "field of " + s_tp.name + ": " + prettyFiType(dummyPretty, f_tp, makeSet());
+	}
+}
+
+fcSymbolScope2s(s : FcSymbolScope) -> string {
+	switch (s) {
+		FcGlobalScope(): "global";
+		FcModuleScope(): "module";
+		FcLocalScope():  "local";
 	}
 }

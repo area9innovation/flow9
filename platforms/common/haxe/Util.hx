@@ -94,7 +94,7 @@ class Util
 	#if sys
 		Sys.println(s);
 	#elseif (js && (flow_nodejs || nwjs))
-		process.stdout.write(s + "\n");	
+		process.stdout.write(s + "\n");
 		#if nwjs
 			untyped console.log(s);
 		#end
@@ -152,7 +152,7 @@ class Util
 		output.close();
 #end
 	}
-	
+
 	public static function compareStrings(a : String, b : String) {
 		if (a < b) return -1;
 		if (a > b) return  1;
@@ -205,8 +205,10 @@ class Util
 	}
 
 	public static function isMouseEventName(event : String) : Bool {
-		return event == "mouseout" || event == "mousedown" || event == "mousemove" || 
-			   event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup" || 
+		return event == "pointerdown" || event == "pointerup" || event == "pointermove" ||
+			   event == "pointerover" || event == "pointerout" ||
+			   event == "mouseout" || event == "mousedown" || event == "mousemove" ||
+			   event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup" ||
 			   event == "mousemiddledown" || event == "mousemiddleup" ||
 			   event == "touchstart" || event == "touchmove" || event == "touchend";
 	}

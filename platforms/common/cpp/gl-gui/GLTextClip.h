@@ -70,6 +70,7 @@ protected:
     unicode_string html_text, plain_text;
     unicode_string base_font_name;
     TextDirection textDirection;
+    bool textDirectionFixed = false;
     FormatRec base_format;
 
     bool has_urls;
@@ -188,7 +189,7 @@ public:
     void setEditState(int cursor, int sel_start, int sel_end, bool set_text, unicode_string text, int scroll_pos = -1);
 
     const unicode_string textFilteredByFlowFilters(const unicode_string &str);
-    const bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
+    bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
 
 public:
     DECLARE_NATIVE_METHOD(setTextInput)
@@ -198,7 +199,6 @@ public:
 
     DECLARE_NATIVE_METHOD(setMultiline)
     DECLARE_NATIVE_METHOD(setWordWrap)
-    DECLARE_NATIVE_METHOD(setDoNotInvalidateStage)
     DECLARE_NATIVE_METHOD(setAutoAlign)
     DECLARE_NATIVE_METHOD(setAdvancedText)
     DECLARE_NATIVE_METHOD(setReadOnly)

@@ -18,6 +18,8 @@ import java.awt.datatransfer.UnsupportedFlavorException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.BufferedReader;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.charset.CharsetDecoder;
 import java.io.FileInputStream;
 import java.io.File;
@@ -32,6 +34,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.lang.Runtime;
 import java.io.OutputStream;
 import java.io.InputStream;
@@ -44,12 +47,13 @@ import java.time.ZoneOffset;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
+import java.util.concurrent.ConcurrentHashMap;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
-	private static final int NTHREDS = 8;
+	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
-	private static final ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
+	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
 	public Native() {
 	try {
 		md5original = MessageDigest.getInstance("MD5");
@@ -58,6 +62,7 @@ public class Native extends NativeHost {
 	}
 
 	}
+
 	public final Object println(Object arg) {
 		String s = "";
 		if (arg instanceof String) {
@@ -67,15 +72,17 @@ public class Native extends NativeHost {
 		}
 
 		try {
-			PrintStream out = new PrintStream(System.out, true, "UTF-8");
-			out.println(s);
+			synchronized (System.out) {
+				PrintStream out = new PrintStream(System.out, true, "UTF-8");
+				out.println(s);
+			}
 		} catch(UnsupportedEncodingException e) {
 		}
 		return null;
 	}
 
-	public final String hostCall(String name, Object[] args) {
-		return "";
+	public final Object hostCall(String name, Object[] args) {
+		return null;
 	}
 
 	public final Object failWithError(String msg) {
@@ -118,6 +125,19 @@ public class Native extends NativeHost {
 			return "";
 		} catch (IOException e) {
 			return "";
+		}
+	}
+
+	public final Object getClipboardToCB(Func1<Object, String> cb) {
+		try {
+			Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+			String data = (String) clipboard.getData(DataFlavor.stringFlavor);
+			cb.invoke(data);
+			return null;
+		} catch (UnsupportedFlavorException e) {
+			return null;
+		} catch (IOException e) {
+			return null;
 		}
 	}
 
@@ -862,7 +882,10 @@ public class Native extends NativeHost {
 	}
 
 	public final String getTargetName() {
-		return "java";
+		String osName = System.getProperty("os.name").toLowerCase();
+		int space_ind = osName.indexOf(" ");
+		osName = osName.substring(0, space_ind == -1 ? osName.length() : space_ind);
+		return  osName + ",java";
 	}
 
 	public final boolean setKeyValue(String k, String v) {
@@ -913,6 +936,13 @@ public class Native extends NativeHost {
 	public final Object makeStructValue(String name, Object[] args, Object defval) {
 		return runtime.makeStructValue(name, args, (Struct)defval);
 	}
+
+	public final Object[] extractStructArguments(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getFields();
+		} else return new Object[0];
+	}
+
 
 	public final Object quit(int c) {
 		System.exit(c);
@@ -1103,62 +1133,103 @@ public class Native extends NativeHost {
 			return aa; else return ab;
 	}
 
-	private final class ProcessStarter implements Callable {
-
-	private final String[] cmd;
-	private final String cwd;
-	private final String stdin;
-	private final Func3<Object, Integer, String, String> onExit;
-
-	public ProcessStarter(String[] cmd, String cwd, String stdin, Func3<Object, Integer, String, String> onExit) {
-		this.cmd = cmd;
-		this.cwd = cwd;
-		this.onExit = onExit;
-		this.stdin = stdin;
+	private final static String exceptionStackTrace(Exception ex) {
+		StringWriter stackTrace = new StringWriter();
+		ex.printStackTrace(new PrintWriter(stackTrace));
+		return stackTrace.toString();
 	}
 
-	@Override
-		public Long call() {
-			long output = 0;
-			try {
-				OutputStream stdin1 = null;
-				InputStream stderr = null;
-				InputStream stdout = null;
+	private final class ProcessRunner implements Runnable {
 
+		private final String[] cmd;
+		private final String cwd;
+		private final String stdin;
+		private final Func3<Object, Integer, String, String> onExit;
+
+		public ProcessRunner(String[] cmd, String cwd, String stdin, Func3<Object, Integer, String, String> onExit) {
+			this.cmd = cmd;
+			this.cwd = cwd;
+			this.onExit = onExit;
+			this.stdin = stdin;
+		}
+
+		private class StreamReader implements Runnable {
+			String name;
+			InputStream is;
+			String contents;
+			Thread thread;
+			StreamReader errReader;
+
+			public StreamReader(String name, InputStream is) {
+				this.name = name;
+				this.is = is;
+				errReader = this;
+				contents = new String();
+				thread = new Thread(this);
+				thread.start();
+			}
+			public StreamReader(String name, InputStream is, StreamReader errReader) {
+				this.name = name;
+				this.is = is;
+				this.errReader = errReader;
+				contents = new String();
+				thread = new Thread(this);
+				thread.start();
+			}
+			public void run() {
+				try {
+					InputStreamReader isr = new InputStreamReader(is);
+					BufferedReader br = new BufferedReader(isr);
+					while (!thread.isInterrupted()) {
+						String s = br.readLine();
+						if (s == null) break;
+						contents += s + "\n";
+					}
+				} catch (Exception ex) {
+					errReader.contents += exceptionStackTrace(ex) + "\n";
+				}
+			}
+			public void close() {
+				thread.interrupt();
+				try {
+					is.close();
+				} catch (Exception ex) {
+					errReader.contents += exceptionStackTrace(ex) + "\n";
+				}
+			}
+		}
+
+		@Override
+		public void run() {
+			StreamReader stderr = null;
+			StreamReader stdout = null;
+			try {
 				Process process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
-				stdin1 = process.getOutputStream();
-				stderr = process.getErrorStream();
-				stdout = process.getInputStream();
-				stdin1.write(this.stdin.getBytes());
-				stdin1.flush();
+				stderr = new StreamReader("stderr", process.getErrorStream());
+				stdout = new StreamReader("stdout", process.getInputStream(), stderr);
+
+				process.getOutputStream().write(this.stdin.getBytes());
+				process.getOutputStream().flush();
 
 				// We wait for the process to finish before we collect the output!
 				process.waitFor();
 
-				BufferedReader brCleanUp = new BufferedReader(new InputStreamReader (stdout));
-				String line;
-				String sout = new String("");
-				while ((line = brCleanUp.readLine ()) != null) {
-					sout = sout + line + "\n";
-				}
-				brCleanUp.close();
-
-				brCleanUp = new BufferedReader(new InputStreamReader (stderr));
-				String serr = new String("");
-				while ((line = brCleanUp.readLine()) != null) {
-					serr = serr + line + "\n";
-				}
-				brCleanUp.close();
-
-				onExit.invoke(process.exitValue(), sout, serr);
+				stdout.close();
+				stderr.close();
+				onExit.invoke(process.exitValue(), stdout.contents, stderr.contents);
 			} catch (Exception ex) {
 				String cmd_str = "";
 				for (String c : this.cmd) {
 					cmd_str += c + " ";
 				}
-				onExit.invoke(-200, "", "while executing:\n'" + cmd_str + "'\noccured:\n" + ex.toString());
+				String err_str = ""; 
+				if (stderr != null) {
+					err_str += stderr.contents + "\n";
+				}
+				err_str += "while executing:\n" + cmd_str + "\n";
+				err_str += exceptionStackTrace(ex);
+				onExit.invoke(-200, "", err_str);
 			}
-			return output;
 		}
 	}
 
@@ -1188,7 +1259,43 @@ public class Native extends NativeHost {
 			md5Hex = "0" + md5Hex;
 		}
 
-	return md5Hex;
+		return md5Hex;
+	}
+
+	public String fileChecksum(String filename) {
+		try {
+			InputStream fis =  new FileInputStream(filename);
+			byte[] buffer = new byte[1024];
+			MessageDigest md = MessageDigest.getInstance("MD5");
+			int numRead;
+			do {
+				numRead = fis.read(buffer);
+				if (numRead > 0) {
+					md.update(buffer, 0, numRead);
+				}
+			} while (numRead != -1);
+
+			fis.close();
+
+			byte[] digest = new byte[0];
+			digest = md.digest();
+
+			BigInteger bigInt = new BigInteger(1, digest);
+			String md5Hex = bigInt.toString(16);
+
+			while( md5Hex.length() < 32 ){
+				md5Hex = "0" + md5Hex;
+			}
+
+			return md5Hex;
+		} catch (IOException e) {
+			return "";
+		} catch (InvalidPathException e) {
+			return "";
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "";
+		}
 	}
 
 	// Launch a system process
@@ -1202,30 +1309,220 @@ public class Native extends NativeHost {
 		cmd[i+1] = (String)args[i];
 		}
 
-		ProcessStarter ps = new ProcessStarter(cmd, currentWorkingDirectory, stdin, onExit);
+		ProcessRunner ps = new ProcessRunner(cmd, currentWorkingDirectory, stdin, onExit);
 		Future future = threadpool.submit(ps);
 
 		return true;
 	} catch (Exception ex) {
-		onExit.invoke(-200, "", "while starting:\n'" + command + "'\noccured:\n" + ex.toString());
+		onExit.invoke(-200, "", "while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
 		return false;
 	}
 	}
 
-	public final Object runProcess(String command, Object[] args, String currentWorkingDirectory,
-					Func1<Object, String> onstdout, Func1<Object, String> onstderr, Func1<Object, String> onExit) {
+	private final class ProcessStarter implements Runnable {
+
+		private final String[] cmd;
+		private final String cwd;
+		private final Func1<Object, String> onOut;
+		private final Func1<Object, String> onErr;
+		private final Func1<Object, Integer> onExit;
+		private StreamReader stdout;
+		private StreamReader stderr;
+		private ExitHandler  exit;
+		private Process process;
+
+		public ProcessStarter(
+			String[] cmd, 
+			String cwd, 
+			Func1<Object, String> onOut,
+			Func1<Object, String> onErr,
+			Func1<Object, Integer> onExit
+		) {
+			this.cmd = cmd;
+			this.cwd = cwd;
+			this.onOut = onOut;
+			this.onErr = onErr;
+			this.onExit = onExit;
+		}
+
+		private class StreamReader implements Runnable {
+			String name;
+			InputStream is;
+			Thread thread;
+			private final Func1<Object, String> callback;
+			private final Func1<Object, String> onErr;
+
+			public StreamReader(String name, InputStream is, Func1<Object, String> callback, Func1<Object, String> onErr) {
+				this.name = name;
+				this.is = is;
+				this.callback = callback;
+				this.onErr = onErr;
+				thread = new Thread(this);
+				thread.start();
+			}
+			public void run() {
+				try {
+					InputStreamReader isr = new InputStreamReader(is);
+					BufferedReader br = new BufferedReader(isr);
+					while (!thread.isInterrupted()) {
+						String s = br.readLine();
+						if (s == null) break;
+						callback.invoke(s);
+					}
+				} catch (Exception ex) {
+					onErr.invoke("Problem reading stream " + name + ":\n" + exceptionStackTrace(ex));
+				}
+			}
+			public void close() {
+				thread.interrupt();
+				try {
+					is.close();
+				} catch (Exception ex) {
+					onErr.invoke("Problem closing stream " + name + ":\n" + exceptionStackTrace(ex));
+				}
+			}
+		}
+
+		private class ExitHandler implements Runnable {
+			Process process;
+			Thread thread;
+			StreamReader out;
+			StreamReader err;
+			private final Func1<Object, Integer> callback;
+			private final Func1<Object, String> onErr;
+
+			public ExitHandler(Process process, Func1<Object, Integer> callback, Func1<Object, String> onErr, StreamReader out, StreamReader err) {
+				this.process = process;
+				this.callback = callback;
+				this.out = out;
+				this.err = err;
+				this.onErr = onErr;
+				thread = new Thread(this);
+				thread.start();
+			}
+			public void run() {
+				try {
+					while (process.isAlive()) {
+						thread.sleep(250);
+					}
+					err.close();
+					out.close();
+					callback.invoke(process.exitValue());
+				} catch (InterruptedException ex) {
+					onErr.invoke(exceptionStackTrace(ex));
+				}
+			}
+		}
+
+		public void writeStdin(String in) {
+			try {
+				if (process != null && process.isAlive()) {
+					process.getOutputStream().write(in.getBytes());
+					process.getOutputStream().flush();
+				}
+			} catch (IOException ex) {
+				onErr.invoke(exceptionStackTrace(ex));
+			}
+		}
+
+		public void kill() {
+			try {
+				stdout.close();
+				stderr.close();
+				process.waitFor(100, TimeUnit.MILLISECONDS);
+				if (process != null && process.isAlive()) {
+					process.destroy();
+					process.waitFor(250, TimeUnit.MILLISECONDS);
+					if (process.isAlive()) {
+						process.destroyForcibly();
+						process.waitFor();
+					}
+				}
+				process = null;
+			} catch (InterruptedException ex) {
+				onErr.invoke(exceptionStackTrace(ex));
+			}
+		}
+
+		@Override
+		public void run() {
+			try {
+				process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
+				stdout = new StreamReader("stdout", process.getInputStream(), onOut, onOut);
+				stderr = new StreamReader("stderr", process.getErrorStream(), onErr, onOut);
+				exit   = new ExitHandler(process, onExit, onErr, stdout, stderr);
+			} catch (IOException ex) {
+				String cmd_str = "";
+				for (String c : this.cmd) {
+					cmd_str += c + " ";
+				}
+				onErr.invoke("while executing:\n" + cmd_str + "\n" + exceptionStackTrace(ex));
+				onExit.invoke(-200);
+			}
+		}
+
+		public int waitFor() {
+			try {
+				return process.waitFor();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+				return 1;
+			}
+		}
+	}
+
+	public final Object runSystemProcess(String command, Object[] args, String currentWorkingDirectory,
+					Func1<Object, String> onOut, Func1<Object, String> onErr, Func1<Object, Integer> onExit) {
+		try {
+			String[] cmd = new String[args.length + 1];
+			cmd[0] = command;
+			for (int i = 0; i < args.length; i++) {
+				cmd[i+1] = (String)args[i];
+			}
+			ProcessStarter runner = new ProcessStarter(cmd, currentWorkingDirectory, onOut, onErr, onExit);
+			Future future = threadpool.submit(runner);
+
+			return runner;
+		} catch (Exception ex) {
+			onErr.invoke("while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			onExit.invoke(-200);
+			return null;
+		}
+	}
+
+	public final int execSystemProcess(String command, Object[] args, String currentWorkingDirectory,
+					Func1<Object, String> onOut, Func1<Object, String> onErr) {
+		try {
+			String[] cmd = new String[args.length + 1];
+			cmd[0] = command;
+			for (int i = 0; i < args.length; i++) {
+				cmd[i+1] = (String)args[i];
+			}
+			ProcessStarter runner = new ProcessStarter(cmd, currentWorkingDirectory, onOut, onErr, 
+				new Func1<Object, Integer>()  {
+					@Override
+					public Object invoke(Integer code) { return null; }
+				}
+			);
+			runner.run();
+			return runner.waitFor();
+		} catch (Exception ex) {
+			onErr.invoke("while execution of:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			return 1;
+		}
+	}
+
+	public final Object writeProcessStdin(Object process, String arg) {
+		((ProcessStarter)process).writeStdin(arg);
+		return null;
+	}
+
+	public final Object killProcess(Object process) {
+		((ProcessStarter)process).kill();
 		return null;
 	}
 
 	public final boolean startDetachedProcess(String command, Object[] args, String currentWorkingDirectory) {
-		return false;
-	}
-
-	public final Object writeProcessStdin(Object process, String arg) {
-		return false;
-	}
-
-	public final Object killProcess(Object process) {
 		return false;
 	}
 
@@ -1267,6 +1564,89 @@ public class Native extends NativeHost {
 	  return resArr;
 	}
 
+	public final Object concurrentAsyncCallback(Func2<Object, String, Func1<Object, Object>> task, Func1<Object,Object> onDone) {
+		// thread #1
+		CompletableFuture.supplyAsync(() -> {
+			// thread #2
+			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
+			task.invoke(Long.toString(Thread.currentThread().getId()), (res) -> {
+				// thread #2
+				completableFuture.complete(res);
+				return null;
+			});
+			Object result = null;
+			try {
+				result = completableFuture.get();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} catch (ExecutionException e) {
+				e.printStackTrace();
+			}
+			return result;
+		}, threadpool).thenApply(result -> {
+			// thread #2
+			return onDone.invoke(result);
+		});
+
+		return null;
+	}	
+
+	public final String getThreadId() {
+		return Long.toString(Thread.currentThread().getId());
+	}
+
+	public final Object initConcurrentHashMap() {
+		return new ConcurrentHashMap();
+	}
+
+	public final Object setConcurrentHashMap(Object map, Object key, Object value) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.put(key, value);
+		return null;
+	}
+
+	public final Object getConcurrentHashMap(Object map, Object key, Object defval) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.containsKey(key) ? concurrentMap.get(key) : defval;
+	}
+
+	public final Boolean containsConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.containsKey(key);
+	}
+
+	public final Object[] valuesConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.values().toArray();
+	}
+
+	public final Object[] removeConcurrentHashMap(Object map, Object key) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.remove(key);
+		return null;
+	}
+
+	public final Object[] keysConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		ArrayList<Object> ret = new ArrayList(); 
+		for (Enumeration<Object> e = concurrentMap.keys(); e.hasMoreElements();) {
+			ret.add(e.nextElement());
+		}
+		return ret.toArray();
+	}
+
+	public final int sizeConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		return concurrentMap.size();
+	}
+
+	public final Object clearConcurrentHashMap(Object map) {
+		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		concurrentMap.clear();
+		return null;
+	}
+
+	// TODO: why don't we use threadpool here?
 	public final Object concurrentAsyncOne(Boolean fine, Func0<Object> task, Func1<Object,Object> callback) {
 		CompletableFuture.supplyAsync(() -> {
 			return task.invoke();
@@ -1293,5 +1673,91 @@ public class Native extends NativeHost {
 	//native addPlatformEventListenerNative : (event : string, cb : () -> bool) -> ( () -> void ) = Native.addPlatformEventListener;
 	public final Func0<Object> addPlatformEventListener (String event, Func0<Boolean> cb) {
 	return null;
+	}
+
+	public final int availableProcessors() {
+		return Runtime.getRuntime().availableProcessors();
+	}
+
+	public final Object setThreadPoolSize(int threads) {
+		threadpool = Executors.newFixedThreadPool(threads);
+		return null;
+	}
+
+	public final String readBytes(int n) {
+		byte[] input = new byte[n];
+		try {
+			int have_read = 0;
+			while (have_read < n) {
+				int read_bytes = System.in.read(input, have_read, n - have_read);
+				if (read_bytes == -1) {
+					break;
+				}
+				have_read += read_bytes;
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		try {
+			return new String(input, "UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+			return new String();
+		}
+	}
+
+	public final String readUntil(String str_pattern) {
+		byte[] pattern = str_pattern.getBytes();
+		ArrayList<Byte> line = new ArrayList<Byte>();
+		int pos = 0;
+		try {
+			while (true) {
+				int ch = System.in.read();
+				line.add(Byte.valueOf((byte)ch));
+				if (ch == pattern[pos]) {
+					pos += 1;
+					if (pos == pattern.length) {
+						break;
+					}
+				} else {
+					pos = 0;
+				}
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		byte[] bytes = new byte[line.size()];
+		for (int i = 0; i < line.size(); ++ i) {
+			bytes[i] = line.get(i).byteValue();
+		}
+		try {
+			return new String(bytes, "UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+			return new String();
+		}
+	}
+
+	public final Object print(String s) {
+		try{
+			synchronized (System.out) {
+				PrintStream out = new PrintStream(System.out, true, "UTF-8");
+				out.print(s);
+				out.flush();
+			}
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+
+	public final double totalMemory() {
+		return (double)(Runtime.getRuntime().totalMemory());
+	}
+	public final double freeMemory() {
+		return (double)(Runtime.getRuntime().freeMemory());
+	}
+	public final double maxMemory() {
+		return (double)(Runtime.getRuntime().maxMemory());
 	}
 }

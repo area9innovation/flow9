@@ -10,6 +10,16 @@ typedef FlowFile = Dynamic; // cannos use js.html.File, because can be sliced to
 
 class FlowFileSystem {
 
+	public static function createTempFile(name : String, content0 : String) : js.html.File {
+		var content = content0;
+		if (Platform.isSafari && content0.indexOf("å") != -1) {
+			// https://trello.com/c/OM0aYCKj/9362-deploying-packages-in-safari-corrupts-the-content
+			content = StringTools.replace(content0, "å",  "å\u200b");
+		}
+
+		return new js.html.File([content], name);
+	}
+
 	public static function createDirectory(dir : String) : String {
 		try {
 			#if sys
@@ -222,17 +232,21 @@ class FlowFileSystem {
 			js.Browser.document.body.removeChild(jsFileInput);
 		};
 
-		//workaround for case when cancel was pressed and onchange isn't fired
+		// workaround for case when cancel was pressed and onchange isn't fired
 		var onFocus : Dynamic = null;
 		onFocus = function(e : Dynamic) {
 			js.Browser.window.removeEventListener("focus", onFocus);
+			js.Browser.window.removeEventListener("mousemove", onFocus);
+			js.Browser.window.removeEventListener("pointermove", onFocus);
 
-			//onfocus is fired before the change of jsFileInput value
+			// onfocus is fired before the change of jsFileInput value
 			haxe.Timer.delay(function() {
 				jsFileInput.dispatchEvent(new js.html.Event("change"));
 			}, 500);
 		}
 		js.Browser.window.addEventListener("focus", onFocus);
+		js.Browser.window.addEventListener("mousemove", onFocus);
+		js.Browser.window.addEventListener("pointermove", onFocus);
 
 		jsFileInput.click();
 		#end
@@ -327,7 +341,7 @@ class FlowFileSystem {
 				switch (readAs : String) {
 					case "data": onData(file.data.toString());
 					case "uri":  onData(file.data.toString()); // Data URI building is not supported in flash
-					
+
 					// TODO add support for other encodings for flash target if needed.
 					default: onData(file.data.readUTF());
 				}

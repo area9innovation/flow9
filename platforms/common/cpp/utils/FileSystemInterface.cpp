@@ -91,6 +91,7 @@ NativeFunction *FileSystemInterface::MakeNativeFunction(const char *name, int nu
     TRY_USE_NATIVE_METHOD(FileSystemInterface, resolveRelativePath, 1);
 
     TRY_USE_NATIVE_METHOD(FileSystemInterface, getFileByPath, 1);
+    TRY_USE_NATIVE_METHOD(FileSystemInterface, createTempFile, 2);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, openFileDialog, 3);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileName, 1);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileType, 1);
@@ -292,6 +293,25 @@ StackSlot FileSystemInterface::getFileByPath(RUNNER_ARGS)
     return RUNNER->AllocNative(new FlowFile(owner, path));
 }
 
+StackSlot FileSystemInterface::createTempFile(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(filename, content);
+    RUNNER_CheckTag2(TString, filename, content);
+
+    std::string path = encodeUtf8(RUNNER->GetString(filename));
+
+    std::ofstream fs(path);
+    if (!fs) {
+        fs << encodeUtf8(RUNNER->GetString(content));
+        fs.close();
+    }
+
+    FlowFile *flowFile = new FlowFile(owner, path);
+    flowFile->setTemporary(true);
+
+    return RUNNER->AllocNative(flowFile);
+}
+
 StackSlot FileSystemInterface::openFileDialog(RUNNER_ARGS)
 {
     RUNNER_PopArgs3(max_files, types, callback);
@@ -302,7 +322,7 @@ StackSlot FileSystemInterface::openFileDialog(RUNNER_ARGS)
 
     std::vector<std::string> fileTypes;
 
-    for (int i = 0; i < RUNNER->GetArraySize(types); i++)
+    for (unsigned int i = 0; i < RUNNER->GetArraySize(types); i++)
     {
         const StackSlot &str = RUNNER->GetArraySlot(types, i);
         RUNNER_CheckTag1(TString, str);

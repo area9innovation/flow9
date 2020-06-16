@@ -109,7 +109,7 @@ class ByteMemory {
 			data[data.length] = String.fromCharCode(getByte(addr + i));
 		}
 		return parser.toDouble(data.join(""));
-		#elseif cpp
+		#else
 		// TODO!
 		return 0.0;	
 		#end

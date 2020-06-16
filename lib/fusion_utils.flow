@@ -1,8 +1,11 @@
 import fusion;
 import math/transformmatrix;
 import ds/array_diff;
+import net/url_parameter;
 
 export {
+	fi2d(i : Transform<int>) -> Transform<double>;
+
 	fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]>;
 	fmapu(a : Transform<[??]>, fn : (??) -> Pair<?, [() -> void]>) -> Transform<[?]>;
 	fmapi(a : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]>;
@@ -14,6 +17,7 @@ export {
 	fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Transform<[?]>;
 
 	ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?>;
+	ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?>;
 
 	ffilter(a : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]>;
 	ffiltermap(a : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]>;
@@ -24,7 +28,10 @@ export {
 	fsubfiltermapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<Maybe<?>>) -> Transform<[?]>;
 
 	flength(a : Transform<[?]>) -> Transform<int>;
+	fsubrange(a : Transform<[?]>, from : Transform<int>, to : Transform<int>) -> Transform<[?]>;
 	felementAt(a : Transform<[?]>, idx : Transform<int>, def : Transform<?>) -> Transform<?>;
+
+	fsplit2d(a : Transform<[[?]]>) -> Transform<[Transform<[?]>]>;
 
 	fpointaddition(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
 	fpointsubtract(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point>;
@@ -46,6 +53,7 @@ export {
 	fpoint2transform(point : Transform<Point>) -> Transform<TransformMatrix>;
 	fx2transform(x : Transform<double>) -> Transform<TransformMatrix>;
 	fy2transform(y : Transform<double>) -> Transform<TransformMatrix>;
+	fxy2transform(x : Transform<double>, y : Transform<double>) -> Transform<TransformMatrix>;
 	ffactor2transform(factor : Transform<Factor>) -> Transform<TransformMatrix>;
 	frotate2transform(rotate : Transform<double>) -> Transform<TransformMatrix>; // In degrees
 
@@ -66,6 +74,10 @@ export {
 
 	fFirstOfPair(b : Transform<Pair<?, ??>>) -> Transform<?>;
 	fSecondOfPair(b : Transform<Pair<?, ??>>) -> Transform<??>;
+
+	fFirstOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<?>;
+	fSecondOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??>;
+	fThirdOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??>;
 
 	feq2(a : Transform<?>, b : Transform<?>) -> Transform<bool>;
 	fneq2(a : Transform<?>, b : Transform<?>) -> Transform<bool>;
@@ -102,6 +114,7 @@ export {
 
 	fselectdelay(b : Transform<?>, fn : (?) -> int) -> Transform<?>;
 	fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?>;
+	fthrottleUntilNextFrameRendered(b : Transform<?>) -> Transform<?>;
 	flerp(start : double, end : double, t : Transform<double>) -> Transform<double>;
 
 	flookupTree(tree : Transform<Tree<?, ??>>, key : Transform<?>) -> Transform<Maybe<??>>;
@@ -113,9 +126,22 @@ export {
 	initUnsM() -> ref Maybe<() -> void>;
 	setUnsM(uns : ref Maybe<() -> void>, v : () -> void) -> void;
 	dispUnsM(uns : ref Maybe<() -> void>) -> void;
+
+	fselectLift(b : Transform<??>, fn : (??) -> ?) -> Transform<?>;
+	fselect2Lift(b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> ?) -> Transform<?>;
+
+	fasync(def : ?, asyncFn : (onDone : (?) -> void) -> void) -> Transform<?>;
+	fpairs2tree(pairs : Transform<[Pair<?, ??>]>) -> Transform<Tree<?, ??>>;
+	fmergeTreeCustom(t1 : Transform<Tree<?, ??>>, t2 : Transform<Tree<?, ??>>, fn : (?, ??, ??) -> ??) -> Transform<Tree<?, ??>>;
+
+	fpreventNanOrInf(b : Transform<double>) -> Transform<double>;
+
+	ARRAY_DIFF_TRESHOLD = 400;
 }
 
-ARRAY_DIFF_TRESHOLD = 400;
+fi2d(i : Transform<int>) -> Transform<double> {
+	fselect(i, i2d |> FLift);
+}
 
 fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 	if (isFConst(a)) {
@@ -127,7 +153,7 @@ fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 		fselect(a, FLift(\a0 -> {
 			if (length(a0) == 0) {
 				output := [];
-			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 				iter(arrayDiff(^input, a0, false), \op ->
 					switch (op : ArrayOperation) {
 						ArrayNop(__, __): {}
@@ -143,7 +169,13 @@ fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 					}
 				);
 			} else {
-				output := map(a0, fn);
+				if (isUrlParameterTrue("check_same_item"))
+					output := mapi(a0, \i, v -> 
+						if (i < length(^input) && ^input[i] == v) ^output[i]
+						else fn(v)
+					)
+				else
+					output := map(a0, fn);
 			}
 
 			input := a0;
@@ -171,7 +203,7 @@ fmapu(a : Transform<[??]>, fn : (??) -> Pair<?, [() -> void]>) -> Transform<[?]>
 
 						output := [];
 						disposers := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, false), \op ->
 							switch (op : ArrayOperation) {
@@ -252,7 +284,7 @@ fmapi(a : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]> {
 		fselect(a, FLift(\a0 -> {
 			if (length(a0) == 0) {
 				output := [];
-			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 				iter(arrayDiff(^input, a0, true), \op -> {
 					switch (op : ArrayOperation) {
 						ArrayNop(x, y): {
@@ -302,7 +334,7 @@ fmapiu(a : Transform<[??]>, fn : (Transform<int>, ??) -> Pair<?, [() -> void]>) 
 						disposers := [];
 						output := [];
 						indexes := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, true), \op ->
 							switch (op : ArrayOperation) {
@@ -404,12 +436,14 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 		output = make([]);
 		disposers = ref [];
 		indexes = ref [];
+		newOutput = ref [];
+		isNopFnsApplying = make(false);
 
 		fdisposable(
 			fsubselect(a, FLift(\a0 -> {
 				if (!^nested) {
 					nested := true;
-					newOutput = ref getValue(output);
+					newOutput := getValue(output);
 
 					if (length(a0) == 0) {
 						applyall(^disposers);
@@ -417,14 +451,17 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 						disposers := [];
 						indexes := [];
 						newOutput := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
+						nopFns = ref [];
+
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, true), \op ->
 							switch (op : ArrayOperation) {
 								ArrayNop(x, y): {
 									if (x != y) {
 										Some(\ -> {
-											nextDistinct(^indexes[x], y);
+											i = ^indexes[x];
+											refArrayPush(nopFns, \ -> nextDistinct(i, y));
 										});
 									} else {
 										None();
@@ -442,7 +479,12 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 											replace(
 												^disposers,
 												y,
-												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+												makeSubscribe2(d, \v0 ->
+													if (getValue(isNopFnsApplying))
+														newOutput := replace(^newOutput, getValue(index), v0)
+													else
+														next(output, replace(getValue(output), getValue(index), v0))
+												)()
 											);
 										newOutput := insertArray(^newOutput, x, fgetValue(d));
 									});
@@ -461,7 +503,12 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 											replace(
 												^disposers,
 												y,
-												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+												makeSubscribe2(d, \v0 ->
+													if (getValue(isNopFnsApplying))
+														newOutput := replace(^newOutput, getValue(index), v0)
+													else
+														next(output, replace(getValue(output), getValue(index), v0))
+												)()
 											);
 										newOutput := replace(^newOutput, x, fgetValue(d));
 									});
@@ -481,6 +528,10 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 							}
 						)
 						|> applyall;
+
+						next(isNopFnsApplying, true);
+						applyall(^nopFns);
+						next(isNopFnsApplying, false);
 					} else {
 						applyall(^disposers);
 
@@ -490,8 +541,14 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 							index = make(i);
 							indexes := replace(^indexes, i, index);
 
-							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+							makeSubscribe2(v, \v0 ->
+								if (getValue(isNopFnsApplying))
+									newOutput := replace(^newOutput, getValue(index), v0)
+								else
+									next(output, replace(getValue(output), getValue(index), v0))
+							)();
 						});
+
 						newOutput := map(d, fgetValue);
 					}
 
@@ -511,6 +568,7 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 				next(output, []);
 				disposers := [];
 				indexes := [];
+				newOutput := [];
 				nested := false;
 			}
 		);
@@ -527,12 +585,14 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 		output = make([]);
 		disposers = ref [];
 		indexes = ref [];
+		newOutput = ref [];
+		isNopFnsApplying = make(false);
 
 		fdisposable(
 			fsubselect(a, FLift(\a0 -> {
 				if (!^nested) {
 					nested := true;
-					newOutput = ref getValue(output);
+					newOutput := getValue(output);
 
 					if (length(a0) == 0) {
 						applyall(^disposers);
@@ -540,14 +600,17 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 						disposers := [];
 						newOutput := [];
 						indexes := [];
-					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
+						nopFns = ref [];
+
 						// Call disposers before initializers
 						filtermap(arrayDiff(^input, a0, true), \op ->
 							switch (op : ArrayOperation) {
 								ArrayNop(x, y): {
 									if (x != y) {
 										Some(\ -> {
-											nextDistinct(^indexes[x], y);
+											i = ^indexes[x];
+											refArrayPush(nopFns, \ -> nextDistinct(i, y));
 										});
 									} else {
 										None();
@@ -565,7 +628,12 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 											replace(
 												^disposers,
 												y,
-												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+												makeSubscribe2(d, \v0 ->
+													if (getValue(isNopFnsApplying))
+														newOutput := replace(^newOutput, getValue(index), v0)
+													else
+														next(output, replace(getValue(output), getValue(index), v0))
+												)()
 											);
 										newOutput := insertArray(^newOutput, x, fgetValue(d));
 									});
@@ -584,7 +652,12 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 											replace(
 												^disposers,
 												y,
-												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+												makeSubscribe2(d, \v0 ->
+													if (getValue(isNopFnsApplying))
+														newOutput := replace(^newOutput, getValue(index), v0)
+													else
+														next(output, replace(getValue(output), getValue(index), v0))
+												)()
 											);
 										newOutput := replace(^newOutput, x, fgetValue(d));
 									});
@@ -604,6 +677,10 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 							}
 						)
 						|> applyall;
+
+						next(isNopFnsApplying, true);
+						applyall(^nopFns);
+						next(isNopFnsApplying, false);
 					} else {
 						applyall(^disposers);
 
@@ -616,8 +693,14 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 
 						disposers := mapi(d, \i, v -> {
 							index = ^indexes[i];
-							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+							makeSubscribe2(v, \v0 ->
+								if (getValue(isNopFnsApplying))
+									newOutput := replace(^newOutput, getValue(index), v0)
+								else
+									next(output, replace(getValue(output), getValue(index), v0))
+							)()
 						});
+
 						newOutput := map(d, fgetValue);
 					}
 
@@ -637,6 +720,7 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 				next(output, []);
 				disposers := [];
 				indexes := [];
+				newOutput := [];
 				nested := false;
 			}
 		);
@@ -657,7 +741,7 @@ ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
 
 				if (length(a0) == 0) {
 					output := [];
-				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
 					// Call disposers before initializers
 					iter(arrayDiff(^input, a0, true) |> reverseA, \op ->
 						switch (op : ArrayOperation) {
@@ -684,6 +768,64 @@ ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
 					output :=
 						fold(a0, Pair(def, []), \acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
 							newAcc = fn(acc.first, v);
+							Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
+						}).second;
+				}
+
+				input := a0;
+				nested := false;
+			}
+
+			if (length(^output) > 0) {
+				^output[length(^output) - 1].second;
+			} else {
+				def;
+			}
+		}))
+	}
+}
+
+ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?> {
+	if (isFConst(a)) {
+		const(foldi(fgetValue(a), def, fn));
+	} else {
+		nested = ref false;
+		input = ref [];
+		output : ref [Pair<?, ?>] = ref [];
+
+		fselect(a, FLift(\a0 -> {
+			if (!^nested) {
+				nested := true;
+
+				if (length(a0) == 0) {
+					output := [];
+				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					// Call disposers before initializers
+					iter(arrayDiff(^input, a0, true) |> reverseA, \op ->
+						switch (op : ArrayOperation) {
+							ArrayNop(x, y): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								if (^output[y].first != acc) {
+									output := replace(^output, y, Pair(acc, fn(y, acc, a0[y])));
+								}
+							}
+							ArrayInsert(x, y, v): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								output := insertArray(^output, y, Pair(acc, fn(y, acc, v)));
+							}
+							ArrayReplace(x, y, v): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								output := replace(^output, y, Pair(acc, fn(y, acc, v)));
+							}
+							ArrayRemove(x, y): {
+								output := removeIndex(^output, y);
+							}
+						}
+					);
+				} else {
+					output :=
+						foldi(a0, Pair(def, []), \y : int, acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
+							newAcc = fn(y, acc.first, v);
 							Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
 						}).second;
 				}
@@ -729,8 +871,47 @@ flength(v : Transform<[?]>) -> Transform<int> {
 	fselect(v, FLift(length))
 }
 
+fsubrange(a : Transform<[?]>, from : Transform<int>, to : Transform<int>) -> Transform<[?]> {
+	fselect3(a, from, to, \aa, f, t -> subrange(aa, f, t));
+}
+
 felementAt(a : Transform<[?]>, idx : Transform<int>, def : Transform<?>) -> Transform<?> {
 	fselect3(a, idx, def, \v, i, d -> elementAt(v, i, d))
+}
+
+fsplit2d(a : Transform<[[?]]>) -> Transform<[Transform<[?]>]> {
+	if (isFConst(a)) {
+		const(map(fgetValue(a), const));
+	} else {
+		input = ref [];
+		output : ref [DynamicBehaviour<[?]>] = ref [];
+
+		fselect(a, FLift(\a0 -> {
+			if (length(a0) == 0) {
+				output := [];
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				iter(arrayDiff(^input, a0, false), \op ->
+					switch (op : ArrayOperation) {
+						ArrayNop(__, __): {}
+						ArrayInsert(x, __, v): {
+							output := insertArray(^output, x, make(v));
+						}
+						ArrayReplace(x, __, v): {
+							nextDistinct(^output[x], v);
+						}
+						ArrayRemove(x, __): {
+							output := removeIndex(^output, x);
+						}
+					}
+				);
+			} else {
+				output := map(a0, make);
+			}
+
+			input := a0;
+			cast(^output : [DynamicBehaviour<[?]>] -> [Transform<[?]>]);
+		}));
+	}
 }
 
 fpointaddition(p1 : Transform<Point>, p2 : Transform<Point>) -> Transform<Point> {
@@ -824,6 +1005,19 @@ fy2transform(y : Transform<double>) -> Transform<TransformMatrix> {
 			1.0,
 			0.0,
 			v
+		)
+	}));
+}
+
+fxy2transform(x : Transform<double>, y : Transform<double>) -> Transform<TransformMatrix> {
+	fselect2(x, y, FLift2(\vx, vy -> {
+		TransformMatrix(
+			1.0,
+			0.0,
+			0.0,
+			1.0,
+			vx,
+			vy
 		)
 	}));
 }
@@ -971,6 +1165,18 @@ fSecondOfPair(b : Transform<Pair<?, ??>>) -> Transform<??> {
 	fselect(b, FLift(\p : Pair<?, ??> -> p.second))
 }
 
+fFirstOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<?> {
+	fselect(b, FLift(\p : Triple<?, ??, ??> -> p.first))
+}
+
+fSecondOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??> {
+	fselect(b, FLift(\p : Triple<?, ??, ??> -> p.second))
+}
+
+fThirdOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??> {
+	fselect(b, FLift(\p : Triple<?, ??, ??> -> p.third))
+}
+
 feq2(a : Transform<?>, b : Transform<?>) -> Transform<bool> {
 	fselect2(a, b, FLift2(\v1, v2 -> v1 == v2))
 }
@@ -1094,6 +1300,7 @@ fdeorder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]> {
 ffuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> () -> void]> {
 	switch (t) {
 		ConstBehaviour(v): Pair(t, []);
+		DynamicBehaviour(v, s): Pair(t, []);
 		default: {
 			b = make(fgetValue(t));
 
@@ -1162,6 +1369,42 @@ fdelayUntilNextFrameRendered(b : Transform<?>) -> Transform<?> {
 	);
 }
 
+fthrottleUntilNextFrameRendered(b : Transform<?>) -> Transform<?> {
+	provider : ref Maybe<DynamicBehaviour<?>> = ref None();
+	ts = ref timestamp();
+	uns = ref nop;
+
+	fdisposable(
+		fsubselect(b, FLift(\v -> {
+			^uns();
+
+			eitherFn(
+				^provider,
+				\p -> {
+					if (^ts + 33.0 > timestamp()) {
+						ts := timestamp();
+						provider := Some(make(v));
+						either(^provider, const(v));
+					} else {
+						ts := timestamp();
+						uns := interruptibleDeferUntilNextFrameRendered(\ -> {
+							nextDistinct(p, v);
+							uns := nop;
+						});
+						cast(p : DynamicBehaviour<?> -> Behaviour<?>);
+					}
+				},
+				\ -> {
+					ts := timestamp();
+					provider := Some(make(v));
+					either(^provider, const(v));
+				}
+			);
+		})),
+		\ -> ^uns()
+	);
+}
+
 flerp(start : double, end : double, t : Transform<double>) -> Transform<double> {
 	fselect(t, FLift(\v -> (1.0 - v) * start + v * end));
 }
@@ -1204,4 +1447,38 @@ fpprint(title : string) -> (Transform<?>) -> Transform<?> {
 		fsubscribe(tr, \v -> pprint(title + " : ")(v) |> ignore);
 		tr
 	}
+}
+
+fselectLift(b : Transform<??>, fn : (??) -> ?) -> Transform<?> {
+	fselect(b, FLift(fn));
+}
+
+fselect2Lift(b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> ?) -> Transform<?> {
+	fselect2(b1, b2, FLift2(fn));
+}
+
+fasync(def : ?, asyncFn : (onDone : (?) -> void) -> void) -> Transform<?> {
+	called = ref false;
+	t = make(def);
+
+	fselect(t, FLift(\t0 -> {
+		if (!^called) {
+			called := true;
+			asyncFn(\v -> next(t, v));
+		}
+
+		getValue(t);
+	}));
+}
+
+fpairs2tree(pairs : Transform<[Pair<?, ??>]>) -> Transform<Tree<?, ??>> {
+	fselect(pairs, pairs2tree |> FLift);
+}
+
+fmergeTreeCustom(t1 : Transform<Tree<?, ??>>, t2 : Transform<Tree<?, ??>>, fn : (?, ??, ??) -> ??) -> Transform<Tree<?, ??>> {
+	fselect2(t1, t2, FLift2(\a, b -> mergeTreeCustom(a, b, fn)));
+}
+
+fpreventNanOrInf(b : Transform<double>) -> Transform<double> {
+	fselect(b, FLift(\v -> if (isNanOrInf(v)) 0.0 else v));
 }

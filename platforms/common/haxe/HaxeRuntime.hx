@@ -32,9 +32,9 @@ class HaxeRuntime {
 	untyped __js__("var j='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';var l=j.length;function f(i){var c=j[i%l|0];var r=i/l|0;return r>0?c+f(r-1):c;}");
 
 #if (readable)
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._name=\"'+name+'\";'+a+'return this;')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {name:'+ name+',' + a + '};}')}");
 #else
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._id='+id.toString()+';'+a+'return this;')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}')}");
 #end
 #end
 		_structnames_.set(id, name);
@@ -183,6 +183,25 @@ if (a === b) return true;
 		return (o1 < o2 ? -1 : 1);
 	}
 
+
+	public static function extractStructArguments(value : Dynamic) :  Array<Dynamic> {
+		#if (js && readable)
+			if (!Reflect.hasField(value, "_name")) return [];
+			var i = _structids_.get(value._name);
+		#else
+			if (!Reflect.hasField(value, "_id")) return [];
+			var i = value._id;
+		#end
+
+		var sargs = _structargs_.get(i);
+		var n = sargs.length;
+		var result = untyped Array(n);
+		for (i in 0...n) {
+			result[i] = Reflect.field(value, sargs[i]);
+		}
+		return result;
+	}
+
 	public static inline function isArray(o1 : Dynamic) : Bool {
 		#if js
 		return untyped __js__ ("Array").isArray(o1);
@@ -198,15 +217,15 @@ if (a === b) return true;
 
 	public static inline function isSameStructType(o1 : Dynamic, o2 : Dynamic) : Bool {
 		#if (js && readable)
-		  return !isArray(o1) && !isArray(o2) &&
-			   Reflect.hasField(o1, "_name") &&
-			   Reflect.hasField(o2, "_name") &&
-			   o1._name == o2._name;
+			return !isArray(o1) && !isArray(o2) &&
+				Reflect.hasField(o1, "_name") &&
+				Reflect.hasField(o2, "_name") &&
+				o1._name == o2._name;
 		#else
-		  return !isArray(o1) && !isArray(o2) &&
-			   Reflect.hasField(o1, "_id") &&
-			   Reflect.hasField(o2, "_id") &&
-			   o1._id == o2._id;
+			return !isArray(o1) && !isArray(o2) &&
+				Reflect.hasField(o1, "_id") &&
+				Reflect.hasField(o2, "_id") &&
+				o1._id == o2._id;
 		#end
 	}
 
@@ -311,7 +330,7 @@ if (a === b) return true;
 
 				return "\"" + s + "\"";
 			} else {
-				StringTools.replace(s, "\\", "\\\\"); // Check if realy a string
+				StringTools.replace(s, "\\", "\\\\"); // Check if really a string
 
 				return s;
 			}
@@ -367,6 +386,37 @@ if (a === b) return true;
 		}
 	}
 
+
+	#if js
+	// Use these when sure args types and count is correct and struct exists 
+	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		return o;
+	}
+
+	public static inline function fastMakeStructValue2(n : String, a1 : Dynamic, a2 : Dynamic) : Dynamic {
+		var sid  = _structids_.get(n);
+		var o = {
+		#if readable
+			name : n
+		#else
+			_id : sid
+		#end
+		};
+		untyped o[_structargs_.get(sid)[0]] = a1;
+		untyped o[_structargs_.get(sid)[1]] = a2;
+		return o;
+	}
+	#end
+
 	public static function makeEmptyStruct(sid : Int) : Dynamic {
 		if (_structtemplates_ != null) {
 			var ff = _structtemplates_.get(sid);
@@ -388,7 +438,7 @@ if (a === b) return true;
 		var t : String;
 
 		#if flash
-		t = untyped __typeof__(value);
+		t = untyped JSHaxeSupport.typeof(value);
 		#elseif js
 		t = untyped __js__("typeof")(value);
 		#else
@@ -432,6 +482,10 @@ if (a === b) return true;
 	}
 	#end
 
+	public static function getStructName(id : Int) : String {
+		return _structnames_.get(id);
+	} 
+
 	// Some characters can NOT be represented in UTF-16, believe it or not!
 	public static function wideStringSafe(str : String) : Bool {
 		#if (flash || js)
@@ -454,6 +508,43 @@ if (a === b) return true;
 			safe = false;
 		}
 		return safe;
+		#end
+	}
+
+	public static function instanceof(v1 : Dynamic, v2 : Dynamic) : Bool {
+		#if (haxe_ver >= "4.0.0")
+			#if js
+				return js.Syntax.instanceof(v1, v2);
+			#else
+				return Std.downcast(v1, v2) != null;
+			#end
+		#else
+			return untyped __instanceof__(v1, v2);
+		#end
+	}
+
+	public static function typeof(v : Dynamic) : Dynamic {
+		#if (haxe_ver >= "4.0.0")
+			#if js
+				return js.Syntax.typeof(v);
+			#else
+				// TODO: Not sure this is correct
+				return Type.getClass(v);
+			#end
+		#else
+			return untyped __typeof__(v);
+		#end
+	}
+
+	public static function strictEq(v1 : Dynamic, v2 : Dynamic) : Bool {
+		#if (haxe_ver >= "4.0.0")
+			#if js
+				return js.Syntax.strictEq(v1, v2);
+			#else
+				return v1 == v2;
+			#end
+		#else
+			return untyped __strict_eq__(v1, v2);
 		#end
 	}
 }

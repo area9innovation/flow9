@@ -6,12 +6,9 @@ export {
 	indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]>;
 	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool>;
 	indexJavaGlobals(gctx : JavaGlobalContext) -> void;
-	generateJavaStructList(gctx : JavaGlobalContext) -> string;
 	generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void;
 	generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void;
-	generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void;
-	javaList2String(lst : ref List<string>, endstr : string) -> string;
-	writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void;
+	type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : bool, in_native : bool) -> string;
 }
 
 javaKnownNatives = fold([
@@ -110,8 +107,8 @@ indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pai
 	);
 	if (length(hashCollisions) > 0 || !isConfigParameterTrue(program.config.config, "java-incremental")) {
 		if (length(hashCollisions) > 0) {
-			fcPrintln("Struct names hases have collisions:");
-			iter(hashCollisions, \collision -> fcPrintln("\t" + strGlue(set2array(collision), ",")));
+			fcPrintln("Struct names hases have collisions:", program.config.threadId);
+			iter(hashCollisions, \collision -> fcPrintln("\t" + strGlue(set2array(collision), ","), program.config.threadId));
 		}
 		// Assign id values
 		init = Pair(0, makeTree());
@@ -138,9 +135,7 @@ indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pai
 }
 
 indexJavaGlobals(gctx : JavaGlobalContext) -> void {
-	pushstr = \s -> rlistPush(gctx.main_file_text, s);
 	pushistr = \s -> rlistPush(gctx.init_code, s);
-
 	iter(gctx.csm_list, \csm -> {
 		iter(csm.decl_order, \decl -> {
 			switch (decl : FiDeclaration) {
@@ -149,7 +144,7 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 					gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
 				}
 				FiGlobalVar(name, expr, type,__,__): {
-					tstr = type2javaObjType(gctx, type, true, false);
+					tstr = type2javaObjType(gctx, type, true, false, false);
 					rlistPush(csm.vars, "\tpublic " + tstr + " g_" + name + ";\n");
 
 					ginfo = JavaGlobalInfo("g_" + name, csm, type, false);
@@ -170,13 +165,13 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 									);
 									tstr = wrapper_t.second;
 
-									pushstr("\tfinal " + tstr + " nw_" + name + " = " + wrapper_t.first + ";\n");
-									pushstr("\t" + tstr + " n_" + name + " = nw_" + name + ";\n");
+									rlistPush(gctx.native_wrapper_code, "\tfinal " + tstr + " nw_" + name + " = " + wrapper_t.first + ";\n");
+									rlistPush(gctx.native_wrapper_code, "\t" + tstr + " n_" + name + " = nw_" + name + ";\n");
 
 									ginfo = JavaGlobalInfo("n_" + name, csm, type, true);
 									gctx.globals ::= setTree(gctx.globals, name, ginfo);
 
-									aclasses = map(type.args, \arg -> type2javaObjType(gctx, arg.type, false, true) + ".class");
+									aclasses = map(type.args, \arg -> type2javaObjType(gctx, arg.type, false, true, false) + ".class");
 									cstr = if (aclasses == []) "" else ", " + strGlue(aclasses, ", ");
 
 									wrapper_r = emitJavaFnWrapper(
@@ -201,7 +196,7 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 							}
 						}
 						default: {
-							fcPrintln("this should never happen: indexJavaGlobals")
+							fcPrintln("this should never happen: indexJavaGlobals", gctx.program.config.threadId)
 						}
 					}
 				}
@@ -211,14 +206,22 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 }
 
 generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
-	pushgstr = \s -> rlistPush(gctx.main_file_text, s);
 	pushistr = \s -> rlistPush(gctx.init_code, s);
+
+	// Statistics of method sizes.
+	max_code_lines = ref 0;
+	max_code_lines_size = ref 0;
+	max_code_lines_fun = ref "";
+	max_code_size = ref 0;
+	max_code_size_lines = ref 0;
+	max_code_size_fun = ref "";
+	config = gctx.program.config;
 
 	iter(gctx.csm_list, \csm -> {
 		module_path = pathCombine(output_dir, "Module_" + csm.id + ".java");
 		if (usePreviouslyGeneratedModules(gctx, csm.module, module_path)) {
 			if (gctx.program.config.verbose > 1) {
-				fcPrintln("Java module '" + module_path + "' is already generated - keeping it");
+				fcPrintln("Java module '" + module_path + "' is already generated - keeping it", gctx.program.config.threadId);
 			}
 			class_path = pathCombine(output_dir, "Module_" + csm.id + ".class");
 			if (!fileExists(class_path)) {
@@ -245,16 +248,15 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 			);
 		} else {
 			if (gctx.program.config.verbose > 0) {
-				fcPrintln("Generating java module '" + module_path + "'");
+				fcPrintln("Generating java module '" + module_path + "'", gctx.program.config.threadId);
 			}
 			module_text = gctx.header_generator(csm.module.fileinfo.trampstamp);
 			pushstr = \s -> rlistPush(module_text, s);
 
-			// pushstr("/* "+csm.module.fullpath+" */\n");
 			pushstr("@SuppressWarnings(\"unchecked\")\n");
 			pushstr("final class Module_" + csm.id + " {\n");
-			pushstr("\tfinal Main runtime;\n");
-			pushstr("\tModule_" + csm.id + "(Main runtime) {\n");
+			pushstr("\tfinal " + gctx.main_class + " runtime;\n");
+			pushstr("\tModule_" + csm.id + "(" + gctx.main_class + " runtime) {\n");
 			pushstr("\t\tthis.runtime = runtime;\n");
 			pushstr("\t}\n");
 
@@ -264,6 +266,21 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 				switch (decl : FiDeclaration) {
 					FiFunctionDec(name, lambda, type, __, __): {
 						code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+						lines = strCountOf(code, "\n");
+						size = strlen(code);
+						if (lines > ^max_code_lines) {
+							max_code_lines := lines;
+							max_code_lines_size := size;
+							max_code_lines_fun := name;
+						}
+						if (size > ^max_code_size) {
+							max_code_size := size;
+							max_code_size_lines := lines;
+							max_code_size_fun := name;
+						}
+						if (size >= 65536 && isConfigParameterTrue(config.config, "java-method-size-stats")) {
+							fcPrintln("Function: " + name + " size: " + i2s(size) + " >= 65536", config.threadId);
+						}
 						pushstr(code);
 					}
 					FiGlobalVar(name, expr, type, __, __): {
@@ -274,7 +291,7 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 							"", false, []
 						);
 						ctx = JavaScopeContext(fctx, "\t\t", makeTree());
-						tstr = type2javaObjType(gctx, type, true, false);
+						tstr = type2javaObjType(gctx, type, true, false, false);
 						emitJavaStatement(ctx, expr, JavaReturnLocal("g_" + name, tstr));
 						body = javaList2String(fctx.text, "");
 						pushstr("\tpublic void init_" + name + "() {\n");
@@ -298,75 +315,10 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 			writeJavaSource(gctx, module_path, javaList2String(module_text, "}\n"));
 		}
 	});
-}
-
-generateJavaStructList(gctx : JavaGlobalContext) -> string {
-	pushstr = \s -> rlistPush(gctx.main_file_text, s);
-	pushstr("\tstatic final Object[] arr_empty = new Object[0];\n");
-	inits = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
-		if (length(sdata.fields) == 0) {
-			pushstr("\tstatic final SingletonStruct str_" + sname + " = SingletonStruct.make(" + i2s(sdata.id) + ",\"" + sname + "\");\n");
-			arrayPush(acc, "\t\t\tstr_" + sname);
-		} else {
-			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
-		}
-	});
-	strGlue(inits, ",\n");
-}
-
-generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void {
-	pushstr = \s -> rlistPush(gctx.main_file_text, s);
-
-	// constructor
-	inits = fold(gctx.csm_list, makeList(), \acc, csm -> {
-		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + ";\n");
-		Cons("\t\tm_" + csm.id + " = new Module_" + csm.id + "(this);\n", acc);
-	});
-
-	pushstr("\tpublic Main(String[] args) {\n");
-	pushstr("\t\tsuper(new Struct[] {\n");
-	pushstr(struct_list);
-	pushstr("\n\t\t}, args);\n");
-	pushstr(list2string(inits));
-	pushstr(javaList2String(gctx.ctor_code, ""));
-	pushstr("\t}\n");
-
-	pushstr(javaList2String(gctx.wrapper_code, ""));
-
-	// init function
-	host_init = foldTree(gctx.uses_host, makeList(), \host, v, acc -> {
-		pushstr("\t" + host + " h_" + host + ";\n");
-		Cons("\t\th_" + host + " = super.getNativeHost(" + host + ".class);\n", acc);
-	});
-
-	pushstr("\tprivate void init() {\n");
-	pushstr(list2string(host_init));
-	pushstr(javaList2String(gctx.init_code, ""));
-	pushstr("\t}\n");
-
-	// main function
-	pushstr("\tprotected void main() {\n");
-	pushstr("\t\tinit();\n");
-
-	switch (lookupTree(gctx.globalFuncs, "main")) {
-		Some(finfo):
-			pushstr("\t\tm_" + finfo.csmodule.id + "." + finfo.name + "();\n");
-		None():
-			fail0("No main function");
+	if (isConfigParameterTrue(config.config, "java-method-size-stats")) {
+		fcPrintln("Max code lines: " + i2s(^max_code_lines) + " at function " + ^max_code_lines_fun + ", size: " + i2s(^max_code_lines_size), config.threadId);
+		fcPrintln("Max code size: " + i2s(^max_code_size) + " at function " + ^max_code_size_fun + " , lines: " + i2s(^max_code_size_lines), config.threadId);
 	}
-	pushstr("\t}\n");
-	
-	pushstr("\tpublic static void main(String[] args) {\n");
-	pushstr("\t\tMain runner = new Main(args);\n");
-	pushstr("\t\trunner.start(null);\n");
-	pushstr("\t}\n");
-}
-
-javaList2String(lst : ref List<string>, endstr : string) -> string {
-	// convert to single string and free old list data for gc
-	str = list2string(Cons(endstr, ^lst));
-	lst := Cons(str, EmptyList());
-	str
 }
 
 generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
@@ -376,7 +328,7 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 			mod_name = pathCombine(output_dir, "Module_" + sdata.csmodule.id + ".java");
 			if (fileExists(fname) && usePreviouslyGeneratedModules(gctx, sdata.csmodule.module, mod_name)) {
 				if (gctx.program.config.verbose > 1) {
-					fcPrintln("Java struct module '" + fname + "' is already generated - keeping it");
+					fcPrintln("Java struct module '" + fname + "' is already generated - keeping it", gctx.program.config.threadId);
 				}
 				class_path = pathCombine(output_dir, "Struct_" + sname + ".class");
 				if (!fileExists(class_path)) {
@@ -384,15 +336,15 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 				}
 			} else {
 				if (gctx.program.config.verbose > 0) {
-					fcPrintln("Generating java struct module '" + fname + "'");
+					fcPrintln("Generating java struct module '" + fname + "'", gctx.program.config.threadId);
 				}
 				str_data = gctx.header_generator(timestamp());
 				pushstr = \s -> str_data := Cons(s, ^str_data);
 
 				fnametypes = zipWith(map(sdata.fields, \f -> f.name), sdata.fields, \n, f ->
 					Quadruple(
-						n, type2javaObjType(gctx, f.type, true, false),
-						f.type, type2javaObjType(gctx, f.type, false, false)
+						n, type2javaObjType(gctx, f.type, true, false, false),
+						f.type, type2javaObjType(gctx, f.type, false, false, false)
 					)
 				);
 				accessor_flds = filter(fnametypes, \f -> lookupTreeDef(gctx.has_field_accessor, f.first, false));
@@ -400,7 +352,7 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 				fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
 
 				pushstr(
-					"class Struct_" + sname + " extends Struct" +
+					"public class Struct_" + sname + " extends Struct" +
 					(if (fieldstr != "") " implements " + fieldstr else "") +
 					" {\n"
 				);
@@ -489,7 +441,7 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	arg_locals = mapi(tree.args, \i, arg -> {
 		aname2 = "a" + (if (arg.name == "__") i2s(i) else arg.name);
 		//aname2 = javaNewLocalName(local_counter, aname);
-		atypestr = type2javaObjType(gctx, atypes[i], !is_closure, false);
+		atypestr = type2javaObjType(gctx, atypes[i], !is_closure, false, false);
 		JavaLocalInfo(arg.name, aname2, atypestr, is_closure, is_closure);
 	});
 
@@ -516,7 +468,7 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 		fold(arg_locals, makeTree(), \t, l -> setTree(t, l.name, l))
 	);
 
-	rtypestr = type2javaObjType(gctx, rtype, !is_closure, false);
+	rtypestr = type2javaObjType(gctx, rtype, !is_closure, false, false);
 	emitJavaStatement(ctx, tree.body, JavaReturnStmt(rtypestr));
 
 	prefix = if (is_closure)
@@ -614,7 +566,7 @@ emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLoc
 										sctx
 									else {
 										aname = javaNewLocalName(ctx.func.next_local_id, arg);
-										ty = type2javaObjType(ctx.func.gctx, cstruct.fields[i].type, true, false);
+										ty = type2javaObjType(ctx.func.gctx, cstruct.fields[i].type, true, false, false);
 										jctxPushStr(ctx, subctx.indent + "final " + ty + " " + aname +
 											" = " + tmpvar2 + ".f_" + cstruct.fields[i].name + ";\n");
 
@@ -653,7 +605,7 @@ emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLoc
 			switch (op) {
 				FcArrayPrim():
 					if (length(es) == 0)
-						javaReturnValue(ctx, retloc, "runtime.arr_empty")
+						javaReturnValue(ctx, retloc, "SingletonStructs.arr_empty")
 					else {
 						emitJavaDefaultStmt(ctx, code, retloc);
 					}
@@ -677,7 +629,7 @@ emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLoc
 							argid = elemIndex(map(cstruct.fields, \f -> f.name), field, -1);
 							if (argid < 0)
 								fail0("Struct " + cstruct.name + " has no field " + field);
-							type2javaObjType(ctx.func.gctx, cstruct.fields[argid].type, true, false);
+							type2javaObjType(ctx.func.gctx, cstruct.fields[argid].type, true, false, false);
 						}
 						None():
 							ctxtype2javaObjType(ctx, fiExpType(es[1]), true, false);
@@ -790,7 +742,7 @@ emitJavaClosure(ctx : JavaScopeContext, code : FiLambda, rloc : string, rtype : 
 	fctx = ctx.func;
 	bodycode = emitJavaFunction(fctx.gctx, fctx.csm, "", "", code, Some(ctx), ctx.indent, code.type);
 
-	type1 = type2javaObjType(fctx.gctx, fiExpType(code), true, false);
+	type1 = type2javaObjType(fctx.gctx, fiExpType(code), true, false, false);
 	type2 = rtype;
 
 	jctxPushStr(ctx, ctx.indent + rloc);
@@ -850,7 +802,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 					gctx = ctx.func.gctx;
 					switch (lookupTree(gctx.globals, name)) {
 						Some(ginfo): {
-							tstr = type2javaObjType(gctx, ginfo.type, true, false);
+							tstr = type2javaObjType(gctx, ginfo.type, true, false, startsWith(name, "h_"));
 							wrapJavaCast(jctxWrapModuleRef(ctx, ginfo), tstr, rtype);
 						}
 						None():
@@ -889,22 +841,28 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 		FiCall(f, es, type, __): {
 			gctx = ctx.func.gctx;
 			global = switch (f) {
-				FiVar(fname, tp, __): {
-					switch (lookupTree(gctx.globals, fname)) {
+				FiVar(fname, __, __): {
+					switch (resolveJavaLocal(ctx, fname)) {
 						Some(__): None();
-						None(): lookupTree(gctx.globalFuncs, fname);
+						None(): {
+							switch (lookupTree(gctx.globals, fname)) {
+								Some(glob): None();
+								None(): lookupTree(gctx.globalFuncs, fname);
+							}
+						}
 					}
 				}
 				default: None();
 			};
 			switch (global) {
 				Some(finfo): {
+					is_native = startsWith(finfo.name, "h_");
 					ftype = cast(finfo.type : FiType -> FiTypeFunction);
 					rname = jctxWrapModuleRef(ctx, finfo);
 					aexprs = mapi(es, \j, expr ->
-						emitJavaExpression(ctx, expr, type2javaObjType(gctx, ftype.args[j].type, true, false))
+						emitJavaExpression(ctx, expr, type2javaObjType(gctx, ftype.args[j].type, true, false, is_native))
 					);
-					result(rname + "(" + strGlue(aexprs, ", ") + ")", type2javaObjType(gctx, ftype.returnType, true, false));
+					result(rname + "(" + strGlue(aexprs, ", ") + ")", type2javaObjType(gctx, ftype.returnType, true, false, is_native));
 				}
 				None(): {
 					arrow = javaVerifyFiTypeFunction(fiExpType(f));
@@ -983,7 +941,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 				FcArrayPrim():
 					result(
 						if (length(es) == 0)
-							"runtime.arr_empty"
+							"SingletonStructs.arr_empty"
 						else
 							"(new Object[] { " + strGlue(map(es, \e -> {
 								val_code = unfoldJavaStatements(ctx, e, false);
@@ -1003,14 +961,14 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 							if (nfields != length(es))
 								fail0("Invalid number of arguments constructing " + sname + ": " + i2s(length(es)) + " instead of " + i2s(nfields));
 							if (nfields == 0)
-								result("runtime.str_" + sname, "SingletonStruct")
+								result("SingletonStructs.str_" + sname, "SingletonStruct")
 							else {
 								stype = "Struct_" + sname;
 								result(
 									"(new " + stype + "(" +
 									strGlue(mapi(es, \j, e ->
 										emitJavaExpression(ctx, e,
-											type2javaObjType(ctx.func.gctx, sinfo.fields[j].type, true, false))),
+											type2javaObjType(ctx.func.gctx, sinfo.fields[j].type, true, false, false))),
 										", ") +
 									"))",
 									stype
@@ -1032,7 +990,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 								argid = elemIndex(map(cstruct.fields, \f -> f.name), field, -1);
 								if (argid < 0)
 									fail0("Struct " + cstruct.name+" has no field " + field);
-								vtype = type2javaObjType(gctx, cstruct.fields[argid].type, true, false);
+								vtype = type2javaObjType(gctx, cstruct.fields[argid].type, true, false, false);
 								result(refstr + ".f_" + field, vtype);
 							}
 							None(): {
@@ -1078,12 +1036,12 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 }
 
 emitJavaFnWrapper(gctx : JavaGlobalContext, csmodule : JavaModule, ftype : FiTypeFunction, indent : string, body : (string,string) -> string) -> Pair<string,string> {
-	tstr = type2javaObjType(gctx, ftype, false, false);
+	tstr = type2javaObjType(gctx, ftype, false, false, false);
 
 	atypes = ftype.args;
-	anames = mapi(atypes, \j, t -> type2javaObjType(gctx, t.type, false, false) + " a" + i2s(j));
+	anames = mapi(atypes, \j, t -> type2javaObjType(gctx, t.type, false, false, false) + " a" + i2s(j));
 	auses = mapi(atypes, \j, t -> "a" + i2s(j));
-	rtypestr = type2javaObjType(gctx, ftype.returnType, false, false);
+	rtypestr = type2javaObjType(gctx, ftype.returnType, false, false, false);
 
 	wrapper = (
 		"new " + tstr + "() {\n" +
@@ -1131,7 +1089,7 @@ emitJavaCompare(ctx : JavaScopeContext, op : string, e1 : FiExp, e2 : FiExp, rty
 			}
 		}
 
-		aempty = "runtime.arr_empty";
+		aempty = "SingletonStructs.arr_empty";
 		rs1 = singletonNo(e1);
 		rs2 = singletonNo(e2);
 		if ((re1 == aempty || re2 == aempty) && (op == "==" || op == "!=")) {
@@ -1167,7 +1125,13 @@ emitJavaCompare(ctx : JavaScopeContext, op : string, e1 : FiExp, e2 : FiExp, rty
 	switch (fiExpType(e1)) {
 		FiTypeInt():    opwrap("int");
 		FiTypeDouble(): opwrap("double");
-		FiTypeBool():   opwrap("boolean");
+		FiTypeBool():
+			if (op == "==" || op == "!=") {
+				opwrap("boolean");
+			} else {
+				"((" + emitJavaExpression(ctx, e1, "boolean") + "? 1 : 0)" + op + 
+				"(" + emitJavaExpression(ctx, e2, "boolean") + "? 1 : 0))";
+			}
 		FiTypeString(): strwrap();
 		default:        fnwrap("FlowRuntime.compareByValue","Object");
 	}
@@ -1282,7 +1246,7 @@ unfoldJavaStatements(ctx : JavaScopeContext, code : FiExp, allow_stmt : bool) ->
 	}
 }
 
-type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : bool) -> string {
+type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : bool, in_native : bool) -> string {
 	switch (t) {
 		FiTypeArray(arr):              "Object[]";
 		FiTypeFunction(args, retType): {
@@ -1292,13 +1256,13 @@ type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : b
 			if (no_args)
 				ft
 			else {
-				astr = strGlue(map(args, \t3 -> type2javaObjType(gctx, t3.type, false, no_args)), ", ");
+				astr = strGlue(map(args, \t3 -> type2javaObjType(gctx, t3.type, false, no_args, in_native)), ", ");
 				
-				(ft + "<" + type2javaObjType(gctx, retType, false, no_args))+
+				(ft + "<" + type2javaObjType(gctx, retType, false, no_args, in_native))+
 					(if (arity == 0) "" else "," + astr) + ">";
 			}
 		};
-		FiTypeRef(tp):                 if (no_args) "Reference" else "Reference<" + type2javaObjType(gctx, tp, false, no_args) + ">";
+		FiTypeRef(tp):                 if (no_args) "Reference" else "Reference<" + type2javaObjType(gctx, tp, false, no_args, in_native) + ">";
 		FiTypeParameter(nm):           "Object"; // TODO: is it right ?
 		FiTypeBool():                  if (field) "boolean" else "Boolean";
 		FiTypeInt():                   if (field) "int" else "Integer";
@@ -1308,14 +1272,13 @@ type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : b
 		FiTypeVoid():                  "Object";
 		FiTypeNative():                "Object";
 		FiTypeName(nm, __):
-			switch(lookupTree(gctx.cstructs, nm)) {
-				Some(cstruct):
-					if (length(cstruct.fields) > 0)
-						"Struct_" + cstruct.name
-					else
-						"SingletonStruct";
-				None():
-					"Struct";
+			if (in_native) "Struct" else {
+				switch(lookupTree(gctx.cstructs, nm)) {
+					Some(cstruct):
+						if (length(cstruct.fields) > 0) "Struct_" + cstruct.name
+						else "SingletonStruct";
+					None(): "Struct";
+				}
 			}
 	}
 }
@@ -1386,7 +1349,7 @@ type2javaStruct(gctx : JavaGlobalContext, t : FiType) -> Maybe<JavaStruct> {
 
 ctxtype2javaObjType(ctx : JavaScopeContext, type : FiType, field : bool, no_args : bool) {
 	fctx = ctx.func;
-	type2javaObjType(fctx.gctx, type, field, no_args);
+	type2javaObjType(fctx.gctx, type, field, no_args, false);
 }
 
 jctxPushStr(ctx : JavaScopeContext, str : string) {
@@ -1617,10 +1580,3 @@ usePreviouslyGeneratedModules(gctx : JavaGlobalContext, module : FiModule, path 
 		false
 	}
 }
-
-writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void {
-	rlistPush(gctx.to_compile, path + "\n");
-	setFileContent(path, src);
-	{}
-}
-

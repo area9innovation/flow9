@@ -40,8 +40,8 @@
 QGLRenderSupport::QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool fake_touch, bool transparent) :
     QOpenGLWidget(parent),
     GLRenderSupport(owner),
-    gl_fake_touch(fake_touch),
-    request_manager(new QNetworkAccessManager(this))
+    request_manager(new QNetworkAccessManager(this)),
+	gl_fake_touch(fake_touch)
 {
     QOpenGLWidget::setAcceptDrops(true);
     setMouseTracking(true);
@@ -97,6 +97,7 @@ static QFont::Weight qFontWeightByTextWeight(TextWeight weight) {
     case TextWeight::Bold: return QFont::Bold;
     case TextWeight::ExtraBold: return QFont::ExtraBold;
     case TextWeight::Black: return QFont::Black;
+    default: return QFont::Normal;
     }
 }
 
@@ -105,6 +106,7 @@ static QFont::Style qFontStyleByTextStyle(TextStyle style) {
     case TextStyle::Normal: return QFont::StyleNormal;
     case TextStyle::Italic: return QFont::StyleItalic;
     case TextStyle::Oblique: return QFont::StyleOblique;
+    default: return QFont::StyleNormal;
     }
 }
 
@@ -191,7 +193,7 @@ bool QGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *in
 
     bool isGreyGlyph = true;
     const uint8_t* bytes = img.bits();
-    for (size_t i = 0; i < img.sizeInBytes(); i+=4) {
+    for (long i = 0; i < img.sizeInBytes(); i += 4) {
         isGreyGlyph = isGreyGlyph && bytes[i] == bytes[i + 1] && bytes[i + 1] == bytes[i + 2] && bytes[i + 2] == bytes[i + 3];
     }
 
@@ -430,6 +432,7 @@ void QGLRenderSupport::doReshapeNativeWidget(GLClip* clip, const GLBoundingBox &
                 // setGeometry invariably causes an "OpenGL error 1282" from inside Qt, so we
                 // consume the error here since it doesn't seem to affect the result.
                 // TODO: Figure out what's actually going on inside Qt. Probably related to rebuilding their FBO.
+            	UNUSED(web_clip);
                 glGetError();
             }
         }
@@ -665,6 +668,7 @@ void QGLRenderSupport::mediaStatusChanged(QMediaPlayer::MediaStatus status)
             dispatchVideoPlayStatus(owner, GLVideoClip::PlayEnd);
             break;
         }
+        default: break;
     }
 }
 
@@ -797,19 +801,22 @@ StackSlot QGLRenderSupport::webClipHostCall(GLWebClip * clip, const unicode_stri
     return getFlowRunner()->AllocateString("");
 }
 
-StackSlot QGLRenderSupport::webClipEvalJS(GLWebClip * clip, const unicode_string &code) {
+StackSlot QGLRenderSupport::webClipEvalJS(GLWebClip * clip, const unicode_string &code, StackSlot& cb) {
     QWidget *widget = NativeWidgets[clip];
     QWebEngineView *web_view = qobject_cast<QWebEngineView*>(widget);
 
     if (web_view) {
         QWebEnginePage * page = web_view->page();
         QString js = unicode2qt(code);
-        page->runJavaScript(js, [this](const QVariant &var) {
-            return variant2slot(var);
+
+        page->runJavaScript(js, [this, cb](const QVariant &var) {
+            RUNNER_VAR = getFlowRunner();
+            WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+            RUNNER->EvalFunction(cb, 1, variant2slot(var));
         });
     }
 
-    return getFlowRunner()->AllocateString("");
+    RETVOID;
 }
 
 StackSlot QGLRenderSupport::variant2slot(QVariant var) {
@@ -1359,7 +1366,7 @@ FlowKeyEvent QGLRenderSupport::keyEventToFlowKeyEvent(FlowEvent event, QKeyEvent
     case FlowKey_F10: case FlowKey_F11: case FlowKey_F12:
     case FlowKey_F13: case FlowKey_F14: case FlowKey_F15:
         {
-            char tmp[10];
+            char tmp[16];
             int sz = sprintf(tmp, "F%d", code-FlowKey_F1+1);
             key = parseUtf8(tmp, sz);
             break;
@@ -1368,6 +1375,7 @@ FlowKeyEvent QGLRenderSupport::keyEventToFlowKeyEvent(FlowEvent event, QKeyEvent
     case FlowKey_Numpad_0:;
 #undef SSTR
 #undef CASE
+    default: break; // do nothing
     }
 
     return FlowKeyEvent(
@@ -1735,6 +1743,7 @@ StackSlot QGLRenderSupport::emitKeyEvent(RUNNER_ARGS)
     RUNNER_CheckTag(TBool, alt);
     RUNNER_CheckTag(TBool, meta);
     RUNNER_CheckTag(TInt, key_code);
+    UNUSED(clip);
 
     std::string event = encodeUtf8(RUNNER->GetString(event_name));
     QEvent::Type type = QEvent::KeyPress;
@@ -1798,6 +1807,7 @@ StackSlot QGLRenderSupport::setClipboard(RUNNER_ARGS)
 
 StackSlot QGLRenderSupport::getClipboard(RUNNER_ARGS)
 {
+	IGNORE_RUNNER_ARGS
     return RUNNER->AllocateString(QApplication::clipboard()->text(QClipboard::Clipboard));
 }
 
@@ -1805,6 +1815,7 @@ StackSlot QGLRenderSupport::getClipboardToCB(RUNNER_ARGS)
 {
     StackSlot &callback = RUNNER_ARG(0);
     RUNNER->EvalFunction(callback, 1, getClipboard(RUNNER, NULL));
+    RETVOID;
 }
 
 StackSlot QGLRenderSupport::getClipboardFormat(RUNNER_ARGS)
@@ -1895,6 +1906,7 @@ StackSlot QGLRenderSupport::setWindowTitleNative(RUNNER_ARGS)
 
 StackSlot QGLRenderSupport::setFavIcon(RUNNER_ARGS)
 {
+	IGNORE_RUNNER_ARGS;
     RETVOID;
 }
 

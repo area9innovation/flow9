@@ -1,4 +1,5 @@
 import tools/common/pathutil;
+import tools/common/logging;
 import math/md5;
 import lingo/linecolumn;
 import tools/flowc/fctypeenv;
@@ -14,9 +15,8 @@ export {
 	addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram;
 
 	addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProgram;
-	printFcError(acc : FlowcAcc, error : FcError) -> void;
+	printFcError(config : CompilerConfig, env : FcTypeEnvGlobal, error : FcError) -> void;
 	prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc;
-	getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo;
 
 	// Add the types we got from the typechecker to the environment
 	mergeTypechecked2TypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal) -> FcTypeEnvProgram;
@@ -30,12 +30,48 @@ export {
 	// Returns a callback for deferred check of dependencies.
 	fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool;
 
-	printLocation(config : CompilerConfig, file : string, start : int, message : string) -> void;
-	makeLocation(config : CompilerConfig, file : string, start : int) -> string;
+	printLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileInfo, start : int,end : int, message : string) -> void;
+	makeLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileInfo, start : int, end : int) -> string;
 
 	name2FimoduleInFiProgram(prog : FiProgram, flowfile : string, name : string) -> FiModule;
 
 	name2FimoduleInFlowcAcc(prog : FlowcAcc, flowfile : string, name : string) -> FiModule;
+
+	// Dump a message to a server log
+	fcServerLog(message : string, conf : CompilerConfig) -> void;
+	// Dump a message to a debug log, not to mess up with the normal logs.
+	fcDebugLog(message : string, conf : CompilerConfig) -> void;
+	// Update a config for 'compile-expression' option
+	fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void>;
+
+	getNameByLineCol(line : int, col : int, src : string) -> string;
+	getNameByPos(pos : int, src : string) -> string;
+	getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2>;
+	getFcInfo2ByPos(pos : int, src : string) -> Maybe<FcInfo2>;
+	getFcInfo2ByPos2(pos : int, allowed : string, src : string) -> Maybe<FcInfo2>;
+
+	// Detects if a string is an char, allowed for id in flow.
+	fcIsIdChar(s : string) -> bool;
+
+	// Approximate borders of toplevel function/global variable expressions.
+	// Returns a tree: a toplevel name is mapped onto a pair of start-end, 
+	// of corresponding expression "{ ... }" in braces.
+	fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>>;
+
+	// Simple string search utilities.
+	forwardUntil(src : string, i : int, pred : (string) -> bool) -> int;
+	backwardUntil(src : string, i : int, pred : (string) -> bool) -> int;
+	forwardWhile(src : string, i : int, pred : (string) -> bool) -> int;
+	backwardWhile(src : string, i : int, pred : (string) -> bool) -> int;
+
+	/*
+	When URI parser parses something like:
+		file:///c:/Users/dmitr/area9/flow9/tools/flowc
+	it outputs path as:
+		/c:/Users/dmitr/area9/flow9/tools/flowc
+	which is wrong in windows, first slash must be removed.
+	*/
+	fcCorrectUriPath(path : string) -> string;
 }
 
 addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram {
@@ -281,29 +317,25 @@ findModuleNameInfo(module : FcModule, name : string) -> FcInfo2 {
 	)))));
 }
 
-
 addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProgram {
-	iter(errors, \e -> 
-		addFcTypeError(tenv, e)
-	);
+	iter(errors, \e -> addFcTypeError(tenv, e));
 	tenv
 }
 
-printFcError(acc : FlowcAcc, error : FcError) -> void {
+printFcError(config : CompilerConfig, env : FcTypeEnvGlobal, error : FcError) -> void {
 	un = uniq(error.positions);
 
 	if (length(error.positions) == 0) {
-		fcPrintln(error.message);
+		fcPrintln(error.message, config.threadId);
 	}
 
 	iteri(un, \i : int, p : FcPosition -> {
-		module = lookupTree(acc.modules, p.file);
 		err =  (if (i == 0) " " + error.message else " and here");
-		file = switch (module) {
-			None():  getFcFileInfo(p.file, acc.config).fullpath;
-			Some(m): m.fileinfo.fullpath;
+		fileinfo = switch (fcLoadFromCache(env, p.file)) {
+			None():  fcfileinfo2fi(getFcFileInfo(p.file, config));
+			Some(cached): cached.loaded.module.fileinfo;
 		}
-		printLocation(acc.config, file, p.start, err);
+		printLocation(config, env, fileinfo, p.start, -1, "Error: " + err);
 	});
 }
 
@@ -325,22 +357,6 @@ prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc {
 		makeIdGroup(globalid),
 		makeTracer()
 	)
-}
-
-getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
-	workingDir = getConfigParameterDef(config.config, "working-dir", "");
-	realfile = findFlowPath(file, true, config.includes, workingDir);
-	content = getFileContent(realfile);
-
-	FcFileInfo(
-		trimFlowfile(file, config.includes, workingDir),
-		fileModified(realfile),
-		realfile,
-		md5(content),
-		content,
-		0,
-		fileSize(realfile)
-	);
 }
 
 mergeTypechecked2TypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv0 : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal) -> FcTypeEnvProgram {
@@ -387,7 +403,7 @@ addFiModuleToFcTypeEnv(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, fimod
 	exist = lookupTreeDef(acc.file2flowfile, fimodule.fileinfo.fullpath, "");
 	if (exist != "" && exist != fimodule.fileinfo.flowfile) {
 		// TODO: Make this an error instead
-		fcPrintln(fimodule.fileinfo.fullpath + " imported both as " + fimodule.fileinfo.flowfile + " and " + exist);
+		fcPrintln(fimodule.fileinfo.fullpath + " imported both as " + fimodule.fileinfo.flowfile + " and " + exist, tenv.acc.config.threadId);
 	}
 
 	FcTypeEnvProgram(
@@ -404,21 +420,23 @@ runTasks(config : CompilerConfig, tasks : [() -> ?]) -> [?] {
 	if (isConfigParameterFalse(config.config, "parallel")) sequential(true, tasks)
 	else concurrent(true, tasks)
 }
-
+   
 fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool {
 	checkMd5 = isConfigParameterTrue(config.config, "use-md5");
 	changed = \ -> {
 		check_imports = exists(module.imports, \imp ->
 			switch (fcLoadFromCache(globEnv, imp.flowfile)) {
 				Some(cachedInc): {
-					module.fileinfo.lastupdate < cachedInc.module.fileinfo.lastupdate || cachedInc.dependencyChanged();
+					cachedInc.outdated || 
+					module.fileinfo.lastupdate < cachedInc.loaded.module.fileinfo.lastupdate || 
+					cachedInc.loaded.dependencyChanged();
 				}
 				None(): {
-					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there"); true; 
+					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there", config.threadId); true; 
 				}
 			}
 		);
-		check_string_includes = exists(module.stringIncludes, \inc ->fiFileInfoFileChanged(inc, checkMd5));
+		check_string_includes = exists(module.stringIncludes, \inc ->fiFileInfoFileChanged(inc, config));
 		ret = check_imports || check_string_includes;
 		fcAddToCache(globEnv, module.fileinfo.flowfile, FcLoaded(module, \ -> ret));
 		ret
@@ -427,22 +445,35 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 	changed
 }
 
-printLocation(config : CompilerConfig, file : string, start : int, message : string) -> void {
-	fcPrintln(makeLocation(config, file, start) + " " + message)
+printLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileInfo, start : int, end : int, message : string) -> void {
+	location = makeLocation(config, env, fileinfo, start, end) + " " + message;
+	fcPrintln(location, config.threadId);
 }
 
-makeLocation(config : CompilerConfig, file : string, start : int) -> string {
-	if (file == "") "" else {
-		code = getFileContent(file);
+makeLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileInfo, start : int, end : int) -> string {
+	if (fileinfo.fullpath == "") "" else {
+		code = fcFileSource(env, fileinfo.fullpath);
 		resolver = makeLineResolver(code);
-		sline = findLine(resolver, start);
-		line_string = i2s(sline.lineno);
-		column_string = i2s(sline.column);
-
-		if (isConfigParameterTrue(config.config, "legacy-format"))
-			file + ":" + line_string + " (" + file + ":" + line_string + ")"
-		else
-			file + ":" + line_string + ":" + column_string + ":"
+		s = findLine(resolver, start);
+		if (isConfigParameterTrue(config.config, "legacy-format")) {
+			fileinfo.fullpath + ":" + i2s(s.lineno) + " (" + fileinfo.fullpath + ":" + i2s(s.lineno) + ")";
+		} else {
+			if (end < 0) {
+				switch (getFcInfo2ByPos(start, code)) {
+					Some(info): {
+						s1 = findLine(resolver, info.start);
+						e1 = findLine(resolver, info.end);
+						fileinfo.fullpath + ":" + i2s(s1.lineno) + ":" + i2s(s1.lineIndex + 1) + ":" + i2s(e1.lineno) + ":" + i2s(e1.lineIndex + 1) + ":";
+					}
+					None(): {
+						fileinfo.fullpath + ":" + i2s(s.lineno) + ":" + i2s(s.lineIndex + 1) + ":";
+					}
+				}
+			} else {
+				e = findLine(resolver, end);
+				fileinfo.fullpath + ":" + i2s(s.lineno) + ":" + i2s(s.lineIndex + 1) + ":" + i2s(e.lineno) + ":" + i2s(e.lineIndex + 1) + ":";
+			}
+		}
 	}
 }
 
@@ -472,4 +503,182 @@ name2FimoduleInFlowcAcc(prog : FlowcAcc, flowfile : string, name : string) -> Fi
 		)
 	);
 	lookupTreeDef(prog.modules, modname, dummyFiModule)
+}
+
+fcServerLog(message : string, conf : CompilerConfig) -> void {
+	log_file = getConfigParameterDef(conf.config, "server-log", getFlowDir() + 
+		"/.log/flowc_" + getConfigParameter(conf.config, "server-mode") + "_server.log");
+	log_dir = fcDirName(log_file);
+	if (log_dir != "") {
+		err = ensureDirectoryExists(log_dir);
+		if (err != "") {
+			fcPrintln(err, conf.threadId);
+		}
+	}
+	if (log_file != "") {
+		log_size = s2i(getConfigParameterDef(conf.config, "server-log-size", "128"));
+		writeLogMessage(message, log_file, log_size);
+	}
+}
+
+fcDebugLog(message : string, conf : CompilerConfig) -> void {
+	log_file = getConfigParameterDef(conf.config, "debug-log", getFlowDir() + "/.log/flowc_debug.log");
+	log_dir = fcDirName(log_file);
+	if (log_dir != "") {
+		err = ensureDirectoryExists(log_dir);
+		if (err != "") {
+			fcPrintln(err, conf.threadId);
+		}
+	}
+	if (log_file != "") {
+		log_size = s2i(getConfigParameterDef(conf.config, "server-log-size", "128"));
+		writeLogMessage(message, log_file, log_size);
+	}
+}
+
+fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
+	if (!isConfigParameterSet(conf.config, "compile-expression")) Pair(conf, nop) else {
+		expr = getConfigParameter(conf.config, "compile-expression");
+		fileinfo = getFcFileInfo(conf.flowfile, conf);
+		file = trimFlowfile(fileinfo.fullpath, conf.includes, getConfigParameterDef(conf.config, "working-dir", ""));
+		file_dir = dirName(fileinfo.fullpath);
+		file_path = file_dir + "/___tmp_expr___.flow";
+		file_str = "import " + file + ";\n\n ___tmpvar___ = " + expr + ";\n\n";
+		setFileContent(file_path, file_str);
+		upd_conf = CompilerConfig(conf with flowfile = "___tmp_expr___.flow");
+		Pair(upd_conf, \ -> {
+			deleteFile(file_path);
+			{}
+		});
+	}
+}
+
+getNameByLineCol(line : int, col : int, src : string) -> string {
+	resolver = makeLineResolver(src);
+	getter = \c -> getNameByPos(findLineIndex(resolver, line, c), src);
+	name = getter(col);
+	// Fix for vscode behavior: it may give a first column after the last symbol if a word was selected.
+	if (name != "" || col <= 0) name else getter(col - 1);
+}
+
+getNameByPos(pos : int, src : string) -> string {
+	eitherMap(getFcInfo2ByPos(pos, src), \info -> substring(src, info.start, info.end - info.start + 1), "");
+}
+
+getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2> {
+	resolver = makeLineResolver(src);
+	getFcInfo2ByPos(findLineIndex(resolver, line, col), src);
+}
+
+getFcInfo2ByPos(pos : int, src : string) -> Maybe<FcInfo2> {
+	if (pos < 0 || pos >= strlen(src) || !fcIsIdChar(getCharAt(src, pos))) None() else {
+		start = for(pos, 
+			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(src, i - 1)), 
+			\i -> i - 1
+		);
+		end = for(pos, 
+			\i -> if (i + 1 >= strlen(src)) false else fcIsIdChar(getCharAt(src, i + 1)), 
+			\i -> i + 1
+		);
+		if (isDigit(getCharAt(src, start))) None() else Some(FcInfo2(start, end));
+	}
+}
+
+getFcInfo2ByPos2(pos : int, allowed : string, src : string) -> Maybe<FcInfo2> {
+	ok_char = \c -> fcIsIdChar(c) || strContains(allowed, c);
+	if (pos < 0 || pos >= strlen(src) || !ok_char(getCharAt(src, pos))) None() else {
+		start = for(pos, 
+			\i -> if (i <= 0) false else ok_char(getCharAt(src, i - 1)), 
+			\i -> i - 1
+		);
+		end = for(pos, 
+			\i -> if (i + 1 >= strlen(src)) false else ok_char(getCharAt(src, i + 1)), 
+			\i -> i + 1
+		);
+		if (isDigit(getCharAt(src, start))) None() else Some(FcInfo2(start, end));
+	}
+}
+
+fcIsIdChar(s : string) -> bool {
+	s == "_" || isLetter(s) || isDigit(s);
+}
+
+fcMatchingBrackets(src : string) -> [Pair<int,int>] {
+	fold(enumFromTo(0, strlen(src) - 1), Triple([], -1, 0), \acc, i ->
+		if (getCharAt(src, i) == "{") {
+			if (acc.third == 0) {
+				Triple(acc.first, i, 1);
+			} else {
+				Triple(acc.first, acc.second, acc.third + 1);
+			}
+		} else if (getCharAt(src, i) == "}") {
+			if (acc.third == 1) {
+				Triple(concat(acc.first, [Pair(acc.second, i)]), -1, 0);
+			} else {
+				Triple(acc.first, acc.second, acc.third - 1);
+			}
+		} else {
+			acc;
+		}
+	).first;
+}
+
+forwardUntil(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src)) -1 else
+	if (pred(getCharAt(src, i))) i else
+	forwardUntil(src, i + 1, pred);
+}
+
+backwardUntil(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src)) -1 else
+	if (pred(getCharAt(src, i))) i else
+	backwardUntil(src, i - 1, pred);
+}
+
+forwardWhile(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src) || !pred(getCharAt(src, i))) -1 else
+	if (!pred(getCharAt(src, i + 1))) i else
+	forwardWhile(src, i + 1, pred);
+}
+
+backwardWhile(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src) || !pred(getCharAt(src, i))) -1 else
+	if (!pred(getCharAt(src, i - 1))) i else
+	backwardWhile(src, i - 1, pred);
+}
+
+fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>> {
+	fold(fcMatchingBrackets(src), makeTree(), \acc, pair -> {
+		bracket_depth = ref 0;
+		border = max(
+			backwardUntil(src, pair.first, \s -> s == "="), 
+			backwardUntil(src, pair.first, \s -> {
+				if (s == ")") bracket_depth := ^bracket_depth + 1 else 
+				if (s == "(") bracket_depth := ^bracket_depth - 1;
+				s == "(" && ^bracket_depth == 0;
+			})
+		);
+		if (border == -1) acc else { 
+			id_end = backwardUntil(src, border, fcIsIdChar);
+			id_beg = backwardWhile(src, id_end, fcIsIdChar);
+			if (id_end == -1 || id_beg == -1) acc else {
+				name = substring(src, id_beg, id_end - id_beg + 1);
+				setTree(acc, name, pair);
+			}
+		}
+	});
+}
+
+fcCorrectUriPath(path : string) -> string {
+	if (!startsWith(path, "/") || !hasTargetName("windows")) path else {
+		// Detect c:, d:, C:, D:, etc.
+		drive = getCharAt(path, 1);
+		if (isLetter(drive) && getCharAt(path, 2) == ":") {
+			// Convert C: to c:
+			toLowerCase(drive) + ":" + strRight(path, 3);
+		} else {
+			// keep original path
+			path
+		}
+	}
 }
