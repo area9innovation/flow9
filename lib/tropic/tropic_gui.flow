@@ -8,6 +8,7 @@ import fform/renderfform;
 import tropic/tropic_manager;
 import fform/renderform3d;
 import fform/fpdf;
+import ui/scrollable;
 
 export {
 	// A fixed size, empty block
@@ -226,6 +227,24 @@ export {
 	TCropSizeX : (content : Tropic, width : Tropic) -> Tropic;
 	// Crops only in Y dimension
 	TCropSizeY : (content : Tropic, height : Tropic) -> Tropic;
+
+	// ---
+	// TScrollable - DEPRECATED, use TScroll
+	// ---
+	// If content is smaller than maxbox, the content size wins. The content gets the fill size from maxbox
+	// [--Explain--] Could we remove this, as we already have tscroll.flow? Or probably just mark this as DEPRECATED or something like that
+	TScrollable(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic;
+		TScrollableState ::= TScrollRect, TScrollOffset, TAnimate, TScrollInspect, TStickToEdge;
+			// If you need to control the area
+			TScrollRect(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, width : DynamicBehaviour<double>, height : DynamicBehaviour<double>);
+			// If you need to control the position
+			TScrollOffset(t : Behaviour<Tropic>);
+			// If scrolling should animate.
+			TAnimate(tension : double, friction : double);
+			// explicitely inspect the size of the content to make sure scroll bars are visible when both TScrollable and its content form rely on TFillXY(). Inspired by case 38798.
+			TScrollInspect();
+			// pushes the scrollbars to egdes of the screen
+			TStickToEdge();
 
 	// TScrollable with extra margins for scroll bars at the right and bottom
 	TScrollableWithBars(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic;
@@ -866,6 +885,151 @@ TRoundedFull(style : [TGraphicsStyle], size : Tropic) -> Tropic {
 
 TRounded4(radius : double, style : [TGraphicsStyle], size : Tropic) -> Tropic {
 	TRounded(radius, radius, radius, radius, style, size);
+}
+
+TScrollable(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic {
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		ba2 = t2a(maxbox, parent, sheet, true);
+		if (metricsOnly) ba2
+		else {
+			stickToEdge = contains(state, TStickToEdge());
+
+			showHorizontal = make(false);
+			showVertical = make(false);
+
+			addedMarginX = style.borderGap + if (stickToEdge) getVScrollWidth(style) else 0.0;
+			addedMarginY = style.borderGap + if (stickToEdge) getHScrollHeight(style) else 0.0;
+
+			borderLeft = 9.9;
+			constMargin = Point(borderLeft + addedMarginX, borderLeft + addedMarginY);
+
+			w = fuse(ba2.metrics.width);
+			h = fuse(ba2.metrics.height);
+
+			realWidth = select2u(w.first, showVertical, \w2, show -> w2 - if (show) constMargin.x else 0.0);
+			realHeight = select2u(h.first, showHorizontal, \h2, show -> h2 - if (show) constMargin.y else 0.0);
+
+			wb = if (stickToEdge) realWidth.first else w.first;
+			hb = if (stickToEdge) realHeight.first else h.first;
+
+			scrollRect = extractStruct(state, TScrollRect(make(0.0), make(0.0), make(0.0), make(0.0)));
+
+			ba1 =
+				t2a(
+					content,
+					TParentInfo(
+						wb,
+						hb,
+						parent.environment,
+						fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(scrollRect.x, scrollRect.y)))
+					),
+					sheet,
+					metricsOnly
+				);
+			ba1form = Available(wb, hb, fform2form(ba1.form));
+
+			width = fuse(ba1.metrics.width);
+			height = fuse(ba1.metrics.height);
+			//those subscriptions are monitoring if we need to display the scrollbars
+			unsWidth = subscribe(width.first, \ww -> if(ww - getValue(w.first) >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
+			unsWidth2 = subscribe(w.first, \ww -> if(getValue(width.first) - ww >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
+			unsHeight = subscribe(height.first, \hh -> if(hh - getValue(h.first) >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
+			unsHeight2 = subscribe(h.first, \hh -> if(getValue(height.first) - hh >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
+
+			contentWH = select2u(width.first, height.first, \w1, h1 -> WidthHeight(w1, h1));
+
+			sizeAdded = if(!stickToEdge) constMargin.x else 0.0;
+			sizeFn = \dimension, vis -> dimension;
+
+			scrollAnimate = extractStruct(state, TAnimate(0.0, 0.0));
+			scrollAnimateTimer = makeDeltaTimer(30);
+			springy = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
+			springyUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springy.goal, scrollRect.y)
+			else connectDistinct(springy.position, scrollRect.y);
+			springx = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
+			springxUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springx.goal, scrollRect.x)
+			else connectDistinct(springx.position, scrollRect.x);
+
+			offsetAccDisposers = ref [];
+			offsetUns = subscribe(extractStruct(state, TScrollOffset(const(TEmpty()))).t, \offsetTropic -> {
+				applyall(^offsetAccDisposers);
+				offsetAcc = t2a(offsetTropic, parent, sheet, true);
+				offsetAccDisposers := offsetAcc.disposers;
+
+				offsetUpdate = \ -> {
+					owidth = fgetValue(offsetAcc.metrics.width);
+					oheight = fgetValue(offsetAcc.metrics.height);
+
+					if (getValue(scrollRect.y) != oheight) {
+						next(springy.position, getValue(scrollRect.y));
+						next(springy.goal, oheight);
+					}
+					if (getValue(scrollRect.x) != owidth) {
+						next(springx.position, getValue(scrollRect.x));
+						next(springx.goal, owidth);
+					}
+				};
+
+				if (isStaticForm(ba1form)) {
+					offsetUpdate();
+				} else {
+					deferred(offsetUpdate);
+				};
+			});
+
+			offsetDisposers = [
+				offsetUns,
+				springyUns,
+				springxUns,
+				\ -> applyall(concat([^(springx.dispose), ^(springy.dispose)], ^offsetAccDisposers))
+			];
+
+			// case 38798 - inspect real size of the content to make sure the scroll bars are visible when necessary
+			inspectContentSize = contains(state, TScrollInspect());
+			formToScroll = if (inspectContentSize) {
+				realSize = makeWH();
+				Size2(
+					select2(contentWH.first, realSize, \s1, s2 -> WidthHeight(max(s1.width, s2.width), max(s1.height, s2.height))),
+					Inspect([ISize(realSize)], ba1form)
+				)
+			} else {
+				Size2(contentWH.first, ba1form)
+			}
+
+			stickToEdgeDisposers = [realHeight.second, realWidth.second, unsWidth, unsWidth2, unsHeight, unsHeight2];
+			addBorderLeft = \f -> if (stickToEdge) Offset(borderLeft, 0.0, f) else f;
+			addBorderTop = \f -> if (stickToEdge) Offset(0.0, borderLeft, f) else f;
+			TAcc(
+				doStyledScrollableCustom(scrollRect.x, scrollRect.y, wb, hb, formToScroll,
+					style, true, true, false,
+					\cForm, hBar, vBar -> if (mobile) {
+						wh = makeWH();
+						Group([
+							Inspect([ISize(wh)], cForm),
+							Available2(wh, Group([
+								Align2(1.0, 0.0, Offset(constMargin.x, 0.0, vBar)),
+								Align2(0.0, 1.0, Offset (0.0, constMargin.y, hBar))
+							]))
+						]);
+					} else Grid([[cForm, vBar |> addBorderLeft], [hBar |> addBorderTop, Empty()]]),
+					sizeFn, sizeFn, true, false
+				) |> FMForm,
+				TFormMetrics(
+					wb,
+					hb,
+					ba2.metrics.baseline
+				),
+				ba2.minWidth,
+				ba2.minHeight,
+				ba2.maxWidth,
+				ba2.maxHeight,
+				ba2.xFillers,
+				ba2.yFillers,
+				ba2.addFillers,
+				concatA([ba1.disposers, ba2.disposers, stickToEdgeDisposers, w.second, h.second, width.second, height.second, [contentWH.second], offsetDisposers])
+			);
+		}
+	})
 }
 
 TScrollableWithBars(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic {
