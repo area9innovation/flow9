@@ -21,7 +21,7 @@ fcDecodeConfigRequest(s : string) -> Maybe<CompilerConfig> {
 	}
 }
 
-fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : string, out_cb : (int, string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
+fcProcessRequest(serverConf : CompilerConfig, globEnv : FcTypeEnvGlobal, req : string, out_cb : (int, string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
 	if (startsWith(req, "config_")) {
 		encoded_conf = substring(req, 7, strlen(req) - 7);
 		switch (fcDecodeConfigRequest(encoded_conf)) {
@@ -31,12 +31,12 @@ fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : strin
 				if (isConfigParameterTrue(config.config, "server-shutdown")) {
 					exit_cb();
 				} else {
-					if (!isConfigParameterTrue(conf.config, "symbol-info")) {
-						fcPrintln("Processing '" + conf.flowfile + "' on http server", config.threadId);
+					if (!(isConfigParameterTrue(conf.config, "symbol-info") || isConfigParameterTrue(conf.config, "print-flow-dir"))) {
+						fcPrintln("Processing '" + conf.flowfile + "' on " + getConfigParameter(serverConf.config, "server-mode") + " server", config.threadId);
 					}
-					fcServerLog("Request: " + fcServerEscapeString(nonDefaultCompilerConfigToString(config)), serverConf);
+					fcServerLog("Request: " + escapeStr(nonDefaultCompilerConfigToString(config)), serverConf);
 					start_time = timestamp();
-					runConfigLocally(conf, env, \code -> {
+					runConfigLocally(conf, globEnv, \code -> {
 						pair.second();
 						bin_out = isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression");
 						out = if (bin_out) {
@@ -46,7 +46,7 @@ fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : strin
 						}
 						clearFcOutput(conf.threadId);
 						clearTimePhases(conf.threadId);
-						fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + fcServerEscapeString(if (bin_out) "<binary>" else out), serverConf);
+						fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(if (bin_out) "<binary>" else out), serverConf);
 						out_cb(code, out);
 						loop_cb();
 					});
@@ -63,7 +63,7 @@ fcProcessRequest(serverConf : CompilerConfig, env : FcTypeEnvGlobal, req : strin
 			out_cb(200, "WARNING: Illegal request");
 			loop_cb();
 		} else {
-			fcLspProcessRequest(serverConf, env, json, \msg -> out_cb(0, msg), loop_cb, exit_cb);
+			fcLspProcessRequest(serverConf, globEnv, json, \msg -> out_cb(0, msg), loop_cb, exit_cb);
 		}
 	}
 }
@@ -74,17 +74,17 @@ fcConsoleServer(config : CompilerConfig) -> void {
 	fcRunConsoleServer(initFcTypeEnvGlobal(), config);
 }
 
-fcRunConsoleServer(env : FcTypeEnvGlobal, config : CompilerConfig) -> void {
+fcRunConsoleServer(globEnv : FcTypeEnvGlobal, config : CompilerConfig) -> void {
 	switch (fcLspReadRequest()) {
 		Some(req): {
-			fcServerLog("Request: " + fcServerEscapeString(req.request), config);
+			fcServerLog("Request: " + escapeStr(req.request), config);
 			start_time = timestamp();
-			fcProcessRequest(config, env, req.json, 
+			fcProcessRequest(config, globEnv, req.json, 
 				\__, msg -> {
-					fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + fcServerEscapeString(msg), config);
+					fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(msg), config);
 					print(msg);
 				},
-				\-> fcRunConsoleServer(env, config),
+				\-> fcRunConsoleServer(globEnv, config),
 				\-> {
 					fcServerLog("Console server stopped.", config);
 					quit(0);
@@ -93,14 +93,14 @@ fcRunConsoleServer(env : FcTypeEnvGlobal, config : CompilerConfig) -> void {
 		}
 		None(): {
 			fcServerLog("Failed to read a request.", config);
-			fcRunConsoleServer(env, config);
+			fcRunConsoleServer(globEnv, config);
 		}
 	}
 }
 
 fcHttpServer(config : CompilerConfig) -> void {
 	port = s2i(getConfigParameter(config.config, "server-port"));
-	env = initFcTypeEnvGlobal();
+	globEnv = initFcTypeEnvGlobal();
 	server = ref nop;
 	server := createHttpServer(port,
 		\-> {
@@ -108,7 +108,7 @@ fcHttpServer(config : CompilerConfig) -> void {
 			fcPrintln("Http server started.", config.threadId)
 		},
 		\request, response -> {
-			fcProcessRequest(config, env, request.body,
+			fcProcessRequest(config, globEnv, request.body,
 				\code, output -> HttpResponse(200 + code, output, []) |> response,
 				nop,
 				\-> {
@@ -121,9 +121,4 @@ fcHttpServer(config : CompilerConfig) -> void {
 			)
 		}
 	);
-}
-
-// Do a replacement "\n" to "\\n" and so on
-fcServerEscapeString(str : string) -> string {
-	strReplaces(str, ["\n", "\\n", "\r", "\\r", "\t", "\\t"]);
 }

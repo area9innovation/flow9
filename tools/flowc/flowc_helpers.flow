@@ -15,7 +15,7 @@ export {
 	addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram;
 
 	addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProgram;
-	printFcError(acc : FlowcAcc, env : FcTypeEnvGlobal, error : FcError) -> void;
+	printFcError(config : CompilerConfig, env : FcTypeEnvGlobal, error : FcError) -> void;
 	prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc;
 
 	// Add the types we got from the typechecker to the environment
@@ -44,7 +44,6 @@ export {
 	// Update a config for 'compile-expression' option
 	fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void>;
 
-	getNameByLineColFromFile(line : int, col : int, file : string) -> string;
 	getNameByLineCol(line : int, col : int, src : string) -> string;
 	getNameByPos(pos : int, src : string) -> string;
 	getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2>;
@@ -53,6 +52,26 @@ export {
 
 	// Detects if a string is an char, allowed for id in flow.
 	fcIsIdChar(s : string) -> bool;
+
+	// Approximate borders of toplevel function/global variable expressions.
+	// Returns a tree: a toplevel name is mapped onto a pair of start-end, 
+	// of corresponding expression "{ ... }" in braces.
+	fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>>;
+
+	// Simple string search utilities.
+	forwardUntil(src : string, i : int, pred : (string) -> bool) -> int;
+	backwardUntil(src : string, i : int, pred : (string) -> bool) -> int;
+	forwardWhile(src : string, i : int, pred : (string) -> bool) -> int;
+	backwardWhile(src : string, i : int, pred : (string) -> bool) -> int;
+
+	/*
+	When URI parser parses something like:
+		file:///c:/Users/dmitr/area9/flow9/tools/flowc
+	it outputs path as:
+		/c:/Users/dmitr/area9/flow9/tools/flowc
+	which is wrong in windows, first slash must be removed.
+	*/
+	fcCorrectUriPath(path : string) -> string;
 }
 
 addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram {
@@ -298,29 +317,25 @@ findModuleNameInfo(module : FcModule, name : string) -> FcInfo2 {
 	)))));
 }
 
-
 addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProgram {
-	iter(errors, \e -> 
-		addFcTypeError(tenv, e)
-	);
+	iter(errors, \e -> addFcTypeError(tenv, e));
 	tenv
 }
 
-printFcError(acc : FlowcAcc, env : FcTypeEnvGlobal, error : FcError) -> void {
+printFcError(config : CompilerConfig, env : FcTypeEnvGlobal, error : FcError) -> void {
 	un = uniq(error.positions);
 
 	if (length(error.positions) == 0) {
-		fcPrintln(error.message, acc.config.threadId);
+		fcPrintln(error.message, config.threadId);
 	}
 
 	iteri(un, \i : int, p : FcPosition -> {
-		module = lookupTree(acc.modules, p.file);
 		err =  (if (i == 0) " " + error.message else " and here");
-		fileinfo = switch (module) {
-			None():  fcfileinfo2fi(getFcFileInfo(p.file, acc.config));
-			Some(m): m.fileinfo;
+		fileinfo = switch (fcLoadFromCache(env, p.file)) {
+			None():  fcfileinfo2fi(getFcFileInfo(p.file, config));
+			Some(cached): cached.loaded.module.fileinfo;
 		}
-		printLocation(acc.config, env, fileinfo, p.start, -1, "Error: " + err);
+		printLocation(config, env, fileinfo, p.start, -1, "Error: " + err);
 	});
 }
 
@@ -412,7 +427,9 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 		check_imports = exists(module.imports, \imp ->
 			switch (fcLoadFromCache(globEnv, imp.flowfile)) {
 				Some(cachedInc): {
-					module.fileinfo.lastupdate < cachedInc.module.fileinfo.lastupdate || cachedInc.dependencyChanged();
+					cachedInc.outdated || 
+					module.fileinfo.lastupdate < cachedInc.loaded.module.fileinfo.lastupdate || 
+					cachedInc.loaded.dependencyChanged();
 				}
 				None(): {
 					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there", config.threadId); true; 
@@ -442,7 +459,16 @@ makeLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileIn
 			fileinfo.fullpath + ":" + i2s(s.lineno) + " (" + fileinfo.fullpath + ":" + i2s(s.lineno) + ")";
 		} else {
 			if (end < 0) {
-				fileinfo.fullpath + ":" + i2s(s.lineno) + ":" + i2s(s.lineIndex + 1) + ":";
+				switch (getFcInfo2ByPos(start, code)) {
+					Some(info): {
+						s1 = findLine(resolver, info.start);
+						e1 = findLine(resolver, info.end);
+						fileinfo.fullpath + ":" + i2s(s1.lineno) + ":" + i2s(s1.lineIndex + 1) + ":" + i2s(e1.lineno) + ":" + i2s(e1.lineIndex + 1) + ":";
+					}
+					None(): {
+						fileinfo.fullpath + ":" + i2s(s.lineno) + ":" + i2s(s.lineIndex + 1) + ":";
+					}
+				}
 			} else {
 				e = findLine(resolver, end);
 				fileinfo.fullpath + ":" + i2s(s.lineno) + ":" + i2s(s.lineIndex + 1) + ":" + i2s(e.lineno) + ":" + i2s(e.lineIndex + 1) + ":";
@@ -527,10 +553,6 @@ fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
 	}
 }
 
-getNameByLineColFromFile(line : int, col : int, file : string) -> string {
-	getNameByLineCol(line, col, getFileContent(file));
-}
-
 getNameByLineCol(line : int, col : int, src : string) -> string {
 	resolver = makeLineResolver(src);
 	getter = \c -> getNameByPos(findLineIndex(resolver, line, c), src);
@@ -579,4 +601,84 @@ getFcInfo2ByPos2(pos : int, allowed : string, src : string) -> Maybe<FcInfo2> {
 
 fcIsIdChar(s : string) -> bool {
 	s == "_" || isLetter(s) || isDigit(s);
+}
+
+fcMatchingBrackets(src : string) -> [Pair<int,int>] {
+	fold(enumFromTo(0, strlen(src) - 1), Triple([], -1, 0), \acc, i ->
+		if (getCharAt(src, i) == "{") {
+			if (acc.third == 0) {
+				Triple(acc.first, i, 1);
+			} else {
+				Triple(acc.first, acc.second, acc.third + 1);
+			}
+		} else if (getCharAt(src, i) == "}") {
+			if (acc.third == 1) {
+				Triple(concat(acc.first, [Pair(acc.second, i)]), -1, 0);
+			} else {
+				Triple(acc.first, acc.second, acc.third - 1);
+			}
+		} else {
+			acc;
+		}
+	).first;
+}
+
+forwardUntil(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src)) -1 else
+	if (pred(getCharAt(src, i))) i else
+	forwardUntil(src, i + 1, pred);
+}
+
+backwardUntil(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src)) -1 else
+	if (pred(getCharAt(src, i))) i else
+	backwardUntil(src, i - 1, pred);
+}
+
+forwardWhile(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src) || !pred(getCharAt(src, i))) -1 else
+	if (!pred(getCharAt(src, i + 1))) i else
+	forwardWhile(src, i + 1, pred);
+}
+
+backwardWhile(src : string, i : int, pred : (string) -> bool) -> int {
+	if (i < 0 || i >= strlen(src) || !pred(getCharAt(src, i))) -1 else
+	if (!pred(getCharAt(src, i - 1))) i else
+	backwardWhile(src, i - 1, pred);
+}
+
+fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>> {
+	fold(fcMatchingBrackets(src), makeTree(), \acc, pair -> {
+		bracket_depth = ref 0;
+		border = max(
+			backwardUntil(src, pair.first, \s -> s == "="), 
+			backwardUntil(src, pair.first, \s -> {
+				if (s == ")") bracket_depth := ^bracket_depth + 1 else 
+				if (s == "(") bracket_depth := ^bracket_depth - 1;
+				s == "(" && ^bracket_depth == 0;
+			})
+		);
+		if (border == -1) acc else { 
+			id_end = backwardUntil(src, border, fcIsIdChar);
+			id_beg = backwardWhile(src, id_end, fcIsIdChar);
+			if (id_end == -1 || id_beg == -1) acc else {
+				name = substring(src, id_beg, id_end - id_beg + 1);
+				setTree(acc, name, pair);
+			}
+		}
+	});
+}
+
+fcCorrectUriPath(path : string) -> string {
+	if (!startsWith(path, "/") || !hasTargetName("windows")) path else {
+		// Detect c:, d:, C:, D:, etc.
+		drive = getCharAt(path, 1);
+		if (isLetter(drive) && getCharAt(path, 2) == ":") {
+			// Convert C: to c:
+			toLowerCase(drive) + ":" + strRight(path, 3);
+		} else {
+			// keep original path
+			path
+		}
+	}
 }

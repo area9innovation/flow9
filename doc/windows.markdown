@@ -11,7 +11,8 @@ Haxe 3.4.* should work.
 Now install the "format" and "pixijs" haxe libraries:
 
 	haxelib install format
-	haxelib install pixijs
+	haxelib install pixijs 4.8.4
+	(pixijs version 5 isn't supported)
 
 Now check that you can compile the compiler:
 

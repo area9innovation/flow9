@@ -1,4 +1,5 @@
-#import <MobileCoreServices/MobileCoreServices.h>
+#import <CoreServices/CoreServices.h>
+#import <CoreServices/UTCoreTypes.h>
 
 #import "iosGLRenderSupport.h"
 
@@ -11,44 +12,10 @@
 #import <objc/runtime.h>
 #include "core/RunnerMacros.h"
 #import "iosAppDelegate.h"
-#import <MobileCoreServices/UTCoreTypes.h>
 #import "EAGLViewController.h"
 #import <CoreText/CoreText.h>
 #import "DeviceInfo.h"
 #import "iosMediaStreamSupport.h"
-
-@interface FixedWebView : UIWebView // This subclass is to fix Apple bug with invalid cut/copy... targets
-@end
-
-@implementation FixedWebView
-- (UIView*)_internalView {
-    UIView* internalView = objc_getAssociatedObject(self, "__internal_view_key");
-    if(internalView == nil && self.subviews.count > 0) {
-        for (UIView* view in self.scrollView.subviews) {
-            if([view.class.description hasPrefix:@"UIWeb"]) {
-                internalView = view;
-                objc_setAssociatedObject(self, "__internal_view_key", view, OBJC_ASSOCIATION_ASSIGN);
-                break;
-            }
-        }
-    }
-    return internalView;
-}
-
-void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id param) {
-    void (*method)(id, SEL, id) = (void(*)(id, SEL, id))[[self _internalView] methodForSelector:selector];
-    method([self _internalView], selector, param);
-}
-
-- (void)_prepareForNoCrashes {
-    NSArray* selectors = @[@"cut:", @"copy:", @"paste:", @"select:", @"selectAll:", @"delete:", @"makeTextWritingDirectionLeftToRight:", @"makeTextWritingDirectionRightToLeft:", @"toggleBoldface:", @"toggleItalics:", @"toggleUnderline:", @"increaseSize:", @"decreaseSize:"];
-    
-    for (NSString* selName in selectors) {
-        SEL selector = NSSelectorFromString(selName);
-        class_addMethod(self.class, selector, (IMP)webView_implement_UIResponderStandardEditActions, "");
-    }
-}
-@end
 
 @implementation FlowUITextView
 
@@ -229,8 +196,9 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
         int maxLength = clip->getMaxChars();
         if (maxLength > 0 && newText.length > maxLength) return NO;
         
-        NSString* filteredText =
-            UNICODE2NS( clip->textFilteredByFlowFilters(NS2UNICODE(newText)) );
+        
+        unicode_string filteredUText = clip->textFilteredByFlowFilters(NS2UNICODE(newText));
+        NSString* filteredText = UNICODE2NS(filteredUText);
         
         bool equals = [newText isEqualToString:filteredText];
         bool doReplaceText = !equals || clip->isPassword();
@@ -280,7 +248,7 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
     [super dealloc];
 }
 
-// Inner domain list (Now supported for UIWebView)
+// Inner domain list
 // collects all document frames domains
 // to open links from them inside the webview
 - (void)addInnerDomain: (NSString*) domain forWebView: (UIView*) web_view {
@@ -329,124 +297,33 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
     return (url.host == nil);
 }
 
-// UIWebView messages:
-//
-- (BOOL)webView: (UIWebView*)web_view shouldStartLoadWithRequest: (NSURLRequest*)request navigationType:(UIWebViewNavigationType)nt {
-    [owner->CDVViewControllers[web_view].originalCordovaDelegate webView: web_view shouldStartLoadWithRequest: request navigationType: nt];
-    // request.URL.relativeString contains absolute url here too
-    NSString * absolute_url = [[request URL] absoluteString];
-    NSLog(@"wV shouldStart %@", absolute_url);
-    
-    if ([absolute_url hasPrefix:@"flow:"]) { // Calls to the platform
-        if ([absolute_url hasPrefix: @"flow:::setInnerDomainsWhiteList"]) {
-            // Special case - setting whitelist for user navigation inside the webview
-            LogI(@"setInnerDomainsWhiteList: %@", absolute_url);
-            NSArray *args = [[absolute_url stringByReplacingPercentEscapesUsingEncoding: NSUTF8StringEncoding] componentsSeparatedByString: @":::"];
-            [self setInnerDomainsWhiteList: [args subarrayWithRange: NSMakeRange(2, args.count - 2)] forWebView: web_view];
-        } else if ( [absolute_url hasPrefix: @"flow:::setExternalDocuments"] ) {
-            // Special case - setting external extentions for user navigation outside the webview
-            LogI(@"setExternalDocuments: %@", absolute_url);
-            NSArray *args = [[absolute_url stringByReplacingPercentEscapesUsingEncoding: NSUTF8StringEncoding] componentsSeparatedByString: @":::"];
-            [self setExternalDocuments: [args subarrayWithRange: NSMakeRange(2, args.count - 2)]  forWebView: web_view];
-        } else {
-            owner->callFlowFromJS(web_view, absolute_url);
-        }
-        return NO; // Cancel the location change
-    }
-
-    if ([absolute_url hasPrefix: @"file://"])
-        return YES;
-    
-    if ([self isFlowAppURL: request.URL]) { // Start another flow app via URL like app://?...
-        [ [UIApplication sharedApplication] openURL: request.URL ];
-        return NO;
-    }
-    
-    // Collect domains of frames while loading the view
-    NSString* domain = request.URL.host;
-    
-    if ([absolute_url rangeOfString: @"player.vimeo.com"].location != NSNotFound) {
-        web_view.scalesPageToFit = YES;
-        web_view.contentMode = UIViewContentModeScaleAspectFit;
-        return YES;
-    }
-    
-    if ( [absolute_url rangeOfString: @"external_browser="].location != NSNotFound ) {
-        if ([absolute_url rangeOfString: @"external_browser=0"].location != NSNotFound)
-            return YES;
-        
-        if ([absolute_url rangeOfString: @"external_browser=1"].location != NSNotFound) {
-            [ [UIApplication sharedApplication] openURL: request.URL ];
-            return NO;
-        }
-        
-        NSRange r = [absolute_url rangeOfString: @"external_browser=2"];
-        if (r.location != NSNotFound) {
-            NSString * patched_url = [absolute_url stringByReplacingCharactersInRange: r withString: @""];
-            [[UIApplication sharedApplication] openURL: [NSURL URLWithString: patched_url]];
-            return NO;
-        }
-    } else {
-        bool is_external_domain = [self isExternalDomain: domain forWebView: web_view];
-        bool is_external_document = [self isExternalDocument: absolute_url forWebView: web_view];
-        LogI(@"User navigation : %@/external domain: %@/external document: %@",
-             absolute_url, is_external_domain? @"yes" : @"no", is_external_document ? @"yes" : @"no");
-        
-        if (is_external_document || is_external_domain) {
-            [ [UIApplication sharedApplication] openURL: request.URL ];
-            return NO;
-        }
-        
-    }
-    
-    return YES;
-}
-
-- (void)webViewDidStartLoad:(UIWebView *)webView {
-    [owner->CDVViewControllers[webView].originalCordovaDelegate webViewDidStartLoad: webView];
-}
-
-- (void)webViewDidFinishLoad:(UIWebView *)webView {
-    [owner->CDVViewControllers[webView].originalCordovaDelegate webViewDidFinishLoad: webView];
-    if (!webView.isLoading) LogI(@"%@ loaded to embedded webview", webView.request.URL.absoluteString);
-    
-    GLWebClip* web_clip = flow_native_cast<GLWebClip>(owner->NativeWidgetClips[webView]);
-    if (web_clip == NULL) return;
-    
-    @autoreleasepool {
-        NSString  * html = [webView stringByEvaluatingJavaScriptFromString: @"document.body.innerHTML"];
-        if ([html isEqualToString: @"<center><h1>404 Not Found</h1></center>"]) {
-            web_clip->notifyError("404 Page Not Found");
-        } else {
-            web_clip->notifyPageLoaded();
-        }
-    }
-
-    // spetial case : video from the vimeo server.
-    if ([webView.request.URL.absoluteString rangeOfString: @"player.vimeo.com"].location != NSNotFound) {
-        UIScrollView *scroll = [webView scrollView];
-        [scroll setZoomScale: (webView.bounds.size.width/scroll.contentSize.width) animated: NO];
-    }
-}
-
-- (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error {
-    [owner->CDVViewControllers[webView].originalCordovaDelegate webView: webView didFailLoadWithError: error];
-    LogI(@"%@ failed to load to embedded webview (%@)", webView.request.URL.absoluteString, error);
-    
-    GLWebClip * web_clip = flow_native_cast<GLWebClip>(owner->NativeWidgetClips[webView]);
-    if (web_clip != NULL)
-        web_clip->notifyError([[error localizedDescription] UTF8String]);
-}
-
 // WKWebView messages:
 //
 
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     // request.URL.relativeString contains absolute url here too
-    NSString * absolute_url = [[navigationAction.request URL] absoluteString];
+    NSURL* url = [navigationAction.request URL];
+    NSString * absolute_url = [url absoluteString];
     
     if ([absolute_url hasPrefix:@"flow:"]) {
-        owner->callFlowFromJS(webView, absolute_url);
+        if ([absolute_url hasPrefix: @"flow:::setInnerDomainsWhiteList"]) {
+            // Special case - setting whitelist for user navigation inside the webview
+            LogI(@"setInnerDomainsWhiteList: %@", absolute_url);
+            NSArray *args = [[absolute_url stringByReplacingPercentEscapesUsingEncoding: NSUTF8StringEncoding] componentsSeparatedByString: @":::"];
+            [self setInnerDomainsWhiteList: [args subarrayWithRange: NSMakeRange(2, args.count - 2)] forWebView: webView];
+        } else if ( [absolute_url hasPrefix: @"flow:::setExternalDocuments"] ) {
+            // Special case - setting external extentions for user navigation outside the webview
+            LogI(@"setExternalDocuments: %@", absolute_url);
+            NSArray *args = [[absolute_url stringByReplacingPercentEscapesUsingEncoding: NSUTF8StringEncoding] componentsSeparatedByString: @":::"];
+            [self setExternalDocuments: [args subarrayWithRange: NSMakeRange(2, args.count - 2)]  forWebView: webView];
+        } else {
+            owner->callFlowFromJS(webView, absolute_url);
+        }
+        decisionHandler(WKNavigationActionPolicyCancel);
+    } else if ([absolute_url hasPrefix: @"file://"]) {
+        decisionHandler(WKNavigationActionPolicyAllow);
+    } else if ([self isFlowAppURL:url]) {
+        [ [UIApplication sharedApplication] openURL: url ];
         decisionHandler(WKNavigationActionPolicyCancel);
     } else {
         if ( [absolute_url rangeOfString: @"external_browser="].location != NSNotFound ) {
@@ -464,7 +341,18 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
                 }
             }
         } else {
-            decisionHandler(WKNavigationActionPolicyAllow);
+            NSString* domain = url.host;
+            bool is_external_domain = [self isExternalDomain: domain forWebView: webView];
+            bool is_external_document = [self isExternalDocument: absolute_url forWebView: webView];
+            LogI(@"User navigation : %@/external domain: %@/external document: %@",
+                absolute_url, is_external_domain? @"yes" : @"no", is_external_document ? @"yes" : @"no");
+
+            if (is_external_document || is_external_domain) {
+                [[UIApplication sharedApplication] openURL: url];
+                decisionHandler(WKNavigationActionPolicyCancel);
+            } else {
+                decisionHandler(WKNavigationActionPolicyAllow);
+            }
         }
     }
 }
@@ -474,8 +362,6 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
     
     GLWebClip * web_clip = flow_native_cast<GLWebClip>(owner->NativeWidgetClips[webView]);
     
-    // TODO add a script dynamically, point to local host or to somewhere else
-    // cordova.js in the resoruces and load from there file:// CocoaTouch API to read from resource
     [webView evaluateJavaScript:@"document.body.innerHTML" completionHandler: ^void(id o, NSError * e) {
         NSString * html = o;
         if ([html isEqualToString: @"<center><h1>404 Not Found</h1></center>"]) {
@@ -487,21 +373,25 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
             // supress all tap events
             [webView evaluateJavaScript: @"document.addEventListener('click', function() {} )"  completionHandler: nil];
         }
-    } ];
+    }];
 }
 
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
     LogI(@"%@ failed to load to embedded webview (%@)", webView.URL.absoluteString, error);
     
     GLWebClip * web_clip = flow_native_cast<GLWebClip>(owner->NativeWidgetClips[webView]);
-    web_clip->notifyError([[error localizedDescription] UTF8String]);
+    if (web_clip != NULL) {
+        web_clip->notifyError([[error localizedDescription] UTF8String]);
+    }
 }
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
     LogI(@"%@ failed to load to embedded webview (%@)", webView.URL.absoluteString, error);
     
     GLWebClip * web_clip = flow_native_cast<GLWebClip>(owner->NativeWidgetClips[webView]);
-    web_clip->notifyError([[error localizedDescription] UTF8String]);
+    if (web_clip != NULL) {
+        web_clip->notifyError([[error localizedDescription] UTF8String]);
+    }
 }
 @end
 
@@ -520,6 +410,10 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
 -(UIView *) viewForZoomingInScrollView:(UIScrollView *)scrollViewBis
 {
     return nil;
+}
+
+-(void)scrollViewWillBeginZooming:(UIScrollView*)scrollView withView: (UIView*) view {
+    scrollView.pinchGestureRecognizer.enabled = NO;
 }
 @end
 
@@ -694,6 +588,20 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
 }
 @end
 
+@implementation FlowWKMessageHandler
+
+- (id) initWithOwner: (iosGLRenderSupport*)ownr {
+    self = [super init];
+    owner = ownr;
+    return self;
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    // TODO: Reimplement webview message handling here
+}
+
+@end
 
 @implementation AudioRecordControlDelegate
 
@@ -764,11 +672,6 @@ iosGLRenderSupport::iosGLRenderSupport( ByteCodeRunner *owner, EAGLView *glview,
         setDPI(dpi);
         LogI(@"DPI from interface idiom: %f", dpi);
     }
-    
-    useWKWebView = false;
-    useCordova = [[NSUserDefaults standardUserDefaults] boolForKey: @"use_cordova"];
-    
-    LogI(@"UseCordova from user settings = %@", useCordova ? @"true" : @"false");
 }
 
 iosGLRenderSupport::~iosGLRenderSupport() {
@@ -801,12 +704,7 @@ void iosGLRenderSupport::destroyAllNativeWidgets() {
         UIView * widget = it->second;
         
         [widget removeFromSuperview];
-        if (CDVViewControllers.find(widget) != CDVViewControllers.end()) {
-            [CDVViewControllers[widget] release];
-            CDVViewControllers.erase(widget);
-        } else {
-            [widget release];
-        }
+        [widget release];
     }
     NativeWidgetClips.clear();
     NativeWidgets.clear();
@@ -1142,19 +1040,8 @@ void iosGLRenderSupport::doDestroyNativeWidget(GLClip *clip)
         } else if (flow_native_cast<GLWebClip>(clip)) {
             [commonWebViewDelegate removeInnerDomainsForWebView: widget];
             [widget removeFromSuperview];
-            if (useCordova) {
-                // delay is used to avoid app crash from MDC-1289 ticket
-                // something inside Cordova or Cocoa sends messages to deleted object
-                DELAY(2000, ^{
-                    [CDVViewControllers[widget] release];
-                    CDVViewControllers.erase(widget);
-                    LogI(@"Cordova WebView is destroyed");
-                });
-                // Widget is released by Controller
-            } else {
-                LogI(@"WebView destroyed");
-                [widget release];
-            }
+            LogI(@"WebView destroyed");
+            [widget release];
         } else {
             [widget removeFromSuperview];
             [widget release];
@@ -1174,7 +1061,7 @@ void iosGLRenderSupport::doReshapeNativeWidget(GLClip* clip, const GLBoundingBox
         if (bbox.isEmpty || alpha <= 0.0f)
         {
             widget.hidden = true;
-            if ([widget isKindOfClass: WKWebView.class] || [widget isKindOfClass: UIWebView.class]) {
+            if ([widget isKindOfClass: WKWebView.class]) {
                 widget.frame = CGRectMake(0.0, 0.0, 0.0, 0.0);
             }
         }
@@ -1504,70 +1391,40 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     [widget release];
     
     NSString * ns_url = UNICODE2NS( web_clip->getUrl() );
-    // Allow # char
-    ns_url = (NSString *)CFURLCreateStringByAddingPercentEscapes(NULL, (CFStringRef)ns_url, CFSTR("%#"), NULL, kCFStringEncodingUTF8);
-    [ns_url autorelease];
-	
+    
+    NSURL* baseResourceUrl = [[NSBundle mainBundle] resourceURL];
+    NSURL* baseResourceWwwUrl = [baseResourceUrl URLByAppendingPathComponent:@"www"];
+    bool isLocalFile = [ns_url hasPrefix:@"./"];
     NSURL * rq_url = nil;
-    if ([ns_url hasPrefix:@"./"] || ![URLLoader hasConnection])
+    if (isLocalFile)
         // File should be in the app bundle on the www folder
+        rq_url = [NSURL URLWithString:ns_url relativeToURL:baseResourceWwwUrl];
+    else if (![URLLoader hasConnection])
         rq_url = [NSURL URLWithString:ns_url];
     else
         rq_url = [NSURL URLWithString: ns_url relativeToURL: [URLLoader getBaseURL]];
 
-    if (!useCordova) {
-        if (useWKWebView && SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0") && NSClassFromString(@"WKWebView") != nil) {
-            LogI(@"Create WKWebView for URL %@", rq_url);
-            WKWebView * web_view = [[WKWebView alloc] init];
-            web_view.navigationDelegate = commonWebViewDelegate;
-            widget = web_view;
-            [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
-        } else {
-            LogI(@"Create UIWebView for URL %@ and %@", rq_url, [URLLoader getBaseURL]);
-            FixedWebView * web_view = [[FixedWebView alloc] init];
-            [(FixedWebView*)web_view _prepareForNoCrashes];
-            web_view.delegate = commonWebViewDelegate;
-            
-            // zoom enables here and controls by WebScrollViewDelegate
-            web_view.scalesPageToFit = YES;
-            web_view.scrollView.bounces = NO;
-            [web_view setMediaPlaybackRequiresUserAction: NO]; // For youtube videos
-            
-            widget = web_view;
-
-            if ([rq_url isFileURL]) {
-                NSError *error = nil;
-                NSString *htmlString = [NSString stringWithContentsOfURL:rq_url encoding:NSUTF8StringEncoding error:&error];
-                [web_view loadHTMLString:htmlString baseURL:nil];
-            } else {
-                [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
-            }
-        }
-    } else {
-        viewController = [[CordovaViewController alloc] init];
-        viewController.startPage = rq_url.absoluteString;
-        viewController.flowDelegate = commonWebViewDelegate;
-        
-        // zoom enables here and controls by WebScrollViewDelegate
-        NSString* flowUserAgent = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
-        [viewController.settings setObject:flowUserAgent forKey:@"OverrideUserAgent"];
-        
-        [viewController.settings setObject:@"true" forKey:@"EnableViewportScale"];
-        [viewController.settings setObject:@"true" forKey:@"DisallowOverscroll"];
-        [viewController.settings setObject:@"false" forKey:@"UIWebViewBounce"];
-
-        LogI(@"Create CDVViewController %@ for URL %@", viewController.view, rq_url);
-        ((UIWebView*)viewController.webView).mediaPlaybackRequiresUserAction = NO;
-        ((UIWebView*)viewController.webView).allowsInlineMediaPlayback = YES;
-        
-        widget = viewController.webView;
-        NSDictionary * user_info = @{ @"webView" : widget, @"domain" : (rq_url && rq_url.host)? rq_url.host: @"" };
-        [[NSNotificationCenter defaultCenter] postNotificationName: @"addInnerDomain" object: nil userInfo: user_info];
-        CDVViewControllers[widget] = viewController;
-    }
+    LogI(@"Create WKWebView for URL %@", rq_url);
+    WKWebView * web_view = [[WKWebView alloc] init];
+    web_view.navigationDelegate = commonWebViewDelegate;
+    web_view.configuration.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
+    web_view.configuration.allowsInlineMediaPlayback = YES; // Doesn't work for WKWebView - use video playsinline attribute only
+    web_view.configuration.ignoresViewportScaleLimits = YES;
+    [web_view.configuration.preferences setValue:@YES forKey:@"allowFileAccessFromFileURLs"];
+    [web_view.configuration.userContentController addScriptMessageHandler:[[FlowWKMessageHandler alloc] initWithOwner:this] name:@"flow"];
+    NSString* custom_ua = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
+    web_view.customUserAgent = custom_ua;
+    widget = web_view;
     
+    NSDictionary * user_info = @{ @"webView" : widget, @"domain" : (rq_url && rq_url.host)? rq_url.host: @"" };
+    [[NSNotificationCenter defaultCenter] postNotificationName: @"addInnerDomain" object: nil userInfo: user_info];
     [commonWebViewDelegate addInnerDomain: rq_url.host forWebView: widget]; // Add the main frame
     
+    if (isLocalFile) {
+        [web_view loadFileURL:rq_url allowingReadAccessToURL:[baseResourceUrl URLByDeletingLastPathComponent]];
+    } else {
+        [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
+    }
     [WidgetsView addSubview:widget];
     
     return true;
@@ -1583,31 +1440,21 @@ StackSlot iosGLRenderSupport::webClipHostCall(GLWebClip *clip, const unicode_str
     
     UIView * view = (UIView*)NativeWidgets[clip];
     
-    if ([view isKindOfClass: UIWebView.class]) {
-        UIWebView * web_view = (UIWebView*)view;
-        NSString * res = [web_view stringByEvaluatingJavaScriptFromString: fn_str];
-        return jsstring2stackslot(res);
-    } else {
-        WKWebView * web_view = (WKWebView*)view;
-        [web_view evaluateJavaScript: fn_str completionHandler: nil];
-        return StackSlot::MakeVoid(); // Cannnot get return value synchroneously
-    }
+    WKWebView * web_view = (WKWebView*)view;
+    [web_view evaluateJavaScript: fn_str completionHandler: nil];
+    RETVOID; // Cannnot get return value synchroneously
 }
 
 StackSlot iosGLRenderSupport::setWebClipZoomable(GLWebClip *clip, const StackSlot &args) {
     UIView * view = (UIView*)NativeWidgets[clip];
     bool zoomable = args.GetBool();
     
-    if ([view isKindOfClass: UIWebView.class]) {
-        UIWebView * web_view = (UIWebView*)view;
-        LogI(@"Set%@ UIWebView scalable to %s with current zoom %f", useCordova ? @" Cordova" : @"", zoomable ? "YES" : "NO", web_view.scrollView.zoomScale);
-        if (zoomable) {
-            web_view.scrollView.delegate = nil;
-        } else {
-            web_view.scrollView.delegate = commonWebScrollViewDelegate;
-        }
+    WKWebView * web_view = (WKWebView*)view;
+    LogI(@"Set WKWebView scalable to %s with current zoom %f", zoomable ? "YES" : "NO", web_view.scrollView.zoomScale);
+    if (zoomable) {
+        web_view.scrollView.delegate = nil;
     } else {
-        // we cannot control it for WKWebView
+        web_view.scrollView.delegate = commonWebScrollViewDelegate;
     }
 
     RETVOID;
@@ -1622,6 +1469,22 @@ StackSlot iosGLRenderSupport::setWebClipDomains(GLWebClip *clip, const StackSlot
         NSString* domain = UNICODE2NS( RUNNER->GetString( RUNNER->GetArraySlot(domains, i)));
         [commonWebViewDelegate addInnerDomain:domain forWebView:view];
     }
+    
+    RETVOID;
+}
+
+StackSlot iosGLRenderSupport::webClipEvalJS(GLWebClip* clip, const unicode_string& js, StackSlot& cb) {
+    RUNNER_VAR = getFlowRunner();
+    int cb_id = RUNNER->RegisterRoot(cb);
+    
+    UIView * view = (UIView*)NativeWidgets[clip];
+    WKWebView * web_view = (WKWebView*)view;
+    [web_view evaluateJavaScript: UNICODE2NS(js) completionHandler: ^void(id o, NSError * e) {
+        RUNNER_VAR = getFlowRunner();
+        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+        RUNNER->EvalFunction(RUNNER->LookupRoot(cb_id), 1, RUNNER->AllocateString(NS2UNICODE((NSString*)o)));
+        RUNNER->ReleaseRoot(cb_id);
+    }];
     
     RETVOID;
 }

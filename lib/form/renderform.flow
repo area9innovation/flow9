@@ -30,6 +30,7 @@ export {
 
 	//must be in target.flow, but need access to getStage_, so placed here
 	isPhoneScreen : () -> bool;
+	isPhoneDiagonal(width : double, height : double, ppi : int) -> bool;
 
 	isPicturesDownloadingEnabled() -> bool;
 
@@ -91,11 +92,15 @@ isPhoneScreen() {
 	if (cgi) {
 		false;
 	} else {
-		screenDiagonal = sqrt(dpow(getStageWidth(),2.0) + dpow(getStageHeight(), 2.0)) / i2d(screenDPI);
-		phoneScreen = screenDiagonal < 5.9 && mobile;
+		phoneScreen = isPhoneDiagonal(getStageWidth(), getStageHeight(), screenDPI) && mobile;
 		isUrlParameterTrue("mobile") || (phoneScreen && !isUrlParameterFalse("mobile"))
 	}
 };
+
+isPhoneDiagonal(width : double, height : double, ppi : int) -> bool {
+	screenDiagonal = sqrt(dpow(width, 2.) + dpow(height, 2.)) / i2d(ppi);
+	screenDiagonal < 5.9
+}
 
 // What do all these result share in capabilities?
 sharedCapabilities(rs : [RenderResult]) -> ClipCapabilities {
@@ -272,6 +277,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			errhndlr = ref \e -> {};
 			onLoaded = ref nop;
 			realSizeFn = ref nop1;
+			picAltText = ref "";
 			iter(style, \s -> switch(s : PictureStyle) {
 				DontCache(): cache := false;
 				OnlyDownloadToCache(): onlydl := true;
@@ -284,6 +290,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 					}
 				};
 				InspectRealSize(fn): realSizeFn := fn;
+				AltText(text): picAltText := text;
 			});
 			widthHeight = make(zeroWH);
 			baseline = make(0.0);
@@ -307,7 +314,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				if (e != "") {
 					println(e);
 				}
-			}, ^onlydl);
+			}, ^onlydl, ^picAltText);
 
 			RenderResult(
 				[picture], widthHeight, baseline, pending,
@@ -782,17 +789,13 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 	}
 
 	TextInput(state, listeners, stateaccess): {
-		fontFamily = {
-			style = fold(state, [], \acc, s ->
-				switch (s : TextInputState) {
-					Content(c, style): style;
-					default: acc;
-				}
-			);
-			getFontFamily(style)
-		};
-
-		textfield = makeTextfield(fontFamily);
+		fontStyle = fold(state, [], \acc, s ->
+			switch (s : TextInputState) {
+				Content(c, style): style;
+				default: acc;
+			}
+		);
+		textfield = makeTextfield(getMappedFontFamily(fontStyle));
 		setTextDirection(textfield, if (getDefaultRtl()) "rtl" else "ltr");
 		setTextFieldCropWords(textfield, true);
 		alive = ref true;
@@ -1128,9 +1131,9 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				subscribe(subtitle, \info -> {
 					if (targetVideoControls()) {
 						definedTextStyle = getDefinedTextStyle(info.style);
-						setVideoSubtitle(video, info.text, definedTextStyle.fontFamily, definedTextStyle.fontSize, definedTextStyle.fontWeight,
-							definedTextStyle.fontSlope, definedTextStyle.fillColor, definedTextStyle.fillOpacity, definedTextStyle.letterSpacing,
-							definedTextStyle.backgroundColor, definedTextStyle.backgroundOpacity
+						setVideoSubtitle(video, info.text, definedTextStyle.face.family, definedTextStyle.fontSize, definedTextStyle.face.weight,
+							definedTextStyle.face.slope, definedTextStyle.fillColor, definedTextStyle.fillOpacity, definedTextStyle.letterSpacing,
+							definedTextStyle.backgroundColor, definedTextStyle.backgroundOpacity, false, -1., false, -1., -1., true
 						);
 					}
 				});
@@ -1487,6 +1490,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		customZorder = ref None();
 		accessAttributes : ref [Pair<string, Behaviour<string>>] = ref [];
 		accessCallback : ref () -> void = ref nop;
+		tagName = ref None();
+		langAttribute = ref None();
 
 		// Grab attributes from Access parameters
 		attributes : ref [[string]] = ref filtermap(properties, \p -> {
@@ -1517,6 +1522,14 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 					customZorder := Some(zo);
 					Some(["zorder", toString(getValue(zo))])
 				}
+				TagName(tn): {
+					tagName := Some(tn);
+					None();
+				}
+				LangAttribute(lang): {
+					langAttribute := Some(lang);
+					Some(["lang", toString(fgetValue(lang))])
+				}
 			}
 		});
 
@@ -1535,7 +1548,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			role := "textbox";
 		}
 		// avoid creating unnecessary empty elements in the hierarchy
-		skipMakingElement = ^role == "";
+		skipMakingElement = ^role == "" && isNone(^tagName) && isNone(^langAttribute);
 		if (^role != "") attributes := concat([["role", ^role]], ^attributes); // "role" should be first and will affect element's tag
 
 		if (^groupId != "") {
@@ -1598,6 +1611,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		// We just override any access attributes of children
 		fn = \clip -> {
+			maybeApply(^tagName, \tn -> setClipTagName(clip, tn));
+
 			dispNodeIndex =
 				eitherFn(
 					^customTabOrder,
@@ -1643,6 +1658,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				unsubscribe_enabled := subscribe2(en, \e -> { setAccessAttributes(clip, [ ["enabled", toString(e)] ]) });
 			});
 
+			langAttributeDisposer = eitherMap(^langAttribute, \la -> makeSubscribe2(la, \v -> { setAccessAttributes(clip, [ ["lang", v] ]) })(), nop);
+
 			concatA([
 				if (^role == "button" && ^shortcut != "" && ^description != "") {
 					dispKeyboardShortcut = addKeyboardShortcut(^shortcut, ^description);
@@ -1654,7 +1671,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				dispZorder,
 				dispAccessAttributes,
 				groupToDisposer,
-				[ set_focus_subscription_fn(clip) ]
+				[ set_focus_subscription_fn(clip), langAttributeDisposer ]
 			])
 		}
 		dontChangeChildrenFn = \clip -> [ ];
@@ -1663,8 +1680,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		// there are some Access forms with only TabIndex set around a syled button.
 		// such Access forms should not have their own clip(HTML element)
-		makeAccessClip = ^role != "" && !contains(["button", "checkbox", "textbox", "video", "iframe"], ^role)
-			|| isSome(^access_child_selected_fn);
+		makeAccessClip = (^role != "" && !contains(["button", "checkbox", "textbox", "video", "iframe"], ^role)
+			|| isSome(^access_child_selected_fn)) && isNone(^tagName) && isNone(^langAttribute);
 		d = renderForm(form, available, zorder, ownTabOrder);
 
 		if (makeAccessClip) {
@@ -1681,7 +1698,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		domain = ref "";
 		flow_callback = ref \args -> { "" };
 		hostcall_setter = ref \fn -> { };
-		eval_js_setters : ref [((string) -> string) -> void] = ref [];
+		eval_js_setters : ref [((string, (string) -> void) -> void) -> void] = ref [];
 		on_error = ref \s : string -> { };
 		on_page_loaded = ref nop;
 		reload_block = ref false;
@@ -1738,7 +1755,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		^hostcall_setter(\name, args -> webClipHostCall(bridge_clip, name, args));
 		iter(^eval_js_setters, \eval_js_setter -> {
-			eval_js_setter(\code -> webClipEvalJS(bridge_clip, code));
+			eval_js_setter(\code, cb -> webClipEvalJS(bridge_clip, code, cb));
 		});
 
 		u2 = subscribe(^zoom_enabled, \zoom -> setWebClipZoomable(bridge_clip, zoom));
@@ -2205,13 +2222,7 @@ defineTextInputState(textfield : native, state : [TextInputState], wh : DynamicB
 					fontSize = extractStruct(cont.style, FontSize(0.)).size;
 					style = if (js) map(cont.style, \style -> {
 						switch (style : CharacterStyle) {
-							FontFamily(name): {
-								if (isUrlParameterTrue("fontweight")) {
-									FontFamily(htmlFont2familiesString(font2htmlFont(getMappedFont(name, fontSize).first)));
-								} else {
-									FontFamily(getMappedFont(name, fontSize).first);
-								}
-							}
+							FontFamily(name): FontFamily(getMappedFont(name, fontSize).first);
 							default: style;
 						}
 					}) else cont.style;
@@ -2461,11 +2472,7 @@ renderLines(lines : [[Form]], zorder : [int], tabOrder : [int]) -> RenderResult 
 
 
 renderText(text : string, style : [CharacterStyle], available : Behaviour<WidthHeight>, zorder : [int], tabOrder: [int]) -> RenderResult {
-	textfield = makeTextfield(getFontFamily(style));
-	setTextDirection(textfield, if (getDefaultRtl()) "rtl" else "ltr");
-	setEscapeHTML(textfield, extractStruct(style, EscapeHTML(false)).escape);
-	defineTextStyle(textfield, text, style);
-
+	textfield = makeStyledTextfield(text, style);
 	metrics = getTextMetrics(textfield);
 
 	disposer = \ -> {
@@ -2567,7 +2574,7 @@ preloadAndCachePicture(url_ : string, errHandler : (string) -> void) -> void {
 		errHandler(error)
 	}
 	if (downloadPictures) {
-		makePicture(addServerPathIfRelative(url), true, metricsFn, errFn, true) |> ignore
+		makePicture(addServerPathIfRelative(url), true, metricsFn, errFn, true, "") |> ignore
 	}
 }
 

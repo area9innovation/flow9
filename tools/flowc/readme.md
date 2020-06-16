@@ -11,7 +11,7 @@ Goals:
 Use
 ---
 
-Install Java Runtime 1.8 or later in a 64-bit version and python 3.
+Install OpenJDK 14 or later in a 64-bit version and python 3.
 Python 3 is necessary to run the flowc1 launching script. Then use
 
 	flowc1
@@ -200,6 +200,96 @@ We have a beta backend for this. See `tools/flowc/backends/wasm/readme.md`. Unfo
 all speed tests show that JS is faster, even for integer-only code. WebAssembly has to be
 considered a young technology. Maybe it will be faster in the future.
 
+Java backend
+------------
+
+Flow program may be translated to java with setting the `java` option to an output directory like:
+
+	flowc java=src program.flow
+
+The default package for the programs, translated to java is `com.area9innovation.flow`. If you want to used
+another package name, you can provide it with `java-package` option:
+
+	flowc java=src java-package=aaa.bbb.ccc program.flow
+
+In case you want to build a jar archive, you can use jar=1 or jar=name.jar option to build a jar target.
+In case jar=1 the name of a program will be used as a name of the jar file. Example:
+
+	flowc jar=1 program.flow
+
+### Library usage.
+If you want to make a library instead of runnable program, you can specify the interface functions of a
+library with `java-library` option (the second variant will build library.jar from library.flow):
+
+	flowc java=src java-library=fun1,fun2,fun3  library.flow
+	flowc jar=1 java-library=fun1,fun2,fun3  library.flow
+	flowc jar=aname-lib.jar java-library=fun1,fun2,fun3  library.flow
+
+Here fun1,fun2,fun3 are functions, which are used in a library interface. 
+The library contains a class with the same name as a compiled flow flie, which contains: 
+- `public static void init(String[] args)` - the function to initialize the runtime. `args` are the command line
+arguments, passed to the library. Must be called before usage.
+- public static methods fun1, fun2, fun3, etc. , listed in the `java-library` option.
+
+So, to use a library function `fun2` you should import the Main class and appropriate data type classes from the 
+translated package (by default it is `com.area9innovation.flow`).
+
+### Conversion of data types from flow typesystem to java:
+- primitive types stay the almost, same (`int` to `int`, `void` to `void` and so on).
+- `flow` type converts to `Object`.
+- array types are converted to java arrays.
+- structs: the naming convention converts a struct `Data : (a : T1, b : int)` (flow) into 
+`public class Struct_Data` (java) with public fields `Object f_a;` and `int f_b;`.
+- functions: the type of a function `(A1, A2, A3) -> RT` translates to the 
+interface java type `Func3<RT,A1,A2,A3>` with the single method `RT invoke(A1 a1, A2 a2, A3 a3)`.
+- polymorphic types are converted to `Object`.
+
+All classes of library may be explored in the jar file for more .
+
+### Example of building and using java library from flow source.
+Flow library source code `libtest.flow`:
+```
+import string;
+import math/math;
+
+InputData(a : [string], b : string);
+OutputData(a : [int], b : int);
+
+transf(d : InputData) -> OutputData {
+	OutputData(map(d.a, s2i), s2i(d.b));
+}
+```
+The library is created by calling:
+
+	flowc1 jar=1 java-library=transf libtest.flow
+
+The java program `libtest.java`, which uses flow library:
+```
+import com.area9innovation.flow.Struct_InputData;
+import com.area9innovation.flow.Struct_OutputData;
+import com.area9innovation.flow.Main;
+
+public class libtest {
+	static public void main(String[] args) {
+		Main.init(args);
+		String[] as = { "1", "2", "3" };
+		Struct_InputData input = new Struct_InputData(as, "5");
+		Struct_OutputData out = Main.transf(input);
+		for (Object s : out.f_a) {
+			System.out.println((Integer)s);
+		}
+		System.out.println(out.f_b);
+	}
+};
+```
+
+Compiling the program: 
+
+	javac -cp .:libtest.jar libtest.java
+
+Running the resulting class:
+
+	java -cp .:libtest.jar libtest
 
 Testing C++ backend
 -------------------

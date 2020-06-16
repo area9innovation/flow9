@@ -30,13 +30,15 @@
 #import <Localytics/LLInboxViewController.h>
 #import <Localytics/LLInboxDetailViewController.h>
 #import <Localytics/LLInAppConfiguration.h>
+#import <Localytics/LLMarketingWebViewHandler.h>
 
 @protocol LLMessagingDelegate;
 @protocol LLCallToActionDelegate;
 @protocol LLLocationDelegate;
 
+@class WKWebViewConfiguration;
 @class UNMutableNotificationContent;
-#define LOCALYTICS_LIBRARY_VERSION      @"5.2.0" //iOS version
+#define LOCALYTICS_LIBRARY_VERSION      @"6.0.1" //iOS version
 
 #else
 
@@ -44,7 +46,11 @@
 
 #endif
 
-@protocol Localytics <JSExport>
+
+@protocol Localytics
+#if TARGET_OS_TV
+<JSExport>
+#endif
 
 #pragma mark - SDK Integration
 /** ---------------------------------------------------------------------------------------
@@ -71,7 +77,7 @@
 
  @Version SDK5.0
  */
-+ (void)autoIntegrate:(nonnull NSString *)appKey withLocalyticsOptions:(nullable NSDictionary *)localyticsOptions launchOptions:(nullable NSDictionary *)launchOptions;
++ (void)autoIntegrate:(nonnull NSString *)appKey withLocalyticsOptions:(nullable NSDictionary *)localyticsOptions launchOptions:(nullable NSDictionary *)launchOptions NS_AVAILABLE_IOS(9_0);
 
 /** Manually integrate the Localytic SDK into the application.
  
@@ -92,7 +98,7 @@
 
  @Version SDK5.0
  */
-+ (void)integrate:(nonnull NSString *)appKey withLocalyticsOptions:(nullable NSDictionary *)localyticsOptions;
++ (void)integrate:(nonnull NSString *)appKey withLocalyticsOptions:(nullable NSDictionary *)localyticsOptions NS_AVAILABLE_IOS(9_0);
 
 /** Opens the Localytics session.
  The session time as presented on the website is the time between <code>open</code> and the
@@ -109,7 +115,7 @@
 
  * @Version SDK3.0
  */
-+ (void)openSession;
++ (void)openSession NS_AVAILABLE_IOS(9_0);
 
 /** Closes the Localytics session.  This should be called in
  <code>applicationWillResignActive</code>.
@@ -121,7 +127,7 @@
 
  @Version SDK3.0
  */
-+ (void)closeSession;
++ (void)closeSession NS_AVAILABLE_IOS(9_0);
 
 /** Creates a low priority thread which uploads any Localytics data already stored
  on the device.  This should be done early in the process life in order to
@@ -131,7 +137,7 @@
 
  @Version SDK3.0
  */
-+ (void)upload;
++ (void)upload NS_AVAILABLE_IOS(9_0);
 
 /**
  Halt the uploading of Analytics and Profiles data to the Localytics servers.
@@ -141,7 +147,7 @@
  @param pause if set to true, all data uploading will be halted.  If false, data uploading will resume as normal.
  */
 
-+ (void)pauseDataUploading:(BOOL)pause;
++ (void)pauseDataUploading:(BOOL)pause NS_AVAILABLE_IOS(9_0);
 
 #pragma mark - Event Tagging
 /** ---------------------------------------------------------------------------------------
@@ -155,7 +161,7 @@
 
  @Version SDK3.0
  */
-+ (void)tagEvent:(nonnull NSString *)eventName;
++ (void)tagEvent:(nonnull NSString *)eventName NS_AVAILABLE_IOS(9_0);
 
 /** Tag an event with attributes
  @param eventName The name of the event which occurred.
@@ -165,7 +171,7 @@
 
  @Version SDK3.0
  */
-+ (void)tagEvent:(nonnull NSString *)eventName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagEvent:(nonnull NSString *)eventName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /** Allows a session to tag a particular event as having occurred.  For
  example, if a view has three buttons, it might make sense to tag
@@ -193,7 +199,7 @@
 
  @Version SDK3.0
  */
-+ (void)tagEvent:(nonnull NSString *)eventName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes customerValueIncrease:(nullable NSNumber *)customerValueIncrease;
++ (void)tagEvent:(nonnull NSString *)eventName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes customerValueIncrease:(nullable NSNumber *)customerValueIncrease NS_AVAILABLE_IOS(9_0);
 
 #pragma mark - Standard Event Tagging
 /** ---------------------------------------------------------------------------------------
@@ -209,10 +215,10 @@
  * @param itemType      The type of item (optional, can be null)
  * @param itemPrice     The price of the item (optional, can be null). Will be added to customer lifetime value. Try to use lowest possible unit, such as cents for US currency.
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagPurchased:(nullable NSString *)itemName itemId:(nullable NSString *)itemId itemType:(nullable NSString *)itemType itemPrice:(nullable NSNumber *)itemPrice attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagPurchased:(nullable NSString *)itemName itemId:(nullable NSString *)itemId itemType:(nullable NSString *)itemType itemPrice:(nullable NSNumber *)itemPrice attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the addition of a single item to a cart (after the action has occurred)
@@ -222,10 +228,10 @@
  * @param itemType      The type of item (optional, can be null)
  * @param itemPrice     The price of the item (optional, can be null). Will NOT be added to customer lifetime value.
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
- 
+ *
  * @Version SDK4.0
  */
-+ (void)tagAddedToCart:(nullable NSString *)itemName itemId:(nullable NSString *)itemId itemType:(nullable NSString *)itemType itemPrice:(nullable NSNumber *)itemPrice attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagAddedToCart:(nullable NSString *)itemName itemId:(nullable NSString *)itemId itemType:(nullable NSString *)itemType itemPrice:(nullable NSNumber *)itemPrice attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the start of the checkout process (after the action has occurred)
@@ -233,10 +239,10 @@
  * @param totalPrice    The total price of all the items in the cart (optional, can be null). Will NOT be added to customer lifetime value.
  * @param itemCount     Total count of items in the cart (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagStartedCheckout:(nullable NSNumber *)totalPrice itemCount:(nullable NSNumber *)itemCount attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagStartedCheckout:(nullable NSNumber *)totalPrice itemCount:(nullable NSNumber *)itemCount attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the conclusions of the checkout process (after the action has occurred)
@@ -244,10 +250,10 @@
  * @param totalPrice    The total price of all the items in the cart (optional, can be null). Will be added to customer lifetime value. Try to use lowest possible unit, such as cents for US currency.
  * @param itemCount     Total count of items in the cart (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagCompletedCheckout:(nullable NSNumber *)totalPrice itemCount:(nullable NSNumber *)itemCount attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagCompletedCheckout:(nullable NSNumber *)totalPrice itemCount:(nullable NSNumber *)itemCount attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the viewing of content (after the action has occurred)
@@ -256,10 +262,10 @@
  * @param contentId     A unique identifier of the content being viewed (optional, can be null)
  * @param contentType   The type of content (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagContentViewed:(nullable NSString *)contentName contentId:(nullable NSString *)contentId contentType:(nullable NSString *)contentType attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagContentViewed:(nullable NSString *)contentName contentId:(nullable NSString *)contentId contentType:(nullable NSString *)contentType attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag a search event (after the action has occurred)
@@ -268,10 +274,10 @@
  * @param contentType   The type of content (optional, can be null)
  * @param resultCount   The number of results returned by the query (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagSearched:(nullable NSString *)queryText contentType:(nullable NSString *)contentType resultCount:(nullable NSNumber *)resultCount attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagSearched:(nullable NSString *)queryText contentType:(nullable NSString *)contentType resultCount:(nullable NSNumber *)resultCount attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag a share event (after the action has occurred)
@@ -281,10 +287,10 @@
  * @param contentType   The type of content (optional, can be null)
  * @param methodName    The method by which the content was shared such as Twitter, Facebook, Native (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagShared:(nullable NSString *)contentName contentId:(nullable NSString *)contentId contentType:(nullable NSString *)contentType methodName:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagShared:(nullable NSString *)contentName contentId:(nullable NSString *)contentId contentType:(nullable NSString *)contentType methodName:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the rating of content (after the action has occurred)
@@ -294,10 +300,10 @@
  * @param contentType   The type of content (optional, can be null)
  * @param rating        A rating of the content (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagContentRated:(nullable NSString *)contentName contentId:(nullable NSString *)contentId contentType:(nullable NSString *)contentType rating:(nullable NSNumber *)rating attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagContentRated:(nullable NSString *)contentName contentId:(nullable NSString *)contentId contentType:(nullable NSString *)contentType rating:(nullable NSNumber *)rating attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the registration of a user (after the action has occurred)
@@ -305,10 +311,10 @@
  * @param customer      An object providing information about the customer that registered (optional, can be null)
  * @param methodName    The method by which the user was registered such as Twitter, Facebook, Native (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagCustomerRegistered:(nullable LLCustomer *)customer methodName:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagCustomerRegistered:(nullable LLCustomer *)customer methodName:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the logging in of a user (after the action has occurred)
@@ -316,29 +322,29 @@
  * @param customer      An object providing information about the customer that logged in (optional, can be null)
  * @param methodName    The method by which the user was logged in such as Twitter, Facebook, Native (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagCustomerLoggedIn:(nullable LLCustomer *)customer methodName:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagCustomerLoggedIn:(nullable LLCustomer *)customer methodName:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the logging out of a user (after the action has occurred)
  *
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagCustomerLoggedOut:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagCustomerLoggedOut:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag the invitation of a user (after the action has occured)
  *
  * @param methodName    The method by which the user was invited such as Twitter, Facebook, Native (optional, can be null)
  * @param attributes    Any additional attributes to attach to this event (optional, can be null)
-
+ *
  * @Version SDK4.0
  */
-+ (void)tagInvited:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes;
++ (void)tagInvited:(nullable NSString *)methodName attributes:(nullable NSDictionary<NSString *, NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 #pragma mark - Tag Screen Method
 
@@ -347,7 +353,7 @@
 
  @Version SDK3.0
  */
-+ (void)tagScreen:(nonnull NSString *)screenName;
++ (void)tagScreen:(nonnull NSString *)screenName NS_AVAILABLE_IOS(9_0);
 
 #pragma mark - Custom Dimensions
 /** ---------------------------------------------------------------------------------------
@@ -368,7 +374,7 @@
 
  @Version SDK3.0
  */
-+ (void)setValue:(nullable NSString *)value forCustomDimension:(NSUInteger)dimension;
++ (void)setValue:(nullable NSString *)value forCustomDimension:(NSUInteger)dimension NS_AVAILABLE_IOS(9_0);
 
 /** Gets the custom value for a given dimension. Avoid calling this on the main thread, as it
  may take some time for all pending database execution.
@@ -378,7 +384,7 @@
 
  @Version SDK3.0
  */
-+ (nullable NSString *)valueForCustomDimension:(NSUInteger)dimension;
++ (nullable NSString *)valueForCustomDimension:(NSUInteger)dimension NS_AVAILABLE_IOS(9_0);
 
 #pragma mark - Identifiers
 /** ---------------------------------------------------------------------------------------
@@ -397,7 +403,7 @@
 
  @Version SDK3.0
  */
-+ (void)setValue:(nullable NSString *)value forIdentifier:(nonnull NSString *)identifier;
++ (void)setValue:(nullable NSString *)value forIdentifier:(nonnull NSString *)identifier NS_AVAILABLE_IOS(9_0);
 
 /** Gets the identifier value for a given identifier. Avoid calling this on the main thread, as it
  may take some time for all pending database execution.
@@ -407,7 +413,7 @@
 
  @Version SDK3.0
  */
-+ (nullable NSString *)valueForIdentifier:(nonnull NSString *)identifier;
++ (nullable NSString *)valueForIdentifier:(nonnull NSString *)identifier NS_AVAILABLE_IOS(9_0);
 
 /** Set the identifier for the customer. This value is used when setting profile attributes,
  targeting users for push and mapping data exported from Localytics to a user.
@@ -415,7 +421,7 @@
 
  @Version SDK3.0
  */
-+ (void)setCustomerId:(nullable NSString *)customerId;
++ (void)setCustomerId:(nullable NSString *)customerId NS_AVAILABLE_IOS(9_0);
 
 /** Set the identifier for the customer. This value is used when setting profile attributes,
  targeting users for push and mapping data exported from Localytics to a user.
@@ -427,7 +433,7 @@
  
  @Version SDK5.1
  */
-+ (void)setCustomerId:(nullable NSString *)customerId privacyOptedOut:(BOOL)optedOut;
++ (void)setCustomerId:(nullable NSString *)customerId privacyOptedOut:(BOOL)optedOut NS_AVAILABLE_IOS(9_0);
 
 /** Gets the customer id. Avoid calling this on the main thread, as it
  may take some time for all pending database execution.
@@ -435,7 +441,7 @@
 
  @Version SDK3.1.0
  */
-+ (nullable NSString *)customerId;
++ (nullable NSString *)customerId NS_AVAILABLE_IOS(9_0);
 
 
 #pragma mark - Profile
@@ -454,7 +460,7 @@
 
  @Version SDK3.0
  */
-+ (void)setValue:(nonnull id)value forProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope;
++ (void)setValue:(nonnull id)value forProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope NS_AVAILABLE_IOS(9_0);
 
 /** Sets the value of a profile attribute (scope: Application).
  @param value The value to set the profile attribute to. value can be one of the following: NSString,
@@ -464,7 +470,7 @@
 
  @Version SDK3.0
  */
-+ (void)setValue:(nonnull id)value forProfileAttribute:(nonnull NSString *)attribute;
++ (void)setValue:(nonnull id)value forProfileAttribute:(nonnull NSString *)attribute NS_AVAILABLE_IOS(9_0);
 
 /** Adds values to a profile attribute that is a set
  @param values The value to be added to the profile attributes set.
@@ -474,7 +480,7 @@
 
  @Version SDK3.0
  */
-+ (void)addValues:(nonnull NSArray *)values toSetForProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope;
++ (void)addValues:(nonnull NSArray *)values toSetForProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope NS_AVAILABLE_IOS(9_0);
 
 /** Adds values to a profile attribute that is a set (scope: Application).
  @param values The value to be added to the profile attributes set
@@ -482,7 +488,7 @@
 
  @Version SDK3.0
  */
-+ (void)addValues:(nonnull NSArray *)values toSetForProfileAttribute:(nonnull NSString *)attribute;
++ (void)addValues:(nonnull NSArray *)values toSetForProfileAttribute:(nonnull NSString *)attribute NS_AVAILABLE_IOS(9_0);
 
 /** Removes values from a profile attribute that is a set
  @param values The value to be removed from the profile attributes set
@@ -492,7 +498,7 @@
 
  @Version SDK3.0
  */
-+ (void)removeValues:(nonnull NSArray *)values fromSetForProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope;
++ (void)removeValues:(nonnull NSArray *)values fromSetForProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope NS_AVAILABLE_IOS(9_0);
 
 /** Removes values from a profile attribute that is a set (scope: Application).
  @param values The value to be removed from the profile attributes set
@@ -500,7 +506,7 @@
 
  @Version SDK3.0
  */
-+ (void)removeValues:(nonnull NSArray *)values fromSetForProfileAttribute:(nonnull NSString *)attribute;
++ (void)removeValues:(nonnull NSArray *)values fromSetForProfileAttribute:(nonnull NSString *)attribute NS_AVAILABLE_IOS(9_0);
 
 /** Increment the value of a profile attribute.
  @param value An NSInteger to be added to an existing profile attribute value.
@@ -510,7 +516,7 @@
 
  @Version SDK3.0
  */
-+ (void)incrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope;
++ (void)incrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope NS_AVAILABLE_IOS(9_0);
 
 /** Increment the value of a profile attribute (scope: Application).
  @param value An NSInteger to be added to an existing profile attribute value.
@@ -518,7 +524,7 @@
 
  @Version SDK3.0
  */
-+ (void)incrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute;
++ (void)incrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute NS_AVAILABLE_IOS(9_0);
 
 /** Decrement the value of a profile attribute.
  @param value An NSInteger to be subtracted from an existing profile attribute value.
@@ -528,7 +534,7 @@
 
  @Version SDK3.0
  */
-+ (void)decrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope;
++ (void)decrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope NS_AVAILABLE_IOS(9_0);
 
 /** Decrement the value of a profile attribute (scope: Application).
  @param value An NSInteger to be subtracted from an existing profile attribute value.
@@ -536,7 +542,7 @@
 
  @Version SDK3.0
  */
-+ (void)decrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute;
++ (void)decrementValueBy:(NSInteger)value forProfileAttribute:(nonnull NSString *)attribute NS_AVAILABLE_IOS(9_0);
 
 /** Delete a profile attribute
  @param attribute The name of the attribute to be deleted
@@ -545,14 +551,14 @@
 
  @Version SDK3.0
  */
-+ (void)deleteProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope;
++ (void)deleteProfileAttribute:(nonnull NSString *)attribute withScope:(LLProfileScope)scope NS_AVAILABLE_IOS(9_0);
 
 /** Delete a profile attribute (scope: Application)
  @param attribute The name of the attribute to be deleted
 
  @Version SDK3.0
  */
-+ (void)deleteProfileAttribute:(nonnull NSString *)attribute;
++ (void)deleteProfileAttribute:(nonnull NSString *)attribute NS_AVAILABLE_IOS(9_0);
 
 /** Convenience method to set a customer's email as both a profile attribute and
  as a customer identifier (scope: Organization)
@@ -560,7 +566,7 @@
 
  @Version SDK3.3.0
  */
-+ (void)setCustomerEmail:(nullable NSString *)email;
++ (void)setCustomerEmail:(nullable NSString *)email NS_AVAILABLE_IOS(9_0);
 
 /** Convenience method to set a customer's first name as both a profile attribute and
  as a customer identifier (scope: Organization)
@@ -568,7 +574,7 @@
 
  @Version SDK3.3.0
  */
-+ (void)setCustomerFirstName:(nullable NSString *)firstName;
++ (void)setCustomerFirstName:(nullable NSString *)firstName NS_AVAILABLE_IOS(9_0);
 
 /** Convenience method to set a customer's last name as both a profile attribute and
  as a customer identifier (scope: Organization)
@@ -576,7 +582,7 @@
 
  @Version SDK3.3.0
  */
-+ (void)setCustomerLastName:(nullable NSString *)lastName;
++ (void)setCustomerLastName:(nullable NSString *)lastName NS_AVAILABLE_IOS(9_0);
 
 /** Convenience method to set a customer's full name as both a profile attribute and
  as a customer identifier (scope: Organization)
@@ -584,7 +590,7 @@
 
  @Version SDK3.3.0
  */
-+ (void)setCustomerFullName:(nullable NSString *)fullName;
++ (void)setCustomerFullName:(nullable NSString *)fullName NS_AVAILABLE_IOS(9_0);
 
 
 #pragma mark - Developer Options
@@ -599,17 +605,17 @@
  * to set the option to. Options can be restored to default by passing in a value of NSNull,
  * or an empty string for values with type NSString.
  * @param options The dictionary of options and values to modify
-
+ *
  * @Version SDK4.0
  */
-+ (void)setOptions:(nullable NSDictionary<NSString *, NSObject *> *)options;
++ (void)setOptions:(nullable NSDictionary<NSString *, NSObject *> *)options NS_AVAILABLE_IOS(9_0);
 
 /** Returns whether the Localytics SDK is set to emit logging information
  @return YES if logging is enabled, NO otherwise
 
  @Version SDK3.0
  */
-+ (BOOL)isLoggingEnabled;
++ (BOOL)isLoggingEnabled NS_AVAILABLE_IOS(9_0);
 
 /** Set whether Localytics SDK should emit logging information. By default the Localytics SDK
  is set to not to emit logging information. It is recommended that you only enable logging
@@ -618,14 +624,14 @@
 
  @Version SDK3.0
  */
-+ (void)setLoggingEnabled:(BOOL)loggingEnabled;
++ (void)setLoggingEnabled:(BOOL)loggingEnabled NS_AVAILABLE_IOS(9_0);
 
 /** Tell the Localytics SDK to keep a copy of all logs in a file on disk.
  It is recommended that you only enable logging for debugging purposes.
 
  @Version SDK5.0
  */
-+ (void)redirectLoggingToDisk;
++ (void)redirectLoggingToDisk NS_AVAILABLE_IOS(9_0);
 
 /** Returns whether or not the application will collect user data.
  @return YES if the user is opted out, NO otherwise. Default is NO
@@ -633,7 +639,7 @@
 
  @Version SDK3.0
  */
-+ (BOOL)isOptedOut;
++ (BOOL)isOptedOut NS_AVAILABLE_IOS(9_0);
 
 /** Allows the application to control whether or not it will collect user data.
  Even if this call is used, it is necessary to continue calling upload().  No new data will be
@@ -644,7 +650,7 @@
 
  @Version SDK3.0
  */
-+ (void)setOptedOut:(BOOL)optedOut;
++ (void)setOptedOut:(BOOL)optedOut NS_AVAILABLE_IOS(9_0);
 
 /** Returns whether or not the application will collect user data.
  @return YES if the user is opted out, NO otherwise. Default is NO
@@ -652,7 +658,7 @@
  
  @Version SDK5.1
  */
-+ (BOOL)isPrivacyOptedOut;
++ (BOOL)isPrivacyOptedOut NS_AVAILABLE_IOS(9_0);
 
 /** Sets the Localytics opt-out state for this application. This call is not necessary and is provided for people who wish to
  allow their users the ability to opt out of data collection. It can be called at any time. Passing true causes all further
@@ -667,28 +673,28 @@
  
  @Version SDK5.1
  */
-+ (void)setPrivacyOptedOut:(BOOL)optedOut;
++ (void)setPrivacyOptedOut:(BOOL)optedOut NS_AVAILABLE_IOS(9_0);
 
 /** Returns the install id
  @return the install id as an NSString
 
  @Version SDK3.0
  */
-+ (nullable NSString *)installId;
++ (nullable NSString *)installId NS_AVAILABLE_IOS(9_0);
 
 /** Returns the version of the Localytics SDK
  @return the version of the Localytics SDK as an NSString
 
  @Version SDK3.0
  */
-+ (nonnull NSString *)libraryVersion;
++ (nonnull NSString *)libraryVersion NS_AVAILABLE_IOS(9_0);
 
 /** Returns the app key currently set in Localytics
  @return the app key currently set in Localytics as an NSString
 
  @Version SDK3.0
  */
-+ (nullable NSString *)appKey;
++ (nullable NSString *)appKey NS_AVAILABLE_IOS(9_0);
 
 /** Returns whether the Localytics SDK is currently in test mode or not. When in test mode
  a small Localytics tab will appear on the left side of the screen which enables a developer
@@ -697,7 +703,7 @@
 
  @Version SDK3.0
  */
-+ (BOOL)isTestModeEnabled;
++ (BOOL)isTestModeEnabled NS_AVAILABLE_IOS(9_0);
 
 /** Set whether Localytics SDK should enter test mode or not. When set to YES the a small
  Localytics tab will appear on the left side of the screen, enabling a developer to see/test
@@ -708,7 +714,14 @@
 
  @Version SDK4.0
  */
-+ (void)setTestModeEnabled:(BOOL)enabled;
++ (void)setTestModeEnabled:(BOOL)enabled NS_AVAILABLE_IOS(9_0);
+
+/**
+ Enter live device logging mode.
+ 
+ @Version SDK5.5
+ */
++ (void)enableLiveDeviceLogging NS_AVAILABLE_IOS(9_0);
 
 
 #pragma mark - Analytics Delegate
@@ -723,7 +736,7 @@
 
  @Version SDK3.0
  */
-+ (void)setAnalyticsDelegate:(nullable id<LLAnalyticsDelegate>)delegate;
++ (void)setAnalyticsDelegate:(nullable id<LLAnalyticsDelegate>)delegate NS_AVAILABLE_IOS(9_0);
 
 /** Stores the user's location.  This will be used in all event and session calls.
  If your application has already collected the user's location, it may be passed to Localytics
@@ -733,7 +746,7 @@
 
  @Version SDK3.0
  */
-+ (void)setLocation:(CLLocationCoordinate2D)location;
++ (void)setLocation:(CLLocationCoordinate2D)location NS_AVAILABLE_IOS(9_0);
 
 #if !TARGET_OS_TV
 
@@ -749,7 +762,7 @@
 
  @Version SDK3.0
  */
-+ (nullable NSString *)pushToken;
++ (nullable NSString *)pushToken NS_AVAILABLE_IOS(9_0);
 
 /** Stores the device's APNS token. This will be used in all event and session calls.
  @param pushToken The devices APNS token returned by application:didRegisterForRemoteNotificationsWithDeviceToken:
@@ -757,15 +770,26 @@
 
  @Version SDK3.0
  */
-+ (void)setPushToken:(nullable NSData *)pushToken;
++ (void)setPushToken:(nullable NSData *)pushToken NS_AVAILABLE_IOS(9_0);
 
-/** Used to record performance data for notifications
+/** Used to record performance data for notifications, both Localytics Push Received and Push Opened.
+ With the introduction of UserNotifications in iOS 10, this method has been deprecated in favor of calling
+ handleNotificationReceived: for push received reporting and didReceiveNotificationResponseWithUserInfo: for push opened reporting.
  @param notificationInfo The dictionary from either didFinishLaunchingWithOptions, didReceiveRemoteNotification,
  or didReceiveLocalNotification should be passed on to this method
 
  @Version SDK4.0
  */
-+ (void)handleNotification:(nonnull NSDictionary *)notificationInfo;
++ (void)handleNotification:(nonnull NSDictionary *)notificationInfo NS_DEPRECATED_IOS(9_0, 10_0);
+
+/** Used to record performance data for notifications
+ @param notificationInfo The dictionary from either didReceiveRemoteNotification,
+ or didReceiveLocalNotification should be passed on to this method
+ 
+ @Version SDK5.5
+ */
++ (void)handleNotificationReceived:(nonnull NSDictionary *)notificationInfo NS_AVAILABLE_IOS(10_0);
+
 
 /** Used to record performance data for notifications with action identifiers
  @param notificationInfo The dictionary from either didFinishLaunchingWithOptions, didReceiveRemoteNotification,
@@ -774,14 +798,14 @@
 
  @Version SDK4.4.0
  */
-+ (void)handleNotification:(nonnull NSDictionary *)notificationInfo withActionIdentifier:(nullable NSString *)identifier;
++ (void)handleNotification:(nonnull NSDictionary *)notificationInfo withActionIdentifier:(nullable NSString *)identifier NS_AVAILABLE_IOS(9_0);
 
 /** Use to record performance data for notifications when using UNUserNotificationCenterDelegate
  @param userInfo The UNNotificationResponse's userInfo retrieved by calling response.notification.request.content.userInfo
 
  @Version SDK4.1.0
  */
-+ (void)didReceiveNotificationResponseWithUserInfo:(nonnull NSDictionary *)userInfo;
++ (void)didReceiveNotificationResponseWithUserInfo:(nonnull NSDictionary *)userInfo NS_AVAILABLE_IOS(10_0);
 
 /** Use to record performance data for notifications when using UNUserNotificationCenterDelegate and a specific notification action was selected.
  @param userInfo The UNNotificationResponse's userInfo retrieved by calling response.notification.request.content.userInfo
@@ -789,19 +813,21 @@
 
  @Version SDK4.4.0
  */
-+ (void)didReceiveNotificationResponseWithUserInfo:(nonnull NSDictionary *)userInfo andActionIdentifier:(nullable NSString *)identifier;
++ (void)didReceiveNotificationResponseWithUserInfo:(nonnull NSDictionary *)userInfo andActionIdentifier:(nullable NSString *)identifier NS_AVAILABLE_IOS(10_0);
 
 /** Used to notify the Localytics SDK that notification settings have changed
 
  * @Version SDK5.0
  */
-+ (void)didRegisterUserNotificationSettings;
++ (void)didRegisterUserNotificationSettings NS_AVAILABLE_IOS(9_0);
 
 /** Used to notify the Localytics SDK that user notification authorization has changed
-
+ *
+ * @param options The options used to request notification authorization
+ * @param granted The user's response to the notification request.
  * @Version SDK4.1.0
  */
-+ (void)didRequestUserNotificationAuthorizationWithOptions:(NSUInteger)options granted:(BOOL)granted;
++ (void)didRequestUserNotificationAuthorizationWithOptions:(NSUInteger)options granted:(BOOL)granted NS_AVAILABLE_IOS(9_0);
 
 #pragma mark - In-App Message
 /** ---------------------------------------------------------------------------------------
@@ -816,7 +842,7 @@
 
  * @Version SDK3.0
  */
-+ (BOOL)handleTestModeURL:(nonnull NSURL *)url;
++ (BOOL)handleTestModeURL:(nonnull NSURL *)url NS_AVAILABLE_IOS(9_0);
 
 /** Set the image to be used for dimissing an In-App message
  @param image The image to be used for dismissing an In-App message. By default this is a
@@ -824,7 +850,7 @@
 
  @Version SDK3.0
  */
-+ (void)setInAppMessageDismissButtonImage:(nullable UIImage *)image;
++ (void)setInAppMessageDismissButtonImage:(nullable UIImage *)image NS_AVAILABLE_IOS(9_0);
 
 /** Set the image to be used for dimissing an In-App message by providing the name of the
  image to be loaded and used
@@ -833,30 +859,30 @@
 
  @Version SDK3.0
  */
-+ (void)setInAppMessageDismissButtonImageWithName:(nullable NSString *)imageName;
++ (void)setInAppMessageDismissButtonImageWithName:(nullable NSString *)imageName NS_AVAILABLE_IOS(9_0);
 
 /** Set the location of the dismiss button on an In-App msg
  @param location The location of the button (left or right)
- @see InAppDismissButtonLocation
+ @see LLInAppMessageDismissButtonLocation
 
  @Version SDK3.0
  */
-+ (void)setInAppMessageDismissButtonLocation:(LLInAppMessageDismissButtonLocation)location;
++ (void)setInAppMessageDismissButtonLocation:(LLInAppMessageDismissButtonLocation)location NS_AVAILABLE_IOS(9_0);
 
 /** Returns the location of the dismiss button on an In-App msg
- @return InAppDismissButtonLocation
- @see InAppDismissButtonLocation
+ @return LLInAppMessageDismissButtonLocation
+ @see LLInAppMessageDismissButtonLocation
 
  @Version SDK3.0
  */
-+ (LLInAppMessageDismissButtonLocation)inAppMessageDismissButtonLocation;
++ (LLInAppMessageDismissButtonLocation)inAppMessageDismissButtonLocation NS_AVAILABLE_IOS(9_0);
 
 /** Set the dismiss button hidden state on an In-App message
  * @param hidden  The hidden state of the dismiss button
-
+ *
  * @Version SDK4.3.0
  */
-+ (void)setInAppMessageDismissButtonHidden:(BOOL)hidden;
++ (void)setInAppMessageDismissButtonHidden:(BOOL)hidden NS_AVAILABLE_IOS(9_0);
 
 /**
  Trigger an In-App message
@@ -865,7 +891,7 @@
 
  @Version SDK3.0
  */
-+ (void)triggerInAppMessage:(nonnull NSString *)triggerName;
++ (void)triggerInAppMessage:(nonnull NSString *)triggerName NS_AVAILABLE_IOS(9_0);
 
 /**
  Trigger an In-App message
@@ -875,7 +901,7 @@
 
  @Version SDK3.0
  */
-+ (void)triggerInAppMessage:(nonnull NSString *)triggerName withAttributes:(nonnull NSDictionary<NSString *,NSString *> *)attributes;
++ (void)triggerInAppMessage:(nonnull NSString *)triggerName withAttributes:(nonnull NSDictionary<NSString *,NSString *> *)attributes NS_AVAILABLE_IOS(9_0);
 
 /**
  Trigger campaigns as if a Session Start event had just occurred.
@@ -890,25 +916,25 @@
 
  @Version SDK4.3.0
  */
-+ (void)triggerInAppMessagesForSessionStart;
++ (void)triggerInAppMessagesForSessionStart NS_AVAILABLE_IOS(9_0);
 
 /**
  * If an In-App message is currently displayed, dismiss it. Is a no-op otherwise.
 
  * @Version SDK3.0
  */
-+ (void)dismissCurrentInAppMessage;
++ (void)dismissCurrentInAppMessage NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag an In-App impression
  *
  * @param campaign The In-App campaign for which to tag an impression
  * @param impressionType an enum of LLImpressionTypeClick or LLImpressionTypeDismiss
-
+ *
  * @Version SDK4.3.1
  */
 + (void)tagImpressionForInAppCampaign:(nonnull LLInAppCampaign *)campaign
-                             withType:(LLImpressionType)impressionType;
+                             withType:(LLImpressionType)impressionType NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag an In-App impression.
@@ -920,28 +946,21 @@
  *
  * @param campaign The In-App campaign for which to tag an impression
  * @param customAction an NSString to tag the impression with.
-
+ *
  * @Version SDK4.3.1
  */
 + (void)tagImpressionForInAppCampaign:(nonnull LLInAppCampaign *)campaign
-                     withCustomAction:(nonnull NSString *)customAction;
+                     withCustomAction:(nonnull NSString *)customAction NS_AVAILABLE_IOS(9_0);
 
 
 #pragma mark - Inbox
 
 /** Returns an array of all Inbox campaigns that are enabled and can be displayed.
  @return an array of LLInboxCampaign objects
-
- @Version SDK3.7.0
- */
-+ (nonnull NSArray<LLInboxCampaign *> *)inboxCampaigns __attribute__((deprecated("inboxCampaigns has been deprecated, please use displayableInboxCampaigns")));
-
-/** Returns an array of all Inbox campaigns that are enabled and can be displayed.
- @return an array of LLInboxCampaign objects
  
  @Version SDK5.2.0
  */
-+ (nonnull NSArray<LLInboxCampaign *> *)displayableInboxCampaigns;
++ (nonnull NSArray<LLInboxCampaign *> *)displayableInboxCampaigns NS_AVAILABLE_IOS(9_0);
 
 /** Returns an array of all Inbox campaigns that are enabled. The return value will include Inbox
  campaigns with no listing title, and thus no visible UI element as well as deleted Inbox campaigns.
@@ -949,14 +968,14 @@
 
  @Version SDK4.4.0
  */
-+ (nonnull NSArray<LLInboxCampaign *> *)allInboxCampaigns;
++ (nonnull NSArray<LLInboxCampaign *> *)allInboxCampaigns NS_AVAILABLE_IOS(9_0);
 
 /** Refresh inbox campaigns from the Localytics server that are enabled and can be displayed.
  @param completionBlock the block invoked with refresh is complete
 
  @Version SDK3.7.0
  */
-+ (void)refreshInboxCampaigns:(nonnull void (^)(NSArray<LLInboxCampaign *> * _Nullable inboxCampaigns))completionBlock;
++ (void)refreshInboxCampaigns:(nonnull void (^)(NSArray<LLInboxCampaign *> * _Nullable inboxCampaigns))completionBlock NS_AVAILABLE_IOS(9_0);
 
 /** Refresh inbox campaigns from the Localytics server that are enabled. The return value will
  include Inbox campaigns with no listing title, and thus no visible UI element as well as deleted Inbox campaigns.
@@ -964,51 +983,52 @@
 
  @Version SDK4.4.0
  */
-+ (void)refreshAllInboxCampaigns:(nonnull void (^)(NSArray<LLInboxCampaign *> * _Nullable inboxCampaigns))completionBlock;
++ (void)refreshAllInboxCampaigns:(nonnull void (^)(NSArray<LLInboxCampaign *> * _Nullable inboxCampaigns))completionBlock NS_AVAILABLE_IOS(9_0);
 
 /** Set an Inbox campaign as read. Read state can be used to display opened but not disabled Inbox
  campaigns differently (e.g. greyed out).
  @param campaign an LLInboxCampaign that should have its read flag changed.
  @param read YES to mark the campaign as read, NO to mark it as unread
- @see [LLInboxCampaign class]
+ @see LLInboxCampaign
 
  @Version SDK4.4.0
  */
-+ (void)setInboxCampaign:(nonnull LLInboxCampaign *)campaign asRead:(BOOL)read;
++ (void)setInboxCampaign:(nonnull LLInboxCampaign *)campaign asRead:(BOOL)read NS_AVAILABLE_IOS(9_0);
 
 /** Set an Inbox campaign as deleted. Deleted Inbox campaigns will not be returned from
  the list of visible inbox campaigns.
  @param campaign an LLInboxCampaign that should be deleted
- @see [LLInboxCampaign class]
+ @see LLInboxCampaign
  
  @Version SDK5.2.0
  */
-+ (void)deleteInboxCampaign:(nonnull LLInboxCampaign *)campaign;
++ (void)deleteInboxCampaign:(nonnull LLInboxCampaign *)campaign NS_AVAILABLE_IOS(9_0);
 
 /** Get the count of unread inbox messages
  @return the count of unread inbox messages
 
  @Version SDK4.0
  */
-+ (NSInteger)inboxCampaignsUnreadCount;
++ (NSInteger)inboxCampaignsUnreadCount NS_AVAILABLE_IOS(9_0);
 
 /** Returns a inbox campaign detail view controller with the given inbox campaign data.
- @return a LLInboxDetailViewController from a given LLInboxCampaign object
-
+ * @param campaign The INbox campaign for which to retrieve an Inbox detail ViewController.
+ * @return a LLInboxDetailViewController from a given LLInboxCampaign object
+ *
  @Version SDK3.7.0
  */
-+ (nonnull LLInboxDetailViewController *)inboxDetailViewControllerForCampaign:(nonnull LLInboxCampaign *)campaign;
++ (nonnull LLInboxDetailViewController *)inboxDetailViewControllerForCampaign:(nonnull LLInboxCampaign *)campaign NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag an Inbox impression
  *
  * @param campaign The Inbox campaign for which to tag an impression
  * @param impressionType an enum of LLImpressionTypeClick or LLImpressionTypeDismiss
-
+ *
  * @Version SDK4.3.1
  */
 + (void)tagImpressionForInboxCampaign:(nonnull LLInboxCampaign *)campaign
-                             withType:(LLImpressionType)impressionType;
+                             withType:(LLImpressionType)impressionType NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag an Inbox impression.
@@ -1020,55 +1040,83 @@
  *
  * @param campaign The Inbox campaign for which to tag an impression
  * @param customAction an NSString to tag the impression with.
-
+ *
  * @Version SDK4.3.1
  */
 + (void)tagImpressionForInboxCampaign:(nonnull LLInboxCampaign *)campaign
-                     withCustomAction:(nonnull NSString *)customAction;
+                     withCustomAction:(nonnull NSString *)customAction NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag a Push to Inbox impression.
  *
  * @param campaign The Inbox campaign for which to tag an impression
  * @param success Whether or not the deep link was successful
-
+ *
  * @Version SDK4.4.0
  */
 + (void)tagImpressionForPushToInboxCampaign:(nonnull LLInboxCampaign *)campaign
-                                    success:(BOOL)success;
+                                    success:(BOOL)success NS_AVAILABLE_IOS(9_0);
 
 /**
  * Tell the Localytics SDK that an Inbox campaign was tapped in the list view.
  *
  * @param campaign The Inbox campaign that was tapped in the list view.
-
+ *
  * @Version SDK4.4.0
  */
-+ (void)inboxListItemTapped:(nonnull LLInboxCampaign *)campaign;
++ (void)inboxListItemTapped:(nonnull LLInboxCampaign *)campaign NS_AVAILABLE_IOS(9_0);
+
+/**
+ * FOR LOCALYTICS WRAPPER USE ONLY
+ *
+ * @param webViewConfig The WebViewConfiguration responsible for handling webview events
+ * @param campaign The Inbox campaign that will be displayed
+ *
+ * @Version SDK5.4.1
+ */
++ (void)setupWebViewConfiguration:(nonnull WKWebViewConfiguration *)webViewConfig withCampaign:(nullable LLInboxCampaign *)campaign NS_AVAILABLE_IOS(9_0);
+
+/**
+ * FOR LOCALYTICS WRAPPER USE ONLY
+ *
+ * @Version SDK5.4.1
+ */
++ (nullable LLMarketingWebViewHandler *)marketingWebViewHandler NS_AVAILABLE_IOS(9_0);
 
 #pragma mark - Location
 
-/** Enable or disable location monitoring for geofence monitoring. Enabling location monitoring
- will prompt the user for location permissions. The NSLocationAlwaysUsageDescription key must
- also be set in your Info.plist
+/** Enable or disable location monitoring for geofence monitoring. When enabled, 
+ invokes requestAlwaysAuthorization callback of the LLCallToActionDelegate. 
+ The Delgate should be implemented to prompt for location permissions. 
  @param enabled YES to enable location monitoring, NO to disable monitoring
 
- * @Version SDK4.0
+ @Attention
+ SDK5.3 requires LLCallToActionDelegate callback requestAlwaysAuthorization to be implemented
+ @Version SDK4.3
  */
-+ (void)setLocationMonitoringEnabled:(BOOL)enabled;
++ (void)setLocationMonitoringEnabled:(BOOL)enabled NS_AVAILABLE_IOS(9_0);
+
+/** Enable or disable location monitoring for geofence monitoring. Using this method will
+ tell Localytics to always look for location permission status, and whenever granted by the end user,
+ track their location for geofencing purposes. This method will NOT request location permissions.
+ @param persist YES to allow Localytics to enable location monitoring whenever available, NO to prevent that behavior
+ 
+ * @Version SDK5.3
+ */
++ (void)persistLocationMonitoring:(BOOL)persist NS_AVAILABLE_IOS(9_0);
 
 /** Retrieve the closest 20 geofences to monitor based on the devices current location. This method
  should be used if you would rather manage location updates and region monitoring instead of
  allowing the Localytics SDK to manage location updates and region monitoring automatically when
- using setLocationMonitoringEnabled. This method should be used in conjunction with triggerRegion:withEvent:
- and triggerRegions:withEvent: to notify the Localytics SDK that regions have been entered or exited.
+ using persistLocationMonitoring:withForegroundOnlyCapabilities:. This method should be used in conjunction with triggerRegion:withEvent:
+ and triggerRegions:withEvent:atLocation: to notify the Localytics SDK that regions have been entered or exited.
  @param currentCoordinate The devices current location coordinate
- @see triggerRegion:withEvent:
- @see triggerRegions:withEvent:
+ @see triggerRegion:withEvent:atLocation:
+ @see triggerRegions:withEvent:atLocation:
 
  * @Version SDK4.0
  */
-+ (nonnull NSArray<LLRegion *> *)geofencesToMonitor:(CLLocationCoordinate2D)currentCoordinate;
++ (nonnull NSArray<LLRegion *> *)geofencesToMonitor:(CLLocationCoordinate2D)currentCoordinate NS_AVAILABLE_IOS(9_0);
 
 /** Trigger a region with a certain event. This method should be used in conjunction with geofencesToMonitor:.
  @param region The CLRegion that is triggered
@@ -1078,7 +1126,7 @@
 
  * @Version SDK5.0
  */
-+ (void)triggerRegion:(nonnull CLRegion *)region withEvent:(LLRegionEvent)event atLocation:(nullable CLLocation *)location;
++ (void)triggerRegion:(nonnull CLRegion *)region withEvent:(LLRegionEvent)event atLocation:(nullable CLLocation *)location NS_AVAILABLE_IOS(9_0);
 
 /** Trigger regions with a certain event at a certain location. This method should be used in
  conjunction with geofencesToMonitor:.
@@ -1086,10 +1134,10 @@
  @param event The triggering event (enter or exit)
  @param location A CLLocation that will update the closest geofences for future triggers
  @see geofencesToMonitor:
-
+ *
  * @Version SDK5.0
  */
-+ (void)triggerRegions:(nonnull NSArray<CLRegion *> *)regions withEvent:(LLRegionEvent)event atLocation:(nullable CLLocation *)location;
++ (void)triggerRegions:(nonnull NSArray<CLRegion *> *)regions withEvent:(LLRegionEvent)event atLocation:(nullable CLLocation *)location NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag a Places Push Received.
@@ -1098,10 +1146,10 @@
  * if standard places triggering is suppressed in favor of custom logic.
  *
  * @param campaign The Places campaign for which to tag an event
-
+ *
  * @Version SDK4.3.0
  */
-+ (void)tagPlacesPushReceived:(nonnull LLPlacesCampaign *)campaign;
++ (void)tagPlacesPushReceived:(nonnull LLPlacesCampaign *)campaign NS_AVAILABLE_IOS(9_0);
 
 /**
  * A standard event to tag a Places Push Opened.
@@ -1110,10 +1158,10 @@
  * if standard places triggering is suppressed in favor of custom logic.
  *
  * @param campaign The Places campaign for which to tag an event
-
+ *
  * @Version SDK4.3.0
  */
-+ (void)tagPlacesPushOpened:(nonnull LLPlacesCampaign *)campaign;
++ (void)tagPlacesPushOpened:(nonnull LLPlacesCampaign *)campaign NS_AVAILABLE_IOS(9_0);
 
 /**
  * An event to tag a Places Push Opened with a custom action.
@@ -1123,33 +1171,33 @@
  *
  * @param campaign The Places campaign for which to tag an event
  * @param identifier The specific notification action associated with the opened push notification.
-
+ *
  * @Version SDK4.4.0
  */
 + (void)tagPlacesPushOpened:(nonnull LLPlacesCampaign *)campaign
-       withActionIdentifier:(nonnull NSString *)identifier;
+       withActionIdentifier:(nonnull NSString *)identifier NS_AVAILABLE_IOS(9_0);
 
 /**
  * Trigger a places notification for the given campaign
  *
  * @param campaign The Places campaign for which to trigger a notification
-
+ *
  * @Version SDK4.3.0
  */
 
-+ (void)triggerPlacesNotificationForCampaign:(nonnull LLPlacesCampaign *)campaign;
++ (void)triggerPlacesNotificationForCampaign:(nonnull LLPlacesCampaign *)campaign NS_AVAILABLE_IOS(9_0);
 
 /**
  * Trigger a places notification for the given campaign id and regionId
  *
- * @param campaignid The Places campaign id for which to trigger a notification
+ * @param campaignId The Places campaign id for which to trigger a notification
  * @param regionId The Places region id for which to trigger a notification
-
+ *
  * @Version SDK4.3.0
  */
 
 + (void)triggerPlacesNotificationForCampaignId:(NSInteger)campaignId
-                              regionIdentifier:(nonnull NSString *)regionId;
+                              regionIdentifier:(nonnull NSString *)regionId NS_AVAILABLE_IOS(9_0);
 
 
 #pragma mark - In-App Message Delegate
@@ -1164,7 +1212,7 @@
 
  @Version SDK4.0
  */
-+ (void)setMessagingDelegate:(nullable id<LLMessagingDelegate>)delegate;
++ (void)setMessagingDelegate:(nullable id<LLMessagingDelegate>)delegate NS_AVAILABLE_IOS(9_0);
 
 /** Set a CallToAction delegate
  @param delegate An object that implements the LLCallToActionDelegate.
@@ -1172,17 +1220,7 @@
  
  @Version SDK4.0
  */
-+ (void)setCallToActionDelegate:(nullable id<LLCallToActionDelegate>)delegate;
-
-/** Returns whether the ADID parameter is added to In-App call to action URLs
- This call is not garaunteed to return the correct result as the call to setInAppAdidParameterEnabled
- is run asynchronously, and this returns synchronously.
- SDK v6.0 will contain a fix for this behavior, if this is a major blocker, please contact support.
- @return YES if parameter is added, NO otherwise
-
- * @Version SDK4.0
- */
-+ (BOOL)isInAppAdIdParameterEnabled;
++ (void)setCallToActionDelegate:(nullable id<LLCallToActionDelegate>)delegate NS_AVAILABLE_IOS(9_0);
 
 /** Set whether ADID parameter is added to In-App call to action URLs. By default
  the ADID parameter will be added to call to action URLs.
@@ -1190,17 +1228,7 @@
 
  * @Version SDK3.4
  */
-+ (void)setInAppAdIdParameterEnabled:(BOOL)enabled;
-
-/** Returns whether the ADID parameter is added to Inbox call to action URLs
- This call is not garaunteed to return the correct result as the call to setInboxAdidParameterEnabled
- is run asynchronously, and this returns synchronously.
- SDK v6.0 will contain a fix for this behavior, if this is a major blocker, please contact support.
- @return YES if parameter is added, NO otherwise
-
- * @Version SDK5.0
- */
-+ (BOOL)isInboxAdIdParameterEnabled;
++ (void)setInAppAdIdParameterEnabled:(BOOL)enabled NS_AVAILABLE_IOS(9_0);
 
 /** Set whether ADID parameter is added to Inbox call to action URLs. By default
  the ADID parameter will be added to call to action URLs.
@@ -1208,7 +1236,7 @@
 
  * @Version SDK5.0
  */
-+ (void)setInboxAdIdParameterEnabled:(BOOL)enabled;
++ (void)setInboxAdIdParameterEnabled:(BOOL)enabled NS_AVAILABLE_IOS(9_0);
 
 
 #pragma mark - Location Delegate
@@ -1223,7 +1251,7 @@
 
  * @Version SDK4.0
  */
-+ (void)setLocationDelegate:(nullable id<LLLocationDelegate>)delegate;
++ (void)setLocationDelegate:(nullable id<LLLocationDelegate>)delegate NS_AVAILABLE_IOS(9_0);
 
 #endif
 
@@ -1276,10 +1304,10 @@
  *                  the app was upgraded.
  * @param isResume  Boolean indicating that an old session will be resumed, as opposed to
  *                  a new session being opened.
-
+ *
  * @Version SDK3.0
  */
-- (void)localyticsSessionWillOpen:(BOOL)isFirst isUpgrade:(BOOL)isUpgrade isResume:(BOOL)isResume;
+- (void)localyticsSessionWillOpen:(BOOL)isFirst isUpgrade:(BOOL)isUpgrade isResume:(BOOL)isResume NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that a session was either opened or resumed. Is not called if a session was already open.
@@ -1290,10 +1318,10 @@
  *                  the app was upgraded.
  * @param isResume  Boolean indicating that an old session was resumed, as opposed to
  *                  a new session was opened.
-
+ *
  * @Version SDK3.0
  */
-- (void)localyticsSessionDidOpen:(BOOL)isFirst isUpgrade:(BOOL)isUpgrade isResume:(BOOL)isResume;
+- (void)localyticsSessionDidOpen:(BOOL)isFirst isUpgrade:(BOOL)isUpgrade isResume:(BOOL)isResume NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an event was tagged.
@@ -1301,18 +1329,18 @@
  * @param eventName             The name of the event.
  * @param attributes            The event's attributes.
  * @param customerValueIncrease The change in a customer's lifetime value associated with this event.
-
+ *
  * @Version SDK3.0
  */
 - (void)localyticsDidTagEvent:(nonnull NSString *)eventName
                    attributes:(nullable NSDictionary<NSString *,NSString *> *)attributes
-        customerValueIncrease:(nullable NSNumber *)customerValueIncrease;
+        customerValueIncrease:(nullable NSNumber *)customerValueIncrease NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that a session will be closed. Is called only if a session is currently open. Note that
  * the session might be resumed if [Localytics openSession] is called, so there is no guarantee that
  * the session will actually close after this callback.
-
+ *
  * @Version SDK3.0
  */
 - (void)localyticsSessionWillClose;
@@ -1335,10 +1363,10 @@
  *
  * @param campaign The campaign that will be shown
  * @return The decision to show the In-App campaign.
-
+ *
  * @Version SDK4.3.0
  */
-- (BOOL)localyticsShouldShowInAppMessage:(nonnull LLInAppCampaign *)campaign;
+- (BOOL)localyticsShouldShowInAppMessage:(nonnull LLInAppCampaign *)campaign NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback to determine if In-App campaigns triggered by session
@@ -1349,10 +1377,10 @@
  * @see [Localytics triggerInAppMessagesForSessionStart]
  *
  * @return The decision to delay In-App campaigns triggered by the "Session Start" event.
-
+ *
  * @Version SDK4.3.0
  */
-- (BOOL)localyticsShouldDelaySessionStartInAppMessages;
+- (BOOL)localyticsShouldDelaySessionStartInAppMessages NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback to modify presentation of an In-App Campaign.
@@ -1361,59 +1389,59 @@
  * @param configuration An object representing the mutable visual state of the In-App campaign
  *        @see LLInAppConfiguration
  * @return The modified configuration object containing all preferred display values.
-
+ *
  * @Version SDK3.0
  */
-- (nonnull LLInAppConfiguration *)localyticsWillDisplayInAppMessage:(nonnull LLInAppCampaign *)campaign withConfiguration:(nonnull LLInAppConfiguration *)configuration;
+- (nonnull LLInAppConfiguration *)localyticsWillDisplayInAppMessage:(nonnull LLInAppCampaign *)campaign withConfiguration:(nonnull LLInAppConfiguration *)configuration NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an In-App message was displayed.
-
+ *
  * @Version SDK3.0
  */
-- (void)localyticsDidDisplayInAppMessage;
+- (void)localyticsDidDisplayInAppMessage NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an In-App message will be dismissed.
-
+ *
  * @Version SDK3.0
  */
-- (void)localyticsWillDismissInAppMessage;
+- (void)localyticsWillDismissInAppMessage NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an In-App message was dismissed.
-
+ *
  * @Version SDK3.0
  */
-- (void)localyticsDidDismissInAppMessage;
+- (void)localyticsDidDismissInAppMessage NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an Inbox Detail View Controller will be shown. This method is called from the viewWillAppear: method of UIViewController.
-
+ *
  * @Version SDK4.4.0
  */
-- (void)localyticsWillDisplayInboxDetailViewController;
+- (void)localyticsWillDisplayInboxDetailViewController NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an Inbox Detail View Controller was just shown.  This method is called from the viewDidAppear: method of UIViewController.
-
+ *
  * @Version SDK4.4.0
  */
-- (void)localyticsDidDisplayInboxDetailViewController;
+- (void)localyticsDidDisplayInboxDetailViewController NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an Inbox Detail View Controller will be dismissed. This method is called from the viewWillDisappear: method of UIViewController.
-
+ *
  * @Version SDK4.4.0
  */
-- (void)localyticsWillDismissInboxDetailViewController;
+- (void)localyticsWillDismissInboxDetailViewController NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback that an Inbox Detail View Controller was just dismissed.  This method is called from the viewDidDisappear: method of UIViewController.
-
+ *
  * @Version SDK4.4.0
  */
-- (void)localyticsDidDismissInboxDetailViewController;
+- (void)localyticsDidDismissInboxDetailViewController NS_AVAILABLE_IOS(9_0);
 
 
 /**
@@ -1421,10 +1449,10 @@
  *
  * @param campaign An object defining a Places Campaign
  * @return The decision to show the local notification.
-
+ *
  * @Version SDK4.0
  */
-- (BOOL)localyticsShouldDisplayPlacesCampaign:(nonnull LLPlacesCampaign *)campaign;
+- (BOOL)localyticsShouldDisplayPlacesCampaign:(nonnull LLPlacesCampaign *)campaign NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback to modify the appearance of a local notification.
@@ -1432,10 +1460,10 @@
  * @param notification The iOS local notification.
  * @param campaign The campaign that triggered the Places notification
  * @return The iOS notification with all updated preferences
-
+ *
  * @Version SDK4.0
  */
-- (nonnull UILocalNotification *)localyticsWillDisplayNotification:(nonnull UILocalNotification *)notification forPlacesCampaign:(nonnull LLPlacesCampaign *)campaign;
+- (nonnull UILocalNotification *)localyticsWillDisplayNotification:(nonnull UILocalNotification *)notification forPlacesCampaign:(nonnull LLPlacesCampaign *)campaign NS_DEPRECATED_IOS(9_0, 10_0);
 
 /**
  * Callback to modify the appearance of a local notification.
@@ -1443,27 +1471,17 @@
  * @param notification The iOS notification content used to customize a local notification.
  * @param campaign The campaign that triggered the Places notification
  * @return The iOS notification content with all updated preferences
-
+ *
  * @Version SDK4.1.0
  */
-- (nonnull UNMutableNotificationContent *)localyticsWillDisplayNotificationContent:(nonnull UNMutableNotificationContent *)notification forPlacesCampaign:(nonnull LLPlacesCampaign *)campaign;
-
-/**
- * Callback to suppress deeplinking from the Localytics SDK.
- *
- * @param url The url that will be opened if deeplinking is permitted.
- * @return A boolean, YES indicates that the Localytics SDK should handle the deeplink and NO indicated it shouldn't.
-
- * @Version SDK5.0
- */
-- (BOOL)localyticsShouldDeeplink:(nonnull NSURL *)url __attribute__((deprecated("localyticsShouldDeeplink in the LLMessagingDelegate has been deprecated, please use localyticsShouldDeeplink in the LLCallToActionDelegate instead")));
+- (nonnull UNMutableNotificationContent *)localyticsWillDisplayNotificationContent:(nonnull UNMutableNotificationContent *)notification forPlacesCampaign:(nonnull LLPlacesCampaign *)campaign NS_AVAILABLE_IOS(10_0);
 
 @end
 
 
 /**
  * A protocol used to receive location updates.
-
+ *
  * @Version SDK4.0
  */
 @protocol LLLocationDelegate <NSObject>
@@ -1473,36 +1491,36 @@
  * Callback for when a significant location update occurs.
  *
  * @param location An object representing the updated location.
-
+ *
  * @Version SDK4.0
  */
-- (void)localyticsDidUpdateLocation:(nonnull CLLocation *)location;
+- (void)localyticsDidUpdateLocation:(nonnull CLLocation *)location NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback for when Localytics updates the regions that are being monitored.
  *
  * @param addedRegions The list of regions that will be added to monitoring
  * @param removedRegions The list of regions which will no longer be monitored.
-
+ *
  * @Version SDK4.0
  */
-- (void)localyticsDidUpdateMonitoredRegions:(nonnull NSArray<LLRegion *> *)addedRegions removeRegions:(nonnull NSArray<LLRegion *> *)removedRegions;
+- (void)localyticsDidUpdateMonitoredRegions:(nonnull NSArray<LLRegion *> *)addedRegions removeRegions:(nonnull NSArray<LLRegion *> *)removedRegions NS_AVAILABLE_IOS(9_0);
 
 /**
  * Callback for when Localytics recognized the entering or exiting of certain regions
  *
  * @param regions The list of regions that have been triggered
  * @param event An event indicating if the regions were triggered due to entering or exiting.
-
+ *
  * @Version SDK4.0
  */
-- (void)localyticsDidTriggerRegions:(nonnull NSArray<LLRegion *> *)regions withEvent:(LLRegionEvent)event;
+- (void)localyticsDidTriggerRegions:(nonnull NSArray<LLRegion *> *)regions withEvent:(LLRegionEvent)event NS_AVAILABLE_IOS(9_0);
 
 @end
 
 /**
  * A protocol used to receive information about Call To Actions triggered by Localytics campaigns.
- 
+ *
  * @Version SDK5.0
  */
 @protocol LLCallToActionDelegate <NSObject>
@@ -1514,23 +1532,23 @@
  * @param campaign The campaign that triggered this deeplink (in the case of push, this will be nil).
  * @return The decision to allow Localytics to handle the deeplink
  */
-- (BOOL)localyticsShouldDeeplink:(nonnull NSURL *)url campaign:(nullable LLCampaignBase *)campaign;
+- (BOOL)localyticsShouldDeeplink:(nonnull NSURL *)url campaign:(nullable LLCampaignBase *)campaign NS_AVAILABLE_IOS(9_0);
 /**
  * Callback to indicate that a user has triggered an privacy opt in or opt out using the Javascript
  * API provided in a Localytics In-App or Inbox message.
  *
- * @param optOut The result of the call to action indicating that the user opted in (false) or out (true).
+ * @param optedOut The result of the call to action indicating that the user opted in (false) or out (true).
  * @param campaign The campaign which triggered the opt in/out call.
  */
-- (void)localyticsDidOptOut:(BOOL)optedOut campaign:(nonnull LLCampaignBase *)campaign;
+- (void)localyticsDidOptOut:(BOOL)optedOut campaign:(nonnull LLCampaignBase *)campaign NS_AVAILABLE_IOS(9_0);
 /**
  * Callback to indicate that a user has triggered an opt in or opt out using the Javascript
  * API provided in a Localytics In-App or Inbox message.
  *
- * @param optOut The result of the call to action indicating that the user opted in (false) or out (true).
+ * @param privacyOptedOut The result of the call to action indicating that the user opted in (false) or out (true).
  * @param campaign The campaign which triggered the privacy opt in/out call.
  */
-- (void)localyticsDidPrivacyOptOut:(BOOL)privacyOptedOut campaign:(nonnull LLCampaignBase *)campaign;
+- (void)localyticsDidPrivacyOptOut:(BOOL)privacyOptedOut campaign:(nonnull LLCampaignBase *)campaign NS_AVAILABLE_IOS(9_0);
 /**
  * Callback to indicate that a user has triggered a location when in use permission prompt using the Javascript
  * API provided in a Localytics In-App or Inbox message.
@@ -1538,7 +1556,7 @@
  * @param campaign The campaign which triggered the location when in use permission prompt.
  * @return boolean indicating if Localytics should proceed. Returning false will prevent the location prompt.
  */
-- (BOOL)localyticsShouldPromptForLocationWhenInUsePermissions:(nonnull LLCampaignBase *)campaign;
+- (BOOL)localyticsShouldPromptForLocationWhenInUsePermissions:(nonnull LLCampaignBase *)campaign NS_AVAILABLE_IOS(9_0);
 /**
  * Callback to indicate that a user has triggered a location always permission prompt using the Javascript
  * API provided in a Localytics In-App or Inbox message.
@@ -1546,7 +1564,7 @@
  * @param campaign The campaign which triggered the location always permission prompt.
  * @return boolean indicating if Localytics should proceed. Returning false will prevent the location prompt.
  */
-- (BOOL)localyticsShouldPromptForLocationAlwaysPermissions:(nonnull LLCampaignBase *)campaign;
+- (BOOL)localyticsShouldPromptForLocationAlwaysPermissions:(nonnull LLCampaignBase *)campaign NS_AVAILABLE_IOS(9_0);
 /**
  * Callback to indicate that a user has triggered a notification permission prompt using the Javascript
  * API provided in a Localytics In-App or Inbox message.
@@ -1554,6 +1572,39 @@
  * @param campaign The campaign which triggered the notification permission prompt.
  * @return boolean indicating if Localytics should proceed. Returning false will prevent the location prompt.
  */
-- (BOOL)localyticsShouldPromptForNotificationPermissions:(nonnull LLCampaignBase *)campaign;
+- (BOOL)localyticsShouldPromptForNotificationPermissions:(nonnull LLCampaignBase *)campaign NS_AVAILABLE_IOS(9_0);
+
+/**
+ * Callback to indicate that a user has triggered a deeplink to the settings using the Javascript
+ * API provided in a Localytics In-App or Inbox message.
+ *
+ @param campaign The campaign which triggered the notification permission prompt.
+ @return boolean indicating if Localytics should proceed. Returning false will prevent the deeplink to settings.
+ *
+ * @Version SDK 5.3
+ */
+- (BOOL)localyticsShouldDeeplinkToSettings:(nonnull LLCampaignBase *)campaign NS_AVAILABLE_IOS(9_0);
+
+
+/**
+ * Callback to request the Always Authorization. Localytics setLocationMonitoringEnabled API requires implementation of this callback.
+ * @param locationManager CLLocationManager instance to request Authorization
+ * @discussion Sample Implementation\: [locationManager requestAlwaysAuthorization];
+ 
+ @Note Apple requires application developers to be aware and request permissions needed by SDK.
+ @Version SDK 5.3
+ */
+- (void)requestAlwaysAuthorization:(nonnull CLLocationManager *)locationManager NS_AVAILABLE_IOS(9_0);
+
+/**
+ * Callback to request When in Use Authorization.
+ @param locationManager CLLocationManager instance to request Authorization
+ *
+ * Sample Implementation \: [locationManager requestWhenInUseAuthorization];
+ @Note Apple requires application developers to be aware and request permissions needed by SDK.
+ @Version SDK 5.3
+ */
+- (void)requestWhenInUseAuthorization:(nonnull CLLocationManager *)locationManager NS_AVAILABLE_IOS(9_0);
 @end
 #endif
+

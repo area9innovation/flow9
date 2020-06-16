@@ -4,7 +4,7 @@
 #import <iostream>
 
 #ifdef HOCKEY_APP_ID
-#import <HockeySDK/HockeySDK.h>
+//#import <HockeySDK/HockeySDK.h>
 #endif
 
 #ifdef LOCALYTICS_APP_KEY
@@ -70,32 +70,30 @@ using namespace std;
     self.DefaultURLParameters = @"";
     localNotificationWakingUpId = -1;
     
-    if (![[NSUserDefaults standardUserDefaults] objectForKey:@"use_cordova"])  {
         
-        LogI(@"application: updating the standardUserDefaults: use_cordova");
+    LogI(@"application: updating the standardUserDefaults");
+    
+    NSString  *mainBundlePath = [[NSBundle mainBundle] bundlePath];
+    NSString  *settingsPropertyListPath = [mainBundlePath
+                                           stringByAppendingPathComponent:@"Settings.bundle/Root.plist"];
+    
+    NSDictionary *settingsPropertyList = [NSDictionary
+                                          dictionaryWithContentsOfFile:settingsPropertyListPath];
+    
+    NSMutableArray      *preferenceArray = [settingsPropertyList objectForKey:@"PreferenceSpecifiers"];
+    NSMutableDictionary *registerableDictionary = [NSMutableDictionary dictionary];
+    
+    for (int i = 0; i < [preferenceArray count]; i++)  {
+        NSString  *key = [[preferenceArray objectAtIndex:i] objectForKey:@"Key"];
         
-        NSString  *mainBundlePath = [[NSBundle mainBundle] bundlePath];
-        NSString  *settingsPropertyListPath = [mainBundlePath
-                                               stringByAppendingPathComponent:@"Settings.bundle/Root.plist"];
-        
-        NSDictionary *settingsPropertyList = [NSDictionary
-                                              dictionaryWithContentsOfFile:settingsPropertyListPath];
-        
-        NSMutableArray      *preferenceArray = [settingsPropertyList objectForKey:@"PreferenceSpecifiers"];
-        NSMutableDictionary *registerableDictionary = [NSMutableDictionary dictionary];
-        
-        for (int i = 0; i < [preferenceArray count]; i++)  {
-            NSString  *key = [[preferenceArray objectAtIndex:i] objectForKey:@"Key"];
-            
-            if (key)  {
-                id  value = [[preferenceArray objectAtIndex:i] objectForKey:@"DefaultValue"];
-                [registerableDictionary setObject:value forKey:key];
-            }
+        if (key)  {
+            id  value = [[preferenceArray objectAtIndex:i] objectForKey:@"DefaultValue"];
+            [registerableDictionary setObject:value forKey:key];
         }
-        
-        [[NSUserDefaults standardUserDefaults] registerDefaults:registerableDictionary];
-        [[NSUserDefaults standardUserDefaults] synchronize];
     }
+    
+    [[NSUserDefaults standardUserDefaults] registerDefaults:registerableDictionary];
+    [[NSUserDefaults standardUserDefaults] synchronize];
 
 
 #ifdef LOCALYTICS_APP_KEY
@@ -123,9 +121,9 @@ using namespace std;
 #endif
 
 #ifdef HOCKEY_APP_ID
-    [[BITHockeyManager sharedHockeyManager] configureWithIdentifier: HOCKEY_APP_ID];
-    [[BITHockeyManager sharedHockeyManager] startManager];
-    [[BITHockeyManager sharedHockeyManager].authenticator authenticateInstallation];
+//    [[BITHockeyManager sharedHockeyManager] configureWithIdentifier: HOCKEY_APP_ID];
+//    [[BITHockeyManager sharedHockeyManager] startManager];
+//    [[BITHockeyManager sharedHockeyManager].authenticator authenticateInstallation];
 #endif
     // Crashes handling is enabled by default
     
@@ -348,27 +346,25 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     
     [self initFlowRunner];
     
-    Boolean useCordova = [[NSUserDefaults standardUserDefaults] boolForKey: @"use_cordova"];
-    
     // TO DO : may be there is better way to get it
-    UIWebView *web_view = [[UIWebView alloc] initWithFrame:CGRectZero];
-    NSString * current_ua = [web_view stringByEvaluatingJavaScriptFromString: @"navigator.userAgent"];
-        
-    if (useCordova) {
-        current_ua = [current_ua stringByAppendingString:@" Cordova"];
-    }
-        
-    [web_view release];
-        
-#if defined(APP_VISIBLE_NAME) && defined(APP_VERSION)
-    NSString * ua = [NSString stringWithFormat: @"%@ [%@/v%@]", current_ua, APP_VISIBLE_NAME, APP_VERSION];
-#else
-    NSString * ua = [NSString stringWithFormat: @"%@ %@", current_ua, @"FlowRunner"];
-#endif
+    WKWebView *web_view = [[WKWebView alloc] initWithFrame:CGRectZero];
     
-    NSDictionary * defs = [NSDictionary dictionaryWithObjectsAndKeys: ua, @"FlowUserAgent", nil];
-    [[NSUserDefaults standardUserDefaults] registerDefaults: defs];
-    LogI(@"User-Agent for WebViews : %@", ua);
+    [web_view evaluateJavaScript:@"navigator.userAgent" completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+        if ([result isKindOfClass:[NSString class]]) {
+            NSString* current_ua = (NSString*)result;
+            #if defined(APP_VISIBLE_NAME) && defined(APP_VERSION)
+                 NSString* ua = [NSString stringWithFormat: @"%@ [%@/v%@]", current_ua, APP_VISIBLE_NAME, APP_VERSION];
+            #else
+                 NSString* ua = [NSString stringWithFormat: @"%@ %@", current_ua, @"FlowRunner"];
+            #endif
+            
+            NSDictionary * defs = [NSDictionary dictionaryWithObjectsAndKeys: ua, @"FlowUserAgent", nil];
+            [[NSUserDefaults standardUserDefaults] registerDefaults: defs];
+            LogI(@"User-Agent for WebViews : %@", ua);
+        }
+
+        [web_view release];
+    }];
 }
 
 - (void) initFlowRunner

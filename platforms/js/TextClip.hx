@@ -165,6 +165,7 @@ class TextClip extends NativeWidgetClip {
 	public var isInteractive : Bool = false;
 
 	private var baselineWidget : Dynamic;
+	private var needBaseline : Bool = true;
 
 	private var doNotRemap : Bool = false;
 
@@ -456,7 +457,7 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.step = step;
 			}
 
-			nativeWidget.autocomplete = autocomplete;
+			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
 
 			if (maxChars >= 0) {
 				nativeWidget.maxLength = maxChars;
@@ -546,7 +547,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public inline function updateBaselineWidget() : Void {
-		if (RenderSupport.RendererType == "html" && isNativeWidget) {
+		if (RenderSupport.RendererType == "html" && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
@@ -666,6 +667,13 @@ class TextClip extends NativeWidgetClip {
 		if (this.escapeHTML != escapeHTML) {
 			this.escapeHTML = escapeHTML;
 			invalidateMetrics();
+		}
+	}
+
+	public function setNeedBaseline(need : Bool) : Void {
+		if (this.needBaseline != need) {
+			this.needBaseline = need;
+			updateBaselineWidget();
 		}
 	}
 
@@ -1501,7 +1509,7 @@ class TextClip extends NativeWidgetClip {
 
 			this.deleteNativeWidget();
 
-			nativeWidget = Browser.document.createElement(tagName);
+			nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 			this.updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');

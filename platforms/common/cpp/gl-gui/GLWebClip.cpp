@@ -27,9 +27,9 @@ StackSlot GLWebClip::webClipHostCall(RUNNER_ARGS)
 
 StackSlot GLWebClip::webClipEvalJS(RUNNER_ARGS)
 {
-    RUNNER_PopArgs1(code);
+    RUNNER_PopArgs2(code, cb);
     RUNNER_CheckTag1(TString, code);
-    return owner->webClipEvalJS(this, RUNNER->GetString(code));
+    return owner->webClipEvalJS(this, RUNNER->GetString(code), cb);
 }
 
 StackSlot GLWebClip::setWebClipZoomable(RUNNER_ARGS)

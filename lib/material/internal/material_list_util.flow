@@ -51,6 +51,8 @@ export {
 		)
 	}
 
+	MListOnClickHandler(selection : MListSelection, selectionEnabled : MListSelectionEnabled, onListClick : MOnListClick) -> (int) -> void;
+
 	// Construct line with MList interactions: down, hover, selection
 	makeTListLine(lightBackground : bool, line : Tropic, focus : MFocus, selected : Transform<bool>, hoverEnabled : Transform<bool>,
 		bgStyle : [TGraphicsStyle], selectedBgStyle : [TGraphicsStyle]) -> Tropic;
@@ -172,7 +174,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			listState.onClick(fgetValue(i));
 		};
 		selected = fselect2(listState.selection.selected, i, FLift2(contains));
-		focusSelected = make(fgetValue(selected));
+		focusSelected = extractStruct(fgetValue(state), MSelected(make(fgetValue(selected)))).selected;
 
 		focusState : [flow] =
 			replaceStructMany(
@@ -182,14 +184,17 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					MEnabled(enabled),
 					MSelected(focusSelected),
 					AccessRole("listitem"),
-					MFocusEnabled(hoverEnabled),
+					MHoverEnabled(hoverEnabled),
 					MAddFocusGroup(true),
 					MRippleType(fif(hoverEnabled, const(MRippleFill()), const(MNoRipple()))),
 					MHighlightOnFocus(const(true)),
 					MHighlightOnHover(const(true)),
 					// MHighlightOnSelect(const(true)),
 					MCursorShape(fif(hoverEnabled, const(FingerCursor()), const(DefaultCursor()))),
-					MButtonTitle(fselect2(title, subtitle, FLift2(\t, st -> trim(t + " " + st.first)))),
+					MButtonTitle(fselect2(title, subtitle, FLift2(\t, st -> {
+						s = trim(t + " " + st.first);
+						if (s == "") "List item" else s;
+					}))),
 					THovering(hovering)
 				]
 			)
@@ -342,7 +347,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 				focusState,
 				\focus ->
 					TAlpha(
-						fif(focus.enabled, const(1.), const(if (getLightBackground(parent)) 0.26 else 0.3)),
+						fif(focus.enabled, const(1.), const(defaultDisabledItemOpacity(getLightBackground(parent)))),
 						TCopySize(
 							f(focus.parent),
 							\tr ->
@@ -603,7 +608,7 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 	multiSelection = tryExtractStruct(state, MMultiSelection(make(makeSet())));
 	selection = extractStruct(state, MListSelection(const(isSome(singleSelection) || isSome(multiSelection)),
 		isSome(multiSelection), false, make([])));
-	selectionEnabled = extractStruct(state, MListSelectionEnabled(const([]))).enabled;
+	selectionEnabled = extractStruct(state, MListSelectionEnabled(const([])));
 	isCondensed = extractStruct(state, MCondensed(false)).condensed || listState.condensed;
 	separators = contains(state, MAddSeparators()) || listState.separators;
 	color =
@@ -644,23 +649,7 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 			)
 		]);
 
-	onClick = \i -> {
-		if (fgetValue(selection.enabled) && fgetValue(elementAt(fgetValue(selectionEnabled), i, const(true))))
-			if (selection.multiple) {
-				if (contains(getValue(selection.selected), i) && selection.toggle)
-					nextDistinct(selection.selected, removeAll(getValue(selection.selected), i))
-				else if (!contains(getValue(selection.selected), i))
-					nextDistinct(selection.selected, arrayPush(getValue(selection.selected), i));
-			} else {
-				if (selection.toggle)
-					next(selection.selected, if (contains(getValue(selection.selected), i)) [] else [i])
-				else
-					nextDistinct(selection.selected, [i]);
-			};
-
-		if (fgetValue(onListClick.enabled))
-			onListClick.onClick(i);
-	};
+	onClick = MListOnClickHandler(selection, selectionEnabled, onListClick);
 
 	MListInnerState(
 		listState.manager,
@@ -693,7 +682,7 @@ makeTListLine(lightBackground : bool, line : Tropic, focus : MFocus, selected : 
 	bgStyle : [TGraphicsStyle], selectedBgStyle : [TGraphicsStyle]) -> Tropic {
 
 	TDecorator(
-		TAlpha(fif(focus.enabled, const(1.), const(if (lightBackground) 0.26 else 0.3)), line),
+		TAlpha(fif(focus.enabled, const(1.), const(defaultDisabledItemOpacity(lightBackground))), line),
 		[
 			Pair(
 				const(true),
@@ -721,7 +710,7 @@ makeMListLine(line : Material, focus : MFocus, selected : Transform<bool>, hover
 	MGetFocusGroup(\p : MFocusGroup ->
 		MLetDisplay(
 			"MListLine",
-			MAlpha(fif(focus.enabled, const(1.), const(if (getLightBackground(p)) 0.26 else 0.3)), line),
+			MAlpha(fif(focus.enabled, const(1.), const(defaultDisabledItemOpacity(getLightBackground(p)))), line),
 			TGroup([
 				TRectangle(bgStyle, TGhost("MListLine")),
 				TShowLazy(selected, \ -> TFrame(0.0, 0.0, selectedBgStyle, TGhost("MListLine"))),
@@ -923,4 +912,24 @@ MListAddLeaveBehinds(parent : MFocusGroup, l : Tropic, listState : MListInnerSta
 				f
 		})
 	)
+}
+
+MListOnClickHandler(selection : MListSelection, selectionEnabled : MListSelectionEnabled, onListClick : MOnListClick) -> (int) -> void {
+	\i -> {
+		if (fgetValue(selection.enabled) && fgetValue(elementAt(fgetValue(selectionEnabled.enabled), i, const(true))))
+			if (selection.multiple) {
+				if (contains(getValue(selection.selected), i) && selection.toggle)
+					nextDistinct(selection.selected, removeAll(getValue(selection.selected), i))
+				else if (!contains(getValue(selection.selected), i))
+					nextDistinct(selection.selected, arrayPush(getValue(selection.selected), i));
+			} else {
+				if (selection.toggle)
+					next(selection.selected, if (contains(getValue(selection.selected), i)) [] else [i])
+				else
+					nextDistinct(selection.selected, [i]);
+			};
+
+		if (fgetValue(onListClick.enabled))
+			onListClick.onClick(i);
+	}
 }

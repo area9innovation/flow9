@@ -450,9 +450,17 @@ class RenderSupport {
 	//
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
-		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
+		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
 		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+
+		// Make additional resize for mobile fullscreen mode
+		if (Platform.isMobile) {
+			on("fullscreen", function(isFullScreen) {
+				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
+				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
 	}
 
 	private static inline function isPortaitOrientation() {
@@ -470,6 +478,11 @@ class RenderSupport {
 			if (WindowTopHeightLandscape == -1)
 				WindowTopHeightLandscape = topHeight;
 		}
+	}
+
+	public static function setApplicationLanguage(languageCode : String) {
+		Browser.document.documentElement.setAttribute("lang", languageCode);
+		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
 	}
 
 	public static function getSafeArea() : Array<Float> {
@@ -627,6 +640,14 @@ class RenderSupport {
 		} else {
 			return { width : Browser.window.screen.width, height : Browser.window.screen.height};
 		}
+	}
+
+	// Delay is required due to issue in WKWebView
+	// https://bugs.webkit.org/show_bug.cgi?id=170595
+	private static inline function onBrowserWindowResizeDelayed(e : Dynamic) : Void {
+		Native.timer(100, function() {
+			onBrowserWindowResize(e);
+		});
 	}
 
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
@@ -1254,6 +1275,22 @@ class RenderSupport {
 		clip.accessCallback = callback;
 	}
 
+	public static function setClipTagName(clip : Dynamic, tagName : String) : Void {
+		if (clip.nativeWidget != null) {
+			clip.nativeWidget = null;
+			clip.tagName = tagName;
+			clip.createNativeWidget(tagName);
+
+			if (clip.updateNativeWidgetStyle != null) {
+				clip.updateNativeWidgetStyle();
+			}
+
+			DisplayObjectHelper.invalidateTransform(clip);
+		} else {
+			clip.tagName = tagName;
+		}
+	}
+
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
 		if (clip.nativeWidget != null && clip.shouldPreventFromBlur != null) {
 			clip.shouldPreventFromBlur = true;
@@ -1334,9 +1371,11 @@ class RenderSupport {
 		// STUB; only implemented in C++/OpenGL
 	}
 
-	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String,
-		fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
-		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
+		fontslope : String, fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
+		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour,
+			backgroundopacity, alignBottom, bottomBorder, scaleMode, scaleModeMin, scaleModeMax, escapeHTML);
 	}
 
 	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
@@ -2255,8 +2294,8 @@ class RenderSupport {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
-		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
+	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
+		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
 	}
 
 	public static function cursor2css(cursor : String) : String {
@@ -2575,8 +2614,12 @@ class RenderSupport {
 				regularFullScreenClipParent = FullWindowTargetClip.parent;
 				mainStage.addChild(FullWindowTargetClip);
 			} else {
-				regularFullScreenClipParent.addChild(FullWindowTargetClip);
-				regularFullScreenClipParent = null;
+				if (regularFullScreenClipParent != null) {
+					regularFullScreenClipParent.addChild(FullWindowTargetClip);
+					regularFullScreenClipParent = null;
+				} else {
+					mainStage.removeChild(FullWindowTargetClip);
+				}
 
 				for (child in mainStage.children) {
 					child.setClipVisible(true);
@@ -2620,17 +2663,10 @@ class RenderSupport {
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!hadUserInteracted) return;
 
-		if (RendererType == "html") {
-			if (fs)
-				requestFullScreen(Browser.document.body);
-			else
-				exitFullScreen(Browser.document);
-		} else {
-			if (fs)
-				requestFullScreen(PixiView);
-			else
-				exitFullScreen(PixiView);
-		}
+		if (fs)
+			requestFullScreen(Browser.document.body);
+		else
+			exitFullScreen(Browser.document);
 	}
 
 	public static function onFullScreen(fn : Bool -> Void) : Void -> Void {
@@ -2797,9 +2833,8 @@ class RenderSupport {
 		clip.setDisableOverlay(disabled);
 	}
 
-	public static function webClipEvalJS(clip : Dynamic, code : String) : Dynamic {
-		clip.evalJS(code);
-		return null;
+	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
+		cb(clip.evalJS(code));
 	}
 
 	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {

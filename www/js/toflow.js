@@ -50,11 +50,10 @@ function callflow_winapp(args) {
 }
 
 function is_flow_ios_native() {
-	return (navigator.platform.indexOf("iPad") != -1 || 
-		navigator.platform.indexOf("iPhone") != -1 ||
-		navigator.platform.indexOf("iPod") != -1) &&
-		navigator.userAgent.indexOf("Safari") == -1 &&
-		parent == window;
+	return (navigator.userAgent.match(/(iPad|iPhone|iPod)/g) ||
+			navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1 &&
+			!window.MSStream) &&
+		window.webkit && window.webkit.messageHandlers;
 }
 
 function is_flow_qt() {

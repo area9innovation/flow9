@@ -12,6 +12,8 @@ import java.io.DataOutputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 @SuppressWarnings("unchecked")
 public class HttpSupport extends NativeHost {
@@ -28,7 +30,7 @@ public class HttpSupport extends NativeHost {
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
-	 			urlParameters = urlParameters + key + "=" + value; // URLEncoder.encode(value, charset);
+	 			urlParameters = urlParameters + this.encodeUrlParameter(key, value);
 			}
 
 			HttpURLConnection con = null;
@@ -37,9 +39,10 @@ public class HttpSupport extends NativeHost {
 				// POST
 				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
 				int postDataLength = postData.length;
-
 				URL obj = new URL(url);
+
 				con = (HttpURLConnection) obj.openConnection();
+				this.addHeaders(con, headers);
 				con.setDoOutput(true); // Triggers POST.
 				con.setRequestMethod("POST");
 
@@ -51,7 +54,6 @@ public class HttpSupport extends NativeHost {
 					wr.write(postData);
 				}
 			} else {
-				// GET
 				String urlWithParams = url;
 				if (!urlParameters.isEmpty()) {
 					if (url.contains("?")) {
@@ -60,18 +62,12 @@ public class HttpSupport extends NativeHost {
 						urlWithParams += "?" + urlParameters;
 					}
 				}
-				URL obj = new URL(urlWithParams);
+				URL obj = new URL(urlWithParams);				
+				// GET
 				con = (HttpURLConnection) obj.openConnection();
+				this.addHeaders(con, headers);
 				con.setRequestMethod("GET");
 			}
-
-			// Add headers
-	 		for (Object header : headers) {
-	 			Object [] heads = (Object []) header;
-	 			String key = (String) heads[0];
-	 			String value = (String) heads[1];
-	 			con.setRequestProperty(key, value);
-	 		}
 
 			int responseCode = con.getResponseCode();
 			onStatus.invoke(responseCode);
@@ -109,6 +105,11 @@ public class HttpSupport extends NativeHost {
 		}
 	}
 
+	public final Object httpCustomRequestNative(String url, String method, Object[] headers,
+		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
+		return httpCustomRequestWithTimeoutNative(url, method, headers, params, data, onResponse, async, 0);
+	}
+
 	public final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
 		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
 		) {
@@ -123,36 +124,44 @@ public class HttpSupport extends NativeHost {
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
-	 			urlParameters += key + "=" + value; // URLEncoder.encode(value, charset);
+	 			urlParameters = urlParameters + this.encodeUrlParameter(key, value);
 			}
-
-			String urlWithParams = url;
-			if (!urlParameters.isEmpty()) {
-				if (url.contains("?")) {
-					urlWithParams += "&" + urlParameters;
-				} else {
-					urlWithParams += "?" + urlParameters;
+			HttpURLConnection con = null;
+			if (method == "POST") {
+				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
+				int postDataLength = postData.length;				
+				URL obj = new URL(url);
+				con = (HttpURLConnection) obj.openConnection();
+				this.addHeaders(con, headers);
+				con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+				con.setRequestProperty("charset", "utf-8");
+				con.setRequestMethod(method);
+				con.setDoOutput(true);	
+				con.setRequestProperty("Content-Length", Integer.toString(postDataLength));
+				con.setUseCaches(false);
+				try(DataOutputStream wr = new DataOutputStream(con.getOutputStream())) {
+					wr.write(postData);
 				}
+			} else {
+				String urlWithParams = url;
+				if (!urlParameters.isEmpty()) {
+					if (url.contains("?")) {
+						urlWithParams += "&" + urlParameters;
+					} else {
+						urlWithParams += "?" + urlParameters;
+					}
+				}
+				URL obj = new URL(urlWithParams);
+				con = (HttpURLConnection) obj.openConnection();
+				addHeaders(con, headers);
+				con.setRequestMethod(method);
+				con.setDoOutput(true);				
 			}
-
-			URL obj = new URL(urlWithParams);
-			HttpURLConnection con = (HttpURLConnection) obj.openConnection();
-			con.setRequestMethod(method);
 			con.setConnectTimeout(timeout.intValue());
 			con.setReadTimeout(timeout.intValue());
 
-			// Add headers
-	 		for (Object header : headers) {
-	 			Object [] heads = (Object []) header;
-	 			String key = (String) heads[0];
-	 			String value = (String) heads[1];
-	 			con.setRequestProperty(key, value);
-	 		}
-
 	 		// Add data
 			if (data != null) {
-				con.setDoOutput(true);
-				con.setRequestProperty("Content-Length", Integer.toString(data.length()));
 				try {
 					byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), data);
 					con.getOutputStream().write(converted/*data.getBytes("UTF8")*/);
@@ -197,9 +206,25 @@ public class HttpSupport extends NativeHost {
 		return null;
 	}
 
-	public final Object httpCustomRequestNative(String url, String method, Object[] headers,
-		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
-		return httpCustomRequestWithTimeoutNative(url, method, headers, params, data, onResponse, async, 0);
+	private final String encodeUrlParameter(String key, String value) {
+		try {
+			String encodedKey = URLEncoder.encode(key, StandardCharsets.UTF_8.toString()).replace("+", "%20");
+			String encodedValue = URLEncoder.encode(value, StandardCharsets.UTF_8.toString()).replace("+", "%20");
+			String parameter = encodedKey + "=" + encodedValue;
+			return parameter;
+		} catch (IOException e) {
+			System.out.println("Error during encoing parameters: " + e);
+			return "";
+		}
+	}
+
+	private final void addHeaders(HttpURLConnection connection, Object[] headers) {
+		for (Object header : headers) {
+			Object [] heads = (Object []) header;
+			String key = (String) heads[0];
+			String value = (String) heads[1];
+			connection.setRequestProperty(key, value);
+		}
 	}
 
 	public final Object sendHttpRequestWithAttachments(String url, Object[] headers, Object[] params,

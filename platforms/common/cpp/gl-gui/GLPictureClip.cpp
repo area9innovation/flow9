@@ -140,7 +140,7 @@ void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, co
 {
     // Actually painting - force lazy-loaded pictures
     if (image && image->isStub() && !owner->loadStubPicture(name, image)) {
-        cerr << "Could not force lazy-loaded picture." << endl;
+        cerr << "Could not force lazy-loaded picture." << std::endl;
         image.reset();
     }
 

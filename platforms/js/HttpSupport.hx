@@ -572,10 +572,6 @@ class HttpSupport {
 
 		#if flash
 
-		cancelFn = function() {
-			file.cancel();
-		}
-
 		file.addEventListener(flash.events.IOErrorEvent.IO_ERROR, function(e) {
 			onErrorFn(e);
 		});
@@ -651,6 +647,10 @@ class HttpSupport {
 
 		for (header in headers) {
 			xhr.setRequestHeader(header[0], header[1]);
+		}
+
+		cancelFn = function() {
+			xhr.abort();
 		}
 
 		xhr.send(form_data);

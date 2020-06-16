@@ -11,10 +11,15 @@
 
 #import <Foundation/Foundation.h>
 
+/** An enum to define the specific channel that this campaign belongs to */
 typedef NS_ENUM(NSInteger, CampaignType) {
+    /** A value to specify that this campaign is an In-App campaign */
     CampaignTypeInApp,
+    /** A value to specify that this campaign is a Push campaign */
     CampaignTypePush,
+    /** A value to specify that this campaign is an Inbox campaign */
     CampaignTypeInbox,
+    /** A value to specify that this campaign is a Places campaign */
     CampaignTypePlaces
 };
 

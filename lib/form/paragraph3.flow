@@ -6,6 +6,7 @@ import text/bidi_text;
 import text/blueprint;
 
 export {
+	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : WigiParagraphWidthManager) -> Form;
 	getLineIndent(paraIndent : double, lineIndex : int) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
@@ -92,8 +93,12 @@ generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 
 general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement {
 	switch (elem) {
-		GeneralText(txt) : Text(txt, overrideCharacterStylePerAlphabet(txt, style));
-		GeneralSpace(txt) : Space(Text(txt, style));
+		GeneralText(txt) : {
+			Text(txt, applyAlphabetStyles(detectAlphabet(txt), style));
+		}
+		GeneralSpace(txt, alBef, alAft) : {
+			Space(Text(txt, apply2AlphabetsScaling(alBef, alAft, style)));
+		}
 		NewLine() : NewLine();
 		GeneralLinePart(f, m, e) : LinePart(Text(f, style), Text(m, style), Text(e, style));
 		EmptyLineElement() : makeZeroSpaceElement(style);
@@ -103,6 +108,14 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> Wrap
 		);
 		NonTextElement() : Empty();
 	}
+}
+
+makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native {
+	overridden = applyAlphabetStyles(detectAlphabet(txt), style);
+	textfield = makeTextfield(getMappedFontFamily(overridden));
+	dstyle = getDefinedTextStyle(overridden);
+	setTextAndStyle(textfield, txt, dstyle.face.family, dstyle.fontSize, dstyle.face.weight, dstyle.face.slope, dstyle.fillColor, dstyle.fillOpacity, dstyle.letterSpacing, dstyle.backgroundColor, dstyle.backgroundOpacity);
+	textfield
 }
 
 renderParagraph(
@@ -119,6 +132,7 @@ renderParagraph(
 	interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
+	interLineHighlighting = containsStruct(s, InterlineHighlighting());
 
 	tightWidth = contains(s, TightWidth());
 
@@ -148,12 +162,16 @@ renderParagraph(
 
 	renderParaLinesFn = \lines, storyWidth -> renderParaLines(
 		storyWidth, lines, tightWidth, alignment, interlineSpacing,
-		topLineBaseline, interactiveStyles, rtl, isParagraphMarked
+		topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
+		interLineHighlighting
 	);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
 	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager) {
-		Select(linesB, \lines -> renderParaLinesFn(lines, getValue(aw)).first);
+		Select(linesB, \lines -> {
+			rpl = renderParaLinesFn(lines, getValue(aw));
+			rpl.first
+		});
 	} else if (widthManager.infoOnly) {
 		// in this non-TightWidth case we just inform WidthManager about our width
 		// we will not take story width into account in this case, but use availableWidth as usual
@@ -209,9 +227,9 @@ renderParagraph(
 		\ -> {
 			updateFn = \wi-> {
 				// Ignore negative widths
-				// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) 100000.0 else max(0.0, wi);
-				newLines = reflowParaWords(words, w, indent, isParagraphMarked);
+				newLines = reflowParaWords(words, w, indent, isParagraphMarked, rtl);
 				nextDistinct(linesCountB, length(newLines));
 
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
@@ -330,7 +348,28 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 	switch (w : ParaAtomic) {
 		NewLine(): ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM);
 		// We choose the middle part
-		LinePart(f, p, e): getDynamicFormSize(p) |> s2w;
+		LinePart(f, p, e): {
+			dynFormSizePair = getDynamicFormSize2(p, true);
+			ParaWord(
+				LinePart(f, p, e),
+				dynFormSizePair.second,
+				CoordinateInspectElement(
+					ParaElementInspector(
+						make(0),
+						make(0.),
+						make(0.),
+						makeWH(),
+						make(0.),
+						make(0.),
+						make(0),
+						make(false)
+					),
+					dynFormSizePair.first,
+				),
+				Empty(),
+				interactivityIdM
+			);
+		}
 		Space(s): {
 			dynFormSizePair = getDynamicFormSize2(s, true);
 			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM);
@@ -400,13 +439,13 @@ getLineIndent(paraIndent : double, lineIndex : int) -> double {
 }
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
-reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double, isFirstMark : bool) -> [ParaLine] {
+reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double, isFirstMark : bool, rtl : bool) -> [ParaLine] {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
 	text = reflowParaWords2(words, firstLineWidth, firstLineWidth, [], [], paraIndent, isFirstMark);
-	if (isBiDiEnabled())
+	if (rtl)
 		zipWith(
 			text,
-			reflowTextToBiDi(map(text, \l -> l.words), isWordEmpty, getWordText, setWordText, idfn, getDefaultRtl()),
+			reflowTextToBiDi(map(text, \l -> l.words), isWordEmpty, getWordText, setWordText, idfn, rtl),
 			\l, ws -> ParaLine(ws, l.indent),
 		)
 	else text;
@@ -642,10 +681,10 @@ renderParaLines(
 	topLineBaseline : bool,
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
-	isMarked : bool
+	isMarked : bool,
+	interLineHighlighting : bool
 ) -> Pair<Form, double> {
 	lasti = length(lines) - 1;
-
 	a : ParaLineAcc = foldi(lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
 		lastLine = i == lasti;
@@ -660,18 +699,19 @@ renderParaLines(
 		f = RenderLine(
 			acc.y, line.words, availableWidth, tightWidth,
 			lineAlignment, line.indent,
-			i, styleTree, rtl, isMarked
+			i, styleTree, rtl, isMarked,
+			if (interLineHighlighting) {
+				if (i == 0) 0. else - interlineSpacing / 2.0
+			} else 0.0,
+			if (interLineHighlighting){
+				if (lastLine || i == 0) interlineSpacing / 2.0 else interlineSpacing
+			} else 0.0
 		);
-		nwidth = max(acc.width, f.width);
-		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
-		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
-		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
-		nbaseline = f.baseline;
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
-			nwidth,
-			nheight,
-			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
+			max(acc.width, f.width),
+			acc.y + f.height + if (lastLine) 0. else interlineSpacing,
+			if (i == 0 || !topLineBaseline) f.baseline else acc.baseline
 		);
 	});
 
@@ -706,7 +746,9 @@ RenderLine(
 	lineNumber : int,
 	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
-	isMarked
+	isMarked : bool,
+	highLightOffset : double,
+	interlineSpacing : double
 ) -> ParaLineResult {
 	optimizedLine = getOptimizedLine(words, alignment);
 	metrics = map(optimizedLine, \p -> getValue(p.metrics));
@@ -747,7 +789,9 @@ RenderLine(
 				dy,
 				m.width,
 				lineHeight,
-				interWord
+				interWord,
+				highLightOffset,
+				interlineSpacing
 			),
 			Translate(const(^alignmentOffset), const(y + dy), fm)
 		);
@@ -795,6 +839,8 @@ applyIntStylesAndHighlighting(
 	width : double,
 	height : double,
 	interWord : double,
+	highLightOffset : double,
+	interlineSpacing : double,
 ) -> Form {
 	getStyleForBackgroundFromCharStyle = \s -> eitherMap(
 		tryExtractStruct(s, BackgroundFill(white)),
@@ -807,7 +853,7 @@ applyIntStylesAndHighlighting(
 
 	makeBackRect = \defStyle, dynStyle -> Rectangle(
 		width + interWord,
-		height,
+		height + interlineSpacing + 0.1,
 		replaceStructMany(
 			getStyleForBackgroundFromCharStyle(defStyle),
 			getStyleForBackgroundFromCharStyle(dynStyle)
@@ -851,26 +897,26 @@ applyIntStylesAndHighlighting(
 	modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
 
 	Group([
-		Translate(const(xOffset - interWord / 2.), const(yOffset), textAndBackPair.second),
+		Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
 		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm),
 	]);
 }
 
 applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) -> Form {
 	if (form == Empty()) form else {
-		eventListenersM = tryExtractStruct(styles, EventListeners([]));
-		interactiveForm = eitherMap(
-			eventListenersM,
-			\el -> Interactive(el.listeners, form),
+		formModifiersM = tryExtractStruct(styles, FormModifiers([]));
+		modifiedForm = eitherMap(
+			formModifiersM,
+			\modifiers -> fold(modifiers.fns, form, \acc, fn -> fn(acc)),
 			form
 		);
 
-		formModifiersM = tryExtractStruct(styles, FormModifiers([]));
+		eventListenersM = tryExtractStruct(styles, EventListeners([]));
 		eitherMap(
-			formModifiersM,
-			\modifiers -> fold(modifiers.fns, interactiveForm, \acc, fn -> fn(acc)),
-			interactiveForm
-		);
+			eventListenersM,
+			\el -> Interactive(el.listeners, modifiedForm),
+			modifiedForm
+		);	
 	}
 }
 
