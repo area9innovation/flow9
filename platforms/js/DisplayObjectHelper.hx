@@ -19,7 +19,7 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
-	public static var MarginGap : Float = 0.5;
+	public static var MarginGap : Float = 0.0;
 
 	private static var InvalidateStage : Bool = true;
 
