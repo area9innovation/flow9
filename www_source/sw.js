@@ -895,7 +895,7 @@ self.addEventListener('fetch', function(event) {
 
 self.addEventListener('message', function(event) {
   var respond = function(data) {
-    if (event.ports.length > 0 && !isEmpty(event.ports[0])) {
+    if (event.ports.length > 0 /*&& !isEmpty(event.ports[0])*/) {
       event.ports[0].postMessage(data);
     } else {
       console.error("ServiceWorker: Failed to respond!");
