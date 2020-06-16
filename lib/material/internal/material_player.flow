@@ -545,25 +545,31 @@ MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerCon
 }
 
 TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : MAnimatedSubtitles, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	duration = extractStruct(subtitles.style, MDuration(const(easingTransitionDuration)));
+	duration = extractStruct(subtitles.style, MDuration(const(0.5)));
 	frame = extractStruct(subtitles.style, MSubtitlesFrame(4., 4.));
 
 	percent = make(0.);
+	old2LineSize = makeWH();
 	oldLineSize = makeWH();
-	boxSize = makeWH();
+	newLineSize = makeWH();
+
+	boxSize = fselect2(oldLineSize, newLineSize, FLift2(\old, new -> WidthHeight(max(old.width, new.width), old.height + new.height)));
 
 	backgroundColor = make(0);
 	backgroundOpacity = make(0.);
 
-	backgroundStyle = fselect3(
-		fselectWithLast(backgroundColor, FLift2(\old, new -> Pair(old, new))),
-		fselectWithLast(backgroundOpacity, FLift2(\old, new -> Pair(old, new))),
-		percent,
-		\col, opac, prc -> [
-			Fill(colorLerp(col.first, col.second, prc)),
-			FillOpacity(lerp(opac.first, opac.second, prc))
-		]
-	);
+	backgroundStyle = 
+		fsubselect(subtitles.subtitles, FLift(\__ ->
+			fselect3(
+				fselectWithLast(backgroundColor, FLift2(\old, new -> Pair(old, new))),
+				fselectWithLast(backgroundOpacity, FLift2(\old, new -> Pair(old, new))),
+				percent,
+				\col, opac, prc -> [
+					Fill(colorLerp(col.first, col.second, prc)),
+					FillOpacity(lerp(opac.first, opac.second, prc))
+				]
+			)
+		));
 
 	background =
 		m2t(
@@ -580,31 +586,56 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 		|> (\t -> TTranslate(translatePoint, t))
 		|> TCenterX;
 
-	TMutable(fselectWithLast(subtitles.subtitles, FLift2(\old, new -> {
+	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
 		innerPercent = make(0.);
 		antiInnerPercent = fsubtract(const(1.), innerPercent);
-		oldLineTranslatePoint = flerpPoint(fselect(oldLineSize, FLift(\sz -> Point(0., -sz.height - frame.border))), antiInnerPercent);
-		newLineTranslatePoint = flerpPoint(fselect(oldLineSize, FLift(\sz -> Point(0., sz.height))), innerPercent);
+		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height * 2. - frame.border))), antiInnerPercent);
+		oldLineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height))), innerPercent);
+		newLineTranslatePoint = fpointaddition(
+			flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height * 2.))), innerPercent),
+			fselect(oldLineSize, FLift(\sz -> Point(0., sz.height)))
+		);
 
-		TGroup2WithoutMetrics(
-			makeSubtitleLine(new, boxSize, newLineTranslatePoint, -4.),	
-			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
-		)
-		|> (\t -> TConstruct([\ -> fconnectSelect(percent, innerPercent, \p -> max(getValue(innerPercent), p))], t))
-	})))
+		TGroupWithoutMetrics([
+			makeSubtitleLine(new, newLineSize, newLineTranslatePoint, -4.),	
+			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
+			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
+		])
+		|> (\t -> TConstruct([
+			\ -> fconnectSelect(percent, innerPercent, \p -> max(getValue(innerPercent), p)),
+			\ -> {
+				color = extractStruct(new.style, BackgroundFill(0)).color;
+				opacity =
+					if (strlen(new.text) == 0) 0.
+					else extractStruct(new.style, BackgroundFillOpacity(0.)).opacity;
+
+				nextDistinct(backgroundColor, color);
+				nextDistinct(backgroundOpacity, opacity);
+				nop;
+			}
+		], t))
+	}, VideoSubtitle("", [])))
 	|> (\t -> TGroup2(
 		TDisplay("TAnimatedSubtitlesBackground") |> TCenterX,
 		TCropSize(TGroup2(TFillX(), TGhost("TAnimatedSubtitlesBackground")), t)
 	))
 	|> (\t -> TLet("TAnimatedSubtitlesBackground", background, t))
 	|> TBorderBottom(8.)
-	|> (\t -> TConstruct([makeSubscribe(subtitles.subtitles, \sbtl -> {
-			color = extractStruct(sbtl.style, BackgroundFill(0)).color;
-			opacity =
-				if (strlen(sbtl.text) == 0) 0.
-				else extractStruct(sbtl.style, BackgroundFillOpacity(0.)).opacity;
+}
 
-			nextDistinct(backgroundColor, color);
-			nextDistinct(backgroundOpacity, opacity);
-		})], t))
+fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transform<?> {
+	lastV = ref None();
+	fselect(ftransistor(fneq(b, def), b), FLift(\v ->
+		switch (^lastV) {
+			Some(prevV): {
+				r = fn(prevV.first, prevV.second, v);
+				lastV := Some(Pair(prevV.second, v));
+				r
+			}
+			None(): {
+				lastV := Some(Pair(def, v));
+				fn(def, def, v);
+			}
+		}
+	))
 }
