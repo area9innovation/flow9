@@ -60,6 +60,10 @@ class Native {
 		#end
 	}
 
+	public static inline function getResourceString(name : String) : String {
+		return haxe.Resource.getString(name);
+	}
+
 	public static function hostCall(name : String, args: Array<Dynamic>) : Dynamic {
 		var result = null;
 
