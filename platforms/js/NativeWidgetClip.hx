@@ -79,7 +79,7 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function setFocus(focus : Bool) : Bool {
 		if (nativeWidget != null) {
-			if (untyped nativeWidget.parentNode == null && !this.destroyed && this.focusRetries < 3) {
+			if (untyped nativeWidget.parentNode == null && !this.destroyed && this.focusRetries < 3 && focus) {
 				focusRetries++;
 				RenderSupport.once("drawframe", function() { setFocus(focus); });
 
