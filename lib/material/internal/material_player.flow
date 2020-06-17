@@ -35,6 +35,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			playbackRateControl = !android() && contains(controls, PlaybackRateControl());
 			subtitlesControl = contains(mPlayerControls, SubtitlesControl());
 			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
+			animatedSubtitles = tryExtractStruct(m.style, MAnimatedSubtitles(const(VideoSubtitle("", [])), []));
 
 			streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
 
@@ -70,7 +71,9 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			playbackRateSelected = make(3);
 			showProgressCircle = make(true);
 			subtitlesVisible = make(true);
-			subtitlesEnabled = const(isSome(subtitles));
+			subtitlesEnabled = const(isSome(subtitles) || isSome(animatedSubtitles));
+
+			videoAreaMetrics = make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.)));
 
 			uns = initUnsM();
 
@@ -101,6 +104,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						st
 					)
 				)
+				|> (\st -> eitherMap(animatedSubtitles, \__ -> arrayPush(st, FInspectVideoArea(videoAreaMetrics)), st))
 				|> (\st -> ifArrayPush(
 					st,
 					containsStruct(m.style, MPlayerVisibleRange(const(0.0), const(0.0))) &&
@@ -150,7 +154,20 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 									MProgressCircle2T(manager, parent, MProgressCircle([MWhite()])),
 									videoSize
 								)
-								|> (\t2 -> TShow(showProgressCircle, t2))
+								|> (\t2 -> TShow(showProgressCircle, t2)),
+
+								eitherMap(animatedSubtitles, \sbtl -> {
+										areaBox = TSized(fselect(videoAreaMetrics, FLift(\vam -> vam.wh)));
+										areaTopLeft = fselect(videoAreaMetrics, FLift(\vam -> vam.topLeft));
+										TAnimatedSubtitles(manager, parent, sbtl, m2t)
+										|> (\t -> TAvailable(t, areaBox))
+										|> (\t -> TTweak([TAlign(const(0.5), const(1.))], t, areaBox))
+										|> (\t -> TCropSize(areaBox, t))
+										|> (\t -> TTranslate(areaTopLeft, t))
+										|> (\t -> TShow(subtitlesVisible, t))
+									},
+									TEmpty()
+								)
 							]),
 						true
 					)
@@ -525,4 +542,100 @@ MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerCon
 			default : None();
 		}
 	)
+}
+
+TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : MAnimatedSubtitles, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	duration = extractStruct(subtitles.style, MDuration(const(0.5)));
+	frame = extractStruct(subtitles.style, MSubtitlesFrame(4., 4.));
+
+	percent = make(0.);
+	old2LineSize = makeWH();
+	oldLineSize = makeWH();
+	newLineSize = makeWH();
+
+	boxSize = fselect2(oldLineSize, newLineSize, FLift2(\old, new -> WidthHeight(max(old.width, new.width), old.height + new.height)));
+
+	backgroundColor = make(0);
+	backgroundOpacity = make(0.);
+
+	backgroundStyle = 
+		fsubselect(subtitles.subtitles, FLift(\__ ->
+			fselect3(
+				fselectWithLast(backgroundColor, FLift2(\old, new -> Pair(old, new))),
+				fselectWithLast(backgroundOpacity, FLift2(\old, new -> Pair(old, new))),
+				percent,
+				\col, opac, prc -> [
+					Fill(colorLerp(col.first, col.second, prc)),
+					FillOpacity(lerp(opac.first, opac.second, prc))
+				]
+			)
+		));
+
+	background =
+		m2t(
+			MAnimatedResizer(fwidth(boxSize), fheight(boxSize), [duration, MResizerPercent(percent)]),
+			parent
+		)
+		|> (\sz -> TFrameT(const(frame.border), const(frame.radius), backgroundStyle, sz));
+
+	makeSubtitleLine = \sbtl, size, translatePoint, dSize -> 
+		MParagraph2T(parent, sbtl.text, arrayPush(MCharacterStyle2MTextStyle(sbtl.style), extractStruct(sbtl.style, EscapeHTML(true))))
+		|> TBorderBottom(dSize)
+		|> (\t -> TAttachBox(t, size))
+		|> TBorderTop(frame.border)
+		|> (\t -> TTranslate(translatePoint, t))
+		|> TCenterX;
+
+	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
+		innerPercent = make(0.);
+		antiInnerPercent = fsubtract(const(1.), innerPercent);
+		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height * 2. - frame.border))), antiInnerPercent);
+		oldLineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height))), innerPercent);
+		newLineTranslatePoint = fpointaddition(
+			flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height * 2.))), innerPercent),
+			fselect(oldLineSize, FLift(\sz -> Point(0., sz.height)))
+		);
+
+		TGroupWithoutMetrics([
+			makeSubtitleLine(new, newLineSize, newLineTranslatePoint, -4.),	
+			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
+			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
+		])
+		|> (\t -> TConstruct([
+			\ -> fconnectSelect(percent, innerPercent, \p -> max(getValue(innerPercent), p)),
+			\ -> {
+				color = extractStruct(new.style, BackgroundFill(0)).color;
+				opacity =
+					if (strlen(new.text) == 0) 0.
+					else extractStruct(new.style, BackgroundFillOpacity(0.)).opacity;
+
+				nextDistinct(backgroundColor, color);
+				nextDistinct(backgroundOpacity, opacity);
+				nop;
+			}
+		], t))
+	}, VideoSubtitle("", [])))
+	|> (\t -> TGroup2(
+		TDisplay("TAnimatedSubtitlesBackground") |> TCenterX,
+		TCropSize(TGroup2(TFillX(), TGhost("TAnimatedSubtitlesBackground")), t)
+	))
+	|> (\t -> TLet("TAnimatedSubtitlesBackground", background, t))
+	|> TBorderBottom(8.)
+}
+
+fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transform<?> {
+	lastV = ref None();
+	fselect(ftransistor(fneq(b, def), b), FLift(\v ->
+		switch (^lastV) {
+			Some(prevV): {
+				r = fn(prevV.first, prevV.second, v);
+				lastV := Some(Pair(prevV.second, v));
+				r
+			}
+			None(): {
+				lastV := Some(Pair(def, v));
+				fn(def, def, v);
+			}
+		}
+	))
 }
