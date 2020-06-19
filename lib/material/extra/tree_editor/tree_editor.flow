@@ -67,6 +67,7 @@ export {
 				manager : MaterialManager,
 				getNewNode : (cb : (newNode : MTreeEditorNode<?, ??>) -> void) -> void,
 				node2material : (node : MTreeEditorNode<?, ??>, titleInput : Material) -> Material,
+				nodeIsEmpty : (node : MTreeEditorNode<?, ??>) -> bool,
 				toolbarAdditionalItems : [Material],
 				toolbarStyle : [MMenuPanelStyle],
 				selected : DynamicBehaviour<Set<[int]>>,
@@ -127,6 +128,13 @@ makeMTreeEditor(
 				style,
 				MTreeEditorNodeMaterial(\node, titleInput -> titleInput)
 			).fn,
+			extractStruct(
+				style,
+				MTreeEditorNodeIsEmpty(\node ->
+					getValue(node.title) == "" &&
+					length(getValue(node.children)) == 0
+				)
+			).fn,
 			extractStruct(style, MTreeEditorToolbar([], [])).additionalItems,
 			extractStruct(style, MTreeEditorToolbar([], [])).style,
 			extractStruct(style, MTreeSelection(make(makeSet()))).selected,
@@ -155,12 +163,7 @@ makeMTreeEditor(
 	));
 
 	clearEmptyItems = \rootNode -> {
-		filterMTreeEditorNode(tree, \node -> node == rootNode
-			|| getValue(node.title) != ""
-			|| getValue(node.focused)
-			|| length(getValue(node.children)) > 0
-	// 		|| length(getValue(node.content)) > 0
-		);
+		filterMTreeEditorNode(tree, \node -> node == rootNode || !state.nodeIsEmpty(node) || getValue(node.focused));
 	}
 
 	selectAndFocusItem = \node -> {
@@ -225,7 +228,7 @@ makeMTreeEditor(
 				active = eitherMap(
 					getMTreeEditorNodeByPath(tree, getSelected()),
 					\node -> {
-						if (getValue(node.title) == "" /* && length(getValue(node.content)) == 0 */) {
+						if (state.nodeIsEmpty(node)) {
 							// do not add row if we already have an empty row
 							false;
 						} else if (getValue(node.focused)) {
@@ -260,15 +263,7 @@ makeMTreeEditor(
 		MIconButton(
 			"delete",
 			\ -> {
-				// If there is edit focus, we do not delete
-				mNode = getMTreeEditorNodeByPath(tree, getSelected());
-				doDelete = switch (mNode) {
-					None(): true;
-					Some(node): !getValue(node.focused);
-				}
-				if (doDelete) {
-					removeMTreeEditorNodeAtPath(tree, getSelected(), nop1)
-				}
+				removeMTreeEditorNodeAtPath(tree, getSelected(), nop1);
 			},
 			[],
 			[MShortcut("delete"), MEnabled(isSelected), mkTooltip(_("Delete"), "Del")]
@@ -434,7 +429,7 @@ MTreeEditorNode2MTreeNode(state : MTreeEditorState<?, ??>, node : MTreeEditorNod
 						TTextInputPosition(position),
 						TTextInputSelection(selection),
 						MEatKeyDown(\ke -> {
-							ke.utf == "enter" || !ke.ctrl && (ke.utf == "left" || ke.utf == "right" || ke.keycode == 32)
+							ke.utf == "enter" || !ke.ctrl && (ke.utf == "left" || ke.utf == "right" || ke.keycode == 32 || ke.keycode == 46)
 						}),
 						MFocused(node.focused),
 						MInputProcessKeyDown(\ke -> {
@@ -646,16 +641,4 @@ filterMTreeEditorNode(node : MTreeEditorNode, cb : (MTreeEditorNode) -> bool) ->
 			nextDistinct(node.children, removeFirst(getValue(node.children), child));
 		}
 	});
-}
-
-isMTreeEditorNodeFocused(node : MTreeEditorNode) -> bool {
-	getValue(node.focused) || exists(fgetValue(node.children), \c -> isMTreeEditorNodeFocused(c))
-}
-
-countMTreeEditorNodesSize0(nodes : [MTreeEditorNode]) {
-	fold(nodes, 1, \acc, node -> acc + countMTreeEditorNodesSize0(getValue(node.children)));
-}
-
-countMTreeEditorNodesSize(nodes : [MTreeEditorNode]) {
-	countMTreeEditorNodesSize0(nodes) - 1;
 }
