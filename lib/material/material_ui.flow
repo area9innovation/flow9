@@ -1,4 +1,5 @@
 import material/material_dialog;
+import material/material_snackbar;
 import material/internal/material_reorder;
 import ui/animate/teasing;
 import form/realhtmlworkaround;
@@ -45,6 +46,7 @@ export {
 
 	// index - position in array, id - unique identifier
 	SelectMLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
+	SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMColsA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMGroup(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
@@ -74,7 +76,7 @@ export {
 		popup : Material
 	) -> Material;
 
-	MAddShortcutDialog(manager : MaterialManager) -> () -> void;
+	MAddShortcutDialog(manager : MaterialManager, onDismiss : () -> void) -> () -> void;
 
 	MDropDownOrAutoComplete(
 		items : [string],
@@ -84,7 +86,7 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MChangeOnClick;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MChangeOnClick, MInputInspector;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -93,13 +95,34 @@ export {
 		MItemsLimit(limit : int);
 		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
 		MChangeOnClick(); // Changes selected only when click on autocomplete item.
+		MInputInspector(text : DynamicBehaviour<string>); // Intended for MAutoComplete case.
 
 	MCollapsingBox(
 		content : Material,
 		yTrans : Transform<double>,
 		expand : Transform<bool>,
-		absoluteOffsetMode : bool
+		absoluteOffsetMode : bool,
+		fade : bool
 	) -> Material;
+
+	// Construct an HTML stage with the given metrics
+	MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material;
+
+	MLinesSeparated(values : [Material]) -> Material;
+	MColsSeparated(values : [Material]) -> Material;
+
+	MPictureFill(picURL : string, style : [MPictureStyle]) -> Material;
+	MPictureFit(picURL : string, style : [MPictureStyle]) -> Material;
+
+	MTabs(tabs : [MTab], selected : DynamicBehaviour<int>, style : [MTabsStyle]) -> Material {
+		MDynamicTabs(const(tabs), selected, style)
+		|> MCallstack;
+	};
+
+	MDataTable(columns : [MColumnDynamic], rows : [[Material]], style : [MDataTableStyle]) -> Material {
+		MDynamicDataTable(columns, const(rows), style)
+		|> MCallstack;
+	};
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -313,6 +336,16 @@ SelectMLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>,
 	)
 }
 
+SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
+	MGetManager(\manager ->
+		MGetFocusGroup(\parent ->
+			MGetMaterial2Tropic(\m2t ->
+				SelectMLines2AT(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
+			)
+		)
+	)
+}
+
 SelectMCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
 	MGetManager(\manager ->
 		MGetFocusGroup(\parent ->
@@ -392,9 +425,9 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 }
 
 SampleStates(
-	length : [DynamicBehaviour<double>], 
-	position : [DynamicBehaviour<double>], 
-	isPlay : [DynamicBehaviour<bool>], 
+	length : [DynamicBehaviour<double>],
+	position : [DynamicBehaviour<double>],
+	isPlay : [DynamicBehaviour<bool>],
 	isReady : [DynamicBehaviour<bool>]
 );
 
@@ -509,8 +542,13 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				makeSubscribe(fands(states.isReady, false), \isReady ->
 					if (isReady) synchrocallEx.onStart()
 				),
-				// sum all audio lengths
-				\-> fconnect(fsum(states.length), lenEx),
+				// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
+				\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
+						if (all(map(lens, \l -> l > 0.0)))
+							dsum(lens)
+						else
+							0.0
+					}),
 				// set possition
 				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
 				// not make2Subscribe(currIndexB, playEx) due to looping in 1-element array
@@ -573,96 +611,75 @@ MInlinePopupPosition(
 	MInlinePopup(manager, placeholder, fselect(position, FLift(\pos -> PositionScale(pos, Point(1.0, 1.0)))), popup);
 }
 
-MAddShortcutDialog(manager : MaterialManager) -> () -> void {
-	setServiceWorkerEnabled(true);
-
-	if (mobile && js && getKeyValue("progressive_shortcut_dialog_shown", "false") == "false" && ios()) {
-		closeWhen = make(true);
-
-		uns =
-			interruptibleDeferUntilNextFrameRendered(\ -> {
-				content =
-					MLines(
-						if (strContains(toLowerCase(getBrowser()), "safari"))
-							[
-								MParagraph("To add this website as shortcut to Home Screen click on share button below:", []),
-								{
-									imageTooltipVisible = make(false);
-
-									MGroup2(
-										MPicture(
-											"images/progressive_web/iphone_safari_bottom_bar.png",
-											[
-												WidthHeight(225.0, 60.0),
-												OnLoaded(\ -> reverseBehaviour(imageTooltipVisible))
-											]
-										),
-										TTranslate(
-											const(Point(92.5, 16.0)),
-											TRounded4(4.0, [MStroke(MRed(500)), StrokeWidth(2.0)], TFixed(40.0, 40.0))
-										)
-										|> (\f -> TVisible(imageTooltipVisible, f))
-									)
-									|> MCenterX;
-								},
-								MFixedY(20.0),
-								MParagraph("Then navigate to \"Add to Home Screen\" and select it:", []),
-								MFixedY(12.0),
-								{
-									imageTooltipVisible = make(false);
-
-									MGroup2(
-										MPicture(
-											"images/progressive_web/iphone_safari_add_to_home.png",
-											[
-												WidthHeight(225.0, 140.0),
-												OnLoaded(\ -> reverseBehaviour(imageTooltipVisible))
-											]
-										),
-										TTranslate(
-											const(Point(122.0, 12.0)),
-											TRounded4(4.0, [MStroke(MRed(500)), StrokeWidth(2.0)], TFixed(80.0, 80.0))
-										)
-										|> (\f -> TVisible(imageTooltipVisible, f))
-									)
-									|> MCenterX;
-								}
-							]
-						else
-							[
-								MParagraph("Open safari to add this website as shortcut to Home Screen", []),
-							]
+MAddShortcutDialog(manager : MaterialManager, onDismiss : () -> void) -> () -> void {
+	if (mobile && js && getKeyValue("progressive_shortcut_dialog_shown", "false") == "false" && ios() && !isUrlParameterTrue("progressive_shortcut_dialog_hide")) {
+		closeB = make(false);
+		uns = interruptibleDeferUntilNextFrameRendered(\-> {
+			showTooltipImageFn = \filename, size, framePos, frameWidth, frameHeight -> {
+				imageTooltipVisible = make(false);
+				MCenterX(MGroup2(
+					MPicture(
+						"images/progressive_web/" + filename,
+						[
+							size,
+							OnLoaded(\ -> reverseBehaviour(imageTooltipVisible))
+						]
+					),
+					TTranslate(
+						const(framePos),
+						TRounded4(4.0, [MStroke(MRed(500)), StrokeWidth(2.0)], TFixed(frameWidth, frameHeight))
 					)
-					|> (\f -> MAvailableWidth(f, const(280.0)));
+					|> (\f -> TVisible(imageTooltipVisible, f))
+				));
+			}
 
-				ShowMDialog(
-					manager,
-					closeWhen,
-					[
-						MDialogUseFrame(),
-						MDialogActions([
-							MTextButton(
-								"OK",
-								\ -> {
-									setKeyValue("progressive_shortcut_dialog_shown", "true");
-									reverseBehaviour(closeWhen);
-								},
-								[],
-								[]
-							)
-						]),
-						MDialogTitle("Add to Home Screen"),
-						MDialogScroll()
-					],
-					content
+			ShowMDialog(
+				manager,
+				closeB,
+				[
+					MDialogUseFrame(),
+					MDialogActions([
+						MTextButton(
+							_("OK"),
+							\ -> {
+								onDismiss();
+								setKeyValue("progressive_shortcut_dialog_shown", "true");
+								nextDistinct(closeB, true);
+							},
+							[],
+							[]
+						)
+					]),
+					MDialogTitle(_("Add to Home Screen")),
+					MDialogScroll()
+				],
+				MAvailableWidth(
+					MLines(
+						if (strContains(toLowerCase(getBrowser()), "safari")) {
+							[
+								MParagraph(_("To add this website as shortcut to Home Screen click on share button below:"), []),
+								showTooltipImageFn("iphone_safari_bottom_bar.png", WidthHeight(225.0, 60.0), Point(92.5, 16.0), 40.0, 40.0),
+								MFixedY(20.0),
+								MParagraph(_("Then navigate to \"Add to Home Screen\" and select it:"), []),
+								MFixedY(12.0),
+								showTooltipImageFn("iphone_safari_add_to_home.png", WidthHeight(225.0, 140.0), Point(122.0, 12.0), 80.0, 80.0)
+							]
+						} else {
+							[MParagraph(_("Open safari to add this website as shortcut to Home Screen"), [])]
+						}
+					),
+					const(280.0)
 				)
-			});
+			);
+		});
 
-		\ -> {
+		\-> {
+			onDismiss();
 			uns();
-			reverseBehaviour(closeWhen);
+			nextDistinct(closeB, true);
 		}
 	} else {
+		onDismiss();
 		nop;
 	}
 }
@@ -701,7 +718,7 @@ MDropDownOrAutoComplete(
 
 		selectedStrB =
 			eitherMap(multiSelection,
-				\ms -> idxs2string(getValue(ms.selected)),	
+				\ms -> idxs2string(getValue(ms.selected)),
 				idxs2string([getValue(selected)])
 			)
 			|> make;
@@ -729,10 +746,16 @@ MDropDownOrAutoComplete(
 			);
 
 		MConstruct(
-			[\ -> 
-				eitherMap(multiSelection,
-					\ms -> bidirectionalLink(selectedStrB, ms.selected, string2idxsMulti, idxs2string),
-					bidirectionalLink(selectedStrB, selected, \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str), \idx -> idxs2string([idx]))
+			[
+				\ ->
+					eitherMap(multiSelection,
+						\ms -> bidirectionalLink(ms.selected, selectedStrB, idxs2string, string2idxsMulti),
+						bidirectionalLink(selected, selectedStrB, \idx -> idxs2string([idx]), \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str))
+					),
+				eitherMap(
+					tryExtractStruct(style, MInputInspector(make(""))),
+					\insp -> makeSubscribe(selectedStrB, \str -> nextDistinct(insp.text, str)),
+					\ -> nop
 				)
 			],
 			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
@@ -768,8 +791,101 @@ MDropDownOrAutoComplete(
 		)
 }
 
-MCollapsingBox(content : Material, yTrans : Transform<double>, expand : Transform<bool>, absoluteOffsetMode : bool) -> Material {
+MCollapsingBox(content : Material, yTrans : Transform<double>, expand : Transform<bool>, absoluteOffsetMode : bool, fade : bool) -> Material {
 	MGetManager(\manager -> MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t ->
-		TCollapsingBox(manager, p, m2t(content, p), yTrans, expand, absoluteOffsetMode)
+		TCollapsingBox(manager, p, m2t(content, p), yTrans, expand, None(), None(), absoluteOffsetMode, fade)
 	)))
+}
+
+MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material {
+	MComponentGroup(
+		THTMLStage(wh, constructor),
+		[MFocusName("MHTMLStage")]
+	)
+}
+
+MLinesSeparated(values : [Material]) -> Material {
+	widthArray = map(values, \__ -> make(0.0));
+	maxWidth = fmaxA(widthArray, 0.0);
+
+	MLines(interleave(
+		mapi(values, \i, v -> {
+			width = widthArray[i];
+			MAttachWidth(v, width)
+		}),
+		MAvailableWidth(MSeparator(true), maxWidth)
+	))
+}
+
+MColsSeparated(values : [Material]) -> Material {
+	heightArray = map(values, \__ -> make(0.0));
+	maxHeight = fmaxA(heightArray, 0.0);
+
+	MCols(interleave(
+		mapi(values, \i, v -> {
+			height = heightArray[i];
+			MAttachHeight(v, height)
+		}),
+		MAvailableHeight(MSeparator(false), maxHeight)
+	))
+}
+
+MPictureTweak(picURL : string, style : [MPictureStyle]) {
+	showLoading = extractStruct(style, MPictureShowLoading(true)).show;
+	customLoading = tryExtractStruct(style, MPictureCustomLoading(TEmpty()));
+	tstyle = MPictureStyle2TPictureStyle(style);
+
+	if (showLoading || isSome(customLoading)) {
+		onPicLoaded = extractStruct(style, OnLoaded(nop)).fn;
+		picLoading = make(false);
+		uns = interruptibleTimer(100, \ -> next(picLoading, true));
+
+		picSize =
+			eitherMap(
+				tryExtractStruct(tstyle, TPictureSize(const(WidthHeight(0., 0.)))),
+				\ds -> Some(ds.size),
+				maybeMap(
+					tryExtractStruct(tstyle, WidthHeight(-1.0, -1.0)),
+					\cs -> const(cs)
+				)
+			);
+
+		pstyle = replaceStruct(tstyle, OnLoaded(\ -> {uns(); onPicLoaded(); nextDistinct(picLoading, false);}));
+
+		MGroup2(
+			TPicture(picURL, pstyle),
+			MShow(
+				picLoading,
+				eitherMap(
+					customLoading,
+					\cl -> cl.loading,
+					MProgressCircle([])
+					|> (\f -> MAlpha(const(0.72), f))
+				)
+				|> MCenter
+			)
+		)
+	} else {
+		TPicture(picURL, tstyle)
+	}
+}
+
+MPictureFill(picURL : string, style : [MPictureStyle]) {
+	MTweak(
+		[
+			TFillZoom(true)
+		],
+		MPictureTweak(picURL, style),
+		TFillXY()
+	)
+}
+
+MPictureFit(picURL : string, style : [MPictureStyle]) {
+	MTweak(
+		[
+			TFitZoom(true, false)
+		],
+		MPictureTweak(picURL, style),
+		TFillXY()
+	)
 }

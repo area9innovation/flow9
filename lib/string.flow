@@ -61,6 +61,11 @@ export {
 	// do not use negative values here (because of some logical exceptions
 	// for Flash target, see flow/flowunit/lib/test_string.flow, UnitTest "substring")
 	native substring : (s : string, start : int, length : int) -> string = Native.substring;
+	// In JS in Chrome, it force to make a copy of string, not sliced chained list of substrings
+	// it is usefull if we parsing long string into some structure that point to small pices of the string.
+	// in sliced mode, the size of the chain could be very large (1000+ levels with 32+ bytes costs each)
+	// and outweight benefits from pointing to the large string
+	cloneString(s : string) -> string;
 
 	// Smart version of substring
 	// `length` = 0 means to the end of `s`, negative `start` or `length` mean relative distance from the end of `s`
@@ -114,7 +119,7 @@ export {
 
 
 	// Get the character at index. Considering the string as UCS-2
-	getCharAt : (string, int) -> string;
+	native getCharAt : (string, int) -> string = Native.getCharAt;
 
 	// Convert a string to an array of character codes in UTF-8 format
 	native string2utf8 : (s : string) -> [int] = Native.string2utf8;
@@ -463,7 +468,7 @@ doStrReplace2(prefix : string, suffix : string, old : string, new : string) -> s
 	}
 }
 
-strReplaces(s, oldnew) {
+strReplaces(s : string, oldnew : [string]) -> string {
 	n = length(oldnew);
 	if (n < 2) s else strReplaces(strReplace(s, oldnew[0], oldnew[1]), subrange(oldnew, 2, n - 2));
 }
@@ -548,7 +553,6 @@ strReplaceCustom2(str : string, substr : string, matchFn : (int, int) -> Maybe<s
 	}
 }
 
-
 getCharAt(s, n) {
 	substring(s, n, 1)
 }
@@ -596,7 +600,7 @@ d2s(d) { cast(d : double -> string); }
 
 s2b(s) { toLowerCase(s) == "true" || s == "1" }
 
-lpad(s, c, l) {
+lpad(s : string, c : string, l : int) -> string {
 	if (strlen(s) < l) {
 		c + lpad(s, c, l - 1);
 	} else {
@@ -604,7 +608,7 @@ lpad(s, c, l) {
 	}
 }
 
-rpad(s, c, l) {
+rpad(s : string, c : string, l : int) -> string {
 	if (strlen(s) < l) {
 		rpad(s, c, l - 1) + c;
 	} else {
@@ -612,11 +616,11 @@ rpad(s, c, l) {
 	}
 }
 
-trim(s) {
+trim(s : string) -> string {
 	rtrim(ltrim(s));
 }
 
-ltrim(s) {
+ltrim(s : string) -> string {
 	l = strlen(s);
 	if (l == 0) {
 		s;
@@ -630,7 +634,7 @@ ltrim(s) {
 	}
 }
 
-rtrim(s) {
+rtrim(s : string) -> string {
 	l = strlen(s);
 	if (l == 0) {
 		s;
@@ -644,12 +648,12 @@ rtrim(s) {
 	}
 }
 
-trim2(s, ugly) {
+trim2(s : string, ugly : string) -> string {
 	rtrim2(ltrim2(s, ugly), ugly);
 }
 
-//please note: it trims from 's' part of 'ugly': e.g. ltrim2("abced", "abght") returns "ced"
-ltrim2(s, ugly) {
+// please note: it trims from 's' part of 'ugly': e.g. ltrim2("abced", "abght") returns "ced"
+ltrim2(s : string, ugly : string) -> string {
 	if (ugly == "") s
 	else {
 		l = strlen(s);
@@ -661,13 +665,14 @@ ltrim2(s, ugly) {
 	}
 }
 
-rtrim2(s, ugly) {
+rtrim2(s : string, ugly : string) -> string {
 	l = strlen(s);
 	e = countUntil(0, l, \i -> {
 		c = getCharAt(s, l - (i + 1));
 		strIndexOf(ugly, c) == -1;
 	});
-	strLeft(s, l - e);
+	if (e == 0) s
+	else strLeft(s, l - e);
 }
 
 // Format this 32 bit integer as if it was unsigned
@@ -1133,45 +1138,37 @@ concatStrings(strings) {
 	}
 }
 
-toCapitalization(s) {
-	output = ref s;
+toCapitalization(s : string) -> string {
 	if (toUpperCase(s) != s) {
-		exceptions = [
-			"am", "are", "is",
-			"in", "on", "at", "of",
-			"and", "the", "a",
-			"my", "y"
-		];
-		spaces = [" ", "\xA0;", "\u00A0"];
-		endMarks = [".", "!", "?", "..."];
-		separators = concat3(["-", ":", ",", "\""], endMarks, spaces);
-		result = ref [];
-		newSentence = ref true;
-
+		exceptions = ["a", "an", "the", "and", "but", "or", "for", "nor", "as", "at", "by", "for", "from", "in", "into", "near", "of", "on", "onto", "to", "with", "down", "up"];
+		endMarks = [".", "!", "?", "...", "\n"];
+		separators = concat(["-", ":", ",", "\"", " ", "\xA0;", "\u00A0"], endMarks);
 		separatedString = strSplit2(s, separators);
-		iter(separatedString, \v -> {
-			first = ref "";
-			rest = ref "";
+		len = length(separatedString);
+		hyphenCase = ref false;
+		
+		concatStrings(mapi(separatedString, \i, v -> {
+			w = toLowerCase(v);
+			isFirstWord = i <= 1 || separatedString[i - 1] == "\n" ||  contains(endMarks, separatedString[i - 2]);
+			isLastWord = i >= len - 1 || contains(endMarks, separatedString[i + 1]);
+			isSeparator = contains(separators, v);
 
-			if ((!contains(exceptions, toLowerCase(v)) || strIndexOf(s, v) == 0 || ^newSentence) && !contains(separators, toLowerCase(v))) {
-				newSentence := false;
-
-				first := substring(v, 0, 1);
-				rest := substring(v, 1, strlen(v) - 1);
-
-				result := arrayPush(^result, toUpperCase(^first) + toLowerCase(^rest));
+			res = if ((isFirstWord || isLastWord || ^hyphenCase || !contains(exceptions, w)) 
+					&& !isSeparator) {
+				toUpperCase(strLeft(v, 1)) + strRight(w, 1)
 			} else {
-				result := arrayPush(^result, toLowerCase(v));
+				w
 			}
 
-			if (contains(endMarks, toLowerCase(v))) {
-				newSentence := true;
+			if (!isSeparator) {
+				hyphenCase := i < len - 1 && separatedString[i + 1] == "-" && (isFirstWord || isLastWord);
 			}
-		});
 
-		output := concatStrings(^result);
+			res
+		}))
+	} else {
+		s
 	}
-	^output;
 }
 
 formatString(s : string, p : [string]) -> string {
@@ -1242,7 +1239,9 @@ toStringNoExtraQuotes(v: flow) -> string {
 
 	if (startsWith(str, "\"") && endsWith(str, "\"")) {
 		flow2s(v)
-	} else str;
+	} else {
+		str;
+	}
 }
 
 strRepeat(s : string, cnt : int) -> string {
@@ -1257,4 +1256,11 @@ a2s2(src : [?], delimiter : string, fn : (elem : ?) -> string) -> string {
 // string to array of anything
 s2a2(src : string, delimiter : string, fn : (elem : string) -> ?) -> [?] {
 	map(strSplit(src, delimiter), fn);
+}
+
+// implemented in haxe for JS only
+native cloneString : (s : string) -> string = Native.cloneString;
+
+cloneString(s : string) -> string {
+	s
 }

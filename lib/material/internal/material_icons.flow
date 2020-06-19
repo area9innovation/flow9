@@ -224,6 +224,8 @@ glyphs = \ -> onlyOnce(materialFonts, \ -> {
 		Pair("check_circle", MIconGlyphInvariant(0xe86c)),
 		Pair("chevron_left", MIconGlyphInvariant(0xe5cb)),
 		Pair("chevron_right", MIconGlyphInvariant(0xe5cc)),
+		Pair("chevron_start", MIconGlyphMirrored(0xe5cb)),
+		Pair("chevron_end", MIconGlyphMirrored(0xe5cc)),
 		Pair("child_care", MIconGlyphInvariant(0xeb41)),
 		Pair("child_friendly", MIconGlyphInvariant(0xeb42)),
 		Pair("chrome_reader_mode", MIconGlyphMirrored(0xe86d)),
@@ -309,8 +311,8 @@ glyphs = \ -> onlyOnce(materialFonts, \ -> {
 		Pair("do_not_disturb_on", MIconGlyphInvariant(0xe644)),
 		Pair("dock", MIconGlyphInvariant(0xe30e)),
 		Pair("domain", MIconGlyphMirrored(0xe7ee)),
-		Pair("done", MIconGlyphMirrored(0xe876)),
-		Pair("done_all", MIconGlyphMirrored(0xe877)),
+		Pair("done", MIconGlyphInvariant(0xe876)),
+		Pair("done_all", MIconGlyphInvariant(0xe877)),
 		Pair("donut_large", MIconGlyphMirrored(0xe917)),
 		Pair("donut_small", MIconGlyphMirrored(0xe918)),
 		Pair("drafts", MIconGlyphInvariant(0xe151)),
@@ -500,6 +502,8 @@ glyphs = \ -> onlyOnce(materialFonts, \ -> {
 		Pair("keyboard_arrow_down", MIconGlyphInvariant(0xe313)),
 		Pair("keyboard_arrow_left", MIconGlyphInvariant(0xe314)),
 		Pair("keyboard_arrow_right", MIconGlyphInvariant(0xe315)),
+		Pair("keyboard_arrow_start", MIconGlyphMirrored(0xe314)),
+		Pair("keyboard_arrow_end", MIconGlyphMirrored(0xe315)),
 		Pair("keyboard_arrow_up", MIconGlyphInvariant(0xe316)),
 		Pair("keyboard_backspace", MIconGlyphMirrored(0xe317)),
 		Pair("keyboard_capslock", MIconGlyphInvariant(0xe318)),
@@ -1006,6 +1010,7 @@ isMaterialIcon(name : string) -> bool {
 }
 
 MIcon2T(parent : MFocusGroup, name : string, style : [MIconStyle]) -> Tropic {
+	isRTL = parent.rtl;
 	iconicFont =
 		eitherFn(
 			tryExtractStruct(style, MIconicFont(materialIcons)),
@@ -1044,7 +1049,8 @@ MIcon2T(parent : MFocusGroup, name : string, style : [MIconStyle]) -> Tropic {
 		extractStruct(
 			style,
 			if (MColor2int(iconColor) == black) {
-				if (disabled) FillOpacity(0.38) else FillOpacity(0.54)
+				// 0.2052 = 38% opacity of the enabled state
+				if (disabled) FillOpacity(0.2052) else FillOpacity(0.54)
 			} else {
 				if (disabled) FillOpacity(0.5) else FillOpacity(1.)
 			}
@@ -1059,15 +1065,16 @@ MIcon2T(parent : MFocusGroup, name : string, style : [MIconStyle]) -> Tropic {
 	code = switch (iconInfo) {
 		MIconGlyphInvariant(code): code;
 		MIconGlyphMirrored(ltrCode): ltrCode;
-		MIconGlyphAlternated(ltrCode, rtlCode): if (getDefaultRtl()) rtlCode else ltrCode;
+		MIconGlyphAlternated(ltrCode, rtlCode): if (isRTL) rtlCode else ltrCode;
 	};
-	needsMirror = getDefaultRtl() && switch (iconInfo) {
+	needsMirror = isRTL && switch (iconInfo) {
 		MIconGlyphInvariant(__): false;
 		MIconGlyphMirrored(__): true;
 		MIconGlyphAlternated(__, __): false;
 	};
 
 	TText(fromCharCode(code), [fill, opacity, FontSize(size), fontFamilyStyle, EscapeHTML(js)])
+	|> (\f -> TCenterInFixSize(f, TFixed(size, size)))
 	|> (\f ->
 		if (needsMirror)
 			TScale(const(Factor(-1.0, 1.0)), f)
@@ -1080,15 +1087,20 @@ MIcon2T(parent : MFocusGroup, name : string, style : [MIconStyle]) -> Tropic {
 		eitherMap(
 			iconCounter,
 			\ic -> {
+				enabled = extractStruct(ic.style, MEnabled(const(true))).enabled;
 				cColor = extractStruct(ic.style, MRed(500));
-				cSize = min(size / 3., 12.);
+				cSize = extractStruct(ic.style, MIconSize(min(size / 3., 12.))).size;
 				numBorders = cSize / 3.;
+				limited = contains(ic.style, MIconCounterLimited());
 
 				TDynamicText(
-					fselect(ic.value, FLift(i2s)),
-					MTextStyle2CharacterStyle(
-						parent,
-						ifArrayPush([MBodyBold(), MTextMColor(cColor)], disabled, MTextDisabled())
+					fselect(ic.value, FLift(\v -> if (limited && v > 99) "99+" else i2s(v))),
+					concat(
+						MTextStyle2CharacterStyle(
+							parent,
+							ifArrayPush([MBodyBold(), MTextMColor(cColor)], disabled, MTextDisabled())
+						),
+						[Resolution(2.0), ParagraphWidth(const(0.))]
 					)
 				)
 				|> (\f2 -> TTweak([TFitZoom(true, false), TAlign(const(0.5), const(0.5))], f2, TFixed((cSize - numBorders) * 2., (cSize - numBorders) * 2.)))
@@ -1104,8 +1116,10 @@ MIcon2T(parent : MFocusGroup, name : string, style : [MIconStyle]) -> Tropic {
 						f2
 					)
 				)
-				|> (\f2 -> TBorderA(0., -cSize / 4. * 3., -cSize / 4. * 3., 0., f2))
-				|> (\f2 -> TGroup2SameMetrics(f, TTweak([TAlign( const(if (getDefaultRtl()) 0.0 else 1.), zero)], f2, f)))
+				|> (\f2 -> TBorderDir(0., -cSize / 4. * 3., -cSize / 4. * 3., 0., f2, isRTL))
+				|> (\f2 -> TTweak([TAlign(const(b2d(!isRTL)), zero)], f2, f))
+				|> (\f2 -> TShow(enabled, f2))
+				|> (\f2 -> TGroup2SameMetrics(f, f2))
 			},
 			f
 		)
@@ -1190,7 +1204,6 @@ MLetterIcon2T(manager : MaterialManager, parent : MFocusGroup, m : MLetterIcon) 
 	color = extractStruct(iconStyle, getPrimaryColor(parent));
 	textColor = extractStruct(textStyle, MTextMColor(color));
 	size = extractStruct(iconStyle, MIconSize(24.0)).size;
-	disabled = contains(iconStyle, MIconDisabled());
 
 	textStyle2 =
 		if (length(extractStructMany(textStyle, MWhite())) == length(textStyle)) {
@@ -1229,7 +1242,7 @@ MAddLabelAndLeftIcon(manager : MaterialManager, parent : MFocusGroup, content : 
 	MAddLabel(manager, parent, content, style, highlighted, labelBorder)
 	|> (\label ->
 		eitherMap(
-			tryExtractStruct(style, MLeftIcon("")),
+			tryExtractStruct(style, MLeftIcon("", [])),
 			\li ->
 				(if (li.icon != "") {
 					ic = if (isMaterialIcon(li.icon)) li.icon else defaultMMenuIcon;
@@ -1265,7 +1278,7 @@ MAddLabelAndLeftIcon(manager : MaterialManager, parent : MFocusGroup, content : 
 						)
 					})
 				)
-				|> (\t -> TBaselineCols2A(t, label)),
+				|> (\t -> TBaselineCols2Dir(t, label, parent.rtl)),
 			label
 		)
 	)
@@ -1288,7 +1301,7 @@ MAddLabel(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sty
 					TAcc(acc with metrics = newMetrics, xConstant = true, yConstant = true)
 				})
 			)
-			|> (\t -> TLines2A(t, content)),
+			|> (\t -> TLines2Dir(t, content, parent.rtl)),
 		content
 	)
 }
@@ -1420,24 +1433,26 @@ MPlayPauseAnimatedIcon(expander : Transform<bool>, style : [MIconStyle]) -> Mate
 	makeRotate = \p -> 90. * p;
 
 	content =
-		TSelect(percent, \p ->
-			TGroup2(
-				[
+		TGroup2(
+			TDynamicGraphics(
+				fselect(percent, FLift(\p -> [
 					MoveTo(8.0 - 3.0 * p, 5.0 + p),
 					LineTo(19.0, 12.0 - 6.0 * p),
 					LineTo(19.0, 12.0 - 2.0 * p),
 					LineTo(8.0 - 3.0 * p, 12.0 - 2.0 * p),
 					ClosePath()
-				]
-					|> (\arr -> TGraphics(arr, [MFill(fillColor)])),
-				[
+				])),
+				const([MFill(fillColor)])
+			),
+			TDynamicGraphics(
+				fselect(percent, FLift(\p -> [
 					MoveTo(8.0 - 3.0 * p, 19.0 - p),
 					LineTo(19.0, 12.0 + 6.0 * p),
 					LineTo(19.0, 12.0 + 2.0 * p),
 					LineTo(8.0 - 3.0 * p, 12.0 + 2.0 * p),
 					ClosePath()
-				]
-					|> (\arr -> TGraphics(arr, [MFill(fillColor)]))	
+				])),
+				const([MFill(fillColor)])
 			)
 		);
 

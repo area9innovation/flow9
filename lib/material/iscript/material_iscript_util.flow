@@ -1,17 +1,12 @@
-import material/iscript/material_iscript_form;
 import material/iscript/material_iscript_screenshot;
-import material/iscript/material_iscript_cursors;
 import material/iscript/material_iscript_filesystem;
-import material/iscript/material_iscript_config;
+import material/iscript/material_iscript_replay_record;
 import net/http_request_callback;
 import net/http_request_util;
 import formats/base64;
 
 export {
-	replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void;
-
-	getBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBehaviourDescriptor, focusExists : bool, enabled : bool, focusable : bool, click : bool) -> Maybe<DynamicBehaviour<flow>>;
-	repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBehaviourDescriptor, value : flow) -> bool;
+	replayIScript(manager : MaterialManager, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void;
 
 	subscribeToIScriptBehavioursFocus(manager : MaterialManager, captureHttp : bool) -> () -> void;
 
@@ -23,36 +18,34 @@ export {
 
 	onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplayResult]) -> void) -> ([IScriptReplayResult]) -> void;
 
-	handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> () -> void;
-
-	isIScriptUrlParamsSet() -> bool;
+	handleIScriptState(manager : MaterialManager) -> () -> void;
 }
 
 stopIScriptReplay(manager : MaterialManager) -> void {
 	next(manager.iscript.state, IScriptStopped());
 }
 
-replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
+replayIScript(manager : MaterialManager, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	iScriptInfo(manager, "Replay IScript", None());
-	replayIScript2(manager, getValue(manager.iscript.script), m2t, onFinished, handleInputOutput);
+	replayIScript2(manager, getValue(manager.iscript.script), onFinished, handleInputOutput);
 }
 
-ContiniousTimer(
+ContinuousTimer(
 	start : () -> void,
 	stop : () -> void,
 	pause : () -> void,
-	timeout : double,
 );
 
-continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContiniousTimer {
+continuousTimer(tree : Tree<double, [Pair<() -> bool, bool>]>, timeout : double, speed : double, onFinished : (bool) -> void) -> ContinuousTimer {
 	isFinished = ref true;
 	delays : ref [Pair<double, double>] = ref [];
 	r = repeatable2(1, false);
 	started = ref 0.0;
 	uns = ref [];
 
-	deferredFns = ref [];
+	deferredFn : ref Maybe<() -> bool> = ref None();
 	deferredTime = ref 0.0;
+	deferredTimeInner = ref 0.0;
 	currentRepeat = ref 0;
 
 	startFn = \ -> {
@@ -68,70 +61,87 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats 
 	initFn = \ -> {
 		isFinished := false;
 		delays := map(getTreeKeys(tree), \v -> Pair(v, v)); // Pair(current replaying time with timeouts, recorded time)
+		startNext = ref 0;
 
 		uns :=
 			[
 				r.stop,
 				\ -> if (!(^isFinished)) {
 					isFinished := true;
-					onFinished(length(^delays) == 0);
+					onFinished(length(^delays) == 0 && isNone(^deferredFn));
 				},
 				makeSubscribe2(r.value, \ts -> {
-					if (length(^delays) == 0) {
+					if (length(^delays) == 0 && isNone(^deferredFn)) {
 						dispUnsA(uns);
 					}
 
-					// check timeouted elements
-					if (^deferredFns != []) {
-						if (^currentRepeat > maxRepeats) {
-							deferredFns := [];
-							currentRepeat := 0;
-							dispUnsA(uns);
-						} else {
-							if (^deferredTime < ts - ^started) {
-								// repeat all fns
-								deferredFns := mapConcat(^deferredFns, \fn -> if (!fn()) [fn] else []);
+					offset = ts - ^started;
+					eitherFn(
+						^deferredFn,
+						\fn -> {
+							if (offset > ^deferredTime + ^deferredTimeInner) {
+								if(fn()) deferredFn := None();
 
-								if (^deferredFns != []) {
-									// repeat was unsuccessful
-									currentRepeat := ^currentRepeat + 1;
-									deferredTime := ^deferredTime + timeout;
+								if (isNone(^deferredFn)) {
+									delays := map(^delays, \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second));
+								} else if (offset > ^deferredTime + 30000.) {
+									println("IScript timeout");
+									stopFn();
 								} else {
-									// repeat was successful - shift all delay.first values to the current timeout
-									delays := map(^delays, \v -> Pair(v.first + timeout * i2d(^currentRepeat), v.second));
+									deferredTimeInner := ^deferredTimeInner + timeout;
 								}
 							}
-						}
-					} else {
-						foldWhile(^delays, ts - ^started, \t, d -> {
-							if (d.first < t) {
-								deferredFns := [];
+						},
+						\ -> {
+							foldWhile(^delays, offset, \t, d -> {
+								if (^delays[0].first < offset) {
+									eitherFn(
+										lookupTree(tree, ^delays[0].second),
+										\records -> {
+											tailedRecords = tailFrom(records, ^startNext);
+											result0 = foldWhile(tailedRecords, Pair([], 0),
+												\acc, fn -> {
+													if (fn.first()) {
+														Some(Pair(arrayPush(acc.first, fn), acc.second + b2i(fn.second)))
+													} else {
+														None()
+													}
+												}
+											);
+											result = result0.first;
 
-								maybeApply(
-									lookupTree(tree, d.second),
-									\records -> iter(records,
-										\fn -> if (!fn()) {
-											// Add to timeout elements
-											println("*** Timeout Fn");
-											deferredFns := arrayPush(^deferredFns, fn);
-											deferredTime := d.first + timeout;
-											currentRepeat := 1;
+											if (result == tailedRecords) {
+												delays := tail(^delays);
+												startNext := 0;
+												if (result0.second == 0) Some(t) else None()
+											} else {
+												startNext := length(result) + 1;
+												if (length(result) + 1 == length(tailedRecords)) {
+													delays := tail(^delays);
+													startNext := 0;
+												}
+												deferredFn := Some(subtractA(tailedRecords, result)[0].first);
+												deferredTime := offset;
+												deferredTimeInner := timeout;
+												None()
+											}
+										},
+										\ -> {
+											delays := tail(^delays);
+											Some(t)
 										}
-									)
-								);
-								delays := subrange(^delays, 1, length(^delays));
-								Some(t)
-							} else {
-								None()
-							}
-						})
-						|> ignore
-					}
+									);
+								} else {
+									None()
+								}
+							}) |> ignore
+						}
+					)
 				})()
 			];
 	}
 
-	ContiniousTimer(
+	ContinuousTimer(
 		\ -> {
 			if (^isFinished == true || length(^delays) == 0) {
 				initFn();
@@ -141,23 +151,39 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats 
 		},
 		stopFn,
 		pauseFn,
-		timeout
 	)
 }
 
-replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
-	stopDelay = either(maxA(getTreeKeys(iScript.stack)), 1.0);
+replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
-	maxRepeats = getValue(manager.iscript.settings.replayRepeats);
 
 	foldTree(iScript.stack, makeTree(), \delay, records, acc ->
 		setTree(
 			acc,
 			delay / getValue(manager.iscript.settings.replaySpeed),
-			map(records, \r -> \ -> replayIScriptRecord(manager, r, m2t, handleInputOutput))
+			map(records, \r -> Pair(
+				\ -> replayIScriptRecord(manager, r, handleInputOutput),
+				isMouseDownEvent(r)
+			))
 		)
 	)
-	|> (\t -> continiousTimer(t, defaultTimeout, maxRepeats, onFinished))
+	|> (\t -> foldTree(
+			t,
+			Pair(makeTree(), 0.),
+			\k, v, acc -> {
+				offset = i2d(countA(v, secondOfPair) * 250) + acc.second;
+				Pair(
+					setTree(
+						acc.first,
+						k + offset,
+						v
+					),
+					offset
+				)
+			}
+		).first
+	)
+	|> (\t -> continuousTimer(t, defaultTimeout, getValue(manager.iscript.settings.replaySpeed), onFinished))
 	|> (\t -> {
 		if (getValue(manager.iscript.settings.replayProfile)) {
 			startProfile(getValue(manager.iscript.currentFileNameB));
@@ -171,10 +197,25 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 	})
 }
 
-replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, m2t : (Material, MFocusGroup) -> Tropic, handleInputOutput : bool) -> bool {
+isMouseDownEvent(record : IScriptRecord) -> bool {
+	eitherMap(
+		getRecordDescriptor(record),
+		\descriptor -> descriptor.name == "mousedown" || descriptor.name =="focused",
+		false
+	)
+}
+
+getRecordDescriptor(record : IScriptRecord) -> Maybe<IScriptBehaviourDescriptor> {
+	switch (record : IScriptRecord) {
+		IScriptBehaviourRecord(descriptor, __, __, __): if (descriptor.component.id != makeList()) Some(descriptor) else None();
+		default: None();
+	}
+}
+
+replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInputOutput : bool) -> bool {
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
-			repeatBehaviourById(manager, descriptor, value) || descriptor.name == "focused"
+			repeatBehaviourById(manager, descriptor, value)
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
 			if (handleInputOutput) {
@@ -249,7 +290,8 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, m2t : (Ma
 		}
 		IScriptScreenshot(__, check): {
 			if (!check) {
-				applyIScriptScreenshot(manager, record);
+				if (getValue(manager.iscript.settings.replayApplyScreenshot))
+					applyIScriptScreenshot(manager, record);
 
 				true;
 			} else {
@@ -262,7 +304,7 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, m2t : (Ma
 						iScriptError(
 							manager,
 							foldTree(v, "\t" + toString(k) + " :", \k2, v2, acc2 ->
-								acc2 + "\n\t\t" + toString(k2) + " : " + eitherMap(v2.first, toString, "") + " - " + eitherMap(v2.second, toString, "")
+								acc2 + "\n\t\t" + toString(k2) + " : " + toString(v2.first) + " - " + toString(v2.second)
 							),
 							None() // todo:
 							// Some(k)
@@ -295,267 +337,9 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, m2t : (Ma
 				true;
 			}
 		}
-		default: {
-			true;
-		}
-	}
-}
-
-getBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBehaviourDescriptor, focusExists : bool, enabled : bool, focusable : bool, click : bool) -> Maybe<DynamicBehaviour<flow>> {
-	idString = IScriptId2s(behaviourDescriptor.component.id);
-	noSuchFocusString = "No such focus: [" + idString + "] " + behaviourDescriptor.name;
-
-	eitherFn(
-		getMaterialFocusByIScriptId(manager.focus, behaviourDescriptor.component.id),
-		\fc ->
-			if (fc.name == behaviourDescriptor.component.name) {
-				if (focusable && fgetValue(fc.focusEnabled) == false) {
-					iScriptError(manager, "Component focus is disabled: " + behaviourDescriptor.name + " in focus:  [" + IScriptId2s(behaviourDescriptor.component.id) + "]",
-						Some(behaviourDescriptor.component.id));
-					None()
-				} else if ((click || enabled) && fgetValue(fc.enabled) == false) {
-					iScriptError(manager, "Component is disabled: " + behaviourDescriptor.name + " in focus:  [" + IScriptId2s(behaviourDescriptor.component.id) + "]",
-						Some(behaviourDescriptor.component.id));
-					None()
-				} else if (click && fgetValue(switchMaterialFocus(fc, \f -> f.parent.zorderEnabled, \f -> f.zorderEnabled)) == false) {
-					iScriptError(manager, "Component clicks are disabled: " + behaviourDescriptor.name + " in focus:  [" + IScriptId2s(behaviourDescriptor.component.id) + "]",
-						Some(behaviourDescriptor.component.id));
-					None()
-				} else {
-					eitherFn(
-						lookupTree(fc.behaviours, behaviourDescriptor.name),
-						\beh ->
-							Some(beh.first),
-						\ -> {
-							if (focusExists) iScriptError(manager, "No such behaviour: " + behaviourDescriptor.name + " in focus:  [" + IScriptId2s(behaviourDescriptor.component.id) + "]",
-								Some(behaviourDescriptor.component.id));
-							None()
-						}
-					)
-				}
-			} else {
-				if (focusExists) iScriptError(manager, noSuchFocusString, Some(behaviourDescriptor.component.id));
-				None()
-			},
-		\ -> {
-			if (focusExists) iScriptError(manager, noSuchFocusString, Some(behaviourDescriptor.component.id));
-			None()
-		}
-	)
-}
-
-repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBehaviourDescriptor, value : flow) -> bool {
-	name = behaviourDescriptor.name;
-	componentName = behaviourDescriptor.component.name;
-
-	iscriptReplayCheckCursorShape(manager, name, value);
-
-	addHeight = \pnt -> Point(pnt.x, pnt.y + if (isIScriptEnabled(manager)) 48.0 else 0.0);
-	checkStr =
-		if (getValue(manager.iscript.settings.replayCheckErrors))
-			">> Check " + componentName + " " + name + " value " + toString(value)
-		else
-			">> Replay " + componentName + " " + name + " value " + toString(value);
-
-	emitMouseEv = \event, point -> {
-		emitMouseEvent(
-			currentClip(), event,
-			point.x,
-			point.y
-		);
-
-		next(manager.iscript.replayCursor.positionB,
-			Point(
-				point.x - getValue(manager.iscript.replayCursor.clickPointB).x,
-				point.y - getValue(manager.iscript.replayCursor.clickPointB).y
-			)
-		);
-
-		iScriptInfo(
-			manager,
-			checkStr + " = " + event + " at (" + toString(point.x) + ", " + toString(point.y) + ")",
-			Some(behaviourDescriptor.component.id)
-		);
-	}
-
-	if (getValue(manager.iscript.settings.replayCheckErrors)) { // replay option "Check errors" is on
-		if ((name == "mousedown" || name == "mouseup" || name == "mousemove") && isSameStructType(value, zeroPoint)) {
-			emitMouseEv(name, cast(value : flow -> Point) |> addHeight);
-			true
-		} else if ((name == "keypress" || name == "keydown" || name == "keyup") && isSameStructType(value, KeyEventRecord("", false, false, false, false, 0))) {
-			kst = cast(value : flow -> KeyEventRecord);
-			iScriptInfo(
-				manager,
-				checkStr,
-				Some(behaviourDescriptor.component.id)
-			);
-			emitKeyEvent(currentClip(), name, kst.utf, kst.ctrl, kst.shift, kst.alt, kst.meta, kst.keycode);
-			true
-		} else {
-			replayBehaviour = contains(getValue(manager.iscript.settings.replayReplayBehaviours), name);
-			checkEnabled = replayBehaviour;
-			checkFocused = replayBehaviour && name == "focused";
-			checkClickable = replayBehaviour && ((name == "down" && flow(value) != None()) || (name == "click" && flow(value) == true)
-				|| (name == "hover" && flow(value) == true) || name == "position");
-			checkExists = checkFocused || checkClickable;
-			eitherMap(
-				getBehaviourById(manager, behaviourDescriptor, checkExists, checkEnabled, checkFocused, checkClickable),
-				\b -> {
-					if (replayBehaviour) {
-						// Behaviours we need to replay
-						if (name == "point" && false) {
-							eitherFn(
-								getMaterialFocusByIScriptId(manager.focus, behaviourDescriptor.component.id),
-								\f -> {
-									down = getValue(either(
-										getBehaviourById(
-											manager,
-											IScriptBehaviourDescriptor(behaviourDescriptor.component, "down"),
-											false,
-											false,
-											false,
-											false
-										),
-										make(None())
-									));
-
-									if (flow(down) == true || (flow(down) != false && isSome(down))) {
-										p = fgetValue(f.position);
-										emitMouseEv("mousemove", Point(p.pos.x + value.x, p.pos.y + value.y));
-									};
-
-									true
-								},
-								\ -> {
-									iScriptError(
-										manager,
-										"Check Errors. No such focus: " + name,
-										Some(behaviourDescriptor.component.id)
-									);
-									false
-								}
-							)
-						} else if (name == "down" && false) {
-							mouseEvent = if (flow(value) != None() && flow(value) != false) "mousedown" else "mouseup";
-
-							eitherFn(
-								getMaterialFocusByIScriptId(manager.focus, behaviourDescriptor.component.id),
-								\f -> {
-									pnt =
-										eitherFn(
-											if (flow(value) == true || flow(value) == false) {
-												None()
-											} else {
-												value
-											},
-											\pnt -> {
-												p = fgetValue(f.position);
-												mx = p.pos.x + pnt.x;
-												my = p.pos.y + pnt.y;
-												Point(mx, my);
-											},
-											\ -> {
-												eitherFn(
-													getBehaviourById(
-														manager,
-														IScriptBehaviourDescriptor(behaviourDescriptor.component, "point"),
-														false,
-														false,
-														false,
-														false
-													),
-													\pnt -> {
-														p = fgetValue(f.position);
-														mx = p.pos.x + getValue(pnt).x;
-														my = p.pos.y + getValue(pnt).y;
-														Point(mx, my);
-													},
-													\ -> {
-														wh = fgetValue(f.widthHeight);
-														p = fgetValue(f.position);
-														mx = p.pos.x + wh.width / 2.0;
-														my = p.pos.y + wh.height / 2.0;
-														Point(mx, my);
-													}
-												);
-											}
-										);
-
-									emitMouseEv(mouseEvent, pnt);
-									true
-								},
-								\ -> {
-									iScriptError(
-										manager,
-										"Check Errors. No such focus: " + name,
-										Some(behaviourDescriptor.component.id)
-									);
-									false
-								}
-							)
-						} else {
-							next(b, value);
-							true
-						}
-					} else {
-						if (contains(getValue(manager.iscript.settings.replayCheckedBehaviours), name) && name != "position") {
-							// Checked behaviours
-							if (getValue(b) != flow(value)) {
-								iScriptError(manager, "Check Errors. " + componentName + " " + name + " in focus:  [" + IScriptId2s(behaviourDescriptor.component.id) + "] doesn't match: " +
-									toString(getValue(b)) + " != " + toString(value), Some(behaviourDescriptor.component.id));
-								false
-							} else {
-								true
-							}
-						} else // All unchecked behaviours
-						{
-							true
-						}
-					}
-				},
-				!checkExists
-			)
-		}
-	} else { // replay option "Check errors" is off
-		if (countList(behaviourDescriptor.component.id) == 0) {
-			if ((name == "mousedown" || name == "mouseup" || name == "mousemove") && isSameStructType(value, zeroPoint)) {
-				emitMouseEv("mousemove", cast(value : flow -> Point) |> addHeight);
-				true
-			} else if ((name == "keypress" || name == "keydown" || name == "keyup") && isSameStructType(value, KeyEventRecord("", false, false, false, false, 0))) {
-				if (componentName == "canvas") {
-					kst = cast(value : flow -> KeyEventRecord);
-					iScriptInfo(
-						manager,
-						checkStr + " = set",
-						Some(behaviourDescriptor.component.id)
-					);
-					emitKeyEvent(currentClip(), name, kst.utf, kst.ctrl, kst.shift, kst.alt, kst.meta, kst.keycode);
-				}
-
-				true
-			} else {
-				false
-			}
-		} else if (!strContains(name, "pebble")) {
-			mv = getBehaviourById(manager, behaviourDescriptor, name != "click" && name != "hover" && name != "point",
-				name != "click" && name != "hover" && name != "point", name == "focused", false);
-			switch (mv) {
-				None(): {
-					true;
-				}
-				Some(bv): {
-					iScriptInfo(
-						manager,
-						checkStr + " = set",
-						Some(behaviourDescriptor.component.id)
-					);
-					next(bv, flow2b(value));
-					true;
-				}
-			}
-		} else {
-			true;
-		}
+		IScriptVisualScreenshot(__) : true;
+		IScriptLogicalScreenshot(__, __) : true;
+		IScriptGeneratedRecord(): replayGeneratedRecord(manager, record);
 	}
 }
 
@@ -921,7 +705,6 @@ startIScriptRecording(manager : MaterialManager, options : CaptureOptions, conti
 
 startIScriptReplaying(
 	manager : MaterialManager,
-	m2t : (Material, MFocusGroup) -> Tropic,
 	onFinish : ([IScriptReplayResult]) -> void
 ) -> [() -> void] {
 	if (!isIScriptEmpty(manager)) {
@@ -936,7 +719,6 @@ startIScriptReplaying(
 		[
 			replayIScript(
 				manager,
-				m2t,
 				\b -> {
 					onFinish(
 						[
@@ -963,7 +745,6 @@ startIScriptReplaying(
 
 startIScriptScenarioReplaying(
 	manager : MaterialManager,
-	m2t : (Material, MFocusGroup) -> Tropic,
 	onFinish : ([IScriptReplayResult]) -> void
 ) -> [() -> void] {
 	if (!isIScriptScenarioEmpty(manager)) {
@@ -1008,7 +789,7 @@ startIScriptScenarioReplaying(
 
 								(manager.iscript).httpRequestDisposer ::= Some(substituteHttpRequest(manager));
 								[
-									replayIScript(manager, m2t,
+									replayIScript(manager,
 										\b -> {
 											hideIScriptReplayCursor(manager);
 
@@ -1095,7 +876,7 @@ disposeIScriptScenarioHandler(manager : MaterialManager) -> void {
 	(manager.iscript).replayScenarioDisposer ::= None();
 }
 
-handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> () -> void {
+handleIScriptState(manager : MaterialManager) -> () -> void {
 	makeSubscribe2Uns(manager.iscript.state, \state -> {
 		switch (state) {
 			IScriptRecording(options, continue): {
@@ -1107,7 +888,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 			}
 			IScriptReplaying(onFinish): {
 				disposeIScriptHandler(manager);
-				startIScriptReplaying(manager, m2t, onFinish);
+				startIScriptReplaying(manager, onFinish);
 			}
 			IScriptReplayingPaused(): {
 				[]
@@ -1115,7 +896,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 			IScriptScenarioReplaying(onFinish): {
 				disposeIScriptHandler(manager);
 				disposeIScriptScenarioHandler(manager);
-				startIScriptScenarioReplaying(manager, m2t, onFinish);
+				startIScriptScenarioReplaying(manager, onFinish);
 			}
 			IScriptScenarioReplayingPaused(): {
 				[]
@@ -1237,7 +1018,7 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 
 		if (getUrlParameter(UP_ISCRIPTGENERATESCREENSHOTS) != "") {
 			iter(b, \result -> writeIScriptScreenshot(
-				getIScriptScreenshotName(result.filepath, Some(getIScriptScenarioFileName(manager)), None()), 
+				getIScriptScreenshotName(result.filepath, Some(getIScriptScenarioFileName(manager)), None()),
 				result.afterReplayVisualScreenshot.screenshot
 			) |> ignore);
 		}
@@ -1247,7 +1028,7 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 			iScriptInfo(manager, "=== End Scenario ===", None());
 			if (getUrlParameter(UP_ISCRIPTGENERATESCENARIOHTMLREPORT) != "") {
 				writeIScriptReport(
-					getIScriptReportName(getIScriptScenarioFileName(manager)), 
+					getIScriptReportName(getIScriptScenarioFileName(manager)),
 					getIscriptReportResults(b)
 				) |> ignore;
 			}
@@ -1256,17 +1037,16 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 			else
 				compareDialog(b);
 		} else {
-			if (getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "")
+			if (
+				getUrlParameter(UP_ISCRIPTPLAY) != "" ||
+				getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "" ||
+				getUrlParameter(UP_ISCRIPTGENERATEPLAY) != ""
+			)
 				quit(b2i(countA(b, \v -> v.isReplaySuccessful) < length(b)))
 			else
 				compareDialog(b);
 		}
 	}
-}
-
-isIScriptUrlParamsSet() -> bool {
-	isUrlParameterTrue(UP_ISCRIPTRECORD) ||
-	getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != ""
 }
 
 getIScriptScenarioFileName(manager : MaterialManager) -> string {
@@ -1286,7 +1066,7 @@ getIScriptScreenshotName(scriptPath : string, scenarioNameM : Maybe<string>, ind
 
 writeIScriptScreenshot(path : string, content : string) -> bool {
 	setFileContentBytes(
-		path, 
+		path,
 		decodeBase64(
 			strRight(content, 22)
 		)
@@ -1304,9 +1084,9 @@ getIscriptReportResults(results : [IScriptReplayResult]) -> string {
 	strGlue(map(results, \result -> {
 		savedScreenshoot = eitherMap(result.iscriptVisualScreenshotM, \ivs -> ivs.screenshot, "");
 		formatString(
-			"<h2>%1 with result %2</h2><img src=\"%3\">%4", 
+			"<h2>%1 with result %2</h2><img src=\"%3\">%4",
 			[
-				result.filepath, 
+				result.filepath,
 				b2s(result.isReplaySuccessful),
 				result.afterReplayVisualScreenshot.screenshot,
 				if (!result.isReplaySuccessful && savedScreenshoot != "")

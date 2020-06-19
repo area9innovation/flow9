@@ -39,7 +39,7 @@ void FlowServer::slotStart() {
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
 		QString flowc1 = QFileInfo(flowdir + QLatin1String("/bin/flowc1")).absoluteFilePath();
 		QStringList args;
-		args << QLatin1String("server-mode=1");
+		args << QLatin1String("server-mode=http");
 		args << QLatin1String("server-port=") + flowView_.flowConfig_.ui.serverPortLineEdit->text();
 		//QTextStream(stdout) << "SERVER START: " << flowc1 << " " << args.join(QLatin1Char(' ')) << "\n";
 		flowView_.flowConfig_.ui.serverTextEdit->clear();
@@ -71,7 +71,7 @@ void FlowServer::slotClearIncremental() {
 	//QTextStream(stdout) << "DELETING INCREMENTALS FROM: " << objcDir << "\n";
 	dir.setNameFilters(QStringList() << QLatin1String("*.*"));
 	dir.setFilter(QDir::Files);
-	foreach (QString dirFile, dir.entryList()) {
+	for (QString dirFile : dir.entryList()) {
 		dir.remove(dirFile);
 	}
 }

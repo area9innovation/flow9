@@ -24,7 +24,7 @@ One can specify package's data in the Bytecode.xcconfig file:
     APP_VERSION = 1.0
     BUILD_ID = 4000 
     PREPROCESSOR_MACRO = DEFAULT_URL_PARAMETERS=\@\"\" FLOW_EMBEDDED FLOW_DFIELD_FONTS IOS FLOW_COMPACT_STRUCTS BYTECODE_FILE=\@\"default\"
-    BUNDLE_ID_PREFIX = dk.area9
+    PRODUCT_BUNDLE_IDENTIFIER = dk.area9.test
     APP_ICON_PREFIX = default
     BUNDLE_ID_10CH_PREFIX = 2DFEM5R927 // In fact it is team ID from Apple dev. account
     URL_SCHEME=${APP_NAME} // the scheme is a suffix of bundle ID by default. 

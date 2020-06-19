@@ -1,14 +1,19 @@
 import material/material_dialog;
 
 export {
-	MCPDialogStyle ::= MCPHideClearColorButtons, MCPDefaultColor, MCPDisableMainPalette, MCPAdditionalColors, MCPForceUpdate, MCPOpacity;
+	MCPDialogStyle ::= MCPHideClearColorButtons, MCPDefaultColor, MCPDisableMainPalette, MCPAdditionalColors, MCPForceUpdate,
+					MCPOpacity, MCPOpacityDefault, MCPOnColorChange, MCPOnSave, MCPSaveCaption;
 		MCPHideClearColorButtons : ();
 		MCPDefaultColor : (defaultColor : MColor);
 		MCPDisableMainPalette : ();
 		MCPAdditionalColors : (additionalColors : DynamicBehaviour<[int]>);
 		MCPOpacity : (opacity : DynamicBehaviour<double>);
+		MCPOpacityDefault : (opacity : double);
+		MCPOnColorChange : (onChange : (color : MColor, opacity : DynamicBehaviour<double>) -> void);
 		// use next instead nextDistinct
 		MCPForceUpdate();
+		MCPOnSave(fn : () -> void);
+        MCPSaveCaption(caption : string);
 
 	showMColorPickerDialogPopup(
 		manager : MaterialManager,
@@ -33,6 +38,9 @@ showMColorPickerDialogPopup(
 	disableMainPalette = contains(style, MCPDisableMainPalette());
 	additionalColors = extractStruct(style, MCPAdditionalColors(make([]))).additionalColors;
 	opacityPicker = tryExtractStruct(style, MCPOpacity(make(0.)));
+	onSave = tryExtractStruct(style, MCPOnSave(nop));
+	onColorChange = tryExtractStruct(style, MCPOnColorChange(nop2));
+	saveCaption = extractStruct(style, MCPSaveCaption(_("SAVE"))).caption;
 
 	showClearButtons = MClearCustomColorsButtons(
 		\colorToRemove -> next(additionalColors, removeAll(getValue(additionalColors), MColor2int(colorToRemove))),
@@ -40,12 +48,13 @@ showMColorPickerDialogPopup(
 	);
 	mColor = color |> getValue |> MCustomColor |> make;
 	opacity = maybeMap(opacityPicker, \op -> cloneBehaviour(op.opacity));
-	defaultOpacity = eitherMap(opacity, getValue, 1.);
+	defaultOpacity = eitherMap(opacity, \op -> extractStruct(style, MCPOpacityDefault(getValue(op))).opacity, 1.);
 
 	onOK = \ -> {
 		force = contains(style, MCPForceUpdate());
 		makeForceFn(force)(color, MColor2int(getValue(mColor)));
-		maybeApply(opacityPicker, \op -> makeForceFn(force)(op.opacity, eitherMap(opacity, getValue, 1.)))
+		maybeApply(opacityPicker, \op -> makeForceFn(force)(op.opacity, eitherMap(opacity, getValue, 1.)));
+		maybeApply(onSave, \onsave -> onsave.fn());
 	};
 
 	close = make(false);
@@ -57,9 +66,9 @@ showMColorPickerDialogPopup(
 						MTextButton(_("RESET"), \ -> {
 								nextDistinct(mColor, defaultColor);
 								maybeApply(opacity, \op -> nextDistinct(op, defaultOpacity))
-							}, [MLeftIcon("format_color_reset")], []),
+							}, [MLeftIcon("format_color_reset", [])], []),
 						MTextButton(_("CANCEL"), \ -> next(close, true), [], [MShortcut("esc")]),
-						MTextButton(_("SAVE"), \ -> {
+						MTextButton(saveCaption, \ -> {
 							updateAdditionalColors(additionalColors, MColor2int(getValue(mColor)));
 							onOK();
 							next(close, true);
@@ -73,6 +82,10 @@ showMColorPickerDialogPopup(
 				eitherMap(opacity, \op -> [MOpacityPicker(op)], [])
 			])
 		)
+		|> (\m -> eitherMap(opacity, \op -> eitherMap(onColorChange, \onChange ->
+			MConstruct([
+				makeSubscribe2(mColor, \col -> onChange.onChange(col, op))
+			], m), m), m))
 	);
 }
 

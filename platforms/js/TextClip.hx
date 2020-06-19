@@ -15,15 +15,49 @@ class Text extends PixiCoreText {
 	public var charIdx : Int = 0;
 	public var orgCharIdxStart : Int = 0;
 	public var orgCharIdxEnd : Int = 0;
-	public var difPositionMapping : Array<Int>;
+	public var modification : TextMappedModification;
+
+	public function update(mod: TextMappedModification, style: TextStyle, textDirection: String) {
+		this.text = TextClip.bidiDecorate(mod.text, textDirection);
+		this.modification = mod;
+		this.style = style;
+	}
 }
 
 class TextMappedModification {
+	public var text: String;
 	public var modified: String;
 	public var difPositionMapping : Array<Int>;
-	public function new(modified: String, difPositionMapping: Array<Int>) {
+	public var variants : Array<Int>;
+	public function new(text: String, modified: String, difPositionMapping: Array<Int>, variants: Array<Int>) {
+		this.text = text;
 		this.modified = modified;
 		this.difPositionMapping = difPositionMapping;
+		this.variants = variants;
+	}
+
+	public static function createInvariantForString(text : String) : TextMappedModification {
+		var positionsDiff : Array<Int> = [];
+		var vars : Array<Int> = [];
+		for (i in 0...text.length) {
+			positionsDiff.push(0);
+			vars.push(TextClip.GV_ISOLATED);
+		}
+		return new TextMappedModification(text, text, positionsDiff, vars);
+	}
+
+	// Substr of text, works at glyph basis.
+	public function substr(pos: Int, len: Int) : TextMappedModification {
+		var ofsB: Int = 0;
+		for (i in 0...pos) ofsB += difPositionMapping[i];
+		var ofsE: Int = 0;
+		for (i in pos...pos+len) ofsE += difPositionMapping[i];
+		return new TextMappedModification(
+			text.substr(pos+ofsB, len+ofsE),
+			modified.substr(pos, len),
+			difPositionMapping.slice(pos, pos+len),
+			variants.slice(pos, pos+len)
+		);
 	}
 }
 
@@ -32,21 +66,10 @@ class UnicodeTranslation {
 	public var rangeContentFlags : Int;
 	static var map : Map<String, UnicodeTranslation> = new Map<String, UnicodeTranslation>();
 
-	public function new(rangeStart, rangeContentFlags) {
-		this.rangeStart = rangeStart;
-		this.rangeContentFlags = rangeContentFlags;
-	}
-
-	static public function getCharAvailableVariants(chr: String): Int {
-		var unit = map.get(chr);
-		if (unit == null) return 1;
-		return unit.rangeContentFlags;
-	}
-
-	static public function getCharVariant(chr: String, gv: Int): String {
+	private static function initMap() {
 		var found = "";
 		for (found in map) break;
-		if (found != "") {
+		if (found == "") {
 			// Glyphs start here.
 			var rangeStart : Int = 0xFE81;
 			// Packed values, bit per character. How many glyphs
@@ -70,6 +93,22 @@ class UnicodeTranslation {
 				rangeStart += 2;
 			}
 		}
+	}
+
+	public function new(rangeStart, rangeContentFlags) {
+		this.rangeStart = rangeStart;
+		this.rangeContentFlags = rangeContentFlags;
+	}
+
+	static public function getCharAvailableVariants(chr: String): Int {
+		initMap();
+		var unit = map.get(chr);
+		if (unit == null) return 1;
+		return unit.rangeContentFlags;
+	}
+
+	static public function getCharVariant(chr: String, gv: Int): String {
+		initMap();
 		var unit = map[chr];
 		if (unit == null) return chr;
 		var tr_gv = unit.rangeContentFlags;
@@ -80,22 +119,27 @@ class UnicodeTranslation {
 }
 
 class TextClip extends NativeWidgetClip {
+	private var widgetMaxWidth = 0.0;
+
+	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
+	private var contentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
+	private var contentGlyphsDirection : String = '';
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
 	private var backgroundOpacity : Float = 0.0;
 	private var cursorColor : Int = -1;
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
-	private var textDirection : String = 'ltr';
-	private var style : TextStyle = new TextStyle();
+	private var textDirection : String = '';
+	private var escapeHTML : Bool = true;
+	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
 	private var autocomplete : String = '';
 	private var step : Float = 1.0;
-	private var wordWrap : Bool = false;
+	private var doNotInvalidateStage : Bool = false;
 	private var cropWords : Bool = false;
-	private var interlineSpacing : Float = 0.0;
 	private var autoAlign : String = 'AutoAlignNone';
 	private var readOnly : Bool = false;
 	private var maxChars : Int = -1;
@@ -106,8 +150,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var background : FlowGraphics = null;
 
-	private var metrics : TextMetrics;
-	private var fontMetrics : Dynamic;
+	private var metrics : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -119,6 +162,20 @@ class TextClip extends NativeWidgetClip {
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
+	public var isInteractive : Bool = false;
+
+	private var baselineWidget : Dynamic;
+	private var needBaseline : Bool = true;
+
+	private var doNotRemap : Bool = false;
+
+	public function new(?worldVisible : Bool = false) {
+		super(worldVisible);
+
+		style.resolution = 1.0;
+		style.wordWrap = false;
+		style.wordWrapWidth = 2048.0;
+	}
 
 	public static function isRtlChar(ch: String) {
 		var code = ch.charCodeAt(0);
@@ -151,13 +208,20 @@ class TextClip extends NativeWidgetClip {
 			|| (code >= 0x20000 && code < 0x2FA20)*/;
 	}
 
-	public static function getStringDirection(s: String) {
+	public static function getStringDirection(s: String, dflt: String) {
+		var flagsR = 0;
 		for (i in 0...s.length) {
 			var c = s.charAt(i);
-			if (isRtlChar(c)) return "RTL";
-			if (isLtrChar(c)) return "LTR";
+			if (isRtlChar(c)) flagsR |= 2;
+			if (isLtrChar(c)) flagsR |= 1;
 		}
-		return "";
+		if (flagsR == 2) return "rtl";
+		if (flagsR == 1) return "ltr";
+		return dflt;
+	}
+
+	public static function isStringRtl(s: String) : Bool {
+		return getStringDirection(s, null) == "rtl";
 	}
 
 	private static function isCharCombining(testChr : String, pos: Int) : Bool {
@@ -189,11 +253,13 @@ class TextClip extends NativeWidgetClip {
 		var i = 0;
 		var ret = "";
 		var positionsDiff : Array<Int> = [];
+		var vars : Array<Int> = [];
 		for (i in 0...t.length) {
 			ret += bullet;
 			positionsDiff.push(0);
+			vars.push(GV_ISOLATED);
 		}
-		return new TextMappedModification(ret, positionsDiff);
+		return new TextMappedModification(ret, ret, positionsDiff, vars);
 	}
 
 	private static var LIGATURES(default, never) : Map<String, String> = [
@@ -202,13 +268,14 @@ class TextClip extends NativeWidgetClip {
 
 	private static var LIGA_LENGTHS(default, never) = [2];
 
-	private static inline var GV_ISOLATED = 0;
-	private static inline var GV_FINAL = 1;
-	private static inline var GV_INITIAL = 2;
-	private static inline var GV_MEDIAL = 3;
+	public static inline var GV_ISOLATED = 0;
+	public static inline var GV_FINAL = 1;
+	public static inline var GV_INITIAL = 2;
+	public static inline var GV_MEDIAL = 3;
 
 	private static function getActualGlyphsString(t : String) : TextMappedModification {
 		var positionsDiff : Array<Int> = [];
+		var vars : Array<Int> = [];
 		var lret = "";
 		var i : Int = 0;
 		while (i<t.length) {
@@ -230,27 +297,27 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 		var gv = GV_ISOLATED;
-		i = 0;
+		i = -1;
 		var ret = "";
 		var rightConnect = false;  // Assume only RTL ones have connections.
 		while (i<=lret.length) {
 			var j = i+1;
 			while (j<lret.length && isCharCombining(lret, j)) j += 1;
 			var conMask = UnicodeTranslation.getCharAvailableVariants(j >= lret.length? "" : lret.substr(j, 1));
-
-			// Simplified implementation due seems following character, if RTL, always support connection.
-			if ((conMask & 3) == 3) {
+			if ((conMask & 3) != 3) gv &= 1;
+			vars.push(gv);
+			var chr = i >=0 ? UnicodeTranslation.getCharVariant(lret.substr(i, 1), gv) : "";
+			if ((conMask & 12) != 0) {
 				gv = rightConnect? GV_MEDIAL : GV_INITIAL;
 				rightConnect = true;
 			} else {
 				gv = rightConnect? GV_FINAL : GV_ISOLATED;
 				rightConnect = false;
 			}
-			if (i>0) ret += UnicodeTranslation.getCharVariant(lret.substr(i-1, 1), gv);
-			ret += lret.substr(i, j-i-1);
+			ret += chr + lret.substr(i+1, j-i-1);
 			i = j;
 		}
-		return new TextMappedModification(ret, positionsDiff);
+		return new TextMappedModification(t, ret, positionsDiff, vars.slice(1, -1));
 	}
 
 	private static function checkTextLength(text : String) : Array<Array<String>> {
@@ -268,107 +335,249 @@ class TextClip extends NativeWidgetClip {
 			text.length > 0 ? [text] : [];
 	}
 
-	public function getCharXPosition(charIdx: Int) : Float {
-		var pos = -1.0;
+	private static function getAdvancedWidths(key: String, style: TextStyle) : Array<Array<Int>> {
+		if (
+			untyped RenderSupport.WebFontsConfig.custom.metrics.hasOwnProperty(style.fontFamily)
+		&&
+			untyped RenderSupport.WebFontsConfig.custom.metrics[style.fontFamily].advanceWidth.hasOwnProperty(key)
+		)
+			return untyped RenderSupport.WebFontsConfig.custom.metrics[style.fontFamily].advanceWidth[key];
+		var mtxI : Dynamic = pixi.core.text.TextMetrics.measureText(key, style);
+		var mtx3 : Dynamic = pixi.core.text.TextMetrics.measureText("ن"+key+"ن", style);
+		var mtx2 : Dynamic = pixi.core.text.TextMetrics.measureText("نن", style);
+		var iso : Array<Int> = [untyped Math.round(mtxI.width * UPM / style.fontSize / key.length)];
+		var med : Array<Int> = [untyped Math.round((mtx3.width-mtx2.width) * UPM / style.fontSize / key.length)];
 
+		// Function getCharAvailableVariants returns flags, so 15 means there are 4 variants.
+		if (key.length!=1 || UnicodeTranslation.getCharAvailableVariants(key)!=15) {
+			// Ligatures have only two variants, so initial=isolated and medial=final.
+			while (iso.length < key.length) {
+				iso.push(iso[0]);
+				med.push(med[0]);
+			}
+			return [iso, med, iso, med];
+		}
+		// Further is approximation, because no metrics in config, and no way
+		// to measure exact glyphs via pixijs. I discovered that final and isolated
+		// are near in width, and initial and medial also near.
+		return [iso, iso, med, med];
+	}
+
+	// Given len is supposed to be measured from the beginning.
+	private static function getAdvancedWidthsCorrection(tm: TextMappedModification, style: TextStyle, textLen: Int, glyphsLen: Int, inGlyphBack: Int) : Int {
+		if (textLen < 1 || glyphsLen < 1) return 0;
+		var variant : Int = tm.variants[glyphsLen-1];
+		if (variant <= 1 && inGlyphBack == 0) return 0;
+		// Last char is initial or medial — will be mistakenly measured as
+		// isolated or final — correction needed.
+		var key : String = tm.text.substr(textLen-1, 1 + tm.difPositionMapping[glyphsLen-1]);
+		var nMetrics : Array<Array<Int>> = getAdvancedWidths(key, style);
+		if (key != tm.text.substr(textLen-1, 1)) {
+			key = tm.text.substr(textLen-1, 1 + tm.difPositionMapping[glyphsLen-1] - inGlyphBack);
+			var oMetrics : Array<Array<Int>> = getAdvancedWidths(key, style);
+			return nMetrics[variant][0]-oMetrics[variant&1][0];
+		}
+		return nMetrics[variant][0]-nMetrics[variant&1][0];
+	}
+
+	public static function measureTextModFrag(tm: TextMappedModification, style: TextStyle, b: Int, e: Int) : Float {
+		var bochi = -1;
+		var bgchi = -1;
+		var egchi = 0;
+		var eochi = 0;
+		var bgb = 0;
+		var egb = 0;
+		while (eochi < e) {
+			eochi += 1 + tm.difPositionMapping[egchi];
+			egchi += 1;
+			if (eochi >= b && bochi < 0) {
+				bochi = eochi;
+				bgchi = egchi;
+			}
+		}
+		if (bochi<0) { bochi = 0; bgchi = 0; }
+		if (bochi>b) { --bochi; ++bgb; }
+		if (eochi>e) { --eochi; ++egb; }
+		if (bochi > eochi || bochi < 0) return -1.0;
+		var advanceCorrection : Float = 0.0;
+
+		advanceCorrection = untyped (getAdvancedWidthsCorrection(tm, style, eochi, egchi, egb)-getAdvancedWidthsCorrection(tm, style, bochi, bgchi, bgb)) / UPM * style.fontSize;
+
+		var mtxb : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, bochi), style);
+		var mtxe : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, eochi), style);
+
+		return mtxe.width - mtxb.width + advanceCorrection;
+	}
+
+	public function getCharXPosition(charIdx: Int) : Float {
 		layoutText();
 
 		for (child in children) {
 			var c : Dynamic = child;
-			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
-				var text = "";
-				var chridx : Int = c.orgCharIdxStart;
-				for (i in 0...c.text.length) {
-					if (chridx >= charIdx) break;
-					chridx += 1 + Math.round(c.difPositionMapping[i]);
-					text += c.text.substr(i, 1);
-				}
-				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
-				var result = c.x + mtx.width;
-				if (TextClip.getStringDirection(c.text) == "RTL") {
-					mtx = pixi.core.text.TextMetrics.measureText(c.text, c.style);
-					return c.width - result;
-				}
+
+			if (c.text == null) {
+				continue;
+			}
+
+			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd >= charIdx) {
+				var result : Float = measureTextModFrag(c.modification, c.style, 0, untyped charIdx-c.orgCharIdxStart);
+				var ctext = bidiUndecorate(c.text);
+				if (ctext[1] == 'rtl') return c.width - result;
 				return result;
 			}
 		}
 		return -1.0;
 	}
 
+	private static function adaptWhitespaces(textContent : String) : String {
+		// Replacing leading space with non-breaking space and tabs with spaces.
+		return StringTools.replace(StringTools.startsWith(textContent, ' ') ? ' ' + textContent.substring(1) : textContent, "\t", " ");
+	}
+
 	public override function updateNativeWidgetStyle() : Void {
-		super.updateNativeWidgetStyle();
-
-		nativeWidget.setAttribute("type", type);
-		nativeWidget.value = text;
-		nativeWidget.style.color = style.fill;
-		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';
-		nativeWidget.style.fontFamily = style.fontFamily;
-		nativeWidget.style.fontWeight = style.fontWeight;
-		nativeWidget.style.fontStyle = style.fontStyle;
-		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${cast(style.fontSize, Float) * 1.15 + interlineSpacing}px';
-		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
-		nativeWidget.readOnly = readOnly;
-		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
-
-		nativeWidget.style.direction = switch (textDirection) {
-			case 'RTL' : 'rtl';
-			case 'rtl' : 'rtl';
-			default : 'ltr';
+		if (metrics == null && !isInput && escapeHTML) {
+			return;
 		}
 
+		super.updateNativeWidgetStyle();
+		var alpha = this.getNativeWidgetAlpha();
+
+		if (isInput) {
+			nativeWidget.setAttribute("type", type);
+			nativeWidget.value = text;
+			nativeWidget.style.whiteSpace = "pre-wrap";
+			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
+			nativeWidget.readOnly = readOnly;
+
+			if (cursorColor >= 0) {
+				nativeWidget.style.caretColor = RenderSupport.makeCSSColor(cursorColor, cursorOpacity);
+			}
+
+			if (type == 'number') {
+				nativeWidget.step = step;
+			}
+
+			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
+
+			if (maxChars >= 0) {
+				nativeWidget.maxLength = maxChars;
+			}
+
+			if (multiline) {
+				nativeWidget.style.resize = 'none';
+			}
+
+			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+			nativeWidget.style.direction = switch (textDirection) {
+				case 'RTL' : 'rtl';
+				case 'rtl' : 'rtl';
+				default : null;
+			}
+
+			if (Platform.isEdge || Platform.isIE) {
+				var slicedColor : Array<String> = style.fill.split(",");
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
+
+				nativeWidget.style.color = newColor;
+			} else {
+				nativeWidget.style.opacity = isFocused ? alpha : 0;
+				nativeWidget.style.color = style.fill;
+			}
+		} else {
+			if (escapeHTML) {
+				if (Platform.isIE && style.fontFamily == "Material Icons") {
+					nativeWidget.textContent = this.contentGlyphs.modified;
+				} else {
+					var textContent = "";
+
+					var textLines : Array<String> = metrics.lines;
+					for (line in textLines) {
+						textContent = textContent + line + "\n";
+					}
+
+					nativeWidget.textContent = textContent;
+				}
+
+				nativeWidget.style.whiteSpace = "pre";
+				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+					case 'RTL' : 'rtl';
+					case 'rtl' : 'rtl';
+					default : null;
+				}
+			} else {
+				nativeWidget.innerHTML = this.contentGlyphs.modified;
+				nativeWidget.style.whiteSpace = "pre-wrap";
+
+				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
+				for (child in children) {
+					if (child != baselineWidget) {
+						child.className = "inlineWidget";
+					}
+				}
+
+				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+					case 'RTL' : 'rtl';
+					case 'rtl' : 'rtl';
+					default : null;
+				}
+			}
+
+			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
+			nativeWidget.style.color = style.fill;
+		}
+
+		nativeWidget.style.letterSpacing = RenderSupport.RendererType != "html" || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		nativeWidget.style.fontFamily = RenderSupport.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
+		nativeWidget.style.fontWeight = RenderSupport.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
+		nativeWidget.style.fontStyle = RenderSupport.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
+		nativeWidget.style.fontSize = '${style.fontSize}px';
+		nativeWidget.style.background = RenderSupport.RendererType != "html" || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
+
 		nativeWidget.style.textAlign = switch (autoAlign) {
-			case 'AutoAlignLeft' : 'left';
+			case 'AutoAlignLeft' : null;
 			case 'AutoAlignRight' : 'right';
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
-			default : 'left';
+			default : null;
 		}
 
-		if (cursorColor >= 0) {
-			nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
-		}
+		updateBaselineWidget();
+	}
 
-		if (type == 'number') {
-			nativeWidget.step = step;
-		}
-
-		nativeWidget.autocomplete = autocomplete;
-
-		if (maxChars >= 0) {
-			nativeWidget.maxLength = maxChars;
-		}
-
-		if (tabIndex >= 0) {
-			nativeWidget.tabIndex = tabIndex;
-		}
-
-		if (multiline) {
-			nativeWidget.style.resize = 'none';
-			nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-		}
-
-		nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-
-		if (Platform.isEdge || Platform.isIE) {
-			nativeWidget.style.opacity = 1;
-			var slicedColor : Array<String> = style.fill.split(",");
-			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
-
-			nativeWidget.style.color = newColor;
-		} else {
-			nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+	public inline function updateBaselineWidget() : Void {
+		if (RenderSupport.RendererType == "html" && isNativeWidget && needBaseline) {
+			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize)}px';
+				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
+			} else if (baselineWidget.parentNode != null) {
+				baselineWidget.parentNode.removeChild(baselineWidget);
+			}
 		}
 	}
 
-	private function bidiDecorate(text : String) : String {
-		if (textDirection == 'ltr') {
+	public static function bidiDecorate(text : String, dir : String) : String {
+		// I do not know how comes this workaround is needed.
+		// But without it, paragraph has &lt; and &gt; displayed wrong.
+		if (text == "<" || text == ">") return text;
+
+		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
-		} else if (textDirection == 'rtl') {
+		} else if (dir == 'rtl') {
 			return String.fromCharCode(0x202B) + text + String.fromCharCode(0x202C);
 		} else {
 			return text;
 		}
+	}
+
+	private static function bidiUndecorate(text : String) : Array<String> {
+		if (text.charCodeAt(text.length-1) == 0x202C) {
+			if (text.charCodeAt(0) == 0x202A) return [text.substr(1, text.length-2), 'ltr'];
+			if (text.charCodeAt(0) == 0x202B) return [text.substr(1, text.length-2), 'rtl'];
+		}
+		return [text, ''];
 	}
 
 	private static inline function capitalize(s : String) : String {
@@ -416,63 +625,86 @@ class TextClip extends NativeWidgetClip {
 		fontFamilies = fontWeight > 0 || fontSlope != ""
 				? fontFamilies.split(",").map(function (fontFamily) { return recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(",")
 				: fontFamilies;
+		if (Platform.isSafari) {
+			fontSize = Math.round(fontSize);
+		}
 
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
+		this.doNotRemap = fontStyle.doNotRemap;
 
 		style.fontSize = Math.max(fontSize, 0.6);
-		style.fill = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
+		style.fill = RenderSupport.makeCSSColor(fillColor, fillOpacity);
 		style.letterSpacing = letterSpacing;
 		style.fontFamily = fontStyle.family;
 		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		style.lineHeight = fontSize * 1.15 + interlineSpacing;
-		style.wordWrap = wordWrap;
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
-		style.breakWords = cropWords;
+		style.lineHeight = Math.ceil(fontSize * 1.15);
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
-		style.padding = style.fontStyle == 'italic' ? fontSize * 0.1 : 0;
+		style.padding = Math.ceil(fontSize * 0.2);
 
-		fontMetrics = TextMetrics.measureFont(untyped style.toFontString());
+		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
+		this.contentGlyphs = applyTextMappedModification(RenderSupport.RendererType == "html" ? adaptWhitespaces(this.text) : this.text);
+		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
+
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
 		// Force text value right away
-		if (nativeWidget != null) {
+		if (nativeWidget != null && isInput) {
 			nativeWidget.value = text;
+		}
+
+		if (RenderSupport.RendererType == "html") {
+			this.initNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
 		}
 
 		invalidateMetrics();
 	}
 
+	public function setEscapeHTML(escapeHTML : Bool) : Void {
+		if (this.escapeHTML != escapeHTML) {
+			this.escapeHTML = escapeHTML;
+			invalidateMetrics();
+		}
+	}
+
+	public function setNeedBaseline(need : Bool) : Void {
+		if (this.needBaseline != need) {
+			this.needBaseline = need;
+			updateBaselineWidget();
+		}
+	}
+
+	private function measureFont() : Void {
+		style.fontProperties = TextMetrics.measureFont(style.toFontString());
+	}
+
 	private function layoutText() : Void {
 		if (isFocused || text == '') {
 			if (textClip != null) {
-				textClip.setClipRenderable(false);
+				textClip.setClipVisible(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+			var modification : TextMappedModification = this.contentGlyphs;
 			var text = modification.modified;
 			var chrIdx: Int = 0;
-			var texts = wordWrap ? [[text]] : checkTextLength(text);
+			var texts = style.wordWrap ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
 				textClip = createTextClip(
-					new TextMappedModification(
-						texts[0][0],
-						modification.difPositionMapping.slice(0, texts[0][0].length)
-					),
+					modification.substr(0, texts[0][0].length),
 					chrIdx, style
 				);
-				textClip.orgCharIdxStart = chrIdx;
-				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
+			} else {
+				textClip.update(modification.substr(0, texts[0][0].length), style, textDirection);
 			}
+			textClip.orgCharIdxStart = chrIdx;
+			textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 
-			textClip.text = texts[0][0];
-			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
@@ -484,21 +716,21 @@ class TextClip extends NativeWidgetClip {
 
 			if (texts.length > 1 || texts[0].length > 1) {
 				var currentHeight = 0.0;
+				var firstTextClip = true;
 
 				for (line in texts) {
 					var currentWidth = 0.0;
 					var lineHeight = 0.0;
 
 					for (txt in line) {
-						if (txt == texts[0][0]) {
+						if (firstTextClip) {
+							firstTextClip = false;
+
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
 							var newTextClip = createTextClip(
-								new TextMappedModification(
-									txt,
-									modification.difPositionMapping.slice(chrIdx, chrIdx+txt.length)
-								),
+								modification.substr(chrIdx, txt.length),
 								chrIdx, style
 							);
 
@@ -524,26 +756,42 @@ class TextClip extends NativeWidgetClip {
 				default : textDirection == 'rtl' ? 1 : 0;
 			};
 
-			textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
+			textClip.setClipX(anchorX * Math.max(0, this.getWidgetWidth() - getClipWidth()));
+
+			if (style.fontFamily == "Material Icons") {
+				if (style.fontProperties == null) {
+					measureFont();
+				}
+
+				textClip.setClipY(style.fontProperties.descent / (Platform.isIOS ? 2.0 : Platform.isMacintosh ? RenderSupport.backingStoreRatio : 1.0));
+			}
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
-			}
-
-			textClip.setClipRenderable(true);
+			textClip.setClipVisible(true);
 			textClipChanged = false;
 		}
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		textClip = new Text(textMod.modified, style);
+		var textClip = new Text(bidiDecorate(textMod.text, getStringDirection(textMod.modified, textDirection)), style);
 		textClip.charIdx = chrIdx;
-		textClip.difPositionMapping = textMod.difPositionMapping;
+		textClip.modification = textMod;
 		textClip.setClipVisible(true);
 
 		return textClip;
+	}
+
+	public override function invalidateStyle() : Void {
+		if (!doNotInvalidateStage) {
+			if (RenderSupport.RendererType != "html") {
+				if (isInput) {
+					this.setScrollRect(0, 0, getWidth(), getHeight());
+				}
+			}
+
+			super.invalidateStyle();
+		}
 	}
 
 	public function invalidateMetrics() : Void {
@@ -594,16 +842,21 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public  function setWordWrap(wordWrap : Bool) : Void {
-		if (this.wordWrap != wordWrap) {
-			this.wordWrap = wordWrap;
+		if (style.wordWrap != wordWrap) {
 			style.wordWrap = wordWrap;
 
 			invalidateMetrics();
 		}
 	}
 
+	public  function setDoNotInvalidateStage(doNotInvalidateStage : Bool) : Void {
+		if (this.doNotInvalidateStage != doNotInvalidateStage) {
+			this.doNotInvalidateStage = doNotInvalidateStage;
+		}
+	}
+
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -642,9 +895,8 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
-		if (this.interlineSpacing != interlineSpacing) {
-			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = cast(style.fontSize, Float) * 1.15 + interlineSpacing;
+		if (style.leading != interlineSpacing) {
+			style.leading = interlineSpacing;
 
 			invalidateMetrics();
 		}
@@ -653,6 +905,21 @@ class TextClip extends NativeWidgetClip {
 	public function setTextDirection(textDirection : String) : Void {
 		if (this.textDirection != textDirection) {
 			this.textDirection = textDirection.toLowerCase();
+			this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
+
+			invalidateStyle();
+			invalidateMetrics();
+			layoutText();
+		}
+	}
+
+	public function getTextDirection() : String {
+		return this.textDirection != '' ? this.textDirection : this.contentGlyphsDirection;
+	}
+
+	public function setResolution(resolution : Float) : Void {
+		if (style.resolution != resolution) {
+			style.resolution = resolution;
 
 			invalidateStyle();
 		}
@@ -703,16 +970,32 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
-		createNativeWidget(multiline ? 'textarea' : 'input');
+		this.keepNativeWidget = true;
+		this.updateKeepNativeWidgetChildren();
+		this.initNativeWidget(multiline ? 'textarea' : 'input');
+		isInteractive = true;
+		this.invalidateInteractive();
 
-		nativeWidget.onmousemove = onMouseMove;
-		nativeWidget.onmousedown = onMouseDown;
-		nativeWidget.onmouseup = onMouseUp;
+		if (Platform.isMobile) {
+			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+				nativeWidget.onpointermove = onMouseMove;
+				nativeWidget.onpointerdown = onMouseDown;
+				nativeWidget.onpointerup = onMouseUp;
 
-		if (Native.isTouchScreen()) {
+				untyped __js__("this.nativeWidget.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
+			}
+
+			nativeWidget.ontouchmove = onMouseMove;
 			nativeWidget.ontouchstart = onMouseDown;
 			nativeWidget.ontouchend = onMouseUp;
-			nativeWidget.ontouchmove = onMouseMove;
+		} else if (Platform.isSafari) {
+			nativeWidget.onmousemove = onMouseMove;
+			nativeWidget.onmousedown = onMouseDown;
+			nativeWidget.onmouseup = onMouseUp;
+		} else {
+			nativeWidget.onpointermove = onMouseMove;
+			nativeWidget.onpointerdown = onMouseDown;
+			nativeWidget.onpointerup = onMouseUp;
 		}
 
 		nativeWidget.onfocus = onFocus;
@@ -753,14 +1036,30 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function onMouseMove(e : MouseEvent) {
+	private function onMouseMove(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupport.MousePos.x = e.touches[0].pageX;
+				RenderSupport.MousePos.y = e.touches[0].pageY;
 
-		RenderSupportJSPixi.provideEvent(e);
+				RenderSupport.PixiStage.emit("mousemove");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupport.MousePos.x = e.pageX;
+			RenderSupport.MousePos.y = e.pageY;
+
+			RenderSupport.PixiStage.emit("mousemove");
+		}
+
+		nativeWidget.style.cursor = RenderSupport.PixiView.style.cursor;
+
+		e.stopPropagation();
 	}
 
 	private function onMouseDown(e : Dynamic) {
@@ -769,36 +1068,111 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
 
-			if (RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, point, true, true) != this) {
+			RenderSupport.MousePos.x = point.x;
+			RenderSupport.MousePos.y = point.y;
+
+			if (RenderSupport.getClipAt(RenderSupport.PixiStage, RenderSupport.MousePos, true, true) != this) {
 				e.preventDefault();
 			}
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		if (e.touches != null) {
+			if (e.touches.length == 1) {
+				RenderSupport.MousePos.x = e.touches[0].pageX;
+				RenderSupport.MousePos.y = e.touches[0].pageY;
+
+				if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+			} else if (e.touches.length > 1) {
+				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+			}
+		} else {
+			RenderSupport.MousePos.x = e.pageX;
+			RenderSupport.MousePos.y = e.pageY;
+
+			if (e.which == 3 || e.button == 2) {
+				RenderSupport.PixiStage.emit("mouserightdown");
+			} else if (e.which == 2 || e.button == 1) {
+				RenderSupport.PixiStage.emit("mousemiddledown");
+			} else {
+				if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+			}
+		}
+
+		e.stopPropagation();
 	}
 
-	private function onMouseUp(e : MouseEvent) {
+	private function onMouseUp(e : Dynamic) {
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
-		RenderSupportJSPixi.provideEvent(e);
+		RenderSupport.MousePos.x = e.pageX;
+		RenderSupport.MousePos.y = e.pageY;
+
+		if (e.which == 3 || e.button == 2) {
+			RenderSupport.PixiStage.emit("mouserightup");
+		} else if (e.which == 2 || e.button == 1) {
+			RenderSupport.PixiStage.emit("mousemiddleup");
+		} else {
+			if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+		}
+
+		e.stopPropagation();
 	}
 
 	private function onFocus(e : Event) : Void {
 		isFocused = true;
+
+		if (RenderSupport.Animating) {
+			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
+
+		if (Platform.isEdge || Platform.isIE) {
+			var slicedColor : Array<String> = style.fill.split(",");
+			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
+
+			nativeWidget.style.color = newColor;
+		}
+
 		emit('focus');
 
 		if (parent != null) {
 			parent.emitEvent('childfocused', this);
 		}
 
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
+
+		if (Platform.isIOS && Platform.browserMajorVersion < 13) {
+			RenderSupport.ensureCurrentInputVisible();
+		}
+
 		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
+		if (untyped RenderSupport.Animating || this.preventBlur) {
+			untyped this.preventBlur = false;
+			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			return;
+		}
+
 		isFocused = false;
+
+		if (Platform.isEdge || Platform.isIE) {
+			var slicedColor : Array<String> = style.fill.split(",");
+			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
+
+			nativeWidget.style.color = newColor;
+		}
+
 		emit('blur');
+
+		if (nativeWidget == null || parent == null) {
+			return;
+		}
 
 		invalidateMetrics();
 	}
@@ -812,6 +1186,10 @@ class TextClip extends NativeWidgetClip {
 
 		for (f in TextInputFilters) {
 			newValue = f(newValue);
+		}
+
+		if (nativeWidget == null) {
+			return;
 		}
 
 		if (newValue != nativeWidget.value) {
@@ -831,6 +1209,8 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		this.text = newValue;
+		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
+		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 		emit('input', newValue);
 	}
 
@@ -847,12 +1227,12 @@ class TextClip extends NativeWidgetClip {
 
 	private function onKeyDown(e : Dynamic) {
 		if (TextInputKeyDownFilters.length > 0) {
-			var ke : Dynamic = RenderSupportJSPixi.parseKeyEvent(e);
+			var ke : Dynamic = RenderSupport.parseKeyEvent(e);
 
 			for (f in TextInputKeyDownFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
-					RenderSupportJSPixi.emit('keydown', ke);
+					RenderSupport.emit('keydown', ke);
 					break;
 				}
 			}
@@ -864,13 +1244,13 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onKeyUp(e : Dynamic) {
-		var ke : Dynamic = RenderSupportJSPixi.parseKeyEvent(e);
+		var ke : Dynamic = RenderSupport.parseKeyEvent(e);
 		if (TextInputKeyUpFilters.length > 0) {
 
 			for (f in TextInputKeyUpFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
-					RenderSupportJSPixi.emit('keyup', ke);
+					RenderSupport.emit('keyup', ke);
 					break;
 				}
 			}
@@ -895,16 +1275,21 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		return widgetWidth > 0.0 && isInput ? widgetWidth : getClipWidth();
+		return (widgetWidth > 0 ? widgetWidth : getClipWidth());
+	}
+
+	public function getMaxWidth() : Float {
+		updateTextMetrics();
+		return metrics != null ? untyped metrics.maxWidth : 0;
+	}
+
+	public override function getHeight() : Float {
+		return widgetHeight > 0 ? widgetHeight : getClipHeight();
 	}
 
 	private function getClipWidth() : Float {
 		updateTextMetrics();
 		return metrics != null ? untyped metrics.width : 0;
-	}
-
-	public override function getHeight() : Float {
-		return widgetHeight > 0.0 && isInput ? widgetHeight : getClipHeight();
 	}
 
 	private function getClipHeight() : Float {
@@ -914,6 +1299,19 @@ class TextClip extends NativeWidgetClip {
 
 	public function getContent() : String {
 		return text;
+	}
+
+	public function getContentGlyphs() : TextMappedModification {
+		return this.contentGlyphs;
+	}
+
+	private function applyTextMappedModification(text : String) : TextMappedModification {
+		if (isInput && type == "password") {
+			return getBulletsString(text);
+		} else {
+			//return getActualGlyphsString(this.text);  // Maybe worth to return this line for C++ target instead next one which is good for JS target.
+			return TextMappedModification.createInvariantForString(text);
+		}
 	}
 
 	public function getStyle() : TextStyle {
@@ -994,20 +1392,134 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextMetrics() : Void {
-		if (text != "" && cast(style.fontSize, Float) > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
-			metrics = TextMetrics.measureText(text, style);
+		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
+			if (!escapeHTML) {
+				metrics = TextMetrics.measureText(untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
+				if (RenderSupport.RendererType == "html") {
+					measureHTMLWidth();
+				}
+			} else {
+				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
+			}
+
+			metrics.maxWidth = 0.0;
+			var lineWidths : Array<Float> = metrics.lineWidths;
+
+			for (lineWidth in lineWidths) {
+				metrics.maxWidth += lineWidth;
+			}
+
+			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 	}
 
+	private function measureHTMLWidth() : Void {
+		if (nativeWidget == null) {
+			isNativeWidget = true;
+			createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
+		}
+
+		var textNodeMetrics : Dynamic = null;
+		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
+		var parentNode : Dynamic = nativeWidget.parentNode;
+		var nextSibling : Dynamic = nativeWidget.nextSibling;
+
+		updateNativeWidgetStyle();
+		var tempDisplay = nativeWidget.style.display;
+		if (!Platform.isIE) {
+			nativeWidget.style.display = null;
+		}
+
+		if (wordWrap) {
+			nativeWidget.style.width = '${style.wordWrapWidth}px';
+		} else {
+			nativeWidget.style.width = 'max-content';
+		}
+
+		Browser.document.body.appendChild(nativeWidget);
+		textNodeMetrics = getTextNodeMetrics(nativeWidget);
+		if (parentNode != null) {
+			if (nextSibling == null || nextSibling.parentNode != parentNode) {
+				parentNode.appendChild(nativeWidget);
+			} else {
+				parentNode.insertBefore(nativeWidget, nextSibling);
+			}
+		} else {
+			Browser.document.body.removeChild(nativeWidget);
+		}
+
+		nativeWidget.style.display = tempDisplay;
+
+		if (!wordWrap && textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
+			var textNodeWidth = textNodeMetrics.width;
+			metrics.width = textNodeWidth;
+		}
+
+		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0) {
+			var textNodeLines = Math.round(textNodeMetrics.height / metrics.lineHeight);
+			var currentLines = Math.round(metrics.height / metrics.lineHeight);
+
+			if (currentLines > 0 && textNodeLines != currentLines) {
+				metrics.height = metrics.height * textNodeLines / currentLines;
+			}
+		}
+
+		if (RenderSupport.RendererType != "html" && !isInput) {
+			this.deleteNativeWidget();
+		}
+	}
+
+	private static function getTextNodeMetrics(textNode) : Dynamic {
+		var textNodeMetrics : Dynamic = {};
+		if (Browser.document.createRange != null) {
+			var range = Browser.document.createRange();
+			range.selectNodeContents(textNode);
+			if (range.getBoundingClientRect != null) {
+				var rect = range.getBoundingClientRect();
+				if (rect != null) {
+					textNodeMetrics.width = rect.right - rect.left;
+					textNodeMetrics.height = rect.bottom - rect.top;
+				}
+			}
+		}
+		return textNodeMetrics;
+	}
+
 	public function getTextMetrics() : Array<Float> {
-		if (fontMetrics == null) {
-			var ascent = 0.9 * cast(style.fontSize, Float);
-			var descent = 0.1 * cast(style.fontSize, Float);
-			var leading = 0.15 * cast(style.fontSize, Float);
+		if (style.fontProperties == null) {
+			var ascent = 0.9 * style.fontSize;
+			var descent = 0.1 * style.fontSize;
+			var leading = 0.15 * style.fontSize;
 
 			return [ascent, descent, leading];
 		} else {
-			return [fontMetrics.ascent, fontMetrics.descent, fontMetrics.descent];
+			return [
+				style.fontProperties.ascent,
+				style.fontProperties.descent,
+				style.fontProperties.descent
+			];
+		}
+	}
+
+	private override function createNativeWidget(?tagName : String = "p") : Void {
+		if (RenderSupport.RendererType == "html") {
+			if (!isNativeWidget) {
+				return;
+			}
+
+			this.deleteNativeWidget();
+
+			nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
+			this.updateClipID();
+			nativeWidget.classList.add('nativeWidget');
+			nativeWidget.classList.add('textWidget');
+
+			baselineWidget = Browser.document.createElement('span');
+			baselineWidget.classList.add('baselineWidget');
+
+			isNativeWidget = true;
+		} else {
+			super.createNativeWidget(tagName);
 		}
 	}
 }

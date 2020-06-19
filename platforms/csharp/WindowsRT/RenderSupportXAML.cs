@@ -2234,7 +2234,7 @@ namespace Area9Innovation.Flow
 			}
 		}
 
-		public override Object makePicture(String name, bool cache, Func2 metricsFn, Func1 errorFn, bool onlyDownload)
+		public override Object makePicture(String name, bool cache, Func2 metricsFn, Func1 errorFn, bool onlyDownload, String altText)
 		{
 			PictureClip img = new PictureClip(this);
 
@@ -2596,4 +2596,3 @@ namespace Area9Innovation.Flow
 		}
 	}
 }
-

@@ -1,0 +1,68 @@
+import tools/flowc/backends/inca/env;
+import tools/flowc/backends/inca/change_function;
+import tools/flowc/incremental/fi_helpers;
+import math/math;
+
+export {
+	// Generate the perform function, and add to the environment
+	makePerformFunction(env : IncaEnv) -> IncaEnv;
+}
+
+makePerformFunction(env : IncaEnv) -> IncaEnv {
+	actions : Tree<string, FiFunctionDec> = foldTree(env.functions, makeTree(), \name, fn, acc -> {
+		// A single struct/union argument, returning void
+		if (length(fn.type.args) == 1 && getFiTypeName(fn.type.args[0].type) != "" && fn.type.returnType == FiTypeVoid()) {
+			typeName = getFiTypeName(fn.type.args[0].type);
+			setTree(acc, typeName, fn)
+		} else acc;
+	});
+
+	cases = foldTree(actions, [], \type, fn, acc -> {
+		start = fn.declStart;
+		call = FiCall(
+			FiVar(fn.name, fn.type, start),
+			[FiVar("a", FiTypeParameter("?"), start)],
+			FiTypeVoid(), start
+		);
+		msdef = lookupTree(env.structs, type);
+		case = switch (msdef) {
+			None(): {
+				// A Union
+				FiCase(
+					type, [], call, start
+				);
+			}
+			Some(sdef): {
+				FiCase(
+					type, map(sdef.args, \arg -> "__"),
+					call, start
+				)
+			}
+		}
+
+		arrayPush(
+			acc, case
+		);
+	});
+	
+	theSwitch = FiSwitch(FiVar("a", FiTypeParameter("?"), 0), FiTypeParameter("?"), cases, FiTypeVoid(), 0);
+
+	fn = FiFunctionDec(
+		"performIncaEffect",
+		FiLambda(
+			[FiFunArg("a", FiTypeParameter("?"))],
+			theSwitch,
+			FiTypeFunction([FiFunArg("a", FiTypeParameter("?"))], FiTypeVoid()),
+			0
+		),
+		FiTypeFunction([FiFunArg("a", FiTypeParameter("?"))], FiTypeVoid()),
+		0, 0
+	);
+
+	prog = addFiFunction2Program(env.program, fn.name, fn);
+
+	IncaEnv(
+		env with
+		program = prog
+	)
+}

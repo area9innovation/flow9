@@ -242,6 +242,8 @@ std::ostream &operator<< (std::ostream &out, const FlowInstruction &insn)
         break;
     case FlowInstruction::IntPtr:
         out << insn.IntValue << ", ";
+        out << stl_sprintf("0x%08x", FlowPtrToInt(insn.PtrValue));
+        break;
     case FlowInstruction::Ptr:
         out << stl_sprintf("0x%08x", FlowPtrToInt(insn.PtrValue));
         break;
@@ -250,6 +252,8 @@ std::ostream &operator<< (std::ostream &out, const FlowInstruction &insn)
         break;
     case FlowInstruction::IntString:
         out << insn.IntValue << ", ";
+        printQuotedString(out, insn.StrValue);
+        break;
     case FlowInstruction::String:
         printQuotedString(out, insn.StrValue);
         break;

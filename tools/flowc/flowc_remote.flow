@@ -1,0 +1,88 @@
+import text/serialize;
+import net/http;
+import tools/common/config;
+import tools/flowc/flowc_local;
+
+export {
+	// Run a task, described by a config, on a remote flowc server
+	runConfigRemote(
+		config : CompilerConfig, 
+		onData: (flow) -> void, 
+		onError : (string) -> void, 
+		onRunComplete : (int) -> void,
+		onServerError : (int, string) -> void
+	) -> void;
+
+	// Try to run config remote, in case it fails run locally.
+	runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void;
+}
+
+runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
+	if (isConfigParameterFalse(config.config, "server") || !java) {
+		runConfigLocally(config, globalEnv, onRunComplete);
+	} else {
+		runConfigRemote(
+			config, 
+			\msg -> fcPrintln(msg, config.threadId), 
+			\msg -> fcPrintln(msg, config.threadId), 
+			onRunComplete, 
+			\code, msg -> {
+				if (isConfigParameterTrue(config.config, "client-mode")) {
+					fcPrintln("Error " + i2s(code) + ": " + msg, config.threadId);
+				} else {
+					runConfigLocally(config, globalEnv, onRunComplete);
+				}
+			}
+		)
+	}
+}
+
+runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string) -> void, onRunComplete : (int) -> void, onServerError : (int, string) -> void) -> void {
+	serverUrl = 
+		"http://localhost:" +
+		getConfigParameterDef(conf.config, "server-port", "10001");
+	cwd = strReplace(resolveRelativePath("."), "\\", "/");
+	patchedConfig = CompilerConfig(conf with config =
+		setTree(
+			setTree(
+				switch (lookupTree(conf.config, "output-dir")) {
+					Some(__): conf.config;
+					None():   setTree(conf.config, "output-dir", cwd);
+				},
+				"file",
+				conf.flowfile
+			),
+			"working-dir",
+			lookupTreeDef(conf.config, "working-dir", cwd)
+		)
+	);
+	serialized_server_job = 
+		isConfigParameterSet(conf.config, "compile-expression") || 
+		isConfigParameterTrue(conf.config, "dump-program");
+	httpCustomRequest(
+		serverUrl,
+		GET(), [], RequestPayload("config_" + serialize(patchedConfig)),
+		\status, data, headers -> {
+			code = status - 200;
+			if (code == 0) {
+				if (serialized_server_job) {
+					value = deserialize(data, IllegalStruct());
+					if (value == IllegalStruct()) {
+						onError("WARNING: Illegal serialized data in response.");
+					} else {
+						onData(value);
+					}
+				} else {
+					onData(data);
+				}
+				onRunComplete(0);
+			} else if (0 < code && code < 64) {
+				onError("Compilation error " + i2s(code) + "\n" + data);
+				onRunComplete(code);
+			} else {
+				onServerError(status, data);
+			}
+		},
+		false
+	)
+}

@@ -49,9 +49,13 @@ Installation
 
 	git clone https://github.com/area9innovation/flow9
 
-3. Add `flow9\bin` to your path. We also require 64-bit Java Runtime and Python in your path.
+3. Add `flow9\bin` to your path.
 
-4. Cd into the flow9 directory and compile and run the first program:
+4. Install Python 3, and make sure it is in your path.
+
+5. Install OpenJDK 11 or newer. It must be the 64 bit version. For example: https://jdk.java.net/java-se-ri/14
+
+6. Cd into the flow9 directory and compile and run the first program:
 
     c:/flow9> flowcpp demos/demos.flow
 

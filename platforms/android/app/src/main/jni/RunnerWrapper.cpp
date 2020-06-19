@@ -229,6 +229,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbRequestPermissionLocalNotification, "(I)V") \
     CALLBACK(cbScheduleLocalNotification, "(DILjava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V") \
     CALLBACK(cbCancelLocalNotification, "(I)V") \
+    CALLBACK(cbGetFBToken, "(I)V") \
     CALLBACK(cbSubscribeToFBTopic, "(Ljava/lang/String;)V") \
     CALLBACK(cbUnsubscribeFromFBTopic, "(Ljava/lang/String;)V") \
     CALLBACK(cbGeolocationGetCurrentPosition, "(IZDDLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V") \
@@ -254,8 +255,11 @@ static jfieldID c_ptr_field = NULL;
 	CALLBACK(cbSendMessageWSClient, "(Lorg/java_websocket/client/WebSocketClient;Ljava/lang/String;)Z") \
 	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V") \
 	CALLBACK(cbOpenFileDialog, "(I[Ljava/lang/String;I)V") \
-	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;")
-
+	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;") \
+	CALLBACK(cbPrintHTML, "(Ljava/lang/String;)V") \
+	CALLBACK(cbPrintURL, "(Ljava/lang/String;)V") \
+	CALLBACK(cbShowSoftKeyboard, "()V") \
+	CALLBACK(cbHideSoftKeyboard, "()V")
 
 #define CALLBACK(id, type) static jmethodID id = NULL;
 CALLBACKS
@@ -791,6 +795,12 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverFBToken
      WRAPPER(getNotifications()->deliverFBToken(jni2unicode(env, token)));
  }
 
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverFBTokenTo
+   (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring token)
+ {
+     WRAPPER(getNotifications()->deliverFBTokenTo(cb_root, jni2unicode(env, token)));
+ }
+
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGeolocationExecuteOnOkCallback
   (JNIEnv *env, jobject obj, jlong ptr, jint callbacksRoot, jboolean removeAfterCall, jdouble latitude, jdouble longitude, jdouble altitude,
    jdouble accuracy, jdouble altitudeAccuracy, jdouble heading, jdouble speed, jdouble time)
@@ -904,7 +914,7 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverOpenFileDialogRe
 AndroidRunnerWrapper::AndroidRunnerWrapper(JNIEnv *env, jobject owner_obj)
     : env(env), owner(owner_obj),
       runner(), renderer(this), http(this), sound(this), localytics(this), purchase(this), notifications(this), store(&runner),
-      geolocation(this), fsinterface(this), mediaStream(this), webrtcSupport(this), mediaRecorder(this), websockets(this)
+      geolocation(this), fsinterface(this), printing(this), mediaStream(this), webrtcSupport(this), mediaRecorder(this), websockets(this)
 {
     bytecode_ok = main_ok = false;
     flow_time_profiling_enabled = false;
@@ -986,7 +996,6 @@ jboolean AndroidRunnerWrapper::runMain()
     //params[parseUtf8("source")] = parseUtf8("nejm_knowledge");
     //params[parseUtf8("prod")] = parseUtf8("IM");
     runner.RunMain();
-
     return (jboolean) (main_ok = !runner.IsErrorReported());
 }
 
@@ -1213,6 +1222,9 @@ NativeFunction *AndroidRenderSupport::MakeNativeFunction(const char *name, int n
 
     TRY_USE_NATIVE_METHOD(AndroidRenderSupport, timer, 2);
 
+    TRY_USE_NATIVE_METHOD(AndroidRenderSupport, showSoftKeyboard, 0);
+    TRY_USE_NATIVE_METHOD(AndroidRenderSupport, hideSoftKeyboard, 0);
+
     return GLRenderSupport::MakeNativeFunction(name, num_args);
 }
 
@@ -1261,6 +1273,22 @@ void AndroidRenderSupport::deliverTimer(jint id)
         getFlowRunner()->EvalFunction(cb, 0);
         getFlowRunner()->NotifyHostEvent(HostEventTimer);
     }
+}
+
+StackSlot AndroidRenderSupport::showSoftKeyboard(RUNNER_ARGS)
+{
+    JNIEnv *env = owner->env;
+    env->CallVoidMethod(owner->owner, cbShowSoftKeyboard);
+    owner->eatExceptions();
+    RETVOID;
+}
+
+StackSlot AndroidRenderSupport::hideSoftKeyboard(RUNNER_ARGS)
+{
+    JNIEnv *env = owner->env;
+    env->CallVoidMethod(owner->owner, cbHideSoftKeyboard);
+    owner->eatExceptions();
+    RETVOID;
 }
 
 void AndroidRenderSupport::GetTargetTokens(std::set<std::string> &tokens)
@@ -1336,7 +1364,7 @@ void AndroidTextureImage::loadData() {
 }
 
 AndroidTextureImage::AndroidTextureImage(AndroidRunnerWrapper *owner, ivec2 size, jobject bmp)
-    : GLTextureImage(size), owner(owner), bitmap(owner->env->NewGlobalRef(bmp))
+    : GLTextureBitmap(size, GL_RGBA, false, false), owner(owner), bitmap(owner->env->NewGlobalRef(bmp))
 {
 }
 
@@ -1348,7 +1376,7 @@ AndroidTextureImage::~AndroidTextureImage()
 jboolean AndroidRenderSupport::resolvePictureBitmap(jstring url, jobject bitmap, jint w, jint h)
 {
     JNIEnv *env = owner->env;
-    GLTextureImage::Ptr ptr(new AndroidTextureImage(owner, ivec2(w,h), bitmap));
+    GLTextureBitmap::Ptr ptr(new AndroidTextureImage(owner, ivec2(w,h), bitmap));
     return (jboolean) resolvePicture(jni2unicode(env, url), ptr);
 }
 
@@ -2211,6 +2239,13 @@ void AndroidNotificationsSupport::doCancelLocalNotification(int notificationId)
     owner->eatExceptions();
 }
 
+void AndroidNotificationsSupport::doGetFBToken(int cb_root)
+{
+    JNIEnv* env = owner->env;
+    env->CallVoidMethod(owner->owner, cbGetFBToken, cb_root);
+    owner->eatExceptions();
+}
+
 void AndroidNotificationsSupport::doSubscribeToFBTopic(unicode_string name)
 {
     JNIEnv* env = owner->env;
@@ -2641,3 +2676,31 @@ std::string AndroidFileSystemInterface::doFileType(const StackSlot &file)
     env->DeleteLocalRef(filepath);
     return mimetype;
 }
+
+AndroidPrintingSupport::AndroidPrintingSupport(AndroidRunnerWrapper *owner) : PrintingSupport(&owner->runner), owner(owner)
+{
+
+}
+
+void AndroidPrintingSupport::doPrintHTMLDocument(unicode_string html)
+{
+    JNIEnv *env = owner->env;
+    jstring html_s = string2jni(env, html);
+
+    env->CallVoidMethod(owner->owner, cbPrintHTML, html_s);
+
+    env->DeleteLocalRef(html_s);
+    owner->eatExceptions();
+}
+
+void AndroidPrintingSupport::doPrintDocumentFromURL(unicode_string url)
+{
+    JNIEnv *env = owner->env;
+    jstring url_s = string2jni(env, url);
+
+    env->CallVoidMethod(owner->owner, cbPrintURL, url_s);
+
+    env->DeleteLocalRef(url_s);
+    owner->eatExceptions();
+}
+

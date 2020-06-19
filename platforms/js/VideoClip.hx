@@ -1,6 +1,10 @@
 import js.Browser;
 import js.html.Element;
+import js.Promise;
 
+import pixi.core.display.Bounds;
+import pixi.core.display.DisplayObject;
+import pixi.core.math.shapes.Rectangle;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
@@ -9,8 +13,6 @@ import pixi.core.renderers.canvas.CanvasRenderer;
 using DisplayObjectHelper;
 
 class VideoClip extends FlowContainer {
-	private var nativeWidget : Dynamic;
-
 	private var metricsFn : Float -> Float -> Void;
 	private var playFn : Bool -> Void;
 	private var durationFn : Float -> Void;
@@ -26,22 +28,41 @@ class VideoClip extends FlowContainer {
 	private var fontFamily : String = '';
 	private var textField : TextClip;
 	private var loaded : Bool = false;
+	private var subtitleAlignBottom : Bool = false;
+	private var subtitleBottomBorder : Float = 2.0;
+	private var subtitlesScaleMode : Bool = false;
+	private var subtitlesScaleModeMin : Float = -1.0;
+	private var subtitlesScaleModeMax : Float = -1.0;
+	private var autoPlay : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
-	public static var CanAutoPlay = false;
-
-	public function getWidth() : Float {
-		return nativeWidget != null ? nativeWidget.width : 0;
-	}
-
-	public function getHeight() : Float {
-		return nativeWidget != null ? nativeWidget.height : 0;
-	}
+	private var videoWidget : Dynamic;
+	private var widgetBounds = new Bounds();
 
 	public static inline function NeedsDrawing() : Bool {
-		if (playingVideos.filter(function (v) { return v.getClipWorldVisible(); }).length > 0) {
+		var playingVideosFiltered =
+			playingVideos.filter(function (v) {
+				var videoWidget = v.videoWidget;
+				if (videoWidget == null) {
+					return false;
+				}
+				v.checkTimeRange(videoWidget.currentTime, true);
+
+				if (RenderSupport.RendererType != "html") {
+					if (videoWidget.width != videoWidget.videoWidth || videoWidget.height != videoWidget.videoHeight) {
+						videoWidget.dispatchEvent(new js.html.Event("resize"));
+					}
+				}
+
+				return v.getClipRenderable();
+			});
+
+		if (playingVideosFiltered.length > 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
+			for (v in playingVideosFiltered) {
+				v.invalidateTransform();
+			}
 			return true;
 		}
 
@@ -51,38 +72,30 @@ class VideoClip extends FlowContainer {
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
 		super();
 
+		this.keepNativeWidget = true;
 		this.metricsFn = metricsFn;
 		this.playFn = playFn;
 		this.durationFn = durationFn;
 		this.positionFn = positionFn;
 	}
 
-	public function updateNativeWidget() {
-		if (!nativeWidget.paused) {
-			checkTimeRange(nativeWidget.currentTime, true);
-			if (nativeWidget.width != nativeWidget.videoWidth || nativeWidget.height != nativeWidget.videoHeight) {
-				nativeWidget.dispatchEvent(new js.html.Event("resize"));
-			}
-		}
-	}
-
 	private function checkTimeRange(currentTime : Float, videoResponse : Bool) : Void {
 		try { // Crashes in IE sometimes
-			if (currentTime < startTime && startTime < nativeWidget.duration) {
-				nativeWidget.currentTime = startTime;
-				positionFn(nativeWidget.currentTime);
+			if (currentTime < startTime && startTime < videoWidget.duration) {
+				videoWidget.currentTime = startTime;
+				positionFn(videoWidget.currentTime);
 			} else if (endTime > 0 && endTime > startTime && currentTime >= endTime) {
-				if (nativeWidget.paused) {
-					nativeWidget.currentTime = endTime;
+				if (videoWidget.paused) {
+					videoWidget.currentTime = endTime;
 				} else {
-					nativeWidget.currentTime = startTime;
-					if (!nativeWidget.loop) nativeWidget.pause();
+					videoWidget.currentTime = startTime;
+					if (!videoWidget.loop) videoWidget.pause();
 				}
-				positionFn(nativeWidget.currentTime);
+				positionFn(videoWidget.currentTime);
 			} else if (videoResponse) {
-				positionFn(nativeWidget.currentTime);
+				positionFn(videoWidget.currentTime);
 			} else {
-				nativeWidget.currentTime = currentTime;
+				videoWidget.currentTime = currentTime;
 			}
 		} catch (e : Dynamic) {}
 	}
@@ -90,50 +103,47 @@ class VideoClip extends FlowContainer {
 	private function createVideoClip(filename : String, startPaused : Bool) : Void {
 		deleteVideoClip();
 
+		autoPlay = !startPaused;
 		addVideoSource(filename, "");
+		videoWidget = Browser.document.createElement("video");
 
-		nativeWidget = Browser.document.createElement("video");
-		nativeWidget.crossorigin = Util.determineCrossOrigin(filename);
-		nativeWidget.autoplay = !startPaused;
-		nativeWidget.setAttribute('playsinline', true);
+		if (RenderSupport.RendererType == "html") {
+			this.initNativeWidget("div");
+			nativeWidget.appendChild(videoWidget);
+		}
+
+		videoWidget.crossOrigin = Util.determineCrossOrigin(filename);
+		videoWidget.className = 'nativeWidget';
+		videoWidget.setAttribute('playsinline', true);
+		videoWidget.style.pointerEvents = 'none';
 
 		for (source in sources) {
-			nativeWidget.appendChild(source);
+			videoWidget.appendChild(source);
 		}
 
-		if (nativeWidget.autoplay) {
-			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
+		if (RenderSupport.RendererType != "html") {
+			videoTexture = Texture.fromVideo(videoWidget);
+			untyped videoTexture.baseTexture.autoUpdate = false;
+			videoSprite = new Sprite(videoTexture);
+			untyped videoSprite._visible = true;
+			addChild(videoSprite);
 		}
-
-		videoTexture = Texture.fromVideo(nativeWidget);
-		untyped videoTexture.baseTexture.autoPlay = !startPaused;
-		untyped videoTexture.baseTexture.autoUpdate = false;
-		videoSprite = new Sprite(videoTexture);
-		untyped videoSprite._visible = true;
-		addChild(videoSprite);
-
-		RenderSupportJSPixi.on("drawframe", updateNativeWidget);
-		once("removed", deleteVideoClip);
 
 		createStreamStatusListeners();
 		createFullScreenListeners();
 
-		if (!startPaused && !CanAutoPlay)
-			playFn(false);
+		once("removed", deleteVideoClip);
 	}
 
 	private function deleteVideoClip() : Void {
-		if (nativeWidget != null) {
-			nativeWidget.autoplay = false;
+		if (videoWidget != null) {
 			pauseVideo();
 
 			// Force video unload
 			for (source in sources) {
-				nativeWidget.removeChild(source);
+				videoWidget.removeChild(source);
 			}
-			nativeWidget.load();
-
-			RenderSupportJSPixi.off("drawframe", updateNativeWidget);
+			videoWidget.load();
 
 			deleteVideoSprite();
 			deleteSubtitlesClip();
@@ -141,33 +151,64 @@ class VideoClip extends FlowContainer {
 			destroyStreamStatusListeners();
 			destroyFullScreenListeners();
 
-			if (nativeWidget != null) {
-				var parentNode = nativeWidget.parentNode;
+			if (videoWidget != null) {
+				var parentNode = videoWidget.parentNode;
 
 				if (parentNode != null) {
-					parentNode.removeChild(nativeWidget);
+					parentNode.removeChild(videoWidget);
 				}
 
-				nativeWidget = null;
+				videoWidget = null;
 			}
 		}
 
 		loaded = false;
 	}
 
+	public function updateNativeWidget() : Void {
+		if (visible) {
+			this.updateNativeWidgetTransformMatrix();
+			this.updateNativeWidgetOpacity();
+			this.updateNativeWidgetMask();
+			nativeWidget.style.transform = 'none';
+
+			var width = Math.round(this.getWidth() * untyped this.transform.scale.x);
+			var height = Math.round(this.getHeight() * untyped this.transform.scale.y);
+
+			videoWidget.width = width;
+			videoWidget.height = height;
+
+			videoWidget.setAttribute('width', '${width}');
+			videoWidget.setAttribute('height', '${height}');
+			videoWidget.style.width = '${width}px';
+			videoWidget.style.height = '${height}px';
+			if (untyped this.transform.scale.x == untyped this.transform.scale.y) {
+				videoWidget.style.objectFit = '';
+			} else {
+				videoWidget.style.objectFit = 'fill';
+			}
+
+			updateSubtitlesClip();
+
+			this.updateNativeWidgetInteractive();
+		}
+
+		this.updateNativeWidgetDisplay();
+	}
+
 	public function getDescription() : String {
-		return nativeWidget != null ? 'VideoClip (url = ${nativeWidget.url})' : '';
+		return videoWidget != null ? 'VideoClip (url = ${videoWidget.url})' : '';
 	}
 
 	public function setVolume(volume : Float) : Void {
-		if (nativeWidget != null) {
-			nativeWidget.volume = volume;
+		if (videoWidget != null) {
+			videoWidget.volume = volume;
 		}
 	}
 
 	public function setLooping(loop : Bool) : Void {
-		if (nativeWidget != null) {
-			nativeWidget.loop = loop;
+		if (videoWidget != null) {
+			videoWidget.loop = loop;
 		}
 	}
 
@@ -177,13 +218,13 @@ class VideoClip extends FlowContainer {
 
 	public function playVideoFromMediaStream(mediaStream : js.html.MediaStream, startPaused : Bool) : Void {
 		createVideoClip("", startPaused);
-		nativeWidget.srcObject = mediaStream;
+		videoWidget.srcObject = mediaStream;
 	}
 
 	public function setTimeRange(start : Float, end : Float) : Void {
 		startTime = start >= 0 ? start : 0;
-		endTime = end > startTime ? end : nativeWidget.duration;
-		checkTimeRange(nativeWidget.currentTime, true);
+		endTime = end > startTime ? end : videoWidget.duration;
+		checkTimeRange(videoWidget.currentTime, true);
 	}
 
 	public function setCurrentTime(time : Float) : Void {
@@ -191,43 +232,81 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function setVideoSubtitle(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
-		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
 		if (text == '') {
 			deleteSubtitlesClip();
 		} else {
-			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity,
+				alignBottom, bottomBorder, scaleMode, scaleModeMin, scaleModeMax, escapeHTML);
 		};
 	}
 
 	public function setPlaybackRate(rate : Float) : Void {
-		if (nativeWidget != null) {
-			nativeWidget.playbackRate = rate;
+		if (videoWidget != null) {
+			videoWidget.playbackRate = rate;
 		}
 	}
 
 	private function setVideoSubtitleClip(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
-		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
 		if (fontFamily != fontfamily && fontfamily != '') {
 			fontFamily = fontfamily;
 			deleteSubtitlesClip();
 		}
 
 		createSubtitlesClip();
-		textField.setTextAndStyle(' ' + text + ' ', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+
+		textField.setAutoAlign('AutoAlignCenter');
+		textField.setNeedBaseline(false);
+		textField.setTextAndStyle(' ' + text + '\u00A0', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		textField.setEscapeHTML(escapeHTML);
+		subtitleAlignBottom = alignBottom;
+		if (bottomBorder >= 0) subtitleBottomBorder = bottomBorder;
+		subtitlesScaleMode = scaleMode;
+		subtitlesScaleModeMin = scaleModeMin;
+		subtitlesScaleModeMax = scaleModeMax;
+
 		updateSubtitlesClip();
 	}
 
 	private function createSubtitlesClip() : Void {
 		if (textField == null) {
 			textField = new TextClip();
+			textField.setWordWrap(true);
 			addChild(textField);
 		};
 	}
 
 	private function updateSubtitlesClip() : Void {
-		if (nativeWidget != null) {
-			textField.setClipX((nativeWidget.width - textField.getWidth()) / 2.0);
-			textField.setClipY(nativeWidget.height - textField.getHeight() - 2.0);
+		if (videoWidget != null && textField != null) {
+			if (videoWidget.width == 0) {
+				textField.setClipVisible(false);
+			} else {
+				textField.setClipVisible(true);
+
+				var xScale = if (subtitlesScaleMode) untyped this.transform.scale.x else 1.0;
+				var yScale = if (subtitlesScaleMode) untyped this.transform.scale.y else 1.0;
+				if (subtitlesScaleModeMin != -1.0) {
+					xScale = Math.max(xScale, subtitlesScaleModeMin);
+					yScale = Math.max(yScale, subtitlesScaleModeMin);
+				}
+				if (subtitlesScaleModeMax != -1.0) {
+					xScale = Math.min(xScale, subtitlesScaleModeMax);
+					yScale = Math.min(yScale, subtitlesScaleModeMax);
+				}
+				textField.setClipScaleX(xScale);
+				textField.setClipScaleY(yScale);
+
+				textField.setWidth(0.0);
+				textField.setWidth(Math.min(textField.getWidth(), videoWidget.width / xScale));
+
+				textField.setClipX((videoWidget.width - textField.getWidth() * xScale) / 2.0);
+				textField.setClipY(videoWidget.height - textField.getHeight() * yScale - subtitleBottomBorder * yScale + (subtitleAlignBottom ? this.y : 0.0));
+
+				textField.invalidateTransform("updateSubtitlesClip");
+			}
 		}
 	}
 
@@ -250,94 +329,135 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function getCurrentTime() : Float {
-		return nativeWidget != null ? nativeWidget.currentTime : 0;
+		return videoWidget != null ? videoWidget.currentTime : 0;
 	}
 
 	public function pauseVideo() : Void {
-		if (loaded && !nativeWidget.paused) {
-		 	nativeWidget.pause();
-			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
+		if (loaded && !videoWidget.paused) {
+			videoWidget.pause();
+			playingVideos.remove(this);
 		}
 	}
 
 	public function resumeVideo() : Void {
-		if (loaded && nativeWidget.paused) {
-			nativeWidget.play();
-			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
+		if (loaded && videoWidget.paused) {
+			var playPromise : Promise<Dynamic> = videoWidget.play();
+			if (playPromise != null) {
+				playPromise.then(
+					function(arg : Dynamic) {
+						playingVideos.push(this);
+					},
+					function(e) {
+						playFn(false);
+					}
+				);
+			} else {
+				playingVideos.push(this);
+			}
 		}
 	}
 
 	private function onMetadataLoaded() {
-		durationFn(nativeWidget.duration);
+		durationFn(videoWidget.duration);
 
 		updateVideoMetrics();
 
-		checkTimeRange(nativeWidget.currentTime, true);
+		videoWidget.currentTime = 0;
+		checkTimeRange(videoWidget.currentTime, true);
 
-		invalidateStage(); // Update the widget
-
-		if (!nativeWidget.autoplay) nativeWidget.pause();
+		this.invalidateTransform('onMetadataLoaded'); // Update the widget
 
 		if (textField != null) {
-			swapChildren(videoSprite, textField);
+			if (RenderSupport.RendererType != "html" && getChildIndex(videoSprite) > getChildIndex(textField)) {
+				swapChildren(videoSprite, textField);
+			}
+
 			updateSubtitlesClip();
 		};
 
+		if (RenderSupport.RendererType != "html") {
+			videoTexture.update();
+		}
+
 		loaded = true;
+
+		if (autoPlay) {
+			resumeVideo();
+		} else {
+			videoWidget.pause();
+		}
 	}
 
 	private function updateVideoMetrics() {
-		nativeWidget.width = nativeWidget.videoWidth;
-		nativeWidget.height = nativeWidget.videoHeight;
-		videoTexture.update();
-		metricsFn(nativeWidget.videoWidth, nativeWidget.videoHeight);
+		metricsFn(videoWidget.videoWidth, videoWidget.videoHeight);
+
+		calculateWidgetBounds();
+		this.invalidateTransform('updateVideoMetrics');
+
+		if (RenderSupport.RendererType == "html") {
+			videoWidget.style.width = '${this.getWidth()}px';
+			videoWidget.style.height = '${this.getHeight()}px';
+		} else {
+			videoWidget.width = videoWidget.videoWidth;
+			videoWidget.height = videoWidget.videoHeight;
+			videoTexture.update();
+		}
 	}
 
 	private function onStreamLoaded() : Void {
-		streamStatusListener.map(function (l) { l("NetStream.Play.Start"); });
+		for (l in streamStatusListener) {
+			l("NetStream.Play.Start");
+		}
 	}
 
 	private function onStreamEnded() : Void {
-		if (!nativeWidget.autoplay) {
-			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
+		if (!videoWidget.loop) {
+			playingVideos.remove(this);
 		}
 
-		streamStatusListener.map(function (l) { l("NetStream.Play.Stop"); });
+		for (l in streamStatusListener) {
+			l("NetStream.Play.Stop");
+		}
 	}
 
 	private function onStreamError() : Void {
-		streamStatusListener.map(function (l) { l("NetStream.Play.StreamNotFound"); });
+		for (l in streamStatusListener) {
+			l("NetStream.Play.StreamNotFound");
+		}
 	}
 
 	private function onStreamPlay() : Void {
-		if (nativeWidget != null && !nativeWidget.paused) {
-			streamStatusListener.map(function (l) { l("FlowGL.User.Resume"); });
+		if (videoWidget != null && !videoWidget.paused) {
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Resume");
+			}
 
 			playFn(true);
 		}
 	}
 
 	private function onStreamPause() : Void {
-		if (nativeWidget != null && nativeWidget.paused) {
-			streamStatusListener.map(function (l) { l("FlowGL.User.Pause"); });
+		if (videoWidget != null && videoWidget.paused) {
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Pause");
+			}
 
 			playFn(false);
 		}
 	}
 
 	private function onFullScreen() : Void {
-		if (nativeWidget != null) {
-			RenderSupportJSPixi.fullScreenTrigger();
+		if (videoWidget != null) {
+			RenderSupport.fullScreenTrigger();
 
-			if (RenderSupportJSPixi.IsFullScreen) {
-				Browser.document.body.appendChild(nativeWidget);
+			if (RenderSupport.IsFullScreen) {
+				Browser.document.body.appendChild(videoWidget);
 			} else {
-				Browser.document.body.removeChild(nativeWidget);
+				Browser.document.body.removeChild(videoWidget);
 			}
 
 		}
 	}
-
 
 	public function addStreamStatusListener(fn : String -> Void) : Void -> Void {
 		streamStatusListener.push(fn);
@@ -354,76 +474,100 @@ class VideoClip extends FlowContainer {
 
 		sources.push(source);
 
-		if (nativeWidget != null) {
-			nativeWidget.appendChild(source);
+		if (videoWidget != null) {
+			videoWidget.appendChild(source);
 		}
 	}
 
 	private function createStreamStatusListeners() {
-		if (nativeWidget != null) {
-			nativeWidget.addEventListener('loadedmetadata', onMetadataLoaded, false);
-			nativeWidget.addEventListener('resize', updateVideoMetrics, false);
-			nativeWidget.addEventListener("loadeddata", onStreamLoaded, false);
-			nativeWidget.addEventListener("ended", onStreamEnded, false);
-			nativeWidget.addEventListener("error", onStreamError, false);
-			nativeWidget.addEventListener("play", onStreamPlay, false);
-			nativeWidget.addEventListener("pause", onStreamPause, false);
+		if (videoWidget != null) {
+			videoWidget.addEventListener('loadedmetadata', onMetadataLoaded, false);
+			videoWidget.addEventListener('resize', updateVideoMetrics, false);
+			videoWidget.addEventListener("loadeddata", onStreamLoaded, false);
+			videoWidget.addEventListener("ended", onStreamEnded, false);
+			videoWidget.addEventListener("error", onStreamError, false);
+			videoWidget.addEventListener("play", onStreamPlay, false);
+			videoWidget.addEventListener("pause", onStreamPause, false);
 		}
 	}
 
 	private function destroyStreamStatusListeners() {
-		if (nativeWidget != null) {
-			nativeWidget.removeEventListener('loadedmetadata', onMetadataLoaded);
-			nativeWidget.removeEventListener('resize', updateVideoMetrics);
-			nativeWidget.removeEventListener("loadeddata", onStreamLoaded);
-			nativeWidget.removeEventListener("ended", onStreamEnded);
-			nativeWidget.removeEventListener("error", onStreamError);
-			nativeWidget.removeEventListener("play", onStreamPlay);
-			nativeWidget.removeEventListener("pause", onStreamPause);
+		if (videoWidget != null) {
+			videoWidget.removeEventListener('loadedmetadata', onMetadataLoaded);
+			videoWidget.removeEventListener('resize', updateVideoMetrics);
+			videoWidget.removeEventListener("loadeddata", onStreamLoaded);
+			videoWidget.removeEventListener("ended", onStreamEnded);
+			videoWidget.removeEventListener("error", onStreamError);
+			videoWidget.removeEventListener("play", onStreamPlay);
+			videoWidget.removeEventListener("pause", onStreamPause);
 		}
 	}
 
 	private function createFullScreenListeners() {
-		if (nativeWidget != null) {
+		if (videoWidget != null) {
 			if (Platform.isIOS) {
-				nativeWidget.addEventListener('webkitbeginfullscreen', onFullScreen, false);
-				nativeWidget.addEventListener('webkitendfullscreen', onFullScreen, false);
+				videoWidget.addEventListener('webkitbeginfullscreen', onFullScreen, false);
+				videoWidget.addEventListener('webkitendfullscreen', onFullScreen, false);
 			}
 
-			nativeWidget.addEventListener('fullscreenchange', onFullScreen, false);
-			nativeWidget.addEventListener('webkitfullscreenchange', onFullScreen, false);
-			nativeWidget.addEventListener('mozfullscreenchange', onFullScreen, false);
+			videoWidget.addEventListener('fullscreenchange', onFullScreen, false);
+			videoWidget.addEventListener('webkitfullscreenchange', onFullScreen, false);
+			videoWidget.addEventListener('mozfullscreenchange', onFullScreen, false);
 		}
 	}
 
 	private function destroyFullScreenListeners() {
-		if (nativeWidget != null) {
+		if (videoWidget != null) {
 			if (Platform.isIOS) {
-				nativeWidget.removeEventListener('webkitbeginfullscreen', onFullScreen);
-				nativeWidget.removeEventListener('webkitendfullscreen', onFullScreen);
+				videoWidget.removeEventListener('webkitbeginfullscreen', onFullScreen);
+				videoWidget.removeEventListener('webkitendfullscreen', onFullScreen);
 			}
 
-			nativeWidget.removeEventListener('fullscreenchange', onFullScreen);
-			nativeWidget.removeEventListener('webkitfullscreenchange', onFullScreen);
-			nativeWidget.removeEventListener('mozfullscreenchange', onFullScreen);
+			videoWidget.removeEventListener('fullscreenchange', onFullScreen);
+			videoWidget.removeEventListener('webkitfullscreenchange', onFullScreen);
+			videoWidget.removeEventListener('mozfullscreenchange', onFullScreen);
 		}
 	}
 
 	public function getCurrentFrame() : String {
 		try {
-			if (textField != null && textField.visible) {
-				textField.visible = false;
-				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
-				textField.visible = true;
+			var canvas : Dynamic = Browser.document.createElement('canvas');
+			var ctx = canvas.getContext('2d');
 
-				return data;
-			} else {
-				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
+			canvas.width = videoWidget.videoWidth;
+			canvas.height = videoWidget.videoHeight;
 
-				return data;
-			}
+			ctx.drawImage(videoWidget, 0, 0);
+
+			var data = canvas.toDataURL();
+			return data;
 		} catch (e : Dynamic) {
 			return "error";
 		}
+	}
+
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		return localBounds.getRectangle(rect);
+	}
+
+	public function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0;
+		widgetBounds.minY = 0;
+		widgetBounds.maxX = videoWidget.videoWidth;
+		widgetBounds.maxY = videoWidget.videoHeight;
+	}
+
+	private override function createNativeWidget(?tagName : String = "video") : Void {
+		if (!isNativeWidget) {
+			return;
+		}
+
+		this.deleteNativeWidget();
+
+		nativeWidget = Browser.document.createElement(tagName);
+		this.updateClipID();
+		nativeWidget.className = 'nativeWidget';
+
+		isNativeWidget = true;
 	}
 }

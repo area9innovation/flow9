@@ -26,6 +26,10 @@ export {
 	// 'captureKeys' assumes that material has the entire screen and captures tab , ctr+i
 	mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void;
 
+	// In difference to mrender renders content over all
+	// iframes and textinputs of previous render calls
+	mrenderStage(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void;
+
 	// Only for special use
 	material2tropic(manager : MaterialManager, m : Material) -> Tropic;
 	material2tropicWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Tropic;
@@ -38,6 +42,14 @@ export {
 renderCounterRef = ref 0;
 
 mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void {
+	mrender2stage(manager, false, captureKeys, m |> MCallstack);
+}
+
+mrenderStage(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void {
+	mrender2stage(manager, true, captureKeys, m |> MCallstack);
+}
+
+mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m : Material) -> () -> void {
 	mrenderInit = timestamp();
 
 	renderCounterRef := ^renderCounterRef + 1;
@@ -53,27 +65,7 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 		setEnableFocusFrame(false);
 	}
 
-	setDropCurrentFocusOnDown(false);
-
-	materialLogFn(
-		\ -> {
-			println("render counter: " + i2s(^renderCounterRef));
-
-			setLeakingSubscribersHandler(100, 50, \subscribersCount, value -> {
-				if (subscribersCount != subscribersCountBelowThreshold) {
-					dumpValue = value |> getValue |> behaviourValueToString;
-					println("ERROR: Too many subscribers (" + toString(subscribersCount) + ") to " + dumpValue);
-					materialLogFn(
-						printCallstack,
-						MaterialWarning(),
-						nop
-					)
-				}
-			});
-		},
-		MaterialError(),
-		nop
-	);
+	setDropCurrentFocusOnMouse(false);
 
 	t0 = material2tropic(manager, m);
 
@@ -104,7 +96,7 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 
 					MSubscribersPanel2T(manager, f, \mat, p -> material2tropicWithParent(manager, p, mat))
 				},
-				MaterialError(),
+				MaterialWarning(),
 				\ -> f
 			)
 		)
@@ -116,12 +108,13 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 	// trenderManager without warning
 	// TTweak for integer width on mobile
 	r =
-		trender2(
+		trender2Stage(
 			if (mobile)
 				TTweak([TSnapSize(1., 1., true)], t, TEmpty())
 			else
 				t,
-			manager.manager.renderStyle
+			manager.manager.renderStyle,
+			toStage
 		);
 
 	manager.manager.findPositionScaleFn := r.second;
@@ -161,9 +154,30 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 	disp;
 }
 
+materialZoomWarningDialogEnabled = ref false;
+
 initMaterialManagerSubs(manager : MaterialManager) -> void {
 	if (isNone(lookupTree(manager.disposers, -1))) {
 		m2t = \mat, p -> material2tropicWithParent(manager, p, mat);
+
+		if (^materialZoomWarningDialogEnabled && js && !mobile && getRendererType() == "html" && getBrowserZoom() != 1.0 && !s2b(getKeyValue("zoom_warning_shown", "false"))) {
+			key = if (macosx()) "Cmd" else "Ctrl";
+
+			deferUntilNextFrameRendered(\ ->
+				renderMSnackbar(
+					manager,
+					_("Warning: You are using page zoom which causes\nproblems with text.\nTo prevent those problems set page zoom to 100%\nand then use " + key + "+/" + key + "- to set required zoom."),
+					[MSnackbarAutoDisappear(false), MSnackbarOnDisappear(\ -> setKeyValue("zoom_warning_shown", "true") |> ignore)],
+					\m, p ->
+						material2tropicWithParent(manager, p, m),
+					\t ->
+						trender(
+							t,
+							manager.manager.renderStyle
+						)
+				)
+			);
+		}
 
 		manager.disposers ::=
 			setTree(
@@ -197,7 +211,7 @@ initMaterialManagerSubs(manager : MaterialManager) -> void {
 						false,
 						false
 					),
-					handleIScriptState(manager, \mat, p -> doMaterial2tropic(MaterialRender(manager, -1), mat, p)),
+					handleIScriptState(manager),
 					makeSubscribe2(manager.focus.focusEnabled, \fen -> if (!fen) {
 						nextDistinct(manager.focus.focusedId, -1);
 						nextDistinct(manager.focus.focused, false);
@@ -284,11 +298,18 @@ material2tropic(manager : MaterialManager, m : Material) -> Tropic {
 	TConstruct(
 		[
 			makeSubscribe(manager.white, \w -> {
+				setKeyValue("dark_mode", b2s(!w)) |> ignore;
+
 				if (w != getLightBackground(manager.focus)) {
 					updateMaterialTheme(manager, MLightTheme(manager.theme, w))
 				}
 			}),
-			makeSubscribe2(getDefaultRtlB(), \__ -> reverseBehaviour(manager.forceRender))
+			makeSubscribe2(getDefaultRtlB(), \__ -> {
+				rerenderEnabled = getValue(
+					extractStruct(manager.style, MForceRenderOnLangChangedEnabled(make(true))).enabled
+				);
+				if (rerenderEnabled) reverseBehaviour(manager.forceRender)
+			})
 		],
 		TSelect(
 			manager.forceRender,
@@ -297,7 +318,10 @@ material2tropic(manager : MaterialManager, m : Material) -> Tropic {
 				setiOSStatusBarColor(MColor2int(getPrimaryColor(manager)));
 				setiOSStatusBarIconsTheme(MTextColor(getToolbarItemsColor(manager)) == black);
 
-				trop = doMaterial2tropic(rend, m, manager.focus);
+				rootFocus = manager.focus;
+				rootFocus.rtl ::= extractStruct(manager.style, MSetRTL(getDefaultRtl())).rtl;
+
+				trop = doMaterial2tropic(rend, m, rootFocus);
 
 				if (getUrlParameterDef("profile", "") >= "1") {
 					profileTropic(trop);
@@ -441,6 +465,10 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			MChart2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
 
+		MDynamicChart(__, __, __): {
+			MDynamicChart2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
+		}
+
 		MGridList(__, __): {
 			MGridList2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
@@ -463,6 +491,10 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 
 		MDynamicGrid(__, __): {
 			MDynamicGrid2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
+		}
+
+		MRecyclerGrid(__, __): {
+			MRecyclerGrid2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
 
 		MTree(__, __): {
@@ -512,7 +544,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MLines(ls): TLines(map(ls, \l -> doMaterial2tropic(rend, l, parent)));
 		MCols(cs): TCols(map(cs, \c -> doMaterial2tropic(rend, c, parent)));
 		MGroup(ms): TGroup(map(ms, \gm -> doMaterial2tropic(rend, gm, parent)));
-		MGrid(mls): TGrid(map(mls, \ms -> map(ms, \gm -> doMaterial2tropic(rend, gm, parent)) |> arrayRTL));
+		MGrid(mls): TGrid(map(mls, \ms -> map(ms, \gm -> doMaterial2tropic(rend, gm, parent))));
 		MLines2(m1, m2) : TLines2(doMaterial2tropic(rend, m1, parent), doMaterial2tropic(rend, m2, parent));
 		MCols2(m1, m2) : TCols2(doMaterial2tropic(rend, m1, parent), doMaterial2tropic(rend, m2, parent));
 		MGroup2(m1, m2) : TGroup2(doMaterial2tropic(rend, m1, parent), doMaterial2tropic(rend, m2, parent));
@@ -543,6 +575,20 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MInteractive(i, mat): TInteractive(i, doMaterial2tropic(rend, mat, parent));
 		MCursor(kind, mat): TCursor(kind, doMaterial2tropic(rend, mat, parent));
 		MFilter(filters, mat): TFilter(filters, doMaterial2tropic(rend, mat, parent));
+		MGraphics(shape, style): {
+			TDynamicGraphics(
+				fselect(shape, FLift(\sh ->
+					switch (sh : GShape) {
+						GPath(path): path;
+						GRect(__, __, __, __): [sh];
+						GRoundedRect(__, __, __, __, __): [sh];
+						GEllipse(__, __, __, __): [sh];
+						GCircle(__, __, __): [sh];
+					}
+				)),
+				style
+			);
+		}
 		MTranslate(p, mat): TTranslate(p, doMaterial2tropic(rend, mat, parent));
 		MRotate(degree, mat) : TRotate(degree, doMaterial2tropic(rend, mat, parent));
 		MCenter(mat): TCenter(doMaterial2tropic(rend, mat, parent));
@@ -730,6 +776,9 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		}
 		MBackdrop(__, __, __): {
 			MBackdrop2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
+		}
+		MAnimator(mat, trigger, style): {
+			TAnimator(rend.manager, parent, doMaterial2tropic(rend, mat, parent), trigger, style)
 		}
 
 		default: cast(m : Material -> Tropic);

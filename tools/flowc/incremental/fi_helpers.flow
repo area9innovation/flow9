@@ -8,7 +8,7 @@ import ds/array;
 
 export {
 	// If t is a typename, we resolve it to FiStruct or FiUnion
-	resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion;
+	resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnion;
 
 	// Get type of the FiExp
 	fiExpType(expr : FiExp) -> FiType;
@@ -32,7 +32,7 @@ export {
 	fiCollectTypars(prog : FiProgram, type : FiType, acc : Set<string>) -> Set<string>;
 
 	// Analog of fcNativeHasFallback
-	fiNativeHasFallback(nat : FiNativeDec) -> bool;
+	fiNativeHasFallback(nat : FiNativeDec, id : int) -> bool;
 
 	isSameFiExp(e1 : FiExp, e2 : FiExp) -> bool;
 	getFiTypeName(t : FiType) -> string;
@@ -62,8 +62,24 @@ export {
     // Checks whether exp is constant (i.e. FiBool or FiString)
     fiExpIsConstant(ex : FiExp) -> bool;
 
-    // Checks whether type is function (i.e. FitypeFunction)
+    // Checks whether type is function (i.e. FiTypeFunction)
     fiTypeIsFunction(t : FiType) -> bool;
+
+    // Checks whether type is array (i.e. FiTypeArray)
+    fiTypeIsArray(t : FiType) -> bool;
+    
+    // Checks whether type is flow (i.e. FiTypeFlow)
+    fiTypeIsFlow(t : FiType) -> bool;
+
+    // All FiModule declarations in one array;
+    fiModuleDecls(m : FiModule) -> [FiDeclaration];
+
+    // All FiModule structs and unions in one array;
+    fiModuleStructsAndUnions(m : FiModule) -> [FiStructOrUnion];
+
+	fiDeclType(d : FiDeclaration) -> FiType;
+	fiDeclExp(d : FiDeclaration) -> FiExp;
+	fiTypeContainsName(tp : FiType, name : string) -> bool;
 }
 
 fiDeclarationArgNames(decl) {
@@ -101,7 +117,7 @@ fiExpType(expr) {
 	}
 }
 
-resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion {
+resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnion {
 	switch (t) {
 		FiTypeName(n, tps): {
 			ms = lookupTree(names.structs, n);
@@ -110,7 +126,7 @@ resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion {
 					mu = lookupTree(names.unions, n);
 					switch (mu) {
 						None(): {
-							fcPrintln("Unknown type name " + n);
+							fcPrintln("Unknown type name " + n, id);
 							dummyFiTypeStruct;
 						}
 						Some(u): {
@@ -132,7 +148,7 @@ fiUnion2structs(prog : FiProgram, union : FiTypeUnion) -> [FiTypeStruct] {
 }
 
 fiTypename2structs(prog : FiProgram, typename : FiTypeName) -> [FiTypeStruct] {
-	rt = resolveFiTypeName(prog.names, typename);
+	rt = resolveFiTypeName(prog.names, typename, prog.config.threadId);
 	switch (rt) {
 		FiTypeStruct(__, __, __, __): [rt];
 		FiTypeUnion(__, __, __, __): fiUnion2structs(prog, rt);
@@ -141,7 +157,7 @@ fiTypename2structs(prog : FiProgram, typename : FiTypeName) -> [FiTypeStruct] {
 
 fiUnion2unions(prog : FiProgram, union : FiTypeUnion) -> [FiTypeUnion] {
 	concatA(map(union.typenames, \typename : FiTypeName -> {
-		rt = resolveFiTypeName(prog.names, typename);
+		rt = resolveFiTypeName(prog.names, typename, prog.config.threadId);
 		switch (rt) {
 			FiTypeUnion(__, __, __, __): arrayPush(fiUnion2unions(prog, rt), rt);
 			default: []
@@ -196,7 +212,7 @@ fiStruct2unions(prog : FiProgram) -> Tree<string, [string]> {
 				union.typenames,
 				acc,
 				\a, typename -> {
-					switch (resolveFiTypeName(prog.names, typename)) {
+					switch (resolveFiTypeName(prog.names, typename, prog.config.threadId)) {
 						FiTypeStruct(sname, __, __, __) : {
 							switch (lookupTree(a, sname)) {
 								Some(arr) : setTree(a, sname, concat(arr, [uname]));
@@ -231,12 +247,12 @@ fiCollectTypars(prog : FiProgram, type : FiType, acc : Set<string>) -> Set<strin
 	}
 }
 
-fiNativeHasFallback(nat : FiNativeDec) -> bool {
+fiNativeHasFallback(nat : FiNativeDec, id : int) -> bool {
 	switch (nat.fallbackLambda) {
 		FiLambda(__, __, __, __) : true;
 		FiVoid(__) : false;
 		default : {
-			fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, nat.fallbackLambda));
+			fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, nat.fallbackLambda), id);
 			false
 		}
 	}
@@ -411,9 +427,9 @@ printFiError(prog : FiProgram, error : FcError) -> void {
 		err = (if (i == 0) ": " + error.message else ": and here");
 
 		if (fileinfo.flowfile == "") {
-			fcPrintln(error.message);
+			fcPrintln(error.message, prog.config.threadId);
 		} else {
-			fcPrintln(fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err);
+			fcPrintln(fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err, prog.config.threadId);
 		}
 
 	});
@@ -536,5 +552,61 @@ fiTypeIsFunction(t : FiType) {
 	switch (t) {
 		FiTypeFunction(__, __): true;
 		default: false;
+	}
+}
+
+fiTypeIsArray(t : FiType) {
+	switch (t) {
+		FiTypeArray(__): true;
+		default: false;
+	}
+}
+
+fiTypeIsFlow(t : FiType) {
+	switch (t) {
+		FiTypeFlow(): true;
+		default: false;
+	}
+}
+
+fiModuleDecls(m : FiModule) -> [FiDeclaration] {
+	concatA([m.functions, m.globalVars, m.natives]);
+}
+
+fiModuleStructsAndUnions(m : FiModule) -> [FiStructOrUnion] {
+	concatA([m.structs, m.unions]);
+}
+
+fiDeclType(d : FiDeclaration) -> FiType {
+	switch (d) {
+		FiGlobalVar(__, __, t, __, __): t;
+		FiNativeDec(__, __, t, __, __, __, __) : t;
+		FiFunctionDec(__, __, t, __, __) : t;
+	}
+}
+
+fiDeclExp(d : FiDeclaration) -> FiExp {
+	switch (d) {
+		FiGlobalVar(__, value, __, __, __): value;
+		FiNativeDec(__, __, __, __, fallback, __, __): fallback;
+		FiFunctionDec(__, lambda, __, __, __): lambda;
+	}
+}
+
+fiTypeContainsName(tp : FiType, name : string) -> bool {
+	switch (tp) {
+		FiTypeVoid():       false;
+		FiTypeBool():       false;
+		FiTypeInt():        false;
+		FiTypeDouble():     false;
+		FiTypeString():     false;
+		FiTypeFlow():       false;
+		FiTypeNative():     false;
+		FiTypeParameter(n): false;
+		FiTypeRef(rt):      fiTypeContainsName(rt, name);
+		FiTypeArray(at):    fiTypeContainsName(at, name);
+		FiTypeName(n, ts):  n == name || exists(ts, \t -> fiTypeContainsName(t, name));
+		FiTypeFunction(args, rt):
+			fiTypeContainsName(rt, name) || exists(args, \arg -> fiTypeContainsName(arg.type, name));
 	}
 }

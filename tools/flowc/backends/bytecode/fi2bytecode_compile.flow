@@ -106,10 +106,10 @@ fiPushToChunks(arr : [BytecodeOrChunks], cmd : Bytecode) {
 	arrayPush(arr, cmd)
 }
 
-fiBcEncode(cfg : FcBytecodeConfig, ctx, expr, tailcall, pc) {
+fiBcEncode(cfg : FcBytecodeConfig, ctx : FiBcScopeContext, expr : FiExp, tailcall : bool, pc : int) -> BytecodeChunks {
 	savedPc = pc;
 	if (cfg.debug) {
-		fiBcDebugAddPosition(cfg, ctx.func.toplevel, pc, expr.start, false, ""/*"Add Position in Encode " + substring(toString(expr), 0, 40)*/);
+		fiBcDebugAddPosition(cfg, pc, expr.start, false, DebugPosExpr() /*"Add Position in Encode " + substring(toString(expr), 0, 40)*/);
 	}
 	switch (expr : FiExp) {
 		FiString(s, start): {
@@ -151,23 +151,11 @@ fiBcEncode(cfg : FcBytecodeConfig, ctx, expr, tailcall, pc) {
 		}
 
 		FiLambda(xs, e0, type, i): {
-			shadowed = foldTree(ctx.locals, ctx.func.shadowed, \n,id,s -> insertSet(s,n));
+			shadowed = foldTree(ctx.locals, ctx.func.shadowed, \n,id,s -> insertSet(s, n));
 			subctx = fiBcMakeFunctionContext(cfg, ctx.func.toplevel, shadowed, xs, pc);
 
 			p = if (cfg.debug) {
-					cfg0 = 	FcBytecodeConfig(
-						cfg.flowfile,
-						cfg.outputfile,
-						cfg.upload,
-						cfg.includes,
-						false,
-						cfg.verbose,
-						cfg.debugInfoFunctions,
-						cfg.debugInfoLocals,
-						cfg.debugInfoPositions,
-						cfg.nargs,
-						cfg.debugVerbose
-					);
+					cfg0 = FcBytecodeConfig(cfg with debug = false);
 
 					ctx0 = fiBcMakeFunctionContext(cfg0, ctx.func.toplevel, shadowed, xs, pc);
 
@@ -225,7 +213,7 @@ fiBcEncode(cfg : FcBytecodeConfig, ctx, expr, tailcall, pc) {
 					[fiMakeBytecode([CStruct(sinfo.id)])]
 				}
 				None(): {
-					fiBcDebugAddPosition(cfg, ctx.func.toplevel, pc, i, false, "FiCall");
+					fiBcDebugAddPosition(cfg, pc, i, false, DebugPosCall());
 					[
 						fiBcEncode(cfg, ctx, f, false, ^pc1),
 						fiMakeLineBytecode("FiCall7", cfg, ctx, i, [
@@ -504,7 +492,7 @@ fiBcEncode(cfg : FcBytecodeConfig, ctx, expr, tailcall, pc) {
 					fieldNamed = CFieldName(name);
 					ftmp = switch(es[0]) {
 							FiVar(__, vtype, info) : {
-								fieldtype = resolveFiTypeName(ctx.func.toplevel.program.names, vtype);
+								fieldtype = resolveFiTypeName(ctx.func.toplevel.program.names, vtype, cfg.threadId);
 								switch (fieldtype) {
 									FiTypeStruct(__, __, _args, __) : {
 										idx = fiFieldNumber(fieldtype, name);
@@ -576,19 +564,7 @@ fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
 			dbgInfoLen = fiBytecodeLength(dbgInfo);
 
 			pl = if (cfg.debug) {
-					cfg0 = 	FcBytecodeConfig(
-						cfg.flowfile,
-						cfg.outputfile,
-						cfg.upload,
-						cfg.includes,
-						false,
-						cfg.verbose,
-						cfg.debugInfoFunctions,
-						cfg.debugInfoLocals,
-						cfg.debugInfoPositions,
-						cfg.nargs,
-						cfg.debugVerbose
-					);
+					cfg0 = FcBytecodeConfig(cfg with debug = false);
 					gctx0 = FiBcGlobalContext(
 						gctx.file,
 						gctx.program,
@@ -634,10 +610,10 @@ fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
 			fiBcDebugAddFunction(cfg, saved_pc + dbgInfoLen + fiBytecodeLength(func) - fiSizeofCGoto, name + "$init");
 
 			// Position of DebugInfo
-			fiBcDebugAddPosition(cfg, gctx, saved_pc, defiStart, true, "FiFunction " + name);
+			fiBcDebugAddPosition(cfg, saved_pc, defiStart, true, DebugPosFunction(name, false));
 
 			// Position of ReserveLocals (actual start of code)
-			fiBcDebugAddPosition(cfg, gctx, reserveLocalsPos, lambda.body.start, false, "FiFunction ReserveLocals");
+			fiBcDebugAddPosition(cfg, reserveLocalsPos, lambda.body.start, false, DebugPosFunctionLocals(false));
 
 			// End of function position: the line after a last position in function body.
 			switch(lookupTree(gctx.resolvers, gctx.file)) {
@@ -646,7 +622,7 @@ fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
 					maxLine = findLineRaw(resolver, maxPos).lineno;
 					endFuncPos = findLineIndex(resolver, maxLine, 0);
 					endPc = saved_pc + dbgInfoLen + fiBytecodeLength(func) - fiSizeofCCodePointer - fiSizeofCReturn;
-					fiBcDebugAddPosition(cfg, gctx, endPc, endFuncPos, false, "FiFunction EndPosition");
+					fiBcDebugAddPosition(cfg, endPc, endFuncPos, false, DebugPosFunctionEnd(false));
 				}
 				None(): {}
 			}
@@ -681,7 +657,7 @@ fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
 					switch (type) {
 						FiTypeFunction(args, rt) : {
 							fiBcDebugAddFunction(cfg, saved_pc, name + "$init");
-							fiBcDebugAddPosition(cfg, gctx, pc, declStart, true, "FiNative " + name + " without fallback");
+							fiBcDebugAddPosition(cfg, pc, declStart, true, DebugPosFunction(name, true));
 							fiMakeBytecode([CDebugInfo(name), CNativeFn(nativeName, length(args))]);
 						}
 						default : {
@@ -692,19 +668,7 @@ fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
 				}
 				FiLambda(__, body, __, lambdaStart): {
 					pl = if (cfg.debug) {
-							cfg0 = 	FcBytecodeConfig(
-								cfg.flowfile,
-								cfg.outputfile,
-								cfg.upload,
-								cfg.includes,
-								false,
-								cfg.verbose,
-								cfg.debugInfoFunctions,
-								cfg.debugInfoLocals,
-								cfg.debugInfoPositions,
-								cfg.nargs,
-								cfg.debugVerbose
-							);
+							cfg0 = FcBytecodeConfig(cfg with debug = false);
 							gctx0 = FiBcGlobalContext(
 								gctx.file,
 								gctx.program,
@@ -738,13 +702,13 @@ fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
 					fiBcDebugAddFunction(cfg, reserveLocalsPos, name);
 
 					// Position of DebugInfo
-					fiBcDebugAddPosition(cfg, gctx, pc, declStart, true, "FiNative " + name + " debug info");
+					fiBcDebugAddPosition(cfg, pc, declStart, true, DebugPosFunction(name, true));
 
 					// Position of Goto
-					fiBcDebugAddPosition(cfg, gctx, pc + dbgInfoLen, defiStart, false, "FiNative " + name + " goto");
+					fiBcDebugAddPosition(cfg, pc + dbgInfoLen, defiStart, false, DebugPosFunction(name, false));
 
 					// Position of ReserveLocals
-					fiBcDebugAddPosition(cfg, gctx, reserveLocalsPos, fallbackLambda.body.start, false, "FiNative " + name + " ReserveLocals");
+					fiBcDebugAddPosition(cfg, reserveLocalsPos, fallbackLambda.body.start, false, DebugPosFunctionLocals(true));
 
 					code = fiBcEncode(cfg, ctx, fallbackLambda.body, true, pc1);
 
@@ -766,7 +730,7 @@ fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
 							maxLine = findLineRaw(resolver, maxPos).lineno;
 							endFuncPos = findLineIndex(resolver, maxLine, 0);
 							endPc = pc + dbgInfoLen + fiBytecodeLength(func) - fiSizeofCCodePointer;
-							fiBcDebugAddPosition(cfg, gctx, endPc, endFuncPos, false, "FiNative EndPosition");
+							fiBcDebugAddPosition(cfg, endPc, endFuncPos, false, DebugPosFunctionEnd(true));
 						}
 						None(): {}
 					}

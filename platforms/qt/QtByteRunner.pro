@@ -156,9 +156,7 @@ SOURCES += \
     qt-backend/QtGeolocationSupport.cpp \
     qt-backend/qfilesysteminterface.cpp \
     qt-backend/RunParallel.cpp \
-    qt-backend/QWebSocketSupport.cpp \
-    qt-gui/VideoWidget.cpp \
-    qt-gui/mainwindow.cpp
+    qt-backend/QWebSocketSupport.cpp
 
 HEADERS  += \
     pcheader.h \
@@ -189,9 +187,7 @@ HEADERS  += \
     qt-backend/qfilesysteminterface.h \
     qt-backend/RunParallel.h \
     qt-backend/QWebSocketSupport.h \
-    qt-gui/VideoWidget.h \
-    qt-gui/testopengl.h \
-    qt-gui/mainwindow.h
+    qt-gui/testopengl.h
 
 # Asmjit
 
@@ -247,9 +243,11 @@ CONFIG(use_gui) {
         qt-gui/QGLRenderSupport.cpp \
         qt-backend/QGLTextEdit.cpp \
         qt-backend/QGLLineEdit.cpp \
+        qt-gui/mainwindow.cpp \
         qt-gui/QGLWebPage.cpp \
         qt-gui/QGLClipTreeModel.cpp \
         qt-gui/QGLClipTreeBrowser.cpp \
+        qt-gui/VideoWidget.cpp \
         ../common/cpp/gl-gui/GLRenderSupport.cpp \
         ../common/cpp/gl-gui/GLRenderer.cpp \
         ../common/cpp/gl-gui/GLUtils.cpp \
@@ -265,7 +263,6 @@ CONFIG(use_gui) {
         ../common/cpp/gl-gui/GLCamera.cpp \
         ../common/cpp/gl-gui/ImageLoader.cpp \
         ../common/cpp/font/TextFont.cpp
-
     HEADERS  += \
         swfloader.h \
         qt-gui/beveleffect.h \
@@ -275,9 +272,11 @@ CONFIG(use_gui) {
         qt-gui/QGraphicsItemWrapper.h \
         qt-backend/QGLTextEdit.h \
         qt-backend/QGLLineEdit.h \
+        qt-gui/mainwindow.h \
         qt-gui/QGLWebPage.h  \
         qt-gui/QGLClipTreeModel.h \
         qt-gui/QGLClipTreeBrowser.h \
+        qt-gui/VideoWidget.h \
         ../common/cpp/gl-gui/GLRenderSupport.h \
         ../common/cpp/gl-gui/shaders/code.inc \
         ../common/cpp/gl-gui/GLRenderer.h \

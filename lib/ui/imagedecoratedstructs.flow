@@ -1,24 +1,41 @@
 import stylestructs;
 import maybe;
 import form/form;
+import form/gui;
 import devmode;
 import form/paragraphtypes;
 import colorspace;
+import ui/imagedecorated_editor_types;
 
 export {
 	ImageDecorated(filename : string, targetSize : string, width : double, height : double, decorations : [ImageDecoration]);
 
-	ImageDecoration ::= PreZoomDecoration, ImageCrop, ImageAdaptiveCrop, PostZoomDecoration, SizeIndependentDecoration;
-		PreZoomDecoration ::= ImageArrow, ImageCircle, ImageLabel, ImageRectangle, ImageTextBox; //Are grouped with full size image and then zoomed
+	ImageDecoration ::= PreZoomDecoration, ImageCrop, ImageAdaptiveCrop, PostZoomDecoration, SizeIndependentDecoration, ImageAdaptiveCropTweaks;
+
+		PreAndPostZoomDecoration ::= ImageLabel, ImageCircle, ImageArrow, ImageRectangle, ImageTextBox;
+
+		PreZoomDecoration ::= PreAndPostZoomDecoration, ImageDimmer; //Are grouped with full size image and then zoomed
 			ImageArrow   : (x : double, y : double, rotate : double, length : double, color : int, thickness : double, label : Form);
 			ImageCircle  : (x : double, y : double, radius : double, style : [GraphicsStyle], inverted : bool);
 			ImageLabel   : (x : double, y : double, label : Form); //Text is replaced with Form  as "Empty" can be found in serialized data
 			ImageRectangle : (x : double, y : double, width : double, height : double, style : [GraphicsStyle], inverted : bool);
-			ImageTextBox : (label : Text, alignment : CommonAlignment, rectangle : ImageRectangle);
-		PostZoomDecoration ::= ImageArrow, ImageCircle, ImageLabel, ImageLabel2, ImageRectangle, ImageTextBox; //Are rendered above zoomed image. Coordinates are recalculated.
+			ImageTextBox : (label : Text, hAlign : CommonAlignment, vAlign : VerticalAlignment, rectangle : ImageRectangle);
+			ImageDimmer : (
+				type : ImageDimmerType,
+				leftTopPoint : Point,
+				rightBotPoint : Point,
+				dimmerColor : int,
+				borderColor : int,
+				dimmerOpacity : double,
+				borderOpacity : double
+			);
+		PostZoomDecoration ::= PreAndPostZoomDecoration, ImageLabel2; //Are rendered above zoomed image. Coordinates are recalculated.
 			//This decoration has been saved in old content, so we will support it too
 			ImageCrop    : (x : double, y : double, width : double, height : double);
 			ImageAdaptiveCrop : (x : double, y : double, width : double, height : double, availableWHB : DynamicBehaviour<WidthHeight>);
+			ImageAdaptiveCropTweaks : (style : [AdaptiveCropStyle]);
+				AdaptiveCropStyle ::= Squareness;
+					Squareness(value : double);
 			ImageLabel2 : (x : double, y : double, hAligng : double, yAlign : double, style : [CharacterStyle], label : string, rotation : double, stable : bool);
 		SizeIndependentDecoration ::= ImageBorder, ImageAltText, ImageHeader, ImageFooter, ImageCopyright, ImageCopyrightHidable, ImageCaption, ImagePadding, ImageShadow; // Do not have coordinates.
 			ImageBorder  : (radius : double, color : int, thickness : double);
@@ -38,8 +55,10 @@ export {
 		mouseZoom : bool,
 		extraZoom : bool,
 		closeButtonAlign : int,
-		closeButtonFn : (() -> void) -> Form
+		closeButtonFn : (() -> void) -> Form,
+		zoomButtonM : Maybe<ZoomButtonDescription>
 	);
+	ZoomButtonDescription(align : Corner, formFn : (() -> void) -> Form);
 
 	ImageSizeControlType ::= FixedSizeControlType, FixedHeightControlType, AutomaticResizingToFitControlType;
 		FixedSizeControlType(size : double);
@@ -62,6 +81,7 @@ export {
 	reportImageLabelError(label : ImageDecoration) -> void;
 
 	makeImageShapeGraphicsStyle(bColor : int, fColor : int) -> [GraphicsStyle];
+	makeDefaultAdaptiveCrop() -> ImageAdaptiveCrop;
 }
 
 import ds/tree;
@@ -76,7 +96,7 @@ makeImageShapeGraphicsStyle(bColor : int, fColor : int) -> [GraphicsStyle] {
 imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 	onlyOnce(imageDecoratedFixupsRef, \ -> {
 		fixups = ref makeTree();
-		fixups := setTree(^fixups, "ImageAltText", \initArgs -> {
+		fixups := setTree(^fixups, "ImageAltText", \initArgs : [flow] -> {
 			dropCoords = \args : [flow] -> if (length(args) == 3) {
 				[args[2]]
 			} else {
@@ -91,7 +111,7 @@ imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 			makeStructValue("ImageAltText", finalArgs, IllegalStruct())
 		});
 
-		fixups := setTree(^fixups, "ImageHeader", \initArgs -> {
+		fixups := setTree(^fixups, "ImageHeader", \initArgs : [flow]-> {
 			dropCoords = \args -> if (length(args) == 5) {
 				[args[2], args[3], args[4]]
 			} else {
@@ -101,7 +121,7 @@ imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 			makeStructValue("ImageHeader", finalArgs, IllegalStruct())
 		});
 
-		fixups := setTree(^fixups, "ImageFooter", \initArgs -> {
+		fixups := setTree(^fixups, "ImageFooter", \initArgs : [flow]-> {
 			dropCoords = \args -> if (length(args) == 5) {
 				[args[2], args[3], args[4]]
 			} else {
@@ -112,7 +132,7 @@ imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 		});
 
 		//int values could be found in serialized ImageLabel, known js problem.
-		fixups := setTree(^fixups, "ImageLabel", \initArgs -> {
+		fixups := setTree(^fixups, "ImageLabel", \initArgs : [flow] -> {
 			finalArgs : [flow] = [
 				flow(number2double(initArgs[0])),
 				flow(number2double(initArgs[1])),
@@ -121,7 +141,19 @@ imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 			makeStructValue("ImageLabel", finalArgs, IllegalStruct())
 		});
 
-		fixups := setTree(^fixups, "ImageLabel2", \initArgs -> {
+		imageTextBox = \initArgs : [flow] -> {
+			addVerticalAlignment = \args : [flow] -> if (length(args) == 3) {
+				insertArray(args, 2, CenterAlign())
+			} else {
+				args
+			}
+			finalArgs = initArgs |> addVerticalAlignment;
+			makeStructValue("ImageTextBox", finalArgs, IllegalStruct())
+		}
+		fixups := setTree(^fixups, "ImageParagraphBox", imageTextBox);
+		fixups := setTree(^fixups, "ImageTextBox", imageTextBox);
+
+		fixups := setTree(^fixups, "ImageLabel2", \initArgs : [flow] -> {
 			addRotation = \args : [flow]-> if (length(args) == 6) {
 				arrayPush(args, 0.0)
 			} else {
@@ -136,7 +168,7 @@ imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 			makeStructValue("ImageLabel2", finalArgs, IllegalStruct())
 		});
 
-		fixups := setTree(^fixups, "ImageCaption", \initArgs -> {
+		fixups := setTree(^fixups, "ImageCaption", \initArgs : [flow] -> {
 			addCharacterStyle = \args : [flow] -> if (length(args) == 3) {
 				concat(args, [[], []])
 			} else if (length(args) == 4) {
@@ -148,7 +180,7 @@ imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 			makeStructValue("ImageCaption", finalArgs, IllegalStruct())
 		});
 
-		fixups := setTree(^fixups, "ImageCopyright", \initArgs -> {
+		fixups := setTree(^fixups, "ImageCopyright", \initArgs : [flow] -> {
 			addCharacterStyle = \args : [flow] -> if (length(args) == 1) {
 				arrayPush(args, [])
 			} else {
@@ -158,7 +190,7 @@ imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
 			makeStructValue("ImageCopyright", finalArgs, IllegalStruct())
 		});
 
-		fixups := setTree(^fixups, "ImageCircle", \initArgs -> {
+		fixups := setTree(^fixups, "ImageCircle", \initArgs : [flow] -> {
 			addGraphicsStyle = \args -> if (length(args) == 4) {
 				if(!isArray(args[3])) {
 					newArgs : [flow] = [args[0], args[1], args[2], flow([Stroke(args[3])]), flow(false)];
@@ -205,16 +237,16 @@ parsePictureZoom(size) {
 		false
 	}
 	if (endsWith(sz, "%")) {
-		ZoomDescription(Some(i2d(s2i(strLeft(sz, strlen(sz)-1))) * 0.01), zeroWH, None(), None(), mouseZoom, extraZoom, -1, \__ -> Empty())
+		ZoomDescription(Some(i2d(s2i(strLeft(sz, strlen(sz)-1))) * 0.01), zeroWH, None(), None(), mouseZoom, extraZoom, -1, \__ -> Empty(), None())
 	} else if (startsWith(sz, "x")) {
-		ZoomDescription(None(), zeroWH, None(), Some(i2d(s2i(substring(sz, 1, strlen(sz)-1)))), mouseZoom, extraZoom, -1, \__ -> Empty())
+		ZoomDescription(None(), zeroWH, None(), Some(i2d(s2i(substring(sz, 1, strlen(sz)-1)))), mouseZoom, extraZoom, -1, \__ -> Empty(), None())
 	} else if (endsWith(sz, "x")) {
-		ZoomDescription(None(), zeroWH, Some(i2d(s2i(strLeft(sz, strlen(sz)-1)))), None(), mouseZoom, extraZoom, -1, \__ -> Empty())
+		ZoomDescription(None(), zeroWH, Some(i2d(s2i(strLeft(sz, strlen(sz)-1)))), None(), mouseZoom, extraZoom, -1, \__ -> Empty(), None())
 	} else if (strIndexOf(sz, "x") >= 0) {
 		sizes = map(strSplit(sz, "x"), \x -> i2d(s2i(x)));
-		ZoomDescription(None(), zeroWH, Some(sizes[0]), Some(sizes[1]), mouseZoom, extraZoom, -1, \__ -> Empty())
+		ZoomDescription(None(), zeroWH, Some(sizes[0]), Some(sizes[1]), mouseZoom, extraZoom, -1, \__ -> Empty(), None())
 	} else {
-		ZoomDescription(None(), zeroWH, None(), None(), false, false, -1, \__ -> Empty())
+		ZoomDescription(None(), zeroWH, None(), None(), false, false, -1, \__ -> Empty(), None())
 	}
 }
 
@@ -243,16 +275,18 @@ getImageDecoratedStrings(image) {
 			ImageCopyrightHidable() : None();
 			ImageCaption(text, __, __, __, __) : Some(text);
 			ImageLabel(__, __, txt) : extractTextFromImageLabel(txt, decoration);
-			ImageTextBox(label, __, rec) : extractTextFromImageLabel(label, decoration);
+			ImageTextBox(label, __, __, __) : extractTextFromImageLabel(label, decoration);
 			ImageLabel2(__, __, __, __, __, label, __, __) : Some(label);
 			ImageArrow(__, __, __, __, __, __, __) : None();
 			ImageCircle(__, __, __, __, __) : None();
 			ImageCrop(__, __, __, __) : None();
 			ImageAdaptiveCrop(__, __, __, __, __) : None();
+			ImageAdaptiveCropTweaks(__) : None();
 			ImageBorder(__, __, __) : None();
 			ImagePadding(__, __, __, __) : None();
 			ImageRectangle(__, __, __, __, __, __) : None();
 			ImageShadow() : None();
+			ImageDimmer(__, __, __, __, __, __, __) : None();
 		}
 	})
 }
@@ -262,4 +296,8 @@ getImageCopyrightPair(copyright : string) -> Pair {
 	text = firstElement(values, "");
 	filename = firstElement(subrange(values, 1, 1), "");
 	Pair(text, filename);
+}
+
+makeDefaultAdaptiveCrop() -> ImageAdaptiveCrop {
+	ImageAdaptiveCrop(0.0, 0.0, 0.0, 0.0, makeWH());
 }

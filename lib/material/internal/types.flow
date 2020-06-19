@@ -5,7 +5,7 @@ import material/internal/urlparams;
 
 export {
 	MRenderStyle ::= TRenderStyle, MFeedbackOptions, MCaptureKeys, MCaptureLongTouch, MCaptureMouse, MaterialTheme, MFocusEnabled,
-		MThemeChangerEnabled, MFeedbackSnapshotEnabled;
+		MThemeChangerEnabled, MFeedbackSnapshotEnabled, SetRTL, MForceRenderOnLangChangedEnabled;
 
 		MFeedbackOptions(
 			mutable jwt : string,
@@ -32,6 +32,8 @@ export {
 		MFocusEnabled(enabled : Transform<bool>);
 		MThemeChangerEnabled(enabled : Transform<bool>);
 		MFeedbackSnapshotEnabled(enabled : Transform<bool>);
+		MSetRTL(rtl : bool) -> SetRTL;
+		MForceRenderOnLangChangedEnabled(enabled : DynamicBehaviour<bool>);
 
 	MaterialManager(
 		id : int,
@@ -96,8 +98,6 @@ export {
 
 		scriptChangedB : DynamicBehaviour<bool>,
 		currentFileNameB : DynamicBehaviour<string>,
-
-		topPanelWidthHeightB : DynamicBehaviour<WidthHeight>,
 
 		filesystemDB : DynamicBehaviour<Maybe<IScriptFilesystemDB>>,
 
@@ -184,13 +184,20 @@ export {
 	KeyEventRecord(utf : string, ctrl : bool, shift : bool, alt : bool, meta : bool, keycode : int);
 
 	IScriptRecord ::= IScriptRequestRecord, IScriptScreenshot, IScriptLogicalScreenshot, IScriptVisualScreenshot,
-		IScriptCheck, IScriptNested, IScript, IScriptEditableRecord, IScriptUrlRecord;
+		IScriptCheck, IScriptNested, IScript, IScriptEditableRecord, IScriptUrlRecord, IScriptGeneratedRecord;
 
 		IScriptEditableRecord ::= IScriptBehaviourRecord, IScriptInputRecord, IScriptOutputRecord, IScriptStageWidthHeight;
 			IScriptInputRecord(behaviourDescriptor : IScriptBehaviourDescriptor, name : string, possibleValues : [flow], valueTypeHelper : string);
 			IScriptOutputRecord(behaviourDescriptor : IScriptBehaviourDescriptor, name : string);
 
 			IScriptBehaviourRecord(descriptor : IScriptBehaviourDescriptor, value : flow, type : IScriptRecordType, callstack : string);
+
+		IScriptGeneratedRecord ::= IScriptGeneratedRecordCommand, IScriptGeneratedStart;
+		IScriptGeneratedRecordCommand ::= IScriptSearchBehaviourRecord, IScriptSearchText, IScriptCountChildren;
+			IScriptSearchBehaviourRecord(descriptor : IScriptBehaviourDescriptor, value : flow);
+			IScriptSearchText(text : string, id : List<IScriptIdentifier>);
+			IScriptGeneratedStart(start : IScriptSearchText, command : IScriptGeneratedRecordCommand);
+			IScriptCountChildren(target : List<IScriptIdentifier>, num : int);
 
 				IScriptIdentifier ::= IScriptId, IScriptFocusTreePosition, IScriptFormPosition;
 					IScriptFocusTreePosition(id : int);
@@ -297,7 +304,7 @@ export {
 			getUrlParameterBoolDef(UP_ISCRIPTCAPTURESELECTIONEVENTS, true),
 			getUrlParameterBoolDef(UP_ISCRIPTCAPTUREINPUTVALUES, true),
 			getUrlParameterBoolDef(UP_ISCRIPTCAPTUREWIGIEVENTS, true),
-			getUrlParameterBoolDef(UP_ISCRIPTCAPTUREPEBBLEEVENTS, true),
+			getUrlParameterBoolDef(UP_ISCRIPTCAPTUREPEBBLEEVENTS, false),
 			getUrlParameterBoolDef(UP_ISCRIPTCAPTURECUSTOMTYPES, true),
 			getUrlParameterBoolDef(UP_ISCRIPTCAPTUREMISCEVENTS, true),
 		);
@@ -311,7 +318,7 @@ export {
 		replayProfile : bool, // Profile while executing script
 		replaySpeed : double,
 		replayTimeout : double, // Timeout in ms
-		replayRepeats : int, // Repeats count before raising an error
+		replayApplyScreenshot : bool,
 		replayPebbleEvents : bool,
 	);
 
@@ -326,7 +333,6 @@ export {
 				"blockAlignControls",
 				"bold",
 				"clipboard",
-				// "content",
 				"current_page",
 				"cursorWantThisX",
 				// "cursorCoord",
@@ -368,11 +374,12 @@ export {
 				"underlining",
 				"wigiName",
 				"zoom",
-				"down",
-				"value"
+				"value",
+				"content",
+				"liveSerializedDocument",
+				"animated",
 			],
 			[ // Unchecked behaviours
-				"content",
 				"dragged_point",
 				"grab_xy",
 				"mouse_xy",
@@ -389,13 +396,13 @@ export {
 				"cursor",
 				"undoStack",
 				"redoStack",
-				"liveSerializedDocument",
 				"is_ok",
 				"selection",
 				"shiftHeld",
+				"down",
+				"focused",
 			],
 			[ // Behaviours to replay
-				"focused",
 				"selected",
 				"position",
 				"screen_size",
@@ -406,7 +413,7 @@ export {
 			false,
 			1.0,
 			250.0,
-			10,
+			!isUrlParameterSet(UP_ISCRIPTAPPLYSCREENSHOT) || isUrlParameterTrue(UP_ISCRIPTAPPLYSCREENSHOT),
 			false
 		);
 
@@ -477,7 +484,7 @@ export {
 		replayProfile : DynamicBehaviour<bool>,
 		replaySpeed : DynamicBehaviour<double>,
 		replayTimeout : DynamicBehaviour<double>,
-		replayRepeats : DynamicBehaviour<int>,
+		replayApplyScreenshot : DynamicBehaviour<bool>,
 		replayPebbleEvents : DynamicBehaviour<bool>,
 		stopOnErrors : DynamicBehaviour<bool>,
 		stopOnTextDetailsError : DynamicBehaviour<bool>,
@@ -525,7 +532,7 @@ export {
 			make(defaultReplayOptions.replayProfile),
 			make(defaultReplayOptions.replaySpeed),
 			make(defaultReplayOptions.replayTimeout),
-			make(defaultReplayOptions.replayRepeats),
+			make(defaultReplayOptions.replayApplyScreenshot),
 			make(defaultReplayOptions.replayPebbleEvents),
 			make(defaultStopOnReplayErrorOptions.stopOnErrors),
 			make(defaultStopOnReplayErrorOptions.stopOnTextDetailsError),
@@ -589,6 +596,8 @@ export {
 			parent : MFocusGroup,
 			onClick : Maybe<() -> void>,
 			down : DynamicBehaviour<bool>,
+			rightDown : DynamicBehaviour<bool>,
+			middleDown : DynamicBehaviour<bool>,
 			hover : DynamicBehaviour<bool>,
 			enabled : Transform<bool>,
 			focusEnabled : Transform<bool>,
@@ -596,13 +605,14 @@ export {
 			focused : DynamicBehaviour<bool>,
 			active : DynamicBehaviour<bool>,
 			selected : DynamicBehaviour<bool>,
-			position : Transform<PositionScale>,
+			transformMatrix : Transform<TransformMatrix>,
 			widthHeight : Transform<WidthHeight>,
 			updateEnabled : DynamicBehaviour<bool>,
 			mutable behaviours : Tree<string, Pair<DynamicBehaviour<flow>, IScriptRecordType>>
 		);
 
 		MFocusGroup(
+			isInitialized : DynamicBehaviour<bool>,
 			managerId : int,
 			// Focus group id
 			id : Transform<int>,
@@ -620,19 +630,25 @@ export {
 			mutable previousFocusedId : int,
 			// Live focus ids along with their z-order
 			focusIds : DynamicBehaviour<Tree<int, MaterialFocus>>,
+			mutable nextFocusId : int,
 			iScriptIds : DynamicBehaviour<Tree<string, MaterialFocus>>,
 			enabled : Transform<bool>,
 			zorderEnabled : Transform<bool>,
+			keysEnabled : Transform<bool>,
 			focusEnabled : Transform<bool>,
 			recordingEnabled : Transform<bool>,
 			selectionEnabled : Transform<bool>,
 			focused : DynamicBehaviour<bool>,
 			active : DynamicBehaviour<bool>,
-			position : Transform<PositionScale>,
+			transformMatrix : Transform<TransformMatrix>,
 			widthHeight : Transform<WidthHeight>,
+			scrollInfo : Maybe<MScrollInfo>,
+			mutable rtl : bool,
 			mutable theme : MaterialTheme,
 			mutable behaviours : Tree<string, Pair<DynamicBehaviour<flow>, IScriptRecordType>>
 		);
+
+		MScrollInfo(position : DynamicBehaviour<Point>, contentWH : Transform<WidthHeight>, enabled : Transform<bool>, scrollToFocusEnabled : Transform<bool>);
 
 	MaterialTheme(
 		palette : MaterialPalette,
@@ -696,4 +712,8 @@ export {
 		);
 
 	MaterialRender(manager : MaterialManager, renderId : int);
+}
+
+MSetRTL(rtl : bool) -> SetRTL {
+	SetRTL(rtl)
 }

@@ -16,6 +16,8 @@ export {
 
 	MPicture2T(manager : MaterialManager, parent : MFocusGroup, m : MPicture, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
+	MPictureStyle2TPictureStyle(style : [MPictureStyle]) -> [TPictureStyle];
+
 	mProgressEnabled = ref !isUrlParameterFalse("materialProgress");
 }
 
@@ -23,31 +25,42 @@ MProgressBarDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MProgr
 	percent = m.percent;
 	style = m.style;
 
+	animated = !contains(style, MNoAnimation());
 	progress = make(fgetValue(percent));
 	size = extractStruct(style, WidthHeight(-1., -1.));
 	color = extractStruct(style, getPrimaryColor(parent));
-	backgroundColor = extractStruct(style, MProgressBackgroundColor(MColor(color.color, 200, color.accent))).color;
+	defBackground = MColor(color with shade = if (color.color == CCustom()) MTintColor(color) else 200);
+	backgroundColor = extractStruct(style, MProgressBackgroundColor(defBackground)).color;
 
 	TLet("rect", TGroup2(if (size.width >= 0.0) TFixed(size.width, 0.0) else TFillX(), TFixed(0.0, if (size.height >= 0.0) size.height else 4.0)),
 		TGroup2(
 			TRectangle([MFill(backgroundColor), FillOpacity(0.25)], TDisplay("rect")),
-			TScale(fselect(progress, FLift(\p -> Factor(p, 1.0))),
-				TGhost("rect") |> addTBackground(color)
+			TTweak([TAlign(const(b2d(getDefaultRtl())), const(0.0))],
+				TScale(fselect(if (animated) progress else percent, FLift(\p -> Factor(p, 1.0))),
+					TGhost("rect") |> addTBackground(color)
+				),
+				TGhost("rect")
 			)
 		)
 	)
 	|> (\f ->
-		MEasingAnimation(
-			manager,
-			parent,
-			const(1.),
-			const(easingStandartCurve),
-			percent,
-			\newPercent -> Some(Pair(getValue(progress), newPercent)),
-			\newPercent, t -> nextDistinct(progress, lerp(newPercent.first, newPercent.second, t)),
-			[MForceAnimation(), MStopOffScreen(true)],
-			f
-		)
+		if (animated)
+			MEasingAnimation(
+				manager,
+				parent,
+				const(1.),
+				const(easingStandartCurve),
+				percent,
+				\newPercent -> Some(Pair(getValue(progress), newPercent)),
+				\newPercent, t -> nextDistinct(progress, lerp(newPercent.first, newPercent.second, t)),
+				concatA([
+					extractStructMany(style, MDuration(const(1.))),
+					extractStructMany(style, MBezier(const(easingStandartCurve))),
+					[MForceAnimation(), MStopOffScreen(true)]
+				]),
+				f
+			)
+		else f
 	)
 	|> makeTropicConstant2(size.width, size.height)
 }
@@ -57,7 +70,8 @@ MProgressBar2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressBar
 
 	size = extractStruct(style, WidthHeight(-1., -1.));
 	color = extractStruct(style, getPrimaryColor(parent));
-	backgroundColor = extractStruct(style, MProgressBackgroundColor(MColor(color.color, 200, color.accent))).color;
+	defBackground = MColor(color with shade = if (color.color == CCustom()) MTintColor(color) else 200);
+	backgroundColor = extractStruct(style, MProgressBackgroundColor(defBackground)).color;
 
 	barSize = make(0.5);
 
@@ -97,7 +111,7 @@ MProgressBar2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressBar
 						manager.manager.deltaTimer.attach();
 						\ -> manager.manager.deltaTimer.detach()
 					},
-					makeSubscribe(manager.manager.deltaTimer.timer, \dt -> deferred(\ -> {
+					makeSubscribe(manager.manager.deltaTimer.timer, \dt -> {
 						p = getValue(passed) + dt;
 						if (p < duration) {
 							next(passed, p);
@@ -122,7 +136,7 @@ MProgressBar2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressBar
 							next(barSlow, 0.0);
 							next(barFast, 0.0);
 						}
-					}))
+					})
 				],
 				progressBar
 			)
@@ -204,10 +218,10 @@ MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgress
 				[MAutoStart(), MLoop(\tr -> {beforeFn(!tr); Some(!tr)}), MForceAnimation(), MStopOffScreen(true)],
 				TConstructRenderable(
 					[
-						\ -> {deltaTimer.attach(); \ -> deltaTimer.detach()},
-						\ -> subscribe2(deltaTimer.timer, \dt -> deferred(\ -> {
+						\ -> { deltaTimer.attach(); \ -> deltaTimer.detach(); },
+						\ -> subscribe2(deltaTimer.timer, \dt -> {
 							progress := ^progress + progressMultiplier * (dt / duration);
-						})),
+						}),
 					],
 					progressCircle
 				)
@@ -216,6 +230,7 @@ MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgress
 			progressCircle
 	)
 	|> makeTropicConstant2(size, size)
+	|> (\t -> TGroup2(t, TRectangle(interactiveRectangleStyle, TFixed(size, size))))
 }
 
 ProgressCircleWithArrow(parent : MFocusGroup, from : Transform<double>, to : Transform<double>, stroke : double, radius : double,
@@ -227,22 +242,44 @@ ProgressCircleWithArrow(parent : MFocusGroup, from : Transform<double>, to : Tra
 	shadow = const(4.0);
 
 	triangle =
-		TGraphics([LineTo(0.0, 1.0), LineTo(sqrt(2.0), 0.0), LineTo(0.0, -1.0), ClosePath()], [Fill(col), FillOpacity(opacity)])
+		TGraphics([LineTo(0.0, 2.0), LineTo(sqrt(2.0), 1.0), LineTo(0.0, 0.0), ClosePath()], [Fill(col), FillOpacity(opacity)])
 		|> (\m -> TScale(fselect(triangleScale, FLift(\s -> Factor(triangleMetrics * s, triangleMetrics * s))), m))
-		|> (\m -> TTranslate(const(Point(0.0, -innerR)), m))
+		|> (\m -> TTranslate(fselect(triangleScale, FLift(\s -> (Point(0.0, -innerR - triangleMetrics * s)))), m))
 		|> (\m -> TRotate(if (rotationMultiplier == 1.) from else fselect(from, FLift(\fr -> fr * rotationMultiplier)), m));
 
-	outterCircle =
+	outterCircle = \ ->
 		TCircle(outterR, [Fill(white)])
 		|> (\m -> TShadowShape(parent, shadow, m, RoundShape()))
 		|> (\m -> TTranslate(const(Point(-outterR, -outterR)), m));
 
-	TTranslate(
-		const(Point(-innerR - stroke / 2., -innerR - stroke / 2.)),
-		TSelect2(from, to, \f, t -> TArc(f * rotationMultiplier, f * rotationMultiplier + (t - f) * lengthMultiplier, stroke, innerR, [Fill(col), FillOpacity(opacity)]))
+	TRotate(
+		fselect2(from, to, FLift2(\f, t ->
+			if (t > f)
+				f * rotationMultiplier
+			else
+				f * rotationMultiplier + (t - f) * lengthMultiplier
+		)),
+		TDynamicGraphics(
+			fselect2(from, to, FLift2(\f, t ->
+				CustomSector2(
+					0.,
+					0.,
+					radius,
+					0.0,
+					abs(t - f) * lengthMultiplier,
+					false,
+					[]
+				).path
+			)),
+			const([
+				Stroke(col),
+				StrokeWidth(stroke),
+				StrokeOpacity(opacity),
+			])
+		)
 	)
 	|> (\f -> TGroup2(f, triangle))
-	|> (\f -> if (!background) f else TGroup2(outterCircle, f))
+	|> (\f -> if (!background) f else TGroup2(outterCircle(), f))
 }
 
 MPicture2T(manager : MaterialManager, parent : MFocusGroup, m : MPicture, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -269,18 +306,21 @@ MPicture2T(manager : MaterialManager, parent : MFocusGroup, m : MPicture, m2t : 
 
 		pstyle = replaceStruct(tstyle, OnLoaded(\ -> {uns(); onPicLoaded(); nextDistinct(picLoading, false);}));
 
-		TCopySize(
+		TDecorator(
 			TPicture(m.picURL, pstyle),
-			\tr ->
-				TShowLazy(picLoading, \ ->
-					eitherMap(customLoading, \cl ->
-						m2t(cl.loading, parent),
-						MProgressCircle2T(manager, parent, MProgressCircle([itemsColor]))
-					)
-					|> (\f -> TAlpha(const(0.72), f))
-					|> (\f -> TFrame(0., 0., [MFill(bgColor)], f))
-					|> (\f -> TCenterIn(f, eitherMap(picSize, \ps -> TSized(ps), TFillXY())))
-				),
+			[
+				Pair(
+					picLoading,
+					\__ ->
+						eitherMap(customLoading, \cl ->
+							m2t(cl.loading, parent),
+							MProgressCircle2T(manager, parent, MProgressCircle([itemsColor]))
+						)
+						|> (\f -> TAlpha(const(0.72), f))
+						|> (\f -> TFrame(0., 0., [MFill(bgColor)], f))
+						|> (\f -> TCenterIn(f, eitherMap(picSize, \ps -> TSized(ps), TFillXY())))
+				)
+			],
 			true
 		)
 	} else {

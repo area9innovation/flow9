@@ -48,6 +48,12 @@ class JSBinflowBuffer {
 		return s.toString();
 	}
 
+	public inline function charAt(idx : Int) : Dynamic {
+		var s = new StringBuf();
+		for (i in idx...(idx + 1)) s.addChar(getWord(i));
+		return s.toString();
+	}
+
 	// Deserialisation
 	private static var FlowIllegalStruct : Dynamic = null;
 	private var StructDefs : Array<Dynamic> = [];

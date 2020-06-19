@@ -1,6 +1,7 @@
 import tools/flowc/backends/common;
 import tools/flowc/backends/bytecode/fi2bytecode_defines;
 import tools/flowc/backends/bytecode/fi2bytecode_bytecode;
+import tools/flowc/backends/bytecode/fi2bytecode_debuginfo;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/incremental/fi_helpers;
 import lingo/flow/bytecode;
@@ -11,18 +12,15 @@ export {
 	fiBcCollectBcStructs(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, program : FiProgram, extStructTypes : bool, pc : ref int) -> FiBcStructs;
 	fiMakeLineBytecode(place : string, cfg : FcBytecodeConfig, sctx : FiBcScopeContext, start : int, code : [BytecodeOrChunks], pc : int)  -> BytecodeChunks;
 	fiBcGetGlobals(decls : [Pair<string, [FiDeclaration]>]) -> Tree<string, int>;
-	fiBcDebugAddPosition(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, pc : int, pos : int, isStart : bool, comment : string) -> void;
-	fiBcDebugAddFunction(cfg : FcBytecodeConfig, pc : int, name : string) -> void;
-	fiBcDebugAddLocal(cfg : FcBytecodeConfig, pc : int, type : int, id : int, name : string) -> void;
 
 	fiBcString2Hex(s : string) -> string;
 	fiMaxPosition(e : FiExp) -> int;
 }
 
-fiBcResolveGlobalName(ctx, name) {
+fiBcResolveGlobalName(ctx, name) -> Maybe<FiBcNameResolution> {
 	switch (lookupTree(ctx.globals, name) : Maybe<int>) {
 		Some(v): Some(FiBcGlobal(v));
-		None(): maybeMap(lookupTree(ctx.structs, name), \v : FiBcNameResolution->v);
+		None(): maybeMap(lookupTree(ctx.structs, name), \v : FiBcStruct -> v);
 	}
 }
 
@@ -77,7 +75,7 @@ fiBcPushLocal(ctx, name) {
 	Pair(FiBcScopeContext(func, setTree(ctx.locals, name, new_id)), new_id);
 }
 
-fiType2BcType(names : FiGlobalNames, type : FiType, extStructTypes : bool) -> BytecodeTypeCode {
+fiType2BcType(names : FiGlobalNames, type : FiType, extStructTypes : bool, id : int) -> BytecodeTypeCode {
 	switch (type) {
 		FiTypeVoid()				: TCVoid();
 		FiTypeInt()				: TCInt();
@@ -86,11 +84,11 @@ fiType2BcType(names : FiGlobalNames, type : FiType, extStructTypes : bool) -> By
 		FiTypeString()				: TCString();
 		FiTypeFlow()				: TCFlow();
 		FiTypeNative()				: TCFlow();
-		FiTypeRef(t)				: if (extStructTypes) TCTypedRefTo(fiType2BcType(names, t, extStructTypes)) else TCRefTo();
-		FiTypeArray(t)			: if (extStructTypes) TCTypedArray(fiType2BcType(names, t, extStructTypes)) else TCArray();
+		FiTypeRef(t)				: if (extStructTypes) TCTypedRefTo(fiType2BcType(names, t, extStructTypes, id)) else TCRefTo();
+		FiTypeArray(t)			: if (extStructTypes) TCTypedArray(fiType2BcType(names, t, extStructTypes, id)) else TCArray();
 
 		FiTypeName(name, __) : {
-			rtype = resolveFiTypeName(names, type);
+			rtype = resolveFiTypeName(names, type, id);
 			switch (rtype) {
 				FiTypeStruct(__, __, __, __) : TCStruct();
 				FiTypeUnion(__, __, __, __): TCFlow();
@@ -126,7 +124,11 @@ fiBcCollectBcStructs(
 						ctx.next_closure_id,
 						ctx.resolvers
 					);
-					fiFlowc2StructDefs(cfg, mctx, program.names, acc, module, extStructTypes, pc)
+
+					diBcDebugStartFile(cfg, module.fileinfo.flowfile);
+					r = fiFlowc2StructDefs(cfg, mctx, program.names, acc, module, extStructTypes, pc);
+					diBcDebugEndFile(cfg, ctx.resolvers, module.fileinfo.flowfile, module.fileinfo.fullpath);
+					r;
 				}
 			}
 		});
@@ -145,12 +147,12 @@ fiFlowc2StructDefs(
 			id = acc.id;
 			sname = struct.name;
 			sargs = map(struct.args, \field : FiStructArg -> {
-				tc = fiType2BcType(names, field.type, extStructTypes);
+				tc = fiType2BcType(names, field.type, extStructTypes, ctx.program.config.threadId);
 				mtc = if (field.ismutable) TCSetMutable(tc) else tc;
 				Pair(field.name, mtc);
 			});
 
-			fiBcDebugAddPosition(cfg, ctx, ^pc, struct.start, false, "FiStruct");
+			fiBcDebugAddPosition(cfg, ^pc, struct.start, false, DebugPosStruct());
 
 			structCode = fiMakeBytecode([CStructDef(id, sname, sargs)]);
 			code = arrayPush(acc.bytecode, structCode);
@@ -181,54 +183,6 @@ fiBcGetGlobals(decls) {
 			Pair(id + 1, tr);
 		})
 	}).second;
-}
-
-fiBcMakeDebugInfoPositionKey(ctx : FiBcGlobalContext, file : string, pos : int, isStart : bool, comment : string) -> string {
-	if (comment != "end") {
-		line = switch(lookupTree(ctx.resolvers, file)) {
-			Some(r) : findLineRaw(r, iabs(pos)).lineno;
-			None() : {
-				fcPrintln("cannot find resolver for file: " + file);
-				pos;
-			}
-		}
-		file + ":" + i2s(line) + (if (isStart) "S" else "")
-	} else {
-		file + ":" + i2s(pos)
-	}
-}
-fiBcDebugAddPosition(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, pc : int, pos : int, isStart : bool, comment : string) -> void {
-	if (cfg.debug) {
-		file = ctx.file;
-		key = fiBcMakeDebugInfoPositionKey(ctx, file, pos, isStart, comment);
-		switch (lookupTree(cfg.debugInfoPositions, key)) {
-			None(): {
-				p = BCDPosition(pc, if (comment == "end") file + "--end--" else file, pos, comment);
-				cfg.debugInfoPositions ::= setTree(cfg.debugInfoPositions, key, p);
-			}
-			Some(infoPos): {
-				if (infoPos.pc > pc) {
-					p = BCDPosition(pc, if (comment == "end") file + "--end--" else file, pos, comment);
-					cfg.debugInfoPositions ::= setTree(cfg.debugInfoPositions, key, p);
-				}
-			}
-		}
-	}
-}
-
-fiBcDebugAddFunction(cfg, pc, name) {
-	if (cfg.debug) {
-		pushDList(cfg.debugInfoFunctions, BCDFunction(pc, name));
-		{}
-	}
-}
-
-fiBcDebugAddLocal(cfg, pc, type, id, name) {
-	if (cfg.debug) {
-		pushDList(cfg.debugInfoLocals, BCDLocal(pc, type, id, name));
-		{}
-	}
-
 }
 
 fiBcString2Hex(s) {

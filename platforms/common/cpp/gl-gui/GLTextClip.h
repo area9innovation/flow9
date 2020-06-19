@@ -70,6 +70,7 @@ protected:
     unicode_string html_text, plain_text;
     unicode_string base_font_name;
     TextDirection textDirection;
+    bool textDirectionFixed = false;
     FormatRec base_format;
 
     bool has_urls;
@@ -116,7 +117,7 @@ protected:
         shared_ptr<Utf32InputIterator> *outputBegin, shared_ptr<Utf32InputIterator> *outputEnd
     );
     void layoutText();
-    void layoutTextWrapLines();
+    void layoutTextWrapLines(bool rtl);
     void layoutTextSpaceLines();
 
     std::pair<Extent::Ptr,float> findExtentByPos(vec2 pos, bool nearest = false);
@@ -127,7 +128,7 @@ protected:
     void computeBBoxSelf(GLBoundingBox &bbox, const GLTransform &transform);
 
     void renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box);
-    
+
     typedef std::map<int, int> T_TextInputFilters;
     T_TextInputFilters text_input_filters, text_input_key_down_event_filters, text_input_key_up_event_filters;
     int next_text_input_filter_id, next_text_input_key_down_event_filter_id, next_text_input_key_up_event_filter_id;
@@ -186,9 +187,9 @@ public:
     void setFocus(bool focus);
 
     void setEditState(int cursor, int sel_start, int sel_end, bool set_text, unicode_string text, int scroll_pos = -1);
-    
+
     const unicode_string textFilteredByFlowFilters(const unicode_string &str);
-    const bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
+    bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
 
 public:
     DECLARE_NATIVE_METHOD(setTextInput)

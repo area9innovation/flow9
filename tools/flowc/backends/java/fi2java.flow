@@ -1,4 +1,6 @@
 import tools/flowc/backends/java/fi2java_compile;
+import tools/flowc/backends/java/fi2java_main;
+import tools/flowc/backends/java/fi2jar;
 
 export {
 	fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void;
@@ -9,7 +11,7 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 
 	fcVerbose(cfg, 1, "Collecting code for all imported files...");
 
-	package_path = pathCombineMany(concat([cfg.outputdir], strSplit(cfg.packageName, ".")));
+	package_path = pathCombineMany(concat([cfg.generatedir], strSplit(cfg.packageName, ".")));
 	ensureDirectoryExists(package_path);
 	main_fname = pathCombine(package_path, "Main.java");
 	prev_build_has_collisions = getCollisionAndTimestampOfFile(main_fname).first;
@@ -17,7 +19,7 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 	cstructs_collisions = indexJavaStructs(program, cmodules_info.first);
 	header_generator = \time ->  {
 		header =
-			"// HASH COLLISIONS: " + if (cstructs_collisions.second) "YES" else "NO" + "\n" +
+			"// HASH COLLISIONS: " + (if (cstructs_collisions.second) "YES" else "NO") + "\n" +
 			"// timestamp: " + d2s(time) + "\n\n" +
 			"package " + cfg.packageName + ";\n\n" +
 			"import com.area9innovation.flow.*;\n\n";
@@ -25,48 +27,34 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 	};
 
 	gcontext = JavaGlobalContext(
-		program, cfg.packageName,
+		program, package_path, cfg.mainClassName,
 		cmodules_info.first, cmodules_info.second, cstructs_collisions.first,
-
-		// globals, globalFuncs
-		makeTree(), makeTree(),
-
-		// has_func_def
-		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)),
-		// has_field_accessor
-		makeTree(),
-
-		// uses_host
-		makeTree(),
-		// init_code
-		ref makeList(),
-		// ctor_code
-		ref makeList(),
-		// wrapper_code
-		ref makeList(),
-		// main_file_text
-		header_generator(timestamp()),
+		makeTree(), // globals
+		makeTree(), // globalFuncs
+		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)), // has_func_def
+		makeTree(), // has_field_accessor
+		makeTree(), // uses_host
+		ref makeList(), // init_code
+		ref makeList(), // wrapper_code
+		ref makeList(), // native wrapper_code
 		header_generator,
 		cstructs_collisions.second || prev_build_has_collisions,
 		ref makeList(),
 	);
 
-	rlistPush(gcontext.main_file_text, "@SuppressWarnings(\"unchecked\")\npublic final class Main extends FlowRuntime {\n");
-
 	indexJavaGlobals(gcontext);
-	struct_list = generateJavaStructList(gcontext);
 	generateJavaModules(gcontext, package_path);
-
 	generateJavaStructDefs(gcontext, package_path);
-	
-	generateJavaInitCode(gcontext, struct_list);
+	generateJavaMain(gcontext, cfg);
+	generateJavaSingletonStructs(gcontext);
+	generateJavaStructs(gcontext);
 
 	traverseInOrder(gcontext.has_field_accessor, \name, has -> {
 		if (has) {
 			field_fname = pathCombine(package_path, "Field_" + name + ".java");
 			if (fileExists(field_fname)) {
 				if (gcontext.program.config.verbose > 1) {
-					fcPrintln("Java field module '" + field_fname + "' is already generated - keeping it");
+					fcPrintln("Java field module '" + field_fname + "' is already generated - keeping it", cfg.threadId);
 				}
 				class_path = pathCombine(package_path, "Field_" + name + ".class");
 				if (!fileExists(class_path)) {
@@ -89,7 +77,7 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 			func_fname = pathCombine(package_path, "Func" + i2s(nargs) + ".java");
 			if (fileExists(func_fname)) {
 				if (gcontext.program.config.verbose > 1) {
-					fcPrintln("Java struct module '" + func_fname + "' is already generated - keeping it");
+					fcPrintln("Java struct module '" + func_fname + "' is already generated - keeping it", cfg.threadId);
 				}
 				class_path = pathCombine(package_path, "Func" + i2s(nargs) + ".class");
 				if (!fileExists(class_path)) {
@@ -111,9 +99,12 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 		}
 	});
 
-	writeJavaSource(gcontext, main_fname, javaList2String(gcontext.main_file_text, "}\n"));
 	sources_list_file = pathCombine(package_path, "sources");
 	setFileContent(sources_list_file, javaList2String(gcontext.to_compile, ""));
 
-	callback();
+	if (cfg.jarfile != "") {
+		buildFiJarFile(cfg, package_path, callback)
+	} else {
+		callback();
+	}
 }

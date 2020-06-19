@@ -35,8 +35,8 @@ export {
 		eventHandlerFn : (handled : bool, GetMouseInfo) -> bool) -> () -> void;
 
 	handleZorderedFineGrainWheelEvent(
-		stage : native, zorder : [int], getMouseInfo : GetMouseInfo,
-		eventHandlerFn : (handled : bool, GetMouseInfo) -> bool) -> () -> void;
+		stage : native, zorder : [int], getMouseWheelInfo : GetMouseWheelInfo,
+		eventHandlerFn : (handled : bool, GetMouseWheelInfo) -> bool) -> () -> void;
 
 	handleZorderedKeyUpEvent(
 		stage : native, zorder : [int], eventHandlerFn : (handled : bool, ke : KeyEvent) -> bool) -> () -> void;
@@ -44,8 +44,22 @@ export {
 	handleZorderedKeyDownEvent(
 		stage : native, zorder : [int], eventHandlerFn : (handled : bool, ke : KeyEvent) -> bool) -> () -> void;
 
+	handleZorderedTouchStartEvent(
+		stage : native, zorder : [int], getTouchInfo : GetTouchInfo,
+		eventHandlerFn : (handled : bool, GetTouchInfo) -> bool) -> () -> void;
+
+	handleZorderedTouchMoveEvent(
+		stage : native, zorder : [int], getTouchInfo : GetTouchInfo,
+		eventHandlerFn : (handled : bool, GetTouchInfo) -> bool) -> () -> void;
+
+	handleZorderedTouchEndEvent(
+		stage : native, zorder : [int], getTouchInfo : GetTouchInfo,
+		eventHandlerFn : (handled : bool, GetTouchInfo) -> bool) -> () -> void;
+
 	isHighResolution = getPixelsPerCm() >= 100.0 || getUrlParameter("retina") == "1" || getStageWidth() > 2000.0 || getStageHeight() > 2000.0;
 	GetMouseInfo : (fn : () -> MouseInfo);
+	GetMouseWheelInfo : (fn : () -> MouseWheelInfo);
+	GetTouchInfo : (fn : () -> TouchInfo);
 	fineGrainMouseWheelDx : DynamicBehaviour<double> = make(0.0);
 	fineGrainMouseWheelDy : DynamicBehaviour<double> = make(0.0);
 
@@ -55,6 +69,8 @@ export {
 
 // Here, we record all the event handlers outstanding. We use an id to make sure we can find and remove each entry again
 ZOrderedHandler : (handlerId : int, getMouseInfo : GetMouseInfo, fn : (handled : bool, GetMouseInfo) -> bool);
+ZOrderedWheelHandler : (handlerId : int, getMouseWheelInfo : GetMouseWheelInfo, fn : (handled : bool, GetMouseWheelInfo) -> bool);
+ZOrderedTouchHandler : (handlerId : int, getTouchInfo : GetTouchInfo, fn : (handled : bool, GetTouchInfo) -> bool);
 zorderHandlerId = ref 0;
 
 // Mouse down handling
@@ -138,7 +154,7 @@ handleZorderedMiddleUpEvent(
 // Mouse move handling
 
 moveHandlers : ref Tree<[int], [ZOrderedHandler]> = ref makeTree();
-wheelHandlers : ref Tree<[int], [ZOrderedHandler]> = ref makeTree();
+wheelHandlers : ref Tree<[int], [ZOrderedWheelHandler]> = ref makeTree();
 mouseMoveEventHandler : ref Maybe<() -> void> = ref None();
 mouseWheelEventHandler : ref Maybe<() -> void> = ref None();
 
@@ -151,23 +167,43 @@ handleZorderedMoveEvent(
 }
 
 handleZorderedFineGrainWheelEvent(
-	stage : native, zorder : [int], getMouseInfo : GetMouseInfo,
-	eventHandlerFn : (handled : bool, GetMouseInfo) -> bool
+	stage : native, zorder : [int], getMouseWheelInfo : GetMouseWheelInfo,
+	eventHandlerFn : (handled : bool, GetMouseWheelInfo) -> bool
 ) -> () -> void {
 	onlyOnce(mouseWheelEventHandler, \ -> {
 		if (!(mobile && cpp)) {
 			addFinegrainMouseWheelEventListener(stage, \dx, dy -> {
 				next(fineGrainMouseWheelDx, dx);
 				next(fineGrainMouseWheelDy, dy);
-				handleZorderEvent(wheelHandlers);
+
+				handled = ref false;
+				traverseRInOrder(^wheelHandlers, \k, av -> {
+					iter(av, \v -> {
+						handled := v.fn(^handled, v.getMouseWheelInfo) || ^handled;
+					});
+				});
+
 				next(fineGrainMouseWheelDx, 0.0);
 				next(fineGrainMouseWheelDy, 0.0);
 			})
 		} else {
-			\ -> {}
+			nop
 		}
 	});
-	registerZorderHandler(zorder, wheelHandlers, getMouseInfo, eventHandlerFn);
+	registerZorderWheelHandler(zorder, wheelHandlers, getMouseWheelInfo, eventHandlerFn);
+}
+
+// This adds an mouse wheel event handler to the z-ordered tree, and returns a disposer that can unregister again
+registerZorderWheelHandler(
+	zorder : [int], handlers : ref Tree<[int], [ZOrderedWheelHandler]>, getMouseWheelInfo : GetMouseWheelInfo,
+	eventHandlerFn : (handled : bool, GetMouseWheelInfo) -> bool
+) -> () -> void {
+	zh = ZOrderedWheelHandler(^zorderHandlerId, getMouseWheelInfo, eventHandlerFn);
+	zorderHandlerId := ^zorderHandlerId + 1;
+	handlers := treePushToArrayValue(^handlers, zorder, zh);
+	\ -> {
+		handlers := treeRemoveFromArrayValue(^handlers, zorder, zh);
+	}
 }
 
 
@@ -286,6 +322,93 @@ handleZorderedKeyDownEvent(
 	);
 	registerKeyboardZorderHandler(zorder, keyboardDownHandlers, eventHandlerFn);
 };
+
+
+// Touch start handling
+
+touchStartHandlers : ref Tree<[int], [ZOrderedTouchHandler]> = ref makeTree();
+touchStartEventHandler : ref Maybe<() -> void> = ref None();
+
+handleZorderedTouchStartEvent(
+	stage : native, zorder : [int], getTouchInfo : GetTouchInfo,
+	eventHandlerFn : (handled : bool, GetTouchInfo) -> bool
+) -> () -> void {
+	onlyOnce(touchStartEventHandler, \ -> addEventListener(stage, "touchstart", \ -> handleZorderTouchEvent(touchStartHandlers)));
+	registerZorderTouchHandler(zorder, touchStartHandlers, getTouchInfo, eventHandlerFn);
+}
+
+// Touch move handling
+
+touchMoveHandlers : ref Tree<[int], [ZOrderedTouchHandler]> = ref makeTree();
+touchMoveEventHandler : ref Maybe<() -> void> = ref None();
+
+handleZorderedTouchMoveEvent(
+	stage : native, zorder : [int], getTouchInfo : GetTouchInfo,
+	eventHandlerFn : (handled : bool, GetTouchInfo) -> bool
+) -> () -> void {
+	onlyOnce(touchMoveEventHandler, \ -> addEventListener(stage, "touchmove", \ -> handleZorderTouchEvent(touchMoveHandlers)));
+	registerZorderTouchHandler(zorder, touchMoveHandlers, getTouchInfo, eventHandlerFn);
+}
+
+// Touch end handling
+
+touchEndHandlers : ref Tree<[int], [ZOrderedTouchHandler]> = ref makeTree();
+touchEndEventHandler : ref Maybe<() -> void> = ref None();
+
+handleZorderedTouchEndEvent(
+	stage : native, zorder : [int], getTouchInfo : GetTouchInfo,
+	eventHandlerFn : (handled : bool, GetTouchInfo) -> bool
+) -> () -> void {
+	onlyOnce(touchEndEventHandler, \ -> addEventListener(stage, "touchend", \ -> handleZorderTouchEvent(touchEndHandlers)));
+	registerZorderTouchHandler(zorder, touchEndHandlers, getTouchInfo, eventHandlerFn);
+}
+
+// Handle a touch event
+handleZorderTouchEvent(handlers : ref Tree<[int], [ZOrderedTouchHandler]>) {
+	// When an event comes, then traverse all handlers in z-order starting at the topmost one
+	// and thread the return values from each eventHandler to the next (starting with false).
+
+	// 3 mm?
+	maxRadius = if (mobile) round(getPixelsPerCm() * 0.3) else 0;
+
+	handleZorderTouchEventWithRadius(handlers, 0, maxRadius);
+}
+
+handleZorderTouchEventWithRadius(handlers : ref Tree<[int], [ZOrderedTouchHandler]>, radius : int, maxRadius : int) {
+	if (mobile) setHitboxRadius(i2d(radius));
+	handled = ref false;
+	traverseRInOrder(^handlers, \k, av -> {
+		iter(av, \v -> {
+			// was = ^handled;
+			handled := v.fn(^handled, v.getTouchInfo) || ^handled;
+			// if (^handled && !was) { // Useful to set a break point here if you want to find out who steals your events
+			// 	v.fn(false, v.getMouseInfo);
+			// 	{}
+			// }
+		});
+	});
+	if (!^handled && radius < maxRadius && ^enableMobileHandlerRadius) {
+		handleZorderTouchEventWithRadius(handlers, radius + 10, maxRadius);
+	} else if (mobile) {
+		setHitboxRadius(i2d(maxRadius));
+		enableMobileHandlerRadius := true;
+	}
+}
+
+
+// This adds a touch event handler to the z-ordered tree, and returns a disposer that can unregister again
+registerZorderTouchHandler(
+	zorder : [int], handlers : ref Tree<[int], [ZOrderedTouchHandler]>, getTouchInfo : GetTouchInfo,
+	eventHandlerFn : (handled : bool, GetTouchInfo) -> bool
+) -> () -> void {
+	zh = ZOrderedTouchHandler(^zorderHandlerId, getTouchInfo, eventHandlerFn);
+	zorderHandlerId := ^zorderHandlerId + 1;
+	handlers := treePushToArrayValue(^handlers, zorder, zh);
+	\ -> {
+		handlers := treeRemoveFromArrayValue(^handlers, zorder, zh);
+	}
+}
+
 
 // This adds an event handler to the z-ordered tree, and returns a disposer that can unregister again
 registerKeyboardZorderHandler(

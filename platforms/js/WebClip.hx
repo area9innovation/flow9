@@ -53,7 +53,8 @@ class WebClip extends NativeWidgetClip {
 			try { Browser.document.domain = domain; } catch(e : Dynamic) { Errors.report("Can not set RealHTML domain" + e); }
 		}
 
-		createNativeWidget("div");
+		this.keepNativeWidget = true;
+		this.initNativeWidget();
 
 		if (Platform.isIOS) {
 			// To restrict size of iframe
@@ -65,6 +66,11 @@ class WebClip extends NativeWidgetClip {
 
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
+
+		if (RenderSupport.RendererType == "html") {
+			iframe.className = 'nativeWidget';
+			iframe.style.pointerEvents = 'auto';
+		}
 
 		if (isUrl(url) || Platform.isIE || Platform.isEdge) {
 			iframe.src = url;
@@ -84,10 +90,19 @@ class WebClip extends NativeWidgetClip {
 
 		iframe.onload = function() {
 			try {
+				var iframeDocument = iframe.contentWindow.document;
+
+				if (RenderSupport.RendererType != "html") {
+					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+					if (Native.isTouchScreen()) {
+						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+					}
+				}
+
 				if (shrinkToFit) {
 					try {
-						this.htmlPageWidth = iframe.contentWindow.document.body.scrollWidth;
-						this.htmlPageHeight = iframe.contentWindow.document.body.scrollHeight;
+						this.htmlPageWidth = iframeDocument.body.scrollWidth;
+						this.htmlPageHeight = iframeDocument.body.scrollHeight;
 						applyShrinkToFit();
 					} catch(e : Dynamic) {
 						// if we can't get the size of the html page, we can't do shrink so disable it
@@ -109,12 +124,12 @@ class WebClip extends NativeWidgetClip {
 				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
 					iframe.scrolling = "no"; // Obviousely it is flow page.
 				}
-			} catch(e : Dynamic) { Errors.report(e); }
+			} catch(e : Dynamic) { Errors.report(e); ondone(e);}
 		};
 	}
 
 	private function applyShrinkToFit() {
-		if (getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
+		if (this.getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
 			var scaleH = nativeWidget.clientHeight / this.htmlPageHeight;
 			var scaleW = nativeWidget.clientWidth / this.htmlPageWidth;
 			var scaleWH = Math.min(1.0, Math.min(scaleH, scaleW));
@@ -140,11 +155,40 @@ class WebClip extends NativeWidgetClip {
 	}
 
 	private function applyNativeWidgetSize() {
-		if (getClipVisible() && nativeWidget != null && iframe != null) {
+		if (this.getClipVisible() && nativeWidget != null && iframe != null) {
 			// Explicitly set w/h (for iOS at least it does not work with "100%")
 			iframe.style.width = nativeWidget.style.width;
 			iframe.style.height = nativeWidget.style.height;
 			iframe.style.visibility = "visible";
+		}
+	}
+
+	private function onContentMouseMove(e : Dynamic) {
+		var iframeZorder : Int = Math.floor(Std.parseInt(nativeWidget.style.zIndex) / 1000);
+		var localStages = RenderSupport.PixiStage.children;
+		var i = localStages.length - 1;
+
+		while (i > iframeZorder) {
+			var pos = Util.getPointerEventPosition(e);
+
+			RenderSupport.MousePos.x = pos.x;
+			RenderSupport.MousePos.y = pos.y;
+
+			if (RenderSupport.getClipAt(localStages[i], RenderSupport.MousePos, true, true) != null) {
+				untyped localStages[i].view.style.pointerEvents = "all";
+				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
+
+				untyped RenderSupport.PixiRenderer.view = untyped localStages[i].view;
+
+				if (e.type == "touchstart") {
+					RenderSupport.emitMouseEvent(RenderSupport.PixiStage, "mousedown", pos.x, pos.y);
+					RenderSupport.emitMouseEvent(RenderSupport.PixiStage, "mouseup", pos.x, pos.y);
+				}
+
+				return;
+			}
+
+			i--;
 		}
 	}
 
@@ -156,7 +200,7 @@ class WebClip extends NativeWidgetClip {
 			nativeWidget.removeAttribute("tabindex"); // FF set focus to div if it has tabindex
 		}
 
-		if (getClipVisible()) {
+		if (this.getClipVisible()) {
 			if (this.shrinkToFit) {
 				applyShrinkToFit();
 			} else {
@@ -187,6 +231,7 @@ class WebClip extends NativeWidgetClip {
 	public function setDisableOverlay(disable : Bool) : Void {
 		if (disableOverlay && !disable) {
 			nativeWidget.removeChild(disableOverlay);
+			iframe.style.pointerEvents = 'auto';
 		} else if (disable) {
 			if (!disableOverlay) {
 				disableOverlay = Browser.document.createElement("div");
@@ -195,6 +240,7 @@ class WebClip extends NativeWidgetClip {
 
 			disableOverlay.style.display = "block";
 			nativeWidget.appendChild(disableOverlay);
+			iframe.style.pointerEvents = 'none';
 		}
 	}
 
@@ -207,5 +253,4 @@ class WebClip extends NativeWidgetClip {
 			iframe.contentWindow.postMessage(code, '*');
 		}
 	}
-
 }

@@ -1,0 +1,193 @@
+import tools/flowc/backends/inca/inca_flow;
+import tools/flowc/backends/inca/env;
+
+/*
+TODO:
+- Finish lowering to IiExp
+- Lift lambdas to global functions in a first phase, to avoid
+  function types
+*/
+export {
+	fi2incaflow(env : IncaEnv) -> IiProgram;
+}
+
+// A program is a set of functions, as well as the types of globals
+IiProgram(
+	functions : Tree<string, IiFunction>, 
+	// The type of global variables
+	globals : [IiType]
+);
+
+FiIncaEnv(
+	// Look up from name to global memory position
+	names : Tree<string, int>,
+	globals : int,
+	program : IiProgram,
+);
+
+FiIncaEnvExp(
+	env : FiIncaEnv,
+	exp : IiExp
+);
+
+fi2incaflow(env : IncaEnv) -> IiProgram {
+	env0 = FiIncaEnv(
+		makeTree(),
+		0,
+		IiProgram(makeTree(), []),
+	);
+	env1 = foldTree(env.functions, env0, \n, f, acc -> fifun2incaflow(acc, f));
+	env1.program
+}
+
+fifun2incaflow(env : FiIncaEnv, fi : FiFunctionDec) -> FiIncaEnv {
+	onError = \e -> {
+		println("Error in " + fi.name + ": " + e);
+	}
+	localEnv = fold(fi.lambda.args, env, \nacc, arg : FiFunArg -> {
+		addNameToFiIncaEnv(nacc, arg.name, fiType2i(arg.type, onError))
+	});
+
+	intoName = fi.name + "__returnValue";
+	retType = fiType2i(fi.type.returnType, onError);
+	intoEnv = addNameToFiIncaEnv(localEnv, intoName, retType);
+	intoIndex = intoEnv.globals - 1;
+
+	bodyWithEnv = fiExp2i(localEnv, fi.lambda.body, onError);
+	bodyExp = IiSet(IiName(intoIndex), retType, bodyWithEnv.exp, fi.lambda.body.start);
+
+	ifun = IiFunction(fi.name, 
+		map(fi.lambda.args, \a : FiFunArg -> {
+			lookupTreeDef(localEnv.names, a.name, -1);
+		}),
+		intoIndex,
+		bodyExp
+	);
+ 
+	// OK, reverse the indexes of names in case they were shadowed
+	cleanEnv = fold(fi.lambda.args, bodyWithEnv.env, \nacc : FiIncaEnv, arg : FiFunArg -> {
+		oldIndex = lookupTree(env.names, arg.name);
+		nnames = switch (oldIndex) {
+			None(): removeFromTree(env.names, arg.name);
+			Some(i): setTree(env.names, arg.name, i);
+		};
+		FiIncaEnv(nacc with names = nnames)
+	});
+
+	// Next, enter the transformed function
+	FiIncaEnv(
+		cleanEnv with
+		program = IiProgram(
+			cleanEnv.program
+			with functions = setTree(cleanEnv.program.functions, fi.name, ifun)
+		)
+	);
+}
+
+fiType2i(i : FiType, onError : (string) -> void) -> IiType {
+	error = \e -> {
+		onError(e);
+		FiTypeVoid();
+	}
+	switch (i) {
+		FiTypeArray(t): IiTypeArray(fiType2i(t, onError));
+		FiTypeFunction(args, returnType): error("No first order functions"); // TODO: This happens since we do not lift functions to global scope yet
+		FiTypeRef(t): error("No refs");
+		FiTypeParameter(n): error("No polymorphism");
+		FiTypeBool(): i;
+		FiTypeInt(): i;
+		FiTypeDouble(): i;
+		FiTypeString(): i;
+		FiTypeFlow(): error("No flow type");
+		FiTypeVoid(): i;
+		FiTypeNative(): i;
+		FiTypeName(name, typeparameters): {
+			if (typeparameters != []) error("No type pars")
+			else IiTypeName(name);
+		}
+	}
+}
+
+fiExp2i(env : FiIncaEnv, ex : FiExp, onError : (string) -> void) -> FiIncaEnvExp {
+	error = \e -> {
+		onError(e);
+		FiIncaEnvExp(env, FiVoid(0))
+	}	
+	todo = \ -> {
+		// error("Todo: " + ex.structname);
+		FiIncaEnvExp(env, FiVoid(0));
+	}
+
+	switch (ex) {
+		FiLambda(args, body, type, start): todo();
+		FiCall(f, args, type, start): {
+			// If there is one place where we allow function types, it is in f.
+			todo();
+		}
+		FiIf(e1, e2, e3, type, start): todo();
+		FiSwitch(x, switchType, cases, type, start): todo();
+		FiCallPrim(op, es, type, start): todo();
+
+		FiVar(name, type, start): {
+			ie = lookupTree(env.names, name);
+			switch (ie) {
+				None(): error("Unknown " + name);
+				Some(ii): {
+					valtype = fiType2i(type, onError);
+					FiIncaEnvExp(env, IiVar(IiName(ii), valtype, start));
+				}
+			}
+		}
+		FiLet(name, type, e1, e2, type2, start): {
+			ie1 = fiExp2i(env, e1, onError);
+			valtype = fiType2i(type, onError);
+
+			nenv = addNameToFiIncaEnv(ie1.env, name, valtype);
+			ie2 = fiExp2i(nenv, e2, onError);
+
+			restype = fiType2i(type2, onError);
+
+			iname = IiName(lookupTreeDef(nenv.names, name, -1));
+
+			let = IiSeq([
+				IiSet(iname, valtype, ie1.exp, start),
+				ie2.exp
+			], restype, start);
+			FiIncaEnvExp(
+				ie2.env,
+				let
+			);
+		}
+
+		FiSeq(es, type, start): {
+			restype = fiType2i(type, onError);
+			ps = fold(es, Pair(env, []), \acc, e -> {
+				ee = fiExp2i(acc.first, e, onError);
+				Pair(ee.env, arrayPush(acc.second, ee.exp))
+			});
+			FiIncaEnvExp(
+				ps.first,
+				IiSeq(ps.second, restype, start)
+			)
+		}
+		FiVoid(start): FiIncaEnvExp(env, ex);
+		FiDouble(d, start): FiIncaEnvExp(env, ex);
+		FiInt(i, start): FiIncaEnvExp(env, ex);
+		FiString(s, start): FiIncaEnvExp(env, ex);
+		FiBool(b, start): FiIncaEnvExp(env, ex);
+
+		FiCast(e, tFrom, tTo, type, start): error("No cast");
+		FiRequire(flowfile, e, type, start): error("No require");
+		FiUnsafe(name, fallback, type, start): error("No unsafe");
+	}
+}
+
+addNameToFiIncaEnv(acc : FiIncaEnv, name : string, type : IiType) -> FiIncaEnv {
+	nextId = acc.globals;
+	FiIncaEnv(
+		acc with
+		names = setTree(acc.names, name, nextId),
+		globals = nextId + 1,
+		program = IiProgram(acc.program with globals = arrayPush(acc.program.globals, type)),
+	);
+}

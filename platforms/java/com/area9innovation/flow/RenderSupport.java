@@ -54,13 +54,34 @@ public class RenderSupport extends NativeHost {
 	public Object setWebClipDisabled(Object clip,boolean value) {
 		return null;
 	}
-	public String webClipEvalJS(Object clip,String code) {
+	public Object webClipEvalJS(Object clip,String code, Func1<Object,String> cb) {
 		return null;
 	}
 	public Object setWebClipZoomable(Object clip,Boolean zoomable) {
 		return null;
 	}
 	public Object setWebClipDomains(Object clip, Object[] domains) {
+		return null;
+	}
+	public Object makeHTMLStage(double width, double height) {
+		return null;
+	}
+	public Object createElement(String tagName) {
+		return null;
+	}
+	public Object createTextNode(String text) {
+		return null;
+	}
+	public Object setAttribute(Object element, String name, String value) {
+		return null;
+	}
+	public Object appendChild(Object element, Object child) {
+		return null;
+	}
+	public Object insertBefore(Object element, Object child, Object reference) {
+		return null;
+	}
+	public Object removeElementChild(Object element, Object child) {
 		return null;
 	}
 	public Object addFilters(Object stg, Object[] filters) {
@@ -117,6 +138,21 @@ public class RenderSupport extends NativeHost {
 	public Object setClipRotation(Object stg, double val) {
 		return null;
 	}
+	public Object setClipWidth(Object clip, double width) {
+		return null;
+	}
+	public double getClipHeight(Object clip) {
+		return 0;
+	}
+	public double getClipWidth(Object clip) {
+		return 0;
+	}
+	public Object setClipHeight(Object clip, double height) {
+		return null;
+	}
+	public Object setClipResolution(Object clip, double resolution) {
+		return null;
+	}
 	public Object setScrollRect(Object stg, double x, double y, double w, double h) {
 		return null;
 	}
@@ -132,7 +168,7 @@ public class RenderSupport extends NativeHost {
 	public Func0<Object> addFileDropListener(Object clib, Integer maxFilesCount, String mimeTypeRegExFilter, Func1<Object,Object[]> onDone) {
 		return null;
 	}
-	public Func0<Object> addVirtualKeyboardHeightListener(Func0<Object> fn) {
+	public Func0<Object> addVirtualKeyboardHeightListener(Func1<Object, Double> fn) {
 		return null;
 	}
 	public Func0<Object> addKeyEventListener(Object stg, String event, Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>> cb) {
@@ -180,8 +216,8 @@ public class RenderSupport extends NativeHost {
 	public Object setTextInputType(Object stg, String type) {
 		return null;
 	}
-	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
-								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
+	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour,double backgroundOpacity) {
 		return null;
 	}
@@ -275,9 +311,10 @@ public class RenderSupport extends NativeHost {
 	public Object setVideoControls(Object stg, Object[] info) {
 		return null;
 	}
-	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
-								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
-								  int backgroundColour,double backgroundOpacity) {
+	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
+								  int backgroundColour, double backgroundOpacity, boolean alignBottom,
+								  double bottomBorder, boolean scaleMode, double scaleModeMin, double scaleModeMax, boolean escapeHTML) {
 		return null;
 	}
 	public Object setVideoPlaybackRate(Object tf, Double rate) {
@@ -319,10 +356,13 @@ public class RenderSupport extends NativeHost {
 	public Object makeBlur(double a,double b) {
 		return null;
 	}
+	public Object makeBackdropBlur(double a) {
+		return null;
+	}
 	public Object makeGlow(double a,double b,int c, double d,boolean e) {
 		return null;
 	}
-	public Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e) {
+	public Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e, String alt) {
 		return null;
 	}
 	public Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {
@@ -391,4 +431,18 @@ public class RenderSupport extends NativeHost {
     public Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
     	return no_op;
     }
+	public Object playVideoFromMediaStream(Object clip, Object stream, Boolean startPaused) {
+		return null;
+	}
+	public Object compareImages(String image1, String image2, Func1<Object, String> cb) {
+		return null;
+	}
+
+	public Func0<Object> addUrlHashListener(Func1<Object,String> cb) {
+		return no_op;
+	}
+
+	public Object takeSnapshot(String path) {
+		return null;
+	}
 }

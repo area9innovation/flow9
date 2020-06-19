@@ -22,42 +22,45 @@ export {
 	staticTropic2form(b : Tropic, sheet : Stylesheet) -> Form {staticTropic2fform(b, sheet) |> fform2form};
 
 	tropic2nativeForm(b : Tropic, sheet : Stylesheet) -> Form;
+
+	distributeAsks(
+		fillers1 : Transform<double>,
+		fillers2 : Transform<double>,
+		min1 : Transform<double>,
+		min2 : Transform<double>,
+		max1 : Transform<double>,
+		max2 : Transform<double>,
+		av : Transform<double>,
+		addFillers1 : Transform<bool>,
+		addFillers2 : Transform<bool>
+	) -> Pair<Transform<double>, Transform<double>>;
+}
+
+makeContext(availableWH : Transform<WidthHeight>) -> TParentInfo {
+	TParentInfo(
+		fwidth(availableWH),
+		fheight(availableWH),
+		makeTree(),
+		const(zeroTransformMatrix)
+	);
 }
 
 tropic2form(b : Tropic, sheet : Stylesheet) -> Form {
 	availableWH = makeWH();
 
-	context = TParentInfo(
-		fwidth(availableWH),
-		fheight(availableWH),
-		makeTree(),
-		const(zeroTransformMatrix),
-		const(true),
-		const(zeroBounds),
-	);
-
-	tropic2fformWithContext(b, sheet, context, availableWH)
+	tropic2fformWithContext(b, sheet, makeContext(availableWH), availableWH)
 	|> fform2form
 	|> (\f -> Inspect([IAvailable(availableWH)], f))
 }
 
 tropic2fform(b : Tropic, sheet : Stylesheet, availableWH : Transform<WidthHeight>) -> FForm {
-	context = TParentInfo(
-		fwidth(availableWH),
-		fheight(availableWH),
-		makeTree(),
-		const(zeroTransformMatrix),
-		const(true),
-		const(zeroBounds)
-	);
-
 	ot = optimizeTropic(resolveTropicCss(b, sheet));
 	form = make(FEmpty());
 
 	FConstructor(
 		FMutable(form),
 		\ -> {
-			ba = tropic2Acc(ot, context, sheet, false);
+			ba = tropic2Acc(ot, makeContext(availableWH), sheet, false);
 			next(form, ba.form);
 
 			\ -> applyall(ba.disposers)
@@ -69,19 +72,10 @@ tropic2fformTranslated(b : Tropic, sheet : Stylesheet) -> FForm {
 	availableWH = makeWH();
 	transformMatrix = make(getDummyTransformMatrix());
 
-	context = TParentInfo(
-		fwidth(availableWH),
-		fheight(availableWH),
-		makeTree(),
-		transformMatrix,
-		const(true),
-		const(zeroBounds)
-	);
-
 	transformMatrixFn = ref \ -> TransformMatrix(1., 0., 0., 1., 0., 0.);
 
 	FConstructor(
-		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, context, availableWH),
+		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, makeContext(availableWH), availableWH),
 		\ -> {
 			// Repeatable timer to check transform matrix every new frame
 			drawFrameDeltaTimer = makeDrawFrameEventListener();
@@ -108,19 +102,10 @@ tropic2formTranslated(b : Tropic, sheet : Stylesheet) -> Form {
 	availableWH = makeWH();
 	transformMatrix = make(getDummyTransformMatrix());
 
-	context = TParentInfo(
-		fwidth(availableWH),
-		fheight(availableWH),
-		makeTree(),
-		transformMatrix,
-		const(true),
-		const(zeroBounds)
-	);
-
 	transformMatrixFn = ref \ -> TransformMatrix(1., 0., 0., 1., 0., 0.);
 
 	FConstructor(
-		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, context, availableWH),
+		tropic2fformWithContext(TTag2(\fn -> transformMatrixFn := fn, b), sheet, makeContext(availableWH), availableWH),
 		\ -> {
 			// Repeatable timer to check transform matrix every new frame
 			drawFrameDeltaTimer = makeDrawFrameEventListener();
@@ -176,9 +161,7 @@ staticTropic2fform(b : Tropic, sheet : Stylesheet) -> FForm {
 		zero,
 		zero,
 		makeTree(),
-		const(zeroTransformMatrix),
-		const(true),
-		const(zeroBounds)
+		const(zeroTransformMatrix)
 	);
 
 	tropic2Acc(ot, context, sheet, false).form;
@@ -215,62 +198,48 @@ tropic2nativeForm(tr : Tropic, sheet : Stylesheet) -> Form {
 			metrics,
 			\ -> fform2form(^form.second),
 			\__, zorder, tabOrder -> {
-				FConstructor(
-					tropic2Acc(
-						TTag2(\fn -> transformMatrixFn := fn, trop),
-						TParentInfo(
-							fwidth(available),
-							fheight(available),
-							makeTree(),
-							transformMatrix,
-							const(true),
-							const(zeroBounds)
-						),
-						sheet,
-						false
-					)
-					|> (\f : TAcc -> {
-						formId = ^form.first + 1;
-						form := Pair(formId, f.form);
-
-						FDisposer(
-							f.form,
-							\ -> {
-								applyall(f.disposers);
-								if (^form.first == formId) {
-									form := Pair(formId, FEmpty());
-									nextDistinct(metrics, FormMetrics(0., 0., 0., 0.));
-								}
-							}
-						);
-					}),
-					\ -> {
-						// Repeatable timer to check transform matrix every new frame
-						drawFrameDeltaTimer = makeDrawFrameEventListener();
-						drawFrameDeltaTimer.attach();
-
-						subscribe2(drawFrameDeltaTimer.timer, \__ -> {
-							nextDistinct(
-								transformMatrix,
-								^transformMatrixFn()
-							);
-						})
-						|> (\disp ->
-							\ -> {
-								drawFrameDeltaTimer.detach();
-								disp();
-								transformMatrixFn := \ -> TransformMatrix(1., 0., 0., 1., 0., 0.)
-							}
-						)
-					}
+				tropic2Acc(
+					TTag2(\fn -> transformMatrixFn := fn, trop),
+					TParentInfo(
+						fwidth(available),
+						fheight(available),
+						makeTree(),
+						transformMatrix
+					),
+					sheet,
+					false
 				)
-				|> (\f -> renderFForm(f, zorder))
-				|> (\f ->
+				|> (\f : TAcc -> {
+					formId = ^form.first + 1;
+					form := Pair(formId, f.form);
+
+					FDisposer(
+						f.form,
+						\ -> {
+							applyall(f.disposers);
+							if (^form.first == formId) {
+								form := Pair(formId, FEmpty());
+								nextDistinct(metrics, FormMetrics(0., 0., 0., 0.));
+							}
+						}
+					);
+				})
+				|> (\f -> renderFForm(f, const(zorder)))
+				|> (\f -> {
+					disposers =
+						concat(
+							[
+								addEventListener(f.clips[0], "transformchanged", \ -> nextDistinct(transformMatrix, ^transformMatrixFn())),
+								\ -> transformMatrixFn := \ -> TransformMatrix(1., 0., 0., 1., 0., 0.)
+							],
+							f.disposers
+						);
+
 					NativeRenderResult(
 						f.clips,
-						\ -> applyall(f.disposers)
-					)
-				)
+						\ -> applyall(disposers)
+					);
+				})
 			}
 		)
 	)
@@ -321,9 +290,13 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TDynamicGroup2(stackChanges, currentStack, combiner) : {
 			fgroupChanges : DynamicBehaviour<[FGroupChange]> = make([]);
 			tropicItems : DynamicBehaviour<[TDynamicGroupItem]> = make([]);
-			verticalCombiner = if (combiner == TLinesCombiner()) FAddition() else FMax();
-			rtl = combiner == TColsACombiner() && getDefaultRtl();
+			verticalCombiner = if (combiner == TLinesCombiner() || combiner == TLinesACombiner()) FAddition() else FMax();
 			horizontalCombiner = if (combiner == TColsCombiner() || combiner == TColsACombiner()) FAddition() else FMax();
+
+			rtl = getDefaultRtl();
+			rtlCols = combiner == TColsACombiner() && getDefaultRtl();
+			rtlLines = combiner == TLinesACombiner() && getDefaultRtl();
+			maxWidth = if (rtlLines) fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0) else const(0.0);
 
 			createNewTAcc = \itemIndex, tropic -> {
 				if (combiner == TGroupCombiner()) {
@@ -339,24 +312,55 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				} else {
 					previousItem : Transform<TDynamicGroupItem> =
 						fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
-							elementAt(ti, if (rtl) i + 1 else i - 1, zeroTDynamicGroupItem)
+							elementAt(ti, if (rtlCols) i + 1 else i - 1, zeroTDynamicGroupItem)
 						));
 
+					tropicWidth = make(0.0);
 					itemPosition =
 						fsubselect(
 							previousItem,
 							FLift(\prevItem ->
-								positionTDynamicGroupItem(
-									prevItem,
-									combiner
-								)
+								if (rtlLines)
+									fselect4(
+										prevItem.position,
+										prevItem.acc.metrics.height,
+										maxWidth,
+										tropicWidth,
+										\p : Point, prevHeight : double, containerWidth, currentWidth : double ->
+											Point(
+												if (containerWidth > currentWidth) containerWidth - currentWidth else 0.0,
+												p.y + prevHeight
+											)
+									)
+								else
+									fselect2(
+										prevItem.position,
+										if (combiner == TLinesCombiner() || combiner == TLinesACombiner())
+											prevItem.acc.metrics.height
+										else
+											prevItem.acc.metrics.width,
+										if (combiner == TLinesCombiner() || combiner == TLinesACombiner())
+											FLift2(\p : Point, metric : double ->
+												Point(
+													0.0,
+													p.y + metric
+												)
+											)
+										else
+											FLift2(\p : Point, metric : double ->
+												Point(
+													p.x + metric,
+													0.0
+												)
+											)
+									)
 							)
 						);
 
 					Pair(
 						itemPosition,
 						tropic2Acc(
-							TTranslate(itemPosition, tropic),
+							TTranslate(itemPosition, TAttachWidth(tropic, tropicWidth)),
 							parent,
 							sheet,
 							metricsOnly
@@ -386,20 +390,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					\i, item -> next(item.index, i + z + 1)
 				);
 
-				if (combiner == TGroupCombiner()) {
-					newTAcc.second.form;
-				} else {
-					FRenderable(
-						fboundsoverlap(
-							fapplytransform(
-								fwidthheight(newTAcc.second.metrics.width, newTAcc.second.metrics.height),
-								fworldtransform(parent.transformMatrix, fpoint2transform(newTAcc.first))
-							),
-							parent.viewBounds
-						),
-						newTAcc.second.form
-					);
-				}
+				newTAcc.second.form;
 			}
 
 			handleDelete = \z -> {
@@ -437,20 +428,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						)
 					);
 
-					if (combiner == TGroupCombiner()) {
-						newTAcc.second.form;
-					} else {
-						FRenderable(
-							fboundsoverlap(
-								fapplytransform(
-									fwidthheight(newTAcc.second.metrics.width, newTAcc.second.metrics.height),
-									fworldtransform(parent.transformMatrix, fpoint2transform(newTAcc.first))
-								),
-								parent.viewBounds
-							),
-							newTAcc.second.form
-						);
-					}
+					newTAcc.second.form;
 				} else {
 					handleAdd(tropic, z);
 				}
@@ -603,25 +581,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			ex2 = make(0.0);
 			yfill = make(0.0);
 
-			ba1worldVisible = make(false);
-
 			ba1 =
 				tropic2Acc(
 					t1,
 					TParentInfo(parent with
 						maxX = ex1,
-						maxY = yfill,
-						worldVisible = ba1worldVisible
+						maxY = yfill
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
-			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, parent.transformMatrix), parent.viewBounds);
-
-			ba2transform = fworldtransform(parent.transformMatrix, fx2transform(ba1.metrics.width));
-			ba2worldVisible = make(false);
 
 			ba2 =
 				tropic2Acc(
@@ -630,16 +599,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						ex2,
 						yfill,
 						parent.environment,
-						ba2transform,
-						ba2worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, fx2transform(ba1.metrics.width))
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
-			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
 
 			minWidth = faddition(ba1.minWidth, ba2.minWidth);
 			minHeight = fmax(ba1.minHeight, ba2.minHeight);
@@ -661,10 +625,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					nextDistinct(ex2, fgetValue(ba2.metrics.width));
 					nextDistinct(yfill, max(fgetValue(ba1.metrics.height), fgetValue(ba2.metrics.height)));
 
-					[
-						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
-					]
+					[]
 				} else {
 					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, ba1.addFillers, ba2.addFillers);
 
@@ -685,9 +646,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						} else
 							[fconnect(allocation.second, ex2)],
 						[
-							fconnect(availYFill, yfill),
-							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+							fconnect(availYFill, yfill)
 						]
 					])
 				}
@@ -697,14 +656,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						FRenderable(
-							ba1worldVisible,
-							ba1.form
-						),
-						FRenderable(
-							ba2worldVisible,
-							FTranslate(ba1.metrics.width, zero, ba2.form)
-						),
+						ba1.form,
+						FTranslate(ba1.metrics.width, zero, ba2.form),
 						true
 					),
 				TFormMetrics(
@@ -731,9 +684,6 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			bsln2 = make(0.);
 			yfill = make(0.);
 
-			ba1transform = fworldtransform(parent.transformMatrix, fy2transform(bsln1));
-			ba1worldVisible = make(false);
-
 			ba1 =
 				tropic2Acc(
 					t1,
@@ -741,19 +691,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						ex1,
 						yfill,
 						parent.environment,
-						ba1transform,
-						ba1worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, fy2transform(bsln1))
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
-			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, ba1transform), parent.viewBounds);
-
-			ba2transform = fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(ba1.metrics.width, bsln2)));
-			ba2worldVisible = make(false);
 
 			ba2 =
 				tropic2Acc(
@@ -762,16 +704,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						ex2,
 						yfill,
 						parent.environment,
-						ba2transform,
-						ba2worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(ba1.metrics.width, bsln2)))
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
-			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
 
 			baseline = fmax(ba1.metrics.baseline, ba2.metrics.baseline);
 			baseline1 = fsubtract(baseline, ba1.metrics.baseline);
@@ -802,10 +739,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					nextDistinct(ex2, fgetValue(ba2.metrics.width));
 					nextDistinct(yfill, max(fgetValue(ba1.metrics.height), fgetValue(ba2.metrics.height)));
 
-					[
-						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
-					]
+					[]
 				} else {
 					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, ba1.addFillers, ba2.addFillers);
 
@@ -828,9 +762,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						[
 							fconnect(availYFill, yfill),
 							fconnect(baseline1, bsln1),
-							fconnect(baseline2, bsln2),
-							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+							fconnect(baseline2, bsln2)
 						]
 					])
 				}
@@ -840,14 +772,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						FRenderable(
-							ba1worldVisible,
-							FTranslate(zero, baseline1, ba1.form)
-						),
-						FRenderable(
-							ba2worldVisible,
-							FTranslate(ba1.metrics.width, baseline2, ba2.form)
-						),
+						FTranslate(zero, baseline1, ba1.form),
+						FTranslate(ba1.metrics.width, baseline2, ba2.form),
 						true
 					),
 				TFormMetrics(
@@ -872,25 +798,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			ey1 = make(0.0);
 			ey2 = make(0.0);
 
-			ba1worldVisible = make(false);
-
 			ba1 =
 				tropic2Acc(
 					t1,
 					TParentInfo(parent with
 						maxX = xfill,
-						maxY = ey1,
-						worldVisible = ba1worldVisible
+						maxY = ey1
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
-			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, parent.transformMatrix), parent.viewBounds);
-
-			ba2transform = fworldtransform(parent.transformMatrix, fy2transform(ba1.metrics.height));
-			ba2worldVisible = make(false);
 
 			ba2 =
 				tropic2Acc(
@@ -899,16 +816,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						xfill,
 						ey2,
 						parent.environment,
-						ba2transform,
-						ba2worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, fy2transform(ba1.metrics.height))
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
-			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
 
 			minWidth = fmax(ba1.minWidth, ba2.minWidth);
 			minHeight = faddition(ba1.minHeight, ba2.minHeight);
@@ -930,10 +842,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					nextDistinct(ey2, fgetValue(ba2.metrics.height));
 					nextDistinct(xfill, max(fgetValue(ba1.metrics.width), fgetValue(ba2.metrics.width)));
 
-					[
-						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
-					]
+					[]
 				} else {
 					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, ba1.addFillers, ba2.addFillers);
 
@@ -954,9 +863,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						} else
 							[fconnect(allocation.second, ey2)],
 						[
-							fconnect(availXFill, xfill),
-							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+							fconnect(availXFill, xfill)
 						]
 					])
 				}
@@ -966,14 +873,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						FRenderable(
-							ba1worldVisible,
-							ba1.form
-						),
-						FRenderable(
-							ba2worldVisible,
-							FTranslate(zero, ba1.metrics.height, ba2.form)
-						),
+						ba1.form,
+						FTranslate(zero, ba1.metrics.height, ba2.form),
 						true
 					),
 				TFormMetrics(
@@ -998,25 +899,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			ey1 = make(0.0);
 			ey2 = make(0.0);
 
-			ba1worldVisible = make(false);
-
 			ba1 =
 				tropic2Acc(
 					t1,
 					TParentInfo(parent with
 						maxX = xfill,
-						maxY = ey1,
-						worldVisible = ba1worldVisible
+						maxY = ey1
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
-			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, parent.transformMatrix), parent.viewBounds);
-
-			ba2transform = fworldtransform(parent.transformMatrix, fy2transform(ba1.metrics.height));
-			ba2worldVisible = make(false);
 
 			ba2 =
 				tropic2Acc(
@@ -1025,16 +917,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						xfill,
 						ey2,
 						parent.environment,
-						ba2transform,
-						ba2worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, fy2transform(ba1.metrics.height))
 					),
 					sheet,
 					metricsOnly
 				);
-
-			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
-			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
 
 			minWidth = fmax(ba1.minWidth, ba2.minWidth);
 			minHeight = faddition(ba1.minHeight, ba2.minHeight);
@@ -1056,10 +943,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					nextDistinct(ey2, fgetValue(ba2.metrics.height));
 					nextDistinct(xfill, max(fgetValue(ba1.metrics.width), fgetValue(ba2.metrics.width)));
 
-					[
-						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
-					]
+					[]
 				} else {
 					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, ba1.addFillers, ba2.addFillers);
 
@@ -1080,9 +964,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						} else
 							[fconnect(allocation.second, ey2)],
 						[
-							fconnect(availXFill, xfill),
-							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
-							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+							fconnect(availXFill, xfill)
 						]
 					])
 				}
@@ -1092,14 +974,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						FRenderable(
-							ba1worldVisible,
-							ba1.form
-						),
-						FRenderable(
-							ba2worldVisible,
-							FTranslate(zero, ba1.metrics.height, ba2.form)
-						),
+						ba1.form,
+						FTranslate(zero, ba1.metrics.height, ba2.form),
 						true
 					),
 				TFormMetrics(
@@ -1226,6 +1102,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			snapSize = extractStruct(style, TSnapSize(0.0, 0.0, false));
 			// How to align the content in the size, when there is excess space
 			tAlign = extractStruct(style, TAlign(const(0.5), const(0.5)));
+			limit = !contains(style, TTweakNoLeftTopLimit());
 
 			snapSizeX =
 				if (snapSize.xsnap <= 0.0)
@@ -1257,9 +1134,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 								parent.maxX |> snapSizeX,
 								parent.maxY |> snapSizeY,
 								parent.environment,
-								fworldtransform(parent.transformMatrix, fpointfactor2transform(fpoint(ox, oy), ffactor(sc, sc))),
-								parent.worldVisible,
-								parent.viewBounds
+								fworldtransform(parent.transformMatrix, fpointfactor2transform(fpoint(ox, oy), ffactor(sc, sc)))
 							),
 							sheet,
 							metricsOnly
@@ -1371,9 +1246,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 										parent.maxX |> snapSizeX,
 										parent.maxY |> snapSizeY,
 										parent.environment,
-										fworldtransform(parent.transformMatrix, ffactor2transform(ffactor(sx, sy))),
-										parent.worldVisible,
-										parent.viewBounds
+										fworldtransform(parent.transformMatrix, ffactor2transform(ffactor(sx, sy)))
 									),
 									sheet,
 									metricsOnly
@@ -1426,9 +1299,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 										parent.maxX |> snapSizeX,
 										parent.maxY |> snapSizeY,
 										parent.environment,
-										fworldtransform(parent.transformMatrix, ffactor2transform(ffactor(sc, sc))),
-										parent.worldVisible,
-										parent.viewBounds
+										fworldtransform(parent.transformMatrix, ffactor2transform(ffactor(sc, sc)))
 									),
 									sheet,
 									metricsOnly
@@ -1480,9 +1351,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 										parent.maxX |> snapSizeX,
 										parent.maxY |> snapSizeY,
 										parent.environment,
-										fworldtransform(parent.transformMatrix, fpointfactor2transform(fpoint(ox, oy), ffactor(sc, sc))),
-										parent.worldVisible,
-										parent.viewBounds
+										fworldtransform(parent.transformMatrix, fpointfactor2transform(fpoint(ox, oy), ffactor(sc, sc)))
 									),
 									sheet,
 									metricsOnly
@@ -1542,9 +1411,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 									parent.maxX |> snapSizeX,
 									parent.maxY |> snapSizeY,
 									parent.environment,
-									fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(ox, oy))),
-									parent.worldVisible,
-									parent.viewBounds
+									fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(ox, oy)))
 								),
 								sheet,
 								metricsOnly
@@ -1559,8 +1426,13 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 								ba2.metrics.baseline
 							);
 
-						offsetx = fmax(fmultiply(tAlign.xalign, fsubtract(ba2Metrics.width, ba1.metrics.width)), zero);
-						offsety = fmax(fmultiply(tAlign.yalign, fsubtract(ba2Metrics.height, ba1.metrics.height)), zero);
+						offsetx =
+							fmultiply(tAlign.xalign, fsubtract(ba2Metrics.width, ba1.metrics.width))
+							|> (\of -> if (limit) fmax(of, zero) else of);
+							
+						offsety =
+							fmultiply(tAlign.yalign, fsubtract(ba2Metrics.height, ba1.metrics.height))
+							|> (\of -> if (limit) fmax(of, zero) else of);
 
 						TAcc(
 							if (metricsOnly)
@@ -1603,9 +1475,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						ex,
 						ey,
 						parent.environment,
-						fworldtransform(parent.transformMatrix, ffactor2transform(ffactor(sc, sc))),
-						parent.worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, ffactor2transform(ffactor(sc, sc)))
 					),
 					sheet,
 					metricsOnly
@@ -1730,160 +1600,12 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 			returnTAcc(ba1, fm, metricsOnly)
 		}
-		TScrollable(content, maxbox, style, state): {
-			ba2 = tropic2Acc(maxbox, parent, sheet, true);
-			if (metricsOnly) ba2
-			else {
-				stickToEdge = contains(state, TStickToEdge());
-
-				showHorizontal = make(false);
-				showVertical = make(false);
-
-				addedMarginX = style.borderGap + if (stickToEdge) getVScrollWidth(style) else 0.0;
-				addedMarginY = style.borderGap + if (stickToEdge) getHScrollHeight(style) else 0.0;
-
-				borderLeft = 9.9;
-				constMargin = Point(borderLeft + addedMarginX, borderLeft + addedMarginY);
-
-				w = fuse(ba2.metrics.width);
-				h = fuse(ba2.metrics.height);
-
-				realWidth = select2u(w.first, showVertical, \w2, show -> w2 - if (show) constMargin.x else 0.0);
-				realHeight = select2u(h.first, showHorizontal, \h2, show -> h2 - if (show) constMargin.y else 0.0);
-
-				wb = if (stickToEdge) realWidth.first else w.first;
-				hb = if (stickToEdge) realHeight.first else h.first;
-
-				scrollRect = extractStruct(state, TScrollRect(make(0.0), make(0.0), make(0.0), make(0.0)));
-
-				ba1 =
-					tropic2Acc(
-						content,
-						TParentInfo(
-							wb,
-							hb,
-							parent.environment,
-							fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(scrollRect.x, scrollRect.y))),
-							parent.worldVisible,
-							parent.viewBounds
-						),
-						sheet,
-						metricsOnly
-					);
-				ba1form = Available(wb, hb, fform2form(ba1.form));
-
-				width = fuse(ba1.metrics.width);
-				height = fuse(ba1.metrics.height);
-				//those subscriptions are monitoring if we need to display the scrollbars
-				unsWidth = subscribe(width.first, \ww -> if(ww - getValue(w.first) >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
-				unsWidth2 = subscribe(w.first, \ww -> if(getValue(width.first) - ww >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
-				unsHeight = subscribe(height.first, \hh -> if(hh - getValue(h.first) >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
-				unsHeight2 = subscribe(h.first, \hh -> if(getValue(height.first) - hh >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
-
-				contentWH = select2u(width.first, height.first, \w1, h1 -> WidthHeight(w1, h1));
-
-				sizeAdded = if(!stickToEdge) constMargin.x else 0.0;
-				sizeFn = \dimension, vis -> dimension;
-
-				scrollAnimate = extractStruct(state, TAnimate(0.0, 0.0));
-				scrollAnimateTimer = makeDeltaTimer(30);
-				springy = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
-				springyUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springy.goal, scrollRect.y)
-				else connectDistinct(springy.position, scrollRect.y);
-				springx = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
-				springxUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springx.goal, scrollRect.x)
-				else connectDistinct(springx.position, scrollRect.x);
-
-				offsetAccDisposers = ref [];
-				offsetUns = subscribe(extractStruct(state, TScrollOffset(const(TEmpty()))).t, \offsetTropic -> {
-					applyall(^offsetAccDisposers);
-					offsetAcc = tropic2Acc(offsetTropic, parent, sheet, true);
-					offsetAccDisposers := offsetAcc.disposers;
-
-					offsetUpdate = \ -> {
-						owidth = fgetValue(offsetAcc.metrics.width);
-						oheight = fgetValue(offsetAcc.metrics.height);
-
-						if (getValue(scrollRect.y) != oheight) {
-							next(springy.position, getValue(scrollRect.y));
-							next(springy.goal, oheight);
-						}
-						if (getValue(scrollRect.x) != owidth) {
-							next(springx.position, getValue(scrollRect.x));
-							next(springx.goal, owidth);
-						}
-					};
-
-					if (isStaticForm(ba1form)) {
-						offsetUpdate();
-					} else {
-						deferred(offsetUpdate);
-					};
-				});
-
-				offsetDisposers = [
-					offsetUns,
-					springyUns,
-					springxUns,
-					\ -> applyall(concat([^(springx.dispose), ^(springy.dispose)], ^offsetAccDisposers))
-				];
-
-				// case 38798 - inspect real size of the content to make sure the scroll bars are visible when necessary
-				inspectContentSize = contains(state, TScrollInspect());
-				formToScroll = if (inspectContentSize) {
-					realSize = makeWH();
-					Size2(
-						select2(contentWH.first, realSize, \s1, s2 -> WidthHeight(max(s1.width, s2.width), max(s1.height, s2.height))),
-						Inspect([ISize(realSize)], ba1form)
-					)
-				} else {
-					Size2(contentWH.first, ba1form)
-				}
-
-				stickToEdgeDisposers = [realHeight.second, realWidth.second, unsWidth, unsWidth2, unsHeight, unsHeight2];
-				addBorderLeft = \f -> if (stickToEdge) Offset(borderLeft, 0.0, f) else f;
-				addBorderTop = \f -> if (stickToEdge) Offset(0.0, borderLeft, f) else f;
-				TAcc(
-					doStyledScrollableCustom(scrollRect.x, scrollRect.y, wb, hb, formToScroll,
-						style, true, true, false,
-						\cForm, hBar, vBar -> if (mobile) {
-							wh = makeWH();
-							Group([
-								Inspect([ISize(wh)], cForm),
-								Available2(wh, Group([
-									Align2(1.0, 0.0, Offset(constMargin.x, 0.0, vBar)),
-									Align2(0.0, 1.0, Offset (0.0, constMargin.y, hBar))
-								]))
-							]);
-						} else Grid([[cForm, vBar |> addBorderLeft], [hBar |> addBorderTop, Empty()]]),
-						sizeFn, sizeFn, true, false
-					) |> FMForm,
-					TFormMetrics(
-						wb,
-						hb,
-						ba2.metrics.baseline
-					),
-					ba2.minWidth,
-					ba2.minHeight,
-					ba2.maxWidth,
-					ba2.maxHeight,
-					ba2.xFillers,
-					ba2.yFillers,
-					ba2.addFillers,
-					ba2.xConstant && isConst(wb),
-					ba2.yConstant && isConst(hb),
-					concatA([ba1.disposers, ba2.disposers, stickToEdgeDisposers, w.second, h.second, width.second, height.second, [contentWH.second], offsetDisposers])
-				);
-			}
-		}
 		TCropSize(size, form) : {
 			ba1 = tropic2Acc(size, parent, sheet, true);
 			ba2 =
 				tropic2Acc(
 					form,
-					TParentInfo(parent with viewBounds =
-						fboundscrop(fapplytransform(fwidthheight(ba1.metrics.width, ba1.metrics.height), parent.transformMatrix), parent.viewBounds)
-					),
+					parent,
 					sheet,
 					metricsOnly
 				);
@@ -2027,7 +1749,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					tv.xConstant := bd.xConstant;
 					tv.yConstant := bd.yConstant;
 
-					form = 
+					form =
 						if (metricsOnly)
 							FEmpty()
 						else
@@ -2198,16 +1920,20 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TConstruct(cs, tr): {
 			bf = tropic2Acc(tr, parent, sheet, metricsOnly);
 
-			returnTAcc(
-				bf,
-				\ -> FConstructor(
-					bf.form,
-					\ ->
-						map(cs, \fn -> fn())
-						|> (\disp -> \ -> applyall(disp))
-				),
-				metricsOnly
-			)
+			if (metricsOnly) {
+				TAcc(bf with disposers = concat(bf.disposers, map(cs, \fn -> fn())))
+			} else {
+				returnTAcc(
+					bf,
+					\ -> FConstructor(
+						bf.form,
+						\ ->
+							map(cs, \fn -> fn())
+							|> (\disp -> \ -> applyall(disp))
+					),
+					metricsOnly
+				)
+			}
 		}
 		TCreate2(current, fn): {
 			f = make(zeroTAcc);
@@ -2393,7 +2119,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						)()
 					];
 
-				TAcc(r with 
+				TAcc(r with
 					form = FGroup([
 						// How big is the child: Color given
 						FMutable(mform),
@@ -2438,13 +2164,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TEmpty(): zeroTAcc;
 		TText(t, s): {
 			charStyle = tcharacterStyle2charStyle(s);
+			fTextStyle = tcharacterStyle2FTextStyle(s);
 			wh = getStaticFormSize2(Text(t, charStyle), false);
 
 			TAcc(
 				if (metricsOnly)
 					FEmpty()
 				else
-					FText(const(t), charStyle),
+					FText(const(t), fTextStyle),
 				TFormMetrics(
 					const(wh.width),
 					const(wh.height),
@@ -2463,8 +2190,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			)
 		}
 		TParagraph(text, style): {
-			metrics = make(FormMetrics(0., 0., 0., 0.));
-			charStyle : [FParagraphStyle] = tparagraphStyle2charStyle(style);
+			metrics = make(FFormMetrics(0., 0., 0., 0.));
+			charStyle : [FParagraphStyle] = TParagraphStyle2FTextStyle(style);
 
 			parWidth = extractStruct(style, ParagraphWidth(const(-1.))).width;
 			parMargin = extractStruct(style, ParagraphMargin(0., 0.));
@@ -2482,9 +2209,10 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						parInterlineSpacing
 					]
 					|> (\s -> arrayPushMaybe(s, parEllipsis))
+					|> (\s -> arrayPushMaybe(s, tryExtractStruct(style, Resolution(1.0))))
 				)
 				|> (\parStyle -> {
-					arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromTParagraphStyles(style)))
+					arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromTParagraphStyles(style), getDefaultRtl()))
 				});
 
 			if (metricsOnly) {
@@ -2492,7 +2220,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			}
 
 			nonLegacyParaBehaviour = isUrlParameterSet("parablk");
-			wd = if (nonLegacyParaBehaviour || parRightAlign || parCenterAlign) parWidthB else fselect(metrics, FLift(\met -> met.width));
+			isFullWidth = nonLegacyParaBehaviour || parRightAlign || parCenterAlign;
+			wd = if (isFullWidth) parWidthB else fselect(metrics, FLift(\met -> met.width));
 			hgt = fselect(metrics, FLift(\met -> met.height + parMargin.top + parMargin.bottom));
 
 			TAcc(
@@ -2507,7 +2236,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				),
 				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), zero, wd),
 				hgt,
-				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(^tropicFillersMax), wd),
+				fif(
+					fselect(parWidth, FLift(\pw -> pw < 0.)),
+					if (isFullWidth)
+						const(^tropicFillersMax)
+					else
+						fselect(metrics, FLift(\met -> met.maxWidth)),
+					wd
+				),
 				hgt,
 				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(1.), zero),
 				zero,
@@ -2527,7 +2263,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				if (metricsOnly)
 					FEmpty()
 				else
-					FGraphics(path, graphicsStyle),
+					FGraphics(const(path), const(graphicsStyle)),
 				TFormMetrics(
 					const(wh.width),
 					const(wh.height),
@@ -2537,6 +2273,35 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				const(wh.height),
 				const(wh.width),
 				const(wh.height),
+				zero,
+				zero,
+				const(true),
+				true,
+				true,
+				[]
+			)
+		}
+		TDynamicGraphics(path, style): {
+			wh = fselect2(path, style, FLift2(\p, s -> {
+				sz = getStaticFormSize2(Graphics(p, tgraphicsStyle2graphicsStyle(s)), false);
+
+				WidthHeight(sz.width, sz.height);
+			}));
+
+			TAcc(
+				if (metricsOnly)
+					FEmpty()
+				else
+					FGraphics(path, fselect(style, tgraphicsStyle2graphicsStyle |> FLift)),
+				TFormMetrics(
+					fwidth(wh),
+					fheight(wh),
+					fheight(wh)
+				),
+				fwidth(wh),
+				fheight(wh),
+				fwidth(wh),
+				fheight(wh),
 				zero,
 				zero,
 				const(true),
@@ -2669,9 +2434,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						fsubtract(parent.maxX, const(l + r)),
 						fsubtract(parent.maxY, const(t + bot)),
 						parent.environment,
-						fworldtransform(parent.transformMatrix, fpoint2transform(const(Point(l, t)))),
-						parent.worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, fpoint2transform(const(Point(l, t))))
 					),
 					sheet,
 					metricsOnly
@@ -2722,9 +2485,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						fdivide(parent.maxX, px),
 						fdivide(parent.maxY, py),
 						parent.environment,
-						fworldtransform(parent.transformMatrix, ffactor2transform(fc)),
-						parent.worldVisible,
-						parent.viewBounds
+						fworldtransform(parent.transformMatrix, ffactor2transform(fc))
 					),
 					sheet,
 					metricsOnly
@@ -2778,9 +2539,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			bf =
 				tropic2Acc(
 					f,
-					TParentInfo(parent with
-						worldVisible = fand(parent.worldVisible, vl)
-					),
+					parent,
 					sheet,
 					metricsOnly
 				);
@@ -2796,9 +2555,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				b1 =
 					tropic2Acc(
 						mainB,
-						TParentInfo(parent with viewBounds =
-							fboundscrop(fapplytransform(fwidthheight(b2.metrics.width, b2.metrics.height), parent.transformMatrix), parent.viewBounds)
-						),
+						parent,
 						sheet,
 						metricsOnly
 					);
@@ -2832,7 +2589,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				if (metricsOnly)
 					FEmpty()
 				else
-					FRealHTML(url, wh, arrayPush(style, ViewBounds(flocalbounds(parent.viewBounds, parent.transformMatrix)))),
+					FRealHTML(url, wh, style),
 				TFormMetrics(
 					wd,
 					hgt,
@@ -2858,7 +2615,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				if (metricsOnly)
 					FEmpty()
 				else
-					FVideo(filename, wh, style),
+					FCrop(zero, zero, wd, hgt, FVideo(filename, wh, style)),
 				TFormMetrics(
 					wd,
 					hgt,
@@ -2886,8 +2643,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				tropic2Acc(
 					bt,
 					TParentInfo(parent with
-						transformMatrix = fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(fnegate(x1), fnegate(y1)))),
-						viewBounds = fboundscrop(fapplytransform(wh, parent.transformMatrix), parent.viewBounds)
+						transformMatrix = fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(fnegate(x1), fnegate(y1))))
 					),
 					sheet,
 					metricsOnly
@@ -3292,9 +3048,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						fif(fs, fwidth(wh), parent.maxX),
 						fif(fs, fheight(wh), parent.maxY),
 						parent.environment,
-						fif(fs, fselect(parent.transformMatrix, FLift(\tm -> TransformMatrix(tm with tx = 0., ty = 0.))), parent.transformMatrix),
-						parent.worldVisible,
-						fif(fs, fwh2bounds(wh0), parent.viewBounds)
+						fif(fs, fselect(parent.transformMatrix, FLift(\tm -> TransformMatrix(tm with tx = 0., ty = 0.))), parent.transformMatrix)
 					),
 					sheet,
 					metricsOnly
@@ -3302,6 +3056,39 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 			returnTAcc(bf, \ ->
 				FFullWindow(fs, wh0,
+					FScale(
+						fif(fs, ffactorX(factor), const(1.)),
+						fif(fs, ffactorY(factor), const(1.)),
+						bf.form
+					)
+				),
+				metricsOnly
+			)
+		}
+		TFullScreen(fs, bt): {
+			wh0 = makeWH();
+
+			factor = const(Factor(screenDensity, screenDensity));
+
+			// TScale from trender2 is ignored in fullscreen mode, so let`s scale content here
+			whF = fselect2(wh0, factor, FLift2(\stage, f -> WidthHeight(stage.width / f.x, stage.height / f.y)));
+			wh = fif(fs, whF, wh0);
+
+			bf =
+				tropic2Acc(
+					bt,
+					TParentInfo(
+						fif(fs, fwidth(wh), parent.maxX),
+						fif(fs, fheight(wh), parent.maxY),
+						parent.environment,
+						fif(fs, fselect(parent.transformMatrix, FLift(\tm -> TransformMatrix(tm with tx = 0., ty = 0.))), parent.transformMatrix)
+					),
+					sheet,
+					metricsOnly
+				);
+
+			returnTAcc(bf, \ ->
+				FFullScreen(fs, wh0,
 					FScale(
 						fif(fs, ffactorX(factor), const(1.)),
 						fif(fs, ffactorY(factor), const(1.)),
@@ -3540,10 +3327,6 @@ distributeAsks(
 	|> (\f -> Pair(fFirstOfPair(f), fSecondOfPair(f)))
 }
 
-fpreventNanOrInf(b : Transform<double>) -> Transform<double> {
-	fselect(b, FLift(\v -> if (isNanOrInf(v)) 0.0 else v));
-}
-
 // TDynamicGroup tools
 
 TDynamicGroupItem : (
@@ -3553,30 +3336,6 @@ TDynamicGroupItem : (
 );
 
 zeroTDynamicGroupItem = TDynamicGroupItem(zeroTAcc, make(0), const(zeroPoint));
-
-positionTDynamicGroupItem(previousItem : TDynamicGroupItem, combiner : TCombiner) -> Transform<Point> {
-	fselect2(
-		previousItem.position,
-		if (combiner == TLinesCombiner())
-			previousItem.acc.metrics.height
-		else
-			previousItem.acc.metrics.width,
-		if (combiner == TLinesCombiner())
-			FLift2(\p : Point, metric : double ->
-				Point(
-					0.0,
-					p.y + metric
-				)
-			)
-		else
-			FLift2(\p : Point, metric : double ->
-				Point(
-					p.x + metric,
-					0.0
-				)
-			)
-	);
-}
 
 fsubselectFn(
 	array : Transform<[?]>,

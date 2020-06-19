@@ -1,5 +1,6 @@
 import material/internal/selectmarray;
 import material/internal/material_dragdrop;
+import material/internal/material_icons;
 import ui/animate/teasing;
 
 export {
@@ -62,7 +63,9 @@ MTreeState(
 	color : MColor,
 	multiSelection : bool,
 	showSeparators : bool,
-	dragDropState : Maybe<MTreeDragDropState<?>>
+	dragDropState : Maybe<MTreeDragDropState<?>>,
+	lazyScrollMode : Maybe<MTreeLazyScrollModeState>,
+	loadLazyButtonMode : Maybe<MTreeLazyLoad>
 );
 
 MTreeDragDropState(
@@ -71,6 +74,12 @@ MTreeDragDropState(
 	content2id : (content : ?) -> int,
 	id2content : (id : int) -> Maybe<?>,
 	current : DynamicBehaviour<Maybe<(MFocusGroup) -> Tropic>>
+);
+
+MTreeLazyScrollModeState(
+	enabled : Transform<bool>,
+	scrollWH : DynamicBehaviour<WidthHeight>,
+	scrollPositionScale : DynamicBehaviour<PositionScale>
 );
 
 fSelectionIndexes(children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
@@ -268,6 +277,28 @@ MTreeOrderNode2MTreeNode(node : MTreeOrderNode<?>, tree : Transform<Tree<?, [MTr
 	);
 }
 
+applyMTreeLazyScrollMode(state : MTreeState<?>) -> (Tropic) -> Tropic {
+	\node ->
+		eitherMap(state.lazyScrollMode, \lsm -> {
+			nodePosScale = make(zeroPositionScale);
+			showItem = make(false);
+			if (fgetValue(lsm.enabled))
+				node
+				|> (\t -> TShow(showItem, t))
+				|> (\t -> TPositionScale(nodePosScale, t))
+				|> (\t -> TConstruct([
+						make3SubscribeTrigger(fnot(showItem), lsm.scrollWH, fstall(nodePosScale, 0), lsm.scrollPositionScale, \swh, ps, sps -> {
+							y = ps.pos.y - sps.pos.y;
+							if (y >= 0. && y < swh.height) nextDistinct(showItem, true);
+						})
+					], t))
+			else
+				node
+			},
+			node
+		)
+} 
+
 makeMTreeDragDropState(
 	manager : MaterialManager,
 	order : DynamicBehaviour<[MTreeOrderNode<?>]>,
@@ -305,6 +336,19 @@ makeMTreeDragDropState(
 }
 
 MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	loadLazyButtonMode = tryExtractStruct(m.style, MTreeLazyLoad(0, None()));
+	lazyLoadState = maybeMap(loadLazyButtonMode, makeMTreeLazyLoadState);
+
+	lazyScrollMode =
+		maybeMap(
+			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true))),
+			\lsm -> MTreeLazyScrollModeState(
+				lsm.enabled,
+				makeWH(),
+				make(zeroPositionScale)
+			)
+		);
+
 	dragDropStateM =
 		eitherFn(
 			maybeMap(
@@ -322,14 +366,15 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 				)
 		);
 
-
-
 	children =
-		ffuseinit(
-			eitherMap(dragDropStateM, \dragDropState -> MTreeOrder2MTreeNodes(m.children, dragDropState.order), m.children),
-			make([])
+		eitherMap(lazyLoadState, \st -> fselect2(m.children, st.loadQuota, FLift2(\arr, lq -> take(arr, lq))), m.children)
+		|> (\children ->
+			fguard(
+				eitherMap(dragDropStateM, \dragDropState -> MTreeOrder2MTreeNodes(children, dragDropState.order), children),
+				make([])
+			)
 		);
-	selIndexes = ffuseinit(fSelectionIndexes(children.first), make([[]]));
+	selIndexes = fguard(fSelectionIndexes(children.first), make([[]]));
 
 	singleSelection = tryExtractStruct(m.style, MSingleSelection(make(-1)));
 	multiSelection = tryExtractStruct(m.style, MMultiSelection(make(makeSet())));
@@ -344,28 +389,52 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			extractStruct(m.style, getPrimaryColor(parent)),
 			isSome(multiSelection),
 			showSeparators,
-			dragDropStateM
+			dragDropStateM,
+			lazyScrollMode,
+			loadLazyButtonMode
 		);
 
-	SelectMLines2T(
-		manager,
-		parent,
-		fmap(children.first, \c -> c.content),
-		\index, __, __, p -> {
-
-			TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c -> {
-				MTreeNode2T(
-					manager,
-					p,
-					state,
-					c,
-					farray(index),
-					m2t,
-					const(showSeparators)
+	(\p -> (\p2 -> TIf(
+		flessi(flength(children.first), const(ARRAY_DIFF_TRESHOLD)),
+		SelectMLines2T(
+			manager,
+			p2,
+			fmap(children.first, \c : MTreeNode<?> -> c.content),
+			\index, __, __, p3 ->
+				TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c ->
+					MTreeNode2T(
+						manager,
+						p3,
+						state,
+						c,
+						farray(index),
+						m2t,
+						const(showSeparators)
+					)
 				)
-			});
-		}
+				|> applyMTreeLazyScrollMode(state)
+		),
+		TSelect(
+			fmap(children.first, \c : MTreeNode<?> -> c.content),
+			\contents : [?] -> mapi(contents, \i, __ ->
+				TSelect(
+					fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
+					MTreeNode2T(
+						manager,
+						p2,
+						state,
+						node,
+						farray(const(i)),
+						m2t,
+						const(showSeparators)
+					)
+				)
+				|> applyMTreeLazyScrollMode(state)
+			)
+			|> TLines
+		)
 	)
+	|> addUnfoldPanel(p2, m2t, m.children, lazyLoadState)
 	|> TBorderBottom(1.)
 	|> (\mtree ->
 		TConstruct(
@@ -486,13 +555,25 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 				),
 			mtree
 		)
-	)
+	))
+	|> (\mtree : (MFocusGroup) -> Tropic ->
+		eitherMap(
+			state.lazyScrollMode,
+			\lsm ->
+				TPositionScale(lsm.scrollPositionScale,
+					MScroll2T(manager, p, MScroll(MGetFocusGroup(mtree), TFillXY(), [MScrollWidthHeight(makeWH(), lsm.scrollWH)]), m2t)
+				),
+			mtree(p)
+		)
+	))
+	|> (\mtree -> MComponentGroup2T(manager, parent, "MTree", extractMComponentGroupState(m.style), mtree))
+
 }
 
 hightlightFnDef(short : bool) -> (Transform<WidthHeight>) -> Material {
 	\wh ->
 		if (short)
-			TPadA(16.0, 0.0,
+			MPadA(16.0, 0.0,
 				TRectangle([MFill(MGrey(200))], TSized(fwidthsubtract(wh, const(32.))))
 			)
 		else
@@ -509,16 +590,39 @@ buildIconFnDef(isExpandedB : DynamicBehaviour<bool>, color : MColor) -> Material
 
 buildLineFnDef(contentBoxB : DynamicBehaviour<WidthHeight>, color : MColor) -> Material {
 	TRectangle([MFill(color)], TFillWY(2.))
-	|> (\t -> TBorderA(15., 0., 0., 6., t))
-	|> TAlignStart
-	|> (\t -> TTranslate(fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))), t))
+	|> (\t -> MBorderA(15., 0., 0., 6., t))
+	|> MAlignStart
+	|> (\m -> MTranslate(fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))), m))
 }
 
-Corner ::= TopLeft, TopRight, BottomLeft, BottomRight;
-	TopLeft();
-	TopRight();
-	BottomLeft();
-	BottomRight();
+buildUnfoldPanelDef(onClick : () -> void) -> Material {
+	MIcon("unfold_more", [])
+	|> (\t -> MCenterIn(t, TFillXH(56.)))
+	|> (\t -> MCopySize(t, \tr -> TRectangle([MFill(MGrey(200)), FillOpacity(0.5)], tr), false))
+	|> (\t -> MComponent([MOnClick(onClick)], \__ -> t))
+}
+
+addUnfoldPanel(parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic, children : Transform<[MTreeNode]>, state : Maybe<MTreeLazyLoadState>) -> (Tropic) -> Tropic {
+	\t ->
+		eitherMap(state, \st ->
+			TLines2(t, TShow(flessi(st.loadQuota, flength(children)), m2t(st.panel, parent))),
+			t
+		)
+}
+
+MTreeLazyLoadState(
+	loadQuota : DynamicBehaviour<int>,
+	panel : Material,
+	resetFn : () -> void
+);
+
+makeMTreeLazyLoadState(loadLazy : MTreeLazyLoad) -> MTreeLazyLoadState {
+	loadQuota = make(loadLazy.loadCount);
+	resetFn = \ -> nextDistinct(loadQuota, loadLazy.loadCount);
+	updateFn = \ -> nextDistinct(loadQuota, getValue(loadQuota) + loadLazy.loadCount);
+	buildPanelFn = either(loadLazy.buildPanelFn, buildUnfoldPanelDef);
+	MTreeLazyLoadState(loadQuota, buildPanelFn(updateFn), resetFn)
+}
 
 DropOperation ::= DropAbove, DropBelow, DropInside;
 	DropAbove();
@@ -527,8 +631,11 @@ DropOperation ::= DropAbove, DropBelow, DropInside;
 
 MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<?>, m : MTreeNode<?>, treeIndex : Transform<[int]>,
 	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
-	children = ffuseinit(m.children, make([]));
-	childrenLength = fselect(children.first, length |> FLift);
+
+	lazyLoadState = maybeMap(state.loadLazyButtonMode, makeMTreeLazyLoadState);
+
+	children = fguard(eitherMap(lazyLoadState, \st -> fselect2(m.children, st.loadQuota, FLift2(\arr, lq -> take(arr, lq))), m.children), make([]));
+	childrenLength = flength(children.first);
 	expanded = extractStruct(m.style, MExpanded(make(false))).expanded;
 	selected = extractStruct(m.style, MSelected(make(false))).selected;
 	focused = extractStruct(m.style, MFocused(make(false))).focused;
@@ -579,7 +686,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 		}
 	}));
 
-	TLinesA([
+	TLinesDir([
 		(\p -> MComponent2T(
 			manager,
 			p,
@@ -589,7 +696,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 				TColsYCenterA([
 					TVisible(
 						fneq(childrenLength, 0),
-						m2t(buildIconFn(expanded, state.color), focus.parent)
+						m2t(buildIconFn(expanded, extractStruct(m.style, state.color)), focus.parent)
 					),
 					TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), focus.parent)), contentBoxB)
 				])
@@ -714,11 +821,12 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 				),
 				expanded
 			),
-			\ ->
+			\ -> TIf(
+				flessi(flength(children.first), const(ARRAY_DIFF_TRESHOLD)),
 				SelectMLines2T(
 					manager,
 					parent,
-					fmap(children.first, \c -> c.content),
+					fmap(children.first, \c : MTreeNode<?> -> c.content),
 					\index, __, __, p -> {
 						nextDistinct(expanded, true);
 
@@ -735,9 +843,33 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								else
 									const(false)
 							)
-						});
+						})
+						|> applyMTreeLazyScrollMode(state)
 					}
+				),
+				TSelect(
+					fmap(children.first, \c : MTreeNode<?> -> c.content),
+					\contents -> mapi(contents, \i, __ ->
+						TSelect(
+							fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
+							MTreeNode2T(
+								manager,
+								parent,
+								state,
+								node,
+								farrayPush(treeIndex, const(i)),
+								m2t,
+								if (state.showSeparators)
+									flessi(const(i), fadditioni(childrenLength, const(-1)))
+								else
+									const(false)
+							)
+						)
+						|> applyMTreeLazyScrollMode(state)
+					)
+					|> TLines
 				)
+			)
 				|> (\t ->
 					TLines2(
 						eitherMap(
@@ -759,19 +891,20 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					TCopySize(
 						t,
 						\tr ->
-							TAvailable(m2t(buildLineFn(contentBoxB, state.color), parent), tr),
+							TAvailable(m2t(buildLineFn(contentBoxB, extractStruct(m.style, state.color)), parent), tr),
 						true
 					)
 				)
 				|> (\t -> TAvailableHeight(t, const(0.)))
+				|> addUnfoldPanel(parent, m2t, m.children, lazyLoadState)
 		),
 
 		MSeparator2T(manager, parent, true)
 		|> TBorderLeftRight(16.)
 		|> (\t -> TShow(addVerticalSeparator, t))
-		|> TAlignStart
-	])
-	|> (\treeNode -> if (length(fgetValue(treeIndex)) > 1) TBorderA(24., 0., 0., 0., treeNode) else treeNode)
+		|> (\t -> TAlignStartDir(t, parent.rtl))
+	], parent.rtl)
+	|> (\treeNode -> if (length(fgetValue(treeIndex)) > 1) TBorderDir(24., 0., 0., 0., treeNode, parent.rtl) else treeNode)
 	|> (\treeNode ->
 		eitherMap(
 			state.dragDropState,
@@ -802,7 +935,8 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 				makeSubscribeUns(selected, \s -> if (s) [interruptibleDeferUntilNextFrameRendered(\ -> nextDistinct(focused, true))] else []),
 				\ -> fBidirectionalLink(
 					fselectWithLast(fif(selected, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
-					fselect2(state.selected, treeIndex, containsSet |> FLift2),
+					fselect2(state.selected, treeIndex, containsSet |> FLift2)
+						|> (\f -> eitherMap(state.lazyScrollMode, \__ -> f, fstall(f, 0))),
 					\s ->
 						if (length(s.first) > 0 || length(s.second) > 0)
 							nextDistinct(
@@ -831,15 +965,15 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 				),
 				\ -> fBidirectionalLink(
 					fselectWithLast(fif(expanded, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
-					fselect2(state.expanded, treeIndex, containsSet |> FLift2),
+					fstall(fselect2(state.expanded, treeIndex, containsSet |> FLift2), 0),
 					\e ->
 						if (length(e.first) > 0 || length(e.second) > 0)
 							nextDistinct(
 								state.expanded,
 								getValue(state.expanded)
 								|> (\ex ->
-									if (length(e.first) > 0 && (!contains(getValue(state.items), e.first) || length(e.second) == 0))
-										removeSet(getValue(state.expanded), e.first)
+									if (length(e.first) > 0)
+										removeSet(ex, e.first)
 									else
 										ex
 								)
@@ -866,13 +1000,24 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 						}
 				}
 			]
-			|> (\arr -> arrayPushMaybe(arr, maybeMap(childSelected, \cs ->
-					\ -> fconnect(
-						fselect2(state.selected, treeIndex, FLift2(\s, i ->
-							foldSet(s, false, \acc, si -> acc || (length(si) > length(i) && subrange(si, 0, length(i)) == i)))),
-						cs.selected
+			|> (\arr ->
+				arrayPushMaybe(
+					arr,
+					maybeMap(
+						childSelected,
+						\cs ->
+							\ -> fconnect(
+								fselect2(state.selected, treeIndex, FLift2(\s, i ->
+									foldSet(s, false, \acc, si -> acc || (length(si) > length(i) && subrange(si, 0, length(i)) == i)))
+								),
+								cs.selected
+							)
 					)
-				))),
+				)
+			)
+			|> (\arr -> arrayPushMaybe(arr, maybeMap(lazyLoadState, \st ->
+				makeSubscribe2(expanded, \e -> if (!e) st.resetFn())
+			))),
 			treeNode
 		)
 	)

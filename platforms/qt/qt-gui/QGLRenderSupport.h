@@ -172,7 +172,7 @@ protected:
     bool doCreateVideoWidget(QWidget *&widget, GLVideoClip *video_clip);
     bool doCreateWebWidget(QWidget *&widget, GLWebClip *video_clip);
     StackSlot webClipHostCall(GLWebClip * clip, const unicode_string &name, const StackSlot & args);
-    StackSlot webClipEvalJS(GLWebClip * clip, const unicode_string &code);
+    StackSlot webClipEvalJS(GLWebClip * clip, const unicode_string &code, StackSlot& cb);
     StackSlot variant2slot(QVariant var);
     void callflow(QWebEngineView * web_view, QVariantList args);
     friend class QWebViewDelegate;
@@ -209,12 +209,15 @@ protected:
 private:
     DECLARE_NATIVE_METHOD(setClipboard)
     DECLARE_NATIVE_METHOD(getClipboard)
+    DECLARE_NATIVE_METHOD(getClipboardToCB)
     DECLARE_NATIVE_METHOD(getClipboardFormat)
     DECLARE_NATIVE_METHOD(setWindowTitleNative)
     DECLARE_NATIVE_METHOD(setFavIcon)
     DECLARE_NATIVE_METHOD(quit)
     DECLARE_NATIVE_METHOD(takeSnapshot)
+    DECLARE_NATIVE_METHOD(takeSnapshotBox)
     DECLARE_NATIVE_METHOD(getSnapshot)
+    DECLARE_NATIVE_METHOD(getSnapshotBox)
     DECLARE_NATIVE_METHOD(getScreenPixelColor)
     DECLARE_NATIVE_METHOD(setNativeTabEnabled)
 

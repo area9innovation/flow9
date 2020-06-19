@@ -5,45 +5,74 @@ import fusion;
 export {
 	VirtualScreenInfo : (
 		size : Behaviour<WidthHeight>,
-		position : Behaviour<PositionScale>
+		position : Behaviour<PositionScale>,
+		renderFn : (Form) -> void,
 	);
+
+	makeDefaultVirtualScreenInfo() -> VirtualScreenInfo;
+
+	CenterPopupByVirtualScreenBox(
+		info : VirtualScreenInfo,
+		popupContent : Form,
+		popupSize : Behaviour<WidthHeight>
+	) -> Form;
 
 	CropPopupByVirtualScreenBox(
 		info : VirtualScreenInfo,
-		popupContent : Form,
-		popupSize : Behaviour<WidthHeight>,
-		translateToVisibleArea : bool
+		popupContent : Form
 	) -> Form;
+
+	getScreenPopupRenderer(
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+		defRender : (Form) -> (() -> void)
+	) -> (Form) -> (() -> void);
+}
+
+makeDefaultVirtualScreenInfo() -> VirtualScreenInfo {
+	VirtualScreenInfo(makeWH(), make(zeroPositionScale), nop1);
+}
+
+CenterPopupByVirtualScreenBox(
+	info : VirtualScreenInfo,
+	popupContent : Form,
+	popupSize : Behaviour<WidthHeight>
+) -> Form {
+	windowXB = make(0.0);
+	windowYB = make(0.0);
+	Constructor(
+		Translate(windowXB, windowYB, popupContent),
+		make2Subscribe(info.size, popupSize, \size, windowWH -> {
+			nextDistinct(windowXB, max(0.0, (size.width - windowWH.width) / 2.0));
+			nextDistinct(windowYB, max(0.0, (size.height - windowWH.height) / 2.0));
+		})
+	);
 }
 
 CropPopupByVirtualScreenBox(
 	info : VirtualScreenInfo,
-	popupContent : Form,
-	popupSize : Behaviour<WidthHeight>,
-	translateToVisibleArea : bool
+	popupContent : Form
 ) -> Form {
-	screenXB = make(0.0);
-	screenYB = make(0.0);
-	screenWB = make(0.0);
-	screenHB = make(0.0);
-	windowXB = make(0.0);
-	windowYB = make(0.0);
+	cropWidthB = make(0.0);
+	cropHeightB = make(0.0);
 	Constructor(
-		popupContent
-		|> (\f -> if (translateToVisibleArea) Translate(windowXB, windowYB, f) else f)
-		|> (\f -> Crop(screenXB, screenYB, screenWB, screenHB, f))
-		|> (\f -> Translate(screenXB, screenYB, f)),
-		make3Subscribe(info.size, info.position, popupSize, \size, p, windowWH -> {
-			nextDistinct(screenXB, p.pos.x);
-			nextDistinct(screenYB, p.pos.y);
-
-			screenWidth = size.width * p.scale.x;
-			screenHeight = size.height * p.scale.y;
-
-			nextDistinct(screenWB, screenWidth);
-			nextDistinct(screenHB, screenHeight);
-			nextDistinct(windowXB, p.pos.x + max(0.0, (screenWidth - windowWH.width) / 2.0));
-			nextDistinct(windowYB, p.pos.y + max(0.0, (screenHeight - windowWH.height) / 2.0));
+		Crop(const(0.0), const(0.0), cropWidthB, cropHeightB, popupContent),
+		make2Subscribe(info.size, info.position, \size : WidthHeight, ps : PositionScale -> {
+			nextDistinct(cropWidthB, size.width);
+			nextDistinct(cropHeightB, size.height);
 		})
+	)
+}
+
+getScreenPopupRenderer(
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+	defRender : (Form) -> (() -> void)
+) -> (Form) -> (() -> void) {
+	eitherMap(
+		virtualScreenInfoM,
+		\vsi -> \f -> {
+			vsi.renderFn(f);
+			\-> vsi.renderFn(Empty())
+		},
+		defRender
 	);
 }

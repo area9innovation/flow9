@@ -54,10 +54,8 @@ export {
 		position : DynamicBehaviour<int>,
 		selection : DynamicBehaviour<int>,
 		cursorShape : DynamicBehaviour<CursorShape>,
-		mTextStyle : [MTextStyle],
-		textStyle : [CharacterStyle],
-		mTextStyleDisabled : [MTextStyle],
-		tTextMetrics : FormMetrics,
+		textStyle : Transform<[MTextStyle]>,
+		tTextMetrics : Transform<FormMetrics>,
 		smallEdit : bool,
 		label : string,
 		dynamicSize : bool,
@@ -74,7 +72,7 @@ export {
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
-		leftIcon : string,
+		leftIcon : MLeftIcon,
 		leftButton : Maybe<MLeftCustomButton>,
 		editIcon : Maybe<DynamicBehaviour<bool>>,
 		rightButton : Maybe<Transform<string>>,
@@ -119,8 +117,9 @@ export {
 		fill : [TGraphicsStyle],
 		setWord : (word : string) -> void,
 		isTextInputInPopup : bool,
-		onTop : bool,
-		inLine : Maybe<MAutoCompleteInLineState>
+		placementType : MSuggestionsPlacementType,
+		inLine : Maybe<MAutoCompleteInLineState>,
+		updateDelay : int
 	);
 
 	MAutoCompleteInLineState(
@@ -136,7 +135,8 @@ export {
 		boxWH : DynamicBehaviour<WidthHeight>,
 		scrollPosition : DynamicBehaviour<Point>,
 		positionScale : DynamicBehaviour<PositionScale>,
-		elevation : Transform<double>
+		elevation : Transform<double>,
+		customMetrics : MCustomPopup
 	);
 
 	MInputErrorState(
@@ -248,11 +248,27 @@ export {
 
 	defEatKeyDown(multiline : bool, readOnly : bool) -> (KeyEvent) -> bool {
 		\k : KeyEvent -> {
-			k.keycode == 37 || k.keycode == 39 || k.keycode == 38 || k.keycode == 40 || (k.keycode == 27 && !readOnly) ||
-			(k.keycode == 8 && !readOnly) || (k.keycode == 9 && !readOnly && multiline) || (k.keycode == 13) ||
-			(k.keycode == 46 && !k.shift && !readOnly) || (k.keycode == 13 && !readOnly) || (k.keycode == 65 && k.ctrl) ||
-			((k.keycode == 67 || k.keycode == 45) && k.ctrl) || (k.keycode == 88 && k.ctrl) || (k.keycode == 46 && k.shift) ||
-			(strlen(k.utf) == 1 && !readOnly && k.keycode != 16777218 && (k.keycode != 86 || !k.ctrl))
+			k.keycode == 37 ||
+			k.keycode == 39 ||
+			k.keycode == 38 ||
+			k.keycode == 40 ||
+			(k.keycode == 27 && !readOnly) ||
+			(k.keycode == 8 && !readOnly) ||
+			(k.keycode == 9 && !readOnly && multiline) ||
+			(k.keycode == 13) ||
+			(k.keycode == 46 && !k.shift && !readOnly) ||
+			(k.keycode == 13 && !readOnly) ||
+			(k.keycode == 65 && k.ctrl) ||
+			((k.keycode == 67 || k.keycode == 45) && k.ctrl) ||
+			(k.keycode == 88 && k.ctrl) ||
+			(k.keycode == 46 && k.shift) ||
+			(
+				strlen(k.utf) == 1 && !readOnly &&
+				k.keycode != 16777218 &&
+				(k.keycode != 86 || !k.ctrl) &&
+				(k.keycode != 187 && k.utf != "=" && !k.ctrl) &&
+				(k.keycode != 95 && k.utf != "-" && !k.ctrl)
+			)
 		}
 	};
 }
@@ -322,29 +338,25 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			}
 		);
 
+	customTextStyle : [MParagraphStyle] = extractStruct(style, MCustomTextStyle([])).style;
+
 	//Text Style
 	mTextStyle =
 		extractMTextStyleDef(
-			extractStruct(style, MCustomTextStyle([])).style,
+			customTextStyle,
 			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
 		)
 		|> (\f : Triple<MColor, MFontStyle, bool> ->
-			[firstOfTriple(f), secondOfTriple(f)]
+			concat(
+				[firstOfTriple(f), secondOfTriple(f)],
+				extractStructMany(customTextStyle, LetterSpacing(0.0))
+			)
 			|> (\f2 -> if (thirdOfTriple(f)) f2 else arrayPush(f2, MTextDisabled()))
 		);
 
-	textStyle : [CharacterStyle] = MTextStyle2CharacterStyle(parent, mTextStyle);
-
-	mTextStyleDisabled =
-		extractMTextStyleDef(
-			extractStruct(style, MCustomTextStyle([])).style,
-			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), false)
-		)
-		|> (\f : Triple<MColor, MFontStyle, bool> ->
-			[firstOfTriple(f), secondOfTriple(f), MTextDisabled()]
-		);
-
-	tTextMetrics = getTWordMetrics(TText(" ", textStyle), makeTree());
+	textStyle = extractStruct(style, MDynamicTextStyle(const(mTextStyle))).style;
+	liftFn : FLift<[MTextStyle], FormMetrics> = FLift(\ts : [MTextStyle] -> getTWordMetrics(TText(" ", MTextStyle2CharacterStyle(parent, ts)), makeTree()));
+	tTextMetrics = fselect(textStyle, liftFn);
 
 	prev = ref getValue(content);
 
@@ -401,7 +413,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	emptyUnderline = Pair([], 2.);
 
 	// TTextInputState
-	focus = make(false);
+	focus = cloneBehaviour(mfocus.focused);
 	position = iScriptBehaviours.position;
 	selection = iScriptBehaviours.selection;
 
@@ -421,6 +433,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	// Popup
 	popup =
 		if (isPopup) {
+			customPopup = extractStruct(style, MCustomPopup(None(), None(), None()));
 			Some(
 				MInputPopupState(
 					MOpenMenu(make(false)),
@@ -430,7 +443,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					makeWH(),
 					extractStruct(style, MScrollPosition(make(zeroPoint))).position,
 					make(zeroPositionScale),
-					either(elevation, MElevation(const(0.))).elevation
+					either(elevation, MElevation(const(0.))).elevation,
+					customPopup
 				)
 			)
 		} else
@@ -442,21 +456,21 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			style,
 			if (skin == MFilled() && width > 0.0)
 				MInputBackgroundStyle([Fill(backgroundDefaultColor), FillOpacity(0.06)], [Fill(backgroundDefaultColor), FillOpacity(0.12)])
-			else if (!isPopup)
+			else if (!isPopup || !iScriptBehaviours.isTextInputInPopup)
 				MInputBackgroundStyle([], [])
 			else
 				MInputBackgroundStyle([], [MFill(MDialogColor(getLightBackground(parent)))])
 		);
 
 	// Icons
-	iconSize = MIconSize(if (condensed) 20. else 24.).size;
-	iconBorders = 8.;
+	iconSize = extractStruct(style, MIconSize(if (condensed) 20. else 24.)).size;
+	iconBorders = extractStruct(style, MIconButtonBorder(8.)).border;
 	showDropDownArrow = !readOnly && extractStruct(style, MShowDropDownArrow(false)).show;
 	mClearIcon = extractStruct(style, MShowClearIcon(mobile && (width <= 0. || width > 96.), false));
 	showClearIcon = (mClearIcon.onFocus || mClearIcon.onHover) && !readOnly;
 
 	// Left icon
-	leftIconName = extractStruct(style, MLeftIcon("")).icon;
+	leftIcon = extractStruct(style, MLeftIcon("", []));
 
 	// Left Button
 	leftButtonDef =
@@ -488,7 +502,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						fneq(content, "")
 					),
 					const("clear"),
-					if (showDropDownArrow) fif(mfocus.focused, const("arrow_drop_down"), const("arrow_drop_up"))
+					if (showDropDownArrow) fif(mfocus.focused, const("arrow_drop_up"), const("arrow_drop_down"))
 					else const("")
 				)
 			)
@@ -502,11 +516,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			None();
 
 	// Floating Label
-	disabledColor = contrastingColor(parent);
-	disabledOpacity = if (getLightBackground(parent)) 0.38 else 0.5;
-	secondaryOpacity = if (getLightBackground(parent)) 0.54 else 0.7;
+	inactiveColor = contrastingColor(parent);
+	inactiveOpacity = defaultInactiveItemLabelOpacity(MColor2int(color) == black);
 
-	unfocusedUnderline = extractStruct(style, MUnderlineUnfocusedStyle([Fill(disabledColor), FillOpacity(disabledOpacity / 4.)])).style;
+	unfocusedUnderline = extractStruct(style, MUnderlineUnfocusedStyle([Fill(inactiveColor), FillOpacity(inactiveOpacity / 4.)])).style;
 
 	mLabelStyle =
 		extractMTextStyleDef(
@@ -522,8 +535,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	labelSize = extractStruct(labelStyle, FontSize(12.)).size;
 	labelStyleB = make(labelStyle);
 
-	disabledStyle = replaceStruct(labelStyle, FillOpacity(disabledOpacity));
-	pressedStyle = replaceStruct(labelStyle, if (hasFloatingLabel) MFill(color) else FillOpacity(secondaryOpacity));
+	inactiveStyle = replaceStruct(labelStyle, FillOpacity(inactiveOpacity));
+	pressedStyle = replaceStruct(labelStyle, if (hasFloatingLabel) MFill(color) else FillOpacity(inactiveOpacity));
 	errorTextStyle = replaceStruct(labelStyle, FillOpacity(1.));
 
 	floatingLabel =
@@ -608,8 +621,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			None();
 
 	// Autocomplete
+	startSearch = extractStruct(style, MAutoCompleteStartSearch(0, 0));
 	preparedSentenceMatcher = extractStruct(style, MPreparedSentenceMatcher(const(dummySentenceMatcher)));
-	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, simpleSentenceMatcher));
+	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, makeAutocompleteMatcher(startSearch.minChars)));
 
 	matchers =
 		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
@@ -680,8 +694,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
 					setWord,
 					iScriptBehaviours.isTextInputInPopup,
-					contains(style, MSuggestionsOnTop()),
-					inLine
+					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
+					inLine,
+					startSearch.wait
 				)
 			)
 		} else
@@ -732,6 +747,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		foc;
 	}
 
+	autocompleteHandlerUns = initUnsM();
 	updateFocusContent = \c : string, foc : bool, mtch : [SentenceMatcher] -> {
 		maybeApply(editIcon, \ei -> nextDistinct(ei, !foc));
 		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, foc || c != ""));
@@ -748,44 +764,71 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						c
 					};
 
-				allCompl =
-					fold(mtch, [], \acc, matcher ->
-						concat(acc,
-							if (ac.showAllOnEmpty && isSome(popup) && c2 == "")
-								map(filter(matcher.sentences, \s -> s != ""), \s -> SentenceHit(matcher, s, 0., makeSet()))
-							else
-								ac.sentenceMatcher.fn(matcher, c2, intMax, true, false, getValue(position))
-						)
-					);
+				showAll = ac.showAllOnEmpty && isSome(popup) && c2 == "";
+				chunkSize = getUrlParameterDef("chunkSize", "5000") |> s2i;
+				simultaneous = max(length(mtch) / chunkSize, 50);
+				mapAsyncParallelChunked(
+					mtch, chunkSize, simultaneous,
+					\chunk, fulfill, __ -> {
+						mapConcat(
+							chunk,
+							\matcher -> {
+								if (showAll)
+									filtermap(
+										matcher.sentences, 
+										\s -> {
+											if (s != "") Some(SentenceHit(matcher, s, 0., makeSet()))
+											else None()
+										}
+									)
+								else
+									ac.sentenceMatcher.fn(matcher, c2, intMax, true, false, getValue(position))
+							}
+						) |> fulfill
+					},
+					\allCompl -> {
+						compl = mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score));
 
-				compl = mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score));
+						newSentences =
+							if (isSome(popup)) {
+								if (ac.maxResults >= 0)
+									subrange(compl, 0, ac.maxResults)
+								else
+									compl;
+							} else {
+								suggest = find(compl, \v -> startsWith(toLowerCase(v.sentence), toLowerCase(c2)));
 
-				newSentences =
-					if (isSome(popup)) {
-						if (ac.maxResults >= 0)
-							subrange(compl, 0, ac.maxResults)
+								eitherMap(suggest, \sg -> [sg], [])
+							};
+
+						maybeApply(
+							ac.currentMatches,
+							\cm ->
+								map(newSentences, \ns -> {
+									sen = ns.sentence;
+									dictId = findiDef(mtch, \mch -> contains(mch.sentences, sen), -1);
+									senId = if (dictId >= 0) findiDef(mtch[dictId].sentences, \sn -> sn == sen, -1) else -1;
+
+									Triple(dictId, senId, ns)
+								})
+								|> cm.fn
+						);
+
+						updateFn = \ -> nextDistinct(ac.sentences, newSentences);
+
+						dispUnsM(autocompleteHandlerUns);
+
+						if (ac.updateDelay == 0 || length(newSentences) == 0)
+							updateFn()
 						else
-							compl;
-					} else {
-						suggest = find(compl, \v -> startsWith(toLowerCase(v.sentence), toLowerCase(c2)));
+							setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, updateFn))
 
-						eitherMap(suggest, \sg -> [sg], [])
-					};
-
-				maybeApply(
-					ac.currentMatches,
-					\cm ->
-						map(newSentences, \ns -> {
-							sen = ns.sentence;
-							dictId = findiDef(mtch, \mch -> contains(mch.sentences, sen), -1);
-							senId = if (dictId >= 0) findiDef(mtch[dictId].sentences, \sn -> sn == sen, -1) else -1;
-
-							Triple(dictId, senId, ns)
-						})
-						|> cm.fn
+					},
+					\localError -> {
+						devtrace("Something goes wrong building completions.");
+						devtrace(localError);
+					}
 				);
-
-				nextDistinct(ac.sentences, newSentences)
 			},
 		);
 
@@ -879,7 +922,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		);
 
 		if (!en) {
-			nextDistinct(labelStyleB, disabledStyle);
+			nextDistinct(labelStyleB, labelStyle);
 
 			maybeApply(inputUnderline, \iu ->
 				nextDistinct(
@@ -887,11 +930,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					if (smallEdit && !foc)
 						emptyUnderline
 					else
-						Pair([Stroke(disabledColor), StrokeOpacity(disabledOpacity / 2.)], 0.)
+						Pair([Stroke(inactiveColor), StrokeOpacity(1.0)], 0.)
 				)
 			);
 			maybeApply(password, \pw ->
-				nextDistinct(pw.style, [MIconDisabled()])
+				nextDistinct(pw.style, [FillOpacity(1.0)])
 			);
 		} else if (secondOfPair(^currentError) != defaultStyle) {
 			cFill = extractStruct(secondOfPair(^currentError), MErrorColor());
@@ -923,10 +966,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				)
 			);
 			maybeApply(password, \pw ->
-				nextDistinct(pw.style, [FillOpacity(secondaryOpacity)])
+				nextDistinct(pw.style, [FillOpacity(inactiveOpacity)])
 			);
 		} else {
-			nextDistinct(labelStyleB, disabledStyle);
+			nextDistinct(labelStyleB, inactiveStyle);
 
 			maybeApply(inputUnderline, \iu ->
 				nextDistinct(
@@ -938,7 +981,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				)
 			);
 			maybeApply(password, \pw ->
-				nextDistinct(pw.style, [FillOpacity(disabledOpacity)])
+				nextDistinct(pw.style, [FillOpacity(inactiveOpacity)])
 			);
 		}
 	}
@@ -1035,11 +1078,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (hasFloatingLabel && dynamicSize)
 			fif(
 				fOr(mfocus.focused, fneq(content, "")),
-				const(tTextMetrics.baseline + inputBorders.top + if (condensed) 8. else 12.),
-				const(tTextMetrics.baseline + inputBorders.top)
+				fselect(tTextMetrics, FLift(\tm -> tm.baseline + inputBorders.top + if (condensed) 8. else 12.)),
+				fselect(tTextMetrics, FLift(\tm -> tm.baseline + inputBorders.top))
 			)
 		else
-			const(tTextMetrics.baseline + inputBorders.top);
+			fselect(tTextMetrics, FLift(\tm -> tm.baseline + inputBorders.top));
 
 	MInputState(
 		manager,
@@ -1052,9 +1095,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		position,
 		selection,
 		textInputCursorShape,
-		mTextStyle,
 		textStyle,
-		mTextStyleDisabled,
 		tTextMetrics,
 		smallEdit,
 		label,
@@ -1072,7 +1113,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		align,
 		iconSize,
 		iconBorders,
-		leftIconName,
+		leftIcon,
 		leftButton,
 		editIcon,
 		rightButton,
@@ -1143,7 +1184,7 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 					MInputErrorState(
 						ie.text,
 						errorLines,
-						\p -> i2d(errorLines) * (MFontStyle2MCustomFont(p, inputErrorFont, 0.87, 0.54).size + 4.),
+						\p -> i2d(errorLines) * (MFontStyle2MCustomFontDefault(p, inputErrorFont, false).size + 4.),
 						contains(ie.style, MRequiredField()),
 						inputErrorColor,
 						fselect(inputErrorColor, FLift(\ec : MColor -> [inputErrorFont, ec])),
@@ -1264,7 +1305,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 	linesCount = inputState.linesCount;
 	maxChars = inputState.maxChars;
 	numeric = inputState.numeric;
-	textStyle = inputState.textStyle;
+	textStyle = MTextStyle2CharacterStyle(inputState.parent, fgetValue(inputState.textStyle)); // TODO:
 	textHeight = getTextSize(".", textStyle).height;
 
 	scrollStyle =
@@ -2079,14 +2120,14 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	editorState = makeMTextEditorState(inputState);
 
-	makeInputBox = \en : bool ->
-		TSelect2(editorState.lines, editorState.width, \lns, wd ->
+	makeInputBox = \ ->
+		TSelect3(editorState.lines, editorState.width, inputState.textStyle, \lns, wd, ts ->
 			TLines(
 				map(lns, \l ->
 					MText2T(
 						inputState.parent,
 						l.visibleText,
-						if (en) inputState.mTextStyle else inputState.mTextStyleDisabled
+						ts
 					)
 					|> TFixHeight(TFixed(0., editorState.textHeight))
 				)
@@ -2114,7 +2155,7 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 			|> (\f -> TFixSize(f, TEmpty())),
 		TGroup2SameMetrics(
 			// The lines themselves
-			makeInputBox(true),
+			makeInputBox(),
 			// The cursor
 			TGraphics([MoveTo(0.0, 0.0), LineTo(0.0, editorState.textHeight)], [MStroke(inputState.color), StrokeWidth(2.)])
 			|> (\f -> TVisible(editorState.cursorVisible, f))
@@ -2122,7 +2163,6 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 			|> (\f -> TFixSize(f, TEmpty()))
 		)
 	)
-	|> (\f -> TIf(inputState.mfocus.enabled, f, makeInputBox(false)))
 	|> (\f ->
 		TCopySize(
 			f,
@@ -2191,11 +2231,16 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 }
 
 makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [MTextInputState], inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	interlineSpacing = if (inputState.multiline) {
-		charStyle = MTextStyle2CharacterStyle(parent, inputState.mTextStyle);
-		fontSize = extractStruct(charStyle, FontSize(0.)).size;
-		fontSize * 1.2 - getTextSize("M", charStyle).height;
-	} else 0.;
+	interlineSpacing =
+		if (inputState.multiline) {
+			\ts ->  {
+				charStyle = MTextStyle2CharacterStyle(parent, ts);
+				fontSize = extractStruct(charStyle, FontSize(0.)).size;
+				fontSize * 1.2 - getTextSize("M", charStyle).height;
+			}
+		} else {
+			\__ -> 0.0
+		};
 
 	inputFlexibleSize =
 		if (mobile && ios())
@@ -2216,16 +2261,18 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 	inputFixedSize = \lines ->
 		THeight(
-			MParagraph2T(
-				inputState.parent,
-				generate(0, lines, \i -> "M\n") |> concatStrings,
-				concat(
-					inputState.mTextStyle,
-					[
-						MWidth(400.),
-						InterlineSpacing(interlineSpacing),
-						ParagraphMargin(0., 0.)
-					]
+			TSelect(inputState.textStyle, \ts : [MTextStyle] ->
+				MParagraph2T(
+					inputState.parent,
+					generate(0, lines, \i -> "M\n") |> concatStrings,
+					concat(
+						ts,
+						[
+							MWidth(400.),
+							InterlineSpacing(interlineSpacing(ts)),
+							ParagraphMargin(0., 0.)
+						]
+					)
 				)
 			)
 		);
@@ -2248,7 +2295,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 					);
 				}
 			} else {
-				THeight(TText("m", inputState.textStyle))
+				THeight(TSelect(inputState.textStyle, \ts -> TText("m", MTextStyle2CharacterStyle(inputState.parent, ts))))
 			}
 		);
 
@@ -2262,8 +2309,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						inputState.content,
 						inpWH,
 						concatA([
-							cast(inputState.textStyle : [CharacterStyle] -> [FTextInputStyle]),
 							[
+								InterlineSpacing(interlineSpacing(fgetValue(inputState.textStyle))),
 								FWordWrap(const(inputState.wordWrap)),
 								FMultiline(const(inputState.multiline)),
 								FInputType(eitherFn(
@@ -2283,9 +2330,14 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 								FCursorOpacity(const(1.)),
 								FCursorWidth(const(2.)),
 								FInputKeyFilter(\name, ke -> {
+									if (getValue(inputState.focus)) {
+										scrollIntoView(inputState.mfocus);
+									}
+
 									filterKey =
 										eitherMap(inputState.processedKeyDown, \pk -> pk.fn(ke), true) &&
 										(js || (inputState.multiline && !ke.shift) || (ke.keycode != 9 && ke.keycode != 16777218)) &&
+										!((ke.ctrl && (ke.keycode  == 187 || ke.utf == "=")) || (ke.ctrl && (ke.keycode  == 95 || ke.utf == "-"))) &&
 										eitherMap(
 											inputState.autocomplete,
 											\ac -> (ke.keycode != 13 || getValue(ac.selected) < 0),
@@ -2298,7 +2350,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 											inputState.mfocus.name,
 											name,
 											KeyEventRecord(ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode),
-											makeList(),
+											eitherMap(fgetValue(getCurrentFocusedItemBehaviour(manager)), getFullMFocusId, makeList()),
 											ISKeyEvent(),
 											getCallstackIfNeeded(manager)
 										)
@@ -2306,7 +2358,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 									filterKey;
 								}),
-								ViewBounds(fboundsapplytransform(pi.viewBounds, finverttransform(pi.transformMatrix)))
+								FCharacterStyle(fselect(inputState.textStyle, FLift(\ts : [MTextStyle] -> MTextStyle2CharacterStyle(parent, ts)))),
+								SetRTL(parent.rtl)
 							],
 							eitherMap(
 								inputState.autoCompleteType,
@@ -2339,7 +2392,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 										[
 											FAccessTabOrder(fselect(parent.tabOrder, FLift(\to -> arrayPush(to, -1)))),
 											FAccessEnabled(inputState.mfocus.focusEnabled),
-											FAccessZorder(parent.zorder)
+											FAccessZorder(parent.zorder),
+											FAccessAttribute("aria-label", const(if (strlen(inputState.label) > 0) inputState.label else "Input"))
 										]
 									),
 									f
@@ -2349,7 +2403,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 									concat(
 										accessProperties,
 										[
-											FAccessZorder(parent.zorder)
+											FAccessZorder(parent.zorder),
+											FAccessAttribute("aria-label", const(if (strlen(inputState.label) > 0) inputState.label else "Input"))
 										]
 									),
 									f
@@ -2409,7 +2464,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						else if (inputState.align == AutoAlignLeft())
 							TDisplay("MTextInputText")
 						else
-							TAlignStart(TDisplay("MTextInputText")),
+							TAlignStartDir(TDisplay("MTextInputText"), inputState.parent.rtl),
 						TGhost("MTextInputSize"),
 						[TScrollbars(invisibleScrollBar, getMaterialScrollBar().y)]
 					),
@@ -2424,7 +2479,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	|> (\f ->
 		TLet(
 			"MTextInputText",
-			(\c0, en, sp -> {
+			(\c0, sp, ts : [MTextStyle] -> {
 				eol = getCharCodeAt("\n", 0);
 				c =
 					(if (sp)
@@ -2449,22 +2504,22 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						inputState.parent,
 						c,
 						concat(
-							if (en) inputState.mTextStyle else inputState.mTextStyleDisabled,
+							ts,
 							[
 								MWidth(-1.),
-								InterlineSpacing(interlineSpacing),
+								InterlineSpacing(interlineSpacing(ts)),
 								ParagraphMargin(0., 0.)
 							]
 						)
 					)
 				else
-					MText2T(inputState.parent, c, if (en) inputState.mTextStyle else inputState.mTextStyleDisabled)
+					MText2T(inputState.parent, c, ts)
 			})
 			|> (\f2 ->
 				eitherMap(
 					inputState.password,
-					\pw -> TSelect3(inputState.content, inputState.mfocus.enabled, pw.showPassword, f2),
-					TSelect2(inputState.content, inputState.mfocus.enabled, \c, en -> f2(c, en, true))
+					\pw -> TSelect3(inputState.content, pw.showPassword, inputState.textStyle, f2),
+					TSelect2(inputState.content, inputState.textStyle, \c, ts -> f2(c, true, ts))
 				)
 			)
 			|> (\t -> TAttachWidth(t, inputState.textWidth)),
@@ -2487,7 +2542,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 	isTextInputInPopup = !contains(style, MTextInputOutOfPopup());
 	custLeftButton = extractStruct(style, MLeftCustomButton(TEmpty(), TFixed(1., 1.), 56.));
 	leftButton = extractStruct(style, MShowLeftButton(false)).show || custLeftButton.closed != TEmpty();
-	leftIcon = extractStruct(style, MLeftIcon("")).icon != "";
+	leftIcon = extractStruct(style, MLeftIcon("", [])).icon != "";
 	label = extractStruct(style, MLabel("")).label;
 	hasFloatingLabel = contains(style, MFloatingLabel()) && label != "";
 	tTextMetrics = getTWordMetrics(MText2T(parent, " ", textStyle), makeTree());
@@ -2506,28 +2561,29 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 	lineHeight = dceil((tTextMetrics.height + inputBorders.top + inputBorders.bottom - 3.) / 4.) * 4.;
 
 	MCompletionFn(\com, isSelected, setWordFn ->
-		MGetMaterial2Tropic(\m2t -> {
+		MGetMaterial2Tropic(\m2t -> MGetFocusGroup(\p -> {
 			focusState = [MOnClick(\ -> setWordFn(com)), MRippleType(const(MRippleFill())), MFocusEnabled(const(false))];
+			isRTL = p.rtl;
 
 			face =
-				TLinesA([
+				TLinesDir([
 					TFillX(),
 					MEllipsisText2T(manager, parent, MEllipsisText(com.sentence, arrayPush(textStyle, MShowTooltip(const(true)))), m2t)
 					|> TCenterY
-				])
+				], isRTL)
 				|> (\f ->
-					TBorderA(
+					TBorderDir(
 						inputBorders.start + (if (leftButton && isTextInputInPopup) custLeftButton.inputIndent else 0.) + (if (leftIcon) 72. else 0.),
 						0.,
 						inputBorders.end,
 						0.,
-						f
+						f,
+						isRTL
 					)
 				)
 				|> (\f -> TAvailable(f, TFillXH(lineHeight)))
 				|> (\f -> TFixSize(f, TFillXH(lineHeight)));
 
-			MGetFocusGroup(\p ->
 				MComponent2T(
 					manager,
 					p,
@@ -2538,8 +2594,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 							[MFill(getAccentColor(p)), FillOpacity(0.4)]),
 					m2t
 				)
-			)
-		})
+		}))
 	)
 }
 
@@ -2549,9 +2604,9 @@ addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic
 	\t ->
 		eitherMap(inputState.autocomplete, \ac ->
 			eitherMap(ac.inLine, \inline ->
-				TSelect(inline.bestSuggestion, \best ->
+				TSelect2(inline.bestSuggestion, inputState.textStyle, \best, ts ->
 					eitherMap(best,	\sg ->
-						MText2T(inputState.parent, sg.second, inputState.mTextStyleDisabled)
+						MText2T(inputState.parent, sg.second, arrayPush(ts, MTextDisabled()))
 						|> (\t2 -> TTranslate(fselect(inputState.textWidth, FLift(\tw -> Point(tw, dh))), t2)),
 						TEmpty()
 					)
@@ -2562,4 +2617,14 @@ addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic
 			),
 			t
 		)
+}
+
+makeAutocompleteMatcher(minChars : int) ->
+	(matcher : SentenceMatcher, input : string, maxHits : int, prefix : bool, exhaustive : bool, position : int) -> [SentenceMatch] {
+
+	if (minChars == 0) simpleSentenceMatcher 
+	else \matcher, input, maxHits, prefix, exhaustive, position -> {
+		if (strlen(input) < minChars) []
+		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
+	}
 }

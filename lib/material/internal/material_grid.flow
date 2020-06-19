@@ -9,31 +9,40 @@ export {
 	MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
-FlexibleGridItem(m : Material, tr : DynamicBehaviour<Point>, wh : DynamicBehaviour<Maybe<WidthHeight>>);
-
 MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	en = extractStruct(m.style, MEnabled(const(true))).enabled;
 	enableAnimation = extractStruct(m.style, MAnimationEnabled(false)).enabled;
-	cropView = extractStruct(m.style, MCropView(true)).crop;
-	keepOrder = contains(m.style, MKeepOrder());
+	ordered = extractStruct(m.style, MOrdered(true)).ordered;
 	verticalGrid = contains(m.style, MVertical());
-	wrapNewRow = contains(m.style, MWrapNewRow());
-	wrapNewColumn = contains(m.style, MWrapNewColumn());
+	wrapNewRow = extractStruct(m.style, MWrapNewRow(!verticalGrid)).wrap;
+	wrapNewColumn = extractStruct(m.style, MWrapNewColumn(verticalGrid)).wrap;
 	maxRows = extractStruct(m.style, MMaxRows(-1)).rows;
 	lockWidth = extractStruct(m.style, MLockWidth(!verticalGrid)).lock;
+	isSameSize = contains(m.style, TSameSize());
+	alignBaselines = contains(m.style, TBaselineAlign());
 
 	(\par -> TFlexibleGrid(
 		fmap(m.items, \it -> m2t(it, par)),
-		concat(extractStructMany(m.style, CenterAlign()), extractStructMany(m.style, EndAlign()))
-		|> (\st -> if (enableAnimation) arrayPush(st, TAnimation(manager.manager.deltaTimer)) else st)
-		|> (\st -> if (keepOrder) arrayPush(st, TOrder(fmapi(m.items, \i, __ -> i))) else st)
-		|> (\st -> if (verticalGrid) arrayPush(st, TVertical()) else st)
-		|> (\st -> if (wrapNewRow) arrayPush(st, TWrapNewRow()) else st)
-		|> (\st -> if (wrapNewColumn) arrayPush(st, TWrapNewColumn()) else st)
-		|> (\st -> if (maxRows > 0) arrayPush(st, TMaxRows(maxRows)) else st)
-		|> (\st -> arrayPush(st, TEnabled(en)))
-		|> (\st -> arrayPush(st, TLockWidth(lockWidth)))
-		|> (\st -> arrayPush(st, TCropView(cropView)))
+		concatA([
+			extractStructMany(m.style, CenterAlign()),
+			extractStructMany(m.style, EndAlign()),
+			extractStructMany(m.style, TFillersSupport()),
+			extractStructMany(m.style, TFlexibleGridContentSizeInspector(makeWH())),
+			extractStructMany(m.style, TAvailableMinMax(zero, zero)),
+			if (enableAnimation) [TAnimation(manager.manager.deltaTimer)] else [],
+			if (ordered) [TOrder(fmapi(m.items, \i, __ -> i))] else [],
+			if (verticalGrid) [TVertical()] else [],
+			if (maxRows > 0) [TMaxRows(maxRows)] else [],
+			if (isSameSize) [TSameSize()] else [],
+			if (alignBaselines) [TBaselineAlign()] else [],
+			[
+				TEnabled(en),
+				TLockWidth(lockWidth),
+				extractStruct(m.style, TSetRTL(par.rtl)),
+				TWrapNewRow(wrapNewRow),
+				TWrapNewColumn(wrapNewColumn)
+			]
+		])
 	))
 	|> (\f ->
 		MComponentGroup2T(
@@ -50,12 +59,13 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items : [MReorde
 	order : DynamicBehaviour<[int]>, style : [MReorderGridStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	en = extractStruct(style, MEnabled(const(true))).enabled;
 	enableAnimation = extractStruct(style, MAnimationEnabled(true)).enabled;
-	cropView = extractStruct(style, MCropView(true)).crop;
 	verticalGrid = contains(style, MVertical());
-	wrapNewRow = contains(style, MWrapNewRow());
-	wrapNewColumn = contains(style, MWrapNewColumn());
+	wrapNewRow = extractStruct(style, MWrapNewRow(!verticalGrid)).wrap;
+	wrapNewColumn = extractStruct(style, MWrapNewColumn(verticalGrid)).wrap;
 	maxRows = extractStruct(style, MMaxRows(-1)).rows;
 	lockWidth = extractStruct(style, MLockWidth(!verticalGrid)).lock;
+	isSameSize = contains(style, TSameSize());
+	alignBaselines = contains(style, TBaselineAlign());
 	borders = extractStruct(style, MBorders(0.)).borders;
 	grabDelay = extractStructMany(style, MGrabDelay(0));
 	customDraggingOrder = contains(style, MReorderCustomDraggingOrder());
@@ -163,16 +173,18 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items : [MReorde
 			)
 		)
 		|> const,
-		concat(extractStructMany(style, CenterAlign()), extractStructMany(style, EndAlign()))
+		concat3(extractStructMany(style, CenterAlign()), extractStructMany(style, EndAlign()), extractStructMany(style, TFillersSupport()))
 		|> (\st -> if (enableAnimation) arrayPush(st, TAnimation(manager.manager.deltaTimer)) else st)
 		|> (\st -> if (verticalGrid) arrayPush(st, TVertical()) else st)
-		|> (\st -> if (wrapNewRow) arrayPush(st, TWrapNewRow()) else st)
-		|> (\st -> if (wrapNewColumn) arrayPush(st, TWrapNewColumn()) else st)
+		|> (\st -> arrayPush(st, TWrapNewRow(wrapNewRow)))
+		|> (\st -> arrayPush(st, TWrapNewColumn(wrapNewColumn)))
 		|> (\st -> if (maxRows > 0) arrayPush(st, TMaxRows(maxRows)) else st)
+		|> (\st -> if (alignBaselines) arrayPush(st, TBaselineAlign()) else st)
+		|> (\st -> if (isSameSize) arrayPush(st, TSameSize()) else st)
 		|> (\st -> arrayPush(st, TOrder(orderIn)))
 		|> (\st -> arrayPush(st, TEnabled(en)))
 		|> (\st -> arrayPush(st, TLockWidth(lockWidth)))
-		|> (\st -> arrayPush(st, TCropView(cropView)))
+		|> (\st -> arrayPush(st, extractStruct(style, TSetRTL(par.rtl))))
 	)
 	|> (\f ->
 		TConstruct(
@@ -333,7 +345,7 @@ MReorderGrids2T(manager : MaterialManager, parent : MFocusGroup, m : MReorderGri
 MDynamicGridContainer(id : DynamicBehaviour<int>, tr : DynamicBehaviour<Point>);
 
 MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	items = ffuseinit(m.items, make([]));
+	items = fguard(m.items, make([]));
 	itemsLength = fselect(items.first, length |> FLift);
 
 	boxSize = extractStruct(m.style, MBoxSize(make(zeroWH))).wh;

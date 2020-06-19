@@ -6,7 +6,7 @@
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLWebClip, GLClip);
 
 GLWebClip::GLWebClip(GLRenderSupport *owner, ivec2 size, const unicode_string url, bool use_cache, const StackSlot & callback, const StackSlot & _ondone) :
-    GLClip(owner), size(size), url(url), callback(callback), useCache(use_cache), ondone(_ondone)
+    GLClip(owner), size(size), url(url), useCache(use_cache), callback(callback), ondone(_ondone)
 {
     owner->createNativeWidget(this);
 }
@@ -27,9 +27,9 @@ StackSlot GLWebClip::webClipHostCall(RUNNER_ARGS)
 
 StackSlot GLWebClip::webClipEvalJS(RUNNER_ARGS)
 {
-    RUNNER_PopArgs1(code);
+    RUNNER_PopArgs2(code, cb);
     RUNNER_CheckTag1(TString, code);
-    return owner->webClipEvalJS(this, RUNNER->GetString(code));
+    return owner->webClipEvalJS(this, RUNNER->GetString(code), cb);
 }
 
 StackSlot GLWebClip::setWebClipZoomable(RUNNER_ARGS)

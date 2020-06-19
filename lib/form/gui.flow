@@ -37,9 +37,6 @@ export {
 
 	// Arrange these in following lines keeping available width. Useful for paragraphs, but Y fillers in the rrows are useless
 	WideLines : ([Form]) -> Form;
-	// Arrange these in following lines keeping available width.
-	// Divide height available between rows that has block with style WigifyNeedAvailableHeight
-	WideLinesWH : ([Form], [bool]) -> Form;
 
 	// Similar to WideLines, but for the columns
 	TallCols : ([Form]) -> Form;
@@ -148,6 +145,14 @@ export {
 	Align2d(xalign : Behaviour<double>, yalign : Behaviour<double>, form : Form) -> Form;
 	Align2dd(xalign : Behaviour<double>, yalign : Behaviour<double>, form : Form) -> Quadruple<Form, Behaviour<double>, Behaviour<double>, Behaviour<WidthHeight>>;
 
+	Corner ::= TopLeft, TopRight, BottomLeft, BottomRight;
+		TopLeft();
+		TopRight();
+		BottomLeft();
+		BottomRight();
+
+	alignCorner(corner : Corner, form : Form) -> Form;
+
 	// Move a form without changing its size
 	Offset(x : double, y : double, form : Form) -> Form;
 
@@ -237,9 +242,6 @@ export {
 
 	// Makes a rectangle of all available area
 	HVFill(style : [GraphicsStyle]) -> Form;
-
-	// Makes a content available space as stage size and enters fullscreen mode
-	FullScreen(fullscreen : DynamicBehaviour<bool>, form : Form) -> Form;
 
 
 	// Animation support
@@ -631,6 +633,17 @@ Align2(xalign, yalign, form) {
 	else Align2d(const(xalign), const(yalign), form)
 }
 
+alignCorner(corner : Corner, form : Form) -> Form {
+	align = switch (corner : Corner) {
+		TopLeft() : Pair(0., 0.);
+		TopRight() : Pair(1., 0.);
+		BottomLeft() : Pair(0., 1.);
+		BottomRight() : Pair(1., 1.);
+	};
+
+	Align2(align.first, align.second, form);
+}
+
 Invisible(invisible, form) {
 	SelectGlobal(invisible, \v -> 1 - v, \vis -> Visible(vis, form))
 }
@@ -954,40 +967,6 @@ HVFill(style) {
 	);
 }
 
-FullScreen(fs, form) {
-	fw = make(false);
-	nextDistinct(fs, false);
-
-	isCurrentClip = ref false;
-
-	Constructor(FullWindow(fw, form), \ -> {
-		fsListener = onFullScreen(\change -> {
-			if (^isCurrentClip) {
-				if (!change) {
-					nextDistinct(fs, change);
-				}
-
-				isCurrentClip := change;
-				nextDistinct(fw, change);
-			}
-		});
-
-		uns = subscribe2(fs, \fsc -> {
-			isCurrentClip := true;
-
-			toggleFullScreen(fsc);
-
-			// For targets without fullscreen available
-			if (targetNoFullscreen())
-				nextDistinct(fw, fsc);
-		});
-		\ -> {
-			fsListener();
-			uns();
-		}
-	});
-}
-
 
 makeAnimation(activities) {
 	tmr = repeatable(if (mobile) 100 else 50);
@@ -1109,45 +1088,6 @@ WideLines(rows) {
 		)
 	}
 }
-
-WideLinesWH(rows, needAvailable : [bool]) {
-	nRows = length(rows);
-	if (nRows <= 1) Lines(rows)
-	else {
-		nRowsWithAvailable = i2d(countA(needAvailable, idfn));
-		if (nRowsWithAvailable > 0.0) {
-			whB = makeWH();
-			rowsHB = generate(0, nRows, \__ -> make(0.0));
-			availableHB = make(0.0);
-
-			Inspect(
-				[IAvailable(whB)],
-				Lines(mapi(rows, \i, f -> {
-					rowWHB = makeWH();
-					Constructor(
-						Available2(rowWHB, Inspect([Height(rowsHB[i])], f)),
-						\ -> {
-							mRowsHB = makeDisposable(mergeu(rowsHB));
-
-							uns1 = connectSelect2Distinctu(whB, mRowsHB.value, availableHB, \wh, rowsH -> {
-								foldi(rowsH, wh.height, \i1, acc, h -> if (needAvailable[i1]) acc else acc - h)
-							});
-
-							uns2 = connectSelect2Distinctu(whB, availableHB, rowWHB, \wh, avH -> {
-								WidthHeight(wh.width, if (needAvailable[i]) { avH / nRowsWithAvailable } else 0.0)
-							});
-
-							\ -> { mRowsHB.dispose(); uns1(); uns2(); }
-						}
-					)
-				}))
-			)
-		} else {
-			WideLines(rows)
-		}
-	}
-}
-
 
 TallCols(cols) {
 	if (length(cols) <= 1) Cols(cols)

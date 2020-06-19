@@ -64,29 +64,32 @@ void FlowConfig::slotSetServerPort(const QString& port) {
 }
 
 void FlowConfig::slotSaveProgTimestamps(int row) {
-	progTimestamps_[row] = progTimestampsCurrent(row);
+	try {
+		progTimestamps_[row] = progTimestampsCurrent(row);
+	} catch (std::exception& ex) {
+		QTextStream(stdout) << "Exception at slotSaveProgTimestamps: " << ex.what() << "\n";
+	}
 }
 
 void FlowConfig::slotAddLaunch() {
-	int currRow = ui.launchTableWidget->currentRow();
-	int rowInd = currRow == -1 ? ui.launchTableWidget->rowCount() : currRow + 1;
-	ui.launchTableWidget->insertRow(rowInd);
 	QString program = QFileDialog::getOpenFileName(widget, i18n("Flow file"), QString());
-
-	// Flow file and directory should be setup via file/dir dialog,
-	// so they are not directly editable
-	ui.launchTableWidget->setItem(rowInd, 0, new QTableWidgetItem(QFileInfo(program).baseName()));
-	ui.launchTableWidget->setItem(rowInd, 1, setNotEditable(new QTableWidgetItem(program)));
-	ui.launchTableWidget->setItem(rowInd, 2, setNotEditable(new QTableWidgetItem(QFileInfo(program).dir().path())));
-	ui.launchTableWidget->setItem(rowInd, 3, new QTableWidgetItem(QLatin1String("bc")));
-	ui.launchTableWidget->setItem(rowInd, 4, new QTableWidgetItem(QLatin1String("timephases=1")));
-	ui.launchTableWidget->setItem(rowInd, 5, new QTableWidgetItem());
-	ui.launchTableWidget->setItem(rowInd, 6, new QTableWidgetItem());
-	ui.removeLaunchButton->setEnabled(true);
-
-	slotSaveProgTimestamps(rowInd);
-
-	emit launchConfigsChanged();
+	if (!program.isEmpty()) {
+		int currRow = ui.launchTableWidget->currentRow();
+		int rowInd = currRow == -1 ? ui.launchTableWidget->rowCount() : currRow + 1;
+		ui.launchTableWidget->insertRow(rowInd);
+		// Flow file and directory should be setup via file/dir dialog,
+		// so they are not directly editable
+		ui.launchTableWidget->setItem(rowInd, 0, new QTableWidgetItem(QFileInfo(program).baseName()));
+		ui.launchTableWidget->setItem(rowInd, 1, setNotEditable(new QTableWidgetItem(program)));
+		ui.launchTableWidget->setItem(rowInd, 2, setNotEditable(new QTableWidgetItem(QFileInfo(program).dir().path())));
+		ui.launchTableWidget->setItem(rowInd, 3, new QTableWidgetItem(QLatin1String("bc")));
+		ui.launchTableWidget->setItem(rowInd, 4, new QTableWidgetItem(QLatin1String("timephases=1")));
+		ui.launchTableWidget->setItem(rowInd, 5, new QTableWidgetItem());
+		ui.launchTableWidget->setItem(rowInd, 6, new QTableWidgetItem());
+		ui.removeLaunchButton->setEnabled(true);
+		slotSaveProgTimestamps(rowInd);
+		emit launchConfigsChanged();
+	}
 }
 
 void FlowConfig::slotRemoveLaunch() {
@@ -129,6 +132,12 @@ void FlowConfig::readConfig(const KConfigGroup& config) {
 	ui.serverAutostartCheckBox->setCheckState(
 		config.readEntry(QLatin1String("Server autostart"), QString()) == QLatin1String("true") ? Qt::Checked : Qt::Unchecked
 	);
+	ui.compilationTimePhasesCheckBox->setCheckState(
+		config.readEntry(QLatin1String("Compilation time phases"), QString()) == QLatin1String("true") ? Qt::Checked : Qt::Unchecked
+	);
+	ui.compilerOptionsLineEdit->setText(config.readEntry(QLatin1String("Compiler options"), QString()));
+	ui.debuggerMaxDepthLineEdit->setText(config.readEntry(QLatin1String("Debugger max depth"), QString(QLatin1String("16"))));
+	ui.debuggerMaxLengthLineEdit->setText(config.readEntry(QLatin1String("Debugger max length"), QString(QLatin1String("1024"))));
 	for (int row = 0; row < config.readEntry(QLatin1String("Launch configs number"), 0); ++ row) {
 		QString name = config.readEntry(QStringLiteral("Launch config %1 name").arg(row), QString());
 		QString prog = config.readEntry(QStringLiteral("Launch config %1 program").arg(row), QString());
@@ -169,6 +178,12 @@ void FlowConfig::writeConfig(KConfigGroup& config) {
     config.writeEntry(QLatin1String("Server autostart"),
     	ui.serverAutostartCheckBox->checkState() == Qt::Checked ? "true" : "false"
     );
+    config.writeEntry(QLatin1String("Compilation time phases"),
+    	ui.compilationTimePhasesCheckBox->checkState() == Qt::Checked ? "true" : "false"
+    );
+    config.writeEntry(QLatin1String("Compiler options"), ui.compilerOptionsLineEdit->text());
+    config.writeEntry(QLatin1String("Debugger max depth"), ui.debuggerMaxDepthLineEdit->text());
+    config.writeEntry(QLatin1String("Debugger max length"), ui.debuggerMaxLengthLineEdit->text());
     config.writeEntry(QLatin1String("Launch configs number"), ui.launchTableWidget->rowCount());
     for (int row = 0; row < ui.launchTableWidget->rowCount(); ++row) {
     	config.writeEntry(QStringLiteral("Launch config %1 name").arg(row),      ui.launchTableWidget->item(row, 0)->text());
@@ -197,6 +212,10 @@ void FlowConfig::eraseConfig(KConfigGroup& config) {
 	config.deleteEntry(QLatin1String("Flow directory"));
 	config.deleteEntry(QLatin1String("Server directory"));
 	config.deleteEntry(QLatin1String("Server autostart"));
+	config.deleteEntry(QLatin1String("Compilation time phases"));
+	config.deleteEntry(QLatin1String("Compiler options"));
+	config.deleteEntry(QLatin1String("Debugger max depth"));
+	config.deleteEntry(QLatin1String("Debugger max length"));
 }
 
 

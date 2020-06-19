@@ -115,7 +115,7 @@ void KatePluginSymbolViewerView::parseEcmaSymbols(void)
       if ((current == QLatin1Char('c')) && (stripped.indexOf(QLatin1String("class"), c) == c)) {
         identifier.clear();
         c += 6;
-        for (c = c; c < stripped.length(); c++) {
+        for (; c < stripped.length(); c++) {
           current = stripped.at(c);
           // look for the beginning of the class itself
           if ((current == QLatin1Char('(')) || (current == QLatin1Char('{'))) {
@@ -149,7 +149,7 @@ void KatePluginSymbolViewerView::parseEcmaSymbols(void)
         c += 8;
         // look for the beginning of the parameters
         identifier.clear();
-        for (c = c; c < stripped.length(); c++) {
+        for (; c < stripped.length(); c++) {
           current = stripped.at(c);
           // look for the beginning of the function definition
           if ((current == QLatin1Char('(')) || (current == QLatin1Char('{'))) {
@@ -232,7 +232,7 @@ void KatePluginSymbolViewerView::parseEcmaSymbols(void)
         c += 3;
         identifier.clear();
         // parse the id name
-        for (c = c; c < stripped.length(); c++) {
+        for (; c < stripped.length(); c++) {
           current = stripped.at(c);
           // look for the beginning of the id
           if (current == QLatin1Char(';')) {

@@ -1,31 +1,66 @@
 #if js
 import js.Browser;
+import js.html.MessageChannel;
 #end
 
 class ProgressiveWebTools {
 	public function new() {}
 
 	public static function __init__() {
+		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches) {
+			var viewport = Browser.document.querySelector('meta[name="viewport"]');
+
+			if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit") < 0) {
+				viewport.setAttribute("content", viewport.getAttribute("content") + ",viewport-fit=cover");
+			}
+		}
 	}
 
 	public static var globalRegistration : Dynamic = null;
 	public static var globalInstallPrompt : Dynamic = null;
-	public static var serviceWorkerFilePath : String = "sw.min.js";
 
-	public static function enableServiceWorkerCaching(callback : Bool -> Void) : Void {
+	public static function enableServiceWorkerCaching(swFilePath : String, callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
 		#elseif js
 		if (untyped navigator.serviceWorker) {
-			untyped navigator.serviceWorker.register(serviceWorkerFilePath).then(function(registration) {
+			untyped navigator.serviceWorker.register(swFilePath).then(function(registration) {
 				trace('ServiceWorker registration successful with scope: ', registration.scope);
 
 				globalRegistration = registration;
-				callback(true);
+				if (registration.active) {
+					callback(true);
+				} else {
+					navigator.serviceWorker.oncontrollerchange = function(e) {
+						callback(true);
+					};
+				}
 			}, function(err) {
 				trace('ServiceWorker registration failed: ', err);
 				callback(false);
 			});
+		} else {
+			callback(false);
+			trace('No ServiceWorker on this browser');
+		}
+		#end
+	}
+
+	public static function subscribeOnServiceWorkerUpdateFound(onUpdateFound : Void -> Void, onError : String -> Void) {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null) {
+			globalRegistration.onupdatefound = function() {
+				var installingWorker = globalRegistration.installing;
+				installingWorker.onstatechange = function() {
+					if (installingWorker.state == 'installed') {
+						onUpdateFound();
+					}
+				};
+			}
+		} else {
+			onError("ServiceWorker is not initialized");
 		}
 		#end
 	}
@@ -36,6 +71,7 @@ class ProgressiveWebTools {
 		#elseif js
 		if (globalRegistration != null) {
 			untyped globalRegistration.unregister().then(function() {
+				globalRegistration = null;
 				callback(true);
 			}, function(err) {
 				callback(false);
@@ -44,40 +80,50 @@ class ProgressiveWebTools {
 		#end
 	}
 
-	public static function checkServiceWorkerCachingEnabled(callback : Bool -> Void) : Void {
+	public static function checkServiceWorkerEnabledOnly(callback : Bool -> Void) : Void {
 		#if flash
 		callback(false);
 		#elseif js
+		if (globalRegistration != null && untyped navigator.serviceWorker) {
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function checkServiceWorkerCachingEnabled(swFileName : String, callback : Bool -> Void) : Void {
+		#if !js
+		callback(false);
+		#else
 		if (globalRegistration != null) {
 			callback(true);
-			return;
-		}
-
-		if (untyped navigator.serviceWorker) {
+		} else if (untyped navigator.serviceWorker) {
 			untyped navigator.serviceWorker.getRegistrations().then(function(registrations) {
 				if (registrations.length == 0) {
 					callback(false);
-				}
-
-				untyped Promise.race(untyped registrations.map(function(registration) {
+				} else if (untyped registrations.filter(function(registration) {
 					if (untyped registration.active == null) {
-						return Promise.reject();
+						return false;
 					}
 
-					if (untyped registration.active.scriptURL == (registration.scope + serviceWorkerFilePath)) {
+					if (untyped registration.active.scriptURL == (registration.scope + swFileName)) {
 						globalRegistration = registration;
-						return Promise.resolve();
+						return true;
 					} else {
-						return Promise.reject();
+						return false;
 					}
-				})).then(function() {
+				}).length > 0) {
 					callback(true);
-				}, function() {
+				} else {
 					callback(false);
-				});
+				}
 			}, function(err) {
 				callback(false);
 			});
+		} else {
+			callback(false);
+			trace('No ServiceWorker on this browser');
 		}
 		#end
 	}
@@ -115,6 +161,381 @@ class ProgressiveWebTools {
 			globalInstallPrompt = null;
 		});
 		#else
+		#end
+	}
+
+	public static function cleanServiceWorkerCache(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({"action" : "clean_cache_storage"}, [messageChannel.port2]);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function setServiceWorkerPreferCachedResources(prefer : Bool, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "set_prefer_cached_resources",
+					"data" : {
+						"value" : prefer
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function setServiceWorkerCacheStaticResources(cache : Bool, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "set_cache_static_resources",
+					"data" : {
+						"value" : cache
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function addServiceWorkerDynamicResourcesExtension(extension : String, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "add_dynamic_resource_extension",
+					"data" : {
+						"value" : extension
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function removeServiceWorkerDynamicResourcesExtension(extension : String, callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "remove_dynamic_resource_extension",
+					"data" : {
+						"value" : extension
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function addRequestCacheFilterN(
+		cacheIfUrlMatch : String,
+		cacheIfMethodMatch : String,
+		cacheIfParametersMatch : Array<Array<String>>,
+		ignoreParameterKeysOnCache : Array<String>,
+		onOK : Void -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't to add request filter");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't to add request filter");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "requests_cache_filter",
+					"data" : {
+						"cacheIfUrlMatch" : cacheIfUrlMatch,
+						"method" : cacheIfMethodMatch,
+						"cacheIfParametersMatch" : cacheIfParametersMatch,
+						"ignoreParameterKeysOnCache" : ignoreParameterKeysOnCache
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function addRequestSkipFilterN(
+		skipIfUrlMatch : String,
+		skipIfMethodMatch : String,
+		skipIfHeaderMatch : Array<String>,
+		onOK : Void -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't to add request filter");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't to add request filter");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "requests_skip_filter",
+					"data" : {
+						"url" : skipIfUrlMatch,
+						"method" : skipIfMethodMatch,
+						"header" : skipIfHeaderMatch
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function loadAndCacheUrls(
+		urls : Array<String>,
+		ignoreParameterKeysOnCache : Array<String>,
+		onOK : Void -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't execute one or more requests");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't execute one or more requests");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "load_and_cache_urls",
+					"data" : {
+						"urls" : urls,
+						"ignoreParameterKeysOnCache" : ignoreParameterKeysOnCache
+					}
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function checkUrlsInServiceWorkerCache(urls : Array<String>, onOK : Array<String> -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null || event.data.urls == null) {
+					onError("ServiceWorker can't return the cache state");
+				} else if (event.data.status == "OK") {
+					onOK(event.data.urls);
+				} else {
+					onError("ServiceWorker can't return the cache state");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "check_urls_in_cache",
+					"data" : { "urls" : urls }
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function isRunningPWA() : Bool {
+		return !Browser.window.matchMedia("(display-mode: browser)").matches || (Platform.isIOS && untyped Browser.window.navigator.standalone == true);
+	}
+
+	public static function getServiceWorkerJsVersion(
+		onOK : Int -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't execute one or more requests");
+				} else {
+					onOK(event.data.data);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_service_worker_version"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function setUseOnlyCacheInOffline(enabled : Bool, onOK : Void -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't change the cache parameter");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't change the cache parameter");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "set_use_cache_only_in_offline",
+					"enabled" : enabled
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function getServiceWorkerRequestsStatsN(onOK : Array<Int> -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't get requests stats");
+				} else {
+					onOK([
+						event.data.data.fromNetwork,
+						event.data.data.fromCache,
+						event.data.data.skipped,
+						event.data.data.failed
+					]);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_requests_stats"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
 		#end
 	}
 }

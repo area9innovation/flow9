@@ -1,0 +1,185 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/doc/fi2doc;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/lambda_lifting;
+
+
+export {
+	fi2flow(program : FiProgram, cfg : FcFlowConfig, callback : () -> void) -> void;
+}
+
+/*
+TODO:
+
+- Preserve all comments
+
+- Ability to work one funtion at a time
+
+- Something with types going wrong. See fusion.flow. gtype works, though
+
+- Wrap long lines
+
+- Preserve order from original source
+  (We could use start position for this)
+ */
+
+fi2flow(program : FiProgram, cfg : FcFlowConfig, callback : () -> void) -> void {
+	traverseInOrder(program.modules, \name, module -> {
+		if (getUrlParameter("inca") == "" || endsWith(name, "_i")) {
+			writeFlow2file(program, cfg.outputdir, module);
+		}
+	});
+	callback();
+}
+
+writeFlow2file(program : FiProgram, path : string, module : FiModule) -> void {
+	filepath : string = pathCombine(path, module.fileinfo.flowfile)  + ".flow";
+
+	docs = if (isUrlParameterTrue("comments")) fiModule2doc(module) else ModuleDocs("", makeTree());
+
+	imports = superglue(module.imports, \i -> "import " + i.flowfile + ";\n", "");
+	forbids = superglue(module.forbids, \i -> "forbid " + i.flowfile + ";\n", "");
+
+	// TODO: We could do the exports in init order
+	exports = if (module.exports != []) blueprint("
+
+		export {
+			%exports%
+		}
+	", ["exports", superglue(module.exports, \e -> name2dec(program, docs, e) + ";\n", "")
+	]) else "";
+
+	// Non-exported structs, unions and natives
+
+	unions = superglue(module.unions, \u -> {
+		if (contains(module.exports, u.name)) ""
+		else name2dec(program, docs, u.name) + ";\n"
+	}, "");
+
+	structs = superglue(module.structs, \u -> {
+		if (contains(module.exports, u.name)) ""
+		else name2dec(program, docs, u.name)  + ";\n"
+	}, "");
+
+	natives = superglue(module.natives, \nat -> {
+		if (contains(module.exports, nat.name)) ""
+		else name2def(program, docs, nat.name) + ";\n"
+	}, "");
+
+	// The bodies
+
+	names = superglue(module.initOrder, \name -> {
+		"\n" + name2def(program, ModuleDocs("", makeTree()), name)
+	}, "");
+
+	file = imports + forbids + exports + unions + structs + names + natives;
+
+	ensureDirectoryExists(dirName(filepath));
+	if (!setFileContent(filepath, file)) {
+		println("Could not write " + filepath);
+	}
+}
+
+name2dec(program : FiProgram, docs : ModuleDocs, e : string) -> string {
+	pt = \t -> prettyFiType(dummyPretty, t, makeSet());
+	doc0 = lookupTreeDef(docs.comments, e, "");
+	doc = if (doc0 != "") "\n// " + strReplace(doc0, "\n", "\n// ") + "\n" else "";
+
+	mdec = lookupTree(program.names.toplevel, e);
+	doc + switch (mdec) {
+		None(): {
+			ms = lookupTree(program.names.structs, e);
+			switch (ms) {
+				None(): {
+					mu = lookupTree(program.names.unions, e);
+					switch (mu) {
+						None(): {
+							"Unknown " + e;
+						}
+						Some(u): {
+							u.name 
+							+ (if (u.typeparameters != []) "<" + superglue(u.typeparameters, pt, ", ") + ">" else "")
+							+ " ::= " + superglue(u.typenames, pt, ", ") + ""
+						}
+					}
+				}
+				Some(str): {
+					e + "(" + superglue(
+						str.args, 
+						\sa -> (if (sa.ismutable) "mutable " else "") + sa.name + " : " + pt(sa.type), 
+						", "
+					) + ")";
+				}
+			}
+		}
+		Some(dec): {
+			switch (dec) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): e + pt(type);
+				FiGlobalVar(name, value, type, declStart, defiStart): e + " : " + pt(type);
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+					"native " + name + " : " + pt(type) + " = " + nativeName;
+				}
+			}
+		}
+	}
+}
+
+name2def(program : FiProgram, docs : ModuleDocs, e : string) -> string {
+	pp = \t -> prettyFiExp(dummyPretty, t);
+	pt = \t -> prettyFiType(dummyPretty, t, makeSet());
+
+	mdec = lookupTree(program.names.toplevel, e);
+	switch (mdec) {
+		None(): {
+			"TODO";
+		}
+		Some(dec): {
+			switch (dec) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): {
+					blueprint("
+					%dec% {
+						%body%
+					}
+					", [
+						"dec", name2dec(program, docs, name),
+						"body", pp(lambda.body)
+					])
+				}
+				FiGlobalVar(name, value, type, declStart, defiStart): name2dec(program, docs, name) + " = " + pp(value) + ";";
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+					switch (fallbackLambda) {
+						FiLambda(args, body, ltype, start): {
+							blueprint("
+								%dec% {
+									%body%
+								}
+								", [
+									"dec", name + pt(ltype),
+									"body", pp(body)
+								]
+							);
+						}
+						default: {
+							name2dec(program, docs, name);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+/*
+		fileinfo : FiFileInfo,
+		structs : [FiTypeStruct],
+		unions : [FiTypeUnion],
+		functions: [FiFunctionDec],
+		globalVars: [FiGlobalVar],
+		natives: [FiNativeDec],
+		// Safe initialization order of globals and functions.
+		initOrder : [string],
+		stringIncludes : [FiFileInfo],
+		start : int, end : int,
+		incremental : bool // module was loaded 'as is', without changes
+
+*/

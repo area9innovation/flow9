@@ -38,7 +38,7 @@ NativeFunction *StartProcess::MakeNativeFunction(const char *name, int num_args)
     #undef NATIVE_NAME_PREFIX
     #define NATIVE_NAME_PREFIX "Native."
     TRY_USE_NATIVE_METHOD(StartProcess, startProcess, 5);
-    TRY_USE_NATIVE_METHOD(StartProcess, runProcess, 6);
+    TRY_USE_NATIVE_METHOD(StartProcess, runSystemProcess, 6);
     TRY_USE_NATIVE_METHOD(StartProcess, writeProcessStdin, 2);
     TRY_USE_NATIVE_METHOD(StartProcess, killProcess, 1);
     TRY_USE_NATIVE_METHOD(StartProcess, startDetachedProcess, 3);
@@ -93,7 +93,7 @@ StackSlot StartProcess::startProcess(RUNNER_ARGS)
     RETVOID;
 }
 
-StackSlot StartProcess::runProcess(RUNNER_ARGS)
+StackSlot StartProcess::runSystemProcess(RUNNER_ARGS)
 {
     RUNNER_PopArgs6(command_str, args_str, cwd_str, onstdout, onstderr, onexit);
     RUNNER_CheckTag2(TString, command_str, cwd_str);
@@ -238,7 +238,7 @@ void StartProcess::provideStdout(FlowProcess *p)
 
         if (p->controlled_process)
         {
-            if (p->stdout_buf.size() <= p->stdout_pos)
+            if (size_t(p->stdout_buf.size()) <= p->stdout_pos)
                 return;
 
             RUNNER_VAR = getFlowRunner();
@@ -261,7 +261,7 @@ void StartProcess::provideStderr(FlowProcess *p)
 
         if (p->controlled_process)
         {
-            if (p->stderr_buf.size() <= p->stderr_pos)
+            if (size_t(p->stderr_buf.size()) <= p->stderr_pos)
                 return;
             RUNNER_VAR = getFlowRunner();
             WITH_RUNNER_LOCK_DEFERRED(RUNNER);

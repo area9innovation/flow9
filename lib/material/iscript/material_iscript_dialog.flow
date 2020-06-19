@@ -961,15 +961,14 @@ showRecordSettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup
 showReplaySettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void {
 	closeWhenB = make(false);
 	currentCursorScheme = make(getIScriptReplayCurrentCursorSchemeId(manager));
-	repeats = make(i2d(getValue(manager.iscript.settings.replayRepeats)));
 
 	content = MAvailable(
 		MLines([
-			// MBaselineCols([
-			// 	MText("Apply first screenshot (reset state)", [MSubheading()]),
-			// 	TFillX(),
-			// 	MSwitchControl(manager.iscript.settings.replayApplyFirstScreenshot, []),
-			// ]),
+			MBaselineCols([
+				MText("Apply first screenshot (reset state)", [MSubheading()]),
+				TFillX(),
+				MSwitchControl(manager.iscript.settings.replayApplyScreenshot, []),
+			]),
 			MBaselineCols([
 				MText("Check errors", [MSubheading()]),
 				TFillX(),
@@ -1007,19 +1006,6 @@ showReplaySettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup
 				MSlider(manager.iscript.settings.replayTimeout,
 					[MWidth(200.0), MSliderRange(0.0, 1000.0), MSliderDisplayValue(true), MSliderStep(50.0)]),
 			]),
-			MConstruct(
-				[
-					makeSubscribe(repeats,
-						\v -> nextDistinct(manager.iscript.settings.replayRepeats, round(v))
-					)
-				],
-				MBaselineCols([
-					MText("Repeat counts", [MSubheading()]),
-					TFillX(),
-					MSlider(repeats,
-						[MWidth(200.0), MSliderRange(1.0, 10.0), MSliderDisplayValue(true), MSliderStep(1.0)]),
-				])
-			),
 			MBaselineCols([
 				MText("Current cursor theme", [MSubheading()]),
 				TFillX(),
@@ -1034,10 +1020,11 @@ showReplaySettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup
 								]
 							),
 							[MOnClick(\ -> setIScriptReplayCurrentCursorSchemeId(manager, i))]
-							)
-						),
+						)
+					),
 					currentCursorScheme,
-					[])
+					[]
+				)
 			]),
 			MBaselineCols([
 				MText("Replay pebble events", [MSubheading()]),
@@ -1170,12 +1157,70 @@ showLogicalScreenshotCompareDialog(
 						else
 							MCenterIn(iconError, TFixed(120.0, 90.0)),
 						MZoom(TPicture(v.afterReplayVisualScreenshot.screenshot, []), TFixed(120.0, 90.0), true),
-						if (isSome(v.iscriptLogicalScreenshotM)) {
-							if (either(v.iscriptLogicalScreenshotM, IScriptLogicalScreenshot("", WidthHeight(0., 0.))).screenshot == v.afterReplayLogicalScreenshot.screenshot)
-								iconSuccess
-							else
-								iconError
-						} else iconError
+						eitherMap(
+							v.iscriptLogicalScreenshotM,
+							\ls -> {
+								diff =
+									diffLogicalSnapshots(
+										deserialize(ls.screenshot, FEmpty()),
+										deserialize(v.afterReplayLogicalScreenshot.screenshot, FEmpty())
+									);
+
+								iteri(diff, \di, d -> {
+									println(di);
+									println(d.a);
+									println(d.b);
+									println("---");
+								});
+
+								perc = dsum(map(diff, \d -> i2d(strlen(serialize(d.a)) + strlen(serialize(d.b))))) * 100.0 /
+									(i2d(strlen(ls.screenshot) + strlen(v.afterReplayLogicalScreenshot.screenshot)));
+
+								MBaselineCols2(
+									if (perc > 3.0)
+										iconError
+									else
+										iconSuccess,
+									MText(d2st(100.0 - perc, 5) + "%", [])
+									|> MBorderLeft(8.0)
+								);
+							},
+							iconError
+						),
+						eitherMap(
+							v.iscriptVisualScreenshotM,
+							\vs -> {
+								if (js) {
+									resultIcon = make(TEmpty());
+
+									compareImages(vs.screenshot, v.afterReplayVisualScreenshot.screenshot, \r -> {
+										rjson = parseJson(r);
+										perc = getJsonDoubleField(rjson, "misMatchPercentage", 100.0);
+
+										next(
+											resultIcon,
+											MBaselineCols2(
+												if (perc > 3.0)
+													iconError
+												else
+													iconSuccess,
+												MText(d2st(100.0 - perc, 5) + "%", [])
+												|> MBorderLeft(8.0)
+											)
+										);
+									});
+
+									MMutable(resultIcon);
+								} else { // TODO: implement cpp image comparisson
+									if (vs.screenshot == v.afterReplayVisualScreenshot.screenshot) {
+										iconSuccess;
+									} else {
+										iconError;
+									}
+								}
+							},
+							iconError
+						)
 					]
 				}
 			);
@@ -1281,7 +1326,8 @@ showLogicalScreenshotCompareDialog(
 						MColumn("Replay result", "", 80, [CenterAlign()]),
 						MColumn("IScript screenshot", "", 144, [CenterAlign()]),
 						MColumn("Replay screenshot", "", 144, [CenterAlign()]),
-						MColumn("Screenshots are equal", "", 120, [CenterAlign()])
+						MColumn("Logical screenshots are equal", "", 120, [CenterAlign()]),
+						MColumn("Visual screenshots are equal", "", 120, [CenterAlign()])
 					],
 					resultDataTable,
 					[TScrollEnabled(const(true)), MFullWidth(), MRowHeight(90.0), MOnListClick(const(true), compareFn)]
@@ -1980,7 +2026,29 @@ scenarioViewDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 				[],
 				[]
 			),
+			MTextButton(
+				"SAVE",
+				\ -> {
+					nextDistinct(manager.iscript.scenario.scriptsB, getValue(scenarioScriptsB));
+					nextDistinct(manager.iscript.scenario.descriptionB, getValue(scenarioDescriptionB));
+					saveLocalIScriptScenario(manager, getValue(manager.iscript.scenario.pathB), m2t)
+				},
+				[],
+				[MEnabled(fneq(manager.iscript.scenario.pathB, ""))]
+			),
+			MTextButton(
+				"SAVE AS",
+				\ -> {
+					nextDistinct(manager.iscript.scenario.scriptsB, getValue(scenarioScriptsB));
+					nextDistinct(manager.iscript.scenario.descriptionB, getValue(scenarioDescriptionB));
+					saveLocalIScriptScenarioDialog(manager, m2t);
+					next(closeWhenB, true);
+				},
+				[],
+				[MEnabled(fneq(flength(scenarioScriptsB), 0))]
+			),
 		]]);
+
 	dialogStyle = [
 		MDialogTitle("Scripts scenario"),
 		MDialogUseFrame(),
@@ -2050,7 +2118,6 @@ scenarioViewDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 				[
 					TScrollEnabled(const(true)),
 					MFullWidth(),
-					// MRowHeight(90.0),
 					MExpandRow(const(true)),
 					MListSelection(const(true), true, true, selectedScriptsB),
 				]

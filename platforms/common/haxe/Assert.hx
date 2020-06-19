@@ -6,17 +6,20 @@ class Assert {
 			fail ("Assertion" + (if (message != null) ": " + message else ""));
 	}
 
+	/*
     macro public static function check1(cond: haxe.macro.Expr, ?msg : haxe.macro.Expr) {
         var pos  = haxe.macro.Context.currentPos();
 	    if (msg == null) 
 		  msg = { expr : haxe.macro.EConst({ 
-			  expr : haxe.macro.EString (cond.toString().toString()), pos : pos}), pos : pos};
+			  expr : haxe.macro.EString (cond.toString().toString()), pos : pos
+			}), pos : pos
+		};
         return { expr : EIf(cond, 
 							{ expr : EThrow (cond), pos : pos },  
 							null
 							), pos : pos };
     }
-
+*/
 	public static inline function fail(message){
 		printStack ("Failure: " + message);
 		throw message;

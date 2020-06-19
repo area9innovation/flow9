@@ -9,7 +9,7 @@ choice.
 1.  [Environment configuration](#environment-configuration)
 2.  [Backend](#backend)
     - [MySQL](#mysql)
-    - [PHP5.6](#php5.6)
+    - [PHP7.2](#php7.2)
     - [Apache2](#apache2)
 3.  [Clone the repositories](#clone-the-repositories)
 4.  [Install `Haxe`](#install-haxe)
@@ -59,14 +59,30 @@ sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | s
 ```
 More details on mysql setup can be found in `flow9/doc/mysql.markdown`
 
-## PHP5.6
+## PHP7.2
 Set up PHP:
 ```bash
 sudo add-apt-repository ppa:ondrej/php
 sudo apt update
-sudo apt install -y php5.6 php5.6-mysql php-gettext php5.6-mbstring php-xdebug libapache2-mod-php5.6 php5.6-xml php5.6-zip php5.6-mcrypt
+sudo apt install -y php7.2 php7.2-mysql php-gettext php7.2-mbstring php-xdebug libapache2-mod-php7.2 php7.2-xml php7.2-zip php7.2-mcrypt
 sudo update-alternatives --config php
 ```
+
+when switching from older php version:
+```bash
+sudo a2dismod php5.6
+sudo a2enmod php7.2
+sudo service apache2 restart
+```
+
+also copying libraries config from php5.6 might be required
+```bash
+sudo cp /etc/php/5.6/apache2/conf.d/* /etc/php/7.2/apache2/conf.d
+```
+
+if php7.2 is not available, 7.0 version/libs work too.
+
+
 ## Apache2
 Install and configure apache2:
 ```bash
@@ -138,8 +154,8 @@ haxelib setup ~/haxelib/lib
 ```
 Then install the required libraries:
 ```bash
-haxelib install format
-haxelib install pixijs 4.7.1 #(or a newer edition)
+haxelib install format 3.4.2
+haxelib install pixijs 4.8.4 #(pixijs version 5 isn't supported)
 ```
 # Install `Neko`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might
@@ -253,7 +269,7 @@ sudo apt install libpulse-dev libglu1-mesa-dev qtchooser -y
 qtchooser -install qt512 ~/Qt/5.12.0/5.12.0/gcc_64/bin/qmake
 echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
-Clone asmjit repo:
+Clone Area9's fork of asmjit repo:
 ```bash
 cd $FLOW/platforms/common/cpp
 git clone ssh://git@github.com/area9innovation/asmjit.git

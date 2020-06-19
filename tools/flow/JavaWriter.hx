@@ -1233,7 +1233,7 @@ class JavaWriter {
 
 	private function isSafeStatement(code : Flow) : Bool {
 		switch (code) {
-		case Call(closure, arguments, pos):
+		case Call(clos, arguments, pos):
 			return true;
 		default:
 			return false;

@@ -1,6 +1,7 @@
 import material/measing;
 import tropic/tropic_constant;
 import material/internal/material_theme;
+import material/internal/material_debug;
 
 export {
 	// Increases the size of this tropic to be a 8x8 multiple
@@ -16,6 +17,7 @@ export {
 	// Temporary replacement of MGrid. Builds table with fixed size cells. Aligns data to the left and centers vertically
 	FixedTableAlignLeft(lines : [[Material]], widths : [double], height : double) -> Material;
 	FixedTableAlignBaselineLeft(lines : [[Material]], widths : [double], height : double) -> Material;
+	FixedTableAlignBaselineA(lines : [[Material]], widths : [double], height : double) -> Material;
 
 	getMaterialScrollBar() -> TScrollbars;
 
@@ -83,9 +85,23 @@ export {
 		content : Tropic,
 		yTrans : Transform<double>,
 		expand : Transform<bool>,
-		absoluteOffsetMode : bool) -> Tropic;
+		trigger : Maybe<Transform<bool>>,
+		heightInspect : Maybe<DynamicBehaviour<double>>,
+		absoluteOffsetMode : bool,
+		fade : bool) -> Tropic;
+
+	TAnimator(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		t : Tropic,
+		trigger : Transform<bool>,
+		style : [MAnimatorStyle]) -> Tropic;
 
 	MLetDisplay(name : string, value : Material, scope : Tropic, above : bool) -> Material;
+
+	flerpPoint(point: Transform<Point>, progress : Transform<double>) -> Transform<Point>;
+	colorLerp(previous : int, current : int, percent : double) -> int;
+	mColorLerp(previous : MColor, current : MColor, percent : double) -> MColor;
 }
 
 MGridSize(t : Tropic) -> Tropic {
@@ -140,20 +156,28 @@ FixedTableAlignBaselineLeft(lines : [[Material]], widths : [double], height : do
 	)
 }
 
+FixedTableAlignBaselineA(lines : [[Material]], widths : [double], height : double) -> Material {
+	MLinesA(
+		map(lines, \columns -> {
+			MBaselineColsA(
+				mapi(columns, \i, cell -> {
+					MAvailable(
+						MAlignStartFill(cell),
+						TFixed(widths[i], height)
+					)
+				})
+			)
+		})
+	)
+}
+
 getMaterialScrollBarWithShade(shade : int) -> TScrollbars {
 	TScrollbarStyle(materialScrollBar with bar =
-		TBorder4(
-			if (mobile) 2. else 4.,
-			TCreate(\ -> {
-				ins = make(false);
-				dwn = make(false);
-
-				TInteractive(
-					[TMouseInside(ins, false), TMouseDownGhost(dwn)],
-					TAlpha(fif(dwn, const(1.0), fif(ins, const(0.8), const(0.6))), TRoundedFull([MFill(MGrey(shade))], TFillXY()))
-				)
-			})
-		)
+		\ins, dwn ->
+			TBorder4(
+				if (mobile) 2. else 4.,
+				TAlpha(fif(dwn, const(1.0), fif(ins, const(0.9), const(0.8))), TRoundedFull([MFill(MGrey(shade)), Stroke(white), StrokeOpacity(0.3)], TFillXY()))
+			)
 	)
 	|> (\f -> TScrollbars(f, f))
 }
@@ -564,7 +588,7 @@ MMonitorMousePosition(manager : MaterialManager, position : DynamicBehaviour<Poi
 	\ -> {
 		density = extractStruct(manager.manager.renderStyle, TDpif(screenDensity)).dpif;
 		stage = getStage();
-		nextDistinct(position, Point(getMouseX(stage) / density, getMouseY(stage) / density));
+		nextDistinct(position, Point(getMouseX(stage) / density / getValue(accessibilityZoom), getMouseY(stage) / density / getValue(accessibilityZoom)));
 
 		trender(
 			TInteractive(
@@ -628,10 +652,31 @@ TAnimatedExpander(
 	expanded : Transform<bool>,
 	style : [MAnimatedExpanderStyle]) -> Tropic {
 
+	if (isUrlParameterTrue("new")) {
+		vertical = !contains(style, MExpanderHorizontal());
+		expandFromStart = contains(style, MExpandFromStart());
+		duration = tryExtractStruct(style, MDuration(const(-1.)));
+		progress = tryExtractStruct(style, MExpanderProgress(make(0.)));
+
+		animatorStyle =	concatA([
+			[
+				MTranslateAnimation(if (vertical) MTop() else MLeft(), if (expandFromStart) [MExpandFromStart()] else []),
+				MFadeAnimation(),
+				MAnimatorCropByContent(),
+				MAnimatorLazy()
+			],
+			eitherMap(duration, \d -> [d], []),
+			eitherMap(progress, \p -> [p], []),
+			extractStructMany(style, MNoCrop()),
+		]);
+
+		TAnimator(manager, parent, content, expanded, animatorStyle);
+	} else {
+
 	vertical = !contains(style, MExpanderHorizontal());
 	expandFromStart = contains(style, MExpandFromStart());
 	progress = tryExtractStruct(style, MExpanderProgress(make(0.)));
-	duration = extractStruct(style, MAnimationDuration(const(0.3))).seconds;
+	duration = extractStruct(style, MDuration(const(0.3))).duration;
 	crop = !contains(style, MNoCrop());
 
 	size = TGhost("TAnimatedExpanderContent");
@@ -664,6 +709,7 @@ TAnimatedExpander(
 				t
 			))
 	|> (\t -> TLet("TAnimatedExpanderContent", content, t))
+	}
 }
 
 TCollapsingBox(
@@ -671,11 +717,14 @@ TCollapsingBox(
 	parent : MFocusGroup,
 	content : Tropic,
 	yTrans : Transform<double>, // in upper direction only
-	expand : Transform<bool>, // trigger to open or close
-	absoluteOffsetMode : bool // if true then y counts from top, otherwise it depends on expand state
+	expand : Transform<bool>,
+	trigger : Maybe<Transform<bool>>, // trigger to open or close
+	heightInspect : Maybe<DynamicBehaviour<double>>,
+	absoluteOffsetMode : bool, // if true then y counts from top, otherwise it depends on expand state
+	fade : bool
 ) -> Tropic {
 
-	height = make(0.);
+	height = either(heightInspect, make(0.));
 	trans = make(0.); // px to translate up
 
 	block = ref false; // to block outer translations while animation is active
@@ -685,7 +734,7 @@ TCollapsingBox(
 	box = TSizedHeight(0., fsubtract(height, trans));
 
 	content
-	|> (\m -> TAlpha(factor, m))
+	|> (\t -> if (fade) TAlpha(factor, t) else t)
 	|> (\t -> TAttachHeight(t, height))
 	|> (\t -> TTranslate(fselect(trans, FLift(\y -> Point(0., -y))), t))
 	|> (\t -> TFixSize(t, box))
@@ -702,11 +751,14 @@ TCollapsingBox(
 			parent,
 			const(0.3),
 			const(easingFastOutSlowIn),
-			expand,
-			\e -> {
-				startFactor := fgetValue(factor);
-				block := true;
-				Some(e)
+			either(trigger, expand),
+			\tr -> {
+				if (isNone(trigger) || !tr) {
+					startFactor := fgetValue(factor);
+					block := true;
+					Some(fgetValue(expand))
+				} else
+					None()
 			},
 			\e, prc -> {
 				f = lerp(^startFactor, b2d(e), prc);
@@ -717,6 +769,175 @@ TCollapsingBox(
 			t
 		)
 	)
+}
+
+TAnimator(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	content : Tropic,
+	trigger : Transform<bool>,
+	style : [MAnimatorStyle]) -> Tropic {
+
+	contentWH = makeWH();
+
+	duration = extractStruct(style, MDuration(const(0.3))).duration;
+	bezier = extractStruct(style, MBezier(const(easingStandartCurve))).bezier;
+	progress = extractStruct(style, MExpanderProgress(make(b2d(fgetValue(trigger))))).progress;
+
+	noCrop = contains(style, MNoCrop());
+	cropByContent = contains(style, MAnimatorCropByContent()) || exists(style, \st -> switch (st) {
+			MTranslateAnimation(__, st2) : contains(st2, MExpandFromStart());
+			default : false;
+		}
+	);
+	cropW = make(false);
+	cropH = make(false);
+
+	lazy = contains(style, MAnimatorLazy());
+
+	fade = contains(style, MFadeAnimation());
+	wh2point = \fn -> fselect(contentWH, FLift(fn));
+
+	centerModeHandler = \fn -> {
+		centerPoint = wh2point(\wh -> Point(wh.width / 2., wh.height / 2.));
+
+		\t, center ->
+			if (!center) fn(t)
+			else
+				(
+					if (cropByContent) TBorderT(fselect(centerPoint, FLift(\p -> -p.x)), fselect(centerPoint, FLift(\p -> -p.y)), zero, zero, t)
+					else TTranslate(fselect(centerPoint, FLift(\p -> Point(-p.x, -p.y))), t)
+				)
+				|> fn
+				|> (\t2 ->
+					if (cropByContent) TBorderT(fpointX(centerPoint), fpointY(centerPoint), zero, zero, t2)
+					else TTranslate(centerPoint, t2)
+				)
+	}
+	
+	scaleHandler = \sc, t -> {
+		scaleFactor = extractStruct(sc.style, MScaleAnimationCustomFactor(const(Factor(0., 0.)))).factor;
+		center = contains(sc.style, MCenterMode());
+		centerModeHandler(\t2 -> TScale(flerpFactor(scaleFactor, progress), t2))(t, center)
+	}
+
+	rotateHandler = \rot, t -> {
+		angle = extractStruct(rot.style, MRotateAnimationCustomAngle(const(360.))).angle;
+		center = contains(rot.style, MCenterMode());
+		centerModeHandler(\t2 -> TRotate(fsubselect(angle, FLift(\ang -> flerp(ang, 0., progress))), t2))(t, center)
+	}
+
+	translateHandler = \trans : MTranslateAnimation, t -> {
+		position = switch (trans.type) {
+			MTop() : wh2point(\wh -> Point(0., -wh.height));
+			MBottom() : wh2point(\wh -> Point(0., wh.height));
+			MLeft() : wh2point(\wh -> Point(-wh.width, 0.));
+			MRight() : wh2point(\wh -> Point(wh.width, 0.));
+			MTranslatePosition(pos) : pos;
+		}
+		translatePoint = flerpPoint(position, progress);
+
+		if (cropByContent) {
+			t2 =
+				if (contains(trans.style, MExpandFromStart())) t
+				else TTranslate(translatePoint, t);
+
+			TransformTAcc2(\t2a -> {
+				b = t2a(t2);
+				xTranslation = fneq(fpointX(position), 0.);
+				yTranslation = fneq(fpointY(position), 0.);
+				TAcc(
+					b with metrics = TFormMetrics(
+						fif(
+							xTranslation,
+							fselect2(contentWH, translatePoint, FLift2(\wh, p -> wh.width - abs(p.x))),
+							b.metrics.width,
+						),
+						fif(
+							yTranslation,
+							fselect2(contentWH, translatePoint, FLift2(\wh, p -> wh.height - abs(p.y))),
+							b.metrics.height
+						),
+						b.metrics.baseline
+					),
+					disposers = concat(
+						b.disposers, [
+							makeSubscribe(xTranslation, \x -> if (x) nextDistinct(cropW, true))(),
+							makeSubscribe(yTranslation, \y -> if (y) nextDistinct(cropH, true))()
+						]
+					)
+				)
+			})
+		} else
+			TTranslate(translatePoint, t)
+	}
+
+	content
+	|> (\t -> if (lazy) TShowLazy(fgreater(progress, const(0.)), \ -> t) else t)
+	|> (\t -> TAttachBox(t, contentWH))
+	|> (\t -> if (fade) TAlpha(progress, t) else t)
+	|> (\t -> 
+		fold(style, t, \acc, st ->
+			switch (st) {
+				MScaleAnimation(__) : scaleHandler(st, acc);
+				MRotateAnimation(__) : rotateHandler(st, acc); 
+				MTranslateAnimation(__, __) : translateHandler(st, acc);
+				default : acc 
+			}
+		)
+	)
+	|> (\t ->
+			if (noCrop) t
+			else if (cropByContent) {
+				transformedContentWH = makeWH();
+				TVisible(
+					fselect(transformedContentWH, FLift(\wh -> wh.width > 0.5 && wh.height > 0.5)),
+					TAttachBox(t, transformedContentWH)
+				)
+				|> (\t2 -> TIf(cropH, TCropHeight(t2, fheight(transformedContentWH)), t2))
+				|> (\t2 -> TIf(cropW, TCropWidth(t2, fwidth(transformedContentWH)), t2))
+			} else {
+				TVisible(
+					fselect(contentWH, FLift(\wh -> wh.width > 0.5 && wh.height > 0.5)),
+					TCrop(const(zeroPoint), contentWH, t)
+				)
+			}
+		)
+	|> (\t ->
+		MEasingAnimation(
+			manager,
+			parent,
+			duration,
+			bezier,
+			trigger,
+			\tr -> {
+				Some(tr)
+			},
+			\e, prc -> {
+				nextDistinct(progress, if (e) prc else 1. - prc);
+			},
+			[],
+			t
+		)
+	)
+}
+
+flerpFactor(factor: Transform<Factor>, progress : Transform<double>) -> Transform<Factor> {
+	fselect2(factor, progress, FLift2(\f, pr ->
+		Factor(
+			lerp(f.x, 1., pr),
+			lerp(f.y, 1., pr)
+		)
+	))
+}
+
+flerpPoint(point: Transform<Point>, progress : Transform<double>) -> Transform<Point> {
+	fselect2(point, progress, FLift2(\p, pr ->
+		Point(
+			lerp(p.x, 0., pr),
+			lerp(p.y, 0., pr)
+		)
+	))
 }
 
 MLetDisplay(name : string, value : Material, scope : Tropic, above : bool) -> Material {
@@ -750,4 +971,27 @@ MLetDisplay(name : string, value : Material, scope : Tropic, above : bool) -> Ma
 			)
 		})
 	)
+}
+
+colorLerp(previous : int, current : int, percent : double) -> int {
+	prevRgb = int2rgb(previous);
+	currentRgb = int2rgb(current);
+
+	rgb2int(
+		RGB(
+			round((1.0 - percent) * i2d(prevRgb.r) + percent * i2d(currentRgb.r)),
+			round((1.0 - percent) * i2d(prevRgb.g) + percent * i2d(currentRgb.g)),
+			round((1.0 - percent) * i2d(prevRgb.b) + percent * i2d(currentRgb.b))
+		)
+	);
+}
+
+mColorLerp(previous : MColor, current : MColor, percent : double) -> MColor {
+	MCustomColor(
+		colorLerp(
+			MColor2int(previous),
+			MColor2int(current),
+			percent
+		)
+	);
 }

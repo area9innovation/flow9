@@ -52,7 +52,7 @@ export {
 		DCompute(values : [DComputeValue]);
 			DComputeValue(expression : DExpression, alias : string);
 		DApply(expressions : [DApplyExpression]);
-			DApplyExpression ::= DAggregate, DGroupBy, DFilter, DApplyExpandU;
+			DApplyExpression ::= DAggregate, DGroupBy, DFilter, DApplyExpandU, DCompute;
 				DAggregate(expressions : [DAggregateExpressionU]);
 					DAggregateExpressionU ::= DAggregateExpression, DAggregateWithResource;
 						DAggregateExpression(property : DExpression, method : DAggregateMethod, alias : string);
@@ -109,7 +109,7 @@ export {
 			DOr2(expr1 : DExpression, expr2 : DExpression);
 			DNot(expression : DExpression);
 			DHas(resource : DPropertyU, val : DExpression);
-			DIn(resource : DPropertyU, values : DInValues);
+			DIn(resource : DPropertyOrFunction, values : DInValues);
 				DInValues ::= DResourceArray, DPropertyU;
 					DResourceArray(values : [DResourceValue]);
 			DAny(resource : DPropertyOrFunction, alias : string, expression : DExpression);
@@ -156,7 +156,23 @@ export {
 		DCount(property : DPropertyU);
 
 
-	makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) -> void, onError : (string) -> void) -> void;
+	makeODataRequest(
+		host : string,
+		jwt : string,
+		query : DQuery,
+		callback : (Json) -> void,
+		onError : (string) -> void
+	) -> void;
+	// Tagget query is used to terminate odata request processing.
+	// Tag should consist only of a-z A-Z 0-9 - _ .		r'^[0-9A-Za-z_\-.]+$'
+	makeTaggedODataRequest(
+		host : string,
+		jwt : string,
+		query : DQuery,
+		queryTag : string,
+		callback : (Json) -> void,
+		onError : (string) -> void
+	) -> void;
 	// Calls onError if whole batch or at least one of subrequests has failed
 	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void;
 	makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void;
@@ -168,6 +184,19 @@ export {
 	specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResource;
 	makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json>;
 	json2ResourceValue(json : Json) -> DResourceValue;
+
+	// Area9 specific function (move to another place?)
+	// Kills all currently running sql server processes associated with jwt and queryTag
+	// callback returns a number of terminated processes
+	// terminated request will fail with error
+	// Termination and error return is not guaranteed
+	abortODataRequests(
+		host : string,
+		jwt : string,
+		queryTag : string,
+		callback : (int) -> void,
+		onError : (string) -> void
+	) -> void;
 
 
 	/*
@@ -449,10 +478,17 @@ resource2string(resource : DResource) -> string {
 	}
 }
 
+
+// Same as urlEncode2, but encodes "'" to "''"
+// When done in one session "'" is replaced by the same "'", so the additional call is required
+odataEncode(val : string) -> string {
+	strReplace(urlEncode(val), "%27", "%27%27");
+}
+
 resourceValue2string(value : DResourceValue) -> string {
 	switch (value : DResourceValue) {
 		DInt(val): i2s(val);
-		DString(val): "'" + urlEncode2(val) + "'";
+		DString(val): "'" + odataEncode(val) + "'";
 		DDouble(val): d2s(val);
 		DBool(val): b2s(val);
 		DDate(val): date2string(val);
@@ -508,7 +544,7 @@ applyExpression2string(applyExpression : DApplyExpression) -> string {
 				"expand(" + resource + "," + filterS + ")"
 			}
 		}
-
+		DCompute(values): if (length(values) > 0) "compute(" + dCompute2string(values) + ")" else "";
 	}
 }
 
@@ -623,18 +659,29 @@ logicalExpression2string(expression : DLogicalExp) -> string {
 		DOr(expressions): superglue(expressions, \e -> "(" + expression2string(e) + ")", " or ");
 		DOr2(expr1, expr2): "(" + expression2string(expr1) + ") or (" + expression2string(expr2) + ")";
 		DNot(expr): "not (" + expression2string(expr) + ")";
-		DHas(resource, val): expression2string(resource) + " has " + expression2string(val);
-		DIn(resource, values): expression2string(resource) + " in " + dInValues2string(values);
+		DHas(resource, val): property2string(resource) + " has " + expression2string(val);
+		DIn(resource, values): dIn2string(resource, values);
 		DAny(expr1, alias, expr2): expression2string(expr1) + "/any(" + alias + ":" + expression2string(expr2) + ")";
 		DAll(resource, alias, expr): expression2string(resource) + "/all(" + alias + ":" + expression2string(expr) + ")";
 	}
 }
 
-dInValues2string(values : DInValues) -> string {
-	switch (values) {
-		DResourceArray(v): "(" + superglue(v, resourceValue2string, ",") + ")";
-		DPropertyU(): expression2string(values)
+dIn2string(resource : DPropertyOrFunction, values : DInValues) -> string {
+	valuesSM = switch (values) {
+		DResourceArray(v): {
+			if (length(v) > 0) {
+				Some("(" + superglue(v, resourceValue2string, ",") + ")")
+			} else {
+				None()
+			}
+		}
+		DPropertyU(): Some(property2string(values))
 	}
+	eitherMap(
+		valuesSM,
+		\valuesS -> expression2string(resource) + " in " + valuesS,
+		"false"
+	)
 }
 
 builtinFunction2string(function : DBuiltIn) -> string {
@@ -728,10 +775,27 @@ makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([
 
 makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void {
 	callback2 = \data, headers -> callback(parseBatchResponse(data, headers));
-	makeODataRequest2(host, jwt, DBatchQuery(queries), callback2, onError)
+	makeODataRequest2(host, jwt, DBatchQuery(queries), "", callback2, onError)
 }
 
-makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) -> void, onError : (string) -> void) -> void {
+makeODataRequest(
+	host : string,
+	jwt : string,
+	query : DQuery,
+	callback : (Json) -> void,
+	onError : (string) -> void
+) -> void {
+	makeTaggedODataRequest(host, jwt, query, "", callback, onError);
+}
+
+makeTaggedODataRequest(
+	host : string,
+	jwt : string,
+	query : DQuery,
+	queryTag : string,
+	callback : (Json) -> void,
+	onError : (string) -> void
+) -> void {
 	callback2 = \data, headers -> {
 		isBatch = isSameStructType(query, DBatchQuery([]));
 		result = if (isBatch) {
@@ -747,10 +811,17 @@ makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) 
 		}
 		callback(result)
 	}
-	makeODataRequest2(host, jwt, query, callback2, onError)
+	makeODataRequest2(host, jwt, query, queryTag, callback2, onError)
 }
 
-makeODataRequest2(host : string, jwt : string, query : DQuery, callback : (string, [KeyValue]) -> void, onError : (string) -> void) -> void {
+makeODataRequest2(
+	host : string,
+	jwt : string,
+	query : DQuery,
+	queryTag : string,
+	callback : (string, [KeyValue]) -> void,
+	onError : (string) -> void
+) -> void {
 	if (isUrlParameterTrue("odataDQuery")) println(query);
 	q = buildODataQuery(query);
 	method = q.method;
@@ -772,7 +843,8 @@ makeODataRequest2(host : string, jwt : string, query : DQuery, callback : (strin
 		KeyValue("Accept", accept),
 		KeyValue("Authorization", "Bearer " + jwt),
 		KeyValue("Content-Type", contentType)
-	] |> (\acc -> ifArrayPush(acc, isBatch, KeyValue("Prefer", "continue-on-error=true")));
+	] |> (\acc -> ifArrayPush(acc, isBatch, KeyValue("Prefer", "continue-on-error=true")))
+	|> (\acc -> ifArrayPush(acc, queryTag != "", KeyValue("X-Request-Tag", queryTag)));
 
 	httpCustomRequest(
 		host + q.resource,
@@ -787,7 +859,7 @@ makeODataRequest2(host : string, jwt : string, query : DQuery, callback : (strin
 			}
 		},
 		true
-	)
+	);
 }
 
 parseBatchResponse(response : string, respHeaders : [KeyValue]) -> [DResponse] {
@@ -805,4 +877,34 @@ parseBatchResponse(response : string, respHeaders : [KeyValue]) -> [DResponse] {
 			DGoodResponse(json)
 		}
 	})
+}
+
+abortODataRequests(
+	host : string,
+	jwt : string,
+	queryTag : string,
+	callback : (int) -> void,
+	onError : (string) -> void
+) -> void {
+	headers : [KeyValue] = [
+		KeyValue("Accept", "application/json"),
+		KeyValue("Authorization", "Bearer " + jwt),
+		KeyValue("Content-Type", "application/json")
+	];
+
+	httpCustomRequest(
+		host + "?operation=kill&request_tag=" + queryTag,
+		GET(),
+		headers,
+		RequestPayload(""),
+		\status, respData, respHeaders -> {
+			if (isErrorStatus(status)) {
+				onError(respData)
+			} else {
+				terminatedThreadsCount = s2i(respData);
+				callback(terminatedThreadsCount)
+			}
+		},
+		true
+	);
 }

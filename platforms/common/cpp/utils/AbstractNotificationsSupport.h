@@ -15,6 +15,7 @@ public:
 
     void deliverFBMessage(unicode_string id, unicode_string body, unicode_string title, unicode_string from, long stamp, T_MessageData data);
     void deliverFBToken(unicode_string token);
+    void deliverFBTokenTo(int cb_root, unicode_string token);
 
 protected:
     NativeFunction *MakeNativeFunction(const char *, int);
@@ -25,6 +26,7 @@ protected:
     virtual void doCancelLocalNotification(int /*notificationId*/) = 0;
     virtual void doScheduleLocalNotification(double /*time*/, int /*notificationId*/, std::string /*notificationCallbackArgs*/, std::string /*notificationTitle*/, std::string /*notificationText*/, bool /*withSound*/, bool /*pinned*/) = 0;
 
+    virtual void doGetFBToken(int /*cb_root*/) {}
     virtual void doSubscribeToFBTopic(unicode_string /*name*/) {}
     virtual void doUnsubscribeFromFBTopic(unicode_string /*name*/) {}
     
@@ -46,8 +48,10 @@ private:
     DECLARE_NATIVE_METHOD(cancelLocalNotification)
     DECLARE_NATIVE_METHOD(addOnClickListenerLocalNotification)
 
+    DECLARE_NATIVE_METHOD(initializeFBApp)
     DECLARE_NATIVE_METHOD(addFBNotificationListener)
     DECLARE_NATIVE_METHOD(onRefreshFBToken)
+    DECLARE_NATIVE_METHOD(getFBToken)
     DECLARE_NATIVE_METHOD(subscribeToFBTopic)
     DECLARE_NATIVE_METHOD(unsubscribeFromFBTopic)
     

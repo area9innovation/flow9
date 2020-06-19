@@ -112,7 +112,7 @@ bool GLRenderSupport::setFallbackFont(unicode_string name) {
     } else {
         // Some GlyphInfo might have id & FALLBACK_FONT instead of id.
         // They are expected to be rendered with current fallback font.
-        cerr << "Error: FallbackFont should be set only once" << endl;
+        cerr << "Error: FallbackFont should be set only once" << std::endl;
     }
     return DefaultFont && FallbackFont != DefaultFont;
 }
@@ -132,7 +132,7 @@ void GLRenderSupport::loadFont(std::string filename, std::vector<unicode_string>
         for (unsigned i = 0; i < aliases.size(); i++)
             Fonts[TextFont::makeWithFamily(encodeUtf8(aliases[i]))] = font;
     } else {
-         cerr << "Cannot load font : " << filename << endl;
+         cerr << "Cannot load font : " << filename << std::endl;
     }
 }
 
@@ -769,8 +769,8 @@ void GLRenderSupport::dispatchKeyEvent(FlowEvent event, unicode_string key,
     case FlowKey_F10: case FlowKey_F11: case FlowKey_F12:
     case FlowKey_F13: case FlowKey_F14: case FlowKey_F15:
         {
-            char tmp[10];
-            int sz = sprintf(tmp, "F%d", code-FlowKey_F1+1);
+            char tmp[16];
+            int sz = sprintf(tmp, "F%i", code - FlowKey_F1 + 1);
             key = parseUtf8(tmp, sz);
             break;
         }
@@ -778,6 +778,7 @@ void GLRenderSupport::dispatchKeyEvent(FlowEvent event, unicode_string key,
     case FlowKey_Numpad_0:;
 #undef SSTR
 #undef CASE
+    default: break; // Do nothing
     }
 
     if (!EventListeners[event].empty())
@@ -1009,7 +1010,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     // Root
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeClip, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeTextField, 1);
-    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 5);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 6);
     TRY_USE_NATIVE_METHOD_NAME(GLRenderSupport, makePicture4, "makePicture", 4);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeVideo, 4);
 
@@ -1157,13 +1158,13 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoTimeRange, 3);
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoLooping, 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoControls, 2);
-    TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoSubtitle, 11);
+    TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoSubtitle, 17);
     TRY_USE_OBJECT_METHOD(GLVideoClip, addStreamStatusListener, 2);
 
     // Web Clip
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeWebClip, 7);
     TRY_USE_OBJECT_METHOD(GLWebClip, webClipHostCall, 3);
-    TRY_USE_OBJECT_METHOD(GLWebClip, webClipEvalJS, 2);
+    TRY_USE_OBJECT_METHOD(GLWebClip, webClipEvalJS, 3);
     TRY_USE_OBJECT_METHOD(GLWebClip, setWebClipZoomable, 2);
     TRY_USE_OBJECT_METHOD(GLWebClip, setWebClipDomains, 2);
 
@@ -1249,7 +1250,7 @@ StackSlot GLRenderSupport::makePicture(RUNNER_ARGS)
     // Try using an already loaded picture
     T_PictureCache::iterator cit = PictureCache.find(url);
     if (cit != PictureCache.end()) {
-        GLTextureImage::Ptr img = cit->second.lock();
+        GLTextureBitmap::Ptr img = cit->second.lock();
         if (img) {
             pclip->setImage(img);
             return retval;
@@ -1344,7 +1345,7 @@ bool GLRenderSupport::resolvePictureDownloaded(unicode_string url)
     return true;
 }
 
-bool GLRenderSupport::resolvePicture(unicode_string url, shared_ptr<GLTextureImage> image)
+bool GLRenderSupport::resolvePicture(unicode_string url, shared_ptr<GLTextureBitmap> image)
 {
     if (image->getSize().x <= 0 || image->getSize().y <= 0)
         return resolvePictureError(url, parseUtf8("Empty picture."));
@@ -1390,10 +1391,10 @@ bool GLRenderSupport::resolvePicture(unicode_string url, std::string filename)
     if (bmp->isStub())
         PictureFiles[url] = filename;
 
-    return resolvePicture(url, static_pointer_cast<GLTextureImage>(bmp));
+    return resolvePicture(url, bmp);
 }
 
-bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img)
+bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureBitmap> &img)
 {
     if (!img || !img->isBitmap() || !img->isStub() || !PictureFiles.count(url))
         return false;
@@ -1406,7 +1407,7 @@ bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureIm
 
     if (!bmp)
     {
-        cerr << "Could not lazy-load picture: " << PictureFiles[url] << endl;
+        cerr << "Could not lazy-load picture: " << PictureFiles[url] << std::endl;
         return false;
     }
 
@@ -1423,7 +1424,7 @@ bool GLRenderSupport::resolvePicture(unicode_string url, const uint8_t *data, un
     if (!bmp)
         return resolvePictureError(url, parseUtf8("Could not decode image: ") + url);
 
-    return resolvePicture(url, static_pointer_cast<GLTextureImage>(bmp));
+    return resolvePicture(url, bmp);
 }
 
 void GLRenderSupport::updateAccessibleClips()
@@ -1787,34 +1788,34 @@ GLClip* GLRenderSupport::getCurrentFocus()
 
 GLClip* getMinTabIdxClip(GLClip *first, GLClip *second)
 {
-    if (first && second)
+    if (first && second) {
         if (first->getTabIndex() < second->getTabIndex())
             return first;
         else if (first->getTabIndex() != second->getTabIndex())
             return second;
         else
             return NULL;
-
-    if (!first)
+    } else if (!first) {
         return second;
-    else
+    } else {
         return first;
+    }
 }
 
 GLClip* getMaxTabIdxClip(GLClip *first, GLClip *second)
 {
-    if (first && second)
+    if (first && second) {
         if (first->getTabIndex() > second->getTabIndex())
             return first;
         else if (first->getTabIndex() != second->getTabIndex())
            return second;
         else
             return NULL;
-
-    if (!first)
+    } else if (!first) {
         return second;
-    else
+    } else {
         return first;
+    }
 }
 
 void GLRenderSupport::tryFocusNextClip(GLClip *focused, bool direct)
@@ -1920,6 +1921,7 @@ StackSlot GLRenderSupport::interruptibleDeferUntilRender(RUNNER_ARGS)
     RUNNER_PopArgs1(fn);
     int cb_root = RUNNER->RegisterRoot(fn);
     RenderDeferredFunctions.push_back(cb_root);
+    doRequestRedraw();
 
     return RUNNER->AllocateNativeClosure(ByteCodeRunner::RemoveDeferredAction, "InterruptibleTimer$disposer", 0, this, 1, cb_root);
 }

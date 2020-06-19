@@ -11,7 +11,7 @@ public:
 	~CompilerTextEdit();
 
 Q_SIGNALS:
-	void signalCompilerError(QString file, int line, int col);
+	void signalCompilerLocation(QString file, int line, int col);
 
 protected:
 	void mousePressEvent(QMouseEvent *e) override;

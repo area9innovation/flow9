@@ -5,7 +5,9 @@ import BytecodeWriter;
 import Database;
 import Extractor;
 import HtmlSupport;
+#if (haxe_ver < 4.0)
 import SwfWriter;
+#end
 import Refactor;
 import Position;
 import JsWriter;
@@ -494,11 +496,13 @@ class FlowNeko extends Options {
 			compileToCSharp(p);
 			return;
 		}
+#if (haxe_ver < 4.0)
 		if (swf != null) {
 			// Try turning on simple optimizations per default!
 			compileToSwf(p, true);
 			return;
 		}
+#end
 		var debugInfo = new DebugInfo();
 		var encoder = new BytecodeWriter(extStructDefs);
 				
@@ -878,6 +882,8 @@ class FlowNeko extends Options {
 		return;
 	}
 
+
+#if (haxe_ver < 4.0)
 	function compileToSwf(p : Program, optSimple : Bool) {
 		var debugInfo = new DebugInfo(null);
 		var encoder = new SwfWriter(debug, optSimple);
@@ -916,7 +922,7 @@ class FlowNeko extends Options {
 			var args = [mainfileName, "-main", "SwfRunner", "-swf", swf, "-swf-version", "11", "-swf-lib", swffileName,
 			          "-swf-lib", resourceFile, 
 			          "-resource",  fontNames + "@fontnames",
-			          "-swf-header", "1024:600:30:FFFFFF", "-D", "jsruntime",
+			          "-swf-header", "1024:600:30:FFFFFF", "-D", "jsruntime", "-D", "no-deprecation-warnings",
 			          '-cp', root+'/platforms/nekocompiler', '-cp', root, '-cp', '.'
 			          ];
 			if (debug > 0) {
@@ -939,6 +945,7 @@ class FlowNeko extends Options {
 			throw e;
 		}
 	}
+#end
 
 	function deleteTempFile(name : String) {
 		if (debug == 0) {

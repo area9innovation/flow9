@@ -31,14 +31,15 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 	MSplitter(
 		TFillXY(),
 		(\p ->
-			MTabs(
+			MDynamicTabs(
 				[
 					MTab(MIScriptStack(manager, m2t), const(_("Script")), []),
 					MTab(MInputOutputValues(manager, m2t), const(_("Input/Output")), []),
 					MTab(MAliases(manager, m2t), const(_("Aliases")), []),
 					MTab(MFocusTree(manager, m2t), const(_("UI Tree")), []),
 					MTab(MIScriptErrors(manager, m2t), const(_("Errors")), [])
-				],
+				]
+				|> const,
 				make(0),
 				[]
 			)
@@ -156,7 +157,10 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 													[
 														MOnClick(\ -> {
 															setFileContentBinary(
-																changeFileExt(getValue(manager.iscript.currentFileNameB), ".iscript"),
+																if (strlen(getValue(manager.iscript.currentFileNameB)) > 0)
+																	changeFileExt(getValue(manager.iscript.currentFileNameB), ".iscript")
+																else
+																	"script.iscript",
 																flow(packStoredIScript(prepareCurrentIScriptForSave(manager)))
 															)
 															|> ignore;
@@ -168,8 +172,11 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 													[
 														MOnClick(\ -> {
 															iScriptToLocalFileUrlEncodeJS(
-																manager, 
-																changeFileExt(getValue(manager.iscript.currentFileNameB), ".iscriptue")
+																manager,
+																if (strlen(getValue(manager.iscript.currentFileNameB)) > 0)
+																	changeFileExt(getValue(manager.iscript.currentFileNameB), ".iscriptue")
+																else
+																	"script.iscriptue"
 															)
 														}),
 														MEnabled(fnot(isIScriptEmptyB(manager)))
@@ -178,7 +185,27 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 
 											]
 										else
-											[]
+											[],
+										[
+											MSeparatorLine(),
+											MMenuSingleLine(
+												"Generate iscript",
+												[
+													MOnClick(\ ->
+														openFileDialog(1, ["*.iscriptg"], \s -> if (length(s) > 0) {
+															readFileClient(
+																s[0],
+																"text",
+																\data : string -> {
+																	generateIScriptFromCommands(manager, data);
+																},
+																nop1
+															);
+														} else {})
+													),
+												]
+											)
+										]
 									]),
 									[MOpenOnClick(), MEnabled(isIScriptStoppedB(manager))]
 								)
@@ -206,7 +233,22 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 								],
 								MCols2(
 									MText("Subscribers: ", []),
-									MSelect(getCurrentSubscribersCountBehaviour(), \t -> MText(i2s(t), []))
+									MSelect(
+										{
+											pscb = ref 0;
+											cts = ref 0.0;
+											fselect(getCurrentSubscribersCountBehaviour(), FLift(\scb -> {
+												ts = timestamp();
+												if (ts - ^cts > 33.0) {
+													cts := ts;
+													pscb := scb;
+												}
+
+												^pscb;
+											}));
+										},
+										\t -> MText(i2s(t), [])
+									)
 								)
 							)
 						),
@@ -244,7 +286,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 											eitherMap(
 												focM,
 												\foc -> {
-													pos : Point = fgetValue(foc.position).pos;
+													pos : Point = applyTransformMatrix(fgetValue(foc.transformMatrix), zeroPoint);
 													IScriptId2s(getFullMFocusId(foc)) + " " + toString(pos)
 												},
 												"-"
@@ -304,36 +346,34 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 					MIconToggle(
 						"stop",
 						[MToggleFalseIcon("fiber_manual_record", [MRed(500)])],
-						concat(
-							[
-								MToggleValueLink(
-									isIScriptRecordingB(manager),
-									\v ->
-										setIScriptState(
-											manager,
-											if (v) {
-												if (!isIScriptEmpty(manager)) {
-													showRecordingModeDialog(manager, m2t);
-													IScriptStopped();
-												} else {
-													IScriptRecording(manager.iscript.getCaptureOptions(), false);
-												}
-											} else {
-												// The latest entries in the script should be screenshots.
-												// The order of the function call is important.
-												addIScriptRecordWithDelayStyle(manager, ISRecLast(), getIScriptScreenshot(manager, true));
-												addIScriptRecordWithDelayStyle(manager, ISRecLast(), getIScriptLogicalScreenshot(manager));
-												addIScriptRecordWithDelayStyle(manager, ISRecLast(), getIScriptVisualScreenshot(manager, true));
-												IScriptStopped();
-											}
-										)
-								),
-								MEnabled(fnot(fmax(isIScriptReplayingB(manager), isIScriptScenarioReplayingB(manager)))),
-							],
-							[
-								MTooltipText(fselect(isIScriptRecordingB(manager), FLift(\rec -> if (rec) _("Stop recording") else _("Start recording"))))
-							]
-						)
+						[
+							MToggleValueLink(
+								isIScriptRecordingB(manager),
+								\v -> setIScriptState(
+									manager,
+									if (v) {
+										if (!isIScriptEmpty(manager)) {
+											showRecordingModeDialog(manager, m2t);
+											IScriptStopped();
+										} else {
+											IScriptRecording(manager.iscript.getCaptureOptions(), false);
+										}
+									} else {
+										addBufferedMouseDownAndDispose(true);
+
+										// The latest entries in the script should be screenshots.
+										// The order of the function call is important.
+										addIScriptRecordWithDelayStyle(manager, ISRecLast(), getIScriptScreenshot(manager, true));
+										addIScriptRecordWithDelayStyle(manager, ISRecLast(), getIScriptLogicalScreenshot(manager));
+										addIScriptRecordWithDelayStyle(manager, ISRecLast(), getIScriptVisualScreenshot(manager, true));
+										IScriptStopped();
+									}
+								)
+							),
+							MEnabled(fnot(fmax(isIScriptReplayingB(manager), isIScriptScenarioReplayingB(manager)))),
+							MTooltipText(fselect(isIScriptRecordingB(manager), FLift(\rec -> if (rec) _("Stop recording") else _("Start recording")))),
+							MShortcut("alt+r")
+						]
 					),
 					MIconToggle(
 						"stop",
@@ -363,7 +403,8 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 									)
 							),
 							MEnabled(fmin(fnot(fmax(isIScriptScenarioReplayingB(manager), isIScriptRecordingB(manager))), isIScriptReplayReadyB(manager))),
-							MTooltipText(fselect(isIScriptReplayingB(manager), FLift(\v -> if(v) _("Stop replaying") else _("Replay recording"))))
+							MTooltipText(fselect(isIScriptReplayingB(manager), FLift(\v -> if(v) _("Stop replaying") else _("Replay recording")))),
+							MShortcut("alt+p")
 						]
 					),
 					MIconToggle(
@@ -562,7 +603,6 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 				|> (\f2 -> MBorder(16., 0., 8., 0., f2))
 				|> (\f2 -> MFrame(0., 0., [MFill(MBackgroundColor(getLightBackground(manager.focus)))], f2))
 				|> (\f2 -> MScroll(f2, TFillXH(48.), []))
-				|> (\f2 -> MAttachBox(f2, manager.iscript.topPanelWidthHeightB))
 				|> disableMInteractivesBelow // Prevent capturing mouse events by IScript on Script Panel
 			),
 			f
@@ -590,21 +630,30 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 		)
 	)
 	|> (\f -> {
-		MConstruct(
+		if (js) MConstruct(
 			[
 				\ -> addMessageEventListener(\message, origin -> {
 					maybeApply(
 						iScriptFromUrlEncode(manager, message),
 						\parameters -> {
-							nextDistinct(manager.iscript.showPanel, true);
+							if (!getValue(manager.iscript.showPanel)) {
+								nextDistinct(manager.iscript.showPanel, true);
+								fixAllIScriptUniqueIds(manager.focus);
+							}
 							setIScriptState(manager, IScriptReplaying(onIScriptReplayFinish(
 								manager,
 								\b -> {
-									result = json2string(JsonObject([
-										Pair("callid", JsonString(parameters.first)),
-										Pair("status", JsonString(if (fold(b, true, \acc, replay -> acc && replay.isReplaySuccessful)) "OK" else "ERROR")),
-										Pair("errors", JsonArray(map(list2array(getValue(manager.iscript.errors)), \error -> JsonString(error.error))))
-									]));
+									status = fold(b, true, \acc, replay -> acc && replay.isReplaySuccessful);
+									errors = map(uniq(list2array(getValue(manager.iscript.errors))), \e -> JsonString(toString(e)));
+									result = json2string(JsonObject(
+										concatA([
+											[
+												Pair("callid", JsonString(parameters.first)),
+												Pair("status", JsonString(if (status) "OK" else "ERROR"))
+											],
+											if (status) [] else [Pair("errors", JsonArray(errors))]
+										])
+									));
 									hostCall("window.postMessage", [result, origin]);
 									if (parameters.second) {
 										showLogicalScreenshotCompareDialog(
@@ -618,9 +667,9 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 						}
 					)
 				})
-			], 
+			],
 			f
-		)
+		) else f
 	})
 	|> (\f -> m2t(f, manager.focus))
 }
