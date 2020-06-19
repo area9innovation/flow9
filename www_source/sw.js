@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 15;
+var SERVICE_WORKER_VERSION = 16;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -155,7 +155,7 @@ var sendMessageToClient = function(event, data) {
   // Otherwise makes problem for caching
   setTimeout(function() {
     clients.get(event.clientId).then(function(client) {
-      client.postMessage(data);
+      if (!isEmpty(client)) client.postMessage(data);
       //console.log(data);
     });
   }, 5);
@@ -619,8 +619,8 @@ self.addEventListener('fetch', function(event) {
     return isMatchSkipFilter(request) ||
       // Do not process files uploading requests
       isFileUploadingRequestFn(request) ||
-      // We disable Range requests for a while
-      !isEmpty(request.headers.get('range')) ||
+      // We disable caching of Range requests for a while
+      (!isEmpty(request.headers.get('range')) && navigator.onLine === true) ||
       (
         // Skip if is not a web resource
         !isStaticCachingFn(request.url) &&
@@ -752,13 +752,9 @@ self.addEventListener('fetch', function(event) {
   };
 
   function buildRangeResponse(requestData) {
-    return caches
-      .open(rangeResourceCache)
-      .then(function(cache) {
-        return cache.match(requestData.fixedUrlToCache);
-      })
+    return caches.match(requestData.urlNewToCache)
       .then(function(res) {
-        if (!res) {
+        if (!res && (!CacheMode.UseOnlyCacheInOffline || navigator.onLine === true)) {
           return fetch(requestData.originalRequest)
             .then(function(res) {
               if (res.status == 200) {
@@ -899,10 +895,10 @@ self.addEventListener('fetch', function(event) {
 
 self.addEventListener('message', function(event) {
   var respond = function(data) {
-    if (event.ports.length > 0) {
+    if (event.ports.length > 0 /*&& !isEmpty(event.ports[0])*/) {
       event.ports[0].postMessage(data);
     } else {
-      console.error("Failed to respond!");
+      console.error("ServiceWorker: Failed to respond!");
     }
   };
 

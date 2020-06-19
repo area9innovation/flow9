@@ -18,7 +18,7 @@ export {
 	addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
 		horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 		enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
-		iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
+		keysEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
 		fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
 
 	// yield focus to the next/previous focus id. 'gotonext' gives the direction.
@@ -412,9 +412,9 @@ addMaterialFocusId(
 }
 
 addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
-	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>, 
+	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 	enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
-	iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
+	keysEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, rtl : bool,
 	fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
 	defaultFocusId = make(-1);
 	focusId = either(tabOrder, defaultFocusId);
@@ -433,6 +433,11 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 			fand(fselect2(manager.manager.zorder, zorder, FLift2(\mz, z -> z >= mz)), clickEnabled)
 		else
 			fand(parent.zorderEnabled, clickEnabled);
+	keysEn =
+		if (zorderKeeper)
+			fand(zorderEn, fand(clickEnabled, keysEnabled))
+		else
+			fand(parent.keysEnabled, fand(clickEnabled, keysEnabled));
 
 	focusEn = fand(en, fand(parent.focusEnabled, focusEnabled));
 	recEn = fand(parent.recordingEnabled, recordingEnabled);
@@ -463,6 +468,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				make(makeTree()),
 				en,
 				zorderEn,
+				keysEn,
 				focusEn,
 				recEn,
 				const(false),
@@ -538,7 +544,6 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 								},
 								\fc -> {
 									nextDistinct(fc.focused, true);
-									scrollIntoView(fc);
 								}
 							));
 
@@ -821,30 +826,27 @@ scrollIntoView2(parent : MFocusGroup, transformMatrix : TransformMatrix, widthHe
 	eitherFn(
 		parent.scrollInfo,
 		\si -> {
-			if (fgetValue(si.enabled)) {
-				tm = fgetValue(parent.transformMatrix);
-				position = transformMatrix |> getTransformPosition;
-				pp = tm |> getTransformPosition;
-				sp = getValue(si.position);
-				cwh = fgetValue(si.contentWH);
-				bwh = fgetValue(parent.widthHeight);
+			if (fgetValue(si.scrollToFocusEnabled)) {
+				if (fgetValue(si.enabled)) {
+					ptm = fgetValue(parent.transformMatrix);
+					tm = prependInvertedTransformMatrix(transformMatrix, ptm);
+					bwh = fgetValue(parent.widthHeight);
+					sp = getValue(si.position);
 
-				p1 =
-					Point(
-						max(min(position.x - pp.x + sp.x, cwh.width - bwh.width), 0.0),
-						max(min(position.y - pp.y + sp.y, cwh.height - bwh.height), 0.0)
-					);
-				p2 =
-					Point(
-						max(min(position.x + widthHeight.width - pp.x + sp.x - bwh.width, cwh.width - bwh.width), 0.0),
-						max(min(position.y + widthHeight.height - pp.y + sp.y - bwh.height, cwh.height - bwh.height), 0.0)
-					);
-				p = Point(max(min(sp.x, max(p1.x, p2.x)), min(p1.x, p2.x)), max(min(sp.y, max(p1.y, p2.y)), min(p1.y, p2.y)));
-				d = Point(getValue(si.position).x - p.x, getValue(si.position).y - p.y);
+					t = applyTransformMatrix(tm, Point(widthHeight.width / 2.0, widthHeight.height / 2.0));
+					p1 = Point(sp.x + t.x - widthHeight.width / 2.0, sp.y + t.y - widthHeight.height / 2.0);
+					p2 = Point(sp.x + t.x - bwh.width + widthHeight.width / 2.0, sp.y + t.y - bwh.height + widthHeight.height / 2.0);
 
-				nextDistinct(si.position, p);
+					p = Point(max(min(sp.x, max(p1.x, p2.x)), min(p1.x, p2.x)), max(min(sp.y, max(p1.y, p2.y)), min(p1.y, p2.y)));
+					d = Point(getValue(si.position).x - p.x, getValue(si.position).y - p.y);
 
-				// maybeApply(parent.parent, \par -> scrollIntoView2(par, Point(position.x - d.x, position.y - d.y), widthHeight));
+					nextDistinct(si.position, p);
+
+					maybeApply(parent.parent, \par -> scrollIntoView2(par, TransformMatrix(transformMatrix.a, transformMatrix.b, transformMatrix.c, transformMatrix.d,
+						transformMatrix.tx + d.x * ptm.a + d.y * ptm.b, transformMatrix.ty + d.x * ptm.c + d.y * ptm.d), widthHeight));
+				} else {
+					maybeApply(parent.parent, \par -> scrollIntoView2(par, transformMatrix, widthHeight));
+				}
 			}
 		},
 		\ -> {
