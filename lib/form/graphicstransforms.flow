@@ -16,6 +16,11 @@ export {
 	// To combine matrices use multiplyMatrices() function from matrix.flow
 
 	deconstructGraphicsPath(path : [StaticGraphicOp]) -> [StaticGraphicOp];
+	StaticGraphicOp2GPolygon(ops : [StaticGraphicOp]) -> GPolygon;
+
+	bezierCurveLength(fromX : double, fromY : double, cpX : double, cpY : double, cpX2 : double, cpY2 : double, toX : double, toY : double) -> int;
+	quadraticCurveLength(fromX : double, fromY : double, cpX : double, cpY : double, toX : double, toY : double) -> int;
+	bezierCurveTo(fromX : double, fromY : double, cpX : double, cpY : double, cpX2 : double, cpY2 : double, toX : double, toY : double, n : int) -> [double];
 }
 
 apply2dPointTransform(p : Point, matrix : [[double]]) -> Point {
@@ -163,7 +168,170 @@ deconstructGraphicsPath(path : [StaticGraphicOp]) -> [StaticGraphicOp] {
 			GCircle(x, y, r): {
 				deconstructGEllipse(acc, x, y, r, r);
 			}
+			GPolygon(polygonPath): {
+				arrayPush(
+					filtermapi(splitBy(polygonPath, 2), \i, xy ->
+						if (length(xy) > 1) {
+							if (i == 0)
+								Some(MoveTo(xy[0], xy[1]))
+							else
+								Some(LineTo(xy[0], xy[1]))
+						} else {
+							None();
+						}
+					),
+					ClosePath()
+				)
+			}
 			default : arrayPush(acc, p);
 		}
 	)
+}
+
+StaticGraphicOp2GPolygon(ops : [StaticGraphicOp]) -> GPolygon {
+	lastX = ref 0.0;
+	lastY = ref 0.0;
+
+	GPolygon(concatA(map(deconstructGraphicsPath(ops), \op ->
+		switch (op : StaticGraphicOp) {
+			CubicBezierTo(cx, cy, x, y): {
+				n = quadraticCurveLength(^lastX, ^lastY, x, y, cx, cy);
+
+				generate(1, n + 1, \i -> {
+					j = i2d(i) / i2d(n);
+
+					xa = ^lastX + ((x - ^lastX) * j);
+					ya = ^lastY + ((y - ^lastY) * j);
+
+					xx = xa + (((x + ((cx - x) * j)) - xa) * j);
+					yy = ya + (((y + ((cy - y) * j)) - ya) * j);
+
+					if (n == i) {
+						lastX := xx;
+						lastY := yy;
+					}
+
+					[xx, yy];
+				})
+				|> concatA;
+			}
+			QuadraticBezierTo(x, y, cx, cy): {
+				n = quadraticCurveLength(^lastX, ^lastY, x, y, cx, cy);
+
+				generate(1, n + 1, \i -> {
+					j = i2d(i) / i2d(n);
+
+					xa = ^lastX + ((x - ^lastX) * j);
+					ya = ^lastY + ((y - ^lastY) * j);
+
+					xx = xa + (((x + ((cx - x) * j)) - xa) * j);
+					yy = ya + (((y + ((cy - y) * j)) - ya) * j);
+
+					if (n == i) {
+						lastX := xx;
+						lastY := yy;
+					}
+
+					[xx, yy];
+				})
+				|> concatA;
+			}
+			MoveTo(x, y): {
+				lastX := x;
+				lastY := y;
+
+				[x, y];
+			}
+			LineTo(x, y): {
+				lastX := x;
+				lastY := y;
+
+				[x, y];
+			}
+			default: {
+				[];
+			}
+		}
+	)));
+
+}
+
+bezierCurveLength(fromX : double, fromY : double, cpX : double, cpY : double, cpX2 : double, cpY2 : double, toX : double, toY : double) -> int {
+	n = 10;
+	result = ref 0.0;
+	prevX = ref fromX;
+	prevY = ref fromY;
+
+	fori(1, n, \i -> {
+		t = i2d(i) / i2d(n);
+		t2 = t * t;
+		t3 = t2 * t;
+		nt = (1.0 - t);
+		nt2 = nt * nt;
+		nt3 = nt2 * nt;
+
+		x = (nt3 * fromX) + (3.0 * nt2 * t * cpX) + (3.0 * nt * t2 * cpX2) + (t3 * toX);
+		y = (nt3 * fromY) + (3.0 * nt2 * t * cpY) + (3.0 * nt * t2 * cpY2) + (t3 * toY);
+		dx = ^prevX - x;
+		dy = ^prevY - y;
+		prevX := x;
+		prevY := y;
+
+		result := ^result + sqrt((dx * dx) + (dy * dy));
+	});
+
+	floor(^result);
+}
+
+quadraticCurveLength(fromX : double, fromY : double, cpX : double, cpY : double, toX : double, toY : double) -> int {
+	ax = fromX - (2.0 * cpX) + toX;
+	ay = fromY - (2.0 * cpY) + toY;
+	bx = (2.0 * cpX) - (2.0 * fromX);
+	by = (2.0 * cpY) - (2.0 * fromY);
+	a = 4.0 * ((ax * ax) + (ay * ay));
+	b = 4.0 * ((ax * bx) + (ay * by));
+	c = (bx * bx) + (by * by);
+
+	s = 2.0 * sqrt(a + b + c);
+	a2 = sqrt(a);
+	a32 = 2.0 * a * a2;
+	c2 = 2.0 * sqrt(c);
+	ba = b / a2;
+
+	floor(
+		(
+			(a32 * s)
+				+ (a2 * b * (s - c2))
+				+ (
+					((4.0 * c * a) - (b * b))
+					* log(((2.0 * a2) + ba + s) / (ba + c2))
+				)
+		) / (4.0 * a32)
+	);
+}
+
+bezierCurveTo(fromX : double, fromY : double, cpX : double, cpY : double, cpX2 : double, cpY2 : double, toX : double, toY : double, n : int) -> [double] {
+	path = ref [fromX, fromY];
+
+	fori(1, n, \i -> {
+		j = i2d(i) / i2d(n);
+
+		dt = (1.0 - j);
+		dt2 = dt * dt;
+		dt3 = dt2 * dt;
+
+		t2 = j * j;
+		t3 = t2 * j;
+
+		path :=
+			concat(
+				^path,
+				[
+					(dt3 * fromX) + (3.0 * dt2 * j * cpX) + (3.0 * dt * t2 * cpX2) + (t3 * toX),
+					(dt3 * fromY) + (3.0 * dt2 * j * cpY) + (3.0 * dt * t2 * cpY2) + (t3 * toY)
+				]
+			);
+	});
+
+   	^path;
 }

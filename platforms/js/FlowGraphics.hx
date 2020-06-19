@@ -301,6 +301,19 @@ class FlowGraphics extends Graphics {
 		}
 	}
 
+	public override function drawPolygon(path : Array<Float>) : Graphics {
+		if (path.length > 0) {
+			var newGraphics = super.drawPolygon(path);
+
+			isSvg = true;
+			endFill();
+
+			return newGraphics;
+		} else {
+			return this;
+		}
+	}
+
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		rect = localBounds.getRectangle(rect);
 
@@ -393,7 +406,7 @@ class FlowGraphics extends Graphics {
 	};
 
 	private function updateNativeWidgetGraphicsData() : Void {
-		if (this.isMask || this.isCanvas || this.isEmpty) {
+		if (this.isMask || this.isCanvas || this.isEmpty || RenderSupport.RendererType != "html") {
 			if (isNativeWidget) {
 				this.deleteNativeWidget();
 			}
