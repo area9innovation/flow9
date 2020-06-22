@@ -20,6 +20,8 @@ export {
 	MShowLazy(condition : Transform<bool>, fn : () -> Material) -> Material;
 	// Construct lines in list only when they are in visible space of scroll
 	MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Material;
+	// MLazyList with forceLoad - backdoor for loading specific item and items above it without scrolling
+	MLazyListExtended(lines : [Pair<() -> Material, Transform<bool>>], scrollInspect : TScrollInspectVisible) -> Material;
 
 	// Helper for standard popup menu
 	// topLeft is catched only when isVisible becomes true
@@ -167,13 +169,18 @@ MShowLazy(condition : Transform<bool>, fn : () -> Material) -> Material {
 }
 
 MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Material {
+	MLazyListExtended(map(lines, \line -> Pair(line, const(false))), scrollInspect)
+}
 
+MLazyListExtended(lines : [Pair<() -> Material, Transform<bool>>], scrollInspect : TScrollInspectVisible) -> Material {
 	height = make(0.0);
-	loadState = generate(0, length(lines), \__ -> make(false));
+	loadState0 : [DynamicBehaviour<bool>] = generate(0, length(lines), \__ -> make(false));
+	loadState = mapi(loadState0, \i, loaded -> fOrs(concat([loaded], map(tailFrom(lines, i), \p -> p.second)), true));
+
 	loadLazy = ref nop;
 	loadLazy := \ -> if (getValue(height) <= getValue(scrollInspect.topleft).y + getValue(scrollInspect.widthHeight).height) {
 		// scrolled to the end of list
-		maybeApply(find(loadState, \b -> !getValue(b)), // not loaded guy
+		maybeApply(find(loadState0, \b -> !getValue(b)), // not loaded guy
 			\b -> {
 				next(b, true); // load him!
 				^loadLazy(); // check again
@@ -184,7 +191,7 @@ MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Ma
 		\ -> subscribe(scrollInspect.topleft, \__ -> ^loadLazy()),
 		\ -> subscribe2(scrollInspect.widthHeight, \__ -> ^loadLazy())
 	], TEmpty())
-		|> (\m -> arrayPush(mapi(lines, \i, line -> MShowLazy(loadState[i], line)), m))
+		|> (\m -> arrayPush(mapi(lines, \i, line -> MShowLazy(loadState[i], line.first)), m))
 		|> MLines
 		|> (\m -> MAttachHeight(m, height));
 }
