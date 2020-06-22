@@ -818,12 +818,8 @@ class Native {
 		#if (flow_nodejs || nwjs)
 		return false;
 		#else
-		return isMobile() || untyped __js__("(('ontouchstart' in window) || (window.DocumentTouch && document instanceof DocumentTouch) || window.matchMedia('(pointer: coarse)').matches)");
+		return Platform.isMobile || untyped __js__("(('ontouchstart' in window) || (window.DocumentTouch && document instanceof DocumentTouch) || window.matchMedia('(pointer: coarse)').matches)");
 		#end
-	}
-
-	public static function isMobile() : Bool {
-		return untyped __js__("/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Windows Phone/i.test(navigator.userAgent)");
 	}
 	#end
 
@@ -853,7 +849,7 @@ class Native {
 			Browser.document.body.appendChild(testdiv);
 			var dpi = testdiv.offsetHeight * js.Browser.window.devicePixelRatio;
 			Browser.document.body.removeChild(testdiv);
-			if (!isMobile()) {
+			if (!Platform.isMobile) {
 				return "js,pixi,dpi=" + dpi;
 			} else {
 				return "js,pixi,mobile,dpi=" + dpi;
@@ -1879,12 +1875,12 @@ class Native {
 
 				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
 				parseJsonFirstCall = false;
-		   }
+			}
 
-		   return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
-	   } catch (e : Dynamic) {
-		   return makeStructValue("JsonDouble", [0.0], null);
-	   }
+			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
+		} catch (e : Dynamic) {
+			return makeStructValue("JsonDouble", [0.0], null);
+		}
 	}
 	#end
 

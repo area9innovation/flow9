@@ -1,5 +1,5 @@
 import pebbles/pebbles;
-import material/material_dialog;
+import material/material_ui;
 import net/appurl;
 
 export {
@@ -39,6 +39,7 @@ export {
 	// Register dispatcher for given pebble based on it's mask (prefix)
 	// The mask is formatted like this: "pathpartname/pathpartname/pathpartname" (i.e. omitting all parameters)
 	registerDispatcher : (controller : PebbleController, mask : string, dispatcher : () -> Material) -> void;
+	registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void;
 	// Call corresponding dispatcher or onError if no dispatcher found to update the view
 	// If mask of the pebble is the same as the current one, just pushes pebble to the stack without calling dispatcher
 	// 	then the view update will be handled by MLinkPebbleParameters
@@ -99,6 +100,8 @@ export {
 	// Check for "debug_pebbles=true" URL flag
 	debugPebbles() -> bool;
 
+	PebbleDispatcher(dispatcher : () -> Material, handler : Maybe<(Pebble) -> void>);
+
 	// NOTE: This is an internal structure that is exported only because of technical restrictions in the old compiler! 
 	//
 	// DON'T create controller yourself, use `makePebbleController` instead!
@@ -107,7 +110,7 @@ export {
 	// TODO: remove from export section as soon as we migrate to flowc
 	PebbleController(
 		// Dispatcher registered based on pebble mask
-		dispatchers : ref Tree<string, () -> Material>,
+		dispatchers : ref Tree<string, PebbleDispatcher>,
 		// Global view
 		view : ref Material,
 		// Set view based on pebble function wrapped with IScript magic
@@ -134,7 +137,7 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 	}
 	isControllerCreatedRef := true;
 
-	dispatchers : ref Tree<string, () -> Material> = ref makeTree();
+	dispatchers : ref Tree<string, PebbleDispatcher> = ref makeTree();
 
 	pebbleStackB = make([]);
 	currentPebbleB = make(urlHash2Pebble2(takeAfter(getUrlHash(), "#", initialPebbleHash()), makeEmptyPebble()));
@@ -145,7 +148,11 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 				Some(pebbleAndDispatcher): {
 					unpair(pebbleAndDispatcher, \foundPebble, dispatcher -> {
 						pushPebble2(pebbleStackB, pebbleAndUpdateHashUrl.second, foundPebble);
-						next(viewBoxB, dispatcher());
+						switch (dispatcher.handler) {
+							Some(handler): handler(foundPebble);
+							None(): {}
+						}
+						next(viewBoxB, dispatcher.dispatcher());
 					})
 				}
 				None(): onError(pebbleAndUpdateHashUrl.first);
@@ -226,22 +233,26 @@ getPebblesControlledView(controller : PebbleController) -> Material {
 }
 
 registerDispatcher(controller : PebbleController, mask : string, dispatcher : () -> Material) -> void {
+	controller.dispatchers := setTree(^(controller.dispatchers), mask, PebbleDispatcher(dispatcher, None()));
+}
+
+registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
 	controller.dispatchers := setTree(^(controller.dispatchers), mask, dispatcher);
 }
 
 // Recursively find a function for a given pebble. If it's not found try parent
-getPebbleDispatcher(controller : PebbleController, pebble : Pebble) -> Maybe<Pair<Pebble, () -> Material>> {
+getPebbleDispatcher(controller : PebbleController, pebble : Pebble) -> Maybe<Pair<Pebble, PebbleDispatcher>> {
 	getPebbleDispatcher2(^(controller.dispatchers), pebble)
 }
 
-getPebbleDispatcher2(dispatchers : Tree<string, () -> Material>, pebble : Pebble) -> Maybe<Pair<Pebble, () -> Material>> {
+getPebbleDispatcher2(dispatchers : Tree<string, PebbleDispatcher>, pebble : Pebble) -> Maybe<Pair<Pebble, PebbleDispatcher>> {
 	secondOfPair(updateWhile2(Pair(pebble, None()), \pbl0 -> {
 		pbl = firstOfPair(pbl0);
 
 		eitherFn(
 			lookupTree(dispatchers, pebble2mask(pbl)), 
-			\fn -> {
-				Pair(Pair(pbl, Some(Pair(pbl, fn))), false)
+			\pebbleDispatcher -> {
+				Pair(Pair(pbl, Some(Pair(pbl, pebbleDispatcher))), false)
 			},
 			\ -> {
 				if (length(pbl.path) > 1) {

@@ -34,89 +34,7 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 				})
 			)
 		);
-
-	// Maximum scroll offset (0 if content fits available box)
-	maxWH = fwhmax(fwhsubtract(scrollWH.content, scrollWH.box), const(WidthHeight(0., 0.)));
-
-	uns = initUnsM();
-	subscribedToCurrent = ref false;
-	scrollToFocusBorder = 8.;
-
-	scrollContent = \newParent ->
-		TConstruct(
-			[
-				makeSubscribe(ftransistor(scrollToFocusEnabled, newParent.focusedId), \foc ->
-					if (foc != -1 && !^subscribedToCurrent) {
-						subscribedToCurrent := true;
-						dispUnsM(uns);
-
-						setUnsM(
-							uns,
-							makeSubscribeUns(fthrottle(getCurrentFocusedItemBehaviour(manager), 33), \currentMFocusM -> {
-								eitherMap(currentMFocusM, \currentMFocus -> {
-									focusedPositionScale = fgetValue(currentMFocus.position);
-
-									focusedPosition =
-										if (focusedPositionScale.scale.x == 0. || focusedPositionScale.scale.y == 0.) {
-											position = make(zeroPoint);
-											u = interruptibleTimer(600, \ -> nextDistinct(position, fgetValue(currentMFocus.position).pos)); // For scroll into animated dialog
-											Pair(position, u)
-										}
-										else
-											Pair(const(zeroPoint), nop);
-
-									focusedWH = currentMFocus.widthHeight;
-
-									uns2 = make3Subscribe(focusedWH, maxWH, focusedPosition.first, \fWH, mwh, __ -> {
-										sp = getValue(scrollPosition.position);
-										bwh = getValue(scrollWH.box);
-										sfp = PositionScale2Point(fgetValue(newParent.position));
-										fps = fgetValue(currentMFocus.position).pos;
-
-										realPosX = fps.x - sfp.x;
-										realPosY = fps.y - sfp.y;
-
-										nextDistinct(
-											scrollPosition.position,
-											Point(
-												if (realPosX < 0.)
-													forceRange(sp.x + realPosX - scrollToFocusBorder, 0., mwh.width)
-												else if (realPosX + fWH.width > bwh.width)
-													forceRange(
-														sp.x + realPosX + min(fWH.width - bwh.width + scrollToFocusBorder, -scrollToFocusBorder),
-														0.,
-														mwh.width
-													)
-												else
-													sp.x,
-												if (realPosY < 0.)
-													forceRange(sp.y + realPosY - scrollToFocusBorder, 0., mwh.height)
-												else if (realPosY + fWH.height > bwh.height)
-													forceRange(
-														sp.y + realPosY + min(fWH.height - bwh.height + scrollToFocusBorder, -scrollToFocusBorder),
-														0.,
-														mwh.height
-													)
-												else
-													sp.y
-											)
-										);
-									})();
-
-									[focusedPosition.second, uns2]
-								}, [])
-							})()
-						)
-					} else if (^subscribedToCurrent && foc == -1) {
-						subscribedToCurrent := false;
-
-						dispUnsM(uns)
-					}
-				),
-				\ -> \ -> dispUnsM(uns)
-			],
-			m2t(m.content, newParent)
-		);
+	enabled = fand(extractStruct(m.style, TScrollEnabled(const(true))).enabled, extractStruct(m.style, MEnabled(const(true))).enabled);
 
 	MComponentGroup2T(
 		manager,
@@ -128,13 +46,13 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 				IScriptBehaviour("point", currentPoint.point, ISInputValue([], serialize(getValue(currentPoint.point)), true)),
 				IScriptBehaviour("down", moving.moving, ISInputValue([], serialize(getValue(moving.moving)), true)),
 				IScriptBehaviour("position", scrollPosition.position, ISInputValue([], serialize(getValue(scrollPosition.position)), true)),
-				AccessRole("scroll")
+				MScrollInfo(scrollPosition.position, scrollWH.content, enabled, scrollToFocusEnabled)
 			]
 		),
 		\newParent ->
 			TScroll(
 				manager.manager,
-				scrollContent(newParent),
+				m2t(m.content, newParent),
 				m2t(m.box, newParent),
 				replaceStructMany(
 					extractTScrollStyle(m.style),
@@ -147,7 +65,8 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 						barstyles,
 						expandOnHover,
 						keyFilter,
-						TSetRTL(newParent.rtl)
+						TSetRTL(newParent.rtl),
+						TScrollEnabled(enabled)
 					]
 				)
 			)
@@ -203,6 +122,45 @@ insetBounds(bounds : Bounds, left : double, top : double, right : double, bottom
 }
 
 MRecyclerGridId(row : int, column : int);
+
+updateMRecyclerGridContainers(containers : [[MRecyclerGridContainer]], lastRow : Maybe<int>, lastColumn : Maybe<int>, availableWH : WidthHeight) -> void {
+	updateMRecyclerGridContainers2(zeroPoint, containers, 0, 0, lastRow, lastColumn, availableWH);
+}
+
+updateMRecyclerGridContainers2(
+	position : Point,
+	containers : [[MRecyclerGridContainer]],
+	row : int,
+	column : int,
+	lastRow : Maybe<int>,
+	lastColumn : Maybe<int>,
+	availableWH : WidthHeight
+) -> void {
+	if (length(containers) > row && length(containers[row]) > column && eitherMap(lastRow, \lr -> lr > row || (lr == row && eitherMap(lastColumn, \lc -> lc >= column, true)), true)) {
+		container = containers[row][column];
+		next(container.position, position);
+
+		initSize = getValue(container.size);
+		emptyInitSize = initSize.width <= 0.0 || initSize.height <= 0.0;
+
+		if (emptyInitSize) {
+			next(container.size, availableWH);
+		}
+
+		size = getValue(container.size);
+		containerBounds = pointwh2bounds(position, size);
+
+		if (column == 0 && length(containers) > 1) {
+			updateMRecyclerGridContainers2(Point(position.x + size.width, position.y), containers, row, column + 1, lastRow, lastColumn, availableWH);
+			newPosition = fold(containers[row], Point(0.0, containerBounds.maxY), \acc, c -> {
+				Point(0.0, max(acc.y, getValue(c.position).y + getValue(c.size).height));
+			});
+			updateMRecyclerGridContainers2(newPosition, containers, row + 1, column, lastRow, lastColumn, availableWH);
+		} else {
+			updateMRecyclerGridContainers2(Point(position.x + size.width, position.y), containers, row, column + 1, lastRow, lastColumn, availableWH);
+		}
+	}
+}
 
 filterVisibleMRecyclerGridContainers(containers : [[MRecyclerGridContainer]], scrollBounds : Bounds, availableWH : WidthHeight) -> [MRecyclerGridId] {
 	position = ref zeroPoint;
@@ -381,20 +339,34 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 			make([])
 		);
 	position = extractStruct(m.style, MScrollPosition(makePoint())).position;
-	scrollBounds = fthrottleUntilNextFrameRendered(fselect2(position, scrollSize.box, FLift2(\p, bwh ->
+	scrollBounds = fselect3(position, contentSize, scrollSize.box, \p0, cwh, bwh -> {
+		p = Point(min(p0.x, cwh.width - bwh.width), min(p0.y, cwh.height - bwh.height));
+
 		Bounds(
 			dfloor(p.x / bwh.width - 0.1) * bwh.width,
 			dfloor(p.y / bwh.height - 0.1) * bwh.height,
 			dceil(p.x / bwh.width + 1.1) * bwh.width,
 			dceil(p.y / bwh.height + 1.1) * bwh.height
-		)
-	)));
+		);
+	});
 	scrollPercent = tryExtractStruct(m.style, TScrollPercent(makePoint()));
 	cachedPercent = ref zeroPoint;
 
 	containers : DynamicBehaviour<[MRecyclerGridId]> = make([]);
 	needsUpdate = make(true);
 	contentSizeNeedsUpdate = make(true);
+
+	scrollToItemPending = ref None();
+	maybeApply(
+		tryExtractStruct(m.style, MScrollToItem(ref nop2)),
+		\msti -> {
+			msti.fn := \r, c -> {
+				scrollToItemPending := Some(Pair(r, c));
+				next(needsUpdate, true);
+				next(contentSizeNeedsUpdate, true);
+			}
+		}
+	);
 
 	SelectTGroup(
 		containers,
@@ -489,35 +461,68 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 					manager.manager.deltaTimer.attach();
 					manager.manager.deltaTimer.detach;
 				},
-				make2Subscribe(
-					fselectWithLast(flength(items.first), FLift2(\prevLen, curLen -> {
-						if (prevLen > curLen) {
-							next(contentSizeNeedsUpdate, true);
-						}
+				makeSubscribe(
+					fthrottleUntilNextFrameRendered(fpair(
+						fselectWithLast(flength(items.first), FLift2(\prevLen, curLen -> {
+							if (prevLen > curLen) {
+								next(contentSizeNeedsUpdate, true);
+							}
 
-						curLen;
-					})),
-					scrollBounds,
-					\__, __ -> next(needsUpdate, true)
+							curLen;
+						})),
+						scrollBounds
+					)),
+					\__ -> next(needsUpdate, true)
 				),
 				makeSubscribe(manager.manager.deltaTimer.timer, \__ -> {
 					if (getValue(needsUpdate)) {
+						next(needsUpdate, false);
+
 						it = getValue(items.first);
 						if (getValue(contentSizeNeedsUpdate)) {
 							next(contentSizeNeedsUpdate, false);
 							next(contentSize, getMRecyclerGridContentSize(it));
 						}
-						sb = fgetValue(scrollBounds);
 
-						next(needsUpdate, false);
+						eitherFn(
+							^scrollToItemPending,
+							\sti -> {
+								r = sti.first;
+								c = sti.second;
 
-						currentContainers = getValue(containers);
-						newContainers = filterVisibleMRecyclerGridContainers(it, sb, fgetValue(initWH));
-						nextDistinct(containers, newContainers);
+								if (length(it) <= r || length(it[r]) <= c) {
+									scrollToItemPending := None();
+								} else if (contains(getValue(containers), MRecyclerGridId(r, c))) {
+									updateMRecyclerGridContainers(it, Some(r), Some(c), fgetValue(initWH));
 
-						maybeApply(scrollPercent, \sp -> {
-							next(sp.percent, ^cachedPercent);
-						});
+									if (getValue(position) == getValue(it[r][c].position)) {
+										scrollToItemPending := None();
+										next(needsUpdate, true);
+									} else {
+										next(position, getValue(it[r][c].position));
+										next(needsUpdate, true);
+									}
+								} else {
+									next(
+										containers,
+										mapi(it, \i, rr -> filtermapi(rr, \j, cc -> if (r > i || (r == i && c >= j)) Some(MRecyclerGridId(i, j)) else None()))
+										|> concatA
+									);
+
+									next(needsUpdate, true);
+								}
+							},
+							\ -> {
+								sb = fgetValue(scrollBounds);
+
+								newContainers = filterVisibleMRecyclerGridContainers(it, sb, fgetValue(initWH));
+								nextDistinct(containers, newContainers);
+
+								maybeApply(scrollPercent, \sp -> {
+									next(sp.percent, ^cachedPercent);
+								});
+							}
+						);
 					}
 				})
 			]

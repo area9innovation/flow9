@@ -112,7 +112,7 @@ bool GLRenderSupport::setFallbackFont(unicode_string name) {
     } else {
         // Some GlyphInfo might have id & FALLBACK_FONT instead of id.
         // They are expected to be rendered with current fallback font.
-        cerr << "Error: FallbackFont should be set only once" << endl;
+        cerr << "Error: FallbackFont should be set only once" << std::endl;
     }
     return DefaultFont && FallbackFont != DefaultFont;
 }
@@ -132,7 +132,7 @@ void GLRenderSupport::loadFont(std::string filename, std::vector<unicode_string>
         for (unsigned i = 0; i < aliases.size(); i++)
             Fonts[TextFont::makeWithFamily(encodeUtf8(aliases[i]))] = font;
     } else {
-         cerr << "Cannot load font : " << filename << endl;
+         cerr << "Cannot load font : " << filename << std::endl;
     }
 }
 
@@ -1010,7 +1010,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     // Root
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeClip, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeTextField, 1);
-    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 5);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 6);
     TRY_USE_NATIVE_METHOD_NAME(GLRenderSupport, makePicture4, "makePicture", 4);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeVideo, 4);
 
@@ -1158,7 +1158,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoTimeRange, 3);
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoLooping, 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoControls, 2);
-    TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoSubtitle, 15);
+    TRY_USE_OBJECT_METHOD(GLVideoClip, setVideoSubtitle, 17);
     TRY_USE_OBJECT_METHOD(GLVideoClip, addStreamStatusListener, 2);
 
     // Web Clip
@@ -1407,7 +1407,7 @@ bool GLRenderSupport::loadStubPicture(unicode_string url, shared_ptr<GLTextureBi
 
     if (!bmp)
     {
-        cerr << "Could not lazy-load picture: " << PictureFiles[url] << endl;
+        cerr << "Could not lazy-load picture: " << PictureFiles[url] << std::endl;
         return false;
     }
 

@@ -59,6 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('flow.startHttpServer', startHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setClient(context, LspKind.Flow); }));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setClient(context, LspKind.JS); }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates));
@@ -102,6 +103,15 @@ function checkHttpServerStatus(initial : boolean) {
 			}
 		}
 	);
+}
+
+function flowConsole() {
+	let file = getPath(vscode.window.activeTextEditor.document.uri);
+	let dir = path.dirname(file);
+	let terminal = vscode.window.createTerminal("Flow console");
+	terminal.sendText("cd " + dir, true);
+	terminal.sendText("flowc1 repl=1 file=" + file, true);
+	terminal.show();
 }
 
 function toggleHttpServer() {
@@ -398,7 +408,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         }
         if (use_lsp) {
             if (!httpServerOnline) {
-                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on.");
+                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on. Click the status in the lower right corner. Try \"flowc1 server-mode=http\" on the command line.");
             }
             switch (clientKind) {
                 case LspKind.Flow: {

@@ -28,6 +28,7 @@ MComponent2T(
 	forceFocusEnabled = tryExtractStruct(state, MForceFocusEnabled(const(true)));
 	focusEnabled = extractStruct(state, MFocusEnabled(const(true))).enabled;
 	clickEnabled = extractStruct(state, MClickEnabled(const(true))).enabled;
+	keysEnabled = extractStruct(state, MKeysEnabled(const(true))).enabled;
 	recordingEnabled = extractStruct(state, IScriptRecordingEnabled(const(true))).enabled;
 	keepFocus = contains(state, MKeepFocusOnClickOut());
 	onClick =
@@ -100,6 +101,7 @@ MComponent2T(
 			tabOrder,
 			\focus -> {
 				mouseDownEnabled = fmin3(focus.enabled, clickEnabled, p.zorderEnabled);
+				keyboardDownEnabled = fmin3(mouseDownEnabled, keysEnabled, p.keysEnabled);
 				maybeApply(mGetFocus, \getFoc -> getFoc.getFn(focus));
 
 				(if (mouseDownEnabled != const(false)) {
@@ -131,7 +133,7 @@ MComponent2T(
 						)
 					)
 					|> (\f ->
-						MComponent2TMouseDown(manager, state, focusClicks.mouseOnDownState, focus, point, mouseDownEnabled, f)
+						MComponent2TMouseDown(manager, state, focusClicks.mouseOnDownState, focus, point, mouseDownEnabled, keyboardDownEnabled, f)
 					)
 					|> (\f : Tropic ->
 						eitherMap(
@@ -302,7 +304,7 @@ MFocusClicks(state : [flow]) -> MFocusClicksState {
 }
 
 MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [MouseOnDownAroundState], focus : MFocus, point : DynamicBehaviour<Point>,
-	mouseDownEnabled : Transform<bool>, tr : Tropic) -> Tropic {
+	clickEnabled : Transform<bool>, keysEnabled : Transform<bool>, tr : Tropic) -> Tropic {
 	focusOnDown = extractStruct(state, MFocusOnDown(ref false)).enabled;
 	hoverDisabled = extractStructMany(state, MDisableHover());
 
@@ -318,7 +320,7 @@ MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [Mouse
 
 	onClick = \ -> {
 		// On click was deferred. Prev. key handler from the queue might change the enabled state:
-		if (fgetValue(mouseDownEnabled))
+		if (fgetValue(clickEnabled))
 			maybeApply(focus.onClick, apply0);
 
 		if (^focusOnDown)
@@ -363,7 +365,7 @@ MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [Mouse
 				[],
 			[
 				MOnClick(onClick),
-				MEnabled(mouseDownEnabled),
+				MEnabled(clickEnabled),
 				TPressed(focus.down),
 				MRightDown(focus.rightDown),
 				MMiddleDown(focus.middleDown),
@@ -380,11 +382,11 @@ MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [Mouse
 
 	mouseOnDownAround(manager, clickableState, tr)
 	|> (\f -> MComponent2TAction(manager, f, state, focus, keyOnClick, shortcut))
-	|> (\f -> MComponent2TShortcut(manager, f, state, focus, keyOnClick, shortcut, mouseDownEnabled))
+	|> (\f -> MComponent2TShortcut(manager, f, state, focus, keyOnClick, shortcut, keysEnabled))
 }
 
 MComponent2TShortcut(manager : MaterialManager, content : Tropic, state : [flow], focus : MFocus, keyOnClick : Maybe<(bool) -> void>,
-	shortcut : string, mouseDownEnabled : Transform<bool>) -> Tropic {
+	shortcut : string, keysEnabled : Transform<bool>) -> Tropic {
 	shortcutPreventDefault = contains(state, MShortcutPreventDefault());
 	defaultShortcutEnabled = extractStruct(state, MDefaultShortcutEnabled(const(true))).enabled;
 	shortcutFilter = extractStructMany(state, MShortcutFilter(\__, __ -> false));
@@ -438,8 +440,8 @@ MComponent2TShortcut(manager : MaterialManager, content : Tropic, state : [flow]
 
 		TInteractive(
 			[
-				KeyDown2(\handled, e ->
-					if (!handled && fgetValue(mouseDownEnabled)) {
+				KeyDown2(\handled, e -> {
+					if (!handled && fgetValue(keysEnabled)) {
 						if (isShortcutFilter && shortcutFilter[0].filterFn(getValue(focus.focused), e)) {
 							filterClick := true;
 
@@ -459,9 +461,10 @@ MComponent2TShortcut(manager : MaterialManager, content : Tropic, state : [flow]
 								false
 							)
 						}
-					} else
+					} else {
 						handled
-				),
+					}
+				}),
 				KeyUp2(\handled, e ->
 					if (!handled) {
 						if (^filterClick) {
@@ -494,23 +497,38 @@ MComponent2TShortcut(manager : MaterialManager, content : Tropic, state : [flow]
 }
 
 MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], focus : MFocus, keyOnClick : Maybe<(bool) -> void>, shortcut : string) -> Tropic {
-	accessRole = extractStruct(state, AccessRole("button")).role;
-	accessAttributes =
-		concat(
-			extractStructMany(state, FAccessAttribute("", const(""))),
-			[
-				FAccessAttribute("aria-pressed", fif(focus.down, const("true"), const("false"))),
-				FAccessAttribute("aria-label", extractStruct(state, MButtonTitle(const(""))).title)
-			]
+	properties =
+		arrayPush(
+			replaceStruct(extractFAccessProperties(state), extractStruct(state, AccessRole("button"))),
+			FAccessAttribute("aria-label", extractStruct(state, MButtonTitle(const(toCapitalization(extractStruct(state, AccessRole("button")).role)))).title)
 		)
-		|> (\f2 ->
+		|> (\properties ->
 			eitherMap(
 				focus.iScriptId,
-				\id -> arrayPush(f2, FAccessAttribute("id", const(id))),
-				f2
+				\id -> arrayPush(properties, FAccessAttribute("id", const(id))),
+				properties
+			)
+		)
+		|> (\properties ->
+			if (shortcut != "")
+				arrayPush(properties, AccessKbdShortcutString(shortcut))
+			else
+				properties
+		)
+		|> (\properties ->
+			eitherMap(
+				keyOnClick,
+				\koc ->
+					arrayPush(
+						properties,
+						AccessCallback(\ -> {
+							koc(true);
+							koc(false);
+						})
+					),
+				properties
 			)
 		);
-	oneWayConnection = maybeMap(tryExtractStruct(state, MAccessOneWayConnection(false)), \owc -> owc.focusedPopup);
 	onDown = \d -> {
 		if (d && getValue(focus.focused) && isNone(manager.downInsideFocus)) {
 			manager.downInsideFocus ::= Some(focus);
@@ -531,11 +549,11 @@ MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], 
 			TCopySize(
 				f,
 				\tr ->
-					MComponent2TAccessibility(manager, tr, focus, keyOnClick, accessRole, shortcut, oneWayConnection, accessAttributes),
+					MComponent2TAccessibility(manager, tr, focus, properties),
 				false
 			)
 		else
-			MComponent2TAccessibility(manager, f, focus, keyOnClick, accessRole, shortcut, oneWayConnection, accessAttributes)
+			MComponent2TAccessibility(manager, f, focus, properties)
 	)
 }
 

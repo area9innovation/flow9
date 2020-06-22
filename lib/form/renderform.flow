@@ -277,6 +277,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			errhndlr = ref \e -> {};
 			onLoaded = ref nop;
 			realSizeFn = ref nop1;
+			picAltText = ref "";
 			iter(style, \s -> switch(s : PictureStyle) {
 				DontCache(): cache := false;
 				OnlyDownloadToCache(): onlydl := true;
@@ -289,6 +290,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 					}
 				};
 				InspectRealSize(fn): realSizeFn := fn;
+				AltText(text): picAltText := text;
 			});
 			widthHeight = make(zeroWH);
 			baseline = make(0.0);
@@ -312,7 +314,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				if (e != "") {
 					println(e);
 				}
-			}, ^onlydl);
+			}, ^onlydl, ^picAltText);
 
 			RenderResult(
 				[picture], widthHeight, baseline, pending,
@@ -1131,7 +1133,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 						definedTextStyle = getDefinedTextStyle(info.style);
 						setVideoSubtitle(video, info.text, definedTextStyle.face.family, definedTextStyle.fontSize, definedTextStyle.face.weight,
 							definedTextStyle.face.slope, definedTextStyle.fillColor, definedTextStyle.fillOpacity, definedTextStyle.letterSpacing,
-							definedTextStyle.backgroundColor, definedTextStyle.backgroundOpacity, false, -1., false, true
+							definedTextStyle.backgroundColor, definedTextStyle.backgroundOpacity, false, -1., false, -1., -1., true
 						);
 					}
 				});
@@ -1488,6 +1490,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		customZorder = ref None();
 		accessAttributes : ref [Pair<string, Behaviour<string>>] = ref [];
 		accessCallback : ref () -> void = ref nop;
+		tagName = ref None();
+		langAttribute = ref None();
 
 		// Grab attributes from Access parameters
 		attributes : ref [[string]] = ref filtermap(properties, \p -> {
@@ -1518,6 +1522,14 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 					customZorder := Some(zo);
 					Some(["zorder", toString(getValue(zo))])
 				}
+				TagName(tn): {
+					tagName := Some(tn);
+					None();
+				}
+				LangAttribute(lang): {
+					langAttribute := Some(lang);
+					Some(["lang", toString(fgetValue(lang))])
+				}
 			}
 		});
 
@@ -1536,7 +1548,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			role := "textbox";
 		}
 		// avoid creating unnecessary empty elements in the hierarchy
-		skipMakingElement = ^role == "";
+		skipMakingElement = ^role == "" && isNone(^tagName) && isNone(^langAttribute);
 		if (^role != "") attributes := concat([["role", ^role]], ^attributes); // "role" should be first and will affect element's tag
 
 		if (^groupId != "") {
@@ -1599,6 +1611,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		// We just override any access attributes of children
 		fn = \clip -> {
+			maybeApply(^tagName, \tn -> setClipTagName(clip, tn));
+
 			dispNodeIndex =
 				eitherFn(
 					^customTabOrder,
@@ -1644,6 +1658,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				unsubscribe_enabled := subscribe2(en, \e -> { setAccessAttributes(clip, [ ["enabled", toString(e)] ]) });
 			});
 
+			langAttributeDisposer = eitherMap(^langAttribute, \la -> makeSubscribe2(la, \v -> { setAccessAttributes(clip, [ ["lang", v] ]) })(), nop);
+
 			concatA([
 				if (^role == "button" && ^shortcut != "" && ^description != "") {
 					dispKeyboardShortcut = addKeyboardShortcut(^shortcut, ^description);
@@ -1655,7 +1671,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				dispZorder,
 				dispAccessAttributes,
 				groupToDisposer,
-				[ set_focus_subscription_fn(clip) ]
+				[ set_focus_subscription_fn(clip), langAttributeDisposer ]
 			])
 		}
 		dontChangeChildrenFn = \clip -> [ ];
@@ -1664,8 +1680,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		// there are some Access forms with only TabIndex set around a syled button.
 		// such Access forms should not have their own clip(HTML element)
-		makeAccessClip = ^role != "" && !contains(["button", "checkbox", "textbox", "video", "iframe"], ^role)
-			|| isSome(^access_child_selected_fn);
+		makeAccessClip = (^role != "" && !contains(["button", "checkbox", "textbox", "video", "iframe"], ^role)
+			|| isSome(^access_child_selected_fn)) && isNone(^tagName) && isNone(^langAttribute);
 		d = renderForm(form, available, zorder, ownTabOrder);
 
 		if (makeAccessClip) {
@@ -2456,16 +2472,7 @@ renderLines(lines : [[Form]], zorder : [int], tabOrder : [int]) -> RenderResult 
 
 
 renderText(text : string, style : [CharacterStyle], available : Behaviour<WidthHeight>, zorder : [int], tabOrder: [int]) -> RenderResult {
-	textfield = if (isUrlParameterFalse("mstf")) {
-		tf = makeTextfield(getMappedFontFamily(style));
-		setTextDirection(tf, if (getDefaultRtl()) "rtl" else "ltr");
-		setEscapeHTML(tf, extractStruct(style, EscapeHTML(false)).escape);
-		defineTextStyle(tf, text, style);
-		tf
-	} else
-	// TODO remove the flag after June 1st leaving this line below.
-		makeStyledTextfield(text, style);
-
+	textfield = makeStyledTextfield(text, style);
 	metrics = getTextMetrics(textfield);
 
 	disposer = \ -> {
@@ -2567,7 +2574,7 @@ preloadAndCachePicture(url_ : string, errHandler : (string) -> void) -> void {
 		errHandler(error)
 	}
 	if (downloadPictures) {
-		makePicture(addServerPathIfRelative(url), true, metricsFn, errFn, true) |> ignore
+		makePicture(addServerPathIfRelative(url), true, metricsFn, errFn, true, "") |> ignore
 	}
 }
 

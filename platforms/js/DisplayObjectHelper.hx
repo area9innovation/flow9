@@ -18,7 +18,8 @@ class DisplayObjectHelper {
 	public static var BoxShadow : Bool = ((Platform.isChrome || Platform.isFirefox) && !Platform.isMobile) ?
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
-	public static var MarginGap : Float = 0.5;
+	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	public static var MarginGap : Float = 0.0;
 
 	private static var InvalidateStage : Bool = true;
 
@@ -818,7 +819,7 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null) {
-			nativeWidget.setAttribute('id', Std.string(Std.int(Math.random() * 100000.0)));
+			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
 		}
 	}
 
@@ -839,6 +840,10 @@ class DisplayObjectHelper {
 							if (untyped clip.info) {
 								untyped clip.nativeWidget.setAttribute("info", clip.info);
 							}
+						}
+
+						if (untyped DebugAccessOrder && clip.accessWidget != null) {
+							untyped clip.nativeWidget.setAttribute("nodeindex", '${clip.accessWidget.nodeindex}');
 						}
 
 						updateNativeWidgetTransformMatrix(clip);

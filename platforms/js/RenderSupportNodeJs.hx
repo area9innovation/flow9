@@ -265,8 +265,8 @@ class RenderSupport {
 
 	public static function endFill(graphics : Dynamic) : Void {}
 
-	//native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void, errorFn : (string) -> void, onlyDownload : bool) -> native = RenderSupport.makePicture;
-	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
+	//native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void, errorFn : (string) -> void, onlyDownload : bool, altText : string) -> native = RenderSupport.makePicture;
+	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
 		return null;
 	}
 
