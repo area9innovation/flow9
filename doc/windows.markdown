@@ -11,7 +11,8 @@ Haxe 3.4.* should work.
 Now install the "format" and "pixijs" haxe libraries:
 
 	haxelib install format
-	haxelib install pixijs
+	haxelib install pixijs 4.8.4
+	(pixijs version 5 isn't supported)
 
 Now check that you can compile the compiler:
 
@@ -25,7 +26,7 @@ Run
 
 to install the Visual Studio runtime needed for our flow bytecode runner.
 
-# Install Python 3.* and Java 8 or later in a 64-bit version
+# Install Python 3.* and Java 11 or later in a 64-bit version
 
 This is required to run the flowc compiler.
 

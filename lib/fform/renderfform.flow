@@ -179,6 +179,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				picErrorHandler = ref nop1;
 				onLoaded = ref nop;
 				realSizeFn = ref nop1;
+				picAltText = ref "";
 
 				decreaseFFilesCount = increaseFFilesCount();
 				url = applyMediaPathMapping(url_);
@@ -199,6 +200,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							}
 						}
 						InspectRealSize(fn): realSizeFn := fn;
+						AltText(text): picAltText := text;
 					}
 				);
 
@@ -268,7 +270,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								^picErrorHandler(e);
 								decreaseFFilesCount();
 							},
-							^onlydl
+							^onlydl,
+							^picAltText
 						);
 					}
 
@@ -307,7 +310,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
-				[FClipMove()],
+				[FClipMove(), FClipInteractive()],
 				\clip -> {
 					if (left != 0.0)
 						setClipX(clip, left);
@@ -1126,7 +1129,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								acc;
 							}
 							PageEvalJS(fn): {
-								fn(\code -> webClipEvalJS(clip, code));
+								fn(\code, cb -> webClipEvalJS(clip, code, cb));
 								acc;
 							}
 							ZoomEnabled(enabled): {
@@ -1186,6 +1189,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			streamListenerResponse = ref false;
 			decreaseFFilesCount = if (cpp) increaseFFilesCount() else nop;
 			realVideoSize = extractStruct(style, FVideoRealSize(make(getValue(wh)))).size;
+			inspectVideoArea = tryExtractStruct(style, FInspectVideoArea(make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.)))));
 
 			playing = extractStruct(style, FVideoPlay(make(true))).play;
 			position = extractStruct(style, FVideoPosition(make(0.))).position;
@@ -1201,6 +1205,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			fullscreen = tryExtractStruct(style, FVideoFullscreen(make(false)));
 			controls = extractStruct(style, FVideoControls([])).controls;
 			subtitles = tryExtractStruct(style, FVideoSubtitles(const(VideoSubtitle("", []))));
+			subtitlesAlignBottom = contains(style, FVideoSubtitlesAlignBottom());
+			subtitlesBottomBorder = extractStruct(style, FVideoSubtitlesBottomBorder(-1.)).border;
+			subtitlesScaleMode = tryExtractStruct(style, FVideoSubtitlesScaleMode(-1., -1.));
 			looping = tryExtractStruct(style, FVideoLoop(const(false)));
 			timeRange = tryExtractStruct(style, FVideoTimeRange(const(0.), const(0.)));
 			playbackRate = tryExtractStruct(style, FVideoPlaybackRate(make(0.)));
@@ -1280,23 +1287,31 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								xScale = cwh.width / rwh.width;
 								yScale = cwh.height / rwh.height;
 
+								setClipMetrics = \xSc, ySc, clX, clY -> {
+									setClipScaleX(video, xSc);
+									setClipScaleY(video, ySc);
+									setClipX(video, clX);
+									setClipY(video, clY);
+									maybeApply(inspectVideoArea, \iva ->
+										nextDistinct(iva.metrics, FVideoAreaMetrics(
+											Point(clX, clY),
+											WidthHeight(rwh.width * xSc, rwh.height * ySc)
+										))
+									)
+								}
+
 								if (cover) {
 									xyScale = max(xScale, yScale);
-									setClipScaleX(video, xyScale);
-									setClipScaleY(video, xyScale);
-									setClipX(video, (cwh.width - rwh.width * xyScale) * forceRange(alX, 0., 1.));
-									setClipY(video, (cwh.height - rwh.height * xyScale) * forceRange(alY, 0., 1.));
+									clipX = (cwh.width - rwh.width * xyScale) * forceRange(alX, 0., 1.);
+									clipY = (cwh.height - rwh.height * xyScale) * forceRange(alY, 0., 1.);
+									setClipMetrics(xyScale, xyScale, clipX, clipY)
 								} else if (kar) {
 									xyScale = min(xScale, yScale);
-									setClipScaleX(video, xyScale);
-									setClipScaleY(video, xyScale);
-									setClipX(video, max(cwh.width - rwh.width * xyScale, 0.) / 2.);
-									setClipY(video, max(cwh.height - rwh.height * xyScale, 0.) / 2.);
+									clipX = max(cwh.width - rwh.width * xyScale, 0.) / 2.;
+									clipY = max(cwh.height - rwh.height * xyScale, 0.) / 2.;
+									setClipMetrics(xyScale, xyScale, clipX, clipY)
 								} else {
-									setClipScaleX(video, xScale);
-									setClipScaleY(video, yScale);
-									setClipX(video, 0.);
-									setClipY(video, 0.);
+									setClipMetrics(xScale, yScale, 0., 0.)
 								}
 							}
 						})(),
@@ -1383,15 +1398,21 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 									setVideoSubtitle(
 										video,
 										s.text,
-										definedTextStyle.fontFamily,
+										definedTextStyle.face.family,
 										definedTextStyle.fontSize,
-										definedTextStyle.fontWeight,
-										definedTextStyle.fontSlope,
+										definedTextStyle.face.weight,
+										definedTextStyle.face.slope,
 										definedTextStyle.fillColor,
 										definedTextStyle.fillOpacity,
 										definedTextStyle.letterSpacing,
 										definedTextStyle.backgroundColor,
-										definedTextStyle.backgroundOpacity
+										definedTextStyle.backgroundOpacity,
+										subtitlesAlignBottom,
+										subtitlesBottomBorder,
+										isSome(subtitlesScaleMode),
+										eitherMap(subtitlesScaleMode, \sc -> sc.min, -1.),
+										eitherMap(subtitlesScaleMode, \sc -> sc.max, -1.),
+										extractStruct(s.style, EscapeHTML(true)).escape
 									);
 								})()
 							],
@@ -1420,8 +1441,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		FTextInput(content, wh, style): {
 			textInputResponse = ref false;
 			characterStyle = extractStruct(style, FCharacterStyle(const(style2characterStyle(style)))).style;
-			textfield = makeTextfield(getFontFamily(fgetValue(characterStyle)));
-			rtl = extractStruct(style, FSetDirection(getDefaultRtl())).rtl;
+			textfield = makeTextfield(getMappedFontFamily(fgetValue(characterStyle)));
+			rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 			setTextDirection(textfield, if (rtl) "rtl" else "ltr");
 			setTextInput(textfield);
 

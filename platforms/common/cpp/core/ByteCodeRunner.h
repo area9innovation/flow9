@@ -913,7 +913,7 @@ private:
     friend class ByteCodeRunnerNativeContext;
     friend class FlowStackSnapshot;
 
-    static const int MAX_NATIVE_ARGS = 15;
+	static const int MAX_NATIVE_ARGS = 20;
 
     static const unsigned MAX_NATIVE_CALLS = 5000;
     static const unsigned MAX_CALL_STACK = 65536;

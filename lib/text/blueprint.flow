@@ -5,9 +5,9 @@ import algorithms;
 	Blueprint
 	---------
 
-	Blueprint allows to substitute parts of the string marked with %...% with values described 
+	Blueprint allows to substitute parts of the string marked with %...% with values described
 	in a dictionary that is passed a second parameter in a format [key0, value0, key1, value1, ...].
-	It also unindent lines based on the indentation of the first line. 
+	It also unindent lines based on the indentation of the first line.
 
 	In general using blueprint makes code a bit longer, however it's much easier to read and maintain.
 
@@ -30,7 +30,7 @@ import algorithms;
 	is equivalent to:
 
 		myItem + "Count = 4;\n\n" +
-		"if (" + myVar + " > 5) {\n" + 
+		"if (" + myVar + " > 5) {\n" +
 		"\tfoo(" + myItem + "Count + " + myVar + ")\n"
 		"}\n"
 
@@ -41,7 +41,7 @@ import algorithms;
 	----------------
 
 	Note, all substituted multiline values will be indented to match indentation of it's first line. I.e.
-		
+
 		blueprint("
 				this
 					is %value%
@@ -73,17 +73,47 @@ import algorithms;
 
 	Unfortunately you have to convert flag to string when passing as part of key-value array:
 
-		"flag", b2s(myFlag) 
+		"flag", b2s(myFlag)
+
+	Reserved parameter names
+	------------------------
+
+	Names nl0, nl1, nl2, nl3 are reserved for new line helpers
+
+	New line helpers
+	----------------
+
+	Sometimes it is hard to control new lines. These helpers make it for us: nl0, nl1, nl2, nl3.
+
+	This statement
+
+		%var1%
+		%nl1%
+		%var2%
+
+	this one
+
+		%var1%
+
+		%nl1%
+		%var2%
+
+	and this
+
+		%var1%%nl1%%var2%
+
+	produce the same result because these helpers eat adjacent new lines characters "\n"
+	and insert number of new line characters corresponding to the number in the name
 
 	Further development
 	-------------------
-	
+
 	In future it could be replaced by new multiline string Flow type similar to one in PHP and Haxe.
-		
+
 		"""
 		multiline text
 		"""
-	
+
 	Grammar draft for it:
 
 		string0 = nl '"""' (nl line)* nl '"""';
@@ -109,14 +139,19 @@ export {
 	supergluei(xs : [?], fn : (int, ?) -> string, delimiter : string) -> string;
 }
 
-blueprint(s : string, parameters : [string]) -> string { 
+BLUEPRINT_RESERVED_NAMES = ["nl0", "nl1", "nl2", "nl3"];
+
+blueprint(s : string, parameters : [string]) -> string {
 	// Step 1. Unindent lines
 	unindented = unindentLines(s);
 
 	// Process parameters
-	key2value = 
+	key2value =
 		foldi(parameters, makeTree(), \i, acc, param -> {
 			if (odd(i)) {
+				if (contains(BLUEPRINT_RESERVED_NAMES, param)) {
+					println("Blueprint error: parameter name '" + param + "' is reserved");
+				}
 				setTree(acc, parameters[i-1], param)
 			} else {
 				acc
@@ -124,15 +159,17 @@ blueprint(s : string, parameters : [string]) -> string {
 		});
 
 	// Step 2. Substitute conditional statements
-	unconditional = substituteConditions(unindented, key2value);
+	unconditional0 = substituteConditions(unindented, key2value);
+	unconditional = strGlue(unconditional0, "\n");
 
-	// Step 3. Substitute keys 
-	substituteKeys(unconditional, key2value); 
+	// Step 3. Substitute keys
+	withKeys = substituteKeys(unconditional, key2value);
+
+	// Step 4. New lines
+	substituteNewLines(withKeys);
 }
 
-substituteConditions(s : string, key2value : Tree<string, string>) -> string {
-	lines = strSplit(s, "\n");
-
+substituteConditions(lines : [string], key2value : Tree<string, string>) -> [string] {
 	// find first IF
 	IF_PREFIX = "% if";
 	IF_POSTFIX = " %";
@@ -154,7 +191,7 @@ substituteConditions(s : string, key2value : Tree<string, string>) -> string {
 
 			//println("ifPrefixIndex=" + i2s(ifPrefixIndex));
 			//println("ifPostixIndex=" + i2s(ifPostixIndex));
-			
+
 			// find IF condition
 			condition = substring(ifLine, ifPrefixIndex + strlen(IF_PREFIX), ifPostixIndex - ifPrefixIndex - strlen(IF_PREFIX));
 			condition2 = trim(condition);
@@ -168,15 +205,13 @@ substituteConditions(s : string, key2value : Tree<string, string>) -> string {
 				Some(value): {
 					// convert string value to boolean
 					boolValue = s2b(value);
-					boolValue2 = if (negateCondition) !boolValue else boolValue; 
+					boolValue2 = if (negateCondition) !boolValue else boolValue;
 
-					// run recursively 
+					// run recursively
 					afterIfLines = tailFrom(lines, ifLineNumber + 1);
-					afterIf = strGlue(afterIfLines, "\n");
-					afterIf2 = substituteConditions(afterIf, key2value);
-					afterIfLines2 = strSplit(afterIf2, "\n");
+					afterIfLines2 = substituteConditions(afterIfLines, key2value);
 
-					// find ENDIF 
+					// find ENDIF
 					ENDIF_TAG = "% endif %";
 					endifLineNumberM = findi(afterIfLines2, \line -> strContains(line, ENDIF_TAG));
 
@@ -189,7 +224,7 @@ substituteConditions(s : string, key2value : Tree<string, string>) -> string {
 							ELSE_TAG = "% else %";
 							elseLineNumberM = findi(bodyLines, \line -> strContains(line, ELSE_TAG));
 
-							branchLines = 
+							branchLines =
 								switch (elseLineNumberM) {
 									Some(elseLineNumber): {
 										beforeElseLines = take(bodyLines, elseLineNumber);
@@ -214,28 +249,27 @@ substituteConditions(s : string, key2value : Tree<string, string>) -> string {
 							// first, unindent branch lines based one the first one
 							// second, indent to match IF tag indentation
 							branchLines2 = indentLines2(unindentLines2(branchLines), ifPrefixIndex);
-				
+
 							// put all lines back together except one with tags
-							lines2 = concat3(beforeIfLines, branchLines2, afterEndIfLines);
-							strGlue(lines2, "\n");
+							concat3(beforeIfLines, branchLines2, afterEndIfLines);
 						}
 						None(): {
 							// no ENDIF found, something wrong
 							println("Blueprint error: % endif % is not found");
-							s
+							lines;
 						}
 					}
 				}
-				None(): {	
+				None(): {
 					// variable not found, can't resolve
 					println("Blueprint error: condition `" + condition2 + "` can't be resolved");
-					s
+					lines;
 				}
 			}
 		}
 		None(): {
 			// no IF found, nothing we can do here
-			s
+			lines;
 		}
 	}
 }
@@ -243,21 +277,22 @@ substituteConditions(s : string, key2value : Tree<string, string>) -> string {
 BlueReplacement : (start : int, end : int, value : string);
 
 substituteKeys(s : string, key2value : Tree<string, string>) -> string {
-	replacements = 
+	replacements =
 		foldTree(key2value, [], \key, value, acc -> {
 			indecies = multipleStrIndexOf(s, "%" + key + "%");
+			valueLines = strSplit(value, "\n");
 
 			fold(indecies, acc, \acc2, index -> {
 				// Indent multi-line values to match indentation of it's first line
-				valueLines = strSplit(value, "\n");
 				value2 =
 					if (length(valueLines) > 1) {
 						lastLineIndent = lineIndetationByIndex(s, index);
+						tabs = buildTabs(lastLineIndent);
 						strGlue(mapi(valueLines, \i, valueLine -> {
 							if (i == 0) {
 								valueLine
 							} else {
-								buildTabs(lastLineIndent) + valueLine;
+								tabs + valueLine;
 							}
 						}), "\n")
 					} else {
@@ -268,7 +303,7 @@ substituteKeys(s : string, key2value : Tree<string, string>) -> string {
 			})
 		});
 
-	reversed = 
+	reversed =
 		mergeSort(replacements, \l, r -> {
 			genericCompareDesc(l.start, r.start)
 		});
@@ -280,6 +315,29 @@ substituteKeys(s : string, key2value : Tree<string, string>) -> string {
 	});
 
 	strGlue(map(strSplit(resultDraft, "\n"), \line -> if (isEmptyLine(line)) "" else line), "\n");
+}
+
+substituteNewLines(s : string) -> string {
+	fold([0, 1, 2, 3], s, \acc, n -> substituteNewLinesN(acc, n));
+}
+
+substituteNewLinesN(s : string, n : int) -> string {
+	nls = strRepeat("\n", n);
+	parts0 = strSplit(s, "%nl" + i2s(n) + "%");
+	len = length(parts0);
+	parts = mapi(parts0, \i, part -> {
+		p1 = if (i == 0) {
+			part;
+		} else {
+			ltrim2(part, "\n");
+		}
+		if (i == len - 1) {
+			p1;
+		} else {
+			rtrim2(p1, "\n");
+		}
+	});
+	strGlue(parts, nls);
 }
 
 lineIndetationByIndex(s : string, index : int) -> int {
@@ -296,36 +354,34 @@ buildTabs(n : int) -> string {
 }
 
 /*
-From: 
+From:
 	alkdsjflkjdsa
 		fjsajf
 			dajhkjfhdsa
 		dsalkhj
-To: 
+To:
 alkdsjflkjdsa
 	fjsajf
 		dajhkjfhdsa
 	dsalkhj
 */
-unindentLines(s : string) -> string {
+unindentLines(s : string) -> [string] {
 	if (s == "") {
-		""
+		[];
 	} else {
 		lines = strSplit(s, "\n");
 
 		if (lines == []) {
-			""
+			[];
 		} else {
-			lines2 = 
+			lines2 =
 				if (trim2(lines[0], "\t ") == "") {
 					tail(lines)
 				} else {
 					lines
 				};
 
-			lines3 = unindentLines2(lines2);
-
-			strGlue(lines3, "\n")
+			unindentLines2(lines2);
 		}
 	}
 }

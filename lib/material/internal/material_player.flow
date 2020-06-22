@@ -4,6 +4,13 @@ import material/internal/material_progress;
 
 export {
 	MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+
+	MVideoWithAnimatedSubtitles(
+		filename : string,
+		wh : DynamicBehaviour<WidthHeight>,
+		style : [FVideoStyle],
+		subtitles : MAnimatedSubtitles
+	) -> Material;
 }
 
 MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -24,13 +31,19 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				], true)
 				|> MEnabled;
 
+			mPlayerControls = extractStruct(m.style, MPlayerControls([VolumeControl()])).controls;
+
 			controls : [PlayerControl] = concat(
-				extractStruct(m.style, MPlayerControls([VolumeControl()])).controls,
+				MPlayerControls2PlayerControls(mPlayerControls),
 				extractStruct(m.style, FVideoControls([VolumeControl()])).controls
 			);
 			volumeControl = contains(controls, VolumeControl());
 			fullScreenControl = contains(controls, FullScreenPlayer());
 			playbackRateControl = !android() && contains(controls, PlaybackRateControl());
+			subtitlesControl = contains(mPlayerControls, SubtitlesControl());
+			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
+			animatedSubtitles = tryExtractStruct(m.style, MAnimatedSubtitles(const(VideoSubtitle("", [])), []));
+
 			streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
 
 			playing = extractStruct(m.style, FVideoPlay(make(false))).play;
@@ -64,6 +77,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			volumeSliderDown = make(false);
 			playbackRateSelected = make(3);
 			showProgressCircle = make(true);
+			subtitlesVisible = make(true);
+			subtitlesEnabled = const(isSome(subtitles) || isSome(animatedSubtitles));
 
 			uns = initUnsM();
 
@@ -86,6 +101,14 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						]
 					)
 				)
+				|> (\st ->
+					eitherMap(subtitles, \sbtl ->
+						replaceStruct(st,
+							FVideoSubtitles(fif(subtitlesVisible, sbtl.subtitles, const(VideoSubtitle("", []))))
+						),
+						st
+					)
+				)
 				|> (\st -> ifArrayPush(
 					st,
 					containsStruct(m.style, MPlayerVisibleRange(const(0.0), const(0.0))) &&
@@ -94,7 +117,13 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				));
 
 			videoBox =
-				TVideo(m.filename, videoWH, videoStyle)
+				TVideoWithAnimatedSubtitles(
+					manager,
+					parent,
+					TVideo(m.filename, videoWH, videoStyle),
+					maybeMap(animatedSubtitles, \sbtl -> Pair(sbtl, subtitlesVisible)),
+					m2t
+				)
 				|> (\video ->
 					TCopySize(
 						video,
@@ -150,8 +179,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						video
 					)
 				)
-				|> addTBackground(backgroundColor)
-				;
+				|> addTBackground(backgroundColor);
 
 			slider = \p ->
 				MSlider2T(
@@ -196,6 +224,11 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					enabled.enabled
 				else
 					fand(fOr(volumeSliderVisible, volumeSliderDown), enabled.enabled);
+			
+			panelFillerW = make(0.);
+			overlapMode =
+				if (mobile) const(false)
+				else fselect(showVolumeSlider, FLift(\__ -> getValue(panelFillerW) <= 0.));
 
 			volumeControlButton = \p ->
 				if (volumeControl)
@@ -248,6 +281,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							m2t
 						)
 						|> (\t -> TBorder(-20., 0., -2., 0., t))
+						|> TFixWidth(TSizedWidth(fif(overlapMode, zero, const(60.)), 0.))
 						|> (\t -> TShow(showVolumeSlider, t))
 					)
 					|> (\volumeSlider ->
@@ -271,7 +305,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						else
 							[MTextDisabled()]
 					)
-				);
+				)
+				|> (\t -> TVisible(fnot(fand(overlapMode, showVolumeSlider)), t));
 
 			playbackRateControlButton = \p ->
 				if (playbackRateControl)
@@ -279,7 +314,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						manager,
 						p,
 						MMenu(
-							MIconButton("settings", nop,  [], []),
+							MIconButton("settings", nop,  [MIconButtonBorder(4.)], []),
 							[
 								MMenuSingleLine("0.25", []),
 								MMenuSingleLine("0.5", []),
@@ -297,6 +332,42 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							]
 						),
 						m2t
+					)
+					|> v2a
+				else
+					[];
+
+			subtitlesButton = \p ->
+				if (subtitlesControl)
+					TCopySize(
+						MIconToggle2T(manager, p, MIconToggle("subtitles", [MIconButtonBorder(4.)], [
+							MToggleValue(subtitlesVisible),
+							MEnabled(subtitlesEnabled)
+						]), m2t),
+						\tr ->
+							TRectangle([MFill(MRed(500))], TFillXH(2.))
+							|> (\t -> TShow(fand(subtitlesVisible, subtitlesEnabled), t))
+							|> TBorderLeftRight(6.)
+							|> (\t -> TAvailable(t, tr))
+							|> TBorderBottom(4.)
+							|> TAlignBottom,
+						true
+					)
+					|> (\t -> 
+						MTooltip2T(
+							manager,
+							p,
+							MTooltip(
+								t,
+								MText(_("Subtitles"), []),
+								[
+									MTooltipAlignment(MTop()),
+									MLightBackground(!getLightBackground(parent)),
+									MEnabled(subtitlesEnabled)
+								]
+							),
+							m2t
+						)
 					)
 					|> v2a
 				else
@@ -334,9 +405,10 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							volumeControlButton(p),
 							[
 								timeLabel(p),
-								TFillX(),
+								TAttachWidth(TFillX(), panelFillerW)
 							],
 							playbackRateControlButton(p),
+							subtitlesButton(p),
 							fullScreenControlButton(p)
 						]
 						|> concatA
@@ -377,7 +449,10 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				TConstruct(
 					[
 						\ -> fconnect(fdivide(visiblePosition, visibleDuration), sliderPosition),
-						\ -> fconnect(faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start), position),
+						makeSubscribe(
+							faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start),
+							\pos -> if (pos <= fgetValue(duration)) nextDistinct(position, pos)
+						),
 						\ -> fconnect2Select(
 							eitherMap(fullscreen, \fs -> fif(fs, availableH, fheight(m.wh)), fheight(m.wh)),
 							controlsWH,
@@ -455,4 +530,153 @@ MVideoPlayer2MRealHTML(url : string, parent : MFocusGroup, m : MVideoPlayer, m2t
 	);
 
 	m2t(MRealHTML(url, m.wh, style), parent)
+}
+
+MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerControl] {
+	filtermap(mPlayerControls, \cntr : MPlayerControl ->
+		switch (cntr) {
+			BasicPlayerControl(): {a : Maybe<PlayerControl> = Some(cntr); a};
+			default : None();
+		}
+	)
+}
+
+MVideoWithAnimatedSubtitles(
+	filename : string,
+	wh : DynamicBehaviour<WidthHeight>,
+	style : [FVideoStyle],
+	subtitles : MAnimatedSubtitles) -> Material {
+
+	MGetManager(\manager -> MGetFocusGroup(\parent -> MGetMaterial2Tropic(\m2t ->
+		TVideoWithAnimatedSubtitles(
+			manager,
+			parent,
+			TVideo(filename, wh, style),
+			Some(Pair(subtitles, const(true))),
+			m2t
+		)
+	)))
+}
+
+TVideoWithAnimatedSubtitles(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	video : TVideo,
+	subtitles : Maybe<Pair<MAnimatedSubtitles, Transform<bool>>>,
+	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	videoAreaMetrics = make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.)));
+	style = eitherMap(subtitles, \__ -> arrayPush(video.style, FInspectVideoArea(videoAreaMetrics)), video.style);
+
+	TGroup2SameMetrics(
+		TVideo(video.filename, video.wh, style),
+		eitherMap(subtitles, \sbtl -> {
+				areaBox = TSized(fselect(videoAreaMetrics, FLift(\vam -> vam.wh)));
+				areaTopLeft = fselect(videoAreaMetrics, FLift(\vam : FVideoAreaMetrics -> vam.topLeft));
+				TAnimatedSubtitles(manager, parent, sbtl.first, m2t)
+				|> (\t -> TAvailable(t, areaBox))
+				|> (\t -> TTweak([TAlign(const(0.5), const(1.))], t, areaBox))
+				|> (\t -> TCropSize(areaBox, t))
+				|> (\t -> TTranslate(areaTopLeft, t))
+				|> (\t -> TShow(sbtl.second, t))
+			},
+			TEmpty()
+		)
+	)
+}
+
+TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : MAnimatedSubtitles, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	duration = extractStruct(subtitles.style, MDuration(const(0.5)));
+	frame = extractStruct(subtitles.style, MSubtitlesFrame(4., 4.));
+
+	percent = make(0.);
+	old2LineSize = makeWH();
+	oldLineSize = makeWH();
+	newLineSize = makeWH();
+
+	boxSize = fselect2(oldLineSize, newLineSize, FLift2(\old, new -> WidthHeight(max(old.width, new.width), old.height + new.height)));
+
+	backgroundColor = make(0);
+	backgroundOpacity = make(0.);
+
+	backgroundStyle = 
+		fsubselect(subtitles.subtitles, FLift(\__ ->
+			fselect3(
+				fselectWithLast(backgroundColor, FLift2(\old, new -> Pair(old, new))),
+				fselectWithLast(backgroundOpacity, FLift2(\old, new -> Pair(old, new))),
+				percent,
+				\col, opac, prc -> [
+					Fill(colorLerp(col.first, col.second, prc)),
+					FillOpacity(lerp(opac.first, opac.second, prc))
+				]
+			)
+		));
+
+	background =
+		m2t(
+			MAnimatedResizer(fwidth(boxSize), fheight(boxSize), [duration, MResizerPercent(percent)]),
+			parent
+		)
+		|> (\sz -> TFrameT(const(frame.border), const(frame.radius), backgroundStyle, sz));
+
+	makeSubtitleLine = \sbtl, size, translatePoint, dSize -> 
+		MParagraph2T(parent, sbtl.text, arrayPush(MCharacterStyle2MTextStyle(sbtl.style), extractStruct(sbtl.style, EscapeHTML(true))))
+		|> TBorderBottom(dSize)
+		|> (\t -> TAttachBox(t, size))
+		|> TBorderTop(frame.border)
+		|> (\t -> TTranslate(translatePoint, t))
+		|> TCenterX;
+
+	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
+		innerPercent = make(0.);
+		antiInnerPercent = fsubtract(const(1.), innerPercent);
+		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height * 2. - frame.border))), antiInnerPercent);
+		oldLineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height))), innerPercent);
+		newLineTranslatePoint = fpointaddition(
+			flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height * 2.))), innerPercent),
+			fselect(oldLineSize, FLift(\sz -> Point(0., sz.height)))
+		);
+
+		TGroupWithoutMetrics([
+			makeSubtitleLine(new, newLineSize, newLineTranslatePoint, -4.),	
+			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
+			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
+		])
+		|> (\t -> TConstruct([
+			\ -> fconnectSelect(percent, innerPercent, \p -> max(getValue(innerPercent), p)),
+			\ -> {
+				color = extractStruct(new.style, BackgroundFill(0)).color;
+				opacity =
+					if (strlen(new.text) == 0) 0.
+					else extractStruct(new.style, BackgroundFillOpacity(0.)).opacity;
+
+				nextDistinct(backgroundColor, color);
+				nextDistinct(backgroundOpacity, opacity);
+				nop;
+			}
+		], t))
+	}, VideoSubtitle("", [])))
+	|> (\t -> TGroup2(
+		TDisplay("TAnimatedSubtitlesBackground") |> TCenterX,
+		TCropSize(TGroup2(TFillX(), TGhost("TAnimatedSubtitlesBackground")), t)
+	))
+	|> (\t -> TLet("TAnimatedSubtitlesBackground", background, t))
+	|> TBorderBottom(8.)
+}
+
+fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transform<?> {
+	lastV : ref Maybe<Pair<??, ??>> = ref None();
+	fselect(ftransistor(fneq(b, def), b), FLift(\v ->
+		switch (^lastV) {
+			Some(prevV): {
+				r = fn(prevV.first, prevV.second, v);
+				lastV := Some(Pair(prevV.second, v));
+				r
+			}
+			None(): {
+				lastV := Some(Pair(def, v));
+				fn(def, def, v);
+			}
+		}
+	))
 }

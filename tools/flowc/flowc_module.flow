@@ -18,14 +18,15 @@ export {
 		fromfile : string, start : int, end : int
 	) -> Pair<FcPreloadedModule, FcError>;
 
-	parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string) -> Pair<SyntaxTree, Maybe<FcError>>;
+	parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string) -> Pair<FcParsed, Maybe<FcError>>;
 }
 
 parseFlowFileOrLoadCached(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, fromfile : string, start : int, end : int) -> Pair<FcPreloadedModule, FcError> {
 	switch (fcLoadFromCache(globEnv, file)) {
-		Some(loaded): {
+		Some(cached): {
+			loaded = cached.loaded;
 			module = loaded.module;
-			needToReload = fcModuleNeedReloading(module.fileinfo, module.stringIncludes, config);
+			needToReload = cached.outdated || fcModuleNeedReloading(module.fileinfo, module.stringIncludes, config);
 
 			if ((!isConfigParameterTrue(config.config, "incremental-priority") && needToReload) || isConfigParameterFalse(config.config, "incremental")) {
 
@@ -69,15 +70,14 @@ doParseFlowFileOrLoadCached(
 				Pair(preloaded, dummyFcError);
 			}
 			None(): {
-				stErr = parseFlowfile(config, fileinfo, fromfile);
-				st = stErr.first;
-				switch (stErr.second) {
+				pair = parseFlowfile(config, fileinfo, fromfile);
+				switch (pair.second) {
 					None(): {
-						parsed : FcPreloadedModule = FcParsed(fileinfo, st, extractFcImports(fileinfo, st), extractFcForbids(fileinfo, st), preloadResult.oldExports);
+						parsed : FcPreloadedModule = FcParsed(pair.first with oldExports = preloadResult.oldExports);
 						Pair(parsed, dummyFcError)
 					}
 					Some(err):{
-						parsed : FcPreloadedModule = FcParsed(fileinfo, dummySyntaxTree, extractFcImports(fileinfo, st), [], makeTree());
+						parsed : FcPreloadedModule = FcParsed(fileinfo, dummySyntaxTree, extractFcImports(fileinfo, pair.first.syntaxtree), [], makeTree());
 						Pair(parsed, err)
 					}
 				}
@@ -90,8 +90,7 @@ doParseFlowFileOrLoadCached(
 	}
 }
 
-
-parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string) -> Pair<SyntaxTree, Maybe<FcError>> {
+parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string) -> Pair<FcParsed, Maybe<FcError>> {
 	if (config.verbose >= 1) {
 		fcPrintln("Parsing '" + fileinfo.flowfile + "'" + (if (fromfile == "") "" else " from '" + fromfile + "'"), config.threadId);
 	}
@@ -101,5 +100,5 @@ parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string)
 	errorM = if (st.end != strlen(fileinfo.content)) {
 		Some(FcError("Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
 	} else None();
-	Pair(st, errorM)
+	Pair(FcParsed(fileinfo, st, extractFcImports(fileinfo, st), extractFcForbids(fileinfo, st), makeTree()), errorM);
 }

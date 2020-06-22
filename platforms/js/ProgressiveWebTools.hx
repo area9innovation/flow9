@@ -93,33 +93,31 @@ class ProgressiveWebTools {
 	}
 
 	public static function checkServiceWorkerCachingEnabled(swFileName : String, callback : Bool -> Void) : Void {
-		#if flash
+		#if !js
 		callback(false);
-		#elseif js
+		#else
 		if (globalRegistration != null) {
 			callback(true);
 		} else if (untyped navigator.serviceWorker) {
 			untyped navigator.serviceWorker.getRegistrations().then(function(registrations) {
 				if (registrations.length == 0) {
 					callback(false);
-				}
-
-				untyped Promise.race(untyped registrations.map(function(registration) {
+				} else if (untyped registrations.filter(function(registration) {
 					if (untyped registration.active == null) {
-						return Promise.reject();
+						return false;
 					}
 
 					if (untyped registration.active.scriptURL == (registration.scope + swFileName)) {
 						globalRegistration = registration;
-						return Promise.resolve();
+						return true;
 					} else {
-						return Promise.reject();
+						return false;
 					}
-				})).then(function() {
+				}).length > 0) {
 					callback(true);
-				}, function() {
+				} else {
 					callback(false);
-				});
+				}
 			}, function(err) {
 				callback(false);
 			});
@@ -183,7 +181,6 @@ class ProgressiveWebTools {
 			};
 
 			untyped navigator.serviceWorker.controller.postMessage({"action" : "clean_cache_storage"}, [messageChannel.port2]);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -214,7 +211,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -245,7 +241,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -276,7 +271,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -307,7 +301,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			callback(true);
 		} else {
 			callback(false);
 		}
@@ -507,6 +500,36 @@ class ProgressiveWebTools {
 			untyped navigator.serviceWorker.controller.postMessage({
 					"action" : "set_use_cache_only_in_offline",
 					"enabled" : enabled
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function getServiceWorkerRequestsStatsN(onOK : Array<Int> -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't get requests stats");
+				} else {
+					onOK([
+						event.data.data.fromNetwork,
+						event.data.data.fromCache,
+						event.data.data.skipped,
+						event.data.data.failed
+					]);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_requests_stats"
 				},
 				[messageChannel.port2]
 			);

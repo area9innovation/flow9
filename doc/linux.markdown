@@ -14,7 +14,8 @@ choice.
 3.  [Clone the repositories](#clone-the-repositories)
 4.  [Install `Haxe`](#install-haxe)
 5.  [Install `Neko`](#install-neko)
-7.  [Compile Flow itself](#compile-flow-itself)
+6.  [Install `JDK`](#install-jdk)
+7.  [Compile Flow itself(Optional)](#compile-flow-itself-optional)
 8.  [Check it using flowcpp (C++ runner)](#c-runner-flowcpp)
 9.  [Install fdb, the Flow debugger](#fdb-the-flow-debugger)
 10. [Check it using flowjs (Javascript in browser)](#try-it-javascript-in-browser)
@@ -67,6 +68,22 @@ sudo apt update
 sudo apt install -y php7.2 php7.2-mysql php-gettext php7.2-mbstring php-xdebug libapache2-mod-php7.2 php7.2-xml php7.2-zip php7.2-mcrypt
 sudo update-alternatives --config php
 ```
+
+when switching from older php version:
+```bash
+sudo a2dismod php5.6
+sudo a2enmod php7.2
+sudo service apache2 restart
+```
+
+also copying libraries config from php5.6 might be required
+```bash
+sudo cp /etc/php/5.6/apache2/conf.d/* /etc/php/7.2/apache2/conf.d
+```
+
+if php7.2 is not available, 7.0 version/libs work too.
+
+
 ## Apache2
 Install and configure apache2:
 ```bash
@@ -139,7 +156,7 @@ haxelib setup ~/haxelib/lib
 Then install the required libraries:
 ```bash
 haxelib install format 3.4.2
-haxelib install pixijs 4.7.1 #(or a newer edition)
+haxelib install pixijs 4.8.4 #(pixijs version 5 isn't supported)
 ```
 # Install `Neko`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might
@@ -213,7 +230,7 @@ sudo ln -s /usr/lib32/nvidia-375/libEGL.so.1 /usr/lib32/nvidia-375/libEGL.so.375
 ```
 Note that `LD_LIBRARY_PATH` will not actually contain the path to Neko,
 but the system can now find libraries on that path nonetheless.
-# Compile Flow itself
+# Compile Flow itself(Optional)
 Neko version of flow from the repo should be fine but if you wish to compile your own, do:
 ```bash
 cd ~/area9/flow9/tools/flow
@@ -224,6 +241,15 @@ The following file will be created or overwritten:
 ```
 flow9/bin/flow.n
 ```
+
+# Install `JDK`
+Be sure that you have installed JDK 11 or newer in a 64-bit version. That is required by the *flowc* compiler, which is used
+by default. You may find it here:
+
+	https://www.oracle.com/java/technologies/javase-jdk11-downloads.html
+
+OpenJDK is suitable as well.
+
 # C++ runner (flowcpp)
 Under linux it’s easier to compile yourself a binary instead of using
 the precompiled one. To do so, you should have Qt 5.12.0 set up by default

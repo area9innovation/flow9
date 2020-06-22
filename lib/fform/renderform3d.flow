@@ -79,9 +79,9 @@ export {
 			F3DAnimation(start : () -> void, stop : () -> void, duration : DynamicBehaviour<double>);
 
 		F3DSceneLoader(url : string);
-		F3DChildren(object : F3DObject, fn : (F3DNative) -> F3DNative);
+		F3DChildren(object : F3DObject, fn : (F3DNative) -> void);
 
-		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable, F3DNativeOnLoad;
+		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable, F3DNativeOnLoad, F3DEmpty;
 			F3DNativeObject(object : native);
 			F3DNativeScene(scene : native, objects : Transform<[F3DNative]>);
 			F3DNativeMutable(object : Transform<F3DNative>);
@@ -584,17 +584,19 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		F3DScene(objects) : {
 			scene = make3DScene();
 			onDoneCounter : ref int = ref 0;
+			loadingFinished = ref false;
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
 
-				if (^onDoneCounter == length(fgetValue(objects))) {
+				if (!^loadingFinished && ^onDoneCounter == length(fgetValue(objects))) {
+					loadingFinished := true;
 					onDone();
 				} else {
 					[]
 				}
 			}
 
-			concat(
+			concat3(
 				onStart(scene),
 				[
 					fiteriu(objects, \index, o -> {
@@ -612,21 +614,40 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 							innerOnDone
 						)
 					})
-				]
+				],
+				if (!^loadingFinished && length(fgetValue(objects)) == 0) {
+					loadingFinished := true;
+					onDone();
+				} else {
+					[]
+				}
 			)
 		}
 		F3DSceneDeferred(objects, delay, duration) : {
 			scene = make3DScene();
 			onDoneCounter : ref int = ref 0;
+			loadingFinished = ref false;
+			uns = ref [];
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
 
-				if (^onDoneCounter == length(fgetValue(objects))) {
+				if (!^loadingFinished && ^onDoneCounter == length(fgetValue(objects))) {
+					loadingFinished := true;
 					onDone();
 				} else {
 					[]
 				}
 			}
+
+			uns :=
+				[
+					interruptibleTimer(fgetValue(delay) + fgetValue(duration), \ -> {
+						if (!^loadingFinished && length(fgetValue(objects)) == 0) {
+							loadingFinished := true;
+							uns := onDone();
+						}
+					})
+				];
 
 			concat(
 				onStart(scene),
@@ -667,7 +688,11 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 									|> (\f -> \ -> applyall(f))
 								)
 							]
-					})
+					}),
+					\ -> {
+						applyall(^uns);
+						uns := [];
+					}
 				]
 			)
 		}
@@ -1376,13 +1401,19 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		}
 		F3DLoader(objUrl, mtlUrl) : {
 			uns = ref [];
+			destroyed = ref false;
 
 			load3DObject(state.stage, objUrl, mtlUrl, \obj -> {
-				uns := concat(onStart(obj), onDone());
+				if (!^destroyed) {
+					uns := concat(onStart(obj), onDone());
+				}
 			});
 
 			[
-				\ -> dispUnsA(uns)
+				\ -> {
+					destroyed := true;
+					dispUnsA(uns);
+				}
 			]
 		}
 		F3DGLTFLoader(url, onAnimation, onError) : {
@@ -1467,18 +1498,14 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 				state,
 				\clip -> {
 					parsedClip = parseF3DNativeObject(clip, state);
+					fn(parsedClip.first);
 
 					concat(
-						parsedClip.second,
-						render3dform(
-							fn(parsedClip.first),
-							state,
-							onStart,
-							innerOnDone
-						)
-					)
+						onStart(clip),
+						parsedClip.second
+					);
 				},
-				innerOnDone
+				onDone
 			);
 
 			r;
@@ -1491,34 +1518,61 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		}
 		F3DNativeScene(scene, objects) : {
 			onDoneCounter : ref int = ref 0;
+			loadingFinished = ref false;
+			destroyed = ref false;
+			uns = ref [];
 			innerOnDone = \ -> {
 				onDoneCounter := ^onDoneCounter + 1;
 
-				if (^onDoneCounter == length(fgetValue(objects))) {
+				if (!^loadingFinished && ^onDoneCounter == length(fgetValue(objects))) {
+					loadingFinished := true;
 					onDone();
 				} else {
 					[]
 				}
 			}
 
+			uns :=
+				[
+					interruptibleTimer(33, \ -> {
+						if (!^loadingFinished && length(get3DObjectChildren(scene)) == 0) {
+							loadingFinished := true;
+							uns := onDone();
+						}
+					})
+				];
+
 			concat(
 				onStart(scene),
 				[
-					fiteriu(objects, \index, o -> {
+					\ -> {
+						destroyed := true;
+					},
+					fiteriu(fthrottleUntilNextFrameRendered(objects), \index, o -> {
 						render3dform(
 							o,
 							state,
 							\c ->
-								concat(
-									addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
-									[
-										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
-										// \ -> remove3DChild(scene, c) TODO:
-									]
-								),
+								if (contains(fgetValue(objects), o))
+									concat(
+										addF3DMouseListeners(state.stage, c, state.transformControlsEnabled),
+										[
+											makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
+											\ -> {
+												if (!^destroyed && !contains(fgetValue(objects), o))
+													remove3DChild(scene, c)
+											}
+										]
+									)
+								else
+									[],
 							innerOnDone
 						)
-					})
+					}),
+					\ -> {
+						applyall(^uns);
+						uns := [];
+					}
 				]
 			)
 		}
@@ -2334,25 +2388,28 @@ renderF3DTexture(texture : F3DTexture, state : F3DRenderState, onStart : (native
 }
 
 parseF3DNativeObject(object : native, state : F3DRenderState) -> Pair<F3DNative, [() -> void]> {
-	children = make(get3DObjectChildren(object));
+	children = make(map(get3DObjectChildren(object), get3DObjectId));
+	outputChildren = make([]);
 	uns = ref nop;
 
 	Pair(
-		F3DNativeScene(object, fmapu(children, \c -> parseF3DNativeObject(c, state))),
+		F3DNativeScene(object, outputChildren),
 		[
 			add3DEventListener(object, "childrenchanged", \ -> {
 				^uns();
 
 				if (!fgetValue(state.loading)) {
-					uns := interruptibleTimer(33, \ -> nextDistinct(children, get3DObjectChildren(object)));
+					uns := interruptibleTimer(33, \ -> nextDistinct(children, map(get3DObjectChildren(object), get3DObjectId)));
 				} else {
 					uns := makeSubscribe2(state.loading, \l -> if (!l) {
 						^uns();
-						uns := interruptibleTimer(33, \ -> nextDistinct(children, get3DObjectChildren(object)));
+						uns := interruptibleTimer(33, \ -> nextDistinct(children, map(get3DObjectChildren(object), get3DObjectId)));
 					})();
 				}
 			}),
-			\ -> ^uns()
+			\ -> ^uns(),
+			\ -> next(children, []),
+			fconnect(fmapu(children, \c -> parseF3DNativeObject(get3DObjectById(state.stage, c)[0], state)), outputChildren)
 		]
 	)
 }
