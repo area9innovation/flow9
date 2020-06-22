@@ -154,8 +154,10 @@ MProgressCircleDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MPr
 	color = extractStruct(style, getPrimaryColor(parent));
 	size = (circleSize.radius + circleSize.stroke) * 2.0;
 	arrowScale = extractStruct(style, MAddArrow(zero)).arrowScale;
+	from = fselect(percent, FLift(\p -> min(1.0, max(0.0, p)) * 360.));
+	to = fmultiply(from, const(2.0));
 
-	ProgressCircleWithArrow(parent, fselect(percent, FLift(\p -> min(1.0, max(0.0, p)) * 360.)), make(0.), circleSize.stroke, circleSize.radius, arrowScale,
+	ProgressCircleWithArrow(parent, from, to, circleSize.stroke, circleSize.radius, arrowScale,
 		extractStruct(style, MFill(color)).color, extractStruct(style, FillOpacity(1.0)).opacity, false, 1., 2.)
 	|> (\f -> TTranslate(const(Point(size / 2., size / 2.)), f))
 	|> makeTropicConstant2(size, size)
@@ -193,7 +195,7 @@ MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgress
 		}
 	}
 
-	ProgressCircleWithArrow(parent, to, from, circleSize.stroke, circleSize.radius, arrowScale, extractStruct(style, MFill(color)).color,
+	ProgressCircleWithArrow(parent, from, to, circleSize.stroke, circleSize.radius, arrowScale, extractStruct(style, MFill(color)).color,
 		extractStruct(style, FillOpacity(1.0)).opacity, false, 0.75, 1.)
 	|> (\progressCircle -> TTranslate(const(Point(size / 2., size / 2.)), progressCircle))
 	|> (\progressCircle ->
@@ -240,45 +242,85 @@ ProgressCircleWithArrow(parent : MFocusGroup, from : Transform<double>, to : Tra
 	outterR = 2.0 * radius /*20.0*/;
 	triangleMetrics = 5.0;
 	shadow = const(4.0);
+	maskSize = radius + stroke / 2.0;
+	sectorLength = fmultiply(fsubtract(to, from), const(lengthMultiplier));
 
 	triangle =
 		TGraphics([LineTo(0.0, 2.0), LineTo(sqrt(2.0), 1.0), LineTo(0.0, 0.0), ClosePath()], [Fill(col), FillOpacity(opacity)])
 		|> (\m -> TScale(fselect(triangleScale, FLift(\s -> Factor(triangleMetrics * s, triangleMetrics * s))), m))
 		|> (\m -> TTranslate(fselect(triangleScale, FLift(\s -> (Point(0.0, -innerR - triangleMetrics * s)))), m))
-		|> (\m -> TRotate(if (rotationMultiplier == 1.) from else fselect(from, FLift(\fr -> fr * rotationMultiplier)), m));
+		|> (\m -> TRotate(faddition(fmultiply(from, const(rotationMultiplier)), fmultiply(sectorLength, const(lengthMultiplier))), m));
 
 	outterCircle = \ ->
 		TCircle(outterR, [Fill(white)])
 		|> (\m -> TShadowShape(parent, shadow, m, RoundShape()))
 		|> (\m -> TTranslate(const(Point(-outterR, -outterR)), m));
 
-	TRotate(
-		fselect2(from, to, FLift2(\f, t ->
-			if (t > f)
-				f * rotationMultiplier
-			else
-				f * rotationMultiplier + (t - f) * lengthMultiplier
-		)),
-		TDynamicGraphics(
-			fselect2(from, to, FLift2(\f, t ->
-				CustomSector2(
-					0.,
-					0.,
-					radius,
-					0.0,
-					abs(t - f) * lengthMultiplier,
-					false,
-					[]
-				).path
-			)),
-			const([
-				Stroke(col),
-				StrokeWidth(stroke),
-				StrokeOpacity(opacity),
-			])
+	TGroup2(
+		TShow(
+			fgreater(sectorLength, const(0.0)),
+			TMask(
+				TTranslate(
+					const(Point(0.0, maskSize)),
+					TRotate(
+						fmin(sectorLength, const(180.0)),
+						TGraphics(
+							CustomSector2(
+								0.,
+								0.,
+								radius,
+								180.0,
+								360.0,
+								false,
+								[]
+							).path,
+							[
+								Stroke(col),
+								StrokeWidth(stroke),
+								StrokeOpacity(opacity),
+							]
+						)
+					)
+				),
+				TRectangle([Fill(white)], TFixed(maskSize, maskSize * 2.0))
+			)
+			|> (\f -> TTranslate(const(Point(maskSize, 0.0)), f))
+		),
+		TShow(
+			fgreater(sectorLength, const(180.0)),
+			TMask(
+				TTranslate(
+					const(Point(maskSize, maskSize)),
+					TRotate(
+						fmin(sectorLength, const(360.0)),
+						TGraphics(
+							CustomSector2(
+								0.,
+								0.,
+								radius,
+								180.0,
+								360.0,
+								false,
+								[]
+							).path,
+							[
+								Stroke(col),
+								StrokeWidth(stroke),
+								StrokeOpacity(opacity),
+							]
+						)
+					)
+				),
+				TRectangle([Fill(white)], TFixed(maskSize, maskSize * 2.0))
+			)
 		)
 	)
-	|> (\f -> TGroup2(f, triangle))
+	|> (\f -> TTranslate(const(Point(-maskSize, -maskSize)), f))
+	|> (\f -> TRotate(fmultiply(from, const(rotationMultiplier)), f))
+	|> (\f -> TTranslate(const(Point(maskSize, maskSize)), f))
+	|> TCanvas
+	|> (\f -> TTranslate(const(Point(-maskSize, -maskSize)), f))
+	|> (\f -> TGroup2(f, TShow(fgreater(triangleScale, const(0.0)), triangle)))
 	|> (\f -> if (!background) f else TGroup2(outterCircle(), f))
 }
 
