@@ -363,26 +363,13 @@ class AccessWidgetTree extends EventEmitter {
 
 		if (previousChild != null) {
 			if (previousChild.accessWidget != null && previousChild.accessWidget != child.accessWidget) {
-				if (previousChild.accessWidget.nodeindex == null) {
-					previousChild.id = nextId;
+				previousChild.id = nextId;
 
-					nextId++;
-					childrenSize++;
-					children.set(child.id, child);
-					child.parent = this;
-					child.emit("added");
-				} else {
-					AccessWidget.addAccessWidgetWithoutNodeindex(child.accessWidget, child.accessWidget.clip.parent);
-
-					var addFn = function() {
-						if (child != null && child.accessWidget != null && child.accessWidget.clip != null && child.accessWidget.clip.parent != null) {
-							AccessWidget.addAccessWidget(child.accessWidget);
-						}
-					};
-
-					child.once("removed", function() { previousChild.off("removed", addFn); });
-					previousChild.once("removed", addFn);
-				}
+				nextId++;
+				childrenSize++;
+				children.set(child.id, child);
+				child.parent = this;
+				child.emit("added");
 			} else {
 				previousChild.accessWidget = child.accessWidget;
 			}
@@ -418,8 +405,6 @@ class AccessWidgetTree extends EventEmitter {
 			childrenSize--;
 			child.parent = null;
 			child.emit("removed");
-		} else {
-			Native.printCallstack();
 		}
 
 		if (destroy && childrenSize == 0 && accessWidget == null && parent != null) {
