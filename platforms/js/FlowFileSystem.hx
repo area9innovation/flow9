@@ -1,6 +1,5 @@
 #if (flow_nodejs || nwjs)
 import js.node.Fs;
-import js.lib;
 #end
 
 #if flash
@@ -27,14 +26,17 @@ class FlowFileSystem {
 
 	// to change Blob to File
 	private static function blob2file(name : String, jsBlob : js.html.Blob) : FlowFile {
-		var file2 = js.lib.Object.assign(jsBlob, {
-			lastModified: Date.now(),
-			lastModifiedDate: Date.now(),
-			name: name,
-			webkitRelativePath: "",
-			prototype: js.lib.Object.getPrototypeOf(js.html.File),
-			__proto__: js.html.File,
-		});
+		var file2 =
+			untyped __js__("
+				Object.assign(jsBlob, {
+					lastModified: Date.now(),
+					lastModifiedDate: Date.now(),
+					name: name,
+					webkitRelativePath: '',
+					prototype: Object.getPrototypeOf(File),
+					__proto__: File,
+				})
+			");
 
 		return file2;
 	}
