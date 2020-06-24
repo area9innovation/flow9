@@ -233,7 +233,8 @@ class RenderSupport3D {
 				if (typeof object1[property] != 'undefined' && typeof object1[property] != 'function'
 					&& property != 'children' && property != 'geometry' && property != 'childrenMap'
 					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
-					&& property != 'material' && property != 'broadcastable' && property != 'inside' && property != 'updateProjectionMatrix') {
+					&& property != 'material' && property != 'broadcastable' && property != 'inside' && property != 'updateProjectionMatrix'
+					&& property != 'boxHelper') {
 
 					if (Array.isArray(object1[property]) || object1[property] instanceof String) {
 						object2[property] = object1[property];
@@ -1086,6 +1087,8 @@ class RenderSupport3D {
 				stage.boxHelpers.push(boxHelper);
 				untyped object.boxHelper = boxHelper;
 			}
+
+			object.invalidateStage();
 		}
 	}
 
@@ -1099,6 +1102,8 @@ class RenderSupport3D {
 
 			stage.boxHelpers.remove(untyped object.boxHelper);
 			untyped object.boxHelper = null;
+
+			object.invalidateStage();
 		}
 	}
 
@@ -1115,7 +1120,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectId(object : Object3D) : String {
-		return object.uuid;
+		return object.uuid != null ? object.uuid : "";
 	}
 
 	public static function get3DObjectById(stage : ThreeJSStage, id : String) : Array<Object3D> {
@@ -1127,7 +1132,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectType(object : Object3D) : String {
-		return object.type;
+		return object.type != null ? object.type : "";
 	}
 
 	public static function get3DObjectStage(object : Object3D) : Array<ThreeJSStage> {
@@ -1139,7 +1144,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectName(object : Object3D) : String {
-		return object.name;
+		return object.name != null ? object.name : "";
 	}
 
 	public static function set3DObjectName(object : Object3D, name : String) : Void {
@@ -1706,8 +1711,14 @@ class RenderSupport3D {
 	}
 
 
-	public static function set3DLightColor(object : Light, color : Int) : Void {
-		object.color = new Color(color);
+	public static function set3DObjectColor(object : Object3D, color : Int) : Void {
+		untyped object.color = new Color(color);
+
+		object.invalidateStage();
+	}
+
+	public static function set3DObjectEmissive(object : Object3D, color : Int) : Void {
+		untyped object.emissive = new Color(color);
 
 		object.invalidateStage();
 	}
@@ -1742,8 +1753,12 @@ class RenderSupport3D {
 		object.invalidateStage();
 	}
 
-	public static function get3DLightColor(object : Light) : Int {
-		return object.color.getHex();
+	public static function get3DObjectColor(object : Object3D) : Int {
+		return untyped object.color != null ? object.color.getHex() : 0;
+	}
+
+	public static function get3DObjectEmissive(object : Object3D) : Int {
+		return untyped object.emissive != null ? object.emissive.getHex() : 0;
 	}
 
 	public static function get3DLightIntensity(object : Light) : Float {
@@ -2361,5 +2376,21 @@ class RenderSupport3D {
 		}
 
 		return object;
+	}
+
+	public static function get3DObjectParameter(object : Object3D, name : String, def : String) : String {
+		if (untyped object[name] != null) {
+			return untyped object[name].toString();
+		} else {
+			return def;
+		}
+	}
+
+	public static function get3DObjectMaterials(object : Object3D) : Array<Material> {
+		return object.getMaterials();
+	}
+
+	public static function get3DObjectGeometry(object : Object3D) : Geometry {
+		return untyped object.geometry;
 	}
 }

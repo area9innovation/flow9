@@ -511,7 +511,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object set3DLightColor(Object object, Integer color) {
+	public Object set3DObjectColor(Object object, Integer color) {
+		return null;
+	}
+	public Object set3DObjectEmissive(Object object, Integer color) {
 		return null;
 	}
 	public Object set3DLightIntensity(Object object, Double intensity) {
@@ -530,7 +533,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Integer get3DLightColor(Object object) {
+	public Integer get3DObjectColor(Object object) {
+		return 0;
+	}
+	public Integer get3DObjectEmissive(Object object) {
 		return 0;
 	}
 	public Double get3DLightIntensity(Object object) {
@@ -754,6 +760,18 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object set3DObjectMaterialParameters(Object object, Object[] parameters) {
+		return null;
+	}
+
+	public String get3DObjectParameter(Object object, String name, String def) {
+		return "";
+	}
+
+	public Object[] get3DObjectMaterials(Object object) {
+		return new Object[0];
+	}
+
+	public Object get3DObjectGeometry(Object object) {
 		return null;
 	}
 }
