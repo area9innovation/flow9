@@ -305,7 +305,7 @@ class Object3DHelper {
 				RenderSupport3D.set3DObjectWorldScaleY(child, RenderSupport3D.get3DObjectLocalScaleY(child));
 				RenderSupport3D.set3DObjectWorldScaleZ(child, RenderSupport3D.get3DObjectLocalScaleZ(child));
 
-				RenderSupport3D.set3DObjectWorldRotationX(child, RenderSupport3D.get3DObjectRotationX(child));
+				RenderSupport3D.set3DObjectWorldRotationX(child, RenderSupport3D.get3DObjectLocalRotationX(child));
 				RenderSupport3D.set3DObjectWorldRotationY(child, RenderSupport3D.get3DObjectLocalRotationY(child));
 				RenderSupport3D.set3DObjectWorldRotationZ(child, RenderSupport3D.get3DObjectLocalRotationZ(child));
 			}

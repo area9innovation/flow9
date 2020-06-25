@@ -1288,7 +1288,7 @@ class RenderSupport3D {
 
 
 
-	public static function get3DObjectRotationX(object : Object3D) : Float {
+	public static function get3DObjectLocalRotationX(object : Object3D) : Float {
 		object.updateObject3DMatrix();
 		return object.rotation.x / 0.0174532925 /*degrees*/;
 	}
@@ -1592,7 +1592,7 @@ class RenderSupport3D {
 
 	public static function add3DObjectLocalRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
-			cb(get3DObjectRotationX(object), get3DObjectLocalRotationY(object), get3DObjectLocalRotationZ(object));
+			cb(get3DObjectLocalRotationX(object), get3DObjectLocalRotationY(object), get3DObjectLocalRotationZ(object));
 		};
 
 		fn(0);
@@ -2354,6 +2354,8 @@ class RenderSupport3D {
 				set3DObjectParameters(child, parameters);
 			}
 		}
+
+		object.invalidateStage();
 
 		return object;
 	}

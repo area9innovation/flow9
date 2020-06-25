@@ -320,7 +320,7 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Double get3DObjectRotationX(Object object) {
+	public Double get3DObjectLocalRotationX(Object object) {
 		return 0.0;
 	}
 	public Double get3DObjectLocalRotationY(Object object) {
