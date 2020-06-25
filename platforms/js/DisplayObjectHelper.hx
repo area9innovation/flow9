@@ -568,6 +568,8 @@ class DisplayObjectHelper {
 			}
 
 			clip.scrollRect = null;
+			clip.mask = null;
+			untyped clip.maskContainer = null;
 
 			invalidateTransform(clip, 'removeScrollRect');
 		}
