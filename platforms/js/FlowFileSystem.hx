@@ -5,19 +5,40 @@ import js.node.Fs;
 #if flash
 typedef FlowFile = flash.net.FileReference;
 #else
-typedef FlowFile = Dynamic; // cannos use js.html.File, because can be sliced to js.html.Blob
+typedef FlowFile = Dynamic; // cannot use js.html.File, because can be sliced to js.html.Blob
 #end
 
 class FlowFileSystem {
 
-	public static function createTempFile(name : String, content0 : String) : js.html.File {
+	public static function createTempFile(name : String, content0 : String) : FlowFile {
 		var content = content0;
 		if (Platform.isSafari && content0.indexOf("å") != -1) {
 			// https://trello.com/c/OM0aYCKj/9362-deploying-packages-in-safari-corrupts-the-content
 			content = StringTools.replace(content0, "å",  "å\u200b");
+		} else if (Platform.isIE || Platform.isEdge) {
+			// https://trello.com/c/sbSCtJQD/10221-content-package-deployment-impossible-with-microsoft-edge
+			var blob = new js.html.Blob([content], { });
+			return blob2file(name, blob);
 		}
 
 		return new js.html.File([content], name);
+	}
+
+	// to change Blob to File
+	private static function blob2file(name : String, jsBlob : js.html.Blob) : FlowFile {
+		var file2 =
+			untyped __js__("
+				Object.assign(jsBlob, {
+					lastModified: Date.now(),
+					lastModifiedDate: Date.now(),
+					name: name,
+					webkitRelativePath: '',
+					prototype: Object.getPrototypeOf(File),
+					__proto__: File,
+				})
+			");
+
+		return file2;
 	}
 
 	public static function createDirectory(dir : String) : String {
@@ -236,8 +257,10 @@ class FlowFileSystem {
 		var onFocus : Dynamic = null;
 		onFocus = function(e : Dynamic) {
 			js.Browser.window.removeEventListener("focus", onFocus);
-			js.Browser.window.removeEventListener("mousemove", onFocus);
-			js.Browser.window.removeEventListener("pointermove", onFocus);
+			if (Platform.isMobile) {
+				js.Browser.window.removeEventListener("mousemove", onFocus);
+				js.Browser.window.removeEventListener("pointermove", onFocus);
+			}
 
 			// onfocus is fired before the change of jsFileInput value
 			haxe.Timer.delay(function() {
@@ -245,8 +268,10 @@ class FlowFileSystem {
 			}, 500);
 		}
 		js.Browser.window.addEventListener("focus", onFocus);
-		js.Browser.window.addEventListener("mousemove", onFocus);
-		js.Browser.window.addEventListener("pointermove", onFocus);
+		if (Platform.isMobile) {
+			js.Browser.window.addEventListener("mousemove", onFocus);
+			js.Browser.window.addEventListener("pointermove", onFocus);
+		}
 
 		jsFileInput.click();
 		#end
