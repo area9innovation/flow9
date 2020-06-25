@@ -767,11 +767,15 @@ public class RenderSupport3D extends NativeHost {
 		return "";
 	}
 
+	public String get3DGeometryParameter(Object geometry, String name, String def) {
+		return "";
+	}
+
 	public Object[] get3DObjectMaterials(Object object) {
 		return new Object[0];
 	}
 
-	public Object get3DObjectGeometry(Object object) {
-		return null;
+	public Object[] get3DObjectGeometries(Object object) {
+		return new Object[0];
 	}
 }

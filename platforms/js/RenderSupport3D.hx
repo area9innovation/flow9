@@ -2394,11 +2394,19 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function get3DGeometryParameter(object : Geometry, name : String, def : String) : String {
+		if (untyped object.parameters != null && object.parameters[name] != null) {
+			return untyped object.parameters[name].toString();
+		} else {
+			return def;
+		}
+	}
+
 	public static function get3DObjectMaterials(object : Object3D) : Array<Material> {
 		return object.getMaterials();
 	}
 
-	public static function get3DObjectGeometry(object : Object3D) : Geometry {
-		return untyped object.geometry;
+	public static function get3DObjectGeometries(object : Object3D) : Array<Geometry> {
+		return untyped object.geometry != null ? [object.geometry] : [];
 	}
 }
