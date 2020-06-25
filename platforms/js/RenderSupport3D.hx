@@ -256,7 +256,10 @@ class RenderSupport3D {
 
 	public static function make3DObjectFromJSON(json : String) : Object3D {
 		json = haxe.Json.parse(json);
-		return new ObjectLoader().parse(json);
+		var object3d : Object3D = new ObjectLoader().parse(json);
+		object3d.updateObject3DParent();
+
+		return object3d;
 	}
 
 	public static function make3DObjectFromObj(obj : String, mtl : String) : Object3D {

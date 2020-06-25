@@ -621,4 +621,19 @@ class Object3DHelper {
 			object.updateMatrixWorld(true);
 		}
 	}
+
+	public static inline function updateObject3DParent(object : Object3D) : Void {
+		for (material in getMaterials(object)) {
+			untyped material.parent = object;
+		}
+
+		var childrenMap = get3DChildrenMap(object);
+		var i = 0;
+
+		for (child in get3DObjectAllChildren(object)) {
+			childrenMap.set(i, child);
+			updateObject3DParent(child);
+			i++;
+		}
+	}
 }
