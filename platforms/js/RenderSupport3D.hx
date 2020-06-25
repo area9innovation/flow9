@@ -1131,14 +1131,8 @@ class RenderSupport3D {
 
 	public static function get3DObjectById(stage : ThreeJSStage, id : String) : Array<Object3D> {
 		if (stage.scene != null) {
-			var objects = stage.scene.get3DObjectByUUID(id);
-			if (objects.length == 0) {
-				trace(objects);
-				trace(id);
-			}
-			return objects;
+			return stage.scene.get3DObjectByUUID(id);
 		} else {
-			trace("EMPTY SCENE");
 			return [];
 		}
 	}
