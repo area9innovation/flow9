@@ -37,10 +37,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object make3DObjectFromJSON(String json) {
+	public Object make3DObjectFromJSON(Object stage, String json) {
 		return null;
 	}
-	public Object make3DObjectFromObj(String obj, String mtl) {
+	public Object make3DObjectFromObj(Object stage, String obj, String mtl) {
 		return null;
 	}
 	public Object make3DGeometryFromJSON(String json) {

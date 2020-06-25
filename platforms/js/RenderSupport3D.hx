@@ -234,7 +234,7 @@ class RenderSupport3D {
 					&& property != 'children' && property != 'geometry' && property != 'childrenMap'
 					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
 					&& property != 'material' && property != 'broadcastable' && property != 'inside' && property != 'updateProjectionMatrix'
-					&& property != 'boxHelper') {
+					&& property != 'boxHelper' && property != 'shadow') {
 
 					if (Array.isArray(object1[property]) || object1[property] instanceof String) {
 						object2[property] = object1[property];
@@ -254,16 +254,19 @@ class RenderSupport3D {
 		");
 	}
 
-	public static function make3DObjectFromJSON(json : String) : Object3D {
+	public static function make3DObjectFromJSON(stage : ThreeJSStage, json : String) : Object3D {
 		json = haxe.Json.parse(json);
 		var object3d : Object3D = new ObjectLoader().parse(json);
-		object3d.updateObject3DParent();
+		stage.updateObject3DParent(object3d);
 
 		return object3d;
 	}
 
-	public static function make3DObjectFromObj(obj : String, mtl : String) : Object3D {
-		return untyped __js__("new THREE.OBJLoader().setMaterials(new THREE.MTLLoader().parse(mtl)).parse(obj)");
+	public static function make3DObjectFromObj(stage : ThreeJSStage, obj : String, mtl : String) : Object3D {
+		var object3d : Object3D = untyped __js__("new THREE.OBJLoader().setMaterials(new THREE.MTLLoader().parse(mtl)).parse(obj)");
+		stage.updateObject3DParent(object3d);
+
+		return object3d;
 	}
 
 	public static function make3DGeometryFromJSON(json : String) : Object3D {
@@ -1128,8 +1131,14 @@ class RenderSupport3D {
 
 	public static function get3DObjectById(stage : ThreeJSStage, id : String) : Array<Object3D> {
 		if (stage.scene != null) {
-			return stage.scene.get3DObjectByUUID(id);
+			var objects = stage.scene.get3DObjectByUUID(id);
+			if (objects.length == 0) {
+				trace(objects);
+				trace(id);
+			}
+			return objects;
 		} else {
+			trace("EMPTY SCENE");
 			return [];
 		}
 	}
