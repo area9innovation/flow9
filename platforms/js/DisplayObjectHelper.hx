@@ -931,19 +931,20 @@ class DisplayObjectHelper {
 
 				if (graphicsData != null && graphicsData.length > 0) {
 					var data = graphicsData[0];
+					var transform2 = prependInvertedMatrix(clip.mask.worldTransform, clip.worldTransform);
 
 					if (data.shape.type == 1) {
-						var point = applyTransformPoint(new Point(data.shape.x, data.shape.y), transform);
+						var point = applyTransformPoint(applyTransformPoint(new Point(data.shape.x, data.shape.y), transform2), transform);
 
 						tx = round(point.x);
 						ty = round(point.y);
 					} else if (data.shape.type == 2) {
-						var point = applyTransformPoint(new Point(round(data.shape.x - data.shape.radius), round(data.shape.y - data.shape.radius)), transform);
+						var point = applyTransformPoint(applyTransformPoint(new Point(round(data.shape.x - data.shape.radius), round(data.shape.y - data.shape.radius)), transform2), transform);
 
 						tx = round(point.x);
 						ty = round(point.y);
 					} else if (data.shape.type == 4) {
-						var point = applyTransformPoint(new Point(data.shape.x, data.shape.y), transform);
+						var point = applyTransformPoint(applyTransformPoint(new Point(data.shape.x, data.shape.y), transform2), transform);
 
 						tx = round(point.x);
 						ty = round(point.y);
@@ -1226,7 +1227,7 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (nativeWidget.firstChild != null) {
-			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0)) {
+			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0 || clip.scrollRect == null)) {
 				nativeWidget.firstChild.style.left = '${-round(x)}px';
 				nativeWidget.firstChild.style.top = '${-round(y)}px';
 
@@ -1238,66 +1239,68 @@ class DisplayObjectHelper {
 			}
 		}
 
-		var currentScrollLeft = round(nativeWidget.scrollLeft);
-		var currentScrollTop = round(nativeWidget.scrollTop);
+		if (untyped clip.scrollRect != null) {
+			var currentScrollLeft = round(nativeWidget.scrollLeft);
+			var currentScrollTop = round(nativeWidget.scrollTop);
 
-		var updateScrollRectFn = function() {
-			if (untyped clip.scrollRect != null && clip.parent != null) {
-				untyped clip.x = clip.x + clip.scrollRect.x - currentScrollLeft;
-				untyped clip.y = clip.y + clip.scrollRect.y - currentScrollTop;
+			var updateScrollRectFn = function() {
+				if (untyped clip.scrollRect != null && clip.parent != null) {
+					untyped clip.x = clip.x + clip.scrollRect.x - currentScrollLeft;
+					untyped clip.y = clip.y + clip.scrollRect.y - currentScrollTop;
 
-				untyped clip.scrollRect.x = currentScrollLeft;
-				untyped clip.scrollRect.y = currentScrollTop;
+					untyped clip.scrollRect.x = currentScrollLeft;
+					untyped clip.scrollRect.y = currentScrollTop;
 
-				invalidateTransform(untyped clip.scrollRect, "scrollNativeWidget");
+					invalidateTransform(untyped clip.scrollRect, "scrollNativeWidget");
 
-				untyped clip.scrollRectListener(currentScrollLeft, currentScrollTop);
-			}
-		}
-
-		var scrollFn = function() {
-			if (untyped clip.scrollRect != null && clip.parent != null) {
-				if (nativeWidget.scrollLeft != untyped clip.scrollRect.x) {
-					nativeWidget.scrollLeft = untyped clip.scrollRect.x;
-				}
-
-				if (nativeWidget.scrollTop != untyped clip.scrollRect.y) {
-					nativeWidget.scrollTop = untyped clip.scrollRect.y;
+					untyped clip.scrollRectListener(currentScrollLeft, currentScrollTop);
 				}
 			}
-		};
 
-		var onScrollFn =
-			if (untyped clip.scrollRectListener != null)
-				function() {
-					if (untyped clip.scrollRect != null && clip.parent != null) {
-						var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft);
-						var nativeWidgetScrollTop = round(nativeWidget.scrollTop);
+			var scrollFn = function() {
+				if (untyped clip.scrollRect != null && clip.parent != null) {
+					if (nativeWidget.scrollLeft != untyped clip.scrollRect.x) {
+						nativeWidget.scrollLeft = untyped clip.scrollRect.x;
+					}
 
-						if (nativeWidgetScrollLeft == currentScrollLeft && nativeWidgetScrollTop == currentScrollTop) {
-							return;
-						} else {
-							currentScrollLeft = nativeWidgetScrollLeft;
-							currentScrollTop = nativeWidgetScrollTop;
-						}
-
-						RenderSupport.off("drawframe", updateScrollRectFn);
-
-						if (RenderSupport.Animating) {
-							RenderSupport.once("drawframe", updateScrollRectFn);
-						} else {
-							updateScrollRectFn();
-						}
+					if (nativeWidget.scrollTop != untyped clip.scrollRect.y) {
+						nativeWidget.scrollTop = untyped clip.scrollRect.y;
 					}
 				}
-			else
-				scrollFn;
+			};
 
-		nativeWidget.onscroll = onScrollFn;
-		if (untyped clip.scrollRectListener == null || (x >= 0 && y >= 0)) {
-			scrollFn();
+			var onScrollFn =
+				if (untyped clip.scrollRectListener != null)
+					function() {
+						if (untyped clip.scrollRect != null && clip.parent != null) {
+							var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft);
+							var nativeWidgetScrollTop = round(nativeWidget.scrollTop);
+
+							if (nativeWidgetScrollLeft == currentScrollLeft && nativeWidgetScrollTop == currentScrollTop) {
+								return;
+							} else {
+								currentScrollLeft = nativeWidgetScrollLeft;
+								currentScrollTop = nativeWidgetScrollTop;
+							}
+
+							RenderSupport.off("drawframe", updateScrollRectFn);
+
+							if (RenderSupport.Animating) {
+								RenderSupport.once("drawframe", updateScrollRectFn);
+							} else {
+								updateScrollRectFn();
+							}
+						}
+					}
+				else
+					scrollFn;
+
+			nativeWidget.onscroll = onScrollFn;
+			if (untyped clip.scrollRectListener == null || (x >= 0 && y >= 0)) {
+				scrollFn();
+			}
+			untyped clip.scrollFn = scrollFn;
 		}
-		untyped clip.scrollFn = scrollFn;
 	}
 
 	public static function updateNativeWidgetMask(clip : DisplayObject, ?attachScrollFn : Bool = false) {
@@ -1376,14 +1379,24 @@ class DisplayObjectHelper {
 					nativeWidget.style.overflow = null;
 					nativeWidget.style.borderRadius = null;
 
-					var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
+					var svgChildren = getSVGChildren(clip);
 
 					if (untyped mask.parent.localTransformChanged) {
 						untyped mask.parent.transform.updateLocalTransform();
 					}
 
-					if (Platform.isIE || svgs.length == 1) {
-						for (svg in svgs) {
+					if (Platform.isIE || svgChildren.length == 1) {
+						for (svgClip in svgChildren) {
+							if (untyped svgClip.nativeWidget == null) {
+								continue;
+							}
+
+							var svg : Element = untyped svgClip.nativeWidget.firstChild;
+
+							if (untyped svg == null) {
+								continue;
+							}
+
 							var elementId = untyped svg.parentNode.getAttribute('id');
 							var clipMask : Element = untyped svg.getElementById(elementId + "mask");
 
@@ -1402,13 +1415,12 @@ class DisplayObjectHelper {
 
 							var path = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'path');
 							var d : String = untyped __js__("data.shape.points.map(function(p, i) {
-								return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p * mask.parent.localTransform.a + ' ' : '' + p * mask.parent.localTransform.d + ' ';
+								return i % 2 == 0 ? (i == 0 ? 'M' : 'L') + p + ' ' : '' + p + ' ';
 							}).join('')");
 							path.setAttribute("d", d);
 							path.setAttribute("fill", "white");
-							path.setAttribute('transform', 'matrix(1 0 0 1
-								${untyped -Std.int(svg.parentNode.style.marginLeft.substring(0, svg.parentNode.style.marginLeft.length - 2)) - Std.int(svg.parentNode.style.left.substring(0, svg.parentNode.style.left.length - 2))}
-								${untyped -Std.int(svg.parentNode.style.marginTop.substring(0, svg.parentNode.style.marginTop.length - 2)) - Std.int(svg.parentNode.style.top.substring(0, svg.parentNode.style.top.length - 2))})');
+							var transform = prependInvertedMatrix(mask.worldTransform, svgClip.worldTransform);
+							path.setAttribute('transform', 'matrix(${transform.a} ${transform.b} ${transform.c} ${transform.d} ${transform.tx} ${transform.ty})');
 							clipMask.setAttribute('id', elementId + "mask");
 
 							clipMask.appendChild(path);
@@ -1420,9 +1432,9 @@ class DisplayObjectHelper {
 							}
 						}
 					} else {
-						var transform = prependInvertedMatrix(clip.worldTransform, untyped clip.mask.worldTransform);
+						var transform = prependInvertedMatrix(clip.worldTransform, mask.worldTransform);
 						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
-							return i % 2 == 0 ? '' + p * transform1.a + 'px ' : '' + p * transform1.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
+							return i % 2 == 0 ? '' + p * transform.a + 'px ' : '' + p * transform.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
 						}).join('') + ')'");
 						untyped nativeWidget.style.webkitClipPath = nativeWidget.style.clipPath;
 					}
@@ -1432,7 +1444,10 @@ class DisplayObjectHelper {
 					nativeWidget.style.borderRadius = null;
 					nativeWidget.style.overflow = "hidden";
 
-					scrollNativeWidget(clip, round(data.shape.x), round(data.shape.y));
+					var transform = prependInvertedMatrix(mask.worldTransform, clip.worldTransform);
+					var point = applyTransformPoint(new Point(data.shape.x, data.shape.y), transform);
+
+					scrollNativeWidget(clip, round(point.x), round(point.y));
 				} else if (data.shape.type == 2) {
 					untyped nativeWidget.style.webkitClipPath = null;
 					nativeWidget.style.clipPath = null;
@@ -1457,6 +1472,16 @@ class DisplayObjectHelper {
 				removeNativeMask(clip);
 			}
 		}
+	}
+
+	public static function getSVGChildren(clip : DisplayObject) : Array<DisplayObject> {
+		var result : Array<DisplayObject> = untyped clip.isSvg ? [clip] : [];
+
+		for (child in getClipChildren(clip)) {
+			result = result.concat(getSVGChildren(child));
+		}
+
+		return result;
 	}
 
 	public static function updateNativeWidgetInteractive(clip : DisplayObject) : Void {
