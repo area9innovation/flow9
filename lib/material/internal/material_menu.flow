@@ -516,40 +516,61 @@ MDropDownMenu2T(
 	selected = MSingleSelection(currentInner);
 	closed = ref !getValue(openMenu.opened);
 
+	focusState =
+		replaceStructMany(
+			extractMComponentGroupState(m.style),
+			[
+				IScriptBehaviour(
+					"selected",
+					current,
+					ISInputValue(map(items, \item -> {
+							switch (item) {
+								MMenuSingleLine(title, __) : title;
+								default : "";
+							}
+						}),
+						"index",
+						true
+					)
+				)
+			]
+		);
+
 	onClick = \ -> if (^closed) next(openMenu.opened, true);
-	(\p -> {
-		mWidth =
-			extractStruct(style, MWidth(0.)).width
-			|> (\f2 ->
-				if (f2 != 0.)
-					f2
-				else
-					MMenuLines2MPopup(
-						manager,
-						arrayPush(items, nonSpecified)
-						|> (\f3 : [MDropDownMenuLine] -> if (isNone(customButton)) map(f3, addIcons) else f3),
-						MDropDownMenuStyle2MMenuStyle(style),
-						m2t,
-						const(zeroPositionScale),
-						const(WidthHeight(0., 0.)),
-						0.,
-						nop
-					).items
-					|> MGrid
-					|> (\f3 -> m2t(f3, p))
-					|> (\f3 -> getTWordMetrics(f3, makeTree()).width) // TODO : Rework without using getTWordMetrics
-			);
+	mWidth =
+		extractStruct(style, MWidth(0.)).width
+		|> (\f2 ->
+			if (f2 != 0.)
+				f2
+			else
+				MMenuLines2MPopup(
+					manager,
+					arrayPush(items, nonSpecified)
+					|> (\f3 : [MDropDownMenuLine] -> if (isNone(customButton)) map(f3, addIcons) else f3),
+					MDropDownMenuStyle2MMenuStyle(style),
+					m2t,
+					const(zeroPositionScale),
+					const(WidthHeight(0., 0.)),
+					0.,
+					nop
+				).items
+				|> MGrid
+				|> (\f3 -> m2t(f3, parent))
+				|> (\f3 -> getTWordMetrics(f3, makeTree()).width) // TODO : Rework without using getTWordMetrics
+		);
 
-		menuStyle =
-			style
-			|> (\st -> replaceStruct(st, MWidth(mWidth)))
-			|> (\st -> replaceStruct(st, openMenu))
-			|> MDropDownMenuStyle2MMenuStyle
-			|> (\st -> arrayPush(st, selected))
-			|> (\st -> ifArrayPush(st, isNone(customButton) && mWidth >= 0.0, MWidthByButton()))
-			|> (\st -> if (contains(style, MNonSpecifiedAlwaysOnTop())) arrayPush(st, MMenuNonSpecifiedAlwaysOnTop(nonSpecified)) else st) 
-			|> (\st -> arrayPush(st, MBelowButton()));
+	menuStyle =
+		style
+		|> (\st -> replaceStruct(st, MWidth(mWidth)))
+		|> (\st -> replaceStruct(st, openMenu))
+		|> (\st -> replaceStruct(st, MFocusName("MDropDownMenu")))
+		|> MDropDownMenuStyle2MMenuStyle
+		|> (\st -> arrayPush(st, selected))
+		|> (\st -> ifArrayPush(st, isNone(customButton) && mWidth >= 0.0, MWidthByButton()))
+		|> (\st -> if (contains(style, MNonSpecifiedAlwaysOnTop())) arrayPush(st, MMenuNonSpecifiedAlwaysOnTop(nonSpecified)) else st) 
+		|> (\st -> arrayPush(st, MBelowButton()));
 
+	MGetFocusGroup(\p ->
 		eitherFn(
 			customButton,
 			\cb ->
@@ -597,59 +618,40 @@ MDropDownMenu2T(
 				)
 			}
 		)
-		|> (\f -> MMenu(f, items, menuStyle))
-		|> (\f -> MMenu2T(manager, p, f, m2t))
-		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
-		|> (\f ->
-			TConstruct(
-				[
-					\ -> makeBidirectionalLink(current, currentInner,
-						\c -> foldi(items, -1, \i, acc, it -> {
-							if (acc < c && (isSameStructType(it, MMenuSingleLine("", [])) ||
-									isSameStructType(it, MMenuCustomLine(TEmpty(), [])))) {
-								if (acc == c - 1) i	else acc + 1
-							} else acc
-						}),
-						\ci -> {
-							if (ci >= 0) {
-								countA(subrange(items, 0, ci), \it -> {
-									isSameStructType(it, MMenuSingleLine("", [])) || isSameStructType(it, MMenuCustomLine(TEmpty(), []))
-								})
-							} else -1
-						},
-						!contains(style, MForceUpdate())
-					),
-					makeSubscribe(openMenu.opened, \opn -> if (opn) closed := false else timer(100, \ -> closed := true))
-				],
-				f
-			)
+	)
+	|> (\f -> MMenu(f, items, menuStyle))
+	|> (\f -> MMenu2T(manager, parent, f, m2t))
+	|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
+	|> (\f ->
+		TConstruct(
+			[
+				\ -> makeBidirectionalLink(current, currentInner,
+					\c -> foldi(items, -1, \i, acc, it -> {
+						if (acc < c && (isSameStructType(it, MMenuSingleLine("", [])) ||
+								isSameStructType(it, MMenuCustomLine(TEmpty(), [])))) {
+							if (acc == c - 1) i	else acc + 1
+						} else acc
+					}),
+					\ci -> {
+						if (ci >= 0) {
+							countA(subrange(items, 0, ci), \it -> {
+								isSameStructType(it, MMenuSingleLine("", [])) || isSameStructType(it, MMenuCustomLine(TEmpty(), []))
+							})
+						} else -1
+					},
+					!contains(style, MForceUpdate())
+				),
+				makeSubscribe(openMenu.opened, \opn -> if (opn) closed := false else timer(100, \ -> closed := true))
+			],
+			f
 		)
-		|> if (isNone(customButton) && mWidth > 0.)
+	)
+	|> (
+		if (isNone(customButton) && mWidth > 0.)
 			makeTropicConstantWidth(Some(mWidth + (if (leftIcon) 72. else 0.) - (if (croppedButton) 2. * lineBorders else 0.)))
 		else
 			idfn
-	})
-	|> (\f -> MComponentGroup2T(
-		manager,
-		parent,
-		"MDropDownMenu",
-		[
-			IScriptBehaviour(
-				"selected",
-				current,
-				ISInputValue(map(items, \item -> {
-						switch (item) {
-							MMenuSingleLine(title, __) : title;
-							default : "";
-						}
-					}),
-					"index",
-					true
-				)
-			)
-		],
-		f
-	))
+	);
 }
 
 MMultiSelectDropDown2T(
