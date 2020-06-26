@@ -14,7 +14,8 @@ export {
 	) -> Tropic;
 	MDropDownMenuStyle2MMenuStyle(style : [MDropDownMenuStyle]) -> [MMenuStyle];
 
-	MDropDownIcon(opened : Transform<bool>, iconSize : double) -> Material;
+	MDropDownIcon(opened : Transform<bool>, style : [MDropDownIconStyle]) -> Material;
+		MDropDownIconStyle ::= MIconSize, MIconBorder4;
 
 	MMenuLines2MPopup(
 		manager : MaterialManager,
@@ -496,9 +497,10 @@ MDropDownMenu2T(
 	addClear = contains(style, MAddClearButton());
 
 	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
+	iconBorders = extractStruct(style, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
 
 	icon =
-		MDropDownIcon(openMenu.opened, iconSize)
+		MDropDownIcon(openMenu.opened, [MIconSize(iconSize), iconBorders])
 		|> (\t -> if (addClear) MCols2A(t, MDropDownClearIcon(current, -1, iconSize)) else t)
 		|> MCenterY;
 
@@ -514,40 +516,61 @@ MDropDownMenu2T(
 	selected = MSingleSelection(currentInner);
 	closed = ref !getValue(openMenu.opened);
 
+	focusState =
+		replaceStructMany(
+			extractMComponentGroupState(m.style),
+			[
+				IScriptBehaviour(
+					"selected",
+					current,
+					ISInputValue(map(items, \item -> {
+							switch (item) {
+								MMenuSingleLine(title, __) : title;
+								default : "";
+							}
+						}),
+						"index",
+						true
+					)
+				)
+			]
+		);
+
 	onClick = \ -> if (^closed) next(openMenu.opened, true);
-	(\p -> {
-		mWidth =
-			extractStruct(style, MWidth(0.)).width
-			|> (\f2 ->
-				if (f2 != 0.)
-					f2
-				else
-					MMenuLines2MPopup(
-						manager,
-						arrayPush(items, nonSpecified)
-						|> (\f3 : [MDropDownMenuLine] -> if (isNone(customButton)) map(f3, addIcons) else f3),
-						MDropDownMenuStyle2MMenuStyle(style),
-						m2t,
-						const(zeroPositionScale),
-						const(WidthHeight(0., 0.)),
-						0.,
-						nop
-					).items
-					|> MGrid
-					|> (\f3 -> m2t(f3, p))
-					|> (\f3 -> getTWordMetrics(f3, makeTree()).width) // TODO : Rework without using getTWordMetrics
-			);
+	mWidth =
+		extractStruct(style, MWidth(0.)).width
+		|> (\f2 ->
+			if (f2 != 0.)
+				f2
+			else
+				MMenuLines2MPopup(
+					manager,
+					arrayPush(items, nonSpecified)
+					|> (\f3 : [MDropDownMenuLine] -> if (isNone(customButton)) map(f3, addIcons) else f3),
+					MDropDownMenuStyle2MMenuStyle(style),
+					m2t,
+					const(zeroPositionScale),
+					const(WidthHeight(0., 0.)),
+					0.,
+					nop
+				).items
+				|> MGrid
+				|> (\f3 -> m2t(f3, parent))
+				|> (\f3 -> getTWordMetrics(f3, makeTree()).width) // TODO : Rework without using getTWordMetrics
+		);
 
-		menuStyle =
-			style
-			|> (\st -> replaceStruct(st, MWidth(mWidth)))
-			|> (\st -> replaceStruct(st, openMenu))
-			|> MDropDownMenuStyle2MMenuStyle
-			|> (\st -> arrayPush(st, selected))
-			|> (\st -> ifArrayPush(st, isNone(customButton) && mWidth >= 0.0, MWidthByButton()))
-			|> (\st -> if (contains(style, MNonSpecifiedAlwaysOnTop())) arrayPush(st, MMenuNonSpecifiedAlwaysOnTop(nonSpecified)) else st) 
-			|> (\st -> arrayPush(st, MBelowButton()));
+	menuStyle =
+		style
+		|> (\st -> replaceStruct(st, MWidth(mWidth)))
+		|> (\st -> replaceStruct(st, openMenu))
+		|> (\st -> replaceStruct(st, MFocusName("MDropDownMenu")))
+		|> MDropDownMenuStyle2MMenuStyle
+		|> (\st -> arrayPush(st, selected))
+		|> (\st -> ifArrayPush(st, isNone(customButton) && mWidth >= 0.0, MWidthByButton()))
+		|> (\st -> if (contains(style, MNonSpecifiedAlwaysOnTop())) arrayPush(st, MMenuNonSpecifiedAlwaysOnTop(nonSpecified)) else st) 
+		|> (\st -> arrayPush(st, MBelowButton()));
 
+	MGetFocusGroup(\p ->
 		eitherFn(
 			customButton,
 			\cb ->
@@ -595,59 +618,40 @@ MDropDownMenu2T(
 				)
 			}
 		)
-		|> (\f -> MMenu(f, items, menuStyle))
-		|> (\f -> MMenu2T(manager, p, f, m2t))
-		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
-		|> (\f ->
-			TConstruct(
-				[
-					\ -> makeBidirectionalLink(current, currentInner,
-						\c -> foldi(items, -1, \i, acc, it -> {
-							if (acc < c && (isSameStructType(it, MMenuSingleLine("", [])) ||
-									isSameStructType(it, MMenuCustomLine(TEmpty(), [])))) {
-								if (acc == c - 1) i	else acc + 1
-							} else acc
-						}),
-						\ci -> {
-							if (ci >= 0) {
-								countA(subrange(items, 0, ci), \it -> {
-									isSameStructType(it, MMenuSingleLine("", [])) || isSameStructType(it, MMenuCustomLine(TEmpty(), []))
-								})
-							} else -1
-						},
-						!contains(style, MForceUpdate())
-					),
-					makeSubscribe(openMenu.opened, \opn -> if (opn) closed := false else timer(100, \ -> closed := true))
-				],
-				f
-			)
+	)
+	|> (\f -> MMenu(f, items, menuStyle))
+	|> (\f -> MMenu2T(manager, parent, f, m2t))
+	|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
+	|> (\f ->
+		TConstruct(
+			[
+				\ -> makeBidirectionalLink(current, currentInner,
+					\c -> foldi(items, -1, \i, acc, it -> {
+						if (acc < c && (isSameStructType(it, MMenuSingleLine("", [])) ||
+								isSameStructType(it, MMenuCustomLine(TEmpty(), [])))) {
+							if (acc == c - 1) i	else acc + 1
+						} else acc
+					}),
+					\ci -> {
+						if (ci >= 0) {
+							countA(subrange(items, 0, ci), \it -> {
+								isSameStructType(it, MMenuSingleLine("", [])) || isSameStructType(it, MMenuCustomLine(TEmpty(), []))
+							})
+						} else -1
+					},
+					!contains(style, MForceUpdate())
+				),
+				makeSubscribe(openMenu.opened, \opn -> if (opn) closed := false else timer(100, \ -> closed := true))
+			],
+			f
 		)
-		|> if (isNone(customButton) && mWidth > 0.)
+	)
+	|> (
+		if (isNone(customButton) && mWidth > 0.)
 			makeTropicConstantWidth(Some(mWidth + (if (leftIcon) 72. else 0.) - (if (croppedButton) 2. * lineBorders else 0.)))
 		else
 			idfn
-	})
-	|> (\f -> MComponentGroup2T(
-		manager,
-		parent,
-		"MDropDownMenu",
-		[
-			IScriptBehaviour(
-				"selected",
-				current,
-				ISInputValue(map(items, \item -> {
-						switch (item) {
-							MMenuSingleLine(title, __) : title;
-							default : "";
-						}
-					}),
-					"index",
-					true
-				)
-			)
-		],
-		f
-	))
+	);
 }
 
 MMultiSelectDropDown2T(
@@ -688,8 +692,9 @@ MMultiSelectDropDown2T(
 	onClick = \ -> nextDistinct(opened, true);
 
 	iconSize = 20.;
+	iconBorders = extractStruct(style, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
 	icon =
-		MDropDownIcon(opened, iconSize)
+		MDropDownIcon(opened, [MIconSize(iconSize), iconBorders])
 		|> (\t -> if (addClear) MCols2A(t, MDropDownClearIcon(selected, [], iconSize)) else t)
 		|> MCenterY;
 
@@ -927,7 +932,8 @@ MDropDownMenuButton2T(
 	mWidth = extractStruct(style0, MWidth(-1.)).width;
 	croppedButton = contains(style0, MCroppedButton());
 	lineBorders0 = extractStruct(style0, MMenuLineBorders(if (tableFooter) 16. else 24.)).borders;
-	lineBorders = if (croppedButton) 0. else lineBorders0;
+	buttonBorders = extractStruct(style0, MDropDownMenuButtonBorder(lineBorders0)).border;
+	lineBorders = if (croppedButton) 0. else buttonBorders;
 	color : MColor = extractStruct(style0, if (lightBackground) MBlack() else MWhite());
 	textStyle = [
 		if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading(),
@@ -1021,7 +1027,7 @@ MDropDownMenuButton2T(
 			)
 	)
 	|> (if (croppedButton)
-			TBorderLeftRight(lineBorders0)
+			TBorderLeftRight(buttonBorders)
 		else
 			idfn)
 	|> (\f -> TAvailable(f, if (mWidth < 0.) TFillX() else TFixed(mWidth, 0.)))
@@ -1232,9 +1238,11 @@ MMenuLines2MPopup(
 	textStyle = [if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading()];
 	borders = if (lineHeight == 32.) 16. else 8.;
 	lineBorders = extractStruct(style0, MMenuLineBorders(if (tableFooter) 16. else 24.)).borders;
+	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
+	iconBorders = extractStruct(style0, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
 
 	dropDownIcon =
-		MDropDownIcon(openMenu.opened, if (tableRow || tableFooter) 16.0 else 20.0)
+		MDropDownIcon(openMenu.opened, [MIconSize(iconSize), iconBorders])
 		|> (\m -> MCenterYIn(m, TFixed(0., lineHeight)));
 
 	onItemClick = \i, click -> \ -> {
@@ -1608,7 +1616,9 @@ MDropDownMenuStyle2MMenuStyle(style : [MDropDownMenuStyle]) -> [MMenuStyle] {
 	})
 }
 
-MDropDownIcon(opened : Transform<bool>, iconSize : double) -> Material {
+MDropDownIcon(opened : Transform<bool>, style : [MDropDownIconStyle]) -> Material {
+	iconSize = extractStruct(style, MIconSize(20.)).size;
+	borders = extractStruct(style, MIconBorder4(0., 0., 0., 0.));
 	MGetFocusGroup(\parent -> TIfLazy2(
 		opened,
 		\op ->
@@ -1623,6 +1633,7 @@ MDropDownIcon(opened : Transform<bool>, iconSize : double) -> Material {
 		true
 	))
 	|> (\m -> MFixSize(m, TFixed(iconSize, iconSize)))
+	|> (\m -> MBorder(borders.left, borders.top, borders.right, borders.bottom, m))
 }
 
 MDropDownClearIcon(selected : DynamicBehaviour<?>, emptySelection : ?, iconSize : double) -> Material {
