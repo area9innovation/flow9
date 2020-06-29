@@ -14,7 +14,8 @@ choice.
 3.  [Clone the repositories](#clone-the-repositories)
 4.  [Install `Haxe`](#install-haxe)
 5.  [Install `Neko`](#install-neko)
-7.  [Compile Flow itself](#compile-flow-itself)
+6.  [Install `JDK`](#install-jdk)
+7.  [Compile Flow itself(Optional)](#compile-flow-itself-optional)
 8.  [Check it using flowcpp (C++ runner)](#c-runner-flowcpp)
 9.  [Install fdb, the Flow debugger](#fdb-the-flow-debugger)
 10. [Check it using flowjs (Javascript in browser)](#try-it-javascript-in-browser)
@@ -229,7 +230,7 @@ sudo ln -s /usr/lib32/nvidia-375/libEGL.so.1 /usr/lib32/nvidia-375/libEGL.so.375
 ```
 Note that `LD_LIBRARY_PATH` will not actually contain the path to Neko,
 but the system can now find libraries on that path nonetheless.
-# Compile Flow itself
+# Compile Flow itself(Optional)
 Neko version of flow from the repo should be fine but if you wish to compile your own, do:
 ```bash
 cd ~/area9/flow9/tools/flow
@@ -240,6 +241,15 @@ The following file will be created or overwritten:
 ```
 flow9/bin/flow.n
 ```
+
+# Install `JDK`
+Be sure that you have installed JDK 11 or newer in a 64-bit version. That is required by the *flowc* compiler, which is used
+by default. You may find it here:
+
+	https://www.oracle.com/java/technologies/javase-jdk11-downloads.html
+
+OpenJDK is suitable as well.
+
 # C++ runner (flowcpp)
 Under linux it’s easier to compile yourself a binary instead of using
 the precompiled one. To do so, you should have Qt 5.12.0 set up by default

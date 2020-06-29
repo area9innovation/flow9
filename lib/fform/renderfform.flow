@@ -1187,8 +1187,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		}
 		FVideo(filename, wh, style): {
 			streamListenerResponse = ref false;
-			decreaseFFilesCount = if (cpp) increaseFFilesCount() else nop;
 			realVideoSize = extractStruct(style, FVideoRealSize(make(getValue(wh)))).size;
+			inspectVideoArea = tryExtractStruct(style, FInspectVideoArea(make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.), Factor(0., 0.)))));
 
 			playing = extractStruct(style, FVideoPlay(make(true))).play;
 			position = extractStruct(style, FVideoPosition(make(0.))).position;
@@ -1222,8 +1222,6 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						if (getValue(wh).width == 0. && getValue(wh).height == 0.) {
 							nextDistinct(wh, WidthHeight(w, h));
 						}
-
-						decreaseFFilesCount();
 					},
 					\p -> {
 						streamListenerResponse := true;
@@ -1251,7 +1249,6 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			streamListener = addStreamStatusListener(video, \code -> {
 				if (code == "NetStream.Play.StreamNotFound") {
 					errorHandlerFn();
-					decreaseFFilesCount();
 					synchroCalls.onStart();
 					timer(1000, synchroCalls.onStop);
 				} else if (code == "NetStream.Play.Start") {
@@ -1286,29 +1283,37 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								xScale = cwh.width / rwh.width;
 								yScale = cwh.height / rwh.height;
 
+								setClipMetrics = \xSc, ySc, clX, clY -> {
+									setClipScaleX(video, xSc);
+									setClipScaleY(video, ySc);
+									setClipX(video, clX);
+									setClipY(video, clY);
+									maybeApply(inspectVideoArea, \iva ->
+										nextDistinct(iva.metrics, FVideoAreaMetrics(
+											Point(clX, clY),
+											WidthHeight(rwh.width * xSc, rwh.height * ySc),
+											Factor(xSc, ySc)
+										))
+									)
+								}
+
 								if (cover) {
 									xyScale = max(xScale, yScale);
-									setClipScaleX(video, xyScale);
-									setClipScaleY(video, xyScale);
-									setClipX(video, (cwh.width - rwh.width * xyScale) * forceRange(alX, 0., 1.));
-									setClipY(video, (cwh.height - rwh.height * xyScale) * forceRange(alY, 0., 1.));
+									clipX = (cwh.width - rwh.width * xyScale) * forceRange(alX, 0., 1.);
+									clipY = (cwh.height - rwh.height * xyScale) * forceRange(alY, 0., 1.);
+									setClipMetrics(xyScale, xyScale, clipX, clipY)
 								} else if (kar) {
 									xyScale = min(xScale, yScale);
-									setClipScaleX(video, xyScale);
-									setClipScaleY(video, xyScale);
-									setClipX(video, max(cwh.width - rwh.width * xyScale, 0.) / 2.);
-									setClipY(video, max(cwh.height - rwh.height * xyScale, 0.) / 2.);
+									clipX = max(cwh.width - rwh.width * xyScale, 0.) / 2.;
+									clipY = max(cwh.height - rwh.height * xyScale, 0.) / 2.;
+									setClipMetrics(xyScale, xyScale, clipX, clipY)
 								} else {
-									setClipScaleX(video, xScale);
-									setClipScaleY(video, yScale);
-									setClipX(video, 0.);
-									setClipY(video, 0.);
+									setClipMetrics(xScale, yScale, 0., 0.)
 								}
 							}
 						})(),
 						makeSubscribe2(playing, \pl -> if (!^streamListenerResponse) { if (pl) resumeVideo(video) else pauseVideo(video) })(),
-						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))(),
-						decreaseFFilesCount
+						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
 					],
 					if (targetVideoLooping())
 						eitherMap(

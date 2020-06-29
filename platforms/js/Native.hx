@@ -1875,12 +1875,12 @@ class Native {
 
 				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
 				parseJsonFirstCall = false;
-		   }
+			}
 
-		   return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
-	   } catch (e : Dynamic) {
-		   return makeStructValue("JsonDouble", [0.0], null);
-	   }
+			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
+		} catch (e : Dynamic) {
+			return makeStructValue("JsonDouble", [0.0], null);
+		}
 	}
 	#end
 

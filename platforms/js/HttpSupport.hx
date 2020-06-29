@@ -643,7 +643,7 @@ class HttpSupport {
 				payloadName = p[1];
 			}
 		};
-		form_data.append(payloadName, file);
+		form_data.append(payloadName, file, file.name);
 
 		for (header in headers) {
 			xhr.setRequestHeader(header[0], header[1]);
