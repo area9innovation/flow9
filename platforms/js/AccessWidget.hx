@@ -11,8 +11,6 @@ import pixi.core.math.Point;
 using DisplayObjectHelper;
 
 class AccessWidgetTree extends EventEmitter {
-	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
-
 	@:isVar public var id(get, set) : Int;
 	@:isVar public var accessWidget(get, set) : AccessWidget;
 	@:isVar public var parent(get, set) : AccessWidgetTree;
@@ -230,7 +228,7 @@ class AccessWidgetTree extends EventEmitter {
 					}
 				}
 
-				if (DebugAccessOrder) {
+				if (DisplayObjectHelper.DebugAccessOrder) {
 					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
 					nativeWidget.setAttribute("zorder", '${zorder}');
 					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
@@ -365,26 +363,13 @@ class AccessWidgetTree extends EventEmitter {
 
 		if (previousChild != null) {
 			if (previousChild.accessWidget != null && previousChild.accessWidget != child.accessWidget) {
-				if (previousChild.accessWidget.nodeindex == null) {
-					previousChild.id = nextId;
+				previousChild.id = nextId;
 
-					nextId++;
-					childrenSize++;
-					children.set(child.id, child);
-					child.parent = this;
-					child.emit("added");
-				} else {
-					AccessWidget.addAccessWidgetWithoutNodeindex(child.accessWidget, child.accessWidget.clip.parent);
-
-					var addFn = function() {
-						if (child != null && child.accessWidget != null && child.accessWidget.clip != null && child.accessWidget.clip.parent != null) {
-							AccessWidget.addAccessWidget(child.accessWidget);
-						}
-					};
-
-					child.once("removed", function() { previousChild.off("removed", addFn); });
-					previousChild.once("removed", addFn);
-				}
+				nextId++;
+				childrenSize++;
+				children.set(child.id, child);
+				child.parent = this;
+				child.emit("added");
 			} else {
 				previousChild.accessWidget = child.accessWidget;
 			}
@@ -420,8 +405,6 @@ class AccessWidgetTree extends EventEmitter {
 			childrenSize--;
 			child.parent = null;
 			child.emit("removed");
-		} else {
-			Native.printCallstack();
 		}
 
 		if (destroy && childrenSize == 0 && accessWidget == null && parent != null) {
@@ -451,6 +434,7 @@ class AccessWidget extends EventEmitter {
 		"contentinfo" => "footer",
 		"form" => "form",
 		"textbox" => "input",
+		"switch" => "button"
 	];
 
 	public static var zIndexValues = {
@@ -1039,7 +1023,7 @@ class AccessWidget extends EventEmitter {
 		if (tree == null) {
 			tree = AccessWidget.tree;
 
-			if (AccessWidgetTree.DebugAccessOrder && tree.childrenChanged) {
+			if (DisplayObjectHelper.DebugAccessOrder && tree.childrenChanged) {
 				printTree();
 			}
 		}

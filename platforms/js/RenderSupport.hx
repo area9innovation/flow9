@@ -2785,6 +2785,7 @@ class RenderSupport {
 		}
 
 		untyped RenderSupport.LayoutText = true;
+		emit("enable_sprites");
 		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
@@ -2792,15 +2793,17 @@ class RenderSupport {
 
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
-			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
 
 			render();
 
 			return img;
 		} catch(e : Dynamic) {
-			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
 
 			render();
 

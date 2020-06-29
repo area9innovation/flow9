@@ -1,12 +1,14 @@
 import material/internal/material_ellipsis;
 import material/internal/material_movable;
+import material/internal/material_component;
 import material/internal/tropic_size_util;
 
 export {
 	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
 		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
 		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent, MDialogCloseButton,
-		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MDialogCloseOnForceRender, MAddSafeArea;
+		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MDialogCloseOnForceRender, MAddSafeArea,
+		MPassClicks;
 
 		// These are very commonly recommended
 		MDialogTitle(title : string);
@@ -23,7 +25,9 @@ export {
 		MDialogCloseButton(close : Material); // it looks like not too "Material"
 		MDialogNoAnimation();
 		MDialogFullScreen();
-		MDialogFullWindow(fullWindow : bool); // Hide all clips outside and below dialog
+		// Hide all clips outside and below dialog
+		// Defaults to true in js with MDialogUseFrame and MDialogFullScreen styles present
+		MDialogFullWindow(fullWindow : bool);
 		MDialogClickOutToClose();
 		// e.g. useful for MTimePicker and similar, close dialog and act as a "cancel" button
 		MDialogClickOutToCancel(pickerValue : DynamicBehaviour<flow>);
@@ -115,7 +119,7 @@ renderMDialog2(
 	scrollStyle = extractStruct(style, MDialogScrollStyle([]));
 	fullScreen = contains(style, MDialogFullScreen());
 	useFrame = contains(style, MDialogUseFrame());
-	fullWindow = extractStruct(style, MDialogFullWindow(fullScreen && useFrame)).fullWindow;
+	fullWindow = extractStruct(style, MDialogFullWindow(fullScreen && useFrame && js)).fullWindow;
 	blockKeyboardEvents = contains(style, MDialogKeyEventBlock());
 	clickOutToClose = contains(style, MDialogClickOutToClose());
 	clickOutToCancel = tryExtractStruct(style, MDialogClickOutToCancel(make(false)));
@@ -131,6 +135,7 @@ renderMDialog2(
 	sameZorder = extractStruct(style, MSameZorder(nonModal)).same;
 	zUns = if (sameZorder) nop else pushZorder(manager);
 	zorder = fgetValue(manager.manager.zorder);
+	passClicks = contains(style, MPassClicks());
 
 	onClose = extractStruct(style, MDialogOnClose(nop)).onClose;
 	name = "MDialog";
@@ -163,6 +168,7 @@ renderMDialog2(
 	noAnimation = noCenter || isSome(draggable) || contains(style, MDialogNoAnimation()) || !manager.theme.enableAnimations;
 	easing = if (noAnimation) EasingAnimation(nop, const(1.)) else makeEasing(0.6, easingStandartCurve, managerTimer(manager), nop);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
+	cs = if (isMaterialLogLevelEnabled(MaterialError())) captureStringCallstack() else "";
 
 	dialogResizableMinSize = 24.;
 	actionsW = make(0.);
@@ -349,8 +355,8 @@ renderMDialog2(
 				t
 			)
 		)
-		|> disableBelow(sameZorder)
-		|> (\t -> if (sameZorder) TCursor(ArrowCursor(), t) else t)
+		|> disableBelow(!passClicks && sameZorder)
+		|> (\t -> if (!passClicks && sameZorder) TCursor(ArrowCursor(), t) else t)
 		|> (\t : Tropic ->
 			if (resizable)
 				MResizable2T(
@@ -515,15 +521,63 @@ renderMDialog2(
 			)
 		)
 	})
+	|> (\f ->
+		if (isMaterialLogLevelEnabled(MaterialError()) && strlen(cs) > 3) {
+			color = randomMColor();
+
+			TCopySize(
+				f,
+				\sz ->
+					TGroup2(
+						TRounded(4.0, 4.0, 4.0, 4.0, [MStroke(color)], sz |> TBorderBottom(-1.0) |> TBorderRight(-1.0)),
+						TFrame(
+							0.0,
+							4.0,
+							[MFill(color)],
+							TBorder(
+								2.0, 0.0, 2.0, 0.0,
+								MComponent2T(
+									manager,
+									manager.focus,
+									"MDialogCallstack",
+									[
+										MOnClick(\ -> iter(concat3([">>>"], strSplit(cs, "\n"), ["<<<"]), println)),
+										MTooltipText(const("Click to print callstack to the console")),
+										MRippleType(MRippleFill() |> const)
+									],
+									\__ -> MText2T(manager.focus, getCallstackEntryPoint(cs), [MTextMColor(color), MOverline()]),
+									m2t
+								)
+							)
+						)
+					),
+				true
+			);
+		} else {
+			f;
+		}
+	)
 	|> (\t ->
 		if (!fullWindow || resizable) {
 			t
 		} else {
 			fw = make(false);
 
+			keysCapture = extractStruct(manager.style, MCaptureKeys(\__ -> TEmpty())).capture(manager);
+			mouseCapture = extractStruct(manager.style, MCaptureMouse(\__ -> TEmpty())).capture(manager);
+			longTouchCapture = extractStruct(manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(manager);
+
 			TConstruct(
-				[\ -> fconnect(fand(fand(feq(easing.percent, 1.), fnot(hideDialog)), feq(manager.manager.zorder, zorder)), fw)],
-				TFullWindow(fw, t)
+				[\ -> fconnect(fand(fand(feq(easing.percent, 1.), fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), feq(manager.manager.zorder, zorder))), fw)],
+				TFullWindow(
+					fw,
+					TGroup([
+						TShow(fw, keysCapture),
+						TShow(fw, mouseCapture),
+						t,
+						TShow(fw, longTouchCapture)
+					])
+				)
 			)
 		})
 	|> (\t ->

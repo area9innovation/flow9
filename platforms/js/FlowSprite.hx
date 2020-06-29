@@ -199,6 +199,20 @@ class FlowSprite extends Sprite {
 		this.deleteNativeWidget();
 	}
 
+	private function enableSprites() : Void {
+		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+			return;
+		}
+
+		texture = Texture.from(nativeWidget);
+		RenderSupport.on("disable_sprites", disableSprites);
+	}
+
+	private function disableSprites() : Void {
+		texture = Texture.EMPTY;
+		RenderSupport.off("disable_sprites", disableSprites);
+	}
+
 	private function onLoaded() : Void {
 		RenderSupport.once("drawframe", function() {
 			if (disposed) {
@@ -210,6 +224,15 @@ class FlowSprite extends Sprite {
 					if (nativeWidget == null) {
 						return;
 					}
+
+					this.onAdded(function() {
+						RenderSupport.on("enable_sprites", enableSprites);
+
+						return function() {
+							RenderSupport.off("enable_sprites", enableSprites);
+							disableSprites();
+						}
+					});
 
 					metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
 				} else {

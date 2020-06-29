@@ -217,15 +217,15 @@ if (a === b) return true;
 
 	public static inline function isSameStructType(o1 : Dynamic, o2 : Dynamic) : Bool {
 		#if (js && readable)
-		  return !isArray(o1) && !isArray(o2) &&
-			   Reflect.hasField(o1, "_name") &&
-			   Reflect.hasField(o2, "_name") &&
-			   o1._name == o2._name;
+			return !isArray(o1) && !isArray(o2) &&
+				Reflect.hasField(o1, "_name") &&
+				Reflect.hasField(o2, "_name") &&
+				o1._name == o2._name;
 		#else
-		  return !isArray(o1) && !isArray(o2) &&
-			   Reflect.hasField(o1, "_id") &&
-			   Reflect.hasField(o2, "_id") &&
-			   o1._id == o2._id;
+			return !isArray(o1) && !isArray(o2) &&
+				Reflect.hasField(o1, "_id") &&
+				Reflect.hasField(o2, "_id") &&
+				o1._id == o2._id;
 		#end
 	}
 
