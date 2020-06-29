@@ -73,7 +73,7 @@ public class Database extends NativeHost {
             dbErr = se.getMessage();
             return null;
         } catch (Exception e) {
-            System.out.println("Exception: " + e.getMessage());
+            printException(e);
             return null;
         }
     }
@@ -95,7 +95,7 @@ public class Database extends NativeHost {
         } catch (SQLException se) {
             ((DBObject) database).err = se.getMessage();
         } catch (Exception e) {
-            System.out.println("Exception: " + e.getMessage());
+            printException(e);
         }
         return null;
     }
@@ -134,7 +134,7 @@ public class Database extends NativeHost {
             ((DBObject) database).err = se.getMessage();
             return null;
         } catch (Exception e) {
-            System.out.println("Exception: " + e.getMessage());
+            printException(e);
             return null;
         }
     }
@@ -165,7 +165,7 @@ public class Database extends NativeHost {
             System.out.println(e.getMessage());
             return -1;
         } catch (Exception e) {
-            System.out.println("Exception: " + e.getMessage());
+            printException(e);
             return -1;
         }
     }
@@ -185,7 +185,7 @@ public class Database extends NativeHost {
             System.out.println(se.getMessage());
             return 0;
         } catch (Exception e) {
-            System.out.println("Exception: " + e.getMessage());
+            printException(e);
             return 0;
         }
     }
@@ -199,7 +199,7 @@ public class Database extends NativeHost {
             res.err = se.getMessage();
             return false;
         } catch (Exception e) {
-            System.out.println("Exception: " + e.getMessage());
+            printException(e);
             return false;
         }
     }
@@ -332,8 +332,13 @@ public class Database extends NativeHost {
         } catch (SQLException e) {
             return new Struct[0];
         } catch (Exception e) {
-            System.out.println("Exception: " + e.getMessage());
+            printException(e);
             return new Struct[0];
         }
+    }
+
+    public static void printException(Exception e) {
+        System.out.println("Exception: '" + e.toString() + "' at:");
+        e.printStackTrace();
     }
 }
