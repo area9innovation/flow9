@@ -1,0 +1,387 @@
+import pebbles/pebble_parameters;
+
+export {
+	// It will add to current pebble parameters iScriptBehaviours ("value", "content", "selected") of interactive
+	// material elements rendered on the screen. To make it works all material elements that should be reflected
+	// in pebble should have IScriptId(id) style. These IScriptId.ids must be unique except cases where group of
+	// elements share the same DynamicBehaviour (e.g. MRadios).
+	// PebbleParameter will be &toLowerCase(IScriptId.id) + "_value/content/selected"=value
+	// In case of buttons we can reflect their action only if that button open dialog, that have to be closed
+	// by another one. To make it works you have to pass for openButton style IScriptId(id + "_open")
+	// and for closeButton style IScriptId(id + "_close").
+	MPebblifier(
+		m : Material,
+		controller : PebbleController,
+		ids : [string]
+	) -> Material;
+}
+
+pebblifyMSlider(mf : MaterialFocus) -> Maybe<Pair<PebbleParameterLink, [() -> () -> void]>> {
+	if (toLowerCase(mf.name) == "mslider") {
+		minValue = getIScriptPairValueB(mf.behaviours, "minValue", make(0.0));
+		maxValue = getIScriptPairValueB(mf.behaviours, "maxValue", make(1.0));
+		downAnywhere = getIScriptPairValueB(mf.behaviours, "downAnywhere", make(false));
+		valueB = getIScriptPairValueB(mf.behaviours, "value", cloneBehaviour(minValue));
+		newValueB = make(d2s(getValue(valueB)));
+		Pair(
+			PebbleStringLink(
+				either(mf.iScriptId, "mslider") + "_value",
+				newValueB,
+				\newValue -> {
+					value = if (newValue == "") getValue(minValue) else s2d(newValue);
+					if (fgetValue(mf.enabled) && getValue(minValue) <= value && value <= getValue(maxValue))
+						nextDistinct(valueB, value)
+				},
+				RecordURLChange()
+			),
+			[make2Subscribe(downAnywhere, valueB, \d, v -> if (!d) nextDistinct(newValueB, if (v == getValue(minValue)) "" else d2s(v)))]
+		) |> Some
+	} else {
+		None()
+	}
+}
+
+pebblifyMTextInput(mf : MaterialFocus) -> Maybe<Pair<PebbleParameterLink, [() -> () -> void]>> {
+	if (toLowerCase(mf.name) == "mtextinput") {
+		valueB = getIScriptPairValueB(mf.behaviours, "content", make(""));
+		newValueB = cloneBehaviour(valueB);
+		Pair(
+			PebbleStringLink(
+				either(mf.iScriptId, "mtextinput") + "_content",
+				newValueB,
+				\newValue -> {
+					if (fgetValue(mf.enabled)) nextDistinct(valueB, newValue)
+				},
+				RecordURLChange()
+			),
+			[makeSubscribe(mf.focused, \focused -> if (!focused) nextDistinct(newValueB, urlEncode(getValue(valueB))))]
+		) |> Some
+	} else {
+		None()
+	}
+}
+
+// To make it works correct you have to mark your MRadio elements which share DynamicBehaviour
+// with the same IScriptId(id) like MRadios does it.
+pebblifyMRadios(mfs : [MaterialFocus]) -> Maybe<Pair<PebbleParameterLink, [() -> () -> void]>> {
+	if (mfs != []) {
+		previousActiveIndexB = make(-1);
+		valueBPs = filtermap(
+			mfs,
+			\mf -> eitherMap(
+				getIScriptPairValueBM(mf.behaviours, "value"),
+				\valueB -> Some(Pair(valueB, mf.enabled)),
+				None()
+			)
+		);
+		valueBs = map(valueBPs, firstOfPair);
+		newValueB = make(eitherMap(findi(valueBs, getValue), i2s, ""));
+		Pair(
+			PebbleStringLink(
+				either(mfs[0].iScriptId, "mradio") + "_value",
+				newValueB,
+				\newValue -> {
+					index = if (newValue == "") -1 else s2i(newValue);
+					if (existsIndex(valueBPs, index)) {
+						valueBP = valueBPs[index];
+						if (fgetValue(valueBP.second)) {
+							nextDistinct(valueBP.first, true);
+							nextDistinct(previousActiveIndexB, index);
+						}
+					} else {
+						maybeApply(
+							elementAtM(valueBPs, getValue(previousActiveIndexB)),
+							\valueBP -> if (fgetValue(valueBP.second)) {
+								nextDistinct(valueBP.first, false);
+								nextDistinct(previousActiveIndexB, -1);
+							}
+						)
+					}
+				},
+				RecordURLChange()
+			),
+			mapi(valueBs, \i, valueB -> makeSubscribe(valueB, \value -> if (value) nextDistinct(newValueB, i2s(i)))),
+		) |> Some
+	} else {
+		None()
+	}
+}
+
+pebblifyConnectedButtons(mf : MaterialFocus) -> Maybe<Pair<PebbleParameterLink, [() -> () -> void]>> {
+	eitherMap(
+		mf.iScriptId,
+		\id -> {
+			if (strContains(toLowerCase(mf.name), "button")) {
+				eitherMap(
+					getIScriptPairValueBM(mf.behaviours, "click"),
+					\clickB -> {
+						valueB = make(false);
+						parameterChangedB = make(false);
+						clickedB = make(false);
+						isOpenButton = strContains(id, "_open");
+						isCloseButton = strContains(id, "_close");
+						Pair(
+							PebbleBoolLink(
+								strReplace(strReplace(id, "_open", ""), "_close", ""),
+								valueB,
+								\value -> {
+									if (getValue(clickedB)) {
+										nextDistinct(clickedB, false)
+									} else if (value && isOpenButton || !value && isCloseButton) {
+										next(parameterChangedB, true);
+										nextDistinct(clickB, true);
+										nextDistinct(clickB, false);
+									}
+								},
+								RecordURLChange()
+							),
+							[makeSubscribe2(clickB, \__ -> {
+								if (getValue(parameterChangedB)) {
+									nextDistinct(parameterChangedB, false)
+								} else {
+									nextDistinct(clickedB, true);
+									nextDistinct(valueB, isOpenButton)
+								}
+							})]
+						) |> Some
+					},
+					None()
+				)
+			} else {
+				None()
+			}
+		},
+		None()
+	)
+}
+
+pebblifyButtons(mf : MaterialFocus) -> Maybe<Pair<PebbleParameterLink, [() -> () -> void]>> {
+	eitherMap(
+		mf.iScriptId,
+		\id -> {
+			if (strContains(toLowerCase(mf.name), "button")) {
+				eitherMap(
+					getIScriptPairValueBM(mf.behaviours, "click"),
+					\clickB -> {
+						valueB = make(false);
+						parameterChangedB = make(false);
+						clickedB = make(false);
+						Pair(
+							PebbleBoolLink(
+								id,
+								valueB,
+								\value -> {
+									if (getValue(clickedB)) {
+										nextDistinct(clickedB, false)
+									} else if (value) {
+										next(parameterChangedB, true);
+										nextDistinct(clickB, true);
+										nextDistinct(clickB, false);
+									}
+								},
+								RecordURLChange()
+							),
+							[makeSubscribe2(clickB, \__ -> {
+								if (getValue(parameterChangedB)) {
+									nextDistinct(parameterChangedB, false)
+								} else {
+									nextDistinct(clickedB, true);
+									nextDistinct(valueB, true)
+								}
+							})]
+						) |> Some
+					},
+					None()
+				)
+			} else {
+				None()
+			}
+		},
+		None()
+	)
+}
+
+pebblifyOther(mf : MaterialFocus) -> Maybe<Pair<PebbleParameterLink, [() -> () -> void]>> {
+	iScriptId = either(mf.iScriptId, "");
+	if (iScriptId != "") {
+		eitherFn(
+			lookupTree(mf.behaviours, "value"),
+			\valueBP -> iScriptBehaviour2PebbleLink(mf, valueBP, "value"),
+			\ -> {
+				eitherFn(
+					lookupTree(mf.behaviours, "content"),
+					\contentBP -> iScriptBehaviour2PebbleLink(mf, contentBP, "content"),
+					\ -> eitherFn(
+						lookupTree(mf.behaviours, "selected"),
+						\selectedBP -> iScriptBehaviour2PebbleLink(mf, selectedBP, "selected"),
+						\ -> eitherMap(
+							lookupTree(mf.behaviours, "click"),
+							\clickB -> iScriptBehaviour2PebbleLink(mf, clickB, "click"),
+							None()
+						)
+					)
+				)
+			}
+		)
+	} else {
+		None()
+	}
+}
+
+iScriptBehaviour2PebbleLink(
+	mf : MaterialFocus,
+	ib : Pair<DynamicBehaviour<flow>, IScriptRecordType>,
+	def : string
+) -> Maybe<Pair<PebbleParameterLink, [() -> () -> void]>> {
+	valueB = ib.first;
+	type = ib.second;
+	parameter = toLowerCase(either(mf.iScriptId, def));
+	if (parameter == "") {
+		None()
+	} else {
+		switch (type) {
+			ISInputValue(values, typeString, __): {
+				if (typeString == "bool") {
+					newValueB = cloneBehaviour(valueB);
+					Pair(
+						PebbleBoolLink(
+							parameter,
+							newValueB,
+							\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, newValue),
+							RecordURLChange()
+						),
+						[makeSubscribe(valueB, \v -> nextDistinct(newValueB, v))]
+					) |> Some
+				} else if (typeString == "int") {
+					newValueB = cloneBehaviour(valueB);
+					Pair(
+						PebbleIntLink(
+							parameter,
+							newValueB,
+							\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, newValue),
+							RecordURLChange()
+						),
+						[makeSubscribe(valueB, \v -> nextDistinct(newValueB, v))]
+					) |> Some
+				} else if (typeString == "string") {
+					newValueB = cloneBehaviour(valueB);
+					Pair(
+						PebbleStringLink(
+							parameter,
+							newValueB,
+							\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, newValue),
+							RecordURLChange()
+						),
+						[makeSubscribe(mf.focused, \f -> if (!f) nextDistinct(newValueB, getValue(valueB)))]
+					) |> Some
+				} else if (typeString == "index") {
+					newValueB = make(if (existsIndex(values, getValue(valueB))) i2s(getValue(valueB)) else "");
+					Pair(
+						PebbleStringLink(
+							parameter,
+							newValueB,
+							\newValue -> {
+								index = if (newValue == "") -1 else s2i(newValue);
+								if (fgetValue(mf.enabled)) {
+									if (existsIndex(values, index)) {
+										nextDistinct(valueB, index)
+									} else if (index == -1) {
+										nextDistinct(valueB, -1);
+									}
+								}
+							},
+							RecordURLChange()
+						),
+						[makeSubscribe(valueB, \v -> nextDistinct(newValueB, if (existsIndex(values, v)) i2s(v) else ""))]
+					) |> Some
+				} else if (typeString == "double") {
+					newValueB = make(d2s(getValue(valueB)));
+					Pair(
+						PebbleStringLink(
+							parameter,
+							newValueB,
+							\newValue -> if (fgetValue(mf.enabled)) nextDistinct(valueB, s2d(newValue)),
+							RecordURLChange()
+						),
+						[makeSubscribe(valueB, \v -> nextDistinct(newValueB, d2s(v)))]
+					) |> Some
+				} else {
+					None()
+				}
+			}
+			default: None()
+		}
+	}
+}
+
+materialFocusesTree2PebbleLinks(focusTree : Tree<string, [MaterialFocus]>) -> [Pair<PebbleParameterLink, [() -> () -> void]>] {
+	foldTree(
+		focusTree,
+		[],
+		\iScriptId, focuses, acc -> {
+			if (focuses != []) {
+				firstFocus = focuses[0];
+				focusName = toLowerCase(firstFocus.name);
+				focusIScriptId = either(firstFocus.iScriptId, "");
+				linkPairM = if (focusName == "mslider") {
+					pebblifyMSlider(firstFocus)
+				} else if (focusName == "mtextinput") {
+					pebblifyMTextInput(firstFocus)
+				} else if (focusName == "mradio") {
+					pebblifyMRadios(focuses)
+				} else if (strContains(focusIScriptId, "_open") || strContains(focusIScriptId, "_close")) {
+					pebblifyConnectedButtons(firstFocus)
+				} else if (strContains(focusIScriptId, "button")) {
+					pebblifyButtons(firstFocus)
+				} else {
+					pebblifyOther(firstFocus)
+				}
+				eitherMap(linkPairM, \lp -> arrayPush(acc, lp), acc)
+			} else {
+				acc
+			}
+		}
+	)
+}
+
+MPebblifier(
+	m : Material,
+	controller : PebbleController,
+	ids : [string]
+) -> Material {
+
+	pebbledView = make(MEmpty());
+
+	onRendered = \manager -> {
+		materialFocusesTree = collectMaterialFocuses(
+			getValue(manager.focus.focusIds),
+			\focus -> {
+				contains(ids, either(focus.iScriptId, "")) &&
+				(
+					containsKeyTree(focus.behaviours, "value") ||
+					containsKeyTree(focus.behaviours, "content") ||
+					containsKeyTree(focus.behaviours, "selected") ||
+					containsKeyTree(focus.behaviours, "click")
+				);
+			}
+		);
+		links = materialFocusesTree2PebbleLinks(materialFocusesTree);
+		next(
+			pebbledView,
+			MConstruct(
+				mapConcat(links, secondOfPair),
+				MLinkPebbleParameters(
+					controller,
+					map(links, firstOfPair),
+					MEmpty()
+				)
+			)
+		);
+		nop;
+	}
+
+	MLines2(
+		m,
+		MGetManager(\mngr -> MConstruct([\-> onRendered(mngr)], MMutable(pebbledView)))
+	)
+}
