@@ -434,11 +434,15 @@ class FlowGraphics extends Graphics {
 					}
 				}, 0.0);
 
+				svg.style.position = 'absolute';
+
 				svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
 				svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-				svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
-				svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
-				svg.style.position = 'absolute';
+
+				if (!Platform.isFirefox) {
+					svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
+					svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
+				}
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
@@ -509,7 +513,9 @@ class FlowGraphics extends Graphics {
 							svg.appendChild(element);
 						}
 
-						element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
+						if (!Platform.isFirefox) {
+							element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
+						}
 
 						if (untyped data.fillGradient != null) {
 							element.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
