@@ -79,7 +79,7 @@ export {
 			F3DAnimation(start : () -> void, stop : () -> void, duration : DynamicBehaviour<double>);
 
 		F3DSceneLoader(url : string);
-		F3DChildren(object : F3DObject, fn : (F3DNative) -> F3DNative);
+		F3DChildren(object : F3DObject, fn : (F3DNative) -> void);
 
 		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable, F3DNativeOnLoad;
 			F3DNativeObject(object : native);
@@ -1492,18 +1492,14 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 				state,
 				\clip -> {
 					parsedClip = parseF3DNativeObject(clip, state);
+					fn(parsedClip.first);
 
 					concat(
-						parsedClip.second,
-						render3dform(
-							fn(parsedClip.first),
-							state,
-							onStart,
-							innerOnDone
-						)
-					)
+						onStart(clip),
+						parsedClip.second
+					);
 				},
-				innerOnDone
+				onDone
 			);
 
 			r;
@@ -2376,26 +2372,28 @@ renderF3DTexture(texture : F3DTexture, state : F3DRenderState, onStart : (native
 }
 
 parseF3DNativeObject(object : native, state : F3DRenderState) -> Pair<F3DNative, [() -> void]> {
-	children = make(get3DObjectChildren(object));
+	children = make(map(get3DObjectChildren(object), get3DObjectId));
+	outputChildren = make([]);
 	uns = ref nop;
 
 	Pair(
-		F3DNativeScene(object, fmapu(children, \c -> parseF3DNativeObject(c, state))),
+		F3DNativeScene(object, outputChildren),
 		[
 			add3DEventListener(object, "childrenchanged", \ -> {
 				^uns();
 
 				if (!fgetValue(state.loading)) {
-					uns := interruptibleTimer(33, \ -> nextDistinct(children, get3DObjectChildren(object)));
+					uns := interruptibleTimer(33, \ -> nextDistinct(children, map(get3DObjectChildren(object), get3DObjectId)));
 				} else {
 					uns := makeSubscribe2(state.loading, \l -> if (!l) {
 						^uns();
-						uns := interruptibleTimer(33, \ -> nextDistinct(children, get3DObjectChildren(object)));
+						uns := interruptibleTimer(33, \ -> nextDistinct(children, map(get3DObjectChildren(object), get3DObjectId)));
 					})();
 				}
 			}),
 			\ -> ^uns(),
-			\ -> next(children, [])
+			\ -> next(children, []),
+			fconnect(fmapu(children, \c -> parseF3DNativeObject(get3DObjectById(state.stage, c)[0], state)), outputChildren)
 		]
 	)
 }
