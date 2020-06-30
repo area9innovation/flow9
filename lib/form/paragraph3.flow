@@ -7,7 +7,7 @@ import text/blueprint;
 
 export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
-	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : WigiParagraphWidthManager) -> Form;
+	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager) -> Form;
 	getLineIndent(paraIndent : double, lineIndex : int) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement;
@@ -15,22 +15,22 @@ export {
 	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 	keepFormTogether(form : Form) -> bool;
 
-	WigiStoryWidthManager(
-		paragraphManagers : [WigiParagraphWidthManager],
-		getParagraphManagerAt: (int) -> WigiParagraphWidthManager,
+	StoryWidthManager(
+		paragraphManagers : [ParagraphWidthManager],
+		getParagraphManagerAt: (int) -> ParagraphWidthManager,
 		width : Behaviour<double>,
 		infoOnly : bool, /* do not control width of paragraphs, just gather their widths */
 		constructor : () -> () -> void,
 	);
-	WigiParagraphWidthManager(
+	ParagraphWidthManager(
 		storyWidth : Behaviour<double>,
 		width : DynamicBehaviour<double>,
 		infoOnly : bool
 	);
 
-	makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager;
-	dummyWigiParagraphWidthManager = WigiParagraphWidthManager(const(0.0), make(0.0), true);
-	dummyWigiStoryWidthManager = WigiStoryWidthManager([], \__ -> dummyWigiParagraphWidthManager, zero, true, \ -> nop);
+	makeStoryWidthManager(paragraphs : int, infoOnly : bool) -> StoryWidthManager;
+	dummyParagraphWidthManager = ParagraphWidthManager(const(0.0), make(0.0), true);
+	dummyStoryWidthManager = StoryWidthManager([], \__ -> dummyParagraphWidthManager, zero, true, \ -> nop);
 }
 
 // TODO:
@@ -119,7 +119,22 @@ makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native {
 	overridden = applyAlphabetStyles(detectAlphabet(txt), style);
 	textfield = makeTextfield(getMappedFontFamily(overridden));
 	dstyle = getDefinedTextStyle(overridden);
-	setTextAndStyle(textfield, txt, dstyle.face.family, dstyle.fontSize, dstyle.face.weight, dstyle.face.slope, dstyle.fillColor, dstyle.fillOpacity, dstyle.letterSpacing, dstyle.backgroundColor, dstyle.backgroundOpacity);
+	setTextAndStyle(
+		textfield,
+		if (isUrlParameterEscUnescHTMLTrue() && cpp) {
+			esc = extractStruct(style, EscapeHTML(true)).escape;
+			if (esc) xmlEscapeText(txt) else txt;
+		} else txt,
+		dstyle.face.family,
+		dstyle.fontSize,
+		dstyle.face.weight,
+		dstyle.face.slope,
+		dstyle.fillColor,
+		dstyle.fillOpacity,
+		dstyle.letterSpacing,
+		dstyle.backgroundColor,
+		dstyle.backgroundOpacity
+	);
 	textfield
 }
 
@@ -135,7 +150,7 @@ renderParagraph(
 	p : [ParagraphElement],
 	s : [ParagraphStyle],
 	rtl : bool,
-	widthManager : WigiParagraphWidthManager
+	widthManager : ParagraphWidthManager
 ) -> Form {
 
 	alignment : NumAlignment = switch (extractParaLineAlignment(s)) {
@@ -177,7 +192,7 @@ renderParagraph(
 	words : [ParaWord] = map(list2array(glued), makeParaWord);
 
 	aw = make(0.0);
-	width = if (widthManager == dummyWigiParagraphWidthManager) make(INF_METRICS) else widthManager.width;
+	width = if (widthManager == dummyParagraphWidthManager) make(INF_METRICS) else widthManager.width;
 	update = make(0);
 	linesB : DynamicBehaviour<[ParaLine]> = make([]);
 
@@ -193,7 +208,7 @@ renderParagraph(
 	maxW = getOptimizedLines(reflowParaWords(words, INF_METRICS, indent, isParagraphMarked, rtl), alignment).first;
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager || widthManager.infoOnly) {
+	renderedParagraph = if (widthManager == dummyParagraphWidthManager || widthManager.infoOnly) {
 		Select(linesB, \lines -> {
 			rendered = renderParaLinesFn(lines, getValue(aw));
 			nextDistinct(width, rendered.size.width);
@@ -903,17 +918,19 @@ applyIntStylesAndHighlighting(
 
 applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) -> Form {
 	if (form == Empty()) form else {
-		eventListenersM = tryExtractStruct(styles, EventListeners([]));
-		interactiveForm = switch(eventListenersM) {
-			Some(el): Interactive(el.listeners, form);
-			None(): form;
-		};
-
 		formModifiersM = tryExtractStruct(styles, FormModifiers([]));
-		switch(formModifiersM) {
-			Some(modifiers): fold(modifiers.fns, interactiveForm, \acc, fn -> fn(acc));
-			None(): interactiveForm
-		};
+		modifiedForm = eitherMap(
+			formModifiersM,
+			\modifiers -> fold(modifiers.fns, form, \acc, fn -> fn(acc)),
+			form
+		);
+
+		eventListenersM = tryExtractStruct(styles, EventListeners([]));
+		eitherMap(
+			eventListenersM,
+			\el -> Interactive(el.listeners, modifiedForm),
+			modifiedForm
+		);
 	}
 }
 
@@ -993,14 +1010,14 @@ setWordForm(word: ParaWord, form: GhostForm) -> ParaWord {
 	ParaWord(word.word, word.metrics, word.ghosted, form, word.interactivityIdM);
 };
 
-makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager {
+makeStoryWidthManager(paragraphs : int, infoOnly : bool) -> StoryWidthManager {
 	paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
 	storyWidth = make(0.0);
 
-	paragraphManagers = map(paragraphWidths, \pw -> WigiParagraphWidthManager(storyWidth, pw, infoOnly));
-	WigiStoryWidthManager(
+	paragraphManagers = map(paragraphWidths, \pw -> ParagraphWidthManager(storyWidth, pw, infoOnly));
+	StoryWidthManager(
 		paragraphManagers,
-		\i -> elementAt(paragraphManagers, i, dummyWigiParagraphWidthManager),
+		\i -> elementAt(paragraphManagers, i, dummyParagraphWidthManager),
 		storyWidth,
 		infoOnly,
 		\ -> {

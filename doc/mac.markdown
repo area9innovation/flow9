@@ -106,8 +106,8 @@ You will be prompted to enter the desired haxelib path. Please specify the haxel
 Then install the required libraries:
 
     haxelib install format
-    haxelib install pixijs 4.7.1
-    (or a newer edition)
+    haxelib install pixijs 4.8.4
+    (pixijs version 5 isn't supported)
 
 ## Install Neko 2.0.0
 
@@ -129,6 +129,14 @@ to pick up the changes.
 ### Troubleshooting
 
 No issues to report at the moment.
+
+# Install `JDK`
+Be sure that you have installed JDK 11 or newer in a 64-bit version. That is required by the *flowc* compiler, which is used
+by default. You may find it here:
+
+	https://www.oracle.com/java/technologies/javase-jdk11-downloads.html
+
+OpenJDK is suitable as well.
 
 ## Check out Flow repository
 

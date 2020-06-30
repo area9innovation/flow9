@@ -203,6 +203,9 @@ class VideoClip extends FlowContainer {
 	public function setVolume(volume : Float) : Void {
 		if (videoWidget != null) {
 			videoWidget.volume = volume;
+			if (Platform.isIOS) {
+				videoWidget.muted = volume == 0.0;
+			}
 		}
 	}
 

@@ -72,17 +72,19 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	footerMinWidth = make(0.);
 	tableHeight = make(0.);
 
-	countRowHeight = \er : int ->
-		state.rowHeight * (i2d(er) + b2d(lifted)) + separatorsHeight;
+	countRowHeight0 = \er : int, isHeader : bool ->
+		state.lineHeight(isHeader) * (i2d(er) + b2d(lifted && !isHeader)) + separatorsHeight;
+	countRowHeight = \er -> countRowHeight0(er, false);
+	countHeaderRowHeight = \er -> countRowHeight0(er, true);
 
 	minimumRowsDef = 3;
-	minTableHeightDef = i2d(minimumRowsDef + b2i(!state.replaceHeader)) * countRowHeight(1) + footerHeight;
+	minTableHeightDef = i2d(minimumRowsDef) * countRowHeight(1) + b2d(!state.replaceHeader) * countHeaderRowHeight(1) + footerHeight;
 	minTableHeight =
 		extractStruct(style, MMinTableHeigth(minTableHeightDef)).height
 		|> (\h -> max(h, state.rowHeight + footerHeight));
 
 	minimumRows = \er -> min(
-		ceil((minTableHeight - footerHeight) / countRowHeight(er)) - b2i(!state.replaceHeader),
+		ceil((minTableHeight - b2d(!state.replaceHeader) * countHeaderRowHeight(1) - footerHeight) / countRowHeight(er)),
 		fgetValue(rowsCountB)
 	);
 
@@ -503,7 +505,7 @@ MDTState(
 	widthByContent : bool,
 	headCount : int,
 	isCheckboxColumn : (int) -> bool,
-	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, bool) -> Tropic,
+	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, Maybe<[MIconStyle]>) -> Tropic,
 	makeCells : (MFocusGroup, int, [Material]) -> [Tropic],
 	cellBox : (int, bool) -> Tropic,
 	enabled : Transform<bool>,
@@ -531,7 +533,7 @@ makeMDataTableState(
 	headerActions = extractStruct(style, MHeaderActions(TEmpty(), []));
 	replaceHeader = contains(headerActions.style, MReplaceHeader());
 	headerRowHeight = if (replaceHeader) 0. else extractStruct(style, MHeaderRowHeight(rowHeight)).height;
-	lineHeight = \isHeader -> if (!isHeader) rowHeight else  headerRowHeight;
+	lineHeight = \isHeader -> if (!isHeader) rowHeight else headerRowHeight;
 
 	separators = !contains(style, MNoSeparators());
 	onClick : MOnListClick = extractStruct(style, MOnListClick(const(false), nop1));
@@ -560,14 +562,13 @@ makeMDataTableState(
 	checkboxBorder = \rh -> forceRange((rh - 24.) / 2., 0., 12.);
 	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + standardIconSize - cellBorder;
 
-	makeChkbox = \p, trigger, en, onClk, h -> {
-		lh = lineHeight(h);
-		MCheckBox2T(
-			manager,
-			p,
-			MCheckBox(TEmpty(), trigger, [MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)]),
-			m2t
-		)
+	makeChkbox = \p, trigger, en, onClk, hStyle -> {
+		lh = lineHeight(isSome(hStyle));
+		chStyle =
+			[MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)]
+			|> (\st -> eitherMap(hStyle, \hs : [MIconStyle] -> concat3(st, hs, [MUncheckedIconStyle(hs)]), st));
+
+		MCheckBox2T(manager, p, MCheckBox(TEmpty(), trigger, chStyle), m2t)
 		|> (\t -> TBorderDir(-checkboxBorder(lh) / 2. - cellBorder / 2., 0., 0., 0., t, p.rtl))
 		|> (\t -> TCenterYIn(t, TFixed(0., lh)))
 	}
@@ -592,9 +593,8 @@ makeMDataTableState(
 		fselect(rowsCountB, FLift(\rc ->
 			generate(0, rc + b2i(isSome(fixedRow)), \__ ->
 				generate(0, columnsCount, \i ->
-					if (!isWidthByContent(columns[i])) make(0.)
-					else if (isCheckboxColumn(i)) make(checkboxColumnWidth)
-					else make(^tropicFillersMax)
+					if (isCheckboxColumn(i)) make(checkboxColumnWidth)
+					else make(0.0)
 				)
 			)
 		));
@@ -662,7 +662,7 @@ makeMDataTableState(
 								nextDistinct(selection.selected, [])
 						}
 					},
-					false
+					None()
 				)
 				|> (\t -> TConstruct(
 					[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j))], t
@@ -1014,6 +1014,7 @@ MDTTitles(
 ) -> [Tropic] {
 	mapi(state.columns, \i0, c : MColumnDynamic -> if (state.replaceHeader) state.cellBox(i0, true) else {
 		colHeaderStyle = tryExtractStruct(concat(c.style, eitherMap(headerStyle, \e -> [e], [])), defaultHS);
+		arrowStyle = eitherMap(colHeaderStyle, \chs -> style2MIconStyle(chs.textStyle), []);
 		rightAlign = (contains(c.style, RightAlign()) != (p.rtl && !isUrlParameterTrue("new"))) || contains(c.style, if (p.rtl) StartAlign() else EndAlign());
 		sortStyle = if (isReorder) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
 		sortable = isSome(sortStyle) || (!isReorder && (sorting.hasExtOrderBy || contains(c.style, MAutoSort())));
@@ -1057,11 +1058,11 @@ MDTTitles(
 											|> (\t -> TBorderDir(0.0, 0.0, 4.0, 0.0, t, p.rtl)),
 										if (isSorting)
 											TIfLazy2(fselect(sorting.sortedBy, FLift(\sb -> sb.ascending)), \sb0 ->
-												MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", [MIconSize(15.)]),
+												MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", concat([MIconSize(15.)], arrowStyle)),
 												true
 											)
 										else if (h)
-											MIcon2T(p, "arrow_upward", [MIconSize(15.), FillOpacity(0.24)])
+											MIcon2T(p, "arrow_upward", concat([MIconSize(15.), FillOpacity(0.24)], arrowStyle))
 										else
 											TFixed(16., 0.)
 									]
@@ -1118,7 +1119,7 @@ MDTTitles(
 						else 
 							filter(getValue(state.selection.selected), \x -> !contains(fgetValue(selPage), x))
 					),
-					true
+					Some(arrowStyle)
 				)
 				|> (\t2 ->
 					if (state.selection.multiple)

@@ -33,6 +33,7 @@ class FlowGraphics extends Graphics {
 
 	private var nativeWidget : Element;
 	private var accessWidget : AccessWidget;
+	public var tagName : String;
 
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
@@ -433,11 +434,15 @@ class FlowGraphics extends Graphics {
 					}
 				}, 0.0);
 
+				svg.style.position = 'absolute';
+
 				svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
 				svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-				svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
-				svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
-				svg.style.position = 'absolute';
+
+				if (!Platform.isFirefox) {
+					svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
+					svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
+				}
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
@@ -502,13 +507,15 @@ class FlowGraphics extends Graphics {
 								svg.removeChild(svg.lastElementChild);
 							}
 
-							element = svg.addElementNS('path');
+							element = svg.addElementNS(tagName);
 						} else {
 							element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
 							svg.appendChild(element);
 						}
 
-						element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
+						if (!Platform.isFirefox) {
+							element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
+						}
 
 						if (untyped data.fillGradient != null) {
 							element.setAttribute("fill", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
@@ -650,7 +657,7 @@ class FlowGraphics extends Graphics {
 
 		this.deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(tagName);
+		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 

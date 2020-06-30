@@ -1,4 +1,5 @@
 import material/material_dialog;
+import material/material_snackbar;
 import material/internal/material_reorder;
 import ui/animate/teasing;
 import form/realhtmlworkaround;
@@ -19,10 +20,17 @@ export {
 	MShowLazy(condition : Transform<bool>, fn : () -> Material) -> Material;
 	// Construct lines in list only when they are in visible space of scroll
 	MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Material;
+	// MLazyList with forceLoad - backdoor for loading specific item and items above it without scrolling
+	MLazyListExtended(lines : [Pair<() -> Material, Transform<bool>>], scrollInspect : TScrollInspectVisible) -> Material;
 
 	// Helper for standard popup menu
 	// topLeft is catched only when isVisible becomes true
 	MPopupMenu(topleft : DynamicBehaviour<Point>, isVisible : DynamicBehaviour<bool>, items : [MMenuLine]) -> Material;
+
+	// Helper for lifting element up, above popups and dialogs
+	MTopMost(content : Material, style : [MTopMostStyle]) -> Material;
+		MTopMostStyle ::= MMovablePosition, MMovableEnabled, MDelay;
+			MMovableEnabled(enabled : Transform<bool>);
 
 	// Helper for creating dashed or dotted circle
 	MDashedCircle(radius : double, dashNumber : int, color : MColor) -> Material;
@@ -45,6 +53,7 @@ export {
 
 	// index - position in array, id - unique identifier
 	SelectMLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
+	SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMColsA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMGroup(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
@@ -111,6 +120,16 @@ export {
 
 	MPictureFill(picURL : string, style : [MPictureStyle]) -> Material;
 	MPictureFit(picURL : string, style : [MPictureStyle]) -> Material;
+
+	MTabs(tabs : [MTab], selected : DynamicBehaviour<int>, style : [MTabsStyle]) -> Material {
+		MDynamicTabs(const(tabs), selected, style)
+		|> MCallstack;
+	};
+
+	MDataTable(columns : [MColumnDynamic], rows : [[Material]], style : [MDataTableStyle]) -> Material {
+		MDynamicDataTable(columns, const(rows), style)
+		|> MCallstack;
+	};
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -155,13 +174,18 @@ MShowLazy(condition : Transform<bool>, fn : () -> Material) -> Material {
 }
 
 MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Material {
+	MLazyListExtended(map(lines, \line -> Pair(line, const(false))), scrollInspect)
+}
 
+MLazyListExtended(lines : [Pair<() -> Material, Transform<bool>>], scrollInspect : TScrollInspectVisible) -> Material {
 	height = make(0.0);
-	loadState = generate(0, length(lines), \__ -> make(false));
+	loadState0 : [DynamicBehaviour<bool>] = generate(0, length(lines), \__ -> make(false));
+	loadState = mapi(loadState0, \i, loaded -> fOrs(concat([loaded], map(tailFrom(lines, i), \p -> p.second)), true));
+
 	loadLazy = ref nop;
 	loadLazy := \ -> if (getValue(height) <= getValue(scrollInspect.topleft).y + getValue(scrollInspect.widthHeight).height) {
 		// scrolled to the end of list
-		maybeApply(find(loadState, \b -> !getValue(b)), // not loaded guy
+		maybeApply(find(loadState0, \b -> !getValue(b)), // not loaded guy
 			\b -> {
 				next(b, true); // load him!
 				^loadLazy(); // check again
@@ -172,7 +196,7 @@ MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Ma
 		\ -> subscribe(scrollInspect.topleft, \__ -> ^loadLazy()),
 		\ -> subscribe2(scrollInspect.widthHeight, \__ -> ^loadLazy())
 	], TEmpty())
-		|> (\m -> arrayPush(mapi(lines, \i, line -> MShowLazy(loadState[i], line)), m))
+		|> (\m -> arrayPush(mapi(lines, \i, line -> MShowLazy(loadState[i], line.first)), m))
 		|> MLines
 		|> (\m -> MAttachHeight(m, height));
 }
@@ -191,6 +215,54 @@ MPopupMenu(topleft : DynamicBehaviour<Point>, isVisible : DynamicBehaviour<bool>
 		\-> \-> mPopupMenuAllVisibility := filter(^mPopupMenuAllVisibility, \kv -> kv.first != id),
 	], m);
 
+}
+
+MTopMost(content : Material, style : [MTopMostStyle]) -> Material {
+	movPosition = extractStruct(style, MMovablePosition(make(zeroPoint))).position;
+	movingEnabled = extractStruct(style, MMovableEnabled(const(true))).enabled;
+	delay = extractStruct(style, MDelay(0.)).delay * 1000. |> floor;
+
+	dialogBorder = if (mobile) 12. else 24.;
+
+	close : ref DynamicBehaviour<bool> = ref make(false);
+	elementClip = ref TEmpty();
+
+	MGetManager(\manager ->
+		MMoveClip(
+			MComponentGroup(
+				MCopySize2(content, \tr, sz -> 
+					MGroup2(
+						MCursor(ArrowCursor(), MTranslate(movPosition, sz |> disableMInteractivesBelow)),
+						MMovable(tr, TFillXY(), [MMovablePosition(movPosition), MEnabled(movingEnabled)])
+					)
+				),
+				[MZorder(manager.manager.zorder)]
+			),
+			\el -> elementClip := el
+		)
+		|> (\m -> MConstruct([
+			makeSubscribe2(manager.manager.zorder, \ord -> {
+				next(^close, true);
+				close := make(false);
+				if (ord > 0)
+					timer(delay, \ ->
+						ShowMDialog(
+							manager,
+							^close,
+							[
+								MDialogNonModal(),
+								MDialogNoCenter(),
+								MDialogNoAnimation(),
+								MPassClicks()
+							],
+							^elementClip
+							|> MBorderTop(-dialogBorder)
+							|> MBorderLeft(-dialogBorder)
+						)
+					)
+			})
+		], m))
+	)
 }
 
 MDashedCircle(radius : double, dashNumber : int, color : MColor) -> Material {
@@ -319,6 +391,16 @@ SelectMLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>,
 		MGetFocusGroup(\parent ->
 			MGetMaterial2Tropic(\m2t ->
 				SelectMLines2T(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
+			)
+		)
+	)
+}
+
+SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
+	MGetManager(\manager ->
+		MGetFocusGroup(\parent ->
+			MGetMaterial2Tropic(\m2t ->
+				SelectMLines2AT(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
 			)
 		)
 	)

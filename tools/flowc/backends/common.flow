@@ -70,7 +70,12 @@ export {
 		readable : bool,
 		tsProcess : TypeScriptProcessing,
 		callMain : bool,
-		keepDebugNewlines : bool
+		keepDebugNewlines : bool,
+		// The path to the external JS file with natives.
+		// Is inlined into the final assembled JS code.
+		externLib : string,
+		// Names from the external natives lib.
+		externNatives : Set<string>
 	);
 
 	FiNimConfig(
@@ -164,6 +169,7 @@ export {
 		outputdir : string,
 		generatedir : string,
 		packageName : string,
+		mainClassName : string,
 		jarfile : string,
 		javaLibrary : Set<string>,
 		includes : [string],
@@ -290,6 +296,9 @@ export {
 getFcBackendConfigs(config : CompilerConfig) {
 	outdir1 = getConfigParameter(config.config, "output-dir");
 	outdir = if (outdir1 == "" || endsWith(outdir1, "/")) outdir1 else outdir1 + "/";
+	js_external_natives = \-> if (!isConfigParameterSet(config.config, "js-extern-natives")) makeSet() else {
+		buildSet(strSplit(getConfigParameter(config.config, "js-extern-natives"), ","));
+	}
 	jsconfig = if (config.jsParams.jsfile != "") {
 			Some(FiJsConfig(
 				config.flowfile,
@@ -313,7 +322,9 @@ getFcBackendConfigs(config : CompilerConfig) {
 				config.jsParams.readable,
 				tsProcessing_dummy,
 				isConfigParameterTrue(config.config, "js-call-main"),
-				isConfigParameterTrue(config.config, "keep-debug-newlines")
+				isConfigParameterTrue(config.config, "keep-debug-newlines"),
+				getConfigParameter(config.config, "js-extern-lib"),
+				js_external_natives()
 			))
 		} else None();
 
@@ -347,7 +358,9 @@ getFcBackendConfigs(config : CompilerConfig) {
 				config.jsParams.readable,
 				tsProcessing_dummy,
 				isConfigParameterTrue(config.config, "js-call-main"),
-				isConfigParameterTrue(config.config, "keep-debug-newlines")
+				isConfigParameterTrue(config.config, "keep-debug-newlines"),
+				getConfigParameter(config.config, "js-extern-lib"),
+				js_external_natives()
 			))
 		} else None();
 
@@ -374,20 +387,27 @@ getFcBackendConfigs(config : CompilerConfig) {
 				true, // readable = 1, for considering named types and unions
 				tsProcessing_dummy,
 				isConfigParameterTrue(config.config, "js-call-main"),
-				isConfigParameterTrue(config.config, "keep-debug-newlines")
+				isConfigParameterTrue(config.config, "keep-debug-newlines"),
+				getConfigParameter(config.config, "js-extern-lib"),
+				js_external_natives()
 			))
 		} else None();
 
 	jar0 = getConfigParameter(config.config, "jar");
-	jar = fileNameOnly(if (jar0 != "1") jar0 else changeFileExt(config.flowfile, ".jar"));
-	jv = if (jar == "" || isConfigParameterSet(config.config, "java")) getConfigParameter(config.config, "java") else "javagen";
+	jar = if (jar0 != "1") jar0 else changeFileExt(config.flowfile, ".jar");
+	jv = if (jar == "" || isConfigParameterSet(config.config, "java")) {
+		dir = getConfigParameter(config.config, "java");
+		if (dir == "1") "javagen" else dir;
+	} else "javagen";
+	java_package = getConfigParameter(config.config, "java-package");
 	javaconfig =
 		if (jv != "")
 			Some(FiJavaConfig(
 				config.flowfile,
 				outdir,
 				fcConcatTarget(config, outdir, jv),
-				getConfigParameterDef(config.config, "java-package", "com.area9innovation.flow"),
+				if (java_package == "") strReplace(config.flowfile, "/", ".") else java_package,
+				getConfigParameterDef(config.config, "java-main", fileNameOnly(config.flowfile)),
 				jar,
 				buildSet(filtermap(strSplit(getConfigParameterDef(config.config, "java-library", ""), ","), 
 					\n -> if (n == "") None() else Some(n)

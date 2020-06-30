@@ -94,11 +94,25 @@ public class FlowFileSystem extends NativeHost {
 		return null;
     }
 
+    public Object readFileEnc(Object file, String as, String enc, Func1<Object,String> onData, Func1<Object, String> onError) {
+		return null;
+    }
+
     public Object saveFileClient(String filename, String data, String type) {
 		return null;
 	}
 
 	public Object getFileByPath(String path) {
 		return null;
+	}
+
+	public Object fileSizeNative(Object file) {
+		File _file = (File)file;
+		return _file.length();
+	}
+	public double fileModifiedNative(Object file) {
+		File _file = (File)file;
+		double d = _file.lastModified() / 1000;
+		return Math.round(d) * 1000;
 	}
 }

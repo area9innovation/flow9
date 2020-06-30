@@ -217,15 +217,29 @@ In case jar=1 the name of a program will be used as a name of the jar file. Exam
 
 	flowc jar=1 program.flow
 
+JavaScript backend
+------------------
+
+Most of natives for the JavaScript are generated from haxe sources. External (non haxe) natives may be added
+by following options:
+
+	flowc js-extern-lib=<file> js-extern-natives=<name_1>,<name_2>,...,<name_k> ...
+
+The first inlines a whole file into the generated JS code. This file should contain an object, say 'native_host',
+containing member functions 'f_1', 'f_2', ... ,'f_k' - the natives, listed in the second option. The names 
+in the second option must be in the form: 'name_1' = 'native_host.f_1', ... , 'name_k' = 'native_host.f_k'.
+
+
 ### Library usage.
 If you want to make a library instead of runnable program, you can specify the interface functions of a
 library with `java-library` option (the second variant will build library.jar from library.flow):
 
 	flowc java=src java-library=fun1,fun2,fun3  library.flow
 	flowc jar=1 java-library=fun1,fun2,fun3  library.flow
+	flowc jar=aname-lib.jar java-library=fun1,fun2,fun3  library.flow
 
 Here fun1,fun2,fun3 are functions, which are used in a library interface. 
-The library contains a `Main` class, which contains: 
+The library contains a class with the same name as a compiled flow flie, which contains: 
 - `public static void init(String[] args)` - the function to initialize the runtime. `args` are the command line
 arguments, passed to the library. Must be called before usage.
 - public static methods fun1, fun2, fun3, etc. , listed in the `java-library` option.

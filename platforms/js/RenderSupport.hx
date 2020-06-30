@@ -453,6 +453,14 @@ class RenderSupport {
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
 		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+
+		// Make additional resize for mobile fullscreen mode
+		if (Platform.isMobile) {
+			on("fullscreen", function(isFullScreen) {
+				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
+				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
 	}
 
 	private static inline function isPortaitOrientation() {
@@ -470,6 +478,11 @@ class RenderSupport {
 			if (WindowTopHeightLandscape == -1)
 				WindowTopHeightLandscape = topHeight;
 		}
+	}
+
+	public static function setApplicationLanguage(languageCode : String) {
+		Browser.document.documentElement.setAttribute("lang", languageCode);
+		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
 	}
 
 	public static function getSafeArea() : Array<Float> {
@@ -1260,6 +1273,22 @@ class RenderSupport {
 
 	public static function setAccessCallback(clip : Dynamic, callback : Void -> Void) : Void {
 		clip.accessCallback = callback;
+	}
+
+	public static function setClipTagName(clip : Dynamic, tagName : String) : Void {
+		if (clip.nativeWidget != null) {
+			clip.nativeWidget = null;
+			clip.tagName = tagName;
+			clip.createNativeWidget(tagName);
+
+			if (clip.updateNativeWidgetStyle != null) {
+				clip.updateNativeWidgetStyle();
+			}
+
+			DisplayObjectHelper.invalidateTransform(clip);
+		} else {
+			clip.tagName = tagName;
+		}
 	}
 
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
@@ -2585,8 +2614,12 @@ class RenderSupport {
 				regularFullScreenClipParent = FullWindowTargetClip.parent;
 				mainStage.addChild(FullWindowTargetClip);
 			} else {
-				regularFullScreenClipParent.addChild(FullWindowTargetClip);
-				regularFullScreenClipParent = null;
+				if (regularFullScreenClipParent != null) {
+					regularFullScreenClipParent.addChild(FullWindowTargetClip);
+					regularFullScreenClipParent = null;
+				} else {
+					mainStage.removeChild(FullWindowTargetClip);
+				}
 
 				for (child in mainStage.children) {
 					child.setClipVisible(true);
@@ -2721,6 +2754,7 @@ class RenderSupport {
 		}
 
 		untyped RenderSupport.LayoutText = true;
+		emit("enable_sprites");
 		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
@@ -2728,15 +2762,17 @@ class RenderSupport {
 
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
-			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
 
 			render();
 
 			return img;
 		} catch(e : Dynamic) {
-			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
 
 			render();
 
