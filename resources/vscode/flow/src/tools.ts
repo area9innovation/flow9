@@ -1,6 +1,5 @@
 import { spawn, ChildProcess, spawnSync } from 'child_process';
 
-
 export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[]):
     ChildProcess {
     const options = wd && wd.length > 0 ? { cwd: wd, shell: true } : { shell : true};
@@ -25,11 +24,11 @@ export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
 }
 
 export function shutdownFlowcHttpServerSync() {
-    return run_cmd_sync("flowc1", "", ["server-shutdown=1"]);
+	return run_cmd_sync("flowc1", "", ["server-shutdown=1"]);
 }
 
 export function shutdownFlowcHttpServer() {
-    run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
+    return run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
 }
 
 export function launchFlowcHttpServer(projectRoot: string, on_start : () => void, on_stop : () => void) {

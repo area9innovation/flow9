@@ -3,7 +3,7 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
@@ -15,6 +15,7 @@ import * as updater from "./updater";
 import * as meta from '../package.json';
 import * as simplegit from 'simple-git/promise';
 //import { performance } from 'perf_hooks';
+const isPortReachable = require('is-port-reachable');
 
 interface ProblemMatcher {
     name: string,
@@ -38,7 +39,9 @@ let flowDiagnosticCollection : vscode.DiagnosticCollection = null;
 let problemMatchers: ProblemMatcher[] = meta['contributes'].problemMatchers;
 
 let serverStatusBarItem: vscode.StatusBarItem;
-let httpServer = null;
+
+let httpServer : ChildProcess;
+let httpServerOnline : boolean = false;
 let clientKind = LspKind.None;
 
 // this method is called when your extension is activated
@@ -47,7 +50,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Use the console to output diagnostic information (console.log) and errors (console.error)
     // This line of code will only be executed once when your extension is activated
     console.log('Flow extension active');
-    serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	serverStatusBarItem.command = 'flow.toggleHttpServer';
     context.subscriptions.push(serverStatusBarItem);
     
     context.subscriptions.push(vscode.commands.registerCommand('flow.compile', compile));
@@ -56,13 +60,17 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('flow.run', runCurrentFile));
     context.subscriptions.push(vscode.commands.registerCommand('flow.updateFlowRepo', () => { updateFlowRepo(context); }));
     context.subscriptions.push(vscode.commands.registerCommand('flow.startHttpServer', startHttpServer));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setClient(context, LspKind.Flow); }));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setClient(context, LspKind.JS); }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates));
 
     flowChannel = vscode.window.createOutputChannel("Flow");
-    flowChannel.show();
+	flowChannel.show();
+
+	checkHttpServerStatus(true);
+	setInterval(checkHttpServerStatus, 3000, false);
 
     // Create a client
     if (vscode.workspace.getConfiguration("flow").get("lspFlowServer")) {
@@ -71,27 +79,54 @@ export function activate(context: vscode.ExtensionContext) {
         setClient(context, LspKind.JS);
     }
 
-    // launch flowc server at startup
-    if (vscode.workspace.getConfiguration("flow").get("autostartHttpServer")) {
-        startHttpServer();
-    }
-
     updater.checkForUpdate();
     updater.setupUpdateChecker();
     serverStatusBarItem.show();
 }
 
+function checkHttpServerStatus(initial : boolean) {
+	const port = vscode.workspace.getConfiguration("flow").get("portOfHttpServer");
+	isPortReachable(port, {host: 'localhost'}).then(
+		(reacheable : boolean) => {
+			if (reacheable) {
+				showHttpServerOnline();
+				httpServerOnline = true;
+			} else {
+				httpServer = null;
+				httpServerOnline = false;
+				showHttpServerOffline();
+				if (initial) {
+					// launch flowc server at startup
+					let autostart = vscode.workspace.getConfiguration("flow").get("autostartHttpServer");
+					if (autostart) {
+						startHttpServer();
+					}
+				}
+			}
+		}
+	);
+}
+
+function toggleHttpServer() {
+    if (!httpServerOnline) {
+		startHttpServer();
+    } else {
+		stopHttpServer();
+	}
+}
+
 function startHttpServer() {
-    if (httpServer == null) {
-        httpServer = tools.launchFlowcHttpServer(getFlowRoot(), showHttpServerOnline, showHttpServerOffline);
+    if (!httpServerOnline) {
+		httpServer = tools.launchFlowcHttpServer(getFlowRoot(), showHttpServerOnline, showHttpServerOffline);
+		httpServerOnline = true;
     }
 }
 
 function stopHttpServer() {
-    if (httpServer) {
-        tools.shutdownFlowcHttpServer();
-    }
-    httpServer = null;
+	if (httpServerOnline) {
+		tools.shutdownFlowcHttpServer().on("exit", (code, msg) => httpServer = null);
+		httpServerOnline = false;
+	}
 }
 
 function setClient(context: vscode.ExtensionContext, kind : LspKind) {
@@ -185,9 +220,10 @@ function showHttpServerOffline() {
 
 // this method is called when your extension is deactivated
 export function deactivate() {
-	// First, shutdown Flowc server
-    tools.shutdownFlowcHttpServer();
-    httpServer = null;
+	// First, shutdown Flowc server, if it is owned by current vscode instance
+	if (httpServer) {
+		tools.shutdownFlowcHttpServer().on("exit", (code, msg) => httpServer = null);
+	}
     // kill all child processed we launched
     childProcesses.forEach(child => { 
         child.kill('SIGKILL'); 
@@ -226,7 +262,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
 
     let shutdown_http_and_pull = (kind : LspKind) => {
         let startHttp = false;
-        if (httpServer) {
+        if (httpServerOnline) {
             startHttp = true;
             flowRepoUpdateChannel.append("Shutting down HTTP flowc server... ");
             stopHttpServer();
@@ -380,8 +416,8 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
             }, childProcesses);
         }
         if (use_lsp) {
-            if (!httpServer) {
-                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performace it is recommended to switch HTTP server on.");
+            if (!httpServerOnline) {
+                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on.");
             }
             switch (clientKind) {
                 case LspKind.Flow: {
@@ -442,7 +478,7 @@ function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile:
     CommandWithArgs
 {
     let compiler = compilerHint ? compilerHint : getFlowCompiler();
-    let serverArgs = (compiler.startsWith("flowc") && !httpServer) ? ["server=0"] : [];
+    let serverArgs = (compiler.startsWith("flowc") && !httpServerOnline) ? ["server=0"] : [];
     if (compiler == "nekocompiler") {
         return { cmd: "neko", args: [
             path.join(flowbinpath, "flow.n"), flowfile, "--dontlink"

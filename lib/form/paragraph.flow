@@ -582,6 +582,7 @@ breakTextFragment(
 	newLinePos = ref -1;                                       // next pos of newline symbol
 	hyphenPos : ref Pair<int, bool> = ref Pair(-1, false);     // pair of next pos of hyphen and soft sign
 	chrCatPos = ref (if (isBiDiEnabled()) -1 else textLen);    // next pos of split in respect of characters' categories
+	wordAlphabet : ref string = ref("");
 
 	remapMinusOne = \p -> if (p >= 0) p else textLen;
 	loop1 : ref (int, int, List<GeneralWrapElement>) -> List<GeneralWrapElement> = ref \i, indexing, acc -> EmptyList();
@@ -653,40 +654,48 @@ breakTextFragment(
 					makeSpaceText = \-> getCharAt(text, keyPos);
 					keyFragment = switch(posType : SymbolAtPositionType) {
 						PositionLineBreak() : {
+							wordAlphabet := "";
 							NewLine();
 						}
 						PositionSpace() : {
 							// To get constant time concatenation of paragraph strings to work, we send
 							// the space from the original string to this guy.
-							space = GeneralSpace(makeSpaceText());
+							space = GeneralSpace(makeSpaceText(), ^wordAlphabet, "");
+							wordAlphabet := "";
 							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
 						}
 						PositionAllowBreakAfter() : {
-							toInspectingElementIfNecessary(
-								indexing,
-								indexing + keyPosRelative,
-								GeneralSpace(if (isCJKLang()) "" else makeSpaceText())
-							);
+							space = GeneralSpace(if (isCJKLang()) "" else makeSpaceText(), ^wordAlphabet, "");
+							wordAlphabet := "";
+							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
 						}
 						PositionAllowSoftBreakAfter() : {
+							wordAlphabet := "";
 							toInspectingElementIfNecessary(indexing,
 								indexing + keyPosRelative,
-								GeneralLinePart("", "", getSoftBreakVisualSymbol())
+								GeneralLinePart("", "", softBreakVisualSymbol)
 							)
 						}
 						PositionCharCat(): {
+							wordAlphabet := getUnicodeAlphabet(getCharCodeAt(text, keyPos));
 							// Used only for case break happens immediately after current position
 							// not to remake current implementation.
 							makeTextFn(indexing, getCharAt(text, keyPos));
 						}
 					};
-
+					spaceAcc = switch(acc) {
+						EmptyList(): acc;
+						Cons(lhead, ltail): switch(lhead) {
+							GeneralSpace(txt, alpB, alpA): Cons(GeneralSpace(lhead with alphabetAfter=^wordAlphabet), ltail)
+							default: acc;
+						}
+					};
 					if (keyPos == i) {
 						//Cannot happen for hyphen
 						// if we have only NewLine, we have to add empty space form to be able to position on this line
 						// we can't treat "\n" as two lines because in SmartBuilder a lot of content think different (treats it as one line)
 						newAcc = if (text == "\n") {
-							Cons(keyFragment, acc)
+							Cons(keyFragment, spaceAcc)
 						} else {
 							switch (keyFragment) {
 								NewLine(): {
@@ -697,7 +706,7 @@ breakTextFragment(
 									Cons(keyFragment, Cons(newLineElement, acc))
 								}
 
-								default: Cons(keyFragment, acc);
+								default: Cons(keyFragment, spaceAcc);
 							}
 						}
 						^loop1(i + 1, indexing + 1, newAcc);
@@ -708,7 +717,7 @@ breakTextFragment(
 						//So, recursive call will return Cons(makeTextFn(word), acc) in
 						//Cons(keyFragment, breakTextFragment(word, style, moreLineBreaks, indexing, acc));
 						//So, refactored as
-						Cons(keyFragment, Cons(makeTextFn(indexing, word), acc));
+						Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc));
 						//to make the function tail recursive
 					} else {
 						doNotSkipSymbolDelta = if (doNotSkipSymbolDeltaOnLang(posType == PositionAllowBreakAfter()) || posType == PositionCharCat()) 1 else 0;
@@ -717,9 +726,9 @@ breakTextFragment(
 							keyPos + 1,
 							indexing + keyPosRelative + 1,
 							if (posType == PositionCharCat())
-								Cons(makeTextFn(indexing, word), acc)
+								Cons(makeTextFn(indexing, word), spaceAcc)
 							else
-								Cons(keyFragment, Cons(makeTextFn(indexing, word), acc))
+								Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc))
 						)
 					}
 				}
