@@ -127,8 +127,7 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 			[
 				IScriptBehaviour("point", currentPoint.point, ISInputValue([], serialize(getValue(currentPoint.point)), true)),
 				IScriptBehaviour("down", moving.moving, ISInputValue([], serialize(getValue(moving.moving)), true)),
-				IScriptBehaviour("position", scrollPosition.position, ISInputValue([], serialize(getValue(scrollPosition.position)), true)),
-				AccessRole("scroll")
+				IScriptBehaviour("position", scrollPosition.position, ISInputValue([], serialize(getValue(scrollPosition.position)), true))
 			]
 		),
 		\newParent ->
@@ -405,6 +404,8 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 			dceil(p.y / bwh.height + 1.1) * bwh.height
 		)
 	)));
+	scrollPercent = tryExtractStruct(m.style, TScrollPercent(makePoint()));
+	cachedPercent = ref zeroPoint;
 
 	containers : DynamicBehaviour<[MRecyclerGridId]> = make([]);
 	needsUpdate = make(true);
@@ -503,7 +504,17 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 					manager.manager.deltaTimer.attach();
 					manager.manager.deltaTimer.detach;
 				},
-				make2Subscribe(items.first, scrollBounds, \__, __ -> next(needsUpdate, true)),
+				make2Subscribe(
+					fselectWithLast(flength(items.first), FLift2(\prevLen, curLen -> {
+						if (prevLen > curLen) {
+							next(contentSizeNeedsUpdate, true);
+						}
+
+						curLen;
+					})),
+					scrollBounds,
+					\__, __ -> next(needsUpdate, true)
+				),
 				makeSubscribe(manager.manager.deltaTimer.timer, \__ -> {
 					if (getValue(needsUpdate)) {
 						it = getValue(items.first);
@@ -518,9 +529,31 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 						currentContainers = getValue(containers);
 						newContainers = filterVisibleMRecyclerGridContainers(it, sb, fgetValue(initWH));
 						nextDistinct(containers, newContainers);
+
+						maybeApply(scrollPercent, \sp -> {
+							next(sp.percent, ^cachedPercent);
+						});
 					}
 				})
-			],
+			]
+			|> (\subs ->
+				eitherMap(
+					scrollPercent,
+					\sp -> {
+						concat(
+							[
+								makeSubscribe(sp.percent, \p -> {
+									if (getValue(needsUpdate) == getValue(contentSizeNeedsUpdate)) {
+										cachedPercent := p;
+									}
+								})
+							],
+							subs
+						)
+					},
+					subs
+				)
+			),
 			f
 		)
 	)

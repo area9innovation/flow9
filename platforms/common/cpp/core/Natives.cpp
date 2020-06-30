@@ -1620,7 +1620,7 @@ StackSlot ByteCodeRunner::setFileContent(RUNNER_ARGS)
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -1651,7 +1651,7 @@ StackSlot ByteCodeRunner::setFileContentUTF16(RUNNER_ARGS)
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -1697,7 +1697,7 @@ StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(in
 #ifdef WIN32
             unlink(filename.c_str());
 #endif
-            rename(tmp_fn.c_str(), filename.c_str());
+            ok = !rename(tmp_fn.c_str(), filename.c_str());
             RUNNER->InvalidateFileCache(filename);
         }
     }
@@ -3094,10 +3094,15 @@ StackSlot ByteCodeRunner::readBytes(RUNNER_ARGS)
 {
 	RUNNER_PopArgs1(n);
 	RUNNER_CheckTag(TInt, n);
-	int len = n.GetInt();
-	char buffer[len];
-    std::cin.read(buffer, len);
-	return RUNNER->AllocateString(parseUtf8(std::string(buffer)));
+	std::string str;
+	getline(std::cin, str);
+
+	unsigned int len = n.GetInt();
+	if (str.size() != len) {
+		cerr << "Expected " << len << " bytes, got " << str.size() << " bytes" << std::endl;
+	}
+
+	return RUNNER->AllocateString(parseUtf8(str));
 }
 
 StackSlot ByteCodeRunner::readUntil(RUNNER_ARGS)

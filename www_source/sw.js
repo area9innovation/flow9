@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 12;
+var SERVICE_WORKER_VERSION = 14;
 var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
@@ -122,8 +122,9 @@ var filterUrlParameters = function(url, ignoreParameters) {
     return url;
   } else {
     return urlParameters.baseUrl + "?" + urlParameters.parameters.filter(function(p) {
+      p = p.toLowerCase();
       var index = p.indexOf('=');
-      if (index !== -1) p = p.substr(0, index).toLowerCase();
+      if (index !== -1) p = p.substr(0, index);
       return !ignoreParameters.includes(p);
     }).join("&");
   }
@@ -379,7 +380,10 @@ self.addEventListener('fetch', function(event) {
     requestCloned.headers.forEach(function(val, key) {
       headers.set(key, val);
     });
+    // For standard cache logic
     headers.set('If-None-Match', etag);
+    // And special case, for header forwarding through CDN
+    headers.set('X-If-None-Match', etag);
 
     if (requestCloned.method == "POST") {
       return requestCloned.blob().then(function(reqBlob) {
@@ -786,7 +790,7 @@ self.addEventListener('message', function(event) {
     return fetch(request).then(function(response) {
       // Automatically cache uncached resources
       if (response.status == 200 && response.type == "basic") {
-        var requestToCache = new Request(filterUrlParameters(request.url, ignoreParameters));
+        var requestToCache = new Request(filterUrlParameters(request.url, ignoreParameters.map(function(p) { return p.toLowerCase(); })));
         caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
           cache.put(requestToCache, response.clone());
 

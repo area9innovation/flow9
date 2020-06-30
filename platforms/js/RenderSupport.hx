@@ -1344,9 +1344,9 @@ class RenderSupport {
 
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
 		fontslope : String, fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
-		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, escapeHTML : Bool) : Void {
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
 		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour,
-			backgroundopacity, alignBottom, bottomBorder, scaleMode, escapeHTML);
+			backgroundopacity, alignBottom, bottomBorder, scaleMode, scaleModeMin, scaleModeMax, escapeHTML);
 	}
 
 	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
@@ -2265,8 +2265,8 @@ class RenderSupport {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
-		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
+	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
+		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
 	}
 
 	public static function cursor2css(cursor : String) : String {

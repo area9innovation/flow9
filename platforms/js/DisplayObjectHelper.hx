@@ -818,7 +818,7 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null) {
-			nativeWidget.setAttribute('id', Std.string(Std.int(Math.random() * 100000.0)));
+			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
 		}
 	}
 

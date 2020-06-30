@@ -314,7 +314,7 @@ public class RenderSupport extends NativeHost {
 	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour, double backgroundOpacity, boolean alignBottom,
-								  double bottomBorder, boolean scaleMode, boolean escapeHTML) {
+								  double bottomBorder, boolean scaleMode, double scaleModeMin, double scaleModeMax, boolean escapeHTML) {
 		return null;
 	}
 	public Object setVideoPlaybackRate(Object tf, Double rate) {
@@ -362,7 +362,7 @@ public class RenderSupport extends NativeHost {
 	public Object makeGlow(double a,double b,int c, double d,boolean e) {
 		return null;
 	}
-	public Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e) {
+	public Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e, String alt) {
 		return null;
 	}
 	public Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {

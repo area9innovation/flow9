@@ -46,7 +46,7 @@ native makeClip() { FLOW_ABORT }
 native makeDropShadow(const double angle, const double distance, const double radius, const double spread, const int color, const double alpha, const bool inner) { FLOW_ABORT }
 native makeGlow(const double radius, const double spread, const int color, const double alpha, const bool inner) { FLOW_ABORT }
 native makeMatrix(const double width, const double height, const double rotation, const double xOffset, const double yOffset) { FLOW_ABORT }
-native makePicture(const flow::string& url, const bool cache, const std::function<void(double, double)>& metricsFn, const std::function<void(flow::string)>& errorFn, const bool onlyDownload) { FLOW_ABORT }
+native makePicture(const flow::string& url, const bool cache, const std::function<void(double, double)>& metricsFn, const std::function<void(flow::string)>& errorFn, const bool onlyDownload, const flow::string& altText) { FLOW_ABORT }
 native makeTextfield(const flow::string& fontFamily) { FLOW_ABORT }
 native makeVideo(const std::function<void(double, double)>& metricsFn, const std::function<void(bool)>& playFn, const std::function<void(double)>& durationFn, const std::function<void(double)>& positionFn) { FLOW_ABORT }
 void moveTo(const native& graphics, const double x, const double y) { FLOW_ABORT }
