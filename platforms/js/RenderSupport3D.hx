@@ -147,7 +147,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectChildren(object : Object3D) : Array<Object3D> {
-		return object.children.copy();
+		return Lambda.array(Lambda.filter(object.children, function(v) { return untyped v; }));
 	}
 
 	public static function get3DObjectJSON(object : Object3D, includeCamera : Bool) : String {
@@ -207,6 +207,7 @@ class RenderSupport3D {
 			return;
 		}
 
+		object.invalidateStage();
 		copyObjectProperties(obj, object);
 
 		var objectChildren : Map<Int, Object3D> = object.get3DChildrenMap();
@@ -217,11 +218,13 @@ class RenderSupport3D {
 		});
 
 		for (child in objChildren) {
-			if (child[1] != null) {
+			if (child[1] != null && child[2] != null) {
 				RenderSupport3D.apply3DObjectStateFromObject(child[2], child[1], stage);
 				object.add3DChildAt(child[2], child[0]);
 			}
 		}
+
+		object.invalidateStage();
 	}
 
 	private static function copyObjectProperties(object1 : Dynamic, object2 : Dynamic) : Void {
@@ -230,7 +233,7 @@ class RenderSupport3D {
 				if (typeof object1[property] != 'undefined' && typeof object1[property] != 'function'
 					&& property != 'children' && property != 'geometry' && property != 'childrenMap'
 					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
-					&& property != 'material') {
+					&& property != 'material' && property != 'broadcastable' && property != 'inside' && property != 'updateProjectionMatrix') {
 
 					if (Array.isArray(object1[property]) || object1[property] instanceof String) {
 						object2[property] = object1[property];
@@ -241,7 +244,9 @@ class RenderSupport3D {
 							object2[property] = new Object();
 						}
 
-						RenderSupport3D.copyObjectProperties(object1[property], object2[property]);
+						if (object2[property] != null) {
+							RenderSupport3D.copyObjectProperties(object1[property], object2[property]);
+						}
 					}
 				}
 			}

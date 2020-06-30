@@ -283,7 +283,7 @@ function runCurrentFile() {
             args : [flowpath],
             matcher: 'flowc'
         }
-    });
+    }, false);
 }
 
 function getMatcher(name: string) {
@@ -297,7 +297,7 @@ function getMatcher(name: string) {
 function compileCurrentFile(compilerHint: string) {
     processFile(function(flowBinPath, flowpath) { 
         return getCompilerCommand(compilerHint, flowBinPath, flowpath);
-    });
+    }, true);
 }
 
 function getFlowRoot(): string {
@@ -305,7 +305,7 @@ function getFlowRoot(): string {
     return config.get("root");
 }
 
-function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs) {
+function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean) {
     let document = vscode.window.activeTextEditor.document;
     document.save().then(() => {
         if (null == flowChannel) {
@@ -324,7 +324,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         let matcher = getMatcher(command.matcher);
         flowChannel.appendLine("Current directory: " + rootPath);
         flowChannel.appendLine("Running " + command.cmd + " " + command.args.join(" "));
-        if (vscode.workspace.getConfiguration("flow").get("useLspServer")) {
+        if (use_lsp && vscode.workspace.getConfiguration("flow").get("useLspServer")) {
             if (!vscode.workspace.getConfiguration("flow").get("useHttpServer")) {
                 flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performace it is recommended to switch HTTP server on.");
             }

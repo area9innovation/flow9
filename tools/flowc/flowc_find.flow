@@ -14,9 +14,6 @@ export {
 
 	// Find a type info for a symbol at given position.
 	fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
-
-	// Output a set of suggestions for auto completion at given position.
-	fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void;
 }
 
 handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> void {
@@ -42,7 +39,8 @@ findFiExpAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, file : string
 	linetext = findLine(resolver, linestart).line;
 	charsToColumn = goToColumn(linetext, col);
 	mfiexp = switch (fcLoadFromCache(env, file)) {
-		Some(loaded): {
+		Some(cached): {
+			loaded = cached.loaded;
 			module = loaded.module;
 			index = linestart + charsToColumn;
 
@@ -77,15 +75,6 @@ findFiExpAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, file : string
 		}
 	}
 	Pair(mfiexp, linetext);
-}
-
-fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void {
-	context = findFiExpAtLineCol(config, globEnv, file, line, col, false);
-	mexp : Maybe<FiExp> = context.first;
-	switch (mexp) {
-		Some(e): codeCompletion(config, globEnv, e, line, col);
-		None():  codeCompletePrefix(config, globEnv, context.second, line, col);
-	}
 }
 
 // Given this line, find the index of this column (considering 4-char tab indentation)
@@ -202,8 +191,8 @@ doFindDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string,
 	switch (fcLookupNameInCache(globEnv, name)) {
 		Some(symbol): {
 			switch (fcLoadFromCache(globEnv, symbol.module)) {
-				Some(loaded): {
-					fileinfo = loaded.module.fileinfo;
+				Some(cached): {
+					fileinfo = cached.loaded.module.fileinfo;
 					proc_decl = \dec, def -> {
 						if (getConfigParameter(config.config, "find-definition") != "") {
 							if (def >= 0) {
@@ -281,16 +270,20 @@ fcDoFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : strin
 				FcModuleScope(): {
 					maybeApply(
 						fcLoadFromCache(globEnv, nature.module), 
-						\loaded -> module_uses(loaded.module)
+						\cached -> if (!cached.outdated) module_uses(cached.loaded.module)
 					);
 				}
 				FcLocalScope(): {
 					maybeApply(
 						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
-						\loaded -> iterSet(
-							fcFindLocalOccurrences(globEnv, loaded.module, line, col, nature.name, nature.kind), 
-							\pos -> print_location(loaded.module, pos + 1)
-						)
+						\cached -> {
+							if (!cached.outdated) {
+								module = cached.loaded.module;
+								iterSet(fcFindLocalOccurrences(globEnv, module, line, col, nature.name, nature.kind), 
+									\pos -> print_location(module, pos + 1)
+								);
+							}
+						}
 					);
 				}
 			}
@@ -321,10 +314,13 @@ fcDoSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 				None(): {
 					maybeApply(
 						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
-						\loaded ->
-							maybeApply(findFiExpInModuleAtLineCol(globEnv, loaded.module, line, col, true), 
-								\e -> fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()), config.threadId)
-							)
+						\cached -> {
+							if (!cached.outdated) {
+								maybeApply(findFiExpInModuleAtLineCol(globEnv, cached.loaded.module, line, col, true), 
+									\e -> fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()), config.threadId)
+								);
+							}
+						}
 					);
 				}
 			}

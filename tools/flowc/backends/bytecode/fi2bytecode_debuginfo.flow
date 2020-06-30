@@ -1,0 +1,210 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/bytecode/fi2bytecode_defines;
+
+export {
+	// Start producing debug info for this file
+	diBcDebugStartFile(cfg : FcBytecodeConfig, file : string) -> void;
+	diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string, path : string) -> void;
+
+	// Add explanation for this point in the bytecode for this file to the debug info
+	// pc is bytecode position. pos is source file position. isStart is set for
+	// functions. comment is meta-info about what kind of debug point this is
+	fiBcDebugAddPosition(cfg : FcBytecodeConfig, 
+		pc : int, pos : int, isStart : bool, comment : BcDebugKind
+	) -> void;
+
+	// Add a function to the debug info
+	fiBcDebugAddFunction(cfg : FcBytecodeConfig, pc : int, name : string) -> void;
+
+	// Add a local variable to the debug info
+	fiBcDebugAddLocal(cfg : FcBytecodeConfig, pc : int, type : int, id : int, name : string) -> void;
+
+	// Mark the end of the bytecode
+	fiBcDebugEndOfBytecode(cfg : FcBytecodeConfig, pc : int) -> void;
+
+	// Build the debug info for this program
+	fcBcMakeDebugInfo(cfg : FcBytecodeConfig) -> string;
+}
+
+diBcDebugStartFile(cfg : FcBytecodeConfig, file : string) -> void {
+	if (cfg.debug) {
+		// println("Start " + file);
+		cfg.debugInfo.currentPositions := makeList();
+	}
+}
+
+diBcDebugEndFile(cfg : FcBytecodeConfig, resolvers : Tree<string, LineResolver>, file : string, path : string) -> void {
+	if (cfg.debug) {
+		// println("End " + file);
+		poss : List<BCDPosition> = ^(cfg.debugInfo.currentPositions);
+
+		filepath = resolveRelativePath(path);
+
+		lineResolverM : Maybe<LineResolver> = lookupTree(resolvers, file);
+		lineResolverM ?? {
+			// Extract all positions in the file we have to resolve to line:col pars
+			positions : Set<int> = foldList(poss, makeSet(), \acc, pos : BCDPosition -> {
+				insertSet(acc, iabs(pos.pos))
+			});
+
+			// Convert all positions to line,col pairs
+			lineCols : Tree<int, Pair<int, int>> = buildLineCols(lineResolverM, positions);
+
+			// Filter out duplicates from each line
+
+			posPerLine : Tree<Pair<int, bool>, BCDPosition> = foldList(poss, makeTree(), \acc, pos -> {
+				key = Pair(lookupTreeDef(lineCols, iabs(pos.pos), Pair(0, 0)).first, switch (pos.comment) {
+					DebugPosFunction(__, __): false;
+					default: true;
+				});
+				value = lookupTree(acc, key);
+				switch (value) {
+					None(): setTree(acc, key, pos);
+					Some(v): {
+						// We keep the first on each line
+						if (v.pos < pos.pos) {
+							acc;
+						} else {
+							setTree(acc, key, pos);
+						}
+					}
+				}
+			})
+
+			// Visit all remaining sites in bytecode position order
+
+			lineOrder : Tree<int, BCDPosition> = 
+				if (true) {
+					// If we want to keep all positions
+					foldList(poss, makeTree(), \acc, pos -> {
+						key = pos.pc;
+						if (containsKeyTree(acc, key)) acc
+						else setTree(acc, key, pos)
+					});
+				} else {
+					// If we want to keep the reduced set
+					foldTree(posPerLine, makeTree(), \__, pos, acc -> {
+						key = pos.pc;
+						if (containsKeyTree(acc, key)) acc
+						else setTree(acc, key, pos)
+					});
+				}
+
+			fileDebugInfo = list2string(foldTree(lineOrder, makeList(), \__ : int, pos : BCDPosition, acc -> {
+				// <pc> <file> <line> <col>
+				// 492 C:\flow9\lib\dynamic.flow 65 0
+
+				address = (if (cfg.debugVerbose) i2s(pos.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(pos.pc)), "0", 8) + "]" else i2s(pos.pc));
+				lc = lookupTreeDef(lineCols, iabs(pos.pos), Pair(0, 0));
+				Cons(
+					address + " " + filepath + " " + i2s(lc.first) + " " + i2s(lc.second) 
+					+ (if (cfg.debugVerbose) " " + toString(pos.comment) else "")
+					+ "\n", acc);
+			}));
+			cfg.debugInfo.positions := Cons(fileDebugInfo, ^(cfg.debugInfo.positions));
+		} : {
+			println("Invariant broken: Could not find resolver for " + file);
+		}
+	}
+}
+
+fiBcDebugAddPosition(cfg : FcBytecodeConfig, pc : int, pos : int, isStart : bool, comment : BcDebugKind) -> void {
+	if (cfg.debug) {
+		debugInfo = cfg.debugInfo;
+		p = BCDPosition(pc, pos, comment);
+		debugInfo.currentPositions := Cons(p, ^(debugInfo.currentPositions));
+	}
+}
+
+fiBcDebugEndOfBytecode(cfg : FcBytecodeConfig, pc : int) -> void {
+	cfg.debugInfo.endByte := pc;
+}
+
+fiBcDebugAddFunction(cfg, pc, name) {
+	if (cfg.debug) {
+		cfg.debugInfo.functions := Cons(BCDFunction(pc, name), ^(cfg.debugInfo.functions));
+	}
+}
+
+fiBcDebugAddLocal(cfg, pc, type, id, name) {
+	if (cfg.debug) {
+		cfg.debugInfo.locals := Cons(BCDLocal(pc, type, id, name), ^(cfg.debugInfo.locals));
+		{}
+	}
+}
+
+
+
+fcBcMakeDebugInfo(cfg : FcBytecodeConfig) -> string {
+	// TODO: this parameter is only required for debugging debuginfo generation itself.
+	// Subject to remove as well as comment field in BCDPosition
+	isDebugVerbose = cfg.debugVerbose;
+
+	debugInfo = cfg.debugInfo;
+
+	// First section of the debug info is
+	//     position function-name
+	fcVerbose(cfg, 1, "Preparing functions...");
+	functions0 = fold(
+		list2sortedArray(^(debugInfo.functions), \p -> p.pc),
+		makeList(),
+		\acc, v -> {
+			Cons((if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc)) + " " + v.name + "\n", acc);
+		});
+	functions : string = list2string(functions0);
+
+	fcVerbose(cfg, 1, "Preparing positions...");
+	// Second section of the debug info is line positions
+	//    position file line token-index/column
+	positions : string = 
+		concatStrings(list2array(^(debugInfo.positions)))
+		+ (if (^(debugInfo.endByte) != 0) {
+			i2s(^(debugInfo.endByte)) + " --end-- 0 -1\n"
+		} else "");
+
+	// Third part of the debug info are local variables
+	//    L position type id name
+	// Types: 0 for local variables, 1 for function arguments, 2 for bound variables (free variables in closures)
+	fcVerbose(cfg, 1, "Preparing locals...");
+	sorted = list2sortedArray(^(debugInfo.locals), \p -> p.pc);
+	locals : string = list2string(fold(
+		sorted,
+		makeList(),
+		\acc, e -> {
+			Cons("L " + (if (isDebugVerbose) i2s(e.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(e.pc)), "0", 8) + "]" else i2s(e.pc))
+				+ " " + i2s(e.type) + " " + i2s(e.id) + " " + e.name + "\n", acc
+			)
+		}
+	));
+
+	list2string(Cons(locals, Cons("\n", Cons(positions, Cons("\n", Cons(functions, makeList()))))));
+}
+
+list2sortedArray(list : List<?>, key : (?) -> ??) -> [?] {
+	t : Tree<??, Set<?>> = foldList(list, makeTree(), \acc, e -> {
+		insertMultimap(acc, key(e), e)
+	});
+	concatA(map(getTreeValues(t), set2array));
+}
+
+// For a set of positions, construct the line-columns for them all
+buildLineCols(lineResolver : LineResolver, positions : Set<int>) -> Tree<int, Pair<int, int>> {
+	foldSet(positions, Pair(makeTree(), 0), \acc : Pair<Tree<int, Pair<int, int>>, int>, p : int -> {
+		line = findLineWithPos(lineResolver.linestarts, acc.second, p);
+		col = p - lineResolver.linestarts[line];
+		lc = Pair(line + 1, col);
+		Pair(setTree(acc.first, p, lc), line)
+	}).first;
+}
+
+findLineWithPos(linestarts : [int], line : int, pos : int) -> int {
+	if (line + 1 < length(linestarts)) {
+		lineStart = linestarts[line];
+		lineEnd = linestarts[line + 1];
+		if (lineStart <= pos && pos < lineEnd) {
+			line
+		} else {
+			findLineWithPos(linestarts, line + 1, pos);
+		}
+	} else line;
+}
