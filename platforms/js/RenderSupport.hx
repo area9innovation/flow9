@@ -450,7 +450,7 @@ class RenderSupport {
 	//
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
-		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
+		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
 		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 	}
@@ -627,6 +627,14 @@ class RenderSupport {
 		} else {
 			return { width : Browser.window.screen.width, height : Browser.window.screen.height};
 		}
+	}
+
+	// Delay is required due to issue in WKWebView
+	// https://bugs.webkit.org/show_bug.cgi?id=170595
+	private static inline function onBrowserWindowResizeDelayed(e : Dynamic) : Void {
+		Native.timer(100, function() {
+			onBrowserWindowResize(e);
+		});
 	}
 
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
@@ -1334,9 +1342,11 @@ class RenderSupport {
 		// STUB; only implemented in C++/OpenGL
 	}
 
-	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String,
-		fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float, alignBottom : Bool, escapeHTML : Bool) : Void {
-		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity, alignBottom, escapeHTML);
+	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
+		fontslope : String, fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
+		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, escapeHTML : Bool) : Void {
+		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour,
+			backgroundopacity, alignBottom, bottomBorder, scaleMode, escapeHTML);
 	}
 
 	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
@@ -2620,17 +2630,10 @@ class RenderSupport {
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!hadUserInteracted) return;
 
-		if (RendererType == "html") {
-			if (fs)
-				requestFullScreen(Browser.document.body);
-			else
-				exitFullScreen(Browser.document);
-		} else {
-			if (fs)
-				requestFullScreen(PixiView);
-			else
-				exitFullScreen(PixiView);
-		}
+		if (fs)
+			requestFullScreen(Browser.document.body);
+		else
+			exitFullScreen(Browser.document);
 	}
 
 	public static function onFullScreen(fn : Bool -> Void) : Void -> Void {

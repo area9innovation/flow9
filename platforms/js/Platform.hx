@@ -35,10 +35,11 @@ class Platform {
 
 	public static var isIEMobile : Bool = ~/iemobile/i.match(Browser.window.navigator.userAgent);
 	public static var isAndroid : Bool = ~/android/i.match(Browser.window.navigator.userAgent);
-	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent) || untyped HaxeRuntime.typeof(navigator.standalone) != 'undefined';
+	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent) || untyped HaxeRuntime.typeof(navigator.standalone) != 'undefined' || navigator.platform == 'MacIntel' && navigator.maxTouchPoints > 1 && !window.MSStream;
 	public static var isMobile : Bool = ~/webOS|BlackBerry|Windows Phone/i.match(Browser.window.navigator.userAgent) || isIEMobile || isAndroid || isIOS;
 	public static var isRetinaDisplay : Bool = getIsRetinaDisplay();
 	public static var isHighDensityDisplay : Bool = isRetinaDisplay || getIsHighDensityDisplay();
+	public static var isWKWebView : Bool = isIOS && untyped window.webkit && untyped window.webkit.messageHandlers;
 
 	public static var isMacintosh : Bool = ~/Mac/i.match(Browser.window.navigator.platform);
 	public static var isWindows : Bool = ~/Win/i.match(Browser.window.navigator.platform);
