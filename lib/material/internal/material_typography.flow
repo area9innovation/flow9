@@ -17,9 +17,8 @@ export {
 	MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> [CharacterStyle];
 
 	MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle];
-	MFontStyle2MCustomFontDefault(parent : MFocusGroup, style : MFontStyle) -> MCustomFont;
-	MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, sto: double) -> MCustomFont;
-	overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MTextStyle]) -> [MTextStyle];
+	MFontStyle2MCustomFontDefault(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> MCustomFont;
+	overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MTextStyle], darkText : bool) -> [MTextStyle];
 
 	style2MTextStyle(style : [?]) -> [MTextStyle];
 
@@ -73,12 +72,13 @@ MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic {
 MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MParagraphStyle]) -> Tropic {
 	mTextStyle = style2MTextStyle(style);
 	defStyle = Triple(getTextColor(parent), getFontStyle(parent), true);
+	darkText = MColor2int(defStyle.first) == black;
 	fontStyle = extractMTextStyleDef(mTextStyle, defStyle);
 	characterStyle : [TCharacterStyle] = addMLangFontFamily(fgetValue(text), MTextStyle2CharacterStyleDef(parent, style, defStyle));
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 
-	interlineSpacing = eitherFn(tryExtractStruct(style, InterlineSpacing(0.)), idfn, \ -> MFontStyle2InterlineSpacing(parent, fontStyle.second));
-	paragraphMargin = eitherFn(tryExtractStruct(style, ParagraphMargin(0., 0.)), idfn, \ -> MFontStyle2ParagraphMargin(parent, fontStyle.second));
+	interlineSpacing = eitherFn(tryExtractStruct(style, InterlineSpacing(0.)), idfn, \ -> MFontStyle2InterlineSpacing(parent, fontStyle.second, darkText));
+	paragraphMargin = eitherFn(tryExtractStruct(style, ParagraphMargin(0., 0.)), idfn, \ -> MFontStyle2ParagraphMargin(parent, fontStyle.second, darkText));
 
 	cropLongWords = extractStructMany(style, CropWords(true));
 
@@ -165,11 +165,19 @@ MCustomFont2CharacterStyle(mcf: MCustomFont) -> [BasicCharacterStyle] {
 	];
 }
 
+MCustomFontAdvanced2CharacterStyle(mcf: MCustomFont) -> [BasicCharacterStyle] {
+	[
+		FontSize(mcf.size),
+		FontFamily(mcf.family),
+		FillOpacity(mcf.opacity)
+	];
+}
+
 // https://material.io/guidelines/style/color.html#color-text-background-colors
 MFontStyle2CharacterStyle(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> [BasicCharacterStyle] {
 	pto = if (darkText) primaryTextOpacityDark else primaryTextOpacity;
 	sto = if (darkText) secondaryTextOpacityDark else secondaryTextOpacity;
-	MCustomFont2CharacterStyle(MFontStyle2MCustomFont(parent, style, pto, sto));
+	MCustomFontAdvanced2CharacterStyle(MFontStyle2MCustomFont(parent, style, pto, sto, darkText));
 }
 
 // Reverse function for special cases
@@ -192,11 +200,11 @@ MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle] {
 	[MCustomColor(^fill), MCustomFont(^fontSize, ^fontFamily, ^fillOpacity)]
 }
 
-MFontStyle2MCustomFontDefault(parent : MFocusGroup, style : MFontStyle) -> MCustomFont {
-	MFontStyle2MCustomFont(parent, style, 0.87, 0.54)
+MFontStyle2MCustomFontDefault(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> MCustomFont {
+	MFontStyle2MCustomFont(parent, style, primaryTextOpacityDark, secondaryTextOpacityDark, darkText)
 }
 
-MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, sto: double) -> MCustomFont {
+MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, sto: double, darkText : bool) -> MCustomFont {
 	switch (style : MFontStyle) {
 		MDisplay5(): MCustomFont(96.0, "Roboto", pto);
 		MDisplay4(): MCustomFont(60.0, "Roboto", pto);
@@ -222,17 +230,23 @@ MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, st
 		MTooltipDesktop(): MCustomFont(12.0, "RobotoMedium", pto);
 		MOverline(): MCustomFont(10.0, "Roboto", pto);
 		MCustomFont(size, family, opacity): MCustomFont(size, family, opacity);
-		MaterialType(): MFontStyle2MCustomFont(parent, MaterialType2MFontStyle(parent, style), pto, sto);
+		MCustomFontAdvanced(dark, light): {
+			if (darkText)
+				MFontStyle2MCustomFont(parent, dark, pto, sto, darkText)
+			else
+				MFontStyle2MCustomFont(parent, light, pto, sto, darkText);
+		}
+		MaterialType(): MFontStyle2MCustomFont(parent, MaterialType2MFontStyle(parent, style), pto, sto, darkText);
 	}
 }
 
-overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MTextStyle]) -> [MTextStyle] {
+overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MTextStyle], darkText : bool) -> [MTextStyle] {
 	alphabet = getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1));
 	if (alphabet == "arb") {
 		map(styles, \s -> {
 			switch (s) {
 				MFontStyle(): {
-					font = MFontStyle2MCustomFontDefault(parent, s);
+					font = MFontStyle2MCustomFontDefault(parent, s, darkText);
 					fsize = FontSize(font.size);
 					ffamily = FontFamily(font.family);
 					charStyles = applyAlphabetStyles(detectAlphabet(text), [fsize, ffamily]);
@@ -248,7 +262,7 @@ overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MText
 		})
 	} else styles
 }
-MFontStyle2ParagraphMargin(parent : MFocusGroup, style : MFontStyle) -> ParagraphMargin {
+MFontStyle2ParagraphMargin(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> ParagraphMargin {
 	switch (style : MFontStyle) {
 		MDisplay5(): ParagraphMargin(0., 26.);
 		MDisplay4(): ParagraphMargin(0., 26.);
@@ -274,11 +288,17 @@ MFontStyle2ParagraphMargin(parent : MFocusGroup, style : MFontStyle) -> Paragrap
 		MTooltipDesktop(): ParagraphMargin(0., 0.);
 		MOverline(): ParagraphMargin(0., 0.);
 		MCustomFont(fs, __, __): ParagraphMargin(0., if (fs <= 20.) 4. else if (fs < 34.) 8. else if (fs < 45.) 18. else 26.);
-		MaterialType(): MFontStyle2ParagraphMargin(parent, MaterialType2MFontStyle(parent, style));
+		MCustomFontAdvanced(dark, light): {
+			if (darkText)
+				MFontStyle2ParagraphMargin(parent, dark, darkText)
+			else
+				MFontStyle2ParagraphMargin(parent, light, darkText);
+		}
+		MaterialType(): MFontStyle2ParagraphMargin(parent, MaterialType2MFontStyle(parent, style), darkText);
 	}
 }
 
-MFontStyle2InterlineSpacing(parent : MFocusGroup, style : MFontStyle) -> InterlineSpacing {
+MFontStyle2InterlineSpacing(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> InterlineSpacing {
 	switch (style : MFontStyle) {
 		MDisplay5(): InterlineSpacing(-5.);
 		MDisplay4(): InterlineSpacing(-5.);
@@ -304,7 +324,13 @@ MFontStyle2InterlineSpacing(parent : MFocusGroup, style : MFontStyle) -> Interli
 		MTooltipDesktop(): InterlineSpacing(0.);
 		MOverline(): InterlineSpacing(0.);
 		MCustomFont(fs, __, __): InterlineSpacing(if (fs <= 12.) 0. else if (fs < 16.) 2. else if (fs < 34.) 4. else if (fs < 45.) -2. else -5.);
-		MaterialType(): MFontStyle2InterlineSpacing(parent, MaterialType2MFontStyle(parent, style));
+		MCustomFontAdvanced(dark, light): {
+			if (darkText)
+				MFontStyle2InterlineSpacing(parent, dark, darkText)
+			else
+				MFontStyle2InterlineSpacing(parent, light, darkText);
+		}
+		MaterialType(): MFontStyle2InterlineSpacing(parent, MaterialType2MFontStyle(parent, style), darkText);
 	}
 }
 
