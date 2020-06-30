@@ -818,8 +818,17 @@ FParagraph2Form(fParagraph : FParagraph) -> Form {
 			fParagraph.text,
 			eitherFn(
 				tryExtractStruct(fParagraph.style, ParagraphMetrics(nop1)),
-				\pm -> replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {pm.fn(m); nextDistinct(met, m); nextDistinct(wh, WidthHeight(m.width, m.height))})),
-				\ -> replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {nextDistinct(met, m); nextDistinct(wh, WidthHeight(m.width, m.height))}))
+				\pm ->
+					replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {
+						pm.fn(m);
+						nextDistinct(met, FormMetrics(m.width, m.height, m.baseline, m.height));
+						nextDistinct(wh, WidthHeight(m.width, m.height));
+					})),
+				\ ->
+					replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {
+						nextDistinct(met, FormMetrics(m.width, m.height, m.baseline, m.height));
+						nextDistinct(wh, WidthHeight(m.width, m.height));
+					}))
 			)
 		);
 
@@ -996,11 +1005,12 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 
 FTextRenderResult(
 	x : Transform<double>,
+	maxX : Transform<double>,
 	y : Transform<double>,
 	disposers : [() -> void]
 );
 
-emptyFTextRenderResult = FTextRenderResult(zero, zero, []);
+emptyFTextRenderResult = FTextRenderResult(zero, zero, zero, []);
 
 renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 	if (isFConst(texts) && length(fgetValue(texts)) < 2) {
@@ -1088,10 +1098,12 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 
 						childClip : ref native = ref clip;
 						cx = make(0.0);
+						cmx = make(0.0);
 						cy = make(0.0);
 						pm = ParagraphMetrics(\fm -> {
 							deferUntilNextFrameRendered(\ -> next(cx, getTextFieldCharXPosition(^childClip, strlen(t.text))));
 							next(cx, fm.width);
+							next(cmx, fm.maxWidth);
 							next(cy, fm.height);
 						});
 
@@ -1106,6 +1118,7 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 
 						FTextRenderResult(
 							faddition(acc.x, cx),
+							faddition(acc.maxX, cmx),
 							faddition(accY, cy),
 							concat3(
 								acc.disposers,
@@ -1126,8 +1139,8 @@ renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRend
 					concat(
 						d.disposers,
 						[
-							make2Subscribe(d.x, d.y, \x, y ->
-								maybeApply(tryExtractStruct(style, ParagraphMetrics(nop1)), \pm -> pm.fn(FormMetrics(x, y, y, y)))
+							make3Subscribe(d.x, d.y, d.maxX, \x, y, mx ->
+								maybeApply(tryExtractStruct(style, ParagraphMetrics(nop1)), \pm -> pm.fn(FFormMetrics(x, y, y, mx)))
 							)()
 						]
 					)
@@ -1159,11 +1172,11 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 			tryExtractStruct(style, ParagraphMetrics(nop1)),
 			\fn -> \ ->
 				fn.fn(
-					FormMetrics(
+					FFormMetrics(
 						getTextFieldWidth(textfield),
 						getTextFieldHeight(textfield),
 						getTextMetrics(textfield)[0],
-						getTextFieldHeight(textfield)
+						getTextFieldMaxWidth(textfield)
 					)
 				),
 			nop
@@ -1177,7 +1190,7 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		}
 	);
 
-	autoAlign = 
+	autoAlign =
 		if (contains(style, LeftAlign()))
 			"AutoAlignLeft"
 		else if (contains(style, RightAlign()))

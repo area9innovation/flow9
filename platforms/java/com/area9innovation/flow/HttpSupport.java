@@ -231,6 +231,21 @@ public class HttpSupport extends NativeHost {
 		return no_op;
 	}
 
+	public final Func0<Object> uploadNativeFile(
+			Object file,
+			String url, 
+			Object[] params, 
+			Object[] headers, 
+			Func0<Object> onOpen,
+			Func1<Object, String> onData,
+			Func1<Object, String> onError, 
+			Func2<Object, Double, Double> onProgress) {
+		// TODO
+		System.out.println("uploadNativeFile not implemented");
+
+		return no_op;
+	}
+
 	private Func0<Object> no_op = new Func0<Object>() {
 		public Object invoke() { return null; }
 	};

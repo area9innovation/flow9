@@ -54,7 +54,7 @@ public class RenderSupport extends NativeHost {
 	public Object setWebClipDisabled(Object clip,boolean value) {
 		return null;
 	}
-	public String webClipEvalJS(Object clip,String code) {
+	public Object webClipEvalJS(Object clip,String code, Func1<Object,String> cb) {
 		return null;
 	}
 	public Object setWebClipZoomable(Object clip,Boolean zoomable) {
@@ -313,7 +313,7 @@ public class RenderSupport extends NativeHost {
 	}
 	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
-								  int backgroundColour,double backgroundOpacity) {
+								  int backgroundColour,double backgroundOpacity, boolean alignBottom) {
 		return null;
 	}
 	public Object setVideoPlaybackRate(Object tf, Double rate) {
@@ -353,6 +353,9 @@ public class RenderSupport extends NativeHost {
 		return null;
 	}
 	public Object makeBlur(double a,double b) {
+		return null;
+	}
+	public Object makeBackdropBlur(double a) {
 		return null;
 	}
 	public Object makeGlow(double a,double b,int c, double d,boolean e) {

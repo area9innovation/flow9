@@ -1,4 +1,5 @@
 import text/serialize;
+import tools/flowc/lsp_types;
 import tools/flowc/flowc_println;
 import tools/flowc/flowc_find;
 import tools/flowc/flowc_usage;
@@ -296,7 +297,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 						name = getNameByLineColFromFile(line, col, file);
 						findDefDecl(config, globalEnv, file, name);
 					} else {
-						fcPrintln("Expect exp-line and exp-column arguments", config.threadId);
+						fcPrintln("find-defdecl: Expect exp-line and exp-column arguments", config.threadId);
 					}
 				}
 				onRunComplete(0);
@@ -310,12 +311,52 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 							name = getNameByLineColFromFile(line, col, file);
 							fcFastFindUses(config, globalEnv, name, line, col);
 						} else {
-							fcPrintln("Expect exp-line and exp-column arguments", config.threadId);
+							fcPrintln("find-uses: Expect exp-line and exp-column arguments", config.threadId);
 						}
 					}
 					onRunComplete(0);
 				} else if (isConfigParameterTrue(config.config, "print-outline")) {
-					fcPrintOutline(config, globalEnv, onRunComplete);
+					fcPrintOutline(config, globalEnv);
+					onRunComplete(0);
+				} else if (isConfigParameterTrue(config.config, "update-cache")) {
+					loadIncrementalModulesToCache(config, globalEnv, config.flowfile);
+					onRunComplete(0);
+				} else if (isConfigParameterSet(config.config, "did-open")) {
+					source_path = getConfigParameter(config.config, "did-open");
+					source_text = getConfigParameter(config.config, "did-open-text");
+					if (source_text != "" && source_path != "") {
+						fcSetFileSource(globalEnv, source_path, source_text);
+					} else {
+						fcPrintln("did-open: Options 'did-open-text' must be provided", config.threadId);
+					}
+					onRunComplete(0);
+				} else if (isConfigParameterSet(config.config, "did-change")) {
+					json = getConfigParameter(config.config, "did-change-json");
+					switch (json2LspDidChangeTextDocumentParams(parseJson(json))) {
+						Some(params): {
+							path = fcCorrectUriPath(params.textDocument.uri.path);
+							contents = fcFileSource(globalEnv, path);
+							changed = fold(params.contentChanges, contents, \acc, changes -> lspApplyContentChangeEvent(changes, acc));
+							fcSetFileSource(globalEnv, path, changed);
+						}
+						None(): {
+							fcPrintln("did-change: An option 'did-change-json' must be a vaid Json-encoded LSP DidChangeTextDocimentParams", config.threadId);
+						}
+					}
+					onRunComplete(0);
+				} else if (isConfigParameterSet(config.config, "did-save")) {
+					path = getConfigParameter(config.config, "did-save");
+					fcLoadFileSource(globalEnv, path);
+					onRunComplete(0);
+				} else if (isConfigParameterTrue(config.config, "complete")) {
+					if (line != -1 && col != -1) {
+						kind = s2i(getConfigParameterDef(config.config, "complete-kind", "1"));
+						char = getConfigParameterDef(config.config, "complete-character", "");
+						fcFindCompletion(config, globalEnv, config.flowfile, line, col, kind, char);
+					} else {
+						fcPrintln("complete: Expect exp-line and exp-column arguments", config.threadId);
+					}
+					onRunComplete(0);
 				} else if (isConfigParameterSet(config.config, "symbol-info")) {
 					symbol = getConfigParameter(config.config, "symbol-info");
 					if (symbol != "1") {
@@ -325,7 +366,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 							name = getNameByLineColFromFile(line, col, file);
 							fcSymbolInfo(config, globalEnv, name, line, col);
 						} else {
-							fcPrintln("Expect exp-line and exp-column arguments", config.threadId);
+							fcPrintln("symbol-info: Expect exp-line and exp-column arguments", config.threadId);
 						}
 					}
 					onRunComplete(0);

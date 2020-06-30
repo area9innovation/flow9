@@ -6,6 +6,7 @@ import lingo/linecolumn;
 
 export {
 	handleFindOptions(env : FcTypeEnvGlobal, flowfile : string, prog : FiProgram) -> void;
+
 	findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, symbol : string) -> void;
 
 	// Uses global cache for lookups.
@@ -13,6 +14,9 @@ export {
 
 	// Find a type info for a symbol at given position.
 	fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
+
+	// Output a set of suggestions for auto completion at given position.
+	fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void;
 }
 
 handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> void {
@@ -26,102 +30,20 @@ handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> voi
 	if (getConfigParameter(config.config, "dump-counts") != "") {
 		dumpProgramCounts(prog);
 	}
-
-	line = getConfigParameter(config.config, "exp-line");
-	col = getConfigParameter(config.config, "exp-column");
-	if (isAnyConfigParametersSet(config.config, ["find-type", "find-definition", "find-declaration", "find-uses"])) {
-		if (line != "" && col != "") {
-			findDefDeclByLineCol(env, file, prog, s2i(line) - 1, s2i(col) - 1);
-		} else {
-			fcPrintln("Fail: Expect exp-line and exp-column arguments", config.threadId);
-		}
-	}
-
-	if (isConfigParameterTrue(config.config, "complete")) {
-		if (line != "" && col != "") {
-			findCompletion(prog, file, s2i(line) - 1, s2i(col) - 1);
-		} else {
-			fcPrintln("Fail: Expect exp-line and exp-column arguments", config.threadId);
-		}
-	}
 }
 
-findDefDeclByLineCol(env : FcTypeEnvGlobal, file : string, prog : FiProgram, line : int, col : int) -> void {
-	config = prog.config;
-	found = findFiExpInProgramAtLineCol(prog, file, line, col, true);
-	switch (found.first) {
-		Some(e):
-			if (isConfigParameterTrue(config.config, "find-type")) {
-				fcPrintln("Type=" + prettyFiType(FcPretty(false, true, makeTree(), makeTree()), fiExpType(e), makeSet()), config.threadId);
-			} else {
-				switch (e) {
-					FiVar(name, type, start): {
-						module = name2FimoduleInFiProgram(prog, file, name);
-						if (isConfigParameterTrue(config.config, "find-definition")) {
-							switch (lookupTree(prog.names.toplevel, name)) {
-								Some(decl): {
-									if (decl.defiStart >= 0) {
-										printLocation(config, env, module.fileinfo, decl.defiStart, decl.defiStart + strlen(name), "");
-									} else if (decl.declStart >= 0) {
-										printLocation(config, env, module.fileinfo, decl.declStart, decl.declStart + strlen(name), "");
-									}
-								}
-								None(): {
-									fcPrintln("Fail: Could not find global name in " + file + " at line " + i2s(line + 1) + " col " + i2s(col + 1), config.threadId);
-								}
-							}
-						} else if (isConfigParameterTrue(config.config, "find-declaration")) {
-							switch (lookupTree(prog.names.toplevel, name)) {
-								Some(decl): {
-									if (decl.declStart >= 0) {
-										printLocation(config, env, module.fileinfo, decl.declStart, decl.declStart + strlen(name), "");
-									} else if (decl.defiStart >= 0) {
-										printLocation(config, env, module.fileinfo, decl.defiStart, decl.defiStart + strlen(name), "");
-									}
-								}
-								None(): {
-									fcPrintln("Fail: Could not find global name in " + file + " at line " + i2s(line + 1) + " col " + i2s(col + 1), config.threadId);
-								}
-							}
-						} else if (isConfigParameterTrue(config.config, "find-uses")) {
-							//findLocalExpType(prog, flowfile, s2i(line) - 1, s2i(column) - 1);
-						}
-					}
-					default: {
-						fcPrintln("Fail: Entity in " + file + " at line " + i2s(line + 1) + " col " + i2s(col + 1) + " is not named", config.threadId);
-					}
-				}
-			}
-		None(): {
-			fcPrintln("Fail: Could not find anything in " + file + " at line " + i2s(line + 1) + " col " + i2s(col + 1), config.threadId);
-		}
-	}
-}
-
-findLocalExpType(prog : FiProgram, file : string, line : int, col : int) -> void {
-	mexp : Maybe<FiExp> = findFiExpInProgramAtLineCol(prog, file, line, col, true).first;
-	switch (mexp) {
-		Some(e): fcPrintln("Type=" + prettyFiType(FcPretty(false, true, makeTree(), makeTree()), fiExpType(e), makeSet()), prog.config.threadId);
-		None(): {
-			fcPrintln("Fail: Could not find type in " + file + " at line " + i2s(line) + " col " + i2s(col), prog.config.threadId);
-		}
-	}
-}
-
-findFiExpInProgramAtLineCol(prog : FiProgram, file : string, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
-	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
-	filepath = findFlowPath(file, true, prog.config.includes, workingDir);
-	code = getFileContent(filepath);
+findFiExpAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, file : string, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	filepath = findFlowPath(file, true, config.includes, workingDir);
+	code = fcFileSource(env, filepath);
 	resolver = makeLineResolver(code);
 
 	linestart = findLineIndex(resolver, line, 0);
 	linetext = findLine(resolver, linestart).line;
 	charsToColumn = goToColumn(linetext, col);
-	// This is the text before the point
-	text = strLeft(linetext, charsToColumn);
-
-	mfiexp = switch (lookupTree(prog.modules, strReplace(file, ".flow", ""))) {
-		Some(module): {
+	mfiexp = switch (fcLoadFromCache(env, file)) {
+		Some(loaded): {
+			module = loaded.module;
 			index = linestart + charsToColumn;
 
 			starts2types = fold(
@@ -154,7 +76,16 @@ findFiExpInProgramAtLineCol(prog : FiProgram, file : string, line : int, col : i
 			None();
 		}
 	}
-	Pair(mfiexp, text);
+	Pair(mfiexp, linetext);
+}
+
+fcFindCompletion(config: CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, line : int, col : int, kind : int, char : string) -> void {
+	context = findFiExpAtLineCol(config, globEnv, file, line, col, false);
+	mexp : Maybe<FiExp> = context.first;
+	switch (mexp) {
+		Some(e): codeCompletion(config, globEnv, e, line, col);
+		None():  codeCompletePrefix(config, globEnv, context.second, line, col);
+	}
 }
 
 // Given this line, find the index of this column (considering 4-char tab indentation)
@@ -264,15 +195,17 @@ dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void
 }
 
 findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string) -> void {
+	doFindDefDecl(config, globEnv, file, name, true) 
+}
+
+doFindDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string, first_time : bool) -> void {
 	switch (fcLookupNameInCache(globEnv, name)) {
 		Some(symbol): {
-			//fcServerLog("name: " + name + " is chached");
 			switch (fcLoadFromCache(globEnv, symbol.module)) {
 				Some(loaded): {
 					fileinfo = loaded.module.fileinfo;
 					proc_decl = \dec, def -> {
 						if (getConfigParameter(config.config, "find-definition") != "") {
-							fcServerLog("symb: " + name + ", def: " + i2s(def) + ", dec: " + i2s(dec), config);
 							if (def >= 0) {
 								printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
 							} else if (dec >=0) {
@@ -293,7 +226,6 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, n
 							}
 						}
 					}
-					//fcServerLog("module: " + symbol.module + " is chached");
 					switch (symbol.named) {
 						FiTypeStruct(__,__,__, start): printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
 						FiTypeUnion(__,__,__, start):  printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
@@ -303,36 +235,33 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, n
 					}
 				}
 				None(): {
-					//fcServerLog("module: " + symbol.module + " is not chached", config);
-					fcPrintln("Fail: cound not find definition/declaration for " + name, config.threadId);
-					fcTryToLoadFile(config, globEnv);
+					if (first_time) {
+						if (fcTryToLoadFile(config, globEnv)) {
+							doFindDefDecl(config, globEnv, file, name, false);
+						}
+					} else {
+						fcPrintln("Fail: cound not find definition/declaration for " + name, config.threadId);
+					}
 				}
 			}
 		}
 		None(): {
-			//fcServerLog("name: " + name + " is not chached", config);
-			//fcPrintln("Complile file " + file + " please", config.threadId);
-			fcPrintln("Fail: cound not find definition/declaration for " + name, config.threadId);
-			fcTryToLoadFile(config, globEnv);
-		}
-	}
-}
-
-findCompletion(prog : FiProgram, file : string, line : int, col : int) -> void {
-	context = findFiExpInProgramAtLineCol(prog, file, line, col, false);
-	mexp : Maybe<FiExp> = context.first;
-	switch (mexp) {
-		Some(e): {
-			codeCompletion(prog, e, line, col);
-		}
-		None(): {
-			before = trim2(context.second, " \t\n;");
-			codeCompleteName(prog, before, line, col);
+			if (first_time) {
+				if (fcTryToLoadFile(config, globEnv)) {
+					doFindDefDecl(config, globEnv, file, name, false);
+				}
+			} else {
+				fcPrintln("Fail: cound not find definition/declaration for " + name, config.threadId);
+			}
 		}
 	}
 }
 
 fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
+	fcDoFastFindUses(config, globEnv, name, line, col, true);
+}
+
+fcDoFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int, first_time : bool) -> void {
 	switch (fastSymbolNature(config, globEnv, name, line, col)) {
 		Some(nature): {
 			print_location = \module, pos -> {
@@ -367,13 +296,22 @@ fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 			}
 		}
 		None(): { 
-			fcPrintln("Fail: couldn't find " + name, config.threadId);
-			fcTryToLoadFile(config, globEnv);
+			if (first_time) {
+				if (fcTryToLoadFile(config, globEnv)) {
+					fcDoFastFindUses(config, globEnv, name, line, col, false);
+				}
+			} else {
+				fcPrintln("Fail: couldn't find " + name, config.threadId);
+			}
 		}
 	}
 }
 
 fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
+	fcDoSymbolInfo(config, globEnv, name, line, col, true); 
+}
+
+fcDoSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int, first_time : bool) -> void {
 	switch (fastSymbolNature(config, globEnv, name, line, col)) {
 		Some(nature): {
 			switch (nature.cached) {
@@ -391,10 +329,12 @@ fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, l
 				}
 			}
 		}
-		None(): { 
-			//fcServerLog("no symbol nature for " + name + " at line: " + i2s(line) + ", col: " + i2s(col) + " in " + getTargetModuleName(config), config);
-			//fcPrintln("Fail: couldn't find " + name, config.threadId);
-			fcTryToLoadFile(config, globEnv);
+		None(): {
+			if (first_time) {
+				if (fcTryToLoadFile(config, globEnv)) {
+					fcDoSymbolInfo(config, globEnv, name, line, col, false); 
+				}
+			}
 		}
 	}
 }
@@ -428,11 +368,10 @@ fcCacheNamed2s(cached : FcCacheNamed) -> string {
 	cached.module + (if (cached.exported) "" else " (local name)") + ":\n\n" + decl;
 }
 
-fcTryToLoadFile(conf : CompilerConfig, env : FcTypeEnvGlobal) -> void {
-	deferred(\-> { 
+fcTryToLoadFile(conf : CompilerConfig, env : FcTypeEnvGlobal) -> bool {
+	if (isConfigParameterSet(conf.config, "server-mode")) false else {
 		// Load silently: error messages are suppressed
 		config = CompilerConfig(conf with config = setTree(conf.config, "no-errors", "1"));
-		parseAndTypecheckProgram(config, env, config.flowfile); 
-		{ } 
-	});
+		parseAndTypecheckProgram(config, env, config.flowfile).second == 0; 
+	}
 }

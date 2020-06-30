@@ -3,6 +3,8 @@
 #include "core/GarbageCollector.h"
 #include "core/RunnerMacros.h"
 
+#include <algorithm>
+
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLPictureClip, GLClip);
 
 GLPictureClip::GLPictureClip(GLRenderSupport *owner, unicode_string name) :
@@ -62,13 +64,14 @@ void GLPictureClip::setDownloaded()
     size_callback = error_callback = StackSlot::MakeVoid();
 }
 
-void GLPictureClip::setImage(GLTextureImage::Ptr image)
+void GLPictureClip::setImage(GLTextureBitmap::Ptr image)
 {
     this->image = image;
+    
     wipeFlags(WipeGraphicsChanged);
 
     if (!size_callback.IsVoid()) {
-        ivec2 size = image->getSize();
+        ivec2 size = ivec2(image->getSize());
 
         RUNNER_VAR = getFlowRunner();
         RUNNER->EvalFunction(size_callback, 2, StackSlot::MakeDouble(size.x), StackSlot::MakeDouble(size.y));
@@ -79,12 +82,58 @@ void GLPictureClip::setImage(GLTextureImage::Ptr image)
     size_callback = error_callback = StackSlot::MakeVoid();
 }
 
+void GLPictureClip::splitTextureByMaxSize(GLTextureBitmap::Ptr image, int maxTextureSize) {
+    if (!imageGrid.empty())
+        return;
+
+    vec2 imageSize = vec2(image->getSize());
+    if (imageSize.x < maxTextureSize && imageSize.y < maxTextureSize) {
+        this->imageGrid = {{image}};
+    } else {
+        for (int i = 0; i * maxTextureSize < imageSize.y; i++) {
+            this->imageGrid.push_back(vector<GLTextureImage::Ptr>());
+
+            for (int j = 0; j * maxTextureSize < imageSize.x; j++) {
+                vec2 offset(j * maxTextureSize, i * maxTextureSize);
+                vec2 size(std::min<unsigned int>(maxTextureSize, imageSize.x - offset.x), std::min<unsigned int>(maxTextureSize, imageSize.y - offset.y));
+
+                this->imageGrid[i].push_back(cropTextureBitmap(image, offset, size));
+            }
+        }
+    }
+}
+
+GLTextureBitmap::Ptr GLPictureClip::cropTextureBitmap(GLTextureBitmap::Ptr image, vec2 offset, vec2 size) {
+    vec2 imageSize = vec2(image->getSize());
+    bool isSolidCopy = imageSize.x == size.x;
+    
+    GLTextureBitmap::Ptr cellImage(new GLTextureBitmap(ivec2(size), image->getDataFormat()));
+    uint8_t* cellData = cellImage->getDataPtr();
+    unsigned int cellDataSize = size.x * size.y * image->getBytesPerPixel();
+    
+    uint8_t* data = image->getDataPtr();
+    
+    if (isSolidCopy) {
+        unsigned long offsetBytes = offset.y*imageSize.x*image->getBytesPerPixel();
+        memcpy(cellData, data + offsetBytes, cellDataSize);
+    } else {
+        unsigned long imageCellLineDataSize = size.x * image->getBytesPerPixel();
+        unsigned long imageLineDataSize = imageSize.x * image->getBytesPerPixel();
+        unsigned long startOffset = offset.y * imageLineDataSize + offset.x * image->getBytesPerPixel();
+        for (int line = 0; line < size.y; line++) {
+            memcpy(cellData + line * imageCellLineDataSize, data + startOffset + line * imageLineDataSize, imageCellLineDataSize);
+        }
+    }
+    
+    return cellImage;
+}
+
 void GLPictureClip::computeBBoxSelf(GLBoundingBox &bbox, const GLTransform &transform)
 {
     GLClip::computeBBoxSelf(bbox, transform);
-
-    if (image)
+    if (image) {
         bbox |= transform * GLBoundingBox(vec2(0,0), vec2(image->getSize()));
+    }
 }
 
 void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box)
@@ -95,17 +144,23 @@ void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, co
         image.reset();
     }
 
-    if (image) {
-        surface->makeCurrent();
+    int maxTextureSize = renderer->getMaxTextureSize();
+    splitTextureByMaxSize(image, maxTextureSize);
 
-        renderer->beginDrawFancy(vec4(0,0,0,0), true);
+    surface->makeCurrent();
 
-        glVertexAttrib4f(GLRenderer::AttrVertexColor, global_alpha, global_alpha, global_alpha, global_alpha);
+    renderer->beginDrawFancy(vec4(0,0,0,0), true);
 
-        image->drawRect(renderer, vec2(0,0), vec2(image->getSize()));
-
-        renderer->reportGLErrors("GLPictureClip::renderInner post image");
+    glVertexAttrib4f(GLRenderer::AttrVertexColor, global_alpha, global_alpha, global_alpha, global_alpha);
+        
+    for (unsigned int i = 0; i < imageGrid.size(); i++) {
+        for (unsigned int j = 0; j < imageGrid[i].size(); j++) {
+            vec2 offset(maxTextureSize * j, maxTextureSize * i);
+            imageGrid[i][j]->drawRect(renderer, offset, offset + vec2(imageGrid[i][j]->getSize()));
+        }
     }
+
+    renderer->reportGLErrors("GLPictureClip::renderInner post image");
 
     GLClip::renderInner(renderer, surface, clip_box);
 }
