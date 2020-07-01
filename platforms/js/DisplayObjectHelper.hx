@@ -1566,7 +1566,7 @@ class DisplayObjectHelper {
 
 	public static function getParentNode(clip : DisplayObject) : Dynamic {
 		if (isNativeWidget(clip)) {
-			return untyped clip.parentClip != null && clip.parentClip.scrollRect != null && clip.nativeWidget.parentNode != null ?
+			return untyped clip.parentClip != null && clip.parentClip.mask != null && clip.nativeWidget.parentNode != null ?
 				clip.nativeWidget.parentNode.parentNode :
 				clip.nativeWidget.parentNode;
 		}
