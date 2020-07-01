@@ -46,6 +46,11 @@ fcShadowGlobals(module : FcModule, toplevel : Tree<string, FcDeclaration>) -> Fc
 fcShadowExpGlobals(expr : FcExp, toplevel : Tree<string, FcDeclaration>, renaming : Tree<string, string>) -> FcExp {
 	res_e = \e -> fcShadowExpGlobals(e, toplevel, renaming);
 	res_es = \es -> map(es, res_e);
+	upd_renaming = \acc, name ->
+		if (!containsKeyTree(toplevel, name)) acc else {
+			new_name = fcMakeUnusedName(name, toplevel);
+			setTree(acc, name, new_name);
+		}
 	switch (expr) {
 		FcSeq(es, __): 
 			FcSeq(expr with es = res_es(es));
@@ -54,23 +59,25 @@ fcShadowExpGlobals(expr : FcExp, toplevel : Tree<string, FcDeclaration>, renamin
 		FcCall(f, args,__): 
 			FcCall(expr with f = res_e(f), args = res_es(args));
 		FcSwitch(x, __, cases, __): 
-			FcSwitch(expr with 
+			FcSwitch(expr with
 				x = cast(res_e(x) : FcExp -> FcVar), 
 				cases = map(cases, \c -> FcCase(c with body = res_e(c.body)))
 			);
-		FcLambda(__, body, __): 
-			FcLambda(expr with body = res_e(body));
-		FcLet(name, __, e1, e2, __):
-			if (containsKeyTree(toplevel, name)) {
-				new_name = fcMakeUnusedName(name, toplevel);
-				FcLet(expr with 
-					name = new_name,
-					e1 = res_e(e1), 
-					e2 = fcShadowExpGlobals(e2, toplevel, setTree(renaming, name, new_name))
-				);
-			} else {
-				FcLet(expr with e1 = res_e(e1), e2 = res_e(e2));
-			}
+		FcLambda(args, body, __): {
+			new_renaming = fold(args, renaming, \acc, arg -> upd_renaming(acc, arg.name));
+			FcLambda(expr with
+				args = map(args, \arg -> FcFunArg(arg with name = lookupTreeDef(new_renaming, arg.name, arg.name))),
+				body = fcShadowExpGlobals(body, toplevel, new_renaming)
+			);
+		}
+		FcLet(name, __, e1, e2, __): {
+			new_renaming = upd_renaming(renaming, name);
+			FcLet(expr with
+				name = lookupTreeDef(new_renaming, name, name),
+				e1 = res_e(e1),
+				e2 = fcShadowExpGlobals(e2, toplevel, new_renaming)
+			);
+		}
 		FcIf(e1, e2, e3, info): 
 			FcIf(res_e(e1), res_e(e2), res_e(e3), info);
 		FcCallPrim(__, es, __): 
