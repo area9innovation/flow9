@@ -43,6 +43,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			subtitlesControl = contains(mPlayerControls, SubtitlesControl());
 			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
 			animatedSubtitles = tryExtractStruct(m.style, MAnimatedSubtitles(const(VideoSubtitle("", [])), []));
+			shortcutsEnabled = !containsStruct(m.style, MPlayerDisableKeyboardShortcuts());
 
 			streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
 
@@ -209,11 +210,13 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							MToggleFalseIcon("play_arrow", [MIconSize(30.)]),
 							MIconButtonBorder(3.), MIconSize(30.)
 						],
-						[
-							MToggleValue(playing),
-							MShortcut(" "),
-							enabled
-						]
+						concat(
+							[
+								MToggleValue(playing),
+								enabled
+							],
+							if (shortcutsEnabled) [MShortcut(" ")] else []
+						)
 					),
 					m2t
 				)
@@ -578,13 +581,26 @@ TVideoWithAnimatedSubtitles(
 				areaBox = TSized(fselect(videoAreaMetrics, FLift(\vam -> vam.wh)));
 				areaTopLeft = fselect(videoAreaMetrics, FLift(\vam : FVideoAreaMetrics -> vam.topLeft));
 				scaleMode = tryExtractStruct(sbtl.first.style, FVideoSubtitlesScaleMode(0., 0.));
+				customOriginSize = tryExtractStruct(sbtl.first.style, MSubtitlesOriginSize(WidthHeight(0., 0.)));
 
 				TAnimatedSubtitles(manager, parent, sbtl.first, m2t)
-				|> (\t -> eitherMap(scaleMode, \scMode ->
-					TScale(fselect(videoAreaMetrics, FLift(\vam -> Factor(
-						applyRange(scMode, vam.scale.x),
-						applyRange(scMode, vam.scale.y)
-					))), t),
+				|> (\t -> eitherMap(scaleMode, \scMode -> {
+					factor =
+						eitherMap(
+							customOriginSize,
+							\os ->
+								fselect(videoAreaMetrics, FLift(\vam ->
+									min(vam.wh.width / os.size.width, vam.wh.height / os.size.height)
+									|> (\f -> applyRange(scMode, f))
+									|> (\f -> Factor(f, f))
+								)),
+							fselect(videoAreaMetrics, FLift(\vam -> Factor(
+								applyRange(scMode, vam.scale.x),
+								applyRange(scMode, vam.scale.y)
+							)))
+						);
+						TScale(factor, t)
+					},
 					t
 				))
 				|> (\t -> TAvailable(t, areaBox))
@@ -643,15 +659,15 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
 		innerPercent = make(0.);
 		antiInnerPercent = fsubtract(const(1.), innerPercent);
-		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height * 2. - frame.border))), antiInnerPercent);
+		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height - frame.border))), antiInnerPercent);
 		oldLineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height))), innerPercent);
 		newLineTranslatePoint = fpointaddition(
-			flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height * 2.))), innerPercent),
+			flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height))), innerPercent),
 			fselect(oldLineSize, FLift(\sz -> Point(0., sz.height)))
 		);
 
 		TGroupWithoutMetrics([
-			makeSubtitleLine(new, newLineSize, newLineTranslatePoint, -4.),	
+			makeSubtitleLine(new, newLineSize, newLineTranslatePoint, -4.) |> (\t -> TAlpha(innerPercent, t)),
 			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
 			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
 		])

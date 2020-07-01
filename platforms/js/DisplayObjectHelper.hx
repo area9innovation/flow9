@@ -1434,9 +1434,9 @@ class DisplayObjectHelper {
 							}
 						}
 					} else {
-						var transform = prependInvertedMatrix(clip.worldTransform, mask.worldTransform);
+						var maskTransform = prependInvertedMatrix(clip.worldTransform, mask.worldTransform);
 						nativeWidget.style.clipPath = untyped __js__("'polygon(' + data.shape.points.map(function (p, i) {
-							return i % 2 == 0 ? '' + p * transform.a + 'px ' : '' + p * transform.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
+							return i % 2 == 0 ? '' + p * maskTransform.a + 'px ' : '' + p * maskTransform.d + 'px' + (i != data.shape.points.length - 1 ? ',' : '')
 						}).join('') + ')'");
 						untyped nativeWidget.style.webkitClipPath = nativeWidget.style.clipPath;
 					}
@@ -1566,7 +1566,7 @@ class DisplayObjectHelper {
 
 	public static function getParentNode(clip : DisplayObject) : Dynamic {
 		if (isNativeWidget(clip)) {
-			return untyped clip.parentClip != null && clip.parentClip.scrollRect != null && clip.nativeWidget.parentNode != null ?
+			return untyped clip.parentClip != null && clip.parentClip.mask != null && clip.nativeWidget.parentNode != null ?
 				clip.nativeWidget.parentNode.parentNode :
 				clip.nativeWidget.parentNode;
 		}

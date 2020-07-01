@@ -7,7 +7,7 @@ import text/blueprint;
 
 export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
-	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : WigiParagraphWidthManager) -> Form;
+	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager) -> Form;
 	getLineIndent(paraIndent : double, lineIndex : int) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement;
@@ -15,22 +15,24 @@ export {
 	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 	keepFormTogether(form : Form) -> bool;
 
-	WigiStoryWidthManager(
-		paragraphManagers : [WigiParagraphWidthManager],
-		getParagraphManagerAt: (int) -> WigiParagraphWidthManager,
+	StoryWidthManager(
+		paragraphManagers : [ParagraphWidthManager],
+		getParagraphManagerAt: (int) -> ParagraphWidthManager,
 		width : Behaviour<double>,
 		infoOnly : bool, /* do not control width of paragraphs, just gather their widths */
 		constructor : () -> () -> void,
 	);
-	WigiParagraphWidthManager(
+	ParagraphWidthManager(
 		storyWidth : Behaviour<double>,
 		width : DynamicBehaviour<double>,
 		infoOnly : bool
 	);
 
-	makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager;
-	dummyWigiParagraphWidthManager = WigiParagraphWidthManager(const(0.0), make(0.0), true);
-	dummyWigiStoryWidthManager = WigiStoryWidthManager([], \__ -> dummyWigiParagraphWidthManager, zero, true, \ -> nop);
+	makeStoryWidthManager(paragraphs : int, infoOnly : bool) -> StoryWidthManager;
+	dummyParagraphWidthManager = ParagraphWidthManager(const(0.0), make(0.0), true);
+	dummyStoryWidthManager = StoryWidthManager([], \__ -> dummyParagraphWidthManager, zero, true, \ -> nop);
+
+	INF_METRICS = 100000.0;
 }
 
 // TODO:
@@ -44,7 +46,6 @@ Ghost elements are rendered once, and then moved around when reflows happen. Tex
 reconstructed on each reflow, because we combine them together to have as few sprites for text as
 possible, and because rendering words in the same sprite improves the interword spacing.
 */
-
 
 // Intermediately used typed as a union of ParagraphElement and WrapElement and ParaOneWord
 ParaElement ::= ParagraphElement, WrapElement, ParaAtomic;
@@ -114,7 +115,22 @@ makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native {
 	overridden = applyAlphabetStyles(detectAlphabet(txt), style);
 	textfield = makeTextfield(getMappedFontFamily(overridden));
 	dstyle = getDefinedTextStyle(overridden);
-	setTextAndStyle(textfield, txt, dstyle.face.family, dstyle.fontSize, dstyle.face.weight, dstyle.face.slope, dstyle.fillColor, dstyle.fillOpacity, dstyle.letterSpacing, dstyle.backgroundColor, dstyle.backgroundOpacity);
+	setTextAndStyle(
+		textfield,
+		if (isUrlParameterEscUnescHTMLTrue() && cpp) {
+			esc = extractStruct(style, EscapeHTML(true)).escape;
+			if (esc) xmlEscapeText(txt) else txt;
+		} else txt,
+		dstyle.face.family,
+		dstyle.fontSize,
+		dstyle.face.weight,
+		dstyle.face.slope,
+		dstyle.fillColor,
+		dstyle.fillOpacity,
+		dstyle.letterSpacing,
+		dstyle.backgroundColor,
+		dstyle.backgroundOpacity
+	);
 	textfield
 }
 
@@ -122,7 +138,7 @@ renderParagraph(
 	p : [ParagraphElement],
 	s : [ParagraphStyle],
 	rtl : bool,
-	widthManager : WigiParagraphWidthManager
+	widthManager : ParagraphWidthManager
 ) -> Form {
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
@@ -167,7 +183,7 @@ renderParagraph(
 	);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = if (widthManager == dummyWigiParagraphWidthManager) {
+	renderedParagraph = if (widthManager == dummyParagraphWidthManager) {
 		Select(linesB, \lines -> {
 			rpl = renderParaLinesFn(lines, getValue(aw));
 			rpl.first
@@ -228,7 +244,7 @@ renderParagraph(
 			updateFn = \wi-> {
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
-				w = if (isSingleLine) 100000.0 else max(0.0, wi);
+				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 				newLines = reflowParaWords(words, w, indent, isParagraphMarked, rtl);
 				nextDistinct(linesCountB, length(newLines));
 
@@ -727,10 +743,10 @@ ParaLineResult(form : Form, width : double, height : double, baseline : double);
 OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
 
 getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [OptimizedLineElement]{
-	if (!isBiDiEnabled() && alignment != Justify()) {
-		optimizeLine(words);
-	} else {
+	if (isBiDiEnabled() || alignment == Justify()) {
 		map(words, \w -> OptimizedLineElement(w.form, w.metrics, w.interactivityIdM));
+	} else {
+		optimizeLine(words);
 	};
 }
 
@@ -996,14 +1012,14 @@ setWordForm(word: ParaWord, form: GhostForm) -> ParaWord {
 	ParaWord(word.word, word.metrics, word.ghosted, form, word.interactivityIdM);
 };
 
-makeWigiStoryWidthManager(paragraphs : int, infoOnly : bool) -> WigiStoryWidthManager {
+makeStoryWidthManager(paragraphs : int, infoOnly : bool) -> StoryWidthManager {
 	paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
 	storyWidth = make(0.0);
 
-	paragraphManagers = map(paragraphWidths, \pw -> WigiParagraphWidthManager(storyWidth, pw, infoOnly));
-	WigiStoryWidthManager(
+	paragraphManagers = map(paragraphWidths, \pw -> ParagraphWidthManager(storyWidth, pw, infoOnly));
+	StoryWidthManager(
 		paragraphManagers,
-		\i -> elementAt(paragraphManagers, i, dummyWigiParagraphWidthManager),
+		\i -> elementAt(paragraphManagers, i, dummyParagraphWidthManager),
 		storyWidth,
 		infoOnly,
 		\ -> {
