@@ -426,23 +426,8 @@ class FlowGraphics extends Graphics {
 				}
 
 				var svg : js.html.Element = nativeWidget.addElementNS('svg');
-				var lineWidth : Float = Lambda.fold(graphicsData, function(a, b) {
-					if (a.lineWidth != null) {
-						return Math.max(a.lineWidth / 2.0, b);
-					} else {
-						return b;
-					}
-				}, 0.0);
 
 				svg.style.position = 'absolute';
-
-				svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-				svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-
-				if (!Platform.isFirefox) {
-					svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
-					svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
-				}
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
@@ -511,10 +496,6 @@ class FlowGraphics extends Graphics {
 						} else {
 							element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
 							svg.appendChild(element);
-						}
-
-						if (!Platform.isFirefox) {
-							element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
 						}
 
 						if (untyped data.fillGradient != null) {
@@ -586,7 +567,6 @@ class FlowGraphics extends Graphics {
 				}
 
 				var data = graphicsData[0];
-				var lineWidth : Float = data.lineWidth != null ? data.lineWidth / 2.0 : 0.0;
 
 				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
 					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
