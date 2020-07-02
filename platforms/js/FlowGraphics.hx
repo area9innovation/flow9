@@ -428,6 +428,8 @@ class FlowGraphics extends Graphics {
 				var svg : js.html.Element = nativeWidget.addElementNS('svg');
 
 				svg.style.position = 'absolute';
+				svg.style.left = "0";
+				svg.style.top = "0";
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
