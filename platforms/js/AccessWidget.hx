@@ -723,7 +723,7 @@ class AccessWidget extends EventEmitter {
 						RenderSupport.PixiStage.emit("mouserightdown");
 					} else if (e.which == 2 || e.button == 1) {
 						RenderSupport.PixiStage.emit("mousemiddledown");
-					} else {
+					} else if (e.which == 1 || e.button == 0) {
 						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
 					}
 				}
@@ -744,7 +744,7 @@ class AccessWidget extends EventEmitter {
 						RenderSupport.PixiStage.emit("mouserightup");
 					} else if (e.which == 2 || e.button == 1) {
 						RenderSupport.PixiStage.emit("mousemiddleup");
-					} else {
+					} else if (e.which == 1 || e.button == 0) {
 						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 					}
 				}
