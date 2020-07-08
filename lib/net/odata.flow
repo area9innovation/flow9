@@ -177,6 +177,8 @@ export {
 	// Calls onError if whole batch or at least one of subrequests has failed
 	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void;
 	makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void;
+	// Checks the length of resulting select query. If it exceeds maximum posible length, batch request should be used
+	isBatchQueryNeeded(host : string, query : DQuery) -> bool;
 
 	DResponse ::= DGoodResponse, DBadResponse;
 		DGoodResponse(data : Json);
@@ -412,6 +414,16 @@ json2ResourceValue(json : Json) -> DResourceValue {
 	}
 }
 
+isBatchQueryNeeded(host : string, query : DQuery) -> bool {
+	if (isSameStructType(query, DBatchQuery([]))) {
+		true;
+	} else {
+		url = host + buildODataQuery(query).resource;
+		urlLength = strlen(url);
+		urlLength > 2000;
+	}
+}
+
 buildODataQuery(query : DQuery) -> ODataQuery {
 	switch (query : DQuery) {
 		DSelectQuery(resource, parameters): {
@@ -424,9 +436,16 @@ buildODataQuery(query : DQuery) -> ODataQuery {
 			res = resource2string(resource) + paramsStr;
 			ODataQuery(POST(), RequestPayload(json2string(entity)), res);
 		}
-		DUpdateQuery(resource, entity): ODataQuery(PATCH(), RequestPayload(json2string(entity)), resource2string(resource));
-		DDeleteQuery(resource): ODataQuery(DELETE(), RequestParameters([]), resource2string(resource));
-		DBatchQuery(queries): buildBatchQuery(queries);
+		DUpdateQuery(resource, entity): {
+			res = resource2string(resource);
+			ODataQuery(PATCH(), RequestPayload(json2string(entity)), res);
+		}
+		DDeleteQuery(resource): {
+			ODataQuery(DELETE(), RequestParameters([]), resource2string(resource));
+		}
+		DBatchQuery(queries): {
+			buildBatchQuery(queries);
+		}
 		DCountQuery(resource, parameters): {
 			paramsStr = if (length(parameters) > 0) "?" + parameters2string(parameters, "&") else "";
 			res = resource2string(resource) + "/$count" + paramsStr;
@@ -436,11 +455,13 @@ buildODataQuery(query : DQuery) -> ODataQuery {
 }
 
 buildBatchQuery(queries : [DQuery]) -> ODataQuery {
+	replaceSpaces = \str -> strReplace(str, " ", "%20");
+
 	boundary = "--" + SHA1(time2string(timestamp()));
 	body = superglue(queries, \query -> {
 		odataQuery = buildODataQuery(query);
 		method = odataQuery.method;
-		resource = odataQuery.resource;
+		resource = replaceSpaces(odataQuery.resource);
 		hasBody = !isSameStructType(method, GET()) && !isSameStructType(method, DELETE());
 		body = switch (odataQuery.data) {
 			RequestPayload(body): body;
@@ -495,13 +516,12 @@ resourceValue2string(value : DResourceValue) -> string {
 		DDate(val): date2string(val);
 		DDateTime(val): dbDateTime2utc(time2db(val));
 		DDuration(days, hours, minutes, seconds): {
-			timePart = (if (hours > 0) i2s(hours) + "H" else "")
-					 + (if (minutes > 0) i2s(minutes) + "M" else "")
-					 + (if (seconds > 0.0) d2s(seconds) + "S" else "");
-			"duration'P"
-				+ (if (days > 0) i2s(days) + "D" else "")
-				+ (if (timePart != "") "T" + timePart else "")
-				+ "'"
+			timePart =
+				(if (hours > 0) i2s(hours) + "H" else "") +
+				(if (minutes > 0) i2s(minutes) + "M" else "") +
+				(if (seconds > 0.0) d2s(seconds) + "S" else "");
+
+			"duration'P" + (if (days > 0) i2s(days) + "D" else "") + (if (timePart != "") "T" + timePart else "") + "'";
 		}
 		DNull(): "null";
 	}
@@ -801,7 +821,7 @@ makeTaggedODataRequest(
 	callback2 = \data, headers -> {
 		isBatch = isSameStructType(query, DBatchQuery([]));
 		result = if (isBatch) {
-			responses = parseBatchResponse(data, headers);
+			responses : [DResponse] = parseBatchResponse(data, headers);
 			JsonArray(map(responses, \response -> {
 				switch (response) {
 					DGoodResponse(v): v;
@@ -825,9 +845,9 @@ makeODataRequest2(
 	onError : (string) -> void
 ) -> void {
 	if (isUrlParameterTrue("odataDQuery")) println(query);
-	q = buildODataQuery(query);
-	method = q.method;
-	data = q.data;
+	odataQuery = buildODataQuery(query);
+	method = odataQuery.method;
+	data = odataQuery.data;
 	isBatch = isSameStructType(query, DBatchQuery([]));
 	contentType = if (isBatch) {
 		body = switch (data) {
@@ -849,8 +869,8 @@ makeODataRequest2(
 	|> (\acc -> ifArrayPush(acc, queryTag != "", KeyValue("X-Request-Tag", queryTag)));
 
 	httpCustomRequest(
-		host + q.resource,
-		q.method,
+		host + odataQuery.resource,
+		odataQuery.method,
 		headers,
 		data,
 		\status, respData, respHeaders -> {
