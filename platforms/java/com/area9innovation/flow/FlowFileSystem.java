@@ -106,9 +106,9 @@ public class FlowFileSystem extends NativeHost {
 		return null;
 	}
 
-	public Object fileSizeNative(Object file) {
+	public double fileSizeNative(Object file) {
 		File _file = (File)file;
-		return _file.length();
+		return (double)_file.length();
 	}
 	public double fileModifiedNative(Object file) {
 		File _file = (File)file;

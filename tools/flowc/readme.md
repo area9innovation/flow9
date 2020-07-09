@@ -217,6 +217,19 @@ In case jar=1 the name of a program will be used as a name of the jar file. Exam
 
 	flowc jar=1 program.flow
 
+JavaScript backend
+------------------
+
+Most of natives for the JavaScript are generated from haxe sources. External (non haxe) natives may be added
+by following options:
+
+	flowc js-extern-lib=<file> js-extern-natives=<name_1>,<name_2>,...,<name_k> ...
+
+The first inlines a whole file into the generated JS code. This file should contain an object, say 'native_host',
+containing member functions 'f_1', 'f_2', ... ,'f_k' - the natives, listed in the second option. The names 
+in the second option must be in the form: 'name_1' = 'native_host.f_1', ... , 'name_k' = 'native_host.f_k'.
+
+
 ### Library usage.
 If you want to make a library instead of runnable program, you can specify the interface functions of a
 library with `java-library` option (the second variant will build library.jar from library.flow):

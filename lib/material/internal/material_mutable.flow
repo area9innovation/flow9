@@ -1,5 +1,6 @@
 import material/internal/material_focus;
 import material/internal/material_theme;
+import material/measing;
 import tropic/tropic_constant;
 
 export {
@@ -35,9 +36,11 @@ export {
 
 	extractMComponentGroupState(state : [flow]) -> [MComponentGroupState];
 
+	MHintMarker(manager : MaterialManager, focus : MFocus, radiusByContent : bool) -> (Tropic) -> Tropic;
+
 	dummyParent = \manager : MaterialManager -> MFocusGroup(
 		make(false), -2, const(-2), FEmpty(), const([]), const(-1), None(), "Dummy", None(), None(), None(), make(-1), make(-1), -1,
-		make(makeTree()), 0, make(makeTree()), const(false), const(false), const(false), const(false), const(false), const(false), make(false), make(false),
+		make(makeTree()), 0, make(makeTree()), const(false), const(false), const(false), const(false), const(false), const(false), const(false), make(false), make(false),
 		const(zeroTransformMatrix), const(zeroWH), None(), false, manager.focus.theme, makeTree()
 	);
 }
@@ -132,6 +135,7 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 		focusEnabled = extractStruct(state, MFocusEnabled(const(true))).enabled;
 		clickEnabled = extractStruct(state, MClickEnabled(const(true))).enabled;
 		keysEnabled = extractStruct(state, MKeysEnabled(const(true))).enabled;
+		hintMarkerEnabled = extractStruct(state, MHintMarkerEnabled(parent.hintMarkerEnabled)).enabled;
 		monitorBehaviours = extractStructMany(state, IScriptBehaviour("", make(flow(false)), ISMiscEvent()));
 		monitorEnabled = extractStruct(state, IScriptRecordingEnabled(const(true))).enabled;
 		iScriptId = eitherMap(tryExtractStruct(state, IScriptId("")), \uid -> Some(uid.id), None());
@@ -151,10 +155,11 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 		setParent = tryExtractStruct(state, MSetParent(const(None())));
 		getParent = tryExtractStruct(state, MGetParent(make(None())));
 		rtl = extractStruct(state, MSetRTL(parent.rtl)).rtl;
+		focusName = extractStruct(state, MFocusName(name)).name;
 
 		(\p -> addMaterialFocusGroupId(
-			manager, p, name, accessRole, vertical, horizontal, scrollInfo, focused, active, enabled, focusEnabled,
-			monitorBehaviours, monitorEnabled, clickEnabled, keysEnabled, iScriptId, tabOrder, zorder, theme, rtl,
+			manager, p, focusName, accessRole, vertical, horizontal, scrollInfo, focused, active, enabled, focusEnabled,
+			monitorBehaviours, monitorEnabled, clickEnabled, keysEnabled, hintMarkerEnabled, iScriptId, tabOrder, zorder, theme, rtl,
 			\f -> {
 				maybeApply(getParent, \p2 -> next(p2.parent, Some(f)));
 
@@ -389,4 +394,53 @@ extractMComponentGroupState(state : [flow]) -> [MComponentGroupState] {
 			default: None();
 		}
 	)
+}
+
+MHintMarker(manager : MaterialManager, focus : MFocus, radiusByContent : bool) -> (Tropic) -> Tropic {
+	size = makeWH();	
+	innerRadius = if (radiusByContent) fdivide(fmax(fwidth(size), fheight(size)), const(2.)) else const(10.);
+
+	percent = make(0.);
+
+	wasClicked = make(false);
+	show0 = make(true);
+	show = fands([show0, focus.parent.hintMarkerEnabled, focus.enabled, fnot(wasClicked)], false);
+
+	marker =
+		TDynamicGraphics(
+			fselect2(percent, innerRadius, FLift2(\prc, ir -> {
+				or = lerp(ir, ir * 2., prc);
+				DonutSectorPath(or, or, ir, or, 0., 360., false, false, true)
+			})),
+			fselect(percent, FLift(\prc -> [
+				MFill(focus.parent.theme.palette.accent),
+				FillOpacity(1. - prc)
+			]))
+		)
+		|> (\t -> MEasingAnimation(
+			manager,
+			focus.parent,
+			const(1.),
+			const(easingFastOutSlowIn),
+			make(false),
+			\v -> Some(v),
+			\__, prc -> nextDistinct(percent, prc),
+			[MAutoStart(), MLoop(\v -> Some(v)), MDelay(0.2)],
+			t
+		))
+		|> (\t -> TShow(show, t))
+		|> (\t -> TConstruct([
+				makeSubscribe2(fOr(focus.focused, focus.hover), \f -> {
+					nextDistinct(show0, !f)
+				}),
+				makeSubscribeTrigger(fnot(wasClicked), fOr(fOr(focus.down, focus.rightDown), focus.middleDown), \d -> {
+					if (d) nextDistinct(wasClicked, true)
+				})
+			], t));
+
+	\t -> TCopySize2(t, \sz, tr -> TGroup2(
+		TTweak([TAlign(const(0.5), const(0.5)), TTweakNoLeftTopLimit()], marker, sz)
+		|> (\t2 -> TFixSize(t2, TEmpty())),
+		if (radiusByContent) TAttachBox(tr, size) else tr
+	))
 }

@@ -751,7 +751,7 @@ class RenderSupport {
 					emit("mouserightdown");
 				} else if (e.which == 2 || e.button == 1) {
 					emit("mousemiddledown");
-				} else {
+				} else if (e.which == 1 || e.button == 0) {
 					if (MouseUpReceived) emit("mousedown");
 				}
 			}
@@ -775,7 +775,7 @@ class RenderSupport {
 					emit("mouserightup");
 				} else if (e.which == 2 || e.button == 1) {
 					emit("mousemiddleup");
-				} else {
+				} else if (e.which == 1 || e.button == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			}
@@ -2754,6 +2754,7 @@ class RenderSupport {
 		}
 
 		untyped RenderSupport.LayoutText = true;
+		emit("enable_sprites");
 		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
@@ -2761,15 +2762,17 @@ class RenderSupport {
 
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
-			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
 
 			render();
 
 			return img;
 		} catch(e : Dynamic) {
-			child.setScrollRect(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
 
 			render();
 
