@@ -419,6 +419,7 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     InAppPurchases = new AppleStorePurchase(Runner);
 #endif
     WebSocketSupport = new iosWebSocketSupport(Runner);
+    ClassKitSupport = new iosClassKitSupport(Runner);
 #ifdef FLOW_MEDIASTREAM
     MediaStream = new iosMediaStreamSupport(Runner);
     WebRTC = new iosWebRTCSupport(Runner);
