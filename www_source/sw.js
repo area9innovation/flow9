@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 17;
+var SERVICE_WORKER_VERSION = 18;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -145,6 +145,8 @@ var swIndexedDb = {
     if (this.showNotifications) console.log("ServiceWorker: " + text);
   }
 }
+
+var timerId = null;
 
 async function swIndexedDbInitialize() {
   if (swIndexedDb.isNeedInit()) {
@@ -331,10 +333,35 @@ function checkOnlineStatus() {
   if (innerOnlineStatus === false) {
     if (isOnline) console.info("Application switched to OFFLINE mode.");
     isOnline = false;
+    // If `navigator.onLine` works not correctly, let check `onLine` status manually
+    if (navigator.onLine && timerId == null) timerId = setInterval(ping_inner, 30000 /* every 30 seconds */);
   } else {
     if (!isOnline) console.info("Application returned back to ONLINE mode.");
     isOnline = true;
+    if (timerId != null) clearInterval(timerId);
+    timerId = null;
   }
+}
+
+function ping_inner() {
+  const request = new Request(
+    urlAddBaseLocation('./images/splash/splash_innovation_trans.png'),
+    {method: 'POST', body: '{"t": ' + (new Date().getTime()) + ', "r":"ping"}'}
+  );
+
+  fetch(request)
+    .then(function(response) {
+        if (response.status == 200 && response.type == "basic") {
+          addRequestStatus("fromNetwork");
+          requestsCount.lastFailedCount = 0;
+          requestsCount.lastNetworkCount = 1;
+          if (timerId != null) clearInterval(timerId);
+          timerId = null;
+        } else {
+          addRequestStatus("failed");
+        }
+    })
+    .catch(function() { addRequestStatus("failed"); });
 }
 
 function addRequestStatus(value) {
