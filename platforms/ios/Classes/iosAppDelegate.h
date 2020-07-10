@@ -11,6 +11,7 @@
 #import "iosNotificationsSupport.h"
 #import "iosGeolocationSupport.h"
 #import "iosWebSocketSupport.h"
+#import "iosClassKitSupport.h"
 #import "iosMediaStreamSupport.h"
 #import "iosWebRTCSupport.h"
 #import "iosMediaRecorderSupport.h"
@@ -41,6 +42,7 @@ class iosFileSystemInterface;
     iosGeolocationSupport * GeolocationSupport;
 #endif
     iosWebSocketSupport * WebSocketSupport;
+    iosClassKitSupport * ClassKitSupport;
 #ifdef FLOW_MEDIASTREAM
     iosMediaStreamSupport * MediaStream;
     iosWebRTCSupport * WebRTC;
