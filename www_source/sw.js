@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 18;
+var SERVICE_WORKER_VERSION = 19;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -148,12 +148,30 @@ var swIndexedDb = {
 
 var timerId = null;
 
-async function swIndexedDbInitialize() {
+function swIndexedDbInitialize() {
   if (swIndexedDb.isNeedInit()) {
-    await swIndexedDbInitPromise();
+    return swIndexedDbInitPromise();
+  } else if (swIndexedDb.isStarting()) {
+    return new Promise(function(resolve, reject) {
+      swIndexedDbWhaitWhileStarting(function() {
+        if (swIndexedDb.isReady()) {
+          resolve(swIndexedDb.db);
+        } else {
+          reject();
+        }
+      });
+    });
+  } else {
+    return new Promise(function(resolve, reject) { resolve(swIndexedDb.db); });
   }
+}
 
-  return swIndexedDb.db;
+function swIndexedDbWhaitWhileStarting(onDone) {
+  if (swIndexedDb.isStarting()) {
+    setTimeout(function() { swIndexedDbWhaitWhileStarting(onDone); }, 100);
+  } else {
+    onDone();
+  }
 }
 
 function swIndexedDbInitPromise() {
@@ -215,7 +233,6 @@ function swIndexedDbInitPromise() {
           swIndexedDb.showSwNotification('IndexedDB has been updated.');
 
           if (!promiseDone) {
-            swIndexedDb.initDb(thisDB);
             promiseDone = true;
             resolve(thisDB);
           }
