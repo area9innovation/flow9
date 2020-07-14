@@ -49,8 +49,6 @@ reconstructed on each reflow, because we combine them together to have as few sp
 possible, and because rendering words in the same sprite improves the interword spacing.
 */
 
-NumAlignment ::= Some, Justify;
-
 // Intermediately used typed as a union of ParagraphElement and WrapElement and ParaOneWord
 ParaElement ::= ParagraphElement, WrapElement, ParaAtomic;
 
@@ -140,29 +138,21 @@ makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native {
 	textfield
 }
 
-// Longest line width and all lines optimized
-getOptimizedLines(lines : [ParaLine], alignment : NumAlignment) -> Pair<double, [OptimizedLine]> {
-	lasti = length(lines) - 1;
-	// None() for Justify, last line alignment overridden.
-	optlines = mapi(lines, \i, line -> getOptimizedLine(line, i != lasti && alignment==Justify()));
-	Pair(fold(optlines, 0.0, \acc, optline -> max(acc, optline.metrics.width)), optlines)
-}
-
 renderParagraph(
 	p : [ParagraphElement],
 	s : [ParagraphStyle],
 	rtl : bool,
 	widthManager : ParagraphWidthManager
 ) -> Form {
+	// Longest line width and all lines optimized
+	getOptimizedLines = \lines : [ParaLine], justify : bool -> /*Pair<double, [OptimizedLine]>*/ {
+		lasti = length(lines) - 1;
+		// Last line alignment overridden.
+		optlines = mapi(lines, \i, line -> getOptimizedLine(line, i != lasti && justify));
+		Pair(fold(optlines, 0.0, \acc, optline -> max(acc, optline.metrics.width)), optlines)
+	}
 
-	alignment : NumAlignment = switch (extractParaLineAlignment(s)) {
-		StartAlign(): Some(0.0);
-		EndAlign(): Some(1.0);
-		LeftAlign(): Some(b2d(rtl));
-		RightAlign(): Some(b2d(!rtl));
-		CenterAlign(): Some(0.5);
-		Justify(): Justify();
-	};
+	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
 	needIndent = genIndent != 0.0;
 
@@ -199,7 +189,7 @@ renderParagraph(
 	linesB : DynamicBehaviour<[ParaLine]> = make([]);
 
 	renderParaLinesFn = \lines, storyWidth -> {
-		optInfo = getOptimizedLines(lines, alignment);
+		optInfo = getOptimizedLines(lines, alignment == Justify());
 		renderParaLines(
 			storyWidth, optInfo.first, optInfo.second, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
@@ -207,7 +197,7 @@ renderParagraph(
 		);
 	}
 
-	maxW = getOptimizedLines(reflowParaWords(words, INF_METRICS, indent, isParagraphMarked, rtl), alignment).first;
+	maxW = getOptimizedLines(reflowParaWords(words, INF_METRICS, indent, isParagraphMarked, rtl), alignment == Justify()).first;
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
 	renderedParagraph = if (widthManager == dummyParagraphWidthManager || widthManager.infoOnly) {
@@ -713,7 +703,7 @@ renderParaLines(
 	longestLineWidth : double,
 	lines : [OptimizedLine],
 	tightWidth : bool,
-	alignment: NumAlignment,
+	alignment: ParaLineAlignment,
 	interlineSpacing : double,
 	topLineBaseline : bool,
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
@@ -730,8 +720,8 @@ renderParaLines(
 			acc.y, line, width,
 	// TODO: If the line ends with NewLine (which we do not track here), we should consider it a last line and not justify.
 	// On the last line, we do not justify.
-	// Also if the line is single with TightWidth, any alignment is equal to StartAlign — Some(0.0).
-			if (lastLine) Some(0.0) else alignment,
+	// Also if the line is single with TightWidth, any alignment is equal to StartAlign.
+			if (lastLine) StartAlign() else alignment,
 			i, styleTree, rtl, isMarked,
 			if (interLineHighlighting) {
 				if (i == 0) 0. else - interlineSpacing / 2.0
@@ -779,7 +769,7 @@ RenderLine(
 	y : double,
 	line : OptimizedLine,
 	width : double,
-	alignment : NumAlignment,
+	alignment : ParaLineAlignment,
 	lineNumber : int,
 	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
@@ -790,8 +780,12 @@ RenderLine(
 	// Alignment offset
 	remaining = max(0.0, width - line.metrics.width);
 	startOffset = switch (alignment) {
+		StartAlign(): 0.0;
+		EndAlign(): 1.0;
+		LeftAlign(): b2d(rtl);
+		RightAlign(): b2d(!rtl);
+		CenterAlign(): 0.5;
 		Justify(): 0.0;
-		Some(al): al;
 	} * remaining + line.indent;
 	// Inter-word spacing for justification
 	wordsCount = length(line.words);
