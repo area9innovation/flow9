@@ -751,7 +751,7 @@ class RenderSupport {
 					emit("mouserightdown");
 				} else if (e.which == 2 || e.button == 1) {
 					emit("mousemiddledown");
-				} else {
+				} else if (e.which == 1 || e.button == 0) {
 					if (MouseUpReceived) emit("mousedown");
 				}
 			}
@@ -775,7 +775,7 @@ class RenderSupport {
 					emit("mouserightup");
 				} else if (e.which == 2 || e.button == 1) {
 					emit("mousemiddleup");
-				} else {
+				} else if (e.which == 1 || e.button == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			}

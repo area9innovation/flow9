@@ -94,13 +94,14 @@ export {
 		filterAction : (string) -> void,
 		positionOnFocus : Maybe<(content : string, previous : int) -> int>,
 		selectionOnFocus : Maybe<(content : string, previous : int) -> int>,
-		clearContent : (focused : bool) -> void,
+		clearContent : () -> void,
 		goToPrev : () -> void,
 		subs : [() -> () -> void],
 		shift : Transform<double>,
 		useNativeInput : bool,
 		condensed : bool,
-		skin : MTextInputSkin
+		skin : MTextInputSkin,
+		scrollStyle : [MScrollStyle]
 	);
 
 	MInputAutocompleteState(
@@ -119,7 +120,8 @@ export {
 		isTextInputInPopup : bool,
 		placementType : MSuggestionsPlacementType,
 		inLine : Maybe<MAutoCompleteInLineState>,
-		updateDelay : int
+		updateDelay : int,
+		showMoreResults : Maybe<DynamicBehaviour<Pair<int, int>>>
 	);
 
 	MAutoCompleteInLineState(
@@ -323,7 +325,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	filterFn = tryExtractStruct(state, MInputFilter(\c, __ -> c));
 	textInputCursorShape = make(DefaultCursor());
 	noLeftBorder = contains(style, MInputNoLeftBorder());
-
+	scrollStyle = extractStruct(style, MTextInputScrollStyle([])).style;
 	// For testing purposes
 	defaultSkin =
 		if (getUrlParameter("inputSkin") == "filled" && !smallEdit) MFilled()
@@ -416,19 +418,6 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	focus = cloneBehaviour(mfocus.focused);
 	position = iScriptBehaviours.position;
 	selection = iScriptBehaviours.selection;
-
-	positionOnFocus =
-		eitherMap(
-			tryExtractStruct(state, MPositionOnFocus(\c, p -> 0)),
-			\pof -> Some(pof.fn),
-			None()
-		);
-	selectionOnFocus =
-		eitherMap(
-			tryExtractStruct(state, MSelectionOnFocus(\c, p -> strlen(c))),
-			\sof -> Some(sof.fn),
-			None()
-		);
 
 	// Popup
 	popup =
@@ -541,7 +530,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	floatingLabel =
 		if (hasFloatingLabel) {
-			fSize = if (condensed) 13. else 16.;
+			fSize = extractStruct(style, MFloatingLabelUnfocusedSize(if (condensed) 13. else 16.)).size;
 			fSizeFocused = forceRange(labelSize, 0., inputBorders.top);
 			betweenFLabels =
 				switch (skin : MTextInputSkin) {
@@ -638,6 +627,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	autocomplete =
 		if (matchers != []) {
 			composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
+			maxResults = extractStruct(style, MMaxResults(10)).results;
 
 			setWord = \word : string -> {
 					newContent = composeContentFn(word, getValue(content), getValue(position));
@@ -669,6 +659,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					)
 				);
 
+			showMoreResults =
+				if (maxResults >= 0 && contains(style, MAutoCompleteShowMoreButton())) Some(make(Pair(maxResults, 0)))
+				else None();
+
 			Some(
 				MInputAutocompleteState(
 					matchers,
@@ -687,7 +681,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					sentences,
 					make(-1),
 					contains(style, MShowAllOnEmpty()),
-					extractStruct(style, MMaxResults(10)).results,
+					maxResults,
 					contains(style, MAutoSelect()),
 					extractStruct(style, MIncludeSpaces(!multiline)).includeSpaces,
 					tryExtractStruct(style, MCurrentMatches(nop1)),
@@ -696,22 +690,36 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					iScriptBehaviours.isTextInputInPopup,
 					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
 					inLine,
-					startSearch.wait
+					startSearch.wait,
+					showMoreResults
 				)
 			)
 		} else
 			None();
 
+	positionOnFocus =
+		eitherMap(
+			tryExtractStruct(state, MPositionOnFocus(\__, __ -> -1)),
+			\pof -> Some(pof.fn),
+			maybeMap(autocomplete, \__ -> \c, p -> 0)
+		);
+	selectionOnFocus =
+		eitherMap(
+			tryExtractStruct(state, MSelectionOnFocus(\__, __ -> -1)),
+			\sof -> Some(sof.fn),
+			maybeMap(autocomplete, \__ -> \c, p -> strlen(c))
+		);
+
 	// Content functions
-	clearContent = \focused : bool -> {
+	clearContent = \ -> {
 		next(content, if (inputType == TelType()) "+" else "");
-		nextDistinct(mfocus.focused, focused);
+		nextDistinct(mfocus.focused, true);
 
 		if (useNativeInput) {
 			if (mobile)
-				deferUntilRender(\ -> nextDistinct(mfocus.focused, focused))
+				deferUntilRender(\ -> nextDistinct(mfocus.focused, true))
 			else
-				deferred(\ -> nextDistinct(mfocus.focused, focused));
+				deferred(\ -> nextDistinct(mfocus.focused, true));
 		}
 	}
 
@@ -748,7 +756,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	}
 
 	autocompleteHandlerUns = initUnsM();
+	showMoreHandlerUns = initUnsM();
 	updateFocusContent = \c : string, foc : bool, mtch : [SentenceMatcher] -> {
+		dispUnsM(showMoreHandlerUns);
 		maybeApply(editIcon, \ei -> nextDistinct(ei, !foc));
 		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, foc || c != ""));
 
@@ -788,12 +798,35 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					},
 					\allCompl -> {
 						compl = mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score));
+						maybeApply(ac.showMoreResults, \results -> nextDistinct(results, Pair(ac.maxResults, length(compl))));
+
+						updateFn = \sentences -> {
+							maybeApply(
+								ac.currentMatches,
+								\cm ->
+									map(sentences, \ns -> {
+										sen = ns.sentence;
+										dictId = findiDef(mtch, \mch -> contains(mch.sentences, sen), -1);
+										senId = if (dictId >= 0) findiDef(mtch[dictId].sentences, \sn -> sn == sen, -1) else -1;
+
+										Triple(dictId, senId, ns)
+									})
+									|> cm.fn
+							);
+
+							nextDistinct(ac.sentences, sentences)
+						};
 
 						newSentences =
 							if (isSome(popup)) {
-								if (ac.maxResults >= 0)
+								if (ac.maxResults >= 0) {
+									maybeApply(ac.showMoreResults, \results -> 
+										setUnsM(showMoreHandlerUns, subscribe2(results, \res ->
+											updateFn(subrange(compl, 0, res.first)))
+										)
+									);
 									subrange(compl, 0, ac.maxResults)
-								else
+								} else
 									compl;
 							} else {
 								suggest = find(compl, \v -> startsWith(toLowerCase(v.sentence), toLowerCase(c2)));
@@ -801,27 +834,12 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 								eitherMap(suggest, \sg -> [sg], [])
 							};
 
-						maybeApply(
-							ac.currentMatches,
-							\cm ->
-								map(newSentences, \ns -> {
-									sen = ns.sentence;
-									dictId = findiDef(mtch, \mch -> contains(mch.sentences, sen), -1);
-									senId = if (dictId >= 0) findiDef(mtch[dictId].sentences, \sn -> sn == sen, -1) else -1;
-
-									Triple(dictId, senId, ns)
-								})
-								|> cm.fn
-						);
-
-						updateFn = \ -> nextDistinct(ac.sentences, newSentences);
-
 						dispUnsM(autocompleteHandlerUns);
 
 						if (ac.updateDelay == 0 || length(newSentences) == 0)
-							updateFn()
+							updateFn(newSentences)
 						else
-							setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, updateFn))
+							setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, \ -> updateFn(newSentences)))
 
 					},
 					\localError -> {
@@ -1002,14 +1020,16 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						if (focused) {
 							maybeApply(
 								positionOnFocus,
-								\pof ->
+								\pof -> deferred(\ ->
 									nextDistinct(position, min(max(pof(getValue(content), getValue(position)), 0), strlen(getValue(content))))
+								)
 							);
 
 							maybeApply(
 								selectionOnFocus,
-								\sof ->
+								\sof -> deferred(\ ->
 									nextDistinct(selection, min(max(sof(getValue(content), getValue(selection)), 0), strlen(getValue(content))))
+								)
 							);
 						}
 					}),
@@ -1141,7 +1161,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		shift,
 		useNativeInput,
 		condensed,
-		skin
+		skin,
+		scrollStyle
 	)
 }
 
@@ -2466,7 +2487,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						else
 							TAlignStartDir(TDisplay("MTextInputText"), inputState.parent.rtl),
 						TGhost("MTextInputSize"),
-						[TScrollbars(invisibleScrollBar, getMaterialScrollBar().y)]
+						concat(inputState.scrollStyle, [TScrollbars(invisibleScrollBar, getMaterialScrollBar().y)])
 					),
 					m2t
 				)
