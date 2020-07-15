@@ -743,7 +743,7 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else {
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
 				MousePos.x = e.clientX;
 				MousePos.y = e.clientY;
 
@@ -767,7 +767,7 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
-			} else {
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
 				MousePos.x = e.clientX;
 				MousePos.y = e.clientY;
 
@@ -796,7 +796,7 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else {
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
 				MousePos.x = e.clientX;
 				MousePos.y = e.clientY;
 

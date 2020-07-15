@@ -981,8 +981,6 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.onpointermove = onMouseMove;
 				nativeWidget.onpointerdown = onMouseDown;
 				nativeWidget.onpointerup = onMouseUp;
-
-				untyped __js__("this.nativeWidget.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
 			}
 
 			nativeWidget.ontouchmove = onMouseMove;
@@ -1050,7 +1048,7 @@ class TextClip extends NativeWidgetClip {
 			} else if (e.touches.length > 1) {
 				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 			}
-		} else {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1077,6 +1075,9 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		if (e.touches != null) {
+			RenderSupport.TouchPoints = e.touches;
+			RenderSupport.emit("touchstart");
+
 			if (e.touches.length == 1) {
 				RenderSupport.MousePos.x = e.touches[0].pageX;
 				RenderSupport.MousePos.y = e.touches[0].pageY;
@@ -1085,7 +1086,7 @@ class TextClip extends NativeWidgetClip {
 			} else if (e.touches.length > 1) {
 				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 			}
-		} else {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1106,15 +1107,26 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		}
 
-		RenderSupport.MousePos.x = e.pageX;
-		RenderSupport.MousePos.y = e.pageY;
+		if (e.touches != null) {
+			RenderSupport.TouchPoints = e.touches;
+			RenderSupport.emit("touchend");
 
-		if (e.which == 3 || e.button == 2) {
-			RenderSupport.PixiStage.emit("mouserightup");
-		} else if (e.which == 2 || e.button == 1) {
-			RenderSupport.PixiStage.emit("mousemiddleup");
-		} else if (e.which == 1 || e.button == 0) {
-			if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+			GesturesDetector.endPinch();
+
+			if (e.touches.length == 0) {
+				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+			}
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
+			RenderSupport.MousePos.x = e.pageX;
+			RenderSupport.MousePos.y = e.pageY;
+
+			if (e.which == 3 || e.button == 2) {
+				RenderSupport.PixiStage.emit("mouserightdown");
+			} else if (e.which == 2 || e.button == 1) {
+				RenderSupport.PixiStage.emit("mousemiddledown");
+			} else if (e.which == 1 || e.button == 0) {
+				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+			}
 		}
 
 		e.stopPropagation();

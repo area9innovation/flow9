@@ -219,7 +219,7 @@ class ThreeJSStage extends Container {
 			RenderSupport.addNonPassiveEventListener(untyped renderer.eventElement, "mousemove", onMouseEvent);
 
 			RenderSupport.removeNonPassiveEventListener(untyped renderer.domElement, "pointerover", onMouseEvent);
-			RenderSupport.addNonPassiveEventListener(untyped renderer.domElement, "pointerout", onMouseEvent);
+			RenderSupport.addNonPassiveEventListener(untyped renderer.domElement, "pointerover", onMouseEvent);
 		}
 	}
 
