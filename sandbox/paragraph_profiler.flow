@@ -1,0 +1,53 @@
+import runtime;  // for timestamp
+import form/renderform;
+import form/paragraph;  // for TextFragment.
+import form/paragraph3;
+import form/paragraphtypes;
+
+texts = [
+	"Sed ut perspiciatis, unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam eaque ipsa, quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt, explicabo. Nemo enim ipsam voluptatem, quia voluptas sit, aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos, qui ratione voluptatem sequi nesciunt, neque porro quisquam est, qui dolorem ipsum, quia dolor sit amet consectetur adipisci[ng]velit, sed quia non-numquam [do] eius modi tempora inci[di]dunt, ut labore et dolore magnam aliquam quaerat voluptatem. Ut enim ad minima veniam, quis nostrum[d] exercitationem ullam corporis suscipitlaboriosam, nisi ut aliquid ex ea commodi consequatur? Quis autem vel eum iure reprehenderit, qui inea voluptate velit esse, quam nihil molestiae consequatur, vel illum, qui dolorem eum fugiat, quo voluptas nulla pariatur? At vero eos et accusamus et iusto odio dignissimos ducimus, qui blanditiis praesentium voluptatum deleniti atque corrupti, quos dolores et quas molestias excepturi sint, obcaecati cupiditate non-provident, similique sunt in culpa, qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita distinctio. Nam libero tempore, cum soluta nobis est eligendi optio, cumque nihil impedit, quo minus id, quod maxime placeat, facere possimus, omnis voluptas assumenda est, omnis dolor repellendus. Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet, ut et voluptates repudiandae sint et molestiae non-recusandae. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat…"
+];
+
+TimeMeasurement(pre : double, post : ref double);
+Aggregation(amount: double, sum: double, min: double, max: double);
+
+report(ini : TimeMeasurement, itr : List<TimeMeasurement>) {
+	println(formatString("Paragraph initialization: %1 µs", [d2s(^(ini.post) - ini.pre)]));
+	measurements = list2array(itr);
+	println(formatString("%1 reflows done:", [i2s(length(measurements))]));
+	agg = fold(measurements, Aggregation(0.0, 0.0, 1000.0*i2d(length(measurements)), 0.0), \acc, m -> {
+		delta = ^(m.post) - m.pre;
+		Aggregation(
+			acc.amount + 1.0, acc.sum + delta,
+			min(delta, acc.min), max(delta, acc.max),
+		);
+	})
+	iteri(measurements, \i, m -> println(formatString("\t%1: %2 - %3 = %4", [i2s(i), d2s(m.pre), d2s(^(m.post)), d2s(^(m.post) - m.pre)])));
+	println(strRepeat("—", 20));
+	println(formatString("Count: %1\nMin: %2\nMax: %3\nAvg: %4\nMedian avg: %5", map([agg.amount, agg.min, agg.max, agg.sum / agg.amount, (agg.sum - agg.min - agg.max) / (agg.amount - 2.0)], d2s)));
+	println(strRepeat("—", 20));
+}
+
+main() {
+	storyWidth = make(1024.0);
+	widthManager = ParagraphWidthManager(storyWidth, make(0.0), false);
+	measurementsToDo = ref 1000;
+	measurements = ref Cons(TimeMeasurement(timestamp(), ref 0.0), EmptyList());
+	uns = ref nop;
+	init = TimeMeasurement(timestamp(), ref 0.0);
+	uns := subscribe(widthManager.width, \__ -> {
+		measurementsToDo := ^measurementsToDo - 1;
+		(^measurements).head.post := timestamp();
+		if (^measurementsToDo <= 0) {
+			^uns();
+			report(init, ^measurements);
+			if (isUrlParameterSet("batch")) quit(0) else println("Use «batch» parameter to exit immediately after measurements.");
+		} else {
+			measurements := Cons(TimeMeasurement(timestamp(), ref 0.0), ^measurements);
+			next(storyWidth, getValue(storyWidth)-1.0);  // No distinct here, we want to trigger.
+		}
+	})
+	content = renderParagraph([TextFragment(strGlue(texts, "\n"), [FontFamily("Roboto"), FontSize(24.0)])], [ParagraphProfiling()], false, widthManager);
+	init.post := timestamp();
+	render(content) |> ignore;
+}
