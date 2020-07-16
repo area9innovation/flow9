@@ -1,0 +1,233 @@
+import material/material;
+import material/internal/material_theme;
+import material/internal/material_util;
+import material/measing;
+
+export {
+	MGraphicsState : (
+		strokeWidth : double,
+		color : int,
+		opacity : double,
+		ripple : bool
+	);
+
+	graphicsStateLerp(
+		prev : MGraphicsState,
+		current : MGraphicsState,
+		percent : double) -> MGraphicsState;
+
+	MOutline(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		size : Transform<WidthHeight>,
+		labelWidth : double,
+		labelGap : Transform<double>,
+		graphicsState : Transform<MGraphicsState>) -> Tropic;
+}
+
+MOutline(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	size : Transform<WidthHeight>,
+	labelWidth : double,
+	labelGap : Transform<double>,
+	graphicsState : Transform<MGraphicsState>) -> Tropic {
+
+	outlineState = make(fgetValue(graphicsState));
+
+	stateWithLast =
+		fselectWithLast(
+			graphicsState,
+			FLift2(\prev, curr -> Pair(prev, curr))
+		);
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(easingTransitionDuration),
+		const(easingStandartCurve),
+		stateWithLast,
+		\st -> Some(st),
+		\st, percent -> {
+			prev = st.first;
+			curr = st.second;
+			next(outlineState, graphicsStateLerp(prev, curr, percent));
+		},
+		[],
+		TSelect3(outlineState, labelGap, size, \st, gap, wh ->
+			makeStaticOutline(
+				parent,
+				st,
+				labelWidth,
+				gap,
+				wh
+			)
+		)
+	);
+}
+
+makeStaticOutline(
+	parent : MFocusGroup,
+	st : MGraphicsState,
+	labelWidth : double,
+	labelGap : double,
+	size : WidthHeight) -> Tropic {
+
+	w = size.width;
+	h = size.height;
+	gapOffset = 8.0 + (labelWidth - labelGap) / 2.0;
+	style = [Stroke(st.color), StrokeWidth(st.strokeWidth), StrokeOpacity(st.opacity)];
+
+	shape = getShapeByComponent(parent, "outlined text field");
+
+	topLeft = parseMaterialShapeCorner_(shape.defaultShape.tl);
+	topRight = parseMaterialShapeCorner_(shape.defaultShape.tr);
+	bottomRight = parseMaterialShapeCorner_(shape.defaultShape.br);
+	bottomLeft = parseMaterialShapeCorner_(shape.defaultShape.bl);
+
+	if (w == 0.0 || h == 0.0) {
+		TEmpty();
+	} else {
+		topLeftR = topLeft(size);
+		topRightR = topRight(size);
+		bottomRightR = bottomRight(size);
+		bottomLeftR = bottomLeft(size);
+
+		r1 = topLeftR.first;
+		r2 = topRightR.first;
+		r3 = bottomRightR.first;
+		r4 = bottomLeftR.first;
+
+		sqrt2 = sqrt(2.0);
+		n1 = 1.0 / sqrt2;
+		n2 = sqrt2 - 1.0;
+
+		TGraphics(
+			concatA([
+				[
+					MoveTo(r1, 0.0)
+				],
+				if (labelGap == 0.0) {
+					[];
+				} else {
+					[
+						LineTo(gapOffset, 0.0),
+						MoveTo(gapOffset + labelGap, 0.0)
+					];
+				},
+				[
+					LineTo(w - r2, 0.0)
+				],
+				if (topRightR.second && r2 > 0.0)
+					[
+						CubicBezierTo(
+							(n1 * r2) + w - r2,
+							(-n1 * r2) + r2,
+							(n2 * r2) + w - r2,
+							(-r2)  + r2
+						),
+						CubicBezierTo(
+							w,
+							r2,
+							w,
+							-n2 * r2 + r2
+						)
+
+					]
+				else
+					[
+						LineTo(w, r2)
+					],
+				[
+					LineTo(w, h - r3)
+				],
+				if (bottomRightR.second && r3 > 0.0)
+					[
+						CubicBezierTo(
+							(n1 * r3) + w - r3,
+							(n1 * r3) + h - r3,
+							w,
+							(n2 * r3) + h - r3,
+						),
+						CubicBezierTo(
+							w - r3,
+							h,
+							(n2 * r3) + w - r3,
+							h
+						)
+					]
+				else
+					[
+						LineTo(w - r3, h)
+					],
+				[
+					LineTo(r4, h)
+				],
+				if (bottomLeftR.second && r4 > 0.0)
+					[
+						CubicBezierTo(
+							-n1 * r4 + r4,
+							n1 * r4 + h - r4,
+							(-n2 * r4) + r4,
+							h
+						),
+						CubicBezierTo(
+							0.0,
+							h - r4,
+							0.0,
+							(n2 * r4) + h - r4,
+						)
+					]
+				else
+					[
+						LineTo(0.0, h - r4)
+					],
+				[
+					LineTo(0.0, r1)
+				],
+				if (topLeftR.second && r1 > 0.0)
+					[
+						CubicBezierTo(
+							(-n1 * r1) + r1,
+							(-n1 * r1) + r1,
+							0.0,
+							(-n2 * r1) + r1
+						),
+						CubicBezierTo(
+							r1,
+							0.0,
+							(-n2 * r1) + r1,
+							0.0
+						)
+					]
+				else
+					[
+						LineTo(r1, 0.0)
+					]
+			]),
+			style
+		)
+	}
+}
+
+parseMaterialShapeCorner_(corner : MaterialShapeCorner) -> (WidthHeight) -> Pair<double, bool> {
+	switch (corner : MaterialShapeCorner) {
+		RoundedCorner(radius) : \__ -> Pair(radius, true);
+		CutCorner(radius) : \__ -> Pair(radius, false);
+		RoundedCornerPercent(percent) : \wh -> Pair(min(wh.width, wh.height) * percent, true);
+		CutCornerPercent(percent) : \wh -> Pair(min(wh.width, wh.height) * percent, false);
+	}
+}
+
+graphicsStateLerp(
+	prev : MGraphicsState,
+	current : MGraphicsState,
+	percent : double) -> MGraphicsState {
+
+	MGraphicsState(
+		lerp(prev.strokeWidth, current.strokeWidth, percent),
+		colorLerp(prev.color, current.color, percent),
+		lerp(prev.opacity, current.opacity, percent),
+		current.ripple
+	);
+}
