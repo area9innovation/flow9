@@ -382,7 +382,7 @@ class EditWidget extends NativeWidget {
         } else if (cursor_pos <= text.length()) {
             sel_start = sel_stop = cursor_pos;
         } else {
-            sel_start = sel_stop = 0;
+            sel_start = sel_stop = text.length();
         }
 
         pad_bottom = multiline ? 0 : 30;

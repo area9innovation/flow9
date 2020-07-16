@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 17;
+var SERVICE_WORKER_VERSION = 19;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -146,12 +146,32 @@ var swIndexedDb = {
   }
 }
 
-async function swIndexedDbInitialize() {
-  if (swIndexedDb.isNeedInit()) {
-    await swIndexedDbInitPromise();
-  }
+var timerId = null;
 
-  return swIndexedDb.db;
+function swIndexedDbInitialize() {
+  if (swIndexedDb.isNeedInit()) {
+    return swIndexedDbInitPromise();
+  } else if (swIndexedDb.isStarting()) {
+    return new Promise(function(resolve, reject) {
+      swIndexedDbWhaitWhileStarting(function() {
+        if (swIndexedDb.isReady()) {
+          resolve(swIndexedDb.db);
+        } else {
+          reject();
+        }
+      });
+    });
+  } else {
+    return new Promise(function(resolve, reject) { resolve(swIndexedDb.db); });
+  }
+}
+
+function swIndexedDbWhaitWhileStarting(onDone) {
+  if (swIndexedDb.isStarting()) {
+    setTimeout(function() { swIndexedDbWhaitWhileStarting(onDone); }, 100);
+  } else {
+    onDone();
+  }
 }
 
 function swIndexedDbInitPromise() {
@@ -213,7 +233,6 @@ function swIndexedDbInitPromise() {
           swIndexedDb.showSwNotification('IndexedDB has been updated.');
 
           if (!promiseDone) {
-            swIndexedDb.initDb(thisDB);
             promiseDone = true;
             resolve(thisDB);
           }
@@ -331,10 +350,35 @@ function checkOnlineStatus() {
   if (innerOnlineStatus === false) {
     if (isOnline) console.info("Application switched to OFFLINE mode.");
     isOnline = false;
+    // If `navigator.onLine` works not correctly, let check `onLine` status manually
+    if (navigator.onLine && timerId == null) timerId = setInterval(ping_inner, 30000 /* every 30 seconds */);
   } else {
     if (!isOnline) console.info("Application returned back to ONLINE mode.");
     isOnline = true;
+    if (timerId != null) clearInterval(timerId);
+    timerId = null;
   }
+}
+
+function ping_inner() {
+  const request = new Request(
+    urlAddBaseLocation('./images/splash/splash_innovation_trans.png'),
+    {method: 'POST', body: '{"t": ' + (new Date().getTime()) + ', "r":"ping"}'}
+  );
+
+  fetch(request)
+    .then(function(response) {
+        if (response.status == 200 && response.type == "basic") {
+          addRequestStatus("fromNetwork");
+          requestsCount.lastFailedCount = 0;
+          requestsCount.lastNetworkCount = 1;
+          if (timerId != null) clearInterval(timerId);
+          timerId = null;
+        } else {
+          addRequestStatus("failed");
+        }
+    })
+    .catch(function() { addRequestStatus("failed"); });
 }
 
 function addRequestStatus(value) {
