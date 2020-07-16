@@ -120,8 +120,6 @@ class Modules {
 								// as the real args for the struct and fill it either with passed values
 								// or field refs to the source struct
 								var sourceRef = arguments[1];
-								var newArgs = new FlowArray<Flow>();
-								var newFields = new Map<String, Flow>();
 								var typeName = switch (clos) {
 									case VarRef(name, p) : name;
 									default : "";
@@ -136,43 +134,57 @@ class Modules {
 								if (structDef == null || !FlowUtil.isStructType(structDef.type.type)) {
 									makeCall([SyntaxError(typeName + " type definition wasn't found", pos)]);
 								} else {
-									var sourceName = "source_" + typeName;
-
 									switch (structDef.type.type) {
 										case TStruct(structname, args, max) : {
-											var structFieldNames = args.map(function(arg) { return arg.name; }); // Used in checking for incorrect names
-											var error : Null<Flow> = null;
-											for (i in 2...al) {
-												switch (arguments[i]) {
-													case Let(name, sigma, value, scope, p) : {
-														if (structFieldNames.indexOf(name) == -1) { // Wrong field name was passed
-															error = SyntaxError("No field named \"" + name + "\" in " + structname, p);
-															break;
-														} else if (newFields.exists(name)) {
-															error = SyntaxError("Duplicate field \"" + name + "\" in " + structname, p);
-															break;
-														} else
-															newFields.set(name, value);
+											var makeNewArgs = function(src) {
+												var newArgs = new FlowArray<Flow>();
+												var newFields = new Map<String, Flow>();
+												var structFieldNames = args.map(function(arg) { return arg.name; }); // Used in checking for incorrect names
+												var error : Null<Flow> = null;
+												for (i in 2...al) {
+													switch (arguments[i]) {
+														case Let(name, sigma, value, scope, p) : {
+															if (structFieldNames.indexOf(name) == -1) { // Wrong field name was passed
+																error = SyntaxError("No field named \"" + name + "\" in " + structname, p);
+																break;
+															} else if (newFields.exists(name)) {
+																error = SyntaxError("Duplicate field \"" + name + "\" in " + structname, p);
+																break;
+															} else
+																newFields.set(name, value);
+														}
+														default : {};
 													}
-													default : {};
 												}
+												if (error != null) {
+													for (i in 0...args.length) {
+														newArgs.push(error);
+													}
+												} else {
+													for (i in 0...args.length) {
+														var value = newFields.get(args[i].name);
+														var valueToPush = if (value == null) Field(src, args[i].name, PositionUtil.copy(pos)) else value;
+														newArgs.push(valueToPush);
+													}
+												}
+												
+												return newArgs;
 											}
-											if (error != null) {
-												for (i in 0...args.length) {
-													newArgs.push(error);
-												}
-											} else {
-												for (i in 0...args.length) {
-													var value = newFields.get(args[i].name);
-													var valueToPush = if (value == null) Field(VarRef(sourceName, PositionUtil.copy(pos)), args[i].name, PositionUtil.copy(pos)) else value;
-													newArgs.push(valueToPush);
-												}
+											
+											var sourceName = "source_" + typeName;
+											switch (sourceRef) {
+												case VarRef(name, pos) : makeCall(makeNewArgs(sourceRef));
+												default : Sequence(
+													FlowArrayUtil.one(Let(
+														sourceName,
+														structDef.type,
+														sourceRef,
+														Sequence(FlowArrayUtil.one(makeCall(makeNewArgs(VarRef(sourceName, PositionUtil.copy(pos))))), PositionUtil.copy(pos)),
+														PositionUtil.copy(pos)
+													)),
+													PositionUtil.copy(pos)
+												);
 											}
-
-											Sequence(
-												FlowArrayUtil.one(Let(sourceName, structDef.type, sourceRef, Sequence(FlowArrayUtil.one(makeCall(newArgs)), PositionUtil.copy(pos)), PositionUtil.copy(pos))),
-												PositionUtil.copy(pos)
-											);
 										}
 										default : {
 											Util.println("Something wrong in \"with\" construction: " + Std.string(structDef));
