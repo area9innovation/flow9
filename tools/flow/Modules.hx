@@ -1,5 +1,6 @@
 import Flow;
 import Position;
+import FlowArray;
 
 #if jsruntime
 #error "Attempt to link Flow compiler code into JS runtime"
@@ -105,77 +106,86 @@ class Modules {
 		return FlowUtil.mapFlow(decl, function(f) {
 			return switch (f) {
 				case Call(clos, arguments, pos) : {
+					var makeCall = function(newArguments) {
+						return Call(clos, newArguments, pos);
+					}
+
 					var al = arguments.length;
-					var newArguments =
-						if (al > 0) {
-							switch (arguments[0]) {
-								// special "with" case
-								// Normally arguments should not contain this
-								case ConstantVoid(p) : {
-									// Since this is just syntactic sugar, we simply do array with same lenght,
-									// as the real args for the struct and fill it either with passed values
-									// or field refs to the source struct
-									var sourceRef = arguments[1];
-									var newArgs = new FlowArray<Flow>();
-									var newFields = new Map<String, Flow>();
-									var typeName = switch (clos) {
-										case VarRef(name, p) : name;
-										default : "";
-									}
-									var structDef = null;
+					if (al > 0) {
+						switch (arguments[0]) {
+							// special "with" case
+							// Normally arguments should not contain this
+							case ConstantVoid(p) : {
+								// Since this is just syntactic sugar, we simply do array with same lenght,
+								// as the real args for the struct and fill it either with passed values
+								// or field refs to the source struct
+								var sourceRef = arguments[1];
+								var newArgs = new FlowArray<Flow>();
+								var newFields = new Map<String, Flow>();
+								var typeName = switch (clos) {
+									case VarRef(name, p) : name;
+									default : "";
+								}
+								var structDef = null;
 
-									for(module in modules) {
-										structDef = module.userTypeDeclarations.get(typeName);
-										if (structDef != null) break;
-									}
+								for(module in modules) {
+									structDef = module.userTypeDeclarations.get(typeName);
+									if (structDef != null) break;
+								}
 
-									if (structDef == null || !FlowUtil.isStructType(structDef.type.type)) {
-										[SyntaxError(typeName + " type definition wasn't found", pos)];
-									} else {
-										switch (structDef.type.type) {
-											case TStruct(structname, args, max) : {
-												var structFieldNames = args.map(function(arg) { return arg.name; }); // Used in checking for incorrect names
-												var error : Null<Flow> = null;
-												for (i in 2...al) {
-													switch (arguments[i]) {
-														case Let(name, sigma, value, scope, p) : {
-															if (structFieldNames.indexOf(name) == -1) { // Wrong field name was passed
-																error = SyntaxError("No field named \"" + name + "\" in " + structname, p);
-																break;
-															} else if (newFields.exists(name)) {
-																error = SyntaxError("Duplicate field \"" + name + "\" in " + structname, p);
-																break;
-															} else
-																newFields.set(name, value);
-														}
-														default : {};
+								if (structDef == null || !FlowUtil.isStructType(structDef.type.type)) {
+									makeCall([SyntaxError(typeName + " type definition wasn't found", pos)]);
+								} else {
+									var sourceName = "source_" + typeName;
+
+									switch (structDef.type.type) {
+										case TStruct(structname, args, max) : {
+											var structFieldNames = args.map(function(arg) { return arg.name; }); // Used in checking for incorrect names
+											var error : Null<Flow> = null;
+											for (i in 2...al) {
+												switch (arguments[i]) {
+													case Let(name, sigma, value, scope, p) : {
+														if (structFieldNames.indexOf(name) == -1) { // Wrong field name was passed
+															error = SyntaxError("No field named \"" + name + "\" in " + structname, p);
+															break;
+														} else if (newFields.exists(name)) {
+															error = SyntaxError("Duplicate field \"" + name + "\" in " + structname, p);
+															break;
+														} else
+															newFields.set(name, value);
 													}
+													default : {};
 												}
-												if (error != null) {
-													for (i in 0...args.length) {
-														newArgs.push(error);
-													}
-												} else {
-													for (i in 0...args.length) {
-														var value = newFields.get(args[i].name);
-														var valueToPush = if (value == null) Field(sourceRef, args[i].name, PositionUtil.copy(pos)) else value;
-														newArgs.push(valueToPush);
-													}
+											}
+											if (error != null) {
+												for (i in 0...args.length) {
+													newArgs.push(error);
 												}
-												newArgs;
+											} else {
+												for (i in 0...args.length) {
+													var value = newFields.get(args[i].name);
+													var valueToPush = if (value == null) Field(VarRef(sourceName, PositionUtil.copy(pos)), args[i].name, PositionUtil.copy(pos)) else value;
+													newArgs.push(valueToPush);
+												}
 											}
-											default : {
-												Util.println("Something wrong in \"with\" construction: " + Std.string(structDef));
-												[];
-											}
+
+											Sequence(
+												FlowArrayUtil.one(Let(sourceName, structDef.type, sourceRef, Sequence(FlowArrayUtil.one(makeCall(newArgs)), PositionUtil.copy(pos)), PositionUtil.copy(pos))),
+												PositionUtil.copy(pos)
+											);
+										}
+										default : {
+											Util.println("Something wrong in \"with\" construction: " + Std.string(structDef));
+											makeCall([]);
 										}
 									}
 								}
-								default : arguments;
+								
 							}
-						} else
-							arguments;
-					Call(clos, newArguments, pos);
+							default : makeCall(arguments);
+						}
+					} else
+						makeCall(arguments);
 				}
 				default : f;
 			}
