@@ -1,5 +1,6 @@
 import Flow;
 import Position;
+import FlowArray;
 
 #if jsruntime
 #error "Attempt to link Flow compiler code into JS runtime"
@@ -105,35 +106,39 @@ class Modules {
 		return FlowUtil.mapFlow(decl, function(f) {
 			return switch (f) {
 				case Call(clos, arguments, pos) : {
+					var makeCall = function(newArguments) {
+						return Call(clos, newArguments, pos);
+					}
+
 					var al = arguments.length;
-					var newArguments =
-						if (al > 0) {
-							switch (arguments[0]) {
-								// special "with" case
-								// Normally arguments should not contain this
-								case ConstantVoid(p) : {
-									// Since this is just syntactic sugar, we simply do array with same lenght,
-									// as the real args for the struct and fill it either with passed values
-									// or field refs to the source struct
-									var sourceRef = arguments[1];
-									var newArgs = new FlowArray<Flow>();
-									var newFields = new Map<String, Flow>();
-									var typeName = switch (clos) {
-										case VarRef(name, p) : name;
-										default : "";
-									}
-									var structDef = null;
+					if (al > 0) {
+						switch (arguments[0]) {
+							// special "with" case
+							// Normally arguments should not contain this
+							case ConstantVoid(p) : {
+								// Since this is just syntactic sugar, we simply do array with same lenght,
+								// as the real args for the struct and fill it either with passed values
+								// or field refs to the source struct
+								var sourceRef = arguments[1];
+								var typeName = switch (clos) {
+									case VarRef(name, p) : name;
+									default : "";
+								}
+								var structDef = null;
 
-									for(module in modules) {
-										structDef = module.userTypeDeclarations.get(typeName);
-										if (structDef != null) break;
-									}
+								for(module in modules) {
+									structDef = module.userTypeDeclarations.get(typeName);
+									if (structDef != null) break;
+								}
 
-									if (structDef == null || !FlowUtil.isStructType(structDef.type.type)) {
-										[SyntaxError(typeName + " type definition wasn't found", pos)];
-									} else {
-										switch (structDef.type.type) {
-											case TStruct(structname, args, max) : {
+								if (structDef == null || !FlowUtil.isStructType(structDef.type.type)) {
+									makeCall([SyntaxError(typeName + " type definition wasn't found", pos)]);
+								} else {
+									switch (structDef.type.type) {
+										case TStruct(structname, args, max) : {
+											var makeNewArgs = function(src) {
+												var newArgs = new FlowArray<Flow>();
+												var newFields = new Map<String, Flow>();
 												var structFieldNames = args.map(function(arg) { return arg.name; }); // Used in checking for incorrect names
 												var error : Null<Flow> = null;
 												for (i in 2...al) {
@@ -158,24 +163,41 @@ class Modules {
 												} else {
 													for (i in 0...args.length) {
 														var value = newFields.get(args[i].name);
-														var valueToPush = if (value == null) Field(sourceRef, args[i].name, PositionUtil.copy(pos)) else value;
+														var valueToPush = if (value == null) Field(src, args[i].name, PositionUtil.copy(pos)) else value;
 														newArgs.push(valueToPush);
 													}
 												}
-												newArgs;
+												
+												return newArgs;
 											}
-											default : {
-												Util.println("Something wrong in \"with\" construction: " + Std.string(structDef));
-												[];
+											
+											var sourceName = "source_" + typeName;
+											switch (sourceRef) {
+												case VarRef(name, pos) : makeCall(makeNewArgs(sourceRef));
+												default : Sequence(
+													FlowArrayUtil.one(Let(
+														sourceName,
+														structDef.type,
+														sourceRef,
+														Sequence(FlowArrayUtil.one(makeCall(makeNewArgs(VarRef(sourceName, PositionUtil.copy(pos))))), PositionUtil.copy(pos)),
+														PositionUtil.copy(pos)
+													)),
+													PositionUtil.copy(pos)
+												);
 											}
+										}
+										default : {
+											Util.println("Something wrong in \"with\" construction: " + Std.string(structDef));
+											makeCall([]);
 										}
 									}
 								}
-								default : arguments;
+								
 							}
-						} else
-							arguments;
-					Call(clos, newArguments, pos);
+							default : makeCall(arguments);
+						}
+					} else
+						makeCall(arguments);
 				}
 				default : f;
 			}
