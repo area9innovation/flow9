@@ -1,6 +1,7 @@
 import material/material;
 import material/internal/material_theme;
 import material/internal/material_util;
+import material/internal/material_ellipsis;
 import material/measing;
 
 export {
@@ -20,17 +21,40 @@ export {
 		manager : MaterialManager,
 		parent : MFocusGroup,
 		size : Transform<WidthHeight>,
-		labelWidth : double,
-		labelGap : Transform<double>,
+		labelWidth : Transform<double>,
+		progress : Maybe<Transform<double>>,
 		graphicsState : Transform<MGraphicsState>) -> Tropic;
+
+	MFloatingLabelState(
+		progress : DynamicBehaviour<double>,
+		showFloatingLabel : DynamicBehaviour<bool>,
+		labelSizeFocused : double,
+		labelSizeUnfocused : double,
+		xMinOffset : double,
+		xOffsetDelta : double,
+		yMinOffset : double,
+		yOffsetDelta : double
+	);
+
+	makeMFloatingLabel(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		label : string,
+		state : MFloatingLabelState,
+		style : Transform<[CharacterStyle]>,
+		dynColor : Maybe<MDynamicColor>,
+		widthInspect : DynamicBehaviour<double>,
+		m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
+
+outlineDuration = 5. /*easingTransitionDuration*/;
 
 MOutline(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	size : Transform<WidthHeight>,
-	labelWidth : double,
-	labelGap : Transform<double>,
+	labelWidth : Transform<double>,
+	progress : Maybe<Transform<double>>,
 	graphicsState : Transform<MGraphicsState>) -> Tropic {
 
 	outlineState = make(fgetValue(graphicsState));
@@ -41,10 +65,17 @@ MOutline(
 			FLift2(\prev, curr -> Pair(prev, curr))
 		);
 
+	labelGap =
+		eitherMap(
+			progress,
+			\pr -> fmultiply(fsubtract(const(1.0), pr), faddition(labelWidth, const(8.0))),
+			const(0.0)
+		);
+
 	MEasingAnimation(
 		manager,
 		parent,
-		const(easingTransitionDuration),
+		const(outlineDuration),
 		const(easingStandartCurve),
 		stateWithLast,
 		\st -> Some(st),
@@ -54,12 +85,12 @@ MOutline(
 			next(outlineState, graphicsStateLerp(prev, curr, percent));
 		},
 		[],
-		TSelect3(outlineState, labelGap, size, \st, gap, wh ->
+		TSelect3(outlineState, fpair(labelWidth, labelGap), size, \st, label, wh ->
 			makeStaticOutline(
 				parent,
 				st,
-				labelWidth,
-				gap,
+				label.first,
+				label.second,
 				wh
 			)
 		)
@@ -75,7 +106,7 @@ makeStaticOutline(
 
 	w = size.width;
 	h = size.height;
-	gapOffset = 8.0 + (labelWidth - labelGap) / 2.0;
+	gapOffset = 12.0 + (labelWidth - labelGap) / 2.0;
 	style = [Stroke(st.color), StrokeWidth(st.strokeWidth), StrokeOpacity(st.opacity)];
 
 	shape = getShapeByComponent(parent, "outlined text field");
@@ -231,3 +262,55 @@ graphicsStateLerp(
 		current.ripple
 	);
 }
+
+makeMFloatingLabel(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	label : string,
+	state : MFloatingLabelState,
+	style : Transform<[CharacterStyle]>,
+	dynColor : Maybe<MDynamicColor>,
+	widthInspect : DynamicBehaviour<double>,
+	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	progress = state.progress;
+	xOffset = fselect(progress, FLift(\pr -> state.xMinOffset + pr * state.xOffsetDelta));
+	yOffset = fselect(progress, FLift(\pr -> state.yMinOffset + pr * state.yOffsetDelta));
+	labelSize = flerp(state.labelSizeFocused, state.labelSizeUnfocused, progress);
+
+	labelStyle : Transform<[CharacterStyle]> =
+		fselect2(labelSize, style, FLift2(\sz, st ->
+			replaceStruct(st, FontSize(sz))
+		));
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(outlineDuration),
+		const(easingStandartCurve),
+		state.showFloatingLabel,
+		\fl -> {
+			pr = getValue(progress);
+
+			if ((fl && pr == 0.) || (!fl && pr == 1.))
+				None()
+			else
+				Some(fl)
+		},
+		\fl, prc -> next(progress, if (fl) 1. - prc else prc),
+		[MAutoStart()],
+		TSelect(labelStyle, \st : [CharacterStyle] ->
+			MEllipsisText2T(
+				manager,
+				parent,
+				MEllipsisText(
+					label,
+					eitherMap(dynColor, \dc -> arrayPush(MCharacterStyle2MTextStyle(st), dc), MCharacterStyle2MTextStyle(st))
+				),
+				m2t
+			)
+		)
+		|> (\t -> TAttachWidth(t, widthInspect))
+		|> (\t -> TBorderT(xOffset, yOffset, zero, zero, t))
+	)
+} 
