@@ -20,8 +20,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 		\url, __ -> MVideoPlayer2MRealHTML(url, parent, m, m2t),
 		\url -> MVideoPlayer2MRealHTML(url, parent, m, m2t),
 		\ -> {
-			color : MColor = extractStruct(m.style, getAccentColor(parent));
-			backgroundColor = extractStruct(m.style, MPlayerBackground(MBlack())).color;
+			color = extractMColor(parent, m.style, MAccentColor());
+			backgroundColor = MThemeColor2MColor(parent, extractStruct(m.style, MPlayerBackground(MBlack())).color);
 			videoHasErrors = make(false);
 			enabled =
 				fands([
@@ -43,6 +43,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			subtitlesControl = contains(mPlayerControls, SubtitlesControl());
 			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
 			animatedSubtitles = tryExtractStruct(m.style, MAnimatedSubtitles(const(VideoSubtitle("", [])), []));
+			shortcutsEnabled = !containsStruct(m.style, MPlayerDisableKeyboardShortcuts());
 
 			streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
 
@@ -209,11 +210,13 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							MToggleFalseIcon("play_arrow", [MIconSize(30.)]),
 							MIconButtonBorder(3.), MIconSize(30.)
 						],
-						[
-							MToggleValue(playing),
-							MShortcut(" "),
-							enabled
-						]
+						concat(
+							[
+								MToggleValue(playing),
+								enabled
+							],
+							if (shortcutsEnabled) [MShortcut(" ")] else []
+						)
 					),
 					m2t
 				)
@@ -415,7 +418,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						|> TColsYCenter
 						|> (\videoButtons -> TBorder(12., 4., 12., 4., videoButtons))
 					)
-					|> addTBackground(MDialogColor(false))
+					|> addTBackground(MDialogMColor(false))
 					|> (\t -> TAnimatedExpander(manager, p, t, if (autoHide) fand(showPanel, showPanelInner) else showPanel, [MExpandFromStart(), MNoCrop()]))
 				)
 				|> (\makePanel ->
@@ -565,15 +568,41 @@ TVideoWithAnimatedSubtitles(
 	subtitles : Maybe<Pair<MAnimatedSubtitles, Transform<bool>>>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
-	videoAreaMetrics = make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.)));
+	videoAreaMetrics = make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.), Factor(1., 1.)));
 	style = eitherMap(subtitles, \__ -> arrayPush(video.style, FInspectVideoArea(videoAreaMetrics)), video.style);
+
+	applyRange = \scMode, value ->
+		if (scMode.max == -1.) max(scMode.min, value)
+		else forceRange(value, scMode.min, scMode.max);
 
 	TGroup2SameMetrics(
 		TVideo(video.filename, video.wh, style),
 		eitherMap(subtitles, \sbtl -> {
 				areaBox = TSized(fselect(videoAreaMetrics, FLift(\vam -> vam.wh)));
 				areaTopLeft = fselect(videoAreaMetrics, FLift(\vam : FVideoAreaMetrics -> vam.topLeft));
+				scaleMode = tryExtractStruct(sbtl.first.style, FVideoSubtitlesScaleMode(0., 0.));
+				customOriginSize = tryExtractStruct(sbtl.first.style, MSubtitlesOriginSize(WidthHeight(0., 0.)));
+
 				TAnimatedSubtitles(manager, parent, sbtl.first, m2t)
+				|> (\t -> eitherMap(scaleMode, \scMode -> {
+					factor =
+						eitherMap(
+							customOriginSize,
+							\os ->
+								fselect(videoAreaMetrics, FLift(\vam ->
+									min(vam.wh.width / os.size.width, vam.wh.height / os.size.height)
+									|> (\f -> applyRange(scMode, f))
+									|> (\f -> Factor(f, f))
+								)),
+							fselect(videoAreaMetrics, FLift(\vam -> Factor(
+								applyRange(scMode, vam.scale.x),
+								applyRange(scMode, vam.scale.y)
+							)))
+						);
+						TScale(factor, t)
+					},
+					t
+				))
 				|> (\t -> TAvailable(t, areaBox))
 				|> (\t -> TTweak([TAlign(const(0.5), const(1.))], t, areaBox))
 				|> (\t -> TCropSize(areaBox, t))
@@ -630,15 +659,15 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
 		innerPercent = make(0.);
 		antiInnerPercent = fsubtract(const(1.), innerPercent);
-		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height * 2. - frame.border))), antiInnerPercent);
+		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height - frame.border))), antiInnerPercent);
 		oldLineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height))), innerPercent);
 		newLineTranslatePoint = fpointaddition(
-			flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height * 2.))), innerPercent),
+			flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., sz.height))), innerPercent),
 			fselect(oldLineSize, FLift(\sz -> Point(0., sz.height)))
 		);
 
 		TGroupWithoutMetrics([
-			makeSubtitleLine(new, newLineSize, newLineTranslatePoint, -4.),	
+			makeSubtitleLine(new, newLineSize, newLineTranslatePoint, -4.) |> (\t -> TAlpha(innerPercent, t)),
 			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
 			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
 		])

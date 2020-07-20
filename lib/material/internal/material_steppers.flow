@@ -1,5 +1,5 @@
-import material/material_gui;
 import material/internal/material_typography;
+import material/internal/material_mutable;
 
 export {
 	MStepper2T(parent : MFocusGroup, m : MStepper, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -135,7 +135,7 @@ makeMobileStepper(parent : MFocusGroup, m : MStepper, type : MobileStepperType, 
 				])
 			};
 			MobileStepProgressBar(progressBarStyle) : {
-				progressBarDetermStyle = extractStruct(progressBarStyle, MProgressBarDetermStyle(getPrimaryColor(parent), MGrey(500), WidthHeight(-1.0, 3.0)));
+				progressBarDetermStyle = extractStruct(progressBarStyle, MProgressBarDetermStyle(MPrimaryColor(), MGrey(500), WidthHeight(-1.0, 3.0)));
 				pBarDeterm = TCenterIn(
 					m2t(MProgressBarDeterm(sProgressPercent, [progressBarDetermStyle.color, MProgressBackgroundColor(progressBarDetermStyle.backgroundColor), progressBarDetermStyle.size]), parent),
 					TFixed(0.0, 36.0)
@@ -200,7 +200,7 @@ makeMobileStepper(parent : MFocusGroup, m : MStepper, type : MobileStepperType, 
 makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Material, MFocusGroup) -> Tropic, horizontal : bool) -> Tropic {
 	steps = m.steps;
 	selectedId = m.selectedId;
-	color = extractStruct(m.style, getPrimaryColor(parent));
+	color = extractMColor(parent, m.style, MPrimaryColor());
 
 	cancelButtonStyle = extractStruct(m.style, MCancelButton(_("CANCEL"), [MGrey(800)], []));
 	continueButtonStyle = extractStruct(m.style, MContinueButton(_("CONTINUE"), [color, MButtonRaised()], []));
@@ -396,7 +396,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 						|> (\t -> TCopySize(t, \tr ->
 								TShowLazy(showSFeedback,
 									\ -> TGroup2(
-										TRectangle([MFill(MBackgroundColor(getLightBackground(parent)))], tr),
+										TRectangle([MThemeFill(parent, MBackgroundColor())], tr),
 										TCenterIn(
 											m2t(MProgressCircle([]), parent),
 											tr
@@ -437,7 +437,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 			textStyleSubtitle = \val : MFontStyle -> MTextStyle2CharacterStyle(parent, [val, textColorSubtitle]);
 
 			createTextTitle = \textT, isSelected, isError, opacity -> {
-				textColor : MColor = if (isError) MErrorColor() else textColorTitle;
+				textColor : MThemeColor = if (isError) MErrorColor() else textColorTitle;
 				textFontFamily = if (isSelected && !isError) "RobotoMedium" else "Roboto";
 
 				if (defFontStyles.truncateText)
@@ -447,11 +447,11 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 					)
 					|> (\f -> m2t(f, parent))
 				else
-					TDynamicText(textT, [FontSize(fontSizeTitle), FontFamily(textFontFamily), FillOpacity(opacity), MFill(textColor)]);
+					TDynamicText(textT, [FontSize(fontSizeTitle), FontFamily(textFontFamily), FillOpacity(opacity), MThemeFill(parent, textColor)]);
 			}
 
 			createTextSubtitle = \text, isError, opacity -> {
-				textColor : MColor = if (isError) MErrorColor() else textColorSubtitle;
+				textColor : MThemeColor = if (isError) MErrorColor() else textColorSubtitle;
 
 				subtitle =
 					if (text == "")
@@ -475,9 +475,8 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 				enabled = extractStruct(step.state, MEnabled(const(true))).enabled;
 				isFirstVisibleStepB = make(false);
 				isLastVisibleStepB = make(false);
-				click = make(false);
-				inside = make(false);
 
+				(\clickFoc -> MGetManager(\manager ->
 				TIf(showStepError,
 					warningIcon,
 					TIf(feq(selectedId, id),
@@ -488,6 +487,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 						)
 					)
 				)
+				|> eitherMap(clickFoc, \foc -> MHintMarker(manager, foc, true), idfn)
 				|> addConnectorLine
 				|> (\f -> TBorder(0., 4., 12., 0., f))
 				|> (\f -> MCols2(
@@ -512,8 +512,8 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 						})
 						|> (\t -> TCenterYIn(t, TFixed(0.0, 40.0)))
 					)
-				)
-				|> (\f : Material -> {
+				)))
+				|> (\fn : (Maybe<MFocus>) -> Material -> {
 					isClickable = if (linearStepper) {
 						allowClickOnStartB = fmax(isFirstVisibleStepB, fand(feq(selectedId, id), fnot(showFirstOnStartB)));
 						editable =
@@ -534,8 +534,15 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 
 					MIf(
 						isClickable,
-						MCursor(FingerCursor(), MMouseDownAround(None(), click, inside, nop, f)),
-						f
+						MGetManager(\manager -> MComponent([], \foc -> {
+							MConstruct([
+								makeSubscribe2(foc.down, \c -> if (c) {
+									nextDistinct(showFirstOnStartB, true);
+									next(selectedId, id);
+								})
+							], fn(Some(foc)))
+						})),
+						fn(None())
 					)
 				})
 				|> (\f ->
@@ -552,7 +559,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 												TShowLazy(
 													showSFeedback,
 													\ -> TGroup2(
-														TRectangle([MFill(MBackgroundColor(getLightBackground(parent)))], tr),
+														TRectangle([MThemeFill(parent, MBackgroundColor())], tr),
 														TCenterIn(
 															m2t(MProgressCircle([]), parent),
 															tr
@@ -587,10 +594,6 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 								if (getValue(selectedId) == id) nextDistinct(showStepError, val)
 								else nextDistinct(showStepError, false)
 							),
-							makeSubscribe2(click, \c -> if (c) {
-								nextDistinct(showFirstOnStartB, true);
-								next(selectedId, id);
-							}),
 							makeSubscribe(stepsEnabledArr, \arr -> {
 								nextDistinct(isFirstVisibleStepB, id == elemIndex(arr, true, -1));
 								nextDistinct(isLastVisibleStepB, id == either( lastfindi(arr, eq(true)), -1));
@@ -684,7 +687,7 @@ createAlternativeSpec(parent : MFocusGroup, steps : [MStep], completes : [Dynami
 	textFill = Fill(contrastingColor(parent));
 	textStyle = \val -> MTextStyle2CharacterStyle(parent, [val, textColor]);
 	makeStyle = \size, opacity, color ->
-		[FontSize(size), FontFamily("Roboto"), FillOpacity(opacity), MFill(color)];
+		[FontSize(size), FontFamily("Roboto"), FillOpacity(opacity), MThemeFill(parent, color)];
 
 	makeTitle = \step, style ->
 		TDynamicText(step.title, style)
@@ -795,7 +798,7 @@ createSpec(parent : MFocusGroup, steps : [MStep], completes : [DynamicBehaviour<
 	textFill = Fill(contrastingColor(parent));
 	textStyle = \val -> MTextStyle2CharacterStyle(parent, [val, textColor]);
 	makeStyle = \size, opacity, color ->
-		[FontSize(size), FontFamily("Roboto"), FillOpacity(opacity), MFill(color)];
+		[FontSize(size), FontFamily("Roboto"), FillOpacity(opacity), MThemeFill(parent, color)];
 
 	makeTitle = \step, style ->
 		TDynamicText(step.title, style);

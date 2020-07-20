@@ -15,6 +15,9 @@ export {
 
 	//checks if partition name has no conflicts with existing names
 	validatePartitionName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string]) -> void;
+
+	//filter (with dialog option) to exclude files with large size
+	filterFilesByMaxSizeDialog(manager : MaterialManager, files : [native], maxSize : int, showDialog : bool, m2t : (Material, MFocusGroup) -> Tropic, onDone : ([native]) -> void) -> void;
 }
 
 FilebrowserState(
@@ -649,6 +652,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	fileFilterFn = extractStruct(styles, FbFileFilter(\__ -> true)).fn;
 	selectedFilesB = extractStruct(styles, FbSelectedNames(make([]))).filenamesB;
 	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop3)), \s -> s.fn);
+	uploadMaxSizeM = minA(map(extractStructMany(styles, FbUploadMaxFileSize(0)), \s -> s.size));
 
 	//currentPathAccessRight = make(FileAccessRightOwner());
 	curDirAccessRightB = make(makePathAccessRight());
@@ -875,6 +879,8 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			);
 
 		if (folderSelection) addInfoIcon("folder_shared", _("Directory selection mode installed"));
+
+		maybeApply(uploadMaxSizeM, \size -> addInfoIcon("attach_file", formatString(_("The maximum file size to upload is %1 Mb"), [i2s(size / 1024 / 1024)])));
 
 		switch (state.maybeMultiselectB) {
 			Some(ctrlKeyB): {
@@ -1315,9 +1321,20 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			TFixed(0.0, 8.0),
 			eitherMap(dropFnM,
 				\dropFn -> {
+					dropFn2 = eitherMap(
+						uploadMaxSizeM,
+						\size -> {
+							\files -> {
+								filterFilesByMaxSizeDialog(manager, files, size, true, m2t, \files2 -> {
+									if (files2 != []) dropFn.fn(files2);
+								});
+							};
+						},
+						dropFn.fn
+					);
 					// we accept only list of extensions without "*." and "." prefixes
 					eRegFilter = if (normalExts == []) "" else strGlue(map(normalExts, \e -> strReplace(strReplace(e, "*.", ""), ".", "")), "|");
-					MInteractive([TFileDrop(-1, eRegFilter, dropFn.fn)], dialogContent);
+					MInteractive([TFileDrop(-1, eRegFilter, dropFn2)], dialogContent);
 				},
 				dialogContent
 			),
@@ -1358,6 +1375,87 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 //////////
 // Utils
 //////////
+
+filterFilesByMaxSizeDialog(manager : MaterialManager, files : [native], maxSize : int, showDialog : bool, m2t : (Material, MFocusGroup) -> Tropic, onDone : ([native]) -> void) -> void {
+	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
+	getText = \isMany -> if (isMany) _("Sorry, your files is too large for the system.")
+		else _("Sorry, your file is too large for the system.");
+
+	files2 = filter(files, \file -> fileSizeClient(file) <= i2d(maxSize));
+	showErrorDialog = \isMany, title, text -> {
+		if (showDialog) {
+			closeB = make(false);
+			renderMDialog2(
+				manager,
+				closeB,
+				[
+					MDialogTitle(title),
+					MDialogUseFrame(),
+					MDialogActions([MTextButton("OK", \-> { onDone(files2); next(closeB, true); }, [], [MShortcut("enter")])]),
+					MDialogScroll()
+				],
+				MLines(interleave(map([
+						getText(isMany),
+						formatString(_("Try to compress it or break it up into smaller pieces (max size is %1 Mb)."), [i2s(maxSize / 1024 / 1024)]),
+						"",
+						text
+					],
+					\t -> MText(t, [MSubheading()])), TFixed(8.0, 8.0)
+				)),
+				m2t,
+				\t -> {
+					trender(
+						TAvailable(
+							TTranslate(fif(manager.iscript.showPanel, const(Point(0.0, 48.0)), const(zeroPoint)), t),
+							TIf(manager.iscript.showPanel, TSized(manager.iscript.available), TFillXY())
+						)
+						|> (\f ->
+							materialLogFn(
+								\ ->
+									TFixSize(
+										TLines2(
+											TFixed(36., 36.),
+											f
+										),
+										TFillXY()
+									),
+								MaterialWarning(),
+								\ -> f
+							)
+						),
+						manager.manager.renderStyle
+					)
+				}
+			);
+		} else {
+			onDone(files2);
+		}
+	}
+
+	if (files2 == []) {
+		isMany = length(files) > 1;
+		title = getTitle(isMany);
+		text = if (isMany) formatString(_("Nothing were uploaded from %1 files."), [i2s(length(files))])
+			else formatString(_("The file was not uploaded."), [i2s(length(files))]);
+		showErrorDialog(isMany, title, text);
+	} else if (length(files) != length(files2)) {
+		countOrig = length(files);
+		countFiltered = length(files2);
+		countDiff = countOrig - countFiltered;
+
+		title = getTitle(countDiff > 1);
+		text = if (countOrig > 1) {
+			if (countFiltered > 1) formatString(_("Only %1 of %2 files were uploaded."), [i2s(countFiltered), i2s(countOrig)])
+			else formatString(_("Only 1 of %1 files was uploaded."), [i2s(countOrig)]);
+		} else {
+			// It should be never reached
+			_("... and something went wrong. Nothing were uploaded.");
+		};
+		showErrorDialog(countDiff > 1, title, text);
+	} else {
+		onDone(files2);
+	}
+}
 
 checkIsDirectoryAll(api : FilesystemExtAPI, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
 	if (paths == [] || !lastResult) {

@@ -707,6 +707,9 @@ class AccessWidget extends EventEmitter {
 				e.preventDefault();
 
 				if (e.touches != null) {
+					RenderSupport.TouchPoints = e.touches;
+					RenderSupport.emit("touchstart");
+
 					if (e.touches.length == 1) {
 						RenderSupport.MousePos.x = e.touches[0].pageX;
 						RenderSupport.MousePos.y = e.touches[0].pageY;
@@ -715,7 +718,7 @@ class AccessWidget extends EventEmitter {
 					} else if (e.touches.length > 1) {
 						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 					}
-				} else {
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
 					RenderSupport.MousePos.x = e.pageX;
 					RenderSupport.MousePos.y = e.pageY;
 
@@ -723,7 +726,7 @@ class AccessWidget extends EventEmitter {
 						RenderSupport.PixiStage.emit("mouserightdown");
 					} else if (e.which == 2 || e.button == 1) {
 						RenderSupport.PixiStage.emit("mousemiddledown");
-					} else {
+					} else if (e.which == 1 || e.button == 0) {
 						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
 					}
 				}
@@ -734,17 +737,20 @@ class AccessWidget extends EventEmitter {
 
 			var onpointerup = function(e : Dynamic) {
 				if (e.touches != null) {
+					RenderSupport.TouchPoints = e.touches;
+					RenderSupport.emit("touchend");
+
 					GesturesDetector.endPinch();
 
 					if (e.touches.length == 0) {
 						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 					}
-				} else {
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
 					if (e.which == 3 || e.button == 2) {
 						RenderSupport.PixiStage.emit("mouserightup");
 					} else if (e.which == 2 || e.button == 1) {
 						RenderSupport.PixiStage.emit("mousemiddleup");
-					} else {
+					} else if (e.which == 1 || e.button == 0) {
 						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 					}
 				}
@@ -753,15 +759,12 @@ class AccessWidget extends EventEmitter {
 				e.stopPropagation();
 			};
 
-			if (Platform.isMobile && Platform.isSafari && Platform.browserMajorVersion >= 13) {
-				element.onpointerdown = onpointerdown;
-				element.onpointerup = onpointerup;
+			if (Platform.isMobile) {
+				if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+					element.onpointerdown = onpointerdown;
+					element.onpointerup = onpointerup;
+				}
 
-				untyped __js__("this.element.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive : false })");
-
-				element.ontouchstart = onpointerdown;
-				element.ontouchend = onpointerup;
-			} else if (Platform.isMobile) {
 				element.ontouchstart = onpointerdown;
 				element.ontouchend = onpointerup;
 			} else if (Platform.isSafari) {

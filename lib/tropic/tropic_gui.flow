@@ -1,4 +1,4 @@
-import tropic/tropic;
+import tropic/selecttarray;
 import tropic/tropic_util;
 import fform/fform_gui;
 import sys/fullscreen;
@@ -346,6 +346,8 @@ export {
 	TDebugMetricsPurple(t : Tropic) -> Tropic { TDebugMetrics(purple, t); };
 
 	TDebugConstruct(tag : string, tr : Tropic) -> Tropic;
+
+	TDebugInteractive(tr : Tropic) -> Tropic;
 
 	TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic;
 
@@ -1141,8 +1143,8 @@ TFillXY() -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			zero,
 			zero,
-			const(^tropicFillersMax),
-			const(^tropicFillersMax),
+			const(doubleMax),
+			const(doubleMax),
 			const(1.),
 			const(1.),
 			const(false),
@@ -1166,7 +1168,7 @@ TFillXHT(hgt : Transform<double>) -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			zero,
 			hgt,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			hgt,
 			const(1.),
 			zero,
@@ -1192,7 +1194,7 @@ TFillXWT(minWidth : Transform<double>) -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			minWidth,
 			hgt,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			hgt,
 			const(1.),
 			zero,
@@ -1218,7 +1220,7 @@ TFillWYT(wd : Transform<double>) -> Tropic {
 			wd,
 			zero,
 			wd,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			zero,
 			const(1.),
 			const(false),
@@ -1244,7 +1246,7 @@ TFillYHT(minHeight : Transform<double>) -> Tropic {
 			wd,
 			minHeight,
 			wd,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			zero,
 			const(1.),
 			const(false),
@@ -1290,15 +1292,15 @@ TFillMax(maxWidth : double, maxHeight : double) -> Tropic {
 }
 
 TFillMaxWY(maxWidth : double) -> Tropic {
-	TFillMax(maxWidth, ^tropicFillersMax)
+	TFillMax(maxWidth, doubleMax)
 }
 
 TFillMaxHX(maxHeight : double) -> Tropic {
-	TFillMax(^tropicFillersMax, maxHeight)
+	TFillMax(doubleMax, maxHeight)
 }
 
 TFillMin(minWidth : double, minHeight : double) -> Tropic {
-	TFillXYXY(minWidth, minHeight, ^tropicFillersMax, ^tropicFillersMax)
+	TFillXYXY(minWidth, minHeight, doubleMax, doubleMax)
 }
 
 THeight(tropic : Tropic) -> Tropic {
@@ -2255,6 +2257,78 @@ TDebugConstruct(tag : string, tr : Tropic) -> Tropic {
 	)
 }
 
+TDebugInteractive(tr : Tropic) -> Tropic {
+	da = makeDynamicArray([]);
+	daDown = makeDynamicArray([]);
+	daUp = makeDynamicArray([]);
+
+	TInteractive(
+		[
+			MouseMove2(\h, mi -> {
+				m = mi();
+
+				println("mouse move: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(da, Point(m.x, m.y));
+
+				h;
+			}),
+			MouseDown2(\h, m -> {
+				println("mouse down: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(daDown, Point(m.x, m.y));
+
+				h;
+			}),
+			MouseUp2(\h, mi -> {
+				m = mi();
+
+				println("mouse up: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(daUp, Point(m.x, m.y));
+
+				h;
+			}),
+		],
+		TGroupSameMetrics([
+			tr,
+			SelectTDynamicGroup(
+				da,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(da, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(red), FillOpacity(0.2)]
+					)
+				}
+			),
+			SelectTDynamicGroup(
+				daDown,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(daDown, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(blue), FillOpacity(0.2)]
+					)
+				}
+			),
+			SelectTDynamicGroup(
+				daUp,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(daUp, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(green), FillOpacity(0.2)]
+					)
+				}
+			)
+		])
+	)
+}
+
 TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic {
 	\tr -> TConstruct(
 		[
@@ -2683,8 +2757,9 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 					zorder = make(z);
 					rr = renderFForm(b.form, zorder);
 					originalParent = makeClip();
-					alive = ref true;
+					alive = ref false;
 					iter(rr.clips, \c -> addChild(originalParent, c));
+					parent = makeClip();
 
 					fn(
 						TFForm(
@@ -2693,7 +2768,7 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 								const(FormMetrics(0., 0., 0., 0.)),
 								\ -> b.form,
 								\__, z2, __ -> {
-									parent = makeClip();
+									alive := true;
 									iter(rr.clips, \c -> addChild(parent, c));
 									nextDistinct(zorder, z2);
 
@@ -2701,7 +2776,11 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 										[parent],
 										\ -> {
 											nextDistinct(zorder, z);
-											iter(rr.clips, \c -> if (^alive) addChild(originalParent, c) else removeChild(parent, c));
+
+											if (^alive) {
+												iter(rr.clips, \c -> addChild(originalParent, c));
+												alive := false;
+											}
 										}
 									)
 								}
@@ -2710,7 +2789,17 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 						)
 					);
 
-					NativeRenderResult([originalParent], \ -> { alive := false; applyall(rr.disposers); } )
+					NativeRenderResult(
+						[originalParent],
+						\ -> {
+							if (^alive) {
+								iter(rr.clips, \c -> removeChild(parent, c));
+								alive := false;
+							}
+
+							applyall(rr.disposers);
+						}
+					)
 				}
 			)
 		)

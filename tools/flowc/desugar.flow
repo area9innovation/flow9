@@ -909,27 +909,7 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 				FcCallPrim(FcIndexPrim(), [acc, desugarFcExp(dacc, index)], FcInfo(ref None(), postfix.start, postfix.end));
 			} else {
 				// "With" construction
-				sourceType = switch (acc) {
-					FcVar(typeName, __) : typeName;
-					default : "";
-				}
-				fcCall = switch (lookupTree(dacc.fileStructs, sourceType)) {
-					None() : {
-						switch (lookupTree(dacc.names.structs, sourceType)) {
-							None() : {
-								if (!dacc.supressUnknownType) {
-									refArrayPush(dacc.errors, FcError("Unknown struct type " + sourceType, [
-										FcPosition(dacc.fileinfo.flowfile, postfix.start, postfix.end),
-									]));
-								}
-								FcCall(acc, [], FcInfo(ref None(), postfix.start, postfix.end))
-							}
-							Some(sourceStructDef) : FcCall(acc, constructStructArgs(dacc, sourceStructDef.args, finfo, postfix), FcInfo(ref None(), postfix.start, postfix.end));
-						}
-					}
-					Some(sourceStructDef) : FcCall(acc, constructStructArgs(dacc, sourceStructDef.args, finfo, postfix), FcInfo(ref None(), postfix.start, postfix.end));
-				}
-				desugarFcCall(dacc, fcCall);
+				desugarWithConstruction(acc, dacc, finfo, postfix);
 			}
 		});
 	} else if (st.rule == st_atom) {
@@ -1296,13 +1276,49 @@ desugarFcType(dacc : DesugarAcc, st : SyntaxTree) -> Maybe<FcType> {
 	}
 }
 
-constructStructArgs(dacc : DesugarAcc, structArgs : [FcStructArg], finfo : () -> FcInfo, postfix : SyntaxTree) -> [FcExp] {
+desugarWithConstruction(acc : FcExp, dacc : DesugarAcc, finfo : () -> FcInfo, postfix : SyntaxTree) -> FcExp {
+	foundDefinition = \sourceStructDef : FcTypeStruct -> {
+		source = desugarFcExp(dacc, get_flow_call(postfix));
+		makeCall = \src -> desugarFcCall(dacc, FcCall(acc, constructStructArgs(dacc, src, sourceStructDef.args, finfo, postfix), FcInfo(ref None(), postfix.start, postfix.end)));
+
+		switch (source) {
+			FcVar(__, __) : makeCall(source);
+			default : {
+				varName = "source_" + sourceStructDef.name;
+				FcLet(varName, makeFcTyVar2(dacc.tyvarIdGroup, FcInfo2(postfix.start, postfix.end)), source, makeCall(FcVar(varName, finfo())), finfo());
+			}
+		}
+	}
+	
+	sourceType = switch (acc) {
+		FcVar(typeName, __) : typeName;
+		default : "";
+	}
+
+	switch (lookupTree(dacc.fileStructs, sourceType)) {
+		None() : {
+			switch (lookupTree(dacc.names.structs, sourceType)) {
+				None() : {
+					if (!dacc.supressUnknownType) {
+						refArrayPush(dacc.errors, FcError("Unknown struct type " + sourceType, [
+							FcPosition(dacc.fileinfo.flowfile, postfix.start, postfix.end),
+						]));
+					}
+					desugarFcCall(dacc, FcCall(acc, [], FcInfo(ref None(), postfix.start, postfix.end)))
+				}
+				Some(sourceStructDef) : foundDefinition(sourceStructDef);
+			}
+		}
+		Some(sourceStructDef) : foundDefinition(sourceStructDef);
+	}
+}
+
+constructStructArgs(dacc : DesugarAcc, source : FcExp, structArgs : [FcStructArg], finfo : () -> FcInfo, postfix : SyntaxTree) -> [FcExp] {
 	// "with" construction consists of assignments, separated by comma
 	// Since that this is syntax sugar, we transform it into regular struct copy
 	// If assignment is to one of struct's fields, we place it as an struct argument
 	// Otherwise field will contain source copy
 
-	source = desugarFcExp(dacc, get_flow_call(postfix));
 	fields = get_flow_fields(postfix);
 	first = get_flow_assign(fields);
 	other = get_flow_fields_tail_s(fields);
