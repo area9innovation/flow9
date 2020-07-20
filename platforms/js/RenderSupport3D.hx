@@ -20,6 +20,7 @@ import js.three.LOD;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
+import js.three.OrthographicCamera;
 import js.three.OrbitControls;
 import js.three.TransformControls;
 import js.three.BoxHelper;
@@ -233,7 +234,8 @@ class RenderSupport3D {
 				if (typeof object1[property] != 'undefined' && typeof object1[property] != 'function'
 					&& property != 'children' && property != 'geometry' && property != 'childrenMap'
 					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
-					&& property != 'material' && property != 'broadcastable' && property != 'inside' && property != 'updateProjectionMatrix') {
+					&& property != 'material' && property != 'broadcastable' && property != 'inside' && property != 'updateProjectionMatrix'
+					&& property != 'boxHelper' && property != 'shadow') {
 
 					if (Array.isArray(object1[property]) || object1[property] instanceof String) {
 						object2[property] = object1[property];
@@ -253,13 +255,19 @@ class RenderSupport3D {
 		");
 	}
 
-	public static function make3DObjectFromJSON(json : String) : Object3D {
+	public static function make3DObjectFromJSON(stage : ThreeJSStage, json : String) : Object3D {
 		json = haxe.Json.parse(json);
-		return new ObjectLoader().parse(json);
+		var object3d : Object3D = new ObjectLoader().parse(json);
+		stage.updateObject3DParent(object3d);
+
+		return object3d;
 	}
 
-	public static function make3DObjectFromObj(obj : String, mtl : String) : Object3D {
-		return untyped __js__("new THREE.OBJLoader().setMaterials(new THREE.MTLLoader().parse(mtl)).parse(obj)");
+	public static function make3DObjectFromObj(stage : ThreeJSStage, obj : String, mtl : String) : Object3D {
+		var object3d : Object3D = untyped __js__("new THREE.OBJLoader().setMaterials(new THREE.MTLLoader().parse(mtl)).parse(obj)");
+		stage.updateObject3DParent(object3d);
+
+		return object3d;
 	}
 
 	public static function make3DGeometryFromJSON(json : String) : Object3D {
@@ -1086,6 +1094,8 @@ class RenderSupport3D {
 				stage.boxHelpers.push(boxHelper);
 				untyped object.boxHelper = boxHelper;
 			}
+
+			object.invalidateStage();
 		}
 	}
 
@@ -1099,6 +1109,8 @@ class RenderSupport3D {
 
 			stage.boxHelpers.remove(untyped object.boxHelper);
 			untyped object.boxHelper = null;
+
+			object.invalidateStage();
 		}
 	}
 
@@ -1115,7 +1127,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectId(object : Object3D) : String {
-		return object.uuid;
+		return object.uuid != null ? object.uuid : "";
 	}
 
 	public static function get3DObjectById(stage : ThreeJSStage, id : String) : Array<Object3D> {
@@ -1127,7 +1139,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectType(object : Object3D) : String {
-		return object.type;
+		return object.type != null ? object.type : "";
 	}
 
 	public static function get3DObjectStage(object : Object3D) : Array<ThreeJSStage> {
@@ -1139,7 +1151,7 @@ class RenderSupport3D {
 	}
 
 	public static function get3DObjectName(object : Object3D) : String {
-		return object.name;
+		return object.name != null ? object.name : "";
 	}
 
 	public static function set3DObjectName(object : Object3D, name : String) : Void {
@@ -1283,7 +1295,7 @@ class RenderSupport3D {
 
 
 
-	public static function get3DObjectRotationX(object : Object3D) : Float {
+	public static function get3DObjectLocalRotationX(object : Object3D) : Float {
 		object.updateObject3DMatrix();
 		return object.rotation.x / 0.0174532925 /*degrees*/;
 	}
@@ -1587,7 +1599,7 @@ class RenderSupport3D {
 
 	public static function add3DObjectLocalRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
-			cb(get3DObjectRotationX(object), get3DObjectLocalRotationY(object), get3DObjectLocalRotationZ(object));
+			cb(get3DObjectLocalRotationX(object), get3DObjectLocalRotationY(object), get3DObjectLocalRotationZ(object));
 		};
 
 		fn(0);
@@ -1649,6 +1661,10 @@ class RenderSupport3D {
 		return new PerspectiveCamera(fov, aspect, near, far);
 	}
 
+	public static function make3DOrthographicCamera(width : Float, height : Float, near : Float, far : Float) : OrthographicCamera {
+		return new OrthographicCamera(width / - 2, width / 2, height / 2, height / - 2, near, far);
+	}
+
 	public static function set3DCameraFov(camera : PerspectiveCamera, fov : Float) : Void {
 		camera.fov = fov;
 		camera.invalidateStage();
@@ -1669,6 +1685,23 @@ class RenderSupport3D {
 		camera.invalidateStage();
 	}
 
+	public static function set3DCameraWidth(camera : OrthographicCamera, width : Float) : Void {
+		camera.left = width / - 2;
+		camera.right = width / 2;
+		camera.invalidateStage();
+	}
+
+	public static function set3DCameraHeight(camera : OrthographicCamera, height : Float) : Void {
+		camera.top = height / - 2;
+		camera.bottom = height / 2;
+		camera.invalidateStage();
+	}
+
+	public static function set3DCameraZoom(camera : OrthographicCamera, zoom : Float) : Void {
+		camera.zoom = zoom;
+		camera.invalidateStage();
+	}
+
 	public static function get3DCameraFov(camera : PerspectiveCamera) : Float {
 		return camera.fov;
 	}
@@ -1683,6 +1716,10 @@ class RenderSupport3D {
 
 	public static function get3DCameraFar(camera : PerspectiveCamera) : Float {
 		return camera.far;
+	}
+
+	public static function get3DCameraZoom(camera : OrthographicCamera) : Float {
+		return camera.zoom;
 	}
 
 
@@ -1706,8 +1743,14 @@ class RenderSupport3D {
 	}
 
 
-	public static function set3DLightColor(object : Light, color : Int) : Void {
-		object.color = new Color(color);
+	public static function set3DObjectColor(object : Object3D, color : Int) : Void {
+		untyped object.color = new Color(color);
+
+		object.invalidateStage();
+	}
+
+	public static function set3DObjectEmissive(object : Object3D, color : Int) : Void {
+		untyped object.emissive = new Color(color);
 
 		object.invalidateStage();
 	}
@@ -1742,8 +1785,12 @@ class RenderSupport3D {
 		object.invalidateStage();
 	}
 
-	public static function get3DLightColor(object : Light) : Int {
-		return object.color.getHex();
+	public static function get3DObjectColor(object : Object3D) : Int {
+		return untyped object.color != null ? object.color.getHex() : 0;
+	}
+
+	public static function get3DObjectEmissive(object : Object3D) : Int {
+		return untyped object.emissive != null ? object.emissive.getHex() : 0;
 	}
 
 	public static function get3DLightIntensity(object : Light) : Float {
@@ -2340,6 +2387,8 @@ class RenderSupport3D {
 			}
 		}
 
+		object.invalidateStage();
+
 		return object;
 	}
 
@@ -2361,5 +2410,29 @@ class RenderSupport3D {
 		}
 
 		return object;
+	}
+
+	public static function get3DObjectParameter(object : Object3D, name : String, def : String) : String {
+		if (untyped object[name] != null) {
+			return untyped object[name].toString();
+		} else {
+			return def;
+		}
+	}
+
+	public static function get3DGeometryParameter(object : Geometry, name : String, def : String) : String {
+		if (untyped object.parameters != null && object.parameters[name] != null) {
+			return untyped object.parameters[name].toString();
+		} else {
+			return def;
+		}
+	}
+
+	public static function get3DObjectMaterials(object : Object3D) : Array<Material> {
+		return object.getMaterials();
+	}
+
+	public static function get3DObjectGeometries(object : Object3D) : Array<Geometry> {
+		return untyped object.geometry != null ? [object.geometry] : [];
 	}
 }
