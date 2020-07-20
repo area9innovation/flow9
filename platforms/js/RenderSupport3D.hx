@@ -1697,6 +1697,11 @@ class RenderSupport3D {
 		camera.invalidateStage();
 	}
 
+	public static function set3DCameraZoom(camera : OrthographicCamera, zoom : Float) : Void {
+		camera.zoom = zoom;
+		camera.invalidateStage();
+	}
+
 	public static function get3DCameraFov(camera : PerspectiveCamera) : Float {
 		return camera.fov;
 	}
@@ -1711,6 +1716,10 @@ class RenderSupport3D {
 
 	public static function get3DCameraFar(camera : PerspectiveCamera) : Float {
 		return camera.far;
+	}
+
+	public static function get3DCameraZoom(camera : OrthographicCamera) : Float {
+		return camera.zoom;
 	}
 
 

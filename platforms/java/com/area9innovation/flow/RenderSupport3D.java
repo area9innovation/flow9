@@ -495,6 +495,9 @@ public class RenderSupport3D extends NativeHost {
 	public Object set3DCameraHeight(Object object, Double height) {
 		return null;
 	}
+	public Object set3DCameraZoom(Object object, Double zoom) {
+		return null;
+	}
 
 	public Object get3DCameraFov(Object object) {
 		return 0.0;
@@ -506,6 +509,9 @@ public class RenderSupport3D extends NativeHost {
 		return 0.0;
 	}
 	public Object get3DCameraFar(Object object) {
+		return 0.0;
+	}
+	public Object get3DCameraZoom(Object object) {
 		return 0.0;
 	}
 
