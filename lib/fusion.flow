@@ -97,6 +97,8 @@ export {
 	make5Subscribe2Trigger(trigger : Transform<bool>, v1 : Transform<?>, v2 : Transform<??>, v3 : Transform<???>, v4 : Transform<????>,
 		v5 : Transform<?????>, f : (?, ??, ???, ????, ?????) -> void) -> () -> () -> void;
 
+	makeSubscribeDelayedDispose(t : Transform<?>, delay : int, fn : (?) -> void) -> () -> () -> void;
+
 	// Helpers for ref unsubscribers disposal
 	dispUns(uns : ref () -> void) -> void;
 	dispUns2(uns : ref Maybe<() -> void>) -> void;
@@ -685,6 +687,45 @@ make5SubscribeTrigger(trigger : Transform<bool>, v1 : Transform<?>, v2 : Transfo
 make5Subscribe2Trigger(trigger : Transform<bool>, v1 : Transform<?>, v2 : Transform<??>, v3 : Transform<???>, v4 : Transform<????>,
 	v5 : Transform<?????>, f : (?, ??, ???, ????, ?????) -> void) -> () -> () -> void {
 	makeSubscribeUns(trigger, \tr -> if (tr) [make5Subscribe2(v1, v2, v3, v4, v5, f)()] else []);
+}
+
+makeSubscribeDelayedDispose(t : Transform<?>, delay : int, fn : (?) -> void) -> () -> () -> void {
+	timerUns = ref None();
+	disposer = ref None();
+	subsCounter = ref 0;
+
+	\ -> {
+		subsCounter := ^subsCounter + 1;
+
+		eitherFn(
+			^timerUns,
+			\uns -> {
+				uns();
+			},
+			\ -> {
+				if (isNone(^disposer)) {
+					u = makeSubscribe(t, fn)();
+					disposer :=
+						Some(\ -> {
+							if (^subsCounter == 0) {
+								disposer := None();
+								u();
+							}
+						});
+				}
+			}
+		);
+
+		\ -> {
+			subsCounter := ^subsCounter - 1;
+
+			timerUns :=
+				Some(interruptibleTimer(delay, \ -> {
+					timerUns := None();
+					maybeApply(^disposer, apply0);
+				}));
+		}
+	}
 }
 
 dispUns(uns : ref () -> void) -> void {
