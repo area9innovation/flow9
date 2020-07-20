@@ -40,6 +40,7 @@ export {
 		F3DGroup(objects : [F3DObject]) -> F3DScene { F3DScene(const(objects)); };
 		F3DGroupDeferred(objects : [F3DObject], delay : Transform<int>, duration : Transform<int>) -> F3DSceneDeferred { F3DSceneDeferred(const(objects), delay, duration); };
 		F3DMutable(object : Transform<F3DObject>);
+		F3DIf(condition : Transform<bool>, then : F3DObject, elset : F3DObject) -> F3DObject { F3DMutable(fif(condition, const(then), const(elset))); }
 		F3DConstruct(constructors : [() -> () -> void], object : F3DObject);
 
 		F3DName(object : F3DObject, name : Transform<string>);
@@ -111,8 +112,9 @@ export {
 			F3DSpotLight(color : Transform<int>, intensity : Transform<double>, distance : Transform<double>, angle : Transform<double>, penumbra : Transform<double>, decayAmount : Transform<double>);
 			F3DAmbientLight(color : Transform<int>, intensity : Transform<double>);
 
-		F3DCamera ::= F3DPerspectiveCamera;
+		F3DCamera ::= F3DPerspectiveCamera, F3DOrthographicCamera;
 			F3DPerspectiveCamera(fov : Transform<double>, aspect : Transform<double>, near : Transform<double>, far : Transform<double>);
+			F3DOrthographicCamera(width : Transform<double>, height : Transform<double>, near : Transform<double>, far : Transform<double>, zoom : Transform<double>);
 
 		F3DMesh(geometry : F3DGeometry, materials : [F3DMaterial], parameters : [KeyValue]);
 		F3DInstancedMesh(geometry : F3DGeometry, materials : [F3DMaterial], parameters : [KeyValue], count : int, fn : (id : int, object : F3DObject) -> F3DObject);
@@ -1578,7 +1580,7 @@ render3dform(object : F3DObject, state : F3DRenderState, onStart : (native) -> [
 		}
 		F3DJsonObject(json) : {
 			concat(
-				onStart(make3DObjectFromJSON(json)),
+				onStart(make3DObjectFromJSON(state.stage, json)),
 				onDone()
 			);
 		}
@@ -1805,6 +1807,21 @@ renderF3DCamera(camera : F3DCamera, onStart : (native) -> [() -> void], onDone :
 				onDone()
 			)
 		}
+		F3DOrthographicCamera(width, height, near, far, zoom): {
+			clip = make3DOrthographicCamera(fgetValue(width), fgetValue(height), fgetValue(near), fgetValue(far));
+
+			concat3(
+				onStart(clip),
+				[
+					makeSubscribe(zoom, \v -> set3DCameraZoom(clip, v))(),
+					makeSubscribe2(width, \v -> set3DCameraWidth(clip, v))(),
+					makeSubscribe2(height, \v -> set3DCameraHeight(clip, v))(),
+					makeSubscribe2(near, \v -> set3DCameraNear(clip, v))(),
+					makeSubscribe2(far, \v -> set3DCameraFar(clip, v))()
+				],
+				onDone()
+			)
+		}
 	}
 }
 
@@ -1816,7 +1833,7 @@ renderF3DLight(light : F3DLight, onStart : (native) -> [() -> void], onDone : ()
 			concat3(
 				onStart(clip),
 				[
-					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
+					makeSubscribe2(color, \v -> set3DObjectColor(clip, v))(),
 					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))(),
 					makeSubscribe2(distance, \v -> set3DLightDistance(clip, v))(),
 					makeSubscribe2(decayAmount, \v -> set3DLightDecay(clip, v))()
@@ -1830,7 +1847,7 @@ renderF3DLight(light : F3DLight, onStart : (native) -> [() -> void], onDone : ()
 			concat3(
 				onStart(clip),
 				[
-					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
+					makeSubscribe2(color, \v -> set3DObjectColor(clip, v))(),
 					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))(),
 					makeSubscribe2(distance, \v -> set3DLightDistance(clip, v))(),
 					makeSubscribe2(angle, \v -> set3DLightAngle(clip, v))(),
@@ -1846,7 +1863,7 @@ renderF3DLight(light : F3DLight, onStart : (native) -> [() -> void], onDone : ()
 			concat3(
 				onStart(clip),
 				[
-					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
+					makeSubscribe2(color, \v -> set3DObjectColor(clip, v))(),
 					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))()
 				],
 				onDone()
@@ -2409,7 +2426,13 @@ parseF3DNativeObject(object : native, state : F3DRenderState) -> Pair<F3DNative,
 			}),
 			\ -> ^uns(),
 			\ -> next(children, []),
-			fconnect(fmapu(children, \c -> parseF3DNativeObject(get3DObjectById(state.stage, c)[0], state)), outputChildren)
+			fconnect(
+				fmapu(
+					ffiltermap(children, \c -> get3DObjectById(state.stage, c) |> (\ch -> if (length(ch) > 0) Some(ch[0]) else None())),
+					\ch -> parseF3DNativeObject(ch, state)
+				),
+				outputChildren
+			)
 		]
 	)
 }

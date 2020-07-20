@@ -37,10 +37,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object make3DObjectFromJSON(String json) {
+	public Object make3DObjectFromJSON(Object stage, String json) {
 		return null;
 	}
-	public Object make3DObjectFromObj(String obj, String mtl) {
+	public Object make3DObjectFromObj(Object stage, String obj, String mtl) {
 		return null;
 	}
 	public Object make3DGeometryFromJSON(String json) {
@@ -320,7 +320,7 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Double get3DObjectRotationX(Object object) {
+	public Double get3DObjectLocalRotationX(Object object) {
 		return 0.0;
 	}
 	public Double get3DObjectLocalRotationY(Object object) {
@@ -473,6 +473,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DOrthographicCamera(Double width, Double height, Double near, Double far) {
+		return null;
+	}
+
 	public Object set3DCameraFov(Object object, Double fov) {
 		return null;
 	}
@@ -483,6 +487,15 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 	public Object set3DCameraFar(Object object, Double far) {
+		return null;
+	}
+	public Object set3DCameraWidth(Object object, Double width) {
+		return null;
+	}
+	public Object set3DCameraHeight(Object object, Double height) {
+		return null;
+	}
+	public Object set3DCameraZoom(Object object, Double zoom) {
 		return null;
 	}
 
@@ -498,6 +511,9 @@ public class RenderSupport3D extends NativeHost {
 	public Object get3DCameraFar(Object object) {
 		return 0.0;
 	}
+	public Object get3DCameraZoom(Object object) {
+		return 0.0;
+	}
 
 	public Object make3DPointLight(Integer color, Double intensity, Double distance, Double decayAmount) {
 		return null;
@@ -511,7 +527,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Object set3DLightColor(Object object, Integer color) {
+	public Object set3DObjectColor(Object object, Integer color) {
+		return null;
+	}
+	public Object set3DObjectEmissive(Object object, Integer color) {
 		return null;
 	}
 	public Object set3DLightIntensity(Object object, Double intensity) {
@@ -530,7 +549,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
-	public Integer get3DLightColor(Object object) {
+	public Integer get3DObjectColor(Object object) {
+		return 0;
+	}
+	public Integer get3DObjectEmissive(Object object) {
 		return 0;
 	}
 	public Double get3DLightIntensity(Object object) {
@@ -755,5 +777,21 @@ public class RenderSupport3D extends NativeHost {
 
 	public Object set3DObjectMaterialParameters(Object object, Object[] parameters) {
 		return null;
+	}
+
+	public String get3DObjectParameter(Object object, String name, String def) {
+		return "";
+	}
+
+	public String get3DGeometryParameter(Object geometry, String name, String def) {
+		return "";
+	}
+
+	public Object[] get3DObjectMaterials(Object object) {
+		return new Object[0];
+	}
+
+	public Object[] get3DObjectGeometries(Object object) {
+		return new Object[0];
 	}
 }
