@@ -473,6 +473,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DOrthographicCamera(Double width, Double height, Double near, Double far) {
+		return null;
+	}
+
 	public Object set3DCameraFov(Object object, Double fov) {
 		return null;
 	}
@@ -483,6 +487,12 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 	public Object set3DCameraFar(Object object, Double far) {
+		return null;
+	}
+	public Object set3DCameraWidth(Object object, Double width) {
+		return null;
+	}
+	public Object set3DCameraHeight(Object object, Double height) {
 		return null;
 	}
 

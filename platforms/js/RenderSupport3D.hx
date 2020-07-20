@@ -20,6 +20,7 @@ import js.three.LOD;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
+import js.three.OrthographicCamera;
 import js.three.OrbitControls;
 import js.three.TransformControls;
 import js.three.BoxHelper;
@@ -1660,6 +1661,10 @@ class RenderSupport3D {
 		return new PerspectiveCamera(fov, aspect, near, far);
 	}
 
+	public static function make3DOrthographicCamera(width : Float, height : Float, near : Float, far : Float) : OrthographicCamera {
+		return new OrthographicCamera(width / - 2, width / 2, height / 2, height / - 2, near, far);
+	}
+
 	public static function set3DCameraFov(camera : PerspectiveCamera, fov : Float) : Void {
 		camera.fov = fov;
 		camera.invalidateStage();
@@ -1677,6 +1682,18 @@ class RenderSupport3D {
 
 	public static function set3DCameraFar(camera : PerspectiveCamera, far : Float) : Void {
 		camera.far = far;
+		camera.invalidateStage();
+	}
+
+	public static function set3DCameraWidth(camera : OrthographicCamera, width : Float) : Void {
+		camera.left = width / - 2;
+		camera.right = width / 2;
+		camera.invalidateStage();
+	}
+
+	public static function set3DCameraHeight(camera : OrthographicCamera, height : Float) : Void {
+		camera.top = height / - 2;
+		camera.bottom = height / 2;
 		camera.invalidateStage();
 	}
 

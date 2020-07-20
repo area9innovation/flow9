@@ -85,9 +85,9 @@ class ThreeJSStage extends Container {
 
 		if (RenderSupport.RendererType == "html") {
 			this.initNativeWidget('canvas');
-			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupport.detectExternalVideoCard(), alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
+			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
 		} else {
-			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS && RenderSupport.detectExternalVideoCard(), alpha : true, logarithmicDepthBuffer : true});
+			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS, alpha : true, logarithmicDepthBuffer : true});
 		}
 
 		updatePixelRatio();
@@ -291,8 +291,11 @@ class ThreeJSStage extends Container {
 	}
 
 	public function createTransformControls() {
-		if (scene != null && transformControls != null) {
-			untyped scene.transformControls = null;
+		if (transformControls != null) {
+			if (scene != null) {
+				untyped scene.transformControls = null;
+			}
+			transformControls.dispose();
 		}
 
 		if (camera != null) {
@@ -315,6 +318,7 @@ class ThreeJSStage extends Container {
 	private function createOrbitControls() {
 		if (orbitControls != null) {
 			RenderSupport.off("drawframe", orbitControls.update);
+			orbitControls.dispose();
 		}
 
 		if (camera != null) {
@@ -331,6 +335,7 @@ class ThreeJSStage extends Container {
 
 		addEventListeners();
 		createOrbitControls();
+		createTransformControls();
 
 		untyped orbitControls.parameters = parameters;
 
