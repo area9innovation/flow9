@@ -28,7 +28,7 @@ export {
 			M3DEditorExportFn(fn : ref Maybe<(includeCamera : bool) -> string>); // Fn to obtain current scene Json
 			M3DEditorObjectPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain properties for any 3d object
 			M3DEditorGeometryPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain geometry properties for any 3d object
-			M3DEditorMaterialPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain material properties for any 3d object
+			M3DEditorMaterialPropertiesFn(fn : ref Maybe<(object3d : native) -> Transform<[Pair<string, Material>]>>); // Fn to obtain material properties for any 3d object
 			M3DEditorParseFn(fn : (scene : F3DNative) -> void); // Fn called after parsing currently loaded scene
 
 	M3DEditor(
@@ -91,7 +91,7 @@ M3DEditorState(
 	exportFn : ref Maybe<(includeCamera : bool) -> string>,
 	objectPropertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
 	geometryPropertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
-	materialPropertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
+	materialPropertiesFn : ref Maybe<(object3d : native) -> Transform<[Pair<string, Material>]>>,
 	parseFn : (F3DNative) -> void,
 	mutable ignoreUndo : bool
 );
@@ -730,13 +730,12 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 					eitherMap(
 						^(state.materialPropertiesFn),
 						\fn ->
-							map(fn(c), \p ->
+							SelectMLines(fn(c), \__, __, p ->
 								MProportionBaselineCols([
 									Pair(const(0.25), MGroup2(TFillX(), MText(p.first + ": ", []))),
 									Pair(const(0.75), p.second)
 								])
-							)
-							|> MLines,
+							),
 						TEmpty()
 					),
 				TEmpty()
@@ -1459,112 +1458,150 @@ F3DGeometryProperties(state : M3DEditorState, object : native) -> [Pair<string, 
 	}
 }
 
-F3DMaterialProperties(state : M3DEditorState, object : native) -> [Pair<string, Material>] {
-	materials = get3DObjectMaterials(object);
+F3DMaterialProperties(state : M3DEditorState, object : native) -> Transform<[Pair<string, Material>]> {
+	initMaterials = get3DObjectMaterials(object);
 
-	if (length(materials) > 0) {
-		material = materials[0];
-		type = get3DObjectType(material);
+	if (length(initMaterials) > 0) {
+		initMaterial = initMaterials[0];
+		currentType = make(get3DObjectType(initMaterial));
 
-		[
-			Pair(
-				"Type",
-				MTextInput(make(type), [MCondensed(true), ReadOnly(true)], [])
-			),
-			Pair(
-				"UUID",
-				MTextInput(make(get3DObjectId(material)), [MCondensed(true), ReadOnly(true)], [])
-			),
-			Pair(
-				"Name",
-				make3DPropertyTextInput(state, object, material, get3DObjectName, set3DObjectName)
-			),
-		]
-		|> (\a ->
-			if (type == "MeshBasicMaterial" || type == "MeshStandardMaterial")
-				concat(
-					a,
-					[
-						Pair(
-							"Color",
-							make3DPropertyColorPicker(state, object, material, get3DObjectColor, set3DObjectColor)
-						)
-					]
-				)
-			else
-				a
-		)
-		|> (\a ->
-			if (type == "MeshStandardMaterial")
-				concat(
-					a,
-					[
-						Pair(
-							"Roughness",
-							make3DPropertyParameterInputDouble(state, object, material, "roughness")
-						),
-						Pair(
-							"Metalness",
-							make3DPropertyParameterInputDouble(state, object, material, "metalness")
-						),
-						Pair(
-							"Emissive",
-							make3DPropertyColorPicker(state, object, material, get3DObjectEmissive, set3DObjectEmissive)
-						)
-					]
-				)
-			else
-				a
-		)
-		|> (\a ->
-			concat(
-				a,
+		fselect(currentType, FLift(\type -> {
+			materials = get3DObjectMaterials(object);
+			if (length(materials) > 0) {
+				material = materials[0];
+
+				availableTypes =
+					concat(
+						[type],
+						[
+							"MeshBasicMaterial",
+							"MeshStandardMaterial"
+						]
+					)
+					|> uniq;
+				selectedType = make(0);
+
 				[
 					Pair(
-						"Vertex Colors",
-						make3DPropertyParameterCheckBox(state, object, material, "vertexColors")
+						"Type",
+						MConstruct(
+							[
+								makeSubscribe2(selectedType, \st -> if (st >= 0) {
+									if (availableTypes[st] == "MeshBasicMaterial") {
+										set3DObjectMaterials(object, [make3DMeshBasicMaterial(get3DObjectColor(material), [])]);
+										next(currentType, availableTypes[st]);
+									} else if (availableTypes[st] == "MeshStandardMaterial") {
+										set3DObjectMaterials(object, [make3DMeshStandardMaterial(get3DObjectColor(material), [])]);
+										next(currentType, availableTypes[st]);
+									}
+								})
+							],
+							MDropDown(
+								selectedType,
+								"Select Material Type",
+								availableTypes,
+								[MWidth(-1.0)]
+							)
+						)
 					),
 					Pair(
-						"Vertex Tangents",
-						make3DPropertyParameterCheckBox(state, object, material, "vertexTangents")
+						"UUID",
+						MTextInput(make(get3DObjectId(material)), [MCondensed(true), ReadOnly(true)], [])
 					),
 					Pair(
-						"Skinning",
-						make3DPropertyParameterCheckBox(state, object, material, "skinning")
-					),
-					Pair(
-						"Flat Shaded",
-						make3DPropertyParameterCheckBox(state, object, material, "flatShaded")
-					),
-					Pair(
-						"Opacity",
-						make3DPropertyParameterInputDouble(state, object, material, "opacity")
-					),
-					Pair(
-						"Transparent",
-						make3DPropertyParameterCheckBox(state, object, material, "transparent")
-					),
-					Pair(
-						"Alpha Test",
-						make3DPropertyParameterInputDouble(state, object, material, "alphaTest")
-					),
-					Pair(
-						"Depth Test",
-						make3DPropertyParameterCheckBox(state, object, material, "depthTest")
-					),
-					Pair(
-						"Depth Write",
-						make3DPropertyParameterCheckBox(state, object, material, "depthWrite")
-					),
-					Pair(
-						"Wireframe",
-						make3DPropertyParameterCheckBox(state, object, material, "wireframe")
+						"Name",
+						make3DPropertyTextInput(state, object, material, get3DObjectName, set3DObjectName)
 					),
 				]
-			)
-		)
+				|> (\a ->
+					if (type == "MeshBasicMaterial" || type == "MeshStandardMaterial")
+						concat(
+							a,
+							[
+								Pair(
+									"Color",
+									make3DPropertyColorPicker(state, object, material, get3DObjectColor, set3DObjectColor)
+								)
+							]
+						)
+					else
+						a
+				)
+				|> (\a ->
+					if (type == "MeshStandardMaterial")
+						concat(
+							a,
+							[
+								Pair(
+									"Roughness",
+									make3DPropertyParameterInputDouble(state, object, material, "roughness")
+								),
+								Pair(
+									"Metalness",
+									make3DPropertyParameterInputDouble(state, object, material, "metalness")
+								),
+								Pair(
+									"Emissive",
+									make3DPropertyColorPicker(state, object, material, get3DObjectEmissive, set3DObjectEmissive)
+								)
+							]
+						)
+					else
+						a
+				)
+				|> (\a ->
+					concat(
+						a,
+						[
+							Pair(
+								"Vertex Colors",
+								make3DPropertyParameterCheckBox(state, object, material, "vertexColors")
+							),
+							Pair(
+								"Vertex Tangents",
+								make3DPropertyParameterCheckBox(state, object, material, "vertexTangents")
+							),
+							Pair(
+								"Skinning",
+								make3DPropertyParameterCheckBox(state, object, material, "skinning")
+							),
+							Pair(
+								"Flat Shaded",
+								make3DPropertyParameterCheckBox(state, object, material, "flatShaded")
+							),
+							Pair(
+								"Opacity",
+								make3DPropertyParameterInputDouble(state, object, material, "opacity")
+							),
+							Pair(
+								"Transparent",
+								make3DPropertyParameterCheckBox(state, object, material, "transparent")
+							),
+							Pair(
+								"Alpha Test",
+								make3DPropertyParameterInputDouble(state, object, material, "alphaTest")
+							),
+							Pair(
+								"Depth Test",
+								make3DPropertyParameterCheckBox(state, object, material, "depthTest")
+							),
+							Pair(
+								"Depth Write",
+								make3DPropertyParameterCheckBox(state, object, material, "depthWrite")
+							),
+							Pair(
+								"Wireframe",
+								make3DPropertyParameterCheckBox(state, object, material, "wireframe")
+							),
+						]
+					)
+				)
+			} else {
+				[]
+			}
+		}))
 	} else {
-		[]
+		const([])
 	}
 }
 

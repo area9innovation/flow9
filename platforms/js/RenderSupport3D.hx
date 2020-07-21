@@ -2435,4 +2435,18 @@ class RenderSupport3D {
 	public static function get3DObjectGeometries(object : Object3D) : Array<Geometry> {
 		return untyped object.geometry != null ? [object.geometry] : [];
 	}
+
+	public static function set3DObjectMaterials(object : Object3D, materials : Array<Material>) : Void {
+		for (material in materials) {
+			untyped material.parent = object;
+		}
+
+		if (materials.length == 1) {
+			untyped object.material = materials[0];
+		} else {
+			untyped object.material = materials;
+		}
+
+		object.invalidateStage();
+	}
 }
