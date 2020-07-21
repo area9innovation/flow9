@@ -61,7 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setClient(context, LspKind.Flow); }));
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setClient(context, LspKind.JS); }));
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates));
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
 
     flowChannel = vscode.window.createOutputChannel("Flow");
 	flowChannel.show();
@@ -142,66 +142,68 @@ function setClient(context: vscode.ExtensionContext, kind : LspKind) {
             client.stop();
         }
         client = null;
-        clientKind = kind;
-        if (clientKind != LspKind.None) {
-            // The server is implemented in node
-            let serverModule = context.asAbsolutePath(path.join('out', 'flow_language_server.js'));
-            // The debug options for the server
-            let debugOptions = { execArgv: ["--nolazy", "--inspect=6009"] };
+        if (vscode.workspace.getConfiguration("flow").get("lspEnabled")) {
+            clientKind = kind;
+            if (clientKind != LspKind.None) {
+                // The server is implemented in node
+                let serverModule = context.asAbsolutePath(path.join('out', 'flow_language_server.js'));
+                // The debug options for the server
+                let debugOptions = { execArgv: ["--nolazy", "--inspect=6009"] };
 
-            // If the extension is launched in debug mode then the debug server options are used
-            // Otherwise the run options are used
-            let serverOptions: ServerOptions;
-            switch (clientKind) {
-                case LspKind.Flow: {
-                    if (serverStatusBarItem.text.indexOf("online") != -1) {
-                        serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`;
-                    } else {
-                        serverStatusBarItem.text = `$(vm-outline) flow http server: offline (lsp)`;
+                // If the extension is launched in debug mode then the debug server options are used
+                // Otherwise the run options are used
+                let serverOptions: ServerOptions;
+                switch (clientKind) {
+                    case LspKind.Flow: {
+                        if (serverStatusBarItem.text.indexOf("online") != -1) {
+                            serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`;
+                        } else {
+                            serverStatusBarItem.text = `$(vm-outline) flow http server: offline (lsp)`;
+                        }
+                        serverStatusBarItem.show();
+                        serverOptions = {
+                            command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
+                            args: ['server-mode=console'],
+                            options: { detached: false }
+                        }
+                        break;
                     }
-                    serverStatusBarItem.show();
-                    serverOptions = {
-                        command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
-                        args: ['server-mode=console'],
-                        options: { detached: false }
+                    case LspKind.JS: {
+                        if (serverStatusBarItem.text.indexOf("online") != -1) {
+                            serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`;
+                        } else {
+                            serverStatusBarItem.text = `$(vm-outline) flow http server: offline (legacy lsp)`;
+                        }
+                        serverOptions = {
+                            run : { module: serverModule, transport: TransportKind.ipc },
+                            debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
+                        }
+                        break;
                     }
-                    break;
                 }
-                case LspKind.JS: {
-                    if (serverStatusBarItem.text.indexOf("online") != -1) {
-                        serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`;
-                    } else {
-                        serverStatusBarItem.text = `$(vm-outline) flow http server: offline (legacy lsp)`;
+                // Options to control the language client
+                let clientOptions: LanguageClientOptions = {
+                    // Register the server for plain text documents
+                    documentSelector: [{scheme: 'file', language: 'flow'}],
+                    outputChannel: flowChannel,
+                    revealOutputChannelOn: RevealOutputChannelOn.Info,
+                    uriConverters: {
+                        // FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
+                        //        the "workaround" below disables temporarily the encoding until decoding
+                        //        is implemented properly in clangd
+                        code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
+                        protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
                     }
-                    serverOptions = {
-                        run : { module: serverModule, transport: TransportKind.ipc },
-                        debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
-                    }
-                    break;
                 }
-            }
-            // Options to control the language client
-            let clientOptions: LanguageClientOptions = {
-                // Register the server for plain text documents
-                documentSelector: [{scheme: 'file', language: 'flow'}],
-                outputChannel: flowChannel,
-                revealOutputChannelOn: RevealOutputChannelOn.Info,
-                uriConverters: {
-                    // FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
-                    //        the "workaround" below disables temporarily the encoding until decoding
-                    //        is implemented properly in clangd
-                    code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
-                    protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
-                }
-            }
 
-            // Create the language client and start the client.
-            client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
-            // Start the client. This will also launch the server
-            client.start();
-            client.onReady().then(() => {
-                sendOutlineEnabledUpdate();
-            });
+                // Create the language client and start the client.
+                client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
+                // Start the client. This will also launch the server
+                client.start();
+                client.onReady().then(() => {
+                    sendOutlineEnabledUpdate();
+                });
+            }
         }
     }
 }
@@ -314,10 +316,20 @@ function sendOutlineEnabledUpdate() {
 	client.sendNotification("outlineEnabled", outlineEnabled);
 }
 
-function handleConfigurationUpdates(e: vscode.ConfigurationChangeEvent) {
-	if (e.affectsConfiguration("flow.outline")) {
-		sendOutlineEnabledUpdate();
-	}
+function handleConfigurationUpdates(context) {
+    return (e) => {
+        if (e.affectsConfiguration("flow.outline")) {
+            sendOutlineEnabledUpdate();
+        }
+
+        if (e.affectsConfiguration("flow.lspEnabled") || e.affectsConfiguration("flow.lspFlowServer")) {
+            if (vscode.workspace.getConfiguration("flow").get("lspFlowServer")) {
+                setClient(context, LspKind.Flow);
+            } else {
+                setClient(context, LspKind.JS);
+            }
+        }
+    }
 }
 
 const homedir = process.env[(process.platform == "win32") ? "USERPROFILE" : "HOME"];
@@ -378,7 +390,7 @@ function runCurrentFile() {
 function compileCurrentFile(compilerHint: string) {
     processFile(function(flowBinPath, flowpath) { 
         return getCompilerCommand(compilerHint, flowBinPath, flowpath);
-    }, true);
+    }, vscode.workspace.getConfiguration("flow").get("lspEnabled"));
 }
 
 function getFlowRoot(): string {

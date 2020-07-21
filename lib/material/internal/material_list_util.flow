@@ -16,9 +16,9 @@ export {
 		minimize : Transform<bool>,
 		minimizedWidth : double,
 		selection : MListSelection,
+		selectionEnabled : MListSelectionEnabled,
 		condensed : bool,
-		lightBackground : bool,
-		color : Pair<MColor, MColor>,
+		color : Pair<MThemeColor, MThemeColor>,
 		bgStyle : Pair<[TGraphicsStyle], [TGraphicsStyle]>,
 		separators : bool,
 		ellipsis : bool,
@@ -62,7 +62,7 @@ export {
 
 	MListAddAvailable(state : MListInnerState) -> (Tropic) -> Tropic;
 
-	MListIcon2T(manager : MaterialManager, content : Material, color : MColor, selectedColor : MColor,
+	MListIcon2T(manager : MaterialManager, content : Material, color : MThemeColor, selectedColor : MThemeColor,
 		m2t : (Material, MFocusGroup) -> Tropic) -> Pair<(bool, MFocusGroup) -> Tropic, bool>;
 }
 
@@ -166,9 +166,11 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		selectionEnabled : Transform<bool> =
 			fsubselect(state, FLift(\st -> extractStruct(st, MSelectionEnabled(const(true))).enabled));
 
+		onLineClick = fselect(state, FLift(\st -> tryExtractStruct(st, MOnClick(nop))));
+
 		hovering = make(false);
 		onClick = \ -> {
-			extractStruct(fgetValue(state), MOnClick(nop)).click();
+			maybeApply(fgetValue(onLineClick), \cl -> cl.click());
 			if (fgetValue(selectionEnabled)) {
 				listState.onClick(fgetValue(i));
 			} else if (fgetValue((listState.onListClick).enabled)) {
@@ -177,6 +179,21 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		};
 		selected = fselect2(listState.selection.selected, i, FLift2(contains));
 		focusSelected = extractStruct(fgetValue(state), MSelected(make(fgetValue(selected)))).selected;
+
+		lineSelectionEnabled =
+			fand(
+				selectionEnabled,
+				fsubselect2(listState.selectionEnabled.enabled, i, \selEnabled, index -> elementAt(selEnabled, index, const(true)))
+			);
+
+		rippleEnabled =
+			fand(hoverEnabled,
+				fOrs([
+					lineSelectionEnabled,
+					listState.onListClick.enabled,
+					fIsSome(onLineClick)
+				], true)
+			);
 
 		focusState : [flow] =
 			replaceStructMany(
@@ -188,11 +205,11 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					AccessRole("listitem"),
 					MHoverEnabled(hoverEnabled),
 					MAddFocusGroup(true),
-					MRippleType(fif(hoverEnabled, const(MRippleFill()), const(MNoRipple()))),
+					MRippleType(fif(rippleEnabled, const(MRippleFill()), const(MNoRipple()))),
 					MHighlightOnFocus(const(true)),
 					MHighlightOnHover(const(true)),
 					// MHighlightOnSelect(const(true)),
-					MCursorShape(fif(hoverEnabled, const(FingerCursor()), const(DefaultCursor()))),
+					MCursorShape(fif(rippleEnabled, const(FingerCursor()), const(DefaultCursor()))),
 					MButtonTitle(fselect2(title, subtitle, FLift2(\t, st -> {
 						s = trim(t + " " + st.first);
 						if (s == "") "List item" else s;
@@ -284,7 +301,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			);
 
 		makeText = \p2, ttl -> \sel -> {
-			color : MColor = if (sel) listState.color.second else listState.color.first;
+			color : MThemeColor = if (sel) listState.color.second else listState.color.first;
 			TSelect(textStyle, \tst : [MTextStyle] ->
 				if (listState.ellipsis)
 					MEllipsisText2T(listState.manager, p2, MEllipsisText(ttl, concat([color, MShowTooltip(const(true))], tst)), m2t)
@@ -294,7 +311,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		};
 
 		makeSubText = \p2, sbttl -> \sel -> {
-			color : MColor = if (sel) listState.color.second else listState.color.first;
+			color : MThemeColor = if (sel) listState.color.second else listState.color.first;
 			TSelect(secondaryTextStyle, \stst : [MTextStyle] ->
 				if (listState.ellipsis)
 					MEllipsisText2T(
@@ -402,9 +419,9 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 							nextDistinct(
 								listState.selection.selected,
 								if (fs)
-									removeFirst(fgetValue(listState.selection.selected), fgetValue(i))
-								else
 									arrayPush(fgetValue(listState.selection.selected), fgetValue(i))
+								else
+									removeFirst(fgetValue(listState.selection.selected), fgetValue(i))
 							);
 						}
 					),
@@ -604,8 +621,8 @@ defaultListState(manager : MaterialManager, parent : MFocusGroup, m2t : (Materia
 		const(false),
 		72.,
 		MListSelection(const(false), false, false, make([])),
+		MListSelectionEnabled(const([])),
 		false,
-		getLightBackground(parent),
 		Pair(contrastingMColor(parent), contrastingMColor(parent)),
 		Pair(
 			[],
@@ -641,7 +658,7 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 	separators = contains(state, MAddSeparators()) || listState.separators;
 	color =
 		Pair(
-			extractStruct(state, listState.color.first),
+			extractMThemeColor(state, listState.color.first),
 			extractStruct(state, MSelectedColor(listState.color.second)).color
 		);
 	bgStyle =
@@ -689,8 +706,8 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 		minimizeList,
 		minimizedWidth,
 		selection,
+		selectionEnabled,
 		isCondensed,
-		listState.lightBackground,
 		color,
 		bgStyle,
 		separators,
@@ -763,7 +780,7 @@ MListAddAvailable(state : MListInnerState) -> (Tropic) -> Tropic {
 	|> (\t -> if (state.width.maxWidth < 0.) t else TAvailableWidth(t, const(max(state.width.minWidth, state.width.maxWidth))))
 }
 
-MListIcon2T(manager : MaterialManager, content : Material, color : MColor, selectedColor : MColor,
+MListIcon2T(manager : MaterialManager, content : Material, color : MThemeColor, selectedColor : MThemeColor,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Pair<(bool, MFocusGroup) -> Tropic, bool> {
 	switch (content) {
 		MIcon(name, iconStyle): {
@@ -782,10 +799,10 @@ MListIcon2T(manager : MaterialManager, content : Material, color : MColor, selec
 
 			Pair(
 				\sel, p -> {
-					iconColor = extractStruct(iconStyle, if (sel) selectedColor else color);
+					iconColor = extractMColor(p, iconStyle, if (sel) selectedColor else color);
 
 					TGroup2(
-						TFrame(0.0, size / 2.0, [MFill(extractStruct(iconStyle, iconColor))], TFixed(size, size)),
+						TFrame(0.0, size / 2.0, [MFill(extractMColor(p, iconStyle, iconColor))], TFixed(size, size)),
 						TCenterIn(MText2T(p, text, textStyle), TFixed(size, size))
 					)
 				},

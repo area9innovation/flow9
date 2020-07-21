@@ -94,7 +94,7 @@ export {
 		filterAction : (string) -> void,
 		positionOnFocus : Maybe<(content : string, previous : int) -> int>,
 		selectionOnFocus : Maybe<(content : string, previous : int) -> int>,
-		clearContent : (focused : bool) -> void,
+		clearContent : () -> void,
 		goToPrev : () -> void,
 		subs : [() -> () -> void],
 		shift : Transform<double>,
@@ -146,7 +146,7 @@ export {
 		lines : int,
 		height : (MFocusGroup) -> double,
 		requiredField : bool,
-		color : Transform<MColor>,
+		color : Transform<MThemeColor>,
 		style : Transform<[MTextStyle]>,
 		ok : Maybe<MInputIsOk>,
 		error : DynamicBehaviour<Pair<string, [MTextStyle]>>
@@ -177,6 +177,8 @@ export {
 		aboveLabel : double,
 		betweenLabels : double,
 		showFloatingLabel : DynamicBehaviour<bool>,
+		labelWidth : DynamicBehaviour<double>,
+		outlinedColor : DynamicBehaviour<MColor>,
 		progress : DynamicBehaviour<double>
 	);
 
@@ -311,7 +313,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	multiline = extractStruct(style, Multiline(false)).multiline;
 	wordWrap = multiline && extractStruct(style, WordWrap(true)).wordWrap;
 	condensed = extractStruct(style, MCondensed(false)).condensed;
-	color = extractStruct(style, getAccentColor(parent));
+	color = extractMColor(parent, style, MAccentColor());
 	width = extractStruct(style, MWidth(-1.)).width;
 	textWidth = make(0.);
 	align = extractStruct(style, AutoAlign(AutoAlignNone())).autoalign;
@@ -348,7 +350,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			customTextStyle,
 			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
 		)
-		|> (\f : Triple<MColor, MFontStyle, bool> ->
+		|> (\f : Triple<MThemeColor, MFontStyle, bool> ->
 			concat(
 				[firstOfTriple(f), secondOfTriple(f)],
 				extractStructMany(customTextStyle, LetterSpacing(0.0))
@@ -448,7 +450,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			else if (!isPopup || !iScriptBehaviours.isTextInputInPopup)
 				MInputBackgroundStyle([], [])
 			else
-				MInputBackgroundStyle([], [MFill(MDialogColor(getLightBackground(parent)))])
+				MInputBackgroundStyle([], [MFill(MDialogMColor(getLightBackground(parent)))])
 		);
 
 	// Icons
@@ -515,13 +517,23 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			extractStruct(style, MLabelTextStyle(if (hasFloatingLabel) [] else mTextStyle)).style,
 			Triple(getTextColor(parent), MCaptionSolid(), true)
 		)
-		|> (\f : Triple<MColor, MFontStyle, bool> ->
+		|> (\f : Triple<MThemeColor, MFontStyle, bool> ->
 			[firstOfTriple(f), secondOfTriple(f)]
 			|> (\f2 -> if (f.third) f2 else arrayPush(f2, MTextDisabled()))
 		);
+	labelStyle0 = MTextStyle2CharacterStyle(parent, mLabelStyle);
+	labelSize = extractStruct(labelStyle0, FontSize(12.)).size;
 
-	labelStyle = MTextStyle2CharacterStyle(parent, mLabelStyle);
-	labelSize = extractStruct(labelStyle, FontSize(12.)).size;
+	floatingLabelStyle =
+		maybeMap(
+			tryExtractStruct(style, MFloatingLabelStyle(mLabelStyle)),
+			\fls -> MTextStyle2CharacterStyle(parent, fls.style)
+		);
+
+	labelStyle =
+		if (hasFloatingLabel) either(floatingLabelStyle, labelStyle0)
+		else labelStyle0;
+
 	labelStyleB = make(labelStyle);
 
 	inactiveStyle = replaceStruct(labelStyle, FillOpacity(inactiveOpacity));
@@ -530,7 +542,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	floatingLabel =
 		if (hasFloatingLabel) {
-			fSize = if (condensed) 13. else 16.;
+			defFSize = if (condensed) 13. else 16.;
+			fSize = eitherMap(floatingLabelStyle, \fls -> extractStruct(fls, FontSize(defFSize)).size, defFSize);
 			fSizeFocused = forceRange(labelSize, 0., inputBorders.top);
 			betweenFLabels =
 				switch (skin : MTextInputSkin) {
@@ -553,6 +566,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					aFlabel,
 					betweenFLabels,
 					make(showFLabel),
+					make(0.),
+					make(MCustomColor(inactiveColor)),
 					make(if (showFLabel) 0.0 else 1.0)
 				)
 			)
@@ -711,15 +726,15 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		);
 
 	// Content functions
-	clearContent = \focused : bool -> {
+	clearContent = \ -> {
 		next(content, if (inputType == TelType()) "+" else "");
-		nextDistinct(mfocus.focused, focused);
+		nextDistinct(mfocus.focused, true);
 
 		if (useNativeInput) {
 			if (mobile)
-				deferUntilRender(\ -> nextDistinct(mfocus.focused, focused))
+				deferUntilRender(\ -> nextDistinct(mfocus.focused, true))
 			else
-				deferred(\ -> nextDistinct(mfocus.focused, focused));
+				deferred(\ -> nextDistinct(mfocus.focused, true));
 		}
 	}
 
@@ -898,7 +913,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						currentError :=
 							Pair(
 								formatString(_("%1 is required"), [if (label != "") label else _("Field")]),
-								replaceStruct(fgetValue(errorState.style), fgetValue(errorState.color))
+								replaceMThemeColor(fgetValue(errorState.style), fgetValue(errorState.color))
 							);
 
 					if (foc)
@@ -916,12 +931,12 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				le.limit,
 				Pair(
 					if (foc) i2s(cLength) + "/" + i2s(maxChars) else if (dynamicSize) "" else " ",
-					if (charsOk) replaceStruct(defaultStyle, MErrorColor()) else defaultStyle
+					if (charsOk) replaceMThemeColor(defaultStyle, MErrorColor()) else defaultStyle
 				)
 			);
 
 			if (charsOk && firstOfPair(^currentError) == "")
-				currentError := Pair(" ", replaceStruct(defaultStyle, MErrorColor()));
+				currentError := Pair(" ", replaceMThemeColor(defaultStyle, MErrorColor()));
 		});
 
 		maybeApply(
@@ -955,7 +970,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				nextDistinct(pw.style, [FillOpacity(1.0)])
 			);
 		} else if (secondOfPair(^currentError) != defaultStyle) {
-			cFill = extractStruct(secondOfPair(^currentError), MErrorColor());
+			cFill = extractMColor(parent, secondOfPair(^currentError), MErrorColor());
 
 			nextDistinct(labelStyleB, replaceStruct(errorTextStyle, MFill(cFill)));
 
@@ -1205,10 +1220,10 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 					MInputErrorState(
 						ie.text,
 						errorLines,
-						\p -> i2d(errorLines) * (MFontStyle2MCustomFontDefault(p, inputErrorFont, false).size + 4.),
+						\p -> i2d(errorLines) * (MFontStyle2MFont(p, inputErrorFont).size + 4.),
 						contains(ie.style, MRequiredField()),
 						inputErrorColor,
-						fselect(inputErrorColor, FLift(\ec : MColor -> [inputErrorFont, ec])),
+						fselect(inputErrorColor, FLift(\ec : MThemeColor -> [inputErrorFont, ec])),
 						tryExtractStruct(ie.style, MInputIsOk(make(true))),
 						make(Pair(if (dynamicSize) "" else " ", []))
 					)
@@ -2556,7 +2571,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 			extractStruct(style, MCustomTextStyle([])).style,
 			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
 		)
-		|> (\f : Triple<MColor, MFontStyle, bool> ->
+		|> (\f : Triple<MThemeColor, MFontStyle, bool> ->
 			[firstOfTriple(f), secondOfTriple(f)]
 			|> (\f2 -> if (f.third) f2 else arrayPush(f2, MTextDisabled()))
 		);
@@ -2612,7 +2627,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 					focusState,
 					\focus ->
 						makeTListLine(getLightBackground(p), face, focus, const(isSelected), const(true), [],
-							[MFill(getAccentColor(p)), FillOpacity(0.4)]),
+							[MThemeFill(p, MAccentColor()), FillOpacity(0.4)]),
 					m2t
 				)
 		}))

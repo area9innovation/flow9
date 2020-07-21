@@ -305,7 +305,7 @@ class Object3DHelper {
 				RenderSupport3D.set3DObjectWorldScaleY(child, RenderSupport3D.get3DObjectLocalScaleY(child));
 				RenderSupport3D.set3DObjectWorldScaleZ(child, RenderSupport3D.get3DObjectLocalScaleZ(child));
 
-				RenderSupport3D.set3DObjectWorldRotationX(child, RenderSupport3D.get3DObjectRotationX(child));
+				RenderSupport3D.set3DObjectWorldRotationX(child, RenderSupport3D.get3DObjectLocalRotationX(child));
 				RenderSupport3D.set3DObjectWorldRotationY(child, RenderSupport3D.get3DObjectLocalRotationY(child));
 				RenderSupport3D.set3DObjectWorldRotationZ(child, RenderSupport3D.get3DObjectLocalRotationZ(child));
 			}
@@ -619,6 +619,30 @@ class Object3DHelper {
 			untyped object.matrixChanged = false;
 			object.updateMatrix();
 			object.updateMatrixWorld(true);
+		}
+	}
+
+	public static inline function updateObject3DParent(stage : ThreeJSStage, object : Object3D) : Void {
+		for (material in getMaterials(object)) {
+			untyped material.parent = object;
+		}
+
+		if (stage.objectCacheEnabled) {
+			stage.objectCache.push(object);
+		}
+
+		var childrenMap = get3DChildrenMap(object);
+		var i = 0;
+
+		for (child in get3DObjectAllChildren(object)) {
+			if (HaxeRuntime.instanceof(child, Camera)) {
+				// stage.setCamera(untyped child, []);
+				remove3DChild(object, child, true);
+			} else {
+				childrenMap.set(i, child);
+				updateObject3DParent(stage, child);
+				i++;
+			}
 		}
 	}
 }

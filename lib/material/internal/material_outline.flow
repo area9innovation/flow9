@@ -1,0 +1,345 @@
+import material/internal/material_ellipsis;
+
+export {
+	MGraphicsState : (
+		strokeWidth : double,
+		color : int,
+		opacity : double,
+		ripple : bool
+	);
+
+	graphicsStateLerp(
+		prev : MGraphicsState,
+		current : MGraphicsState,
+		percent : double) -> MGraphicsState;
+
+	MOutline(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		size : Transform<WidthHeight>,
+		labelWidth : Transform<double>,
+		progress : Transform<double>,
+		graphicsState : Transform<MGraphicsState>,
+		dynamicColor : DynamicBehaviour<MColor>) -> Tropic;
+
+	addMOutline(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		labelWidth : Transform<double>,
+		progress : Transform<double>,
+		graphicsState : Transform<MGraphicsState>,
+		dynamicColor : DynamicBehaviour<MColor>) -> (Tropic) -> Tropic;
+
+	MFloatingLabelState(
+		progress : DynamicBehaviour<double>,
+		showFloatingLabel : Transform<bool>,
+		labelSizeFocused : double,
+		labelSizeUnfocused : double,
+		xMinOffset : double,
+		xOffsetDelta : double,
+		yMinOffset : double,
+		yOffsetDelta : double
+	);
+
+	makeMFloatingLabel(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		label : string,
+		state : MFloatingLabelState,
+		style : Transform<[CharacterStyle]>,
+		dynColor : Maybe<MDynamicColor>,
+		widthInspect : DynamicBehaviour<double>,
+		m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+outlineDuration = easingTransitionDuration;
+
+addMOutline(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	labelWidth : Transform<double>,
+	progress : Transform<double>,
+	graphicsState : Transform<MGraphicsState>,
+	dynamicColor : DynamicBehaviour<MColor>) -> (Tropic) -> Tropic {
+
+	\tr -> {
+		size = makeWH();
+		TGroup2(
+			TAttachBox(tr, size),
+			MOutline(
+				manager,
+				parent,
+				size,
+				labelWidth,
+				progress,
+				graphicsState,
+				dynamicColor
+			)
+		)
+	}
+}
+
+MOutline(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	size : Transform<WidthHeight>,
+	labelWidth : Transform<double>,
+	progress : Transform<double>,
+	graphicsState : Transform<MGraphicsState>,
+	dynamicColor : DynamicBehaviour<MColor>) -> Tropic {
+
+	outlineState = make(fgetValue(graphicsState));
+
+	stateWithLast =
+		fselectWithLast(
+			graphicsState,
+			FLift2(\prev, curr -> Pair(prev, curr))
+		);
+
+	shape = getShapeByComponent(parent, "outlined text field");
+	topLeft = parseMaterialShapeCorner(shape.defaultShape.tl);
+	topRight = parseMaterialShapeCorner(shape.defaultShape.tr);
+	bottomRight = parseMaterialShapeCorner(shape.defaultShape.br);
+	bottomLeft = parseMaterialShapeCorner(shape.defaultShape.bl);
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(outlineDuration),
+		const(easingStandartCurve),
+		stateWithLast,
+		\st -> Some(st),
+		\st, percent -> {
+			prev = st.first;
+			curr = st.second;
+			grState = graphicsStateLerp(prev, curr, percent);
+			next(outlineState, grState);
+			nextDistinct(dynamicColor, MCustomColor(grState.color));
+		},
+		[],
+		TSelect3(outlineState, fpair(labelWidth, progress), size, \st, label, wh -> {
+			a = if (label.first == 0.) 0. else label.first + 8.0;
+			b = label.second / 2.0;
+			c = 8.0;
+
+			gapStart = a * b + c;
+			gapEnd = a * (1. - b) + c;
+
+			makeStaticOutline(
+				st,
+				if (parent.rtl) Pair(wh.width - gapEnd, wh.width - gapStart) else Pair(gapStart, gapEnd),
+				wh,
+				MOutlineCorners(topLeft, topRight, bottomRight, bottomLeft)
+			)
+		})
+	);
+}
+
+makeStaticOutline(
+	st : MGraphicsState,
+	gap : Pair<double, double>,
+	size : WidthHeight,
+	corners : MOutlineCorners) -> Tropic {
+
+	w = size.width;
+	h = size.height;
+	
+	style = [Stroke(st.color), StrokeWidth(st.strokeWidth), StrokeOpacity(st.opacity)];
+
+	if (w == 0.0 || h == 0.0) {
+		TEmpty();
+	} else {
+		topLeftR = corners.getTopLeft(size);
+		topRightR = corners.getTopRight(size);
+		bottomRightR = corners.getBottomRight(size);
+		bottomLeftR = corners.getBottomLeft(size);
+
+		r1 = topLeftR.first;
+		r2 = topRightR.first;
+		r3 = bottomRightR.first;
+		r4 = bottomLeftR.first;
+
+		sqrt2 = sqrt(2.0);
+		n1 = 1.0 / sqrt2;
+		n2 = sqrt2 - 1.0;
+
+		TGraphics(
+			concatA([
+				[
+					MoveTo(r1, 0.0)
+				],
+				if (gap.first == gap.second) {
+					[];
+				} else {
+					[
+						LineTo(gap.first, 0.0),
+						MoveTo(gap.second, 0.0)
+					];
+				},
+				[
+					LineTo(w - r2, 0.0)
+				],
+				if (topRightR.second && r2 > 0.0)
+					[
+						CubicBezierTo(
+							(n1 * r2) + w - r2,
+							(-n1 * r2) + r2,
+							(n2 * r2) + w - r2,
+							(-r2)  + r2
+						),
+						CubicBezierTo(
+							w,
+							r2,
+							w,
+							-n2 * r2 + r2
+						)
+
+					]
+				else
+					[
+						LineTo(w, r2)
+					],
+				[
+					LineTo(w, h - r3)
+				],
+				if (bottomRightR.second && r3 > 0.0)
+					[
+						CubicBezierTo(
+							(n1 * r3) + w - r3,
+							(n1 * r3) + h - r3,
+							w,
+							(n2 * r3) + h - r3,
+						),
+						CubicBezierTo(
+							w - r3,
+							h,
+							(n2 * r3) + w - r3,
+							h
+						)
+					]
+				else
+					[
+						LineTo(w - r3, h)
+					],
+				[
+					LineTo(r4, h)
+				],
+				if (bottomLeftR.second && r4 > 0.0)
+					[
+						CubicBezierTo(
+							-n1 * r4 + r4,
+							n1 * r4 + h - r4,
+							(-n2 * r4) + r4,
+							h
+						),
+						CubicBezierTo(
+							0.0,
+							h - r4,
+							0.0,
+							(n2 * r4) + h - r4,
+						)
+					]
+				else
+					[
+						LineTo(0.0, h - r4)
+					],
+				[
+					LineTo(0.0, r1)
+				],
+				if (topLeftR.second && r1 > 0.0)
+					[
+						CubicBezierTo(
+							(-n1 * r1) + r1,
+							(-n1 * r1) + r1,
+							0.0,
+							(-n2 * r1) + r1
+						),
+						CubicBezierTo(
+							r1,
+							0.0,
+							(-n2 * r1) + r1,
+							0.0
+						)
+					]
+				else
+					[
+						LineTo(r1, 0.0)
+					]
+			]),
+			style
+		)
+	}
+}
+
+graphicsStateLerp(
+	prev : MGraphicsState,
+	current : MGraphicsState,
+	percent : double) -> MGraphicsState {
+
+	MGraphicsState(
+		lerp(prev.strokeWidth, current.strokeWidth, percent),
+		colorLerp(prev.color, current.color, percent),
+		lerp(prev.opacity, current.opacity, percent),
+		current.ripple
+	);
+}
+
+makeMFloatingLabel(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	label : string,
+	state : MFloatingLabelState,
+	style : Transform<[CharacterStyle]>,
+	dynColor : Maybe<MDynamicColor>,
+	widthInspect : DynamicBehaviour<double>,
+	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	progress = state.progress;
+	xOffset = fselect(progress, FLift(\pr -> (state.xMinOffset + pr * state.xOffsetDelta) * (if (parent.rtl) -1. else 1.)));
+	yOffset = fselect(progress, FLift(\pr -> state.yMinOffset + pr * state.yOffsetDelta));
+	labelSize = flerp(state.labelSizeFocused, state.labelSizeUnfocused, progress);
+
+	labelStyle : Transform<[MTextStyle]> =
+		fselect2(labelSize, style, FLift2(\sz, st ->
+			maybeArrayPush(
+				MCharacterStyle2MTextStyle(replaceStruct(st, FontSize(sz))),
+				dynColor
+			)
+		));
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(outlineDuration),
+		const(easingStandartCurve),
+		state.showFloatingLabel,
+		\fl -> {
+			pr = getValue(progress);
+
+			if ((fl && pr == 0.) || (!fl && pr == 1.))
+				None()
+			else
+				Some(fl)
+		},
+		\fl, prc -> next(progress, if (fl) 1. - prc else prc),
+		[MAutoStart()],
+		TSelect(labelStyle, \st ->
+			MEllipsisText2T(
+				manager,
+				parent,
+				MEllipsisText(label, st),
+				m2t
+			)
+		)
+		|> (\t -> TAttachWidth(t, widthInspect))
+		|> (\t -> TTranslate(fpoint(xOffset, yOffset), t))
+		|> (\t -> TAlignStartDir(t, parent.rtl))
+	)
+}
+
+MOutlineCorners(
+	getTopLeft : (WidthHeight) -> Pair<double, bool>,
+	getTopRight : (WidthHeight) -> Pair<double, bool>,
+	getBottomRight : (WidthHeight) -> Pair<double, bool>,
+	getBottomLeft : (WidthHeight) -> Pair<double, bool>
+);
