@@ -16,6 +16,7 @@ export {
 		minimize : Transform<bool>,
 		minimizedWidth : double,
 		selection : MListSelection,
+		selectionEnabled : MListSelectionEnabled,
 		condensed : bool,
 		color : Pair<MThemeColor, MThemeColor>,
 		bgStyle : Pair<[TGraphicsStyle], [TGraphicsStyle]>,
@@ -165,9 +166,11 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		selectionEnabled : Transform<bool> =
 			fsubselect(state, FLift(\st -> extractStruct(st, MSelectionEnabled(const(true))).enabled));
 
+		onLineClick = fselect(state, FLift(\st -> tryExtractStruct(st, MOnClick(nop))));
+
 		hovering = make(false);
 		onClick = \ -> {
-			extractStruct(fgetValue(state), MOnClick(nop)).click();
+			maybeApply(fgetValue(onLineClick), \cl -> cl.click());
 			if (fgetValue(selectionEnabled)) {
 				listState.onClick(fgetValue(i));
 			} else if (fgetValue((listState.onListClick).enabled)) {
@@ -176,6 +179,21 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		};
 		selected = fselect2(listState.selection.selected, i, FLift2(contains));
 		focusSelected = extractStruct(fgetValue(state), MSelected(make(fgetValue(selected)))).selected;
+
+		lineSelectionEnabled =
+			fand(
+				selectionEnabled,
+				fsubselect2(listState.selectionEnabled.enabled, i, \selEnabled, index -> elementAt(selEnabled, index, const(true)))
+			);
+
+		rippleEnabled =
+			fand(hoverEnabled,
+				fOrs([
+					lineSelectionEnabled,
+					listState.onListClick.enabled,
+					fIsSome(onLineClick)
+				], true)
+			);
 
 		focusState : [flow] =
 			replaceStructMany(
@@ -187,11 +205,11 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					AccessRole("listitem"),
 					MHoverEnabled(hoverEnabled),
 					MAddFocusGroup(true),
-					MRippleType(fif(hoverEnabled, const(MRippleFill()), const(MNoRipple()))),
+					MRippleType(fif(rippleEnabled, const(MRippleFill()), const(MNoRipple()))),
 					MHighlightOnFocus(const(true)),
 					MHighlightOnHover(const(true)),
 					// MHighlightOnSelect(const(true)),
-					MCursorShape(fif(hoverEnabled, const(FingerCursor()), const(DefaultCursor()))),
+					MCursorShape(fif(rippleEnabled, const(FingerCursor()), const(DefaultCursor()))),
 					MButtonTitle(fselect2(title, subtitle, FLift2(\t, st -> {
 						s = trim(t + " " + st.first);
 						if (s == "") "List item" else s;
@@ -603,6 +621,7 @@ defaultListState(manager : MaterialManager, parent : MFocusGroup, m2t : (Materia
 		const(false),
 		72.,
 		MListSelection(const(false), false, false, make([])),
+		MListSelectionEnabled(const([])),
 		false,
 		Pair(contrastingMColor(parent), contrastingMColor(parent)),
 		Pair(
@@ -687,6 +706,7 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 		minimizeList,
 		minimizedWidth,
 		selection,
+		selectionEnabled,
 		isCondensed,
 		color,
 		bgStyle,

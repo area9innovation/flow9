@@ -1452,4 +1452,4 @@ self.addEventListener('message', function(event) {
   }
 });
 
-swIndexedDbInitialize();
+swIndexedDbInitialize();  

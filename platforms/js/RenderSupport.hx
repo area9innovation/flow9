@@ -324,7 +324,7 @@ class RenderSupport {
 			PixiView = Browser.document.createElement('div');
 			PixiView.tabIndex = 1;
 			PixiView.style.background = "white";
-		} else if (PixiView != null && PixiView.tagName.toLowerCase() == 'div') {
+		} else if (RendererType != "canvas") {
 			PixiView = null;
 		}
 
@@ -369,14 +369,6 @@ class RenderSupport {
 
 			var tempPlugins = untyped WebGLRenderer.__plugins;
 			untyped WebGLRenderer.__plugins = [];
-
-			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
-				transparent : true,
-				autoResize : false,
-				antialias : Antialias,
-				roundPixels : RoundPixels
-			});
-
 			untyped WebGLRenderer.__plugins = tempPlugins;
 		} else if (RendererType == "webgl") {
 			untyped PixiRenderer.gl.viewport(0, 0, untyped PixiRenderer.gl.drawingBufferWidth, untyped PixiRenderer.gl.drawingBufferHeight);
@@ -2435,6 +2427,16 @@ class RenderSupport {
 
 				if (untyped !HaxeRuntime.instanceof(f, DropShadowFilter) && untyped !HaxeRuntime.instanceof(f, BlurFilter)) {
 					untyped clip.glShaders = true;
+					if (untyped PixiRenderer.gl == null) {
+						try {
+							untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
+								transparent : true,
+								autoResize : false,
+								antialias : Antialias,
+								roundPixels : RoundPixels
+							});
+						} catch (e : Dynamic) { }
+					}
 				}
 
 				return true;
