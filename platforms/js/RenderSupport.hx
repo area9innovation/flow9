@@ -370,13 +370,14 @@ class RenderSupport {
 			var tempPlugins = untyped WebGLRenderer.__plugins;
 			untyped WebGLRenderer.__plugins = [];
 
-			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
-				transparent : true,
-				autoResize : false,
-				antialias : Antialias,
-				roundPixels : RoundPixels
-			});
-
+			try {
+				untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
+					transparent : true,
+					autoResize : false,
+					antialias : Antialias,
+					roundPixels : RoundPixels
+				});
+			} catch (e : Dynamic) { }
 			untyped WebGLRenderer.__plugins = tempPlugins;
 		} else if (RendererType == "webgl") {
 			untyped PixiRenderer.gl.viewport(0, 0, untyped PixiRenderer.gl.drawingBufferWidth, untyped PixiRenderer.gl.drawingBufferHeight);
