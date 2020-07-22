@@ -1301,7 +1301,7 @@ class TextClip extends NativeWidgetClip {
 
 	private function getClipWidth() : Float {
 		updateTextMetrics();
-		return metrics != null ? untyped metrics.width : 0;
+		return metrics != null ? (untyped Platform.isSafari && !isInput && !escapeHTML ? Math.ceil(metrics.width) : metrics.width) : 0;
 	}
 
 	private function getClipHeight() : Float {
