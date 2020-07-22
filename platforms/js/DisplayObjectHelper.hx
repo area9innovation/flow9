@@ -980,10 +980,10 @@ class DisplayObjectHelper {
 				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}px';
 				nativeWidget.style.height = '${Math.ceil(localBounds.maxY * transform.d * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupport.PixiRenderer.resolution), 0.0)}px';
 			} else if (untyped clip.alphaMask != null) {
-				nativeWidget.style.width = '${Math.ceil(localBounds.maxX)}px';
+				nativeWidget.style.width = '${localBounds.maxX}px';
 				nativeWidget.style.height = '${localBounds.maxY}px';
 			} else {
-				nativeWidget.style.width = '${Math.ceil(getWidgetWidth(clip))}px';
+				nativeWidget.style.width = '${getWidgetWidth(clip)}px';
 				nativeWidget.style.height = '${getWidgetHeight(clip)}px';
 			}
 
