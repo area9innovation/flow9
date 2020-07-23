@@ -377,7 +377,7 @@ class DisplayObjectHelper {
 
 			clip.scale.x = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0) {
+			if (RenderSupport.RendererType == "html" && scale != 1.0 && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -391,7 +391,7 @@ class DisplayObjectHelper {
 
 			clip.scale.y = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0) {
+			if (RenderSupport.RendererType == "html" && scale != 1.0 && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
