@@ -174,7 +174,7 @@ class WebClip extends NativeWidgetClip {
 			RenderSupport.MousePos.x = pos.x;
 			RenderSupport.MousePos.y = pos.y;
 
-			if (RenderSupport.getClipAt(localStages[i], RenderSupport.MousePos, true, true) != null) {
+			if (RenderSupport.getClipAt(localStages[i], RenderSupport.MousePos, true, 0.0) != null) {
 				untyped localStages[i].view.style.pointerEvents = "all";
 				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
 
