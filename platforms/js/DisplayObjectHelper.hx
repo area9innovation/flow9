@@ -2110,7 +2110,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds) : Void {
+	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds, ?hasAnimation : Bool = false) : Void {
 		if (!InvalidateRenderable) {
 			return;
 		}
@@ -2152,7 +2152,7 @@ class DisplayObjectHelper {
 		}
 
 		if (RenderSupport.RendererType != "html" || isNativeWidget(clip) || !clip.renderable) {
-			var renderable = viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY;
+			var renderable = untyped hasAnimation || clip.hasAnimation || (viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY);
 
 			if (untyped clip.keepNativeWidgetChildren && isNativeWidget(clip)) {
 				untyped clip.nativeWidget.style.visibility = clip.nativeWidget.tabIndex > 0 ? "visible" : (renderable ? "inherit" : "hidden");
@@ -2167,7 +2167,7 @@ class DisplayObjectHelper {
 
 		for (child in getClipChildren(clip)) {
 			if (untyped !child.isMask) {
-				invalidateRenderable(child, viewBounds);
+				invalidateRenderable(child, viewBounds, untyped hasAnimation || clip.hasAnimation);
 			}
 		}
 	}

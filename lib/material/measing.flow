@@ -9,7 +9,7 @@ export {
 
 		MEasingAnimationStyle<?> ::=
 			MLoop, MAutoStart, MContinueOnNone, MForceAnimation, MDelay, MFreezeAnimation,
-			MStopOffScreen, MAnimating, MIsAnimationPlayed, MDuration, MBezier, MEnabled;
+			MStopOffScreen, MAnimating, MIsAnimationPlayed, MDuration, MBezier, MEnabled, MAnimationOnFinish;
 
 			MLoop(beforeLoop : (?) -> Maybe<?>);
 			MAutoStart();
@@ -28,6 +28,8 @@ export {
 
 			// Shows if animation has finished playing
 			MIsAnimationPlayed(played : DynamicBehaviour<bool>);
+
+			MAnimationOnFinish(onFinish : () -> void);
 
 	MEasing(
 		start : () -> void,
@@ -49,11 +51,13 @@ export {
 			MResizerMaxHeight(height : Transform<double>);
 			MResizerPercent(percent : DynamicBehaviour<double>);
 
-	MSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material;
-	MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
-	MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
+	MEasingSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material;
+	MEasingWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
+	MEasingHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
 
-	MBorderAnimation(
+	MEasingScaleAnimation(factor : Transform<Factor>, content : Material, style : [MEasingAnimationStyle<Pair<Factor, Factor>>]) -> Material;
+
+	MEasingBorderAnimation(
 		left : Transform<double>,
 		top : Transform<double>,
 		right : Transform<double>,
@@ -62,7 +66,7 @@ export {
 		style : [MEasingAnimationStyle<Pair<Quadruple<double, double, double, double>, Quadruple<double, double, double, double>>>]
 	) -> Material;
 
-	MAlphaAnimation(alpha : Transform<double>, content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
+	MEasingAlphaAnimation(alpha : Transform<double>, content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
 
 	MShowAnimation(show : Transform<bool>, content : Material, style : [MEasingAnimationStyle<bool>]) -> Material;
 	MShowAnimationWidth(show : Transform<bool>, content : Material, style : [MEasingAnimationStyle<bool>]) -> Material;
@@ -422,7 +426,7 @@ MAnimatedHide(show : Transform<bool>, content : Material, durationM : Maybe<Tran
 	}))
 }
 
-MSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material {
+MEasingSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material {
 	triggerWH = makeWH();
 	easedWidth = make(0.0);
 	easedHeight = make(0.0);
@@ -456,7 +460,7 @@ MSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeig
 	)
 }
 
-MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
+MEasingWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
 	triggerWidth = make(0.0);
 	easedWidth = make(0.0);
 	animating = extractStruct(style, MAnimating(make(false))).animating;
@@ -487,7 +491,7 @@ MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, 
 	)
 }
 
-MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
+MEasingHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
 	triggerHeight = make(0.0);
 	easedHeight = make(0.0);
 	animating = extractStruct(style, MAnimating(make(false))).animating;
@@ -518,33 +522,127 @@ MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double,
 	)
 }
 
-MAlphaAnimation(alpha : Transform<double>, content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
-	easedAlpha = make(0.0);
+MAnimation(content : Material, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> Material {
+	MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t -> TAnimation(m2t(content, p), keyframes, style)));
+}
+
+MEasingScaleAnimation(factor : Transform<Factor>, content : Material, style : [MEasingAnimationStyle<Pair<Factor, Factor>>]) -> Material {
 	autoStart = contains(style, MAutoStart());
+	scaleAnimation = make([]);
+	contentSize = makeWH();
+
+	animationFn = \fc : Pair<Factor, Factor> -> {
+		next(
+			scaleAnimation,
+			[
+				FAnimationKeyframe(
+					if (fc.first != fc.second)
+						[
+							FTranslateValue(
+								Point(
+									fgetValue(contentSize).width / 2.0 * (1.0 - fc.first.x),
+									fgetValue(contentSize).height / 2.0 * (1.0 - fc.first.y)
+								)
+							),
+							FScaleValue(Factor(
+								fc.first.x,
+								fc.first.y
+							))
+						]
+					else
+						[
+							FTranslateValue(
+								Point(
+									fgetValue(contentSize).width / 2.0,
+									fgetValue(contentSize).height / 2.0
+								)
+							),
+							FScaleValue(Factor(0.0, 0.0))
+						]
+				),
+				FAnimationKeyframe(
+					[
+						FTranslateValue(
+							Point(
+								0.0,
+								0.0
+							)
+						),
+						FScaleValue(Factor(1.0, 1.0))
+					]
+				)
+			]
+		);
+	};
 
 	MConstruct(
-		[\ -> { nextDistinct(easedAlpha, if (autoStart) b2d(!i2b(round(fgetValue(alpha)))) else fgetValue(alpha)); nop; }],
-		MMEasingAnimation(
-			const(0.3),
-			const(easingFastOutSlowIn),
-			alpha,
-			\a ->
-				Some(Pair(getValue(easedAlpha), a)),
-			\a, v ->
-				nextDistinct(
-					easedAlpha,
-					lerp(a.first, a.second, v)
-				),
-			style,
-			MAlpha(
-				easedAlpha,
-				content
-			)
+		[
+			if (autoStart)
+				makeSubscribe(fselectWithLast(factor, FIdentity2()), animationFn)
+			else
+				makeSubscribe2(fselectWithLast(factor, FIdentity2()), animationFn)
+		],
+		MAnimation(
+			content
+			|> (\f -> MInspect([ISize(contentSize)], f)),
+			scaleAnimation,
+			[
+				FAnimationDuration(extractStruct(style, MDuration(const(0.3))).duration),
+				FAnimationEasing(extractStruct(style, MBezier(const(easingFastOutSlowIn))).bezier),
+				FAnimationOnFinish(extractStruct(style, MAnimationOnFinish(nop)).onFinish)
+			]
 		)
 	);
 }
 
-MBorderAnimation(
+MEasingAlphaAnimation(alpha : Transform<double>, content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
+	autoStart = contains(style, MAutoStart());
+	alphaAnimation = make([]);
+	contentSize = makeWH();
+
+	animationFn = \a : Pair<double, double> -> {
+		next(
+			alphaAnimation,
+			[
+				FAnimationKeyframe(
+					if (a.first != a.second)
+						[
+							FAlphaValue(a.first)
+						]
+					else
+						[
+							FAlphaValue(0.0)
+						]
+				),
+				FAnimationKeyframe(
+					[
+						FAlphaValue(a.second)
+					]
+				)
+			]
+		);
+	};
+
+	MConstruct(
+		[
+			if (autoStart)
+				makeSubscribe(fselectWithLast(alpha, FIdentity2()), animationFn)
+			else
+				makeSubscribe2(fselectWithLast(alpha, FIdentity2()), animationFn)
+		],
+		MAnimation(
+			content,
+			alphaAnimation,
+			[
+				FAnimationDuration(extractStruct(style, MDuration(const(0.3))).duration),
+				FAnimationEasing(extractStruct(style, MBezier(const(easingFastOutSlowIn))).bezier),
+				FAnimationOnFinish(extractStruct(style, MAnimationOnFinish(nop)).onFinish)
+			]
+		)
+	);
+}
+
+MEasingBorderAnimation(
 	left : Transform<double>,
 	top : Transform<double>,
 	right : Transform<double>,
