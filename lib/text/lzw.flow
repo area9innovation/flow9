@@ -2,33 +2,20 @@ import string;
 import ds/list;
 import ds/tree;
 import text/blueprint;
+import math/bits;
 
 export {
 	// LZW-compress a string
-	lzw_encode(s : string) -> [int];
+	lzw_encode(s : string) -> string;
 
 	// Decompress an LZW-encoded string
-	lzw_decode(data : [int]) -> string;
+	lzw_decode(data : string) -> string;
 }
 
-lzw_encode(s : string) -> [int] {
-	dict : ref Tree<[int], int> = ref makeTree();
-	out : ref List<int> = ref makeList();
-	phrase : ref [int]= ref [getCharCodeAt(s, 0)];
-	code = ref 65536;
-
-	storeResult = \ -> {
-		out := Cons(
-			if (length(^phrase) > 1) {
-				lookupTreeDef(^dict, ^phrase, 0);
-			} else {
-				^phrase[0];
-			},
-			^out
-		);
-	}
-	fori(1, strlen(s)-1, \i -> {
+lzw_encode_rec(s : string, sLength : int, i : int, code : ref int, phrase : ref [int], dict : ref Tree<[int], int>, storeResult : () -> void) -> void {
+	if (i < sLength) {
 		currChar = getCharCodeAt(s, i);
+		// tested List here, the array is better from performance and memory point of view
 		newPhrase = arrayPush(^phrase, currChar);
 		if (isSome(lookupTree(^dict, newPhrase))) {
 			phrase := newPhrase;
@@ -38,24 +25,52 @@ lzw_encode(s : string) -> [int] {
 			code := ^code + 1;
 			phrase := [currChar];
 		}
+		lzw_encode_rec(s, sLength, i + 1, code, phrase, dict, storeResult)
+	} else {
+		storeResult()
+	}
+}
+
+lzw_encode(s : string) -> string {
+	dict : ref Tree<[int], int> = ref makeTree();
+	out : ref List<string> = ref makeList();
+	phrase : ref [int]= ref [getCharCodeAt(s, 0)];
+	code = ref 65536;
+
+	intAsAtring : (int) -> string = \i -> {
+		fromCharCode(i) + fromCharCode(bitUshr(i, 16));
+	}
+
+	lzw_encode_rec(s, strlen(s), 1, code, phrase, dict, \ -> {
+		out := Cons(
+			intAsAtring(if (length(^phrase) > 1) {
+				lookupTreeDef(^dict, ^phrase, 0);
+			} else {
+				^phrase[0];
+			}),
+			^out
+		);
 	});
 
-	storeResult();
-
-	list2array(^out)
+	list2string(^out)
 }
 
 // Decompress an LZW-encoded string
-lzw_decode(data : [int]) -> string {
+lzw_decode(s : string) -> string {
+
+	data = \i : int -> {
+		getCharCodeAt(s, 2*i) + bitShl(getCharCodeAt(s, 2*i + 1), 16);
+	}
+
 	dict : ref Tree<int, [int]> = ref makeTree();
-	currChar : ref int = ref data[0];
+	currChar : ref int = ref data(0);
 	out : ref List<[int]> = ref makeList1([^currChar]);
 	oldPhrase : ref [int] = ref [(^currChar)];
 	code = ref 65536;
-	fori (1, length(data)-1, \i -> {
-		currCode = data[i];
+	fori (1, round(i2d(strlen(s))/2.0 - 1.0), \i -> {
+		currCode = data(i);
 		phrase = if (currCode < 65536) {
-			[data[i]];
+			[data(i)];
 		} else {
 			eitherFn(
 				lookupTree(^dict, currCode),
