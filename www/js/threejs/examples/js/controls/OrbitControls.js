@@ -712,7 +712,17 @@ THREE.OrbitControls = function ( object, domElement, eventElement ) {
 
 		}
 
-		rotateDelta.subVectors( rotateEnd, rotateStart ).multiplyScalar( scope.rotateSpeed );
+		rotateDelta.subVectors( rotateEnd, rotateStart ).multiplyScalar(
+			scope.rotateSpeed *
+				(
+					scope.maxDistance != Infinity ?
+					Math.max(
+						Math.sqrt(Math.max(scope.object.position.distanceTo(panOffset) - scope.minDistance, 1.0)) * 10.0 / (scope.maxDistance - scope.minDistance),
+						0.1
+					) :
+					1.0
+				)
+		);
 
 		var element = scope.domElement;
 

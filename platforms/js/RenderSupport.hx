@@ -518,7 +518,7 @@ class RenderSupport {
 
 			i = localStages.length - 1;
 			while(i > currentInteractiveLayerZorder) {
-				if (getClipAt(localStages[i], pos, true, true) != null &&
+				if (getClipAt(localStages[i], pos, true, 0.0) != null &&
 					untyped localStages[i].view.style.pointerEvents != "all") {
 
 					untyped localStages[i].view.style.pointerEvents = "all";
@@ -537,7 +537,7 @@ class RenderSupport {
 				i--;
 			}
 
-			if (getClipAt(localStages[currentInteractiveLayerZorder], pos, true, true) == null) {
+			if (getClipAt(localStages[currentInteractiveLayerZorder], pos, true, 0.0) == null) {
 				untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
 			}
 		};
@@ -2133,7 +2133,7 @@ class RenderSupport {
 		}
 	}
 
-	private static function hittestGraphics(clip : FlowGraphics, point : Point, ?checkAlpha : Bool = false) : Bool {
+	private static function hittestGraphics(clip : FlowGraphics, point : Point, ?checkAlpha : Float) : Bool {
 		var graphicsData : Array<Dynamic> = clip.graphicsData;
 
 		if (graphicsData == null || graphicsData.length == 0) {
@@ -2142,7 +2142,7 @@ class RenderSupport {
 
 		var data = graphicsData[0];
 
-		if (data.fill && data.shape != null && (!checkAlpha || data.fillAlpha > 0)) {
+		if (data.fill && data.shape != null && (checkAlpha == null || data.fillAlpha > checkAlpha)) {
 			if (untyped clip.worldTransformChanged) {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
@@ -2159,7 +2159,7 @@ class RenderSupport {
 		return getClipAt(clip, point, false) != null;
 	}
 
-	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Bool = false) : DisplayObject {
+	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Float) : DisplayObject {
 		if (!clip.getClipRenderable() || untyped clip.isMask) {
 			return null;
 		} else if (checkMask && !hittestMask(clip, point)) {

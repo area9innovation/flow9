@@ -1069,7 +1069,7 @@ class TextClip extends NativeWidgetClip {
 			RenderSupport.MousePos.x = point.x;
 			RenderSupport.MousePos.y = point.y;
 
-			if (RenderSupport.getClipAt(RenderSupport.PixiStage, RenderSupport.MousePos, true, true) != this) {
+			if (RenderSupport.getClipAt(RenderSupport.PixiStage, RenderSupport.MousePos, true, 0.16) != this) {
 				e.preventDefault();
 			}
 		}
