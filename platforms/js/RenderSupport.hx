@@ -1682,52 +1682,66 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html") {
+		if (RendererType == "html" && Browser.document.body.animate != null) {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
 
-			if (untyped clip.nativeWidget == null || clip.nativeWidget.animate == null) {
+			if (untyped clip.nativeWidget == null) {
 				return fallbackAnimation();
 			} else {
-				if (untyped !clip.hasAnimation) {
-					untyped clip.hasAnimation = true;
-					clip.invalidateTransform("addClipAnimation");
-				}
-
-				var nativeWidget = untyped clip.nativeWidget;
-				var optionsObject : Dynamic = {};
-
-				function isNormalInteger(str) {
-					var n = Math.floor(Std.parseInt(str));
-					return n != Math.POSITIVE_INFINITY && Std.string(n) == str && n >= 0;
-				}
-
-				for (option in options) {
-					if (isNormalInteger(option[1])) {
-						untyped optionsObject[option[0]] = Std.parseInt(option[1]);
-					} else {
-						untyped optionsObject[option[0]] = option[1];
+				try {
+					if (untyped !clip.hasAnimation) {
+						untyped clip.hasAnimation = true;
+						clip.invalidateTransform("addClipAnimation");
 					}
+
+					var nativeWidget = untyped clip.nativeWidget;
+					var optionsObject : Dynamic = {};
+
+					clip.updateNativeWidget();
+
+					function isNormalInteger(str) {
+						var n = Math.floor(Std.parseInt(str));
+						return n != Math.POSITIVE_INFINITY && Std.string(n) == str && n >= 0;
+					}
+
+					for (option in options) {
+						if (isNormalInteger(option[1])) {
+							untyped optionsObject[option[0]] = Std.parseInt(option[1]);
+						} else {
+							untyped optionsObject[option[0]] = option[1];
+						}
+					}
+
+					var animation : Dynamic =
+						nativeWidget.animate(
+							keyframes.map(
+								function(keyframe : Array<String>) {
+									var o : Dynamic = {};
+									untyped o[keyframe[0]] = keyframe[1];
+									return o;
+								}
+							),
+							optionsObject
+						);
+
+					animation.onfinish = function() {
+						onFinish();
+
+						clip.updateNativeWidget();
+					}
+
+					return function() {
+						if (animation != null) {
+							animation.cancel();
+						}
+					}
+				} catch (e : Dynamic) {
+					trace(e);
+
+					return fallbackAnimation();
 				}
-
-				var animation : Dynamic =
-					nativeWidget.animate(
-						keyframes.map(
-							function(keyframe : Array<String>) {
-								var o : Dynamic = {};
-								untyped o[keyframe[0]] = keyframe[1];
-								return o;
-							}
-						),
-						optionsObject
-					);
-
-				animation.onfinish = onFinish;
-
-				return function() {
-					animation.cancel();
-				};
 			}
 		} else {
 			return fallbackAnimation();

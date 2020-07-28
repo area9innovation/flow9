@@ -159,7 +159,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 									{
 										if (noDimming) t
 										else TAlpha(
-											fif(fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false), const(1.), const(0.6)),
+											fif(fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false), const(1.), const(secondaryTextOpacity)),
 											t
 										)
 									}
@@ -459,25 +459,46 @@ splitText2(text : string, text1 : string, text2 : string) -> Pair<string, string
 MTabAnimation(
 	trans : Point,
 	trop : double,
-	scroll : double);
+	scroll : double
+);
 
 MTabsBottomLineInfo(
 	width : double,
 	tabsWidths : [double],
 	selected : int,
-	order : [int]);
+	order : [int]
+);
+
+MTabsBottomLineInfo2MTabAnimation(info : MTabsBottomLineInfo) -> MTabAnimation {
+	wds = info.tabsWidths;
+	sel = info.selected;
+	ord = findiDef(info.order, eq(sel), sel);
+
+	if (sel >= 0 && sel < length(wds)) {
+		fullW = dsum(wds);
+		nTransWidth = dsum(generate(0, ord, \i -> wds[elementAt(info.order, i, i)]));
+		nTrop = wds[ord];
+
+		MTabAnimation(
+			Point(nTransWidth, 0.),
+			nTrop,
+			forceRange(0., nTransWidth - info.width / 2. + nTrop / 2., fullW - info.width)
+		);
+	} else {
+		MTabAnimation(
+			zeroPoint,
+			0.0,
+			0.0
+		);
+	}
+}
 
 MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : DynamicBehaviour<[double]>, selected : Transform<int>, order : Maybe<MListReorder>,
 	scrollPosition : DynamicBehaviour<Point>, inspectScroll : TScrollInspectVisible, tabsHeight : DynamicBehaviour<double>,
 	indicatorColor : MColor, indicatorAbove : bool
 ) -> Tropic {
 
-	prevTrans = ref 0.;
-	prevTropW = ref 0.;
-	prevScroll = ref 0.;
 	prevS = ref fgetValue(selected);
-	trans = make(zeroPoint);
-	tropW = make(0.);
 	lineHeight = 2.0;
 	isRTL = parent.rtl;
 	orderedTabsWidths = fselect(tabsWidths, FLift(arrayRTL2(isRTL)));
@@ -498,62 +519,39 @@ MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : Dy
 			\wd, twds, sel, ord -> MTabsBottomLineInfo(wd, twds, sel, ord)
 		);
 
-	MEasingAnimation(
-		manager,
-		parent,
-		const(easingTransitionDuration),
-		const(easingStandartCurve),
-		trigger,
-		\info : MTabsBottomLineInfo -> {
-			wds = info.tabsWidths;
-			sel = info.selected;
-			ord = findiDef(info.order, eq(sel), sel);
+	TAnimation(
+		TSizedWidth(const(10.0), lineHeight)
+		|> addTBackground(indicatorColor),
+		fselect(fselectWithLast(fselect(trigger, MTabsBottomLineInfo2MTabAnimation |> FLift), FIdentity2()), FLift(\p : Pair<MTabAnimation, MTabAnimation> -> {
+			next(scrollPosition, Point(p.second.scroll, 0.0));
+			sel = fgetValue(trigger).selected;
 
-			if (length(wds) == 0)
-				nextDistinct(tropW, 0.);
-
-			if (sel >= 0 && sel < length(wds)) {
-				prevTrans := getValue(trans).x;
-				prevTropW := getValue(tropW);
-				prevScroll := getValue(scrollPosition).x;
-
-				fullW = dsum(wds);
-				nTransWidth = generate(0, ord, \i ->
-					wds[elementAt(info.order, i, i)]
-				)
-				|> dsum;
-				nTrop = wds[ord];
-
-				tAnim = MTabAnimation(
-					Point(nTransWidth, 0.),
-					nTrop,
-					forceRange(0., nTransWidth - info.width / 2. + nTrop / 2., fullW - info.width)
-				);
-
-				if (^prevS == sel || !parent.theme.enableAnimations) {
-					nextDistinct(trans, tAnim.trans);
-					nextDistinct(tropW, tAnim.trop);
-					nextDistinct(scrollPosition, Point(tAnim.scroll, 0.));
-
-					None()
-				} else {
-					prevS := sel;
-
-					Some(tAnim);
-				}
+			if (^prevS == sel || !parent.theme.enableAnimations) {
+				[
+					FAnimationKeyframe([
+						FTranslateValue(Point(p.second.trans.x, 0.0)),
+						FScaleValue(Factor(p.second.trop / 10.0, 1.0))
+					])
+				];
 			} else {
-				None()
+				prevS := sel;
+
+				[
+					FAnimationKeyframe([
+						FTranslateValue(Point(p.first.trans.x, 0.0)),
+						FScaleValue(Factor(p.first.trop / 10.0, 1.0))
+					]),
+					FAnimationKeyframe([
+						FTranslateValue(Point(p.second.trans.x, 0.0)),
+						FScaleValue(Factor(p.second.trop / 10.0, 1.0))
+					])
+				];
 			}
-		},
-		\tAnim, p -> {
-			nextDistinct(trans, Point(lerp(^prevTrans, tAnim.trans.x, p), 0.));
-			nextDistinct(tropW, lerp(^prevTropW, tAnim.trop, p));
-			nextDistinct(scrollPosition, Point(lerp(^prevScroll, tAnim.scroll, p), 0.));
-		},
-		[MAutoStart()],
-		TSizedWidth(tropW, lineHeight)
-		|> addTBackground(indicatorColor)
-		|> (\t -> TTranslate(trans, t))
+		})),
+		[
+			FAnimationDuration(const(easingTransitionDuration)),
+			FAnimationEasing(const(easingStandartCurve)),
+		]
 	)
 	|> makeTropicConstantHeight(Some(lineHeight))
 	|> (\t -> if (indicatorAbove) t else TTranslate(fselect(tabsHeight, FLift(\th -> Point(0., th - lineHeight))), t))
