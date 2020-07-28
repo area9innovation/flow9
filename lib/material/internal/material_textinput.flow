@@ -173,7 +173,6 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 		|> (\f -> switch (inputState.skin) {
 			MFilled(): {
 				height = if (!inputState.condensed) 54.0 else if (hasFloatingLabel) 50.0 else 38.0;
-				size = makeWH();
 
 				unfocusedColor = contrastingColor(inputState.parent);
 				unfocusedOpacity = if (getLightBackground(inputState.parent)) 0.38 else 0.5;
@@ -228,22 +227,16 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 					)
 				], isRTL)
 					|> (\f2 -> TBorderDir(inputState.inputBorders.start, 0., inputState.inputBorders.end, 0., f2, isRTL))
-					|> (\f2 -> TAttachBox(f2, size))
-					|> (\f2 -> TBaselineLines([
-						f2,
-						makeTextInputUnderline(
-							inputState.manager,
-							inputState.parent,
-							size,
-							graphicsState,
-							eitherMap(inputState.floatingLabel, \fls -> fls.outlinedColor, make(MWhite()))
-						)
-					]))
+					|> addMFilledUnderline(
+						inputState.manager,
+						inputState.parent,
+						graphicsState,
+						eitherMap(inputState.floatingLabel, \fls -> fls.outlinedColor, make(MWhite()))
+					)
 					|> addMTextInputBackground(const(false))
 			}
 			MOutlined(): {
 				height = if (!inputState.condensed) 54.0 else if (hasFloatingLabel) 50.0 else 38.0;
-				size = makeWH();
 
 				unfocusedColor = contrastingColor(inputState.parent);
 				unfocusedOpacity = if (getLightBackground(inputState.parent)) 0.38 else 0.5;
@@ -904,103 +897,6 @@ makeRightIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic
 			[MEnabled(inputState.mfocus.enabled), MFocusEnabled(const(false))],
 			\p -> TBaselineColsDir(rightIcons(p), p.rtl)
 		));
-}
-
-makeTextInputUnderline(
-	manager : MaterialManager,
-	parent : MFocusGroup,
-	size : Transform<WidthHeight>,
-	graphicsState : Transform<MGraphicsState>,
-	dynamicColor : DynamicBehaviour<MColor>) -> Tropic {
-
-	initState       = fgetValue(graphicsState);
-	backgroundState = make(initState);
-	rippleState     = make(None());
-	rippleTrigger   = make(false);
-
-	stateWithLast =
-		fselectWithLast(
-			graphicsState,
-			FLift2(\prev, curr -> Pair(prev, curr))
-		);
-
-	MEasingAnimation(
-		manager,
-		parent,
-		const(easingTransitionDuration),
-		const(easingStandartCurve),
-		stateWithLast,
-		\st -> {
-			// Swap buffers
-			maybeApply(getValue(rippleState), \s -> {
-				next(backgroundState, s);
-				next(rippleState, None());
-				next(rippleTrigger, false);
-			});
-
-			if (st.second.ripple) {
-				next(rippleState, Some(st.second));
-				deferred(\ -> next(rippleTrigger, true));
-				None();
-			} else {
-				Some(st);
-			}
-		},
-		\st, percent -> {
-			prev = st.first;
-			curr = st.second;
-			next(backgroundState, graphicsStateLerp(prev, curr, percent));
-		},
-		[],
-		TGroup2(
-			TSelect(backgroundState, \st -> if (st.opacity == 0.0) {
-				TEmpty();
-			} else if (st.strokeWidth == 0.0) {
-				TDynamicGraphics(
-					fselect(size, FLift(\wh -> 
-						generate(0, floor(wh.width / 4.0), \i ->
-							[MoveTo(i2d(i) * 4.0, 0.0), LineTo(i2d(i) * 4.0 + 1.0, 0.0)]
-						) |> concatA
-					)),
-					const([Stroke(st.color), StrokeOpacity(st.opacity)])
-				)
-			} else {
-				TRectangle(
-					[Fill(st.color), FillOpacity(st.opacity)],
-					TFillXH(st.strokeWidth)
-				);
-			})
-				|> (\f -> TTweak([TAlign(const(0.0), const(1.0))], f, TFixed(0.0, 2.0))),
-			TSelect(rippleState, \st ->
-				eitherMap(
-					st,
-					\s ->
-						MRipple2T(
-							manager,
-							parent,
-							TFillXH(s.strokeWidth),
-							rippleTrigger,
-							[
-								MRippleColor(const(MCustomColor(s.color))),
-								MRippleOpacity(const(1.0)),
-								MRippleType(const(MRippleFill())),
-								MRipplePosition(fselect(
-									size,
-									FLift(\wh ->
-										Point(wh.width / 2.0, s.strokeWidth / 2.0)
-									)
-								))
-							]
-						),
-					TEmpty()
-				)
-			)
-		)
-		|> (\t -> TConstruct([
-			makeSubscribe2(backgroundState, \st -> nextDistinct(dynamicColor, MCustomColor(st.color))),
-			makeSubscribe2(rippleState, \rSt -> maybeApply(rSt, \st -> nextDistinct(dynamicColor, MCustomColor(st.color))))
-		], t))
-	);
 }
 
 MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, makeTextInput : (MFocusGroup) -> Tropic,

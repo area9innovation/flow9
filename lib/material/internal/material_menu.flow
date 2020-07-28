@@ -940,28 +940,37 @@ MDropDownMenuButton2T(
 		color
 	];
 	outlined = contains(style0, MOutlined());
+	filled = contains(style0, MFilled());
+	plain = !outlined && !filled;
 	nonSpecified : MNonSpecifiedLine = extractStruct(style0, MNonSpecified(MMenuSingleLine(_("Pick"), []))).item;
 	label = switch (nonSpecified) {
 		MMenuSingleLine(title, __) : title;
 		MMenuCustomLine(__, __) : "";
 	};
-	separators = !outlined && extractStruct(style0, MSeparators(true)).separators;
+	separators = plain && extractStruct(style0, MSeparators(true)).separators;
 	showTooltip = extractStruct(style0, MShowTooltip(const(false))).show;
 	indent = contains(style0, MMenuIndent());
+	focused = make(false);
 	focusState =
 		[
 			MEnabled(fsubselect(lineB, FLift(\line -> extractStruct(line.style, MEnabled(const(true))).enabled))),
 			MOnClick(onClick),
 			MRippleType(const(MRippleFill())),
 			MHighlightOnFocus(const(true)),
-			MHighlightOnHover(const(true))
+			MHighlightOnHover(const(true)),
+			MFocused(focused)
 		]
 		|> (\st -> maybeArrayPush(st, tryExtractStruct(style0, MButtonTitle(const("")))));
 
 	iconNearTitle = contains(style0, MDropDownIconNearTitle());
 
 	openMenu = extractStruct(style0, MOpenMenu(make(false))).opened;
-	outlineColor = fif(openMenu, const(selectedColor), const(color));
+	active = fOr(openMenu, focused);
+	graphicsState = fif(active, 
+		const(MGraphicsState(2., MColor2int(selectedColor), 1., true)),
+		const(MGraphicsState(1., MColor2int(color), 0.38, false)),
+	);
+
 	dynColor = make(color);
 	floatingLabelProgress = make(1.);
 	labelWidth = make(0.);
@@ -987,11 +996,13 @@ MDropDownMenuButton2T(
 	setMenuBaseline = \avH, height, baseline -> 
 		\t -> TBaseline(faddition(baseline, fmax(zero, fdivide(fsubtract(avH, height), const(2.)))), t);
 
-	floatingLabelOffset = \st -> eitherMap(
-		tryExtractStruct(st, MPrimaryAction(TEmpty())),
-		\__ -> 52.,
-		12.
-	);
+	floatingLabelOffset = \st ->
+		if (filled) 0.
+		else eitherMap(
+			tryExtractStruct(st, MPrimaryAction(TEmpty())),
+			\__ -> 52.,
+			12.
+		);
 
 	TSelect(lineB, \line ->  // Display chosen item when not expanded
 		switch (line) {
@@ -1005,7 +1016,8 @@ MDropDownMenuButton2T(
 				)
 				|> (\t -> TAlignStartDir(t, parent.rtl))
 				|> (\t ->
-					if (outlined) {
+					if (plain) t
+					else {
 						isNonSpec = title == label;
 						trigger = if (isNonSpec) fstall(openMenu, 66) else const(true);
 						showLabel = if (isNonSpec) fneq(floatingLabelProgress, 1.) else const(true);
@@ -1020,14 +1032,16 @@ MDropDownMenuButton2T(
 								showLabel,
 								makeMFloatingLabel(manager, parent, label,
 									MFloatingLabelState(floatingLabelProgress, trigger, 12., labelSize, -offset, offset, -8., 16.),
-									const(characterStyle),
+									fif(active,
+										const(characterStyle),
+										const(replaceStruct(characterStyle, FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))))
+									),
 									Some(MDynamicColor(dynColor)),
 									labelWidth, m2t
 								)
 							)
 						)
 					}
-					else t
 				)
 				|> (\f -> if (iconNearTitle) f else TGroup2(TFillX(), f))
 				|> addActions(style)
@@ -1043,17 +1057,17 @@ MDropDownMenuButton2T(
 				|> (\t -> TInspect([IAvailableHeight(availableH), Height(height), IBaseline(baseline)], t))
 				|> TCenterY
 				|> (\t ->
-					if (outlined)
+					if (plain) t
+					else
 						TGroup2(
 							t,
 							makeMFloatingLabel(manager, parent, label,
 								MFloatingLabelState(floatingLabelProgress, const(true), 12., 14., -offset, offset, -8., 16.),
-								const([]),
+								fif(active, const([]), const([FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))])),
 								Some(MDynamicColor(dynColor)),
 								labelWidth, m2t
 							)
 						)
-					else t
 				)
 				|> (\f -> if (iconNearTitle) f else TGroup2(TFillX(), f))
 				|> addActions(style)
@@ -1069,12 +1083,17 @@ MDropDownMenuButton2T(
 	|> (\f -> if (outlined) {
 			addMOutline(
 				manager,
-				parent, 
+				parent,
 				labelWidth,
 				floatingLabelProgress,
-				fselect(outlineColor, FLift(\oc ->
-					MGraphicsState(1., MColor2int(oc), 1., true)
-				)),
+				graphicsState,
+				dynColor
+			)(f)
+		} else if (filled) {
+			addMFilledUnderline(
+				manager,
+				parent,
+				graphicsState,
 				dynColor
 			)(f)
 		} else f)
