@@ -1,105 +1,187 @@
 import string;
 import ds/list;
-import ds/tree;
+import ds/inttree;
 import text/blueprint;
 import math/bits;
+import loop;
 
 export {
+	CodecStyle ::= MemUsedR, BitPacking;
+		MemUsedR(bytes : ref int);
+		BitPacking(enable: bool);
+
 	// LZW-compress a string
-	lzw_encode(s : string) -> string;
+	lzw_encode(s : string, style : [CodecStyle]) -> string;
 
 	// Decompress an LZW-encoded string
-	lzw_decode(data : string) -> string;
+	lzw_decode(data : string, style : [CodecStyle]) -> string;
 }
 
-lzw_encode_rec(s : string, sLength : int, i : int, code : ref int, phrase : ref [int], dict : ref Tree<[int], int>, storeResult : () -> void) -> void {
-	if (i < sLength) {
-		currChar = getCharCodeAt(s, i);
-		// tested List here, the array is better from performance and memory point of view
-		newPhrase = arrayPush(^phrase, currChar);
-		if (isSome(lookupTree(^dict, newPhrase))) {
-			phrase := newPhrase;
-		} else {
-			storeResult();
-			dict := setTree(^dict, newPhrase, ^code);
-			code := ^code + 1;
-			phrase := [currChar];
-		}
-		lzw_encode_rec(s, sLength, i + 1, code, phrase, dict, storeResult)
-	} else {
-		storeResult()
+EncPhrase(children : ref IntTree<int>);
+DecPhrase(parent : int, suffix : int /* char */);
+
+lzw_measure_enc_phrase(p : ref IntTree<int>) -> int {
+	switch (^p) {
+		IntTreeNode(children): 128 + sum(map(children, lzw_measure_enc_phrase));
+		IntTreeValue(__, __): 16;
+		IntTreeNone(): 8;
 	}
 }
 
-lzw_encode(s : string) -> string {
-	dict : ref Tree<[int], int> = ref makeTree();
-	out : ref List<string> = ref makeList();
-	phrase : ref [int]= ref [getCharCodeAt(s, 0)];
-	code = ref 65536;
+lzw_measure_enc_dict(t : IntTree<EncPhrase>) -> int {
+	switch (t) {
+		IntTreeNode(children): 128 + sum(map(children, \child -> lzw_measure_enc_dict(^child)));
+		IntTreeValue(__, phrase): 8 + lzw_measure_enc_phrase(phrase.children);
+		IntTreeNone(): 8;
+	}
+}
 
-	intAsAtring : (int) -> string = \i -> {
+lzw_measure_dec_dict(t : IntTree<DecPhrase>) -> int {
+	switch (t) {
+		IntTreeNode(children): 128 + sum(map(children, \child -> lzw_measure_dec_dict(^child)));
+		IntTreeValue(__, __): 32;
+		IntTreeNone(): 8;
+	}
+}
+
+LZWEncodingAcc(list : List<string>, phraseIdx : int, phraseWidth : int, remainder : int, remainderLen : int);
+LZWDecodingAcc(list : List<string>, phraseIdx : int, phraseWidth : int, remainder : int, remainderLen : int, phrase : string, skip : bool);
+
+lzw_encode(s : string, style : [CodecStyle]) -> string {
+	memUsedM = tryExtractStruct(style, MemUsedR(ref 0));
+	bitPacking = extractStruct(style, BitPacking(false)).enable;
+	dict : ref IntTree<EncPhrase> = makeIntTree();
+	makePhrase = \-> EncPhrase(makeIntTree());
+	code = ref 65535;
+
+	intAsString : (int) -> string = \i -> {
 		fromCharCode(i) + fromCharCode(bitUshr(i, 16));
-	}
+	};
 
-	lzw_encode_rec(s, strlen(s), 1, code, phrase, dict, \ -> {
-		out := Cons(
-			intAsAtring(if (length(^phrase) > 1) {
-				lookupTreeDef(^dict, ^phrase, 0);
-			} else {
-				^phrase[0];
-			}),
-			^out
-		);
+	pushPhrase : (LZWEncodingAcc, int, int) -> LZWEncodingAcc = \acc, phIdx, newWidth -> {
+		next = bitOr(acc.remainder, bitShl(acc.phraseIdx, acc.remainderLen));
+		nextLen = acc.remainderLen + acc.phraseWidth;
+		if (nextLen >= 32)
+			LZWEncodingAcc(Cons(intAsString(next), acc.list), phIdx, newWidth, if (acc.phraseWidth == nextLen) 0 else bitUshr(acc.phraseIdx, acc.phraseWidth + 32 - nextLen), nextLen - 32)
+		else if (nextLen >= 16)
+			LZWEncodingAcc(Cons(fromCharCode(next), acc.list), phIdx, newWidth, bitUshr(next, 16), nextLen - 16)
+		else
+			LZWEncodingAcc(acc.list, phIdx, newWidth, next, nextLen)
+	};
+
+	out = if (bitPacking) stringFoldi(s, LZWEncodingAcc(makeList(), getCharCodeAt(s, 0), 16, 0, 0), \i, acc, c -> if (i == 0) acc else {
+		phrase = switch (lookupIntTree(dict, acc.phraseIdx)) {
+			Some(ph): ph;
+			None(): {
+				ph = makePhrase();
+				dict := addOrUpdateIntTree(dict, acc.phraseIdx, ph);
+				ph
+			};
+		};
+		switch (lookupIntTree(phrase.children, c)) {
+			Some(phi): LZWEncodingAcc(acc with phraseIdx=phi)
+			None(): {
+				code := ^code + 1;
+				phrase.children := addOrUpdateIntTree(phrase.children, c, ^code);
+				pushPhrase(acc, c, acc.phraseWidth + if (acc.phraseWidth == 32) 0 else bitUshr(^code, acc.phraseWidth));
+			}
+		}
+	}) else stringFoldi(s, LZWEncodingAcc(makeList(), getCharCodeAt(s, 0), 32, 0, 0), \i, acc, c -> if (i == 0) acc else {
+		phrase = switch (lookupIntTree(dict, acc.phraseIdx)) {
+			Some(ph): ph;
+			None(): {
+				ph = makePhrase();
+				dict := addOrUpdateIntTree(dict, acc.phraseIdx, ph);
+				ph
+			};
+		};
+		switch (lookupIntTree(phrase.children, c)) {
+			Some(phi): LZWEncodingAcc(acc.list, phi, 32, 0, 0)
+			None(): {
+				code := ^code + 1;
+				phrase.children := addOrUpdateIntTree(phrase.children, c, ^code);
+				LZWEncodingAcc(Cons(intAsString(acc.phraseIdx), acc.list), c, 32, 0, 0)
+			}
+		}
 	});
 
-	list2string(^out)
-}
-
-lzw_decode_rec(
-	i : int,
-	limit : int,
-	code : ref int,
-	currChar : ref int,
-	oldPhrase : ref List<int>,
-	data : (int) -> int,
-	dict : ref Tree<int, List<int>>,
-	out : ref List<string>
-) -> void {
-	if (i <= limit) {
-		currCode = data(i);
-		phrase = if (currCode < 65536) {
-			makeList1(data(i));
-		} else {
-			eitherFn(
-				lookupTree(^dict, currCode),
-				idfn,
-				\ -> Cons(^currChar, ^oldPhrase)
-			)
+	switch (memUsedM) {
+		Some(mu): {
+			mu.bytes := lzw_measure_enc_dict(^dict) + 8 + 8 + 8 + 8;
 		}
-		phraseA = phrase |> list2array;
-		out := Cons(superglue(phraseA, fromCharCode, ""), ^out);
-		currChar := phraseA[0];
-		dict := setTree(^dict, ^code, Cons(^currChar, ^oldPhrase));
-		code := ^code + 1;
-		oldPhrase := phrase;
-
-		lzw_decode_rec(i + 1, limit, code, currChar, oldPhrase, data, dict, out);
+		None(): {}
 	}
+
+	if (bitPacking) {
+		tmp = pushPhrase(out, 0, out.phraseWidth);
+		list2string(
+			if (tmp.remainderLen > 16) Cons(intAsString(tmp.remainder), tmp.list)
+			else if (tmp.remainderLen > 0) Cons(fromCharCode(tmp.remainder), tmp.list)
+			else tmp.list
+		)
+	} else
+		list2string(Cons(intAsString(out.phraseIdx), out.list))
 }
 
 // Decompress an LZW-encoded string
-lzw_decode(s : string) -> string {
-	data = \i : int -> {
-		getCharCodeAt(s, 2*i) + bitShl(getCharCodeAt(s, 2*i + 1), 16);
-	}
+lzw_decode(s : string, style : [CodecStyle]) -> string {
+	memUsedM = tryExtractStruct(style, MemUsedR(ref 0));
+	bitPacking = extractStruct(style, BitPacking(false)).enable;
 
-	dict : ref Tree<int, List<int>> = ref makeTree();
-	currChar : ref int = ref data(0);
-	out : ref List<string> = ref makeList1(getCharAt(s, 0));
-	oldPhrase : ref List<int> = ref makeList1(^currChar);
+	dict : ref IntTree<DecPhrase> = makeIntTree();
 	code = ref 65536;
 
-	lzw_decode_rec(1, round(i2d(strlen(s))/2.0 - 1.0), code, currChar, oldPhrase, data, dict, out);
+	getFullPhrase = \idx -> {
+		acc = updateWhile(Pair(idx, ""), \p -> {
+			phraseM = lookupIntTree(dict, p.first);
+			switch (phraseM) {
+				Some(phrase): Some(Pair(
+					phrase.parent,
+					fromCharCode(phrase.suffix) + p.second
+				));
+				None(): None();
+			}
+		});
+		fromCharCode(acc.first) + acc.second;
+	};
 
-	list2string(^out)
+	out = stringFold(s, LZWDecodingAcc(makeList(), 0, if (bitPacking) 16 else 32, 0, 0, "", true), \acc, c -> {
+		if (acc.remainderLen + 16 >= acc.phraseWidth) {
+			remainderLen = 16 + acc.remainderLen - acc.phraseWidth;
+			remainder = bitUshr(c, 16 - remainderLen);
+			phraseIdx = bitAnd(bitOr(acc.remainder, bitShl(c, acc.remainderLen)), bitUshr(-1, 32-acc.phraseWidth));
+			phrase = if (phraseIdx < ^code)
+				getFullPhrase(phraseIdx)
+			else
+				acc.phrase + strsubsmart(acc.phrase, 0, 1);
+			if (!acc.skip) {
+				dict := addOrUpdateIntTree(dict, ^code, DecPhrase(acc.phraseIdx, getCharCodeAt(phrase, 0)));
+				code := ^code + 1;
+			};
+			LZWDecodingAcc(
+				if (acc.skip) acc.list else Cons(acc.phrase, acc.list),
+				phraseIdx,
+				acc.phraseWidth + if (acc.phraseWidth == 32) 0 else bitUshr(^code, acc.phraseWidth),
+				remainder,
+				remainderLen,
+				phrase,
+				false
+			)
+		} else {
+			LZWDecodingAcc(acc with remainder=bitOr(acc.remainder, bitShl(c, acc.remainderLen)), remainderLen=16+acc.remainderLen)
+		}
+	});
+
+	switch (memUsedM) {
+		Some(mu): {
+			mu.bytes :=
+				lzw_measure_dec_dict(^dict) +
+				8 + 8 + 8 + 8 +
+				8 + 2 * strlen(out.phrase) +
+				8
+		}
+		None(): {}
+	};
+
+	list2string(Cons(out.phrase, out.list))
 }

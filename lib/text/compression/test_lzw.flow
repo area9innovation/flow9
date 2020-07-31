@@ -1,33 +1,230 @@
 import text/compression/lzw;
 
-main() {
+Codec(name: string, enc : (string, [CodecStyle]) -> string, dec : (string, [CodecStyle]) -> string);
+CodecTestResult(codec: Codec, encTime : double, encMem : double, encLen : double, decTime : double, decMem : double, decLen : double, correct : bool);
 
-	testStr = strRepeat(sourceStr, 60);
-	testStrLen = strlen(testStr);
-	println("source: " + i2s(testStrLen));
+cpad(s : string, c : string, l : int) -> string {
+	dif = strlen(s) - l;
+	if (dif < 0) {
+		cpad(c+s+c, c, l)
+	} else strRight(s, dif)
+}
 
+test(testStr : string, codec : Codec, extraStyles : [CodecStyle]) -> CodecTestResult {
+	memUsedREnc = ref 0;
+	memUsedRDec = ref 0;
+	compressed2 = codec.enc(testStr, arrayPush(extraStyles, MemUsedR(memUsedREnc)));
+	decompressed2 = codec.dec(compressed2, arrayPush(extraStyles, MemUsedR(memUsedRDec)));
 	t0 = timestamp();
-	compressed = lzw_encode(testStr);
+	compressed = codec.enc(testStr, extraStyles);
 	t1 = timestamp();
-
-	compressedLen = strlen(compressed);
-	println("compressed: " + i2s(compressedLen) + ", " + d2s(roundTo((t1-t0)/1000.0, 0.1)) + " sec");
-
+	decompressed = codec.dec(compressed, extraStyles);
 	t2 = timestamp();
-	decompressed = lzw_decode(compressed);
-	t3 = timestamp();
-	decompressedLen = strlen(decompressed);
-	println("decompressed: " + i2s(decompressedLen) + ", " + d2s(roundTo((t3-t2)/1000.0, 0.1)) + " sec");
+	difs = stringFoldi(testStr, [], \i, acc, c ->
+		if (c != getCharCodeAt(decompressed, i)) arrayPush(acc, i) else acc
+	);
+	CodecTestResult(
+		codec,
+		t1-t0, i2d(^memUsedREnc), i2d(2 * strlen(compressed)),
+		t2-t1, i2d(^memUsedRDec), i2d(2 * strlen(decompressed)),
+		testStr == decompressed && testStr == decompressed2
+	);
+}
 
-	println(i2s(testStrLen) + " -> " + i2s(compressedLen) + " -> " + i2s(decompressedLen));
-	println("RATIO: " + i2s(round(100.0 * i2d(compressedLen) / i2d(testStrLen))) + "%");
-	if (testStr == decompressed) {
-		println("PASSED");
-	} else {
-		println("FAILED");
+Col(name : string, width : int, pad : (string, string, int) -> string, getter : (CodecTestResult) -> string);
+
+percent(num, denom) -> string {
+	i2s(floor(num*100.0 / denom))+"%";
+}
+
+cols = [
+	//Col("Codec name", 16, rpad, \res -> res.codec.name),
+	Col("Enc.t", 6, lpad, \res -> i2s(floor(res.encTime))),
+	Col("Enc.mem", 8, lpad, \res -> i2s(floor(res.encMem))),
+	Col("%org", 5, lpad, \res -> percent(res.encMem, res.decLen)),
+	Col("Dec.t", 6, lpad, \res -> i2s(floor(res.decTime))),
+	Col("Dec.mem", 8, lpad, \res -> i2s(floor(res.decMem))),
+	Col("%org", 5, lpad, \res -> percent(res.decMem, res.decLen)),
+	Col("Org.size", 10, lpad, \res -> i2s(floor(res.decLen))),
+	Col("Enc.size", 10, lpad, \res -> i2s(floor(res.encLen))),
+	Col("%org", 4, lpad, \res -> percent(res.encLen, res.decLen)),
+	Col("?", 1, cpad, \res -> if (res.correct) "V" else "X"),
+]
+
+printHeader() -> void {
+	println(superglue(cols, \col -> cpad(col.name, " ", col.width), "|"));
+	println(superglue(cols, \col -> lpad("", "—", col.width), "+"));
+}
+
+printResult(result : CodecTestResult) -> void{
+	println(superglue(cols, \col -> col.pad(col.getter(result), " ", col.width), "|"));
+}
+
+lzw_measure_enc_dict_full_phrase(t : Tree<[int], int>) -> int {
+	switch (t) {
+		TreeEmpty() : 8;
+		TreeNode(k, v, l, r, d) :
+			4 * (1 + length(k)) +
+			8 +
+			lzw_measure_enc_dict_full_phrase(l) +
+			lzw_measure_enc_dict_full_phrase(r) +
+			8
 	}
-	assertEquals(testStr, decompressed);
+}
 
+listLen(l : List<?>) -> int {
+	foldList(l, 0, \acc : int, whatever : ? -> acc + 1);
+}
+
+lzw_measure_dec_dict_full_phrase(t : Tree<int, List<int>>) -> int {
+	switch (t) {
+		TreeEmpty() : 8;
+		TreeNode(k, v, l, r, d) :
+			8 +
+			8 + 16 * listLen(v) +
+			lzw_measure_dec_dict_full_phrase(l) +
+			lzw_measure_dec_dict_full_phrase(r) +
+			8
+	}
+}
+
+lzw_encode_rec_full_phrase(s : string, sLength : int, i : int, code : ref int, phrase : ref [int], dict : ref Tree<[int], int>, storeResult : () -> void) -> void {
+	if (i < sLength) {
+		currChar = getCharCodeAt(s, i);
+		// tested List here, the array is better from performance and memory point of view
+		newPhrase = arrayPush(^phrase, currChar);
+		if (isSome(lookupTree(^dict, newPhrase))) {
+			phrase := newPhrase;
+		} else {
+			storeResult();
+			dict := setTree(^dict, newPhrase, ^code);
+			code := ^code + 1;
+			phrase := [currChar];
+		};
+		lzw_encode_rec_full_phrase(s, sLength, i + 1, code, phrase, dict, storeResult)
+	} else {
+		storeResult()
+	}
+}
+
+lzw_encode_full_phrase(s : string, style : [CodecStyle]) -> string {
+	memUsedM = tryExtractStruct(style, MemUsedR(ref 0));
+	dict : ref Tree<[int], int> = ref makeTree();
+	out : ref List<string> = ref makeList();
+	phrase : ref [int]= ref [getCharCodeAt(s, 0)];
+	code = ref 65536;
+
+	intAsString : (int) -> string = \i -> {
+		fromCharCode(i) + fromCharCode(bitUshr(i, 16));
+	};
+
+	lzw_encode_rec_full_phrase(s, strlen(s), 1, code, phrase, dict, \ -> {
+		out := Cons(
+			intAsString(if (length(^phrase) > 1) {
+				lookupTreeDef(^dict, ^phrase, 0);
+			} else {
+				^phrase[0];
+			}),
+			^out
+		);
+	});
+
+	switch (memUsedM) {
+		Some(mu): {
+			mu.bytes :=
+				2 * 4 * length(^phrase) +
+				lzw_measure_enc_dict_full_phrase(^dict);
+		}
+		None(): {}
+	}
+
+	list2string(^out)
+}
+
+lzw_decode_rec_full_phrase(
+	i : int,
+	limit : int,
+	code : ref int,
+	currChar : ref int,
+	oldPhrase : ref List<int>,
+	data : (int) -> int,
+	dict : ref Tree<int, List<int>>,
+	out : ref List<string>
+) -> void {
+	if (i <= limit) {
+		currCode = data(i);
+		phrase = if (currCode < 65536) {
+			makeList1(data(i));
+		} else {
+			eitherFn(
+				lookupTree(^dict, currCode),
+				idfn,
+				\ -> Cons(^currChar, ^oldPhrase)
+			)
+		}
+		phraseA = phrase |> list2array;
+		out := Cons(superglue(phraseA, fromCharCode, ""), ^out);
+		currChar := phraseA[0];
+		dict := setTree(^dict, ^code, Cons(^currChar, ^oldPhrase));
+		code := ^code + 1;
+		oldPhrase := phrase;
+
+		lzw_decode_rec_full_phrase(i + 1, limit, code, currChar, oldPhrase, data, dict, out);
+	}
+}
+
+// Decompress an LZW-encoded string
+lzw_decode_full_phrase(s : string, style : [CodecStyle]) -> string {
+	memUsedM = tryExtractStruct(style, MemUsedR(ref 0));
+	data = \i : int -> {
+		getCharCodeAt(s, 2*i) + bitShl(getCharCodeAt(s, 2*i + 1), 16);
+	}
+
+	dict : ref Tree<int, List<int>> = ref makeTree();
+	currChar : ref int = ref data(0);
+	out : ref List<string> = ref makeList1(getCharAt(s, 0));
+	oldPhrase : ref List<int> = ref makeList1(^currChar);
+	code = ref 65536;
+
+	lzw_decode_rec_full_phrase(1, round(i2d(strlen(s))/2.0 - 1.0), code, currChar, oldPhrase, data, dict, out);
+
+	switch (memUsedM) {
+		Some(mu): {
+			phraseLen = listLen(^oldPhrase);
+			mu.bytes :=
+				8 + 16 * phraseLen + 4 * phraseLen +
+				lzw_measure_dec_dict_full_phrase(^dict);
+		}
+		None(): {}
+	};
+
+	list2string(^out)
+}
+
+main() {
+	oldCodec = Codec("LZW Full phrase", lzw_encode_full_phrase, lzw_decode_full_phrase);
+	newCodec = Codec("LZW short", lzw_encode, lzw_decode);
+
+	srcInfo = "source: " + i2s(2 * strlen(sourceStr));
+	println(srcInfo);
+	println(strRepeat("^", strlen(srcInfo)));
+	println("");
+
+	printHeader();
+	//println(test(sourceStr, newCodec));
+
+	fori (1, 256, \i ->
+		printResult(test(strRepeat(sourceStr, i), newCodec, [BitPacking(true)]))
+	);
+
+	/*iter(
+		[
+			Codec("LZW Full phrase", lzw_encode_full_phrase, lzw_decode_full_phrase),
+			Codec("LZW Ref phrase", lzw_encode, lzw_decode),
+		],
+		\codec -> printResult(test(testStr, codec))
+	);
+	println("");*/
 	quit(0);
 }
 
