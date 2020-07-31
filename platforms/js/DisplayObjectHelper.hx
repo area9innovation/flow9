@@ -2307,4 +2307,12 @@ class DisplayObjectHelper {
 			}
 		}
 	}
+
+	public static function isParentOf(parent : DisplayObject, child : DisplayObject) : Bool {
+		if (child.parent == parent) {
+			return true;
+		} else {
+			return child.parent != null && isParentOf(parent, child.parent);
+		}
+	}
 }
