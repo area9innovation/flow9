@@ -735,9 +735,9 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightdown");
@@ -759,9 +759,9 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightup");
@@ -788,9 +788,9 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				emit("mousemove");
 			}
