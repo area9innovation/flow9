@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 19;
+var SERVICE_WORKER_VERSION = 20;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -1052,6 +1052,9 @@ self.addEventListener('fetch', function(event) {
             if (isEmpty(etag)) {
               return doFetchFn();
             } else {
+              if (etag.endsWith("-gzip")) etag = etag.substring(0, etag.length - 5);
+              else if (etag.endsWith("-gzip\"")) etag = etag.substring(0, etag.length - 6) + "\"";
+
               return createIfNoneMatchRequest(requestData, etag).then(function(cRequest) {
                   return fetch(cRequest).then(function(response) {
                     if (response.status == 200 && response.type == "basic") {
