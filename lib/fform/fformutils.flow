@@ -1229,6 +1229,15 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> () -> void {
 	onFinish = extractStruct(style, FAnimationOnFinish(nop)).onFinish;
 	animationPercent = tryExtractStruct(style, FAnimationPercent(make(0.0)));
+	direction =
+		if (contains(style, FAnimationAlternateReverse()))
+			FAnimationAlternateReverse()
+		else if (contains(style, FAnimationAlternate()))
+			FAnimationAlternate()
+		else if (contains(style, FAnimationReverse()))
+			FAnimationReverse()
+		else
+			FAnimationNormal();
 
 	makeSubscribeUns(keyframes, \kf -> {
 		if (length(kf) > 0) {
@@ -1245,7 +1254,16 @@ renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, sty
 											extractStruct(style, FAnimationIterations(const(1))).iterations,
 											\iterations ->
 												[
-													addFClipAnimation(clip, addMissingFAnimationKeyframeValues(kf), duration, easing, iterations, onFinish, animationPercent)
+													addFClipAnimation(
+														clip,
+														addMissingFAnimationKeyframeValues(kf),
+														duration,
+														easing,
+														iterations,
+														direction,
+														onFinish,
+														animationPercent
+													)
 												]
 										)()
 									]
@@ -1317,8 +1335,17 @@ addMissingFAnimationKeyframeValues(keyframes : [FAnimationKeyframe]) -> [FAnimat
 	});
 }
 
-addFClipAnimation(clip : native, keyframes : [FAnimationKeyframe], duration : double, easing : CubicBezierEasing, iterations : int, onFinish : () -> void, animationPercent : Maybe<FAnimationPercent>) -> () -> void {
-	commitStylesFn = \ -> {
+addFClipAnimation(
+	clip : native,
+	keyframes : [FAnimationKeyframe],
+	duration : double,
+	easing : CubicBezierEasing,
+	iterations : int,
+	direction : FAnimationDirection,
+	onFinish : () -> void,
+	animationPercent : Maybe<FAnimationPercent>
+) -> () -> void {
+commitStylesFn = \ -> {
 		iter(keyframes[length(keyframes) - 1].values, \v -> {
 			switch (v : FAnimationValue) {
 				FScaleValue(factor): {
@@ -1335,6 +1362,7 @@ addFClipAnimation(clip : native, keyframes : [FAnimationKeyframe], duration : do
 				FRotateValue(degrees): {
 					setClipRotation(clip, degrees);
 				}
+				FEasingValue(__): {}
 			}
 		});
 	}
@@ -1440,10 +1468,23 @@ addFClipAnimation(clip : native, keyframes : [FAnimationKeyframe], duration : do
 								eitherFn(
 									findi(acc, \vvv -> vvv == "transform"),
 									\i -> {
-										replace(acc, i + 1, acc[i + 1] + " rotate(" + d2s(degrees) + ")")
+										replace(acc, i + 1, acc[i + 1] + " rotate(" + d2s(degrees) + "deg)")
 									},
 									\ -> {
-										concat(acc, ["transform", "rotate(" + d2s(degrees) + ")"])
+										concat(acc, ["transform", "rotate(" + d2s(degrees) + "deg)"])
+									}
+								)
+							}
+							FEasingValue(easing2): {
+								eitherFn(
+									findi(acc, \vvv -> vvv == "easing"),
+									\i -> {
+										replace(acc, i + 1, acc[i + 1] + " cubic-bezier(" + d2s(easing2.x1) + ", " + d2s(easing2.y1) + ", " +
+											d2s(easing2.x2) + ", " + d2s(easing2.y2) + ")")
+									},
+									\ -> {
+										concat(acc, ["easing", "cubic-bezier(" + d2s(easing2.x1) + ", " + d2s(easing2.y1) + ", " +
+											d2s(easing2.x2) + ", " + d2s(easing2.y2) + ")"])
 									}
 								)
 							}
@@ -1462,7 +1503,19 @@ addFClipAnimation(clip : native, keyframes : [FAnimationKeyframe], duration : do
 					],
 					[
 						"iterations",
-						i2s(iterations)
+						if (iterations >= intMax)
+							"Infinity"
+						else
+							i2s(iterations)
+					],
+					[
+						"direction",
+						switch (direction : FAnimationDirection) {
+							FAnimationNormal(): "normal";
+							FAnimationAlternate(): "alternate";
+							FAnimationReverse(): "reverse";
+							FAnimationAlternateReverse(): "alternate-reverse";
+						}
 					]
 				],
 				\ -> {
@@ -1476,6 +1529,7 @@ addFClipAnimation(clip : native, keyframes : [FAnimationKeyframe], duration : do
 					started = ref None();
 					iteration = ref 0;
 					disp = ref nop;
+					reversed = ref direction == FAnimationReverse() || direction == FAnimationAlternateReverse();
 
 					disp :=
 						addDrawFrameEventListener(\df -> {
@@ -1495,33 +1549,53 @@ addFClipAnimation(clip : native, keyframes : [FAnimationKeyframe], duration : do
 								if (percent < 1.0) {
 									maybeApply(animationPercent, \ap -> next(ap.percent, percent));
 
-									easedPercent = lerpCurve(0.0, 1.0, easing)(percent);
+									easedPercent = lerpCurve(0.0, 1.0, easing)(if (^reversed) 1.0 - percent else percent);
 
 									i = floor(i2d(length(keyframes) - 1) * easedPercent);
 									keyframe = keyframes[i];
 									nextKeyframe = keyframes[min(i + 1, length(keyframes) - 1)];
 									localPercent = (easedPercent - i2d(i) / i2d(length(keyframes) - 1)) * i2d(length(keyframes) - 1);
+									localEasing = extractStruct(keyframe.values, FEasingValue(easingLinearCurve)).easing;
 
 									iter(keyframe.values, \v -> {
 										switch (v : FAnimationValue) {
 											FScaleValue(factor): {
 												nextFactor = extractStruct(nextKeyframe.values, v).factor;
-												setClipScaleX(clip, lerp(factor.x, nextFactor.x, localPercent));
-												setClipScaleY(clip, lerp(factor.y, nextFactor.y, localPercent));
+												if (^reversed) {
+													setClipScaleX(clip, lerpCurve(nextFactor.x, factor.x, localEasing)(1.0 - localPercent));
+													setClipScaleY(clip, lerpCurve(nextFactor.y, factor.y, localEasing)(1.0 - localPercent));
+												} else {
+													setClipScaleX(clip, lerpCurve(factor.x, nextFactor.x, localEasing)(localPercent));
+													setClipScaleY(clip, lerpCurve(factor.y, nextFactor.y, localEasing)(localPercent));
+												}
 											}
 											FAlphaValue(alpha): {
 												nextAlpha = extractStruct(nextKeyframe.values, v).alpha;
-												setClipAlpha(clip, lerp(alpha, nextAlpha, localPercent));
+												if (^reversed) {
+													setClipAlpha(clip, lerpCurve(nextAlpha, alpha, localEasing)(1.0 - localPercent));
+												} else {
+													setClipAlpha(clip, lerpCurve(alpha, nextAlpha, localEasing)(localPercent));
+												}
 											}
 											FTranslateValue(point): {
 												nextPoint = extractStruct(nextKeyframe.values, v).point;
-												setClipX(clip, lerp(point.x, nextPoint.x, localPercent));
-												setClipY(clip, lerp(point.y, nextPoint.y, localPercent));
+												if (^reversed) {
+													setClipX(clip, lerpCurve(nextPoint.x, point.x, localEasing)(1.0 - localPercent));
+													setClipY(clip, lerpCurve(nextPoint.y, point.y, localEasing)(1.0 - localPercent));
+												} else {
+													setClipX(clip, lerpCurve(point.x, nextPoint.x, localEasing)(localPercent));
+													setClipY(clip, lerpCurve(point.y, nextPoint.y, localEasing)(localPercent));
+												}
 											}
 											FRotateValue(degrees): {
 												nextPoint = extractStruct(nextKeyframe.values, v).degrees;
-												setClipRotation(clip, lerp(degrees, nextPoint, localPercent));
+												if (^reversed) {
+													setClipRotation(clip, lerpCurve(nextPoint, degrees, localEasing)(1.0 - localPercent));
+												} else {
+													setClipRotation(clip, lerpCurve(degrees, nextPoint, localEasing)(localPercent));
+												}
 											}
+											FEasingValue(__): { }
 										}
 									});
 								} else {
@@ -1536,6 +1610,10 @@ addFClipAnimation(clip : native, keyframes : [FAnimationKeyframe], duration : do
 										onFinish();
 									} else {
 										started := Some(df);
+
+										if (direction == FAnimationAlternate() || direction == FAnimationAlternateReverse()) {
+											reversed := !^reversed;
+										}
 									}
 								}
 							}

@@ -1682,7 +1682,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html" && Browser.document.body.animate != null) {
+		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -1719,7 +1719,10 @@ class RenderSupport {
 							keyframes.map(
 								function(keyframe : Array<String>) {
 									var o : Dynamic = {};
-									untyped o[keyframe[0]] = keyframe[1];
+									var ii : Int = Std.int(keyframe.length / 2);
+									for (i in 0...ii) {
+										untyped o[keyframe[i * 2]] = keyframe[i * 2 + 1];
+									}
 									return o;
 								}
 							),
@@ -1738,6 +1741,7 @@ class RenderSupport {
 						}
 					}
 				} catch (e : Dynamic) {
+					trace("addClipAnimation error:");
 					trace(e);
 
 					return fallbackAnimation();
@@ -2055,9 +2059,10 @@ class RenderSupport {
 
 						RenderSupport.pointerOverClips.push(clip);
 					}
-				}
+
 					fn();
 				}
+			}
 
 			clip.on("pointerover", checkFn);
 			clip.invalidateInteractive();
