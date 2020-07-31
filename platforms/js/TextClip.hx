@@ -1244,6 +1244,7 @@ class TextClip extends NativeWidgetClip {
 			for (f in TextInputKeyDownFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
+					e.stopPropagation();
 					RenderSupport.emit('keydown', ke);
 					break;
 				}
@@ -1262,6 +1263,7 @@ class TextClip extends NativeWidgetClip {
 			for (f in TextInputKeyUpFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
+					e.stopPropagation();
 					RenderSupport.emit('keyup', ke);
 					break;
 				}
