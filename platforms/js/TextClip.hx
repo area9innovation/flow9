@@ -1048,7 +1048,7 @@ class TextClip extends NativeWidgetClip {
 			} else if (e.touches.length > 1) {
 				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1086,7 +1086,7 @@ class TextClip extends NativeWidgetClip {
 			} else if (e.touches.length > 1) {
 				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1116,7 +1116,7 @@ class TextClip extends NativeWidgetClip {
 			if (e.touches.length == 0) {
 				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1244,6 +1244,7 @@ class TextClip extends NativeWidgetClip {
 			for (f in TextInputKeyDownFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
+					e.stopPropagation();
 					RenderSupport.emit('keydown', ke);
 					break;
 				}
@@ -1262,6 +1263,7 @@ class TextClip extends NativeWidgetClip {
 			for (f in TextInputKeyUpFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
+					e.stopPropagation();
 					RenderSupport.emit('keyup', ke);
 					break;
 				}
