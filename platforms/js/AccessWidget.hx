@@ -718,7 +718,7 @@ class AccessWidget extends EventEmitter {
 					} else if (e.touches.length > 1) {
 						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageX) {
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 					RenderSupport.MousePos.x = e.pageX;
 					RenderSupport.MousePos.y = e.pageY;
 
@@ -745,7 +745,7 @@ class AccessWidget extends EventEmitter {
 					if (e.touches.length == 0) {
 						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageX) {
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 					RenderSupport.MousePos.x = e.pageX;
 					RenderSupport.MousePos.y = e.pageY;
 
