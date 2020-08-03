@@ -2037,32 +2037,31 @@ class RenderSupport {
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
 			var checkFn = function() {
-				if (untyped !clip.pointerOver) {
-					untyped clip.pointerOver = true;
-					if (Platform.isSafari && RenderSupport.pointerOverClips.indexOf(clip) < 0) {
-						var clipsToRemove = [];
+					if (untyped !clip.pointerOver) {
+						untyped clip.pointerOver = true;
+						if (Platform.isSafari && RenderSupport.pointerOverClips.indexOf(clip) < 0) {
+							var clipsToRemove = [];
 
-						for (pointerOverClip in RenderSupport.pointerOverClips) {
-							if (untyped pointerOverClip.pointerOver && !pointerOverClip.destroyed) {
-								if (!pointerOverClip.isParentOf(clip) && !clip.isParentOf(pointerOverClip)) {
-									pointerOverClip.emit("pointerout");
+							for (pointerOverClip in RenderSupport.pointerOverClips) {
+								if (untyped pointerOverClip.pointerOver && !pointerOverClip.destroyed) {
+									if (!pointerOverClip.isParentOf(clip) && !clip.isParentOf(pointerOverClip)) {
+										pointerOverClip.emit("pointerout");
+										clipsToRemove.push(pointerOverClip);
+									}
+								} else {
 									clipsToRemove.push(pointerOverClip);
 								}
-							} else {
-								clipsToRemove.push(pointerOverClip);
 							}
-						}
 
-						for (pointerOverClip in clipsToRemove) {
-							RenderSupport.pointerOverClips.remove(pointerOverClip);
-						}
+							for (pointerOverClip in clipsToRemove) {
+								RenderSupport.pointerOverClips.remove(pointerOverClip);
+							}
 
-						RenderSupport.pointerOverClips.push(clip);
+							RenderSupport.pointerOverClips.push(clip);
+						}
+						fn();
 					}
-
-					fn();
 				}
-			}
 
 			clip.on("pointerover", checkFn);
 			clip.invalidateInteractive();
