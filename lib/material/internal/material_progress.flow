@@ -73,59 +73,77 @@ MProgressBar2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressBar
 	defBackground = MColor(color with shade = if (color.color == CCustom()) MTintColor(color) else 100);
 	backgroundColor = extractStruct(style, MProgressBackgroundColor(defBackground)).color;
 
+	barSize = make(0.5);
+
+	makeBar = \barEnd -> {
+		startOffsetP = fselect(fsubtract(barEnd, barSize), FLift(\stOff -> forceRange(stOff, 0., 1.)));
+		len = fselect2(startOffsetP, barEnd, FLift2(\startOffset, end -> (forceRange(end, 0., 1.) - startOffset) * size.width));
+
+		TSizedWidth(len, size.height)
+		|> addTBackground(color)
+		|> (\t -> TTranslate(fselect(startOffsetP, FLift(\startOffset -> Point(startOffset * size.width, 0.0))), t))
+	}
+
+	duration = 2.0;
+	durationSlow = 0.8;
+	durationFast = 0.5;
+	barFastStart = 1.15;
+
+	barSlow = make(0.0);
+	barFast = make(0.0);
+
 	bar = TGroup2(
-		TAnimation(
-			TFixed(size.width, size.height)
-			|> addTBackground(color),
-			const([
-				FAnimationKeyframe([
-					FTranslateValue(Point(-size.width * 0.5, 0.0)),
-					FScaleValue(Factor(0.5, 1.0))
-				]),
-				FAnimationKeyframe([
-					FTranslateValue(Point(size.width * 2.0 / 3.0, 0.0)),
-					FScaleValue(Factor(2.0 / 3.0, 1.0))
-				]),
-				FAnimationKeyframe([
-					FTranslateValue(Point(size.width * 4.0 / 3.0, 0.0)),
-					FScaleValue(Factor(2.0 / 3.0, 1.0))
-				])
-			]),
-			[
-				FAnimationDuration(const(2.0)),
-				FAnimationIterations(const(intMax)),
-				FAnimationEasing(const(easingFastOutLinearIn))
-			]
-		),
-		TAnimation(
-			TFixed(size.width, size.height)
-			|> addTBackground(color),
-			const([
-				FAnimationKeyframe([
-					FTranslateValue(Point(-size.width, 0.0)),
-					FScaleValue(Factor(0.5, 1.0))
-				]),
-				FAnimationKeyframe([
-					FTranslateValue(Point(-size.width, 0.0)),
-					FScaleValue(Factor(0.5, 1.0))
-				]),
-				FAnimationKeyframe([
-					FTranslateValue(Point(size.width, 0.0)),
-					FScaleValue(Factor(1.0 / 3.0, 1.0))
-				])
-			]),
-			[
-				FAnimationDuration(const(2.0)),
-				FAnimationIterations(const(intMax)),
-				FAnimationEasing(const(easingFastOutLinearIn))
-			]
-		)
+		makeBar(barSlow),
+		makeBar(barFast)
 	);
+
+	passed = make(0.0);
 
 	TGroup2(
 		TRectangle([MThemeFill(parent, backgroundColor)], TFixed(size.width, size.height)),
-		TMask(bar, TRectangle([Fill(black)], TFixed(size.width, size.height)))
+		bar
 	)
+	|> (\progressBar ->
+		if (^mProgressEnabled)
+			TConstructRenderable(
+				[
+					\ -> {
+						manager.manager.deltaTimer.attach();
+						\ -> manager.manager.deltaTimer.detach()
+					},
+					makeSubscribe(manager.manager.deltaTimer.timer, \dt -> {
+						p = getValue(passed) + dt;
+						if (p < duration) {
+							next(passed, p);
+
+							nextDistinct(barSlow, getValue(barSlow) + dt / durationSlow);
+							if (p > barFastStart) nextDistinct(barFast, getValue(barFast) + dt / durationFast);
+
+							growthDuration = durationSlow * 0.5;
+							growthStart = durationSlow * 0.5;
+							if (p > growthStart && p <= growthStart + growthDuration) {
+								nextDistinct(barSize, 0.5 + 0.25 * (p - growthStart) / growthDuration)
+}
+
+							shrinkStart = barFastStart + durationFast * 0.75;
+							shrinkDuration = durationFast * 0.2;
+							if (p > shrinkStart && p <= shrinkStart + shrinkDuration) {
+								nextDistinct(barSize, 0.75 - 0.25 * (p - shrinkStart) / shrinkDuration)
+							}
+						} else {
+							next(passed, p - duration);
+
+							next(barSlow, 0.0);
+							next(barFast, 0.0);
+						}
+					})
+				],
+				progressBar
+			)
+		else
+			progressBar
+	)
+	|> makeTropicConstant2(size.width, size.height)
 }
 
 MProgressCircleDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressCircleDeterm) -> Tropic {
@@ -135,8 +153,9 @@ MProgressCircleDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MPr
 	circleSize = extractStruct(style, MProgressCircleSize(4.0, 20.0));
 	color = extractMColor(parent, style, MPrimaryColor());
 	size = (circleSize.radius + circleSize.stroke) * 2.0;
+	arrowScale = extractStruct(style, MAddArrow(zero)).arrowScale;
 
-	ProgressCircleWithArrow(parent, fselect(percent, FLift(\p -> min(1.0, max(0.0, p)) * 360.)), make(0.), circleSize.stroke, circleSize.radius, zero,
+	ProgressCircleWithArrow(parent, fselect(percent, FLift(\p -> min(1.0, max(0.0, p)) * 360.)), make(0.), circleSize.stroke, circleSize.radius, arrowScale,
 		extractStruct(style, MFill(color)).color, extractStruct(style, FillOpacity(1.0)).opacity, false, 1., 2.)
 	|> (\f -> TTranslate(const(Point(size / 2., size / 2.)), f))
 	|> makeTropicConstant2(size, size)
@@ -144,177 +163,73 @@ MProgressCircleDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MPr
 
 MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressCircle) -> Tropic {
 	style = m.style;
+
 	circleSize = extractStruct(style, MProgressCircleSize(4.0, 20.0));
 	color = extractMColor(parent, style, MPrimaryColor());
 	size = (circleSize.radius + circleSize.stroke) * 2.0;
-	strokeColor = extractStruct(style, MFill(color)).color;
-	strokeOpacity = extractStruct(style, FillOpacity(1.0)).opacity;
 
-	TGroup([
-		TMask( // left
-			TAnimation(
-				TGraphics(
-					CustomSector2(
-						0.,
-						0.,
-						circleSize.radius,
-						0.0,
-						135.0,
-						false,
-						[]
-					).path,
-					[
-						Stroke(strokeColor),
-						StrokeWidth(circleSize.stroke),
-						StrokeOpacity(strokeOpacity),
-					]
-				),
-				const([
-					FAnimationKeyframe([
-						FRotateValue(0.0),
-						FEasingValue(easingStandartCurve)
-					]),
-					FAnimationKeyframe([
-						FRotateValue(-135.0),
-						FEasingValue(easingStandartCurve)
-					]),
-					FAnimationKeyframe([
-						FRotateValue(0.0)
-					])
-				]),
-				[
-					FAnimationDuration(const(4.0 / 3.0)),
-					FAnimationIterations(const(intMax))
-				]
-			),
-			TGraphics(
-				[GRect(-size, -size, size, size * 2.0)],
-				[Fill(white)]
-			)
-		), // right
-		TMask(
-			TAnimation(
-				TGraphics(
-					CustomSector2(
-						0.,
-						0.,
-						circleSize.radius,
-						45.0,
-						180.0,
-						false,
-						[]
-					).path,
-					[
-						Stroke(strokeColor),
-						StrokeWidth(circleSize.stroke),
-						StrokeOpacity(strokeOpacity),
-					]
-				),
-				const([
-					FAnimationKeyframe([
-						FRotateValue(-180.0),
-						FEasingValue(easingStandartCurve)
-					]),
-					FAnimationKeyframe([
-						FRotateValue(-45.0),
-						FEasingValue(easingStandartCurve)
-					]),
-					FAnimationKeyframe([
-						FRotateValue(-180.0)
-					])
-				]),
-				[
-					FAnimationDuration(const(4.0 / 3.0)),
-					FAnimationIterations(const(intMax))
-				]
-			),
-			TGraphics(
-				[GRect(0.0, -size, size, size * 2.0)],
-				[Fill(white)]
-			)
-		),
-		TGraphics( // gap
-			CustomSector2(
-				0.,
-				0.,
-				circleSize.radius,
-				0.0,
-				10.0,
-				false,
-				[]
-			).path,
-			[
-				Stroke(strokeColor),
-				StrokeWidth(circleSize.stroke),
-				StrokeOpacity(strokeOpacity),
-			]
-		)
-		|> (\f -> TRotate(const(-5.0), f))
-	])
-	|> (\f ->
-		TAnimation(
-			f,
-			const([
-				FAnimationKeyframe([
-					FRotateValue(0.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(135.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(270.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(405.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(540.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(675.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(810.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(945.0),
-					FEasingValue(easingStandartCurve)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(1080.0)
-				])
-			]),
-			[
-				FAnimationDuration(const(16.0 / 3.0)),
-				FAnimationIterations(const(intMax))
-			]
-		)
-	)
-	|> (\f ->
-		TAnimation(
-			f,
-			const([
-				FAnimationKeyframe([
-					FRotateValue(0.0)
-				]),
-				FAnimationKeyframe([
-					FRotateValue(360.0)
-				])
-			]),
-			[
-				FAnimationDuration(const(8.0 / 3.0)),
-				FAnimationIterations(const(intMax))
-			]
-		)
-	)
+	from = make(0.0);
+	to = make(0.0);
+	arrowScale = extractStruct(style, MAddArrow(zero)).arrowScale;
+
+	deltaTimer = manager.manager.deltaTimer;
+	duration = 0.65;
+
+	tick = make(false);
+	arcMax = 360.0;
+	progress = ref getValue(from);
+	progressMultiplier = 13.0 * 180.0 / 24.0;
+
+	beforeFn = \tr -> {
+		prog = ^progress;
+
+		if (tr) {
+			progress := prog - arcMax;
+			next(to, prog);
+			next(from, prog - arcMax);
+		} else {
+			next(from, prog);
+			next(to, prog);
+		}
+	}
+
+	ProgressCircleWithArrow(parent, to, from, circleSize.stroke, circleSize.radius, arrowScale, extractStruct(style, MFill(color)).color,
+		extractStruct(style, FillOpacity(1.0)).opacity, false, 0.75, 1.)
 	|> (\progressCircle -> TTranslate(const(Point(size / 2., size / 2.)), progressCircle))
+	|> (\progressCircle ->
+		if (^mProgressEnabled)
+			MEasingAnimation(manager, parent, const(duration), const(easingStandartCurve), tick,
+				\tr -> {
+					beforeFn(tr);
+
+					Some(tr)
+				},
+				\tr, p -> {
+					prog = ^progress;
+
+					if (tr) {
+						next(from, prog - arcMax * (1.0 - p));
+						next(to, prog)
+					} else {
+						next(from, prog);
+						next(to, prog + arcMax * p)
+					}
+				},
+				[MAutoStart(), MLoop(\tr -> {beforeFn(!tr); Some(!tr)}), MForceAnimation(), MStopOffScreen(true)],
+				TConstructRenderable(
+			[
+						\ -> { deltaTimer.attach(); \ -> deltaTimer.detach(); },
+						\ -> subscribe2(deltaTimer.timer, \dt -> {
+							progress := ^progress + progressMultiplier * (dt / duration);
+						}),
+					],
+					progressCircle
+	)
+		)
+		else
+			progressCircle
+	)
+	|> makeTropicConstant2(size, size)
 	|> (\t -> TGroup2(t, TRectangle(interactiveRectangleStyle, TFixed(size, size))))
 }
 
