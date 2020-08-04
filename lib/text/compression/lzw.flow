@@ -6,59 +6,31 @@ import math/bits;
 import loop;
 
 export {
-	// LZW-compress a string. compress time ~ decompress time
-	compressLzw(s : string) -> string;
-	compressLzwExt(s : string, bitPacking : bool) -> string;
-
-	// Decompress an LZW-encoded string
+/*
+see lib/text/compression/test_lzw.flow
+for JS:
+ Org.size |Enc.t |Dec.t | Enc.size |%org|?
+——————————+——————+——————+——————————+————+—
+    239358|    48|    28|     45144| 18%|V
+   2393580|   376|    43|    171680|  7%|V
+   4787160|   594|    77|    258520|  5%|V
+   7180740|  1059|    82|    326628|  4%|V
+   9574320|  1434|   109|    388588|  4%|V
+  11967900|  2353|   109|    446260|  3%|V
+  14361480|  2686|   188|    498548|  3%|V
+  16755060|  3818|   157|    547056|  3%|V
+  19148640|  4090|   187|    593404|  3%|V
+  21542220|  5307|   175|    637988|  2%|V
+  23935800|  5358|   214|    680788|  2%|V
+*/
+  	compressLzw(s : string) -> string;
 	decompressLzw(data : string) -> string;
-	decompressLzwExt(data : string, bitPacking : bool) -> string;
-
-
-	// ~2 times slower compressions than compressLzw but ~10 times faster decompression
-	compressLzwFp(s : string) -> string;
-	decompressLzwFp(s : string) -> string;
-}
-
-compressLzw(s : string) -> string {
-	compressLzwExt(s, true)
-}
-
-decompressLzw(data : string) -> string {
-	decompressLzwExt(data, true)
 }
 
 EncPhrase(children : ref IntTree<int>);
-DecPhrase(parent : int, suffix : int /* char */);
-
-lzw_measure_enc_phrase(p : ref IntTree<int>) -> int {
-	switch (^p) {
-		IntTreeNode(children): 128 + sum(map(children, lzw_measure_enc_phrase));
-		IntTreeValue(__, __): 16;
-		IntTreeNone(): 8;
-	}
-}
-
-lzw_measure_enc_dict(t : IntTree<EncPhrase>) -> int {
-	switch (t) {
-		IntTreeNode(children): 128 + sum(map(children, \child -> lzw_measure_enc_dict(^child)));
-		IntTreeValue(__, phrase): 8 + lzw_measure_enc_phrase(phrase.children);
-		IntTreeNone(): 8;
-	}
-}
-
-lzw_measure_dec_dict(t : IntTree<DecPhrase>) -> int {
-	switch (t) {
-		IntTreeNode(children): 128 + sum(map(children, \child -> lzw_measure_dec_dict(^child)));
-		IntTreeValue(__, __): 32;
-		IntTreeNone(): 8;
-	}
-}
-
 LZWEncodingAcc(list : List<string>, phraseIdx : int, phraseWidth : int, remainder : int, remainderLen : int);
-LZWDecodingAcc(list : List<string>, phraseIdx : int, phraseWidth : int, remainder : int, remainderLen : int, phrase : string, skip : bool);
 
-compressLzwExt(s : string, bitPacking : bool) -> string {
+compressLzw(s : string) -> string {
 	dict : ref IntTree<EncPhrase> = makeIntTree();
 	makePhrase = \-> EncPhrase(makeIntTree());
 	code = ref 65535;
@@ -78,24 +50,7 @@ compressLzwExt(s : string, bitPacking : bool) -> string {
 			LZWEncodingAcc(acc.list, phIdx, newWidth, next, nextLen)
 	};
 
-	out = if (bitPacking) stringFoldi(s, LZWEncodingAcc(makeList(), getCharCodeAt(s, 0), 16, 0, 0), \i, acc, c -> if (i == 0) acc else {
-		phrase = switch (lookupIntTree(dict, acc.phraseIdx)) {
-			Some(ph): ph;
-			None(): {
-				ph = makePhrase();
-				dict := addOrUpdateIntTree(dict, acc.phraseIdx, ph);
-				ph
-			};
-		};
-		switch (lookupIntTree(phrase.children, c)) {
-			Some(phi): LZWEncodingAcc(acc with phraseIdx=phi)
-			None(): {
-				code := ^code + 1;
-				phrase.children := addOrUpdateIntTree(phrase.children, c, ^code);
-				pushPhrase(acc, c, acc.phraseWidth + if (acc.phraseWidth == 32) 0 else bitUshr(^code, acc.phraseWidth));
-			}
-		}
-	}) else stringFoldi(s, LZWEncodingAcc(makeList(), getCharCodeAt(s, 0), 32, 0, 0), \i, acc, c -> if (i == 0) acc else {
+	out = stringFoldi(s, LZWEncodingAcc(makeList(), getCharCodeAt(s, 0), 32, 0, 0), \i, acc, c -> if (i == 0) acc else {
 		phrase = switch (lookupIntTree(dict, acc.phraseIdx)) {
 			Some(ph): ph;
 			None(): {
@@ -114,108 +69,10 @@ compressLzwExt(s : string, bitPacking : bool) -> string {
 		}
 	});
 
-	if (bitPacking) {
-		tmp = pushPhrase(out, 0, out.phraseWidth);
-		list2string(
-			if (tmp.remainderLen > 16) Cons(intAsString(tmp.remainder), tmp.list)
-			else if (tmp.remainderLen > 0) Cons(fromCharCode(tmp.remainder), tmp.list)
-			else tmp.list
-		)
-	} else
-		list2string(Cons(intAsString(out.phraseIdx), out.list))
+	list2string(Cons(intAsString(out.phraseIdx), out.list))
 }
 
-// Decompress an LZW-encoded string
-decompressLzwExt(s : string, bitPacking : bool) -> string {
-
-	dict : ref IntTree<DecPhrase> = makeIntTree();
-	code = ref 65536;
-
-	getFullPhrase = \idx -> {
-		acc = updateWhile(Pair(idx, ""), \p -> {
-			phraseM = lookupIntTree(dict, p.first);
-			switch (phraseM) {
-				Some(phrase): Some(Pair(
-					phrase.parent,
-					fromCharCode(phrase.suffix) + p.second
-				));
-				None(): None();
-			}
-		});
-		fromCharCode(acc.first) + acc.second;
-	};
-
-	out = stringFold(s, LZWDecodingAcc(makeList(), 0, if (bitPacking) 16 else 32, 0, 0, "", true), \acc, c -> {
-		if (acc.remainderLen + 16 >= acc.phraseWidth) {
-			remainderLen = 16 + acc.remainderLen - acc.phraseWidth;
-			remainder = bitUshr(c, 16 - remainderLen);
-			phraseIdx = bitAnd(bitOr(acc.remainder, bitShl(c, acc.remainderLen)), bitUshr(-1, 32-acc.phraseWidth));
-			phrase = if (phraseIdx < ^code)
-				getFullPhrase(phraseIdx)
-			else
-				acc.phrase + strsubsmart(acc.phrase, 0, 1);
-			if (!acc.skip) {
-				dict := addOrUpdateIntTree(dict, ^code, DecPhrase(acc.phraseIdx, getCharCodeAt(phrase, 0)));
-				code := ^code + 1;
-			};
-			LZWDecodingAcc(
-				if (acc.skip) acc.list else Cons(acc.phrase, acc.list),
-				phraseIdx,
-				acc.phraseWidth + if (acc.phraseWidth == 32) 0 else bitUshr(^code, acc.phraseWidth),
-				remainder,
-				remainderLen,
-				phrase,
-				false
-			)
-		} else {
-			LZWDecodingAcc(acc with remainder=bitOr(acc.remainder, bitShl(c, acc.remainderLen)), remainderLen=16+acc.remainderLen)
-		}
-	});
-
-	list2string(Cons(out.phrase, out.list))
-}
-
-
-compressLzwFpRec(s : string, sLength : int, i : int, code : ref int, phrase : ref string, dict : ref Tree<string, int>, storeResult : () -> void) -> void {
-	if (i < sLength) {
-		currChar = getCharAt(s, i);
-		newPhrase = ^phrase + currChar;
-		if (isSome(lookupTree(^dict, newPhrase))) {
-			phrase := newPhrase;
-		} else {
-			storeResult();
-			dict := setTree(^dict, newPhrase, ^code);
-			code := ^code + 1;
-			phrase := currChar;
-		}
-		compressLzwFpRec(s, sLength, i + 1, code, phrase, dict, storeResult)
-	} else {
-		storeResult()
-	}
-}
-
-compressLzwFp(s : string) -> string {
-	dict : ref Tree<string, int> = ref makeTree();
-	out : ref List<string> = ref makeList();
-	phrase : ref string= ref (getCharAt(s, 0));
-	code = ref 65536;
-	zeroCode = fromCharCode(0);
-
-	compressLzwFpRec(s, strlen(s), 1, code, phrase, dict, \ -> {
-		out := Cons(
-			(if (strlen(^phrase) > 1) {
-				intAsString(lookupTreeDef(^dict, ^phrase, 0));
-			} else {
-				^phrase + zeroCode;
-			}),
-			^out
-		);
-	});
-
-	list2string(^out)
-}
-
-decompressLzwFpRec(
+decompressLzwRec(
 	i : int,
 	limit : int,
 	code : ref int,
@@ -242,12 +99,12 @@ decompressLzwFpRec(
 		code := ^code + 1;
 		oldPhrase := phrase;
 
-		decompressLzwFpRec(i + 1, limit, code, currChar, oldPhrase, data, dict, out);
+		decompressLzwRec(i + 1, limit, code, currChar, oldPhrase, data, dict, out);
 	}
 }
 
 // Decompress an LZW-encoded string
-decompressLzwFp(s : string) -> string {
+decompressLzw(s : string) -> string {
 	data = \i : int -> {
 		getCharCodeAt(s, 2*i) + bitShl(getCharCodeAt(s, 2*i + 1), 16);
 	}
@@ -258,7 +115,7 @@ decompressLzwFp(s : string) -> string {
 	oldPhrase : ref string = ref fromCharCode(^currChar);
 	code = ref 65536;
 
-	decompressLzwFpRec(1, round(i2d(strlen(s))/2.0 - 1.0), code, currChar, oldPhrase, data, dict, out);
+	decompressLzwRec(1, round(i2d(strlen(s))/2.0 - 1.0), code, currChar, oldPhrase, data, dict, out);
 
 	list2string(^out)
 }
