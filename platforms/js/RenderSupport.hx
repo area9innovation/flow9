@@ -735,9 +735,9 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightdown");
@@ -759,9 +759,9 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightup");
@@ -788,9 +788,9 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				emit("mousemove");
 			}
@@ -1945,6 +1945,8 @@ class RenderSupport {
 		}
 	}
 
+	private static var pointerOverClips : Array<DisplayObject> = [];
+
 	public static function addDisplayObjectEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
 		if (event == "transformchanged") {
 			clip.on("transformchanged", fn);
@@ -1964,11 +1966,31 @@ class RenderSupport {
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
 			var checkFn = function() {
-				if (untyped !clip.pointerOver) {
-					untyped clip.pointerOver = true;
-					fn();
+					if (untyped !clip.pointerOver) {
+						untyped clip.pointerOver = true;
+						if (Platform.isSafari && RenderSupport.pointerOverClips.indexOf(clip) < 0) {
+							var clipsToRemove = [];
+
+							for (pointerOverClip in RenderSupport.pointerOverClips) {
+								if (untyped pointerOverClip.pointerOver && !pointerOverClip.destroyed) {
+									if (!pointerOverClip.isParentOf(clip) && !clip.isParentOf(pointerOverClip)) {
+										pointerOverClip.emit("pointerout");
+										clipsToRemove.push(pointerOverClip);
+									}
+								} else {
+									clipsToRemove.push(pointerOverClip);
+								}
+							}
+
+							for (pointerOverClip in clipsToRemove) {
+								RenderSupport.pointerOverClips.remove(pointerOverClip);
+							}
+
+							RenderSupport.pointerOverClips.push(clip);
+						}
+						fn();
+					}
 				}
-			}
 
 			clip.on("pointerover", checkFn);
 			clip.invalidateInteractive();
@@ -1980,6 +2002,11 @@ class RenderSupport {
 			var checkFn = function() {
 				if (untyped clip.pointerOver) {
 					untyped clip.pointerOver = false;
+
+					if (Platform.isSafari && RenderSupport.pointerOverClips.indexOf(clip) < 0) {
+						RenderSupport.pointerOverClips.remove(clip);
+					}
+
 					fn();
 				}
 			}
