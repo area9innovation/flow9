@@ -193,7 +193,7 @@ class TextClip extends NativeWidgetClip {
 		return (code >= 0x30 && code < 0x3A)      // Decimals.
 			|| (code >= 0x41 && code < 0x5B)      // Capital basic latin.
 			|| (code >= 0x61 && code < 0x7B)      // Small basic latin.
-			|| (code >= 0xA0 && code < 0x590)     // Extended latin, diacritics, greeks, cyrillics, and other LTR alphabet letters, also symbols.
+			|| (code >= 0xA1 && code < 0x590)     // Extended latin, diacritics, greeks, cyrillics, and other LTR alphabet letters, also symbols.
 			|| (code >= 0x700 && code < 0x2000)   // Extended latin and greek, other LTR alphabet letters, also symbols.
 			|| (code >= 0x2100 && code < 0x2190)  // Punctuation, subscripts and superscripts, letterlikes, numerics, diacritics.
 			|| (code >= 0x2460 && code < 0x2500)  // Enclosed alphanums.
@@ -403,8 +403,10 @@ class TextClip extends NativeWidgetClip {
 
 		advanceCorrection = untyped (getAdvancedWidthsCorrection(tm, style, eochi, egchi, egb)-getAdvancedWidthsCorrection(tm, style, bochi, bgchi, bgb)) / UPM * style.fontSize;
 
-		var mtxb : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, bochi), style);
-		var mtxe : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, eochi), style);
+		var scriptingFixSuffix = "";  // Helps to keep substring ending letter form when measuring with Pixi.
+		if (isRtlChar(tm.text.substr(eochi, 1))) scriptingFixSuffix = "ث";  // Any letter with 4 variants.
+		var mtxb : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, bochi)+scriptingFixSuffix, style);
+		var mtxe : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, eochi)+scriptingFixSuffix, style);
 
 		return mtxe.width - mtxb.width + advanceCorrection;
 	}
