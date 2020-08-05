@@ -1373,7 +1373,12 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
 			nativeWidget.style.borderRadius = null;
-			nativeWidget.style.overflow = untyped clip.scrollRectListener != null ? "overlay" : clip.isInput ? "auto" : "hidden";
+			if (untyped clip.scrollRectListener != null) {
+				nativeWidget.classList.add("nativeScroll");
+				nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "scroll";
+			} else {
+				nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
+			}
 
 			scrollNativeWidget(clip, round(scrollRect.x), round(scrollRect.y));
 		} else if (mask != null) {
