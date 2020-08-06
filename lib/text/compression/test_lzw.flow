@@ -1,36 +1,104 @@
-import text/compression/lzw;
+import text/compression/api;
+
+Codec(name: string, enc : (string) -> string, dec : (string) -> string);
+CodecTestResult(codec: Codec, origLen : double, encTime : double, encLen : double, decTime : double, decLen : double, correct : bool);
+
+cpad(s : string, c : string, l : int) -> string {
+	dif = strlen(s) - l;
+	if (dif < 0) {
+		cpad(c+s+c, c, l)
+	} else strRight(s, dif)
+}
+
+test(testStr : string, codec : Codec) -> CodecTestResult {
+	t0 = timestamp();
+	compressed = codec.enc(testStr);
+	t1 = timestamp();
+	decompressed = codec.dec(compressed);
+	t2 = timestamp();
+	CodecTestResult(
+		codec,
+		i2d(2 * strlen(testStr)),
+		t1-t0, i2d(2 * strlen(compressed)),
+		t2-t1, i2d(2 * strlen(decompressed)),
+		testStr == decompressed
+	);
+}
+
+Col(name : string, width : int, pad : (string, string, int) -> string, getter : (CodecTestResult) -> string);
+
+percent(num, denom) -> string {
+	i2s(floor(num*100.0 / denom))+"%";
+}
+
+cols = [
+	//Col("Codec name", 16, rpad, \res -> res.codec.name),
+	Col("Org.size", 10, lpad, \res -> i2s(floor(res.origLen))),
+	Col("Enc.t", 6, lpad, \res -> i2s(floor(res.encTime))),
+	Col("Dec.t", 6, lpad, \res -> i2s(floor(res.decTime))),
+	Col("Enc.size", 10, lpad, \res -> i2s(floor(res.encLen))),
+	Col("Dec.size", 10, lpad, \res -> i2s(floor(res.decLen))),
+	Col("%org", 4, lpad, \res -> percent(res.encLen, res.decLen)),
+	Col("?", 1, cpad, \res -> if (res.correct) "V" else "X"),
+]
+
+printHeader() -> void {
+	println(superglue(cols, \col -> cpad(col.name, " ", col.width), "|"));
+	println(superglue(cols, \col -> lpad("", "—", col.width), "+"));
+}
+
+printResult(result : CodecTestResult) -> void{
+	println(superglue(cols, \col -> col.pad(col.getter(result), " ", col.width), "|"));
+}
+
+lzw_measure_enc_dict_full_phrase(t : Tree<string, int>) -> int {
+	switch (t) {
+		TreeEmpty() : 8;
+		TreeNode(k, v, l, r, d) :
+			2 * (1 + strlen(k)) +
+			8 +
+			lzw_measure_enc_dict_full_phrase(l) +
+			lzw_measure_enc_dict_full_phrase(r) +
+			8
+	}
+}
+
+listLen(l : List<?>) -> int {
+	foldList(l, 0, \acc : int, whatever : ? -> acc + 1);
+}
+
+lzw_measure_dec_dict_full_phrase(t : Tree<int, string>) -> int {
+	switch (t) {
+		TreeEmpty() : 8;
+		TreeNode(k, v, l, r, d) :
+			8 +
+			2 * (1 + strlen(v)) +
+			lzw_measure_dec_dict_full_phrase(l) +
+			lzw_measure_dec_dict_full_phrase(r) +
+			8
+	}
+}
 
 main() {
-	sourceStr = "#include lib/text/test_lzw_data.txt";
-	// sourceStr = "Test test Test";
+	sourceStr = "#include lib/text/compression/test_lzw_data.txt";
+	codecs = [
+		Codec("LZW", compressLzw, decompress),
+		Codec("LZW BitPack", compressLzwBp, decompress)
+	];
 
-	testStr = strRepeat(sourceStr, 60);
-	testStrLen = strlen(testStr);
-	println("source: " + i2s(testStrLen));
+	srcInfo = "source: " + i2s(2 * strlen(sourceStr));
+	println(srcInfo);
+	println(strRepeat("^", strlen(srcInfo)));
+	println("");
 
-	println("Start lzw_encode...");
-	t0 = timestamp();
-	compressed = lzw_encode(testStr);
-	t1 = timestamp();
-
-	compressedLen = strlen(compressed);
-	println("    DOME. compressed: " + i2s(compressedLen) + ", " + d2s(roundTo((t1-t0)/1000.0, 0.1)) + " sec");
-
-	println("Start lzw_decode...");
-	t2 = timestamp();
-	decompressed = lzw_decode(compressed);
-	t3 = timestamp();
-	decompressedLen = strlen(decompressed);
-	println("    DONE. decompressed: " + i2s(decompressedLen) + ", " + d2s(roundTo((t3-t2)/1000.0, 0.1)) + " sec");
-
-	println(i2s(testStrLen) + " -> " + i2s(compressedLen) + " -> " + i2s(decompressedLen));
-	println("RATIO: " + i2s(round(100.0 * i2d(compressedLen) / i2d(testStrLen))) + "%");
-	if (testStr == decompressed) {
-		println("PASSED");
-	} else {
-		println("FAILED");
-	}
-	assertEquals(testStr, decompressed);
-
+	iter(codecs, \codec -> {
+		println("---------------------------------");
+		println(codec.name + ":");
+		printHeader();
+		fori (0, 10, \i ->
+			printResult(test(strRepeat(sourceStr, if(i == 0) 1 else i*10), codec))
+		);
+	})
+	println("---------------------------------");
 	quit(0);
 }
