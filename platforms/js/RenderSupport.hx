@@ -400,7 +400,7 @@ class RenderSupport {
 		}
 	}
 
-	private static var webFontsLoadingStartAt : Float = 0;
+	private static var webFontsLoadingStartAt : Float;
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
