@@ -1088,6 +1088,7 @@
           , c = goog.now()
           , d = new Promise(function(d, e) {
             var f = function() {
+				console.log("WebFont.loading: " + b.font_.toCssString());
                 goog.now() - c >= b.timeout_ ? e() : a.fonts.load(b.font_.toCssString(), b.fontTestString_).then(function(a) {
                     1 <= a.length ? d() : setTimeout(f, 25)
                 }, function() {
@@ -1105,8 +1106,10 @@
         Promise.race([f, d]).then(function() {
             e && (clearTimeout(e),
             e = null);
+			console.log("WebFont.active: " + b.font_.toCssString());
             b.activeCallback_(b.font_)
         }, function() {
+			console.log("WebFont.inactive: " + b.font_.toCssString());
             b.inactiveCallback_(b.font_)
         })
     }
@@ -1289,6 +1292,7 @@
     }
     ;
     webfont.WebFont.prototype.load = function(a) {
+		console.log("WebFont.load called with config: " + JSON.stringify(a));
         this.domHelper_ = new webfont.DomHelper(this.mainWindow_,a.context || this.mainWindow_);
         this.events_ = !1 !== a.events;
         this.classes_ = !1 !== a.classes;
