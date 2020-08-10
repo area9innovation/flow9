@@ -10,11 +10,11 @@ class FontLoader {
 		if (HaxeRuntime.typeof(WebFont) != "undefined") {
 			var webfontconfig : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
 			if (webfontconfig != null && Reflect.fields(webfontconfig).length > 0) {
+				webfontconfig.active = onDone;
+				webfontconfig.inactive = onDone;
 				webfontconfig.loading = function() {
 					workaroundWebFontLoading(webfontconfig);
 					Errors.print("Loading web fonts...");
-					// We put real elements into the dom so all checked fonts are loaded and we can start our application
-					untyped __js__("setTimeout(onDone, 25)");
 				};
 				WebFont.load(webfontconfig);
 			} else {

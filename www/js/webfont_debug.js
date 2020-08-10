@@ -1088,7 +1088,6 @@
           , c = goog.now()
           , d = new Promise(function(d, e) {
             var f = function() {
-				console.log("WebFont.loading: " + b.font_.toCssString());
                 goog.now() - c >= b.timeout_ ? e() : a.fonts.load(b.font_.toCssString(), b.fontTestString_).then(function(a) {
                     1 <= a.length ? d() : setTimeout(f, 25)
                 }, function() {
@@ -1106,10 +1105,9 @@
         Promise.race([f, d]).then(function() {
             e && (clearTimeout(e),
             e = null);
-			console.log("WebFont.active: " + b.font_.toCssString());
             b.activeCallback_(b.font_)
         }, function() {
-			console.log("WebFont.inactive: " + b.font_.toCssString());
+			console.log("WebFont.inactive: " + b.font_.toCssString() + ", testString: '" + b.fontTestString_ + "'");
             b.inactiveCallback_(b.font_)
         })
     }
