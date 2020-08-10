@@ -16,7 +16,12 @@ class FontLoader {
 					workaroundWebFontLoading(webfontconfig);
 					Errors.print("Loading web fonts...");
 				};
+				var googleFamilies = Reflect.field(Reflect.field(webfontconfig, "google"), "families");
 				WebFont.load(webfontconfig);
+				if (googleFamilies == null || googleFamilies.length == 0) {
+					webfontconfig.loading();
+					onDone();
+				}
 			} else {
 				onDone();
 			}
@@ -32,7 +37,7 @@ class FontLoader {
 	// We have to append text with described google families to body
 	// Because browser starts load once it's used by the page
 	private static function workaroundWebFontLoading(config : Dynamic) {
-		var fontFields = ["google", "custom"];
+		var fontFields = ["custom"];
 		var fontList = [];
 		var testStringsMap : Map<String, String> = [""=>""];
 
