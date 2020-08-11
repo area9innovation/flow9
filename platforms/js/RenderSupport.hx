@@ -400,6 +400,7 @@ class RenderSupport {
 		}
 	}
 
+	private static var webFontsLoadingStartAt : Float;
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
@@ -427,7 +428,10 @@ class RenderSupport {
 		initBrowserWindowEventListeners();
 		initMessageListener();
 		initFullScreenEventListeners();
-		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMain);
+
+		webFontsLoadingStartAt = NativeTime.timestamp();
+		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMainWithTimeCheck);
+
 		initClipboardListeners();
 		initCanvasStackInteractions();
 
@@ -435,6 +439,11 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+	}
+
+	private static function StartFlowMainWithTimeCheck() {
+		Errors.print("Web fonts loaded in " + (NativeTime.timestamp() - webFontsLoadingStartAt) + " ms");
+		StartFlowMain();
 	}
 
 	//
