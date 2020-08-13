@@ -36,6 +36,7 @@ class RenderSupport {
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
 	private static var PageWasHidden = false;
+	private static var IsLoading = true;
 
 	// Renderer options
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
@@ -380,6 +381,11 @@ class RenderSupport {
 		}
 
 		PixiView = PixiRenderer.view;
+
+		if (IsLoading) {
+			PixiView.style.display = "none";
+		}
+
 		// Make absolute position for canvas for Safari to fix fullscreen API
 		if (Platform.isSafari) {
 			PixiView.style.position = "absolute";
@@ -1322,6 +1328,11 @@ class RenderSupport {
 	}
 
 	public static function enableResize() : Void {
+		IsLoading = false;
+		if (PixiView != null) {
+			PixiView.style.display = 'block';
+		}
+
 		// The first flow render call. Hide loading progress indicator.
 		Browser.document.body.style.backgroundImage = "none";
 		var indicator = Browser.document.getElementById("loading_js_indicator");
