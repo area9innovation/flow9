@@ -666,7 +666,11 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function set_role(role : String) : String {
-		element.setAttribute("role", role);
+		if (role != "") {
+			element.setAttribute("role", role);
+		} else {
+			element.removeAttribute("role");
+		}
 
 		if (RenderSupport.RendererType == "html" && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
@@ -809,6 +813,8 @@ class AccessWidget extends EventEmitter {
 	public function set_description(description : String) : String {
 		if (description != "") {
 			element.setAttribute("aria-label", description);
+		} else {
+			element.removeAttribute("aria-label");
 		}
 
 		return this.description;
@@ -902,8 +908,10 @@ class AccessWidget extends EventEmitter {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {
 							element.style.setProperty(key.substr(6, key.length), attributes.get(key));
-						} else {
+						} else if (attributes.get(key) != "") {
 							element.setAttribute(key, attributes.get(key));
+						} else {
+							element.removeAttribute(key);
 						}
 					}
 				}
