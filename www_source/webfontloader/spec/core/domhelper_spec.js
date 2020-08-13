@@ -322,7 +322,9 @@ describe('DomHelper', function () {
         domHelper.insertInto('body', el);
         width = el.offsetWidth;
         domHelper.loadStylesheet('fixtures/external_stylesheet.css', callback, true);
-      });
+	  });
+
+	  console.log();
 
       waitsFor(function () {
         return callbackMade;

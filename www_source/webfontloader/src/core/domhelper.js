@@ -271,12 +271,6 @@ goog.scope(function () {
    * @return {Element} The link element
    */
   DomHelper.prototype.loadStylesheet = function (href, opt_callback, opt_async) {
-    var link = this.createElement('link', {
-      'rel': 'stylesheet',
-      'href': href,
-      'media': (opt_async ? 'only x' : 'all')
-    });
-
     var sheets = this.document_.styleSheets,
         eventFired = false,
         asyncResolved = !opt_async,
@@ -289,6 +283,30 @@ goog.scope(function () {
         callback = null;
       }
     }
+
+	for (var i = 0; i < sheets.length; i++) {
+		if (sheets[i].href && sheets[i].href.indexOf(href) !== -1 && sheets[i].media) {
+			/**
+			 * @type {string|MediaList|null}
+			 */
+			var media = sheets[i].media;
+
+			if (media === "all" || (media.mediaText && media.mediaText === "all")) {
+				setTimeout(function () {
+					asyncResolved = true;
+					eventFired = true;
+					mayInvokeCallback();
+				}, 0);
+				return media;
+			}
+		}
+	}
+
+	var link = this.createElement('link', {
+		'rel': 'stylesheet',
+		'href': href,
+		'media': (opt_async ? 'only x' : 'all')
+	});
 
     if (DomHelper.CAN_WAIT_STYLESHEET) {
       link.onload = function () {
