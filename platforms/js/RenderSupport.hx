@@ -322,8 +322,8 @@ class RenderSupport {
 
 		if (RendererType == "html") {
 			PixiView = Browser.document.createElement('div');
-			PixiView.tabIndex = 1;
 			PixiView.style.background = "white";
+			PixiView.setAttribute("role", "presentation");
 		} else if (RendererType != "canvas") {
 			PixiView = null;
 		}
@@ -696,8 +696,10 @@ class RenderSupport {
 	}
 
 	private static function dropCurrentFocus() : Void {
-		if (Browser.document.activeElement != null && !isEmulating)
+		if (Browser.document.activeElement != null && !isEmulating) {
 			Browser.document.activeElement.blur();
+			Browser.document.activeElement.tabIndex = -1;
+		}
 	}
 
 	private static function setDropCurrentFocusOnMouse(drop : Bool) : Void {
@@ -1848,6 +1850,9 @@ class RenderSupport {
 				case 8: "backspace";
 				case 9: {
 					switchFocusFramesShow(EnableFocusFrame);
+					if (!EnableFocusFrame) {
+						e.preventDefault();
+					}
 
 					"tab";
 				}

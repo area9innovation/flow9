@@ -458,11 +458,13 @@ class DisplayObjectHelper {
 			return true;
 		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
 			if (focus && accessWidget.element.focus != null) {
+				accessWidget.element.tabIndex = 0;
 				accessWidget.element.focus();
 
 				return true;
 			} else if (!focus && accessWidget.element.blur != null) {
 				accessWidget.element.blur();
+				accessWidget.element.tabIndex = -1;
 
 				return true;
 			}
@@ -1755,9 +1757,11 @@ class DisplayObjectHelper {
 				if (Platform.isIE) {
 					untyped clip.nativeWidget.blur();
 					RenderSupport.once("drawframe", function() {
+						untyped clip.nativeWidget.tabIndex = 0;
 						untyped clip.nativeWidget.focus();
 					});
 				} else {
+					untyped clip.nativeWidget.tabIndex = 0;
 					untyped clip.nativeWidget.focus();
 				}
 			}
@@ -2160,7 +2164,7 @@ class DisplayObjectHelper {
 			var renderable = viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY;
 
 			if (untyped clip.keepNativeWidgetChildren && isNativeWidget(clip)) {
-				untyped clip.nativeWidget.style.visibility = clip.nativeWidget.tabIndex > 0 ? "visible" : (renderable ? "inherit" : "hidden");
+				untyped clip.nativeWidget.style.visibility = clip.nativeWidget.tabIndex != null ? "visible" : (renderable ? "inherit" : "hidden");
 			}
 
 			setClipRenderable(clip, untyped clip.keepNativeWidgetChildren || renderable);

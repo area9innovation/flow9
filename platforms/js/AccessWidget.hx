@@ -20,7 +20,7 @@ class AccessWidgetTree extends EventEmitter {
 	@:isVar public var childrenChanged(get, set) : Bool;
 	@:isVar public var changed(get, set) : Bool;
 	public var zorder : Int = 0;
-	public var childrenTabIndex : Int = 1;
+	public var childrenTabIndex : Int = -1;
 
 	public function new(id : Int, ?accessWidget : AccessWidget, ?parent : AccessWidgetTree) {
 		super();
@@ -525,7 +525,7 @@ class AccessWidget extends EventEmitter {
 					focused = true;
 
 					if (RenderSupport.Animating) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once("stagechanged", function() { if (focused) { this.element.tabIndex = 0; this.element.focus(); } });
 						return;
 					}
 
@@ -563,7 +563,7 @@ class AccessWidget extends EventEmitter {
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
 					if (untyped RenderSupport.Animating || clip.preventBlur) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once("stagechanged", function() { if (focused) { this.element.tabIndex = 0; this.element.focus(); } });
 						return;
 					}
 
@@ -785,7 +785,7 @@ class AccessWidget extends EventEmitter {
 			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 
 			if (element.tabIndex == null) {
-				element.tabIndex = 0;
+				element.tabIndex = -1;
 			}
 		} else if (role == "textbox") {
 			element.onkeyup = function(e) {
@@ -795,11 +795,11 @@ class AccessWidget extends EventEmitter {
 			}
 
 			if (element.tabIndex == null) {
-				element.tabIndex = 0;
+				element.tabIndex = -1;
 			}
 		} else if (role == "iframe") {
 			if (element.tabIndex == null) {
-				element.tabIndex = 0;
+				element.tabIndex = -1;
 			}
 		}
 
@@ -1046,7 +1046,7 @@ class AccessWidget extends EventEmitter {
 			return tree.childrenTabIndex;
 		}
 
-		tree.childrenTabIndex = tree.parent != null ? tree.parent.childrenTabIndex : 1;
+		tree.childrenTabIndex = tree.parent != null ? tree.parent.childrenTabIndex : -1;
 
 		if (parent == null) {
 			parent = Browser.document.body;
@@ -1085,9 +1085,7 @@ class AccessWidget extends EventEmitter {
 					if (tagName == "button" || tagName == "input" || tagName == "textarea") {
 						tree.childrenTabIndex++;
 
-						if (accessWidget.element.tabIndex != tree.childrenTabIndex) {
-							accessWidget.element.tabIndex = tree.childrenTabIndex;
-						}
+						accessWidget.element.tabIndex = -1;//tree.childrenTabIndex;
 					}
 				}
 

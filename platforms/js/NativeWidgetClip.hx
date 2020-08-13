@@ -89,11 +89,13 @@ class NativeWidgetClip extends FlowContainer {
 			focusRetries = 0;
 
 			if (focus && nativeWidget.focus != null && !getFocus()) {
+				accessWidget.element.tabIndex = 0;
 				nativeWidget.focus();
 
 				return true;
 			} else if (!focus && nativeWidget.blur != null && getFocus()) {
 				nativeWidget.blur();
+				accessWidget.element.tabIndex = -1;
 
 				return true;
 			}

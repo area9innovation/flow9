@@ -175,6 +175,8 @@ class TextClip extends NativeWidgetClip {
 		style.resolution = 1.0;
 		style.wordWrap = false;
 		style.wordWrapWidth = 2048.0;
+
+		this.keepNativeWidget = true;
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -952,8 +954,11 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
-		this.keepNativeWidget = true;
-		this.updateKeepNativeWidgetChildren();
+		if (!this.keepNativeWidget) {
+			this.keepNativeWidget = true;
+			this.updateKeepNativeWidgetChildren();
+		}
+
 		this.initNativeWidget(multiline ? 'textarea' : 'input');
 		isInteractive = true;
 		this.invalidateInteractive();
@@ -1118,7 +1123,7 @@ class TextClip extends NativeWidgetClip {
 		isFocused = true;
 
 		if (RenderSupport.Animating) {
-			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			RenderSupport.once("stagechanged", function() { if (isFocused) { nativeWidget.tabIndex = 0; nativeWidget.focus(); } });
 			return;
 		}
 
@@ -1149,7 +1154,7 @@ class TextClip extends NativeWidgetClip {
 	private function onBlur(e : Event) : Void {
 		if (untyped RenderSupport.Animating || this.preventBlur) {
 			untyped this.preventBlur = false;
-			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			RenderSupport.once("stagechanged", function() { if (isFocused) { nativeWidget.tabIndex = 0; nativeWidget.focus(); } });
 			return;
 		}
 
@@ -1255,6 +1260,7 @@ class TextClip extends NativeWidgetClip {
 		 // Hide mobile keyboard on enter key press
 		if (ke.keyCode == 13 && Platform.isMobile && !this.multiline) {
 			nativeWidget.blur();
+			nativeWidget.tabIndex = -1;
 		}
 
 		if (isFocused) {
@@ -1323,6 +1329,7 @@ class TextClip extends NativeWidgetClip {
 		} catch (e : Dynamic) {}
 
 		if (untyped Browser.document.selection != null) {
+			nativeWidget.tabIndex = 0;
 			nativeWidget.focus();
 			var r : Dynamic = untyped Browser.document.selection.createRange();
 			if (r == null) return 0;
