@@ -423,18 +423,16 @@ class AccessWidget extends EventEmitter {
 		"button" => "button",
 		"checkbox" => "button",
 		"radio" => "button",
-		"menu" => "button",
-		"listitem" => "button",
-		"menuitem" => "button",
 		"tab" => "button",
-		"slider" => "button",
 		"banner" => "header",
 		"main" => "section",
 		"navigation" => "nav",
 		"contentinfo" => "footer",
 		"form" => "form",
 		"textbox" => "input",
-		"switch" => "button"
+		"switch" => "button",
+		"menuitem" => "button",
+		"option" => "button"
 	];
 
 	public static var zIndexValues = {
@@ -784,7 +782,7 @@ class AccessWidget extends EventEmitter {
 
 			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 
-			if (element.tabIndex == null) {
+			if (element.tabIndex == null || element.tabIndex < 0) {
 				element.tabIndex = 0;
 			}
 		} else if (role == "textbox") {
@@ -794,11 +792,11 @@ class AccessWidget extends EventEmitter {
 				}
 			}
 
-			if (element.tabIndex == null) {
+			if (element.tabIndex == null || element.tabIndex < 0) {
 				element.tabIndex = 0;
 			}
-		} else if (role == "iframe") {
-			if (element.tabIndex == null) {
+		} else if (role == "iframe" || role == "slider") {
+			if (element.tabIndex == null || element.tabIndex < 0) {
 				element.tabIndex = 0;
 			}
 		}
@@ -1082,7 +1080,7 @@ class AccessWidget extends EventEmitter {
 				} else {
 					var tagName = accessWidget.element.tagName.toLowerCase();
 
-					if (tagName == "button" || tagName == "input" || tagName == "textarea") {
+					if (tagName == "button" || tagName == "input" || tagName == "textarea" || accessWidget.role == "slider") {
 						tree.childrenTabIndex++;
 
 						if (accessWidget.element.tabIndex != tree.childrenTabIndex) {
