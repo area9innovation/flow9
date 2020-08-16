@@ -193,7 +193,7 @@ class TextClip extends NativeWidgetClip {
 		return (code >= 0x30 && code < 0x3A)      // Decimals.
 			|| (code >= 0x41 && code < 0x5B)      // Capital basic latin.
 			|| (code >= 0x61 && code < 0x7B)      // Small basic latin.
-			|| (code >= 0xA0 && code < 0x590)     // Extended latin, diacritics, greeks, cyrillics, and other LTR alphabet letters, also symbols.
+			|| (code >= 0xA1 && code < 0x590)     // Extended latin, diacritics, greeks, cyrillics, and other LTR alphabet letters, also symbols.
 			|| (code >= 0x700 && code < 0x2000)   // Extended latin and greek, other LTR alphabet letters, also symbols.
 			|| (code >= 0x2100 && code < 0x2190)  // Punctuation, subscripts and superscripts, letterlikes, numerics, diacritics.
 			|| (code >= 0x2460 && code < 0x2500)  // Enclosed alphanums.
@@ -363,23 +363,6 @@ class TextClip extends NativeWidgetClip {
 		return [iso, iso, med, med];
 	}
 
-	// Given len is supposed to be measured from the beginning.
-	private static function getAdvancedWidthsCorrection(tm: TextMappedModification, style: TextStyle, textLen: Int, glyphsLen: Int, inGlyphBack: Int) : Int {
-		if (textLen < 1 || glyphsLen < 1) return 0;
-		var variant : Int = tm.variants[glyphsLen-1];
-		if (variant <= 1 && inGlyphBack == 0) return 0;
-		// Last char is initial or medial — will be mistakenly measured as
-		// isolated or final — correction needed.
-		var key : String = tm.text.substr(textLen-1, 1 + tm.difPositionMapping[glyphsLen-1]);
-		var nMetrics : Array<Array<Int>> = getAdvancedWidths(key, style);
-		if (key != tm.text.substr(textLen-1, 1)) {
-			key = tm.text.substr(textLen-1, 1 + tm.difPositionMapping[glyphsLen-1] - inGlyphBack);
-			var oMetrics : Array<Array<Int>> = getAdvancedWidths(key, style);
-			return nMetrics[variant][0]-oMetrics[variant&1][0];
-		}
-		return nMetrics[variant][0]-nMetrics[variant&1][0];
-	}
-
 	public static function measureTextModFrag(tm: TextMappedModification, style: TextStyle, b: Int, e: Int) : Float {
 		var bochi = -1;
 		var bgchi = -1;
@@ -399,14 +382,13 @@ class TextClip extends NativeWidgetClip {
 		if (bochi>b) { --bochi; ++bgb; }
 		if (eochi>e) { --eochi; ++egb; }
 		if (bochi > eochi || bochi < 0) return -1.0;
-		var advanceCorrection : Float = 0.0;
 
-		advanceCorrection = untyped (getAdvancedWidthsCorrection(tm, style, eochi, egchi, egb)-getAdvancedWidthsCorrection(tm, style, bochi, bgchi, bgb)) / UPM * style.fontSize;
+		var scriptingFixSuffix = "";  // Helps to keep substring ending letter form when measuring with Pixi.
+		if (isRtlChar(tm.text.substr(eochi, 1))) scriptingFixSuffix = "ث";  // Any letter with 4 variants.
+		var mtxb : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, bochi)+scriptingFixSuffix, style);
+		var mtxe : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, eochi)+scriptingFixSuffix, style);
 
-		var mtxb : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, bochi), style);
-		var mtxe : Dynamic = pixi.core.text.TextMetrics.measureText(tm.text.substr(0, eochi), style);
-
-		return mtxe.width - mtxb.width + advanceCorrection;
+		return mtxe.width - mtxb.width;
 	}
 
 	public function getCharXPosition(charIdx: Int) : Float {
@@ -1048,7 +1030,7 @@ class TextClip extends NativeWidgetClip {
 			} else if (e.touches.length > 1) {
 				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1069,7 +1051,7 @@ class TextClip extends NativeWidgetClip {
 			RenderSupport.MousePos.x = point.x;
 			RenderSupport.MousePos.y = point.y;
 
-			if (RenderSupport.getClipAt(RenderSupport.PixiStage, RenderSupport.MousePos, true, true) != this) {
+			if (RenderSupport.getClipAt(RenderSupport.PixiStage, RenderSupport.MousePos, true, 0.16) != this) {
 				e.preventDefault();
 			}
 		}
@@ -1086,7 +1068,7 @@ class TextClip extends NativeWidgetClip {
 			} else if (e.touches.length > 1) {
 				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1116,7 +1098,7 @@ class TextClip extends NativeWidgetClip {
 			if (e.touches.length == 0) {
 				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
 			RenderSupport.MousePos.x = e.pageX;
 			RenderSupport.MousePos.y = e.pageY;
 
@@ -1244,6 +1226,7 @@ class TextClip extends NativeWidgetClip {
 			for (f in TextInputKeyDownFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
+					e.stopPropagation();
 					RenderSupport.emit('keydown', ke);
 					break;
 				}
@@ -1262,6 +1245,7 @@ class TextClip extends NativeWidgetClip {
 			for (f in TextInputKeyUpFilters) {
 				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
 					ke.preventDefault();
+					e.stopPropagation();
 					RenderSupport.emit('keyup', ke);
 					break;
 				}
@@ -1301,7 +1285,7 @@ class TextClip extends NativeWidgetClip {
 
 	private function getClipWidth() : Float {
 		updateTextMetrics();
-		return metrics != null ? untyped metrics.width : 0;
+		return metrics != null ? (untyped Platform.isSafari && !isInput && !escapeHTML ? Math.ceil(metrics.width) : metrics.width) : 0;
 	}
 
 	private function getClipHeight() : Float {

@@ -794,4 +794,8 @@ public class RenderSupport3D extends NativeHost {
 	public Object[] get3DObjectGeometries(Object object) {
 		return new Object[0];
 	}
+
+	public Object set3DObjectMaterials(Object object, Object[] materials) {
+		return null;
+	}
 }

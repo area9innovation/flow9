@@ -32,6 +32,8 @@ enum LspKind { Flow = 1, JS = 2, None = 3 }
 let childProcesses = [];
 let client: LanguageClient = null;
 let flowChannel : vscode.OutputChannel = null;
+let serverChannel : vscode.OutputChannel = null;
+let flowRepoUpdateChannel : vscode.OutputChannel = null;
 let counter = 0; // used to silence not finished jobs when new ones got started
 
 let serverStatusBarItem: vscode.StatusBarItem;
@@ -63,7 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setClient(context, LspKind.JS); }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
 
-    flowChannel = vscode.window.createOutputChannel("Flow");
+    flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
 
 	checkHttpServerStatus(true);
@@ -123,7 +125,16 @@ function toggleHttpServer() {
 
 function startHttpServer() {
     if (!httpServerOnline) {
-		httpServer = tools.launchFlowcHttpServer(getFlowRoot(), showHttpServerOnline, showHttpServerOffline);
+		if (!serverChannel) {
+			serverChannel = vscode.window.createOutputChannel("Flow server");
+			serverChannel.show();
+		}
+		httpServer = tools.launchFlowcHttpServer(
+			getFlowRoot(), 
+			showHttpServerOnline, 
+			showHttpServerOffline,
+			(msg : any) => serverChannel.appendLine(msg)
+		);
 		httpServerOnline = true;
     }
 }

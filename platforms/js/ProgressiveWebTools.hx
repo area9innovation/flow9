@@ -7,7 +7,7 @@ class ProgressiveWebTools {
 	public function new() {}
 
 	public static function __init__() {
-		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches) {
+		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches || ~/CapacitorJS/i.match(Browser.window.navigator.userAgent)) {
 			var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
 			if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit") < 0) {

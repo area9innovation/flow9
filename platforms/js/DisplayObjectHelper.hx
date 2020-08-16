@@ -377,7 +377,7 @@ class DisplayObjectHelper {
 
 			clip.scale.x = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0) {
+			if (RenderSupport.RendererType == "html" && scale != 1.0 && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -391,7 +391,7 @@ class DisplayObjectHelper {
 
 			clip.scale.y = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0) {
+			if (RenderSupport.RendererType == "html" && scale != 1.0 && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -1373,7 +1373,12 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
 			nativeWidget.style.borderRadius = null;
-			nativeWidget.style.overflow = untyped clip.scrollRectListener != null ? "overlay" : clip.isInput ? "auto" : "hidden";
+			if (untyped clip.scrollRectListener != null) {
+				nativeWidget.classList.add("nativeScroll");
+				nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "scroll";
+			} else {
+				nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
+			}
 
 			scrollNativeWidget(clip, round(scrollRect.x), round(scrollRect.y));
 		} else if (mask != null) {
@@ -2305,6 +2310,14 @@ class DisplayObjectHelper {
 				invalidateInteractive(clip);
 				invalidateTransform(clip, "addFileDropListener");
 			}
+		}
+	}
+
+	public static function isParentOf(parent : DisplayObject, child : DisplayObject) : Bool {
+		if (child.parent == parent) {
+			return true;
+		} else {
+			return child.parent != null && isParentOf(parent, child.parent);
 		}
 	}
 }

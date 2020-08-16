@@ -147,8 +147,14 @@ MMenuButton2T(
 	openOnClick : bool,
 	longTouch : Maybe<MLongTouchDelay>) -> Tropic {
 
+	addAria = \st -> concat(st, [
+		FAccessAttribute("aria-expanded", fselect(openMenu.opened, FLift(b2s))),
+		FAccessAttribute("aria-haspopup", const("true"))
+	]);
+
 	extendState = \state : [MButtonState], open ->
 		replaceStruct(state, MEnabled(enabled))
+		|> addAria
 		|> (\st -> eitherMap(longTouch, \lt -> concat(st, [lt, MOnLongTouch(open)]), st));
 
 	switch (button) {
@@ -205,7 +211,8 @@ MMenuButton2T(
 							],
 							[MOnClick(\ -> reverseBehaviour(openMenu.opened))]
 						)
-					);
+					)
+					|> addAria;
 
 				MComponent2T(
 					manager,
@@ -263,14 +270,13 @@ MMenuPanelItem2T(
 		MMenu(button, items, style): {
 			openMenu = extractStruct(style, MOpenMenu(make(false)));
 			refArrayPush(openMenus, openMenu);
-			enabled = extractStruct(style, MEnabled(const(true))).enabled;
 			rollOver = make(false);
 			(\p ->
 				(\par ->
 					switch (button) {
 						MTextButton(text, onClick, buttonStyle, buttonState): {
 							MMenuTextButton2T(manager, par, text, extractStruct(buttonState, MShortcut("")).shortcut, onClick,
-								enabled, buttonStyle, openMenu, rollOver, m2t)
+								buttonStyle, openMenu, m2t)
 						}
 						MIconButton(name, onClick, iconStyle, state): {
 							iconSize = MMenuPanelIconSize(iconStyle, height, borders);
@@ -286,7 +292,7 @@ MMenuPanelItem2T(
 										reverseBehaviour(openMenu.opened)
 									},
 									replaceStructMany(iconStyle, [iconSize, iconBorders]),
-									replaceStructMany(state, [MFocusEnabled(const(false)), MEnabled(enabled), THovering(rollOver)])
+									replaceStructMany(state, [MFocusEnabled(const(false))])
 								),
 								m2t
 							)
@@ -296,7 +302,7 @@ MMenuPanelItem2T(
 						}
 					}
 				)
-				|> (\f -> MMenu2T(manager, p, MMenu(MGetFocusGroup(f), items, arrayPush(replaceStruct(style, openMenu), MBelowButton())), m2t))
+				|> (\f -> MMenu2T(manager, p, MMenu(MGetFocusGroup(f), items, concat(replaceStruct(style, openMenu), [THovering(rollOver), MBelowButton()])), m2t))
 				|> TCenterY
 			)
 			|> (\f ->
@@ -312,10 +318,7 @@ MMenuPanelItem2T(
 								}),
 								makeSubscribe2(openMenu.opened, \op -> nextDistinct(eh, op)),
 							],
-							TInteractive(
-								[TMouseInside(rollOver, false)],
-								MComponentGroup2T(manager, parent, "MMenuPanelMMenu", [IScriptBehaviour("hover", rollOver, ISInteractionEvent())], f)
-							)
+							f(parent)
 						)
 					},
 					\ -> f(parent)
@@ -496,6 +499,10 @@ MDropDownMenu2T(
 	currentInner = cloneBehaviour(current);
 	leftIcon = isSome(tryExtractStruct(style, MLeftIcon("", [])));
 	addClear = contains(style, MAddClearButton());
+	label = switch (nonSpecified) {
+		MMenuSingleLine(title, __) : title;
+		MMenuCustomLine(__, __) : "";
+	};
 
 	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
 	iconBorders = extractStruct(style, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
@@ -565,10 +572,11 @@ MDropDownMenu2T(
 		|> (\st -> replaceStruct(st, MWidth(mWidth)))
 		|> (\st -> replaceStruct(st, openMenu))
 		|> (\st -> replaceStruct(st, MFocusName("MDropDownMenu")))
+		|> (\st -> replaceStruct(st, extractStruct(style, MButtonTitle(const(label)))))
 		|> MDropDownMenuStyle2MMenuStyle
 		|> (\st -> arrayPush(st, selected))
 		|> (\st -> ifArrayPush(st, isNone(customButton) && mWidth >= 0.0, MWidthByButton()))
-		|> (\st -> if (contains(style, MNonSpecifiedAlwaysOnTop())) arrayPush(st, MMenuNonSpecifiedAlwaysOnTop(nonSpecified)) else st) 
+		|> (\st -> if (contains(style, MNonSpecifiedAlwaysOnTop())) arrayPush(st, MMenuNonSpecifiedAlwaysOnTop(nonSpecified)) else st)
 		|> (\st -> arrayPush(st, MBelowButton()));
 
 	MGetFocusGroup(\p ->
@@ -719,7 +727,7 @@ MMultiSelectDropDown2T(
 								", "
 							),
 							arrayPush(textStyle, showTooltip)
-						) 
+						)
 					)
 					|> MAlignStart,
 					defButtonLineStyle
@@ -958,9 +966,10 @@ MDropDownMenuButton2T(
 			MOnClick(onClick),
 			MRippleType(const(MRippleFill())),
 			MHighlightOnFocus(const(true)),
-			MHighlightOnHover(const(true))
-		]
-		|> (\st -> maybeArrayPush(st, tryExtractStruct(style0, MButtonTitle(const("")))));
+			MHighlightOnHover(const(true)),
+			FAccessAttribute("aria-haspopup", const("menu")),
+			extractStruct(style0, MButtonTitle(const(label)))
+		];
 
 	iconNearTitle = contains(style0, MDropDownIconNearTitle());
 
@@ -988,7 +997,7 @@ MDropDownMenuButton2T(
 			getMenuAlpha(focus, parent)
 		);
 
-	setMenuBaseline = \avH, height, baseline -> 
+	setMenuBaseline = \avH, height, baseline ->
 		\t -> TBaseline(faddition(baseline, fmax(zero, fdivide(fsubtract(avH, height), const(2.)))), t);
 
 	floatingLabelOffset = \st -> eitherMap(
@@ -1073,7 +1082,7 @@ MDropDownMenuButton2T(
 	|> (\f -> if (outlined) {
 			addMOutline(
 				manager,
-				parent, 
+				parent,
 				labelWidth,
 				floatingLabelProgress,
 				fselect(outlineColor, FLift(\oc ->
@@ -1113,10 +1122,8 @@ MMenuTextButton2T(
 	text : string,
 	shortcut : string,
 	onClick : () -> void,
-	enabled : Transform<bool>,
 	style : [MTextButtonStyle],
 	openMenu : MOpenMenu,
-	rollOver : DynamicBehaviour<bool>,
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
 	raised = contains(style, MButtonRaised());
@@ -1125,13 +1132,11 @@ MMenuTextButton2T(
 	fullWidth = contains(style, MFullWidth());
 	focusState =
 		[
-			MEnabled(enabled),
 			MOnClick(\ -> {
 				onClick();
 				reverseBehaviour(openMenu.opened)
 			}),
 			MRippleType(const(MRippleFill())),
-			THovering(rollOver),
 			MButtonTitle(const(text))
 		];
 
@@ -1267,6 +1272,8 @@ MMenuLines2MPopup(
 	mLabel = tryExtractStruct(style0, MLabel(""));
 	sameZorder = extractStruct(style0, MSameZorder(false)).same;
 	nextFn = if (contains(style0, MForceUpdate())) next else nextDistinct;
+	focusName = extractStruct(style0, MFocusName("MMenu")).name;
+	popupRole = extractStruct(style0, AccessRole(if (strContains(toLowerCase(focusName), "drop")) "listbox" else "menu")).role;
 
 	menuScrollStyle = extractStruct(style0, MMenuScrollStyle([])).style;
 
@@ -1331,10 +1338,12 @@ MMenuLines2MPopup(
 		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> nextFn(ss.selected, -1))
 	};
 
-	itemOnTop = \i -> indexShift && (
-		if (nonspecAlwaysOnTop) i == 0
-		else (selectedId >= 0 && i == selectedId + 2) || (selectedId == -1 && i == 0)
-	);
+	itemOnTop = \i -> {
+		indexShift && (
+			if (nonspecAlwaysOnTop) i == 0
+			else (selectedId >= 0 && i == selectedId + 2) || (selectedId == -1 && i == 0)
+		);
+	}
 
 	getLineStyle = \style, i ->
 		if (itemOnTop(i))
@@ -1394,7 +1403,7 @@ MMenuLines2MPopup(
 					style,
 					[
 						MOnClick(onClick),
-						AccessRole("menuitem"),
+						extractStruct(_style, AccessRole(if (popupRole == "menu") "menuitem" else "option")),
 						MRippleType(const(MRippleFill())),
 						MHighlightOnFocus(const(true)),
 						MHighlightOnHover(const(true)),
@@ -1474,8 +1483,9 @@ MMenuLines2MPopup(
 					[
 						MOnClick(\ -> if (isOpenOnClick) deferred(\-> nextDistinct(subOpenMenu.opened, true))),
 						AccessRole("menuitem"),
+						FAccessAttribute("aria-haspopup", const("menu")),
 						MRippleType(const(MRippleFill())),
-						MButtonTitle(title),
+						extractStruct(style, MButtonTitle(title)),
 						MHighlightOnFocus(const(true)),
 						MHighlightOnHover(const(true)),
 						MFocusOnDown(ref true)
@@ -1521,7 +1531,11 @@ MMenuLines2MPopup(
 											MSubMenuStyle2MMenuStyle(
 												replaceStructMany(
 													style,
-													[subOpenMenu, extractStruct(style, MSameZorder(sameZorder))]
+													[
+														subOpenMenu,
+														extractStruct(style, MSameZorder(sameZorder)),
+														extractStruct(style, MButtonTitle(title))
+													]
 													|> (\arr : [MMenuStyle] -> eitherMap(fixPosition, \fp -> arrayPush(arr, fp), arr))
 												)
 												|> (\subMenuStyle -> removeAllStructs(subMenuStyle, MFocusOnPrevious()))
@@ -1576,17 +1590,26 @@ MMenuLines2MPopup(
 				MSeparatorLine():
 					makeSeparatorLine(acc)
 			}
-			// |> (\f -> if (mWidth.width > 0.) makeTropicConstantWidth(f, Some(const(mWidth.width + lineBorders * 2.))) else f)
 		}).second;
 
 	newItems =
 		(if (indexShift && selectedId >= 0 && !nonspecAlwaysOnTop) {
-			selIt = items[selectedId + 2];
+			if (selectedId > 0 && selectedId < length(items0) - 1 &&
+				items0[selectedId - 1].structname == "MMenuGroupLine" && items0[selectedId + 1].structname == "MMenuGroupLine") {
+				selIt = items[selectedId + 1];
 
-			concat(
-				[selIt],
-				removeIndex(removeIndex(items, 0), selectedId + 1)
-			);
+				concat(
+					[selIt],
+					removeIndex(removeIndex(items, 0), selectedId)
+				);
+			} else {
+				selIt = items[selectedId + 2];
+
+				concat(
+					[selIt],
+					removeIndex(removeIndex(items, 0), selectedId + 1)
+				);
+			}
 		} else
 			items
 		)
@@ -1610,7 +1633,11 @@ MMenuLines2MPopup(
 			MFocusHorizontal(false),
 			MFocusVertical(true),
 			MActive(make(true)),
-			AccessRole("menu")
+			AccessRole(popupRole),
+			FAccessAttribute(
+				"aria-label",
+				extractStruct(style0, MButtonTitle(const(eitherMap(mLabel, \l -> l.label, "")))).title
+			)
 		]
 		|> (\arr : [MPopupStyle] -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, TScrollPersistent(const(true)))))
 		|> (\arr -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, MScrollWidthHeight(makeWH(), makeWH()))))
