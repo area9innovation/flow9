@@ -1141,7 +1141,7 @@ class RenderSupport {
 			if (pixijscss != null) {
 				var newRuleIndex = 0;
 				if (!toShowFrames) {
-					pixijscss.insertRule(".focused { border: none !important; box-shadow: none !important; }", newRuleIndex);
+					pixijscss.insertRule(".focused { outline: none !important; box-shadow: none !important; }", newRuleIndex);
 					off("mousemove", pixiStageOnMouseMove); // Remove mouse event listener that not handle it always when focus frames are hidden
 				} else {
 					pixijscss.deleteRule(newRuleIndex);
