@@ -815,7 +815,7 @@ class DisplayObjectHelper {
 	public static function updateClipID(clip : DisplayObject) : Void {
 		var nativeWidget = untyped clip.nativeWidget;
 
-		if (nativeWidget != null) {
+		if (nativeWidget != null && nativeWidget.getAttribute("id") == null) {
 			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
 		}
 	}
