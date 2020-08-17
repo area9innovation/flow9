@@ -359,10 +359,10 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.minY = temp;
 		}
 
-		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null && !isSvg ? lineWidth : 0.0);
-		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && !isSvg ? lineWidth : 0.0);
-		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && !isSvg ? lineWidth : 0.0);
-		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
+		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
+		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
+		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
 
 		if (isSvg) {
 			widgetBounds.maxX = Math.max(widgetBounds.minX + 4.0, widgetBounds.maxX);
@@ -642,6 +642,7 @@ class FlowGraphics extends Graphics {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		nativeWidget.setAttribute('role', 'presentation');
 
 		isNativeWidget = true;
 	}
