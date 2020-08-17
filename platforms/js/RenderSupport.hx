@@ -222,6 +222,42 @@ class RenderSupport {
 		return false;
 	}
 
+	private static var UserDefinedFontSize : Float = null;
+	private static function getUserDefinedFontSize() : Float {
+		if (UserDefinedFontSize == null) {
+			var style = Browser.window.getComputedStyle(Browser.document.body);
+
+			UserDefinedFontSize = Std.parseFloat(style.fontSize);
+		}
+
+		if (Math.isNaN(UserDefinedFontSize)) {
+			UserDefinedFontSize = 16.0;
+		}
+
+		return UserDefinedFontSize;
+	}
+
+	private static var UserDefinedLetterSpacing : Float = null;
+	private static function getUserDefinedLetterSpacing() : Float {
+		if (UserDefinedLetterSpacing == null) {
+			var div = Browser.document.createElement("p");
+			Browser.document.body.appendChild(div);
+			var style = Browser.window.getComputedStyle(div);
+
+			UserDefinedLetterSpacing = style.letterSpacing != "normal"
+				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
+				: 0.0;
+
+			Browser.document.body.removeChild(div);
+		}
+
+		if (Math.isNaN(UserDefinedLetterSpacing)) {
+			UserDefinedLetterSpacing = 0.0;
+		}
+
+		return UserDefinedLetterSpacing;
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
