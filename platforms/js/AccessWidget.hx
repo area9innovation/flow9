@@ -449,11 +449,11 @@ class AccessWidget extends EventEmitter {
 	@:isVar public var nodeindex(get, set) : Array<Int>;
 	@:isVar public var zorder(get, set) : Int;
 
-	public var tabindex(get, set) : Int;
+	@:isVar public var tabindex(get, set) : Int;
 	public var role(get, set) : String;
 	public var description(get, set) : String;
 	public var id(get, set) : String;
-	public var enabled(get, set) : Bool;
+	@:isVar public var enabled(get, set) : Bool;
 	public var autocomplete(get, set) : String;
 	public var focused : Bool = false;
 
@@ -466,6 +466,8 @@ class AccessWidget extends EventEmitter {
 		this.element = element;
 		this.nodeindex = nodeindex;
 		this.zorder = zorder;
+		this.tabindex = -1;
+		this.enabled = true;
 
 		clip.onAdded(function() {
 			if (untyped clip.accessWidget == this) {
@@ -670,11 +672,17 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function get_tabindex() : Int {
-		return element.tabIndex;
+		return this.tabindex;
 	}
 
 	public function set_tabindex(tabindex : Int) : Int {
-		element.tabIndex = tabindex;
+		if (this.tabindex != tabindex) {
+			this.tabindex = tabindex;
+
+			if (enabled) {
+				element.tabIndex = tabindex;
+			}
+		}
 
 		return this.tabindex;
 	}
@@ -802,8 +810,8 @@ class AccessWidget extends EventEmitter {
 
 			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 
-			if (element.tabIndex == null || element.tabIndex < 0) {
-				element.tabIndex = 0;
+			if (tabindex < 0) {
+				tabindex = 0;
 			}
 		} else if (role == "textbox") {
 			element.onkeyup = function(e) {
@@ -812,12 +820,12 @@ class AccessWidget extends EventEmitter {
 				}
 			}
 
-			if (element.tabIndex == null || element.tabIndex < 0) {
-				element.tabIndex = 0;
+			if (tabindex < 0) {
+				tabindex = 0;
 			}
 		} else if (role == "iframe" || role == "slider") {
-			if (element.tabIndex == null || element.tabIndex < 0) {
-				element.tabIndex = 0;
+			if (tabindex < 0) {
+				tabindex = 0;
 			}
 		}
 
@@ -849,14 +857,20 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function get_enabled() : Bool {
-		return element.getAttribute("disabled") == null;
+		return this.enabled;
 	}
 
 	public function set_enabled(enabled : Bool) : Bool {
-		if (enabled) {
-			element.removeAttribute("disabled");
-		} else {
-			element.setAttribute("disabled", "disabled");
+		if (this.enabled != enabled) {
+			this.enabled = enabled;
+
+			if (enabled) {
+				element.removeAttribute("disabled");
+				element.tabIndex = tabindex;
+			} else {
+				element.setAttribute("disabled", "disabled");
+				element.tabIndex = -1;
+			}
 		}
 
 		return this.enabled;
@@ -1103,9 +1117,7 @@ class AccessWidget extends EventEmitter {
 					if (tagName == "button" || tagName == "input" || tagName == "textarea" || accessWidget.role == "slider") {
 						tree.childrenTabIndex++;
 
-						if (accessWidget.element.tabIndex != tree.childrenTabIndex) {
-							accessWidget.element.tabIndex = tree.childrenTabIndex;
-						}
+						accessWidget.tabindex = tree.childrenTabIndex;
 					}
 				}
 

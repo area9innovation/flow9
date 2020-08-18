@@ -1099,6 +1099,11 @@ class DisplayObjectHelper {
 	private static function applyNativeWidgetBoxShadow(parent : DisplayObject, filter : Dynamic) : Void {
 		var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
 		var clip = getFirstGraphicsOrSprite(parent);
+
+		if (clip == null) {
+			return;
+		}
+
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (untyped clip.filterPadding != parent.filterPadding) {
