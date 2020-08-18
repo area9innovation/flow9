@@ -66,7 +66,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 		TransformTAcc2(\t2a -> {
 			b1 = content |> t2a;
 			rippleWH = tryExtractStruct(style, MRippleWidthHeight(const(WidthHeight(0., 0.))));
-			showRipple = fand(enabled, fmin(fneq(rippleType, MNoRipple()), fmax(fmax(selected, focused), fmax(hovered, triggered))));
+			showRipple = fand(enabled, fmin(fneq(rippleType, MNoRipple()), triggered));
 
 			wd = eitherMap(rippleWH, \b -> fselect(b.wh, FLift(\wh -> wh.width)), b1.metrics.width);
 			hgt = eitherMap(rippleWH, \b -> fselect(b.wh, FLift(\wh -> wh.height)), b1.metrics.height);
@@ -152,6 +152,47 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 				)
 			};
 
+			hoverFForm = \ -> {
+				FGraphics(
+					fselect(box, FLift(\b ->
+						if (isCircleCenteredRipple)
+							[GCircle(b.width / 2.0, b.height / 2.0, max(b.width, b.height) / 2.0)]
+						else
+							[GRect(0.0, 0.0, b.width, b.height)]
+					)),
+					fselect2(color, fmultiply(opacity, fif(fmax(selected, focused), const(0.8), fif(hovered, const(0.4), zero))), FLift2(\c, op ->
+						[MThemeFill(parent, c), FillOpacity(if (MColor2int(MThemeColor2MColor(parent, c)) == black) op else op * 2.0)]
+					))
+				)
+				|> (\f ->
+					if (isCircleCenteredRipple) {
+						f;
+					} else if (shape != "") {
+						container = FMaterialShape(parent, [Fill(black)], shape);
+
+						FMask(f, FMutable(fselect(box, container |> FLift)));
+					} else {
+						FMask(f, FMutable(fselect2(rippleType, box, FLift2(\rt, b ->
+							switch (rt : RippleType) {
+								MRippleFill(): {
+									FRectangle(b.width, b.height, [Fill(black)])
+								}
+								MRippleCenter(): {
+									FTranslate(
+										const((b.width - b.height) / 4.0),
+										const((b.height - b.width) / 4.0),
+										FCircle((b.width + b.height) / 4.0, [Fill(black)])
+									);
+								}
+								MNoRipple(): {
+									FEmpty();
+								}
+							}
+						))))
+					}
+				)
+			};
+
 			contentFForm =
 				if (isSome(rippleWH))
 					FTranslate(
@@ -166,6 +207,16 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 				FDecorator(
 					FConstruct(
 						[
+							\ -> {
+								if (fgetValue(showRipple)) {
+									startingPoint := Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0);
+
+									efade.stop();
+									egrowth.start();
+								}
+
+								nop;
+							},
 							makeSubscribe2(trigger, \tr -> {
 								if (tr) {
 									startingPoint := fgetValue(point);
@@ -176,7 +227,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 									efade.start();
 								}
 							}),
-							makeSubscribeUns(focused, \tr -> {
+							makeSubscribe2Uns(focused, \tr -> {
 								if (tr) {
 									startingPoint := Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0);
 
@@ -199,6 +250,10 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 						contentFForm
 					),
 					[
+						Pair(
+							fmax(fmax(hovered, selected), focused),
+							hoverFForm
+						),
 						Pair(
 							showRipple,
 							rippleFForm

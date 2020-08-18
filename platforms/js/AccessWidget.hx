@@ -521,9 +521,10 @@ class AccessWidget extends EventEmitter {
 				// Add focus notification. Used for focus control
 				this.element.addEventListener("focus", function () {
 					focused = true;
+					this.element.classList.add("focused");
 
 					if (RenderSupport.Animating) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once("stagechanged", function() { if (focused) { this.element.focus(); this.element.classList.add("focused"); } });
 						return;
 					}
 
@@ -561,12 +562,13 @@ class AccessWidget extends EventEmitter {
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
 					if (untyped RenderSupport.Animating || clip.preventBlur) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once("stagechanged", function() { if (focused) { this.element.focus(); this.element.classList.add("focused"); } });
 						return;
 					}
 
 					RenderSupport.once("drawframe", function() {
 						focused = false;
+						this.element.classList.remove("focused");
 						clip.emit("blur");
 
 						if (RenderSupport.RendererType == "html") {

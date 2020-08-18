@@ -119,7 +119,7 @@ class UnicodeTranslation {
 }
 
 class TextClip extends NativeWidgetClip {
-	private var widgetMaxWidth = 0.0;
+	private static var KeepTextClips = Util.getParameter("wcag") == "1";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
@@ -175,6 +175,8 @@ class TextClip extends NativeWidgetClip {
 		style.resolution = 1.0;
 		style.wordWrap = false;
 		style.wordWrapWidth = 2048.0;
+
+		this.keepNativeWidget = KeepTextClips;
 	}
 
 	public static function isRtlChar(ch: String) {
@@ -952,8 +954,11 @@ class TextClip extends NativeWidgetClip {
 			setWordWrap(true);
 		}
 
-		this.keepNativeWidget = true;
-		this.updateKeepNativeWidgetChildren();
+		if (!this.keepNativeWidget) {
+			this.keepNativeWidget = true;
+			this.updateKeepNativeWidgetChildren();
+		}
+
 		this.initNativeWidget(multiline ? 'textarea' : 'input');
 		isInteractive = true;
 		this.invalidateInteractive();
