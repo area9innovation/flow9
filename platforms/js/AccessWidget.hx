@@ -586,7 +586,7 @@ class AccessWidget extends EventEmitter {
 
 					RenderSupport.once("drawframe", function() {
 						focused = false;
-						this.element.classList.remove("focused");
+						if (this.element != null) this.element.classList.remove("focused");
 						clip.emit("blur");
 
 						if (RenderSupport.RendererType == "html") {
