@@ -90,7 +90,7 @@ class NativeWidgetClip extends FlowContainer {
 
 			if (focus && nativeWidget.focus != null && !getFocus()) {
 				nativeWidget.focus();
-				nativeWidget.classList.add("focused");
+				if (RenderSupport.EnableFocusFrame) nativeWidget.classList.add("focused");
 
 				return true;
 			} else if (!focus && nativeWidget.blur != null && getFocus()) {

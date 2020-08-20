@@ -67,21 +67,21 @@ class RenderSupport {
 	public function new() {}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.on(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.off(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.once(event, fn, context);
 	}
 
-	public static inline function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
+	public static function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
 	}
 
@@ -1114,7 +1114,7 @@ class RenderSupport {
 					} else {
 						var mainStage = PixiStage.children[0];
 						mainStage.y = visibleAreaHeight - rect.bottom;
-						var onblur : Dynamic;
+						var onblur : Dynamic = function () {};
 						onblur = function() {
 							mainStage.y = 0;
 							focused_node.removeEventListener("blur", onblur);

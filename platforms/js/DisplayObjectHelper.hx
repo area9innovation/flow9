@@ -459,7 +459,7 @@ class DisplayObjectHelper {
 		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
 			if (focus && accessWidget.element.focus != null) {
 				accessWidget.element.focus();
-				accessWidget.element.classList.add("focused");
+				if (RenderSupport.EnableFocusFrame) accessWidget.element.classList.add("focused");
 
 				return true;
 			} else if (!focus && accessWidget.element.blur != null) {
