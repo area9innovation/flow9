@@ -423,18 +423,16 @@ class AccessWidget extends EventEmitter {
 		"button" => "button",
 		"checkbox" => "button",
 		"radio" => "button",
-		"menu" => "button",
-		"listitem" => "button",
-		"menuitem" => "button",
 		"tab" => "button",
-		"slider" => "button",
 		"banner" => "header",
 		"main" => "section",
 		"navigation" => "nav",
 		"contentinfo" => "footer",
 		"form" => "form",
 		"textbox" => "input",
-		"switch" => "button"
+		"switch" => "button",
+		"menuitem" => "button",
+		"option" => "button"
 	];
 
 	public static var zIndexValues = {
@@ -523,9 +521,19 @@ class AccessWidget extends EventEmitter {
 				// Add focus notification. Used for focus control
 				this.element.addEventListener("focus", function () {
 					focused = true;
+					if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 
 					if (RenderSupport.Animating) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once(
+							"stagechanged",
+							function() {
+								if (focused) {
+									this.element.focus();
+									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
+								}
+							}
+						);
+
 						return;
 					}
 
@@ -563,12 +571,22 @@ class AccessWidget extends EventEmitter {
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
 					if (untyped RenderSupport.Animating || clip.preventBlur) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once(
+							"stagechanged",
+							function() {
+								if (focused) {
+									this.element.focus();
+									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
+								}
+							}
+						);
+
 						return;
 					}
 
 					RenderSupport.once("drawframe", function() {
 						focused = false;
+						if (this.element != null) this.element.classList.remove("focused");
 						clip.emit("blur");
 
 						if (RenderSupport.RendererType == "html") {
@@ -666,7 +684,11 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function set_role(role : String) : String {
-		element.setAttribute("role", role);
+		if (role != "") {
+			element.setAttribute("role", role);
+		} else {
+			element.removeAttribute("role");
+		}
 
 		if (RenderSupport.RendererType == "html" && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
@@ -780,7 +802,7 @@ class AccessWidget extends EventEmitter {
 
 			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
 
-			if (element.tabIndex == null) {
+			if (element.tabIndex == null || element.tabIndex < 0) {
 				element.tabIndex = 0;
 			}
 		} else if (role == "textbox") {
@@ -790,11 +812,11 @@ class AccessWidget extends EventEmitter {
 				}
 			}
 
-			if (element.tabIndex == null) {
+			if (element.tabIndex == null || element.tabIndex < 0) {
 				element.tabIndex = 0;
 			}
-		} else if (role == "iframe") {
-			if (element.tabIndex == null) {
+		} else if (role == "iframe" || role == "slider") {
+			if (element.tabIndex == null || element.tabIndex < 0) {
 				element.tabIndex = 0;
 			}
 		}
@@ -809,6 +831,8 @@ class AccessWidget extends EventEmitter {
 	public function set_description(description : String) : String {
 		if (description != "") {
 			element.setAttribute("aria-label", description);
+		} else {
+			element.removeAttribute("aria-label");
 		}
 
 		return this.description;
@@ -902,8 +926,10 @@ class AccessWidget extends EventEmitter {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {
 							element.style.setProperty(key.substr(6, key.length), attributes.get(key));
-						} else {
+						} else if (attributes.get(key) != "") {
 							element.setAttribute(key, attributes.get(key));
+						} else {
+							element.removeAttribute(key);
 						}
 					}
 				}
@@ -1074,7 +1100,7 @@ class AccessWidget extends EventEmitter {
 				} else {
 					var tagName = accessWidget.element.tagName.toLowerCase();
 
-					if (tagName == "button" || tagName == "input" || tagName == "textarea") {
+					if (tagName == "button" || tagName == "input" || tagName == "textarea" || accessWidget.role == "slider") {
 						tree.childrenTabIndex++;
 
 						if (accessWidget.element.tabIndex != tree.childrenTabIndex) {

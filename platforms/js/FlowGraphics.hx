@@ -642,6 +642,7 @@ class FlowGraphics extends Graphics {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		nativeWidget.setAttribute('role', 'presentation');
 
 		isNativeWidget = true;
 	}

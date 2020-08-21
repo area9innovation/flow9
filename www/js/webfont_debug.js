@@ -780,21 +780,21 @@
     ;
     webfont.DomHelper.prototype.loadStylesheet = function(a, b, c) {
         function d() {
-            n && k && l && (n(m),
-            n = null)
+            m && h && k && (m(l),
+            m = null)
         }
         function e(b) {
-            for (var c = 0; c < h.length; c++)
-                if (h[c].href && -1 !== h[c].href.indexOf(a))
+            for (var c = 0; c < g.length; c++)
+                if (g[c].href && -1 !== g[c].href.indexOf(a))
                     return b();
             setTimeout(function() {
                 e(b)
             }, 0)
         }
         function f(b) {
-            for (var c = 0; c < h.length; c++)
-                if (h[c].href && -1 !== h[c].href.indexOf(a) && h[c].media) {
-                    var d = h[c].media;
+            for (var c = 0; c < g.length; c++)
+                if (g[c].href && -1 !== g[c].href.indexOf(a) && g[c].media) {
+                    var d = g[c].media;
                     if ("all" === d || d.mediaText && "all" === d.mediaText)
                         return b()
                 }
@@ -802,39 +802,49 @@
                 f(b)
             }, 0)
         }
-        var g = this.createElement("link", {
+        var g = this.document_.styleSheets
+          , h = !1
+          , k = !c
+          , l = null
+          , m = b || null;
+        for (b = 0; b < g.length; b++)
+            if (g[b].href && -1 !== g[b].href.indexOf(a) && g[b].media) {
+                var p = g[b].media;
+                if ("all" === p || p.mediaText && "all" === p.mediaText)
+                    return setTimeout(function() {
+                        h = k = !0;
+                        d()
+                    }, 0),
+                    p
+            }
+        var n = this.createElement("link", {
             rel: "stylesheet",
             href: a,
             media: c ? "only x" : "all"
-        })
-          , h = this.document_.styleSheets
-          , k = !1
-          , l = !c
-          , m = null
-          , n = b || null;
-        webfont.DomHelper.CAN_WAIT_STYLESHEET ? (g.onload = function() {
-            k = !0;
+        });
+        webfont.DomHelper.CAN_WAIT_STYLESHEET ? (n.onload = function() {
+            h = !0;
             d()
         }
         ,
-        g.onerror = function() {
-            k = !0;
-            m = Error("Stylesheet failed to load");
+        n.onerror = function() {
+            h = !0;
+            l = Error("Stylesheet failed to load");
             d()
         }
         ) : setTimeout(function() {
-            k = !0;
+            h = !0;
             d()
         }, 0);
-        this.insertInto("head", g);
+        this.insertInto("head", n);
         c && e(function() {
-            g.media = "all";
+            n.media = "all";
             f(function() {
-                l = !0;
+                k = !0;
                 d()
             })
         });
-        return g
+        return n
     }
     ;
     webfont.DomHelper.prototype.loadScript = function(a, b, c) {
@@ -1107,7 +1117,6 @@
             e = null);
             b.activeCallback_(b.font_)
         }, function() {
-			console.log("WebFont.inactive: " + b.font_.toCssString() + ", testString: '" + b.fontTestString_ + "'");
             b.inactiveCallback_(b.font_)
         })
     }
@@ -1290,7 +1299,6 @@
     }
     ;
     webfont.WebFont.prototype.load = function(a) {
-		console.log("WebFont.load called with config: " + JSON.stringify(a));
         this.domHelper_ = new webfont.DomHelper(this.mainWindow_,a.context || this.mainWindow_);
         this.events_ = !1 !== a.events;
         this.classes_ = !1 !== a.classes;

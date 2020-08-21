@@ -36,6 +36,7 @@ class RenderSupport {
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
 	private static var PageWasHidden = false;
+	private static var IsLoading = true;
 
 	// Renderer options
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
@@ -66,21 +67,21 @@ class RenderSupport {
 	public function new() {}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.on(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.off(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.once(event, fn, context);
 	}
 
-	public static inline function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
+	public static function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
 	}
 
@@ -219,6 +220,42 @@ class RenderSupport {
 		}
 
 		return false;
+	}
+
+	private static var UserDefinedFontSize : Float = null;
+	private static function getUserDefinedFontSize() : Float {
+		if (UserDefinedFontSize == null) {
+			var style = Browser.window.getComputedStyle(Browser.document.body);
+
+			UserDefinedFontSize = Std.parseFloat(style.fontSize);
+		}
+
+		if (Math.isNaN(UserDefinedFontSize)) {
+			UserDefinedFontSize = 16.0;
+		}
+
+		return UserDefinedFontSize;
+	}
+
+	private static var UserDefinedLetterSpacing : Float = null;
+	private static function getUserDefinedLetterSpacing() : Float {
+		if (UserDefinedLetterSpacing == null) {
+			var div = Browser.document.createElement("p");
+			Browser.document.body.appendChild(div);
+			var style = Browser.window.getComputedStyle(div);
+
+			UserDefinedLetterSpacing = style.letterSpacing != "normal"
+				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
+				: 0.0;
+
+			Browser.document.body.removeChild(div);
+		}
+
+		if (Math.isNaN(UserDefinedLetterSpacing)) {
+			UserDefinedLetterSpacing = 0.0;
+		}
+
+		return UserDefinedLetterSpacing;
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -380,6 +417,11 @@ class RenderSupport {
 		}
 
 		PixiView = PixiRenderer.view;
+
+		if (IsLoading) {
+			PixiView.style.display = "none";
+		}
+
 		// Make absolute position for canvas for Safari to fix fullscreen API
 		if (Platform.isSafari) {
 			PixiView.style.position = "absolute";
@@ -1072,7 +1114,7 @@ class RenderSupport {
 					} else {
 						var mainStage = PixiStage.children[0];
 						mainStage.y = visibleAreaHeight - rect.bottom;
-						var onblur : Dynamic;
+						var onblur : Dynamic = function () {};
 						onblur = function() {
 							mainStage.y = 0;
 							focused_node.removeEventListener("blur", onblur);
@@ -1099,7 +1141,7 @@ class RenderSupport {
 			if (pixijscss != null) {
 				var newRuleIndex = 0;
 				if (!toShowFrames) {
-					pixijscss.insertRule(".focused { border: none !important; box-shadow: none !important; }", newRuleIndex);
+					pixijscss.insertRule(".focused { outline: none !important; box-shadow: none !important; }", newRuleIndex);
 					off("mousemove", pixiStageOnMouseMove); // Remove mouse event listener that not handle it always when focus frames are hidden
 				} else {
 					pixijscss.deleteRule(newRuleIndex);
@@ -1322,6 +1364,11 @@ class RenderSupport {
 	}
 
 	public static function enableResize() : Void {
+		IsLoading = false;
+		if (PixiView != null) {
+			PixiView.style.display = 'block';
+		}
+
 		// The first flow render call. Hide loading progress indicator.
 		Browser.document.body.style.backgroundImage = "none";
 		var indicator = Browser.document.getElementById("loading_js_indicator");

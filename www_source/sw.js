@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 20;
+var SERVICE_WORKER_VERSION = 21;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -186,10 +186,10 @@ function swIndexedDbInitPromise() {
 
       if (!thisDB.objectStoreNames.contains('serviceWorkerVars')) {
         swIndexedDb.showSwNotification("Creation of new tables.");
-        thisDB.createObjectStore('serviceWorkerVars', {keyPath: 'varName'});
+        thisDB.createObjectStore('serviceWorkerVars', { keyPath: 'varName' });
         let tx = e.target.transaction;
         let os = tx.objectStore('serviceWorkerVars');
-        
+
         try {
           swIndexedDb.showSwNotification("Adding data 1...");
           // We gonna cache all resources except resources extensions below
@@ -236,7 +236,7 @@ function swIndexedDbInitPromise() {
             promiseDone = true;
             resolve(thisDB);
           }
-        } catch(err) {
+        } catch (err) {
           swIndexedDb.failInitDb(err.message);
           if (!promiseDone) {
             promiseDone = true;
@@ -245,7 +245,7 @@ function swIndexedDbInitPromise() {
         }
       }
     }
-   
+
     openRequest.onsuccess = function(e) {
       var thisDB = e.target.result;
       swIndexedDb.db = thisDB;
@@ -263,12 +263,12 @@ function swIndexedDbInitPromise() {
           arr => { swIndexedDb.initDb(thisDB); },
           err => { swIndexedDb.failInitDb(err); }
         );
-      } catch(err) {
+      } catch (err) {
         swIndexedDb.failInitDb(err.message);
-          if (!promiseDone) {
-            promiseDone = true;
-            reject(err.message);
-          }
+        if (!promiseDone) {
+          promiseDone = true;
+          reject(err.message);
+        }
       }
 
       thisDB.onversionchange = function() {
@@ -281,7 +281,7 @@ function swIndexedDbInitPromise() {
         resolve(thisDB);
       }
     }
-   
+
     openRequest.onerror = function(e) {
       swIndexedDb.failInitDb(e.target.error);
 
@@ -351,7 +351,7 @@ function checkOnlineStatus() {
     if (isOnline) console.info("Application switched to OFFLINE mode.");
     isOnline = false;
     // If `navigator.onLine` works not correctly, let check `onLine` status manually
-    if (navigator.onLine && timerId == null) timerId = setInterval(ping_inner, 30000 /* every 30 seconds */);
+    if (navigator.onLine && timerId == null) timerId = setInterval(ping_inner, 30000 /* every 30 seconds */ );
   } else {
     if (!isOnline) console.info("Application returned back to ONLINE mode.");
     isOnline = true;
@@ -362,21 +362,20 @@ function checkOnlineStatus() {
 
 function ping_inner() {
   const request = new Request(
-    urlAddBaseLocation('./images/splash/splash_innovation_trans.png'),
-    {method: 'POST', body: '{"t": ' + (new Date().getTime()) + ', "r":"ping"}'}
+    urlAddBaseLocation('./images/splash/splash_innovation_trans.png'), { method: 'POST', body: '{"t": ' + (new Date().getTime()) + ', "r":"ping"}' }
   );
 
   fetch(request)
     .then(function(response) {
-        if (response.status == 200 && response.type == "basic") {
-          addRequestStatus("fromNetwork");
-          requestsCount.lastFailedCount = 0;
-          requestsCount.lastNetworkCount = 1;
-          if (timerId != null) clearInterval(timerId);
-          timerId = null;
-        } else {
-          addRequestStatus("failed");
-        }
+      if (response.status == 200 && response.type == "basic") {
+        addRequestStatus("fromNetwork");
+        requestsCount.lastFailedCount = 0;
+        requestsCount.lastNetworkCount = 1;
+        if (timerId != null) clearInterval(timerId);
+        timerId = null;
+      } else {
+        addRequestStatus("failed");
+      }
     })
     .catch(function() { addRequestStatus("failed"); });
 }
@@ -385,7 +384,7 @@ function addRequestStatus(value) {
   var lastFailedCount = requestsCount.lastFailedCount;
   var lastNetworkCount = requestsCount.lastNetworkCount;
 
-  switch(value) {
+  switch (value) {
     case 'fromNetwork':
       requestsCount.fromNetwork++;
       lastFailedCount = 0;
@@ -393,9 +392,13 @@ function addRequestStatus(value) {
         lastNetworkCount++;
       if (lastNetworkCount >= LAST_SUCCESS_COUNT_BACK) lastFailedCount = 0;
       break;
-    case 'fromCache': requestsCount.fromCache++; break;
-    case 'skipped': requestsCount.skipped++; break;
-    case 'failed': 
+    case 'fromCache':
+      requestsCount.fromCache++;
+      break;
+    case 'skipped':
+      requestsCount.skipped++;
+      break;
+    case 'failed':
       requestsCount.failed++;
       if (requestsCount.lastStatus == value || (requestsCount.lastStatus == 'fromCache' && !cacheMode.PreferCachedResources))
         lastFailedCount++;
@@ -501,7 +504,8 @@ var cleanServiceWorkerCache = function() {
 
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
-      if (CACHE_NAME != key && SHARED_DATA_ENDPOINT != key) {
+      // We should reset whole cache on update #21 (excluding SHARED_DATA_ENDPOINT)
+      if (!((SHARED_DATA_ENDPOINT == key) || (CACHE_NAME == key && SERVICE_WORKER_VERSION != 21))) {
         console.log("cache cleared", key);
         return caches.delete(key);
       }
@@ -915,6 +919,31 @@ self.addEventListener('fetch', function(event) {
     }
   }
 
+  var updateHeadersInResponse = function(response, newHeaders) {
+    var clResponse = response.clone();
+    return clResponse.blob().then(blob => {
+      var headers = new Headers();
+      /* Copying exists headers */
+      clResponse.headers.forEach(function(val, key) {
+        headers.set(key, val);
+      });
+      /* Adding/rewriting by new headers */
+      newHeaders.forEach(function(val, key) {
+        headers.set(key, val);
+      });
+
+      return new Response(blob, {
+        ok: clResponse.ok,
+        redirected: clResponse.redirected,
+        status: clResponse.status,
+        statusText: clResponse.statusText,
+        headers: headers,
+        type: clResponse.type,
+        url: clResponse.url,
+      });
+    });
+  }
+
   // Clean all previous caches for sensitive to timestamp requests
   var cleanTimestampSensitiveRequests = function(originalUrl) {
     var url = new URL(originalUrl);
@@ -1037,7 +1066,42 @@ self.addEventListener('fetch', function(event) {
           addRequestStatus("fromNetwork");
           return response.clone();
         })
-        .catch(function() { addRequestStatus("failed"); checkOnlineStatus(); return Promise.reject(); });
+        .catch(function() {
+          addRequestStatus("failed");
+          checkOnlineStatus();
+          return Promise.reject();
+        });
+    };
+
+    var doIfNoneMatchFn = function(responseCache) {
+      var etag = responseCache.headers.get('etag');
+      if (isEmpty(etag)) {
+        return doFetchFn();
+      } else {
+        if (etag.endsWith("-gzip")) etag = etag.substring(0, etag.length - 5);
+        else if (etag.endsWith("-gzip\"")) etag = etag.substring(0, etag.length - 6) + "\"";
+
+        return createIfNoneMatchRequest(requestData, etag).then(function(cRequest) {
+            return fetch(cRequest).then(function(response) {
+              if (response.status == 200 && response.type == "basic") {
+                doCacheFn(response);
+                return response.clone();
+              } else if (response.status == 304 && response.type == "basic") {
+                return updateHeadersInResponse(responseCache, response.headers)
+                  .then(responseNew => {
+                    doCacheFn(responseNew);
+                    return responseNew.clone();
+                  })
+                  .catch(function() {
+                    return responseCache.clone();
+                  });
+              } else {
+                return response.clone();
+              }
+            });
+          })
+          .catch(doFetchFn);
+      }
     };
 
     if (requestData.isFileUploading) {
@@ -1048,26 +1112,49 @@ self.addEventListener('fetch', function(event) {
       if (checkIfNotModified) {
         return getCachedResource(requestData)
           .then(function(responseCache) {
-            var etag = responseCache.headers.get('etag');
-            if (isEmpty(etag)) {
-              return doFetchFn();
-            } else {
-              if (etag.endsWith("-gzip")) etag = etag.substring(0, etag.length - 5);
-              else if (etag.endsWith("-gzip\"")) etag = etag.substring(0, etag.length - 6) + "\"";
+            var cacheControl = responseCache.headers.get('cache-control');
 
-              return createIfNoneMatchRequest(requestData, etag).then(function(cRequest) {
-                  return fetch(cRequest).then(function(response) {
-                    if (response.status == 200 && response.type == "basic") {
-                      doCacheFn(response);
-                      return response.clone();
-                    } else if (response.status == 304 && response.type == "basic") {
+            if (isEmpty(cacheControl)) {
+              return doIfNoneMatchFn(responseCache);
+            } else {
+              var ccParams = cacheControl.split(", ");
+              var ccNC = ccParams.find(function(p) { return p == 'no-cache'; });
+              var ccMR = ccParams.find(function(p) { return p == 'must-revalidate'; });
+              var ccMA = ccParams.find(function(p) { return p.startsWith('max-age='); });
+              var ccDate = responseCache.headers.get('date');
+
+              /* If 'cache-control: no-cache' header presented in the answer from server - we send `If None Match` request */
+              if (!isEmpty(ccNC)) {
+                return doIfNoneMatchFn(responseCache);
+                /* If 'cache-control: max-age' header presented in the answer */
+              } else if (!isEmpty(ccMA)) {
+                /* and there is not `Date` header - we send `If None Match` request */
+                if (isEmpty(ccDate)) {
+                  return doIfNoneMatchFn(responseCache);
+                  /* and `Date` header exists */
+                } else {
+                  ccMA = ccMA.split("=");
+                  if (ccMA.length == 2 && !isNaN(parseInt(ccMA[1]))) {
+                    ccDate = new Date(ccDate);
+                    ccDate.setSeconds(ccDate.getSeconds() + parseInt(ccMA[1]));
+
+                    /* We check does the answer still valid and we can reuse it */
+                    if (ccDate >= (new Date())) {
                       return responseCache.clone();
+                      /* If 'cache-control: must-revalidate' header presented we revalidate exists cache with `If None Match` request */
+                    } else if (!isEmpty(ccMR)) {
+                      return doIfNoneMatchFn(responseCache);
+                      /* If not - we do new request */
                     } else {
-                      return response.clone();
+                      return doFetchFn();
                     }
-                  });
-                })
-                .catch(doFetchFn);
+                  } else {
+                    return doIfNoneMatchFn(responseCache);
+                  }
+                }
+              } else {
+                return doIfNoneMatchFn(responseCache);
+              }
             }
           })
           .catch(doFetchFn);
@@ -1237,7 +1324,7 @@ self.addEventListener('message', function(event) {
   swIndexedDbInitialize();
 
   var respond = function(data) {
-    if (event.ports.length > 0 /*&& !isEmpty(event.ports[0])*/) {
+    if (event.ports.length > 0 /*&& !isEmpty(event.ports[0])*/ ) {
       event.ports[0].postMessage(data);
     } else {
       console.error("ServiceWorker: Failed to respond!");
@@ -1455,4 +1542,4 @@ self.addEventListener('message', function(event) {
   }
 });
 
-swIndexedDbInitialize();  
+swIndexedDbInitialize();

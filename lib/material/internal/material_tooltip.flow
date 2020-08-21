@@ -11,6 +11,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 
 	tooltipGap = 8.;
 	hover = make(false);
+	popupHover = make(false);
 	enabled =
 		extractStruct(m.style, MEnabled(const(true))).enabled
 		|> (\en -> if (disableOnDragging) fand(en, feq(manager.manager.dragging, -1)) else en);
@@ -20,11 +21,45 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 	positionScale = make(zeroPositionScale);
 
 	buttonWH = makeWH();
+	tooltipWH = makeWH();
 	lightBackground = extractStruct(m.style, MLightBackground(getLightBackground(parent))).light;
 	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(MGrey(if (lightBackground) 600 else 200))]));
 
 	tooltipAlign = extractStruct(m.style, MTooltipAlignment(MBottom())).type;
 	translatePosition = extractStruct(m.style, MTranslatePosition(const(zeroPoint))).point;
+
+	tooltipId = "tooltip" + i2s(makeTropicTag(manager));
+
+	offsetT =
+		fsubselect2(tooltipWH, buttonWH, \twh, bwh -> {
+			top = const(WidthHeight((bwh.width - twh.width) / 2., -twh.height - tooltipGap));
+			bottom = const(WidthHeight((bwh.width - twh.width) / 2., bwh.height + tooltipGap));
+			left = const(WidthHeight(-twh.width - tooltipGap, (bwh.height - twh.height) / 2.));
+			right = const(WidthHeight(bwh.width + tooltipGap, (bwh.height - twh.height) / 2.));
+
+			switch (tooltipAlign) {
+				MTop() : top;
+				MBottom() : bottom;
+				MLeft() : left;
+				MRight() : right;
+				MTryTopFirst() :
+					fif(
+						fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
+						top,
+						bottom
+					);
+				MTryBottomFirst() :
+					fif(
+						fselect2(positionScale, manager.stageWH, FLift2(\ps : PositionScale, sWH ->
+							ps.pos.y + bwh.height > sWH.height - twh.height - tooltipGap)
+						),
+						top,
+						bottom
+					);
+				MNoAlignment() : const(WidthHeight(0., 0.));
+			}
+		});
+	content = MAccess([FAccessAttribute("aria-describedby", const(tooltipId)), FAccessVisible(enabled)], m.box);
 
 	TConstruct(
 		[
@@ -35,7 +70,59 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 							MComponentGroup(
 								m.tooltip
 								|> MBorderLeftRight(8.)
-								|> MBorderTopBottom(4.),
+								|> MBorderTopBottom(4.)
+								|> (\f ->
+									if (mobile)
+										f
+									else
+										MCopySize(
+											f,
+											\tr ->
+												TDispose(
+													[
+														\ -> {
+															next(popupHover, false);
+														}
+													],
+													TInteractive(
+														[
+															KeyDown2(\h, ke -> {
+																if (ke.keycode == 27) {
+																	next(openMenu.opened, false);
+
+																	true;
+																} else {
+																	h;
+																}
+															}),
+															TMouseInside(popupHover, false)
+														],
+														TGroup2(
+															TTranslate(
+																fpoint(
+																	fnegate(fwidth(offsetT)),
+																	fnegate(fheight(offsetT))
+																),
+																TRectangle(
+																	interactiveRectangleStyle,
+																	TSized(
+																		fwh(
+																			fwidth(buttonWH),
+																			fmax(fheight(buttonWH), fheight(offsetT))
+																		)
+																	)
+																)
+															),
+															TRectangle(
+																interactiveRectangleStyle,
+																tr
+															)
+														)
+													)
+												),
+											true
+										)
+								),
 								[
 									MFocusName("MTooltip"),
 									UpdateMaterialTheme(\t ->
@@ -43,12 +130,12 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 											MaterialTheme(t with type = MaterialFontManager(t.type with body1 = MTooltipDesktop(), body2 = MTooltipDesktop())),
 											!lightBackground
 										)
-									)
+									),
+									AccessRole("tooltip"),
+									FAccessAttribute("id", const(tooltipId))
 								]
 							)
 							|> (\f -> {
-								tooltipWH = makeWH();
-
 								RenderMPopup(
 									manager,
 									parent,
@@ -67,36 +154,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 											RMDontHandle(),
 											RMNoSnapSize(),
 											MElevation(zero),
-											RMOffset(
-												fsubselect2(tooltipWH, buttonWH, \twh, bwh -> {
-													top = const(WidthHeight((bwh.width - twh.width) / 2., -twh.height - tooltipGap));
-													bottom = const(WidthHeight((bwh.width - twh.width) / 2., bwh.height + tooltipGap));
-													left = const(WidthHeight(-twh.width - tooltipGap, (bwh.height - twh.height) / 2.));
-													right = const(WidthHeight(bwh.width + tooltipGap, (bwh.height - twh.height) / 2.));
-													switch (tooltipAlign) {
-														MTop() : top;
-														MBottom() : bottom;
-														MLeft() : left;
-														MRight() : right;
-														MTryTopFirst() :
-															fif(
-																fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
-																top,
-																bottom
-															);
-														MTryBottomFirst() :
-															fif(
-																fselect2(positionScale, manager.stageWH, FLift2(\ps : PositionScale, sWH ->
-																	ps.pos.y + bwh.height > sWH.height - twh.height - tooltipGap)
-																), 
-																top,
-																bottom
-															);
-														MNoAlignment() : const(WidthHeight(0., 0.));
-													}
-												})
-												|> (\offset -> fpair(offset, const(0.)))
-											),
+											RMOffset(fpair(offsetT, const(0.))),
 											MRippleShape("MTooltip")
 										]
 									),
@@ -110,20 +168,21 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 				}
 			}),
 			\ -> fconnect(
-				fand(enabled, fand(hover, fselect(manager.manager.zorder, FLift(\cz -> cz <= zorder)))),
+				fand(enabled, fand(fOr(hover, popupHover), fselect(manager.manager.zorder, FLift(\cz -> cz <= zorder)))),
 				openMenu.opened
 			),
 			\ -> \ -> next(openMenu.opened, false)
 		],
 		(if (!mobile)
-			TInteractive([TMouseInside(hover, contains(m.style, MBlockHover()))], m2t(m.box, parent))
+			TInteractive([TMouseInside(hover, contains(m.style, MBlockHover()))], m2t(content, parent))
 		else
 			TCopySize(
-				m2t(m.box, parent),
+				m2t(content, parent),
 				\tr ->
 					TInteractive([TMouseDownGhost(hover)], tr),
 				true
-			))
+			)
+		)
 		|> (\f -> MPositionScaleAttachBox(positionScale, buttonWH, f, fand(enabled, openMenu.opened)))
 	)
 }

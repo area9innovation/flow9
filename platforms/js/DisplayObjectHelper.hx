@@ -459,10 +459,12 @@ class DisplayObjectHelper {
 		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
 			if (focus && accessWidget.element.focus != null) {
 				accessWidget.element.focus();
+				if (RenderSupport.EnableFocusFrame) accessWidget.element.classList.add("focused");
 
 				return true;
 			} else if (!focus && accessWidget.element.blur != null) {
 				accessWidget.element.blur();
+				accessWidget.element.classList.remove("focused");
 
 				return true;
 			}
@@ -815,7 +817,7 @@ class DisplayObjectHelper {
 	public static function updateClipID(clip : DisplayObject) : Void {
 		var nativeWidget = untyped clip.nativeWidget;
 
-		if (nativeWidget != null) {
+		if (nativeWidget != null && nativeWidget.getAttribute("id") == null) {
 			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
 		}
 	}
