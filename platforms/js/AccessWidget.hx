@@ -587,7 +587,7 @@ class AccessWidget extends EventEmitter {
 					this.element.onsubmit = function() { return false; };
 				}
 
-				if (hasTabIndex()) {
+				if (hasTabIndex() && tabindex < 0) {
 					tabindex = 0;
 				}
 
@@ -776,7 +776,7 @@ class AccessWidget extends EventEmitter {
 			}
 		}
 
-		if (hasTabIndex()) {
+		if (hasTabIndex() && tabindex < 0) {
 			tabindex = 0;
 		}
 
