@@ -1,5 +1,4 @@
 import js.Browser;
-import js.html.MouseEvent;
 import js.html.Event;
 import pixi.core.text.Text in PixiCoreText;
 import pixi.core.text.TextMetrics;

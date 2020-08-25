@@ -11,8 +11,6 @@ import pixi.core.renderers.webgl.filters.Filter;
 import pixi.core.math.Point;
 import pixi.core.text.TextStyle;
 
-import pixi.loaders.Loader;
-
 import MacroUtils;
 import Platform;
 import ProgressiveWebTools;
@@ -359,7 +357,6 @@ class RenderSupport {
 
 		if (RendererType == "html") {
 			PixiView = Browser.document.createElement('div');
-			PixiView.tabIndex = 1;
 			PixiView.style.background = "white";
 		} else if (RendererType != "canvas") {
 			PixiView = null;
@@ -417,6 +414,21 @@ class RenderSupport {
 		}
 
 		PixiView = PixiRenderer.view;
+
+		PixiView.tabIndex = 1;
+		PixiView.onfocus = function(e) {
+			var accessWidget = AccessWidget.tree.getFirstAccessWidget();
+
+			if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+				setFocus(accessWidget.clip, true);
+			} else {
+				accessWidget = AccessWidget.tree.getLastAccessWidget();
+
+				if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+					setFocus(accessWidget.clip, true);
+				}
+			}
+		}
 
 		if (IsLoading) {
 			PixiView.style.display = "none";

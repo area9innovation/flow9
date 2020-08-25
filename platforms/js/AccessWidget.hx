@@ -2,8 +2,6 @@ import js.Browser;
 import js.html.Element;
 
 import pixi.core.math.Matrix;
-import pixi.core.display.Bounds;
-import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 import pixi.interaction.EventEmitter;
 import pixi.core.math.Point;
@@ -253,7 +251,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function getFirstAccessWidget() : AccessWidget {
-		if (parent != null) {
+		if (parent != null || this == AccessWidget.tree) {
 			for (i in -1...nextId) {
 				var child = children.get(i);
 
@@ -275,7 +273,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function getLastAccessWidget() : AccessWidget {
-		if (parent != null) {
+		if (parent != null || this == AccessWidget.tree) {
 			for (i in 1...(nextId + 1)) {
 				var child = children.get(nextId - i);
 
@@ -444,6 +442,7 @@ class AccessWidget extends EventEmitter {
 	public static var tree : AccessWidgetTree = new AccessWidgetTree(0);
 
 	public var clip : DisplayObject;
+	public var tagName : String = "div";
 	@:isVar public var element(get, set) : Element;
 
 	@:isVar public var nodeindex(get, set) : Array<Int>;
@@ -463,10 +462,10 @@ class AccessWidget extends EventEmitter {
 		super();
 
 		this.clip = clip;
+		this.tabindex = -1;
 		this.element = element;
 		this.nodeindex = nodeindex;
 		this.zorder = zorder;
-		this.tabindex = -1;
 		this.enabled = true;
 
 		clip.onAdded(function() {
@@ -507,6 +506,10 @@ class AccessWidget extends EventEmitter {
 		return element;
 	}
 
+	public inline function hasTabIndex() : Bool {
+		return this.tagName == "button" || this.tagName == "input" || this.tagName == "textarea" || this.role == "slider";
+	}
+
 	public function set_element(element : Element) : Element {
 		if (this.element != element) {
 			if (this.element != null && this.element.parentNode != null) {
@@ -518,8 +521,9 @@ class AccessWidget extends EventEmitter {
 			this.element = element;
 
 			if (this.element != null) {
-				var tagName = this.element.tagName.toLowerCase();
-
+				this.tagName = element.tagName.toLowerCase();
+				untyped this.clip.keepNativeWidget = hasTabIndex();
+				this.clip.updateKeepNativeWidgetChildren();
 				// Add focus notification. Used for focus control
 				this.element.addEventListener("focus", function () {
 					focused = true;
@@ -537,28 +541,6 @@ class AccessWidget extends EventEmitter {
 						);
 
 						return;
-					}
-
-					if (RenderSupport.RendererType == "html") {
-						if (parent != null) {
-							var accessWidget = parent.getNextAccessWidget();
-
-							if (untyped accessWidget != null && accessWidget.clip != null && !accessWidget.focused && !accessWidget.clip.keepNativeWidget) {
-								untyped accessWidget.clip.keepNativeWidget = true;
-								accessWidget.clip.updateKeepNativeWidgetChildren();
-
-								RenderSupport.render();
-							}
-
-							accessWidget = parent.getPreviousAccessWidget();
-
-							if (untyped accessWidget != null && accessWidget.clip != null && !accessWidget.focused && !accessWidget.clip.keepNativeWidget) {
-								untyped accessWidget.clip.keepNativeWidget = true;
-								accessWidget.clip.updateKeepNativeWidgetChildren();
-
-								RenderSupport.render();
-							}
-						}
 					}
 
 					clip.emit("focus");
@@ -590,46 +572,23 @@ class AccessWidget extends EventEmitter {
 						focused = false;
 						if (this.element != null) this.element.classList.remove("focused");
 						clip.emit("blur");
-
-						if (RenderSupport.RendererType == "html") {
-							untyped clip.keepNativeWidget = clip.isInput == true;
-							clip.updateKeepNativeWidgetChildren();
-
-							RenderSupport.render();
-
-							if (parent != null) {
-								var accessWidget = parent.getNextAccessWidget();
-
-								if (untyped accessWidget != null && accessWidget.clip != null && !accessWidget.focused && accessWidget.clip.keepNativeWidget) {
-									untyped accessWidget.clip.keepNativeWidget = accessWidget.clip.isInput == true;
-									accessWidget.clip.updateKeepNativeWidgetChildren();
-
-									RenderSupport.render();
-								}
-
-								accessWidget = parent.getPreviousAccessWidget();
-
-								if (untyped accessWidget != null && accessWidget.clip != null && !accessWidget.focused && accessWidget.clip.keepNativeWidget) {
-									untyped accessWidget.clip.keepNativeWidget = accessWidget.clip.isInput == true;
-									accessWidget.clip.updateKeepNativeWidgetChildren();
-
-									RenderSupport.render();
-								}
-							}
-						}
 					});
 				});
 
-				if (tagName == "button") {
+				if (this.tagName == "button") {
 					this.element.classList.remove("accessElement");
 					this.element.classList.add("accessButton");
-				} else if (tagName == "div") {
+				} else if (this.tagName == "div") {
 					this.element.classList.remove("accessButton");
 					this.element.classList.add("accessElement");
-				} else if (tagName == "form") {
+				} else if (this.tagName == "form") {
 					this.element.classList.remove("accessButton");
 					this.element.classList.remove("accessElement");
 					this.element.onsubmit = function() { return false; };
+				}
+
+				if (hasTabIndex()) {
+					tabindex = 0;
 				}
 
 				if (parent != null) {
@@ -679,7 +638,7 @@ class AccessWidget extends EventEmitter {
 		if (this.tabindex != tabindex) {
 			this.tabindex = tabindex;
 
-			if (enabled) {
+			if (enabled && hasTabIndex()) {
 				element.tabIndex = tabindex;
 			}
 		}
@@ -809,24 +768,16 @@ class AccessWidget extends EventEmitter {
 			}
 
 			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
-
-			if (tabindex < 0) {
-				tabindex = 0;
-			}
 		} else if (role == "textbox") {
 			element.onkeyup = function(e) {
 				if (e.keyCode == 13 && untyped clip.accessCallback != null) {
 					untyped clip.accessCallback();
 				}
 			}
+		}
 
-			if (tabindex < 0) {
-				tabindex = 0;
-			}
-		} else if (role == "iframe" || role == "slider") {
-			if (tabindex < 0) {
-				tabindex = 0;
-			}
+		if (hasTabIndex()) {
+			tabindex = 0;
 		}
 
 		return this.role;
@@ -866,10 +817,16 @@ class AccessWidget extends EventEmitter {
 
 			if (enabled) {
 				element.removeAttribute("disabled");
-				element.tabIndex = tabindex;
+				if (hasTabIndex()) {
+					element.tabIndex = tabindex;
+				}
 			} else {
-				element.setAttribute("disabled", "disabled");
-				element.tabIndex = -1;
+				if (!Platform.isFirefox) {
+					element.setAttribute("disabled", "disabled");
+				}
+				if (hasTabIndex()) {
+					element.tabIndex = -1;
+				}
 			}
 		}
 
@@ -1074,7 +1031,7 @@ class AccessWidget extends EventEmitter {
 			}
 		}
 
-		if (!tree.childrenChanged && (!childrenChanged || RenderSupport.RendererType != "html")) {
+		if (!tree.childrenChanged && !childrenChanged) {
 			return tree.childrenTabIndex;
 		}
 
@@ -1089,7 +1046,7 @@ class AccessWidget extends EventEmitter {
 
 			childrenChanged = childrenChanged || child.childrenChanged;
 
-			if (!child.childrenChanged && !child.changed && (!childrenChanged || RenderSupport.RendererType != "html")) {
+			if (!child.childrenChanged && !child.changed && !childrenChanged) {
 				tree.childrenTabIndex = child.childrenTabIndex;
 				continue;
 			}
@@ -1111,14 +1068,12 @@ class AccessWidget extends EventEmitter {
 					}
 
 					previousElement = accessWidget.element;
-				} else {
-					var tagName = accessWidget.element.tagName.toLowerCase();
+				}
 
-					if (tagName == "button" || tagName == "input" || tagName == "textarea" || accessWidget.role == "slider") {
-						tree.childrenTabIndex++;
+				if (accessWidget.hasTabIndex()) {
+					tree.childrenTabIndex++;
 
-						accessWidget.tabindex = tree.childrenTabIndex;
-					}
+					accessWidget.tabindex = tree.childrenTabIndex;
 				}
 
 				tree.childrenTabIndex = updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild, childrenChanged);
