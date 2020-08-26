@@ -1357,7 +1357,9 @@ class DisplayObjectHelper {
 				svg.insertBefore(defs, svg.firstChild);
 
 				for (child in svg.childNodes) {
-					untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+					if (untyped child.tagName != null && child.tagName.toLowerCase() != "defs") {
+						untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+					}
 				}
 			}
 		} else if (viewBounds != null) {
@@ -1442,7 +1444,9 @@ class DisplayObjectHelper {
 							svg.insertBefore(defs, svg.firstChild);
 
 							for (child in svg.childNodes) {
-								untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+								if (untyped child.tagName != null && child.tagName.toLowerCase() != "defs") {
+									untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+								}
 							}
 						}
 					} else {
@@ -1489,6 +1493,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function getSVGChildren(clip : DisplayObject) : Array<DisplayObject> {
+		if (untyped clip.isSvg && clip.transform != null && clip.parent != null && clip.parent.transform != null) {
+			untyped clip.transform.updateTransform(clip.parent.transform);
+		}
+
 		var result : Array<DisplayObject> = untyped clip.isSvg ? [clip] : [];
 
 		for (child in getClipChildren(clip)) {

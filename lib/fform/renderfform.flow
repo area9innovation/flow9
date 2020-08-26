@@ -1215,8 +1215,6 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			getCurrentFrame = tryExtractStruct(style, FVideoGetCurrentFrame(ref \ -> ""));
 			additionalSources = extractStruct(style, FVideoAdditionalSources([])).sources;
 
-			dispR : ref [() -> void] = ref [];
-
 			video =
 				makeVideo(
 					\w, h -> {
@@ -1250,7 +1248,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 			maybeApply(getCurrentFrame, \gcf -> gcf.fn := \ -> getVideoCurrentFrame(video));
 
-			dispR := concatA([
+			disp = concatA([
 				[
 					make5Subscribe(
 						fpair(realVideoSize, wh), keepAspectRation, coverBox.cover, coverBoxAlign.x, coverBoxAlign.y,
@@ -1405,20 +1403,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					\ -> deleteNative(video),
 				]
 			]);
-			
-			addMoreSubscribersDone = ref false;
-			addMoreSubscribersOnce = \-> {
-				if (!^addMoreSubscribersDone) {
-					addMoreSubscribersDone := true;
-					dispR := concat(^dispR, [
-						makeSubscribe(playing, \pl -> if (!^streamListenerResponse) {
-							if (pl) resumeVideo(video) else pauseVideo(video);
-						})(),
-						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
-					]);
-				}
-			}
 
+			dispR = ref [];
 			streamListener = addStreamStatusListener(video, \code -> {
 				if (code == "NetStream.Play.StreamNotFound") {
 					errorHandlerFn();
@@ -1436,15 +1422,20 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					synchroCalls.onStop();
 				}
 
-				addMoreSubscribersOnce();
+				applyall(^dispR);
+				dispR := [
+					makeSubscribe(playing, \pl -> if (!^streamListenerResponse) {
+						if (pl) resumeVideo(video) else pauseVideo(video);
+					})(),
+					makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
+				];
+
 				streamListenerFn(code);
 			});
 
-			dispR := concat(^dispR, [streamListener]);
-
 			FRenderResult(
 				[video],
-				[\-> applyall(^dispR)],
+				[\-> applyall(concat3(^dispR, [streamListener], disp))],
 				[FClipInteractive(), FClipFilters(), FClipMask()]
 			);
 		}
