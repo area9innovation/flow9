@@ -522,8 +522,11 @@ class AccessWidget extends EventEmitter {
 
 			if (this.element != null) {
 				this.tagName = element.tagName.toLowerCase();
-				untyped this.clip.keepNativeWidget = hasTabIndex();
-				this.clip.updateKeepNativeWidgetChildren();
+				if (this.clip != null) {
+					untyped this.clip.keepNativeWidget = hasTabIndex() || this.tagName == "iframe" || this.role == "iframe";
+					this.clip.updateKeepNativeWidgetChildren();
+				}
+
 				// Add focus notification. Used for focus control
 				this.element.addEventListener("focus", function () {
 					focused = true;
@@ -655,6 +658,11 @@ class AccessWidget extends EventEmitter {
 			element.setAttribute("role", role);
 		} else {
 			element.removeAttribute("role");
+		}
+
+		if (this.clip != null) {
+			untyped this.clip.keepNativeWidget = hasTabIndex() || this.tagName == "iframe" || role == "iframe";
+			this.clip.updateKeepNativeWidgetChildren();
 		}
 
 		if (RenderSupport.RendererType == "html" && accessRoleMap.get(role) != null &&
