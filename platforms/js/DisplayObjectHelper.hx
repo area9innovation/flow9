@@ -459,10 +459,12 @@ class DisplayObjectHelper {
 		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
 			if (focus && accessWidget.element.focus != null) {
 				accessWidget.element.focus();
+				if (RenderSupport.EnableFocusFrame) accessWidget.element.classList.add("focused");
 
 				return true;
 			} else if (!focus && accessWidget.element.blur != null) {
 				accessWidget.element.blur();
+				accessWidget.element.classList.remove("focused");
 
 				return true;
 			}
@@ -815,7 +817,7 @@ class DisplayObjectHelper {
 	public static function updateClipID(clip : DisplayObject) : Void {
 		var nativeWidget = untyped clip.nativeWidget;
 
-		if (nativeWidget != null) {
+		if (nativeWidget != null && nativeWidget.getAttribute("id") == null) {
 			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
 		}
 	}
@@ -1355,7 +1357,9 @@ class DisplayObjectHelper {
 				svg.insertBefore(defs, svg.firstChild);
 
 				for (child in svg.childNodes) {
-					untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+					if (untyped child.tagName != null && child.tagName.toLowerCase() != "defs") {
+						untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+					}
 				}
 			}
 		} else if (viewBounds != null) {
@@ -1440,7 +1444,9 @@ class DisplayObjectHelper {
 							svg.insertBefore(defs, svg.firstChild);
 
 							for (child in svg.childNodes) {
-								untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+								if (untyped child.tagName != null && child.tagName.toLowerCase() != "defs") {
+									untyped child.setAttribute("mask", 'url(#' + elementId + "mask)");
+								}
 							}
 						}
 					} else {
@@ -1487,6 +1493,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function getSVGChildren(clip : DisplayObject) : Array<DisplayObject> {
+		if (untyped clip.isSvg && clip.transform != null && clip.parent != null && clip.parent.transform != null) {
+			untyped clip.transform.updateTransform(clip.parent.transform);
+		}
+
 		var result : Array<DisplayObject> = untyped clip.isSvg ? [clip] : [];
 
 		for (child in getClipChildren(clip)) {

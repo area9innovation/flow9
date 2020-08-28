@@ -507,7 +507,7 @@ class AccessWidget extends EventEmitter {
 
 	public function set_element(element : Element) : Element {
 		if (this.element != element) {
-			if (this.element != null && this.element.parentNode != null) {
+			if (this.element != null && this.element.parentNode != null && (element != null || RenderSupport.RendererType != "html")) {
 				this.element.parentNode.removeChild(this.element);
 
 				untyped __js__("delete this.element;");
@@ -521,9 +521,19 @@ class AccessWidget extends EventEmitter {
 				// Add focus notification. Used for focus control
 				this.element.addEventListener("focus", function () {
 					focused = true;
+					if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 
 					if (RenderSupport.Animating) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once(
+							"stagechanged",
+							function() {
+								if (focused) {
+									this.element.focus();
+									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
+								}
+							}
+						);
+
 						return;
 					}
 
@@ -561,12 +571,22 @@ class AccessWidget extends EventEmitter {
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
 					if (untyped RenderSupport.Animating || clip.preventBlur) {
-						RenderSupport.once("stagechanged", function() { if (focused) this.element.focus(); });
+						RenderSupport.once(
+							"stagechanged",
+							function() {
+								if (focused) {
+									this.element.focus();
+									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
+								}
+							}
+						);
+
 						return;
 					}
 
 					RenderSupport.once("drawframe", function() {
 						focused = false;
+						if (this.element != null) this.element.classList.remove("focused");
 						clip.emit("blur");
 
 						if (RenderSupport.RendererType == "html") {
