@@ -131,14 +131,14 @@ public class HttpSupport extends NativeHost {
 			if (method == "POST") {
 				URL obj = new URL(url);
 				con = (HttpURLConnection) obj.openConnection();
-				if (data != null) {
+				if (data != null & data != "") {
 					postData = data.getBytes(StandardCharsets.UTF_8);
 					con.setRequestProperty("Content-Type", "application/raw");
 				} else {
 					postData = urlParameters.getBytes(StandardCharsets.UTF_8);
 					con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-				}
-				int postDataLength = postData.length;				
+				};
+				int postDataLength = postData.length;
 				this.addHeaders(con, headers);
 				con.setRequestProperty("charset", "utf-8");
 				con.setRequestMethod(method);
