@@ -1625,10 +1625,18 @@ class Native {
 				}
 			} else if (event == "suspend") {
 				Browser.window.addEventListener("blur", cb);
-				return function() { Browser.window.removeEventListener("blur", cb); };
+				Browser.window.addEventListener("pagehide", cb);
+				return function() {
+					Browser.window.removeEventListener("blur", cb);
+					Browser.window.removeEventListener("pagehide", cb);
+				};
 			} else if (event == "resume") {
 				Browser.window.addEventListener("focus", cb);
-				return function() { Browser.window.removeEventListener("focus", cb); };
+				Browser.window.addEventListener("pageshow", cb);
+				return function() {
+					Browser.window.removeEventListener("focus", cb);
+					Browser.window.removeEventListener("pageshow", cb);
+				};
 			} else if (event == "active") {
 				var timeoutActiveId = -1;
 				var setTimeoutActiveFn = function () {};

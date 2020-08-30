@@ -20,6 +20,7 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	persistent : TScrollPersistent = extractStruct(m.style, TScrollPersistent(const(false)));
 	barstyles : TScrollbars = extractStruct(m.style, TScrollbars(materialScrollBar, materialScrollBar));
 	expandOnHover : TExpandOnHover = extractStruct(m.style, TExpandOnHover(true));
+	spinner = tryExtractStruct(m.style, MScrollSpinner(make(false), []));
 	keyFilter : TKeyFilter =
 		tryExtractStruct(m.style, TKeyFilter(\__ -> true))
 		|> (\kf ->
@@ -70,7 +71,8 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 					]
 				)
 			)
-	);
+	)
+	|> (\t -> eitherMap(spinner, \sp -> MPullSpin(manager, parent, scrollPosition.position, sp, t), t))
 }
 
 extractMScrollStyle(style : [flow]) -> [MScrollStyle] {
@@ -545,6 +547,168 @@ MRecyclerGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MRecyclerGr
 				)
 			),
 			f
+		)
+	)
+}
+
+MPullSpinState(from : double, to : double);
+
+MPullSpin(manager : MaterialManager, parent : MFocusGroup, topleft : DynamicBehaviour<Point>, spinner : MScrollSpinner, tr : Tropic) -> Tropic {
+	down = make(false);
+	mouse = make(zeroPoint);
+	isDragging = make(false);
+	spin = spinner.spin;
+	resetAnimation = make(Pair(false, false));
+
+	radius = 10.0;
+	maxPosition = 64.0;
+	normalPosition = 40.0;
+	offset = ref 0.0;
+	arrowColor = extractStruct(spinner.style, MFill(MGrey(600))).color;
+	arrowOpacity = extractStruct(spinner.style, FillOpacity(1.0)).opacity;
+
+	state = make(MPullSpinState(0., 0.));
+	arrowScale = make(0.0);
+	circleScale = make(1.0);
+	opacity = make(0.0);
+	posY = make(0.0);
+
+	TCopySize(tr, \sz ->
+		TGroup2(
+			ProgressCircleWithArrow(
+				manager.focus,
+				fselect(state, FLift(\st -> st.from)),
+				fselect(state, FLift(\st -> st.to)),
+				2.0,
+				radius,
+				arrowScale,
+				arrowColor,
+				arrowOpacity,
+				true,
+				0.75,
+				1.
+			)
+			|> (\t -> TTranslate(fpoint(const(2. * radius), const(0.0)), t))
+			|> (\t -> TScale(ffactor2(circleScale), t))
+			|> (\t -> TAlpha(opacity, t))
+			|> (\t -> TTranslate(fpoint(const(0.0), posY), t))
+			|> (\t -> TCenterXIn(t, sz))
+			|> (\t -> TCropSize(sz, t))
+			|> (\t -> MEasingAnimation(
+					manager,
+					parent,
+					const(1.),
+					const(easingStandartCurve),
+					spin,
+					\v ->
+						Some(v),
+					\v, prc ->
+						nextDistinct(state, MPullSpinState(
+							360. * (0.5 * prc + max(0., prc - 0.5)) + 180.0,
+							360. * (0.5 * prc - max(0., 0.5 - prc)) + 90.0
+						)),
+					[MLoop(\v -> if (v) Some(v) else None())],
+					t
+				))
+			|> (\t -> MEasingAnimation(
+					manager,
+					parent,
+					const(0.2),
+					const(easingStandartCurve),
+					spin,
+					\v ->
+						Some(Pair(v, getValue(posY))),
+					\v, prc ->
+						if (v.first) {
+							nextDistinct(arrowScale, 1.0 - prc);
+							nextDistinct(posY, lerp(v.second, normalPosition, prc));
+						},
+					[],
+					t
+				))
+			|> (\t -> MEasingAnimation(
+					manager,
+					parent,
+					const(0.33),
+					const(easingStandartCurve),
+					resetAnimation,
+					\v ->
+						Some(Quadruple(
+							v,
+							getValue(state),
+							getValue(opacity),
+							getValue(posY)
+						)),
+					\v, prc -> {
+						if (v.first.first) {
+							nextDistinct(state, 
+								MPullSpinState(
+									lerp(v.second.from, 0., prc),
+									lerp(v.second.to, 0., prc),
+								)
+							);
+							nextDistinct(opacity, lerp(v.third, 0., prc));
+
+							if (v.first.second) {
+								nextDistinct(circleScale, 1.0 - prc)
+							} else {
+								nextDistinct(posY, lerp(v.fourth, 0., prc));
+							}
+						}
+
+						if (prc == 1.0) {
+							nextDistinct(resetAnimation, Pair(false, false));
+							nextDistinct(circleScale, 1.0);
+							nextDistinct(posY, 0.0);
+						}
+					},
+					[],
+					t
+				)),
+
+			TInteractive(
+				[
+					TMouseDownGhost(down),
+					TMouseXY(mouse)
+				],
+				TRectangle(interactiveRectangleStyle, sz)
+			)
+		),
+		true
+	)
+	|> (\t -> 
+		TConstruct(
+			[
+				makeSubscribe2(down, \d -> 
+					if (!getValue(spin)) {
+						if (getValue(topleft).y < 4.0 && d) {
+							nextDistinct(isDragging, true);
+							offset := getValue(posY) - getValue(mouse).y;
+						} else if (getValue(isDragging) && !d) {
+							if (getValue(posY) > normalPosition) {
+								nextDistinct(spin, true);
+							} else {
+								nextDistinct(resetAnimation, Pair(true, false))
+							}
+							nextDistinct(isDragging, false);
+						}
+					}
+				),
+				makeSubscribe2(mouse, \xy ->
+					if (getValue(isDragging)) {
+						pos = xy.y + ^offset;
+						nextDistinct(posY, min(pos, maxPosition));
+						nextDistinct(state, MPullSpinState(
+							min(pos * 10.0, pos * 2.0 + 360.0),
+							pos * 2.0
+						));
+						nextDistinct(opacity, min(pos / 45.0, 1.0));
+						nextDistinct(arrowScale, min(pos / 45.0, 1.0));
+					}
+				),
+				makeSubscribe2(spin, \sp -> if (!sp) nextDistinct(resetAnimation, Pair(true, true)))
+			],
+			t
 		)
 	)
 }

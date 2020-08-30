@@ -2,12 +2,16 @@ import ds/array;
 import string;
 import math/md5;
 import ds/arrayutils;
+import sys/system;
+import sys/target;
 
 export {
 	// get native file object by path in file system (works only for QT)
 	native getFileByPath : (path : string) -> native = FlowFileSystem.getFileByPath;
 
 	native createTempFile : (name : string, content : string) -> native = FlowFileSystem.createTempFile;
+
+	createTempFileAsync(name : string, content : string, onDone : (native) -> void, onError : (string) -> void) -> void;
 
 	// opens up a file dialog with multiple file choosing supported
 	// returns an array of native file objects in callback
@@ -115,12 +119,35 @@ export {
 
 	// Are these the same path? Understands the difference between / and \
 	isSamePath(p1 : string, p2 : string) -> bool;
+
+	// Find all paths to a file from a directory.
+	findFile(dir : string, file : string) -> [string];
+
+	// Delete file of directory recursively. Return an error string if it did not work well, "" is things are cool
+	deleteRecursively : (string) -> string;
 }
 
 createTempFile(name : string, content : string) -> native {
 	path = "tmp/" + name;
+	if (!fileExists("tmp")) createDirectory("tmp") |> ignore;
 	setFileContent(path, content);
 	getFileByPath(path);
+}
+
+createTempFileAsync(name : string, content : string, onDone : (native) -> void, onError : (string) -> void) -> void {
+
+	if (js) {
+		onDone(createTempFile(name, content));
+	} else {
+		path = "tmp/" + name;
+		isDirDone = if (fileExists("tmp")) "" else createDirectory("tmp");
+		if (isDirDone != "") onError(isDirDone)
+		else {
+			isDone = setFileContent(path, content);
+			if (isDone) onDone(getFileByPath(path))
+			else onError("Can't create temporary file on device.");
+		}
+	}
 }
 
 relatingPath(fullPath, basePath) {
@@ -227,4 +254,40 @@ saveFile(filename : string, data : string, type : string) -> void {}
 
 isSamePath(p1 : string, p2 : string) -> bool {
 	resolveRelativePath(p1) == resolveRelativePath(p2);
+}
+
+findFile(dir : string, file : string) -> [string] {
+	doFindFile(dir, file, []);
+}
+
+doFindFile(dir : string, file : string, acc : [string]) -> [string] {
+	fold(readDirectory(dir), acc, \ac, name -> 
+		if (name == file) concat(ac, [pathCombine(dir, file)]) else 
+		if (isDirectory(name)) doFindFile(pathCombine(dir, name), file, ac) else ac
+	);
+}
+
+deleteRecursively(path : string) -> string {
+	wrap_err = \e, p -> if (e == "") "" else e + " : " + p;
+	if (isDirectory(path)) {
+		errors = strGlue(
+			filtermap(readDirectory(path), 
+				\item -> {
+					// . and .. should be skipped
+					if (item == "." || item == "..") {
+						None();
+					} else {
+						item_path = pathCombine(path, item);
+						err = deleteRecursively(item_path);
+						if (err == "") None() else Some(err);
+					}
+				}
+			), 
+			"\n"
+		);
+		err = wrap_err(deleteDirectory(path), path);
+		if (errors == "") err else errors + "\n" + err;
+	} else if (fileExists(path)) {
+		wrap_err(deleteFile(path), path);
+	} else "";
 }

@@ -1,0 +1,116 @@
+import string;
+import ds/list;
+import ds/inttree;
+import text/blueprint;
+
+export {
+/*
+see lib/text/compression/test_lzw.flow
+for JS:
+ Org.size |Enc.t |Dec.t | Enc.size |%org|?
+——————————+——————+——————+——————————+————+—
+    239358|    41|    33|     45144| 18%|V
+   2393580|   254|    44|    171680|  7%|V
+   4787160|   400|    67|    258520|  5%|V
+   7180740|   849|    76|    326628|  4%|V
+   9574320|  1178|    97|    388588|  4%|V
+  11967900|  1885|   121|    446260|  3%|V
+  14361480|  2359|   167|    498548|  3%|V
+  16755060|  3223|   160|    547056|  3%|V
+  19148640|  3800|   198|    593404|  3%|V
+  21542220|  4404|   180|    637988|  2%|V
+  23935800|  4862|   189|    680788|  2%|V
+*/
+  	compressLzw(s : string) -> string;
+	decompressLzw(data : string) -> string;
+}
+
+compressLzwRec(s : string, sLength : int, i : int, dict : ref IntTree<ref IntTree<int>>, code : ref int, phraseIdx : ref int, out : ref List<string>) -> void {
+	if (i < sLength) {
+		phrase = switch (lookupIntTree(dict, ^phraseIdx)) {
+			Some(ph): ph;
+			None(): {
+				ph = makeIntTree();
+				dict := addOrUpdateIntTree(dict, ^phraseIdx, ph);
+				ph
+			};
+		};
+
+		c = getCharCodeAt(s, i);
+		switch (lookupIntTree(phrase, c)) {
+			Some(phi): {
+				phraseIdx := phi;
+			}
+			None(): {
+				code := ^code + 1;
+				phrase := addOrUpdateIntTree(phrase, c, ^code);
+				out := Cons(intAsString(^phraseIdx), ^out);
+				phraseIdx := c;
+			}
+		}
+
+		compressLzwRec(s, sLength, i + 1, dict, code, phraseIdx, out)
+	} else {
+		out := Cons(intAsString(^phraseIdx), ^out)
+	}
+}
+
+compressLzw(s : string) -> string {
+	dict : ref IntTree<ref IntTree<int>> = makeIntTree();
+	code : ref int = ref 65535;
+
+	out = ref makeList1("LZW:");
+	phraseIdx = ref getCharCodeAt(s, 0);
+	sLength = strlen(s);
+
+	compressLzwRec(s, sLength, 1, dict, code, phraseIdx, out);
+	compressed = list2string(^out);
+	if (strlen(compressed) < sLength) compressed else s;
+}
+
+decompressLzwRec(i : int, limit : int, code : ref int, currChar : ref int, oldPhrase : ref string, data : (int) -> int, dict : ref Tree<int, string>, out : ref List<string>) -> void {
+	if (i <= limit) {
+		currCode = data(i);
+		phrase = if (currCode < 65536) {
+			fromCharCode(currCode);
+		} else {
+			eitherFn(
+				lookupTree(^dict, currCode),
+				idfn,
+				\ -> ^oldPhrase + fromCharCode(^currChar)
+			)
+		}
+		out := Cons(phrase, ^out);
+		currChar := getCharCodeAt(phrase, 0);
+		dict := setTree(^dict, ^code, ^oldPhrase + fromCharCode(^currChar));
+		code := ^code + 1;
+		oldPhrase := phrase;
+
+		decompressLzwRec(i + 1, limit, code, currChar, oldPhrase, data, dict, out);
+	}
+}
+
+// Decompress an LZW-encoded string
+decompressLzw(s : string) -> string {
+	if (startsWith(s, "LZW:")) {
+		data = \i : int -> {
+			getCharCodeAt(s, 2*i + 4) + bitShl(getCharCodeAt(s, 2*i + 1 + 4), 16);
+		}
+
+		dict : ref Tree<int, string> = ref makeTree();
+		currChar : ref int = ref data(0);
+		out : ref List<string> = ref makeList1(getCharAt(s, 4));
+		oldPhrase : ref string = ref fromCharCode(^currChar);
+		code = ref 65536;
+
+		decompressLzwRec(1, round(i2d(strlen(s))/2.0) - 3, code, currChar, oldPhrase, data, dict, out);
+
+		list2string(^out)
+	} else {
+		s
+	}
+}
+
+intAsString(i : int) -> string {
+	fromCharCode(i) + fromCharCode(bitUshr(i, 16));
+}

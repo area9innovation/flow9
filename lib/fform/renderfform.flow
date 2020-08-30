@@ -1246,6 +1246,165 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 			if (controls != []) setVideoControls(video, controls);
 
+			maybeApply(getCurrentFrame, \gcf -> gcf.fn := \ -> getVideoCurrentFrame(video));
+
+			disp = concatA([
+				[
+					make5Subscribe(
+						fpair(realVideoSize, wh), keepAspectRation, coverBox.cover, coverBoxAlign.x, coverBoxAlign.y,
+						\pr, kar, cover, alX, alY -> {
+
+						rwh = firstOfPair(pr);
+						cwh = secondOfPair(pr);
+
+						if (rwh.width > 0. && cwh.width > 0. && rwh.height > 0. && cwh.height > 0.) {
+							xScale = cwh.width / rwh.width;
+							yScale = cwh.height / rwh.height;
+
+							setClipMetrics = \xSc, ySc, clX, clY -> {
+								setClipScaleX(video, xSc);
+								setClipScaleY(video, ySc);
+								setClipX(video, clX);
+								setClipY(video, clY);
+								maybeApply(inspectVideoArea, \iva ->
+									nextDistinct(iva.metrics, FVideoAreaMetrics(
+										Point(clX, clY),
+										WidthHeight(rwh.width * xSc, rwh.height * ySc),
+										Factor(xSc, ySc)
+									))
+								)
+							}
+
+							if (cover) {
+								xyScale = max(xScale, yScale);
+								clipX = (cwh.width - rwh.width * xyScale) * forceRange(alX, 0., 1.);
+								clipY = (cwh.height - rwh.height * xyScale) * forceRange(alY, 0., 1.);
+								setClipMetrics(xyScale, xyScale, clipX, clipY)
+							} else if (kar) {
+								xyScale = min(xScale, yScale);
+								clipX = max(cwh.width - rwh.width * xyScale, 0.) / 2.;
+								clipY = max(cwh.height - rwh.height * xyScale, 0.) / 2.;
+								setClipMetrics(xyScale, xyScale, clipX, clipY)
+							} else {
+								setClipMetrics(xScale, yScale, 0., 0.)
+							}
+						}
+					})(),
+				],
+				if (targetVideoLooping())
+					eitherMap(
+						looping,
+						\lp ->
+							[
+								makeSubscribe(lp.loop, \l -> setVideoLooping(video, l))()
+							],
+						[]
+					)
+				else
+					[],
+				eitherMap(
+					volume,
+					\vol ->
+						[
+							makeSubscribe(vol.volume, \v -> setVideoVolume(video, v))()
+						],
+					[]
+				),
+				eitherMap(
+					timeRange,
+					\tr ->
+						[
+							make2Subscribe(tr.start, tr.end, \s, e -> setVideoTimeRange(video, s, e))()
+						],
+					[]
+				),
+				if (!android())
+					eitherMap(
+						playbackRate,
+						\pr ->
+							[
+								makeSubscribe(pr.rate, \rate -> setVideoPlaybackRate(video, rate))()
+							],
+						[]
+					)
+				else
+					[],
+				eitherMap(
+					fullscreen,
+					\fs -> {
+						resize = ref nop;
+						prevWH = ref getValue(wh);
+
+						[
+							onFullScreen(\v -> if (isFullScreenTarget(video) || !v) nextDistinct(fs.fullscreen, v)),
+							makeSubscribe(fs.fullscreen, \v -> {
+								setFullWindowTarget(video);
+
+								^resize();
+
+								if (v) {
+									setFullScreenTarget(video);
+									prevWH := getValue(wh);
+									nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
+									resize := monitorFResize(wh);
+								} else {
+									removeFullScreenTarget(video);
+									nextDistinct(wh, ^prevWH);
+								}
+
+								toggleFullScreen(v);
+								toggleFullWindow(v);
+							})(),
+							resetFullWindowTarget,
+							\ -> ^resize()
+						]
+					},
+					[]
+				),
+				eitherMap(
+					subtitles,
+					\sbt ->
+						[
+							makeSubscribe(sbt.subtitles, \s -> {
+								definedTextStyle = getDefinedTextStyle(s.style);
+								setVideoSubtitle(
+									video,
+									s.text,
+									definedTextStyle.face.family,
+									definedTextStyle.fontSize,
+									definedTextStyle.face.weight,
+									definedTextStyle.face.slope,
+									definedTextStyle.fillColor,
+									definedTextStyle.fillOpacity,
+									definedTextStyle.letterSpacing,
+									definedTextStyle.backgroundColor,
+									definedTextStyle.backgroundOpacity,
+									subtitlesAlignBottom,
+									subtitlesBottomBorder,
+									isSome(subtitlesScaleMode),
+									eitherMap(subtitlesScaleMode, \sc -> sc.min, -1.),
+									eitherMap(subtitlesScaleMode, \sc -> sc.max, -1.),
+									extractStruct(s.style, EscapeHTML(true)).escape
+								);
+							})()
+						],
+					[]
+				),
+				eitherMap(
+					viewBounds,
+					\vb ->
+						[
+							makeSubscribe(vb.bounds, \b -> setClipViewBounds(video, b.minX, b.minY, b.maxX, b.maxY))()
+						],
+					[]
+				),
+				[
+					\ -> closeVideo(video),
+					\ -> deleteNative(video),
+				]
+			]);
+
+			dispR = ref [];
 			streamListener = addStreamStatusListener(video, \code -> {
 				if (code == "NetStream.Play.StreamNotFound") {
 					errorHandlerFn();
@@ -1263,174 +1422,20 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					synchroCalls.onStop();
 				}
 
+				applyall(^dispR);
+				dispR := [
+					makeSubscribe(playing, \pl -> if (!^streamListenerResponse) {
+						if (pl) resumeVideo(video) else pauseVideo(video);
+					})(),
+					makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
+				];
+
 				streamListenerFn(code);
 			});
 
-			maybeApply(getCurrentFrame, \gcf -> gcf.fn := \ -> getVideoCurrentFrame(video));
-
-			disp =
-				concatA([
-					[
-						streamListener,
-						make5Subscribe(
-							fpair(realVideoSize, wh), keepAspectRation, coverBox.cover, coverBoxAlign.x, coverBoxAlign.y,
-							\pr, kar, cover, alX, alY -> {
-
-							rwh = firstOfPair(pr);
-							cwh = secondOfPair(pr);
-
-							if (rwh.width > 0. && cwh.width > 0. && rwh.height > 0. && cwh.height > 0.) {
-								xScale = cwh.width / rwh.width;
-								yScale = cwh.height / rwh.height;
-
-								setClipMetrics = \xSc, ySc, clX, clY -> {
-									setClipScaleX(video, xSc);
-									setClipScaleY(video, ySc);
-									setClipX(video, clX);
-									setClipY(video, clY);
-									maybeApply(inspectVideoArea, \iva ->
-										nextDistinct(iva.metrics, FVideoAreaMetrics(
-											Point(clX, clY),
-											WidthHeight(rwh.width * xSc, rwh.height * ySc),
-											Factor(xSc, ySc)
-										))
-									)
-								}
-
-								if (cover) {
-									xyScale = max(xScale, yScale);
-									clipX = (cwh.width - rwh.width * xyScale) * forceRange(alX, 0., 1.);
-									clipY = (cwh.height - rwh.height * xyScale) * forceRange(alY, 0., 1.);
-									setClipMetrics(xyScale, xyScale, clipX, clipY)
-								} else if (kar) {
-									xyScale = min(xScale, yScale);
-									clipX = max(cwh.width - rwh.width * xyScale, 0.) / 2.;
-									clipY = max(cwh.height - rwh.height * xyScale, 0.) / 2.;
-									setClipMetrics(xyScale, xyScale, clipX, clipY)
-								} else {
-									setClipMetrics(xScale, yScale, 0., 0.)
-								}
-							}
-						})(),
-						makeSubscribe2(playing, \pl -> if (!^streamListenerResponse) { if (pl) resumeVideo(video) else pauseVideo(video) })(),
-						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
-					],
-					if (targetVideoLooping())
-						eitherMap(
-							looping,
-							\lp ->
-								[
-									makeSubscribe(lp.loop, \l -> setVideoLooping(video, l))()
-								],
-							[]
-						)
-					else
-						[],
-					eitherMap(
-						volume,
-						\vol ->
-							[
-								makeSubscribe(vol.volume, \v -> setVideoVolume(video, v))()
-							],
-						[]
-					),
-					eitherMap(
-						timeRange,
-						\tr ->
-							[
-								make2Subscribe(tr.start, tr.end, \s, e -> setVideoTimeRange(video, s, e))()
-							],
-						[]
-					),
-					if (!android())
-						eitherMap(
-							playbackRate,
-							\pr ->
-								[
-									makeSubscribe(pr.rate, \rate -> setVideoPlaybackRate(video, rate))()
-								],
-							[]
-						)
-					else
-						[],
-					eitherMap(
-						fullscreen,
-						\fs -> {
-							resize = ref nop;
-							prevWH = ref getValue(wh);
-
-							[
-								onFullScreen(\v -> if (isFullScreenTarget(video) || !v) nextDistinct(fs.fullscreen, v)),
-								makeSubscribe(fs.fullscreen, \v -> {
-									setFullWindowTarget(video);
-
-									^resize();
-
-									if (v) {
-										setFullScreenTarget(video);
-										prevWH := getValue(wh);
-										nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
-										resize := monitorFResize(wh);
-									} else {
-										removeFullScreenTarget(video);
-										nextDistinct(wh, ^prevWH);
-									}
-
-									toggleFullScreen(v);
-									toggleFullWindow(v);
-								})(),
-								resetFullWindowTarget,
-								\ -> ^resize()
-							]
-						},
-						[]
-					),
-					eitherMap(
-						subtitles,
-						\sbt ->
-							[
-								makeSubscribe(sbt.subtitles, \s -> {
-									definedTextStyle = getDefinedTextStyle(s.style);
-									setVideoSubtitle(
-										video,
-										s.text,
-										definedTextStyle.face.family,
-										definedTextStyle.fontSize,
-										definedTextStyle.face.weight,
-										definedTextStyle.face.slope,
-										definedTextStyle.fillColor,
-										definedTextStyle.fillOpacity,
-										definedTextStyle.letterSpacing,
-										definedTextStyle.backgroundColor,
-										definedTextStyle.backgroundOpacity,
-										subtitlesAlignBottom,
-										subtitlesBottomBorder,
-										isSome(subtitlesScaleMode),
-										eitherMap(subtitlesScaleMode, \sc -> sc.min, -1.),
-										eitherMap(subtitlesScaleMode, \sc -> sc.max, -1.),
-										extractStruct(s.style, EscapeHTML(true)).escape
-									);
-								})()
-							],
-						[]
-					),
-					eitherMap(
-						viewBounds,
-						\vb ->
-							[
-								makeSubscribe(vb.bounds, \b -> setClipViewBounds(video, b.minX, b.minY, b.maxX, b.maxY))()
-							],
-						[]
-					),
-					[
-						\ -> closeVideo(video),
-						\ -> deleteNative(video),
-					]
-				]);
-
 			FRenderResult(
 				[video],
-				disp,
+				[\-> applyall(concat3(^dispR, [streamListener], disp))],
 				[FClipInteractive(), FClipFilters(), FClipMask()]
 			);
 		}

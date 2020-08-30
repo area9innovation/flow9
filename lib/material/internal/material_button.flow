@@ -413,7 +413,7 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 			[
 				IScriptBehaviour("value", value, ISInputValue([], "bool", true)),
 				FAccessAttribute("aria-pressed", fif(value, const("true"), const("false"))),
-				MButtonTitle(const(m.icon + " " + falseIcon.icon))
+				extractStruct(m.state, MButtonTitle(const(m.icon + " " + falseIcon.icon)))
 			]
 		);
 
@@ -474,7 +474,7 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 }
 
 MCheckBox2T(manager : MaterialManager, parent : MFocusGroup, m : MCheckBox, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	MCheckable2T(manager, parent, "MCheckBox", m.value, m.caption, m.style, "check_box", "check_box_outline_blank", false, "checkbox", m2t)
+	MCheckable2T(manager, parent, "MCheckBox", m.value, m.caption, m.style, "check_box", "check_box_outline_blank", false, false, "checkbox", m2t)
 }
 
 MRadio2T(manager : MaterialManager, parent : MFocusGroup, m : MRadio, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -483,12 +483,12 @@ MRadio2T(manager : MaterialManager, parent : MFocusGroup, m : MRadio, m2t : (Mat
 		[
 			\ -> fBidirectionalLink(m.activeValue, checked, \v -> nextDistinct(checked, v == m.thisValue), \ch -> if (ch) nextDistinct(m.activeValue, m.thisValue))
 		],
-		MCheckable2T(manager, parent, "MRadio", checked, m.caption, m.style, "radio_button_checked", "radio_button_unchecked", true, "radio", m2t)
+		MCheckable2T(manager, parent, "MRadio", checked, m.caption, m.style, "radio_button_checked", "radio_button_unchecked", true, true, "radio", m2t)
 	)
 }
 
 MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, value : DynamicBehaviour<bool>, captionM : Material, style : [MCheckableStyle],
-	iNameChecked : string, iNameUnchecked : string, cannotUncheck : bool, accessRole : string, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	iNameChecked : string, iNameUnchecked : string, cannotUncheck : bool, constHeight : bool, accessRole : string, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	mcolor : MColor = extractMColor(parent, style, MAccentColor());
 	iconStyle = MCheckableStyle2IconStyle(style);
 	iconSize = extractStruct(style, MIconSize(standardIconSize)).size;
@@ -497,7 +497,12 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 	uncheckedIconStyle = extractStruct(style, MUncheckedIconStyle(replaceMThemeColor(iconStyle, MIconsColor()))).style;
 	captionPosition = extractStruct(style, MCaptionPosition(MAfterPosition()));
 	onClick = extractStruct(style, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {next(value, cannotUncheck || !getValue(value)); f();}));
-	onNewValue = tryExtractStruct(style, MOnNewValue(nop1));
+	onNewValue =
+		eitherMap(
+			tryExtractStruct(style, MOnNewValue(nop1)),
+			\onv -> Some(Pair(onv.fn, true)),
+			maybeMap(tryExtractStruct(style, MOnNewValue2(nop1)), \onv -> Pair(onv.fn, false))
+		);
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 	clickEnabled = extractStruct(style, MClickEnabled(const(true))).enabled;
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
@@ -573,13 +578,14 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			MBottomPosition() : TLinesXCenter([f, cap]);
 		}
 	})
-	|> makeTropicConstantHeight(None())
+	|> (if (constHeight) makeTropicConstantHeight(None()) else idfn)
 	|> (\checkable ->
 		eitherMap(
 			onNewValue,
 			\onv ->
 				TConstruct(
-					[makeSubscribe(value, onv.fn)],
+					if (onv.second) [makeSubscribe(value, onv.first)]
+					else [makeSubscribe2(value, onv.first)],
 					checkable
 				),
 			checkable
@@ -643,7 +649,7 @@ MSwitchControl2T(manager : MaterialManager, parent : MFocusGroup, m : MSwitchCon
 								MFill(if (en && v) color else contrastingMColor(parent)),
 								FillOpacity(
 									if (en) {
-										if (v) 0.5 else if (getLightBackground(parent)) 0.38 else 0.3
+										if (v) 0.5 else 0.45
 									} else {
 										if (getLightBackground(parent)) 0.12 else 0.1
 									}
@@ -707,7 +713,12 @@ MSwitchControl2T(manager : MaterialManager, parent : MFocusGroup, m : MSwitchCon
 					)
 					|> (\t -> TVisible(feq(m.value, true), t)),
 
-					MText2T(parent, if (text.off != "") text.off else text.on, [MButton1(), MTextDisabled()])
+					TIfLazy2(
+						fmin(parent.enabled, enabled),
+						\en ->
+							MText2T(parent, if (text.off != "") text.off else text.on, [MSecondaryButtonStyle(), if (en) MTextColor() else MTextDisabled()]),
+						true
+					)
 					|> (\t -> TVisible(feq(m.value, false), t))
 				)
 				|> (\t -> TBorderDir(0., 0., 24., 0., t, isRTL))
@@ -1077,7 +1088,13 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 				f[0]
 			else
 				extractStructMany(style, MLetterIcon("", [], []))
-				|> (\f2 -> if (length(f2) > 0) f2[0] else TEmpty())
+				|> (\f2 ->
+					if (length(f2) > 0)
+						f2[0]
+					else
+						extractStructMany(style, MIcon("", []))
+						|> (\f3 -> if (length(f3) > 0) f3[0] else TEmpty())
+				)
 		);
 	focusEnabled = make(true);
 	focusHover = make(false);
@@ -1120,6 +1137,9 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 						MAvatar(url, avatarStyle): {
 							MAvatar2T(p, url, replaceStruct(avatarStyle, MIconSize(32.)))
 						}
+						MIcon(name, iconStyle): {
+							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, replaceStruct(iconStyle, MIconSize(20.))))
+						}
 						default: TEmpty();
 					}
 					|> (\f2 -> TBorderDir(-13., -8., 8., -8., f2, isRTL)),
@@ -1131,6 +1151,12 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 		|> (\f ->
 			if (contains(style, MCloseButton()) || isSome(onClose)) {
 				onClickClose = \ -> eitherFn(onClose, \oc -> if (oc.close()) next(visible, false), \ -> next(visible, false));
+				defaultCloseIconStyle = [MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)];
+				closeIconStyle = eitherMap(
+					tryExtractStruct(style, MCustomCloseButtonIconStyle(\__, __ -> [])),
+					\customStyle : MCustomCloseButtonIconStyle -> replaceStructMany(defaultCloseIconStyle, customStyle.styleFn(hov, sel)),
+					defaultCloseIconStyle
+				);
 
 				MIconButton2T(
 					manager,
@@ -1138,7 +1164,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 					MIconButton(
 						extractStruct(style, MCustomCloseButtonIcon("cancel")).icon,
 						onClickClose,
-						[MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)],
+						closeIconStyle,
 						[MEnabled(enabled), MRippleType(const(MNoRipple())), MFocusEnabled(const(false)), MDisableHover(),
 							MCursorShape(const(DefaultCursor())), AccessRole("")]
 					),
@@ -1259,7 +1285,11 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 		eitherMap(
 			tryExtractStruct(style, MAvatar("", [])),
 			\v -> Some(v),
-			tryExtractStruct(style, MLetterIcon("", [], [])),
+			eitherMap(
+				tryExtractStruct(style, MLetterIcon("", [], [])),
+				\v -> Some(v),
+				tryExtractStruct(style, MIcon("", []))
+			)
 		);
 
 	focusState = [
@@ -1271,7 +1301,7 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 		MOnMouseUp(\__, ins -> nextDistinct(isInside, ins))
 	];
 
-	(\p -> (\textColor, isEnabled -> {
+	(\p -> (\textColor, isEnabled, selected, hovered -> {
 		isRTL = p.rtl;
 
 		titleStyle =
@@ -1304,6 +1334,9 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						MAvatar(url, avatarStyle): {
 							MAvatar2T(p, url, replaceStruct(avatarStyle, MIconSize(32.)))
 						}
+						MIcon(name, iconStyle): {
+							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, replaceStruct(iconStyle, MIconSize(20.))))
+						}
 						default: TEmpty();
 					}
 					|> (\f2 -> TAlpha(fif(isEnabled, const(1.), const(defaultDisabledItemOpacity(getLightBackground(parent)))), f2))
@@ -1317,11 +1350,19 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 			if (contains(style, MCloseButton()) || isSome(onClose)) {
 				onClickClose = \ -> eitherFn(onClose, \oc -> if (oc.close()) next(visible, false), \ -> next(visible, false));
 
+				closeIconStyleFn = tryExtractStruct(style, MCustomCloseButtonIconStyle(\__, __ -> []));
+
 				iconStyle =
-					fselect2(textColor, isEnabled, FLift2(\col : MColor, en -> {
+					fselect4(textColor, isEnabled, selected, hovered, \col : MColor, en, sel, hov -> {
 						op = if (col == MWhite()) 1. else 0.32;
-						ifArrayPush([MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)], !en, MIconDisabled())
-					}));
+						defaultCloseIconStyle = [MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)];
+						
+						eitherMap(closeIconStyleFn, \customStyle : MCustomCloseButtonIconStyle ->
+							replaceStructMany(defaultCloseIconStyle, customStyle.styleFn(sel, hov)),
+							defaultCloseIconStyle
+						)
+						|> (\arr -> ifArrayPush(arr, !en, MIconDisabled()))
+					});
 
 				TSelect(iconStyle, \st ->
 					MIconButton2T(
@@ -1387,7 +1428,7 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						if (down) 0.04 else if (focused) 0.12 else if (hov) 0.04 else 0.
 					);
 
-				TCopySize2(makeChipFn(textColor, isEnabled), \sz, tr ->
+				TCopySize2(makeChipFn(textColor, isEnabled, selected, hovered), \sz, tr ->
 					TGroup([
 						TSelect2(mainLayerColor, mainLayerOpacity, \col, op ->
 							MShape(p, [MFill(col), FillOpacity(op)], sz, "MChip")
