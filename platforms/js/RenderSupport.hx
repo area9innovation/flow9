@@ -1320,6 +1320,29 @@ class RenderSupport {
 		}
 	}
 
+	public static function setClipStyle(clip : DisplayObject, name : String, value : String) : Void {
+		var accessWidget : AccessWidget = untyped clip.accessWidget;
+
+		if (accessWidget == null) {
+			if (AccessibilityEnabled) {
+				if (RendererType == "html") {
+					clip.initNativeWidget();
+				}
+
+				var nativeWidget : Element = untyped clip.nativeWidget;
+
+				// Create DOM node for access. properties
+				if (nativeWidget != null) {
+					accessWidget = new AccessWidget(clip, nativeWidget);
+					untyped clip.accessWidget = accessWidget;
+					untyped accessWidget.element.style[name] = value;
+				}
+			}
+		} else {
+			untyped accessWidget.element.style[name] = value;
+		}
+	}
+
 	public static function removeAccessAttributes(clip : Dynamic) : Void {
 		if (clip.accessWidget != null) {
 			AccessWidget.removeAccessWidget(clip.accessWidget);
