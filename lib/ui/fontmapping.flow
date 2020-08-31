@@ -32,6 +32,8 @@ export {
 	// Check if "lang" is one of RTL languages
 	isRTLLang(lang : string) -> bool;
 
+	isRtlAlphabet(alphabet : string) -> bool;
+
 	// Returns if BiDi support is enabled
 	isBiDiEnabled() -> bool;
 
@@ -58,6 +60,9 @@ export {
 	// The function accepts font family and size and must return family and size.
 	// Note that function may be called by renderForm very often, so it must be fast.
 	setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -> void;
+
+	// override font family for default font (works as defaultFont http-parameter but lower priority)
+	setFontFamilyOverride(familyM : Maybe<string>) -> void;
 
 	getNativeLangFromBCP(bcpLang : string) -> string;
 
@@ -259,7 +264,40 @@ getChineseFontMinimal() -> FontFamily {
 //In case of change update getCharacterStyleFromWigiTextStyle
 defaultFontFamily_ = "Roboto";
 defaultFontSize_ = 11.0;
-defaultFontOverride_ = eitherGetUrlValidParameter("defaultFont", isValidIdentifier, idfn, defaultFontFamily_);
+defaultFontOverride_ = eitherGetUrlValidParameter("defaultFont", isValidIdentifier, idfn, "");
+fontFamilyOverride_ : ref Maybe<string> = ref None();
+
+setFontFamilyOverride(familyM : Maybe<string>) -> void {
+	fontFamilyOverride_ := familyM;
+}
+
+getDefaultFontFaceOverride() -> string {
+	if (defaultFontOverride_ != "") defaultFontOverride_
+	else either(^fontFamilyOverride_,  defaultFontFamily_);
+}
+
+fontOverrides = eitherGetUrlValidParameterM("fontOverrides", \s -> {
+	fold(strSplit(s, ","), Some([]), \acc, raw -> {
+		eitherMap(acc, \a -> {
+			parts1 = strSplit(raw, "*");
+			tmp = if (length(parts1) == 2)
+				Pair(parts1[0], parts1[1])
+			else if (length(parts1) == 1)
+				Pair(parts1[0], "1.0")
+			else
+				Pair("", "");
+			parts2 = strSplit(tmp.first, "@");
+			if (tmp.first == "")
+				None()
+			else if (length(parts2) == 2)
+				Some(arrayPush(a, Triple(parts2[1], parts2[0], s2d(tmp.second))))
+			else if (length(parts2) == 1)
+				Some(arrayPush(a, Triple(parts2[0], parts2[0], s2d(tmp.second))))
+			else
+				None()
+		}, None())
+	})
+}, []);
 
 getMappedFontFn : ref (string, double) -> Pair<string, double> =
 	ref \family, size -> Pair(family, size);
@@ -268,21 +306,21 @@ getMappedFontFn : ref (string, double) -> Pair<string, double> =
 getMappedFont_cache_key = ref Pair("", -1.0);
 getMappedFont_cache_value = ref Pair("", -1.0);
 
-getMappedFont(family : string, size : double) {
-	ffamily = if (family != "" && family != defaultFontFamily_) family else defaultFontOverride_;
-	if (ffamily != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
+getMappedFont(face : string, size : double) {
+	fface = if (face != "" && face != defaultFontFamily_) face else getDefaultFontFaceOverride();
+	if (fface != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
 		mappedFont =
-			if (ffamily == "MaterialIcons" || (ffamily == "'Material Icons'")) {
+			if (fface == "MaterialIcons" || (fface == "'Material Icons'")) {
 				Pair("MaterialIcons", size)
 			} else {
-		 		(^getMappedFontFn)(ffamily, size);
+		 		(^getMappedFontFn)(fface, size);
 			}
-		getMappedFont_cache_key := Pair(ffamily, size);
+		getMappedFont_cache_key := Pair(fface, size);
 		getMappedFont_cache_value := mappedFont;
 	}
 
 	if (debugFontMapping) {
-		println("zz mapped font: " + "'"+ffamily+"' -> " + toString(^getMappedFont_cache_value));
+		println("zz mapped font: " + "'"+fface+"' -> " + toString(^getMappedFont_cache_value));
 	}
 
 	^getMappedFont_cache_value
@@ -327,6 +365,7 @@ setLangCore(lang0 : string) -> void{
 }
 
 rtlLanguages = ["ar", "he", "yi"];
+rtlAlphabets = ["arb", "heb"];
 
 getDefaultRtl() -> bool {
 	contains(rtlLanguages, getValue(currentLang));
@@ -338,6 +377,10 @@ getDefaultRtlB() -> Transform<bool> {
 
 isRTLLang(lang : string) -> bool {
 	contains(rtlLanguages, lang);
+}
+
+isRtlAlphabet(alphabet : string) -> bool {
+	contains(rtlAlphabets, alphabet);
 }
 
 isBiDiEnabled() -> bool {
@@ -428,25 +471,20 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 }
 
 // This allows setting font and size multiplier in url flag.
-// Example: setting font family: overridefont=Meyrio
-// Example: setting font family and size multiplier: overridefont=Meyrio;1.2
+// Example: setting font family Meiro instead of Roboto: fontOverrides=Meyrio@Roboto
+// Example: setting font size multiplier: fontOverrides=Meyrio*1.2
+// You can split several settings with comma.
 applyFontOverriding = {
-	t = getAnyUrlParameter("overridefont");
-	if (t == "") {
+	if (fontOverrides == []) {
 		idfn
 	} else {
-		tt = strSplit(t, ";");
-		overridden_family = tt[0];
-		size_multiplier = {
-			m = if (length(tt) > 1) s2d(tt[1]) else 1.0;
-			if (m < 0.01 || m > 100.0) 1.0 else m
-		};
 		\fontOverrideMappingFn -> {
 			\family : string, size : double -> {
 				mapped_FamilySize : Pair<string, double> = fontOverrideMappingFn(family, size);
-				Pair(
-					if (overridden_family != "") overridden_family else mapped_FamilySize.first,
-					mapped_FamilySize.second * size_multiplier
+				eitherMap(
+					find(fontOverrides, \o -> o.first == family),
+					\o -> Pair(o.second, mapped_FamilySize.second * o.third),
+					Pair(mapped_FamilySize.first, mapped_FamilySize.second)
 				)
 			}
 		}

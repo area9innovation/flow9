@@ -3,12 +3,9 @@ import js.html.Element;
 import js.Promise;
 
 import pixi.core.display.Bounds;
-import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
-import pixi.core.textures.BaseTexture;
-import pixi.core.renderers.canvas.CanvasRenderer;
 
 using DisplayObjectHelper;
 
@@ -115,6 +112,8 @@ class VideoClip extends FlowContainer {
 		videoWidget.crossOrigin = Util.determineCrossOrigin(filename);
 		videoWidget.className = 'nativeWidget';
 		videoWidget.setAttribute('playsinline', true);
+		videoWidget.setAttribute('muted', true);
+		videoWidget.setAttribute('autoplay', true);
 		videoWidget.style.pointerEvents = 'none';
 
 		for (source in sources) {

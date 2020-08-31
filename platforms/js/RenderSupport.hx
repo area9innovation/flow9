@@ -11,8 +11,6 @@ import pixi.core.renderers.webgl.filters.Filter;
 import pixi.core.math.Point;
 import pixi.core.text.TextStyle;
 
-import pixi.loaders.Loader;
-
 import MacroUtils;
 import Platform;
 import ProgressiveWebTools;
@@ -36,6 +34,7 @@ class RenderSupport {
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
 	private static var PageWasHidden = false;
+	private static var IsLoading = true;
 
 	// Renderer options
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
@@ -66,21 +65,21 @@ class RenderSupport {
 	public function new() {}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.on(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.off(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.once(event, fn, context);
 	}
 
-	public static inline function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
+	public static function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
 	}
 
@@ -221,6 +220,42 @@ class RenderSupport {
 		return false;
 	}
 
+	private static var UserDefinedFontSize : Float = null;
+	private static function getUserDefinedFontSize() : Float {
+		if (UserDefinedFontSize == null) {
+			var style = Browser.window.getComputedStyle(Browser.document.body);
+
+			UserDefinedFontSize = Std.parseFloat(style.fontSize);
+		}
+
+		if (Math.isNaN(UserDefinedFontSize)) {
+			UserDefinedFontSize = 16.0;
+		}
+
+		return UserDefinedFontSize;
+	}
+
+	private static var UserDefinedLetterSpacing : Float = null;
+	private static function getUserDefinedLetterSpacing() : Float {
+		if (UserDefinedLetterSpacing == null) {
+			var div = Browser.document.createElement("p");
+			Browser.document.body.appendChild(div);
+			var style = Browser.window.getComputedStyle(div);
+
+			UserDefinedLetterSpacing = style.letterSpacing != "normal"
+				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
+				: 0.0;
+
+			Browser.document.body.removeChild(div);
+		}
+
+		if (Math.isNaN(UserDefinedLetterSpacing)) {
+			UserDefinedLetterSpacing = 0.0;
+		}
+
+		return UserDefinedLetterSpacing;
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
@@ -322,7 +357,6 @@ class RenderSupport {
 
 		if (RendererType == "html") {
 			PixiView = Browser.document.createElement('div');
-			PixiView.tabIndex = 1;
 			PixiView.style.background = "white";
 		} else if (RendererType != "canvas") {
 			PixiView = null;
@@ -380,6 +414,26 @@ class RenderSupport {
 		}
 
 		PixiView = PixiRenderer.view;
+
+		PixiView.tabIndex = 1;
+		PixiView.onfocus = function(e) {
+			var accessWidget = AccessWidget.tree.getFirstAccessWidget();
+
+			if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+				setFocus(accessWidget.clip, true);
+			} else {
+				accessWidget = AccessWidget.tree.getLastAccessWidget();
+
+				if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+					setFocus(accessWidget.clip, true);
+				}
+			}
+		}
+
+		if (IsLoading) {
+			PixiView.style.display = "none";
+		}
+
 		// Make absolute position for canvas for Safari to fix fullscreen API
 		if (Platform.isSafari) {
 			PixiView.style.position = "absolute";
@@ -400,6 +454,7 @@ class RenderSupport {
 		}
 	}
 
+	private static var webFontsLoadingStartAt : Float;
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
@@ -427,7 +482,10 @@ class RenderSupport {
 		initBrowserWindowEventListeners();
 		initMessageListener();
 		initFullScreenEventListeners();
-		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMain);
+
+		webFontsLoadingStartAt = NativeTime.timestamp();
+		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMainWithTimeCheck);
+
 		initClipboardListeners();
 		initCanvasStackInteractions();
 
@@ -435,6 +493,11 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+	}
+
+	private static function StartFlowMainWithTimeCheck() {
+		Errors.print("Web fonts loaded in " + (NativeTime.timestamp() - webFontsLoadingStartAt) + " ms");
+		StartFlowMain();
 	}
 
 	//
@@ -518,7 +581,7 @@ class RenderSupport {
 
 			i = localStages.length - 1;
 			while(i > currentInteractiveLayerZorder) {
-				if (getClipAt(localStages[i], pos, true, true) != null &&
+				if (getClipAt(localStages[i], pos, true, 0.0) != null &&
 					untyped localStages[i].view.style.pointerEvents != "all") {
 
 					untyped localStages[i].view.style.pointerEvents = "all";
@@ -537,7 +600,7 @@ class RenderSupport {
 				i--;
 			}
 
-			if (getClipAt(localStages[currentInteractiveLayerZorder], pos, true, true) == null) {
+			if (getClipAt(localStages[currentInteractiveLayerZorder], pos, true, 0.0) == null) {
 				untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
 			}
 		};
@@ -735,9 +798,9 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightdown");
@@ -759,9 +822,9 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightup");
@@ -788,9 +851,9 @@ class RenderSupport {
 				} else if (e.touches.length > 1) {
 					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch') {
-				MousePos.x = e.clientX;
-				MousePos.y = e.clientY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+				MousePos.x = e.pageX;
+				MousePos.y = e.pageY;
 
 				emit("mousemove");
 			}
@@ -1063,7 +1126,7 @@ class RenderSupport {
 					} else {
 						var mainStage = PixiStage.children[0];
 						mainStage.y = visibleAreaHeight - rect.bottom;
-						var onblur : Dynamic;
+						var onblur : Dynamic = function () {};
 						onblur = function() {
 							mainStage.y = 0;
 							focused_node.removeEventListener("blur", onblur);
@@ -1090,7 +1153,7 @@ class RenderSupport {
 			if (pixijscss != null) {
 				var newRuleIndex = 0;
 				if (!toShowFrames) {
-					pixijscss.insertRule(".focused { border: none !important; box-shadow: none !important; }", newRuleIndex);
+					pixijscss.insertRule(".focused { outline: none !important; box-shadow: none !important; }", newRuleIndex);
 					off("mousemove", pixiStageOnMouseMove); // Remove mouse event listener that not handle it always when focus frames are hidden
 				} else {
 					pixijscss.deleteRule(newRuleIndex);
@@ -1336,6 +1399,11 @@ class RenderSupport {
 	}
 
 	public static function enableResize() : Void {
+		IsLoading = false;
+		if (PixiView != null) {
+			PixiView.style.display = 'block';
+		}
+
 		// The first flow render call. Hide loading progress indicator.
 		Browser.document.body.style.backgroundImage = "none";
 		var indicator = Browser.document.getElementById("loading_js_indicator");
@@ -1968,6 +2036,8 @@ class RenderSupport {
 		}
 	}
 
+	private static var pointerOverClips : Array<DisplayObject> = [];
+
 	public static function addDisplayObjectEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
 		if (event == "transformchanged") {
 			clip.on("transformchanged", fn);
@@ -1987,11 +2057,31 @@ class RenderSupport {
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
 			var checkFn = function() {
-				if (untyped !clip.pointerOver) {
-					untyped clip.pointerOver = true;
-					fn();
+					if (untyped !clip.pointerOver) {
+						untyped clip.pointerOver = true;
+						if (Platform.isSafari && RenderSupport.pointerOverClips.indexOf(clip) < 0) {
+							var clipsToRemove = [];
+
+							for (pointerOverClip in RenderSupport.pointerOverClips) {
+								if (untyped pointerOverClip.pointerOver && !pointerOverClip.destroyed) {
+									if (!pointerOverClip.isParentOf(clip) && !clip.isParentOf(pointerOverClip)) {
+										pointerOverClip.emit("pointerout");
+										clipsToRemove.push(pointerOverClip);
+									}
+								} else {
+									clipsToRemove.push(pointerOverClip);
+								}
+							}
+
+							for (pointerOverClip in clipsToRemove) {
+								RenderSupport.pointerOverClips.remove(pointerOverClip);
+							}
+
+							RenderSupport.pointerOverClips.push(clip);
+						}
+						fn();
+					}
 				}
-			}
 
 			clip.on("pointerover", checkFn);
 			clip.invalidateInteractive();
@@ -2003,6 +2093,11 @@ class RenderSupport {
 			var checkFn = function() {
 				if (untyped clip.pointerOver) {
 					untyped clip.pointerOver = false;
+
+					if (Platform.isSafari && RenderSupport.pointerOverClips.indexOf(clip) < 0) {
+						RenderSupport.pointerOverClips.remove(clip);
+					}
+
 					fn();
 				}
 			}
@@ -2156,7 +2251,7 @@ class RenderSupport {
 		}
 	}
 
-	private static function hittestGraphics(clip : FlowGraphics, point : Point, ?checkAlpha : Bool = false) : Bool {
+	private static function hittestGraphics(clip : FlowGraphics, point : Point, ?checkAlpha : Float) : Bool {
 		var graphicsData : Array<Dynamic> = clip.graphicsData;
 
 		if (graphicsData == null || graphicsData.length == 0) {
@@ -2165,7 +2260,7 @@ class RenderSupport {
 
 		var data = graphicsData[0];
 
-		if (data.fill && data.shape != null && (!checkAlpha || data.fillAlpha > 0)) {
+		if (data.fill && data.shape != null && (checkAlpha == null || data.fillAlpha > checkAlpha)) {
 			if (untyped clip.worldTransformChanged) {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
@@ -2182,7 +2277,7 @@ class RenderSupport {
 		return getClipAt(clip, point, false) != null;
 	}
 
-	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Bool = false) : DisplayObject {
+	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Float) : DisplayObject {
 		if (!clip.getClipRenderable() || untyped clip.isMask) {
 			return null;
 		} else if (checkMask && !hittestMask(clip, point)) {
