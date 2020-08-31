@@ -18,6 +18,10 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 
 	openMenu = extractStruct(m.style, MOpenMenu(make(false)));
 
+	positionScale = make(zeroPositionScale);
+
+	buttonWH = makeWH();
+	tooltipWH = makeWH();
 	lightBackground = extractStruct(m.style, MLightBackground(getLightBackground(parent))).light;
 	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(MGrey(if (lightBackground) 600 else 200))]));
 
@@ -27,250 +31,236 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 	popupId = makeTropicTag(manager);
 	tooltipId = "tooltip" + i2s(popupId);
 
-	MComponentGroup2T(
-		manager,
-		parent,
-		"MTooltip",
-		concat(
-			extractMComponentGroupState(m.style),
-			[
-				FAccessAttribute("aria-describedby", const(tooltipId))
-			]
-		),
-		\p -> {
-			positionScale = fselect(p.transformMatrix, getTransformPositionScale |> FLift);
-			buttonWH = p.widthHeight;
-			tooltipWH = makeWH();
+	offsetT =
+		fsubselect2(tooltipWH, buttonWH, \twh, bwh -> {
+			top = const(WidthHeight((bwh.width - twh.width) / 2., -twh.height - tooltipGap));
+			bottom = const(WidthHeight((bwh.width - twh.width) / 2., bwh.height + tooltipGap));
+			left = const(WidthHeight(-twh.width - tooltipGap, (bwh.height - twh.height) / 2.));
+			right = const(WidthHeight(bwh.width + tooltipGap, (bwh.height - twh.height) / 2.));
 
-			offsetT =
-				fsubselect2(tooltipWH, buttonWH, \twh, bwh -> {
-					top = const(WidthHeight((bwh.width - twh.width) / 2., -twh.height - tooltipGap));
-					bottom = const(WidthHeight((bwh.width - twh.width) / 2., bwh.height + tooltipGap));
-					left = const(WidthHeight(-twh.width - tooltipGap, (bwh.height - twh.height) / 2.));
-					right = const(WidthHeight(bwh.width + tooltipGap, (bwh.height - twh.height) / 2.));
+			switch (tooltipAlign) {
+				MTop() : top;
+				MBottom() : bottom;
+				MLeft() : left;
+				MRight() : right;
+				MTryTopFirst() :
+					fif(
+						fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
+						top,
+						bottom
+					);
+				MTryBottomFirst() :
+					fif(
+						fselect2(positionScale, manager.stageWH, FLift2(\ps : PositionScale, sWH ->
+							ps.pos.y + bwh.height > sWH.height - twh.height - tooltipGap)
+						),
+						top,
+						bottom
+					);
+				MNoAlignment() : const(WidthHeight(0., 0.));
+			}
+		});
+	content = MAccess([FAccessAttribute("aria-describedby", const(tooltipId)), FAccessVisible(enabled)], m.box);
 
-					switch (tooltipAlign) {
-						MTop() : top;
-						MBottom() : bottom;
-						MLeft() : left;
-						MRight() : right;
-						MTryTopFirst() :
-							fif(
-								fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
-								top,
-								bottom
-							);
-						MTryBottomFirst() :
-							fif(
-								fselect2(positionScale, manager.stageWH, FLift2(\ps : PositionScale, sWH ->
-									ps.pos.y + bwh.height > sWH.height - twh.height - tooltipGap)
-								),
-								top,
-								bottom
-							);
-						MNoAlignment() : const(WidthHeight(0., 0.));
-					}
-				});
+	TConstruct(
+		[
+			makeSubscribe2Uns(fand(enabled, openMenu.opened), \op -> {
+				if (op && !isEmptyMaterial(m.tooltip)) {
+					[
+						interruptibleDeferUntilNextFrameRendered(\ -> {
+							MComponentGroup(
+								m.tooltip
+								|> MBorderLeftRight(8.)
+								|> MBorderTopBottom(4.)
+								|> (\f ->
+									if (mobile)
+										f
+									else
+										MCopySize(
+											f,
+											\tr ->
+												TDispose(
+													[
+														\ -> {
+															next(popupHover, false);
+														}
+													],
+													TInteractive(
+														[
+															KeyDown2(\h, ke -> {
+																if (fgetValue(parent.keysEnabled) && ke.keycode == 27) {
+																	next(openMenu.opened, false);
 
-			TConstruct(
-				[
-					makeSubscribe2Uns(fand(enabled, openMenu.opened), \op -> {
-						if (op && !isEmptyMaterial(m.tooltip)) {
-							[
-								interruptibleDeferUntilNextFrameRendered(\ -> {
-									MComponentGroup(
-										m.tooltip
-										|> MBorderLeftRight(8.)
-										|> MBorderTopBottom(4.)
-										|> (\f ->
-											if (mobile)
-												f
-											else
-												MCopySize(
-													f,
-													\tr ->
-														TDispose(
-															[
-																\ -> {
-																	next(popupHover, false);
+																	true;
+																} else {
+																	h;
 																}
-															],
-															TInteractive(
-																[
-																	KeyDown2(\h, ke -> {
-																		if (fgetValue(p.keysEnabled) && ke.keycode == 27) {
-																			next(openMenu.opened, false);
-
-																			true;
-																		} else {
-																			h;
-																		}
-																	}),
-																	TMouseInside(popupHover, false)
-																],
-																TGroup2(
-																	TDynamicGraphics(
-																		fsubselect3(offsetT, buttonWH, tooltipWH, \offs, bwh, twh -> {
-																			switch (tooltipAlign) {
-																				MTop() :
-																					const([
-																						MoveTo(0., twh.height),
-																						LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																						LineTo(twh.width, twh.height),
-																						LineTo(0., twh.height),
-																						ClosePath()
-																					]);
-																				MBottom() :
-																					const([
-																						MoveTo(0., 0.),
-																						LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																						LineTo(twh.width, 0.),
-																						LineTo(0., 0.),
-																						ClosePath()
-																					]);
-																				MLeft() :
-																					const([
-																						MoveTo(twh.width, 0.),
-																						LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																						LineTo(twh.width, twh.height),
-																						LineTo(twh.width, 0.),
-																						ClosePath()
-																					]);
-																				MRight() :
-																					const([
-																						MoveTo(0., 0.),
-																						LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																						LineTo(0., twh.height),
-																						LineTo(0., 0.),
-																						ClosePath()
-																					]);
-																				MTryTopFirst() :
-																					fif(
-																						fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
-																						const([
-																							MoveTo(0., twh.height),
-																							LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																							LineTo(twh.width, twh.height),
-																							LineTo(0., twh.height),
-																							ClosePath()
-																						]),
-																						const([
-																							MoveTo(0., 0.),
-																							LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																							LineTo(twh.width, 0.),
-																							LineTo(0., 0.),
-																							ClosePath()
-																						])
-																					);
-																				MTryBottomFirst() :
-																					fif(
-																						fselect2(positionScale, manager.stageWH, FLift2(\ps : PositionScale, sWH ->
-																							ps.pos.y + bwh.height > sWH.height - twh.height - tooltipGap)
-																						),
-																						const([
-																							MoveTo(0., twh.height),
-																							LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																							LineTo(twh.width, twh.height),
-																							LineTo(0., twh.height),
-																							ClosePath()
-																						]),
-																						const([
-																							MoveTo(0., 0.),
-																							LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
-																							LineTo(twh.width, 0.),
-																							LineTo(0., 0.),
-																							ClosePath()
-																						])
-																					);
-																				MNoAlignment() : const([])
-																			}
-																		}),
-																		const(interactiveRectangleStyle)
-																	),
-																	TRectangle(
-																		interactiveRectangleStyle,
-																		tr
-																	)
-																)
+															}),
+															TMouseInside(popupHover, false)
+														],
+														TGroup2(
+															TDynamicGraphics(
+																fsubselect3(offsetT, buttonWH, tooltipWH, \offs, bwh, twh -> {
+																	switch (tooltipAlign) {
+																		MTop() :
+																			const([
+																				MoveTo(0., twh.height),
+																				LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																				LineTo(twh.width, twh.height),
+																				LineTo(0., twh.height),
+																				ClosePath()
+																			]);
+																		MBottom() :
+																			const([
+																				MoveTo(0., 0.),
+																				LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																				LineTo(twh.width, 0.),
+																				LineTo(0., 0.),
+																				ClosePath()
+																			]);
+																		MLeft() :
+																			const([
+																				MoveTo(twh.width, 0.),
+																				LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																				LineTo(twh.width, twh.height),
+																				LineTo(twh.width, 0.),
+																				ClosePath()
+																			]);
+																		MRight() :
+																			const([
+																				MoveTo(0., 0.),
+																				LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																				LineTo(0., twh.height),
+																				LineTo(0., 0.),
+																				ClosePath()
+																			]);
+																		MTryTopFirst() :
+																			fif(
+																				fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
+																				const([
+																					MoveTo(0., twh.height),
+																					LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																					LineTo(twh.width, twh.height),
+																					LineTo(0., twh.height),
+																					ClosePath()
+																				]),
+																				const([
+																					MoveTo(0., 0.),
+																					LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																					LineTo(twh.width, 0.),
+																					LineTo(0., 0.),
+																					ClosePath()
+																				])
+																			);
+																		MTryBottomFirst() :
+																			fif(
+																				fselect2(positionScale, manager.stageWH, FLift2(\ps : PositionScale, sWH ->
+																					ps.pos.y + bwh.height > sWH.height - twh.height - tooltipGap)
+																				),
+																				const([
+																					MoveTo(0., twh.height),
+																					LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																					LineTo(twh.width, twh.height),
+																					LineTo(0., twh.height),
+																					ClosePath()
+																				]),
+																				const([
+																					MoveTo(0., 0.),
+																					LineTo(-offs.width + bwh.width / 2., -offs.height + bwh.height / 2.),
+																					LineTo(twh.width, 0.),
+																					LineTo(0., 0.),
+																					ClosePath()
+																				])
+																			);
+																		MNoAlignment() : const([])
+																	}
+																}),
+																const(interactiveRectangleStyle)
+															),
+															TRectangle(
+																interactiveRectangleStyle,
+																tr
 															)
-														),
-													true
-												)
+														)
+													)
+												),
+											true
+										)
+								),
+								[
+									MFocusName("MTooltip"),
+									UpdateMaterialTheme(\t ->
+										MLightTheme(
+											MaterialTheme(t with type = MaterialFontManager(t.type with body1 = MTooltipDesktop(), body2 = MTooltipDesktop())),
+											!lightBackground
+										)
+									),
+									AccessRole("tooltip"),
+									FAccessAttribute("id", const(tooltipId))
+								]
+							)
+							|> (\f -> {
+								RenderMPopup(
+									manager,
+									parent,
+									MPopup(
+										[[MAttachBox(f, tooltipWH)]],
+										fselect2(positionScale, translatePosition, FLift2(\ps : PositionScale, tr : Point ->
+											PositionScale(Point(ps.pos.x + tr.x, ps.pos.y + tr.y), ps.scale))
 										),
 										[
-											MFocusName("MTooltipPopup"),
-											UpdateMaterialTheme(\t ->
-												MLightTheme(
-													MaterialTheme(t with type = MaterialFontManager(t.type with body1 = MTooltipDesktop(), body2 = MTooltipDesktop())),
-													!lightBackground
-												)
-											),
-											AccessRole("tooltip"),
-											FAccessAttribute("id", const(tooltipId))
+											RMOutterBorder(tooltipGap),
+											RMAlphaAnimation(),
+											openMenu,
+											MSameZorder(true),
+											RMBorders(0.),
+											bgStyle,
+											RMDontHandle(),
+											RMNoSnapSize(),
+											MElevation(zero),
+											RMOffset(fpair(offsetT, const(0.))),
+											MRippleShape("MTooltip")
 										]
-									)
-									|> (\f -> {
-										RenderMPopup(
-											manager,
-											p,
-											MPopup(
-												[[MAttachBox(f, tooltipWH)]],
-												fselect2(positionScale, translatePosition, FLift2(\ps : PositionScale, tr : Point ->
-													PositionScale(Point(ps.pos.x + tr.x, ps.pos.y + tr.y), ps.scale))
-												),
-												[
-													RMOutterBorder(tooltipGap),
-													RMAlphaAnimation(),
-													openMenu,
-													MSameZorder(true),
-													RMBorders(0.),
-													bgStyle,
-													RMDontHandle(),
-													RMNoSnapSize(),
-													MElevation(zero),
-													RMOffset(fpair(offsetT, const(0.))),
-													MRippleShape("MTooltipPopup")
-												]
-											),
-											m2t
-										)
-									})
-								})
-							]
-						} else {
-							[]
-						}
-					}),
-					makeSubscribeUns(fand(enabled, fand(fOr(fOr(hover, popupHover), p.focused), fselect(manager.manager.zorder, FLift(\cz -> cz <= zorder)))), \h -> {
-						if (h) {
-							addMPopupItemId(manager, popupId);
-							blockOtherMPopupItemIds(manager, popupId);
+									),
+									m2t
+								)
+							})
+						})
+					]
+				} else {
+					[]
+				}
+			}),
+			makeSubscribeUns(fand(enabled, fand(fOr(hover, popupHover), fselect(manager.manager.zorder, FLift(\cz -> cz <= zorder)))), \h -> {
+				if (h) {
+					addMPopupItemId(manager, popupId);
+					blockOtherMPopupItemIds(manager, popupId);
 
-							[
-								fconnect(fcontains(manager.manager.currentPopupItemID, const(popupId)), openMenu.opened)
-							]
-						} else {
-							nextDistinct(openMenu.opened, false);
+					[
+						fconnect(fcontains(manager.manager.currentPopupItemID, const(popupId)), openMenu.opened)
+					]
+				} else {
+					nextDistinct(openMenu.opened, false);
 
-							[]
-						}
-					}),
-					\ -> \ -> next(openMenu.opened, false)
-				],
-				if (!mobile)
-					TInteractive(
-						[TMouseInside(hover, contains(m.style, MBlockHover()))],
-						m2t(m.box, p)
-					)
-				else
-					TCopySize(
-						m2t(m.box, p),
-						\tr ->
-							TInteractive([TMouseDownGhost(hover)], tr),
-						true
-					)
+					[]
+				}
+			}),
+			\ -> \ -> next(openMenu.opened, false)
+		],
+		(if (!mobile)
+			TInteractive(
+				[TMouseInside(hover, contains(m.style, MBlockHover()))],
+				m2t(content, parent)
 			)
-		}
+		else
+			TCopySize(
+				m2t(content, parent),
+				\tr ->
+					TInteractive([TMouseDownGhost(hover)], tr),
+				true
+			)
+		)
+		|> (\f -> MPositionScaleAttachBox(positionScale, buttonWH, f, fand(enabled, openMenu.opened)))
 	)
 }
 
