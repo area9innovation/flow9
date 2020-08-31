@@ -336,6 +336,7 @@ class VideoClip extends FlowContainer {
 
 	public function pauseVideo() : Void {
 		if (loaded && !videoWidget.paused) {
+			autoPlay = false;
 			videoWidget.pause();
 			playingVideos.remove(this);
 		}
@@ -343,6 +344,7 @@ class VideoClip extends FlowContainer {
 
 	public function resumeVideo() : Void {
 		if (loaded && videoWidget.paused) {
+			autoPlay = true;
 			var playPromise : Promise<Dynamic> = videoWidget.play();
 			if (playPromise != null) {
 				playPromise.then(
@@ -430,11 +432,15 @@ class VideoClip extends FlowContainer {
 
 	private function onStreamPlay() : Void {
 		if (videoWidget != null && !videoWidget.paused) {
-			for (l in streamStatusListener) {
-				l("FlowGL.User.Resume");
-			}
+			if (!autoPlay) {
+				videoWidget.pause();
+			} else {
+				for (l in streamStatusListener) {
+					l("FlowGL.User.Resume");
+				}
 
-			playFn(true);
+				playFn(true);
+			}
 		}
 	}
 
