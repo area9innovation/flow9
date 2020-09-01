@@ -112,7 +112,9 @@ class VideoClip extends FlowContainer {
 		videoWidget.crossOrigin = Util.determineCrossOrigin(filename);
 		videoWidget.className = 'nativeWidget';
 		videoWidget.setAttribute('playsinline', true);
-		videoWidget.setAttribute('muted', true);
+		if (!Platform.isIE) {
+			videoWidget.setAttribute('muted', true);
+		}
 		videoWidget.setAttribute('autoplay', true);
 		videoWidget.style.pointerEvents = 'none';
 
@@ -336,6 +338,7 @@ class VideoClip extends FlowContainer {
 
 	public function pauseVideo() : Void {
 		if (loaded && !videoWidget.paused) {
+			autoPlay = false;
 			videoWidget.pause();
 			playingVideos.remove(this);
 		}
@@ -343,6 +346,7 @@ class VideoClip extends FlowContainer {
 
 	public function resumeVideo() : Void {
 		if (loaded && videoWidget.paused) {
+			autoPlay = true;
 			var playPromise : Promise<Dynamic> = videoWidget.play();
 			if (playPromise != null) {
 				playPromise.then(
@@ -430,11 +434,15 @@ class VideoClip extends FlowContainer {
 
 	private function onStreamPlay() : Void {
 		if (videoWidget != null && !videoWidget.paused) {
-			for (l in streamStatusListener) {
-				l("FlowGL.User.Resume");
-			}
+			if (!autoPlay) {
+				videoWidget.pause();
+			} else {
+				for (l in streamStatusListener) {
+					l("FlowGL.User.Resume");
+				}
 
-			playFn(true);
+				playFn(true);
+			}
 		}
 	}
 
