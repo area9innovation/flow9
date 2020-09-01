@@ -376,7 +376,7 @@ class DisplayObjectHelper {
 
 			clip.scale.x = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0 && scale != 0.0) {
+			if (RenderSupport.RendererType == "html" && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -390,7 +390,7 @@ class DisplayObjectHelper {
 
 			clip.scale.y = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 1.0 && scale != 0.0) {
+			if (RenderSupport.RendererType == "html" && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -1021,6 +1021,10 @@ class DisplayObjectHelper {
 		} else {
 			nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
 				'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
+		}
+
+		if (transform.a == 0 || transform.d == 0) {
+			invalidateTransform(clip, "updateNativeWidgetTransformMatrix", true);
 		}
 	}
 

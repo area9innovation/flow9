@@ -1324,7 +1324,7 @@ class RenderSupport {
 		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
 		if (accessWidget == null) {
-			if (AccessibilityEnabled) {
+			if (AccessibilityEnabled || RendererType == "html") {
 				if (RendererType == "html") {
 					clip.initNativeWidget();
 				}
@@ -1903,11 +1903,11 @@ class RenderSupport {
 	}
 
 	public static function getClipWidth(clip : NativeWidgetClip) : Float {
-		return clip.getWidth();
+		return clip.getWidth != null ? clip.getWidth() : clip.getWidgetWidth();
 	}
 
 	public static function getClipHeight(clip : NativeWidgetClip) : Float {
-		return clip.getHeight();
+		return clip.getHeight != null ? clip.getHeight() : clip.getWidgetHeight();
 	}
 
 	public static function setClipResolution(clip : TextClip, resolution : Float) : Void {
