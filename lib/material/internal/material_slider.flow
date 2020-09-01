@@ -7,6 +7,10 @@ export {
 MSliderThumb(
 	percent : DynamicBehaviour<double>,
 	active : DynamicBehaviour<bool>,
+	focused : DynamicBehaviour<bool>,
+	hovered : Transform<bool>,
+	min : Transform<double>,
+	max : Transform<double>,
 	restrictPercent : (double) -> double,
 	isStart : bool
 );
@@ -22,43 +26,41 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	sliderSteps = extractStruct(m.style, MSliderSteps([])).steps;
 	showValue = extractStruct(m.style, MSliderDisplayValue(false)).display;
 	valueEnabled = extractStruct(m.style, MSliderDisplayValueEnabled(const(true))).enabled;
-	isDiscrete = contains(m.style, MSliderDiscrete());
+	isDiscrete = extractStruct(m.style, MSliderDiscrete(sliderStep >= 0.)).discrete;
 	showDiscreteValues = tryExtractStruct(m.style, MSliderShowDiscreteValues(const(false)));
 	mWidth = extractStruct(m.style, MWidth(-1.)).width;
 	fullWidth = mWidth < 0.;
 	enabled = fand(parent.enabled, extractStruct(m.style, MEnabled(const(true))).enabled);
 	chooseRange = tryExtractStruct(m.style, MSliderChooseRange(make(0.), make(0.)));
 	sliderUndefinedM : Maybe<MSliderUndefined> = tryExtractStruct(m.style, MSliderUndefined(make(true)));
-	outlineOnMinimum = extractStruct(m.style, MOutlineOnMinimum(isNone(chooseRange))).outline;
-	maximizeOnHover = extractStruct(m.style, MMaximizeOnHover(true)).maximize;
 	condensed = extractStruct(m.style, MCondensed(false)).condensed;
 	downAnywhere = extractStruct(m.style, MMouseDown(make(false))).down;
 	down2 = fand(downAnywhere, enabled);
 	sliderTooltip = tryExtractStruct(m.style, MSliderTooltip(\__ -> ""));
+	thumbRadius = extractStruct(m.style, MSliderThumbRadius(const(if (condensed) 6.0 else 8.0))).radius;
 	mousePosition : MMousePosition = extractStruct(m.style, MMousePosition(make(zeroPoint)));
 	point = mousePosition.point;
-	noRipple = !contains(m.style, MSliderRipple());
-	enableArrows = contains(m.style, MSliderEnableArrows());
+	hover = make(false);
 
 	isRTL = parent.rtl;
 	lightBackground = getLightBackground(parent);
 
 	minMax = sliderRange.max - sliderRange.min;
-	stepPercent = if (sliderStep >= 0.) sliderStep / minMax else 0.01;
+	stepPercent = if (sliderStep >= 0.) sliderStep / minMax else 0.05;
 
 	sliderWidth = make(mWidth);
 	percent = make(0.);
 	editString = make("");
 	drag = ref false;
 	tooltipText = make("");
-	cursorPercent = fdivide(fpointX(point), sliderWidth) |> (\p -> if (isRTL) fsubtract(const(1.), p) else p);
+	cursorPercent = fdivide(fsubtract(fpointX(point), const(12.0)), sliderWidth) |> (\p -> if (isRTL) fsubtract(const(1.), p) else p);
 
 	percent2value = \p -> sliderRange.min + p * minMax;
 	percent2strvalue = \p -> d2st(percent2value(p), 2);
 	value2percent = if (minMax != 0.) \v -> (v - sliderRange.min) / minMax else \v -> 0.;
 
 	snapPercent = \p ->
-		if (length(sliderSteps) > 0)
+		if (length(sliderSteps) > 0 && isDiscrete)
 			percent2value(p)
 			|> (\f ->
 				fold(sliderSteps, Pair(-1.0, -1.0), \acc, ss ->
@@ -73,60 +75,21 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				).first
 			)
 			|> value2percent
-		else if (sliderStep > 0.)
+		else if (sliderStep > 0. && isDiscrete)
 			roundTo(forceRange(p, 0.0, 1.0) * minMax, sliderStep) + sliderRange.min
 			|> (\f -> if (f > sliderRange.max) f - sliderStep else if (f < sliderRange.min) f + sliderStep else f)
 			|> value2percent
 		else
 			forceRange(p, 0.0, 1.0);
 
-	preparePercent = \p ->
-		snapPercent(p)
-		|> mirrorIfRTL(isRTL);
-
 	setNewPercent = \thumb, prc ->
 		nextDistinct(thumb.percent, snapPercent(thumb.restrictPercent(prc)));
 
-	prepareValue = \v ->
-		if (length(sliderSteps) > 0)
-			fold(sliderSteps, Pair(-1.0, -1.0), \acc, ss ->
-				if (acc.second >= 0.0) {
-					if (acc.second > abs(ss - v))
-						Pair(ss, abs(ss - v))
-					else
-						acc
-				} else {
-					Pair(ss, abs(ss - v))
-				}
-			).first
-		else if (sliderStep > 0.)
-			(roundTo(max(sliderRange.min, min(sliderRange.max, v)) - sliderRange.min, sliderStep) + sliderRange.min)
-			|> (\f -> if (f > sliderRange.max) f - sliderStep else if (f < sliderRange.min) f + sliderStep else f)
-		else
-			max(sliderRange.min, min(sliderRange.max, v));
-
-	updateValue = \pt : Point -> {
-		w = getValue(sliderWidth);
-
-		if (w != 0.0) {
-			p = preparePercent((pt.x - 4.0) / w);
-			nextDistinct(percent, p);
-
-			if (eitherMap(sliderUndefinedM, \su -> !fgetValue(su.undefined), true))
-				nextDistinct(m.value, percent2value(p));
-		}
-	}
-
-	onValueUpdated = \v, undef -> {
-		val = prepareValue(v);
-		nextDistinct(editString, if (undef) "" else d2st(val, 2));
-		nextDistinct(percent, value2percent(val));
-	}
 
 	discreteValues =
-		if (length(sliderSteps) > 0)
+		if (length(sliderSteps) > 0 && isDiscrete)
 			map(sliderSteps, \ss -> (ss - sliderRange.min) / minMax)
-		else if (sliderStep > 0. && minMax != 0. && minMax / sliderStep < 2000.) {
+		else if (sliderStep > 0. && minMax != 0. && minMax / sliderStep < 2000. && isDiscrete) {
 			mValue = sliderRange.min;
 			generate(
 				0,
@@ -136,20 +99,9 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		} else
 			[];
 
-	focusState =
+	focusGroupState =
 		concat(
-			concatStyles(
-				m.style,
-				[
-					AccessRole("slider"),
-					FAccessAttribute("aria-valuenow", fselect(m.value, d2s |> FLift)),
-					FAccessAttribute("aria-valuemin", const(d2s(sliderRange.min))),
-					FAccessAttribute("aria-valuemax", const(d2s(sliderRange.max))),
-					MRippleType(const(MNoRipple())),
-					mousePosition,
-					MPassClicks()
-				]
-			),
+			extractMComponentGroupState(m.style),
 			[
 				IScriptBehaviour("downAnywhere", downAnywhere, ISInteractionEvent()),
 				IScriptBehaviour("value", m.value, ISInputValue([], "double", true)),
@@ -194,185 +146,50 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 
 	customBar = tryExtractStruct(m.style, MCustomBar(\__, __, __ -> TEmpty()));
 
-	oldSlider = MComponent2T(
-		manager,
-		parent,
-		"MSlider",
-		focusState,
-		\focus ->
-			makeMSlider(manager, focus, percent, sliderWidth, fand(focus.enabled, downAnywhere), color,
-				getLightBackground(parent), discreteValues, fselect(percent, FLift(percent2strvalue)),
-				isDiscrete, sliderUndefined, outlineOnMinimum, maximizeOnHover, condensed, mkCustomThumb, showDiscreteValues
-			)
-			|> (\t -> if (!fullWidth) t else TAttachAvailableWidth(t, sliderWidth))
-			|> (\t -> if (condensed) TBorder(0., 7., 0., 7., t) else TBorder(0., 9., 0., 9., t))
-			|> (\t ->
-				TConstruct(
-					[
-						makeSubscribe(
-							eitherMap(
-								sliderUndefinedM,
-								\su ->
-									fif(su.undefined,
-										fOr(
-											fselect(focus.down, FLift(\d -> {
-												if (d && fgetValue(su.undefined)) {
-													next(su.undefined, false);
-													updateValue(fgetValue(point));
-												}
-												d
-											})),
-											focus.hover
-										),
-										focus.down
-									),
-								focus.down
-							), \d -> if (d) {
-							addMInteractionItemId(manager, sliderId);
-							updateValue(fgetValue(point));
-							drag := true;
-						}),
-						make2Subscribe(focus.enabled, point, \en, p -> {
-							maybeApply(
-								sliderTooltip,
-								\tooltip -> {
-									if (en) {
-										v = preparePercent((p.x - 4.0) / getValue(sliderWidth));
-										nextDistinct(tooltipText, tooltip.textFn(percent2value(v)));
-									} else {
-										nextDistinct(tooltipText, "");
-									}
-								}
-							);
-							if (^drag) {
-								if (isCurrentMInteractionItemId(manager, sliderId))
-									blockOtherMInteractionItemIds(manager, sliderId);
-								updateValue(p)
-							}
-						}),
-						makeSubscribe(downAnywhere, \d -> if (!d) drag := false),
-						eitherFn(
-							sliderUndefinedM,
-							\su -> {
-								prevVal = ref fgetValue(m.value);
-
-								make2Subscribe(
-									fselect(m.value, FLift(\v -> {if (^prevVal != v) nextDistinct(su.undefined, false); prevVal := v; v})),
-									su.undefined,
-									onValueUpdated
-								)
-							},
-							\ ->
-								makeSubscribe(m.value, \v -> onValueUpdated(v, false))
-						)
-					],
-					t
-				)
-			),
-		m2t
-	)
-	|> (\t -> if (condensed) TBorder(4., 0., 4., 0., t) else TBorder(4., 6., 4., 6., t))
-	|> (\t -> TInteractive([if (mobile) TMouseDownGhost(downAnywhere) else TMouseDown(downAnywhere)], t))
-	|> (\t -> if (isNone(sliderTooltip)) t else {
-			contentW = make(0.);
-			posScale = make(zeroPositionScale);
-
-			MTooltip2T(
-				manager,
-				parent,
-				MTooltip(
-					TPositionScale(posScale, TAttachWidth(t, contentW)),
-					MDynamicParagraph(tooltipText, []),
-					[
-						MTooltipAlignment(MTop()),
-						MLightBackground(!getLightBackground(parent)),
-						MTranslatePosition(fselect3(point, contentW, posScale, \p, cw, ps -> Point((p.x - cw / 2.) * ps.scale.x, 0.))),
-						MEnabled(fneq(tooltipText, ""))
-					]
-				),
-				m2t
-			)
-		})
-	|> (\t -> if (condensed) TBorder(0., -7., 0., -7., t) else t)
-	|> (\t -> TBorder(11.,  if (!condensed) 0. else if (isDiscrete) 28. else 0., 11., 0., t))
-	|> (\t -> TBaselineOffset(const(6.), t))
-	|> addIcon(iconLeft, true)
-	|> (\f ->
-		if (showValue) {
-			extraTextInputWidth = if (sliderStep > 0.) i2d(strlen(d2s(sliderStep)) - 1) else 2.0;
-			width = (i2d(max(strlen(i2s(floor(sliderRange.min))), strlen(i2s(floor(sliderRange.max))))) + extraTextInputWidth) * 12.;
-
-			TBaselineCols2Dir(
-				f,
-				MTextInput2T(
-					manager,
-					parent,
-					MTextInput(
-						editString,
-						arrayPushMaybe(
-							[TextInputType(NumericType()), color, MWidth(width), MNumericStep(const(sliderStep))],
-							maybeMap(itemsColor, \ic -> MCustomTextStyle([ic.color]))
-						),
-						[MEnabled(fand(valueEnabled, enabled)), MInputFilter(\es, foc -> {
-							if (es != "") switchOffUndefined();
-
-							value = s2d(es);
-							if (d2s(value) == es)
-								nextDistinct(m.value, prepareValue(value));
-
-							if (foc)
-								es
-							else
-								d2s(getValue(m.value));
-						})]
-					),
-					m2t
-				),
-				isRTL
-			)
-		} else
-			f
-	)
-	|> addIcon(iconRight, false)
-	|> if (fullWidth) idfn else makeTropicConstant(None(), None());
-
 	barHeight0 = make(0.);
-	barHeight = eitherMap(customBar, \__ -> barHeight0, const(3.));
-	activeItemStyle = \en -> [MFill(if (en) color else MGrey(if (lightBackground) 700 else 300))];
-	unactiveItemStyle = mDisabledStyle(lightBackground);
+	barHeight = eitherMap(customBar, \__ -> barHeight0, const(4.));
+	activeItemStyle = \en -> [MFill(if (en) color else MGrey(400))];
+	unactiveItemStyle = \en ->
+		mDisabledStyle(lightBackground)
+		|> (\st -> if (en) st else replaceStruct(st, FillOpacity(extractStruct(st, FillOpacity(0.0)).opacity / 4.0)));
 	outlinedStyle = replaceStruct(mDisabledStyle(lightBackground), FillOpacity(defaultDisabledItemOpacity(lightBackground)));
 
-	makeCircleThumb = \focus, radius, foc, st, outlined -> {
-		circleStyle = fif(outlined, const(outlinedStyle), fselect(foc.enabled, FLift(st)));
+	makeCircleThumb = \foc, st -> {
+		radius =
+			if (condensed)
+				fif(fmax3(foc.focused, fOr(hover, foc.hover), down2), thumbRadius, const(0.))
+			else
+				thumbRadius;
 
-		rippleRadius = fif(foc.down, const(24.), const(16.));
-		setRipple = if (noRipple) idfn else \t ->
-			MRipple2T(manager, foc.parent, t, fOr(foc.focused, fOr(foc.hover, foc.down)), [
-				MRippleType(const(MRippleCenter())),
-				MRippleColor(fif(outlined, const(MBlack()), const(color))),
-				MRippleOpacity(fif(fOr(foc.focused, foc.down), const(0.2), const(0.1))),
-				MRippleWidthHeight(fselect(rippleRadius, FLift(\rr -> WidthHeight(2. * rr, 2. * rr))))
-			])
-			|> (\t2 -> TBorderT(fsubtract(radius, rippleRadius), fsubtract(radius, rippleRadius), zero, zero, t2));
-
+		circleStyle = fselect(foc.enabled, FLift(st));
 		setMarker = \t -> t |> MHintMarker(manager, foc, false);
 
-		TCenteredCircle(focus, radius, circleStyle, outlined, setRipple, setMarker)
+		TCenteredCircle(foc.parent, radius, circleStyle, setMarker)
+		|> (\f -> TBorderT(radius, radius, zero, zero, f))
+		|> (\f -> TShadowShape(foc.parent, const(3.0), f, RectangleShape("MSlider")))
+		|> (\f -> TTranslate(fpoint(fnegate(radius), fnegate(radius)), f))
+		|> (\f -> TShow(fneq(radius, 0.0), f))
 	}
 
-	makeValueLabel = \par, thumbRadius, thumbPercent, style -> {
+	makeValueLabel = \foc, thumbPercent, style -> {
+		thumbRadiusT =
+			if (condensed)
+				fif(fmax3(foc.focused, fOr(hover, foc.hover), down2), thumbRadius, const(0.))
+			else
+				thumbRadius;
+
 		radius = 14.;
 		dsqrt2 = 1. / sqrt(2.);
 
 		label =
 			TSelect(thumbPercent, \prc ->
-				MText2T(parent, percent2strvalue(prc), [MCustomFont(radius, "Roboto", 1.), MWhite()])
+				MText2T(foc.parent, percent2strvalue(prc), [MCustomFont(radius, "Roboto", 1.), MWhite()])
 			)
 			|> (\t -> TCenterIn(t, TFixed(2.0 * radius, 2.0 * radius)));
 
 		TGroupSameMetrics([
 			TSelect(style, \st -> TCircle(radius, st)),
-			TDynamicGraphics(fselect(thumbRadius, FLift(\smallradius -> [
+			TDynamicGraphics(fselect(thumbRadiusT, FLift(\smallradius -> [
 				MoveTo(radius, radius),
 				LineTo((1. + dsqrt2) * radius, (1. + dsqrt2) * radius),
 				CubicBezierTo(1.05 * radius, 2.75 * radius, 1.05 * radius, 2.1 * radius),
@@ -385,76 +202,89 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			])), style),
 			label
 		])
-		|> (\t -> TTranslate(fselect(thumbRadius, FLift(\smallradius -> Point(-radius, -3. * radius - smallradius))), t))
+		|> (\t -> TTranslate(fselect(thumbRadiusT, FLift(\smallradius -> Point(-radius, -3. * radius - smallradius))), t))
 	}
 
 	makeThumb = \thumb, sliderFoc, style -> {
-		name = if (thumb.isStart) "startThumb" else "endThumb";
-		activeU = if (thumb.isStart) thumb.active else fOr(sliderUndefined, thumb.active);
+		name = "MSlider";
+		activeU : Transform<bool> = thumb.active;
 		thumbPoint = fselect2(thumb.percent, sliderWidth, FLift2(\p, sw -> Point((if (isRTL) 1. - p else p) * sw, 0.)));
-		show = fif(sliderUndefined, sliderFoc.hover, const(true));
-		focused = if (isSome(chooseRange)) make(false) else sliderFoc.focused;
+		focused = make(false);
+		focusDown = make(false);
+		haloRadius = fmultiply(thumbRadius, const(2.0));
 
-		MComponent2T(manager, parent, name, concatA([[
-					MOnMouseDown(\__, ins -> nextDistinct(thumb.active, ins)),
-					MOnMouseUp(\__, __ -> nextDistinct(thumb.active, false)),
-					MEnabled(enabled),
-					MFocused(focused),
-					MAddFocusGroup(true)
-				],
-				eitherMap(sliderUndefinedM, \__ -> [MPassClicks()], [])
-			]), \foc -> {
+		MComponent2T(manager, sliderFoc, name,
+			[
+				AccessRole("slider"),
+				FAccessAttribute("aria-valuenow", fd2s(fselect(thumb.percent, FLift(percent2value)))),
+				FAccessAttribute("aria-valuemin", fd2s(fselect(thumb.min, FLift(percent2value)))),
+				FAccessAttribute("aria-valuemax", fd2s(fselect(thumb.max, FLift(percent2value)))),
+				extractStruct(m.style, MRippleType(const(MRippleCenter()))),
+				MRippleColor(const(color)),
+				MMouseDown(focusDown),
+				extractStruct(m.style, MHighlightOnFocus(const(true))),
+				extractStruct(m.style, MHighlightOnHover(const(!condensed))),
+				extractStruct(m.style, MHighlightOnSelect(const(!condensed))),
+				MRippleSelected(thumb.hovered),
+				MRippleTrigger(if (condensed) const(false) else activeU),
+				MPassClicks(),
+				MFocused(thumb.focused),
+				MCursorShape(const(DefaultCursor()))
+			], \foc -> {
 				onKeyDown = \h, ke ->
-					if (!h && fgetValue(foc.focused)) {
+					if (!h && fgetValue(sliderFoc.keysEnabled) && fgetValue(foc.focused)) {
 						if (ke.utf == "left") { setNewPercent(thumb, getValue(thumb.percent) - stepPercent); true }
 						else if (ke.utf == "right") { setNewPercent(thumb, getValue(thumb.percent) + stepPercent); true }
 						else false
 					} else h;
 
-				eitherMap(mkCustomThumb, \ct -> ct(thumb.active, foc.focused), {
-					radius =
-						if (condensed) fif(fmax3(sliderFoc.hover, foc.focused, down2), const(6.), const(0.))
-						else
-							fif(foc.enabled,
-								if (maximizeOnHover)
-									fif(foc.down, const(if (noRipple) 9. else 7.), fif(fOr(foc.hover, activeU), const(7.), const(6.)))
-								else
-									const(6.),
-								const(4.)
-							);
-					circle = makeCircleThumb(sliderFoc, radius, foc, style, fand(const(outlineOnMinimum), feq(thumb.percent, 0.)));
+				eitherFn(mkCustomThumb, \ct -> ct(thumb.active, foc.focused), \ -> {
+					circle = makeCircleThumb(foc, style);
 					if (isDiscrete)
 						TGroup2(
 							makeValueLabel(
-								foc.parent,
-								radius,
+								foc,
 								thumb.percent,
-								fif(fand(const(outlineOnMinimum), feq(thumb.percent, 0.)), const([MFill(MGrey(500))]), const(style(true)))
+								const(style(true))
 							)
-							|> (\t -> TShow(fand(foc.enabled, activeU), t)),
+							|> (\t -> TShow(fand(foc.enabled, fOr(activeU, foc.focused)), t)),
 							circle
 						)
 					else circle
 				})
-				|> (\t -> if (enableArrows) TInteractive([KeyDown2(onKeyDown)], t) else t)
+				|> (\t -> TInteractive([KeyDown2(onKeyDown)], t))
+				|> (\t ->
+					TConstruct(
+						[
+							\ -> {
+								if (fgetValue(foc.focused)) {
+									switchOffUndefined();
+								}
+
+								nop;
+							}
+						],
+						t
+					)
+				)
+				|> (\t -> TShow(fif(sliderUndefined, fOr(hover, foc.focused), const(true)), t))
+				|> (\t -> TBorderT(haloRadius, haloRadius, zero, zero, t))
+				|> (\t -> TFixSize(t, TSized(fwh(fmultiply(haloRadius, const(2.0)), fmultiply(haloRadius, const(2.0))))))
 			},
 			m2t
 		)
-		|> (\t -> eitherMap(sliderUndefinedM, \__ -> TCopySize(t, \tr ->
-					TInteractive(
-						[MouseDown(\mi -> mi.inside() && !fgetValue(sliderUndefined))],
-						TRectangle(interactiveRectangleStyle, tr),
-					)
-					|> (\t2 -> TShift(TScale(ffactor2(const(2.)), t2), tr)),
-				false
-			), t))
+		|> (\t -> TTranslate(fpoint(fnegate(haloRadius), fnegate(haloRadius)), t))
 		|> (\t -> TBorderT(zero, fdivide(barHeight, const(2.)), zero, zero, t))
-		|> (\t -> TConstruct([
-			makeSubscribe2Trigger(activeU, cursorPercent, \p -> setNewPercent(thumb, p)),
-			makeSubscribe2(thumb.active, \act -> if (act) deferred( \ -> nextDistinct(focused, true)))
-		], t))
-		|> (\t -> TTranslate(thumbPoint, t))
-		|> (\t -> TVisible(show, t));
+		|> (\t ->
+			TConstruct(
+				[
+					makeSubscribe2Trigger(activeU, cursorPercent, \p -> setNewPercent(thumb, p)),
+					makeSubscribe2(thumb.active, \act -> if (act) deferred( \ -> nextDistinct(focused, true)))
+				],
+				t
+			)
+		)
+		|> (\t -> TTranslate(thumbPoint, t));
 	}
 
 	makeValueInput = \thumb -> {
@@ -502,318 +332,227 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 
 	sliderBar = \foc, type, prc ->
 		TSelect(foc.enabled, \en -> {
-			circleGap = if (en || condensed || isSome(customThumb)) 0. else 6.;
-			barLength = fsubtract(fmultiply(prc, sliderWidth), const(if (type == ActiveBar()) 2. * circleGap else circleGap));
-			border = faddition(fmin(const(0.), barLength), const(circleGap));
-			style = if (type != ActiveBar()) unactiveItemStyle else activeItemStyle(en);
+			circleGap = if (en || isSome(customThumb)) zero else thumbRadius;
+			barLength = fsubtract(fmultiply(prc, sliderWidth), if (type == ActiveBar()) fmultiply(circleGap, const(2.0)) else circleGap);
+			border = faddition(fmin(const(0.), barLength), circleGap);
+			style = if (type != ActiveBar()) unactiveItemStyle(en) else activeItemStyle(en);
 
 			eitherMap(
 				customBar,
-				\cb -> TAttachHeight(m2t(cb.makeBar(type, fmax(barLength, const(0.)), style), parent), barHeight0),
-				TRectangle(style, TSizedWidthHeight(fmax(barLength, const(0.)), barHeight))
+				\cb -> TAttachHeight(m2t(cb.makeBar(type, fmax(barLength, const(0.)), style), foc), barHeight0),
+				if (condensed)
+					TRectangle(style, TSizedWidthHeight(fmax(barLength, const(0.)), barHeight))
+				else
+					TRounded(2.0, 2.0, 2.0, 2.0, style, TSizedWidthHeight(fmax(barLength, const(0.)), barHeight))
 			)
 			|> (\t -> TBorderT(if (type == LeftBar()) zero else border, zero, if (type == RightBar()) zero else border, zero, t))
 		});
 
 	makeOuterValueLink = \value : DynamicBehaviour<double>, prc ->
 		[
-			\ -> {if (!fgetValue(sliderUndefined)) nextDistinct(prc, snapPercent(value2percent(getValue(value)))); nop},
+			\ -> { nextDistinct(prc, snapPercent(value2percent(getValue(value)))); nop},
 			makeSubscribe2(value, \v -> {nextDistinct(prc, snapPercent(value2percent(v))); switchOffUndefined()}),
 			makeSubscribe2(fpair(prc, sliderUndefined), \p -> if (!p.second) nextDistinct(value, percent2value(p.first)))
 		];
 
-	if (isUrlParameterTrue("newSlider") || isSome(chooseRange) || isSome(customBar)) {
-			rangeStartPercent = make(0.);
-			rangeEndPercent = make(0.);
+	rangeStartPercent = make(0.);
+	rangeEndPercent = make(0.);
 
-			startThumb =
-				MSliderThumb(
-					rangeStartPercent,
-					make(false),
-					\p -> min(p, fgetValue(rangeEndPercent) - stepPercent),
-					true
-				);
-
-			endThumb =
-				MSliderThumb(
-					rangeEndPercent,
-					make(false),
-					if (isSome(chooseRange)) \p -> max(p, fgetValue(rangeStartPercent) + stepPercent) else idfn,
-					false
-				);
-
-			addDiscreteValues = \foc -> \f2 ->
-				TGroup2(
-					f2,
-					(\ ->
-						map(discreteValues, \v -> {
-							tickColor = fselect2(startThumb.percent, endThumb.percent, FLift2(\st, e -> {
-								light = if (v > st && v < e) isLightMColor(color) else lightBackground;
-								MDialogMColor(!light)
-							}));
-							TTranslate(
-								fselect2(sliderWidth, barHeight, FLift2(\w, h -> {x = v * w - h / 2.; Point(if (isRTL) w - x else x, 0.)})),
-								TSelect(tickColor, \col -> TRectangle([MFill(col)], TSizedWidthHeight(barHeight, barHeight)))
-							)
-						})
-						|> TGroup
-					)
-					|> (\t -> TShowLazy(fand(
-							eitherMap(showDiscreteValues,
-								\sdv -> sdv.show,
-								fand(
-									foc.enabled,
-									fif(sliderUndefined, foc.hover, fmax3(down2, startThumb.active, endThumb.active))
-								)
-							),
-							fselect(sliderWidth, FLift(\w -> i2d(length(discreteValues)) < w / 10.))
-						), t
-					))
-				);
-
-			(\foc -> {
-				rangeStartPercentU = fif(sliderUndefined, const(0.), rangeStartPercent);
-				rangeEndPercentU = fif(fand(sliderUndefined, fnot(foc.hover)), const(0.), rangeEndPercent);
-
-				leftBar =
-					sliderBar(foc, LeftBar(), rangeStartPercentU);
-				activeBar =
-					sliderBar(foc, ActiveBar(), fsubtract(rangeEndPercentU, rangeStartPercentU));
-				rightBar =
-					sliderBar(foc, RightBar(), fsubtract(const(1.), rangeEndPercentU));
-
-				concat([
-						TColsDir([leftBar, activeBar, rightBar], isRTL)
-						|> addDiscreteValues(foc),
-						makeThumb(endThumb, foc, activeItemStyle)
-					],
-					eitherMap(chooseRange, \__ -> [makeThumb(startThumb, foc, activeItemStyle)], [])
-				)
-				|> TGroupSameMetrics
-				|> (\t -> if (!fullWidth) t else TAttachAvailableWidth(t, sliderWidth))
-				|> (\t -> if (condensed) TBorder(0., 7., 0., 7., t) else TBorder(0., 9., 0., 9., t))
-			})
-			|> (\makeSlider -> MComponent2T(manager, parent, "MSlider", focusState, makeSlider, m2t))
-			|> (\t -> if (condensed) TBorder(4., 0., 4., 0., t) else TBorder(4., 6., 4., 6., t))
-			|> (\t -> TInteractive([if (mobile) TMouseDownGhost(downAnywhere) else TMouseDown(downAnywhere), TMouseXY(point)], t))
-			|> (\t -> TConstruct(concat([
-				makeSubscribe2(down2, \d -> if (d) {
-					switchOffUndefined();
-					prc = snapPercent(fgetValue(cursorPercent));
-					thumb =
-						if (isSome(chooseRange) && abs(prc - getValue(rangeStartPercent)) <= abs(prc - getValue(rangeEndPercent)))
-							startThumb
-						else
-							endThumb;
-
-					nextDistinct(thumb.percent, prc);
-					nextDistinct(thumb.active, true);
-				}),
-				makeSubscribeUns(fOr(startThumb.active, endThumb.active), \active -> {
-					if (active) {
-						addMInteractionItemId(manager, sliderId);
-
-						[
-							makeSubscribe2(point, \p -> {
-								if (isCurrentMInteractionItemId(manager, sliderId))
-									blockOtherMInteractionItemIds(manager, sliderId);
-							})()
-						]
-					} else {
-						[]
-					}
-				})],
-				eitherMap(chooseRange, \chR -> concat(
-						makeOuterValueLink(chR.end, rangeEndPercent),
-						makeOuterValueLink(chR.start, rangeStartPercent)
-					),
-					makeOuterValueLink(m.value, rangeEndPercent)
-				)
-			), t))
-			|> (\t -> eitherMap(sliderTooltip, \tooltip -> {
-					contentW = make(0.);
-					posScale = make(zeroPositionScale);
-
-					tooltipText2 = fselect(cursorPercent, FLift(\prc ->
-						tooltip.textFn(percent2value(snapPercent(prc)))
-					));
-					MTooltip2T(
-						manager,
-						parent,
-						MTooltip(
-							TPositionScale(posScale, TAttachWidth(t, contentW)),
-							MSelect(tooltipText2, \txt -> MText(txt, [])),
-							[
-								MTooltipAlignment(MTop()),
-								MLightBackground(!lightBackground),
-								MTranslatePosition(fselect3(point, contentW, posScale, \p, cw, ps -> Point((p.x - cw / 2.) * ps.scale.x, 0.))),
-								MEnabled(fneq(tooltipText2, ""))
-							]
-						),
-						m2t
-					)
-				}, t))
-			|> (\t -> if (condensed) TBorder(0., -7., 0., -7., t) else t)
-			|> TBorderLeftRight(11.)
-			|> (\t -> TBaselineOffset(const(6.), t))
-			|> (\t : Tropic -> if (showValue) TBaselineColsDir([if (isSome(chooseRange)) makeValueInput(startThumb) else TEmpty(), t, makeValueInput(endThumb)], isRTL) else t)
-			|> (\t -> TBaselineColsDir([makeSliderIcon(iconLeft), t, makeSliderIcon(iconRight)], isRTL))
-		}
-	else oldSlider
-}
-
-IconBasedCircle(parent : MFocusGroup, radius : double, style : [TGraphicsStyle]) -> Tropic {
-	color = extractStruct(style, Fill(black)).color;
-	opacity = extractStruct(style, FillOpacity(1.0)).opacity;
-
-	stroke = extractStruct(style, Stroke(black)).colour;
-	strokeWidth = extractStruct(style, StrokeWidth(0.0)).width;
-	strokeOpacity = extractStruct(style, StrokeOpacity(1.0)).opacity;
-
-	makeCircle = \r, col, op ->
-		MIcon2T(parent, "lens", [MIconSize(2.4 * r), MCustomColor(col), FillOpacity(op)])
-		|> (\t -> TCrop(const(Point(0.21 * r, 0.21 * r)), const(WidthHeight(2. * r, 2. * r)), t));
-
-	if (strokeWidth == 0.0)
-		makeCircle(radius, color, opacity)
-	else
-		TGroup2SameMetrics(
-			makeCircle(radius + strokeWidth / 2.0, stroke, strokeOpacity),
-			makeCircle(radius - strokeWidth / 2.0, color, opacity) |> (\m -> TTranslate(const(Point(strokeWidth, strokeWidth)), m))
-		);
-}
-
-makeBlobHandle(parent : MFocusGroup, text : string, radius : double, st : [TGraphicsStyle]) -> Tropic {
-	sqrt2 = sqrt(2.0);
-	dsqrt2 = 1.0 / sqrt2;
-
-	TGroupSameMetrics([
-		IconBasedCircle(parent, radius, st),
-		TGraphics(
-			[
-				MoveTo(radius, 0.0),
-				LineTo((1. + sqrt(3.)/2.) * radius, 1.55 * radius),
-				LineTo(radius, 3. * radius),
-				LineTo((1. - sqrt(3.)/2.) * radius, 1.55 * radius),
-				ClosePath()
-			],
-			st
-		),
-		MText2T(parent, text, [MCustomFont(radius, "Roboto", 1.), MWhite()])
-		|> (\t -> TCenterIn(t, TFixed(2.0 * radius, 2.0 * radius)))
-	])
-	|> (\t -> TTranslate(const(Point(-radius, -radius * (2. + sqrt2))), t))
-}
-
-MSliderState(enabled : bool, strokeCircle : bool, radius : double, left : double, center : double, right : double, circlePosition : double,
-	width : double, blob : bool);
-
-makeMSlider(manager : MaterialManager, focus : MFocus, value0 : Transform<double>, width : Transform<double>, down : Transform<bool>, color : MColor, lightBackground: bool,
-	discreteValues : [double], editString : Transform<string>, isDiscrete : bool, sliderUndefined : Transform<bool>, outlineOnMinimum : bool, maximizeOnHover : bool,
-	condensed : bool, customThumb : Maybe<(Transform<bool>, Transform<bool>) -> Tropic>, showDiscreteValues : Maybe<MSliderShowDiscreteValues>) -> Tropic {
-
-	isRTL = focus.parent.rtl;
-	radius =
-		if (isSome(customThumb))
-			const(0.0)
-		else if (condensed)
-			fselect(fmax3(focus.hover, focus.focused, down), FLift(\h -> if (!h) 0. else 6.))
-		else if (!maximizeOnHover)
-			fselect2(focus.hover, sliderUndefined, FLift2(\h, su -> if (su && !h) 0. else 6.))
-		else if (isDiscrete)
-			fselect3(focus.hover, fOr(down, focus.focused), sliderUndefined, \h, d, su -> if (su || d) 0. else if (h) 7. else 6.)
-		else
-			fselect3(focus.hover, down, sliderUndefined, \h, d, su -> if (su && !h) 0. else if (d) 9. else if (h) 7. else 6.);
-
-	value = fif(fand(sliderUndefined, fnot(focus.hover)), zero, value0);
-
-	sliderState =
-		fselect6(focus.enabled, radius, value, width, sliderUndefined, focus.hover, \en, r0, val, wd, undef, hvr -> {
-			strokeCircle = val == 0. && !undef && outlineOnMinimum;
-			r = if (strokeCircle) r0 + 1. else r0;
-
-			a = val * wd - r;
-			b = (1. - val) * wd - r;
-			c = r * 2. + min(a, 0.) + min(b, 0.);
-
-			MSliderState(en, strokeCircle, r0, max(a, 0.), c, max(b, 0.), mirrorIfRTL(isRTL)(val) * wd, wd, r0 == 0. && isDiscrete && (!undef || hvr))
-		});
-
-	makeBlob = \r, style, sc, blob ->
-		if (blob)
-			makeBlobHandle(focus.parent, fgetValue(editString), 14., if (sc) [MFill(MGrey(500))] else style)
-		else if (sc)
-			TTranslate(
-				const(Point(-r - 1., -r - 1.)),
-				TGroup2SameMetrics(
-					TCircle(r + 1., replaceStruct(mDisabledStyle(lightBackground), FillOpacity(defaultDisabledItemOpacity(lightBackground)))),
-					TTranslate(const(Point(2., 2.)), TCircle(r - 1., [MThemeFill(focus, MBackgroundColor())]))
-				)
-			)
-		else
-			TTranslate(const(Point(-r, -r)), TCircle(r, style));
-
-	slider = \st ->
-		TColsDir([
-			TRectangle(if (st.enabled) [MFill(color)] else mDisabledStyle(lightBackground), TFixed(st.left, 3.)),
-			TFixed(st.center, 3.),
-			TRectangle(mDisabledStyle(lightBackground), TFixed(st.right, 3.))
-		], isRTL)
-		|> (\f2 ->
-			if (i2d(length(discreteValues)) < st.width / 4.)
-				TGroup2(
-					f2,
-					(\ ->
-						TGroup(
-							map(discreteValues, \v ->
-								TTranslate(
-									if (isRTL)
-										fselect(width, FLift(\w -> Point(w - (v * st.width - 1.5), 0.)))
-									else
-										const(Point(v * st.width - 1.5, 0.)),
-									TRectangle([MFill(MDialogMColor(!lightBackground))], TFixed(3., 3.))
-								)
-							)
-						)
-					)
-					|> (\f3 -> TShowLazy(eitherMap(showDiscreteValues,
-							\sdv -> sdv.show,
-							fif(sliderUndefined, focus.hover, down)
-						), f3))
+	startThumb =
+		MSliderThumb(
+			rangeStartPercent,
+			make(false),
+			make(false),
+			if (isSome(chooseRange))
+				fand(
+					fselect(cursorPercent, FLift(\prc -> abs(prc - getValue(rangeStartPercent)) <= abs(prc - getValue(rangeEndPercent)))),
+					hover
 				)
 			else
-				f2
+				hover,
+			const(value2percent(sliderRange.min)),
+			if (isSome(chooseRange)) rangeEndPercent else const(value2percent(sliderRange.max)),
+			\p -> min(p, fgetValue(rangeEndPercent) - (if (isDiscrete) stepPercent else min(0.01, stepPercent))),
+			true
 		);
 
-	blob = \st ->
-		if (st.radius == 0. && !st.blob)
-			TEmpty()
-		else if (st.enabled) {
-			makeBlob(st.radius, [MFill(color)], st.strokeCircle, st.blob)
-			|> (\blob -> if (st.blob) blob else
-					TGroup2WithoutMetrics(
-						TShowLazy(focus.focused, \ -> makeBlob(
-							16.,
-							[MFill(if (st.strokeCircle) MGrey(500) else color), FillOpacity(0.2)],
-							false,
-							false
-						)),
-						blob
-					))
-		} else {
-			makeBlob(4., mDisabledStyle(lightBackground), st.strokeCircle, false)
-		};
+	endThumb =
+		MSliderThumb(
+			rangeEndPercent,
+			make(false),
+			make(false),
+			if (isSome(chooseRange))
+				fand(
+					fselect(cursorPercent, FLift(\prc -> abs(prc - getValue(rangeStartPercent)) > abs(prc - getValue(rangeEndPercent)))),
+					hover
+				)
+			else
+				hover,
+			if (isSome(chooseRange)) rangeStartPercent else const(value2percent(sliderRange.min)),
+			const(value2percent(sliderRange.max)),
+			if (isSome(chooseRange)) \p -> max(p, fgetValue(rangeStartPercent) + (if (isDiscrete) stepPercent else min(0.01, stepPercent))) else idfn,
+			false
+		);
 
-	TGroup2SameMetrics(
-		TSelect(sliderState, slider),
-		eitherFn(
-			customThumb,
-			\thumb -> thumb(down, focus.focused),
-			\ -> TSelect(sliderState, blob)
+	addDiscreteValues = \foc -> \f2 ->
+		TGroup2(
+			f2,
+			(\ ->
+				map(discreteValues, \v -> {
+					tickColor = fselect2(startThumb.percent, endThumb.percent, FLift2(\st, e -> {
+						light = if (v >= st && v <= e) isLightMColor(color) else lightBackground;
+						MDialogMColor(!light)
+					}));
+					TTranslate(
+						fselect2(sliderWidth, barHeight, FLift2(\w, h -> {x = 2.0 + v * (w - 4.0) - h / 2.; Point(if (isRTL) (w - 4.0) - x else x, 0.)})),
+						TSelect(
+							tickColor,
+							\col ->
+								TRounded(1.0, 1.0, 1.0, 1.0, [MFill(col)], TSizedWidthHeight(fsubtract(barHeight, const(2.0)), fsubtract(barHeight, const(2.0))))
+						)
+						|> (\f3 -> TBorder4(1.0, f3))
+					)
+				})
+				|> TGroup
+			)
+			|> (\t -> TShowLazy(fand(
+					eitherFn(
+						showDiscreteValues,
+						\sdv -> sdv.show,
+						\ -> fand(
+							foc.enabled,
+							fmax3(fOr(down2, fOr(startThumb.focused, endThumb.focused)), startThumb.active, endThumb.active)
+						)
+					),
+					fselect(sliderWidth, FLift(\w -> i2d(length(discreteValues)) < w / 10.))
+				), t
+			))
+		);
+
+	(\foc : MFocusGroup -> {
+		rangeStartPercentU = fif(sliderUndefined, const(0.), rangeStartPercent);
+		rangeEndPercentU = fif(fand(sliderUndefined, fnot(fOr(hover, fOr(startThumb.focused, endThumb.focused)))), const(0.), rangeEndPercent);
+
+		leftBar =
+			sliderBar(foc, LeftBar(), rangeStartPercentU);
+		activeBar =
+			sliderBar(foc, ActiveBar(), fsubtract(rangeEndPercentU, rangeStartPercentU));
+		rightBar =
+			sliderBar(foc, RightBar(), fsubtract(const(1.), rangeEndPercentU));
+
+		concat3(
+			[
+				TColsDir([leftBar, activeBar, rightBar], isRTL)
+				|> addDiscreteValues(foc)
+			],
+			eitherMap(chooseRange, \__ -> [makeThumb(startThumb, foc, activeItemStyle)], []),
+			[
+				makeThumb(endThumb, foc, activeItemStyle)
+			]
 		)
-		|> MHintMarker(manager, focus, false)
-		|> (\f2 -> TTranslate(fselect(sliderState, FLift(\st -> Point(st.circlePosition, 1.5))), f2))
+		|> TGroupSameMetrics
+		|> (\t -> if (!fullWidth) t else TAttachAvailableWidth(t, sliderWidth))
+		|> (\t -> if (condensed) TBorder(0., 7., 0., 7., t) else TBorder(0., 9., 0., 9., t))
+	})
+	|> (\makeSlider -> MComponentGroup2T(manager, parent, "MSliderContainer", focusGroupState, makeSlider))
+	|> (\t -> if (condensed) TBorder(12., 6., 12., 2., t) else TBorder(12., 8., 12., 8., t))
+	|> (\t ->
+		TCopySize(
+			t,
+			\tr ->
+				TShow(
+					enabled,
+					TCursor(
+						FingerCursor(),
+						TInteractive(
+							[
+								if (mobile)
+									TMouseDownGhost(downAnywhere)
+								else
+									TMouseDown(downAnywhere),
+								TMouseXY(point),
+								if (mobile)
+									TMouseDownGhost(hover)
+								else
+									TMouseInside(hover, false)
+							],
+							TFrame(0.0, 0.0, interactiveRectangleStyle, tr)
+						)
+					)
+				),
+			false
+		)
 	)
+	|> (\t -> TBorder(-6., 0., -6., 0., t))
+	|> (\t -> TConstruct(concat([
+		makeSubscribe2(down2, \d ->
+			if (d) {
+				switchOffUndefined();
+				prc = snapPercent(fgetValue(cursorPercent));
+				thumb =
+					if (isSome(chooseRange) && abs(prc - getValue(rangeStartPercent)) <= abs(prc - getValue(rangeEndPercent)))
+						startThumb
+					else
+						endThumb;
+
+				nextDistinct(thumb.percent, prc);
+				nextDistinct(thumb.active, true);
+			} else {
+				nextDistinct(startThumb.active, false);
+				nextDistinct(endThumb.active, false);
+			}
+		),
+		makeSubscribeUns(fOr(startThumb.active, endThumb.active), \active -> {
+			if (active) {
+				addMInteractionItemId(manager, sliderId);
+
+				[
+					makeSubscribe2(point, \p -> {
+						if (isCurrentMInteractionItemId(manager, sliderId))
+							blockOtherMInteractionItemIds(manager, sliderId);
+					})()
+				]
+			} else {
+				[]
+			}
+		})],
+		eitherFn(
+			chooseRange,
+			\chR -> concat(
+				makeOuterValueLink(chR.end, rangeEndPercent),
+				makeOuterValueLink(chR.start, rangeStartPercent)
+			),
+			\ -> makeOuterValueLink(m.value, rangeEndPercent)
+		)
+	), t))
+	|> (\t -> eitherMap(sliderTooltip, \tooltip -> {
+			contentW = make(0.);
+			posScale = make(zeroPositionScale);
+
+			tooltipText2 = fselect(cursorPercent, FLift(\prc ->
+				tooltip.textFn(percent2value(snapPercent(prc)))
+			));
+			MTooltip2T(
+				manager,
+				parent,
+				MTooltip(
+					TPositionScale(posScale, TAttachWidth(t, contentW)),
+					MSelect(tooltipText2, \txt -> MText(txt, [])),
+					[
+						MTooltipAlignment(MTop()),
+						MLightBackground(lightBackground),
+						MTranslatePosition(fselect3(point, contentW, posScale, \p, cw, ps -> Point((p.x - cw / 2.) * ps.scale.x, 0.))),
+						MEnabled(fneq(tooltipText2, ""))
+					]
+				),
+				m2t
+			)
+		}, t))
+	|> (\t -> if (condensed) TBorder(0., -7., 0., -7., t) else TBorder(0., -3., 0., -3., t))
+	|> TBorderLeftRight(11.)
+	|> (\t -> TBaselineOffset(const(6.), t))
+	|> (\t : Tropic -> if (showValue) TBaselineColsDir([if (isSome(chooseRange)) makeValueInput(startThumb) else TEmpty(), t, makeValueInput(endThumb)], isRTL) else t)
+	|> (\t -> TBaselineColsDir([makeSliderIcon(iconLeft), t, makeSliderIcon(iconRight)], isRTL))
 }
 
 mirrorIfRTL(isRTL : bool) -> (double) -> double {
@@ -821,20 +560,15 @@ mirrorIfRTL(isRTL : bool) -> (double) -> double {
 }
 
 TCenteredCircle(
-	focus : MFocus,
+	parent : MFocusGroup,
 	radius0 : Transform<double>,
 	style : Transform<[TGraphicsStyle]>,
-	outlined : Transform<bool>,
-	setRipple : (Tropic) -> Tropic,
 	setMarker : (Tropic) -> Tropic
 ) -> Tropic {
 
-	radius = fif(outlined, faddition(radius0, const(1.)), radius0);
-	outlinedCircle = TBorder(2., 2., 0., 0., TShowLazy(outlined, \ -> TSelect(radius0, \r -> TCircle(r - 1., [MThemeFill(focus, MBackgroundColor())]))));
+	radius = faddition(radius0, const(1.));
 
 	TSelect2(radius, style, \r, st -> TCircle(r, st))
-	|> (\t -> TGroup2(t, outlinedCircle))
-	|> setRipple
 	|> setMarker
 	|> (\t -> TBorderT(fnegate(radius), fnegate(radius), zero, zero, t))
 }

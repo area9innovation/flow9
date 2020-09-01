@@ -2,11 +2,9 @@ import js.Browser;
 import js.html.Element;
 
 import pixi.core.display.Bounds;
-import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
 import pixi.core.graphics.Graphics;
-import pixi.core.graphics.GraphicsData;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 
