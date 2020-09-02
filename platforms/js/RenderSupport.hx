@@ -1773,7 +1773,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
+		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0" && !Platform.isSafari) {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -1789,6 +1789,7 @@ class RenderSupport {
 
 					var nativeWidget = untyped clip.nativeWidget;
 					var optionsObject : Dynamic = {};
+					var disposed = false;
 
 					clip.updateNativeWidget();
 
@@ -1820,8 +1821,30 @@ class RenderSupport {
 							optionsObject
 						);
 
+
+					animation.oncancel = function() {
+						if (!disposed) {
+							disposed = true;
+							onFinish();
+						}
+
+						clip.updateNativeWidget();
+					}
+
+					animation.onremove = function() {
+						if (!disposed) {
+							disposed = true;
+							onFinish();
+						}
+
+						clip.updateNativeWidget();
+					}
+
 					animation.onfinish = function() {
-						onFinish();
+						if (!disposed) {
+							disposed = true;
+							onFinish();
+						}
 
 						clip.updateNativeWidget();
 					}
