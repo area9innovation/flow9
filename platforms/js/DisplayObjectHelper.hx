@@ -50,13 +50,14 @@ class DisplayObjectHelper {
 
 	public static function invalidateStage(clip : DisplayObject) : Void {
 		if (InvalidateStage && (clip.visible || (clip.parent != null && clip.parent.visible)) && untyped clip.stage != null) {
-			if (DisplayObjectHelper.Redraw && (untyped clip.updateGraphics == null || untyped clip.updateGraphics.parent == null)) {
+			if (untyped DisplayObjectHelper.Redraw && (clip.updateGraphics == null || clip.updateGraphics.parent == null)) {
 				var updateGraphics = new FlowGraphics();
 
 				if (untyped clip.updateGraphics == null) {
 					untyped clip.updateGraphics = updateGraphics;
 					updateGraphics.beginFill(0x0000FF, 0.2);
-					updateGraphics.drawRect(0, 0, 100, 100);
+					var localBounds = clip.getLocalBounds();
+					updateGraphics.drawRect(localBounds.x, localBounds.y, localBounds.width, localBounds.height);
 				} else {
 					updateGraphics = untyped clip.updateGraphics;
 				}
@@ -70,8 +71,6 @@ class DisplayObjectHelper {
 
 				Native.timer(100, function () {
 					untyped __js__("if ({0}.parent) PIXI.Container.prototype.removeChild.call({0}.parent, {0})", updateGraphics);
-					untyped clip.stage.invalidateStage();
-					untyped clip.stage.invalidateTransform('invalidateStage');
 				});
 			}
 
@@ -403,6 +402,33 @@ class DisplayObjectHelper {
 			var from = DebugUpdate ? 'setClipRotation ' + clip.rotation + ' : ' + rotation : null;
 
 			clip.rotation = rotation;
+			invalidateTransform(clip, from);
+		}
+	}
+
+	public static inline function setClipOrigin(clip : DisplayObject, x : Float, y : Float) : Void {
+		if (untyped !clip.destroyed && clip.origin == null || (clip.origin.x != x && clip.origin.y != y)) {
+			var from = DebugUpdate ? 'setClipOrigin ' + untyped clip.origin + ' : ' + x + ' ' + y : null;
+
+			untyped clip.origin = new Point(x, y);
+
+			if (RenderSupport.RendererType == "html") {
+				initNativeWidget(clip);
+
+				if (untyped clip.nativeWidget != null) {
+					untyped clip.nativeWidget.style.transformOrigin = clip.origin.x * 100 + "% " + (clip.origin.y * 100 + "%");
+
+					untyped clip.transform.pivot.x = 0.0;
+					untyped clip.transform.pivot.y = 0.0;
+				} else {
+					untyped clip.transform.pivot.x = getWidth(clip) * clip.origin.x;
+					untyped clip.transform.pivot.y = getHeight(clip) * clip.origin.y;
+				}
+			} else {
+				untyped clip.transform.pivot.x = getWidth(clip) * clip.origin.x;
+				untyped clip.transform.pivot.y = getHeight(clip) * clip.origin.y;
+			}
+
 			invalidateTransform(clip, from);
 		}
 	}
@@ -972,6 +998,7 @@ class DisplayObjectHelper {
 		if (untyped clip.left != null && clip.top != null) {
 			tx += untyped clip.left * transform.a + clip.top * transform.c;
 			ty += untyped clip.left * transform.b + clip.top * transform.d;
+			untyped nativeWidget.style.transformOrigin = -clip.left + "px " + (-clip.top + "px");
 		}
 
 		var localBounds = untyped clip.localBounds;
@@ -1886,6 +1913,29 @@ class DisplayObjectHelper {
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
 				if (RenderSupport.RendererType != "html") {
 					untyped clip.nativeWidgetBoundsChanged = false;
+				}
+
+				if (untyped clip.origin != null) {
+					if (RenderSupport.RendererType == "html") {
+						initNativeWidget(clip);
+
+						if (untyped clip.nativeWidget != null) {
+							untyped clip.nativeWidget.style.transformOrigin = clip.origin.x * 100 + "% " + (clip.origin.y * 100 + "%");
+
+							untyped clip.transform.pivot.x = 0.0;
+							untyped clip.transform.pivot.y = 0.0;
+						} else {
+							untyped clip.transform.pivot.x = getWidth(clip) * clip.origin.x;
+							untyped clip.transform.pivot.y = getHeight(clip) * clip.origin.y;
+						}
+					} else {
+						untyped clip.transform.pivot.x = getWidth(clip) * clip.origin.x;
+						untyped clip.transform.pivot.y = getHeight(clip) * clip.origin.y;
+					}
+				}
+
+				if (untyped clip.updateGraphics != null) {
+					untyped clip.updateGraphics.drawRect(clip.localBounds.minX, clip.localBounds.minY, clip.localBounds.maxX, clip.localBounds.maxY);
 				}
 
 				untyped clip.currentBounds = applyLocalBoundsTransform(clip);

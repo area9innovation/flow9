@@ -1763,6 +1763,10 @@ class RenderSupport {
 		clip.setClipRotation(r * 0.0174532925 /*radians*/);
 	}
 
+	public static function setClipOrigin(clip : DisplayObject, x : Float, y : Float) : Void {
+		clip.setClipOrigin(x, y);
+	}
+
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
 			var a = clip.worldTransform;
