@@ -349,7 +349,7 @@ class DisplayObjectHelper {
 			x = x - untyped clip.scrollRect.x;
 		}
 
-		if (clip.x != x) {
+		if (untyped !clip.destroyed && clip.x != x) {
 			var from = DebugUpdate ? 'setClipX ' + clip.x + ' : ' + x : null;
 
 			clip.x = x;
@@ -362,7 +362,7 @@ class DisplayObjectHelper {
 			y = y - untyped clip.scrollRect.y;
 		}
 
-		if (clip.y != y) {
+		if (untyped !clip.destroyed && clip.y != y) {
 			var from = DebugUpdate ? 'setClipY ' + clip.y + ' : ' + y : null;
 
 			clip.y = y;
@@ -371,7 +371,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
-		if (clip.scale.x != scale) {
+		if (untyped !clip.destroyed && clip.scale.x != scale) {
 			var from = DebugUpdate ? 'setClipScaleX ' + clip.scale.x + ' : ' + scale : null;
 
 			clip.scale.x = scale;
@@ -385,7 +385,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function setClipScaleY(clip : DisplayObject, scale : Float) : Void {
-		if (clip.scale.y != scale) {
+		if (untyped !clip.destroyed && clip.scale.y != scale) {
 			var from = DebugUpdate ? 'setClipScaleY ' + clip.scale.y + ' : ' + scale : null;
 
 			clip.scale.y = scale;
@@ -399,7 +399,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function setClipRotation(clip : DisplayObject, rotation : Float) : Void {
-		if (clip.rotation != rotation) {
+		if (untyped !clip.destroyed && clip.rotation != rotation) {
 			var from = DebugUpdate ? 'setClipRotation ' + clip.rotation + ' : ' + rotation : null;
 
 			clip.rotation = rotation;
@@ -408,7 +408,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function setClipAlpha(clip : DisplayObject, alpha : Float) : Void {
-		if (clip.alpha != alpha) {
+		if (untyped !clip.destroyed && clip.alpha != alpha) {
 			var from = DebugUpdate ? 'setClipAlpha ' + clip.alpha + ' : ' + alpha : null;
 
 			clip.alpha = alpha;
