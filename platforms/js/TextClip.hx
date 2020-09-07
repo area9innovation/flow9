@@ -1274,6 +1274,13 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	public override function calculateWidgetBounds() : Void {
+		widgetBounds.minX = 0.0;
+		widgetBounds.minY = 0.0;
+		widgetBounds.maxX = DisplayObjectHelper.ceil(getClipWidth());
+		widgetBounds.maxY = DisplayObjectHelper.ceil(getClipHeight());
+	}
+
 	public override function getWidth() : Float {
 		return (widgetWidth > 0 ? widgetWidth : getClipWidth());
 	}
