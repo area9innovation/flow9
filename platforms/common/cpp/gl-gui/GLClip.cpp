@@ -888,8 +888,6 @@ StackSlot GLClip::setClipOrigin(RUNNER_ARGS)
     wipeFlags(WipeLocalTransformChanged);
     local_transform_raw.ox = x.GetDouble();
     local_transform_raw.oy = y.GetDouble();
-    cout << local_transform_raw.ox << endl;
-    cout << local_transform_raw.oy << endl;
 
     FIX_NAN_VALUE(local_transform_raw.ox, 0.0f, "setClipOrigin");
     FIX_NAN_VALUE(local_transform_raw.oy, 0.0f, "setClipOrigin");
