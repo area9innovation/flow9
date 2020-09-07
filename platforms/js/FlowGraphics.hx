@@ -24,6 +24,7 @@ class FlowGraphics extends Graphics {
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
+	private var strokeDashArray : Array<Float> = [];
 
 	public var transformChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
@@ -68,6 +69,12 @@ class FlowGraphics extends Graphics {
 		isSvg = true;
 
 		lineStyle(lineWidth, RenderSupport.removeAlphaChannel(colors[0]), alphas[0]);
+	}
+
+	public function lineDashArray(values : Array<Float>) : Void {
+		strokeDashArray = values;
+
+		isSvg = true;
 	}
 
 	public override function moveTo(x : Float, y : Float) : Graphics {
@@ -137,6 +144,13 @@ class FlowGraphics extends Graphics {
 			}
 
 			untyped data.strokeGradient += ")";
+		}
+
+		if (strokeDashArray != null && strokeDashArray.length > 0 && RenderSupport.RendererType == "html") {
+			untyped data.strokeDashArray = "" + strokeDashArray[0];
+			for (dash in strokeDashArray) {
+				untyped data.strokeDashArray += ", " + dash;
+			}
 		}
 
 		if (fillGradient != null) {
@@ -506,6 +520,12 @@ class FlowGraphics extends Graphics {
 							element.setAttribute("fill", "none");
 						}
 
+						if (untyped data.strokeDashArray != null) {
+							element.setAttribute("stroke-dasharray", untyped data.strokeDashArray);
+						} else {
+							element.removeAttribute("stroke-dasharray");
+						}
+
 						if (untyped data.strokeGradient != null) {
 							element.setAttribute("stroke", "url(#" + nativeWidget.getAttribute('id') + "gradient)");
 							element.setAttribute("stroke-width", Std.string(data.lineWidth));
@@ -594,7 +614,6 @@ class FlowGraphics extends Graphics {
 					if (untyped data.fillGradient != null) {
 						nativeWidget.style.background = untyped data.fillGradient;
 					} else if (untyped data.strokeGradient != null) {
-						trace(untyped data.strokeGradient);
 						nativeWidget.style.borderImage = untyped data.strokeGradient;
 					}
 

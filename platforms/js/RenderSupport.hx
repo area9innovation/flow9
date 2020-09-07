@@ -2452,14 +2452,16 @@ class RenderSupport {
 		graphics.beginFill(removeAlphaChannel(color), opacity);
 	}
 
-	// native beginLineGradientFill : (graphics : native, colors : [int], alphas: [double], offsets: [double], matrix : native) -> void = RenderSupport.beginFill;
 	public static function beginGradientFill(graphics : FlowGraphics, colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
 		graphics.beginGradientFill(colors, alphas, offsets, matrix, type);
 	}
 
-	// native setLineGradientStroke : (graphics : native, colors : [int], alphas: [double], offsets: [double]) -> void = RenderSupport.beginFill;
 	public static function setLineGradientStroke(graphics : FlowGraphics, colours : Array<Int>, alphas : Array<Float>, offsets : Array<Float>, matrix : Dynamic) : Void {
 		graphics.lineGradientStroke(colours, alphas, offsets, matrix);
+	}
+
+	public static function setLineDashArray(graphics : FlowGraphics, values : Array<Float>) : Void {
+		graphics.lineDashArray(values);
 	}
 
 	public static function makeMatrix(width : Float, height : Float, rotation : Float, xOffset : Float, yOffset : Float) : Dynamic {
