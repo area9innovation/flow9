@@ -1244,14 +1244,19 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (nativeWidget.firstChild != null) {
-			if (untyped clip.scrollRectListener == null && (y < 0 || x < 0 || clip.scrollRect == null)) {
+			if (untyped clip.scrollRectListener == null && (x < 0 || clip.scrollRect == null || (clip.localBounds != null && x > clip.localBounds.width))) {
 				nativeWidget.firstChild.style.left = '${-round(x)}px';
-				nativeWidget.firstChild.style.top = '${-round(y)}px';
 
-				y = 0;
 				x = 0;
 			} else {
 				nativeWidget.firstChild.style.left = null;
+			}
+
+			if (untyped clip.scrollRectListener == null && (y < 0 || clip.scrollRect == null || (clip.localBounds != null && y > clip.localBounds.height))) {
+				nativeWidget.firstChild.style.top = '${-round(y)}px';
+
+				y = 0;
+			} else {
 				nativeWidget.firstChild.style.top = null;
 			}
 		}

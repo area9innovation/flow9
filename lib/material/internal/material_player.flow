@@ -62,7 +62,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			position = extractStruct(m.style, FVideoPosition(make(0.))).position;
 			duration = extractStruct(m.style, FVideoLength(make(1.))).length;
 			playbackRate = extractStruct(m.style, FVideoPlaybackRate(make(1.))).rate;
-			autoHide = contains(m.style, MPlayerPanelAutoHide());
+			autoHide = extractStruct(m.style, MPlayerPanelAutoHide(false)).enabled;
 			showPanel = extractStruct(m.style, MPlayerShowPanel(const(true))).show;
 			visibleRange = extractStruct(m.style, MPlayerVisibleRange(const(0.0), duration));
 			visibleDuration = fselect3(visibleRange.start, visibleRange.end, duration, \st, en, d -> min(d, en - st));
@@ -74,16 +74,18 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			videoWH = makeWH();
 			availableH = make(0.);
 			sliderPosition = make(0.);
-			volumeSliderVisible = make(false);
 			volumeSliderDown = make(false);
+			positionSliderDown = make(false);
+			volumeSliderHovered = make(false);
 			volumeButtonFocused = make(false);
-			volumeButtonHadFocus = make(false);
+			volumeButtonHovered = make(false);
 			playPauseButtonFocused = make(false);
 			subtitlesButtonFocused = make(false);
 			playbackRateControlButtonFocused = make(false);
 			fullScreenControlButtonFocused = make(false);
 			volumeSliderFocused = make(false);
 			videoFocused = make(false);
+			panelHovered = make(false);
 			playbackRateSelected = make(3);
 			showProgressCircle = make(true);
 			subtitlesVisible = make(true);
@@ -91,6 +93,21 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			playingPopup = make(None());
 			volumePopup = make(None());
 			positionPopup = make(None());
+			mousePosition = makePoint();
+			mouseDown = make(false);
+			settingsMenuOpen = make(false);
+
+			makeFadeOutIcon = \icon -> {
+				MIcon2T(
+					p,
+					icon,
+					[MCircleBackground(MBlack(), 56.), MIconSize(32.), FillOpacity(1.0)]
+				)
+				|> (\ic -> TAlpha(const(0.9), ic))
+				|> (\ic -> MFadeOutAnimation(manager, p, ic))
+				|> (\ic -> TBorder4(48.0, ic))
+				|> TCenter
+			}
 
 			uns = initUnsM();
 
@@ -133,7 +150,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					manager,
 					p,
 					"MVideo",
-					[MFocused(videoFocused), AccessRole("group")],
+					[MFocused(videoFocused), AccessRole("group"), MCursorShape(const(DefaultCursor()))],
 					\foc ->
 						TVideoWithAnimatedSubtitles(
 							manager,
@@ -141,7 +158,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							TVideo(m.filename, videoWH, videoStyle),
 							maybeMap(animatedSubtitles, \sbtl -> Pair(sbtl, subtitlesVisible)),
 							m2t
-						),
+						)
+						|> (\f -> TVisible(parent.ready, f)),
 					m2t
 				)
 				|> (\video ->
@@ -152,46 +170,38 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 								mouseOnDownAround(
 									manager,
 									[
-										MOnClick(\ -> reverseBehaviour(playing)),
+										MOnClick(\ -> {
+											if (!getValue(panelHovered)) {
+												next(playingPopup, None());
+												reverseBehaviour(playing);
+												next(playingPopup, Some(getValue(playing)));
+											}
+										}),
+										TPressed(mouseDown),
+										MMousePosition(mousePosition),
 										MPassClicks(),
 										enabled
 									],
-									TSubtractGroup2(videoSize, TFixed(0., 10.)) // to avoid clicking while changing position
+									videoSize
 								),
-								TZoomOnOverflow(
+								TTweak(
+									[TFitZoom(true, false)],
 									TGroup([
-										TConstruct(
-											[
-												makeSubscribe2(playing, \pl -> {
-													nextDistinct(playingPopup, None());
-													nextDistinct(playingPopup, Some(pl));
-												})
-											],
-											TSelect(playingPopup, \plM ->
-												eitherMap(
-													plM,
-													\pl -> {
-														nextDistinct(volumePopup, None());
-														nextDistinct(positionPopup, None());
+										TSelect(playingPopup, \plM ->
+											eitherMap(
+												plM,
+												\pl -> {
+													nextDistinct(volumePopup, None());
+													nextDistinct(positionPopup, None());
 
-														TCopySize2(
-															MIcon2T(
-																p,
-																if (pl)
-																	"play_arrow"
-																else
-																	"pause",
-																[MCircleBackground(MGrey(900), 56.), MIconSize(32.), FillOpacity(1.0)]
-															),
-															\size, icon ->
-																TFixSize(
-																	TCenter(MFadeOutAnimation(manager, p, icon)),
-																	TCenter(TScale(const(Factor(2., 2.)), size))
-																)
-														)
-													},
-													TEmpty()
-												)
+													makeFadeOutIcon(
+														if (pl)
+															"play_arrow"
+														else
+															"pause"
+													);
+												},
+												TEmpty()
 											)
 										),
 										TSelect(volumePopup, \vM ->
@@ -201,23 +211,14 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 													nextDistinct(positionPopup, None());
 													nextDistinct(playingPopup, None());
 
-													TCopySize2(
-														MIcon2T(
-															p,
-															if (v == 0.)
-																"volume_off"
-															else if (v < 0.5)
-																"volume_down"
-															else
-																"volume_up",
-															[MCircleBackground(MGrey(900), 56.), MIconSize(32.), FillOpacity(1.0)]
-														),
-														\size, icon ->
-															TFixSize(
-																TCenter(MFadeOutAnimation(manager, p, icon)),
-																TCenter(TScale(const(Factor(2., 2.)), size))
-															)
-													)
+													makeFadeOutIcon(
+														if (v == 0.)
+															"volume_off"
+														else if (v < 0.5)
+															"volume_down"
+														else
+															"volume_up"
+													);
 												},
 												TEmpty()
 											)
@@ -229,29 +230,19 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 													nextDistinct(volumePopup, None());
 													nextDistinct(playingPopup, None());
 
-													TCopySize2(
-														MIcon2T(
-															p,
-															if (pos)
-																"forward_5"
-															else
-																"replay_5",
-															[MCircleBackground(MGrey(900), 56.), MIconSize(32.), FillOpacity(1.0)]
-														),
-														\size, icon ->
-															TFixSize(
-																TCenter(MFadeOutAnimation(manager, p, icon)),
-																TCenter(TScale(const(Factor(2., 2.)), size))
-															)
-													)
+													makeFadeOutIcon(
+														if (pos)
+															"forward_5"
+														else
+															"replay_5"
+													);
 												},
 												TEmpty()
 											)
 										)
 									])
 									|> (\t -> TBorder4(16., t)),
-									videoSize,
-									true
+									videoSize
 								),
 								TCenterIn(
 									MProgressCircle2T(manager, p, MProgressCircle([MWhite()])),
@@ -293,6 +284,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 									MSliderThumbRadius(const(6.0)),
 									MSliderStep(if (d > 0.0) min(max(0.001, 5.0 / d), 0.2) else 0.2),
 									MSliderDiscrete(false),
+									TPressed(positionSliderDown),
 									color,
 									MButtonTitle(const(_("Video Slider"))),
 									enabled
@@ -313,7 +305,9 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						if (fgetValue(videoFocused)) {
 							if (ke.utf == " " && !getValue(playPauseButtonFocused) && !getValue(subtitlesButtonFocused) && !getValue(fullScreenControlButtonFocused)
 								&& !getValue(playbackRateControlButtonFocused) && !getValue(volumeButtonFocused)) {
+								next(playingPopup, None());
 								reverseBehaviour(playing);
+								next(playingPopup, Some(getValue(playing)));
 								true;
 							} else if (ke.utf == "up") {
 								next(volumePopup, None());
@@ -371,61 +365,51 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					enabled.enabled
 				else
 					fselectdelay(
-						fand(fOr(fOr(volumeSliderVisible, fOr(volumeSliderFocused, volumeButtonFocused)), volumeSliderDown), enabled.enabled),
+						fand(fOr(fOr(fOr(volumeButtonHovered, volumeSliderHovered), fOr(volumeSliderFocused, volumeButtonFocused)), volumeSliderDown), enabled.enabled),
 						\sh -> if (sh) 0 else 100
 					);
 
 			panelFillerW = make(0.);
-			overlapMode =
+			timeLabelHidden =
 				if (mobile) const(false)
 				else fselect(showVolumeSlider, FLift(\__ -> getValue(panelFillerW) <= 0.));
 
 			volumeControlButton = \p2 ->
 				if (volumeControl)
 					TColsYCenter([
-						TSelect(
-							volume,
-							\v ->
-								TConstruct(
-									[
-										makeSubscribe2(volumeButtonFocused, \vbf -> {
-											if (vbf) {
-												nextDistinct(volumeButtonHadFocus, true);
-											} else {
-												deferred(\ -> nextDistinct(volumeButtonHadFocus, false));
-											}
-										})
-									],
-									MTooltip2T(
-										manager,
-										p2,
-										MTooltip(
-											MIconButton(
-												if (v == 0.)
-													"volume_off"
-												else if (v < 0.5)
-													"volume_down"
-												else
-													"volume_up",
-												\ ->
-													next(volume, if (v == 0.) 1. else 0.),
-												[MIconButtonBorder(6.)],
-												[
-													MButtonTitle(fif(feq(volume, 0.), const(_("Unmute")), const(_("Mute")))),
-													enabled,
-													MFocused(volumeButtonFocused),
-													MOnClick(\ -> if (fgetValue(volumeButtonHadFocus)) deferred(\ -> nextDistinct(volumeButtonFocused, true)))
-												]
-											),
-											MText(if (v == 0.) _("Unmute") else _("Mute"), []),
-											[
-												MTooltipAlignment(MTop()),
-												enabled
-											]
-										),
-										m2t
-									)
+						MComponent2T(
+							manager,
+							p2,
+							"MVolumeToggle",
+							[
+								MButtonTitle(fif(feq(volume, 0.0), const(_("Unmute")), const(_("Mute")))),
+								enabled,
+								MFocused(volumeButtonFocused),
+								MOnClick(\ -> next(volume, if (getValue(volume) == 0.) 1. else 0.)),
+								THovering(volumeButtonHovered),
+								MTooltipAlignment(MTop()),
+								MTooltipText(fif(feq(volume, 0.0), const(_("Unmute")), const(_("Mute")))),
+								MRippleType(const(MRippleCenter())),
+								MHighlightOnHover(const(true)),
+								MHighlightOnFocus(const(true))
+							],
+							\f ->
+								TSelect(
+									volume,
+									\v ->
+										MIcon2T(
+											p2,
+											if (v == 0.)
+												"volume_off"
+											else if (v < 0.5)
+												"volume_down"
+											else
+												"volume_up",
+											[]
+										)
 								)
+								|> (\f2 -> TBorder4(6.0, f2)),
+							m2t
 						)
 						|> TBorderRight(12.),
 						MShow2T(
@@ -440,27 +424,26 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 										volume,
 										[
 											MWhite(),
-											MMouseDown(volumeSliderDown),
+											TPressed(volumeSliderDown),
+											MRippleType(const(MNoRipple())),
 											MSliderThumbRadius(const(6.0)),
 											enabled,
 											MWidth(52.0),
 											MButtonTitle(const(_("Volume Slider"))),
-											MFocused(volumeSliderFocused)
+											MFocused(volumeSliderFocused),
+											MHighlightOnHover(const(false)),
+											MHighlightOnSelect(const(false))
 										]
 									),
 									m2t
 								)
+								|> (\volumeSlider ->
+									TInteractive([if (mobile) TMouseDownGhost(volumeSliderHovered) else TMouseInside(volumeSliderHovered, false)], volumeSlider)
+								)
 								|> (\t -> TBorder(-22., 0., 0., 0., t))
-								|> TFixWidth(TSizedWidth(fif(overlapMode, zero, const(64.)), 0.))
+								|> TFixWidth(TSizedWidth(fif(timeLabelHidden, zero, const(64.)), 0.))
 						)
 					])
-					|> (\volumeSlider ->
-						TCopySize(
-							volumeSlider,
-							\volumeSliderSize -> TInteractive([TMouseInside(volumeSliderVisible, false)], volumeSliderSize),
-							true
-						)
-					)
 					|> v2a
 				else
 					[];
@@ -476,7 +459,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							[MTextDisabled()]
 					)
 				)
-				|> (\t -> TVisible(fnot(fand(overlapMode, showVolumeSlider)), t));
+				|> TBorderRight(12.)
+				|> (\t -> TVisible(fnot(fand(timeLabelHidden, showVolumeSlider)), t));
 
 			playbackRateControlButton = \p2 ->
 				if (playbackRateControl)
@@ -498,7 +482,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 								MCondensed(true),
 								MSingleSelection(playbackRateSelected),
 								enabled,
-								MSelectedColor(color)
+								MSelectedColor(color),
+								MOpenMenu(settingsMenuOpen)
 							]
 						),
 						m2t
@@ -574,31 +559,35 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					[];
 
 			panel =
-				(\p2 ->
+				(\p3 ->
 					TLines2(
-						slider(p2) |> TFixWidth(TEmpty()),
+						slider(p3) |> TFixWidth(TEmpty()),
 						[
-							[playPauseButton(p2)],
-							volumeControlButton(p2),
+							[playPauseButton(p3)],
+							volumeControlButton(p3),
 							[
-								timeLabel(p2),
+								timeLabel(p3),
 								TAttachWidth(TFillX(), panelFillerW)
 							],
-							playbackRateControlButton(p2),
-							subtitlesButton(p2),
-							fullScreenControlButton(p2)
+							playbackRateControlButton(p3),
+							subtitlesButton(p3),
+							fullScreenControlButton(p3)
 						]
 						|> concatA
 						|> TColsYCenter
 						|> (\videoButtons -> TBorder(12., 4., 12., 4., videoButtons))
 					)
-					|> addTBackground(MDialogMColor(false))
-					|> (\t -> TAnimatedExpander(manager, p2, t, if (autoHide) fand(showPanel, showPanelInner) else showPanel, [MExpandFromStart(), MNoCrop()]))
+					|> (\f ->
+						if (autoHide)
+							TFrame(0.0, 0.0, [GradientFill(90.0, [GradientPoint(black, 0.0, 0.0), GradientPoint(black, 0.3, 0.3),GradientPoint(black, 0.8, 1.0)])], f)
+						else
+							addTBackground(MDialogMColor(false))(f)
+					)
 				)
 				|> (\makePanel ->
-					MComponentGroup2T(
+					(\p2 -> MComponentGroup2T(
 						manager,
-						p,
+						p2,
 						"MVideoControls",
 						[
 							MLightBackground(false),
@@ -606,8 +595,11 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						],
 						makePanel
 					)
+					|> (\t -> TAttachBox(t, controlsWH))
 				)
-				|> (\t -> TAttachBox(t, controlsWH))
+				|> (\f -> m2t(MShowAnimation(fOr(fand(showPanel, showPanelInner), fOr(fnot(playing), settingsMenuOpen)), MGetFocusGroup(f), []), p))
+				|> TBorderTop(10.0)
+				|> (\t -> TInteractive([if (mobile) TMouseDown(panelHovered) else TMouseInside(panelHovered, false)], t)))
 				|> (\t -> TLines2(TFillY(), t));
 
 			TGroup2(videoBox, panel)
@@ -623,39 +615,44 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					\fs ->
 						TAttachAvailableHeight(videoPlayer, availableH)
 						|> (\t -> TAvailable(t, TIf(fs, TFillXY(), TSized(m.wh))))
-						|> (\t -> if (autoHide) TCropSize(TIf(fs, TFillXY(), TSized(fwhmax(m.wh, controlsWH))), t) else t)
 						|> (\t -> TFullScreen(fs, t)),
 					TAvailable(videoPlayer, TSized(m.wh))
-					|> (\t -> if (autoHide) TCrop(const(zeroPoint), fwhmax(m.wh, controlsWH), t) else t)
 				)
 			)
 			|> (\t ->
 				TConstruct(
-					[
-						\ -> fconnect(fdivide(visiblePosition, visibleDuration), sliderPosition),
-						makeSubscribe(
-							faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start),
-							\pos -> if (pos <= fgetValue(duration)) nextDistinct(position, pos)
-						),
-						\ -> fconnect2Select(
-							eitherMap(fullscreen, \fs -> fif(fs, availableH, fheight(m.wh)), fheight(m.wh)),
-							controlsWH,
-							videoWH,
-							\vh, cwh -> WidthHeight(cwh.width, max(0., vh - cwh.height))
-						),
-						\ -> bidirectionalLink(playbackRate, playbackRateSelected, playbackRate2selected, selected2playbackRate)
-					]
-					|> (\arr -> ifArrayPush(arr, autoHide, makeSubscribe(playing, \pl -> {
-							dispUnsM(uns);
-							nextDistinct(showPanelInner, true);
+					concat(
+						[
+							\ -> fconnect(fdivide(visiblePosition, visibleDuration), sliderPosition),
+							makeSubscribe(
+								faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start),
+								\pos -> if (pos <= fgetValue(duration)) nextDistinct(position, pos)
+							),
+							\ -> fconnect2Select(
+								eitherMap(fullscreen, \fs -> fif(fs, availableH, fheight(m.wh)), fheight(m.wh)),
+								controlsWH,
+								videoWH,
+								\vh, cwh -> WidthHeight(cwh.width, max(0., if (autoHide) vh else vh - cwh.height))
+							),
+							\ -> bidirectionalLink(playbackRate, playbackRateSelected, playbackRate2selected, selected2playbackRate),
+						],
+						if (autoHide)
+							[
+								makeSubscribeUns(
+									fpair(
+										fpair(mousePosition, mouseDown),
+										fpair(fpair(playingPopup, fpair(volumePopup, volumeSliderDown)), fpair(positionPopup, positionSliderDown))
+									), \__ -> {
+									next(showPanelInner, true);
 
-							if (pl) {
-								setUnsM(
-									uns,
-									interruptibleTimer(1000, \ -> nextDistinct(showPanelInner, false))
-								)
-							}
-						}))),
+									[
+										interruptibleTimer(2000, \ -> next(showPanelInner, false))
+									]
+								})
+							]
+						else
+							[]
+					),
 					t
 				)
 			)
