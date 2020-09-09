@@ -25,7 +25,7 @@ class PDF {
 	}
 
 	public static function getPdfDocument(url : String, onOK : Dynamic -> Void, onError : String -> Void) {
-		var promise : Promise<Dynamic> = pdfjsLib.getDocument(url).promise;
+		var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, withCredentials: true }).promise;
 		promise.then(onOK).catchError(onError);
 	}
 
