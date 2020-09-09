@@ -1795,7 +1795,9 @@ class RenderSupport {
 					var optionsObject : Dynamic = {};
 					var disposed = false;
 
-					clip.updateNativeWidget();
+					if (untyped clip.onStage) {
+						clip.updateNativeWidget();
+					}
 
 					function isNormalInteger(str) {
 						var n = Math.floor(Std.parseInt(str));
@@ -1832,7 +1834,9 @@ class RenderSupport {
 							onFinish();
 						}
 
-						clip.updateNativeWidget();
+						if (untyped clip.onStage) {
+							clip.updateNativeWidget();
+						}
 					}
 
 					animation.onremove = function() {
@@ -1841,7 +1845,9 @@ class RenderSupport {
 							onFinish();
 						}
 
-						clip.updateNativeWidget();
+						if (untyped clip.onStage) {
+							clip.updateNativeWidget();
+						}
 					}
 
 					animation.onfinish = function() {
@@ -1850,7 +1856,9 @@ class RenderSupport {
 							onFinish();
 						}
 
-						clip.updateNativeWidget();
+						if (untyped clip.onStage) {
+							clip.updateNativeWidget();
+						}
 					}
 
 					return function() {
