@@ -1777,7 +1777,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0" && !Platform.isSafari) {
+		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
