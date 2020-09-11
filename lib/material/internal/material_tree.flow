@@ -79,7 +79,8 @@ MTreeDragDropState(
 MTreeLazyScrollModeState(
 	enabled : Transform<bool>,
 	scrollWH : DynamicBehaviour<WidthHeight>,
-	scrollPositionScale : DynamicBehaviour<PositionScale>
+	scrollPositionScale : DynamicBehaviour<PositionScale>,
+	externalScroll : Maybe<MTreeLazyScrollModeExternalInfo>
 );
 
 fSelectionIndexes(children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
@@ -280,7 +281,7 @@ MTreeOrderNode2MTreeNode(node : MTreeOrderNode<?>, tree : Transform<Tree<?, [MTr
 applyMTreeLazyScrollMode(state : MTreeState<?>) -> (Tropic) -> Tropic {
 	\node ->
 		eitherMap(state.lazyScrollMode, \lsm -> {
-			nodePosScale = make(zeroPositionScale);
+			nodePosScale = make(PositionScale(zeroPoint, zeroPoint));
 			showItem = make(false);
 			if (fgetValue(lsm.enabled))
 				node
@@ -289,7 +290,7 @@ applyMTreeLazyScrollMode(state : MTreeState<?>) -> (Tropic) -> Tropic {
 				|> (\t -> TConstruct([
 						make3SubscribeTrigger(fnot(showItem), lsm.scrollWH, fstall(nodePosScale, 0), lsm.scrollPositionScale, \swh, ps, sps -> {
 							y = ps.pos.y - sps.pos.y;
-							if (y >= 0. && y < swh.height) nextDistinct(showItem, true);
+							if (y < swh.height && ps.scale.x > 0.) nextDistinct(showItem, true);
 						})
 					], t))
 			else
@@ -341,11 +342,12 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 
 	lazyScrollMode =
 		maybeMap(
-			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true))),
+			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), None())),
 			\lsm -> MTreeLazyScrollModeState(
 				lsm.enabled,
 				makeWH(),
-				make(zeroPositionScale)
+				make(zeroPositionScale),
+				lsm.externalScroll
 			)
 		);
 
@@ -561,7 +563,17 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			state.lazyScrollMode,
 			\lsm ->
 				TPositionScale(lsm.scrollPositionScale,
-					MScroll2T(manager, p, MScroll(MGetFocusGroup(mtree), TFillXY(), [MScrollWidthHeight(makeWH(), lsm.scrollWH)]), m2t)
+					MScroll2T(manager, p,
+						MScroll(
+							MGroup2(MGetFocusGroup(mtree), eitherMap(lsm.externalScroll, \es -> TSizedHeight(0., es.minHeight), TEmpty())),
+							TFillXY(),
+							concat(
+								[MScrollWidthHeight(eitherMap(lsm.externalScroll, \es -> es.contentWH, makeWH()), lsm.scrollWH)],
+								eitherMap(lsm.externalScroll, \es -> [MScrollPosition(es.scrollPosition)], [])
+							)
+						),
+						m2t
+					)
 				),
 			mtree(p)
 		)
