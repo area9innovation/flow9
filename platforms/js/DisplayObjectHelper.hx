@@ -1679,6 +1679,10 @@ class DisplayObjectHelper {
 		return untyped clip.isNativeWidget;
 	}
 
+	public static function isClipOnStage(clip : DisplayObject) : Bool {
+		return untyped clip.onStage && clip.tansform != null;
+	}
+
 	public static function addNativeWidget(clip : DisplayObject) : Void {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();

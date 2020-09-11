@@ -1795,7 +1795,7 @@ class RenderSupport {
 					var optionsObject : Dynamic = {};
 					var disposed = false;
 
-					if (untyped clip.onStage) {
+					if (clip.isClipOnStage()) {
 						clip.updateNativeWidget();
 					}
 
@@ -1834,7 +1834,7 @@ class RenderSupport {
 							onFinish();
 						}
 
-						if (untyped clip.onStage) {
+						if (clip.isClipOnStage()) {
 							clip.updateNativeWidget();
 						}
 					}
@@ -1845,7 +1845,7 @@ class RenderSupport {
 							onFinish();
 						}
 
-						if (untyped clip.onStage) {
+						if (clip.isClipOnStage()) {
 							clip.updateNativeWidget();
 						}
 					}
@@ -1856,7 +1856,7 @@ class RenderSupport {
 							onFinish();
 						}
 
-						if (untyped clip.onStage) {
+						if (clip.isClipOnStage()) {
 							clip.updateNativeWidget();
 						}
 					}
