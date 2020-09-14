@@ -98,6 +98,10 @@ class RenderSupport {
 		}
 	}
 
+	public static function setKeepTextClips(keep : Bool) : Void {
+		TextClip.KeepTextClips = keep;
+	}
+
 	public static function getRendererType() : String {
 		return RendererType;
 	}
