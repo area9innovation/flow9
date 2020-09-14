@@ -1252,23 +1252,30 @@ renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, sty
 					\duration ->
 						[
 							makeSubscribeUns(
-								extractStruct(style, FAnimationEasing(const(CubicBezierEasing(0.0, 0.0, 1.0, 1.0)))).easing,
-								\easing ->
+								extractStruct(style, FAnimationDelay(const(0.0))).delay,
+								\delay ->
 									[
 										makeSubscribeUns(
-											extractStruct(style, FAnimationIterations(const(1))).iterations,
-											\iterations ->
+											extractStruct(style, FAnimationEasing(const(CubicBezierEasing(0.0, 0.0, 1.0, 1.0)))).easing,
+											\easing ->
 												[
-													addFClipAnimation(
-														clip,
-														addMissingFAnimationKeyframeValues(kf),
-														duration,
-														easing,
-														iterations,
-														direction,
-														onFinish,
-														animationPercent
-													)
+													makeSubscribeUns(
+														extractStruct(style, FAnimationIterations(const(1))).iterations,
+														\iterations ->
+															[
+																addFClipAnimation(
+																	clip,
+																	addMissingFAnimationKeyframeValues(kf),
+																	duration,
+																	delay,
+																	easing,
+																	iterations,
+																	direction,
+																	onFinish,
+																	animationPercent
+																)
+															]
+													)()
 												]
 										)()
 									]
@@ -1344,6 +1351,7 @@ addFClipAnimation(
 	clip : native,
 	keyframes : [FAnimationKeyframe],
 	duration : double,
+	delay : double,
 	easing : CubicBezierEasing,
 	iterations : int,
 	direction : FAnimationDirection,
@@ -1351,6 +1359,50 @@ addFClipAnimation(
 	animationPercent : Maybe<FAnimationPercent>
 ) -> () -> void {
 	finalized = ref false;
+	commitInitStylesFn = \ -> {
+		if (!^finalized) {
+			iter(keyframes[0].values, \v -> {
+				switch (v : FAnimationValue) {
+					FScaleValue(factor): {
+						setClipScaleX(clip, factor.x);
+						setClipScaleY(clip, factor.y);
+					}
+					FAlphaValue(alpha): {
+						setClipAlpha(clip, alpha);
+					}
+					FTranslateValue(point): {
+						setClipX(clip, point.x);
+						setClipY(clip, point.y);
+					}
+					FRotateValue(degrees): {
+						setClipRotation(clip, degrees);
+					}
+					FEasingValue(__): {}
+				}
+			});
+		}
+	}
+
+	resetStylesFn = \ -> {
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FScaleValue(Factor(1.0, 1.0)))))) {
+			setClipScaleX(clip, 1.0);
+			setClipScaleY(clip, 1.0);
+		}
+
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FAlphaValue(1.0))))) {
+			setClipAlpha(clip, 1.0);
+		}
+
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FTranslateValue(zeroPoint))))) {
+			setClipX(clip, 0.0);
+			setClipY(clip, 0.0);
+		}
+
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FRotateValue(0.0))))) {
+			setClipRotation(clip, 0.0);
+		}
+	}
+
 	commitStylesFn = \ -> {
 		if (!^finalized) {
 			finalized := true;
@@ -1377,24 +1429,6 @@ addFClipAnimation(
 	}
 
 	if (length(keyframes) > 1) {
-		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FScaleValue(Factor(1.0, 1.0)))))) {
-			setClipScaleX(clip, 1.0);
-			setClipScaleY(clip, 1.0);
-		}
-
-		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FAlphaValue(1.0))))) {
-			setClipAlpha(clip, 1.0);
-		}
-
-		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FTranslateValue(zeroPoint))))) {
-			setClipX(clip, 0.0);
-			setClipY(clip, 0.0);
-		}
-
-		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FRotateValue(0.0))))) {
-			setClipRotation(clip, 0.0);
-		}
-
 		animationPercentDisposer =
 			eitherMap(
 				animationPercent,
@@ -1408,7 +1442,7 @@ addFClipAnimation(
 								eitherFn(
 									^started,
 									\st -> {
-										(df - st) / 1000.0 / duration;
+										max(0.0, df - st - delay * 1000.0) / 1000.0 / duration;
 									},
 									\ -> {
 										started := Some(df);
@@ -1434,7 +1468,7 @@ addFClipAnimation(
 				nop
 			);
 
-		addClipAnimationDisposer =
+		addClipAnimationFn = \ ->
 			addClipAnimation(
 				clip,
 				map(keyframes, \v -> {
@@ -1546,7 +1580,7 @@ addFClipAnimation(
 								eitherFn(
 									^started,
 									\st -> {
-										(df - st) / 1000.0 / duration;
+										max(0.0, df - st) / 1000.0 / duration;
 									},
 									\ -> {
 										started := Some(df);
@@ -1634,6 +1668,21 @@ addFClipAnimation(
 					}
 				}
 			);
+
+		addClipAnimationDisposer =
+			if (delay == 0.0) {
+				resetStylesFn();
+				addClipAnimationFn();
+			} else {
+				commitInitStylesFn();
+				disp = ref nop;
+				timerDisp = interruptibleTimer(floor(delay * 1000.0), \ -> if (!^finalized) { resetStylesFn(); disp := addClipAnimationFn(); });
+
+				\ -> {
+					timerDisp();
+					^disp();
+				}
+			};
 
 		\ -> {
 			commitStylesFn();
