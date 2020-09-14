@@ -11,8 +11,6 @@ import pixi.core.renderers.webgl.filters.Filter;
 import pixi.core.math.Point;
 import pixi.core.text.TextStyle;
 
-import pixi.loaders.Loader;
-
 import MacroUtils;
 import Platform;
 import ProgressiveWebTools;
@@ -67,21 +65,21 @@ class RenderSupport {
 	public function new() {}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.on(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.off(event, fn, context);
 	}
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
-	public static inline function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+	public static function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
 		PixiStage.once(event, fn, context);
 	}
 
-	public static inline function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
+	public static function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
 	}
 
@@ -222,6 +220,42 @@ class RenderSupport {
 		return false;
 	}
 
+	private static var UserDefinedFontSize : Float = null;
+	private static function getUserDefinedFontSize() : Float {
+		if (UserDefinedFontSize == null) {
+			var style = Browser.window.getComputedStyle(Browser.document.body);
+
+			UserDefinedFontSize = Std.parseFloat(style.fontSize);
+		}
+
+		if (Math.isNaN(UserDefinedFontSize)) {
+			UserDefinedFontSize = 16.0;
+		}
+
+		return UserDefinedFontSize;
+	}
+
+	private static var UserDefinedLetterSpacing : Float = null;
+	private static function getUserDefinedLetterSpacing() : Float {
+		if (UserDefinedLetterSpacing == null) {
+			var div = Browser.document.createElement("p");
+			Browser.document.body.appendChild(div);
+			var style = Browser.window.getComputedStyle(div);
+
+			UserDefinedLetterSpacing = style.letterSpacing != "normal"
+				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
+				: 0.0;
+
+			Browser.document.body.removeChild(div);
+		}
+
+		if (Math.isNaN(UserDefinedLetterSpacing)) {
+			UserDefinedLetterSpacing = 0.0;
+		}
+
+		return UserDefinedLetterSpacing;
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
@@ -323,7 +357,6 @@ class RenderSupport {
 
 		if (RendererType == "html") {
 			PixiView = Browser.document.createElement('div');
-			PixiView.tabIndex = 1;
 			PixiView.style.background = "white";
 		} else if (RendererType != "canvas") {
 			PixiView = null;
@@ -381,6 +414,21 @@ class RenderSupport {
 		}
 
 		PixiView = PixiRenderer.view;
+
+		PixiView.tabIndex = 1;
+		PixiView.onfocus = function(e) {
+			var accessWidget = AccessWidget.tree.getFirstAccessWidget();
+
+			if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+				setFocus(accessWidget.clip, true);
+			} else {
+				accessWidget = AccessWidget.tree.getLastAccessWidget();
+
+				if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+					setFocus(accessWidget.clip, true);
+				}
+			}
+		}
 
 		if (IsLoading) {
 			PixiView.style.display = "none";
@@ -1078,7 +1126,7 @@ class RenderSupport {
 					} else {
 						var mainStage = PixiStage.children[0];
 						mainStage.y = visibleAreaHeight - rect.bottom;
-						var onblur : Dynamic;
+						var onblur : Dynamic = function () {};
 						onblur = function() {
 							mainStage.y = 0;
 							focused_node.removeEventListener("blur", onblur);
@@ -1105,7 +1153,7 @@ class RenderSupport {
 			if (pixijscss != null) {
 				var newRuleIndex = 0;
 				if (!toShowFrames) {
-					pixijscss.insertRule(".focused { border: none !important; box-shadow: none !important; }", newRuleIndex);
+					pixijscss.insertRule(".focused { outline: none !important; box-shadow: none !important; }", newRuleIndex);
 					off("mousemove", pixiStageOnMouseMove); // Remove mouse event listener that not handle it always when focus frames are hidden
 				} else {
 					pixijscss.deleteRule(newRuleIndex);
@@ -1269,6 +1317,29 @@ class RenderSupport {
 			}
 		} else {
 			accessWidget.addAccessAttributes(attributesMap);
+		}
+	}
+
+	public static function setClipStyle(clip : DisplayObject, name : String, value : String) : Void {
+		var accessWidget : AccessWidget = untyped clip.accessWidget;
+
+		if (accessWidget == null) {
+			if (AccessibilityEnabled) {
+				if (RendererType == "html") {
+					clip.initNativeWidget();
+				}
+
+				var nativeWidget : Element = untyped clip.nativeWidget;
+
+				// Create DOM node for access. properties
+				if (nativeWidget != null) {
+					accessWidget = new AccessWidget(clip, nativeWidget);
+					untyped clip.accessWidget = accessWidget;
+					untyped accessWidget.element.style[name] = value;
+				}
+			}
+		} else {
+			untyped accessWidget.element.style[name] = value;
 		}
 	}
 
