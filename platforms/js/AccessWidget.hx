@@ -829,7 +829,7 @@ class AccessWidget extends EventEmitter {
 					element.tabIndex = tabindex;
 				}
 			} else {
-				if (!Platform.isFirefox) {
+				if (!Platform.isFirefox && !Platform.isSafari) {
 					element.setAttribute("disabled", "disabled");
 				}
 				if (hasTabIndex()) {
