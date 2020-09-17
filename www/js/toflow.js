@@ -57,11 +57,11 @@ function is_flow_ios_native() {
 }
 
 function is_flow_qt() {
-	return navigator.userAgent.indexOf("QtWebEngine") != -1 && window.parent == null;
+	return navigator.userAgent.indexOf("QtWebEngine") != -1 && window.parent == window;
 }
 
 function is_flow_android() {
-	return navigator.userAgent.indexOf("Android") != -1 && window.parent == null;
+	return navigator.userAgent.indexOf("Android") != -1 && window.parent == window;
 }
 
 function is_flow_winapp() {
