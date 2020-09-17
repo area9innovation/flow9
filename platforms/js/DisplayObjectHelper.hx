@@ -2151,6 +2151,10 @@ class DisplayObjectHelper {
 			return;
 		}
 
+		if (!Math.isFinite(localBounds.minX) || !Math.isFinite(localBounds.minY) || localBounds.isEmpty()) {
+			return;
+		}
+
 		if (untyped clip.localTransformChanged) {
 			untyped clip.transform.updateLocalTransform();
 		}
