@@ -28,20 +28,20 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	expandRowEnabled = extractStruct(style, MExpandRow(const(false))).enabled;
 	isDefExpandRow = isFConst(expandRowEnabled) && !fgetValue(expandRowEnabled);
 	scrollEnabled = extractStruct(style, TScrollEnabled(const(false))).enabled;
-	
+
 	defaultHS = MHeaderStyle([], [], []);
 	headerStyle = tryExtractStruct(style, defaultHS);
 	rowBackgroundStyle = tryExtractStruct(style, MRowBackgroundStyle(\__ -> []));
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle> = tryExtractStruct(style, MSelectedBackgroundStyle([]));
 	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
-	
+
 	showFixedRow = eitherMap(state.fixedRow, \fr -> fr.show, const(false));
 	lifted = eitherMap(tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), [])), \is -> is.mode == MLiftedFirstColumnMode(), false);
 	isAnyWidthByContent = state.widthByContent || any(map(state.columns, isWidthByContent));
 
 	screenW = make(0.);
 	rowsBoxH = make(0.);
-	
+
 	splitWithoutHead : ([flow], int) -> [flow] = \arr : [flow], er : int -> {
 		concat(map(colsHead(state, arr), v2a), splitByNumber(colsTail(state, arr), er));
 	}
@@ -56,7 +56,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			));
 
 	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else fsum(state.minWidths);
-	
+
 	innerScrollState = makeMInnerScrollState(state.fullWidth, screenW, minWidthsSum, state.externalBorder, style);
 	isInnerScroll = isSome(innerScrollState);
 	glued = eitherMap(innerScrollState, \is -> is.glued, false);
@@ -139,7 +139,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					),
 				t
 			)
-		);
+		)
+		|> (\t -> TAccess([TagName("tr")], t));
 
 	addHeaderActions = \p -> \t : Tropic ->
 		if (state.headerActions.actions != TEmpty())
@@ -167,7 +168,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			|> (\rc -> fmapi(rc, \j0, row -> {
 
 					j = j0 - b2i(isSome(state.fixedRow));
-					
+
 					makeLineContent = \p3 : MFocusGroup ->
 						state.makeCells(p3, j, row)
 						|> (\cells : [Tropic] -> expandContent(cells, er))
@@ -187,7 +188,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 					MCustomLine(
 						MGetFocusGroup(makeLineContent),
-						[state.clickEnabled, MHeight(countRowHeight(er))]
+						[state.clickEnabled, MHeight(countRowHeight(er)), TagName("tr")]
 					);
 				})
 			)
@@ -425,6 +426,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			}, t))
 		|> MDTFirstColumn(state, p, headers, rows, sorting, innerScrollState, expandRow, rowsBoxScrollPosition,
 				rowBackgroundStyle, selectedBgStyle,visibleRowsHeight, rowsAvailableHeight)
+		|> (\t -> TAccess([TagName("table")], t))
 		|> addHeaderActions(p)
 		// Bottom bar
 		|> (\f : Tropic -> TLines2Dir(f, footer, p.rtl))
@@ -701,6 +703,7 @@ makeMDataTableState(
 
 				MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
 				|> alignCellContent(p, cellBorder, colStyle, box)
+				|> (\t -> TAccess([TagName("td")], t))
 			}
 		})
 	};
@@ -884,6 +887,7 @@ makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> 
 	sortColumnNumber = make(-1);
 	sortUpdating = tryExtractStruct(style, MUpdateSorting(0));
 	hasExtOrderBy = contains(style, MExternalSort());
+	isFirstClick = ref true;
 
 	updatingTrigger = make(true);
 	maybeApply(sortUpdating, \su -> updateTrigger(updatingTrigger, su.delay));
@@ -924,10 +928,10 @@ makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> 
 		})
 	)));
 
-	onColumnClick = \i, columnSortStyle, checkIsCurrent ->
-		if (!checkIsCurrent || getValue(defaultParam).colIndex == i) {
+	onColumnClick = \i, columnSortStyle, initialClick -> {
+		if (!initialClick || (^isFirstClick && getValue(defaultParam).colIndex == i)) {
 			sb = fgetValue(sortedBy);
-			
+
 			if (sb.column == i && !sb.ascending) {
 				nextDistinct(defaultParam, MSortingParam(-1, true));
 				next(sortedBy, MDataTableSorting(-1, false, None()))
@@ -940,7 +944,9 @@ makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> 
 				nextDistinct(defaultParam, MSortingParam(i, asc));
 				next(sortedBy, MDataTableSorting(i, asc, columnSortStyle))
 			}
+			isFirstClick := false
 		}
+	}
 
 	subs = \columns -> [
 		\ -> fBidirectionalLink(sortedBy, sortColumnNumber,
@@ -1035,7 +1041,7 @@ MDTTitles(
 				)
 			)};
 
-		makeHeaderTitle = 
+		makeHeaderTitle =
 			eitherMap(
 				tryExtractStruct(c.style, MColumnCustomTitle(\__ -> TEmpty())),
 				\customTitle -> \isSelected -> state.m2t(customTitle.fn(isSelected), p),
@@ -1044,8 +1050,7 @@ MDTTitles(
 
 		(if (sortable) {
 			hover = make(false);
-			clickColumn = \checkIsCurrent -> sorting.onColumnClick(i, sortStyle, checkIsCurrent);
-			clickColumn(true);
+			clickColumn = \initialClick -> sorting.onColumnClick(i, sortStyle, initialClick);
 
 				TIfLazy2(
 					fselect(sorting.sortedBy, FLift(\sb : MDataTableSorting -> sb.column == i)),
@@ -1080,6 +1085,7 @@ MDTTitles(
 						MOnClick(\ -> clickColumn(false)),
 						TEnabled(state.enabled)
 					], t))
+				|> (\t -> TConstruct([\ -> {clickColumn(true); nop}], t))
 		} else
 			makeHeaderTitle(false)
 		)
@@ -1104,8 +1110,8 @@ MDTTitles(
 								subrange(sr, pg.first, min(pg.second, length(sr))),
 								[], \acc, j ->
 									ifArrayPush(
-										acc, 
-										elementAt(en, j, true), 
+										acc,
+										elementAt(en, j, true),
 										j
 									)
 							)
@@ -1119,7 +1125,7 @@ MDTTitles(
 					\ -> nextDistinct(state.selection.selected,
 						if (getValue(selAll))
 							concat(getValue(state.selection.selected), fgetValue(selPage)) |> uniq
-						else 
+						else
 							filter(getValue(state.selection.selected), \x -> !contains(fgetValue(selPage), x))
 					),
 					Some(arrowStyle)
@@ -1144,6 +1150,7 @@ MDTTitles(
 			} else t
 		)
 		|> alignCellContent(p, state.cellBorder, c.style, state.cellBox(i0, true))
+		|> (\t -> TAccess([TagName("th")], t))
 	});
 }
 
@@ -1206,13 +1213,14 @@ MDTFirstColumn(
 								)
 							else t
 						)
+						|> (\t -> if (state.separators && is.glued) TLines2Dir(t, MSeparator2T(state.manager, parent, true), parent.rtl) else t)
 						|> (\t -> if (is.glued)
 							MComponent2T(state.manager, parent, "MDataTableLine" + i2s(i), [
 								MOnClick(\ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(sortRes[i])),
 								MRippleType(const(MRippleFill())),
-								state.clickEnabled
+								state.clickEnabled,
+								TagName("tr")
 							], \__ -> t, state.m2t) else t)
-						|> (\t -> if (state.separators && is.glued) TLines2Dir(t, MSeparator2T(state.manager, parent, true), parent.rtl) else t)
 					}))
 				}));
 
@@ -1285,7 +1293,7 @@ MDTFooter(
 	pagination = paginationState.pagination;
 	page = paginationState.page;
 	fixPaginationCurrent = \current -> forceRange(current, 0, length(pagination.rowsPerPage) - 1);
-	
+
 	footer =
 		if (paginationState.anyType)
 			MSelect2T(manager, parent, "MDynamicDataTableFooter", [], rowsCountB, \rowsCount, p2 -> {
@@ -1314,7 +1322,7 @@ MDTFooter(
 					paginationState.updateRowsPerPage(pagination.rowsPerPage[selectedRowsPerPage])
 				};
 
-				
+
 				concatA([
 					[TFillX()],
 					if (length(pagination.rowsPerPage) > 1)
