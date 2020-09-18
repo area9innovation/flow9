@@ -46,9 +46,21 @@ rem call %~dp0/flow --java %~dp0/../javagen %*
 
 cd %~dp0..
 
+dir javagen\*.java /S /B > files.txt
+
 rem Compile the generated code
-"%JAVAC%" -Xlint:unchecked -encoding UTF-8 --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -classpath "%LIBS%" -cp platforms/java/build/ javagen/*.java
+"%JAVAC%" -d javagen/build  -Xlint:unchecked -encoding UTF-8 --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "%LIBS%";platforms/java/build/ @files.txt
+
+del files.txt
+
+set FILE = %*
+set empty =
+set dot = .
+set JAVA_MAIN=%FILE:.flow=!empty!%
+set JAVA_MAIN=%JAVA_MAIN:/=!dot!%
+set JAVA_MAIN=%JAVA_MAIN:\=!dot!%
+set "JAVA_CLASS=%JAVA_MAIN:$=" & set "result=%"
 
 rem Run the program!
-java --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "%LIBS%":platforms/java/build:. com.area9innovation.flow.javafx.FxLoader %*
+java --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "%LIBS%";platforms/java/build;javagen/build com.area9innovation.flow.javafx.FxLoader --flowapp="%JAVA_MAIN%.%JAVA_CLASS%"
 popd
