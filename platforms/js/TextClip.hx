@@ -839,7 +839,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -1394,8 +1394,9 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
-				metrics = TextMetrics.measureText(untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
-				if (RenderSupport.RendererType == "html") {
+				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
+				metrics = TextMetrics.measureText(contentGlyphsModified, style);
+				if (RenderSupport.RendererType == "html" && contentGlyphsModified != this.contentGlyphs.modified) {
 					measureHTMLWidth();
 				}
 			} else {
@@ -1428,6 +1429,8 @@ class TextClip extends NativeWidgetClip {
 		var tempDisplay = nativeWidget.style.display;
 		if (!Platform.isIE) {
 			nativeWidget.style.display = null;
+		} else {
+			nativeWidget.style.display = "block";
 		}
 
 		if (wordWrap) {
@@ -1438,6 +1441,7 @@ class TextClip extends NativeWidgetClip {
 
 		Browser.document.body.appendChild(nativeWidget);
 		textNodeMetrics = getTextNodeMetrics(nativeWidget);
+
 		if (parentNode != null) {
 			if (nextSibling == null || nextSibling.parentNode != parentNode) {
 				parentNode.appendChild(nativeWidget);
