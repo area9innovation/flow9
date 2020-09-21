@@ -135,7 +135,7 @@ class DisplayObjectHelper {
 			untyped clip.transformChanged = true;
 
 			if (untyped !parentClip) {
-				parentClip = findParentClip(clip);
+				parentClip = untyped clip.parentClip != null ? clip.parentClip : findParentClip(clip);
 			}
 
 			untyped clip.parentClip = parentClip;
@@ -209,7 +209,7 @@ class DisplayObjectHelper {
 			&& (clip.isMask || (clipVisible && (clip.renderable || clip.keepNativeWidgetChildren)));
 
 		if (untyped !parentClip) {
-			parentClip = findParentClip(clip);
+			parentClip = untyped clip.parentClip != null ? clip.parentClip : findParentClip(clip);
 		}
 
 		untyped clip.parentClip = parentClip;
@@ -339,8 +339,16 @@ class DisplayObjectHelper {
 
 		untyped clip.parentClip = parentClip;
 
-		for (child in getClipChildren(clip)) {
-			invalidateParentClip(child, isNativeWidget(clip) ? clip : parentClip);
+		if (isNativeWidget(clip)) {
+			for (child in getClipChildren(clip)) {
+				if (untyped child.parentClip != clip) {
+					invalidateParentClip(child, clip);
+				}
+			}
+		} else {
+			for (child in getClipChildren(clip)) {
+				invalidateParentClip(child, parentClip);
+			}
 		}
 	}
 
