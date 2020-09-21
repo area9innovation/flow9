@@ -381,6 +381,230 @@ class PixiWorkarounds {
 		untyped __js__("
 			if (!HTMLElement.prototype.scrollTo) { HTMLElement.prototype.scrollTo = function (left, top) {this.scrollTop = top; this.scrollLeft = left; } }
 
+			PIXI.TextMetrics.wordWrap = function(text, style, canvas)
+			{
+				if (canvas == null) {
+					canvas = PIXI.TextMetrics._canvas;
+				}
+
+				const context = canvas.getContext('2d');
+
+				let width = 0;
+				let line = '';
+				let lines = '';
+
+				const cache = {};
+				const letterSpacing = style.letterSpacing;
+				const whiteSpace = style.whiteSpace;
+
+				// How to handle whitespaces
+				const collapseSpaces = PIXI.TextMetrics.collapseSpaces(whiteSpace);
+				const collapseNewlines = PIXI.TextMetrics.collapseNewlines(whiteSpace);
+
+				// whether or not spaces may be added to the beginning of lines
+				let canPrependSpaces = !collapseSpaces;
+
+				// There is letterSpacing after every char except the last one
+				// t_h_i_s_' '_i_s_' '_a_n_' '_e_x_a_m_p_l_e_' '_!
+				// so for convenience the above needs to be compared to width + 1 extra letterSpace
+				// t_h_i_s_' '_i_s_' '_a_n_' '_e_x_a_m_p_l_e_' '_!_
+				// ________________________________________________
+				// And then the final space is simply no appended to each line
+				const wordWrapWidth = style.wordWrapWidth + letterSpacing;
+
+				// break text into words, spaces and newline chars
+				const tokens = PIXI.TextMetrics.tokenize(text);
+
+				for (let i = 0; i < tokens.length; i++)
+				{
+					// get the word, space or newlineChar
+					let token = tokens[i];
+
+					// if word is a new line
+					if (PIXI.TextMetrics.isNewline(token))
+					{
+						// keep the new line
+						if (!collapseNewlines)
+						{
+							lines += PIXI.TextMetrics.addLine(line);
+							canPrependSpaces = !collapseSpaces;
+							line = '';
+							width = 0;
+							continue;
+						}
+
+						// if we should collapse new lines
+						// we simply convert it into a space
+						token = ' ';
+					}
+
+					// if we should collapse repeated whitespaces
+					if (collapseSpaces)
+					{
+						// check both this and the last tokens for spaces
+						const currIsBreakingSpace = PIXI.TextMetrics.isBreakingSpace(token);
+						const lastIsBreakingSpace = PIXI.TextMetrics.isBreakingSpace(line[line.length - 1]);
+
+						if (currIsBreakingSpace && lastIsBreakingSpace)
+						{
+							continue;
+						}
+					}
+
+					// get word width from cache if possible
+					const tokenWidth = PIXI.TextMetrics.getFromCache(token, letterSpacing, cache, context, style);
+
+					// word is longer than desired bounds
+					if (tokenWidth > wordWrapWidth)
+					{
+						// if we are not already at the beginning of a line
+						if (line !== '')
+						{
+							// start newlines for overflow words
+							lines += PIXI.TextMetrics.addLine(line);
+							line = '';
+							width = 0;
+						}
+
+						// break large word over multiple lines
+						if (PIXI.TextMetrics.canBreakWords(token, style.breakWords))
+						{
+							// break word into characters
+							const characters = token.split('');
+
+							// loop the characters
+							for (let j = 0; j < characters.length; j++)
+							{
+								let char = characters[j];
+
+								let k = 1;
+								// we are not at the end of the token
+
+								while (characters[j + k])
+								{
+									const nextChar = characters[j + k];
+									const lastChar = char[char.length - 1];
+
+									// should not split chars
+									if (!PIXI.TextMetrics.canBreakChars(lastChar, nextChar, token, j, style.breakWords))
+									{
+										// combine chars & move forward one
+										char += nextChar;
+									}
+									else
+									{
+										break;
+									}
+
+									k++;
+								}
+
+								j += char.length - 1;
+
+								const characterWidth = PIXI.TextMetrics.getFromCache(char, letterSpacing, cache, context, style);
+
+								if (characterWidth + width > wordWrapWidth)
+								{
+									lines += PIXI.TextMetrics.addLine(line);
+									canPrependSpaces = false;
+									line = '';
+									width = 0;
+								}
+
+								line += char;
+								width += characterWidth;
+							}
+						}
+
+						// run word out of the bounds
+						else
+						{
+						// if there are words in this line already
+							// finish that line and start a new one
+							if (line.length > 0)
+							{
+								lines += PIXI.TextMetrics.addLine(line);
+								line = '';
+								width = 0;
+							}
+
+							const isLastToken = i === tokens.length - 1;
+
+							// give it its own line if it's not the end
+							lines += PIXI.TextMetrics.addLine(token, !isLastToken);
+							canPrependSpaces = false;
+							line = '';
+							width = 0;
+						}
+					}
+
+					// word could fit
+					else
+					{
+						// word won't fit because of existing words
+						// start a new line
+						if (tokenWidth + width > wordWrapWidth)
+						{
+							// if its a space we don't want it
+							canPrependSpaces = false;
+
+							// add a new line
+							lines += PIXI.TextMetrics.addLine(line);
+
+							// start a new line
+							line = '';
+							width = 0;
+						}
+
+						// don't add spaces to the beginning of lines
+						if (line.length > 0 || !PIXI.TextMetrics.isBreakingSpace(token) || canPrependSpaces)
+						{
+							// add the word to the current line
+							line += token;
+
+							// update width counter
+							width += tokenWidth;
+						}
+					}
+				}
+
+				lines += PIXI.TextMetrics.addLine(line, false);
+
+				return lines;
+			}
+
+			PIXI.TextMetrics.getFromCache = function(key, letterSpacing, cache, context, style)
+			{
+				let width = cache[key];
+
+				if (width === undefined)
+				{
+					const spacing = ((key.length) * letterSpacing);
+					let widthMulti = Platform.isIE ? 100 : 1;
+					let widthContext = context;
+
+					if (Platform.isIE) {
+						// In IE, CanvasRenderingContext2D measure text with integer preceision
+						// it leads to cumulative errors in flow
+						// for example, if we counts width of words in the line
+						let widthCanvas = PIXI.TextMetrics._widthCanvas;
+						if (typeof widthCanvas === 'undefined') {
+							PIXI.TextMetrics._widthCanvas = document.createElement('canvas');
+							widthCanvas = PIXI.TextMetrics._widthCanvas;
+						}
+						let clonedStyle = style.clone();
+						clonedStyle.fontSize *= widthMulti;
+						widthContext = widthCanvas.getContext('2d');
+						widthContext.font = clonedStyle.toFontString();
+					}
+
+					width = widthContext.measureText(key).width / widthMulti + spacing;
+					cache[key] = width;
+				}
+
+				return width;
+			}
+
 			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
 			{
 				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
@@ -622,247 +846,6 @@ class PixiWorkarounds {
 				return properties;
 			};
 
-			// PIXI.TextMetrics.wordWrap = function(text, style, canvas)
-			// {
-			// 	if (typeof canvas == 'undefined') {
-			// 		canvas = PIXI.TextMetrics._canvas;
-			// 	}
-
-			// 	const context = canvas.getContext('2d');
-
-			// 	var width = 0;
-			// 	var line = '';
-			// 	var lines = '';
-
-			// 	const cache = {};
-			// 	const letterSpacing = style.letterSpacing;
-			// 	const whiteSpace = style.whiteSpace;
-			// 	const truncate = style.truncate ? style.truncate : Number.MAX_SAFE_INTEGER;
-
-			// 	// How to handle whitespaces
-			// 	const collapseSpaces = PIXI.TextMetrics.collapseSpaces(whiteSpace);
-			// 	const collapseNewlines = PIXI.TextMetrics.collapseNewlines(whiteSpace);
-
-			// 	// whether or not spaces may be added to the beginning of lines
-			// 	var canPrependSpaces = !collapseSpaces;
-
-			// 	// There is letterSpacing after every char except the last one
-			// 	// t_h_i_s_' '_i_s_' '_a_n_' '_e_x_a_m_p_l_e_' '_!
-			// 	// so for convenience the above needs to be compared to width + 1 extra letterSpace
-			// 	// t_h_i_s_' '_i_s_' '_a_n_' '_e_x_a_m_p_l_e_' '_!_
-			// 	// ________________________________________________
-			// 	// And then the final space is simply no appended to each line
-			// 	const wordWrapWidth = style.wordWrapWidth + letterSpacing;
-
-			// 	// break text into words, spaces and newline chars
-			// 	const tokens = PIXI.TextMetrics.tokenize(text);
-
-			// 	var i = -1;
-			// 	var linesCount = 0;
-			// 	var token = '';
-
-			// 	var addLine = function(newLine)
-			// 	{
-			// 		if (typeof newLine == 'undefined') {
-			// 			newLine = true;
-			// 		}
-
-			// 		if (linesCount == truncate - 1)
-			// 		{
-			// 			if (newLine) {
-			// 				line += token;
-
-			// 				const threeDotWidth = PIXI.TextMetrics.getFromCache('…', letterSpacing, cache, context);
-			// 				var lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
-
-			// 				while (line.length > 1 && (lineWidth + threeDotWidth > wordWrapWidth || PIXI.TextMetrics.isNewline(line[line.length - 1]) || line.endsWith('\\n')))
-			// 				{
-			// 					line = line.substring(0, line.length - 1);
-			// 					lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
-			// 				}
-
-			// 				line += '…';
-			// 			}
-
-			// 			if (style.truncateCallback) {
-			// 				style.truncateCallback(newLine);
-			// 			}
-
-			// 			lines += PIXI.TextMetrics.addLine(line, false);
-
-			// 			return true;
-			// 		}
-			// 		else
-			// 		{
-			// 			console.log(line);
-			// 			console.log(PIXI.TextMetrics.addLine(line, newLine));
-			// 			lines += PIXI.TextMetrics.addLine(line, newLine);
-
-			// 			if (newLine)
-			// 			{
-			// 				linesCount++;
-			// 			}
-
-			// 			line = '';
-			// 			width = 0;
-
-			// 			return false;
-			// 		}
-			// 	}
-
-			// 	while (i < tokens.length - 1 && linesCount < truncate)
-			// 	{
-			// 		i++;
-
-			// 		// get the word, space or newlineChar
-			// 		token = tokens[i];
-
-			// 		// if word is a new line
-			// 		if (PIXI.TextMetrics.isNewline(token))
-			// 		{
-			// 			// keep the new line
-			// 			if (!collapseNewlines)
-			// 			{
-			// 				if (addLine(true)) return lines;
-			// 				canPrependSpaces = !collapseSpaces;
-			// 				continue;
-			// 			}
-
-			// 			// if we should collapse new lines
-			// 			// we simply convert it into a space
-			// 			token = ' ';
-			// 		}
-
-			// 		// if we should collapse repeated whitespaces
-			// 		if (collapseSpaces)
-			// 		{
-			// 			// check both this and the last tokens for spaces
-			// 			const currIsBreakingSpace = PIXI.TextMetrics.isBreakingSpace(token);
-			// 			const lastIsBreakingSpace = PIXI.TextMetrics.isBreakingSpace(line[line.length - 1]);
-
-			// 			if (currIsBreakingSpace && lastIsBreakingSpace)
-			// 			{
-			// 				continue;
-			// 			}
-			// 		}
-
-			// 		// get word width from cache if possible
-			// 		var tokenWidth = PIXI.TextMetrics.getFromCache(token, letterSpacing, cache, context);
-
-			// 		// word is longer than desired bounds
-			// 		if (tokenWidth > wordWrapWidth)
-			// 		{
-			// 			// if we are not already at the beginning of a line
-			// 			if (line !== '')
-			// 			{
-			// 				// start newlines for overflow words
-			// 				if (addLine(true)) return lines;
-			// 			}
-
-			// 			// break large word over multiple lines
-			// 			if (PIXI.TextMetrics.canBreakWords(token, style.breakWords))
-			// 			{
-			// 				// break word into characters
-			// 				const characters = token.split('');
-
-			// 				// loop the characters
-			// 				for (var j = 0; j < characters.length; j++)
-			// 				{
-			// 					var char = characters[j];
-
-			// 					var k = 1;
-			// 					// we are not at the end of the token
-
-			// 					while (characters[j + k])
-			// 					{
-			// 						const nextChar = characters[j + k];
-			// 						const lastChar = char[char.length - 1];
-
-			// 						// should not split chars
-			// 						if (!PIXI.TextMetrics.canBreakChars(lastChar, nextChar, token, j, style.breakWords))
-			// 						{
-			// 							// combine chars & move forward one
-			// 							char += nextChar;
-			// 						}
-			// 						else
-			// 						{
-			// 							break;
-			// 						}
-
-			// 						k++;
-			// 					}
-
-			// 					j += char.length - 1;
-
-			// 					const characterWidth = PIXI.TextMetrics.getFromCache(char, letterSpacing, cache, context);
-
-			// 					if (characterWidth + width > wordWrapWidth)
-			// 					{
-			// 						if (addLine(true)) return lines;
-			// 						canPrependSpaces = false;
-			// 					}
-
-			// 					line += char;
-			// 					width += characterWidth;
-			// 				}
-			// 			}
-
-			// 			// run word out of the bounds
-			// 			else
-			// 			{
-			// 			   // if there are words in this line already
-			// 				// finish that line and start a new one
-			// 				if (line.length > 0)
-			// 				{
-			// 					if (addLine(true)) return lines;
-			// 				}
-
-			// 				const isLastToken = i === tokens.length - 1;
-
-			// 				line = token;
-			// 				// give it its own line if it's not the end
-			// 				if (addLine(!isLastToken)) return lines;
-			// 				canPrependSpaces = false;
-			// 			}
-			// 		}
-
-			// 		// word could fit
-			// 		else
-			// 		{
-			// 			// word won't fit because of existing words
-			// 			// start a new line
-			// 			if (tokenWidth + width > wordWrapWidth)
-			// 			{
-			// 				// if its a space we don't want it
-			// 				canPrependSpaces = false;
-
-			// 				// add a new line
-			// 				if (addLine()) return lines;
-			// 			}
-
-			// 			// don't add spaces to the beginning of lines
-			// 			if (line.length > 0 || !PIXI.TextMetrics.isBreakingSpace(token) || canPrependSpaces)
-			// 			{
-			// 				// add the word to the current line
-			// 				line += token;
-
-			// 				// update width counter
-			// 				width += tokenWidth;
-			// 			}
-			// 		}
-			// 	}
-
-			// 	addLine(false);
-
-			// 	if (style.truncateCallback) {
-			// 		style.truncateCallback(false);
-			// 	}
-
-			// 	console.log(lines);
-
-			// 	return lines;
-			// }
-
 			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y)
 			{
 				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
@@ -942,7 +925,7 @@ class PixiWorkarounds {
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
-					this.style.wordWrapWidth = Math.ceil(Math.max(this.style.wordWrapWidth - 1.0, 0.0) * scaleFactor) + 1.0;
+					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
 					this.style.strokeThickness = this.style.strokeThickness * scaleFactor;
 					this.style.dropShadowDistance = this.style.dropShadowDistance * scaleFactor;
 					this.style.leading = this.style.leading * scaleFactor;

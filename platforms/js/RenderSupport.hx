@@ -265,7 +265,7 @@ class RenderSupport {
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
 		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
 
-		if (browserZoom != 1.0) {
+		if (!Platform.isMobile && browserZoom != 1.0) {
 			accessibilityZoom = 1.0;
 			Native.setKeyValue("accessibility_zoom", "1.0");
 		}

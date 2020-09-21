@@ -30,11 +30,13 @@ goto endif
 :endif
 
 set JAVAC=%JAVA_HOME%\bin\javac
+set LIBS=%~dp0..\platforms\java\lib\java-websocket-1.5.1\*:%~dp0..\platforms\java\lib\jjwt-api-0.10.8\jjwt-api-0.10.8.jar
+set PATH_TO_FX=%~dp0..\platforms\java\lib\javafx-sdk-11.0.2\windows\lib
 
 
 rem The runtime
-cd %~dp0..\platforms\java 
-"%JAVAC%" -d build -g com/area9innovation/flow/*.java javafx/com/area9innovation/flow/javafx/*.java
+cd %~dp0..\platforms\java
+"%JAVAC%" -d build --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -classpath "%LIBS%" -g com/area9innovation/flow/*.java javafx/com/area9innovation/flow/javafx/*.java
 popd
 
 rem Generate the Java for our program
@@ -44,9 +46,21 @@ rem call %~dp0/flow --java %~dp0/../javagen %*
 
 cd %~dp0..
 
+dir javagen\*.java /S /B > files.txt
+
 rem Compile the generated code
-"%JAVAC%" -Xlint:unchecked -encoding UTF-8 -cp platforms/java/build/ javagen/*.java
+"%JAVAC%" -d javagen/build  -Xlint:unchecked -encoding UTF-8 --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "%LIBS%";platforms/java/build/ @files.txt
+
+del files.txt
+
+set FILE = %*
+set empty =
+set dot = .
+set JAVA_MAIN=%FILE:.flow=!empty!%
+set JAVA_MAIN=%JAVA_MAIN:/=!dot!%
+set JAVA_MAIN=%JAVA_MAIN:\=!dot!%
+set "JAVA_CLASS=%JAVA_MAIN:$=" & set "result=%"
 
 rem Run the program!
-java -cp platforms/java/build;. com.area9innovation.flow.javafx.FxLoader %*
+java --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "%LIBS%";platforms/java/build;javagen/build com.area9innovation.flow.javafx.FxLoader --flowapp="%JAVA_MAIN%.%JAVA_CLASS%"
 popd
