@@ -1396,7 +1396,7 @@ class TextClip extends NativeWidgetClip {
 			if (!escapeHTML) {
 				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
 				metrics = TextMetrics.measureText(contentGlyphsModified, style);
-				if (RenderSupport.RendererType == "html" && contentGlyphsModified != this.contentGlyphs.modified) {
+				if (RenderSupport.RendererType == "html") {
 					measureHTMLWidth();
 				}
 			} else {
