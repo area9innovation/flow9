@@ -75,6 +75,8 @@ protected:
     std::string fileDropMimeTypeRegExFilter;
 
     GLBoundingBox local_bbox_self;
+    GLBoundingBox local_bbox_full; // children + mask
+    GLBoundingBox local_bbox_effect;
 
     GLTransform global_transform; // valid if UnchangedFromRender
     float global_alpha; // computed simultaneously to global_transform
@@ -123,7 +125,8 @@ public:
         // Render node may reuse a cached buffer
         ScheduleNodeCacheValid    = 0x1000,
         // Listens to mouseenter/mouseout events
-        ListensToOverOutEvents         = 0x2000
+        ListensToOverOutEvents         = 0x2000,
+        LocalBBoxReady         = 0x4000
     };
 
     /* Multiple-flag groups for checks or mass wiping. */
@@ -165,6 +168,7 @@ public:
         // Content appearance may have changed
         WipeContentMayHaveChanged
             = GlobalBBoxReady
+            | LocalBBoxReady
             | ScheduleNodeCacheValid
     };
 
@@ -194,6 +198,7 @@ public:
     const GLBoundingBox &getGlobalBBox();
     const GLBoundingBox &getGlobalBBoxSelf();
     const GLBoundingBox &getLocalBBoxSelf();
+    const GLBoundingBox &getLocalBBox();
     GLBoundingBox getGlobalMaskBBox();
 
     shared_ptr<GLScheduleNode> getScheduleNode();
@@ -284,6 +289,7 @@ public:
     DECLARE_NATIVE_METHOD(setClipScaleX)
     DECLARE_NATIVE_METHOD(setClipScaleY)
     DECLARE_NATIVE_METHOD(setClipRotation)
+    DECLARE_NATIVE_METHOD(setClipOrigin)
     DECLARE_NATIVE_METHOD(setClipAlpha)
     DECLARE_NATIVE_METHOD(setClipVisible)
     DECLARE_NATIVE_METHOD(setClipRenderable)

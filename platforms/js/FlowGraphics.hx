@@ -41,8 +41,8 @@ class FlowGraphics extends Graphics {
 	public var keepNativeWidgetChildren : Bool = false;
 	public var hasMask : Bool = false;
 
-	public var left = 0.0;
-	public var top = 0.0;
+	public var left = null;
+	public var top = null;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
