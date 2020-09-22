@@ -118,7 +118,7 @@ class UnicodeTranslation {
 }
 
 class TextClip extends NativeWidgetClip {
-	private static var KeepTextClips = Util.getParameter("wcag") == "1";
+	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
@@ -426,7 +426,11 @@ class TextClip extends NativeWidgetClip {
 		var alpha = this.getNativeWidgetAlpha();
 
 		if (isInput) {
-			nativeWidget.setAttribute("type", type);
+			if (multiline) {
+				nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
+			} else {
+				nativeWidget.setAttribute("type", type);
+			}
 			nativeWidget.value = text;
 			nativeWidget.style.whiteSpace = "pre-wrap";
 			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
@@ -839,7 +843,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + Browser.window.devicePixelRatio : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -1394,7 +1398,8 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
-				metrics = TextMetrics.measureText(untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')"), style);
+				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
+				metrics = TextMetrics.measureText(contentGlyphsModified, style);
 				if (RenderSupport.RendererType == "html") {
 					measureHTMLWidth();
 				}
@@ -1428,6 +1433,8 @@ class TextClip extends NativeWidgetClip {
 		var tempDisplay = nativeWidget.style.display;
 		if (!Platform.isIE) {
 			nativeWidget.style.display = null;
+		} else {
+			nativeWidget.style.display = "block";
 		}
 
 		if (wordWrap) {
@@ -1438,6 +1445,7 @@ class TextClip extends NativeWidgetClip {
 
 		Browser.document.body.appendChild(nativeWidget);
 		textNodeMetrics = getTextNodeMetrics(nativeWidget);
+
 		if (parentNode != null) {
 			if (nextSibling == null || nextSibling.parentNode != parentNode) {
 				parentNode.appendChild(nativeWidget);

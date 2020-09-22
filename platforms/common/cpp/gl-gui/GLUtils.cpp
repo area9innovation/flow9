@@ -101,6 +101,62 @@ GLTransform GLUnpackedTransform::toMatrixForm()
     return GLTransform(forward, reverse);
 }
 
+GLTransform GLUnpackedTransform::toMatrixForm(float width, float height)
+{
+    float rad_angle = float(M_PI) * angle / 180.0f;
+    float cosv = cosf(rad_angle);
+    float sinv = sinf(rad_angle);
+
+    float sx = this->sx, sy = this->sy;
+    float rsx = 1.0f/sx, rsy = 1.0f/sy;
+
+    float rscale = sqrt(fabsf(sx*sy));
+    float scale = 1.0f / rscale;
+
+    // Avoid NaNs from division by zero: make both
+    // forward and reverse matrices scale into zero
+    if (isZeroScale()) {
+        rsx = rsy = 0.0f;
+        rscale = scale = 1.0f;
+    }
+
+    mat3 forward =
+            mat3(1.0f, 0.0f, 0.0f,
+                 0.0f, 1.0f, 0.0f,
+                 x, y, 1.0f)
+            *
+            mat3(cosv, sinv, 0.0f,
+                 -sinv, cosv, 0.0f,
+                 0.0f, 0.0f, 1.0f)
+            *
+            mat3(sx*scale, 0.0f, 0.0f,
+                 0.0f, sy*scale, 0.0f,
+                 0.0f, 0.0f, scale)
+            *
+            mat3(1.0f, 0.0f, 0.0f,
+                 0.0f, 1.0f, 0.0f,
+                 -width * ox, -height * oy, 1.0f);
+
+    mat3 reverse =
+            mat3(1.0f, 0.0f, 0.0f,
+                 0.0f, 1.0f, 0.0f,
+                 width * ox, height * oy, 1.0f)
+            *
+            mat3(rscale*rsx, 0.0f, 0.0f,
+                 0.0f, rscale*rsy, 0.0f,
+                 0.0f, 0.0f, rscale)
+            *
+            mat3(cosv, -sinv, 0.0f,
+                 sinv, cosv, 0.0f,
+                 0.0f, 0.0f, 1.0f)
+            *
+            mat3(1.0f, 0.0f, 0.0f,
+                 0.0f, 1.0f, 0.0f,
+                 -x, -y, 1.0f);
+
+    return GLTransform(forward, reverse);
+}
+
 GLBoundingBox &GLBoundingBox::operator |= (const vec2 &pt) {
     if (isEmpty) {
         min_pt = max_pt = pt;

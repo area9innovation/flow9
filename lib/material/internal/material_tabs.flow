@@ -38,6 +38,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	verticalSeparators = tryExtractStruct(m.style, MTabsVerticalSeparators(0., MWhite()));
 	leftAlignIcon = contains(m.style, MTabsIconLeftAlign());
 	grabDelay = extractStructMany(m.style, MGrabDelay(0));
+	isKeepTabColor = !contains(m.style, MTabChangeIndicatorColor());
 
 	tabsFontStyle = fold(m.style, defaultTabFontStyle, \acc, st -> switch(st) {
 		MFontStyle() : st;
@@ -128,15 +129,15 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						}));
 					focusState = replaceStructMany(tb.style, [onClick, AccessRole("tab"), MRippleType(const(MRippleFill()))]);
 					tabIcon = tryExtractStruct(tb.style, MTabIcon(TEmpty()));
-
-					TSelect2(tb.text, tabsWidths, \txt, tws ->
-						if (txt != "")
-							MTabsText(manager, p2, txt, tabMinWidth, tws[i]-bordersGap, capitalizeTitle, showTooltip, tabsFontStyle, itemsColor, m2t)
+					TSelect3(tb.text, tabsWidths, fand(const(!isKeepTabColor), feq(m.selected, i)), \txt, tws, selected ->
+						if (txt != "") {
+							color = if (selected) Some(indicatorColor) else itemsColor;
+							MTabsText(manager, p2, txt, tabMinWidth, tws[i]-bordersGap, capitalizeTitle, showTooltip, tabsFontStyle, color, m2t)
 							|> TBorderTopBottom(2.)
-						else if (leftAlignIcon) TFillX()
+						} else if (leftAlignIcon) TFillX()
 						else TEmpty()
 					)
-					|> (if (leftAlignIcon) idfn else TSetMinWidth2(const(tabMinWidth)))
+					|> (if (leftAlignIcon && isSome(tabIcon)) idfn else TSetMinWidth2(const(tabMinWidth)))
 					|> (\t -> eitherMap(tabIcon, \ti ->
 							m2t(ti.icon, p2)
 							|> (if (leftAlignIcon)
@@ -160,7 +161,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 									{
 										if (noDimming) t
 										else TAlpha(
-											fif(fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false), const(1.), const(0.6)),
+											fif(fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false), const(1.), const(secondaryTextOpacity)),
 											t
 										)
 									}
@@ -342,16 +343,16 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 				SelectMGroup2T(manager, p0, m.tabs, \i, id, tab, p2 -> {
 					tabEn = feq2(m.selected, i);
 
-					(\ -> MComponentGroup2T(manager, p2, "MTabsContent", [MEnabled(tabEn), MFocusEnabled(tabEn), MFocusId(const(id))], \p3 ->
-						m2t(MAlignStart(tab.content), p3)
+					(\p3 -> MComponentGroup2T(manager, p3, "MTabsContent", [MEnabled(tabEn), MFocusEnabled(tabEn), MFocusId(const(id))], \p4 ->
+						m2t(MAlignStart(tab.content), p4)
 					))
 					|> (\makeTabContent ->
 						if (preRender)
-							TIfPreRender(tabEn, makeTabContent(), TEmpty(), false)
+							MShowPreRender2T(manager, p2, tabEn, makeTabContent)
 						else if (noDispose)
-							TRenderOnce(tabEn, makeTabContent)
+							MRenderOnce2T(manager, p2, tabEn, makeTabContent)
 						else
-							TShowLazy(tabEn, makeTabContent)
+							TShowLazy(tabEn, \ -> makeTabContent(p2))
 					)
 				})
 				|> (\t2 : Tropic -> if (noScroll) t2 else MScroll2T(manager, p0, MScroll(t2, TFillXY(), [contentScrollInspect]), m2t))
@@ -462,25 +463,46 @@ splitText2(text : string, text1 : string, text2 : string) -> Pair<string, string
 MTabAnimation(
 	trans : Point,
 	trop : double,
-	scroll : double);
+	scroll : double
+);
 
 MTabsBottomLineInfo(
 	width : double,
 	tabsWidths : [double],
 	selected : int,
-	order : [int]);
+	order : [int]
+);
+
+MTabsBottomLineInfo2MTabAnimation(info : MTabsBottomLineInfo) -> MTabAnimation {
+	wds = info.tabsWidths;
+	sel = info.selected;
+	ord = findiDef(info.order, eq(sel), sel);
+
+	if (sel >= 0 && sel < length(wds)) {
+		fullW = dsum(wds);
+		nTransWidth = dsum(generate(0, ord, \i -> wds[elementAt(info.order, i, i)]));
+		nTrop = wds[ord];
+
+		MTabAnimation(
+			Point(nTransWidth, 0.),
+			nTrop,
+			forceRange(0., nTransWidth - info.width / 2. + nTrop / 2., fullW - info.width)
+		);
+	} else {
+		MTabAnimation(
+			zeroPoint,
+			0.0,
+			0.0
+		);
+	}
+}
 
 MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : DynamicBehaviour<[double]>, selected : Transform<int>, order : Maybe<MListReorder>,
 	scrollPosition : DynamicBehaviour<Point>, inspectScroll : TScrollInspectVisible, tabsHeight : DynamicBehaviour<double>,
 	indicatorColor : MColor, indicatorAbove : bool
 ) -> Tropic {
 
-	prevTrans = ref 0.;
-	prevTropW = ref 0.;
-	prevScroll = ref 0.;
 	prevS = ref fgetValue(selected);
-	trans = make(zeroPoint);
-	tropW = make(0.);
 	lineHeight = 2.0;
 	isRTL = parent.rtl;
 	orderedTabsWidths = fselect(tabsWidths, FLift(arrayRTL2(isRTL)));
@@ -501,62 +523,39 @@ MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : Dy
 			\wd, twds, sel, ord -> MTabsBottomLineInfo(wd, twds, sel, ord)
 		);
 
-	MEasingAnimation(
-		manager,
-		parent,
-		const(easingTransitionDuration),
-		const(easingStandartCurve),
-		trigger,
-		\info : MTabsBottomLineInfo -> {
-			wds = info.tabsWidths;
-			sel = info.selected;
-			ord = findiDef(info.order, eq(sel), sel);
+	TAnimation(
+		TSizedWidth(const(10.0), lineHeight)
+		|> addTBackground(indicatorColor),
+		fselect(fselectWithLast(fselect(trigger, MTabsBottomLineInfo2MTabAnimation |> FLift), FIdentity2()), FLift(\p : Pair<MTabAnimation, MTabAnimation> -> {
+			next(scrollPosition, Point(p.second.scroll, 0.0));
+			sel = fgetValue(trigger).selected;
 
-			if (length(wds) == 0)
-				nextDistinct(tropW, 0.);
-
-			if (sel >= 0 && sel < length(wds)) {
-				prevTrans := getValue(trans).x;
-				prevTropW := getValue(tropW);
-				prevScroll := getValue(scrollPosition).x;
-
-				fullW = dsum(wds);
-				nTransWidth = generate(0, ord, \i ->
-					wds[elementAt(info.order, i, i)]
-				)
-				|> dsum;
-				nTrop = wds[ord];
-
-				tAnim = MTabAnimation(
-					Point(nTransWidth, 0.),
-					nTrop,
-					forceRange(0., nTransWidth - info.width / 2. + nTrop / 2., fullW - info.width)
-				);
-
-				if (^prevS == sel || !parent.theme.enableAnimations) {
-					nextDistinct(trans, tAnim.trans);
-					nextDistinct(tropW, tAnim.trop);
-					nextDistinct(scrollPosition, Point(tAnim.scroll, 0.));
-
-					None()
-				} else {
-					prevS := sel;
-
-					Some(tAnim);
-				}
+			if (^prevS == sel || !parent.theme.enableAnimations) {
+				[
+					FAnimationKeyframe([
+						FTranslateValue(Point(p.second.trans.x, 0.0)),
+						FScaleValue(Factor(p.second.trop / 10.0, 1.0))
+					])
+				];
 			} else {
-				None()
+				prevS := sel;
+
+				[
+					FAnimationKeyframe([
+						FTranslateValue(Point(p.first.trans.x, 0.0)),
+						FScaleValue(Factor(p.first.trop / 10.0, 1.0))
+					]),
+					FAnimationKeyframe([
+						FTranslateValue(Point(p.second.trans.x, 0.0)),
+						FScaleValue(Factor(p.second.trop / 10.0, 1.0))
+					])
+				];
 			}
-		},
-		\tAnim, p -> {
-			nextDistinct(trans, Point(lerp(^prevTrans, tAnim.trans.x, p), 0.));
-			nextDistinct(tropW, lerp(^prevTropW, tAnim.trop, p));
-			nextDistinct(scrollPosition, Point(lerp(^prevScroll, tAnim.scroll, p), 0.));
-		},
-		[MAutoStart()],
-		TSizedWidth(tropW, lineHeight)
-		|> addTBackground(indicatorColor)
-		|> (\t -> TTranslate(trans, t))
+		})),
+		[
+			FAnimationDuration(const(easingTransitionDuration)),
+			FAnimationEasing(const(easingStandartCurve)),
+		]
 	)
 	|> TFixHeight(TFixed(0.0, lineHeight))
 	|> (\t -> if (indicatorAbove) t else TTranslate(fselect(tabsHeight, FLift(\th -> Point(0., th - lineHeight))), t))

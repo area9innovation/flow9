@@ -128,13 +128,16 @@ inline vec2 transformShift(const GLTransform &transform, vec2 dpt) {
 }
 
 struct GLUnpackedTransform {
-    float x, y, sx, sy, angle; // rotation is clockwise
+    float x, y, sx, sy, angle, ox, oy; // rotation is clockwise
 
-    GLUnpackedTransform() : x(0), y(0), sx(1), sy(1), angle(0) {}
+    GLUnpackedTransform() : x(0), y(0), sx(1), sy(1), angle(0), ox(0), oy(0) {}
     GLUnpackedTransform(float x, float y, float sx, float sy, float angle)
-        : x(x), y(y), sx(sx), sy(sy), angle(angle) {}
+        : x(x), y(y), sx(sx), sy(sy), angle(angle), ox(0), oy(0) {}
+    GLUnpackedTransform(float x, float y, float sx, float sy, float angle, float ox, float oy)
+        : x(x), y(y), sx(sx), sy(sy), angle(angle), ox(ox), oy(oy) {}
 
     GLTransform toMatrixForm();
+    GLTransform toMatrixForm(float width, float height);
 
     bool isZeroScale() {
         return fabsf(sx) < 1e-6 || fabsf(sy) < 1e-6;

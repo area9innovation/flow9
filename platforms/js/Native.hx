@@ -654,6 +654,35 @@ class Native {
 	}
 	#end
 
+	public static function setInterval(ms : Int, cb : Void -> Void) : Void -> Void {
+		#if !neko
+		#if flash
+		var cs = haxe.CallStack.callStack();
+		#end
+		var fn = function() {
+			try {
+				cb();
+			} catch (e : Dynamic) {
+				var stackAsString = "n/a";
+				#if flash
+					stackAsString = Assert.callStackToString(cs);
+				#end
+				var actualStack = Assert.callStackToString(haxe.CallStack.callStack());
+				var crashInfo = e + "\nStack at timer creation:\n" + stackAsString + "\nStack:\n" + actualStack;
+				println("FATAL ERROR: timer callback: " + crashInfo);
+				Assert.printStack(e);
+				Native.callFlowCrashHandlers("[Timer Handler]: " + crashInfo);
+			}
+		};
+
+		var t = untyped __js__("setInterval(fn, ms);");
+		return function() { untyped __js__("clearInterval(t);"); };
+		#else
+		cb();
+		return function() {};
+		#end
+	}
+
 	public static function interruptibleTimer(ms : Int, cb : Void -> Void) : Void -> Void {
 		#if !neko
 		#if flash
