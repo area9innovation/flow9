@@ -1,7 +1,10 @@
 import ds/dlist;
 
 export {
+	// This is roughly the same as Behavior<?>
 	Frp1<?> ::= FrpConst1<?>, FrpValue1<?>;
+
+	// This is roughly the same as Behavior<Pair<?, ??>>
 	Frp2<?, ??> ::= FrpConst2<?, ??>, FrpValue2<?, ??>;
 
 	fconst1(v : ?) -> FrpConst1<?>;
@@ -13,6 +16,12 @@ export {
 	// Does not call immediately - s for silent
 	fsubscribe1s(f : Frp1<?>, fn : (?) -> void) -> () -> void;
 
+	// Add a disposer that will be cleaned up when we free
+	faddDisposer1(v : FrpValue1<?>, disposer : () -> void) -> void;
+
+	// This frees the behaviour and all disposers inside it
+	ffree1(v : Frp1<?>) -> void;
+
 	fconst2(v : ?, w : ??) -> FrpConst2<?, ??>;
 	fmake2(v : ?, w : ??) -> FrpValue2<?, ??>;
 	fnext2(f : FrpValue2<?, ??>, v : ?, w : ??) -> void;
@@ -22,16 +31,20 @@ export {
 	fget2First(f : Frp2<?, ??>) -> ?;
 	fget2Second(f : Frp2<?, ??>) -> ??;
 
+	// Calls immediately
 	fsubscribe2(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void;
 	// Does not call immediately - s for silent
 	fsubscribe2s(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void;
+
+	faddDisposer2(f : FrpValue2<?, ??>, disposer : () -> void) -> void;
+	ffree2(v : Frp2<?, ??>) -> void;
 }
 
 FrpConst1(value : ?);
-FrpValue1(value : ref ?, subscribers : DList<(?) -> void>);
+FrpValue1(value : ref ?, subscribers : DList<(?) -> void>, disposers : ref List<() -> void>);
 
 FrpConst2(value1 : ?, value2 : ??);
-FrpValue2(value1 : ref ?, value2 : ref ??, subscribers : DList<(?, ??) -> void>);
+FrpValue2(value1 : ref ?, value2 : ref ??, subscribers : DList<(?, ??) -> void>, disposers : ref List<() -> void>);
 
 
 fconst1(v : ?) -> FrpConst1<?> {
@@ -39,7 +52,7 @@ fconst1(v : ?) -> FrpConst1<?> {
 }
 
 fmake1(v : ?) -> FrpValue1<?> {
-	FrpValue1(ref v, makeDList());
+	FrpValue1(ref v, makeDList(), ref makeList());
 }
 
 fnext1(frp : FrpValue1<?>, value : ?) -> void {
@@ -51,7 +64,7 @@ fnext1(frp : FrpValue1<?>, value : ?) -> void {
 fget1(f : Frp1<?>) -> ? {
 	switch (f) {
 		FrpConst1(v): v;
-		FrpValue1(r, __): ^r;
+		FrpValue1(r, __, __): ^r;
 	}
 }
 
@@ -61,7 +74,7 @@ fsubscribe1(f : Frp1<?>, fn : (?) -> void) -> () -> void {
 			fn(v);
 			\ -> {};
 		}
-		FrpValue1(r, sub): {
+		FrpValue1(r, sub, __): {
 			fn(^r);
 			fsubscribe1s(f, fn);
 		}
@@ -71,7 +84,7 @@ fsubscribe1(f : Frp1<?>, fn : (?) -> void) -> () -> void {
 fsubscribe1s(f : Frp1<?>, fn : (?) -> void) -> () -> void {
 	switch (f) {
 		FrpConst1(v): \ -> {};
-		FrpValue1(r, subscribers): {
+		FrpValue1(r, subscribers, __): {
 			n = pushDList(subscribers, fn);
 			\ -> {
 				removeDList(subscribers, n);
@@ -80,13 +93,31 @@ fsubscribe1s(f : Frp1<?>, fn : (?) -> void) -> () -> void {
 	}
 }
 
+faddDisposer1(f : FrpValue1<?>, disposer : () -> void) -> void {
+	f.disposers := Cons(disposer, ^(f.disposers));
+}
+
+ffree1(f : Frp1<?>) -> void {
+	switch (f) {
+		FrpConst1(v): {}
+		FrpValue1(r, subs, disposers): {
+			callList(^disposers);
+			subs.first ::= DEnd();
+			subs.last ::= DEnd();
+			disposers := makeList();
+		}
+	}
+}
+
+
+// 2-values FRP values
 
 fconst2(v : ?, w : ??) -> FrpConst2<?, ??> {
 	FrpConst2(v, w);
 }
 
 fmake2(v : ?, w : ??) -> FrpValue2<?, ??> {
-	FrpValue2(ref v, ref w, makeDList());
+	FrpValue2(ref v, ref w, makeDList(), ref makeList());
 }
 
 
@@ -115,21 +146,21 @@ fnext2Second(frp : FrpValue2<?, ??>, w : ??) -> void {
 fget2(f : Frp2<?, ??>) -> Pair<?, ??> {
 	switch (f) {
 		FrpConst2(v, w): Pair(v, w);
-		FrpValue2(v, w, __): Pair(^v, ^w);
+		FrpValue2(v, w, __, __): Pair(^v, ^w);
 	}
 }
 
 fget2First(f : Frp2<?, ??>) -> ? {
 	switch (f) {
 		FrpConst2(v, w): v;
-		FrpValue2(v, w, __): ^v;
+		FrpValue2(v, w, __, __): ^v;
 	}
 }
 
 fget2Second(f : Frp2<?, ??>) -> ?? {
 	switch (f) {
 		FrpConst2(v, w): w;
-		FrpValue2(v, w, __): ^w;
+		FrpValue2(v, w, __, __): ^w;
 	}
 }
 
@@ -140,7 +171,7 @@ fsubscribe2(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void {
 			fn(v, w);
 			\ -> {};
 		}
-		FrpValue2(v, w, sub): {
+		FrpValue2(v, w, sub, __): {
 			fn(^v, ^w);
 			fsubscribe2s(f, fn);
 		}
@@ -150,11 +181,27 @@ fsubscribe2(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void {
 fsubscribe2s(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void {
 	switch (f) {
 		FrpConst2(v, w): \ -> {};
-		FrpValue2(v, w, subscribers): {
+		FrpValue2(v, w, subscribers, __): {
 			n = pushDList(subscribers, fn);
 			\ -> {
 				removeDList(subscribers, n);
 			}
+		}
+	}
+}
+
+faddDisposer2(f : FrpValue2<?, ??>, disposer : () -> void) -> void {
+	f.disposers := Cons(disposer, ^(f.disposers));
+}
+
+ffree2(f : Frp2<?, ??>) -> void {
+	switch (f) {
+		FrpConst2(v, w): {}
+		FrpValue2(v, w, subs, disposers): {
+			callList(^disposers);
+			subs.first ::= DEnd();
+			subs.last ::= DEnd();
+			disposers := makeList();
 		}
 	}
 }
