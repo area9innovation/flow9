@@ -160,8 +160,8 @@ renderMDialog2(
 	point = make(zeroPoint);
 	insideDialogB = make(false);
 	pressedOutsideB = fand(down, fnot(insideDialogB));
-	noAnimation = noCenter || isSome(draggable) || contains(style, MDialogNoAnimation()) || !manager.theme.enableAnimations;
-	easing = if (noAnimation) EasingAnimation(nop, const(1.)) else makeEasing(0.6, easingStandartCurve, managerTimer(manager), nop);
+	noAnimation = contains(style, MDialogNoAnimation()) || contains(style, MDialogFullScreen())
+		|| !manager.theme.enableAnimations || noCenter || isSome(draggable);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
 	cs = if (isMaterialLogLevelEnabled(MaterialError())) captureStringCallstack() else "";
 
@@ -175,6 +175,7 @@ renderMDialog2(
 	boxH = make(0.);
 
 	availW = make(0.);
+	animated = make(noAnimation);
 
 	(\p -> {
 		isRTL = p.rtl;
@@ -367,20 +368,53 @@ renderMDialog2(
 				t
 		)
 		|> (\t ->
+			if (noAnimation) {
+				t
+			} else {
+				TOrigin(
+					const(Factor(-0.5, -0.5)),
+					TGroup2(
+						TOrigin(
+							const(Factor(0.5, 0.5)),
+							TRectangle(interactiveRectangleStyle, TSized(fwh(boxW, boxH))) // Invisible reactangle to keep metrics static
+						),
+						TAnimation(
+							TOrigin(
+								const(Factor(0.5, 0.5)),
+								TCropSize(TSized(fwh(boxW, boxH)), t)
+							),
+							fif(
+								animated,
+								const([]),
+								const(
+									[
+										FAnimationKeyframe([
+											FScaleValue(Factor(0.0, 0.0)),
+											FAlphaValue(0.0)
+										]),
+										FAnimationKeyframe([
+											FScaleValue(Factor(1.0, 1.0)),
+											FAlphaValue(1.0)
+										])
+									]
+								)
+							),
+							[
+								FAnimationDuration(const(0.6)),
+								FAnimationEasing(const(easingStandartCurve)),
+								FAnimationOnFinish(\ -> nextDistinct(animated, true))
+							]
+						)
+					)
+				);
+			}
+		)
+		|> (\t ->
 			if (noCenter || isSome(draggable))
 				t
 			else
-				TCenter(
-					if (noAnimation)
-						t
-					else {
-						availH = make(0.);
-
-						TAvailableWidthHeight(t, availW, availH)
-						|> (\t2 -> TAlpha(easing.percent, t2))
-						|> (\t2 -> TScale(ffactor2(easing.percent), t2))
-						|> (\t2 -> TAttachAvailableHeight(t2, availH))
-				}))
+				TCenter(t)
+		)
 		|> (\t : Tropic ->
 			eitherMap(
 				draggable,
@@ -437,7 +471,36 @@ renderMDialog2(
 					|> (\inter -> ifArrayPush(inter, blockKeyboardEvents, makeTKey(\k -> {materialLog(toString(k), MaterialInfo()); k != noKey}))),
 
 					TFillXY()
-					|> (\t2 -> if (nonModal) t2 else TRectangle([Fill(black), FillOpacity(0.5)], t2))
+					|> (\t2 ->
+						if (nonModal) {
+							t2
+						} else {
+							if (noAnimation) {
+								TRectangle([Fill(black), FillOpacity(0.5)], t2)
+							} else {
+								TAnimation(
+									TRectangle([Fill(black), FillOpacity(0.5)], t2),
+									fif(
+										animated,
+										const([]),
+										const([
+											FAnimationKeyframe([
+												FAlphaValue(0.0)
+											]),
+											FAnimationKeyframe([
+												FAlphaValue(1.0)
+											])
+										])
+									),
+									[
+										FAnimationDuration(const(0.6)),
+										FAnimationEasing(const(easingStandartCurve)),
+										FAnimationOnFinish(\ -> nextDistinct(animated, true))
+									]
+								);
+							}
+						}
+					)
 					|> (\t2 ->
 						if (clickOutToClose)
 							TConstruct(
@@ -491,25 +554,21 @@ renderMDialog2(
 		)
 	})
 	|> (\t -> {
-		animated = make(false);
-		TConstruct(
-			[\ -> fconnectSelect(easing.percent, animated, eq(1.))],
-			TSelect(manager.forceRender, \__ ->
-				MComponentGroup2T(
-					manager,
-					manager.focus,
-					name,
-					[
-						IScriptBehaviour("point", point, ISInteractionEvent()),
-						IScriptBehaviour("down", down, ISInteractionEvent()),
-						IScriptBehaviour("inside", insideDialogB, ISInteractionEvent()),
-						IScriptBehaviour("animated", animated, ISAppearanceEvent()),
-						extractStruct(style, UpdateMaterialTheme(idfn)),
-						MSetReady(animated)
-					]
-					|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MSetRTL(false)))),
-					t
-				)
+		TSelect(manager.forceRender, \__ ->
+			MComponentGroup2T(
+				manager,
+				manager.focus,
+				name,
+				[
+					IScriptBehaviour("point", point, ISInteractionEvent()),
+					IScriptBehaviour("down", down, ISInteractionEvent()),
+					IScriptBehaviour("inside", insideDialogB, ISInteractionEvent()),
+					IScriptBehaviour("animated", animated, ISAppearanceEvent()),
+					extractStruct(style, UpdateMaterialTheme(idfn)),
+					MSetReady(animated)
+				]
+				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MSetRTL(false)))),
+				t
 			)
 		)
 	})
@@ -560,7 +619,7 @@ renderMDialog2(
 			longTouchCapture = extractStruct(manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(manager);
 
 			TConstruct(
-				[\ -> fconnect(fand(fand(feq(easing.percent, 1.), fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), feq(manager.manager.zorder, zorder))), fw)],
+				[\ -> fconnect(fand(fand(animated, fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), feq(manager.manager.zorder, zorder))), fw)],
 				TFullWindow(
 					fw,
 					TGroup([
@@ -589,9 +648,6 @@ renderMDialog2(
 				})
 			]
 	);
-
-	if (!noAnimation)
-		easing.start();
 }
 
 snackbarDisp = initUnsM();
