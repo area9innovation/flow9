@@ -1,10 +1,25 @@
 import sandbox/frp/frp;
 
 export {
-	frpMerge2(f1 : Frp1<?>, f2 : Frp1<??>) -> Frp2<?, ??>;
-
+	// A bit similar to fselect
 	frpMapDistinct1(f : Frp1<?>, fn : (?) -> ??) -> Frp1<??>;
 	frpMapDistinct2(f : Frp2<?, ??>, fn : (?, ??) -> ???) -> Frp1<???>;
+
+	// Merge two streams into one
+	frpMerge2(f1 : Frp1<?>, f2 : Frp1<??>) -> Frp2<?, ??>;
+	frpMergeDistinct2(f1 : Frp1<?>, f2 : Frp1<??>) -> Frp2<?, ??>;
+
+	// Pick a substream
+	frpFirst(f : Frp2<?, ??>) -> Frp1<?>;
+	frpFirstDistinct(f : Frp2<?, ??>) -> Frp1<?>;
+	frpSecond(f : Frp2<?, ??>) -> Frp1<??>;
+	frpSecondDistinct(f : Frp2<?, ??>) -> Frp1<??>;
+
+	// Switch between two frps depending on a condition
+	frpIf1(condition : Frp1<bool>, then : Frp1<?>, else_ : Frp1<?>) -> Frp1<?>;
+	frpIfDistinct1(condition : Frp1<bool>, then : Frp1<?>, else_ : Frp1<?>) -> Frp1<?>;
+
+	// frpIf2(condition : Frp1<bool>, thenElse : Frp2<?, ??>) -> Frp1<?>;
 
 	frpAdd(f : Frp2<double, double>) -> Frp1<double>;
 	frpSub(f : Frp2<double, double>) -> Frp1<double>;
@@ -19,19 +34,15 @@ export {
 	frpNegi(f : Frp1<int>) -> Frp1<int>;
 
 
-	// fgreater(b1 : Transform<double>, b2 : Transform<double>) -> Transform<bool>;
-	// fless(b1 : Transform<double>, b2 : Transform<double>) -> Transform<bool>;
-
-	// fgreateri(b1 : Transform<int>, b2 : Transform<int>) -> Transform<bool>;
-	// flessi(b1 : Transform<int>, b2 : Transform<int>) -> Transform<bool>;
-
 /*
+	fgreater(b1 : Transform<double>, b2 : Transform<double>) -> Transform<bool>;
+	fless(b1 : Transform<double>, b2 : Transform<double>) -> Transform<bool>;
+
+	fgreateri(b1 : Transform<int>, b2 : Transform<int>) -> Transform<bool>;
+	flessi(b1 : Transform<int>, b2 : Transform<int>) -> Transform<bool>;
+
 	fmax(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?>; // For bools, this is OR
 	fmin(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?>; // For bools, this is AND
-	fmax3(b1 : Transform<?>, b2 : Transform<?>, b3 : Transform<?>) -> Transform<?>; // For bools, this is OR
-	fmin3(b1 : Transform<?>, b2 : Transform<?>, b3 : Transform<?>) -> Transform<?>; // For bools, this is AND
-	fmaxA(v : [Transform<?>], def : ?) -> Transform<?>;
-	fminA(v : [Transform<?>], def : ?) -> Transform<?>;
 
 	feq(b : Transform<?>, v : ?) -> Transform<bool>;
 	fneq(a : Transform<?>, v : ?) -> Transform<bool>;
@@ -43,28 +54,12 @@ export {
 	fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fabs(a : Transform<double>) -> Transform<double>;
 */
-
-
-	// Switch between two frps depending on a condition
-	frpIfDistinct1(condition : Frp1<bool>, then : Frp1<?>, else_ : Frp1<?>) -> Frp1<?>;
 }
 
-frpMerge2(f1 : Frp1<?>, f2 : Frp1<??>) -> Frp2<?, ??> {
-	s = fmake2(fget1(f1), fget1(f2));
-	u1 = fsubscribe1s(f1, \v -> {
-		fnext2First(s, v)
-	});
-	faddDisposer2(s, u1);
-	u2 = fsubscribe1s(f2, \v -> {
-		fnext2Second(s, v)
-	});
-	faddDisposer2(s, u2);
-	s;
-}
 
 frpMapDistinct1(f : Frp1<?>, fn : (?) -> ??) -> Frp1<??> {
 	s = fmake1(fn(fget1(f)));
-	us = fsubscribe1s(f, \v -> {
+	us = fsubscribes1(f, \v -> {
 		fnextDistinct1(s, fn(v));
 	});
 	faddDisposer1(s, us);
@@ -73,13 +68,62 @@ frpMapDistinct1(f : Frp1<?>, fn : (?) -> ??) -> Frp1<??> {
 
 
 frpMapDistinct2(f : Frp2<?, ??>, fn : (?, ??) -> ???) -> Frp1<???> {
-	s = fmake1(fn(fget2First(f), fget2Second(f)));
-	us = fsubscribe2s(f, \v, w -> {
+	s = fmake1(fn(fgetFirst2(f), fgetSecond2(f)));
+	us = fsubscribes2(f, \v, w -> {
 		fnextDistinct1(s, fn(v, w));
 	});
 	faddDisposer1(s, us);
 	s;
 }
+
+frpMerge2(f1 : Frp1<?>, f2 : Frp1<??>) -> Frp2<?, ??> {
+	s = fmake2(fget1(f1), fget1(f2));
+	fsubscribes1To2(f1, \v -> fnextFirst2(s, v), s);
+	fsubscribes1To2(f2, \v -> fnextSecond2(s, v), s);
+	s;
+}
+
+frpMergeDistinct2(f1 : Frp1<?>, f2 : Frp1<??>) -> Frp2<?, ??> {
+	s = fmake2(fget1(f1), fget1(f2));
+	fsubscribes1To2(f1, \v -> fnextDistinctFirst2(s, v), s);
+	fsubscribes1To2(f2, \v -> fnextDistinctSecond2(s, v), s);
+	s;
+}
+
+
+frpFirst(f : Frp2<?, ??>) -> Frp1<?> {
+	s = fmake1(fgetFirst2(f));
+	fsubscribes2To1(f, \v, w -> {
+		fnext1(s, v);
+	}, s);
+	s;
+}
+
+frpFirstDistinct(f : Frp2<?, ??>) -> Frp1<?> {
+	s = fmake1(fgetFirst2(f));
+	fsubscribes2To1(f, \v, w -> {
+		fnextDistinct1(s, v);
+	}, s);
+	s;
+}
+
+frpSecond(f : Frp2<?, ??>) -> Frp1<??> {
+	s = fmake1(fgetFirst2(f));
+	fsubscribes2To1(f, \v, w -> {
+		fnext1(s, w);
+	}, s);
+	s;
+}
+
+frpSecondDistinct(f : Frp2<?, ??>) -> Frp1<??> {
+	s = fmake1(fgetFirst2(f));
+	fsubscribes2To1(f, \v, w -> {
+		fnextDistinct1(s, w);
+	}, s);
+	s;
+}
+
+
 
 frpAdd(f : Frp2<double, double>) -> Frp1<double> {
 	frpMapDistinct2(f, \v, w -> v + w);
@@ -123,24 +167,65 @@ frpNegi(f : Frp1<int>) -> Frp1<int> {
 }
 
 
+frpIf1(condition : Frp1<bool>, then : Frp1<?>, else_ : Frp1<?>) -> Frp1<?> {
+	s = fmake1(if (fget1(condition)) fget1(then) else fget1(else_));
+	fsubscribes1To1(then, \v -> {
+		if (fget1(condition)) {
+			fnext1(s, v);
+		}
+	}, s);
+	fsubscribes1To1(else_, \v -> {
+		if (!fget1(condition)) {
+			fnext1(s, v);
+		} 
+	}, s);
+	fsubscribes1To1(condition, \c -> {
+		fnext1(s, if (c) fget1(then) else fget1(else_));
+	}, s);
+	s;
+}
+
+
 frpIfDistinct1(condition : Frp1<bool>, then : Frp1<?>, else_ : Frp1<?>) -> Frp1<?> {
 	s = fmake1(if (fget1(condition)) fget1(then) else fget1(else_));
-	u1 = fsubscribe1s(then, \v -> {
+	fsubscribes1To1(then, \v -> {
 		if (fget1(condition)) {
 			fnextDistinct1(s, v);
 		}
-	});
-	faddDisposer1(s, u1);
-	u2 = fsubscribe1s(else_, \v -> {
+	}, s);
+	fsubscribes1To1(else_, \v -> {
 		if (!fget1(condition)) {
 			fnextDistinct1(s, v);
 		} 
-	});
-	faddDisposer1(s, u2);
-
-	us = fsubscribe1s(condition, \c -> {
+	}, s);
+	fsubscribes1To1(condition, \c -> {
 		fnextDistinct1(s, if (c) fget1(then) else fget1(else_));
-	});
-	faddDisposer1(s, us);
+	}, s);
 	s;
+}
+
+
+/*
+frpIf2(condition : Frp1<bool>, thenElse : Frp2<?, ??>) -> Frp1<?> {
+	s = fmake1(if (fget1(condition)) fget1(then) else fget1(else_));
+}
+
+*/
+
+
+
+fsubscribes1To1(v : Frp1<?>, fn : (?) -> void, target : FrpValue1<??>) -> void {
+	u = fsubscribes1(v, fn);
+	faddDisposer1(target, u);
+}
+
+fsubscribes1To2(v : Frp1<?>, fn : (?) -> void, target : FrpValue2<??, ???>) -> void {
+	u = fsubscribes1(v, fn);
+	faddDisposer2(target, u);
+}
+
+
+fsubscribes2To1(v : Frp2<?, ??>, fn : (?, ??) -> void, target : FrpValue1<???>) -> void {
+	u = fsubscribes2(v, fn);
+	faddDisposer1(target, u);
 }
