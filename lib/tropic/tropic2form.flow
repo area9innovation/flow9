@@ -8,6 +8,7 @@ import fform/renderfform;
 import ui/scrollable;
 import text/bidi_text;
 import form/paragraph3;  // INF_METRICS
+import ds/frp_utils;
 
 export {
 	// Convert a tropic layout to a form
@@ -626,15 +627,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 							[]
 						} else
-							[fconnect(allocation.first, ex1)],
+							[rsubscribef2(allocation, \v, __ -> nextDistinct(ex1, v))],
 						if (ba2.xConstant) {
 							nextDistinct(ex2, fgetValue(ba2.metrics.width));
 
 							[]
 						} else
-							[fconnect(allocation.second, ex2)],
+							[rsubscribef2(allocation, \__, v -> nextDistinct(ex2, v))],
 						[
-							fconnect(availYFill, yfill)
+							fconnect(availYFill, yfill),
+							\ -> rfree2(allocation)
 						]
 					])
 				}
@@ -740,17 +742,18 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 							[]
 						} else
-							[fconnect(allocation.first, ex1)],
+							[rsubscribef2(allocation, \v, __ -> nextDistinct(ex1, v))],
 						if (ba2.xConstant) {
 							nextDistinct(ex2, fgetValue(ba2.metrics.width));
 
 							[]
 						} else
-							[fconnect(allocation.second, ex2)],
+							[rsubscribef2(allocation, \__, v -> nextDistinct(ex2, v))],
 						[
 							fconnect(availYFill, yfill),
 							fconnect(baseline1, bsln1),
-							fconnect(baseline2, bsln2)
+							fconnect(baseline2, bsln2),
+							\ -> rfree2(allocation)
 						]
 					])
 				}
@@ -843,15 +846,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 							[]
 						} else
-							[fconnect(allocation.first, ey1)],
+							[rsubscribef2(allocation, \v, __ -> nextDistinct(ey1, v))],
 						if (ba2.yConstant) {
 							nextDistinct(ey2, fgetValue(ba2.metrics.height));
 
 							[]
 						} else
-							[fconnect(allocation.second, ey2)],
+							[rsubscribef2(allocation, \__, v -> nextDistinct(ey2, v))],
 						[
-							fconnect(availXFill, xfill)
+							fconnect(availXFill, xfill),
+							\ -> rfree2(allocation)
 						]
 					])
 				}
@@ -944,15 +948,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 							[]
 						} else
-							[fconnect(allocation.first, ey1)],
+							[rsubscribef2(allocation, \v, __ -> nextDistinct(ey1, v))],
 						if (ba2.yConstant) {
 							nextDistinct(ey2, fgetValue(ba2.metrics.height));
 
 							[]
 						} else
-							[fconnect(allocation.second, ey2)],
+							[rsubscribef2(allocation, \__, v -> nextDistinct(ey2, v))],
 						[
-							fconnect(availXFill, xfill)
+							fconnect(availXFill, xfill),
+							\ -> rfree2(allocation)
 						]
 					])
 				}
@@ -3307,6 +3312,34 @@ returnTAcc(bf : TAcc, fform : () -> FForm, metricsOnly : bool) -> TAcc {
 		TAcc(bf with form = fform())
 }
 
+rfusion(t : Transform<?>) -> Frp1<?> {
+	switch (t) {
+		ConstBehaviour(b): rconst1(b);
+		default: {
+			s = rmake1(fgetValue(t));
+			u1 = makeSubscribe2(t, \v -> {
+				rnext1(s, v);
+			})();
+			raddDisposer1(s, u1);
+			s;
+		}
+	}
+}
+
+rfusionTo2(t : Transform<?>, target : FrpValue2) -> Frp1<?> {
+	switch (t) {
+		ConstBehaviour(b): rconst1(b);
+		default: {
+			s = rmake1(fgetValue(t));
+			u1 = makeSubscribe2(t, \v -> {
+				rnext1(s, v);
+			})();
+			raddDisposer2(target, u1);
+			s;
+		}
+	}
+}
+
 
 // Given asks for a budget, as well as a minimum, allocate the budget we have fairly
 distributeAsks(
@@ -3319,43 +3352,80 @@ distributeAsks(
 	av : Transform<double>,
 	addFillers1 : Transform<bool>,
 	addFillers2 : Transform<bool>
-) -> Pair<Transform<double>, Transform<double>> {
-	fselect9(fillers1, fillers2, min1, min2, max1, max2, av, addFillers1, addFillers2,
-		\f1, f2, mn1, mn2, mx1, mx2, a, af1, af2 -> {
-			mn = mn1 + mn2;
+) -> Frp2<double, double> {
+	r = rmake2(0.0, 0.0);
 
-			if (mn >= a || f1 + f2 <= 0.0) { // If minimum is more than available or there are no fillers then use min values
+	rfillers1 = rfusionTo2(fillers1, r);
+	rfillers2 = rfusionTo2(fillers2, r);
+	rmin1 = rfusionTo2(min1, r);
+	rmin2 = rfusionTo2(min2, r);
+	rmax1 = rfusionTo2(max1, r);
+	rmax2 = rfusionTo2(max2, r);
+	rav = rfusionTo2(av, r);
+	raddFillers1 = rfusionTo2(addFillers1, r);
+	raddFillers2 = rfusionTo2(addFillers2, r);
+
+	fn = \ -> {
+		f1 = rget1(rfillers1);
+		f2 = rget1(rfillers2);
+		mn1 = rget1(rmin1);
+		mn2 = rget1(rmin2);
+		mx1 = rget1(rmax1);
+		mx2 = rget1(rmax2);
+		a = rget1(rav);
+		af1 = rget1(raddFillers1);
+		af2 = rget1(raddFillers2);
+
+		mn = mn1 + mn2;
+
+		rr = if (mn >= a || f1 + f2 <= 0.0) { // If minimum is more than available or there are no fillers then use min values
+			Pair(mn1, mn2);
+		} else if (f1 <= 0.0) {
+			if (f2 <= 0.0) {
 				Pair(mn1, mn2);
-			} else if (f1 <= 0.0) {
-				if (f2 <= 0.0) {
-					Pair(mn1, mn2);
-				} else {
-					Pair(mn1, max(min(a - mn1, mx2), mn2));
-				}
-			} else if (f2 <= 0.0) {
-				Pair(max(min(a - mn2, mx1), mn1), mn2);
 			} else {
-				mx = mx1 + mx2;
+				Pair(mn1, max(min(a - mn1, mx2), mn2));
+			}
+		} else if (f2 <= 0.0) {
+			Pair(max(min(a - mn2, mx1), mn1), mn2);
+		} else {
+			mx = mx1 + mx2;
 
-				if (mx <= a || mn >= mx) { // If maximum is less than available or max equals min then use max values
-					Pair(mx1, mx2);
+			if (mx <= a || mn >= mx) { // If maximum is less than available or max equals min then use max values
+				Pair(mx1, mx2);
+			} else {
+				ad = a - (if (af1) mn1 else 0.0) - (if (af2) mn2 else 0.0);
+				s1 = max(min(ad * f1 / (f1 + f2) + (if (af1) mn1 else 0.0), mx1), mn1);
+				s2 = a - s1;
+
+				if (s2 < mn2) {
+					Pair(max(a - mn2, mn1), mn2);
+				} else if (s2 > mx2) {
+					Pair(min(a - mx2, mx1), mx2);
 				} else {
-					ad = a - (if (af1) mn1 else 0.0) - (if (af2) mn2 else 0.0);
-					s1 = max(min(ad * f1 / (f1 + f2) + (if (af1) mn1 else 0.0), mx1), mn1);
-					s2 = a - s1;
-
-					if (s2 < mn2) {
-						Pair(max(a - mn2, mn1), mn2);
-					} else if (s2 > mx2) {
-						Pair(min(a - mx2, mx1), mx2);
-					} else {
-						Pair(s1, s2);
-					}
+					Pair(s1, s2);
 				}
 			}
-		}
-	)
-	|> (\f -> Pair(fFirstOfPair(f), fSecondOfPair(f)))
+		};
+
+		rnextFirst2(r, rr.first);
+		rnextSecond2(r, rr.second);
+	}
+
+
+	rsubscribe1To2(rfillers1, \__ -> fn(), r);
+	rsubscribe1To2(rfillers2, \__ -> fn(), r);
+	rsubscribe1To2(rmin1, \__ -> fn(), r);
+	rsubscribe1To2(rmin2, \__ -> fn(), r);
+	rsubscribe1To2(rmax1, \__ -> fn(), r);
+	rsubscribe1To2(rmax2, \__ -> fn(), r);
+	rsubscribe1To2(rav, \__ -> fn(), r);
+	rsubscribe1To2(raddFillers1, \__ -> fn(), r);
+	rsubscribe1To2(raddFillers2, \__ -> fn(), r);
+
+	fn();
+
+	r;
 }
 
 // TDynamicGroup tools
