@@ -123,6 +123,7 @@ class TextClip extends NativeWidgetClip {
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
 	private var contentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
+	private var contentGlyphsModified : String = '';
 	private var contentGlyphsDirection : String = '';
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
@@ -843,7 +844,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -1293,7 +1294,7 @@ class TextClip extends NativeWidgetClip {
 
 	private function getClipWidth() : Float {
 		updateTextMetrics();
-		return metrics != null ? (untyped Platform.isSafari && !isInput && !escapeHTML ? Math.ceil(metrics.width) : metrics.width) : 0;
+		return metrics != null ? Math.ceil(metrics.width) : 0;
 	}
 
 	private function getClipHeight() : Float {
@@ -1398,9 +1399,11 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
-				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
-				metrics = TextMetrics.measureText(contentGlyphsModified, style);
-				if (RenderSupport.RendererType == "html") {
+				this.contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
+				metrics = TextMetrics.measureText(this.contentGlyphsModified, style);
+
+				if (RenderSupport.RendererType == "html" &&
+					(this.contentGlyphsModified != this.contentGlyphs.modified || this.contentGlyphsModified != StringTools.urlEncode(this.contentGlyphs.modified))) {
 					measureHTMLWidth();
 				}
 			} else {
@@ -1438,21 +1441,18 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		if (wordWrap) {
-			nativeWidget.style.width = '${style.wordWrapWidth}px';
+			nativeWidget.style.width = '${Math.ceil(style.wordWrapWidth)}px';
 		} else {
 			nativeWidget.style.width = 'max-content';
 		}
 
-		Browser.document.body.appendChild(nativeWidget);
+		if (nativeWidget.parentNode == null) {
+			Browser.document.body.appendChild(nativeWidget);
+		}
+
 		textNodeMetrics = getTextNodeMetrics(nativeWidget);
 
-		if (parentNode != null) {
-			if (nextSibling == null || nextSibling.parentNode != parentNode) {
-				parentNode.appendChild(nativeWidget);
-			} else {
-				parentNode.insertBefore(nativeWidget, nextSibling);
-			}
-		} else {
+		if (nativeWidget.parentNode == Browser.document.body) {
 			Browser.document.body.removeChild(nativeWidget);
 		}
 
@@ -1470,10 +1470,6 @@ class TextClip extends NativeWidgetClip {
 			if (currentLines > 0 && textNodeLines != currentLines) {
 				metrics.height = metrics.height * textNodeLines / currentLines;
 			}
-		}
-
-		if (RenderSupport.RendererType != "html" && !isInput) {
-			this.deleteNativeWidget();
 		}
 	}
 

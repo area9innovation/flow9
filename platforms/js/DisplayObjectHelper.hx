@@ -346,7 +346,9 @@ class DisplayObjectHelper {
 			}
 		} else {
 			for (child in getClipChildren(clip)) {
-				invalidateParentClip(child, parentClip);
+				if (untyped child.parentClip != parentClip) {
+					invalidateParentClip(child, parentClip);
+				}
 			}
 		}
 	}
@@ -556,6 +558,8 @@ class DisplayObjectHelper {
 
 		scrollRect.beginFill(0xFFFFFF);
 		scrollRect.drawRect(0.0, 0.0, width, height);
+
+		untyped clip.scrollRectChanged = true;
 	}
 
 	public static inline function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
@@ -604,6 +608,7 @@ class DisplayObjectHelper {
 			clip.scrollRect = null;
 			clip.mask = null;
 			untyped clip.maskContainer = null;
+			untyped clip.scrollRectChanged = true;
 
 			invalidateTransform(clip, 'removeScrollRect');
 		}
@@ -890,8 +895,6 @@ class DisplayObjectHelper {
 
 						if (untyped clip.styleChanged) {
 							untyped clip.updateNativeWidgetStyle();
-						} else if (untyped clip.updateBaselineWidget != null) {
-							untyped clip.updateBaselineWidget();
 						}
 
 						updateNativeWidgetFilters(clip);
@@ -1280,6 +1283,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function scrollNativeWidget(clip : DisplayObject, x : Float, y : Float) : Void {
+		if (untyped !clip.scrollRectChanged) {
+			return;
+		}
+
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (nativeWidget.firstChild != null) {
@@ -1362,6 +1369,8 @@ class DisplayObjectHelper {
 			}
 			untyped clip.scrollFn = scrollFn;
 		}
+
+		untyped clip.scrollRectChanged = false;
 	}
 
 	public static function updateNativeWidgetMask(clip : DisplayObject, ?attachScrollFn : Bool = false) {
@@ -1806,6 +1815,8 @@ class DisplayObjectHelper {
 	}
 
 	public static function applyScrollFn(clip : DisplayObject) : Void {
+		return;
+
 		if (untyped clip.visible && clip.scrollFn != null) {
 			untyped clip.scrollFn();
 		} else if (clip.parent != null && clip.mask == null) {
@@ -1814,6 +1825,8 @@ class DisplayObjectHelper {
 	}
 
 	public static function applyScrollFnChildren(clip : DisplayObject) : Void {
+		return;
+
 		if (clip.visible) {
 			if (untyped clip.scrollFn != null) {
 				untyped clip.scrollFn();
