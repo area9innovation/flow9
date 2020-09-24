@@ -660,18 +660,10 @@ class PixiWorkarounds {
 				const lineWidths = new Array(lines.length);
 				let maxLineWidth = 0;
 
-				const spaceWidth = Platform.isSafari ? context.measureText(' ').width : 0;
-
 				for (let i = 0; i < lines.length; i++)
 				{
 					let lineWidth;
-					if (Platform.isSafari) {
-						let spacesCount = 0;
-						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
-						lineWidth += spacesCount * spaceWidth;
-					} else {
-						lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					}
+					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
 					lineWidth += (lines[i].length - 1) * style.letterSpacing;
 
 					lineWidths[i] = lineWidth;
