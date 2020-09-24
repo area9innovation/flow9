@@ -6,16 +6,23 @@ export {
 	rmakea(elements : [?]) -> FrpArray<?>;
 	rgeta(v : FrpArray<?>) -> [?];
 
-	rsubscribea(f : FrpArray<?>, fn : (HeckelOperationSimple<?>) -> void) -> () -> void;
+	rsubscribea(f : FrpArray<?>, fn : ([?]) -> void) -> () -> void;
 	raddDisposera(f : FrpArray<?>, disposer : () -> void) -> void;
 
 	rinsertaf(v : FrpArray<?>, index : int, value : ?) -> void;
 	rdeleteaf(v : FrpArray<?>, index : int) -> void;
 
 	rnextaf(v : FrpArray<?>, values : [?]) -> void;
-
 	// Update the value of a given element
 	rupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void;
+
+	riter(v : FrpArray<?>, fn : (?) -> void) -> () -> void;
+	rmap(v : FrpArray<?>, fn : (?) -> ??) -> FrpArray<??>;
+	rfold(v : FrpArray<?>, acc : ??, fn : (??, ?) -> ??) -> Frp1<??>;
+	rfilter(v : FrpArray<?>, fn : (?) -> bool) -> FrpArray<?>;
+	rconcat(v1 : FrpArray<?>, v2 : FrpArray<?>) -> FrpArray<?>;
+	rsubrange(v : FrpArray<?>, index : Frp1<int>, len : Frp1<int>) -> FrpArray<?>;
+	rsortCustom(v : FrpArray<?>, productFn : (?) -> ??, ascending : bool) -> FrpArray<?>;
 }
 
 FrpArray(
@@ -34,11 +41,15 @@ rlengtha(v : FrpArray<?>) -> int {
 	length(^(v.values));
 }
 
-rsubscribea(f : FrpArray<?>, fn : (HeckelOperationSimple<?>) -> void) -> () -> void {
+rsubscribeHeckel(f : FrpArray<?>, fn : (HeckelOperationSimple<?>) -> void) -> () -> void {
 	n = pushDList(f.subscribers, fn);
 	\ -> {
 		removeDList(f.subscribers, n);
 	}
+}
+
+rsubscribea(f : FrpArray<?>, fn : ([?]) -> void) -> () -> void {
+	rsubscribeHeckel(f, \__ -> fn(rgeta(f)));
 }
 
 raddDisposera(f : FrpArray<?>, disposer : () -> void) -> void {
@@ -87,16 +98,189 @@ rupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void {
 	}
 }
 
+riter(v : FrpArray<?>, fn : (?) -> void) -> () -> void {
+	iter(rgeta(v), fn);
+
+	rsubscribeHeckel(v, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				fn(value);
+			}
+			HeckelDelete(i): {}
+		}
+	});
+}
+
 rmap(v : FrpArray<?>, fn : (?) -> ??) -> FrpArray<??> {
 	r = rmakea(map(rgeta(v), fn));
 
-	u = rsubscribea(v, \vv -> {
+	u = rsubscribeHeckel(v, \vv -> {
 		switch (vv : HeckelOperationSimple<?>) {
 			HeckelInsert(i, value): {
 				rinsertaf(r, i, fn(value));
 			}
 			HeckelDelete(i): {
 				rdeleteaf(r, i);
+			}
+		}
+	});
+
+	raddDisposera(r, u);
+
+	r;
+}
+
+rfold(v : FrpArray<?>, acc : ??, fn : (??, ?) -> ??) -> Frp1<??> {
+	r = rmake1(fold(rgeta(v), acc, fn));
+
+	u = rsubscribeHeckel(v, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				rnext1(r, fold(rgeta(v), acc, fn)); // TODO:
+			}
+			HeckelDelete(i): {
+				rnext1(r, fold(rgeta(v), acc, fn)); // TODO:
+			}
+		}
+	});
+
+	raddDisposer1(r, u);
+
+	r;
+}
+
+rfilter(v : FrpArray<?>, fn : (?) -> bool) -> FrpArray<?> {
+	result = ref [];
+	r = rmakea(filtermapi(rgeta(v), \i, value -> {
+		if (fn(value)) {
+			result := insertArray(^result, i, true);
+			Some(value);
+		} else {
+			result := insertArray(^result, i, false);
+			None();
+		}
+	}));
+
+	u = rsubscribeHeckel(v, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				if (fn(value)) {
+					result := insertArray(^result, i, true);
+					rinsertaf(r, countA(subrange(^result , 0, i), idfn), value);
+				} else {
+					result := insertArray(^result, i, false);
+				}
+			}
+			HeckelDelete(i): {
+				if (^result[i]) {
+					result := removeIndex(^result, i);
+					rdeleteaf(r, countA(subrange(^result, 0, i), idfn));
+				} else {
+					result := removeIndex(^result, i);
+				}
+			}
+		}
+	});
+
+	raddDisposera(r, u);
+
+	r;
+}
+
+rconcat(v1 : FrpArray<?>, v2 : FrpArray<?>) -> FrpArray<?> {
+	r = rmakea(concat(rgeta(v1), rgeta(v2)));
+
+	u1 = rsubscribeHeckel(v1, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				rinsertaf(r, i, value);
+			}
+			HeckelDelete(i): {
+				rdeleteaf(r, i);
+			}
+		}
+	});
+
+	u2 = rsubscribeHeckel(v2, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				rinsertaf(r, i + rlengtha(v1), value);
+			}
+			HeckelDelete(i): {
+				rdeleteaf(r, i + rlengtha(v1));
+			}
+		}
+	});
+
+	raddDisposera(r, u1);
+	raddDisposera(r, u2);
+
+	r;
+}
+
+rsubrange(v : FrpArray<?>, index : Frp1<int>, len : Frp1<int>) -> FrpArray<?> {
+	r = rmakea(subrange(rgeta(v), rget1(index), rget1(len)));
+
+	u1 = rsubscribeHeckel(v, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				ind = rget1(index);
+				l = rget1(len);
+
+				if (i < ind + l) {
+					rdeleteaf(v, l - 1);
+
+					if (i >= ind) {
+						rinsertaf(v, i - ind, value);
+					} else {
+						av = rgeta(v);
+						if (length(av) > ind) {
+							rinsertaf(v, 0, rgeta(v)[ind]);
+						}
+					}
+				}
+			}
+			HeckelDelete(i): {
+				ind = rget1(index);
+				l = rget1(len);
+
+				if (i < ind + l) {
+					rdeleteaf(v, max(i - ind, 0));
+
+					av = rgeta(v);
+					if (length(av) > ind + l - 1) {
+						rinsertaf(v, l - 1, rgeta(v)[ind + l - 1]);
+					}
+				}
+			}
+		}
+	});
+
+	u2 = rsubscribe1(index, \ind -> {
+		rnextaf(r, subrange(rgeta(v), ind, rget1(len))); // TODO:
+	});
+
+	u3 = rsubscribe1(len, \l -> {
+		rnextaf(r, subrange(rgeta(v), rget1(index), l)); // TODO:
+	});
+
+	raddDisposera(r, u1);
+	raddDisposera(r, u2);
+	raddDisposera(r, u3);
+
+	r;
+}
+
+rsortCustom(v : FrpArray<?>, productFn : (?) -> ??, ascending : bool) -> FrpArray<?> {
+	r = rmakea(sortCustom(rgeta(v), productFn, ascending));
+
+	u = rsubscribeHeckel(v, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				rnextaf(r, sortCustom(rgeta(v), productFn, ascending)); // TODO:
+			}
+			HeckelDelete(i): {
+				rnextaf(r, sortCustom(rgeta(v), productFn, ascending)); // TODO:
 			}
 		}
 	});
