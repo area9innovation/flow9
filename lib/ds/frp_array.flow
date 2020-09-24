@@ -1,67 +1,107 @@
 import ds/frp;
-import runtime;
+import ds/heckel_diff;
+import ds/dynamic_array;
 
 export {
-	fmakea(elements : [?]) -> FrpArray<?>;
-	fgeta(v : FrpArray<?>) -> [?];
+	rmakea(elements : [?]) -> FrpArray<?>;
+	rgeta(v : FrpArray<?>) -> [?];
 
-	fnextaf(v : FrpArray<?>, values : [?]) -> void;
+	rsubscribea(f : FrpArray<?>, fn : (HeckelOperationSimple<?>) -> void) -> () -> void;
+	raddDisposera(f : FrpArray<?>, disposer : () -> void) -> void;
+
+	rinsertaf(v : FrpArray<?>, index : int, value : ?) -> void;
+	rdeleteaf(v : FrpArray<?>, index : int) -> void;
+
+	rnextaf(v : FrpArray<?>, values : [?]) -> void;
 
 	// Update the value of a given element
-	fupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void;
+	rupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void;
 }
 
 FrpArray(
-	values : ref [ref ?], subscribers : DList<(int, ?) -> void>, disposers : ref List<() -> void>
+	values : ref [ref ?], subscribers : DList<(HeckelOperationSimple<?>) -> void>, disposers : ref List<() -> void>
 );
 
-fmakea(elements : [?]) -> FrpArray<?> {
+rmakea(elements : [?]) -> FrpArray<?> {
 	FrpArray(ref map(elements, \a -> ref a), makeDList(), ref makeList());
 }
 
-fgeta(v : FrpArray<?>) -> [?] {
+rgeta(v : FrpArray<?>) -> [?] {
 	map(^(v.values), \r -> ^r);
 }
 
-fnextaf(v : FrpArray<?>, values : [?]) -> void {
-	nv = map(values, \vv -> ref vv);
-	v.values := nv;
-	fori(0, length(values) - 1, \i -> {
-		applyARefDList(v.subscribers, i, nv)
+rlengtha(v : FrpArray<?>) -> int {
+	length(^(v.values));
+}
+
+rsubscribea(f : FrpArray<?>, fn : (HeckelOperationSimple<?>) -> void) -> () -> void {
+	n = pushDList(f.subscribers, fn);
+	\ -> {
+		removeDList(f.subscribers, n);
+	}
+}
+
+raddDisposera(f : FrpArray<?>, disposer : () -> void) -> void {
+	f.disposers := Cons(disposer, ^(f.disposers));
+}
+
+rinsertaf(v : FrpArray<?>, index : int, value : ?) -> void {
+	ii = min(rlengtha(v), max(index, 0));
+
+	v.values := insertArray(^(v.values), ii, ref value);
+
+	iterDList(v.subscribers, \fn -> fn(HeckelInsert(ii, value)));
+}
+
+rdeleteaf(v : FrpArray<?>, index : int) -> void {
+	if (existsIndex(^(v.values), index)) {
+		v.values := removeIndex(^(v.values), index);
+
+		iterDList(v.subscribers, \fn -> fn(HeckelDelete(index)));
+	}
+}
+
+rnextaf(v : FrpArray<?>, values : [?]) -> void {
+	iter(heckelDiff(map(^(v.values), \vv -> ^vv), values), \op -> {
+		switch (op : HeckelOperation<?>) {
+			HeckelInsert(i, value): {
+				rinsertaf(v, i, value);
+			}
+			HeckelMove(f, t): {
+				value = rgeta(v)[f];
+				rdeleteaf(v, f);
+				rinsertaf(v, t, value);
+			}
+			HeckelDelete(i): {
+				rdeleteaf(v, i);
+			}
+		}
 	});
 }
 
-fupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void {
+rupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void {
 	vals = ^(v.values);
 	if (index < length(vals)) {
-		vals[index] := value;
-		applyARefDList(v.subscribers, index, vals)
+		rdeleteaf(v, index);
+		rinsertaf(v, index, value);
 	}
 }
 
+rmap(v : FrpArray<?>, fn : (?) -> ??) -> FrpArray<??> {
+	r = rmakea(map(rgeta(v), fn));
 
-applyARefDList(list : DList<(int, ?) -> void>, i : int, v : [ref ?]) -> void {
-	applyARefDNode(list.first, i, v);
-}
-
-applyARefDNode(node : DNode<(int, ?) -> void>, i : int, v : [ref ?]) -> void {
-	switch (node : DNode) {
-		DEnd(): {}
-		DLink(fn, before, after, attached): {
-			// node could be removed from the list in previous call, do nothing in this case.
-			if (attached) {
-				// Notice that we deference the value by purpose in each iteration, because a previous
-				// iteration might have changed the value when used in behaviours.
-				fn(i, ^(v[i]));
-				// in case if fn(^r) changed the list by removing inself, we have to use saved 'after' node
-				nextNode : DNode<(int, ?) -> void> =
-					if (node.after == DEnd() && node.before == DEnd() && after != DEnd()) {
-						after;
-					} else {
-						node.after;
-					}
-				applyARefDNode(nextNode, i, v)
+	u = rsubscribea(v, \vv -> {
+		switch (vv : HeckelOperationSimple<?>) {
+			HeckelInsert(i, value): {
+				rinsertaf(r, i, fn(value));
+			}
+			HeckelDelete(i): {
+				rdeleteaf(r, i);
 			}
 		}
-	}
+	});
+
+	raddDisposera(r, u);
+
+	r;
 }
