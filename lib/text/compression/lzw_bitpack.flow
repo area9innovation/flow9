@@ -4,6 +4,7 @@ import ds/inttree;
 import text/blueprint;
 import math/bits;
 import loop;
+import text/compression/types;
 
 export {
 	/*
@@ -22,8 +23,8 @@ export {
   21542220|  5694|  4271|    350676|  1%|V
   23935800|  5900|  5079|    374752|  1%|V
   	*/
-  	compressLzwBp(s : string) -> string;
-	decompressLzwBp(data : string) -> string;
+  	compressLzwBp(s : string) -> CompressedData;
+	decompressLzwBp(data : CompressedLzwbp) -> string;
 }
 
 EncPhrase(children : ref IntTree<int>);
@@ -32,7 +33,7 @@ DecPhrase(parent : int, suffix : int /* char */);
 LZWEncodingAcc(list : List<string>, phraseIdx : int, phraseWidth : int, remainder : int, remainderLen : int);
 LZWDecodingAcc(list : List<string>, phraseIdx : int, phraseWidth : int, remainder : int, remainderLen : int, phrase : string, skip : bool);
 
-compressLzwBp(s : string) -> string {
+compressLzwBp(s : string) -> CompressedData {
 	dict : ref IntTree<EncPhrase> = makeIntTree();
 	makePhrase = \-> EncPhrase(makeIntTree());
 	code = ref 65535;
@@ -52,7 +53,7 @@ compressLzwBp(s : string) -> string {
 			LZWEncodingAcc(acc.list, phIdx, newWidth, next, nextLen)
 	};
 
-	out = stringFoldi(s, LZWEncodingAcc(makeList1("LZWBP:"), getCharCodeAt(s, 0), 16, 0, 0), \i, acc, c -> if (i == 0) acc else {
+	out = stringFoldi(s, LZWEncodingAcc(makeList(), getCharCodeAt(s, 0), 16, 0, 0), \i, acc, c -> if (i == 0) acc else {
 		phrase = switch (lookupIntTree(dict, acc.phraseIdx)) {
 			Some(ph): ph;
 			None(): {
@@ -78,59 +79,54 @@ compressLzwBp(s : string) -> string {
 		else tmp.list
 	);
 
-	if (strlen(compressed) < strlen(s)) compressed else s;
+	if (strlen(compressed) < strlen(s)) CompressedLzwbp(compressed) else CompressedNone(s);
 }
 
-decompressLzwBp(s : string) -> string {
-	if (startsWith(s, "LZWBP:")) {
-		dict : ref IntTree<DecPhrase> = makeIntTree();
-		code = ref 65536;
+decompressLzwBp(data : CompressedLzwbp) -> string {
+	s = data.s;
+	dict : ref IntTree<DecPhrase> = makeIntTree();
+	code = ref 65536;
 
-		getFullPhrase = \idx -> {
-			acc = updateWhile(Pair(idx, ""), \p -> {
-				phraseM = lookupIntTree(dict, p.first);
-				switch (phraseM) {
-					Some(phrase): Some(Pair(
-						phrase.parent,
-						fromCharCode(phrase.suffix) + p.second
-					));
-					None(): None();
-				}
-			});
-			fromCharCode(acc.first) + acc.second;
-		};
-
-		out = stringFoldi(s, LZWDecodingAcc(makeList(), 0, 16, 0, 0, "", true), \i, acc, c -> {
-			if (i < 6) {
-				acc
-			} else if (acc.remainderLen + 16 >= acc.phraseWidth) {
-				remainderLen = 16 + acc.remainderLen - acc.phraseWidth;
-				remainder = bitUshr(c, 16 - remainderLen);
-				phraseIdx = bitAnd(bitOr(acc.remainder, bitShl(c, acc.remainderLen)), bitUshr(-1, 32-acc.phraseWidth));
-				phrase = if (phraseIdx < ^code)
-					getFullPhrase(phraseIdx)
-				else
-					acc.phrase + strsubsmart(acc.phrase, 0, 1);
-				if (!acc.skip) {
-					dict := addOrUpdateIntTree(dict, ^code, DecPhrase(acc.phraseIdx, getCharCodeAt(phrase, 0)));
-					code := ^code + 1;
-				};
-				LZWDecodingAcc(
-					if (acc.skip) acc.list else Cons(acc.phrase, acc.list),
-					phraseIdx,
-					acc.phraseWidth + if (acc.phraseWidth == 32) 0 else bitUshr(^code, acc.phraseWidth),
-					remainder,
-					remainderLen,
-					phrase,
-					false
-				)
-			} else {
-				LZWDecodingAcc(acc with remainder=bitOr(acc.remainder, bitShl(c, acc.remainderLen)), remainderLen=16+acc.remainderLen)
+	getFullPhrase = \idx -> {
+		acc = updateWhile(Pair(idx, ""), \p -> {
+			phraseM = lookupIntTree(dict, p.first);
+			switch (phraseM) {
+				Some(phrase): Some(Pair(
+					phrase.parent,
+					fromCharCode(phrase.suffix) + p.second
+				));
+				None(): None();
 			}
 		});
+		fromCharCode(acc.first) + acc.second;
+	};
 
-		list2string(Cons(out.phrase, out.list))
-	} else {
-		s
-	}
+	out = stringFoldi(s, LZWDecodingAcc(makeList(), 0, 16, 0, 0, "", true), \i, acc, c -> {
+		if (acc.remainderLen + 16 >= acc.phraseWidth) {
+			remainderLen = 16 + acc.remainderLen - acc.phraseWidth;
+			remainder = bitUshr(c, 16 - remainderLen);
+			phraseIdx = bitAnd(bitOr(acc.remainder, bitShl(c, acc.remainderLen)), bitUshr(-1, 32-acc.phraseWidth));
+			phrase = if (phraseIdx < ^code)
+				getFullPhrase(phraseIdx)
+			else
+				acc.phrase + strsubsmart(acc.phrase, 0, 1);
+			if (!acc.skip) {
+				dict := addOrUpdateIntTree(dict, ^code, DecPhrase(acc.phraseIdx, getCharCodeAt(phrase, 0)));
+				code := ^code + 1;
+			};
+			LZWDecodingAcc(
+				if (acc.skip) acc.list else Cons(acc.phrase, acc.list),
+				phraseIdx,
+				acc.phraseWidth + if (acc.phraseWidth == 32) 0 else bitUshr(^code, acc.phraseWidth),
+				remainder,
+				remainderLen,
+				phrase,
+				false
+			)
+		} else {
+			LZWDecodingAcc(acc with remainder=bitOr(acc.remainder, bitShl(c, acc.remainderLen)), remainderLen=16+acc.remainderLen)
+		}
+	});
+
+	list2string(Cons(out.phrase, out.list))
 }
