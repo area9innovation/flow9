@@ -1751,6 +1751,7 @@ public class Native extends NativeHost {
 		return null;
 	}
 
+	// Memory statistics:
 	public final double totalMemory() {
 		return (double)(Runtime.getRuntime().totalMemory());
 	}
@@ -1759,5 +1760,38 @@ public class Native extends NativeHost {
 	}
 	public final double maxMemory() {
 		return (double)(Runtime.getRuntime().maxMemory());
+	}
+
+	// Vector natives:
+	public final Object makeVector(Integer capacity) {
+		return new ArrayList(capacity);
+	}
+	public final Object getVector(Object v, Integer i) {
+		ArrayList vector = (ArrayList)v;
+		return vector.get(i.intValue());
+	}
+	public final Object setVector(Object v, Integer i, Object x) {
+		ArrayList vector = (ArrayList)v;
+		vector.set(i.intValue(), x);
+		return null;
+	}
+	public final Object addVector(Object v, Object x) {
+		ArrayList vector = (ArrayList)v;
+		vector.add(x);
+		return null;
+	}
+	public final Object removeVector(Object v, Integer i) {
+		ArrayList vector = (ArrayList)v;
+		vector.remove(i.intValue());
+		return null;
+	}
+	public final int sizeVector(Object v) {
+		ArrayList vector = (ArrayList)v;
+		return vector.size();
+	}
+	public final Object clearVector(Object v) {
+		ArrayList vector = (ArrayList)v;
+		vector.clear();
+		return null;
 	}
 }
