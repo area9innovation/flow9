@@ -2,6 +2,7 @@ import string;
 import ds/list;
 import ds/inttree;
 import text/blueprint;
+import text/compression/types;
 
 export {
 /*
@@ -21,11 +22,15 @@ for JS:
   21542220|  4404|   180|    637988|  2%|V
   23935800|  4862|   189|    680788|  2%|V
 */
-  	compressLzw(s : string) -> string;
-	decompressLzw(data : string) -> string;
+  	compressLzw(s : string) -> CompressedData;
+	decompressLzw(data : CompressedLzw) -> string;
 }
 
 compressLzwRec(s : string, sLength : int, i : int, dict : ref IntTree<ref IntTree<int>>, code : ref int, phraseIdx : ref int, out : ref List<string>) -> void {
+	intAsString : (int) -> string = \i0 -> {
+		fromCharCode(i0) + fromCharCode(bitUshr(i0, 16));
+	};
+
 	if (i < sLength) {
 		phrase = switch (lookupIntTree(dict, ^phraseIdx)) {
 			Some(ph): ph;
@@ -55,17 +60,26 @@ compressLzwRec(s : string, sLength : int, i : int, dict : ref IntTree<ref IntTre
 	}
 }
 
-compressLzw(s : string) -> string {
-	dict : ref IntTree<ref IntTree<int>> = makeIntTree();
-	code : ref int = ref 65535;
+compressLzw(s : string) -> CompressedData {
+	if (s == "") {
+		CompressedNone(s)
+	} else {
+		dict : ref IntTree<ref IntTree<int>> = makeIntTree();
+		code : ref int = ref 65535;
 
-	out = ref makeList1("LZW:");
-	phraseIdx = ref getCharCodeAt(s, 0);
-	sLength = strlen(s);
+		out = ref makeList();
+		phraseIdx = ref getCharCodeAt(s, 0);
+		sLength = strlen(s);
 
-	compressLzwRec(s, sLength, 1, dict, code, phraseIdx, out);
-	compressed = list2string(^out);
-	if (strlen(compressed) < sLength) compressed else s;
+		compressLzwRec(s, sLength, 1, dict, code, phraseIdx, out);
+		compressed = list2string(^out);
+		if (strlen(compressed) < sLength) {
+			compressedLen = strlen(compressed);
+			CompressedLzw(compressed)
+		 } else {
+			CompressedNone(s)
+		 };
+	}
 }
 
 decompressLzwRec(i : int, limit : int, code : ref int, currChar : ref int, oldPhrase : ref string, data : (int) -> int, dict : ref Tree<int, string>, out : ref List<string>) -> void {
@@ -91,26 +105,19 @@ decompressLzwRec(i : int, limit : int, code : ref int, currChar : ref int, oldPh
 }
 
 // Decompress an LZW-encoded string
-decompressLzw(s : string) -> string {
-	if (startsWith(s, "LZW:")) {
-		data = \i : int -> {
-			getCharCodeAt(s, 2*i + 4) + bitShl(getCharCodeAt(s, 2*i + 1 + 4), 16);
-		}
-
-		dict : ref Tree<int, string> = ref makeTree();
-		currChar : ref int = ref data(0);
-		out : ref List<string> = ref makeList1(getCharAt(s, 4));
-		oldPhrase : ref string = ref fromCharCode(^currChar);
-		code = ref 65536;
-
-		decompressLzwRec(1, round(i2d(strlen(s))/2.0) - 3, code, currChar, oldPhrase, data, dict, out);
-
-		list2string(^out)
-	} else {
-		s
+decompressLzw(data : CompressedLzw) -> string {
+	s = data.s;
+	getData = \i : int -> {
+		getCharCodeAt(s, 2*i) + bitShl(getCharCodeAt(s, 2*i + 1), 16);
 	}
-}
 
-intAsString(i : int) -> string {
-	fromCharCode(i) + fromCharCode(bitUshr(i, 16));
+	dict : ref Tree<int, string> = ref makeTree();
+	currChar : ref int = ref getData(0);
+	out : ref List<string> = ref makeList1(getCharAt(s, 0));
+	oldPhrase : ref string = ref fromCharCode(^currChar);
+	code = ref 65536;
+
+	decompressLzwRec(1, round(i2d(strlen(s))/2.0 - 1.0), code, currChar, oldPhrase, getData, dict, out);
+
+	list2string(^out)
 }
