@@ -1,0 +1,308 @@
+import ds/dlist;
+
+/*
+The third iteration of Functional Reactive Programming (FRP).
+
+Compared to Behaviour and Transforms:
+- Has lifetime tracking (but does not use fuse) so no leaks (remember to call rfree)
+- Has principled way of doing fselect2 - there is a pair which can be atomically updated
+- Has principled way of doing fsubselect - use rif instead
+- Has both distinct and forced versions of all to control when to compare
+
+We use this naming convention:
+- "r" for reactive as a prefix.
+- "f" suffix for force. This is the opposite of distinct. Distinct is the default.
+- "1" suffix for Frp1 inputs, "2" for Frp2 inputs
+- "i" for integer functions in frp_transforms
+*/
+
+export {
+	// This is the same as Behavior<?>, just with disposers for cleanup
+	Frp1<?> ::= FrpConst1<?>, FrpValue1<?>;
+
+	// This is roughly the same as Behavior<Pair<?, ??>>, except we can update atomically or separately
+	Frp2<?, ??> ::= FrpConst2<?, ??>, FrpValue2<?, ??>;
+
+	// A constant value
+	rconst1(v : ?) -> FrpConst1<?>;
+	// A dynamic value
+	rmake1(v : ?) -> FrpValue1<?>;
+
+	// Update the value (if distinct)
+	rnext1(f : FrpValue1<?>, v : ?) -> void;
+
+	// Force the value to be propagated
+	rnextf1(f : FrpValue1<?>, v : ?) -> void;
+
+	// What is the current value?
+	rget1(f : Frp1<?>) -> ?;
+
+	// Be notified when the value changes. Does not call immediately
+	rsubscribe1(f : Frp1<?>, fn : (?) -> void) -> () -> void;
+	// Same, but also calls immediately
+	rsubscribef1(f : Frp1<?>, fn : (?) -> void) -> () -> void;
+
+	// Add a disposer that will be cleaned up when we free
+	raddDisposer1(v : FrpValue1<?>, disposer : () -> void) -> void;
+
+	// This frees the behaviour and calls the disposers inside it. Use this to clean up
+	rfree1(v : Frp1<?>) -> void;
+
+	// The same family, but when you have a pair of values that can update together (or separately)
+	rconst2(v : ?, w : ??) -> FrpConst2<?, ??>;
+	rmake2(v : ?, w : ??) -> FrpValue2<?, ??>;
+
+	// This is the key: We allow atomic update of both values with only one update propagated
+	rnext2(f : FrpValue2<?, ??>, v : ?, w : ??) -> void;
+	rnextFirst2(f : FrpValue2<?, ??>, v : ?) -> void;
+	rnextSecond2(f : FrpValue2<?, ??>, w : ??) -> void;
+
+	rnextf2(f : FrpValue2<?, ??>, v : ?, w : ??) -> void;
+	rnextFirstf2(f : FrpValue2<?, ??>, v : ?) -> void;
+	rnextSecondf2(f : FrpValue2<?, ??>, w : ??) -> void;
+
+	rget2(f : Frp2<?, ??>) -> Pair<?, ??>;
+	rgetFirst2(f : Frp2<?, ??>) -> ?;
+	rgetSecond2(f : Frp2<?, ??>) -> ??;
+
+	// Does not call immediately
+	rsubscribe2(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void;
+	// Calls immediately
+	rsubscribef2(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void;
+
+	// If you have some disposer that should be attached to this value
+	raddDisposer2(f : FrpValue2<?, ??>, disposer : () -> void) -> void;
+	// Free this Frp, and call all disposers in it
+	rfree2(v : Frp2<?, ??>) -> void;
+}
+
+FrpConst1(value : ?);
+FrpValue1(value : ref ?, subscribers : DList<(?) -> void>, disposers : ref List<() -> void>);
+
+FrpConst2(value1 : ?, value2 : ??);
+FrpValue2(value1 : ref ?, value2 : ref ??, subscribers : DList<(?, ??) -> void>, disposers : ref List<() -> void>);
+
+
+rconst1(v : ?) -> FrpConst1<?> {
+	FrpConst1(v);
+}
+
+rmake1(v : ?) -> FrpValue1<?> {
+	FrpValue1(ref v, makeDList(), ref makeList());
+}
+
+rnextf1(frp : FrpValue1<?>, value : ?) -> void {
+	r = frp.value;
+	r := value;
+	applyRefDList(frp.subscribers, r);
+}
+
+rnext1(frp : FrpValue1<?>, value : ?) -> void {
+	r = frp.value;
+	if (^r != value) {
+		r := value;
+		applyRefDList(frp.subscribers, r);
+	}
+}
+
+
+rget1(f : Frp1<?>) -> ? {
+	switch (f) {
+		FrpConst1(v): v;
+		FrpValue1(r, __, __): ^r;
+	}
+}
+
+rsubscribef1(f : Frp1<?>, fn : (?) -> void) -> () -> void {
+	switch (f) {
+		FrpConst1(v): {
+			fn(v);
+			\ -> {};
+		}
+		FrpValue1(r, sub, __): {
+			fn(^r);
+			rsubscribe1(f, fn);
+		}
+	}
+}
+
+rsubscribe1(f : Frp1<?>, fn : (?) -> void) -> () -> void {
+	switch (f) {
+		FrpConst1(v): \ -> {};
+		FrpValue1(r, subscribers, __): {
+			n = pushDList(subscribers, fn);
+			\ -> {
+				removeDList(subscribers, n);
+			}
+		}
+	}
+}
+
+raddDisposer1(f : FrpValue1<?>, disposer : () -> void) -> void {
+	f.disposers := Cons(disposer, ^(f.disposers));
+}
+
+rfree1(f : Frp1<?>) -> void {
+	switch (f) {
+		FrpConst1(v): {}
+		FrpValue1(r, subs, disposers): {
+			callList(^disposers);
+			subs.first ::= DEnd();
+			subs.last ::= DEnd();
+			disposers := makeList();
+		}
+	}
+}
+
+
+// 2-values FRP values
+
+rconst2(v : ?, w : ??) -> FrpConst2<?, ??> {
+	FrpConst2(v, w);
+}
+
+rmake2(v : ?, w : ??) -> FrpValue2<?, ??> {
+	FrpValue2(ref v, ref w, makeDList(), ref makeList());
+}
+
+
+rnextf2(frp : FrpValue2<?, ??>, value1 : ?, value2 : ??) -> void {
+	r1 = frp.value1;
+	r2 = frp.value2;
+	r1 := value1;
+	r2 := value2;
+
+	apply2RefDList(frp.subscribers, r1, r2);
+}
+
+rnextFirstf2(frp : FrpValue2<?, ??>, v : ?) -> void {
+	r1 = frp.value1;
+	r1 := v;
+	apply2RefDList(frp.subscribers, r1, frp.value2);
+}
+
+rnextSecondf2(frp : FrpValue2<?, ??>, w : ??) -> void {
+	r2 = frp.value2;
+	r2 := w;
+	apply2RefDList(frp.subscribers, frp.value1, r2);
+}
+
+
+rnext2(frp : FrpValue2<?, ??>, value1 : ?, value2 : ??) -> void {
+	r1 = frp.value1;
+	r2 = frp.value2;
+	if (value1 != ^r1 || value2 != ^r2) {
+		r1 := value1;
+		r2 := value2;
+		apply2RefDList(frp.subscribers, r1, r2);
+	}
+}
+
+rnextFirst2(frp : FrpValue2<?, ??>, v : ?) -> void {
+	r1 = frp.value1;
+	if (v != ^r1) {
+		r1 := v;
+		apply2RefDList(frp.subscribers, r1, frp.value2);
+	}
+}
+
+rnextSecond2(frp : FrpValue2<?, ??>, w : ??) -> void {
+	r2 = frp.value2;
+	if (w != ^r2) {
+		r2 := w;
+		apply2RefDList(frp.subscribers, frp.value1, r2);
+	}
+}
+
+
+rget2(f : Frp2<?, ??>) -> Pair<?, ??> {
+	switch (f) {
+		FrpConst2(v, w): Pair(v, w);
+		FrpValue2(v, w, __, __): Pair(^v, ^w);
+	}
+}
+
+rgetFirst2(f : Frp2<?, ??>) -> ? {
+	switch (f) {
+		FrpConst2(v, w): v;
+		FrpValue2(v, w, __, __): ^v;
+	}
+}
+
+rgetSecond2(f : Frp2<?, ??>) -> ?? {
+	switch (f) {
+		FrpConst2(v, w): w;
+		FrpValue2(v, w, __, __): ^w;
+	}
+}
+
+
+rsubscribef2(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void {
+	switch (f) {
+		FrpConst2(v, w): {
+			fn(v, w);
+			\ -> {};
+		}
+		FrpValue2(v, w, sub, __): {
+			fn(^v, ^w);
+			rsubscribe2(f, fn);
+		}
+	}
+}
+
+rsubscribe2(f : Frp2<?, ??>, fn : (?, ??) -> void) -> () -> void {
+	switch (f) {
+		FrpConst2(v, w): \ -> {};
+		FrpValue2(v, w, subscribers, __): {
+			n = pushDList(subscribers, fn);
+			\ -> {
+				removeDList(subscribers, n);
+			}
+		}
+	}
+}
+
+raddDisposer2(f : FrpValue2<?, ??>, disposer : () -> void) -> void {
+	f.disposers := Cons(disposer, ^(f.disposers));
+}
+
+rfree2(f : Frp2<?, ??>) -> void {
+	switch (f) {
+		FrpConst2(v, w): {}
+		FrpValue2(v, w, subs, disposers): {
+			callList(^disposers);
+			subs.first ::= DEnd();
+			subs.last ::= DEnd();
+			disposers := makeList();
+		}
+	}
+}
+
+
+
+
+apply2RefDList(list : DList<(?, ??) -> void>, v : ref ?, w : ref ??) -> void {
+	apply2RefDNode(list.first, v, w);
+}
+
+apply2RefDNode(node : DNode<(?, ??) -> void>, v : ref ?, w : ref ??) -> void {
+	switch (node : DNode) {
+		DEnd(): {}
+		DLink(fn, before, after, attached): {
+			// node could be removed from the list in previous call, do nothing in this case.
+			if (attached) {
+				// Notice that we deference the value by purpose in each iteration, because a previous
+				// iteration might have changed the value when used in behaviours.
+				fn(^v, ^w);
+				// in case if fn(^r) changed the list by removing inself, we have to use saved 'after' node
+				nextNode : DNode<(?, ??) -> void> =
+					if (node.after == DEnd() && node.before == DEnd() && after != DEnd()) {
+						after;
+					} else {
+						node.after;
+					}
+				apply2RefDNode(nextNode, v, w)
+			}
+		}
+	}
+}
