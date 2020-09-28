@@ -3,10 +3,10 @@ import tools/flowc/manipulation/effects;
 import tools/flowc/manipulation/freevars;
 
 export {
-	deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram;
+	deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : HashSet<string>, eliminateNames : HashSet<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram;
 }
 
-deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram {
+deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : HashSet<string>, eliminateNames : HashSet<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram {
 	used = deadFiCodeAlive(prog, effects, preserveNames, eliminateNames, removeMain, removeGlobals);
 	dead = ref makeList();
 	reportdead = \n -> dead := Cons(n, ^dead);
@@ -14,11 +14,11 @@ deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, e
 		prog.modules, 
 		makeTree(), 
 		\modname : string, mo : FiModule, acc -> {
-			nfns = fold(mo.functions, [], \a, fn -> if (containsSet(used, fn.name)) concat(a, [fn]) else { reportdead(fn.name); a });
-			nglobals = fold(mo.globalVars, [], \a, gv -> if (containsSet(used, gv.name)) concat(a, [gv]) else { reportdead(gv.name); a });
-			nnatives = fold(mo.natives, [], \a, nat -> if (containsSet(used, nat.name)) concat(a, [nat]) else { reportdead(nat.name); a });
-			ninitorder = filter(mo.initOrder, \n : string -> containsSet(used, n));
-			nexports = set2array(intersectSets(buildSet(mo.exports), used));
+			nfns = fold(mo.functions, [], \a, fn -> if (containsHashSet(used, fn.name)) concat(a, [fn]) else { reportdead(fn.name); a });
+			nglobals = fold(mo.globalVars, [], \a, gv -> if (containsHashSet(used, gv.name)) concat(a, [gv]) else { reportdead(gv.name); a });
+			nnatives = fold(mo.natives, [], \a, nat -> if (containsHashSet(used, nat.name)) concat(a, [nat]) else { reportdead(nat.name); a });
+			ninitorder = filter(mo.initOrder, \n : string -> containsHashSet(used, n));
+			nexports = hashSet2array(intersectHashSets(buildHashSet(mo.exports, fastHashString), used));
 			nmo = FiModule(
 				mo.fileinfo, 
 				mo.imports, mo.forbids,
@@ -47,40 +47,39 @@ deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, e
 	);
 }
 
-DeadCodeAcc(effects : FiEffects, modules : Tree<string, FiModule>, queue : Set<string>, used : Set<string>);
+DeadCodeAcc(effects : FiEffects, modules : Tree<string, FiModule>, queue : HashSet<string>, used : HashSet<string>);
 
-deadFiCodeAlive(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool) -> Set<string> {
+deadFiCodeAlive(prog : FiProgram, effects : FiEffects, preserveNames : HashSet<string>, eliminateNames : HashSet<string>, removeMain : bool, removeGlobals : bool) -> HashSet<string> {
 	queue = foldTree(
 		prog.modules,
-		differenceSets(
-			mergeSets(if (removeMain) makeSet() else insertSet(makeSet(), "main"), preserveNames),
+		differenceHashSets(
+			mergeHashSets(if (removeMain) makeHashSet(fastHashString) else insertHashSet(makeHashSet(fastHashString), "main"), preserveNames),
 			eliminateNames
 		),
 		\modname, mo, acc -> {
 			fold(
 				mo.globalVars, 
 				acc, 
-				\a, gv -> if (!removeGlobals && hasFiSideEffects(effects, gv.value)) insertSet(a, gv.name) else a
+				\a, gv -> if (!removeGlobals && hasFiSideEffects(effects, gv.value)) insertHashSet(a, gv.name) else a
 			)
 		}
 	);
-	visitDead(DeadCodeAcc(effects, prog.modules, queue, makeSet()), eliminateNames).used
+	visitDead(DeadCodeAcc(effects, prog.modules, queue, makeHashSet(fastHashString)), eliminateNames).used
 }
 
-visitDead(acc : DeadCodeAcc, eliminateNames : Set<string>) -> DeadCodeAcc {
-	switch (popMinSet(acc.queue)) {
+visitDead(acc : DeadCodeAcc, eliminateNames : HashSet<string>) -> DeadCodeAcc {
+	switch (popHashSet(acc.queue)) {
 		None(): acc;
-		Some(pop): {
-			name = pop.value;
+		Some(name): {
 			visitDead(
-				deadFiName(DeadCodeAcc(acc.effects, acc.modules, pop.rest, acc.used),name, eliminateNames),
+				deadFiName(DeadCodeAcc(acc.effects, acc.modules, acc.queue, acc.used),name, eliminateNames),
 				eliminateNames
 			)
 		}
 	}
 }
 
-deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> DeadCodeAcc {
+deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : HashSet<string>) -> DeadCodeAcc {
 	mdec = lookupTree(acc.effects.names.toplevel, name);
 	switch (mdec) {
 		None(): {
@@ -90,19 +89,19 @@ deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> De
 			acc
 		}
 		Some(dec): {
-			nused = insertSet(acc.used, name);
+			nused = insertHashSet(acc.used, name);
 			referenced = switch (dec : FiDeclaration) {
 				FiFunctionDec(f, lambda, __, __, __):          fifreevars(lambda);
 				FiGlobalVar(x, value, __, __, __): fifreevars(value);
 				FiNativeDec(n, isio, type, nativeName, flowfallback, __, __):
 					switch (flowfallback) {
 						FiLambda(__, __, __, __): fifreevars(flowfallback);
-						default: makeSet();
+						default: makeHashSet(fastHashString);
 					}
 			}
-			newnames = differenceSets(differenceSets(referenced, nused), eliminateNames);
-			nqueue = mergeSets(acc.queue, newnames);
-			nused2 = mergeSets(nused, newnames);
+			newnames = differenceHashSets(differenceHashSets(referenced, nused), eliminateNames);
+			nqueue = mergeHashSets(acc.queue, newnames);
+			nused2 = mergeHashSets(nused, newnames);
 			DeadCodeAcc(acc.effects, acc.modules, nqueue, nused2)
 		}
 	}
