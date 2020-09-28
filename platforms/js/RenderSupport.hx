@@ -691,7 +691,7 @@ class RenderSupport {
 	}
 
 	private static inline function getScreenSize() {
-		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
+		if (Platform.isIOS && (Platform.isChrome || Platform.isSafari || ProgressiveWebTools.isRunningPWA())) {
 			var is_portrait = isPortaitOrientation();
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
