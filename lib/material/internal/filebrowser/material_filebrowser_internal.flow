@@ -1513,55 +1513,87 @@ sortPairByFirst(arr : [Pair<?, ?>]) -> [Pair<?, ?>] {
 
 MDialogMenuItem : (icon : string, tooltip : string, enabled : bool, onClick : () -> void);
 
-MDialogMenu(manager : MaterialManager, parent : MFocusGroup, items : [MDialogMenuItem], m2t : (Material, MFocusGroup) -> Tropic) -> void {
-	us = ref [];
-	mousePoint = make(Point(0.0, 0.0));
-	pressed = make(false);
+mDialogMenuMousePointRealB = make(Point(0.0, 0.0));
+mDialogMenuReopenInfoR : ref [() -> void] = ref [];
 
-	closeDialog = \-> applyall(^us);
+MDialogMenu(manager : MaterialManager, parent : MFocusGroup, items : [MDialogMenuItem], m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	applyall(^mDialogMenuReopenInfoR);
+
+	menuSize = 250.;
+	itemSize = 70.;
+	mousePointUsedB = make(Point(0.0, 0.0));
+	pressedB = make(false);
+	pressedRightB = make(false);
+	inside1B = make(false);
+	insideArrB = generate(1, length(items), \__ -> make(false));
+
+	easing = makeEasing(0.6, easingStandartCurve, managerTimer(manager), nop);
+
+	closeDialog = \-> {
+		applyall(^mDialogMenuReopenInfoR);
+		nextDistinct(mDialogMenuMousePointRealB, Point(0.0, 0.0));
+	}
 
 	count = (if (length(items) > 6) 6 else (length(items))) |> i2d;
 	if (count > 0.0) {
-
 		step = 360.0 / count;
 
 		MGroup2(
 			MInteractive(
 				[
-					TMouseDownGhost(pressed),
-					TMouseRightDownGhost(pressed),
-					TMouseInside(make(true), true),
-					TMouseXY(mousePoint)
+					TMouseDown(pressedB),
+					TMouseRightDownGhost(pressedRightB),
+					TMouseXY(mDialogMenuMousePointRealB)
 				],
 				TRectangle(interactiveRectangleStyle, TFillXY())
 				|> (\m -> MConstruct(
-					[\ -> subscribe2(pressed, \p -> if (p) closeDialog())],
+					[
+						make2Subscribe2(pressedB, fOr(inside1B, fmaxA(insideArrB, false)), \p, i -> if (!i && p) closeDialog()),
+						\-> { unsR = ref nop; 
+							unsR := subscribe(mDialogMenuMousePointRealB,
+								\p -> {
+									mousePointUsed = getValue(mousePointUsedB);
+									if (p != Point(0.0, 0.0) && mousePointUsed == Point(0.0, 0.0)) {
+										nextDistinct(mousePointUsedB, Point(p.x - menuSize / 2., p.y - menuSize / 2.));
+										(^unsR)();
+									}
+								}
+							);
+							^unsR;
+						}
+					],
 					m
 				))
 			),
-			MCenter(MIcon("touch_app", [MIconSize(40.0), MCircleBackground(MGrey(500), 250.0)]))
+			MIcon("touch_app", [MIconSize(40.0), MCircleBackground(MGrey(500), menuSize)])
+			|> (\m -> MInteractive([TMouseInside(inside1B, true)], m))
 			|> (\m -> MGroup(
 				concat(
 					[m],
 					mapi(items, \i, item : MDialogMenuItem -> {
-						point = polarDegree2cartesian(160.0, i2d(i) * step - 90.0);
+						radius = (menuSize - itemSize) / 2.;
+						point = polarDegree2cartesian(radius - 10., i2d(i) * step - 90.0);
 						MIconButton(
 							item.icon,
 							\-> { item.onClick(); closeDialog(); },
-							[MIconSize(25.0), MCircleBackground(if (item.enabled) MOrange(300) else MGrey(400), 70.0)],
-							[MEnabled(const(item.enabled))]
+							[MIconSize(25.), MCircleBackground(if (item.enabled) MOrange(300) else MGrey(300), itemSize)],
+							[MEnabled(const(item.enabled)), THovering(insideArrB[i])]
 						)
 						|> (\mi -> if (strlen(item.tooltip) > 0) MTooltip(mi, MText(item.tooltip, []), []) else mi)
-						|> MCenter
-						|> (\mi -> MPad(point.x, point.y, mi))
+						|> (\mi -> MPad(point.x + radius, point.y + radius, mi))
 					})
 				)
 			))
-			|> (\m -> { p = mousePoint |> getValue; MPad(p.x, p.y, m) })
+			// Commented code is for future, to open menu near the item
+			|> MCenter//(\m -> MSelect(mousePointUsedB, \p -> { if (p == Point(0.0, 0.0)) MCenter(m) else MPad(p.x, p.y, m) }))
 		)
+		|> MPushZorder
 		|> (\m -> m2t(m, parent))
-		|> (\t -> us := [pushZorder(manager), trender(t, manager.manager.renderStyle)])
+		|> (\t -> TScale(ffactor2(easing.percent), t))
+		|> (\t -> mDialogMenuReopenInfoR := [trender(t, manager.manager.renderStyle)])
 	}
+
+	easing.start();
 }
 
 polarDegree2cartesian(radius : double, angleDegree : double) -> Point {

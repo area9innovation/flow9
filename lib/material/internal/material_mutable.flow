@@ -15,16 +15,15 @@ export {
 	extractDynamicBehaviours(v : Transform<?>, name : string, type : IScriptRecordType) -> [IScriptBehaviour];
 	extractDynamicBehavioursEx(v : Transform<?>, name : string, type : IScriptRecordType) -> [IScriptBehaviour];
 
-	TIfPreRender(condition : Transform<bool>, thenContent : Tropic, elseContent : Tropic, sameSize : bool) -> Tropic;
+	MRenderOnce2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, content : (MFocusGroup) -> Tropic) -> Tropic;
 	MIfPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, thenContent : (MFocusGroup) -> Tropic,
 		elseContent : (MFocusGroup) -> Tropic, sameSize : bool) -> Tropic;
+	MShowPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, fn : (MFocusGroup) -> Tropic) -> Tropic;
 
-	TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic;
 	TSubscribe2(v : Transform<?>, fn : (?) -> Tropic) -> Tropic;
 
 	// TShow which creates tropic only once and only when show is true
-	MShow2(manager : MaterialManager, parent : MFocusGroup, show : Transform<bool>, tr : (MFocusGroup) -> Tropic) -> Tropic;
-	MRenderOnce2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, content : (MFocusGroup) -> Tropic) -> Tropic;
+	MShow2T(manager : MaterialManager, parent : MFocusGroup, show : Transform<bool>, tr : (MFocusGroup) -> Tropic) -> Tropic;
 
 	MDynamicGroup2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGroup2, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
@@ -37,12 +36,6 @@ export {
 	extractMComponentGroupState(state : [flow]) -> [MComponentGroupState];
 
 	MHintMarker(manager : MaterialManager, focus : MFocus, radiusByContent : bool) -> (Tropic) -> Tropic;
-
-	dummyParent = \manager : MaterialManager -> MFocusGroup(
-		make(false), -2, const(-2), FEmpty(), const([]), const(-1), None(), "Dummy", None(), None(), None(), make(-1), make(-1), -1,
-		make(makeTree()), 0, make(makeTree()), const(false), const(false), const(false), const(false), const(false), const(false), const(false), make(false), make(false),
-		const(zeroTransformMatrix), const(zeroWH), None(), false, manager.focus.theme, makeTree()
-	);
 }
 
 MIfLazy2T(manager : MaterialManager, parent : MFocusGroup, value : Transform<bool>, fn : (bool, MFocusGroup) -> Tropic, sameSize : bool) -> Tropic {
@@ -157,9 +150,11 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 		hovering = tryExtractStruct(state, THovering(make(false)));
 		rtl = extractStruct(state, MSetRTL(parent.rtl)).rtl;
 		focusName = extractStruct(state, MFocusName(name)).name;
+		ready = extractStruct(state, MSetReady(const(true))).ready;
+		isReady = tryExtractStruct(state, MIsReady(make(true)));
 
 		(\p -> addMaterialFocusGroupId(
-			manager, p, focusName, accessRole, vertical, horizontal, scrollInfo, focused, active, enabled, focusEnabled,
+			manager, p, focusName, accessRole, vertical, horizontal, scrollInfo, ready, focused, active, enabled, focusEnabled,
 			monitorBehaviours, monitorEnabled, clickEnabled, keysEnabled, hintMarkerEnabled, iScriptId, tabOrder, zorder, theme, rtl,
 			\f -> {
 				maybeApply(getParent, \p2 -> next(p2.parent, Some(f)));
@@ -218,6 +213,22 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 							),
 						f2
 					)
+				)
+				|> (\f2 ->
+					eitherMap(
+						isReady,
+						\ir ->
+							TConstruct(
+								[
+									\ -> fconnect(
+										f.ready,
+										ir.ready
+									)
+								],
+								f2
+							),
+						f2
+					)
 				);
 			}
 		))
@@ -244,25 +255,8 @@ extractDynamicBehavioursEx(v : Transform<?>, name : string, type : IScriptRecord
 	mapi(fgetDynamicBehavioursEx(v), \i, v0 -> IScriptBehaviour(name + if (i > 0) i2s(i) else "", v0, type))
 }
 
-TIfPreRender(condition : Transform<bool>, thenContent : Tropic, elseContent : Tropic, sameSize : bool) -> Tropic {
-	if (isFConst(condition)) {
-		if (fgetValue(condition))
-			thenContent
-		else
-			elseContent
-	} else {
-		TCols2(
-			TScale(
-				fif(condition, const(Factor(1. , 1.)), const(Factor(0., 0.))),
-				thenContent
-			),
-			TScale(
-				fif(condition, const(Factor(0. , 0.)), const(Factor(1., 1.))),
-				elseContent
-			)
-		)
-		|> if (sameSize) makeTropicConstant(None(), None()) else idfn
-	}
+MRenderOnce2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, content : (MFocusGroup) -> Tropic) -> Tropic {
+	MComponentGroup2T(manager, parent, "MRenderOnce", [MEnabled(condition)], \p -> TRenderOnce(condition, \ -> content(p)));
 }
 
 MIfPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, thenContent : (MFocusGroup) -> Tropic,
@@ -273,7 +267,7 @@ MIfPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Tran
 		else
 			elseContent(parent)
 	} else {
-		TCols2(
+		TGroup2(
 			TVisible(
 				condition,
 				TCopySize2(
@@ -293,27 +287,21 @@ MIfPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Tran
 	}
 }
 
-TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic {
-	contRendered = ref false;
-	scaleFactor = make(if (fgetValue(condition)) Factor(1., 1.) else Factor(0., 0.));
-
-	TShowLazy(
-		fselect(condition,
-			FLift(\c -> {
-				nextDistinct(scaleFactor, if (c) Factor(1., 1.) else Factor(0., 0.));
-
-				if (^contRendered) {
-					true
-				} else if (c) {
-					contRendered := true;
-					true
-				} else
-					false
-			})
-		),
-		content
-	)
-	|> (\f -> TScale(scaleFactor, f))
+MShowPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, fn : (MFocusGroup) -> Tropic) -> Tropic {
+	if (isFConst(condition)) {
+		if (fgetValue(condition))
+			fn(parent)
+		else
+			TEmpty()
+	} else {
+		TVisible(
+			condition,
+			TCopySize2(
+				MComponentGroup2T(manager, parent, "MShowPreRender", [MEnabled(condition)], fn),
+				\sz, tr -> TFixSize(tr, TShow(condition, sz))
+			)
+		)
+	}
 }
 
 TSubscribe2(v : Transform<?>, fn : (?) -> Tropic) -> Tropic {
@@ -335,10 +323,10 @@ TSubscribe2(v : Transform<?>, fn : (?) -> Tropic) -> Tropic {
 	}
 }
 
-MShow2(manager : MaterialManager, parent : MFocusGroup, show : Transform<bool>, tr : (MFocusGroup) -> Tropic) -> Tropic {
+MShow2T(manager : MaterialManager, parent : MFocusGroup, show : Transform<bool>, tr : (MFocusGroup) -> Tropic) -> Tropic {
 	t : ref Maybe<Tropic> = ref None();
 
-	MSelect2T(manager, parent, "MShow2", [], show, \s, p -> {
+	MSelect2T(manager, parent, "MShow2T", [], show, \s, p -> {
 		if (s) onlyOnce(t, \ -> tr(p)) else TEmpty()
 	})
 }
@@ -350,35 +338,6 @@ MPositionScale2(positionScale : DynamicBehaviour<PositionScale>, content : Tropi
 MPositionScaleAttachBox(positionScale : DynamicBehaviour<PositionScale>, boxWH : DynamicBehaviour<WidthHeight>, content : Tropic,
 	enabled : Transform<bool>) -> Tropic {
 	TCopySize(content, \tr -> TShowLazy(enabled, \ -> TPositionScale(positionScale, TAttachBox2(tr, boxWH, TEmpty()))), true)
-}
-
-MRenderOnce2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, content : (MFocusGroup) -> Tropic) -> Tropic {
-	contRendered = ref false;
-	scaleFactor = make(if (fgetValue(condition)) Factor(1., 1.) else Factor(0., 0.));
-
-	(\p -> MSelect2T(
-		manager,
-		p,
-		"MRenderOnceContent",
-		[],
-		fselect(
-			condition,
-			FLift(\c -> {
-				nextDistinct(scaleFactor, if (c) Factor(1., 1.) else Factor(0., 0.));
-
-				if (^contRendered) {
-					true
-				} else if (c) {
-					contRendered := true;
-					true
-				} else
-					false
-			})
-		),
-		\cond, p0 -> if (cond) content(p0) else TEmpty()
-	))
-	|> (\f -> MComponentGroup2T(manager, parent, "MRenderOnceContentContainer", [MEnabled(condition), MFocusEnabled(condition)], f))
-	|> (\f -> TScale(scaleFactor, f))
 }
 
 MDynamicGroup2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGroup2, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
