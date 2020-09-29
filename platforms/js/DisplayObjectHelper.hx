@@ -1825,8 +1825,6 @@ class DisplayObjectHelper {
 	}
 
 	public static function applyScrollFnChildren(clip : DisplayObject) : Void {
-		return;
-
 		if (clip.visible) {
 			if (untyped clip.scrollFn != null) {
 				untyped clip.scrollFn();
