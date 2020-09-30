@@ -1774,7 +1774,8 @@ class RenderSupport {
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
 			var a = clip.worldTransform;
-			return [a.a / getAccessibilityZoom(), a.b, a.c, a.d / getAccessibilityZoom(), a.tx / getAccessibilityZoom(), a.ty / getAccessibilityZoom()];
+			var az = getAccessibilityZoom();
+			return [a.a / az, a.b, a.c, a.d / az, a.tx / az, a.ty / az];
 		} else {
 			return [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 		}
