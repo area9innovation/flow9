@@ -49,6 +49,7 @@ export {
 
 	setJsonField(json : Json, field : string, value : Json) -> JsonObject;
 	setJsonFieldCustom(json : Json, field : string, value : Json, options : [JsonFieldOptions]) -> JsonObject;
+	
 		JsonFieldOptions ::= JsonFieldIgnoreCase, JsonFieldTreatAsPath;
 			JsonFieldIgnoreCase();
 			JsonFieldTreatAsPath(pathDelimiter : string);
@@ -79,10 +80,13 @@ export {
 	//equals Json
 	isJsonEqual(first : Json, second : Json) -> bool;
 
-	// Returns true iff json is an object and has appropriate member.
+	// Returns true if json is an object and has appropriate member.
 	jsonObjectHasField(json : Json, member : string) -> bool;
 	// Access to a nested field like obj.f1.f2.f3, where fields = [f1, f2, f3]
 	getJsonNestedField(json: Json, fields: [string]) -> Json;
+	
+	// escape chars not allowed for JSON
+	toStringForJson(s : string) -> string;
 }
 
 parseJson(json : string) -> Json {
@@ -340,14 +344,32 @@ getJsonMaybeValue(value, getJsonValueFn, def) {
 	}
 }
 
+toStringForJson(s : string) -> string {
+	f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
+		Cons(if (code < 0x20) {
+			if (code == 0x08) "\\b"
+			else if (code == 0x09) "\\t"
+			else if (code == 0x0A) "\\n"
+			else if (code == 0x0C) "\\f"
+			else if (code == 0x0D) "\\r"
+			else "\\u" + lpad(formatHex(code), "0", 4);
+		} else {
+			if (code == 0x22) "\\\""
+			else if (code == 0x5c) "\\\\"
+			else fromCharCode(code);
+		}, acc)
+	});
+	list2string(Cons("\"", f));
+}
+
 json2string(j : Json) -> string {
 	switch (j : Json) {
 		JsonNull(): "null";
 		JsonBool(v): b2s(v);
 		JsonDouble(d): d2s(d);
-		JsonString(s): toString(s);
+		JsonString(s): toStringForJson(s);
 		JsonArray(arr): "[" + strGlue(map(arr, json2string), ",") + "]";
-		JsonObject(m): "{" + strGlue(map(m, \p : Pair<string, Json> -> toString(p.first) + ":" + json2string(p.second)), ",") + "}";
+		JsonObject(m): "{" + strGlue(map(m, \p : Pair<string, Json> -> toStringForJson(p.first) + ":" + json2string(p.second)), ",") + "}";
 	}
 }
 
@@ -356,7 +378,7 @@ json2stringFormatted(j : Json) -> string {
 		JsonNull(): "null";
 		JsonBool(v): b2s(v);
 		JsonDouble(d): d2s(d);
-		JsonString(s): toString(s);
+		JsonString(s): toStringForJson(s);
 		JsonArray(arr): {
 			if (arr == []) "[]" else {
 				a = map(arr, \v -> json2stringFormatted(v));
@@ -367,7 +389,7 @@ json2stringFormatted(j : Json) -> string {
 		}
 		JsonObject(arr): {
 			if (arr == []) "{}" else {
-				a = map(arr, \v : Pair<string, Json> -> toString(v.first) + ": " + json2stringFormatted(v.second));
+				a = map(arr, \v : Pair<string, Json> -> toStringForJson(v.first) + ": " + json2stringFormatted(v.second));
 				b = length(arr) > 1 || strContains(a[0], "\n");
 				if (!b)	"{" + a[0] + "}"
 				else "{\n" + strGlue(map(strSplit(strGlue(a, ",\n"), "\n"), \l -> "\t" + l),"\n") + "\n}";

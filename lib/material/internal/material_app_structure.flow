@@ -24,7 +24,7 @@ MAppState(
 );
 
 MAppNav(content : Material, expander : DynamicBehaviour<bool>, mini : bool, fullHeight : bool, persistent : Transform<bool>, width : double, miniWidth : double,
-	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>);
+	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>, elevation : Transform<double>);
 
 MAppFlexibleState(persistent : Transform<bool>, persistentB : DynamicBehaviour<bool>, showExpander : Transform<bool>, showToolbar : Transform<bool>);
 
@@ -124,7 +124,10 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 						])
 					else t)
 				|> (\t -> TGroup2SameMetrics(t, TLines2(THeight(TGhost("MAppBar")), TDisplay("MBanner"))))
-				|> (\t -> TGroup2SameMetrics(t, TDisplay("MAppBar")))
+				|> (\t ->
+					if (isNone(ab.floatingToolbar))  TGroup2(TDisplay("MAppBar"), t)
+					else TGroup2SameMetrics(t, TDisplay("MAppBar"))
+				)
 				|> (\t : Tropic ->
 					eitherMap(ab.extendToolbar, \eab ->
 						MSwipe2T(manager, parent, MSwipe(t, [
@@ -275,7 +278,7 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 				radius = 24.;
 				icon = tryExtractStruct(e.style, MExpandingBottomSheetIcon(""));
 				additionalItems = extractStruct(e.style, MExpandingBottomSheetAdditional([])).items;
-				bgColor = extractStruct(e.style, parent.theme.palette.accent);
+				bgColor = extractMColor(parent, e.style, MAccentColor());
 
 				bottomContent =
 					TGroup2(
@@ -290,7 +293,7 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 					],
 					eitherMap(icon, \ic -> [MBorder4(8., MIcon(ic.icon, []))], []),
 					[
-						MDynamicText(e.title, []),
+						MDynamicParagraph(e.title, []),
 						MScaleAvailable(ffactor2(fmin(fmultiply(expandingProgress, const(2.)), const(1.))), TFillX())
 					],
 					additionalItems
@@ -510,7 +513,11 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 					navMiniWidth,
 					navSwipe.gapLength,
 					navSwipe.enabled,
-					if (navMini) const(true) else nav.expander
+					if (navMini) const(true) else nav.expander,
+					extractStruct(
+						nav.style,
+						MElevation(const(2.0))
+					).elevation,
 				)
 			}
 		);
@@ -569,12 +576,12 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 					leftIcon =
 						eitherMap(
 							tryExtractStruct(banner.style, MLeftIcon("", [])),
-							\ic -> MIcon(ic.icon, [MIconSize(40.)]) |> MBorderRight(8.),
+							\ic -> MIcon(ic.icon, concat([MIconSize(40.)], ic.style)) |> MBorderRight(8.),
 							TEmpty()
 						);
 
 					title =
-						MParagraph(banner.text, [])
+						MParagraph(banner.text, extractStruct(banner.style, MBannerTitleStyle([])).style)
 						|> MBorderLeft(8.)
 						|> MCenterY
 						|> (\m2 -> MCols2(leftIcon, m2))
@@ -636,7 +643,7 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 					);
 
 				floatingToolbar =
-					if (contains(m.style, MFloatingToolbar()) && mobile) {
+					if (contains(m.style, MFloatingToolbar())) {
 						startPoint = ref 0.;
 						updateStartPoint = \ -> startPoint := getValue(scrollPosition).y;
 
@@ -706,7 +713,7 @@ letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tro
 			manager,
 			parent,
 			"MAppContent",
-			concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(3)), AccessRole("document"), MSetParent(state.scrollParent)]),
+			concat(state.state, [TagName("main"), MFocusEnabled(state.content.second), MFocusId(const(3)), MSetParent(state.scrollParent)]),
 			\p ->
 				state.content.first
 				|> MAlignStart
@@ -799,13 +806,14 @@ letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 			[
 				MFocusEnabled(ab.focusEnabled),
 				MFocusId(const(0)),
-				AccessRole("toolbar")
+				AccessRole("banner"),
+				TagName("header")
 			],
 			\p ->
 				eitherFn(
 					state.flexible,
 					\flx ->
-						MShow2(
+						MShow2T(
 							manager,
 							p,
 							flx.showToolbar,
@@ -845,8 +853,7 @@ letFloatingContent(manager : MaterialManager, parent : MFocusGroup, content : Tr
 		"MAppFloatingContent",
 		[
 			MFocusEnabled(state.floatingContent.second),
-			MFocusId(const(6)),
-			AccessRole("presentation")
+			MFocusId(const(6))
 		],
 		\p ->
 			m2t(
@@ -952,7 +959,8 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 					[
 						MFocusEnabled(fand(nav.focusEnabled, fnot(otherNavExpanded))),
 						MFocusId(const(if (left) 1 else 5)),
-						AccessRole("list"),
+						TagName("nav"),
+						AccessRole("navigation"),
 						IScriptBehaviour("expander", nav.expander, ISInputValue([], "bool", false)),
 						IScriptBehaviour("animated", animated, ISAppearanceEvent()),
 					],
@@ -971,11 +979,11 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 							),
 							t
 						)
-						|> (\f -> TShadow(parent, const(2.), f))
+						|> (\f -> TShadow(parent, nav.elevation, f))
 					else
 						TRenderOnce(showPanel, \ ->
 							t
-							|> (\f -> TShadow(parent, const(2.), f))
+							|> (\f -> TShadow(parent, nav.elevation, f))
 							|> (\f -> TTranslate(fselect(ePointX, FLift(\ep -> Point(ep, 0.))), f))
 						)
 				)

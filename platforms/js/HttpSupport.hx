@@ -20,7 +20,7 @@ import js.html.Uint8Array;
 #end
 
 class HttpSupport {
-	static var TimeoutInterval = 600000;	// Ten minutes in ms
+	static var TimeoutInterval = 1200000;	// twenty minutes in ms
 
 	#if (js && !flow_nodejs)
 	private static var XMLHttpRequestOverriden : Bool = false;

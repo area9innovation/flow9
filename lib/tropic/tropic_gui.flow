@@ -1,4 +1,4 @@
-import tropic/tropic;
+import tropic/selecttarray;
 import tropic/tropic_util;
 import fform/fform_gui;
 import sys/fullscreen;
@@ -101,6 +101,7 @@ export {
 	TBaselineColsXCenter(cols : [Tropic]) -> Tropic;
 	TBaselineColsYCenter(cols : [Tropic]) -> Tropic;
 	TColsYCenterA(cols : [Tropic]) -> Tropic;
+	TBaselineColsYCenterA(cols : [Tropic]) -> Tropic;
 	TLinesXCenter(lines : [Tropic]) -> Tropic;
 	TLinesYCenter(lines : [Tropic]) -> Tropic;
 	TBaselineLinesXCenter(lines : [Tropic]) -> Tropic;
@@ -218,6 +219,9 @@ export {
 	// The tropic is destroyed/reconstructed when 'show' becomes false/true but tr fn called only once
 	// and only when show becomes true
 	TShowLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic;
+	// Calls content function only on first condition true value
+	// Hides content if condition is false
+	TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic;
 	// Similar to TShowLazy
 	// Constructs tr when show is true and just hides it when show is false
 	// If show is false initially tr function isn't called until show is true
@@ -323,6 +327,7 @@ export {
 
 	// Dynamic version of TBorder
 	TBorderT(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic) -> Tropic;
+	TBorderTDir(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic, isRTL : bool) -> Tropic;
 
 	TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeight>) -> Tropic>], above : bool) -> Tropic;
 	// Helper for dynamic text
@@ -346,6 +351,8 @@ export {
 	TDebugMetricsPurple(t : Tropic) -> Tropic { TDebugMetrics(purple, t); };
 
 	TDebugConstruct(tag : string, tr : Tropic) -> Tropic;
+
+	TDebugInteractive(tr : Tropic) -> Tropic;
 
 	TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic;
 
@@ -681,6 +688,19 @@ TColsYCenterA(cols : [Tropic]) -> Tropic {
 		);
 
 	TColsA(map(segmentsAttaches, \sa ->
+		TCenterYIn(sa, TSizedHeight(0.0, fmaxA(sizes, 0.0)))
+	));
+}
+
+TBaselineColsYCenterA(cols : [Tropic]) -> Tropic {
+	sizes = generate(0, length(cols), \__ -> make(0.0));
+
+	segmentsAttaches =
+		mapi(cols, \i, segment ->
+			TAttachHeight(segment, sizes[i])
+		);
+
+	TBaselineColsA(map(segmentsAttaches, \sa ->
 		TCenterYIn(sa, TSizedHeight(0.0, fmaxA(sizes, 0.0)))
 	));
 }
@@ -1141,8 +1161,8 @@ TFillXY() -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			zero,
 			zero,
-			const(^tropicFillersMax),
-			const(^tropicFillersMax),
+			const(doubleMax),
+			const(doubleMax),
 			const(1.),
 			const(1.),
 			const(false),
@@ -1166,7 +1186,7 @@ TFillXHT(hgt : Transform<double>) -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			zero,
 			hgt,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			hgt,
 			const(1.),
 			zero,
@@ -1192,7 +1212,7 @@ TFillXWT(minWidth : Transform<double>) -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			minWidth,
 			hgt,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			hgt,
 			const(1.),
 			zero,
@@ -1218,7 +1238,7 @@ TFillWYT(wd : Transform<double>) -> Tropic {
 			wd,
 			zero,
 			wd,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			zero,
 			const(1.),
 			const(false),
@@ -1244,7 +1264,7 @@ TFillYHT(minHeight : Transform<double>) -> Tropic {
 			wd,
 			minHeight,
 			wd,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			zero,
 			const(1.),
 			const(false),
@@ -1290,15 +1310,15 @@ TFillMax(maxWidth : double, maxHeight : double) -> Tropic {
 }
 
 TFillMaxWY(maxWidth : double) -> Tropic {
-	TFillMax(maxWidth, ^tropicFillersMax)
+	TFillMax(maxWidth, doubleMax)
 }
 
 TFillMaxHX(maxHeight : double) -> Tropic {
-	TFillMax(^tropicFillersMax, maxHeight)
+	TFillMax(doubleMax, maxHeight)
 }
 
 TFillMin(minWidth : double, minHeight : double) -> Tropic {
-	TFillXYXY(minWidth, minHeight, ^tropicFillersMax, ^tropicFillersMax)
+	TFillXYXY(minWidth, minHeight, doubleMax, doubleMax)
 }
 
 THeight(tropic : Tropic) -> Tropic {
@@ -1505,6 +1525,28 @@ TShowLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic {
 	TFSelect(show, FLift(\s -> {
 		if (s) onlyOnce(t, \ -> tr()) else TEmpty()
 	}))
+}
+
+TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic {
+	contRendered = ref false;
+
+	TCopySize2(
+		TShowLazy(
+			fselect(condition,
+				FLift(\c -> {
+					if (^contRendered) {
+						true
+					} else if (c) {
+						contRendered := true;
+						true
+					} else
+						false
+				})
+			),
+			content
+		),
+		\sz, t -> TFixSize(TVisible(condition, t), TIf(condition, sz, TEmpty()))
+	)
 }
 
 TVisibleLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic {
@@ -2168,6 +2210,11 @@ TBorderT(left : Transform<double>, top : Transform<double>, right : Transform<do
 	|> (\f -> TTranslate(fpoint(left, top), f))
 }
 
+TBorderTDir(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic, isRTL : bool) -> Tropic {
+	if (isRTL) TBorderT(right, top, left, bottom, t)
+	else TBorderT(left, top, right, bottom, t)
+}
+
 TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeight>) -> Tropic>], above : bool) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b1 = tr |> t2a;
@@ -2252,6 +2299,78 @@ TDebugConstruct(tag : string, tr : Tropic) -> Tropic {
 			}
 		],
 		tr
+	)
+}
+
+TDebugInteractive(tr : Tropic) -> Tropic {
+	da = makeDynamicArray([]);
+	daDown = makeDynamicArray([]);
+	daUp = makeDynamicArray([]);
+
+	TInteractive(
+		[
+			MouseMove2(\h, mi -> {
+				m = mi();
+
+				println("mouse move: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(da, Point(m.x, m.y));
+
+				h;
+			}),
+			MouseDown2(\h, m -> {
+				println("mouse down: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(daDown, Point(m.x, m.y));
+
+				h;
+			}),
+			MouseUp2(\h, mi -> {
+				m = mi();
+
+				println("mouse up: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(daUp, Point(m.x, m.y));
+
+				h;
+			}),
+		],
+		TGroupSameMetrics([
+			tr,
+			SelectTDynamicGroup(
+				da,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(da, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(red), FillOpacity(0.2)]
+					)
+				}
+			),
+			SelectTDynamicGroup(
+				daDown,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(daDown, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(blue), FillOpacity(0.2)]
+					)
+				}
+			),
+			SelectTDynamicGroup(
+				daUp,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(daUp, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(green), FillOpacity(0.2)]
+					)
+				}
+			)
+		])
 	)
 }
 
@@ -2683,8 +2802,9 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 					zorder = make(z);
 					rr = renderFForm(b.form, zorder);
 					originalParent = makeClip();
-					alive = ref true;
+					alive = ref false;
 					iter(rr.clips, \c -> addChild(originalParent, c));
+					parent = makeClip();
 
 					fn(
 						TFForm(
@@ -2693,7 +2813,7 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 								const(FormMetrics(0., 0., 0., 0.)),
 								\ -> b.form,
 								\__, z2, __ -> {
-									parent = makeClip();
+									alive := true;
 									iter(rr.clips, \c -> addChild(parent, c));
 									nextDistinct(zorder, z2);
 
@@ -2701,7 +2821,11 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 										[parent],
 										\ -> {
 											nextDistinct(zorder, z);
-											iter(rr.clips, \c -> if (^alive) addChild(originalParent, c) else removeChild(parent, c));
+
+											if (^alive) {
+												iter(rr.clips, \c -> addChild(originalParent, c));
+												alive := false;
+											}
 										}
 									)
 								}
@@ -2710,7 +2834,17 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 						)
 					);
 
-					NativeRenderResult([originalParent], \ -> { alive := false; applyall(rr.disposers); } )
+					NativeRenderResult(
+						[originalParent],
+						\ -> {
+							if (^alive) {
+								iter(rr.clips, \c -> removeChild(parent, c));
+								alive := false;
+							}
+
+							applyall(rr.disposers);
+						}
+					)
 				}
 			)
 		)

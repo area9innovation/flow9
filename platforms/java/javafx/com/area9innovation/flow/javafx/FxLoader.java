@@ -19,13 +19,13 @@ public class FxLoader extends Application {
 
 	@Override
 	public void start(Stage primaryStage) throws Exception {
-		String flowapp = getParameters().getNamed().get("flowapp");
-		if (flowapp == null)
-			flowapp = "javagen";
+		String flowappMain = getParameters().getNamed().get("flowapp");
+		if (flowappMain == null)
+			flowappMain = "javagen.Main";
 		final List<String> params = this.getParameters().getRaw();
 		String[] params1 = params.toArray(new String[0]);
 
-		Class cl = Class.forName(flowapp+".Main");
+		Class cl = Class.forName(flowappMain);
 
 		Constructor constructor =
 			cl.getConstructor(String[].class);

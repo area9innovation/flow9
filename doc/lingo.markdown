@@ -63,7 +63,7 @@ bind to the innermost `if`.
 
 Besides the sequence of terminals and rules, you can use different operators:
 
-	ws = " "+;	                             // One or more spaces
+	ws = " "+;                               // One or more spaces
 	star = "Hello" ws "cruel"* ws "world";   // Zero, one or more "cruel"s allowed
 	optional = "Bye" ws "cruel"? ws "world"; // Zero or one "cruel" allowed
 	letter = "a"-"z";                        // Character range, inclusive in both ends
@@ -179,7 +179,7 @@ Make a `flow/lib/mygrammar.flow` file with the contents:
 
 Make a `sandbox/testcase.txt` file with a text to be parsed like this:
 
-        11+15
+		11+15
 
 There are no spaces or new lines in this sample.
 
@@ -713,14 +713,14 @@ Consider this example:
 
 In file a.lingo, we have:
 
-    number = int;
+	number = int;
 	int = digit+;
 	digit = '0'-'9';
 
 In file b.lingo, we have:
 
-    number = double | number;
-    double = int "." int;
+	number = double | number;
+	double = int "." int;
 
 Then we can combine these grammars into one using
 
@@ -728,8 +728,8 @@ Then we can combine these grammars into one using
 
 and it would be the same as if I had this grammar:
 
-    number = double | number;
-    double = int "." int;
+	number = double | number;
+	double = int "." int;
 	int = digit+;
 	digit = '0'-'9';
 

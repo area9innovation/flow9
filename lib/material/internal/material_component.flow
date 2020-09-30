@@ -27,7 +27,7 @@ MComponent2T(
 	enabled = fand(extractStruct(state, MEnabled(const(true))).enabled, extractStruct(state, TEnabled(const(true))).enabled);
 	forceFocusEnabled = tryExtractStruct(state, MForceFocusEnabled(const(true)));
 	focusEnabled = extractStruct(state, MFocusEnabled(const(true))).enabled;
-	clickEnabled = extractStruct(state, MClickEnabled(const(true))).enabled;
+	clickEnabled = fand(parent.ready, extractStruct(state, MClickEnabled(const(true))).enabled);
 	keysEnabled = extractStruct(state, MKeysEnabled(const(true))).enabled;
 	recordingEnabled = extractStruct(state, IScriptRecordingEnabled(const(true))).enabled;
 	keepFocus = contains(state, MKeepFocusOnClickOut());
@@ -58,12 +58,12 @@ MComponent2T(
 	title = extractStruct(state, MButtonTitle(const(""))).title;
 	focusClicks = MFocusClicks(state);
 	focusOnPrevious =
-		if (contains(state, MFocusOnPrevious()))
+		if (extractStruct(state, MFocusOnPrevious(false)).enabled)
 			[
 				makeSubscribe(focused, \f ->
 					if (!f && isNone(getCurrentFocusedItem(manager))) {
 						foc = getPreviousFocusedItem(manager);
-						maybeApply(foc, \pf -> deferred(\ -> nextDistinct(pf.focused, true)));
+						maybeApply(foc, \pf -> if (fgetValue(pf.focusEnabled)) deferred(\ -> nextDistinct(pf.focused, true)));
 					}
 				)
 			]
@@ -105,7 +105,7 @@ MComponent2T(
 				maybeApply(mGetFocus, \getFoc -> getFoc.getFn(focus));
 
 				(if (mouseDownEnabled != const(false)) {
-					mCursorShape = extractStruct(state, MCursorShape(const(FingerCursor()))).shape;
+					mCursorShape = extractStruct(state, MCursorShape(fif(clickEnabled, const(FingerCursor()), const(DefaultCursor())))).shape;
 					tooltipText = tryExtractStruct(state, MTooltipText(const("")));
 
 					fn(focus)
@@ -114,12 +114,12 @@ MComponent2T(
 							manager,
 							p,
 							f,
-							down,
+							extractStruct(state, MRippleTrigger(down)).trigger,
 							concat(
 								[
 									extractStruct(state, MRipplePosition(point)),
 									extractStruct(state, MRippleColor(const(if (getLightBackground(p)) MBlack() else MWhite()))),
-									extractStruct(state, MRippleOpacity(const(0.1))),
+									extractStruct(state, MRippleOpacity(const(defaultMaterialRippleOpacity))),
 									extractStruct(state, MRippleType(const(MNoRipple()))),
 									MRippleFocused(fmin(highlightOnFocus, extractStruct(state, MRippleFocused(focus.focused)).focused)),
 									MRippleHovered(fmin(highlightOnHover, extractStruct(state, MRippleHovered(focus.hover)).hovered)),
@@ -146,6 +146,7 @@ MComponent2T(
 										f,
 										TSelect(tt.text, \t -> MText2T(p, t, [sameLightMColor(p), MTooltipDesktop()])),
 										[MEnabled(fand(focus.enabled, fneq(tt.text, "")))]
+										|> (\st -> arrayPushMaybe(st, tryExtractStruct(state, MTooltipAlignment(MBottom()))))
 									),
 									m2t
 								),
@@ -173,16 +174,16 @@ MComponent2T(
 							f
 						)
 					)
-				} else
-					fn(focus)
-				)
+				} else {
+					MComponent2TAction(manager, fn(focus), state, focus, None(), "");
+				})
 				|> (\f -> TShadow(p, elevation, f))
 			}
 		)
 	})
 	|> (\f ->
 		(\p -> if (extractStruct(state, MAddFocusGroup(false)).add)
-			MComponentGroup2T(manager, p, "MFocusContainer", [], f)
+			MComponentGroup2T(manager, p, "MFocusContainer", [MEnabled(enabled)], f)
 		else
 			f(p))
 	)
@@ -306,6 +307,7 @@ MFocusClicks(state : [flow]) -> MFocusClicksState {
 MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [MouseOnDownAroundState], focus : MFocus, point : DynamicBehaviour<Point>,
 	clickEnabled : Transform<bool>, keysEnabled : Transform<bool>, tr : Tropic) -> Tropic {
 	focusOnDown = extractStruct(state, MFocusOnDown(ref false)).enabled;
+	keepFocusOnDown = extractStruct(state, MKeepFocusOnDown(ref false)).enabled;
 	hoverDisabled = extractStructMany(state, MDisableHover());
 
 	cursorPoint = extractStructMany(state, MMousePosition(point));
@@ -325,6 +327,11 @@ MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [Mouse
 
 		if (^focusOnDown)
 			deferred(\ -> if (fgetValue(focus.focusEnabled)) nextDistinct(focus.focused, true));
+
+		if (^keepFocusOnDown && isNone(manager.downInsideFocus)) {
+			manager.downInsideFocus ::= Some(focus);
+			deferred(\ -> manager.downInsideFocus ::= None());
+		}
 	}
 
 	keyOnClick =
@@ -525,6 +532,20 @@ MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], 
 							koc(true);
 							koc(false);
 						})
+					),
+				properties
+			)
+		)
+		|> (\properties ->
+			eitherMap(
+				tryExtractStruct(state, MSelected(make(false))),
+				\sel ->
+					concat(
+						properties,
+						[
+							AccessRole("button"),
+							FAccessAttribute("aria-pressed", fselect(sel.selected, FLift(b2s)))
+						]
 					),
 				properties
 			)

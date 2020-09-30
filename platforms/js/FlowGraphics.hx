@@ -2,11 +2,9 @@ import js.Browser;
 import js.html.Element;
 
 import pixi.core.display.Bounds;
-import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
 import pixi.core.graphics.Graphics;
-import pixi.core.graphics.GraphicsData;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 
@@ -43,8 +41,8 @@ class FlowGraphics extends Graphics {
 	public var keepNativeWidgetChildren : Bool = false;
 	public var hasMask : Bool = false;
 
-	public var left = 0.0;
-	public var top = 0.0;
+	public var left = null;
+	public var top = null;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
@@ -359,10 +357,10 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.minY = temp;
 		}
 
-		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null && !isSvg ? lineWidth : 0.0);
-		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && !isSvg ? lineWidth : 0.0);
-		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && !isSvg ? lineWidth : 0.0);
-		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && !isSvg ? lineWidth : 0.0);
+		widgetBounds.minX = graphicsBounds.minX + (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
+		widgetBounds.minY = graphicsBounds.minY + (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
+		widgetBounds.maxX = graphicsBounds.maxX - (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
+		widgetBounds.maxY = graphicsBounds.maxY - (lineWidth != null && lineWidth > 0 && !isSvg ? (lineWidth < 2.0 ? lineWidth + 0.25 : lineWidth) : 0.0);
 
 		if (isSvg) {
 			widgetBounds.maxX = Math.max(widgetBounds.minX + 4.0, widgetBounds.maxX);
@@ -426,23 +424,10 @@ class FlowGraphics extends Graphics {
 				}
 
 				var svg : js.html.Element = nativeWidget.addElementNS('svg');
-				var lineWidth : Float = Lambda.fold(graphicsData, function(a, b) {
-					if (a.lineWidth != null) {
-						return Math.max(a.lineWidth / 2.0, b);
-					} else {
-						return b;
-					}
-				}, 0.0);
 
 				svg.style.position = 'absolute';
-
-				svg.style.width = '${Math.max(graphicsBounds.maxX - graphicsBounds.minX + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-				svg.style.height = '${Math.max(graphicsBounds.maxY - graphicsBounds.minY + filterPadding * 2.0 + lineWidth * 2.0, 4.0)}px';
-
-				if (!Platform.isFirefox) {
-					svg.style.left = '${graphicsBounds.minX - filterPadding - lineWidth}px';
-					svg.style.top = '${graphicsBounds.minY - filterPadding - lineWidth}px';
-				}
+				svg.style.left = "0";
+				svg.style.top = "0";
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
@@ -511,10 +496,6 @@ class FlowGraphics extends Graphics {
 						} else {
 							element = Browser.document.createElementNS("http://www.w3.org/2000/svg", tagName);
 							svg.appendChild(element);
-						}
-
-						if (!Platform.isFirefox) {
-							element.setAttribute('transform', 'matrix(1 0 0 1 ${filterPadding - graphicsBounds.minX + lineWidth} ${filterPadding - graphicsBounds.minY + lineWidth})');
 						}
 
 						if (untyped data.fillGradient != null) {
@@ -586,7 +567,6 @@ class FlowGraphics extends Graphics {
 				}
 
 				var data = graphicsData[0];
-				var lineWidth : Float = data.lineWidth != null ? data.lineWidth / 2.0 : 0.0;
 
 				if (data.fillAlpha > 0 || data.lineAlpha > 0) {
 					if (data.lineWidth != null && data.lineWidth > 0 && data.lineAlpha > 0) {
@@ -660,6 +640,7 @@ class FlowGraphics extends Graphics {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		nativeWidget.setAttribute('role', 'presentation');
 
 		isNativeWidget = true;
 	}

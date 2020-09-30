@@ -27,13 +27,17 @@ export {
 	renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult;
 	renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRenderResult;
 
+	renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> () -> void;
+
 	fform2s(rform : FForm, level : int) -> string;
 
-	FClipCapability ::= FClipMove, FClipScale, FClipRotate, FClipAlpha, FClipVisible, FClipInteractive, FClipMask, FClipFilters, FClipAccess, FClipCursor;
+	FClipCapability ::= FClipMove, FClipScale, FClipRotate, FClipAlpha, FClipOrigin, FClipAnimation, FClipVisible, FClipInteractive, FClipMask, FClipFilters, FClipAccess, FClipCursor;
 		FClipMove();
 		FClipScale();
 		FClipRotate();
 		FClipAlpha();
+		FClipOrigin();
+		FClipAnimation();
 		FClipVisible();
 		FClipInteractive();
 		FClipMask();
@@ -202,6 +206,8 @@ fform2form(fform : FForm) -> Form {
 		FNativeForm(init, metrics, ff, fn): NativeForm(init, metrics, \ -> fform2form(ff()), fn);
 		FTextInput(__, __, __) : FTextInput2TextInput(fform) |> (\f -> Constructor(f.first, f.second));
 		FCanvas(content) : fform2form(content);
+		FAnimation(content, __, __) : fform2form(content); // TODO:
+		FOrigin(origin, form) : fform2form(form); // TODO:
 	}
 }
 
@@ -362,6 +368,9 @@ FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProp
 				acc;
 			}
 			LangAttribute(__): {
+				acc;
+			}
+			FAccessStyle(name, value) : {
 				acc;
 			}
 		}
@@ -979,7 +988,7 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 
 		})();
 
-		FRenderResult([clip], [u, \ -> deleteNative(clip)], [])
+		FRenderResult([clip], [u, \ -> deleteNative(clip)], [FClipMove(), FClipAnimation()])
 	} else {
 		clip = makeClip();
 		setClipDebugInfo(clip, "form", FGraphics(path0, style0));
@@ -987,7 +996,7 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 			renderGraphics(clip, path, style) |> ignore;
 		})();
 
-		FRenderResult([clip], [u, \ -> deleteNative(clip)], [])
+		FRenderResult([clip], [u, \ -> deleteNative(clip)], [FClipMove(), FClipAnimation()])
 	}
 }
 
@@ -1223,6 +1232,471 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 	FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities)
 }
 
+renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> () -> void {
+	onFinish = extractStruct(style, FAnimationOnFinish(nop)).onFinish;
+	animationPercent = tryExtractStruct(style, FAnimationPercent(make(0.0)));
+	direction =
+		if (contains(style, FAnimationAlternateReverse()))
+			FAnimationAlternateReverse()
+		else if (contains(style, FAnimationAlternate()))
+			FAnimationAlternate()
+		else if (contains(style, FAnimationReverse()))
+			FAnimationReverse()
+		else
+			FAnimationNormal();
+
+	makeSubscribeUns(keyframes, \kf -> {
+		if (length(kf) > 0) {
+			[
+				makeSubscribeUns(
+					extractStruct(style, FAnimationDuration(const(1.0))).duration,
+					\duration ->
+						[
+							makeSubscribeUns(
+								extractStruct(style, FAnimationDelay(const(0.0))).delay,
+								\delay ->
+									[
+										makeSubscribeUns(
+											extractStruct(style, FAnimationEasing(const(CubicBezierEasing(0.0, 0.0, 1.0, 1.0)))).easing,
+											\easing ->
+												[
+													makeSubscribeUns(
+														extractStruct(style, FAnimationIterations(const(1))).iterations,
+														\iterations ->
+															[
+																addFClipAnimation(
+																	clip,
+																	addMissingFAnimationKeyframeValues(kf),
+																	duration,
+																	delay,
+																	easing,
+																	iterations,
+																	direction,
+																	onFinish,
+																	animationPercent
+																)
+															]
+													)()
+												]
+										)()
+									]
+							)()
+						]
+				)()
+			]
+		} else {
+			[]
+		}
+	})()
+}
+
+addMissingFAnimationKeyframeValues(keyframes : [FAnimationKeyframe]) -> [FAnimationKeyframe] {
+	addScale = find(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FScaleValue(Factor(1.0, 1.0)))));
+	addAlpha = find(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FAlphaValue(1.0))));
+	addTranslate = find(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FTranslateValue(zeroPoint))));
+	addRotate = find(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FRotateValue(0.0))));
+
+	map(keyframes, \keyframe -> {
+		FAnimationKeyframe(
+			eitherMap(
+				addScale,
+				\scaleKeyframe -> {
+					if (isNone(tryExtractStruct(keyframe.values, FScaleValue(Factor(1.0, 1.0)))))
+						arrayPush(keyframe.values, extractStruct(scaleKeyframe.values, FScaleValue(Factor(1.0, 1.0))))
+					else
+						keyframe.values;
+				},
+				keyframe.values
+			)
+			|> (\values ->
+				eitherMap(
+					addAlpha,
+					\alphaKeyframe -> {
+						if (isNone(tryExtractStruct(values, FAlphaValue(1.0))))
+							arrayPush(values, extractStruct(alphaKeyframe.values, FAlphaValue(1.0)))
+						else
+							values;
+					},
+					values
+				)
+			)
+			|> (\values ->
+				eitherMap(
+					addTranslate,
+					\translateKeyframe -> {
+						if (isNone(tryExtractStruct(values, FTranslateValue(zeroPoint))))
+							arrayPush(values, extractStruct(translateKeyframe.values, FTranslateValue(Point(1.0, 1.0))))
+						else
+							values;
+					},
+					values
+				)
+			)
+			|> (\values ->
+				eitherMap(
+					addTranslate,
+					\translateKeyframe -> {
+						if (isNone(tryExtractStruct(values, FRotateValue(0.0))))
+							arrayPush(values, extractStruct(translateKeyframe.values, FRotateValue(0.0)))
+						else
+							values;
+					},
+					values
+				)
+			)
+		)
+	});
+}
+
+addFClipAnimation(
+	clip : native,
+	keyframes : [FAnimationKeyframe],
+	duration : double,
+	delay : double,
+	easing : CubicBezierEasing,
+	iterations : int,
+	direction : FAnimationDirection,
+	onFinish : () -> void,
+	animationPercent : Maybe<FAnimationPercent>
+) -> () -> void {
+	finalized = ref false;
+	commitInitStylesFn = \ -> {
+		if (!^finalized) {
+			iter(keyframes[0].values, \v -> {
+				switch (v : FAnimationValue) {
+					FScaleValue(factor): {
+						setClipScaleX(clip, factor.x);
+						setClipScaleY(clip, factor.y);
+					}
+					FAlphaValue(alpha): {
+						setClipAlpha(clip, alpha);
+					}
+					FTranslateValue(point): {
+						setClipX(clip, point.x);
+						setClipY(clip, point.y);
+					}
+					FRotateValue(degrees): {
+						setClipRotation(clip, degrees);
+					}
+					FEasingValue(__): {}
+				}
+			});
+		}
+	}
+
+	resetStylesFn = \ -> {
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FScaleValue(Factor(1.0, 1.0)))))) {
+			setClipScaleX(clip, 1.0);
+			setClipScaleY(clip, 1.0);
+		}
+
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FAlphaValue(1.0))))) {
+			setClipAlpha(clip, 1.0);
+		}
+
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FTranslateValue(zeroPoint))))) {
+			setClipX(clip, 0.0);
+			setClipY(clip, 0.0);
+		}
+
+		if (exists(keyframes, \keyframe -> isSome(tryExtractStruct(keyframe.values, FRotateValue(0.0))))) {
+			setClipRotation(clip, 0.0);
+		}
+	}
+
+	commitStylesFn = \ -> {
+		if (!^finalized) {
+			finalized := true;
+			iter(keyframes[length(keyframes) - 1].values, \v -> {
+				switch (v : FAnimationValue) {
+					FScaleValue(factor): {
+						setClipScaleX(clip, factor.x);
+						setClipScaleY(clip, factor.y);
+					}
+					FAlphaValue(alpha): {
+						setClipAlpha(clip, alpha);
+					}
+					FTranslateValue(point): {
+						setClipX(clip, point.x);
+						setClipY(clip, point.y);
+					}
+					FRotateValue(degrees): {
+						setClipRotation(clip, degrees);
+					}
+					FEasingValue(__): {}
+				}
+			});
+		}
+	}
+
+	if (length(keyframes) > 1) {
+		animationPercentDisposer =
+			eitherMap(
+				animationPercent,
+				\ap -> {
+					started = ref None();
+					disp = ref nop;
+
+					disp :=
+						addDrawFrameEventListener(\df -> {
+							percent =
+								eitherFn(
+									^started,
+									\st -> {
+										max(0.0, df - st - delay * 1000.0) / 1000.0 / duration;
+									},
+									\ -> {
+										started := Some(df);
+										0.0;
+									}
+								);
+
+							if (percent >= 0.0) {
+								if (percent < 1.0) {
+									next(ap.percent, percent);
+								} else {
+									^disp();
+									disp := nop;
+								}
+							}
+						});
+
+					\ -> {
+						^disp();
+						disp := nop;
+					}
+				},
+				nop
+			);
+
+		addClipAnimationFn = \ ->
+			addClipAnimation(
+				clip,
+				map(keyframes, \v -> {
+					fold(v.values, [], \acc, vv -> {
+						switch (vv : FAnimationValue) {
+							FScaleValue(factor): {
+								eitherFn(
+									findi(acc, \vvv -> vvv == "transform"),
+									\i -> {
+										replace(acc, i + 1, acc[i + 1] + " scale(" + d2s(factor.x) + ", " + d2s(factor.y) + ")")
+									},
+									\ -> {
+										concat(acc, ["transform", "scale(" + d2s(factor.x) + ", " + d2s(factor.y) + ")"])
+									}
+								)
+							}
+							FAlphaValue(alpha): {
+								eitherFn(
+									findi(acc, \vvv -> vvv == "opacity"),
+									\i -> {
+										replace(acc, i + 1, acc[i + 1] + " " + d2s(alpha))
+									},
+									\ -> {
+										concat(acc, ["opacity", d2s(alpha)])
+									}
+								)
+							}
+							FTranslateValue(point): {
+								eitherFn(
+									findi(acc, \vvv -> vvv == "transform"),
+									\i -> {
+										replace(acc, i + 1, acc[i + 1] + " translate(" + d2s(point.x) + "px, " + d2s(point.y) + "px)")
+									},
+									\ -> {
+										concat(acc, ["transform", "translate(" + d2s(point.x) + "px," + d2s(point.y) + "px)"])
+									}
+								)
+							}
+							FRotateValue(degrees): {
+								eitherFn(
+									findi(acc, \vvv -> vvv == "transform"),
+									\i -> {
+										replace(acc, i + 1, acc[i + 1] + " rotate(" + d2s(degrees) + "deg)")
+									},
+									\ -> {
+										concat(acc, ["transform", "rotate(" + d2s(degrees) + "deg)"])
+									}
+								)
+							}
+							FEasingValue(easing2): {
+								eitherFn(
+									findi(acc, \vvv -> vvv == "easing"),
+									\i -> {
+										replace(acc, i + 1, acc[i + 1] + " cubic-bezier(" + d2s(easing2.x1) + ", " + d2s(easing2.y1) + ", " +
+											d2s(easing2.x2) + ", " + d2s(easing2.y2) + ")")
+									},
+									\ -> {
+										concat(acc, ["easing", "cubic-bezier(" + d2s(easing2.x1) + ", " + d2s(easing2.y1) + ", " +
+											d2s(easing2.x2) + ", " + d2s(easing2.y2) + ")"])
+									}
+								)
+							}
+						}
+					})
+				}),
+				[
+					[
+						"duration",
+						i2s(floor(duration * 1000.0))
+					],
+					[
+						"easing",
+						"cubic-bezier(" + d2s(easing.x1) + ", " + d2s(easing.y1) + ", " +
+							d2s(easing.x2) + ", " + d2s(easing.y2) + ")",
+					],
+					[
+						"iterations",
+						if (iterations >= intMax)
+							"Infinity"
+						else
+							i2s(iterations)
+					],
+					[
+						"direction",
+						switch (direction : FAnimationDirection) {
+							FAnimationNormal(): "normal";
+							FAnimationAlternate(): "alternate";
+							FAnimationReverse(): "reverse";
+							FAnimationAlternateReverse(): "alternate-reverse";
+						}
+					]
+				],
+				\ -> {
+					commitStylesFn();
+
+					onFinish();
+				},
+				\ -> {
+					animationPercentDisposer();
+
+					started = ref None();
+					iteration = ref 0;
+					disp = ref nop;
+					reversed = ref direction == FAnimationReverse() || direction == FAnimationAlternateReverse();
+
+					disp :=
+						addDrawFrameEventListener(\df -> {
+							percent =
+								eitherFn(
+									^started,
+									\st -> {
+										max(0.0, df - st) / 1000.0 / duration;
+									},
+									\ -> {
+										started := Some(df);
+										0.0;
+									}
+								);
+
+							if (percent >= 0.0) {
+								if (percent < 1.0) {
+									maybeApply(animationPercent, \ap -> next(ap.percent, percent));
+
+									easedPercent = lerpCurve(0.0, 1.0, easing)(if (^reversed) 1.0 - percent else percent);
+
+									i = floor(i2d(length(keyframes) - 1) * easedPercent);
+									keyframe = keyframes[i];
+									nextKeyframe = keyframes[min(i + 1, length(keyframes) - 1)];
+									localPercent = (easedPercent - i2d(i) / i2d(length(keyframes) - 1)) * i2d(length(keyframes) - 1);
+									localEasing = extractStruct(keyframe.values, FEasingValue(easingLinearCurve)).easing;
+
+									iter(keyframe.values, \v -> {
+										switch (v : FAnimationValue) {
+											FScaleValue(factor): {
+												nextFactor = extractStruct(nextKeyframe.values, v).factor;
+												if (^reversed) {
+													setClipScaleX(clip, lerpCurve(nextFactor.x, factor.x, localEasing)(1.0 - localPercent));
+													setClipScaleY(clip, lerpCurve(nextFactor.y, factor.y, localEasing)(1.0 - localPercent));
+												} else {
+													setClipScaleX(clip, lerpCurve(factor.x, nextFactor.x, localEasing)(localPercent));
+													setClipScaleY(clip, lerpCurve(factor.y, nextFactor.y, localEasing)(localPercent));
+												}
+											}
+											FAlphaValue(alpha): {
+												nextAlpha = extractStruct(nextKeyframe.values, v).alpha;
+												if (^reversed) {
+													setClipAlpha(clip, lerpCurve(nextAlpha, alpha, localEasing)(1.0 - localPercent));
+												} else {
+													setClipAlpha(clip, lerpCurve(alpha, nextAlpha, localEasing)(localPercent));
+												}
+											}
+											FTranslateValue(point): {
+												nextPoint = extractStruct(nextKeyframe.values, v).point;
+												if (^reversed) {
+													setClipX(clip, lerpCurve(nextPoint.x, point.x, localEasing)(1.0 - localPercent));
+													setClipY(clip, lerpCurve(nextPoint.y, point.y, localEasing)(1.0 - localPercent));
+												} else {
+													setClipX(clip, lerpCurve(point.x, nextPoint.x, localEasing)(localPercent));
+													setClipY(clip, lerpCurve(point.y, nextPoint.y, localEasing)(localPercent));
+												}
+											}
+											FRotateValue(degrees): {
+												nextPoint = extractStruct(nextKeyframe.values, v).degrees;
+												if (^reversed) {
+													setClipRotation(clip, lerpCurve(nextPoint, degrees, localEasing)(1.0 - localPercent));
+												} else {
+													setClipRotation(clip, lerpCurve(degrees, nextPoint, localEasing)(localPercent));
+												}
+											}
+											FEasingValue(__): { }
+										}
+									});
+								} else {
+									iteration := ^iteration + 1;
+
+									if (^iteration >= iterations) {
+										^disp();
+										disp := nop;
+
+										commitStylesFn();
+
+										onFinish();
+									} else {
+										started := Some(df);
+
+										if (direction == FAnimationAlternate() || direction == FAnimationAlternateReverse()) {
+											reversed := !^reversed;
+										}
+									}
+								}
+							}
+						});
+
+					\ -> {
+						^disp();
+						disp := nop;
+					}
+				}
+			);
+
+		addClipAnimationDisposer =
+			if (delay == 0.0) {
+				resetStylesFn();
+				addClipAnimationFn();
+			} else {
+				commitInitStylesFn();
+				disp = ref nop;
+				timerDisp = interruptibleTimer(floor(delay * 1000.0), \ -> if (!^finalized) { resetStylesFn(); disp := addClipAnimationFn(); });
+
+				\ -> {
+					timerDisp();
+					^disp();
+				}
+			};
+
+		\ -> {
+			commitStylesFn();
+			addClipAnimationDisposer();
+			animationPercentDisposer();
+		}
+	} else {
+		commitStylesFn();
+
+		nop;
+	}
+}
+
 fform2s(rform : FForm, level : int) -> string {
 	generateSpaces = concatStrings(generate(0, level, \__ -> " "));
 	structName = rform.structname + "(";
@@ -1271,6 +1745,11 @@ fform2s(rform : FForm, level : int) -> string {
 		}
 		FRotate(degrees, form): {
 			generateSpaces + structName + toString(fgetValue(degrees)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FOrigin(origin, form): {
+			generateSpaces + structName + toString(fgetValue(origin)) + "," + "\n" +
 			fform2s(form, level + 1) + "\n" +
 			generateSpaces + ")"
 		}
@@ -1394,6 +1873,11 @@ fform2s(rform : FForm, level : int) -> string {
 			fform2s(content, level + 1) + "\n" +
 			generateSpaces + ")"
 		}
+		FAnimation(content, __, __): {
+			generateSpaces + structName + "\n" +
+			fform2s(content, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
 	}
 }
 
@@ -1414,7 +1898,7 @@ addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) 
 		fold(
 			properties,
 			Pair(
-				makeTree1("zorder", \ -> i2s(fgetValue(zorder)[0])),
+				makeTree(),
 				[]
 			),
 			\acc : Pair<Tree<string, () -> string>, [() -> () -> void]>, p -> {
@@ -1452,6 +1936,14 @@ addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) 
 
 						Pair(
 							setTree(acc.first, name, \ -> fgetValue(val)),
+							arrayPush(acc.second, uns)
+						)
+					}
+					FAccessStyle(name, val): {
+						uns = makeSubscribe(val, \v -> setClipStyle(clip, name, v));
+
+						Pair(
+							acc.first,
 							arrayPush(acc.second, uns)
 						)
 					}

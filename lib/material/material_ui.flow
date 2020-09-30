@@ -3,6 +3,7 @@ import material/material_snackbar;
 import material/internal/material_reorder;
 import ui/animate/teasing;
 import form/realhtmlworkaround;
+import net/integration_url_parameter;
 
 export {
 	// A function which constructs a bunch of MRadio that belong to one group
@@ -91,9 +92,11 @@ export {
 		style : [MDropDownOrAutoCompleteStyle],
 	) -> Material;
 
+	MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material;
+
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MChangeOnClick, MInputInspector;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -101,6 +104,7 @@ export {
 		MAutoCompleteState(state : [MTextInputState]);
 		MItemsLimit(limit : int);
 		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
+		MCustomAnyItem(text : string);
 		MChangeOnClick(); // Changes selected only when click on autocomplete item.
 		MInputInspector(text : DynamicBehaviour<string>); // Intended for MAutoComplete case.
 
@@ -130,6 +134,9 @@ export {
 		MDynamicDataTable(columns, const(rows), style)
 		|> MCallstack;
 	};
+
+	MTextStyle2CharacterStyleRootParent(style : [MParagraphStyle]) -> [CharacterStyle];
+	MFontStyle2CharacterStyleRootParent(style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -466,7 +473,7 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 				st
 			)
 		)
-		|> (\st -> removeAllStructs(st, MPlayerPanelAutoHide()))
+		|> (\st -> replaceStruct(st, MPlayerPanelAutoHide(false)))
 	)
 	|> (\audioPlayer ->
 		if (mWidth > 0.)
@@ -612,7 +619,7 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				// set possition
 				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
 				// not make2Subscribe(currIndexB, playEx) due to looping in 1-element array
-				makeSubscribe(fselectWithLast(currIndexB, FLift2(\old, new -> Pair(old, new))), \oldAndNewIndexes ->
+				makeSubscribeUns(fselectWithLast(currIndexB, FLift2(\old, new -> Pair(old, new))), \oldAndNewIndexes ->
 					unpair(oldAndNewIndexes, \oldIndex, newIndex -> {
 						if (oldIndex != newIndex) {
 							// reset current player before switching
@@ -620,6 +627,10 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 							nextDistinct(states.position[oldIndex], 0.0);
 						}
 						changeAudioPlaying(newIndex, getValue(playEx));
+
+						[
+							fconnect(states.isPlay[newIndex], playEx)
+						]
 					})
 				),
 				\-> subscribe(playEx, \isPlay -> {
@@ -672,71 +683,87 @@ MInlinePopupPosition(
 }
 
 MAddShortcutDialog(manager : MaterialManager, onDismiss : () -> void) -> () -> void {
-	if (mobile && js && getKeyValue("progressive_shortcut_dialog_shown", "false") == "false" && ios() && !isUrlParameterTrue("progressive_shortcut_dialog_hide")) {
-		closeB = make(false);
-		uns = interruptibleDeferUntilNextFrameRendered(\-> {
-			showTooltipImageFn = \filename, size, framePos, frameWidth, frameHeight -> {
-				imageTooltipVisible = make(false);
-				MCenterX(MGroup2(
-					MPicture(
-						"images/progressive_web/" + filename,
+	if (mobile && js && ios() &&
+			getKeyValue("progressive_shortcut_dialog_shown", "false") == "false" && 
+			!isUrlParameterTrue("progressive_shortcut_dialog_hide")) {
+
+		onClose = ref nop;
+
+		takeSharedKeyValue("progressive_shortcut_dialog_shown", \value -> {
+			if (s2b(value)) {
+				onDismiss();
+				onClose := nop;
+			} else {
+				closeB = make(false);
+				uns = interruptibleDeferUntilNextFrameRendered(\-> {
+					showTooltipImageFn = \filename, size, framePos, frameWidth, frameHeight -> {
+						imageTooltipVisible = make(false);
+						MCenterX(MGroup2(
+							MPicture(
+								"images/progressive_web/" + filename,
+								[
+									size,
+									OnLoaded(\ -> reverseBehaviour(imageTooltipVisible))
+								]
+							),
+							TTranslate(
+								const(framePos),
+								TRounded4(4.0, [MStroke(MRed(500)), StrokeWidth(2.0)], TFixed(frameWidth, frameHeight))
+							)
+							|> (\f -> TVisible(imageTooltipVisible, f))
+						));
+					}
+
+					ShowMDialog(
+						manager,
+						closeB,
 						[
-							size,
-							OnLoaded(\ -> reverseBehaviour(imageTooltipVisible))
-						]
-					),
-					TTranslate(
-						const(framePos),
-						TRounded4(4.0, [MStroke(MRed(500)), StrokeWidth(2.0)], TFixed(frameWidth, frameHeight))
-					)
-					|> (\f -> TVisible(imageTooltipVisible, f))
-				));
-			}
-
-			ShowMDialog(
-				manager,
-				closeB,
-				[
-					MDialogUseFrame(),
-					MDialogActions([
-						MTextButton(
-							_("OK"),
-							\ -> {
-								onDismiss();
-								setKeyValue("progressive_shortcut_dialog_shown", "true");
-								nextDistinct(closeB, true);
-							},
-							[],
-							[]
+							MDialogUseFrame(),
+							MDialogActions([
+								MTextButton(
+									_("OK"),
+									\ -> {
+										onDismiss();
+										setKeyValue("progressive_shortcut_dialog_shown", "true");
+										storeSharedKeyValue("progressive_shortcut_dialog_shown", "true", nop1);
+										nextDistinct(closeB, true);
+									},
+									[],
+									[]
+								)
+							]),
+							MDialogTitle(_("Add to Home Screen")),
+							MDialogScroll()
+						],
+						MAvailableWidth(
+							MLines(
+								if (strContains(toLowerCase(getBrowser()), "safari")) {
+									[
+										MParagraph(_("To add this website as shortcut to Home Screen click on share button:"), []),
+										showTooltipImageFn("ios_safari_share_button.png", WidthHeight(60.0, 60.0), Point(0.0, 0.0), 60.0, 60.0),
+										MFixedY(20.0),
+										MParagraph(_("Then navigate to \"Add to Home Screen\" and select it:"), []),
+										MFixedY(12.0),
+										showTooltipImageFn("iphone_safari_add_to_home.png", WidthHeight(225.0, 140.0), Point(122.0, 12.0), 80.0, 80.0)
+									]
+								} else {
+									[MParagraph(_("Open safari to add this website as shortcut to Home Screen"), [])]
+								}
+							),
+							const(280.0)
 						)
-					]),
-					MDialogTitle(_("Add to Home Screen")),
-					MDialogScroll()
-				],
-				MAvailableWidth(
-					MLines(
-						if (strContains(toLowerCase(getBrowser()), "safari")) {
-							[
-								MParagraph(_("To add this website as shortcut to Home Screen click on share button below:"), []),
-								showTooltipImageFn("iphone_safari_bottom_bar.png", WidthHeight(225.0, 60.0), Point(92.5, 16.0), 40.0, 40.0),
-								MFixedY(20.0),
-								MParagraph(_("Then navigate to \"Add to Home Screen\" and select it:"), []),
-								MFixedY(12.0),
-								showTooltipImageFn("iphone_safari_add_to_home.png", WidthHeight(225.0, 140.0), Point(122.0, 12.0), 80.0, 80.0)
-							]
-						} else {
-							[MParagraph(_("Open safari to add this website as shortcut to Home Screen"), [])]
-						}
-					),
-					const(280.0)
-				)
-			);
+					);
+				});
+				onClose := \ -> {
+					onDismiss();
+					uns();
+					nextDistinct(closeB, true);
+				}
+			}
 		});
-
-		\-> {
-			onDismiss();
-			uns();
-			nextDistinct(closeB, true);
+		\ -> {
+			^onClose();
+			onClose := nop;
 		}
 	} else {
 		onDismiss();
@@ -757,7 +784,8 @@ MDropDownOrAutoComplete(
 	changeOnClick = contains(style, MChangeOnClick());
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
-	items = concat(if (showAnyItem) ["Any"] else [], items0);
+	anyItem = extractStruct(style, MCustomAnyItem(_("Any"))).text;
+	items = concat(if (showAnyItem) [anyItem] else [], items0);
 
 	isError =
 		eitherMap(
@@ -843,12 +871,46 @@ MDropDownOrAutoComplete(
 		|> (\m -> if (isRequired)
 			MLines2(
 				m,
-				MText("Required field", [MErrorColor(), MCaptionSolid()])
+				MText(_("Required field"), [MErrorColor(), MCaptionSolid()])
 				|> (\m2 -> MVisible(isError, m2))
 				|> MBorderTop(4.0)
 			)
 			else m
 		)
+}
+
+MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material {
+	posScale = make(zeroPositionScale);
+	buttonWH = makeWH();
+
+	MGetManager(\manager -> {
+		iconStyle = eitherMap(tryExtractMColor(manager, iconButton.style), \__ -> iconButton.style, arrayPush(iconButton.style, MPrimaryColor()));
+
+		MCopySize2(MTextButton(mainButton with style = arrayPush(mainButton.style, MButtonPaddings(12.0, 12.0, 12.0, 12.0))), \sz, tr ->
+			MColsA([
+				tr,
+				TRectangle([MThemeFill(manager, MPrimaryColor())], TGroup2(THeight(sz), TFixed(1., 0.))),
+
+				MIconButton(iconButton with
+					style = iconStyle,
+					state = concat(iconButton.state, [MRippleShape("MTextButton"), MRippleType(const(MRippleFill()))])
+				)
+				|> (\m -> MMenu(
+					m,
+					menuLines,
+					concatA([
+						[MBelowButton(), MMenuCustomPopup(Some(buttonWH), Some(posScale))],
+						if (widthByButton) [MWidthByButton()] else []
+					])
+				))
+				|> (\m -> MBorderA(-4., -4., -3., -4., m))
+			])
+		)
+		|> (\m -> MPositionScale(posScale, m))
+		|> (\m -> MAttachBox(m, buttonWH))
+		|> (\m -> MFrame(0.0, 4.0, [MThemeStroke(manager, MPrimaryColor()), StrokeWidth(1.0)], m))
+		|> (\m -> MBorder4(1., m))
+	})
 }
 
 MCollapsingBox(content : Material, yTrans : Transform<double>, expand : Transform<bool>, absoluteOffsetMode : bool, fade : bool) -> Material {
@@ -948,4 +1010,12 @@ MPictureFit(picURL : string, style : [MPictureStyle]) {
 		MPictureTweak(picURL, style),
 		TFillXY()
 	)
+}
+
+MTextStyle2CharacterStyleRootParent(style : [MParagraphStyle]) -> [CharacterStyle] {
+	MTextStyle2CharacterStyle(createRootMFocusGroup([]), style)
+}
+
+MFontStyle2CharacterStyleRootParent(style : MFontStyle, darkText : bool) -> [BasicCharacterStyle] {
+	MFontStyle2CharacterStyle(createRootMFocusGroup([]), style, darkText)
 }

@@ -654,6 +654,35 @@ class Native {
 	}
 	#end
 
+	public static function setInterval(ms : Int, cb : Void -> Void) : Void -> Void {
+		#if !neko
+		#if flash
+		var cs = haxe.CallStack.callStack();
+		#end
+		var fn = function() {
+			try {
+				cb();
+			} catch (e : Dynamic) {
+				var stackAsString = "n/a";
+				#if flash
+					stackAsString = Assert.callStackToString(cs);
+				#end
+				var actualStack = Assert.callStackToString(haxe.CallStack.callStack());
+				var crashInfo = e + "\nStack at timer creation:\n" + stackAsString + "\nStack:\n" + actualStack;
+				println("FATAL ERROR: timer callback: " + crashInfo);
+				Assert.printStack(e);
+				Native.callFlowCrashHandlers("[Timer Handler]: " + crashInfo);
+			}
+		};
+
+		var t = untyped __js__("setInterval(fn, ms);");
+		return function() { untyped __js__("clearInterval(t);"); };
+		#else
+		cb();
+		return function() {};
+		#end
+	}
+
 	public static function interruptibleTimer(ms : Int, cb : Void -> Void) : Void -> Void {
 		#if !neko
 		#if flash
@@ -1625,10 +1654,18 @@ class Native {
 				}
 			} else if (event == "suspend") {
 				Browser.window.addEventListener("blur", cb);
-				return function() { Browser.window.removeEventListener("blur", cb); };
+				Browser.window.addEventListener("pagehide", cb);
+				return function() {
+					Browser.window.removeEventListener("blur", cb);
+					Browser.window.removeEventListener("pagehide", cb);
+				};
 			} else if (event == "resume") {
 				Browser.window.addEventListener("focus", cb);
-				return function() { Browser.window.removeEventListener("focus", cb); };
+				Browser.window.addEventListener("pageshow", cb);
+				return function() {
+					Browser.window.removeEventListener("focus", cb);
+					Browser.window.removeEventListener("pageshow", cb);
+				};
 			} else if (event == "active") {
 				var timeoutActiveId = -1;
 				var setTimeoutActiveFn = function () {};

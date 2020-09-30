@@ -9,7 +9,7 @@ export {
 
 		MEasingAnimationStyle<?> ::=
 			MLoop, MAutoStart, MContinueOnNone, MForceAnimation, MDelay, MFreezeAnimation,
-			MStopOffScreen, MAnimating, MIsAnimationPlayed, MDuration, MBezier, MEnabled;
+			MStopOffScreen, MAnimating, MIsAnimationPlayed, MDuration, MBezier, MEnabled, MAnimationOnFinish;
 
 			MLoop(beforeLoop : (?) -> Maybe<?>);
 			MAutoStart();
@@ -29,6 +29,8 @@ export {
 			// Shows if animation has finished playing
 			MIsAnimationPlayed(played : DynamicBehaviour<bool>);
 
+			MAnimationOnFinish(onFinish : () -> void);
+
 	MEasing(
 		start : () -> void,
 		stop : () -> void,
@@ -38,7 +40,6 @@ export {
 	makeMEasing(duration : double, bezier : CubicBezierEasing, deltaTimer : LazyDeltaTimer) -> MEasing;
 
 	MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic;
-	MFadeOutAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic;
 
 	mStepOf5TransitionDuration = \step : int -> easingTransitionDuration * i2d(step) / 5.;
 
@@ -52,6 +53,8 @@ export {
 	MSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material;
 	MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
 	MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
+
+	MEasingScaleAnimation(factor : Transform<Factor>, content : Material, style : [MEasingAnimationStyle<Pair<Factor, Factor>>]) -> Material;
 
 	MBorderAnimation(
 		left : Transform<double>,
@@ -337,27 +340,6 @@ MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 	)
 }
 
-MFadeOutAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic {
-	transformation = make(1.);
-
-	MEasingAnimation(
-		manager,
-		parent,
-		const(0.5),
-		const(easingSharpCurve),
-		make(true),
-		\tr -> Some(tr),
-		\tr, v -> nextDistinct(transformation, v),
-		[
-			MAutoStart()
-		],
-		TScale(
-			ffactor2(flerp(1., 2., transformation)),
-			TAlpha(flerp(0.75, 0., transformation), content)
-		)
-	)
-}
-
 MAnimatedResizer(width : Transform<double>, height : Transform<double>, style : [MAnimatedResizerStyle]) -> Material {
 	if (width == const(-1.) && height == const(1.))
 		TFillXY()
@@ -518,52 +500,122 @@ MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double,
 	)
 }
 
-MAlphaAnimation(alpha : Transform<double>, content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
-	easedAlpha = make(0.0);
+MEasingScaleAnimation(factor : Transform<Factor>, content : Material, style : [MEasingAnimationStyle<Pair<Factor, Factor>>]) -> Material {
 	autoStart = contains(style, MAutoStart());
+	scaleAnimation = make([]);
+
+	animationFn = \fc : Pair<Factor, Factor> -> {
+		next(
+			scaleAnimation,
+			[
+				FAnimationKeyframe(
+					if (fc.first != fc.second)
+						[
+							FScaleValue(Factor(
+								fc.first.x,
+								fc.first.y
+							))
+						]
+					else
+						[
+							FScaleValue(Factor(0.0, 0.0))
+						]
+				),
+				FAnimationKeyframe(
+					[
+						FScaleValue(Factor(1.0, 1.0))
+					]
+				)
+			]
+		);
+	};
 
 	MConstruct(
-		[\ -> { nextDistinct(easedAlpha, if (autoStart) b2d(!i2b(round(fgetValue(alpha)))) else fgetValue(alpha)); nop; }],
-		MMEasingAnimation(
-			const(0.3),
-			const(easingFastOutSlowIn),
-			alpha,
-			\a ->
-				Some(Pair(getValue(easedAlpha), a)),
-			\a, v ->
-				nextDistinct(
-					easedAlpha,
-					lerp(a.first, a.second, v)
+		[
+			if (autoStart)
+				makeSubscribe(fselectWithLast(factor, FIdentity2()), animationFn)
+			else
+				makeSubscribe2(fselectWithLast(factor, FIdentity2()), animationFn)
+		],
+		MAnimation(
+			content,
+			scaleAnimation,
+			[
+				FAnimationDuration(extractStruct(style, MDuration(const(0.3))).duration),
+				FAnimationEasing(extractStruct(style, MBezier(const(easingFastOutSlowIn))).bezier),
+				FAnimationOnFinish(extractStruct(style, MAnimationOnFinish(nop)).onFinish)
+			]
+		)
+	);
+}
+
+MAlphaAnimation(alpha : Transform<double>, content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material {
+	autoStart = contains(style, MAutoStart());
+	alphaAnimation = make([]);
+	contentSize = makeWH();
+
+	animationFn = \a : Pair<double, double> -> {
+		next(
+			alphaAnimation,
+			[
+				FAnimationKeyframe(
+					if (a.first != a.second)
+						[
+							FAlphaValue(a.first)
+						]
+					else
+						[
+							FAlphaValue(0.0)
+						]
 				),
-			style,
-			MAlpha(
-				easedAlpha,
-				content
-			)
+				FAnimationKeyframe(
+					[
+						FAlphaValue(a.second)
+					]
+				)
+			]
+		);
+	};
+
+	MConstruct(
+		[
+			if (autoStart)
+				makeSubscribe(fselectWithLast(alpha, FIdentity2()), animationFn)
+			else
+				makeSubscribe2(fselectWithLast(alpha, FIdentity2()), animationFn)
+		],
+		MAnimation(
+			content,
+			alphaAnimation,
+			[
+				FAnimationDuration(extractStruct(style, MDuration(const(0.3))).duration),
+				FAnimationEasing(extractStruct(style, MBezier(const(easingFastOutSlowIn))).bezier),
+				FAnimationOnFinish(extractStruct(style, MAnimationOnFinish(nop)).onFinish)
+			]
 		)
 	);
 }
 
 MBorderAnimation(
-	left : Transform<double>,
+	start : Transform<double>,
 	top : Transform<double>,
-	right : Transform<double>,
+	end : Transform<double>,
 	bottom : Transform<double>,
 	content : Material,
 	style : [MEasingAnimationStyle<Pair<Quadruple<double, double, double, double>, Quadruple<double, double, double, double>>>]
 ) -> Material {
-	easedLeft = make(0.0);
+	easedStart = make(0.0);
 	easedTop = make(0.0);
-	easedRight = make(0.0);
+	easedEnd = make(0.0);
 	easedBottom = make(0.0);
 	autoStart = contains(style, MAutoStart());
 
 	MConstruct(
 		[
 			\ -> {
-				nextDistinct(easedLeft, if (autoStart) 0.0 else fgetValue(left));
+				nextDistinct(easedStart, if (autoStart) 0.0 else fgetValue(start));
 				nextDistinct(easedTop, if (autoStart) 0.0 else fgetValue(top));
-				nextDistinct(easedRight, if (autoStart) 0.0 else fgetValue(right));
+				nextDistinct(easedEnd, if (autoStart) 0.0 else fgetValue(end));
 				nextDistinct(easedBottom, if (autoStart) 0.0 else fgetValue(bottom));
 				nop;
 			}
@@ -571,14 +623,14 @@ MBorderAnimation(
 		MMEasingAnimation(
 			const(0.3),
 			const(easingFastOutSlowIn),
-			fquadruple(left, top, right, bottom),
+			fquadruple(start, top, end, bottom),
 			\q ->
 				Some(
 					Pair(
 						Quadruple(
-							getValue(easedLeft),
+							getValue(easedStart),
 							getValue(easedTop),
-							getValue(easedRight),
+							getValue(easedEnd),
 							getValue(easedBottom)
 						),
 						q
@@ -586,7 +638,7 @@ MBorderAnimation(
 				),
 			\q, v -> {
 				nextDistinct(
-					easedLeft,
+					easedStart,
 					lerp(q.first.first, q.second.first, v)
 				);
 
@@ -596,7 +648,7 @@ MBorderAnimation(
 				);
 
 				nextDistinct(
-					easedRight,
+					easedEnd,
 					lerp(q.first.third, q.second.third, v)
 				);
 
@@ -606,10 +658,10 @@ MBorderAnimation(
 				);
 			},
 			style,
-			MBorderT(
-				easedLeft,
+			MBorderTA(
+				easedStart,
 				easedTop,
-				easedRight,
+				easedEnd,
 				easedBottom,
 				content
 			)

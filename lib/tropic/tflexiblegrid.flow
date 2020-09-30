@@ -7,14 +7,14 @@ import tropic/tropic2form;
 export {
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
 		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows,
-			CenterAlign, EndAlign, TAnimation, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector,
+			CenterAlign, EndAlign, TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector,
 			TBaselineAlign, TFillersSupport, TAvailableMinMax;
 
 			TWrapNewRow(wrap : bool); // New row should be below all the elements in the previous one (true by default for horizontal grid)
 			TWrapNewColumn(wrap : bool); // New column should be to the right of all the elements in the previous one (true by default for vertical grid)
 			TVertical(); // Pack elements vertically and bound them with available height
 			TMaxRows(rows : int); // Max elements in a first column (Max elements in a first row if TVertical is passed)
-			TAnimation(deltaTimer : LazyDeltaTimer); // Enables animation
+			TAnimationTimer(deltaTimer : LazyDeltaTimer); // Enables animation
 			TOrder(order : Transform<[int]>); // Set items order
 			TLockWidth(lock : bool); // If true size only grows in height not in width (false for TVertical and true for horizontal grid)
 			TSameSize(); // Some optimization for performance boosting in case of same sized items
@@ -59,10 +59,10 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	wrapNewColumn = extractStruct(style, TWrapNewColumn(verticalGrid)).wrap;
 	order = tryExtractStruct(style, TOrder(const([])));
 	gridEnabled = extractStruct(style, TEnabled(const(true))).enabled;
-	animation = tryExtractStruct(style, TAnimation(LazyDeltaTimer(make(0.0), nop, nop)));
+	animation = tryExtractStruct(style, TAnimationTimer(LazyDeltaTimer(make(0.0), nop, nop)));
 	maxRows = maybeMap(tryExtractStruct(style, TMaxRows(0)), \mr -> mr.rows);
 	contentSizeInspector = tryExtractStruct(style, TFlexibleGridContentSizeInspector(makeWH()));
-	fillersSupport = contains(style, TFillersSupport());
+	fillersSupport = contains(style, TFillersSupport()); // wrapNewRow == !verticalGrid && wrapNewColumn == verticalGrid;
 	stageSizeB = make(0.);
 	availableMinMax = extractStruct(style, TAvailableMinMax(stageSizeB, stageSizeB));
 	alignment =
@@ -112,7 +112,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 				)
 			})
 		);
-	contentMinSize = fselect(fsubmap(itemsB, \it -> if (lockWidth) fheight(it.minWH) else fwidth(it.minWH)), FLift(\v -> either(maxA(v), 0.0)));
+	contentMinSize = fselect(fsubmap(itemsB, \it -> if (lockWidth) fwidth(it.minWH) else fheight(it.minWH)), FLift(\v -> either(maxA(v), 0.0)));
 
 	parameters =
 		BFParameters(
@@ -157,7 +157,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			eitherMap(
 				animation,
 				\a -> {
-					pos = make(zeroPoint);
+					pos = make(None());
 					trigger = ffuse(fsubselect(item.tr, idfn |> FLift));
 
 					TEasingAnimation(
@@ -165,13 +165,13 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 						0.2,
 						CubicBezierEasing(0.4, 0.0, 0.2, 1.0),
 						trigger.first,
-						\tr -> Some(Pair(getValue(pos), tr)),
-						\tr -> nextDistinct(pos, tr.second),
-						\tr, p -> nextDistinct(pos, Point(lerp(tr.first.x, tr.second.x, p), lerp(tr.first.y, tr.second.y, p))),
-						TTranslate(pos, tropic)
+						\tr -> eitherMap(getValue(pos), \p -> Some(Pair(p, tr)), None()),
+						\tr -> nextDistinct(pos, Some(tr.second)),
+						\tr, p -> nextDistinct(pos, Some(Point(lerp(tr.first.x, tr.second.x, p), lerp(tr.first.y, tr.second.y, p)))),
+						TTranslate(feither(pos, fsubselect(item.tr, idfn |> FLift)), tropic)
 					)
 					|> (\f -> TConstruct(trigger.second, f))
-					|> TOnConstruct(\ -> nextDistinct(pos, fgetValue(getValue(item.tr))))
+					|> TOnConstruct(\ -> nextDistinct(pos, Some(fgetValue(getValue(item.tr)))))
 				},
 				TTranslate(fsubselect(item.tr, idfn |> FLift), tropic)
 			)
@@ -205,14 +205,14 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 				TAcc(
 					b1.form,
 					TFormMetrics(
-						if (lockWidth && fillersSupport) fmax(availableMinMax.min, fwidth(contentSize)) else fwidth(contentSize),
-						if (!lockWidth && fillersSupport) fmax(availableMinMax.min, fheight(contentSize)) else fheight(contentSize),
+						fwidth(contentSize),
+						fheight(contentSize),
 						contentBaseline
 					),
 					if (lockWidth) contentMinSize else fwidth(contentSize),
 					if (!lockWidth) contentMinSize else fheight(contentSize),
-					if (lockWidth) const(^tropicFillersMax) else fwidth(contentSize),
-					if (!lockWidth) const(^tropicFillersMax) else fheight(contentSize),
+					if (lockWidth) const(doubleMax) else fwidth(contentSize),
+					if (!lockWidth) const(doubleMax) else fheight(contentSize),
 					const(b2d(lockWidth)),
 					const(b2d(!lockWidth)),
 					b1.addFillers,
@@ -326,9 +326,15 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 		)
 	)
 	|> (\f ->
-		TInspect(
-			[if ((lockWidth && !fillersSupport) || (!verticalGrid && fillersSupport)) IAvailableWidth(stageSizeB) else IAvailableHeight(stageSizeB)],
-			f
+		TGroup2(
+			if (lockWidth)
+				TSizedWidth(contentMinSize, 0.0)
+			else
+				TSizedHeight(0.0, contentMinSize),
+			TInspect(
+				[if (lockWidth) IAvailableWidth(stageSizeB) else IAvailableHeight(stageSizeB)],
+				f
+			)
 		)
 	)
 }
@@ -589,7 +595,7 @@ fitTFlexibleGrid(
 						)
 					)
 				);
-				next(availableSize, fmax(getValue(availableSize), fheight(t.wh)));
+				next(availableSize, fmax(getValue(availableSize), fheight(t.minWH)));
 
 				currentPoint := fpoint(faddition(fpointX(^currentPoint), fwidth(t.wh)), fpointY(^currentPoint));
 			} else {
@@ -609,7 +615,7 @@ fitTFlexibleGrid(
 						fpointY(^currentPoint)
 					)
 				);
-				next(availableSize, fmax(getValue(availableSize), fwidth(t.wh)));
+				next(availableSize, fmax(getValue(availableSize), fwidth(t.minWH)));
 
 				currentPoint := fpoint(fpointX(^currentPoint), faddition(fpointY(^currentPoint), fheight(t.wh)));
 			}
@@ -799,7 +805,7 @@ updateBFLine(state : BFState, block : BFBlock, point : Point, par : BFParameters
 				insertArray(
 					ln,
 					^i,
-					Point(^lastX, point.y + block.h)
+					Point(if (par.wrapNewColumn) max(^lastX, point.x) else ^lastX, point.y + block.h)
 				),
 				^i,
 				Point(point.x + block.w, point.y)
@@ -829,7 +835,7 @@ updateBFLine(state : BFState, block : BFBlock, point : Point, par : BFParameters
 				insertArray(
 					ln,
 					^i,
-					Point(point.x + block.w, ^lastY)
+					Point(point.x + block.w, if (par.wrapNewRow) max(^lastY, point.y) else ^lastY)
 				),
 				^i,
 				Point(point.x, point.y + block.h)
