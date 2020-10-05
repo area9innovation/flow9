@@ -1017,6 +1017,11 @@ class DisplayObjectHelper {
 
 		var localBounds = untyped clip.localBounds;
 
+		if (untyped clip.isCanvas) {
+			tx -= Math.max(-localBounds.minX, 0.0);
+			ty -= Math.max(-localBounds.minY, 0.0);
+		}
+
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
 
@@ -2344,7 +2349,10 @@ class DisplayObjectHelper {
 
 			RenderSupport.PixiRenderer.context.setTransform(1, 0, 0, 1, 0, 0);
 			RenderSupport.PixiRenderer.context.globalAlpha = 1;
-			RenderSupport.PixiRenderer.context.clearRect(0, 0, untyped clip.localBounds.maxX * RenderSupport.PixiRenderer.resolution, untyped clip.localBounds.maxY * RenderSupport.PixiRenderer.resolution);
+			RenderSupport.PixiRenderer.context.clearRect(0, 0,
+				untyped (clip.localBounds.maxX + Math.max(-clip.localBounds.minX, 0.0)) * RenderSupport.PixiRenderer.resolution,
+				untyped (clip.localBounds.maxY + Math.max(-clip.localBounds.minY, 0.0)) * RenderSupport.PixiRenderer.resolution
+			);
 
 			RenderSupport.RendererType = 'canvas';
 
