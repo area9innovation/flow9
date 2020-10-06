@@ -364,7 +364,7 @@ class FlowSprite extends Sprite {
 					} else {
 						forceImageFn();
 					}
-				} catch (e) {
+				} catch (e : Dynamic) {
 					forceImageFn();
 				}
 			};
