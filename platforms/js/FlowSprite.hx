@@ -17,6 +17,7 @@ class FlowSprite extends Sprite {
 	private var url : String = "";
 	private var loaded : Bool = false;
 	private var visibilityChanged : Bool = true;
+	private var widgetBoundsChanged : Bool = false;
 	private var updateParent : Bool = false;
 	private var cache : Bool = false;
 	private var metricsFn : Float -> Float -> Void;
@@ -36,6 +37,7 @@ class FlowSprite extends Sprite {
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
+	public var forceSvg : Bool = false;
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
@@ -62,6 +64,9 @@ class FlowSprite extends Sprite {
 		};
 
 		if (RenderSupport.RendererType == "html") {
+			// Chrome can't render svgs with <img> element if file contains "data:img" type instead of "data:image"
+			// As workaround we insert svg content directly to innerHTML
+			forceSvg = Platform.isChrome && url.indexOf(".svg") > 0;
 			this.initNativeWidget("img");
 		} else {
 			once("removed", onSpriteRemoved);
@@ -121,7 +126,7 @@ class FlowSprite extends Sprite {
 
 	private function onSpriteAdded() : Void {
 		if (!loaded) {
-			if (StringTools.endsWith(url, ".svg")) {
+			if (url.indexOf(".svg") > 0) {
 				var svgXhr = new js.html.XMLHttpRequest();
 				if (!Platform.isIE && !Platform.isEdge)
 					svgXhr.overrideMimeType('image/svg+xml');
@@ -219,30 +224,46 @@ class FlowSprite extends Sprite {
 			}
 
 			try {
-				if (RenderSupport.RendererType == "html") {
-					if (nativeWidget == null) {
-						return;
-					}
-
-					this.onAdded(function() {
-						RenderSupport.on("enable_sprites", enableSprites);
-
-						return function() {
-							RenderSupport.off("enable_sprites", enableSprites);
-							disableSprites();
-						}
-					});
-
-					metricsFn(nativeWidget.naturalWidth, nativeWidget.naturalHeight);
-				} else {
-					metricsFn(texture.width, texture.height);
-				}
-
 				this.invalidateTransform('onLoaded');
+				widgetBoundsChanged = true;
 				calculateWidgetBounds();
 
-				loaded = true;
-				visibilityChanged = true;
+				if (widgetBounds.maxX == 0.0) {
+					if (parent != null && retries < 2) {
+						retries++;
+						nativeWidget.style.width = null;
+						nativeWidget.style.height = null;
+
+						onLoaded();
+					} else {
+						onError();
+					}
+				} else {
+					if (RenderSupport.RendererType == "html") {
+						if (nativeWidget == null) {
+							return;
+						}
+
+						this.onAdded(function() {
+							RenderSupport.on("enable_sprites", enableSprites);
+
+							return function() {
+								RenderSupport.off("enable_sprites", enableSprites);
+								disableSprites();
+							}
+						});
+
+						var width = Math.isFinite(widgetBounds.maxX) ? widgetBounds.maxX : 0;
+						var height = Math.isFinite(widgetBounds.maxY) ? widgetBounds.maxY : 0;
+
+						metricsFn(width, height);
+					} else {
+						metricsFn(texture.width, texture.height);
+					}
+
+					visibilityChanged = true;
+					loaded = true;
+				}
 			} catch (e : Dynamic) {
 				if (parent != null && retries < 2) {
 					loadTexture();
@@ -311,12 +332,56 @@ class FlowSprite extends Sprite {
 
 		this.deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(tagName);
-		this.updateClipID();
+		if (forceSvg) {
+			nativeWidget = Browser.document.createElement("div");
+			this.updateClipID();
+
+			var svgXhr = new js.html.XMLHttpRequest();
+			if (!Platform.isIE && !Platform.isEdge)
+				svgXhr.overrideMimeType('image/svg+xml');
+
+			var forceImageFn = function () {
+				if (untyped this.destroyed || parent == null || nativeWidget == null || disposed) {
+					return;
+				}
+
+				forceSvg = false;
+				createNativeWidget(tagName);
+			}
+
+			svgXhr.onload = function () {
+				if (untyped this.destroyed || parent == null || nativeWidget == null || disposed) {
+					return;
+				}
+
+				try {
+					if (svgXhr.getResponseHeader("content-type").indexOf("svg") > 0 && svgXhr.response.indexOf("data:img") > 0) {
+						nativeWidget.style.width = null;
+						nativeWidget.style.height = null;
+						nativeWidget.innerHTML = svgXhr.response;
+
+						onLoaded();
+					} else {
+						forceImageFn();
+					}
+				} catch (e) {
+					forceImageFn();
+				}
+			};
+			svgXhr.onerror = forceImageFn;
+
+			svgXhr.open('GET', url, true);
+			svgXhr.send();
+		} else {
+			nativeWidget = Browser.document.createElement(tagName);
+			this.updateClipID();
+
+			nativeWidget.onload = onLoaded;
+			nativeWidget.onerror = onError;
+			nativeWidget.src = url;
+		}
+
 		nativeWidget.className = 'nativeWidget';
-		nativeWidget.onload = onLoaded;
-		nativeWidget.onerror = onError;
-		nativeWidget.src = url;
 		nativeWidget.style.visibility = 'hidden';
 		nativeWidget.alt = altText;
 
@@ -324,14 +389,21 @@ class FlowSprite extends Sprite {
 	}
 
 	public function calculateWidgetBounds() : Void {
+		if (!widgetBoundsChanged) {
+			return;
+		}
+
 		if (RenderSupport.RendererType == "html") {
+			nativeWidget.style.width = null;
+			nativeWidget.style.height = null;
+
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {
 				widgetBounds.minX = 0;
 				widgetBounds.minY = 0;
-				widgetBounds.maxX = nativeWidget.naturalWidth;
-				widgetBounds.maxY = nativeWidget.naturalHeight;
+				widgetBounds.maxX = nativeWidget.naturalWidth != null && nativeWidget.naturalWidth > 0 ? nativeWidget.naturalWidth : nativeWidget.clientWidth;
+				widgetBounds.maxY = nativeWidget.naturalHeight != null && nativeWidget.naturalHeight > 0 ? nativeWidget.naturalHeight : nativeWidget.clientHeight;
 			}
 		} else {
 			widgetBounds.minX = 0;
@@ -339,5 +411,7 @@ class FlowSprite extends Sprite {
 			widgetBounds.maxX = texture.width;
 			widgetBounds.maxY = texture.height;
 		}
+
+		widgetBoundsChanged = false;
 	}
 }
