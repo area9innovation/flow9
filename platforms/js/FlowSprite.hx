@@ -338,14 +338,27 @@ class FlowSprite extends Sprite {
 			if (!Platform.isIE && !Platform.isEdge)
 				svgXhr.overrideMimeType('image/svg+xml');
 
-			svgXhr.onload = function () {
-				nativeWidget.style.width = null;
-				nativeWidget.style.height = null;
-				nativeWidget.innerHTML = svgXhr.response;
+			var forceImageFn = function () {
+				forceSvg = false;
+				createNativeWidget(tagName);
+			}
 
-				onLoaded();
+			svgXhr.onload = function () {
+				try {
+					if (svgXhr.getResponseHeader("content-type").indexOf("svg") > 0) {
+						nativeWidget.style.width = null;
+						nativeWidget.style.height = null;
+						nativeWidget.innerHTML = svgXhr.response;
+
+						onLoaded();
+					} else {
+						forceImageFn();
+					}
+				} catch (e) {
+					forceImageFn();
+				}
 			};
-			svgXhr.onerror = onError;
+			svgXhr.onerror = forceImageFn;
 
 			svgXhr.open('GET', url, true);
 			svgXhr.send();
@@ -376,11 +389,6 @@ class FlowSprite extends Sprite {
 
 			if (nativeWidget == null) {
 				widgetBounds.clear();
-			} else if (forceSvg) {
-				widgetBounds.minX = 0;
-				widgetBounds.minY = 0;
-				widgetBounds.maxX = nativeWidget.clientWidth;
-				widgetBounds.maxY = nativeWidget.clientHeight;
 			} else {
 				widgetBounds.minX = 0;
 				widgetBounds.minY = 0;
