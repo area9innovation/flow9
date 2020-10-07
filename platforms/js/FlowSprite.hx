@@ -394,12 +394,12 @@ class FlowSprite extends Sprite {
 		}
 
 		if (RenderSupport.RendererType == "html") {
-			nativeWidget.style.width = null;
-			nativeWidget.style.height = null;
-
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {
+				nativeWidget.style.width = null;
+				nativeWidget.style.height = null;
+
 				widgetBounds.minX = 0;
 				widgetBounds.minY = 0;
 				widgetBounds.maxX = nativeWidget.naturalWidth != null && nativeWidget.naturalWidth > 0 ? nativeWidget.naturalWidth : nativeWidget.clientWidth;
