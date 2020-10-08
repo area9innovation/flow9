@@ -239,25 +239,47 @@ class RenderSupport {
 		return UserDefinedFontSize;
 	}
 
-	private static var UserDefinedLetterSpacing : Float = null;
+	private static var UserDefinedLetterSpacing = null;
 	private static function getUserDefinedLetterSpacing() : Float {
-		if (UserDefinedLetterSpacing == null) {
-			var div = Browser.document.createElement("p");
-			Browser.document.body.appendChild(div);
-			var style = Browser.window.getComputedStyle(div);
+		var div = Browser.document.createElement("p");
+		Browser.document.body.appendChild(div);
+		var style = Browser.window.getComputedStyle(div);
 
-			UserDefinedLetterSpacing = style.letterSpacing != "normal"
-				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
-				: 0.0;
+		UserDefinedLetterSpacing = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
+			: 0.0;
 
-			Browser.document.body.removeChild(div);
-		}
-
-		if (Math.isNaN(UserDefinedLetterSpacing)) {
-			UserDefinedLetterSpacing = 0.0;
-		}
+		Browser.document.body.removeChild(div);
 
 		return UserDefinedLetterSpacing;
+	}
+
+	private static var UserDefinedLetterSpacingPercent = null;
+	private static function getUserDefinedLetterSpacingPercent() : Float {
+		var div = Browser.document.createElement("p");
+		Browser.document.body.appendChild(div);
+		var style = Browser.window.getComputedStyle(div);
+
+		UserDefinedLetterSpacingPercent = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
+			: 0.0;
+
+		Browser.document.body.removeChild(div);
+
+		return UserDefinedLetterSpacingPercent;
+	}
+
+	private static var UserStylePending = false;
+	public static function emitUserStyleChanged() {
+		if (!UserStylePending) {
+			UserStylePending = true;
+			RenderSupport.once("drawframe", function() {
+				if (getUserDefinedLetterSpacing() != 0.0 || getUserDefinedLetterSpacingPercent() != 0.0) {
+					RenderSupport.emit("userstylechanged");
+				}
+				UserStylePending = false;
+			});
+		}
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -2139,7 +2161,12 @@ class RenderSupport {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (untyped HaxeRuntime.instanceof(clip, Element)) {
+		if (event == "userstylechanged") {
+			on("userstylechanged", fn);
+			return function () {
+				off("userstylechanged", fn);
+			}
+		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
 		} else {
