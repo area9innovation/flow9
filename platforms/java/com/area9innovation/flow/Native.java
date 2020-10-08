@@ -1222,7 +1222,7 @@ public class Native extends NativeHost {
 				for (String c : this.cmd) {
 					cmd_str += c + " ";
 				}
-				String err_str = ""; 
+				String err_str = "";
 				if (stderr != null) {
 					err_str += stderr.contents + "\n";
 				}
@@ -1332,8 +1332,8 @@ public class Native extends NativeHost {
 		private Process process;
 
 		public ProcessStarter(
-			String[] cmd, 
-			String cwd, 
+			String[] cmd,
+			String cwd,
 			Func1<Object, String> onOut,
 			Func1<Object, String> onErr,
 			Func1<Object, Integer> onExit
@@ -1498,7 +1498,7 @@ public class Native extends NativeHost {
 			for (int i = 0; i < args.length; i++) {
 				cmd[i+1] = (String)args[i];
 			}
-			ProcessStarter runner = new ProcessStarter(cmd, currentWorkingDirectory, onOut, onErr, 
+			ProcessStarter runner = new ProcessStarter(cmd, currentWorkingDirectory, onOut, onErr,
 				new Func1<Object, Integer>()  {
 					@Override
 					public Object invoke(Integer code) { return null; }
@@ -1589,7 +1589,7 @@ public class Native extends NativeHost {
 		});
 
 		return null;
-	}	
+	}
 
 	public final String getThreadId() {
 		return Long.toString(Thread.currentThread().getId());
@@ -1628,7 +1628,7 @@ public class Native extends NativeHost {
 
 	public final Object[] keysConcurrentHashMap(Object map) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
-		ArrayList<Object> ret = new ArrayList(); 
+		ArrayList<Object> ret = new ArrayList();
 		for (Enumeration<Object> e = concurrentMap.keys(); e.hasMoreElements();) {
 			ret.add(e.nextElement());
 		}
