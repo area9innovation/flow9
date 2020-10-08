@@ -45,7 +45,7 @@ MDynamicMenu2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicMenu
 	longTouch = tryExtractStruct(m.style, MLongTouchDelay(0));
 
 	(\p ->
-		MMenuButton2T(manager, p, m.button, m2t, openMenu, enabled, openOnClick, longTouch, None())
+		MMenuButton2T(manager, p, m.button, m2t, openMenu, enabled, openOnClick, longTouch, None(), extractMButtonState(m.style))
 		|> (\f -> MPositionScaleAttachBox(positionScale, buttonWH, f, openMenu.opened))
 		|> (\f -> MAddLabelAndLeftIcon(manager, p, f, m.style, openMenu.opened, 12.))
 		|> (\f ->
@@ -147,7 +147,8 @@ MMenuButton2T(
 	enabled : Transform<bool>,
 	openOnClick : bool,
 	longTouch : Maybe<MLongTouchDelay>,
-	buttonTitleM : Maybe<MButtonTitle>
+	buttonTitleM : Maybe<MButtonTitle>,
+	buttonState : [MButtonState]
 ) -> Tropic {
 
 	addAria = \st -> concat(st, arrayPushMaybe([
@@ -174,7 +175,10 @@ MMenuButton2T(
 					text,
 					eitherMap(longTouch, \__-> nop, open),
 					style,
-					extendState(state, open)
+					replaceStructMany(
+						buttonState,
+						extendState(state, open)
+					)
 				),
 				m2t
 			)
@@ -192,14 +196,17 @@ MMenuButton2T(
 					name,
 					eitherMap(longTouch, \__-> nop, open),
 					style,
-					extendState(state, open)
+					replaceStructMany(
+						buttonState,
+						extendState(state, open)
+					)
 				),
 				m2t
 			)
 		}
 		MMutable(contentT): {
 			TMutable(fselect(contentT, FLift(\content ->
-				MMenuButton2T(manager, parent, content, m2t, openMenu, enabled, openOnClick, longTouch, buttonTitleM)
+				MMenuButton2T(manager, parent, content, m2t, openMenu, enabled, openOnClick, longTouch, buttonTitleM, buttonState)
 			)))
 		}
 		default: {
@@ -208,12 +215,15 @@ MMenuButton2T(
 				isRect = fselect(buttonWH, FLift(\wh -> abs(1. - wh.width / wh.height) > 0.5));
 				focusState =
 					concat(
-						[
-							MEnabled(enabled),
-							MRippleType(fif(isRect, const(MRippleFill()), const(MRippleCenter()))),
-							MHighlightOnFocus(const(true)),
-							MRippleShape("")
-						],
+						replaceStructMany(
+							buttonState,
+							[
+								MEnabled(enabled),
+								MRippleType(fif(isRect, const(MRippleFill()), const(MRippleCenter()))),
+								MHighlightOnFocus(const(true)),
+								MRippleShape("")
+							]
+						),
 						eitherMap(longTouch, \lt -> [
 								lt,
 								MOnLongTouch(\ -> reverseBehaviour(openMenu.opened))
@@ -512,7 +522,7 @@ MDropDownMenu2T(
 		MMenuSingleLine(title, __) : title;
 		MMenuCustomLine(__, __) : "";
 	};
-	buttonTitle = extractStruct(style, MButtonTitle(const(label)));
+	buttonTitle : MButtonTitle = extractStruct(style, MButtonTitle(const(label)));
 
 	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
 	iconBorders = extractStruct(style, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
@@ -593,7 +603,7 @@ MDropDownMenu2T(
 		eitherFn(
 			customButton,
 			\cb ->
-				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true, None(), Some(buttonTitle))
+				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true, None(), Some(buttonTitle), extractMButtonState(style))
 				|> (\f -> TBaselineOffset(const(-12.), f)),
 			\ -> {
 				lItems = length(items);
@@ -763,7 +773,18 @@ MMultiSelectDropDown2T(
 		eitherMap(
 			customButton,
 			\cb ->
-				MMenuButton2T(manager, parent, cb.button, m2t, MOpenMenu(opened), enabled, true, None(), tryExtractStruct(m.style, MButtonTitle(const(""))))
+				MMenuButton2T(
+					manager,
+					parent,
+					cb.button,
+					m2t,
+					MOpenMenu(opened),
+					enabled,
+					true,
+					None(),
+					tryExtractStruct(m.style, MButtonTitle(const(""))),
+					extractMButtonState(style)
+				)
 				|> (\f -> TBaselineOffset(const(-12.), f)),
 			defMenuButton
 		)
@@ -970,24 +991,27 @@ MDropDownMenuButton2T(
 	];
 	outlined = contains(style0, MOutlined());
 	nonSpecified : MNonSpecifiedLine = extractStruct(style0, MNonSpecified(MMenuSingleLine(_("Pick"), []))).item;
-	label = \line -> switch (line) {
+	label = \line -> switch (line : MDropDownMenuLine) {
 		MMenuSingleLine(title, __) : title;
-		MMenuCustomLine(__, __) : "";
+		default : "";
 	};
 	nonSpecifiedLabel = label(nonSpecified);
 	separators = !outlined && extractStruct(style0, MSeparators(true)).separators;
 	showTooltip = extractStruct(style0, MShowTooltip(const(false))).show;
 	indent = contains(style0, MMenuIndent());
 	focusState =
-		[
-			MEnabled(fsubselect(lineB, FLift(\line -> extractStruct(line.style, MEnabled(const(true))).enabled))),
-			MOnClick(onClick),
-			MRippleType(const(MRippleFill())),
-			MHighlightOnFocus(const(true)),
-			MHighlightOnHover(const(true)),
-			FAccessAttribute("aria-haspopup", const("menu")),
-			extractStruct(style0, MButtonTitle(fselect(lineB, label |> FLift)))
-		];
+		replaceStructMany(
+			extractMButtonState(style0),
+			[
+				MEnabled(fsubselect(lineB, FLift(\line -> extractStruct(line.style, MEnabled(const(true))).enabled))),
+				MOnClick(onClick),
+				MRippleType(const(MRippleFill())),
+				MHighlightOnFocus(const(true)),
+				MHighlightOnHover(const(true)),
+				FAccessAttribute("aria-haspopup", const("menu")),
+				extractStruct(style0, MButtonTitle(fselect(lineB, label |> FLift)))
+			]
+		);
 
 	iconNearTitle = contains(style0, MDropDownIconNearTitle());
 
