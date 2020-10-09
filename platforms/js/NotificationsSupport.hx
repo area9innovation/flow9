@@ -131,12 +131,14 @@ class NotificationsSupport {
         NotificationsSupport.cancelLocalNotification(notificationId);
         var timer = haxe.Timer.delay(
             function() {
+                var iconNode = Browser.document.getElementById('dynamic-favicon');
                 var strNotificationId : String = Std.string(notificationId);
                 var notification : Notification = new Notification(
                     notificationTitle,
                     {
                         body : notificationText,
-                        tag : strNotificationId
+                        tag : strNotificationId,
+                        icon : iconNode != null ? untyped iconNode.href : null
                     }
                 );
                 notification.onclick = function() {
