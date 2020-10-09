@@ -173,8 +173,8 @@ function setClient(context: vscode.ExtensionContext, kind : LspKind) {
                         }
                         serverStatusBarItem.show();
                         serverOptions = {
-                            command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
-                            args: ['server-mode=console'],
+                            command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1_lsp',
+                            args: [], //args: ['server-mode=console'],
                             options: { detached: false }
                         }
                         break;
@@ -381,7 +381,7 @@ interface CommandWithArgs {
 }
 
 function compile() {
-    compileCurrentFile(""); // empty means default compiler
+    compileCurrentFile("", ["verbose=1"]); // empty means default compiler
 }
 
 function compileNeko() {
@@ -398,10 +398,10 @@ function runCurrentFile() {
     }, false);
 }
 
-function compileCurrentFile(compilerHint: string) {
+function compileCurrentFile(compilerHint: string, extra_args : string[] = []) {
     processFile(function(flowBinPath, flowpath) { 
         return getCompilerCommand(compilerHint, flowBinPath, flowpath);
-    }, vscode.workspace.getConfiguration("flow").get("lspEnabled"));
+    }, vscode.workspace.getConfiguration("flow").get("lspEnabled"), extra_args);
 }
 
 function getFlowRoot(): string {
@@ -409,7 +409,7 @@ function getFlowRoot(): string {
     return config.get("root");
 }
 
-function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean) {
+function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean, extra_args : string[] = []) {
     let document = vscode.window.activeTextEditor.document;
     document.save().then(() => {
         let current = ++counter;
@@ -438,7 +438,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
                     //let start = performance.now();
                     client.sendRequest("workspace/executeCommand", {
                             command : "compile", 
-                            arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath]
+                            arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath].concat(extra_args)
                         }
                     ).then(
                         (out : any) => {
