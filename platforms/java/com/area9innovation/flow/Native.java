@@ -1463,6 +1463,9 @@ public class Native extends NativeHost {
 
 		public int waitFor() {
 			try {
+				stdout.thread.join();
+				stderr.thread.join();
+				exit.thread.join();
 				return process.waitFor();
 			} catch (InterruptedException e) {
 				e.printStackTrace();
