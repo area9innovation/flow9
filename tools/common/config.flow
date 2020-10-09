@@ -76,6 +76,7 @@ export {
     compilerConfigFromConfig : (config : Tree<string, string>) -> CompilerConfig;
     compilerConfigToTree : (config : CompilerConfig) -> Tree<string, string>;
     compilerConfigToString(config : CompilerConfig) -> string;
+	jsCliParamsToTree(params : JSCliParams) -> Tree<string, string>;
 
     // Finds the directory of flow itself. Is not very clever
 	getFlowDir() -> string;
@@ -89,26 +90,49 @@ fcFlowDir : ref Maybe<string> = ref None();
 
 getFlowDir() -> string {
 	init_dir = \-> {
+		// Use the 'print-flow-dir=1' option of flowc
+		flowDirByFlowc = \-> {
+			dir_lines = ref "";
+			err_lines = ref "";
+			code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".", 
+				\out -> dir_lines := ^dir_lines + out, 
+				\err -> {
+					println(err);
+					err_lines := err;
+				}
+			);
+			filtered = filtermap(strSplit(^dir_lines, "\n"), \line -> {
+				line1 = trim2(line, " \n\t\r");
+				if (line1 == "") None() else Some(line1);
+			});
+			if (code != 0 || ^err_lines != "" || length(filtered) != 1) {
+				println("WARNING: Could not determine the flow directory.");
+				println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
+				"../flow9/";
+			} else {
+				filtered[0];
+			}
+		}
 		// Use the path of the executable
-		appPath = strReplace(getApplicationPath(), "\\", "/");
-		flowDefDir = if (strContains(appPath, "/platforms/qt")) {
-			takeBefore(appPath, "/platforms/qt", appPath) + "/"
-		} else if (strContains(appPath, "flow9/platforms/java")) {
-			takeBefore(appPath, "platforms/java", appPath)
-		} else if (strContains(appPath, "tools/flowc/")) {
-			takeBefore(appPath, "tools/flowc/", appPath)
-		} else if (strContains(appPath, "flow9/bin/")) {
-			takeBefore(appPath, "bin/", appPath)
-		} else if (strContains(appPath, "bin/")) {
-			takeBefore(appPath, "bin/", appPath)
-		} else {
-			println("WARNING: Could not determine the flow directory.");
-			println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
-			"../flow9/";
+		flowDirByAppPath = \-> {
+			appPath = strReplace(getApplicationPath(), "\\", "/");
+			if (strContains(appPath, "/platforms/qt")) {
+				takeBefore(appPath, "/platforms/qt", appPath) + "/"
+			} else if (strContains(appPath, "flow9/platforms/java")) {
+				takeBefore(appPath, "platforms/java", appPath)
+			} else if (strContains(appPath, "tools/flowc/")) {
+				takeBefore(appPath, "tools/flowc/", appPath)
+			} else if (strContains(appPath, "flow9/bin/")) {
+				takeBefore(appPath, "bin/", appPath)
+			} else if (strContains(appPath, "bin/")) {
+				takeBefore(appPath, "bin/", appPath)
+			} else {
+				flowDirByFlowc();
+			}
 		}
 		binDir = getUrlParameter("bin-dir");
 		flowdir = if (binDir == "") {
-			flowDefDir
+			flowDirByAppPath()
 		} else {
 			if (endsWith(binDir, "bin/") || endsWith(binDir, "bin\\"))
 				substring(binDir, 0, strlen(binDir)-4)
