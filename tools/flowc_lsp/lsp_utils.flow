@@ -49,8 +49,16 @@ lspFileConfig(file : string) -> Tree<string, string> {
 	cwd_dir = strReplace(resolveRelativePath("."), "\\", "/");
 	file_dir = dirName(file);
 	conf_dir = findFlowConfigDir(file_dir);
-	conf1 = makeTree1("file", file);
-	if (conf_dir == "") conf1 else {
+	conf1 = pairs2tree([
+		Pair("file", file), 
+		Pair("orig-file", file), 
+		Pair("orig-cwd", cwd_dir),
+		Pair("orig-file-dir", file_dir),
+		Pair("orig-conf-dir", conf_dir),
+	]);
+	if (conf_dir == "") {
+		setTree(conf1, conf_dir, "empty");
+	} else {
 		switch (getCompilerConfig(file_dir)) {
 			Some(conf): {
 				c = CompilerConfig(conf with 
@@ -66,11 +74,54 @@ lspFileConfig(file : string) -> Tree<string, string> {
 					config = setTree(conf1, "working-dir", cwd_dir),
 					flowfile = file
 				);
-				setTree(lspCompilerConfigToCommandArgs(c), "file", file);
+				conf_with_args = lspCompilerConfigToCommandArgs(c);
+				ff = lookupTreeDef(conf_with_args, "file", "");
+				setTree(conf_with_args, "file-form-conf", ff);
 			}
-			Failed(msg): conf1;
+			Failed(msg): {
+				setTree(conf1, "failed", msg);
+			}
 		}
 	}
+}
+
+
+/*
+lspFileConfig(file : string) -> CompilerConfig {
+	cwd_dir = strReplace(resolveRelativePath("."), "\\", "/");
+	file_dir = dirName(file);
+	conf_dir = findFlowConfigDir(file_dir);
+	def = CompilerConfig(file, [], [], 0, makeEmptyJSCliParams());
+	switch (getCompilerConfig(file_dir)) {
+		Some(conf): {
+			if (conf_dir == "") def else {
+				CompilerConfig(conf with 
+					includes = uniq(concat(def.includes, map(conf.includes, \inc ->
+						if (isAbsolutePath(inc)) inc else {
+							if (inc == ".") {
+								conf_dir;
+							} else {
+								conf_dir + "/" + inc;
+							}
+						}
+					))),
+					config = setTree(combineConfigsOverride(conf.config, def.config), "working-dir", cwd_dir),
+					flowfile = file
+				);
+			}
+		}
+		Failed(msg): {
+			def;
+		}
+	}
+}*/
+
+makeEmptyJSCliParams() -> JSCliParams {
+	JSCliParams(
+		"", "", "", false, false, "", false, false, false,
+		false, false, tsProcessing_dummy, false, false,
+		false, 0, false, "", makeSet(), false, "", false
+	);
 }
 
 lspCompilerConfigToCommandArgs(config : CompilerConfig) -> Tree<string, string> {
@@ -79,7 +130,7 @@ lspCompilerConfigToCommandArgs(config : CompilerConfig) -> Tree<string, string> 
 			config.config,
 			jsCliParamsToTree(config.jsParams),
 		),
-		getConstConfig([
+		pairs2tree([
 			Pair("file", config.flowfile),
 			Pair("I", strGlue(config.includes, ",")),
 			Pair("obj", strGlue(config.objectFolders, ",")),
