@@ -1,8 +1,6 @@
 import math/uuid;
 import text/serialize;
 import text/utf8;
-//import tools/flowc/flowc_remote;
-import tools/flowc/flowc_helpers;
 import tools/flowc_lsp/lsp_utils;
 
 /*
@@ -34,7 +32,7 @@ export {
 		type : string, // Content-Type
 		json : string  // the Json description of request
 	);
-	lspProcessRequest(conf : Tree<string, string>, json : Json, out_cb : (string) -> void, loop_cb : () -> void, exit_cb : () -> void) -> void;
+	lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, out_cb : (string) -> void, loop_cb : () -> void, exit_cb : () -> void) -> void;
 }
 
 lspDecodeJsonRequest(s : string) -> Json {
@@ -118,7 +116,7 @@ lspNormalResponse(id : Json, result : Json) -> Json {
 	lspResponseMessage2Json(LspResponseMessage("2.0", id, result, None()));
 }
 
-lspProcessRequest(lspConf : Tree<string, string>, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
+lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
 	out_cb = \msg -> {
 		js_len = strlen(expandUtf8(json2string(msg)));
 		js_out = json2string(msg);
@@ -131,7 +129,7 @@ lspProcessRequest(lspConf : Tree<string, string>, json : Json, str_out_cb : (str
 				loop_cb();
 			} else {
 				switch (lookupTree(lspMethods, request.method)) {
-					Some(m): m(LspMethodCall(lspConf, request.id, request.params, out_cb, loop_cb, exit_cb));
+					Some(m): m(LspMethodCall(lsp_conf, request.id, request.params, out_cb, loop_cb, exit_cb));
 					None(): {
 						if (request.method == "$/cancelRequest") {
 							// Ignore this one
@@ -152,11 +150,11 @@ lspProcessRequest(lspConf : Tree<string, string>, json : Json, str_out_cb : (str
 							lspServerLog("response to the request: " + 
 								json2string(lspRequestMessage2Json(request)) + ":\n" + 
 								json2string(lspResponseMessage2Json(response))
-								, lspConf
+								, lsp_conf
 							);
 						}
 						None(): {
-							lspServerLog("unknown request: " + json2string(response.id), lspConf);
+							lspServerLog("unknown request: " + json2string(response.id), lsp_conf);
 						}
 					}
 					loop_cb();
@@ -243,16 +241,15 @@ lspTextDocumentDidOpen(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(textitem.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				setTree(conf, "update-cache", "1"),
+				setConfigOption(conf, "update-cache", "1"),
 				\code, out, err -> {
 					if (code != 0) call.loop_cb() else {
 						lspRunConf(true,
-							mergeTree(conf, 
-								pairs2tree([
+							setConfigOptions(conf, [
 									Pair("did-open", path),
 									Pair("did-open-text", textitem.text),
 									Pair("check-syntax", "2"),
-								])
+								]
 							),
 							\code_, out_, err_ -> {
 								call.out_cb(lspErrorDiagnostics(textitem.uri, out));
@@ -276,12 +273,11 @@ lspTextDocumentDidChange(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(params.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				mergeTree(conf, 
-					pairs2tree([
+				setConfigOptions(conf, [
 						Pair("did-change", path),
 						Pair("did-change-json", json2string(call.params)),
 						Pair("check-syntax", "2"),
-					])
+					]
 				),
 				\code, out, err -> {
 					call.out_cb(lspErrorDiagnostics(params.textDocument.uri, out));
@@ -303,7 +299,7 @@ lspTextDocumentDidSave(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(params.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				setTree(conf, "did-save", path),
+				setConfigOption(conf, "did-save", path),
 				\__,__,__ -> call.loop_cb()
 			);
 		}
@@ -320,7 +316,7 @@ lspTextDocumentDocumentSymbol(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(textid.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				setTree(conf, "print-outline", "1"),
+				setConfigOption(conf, "print-outline", "1"),
 				\code, out, err -> {
 					if (lspDetectLspError(out, call.lspConf)) {
 						call.out_cb(lspErrorDiagnostics(textid.uri, out));
@@ -346,12 +342,11 @@ lspTextDocumentDeclaration(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(textpos.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				mergeTree(conf, 
-					pairs2tree([
+				setConfigOptions(conf, [
 						Pair("exp-line", i2s(textpos.position.line)), 
 						Pair("exp-column", i2s(textpos.position.character)), 
 						Pair("find-declaration", "1")
-					])
+					]
 				),
 				\code, out, err -> {
 					if (lspDetectLspError(out, call.lspConf)) {
@@ -378,12 +373,11 @@ lspTextDocumentDefinition(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(textpos.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				mergeTree(conf, 
-					pairs2tree([
+				setConfigOptions(conf, [
 						Pair("exp-line", i2s(textpos.position.line)), 
 						Pair("exp-column", i2s(textpos.position.character)), 
 						Pair("find-definition", "1")
-					])
+					]
 				),
 				\code, out, err -> {
 					if (lspDetectLspError(out, call.lspConf)) {
@@ -410,12 +404,11 @@ lspTextDocumentReferences(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(textpos.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				mergeTree(conf, 
-					pairs2tree([
+				setConfigOptions(conf, [
 						Pair("exp-line", i2s(textpos.position.line)), 
 						Pair("exp-column", i2s(textpos.position.character)), 
 						Pair("find-uses", "1")
-					])
+					]
 				),
 				\code, out, err -> {
 					if (lspDetectLspError(out, call.lspConf)) {
@@ -442,12 +435,11 @@ lspTextDocumentHover(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(textpos.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				mergeTree(conf, 
-					pairs2tree([
+				setConfigOptions(conf, [
 						Pair("exp-line", i2s(textpos.position.line)), 
 						Pair("exp-column", i2s(textpos.position.character)), 
 						Pair("symbol-info", "1")
-					])
+					]
 				),
 				\code, out, err -> {
 					if (lspDetectLspError(out, call.lspConf)) {
@@ -478,13 +470,12 @@ lspTextDocumentRename(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(rename.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				mergeTree(conf, 
-					pairs2tree([
+				setConfigOptions(conf, [
 						Pair("exp-line", i2s(rename.position.line)), 
 						Pair("exp-column", i2s(rename.position.character)), 
 						Pair("rename", "1"),
 						Pair("to", rename.newName),
-					])
+					]
 				),
 				\code, out, err -> {
 					if (lspDetectLspError(out, call.lspConf)) {
@@ -510,14 +501,13 @@ lspTextDocumentCompletion(call: LspMethodCall) -> void {
 			path = fcCorrectUriPath(completion.textDocument.uri.path);
 			conf = lspFileConfig(path);
 			lspRunConf(true,
-				mergeTree(conf, 
-					pairs2tree([
+				setConfigOptions(conf, [
 						Pair("exp-line", i2s(completion.position.line)), 
 						Pair("exp-column", i2s(completion.position.character)), 
 						Pair("complete", "1"),
 						Pair("complete-kind", i2s(completion.context.triggerKind)),
 						Pair("complete-character", completion.context.triggerCharacter),
-					])
+					]
 				),
 				\code, out, err -> {
 					if (lspDetectLspError(out, call.lspConf)) {
@@ -581,10 +571,11 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 						path = fcCorrectUriPath(^file);
 						conf = lspFileConfig(path);
 						lspRunConf(false,
-							mergeTree(conf, pairs2tree(params)), 
+							setConfigOptions(conf, params), 
 							\code, out, err -> {
-								call.out_cb(lspErrorDiagnostics(parseURI(path), out));
-								call.out_cb(lspNormalResponse(call.id, JsonString(out)));
+								msg = if (err == "") out else err + "\n" + out;
+								call.out_cb(lspErrorDiagnostics(parseURI(path), msg));
+								call.out_cb(lspNormalResponse(call.id, JsonString(msg)));
 								call.loop_cb();
 							}
 						);
