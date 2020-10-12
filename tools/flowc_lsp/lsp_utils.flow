@@ -7,14 +7,14 @@ import tools/common/logging;
 export {
 	lspErrorDiagnostics(file : URI, s : string) -> Json;
 	lspParseErrors(s : string) -> [LspDiagnostic];
-	lspFileConfig(file : string) -> Tree<string, string>;
+	lspFileConfig(file : string) -> CompilerConfig;
 	lspParseLocations(s : string) -> [Json];
 	lspParseSymbols(s : string) -> [Json];
 	lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, string>>;
 	lspServerLog(message : string, conf : Tree<string, string>) -> void;
 	lspDetectLspError(out : string, conf : Tree<string, string>) -> bool;
 
-	lspRunConf(trim_out : bool, conf : Tree<string, string>, on_exit : (int, string, string) -> void) -> void;
+	lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, string) -> void) -> void;
 	lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string];
 }
 
@@ -45,76 +45,10 @@ lspParseErrors(s : string) -> [LspDiagnostic] {
 	}
 }
 
-lspFileConfig(file : string) -> Tree<string, string> {
-	cwd_dir = strReplace(resolveRelativePath("."), "\\", "/");
-	file_dir = dirName(file);
-	conf_dir = findFlowConfigDir(file_dir);
-	conf1 = pairs2tree([
-		Pair("file", file), 
-		Pair("orig-file", file), 
-		Pair("orig-cwd", cwd_dir),
-		Pair("orig-file-dir", file_dir),
-		Pair("orig-conf-dir", conf_dir),
-	]);
-	if (conf_dir == "") {
-		setTree(conf1, conf_dir, "empty");
-	} else {
-		switch (getCompilerConfig(file_dir)) {
-			Some(conf): {
-				c = CompilerConfig(conf with 
-					includes = uniq(map(conf.includes, \inc ->
-						if (isAbsolutePath(inc)) inc else {
-							if (inc == ".") {
-								conf_dir;
-							} else {
-								conf_dir + "/" + inc;
-							}
-						}
-					)),
-					config = setTree(conf1, "working-dir", cwd_dir),
-					flowfile = file
-				);
-				conf_with_args = lspCompilerConfigToCommandArgs(c);
-				ff = lookupTreeDef(conf_with_args, "file", "");
-				setTree(conf_with_args, "file-form-conf", ff);
-			}
-			Failed(msg): {
-				setTree(conf1, "failed", msg);
-			}
-		}
-	}
-}
-
-
-/*
 lspFileConfig(file : string) -> CompilerConfig {
-	cwd_dir = strReplace(resolveRelativePath("."), "\\", "/");
-	file_dir = dirName(file);
-	conf_dir = findFlowConfigDir(file_dir);
-	def = CompilerConfig(file, [], [], 0, makeEmptyJSCliParams());
-	switch (getCompilerConfig(file_dir)) {
-		Some(conf): {
-			if (conf_dir == "") def else {
-				CompilerConfig(conf with 
-					includes = uniq(concat(def.includes, map(conf.includes, \inc ->
-						if (isAbsolutePath(inc)) inc else {
-							if (inc == ".") {
-								conf_dir;
-							} else {
-								conf_dir + "/" + inc;
-							}
-						}
-					))),
-					config = setTree(combineConfigsOverride(conf.config, def.config), "working-dir", cwd_dir),
-					flowfile = file
-				);
-			}
-		}
-		Failed(msg): {
-			def;
-		}
-	}
-}*/
+	def = CompilerConfig(file, [], [], 0, makeEmptyJSCliParams(), makeTree(), 0);
+	updateConfigForFile(def, file);
+}
 
 makeEmptyJSCliParams() -> JSCliParams {
 	JSCliParams(
@@ -138,7 +72,6 @@ lspCompilerConfigToCommandArgs(config : CompilerConfig) -> Tree<string, string> 
 		])
 	)
 }
-
 
 lspParseLocations(s : string) -> [Json] {
 	filtermap(strSplit(s, "\n"), \l -> maybeMap(lspParseLocation(l, false), \p -> lspLocation2Json(p.first)));
@@ -310,79 +243,35 @@ lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string] {
 		if (value == "") key else key + "=" + value;
 	});
 }
-/*
-lspRunConfViaFlowc1(conf : Tree<string, string>, on_exit : (int, string, string) -> void) -> void {
-	startProcess("flowc1", lspConf2ConsoleArgs(conf), ".", "", 
-		\code, out, err -> {
-			//lspServerLog("ARGS: '" + strGlue(lspConf2ConsoleArgs(conf), " ") + "'\nOUT:\n" + out, conf);
-			if (err != "") {
-				lspServerLog("ERR:\n" + err, conf);
-			}
-			if (code != 0) {
-				lspServerLog("code: " + i2s(code), conf);
-			}
-			out1 = if (trim_out) lspTrimOutput(out) else out;
-			//lspServerLog("OUT1:\n" + out1, conf);
-			on_exit(code, out1, err);
-		}
-	);
-}
-*/
-/*
-lspRunConf(trim_out : bool, conf : Tree<string, string>, on_exit : (int, string, string) -> void) -> void {
-	startProcess("flowc1", lspConf2ConsoleArgs(conf), ".", "", 
-		\code, out, err -> {
-			//lspServerLog("ARGS: '" + strGlue(lspConf2ConsoleArgs(conf), " ") + "'\nOUT:\n" + out, conf);
-			if (err != "") {
-				lspServerLog("ERR:\n" + err, conf);
-			}
-			if (code != 0) {
-				lspServerLog("code: " + i2s(code), conf);
-			}
-			out1 = if (trim_out) lspTrimOutput(out) else out;
-			//lspServerLog("OUT1:\n" + out1, conf);
-			on_exit(code, out1, err);
-		}
-	);
-}
-*/
 
-lspRunConf(trim_out : bool, conf : Tree<string, string>, on_exit : (int, string, string) -> void) -> void {
+lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, string) -> void) -> void {
 	on_exit_1 = \code, out, err -> {
-		//lspServerLog("ARGS: '" + strGlue(lspConf2ConsoleArgs(conf), " ") + "'\nOUT:\n" + out, conf);
-		if (err != "") {
-			lspServerLog("ERR:\n" + err, conf);
-		}
-		if (code != 0) {
-			lspServerLog("code: " + i2s(code), conf);
-		}
 		out1 = if (trim_out) lspTrimOutput(out) else out;
-		//lspServerLog("OUT1:\n" + out1, conf);
 		on_exit(code, out1, err);
 	}
 	lspRunConfViaHttp(conf, on_exit_1,
 		\code, msg -> {
-			if (lookupTreeDef(conf, "client-mode", "") == "1") {
+			if (getConfigParameterDef(conf.config, "client-mode", "") == "1") {
 				on_exit(code, "", "Error " + i2s(code) + ": " + msg);
 			} else {
-				startProcess("flowc1", lspConf2ConsoleArgs(conf), ".", "", on_exit_1);
+				startProcess("flowc1", lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", on_exit_1);
 			}
 		}
 	);
 }
 
 lspRunConfViaHttp(
-	conf : Tree<string, string>, 
+	conf : CompilerConfig, 
 	on_exit : (int, string, string) -> void, 
-	on_error : (int, string) -> void
+	on_fail : (int, string) -> void
 ) -> void {
 	serverUrl = 
 		"http://localhost:" +
-		lookupTreeDef(conf, "server-port", "10001");
+		getConfigParameterDef(conf.config, "server-port", "10001");
 	patchedConfig = patchRemoteConfig(conf);
 	serialized_server_job = 
-		(lookupTreeDef(conf, "compile-expression", "") != "") || 
-		(lookupTreeDef(conf, "dump-program", "") == "1");
+		(getConfigParameterDef(conf.config, "compile-expression", "") != "") || 
+		(getConfigParameterDef(conf.config, "dump-program", "") == "1");
 	httpCustomRequest(
 		serverUrl,
 		GET(), [], RequestPayload("config_" + serialize(patchedConfig)),
@@ -400,47 +289,16 @@ lspRunConfViaHttp(
 					on_exit(0, data, "");
 				}
 			} else if (0 < code && code < 64) {
-				on_exit(code, ", ", "Compilation error " + i2s(code) + "\n" + data);
+				msg = if (conf.verbose > 0) {
+					"Compilation error " + i2s(code) + "\n";
+				} else {
+					"";
+				}
+				on_exit(code, "", msg + data);
 			} else {
-				on_error(status, data);
+				on_fail(status, data);
 			}
 		},
 		false
 	);
 }
-
-patchRemoteConfig(conf : Tree<string, string>) -> Tree<string, string> {
-	cwd = strReplace(resolveRelativePath("."), "\\", "/");
-
-	// Setup the 'output-dir' in case it is not set explicitly.
-	conf1 = switch (lookupTree(conf, "output-dir")) {
-		Some(__): conf;
-		None():   setTree(conf, "output-dir", cwd);
-	}
-
-	// Setup the 'working-dir' option
-	conf2 = setTree(conf1, "working-dir", lookupTreeDef(conf1, "working-dir", cwd));
-
-	// Resolve relative path for 'fontconfig-file', because server may run in a different place.
-	conf3 = switch (lookupTree(conf2, "fontconfig-file")) {
-		Some(file): setTree(conf2, "fontconfig-file", resolveRelativePath(file));
-		None():     conf2;
-	}
-
-	conf3;
-
-//	jsCliParamsToTree(params : JSCliParams) -> Tree<string, string>;
-	//fontconfig = lookupTreeDef(conf3, "fontconfig-file", conf.jsParams.fontconfig);
-	//jsParams = JSCliParams(conf.jsParams with fontconfig = fontconfig);
-	//mergeTree(conf3, jsCliParamsToTree());
-
-/*	
-	// Update 'fontconfig' field in JSCliParams
-	fontconfig = lookupTreeDef(conf4, "fontconfig-file", conf.jsParams.fontconfig);
-	jsParams = JSCliParams(conf.jsParams with fontconfig = fontconfig);
-
-	// Output the result
-	//CompilerConfig(conf with config = conf4, jsParams = jsParams);
-*/
-}
-
