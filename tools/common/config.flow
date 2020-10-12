@@ -84,6 +84,12 @@ export {
 	fcDirName(path : string) -> string;
 
 	setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig;
+
+	patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig;
+
+	// Set (add or modify) a config field(s) in conf struct.
+	setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig;
+	setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig;
 }
 
 fcFlowDir : ref Maybe<string> = ref None();
@@ -377,4 +383,40 @@ jsCliParamsToTree(params : JSCliParams) -> Tree<string, string> {
 
 setConfigFlowfile(conf : CompilerConfig, file : string) -> CompilerConfig {
 	CompilerConfig(conf with flowfile = file)
+}
+
+patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
+	cwd = strReplace(resolveRelativePath("."), "\\", "/");
+
+	// Setup the 'output-dir' in case it is not set explicitly.
+	conf1 = switch (lookupTree(conf.config, "output-dir")) {
+		Some(__): conf.config;
+		None():   setTree(conf.config, "output-dir", cwd);
+	}
+	// Add a flowfile as a config tree option.
+	conf2 = setTree(conf1, "file", conf.flowfile);
+
+	// Setup the 'working-dir' option
+	conf3 = setTree(conf2, "working-dir", lookupTreeDef(conf2, "working-dir", cwd));
+
+	// Resolve relative path for 'fontconfig-file', because server may run in a different place.
+	conf4 = switch (lookupTree(conf3, "fontconfig-file")) {
+		Some(file): setTree(conf3, "fontconfig-file", resolveRelativePath(file));
+		None():     conf3;
+	}
+
+	// Update 'fontconfig' field in JSCliParams
+	fontconfig = lookupTreeDef(conf4, "fontconfig-file", conf.jsParams.fontconfig);
+	jsParams = JSCliParams(conf.jsParams with fontconfig = fontconfig);
+
+	// Output the result
+	CompilerConfig(conf with config = conf4, jsParams = jsParams);
+}
+
+setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig {
+	CompilerConfig(conf with config = setTree(conf.config, opt, val));
+}
+
+setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig {
+	CompilerConfig(conf with config = mergeTree(conf.config, pairs2tree(opt_pairs)));
 }
