@@ -229,12 +229,12 @@ class FlowSprite extends Sprite {
 				calculateWidgetBounds();
 
 				if (widgetBounds.maxX == 0.0) {
-					if (parent != null && retries < 2) {
+					if (parent != null && retries < 10) {
 						retries++;
 						nativeWidget.style.width = null;
 						nativeWidget.style.height = null;
 
-						onLoaded();
+						Native.timer(retries * 1000, onLoaded);
 					} else {
 						if (forceSvg) {
 							forceImageElement();
