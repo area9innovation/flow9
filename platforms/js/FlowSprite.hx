@@ -236,7 +236,11 @@ class FlowSprite extends Sprite {
 
 						onLoaded();
 					} else {
-						onError();
+						if (forceSvg) {
+							forceImageElement();
+						} else {
+							onError();
+						}
 					}
 				} else {
 					if (RenderSupport.RendererType == "html") {
@@ -325,6 +329,15 @@ class FlowSprite extends Sprite {
 		_bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
 	}
 
+	private function forceImageElement(?tagName : String = "img") : Void {
+		if (untyped this.destroyed || parent == null || nativeWidget == null || disposed) {
+			return;
+		}
+
+		forceSvg = false;
+		createNativeWidget(tagName);
+	}
+
 	private function createNativeWidget(?tagName : String = "img") : Void {
 		if (!isNativeWidget) {
 			return;
@@ -340,15 +353,6 @@ class FlowSprite extends Sprite {
 			if (!Platform.isIE && !Platform.isEdge)
 				svgXhr.overrideMimeType('image/svg+xml');
 
-			var forceImageFn = function () {
-				if (untyped this.destroyed || parent == null || nativeWidget == null || disposed) {
-					return;
-				}
-
-				forceSvg = false;
-				createNativeWidget(tagName);
-			}
-
 			svgXhr.onload = function () {
 				if (untyped this.destroyed || parent == null || nativeWidget == null || disposed) {
 					return;
@@ -362,13 +366,13 @@ class FlowSprite extends Sprite {
 
 						onLoaded();
 					} else {
-						forceImageFn();
+						forceImageElement();
 					}
 				} catch (e : Dynamic) {
-					forceImageFn();
+					forceImageElement();
 				}
 			};
-			svgXhr.onerror = forceImageFn;
+			svgXhr.onerror = forceImageElement;
 
 			svgXhr.open('GET', url, true);
 			svgXhr.send();
