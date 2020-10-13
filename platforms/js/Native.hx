@@ -1803,7 +1803,7 @@ class Native {
 	static var sidJsonObjectFields : String;
 
 	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
-	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+	private static function object2JsonStructs(o : Dynamic, strDict : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
 			var a1 = Native.map(o,Native.object2JsonStructs);
@@ -1828,9 +1828,14 @@ class Native {
 					} else {
 						var mappedFields = [];
 						for(var f in o) {
-							var a2 = Native.object2JsonStructs(o[f]);
+							var a2 = Native.object2JsonStructs(o[f], strDict);
 							var obj = { _id : Native.sidPair };
-							obj[Native.sidPairFirst] = f;
+							var cf = strDict[f];
+							if (cf === undefined) {
+								cf = f;
+								strDict[f] = cf;
+							}
+							obj[Native.sidPairFirst] = cf;
 							obj[Native.sidPairSecond] = a2;
 							mappedFields.push(obj);
 						}
@@ -1845,7 +1850,7 @@ class Native {
 	}
 
 	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
-	private static function object2JsonStructs_FF(o : Dynamic) : Dynamic {
+	private static function object2JsonStructs_FF(o : Dynamic, strDict : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
 			var a1 = Native.map(o,Native.object2JsonStructs_FF);
@@ -1871,9 +1876,15 @@ class Native {
 						var mappedFields = Object.getOwnPropertyNames(o);
 						for(var i=0; i< mappedFields.length; i++) {
 							var f = mappedFields[i];
-							var a2 = Native.object2JsonStructs_FF(o[f]);
+							var cf = strDict[f];
+							if (cf === undefined) {
+								cf = f;
+								strDict[f] = cf;
+							}
+
+							var a2 = Native.object2JsonStructs_FF(o[f], strDict);
 							var obj = { _id : Native.sidPair };
-							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairFirst] = cf;
 							obj[Native.sidPairSecond] = a2;
 							mappedFields[i] = obj;
 						}
@@ -1914,7 +1925,7 @@ class Native {
 				parseJsonFirstCall = false;
 			}
 
-			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
+			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json), untyped __js__("{}")) : object2JsonStructs(haxe.Json.parse(json), untyped __js__("{}"));
 		} catch (e : Dynamic) {
 			return makeStructValue("JsonDouble", [0.0], null);
 		}
