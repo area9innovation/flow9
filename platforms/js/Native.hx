@@ -1802,11 +1802,18 @@ class Native {
 	static var sidJsonObject : Int;
 	static var sidJsonObjectFields : String;
 
+	static var jsonDoubleZero : Dynamic;
+	static var jsonStringEmpty : Dynamic;
+
 	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
-	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+	private static function object2JsonStructs(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
-			var a1 = Native.map(o,Native.object2JsonStructs);
+			var n = o.length;
+			var a1 = Array(n);
+			for (var i=0; i<n; i++) {
+				a1[i] = Native.object2JsonStructs(o[i], sDict, jsDict, nDict);
+			}
 			var obj = { _id : Native.sidJsonArray };
 			obj[Native.sidJsonArrayVal] = a1;
 			return obj;
@@ -1814,12 +1821,27 @@ class Native {
 			var t = typeof o;
 			switch (t) {
 				case 'string':
-					var obj = { _id : Native.sidJsonString };
-					obj[Native.sidJsonStringVal] = o;
+					if (o === '') return Native.jsonStringEmpty;
+					var obj = jsDict[o];
+					if (obj == undefined) {
+						var s = sDict[o];
+						if (s === undefined) {
+							s = o;
+							sDict[o] = s;
+						}
+						obj = { _id : Native.sidJsonString };
+						obj[Native.sidJsonStringVal] = s;
+						jsDict[o] = obj;
+					}
 					return obj;
 				case 'number':
-					var obj = { _id : Native.sidJsonDouble };
-					obj[Native.sidJsonDoubleVal] = o;
+					if (o === 0.0) return Native.jsonDoubleZero;
+					var obj = nDict[o];
+					if (obj === undefined) {
+						obj = { _id : Native.sidJsonDouble };
+						obj[Native.sidJsonDoubleVal] = o;
+						nDict[o] = obj;
+					}
 					return obj;
 				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
 				default:
@@ -1828,9 +1850,14 @@ class Native {
 					} else {
 						var mappedFields = [];
 						for(var f in o) {
-							var a2 = Native.object2JsonStructs(o[f]);
+							var a2 = Native.object2JsonStructs(o[f], sDict, jsDict, nDict);
 							var obj = { _id : Native.sidPair };
-							obj[Native.sidPairFirst] = f;
+							var cf = sDict[f];
+							if (cf === undefined) {
+								cf = f;
+								sDict[f] = cf;
+							}
+							obj[Native.sidPairFirst] = cf;
 							obj[Native.sidPairSecond] = a2;
 							mappedFields.push(obj);
 						}
@@ -1845,23 +1872,42 @@ class Native {
 	}
 
 	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
-	private static function object2JsonStructs_FF(o : Dynamic) : Dynamic {
+	private static function object2JsonStructs_FF(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
-			var a1 = Native.map(o,Native.object2JsonStructs_FF);
-			var obj = { _id : Native.sidJsonArray};
+			var n = o.length;
+			var a1 = Array(n);
+			for (var i=0; i<n; i++) {
+				a1[i] = Native.object2JsonStructs_FF(o[i], sDict, jsDict, nDict);
+			}
+			var obj = { _id : Native.sidJsonArray };
 			obj[Native.sidJsonArrayVal] = a1;
 			return obj;
 		} else {
 			var t = typeof o;
 			switch (t) {
 				case 'string':
-					var obj = { _id : Native.sidJsonString };
-					obj[Native.sidJsonStringVal] = o;
+					if (o === '') return Native.jsonStringEmpty;
+					var obj = jsDict[o];
+					if (obj == undefined) {
+						var s = sDict[o];
+						if (s === undefined) {
+							s = o;
+							sDict[o] = s;
+						}
+						obj = { _id : Native.sidJsonString };
+						obj[Native.sidJsonStringVal] = s;
+						jsDict[o] = obj;
+					}
 					return obj;
 				case 'number':
-					var obj = { _id : Native.sidJsonDouble };
-					obj[Native.sidJsonDoubleVal] = o;
+					if (o === 0.0) return Native.jsonDoubleZero;
+					var obj = nDict[o];
+					if (obj === undefined) {
+						obj = { _id : Native.sidJsonDouble };
+						obj[Native.sidJsonDoubleVal] = o;
+						nDict[o] = obj;
+					}
 					return obj;
 				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
 				default:
@@ -1871,9 +1917,15 @@ class Native {
 						var mappedFields = Object.getOwnPropertyNames(o);
 						for(var i=0; i< mappedFields.length; i++) {
 							var f = mappedFields[i];
-							var a2 = Native.object2JsonStructs_FF(o[f]);
+							var cf = sDict[f];
+							if (cf === undefined) {
+								cf = f;
+								sDict[f] = cf;
+							}
+
+							var a2 = Native.object2JsonStructs_FF(o[f], sDict, jsDict, nDict);
 							var obj = { _id : Native.sidPair };
-							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairFirst] = cf;
 							obj[Native.sidPairSecond] = a2;
 							mappedFields[i] = obj;
 						}
@@ -1911,12 +1963,35 @@ class Native {
 				Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
 
 				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+
+				Native.jsonDoubleZero =  HaxeRuntime.makeStructValue("JsonDouble", [0.0], null);
+				Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
 				parseJsonFirstCall = false;
 			}
+			if (json == "") return Native.jsonDoubleZero;
+			var parsed = Native.jsonDoubleZero;
+			// if json string contains NaN as value of some field then JSON.parse will throw exception
+			// instead of returning JsonDouble(0.0) in this case we will try to replace NaN with 0.0 to avoid full content loss possible issue
+			untyped __js__("
+			try {
+				parsed = JSON.parse(json);
+			} catch(e) {
+				if (e.message.startsWith('Unexpected token N in JSON')) {
+					parsed = JSON.parse(json.replace(/\":NaN/g, '\":0.0'));
+				} else {
+					return Native.jsonDoubleZero;
+				}
+			}
+			");
 
-			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
+			return Platform.isFirefox ?
+				object2JsonStructs_FF(parsed, untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}")) :
+				object2JsonStructs(parsed, untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}"));
 		} catch (e : Dynamic) {
-			return makeStructValue("JsonDouble", [0.0], null);
+			Errors.print("parseJson");
+			Errors.print(json);
+			Errors.print(e);
+			return Native.jsonDoubleZero;
 		}
 	}
 	#end
