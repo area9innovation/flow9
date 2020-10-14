@@ -1988,6 +1988,9 @@ class Native {
 				object2JsonStructs_FF(parsed, untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}")) :
 				object2JsonStructs(parsed, untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}"));
 		} catch (e : Dynamic) {
+			Errors.print("parseJson");
+			Errors.print(json);
+			Errors.print(e);
 			return Native.jsonDoubleZero;
 		}
 	}
