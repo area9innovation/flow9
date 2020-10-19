@@ -372,7 +372,9 @@ class FlowSprite extends Sprite {
 					forceImageElement();
 				}
 			};
-			svgXhr.onerror = forceImageElement;
+			svgXhr.onerror = function() {
+				forceImageElement();
+			};
 
 			svgXhr.open('GET', url, true);
 			svgXhr.send();
