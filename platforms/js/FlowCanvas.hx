@@ -37,8 +37,11 @@ class FlowCanvas extends FlowContainer {
 
 			this.updateNativeWidgetTransformMatrix();
 			this.updateNativeWidgetOpacity();
+			var transform = worldTransform.clone().invert();
+			transform.tx += Math.max(-localBounds.minX, 0.0);
+			transform.ty += Math.max(-localBounds.minY, 0.0);
 
-			this.renderToCanvas(nativeWidget, context, worldTransform.clone().invert());
+			this.renderToCanvas(nativeWidget, context, transform);
 
 			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
 				untyped this.localTransformChanged = true;

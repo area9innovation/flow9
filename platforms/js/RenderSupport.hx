@@ -691,7 +691,7 @@ class RenderSupport {
 	}
 
 	private static inline function getScreenSize() {
-		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
+		if (Platform.isIOS && (Platform.isChrome || Platform.isSafari || ProgressiveWebTools.isRunningPWA())) {
 			var is_portrait = isPortaitOrientation();
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
@@ -1774,7 +1774,8 @@ class RenderSupport {
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
 			var a = clip.worldTransform;
-			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
+			var az = getAccessibilityZoom();
+			return [a.a / az, a.b, a.c, a.d / az, a.tx / az, a.ty / az];
 		} else {
 			return [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 		}

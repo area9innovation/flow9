@@ -153,6 +153,7 @@ renderParagraph(
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 	interLineHighlighting = containsStruct(s, InterlineHighlighting());
+	fitLongWords = containsStruct(s, ParagraphFitLongWords());
 
 	tightWidth = contains(s, TightWidth());
 
@@ -183,7 +184,7 @@ renderParagraph(
 	renderParaLinesFn = \lines, storyWidth -> renderParaLines(
 		storyWidth, lines, tightWidth, alignment, interlineSpacing,
 		topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-		interLineHighlighting
+		interLineHighlighting, fitLongWords
 	);
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
@@ -702,7 +703,8 @@ renderParaLines(
 	styleTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
 	isMarked : bool,
-	interLineHighlighting : bool
+	interLineHighlighting : bool,
+	fitLongWords : bool
 ) -> Pair<Form, double> {
 	lasti = length(lines) - 1;
 	a : ParaLineAcc = foldi(lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
@@ -725,7 +727,8 @@ renderParaLines(
 			} else 0.0,
 			if (interLineHighlighting){
 				if (lastLine || i == 0) interlineSpacing / 2.0 else interlineSpacing
-			} else 0.0
+			} else 0.0,
+			fitLongWords
 		);
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
@@ -768,7 +771,8 @@ RenderLine(
 	rtl : bool,
 	isMarked : bool,
 	highLightOffset : double,
-	interlineSpacing : double
+	interlineSpacing : double,
+	fitLongWords : bool
 ) -> ParaLineResult {
 	optimizedLine = getOptimizedLine(words, alignment);
 	metrics = map(optimizedLine, \p -> getValue(p.metrics));
@@ -787,10 +791,12 @@ RenderLine(
 		EndAlign(): endOffset;
 		Justify(): 0.0;
 	} + (if (rtl) 0. else lineIndent);
+
+	remaining = (width - lineWidth);
+	fittingCoef = if (fitLongWords && remaining < 0.0) width / lineWidth else 1.0;
 	// Inter-word spacing for justification
 	interWord = if (alignment == Justify() && length(optimizedLine) > 1) {
 		nwords = length(optimizedLine);
-		remaining = (width - lineWidth);
 		min(10.0, remaining / i2d(nwords - 1));
 	} else 0.0;
 
@@ -810,22 +816,32 @@ RenderLine(
 		isSuperscript = intStyleContains(ParaElementSuperscript());
 		isSubscript = intStyleContains(ParaElementSubscript());
 
+		wordWidth = m.width * fittingCoef;
+
+		fitLongWordToWidth = \fm -> if (fitLongWords && remaining < 0.0) Size2(
+			const(WidthHeight(width, m.height)),
+			Scale(const(fittingCoef), const(fittingCoef), fm)
+		 ) else fm;
+
 		dy = if (isSuperscript) -1.0 else lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
 		applyStylesAndOffset = \fm : Form -> eitherMap(
 			elem.interactivityIdM,
 			\id -> applyIntStylesAndHighlighting(
-				fm,
+				fitLongWordToWidth(fm),
 				lookupTreeDef(interactiveStyles, id, []),
 				^alignmentOffset,
 				y,
 				dy,
-				m.width,
-				lineHeight,
+				wordWidth,
+				lineHeight * fittingCoef,
 				interWord,
 				highLightOffset,
 				interlineSpacing
 			),
-			Translate(const(^alignmentOffset), const(y + dy), fm)
+			Translate(
+				const(^alignmentOffset), const(y + dy),
+				fitLongWordToWidth(fm)
+			)
 		);
 
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
@@ -856,11 +872,16 @@ RenderLine(
 			}
 			default: Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
 		}
-		ignoreWidth = intStyleContains(IgnoreMetrics());
-		alignmentOffset := ^alignmentOffset + if (m.width == 0.0 || ignoreWidth) 0.0 else m.width + justifyOffset;
+
+		alignmentOffset := ^alignmentOffset + if (m.width == 0.0 || intStyleContains(IgnoreMetrics())) 0.0 else wordWidth + justifyOffset;
 		r;
 	});
-	ParaLineResult(Group(lo), lineWidth, lineHeight, y + lineAsc);
+	ParaLineResult(
+		Group(lo),
+		if (fitLongWords) min(lineWidth, width) else lineWidth,
+		lineHeight * fittingCoef,
+		y + lineAsc
+	);
 }
 
 applyIntStylesAndHighlighting(
