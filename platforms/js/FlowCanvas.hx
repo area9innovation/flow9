@@ -22,7 +22,7 @@ class FlowCanvas extends FlowContainer {
 	}
 
 	public function updateNativeWidget() {
-		if (visible) {
+		if (visible && worldAlpha > 0 && renderable) {
 			if (DisplayObjectHelper.DebugUpdate) {
 				nativeWidget.setAttribute("update", Std.int(nativeWidget.getAttribute("update")) + 1);
 				if (untyped this.from) {
@@ -46,6 +46,8 @@ class FlowCanvas extends FlowContainer {
 			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
 				untyped this.localTransformChanged = true;
 			}
+		} else {
+			untyped this.localTransformChanged = true;
 		}
 
 		this.updateNativeWidgetDisplay();
