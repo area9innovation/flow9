@@ -64,13 +64,14 @@ MComponent2T(
 	highlightOnSelect = extractStruct(state, MHighlightOnSelect(const(false))).enabled;
 	title = extractStruct(state, MButtonTitle(const(""))).title;
 	focusClicks = MFocusClicks(state);
-	focusOnPrevious =
+	focusOnPrevious = \focus ->
 		if (extractStruct(state, MFocusOnPrevious(false)).enabled)
 			[
-				makeSubscribe(focused, \f ->
-					if (!f && isNone(getCurrentFocusedItem(manager))) {
-						foc = getPreviousFocusedItem(manager);
-						maybeApply(foc, \pf -> if (fgetValue(pf.focusEnabled)) deferred(\ -> nextDistinct(pf.focused, true)));
+				makeSubscribe2(focused, \f ->
+					if (!f) {
+						maybeApply(getPreviousFocusedItem(manager), \pf ->
+							deferred(\ -> if (pf != focus && fgetValue(pf.focusEnabled) && isNone(getCurrentFocusedItem(manager))) nextDistinct(pf.focused, true))
+						);
 					}
 				)
 			]
@@ -122,7 +123,7 @@ MComponent2T(
 							p,
 							f,
 							extractStruct(state, MRippleTrigger(down)).trigger,
-							concat(
+							concat3(
 								[
 									extractStruct(state, MRipplePosition(point)),
 									extractStruct(state, MRippleColor(const(if (getLightBackground(p)) MBlack() else MWhite()))),
@@ -135,7 +136,8 @@ MComponent2T(
 									extractStruct(state, MRippleOverlay(true)),
 									MEnabled(focus.enabled)
 								],
-								extractStructMany(state, MRippleWidthHeight(const(WidthHeight(0., 0.))))
+								extractStructMany(state, MRippleWidthHeight(const(WidthHeight(0., 0.)))),
+								extractStructMany(state, MRippleOutlineColor(const(MWhite())))
 							)
 						)
 					)
@@ -152,7 +154,7 @@ MComponent2T(
 									MTooltip(
 										f,
 										TSelect(tt.text, \t -> MText2T(p, t, [sameLightMColor(p), MTooltipDesktop()])),
-										[MEnabled(fand(focus.enabled, fneq(tt.text, "")))]
+										[MEnabled(fand(focus.enabled, fneq(tt.text, ""))), MTooltipExternalFocused(focus.focused)]
 										|> (\st -> arrayPushMaybe(st, tryExtractStruct(state, MTooltipAlignment(MBottom()))))
 									),
 									m2t
@@ -173,7 +175,7 @@ MComponent2T(
 						TConstruct(
 							arrayPushMaybe(
 								arrayPushMaybe(
-									concat(focusClicks.subscribers, focusOnPrevious),
+									concat(focusClicks.subscribers, focusOnPrevious(focus)),
 									maybeMap(onClick, \c -> c.subscribers)
 								),
 								maybeMap(onFocus, \of -> makeSubscribe2(focus.focused, of.onFocus))
@@ -308,7 +310,6 @@ MFocusClicks(state : [flow]) -> MFocusClicksState {
 MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [MouseOnDownAroundState], focus : MFocus, point : DynamicBehaviour<Point>,
 	clickEnabled : Transform<bool>, keysEnabled : Transform<bool>, tr : Tropic) -> Tropic {
 	focusOnDown = extractStruct(state, MFocusOnDown(ref false)).enabled;
-	keepFocusOnDown = extractStruct(state, MKeepFocusOnDown(ref false)).enabled;
 	hoverDisabled = extractStructMany(state, MDisableHover());
 
 	cursorPoint = extractStructMany(state, MMousePosition(point));
@@ -326,12 +327,8 @@ MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [Mouse
 		if (fgetValue(clickEnabled))
 			maybeApply(focus.onClick, apply0);
 
-		if (^focusOnDown)
+		if (^focusOnDown) {
 			deferred(\ -> if (fgetValue(focus.focusEnabled)) nextDistinct(focus.focused, true));
-
-		if (^keepFocusOnDown && isNone(manager.downInsideFocus)) {
-			manager.downInsideFocus ::= Some(focus);
-			deferred(\ -> manager.downInsideFocus ::= None());
 		}
 	}
 
@@ -505,6 +502,7 @@ MComponent2TShortcut(manager : MaterialManager, content : Tropic, state : [flow]
 }
 
 MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], focus : MFocus, keyOnClick : Maybe<(bool) -> void>, shortcut : string) -> Tropic {
+	keepFocusOnDown = extractStruct(state, MKeepFocusOnDown(ref false)).enabled;
 	properties =
 		arrayPush(
 			replaceStruct(extractFAccessProperties(state), extractStruct(state, AccessRole("button"))),
@@ -552,7 +550,7 @@ MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], 
 			)
 		);
 	onDown = \d -> {
-		if (d && getValue(focus.focused) && isNone(manager.downInsideFocus)) {
+		if (d && (getValue(focus.focused) || ^keepFocusOnDown) && isNone(manager.downInsideFocus)) {
 			manager.downInsideFocus ::= Some(focus);
 			deferred(\ -> manager.downInsideFocus ::= None());
 		}

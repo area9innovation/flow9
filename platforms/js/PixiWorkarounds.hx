@@ -605,6 +605,13 @@ class PixiWorkarounds {
 				return width;
 			}
 
+			var nativeSetProperty = CSSStyleDeclaration.prototype.setProperty;
+
+			CSSStyleDeclaration.prototype.setProperty = function(propertyName, value, priority) {
+				RenderSupport.emitUserStyleChanged();
+				nativeSetProperty.call(this, propertyName, value, priority);
+			}
+
 			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
 			{
 				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
@@ -660,18 +667,10 @@ class PixiWorkarounds {
 				const lineWidths = new Array(lines.length);
 				let maxLineWidth = 0;
 
-				const spaceWidth = Platform.isSafari ? context.measureText(' ').width : 0;
-
 				for (let i = 0; i < lines.length; i++)
 				{
 					let lineWidth;
-					if (Platform.isSafari) {
-						let spacesCount = 0;
-						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
-						lineWidth += spacesCount * spaceWidth;
-					} else {
-						lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					}
+					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
 					lineWidth += (lines[i].length - 1) * style.letterSpacing;
 
 					lineWidths[i] = lineWidth;
