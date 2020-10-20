@@ -274,12 +274,16 @@ class RenderSupport {
 		if (!UserStylePending) {
 			UserStylePending = true;
 			RenderSupport.once("drawframe", function() {
-				if (getUserDefinedLetterSpacing() != 0.0 || getUserDefinedLetterSpacingPercent() != 0.0) {
+				if (UserDefinedLetterSpacing != getUserDefinedLetterSpacing() || UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) {
 					RenderSupport.emit("userstylechanged");
 				}
 				UserStylePending = false;
 			});
 		}
+	}
+
+	public static function monitorUserStyleChanges() : Void -> Void {
+		return Native.setInterval(1000, emitUserStyleChanged);
 	}
 
 	private static function getBackingStoreRatio() : Float {
