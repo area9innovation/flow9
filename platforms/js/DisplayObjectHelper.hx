@@ -1757,25 +1757,6 @@ class DisplayObjectHelper {
 	}
 
 	public static function findNextNativeWidget(clip : DisplayObject, parent : DisplayObject) : Element {
-		// if (clip.parent != null) {
-		// 	var children = clip.parent.children;
-
-		// 	if (children.indexOf(clip) >= 0) {
-		// 		for (child in children.slice(children.indexOf(clip) + 1)) {
-		// 			if (untyped child.visible && (!isNativeWidget(child) || (child.onStage && child.parentClip == parent))) {
-		// 				var nativeWidget = findNativeWidgetChild(child, parent);
-
-		// 				if (nativeWidget != null) {
-		// 					return nativeWidget;
-		// 				}
-		// 			}
-		// 		}
-		// 	}
-
-		// 	return RenderSupport.RenderContainers || isNativeWidget(clip.parent) ? null : findNextNativeWidget(clip.parent, parent);
-		// }
-
-		// return null;
 		untyped __js__("
 		if(clip.parent != null) {
 			var children = clip.parent.children;
@@ -1802,21 +1783,6 @@ class DisplayObjectHelper {
 	}
 
 	public static function findNativeWidgetChild(clip : DisplayObject, parent : DisplayObject) : Element {
-		// if (untyped isNativeWidget(clip) && clip.parentClip == parent && getParentNode(clip) == parent.nativeWidget) {
-		// 	return untyped clip.nativeWidget;
-		// } else if (!RenderSupport.RenderContainers && RenderSupport.RendererType == "html") {
-		// 	for (child in getClipChildren(clip)) {
-		// 		if (untyped child.visible && (!isNativeWidget(child) || child.parentClip == parent)) {
-		// 			var nativeWidget = findNativeWidgetChild(child, parent);
-
-		// 			if (nativeWidget != null) {
-		// 				return nativeWidget;
-		// 			}
-		// 		}
-		// 	}
-		// }
-
-		// return null;
 		untyped __js__("
 		if(DisplayObjectHelper.isNativeWidget(clip) && clip.parentClip == parent && DisplayObjectHelper.getParentNode(clip) == parent.nativeWidget) {
 			return clip.nativeWidget;
