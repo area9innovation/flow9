@@ -282,8 +282,20 @@ class RenderSupport {
 		}
 	}
 
+	public static function isInsideFrame() : Bool {
+		try {
+			return untyped __js__("window.self !== window.top");
+		} catch (e : Dynamic) {
+			return true;
+		}
+	}
+
 	public static function monitorUserStyleChanges() : Void -> Void {
-		return Native.setInterval(1000, emitUserStyleChanged);
+		if (isInsideFrame()) {
+			return Native.setInterval(1000, emitUserStyleChanged);
+		} else {
+			return function() {};
+		}
 	}
 
 	private static function getBackingStoreRatio() : Float {
