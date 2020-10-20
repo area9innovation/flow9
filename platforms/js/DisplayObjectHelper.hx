@@ -1706,7 +1706,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function isNativeWidget(clip : DisplayObject) : Bool {
+	public static inline function isNativeWidget(clip : DisplayObject) : Bool {
 		return untyped clip.isNativeWidget;
 	}
 
