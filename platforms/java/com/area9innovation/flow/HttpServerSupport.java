@@ -184,8 +184,8 @@ public class HttpServerSupport extends NativeHost
 					result.write(buffer, 0, length);
 				}
 				return result.toString("UTF-8");
-			} catch (Exception e) {
-				throw new RuntimeException(e.getMessage());
+			} catch (IOException e) {
+				throw new UncheckedIOException(e);
 			}
 		}
 
