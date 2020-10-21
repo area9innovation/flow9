@@ -605,6 +605,13 @@ class PixiWorkarounds {
 				return width;
 			}
 
+			var nativeSetProperty = CSSStyleDeclaration.prototype.setProperty;
+
+			CSSStyleDeclaration.prototype.setProperty = function(propertyName, value, priority) {
+				RenderSupport.emitUserStyleChanged();
+				nativeSetProperty.call(this, propertyName, value, priority);
+			}
+
 			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
 			{
 				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
