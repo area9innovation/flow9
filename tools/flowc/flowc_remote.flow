@@ -20,6 +20,20 @@ export {
 runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
 	if (isConfigParameterFalse(config.config, "server") || !java) {
 		runConfigLocally(config, globalEnv, onRunComplete);
+	} else if (isConfigParameterTrue(config.config, "server-process")) {
+		switch (flowcHttpServerProcessIds()) {
+			Some(ids): {
+				if (length(ids) == 0) {
+					fcPrintln("Flow http server is not running\n", config.threadId);
+				} else if (length(ids) == 1) {
+					fcPrintln("Flow http server is running, process id = " + ids[0] + "\n", config.threadId);
+				} else {
+					fcPrintln("Multiple flow http server instances are running, process ids = " + strGlue(ids, ", ") + "\n", config.threadId);
+				}
+			}
+			None(): fcPrintln("Failed to determine if a flow http server is running\n", config.threadId);
+		}
+		onRunComplete(0);
 	} else {
 		runConfigRemote(
 			config, 
@@ -86,6 +100,31 @@ runConfigRemote(
 	)
 }
 
+flowcHttpServerProcessIds() -> Maybe<[string]> {
+	if (linux()) {
+		ids = ref [];
+		code = execSystemProcess("ps", ["-ax"], ".", 
+			\out -> {
+				if (strContains(out, "flowc.jar server-mode=http")) {
+					out1 = ltrim2(out, " ");
+					non_digit = strIndexOf(out1, " ");
+					id = strLeft(out1, non_digit);
+					ids := concat(^ids, [id]);
+				}
+			}, 
+			\err -> println("error: " + err)
+		);
+		if (code == 0) {
+			Some(^ids);
+		} else {
+			println("code: " + i2s(code));
+			None();
+		}
+	} else {
+		None();
+	}
+}
+
 patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	cwd = strReplace(resolveRelativePath("."), "\\", "/");
 
@@ -113,3 +152,4 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	// Output the result
 	CompilerConfig(conf with config = conf4, jsParams = jsParams);
 }
+
