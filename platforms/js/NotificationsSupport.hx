@@ -80,7 +80,7 @@ class NotificationsSupport {
 
         #if flash
         #elseif js
-        result = untyped HaxeRuntime.typeof(Notification) != "undefined" 
+        result = untyped __js__("typeof Notification !== 'undefined'")
                 && Notification.permission == GRANTED;
         #end
 
@@ -90,7 +90,7 @@ class NotificationsSupport {
     public static function requestPermissionLocalNotification(cb : Bool -> Void) : Void {
         #if flash
         #elseif js
-        if (untyped HaxeRuntime.typeof(Notification) == "undefined") {
+        if (untyped __js__("typeof Notification === 'undefined'")) {
             cb(false);
             return;
         }
@@ -126,17 +126,19 @@ class NotificationsSupport {
         #if flash
         #elseif js
         // Notificaitons API is not available
-        if (untyped HaxeRuntime.typeof(Notification) == "undefined") return;
+        if (untyped __js__("typeof Notification === 'undefined'")) return;
 
         NotificationsSupport.cancelLocalNotification(notificationId);
         var timer = haxe.Timer.delay(
             function() {
+                var iconNode = Browser.document.getElementById('dynamic-favicon');
                 var strNotificationId : String = Std.string(notificationId);
                 var notification : Notification = new Notification(
                     notificationTitle,
                     {
                         body : notificationText,
-                        tag : strNotificationId
+                        tag : strNotificationId,
+                        icon : iconNode != null ? untyped iconNode.href : null
                     }
                 );
                 notification.onclick = function() {

@@ -239,25 +239,63 @@ class RenderSupport {
 		return UserDefinedFontSize;
 	}
 
-	private static var UserDefinedLetterSpacing : Float = null;
+	private static var UserDefinedLetterSpacing = null;
 	private static function getUserDefinedLetterSpacing() : Float {
-		if (UserDefinedLetterSpacing == null) {
-			var div = Browser.document.createElement("p");
-			Browser.document.body.appendChild(div);
-			var style = Browser.window.getComputedStyle(div);
+		var div = Browser.document.createElement("p");
+		Browser.document.body.appendChild(div);
+		var style = Browser.window.getComputedStyle(div);
 
-			UserDefinedLetterSpacing = style.letterSpacing != "normal"
-				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
-				: 0.0;
+		UserDefinedLetterSpacing = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
+			: 0.0;
 
-			Browser.document.body.removeChild(div);
-		}
-
-		if (Math.isNaN(UserDefinedLetterSpacing)) {
-			UserDefinedLetterSpacing = 0.0;
-		}
+		Browser.document.body.removeChild(div);
 
 		return UserDefinedLetterSpacing;
+	}
+
+	private static var UserDefinedLetterSpacingPercent = null;
+	private static function getUserDefinedLetterSpacingPercent() : Float {
+		var div = Browser.document.createElement("p");
+		Browser.document.body.appendChild(div);
+		var style = Browser.window.getComputedStyle(div);
+
+		UserDefinedLetterSpacingPercent = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
+			: 0.0;
+
+		Browser.document.body.removeChild(div);
+
+		return UserDefinedLetterSpacingPercent;
+	}
+
+	private static var UserStylePending = false;
+	public static function emitUserStyleChanged() {
+		if (!UserStylePending) {
+			UserStylePending = true;
+			RenderSupport.once("drawframe", function() {
+				if (UserDefinedLetterSpacing != getUserDefinedLetterSpacing() || UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) {
+					RenderSupport.emit("userstylechanged");
+				}
+				UserStylePending = false;
+			});
+		}
+	}
+
+	public static function isInsideFrame() : Bool {
+		try {
+			return untyped __js__("window.self !== window.top");
+		} catch (e : Dynamic) {
+			return true;
+		}
+	}
+
+	public static function monitorUserStyleChanges() : Void -> Void {
+		if (isInsideFrame()) {
+			return Native.setInterval(1000, emitUserStyleChanged);
+		} else {
+			return function() {};
+		}
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -507,10 +545,19 @@ class RenderSupport {
 	//
 	//	Browser window events
 	//
+
+	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
-		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
+		Browser.window.addEventListener('blur', function () {
+			PageWasHidden = true;
+
+			for (key in keysPending) {
+				key.preventDefault = function() {};
+				emit("keyup", key);
+			}
+		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 
 		// Make additional resize for mobile fullscreen mode
@@ -2123,6 +2170,12 @@ class RenderSupport {
 	public static function addKeyEventListener(clip : DisplayObject, event : String,
 		fn : String -> Bool -> Bool -> Bool -> Bool -> Int -> (Void -> Void) -> Bool) : Void -> Void {
 		var keycb = function(ke) {
+			if (event == "keydown") {
+				keysPending.set(ke.keyCode, ke);
+			} else {
+				keysPending.remove(ke.keyCode);
+			}
+
 			fn(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode, ke.preventDefault);
 		}
 
@@ -2139,7 +2192,12 @@ class RenderSupport {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (untyped HaxeRuntime.instanceof(clip, Element)) {
+		if (event == "userstylechanged") {
+			on("userstylechanged", fn);
+			return function () {
+				off("userstylechanged", fn);
+			}
+		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
 		} else {

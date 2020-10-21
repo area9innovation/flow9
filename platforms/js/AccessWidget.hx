@@ -420,6 +420,7 @@ class AccessWidget extends EventEmitter {
 	private static var accessRoleMap : Map<String, String> = [
 		"button" => "button",
 		"checkbox" => "button",
+		"combobox" => "button",
 		"radio" => "button",
 		"tab" => "button",
 		"banner" => "header",
