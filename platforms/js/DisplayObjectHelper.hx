@@ -1713,7 +1713,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function isNativeWidget(clip : DisplayObject) : Bool {
+	public static inline function isNativeWidget(clip : DisplayObject) : Bool {
 		return untyped clip.isNativeWidget;
 	}
 
@@ -1764,41 +1764,47 @@ class DisplayObjectHelper {
 	}
 
 	public static function findNextNativeWidget(clip : DisplayObject, parent : DisplayObject) : Element {
-		if (clip.parent != null) {
+		untyped __js__("
+		if(clip.parent != null) {
 			var children = clip.parent.children;
-
-			if (children.indexOf(clip) >= 0) {
-				for (child in children.slice(children.indexOf(clip) + 1)) {
-					if (untyped child.visible && (!isNativeWidget(child) || (child.onStage && child.parentClip == parent))) {
-						var nativeWidget = findNativeWidgetChild(child, parent);
-
-						if (nativeWidget != null) {
+			if(children.indexOf(clip) >= 0) {
+				for(var child in children.slice(children.indexOf(clip) + 1)) {
+					if(child.visible && (!DisplayObjectHelper.isNativeWidget(child) || child.onStage && child.parentClip == parent)) {
+						var nativeWidget = DisplayObjectHelper.findNativeWidgetChild(child,parent);
+						if(nativeWidget != null) {
 							return nativeWidget;
 						}
 					}
 				}
 			}
-
-			return RenderSupport.RenderContainers || isNativeWidget(clip.parent) ? null : findNextNativeWidget(clip.parent, parent);
+			if(RenderSupport.RenderContainers || DisplayObjectHelper.isNativeWidget(clip.parent)) {
+				return null;
+			} else {
+				return DisplayObjectHelper.findNextNativeWidget(clip.parent,parent);
+			}
 		}
+		return null;
+		");
 
 		return null;
 	}
 
 	public static function findNativeWidgetChild(clip : DisplayObject, parent : DisplayObject) : Element {
-		if (untyped isNativeWidget(clip) && clip.parentClip == parent && getParentNode(clip) == parent.nativeWidget) {
-			return untyped clip.nativeWidget;
-		} else if (!RenderSupport.RenderContainers && RenderSupport.RendererType == "html") {
-			for (child in getClipChildren(clip)) {
-				if (untyped child.visible && (!isNativeWidget(child) || child.parentClip == parent)) {
-					var nativeWidget = findNativeWidgetChild(child, parent);
-
-					if (nativeWidget != null) {
+		untyped __js__("
+		if(DisplayObjectHelper.isNativeWidget(clip) && clip.parentClip == parent && DisplayObjectHelper.getParentNode(clip) == parent.nativeWidget) {
+			return clip.nativeWidget;
+		} else if(!RenderSupport.RenderContainers && RenderSupport.RendererType == 'html') {
+			for (var child in clip.children || []) {
+				if(child.visible && (!DisplayObjectHelper.isNativeWidget(child) || child.parentClip == parent)) {
+					var nativeWidget = DisplayObjectHelper.findNativeWidgetChild(child,parent);
+					if(nativeWidget != null) {
 						return nativeWidget;
 					}
 				}
 			}
 		}
+		return null;
+		");
 
 		return null;
 	}
