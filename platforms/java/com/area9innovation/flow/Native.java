@@ -1463,7 +1463,20 @@ public class Native extends NativeHost {
 
 		public int waitFor() {
 			try {
-				return process.waitFor();
+				if (stdout != null && stdout.thread != null) {
+					stdout.thread.join();
+				}
+				if (stderr != null && stderr.thread != null) {
+					stderr.thread.join();
+				}
+				if (exit != null && exit.thread != null) {
+					exit.thread.join();
+				}
+				if (process != null) {
+					return process.waitFor();
+				} else {
+					return 0;
+				}
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 				return 1;
