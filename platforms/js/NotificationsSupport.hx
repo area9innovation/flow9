@@ -131,7 +131,7 @@ class NotificationsSupport {
         NotificationsSupport.cancelLocalNotification(notificationId);
         var timer = haxe.Timer.delay(
             function() {
-                var iconNode = Browser.document.getElementById('dynamic-favicon');
+                var iconNode = Browser.document.getElementById('app-favicon');
                 var strNotificationId : String = Std.string(notificationId);
                 var notification : Notification = new Notification(
                     notificationTitle,

@@ -3446,9 +3446,9 @@ RenderSupportHx.setWindowTitle = function(title) {
 };
 RenderSupportHx.setFavIcon = function(url) {
 	var head = window.document.getElementsByTagName("head")[0];
-	var oldNode = window.document.getElementById("dynamic-favicon");
+	var oldNode = window.document.getElementById("app-favicon");
 	var node = window.document.createElement("link");
-	node.setAttribute("id","dynamic-favicon");
+	node.setAttribute("id","app-favicon");
 	node.setAttribute("rel","shortcut icon");
 	node.setAttribute("href",url);
 	node.setAttribute("type","image/ico");
@@ -6992,9 +6992,9 @@ RenderSupport.setWindowTitle = function(title) {
 };
 RenderSupport.setFavIcon = function(url) {
 	var head = window.document.getElementsByTagName("head")[0];
-	var oldNode = window.document.getElementById("dynamic-favicon");
+	var oldNode = window.document.getElementById("app-favicon");
 	var node = window.document.createElement("link");
-	node.setAttribute("id","dynamic-favicon");
+	node.setAttribute("id","app-favicon");
 	node.setAttribute("rel","shortcut icon");
 	node.setAttribute("href",url);
 	node.setAttribute("type","image/ico");
