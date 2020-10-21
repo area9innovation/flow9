@@ -741,6 +741,13 @@ class DisplayObjectHelper {
 		invalidateTransform(clip, 'updateKeepNativeWidgetChildren');
 	}
 
+	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false) : Void {
+		if (isNativeWidget(clip)) untyped clip.nativeWidget.setAttribute("aria-hidden", isAriaHidden ? 'true' : '');
+		for (child in getClipChildren(clip)) {
+			updateIsAriaHidden(child, isAriaHidden);
+		}
+	}
+
 	public static function getViewBounds(clip : DisplayObject) : Bounds {
 		return untyped clip.viewBounds;
 	}
