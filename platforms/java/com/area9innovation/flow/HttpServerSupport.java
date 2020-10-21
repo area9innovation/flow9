@@ -175,10 +175,18 @@ public class HttpServerSupport extends NativeHost
 
 		private static String readInputStream(InputStream stream)
 		{
-			return
-				new BufferedReader(new InputStreamReader(stream))
-					.lines()
-					.collect(Collectors.joining("\n"));
+			// https://stackoverflow.com/questions/309424/how-do-i-read-convert-an-inputstream-into-a-string-in-java
+			try {
+				ByteArrayOutputStream result = new ByteArrayOutputStream();
+				byte[] buffer = new byte[1024];
+				int length;
+				while ((length = stream.read(buffer)) != -1) {
+					result.write(buffer, 0, length);
+				}
+				return result.toString("UTF-8");
+			} catch (Exception e) {
+				throw new RuntimeException(e.getMessage());
+			}
 		}
 
 		private static String[][] readHeaders(Set<Map.Entry<String,List<String>>> entries)
