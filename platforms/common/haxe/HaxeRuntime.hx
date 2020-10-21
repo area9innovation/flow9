@@ -114,73 +114,175 @@ if (a === b) return true;
 #end
   }
 	static public function compareByValue(o1 : Dynamic, o2 : Dynamic) : Int {
-		#if (js)
-			untyped __js__("if (o1 === o2) return 0;");
-		#else
-			if (o1 == o2) return 0;
-		#end
-		if (o1 == null || o2 == null) return 1;
-
-		#if flash
-		// Possible return values of the getQualifiedClassName:
-		//   "Array"
-		//   "int" for ints (or defacto doubles that are ints)
-		//   "Number" for doubles
-		//   "Boolean" for bools
-		//   "String"
-		//   "FS_Foo" for structs
-		//   "FlowRefObject" for references
-		//   "builtin.as$0::MethodClosure"  for functions
-		// See the results with this:
-		// flash.external.ExternalInterface.call("console.log", qname1);
-		var qname1 = untyped __global__["flash.utils.getQualifiedClassName"](o1);
-		if (qname1 == "Array") {
-		#else
-		if ( isArray(o1) ) {
-		#end
-			if (!isArray(o2)) return 1;
-			var l1 : Int = o1.length;
-			var l2 : Int = o2.length;
-			var l : Int =  l1 < l2 ? l1 : l2;
-			for (i in 0...l ) {
-				var c = compareByValue(o1[i], o2[i]);
-				if (c != 0) return c;
-			}
-			return (l1 == l2) ? 0 : (l1 < l2 ? -1 : 1);
-		}
-		#if flash
-		if (untyped o1.hasOwnProperty("_id")) {
-		#else
-			#if (js && readable)
-				if (Reflect.hasField(o1, "_name")) {
-			#else
-				if (Reflect.hasField(o1, "_id")) {
-			#end
-		#end
 		#if (js && readable)
-			if (!Reflect.hasField(o2, "_name")) return 1;
-			var n1 = o1._name;
-			var n2 = o2._name;
-			var i1 = _structids_.get(n1);
-			var i2 = _structids_.get(n2);
-		#else
-			if (!Reflect.hasField(o2, "_id")) return 1;
-			var i1 = o1._id;
-			var i2 = o2._id;
-		#end
-			if (i1 < i2) return -1;
-			if (i1 > i2) return 1;
-
-			// We need to remember the order of the fields
-			var args = _structargs_.get(i1);
-			for (f in args) {
-				var c = compareByValue(Reflect.field(o1, f), Reflect.field(o2, f));
-				if (c != 0) return c;
+			untyped __js__("
+			if (o1 === o2) return 0;
+			if(o1 == null || o2 == null) {
+				return 1;
 			}
-			return 0;
-		}
+			if(Array.isArray(o1)) {
+				if(!Array.isArray(o2)) {
+					return 1;
+				}
 
-		return (o1 < o2 ? -1 : 1);
+				for(var i=0; i<Math.min(o1.length, o2.length); i++) {
+					var c = HaxeRuntime.compareByValue(o1[i],o2[i]);
+					if(c != 0) {
+						return c;
+					}
+				}
+				if(o1.length == o2.length) {
+					return 0;
+				} else if(o1.length < o2.length) {
+					return -1;
+				} else {
+					return 1;
+				}
+			}
+			if(Object.prototype.hasOwnProperty.call(o1,'_name')) {
+				if(!Object.prototype.hasOwnProperty.call(o2,'_name')) {
+					return 1;
+				}
+				if(o1._name < o2._name) {
+					return -1;
+				}
+				if(o1._name > o2._name) {
+					return 1;
+				}
+				for(var f in HaxeRuntime._structargs_.h[o1._name]) {
+					var c1 = HaxeRuntime.compareByValue(o1[f], o2[f]);
+					if(c1 != 0) {
+						return c1;
+					}
+				}
+				return 0;
+			}
+			if(o1 < o2) {
+				return -1;
+			} else {
+				return 1;
+			}");
+			return 0;
+		#end
+		#if(js && !readable)
+			untyped __js__("
+			if (o1 === o2) return 0;
+			if(o1 == null || o2 == null) {
+				return 1;
+			}
+			if(Array.isArray(o1)) {
+				if(!Array.isArray(o2)) {
+					return 1;
+				}
+
+				for(var i=0; i<Math.min(o1.length, o2.length); i++) {
+					var c = HaxeRuntime.compareByValue(o1[i],o2[i]);
+					if(c != 0) {
+						return c;
+					}
+				}
+				if(o1.length == o2.length) {
+					return 0;
+				} else if(o1.length < o2.length) {
+					return -1;
+				} else {
+					return 1;
+				}
+			}
+			if(Object.prototype.hasOwnProperty.call(o1,'_id')) {
+				if(!Object.prototype.hasOwnProperty.call(o2,'_id')) {
+					return 1;
+				}
+				if(o1._id < o2._id) {
+					return -1;
+				}
+				if(o1._id > o2._id) {
+					return 1;
+				}
+				for(var f in HaxeRuntime._structargs_.h[o1._id]) {
+					var c1 = HaxeRuntime.compareByValue(o1[f], o2[f]);
+					if(c1 != 0) {
+						return c1;
+					}
+				}
+				return 0;
+			}
+			if(o1 < o2) {
+				return -1;
+			} else {
+				return 1;
+			}");
+			return 0;
+		#end
+		#if (!js && !readable)
+			#if (js)
+				untyped __js__("if (o1 === o2) return 0;");
+			#else
+				if (o1 == o2) return 0;
+			#end
+			if (o1 == null || o2 == null) return 1;
+
+			#if flash
+			// Possible return values of the getQualifiedClassName:
+			//   "Array"
+			//   "int" for ints (or defacto doubles that are ints)
+			//   "Number" for doubles
+			//   "Boolean" for bools
+			//   "String"
+			//   "FS_Foo" for structs
+			//   "FlowRefObject" for references
+			//   "builtin.as$0::MethodClosure"  for functions
+			// See the results with this:
+			// flash.external.ExternalInterface.call("console.log", qname1);
+			var qname1 = untyped __global__["flash.utils.getQualifiedClassName"](o1);
+			if (qname1 == "Array") {
+			#else
+			if ( isArray(o1) ) {
+			#end
+				if (!isArray(o2)) return 1;
+				var l1 : Int = o1.length;
+				var l2 : Int = o2.length;
+				var l : Int =  l1 < l2 ? l1 : l2;
+				for (i in 0...l ) {
+					var c = compareByValue(o1[i], o2[i]);
+					if (c != 0) return c;
+				}
+				return (l1 == l2) ? 0 : (l1 < l2 ? -1 : 1);
+			}
+			#if flash
+			if (untyped o1.hasOwnProperty("_id")) {
+			#else
+				#if (js && readable)
+					if (Reflect.hasField(o1, "_name")) {
+				#else
+					if (Reflect.hasField(o1, "_id")) {
+				#end
+			#end
+			#if (js && readable)
+				if (!Reflect.hasField(o2, "_name")) return 1;
+				var n1 = o1._name;
+				var n2 = o2._name;
+				var i1 = _structids_.get(n1);
+				var i2 = _structids_.get(n2);
+			#else
+				if (!Reflect.hasField(o2, "_id")) return 1;
+				var i1 = o1._id;
+				var i2 = o2._id;
+			#end
+				if (i1 < i2) return -1;
+				if (i1 > i2) return 1;
+
+				// We need to remember the order of the fields
+				var args = _structargs_.get(i1);
+				for (f in args) {
+					var c = compareByValue(Reflect.field(o1, f), Reflect.field(o2, f));
+					if (c != 0) return c;
+				}
+				return 0;
+			}
+
+			return (o1 < o2 ? -1 : 1);
+		#end
 	}
 
 
@@ -351,7 +453,7 @@ if (a === b) return true;
 				return true;
 			}
 			case RTInt: return typeOf(value) == RTDouble; // There are only numbers for JS and Flash runtime. Check if integer?
-			case RTRefTo(reftype): switch (typeOf(value)) {case RTRefTo(t): return isValueFitInType(reftype, value.__v); default: return false; }; 
+			case RTRefTo(reftype): switch (typeOf(value)) {case RTRefTo(t): return isValueFitInType(reftype, value.__v); default: return false; };
 			case RTUnknown: return true;
 			case RTStruct(name): switch (typeOf(value)) { case RTStruct(n): return name == "" || n == name; default: return false; };
 			default: return typeOf(value) == type;
@@ -388,7 +490,7 @@ if (a === b) return true;
 
 
 	#if js
-	// Use these when sure args types and count is correct and struct exists 
+	// Use these when sure args types and count is correct and struct exists
 	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
 		var sid  = _structids_.get(n);
 		var o = {
@@ -484,7 +586,7 @@ if (a === b) return true;
 
 	public static function getStructName(id : Int) : String {
 		return _structnames_.get(id);
-	} 
+	}
 
 	// Some characters can NOT be represented in UTF-16, believe it or not!
 	public static function wideStringSafe(str : String) : Bool {
