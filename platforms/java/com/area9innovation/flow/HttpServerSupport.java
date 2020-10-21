@@ -183,7 +183,9 @@ public class HttpServerSupport extends NativeHost
 				while ((length = stream.read(buffer)) != -1) {
 					result.write(buffer, 0, length);
 				}
-				return result.toString("UTF-8");
+				// we use default encoding here, it could be defined as command line argument
+				// https://stackoverflow.com/questions/361975/setting-the-default-java-character-encoding
+				return result.toString();
 			} catch (IOException e) {
 				throw new UncheckedIOException(e);
 			}
