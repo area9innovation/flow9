@@ -122,9 +122,10 @@ class NotificationsSupport {
         return function() { };
     }
 
-    public static function scheduleLocalNotification(time : Float, notificationId : Int, notificationCallbackArgs : String, notificationTitle : String, notificationText : String, withSound : Bool, notificationIconUrl : String) : Void {
+    public static function scheduleLocalNotification(time : Float, notificationId : Int, notificationCallbackArgs : String, notificationTitle : String, notificationText : String, withSound : Bool, pinNotification : Bool, notificationIconUrl : String) : Void {
         #if flash
         #elseif js
+        // TODO: Implement pin notification if possible
         // Notificaitons API is not available
         if (untyped __js__("typeof Notification === 'undefined'")) return;
 
