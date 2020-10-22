@@ -61,9 +61,6 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setLspClient(context, LspKind.Flow); }));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow_lsp', () => { setLspClient(context, LspKind.Flow_lsp); }));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setLspClient(context, LspKind.JS); }));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.execCommand', execCommand));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
 
