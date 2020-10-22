@@ -2989,9 +2989,9 @@ class RenderSupport {
 
 	public static function setFavIcon(url : String) : Void {
 		var head = Browser.document.getElementsByTagName('head')[0];
-		var oldNode = Browser.document.getElementById('dynamic-favicon');
+		var oldNode = Browser.document.getElementById('app-favicon');
 		var node = Browser.document.createElement('link');
-		node.setAttribute("id", "dynamic-favicon");
+		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
 		node.setAttribute("href", url);
 		node.setAttribute("type", "image/ico");
