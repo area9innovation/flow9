@@ -8,6 +8,7 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageWidth : Dynamic = null;
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
+	private var noScroll : Dynamic = null;
 
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
@@ -97,6 +98,13 @@ class WebClip extends NativeWidgetClip {
 					if (Native.isTouchScreen()) {
 						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
 					}
+				}
+
+				if (this.noScroll) {
+					untyped iframeDocument.body.style["overflow"] = "hidden";
+					iframeDocument.addEventListener('wheel', function (e) {
+						RenderSupport.provideEvent(e);
+					}, true);
 				}
 
 				if (shrinkToFit) {
@@ -242,6 +250,10 @@ class WebClip extends NativeWidgetClip {
 			nativeWidget.appendChild(disableOverlay);
 			iframe.style.pointerEvents = 'none';
 		}
+	}
+
+	public function setNoScroll() : Void {
+		this.noScroll = true;
 	}
 
 	public function setSandBox(value : String) : Void {

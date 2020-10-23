@@ -3125,6 +3125,10 @@ class RenderSupport {
 		clip.setDisableOverlay(disabled);
 	}
 
+	public static function setWebClipNoScroll(clip : WebClip) : Void {
+		clip.setNoScroll();
+	}
+
 	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
 		cb(clip.evalJS(code));
 	}
