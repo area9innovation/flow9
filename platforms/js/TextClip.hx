@@ -607,16 +607,19 @@ class TextClip extends NativeWidgetClip {
 			return "Black";
 	}
 
-	private static var ffMap : Map<String, String> = new haxe.ds.StringMap();
+	private static var ffMap : Dynamic;
 
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 
 		if (fontWeight > 0 || fontSlope != "") {
-			if (!ffMap.exists(fontFamilies)) {
-				ffMap[fontFamilies] = fontFamilies.split(",").map(function (fontFamily) { return recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(",");
+			untyped __js__("
+			if (TextClip.ffMap === undefined) TextClip.ffMap = {}
+			if (TextClip.ffMap[fontFamilies] === undefined) {
+				TextClip.ffMap[fontFamilies] = fontFamilies.split(',').map(function(fontFamily){ return TextClip.recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(',');
 			}
-			fontFamilies = ffMap[fontFamilies];
+			fontFamilies = TextClip.ffMap[fontFamilies];
+			");
 		}
 
 		if (Platform.isSafari) {
