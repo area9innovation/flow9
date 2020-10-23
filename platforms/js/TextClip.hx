@@ -641,8 +641,7 @@ class TextClip extends NativeWidgetClip {
 
 		measureFont();
 
-		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
-		untyped __js__("this.text = (text.charAt(text.length-1) == '\\n') ? text.slice(0, text.length-2) : text");
+		untyped __js__("this.text = (text !== '' && text.charAt(text.length-1) === '\\n') ? text.slice(0, text.length-1) : text");
 		this.contentGlyphs = applyTextMappedModification(RenderSupport.RendererType == "html" ? adaptWhitespaces(this.text) : this.text);
 		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 
