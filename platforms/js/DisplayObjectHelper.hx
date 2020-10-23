@@ -2289,10 +2289,9 @@ class DisplayObjectHelper {
 
 		if (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty()) {
 			setClipRenderable(clip, false);
-			return;
+		} else {
+			setClipRenderable(clip, viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY);
 		}
-
-		setClipRenderable(clip, viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY);
 
 		if (untyped !clip.transformChanged || (!clip.visible && !clip.parent.visible)) {
 			return;
