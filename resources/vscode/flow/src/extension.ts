@@ -102,7 +102,10 @@ function checkHttpServerStatus(initial : boolean) {
 }
 
 function outputHttpServerMemStats() {
-	client.sendRequest("workspace/executeCommand", { command : "command", arguments : ["server-mem-info=1"]}).then(
+	client.sendRequest("workspace/executeCommand", { 
+		command : "command", 
+		arguments : ["server-mem-info=1", "do_not_log_this=1"]
+	}).then(
 		(out : string) => {
 			let msg_start = out.indexOf("Used:");
 			let msg_end = out.indexOf("\n", msg_start);
