@@ -46,7 +46,8 @@ export {
     CalendarDefaultDisplayedEventsInOneDay = 3;
 
     CalendarForEventsStyle ::= ShowMonthViewSwitchMenu, DefaultMonthView, TabOrder, DefaultTab, TabColors, HideAddEventButton,
-        CloseDayPopupAfterAdditionalAction, EventListSettings, PlannedTableDateFormat, BlackAndWhiteTextColor, HideTimeInfo, HiddenEventTypes;
+        CloseDayPopupAfterAdditionalAction, EventListSettings, PlannedTableDateFormat, BlackAndWhiteTextColor, HideTimeInfo, HiddenEventTypes,
+		ShowWeekViewDaysNames, CalendarTabMenuStyle, CalendarTabMenuText, CalendarTodayColors;
         ShowMonthViewSwitchMenu();
         DefaultMonthView(byWeek : bool);
         TabOrder(tabs : [CalendarTab]);
@@ -66,6 +67,11 @@ export {
         BlackAndWhiteTextColor();
         // Hide event types by default
         HiddenEventTypes(types : [string]);
+		// Show days names in week view
+		ShowWeekViewDaysNames();
+		CalendarTabMenuStyle(text : [MTextStyle], icon : [MIconStyle], background : [TGraphicsStyle]);
+		CalendarTabMenuText(draw : (date : Date, tab : CalendarTab) -> Maybe<Material>);
+		CalendarTodayColors(text : MColor, background : MColor);
 
     CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab;
         YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab();
@@ -83,6 +89,7 @@ calendarMpickerWidth = calendarPickerWidthCells + calendarPickerMarginCells * 2.
 maxDisplayedEventsInOneDay = ref 3;
 isOnlyOneSameTypeEventsByDay = ref true;
 isColorizeDayHeaders = ref true;
+defaultCalendarTabMenuStyle = CalendarTabMenuStyle([MWhite(), MCustomFont(20.0, "RobotoMedium", 1.0)], [MIconSize(50.0), MCustomColor(0xFDB22B)], [Fill(black)]);
 
 isDateEnable(
     thisDate : Date,
@@ -1070,7 +1077,7 @@ dayEventsPopup(
                         TFixed(0., buttonHeight)
                     ),
                     MCenterIn(
-                        MFrame(2., 2., [MFill(MWhite())], TFixed(lineWidth - 2., buttonHeight - 2.)),
+                        MFrame(2., 2., [MFill(evType.backColor)], TFixed(lineWidth - 2., buttonHeight - 2.)),
                         TFixed(lineWidth, buttonHeight)
                     ),
                     MCenterIn(
@@ -1192,6 +1199,8 @@ MonthTable(
     isUseMTextMColor = contains(styles, BlackAndWhiteTextColor());
     byWeekViewB = make(extractStruct(styles, DefaultMonthView(true)).byWeek);
     hideTimeInfo = contains(styles, HideTimeInfo());
+	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
+	todayColors = tryExtractStruct(styles, CalendarTodayColors(MBlack(), MWhite()));
 
     calendarDayTouch = \item : CalendarEvent, dayDate : Date -> {
         eventTypes = getValue(eventTypesB);
@@ -1462,23 +1471,24 @@ MonthTable(
             dateMin,
             dateMax,
             0,
-            false
+            false,
+			false,
+			todayColors
         )
     }
 
     MonthViewSwitchMenu = \ -> {
-        MIconToggle("view_module", [
-                MOrange(600), MIconButtonBorder(8.), MIconSize(32.),
-                MToggleFalseIcon("view_column", [MGrey(600), MIconSize(32.)])
-            ], [MToggleValue(byWeekViewB)]
-        )
-        |> (\m -> MCols2(TFillXH(48.), m))
+		style = concat(
+			calendarTabMenuStyle.icon,
+			[MIconButtonBorder(8.), MToggleFalseIcon("view_column", arrayPush(calendarTabMenuStyle.icon, MGrey(600)))]
+		);
+        MIconToggle("view_module", style, [MToggleValue(byWeekViewB)]) |> (\m -> MCols2(MFillX(), m))
     }
 
     MGroup2(
         TRectangle([Fill(white), FillOpacity(1.0)], TFillXY()),
         MLines2(
-            if (showMonthSwitchView) MOnTop(TRectangle([Fill(black)], TFillXH(48.)), MonthViewSwitchMenu()) else MEmpty(),
+            if (showMonthSwitchView) MFrame(0.0, 0.0, calendarTabMenuStyle.background, MonthViewSwitchMenu()) else MEmpty(),
             MSelect2(currentEvents, currentDate,
                 \items : [CalendarEvent], curD -> MIf(byWeekViewB, MonthViewByWeek(curD, items), MonthViewByDay(curD, items))
             )
@@ -1533,7 +1543,9 @@ RangeView(
     dateMin : Date,
     dateMax : Date,
     rangeType : int,
-    showMonthRow : bool
+    showMonthRow : bool,
+	showDaysNames : bool,
+	todayColors : Maybe<CalendarTodayColors>
 ) -> Material {
     byDayCellHeight = 48.;
     byDayCellSize : Tropic = TFillXH(byDayCellHeight);
@@ -1565,9 +1577,25 @@ RangeView(
     });
 
     titleRow = MCols(generate(0, columnsCountInRange, \dateNum -> {
+		todayCircleDiam = byDayCellHeight / 2.0;
         date = getNextDate(startDate, dateNum);
+		isToday = compareDates(date, getCurrentDate()) == DateEqual();
         text = if (rangeType == 0) date.day else if (rangeType == 1) getWeekOfYear(date, 0, true) else date.month;
-        MCenterIn(MEllipsisText(i2s(text), [if (dayOfWeek(date) >= 5 && rangeType == 0) MRed(600) else MBlack(), MBodyBold()]), byDayCellSize)
+		todayTextColor = eitherMap(todayColors, \c -> c.text, MBlack());
+		textColor = if (isToday) todayTextColor else if (dayOfWeek(date) >= 5 && rangeType == 0) MRed(600) else MBlack();
+
+		dayNumberM = MGroup2(
+			eitherMap(todayColors, \c -> if (isToday) TCircle(todayCircleDiam / 2.0, [MFill(c.background)]) else MEmpty(), MEmpty()),
+			MCenterIn(MEllipsisText(i2s(text), [textColor, MBodyBold()]), MFixed(todayCircleDiam, todayCircleDiam))
+		);
+		if (rangeType == 0 && showDaysNames) {
+			MCenterIn(MLines2(
+				MCenterX(MText(toUpperCase(dayOfWeekString(date, false)), [MCaptionColumn(), MGrey(500)])),
+				MCenterX(dayNumberM) |> MBorderTop(8.0)
+			), byDayCellSize);
+		} else {
+			MCenterIn(dayNumberM, byDayCellSize);
+		}
     }));
 
     dayClickGrid = MCols(generate(0, columnsCountInRange, \dateNum -> {
@@ -1616,7 +1644,10 @@ RangeView(
                 // insert empty cells before event, if any
                 |> (\r -> if (blankLength > 0) insertArray(r, 0, EmptyCells(blankLength)) else r)
                 // insert empty cells after event, if it's the last
-                |> (\r -> if (i == length(evs) - 1) arrayPush(r, EmptyCells(getRangeColumnsCount(time2date(event.endDate), endDate))) else r);
+                |> (\r -> {
+					c = getRangeColumnsCount(time2date(event.endDate), endDate);
+					if (i == length(evs) - 1 && c > 0) arrayPush(r, EmptyCells(c)) else r
+				});
             res
         }) |> concatA |> MCols
     }));
@@ -1663,6 +1694,7 @@ PlannedEventsTable(
     tableDateFormat = extractStruct(styles, PlannedTableDateFormat("%YYYY/%MM/%DD")).tableDateFormat;
     hideTimeInfo = contains(styles, HideTimeInfo());
     littleFont = MCustomFont(14., "Roboto", 0.87);
+	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
 
     timeSort = \item : CalendarEvent -> item.startDate;
 
@@ -1682,11 +1714,11 @@ PlannedEventsTable(
     lineHeight = 60.;
 
     title = MGroup([
-        TRectangle([Fill(black), FillOpacity(1.0)], TFillXH(50.)),
+        TRectangle(calendarTabMenuStyle.background, TFillXH(50.)),
         MCols([
             TFixed(20., 0.),
             MCenterYIn(
-                MSelect(currentEvents, \events -> MText(i2s(length(getLastEvents(events))) + " " + _("planned events"), [MCustomFont(20., "RobotoMedium", 1.), MWhite()])),
+                MSelect(currentEvents, \events -> MText(i2s(length(getLastEvents(events))) + " " + _("planned events"), calendarTabMenuStyle.text)),
                 TFillXH(50.)
             )
         ])
@@ -2053,6 +2085,8 @@ CalendarForEvents(
     isOnlyOneSameTypeEventsByDay := onlyOneSameTypeEventsByDay;
     isColorizeDayHeaders := colorizeDayHeaders;
     hideAddEventButton = contains(styles, HideAddEventButton());
+	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
+	todayColors = tryExtractStruct(styles, CalendarTodayColors(MBlack(), MWhite()));
 
     filteredEvents = make(getValue(allEvents));
     hiddenEventTypes = extractStruct(styles, HiddenEventTypes([])).types;
@@ -2070,6 +2104,7 @@ CalendarForEvents(
     tabColors = extractStruct(styles, TabColors(MWhite(), MGrey(300)));
     activeTabColor = tabColors.activeTabColor;
     nonActiveTabColor = tabColors.nonActiveTabColor;
+	hideTabs = length(tabOrder) < 2;
 
     maxYear = dateMax.year;
     minYear = dateMin.year;
@@ -2201,7 +2236,7 @@ CalendarForEvents(
         )
     }
 
-    subMenuIconStyle = [MIconSize(50.), MCustomColor(0xFDB22B)];
+    subMenuIconStyle = calendarTabMenuStyle.icon;
 
     monthTable = MonthTable(filteredEvents, currentEventTypes, currentDate, dateMin, dateMax, manager, multiDayEventsPosition, choosedFilters, styles);
     plannedTable = PlannedEventsTable(filteredEvents, currentEventTypes, manager, styles);
@@ -2220,7 +2255,7 @@ CalendarForEvents(
 
     TabContent = \tab : CalendarTab -> {
         updateCurrentDate = \newDate : Date -> if (isDateBetween(newDate, dateMin, dateMax)) next(currentDate, newDate);
-        customFontStyle = [MWhite(), MCustomFont(20., "RobotoMedium", 1.)];
+        customFontStyle = calendarTabMenuStyle.text;
         subMenuSize = TFillXH(50.);
 
         isSwipePaused = make(false);
@@ -2229,7 +2264,12 @@ CalendarForEvents(
             timer(1000, \ -> next(isSwipePaused, false))
         }
 
-        TabMenu = \items : [Material] -> MGroup2(TRectangle([Fill(black)], subMenuSize), MCols(items));
+        TabMenu = \items : [Material] -> {
+			MGroup2(
+				TRectangle(calendarTabMenuStyle.background, subMenuSize),
+				MCenterX(MCols(map(items, \item -> MCenterYIn(item, MHeightOf(subMenuSize)))))
+			);
+		}
         TabBody = \body : Material -> MGroup([
                 TRectangle([Fill(white)], TFillXY()),
                 MScroll(
@@ -2240,6 +2280,8 @@ CalendarForEvents(
                 legend
         ]);
 
+		drawCalendarTabMenuText = extractStruct(styles, CalendarTabMenuText(\__, __ -> None())).draw;
+
         tabContent = switch(tab) {
             YearTab(): {
                 menuItems = [
@@ -2248,7 +2290,10 @@ CalendarForEvents(
                             \ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1))
                         ),
                         MSelect(currentDate, \date ->
-                            MCenterIn(MText(i2s(date.year), customFontStyle), subMenuSize)
+							either(
+								drawCalendarTabMenuText(date, tab),
+								MCenterIn(MText(i2s(date.year), customFontStyle), subMenuSize)
+							)
                         ),
                         MClickable(
                             MIcon("keyboard_arrow_right", subMenuIconStyle),
@@ -2269,7 +2314,10 @@ CalendarForEvents(
                         \ -> updateCurrentDate(addMonthsToDate(getValue(currentDate), -1))
                     ),
                     MSelect(currentDate, \date ->
-                        MCenterIn(MText(i2s(date.year) + " " + toUpperCase(monthString(date, true)), customFontStyle), subMenuSize)
+                        either(
+							drawCalendarTabMenuText(date, tab),
+							MCenterIn(MText(i2s(date.year) + " " + toUpperCase(monthString(date, true)), customFontStyle), subMenuSize)
+						)
                     ),
                     MClickable(
                         MIcon("keyboard_arrow_right", subMenuIconStyle),
@@ -2336,7 +2384,7 @@ CalendarForEvents(
                                 RangeView(
                                     events, currentEventTypes, start, end,
                                     \date, dayEvents -> dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), rangeType, styles),
-                                    dateMin, dateMax, rangeType, true
+                                    dateMin, dateMax, rangeType, true, false, todayColors
                                 )
                         ))
                     )
@@ -2357,7 +2405,10 @@ CalendarForEvents(
                         \ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -7))
                     ),
                     MSelect(currentDate, \date ->
-                        MCenterIn(MText(formatString("WEEK %1 OF %2", [i2s(getWeekOfYear(date, 0, true)), i2s(date.year)]), customFontStyle), subMenuSize)
+                        either(
+							drawCalendarTabMenuText(date, tab),
+							MCenterIn(MText(formatString("WEEK %1 OF %2", [i2s(getWeekOfYear(date, 0, true)), i2s(date.year)]), customFontStyle), subMenuSize)
+						)
                     ),
                     MClickable(
                         MIcon("keyboard_arrow_right", subMenuIconStyle),
@@ -2373,7 +2424,7 @@ CalendarForEvents(
                     RangeView(
                         events, currentEventTypes, start, addDaysToDate(start, 6),
                         \date, dayEvents -> dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, styles),
-                        dateMin, dateMax, 0, false
+                        dateMin, dateMax, 0, false, containsStruct(styles, ShowWeekViewDaysNames()), todayColors
                     )
                 });
 
@@ -2405,7 +2456,7 @@ CalendarForEvents(
 
     MConstruct(
         [
-            makeSubscribe2(allEvents, \events -> {
+            makeSubscribe(allEvents, \events -> {
                 filters = getValue(choosedFilters);
                 nextDistinct(filteredEvents, filter(events, \item -> !contains(filters, item.eventType)));
             }),
@@ -2419,7 +2470,7 @@ CalendarForEvents(
         ],
         MGroup([
             MLines([
-                tabTitles,
+                if (hideTabs) MEmpty() else tabTitles,
                 MBorder(16., 0., 16., 0.,
                     MSelect(choosedTab, \tabNumber -> TabContent(elementAt(tabOrder, tabNumber, YearTab())))
                 )

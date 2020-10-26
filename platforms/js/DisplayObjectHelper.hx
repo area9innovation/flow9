@@ -746,6 +746,13 @@ class DisplayObjectHelper {
 		invalidateTransform(clip, 'updateKeepNativeWidgetChildren');
 	}
 
+	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false) : Void {
+		if (isNativeWidget(clip)) untyped clip.nativeWidget.setAttribute("aria-hidden", isAriaHidden ? 'true' : '');
+		for (child in getClipChildren(clip)) {
+			updateIsAriaHidden(child, isAriaHidden);
+		}
+	}
+
 	public static function getViewBounds(clip : DisplayObject) : Bounds {
 		return untyped clip.viewBounds;
 	}
@@ -1019,6 +1026,11 @@ class DisplayObjectHelper {
 		}
 
 		var localBounds = untyped clip.localBounds;
+
+		if (untyped clip.isCanvas) {
+			tx -= Math.max(-localBounds.minX, 0.0);
+			ty -= Math.max(-localBounds.minY, 0.0);
+		}
 
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
@@ -1710,7 +1722,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function isNativeWidget(clip : DisplayObject) : Bool {
+	public static inline function isNativeWidget(clip : DisplayObject) : Bool {
 		return untyped clip.isNativeWidget;
 	}
 
@@ -2288,10 +2300,9 @@ class DisplayObjectHelper {
 
 		if (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty()) {
 			setClipRenderable(clip, false);
-			return;
+		} else {
+			setClipRenderable(clip, viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY);
 		}
-
-		setClipRenderable(clip, viewBounds.maxX >= localBounds.minX && viewBounds.minX <= localBounds.maxX && viewBounds.maxY >= localBounds.minY && viewBounds.minY <= localBounds.maxY);
 
 		if (untyped !clip.transformChanged || (!clip.visible && !clip.parent.visible)) {
 			return;
@@ -2355,7 +2366,10 @@ class DisplayObjectHelper {
 
 			RenderSupport.PixiRenderer.context.setTransform(1, 0, 0, 1, 0, 0);
 			RenderSupport.PixiRenderer.context.globalAlpha = 1;
-			RenderSupport.PixiRenderer.context.clearRect(0, 0, untyped clip.localBounds.maxX * RenderSupport.PixiRenderer.resolution, untyped clip.localBounds.maxY * RenderSupport.PixiRenderer.resolution);
+			RenderSupport.PixiRenderer.context.clearRect(0, 0,
+				untyped (clip.localBounds.maxX + Math.max(-clip.localBounds.minX, 0.0)) * RenderSupport.PixiRenderer.resolution,
+				untyped (clip.localBounds.maxY + Math.max(-clip.localBounds.minY, 0.0)) * RenderSupport.PixiRenderer.resolution
+			);
 
 			RenderSupport.RendererType = 'canvas';
 

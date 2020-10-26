@@ -8,9 +8,9 @@ function setWindowTitle(t) { document.title = t; }
 
 function setFavIcon(url) {
 		var head = document.getElementsByTagName('head')[0];
-		var oldNode = document.getElementById('dynamic-favicon');
+		var oldNode = document.getElementById('app-favicon');
 		var node = document.createElement('link');
-		node.setAttribute("id", "dynamic-favicon");
+		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
 		node.setAttribute("href", url);
 		node.setAttribute("type", "image/ico");

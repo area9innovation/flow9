@@ -420,6 +420,7 @@ class AccessWidget extends EventEmitter {
 	private static var accessRoleMap : Map<String, String> = [
 		"button" => "button",
 		"checkbox" => "button",
+		"combobox" => "button",
 		"radio" => "button",
 		"tab" => "button",
 		"banner" => "header",
@@ -901,6 +902,7 @@ class AccessWidget extends EventEmitter {
 				case "nodeindex" : nodeindex = parseNodeIndex(attributes.get(key));
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);
+				case "aria-hidden" : clip.updateIsAriaHidden(attributes.get(key) == "true");
 				default : {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {

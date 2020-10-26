@@ -37,7 +37,8 @@ FilebrowserState(
 	onRightClickB : DynamicBehaviour<(string, (string) -> void) -> void>,
 	// convert array of "FilesPaths" to array of Pairs of "FilePath" and "FilePreview"
 	getPreviews : ([string], ([Pair<string, Material>]) -> void) -> void,
-	contentSortTypeB : DynamicBehaviour<FBSortType>
+	contentSortTypeB : DynamicBehaviour<FBSortType>,
+	fileDefaultIcon : (extension : string, size : double) -> Material
 );
 
 FBSortType ::= FBSortByName, FBSortBySize, FBSortByDate;
@@ -79,7 +80,11 @@ makeFilebrowserState(styles : [FbMStyle]) -> FilebrowserState {
 		make(nop),
 		make(\__, __ -> {}),
 		extractStruct(styles, FbGetFilesPreview(\__, fn -> fn([]))).fn,
-		make(FBSortByName(true))
+		make(FBSortByName(true)),
+		if (extractStruct(styles, FbFileUseRegisteredIcons(false)).useRegistered)
+			\ext, size -> getDefaultViewForFileExtension(ext, size, None())
+		else 
+			\__, size -> MIcon("insert_drive_file", [MIconSize(size), MTeal(500)])
 	)
 }
 
@@ -281,7 +286,9 @@ createFileUI(state : FilebrowserState, curPath : string, curNameB : DynamicBehav
 			isSelectedB = fselect(state.selectedElementsB, FLift(\elements -> contains(elements, fullName)));
 			tooltip = if (correctedCurPath != (state.currentPathB |> getValue)) fullName else "";
 
-			defaultContent = MSelect(state.iconSizeB, \iconSize -> MIcon("insert_drive_file", [MIconSize(iconSize), MTeal(500)]));
+			defaultContent = MSelect(state.iconSizeB, \iconSize -> {
+				state.fileDefaultIcon(getFileExt(name), iconSize);
+			});
 
 			fContent = MSelect(previewsB, \previews ->
 				eitherMap(
@@ -428,7 +435,7 @@ getLibraryUI(state : FilebrowserState, ext : [string], onUpdate : (Material) -> 
 	onContentUpdate(state, [], itemB, \m -> onUpdate(m));
 
 	// a bit of time to render MLoading()
-	deferUntilRender(\->{
+	deferUntilRender(\-> {
 		currentPath = getValue(state.currentPathB);
 		getContentAPI(currentPath, ext, filterFn, \dirs, files -> {
 			previewsB = make([]);
@@ -653,6 +660,9 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	selectedFilesB = extractStruct(styles, FbSelectedNames(make([]))).filenamesB;
 	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop3)), \s -> s.fn);
 	uploadMaxSizeM = minA(map(extractStructMany(styles, FbUploadMaxFileSize(0)), \s -> s.size));
+
+	// Reset the last cache for the WhatIsChanged to start new `session`
+	lastCheckResultR := None();
 
 	//currentPathAccessRight = make(FileAccessRightOwner());
 	curDirAccessRightB = make(makePathAccessRight());
@@ -1312,7 +1322,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			MDialogActions(dialogActions),
 			MDialogUseFrame(),
 			MDialogResizable(),
-			MDialogFocusOnPrevious()
+			MFocusOnPrevious(true)
 		],
 		MLines([
 			TFixed(0.0, 1.0),
