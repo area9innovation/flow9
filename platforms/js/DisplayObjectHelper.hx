@@ -742,7 +742,13 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false) : Void {
-		if (isNativeWidget(clip)) untyped clip.nativeWidget.setAttribute("aria-hidden", isAriaHidden ? 'true' : '');
+		if (isNativeWidget(clip)) {
+			if (isAriaHidden) {
+				untyped clip.nativeWidget.setAttribute("aria-hidden", 'true');
+			} else {
+				untyped clip.nativeWidget.removeAttribute("aria-hidden");
+			}
+		}
 		for (child in getClipChildren(clip)) {
 			updateIsAriaHidden(child, isAriaHidden);
 		}
