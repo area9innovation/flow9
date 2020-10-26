@@ -92,6 +92,12 @@ export {
 		style : [MDropDownOrAutoCompleteStyle],
 	) -> Material;
 
+	MAutoCompleteMultiSelection(
+		items : [string],
+		selected : DynamicBehaviour<[int]>,
+		separator : string
+	) -> Material;
+
 	MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material;
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
@@ -874,6 +880,81 @@ MDropDownOrAutoComplete(
 			)
 			else m
 		)
+}
+
+MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>, separator : string) -> Material {
+	text = make("");
+	focused = make(false);
+
+	idxs2string = \idxs -> concatStrings(map(idxs, \idx -> elementAt(items, idx, "") + separator));
+	trimStr = \s -> trim(s) |> toLowerCase;
+	string2idx = \s -> findi(items, \item -> trimStr(item) == trimStr(s));
+	string2idxsMulti = \str -> filtermap(strSplit2WithoutLeave(str, [separator]), string2idx);
+
+	matchFn = \matcher, input0, maxHits, prefix, exhaustive, position -> {
+		input = trim(takeAfterLast(input0, separator, input0));
+		if (input == "")
+			filtermap(matcher.sentences, \s -> {
+				if (s != "") Some(SentenceHit(matcher, s, 0., makeSet()))
+				else None()
+			})
+		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
+	}
+
+	matchHandler = \matched, __, __ -> {
+		deferred(\ -> nextDistinct(focused, true));
+		maybeApply(string2idx(matched), \idx ->
+		 	if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
+			else nextDistinct(selected, filter(getValue(selected), \it -> it != idx))
+		);
+		idxs2string(getValue(selected))
+	}
+
+	completionFn = \com, active, __ ->
+		MGetManager(\manager -> MGetFocusGroup(\parent -> {
+			selectedB = make(false);
+			isSelected = fselect(selected, FLift(\idxs ->
+				eitherMap(
+					string2idx(com.sentence),
+					\idx -> contains(idxs, idx),
+					false
+				)
+			));
+
+			wrapSetWordFn = \__ -> {
+				reverseBehaviour(selectedB);
+				deferred(\ -> nextDistinct(focused, true))
+			}
+
+			MCols2(
+				MConstruct([
+					\ -> fconnect(isSelected, selectedB),
+					makeSubscribe2(selectedB, \sel ->
+						maybeApply(string2idx(com.sentence), \idx ->
+						 	if (sel) {
+						 		if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
+						 	}
+							else nextDistinct(selected, filter(getValue(selected), \it -> it != idx))
+						)
+					)],
+					MCheckBox(TEmpty(), selectedB, [])
+				),
+				defaultCompletionFn(manager, parent, []).fn(com, active, wrapSetWordFn)
+			)
+		}));
+
+	MAutoComplete(text, items, [
+		MSentenceMatcher(buildSentenceMatcher, matchFn),
+		TMatchedHandler(matchHandler),
+		MCompletionFn(completionFn)
+	], [
+		MFocused(focused),
+		MPositionOnFocus(\c, p -> strlen(c)),
+	])
+	|> (\m -> MConstruct(
+		[\ -> bidirectionalLink(selected, text, idxs2string, string2idxsMulti)],
+		m
+	))
 }
 
 MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material {
