@@ -1,0 +1,461 @@
+import fs/api_filebrowser;
+import material/material_gui;
+import material/internal/filebrowser/material_filebrowser_internal_api;
+import material/internal/filebrowser/material_filebrowser_internal_utils;
+
+export {
+	FilebrowserState(
+		startDir : string,
+		limitAccess : bool,
+		limitDir : string,
+		maybeMultiselectB : Maybe<DynamicBehaviour<bool>>,
+		currentPathB : DynamicBehaviour<string>,
+		selectedElementsB : DynamicBehaviour<[string]>,
+		copiedElementsB : DynamicBehaviour<Pair<string, bool>>,
+		searchTextB : DynamicBehaviour<string>,
+		focusedIdB : DynamicBehaviour<string>,
+		iconSizeB : DynamicBehaviour<double>,
+		thumbnailSize : Transform<double>,
+		contentViewIconsB : DynamicBehaviour<bool>,
+		onClickB : DynamicBehaviour<(Maybe<?>) -> void>, // None() - backButton, Some(?) - item clicked
+		onRightClickB : DynamicBehaviour<(itemCP : Maybe<FBContentPath<?>>, clickPos : Point, onUpdate : (Maybe<?>) -> void) -> void>,
+		// convert array of "FilesPaths" to array of Pairs of "FilePath" and "FilePreview"
+		getPreviews : ([string], ([Pair<string, Material>]) -> void) -> void,
+		contentSortTypeB : DynamicBehaviour<FBSortPropertyState<?>>,
+		getDefaultIcon : (isFolder : bool, item : string) -> Material,
+		item2name : (?) -> string,
+		itemProperties : [FBItemProperty<?>],
+		style : [FbMStyle]
+	);
+
+	FBSortPropertyState(itemProperty : FBItemProperty<?>, asc : bool);
+
+	FBItemProperty(
+		name : string,
+		compare : (?, ?) -> int,
+		toString : (?) -> string
+	);
+
+	makeFilebrowserState(item2name : (?) -> string, itemProperties : [FBItemProperty], styles : [FbMStyle]) -> FilebrowserState;
+
+	prepareAndGetContentUI(
+		state : FilebrowserState,
+		dirs : [?],
+		files : [?],
+		addBackButton : bool,
+		previewsB : DynamicBehaviour<[Pair<string, Material>]>
+	) -> Material;
+
+	getContentUI(
+		state : FilebrowserState,
+		dirs : [FBContentPath],
+		files : [FBContentPath],
+		backButtonM : Maybe<Material>,
+		previewsB : DynamicBehaviour<[Pair<string, Material>]>
+	) -> Material;
+
+	getStateSubscribers(
+		state : FilebrowserState<?>,
+		fileNameB : DynamicBehaviour<string>,
+		selectedFilesB : DynamicBehaviour<[string]>,
+		curDirChangedCallback : (string) -> void
+	) -> [() -> () -> void];
+}
+
+//
+makeFilebrowserState(item2name : (?) -> string, itemProperties : [FBItemProperty], styles : [FbMStyle]) -> FilebrowserState {
+	startDir = extractStruct(styles, FbStartDir("DB:/")).dir |> addSlash2pathEnd;
+	limitAccess = extractStruct(styles, FbLimitAccessToUpperFolder(false)).mode;
+	iconSizeB = make(0.5);
+	// reuse one of the exists CurrentPath as a main
+	currentPathB = firstElement(map(extractStructMany(styles, FbGetCurrentPathB(make(""))), \s -> s.path), make(""));
+
+	FilebrowserState(
+		startDir,
+		limitAccess,
+		if (limitAccess) startDir else ":::",
+		if (contains(styles, FbMultiSelect())) Some(make(false)) else None(),
+		currentPathB,
+		make([]),
+		make(Pair("", false)),
+		make(""),
+		make(""),
+		iconSizeB,
+		const(16.0),
+		make(true),
+		make(nop1),
+		make(nop3),
+		extractStruct(styles, FbGetFilesPreview(\__, fn -> fn([]))).fn,
+		make(FBSortPropertyState(FBItemProperty("", \__, __ -> 0, \__ -> ""), true)),
+		if (extractStruct(styles, FbFileUseRegisteredIcons(false)).useRegistered)
+			\isFolder : bool, item : string -> {
+				MSelect(iconSizeB, \iconSize -> {
+					if (isFolder) MIcon("folder", [MIconSize(iconSize), MOrange(500)])
+					else getDefaultViewForFileExtension(getFileExt(item), iconSize, None());
+				});
+			}
+		else 
+			\isFolder : bool, __ -> {
+				MSelect(iconSizeB, \iconSize -> {
+					if (isFolder) MIcon("folder", [MIconSize(iconSize), MOrange(500)])
+					else MIcon("insert_drive_file", [MIconSize(iconSize), MTeal(500)]);
+				});
+			},
+		item2name,
+		itemProperties,
+		styles
+	)
+}
+
+FBContentItem(
+	item : FBContentPath<?>,
+	view : Material
+);
+
+__dblClickCatch = ref false;
+__catchDblClickDispose = ref nop;
+
+// preparing filebrowser content view
+prepareAndGetContentUI(state : FilebrowserState, dirs : [?], files : [?], addBackButton : bool, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Material {
+	correctCurPath = addSlash2pathEnd(getValue(state.currentPathB));
+	curPath = if (strlen(correctCurPath) > 0) strLeft(correctCurPath, strlen(correctCurPath) - 1) else correctCurPath;
+
+	lastSlashIdx = strLastIndexOf(curPath, "/");
+	backButtonM = if (lastSlashIdx != -1 && addBackButton && (!endsWith(correctCurPath, state.limitDir))) {
+		contentM = MSelect(state.iconSizeB, \iconSize -> MIcon("reply", [MIconSize(iconSize), MGrey(300)]));
+		Some(fsCustomElement(state, contentM, "..", "", const(false), nop, \-> getValue(state.onClickB)(None()), nop1));
+	} else {
+		None();
+	}
+
+	getContentUI(
+		state,
+		map(dirs, \d -> FBContentPath(d, true, correctCurPath, state.item2name(d))),
+		map(files, \f -> FBContentPath(f, false, correctCurPath, state.item2name(f))),
+		backButtonM,
+		previewsB
+	);
+}
+
+// creating filebrowser content view
+getContentUI(state : FilebrowserState, dirsCP : [FBContentPath], filesCP : [FBContentPath], backButtonM : Maybe<Material>, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Material {
+	createContentItemWrapper = \itemCP -> createContentItem(state, itemCP, previewsB);
+
+	ddItems = map(
+		filter(dirsCP, \dir -> dir.filename != ".." && dir.filename != "."),
+		createContentItemWrapper
+	);
+
+	ffItems = map(filesCP, createContentItemWrapper);
+
+	onSortChanged = \ddM, ffM, sortState -> {
+		sortItemsAndGetViews(
+			filtermap(ddM, idfn),
+			filtermap(ffM, idfn),
+			sortState.itemProperty.compare,
+			sortState.asc
+		);
+	};
+
+	boxSize = make(zeroWH);
+	view = MDynamicGrid(
+		fconcat(
+			const(eitherMap(backButtonM, \b -> [b], [])),
+			fselect3(fmerge(ddItems), fmerge(ffItems), state.contentSortTypeB, onSortChanged)
+		),
+		[
+			MBoxSize(boxSize),
+			MItemSize(fselect4(boxSize, state.contentViewIconsB, state.iconSizeB, state.thumbnailSize, \bs, ic, is, thumbnailSize -> {
+				if (ic)
+					WidthHeight(is + 20., is + 37.)
+				else
+					WidthHeight(bs.width, thumbnailSize + 12.)
+			}))
+		]
+	);
+	wrapWithSubscribers(state, view);
+}
+
+// Adding subscribers to the view
+wrapWithSubscribers(state : FilebrowserState<?>, content : Material) -> Material {
+	keyBroadcast = makeTKeyBroadcast();
+	downB = make(false);
+	rightClickB = make(false);
+
+	onLongClick = \-> {
+		next(state.selectedElementsB, []);
+		getValue(state.onRightClickB)(None(), zeroPoint, nop1);
+	};
+
+	content
+	|> (\m -> MScroll(m, TFillXY(), [TScrollDontHandle()]))
+	|> (\m -> MInteractive([TMouseRightDown(rightClickB), TMouseDownGhost(downB), keyBroadcast], m))
+	|> (\m -> MConstruct([
+			\-> subscribe(downB, \isDown -> if (isDown) next(state.selectedElementsB, [])),
+			\-> subscribe(rightClickB, \isDown -> if (isDown) onLongClick()),
+			// look for "ctrl" button pressed
+			switch (state.maybeMultiselectB) {
+				Some(ctrlKeyB): makeSubscribe(keyBroadcast.pressed, \ke -> nextDistinct(ctrlKeyB, ke.ctrl));
+				None(): \-> nop;
+			}
+		],
+		m
+	))
+	|> (\m -> MBorder4(4.0, m));
+}
+
+createContentItem(state : FilebrowserState, itemCP : FBContentPath, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Transform<Maybe<FBContentItem>> {
+	itemItemMB = make(Some(itemCP.item));
+	changeItem = \value -> nextDistinct(itemItemMB, value);
+
+	fselect(itemItemMB, FLift(\itemItemM -> {
+		maybeMap(
+			itemItemM,
+			\itemItem -> {
+				newCPItem = FBContentPath(itemItem, itemCP.isFolder, itemCP.dirPath, state.item2name(itemItem));
+				FBContentItem(
+					newCPItem,
+					createItemUI(state, newCPItem, changeItem, fif(state.contentViewIconsB, previewsB, const([])))
+				)
+			}
+		);
+	}));
+}
+
+// creating material view of the file/folder
+createItemUI(state : FilebrowserState<?>, itemCP : FBContentPath, changeItem : (Maybe<?>) -> void, previewsB : Transform<[Pair<string, Material>]>) -> Material {
+	fullName = getItemFullname(itemCP);
+	isSelectedB = fselect(state.selectedElementsB, FLift(\elements -> contains(elements, fullName)));
+	tooltip = if (itemCP.dirPath != (state.currentPathB |> getValue)) fullName else "";
+
+	fContent = MSelect(previewsB, \previews ->
+		eitherMap(
+			find(previews, \p -> p.first == fullName),
+			\p -> p.second,
+			state.getDefaultIcon(itemCP.isFolder, itemCP.filename)
+		)
+	);
+
+	// We release item click if it is a folder or if the CTRL button is not down
+	onClick = \-> if (!getValue(either(state.maybeMultiselectB, make(false)))) getValue(state.onClickB)(Some(itemCP.item));
+	onLongClick = \clickPos -> getValue(state.onRightClickB)(Some(itemCP), clickPos, changeItem);
+	onDown = if (itemCP.isFolder) {
+		// after calling onClick is called onDown, but onClick changed a current path and this element destoryed,
+		// we need no selection on it (because we check the current path)
+		\-> if (getValue(state.currentPathB) == itemCP.dirPath) onDownElementFn(state, fullName);
+	} else {
+		\-> onDownElementFn(state, fullName);
+	}
+
+	fsCustomElement(state, fContent, itemCP.filename, tooltip, isSelectedB, onDown, onClick, onLongClick);
+}
+
+// creating material view of the filebrowser element using own "icon"
+fsCustomElement(
+	state : FilebrowserState<?>,
+	contentM : Material,
+	text : string,
+	tooltip : string,
+	isSelectedB : Transform<bool>,
+	onDown : () -> void,
+	onClick : () -> void,
+	onRightClick : (Point) -> void
+) -> Material {
+	downB = make(false);
+	hoverB = make(false);
+	onClickB = make(true);
+	clickForHoverB = make(false);
+	rightClickB = make(false);
+	positionScaleB = make(PositionScale(Point(1., 1.), Point(1., 1.)));
+	boxB = makeWH();
+
+	getPoint = \pos, wh -> Point(pos.x + wh.width / 2., pos.y + wh.height / 2.);
+	onRightClick2 = \-> {
+		next(onClickB, false);
+		next(clickForHoverB, false);
+		onRightClick(getPoint(getValue(positionScaleB).pos, getValue(boxB)));
+	};
+
+	getFolderFileClick = \click -> {
+		catchDblClick = \-> {
+			//println("dblClickCatch start timer...");
+			^__catchDblClickDispose();
+			__dblClickCatch := true;
+			__catchDblClickDispose := interruptibleTimer(500, \-> {
+				if (^__dblClickCatch) {
+					//println("dblClickCatch released");
+					__dblClickCatch := false;
+
+				}
+			});
+		}
+		\-> {
+			if (!^__dblClickCatch) {
+				//println("dblClickCatch first click");
+				catchDblClick();
+				click();
+			}
+		}
+	}
+
+	onClick2 = \-> {
+		if (getValue(onClickB)) onClick()
+		else next(onClickB, true);
+		next(clickForHoverB, true);
+	}
+
+	onDown2 = \flag -> {
+		if (flag && !getValue(clickForHoverB)) onDown();
+		next(clickForHoverB, false);
+	}
+
+	MSelect(state.iconSizeB, \iconSize -> {
+		MSelect(state.contentViewIconsB, \contentViewIcons -> {
+			// calculating of text length which size will be corresponds to the element icon width
+			// min text length is 4
+			maxTextLength = if (contentViewIcons) {
+				if (iconSize < 31.0) 4
+				else 3 + (trunc(iconSize) - 30) / 5;
+			} else 255;
+
+			(if (contentViewIcons) {
+				MLines2(
+					MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
+					MFixSize(
+						MCenterXIn(
+							MSelect(hoverB, \ishovered ->
+								MText(ellipsis(text, maxTextLength), [if (ishovered) MPurple(500) else MBlack()]),
+							),
+							TFixed(iconSize, 23.0)
+						),
+						TFixed(iconSize, 23.0)
+					)
+				)
+			} else {
+				MColsYCenter([
+					MZoomToFill(contentM, TSizedWidthHeight(state.thumbnailSize, state.thumbnailSize), true),
+					TFixed(5.0, 0.0),
+					MSelect(hoverB, \ishovered -> MText(text, [if (ishovered) MPurple(500) else MBlack()])),
+				])
+			})
+			|> (\m -> MBorder(6.0, 3.0, 6.0, 3.0, m))
+			|> (\content ->
+				MGroup([
+					MIf(
+						isSelectedB,
+						MAvailable(
+							TRounded(2.0, 2.0, 2.0, 2.0, [Fill(lightBlue), FillOpacity(0.7)], TFillXY()),
+							MSizeOf(content)
+						),
+						TEmpty()
+					),
+					MIf(
+						hoverB,
+						MAvailable(
+							MFrame(0.0, 1.0, [Stroke(gray), StrokeWidth(0.5)], TFillXY()),
+							MSizeOf(content)
+						),
+						TEmpty()
+					),
+					content
+				])
+			)
+			|> (\m -> if ((strlen(text) > maxTextLength - 1) || tooltip != "") MTooltip(m, MText(text + "\n" + tooltip, []), []) else m)
+		})
+	})
+	|> (\m -> MInteractive([TMouseRightDown(rightClickB), TMouseDownGhost(downB), TMouseInside(hoverB, true)], m))
+	|> (\m -> MClickable(m, getFolderFileClick(onClick2)))
+	|> (\m -> MConstruct(
+		[
+			// select an element if: the mouse down on element (not click)
+			\-> subscribe(downB, \isDown -> if (isDown) onDown2(true)),
+			\-> subscribe(rightClickB, \isDown -> if (isDown) { onDown2(true); getFolderFileClick(onRightClick2)(); }),
+			// if element hovered 766 msec - it is the same like onDown
+			\-> subscribe(hoverB, \hovered -> if (hovered) timer(766, \-> onDown2(getValue(hoverB))) else onDown2(false))
+		],
+		m
+	))
+	//|> (\m -> MGroup2(m, MCheckBox(TEmpty(), make(false), [MIconButtonBorder(4.), MCircleBackground(MGrey(400), 32.)])))
+	|> (\m -> MSelect(state.contentViewIconsB, \contentViewIcons -> if (!contentViewIcons) MCols2(m, TFillX()) else m))
+	|> (\m -> MPositionScale(positionScaleB, m))
+	|> (\m -> MAttachBox(m, boxB))
+	|> (\m -> MBorder4(4.0, m));
+}
+
+// function to add filesystem element to the Selection list
+onDownElementFn(state : FilebrowserState<?>, fullName : string) -> void {
+	selectedElements = getValue(state.selectedElementsB);
+	newSelection =
+		switch (state.maybeMultiselectB) {
+			Some(ctrlKeyB): {
+				if (!getValue(ctrlKeyB)) {
+					[fullName]
+				} else if (contains(selectedElements, fullName)) {
+					removeFirst(selectedElements, fullName)
+				} else {
+					arrayPush(selectedElements, fullName)
+				}
+			}
+			None(): [fullName];
+		}
+	next(state.selectedElementsB, newSelection);
+}
+
+sortItemsAndGetViews(dirs : [FBContentItem], files : [FBContentItem], compare : (?, ?) -> int, asc : bool) -> [Material] {
+	direction = if (asc) 1 else -1;
+	map(
+		concat(
+			// to keep folder list on the top of view
+			mergeSort(dirs, \i1, i2 -> direction * compare(i1.item.item, i2.item.item)),
+			mergeSort(files, \i1, i2 -> direction * compare(i1.item.item, i2.item.item))
+		),
+		\a -> a.view
+	);
+}
+
+getStateSubscribers(
+	state : FilebrowserState<?>,
+	fileNameB : DynamicBehaviour<string>,
+	selectedFilesOutB : DynamicBehaviour<[string]>,
+	curDirChangedCallback : (string) -> void
+) -> [() -> () -> void] {
+	// If initialized with selection - copy it into state
+	if (getValue(selectedFilesOutB) != []) {
+		curPath = getValue(state.currentPathB);
+		nextDistinct(
+			state.selectedElementsB,
+			map(getValue(selectedFilesOutB), \name -> curPath + name)
+		);
+	}
+
+	selectedFilesUpdatingR : ref bool = ref false;
+	[
+		// Every time path changed (except initialization) we don't have a selection anymore
+		makeSubscribe2(state.currentPathB, \cp -> {
+			nextDistinct(state.selectedElementsB, []);
+			curDirChangedCallback(cp);
+		}),
+		// On the selection changed set only the file name into the Filename field (in non multiselect mode)
+		makeSubscribe(state.selectedElementsB, \selectedPaths -> {
+			if (isNone(state.maybeMultiselectB) && selectedPaths != [] && !endsWith(selectedPaths[0], "/"))
+				nextDistinct(fileNameB, selectedPaths[0] |> split2Name_Path |> firstOfPair);
+
+			selectedFilesUpdatingR := true;
+			nextDistinct(
+				selectedFilesOutB,
+				map(
+					selectedPaths,
+					\path -> split2Name_Path(path).first + (if (endsWith(path, "/")) "/" else "")
+				)
+			);
+			selectedFilesUpdatingR := false;
+		}),
+		// If smb change selection in the current folder from out of the MFileBrowser
+		makeSubscribe(selectedFilesOutB, \selected -> {
+			if (!^selectedFilesUpdatingR) {
+				curPath = getValue(state.currentPathB);
+				nextDistinct(state.selectedElementsB, map(selected, \fileName -> curPath + fileName));
+			}
+		})
+	]
+}
