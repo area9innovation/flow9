@@ -48,7 +48,7 @@ export {
 	CalendarForEventsStyle ::= ShowMonthViewSwitchMenu, DefaultMonthView, TabOrder, DefaultTab, TabColors, HideAddEventButton,
 		CloseDayPopupAfterAdditionalAction, EventListSettings, PlannedTableDateFormat, BlackAndWhiteTextColor, HideTimeInfo, HiddenEventTypes,
 		ShowWeekViewDaysNames, CalendarTabMenuStyle, CalendarTabMenuText, CalendarTodayColors, CalendarWeekendsColor, CalendarDefaultEventToAdd,
-		CalendarHideEventTypesLegend, CalendarCurrentDate;
+		CalendarHideEventTypesLegend, CalendarCurrentDate, CalendarShowTodayButton, CalendarMenuTightWidth;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -72,7 +72,7 @@ export {
 		// Show days names in week view
 		ShowWeekViewDaysNames();
 		CalendarTabMenuStyle(text : [MTextStyle], icon : [MIconStyle], background : [TGraphicsStyle]);
-		CalendarTabMenuText(draw : (date : Date, tab : CalendarTab) -> Maybe<Material>);
+		CalendarTabMenuText(getText : (date : Date, tab : CalendarTab) -> Maybe<string>);
 		CalendarTodayColors(text : MColor, background : MColor);
 		CalendarWeekendsColor(color : MColor);
 		// Instead of dayEventsPopup show add event dialog for eventType
@@ -80,6 +80,8 @@ export {
 		CalendarHideEventTypesLegend();
 		// Allows to get or set current date
 		CalendarCurrentDate(currentDateB : DynamicBehaviour<Date>);
+		CalendarShowTodayButton();
+		CalendarMenuTightWidth();
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab();
@@ -1679,6 +1681,8 @@ RangeView(
 		}) |> concatA |> MCols
 	}));
 
+	gridLinesStyle = [MFill(MGrey(400)), FillOpacity(0.4)];
+
 	monthCount = getMonthsBetweenDates(startDate, endDate, 1);
 	monthNamesRow = MCols(generate(0, monthCount, \idx -> {
 		date = addMonthsToDate(startDate, idx);
@@ -1687,7 +1691,7 @@ RangeView(
 			if (idx == monthCount - 1) endDate else Date(date.year, date.month, getNumberOfDaysPerMonthInTheYear(date.year)[date.month])
 		) + 1;
 		MCols2A(
-			TRectangle([Fill(if (idx == 0) white else black)], TFixed(1., 24.)),
+			TRectangle(if (idx == 0) [Fill(white)] else gridLinesStyle, TFixed(1., 24.)),
 			MOnTop(
 				MCols(generate(0, len, \__ -> TFillXH(24.))),
 				MCenter(MEllipsisText(monthString(date, true), [MBodyBold(), MShowTooltip(const(true))]))
@@ -1695,7 +1699,6 @@ RangeView(
 		)
 	}));
 
-	gridLinesStyle = [MFill(MGrey(400)), FillOpacity(0.4)];
 	gridLine = TRectangle(gridLinesStyle, TFillWY(1.));
 	verticalGrid = MCols(concatA(generate(0, columnsCountInRange, \__ -> [gridLine, TFillX()])));
 	horizontalLine = TRectangle(gridLinesStyle, TFillXH(1.));
@@ -2117,6 +2120,8 @@ CalendarForEvents(
 	weekendsColor = extractStruct(styles, CalendarWeekendsColor(MRed(600))).color;
 	hideLegend = containsStruct(styles, CalendarHideEventTypesLegend());
 	externalDateM = tryExtractStruct(styles, CalendarCurrentDate(make(nullDate)));
+	showTodayButton = containsStruct(styles, CalendarShowTodayButton());
+	menuTightWidth = containsStruct(styles, CalendarMenuTightWidth());
 
 	filteredEvents = make(getValue(allEvents));
 	hiddenEventTypes = extractStruct(styles, HiddenEventTypes([])).types;
@@ -2309,7 +2314,11 @@ CalendarForEvents(
 				legend
 		]);
 
-		drawCalendarTabMenuText = extractStruct(styles, CalendarTabMenuText(\__, __ -> None())).draw;
+		drawCalendarTabMenuText = \date, defaultText -> {
+			text = either(extractStruct(styles, CalendarTabMenuText(\__, __ -> None())).getText(date, tab), defaultText);
+			textM = MText(text, customFontStyle);
+			if (menuTightWidth) textM |> MBorderLeftRight(32.0) else MCenterX(textM);
+		}
 
 		tabContent = switch(tab) {
 			YearTab(): {
@@ -2320,12 +2329,10 @@ CalendarForEvents(
 							subMenuIconStyle,
 							[]
 						),
-						MSelect(currentDate, \date ->
-							either(
-								drawCalendarTabMenuText(date, tab),
-								MCenterIn(MText(i2s(date.year), customFontStyle), subMenuSize)
-							)
-						),
+						MSelect(currentDate, \date -> {
+							defaultText = i2s(date.year);
+							drawCalendarTabMenuText(date, defaultText);
+						}),
 						MIconButton(
 							"keyboard_arrow_right",
 							\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1)),
@@ -2363,12 +2370,10 @@ CalendarForEvents(
 						subMenuIconStyle,
 						[]
 					),
-					MSelect(currentDate, \date ->
-						either(
-							drawCalendarTabMenuText(date, tab),
-							MCenterIn(MText(i2s(date.year) + " " + toUpperCase(monthString(date, true)), customFontStyle), subMenuSize)
-						)
-					),
+					MSelect(currentDate, \date -> {
+						defaultText = i2s(date.year) + " " + toUpperCase(monthString(date, true));
+						drawCalendarTabMenuText(date, defaultText);
+					}),
 					MIconButton(
 						"keyboard_arrow_right",
 						\ -> updateCurrentDate(addMonthsToDate(getValue(currentDate), 1)),
@@ -2425,19 +2430,17 @@ CalendarForEvents(
 				);
 
 				menuItems = [
-					MGroup2(
-						MCenterIn(
-							MSelect2(startDate, endDate, \start, end ->
-								MColsA([
-									dateButton(startDate, dateMin, addDaysToDate(end, -1)),
-									MBorderA(4., 4., 4., 4., MText(" — ", customFontStyle)),
-									dateButton(endDate, addDaysToDate(start, 1), dateMax),
-								]),
-							),
-							subMenuSize
+					MSizeOf(groupedByMenu),
+					MCenterX(
+						MSelect2(startDate, endDate, \start, end ->
+							MColsA([
+								dateButton(startDate, dateMin, addDaysToDate(end, -1)),
+								MBorder(4., 4., 4., 4., MText(" — ", customFontStyle)),
+								dateButton(endDate, addDaysToDate(start, 1), dateMax),
+							]),
 						),
-						MCenterYIn(MRightShift(groupedByMenu), subMenuSize)
-					)
+					),
+					groupedByMenu
 				];
 
 				MConstruct([
@@ -2477,7 +2480,21 @@ CalendarForEvents(
 				startOfCurrentWeek = getStartOfWeek(getCurrentDate());
 				updateCurrentDate(startOfCurrentWeek);
 
+				todayButtonM = if (showTodayButton) {
+					MShow(fneq(currentDate, startOfCurrentWeek),
+						MTextButton(
+							_("Today"),
+							\ -> updateCurrentDate(startOfCurrentWeek),
+							[MGrey(200), MButtonRaised(), MButtonPaddings(24.0, 10.0, 24.0, 9.0)],
+							[]
+						) |> MBorderLeftRight(16.0)
+					);
+				} else {
+					MEmpty();
+				}
+
 				menuItems = [
+					if (menuTightWidth) MSizeOf(todayButtonM) else MEmpty(),
 					MIconButton(
 						"first_page",
 						\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -28)),
@@ -2490,12 +2507,11 @@ CalendarForEvents(
 						subMenuIconStyle,
 						[]
 					),
-					MSelect(currentDate, \date ->
-						either(
-							drawCalendarTabMenuText(date, tab),
-							MCenterIn(MText(formatString("WEEK %1 OF %2", [i2s(getWeekOfYear(date, 0, true)), i2s(date.year)]), customFontStyle), subMenuSize)
-						)
-					),
+					MSelect(currentDate, \date -> {
+						defaultText = formatString("WEEK %1 OF %2", [i2s(getWeekOfYear(date, 0, true)), i2s(date.year)]);
+						drawCalendarTabMenuText(date, defaultText);
+					}),
+					if (!menuTightWidth) todayButtonM else MEmpty(),
 					MIconButton(
 						"keyboard_arrow_right",
 						\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 7)),
@@ -2507,7 +2523,8 @@ CalendarForEvents(
 						\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 28)),
 						subMenuIconStyle,
 						[]
-					)
+					),
+					if (menuTightWidth) todayButtonM else MEmpty()
 				];
 
 				content = MSelect2(currentDate, filteredEvents, \start, events -> {
