@@ -224,78 +224,97 @@ class RenderSupport {
 		return false;
 	}
 
-	private static var UserDefinedFontSize : Float = null;
-	private static function getUserDefinedFontSize() : Float {
-		if (UserDefinedFontSize == null) {
-			var style = Browser.window.getComputedStyle(Browser.document.body);
+	private static function getUserDefinedFontSize(clip : DisplayObject) : Float {
+		var nativeWidget = untyped clip.nativeWidget;
 
-			UserDefinedFontSize = Std.parseFloat(style.fontSize);
-		}
-
-		if (Math.isNaN(UserDefinedFontSize)) {
-			UserDefinedFontSize = 16.0;
-		}
-
-		return UserDefinedFontSize;
-	}
-
-	private static var UserDefinedLetterSpacing = null;
-	private static function getUserDefinedLetterSpacing() : Float {
-		var div = Browser.document.createElement("p");
-		Browser.document.body.appendChild(div);
-		var style = Browser.window.getComputedStyle(div);
-
-		UserDefinedLetterSpacing = style.letterSpacing != "normal"
-			? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
-			: 0.0;
-
-		Browser.document.body.removeChild(div);
-
-		return UserDefinedLetterSpacing;
-	}
-
-	private static var UserDefinedLetterSpacingPercent = null;
-	private static function getUserDefinedLetterSpacingPercent() : Float {
-		var div = Browser.document.createElement("p");
-		Browser.document.body.appendChild(div);
-		var style = Browser.window.getComputedStyle(div);
-
-		UserDefinedLetterSpacingPercent = style.letterSpacing != "normal"
-			? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
-			: 0.0;
-
-		Browser.document.body.removeChild(div);
-
-		return UserDefinedLetterSpacingPercent;
-	}
-
-	private static var UserStylePending = false;
-	public static function emitUserStyleChanged() {
-		if (!UserStylePending) {
-			UserStylePending = true;
-			RenderSupport.once("drawframe", function() {
-				if (UserDefinedLetterSpacing != getUserDefinedLetterSpacing() || UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) {
-					RenderSupport.emit("userstylechanged");
-				}
-				UserStylePending = false;
-			});
-		}
-	}
-
-	public static function isInsideFrame() : Bool {
-		try {
-			return untyped __js__("window.self !== window.top");
-		} catch (e : Dynamic) {
-			return true;
-		}
-	}
-
-	public static function monitorUserStyleChanges() : Void -> Void {
-		if (isInsideFrame()) {
-			return Native.setInterval(1000, emitUserStyleChanged);
+		if (nativeWidget == null) {
+			untyped clip.fontSize = 0.0;
 		} else {
-			return function() {};
+			var style = Browser.window.getComputedStyle(nativeWidget);
+
+			untyped clip.fontSize = Std.parseFloat(style.fontSize);
 		}
+
+		if (untyped clip.style != null && clip.fontSize != 0.0 && clip.style.fontSize != clip.fontSize) {
+			untyped clip.style.fontSize = clip.fontSize;
+			untyped clip.invalidateMetrics();
+			untyped clip.measureFont();
+		}
+
+		return untyped clip.fontSize;
+	}
+
+	private static function getUserDefinedLetterSpacing(clip : DisplayObject) : Float {
+		var nativeWidget = untyped clip.nativeWidget;
+
+		if (nativeWidget == null) {
+			untyped clip.letterSpacing = 0.0;
+		} else {
+			var style = Browser.window.getComputedStyle(nativeWidget);
+
+			untyped clip.letterSpacing = style.letterSpacing != "normal"
+				? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
+				: 0.0;
+		}
+
+		if (untyped clip.style != null && clip.letterSpacing != 0.0 && clip.style.letterSpacing != clip.letterSpacing) {
+			untyped clip.style.letterSpacing = clip.letterSpacing;
+			untyped clip.invalidateMetrics();
+			untyped clip.measureFont();
+		}
+
+		return untyped clip.letterSpacing;
+	}
+
+	private static function getUserDefinedLetterSpacingPercent(clip : DisplayObject) : Float {
+		var nativeWidget = untyped clip.nativeWidget;
+
+		if (nativeWidget == null) {
+			untyped clip.letterSpacingPercent = 0.0;
+		} else {
+			var style = Browser.window.getComputedStyle(nativeWidget);
+
+			untyped clip.letterSpacingPercent = style.letterSpacing != "normal"
+				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
+				: 0.0;
+		}
+
+		if (untyped clip.style != null && clip.letterSpacingPercent != 0.0 && clip.style.letterSpacing != clip.style.fontSize * clip.letterSpacingPercent) {
+			untyped clip.style.letterSpacing = clip.style.fontSize * clip.letterSpacingPercent;
+			untyped clip.invalidateMetrics();
+			untyped clip.measureFont();
+		}
+
+		return untyped clip.letterSpacingPercent;
+	}
+
+	public static function emitUserStyleChanged(clip : DisplayObject) {
+		if (untyped (clip.letterSpacing != getUserDefinedLetterSpacing(clip)) | (clip.letterSpacingPercent != getUserDefinedLetterSpacingPercent(clip)) |
+			(clip.fontSize != getUserDefinedFontSize(clip))) {
+			RenderSupport.once("drawframe", function() { clip.emit("userstylechanged"); });
+		}
+	}
+
+	public static function monitorUserStyleChanges(clip : DisplayObject) : Void -> Void {
+		var fn = function() {
+			emitUserStyleChanged(clip);
+		};
+
+		if (untyped clip.style != null && clip.letterSpacing == null) {
+			untyped clip.letterSpacing = clip.style.letterSpacing;
+			untyped clip.fontSize = clip.style.fontSize;
+		}
+
+		if (untyped clip.letterSpacingPercent == null) {
+			untyped clip.letterSpacingPercent = 0.0;
+		}
+
+		once("drawframe", fn);
+
+		var observer = untyped __js__("new MutationObserver(fn)");
+		observer.observe(untyped clip.nativeWidget, { attributes : true, attributeFilter : ['style'] });
+
+		return function() { observer.disconnect(); };
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -2193,9 +2212,9 @@ class RenderSupport {
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
 		if (event == "userstylechanged") {
-			on("userstylechanged", fn);
+			clip.on("userstylechanged", fn);
 			return function () {
-				off("userstylechanged", fn);
+				clip.off("userstylechanged", fn);
 			}
 		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);

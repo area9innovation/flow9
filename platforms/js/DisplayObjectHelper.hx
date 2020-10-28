@@ -864,6 +864,28 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static function onAttached(clip : DisplayObject, fn : Void -> (Void -> Void)) : Void {
+		var disp = function () {};
+
+		if (untyped clip.nativeWidget == null || clip.nativeWidget.parentNode == null || !clip.onStage) {
+			clip.once("attached", function () {
+				disp = fn();
+
+				clip.once("detached", function () {
+					disp();
+					onAttached(clip, fn);
+				});
+			});
+		} else {
+			disp = fn();
+
+			clip.once("detached", function () {
+				disp();
+				onAttached(clip, fn);
+			});
+		}
+	}
+
 	public static function updateClipID(clip : DisplayObject) : Void {
 		var nativeWidget = untyped clip.nativeWidget;
 
@@ -1741,20 +1763,18 @@ class DisplayObjectHelper {
 	}
 
 	public static function removeNativeWidget(clip : DisplayObject) : Void {
-		if (untyped clip.removeNativeWidget != null) {
-			untyped clip.removeNativeWidget();
-		} else {
-			if (untyped isNativeWidget(clip)) {
-				var nativeWidget : Dynamic = untyped clip.nativeWidget;
+		if (untyped isNativeWidget(clip)) {
+			var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
-				if (untyped nativeWidget.parentNode != null) {
-					nativeWidget.parentNode.removeChild(nativeWidget);
+			if (untyped nativeWidget.parentNode != null) {
+				nativeWidget.parentNode.removeChild(nativeWidget);
 
-					if (untyped clip.parentClip != null) {
-						applyScrollFn(untyped clip.parentClip);
-						untyped clip.parentClip = null;
-					}
+				if (untyped clip.parentClip != null) {
+					applyScrollFn(untyped clip.parentClip);
+					untyped clip.parentClip = null;
 				}
+
+				clip.emit("detached");
 			}
 		}
 	}
@@ -1836,6 +1856,8 @@ class DisplayObjectHelper {
 			}
 
 			applyScrollFnChildren(child);
+
+			child.emit("attached");
 		} else {
 			appendNativeWidget(clip.parent, child);
 		}

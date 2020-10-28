@@ -175,6 +175,10 @@ class TextClip extends NativeWidgetClip {
 		style.wordWrap = false;
 		style.wordWrapWidth = 2048.0;
 
+		this.onAttached(function () {
+			return RenderSupport.monitorUserStyleChanges(this);
+		});
+
 		this.keepNativeWidget = KeepTextClips;
 	}
 
@@ -853,7 +857,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
+		style.wordWrapWidth = widgetWidth >= 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -885,8 +889,8 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function setEllipsis(lines : Int, cb : Bool -> Void) : Void {
-		untyped this.style.truncate = lines;
-		untyped this.style.truncateCallback = cb;
+		untyped this.style.ellipsis = lines;
+		untyped this.style.ellipsisCallback = cb;
 
 		invalidateMetrics();
 	}
@@ -904,7 +908,6 @@ class TextClip extends NativeWidgetClip {
 			this.textDirection = textDirection.toLowerCase();
 			this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 
-			invalidateStyle();
 			invalidateMetrics();
 			layoutText();
 		}
@@ -1417,14 +1420,36 @@ class TextClip extends NativeWidgetClip {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
 			}
 
-			metrics.maxWidth = 0.0;
-			var lineWidths : Array<Float> = metrics.lineWidths;
+			if (style.ellipsis != null) {
+				var prevEllipsis = style.ellipsis;
+				var prevWordWrap = style.wordWrap;
+				var prevWordWrapWidth = style.wordWrapWidth;
+				style.ellipsis = null;
+				style.wordWrap = false;
+				style.wordWrapWidth = null;
+				var metrics2 = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				style.ellipsis = prevEllipsis;
+				style.wordWrap = prevWordWrap;
+				style.wordWrapWidth = prevWordWrapWidth;
 
-			for (lineWidth in lineWidths) {
-				metrics.maxWidth += lineWidth;
+				untyped metrics2.maxWidth = 0.0;
+				var lineWidths : Array<Float> = untyped metrics2.lineWidths;
+
+				for (lineWidth in lineWidths) {
+					untyped metrics2.maxWidth += lineWidth;
+				}
+
+				metrics.maxWidth = Math.max(metrics2.width, untyped metrics2.maxWidth);
+			} else {
+				metrics.maxWidth = 0.0;
+				var lineWidths : Array<Float> = metrics.lineWidths;
+
+				for (lineWidth in lineWidths) {
+					metrics.maxWidth += lineWidth;
+				}
+
+				metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 			}
-
-			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 	}
 
