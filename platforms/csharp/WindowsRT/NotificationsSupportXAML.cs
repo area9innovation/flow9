@@ -47,7 +47,7 @@ namespace Area9Innovation.Flow
 			return null;
 		}
 
-		public override object scheduleLocalNotification(double timestampUTC, int notificationId, string callbackArgs, string title, string text, bool playsound, bool pinNotification)
+		public override object scheduleLocalNotification(double timestampUTC, int notificationId, string callbackArgs, string title, string text, bool playsound, bool pinNotification, string notificationIconUrl)
 		{
 			// Load the content into an XML document
 			// ToastText02 is a built-in template with a single line header (id=1)

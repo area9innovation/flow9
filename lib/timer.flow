@@ -1,0 +1,138 @@
+
+import runtime;
+
+export {
+	// Get a callback in x ms
+	native timer : io (int, () -> void) -> void = Native.timer;
+
+	// Repeat a callback every x ms
+	native setInterval : io (int, () -> void) -> () -> void = Native.setInterval;
+
+	// Executes the function given in x ms if not interrupted before.
+	native interruptibleTimer : io (int, () -> void) -> () -> void = Native.interruptibleTimer;
+	native interruptibleDeferUntilNextFrameRendered : io (fn : () -> void) -> () -> void = RenderSupport.interruptibleDeferUntilRender;
+
+	// Deffer function call
+	deferred(fn : () -> void) -> void;
+
+	// Wait until rendering finished
+	deferUntilRender : (fn : () -> void) -> void;
+
+	native deferUntilNextFrameRendered : (cb : () -> void) -> void = RenderSupport.deferUntilRender;
+
+	// splits array into chunks of chunkSize and does a deferred call between
+	// processing them to avoid flash timeout
+	iterDeferred(arr: [?], chunkSize: int, doItem: (?) -> void, onDone: () -> void, progress: (int, int) -> void) -> void;
+	iterDeferred2(arr: [?], iterator: (v : ?, onDoneChunk: () -> void) -> void, onDone: () -> void, progress: (int, int) -> void) -> void;
+
+	// apply all using deferred() after each call. Elements of array should be functions with two parameters - current input and function which is called at the end
+	threadApplyDeferred(input : ?, array : [(?, (?) -> void) -> void]) -> void;
+
+	// wait for condition become true, then exec
+	executeAfter : (condition : () -> bool, fn : () -> void) -> void;
+}
+
+interruptibleTimer(t : int, fn : () -> void) -> () -> void {
+	execute = ref true;
+	timer(t, \ -> {if (^execute) fn();});
+	\ -> {execute := false;}
+}
+
+interruptibleDeferUntilNextFrameRendered(fn : () -> void) -> () -> void {
+	execute = ref true;
+	deferUntilNextFrameRendered(\ -> {if (^execute) fn();});
+	\ -> {execute := false;}
+}
+
+setInterval(ms : int, cb : () -> void) -> () -> void {
+	disp = ref nop;
+	fn = ref nop;
+
+	fn := (\ -> {
+		cb();
+		disp := interruptibleTimer(ms, ^fn);
+	});
+
+	^fn();
+
+	\ -> {
+		fn := nop;
+		^disp();
+		disp := nop;
+	}
+}
+
+deferred(fn : () -> void) -> void {
+	timer(0, fn);
+}
+
+deferUntilRender(fn : () -> void) -> void {
+	timer(10, fn);
+}
+
+deferUntilNextFrameRendered(fn : () -> void) {
+	timer(10, fn);
+}
+
+threadApplyDeferred(input, array) {
+	len = length(array);
+	if (len > 0) {
+		// println("Calls remaining: " + toString(len));
+		curFn = array[0];
+		array2 = subrange(array, 1, len - 1);
+		curFn(input, \output -> deferred(\-> { threadApplyDeferred(output, array2) }));
+	}
+}
+
+iterDeferredRec : (arr : [?], from : int, chunkSize : int, doItem : (?)->void, onDone : ()->void, progress : (int, int)->void)->void;
+iterDeferredRec(arr, from, chunkSize, doItem, onDone, progress) {
+	if (chunkSize <= 0) {
+		onDone();
+	} else {
+		len = length(arr);
+
+		iteri(subrange(arr, from, chunkSize),
+			\i, item -> {
+				doItem(item);
+				progress(from + i + 1, len);
+			}
+		);
+
+		if (len < from + chunkSize) {
+			onDone();
+		} else {
+			deferred(\ -> iterDeferredRec(arr, from + chunkSize, chunkSize, doItem, onDone, progress))
+		}
+	}
+}
+
+iterDeferred(arr: [?], chunkSize: int, doItem: (?) -> void, onDone: () -> void, progress: (int, int) -> void) -> void {
+	iterDeferredRec(arr, 0, chunkSize, doItem, onDone, progress);
+}
+
+iterDeferred2Rec(arr: [?], index : int, len : int, iterator: (v : ?, onDoneItem: () -> void) -> void, onDone: () -> void, onProgress: (int, int) -> void) -> void {
+	if (index < len) {
+		iterator(arr[index],
+			\ -> {
+				onProgress(index + 1, len);
+				deferred(\ -> iterDeferred2Rec(arr, index + 1, len, iterator, onDone, onProgress));
+			}
+		);
+	} else {
+		onDone()
+	}
+}
+
+iterDeferred2(arr, iterator, onDone, onProgress) {
+	len = length(arr);
+	if (len > 0) {
+		iterDeferred2Rec(arr, 0, len, iterator, onDone, onProgress)
+	} else {
+		onDone()
+	}
+}
+
+executeAfter(condition : () -> bool, fn : () -> void) -> void {
+	if (condition()) fn()
+	else timer(10, \ -> executeAfter(condition, fn))
+}

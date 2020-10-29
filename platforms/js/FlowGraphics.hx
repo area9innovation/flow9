@@ -2,11 +2,9 @@ import js.Browser;
 import js.html.Element;
 
 import pixi.core.display.Bounds;
-import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
 import pixi.core.graphics.Graphics;
-import pixi.core.graphics.GraphicsData;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 
@@ -43,8 +41,8 @@ class FlowGraphics extends Graphics {
 	public var keepNativeWidgetChildren : Bool = false;
 	public var hasMask : Bool = false;
 
-	public var left = 0.0;
-	public var top = 0.0;
+	public var left = null;
+	public var top = null;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);

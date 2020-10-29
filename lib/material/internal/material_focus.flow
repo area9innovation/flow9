@@ -6,6 +6,7 @@ import material/internal/material_debug;
 export {
 	// when a modal dialog comes, use this to increase the z-order
 	pushZorder(manager : MaterialManager) -> () -> void;
+	MPushZorder(content : Material) -> Material;
 	popZorder(manager : MaterialManager) -> () -> void;
 
 	// If you need a focus id, call this.
@@ -34,7 +35,7 @@ export {
 		fn : (MFocus) -> Tropic
 	) -> Tropic;
 	addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
-		horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
+		horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, ready : Transform<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 		enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
 		keysEnabled : Transform<bool>, hintMarkerEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>,
 		theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
@@ -48,6 +49,7 @@ export {
 	scrollIntoView2(parent : MFocusGroup, transformMatrix : TransformMatrix, widthHeight : WidthHeight) -> void;
 
 	getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
+	getCurrentActiveItem(manager : MaterialManager) -> Maybe<MaterialFocus>;
 	getPreviousFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
 
 	isMFocusChild(parent : MFocusGroup, child : MaterialFocus) -> bool;
@@ -62,6 +64,11 @@ export {
 	blockOtherMInteractionItemIds(manager : MaterialManager, itemId : int) -> void;
 	isCurrentMInteractionItemId(manager : MaterialManager, itemId : int) -> bool;
 
+	addMPopupItemId(manager : MaterialManager, itemId : int) -> void;
+	removeMPopupItemId(manager : MaterialManager, itemId : int) -> void;
+	blockOtherMPopupItemIds(manager : MaterialManager, itemId : int) -> void;
+	isCurrentMPopupItemId(manager : MaterialManager, itemId : int) -> bool;
+
 	filterIScriptIdentifierWithoutFormPosition(id : List<IScriptIdentifier>) -> List<IScriptIdentifier>;
 	filterIScriptIdentifierOnlyFormPosition(id : List<IScriptIdentifier>) -> List<IScriptFormPosition>;
 
@@ -70,6 +77,35 @@ export {
 	mClickButton(manager : MaterialManager, name : string) -> void;
 
 	mSpeechAccessiblityEnabled = ref isUrlParameterTrue("speech");
+}
+
+MPushZorder(content : Material) -> Material {
+	MGetManager(\manager -> {
+		zorder = make(getValue(manager.manager.zorder) + 1);
+
+		MConstruct(
+			[
+				\ -> {
+					v = getValue(manager.manager.zorder);
+					next(manager.manager.zorder, v + 1);
+					next(zorder, v + 1);
+					setForceZorder(v + 1);
+
+					\ -> {
+						vPrev = getValue(manager.manager.zorder);
+						if (vPrev > v) {
+							nextDistinct(manager.manager.zorder, v);
+							setForceZorder(v);
+						}
+					}
+				}
+			],
+			MComponentGroup(
+				content,
+				[MZorder(zorder), MFocusName("MPushZorder")]
+			)
+		)
+	});
 }
 
 pushZorder(manager : MaterialManager) -> () -> void {
@@ -430,7 +466,7 @@ addMaterialFocusId(
 }
 
 addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
-	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
+	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, ready : Transform<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 	enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
 	keysEnabled : Transform<bool>, hintMarkerEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>,
 	theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
@@ -492,6 +528,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				hintMarkerEnabled,
 				recEn,
 				const(false),
+				fand(parent.ready, ready),
 				focused,
 				active,
 				pi.transformMatrix,
@@ -879,6 +916,10 @@ getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus> {
 	fgetValue(getCurrentFocusedItemBehaviour(manager));
 }
 
+getCurrentActiveItem(manager : MaterialManager) -> Maybe<MaterialFocus> {
+	fgetValue(getCurrentActiveItemBehaviour(manager));
+}
+
 isMFocusChild(parent : MFocusGroup, child : MaterialFocus) -> bool {
 	foldTree(getValue(parent.focusIds), false, \k, v, acc -> switchMaterialFocus(v, \f -> acc || f == child, \f -> acc || isMFocusChild(f, child)))
 }
@@ -901,6 +942,22 @@ blockOtherMInteractionItemIds(manager : MaterialManager, itemId : int) -> void {
 
 isCurrentMInteractionItemId(manager : MaterialManager, itemId : int) -> bool {
 	isCurrentInteractionItemId(manager.manager, itemId);
+}
+
+addMPopupItemId(manager : MaterialManager, itemId : int) -> void {
+	addPopupItemId(manager.manager, itemId);
+}
+
+removeMPopupItemId(manager : MaterialManager, itemId : int) -> void {
+	removePopupItemId(manager.manager, itemId);
+}
+
+blockOtherMPopupItemIds(manager : MaterialManager, itemId : int) -> void {
+	blockOtherPopupItemIds(manager.manager, itemId);
+}
+
+isCurrentMPopupItemId(manager : MaterialManager, itemId : int) -> bool {
+	isCurrentPopupItemId(manager.manager, itemId);
 }
 
 getFFormById(f : FForm, id : List<IScriptFormPosition>) -> Transform<Maybe<FForm>> {
@@ -974,6 +1031,7 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 					(if (accessRole != "")
 						[
 							FAccessZorder(f.parent.zorder),
+							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.parent.zorder), const("true"), const(""))),
 							AccessFocused(f.focused),
 							FAccessEnabled(f.focusEnabled),
 							FAccessTabOrder(f.tabOrder),
@@ -982,8 +1040,8 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 					else
 						[
 							FAccessZorder(f.parent.zorder),
+							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.parent.zorder), const("true"), const(""))),
 							FAccessTabOrder(f.tabOrder),
-							AccessRole("group"),
 							FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
 						])
 					|> (\f3 ->
@@ -1039,6 +1097,7 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 					(if (accessRole != "")
 						[
 							FAccessZorder(f.zorder),
+							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.zorder), const("true"), const(""))),
 							FAccessEnabled(f.focusEnabled),
 							FAccessVisible(f.isInitialized),
 							FAccessTabOrder(f.tabOrder),
@@ -1047,9 +1106,9 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 					else
 						[
 							FAccessZorder(f.zorder),
+							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.zorder), const("true"), const(""))),
 							FAccessVisible(f.isInitialized),
 							FAccessTabOrder(f.tabOrder),
-							AccessRole("group"),
 							FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
 						])
 					|> (\f3 ->

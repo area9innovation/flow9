@@ -297,7 +297,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
-				[FClipMove(), FClipInteractive()],
+				[FClipMove(), FClipAnimation(), FClipInteractive()],
 				\clip ->
 					[
 						makeSubscribe(x, \x0 -> setClipX(clip, x0))(),
@@ -310,7 +310,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
-				[FClipMove(), FClipInteractive()],
+				[FClipMove(), FClipAnimation(), FClipInteractive()],
 				\clip -> {
 					if (left != 0.0)
 						setClipX(clip, left);
@@ -326,7 +326,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
-				[FClipScale(), FClipRotate()],
+				[FClipScale(), FClipRotate(), FClipAnimation()],
 				\clip ->
 					[
 						makeSubscribe(x, \x0 -> setClipScaleX(clip, x0))(),
@@ -339,9 +339,18 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
-				[FClipScale(), FClipMove(), FClipRotate()],
+				[FClipScale(), FClipMove(), FClipRotate(), FClipAnimation()],
 				\clip ->
 					makeSubscribe(degrees, \de -> setClipRotation(clip, de))()
+			)
+		}
+		FOrigin(origin, form): {
+			attachFChildAndCapability(
+				rform,
+				renderFForm(form, zorder),
+				[FClipOrigin()],
+				\clip ->
+					makeSubscribe(origin, \orig -> setClipOrigin(clip, orig.x, orig.y))()
 			)
 		}
 		FAlpha(alpha, form): {
@@ -638,7 +647,6 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		}
 		FFullWindow(fullwindow, wh, form) : {
 			resize = ref nop;
-			d = renderFForm(form, zorder);
 			container = makeClip();
 
 			setResize = \fw -> {
@@ -666,6 +674,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				setResize(fw);
 				setFullWindow(fw);
 			});
+
+			d = renderFForm(form, zorder);
 
 			attachFChildren(
 				container,
@@ -1063,7 +1073,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					FClipMask(),
 					FClipFilters(),
 					FClipAccess(),
-					FClipCursor()
+					FClipCursor(),
+					FClipOrigin(),
+					FClipAnimation()
 				]
 			)
 		}
@@ -1074,8 +1086,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			if (^accessibilityEnabled || ^fAccessibilityEnabled) {
 				d = renderFForm(form, zorder);
 
-				makeAccessClip = !contains(["", "button", "checkbox", "textbox", "video", "iframe"], extractStruct(properties, AccessRole("")).role) ||
-					isSome(tryExtractStruct(properties, AccessChildSelected(nop2)));
+				makeAccessClip =
+					(!contains(["button", "checkbox", "textbox", "video", "iframe"], extractStruct(properties, AccessRole("")).role) &&
+						!contains(["button", "textarea", "input", "video", "iframe"], extractStruct(properties, TagName("")).tagName))
+					|| isSome(tryExtractStruct(properties, AccessChildSelected(nop2)));
 
 				if (makeAccessClip) {
 					attachFChildAndCapability(
@@ -1163,6 +1177,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							}
 							ViewBounds(bounds): {
 								arrayPush(acc, makeSubscribe(bounds, \b -> if (isCorrectBounds(b)) setClipViewBounds(clip, b.minX, b.minY, b.maxX, b.maxY))())
+							}
+							NoScroll(): {
+								setWebClipNoScroll(clip);
+								acc;
 							}
 							default: acc;
 						}
@@ -1422,13 +1440,14 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					synchroCalls.onStop();
 				}
 
-				applyall(^dispR);
-				dispR := [
-					makeSubscribe(playing, \pl -> if (!^streamListenerResponse) {
-						if (pl) resumeVideo(video) else pauseVideo(video);
-					})(),
-					makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
-				];
+				if (^dispR == []) {
+					dispR := [
+						makeSubscribe(playing, \pl -> if (!^streamListenerResponse) {
+							if (pl) resumeVideo(video) else pauseVideo(video);
+						})(),
+						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
+					];
+				}
 
 				streamListenerFn(code);
 			});
@@ -1625,7 +1644,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					FClipMask(),
 					FClipFilters(),
 					FClipAccess(),
-					FClipCursor()
+					FClipCursor(),
+					FClipOrigin(),
+					FClipAnimation()
 				]
 			)
 		}
@@ -1647,8 +1668,23 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					FClipMask(),
 					FClipFilters(),
 					FClipAccess(),
-					FClipCursor()
+					FClipCursor(),
+					FClipOrigin(),
+					FClipAnimation()
 				]
+			)
+		}
+		FAnimation(form, keyframes, style): {
+			attachFChildAndCapability(
+				rform,
+				renderFForm(form, zorder),
+				[FClipAnimation()],
+				\clip ->
+					[
+						renderFAnimation(clip, keyframes, style),
+						addFAccessProperties(style |> extractFAccessProperties, zorder)(clip)
+					]
+					|> (\f -> \ -> applyall(f))
 			)
 		}
 	}

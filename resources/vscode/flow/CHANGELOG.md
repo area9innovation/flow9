@@ -145,3 +145,6 @@
  
 ## 0.4.6
  - flow interactive console is added. 
+
+## 0.4.7
+ - another LSP server is added (flowc_lsp), choice of LSP servers is modified. 

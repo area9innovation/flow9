@@ -17,34 +17,37 @@ export {
 
 	MDropDownIcon(opened : Transform<bool>, style : [MDropDownIconStyle]) -> Material;
 		MDropDownIconStyle ::= MIconSize, MIconBorder4;
-
-	MMenuLines2MPopup(
-		manager : MaterialManager,
-		items0 : [MMenuLine],
-		style0 : [MMenuStyle],
-		m2t : (Material, MFocusGroup) -> Tropic,
-		posScale : Transform<PositionScale>,
-		buttonWH : Behaviour<WidthHeight>,
-		elevation : double,
-		closeBelow : () -> void
-	) -> MPopup;
 }
+
+MMenuFocusedItem ::= MMenuFirstItem, MMenuLastItem;
+	MMenuFirstItem();
+	MMenuLastItem();
 
 MMenu2T(manager : MaterialManager, parent : MFocusGroup, m : MMenu, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	MDynamicMenu2T(manager, parent, MDynamicMenu(m.button, const(m.items), m.style), m2t)
 }
 
 MDynamicMenu2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicMenu, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	MDynamicMenu2TInner(manager, parent, m, m2t, None())
+}
+
+MDynamicMenu2TInner(manager : MaterialManager, parent : MFocusGroup, m : MDynamicMenu, m2t : (Material, MFocusGroup) -> Tropic, popupId0 : Maybe<string>) -> Tropic {
 	openMenu = extractStruct(m.style, MOpenMenu(make(false)));
 	buttonWH = makeWH();
 	positionScale = make(zeroPositionScale);
+	customPopup = tryExtractStruct(m.style, MMenuCustomPopup(None(), None()));
+	popupId = either(popupId0, getPopupId(manager));
 
 	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
 	openOnClick = contains(m.style, MOpenOnClick());
 	longTouch = tryExtractStruct(m.style, MLongTouchDelay(0));
 
+	buttonFocused = extractStruct(m.style, MFocused(make(false)));
+	buttonState = replaceStruct(extractMButtonState(m.style), buttonFocused);
+	focusedItem = make(None());
+
 	(\p ->
-		MMenuButton2T(manager, p, m.button, m2t, openMenu, enabled, openOnClick, longTouch)
+		MMenuButton2T(manager, p, m.button, m2t, openMenu, enabled, openOnClick, longTouch, None(), popupId, buttonState)
 		|> (\f -> MPositionScaleAttachBox(positionScale, buttonWH, f, openMenu.opened))
 		|> (\f -> MAddLabelAndLeftIcon(manager, p, f, m.style, openMenu.opened, 12.))
 		|> (\f ->
@@ -66,10 +69,12 @@ MDynamicMenu2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicMenu
 									fgetValue(m.items),
 									replaceStruct(m.style, openMenu),
 									m2t,
-									positionScale,
-									buttonWH,
+									eitherMap(customPopup, \cp -> either(cp.positionScale, positionScale), positionScale),
+									eitherMap(customPopup, \cp -> either(cp.buttonWH, buttonWH), buttonWH),
 									8.,
-									nop
+									nop,
+									popupId,
+									getValue(focusedItem)
 								),
 								m2t
 							)
@@ -89,10 +94,15 @@ MDynamicMenu2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicMenu
 			f
 		)
 	)
-	|> MDynamicMenuHandleShortcuts(m.items, openMenu)
+	|> MDynamicMenuHandleShortcuts(m.items, openMenu, buttonFocused, focusedItem)
 }
 
-MDynamicMenuHandleShortcuts(items : Transform<[MMenuLine]>, openMenu : MOpenMenu) -> (Tropic) -> Tropic {
+MDynamicMenuHandleShortcuts(
+	items : Transform<[MMenuLine]>,
+	openMenu : MOpenMenu,
+	buttonFocused : MFocused,
+	focusedItem : DynamicBehaviour<Maybe<MMenuFocusedItem>>) -> (Tropic) -> Tropic {
+
 	\t -> {
 		shortcuts = fmap(fgetShortcuts(items), \sh -> parseShortcut(toLowerCase(sh.shortcut)));
 
@@ -107,7 +117,22 @@ MDynamicMenuHandleShortcuts(items : Transform<[MMenuLine]>, openMenu : MOpenMenu
 
 						deferred(\ -> next(openMenu.opened, false));
 					}
-				})
+				}),
+				KeyUp2(\h, ke ->
+					if (!h && !getValue(openMenu.opened) && fgetValue(buttonFocused.focused)) {
+						onKeyUp = \type -> {
+							nextDistinct(focusedItem, Some(type));
+							nextDistinct(openMenu.opened, true);
+							nextDistinct(focusedItem, None());
+						}
+						if (ke.utf == "up") {
+							onKeyUp(MMenuLastItem());
+						} else if (ke.utf == "down") {
+							onKeyUp(MMenuFirstItem());
+						}
+						true
+					} else h
+				)
 			],
 			t
 		);
@@ -145,12 +170,17 @@ MMenuButton2T(
 	openMenu : MOpenMenu,
 	enabled : Transform<bool>,
 	openOnClick : bool,
-	longTouch : Maybe<MLongTouchDelay>) -> Tropic {
+	longTouch : Maybe<MLongTouchDelay>,
+	buttonTitleM : Maybe<MButtonTitle>,
+	popupId : string,
+	buttonState : [MButtonState]
+) -> Tropic {
 
-	addAria = \st -> concat(st, [
-		FAccessAttribute("aria-expanded", fselect(openMenu.opened, FLift(b2s))),
-		FAccessAttribute("aria-haspopup", const("true"))
-	]);
+	addAria = \st -> concat(st, arrayPushMaybe([
+		FAccessAttribute("aria-haspopup", const("true")),
+		FAccessAttribute("aria-expanded", fif(openMenu.opened, const("true"), const(""))),
+		FAccessAttribute("aria-owns", fif(openMenu.opened, const(popupId), const("")))
+	], buttonTitleM));
 
 	extendState = \state : [MButtonState], open ->
 		replaceStruct(state, MEnabled(enabled))
@@ -160,8 +190,9 @@ MMenuButton2T(
 	switch (button) {
 		MTextButton(text, onClick, style, state): {
 			open = \ -> {
+				opened = getValue(openMenu.opened);
 				onClick();
-				reverseBehaviour(openMenu.opened)
+				nextDistinct(openMenu.opened, !opened);
 			}
 			MTextButton2T(
 				manager,
@@ -170,7 +201,10 @@ MMenuButton2T(
 					text,
 					eitherMap(longTouch, \__-> nop, open),
 					style,
-					extendState(state, open)
+					replaceStructMany(
+						buttonState,
+						extendState(state, open)
+					)
 				),
 				m2t
 			)
@@ -179,7 +213,7 @@ MMenuButton2T(
 			open = \ -> {
 				opened = getValue(openMenu.opened);
 				onClick();
-				nextDistinct(openMenu.opened, !opened)
+				nextDistinct(openMenu.opened, !opened);
 			}
 			MIconButton2T(
 				manager,
@@ -188,10 +222,18 @@ MMenuButton2T(
 					name,
 					eitherMap(longTouch, \__-> nop, open),
 					style,
-					extendState(state, open)
+					replaceStructMany(
+						buttonState,
+						extendState(state, open)
+					)
 				),
 				m2t
 			)
+		}
+		MMutable(contentT): {
+			TMutable(fselect(contentT, FLift(\content ->
+				MMenuButton2T(manager, parent, content, m2t, openMenu, enabled, openOnClick, longTouch, buttonTitleM, popupId, buttonState)
+			)))
 		}
 		default: {
 			if (openOnClick || isSome(longTouch)) {
@@ -199,12 +241,15 @@ MMenuButton2T(
 				isRect = fselect(buttonWH, FLift(\wh -> abs(1. - wh.width / wh.height) > 0.5));
 				focusState =
 					concat(
-						[
-							MEnabled(enabled),
-							MRippleType(fif(isRect, const(MRippleFill()), const(MRippleCenter()))),
-							MHighlightOnFocus(const(true)),
-							MRippleShape("")
-						],
+						replaceStructMany(
+							buttonState,
+							[
+								MEnabled(enabled),
+								MRippleType(fif(isRect, const(MRippleFill()), const(MRippleCenter()))),
+								MHighlightOnFocus(const(true)),
+								MRippleShape("")
+							]
+						),
 						eitherMap(longTouch, \lt -> [
 								lt,
 								MOnLongTouch(\ -> reverseBehaviour(openMenu.opened))
@@ -503,6 +548,7 @@ MDropDownMenu2T(
 		MMenuSingleLine(title, __) : title;
 		MMenuCustomLine(__, __) : "";
 	};
+	buttonTitle : MButtonTitle = extractStruct(style, MButtonTitle(const(label)));
 
 	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
 	iconBorders = extractStruct(style, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
@@ -560,19 +606,25 @@ MDropDownMenu2T(
 					const(zeroPositionScale),
 					const(WidthHeight(0., 0.)),
 					0.,
-					nop
+					nop,
+					"",
+					None()
 				).items
 				|> MGrid
 				|> (\f3 -> m2t(f3, parent))
 				|> (\f3 -> getTWordMetrics(f3, makeTree()).width) // TODO : Rework without using getTWordMetrics
 		);
 
+	popupId = getPopupId(manager);
+	buttonFocused = extractStruct(style, MFocused(make(false)));
+
 	menuStyle =
 		style
 		|> (\st -> replaceStruct(st, MWidth(mWidth)))
 		|> (\st -> replaceStruct(st, openMenu))
 		|> (\st -> replaceStruct(st, MFocusName("MDropDownMenu")))
-		|> (\st -> replaceStruct(st, extractStruct(style, MButtonTitle(const(label)))))
+		|> (\st -> replaceStruct(st, buttonFocused))
+		|> (\st -> addStyleIfAbsent(st, buttonTitle))
 		|> MDropDownMenuStyle2MMenuStyle
 		|> (\st -> arrayPush(st, selected))
 		|> (\st -> ifArrayPush(st, isNone(customButton) && mWidth >= 0.0, MWidthByButton()))
@@ -583,7 +635,7 @@ MDropDownMenu2T(
 		eitherFn(
 			customButton,
 			\cb ->
-				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true, None())
+				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true, None(), Some(buttonTitle), popupId, extractMButtonState(style))
 				|> (\f -> TBaselineOffset(const(-12.), f)),
 			\ -> {
 				lItems = length(items);
@@ -620,16 +672,17 @@ MDropDownMenu2T(
 							}
 						})
 					)),
-					replaceStructMany(style, [MWidth(mWidth), openMenu]),
+					replaceStructMany(style, [MWidth(mWidth), openMenu, AccessRole("combobox")]),
 					onClick,
 					getLightBackground(p),
+					popupId,
 					m2t
 				)
 			}
 		)
 	)
-	|> (\f -> MMenu(f, items, menuStyle))
-	|> (\f -> MMenu2T(manager, parent, f, m2t))
+	|> (\f -> MDynamicMenu(f, const(items), menuStyle))
+	|> (\f -> MDynamicMenu2TInner(manager, parent, f, m2t, Some(popupId)))
 	|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
 	|> (\f ->
 		TConstruct(
@@ -711,6 +764,8 @@ MMultiSelectDropDown2T(
 	iconNearTitle = contains(style, MDropDownIconNearTitle());
 	defButtonLineStyle = [MDisableHover(), MEnabled(enabled), MSecondaryAction(icon)];
 
+	popupId = getPopupId(manager);
+
 	defMenuButton =
 		MDropDownMenuButton2T(
 			manager,
@@ -734,15 +789,19 @@ MMultiSelectDropDown2T(
 				)),
 				const(MMenuSingleLine(nonSpec, defButtonLineStyle))
 			),
-			concatA([
-				[MWidth(width + (if (croppedButton) lineBorders * 2. else 0.)), MCustomLineHeight(lineHeight)],
-				if (iconNearTitle) [MDropDownIconNearTitle()] else [],
-				if (croppedButton) [MCroppedButton()] else [],
-				if (outlined) [MOutlined(), MNonSpecified(MMenuSingleLine(nonSpec, [])), MOpenMenu(opened)] else [],
-				eitherMap(tryExtractStruct(style, MDropDownMenuDisabledOpacity(const(0.0))), \v -> [v], []),
-			]),
+			replaceStructMany(
+				extractMButtonState(style),
+				concatA([
+					[MWidth(width + (if (croppedButton) lineBorders * 2. else 0.)), MCustomLineHeight(lineHeight)],
+					if (iconNearTitle) [MDropDownIconNearTitle()] else [],
+					if (croppedButton) [MCroppedButton()] else [],
+					if (outlined) [MOutlined(), MNonSpecified(MMenuSingleLine(nonSpec, [])), MOpenMenu(opened)] else [],
+					eitherMap(tryExtractStruct(style, MDropDownMenuDisabledOpacity(const(0.0))), \v -> [v], []),
+				])
+			),
 			onClick,
 			getLightBackground(parent),
+			popupId,
 			m2t
 		);
 
@@ -750,7 +809,19 @@ MMultiSelectDropDown2T(
 		eitherMap(
 			customButton,
 			\cb ->
-				MMenuButton2T(manager, parent, cb.button, m2t, MOpenMenu(opened), enabled, true, None())
+				MMenuButton2T(
+					manager,
+					parent,
+					cb.button,
+					m2t,
+					MOpenMenu(opened),
+					enabled,
+					true,
+					None(),
+					tryExtractStruct(m.style, MButtonTitle(const(""))),
+					popupId,
+					extractMButtonState(style)
+				)
 				|> (\f -> TBaselineOffset(const(-12.), f)),
 			defMenuButton
 		)
@@ -781,9 +852,10 @@ MMultiSelectDropDown2T(
 							|> (\f -> MGroup2(MFixedY(lineHeight), MCenterY(f)))
 							|> (\f -> MGroup2(TFillX(), f))
 							|> MBorderLeftRight(lineBorders),
-						concat(
+						concat3(
 							if (existsIndex(leftDecorations, i)) [MPrimaryAction(leftDecorations[i])] else [],
 							if (existsIndex(rightDecorations, i)) [MSecondaryAction(rightDecorations[i])] else [],
+							[extractStruct(style, MRippleOutlineEnabled(const(false)))]
 						)
 					)
 				}), [
@@ -817,12 +889,12 @@ MMultiSelectDropDown2T(
 			|> (\m2 -> MMenuCustomLine(m2, [MDisableHover(), MClickEnabled(const(false)), MEnabled(enabled)]))
 			|> v2a;
 
-	MMenu2T(
-		manager,
-		parent,
-		MMenu(menuButton, dropDownLines, ifArrayPush([MOpenMenu(opened), MWidthByButton(), MMenuLineBorders(lineBorders)], outlined, MBelowButton())),
-		m2t
+	MDynamicMenu(
+		menuButton,
+		const(dropDownLines),
+		ifArrayPush([MOpenMenu(opened), MWidthByButton(), MMenuLineBorders(lineBorders)], outlined, MBelowButton())
 	)
+	|> (\f -> MDynamicMenu2TInner(manager, parent, f, m2t, Some(popupId)))
 }
 
 MMenuTitle2T(
@@ -849,7 +921,7 @@ MMenuTitle2T(
 						t,
 						arrayPush(
 							if (selected)
-								replaceStruct(textStyle, selectedColor)
+								replaceStructMany(textStyle, [selectedColor, FillOpacity(1.0)])
 							else
 								textStyle,
 							MShowTooltip(showTooltip)
@@ -862,7 +934,7 @@ MMenuTitle2T(
 					parent,
 					t,
 					if (selected)
-						replaceStruct(textStyle, selectedColor)
+						replaceStructMany(textStyle, [selectedColor, FillOpacity(1.0)])
 					else
 						textStyle
 				))
@@ -934,6 +1006,7 @@ MDropDownMenuButton2T(
 	style0 : [MDropDownMenuStyle],
 	onClick : () -> void,
 	lightBackground : bool,
+	popupId : string,
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
 	condensed = extractStruct(style0, MCondensed(true)).condensed;
@@ -953,27 +1026,33 @@ MDropDownMenuButton2T(
 	];
 	outlined = contains(style0, MOutlined());
 	nonSpecified : MNonSpecifiedLine = extractStruct(style0, MNonSpecified(MMenuSingleLine(_("Pick"), []))).item;
-	label = switch (nonSpecified) {
+	label = \line -> switch (line : MDropDownMenuLine) {
 		MMenuSingleLine(title, __) : title;
-		MMenuCustomLine(__, __) : "";
+		default : "";
 	};
+	nonSpecifiedLabel = label(nonSpecified);
 	separators = !outlined && extractStruct(style0, MSeparators(true)).separators;
 	showTooltip = extractStruct(style0, MShowTooltip(const(false))).show;
 	indent = contains(style0, MMenuIndent());
-	focusState =
-		[
-			MEnabled(fsubselect(lineB, FLift(\line -> extractStruct(line.style, MEnabled(const(true))).enabled))),
-			MOnClick(onClick),
-			MRippleType(const(MRippleFill())),
-			MHighlightOnFocus(const(true)),
-			MHighlightOnHover(const(true)),
-			FAccessAttribute("aria-haspopup", const("menu")),
-			extractStruct(style0, MButtonTitle(const(label)))
-		];
-
-	iconNearTitle = contains(style0, MDropDownIconNearTitle());
-
 	openMenu = extractStruct(style0, MOpenMenu(make(false))).opened;
+	iconNearTitle = contains(style0, MDropDownIconNearTitle());
+	
+	focusState =
+		replaceStructMany(
+			extractMButtonState(style0),
+			[
+				MEnabled(fsubselect(lineB, FLift(\line -> extractStruct(line.style, MEnabled(const(true))).enabled))),
+				MOnClick(onClick),
+				MRippleType(const(MRippleFill())),
+				MHighlightOnFocus(const(true)),
+				MHighlightOnHover(const(true)),
+				FAccessAttribute("aria-haspopup", const("menu")),
+				FAccessAttribute("aria-expanded", fif(openMenu, const("true"), const(""))),
+				FAccessAttribute("aria-owns", fif(openMenu, const(popupId), const(""))),
+				extractStruct(style0, MButtonTitle(fselect(lineB, label |> FLift)))
+			]
+		);
+
 	outlineColor = fif(openMenu, const(selectedColor), const(color));
 	dynColor = make(color);
 	floatingLabelProgress = make(1.);
@@ -1019,7 +1098,7 @@ MDropDownMenuButton2T(
 				|> (\t -> TAlignStartDir(t, parent.rtl))
 				|> (\t ->
 					if (outlined) {
-						isNonSpec = title == label;
+						isNonSpec = title == nonSpecifiedLabel;
 						trigger = if (isNonSpec) fstall(openMenu, 66) else const(true);
 						showLabel = if (isNonSpec) fneq(floatingLabelProgress, 1.) else const(true);
 						showTitle = if (isNonSpec) feq(floatingLabelProgress, 1.) else const(true);
@@ -1031,7 +1110,7 @@ MDropDownMenuButton2T(
 							TVisible(showTitle, t),
 							TVisible(
 								showLabel,
-								makeMFloatingLabel(manager, parent, label,
+								makeMFloatingLabel(manager, parent, nonSpecifiedLabel,
 									MFloatingLabelState(floatingLabelProgress, trigger, 12., labelSize, -offset, offset, -8., 16.),
 									const(characterStyle),
 									Some(MDynamicColor(dynColor)),
@@ -1059,7 +1138,7 @@ MDropDownMenuButton2T(
 					if (outlined)
 						TGroup2(
 							t,
-							makeMFloatingLabel(manager, parent, label,
+							makeMFloatingLabel(manager, parent, nonSpecifiedLabel,
 								MFloatingLabelState(floatingLabelProgress, const(true), 12., 14., -offset, offset, -8., 16.),
 								const([]),
 								Some(MDynamicColor(dynColor)),
@@ -1137,7 +1216,7 @@ MMenuTextButton2T(
 				reverseBehaviour(openMenu.opened)
 			}),
 			MRippleType(const(MRippleFill())),
-			MButtonTitle(const(text))
+			extractStruct(style, MButtonTitle(const(text)))
 		];
 
 	disabled = \ ->
@@ -1244,7 +1323,9 @@ MMenuLines2MPopup(
 	posScale : Transform<PositionScale>,
 	buttonWH : Behaviour<WidthHeight>,
 	elevation : double,
-	closeBelow : () -> void
+	closeBelow : () -> void,
+	popupId : string,
+	focusedItem : Maybe<MMenuFocusedItem>
 ) -> MPopup {
 	tableRow = contains(style0, MDataTableRow());
 	tableFooter = contains(style0, MDataTableFooter());
@@ -1304,6 +1385,7 @@ MMenuLines2MPopup(
 		});
 
 	hovered = make(-1);
+	activeDescendantId = make("");
 
 	leftAnimation =
 		widthByButton ||
@@ -1323,11 +1405,10 @@ MMenuLines2MPopup(
 		MDropDownIcon(openMenu.opened, [MIconSize(iconSize), iconBorders])
 		|> (\m -> MCenterYIn(m, TFixed(0., lineHeight)));
 
+	shiftGap = if (indexShift) 2 else 0;
 	onItemClick = \i, click -> \ -> {
 		nextDistinct(openMenu.opened, false);
 		closeBelow();
-
-		shiftGap = if (indexShift) 2 else 0;
 
 		if (i >= shiftGap) {
 			timer(50, \ ->
@@ -1392,12 +1473,19 @@ MMenuLines2MPopup(
 			t
 		);
 
+	focusOnOpen = \arr -> {
+		focused = make(false);
+		timer(50, \ -> nextDistinct(focused, true));
+		arrayPush(arr, MFocused(focused))
+	}
+
 	makeMMenuLine = \i, title : Maybe<string>, content : Maybe<Material>, _style ->
 		\parent -> {
 			style = getLineStyle(_style, i);
 			hgt = extractStruct(style, MHeight(lineHeight)).height;
 			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click);
 			selected = selectedId == i && !indexShift;
+			id = popupId + "_menuitem" + i2s(i);
 			focusState =
 				replaceStructMany(
 					style,
@@ -1407,10 +1495,24 @@ MMenuLines2MPopup(
 						MRippleType(const(MRippleFill())),
 						MHighlightOnFocus(const(true)),
 						MHighlightOnHover(const(true)),
-						MFocusOnDown(ref true)
+						MFocusOnDown(ref true),
+						FAccessAttribute("id", const(id)),
+						extractStruct(_style, MRippleOutlineEnabled(const(false)))
 					]
-					|> (\arr -> eitherMap(title, \t -> arrayPush(arr, MButtonTitle(const(t))), arr))
-					|> (\arr -> if (selected) arrayPush(arr, MFocused(make(true))) else arr)
+					|> (\arr -> eitherMap(title, \t -> arrayPush(arr, extractStruct(_style, MButtonTitle(const(t)))), arr))
+					|> (\arr -> 
+						eitherMap(focusedItem,
+							\fi ->
+								if (
+									((i == shiftGap) && fi == MMenuFirstItem())
+									|| (i == length(items1) - 1 && fi == MMenuLastItem())
+								)
+									focusOnOpen(arr)
+								else arr,
+							if (i == selectedId + shiftGap || (selectedId == -1 && i == 0)) focusOnOpen(arr)
+							else arr
+						)
+					)
 				);
 			lineTextStyle = extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(parent)))).style;
 
@@ -1433,6 +1535,7 @@ MMenuLines2MPopup(
 					TConstruct(
 						[
 							makeSubscribe2(fmax(focus.hover, focus.down), \h -> if (h) nextDistinct(hovered, i)),
+							makeSubscribe(focus.focused, \foc -> if (foc) nextDistinct(activeDescendantId, id))
 						],
 						f2
 					)
@@ -1446,7 +1549,7 @@ MMenuLines2MPopup(
 			acc
 		} else {
 			addLine = \parent, f ->
-				if (((i - if (indexShift) 2 else 0) != 0) && !(indexShift && i > 3 && selectedId == i - 3 &&
+				if (((i - shiftGap) != 0) && !(indexShift && i > 3 && selectedId == i - 3 &&
 						isSameStructType(items0[i - 4], MMenuGroupLine("", []))))
 					TLines2(
 						TAlpha(const(0.12), TRectangle([Fill(contrastingColor(parent))], TFillXH(1.0)))
@@ -1476,6 +1579,7 @@ MMenuLines2MPopup(
 			subPosScale = make(zeroPositionScale);
 			isOpenOnClick = contains(style, MSubMenuOpenOnClick());
 			isCloseParentOnClick = extractStruct(style, MCloseParentOnClick(true)).close;
+			subMenuPopupId = getPopupId(manager);
 
 			focusState =
 				replaceStructMany(
@@ -1484,14 +1588,17 @@ MMenuLines2MPopup(
 						MOnClick(\ -> if (isOpenOnClick) deferred(\-> nextDistinct(subOpenMenu.opened, true))),
 						AccessRole("menuitem"),
 						FAccessAttribute("aria-haspopup", const("menu")),
+						FAccessAttribute("aria-expanded", fif(subOpenMenu.opened, const("true"), const(""))),
+						FAccessAttribute("aria-owns", fif(subOpenMenu.opened, const(subMenuPopupId), const(""))),
 						MRippleType(const(MRippleFill())),
 						extractStruct(style, MButtonTitle(title)),
 						MHighlightOnFocus(const(true)),
 						MHighlightOnHover(const(true)),
-						MFocusOnDown(ref true)
+						MFocusOnDown(ref true),
+						extractStruct(style, MRippleOutlineEnabled(const(false)))
 					]
 				)
-				|> (\focusState -> removeAllStructs(focusState, MFocusOnPrevious()));
+				|> (\focusState -> replaceStruct(focusState, MFocusOnPrevious(false)));
 			lineTextStyle = extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(parent)))).style;
 
 			MComponent2T(manager, parent, "MSubMenuDynamic", focusState, \focus ->
@@ -1538,7 +1645,7 @@ MMenuLines2MPopup(
 													]
 													|> (\arr : [MMenuStyle] -> eitherMap(fixPosition, \fp -> arrayPush(arr, fp), arr))
 												)
-												|> (\subMenuStyle -> removeAllStructs(subMenuStyle, MFocusOnPrevious()))
+												|> (\subMenuStyle -> replaceStruct(subMenuStyle, MFocusOnPrevious(false)))
 											),
 											m2t,
 											subPosScale,
@@ -1547,7 +1654,9 @@ MMenuLines2MPopup(
 											\ -> if (isCloseParentOnClick) {
 												next(openMenu.opened, false);
 												closeBelow();
-											}
+											},
+											subMenuPopupId,
+											None()
 										),
 										m2t
 									)
@@ -1637,7 +1746,10 @@ MMenuLines2MPopup(
 			FAccessAttribute(
 				"aria-label",
 				extractStruct(style0, MButtonTitle(const(eitherMap(mLabel, \l -> l.label, "")))).title
-			)
+			),
+			FAccessAttribute("aria-activedescendant", activeDescendantId),
+			FAccessAttribute("id", const(popupId)),
+			extractStruct(style0, MFocusOnPrevious(true))
 		]
 		|> (\arr : [MPopupStyle] -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, TScrollPersistent(const(true)))))
 		|> (\arr -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, MScrollWidthHeight(makeWH(), makeWH()))))
@@ -1679,7 +1791,6 @@ MMenuLines2MPopup(
 				)
 		)
 		|> (\f -> ifArrayPush(f, elevation == 8., RMClickOutToClose()))
-		|> (\f -> concat(f, extractStructMany(style0, MFocusOnPrevious())))
 		|> (\f -> concat(f, extractStructMany(style0, MBlockClicks())));
 
 	MPopup(
@@ -1746,4 +1857,8 @@ MDropDownClearIcon(selected : DynamicBehaviour<?>, emptySelection : ?, iconSize 
 
 getMenuAlpha(focus : MFocus, parent : MFocusGroup) -> Transform<double> {
 	fif(focus.enabled, const(1.), const(defaultDisabledItemOpacity(getLightBackground(parent))))
+}
+
+getPopupId(manager : MaterialManager) {
+	"menu" + i2s(makeTropicTag(manager))
 }

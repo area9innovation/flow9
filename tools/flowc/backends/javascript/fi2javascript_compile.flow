@@ -7,6 +7,7 @@ import tools/flowc/backends/javascript/fi2javascript_utils;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/freevars;
 import tools/flowc/manipulation/find_unused;
+import text/compression/lzw;
 
 export {
 	fiJsCompileToplevel(
@@ -256,7 +257,7 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 	exprstr =
 		(if (commentsBefore == "") "" else commentsBefore) +
 	*/
-	switch (expr : FiExp) {
+	code = switch (expr : FiExp) {
 		// TODO: Not declared
 		// FcForeign(a,b,c): fail0("FbForeign not supported");
 		FiVoid(__): "null";
@@ -299,25 +300,7 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 			}
 
 		FiString(s, __): {
-			// We use Cons() concatenation instead of string concatenation,
-			// because structures creation and list2string() call is
-			// much cheaper than usual string concatenation.
-			f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
-				Cons(if (code < 0x20) {
-						if (code == 0x09) "\\t"
-						else if (code == 0x0a) "\\n"
-						else if (code == 0x0d) "\\r"
-						else "\\u"+lpad(formatHex(code), "0", 4);
-					} else if (code >= 0x80) {
-						"\\u"+lpad(formatHex(code), "0", 4)
-					} else {
-						if (code == 0x22) "\\\""
-						else if (code == 0x3c) "<\"+\""
-						else if (code == 0x5c) "\\\\"
-						else fromCharCode(code);
-					}, acc)
-			});
-			list2string(Cons("\"", f));
+			generateJsString(s);
 		}
 
 		FiVar(x, __, __): {
@@ -596,6 +579,51 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 	// TODO: Comments processing
 	//	endComment = jsConvertComment(jsLnComment(ctx : FiJsToplevelContext, ei.end));
 	//	exprstr + (if (endComment == "") "" else " " + endComment);
+
+	if (false && fiExpIsData(expr)) {
+		flowstring = prettyFiExp(dummyPretty, expr);
+		compressed = compressLzw(code);
+
+		switch (compressed) {
+			CompressedLzw(s): {
+				jsdata = "eval(A9__decompressLzw(c$7(" + generateJsString(s) + ")))";
+				if (true || strlen(jsdata) < strlen(code)) {
+					println("Worked");
+					jsdata
+				} else code;
+			}
+			CompressedNone(s): code;
+			CompressedLzwbp(s): {
+				println("TODO: Consider to compress this");
+				code;
+			}
+		}
+	} else code;
+}
+
+generateJsString(s : string) -> string {
+	// We use Cons() concatenation instead of string concatenation,
+	// because structures creation and list2string() call is
+	// much cheaper than usual string concatenation.
+	f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
+		Cons(if (code < 0x20) {
+				if (code == 0x00) "\\0"
+				else if (code == 0x09) "\\t"
+				else if (code == 0x0a) "\\n"
+				else if (code == 0x0d) "\\r"
+				else "\\x"+lpad(formatHex(code), "0", 2);
+			} else if (code >= 0x100) {
+				"\\u"+lpad(formatHex(code), "0", 4)
+			} else if (code >= 0x80) {
+				"\\x"+lpad(formatHex(code), "0", 2)
+			} else {
+				if (code == 0x22) "\\\""
+				else if (code == 0x3c) "<\"+\""
+				else if (code == 0x5c) "\\\\"
+				else fromCharCode(code);
+			}, acc)
+	});
+	list2string(Cons("\"", f));
 }
 
 fiJsCompileToReturn(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string, unusedVars : Set<string>) {

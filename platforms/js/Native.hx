@@ -654,6 +654,35 @@ class Native {
 	}
 	#end
 
+	public static function setInterval(ms : Int, cb : Void -> Void) : Void -> Void {
+		#if !neko
+		#if flash
+		var cs = haxe.CallStack.callStack();
+		#end
+		var fn = function() {
+			try {
+				cb();
+			} catch (e : Dynamic) {
+				var stackAsString = "n/a";
+				#if flash
+					stackAsString = Assert.callStackToString(cs);
+				#end
+				var actualStack = Assert.callStackToString(haxe.CallStack.callStack());
+				var crashInfo = e + "\nStack at timer creation:\n" + stackAsString + "\nStack:\n" + actualStack;
+				println("FATAL ERROR: timer callback: " + crashInfo);
+				Assert.printStack(e);
+				Native.callFlowCrashHandlers("[Timer Handler]: " + crashInfo);
+			}
+		};
+
+		var t = untyped __js__("setInterval(fn, ms);");
+		return function() { untyped __js__("clearInterval(t);"); };
+		#else
+		cb();
+		return function() {};
+		#end
+	}
+
 	public static function interruptibleTimer(ms : Int, cb : Void -> Void) : Void -> Void {
 		#if !neko
 		#if flash
@@ -1773,7 +1802,143 @@ class Native {
 	static var sidJsonObject : Int;
 	static var sidJsonObjectFields : String;
 
+	static var jsonDoubleZero : Dynamic;
+	static var jsonStringEmpty : Dynamic;
+
 	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
+	private static function object2JsonStructsCompacting(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var n = o.length;
+			var a1 = Array(n);
+			for (var i=0; i<n; i++) {
+				a1[i] = Native.object2JsonStructs(o[i], sDict, jsDict, nDict);
+			}
+			var obj = { _id : Native.sidJsonArray };
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					if (o === '') return Native.jsonStringEmpty;
+					var obj = jsDict[o];
+					if (obj == undefined) {
+						var s = sDict[o];
+						if (s === undefined) {
+							s = o;
+							sDict[o] = s;
+						}
+						obj = { _id : Native.sidJsonString };
+						obj[Native.sidJsonStringVal] = s;
+						jsDict[o] = obj;
+					}
+					return obj;
+				case 'number':
+					if (o === 0.0) return Native.jsonDoubleZero;
+					var obj = nDict[o];
+					if (obj === undefined) {
+						obj = { _id : Native.sidJsonDouble };
+						obj[Native.sidJsonDoubleVal] = o;
+						nDict[o] = obj;
+					}
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = [];
+						for(var f in o) {
+							var a2 = Native.object2JsonStructs(o[f], sDict, jsDict, nDict);
+							var obj = { _id : Native.sidPair };
+							var cf = sDict[f];
+							if (cf === undefined) {
+								cf = f;
+								sDict[f] = cf;
+							}
+							obj[Native.sidPairFirst] = cf;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields.push(obj);
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
+	}
+
+	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
+	private static function object2JsonStructsCompacting_FF(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var n = o.length;
+			var a1 = Array(n);
+			for (var i=0; i<n; i++) {
+				a1[i] = Native.object2JsonStructs_FF(o[i], sDict, jsDict, nDict);
+			}
+			var obj = { _id : Native.sidJsonArray };
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					if (o === '') return Native.jsonStringEmpty;
+					var obj = jsDict[o];
+					if (obj == undefined) {
+						var s = sDict[o];
+						if (s === undefined) {
+							s = o;
+							sDict[o] = s;
+						}
+						obj = { _id : Native.sidJsonString };
+						obj[Native.sidJsonStringVal] = s;
+						jsDict[o] = obj;
+					}
+					return obj;
+				case 'number':
+					if (o === 0.0) return Native.jsonDoubleZero;
+					var obj = nDict[o];
+					if (obj === undefined) {
+						obj = { _id : Native.sidJsonDouble };
+						obj[Native.sidJsonDoubleVal] = o;
+						nDict[o] = obj;
+					}
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = Object.getOwnPropertyNames(o);
+						for(var i=0; i< mappedFields.length; i++) {
+							var f = mappedFields[i];
+							var cf = sDict[f];
+							if (cf === undefined) {
+								cf = f;
+								sDict[f] = cf;
+							}
+
+							var a2 = Native.object2JsonStructs_FF(o[f], sDict, jsDict, nDict);
+							var obj = { _id : Native.sidPair };
+							obj[Native.sidPairFirst] = cf;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields[i] = obj;
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
+	}
+
 	private static function object2JsonStructs(o : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
@@ -1882,12 +2047,27 @@ class Native {
 				Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
 
 				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+
+				Native.jsonDoubleZero =  HaxeRuntime.makeStructValue("JsonDouble", [0.0], null);
+				Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
 				parseJsonFirstCall = false;
 			}
+			if (json == "") return Native.jsonDoubleZero;
 
-			return Platform.isFirefox ? object2JsonStructs_FF(haxe.Json.parse(json)) : object2JsonStructs(haxe.Json.parse(json));
+			if (Platform.isIOS && json.length > 1024) {
+				// on IOS memory restriction is very tight so we try to not create duplicate strings if possible
+				// it might have advantages for quite long parsed string only
+				return Platform.isFirefox ?
+				object2JsonStructsCompacting_FF(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}")) :
+				object2JsonStructsCompacting(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}"));
+			} else {
+				return Platform.isFirefox ?
+				object2JsonStructs_FF(haxe.Json.parse(json)) :
+				object2JsonStructs(haxe.Json.parse(json));
+			}
+
 		} catch (e : Dynamic) {
-			return makeStructValue("JsonDouble", [0.0], null);
+			return Native.jsonDoubleZero;
 		}
 	}
 	#end

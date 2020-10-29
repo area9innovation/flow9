@@ -53,15 +53,15 @@ function is_flow_ios_native() {
 	return (navigator.userAgent.match(/(iPad|iPhone|iPod)/g) ||
 			navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1 &&
 			!window.MSStream) &&
-		window.webkit && window.webkit.messageHandlers && window.parent == null;
+		window.webkit && window.webkit.messageHandlers && window.parent == window;
 }
 
 function is_flow_qt() {
-	return navigator.userAgent.indexOf("QtWebEngine") != -1 && window.parent == null;
+	return navigator.userAgent.indexOf("QtWebEngine") != -1 && window.parent == window;
 }
 
 function is_flow_android() {
-	return navigator.userAgent.indexOf("Android") != -1 && window.parent == null;
+	return navigator.userAgent.indexOf("Android") != -1 && window.parent == window;
 }
 
 function is_flow_winapp() {

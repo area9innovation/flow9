@@ -11,8 +11,6 @@ import pixi.core.renderers.webgl.filters.Filter;
 import pixi.core.math.Point;
 import pixi.core.text.TextStyle;
 
-import pixi.loaders.Loader;
-
 import MacroUtils;
 import Platform;
 import ProgressiveWebTools;
@@ -98,6 +96,10 @@ class RenderSupport {
 
 			createPixiRenderer();
 		}
+	}
+
+	public static function setKeepTextClips(keep : Bool) : Void {
+		TextClip.KeepTextClips = keep;
 	}
 
 	public static function getRendererType() : String {
@@ -237,25 +239,63 @@ class RenderSupport {
 		return UserDefinedFontSize;
 	}
 
-	private static var UserDefinedLetterSpacing : Float = null;
+	private static var UserDefinedLetterSpacing = null;
 	private static function getUserDefinedLetterSpacing() : Float {
-		if (UserDefinedLetterSpacing == null) {
-			var div = Browser.document.createElement("p");
-			Browser.document.body.appendChild(div);
-			var style = Browser.window.getComputedStyle(div);
+		var div = Browser.document.createElement("p");
+		Browser.document.body.appendChild(div);
+		var style = Browser.window.getComputedStyle(div);
 
-			UserDefinedLetterSpacing = style.letterSpacing != "normal"
-				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
-				: 0.0;
+		UserDefinedLetterSpacing = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
+			: 0.0;
 
-			Browser.document.body.removeChild(div);
-		}
-
-		if (Math.isNaN(UserDefinedLetterSpacing)) {
-			UserDefinedLetterSpacing = 0.0;
-		}
+		Browser.document.body.removeChild(div);
 
 		return UserDefinedLetterSpacing;
+	}
+
+	private static var UserDefinedLetterSpacingPercent = null;
+	private static function getUserDefinedLetterSpacingPercent() : Float {
+		var div = Browser.document.createElement("p");
+		Browser.document.body.appendChild(div);
+		var style = Browser.window.getComputedStyle(div);
+
+		UserDefinedLetterSpacingPercent = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
+			: 0.0;
+
+		Browser.document.body.removeChild(div);
+
+		return UserDefinedLetterSpacingPercent;
+	}
+
+	private static var UserStylePending = false;
+	public static function emitUserStyleChanged() {
+		if (!UserStylePending) {
+			UserStylePending = true;
+			RenderSupport.once("drawframe", function() {
+				if (UserDefinedLetterSpacing != getUserDefinedLetterSpacing() || UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) {
+					RenderSupport.emit("userstylechanged");
+				}
+				UserStylePending = false;
+			});
+		}
+	}
+
+	public static function isInsideFrame() : Bool {
+		try {
+			return untyped __js__("window.self !== window.top");
+		} catch (e : Dynamic) {
+			return true;
+		}
+	}
+
+	public static function monitorUserStyleChanges() : Void -> Void {
+		if (isInsideFrame()) {
+			return Native.setInterval(1000, emitUserStyleChanged);
+		} else {
+			return function() {};
+		}
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -263,7 +303,7 @@ class RenderSupport {
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
 		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
 
-		if (browserZoom != 1.0) {
+		if (!Platform.isMobile && browserZoom != 1.0) {
 			accessibilityZoom = 1.0;
 			Native.setKeyValue("accessibility_zoom", "1.0");
 		}
@@ -359,7 +399,6 @@ class RenderSupport {
 
 		if (RendererType == "html") {
 			PixiView = Browser.document.createElement('div');
-			PixiView.tabIndex = 1;
 			PixiView.style.background = "white";
 		} else if (RendererType != "canvas") {
 			PixiView = null;
@@ -417,6 +456,21 @@ class RenderSupport {
 		}
 
 		PixiView = PixiRenderer.view;
+
+		PixiView.tabIndex = 1;
+		PixiView.onfocus = function(e) {
+			var accessWidget = AccessWidget.tree.getFirstAccessWidget();
+
+			if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+				setFocus(accessWidget.clip, true);
+			} else {
+				accessWidget = AccessWidget.tree.getLastAccessWidget();
+
+				if (accessWidget != null && accessWidget.element != null && accessWidget.clip != null && accessWidget.element != e.relatedTarget) {
+					setFocus(accessWidget.clip, true);
+				}
+			}
+		}
 
 		if (IsLoading) {
 			PixiView.style.display = "none";
@@ -491,10 +545,19 @@ class RenderSupport {
 	//
 	//	Browser window events
 	//
+
+	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
-		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
+		Browser.window.addEventListener('blur', function () {
+			PageWasHidden = true;
+
+			for (key in keysPending) {
+				key.preventDefault = function() {};
+				emit("keyup", key);
+			}
+		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 
 		// Make additional resize for mobile fullscreen mode
@@ -675,7 +738,7 @@ class RenderSupport {
 	}
 
 	private static inline function getScreenSize() {
-		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
+		if (Platform.isIOS && (Platform.isChrome || Platform.isSafari || ProgressiveWebTools.isRunningPWA())) {
 			var is_portrait = isPortaitOrientation();
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
@@ -1308,6 +1371,29 @@ class RenderSupport {
 		}
 	}
 
+	public static function setClipStyle(clip : DisplayObject, name : String, value : String) : Void {
+		var accessWidget : AccessWidget = untyped clip.accessWidget;
+
+		if (accessWidget == null) {
+			if (AccessibilityEnabled || RendererType == "html") {
+				if (RendererType == "html") {
+					clip.initNativeWidget();
+				}
+
+				var nativeWidget : Element = untyped clip.nativeWidget;
+
+				// Create DOM node for access. properties
+				if (nativeWidget != null) {
+					accessWidget = new AccessWidget(clip, nativeWidget);
+					untyped clip.accessWidget = accessWidget;
+					untyped accessWidget.element.style[name] = value;
+				}
+			}
+		} else {
+			untyped accessWidget.element.style[name] = value;
+		}
+	}
+
 	public static function removeAccessAttributes(clip : Dynamic) : Void {
 		if (clip.accessWidget != null) {
 			AccessWidget.removeAccessWidget(clip.accessWidget);
@@ -1728,12 +1814,119 @@ class RenderSupport {
 		clip.setClipRotation(r * 0.0174532925 /*radians*/);
 	}
 
+	public static function setClipOrigin(clip : DisplayObject, x : Float, y : Float) : Void {
+		clip.setClipOrigin(x, y);
+	}
+
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
 			var a = clip.worldTransform;
-			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
+			var az = getAccessibilityZoom();
+			return [a.a / az, a.b, a.c, a.d / az, a.tx / az, a.ty / az];
 		} else {
 			return [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+		}
+	}
+
+	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
+		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
+			if (untyped clip.nativeWidget == null) {
+				clip.initNativeWidget();
+			}
+
+			if (untyped clip.nativeWidget == null) {
+				return fallbackAnimation();
+			} else {
+				try {
+					if (untyped !clip.hasAnimation) {
+						untyped clip.hasAnimation = true;
+						clip.invalidateTransform("addClipAnimation");
+					}
+
+					var nativeWidget = untyped clip.nativeWidget;
+					var optionsObject : Dynamic = {};
+					var disposed = false;
+
+					if (clip.isClipOnStage()) {
+						clip.updateNativeWidget();
+					}
+
+					function isNormalInteger(str) {
+						var n = Math.floor(Std.parseInt(str));
+						return n != Math.POSITIVE_INFINITY && Std.string(n) == str && n >= 0;
+					}
+
+					for (option in options) {
+						if (isNormalInteger(option[1])) {
+							untyped optionsObject[option[0]] = Std.parseInt(option[1]);
+						} else {
+							untyped optionsObject[option[0]] = option[1];
+						}
+					}
+
+					var animation : Dynamic =
+						nativeWidget.animate(
+							keyframes.map(
+								function(keyframe : Array<String>) {
+									var o : Dynamic = {};
+									var ii : Int = Std.int(keyframe.length / 2);
+									for (i in 0...ii) {
+										untyped o[keyframe[i * 2]] = keyframe[i * 2 + 1];
+									}
+									return o;
+								}
+							),
+							optionsObject
+						);
+
+
+					animation.oncancel = function() {
+						if (!disposed) {
+							disposed = true;
+							onFinish();
+						}
+
+						if (clip.isClipOnStage()) {
+							clip.updateNativeWidget();
+						}
+					}
+
+					animation.onremove = function() {
+						if (!disposed) {
+							disposed = true;
+							onFinish();
+						}
+
+						if (clip.isClipOnStage()) {
+							clip.updateNativeWidget();
+						}
+					}
+
+					animation.onfinish = function() {
+						if (!disposed) {
+							disposed = true;
+							onFinish();
+						}
+
+						if (clip.isClipOnStage()) {
+							clip.updateNativeWidget();
+						}
+					}
+
+					return function() {
+						if (animation != null) {
+							animation.cancel();
+						}
+					}
+				} catch (e : Dynamic) {
+					trace("addClipAnimation error:");
+					trace(e);
+
+					return fallbackAnimation();
+				}
+			}
+		} else {
+			return fallbackAnimation();
 		}
 	}
 
@@ -1797,11 +1990,11 @@ class RenderSupport {
 	}
 
 	public static function getClipWidth(clip : NativeWidgetClip) : Float {
-		return clip.getWidth();
+		return clip.getWidth != null ? clip.getWidth() : clip.getWidgetWidth();
 	}
 
 	public static function getClipHeight(clip : NativeWidgetClip) : Float {
-		return clip.getHeight();
+		return clip.getHeight != null ? clip.getHeight() : clip.getWidgetHeight();
 	}
 
 	public static function setClipResolution(clip : TextClip, resolution : Float) : Void {
@@ -1977,6 +2170,12 @@ class RenderSupport {
 	public static function addKeyEventListener(clip : DisplayObject, event : String,
 		fn : String -> Bool -> Bool -> Bool -> Bool -> Int -> (Void -> Void) -> Bool) : Void -> Void {
 		var keycb = function(ke) {
+			if (event == "keydown") {
+				keysPending.set(ke.keyCode, ke);
+			} else {
+				keysPending.remove(ke.keyCode);
+			}
+
 			fn(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode, ke.preventDefault);
 		}
 
@@ -1993,7 +2192,12 @@ class RenderSupport {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (untyped HaxeRuntime.instanceof(clip, Element)) {
+		if (event == "userstylechanged") {
+			on("userstylechanged", fn);
+			return function () {
+				off("userstylechanged", fn);
+			}
+		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
 		} else {
@@ -2785,9 +2989,9 @@ class RenderSupport {
 
 	public static function setFavIcon(url : String) : Void {
 		var head = Browser.document.getElementsByTagName('head')[0];
-		var oldNode = Browser.document.getElementById('dynamic-favicon');
+		var oldNode = Browser.document.getElementById('app-favicon');
 		var node = Browser.document.createElement('link');
-		node.setAttribute("id", "dynamic-favicon");
+		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
 		node.setAttribute("href", url);
 		node.setAttribute("type", "image/ico");
@@ -2919,6 +3123,10 @@ class RenderSupport {
 
 	public static function setWebClipDisabled(clip : WebClip, disabled : Bool) : Void {
 		clip.setDisableOverlay(disabled);
+	}
+
+	public static function setWebClipNoScroll(clip : WebClip) : Void {
+		clip.setNoScroll();
 	}
 
 	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
