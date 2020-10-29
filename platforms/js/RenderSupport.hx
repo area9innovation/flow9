@@ -274,11 +274,27 @@ class RenderSupport {
 		if (!UserStylePending) {
 			UserStylePending = true;
 			RenderSupport.once("drawframe", function() {
-				if (getUserDefinedLetterSpacing() != 0.0 || getUserDefinedLetterSpacingPercent() != 0.0) {
+				if (UserDefinedLetterSpacing != getUserDefinedLetterSpacing() || UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) {
 					RenderSupport.emit("userstylechanged");
 				}
 				UserStylePending = false;
 			});
+		}
+	}
+
+	public static function isInsideFrame() : Bool {
+		try {
+			return untyped __js__("window.self !== window.top");
+		} catch (e : Dynamic) {
+			return true;
+		}
+	}
+
+	public static function monitorUserStyleChanges() : Void -> Void {
+		if (isInsideFrame()) {
+			return Native.setInterval(1000, emitUserStyleChanged);
+		} else {
+			return function() {};
 		}
 	}
 
@@ -529,10 +545,19 @@ class RenderSupport {
 	//
 	//	Browser window events
 	//
+
+	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
-		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
+		Browser.window.addEventListener('blur', function () {
+			PageWasHidden = true;
+
+			for (key in keysPending) {
+				key.preventDefault = function() {};
+				emit("keyup", key);
+			}
+		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 
 		// Make additional resize for mobile fullscreen mode
@@ -2145,6 +2170,12 @@ class RenderSupport {
 	public static function addKeyEventListener(clip : DisplayObject, event : String,
 		fn : String -> Bool -> Bool -> Bool -> Bool -> Int -> (Void -> Void) -> Bool) : Void -> Void {
 		var keycb = function(ke) {
+			if (event == "keydown") {
+				keysPending.set(ke.keyCode, ke);
+			} else {
+				keysPending.remove(ke.keyCode);
+			}
+
 			fn(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode, ke.preventDefault);
 		}
 
@@ -2958,9 +2989,9 @@ class RenderSupport {
 
 	public static function setFavIcon(url : String) : Void {
 		var head = Browser.document.getElementsByTagName('head')[0];
-		var oldNode = Browser.document.getElementById('dynamic-favicon');
+		var oldNode = Browser.document.getElementById('app-favicon');
 		var node = Browser.document.createElement('link');
-		node.setAttribute("id", "dynamic-favicon");
+		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
 		node.setAttribute("href", url);
 		node.setAttribute("type", "image/ico");
@@ -3092,6 +3123,10 @@ class RenderSupport {
 
 	public static function setWebClipDisabled(clip : WebClip, disabled : Bool) : Void {
 		clip.setDisableOverlay(disabled);
+	}
+
+	public static function setWebClipNoScroll(clip : WebClip) : Void {
+		clip.setNoScroll();
 	}
 
 	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
