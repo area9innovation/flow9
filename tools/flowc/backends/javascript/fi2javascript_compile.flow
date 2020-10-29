@@ -55,8 +55,7 @@ export {
 		ctx  : FiJsToplevelContext,
 		arg1 : Pair<string, FiType>,
 		op : string,
-		arg2 : Pair<string, FiType>,
-		needPars : bool) -> string;
+		arg2 : Pair<string, FiType>) -> string;
 
 }
 
@@ -232,8 +231,25 @@ fiGetItemId(ctx : FiJsToplevelContext, item, readable) {
 	if (readable) "'" + item.struct + "'" else i2s(fiGetStructId(ctx, item));
 }
 
+// Check if a string starts with somth. like: "Native.length_32_("
+// and ends with a closing bracket: ")"
+fiJsWrappedWithPars(s : string) -> bool {
+	getCharAt(s, strlen(s) - 1) == ")" &&
+	fiJsWrappedLeftWithPars(s, 0);
+}
+
+fiJsWrappedLeftWithPars(s : string, i : int) -> bool {
+	if (i == strlen(s)) false else {
+		char = getCharAt(s, i);
+		if (char == "(") true else 
+		if ((i > 0 && isDigit(char)) || isLetter(char) || char == "." || char == "_") {
+			fiJsWrappedLeftWithPars(s, i + 1);
+		} else false;
+	}
+}
+
 fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string, tailcall : bool, needPars : bool, unusedVars : Set<string>) -> string {
-	pars = \s -> if (needPars) "(" + s + ")" else s;
+	pars = \s -> if (needPars && !fiJsWrappedWithPars(s)) "(" + s + ")" else s;
 	// TODO: Comments processing
 	/*
 	ei = getFbExpInfo(expr);
@@ -461,18 +477,18 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 			switch (op : FcPrim) {
 				FcOrPrim():	   pars(args[0].first + "||" + args[1].first);
 				FcAndPrim():   pars(args[0].first + "&&" + args[1].first);
-				FcNotPrim():   pars("!" + args[0].first);
-				FcEqPrim():    fiJsCompileCompare(cfg, ctx, args[0], "==", args[1], false);
-				FcNePrim():    fiJsCompileCompare(cfg, ctx, args[0], "!=", args[1], false);
-				FcLePrim():    fiJsCompileCompare(cfg, ctx, args[0], "<=",  args[1], false);
-				FcGePrim():    fiJsCompileCompare(cfg, ctx, args[0], ">=",  args[1], false);
-				FcLtPrim():    fiJsCompileCompare(cfg, ctx, args[0], "<",   args[1], false);
-				FcGtPrim():    fiJsCompileCompare(cfg, ctx, args[0], ">",   args[1], false);
-				FcPlusPrim():  fiJsCompileMath(cfg, ctx, args[0], "+", args[1]);
-				FcMinusPrim(): fiJsCompileMath(cfg, ctx, args[0], "-", args[1]);
-				FcMulPrim():   fiJsCompileMath(cfg, ctx, args[0], "*", args[1]);
-				FcDivPrim():   fiJsCompileMath(cfg, ctx, args[0], "/", args[1]);
-				FcModPrim():   fiJsCompileMath(cfg, ctx, args[0], "%", args[1]);
+				FcNotPrim():   "!" + args[0].first;
+				FcEqPrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "==", args[1]));
+				FcNePrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "!=", args[1]));
+				FcLePrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "<=",  args[1]));
+				FcGePrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], ">=",  args[1]));
+				FcLtPrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "<",   args[1]));
+				FcGtPrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], ">",   args[1]));
+				FcPlusPrim():  pars(fiJsCompileMath(cfg, ctx, args[0], "+", args[1]));
+				FcMinusPrim(): pars(fiJsCompileMath(cfg, ctx, args[0], "-", args[1]));
+				FcMulPrim():   pars(fiJsCompileMath(cfg, ctx, args[0], "*", args[1]));
+				FcDivPrim():   pars(fiJsCompileMath(cfg, ctx, args[0], "/", args[1]));
+				FcModPrim():   pars(fiJsCompileMath(cfg, ctx, args[0], "%", args[1]));
 				FcNegPrim(): {
 					def = \ -> "-" + args[0].first;
 					switch (type) {
@@ -992,11 +1008,9 @@ fiJsCompileMath(cfg : FiJsConfig, ctx : FiJsToplevelContext, arg1 : Pair<string,
 }
 
 
-fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>, needPars : bool) -> string {
+fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) -> string {
 	a1 = arg1.first;
 	a2 = arg2.first;
-
-	pars = \s -> if (needPars) "(" + s + ")" else s;
 
 	ep = Pair(-1, "");
 
@@ -1060,7 +1074,7 @@ fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<st
 	*/
 	if (op == "==") {
 		if (isSimpleType) {
-			pars(a1 + "===" + a2)
+			a1 + "===" + a2
 		} else if (isEmptyArray) {
 			cma(true);
 		} else if (isSingleton) {
@@ -1070,17 +1084,17 @@ fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<st
 		}
 	} else if (op == "!=") {
 		if (isSimpleType) {
-			pars(a1 + "!==" + a2)
+			a1 + "!==" + a2
 		} else if (isEmptyArray) {
 			cma(false);
 		} else if (isSingleton) {
 			cms(false);
 		} else {
-			pars("!" + cme());
+			"!" + cme();
 		}
 	} else {
 		if (isSimpleType) {
-			pars(a1 + op + a2)
+			a1 + op + a2
 		} else {
 			cmp();
 		}
