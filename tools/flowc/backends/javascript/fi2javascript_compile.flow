@@ -231,8 +231,27 @@ fiGetItemId(ctx : FiJsToplevelContext, item, readable) {
 	if (readable) "'" + item.struct + "'" else i2s(fiGetStructId(ctx, item));
 }
 
+// Check if an espression is wrapped with brackets:
+// for ((a + 1) * (c - d)) will return true,
+// for (a + 1) * (c - d) will return false,
+fiJsCheckEnclosedInBrackets(s : string) -> bool {
+	if (!(getCharAt(s, 0) == "(" && getCharAt(s, strlen(s) - 1) == ")")) false else {
+		fiDoJsCheckEnclosedInBrackets(s, 1, 1);
+	}
+}
+
+fiDoJsCheckEnclosedInBrackets(s : string, i : int, d : int) -> bool {
+	if (d == 0) i == strlen(s) else 
+	if (i == strlen(s)) false else {
+		ch = getCharAt(s, i);
+		if (ch == "(") fiDoJsCheckEnclosedInBrackets(s, i + 1, d + 1) else 
+		if (ch == ")") fiDoJsCheckEnclosedInBrackets(s, i + 1, d - 1) else
+		fiDoJsCheckEnclosedInBrackets(s, i + 1, d);
+	}
+}
+
 fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string, tailcall : bool, needPars : bool, unusedVars : Set<string>) -> string {
-	pars = \s -> if (needPars) "(" + s + ")" else s;
+	pars = \s -> if (needPars && !fiJsCheckEnclosedInBrackets(s)) "(" + s + ")" else s;
 	// TODO: Comments processing
 	/*
 	ei = getFbExpInfo(expr);
@@ -381,7 +400,7 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 		FiIf(e1, e2, e3, __, __): {
 			subindent = indent+ctx.indent2;
 			"("+fiJsCompileToExpr(cfg, ctx, e1, indent, false, false, unusedVars)+"?"+
-			fiJsCompileToExpr(cfg, ctx, e2, subindent, false, false, unusedVars) + ":" +
+			fiJsCompileToExpr(cfg, ctx, e2, subindent, false, true, unusedVars) + ":" +
 			fiJsCompileToExpr(cfg, ctx, e3, subindent, false, false, unusedVars) + ")";
 		}
 
@@ -455,36 +474,33 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 				FcArrayPrim(): indent + ctx.indent1;
 				default: indent;
 			};
-
-			args = map(es, \arg -> Pair(fiJsCompileToExpr(cfg, ctx, arg, subindent, false, true, unusedVars), fiExpType(arg)));
+			arg = \a, np -> fiJsCompileToExpr(cfg, ctx, a, subindent, false, np, unusedVars);
+			argtp = \a, np -> Pair(arg(a, np), fiExpType(a));
 			switch (op : FcPrim) {
-				FcOrPrim():	   pars(args[0].first + "||" + args[1].first);
-				FcAndPrim():   pars(args[0].first + "&&" + args[1].first);
-				FcNotPrim():   "!" + args[0].first;
-				FcEqPrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "==", args[1]));
-				FcNePrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "!=", args[1]));
-				FcLePrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "<=",  args[1]));
-				FcGePrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], ">=",  args[1]));
-				FcLtPrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], "<",   args[1]));
-				FcGtPrim():    pars(fiJsCompileCompare(cfg, ctx, args[0], ">",   args[1]));
-				FcPlusPrim():  pars(fiJsCompileMath(cfg, ctx, args[0], "+", args[1]));
-				FcMinusPrim(): pars(fiJsCompileMath(cfg, ctx, args[0], "-", args[1]));
-				FcMulPrim():   pars(fiJsCompileMath(cfg, ctx, args[0], "*", args[1]));
-				FcDivPrim():   pars(fiJsCompileMath(cfg, ctx, args[0], "/", args[1]));
-				FcModPrim():   pars(fiJsCompileMath(cfg, ctx, args[0], "%", args[1]));
+				FcOrPrim():    pars(arg(es[0], false) + "||" + arg(es[1], true));
+				FcAndPrim():   pars(arg(es[0], false) + "&&" + arg(es[1], true));
+				FcNotPrim():   "!" + arg(es[0], true);
+				FcEqPrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], false), "==", argtp(es[1], true)));
+				FcNePrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], false), "!=", argtp(es[1], true)));
+				FcLePrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], false), "<=", argtp(es[1], true)));
+				FcGePrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], false), ">=", argtp(es[1], true)));
+				FcLtPrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], false), "<",  argtp(es[1], true)));
+				FcGtPrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], false), ">",  argtp(es[1], true)));
+				FcPlusPrim():  pars(fiJsCompileMath(cfg, ctx, argtp(es[0], false), "+", argtp(es[1], true)));
+				FcMinusPrim(): pars(fiJsCompileMath(cfg, ctx, argtp(es[0], false), "-", argtp(es[1], true)));
+				FcMulPrim():   pars(fiJsCompileMath(cfg, ctx, argtp(es[0], false), "*", argtp(es[1], true)));
+				FcDivPrim():   pars(fiJsCompileMath(cfg, ctx, argtp(es[0], false), "/", argtp(es[1], true)));
+				FcModPrim():   pars(fiJsCompileMath(cfg, ctx, argtp(es[0], false), "%", argtp(es[1], true)));
 				FcNegPrim(): {
-					def = \ -> "-" + args[0].first;
 					switch (type) {
-						FiTypeInt(): {
-							pars("-(" + args[0].first + ")|0");
-						}
-						default: def();
+						FiTypeInt(): pars("-(" + arg(es[0], false) + ")|0");
+						default:     "-" + arg(es[0], true);
 					}
 				}
-				FcArrayPrim(): "[" + strGlue(map(args, \e->e.first), ",") + "]";
-				FcIndexPrim(): args[0].first + "[" + args[1].first + "]";
-				FcDerefPrim(): args[0].first + ".__v";
-				FcAssignPrim():	pars(args[0].first + ".__v=" + args[1].first);
+				FcArrayPrim(): "[" + strGlue(map(es, \a -> arg(a, false)), ",") + "]";
+				FcIndexPrim(): arg(es[0], true)+ "[" + arg(es[1], false) + "]";
+				FcDerefPrim(): arg(es[0], true) + ".__v";
+				FcAssignPrim():	pars(arg(es[0], true) + ".__v=" + arg(es[1], true));
 				/*
 				 * =================
 				 * Important notice!
@@ -511,17 +527,17 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 				 *
 				 *    The only slowdown we found is Firefox on Windows, but not so drastically.
 				 */
-				FcRefPrim(): "new CR_(" + args[0].first + ")";
+				FcRefPrim(): "new CR_(" + arg(es[0], false) + ")";
 				FcStructPrim(structname):
 				switch (lookupTree(ctx.ovl.structs, structname) : Maybe<FiJsStruct>) {
 					Some(sinfo): {
 						if (length(sinfo.struct.args) == 0) {
 							"st_" + if (cfg.readable) sinfo.struct.name else i2s(sinfo.id)
 						} else {
-							foldi(map(args, \e->e.first), "c$" + formatId(sinfo.id) + "(", \idx, acc, arg -> {
+							foldi(map(es, \a-> arg(a, false)), "c$" + formatId(sinfo.id) + "(", \idx, acc, ar -> {
 							n = sinfo.struct.args[idx].name;
 							fld = lookupTreeDef(ctx.ovl.fieldRenamings, n, n);
-							acc + (if (idx == 0) "" else ",") + /*fld + ":" + */ arg
+							acc + (if (idx == 0) "" else ",") + /*fld + ":" + */ ar
 						}) + ")";}
 					}
 					None():
@@ -530,19 +546,19 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 				FcFieldPrim(name):
 				if (name == "structname") {
 					if (cfg.readable)
-						args[0].first + "._name"
+						arg(es[0], true) + "._name"
 					else
-						"(HaxeRuntime.getStructName(" + args[0].first + "._id))";
+						"(HaxeRuntime.getStructName(" + arg(es[0], false) + "._id))";
 				} else {
 						// TODO: TS processing
 						//(if (params.tsProcess.typeBuffer == "")
-							args[0].first
+							arg(es[0], true)
 						//	else "(<" + params.tsProcess.typeBuffer + ">" + args[0].first + ")")
 						+
 						"." + lookupTreeDef(ctx.ovl.fieldRenamings, name, name);
 				}
 				FcSetMutablePrim(name):
-					pars(args[0].first + ("."+lookupTreeDef(ctx.ovl.fieldRenamings, name, name) + "=") + args[1].first);
+					pars(arg(es[0], true) + "." + lookupTreeDef(ctx.ovl.fieldRenamings, name, name) + "=" + arg(es[1], true));
 				FcCreateClosurePrim(__, __): ""; // should not happen - JS does not use lambda lifting
                 FcQuote(): "TODO";
                 FcUnquote(): "TODO";
@@ -877,7 +893,7 @@ jsGenerateTailCall(
 }
 
 fiJsSubstituteJSNative(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, es : [FiExp], indent : string, tailcall : bool, callexpr : FiExp) {
-	operator0 = fiJsCompileToExpr(cfg, ctx, expr, indent, false, true, makeSet());
+	operator0 = fiJsCompileToExpr(cfg, ctx, expr, indent, false, false, makeSet());
 	// Top-level name in its converted form: deserializeRestOfStringTail2 -> $M7
 	renamedOp = either(lookupTree(ctx.renamings, ctx.toplevel_name), "");
 
