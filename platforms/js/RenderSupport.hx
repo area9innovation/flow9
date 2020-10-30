@@ -554,6 +554,7 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+		monitorUserStyleChanges(PixiStage);
 	}
 
 	private static function StartFlowMainWithTimeCheck() {

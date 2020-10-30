@@ -633,9 +633,27 @@ class TextClip extends NativeWidgetClip {
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
 		this.doNotRemap = fontStyle.doNotRemap;
 
-		this.style.fontSize = Math.max(fontSize, 0.6);
+		if (fontSize == 0.0) {
+			if (untyped Math.isFinite(RenderSupport.PixiStage.fontSize)) {
+				this.style.fontSize = untyped RenderSupport.PixiStage.fontSize;
+			} else {
+				this.style.fontSize = Math.max(fontSize, 0.6);
+			}
+		} else {
+			this.style.fontSize = Math.max(fontSize, 0.6);
+		}
 		this.style.fill = RenderSupport.makeCSSColor(fillColor, fillOpacity);
-		this.style.letterSpacing = letterSpacing;
+		if (letterSpacing == 0.0) {
+			if (untyped Math.isFinite(RenderSupport.PixiStage.letterSpacingPercent) && RenderSupport.PixiStage.letterSpacingPercent != 0.0) {
+				this.style.letterSpacing = untyped RenderSupport.PixiStage.letterSpacingPercent * this.style.fontSize;
+			} else if (untyped Math.isFinite(RenderSupport.PixiStage.letterSpacing)) {
+				this.style.letterSpacing = untyped RenderSupport.PixiStage.letterSpacing;
+			} else {
+				this.style.letterSpacing = letterSpacing;
+			}
+		} else {
+			this.style.letterSpacing = letterSpacing;
+		}
 		this.style.fontFamily = fontStyle.family;
 		this.style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		this.style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
@@ -857,7 +875,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth >= 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
