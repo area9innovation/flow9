@@ -642,20 +642,19 @@ class Native {
 	private static var DeferQueue : Array< Void -> Void > = new Array();
 	private static var deferTolerance : Int = 250;
 	public static function defer(cb : Void -> Void) : Void {
-		if (DeferQueue.length == 0) {
-			var fn = function() {
-				var t0 = NativeTime.timestamp();
-				// we shouldn't block the thread in JS for long time because it freeze UI
-				while (NativeTime.timestamp() - t0 < Native.deferTolerance && DeferQueue.length > 0) {
-					var f = DeferQueue.shift();
-					f();
-				}
-				if (DeferQueue.length > 0) untyped __js__("setTimeout(fn, 42);");
+		var fn = function() {
+			var t0 = NativeTime.timestamp();
+			// we shouldn't block the thread in JS for long time because it freeze UI
+			while (NativeTime.timestamp() - t0 < Native.deferTolerance && DeferQueue.length > 0) {
+				var f = DeferQueue.shift();
+				f();
 			}
-
-			untyped __js__("setTimeout(fn, 0);");
+			if (DeferQueue.length > 0) untyped __js__("setTimeout(fn, 42);");
 		}
 
+		if (DeferQueue.length == 0) {
+			untyped __js__("setTimeout(fn, 0);");
+		}
 		DeferQueue.push(cb);
 	}
 	#end
