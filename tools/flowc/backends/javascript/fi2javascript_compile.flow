@@ -55,8 +55,7 @@ export {
 		ctx  : FiJsToplevelContext,
 		arg1 : Pair<string, FiType>,
 		op : string,
-		arg2 : Pair<string, FiType>,
-		needPars : bool) -> string;
+		arg2 : Pair<string, FiType>) -> string;
 
 }
 
@@ -233,7 +232,7 @@ fiGetItemId(ctx : FiJsToplevelContext, item, readable) {
 }
 
 fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string, tailcall : bool, needPars : bool, unusedVars : Set<string>) -> string {
-	pars = \s -> if (needPars) "(" + s + ")" else s;
+	pars = \s -> if (needPars && !fiJsCheckEnclosedInBrackets(s)) "(" + s + ")" else s;
 	// TODO: Comments processing
 	/*
 	ei = getFbExpInfo(expr);
@@ -430,25 +429,25 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 		}
 
 		FiCast(e0, tFrom, tTo, __, __): {
-			arg = fiJsCompileToExpr(cfg, ctx, e0, indent, false, needPars, unusedVars);
+			arg = \np -> fiJsCompileToExpr(cfg, ctx, e0, indent, false, np, unusedVars);
 			switch (tFrom : FiType) {
 				FiTypeInt(): {
 					switch (tTo : FiType) {
-						FiTypeInt(): arg;
-						FiTypeString(): (if (cfg.modules != "") "R." else "") + "Std.string(" + arg + ")";
-						FiTypeDouble(): arg; // All numbers are doubles in JS. "(1.0*" + arg + ")";
-						default: arg;
+						FiTypeInt(): arg(needPars);
+						FiTypeString(): (if (cfg.modules != "") "R." else "") + "Std.string(" + arg(false) + ")";
+						FiTypeDouble(): arg(needPars); // All numbers are doubles in JS. "(1.0*" + arg + ")";
+						default: arg(needPars);
 					}
 				}
 				FiTypeDouble(): {
 					switch (tTo : FiType) {
-						FiTypeString(): (if (cfg.modules != "") "R." else "") + "Std.string("+arg+")";
-						FiTypeInt(): pars("(" + arg + ")|0");
-						FiTypeDouble(): arg;
-						default: arg;
+						FiTypeString(): (if (cfg.modules != "") "R." else "") + "Std.string(" + arg(false) + ")";
+						FiTypeInt(): pars("(" + arg(false) + ")|0");
+						FiTypeDouble(): arg(needPars);
+						default: arg(needPars);
 					}
 				}
-				default: arg;
+				default: arg(needPars);
 			}
 		}
 		FiCallPrim(op, es, type, __): {
@@ -456,36 +455,33 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 				FcArrayPrim(): indent + ctx.indent1;
 				default: indent;
 			};
-
-			args = map(es, \arg -> Pair(fiJsCompileToExpr(cfg, ctx, arg, subindent, false, true, unusedVars), fiExpType(arg)));
+			arg = \a, np -> fiJsCompileToExpr(cfg, ctx, a, subindent, false, np, unusedVars);
+			argtp = \a, np -> Pair(arg(a, np), fiExpType(a));
 			switch (op : FcPrim) {
-				FcOrPrim():	   pars(args[0].first + "||" + args[1].first);
-				FcAndPrim():   pars(args[0].first + "&&" + args[1].first);
-				FcNotPrim():   pars("!" + args[0].first);
-				FcEqPrim():    fiJsCompileCompare(cfg, ctx, args[0], "==", args[1], false);
-				FcNePrim():    fiJsCompileCompare(cfg, ctx, args[0], "!=", args[1], false);
-				FcLePrim():    fiJsCompileCompare(cfg, ctx, args[0], "<=",  args[1], false);
-				FcGePrim():    fiJsCompileCompare(cfg, ctx, args[0], ">=",  args[1], false);
-				FcLtPrim():    fiJsCompileCompare(cfg, ctx, args[0], "<",   args[1], false);
-				FcGtPrim():    fiJsCompileCompare(cfg, ctx, args[0], ">",   args[1], false);
-				FcPlusPrim():  fiJsCompileMath(cfg, ctx, args[0], "+", args[1]);
-				FcMinusPrim(): fiJsCompileMath(cfg, ctx, args[0], "-", args[1]);
-				FcMulPrim():   fiJsCompileMath(cfg, ctx, args[0], "*", args[1]);
-				FcDivPrim():   fiJsCompileMath(cfg, ctx, args[0], "/", args[1]);
-				FcModPrim():   fiJsCompileMath(cfg, ctx, args[0], "%", args[1]);
+				FcOrPrim():    pars(arg(es[0], true) + "||" + arg(es[1], true));
+				FcAndPrim():   pars(arg(es[0], true) + "&&" + arg(es[1], true));
+				FcNotPrim():   "!" + arg(es[0], true);
+				FcEqPrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], true), "==", argtp(es[1], true)));
+				FcNePrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], true), "!=", argtp(es[1], true)));
+				FcLePrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], true), "<=", argtp(es[1], true)));
+				FcGePrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], true), ">=", argtp(es[1], true)));
+				FcLtPrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], true), "<",  argtp(es[1], true)));
+				FcGtPrim():    pars(fiJsCompileCompare(cfg, ctx, argtp(es[0], true), ">",  argtp(es[1], true)));
+				FcPlusPrim():  pars(fiJsCompileMath(cfg, ctx, argtp(es[0], true), "+", argtp(es[1], true)));
+				FcMinusPrim(): pars(fiJsCompileMath(cfg, ctx, argtp(es[0], true), "-", argtp(es[1], true)));
+				FcMulPrim():   pars(fiJsCompileMath(cfg, ctx, argtp(es[0], true), "*", argtp(es[1], true)));
+				FcDivPrim():   pars(fiJsCompileMath(cfg, ctx, argtp(es[0], true), "/", argtp(es[1], true)));
+				FcModPrim():   pars(fiJsCompileMath(cfg, ctx, argtp(es[0], true), "%", argtp(es[1], true)));
 				FcNegPrim(): {
-					def = \ -> "-" + args[0].first;
 					switch (type) {
-						FiTypeInt(): {
-							pars("-(" + args[0].first + ")|0");
-						}
-						default: def();
+						FiTypeInt(): pars("-(" + arg(es[0], false) + ")|0");
+						default:     "-" + arg(es[0], true);
 					}
 				}
-				FcArrayPrim(): "[" + strGlue(map(args, \e->e.first), ",") + "]";
-				FcIndexPrim(): args[0].first + "[" + args[1].first + "]";
-				FcDerefPrim(): args[0].first + ".__v";
-				FcAssignPrim():	pars(args[0].first + ".__v=" + args[1].first);
+				FcArrayPrim(): "[" + strGlue(map(es, \a -> arg(a, false)), ",") + "]";
+				FcIndexPrim(): arg(es[0], true)+ "[" + arg(es[1], false) + "]";
+				FcDerefPrim(): arg(es[0], true) + ".__v";
+				FcAssignPrim():	pars(arg(es[0], true) + ".__v=" + arg(es[1], true));
 				/*
 				 * =================
 				 * Important notice!
@@ -512,17 +508,17 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 				 *
 				 *    The only slowdown we found is Firefox on Windows, but not so drastically.
 				 */
-				FcRefPrim(): "new CR_(" + args[0].first + ")";
+				FcRefPrim(): "new CR_(" + arg(es[0], false) + ")";
 				FcStructPrim(structname):
 				switch (lookupTree(ctx.ovl.structs, structname) : Maybe<FiJsStruct>) {
 					Some(sinfo): {
 						if (length(sinfo.struct.args) == 0) {
 							"st_" + if (cfg.readable) sinfo.struct.name else i2s(sinfo.id)
 						} else {
-							foldi(map(args, \e->e.first), "c$" + formatId(sinfo.id) + "(", \idx, acc, arg -> {
+							foldi(map(es, \a-> arg(a, false)), "c$" + formatId(sinfo.id) + "(", \idx, acc, ar -> {
 							n = sinfo.struct.args[idx].name;
 							fld = lookupTreeDef(ctx.ovl.fieldRenamings, n, n);
-							acc + (if (idx == 0) "" else ",") + /*fld + ":" + */ arg
+							acc + (if (idx == 0) "" else ",") + /*fld + ":" + */ ar
 						}) + ")";}
 					}
 					None():
@@ -531,19 +527,19 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 				FcFieldPrim(name):
 				if (name == "structname") {
 					if (cfg.readable)
-						args[0].first + "._name"
+						arg(es[0], true) + "._name"
 					else
-						"(HaxeRuntime.getStructName(" + args[0].first + "._id))";
+						"(HaxeRuntime.getStructName(" + arg(es[0], false) + "._id))";
 				} else {
 						// TODO: TS processing
 						//(if (params.tsProcess.typeBuffer == "")
-							args[0].first
+							arg(es[0], true)
 						//	else "(<" + params.tsProcess.typeBuffer + ">" + args[0].first + ")")
 						+
 						"." + lookupTreeDef(ctx.ovl.fieldRenamings, name, name);
 				}
 				FcSetMutablePrim(name):
-					pars(args[0].first + ("."+lookupTreeDef(ctx.ovl.fieldRenamings, name, name) + "=") + args[1].first);
+					pars(arg(es[0], true) + "." + lookupTreeDef(ctx.ovl.fieldRenamings, name, name) + "=" + arg(es[1], true));
 				FcCreateClosurePrim(__, __): ""; // should not happen - JS does not use lambda lifting
                 FcQuote(): "TODO";
                 FcUnquote(): "TODO";
@@ -628,7 +624,7 @@ fiJsCompileToReturn(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, i
 				isKwd = endsWith(cleaned0, "__") && containsSet(js_keyword_set, substring(cleaned0, 0, strlen(cleaned0) - 2));
 				cleaned = if (isKwd) substring(cleaned0, 0, strlen(cleaned0) - 2) else cleaned0;
 
-				acall = fiJsCompileToExpr(cfg, ctx, expr, indent, true, true, makeSet());
+				acall = fiJsCompileToExpr(cfg, ctx, expr, indent, true, false, makeSet());
 				if ((cleaned == ctx.toplevel_name || cleaned == renamedOp) && ctx.has_tail && ^fiJsLambdaLevel == 0)
 					acall
 				else
@@ -829,7 +825,7 @@ jsGenerateTailCall(
 					});
 
 					fnparams = map(es, \arg -> {
-						fiJsCompileToExpr(cfg, ctx, arg, indent, false, true, makeSet());
+						fiJsCompileToExpr(cfg, ctx, arg, indent, false, false, makeSet());
 					});
 
 					iteri(usedFreeVars, \ix, e -> {
@@ -878,7 +874,7 @@ jsGenerateTailCall(
 }
 
 fiJsSubstituteJSNative(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, es : [FiExp], indent : string, tailcall : bool, callexpr : FiExp) {
-	operator0 = fiJsCompileToExpr(cfg, ctx, expr, indent, false, true, makeSet());
+	operator0 = fiJsCompileToExpr(cfg, ctx, expr, indent, false, false, makeSet());
 	// Top-level name in its converted form: deserializeRestOfStringTail2 -> $M7
 	renamedOp = either(lookupTree(ctx.renamings, ctx.toplevel_name), "");
 
@@ -891,7 +887,7 @@ fiJsSubstituteJSNative(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp
 		} else {
 			operator0;
 		}
-	args = map(es, \arg -> fiJsCompileToExpr(cfg, ctx, arg, indent, false, true, makeSet()));
+	args = map(es, \arg -> fiJsCompileToExpr(cfg, ctx, arg, indent, false, false, makeSet()));
 	isNoOtc = isConfigParameterTrue(ctx.program.config.config, fiJsNoOtcParamName);
 
 	// Remove prefix A9__, appended earlier
@@ -992,11 +988,9 @@ fiJsCompileMath(cfg : FiJsConfig, ctx : FiJsToplevelContext, arg1 : Pair<string,
 }
 
 
-fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>, needPars : bool) -> string {
+fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) -> string {
 	a1 = arg1.first;
 	a2 = arg2.first;
-
-	pars = \s -> if (needPars) "(" + s + ")" else s;
 
 	ep = Pair(-1, "");
 
@@ -1060,7 +1054,7 @@ fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<st
 	*/
 	if (op == "==") {
 		if (isSimpleType) {
-			pars(a1 + "===" + a2)
+			a1 + "===" + a2
 		} else if (isEmptyArray) {
 			cma(true);
 		} else if (isSingleton) {
@@ -1070,17 +1064,17 @@ fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<st
 		}
 	} else if (op == "!=") {
 		if (isSimpleType) {
-			pars(a1 + "!==" + a2)
+			a1 + "!==" + a2
 		} else if (isEmptyArray) {
 			cma(false);
 		} else if (isSingleton) {
 			cms(false);
 		} else {
-			pars("!" + cme());
+			"!" + cme();
 		}
 	} else {
 		if (isSimpleType) {
-			pars(a1 + op + a2)
+			a1 + op + a2
 		} else {
 			cmp();
 		}
