@@ -122,23 +122,23 @@ class NotificationsSupport {
         return function() { };
     }
 
-    public static function scheduleLocalNotification(time : Float, notificationId : Int, notificationCallbackArgs : String, notificationTitle : String, notificationText : String, withSound : Bool) : Void {
+    public static function scheduleLocalNotification(time : Float, notificationId : Int, notificationCallbackArgs : String, notificationTitle : String, notificationText : String, withSound : Bool, pinNotification : Bool, notificationIconUrl : String) : Void {
         #if flash
         #elseif js
+        // TODO: Implement pin notification if possible
         // Notificaitons API is not available
         if (untyped __js__("typeof Notification === 'undefined'")) return;
 
         NotificationsSupport.cancelLocalNotification(notificationId);
         var timer = haxe.Timer.delay(
             function() {
-                var iconNode = Browser.document.getElementById('app-favicon');
                 var strNotificationId : String = Std.string(notificationId);
                 var notification : Notification = new Notification(
                     notificationTitle,
                     {
                         body : notificationText,
                         tag : strNotificationId,
-                        icon : iconNode != null ? untyped iconNode.href : null
+                        icon : notificationIconUrl != "" ? notificationIconUrl : null
                     }
                 );
                 notification.onclick = function() {

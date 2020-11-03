@@ -46,7 +46,7 @@ export {
 		zoomEnabled : Transform<bool>) -> Material;
 	MRealHTMLCrossDomain2(url : string, domain : string, wh : Transform<WidthHeight>, sendChannel : DynamicBehaviour<string>,
 		receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, onError : (string) -> void,
-		zoomEnabled : Transform<bool>) -> Material;
+		zoomEnabled : Transform<bool>, noScroll : bool) -> Material;
 
 	// Changes items on every dragging ends
 	MReorderCols(items : DynamicBehaviour<[?]>, materialize : (?) -> Material, style : [MReorderStyle]) -> Material;
@@ -90,6 +90,12 @@ export {
 		items : [string],
 		selected : DynamicBehaviour<int>,
 		style : [MDropDownOrAutoCompleteStyle],
+	) -> Material;
+
+	MAutoCompleteMultiSelection(
+		items : [string],
+		selected : DynamicBehaviour<[int]>,
+		separator : string
 	) -> Material;
 
 	MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material;
@@ -337,7 +343,7 @@ MRealHTMLCrossDomain(
 	onLoaded : () -> void,
 	zoomEnabled : Transform<bool>
 ) -> Material {
-	MRealHTMLCrossDomain2(url, domain, wh, sendChannel, receiveChannel, targetOrigin, key, onLoaded, ignore, zoomEnabled);
+	MRealHTMLCrossDomain2(url, domain, wh, sendChannel, receiveChannel, targetOrigin, key, onLoaded, ignore, zoomEnabled, false);
 }
 
 MRealHTMLCrossDomain2(
@@ -350,7 +356,8 @@ MRealHTMLCrossDomain2(
 	key : string,
 	onLoaded : () -> void,
 	onError : (string) -> void,
-	zoomEnabled : Transform<bool>
+	zoomEnabled : Transform<bool>,
+	noScroll : bool
 ) -> Material {
 	sendToJS = ref nop1;
 	getHostCall = \hc -> sendToJS := \msg -> hc("postMessage", [msg, targetOrigin]) |> ignore;
@@ -380,6 +387,7 @@ MRealHTMLCrossDomain2(
 					OnError(onError),
 					ZoomEnabled(zoomEnabledB)
 				]
+				|> (\st -> ifArrayPush(st, noScroll, NoScroll()))
 			)
 		)
 	)
@@ -735,7 +743,7 @@ MAddShortcutDialog(manager : MaterialManager, onDismiss : () -> void) -> () -> v
 							MDialogTitle(_("Add to Home Screen")),
 							MDialogScroll()
 						],
-						if (strContains(toLowerCase(getBrowser()), "safari")) {
+						if (isSafariBrowser()) {
 							MLines([
 								MParagraph(_("To create a website shortcut on your Home Screen, click on the share button."), []),
 								showTooltipImageFn("ios_safari_share_button.png", WidthHeight(60.0, 60.0), Point(0.0, 0.0), 60.0, 60.0),
@@ -872,6 +880,81 @@ MDropDownOrAutoComplete(
 			)
 			else m
 		)
+}
+
+MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>, separator : string) -> Material {
+	text = make("");
+	focused = make(false);
+
+	idxs2string = \idxs -> concatStrings(map(idxs, \idx -> elementAt(items, idx, "") + separator));
+	trimStr = \s -> trim(s) |> toLowerCase;
+	string2idx = \s -> findi(items, \item -> trimStr(item) == trimStr(s));
+	string2idxsMulti = \str -> filtermap(strSplit2WithoutLeave(str, [separator]), string2idx);
+
+	matchFn = \matcher, input0, maxHits, prefix, exhaustive, position -> {
+		input = trim(takeAfterLast(input0, separator, input0));
+		if (input == "")
+			filtermap(matcher.sentences, \s -> {
+				if (s != "") Some(SentenceHit(matcher, s, 0., makeSet()))
+				else None()
+			})
+		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
+	}
+
+	matchHandler = \matched, __, __ -> {
+		deferred(\ -> nextDistinct(focused, true));
+		maybeApply(string2idx(matched), \idx ->
+		 	if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
+			else nextDistinct(selected, filter(getValue(selected), \it -> it != idx))
+		);
+		idxs2string(getValue(selected))
+	}
+
+	completionFn = \com, active, __ ->
+		MGetManager(\manager -> MGetFocusGroup(\parent -> {
+			selectedB = make(false);
+			isSelected = fselect(selected, FLift(\idxs ->
+				eitherMap(
+					string2idx(com.sentence),
+					\idx -> contains(idxs, idx),
+					false
+				)
+			));
+
+			wrapSetWordFn = \__ -> {
+				reverseBehaviour(selectedB);
+				deferred(\ -> nextDistinct(focused, true))
+			}
+
+			MCols2(
+				MConstruct([
+					\ -> fconnect(isSelected, selectedB),
+					makeSubscribe2(selectedB, \sel ->
+						maybeApply(string2idx(com.sentence), \idx ->
+						 	if (sel) {
+						 		if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
+						 	}
+							else nextDistinct(selected, filter(getValue(selected), \it -> it != idx))
+						)
+					)],
+					MCheckBox(TEmpty(), selectedB, [])
+				),
+				defaultCompletionFn(manager, parent, []).fn(com, active, wrapSetWordFn)
+			)
+		}));
+
+	MAutoComplete(text, items, [
+		MSentenceMatcher(buildSentenceMatcher, matchFn),
+		TMatchedHandler(matchHandler),
+		MCompletionFn(completionFn)
+	], [
+		MFocused(focused),
+		MPositionOnFocus(\c, p -> strlen(c)),
+	])
+	|> (\m -> MConstruct(
+		[\ -> bidirectionalLink(selected, text, idxs2string, string2idxsMulti)],
+		m
+	))
 }
 
 MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material {
