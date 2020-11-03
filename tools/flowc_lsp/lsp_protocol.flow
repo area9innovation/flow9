@@ -129,7 +129,9 @@ lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (st
 				loop_cb();
 			} else {
 				switch (lookupTree(lspMethods, request.method)) {
-					Some(m): m(LspMethodCall(lsp_conf, request.id, request.params, out_cb, loop_cb, exit_cb));
+					Some(method): {
+						method(LspMethodCall(lsp_conf, request.id, request.params, out_cb, loop_cb, exit_cb));
+					}
 					None(): {
 						if (request.method == "$/cancelRequest") {
 							// Ignore this one
@@ -540,6 +542,7 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 	switch (json2LspExecuteCommandParams(call.params)) {
 		Some(commandParams): {
 			if (commandParams.command == "compile") {
+				// Execute a special command: compilation
 				if (length(commandParams.arguments) == 0) {
 					call.out_cb(lspErrorResponse(call.id, 1, "no file for compilation is provided"));
 					call.loop_cb();
@@ -581,8 +584,33 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 						);
 					}
 				}
+			} else if (commandParams.command == "command") {
+				// Execute a general command
+				params = filtermap(commandParams.arguments, \arg -> 
+					switch (arg) {
+						JsonString(str): {
+							opt_val = strSplit(str, "=");
+							if (length(opt_val) == 0) None() else
+							if (length(opt_val) == 1) Some(Pair(opt_val[0], "")) else {
+								opt = opt_val[0];
+								val = opt_val[1];
+								Some(Pair(opt, val));
+							}
+						}
+						default: None();
+					}
+				);
+				conf = compilerConfigFromConfig(pairs2tree(params));
+				lspRunConf(false,
+					conf, 
+					\code, out, err -> {
+						msg = if (err == "") out else err + "\n" + out;
+						call.out_cb(lspNormalResponse(call.id, JsonString(msg)));
+						call.loop_cb();
+					}
+				);
 			} else {
-				call.out_cb(lspErrorResponse(call.id, 1, "command " + commandParams.command + " is unknown"));
+				call.out_cb(lspErrorResponse(call.id, 1, "Unknown command: '" + commandParams.command + "'"));
 				call.loop_cb();
 			}
 		}
