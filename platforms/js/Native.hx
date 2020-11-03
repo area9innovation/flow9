@@ -1059,6 +1059,10 @@ class Native {
 
 	#if js
 	public static function setKeyValueJS(k : String, v : String, session : Bool) : Bool {
+		#if flow_nodejs
+//			Errors.report("Cannot set value for key \"" + k + "\"");
+			return false;
+		#else
 		try {
 			var storage = session? untyped sessionStorage : untyped localStorage;
 			if (isIE())
@@ -1070,9 +1074,14 @@ class Native {
 			Errors.report("Cannot set value for key \"" + k + "\": " + e);
 			return false;
 		}
+		#end
 	}
 
 	public static function getKeyValueJS(key : String, def : String, session : Bool) : String {
+		#if flow_nodejs
+			// Errors.report("Cannot get value for key \"" + key + "\"");
+			return def;
+		#else
 		try {
 			var storage = session? untyped sessionStorage : untyped localStorage;
 			var value = untyped storage.getItem(key);
@@ -1087,9 +1096,13 @@ class Native {
 			Errors.report("Cannot get value for key \"" + key + "\": " + e);
 			return def;
 		}
+		#end
 	}
 
 	public static function removeKeyValueJS(key : String, session : Bool) : Void {
+		#if flow_nodejs
+//			Errors.report("Cannot get remove key \"" + key + "\"");
+		#else
 		var useMask = StringTools.endsWith(key, "*");
 		var mask = "";
 		if (useMask) mask = key.substr(0, key.length-1);
@@ -1107,6 +1120,7 @@ class Native {
 		} catch (e : Dynamic) {
 			Errors.report("Cannot remove key \"" + key + "\": " + e);
 		}
+		#end
 	}
 
 	public static function removeAllKeyValuesJS(session : Bool) : Void {
