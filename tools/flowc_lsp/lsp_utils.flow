@@ -153,7 +153,7 @@ lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, str
 }
 
 lspServerLog(message : string, conf : Tree<string, string>) -> void {
-	log_file = lookupTreeDef(conf, "server-log", getFlowDir() + 
+	log_file = lookupTreeDef(conf, "server-log", findFlowDir() + 
 		"/.log/flowc_lsp_server_1.log");
 	log_dir = fcDirName(log_file);
 	if (log_dir != "") {
@@ -249,15 +249,23 @@ lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, strin
 		out1 = if (trim_out) lspTrimOutput(out) else out;
 		on_exit(code, out1, err);
 	}
-	lspRunConfViaHttp(conf, on_exit_1,
-		\code, msg -> {
-			if (getConfigParameterDef(conf.config, "client-mode", "") == "1") {
-				on_exit(code, "", "Error " + i2s(code) + ": " + msg);
-			} else {
-				startProcess("flowc1", lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", on_exit_1);
+	run_locally = \-> {
+		startProcess("flowc1", lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", on_exit_1);
+	}
+	if (containsKeyTree(conf.config, "server-kill")) {
+		// Executing 'server-kill=1' on server makes no sense - must be executed on a distinguished process.
+		run_locally();
+	} else {
+		lspRunConfViaHttp(conf, on_exit_1,
+			\code, msg -> {
+				if (getConfigParameterDef(conf.config, "client-mode", "") == "1") {
+					on_exit(code, "", "Error " + i2s(code) + ": " + msg);
+				} else {
+					run_locally();
+				}
 			}
-		}
-	);
+		);
+	}
 }
 
 lspRunConfViaHttp(
@@ -272,9 +280,10 @@ lspRunConfViaHttp(
 	serialized_server_job = 
 		(getConfigParameterDef(conf.config, "compile-expression", "") != "") || 
 		(getConfigParameterDef(conf.config, "dump-program", "") == "1");
+	serialized_config = "config_" + serialize(patchedConfig);
 	httpCustomRequest(
 		serverUrl,
-		GET(), [], RequestPayload("config_" + serialize(patchedConfig)),
+		GET(), [], RequestPayload(serialized_config),
 		\status, data, headers -> {
 			code = status - 200;
 			if (code == 0) {

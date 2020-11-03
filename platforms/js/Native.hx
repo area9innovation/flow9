@@ -640,17 +640,31 @@ class Native {
 
 	#if js
 	private static var DeferQueue : Array< Void -> Void > = new Array();
+	private static var deferTolerance : Int = 250;
+	private static var deferActive : Bool = false;
 	public static function defer(cb : Void -> Void) : Void {
-		if (DeferQueue.length == 0) {
-			var fn = function() {
-				for (f in DeferQueue) f();
-				DeferQueue = [];
-			}
+		var fn = function() {
+			var t0 = NativeTime.timestamp();
 
-			untyped __js__("setTimeout(fn, 0);");
+			// we shouldn't block the thread in JS for long time because it freeze UI
+			while (NativeTime.timestamp() - t0 < Native.deferTolerance && DeferQueue.length > 0) {
+				var f = DeferQueue.shift();
+				f();
+			}
+			if (DeferQueue.length > 0) {
+				untyped __js__("setTimeout(fn, 42);");
+			} else {
+				Native.deferActive = false;
+			}
 		}
 
-		DeferQueue.push(cb);
+		if (Native.deferActive) {
+			DeferQueue.push(cb);
+		} else {
+			Native.deferActive = true;
+			DeferQueue.push(cb);
+			untyped __js__("setTimeout(fn, 0);");
+		}
 	}
 	#end
 
@@ -1045,6 +1059,10 @@ class Native {
 
 	#if js
 	public static function setKeyValueJS(k : String, v : String, session : Bool) : Bool {
+		#if flow_nodejs
+//			Errors.report("Cannot set value for key \"" + k + "\"");
+			return false;
+		#else
 		try {
 			var storage = session? untyped sessionStorage : untyped localStorage;
 			if (isIE())
@@ -1056,9 +1074,14 @@ class Native {
 			Errors.report("Cannot set value for key \"" + k + "\": " + e);
 			return false;
 		}
+		#end
 	}
 
 	public static function getKeyValueJS(key : String, def : String, session : Bool) : String {
+		#if flow_nodejs
+			// Errors.report("Cannot get value for key \"" + key + "\"");
+			return def;
+		#else
 		try {
 			var storage = session? untyped sessionStorage : untyped localStorage;
 			var value = untyped storage.getItem(key);
@@ -1073,9 +1096,13 @@ class Native {
 			Errors.report("Cannot get value for key \"" + key + "\": " + e);
 			return def;
 		}
+		#end
 	}
 
 	public static function removeKeyValueJS(key : String, session : Bool) : Void {
+		#if flow_nodejs
+//			Errors.report("Cannot get remove key \"" + key + "\"");
+		#else
 		var useMask = StringTools.endsWith(key, "*");
 		var mask = "";
 		if (useMask) mask = key.substr(0, key.length-1);
@@ -1093,6 +1120,7 @@ class Native {
 		} catch (e : Dynamic) {
 			Errors.report("Cannot remove key \"" + key + "\": " + e);
 		}
+		#end
 	}
 
 	public static function removeAllKeyValuesJS(session : Bool) : Void {
