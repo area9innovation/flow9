@@ -392,9 +392,10 @@ class PixiWorkarounds {
 				let width = 0;
 				let line = '';
 				let lines = '';
-				let linesCount = 0;
+				let linesCount = 1;
 
 				const cache = {};
+				const wordSpacing = style.wordSpacing || 0;
 				const letterSpacing = style.letterSpacing;
 				const whiteSpace = style.whiteSpace;
 				const ellipsis = style.ellipsis;
@@ -447,12 +448,12 @@ class PixiWorkarounds {
 						{
 							canPrependSpaces = !collapseSpaces;
 
-							if (linesCount >= ellipsis) {
+							if (linesCount > ellipsis) {
 								addEllipsis();
 								break;
 							}
 
-							lines += PIXI.TextMetrics.addLine(line, ++linesCount != ellipsis);
+							lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 							line = '';
 							width = 0;
 							continue;
@@ -480,19 +481,18 @@ class PixiWorkarounds {
 					const tokenWidth = PIXI.TextMetrics.getFromCache(token, letterSpacing, cache, context, style);
 
 					// word is longer than desired bounds
-					if (tokenWidth > wordWrapWidth - (linesCount == ellipsis ? ellipsisWidth : 0)
-						|| (linesCount + 1 >= ellipsis && tokenWidth + width > wordWrapWidth - (linesCount == ellipsis ? ellipsisWidth : 0)))
+					if ((tokenWidth + (linesCount == ellipsis ? width : 0) + ((linesCount == ellipsis && (i != tokens.length - 1)) ? ellipsisWidth : 0)) > wordWrapWidth)
 					{
 						// if we are not already at the beginning of a line
 						if (line !== '' && tokenWidth > wordWrapWidth - (linesCount == ellipsis ? ellipsisWidth : 0))
 						{
-							if (linesCount >= ellipsis) {
+							if (linesCount > ellipsis) {
 								addEllipsis();
 								break;
 							}
 
 							// start newlines for overflow words
-							lines += PIXI.TextMetrics.addLine(line, ++linesCount != ellipsis);
+							lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 							line = '';
 							width = 0;
 						}
@@ -538,7 +538,7 @@ class PixiWorkarounds {
 								{
 									canPrependSpaces = false;
 
-									if (linesCount >= ellipsis) {
+									if (linesCount > ellipsis) {
 										if (lines.length == 0) {
 											lines += line;
 										}
@@ -546,7 +546,7 @@ class PixiWorkarounds {
 										break;
 									}
 
-									lines += PIXI.TextMetrics.addLine(line, ++linesCount != ellipsis);
+									lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 									line = '';
 									width = 0;
 								}
@@ -561,7 +561,7 @@ class PixiWorkarounds {
 						{
 							canPrependSpaces = false;
 
-							if (linesCount >= ellipsis) {
+							if (linesCount > ellipsis) {
 								addEllipsis();
 								break;
 							}
@@ -570,12 +570,12 @@ class PixiWorkarounds {
 							// finish that line and start a new one
 							if (line.length > 0)
 							{
-								lines += PIXI.TextMetrics.addLine(line, ++linesCount != ellipsis);
+								lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 								line = '';
 								width = 0;
 							}
 
-							if (linesCount >= ellipsis) {
+							if (linesCount > ellipsis) {
 								addEllipsis();
 								break;
 							}
@@ -583,7 +583,7 @@ class PixiWorkarounds {
 							const isLastToken = i === tokens.length - 1;
 
 							// give it its own line if it's not the end
-							lines += PIXI.TextMetrics.addLine(token, ++linesCount != ellipsis && !isLastToken);
+							lines += PIXI.TextMetrics.addLine(token, linesCount++ != ellipsis && !isLastToken);
 							line = '';
 							width = 0;
 						}
@@ -594,18 +594,18 @@ class PixiWorkarounds {
 					{
 						// word won't fit because of existing words
 						// start a new line
-						if (tokenWidth + width > wordWrapWidth - (linesCount == ellipsis ? ellipsisWidth : 0))
+						if (tokenWidth + width > wordWrapWidth - ((linesCount == ellipsis && (i != tokens.length - 1)) ? ellipsisWidth : 0))
 						{
 							// if its a space we don't want it
 							canPrependSpaces = false;
 
-							if (linesCount >= ellipsis) {
+							if (linesCount > ellipsis) {
 								addEllipsis();
 								break;
 							}
 
 							// add a new line
-							lines += PIXI.TextMetrics.addLine(line, ++linesCount != ellipsis);
+							lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 
 							// start a new line
 							line = '';
@@ -619,12 +619,12 @@ class PixiWorkarounds {
 							line += token;
 
 							// update width counter
-							width += tokenWidth;
+							width += tokenWidth + (token != ' ' ? wordSpacing : 0.0);
 						}
 					}
 				}
 
-				if (linesCount >= ellipsis) {
+				if (linesCount > ellipsis) {
 					if (line != '') {
 						addEllipsis();
 					}
@@ -730,7 +730,7 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					lineWidth += (lines[i].length - 1) * style.letterSpacing;
+					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
 
 					lineWidths[i] = lineWidth;
 					maxLineWidth = Math.max(maxLineWidth, lineWidth);

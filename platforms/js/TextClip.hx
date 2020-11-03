@@ -654,6 +654,9 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			this.style.letterSpacing = letterSpacing;
 		}
+		if (untyped Math.isFinite(RenderSupport.PixiStage.wordSpacing) && RenderSupport.PixiStage.wordSpacing != 0.0) {
+			this.style.wordSpacing = untyped RenderSupport.PixiStage.wordSpacing;
+		}
 		this.style.fontFamily = fontStyle.family;
 		this.style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		this.style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
