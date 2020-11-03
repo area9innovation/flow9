@@ -78,8 +78,13 @@ export {
     compilerConfigToString(config : CompilerConfig) -> string;
 	jsCliParamsToTree(params : JSCliParams) -> Tree<string, string>;
 
-    // Finds the directory of flow itself. Is not very clever
+    // Finds the directory of flow distribution.
+	// In case of failure prints the warning message and returns "../flow9/"
 	getFlowDir() -> string;
+
+	// Tries to find the directory of flow distribution.
+	// In case of failure returns "" and doens't report anything.
+	findFlowDir() -> string;
 
 	fcDirName(path : string) -> string;
 
@@ -92,31 +97,42 @@ export {
 	setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig;
 }
 
+getFlowDir() -> string {
+	flowdir = findFlowDir();
+	if (flowdir != "") flowdir else {
+		println("WARNING: Could not determine the flow directory.");
+		println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
+		"../flow9/";
+	} 
+}
+
 fcFlowDir : ref Maybe<string> = ref None();
 
-getFlowDir() -> string {
+findFlowDir() -> string {
 	init_dir = \-> {
 		// Use the 'print-flow-dir=1' option of flowc
 		flowDirByFlowc = \-> {
-			dir_lines = ref "";
-			err_lines = ref "";
-			code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".", 
-				\out -> dir_lines := ^dir_lines + out, 
-				\err -> {
-					println(err);
-					err_lines := err;
-				}
-			);
-			filtered = filtermap(strSplit(^dir_lines, "\n"), \line -> {
-				line1 = trim2(line, " \n\t\r");
-				if (line1 == "") None() else Some(line1);
-			});
-			if (code != 0 || ^err_lines != "" || length(filtered) != 1) {
-				println("WARNING: Could not determine the flow directory.");
-				println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
-				"../flow9/";
+			if (strContains(getApplicationPath(), "flowc1")) {
+				// flowc1 must not use itsef in this function, 
+				// otherwise there's a fork bomb.
+				"" 
 			} else {
-				filtered[0];
+				dir_lines = ref "";
+				err_lines = ref "";
+				code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".", 
+					\out -> dir_lines := ^dir_lines + out, 
+					\err -> {
+						println(err);
+						err_lines := err;
+					}
+				);
+				filtered = filtermap(strSplit(^dir_lines, "\n"), \line -> {
+					line1 = trim2(line, " \n\t\r");
+					if (line1 == "") None() else Some(line1);
+				});
+				if (code != 0 || ^err_lines != "" || length(filtered) != 1) "" else {
+					filtered[0];
+				}
 			}
 		}
 		// Use the path of the executable
@@ -128,6 +144,8 @@ getFlowDir() -> string {
 				takeBefore(appPath, "platforms/java", appPath)
 			} else if (strContains(appPath, "tools/flowc/")) {
 				takeBefore(appPath, "tools/flowc/", appPath)
+			} else if (strContains(appPath, "tools/flowc_lsp/")) {
+				takeBefore(appPath, "tools/flowc_lsp/", appPath)
 			} else if (strContains(appPath, "flow9/bin/")) {
 				takeBefore(appPath, "bin/", appPath)
 			} else if (strContains(appPath, "bin/")) {
