@@ -589,6 +589,7 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+		monitorUserStyleChanges();
 	}
 
 	private static function StartFlowMainWithTimeCheck() {
