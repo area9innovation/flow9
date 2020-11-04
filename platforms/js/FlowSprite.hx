@@ -382,6 +382,7 @@ class FlowSprite extends Sprite {
 			nativeWidget = Browser.document.createElement(tagName);
 			this.updateClipID();
 
+			nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
 			nativeWidget.onload = onLoaded;
 			nativeWidget.onerror = onError;
 			nativeWidget.src = url;

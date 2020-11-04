@@ -2463,6 +2463,15 @@ class RenderSupport {
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = untyped clip.getWidth();
 			var clipHeight = untyped clip.getHeight();
+			if (checkAlpha != null && untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
+				var tempCanvas = Browser.document.createElement('canvas');
+				untyped tempCanvas.width = clipWidth;
+				untyped tempCanvas.height = clipHeight;
+				var ctx = untyped tempCanvas.getContext('2d');
+				untyped ctx.drawImage(clip.nativeWidget, 0, 0, clipWidth, clipHeight);
+				var pixel = ctx.getImageData(point.x, point.y, 1, 1);
+				if (pixel.data[3] / 255 < checkAlpha) return null;
+			}
 
 			if (local.x >= 0.0 && local.y >= 0.0 && local.x <= clipWidth && local.y <= clipHeight) {
 				return clip;
