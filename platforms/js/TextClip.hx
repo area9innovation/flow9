@@ -608,11 +608,21 @@ class TextClip extends NativeWidgetClip {
 			return "Black";
 	}
 
+	private static var ffMap : Dynamic;
+
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
-		fontFamilies = fontWeight > 0 || fontSlope != ""
-				? fontFamilies.split(",").map(function (fontFamily) { return recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(",")
-				: fontFamilies;
+
+		if (fontWeight > 0 || fontSlope != "") {
+			untyped __js__("
+			if (TextClip.ffMap === undefined) TextClip.ffMap = {}
+			if (TextClip.ffMap[fontFamilies] === undefined) {
+				TextClip.ffMap[fontFamilies] = fontFamilies.split(',').map(function(fontFamily){ return TextClip.recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(',');
+			}
+			fontFamilies = TextClip.ffMap[fontFamilies];
+			");
+		}
+
 		if (Platform.isSafari) {
 			fontSize = Math.round(fontSize);
 		}
@@ -620,19 +630,19 @@ class TextClip extends NativeWidgetClip {
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
 		this.doNotRemap = fontStyle.doNotRemap;
 
-		style.fontSize = Math.max(fontSize, 0.6);
-		style.fill = RenderSupport.makeCSSColor(fillColor, fillOpacity);
-		style.letterSpacing = letterSpacing;
-		style.fontFamily = fontStyle.family;
-		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
-		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		style.lineHeight = Math.ceil(fontSize * 1.15);
-		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
-		style.padding = Math.ceil(fontSize * 0.2);
+		this.style.fontSize = Math.max(fontSize, 0.6);
+		this.style.fill = RenderSupport.makeCSSColor(fillColor, fillOpacity);
+		this.style.letterSpacing = letterSpacing;
+		this.style.fontFamily = fontStyle.family;
+		this.style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
+		this.style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
+		this.style.lineHeight = Math.ceil(fontSize * 1.15);
+		this.style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
+		this.style.padding = Math.ceil(fontSize * 0.2);
 
 		measureFont();
 
-		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
+		untyped __js__("this.text = (text !== '' && text.charAt(text.length-1) === '\\n') ? text.slice(0, text.length-1) : text");
 		this.contentGlyphs = applyTextMappedModification(RenderSupport.RendererType == "html" ? adaptWhitespaces(this.text) : this.text);
 		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 

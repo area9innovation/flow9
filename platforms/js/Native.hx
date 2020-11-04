@@ -640,17 +640,31 @@ class Native {
 
 	#if js
 	private static var DeferQueue : Array< Void -> Void > = new Array();
+	private static var deferTolerance : Int = 250;
+	private static var deferActive : Bool = false;
 	public static function defer(cb : Void -> Void) : Void {
-		if (DeferQueue.length == 0) {
-			var fn = function() {
-				for (f in DeferQueue) f();
-				DeferQueue = [];
-			}
+		var fn = function() {
+			var t0 = NativeTime.timestamp();
 
-			untyped __js__("setTimeout(fn, 0);");
+			// we shouldn't block the thread in JS for long time because it freeze UI
+			while (NativeTime.timestamp() - t0 < Native.deferTolerance && DeferQueue.length > 0) {
+				var f = DeferQueue.shift();
+				f();
+			}
+			if (DeferQueue.length > 0) {
+				untyped __js__("setTimeout(fn, 42);");
+			} else {
+				Native.deferActive = false;
+			}
 		}
 
-		DeferQueue.push(cb);
+		if (Native.deferActive) {
+			DeferQueue.push(cb);
+		} else {
+			Native.deferActive = true;
+			DeferQueue.push(cb);
+			untyped __js__("setTimeout(fn, 0);");
+		}
 	}
 	#end
 
@@ -1045,6 +1059,10 @@ class Native {
 
 	#if js
 	public static function setKeyValueJS(k : String, v : String, session : Bool) : Bool {
+		#if flow_nodejs
+//			Errors.report("Cannot set value for key \"" + k + "\"");
+			return false;
+		#else
 		try {
 			var storage = session? untyped sessionStorage : untyped localStorage;
 			if (isIE())
@@ -1056,9 +1074,14 @@ class Native {
 			Errors.report("Cannot set value for key \"" + k + "\": " + e);
 			return false;
 		}
+		#end
 	}
 
 	public static function getKeyValueJS(key : String, def : String, session : Bool) : String {
+		#if flow_nodejs
+			// Errors.report("Cannot get value for key \"" + key + "\"");
+			return def;
+		#else
 		try {
 			var storage = session? untyped sessionStorage : untyped localStorage;
 			var value = untyped storage.getItem(key);
@@ -1073,9 +1096,13 @@ class Native {
 			Errors.report("Cannot get value for key \"" + key + "\": " + e);
 			return def;
 		}
+		#end
 	}
 
 	public static function removeKeyValueJS(key : String, session : Bool) : Void {
+		#if flow_nodejs
+//			Errors.report("Cannot get remove key \"" + key + "\"");
+		#else
 		var useMask = StringTools.endsWith(key, "*");
 		var mask = "";
 		if (useMask) mask = key.substr(0, key.length-1);
@@ -1093,6 +1120,7 @@ class Native {
 		} catch (e : Dynamic) {
 			Errors.report("Cannot remove key \"" + key + "\": " + e);
 		}
+		#end
 	}
 
 	public static function removeAllKeyValuesJS(session : Bool) : Void {
@@ -1806,7 +1834,7 @@ class Native {
 	static var jsonStringEmpty : Dynamic;
 
 	// Chrome and maybe other browsers faster with for(var f in o) that with Object.getOwnPropertyNames
-	private static function object2JsonStructs(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
+	private static function object2JsonStructsCompacting(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
 			var n = o.length;
@@ -1872,7 +1900,7 @@ class Native {
 	}
 
 	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
-	private static function object2JsonStructs_FF(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
+	private static function object2JsonStructsCompacting_FF(o : Dynamic, sDict : Dynamic, jsDict : Dynamic, nDict : Dynamic) : Dynamic {
 		untyped __js__("
 		if (Array.isArray(o)) {
 			var n = o.length;
@@ -1939,6 +1967,90 @@ class Native {
 		return "";
 	}
 
+	private static function object2JsonStructs(o : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var a1 = Native.map(o,Native.object2JsonStructs);
+			var obj = { _id : Native.sidJsonArray };
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString };
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble };
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = [];
+						for(var f in o) {
+							var a2 = Native.object2JsonStructs(o[f]);
+							var obj = { _id : Native.sidPair };
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields.push(obj);
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
+	}
+
+	// Firefox and maybe other browsers faster with Object.getOwnPropertyNames that with for(var f in o)
+	private static function object2JsonStructs_FF(o : Dynamic) : Dynamic {
+		untyped __js__("
+		if (Array.isArray(o)) {
+			var a1 = Native.map(o,Native.object2JsonStructs_FF);
+			var obj = { _id : Native.sidJsonArray};
+			obj[Native.sidJsonArrayVal] = a1;
+			return obj;
+		} else {
+			var t = typeof o;
+			switch (t) {
+				case 'string':
+					var obj = { _id : Native.sidJsonString };
+					obj[Native.sidJsonStringVal] = o;
+					return obj;
+				case 'number':
+					var obj = { _id : Native.sidJsonDouble };
+					obj[Native.sidJsonDoubleVal] = o;
+					return obj;
+				case 'boolean': return o ? Native.jsonBoolTrue : Native.jsonBoolFalse;
+				default:
+					if(o == null) {
+						return Native.jsonNull;
+					} else {
+						var mappedFields = Object.getOwnPropertyNames(o);
+						for(var i=0; i< mappedFields.length; i++) {
+							var f = mappedFields[i];
+							var a2 = Native.object2JsonStructs_FF(o[f]);
+							var obj = { _id : Native.sidPair };
+							obj[Native.sidPairFirst] = f;
+							obj[Native.sidPairSecond] = a2;
+							mappedFields[i] = obj;
+						}
+						var obj = { _id : Native.sidJsonObject};
+						obj[Native.sidJsonObjectFields] = mappedFields;
+						return obj;
+					}
+			}
+		}");
+
+		return "";
+	}
+
 	private static var parseJsonFirstCall = true;
 	public static function parseJson(json : String) : Dynamic {
 		try {
@@ -1970,9 +2082,18 @@ class Native {
 			}
 			if (json == "") return Native.jsonDoubleZero;
 
-			return Platform.isFirefox ?
-				object2JsonStructs_FF(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}")) :
-				object2JsonStructs(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}"));
+			if (Platform.isIOS && json.length > 1024) {
+				// on IOS memory restriction is very tight so we try to not create duplicate strings if possible
+				// it might have advantages for quite long parsed string only
+				return Platform.isFirefox ?
+				object2JsonStructsCompacting_FF(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}")) :
+				object2JsonStructsCompacting(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}"));
+			} else {
+				return Platform.isFirefox ?
+				object2JsonStructs_FF(haxe.Json.parse(json)) :
+				object2JsonStructs(haxe.Json.parse(json));
+			}
+
 		} catch (e : Dynamic) {
 			return Native.jsonDoubleZero;
 		}
