@@ -2456,7 +2456,6 @@ class RenderSupport {
 		}
 
 		if (untyped HaxeRuntime.instanceof(clip, NativeWidgetClip) || untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
-			if (untyped HaxeRuntime.instanceof(clip, FlowSprite) && clip.transparentForInput) return null;
 			if (untyped clip.worldTransformChanged) {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
@@ -2576,10 +2575,6 @@ class RenderSupport {
 
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
-	}
-
-	public static function setPictureTransparentForInput(picture : FlowSprite) {
-		picture.transparentForInput = true;
 	}
 
 	public static function cursor2css(cursor : String) : String {

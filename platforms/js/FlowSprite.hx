@@ -41,7 +41,6 @@ class FlowSprite extends Sprite {
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
-	public var transparentForInput : Bool = false;
 	private var disposed : Bool = false;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
