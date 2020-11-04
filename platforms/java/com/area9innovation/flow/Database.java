@@ -105,7 +105,7 @@ public class Database extends NativeHost {
         DBObject db = new DBObject();
         try {
 			if (socket.isEmpty()) {
-	            db.con = DriverManager.getConnection(String.format("jdbc:mysql://%s:%d/%s?allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&autoReconnect=true&characterEncoding=UTF-8", host, port, database), user, password);
+	            db.con = DriverManager.getConnection(String.format("jdbc:mysql://%s:%d/%s?allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&autoReconnect=true&tcpKeepAlive=true&characterEncoding=UTF-8", host, port, database), user, password);
 			} else {
 				// This makes H2 work
 				Class.forName("org.h2.Driver");
