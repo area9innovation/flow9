@@ -158,169 +158,198 @@ renderParagraph(
 	rtl : bool,
 	widthManager : ParagraphWidthManager
 ) -> Form {
-
-	alignment : ParaLineAlignment = extractParaLineAlignment(s);
-	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
-	needIndent = genIndent != 0.0;
-
-	interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
-
-	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
-	interLineHighlighting = containsStruct(s, InterlineHighlighting());
-	fitLongWords = containsStruct(s, ParagraphFitLongWords());
-
-	tightWidth = contains(s, TightWidth());
-
-	fill = filtermap(s, \st -> switch (st) {
-		Fill(__): Some(st);
-		FillOpacity(__): Some(st);
-		default: None();
-	});
-
-	topLineBaseline = contains(s, TopLineBaseline());
-
-	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
-	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
-
-	isSingleLine = containsStruct(s, ParagraphSingleLine());
-	isParagraphMarked = containsStruct(s, ParagraphMarked());
-	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
-
-	// Expand elements into word-units
-	glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
-	// Construct our ParaWords
-	words : [ParaWord] = map(list2array(glued), makeParaWord);
-
-	aw = make(0.0);
-	update = make(0);
-	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0));
-
-	renderParaLinesFn = \lines, storyWidth -> {
-		renderParaLines(
-			storyWidth, lines, tightWidth, alignment, interlineSpacing,
-			topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-			interLineHighlighting, fitLongWords
-		);
-	}
-	paragraphAccessibilityParent = ^accessibilityParent;
-
-	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = if (widthManager == dummyParagraphWidthManager) {
-		Select(linesB, \lines -> {
-			prevAccessibilityParent = ^accessibilityParent;
-			accessibilityParent := paragraphAccessibilityParent;
-			rpl = renderParaLinesFn(lines, getValue(aw));
-			accessibilityParent := prevAccessibilityParent;
-			rpl
-		});
-	} else if (widthManager.infoOnly) {
-		// in this non-TightWidth case we just inform WidthManager about our width
-		// we will not take story width into account in this case, but use availableWidth as usual
-		Select(linesB, \lines -> {
-			prevAccessibilityParent = ^accessibilityParent;
-			accessibilityParent := paragraphAccessibilityParent;
-			rendered = renderParaLinesFn(lines, getValue(aw));
-			nextDistinct(widthManager.width, lines.maxLineWidth);
-			accessibilityParent := prevAccessibilityParent;
-			rendered
-		});
+	te2form = \te : TextElement -> switch(te) {
+		InspectElement(__, inspected): [switch(inspected) {
+			Form(): inspected;
+			LinePart(__, mid, __): mid;
+			Space(f): f;
+		}];
+		LinePart(__, mid, __): [mid];
+		NewLine(): [];  // TODO 813
+		Space(f): [f];
+	};
+	we2form = ref \we : WrapElement -> [];
+	we2form := \we : WrapElement-> switch(we) {
+		Form(): [we];
+		GlueFragments(): [];
+		TextElement(): te2form(we);
+		WordWrapInteractive(elem, __): (^we2form)(elem);
+	};
+	if (isUrlParameterTrue("813")) {
+		FormParagraph(mapConcat(p, \pe -> switch(pe) {
+			Form(): [pe];
+			GlueFragments(): [];
+			TextFragments(parts): mapConcat(list2array(reverseList(parts)), \part -> switch(part) {
+				Form(): [part];
+				GlueFragments(): [];
+				TextElement(): te2form(part);
+				WordWrapInteractive(elem, __): (^we2form)(elem);
+			});
+		}), [])
 	} else {
-		Select2(linesB, widthManager.storyWidth, \lines, storyWidth -> {
-			prevAccessibilityParent = ^accessibilityParent;
-			accessibilityParent := paragraphAccessibilityParent;
-			rendered = renderParaLinesFn(
-				lines,
-				if (storyWidth > 0.0) storyWidth else getValue(aw),
-			);
-			// we have to notify story about changes in our width.
-			// it could alter widthManager.storyWidth if we are new winner so we have to defer
-			deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, lines.maxLineWidth));
-			accessibilityParent := prevAccessibilityParent;
-			rendered
+		alignment : ParaLineAlignment = extractParaLineAlignment(s);
+		genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
+		needIndent = genIndent != 0.0;
+
+		interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
+
+		interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
+		interLineHighlighting = containsStruct(s, InterlineHighlighting());
+		fitLongWords = containsStruct(s, ParagraphFitLongWords());
+
+		tightWidth = contains(s, TightWidth());
+
+		fill = filtermap(s, \st -> switch (st) {
+			Fill(__): Some(st);
+			FillOpacity(__): Some(st);
+			default: None();
 		});
-	}
 
-	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	dynamicWords = filter(words, \w -> !isConst(w.metrics));
-	ndynamic = length(dynamicWords);
-	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
+		topLineBaseline = contains(s, TopLineBaseline());
 
-	contentGroup = Group(concat(
-		[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
-		filtermap(words, \word -> {
-			applyStyles = \form -> eitherMap(
-				lookupTree(interactiveStyles, either(word.interactivityIdM, -1)),
-				\wordStyles -> applyListenersAndModifiers(wordStyles, form),
-				form
+		indent = extractStruct(s, FirstLineIndent(0.0)).indent;
+		linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
+
+		isSingleLine = containsStruct(s, ParagraphSingleLine());
+		isParagraphMarked = containsStruct(s, ParagraphMarked());
+		paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
+
+		// Expand elements into word-units
+		glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
+		// Construct our ParaWords
+		words : [ParaWord] = map(list2array(glued), makeParaWord);
+
+		aw = make(0.0);
+		update = make(0);
+		linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0));
+
+		renderParaLinesFn = \lines, storyWidth -> {
+			renderParaLines(
+				storyWidth, lines, tightWidth, alignment, interlineSpacing,
+				topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
+				interLineHighlighting, fitLongWords
 			);
-			switch (word.ghosted : Ghosted) {
-				Empty(): None();
-				Ghost(x, y, f): Some(Translate(x, y, applyStyles(f)));
-				InspectGhost(inspector, f): Some(Translate(inspector.x, inspector.y, applyStyles(f)));
-				CoordinateInspectElement(__, __): None();
+		}
+		paragraphAccessibilityParent = ^accessibilityParent;
+
+		// it renders all words but for dynamics it just reserves space and updates coordinates
+		renderedParagraph = if (widthManager == dummyParagraphWidthManager) {
+			Select(linesB, \lines -> {
+				prevAccessibilityParent = ^accessibilityParent;
+				accessibilityParent := paragraphAccessibilityParent;
+				rpl = renderParaLinesFn(lines, getValue(aw));
+				accessibilityParent := prevAccessibilityParent;
+				rpl
+			});
+		} else if (widthManager.infoOnly) {
+			// in this non-TightWidth case we just inform WidthManager about our width
+			// we will not take story width into account in this case, but use availableWidth as usual
+			Select(linesB, \lines -> {
+				prevAccessibilityParent = ^accessibilityParent;
+				accessibilityParent := paragraphAccessibilityParent;
+				rendered = renderParaLinesFn(lines, getValue(aw));
+				nextDistinct(widthManager.width, lines.maxLineWidth);
+				accessibilityParent := prevAccessibilityParent;
+				rendered
+			});
+		} else {
+			Select2(linesB, widthManager.storyWidth, \lines, storyWidth -> {
+				prevAccessibilityParent = ^accessibilityParent;
+				accessibilityParent := paragraphAccessibilityParent;
+				rendered = renderParaLinesFn(
+					lines,
+					if (storyWidth > 0.0) storyWidth else getValue(aw),
+				);
+				// we have to notify story about changes in our width.
+				// it could alter widthManager.storyWidth if we are new winner so we have to defer
+				deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, lines.maxLineWidth));
+				accessibilityParent := prevAccessibilityParent;
+				rendered
+			});
+		}
+
+		// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
+		dynamicWords = filter(words, \w -> !isConst(w.metrics));
+		ndynamic = length(dynamicWords);
+		ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
+
+		contentGroup = Group(concat(
+			[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
+			filtermap(words, \word -> {
+				applyStyles = \form -> eitherMap(
+					lookupTree(interactiveStyles, either(word.interactivityIdM, -1)),
+					\wordStyles -> applyListenersAndModifiers(wordStyles, form),
+					form
+				);
+				switch (word.ghosted : Ghosted) {
+					Empty(): None();
+					Ghost(x, y, f): Some(Translate(x, y, applyStyles(f)));
+					InspectGhost(inspector, f): Some(Translate(inspector.x, inspector.y, applyStyles(f)));
+					CoordinateInspectElement(__, __): None();
+				}
+			})
+		));
+
+		Constructor(
+			Inspect(
+				[AvailableWidth2(aw)],
+				if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
+					Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
+				} else {
+					contentGroup;
+				}
+			),
+			\ -> {
+				updateFn = \wi-> {
+					// Ignore negative widths
+					// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
+					w = if (isSingleLine) INF_METRICS else max(0.0, wi);
+					newLines = reflowParaWords(words, w, indent, isParagraphMarked, rtl);
+					infos = map(newLines, \line -> {
+						optimizedLine = getOptimizedLine(line.words, alignment);
+						metrics = map(optimizedLine, \ole -> getValue(ole.metrics));
+						lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
+						ParaLineInfo(
+							optimizedLine, lineAsc,
+							fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
+							line.indent + fold(metrics, 0.0, \ac, m -> ac + m.width),
+							line.indent,
+						)
+					});
+					nextDistinct(linesCountB, length(newLines));
+
+					// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
+					next(linesB, ParaLinesInfos(infos, fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))));
+				};
+
+				uns = concatA([
+					[
+						subscribe(aw, \v -> updateFn(v)),
+					],
+					if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
+					[
+						subscribe2(update, \u -> {
+							// When an update from a dynamic element is requested, we do it in the next frame
+							if (u == 1) deferUntilNextFrameRendered(\ -> {
+								next(update, 0);
+								updateFn(getValue(aw))
+							})
+						})
+					],
+					mapi(dynamicWords, \i, w -> subscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1)))
+				]);
+
+				\ -> applyall(uns)
+			}
+		)
+		|> (\f -> {
+			if (needIndent) {
+				if (rtl) Border(0.0, 0.0, genIndent, 0.0, f) else Border(genIndent, 0.0, 0.0, 0.0, f)
+			} else {
+				f
 			}
 		})
-	));
-
-	Constructor(
-		Inspect(
-			[AvailableWidth2(aw)],
-			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
-				Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
-			} else {
-				contentGroup;
-			}
-		),
-		\ -> {
-			updateFn = \wi-> {
-				// Ignore negative widths
-				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
-				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
-				newLines = reflowParaWords(words, w, indent, isParagraphMarked, rtl);
-				infos = map(newLines, \line -> {
-					optimizedLine = getOptimizedLine(line.words, alignment);
-					metrics = map(optimizedLine, \ole -> getValue(ole.metrics));
-					lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
-					ParaLineInfo(
-						optimizedLine, lineAsc,
-						fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
-						line.indent + fold(metrics, 0.0, \ac, m -> ac + m.width),
-						line.indent,
-					)
-				});
-				nextDistinct(linesCountB, length(newLines));
-
-				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				next(linesB, ParaLinesInfos(infos, fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))));
-			};
-
-			uns = concatA([
-				[
-					subscribe(aw, \v -> updateFn(v)),
-				],
-				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
-				[
-					subscribe2(update, \u -> {
-						// When an update from a dynamic element is requested, we do it in the next frame
-						if (u == 1) deferUntilNextFrameRendered(\ -> {
-							next(update, 0);
-							updateFn(getValue(aw))
-						})
-					})
-				],
-				mapi(dynamicWords, \i, w -> subscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1)))
-			]);
-
-			\ -> applyall(uns)
-		}
-	)
-	|> (\f -> {
-		if (needIndent) {
-			if (rtl) Border(0.0, 0.0, genIndent, 0.0, f) else Border(genIndent, 0.0, 0.0, 0.0, f)
-		} else {
-			f
-		}
-	})
+	}
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -709,6 +738,7 @@ keepFormTogether(form : Form) -> bool {
 		Border(__, __, __, __, f): keepFormTogether(f);
 		Crop2(__, __, __, __, f, __): keepFormTogether(f);
 		Group(fs): any(map(fs, \f -> keepFormTogether(f)));
+		FormParagraph(__, __): false;
 		Switch(i, fs): keepFormTogether(if (getValue(i) < length(fs)) fs[getValue(i)] else { println("STRANGE CASE"); Empty(); });
 		Grid(__): false; // Unlikely to be a part of a word. But maybe should go recursive.
 		Picture(__, __): false;
