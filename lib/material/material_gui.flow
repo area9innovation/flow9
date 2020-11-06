@@ -224,6 +224,13 @@ export {
 
 	MMoveClip(m : Material, fn : (Tropic) -> void) -> Material;
 
+	// Takes pairs of Material and its priority level. None() corresponds to medium level (Some(5))
+	// When there is not enough available width, hides elements, starting from low-prority.
+	MIfFitsCols(
+		items : Transform<[Pair<Material, Maybe<int>>]>,
+		colsFn : Maybe<([Material]) -> Material>) -> Material;
+	MIfFitsColsYCenterA(items : Transform<[Pair<Material, Maybe<int>>]>) -> Material;
+
 	// Shows fullSizeContent only if available space is greater than minimum size required to show it
 	// Otherwise shows reducedSizeContent
 	MIfFits(fullSizeContent : Material, reducedSizeContent : Material) -> Material;
@@ -883,4 +890,54 @@ MShowIfFitsWidth(content : Material) -> Material {
 
 MShowIfFitsHeight(content : Material) -> Material {
 	Material2Tropic(content, TShowIfFitsHeight)
+}
+
+MIfFitsColsItem : (
+	material : Material,
+	minWidth : DynamicBehaviour<double>,
+	priorityIndex : DynamicBehaviour<int>,
+	priority : int
+);
+
+MIfFitsColsYCenterA(items0 : Transform<[Pair<Material, Maybe<int>>]>) -> Material {
+	MIfFitsCols(items0, Some(MColsYCenterA))
+}
+
+MIfFitsCols(items0 : Transform<[Pair<Material, Maybe<int>>]>, colsFn0 : Maybe<([Material]) -> Material>) -> Material {
+	availableWidth = make(0.);
+	colsFn = either(colsFn0, \arr -> MCols(arr));
+
+	MSelect(items0, \itms -> {
+		items = map(itms, \it -> 
+			MIfFitsColsItem(
+				it.first,
+				make(0.),
+				make(-1),
+				either(it.second, 5)
+			)
+		);
+
+		priorityOrder = sortCustom(
+			items,
+			\it -> it.priority,
+			false
+		);
+
+		iteri(priorityOrder, \i, it -> nextDistinct(it.priorityIndex, i));
+
+		showThreshold =
+			fselect(fstall(availableWidth, 0), FLift(\av -> 
+				foldi(priorityOrder, Pair(0., length(priorityOrder)), \i, acc, it -> {
+					s = acc.first + fgetValue(it.minWidth);
+					Pair(s, if (acc.first <= av && s > av) i else acc.second)
+				}).second
+			));
+
+		map(items, \it ->
+			MInspect([IMinWidth(it.minWidth)], it.material)
+			|> (\m -> MShow(flessi(it.priorityIndex, showThreshold), m))
+		)
+		|> colsFn
+	})
+	|> (\m -> MInspect([AvailableWidth(availableWidth)], m))
 }
