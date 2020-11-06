@@ -2456,7 +2456,6 @@ class RenderSupport {
 		}
 
 		if (untyped HaxeRuntime.instanceof(clip, NativeWidgetClip) || untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
-			if (untyped HaxeRuntime.instanceof(clip, FlowSprite) && clip.transparentForInput) return null;
 			if (untyped clip.worldTransformChanged) {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
@@ -2464,6 +2463,17 @@ class RenderSupport {
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = untyped clip.getWidth();
 			var clipHeight = untyped clip.getHeight();
+			if (checkAlpha != null && untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
+				try {
+					var tempCanvas = Browser.document.createElement('canvas');
+					untyped tempCanvas.width = clipWidth;
+					untyped tempCanvas.height = clipHeight;
+					var ctx = untyped tempCanvas.getContext('2d');
+					untyped ctx.drawImage(clip.nativeWidget, 0, 0, clipWidth, clipHeight);
+					var pixel = ctx.getImageData(local.x, local.y, 1, 1);
+					if (pixel.data[3] * clip.worldAlpha / 255 < checkAlpha) return null;
+				} catch (e : Dynamic) {}
+			}
 
 			if (local.x >= 0.0 && local.y >= 0.0 && local.x <= clipWidth && local.y <= clipHeight) {
 				return clip;
@@ -2576,10 +2586,6 @@ class RenderSupport {
 
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
-	}
-
-	public static function setPictureTransparentForInput(picture : FlowSprite) {
-		picture.transparentForInput = true;
 	}
 
 	public static function cursor2css(cursor : String) : String {
