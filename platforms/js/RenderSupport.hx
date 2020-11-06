@@ -2464,13 +2464,15 @@ class RenderSupport {
 			var clipWidth = untyped clip.getWidth();
 			var clipHeight = untyped clip.getHeight();
 			if (checkAlpha != null && untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
-				var tempCanvas = Browser.document.createElement('canvas');
-				untyped tempCanvas.width = clipWidth;
-				untyped tempCanvas.height = clipHeight;
-				var ctx = untyped tempCanvas.getContext('2d');
-				untyped ctx.drawImage(clip.nativeWidget, 0, 0, clipWidth, clipHeight);
-				var pixel = ctx.getImageData(point.x, point.y, 1, 1);
-				if (pixel.data[3] / 255 < checkAlpha) return null;
+				try {
+					var tempCanvas = Browser.document.createElement('canvas');
+					untyped tempCanvas.width = clipWidth;
+					untyped tempCanvas.height = clipHeight;
+					var ctx = untyped tempCanvas.getContext('2d');
+					untyped ctx.drawImage(clip.nativeWidget, 0, 0, clipWidth, clipHeight);
+					var pixel = ctx.getImageData(local.x, local.y, 1, 1);
+					if (pixel.data[3] * clip.worldAlpha / 255 < checkAlpha) return null;
+				} catch (e : Dynamic) {}
 			}
 
 			if (local.x >= 0.0 && local.y >= 0.0 && local.x <= clipWidth && local.y <= clipHeight) {
