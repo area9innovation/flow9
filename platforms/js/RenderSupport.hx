@@ -1657,6 +1657,10 @@ class RenderSupport {
 		clip.setAutoAlign(autoalign);
 	}
 
+	public static function setClipChildrenLayout(clip : FlowContainer, layout : String) : Void {
+		clip.setChildrenLayout(layout);
+	}
+
 	public static function setTextInput(clip : TextClip) : Void {
 		clip.setTextInput();
 	}

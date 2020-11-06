@@ -2253,6 +2253,9 @@ class DisplayObjectHelper {
 		if (untyped !clip.isNativeWidget || (tagName != null && clip.nativeWidget.tagName.toLowerCase() != tagName)) {
 			untyped clip.isNativeWidget = true;
 			untyped clip.createNativeWidget(tagName);
+			if (untyped clip.setChildrenLayout) {
+				untyped clip.setChildrenLayout(clip.childrenLayout);
+			}
 
 			invalidateTransform(clip, 'initNativeWidget', untyped clip.parent != null);
 		}

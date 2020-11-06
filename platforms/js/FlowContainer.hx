@@ -37,6 +37,8 @@ class FlowContainer extends Container {
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
 
+	public var childrenLayout : String = "layers";
+
 	public function new(?worldVisible : Bool = false) {
 		super();
 
@@ -49,6 +51,17 @@ class FlowContainer extends Container {
 			nativeWidget = Browser.document.body;
 		} else if (RenderSupport.RendererType == "html") {
 			createNativeWidget();
+		}
+	}
+
+	public function setChildrenLayout(layout : String) : Void {
+		childrenLayout = layout;
+		if (RenderSupport.RendererType == "html" && layout == "para") {
+			if (untyped nativeWidget == null) {
+				untyped isNativeWidget = true;
+				untyped createNativeWidget();
+			}
+			nativeWidget.className = "nativeWidget para";
 		}
 	}
 
@@ -278,6 +291,7 @@ class FlowContainer extends Container {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		setChildrenLayout(childrenLayout);
 
 		isNativeWidget = true;
 
