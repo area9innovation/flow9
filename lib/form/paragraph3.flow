@@ -59,7 +59,7 @@ ParaElement ::= ParagraphElement, WrapElement, ParaAtomic;
 ParaAtomic ::= Form, ParaOneWord, TextElement, InteractiveParaAtomic;
 	// A range of elements that need to be on the same line
 	ParaOneWord(elements : [Form]);
-	InteractiveParaAtomic(elem : ParaAtomic, interactivityId : int);
+	InteractiveParaAtomic(elem : ParaAtomic, interactivityId : int, ghostable: bool);
 
 GhostForm ::= Form, Ghosted; // It is important that GhostForm is a super type of Ghosted
 	Ghost(xc : DynamicBehaviour<double>, yc : DynamicBehaviour<double>, form : Form);
@@ -87,7 +87,7 @@ ParaLineAcc(lines : List<Form>, y : double, baseline : double);
 OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
 ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
-ParaLineResult(form : Form, width : double, height : double, baseline : double);
+ParaLineResult(line : List<Form>, width : double, height : double, baseline : double);
 
 makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement> {
 	mapList(fragments.elements, \elem -> general2WrapElement(elem, fragments.style))
@@ -322,22 +322,25 @@ renderParagraph(
 					next(linesB, ParaLinesInfos(infos, fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))));
 				};
 
-				uns = concatA([
-					[
-						subscribe(aw, \v -> updateFn(v)),
-					],
-					if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
-					[
-						subscribe2(update, \u -> {
-							// When an update from a dynamic element is requested, we do it in the next frame
-							if (u == 1) deferUntilNextFrameRendered(\ -> {
-								next(update, 0);
-								updateFn(getValue(aw))
-							})
+			uns = concatA([
+				[
+					subscribe(aw, \v -> updateFn(v)),
+				],
+				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
+				[
+					subscribe2(update, \u -> {
+						// When an update from a dynamic element is requested, we do it in the next frame
+						if (u == 1) deferUntilNextFrameRendered(\ -> {
+							next(update, 0);
+							updateFn(getValue(aw))
 						})
-					],
-					mapi(dynamicWords, \i, w -> subscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1)))
-				]);
+					})
+				],
+				mapi(dynamicWords, \i, w -> subscribe2(
+					w.metrics,
+					\m -> if (i < ndymamicUpper) deferUntilNextFrameRendered(\ -> updateFn(getValue(aw))) else nextDistinct(update, 1)
+				))
+			]);
 
 				\ -> applyall(uns)
 			}
@@ -380,7 +383,7 @@ expandGlueFragments(
 							default: Cons(cast(e : InspectableElement -> Form), acc2);
 						}
 					}
-					InteractiveParaAtomic(ia, id) : {
+					InteractiveParaAtomic(ia, id, ghostable) : {
 						Cons(cast(ia : ParaAtomic -> Form), acc2);
 					}
 					default: {
@@ -407,8 +410,8 @@ expandGlueFragments(
 			// TODO rewrite via switch subunion syntax when implemented.
 			default: {
 				en = switch (e : ParaElement) {
-					WordWrapInteractive(wElem, id): {
-						InteractiveParaAtomic(cast(wElem : WrapElement -> ParaAtomic), id)
+					WordWrapInteractive(wElem, id, ghostable): {
+						InteractiveParaAtomic(cast(wElem : WrapElement -> ParaAtomic), id, ghostable)
 					}
 					default: cast(e : ParaElement -> ParaAtomic);
 				}
@@ -422,9 +425,9 @@ expandGlueFragments(
 	}
 }
 
-makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWord {
+makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>, ghostable: bool) -> ParaWord {
 	s2w = \s : Pair<Form, Behaviour<FormMetrics>> -> {
-		if (!isGhostable(s.first)) {
+		if (!ghostable || !isGhostable(s.first)) {
 			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM);
 		} else {
 			x = make(0.0);
@@ -490,8 +493,8 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 				}
 			}
 		}
-		InteractiveParaAtomic(word, id) : {
-			makeInteractiveParaWord(word, Some(id));
+		InteractiveParaAtomic(word, id, g) : {
+			makeInteractiveParaWord(word, Some(id), g);
 		}
 		default: {
 			opt = optimizeForm(cast(w : ParaAtomic -> Form));
@@ -502,8 +505,8 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 
 makeParaWord(w : ParaAtomic) -> ParaWord {
 	switch (w) {
-		InteractiveParaAtomic(word, id): makeInteractiveParaWord(word, Some(id));
-		default : makeInteractiveParaWord(w, None());
+		InteractiveParaAtomic(word, id, ghostable): makeInteractiveParaWord(word, Some(id), ghostable);
+		default : makeInteractiveParaWord(w, None(), true);
 	}
 }
 
@@ -794,14 +797,18 @@ renderParaLines(
 			fitLongWords
 		);
 		ParaLineAcc(
-			Cons(Size2(const(zeroWH), f.form), acc.lines),
+			concatList(f.line, acc.lines),
 			acc.y + f.height + if (lastLine) 0. else interlineSpacing,
 			if (i == 0 || !topLineBaseline) f.baseline else acc.baseline
 		);
 	});
-	Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) lines.maxLineWidth else max(availableWidth, lines.maxLineWidth), a.y)),
-		Group(list2array(a.lines))
-	))
+	Baseline(
+		const(a.baseline),
+		Size2(
+			const(WidthHeight(if (tightWidth) lines.maxLineWidth else max(availableWidth, lines.maxLineWidth), a.y)),
+			Group(list2array(a.lines))
+		)
+	)
 }
 
 getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [OptimizedLineElement]{
@@ -820,7 +827,7 @@ RenderLine(
 	width : double,
 	alignment : ParaLineAlignment,
 	lineNumber : int,
-	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>,
+	interactiveStylesTree : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
 	isMarked : bool,
 	highLightOffset : double,
@@ -831,7 +838,7 @@ RenderLine(
 	remaining = width - info.lineWidth;
 	startOffset = if (rtl) max(remaining, 0.) else 0.;
 	endOffset = if (rtl) 0. else max(0., remaining);
-	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
+	initialAlignmentOffset = switch (alignment : ParaLineAlignment) {
 		LeftAlign(): if (rtl) endOffset else startOffset;
 		RightAlign(): if (rtl) startOffset else endOffset;
 		CenterAlign(): max(0.0, remaining / 2.0);
@@ -848,35 +855,36 @@ RenderLine(
 	} else 0.0;
 
 	// The width and the individual forms
-	lo : [Form] = filtermapi(info.optimizedLine, \i : int, elem : OptimizedLineElement -> {
-		f = elem.f;
-		m = getValue(elem.metrics);
-		intStyleContains = \st : ParaElementInteractiveStyle -> eitherMap(
-			elem.interactivityIdM,
-			\id -> containsStruct(
-				lookupTreeDef(interactiveStyles, id, []),
-				st
-			),
-			false
-		);
+	lo : LineHeadingsAcc = foldi2(
+		info.optimizedLine,
+		LineHeadingsAcc(makeList(), makeList(), ""),
+		initialAlignmentOffset,
+		\i : int, acc, alignmentOffset, elem : OptimizedLineElement -> {
+			f = elem.f;
+			m = getValue(elem.metrics);
+			interactiveStyles = eitherMap(
+				elem.interactivityIdM,
+				\id -> lookupTreeDef(interactiveStylesTree, id, []),
+				[]
+			);
 
-		isSuperscript = intStyleContains(ParaElementSuperscript());
-		isSubscript = intStyleContains(ParaElementSubscript());
+			accessTagName = extractStruct(interactiveStyles, AccessTagName("")).tag;
+			isSuperscript = containsStruct(interactiveStyles, ParaElementSuperscript());
+			isSubscript = containsStruct(interactiveStyles, ParaElementSubscript());
+			ignoreWordWidth = containsStruct(interactiveStyles, IgnoreMetrics());
 
-		wordWidth = m.width * fittingCoef;
+			wordWidth = m.width * fittingCoef;
 
-		fitLongWordToWidth = \fm -> if (fitLongWords && remaining < 0.0) Size2(
-			const(WidthHeight(width, m.height)),
-			Scale(const(fittingCoef), const(fittingCoef), fm)
-		 ) else fm;
+			fitLongWordToWidth = \fm -> if (fitLongWords && remaining < 0.0) Size2(
+				const(WidthHeight(width, m.height)),
+				Scale(const(fittingCoef), const(fittingCoef), fm)
+			) else fm;
 
-		dy = if (isSuperscript) -1.0 else info.lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
-		applyStylesAndOffset = \fm : Form -> eitherMap(
-			elem.interactivityIdM,
-			\id -> applyIntStylesAndHighlighting(
+			dy = if (isSuperscript) -1.0 else info.lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
+			applyStylesAndOffset = \fm : Form -> applyIntStylesAndHighlighting(
 				fitLongWordToWidth(fm),
-				lookupTreeDef(interactiveStyles, id, []),
-				^alignmentOffset,
+				interactiveStyles,
+				alignmentOffset,
 				y,
 				dy,
 				wordWidth,
@@ -884,47 +892,53 @@ RenderLine(
 				interWord,
 				highLightOffset,
 				interlineSpacing
-			),
-			Translate(
-				const(^alignmentOffset), const(y + dy),
-				fitLongWordToWidth(fm)
+			);
+
+			justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
+
+			Pair(
+				switch (f : GhostForm) {
+					Empty(): acc;
+					Ghost(xc, yc, fm): {
+						nextDistinct(xc, alignmentOffset);
+						nextDistinct(yc, y + dy);
+						appendWordToLine(acc, applyStylesAndOffset(Empty()), "");
+					}
+					InspectGhost(inspector, fm): {
+						nextDistinct(inspector.x, alignmentOffset);
+						nextDistinct(inspector.y, y + dy);
+						nextDistinct(inspector.size, WidthHeight(m.width, m.height));
+						nextDistinct(inspector.lineHeight, info.lineHeight);
+						nextDistinct(inspector.lineNumber, lineNumber);
+						appendWordToLine(acc, applyStylesAndOffset(Empty()), "");
+					}
+					CoordinateInspectElement(inspector, fm): {
+						nextDistinct(inspector.x, alignmentOffset);
+						nextDistinct(inspector.y, y + dy);
+						nextDistinct(inspector.size, WidthHeight(m.width, m.height));
+						nextDistinct(inspector.lineHeight, info.lineHeight);
+						nextDistinct(inspector.lineNumber, lineNumber);
+						appendWordToLine(acc, applyStylesAndOffset(Empty()), accessTagName);
+
+					}
+					default: appendWordToLine(
+						acc,
+						applyStylesAndOffset(cast(f : GhostForm -> Form)),
+						accessTagName
+					);
+				},
+				alignmentOffset + if (m.width == 0.0 || ignoreWordWidth) 0.0 else wordWidth + justifyOffset
 			)
-		);
-
-		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
-
-		r = switch (f : GhostForm) {
-			Empty(): None();
-			Ghost(xc, yc, fm): {
-				nextDistinct(xc, ^alignmentOffset);
-				nextDistinct(yc, y + dy);
-				Some(applyStylesAndOffset(Empty()));
-			}
-			InspectGhost(inspector, fm): {
-				nextDistinct(inspector.x, ^alignmentOffset);
-				nextDistinct(inspector.y, y + dy);
-				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, info.lineHeight);
-				nextDistinct(inspector.lineNumber, lineNumber);
-				Some(applyStylesAndOffset(Empty()));
-			}
-			CoordinateInspectElement(inspector, fm): {
-				fo = applyStylesAndOffset(fm);
-				nextDistinct(inspector.x, ^alignmentOffset);
-				nextDistinct(inspector.y, y + dy);
-				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, info.lineHeight);
-				nextDistinct(inspector.lineNumber, lineNumber);
-				Some(fo);
-			}
-			default: Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
 		}
+	).first;
 
-		alignmentOffset := ^alignmentOffset + if (m.width == 0.0 || intStyleContains(IgnoreMetrics())) 0.0 else wordWidth + justifyOffset;
-		r;
-	});
 	ParaLineResult(
-		Group(lo),
+		if (lo.currentGroup == EmptyList()) {
+			lo.groupedWords
+		} else Cons(
+			Access([TagName(lo.currentTag)], Group(list2array(lo.currentGroup))),
+			lo.groupedWords
+		),
 		if (fitLongWords) min(info.lineWidth, width) else info.lineWidth,
 		info.lineHeight * fittingCoef,
 		y + info.lineAsc
@@ -943,64 +957,100 @@ applyIntStylesAndHighlighting(
 	highLightOffset : double,
 	interlineSpacing : double,
 ) -> Form {
-	getStyleForBackgroundFromCharStyle = \s -> eitherMap(
-		tryExtractStruct(s, BackgroundFill(white)),
-		\backFill -> [
-			Fill(backFill.color),
-			FillOpacity(extractStruct(s, BackgroundFillOpacity(1.0)).opacity)
-		],
-		[]
-	);
+	if (styles == []) {
+		Translate(const(xOffset), const(yOffset + baselineShift), form);
+	} else {
 
-	makeBackRect = \defStyle, dynStyle -> Rectangle(
-		width + interWord,
-		height + interlineSpacing + 0.1,
-		replaceStructMany(
-			getStyleForBackgroundFromCharStyle(defStyle),
-			getStyleForBackgroundFromCharStyle(dynStyle)
-		)
-	);
+		getStyleForBackgroundFromCharStyle = \s -> eitherMap(
+			tryExtractStruct(s, BackgroundFill(white)),
+			\backFill -> [
+				Fill(backFill.color),
+				FillOpacity(extractStruct(s, BackgroundFillOpacity(1.0)).opacity)
+			],
+			[]
+		);
 
-	dynamicCharStyleBM = tryExtractStruct(styles, DynamicCharStyle(make([])));
-
-	textAndBackPair = switch(form) {
-		Text(txt, txtStyle) : {
-
-			makeTxt = \dynStyle -> Text(
-				txt,
-				removeAllStructsMany(
-					replaceStructMany(txtStyle, dynStyle),
-					[BackgroundFill(0), BackgroundFillOpacity(0.0)]
-				)
-			);
-
-			// We draw custom highlighting to fix gaps for cases of justifying alignment
-			// And to have more straight and pretty highlighting.
-			eitherMap(
-				dynamicCharStyleBM,
-				\dynCharStyle -> Pair(
-					Select(dynCharStyle.styleB, \chStyle -> makeTxt(chStyle)),
-					Select(dynCharStyle.styleB, \chStyle -> makeBackRect(txtStyle, chStyle))
-				),
-				Pair(makeTxt([]), makeBackRect(txtStyle, []))
-			)
-		}
-		default : Pair(
-			form,
-			eitherMap(
-				dynamicCharStyleBM,
-				\dynCharStyle -> Select(dynCharStyle.styleB, \chStyle -> makeBackRect([], chStyle)),
-				Empty()
+		makeBackRect = \defStyle, dynStyle -> Rectangle(
+			width + interWord,
+			height + interlineSpacing + 0.1,
+			replaceStructMany(
+				getStyleForBackgroundFromCharStyle(defStyle),
+				getStyleForBackgroundFromCharStyle(dynStyle)
 			)
 		);
+
+		dynamicCharStyleBM = tryExtractStruct(styles, DynamicCharStyle(make([])));
+
+		textAndBackPair = switch(form) {
+			Text(txt, txtStyle) : {
+
+				makeTxt = \dynStyle -> Text(
+					txt,
+					removeAllStructsMany(
+						replaceStructMany(txtStyle, dynStyle),
+						[BackgroundFill(0), BackgroundFillOpacity(0.0)]
+					)
+				);
+
+				// We draw custom highlighting to fix gaps for cases of justifying alignment
+				// And to have more straight and pretty highlighting.
+				eitherMap(
+					dynamicCharStyleBM,
+					\dynCharStyle -> Pair(
+						Select(dynCharStyle.styleB, \chStyle -> makeTxt(chStyle)),
+						Select(dynCharStyle.styleB, \chStyle -> makeBackRect(txtStyle, chStyle))
+					),
+					Pair(makeTxt([]), makeBackRect(txtStyle, []))
+				)
+			}
+			default : Pair(
+				form,
+				eitherMap(
+					dynamicCharStyleBM,
+					\dynCharStyle -> Select(
+						dynCharStyle.styleB,
+						\chStyle -> makeBackRect([], chStyle)
+					),
+					Empty()
+				)
+			);
+		}
+
+		modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
+
+		Group([
+			Translate(
+				const(xOffset - interWord / 2.),
+				const(yOffset + highLightOffset),
+				textAndBackPair.second
+			),
+			Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm),
+		]);
 	}
+}
 
-	modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
+LineHeadingsAcc(groupedWords : List<Form>, currentGroup: List<Form>, currentTag : string);
 
-	Group([
-		Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
-		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm),
-	]);
+appendWordToLine(acc : LineHeadingsAcc, form : Form, tag : string) -> LineHeadingsAcc {
+	if (acc.currentTag == tag) {
+		if (tag == "") LineHeadingsAcc(acc with
+			groupedWords = Cons(form, acc.groupedWords)
+		) else LineHeadingsAcc(acc with
+			currentGroup = Cons(form, acc.currentGroup)
+		);
+	} else {
+		newGroupedWords = if (acc.currentGroup == EmptyList()) acc.groupedWords else Cons(
+			Access([TagName(acc.currentTag)], Group(list2array(acc.currentGroup))),
+			acc.groupedWords
+		);
+		newCurrentGroup = if (tag == "") makeList() else makeList1(form);
+
+		LineHeadingsAcc(
+			if (tag == "") Cons(form, newGroupedWords) else newGroupedWords,
+			newCurrentGroup,
+			tag
+		)
+	}
 }
 
 applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) -> Form {

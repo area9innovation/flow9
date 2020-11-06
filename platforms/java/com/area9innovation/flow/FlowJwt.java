@@ -117,51 +117,18 @@ public class FlowJwt extends NativeHost {
 		}
 	}
 
-	public Object createJwtHs256(String jwtKey, Object[] keys, Object[] values, Func1<Object, String> onOk, Func1<Object, String> onError) {
-		if (keys.length != 0 && keys.length == values.length) {
-			JwtBuilder builder = Jwts.builder();
 
-			// we cannot pass string[] arrays using flow native machinery, so we need to
-			// make these transofmations to avoid unsafe conversions and calm the compiler!!
-			String[] sKeys = java.util.Arrays.copyOf(keys, keys.length, String[].class);
-			String[] sValues = java.util.Arrays.copyOf(values, values.length, String[].class);
+	public String createJwtClaims(String jwtKey, Object[] keys, Object[] values) {
+		JwtBuilder builder = Jwts.builder();
 
-			try {
-				for (int i = 0; i < sKeys.length; i++) {
-					String key = sKeys[i];
-					String value = sValues[i];
-
-					if (key.equals(ID)) {
-						builder = builder.setIssuer(value);
-					} else if (key.equals(ISSUER)) {
-						builder = builder.setIssuer(value);
-					} else if (key.equals(ISSUED_AT)) {
-						builder = builder.setIssuedAt(getDateFromIsoString(value));
-					} else if (key.equals(SUBJECT)) {
-						builder = builder.setSubject(value);
-					} else if (key.equals(AUDIENCE)) {
-						builder = builder.setAudience(value);
-					} else if (key.equals((EXPIRATION))) {
-						builder = builder.setExpiration(getDateFromIsoString(value));
-					} else if (key.equals((NOT_BEFORE))) {
-						builder = builder.setNotBefore(getDateFromIsoString(value));
-					} else {
-						builder = builder.claim(key, value);
-					}
-				}
-
-				Map<String, Object> header = new HashMap<String, Object>();
-				header.put(JwsHeader.ALGORITHM, algorithm.getValue());
-				header.put(Header.TYPE, "JWT");
-
-				onOk.invoke(builder.setHeader(header).signWith(algorithm, getSecretKey(jwtKey)).compact());
-
-			} catch (NumberFormatException e) {
-				onError.invoke(e.getMessage());
-			}
-		} else {
-			onError.invoke("No claims provided!");
+		for (int i = 0; i < keys.length; i++) {
+			builder.claim((String)keys[i], values[i]);
 		}
-		return null;
+
+		Map<String, Object> header = new HashMap<String, Object>();
+		header.put(JwsHeader.ALGORITHM, algorithm.getValue());
+		header.put(Header.TYPE, "JWT");
+
+		return builder.setHeader(header).signWith(algorithm, getSecretKey(jwtKey)).compact();
 	}
 }
