@@ -224,13 +224,26 @@ export {
 
 	MMoveClip(m : Material, fn : (Tropic) -> void) -> Material;
 
-	// Takes pairs of Material and its priority level. None() corresponds to medium level (Some(5))
+	// Takes Materials with its priority level.
 	// When there is not enough available width, hides elements, starting from low-prority.
-	// Give None() as the colsFn to default to MCols. Some(MColsA), Some(MBaselineColsA) are other good choices
-	MIfFitsCols(
-		items : Transform<[Pair<Material, Maybe<int>>]>,
-		colsFn : Maybe<([Material]) -> Material>) -> Material;
-	MIfFitsColsYCenterA(items : Transform<[Pair<Material, Maybe<int>>]>) -> Material;
+	MIfFitsCols(items0 : Transform<[MIfFitsColsItem]>, style : [MIfFitsColsStyle]) -> Material;
+
+		MIfFitsColsItem(material : Material, style : [MIfFitsColsItemStyle]);
+			MIfFitsColsItemStyle ::= MIfFitsColsItemPriority, MIfFitsColsOverflowView;
+				// Medium priority (5) by default.
+				MIfFitsColsItemPriority(priority : int);
+				// Defines that item should be visible into the 'overflow' items menu.
+				MIfFitsColsOverflowView(view : MMenuLine);
+
+		MIfFitsColsStyle ::= MIfFitsColsFn, MIfFitsColsOverflowItems, MIfFitsColsMenuButton;
+			// Defines how items should be wrapped into cols. MCols by default. MColsA, MBaselineColsA are other good choices
+			MIfFitsColsFn(fn : ([Material]) -> Material);
+			// Returns overflowView of hidden items
+			MIfFitsColsOverflowItems(items : DynamicBehaviour<[MMenuLine]>);
+			// Collect hidden items and add them to the menu
+			MIfFitsColsMenuButton(enabled : Transform<bool>);
+
+	MIfFitsColsYCenterA(items : Transform<[MIfFitsColsItem]>) -> Material;
 
 	// Shows fullSizeContent only if available space is greater than minimum size required to show it
 	// Otherwise shows reducedSizeContent
@@ -893,28 +906,34 @@ MShowIfFitsHeight(content : Material) -> Material {
 	Material2Tropic(content, TShowIfFitsHeight)
 }
 
-MIfFitsColsItem : (
+MIfFitsColsItemInner : (
 	material : Material,
 	minWidth : DynamicBehaviour<double>,
 	priorityIndex : DynamicBehaviour<int>,
-	priority : int
+	priority : int,
+	overflowView : Maybe<MMenuLine>
 );
 
-MIfFitsColsYCenterA(items0 : Transform<[Pair<Material, Maybe<int>>]>) -> Material {
-	MIfFitsCols(items0, Some(MColsYCenterA))
+MIfFitsColsYCenterA(items0 : Transform<[MIfFitsColsItem]>) -> Material {
+	MIfFitsCols(items0, [MIfFitsColsFn(MColsYCenterA)])
 }
 
-MIfFitsCols(items0 : Transform<[Pair<Material, Maybe<int>>]>, colsFn0 : Maybe<([Material]) -> Material>) -> Material {
+MIfFitsCols(items0 : Transform<[MIfFitsColsItem]>, style : [MIfFitsColsStyle]) -> Material {
 	availableWidth = make(0.);
-	colsFn = either(colsFn0, \arr -> MCols(arr));
+	colsFn = extractStruct(style, MIfFitsColsFn(\arr -> MCols(arr))).fn;
+
+	overflowItems0 = tryExtractStruct(style, MIfFitsColsOverflowItems(make([])));
+	menuButton = tryExtractStruct(style, MIfFitsColsMenuButton(const(false)));
+	overflowItems : Maybe<DynamicBehaviour<[MMenuLine]>> = eitherMap(overflowItems0, \oi -> Some(oi.items), maybeMap(menuButton, \__ -> make([])));
 
 	MSelect(items0, \itms -> {
 		items = map(itms, \it -> 
-			MIfFitsColsItem(
-				it.first,
+			MIfFitsColsItemInner(
+				it.material,
 				make(0.),
 				make(-1),
-				either(it.second, 5)
+				extractStruct(it.style, MIfFitsColsItemPriority(5)).priority,
+				maybeMap(tryExtractStruct(it.style, MIfFitsColsOverflowView(MMenuSingleLine("", []))), \v -> v.view)
 			)
 		);
 
@@ -927,7 +946,7 @@ MIfFitsCols(items0 : Transform<[Pair<Material, Maybe<int>>]>, colsFn0 : Maybe<([
 		iteri(priorityOrder, \i, it -> nextDistinct(it.priorityIndex, i));
 
 		showThreshold =
-			fselect(fstall(availableWidth, 0), FLift(\av -> 
+			fselect(fstall(availableWidth, 0), FLift(\av ->
 				foldi(priorityOrder, Pair(0., length(priorityOrder)), \i, acc, it -> {
 					s = acc.first + fgetValue(it.minWidth);
 					Pair(s, if (acc.first <= av && s > av) i else acc.second)
@@ -939,6 +958,21 @@ MIfFitsCols(items0 : Transform<[Pair<Material, Maybe<int>>]>, colsFn0 : Maybe<([
 			|> (\m -> MShow(flessi(it.priorityIndex, showThreshold), m))
 		)
 		|> colsFn
+		|> (\m -> eitherMap(overflowItems, \oi ->
+			MConstruct([makeSubscribe2(showThreshold, \threshold -> nextDistinct(oi,
+				filtermap(items, \it -> if (fgetValue(it.priorityIndex) >= threshold) it.overflowView else None())
+			))], m),
+			m
+		))
 	})
 	|> (\m -> MInspect([AvailableWidth(availableWidth)], m))
+	|> (\m -> eitherMap(menuButton, \mb -> {
+		oi = either(overflowItems, make([]));
+		MCols2(m, 
+			MShow(
+				fand(mb.enabled, fselectWithLast(flength(oi), FLift2(\oldLen, len -> len > b2i(oldLen > 1)))),
+				MDynamicMenu(MIconButton("more_vert", nop, [], []), oi, [])
+			)
+		)
+	}, m))
 }
