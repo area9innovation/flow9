@@ -49,6 +49,22 @@
 
 @end
 
+@implementation MetadataObjectDelegate
+
+- (id) initWithCallback: (void (^)(NSString*)) dataCallback {
+    self = [super init];
+    self.dataCallback = dataCallback;
+    return self;
+}
+
+- (void)captureOutput:(AVCaptureOutput *)output didOutputMetadataObjects:(NSArray<__kindof AVMetadataObject *> *)metadataObjects fromConnection:(AVCaptureConnection *)connection {
+    AVMetadataMachineReadableCodeObject* firstObject = (AVMetadataMachineReadableCodeObject*)(metadataObjects.firstObject);
+    if (firstObject.stringValue != nil)
+        self.dataCallback(firstObject.stringValue);
+}
+
+@end
+
 IMPLEMENT_FLOW_NATIVE_OBJECT(FlowNativeMediaStream, FlowNativeObject)
 
 FlowNativeMediaStream::FlowNativeMediaStream(NativeMethodHost *owner) : FlowNativeObject(owner->getFlowRunner())
@@ -158,8 +174,13 @@ void iosMediaStreamSupport::makeStream(bool recordAudio, bool recordVideo, unico
         flowMediaStream->height = dimensions.height;
         
         [videoCapturer startCaptureWithDevice:device format:format fps:20 completionHandler:^(NSError *error) {
-            if (error != nil)
-                RUNNER->EvalFunction(RUNNER->LookupRoot(onErrorRoot), 1, RUNNER->AllocateString(NS2UNICODE(error.localizedDescription)));
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (error != nil) {
+                    RUNNER->EvalFunction(RUNNER->LookupRoot(onErrorRoot), 1, RUNNER->AllocateString(NS2UNICODE(error.localizedDescription)));
+                } else {
+                    RUNNER->EvalFunction(RUNNER->LookupRoot(onReadyRoot), 1, flowMediaStream->getFlowValue());
+                }
+            });
         }];
         
         RTCVideoTrack *videoTrack = [peerConnectionFactory videoTrackWithSource:videoSource trackId:@"Video1"];
@@ -173,18 +194,79 @@ void iosMediaStreamSupport::makeStream(bool recordAudio, bool recordVideo, unico
     flowMediaStream->mediaStream = mediaStream;
     
     flowMediaStream->retain();
-    RUNNER->EvalFunction(RUNNER->LookupRoot(onReadyRoot), 1, flowMediaStream->getFlowValue());
+}
+
+void iosMediaStreamSupport::scanStream(StackSlot mediaStream, std::vector<std::string> scanTypes, int onResultRoot) {
+    RUNNER_VAR = owner;
+
+    FlowNativeMediaStream *flowMediaStream = RUNNER->GetNative<FlowNativeMediaStream*>(mediaStream);
+    AVCaptureSession* session = flowMediaStream->videoCapturer.captureSession;
+
+    AVCaptureMetadataOutput* output = [[AVCaptureMetadataOutput alloc] init];
+    if ([session canAddOutput:output]) {
+        [session addOutput:output];
+
+        MetadataObjectDelegate* delegate = [[MetadataObjectDelegate alloc] initWithCallback: ^(NSString* data) {
+            [session stopRunning];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                RUNNER_VAR = owner;
+                RUNNER->EvalFunction(RUNNER->LookupRoot(onResultRoot), 1, RUNNER->AllocateString(NS2UNICODE(data)));
+                [session startRunning];
+            });
+        }];
+        [output setMetadataObjectsDelegate: delegate queue:dispatch_get_main_queue()];
+
+        [output setMetadataObjectTypes:scanTypesToAVMetadataObjectType(scanTypes)];
+    }
+}
+
+NSArray<AVMetadataObjectType>* iosMediaStreamSupport::scanTypesToAVMetadataObjectType(std::vector<std::string> scanTypes) {
+    NSMutableArray<AVMetadataObjectType>* array = [[NSMutableArray alloc] initWithCapacity:scanTypes.size()];
+    
+    for (std::vector<std::string>::iterator it = scanTypes.begin(); it != scanTypes.end(); it++) {
+        AVMetadataObjectType type;
+        if (*it == "code39") {
+            type = AVMetadataObjectTypeCode39Code;
+        } else if (*it == "code29mode43") {
+            type = AVMetadataObjectTypeCode39Mod43Code;
+        } else if (*it == "ean13") {
+            type = AVMetadataObjectTypeEAN13Code;
+        } else if (*it == "ean8") {
+            type = AVMetadataObjectTypeEAN8Code;
+        } else if (*it == "code93") {
+            type = AVMetadataObjectTypeCode93Code;
+        } else if (*it == "code128") {
+            type = AVMetadataObjectTypeCode128Code;
+        } else if (*it == "pdf417") {
+            type = AVMetadataObjectTypePDF417Code;
+        } else if (*it == "aztek") {
+            type = AVMetadataObjectTypeAztecCode;
+        } else if (*it == "interleaved2of5") {
+            type = AVMetadataObjectTypeInterleaved2of5Code;
+        } else if (*it == "itf14") {
+            type = AVMetadataObjectTypeITF14Code;
+        } else if (*it == "datamatrix") {
+            type = AVMetadataObjectTypeDataMatrixCode;
+        } else {
+            type = AVMetadataObjectTypeQRCode;
+        }
+        [array addObject:type];
+    }
+    
+    return array;
 }
 
 void iosMediaStreamSupport::stopStream(StackSlot mediaStream)
 {
     RUNNER_VAR = owner;
     FlowNativeMediaStream *flowMediaStream = RUNNER->GetNative<FlowNativeMediaStream*>(mediaStream);
-    [flowMediaStream->videoCapturer stopCapture];
-    
-    RUNNER->ReleaseRoot(flowMediaStream->onReadyRoot);
-    RUNNER->ReleaseRoot(flowMediaStream->onErrorRoot);
-    flowMediaStream->release();
+    [flowMediaStream->videoCapturer stopCaptureWithCompletionHandler:^() {
+        RUNNER_VAR = owner;
+        RUNNER->ReleaseRoot(flowMediaStream->onReadyRoot);
+        RUNNER->ReleaseRoot(flowMediaStream->onErrorRoot);
+        
+        flowMediaStream->release();
+    }];
 }
 
 #endif /* FLOW_MEDIASTREAM */
