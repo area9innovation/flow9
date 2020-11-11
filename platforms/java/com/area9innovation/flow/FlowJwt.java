@@ -26,7 +26,7 @@ public class FlowJwt extends NativeHost {
 
 	public String verifyJwt(String jwt, String key) {
 		try {
-			Jwts.parser().setSigningKey(getSecretKey(key)).parseClaimsJws(jwt);
+			Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt);
 			return "OK";
 		} catch (MalformedJwtException e) {
 			System.out.println(e.getMessage());
@@ -57,7 +57,7 @@ public class FlowJwt extends NativeHost {
 			Date iat;
 			String jti;
 			try {
-				Claims jws = Jwts.parser().setSigningKey(getSecretKey(key)).parseClaimsJws(jwt).getBody();
+				Claims jws = Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt).getBody();
 				iss = jws.getIssuer();
 				sub = jws.getSubject();
 				aud = jws.getAudience();
@@ -116,7 +116,7 @@ public class FlowJwt extends NativeHost {
 			header.put(JwsHeader.ALGORITHM, algorithm.getValue());
 			header.put(Header.TYPE, "JWT");
 
-			return builder.setHeader(header).signWith(algorithm, getSecretKey(key)).compact();
+			return builder.setHeader(header).signWith(getSecretKey(key), algorithm).compact();
 
 		} catch (NumberFormatException e) {
 			System.out.println(e.getMessage());
@@ -136,6 +136,6 @@ public class FlowJwt extends NativeHost {
 		header.put(JwsHeader.ALGORITHM, algorithm.getValue());
 		header.put(Header.TYPE, "JWT");
 
-		return builder.setHeader(header).signWith(algorithm, getSecretKey(jwtKey)).compact();
+		return builder.setHeader(header).signWith(getSecretKey(jwtKey), algorithm).compact();
 	}
 }

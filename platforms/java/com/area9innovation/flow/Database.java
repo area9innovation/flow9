@@ -98,7 +98,7 @@ public class Database extends NativeHost {
 
     public Database() {
         try {
-            Class.forName("com.mysql.cj.jdbc.Driver").newInstance();
+            Class.forName("com.mysql.cj.jdbc.Driver").getConstructor().newInstance();
             Integer strid = runtime.struct_ids.get("IllegalStruct");
             illegal = runtime.struct_prototypes[strid];
         } catch (Exception e) {
@@ -273,28 +273,36 @@ public class Database extends NativeHost {
             String name = fieldNames[i];
             Struct anull = nulls[i];
 
-            if (type == Types.NULL) {
-                value = anull;
-            } else if (type == Types.DOUBLE) {
-                Double dvalue = rs.getDouble(i + 1);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbDoubleField", new Object[]{name, dvalue}, illegal);
-            } else if (type == Types.INTEGER || type == Types.TINYINT) {
-                Integer ivalue = rs.getInt(i + 1);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
-            } else if (type == Types.DECIMAL || type == Types.REAL) {
-                Double dvalue = rs.getDouble(i + 1);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbDoubleField", new Object[]{name, dvalue}, illegal);
-            } else if (type == Types.TIMESTAMP) {
-                Timestamp t = rs.getTimestamp(i + 1, calendar);
-                if (t == null || rs.wasNull()) {
+            switch (type) {
+                case (Types.NULL):
                     value = anull;
-                } else {
-                    String svalue = dateFormat.format(t);
-                    value = runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
-                }
-            } else {
-                String svalue = rs.getString(i + 1);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
+                    break;
+                case (Types.INTEGER):
+                case (Types.TINYINT):
+                case (Types.SMALLINT):
+                    Integer ivalue = rs.getInt(i + 1);
+                    value = rs.wasNull() ? anull : runtime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
+                    break;
+                case (Types.DOUBLE):
+                case (Types.DECIMAL):
+                case (Types.REAL):
+                case (Types.FLOAT):
+                case (Types.NUMERIC):
+                    Double dvalue = rs.getDouble(i + 1);
+                    value = rs.wasNull() ? anull : runtime.makeStructValue("DbDoubleField", new Object[]{name, dvalue}, illegal);
+                    break;
+                case (Types.TIMESTAMP):
+                    Timestamp t = rs.getTimestamp(i + 1, calendar);
+                    if (t == null || rs.wasNull()) {
+                        value = anull;
+                    } else {
+                        String svalue = dateFormat.format(t);
+                        value = runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
+                    }
+                    break;
+                default:
+                    String svalue = rs.getString(i + 1);
+                    value = rs.wasNull() ? anull : runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
             }
 
             values[i] = value;
