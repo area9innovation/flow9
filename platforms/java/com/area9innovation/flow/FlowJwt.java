@@ -49,29 +49,36 @@ public class FlowJwt extends NativeHost {
 	public Object decodeJwt(String jwt, String key, Func7<Object, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
 		String verify = verifyJwt(jwt, key);
 		if (verify == "OK") {
+			String iss;
+			String sub;
+			String aud;
+			Date exp;
+			Date nbf;
+			Date iat;
+			String jti;
 			try {
 				Claims jws = Jwts.parser().setSigningKey(getSecretKey(key)).parseClaimsJws(jwt).getBody();
-				String iss = jws.getIssuer();
-				String sub = jws.getSubject();
-				String aud = jws.getAudience();
-				Date exp = jws.getExpiration();
-				Date nbf = jws.getNotBefore();
-				Date iat = jws.getIssuedAt();
-				String jti = jws.get("id").toString();
-
-				callback.invoke(
-					(iss == null ? "" : iss),
-					(sub == null ? "" : sub),
-					(aud == null ? "" : aud),
-					(exp == null ? "" : DateFormats.formatIso8601(exp, false)),
-					(nbf == null ? "" : DateFormats.formatIso8601(nbf, false)),
-					(iat == null ? "" : DateFormats.formatIso8601(iat, false)),
-					(jti == null ? "" : jti)
-				);
+				iss = jws.getIssuer();
+				sub = jws.getSubject();
+				aud = jws.getAudience();
+				exp = jws.getExpiration();
+				nbf = jws.getNotBefore();
+				iat = jws.getIssuedAt();
+				jti = jws.get("id").toString();
 			} catch (Exception e) {
 				System.out.println(e.getMessage());
 				onError.invoke("Hash problems");
+				return null;
 			}
+			callback.invoke(
+				(iss == null ? "" : iss),
+				(sub == null ? "" : sub),
+				(aud == null ? "" : aud),
+				(exp == null ? "" : DateFormats.formatIso8601(exp, false)),
+				(nbf == null ? "" : DateFormats.formatIso8601(nbf, false)),
+				(iat == null ? "" : DateFormats.formatIso8601(iat, false)),
+				(jti == null ? "" : jti)
+			);
 		} else {
 			onError.invoke(verify);
 		}
