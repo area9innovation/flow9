@@ -547,6 +547,7 @@ class RenderSupport {
 	//
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
+	private static var printMode = false;
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
@@ -559,6 +560,22 @@ class RenderSupport {
 			}
 		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+		var prevInvalidateRenderable = true;
+		Browser.window.addEventListener('beforeprint', function () {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+			PixiStage.forceClipRenderable();
+			emit("beforeprint");
+			forceRender();
+		}, false);
+
+		Browser.window.addEventListener('afterprint', function () {
+			DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+			printMode = false;
+			emit("afterprint");
+			forceRender();
+		}, false);
 
 		// Make additional resize for mobile fullscreen mode
 		if (Platform.isMobile) {
@@ -757,6 +774,8 @@ class RenderSupport {
 	}
 
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
+		if (printMode) return;
+
 		backingStoreRatio = getBackingStoreRatio();
 
 		if (backingStoreRatio != PixiRenderer.resolution) {
@@ -2192,10 +2211,10 @@ class RenderSupport {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (event == "userstylechanged") {
-			on("userstylechanged", fn);
+		if (event == "userstylechanged" || event == "beforeprint" || event == "afterprint") {
+			on(event, fn);
 			return function () {
-				off("userstylechanged", fn);
+				off(event, fn);
 			}
 		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
