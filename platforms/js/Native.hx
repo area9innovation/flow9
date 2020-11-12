@@ -1784,6 +1784,10 @@ class Native {
 		return function() { PlatformEventListeners[event].remove(cb); };
 	}
 
+	public static function setUserIdleLimit(ms : Int) : Void {
+		IdleLimit = ms;
+	}
+
 	public static function notifyPlatformEvent(event : String) : Bool {
 		var cancelled = false;
 		if (PlatformEventListeners.exists(event))

@@ -470,6 +470,16 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static inline function forceClipRenderable(clip : DisplayObject, ?renderable : Bool = true) : Void {
+		setClipRenderable(clip, renderable);
+
+		for (child in getClipChildren(clip)) {
+			if (untyped child.clipVisible && !child.isMask) {
+				forceClipRenderable(child, renderable);
+			}
+		}
+	}
+
 	public static inline function getClipVisible(clip : DisplayObject) : Bool {
 		return untyped clip.clipVisible;
 	}
