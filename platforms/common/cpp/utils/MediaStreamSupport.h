@@ -16,13 +16,16 @@ private:
     virtual void getVideoInputDevices(int onDeviceInfoReadyRoot) {}
     virtual void makeStream(bool recordAudio, bool recordVideo, unicode_string audioDeviceId, unicode_string videoDeviceId,
                                 int onReadyRoot, int onErrorRoot) {}
+    virtual void scanStream(StackSlot mediaStream, std::vector<std::string> scanTypes, int onResultRoot) {}
     virtual void stopStream(StackSlot mediaStream) {}
 
     DECLARE_NATIVE_METHOD(initDeviceInfo)
     DECLARE_NATIVE_METHOD(requestAudioInputDevices)
     DECLARE_NATIVE_METHOD(requestVideoInputDevices)
-
+    
     DECLARE_NATIVE_METHOD(makeMediaStream)
+    
+    DECLARE_NATIVE_METHOD(scanMediaStream)
     DECLARE_NATIVE_METHOD(stopMediaStream)
 };
 

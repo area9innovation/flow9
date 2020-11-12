@@ -24,6 +24,14 @@ class iosMediaStreamSupport;
 
 @end
 
+@interface MetadataObjectDelegate : NSObject <AVCaptureMetadataOutputObjectsDelegate> {
+}
+
+@property(readwrite, copy) void (^dataCallback)(NSString*);
+- (id) initWithCallback: (void (^)(NSString*)) dataCallback;
+- (void)captureOutput:(AVCaptureOutput *)output didOutputMetadataObjects:(NSArray<__kindof AVMetadataObject *> *)metadataObjects fromConnection:(AVCaptureConnection *)connection;
+@end
+
 class FlowNativeMediaStream : public FlowNativeObject
 {
 public:
@@ -58,11 +66,13 @@ public:
     
 protected:
     void makeStream(bool recordAudio, bool recordVideo, unicode_string audioDeviceId, unicode_string videoDeviceId, int onReadyRoot, int onErrorRoot);
+    void scanStream(StackSlot mediaStream, std::vector<std::string> scanTypes, int onResultRoot);
     void stopStream(StackSlot mediaStream);
     void initializeDeviceInfo(int OnDeviceInfoReadyRoot);
     void getAudioInputDevices(int OnDeviceInfoReadyRoot);
     void getVideoInputDevices(int OnDeviceInfoReadyRoot);
 private:
+    NSArray<AVMetadataObjectType>* scanTypesToAVMetadataObjectType(std::vector<std::string> scanTypes);
     void returnDevices(int callbackRoot, NSArray<AVCaptureDevice*>  *devices);
 };
 
