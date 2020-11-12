@@ -1,5 +1,6 @@
 import text/serialize;
 import net/http;
+import sys/process;
 import tools/common/config;
 import tools/flowc/flowc_local;
 
@@ -20,6 +21,26 @@ export {
 runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
 	if (isConfigParameterFalse(config.config, "server") || !java) {
 		runConfigLocally(config, globalEnv, onRunComplete);
+	} else if (isConfigParameterTrue(config.config, "server-process")) {
+		switch (findProcessIds("flowc.jar server-mode=http")) {
+			Some(ids): {
+				if (length(ids) == 0) {
+					fcPrintln("Flow http server is not running\n", config.threadId);
+				} else if (length(ids) == 1) {
+					fcPrintln("Flow http server is running, process id = " + ids[0] + "\n", config.threadId);
+				} else {
+					fcPrintln("Multiple flow http server instances are running, process ids = " + strGlue(ids, ", ") + "\n", config.threadId);
+				}
+			}
+			None(): fcPrintln("Failed to determine if a flow http server is running\n", config.threadId);
+		}
+		onRunComplete(0);
+	} else if (isConfigParameterTrue(config.config, "server-kill")) {
+		switch (findProcessIds("flowc.jar server-mode=http")) {
+			Some(ids): iter(ids, killProcessId);
+			None(): fcPrintln("Failed to determine flow http server process\n", config.threadId);
+		}
+		onRunComplete(0);
 	} else {
 		runConfigRemote(
 			config, 
@@ -27,41 +48,38 @@ runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : 
 			\msg -> fcPrintln(msg, config.threadId), 
 			onRunComplete, 
 			\code, msg -> {
-				if (isConfigParameterTrue(config.config, "client-mode")) {
+				if (isConfigParameterTrue(config.config, "server-ping")) {
+					fcPrintln("Flow http server is offline\n", config.threadId);
+				} else if (isConfigParameterTrue(config.config, "client-mode")) {
 					fcPrintln("Error " + i2s(code) + ": " + msg, config.threadId);
 				} else {
 					runConfigLocally(config, globalEnv, onRunComplete);
 				}
 			}
-		)
+		);
 	}
 }
 
-runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string) -> void, onRunComplete : (int) -> void, onServerError : (int, string) -> void) -> void {
+runConfigRemote(
+	conf : CompilerConfig, 
+	onData: (flow) -> void, 
+	onError : (string) -> void, 
+	onRunComplete : (int) -> void, 
+	onServerError : (int, string) -> void
+) -> void {
 	serverUrl = 
 		"http://localhost:" +
 		getConfigParameterDef(conf.config, "server-port", "10001");
-	cwd = strReplace(resolveRelativePath("."), "\\", "/");
-	patchedConfig = CompilerConfig(conf with config =
-		setTree(
-			setTree(
-				switch (lookupTree(conf.config, "output-dir")) {
-					Some(__): conf.config;
-					None():   setTree(conf.config, "output-dir", cwd);
-				},
-				"file",
-				conf.flowfile
-			),
-			"working-dir",
-			lookupTreeDef(conf.config, "working-dir", cwd)
-		)
-	);
+	patchedConfig = patchRemoteConfig(conf);
 	serialized_server_job = 
 		isConfigParameterSet(conf.config, "compile-expression") || 
 		isConfigParameterTrue(conf.config, "dump-program");
+	ping_server = isConfigParameterTrue(conf.config, "server-ping");
+	request = if (ping_server) "ping" else "config_" + serialize(patchedConfig);
+	starttime = timestamp();
 	httpCustomRequest(
 		serverUrl,
-		GET(), [], RequestPayload("config_" + serialize(patchedConfig)),
+		GET(), [], RequestPayload(request),
 		\status, data, headers -> {
 			code = status - 200;
 			if (code == 0) {
@@ -72,6 +90,8 @@ runConfigRemote(conf : CompilerConfig, onData: (flow) -> void, onError : (string
 					} else {
 						onData(value);
 					}
+				} else if (ping_server) {
+					onData(rtrim2(data, " \t\n\r") + " (ping time = " + d2st((timestamp() - starttime), 4) + " ms)\n");
 				} else {
 					onData(data);
 				}

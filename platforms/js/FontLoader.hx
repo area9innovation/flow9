@@ -18,12 +18,12 @@ class FontLoader {
 				};
 				WebFont.load(webfontconfig);
 			} else {
-				onDone();
+				untyped __js__("setTimeout(onDone, 25)");
 			}
 			return webfontconfig;
 		} else {
 			Errors.print("WebFont is not defined");
-			onDone();
+			untyped __js__("setTimeout(onDone, 25)");
 			return untyped {};
 		}
 	}
@@ -49,27 +49,37 @@ class FontLoader {
 			}
 		}
 
+		// 400italic, 400 - examples of valid strings to parse
+		var wsReg = ~/([0-9]+)([A-Za-z]*)/;
+
 		for (i in 0...fontList.length) {
 			var font = untyped fontList[i];
 			var parts : Array<String> = font.split(":");
 			var family = parts[0];
 			var testString = testStringsMap.get(family);
 			if (parts.length > 1) {
-				var weights = parts[1].split(",");
-				for (j in 0...weights.length)
-					addStyledText(family, untyped weights[j], testString);
+				var styles = parts[1].split(",");
+				for (j in 0...styles.length) {
+					var weight = "", style = "";
+
+					if (wsReg.match(styles[j])) {
+						weight = wsReg.matched(1);
+						style = wsReg.matched(2);
+					}
+					addStyledText(family, untyped weight, untyped style, testString);
+				}
 			} else {
-				addStyledText(family, "", testString);
+				addStyledText(family, "", "", testString);
 			}
 		}
 	}
 
-	private static function addStyledText(family : String, weight : String = "", testString : String = "") {
+	private static function addStyledText(family : String, weight : String = "", style : String = "", testString : String = "") {
 		var text = Browser.document.createElement('span');
 		text.innerText = "Loading font '" + family + "' [" + testString + "]...";
 		text.style.fontFamily = family;
-		if (weight != "")
-			text.style.fontWeight = weight;
+		if (weight != "") text.style.fontWeight = weight;
+		if (style != "") text.style.fontStyle = style;
 		text.style.visibility = "hidden";
 		Browser.document.body.appendChild(text);
 

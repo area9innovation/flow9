@@ -1,4 +1,4 @@
-import tropic/tropic;
+import tropic/selecttarray;
 import tropic/tropic_util;
 import fform/fform_gui;
 import sys/fullscreen;
@@ -8,6 +8,7 @@ import fform/renderfform;
 import tropic/tropic_manager;
 import fform/renderform3d;
 import fform/fpdf;
+import ui/scrollable;
 
 export {
 	// A fixed size, empty block
@@ -100,6 +101,7 @@ export {
 	TBaselineColsXCenter(cols : [Tropic]) -> Tropic;
 	TBaselineColsYCenter(cols : [Tropic]) -> Tropic;
 	TColsYCenterA(cols : [Tropic]) -> Tropic;
+	TBaselineColsYCenterA(cols : [Tropic]) -> Tropic;
 	TLinesXCenter(lines : [Tropic]) -> Tropic;
 	TLinesYCenter(lines : [Tropic]) -> Tropic;
 	TBaselineLinesXCenter(lines : [Tropic]) -> Tropic;
@@ -116,7 +118,7 @@ export {
 
 	// Add a rounded frame behind the given box
 	TFrame(margin : double, radius : double, style : [TGraphicsStyle], box : Tropic) -> Tropic;
-	TFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphicsStyle], box : Tropic) -> Tropic;
+	TFrameT(margin : Transform<double>, radius : Transform<double>, style : Transform<[TGraphicsStyle]>, box : Tropic) -> Tropic;
 	TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double, trRounded : bool, r : double,
 		br : double, brRounded : bool, b : double, bl : double, blRounded : bool, style : [TGraphicsStyle], box : Tropic) -> Tropic;
 
@@ -217,6 +219,9 @@ export {
 	// The tropic is destroyed/reconstructed when 'show' becomes false/true but tr fn called only once
 	// and only when show becomes true
 	TShowLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic;
+	// Calls content function only on first condition true value
+	// Hides content if condition is false
+	TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic;
 	// Similar to TShowLazy
 	// Constructs tr when show is true and just hides it when show is false
 	// If show is false initially tr function isn't called until show is true
@@ -226,6 +231,24 @@ export {
 	TCropSizeX : (content : Tropic, width : Tropic) -> Tropic;
 	// Crops only in Y dimension
 	TCropSizeY : (content : Tropic, height : Tropic) -> Tropic;
+
+	// ---
+	// TScrollable - DEPRECATED, use TScroll
+	// ---
+	// If content is smaller than maxbox, the content size wins. The content gets the fill size from maxbox
+	// [--Explain--] Could we remove this, as we already have tscroll.flow? Or probably just mark this as DEPRECATED or something like that
+	TScrollable(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic;
+		TScrollableState ::= TScrollRect, TScrollOffset, TAnimate, TScrollInspect, TStickToEdge;
+			// If you need to control the area
+			TScrollRect(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, width : DynamicBehaviour<double>, height : DynamicBehaviour<double>);
+			// If you need to control the position
+			TScrollOffset(t : Behaviour<Tropic>);
+			// If scrolling should animate.
+			TAnimate(tension : double, friction : double);
+			// explicitely inspect the size of the content to make sure scroll bars are visible when both TScrollable and its content form rely on TFillXY(). Inspired by case 38798.
+			TScrollInspect();
+			// pushes the scrollbars to egdes of the screen
+			TStickToEdge();
 
 	// TScrollable with extra margins for scroll bars at the right and bottom
 	TScrollableWithBars(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic;
@@ -304,6 +327,7 @@ export {
 
 	// Dynamic version of TBorder
 	TBorderT(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic) -> Tropic;
+	TBorderTDir(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic, isRTL : bool) -> Tropic;
 
 	TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeight>) -> Tropic>], above : bool) -> Tropic;
 	// Helper for dynamic text
@@ -327,6 +351,8 @@ export {
 	TDebugMetricsPurple(t : Tropic) -> Tropic { TDebugMetrics(purple, t); };
 
 	TDebugConstruct(tag : string, tr : Tropic) -> Tropic;
+
+	TDebugInteractive(tr : Tropic) -> Tropic;
 
 	TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic;
 
@@ -388,6 +414,7 @@ export {
 	// Otherwise shows reducedSizeContent
 	TIfFits(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic;
 	TIfFitsWidth(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic;
+	TIfFitsWidthDelay(fullSizeContent : Tropic, reducedSizeContent : Tropic, delay : int) -> Tropic;
 	TIfFitsHeight(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic;
 
 	// Shows content only if available space is greater than minimum size required to show it
@@ -397,6 +424,9 @@ export {
 
 	// Detect is tropic inside viewbox
 	TRenderable(renderable : DynamicBehaviour<bool>, t : Tropic) -> Tropic;
+
+	// Content displayed in browser print dialog
+	TPrintTarget(t : Tropic) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -666,6 +696,19 @@ TColsYCenterA(cols : [Tropic]) -> Tropic {
 	));
 }
 
+TBaselineColsYCenterA(cols : [Tropic]) -> Tropic {
+	sizes = generate(0, length(cols), \__ -> make(0.0));
+
+	segmentsAttaches =
+		mapi(cols, \i, segment ->
+			TAttachHeight(segment, sizes[i])
+		);
+
+	TBaselineColsA(map(segmentsAttaches, \sa ->
+		TCenterYIn(sa, TSizedHeight(0.0, fmaxA(sizes, 0.0)))
+	));
+}
+
 TLinesXCenter(lines : [Tropic]) -> Tropic {
 	TSegmentCenter(lines, false, false, false)
 }
@@ -791,14 +834,16 @@ TFrame(margin : double, radius : double, style : [TGraphicsStyle], box : Tropic)
 		borderedBox
 }
 
-TFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphicsStyle], box : Tropic) -> Tropic {
+TFrameT(margin : Transform<double>, radius : Transform<double>, style : Transform<[TGraphicsStyle]>, box : Tropic) -> Tropic {
 	borderedBox = TBorderT(margin, margin, margin, margin, box);
 
-	if (style != [])
+	if (isFConst(style) && length(fgetValue(style)) == 0)
+		borderedBox
+	else
 		TransformTAcc2(\tac -> {
 			b1 = borderedBox |> tac;
 
-			gstyle = tgraphicsStyle2graphicsStyle(style);
+			gstyle = fselect(style, FLift(tgraphicsStyle2graphicsStyle));
 
 			isconst = b1.xConstant && b1.yConstant;
 			wd = if (isconst) const(fgetValue(b1.metrics.width)) else b1.metrics.width;
@@ -813,14 +858,12 @@ TFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphi
 							else
 								perfectRoundedRect(w, h, r)
 						),
-						const(gstyle)
+						gstyle
 					),
 					b1.form
 				], false)
 			)
 		})
-	else
-		borderedBox
 }
 
 TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double, trRounded : bool, r : double,
@@ -874,6 +917,153 @@ TRoundedFull(style : [TGraphicsStyle], size : Tropic) -> Tropic {
 
 TRounded4(radius : double, style : [TGraphicsStyle], size : Tropic) -> Tropic {
 	TRounded(radius, radius, radius, radius, style, size);
+}
+
+TScrollable(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic {
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		ba2 = t2a(maxbox, parent, sheet, true);
+		if (metricsOnly) ba2
+		else {
+			stickToEdge = contains(state, TStickToEdge());
+
+			showHorizontal = make(false);
+			showVertical = make(false);
+
+			addedMarginX = style.borderGap + if (stickToEdge) getVScrollWidth(style) else 0.0;
+			addedMarginY = style.borderGap + if (stickToEdge) getHScrollHeight(style) else 0.0;
+
+			borderLeft = 9.9;
+			constMargin = Point(borderLeft + addedMarginX, borderLeft + addedMarginY);
+
+			w = fuse(ba2.metrics.width);
+			h = fuse(ba2.metrics.height);
+
+			realWidth = select2u(w.first, showVertical, \w2, show -> w2 - if (show) constMargin.x else 0.0);
+			realHeight = select2u(h.first, showHorizontal, \h2, show -> h2 - if (show) constMargin.y else 0.0);
+
+			wb = if (stickToEdge) realWidth.first else w.first;
+			hb = if (stickToEdge) realHeight.first else h.first;
+
+			scrollRect = extractStruct(state, TScrollRect(make(0.0), make(0.0), make(0.0), make(0.0)));
+
+			ba1 =
+				t2a(
+					content,
+					TParentInfo(
+						wb,
+						hb,
+						parent.environment,
+						fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(scrollRect.x, scrollRect.y)))
+					),
+					sheet,
+					metricsOnly
+				);
+			ba1form = Available(wb, hb, fform2form(ba1.form));
+
+			width = fuse(ba1.metrics.width);
+			height = fuse(ba1.metrics.height);
+			//those subscriptions are monitoring if we need to display the scrollbars
+			unsWidth = subscribe(width.first, \ww -> if(ww - getValue(w.first) >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
+			unsWidth2 = subscribe(w.first, \ww -> if(getValue(width.first) - ww >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
+			unsHeight = subscribe(height.first, \hh -> if(hh - getValue(h.first) >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
+			unsHeight2 = subscribe(h.first, \hh -> if(getValue(height.first) - hh >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
+
+			contentWH = select2u(width.first, height.first, \w1, h1 -> WidthHeight(w1, h1));
+
+			sizeAdded = if(!stickToEdge) constMargin.x else 0.0;
+			sizeFn = \dimension, vis -> dimension;
+
+			scrollAnimate = extractStruct(state, TAnimate(0.0, 0.0));
+			scrollAnimateTimer = makeDeltaTimer(30);
+			springy = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
+			springyUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springy.goal, scrollRect.y)
+			else connectDistinct(springy.position, scrollRect.y);
+			springx = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
+			springxUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springx.goal, scrollRect.x)
+			else connectDistinct(springx.position, scrollRect.x);
+
+			offsetAccDisposers = ref [];
+			offsetUns = subscribe(extractStruct(state, TScrollOffset(const(TEmpty()))).t, \offsetTropic -> {
+				applyall(^offsetAccDisposers);
+				offsetAcc = t2a(offsetTropic, parent, sheet, true);
+				offsetAccDisposers := offsetAcc.disposers;
+
+				offsetUpdate = \ -> {
+					owidth = fgetValue(offsetAcc.metrics.width);
+					oheight = fgetValue(offsetAcc.metrics.height);
+
+					if (getValue(scrollRect.y) != oheight) {
+						next(springy.position, getValue(scrollRect.y));
+						next(springy.goal, oheight);
+					}
+					if (getValue(scrollRect.x) != owidth) {
+						next(springx.position, getValue(scrollRect.x));
+						next(springx.goal, owidth);
+					}
+				};
+
+				if (isStaticForm(ba1form)) {
+					offsetUpdate();
+				} else {
+					deferred(offsetUpdate);
+				};
+			});
+
+			offsetDisposers = [
+				offsetUns,
+				springyUns,
+				springxUns,
+				\ -> applyall(concat([^(springx.dispose), ^(springy.dispose)], ^offsetAccDisposers))
+			];
+
+			// case 38798 - inspect real size of the content to make sure the scroll bars are visible when necessary
+			inspectContentSize = contains(state, TScrollInspect());
+			formToScroll = if (inspectContentSize) {
+				realSize = makeWH();
+				Size2(
+					select2(contentWH.first, realSize, \s1, s2 -> WidthHeight(max(s1.width, s2.width), max(s1.height, s2.height))),
+					Inspect([ISize(realSize)], ba1form)
+				)
+			} else {
+				Size2(contentWH.first, ba1form)
+			}
+
+			stickToEdgeDisposers = [realHeight.second, realWidth.second, unsWidth, unsWidth2, unsHeight, unsHeight2];
+			addBorderLeft = \f -> if (stickToEdge) Offset(borderLeft, 0.0, f) else f;
+			addBorderTop = \f -> if (stickToEdge) Offset(0.0, borderLeft, f) else f;
+			TAcc(
+				doStyledScrollableCustom(scrollRect.x, scrollRect.y, wb, hb, formToScroll,
+					style, true, true, false,
+					\cForm, hBar, vBar -> if (mobile) {
+						wh = makeWH();
+						Group([
+							Inspect([ISize(wh)], cForm),
+							Available2(wh, Group([
+								Align2(1.0, 0.0, Offset(constMargin.x, 0.0, vBar)),
+								Align2(0.0, 1.0, Offset (0.0, constMargin.y, hBar))
+							]))
+						]);
+					} else Grid([[cForm, vBar |> addBorderLeft], [hBar |> addBorderTop, Empty()]]),
+					sizeFn, sizeFn, true, false
+				) |> FMForm,
+				TFormMetrics(
+					wb,
+					hb,
+					ba2.metrics.baseline
+				),
+				ba2.minWidth,
+				ba2.minHeight,
+				ba2.maxWidth,
+				ba2.maxHeight,
+				ba2.xFillers,
+				ba2.yFillers,
+				ba2.addFillers,
+				ba2.xConstant && isConst(wb),
+				ba2.yConstant && isConst(hb),
+				concatA([ba1.disposers, ba2.disposers, stickToEdgeDisposers, w.second, h.second, width.second, height.second, [contentWH.second], offsetDisposers])
+			);
+		}
+	})
 }
 
 TScrollableWithBars(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic {
@@ -975,8 +1165,8 @@ TFillXY() -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			zero,
 			zero,
-			const(^tropicFillersMax),
-			const(^tropicFillersMax),
+			const(doubleMax),
+			const(doubleMax),
 			const(1.),
 			const(1.),
 			const(false),
@@ -1000,7 +1190,7 @@ TFillXHT(hgt : Transform<double>) -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			zero,
 			hgt,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			hgt,
 			const(1.),
 			zero,
@@ -1026,7 +1216,7 @@ TFillXWT(minWidth : Transform<double>) -> Tropic {
 			TFormMetrics(wd, hgt, hgt),
 			minWidth,
 			hgt,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			hgt,
 			const(1.),
 			zero,
@@ -1052,7 +1242,7 @@ TFillWYT(wd : Transform<double>) -> Tropic {
 			wd,
 			zero,
 			wd,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			zero,
 			const(1.),
 			const(false),
@@ -1078,7 +1268,7 @@ TFillYHT(minHeight : Transform<double>) -> Tropic {
 			wd,
 			minHeight,
 			wd,
-			const(^tropicFillersMax),
+			const(doubleMax),
 			zero,
 			const(1.),
 			const(false),
@@ -1124,15 +1314,15 @@ TFillMax(maxWidth : double, maxHeight : double) -> Tropic {
 }
 
 TFillMaxWY(maxWidth : double) -> Tropic {
-	TFillMax(maxWidth, ^tropicFillersMax)
+	TFillMax(maxWidth, doubleMax)
 }
 
 TFillMaxHX(maxHeight : double) -> Tropic {
-	TFillMax(^tropicFillersMax, maxHeight)
+	TFillMax(doubleMax, maxHeight)
 }
 
 TFillMin(minWidth : double, minHeight : double) -> Tropic {
-	TFillXYXY(minWidth, minHeight, ^tropicFillersMax, ^tropicFillersMax)
+	TFillXYXY(minWidth, minHeight, doubleMax, doubleMax)
 }
 
 THeight(tropic : Tropic) -> Tropic {
@@ -1339,6 +1529,28 @@ TShowLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic {
 	TFSelect(show, FLift(\s -> {
 		if (s) onlyOnce(t, \ -> tr()) else TEmpty()
 	}))
+}
+
+TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic {
+	contRendered = ref false;
+
+	TCopySize2(
+		TShowLazy(
+			fselect(condition,
+				FLift(\c -> {
+					if (^contRendered) {
+						true
+					} else if (c) {
+						contRendered := true;
+						true
+					} else
+						false
+				})
+			),
+			content
+		),
+		\sz, t -> TFixSize(TVisible(condition, t), TIf(condition, sz, TEmpty()))
+	)
 }
 
 TVisibleLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic {
@@ -2002,6 +2214,11 @@ TBorderT(left : Transform<double>, top : Transform<double>, right : Transform<do
 	|> (\f -> TTranslate(fpoint(left, top), f))
 }
 
+TBorderTDir(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic, isRTL : bool) -> Tropic {
+	if (isRTL) TBorderT(right, top, left, bottom, t)
+	else TBorderT(left, top, right, bottom, t)
+}
+
 TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeight>) -> Tropic>], above : bool) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b1 = tr |> t2a;
@@ -2086,6 +2303,78 @@ TDebugConstruct(tag : string, tr : Tropic) -> Tropic {
 			}
 		],
 		tr
+	)
+}
+
+TDebugInteractive(tr : Tropic) -> Tropic {
+	da = makeDynamicArray([]);
+	daDown = makeDynamicArray([]);
+	daUp = makeDynamicArray([]);
+
+	TInteractive(
+		[
+			MouseMove2(\h, mi -> {
+				m = mi();
+
+				println("mouse move: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(da, Point(m.x, m.y));
+
+				h;
+			}),
+			MouseDown2(\h, m -> {
+				println("mouse down: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(daDown, Point(m.x, m.y));
+
+				h;
+			}),
+			MouseUp2(\h, mi -> {
+				m = mi();
+
+				println("mouse up: " + toString(Point(m.x, m.y)));
+
+				pushDynamicArray(daUp, Point(m.x, m.y));
+
+				h;
+			}),
+		],
+		TGroupSameMetrics([
+			tr,
+			SelectTDynamicGroup(
+				da,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(da, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(red), FillOpacity(0.2)]
+					)
+				}
+			),
+			SelectTDynamicGroup(
+				daDown,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(daDown, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(blue), FillOpacity(0.2)]
+					)
+				}
+			),
+			SelectTDynamicGroup(
+				daUp,
+				\index, id, v -> {
+					timer(500, \ -> removeDynamicArray(daUp, v) |> ignore);
+
+					TGraphics(
+						[GCircle(v.x, v.y, 10.0)],
+						[Fill(green), FillOpacity(0.2)]
+					)
+				}
+			)
+		])
 	)
 }
 
@@ -2517,8 +2806,9 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 					zorder = make(z);
 					rr = renderFForm(b.form, zorder);
 					originalParent = makeClip();
-					alive = ref true;
+					alive = ref false;
 					iter(rr.clips, \c -> addChild(originalParent, c));
+					parent = makeClip();
 
 					fn(
 						TFForm(
@@ -2527,7 +2817,7 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 								const(FormMetrics(0., 0., 0., 0.)),
 								\ -> b.form,
 								\__, z2, __ -> {
-									parent = makeClip();
+									alive := true;
 									iter(rr.clips, \c -> addChild(parent, c));
 									nextDistinct(zorder, z2);
 
@@ -2535,7 +2825,11 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 										[parent],
 										\ -> {
 											nextDistinct(zorder, z);
-											iter(rr.clips, \c -> if (^alive) addChild(originalParent, c) else removeChild(parent, c));
+
+											if (^alive) {
+												iter(rr.clips, \c -> addChild(originalParent, c));
+												alive := false;
+											}
 										}
 									)
 								}
@@ -2544,7 +2838,17 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 						)
 					);
 
-					NativeRenderResult([originalParent], \ -> { alive := false; applyall(rr.disposers); } )
+					NativeRenderResult(
+						[originalParent],
+						\ -> {
+							if (^alive) {
+								iter(rr.clips, \c -> removeChild(parent, c));
+								alive := false;
+							}
+
+							applyall(rr.disposers);
+						}
+					)
 				}
 			)
 		)
@@ -2676,6 +2980,36 @@ TIfFitsWidth(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic {
 	)
 }
 
+TIfFitsWidthDelay(fullSizeContent : Tropic, reducedSizeContent : Tropic, delay : int) -> Tropic {
+	TransformTAcc(\t2a, parent, ss, mo -> {
+			b = t2a(fullSizeContent, parent, ss, mo);
+
+			ifAvailable = fstall(fnot(fless(parent.maxX, b.minWidth)), delay);
+
+			b2 = t2a(TShowKeepMetrics(fnot(ifAvailable), reducedSizeContent), parent, ss, mo);
+
+			TAcc(
+				FMutable(fif(ifAvailable, const(b.form), const(b2.form))),
+				TFormMetrics(
+					fif(ifAvailable, b.metrics.width, b2.metrics.width),
+					fif(ifAvailable, b.metrics.height, b2.metrics.height),
+					fif(ifAvailable, b.metrics.baseline, b2.metrics.baseline)
+				),
+				fmin(b.minWidth, b2.minWidth),
+				fif(ifAvailable, b.minHeight, b2.minHeight),
+				b.maxWidth,
+				fif(ifAvailable, b.maxHeight, b2.maxHeight),
+				fmax(fif(ifAvailable, b.xFillers, b2.xFillers), const(1.0)),
+				fif(ifAvailable, b.yFillers, b2.yFillers),
+				const(false),
+				false,
+				false,
+				concat(b.disposers, b2.disposers)
+			)
+		}
+	)
+}
+
 TIfFitsHeight(fullSizeContent : Tropic, reducedSizeContent : Tropic) -> Tropic {
 	TransformTAcc(\t2a, parent, ss, mo -> {
 			b = t2a(fullSizeContent, parent, ss, mo);
@@ -2720,4 +3054,17 @@ TShowIfFitsHeight(content : Tropic) -> Tropic {
 
 TRenderable(renderable : DynamicBehaviour<bool>, t : Tropic) -> Tropic {
 	TransformTAcc2(\t2a -> t2a(t) |> (\b -> TAcc(b with form = FRenderable(renderable, b.form))))
+}
+
+TPrintTarget(t : Tropic) -> Tropic {
+	printMode = make(false);
+
+	TConstruct(
+		[
+			\ -> \ -> next(printMode, false),
+			\ -> addEventListener(getStage(), "beforeprint", \ -> next(printMode, true)),
+			\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false))
+		],
+		TFullWindow(printMode, t)
+	)
 }

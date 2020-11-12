@@ -70,6 +70,9 @@ Documentation
 See [doc/readme.markdown](doc/readme.markdown) for further documentation about the language 
 and platform, including more details on how to get started.
 
+See [flow9 Wiki](https://github.com/area9innovation/flow9/wiki) for documentation on the [Material library](https://github.com/area9innovation/flow9/wiki/Material)
+and main UI building blocks.
+
 Community
 ---------
 

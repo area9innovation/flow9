@@ -7,7 +7,7 @@ class ProgressiveWebTools {
 	public function new() {}
 
 	public static function __init__() {
-		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches) {
+		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches || ~/CapacitorJS/i.match(Browser.window.navigator.userAgent)) {
 			var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
 			if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit") < 0) {
@@ -93,33 +93,31 @@ class ProgressiveWebTools {
 	}
 
 	public static function checkServiceWorkerCachingEnabled(swFileName : String, callback : Bool -> Void) : Void {
-		#if flash
+		#if !js
 		callback(false);
-		#elseif js
+		#else
 		if (globalRegistration != null) {
 			callback(true);
 		} else if (untyped navigator.serviceWorker) {
 			untyped navigator.serviceWorker.getRegistrations().then(function(registrations) {
 				if (registrations.length == 0) {
 					callback(false);
-				}
-
-				untyped Promise.race(untyped registrations.map(function(registration) {
+				} else if (untyped registrations.filter(function(registration) {
 					if (untyped registration.active == null) {
-						return Promise.reject();
+						return false;
 					}
 
 					if (untyped registration.active.scriptURL == (registration.scope + swFileName)) {
 						globalRegistration = registration;
-						return Promise.resolve();
+						return true;
 					} else {
-						return Promise.reject();
+						return false;
 					}
-				})).then(function() {
+				}).length > 0) {
 					callback(true);
-				}, function() {
+				} else {
 					callback(false);
-				});
+				}
 			}, function(err) {
 				callback(false);
 			});

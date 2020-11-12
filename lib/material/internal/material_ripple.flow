@@ -2,10 +2,12 @@ import material/internal/material_clickable;
 
 export {
 	MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, rippleType : Transform<RippleType>) -> Tropic;
-	MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MColor>, opacity : Transform<double>,
+	MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MThemeColor>, opacity : Transform<double>,
 		rippleType : Transform<RippleType>, focused : Transform<bool>, hovered : Transform<bool>, component : string) -> Tropic;
 
 	MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, trigger : Transform<bool>, style : [MRippleStyle]) -> Tropic;
+
+	defaultMaterialRippleOpacity = if (isWCAGEnabled) 0.2 else 0.1;
 }
 
 MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, rippleType : Transform<RippleType>) -> Tropic {
@@ -22,7 +24,7 @@ MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content 
 	)
 }
 
-MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MColor>, opacity : Transform<double>,
+MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MThemeColor>, opacity : Transform<double>,
 	rippleType : Transform<RippleType>, focused : Transform<bool>, hovered : Transform<bool>, component : string) -> Tropic {
 	down = make(false);
 	point = make(zeroPoint);
@@ -51,72 +53,113 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 	focused = extractStruct(style, MRippleFocused(const(false))).focused;
 	hovered = extractStruct(style, MRippleHovered(const(false))).hovered;
 	selected = extractStruct(style, MRippleSelected(const(false))).selected;
-	triggered = fselectdelay(fmax(trigger, focused), \tr -> if (tr) 0 else 400);
+	triggered = fselectdelay(fmax(extractStruct(style, MRippleTrigger(trigger)).trigger, focused), \tr -> if (tr) 0 else 400);
 
 	if (parent.theme.enableRipple && enabled != const(false) &&
 		(rippleType != const(MNoRipple()) || focused != const(false) || hovered != const(false) || selected != const(false))) {
-		point = extractStruct(style, MRipplePosition(const(zeroPoint))).position;
+		position = tryExtractStruct(style, MRipplePosition(const(zeroPoint)));
 		color = extractStruct(style, MRippleColor(const(contrastingMColor(parent)))).color;
-		opacity = extractStruct(style, MRippleOpacity(const(0.1))).opacity;
+		opacity = extractStruct(style, MRippleOpacity(const(defaultMaterialRippleOpacity))).opacity;
 		shape = extractStruct(style, MRippleShape("")).component;
 		overlay = extractStruct(style, MRippleOverlay(true)).overlay;
 
-		isCircleCenteredRipple = rippleType == const(MRippleCenter()) && getShapeByComponent(parent, shape).defaultShape == defaultMaterialRoundShape;
+		isCircleCenteredRipple = rippleType == const(MRippleCenter()) &&
+			getShapeByComponentDef(
+				parent,
+				shape,
+				MaterialShapeRange(defaultMaterialRoundShape, defaultMaterialShapeApplicable, defaultMaterialShapeLimit, defaultMaterialShapeLimit)
+			).defaultShape == defaultMaterialRoundShape;
 
 		TransformTAcc2(\t2a -> {
 			b1 = content |> t2a;
 			rippleWH = tryExtractStruct(style, MRippleWidthHeight(const(WidthHeight(0., 0.))));
-			showRipple = fand(enabled, fmin(fneq(rippleType, MNoRipple()), fmax(fmax(selected, focused), fmax(hovered, triggered))));
+			showRipple = fand(enabled, fmin(fneq(rippleType, MNoRipple()), triggered));
 
 			wd = eitherMap(rippleWH, \b -> fselect(b.wh, FLift(\wh -> wh.width)), b1.metrics.width);
 			hgt = eitherMap(rippleWH, \b -> fselect(b.wh, FLift(\wh -> wh.height)), b1.metrics.height);
 			box = eitherMap(rippleWH, \b -> b.wh, fwidthheight(b1.metrics.width, b1.metrics.height));
 
-			egrowth = makeMEasing(if (isCircleCenteredRipple) 0.3 else 0.6, easingStandartCurve, manager.manager.deltaTimer);
-			efade = makeMEasing(0.4, easingStandartCurve, manager.manager.deltaTimer);
+			startingPoint = make(zeroPoint);
 
-			next(egrowth.percent, 0.0);
-			next(efade.percent, 1.0);
-
-			startingPoint = ref fgetValue(point);
-
-			opacityPercent =
-				fmin(
-					fmultiply(
-						fmax(
-							fsubtract(const(1.0), fmultiply(efade.percent, const(1.0))),
-							fif(fmax(selected, focused), const(0.8), fif(hovered, const(0.4), zero))
-						),
-						fif(fselect(color, FLift(\c -> MColor2int(c) != black)), const(2.0), const(1.0))
-					),
-					const(1.0)
-				);
-			rippleOpacity = fmultiply(opacity, opacityPercent);
-			radiusPercent = fif(triggered, egrowth.percent, fif(fmax(hovered, selected), const(1.0), zero));
-			radius =
-				fmultiply(
-					if (isCircleCenteredRipple)
-						fselect(box, FLift(\b -> max(b.width, b.height) / 2.0))
-					else
-						fselect(box, FLift(\b -> sqrt(b.width * b.width + b.height * b.height))),
-					radiusPercent
-				);
-			position =
-				fif(
-					fmax(feq(rippleType, MRippleCenter()), fmin(fmax(hovered, selected), fnot(triggered))),
-					fselect2(box, radius, FLift2(\b, r -> Point(b.width / 2.0 - r, b.height / 2.0 - r))),
-					fselect(radius, FLift(\r -> Point(^startingPoint.x - r, ^startingPoint.y - r)))
-				);
+			transformAnimationB = make([]);
+			opacityAnimationB = make([]);
 
 			rippleContent =
-				FAlpha(
-					rippleOpacity,
-					FTranslate(
-						fselect(position, FLift(\pt -> pt.x)),
-						fselect(position, FLift(\pt -> pt.y)),
-						FGraphics(
-							fselect(radius, FLift(\r -> [GCircle(r, r, r)])),
-							fselect(color, FLift(\c -> [MFill(c)]))
+				FTranslate(
+					if (isCircleCenteredRipple) fdivide(fwidth(box), const(2.0)) else fpointX(startingPoint),
+					if (isCircleCenteredRipple) fdivide(fheight(box), const(2.0)) else fpointY(startingPoint),
+					FGraphics(
+						const([GCircle(0.0, 0.0, 10.0)]),
+						fselect2(color, opacity, FLift2(\c, op -> [MThemeFill(parent, c), FillOpacity(op)]))
+					)
+					|> (\f ->
+						FConstruct(
+							[
+								\ -> \ -> {
+									nextDistinct(transformAnimationB, []);
+									nextDistinct(opacityAnimationB, []);
+								}
+							],
+							eitherMap(
+								tryExtractStruct(style, MRipplePercents(make(0.), make(0.))),
+								\prcs -> {
+									animationPercent = make(0.0);
+
+									FConstruct(
+										[
+											\ -> fconnect(animationPercent, prcs.growth)
+										],
+										FAnimation(
+											f,
+											transformAnimationB,
+											[
+												FAnimationDuration(const(if (isCircleCenteredRipple) 0.3 else 0.6)),
+												FAnimationEasing(const(easingStandartCurve)),
+												FAnimationPercent(animationPercent)
+											]
+										)
+									)
+								},
+								FAnimation(
+									f,
+									transformAnimationB,
+									[
+										FAnimationDuration(const(if (isCircleCenteredRipple) 0.3 else 0.6)),
+										FAnimationEasing(const(easingStandartCurve))
+									]
+								)
+							)
+						)
+					)
+				)
+				|> (\f ->
+					eitherMap(
+						tryExtractStruct(style, MRipplePercents(make(0.), make(0.))),
+						\prcs -> {
+							animationPercent = make(0.0);
+
+							FConstruct(
+								[
+									\ -> fconnect(animationPercent, prcs.fade)
+								],
+								FAnimation(
+									f,
+									opacityAnimationB,
+									[
+										FAnimationDuration(const(0.4)),
+										FAnimationEasing(const(easingStandartCurve)),
+										FAnimationPercent(animationPercent)
+									]
+								)
+							)
+						},
+						FAnimation(
+							f,
+							opacityAnimationB,
+							[
+								FAnimationDuration(const(0.4)),
+								FAnimationEasing(const(easingStandartCurve))
+							]
 						)
 					)
 				);
@@ -152,6 +195,112 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 				)
 			};
 
+			focusFForm = \focusOutlineColor -> {
+				if (isCircleCenteredRipple) {
+					FGraphics(
+						fselect(box, FLift(\b -> [GCircle(b.width / 2.0 - 1.0, b.height / 2.0 - 1.0, max(b.width, b.height) / 2.0 - 1.0)])),
+						const([MThemeStroke(parent, focusOutlineColor), StrokeWidth(2.0)])
+					);
+				} else if (shape != "") {
+					FMutable(fselect2(rippleType, box, FLift2(\rt, b ->
+						FMaterialShape(parent, [MThemeStroke(parent, focusOutlineColor), StrokeWidth(2.0)], shape)(WidthHeight(b.width - 2.0, b.height - 2.0))
+					)));
+				} else {
+					FMutable(fselect2(rippleType, box, FLift2(\rt, b ->
+						switch (rt : RippleType) {
+							MRippleFill(): {
+								FRectangle(
+									b.width - 2.0,
+									b.height - 2.0,
+									[MThemeStroke(parent, focusOutlineColor), StrokeWidth(2.0)]
+								)
+							}
+							MRippleCenter(): {
+								FTranslate(
+									const((b.width - b.height) / 4.0),
+									const((b.height - b.width) / 4.0),
+									FCircle((b.width + b.height) / 4.0 - 1.0, [MThemeStroke(parent, focusOutlineColor), StrokeWidth(2.0)])
+								);
+							}
+							MNoRipple(): {
+								FRectangle(
+									b.width - 2.0,
+									b.height - 2.0,
+									[MThemeStroke(parent, focusOutlineColor), StrokeWidth(2.0)]
+								)
+							}
+						}
+					)))
+				};
+			}
+
+			hoverFForm = \ -> {
+				FGraphics(
+					fselect(box, FLift(\b ->
+						if (isCircleCenteredRipple)
+							[GCircle(b.width / 2.0, b.height / 2.0, max(b.width, b.height) / 2.0)]
+						else
+							[GRect(0.0, 0.0, b.width, b.height)]
+					)),
+					fselect2(color, fmultiply(opacity, fif(fmax(selected, focused), const(0.8), fif(hovered, const(0.4), zero))), FLift2(\c, op ->
+						[
+							MThemeFill(parent, c),
+							FillOpacity(if (MColor2int(MThemeColor2MColor(parent, c)) == black) op else op * 2.0)
+						]
+					))
+				)
+				|> (\f ->
+					if (isCircleCenteredRipple) {
+						f;
+					} else if (shape != "") {
+						container = FMaterialShape(parent, [Fill(black)], shape);
+
+						FMask(f, FMutable(fselect(box, container |> FLift)));
+					} else {
+						FMask(f, FMutable(fselect2(rippleType, box, FLift2(\rt, b ->
+							switch (rt : RippleType) {
+								MRippleFill(): {
+									FRectangle(b.width, b.height, [Fill(black)])
+								}
+								MRippleCenter(): {
+									FTranslate(
+										const((b.width - b.height) / 4.0),
+										const((b.height - b.width) / 4.0),
+										FCircle((b.width + b.height) / 4.0, [Fill(black)])
+									);
+								}
+								MNoRipple(): {
+									FEmpty();
+								}
+							}
+						))))
+					}
+				)
+				|> (\f ->
+					FMutable(
+						fselect(
+							extractStruct(style, MRippleOutlineEnabled(const(isSome(parent.theme.focusOutlineColor)))).enabled,
+							FLift(\en -> {
+								if (en) {
+									focusOutlineColor = extractStruct(style, MRippleOutlineColor(const(either(parent.theme.focusOutlineColor, MAccentColor()))));
+
+									FGroup2(
+										f,
+										FShow(
+											focused,
+											FTranslate(const(1.0), const(1.0), FMutable(fselect(focusOutlineColor.color, focusFForm |> FLift)))
+										),
+										false
+									);
+								} else {
+									f;
+								}
+							})
+						)
+					)
+				)
+			};
+
 			contentFForm =
 				if (isSome(rippleWH))
 					FTranslate(
@@ -162,43 +311,114 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 				else
 					b1.form;
 
+			retriggerFn = \tr -> {
+				if (tr) {
+					r =
+						fgetValue(
+							if (isCircleCenteredRipple)
+								fselect(box, FLift(\b -> max(b.width, b.height) / 2.0))
+							else
+								fselect(box, FLift(\b -> sqrt(b.width * b.width + b.height * b.height)))
+						);
+
+					next(
+						opacityAnimationB,
+						[
+							FAnimationKeyframe(
+								[
+									FAlphaValue(1.0)
+								]
+							)
+						]
+					);
+					next(
+						transformAnimationB,
+						[
+							FAnimationKeyframe(
+								[
+									FScaleValue(Factor(
+										0.0,
+										0.0
+									))
+								]
+							),
+							FAnimationKeyframe(
+								[
+									FScaleValue(Factor(
+										r / 10.0,
+										r / 10.0
+									))
+								]
+							)
+						]
+					);
+				} else if (!fgetValue(fmax(focused, trigger))) {
+					next(
+						opacityAnimationB,
+						[
+							FAnimationKeyframe(
+								[
+									FAlphaValue(1.0)
+								]
+							),
+							FAnimationKeyframe(
+								[
+									FAlphaValue(0.0)
+								]
+							)
+						]
+					);
+				}
+			}
+
 			TAcc(
 				FDecorator(
 					FConstruct(
 						[
+							\ -> {
+								if (fgetValue(showRipple)) {
+									nextDistinct(
+										startingPoint,
+										Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0)
+									);
+
+									retriggerFn(true);
+								}
+
+								nop;
+							},
 							makeSubscribe2(trigger, \tr -> {
 								if (tr) {
-									startingPoint := fgetValue(point);
-
-									efade.stop();
-									egrowth.start();
-								} else {
-									efade.start();
+									nextDistinct(
+										startingPoint,
+										eitherFn(
+											position,
+											\p -> fgetValue(p.position),
+											\ -> Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0)
+										)
+									);
 								}
+
+								retriggerFn(tr);
 							}),
-							makeSubscribeUns(focused, \tr -> {
+							makeSubscribe2(focused, \tr -> {
 								if (tr) {
-									startingPoint := Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0);
-
-									efade.stop();
-									egrowth.start();
-
-									[efade.start]
-								} else {
-									[]
+									nextDistinct(
+										startingPoint,
+										Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0)
+									);
 								}
+
+								retriggerFn(tr);
 							})
-						]
-						|> (\arr -> concat(arr, eitherMap(tryExtractStruct(style, MRipplePercents(make(0.), make(0.))), 
-								\prcs -> [
-									\ -> fconnect(egrowth.percent, prcs.growth),
-									\ -> fconnect(efade.percent, prcs.fade)
-								],
-								[]
-						))),
+						],
 						contentFForm
 					),
 					[
+						Pair(
+							fand(enabled, fOr(fOr(hovered, selected), focused)),
+							hoverFForm
+						),
 						Pair(
 							showRipple,
 							rippleFForm

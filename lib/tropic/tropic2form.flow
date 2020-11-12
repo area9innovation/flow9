@@ -7,7 +7,7 @@ import ui/animate/spring;
 import fform/renderfform;
 import ui/scrollable;
 import text/bidi_text;
-// import tropic/tropic2string;
+import form/paragraph3;  // INF_METRICS
 
 export {
 	// Convert a tropic layout to a form
@@ -22,18 +22,6 @@ export {
 	staticTropic2form(b : Tropic, sheet : Stylesheet) -> Form {staticTropic2fform(b, sheet) |> fform2form};
 
 	tropic2nativeForm(b : Tropic, sheet : Stylesheet) -> Form;
-
-	distributeAsks(
-		fillers1 : Transform<double>,
-		fillers2 : Transform<double>,
-		min1 : Transform<double>,
-		min2 : Transform<double>,
-		max1 : Transform<double>,
-		max2 : Transform<double>,
-		av : Transform<double>,
-		addFillers1 : Transform<bool>,
-		addFillers2 : Transform<bool>
-	) -> Pair<Transform<double>, Transform<double>>;
 }
 
 makeContext(availableWH : Transform<WidthHeight>) -> TParentInfo {
@@ -294,8 +282,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			horizontalCombiner = if (combiner == TColsCombiner() || combiner == TColsACombiner()) FAddition() else FMax();
 
 			rtl = getDefaultRtl();
-			rtlCols = combiner == TColsACombiner() && getDefaultRtl();
-			rtlLines = combiner == TLinesACombiner() && getDefaultRtl();
+			rtlCols = combiner == TColsACombiner() && rtl;
+			rtlLines = combiner == TLinesACombiner() && rtl;
 			maxWidth = if (rtlLines) fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0) else const(0.0);
 
 			createNewTAcc = \itemIndex, tropic -> {
@@ -1005,7 +993,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				),
 				zero,
 				zero,
-				const(^tropicFillersMax),
+				const(doubleMax),
 				zero,
 				const(1.0),
 				zero,
@@ -1024,7 +1012,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				zero,
 				zero,
 				zero,
-				const(^tropicFillersMax),
+				const(doubleMax),
 				zero,
 				const(1.0),
 				const(true),
@@ -1429,7 +1417,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						offsetx =
 							fmultiply(tAlign.xalign, fsubtract(ba2Metrics.width, ba1.metrics.width))
 							|> (\of -> if (limit) fmax(of, zero) else of);
-							
+
 						offsety =
 							fmultiply(tAlign.yalign, fsubtract(ba2Metrics.height, ba1.metrics.height))
 							|> (\of -> if (limit) fmax(of, zero) else of);
@@ -1600,150 +1588,6 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 			returnTAcc(ba1, fm, metricsOnly)
 		}
-		TScrollable(content, maxbox, style, state): {
-			ba2 = tropic2Acc(maxbox, parent, sheet, true);
-			if (metricsOnly) ba2
-			else {
-				stickToEdge = contains(state, TStickToEdge());
-
-				showHorizontal = make(false);
-				showVertical = make(false);
-
-				addedMarginX = style.borderGap + if (stickToEdge) getVScrollWidth(style) else 0.0;
-				addedMarginY = style.borderGap + if (stickToEdge) getHScrollHeight(style) else 0.0;
-
-				borderLeft = 9.9;
-				constMargin = Point(borderLeft + addedMarginX, borderLeft + addedMarginY);
-
-				w = fuse(ba2.metrics.width);
-				h = fuse(ba2.metrics.height);
-
-				realWidth = select2u(w.first, showVertical, \w2, show -> w2 - if (show) constMargin.x else 0.0);
-				realHeight = select2u(h.first, showHorizontal, \h2, show -> h2 - if (show) constMargin.y else 0.0);
-
-				wb = if (stickToEdge) realWidth.first else w.first;
-				hb = if (stickToEdge) realHeight.first else h.first;
-
-				scrollRect = extractStruct(state, TScrollRect(make(0.0), make(0.0), make(0.0), make(0.0)));
-
-				ba1 =
-					tropic2Acc(
-						content,
-						TParentInfo(
-							wb,
-							hb,
-							parent.environment,
-							fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(scrollRect.x, scrollRect.y)))
-						),
-						sheet,
-						metricsOnly
-					);
-				ba1form = Available(wb, hb, fform2form(ba1.form));
-
-				width = fuse(ba1.metrics.width);
-				height = fuse(ba1.metrics.height);
-				//those subscriptions are monitoring if we need to display the scrollbars
-				unsWidth = subscribe(width.first, \ww -> if(ww - getValue(w.first) >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
-				unsWidth2 = subscribe(w.first, \ww -> if(getValue(width.first) - ww >= 2.0) nextDistinct(showHorizontal, true) else nextDistinct(showHorizontal, false));
-				unsHeight = subscribe(height.first, \hh -> if(hh - getValue(h.first) >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
-				unsHeight2 = subscribe(h.first, \hh -> if(getValue(height.first) - hh >= 2.0) nextDistinct(showVertical, true) else nextDistinct(showVertical, false));
-
-				contentWH = select2u(width.first, height.first, \w1, h1 -> WidthHeight(w1, h1));
-
-				sizeAdded = if(!stickToEdge) constMargin.x else 0.0;
-				sizeFn = \dimension, vis -> dimension;
-
-				scrollAnimate = extractStruct(state, TAnimate(0.0, 0.0));
-				scrollAnimateTimer = makeDeltaTimer(30);
-				springy = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
-				springyUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springy.goal, scrollRect.y)
-				else connectDistinct(springy.position, scrollRect.y);
-				springx = makeSpring(scrollAnimate.tension, scrollAnimate.friction, make(0.0), scrollAnimateTimer, nop);
-				springxUns = if (scrollAnimate == TAnimate(0.0, 0.0)) connectDistinct(springx.goal, scrollRect.x)
-				else connectDistinct(springx.position, scrollRect.x);
-
-				offsetAccDisposers = ref [];
-				offsetUns = subscribe(extractStruct(state, TScrollOffset(const(TEmpty()))).t, \offsetTropic -> {
-					applyall(^offsetAccDisposers);
-					offsetAcc = tropic2Acc(offsetTropic, parent, sheet, true);
-					offsetAccDisposers := offsetAcc.disposers;
-
-					offsetUpdate = \ -> {
-						owidth = fgetValue(offsetAcc.metrics.width);
-						oheight = fgetValue(offsetAcc.metrics.height);
-
-						if (getValue(scrollRect.y) != oheight) {
-							next(springy.position, getValue(scrollRect.y));
-							next(springy.goal, oheight);
-						}
-						if (getValue(scrollRect.x) != owidth) {
-							next(springx.position, getValue(scrollRect.x));
-							next(springx.goal, owidth);
-						}
-					};
-
-					if (isStaticForm(ba1form)) {
-						offsetUpdate();
-					} else {
-						deferred(offsetUpdate);
-					};
-				});
-
-				offsetDisposers = [
-					offsetUns,
-					springyUns,
-					springxUns,
-					\ -> applyall(concat([^(springx.dispose), ^(springy.dispose)], ^offsetAccDisposers))
-				];
-
-				// case 38798 - inspect real size of the content to make sure the scroll bars are visible when necessary
-				inspectContentSize = contains(state, TScrollInspect());
-				formToScroll = if (inspectContentSize) {
-					realSize = makeWH();
-					Size2(
-						select2(contentWH.first, realSize, \s1, s2 -> WidthHeight(max(s1.width, s2.width), max(s1.height, s2.height))),
-						Inspect([ISize(realSize)], ba1form)
-					)
-				} else {
-					Size2(contentWH.first, ba1form)
-				}
-
-				stickToEdgeDisposers = [realHeight.second, realWidth.second, unsWidth, unsWidth2, unsHeight, unsHeight2];
-				addBorderLeft = \f -> if (stickToEdge) Offset(borderLeft, 0.0, f) else f;
-				addBorderTop = \f -> if (stickToEdge) Offset(0.0, borderLeft, f) else f;
-				TAcc(
-					doStyledScrollableCustom(scrollRect.x, scrollRect.y, wb, hb, formToScroll,
-						style, true, true, false,
-						\cForm, hBar, vBar -> if (mobile) {
-							wh = makeWH();
-							Group([
-								Inspect([ISize(wh)], cForm),
-								Available2(wh, Group([
-									Align2(1.0, 0.0, Offset(constMargin.x, 0.0, vBar)),
-									Align2(0.0, 1.0, Offset (0.0, constMargin.y, hBar))
-								]))
-							]);
-						} else Grid([[cForm, vBar |> addBorderLeft], [hBar |> addBorderTop, Empty()]]),
-						sizeFn, sizeFn, true, false
-					) |> FMForm,
-					TFormMetrics(
-						wb,
-						hb,
-						ba2.metrics.baseline
-					),
-					ba2.minWidth,
-					ba2.minHeight,
-					ba2.maxWidth,
-					ba2.maxHeight,
-					ba2.xFillers,
-					ba2.yFillers,
-					ba2.addFillers,
-					ba2.xConstant && isConst(wb),
-					ba2.yConstant && isConst(hb),
-					concatA([ba1.disposers, ba2.disposers, stickToEdgeDisposers, w.second, h.second, width.second, height.second, [contentWH.second], offsetDisposers])
-				);
-			}
-		}
 		TCropSize(size, form) : {
 			ba1 = tropic2Acc(size, parent, sheet, true);
 			ba2 =
@@ -1846,7 +1690,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			uvw = fconnect(parent.maxX, vw);
 			uvh = fconnect(parent.maxY, vh);
 
-			var = TVar(TEmpty(), vw, vh, vh, vh, make(0.0), make(0.0), make(^tropicFillersMax), make(^tropicFillersMax), ref isFConst(parent.maxX), ref isFConst(parent.maxY));
+			var = TVar(TEmpty(), vw, vh, vh, vh, make(0.0), make(0.0), make(doubleMax), make(doubleMax), ref isFConst(parent.maxX), ref isFConst(parent.maxY));
 			bd =
 				tropic2Acc(
 					scope,
@@ -2020,7 +1864,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			// For each case, we find the best when the available changes
 			case = fselect2(parent.maxX, parent.maxY, FLift2(\x : double, y : double -> {
 				// println(d2s(x) + "," + d2s(y));
-				index = foldi(boxes, Pair(0, 100000.0), \i, acc : Pair<int, double>, box : [double] -> {
+				index = foldi(boxes, Pair(0, INF_METRICS), \i, acc : Pair<int, double>, box : [double] -> {
 					mnw = box[0];
 					mnh = box[1];
 					mxw = box[2];
@@ -2051,8 +1895,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				ta.metrics,
 				fminA(map(taccs, \tac -> tac.minWidth), 0.),
 				fminA(map(taccs, \tac -> tac.minHeight), 0.),
-				fmaxA(map(taccs, \tac -> tac.maxWidth), ^tropicFillersMax),
-				fmaxA(map(taccs, \tac -> tac.maxHeight), ^tropicFillersMax),
+				fmaxA(map(taccs, \tac -> tac.maxWidth), doubleMax),
+				fmaxA(map(taccs, \tac -> tac.maxHeight), doubleMax),
 				fmaxA(arrayPush(map(taccs, \tac -> tac.xFillers), const(1.)), 1.),
 				fmaxA(arrayPush(map(taccs, \tac -> tac.yFillers), const(1.)), 1.),
 				const(false),
@@ -2363,8 +2207,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				applyall(renderFParagraph(text, parStyle).disposers);
 			}
 
-			nonLegacyParaBehaviour = isUrlParameterSet("parablk");
-			isFullWidth = nonLegacyParaBehaviour || parRightAlign || parCenterAlign;
+			isFullWidth = contains(style, FullWidth()) || parRightAlign || parCenterAlign;
 			wd = if (isFullWidth) parWidthB else fselect(metrics, FLift(\met -> met.width));
 			hgt = fselect(metrics, FLift(\met -> met.height + parMargin.top + parMargin.bottom));
 
@@ -2383,7 +2226,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				fif(
 					fselect(parWidth, FLift(\pw -> pw < 0.)),
 					if (isFullWidth)
-						const(^tropicFillersMax)
+						const(doubleMax)
 					else
 						fselect(metrics, FLift(\met -> met.maxWidth)),
 					wd
@@ -2508,8 +2351,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						TFormMetrics(w, h, h),
 						fif(fillerModeX, const(0.), w),
 						fif(fillerModeY, const(0.), h),
-						fif(fillerModeX, const(^tropicFillersMax), w),
-						fif(fillerModeY, const(^tropicFillersMax), h),
+						fif(fillerModeX, const(doubleMax), w),
+						fif(fillerModeY, const(doubleMax), h),
 						fif(fillerModeX, const(1.), zero),
 						fif(fillerModeY, const(1.), zero),
 						const(true),
@@ -2556,8 +2399,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 							),
 							w,
 							h,
-							w,	// TODO: Should we use ^tropicFillersMax0 instead?
-							h, // TODO: Should we use ^tropicFillersMax0 instead?
+							w,
+							h,
 							zero,
 							zero,
 							const(true),
@@ -2673,6 +2516,25 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				);
 
 			returnTAcc(bf, \ -> FRotate(ro, bf.form), metricsOnly)
+		}
+		TOrigin(orig, f): {
+			bf =
+				tropic2Acc(
+					f,
+					parent,
+					sheet,
+					metricsOnly
+				);
+
+			returnTAcc(
+				bf,
+				\ ->
+					FOrigin(
+						orig,
+						bf.form
+					),
+				metricsOnly
+			)
 		}
 		TAlpha(al, f): {
 			bf = tropic2Acc(f, parent, sheet, metricsOnly);
@@ -2893,107 +2755,121 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						TMouseInside(n, g): acc;
 						TMouseDownGhost(down):
 							concat(acc, [
-								if (mobile)
-									MouseDown(\mi -> {
-										if (mi.inside()) {
-											// On touch device, this is useful
-											if (isSome(inside)) {
-												inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-												nextDistinct(inb, true);
-											}
-											if (isSome(mousexy)) {
-												mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-												nextDistinct(mxy.point, Point(mi.x, mi.y));
-											}
-
-											next(down, true);
+								MouseDown(\mi -> {
+									if (mi.inside()) {
+										// At this point, we know it was not handled and we are inside.
+										if (isSome(inside)) {
+											inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
+											nextDistinct(inb, true);
 										}
-										false
-									})
-								else
-									MouseDown(\mi -> {
-										if (mi.inside()) next(down, true);
-										false
-									}),
+
+										// On touch device, this is useful
+										if (mobile && isSome(mousexy)) {
+											mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
+											nextDistinct(mxy.point, Point(mi.x, mi.y));
+										}
+
+										nextDistinct(down, true);
+									}
+									false
+								}),
 								MouseUp2(\handled, mi -> {
 									nextDistinct(down, false);
+
+									// If we also monitor inside, be sure to update this
+									m = mi();
+									if (isSome(inside)) {
+										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
+										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
+										nextDistinct(inb, !mobile && m.inside);
+									}
+
+									// On touch device, this is useful
+									if (mobile && isSome(mousexy)) {
+										mxy = cast(mousexy : Maybe<TMouseXY> -> Some<TMouseXY>).value;
+										nextDistinct(mxy.point, Point(m.x, m.y));
+									}
+
 									handled
 								})
 							]);
 						TMouseRightDownGhost(down):
 							concat(acc, [
-								if (mobile)
-									MouseRightDown(\mi -> {
-										if (mi.inside()) {
-											// On touch device, this is useful
-											if (isSome(mousexy)) {
-												mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-												nextDistinct(mxy.point, Point(mi.x, mi.y));
-											}
-
-											next(down, true);
+								MouseRightDown(\mi -> {
+									if (mi.inside()) {
+										// At this point, we know it was not handled and we are inside.
+										if (isSome(inside)) {
+											inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
+											nextDistinct(inb, true);
 										}
-										false
-									})
-								else
-									MouseRightDown(\mi -> {
-										if (mi.inside()) next(down, true);
-										false
-									}),
+
+										// On touch device, this is useful
+										if (mobile && isSome(mousexy)) {
+											mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
+											nextDistinct(mxy.point, Point(mi.x, mi.y));
+										}
+
+										nextDistinct(down, true);
+									}
+									false
+								}),
 								MouseRightUp2(\handled, mi -> {
 									nextDistinct(down, false);
+
+									// If we also monitor inside, be sure to update this
+									m = mi();
+									if (isSome(inside)) {
+										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
+										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
+										nextDistinct(inb, !mobile && m.inside);
+									}
+
+									// On touch device, this is useful
+									if (mobile && isSome(mousexy)) {
+										mxy = cast(mousexy : Maybe<TMouseXY> -> Some<TMouseXY>).value;
+										nextDistinct(mxy.point, Point(m.x, m.y));
+									}
+
 									handled
 								})
 							]);
 						TMouseMiddleDownGhost(down):
 							concat(acc, [
-								if (mobile)
-									MouseMiddleDown(\mi -> {
-										if (mi.inside()) {
-											// On touch device, this is useful
-											if (isSome(mousexy)) {
-												mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-												nextDistinct(mxy.point, Point(mi.x, mi.y));
-											}
-
-											next(down, true);
+								MouseMiddleDown(\mi -> {
+									if (mi.inside()) {
+										// At this point, we know it was not handled and we are inside.
+										if (isSome(inside)) {
+											inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
+											nextDistinct(inb, true);
 										}
-										false
-									})
-								else
-									MouseMiddleDown(\mi -> {
-										if (mi.inside()) next(down, true);
-										false
-									}),
+
+										// On touch device, this is useful
+										if (mobile && isSome(mousexy)) {
+											mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
+											nextDistinct(mxy.point, Point(mi.x, mi.y));
+										}
+
+										nextDistinct(down, true);
+									}
+									false
+								}),
 								MouseMiddleUp2(\handled, mi -> {
 									nextDistinct(down, false);
-									handled
-								})
-							]);
-						TMouseDownGhostHandleRadiusEvents(down):
-							concat(acc, [
-								if (mobile)
-									MouseDown(\mi -> {
-										if (mi.inside()) {
-											enableMobileHandlerRadius := false;
 
-											// On touch device, this is useful
-											if (isSome(mousexy)) {
-												mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-												nextDistinct(mxy.point, Point(mi.x, mi.y));
-											}
+									// If we also monitor inside, be sure to update this
+									m = mi();
+									if (isSome(inside)) {
+										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
+										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
+										nextDistinct(inb, !mobile && m.inside);
+									}
 
-											next(down, true);
-										}
-										false
-									})
-								else
-									MouseDown(\mi -> {
-										if (mi.inside()) next(down, true);
-										false
-									}),
-								MouseUp2(\handled, mi -> {
-									nextDistinct(down, false);
+									// On touch device, this is useful
+									if (mobile && isSome(mousexy)) {
+										mxy = cast(mousexy : Maybe<TMouseXY> -> Some<TMouseXY>).value;
+										nextDistinct(mxy.point, Point(m.x, m.y));
+									}
+
 									handled
 								})
 							]);
@@ -3022,7 +2898,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 									if (isSome(inside)) {
 										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
 										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, false);
+										nextDistinct(inb, !mobile && m.inside);
 									}
 
 									// On touch device, this is useful
@@ -3060,7 +2936,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 									if (isSome(inside)) {
 										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
 										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, false);
+										nextDistinct(inb, !mobile && m.inside);
 									}
 
 									// On touch device, this is useful
@@ -3098,7 +2974,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 									if (isSome(inside)) {
 										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
 										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, false);
+										nextDistinct(inb, !mobile && m.inside);
 									}
 
 									// On touch device, this is useful
@@ -3317,8 +3193,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				bf.metrics,
 				if (!^avW || bf.xConstant) bf.minWidth else zero,
 				if (!^avH || bf.yConstant) bf.minHeight else zero,
-				if (!^avW || bf.xConstant) bf.maxWidth else const(^tropicFillersMax),
-				if (!^avH || bf.yConstant) bf.maxHeight else const(^tropicFillersMax),
+				if (!^avW || bf.xConstant) bf.maxWidth else const(doubleMax),
+				if (!^avH || bf.yConstant) bf.maxHeight else const(doubleMax),
 				if (^avW) const(b2d(!bf.xConstant)) else bf.xFillers,
 				if (^avH) const(b2d(!bf.yConstant)) else bf.yFillers,
 				bf.addFillers,
@@ -3405,6 +3281,17 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			// If this comes, it is because we have an empty stylesheet, so this is OK
 			tropic2Acc(tr, parent, sheet, metricsOnly);
 		}
+		TAnimation(f, keyframes, style): {
+			bf =
+				tropic2Acc(
+					f,
+					parent,
+					sheet,
+					metricsOnly
+				);
+
+			returnTAcc(bf, \ -> FAnimation(bf.form, keyframes, style), metricsOnly)
+		}
 		TNative(fn): {
 			fn(parent.maxX, parent.maxY);
 		}
@@ -3433,7 +3320,7 @@ distributeAsks(
 	addFillers1 : Transform<bool>,
 	addFillers2 : Transform<bool>
 ) -> Pair<Transform<double>, Transform<double>> {
-	fselect9(fillers1, fillers2, fpreventNanOrInf(min1), fpreventNanOrInf(min2), max1, max2, av, addFillers1, addFillers2,
+	fselect9(fillers1, fillers2, min1, min2, max1, max2, av, addFillers1, addFillers2,
 		\f1, f2, mn1, mn2, mx1, mx2, a, af1, af2 -> {
 			mn = mn1 + mn2;
 

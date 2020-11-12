@@ -27,11 +27,12 @@ interface ProblemMatcher {
     }
 }
 
-enum LspKind { Flow = 1, JS = 2, None = 3 }
+enum LspKind { Flow = 1, JS = 2, Flow_lsp = 3, None = 4 }
 
 let childProcesses = [];
 let client: LanguageClient = null;
 let flowChannel : vscode.OutputChannel = null;
+let serverChannel : vscode.OutputChannel = null;
 let flowRepoUpdateChannel : vscode.OutputChannel = null;
 let counter = 0; // used to silence not finished jobs when new ones got started
 
@@ -60,22 +61,17 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setClient(context, LspKind.Flow); }));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setClient(context, LspKind.JS); }));
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.execCommand', execCommand));
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
 
-    flowChannel = vscode.window.createOutputChannel("Flow");
+    flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
 
 	checkHttpServerStatus(true);
 	setInterval(checkHttpServerStatus, 3000, false);
 
-    // Create a client
-    if (vscode.workspace.getConfiguration("flow").get("lspFlowServer")) {
-        setClient(context, LspKind.Flow);
-    } else {
-        setClient(context, LspKind.JS);
-    }
+	// Create an LSP client
+	updateLspClient(context);
 
     updater.checkForUpdate();
     updater.setupUpdateChecker();
@@ -87,7 +83,7 @@ function checkHttpServerStatus(initial : boolean) {
 	isPortReachable(port, {host: 'localhost'}).then(
 		(reacheable : boolean) => {
 			if (reacheable) {
-				showHttpServerOnline();
+				outputHttpServerMemStats();
 				httpServerOnline = true;
 			} else {
 				httpServer = null;
@@ -102,6 +98,21 @@ function checkHttpServerStatus(initial : boolean) {
 				}
 			}
 		}
+	);
+}
+
+function outputHttpServerMemStats() {
+	client.sendRequest("workspace/executeCommand", { 
+		command : "command", 
+		arguments : ["server-mem-info=1", "do_not_log_this=1"]
+	}).then(
+		(out : string) => {
+			let msg_start = out.indexOf("Used:");
+			let msg_end = out.indexOf("\n", msg_start);
+			let mem_stats = out.substr(msg_start, msg_end - msg_start);
+			showHttpServerOnline(mem_stats);
+		},
+		(err : any) => showHttpServerOffline()
 	);
 }
 
@@ -124,7 +135,16 @@ function toggleHttpServer() {
 
 function startHttpServer() {
     if (!httpServerOnline) {
-		httpServer = tools.launchFlowcHttpServer(getFlowRoot(), showHttpServerOnline, showHttpServerOffline);
+		if (!serverChannel) {
+			serverChannel = vscode.window.createOutputChannel("Flow server");
+			serverChannel.show();
+		}
+		httpServer = tools.launchFlowcHttpServer(
+			getFlowRoot(), 
+			showHttpServerOnline, 
+			showHttpServerOffline,
+			(msg : any) => serverChannel.appendLine(msg)
+		);
 		httpServerOnline = true;
     }
 }
@@ -136,93 +156,91 @@ function stopHttpServer() {
 	}
 }
 
-function setClient(context: vscode.ExtensionContext, kind : LspKind) {
+function updateLspClient(context: vscode.ExtensionContext) {
+	let kind = LspKind[vscode.workspace.getConfiguration("flow").get("lspMode") as keyof typeof LspKind];
+	setLspClient(context, kind);
+}
+
+function setLspClient(context: vscode.ExtensionContext, kind : LspKind) {
     if (clientKind != kind) {
         if (client) {
             client.sendNotification("exit");
             client.stop();
         }
-        client = null;
-        clientKind = kind;
-        if (clientKind != LspKind.None) {
-            // The server is implemented in node
-            let serverModule = context.asAbsolutePath(path.join('out', 'flow_language_server.js'));
-            // The debug options for the server
-            let debugOptions = { execArgv: ["--nolazy", "--inspect=6009"] };
+		client = null;
+		clientKind = kind;
+		if (clientKind != LspKind.None) {
+			// The debug options for the server
+			let debugOptions = { execArgv: ["--nolazy", "--inspect=6009"] };
 
-            // If the extension is launched in debug mode then the debug server options are used
-            // Otherwise the run options are used
-            let serverOptions: ServerOptions;
-            switch (clientKind) {
-                case LspKind.Flow: {
-                    if (serverStatusBarItem.text.indexOf("online") != -1) {
-                        serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`;
-                    } else {
-                        serverStatusBarItem.text = `$(vm-outline) flow http server: offline (lsp)`;
-                    }
-                    serverStatusBarItem.show();
-                    serverOptions = {
-                        command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
-                        args: ['server-mode=console'],
-                        options: { detached: false }
-                    }
-                    break;
-                }
-                case LspKind.JS: {
-                    if (serverStatusBarItem.text.indexOf("online") != -1) {
-                        serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`;
-                    } else {
-                        serverStatusBarItem.text = `$(vm-outline) flow http server: offline (legacy lsp)`;
-                    }
-                    serverOptions = {
-                        run : { module: serverModule, transport: TransportKind.ipc },
-                        debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
-                    }
-                    break;
-                }
-            }
-            // Options to control the language client
-            let clientOptions: LanguageClientOptions = {
-                // Register the server for plain text documents
-                documentSelector: [{scheme: 'file', language: 'flow'}],
-                outputChannel: flowChannel,
-                revealOutputChannelOn: RevealOutputChannelOn.Info,
-                uriConverters: {
-                    // FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
-                    //        the "workaround" below disables temporarily the encoding until decoding
-                    //        is implemented properly in clangd
-                    code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
-                    protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
-                }
-            }
+			// If the extension is launched in debug mode then the debug server options are used
+			// Otherwise the run options are used
+			let serverOptions: ServerOptions;
+			switch (clientKind) {
+				case LspKind.Flow: {
+					serverStatusBarItem.show();
+					serverOptions = {
+						command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
+						args: ['server-mode=console'],
+						options: { detached: false }
+					}
+					break;
+				}
+				case LspKind.Flow_lsp: {
+					serverStatusBarItem.show();
+					serverOptions = {
+						command: process.platform == "win32" ? 'flowc1_lsp.bat' : 'flowc1_lsp',
+						args: [],
+						options: { detached: false }
+					}
+					break;
+				}
+				case LspKind.JS: {
+					// The server is implemented in node
+					let serverModule = context.asAbsolutePath(path.join('out', 'flow_language_server.js'));
+					serverOptions = {
+						run : { module: serverModule, transport: TransportKind.ipc },
+						debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions }
+					}
+					break;
+				}
+			}
+			// Options to control the language client
+			let clientOptions: LanguageClientOptions = {
+				// Register the server for plain text documents
+				documentSelector: [{scheme: 'file', language: 'flow'}],
+				outputChannel: flowChannel,
+				revealOutputChannelOn: RevealOutputChannelOn.Info,
+				uriConverters: {
+					// FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
+					//        the "workaround" below disables temporarily the encoding until decoding
+					//        is implemented properly in clangd
+					code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
+					protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
+				}
+			}
 
-            // Create the language client and start the client.
-            client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
-            // Start the client. This will also launch the server
-            client.start();
-            client.onReady().then(() => {
-                sendOutlineEnabledUpdate();
-            });
-        }
+			// Create the language client and start the client.
+			client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
+			// Start the client. This will also launch the server
+			client.start();
+			client.onReady().then(() => {
+				sendOutlineEnabledUpdate();
+			});
+		}
     }
 }
 
-function showHttpServerOnline() { 
-    //'flow http server online (lsp)' vs. 'flow http server online (legacy lsp)'
-    if (serverStatusBarItem.text.indexOf("legacy") == -1) {
-        serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`; 
-    } else {
-        serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`; 
-    }
+function showHttpServerOnline(mem_stats : string = null) {
+	if (mem_stats) {
+		serverStatusBarItem.text = `$(vm-active) flow http server: online (` + mem_stats + ")"; 
+	} else {
+		serverStatusBarItem.text = `$(vm-active) flow http server: online`; 
+	}
 }
 
-function showHttpServerOffline() { 
-    //'flow http server online (lsp)' vs. 'flow http server online (legacy lsp)'
-    if (serverStatusBarItem.text.indexOf("legacy") == -1) {
-        serverStatusBarItem.text = `$(vm-outline) flow: http server: offline (lsp)`; 
-    } else {
-        serverStatusBarItem.text = `$(vm-outline) flow: http server: offline (legacy lsp)`; 
-    }
+function showHttpServerOffline() {
+    serverStatusBarItem.text = `$(vm-outline) flow: http server: offline`;
 }
 
 // this method is called when your extension is deactivated
@@ -280,7 +298,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
 
     if (clientKind == LspKind.Flow) {
         flowRepoUpdateChannel.append("Shutting down flow LSP server... ");
-        setClient(context, LspKind.None);
+        setLspClient(context, LspKind.None);
         shutdown_http_and_pull(LspKind.Flow);
     } else {
         shutdown_http_and_pull(clientKind);
@@ -305,7 +323,7 @@ async function pullAndStartServer(git, context : vscode.ExtensionContext, kind :
     }
     if (kind == LspKind.Flow) {
         flowRepoUpdateChannel.append("Starting flow LSP server... ");
-        setClient(context, LspKind.Flow);
+        setLspClient(context, LspKind.Flow);
     }
 }
 
@@ -315,10 +333,15 @@ function sendOutlineEnabledUpdate() {
 	client.sendNotification("outlineEnabled", outlineEnabled);
 }
 
-function handleConfigurationUpdates(e: vscode.ConfigurationChangeEvent) {
-	if (e.affectsConfiguration("flow.outline")) {
-		sendOutlineEnabledUpdate();
-	}
+function handleConfigurationUpdates(context) {
+    return (e) => {
+        if (e.affectsConfiguration("flow.outline")) {
+            sendOutlineEnabledUpdate();
+        }
+        if (e.affectsConfiguration("flow.lspMode")) {
+			updateLspClient(context);
+        }
+    }
 }
 
 const homedir = process.env[(process.platform == "win32") ? "USERPROFILE" : "HOME"];
@@ -359,7 +382,7 @@ interface CommandWithArgs {
 }
 
 function compile() {
-    compileCurrentFile(""); // empty means default compiler
+    compileCurrentFile("", ["verbose=1"]); // empty means default compiler
 }
 
 function compileNeko() {
@@ -376,10 +399,14 @@ function runCurrentFile() {
     }, false);
 }
 
-function compileCurrentFile(compilerHint: string) {
-    processFile(function(flowBinPath, flowpath) { 
-        return getCompilerCommand(compilerHint, flowBinPath, flowpath);
-    }, true);
+function compileCurrentFile(compilerHint: string, extra_args : string[] = []) {
+	let use_lsp = vscode.workspace.getConfiguration("flow").get("lspMode") != "None";
+    processFile(
+		function(flowBinPath, flowpath) { 
+        	return getCompilerCommand(compilerHint, flowBinPath, flowpath);
+		}, 
+		use_lsp, extra_args
+	);
 }
 
 function getFlowRoot(): string {
@@ -387,7 +414,7 @@ function getFlowRoot(): string {
     return config.get("root");
 }
 
-function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean) {
+function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean, extra_args : string[] = []) {
     let document = vscode.window.activeTextEditor.document;
     document.save().then(() => {
         let current = ++counter;
@@ -405,32 +432,47 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
                     flowChannel.append(s.toString());
                 }
             }, childProcesses);
-        }
+		}
+		let kind2s = (kind : LspKind) => {
+			switch (clientKind) {
+				case LspKind.Flow:     return "flowc";
+				case LspKind.Flow_lsp: return "flowc_lsp";
+				case LspKind.JS:       return "Nodejs";
+				case LspKind.None:     return "None";
+			}
+		}
+		let run_on_server = (kind : LspKind) => {
+			flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using " + kind2s(kind) + " server");
+			//let start = performance.now();
+			client.sendRequest("workspace/executeCommand", {
+					command : "compile", 
+					arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath].concat(extra_args)
+				}
+			).then(
+				(out : any) => {
+					// if there is a newer job, ignoring ones pending
+					if (counter == current) {
+						//flowChannel.appendLine("Execution of a request took " + (performance.now() - start) + " milliseconds.")
+						flowChannel.appendLine(out);
+					}
+				}
+			);
+		}
         if (use_lsp) {
             if (!httpServerOnline) {
-                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on.");
+                flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on. Click the status in the lower right corner. Try \"flowc1 server-mode=http\" on the command line.");
             }
             switch (clientKind) {
                 case LspKind.Flow: {
-                    flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using Flow LSP server");
-                    //let start = performance.now();
-                    client.sendRequest("workspace/executeCommand", {
-                            command : "compile", 
-                            arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath]
-                        }
-                    ).then(
-                        (out : any) => {
-                            // if there is a newer job, ignoring ones pending
-                            if (counter == current) {
-                                //flowChannel.appendLine("Execution of a request took " + (performance.now() - start) + " milliseconds.")
-                                flowChannel.appendLine(out);
-                            }
-                        }
-                    );
-                    break;
-                }
+					run_on_server(clientKind);
+					break;
+				}
+                case LspKind.Flow_lsp: {
+					run_on_server(clientKind);
+					break;
+				}
                 case LspKind.JS: {
-                    flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using legacy JS LSP server");
+                    flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using legacy " + kind2s(clientKind) + " server");
                     run_separately();
                     break;
                 }
@@ -501,4 +543,24 @@ function readConfiguration(): PropertiesReader.Reader {
         reader.append(configFile);
    
     return reader;
+}
+
+function execCommand() {
+	flowChannel.show(true);
+	let options: vscode.InputBoxOptions = { prompt: "Command and args: ", placeHolder: "" };
+	vscode.window.showInputBox(options).then(value => {
+		let val_arr = value.split(" ");
+		if (val_arr.length > 0) {
+			let file_arg = Array("file=" + vscode.window.activeTextEditor.document.uri.fsPath);
+			let args = file_arg.concat(val_arr);
+			client.sendRequest("workspace/executeCommand", { command : "command", arguments: args }).then(
+				(out : string) => {
+					flowChannel.appendLine(out);
+				},
+				(err : any) => {
+					vscode.window.showErrorMessage(`command ${value} failed: ${err}`);
+				}
+			);
+		}
+	});
 }

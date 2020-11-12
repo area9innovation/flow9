@@ -28,6 +28,7 @@ MEllipsis2T(m : MEllipsis, m2t : (Material) -> Tropic) {
 	sizeT = m2t(size);
 	sm = getTropicMetrics(sizeT);
 	disableOnDragging = contains(style, MDisableOnDragging());
+	rtl = getDefaultRtl();
 
 	fits = if (isConstantSizeTropic(sizeT) && isConstantSizeTropic(fullT)) {
 		fm = getTropicMetrics(fullT);
@@ -57,21 +58,21 @@ MEllipsis2T(m : MEllipsis, m2t : (Material) -> Tropic) {
 		croped = TCropSize(sizeWithoutEllipsis, fullT);
 
 		prettyCroped = switch (full) {
-						MText(text, s): {
-							wCroped = getTropicMetrics(croped).width;
-							if ((strlen(text) > 0) && (wCroped > 0.0) && (wCroped < getTropicMetrics(fullT).width))
-								getPrettyTextCut(0, strlen(text) - 1, wCroped, text, s, m2t)
-							else
-								croped;
-						}
-						default: croped;
-					};
+			MText(text, s): {
+				wCroped = getTropicMetrics(croped).width;
+				if ((strlen(text) > 0) && (wCroped > 0.0) && (wCroped < getTropicMetrics(fullT).width))
+					getPrettyTextCut(0, strlen(text) - 1, wCroped, text, s, m2t)
+				else
+					croped;
+			}
+			default: croped;
+		};
 
 		// If cropped, display the complete content as a tooltip when requested
 		truncated : (Tropic) -> Tropic = \tr : Tropic ->
-			TCols2(
+			TCols2A(
 				TCenterY(prettyCroped),
-				TTweak([TAlign(zero, const(1.))], ellipsisText, THeight(prettyCroped))
+				TTweak([TAlign(const(b2d(rtl)), const(1.))], ellipsisText, THeight(prettyCroped))
 			)
 			|> (\t -> TAvailable(t, tr))
 			|> (\t : Tropic ->
@@ -98,24 +99,29 @@ MEllipsis2T(m : MEllipsis, m2t : (Material) -> Tropic) {
 }
 
 MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisText, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	text = m.text;
 	mTextStyle = style2MTextStyle(m.style);
 	minWidth = extractStruct(m.style, MMinWidth(-1.)).width;
 	tooltipMaxWidth = extractStruct(m.style, MTooltipMaxWidth(400.0)).width;
 	lines = extractStruct(m.style, MMaxLines(1)).lines;
-	rightAlign = contains(m.style, RightAlign());
-	centerAlign = contains(m.style, CenterAlign());
+	textAlignment = maybeMap(tryExtractStruct(m.style, MEllipsisTextAlignment(StartAlign())), \al -> al.alignment);
+	rightAlign0 = contains(m.style, RightAlign());
+	centerAlign0 = contains(m.style, CenterAlign());
+	rightAlign = rightAlign0 || eitherMap(textAlignment, \al -> !centerAlign0 && commonAlignment2abs(al, parent.rtl) == RightAlign(), false);
+	centerAlign = centerAlign0 || eitherMap(textAlignment, \al -> !rightAlign0 && al == CenterAlign(), false);
 	truncateFromStart = contains(m.style, MTruncateFromStart());
 	isTruncated = extractStruct(m.style, MTextIsTruncated(make(false))).isTruncated;
 	setIsTruncated = \v -> nextDistinct(isTruncated, v);
 	isFullWidth = contains(m.style, MFullWidth());
 	interlineSpacing = extractStruct(m.style, InterlineSpacing(0.0));
 	escapeHTML = extractStruct(m.style, EscapeHTML(true));
+	unescape = \s -> if (escapeHTML.escape) s else unescapeHtml2(s);
+	text = unescape(m.text);
 
-	charStyle = addMLangFontFamily(text, MTextStyle2CharacterStyleDef(parent, mTextStyle, Triple(getTextColor(parent), getFontStyle(parent), true)));
+	charStyle = MTextStyle2TCharacterStyle(parent, text, mTextStyle);
 	textT = TText(text, charStyle);
 	fullWidth = getTWordMetrics(textT, makeTree()).width;
-	variants = arrayPush(extractStruct(m.style, MTextVariants([])).variants, text);
+	maybeApply(tryExtractStruct(m.style, MEllipsisTextGetFullWidth(nop1)), \getfw -> getfw.fn(fullWidth));
+	variants = arrayPush(extractStruct(m.style, MTextVariants([])).variants, m.text);
 	variantWidths = map(variants, \v -> getTWordMetrics(TText(v, charStyle), makeTree()).width);
 
 	if (minWidth > 0. && minWidth >= fullWidth && strCountOf(text, "\n") < lines) {
@@ -142,7 +148,15 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 		} else {
 			currentText = make(text);
 
-			TDynamicText(currentText, concat(charStyle, [ParagraphWidth(availableWidth), interlineSpacing]))
+			(if (lines > 1)
+				TParagraph(
+					fselect(currentText, FLift(unescape)),
+					concat3(charStyle, [ParagraphWidth(availableWidth), interlineSpacing], eitherMap(textAlignment, v2a, []))
+				)
+			else {
+				ttext = TSelect(currentText, \txt -> TText(unescape(txt), charStyle));
+				TAvailableWidth(eitherMap(textAlignment, \align -> TAlignHorizontal(align)(ttext), ttext), availableWidth);
+			})
 			|> (\t ->
 				TConstruct(
 					[
@@ -184,8 +198,11 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 									[sameLightMColor(parent), MTooltipDesktop(), CropWords(true), MWidth(min(fullWidth, tooltipMaxWidth)), escapeHTML]
 								)
 						),
-						[MEnabled(showTooltip)]
-						|> (\f2 -> ifArrayPush(f2, disableOnDragging, MDisableOnDragging()))
+						concatA([
+							[MEnabled(showTooltip)],
+							extractStructMany(m.style, MTooltipExternalFocused(const(false))),
+							if (disableOnDragging) [MDisableOnDragging()] else []
+						])
 					),
 					m2t
 				)

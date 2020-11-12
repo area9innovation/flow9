@@ -1,0 +1,313 @@
+import formats/lsp;
+import text/serialize;
+import net/http;
+import tools/common/compilerconfig;
+import tools/common/logging;
+
+export {
+	lspErrorDiagnostics(file : URI, s : string) -> Json;
+	lspParseErrors(s : string) -> [LspDiagnostic];
+	lspFileConfig(file : string) -> CompilerConfig;
+	lspParseLocations(s : string) -> [Json];
+	lspParseSymbols(s : string) -> [Json];
+	lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, string>>;
+	lspServerLog(message : string, conf : Tree<string, string>) -> void;
+	lspDetectLspError(out : string, conf : Tree<string, string>) -> bool;
+
+	lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, string) -> void) -> void;
+	lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string];
+}
+
+lspErrorDiagnostics(file : URI, s : string) -> Json {
+	lspNotificationMessage2Json(LspNotificationMessage("2.0", "textDocument/publishDiagnostics", 
+		lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(file, "", lspParseErrors(s)))
+	));
+}
+
+lspParseErrors(s : string) -> [LspDiagnostic] {
+	if (!strContains(s, "Error: ")) [] else {
+		err_lines = filtermap(strSplit(s, "\n"), \l -> lspParseLocation(l, true));
+		fold(err_lines, [], \acc, p -> {
+			loc = p.first; msg = p.second;
+			diag = LspDiagnostic(loc.range, 1, "", "flowc", msg, [], []);
+			acc1 = if (strContains(msg, "Error: ")) {
+				concat(acc, [diag]);
+			} else if (acc != []) {
+				last = lastElement(acc, diag);
+				replace(acc, length(acc) - 1, LspDiagnostic(last with 
+					relatedInformation = concat(last.relatedInformation, [LspDiagnosticRelatedInformation(loc, "")])
+				));
+			} else {
+				acc;
+			}
+			acc1
+		});
+	}
+}
+
+lspFileConfig(file : string) -> CompilerConfig {
+	def = CompilerConfig(file, [], [], 0, makeEmptyJSCliParams(), makeTree(), 0);
+	updateConfigForFile(def, file);
+}
+
+makeEmptyJSCliParams() -> JSCliParams {
+	JSCliParams(
+		"", "", "", false, false, "", false, false, false,
+		false, false, tsProcessing_dummy, false, false,
+		false, 0, false, "", makeSet(), false, "", false
+	);
+}
+
+lspCompilerConfigToCommandArgs(config : CompilerConfig) -> Tree<string, string> {
+	mergeTree(
+		mergeTree(
+			config.config,
+			jsCliParamsToTree(config.jsParams),
+		),
+		pairs2tree([
+			Pair("file", config.flowfile),
+			Pair("I", strGlue(config.includes, ",")),
+			Pair("obj", strGlue(config.objectFolders, ",")),
+			Pair("verbose", i2s(config.verbose))
+		])
+	)
+}
+
+lspParseLocations(s : string) -> [Json] {
+	filtermap(strSplit(s, "\n"), \l -> maybeMap(lspParseLocation(l, false), \p -> lspLocation2Json(p.first)));
+}
+
+lspParseSymbols(s : string) -> [Json] {
+	isNum = \st -> st != "" && isDigits(st);
+	filtermap(strSplit(s, "\n"), \l -> 
+		maybeBind(lspParseLocation(l, false), \p -> {
+			loc = p.first;
+			descr_parts = strSplit(trim(p.second), " ");
+
+			if (length(descr_parts) == 1) {
+				Some(lspSymbol2Json(LspSymbol(p.second, "", 0, false, loc.range, loc.range, [])))
+			} else if (length(descr_parts) > 1) {
+				name = descr_parts[1];
+				kind = if (descr_parts[0] == "import") {
+					lookupTreeDef(lspSymbolKindName2id, "Module", 0);
+				} else if (descr_parts[0] == "forbid") {
+					lookupTreeDef(lspSymbolKindName2id, "Package", 0);
+				} else if (descr_parts[0] == "struct") {
+					lookupTreeDef(lspSymbolKindName2id, "Struct", 0);
+				} else if (descr_parts[0] == "union") {
+					lookupTreeDef(lspSymbolKindName2id, "Enum", 0);
+				} else if (descr_parts[0] == "fundef") {
+					lookupTreeDef(lspSymbolKindName2id, "Function", 0);
+				} else if (descr_parts[0] == "fundecl") {
+					lookupTreeDef(lspSymbolKindName2id, "Interface", 0);
+				} else if (descr_parts[0] == "vardef") {
+					lookupTreeDef(lspSymbolKindName2id, "Object", 0);
+				} else if (descr_parts[0] == "vardecl") {
+					lookupTreeDef(lspSymbolKindName2id, "Variable", 0);
+				} else if (descr_parts[0] == "natdef") {
+					lookupTreeDef(lspSymbolKindName2id, "Method", 0);
+				} else if (descr_parts[0] == "natdecl") {
+					lookupTreeDef(lspSymbolKindName2id, "Method", 0);
+				} else {
+					0
+				}
+				Some(lspSymbol2Json(LspSymbol(name, "", kind, false, loc.range, loc.range, [])));
+			} else {
+				None();
+			}
+		})
+	);
+}
+
+lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, string>> {
+	isNum = \st -> st != "" && isDigits(st);
+	parts0 = strSplit(s, ":");
+	if (length(parts0) < 3 || (!admit_errors && (strContains(s, "Error: ") || strContains(s, "Fail: ")))) None() else {
+		// Windows path may start with C:/... and 
+		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) parts0 else {
+			concat(["/" + parts0[0] + ":" + parts0[1]], tailFrom(parts0, 2));
+		}
+		if (length(parts) < 3 || parts[0] == "" || !isNum(parts[1]) || !isNum(parts[2])) {
+			None() ;
+		} else {
+			path = strReplace(parts[0], "\\", "/");
+			sline = s2i(parts[1]) - 1;
+			schar = s2i(parts[2]) - 1;
+			if (length(parts) < 5 || !isNum(parts[3]) || !isNum(parts[4])) {
+				Some(Pair(LspLocation(
+					URI("file", URIAuthority("", "", ""), path, "", ""),
+					LspRange(LspPosition(sline, schar), LspPosition(sline, schar))
+					), trim(strGlue(tailFrom(parts, 3), ":")))
+				);
+			} else {
+				eline = s2i(parts[3]) - 1;
+				echar = s2i(parts[4]) - 1;
+				Some(Pair(LspLocation(
+					URI("file", URIAuthority("", "", ""), path, "", ""),
+					LspRange(LspPosition(sline, schar), LspPosition(eline, echar))
+					), trim(strGlue(tailFrom(parts, 5), ":")))
+				);
+			}
+		}
+	}
+}
+
+lspServerLog(message : string, conf : Tree<string, string>) -> void {
+	log_file = lookupTreeDef(conf, "server-log", findFlowDir() + 
+		"/.log/flowc_lsp_server_1.log");
+	log_dir = fcDirName(log_file);
+	if (log_dir != "") {
+		err = ensureDirectoryExists(log_dir);
+		if (err != "") {
+			println(err);
+		}
+	}
+	if (log_file != "") {
+		log_size = s2i(lookupTreeDef(conf, "log-max-lines", "128"));
+		message_size = lookupTreeDef(conf, "log-max-message", "4096");
+		if (isDigits(message_size)) {
+			writeLogMessage(lspCutLongStringUpTo(message, s2i(message_size)), log_file, log_size);
+		} else {
+			writeLogMessage(message, log_file, log_size);
+		}
+	}
+}
+
+lspCutLongStringUpTo(str : string, up_to : int) -> string {
+	if (strlen(str) < up_to) str else {
+		strLeft(str, up_to / 2) + "...[" + i2s(strlen(str) - up_to) + " is cut off ]..." + strRight(str, strlen(str) - (up_to / 2));
+	}
+}
+
+lspDetectLspError(out : string, conf : Tree<string, string>) -> bool {
+	if (strContains(out, "Error: ") || strContains(out, "Fail: ")) {
+		lspServerLog("ERROR: " + out, conf);
+		true
+	} else false;
+}
+
+lspLTrimLines(lines : [string]) -> [string] {
+	if (length(lines) == 0 || trim2(lines[0], " \t\r") != "") {
+		lines 
+	} else {
+		lspLTrimLines(tail(lines));
+	}
+}
+
+lspLTrimLines2(lines : [string], beginning : string) -> [string] {
+	if (length(lines) == 0 || !startsWith(lines[0], beginning)) {
+		lines 
+	} else {
+		lspLTrimLines(tail(lines));
+	}
+}
+
+lspRTrimLines(lines : [string]) -> [string] {
+	if (length(lines) == 0 || trim2(lastElement(lines, ""), " \t\r") != "") {
+		lines 
+	} else {
+		lspRTrimLines(take(lines, length(lines) - 1));
+	}
+}
+
+lspRTrimLines2(lines : [string], beginning : string) -> [string] {
+	if (length(lines) == 0 || !startsWith(lastElement(lines, ""), beginning)) {
+		lines 
+	} else {
+		lspRTrimLines(take(lines, length(lines) - 1));
+	}
+}
+
+lspTrimLines(lines : [string]) -> [string] {
+	lspLTrimLines(lspRTrimLines(lines));
+}
+
+lspTrimOutput(out : string) -> string {
+	lines0 = strSplit(out, "\n");
+	
+	lines1 = lspLTrimLines2(lines0, "Flow compiler (3rd generation)");
+	lines2 = lspLTrimLines(lines1);
+	lines3 = lspLTrimLines2(lines2, "Processing '");
+	lines4 = lspLTrimLines(lines3);
+
+	lines5 = lspRTrimLines(lines4);
+	lines6 = lspRTrimLines2(lines5, "done in ");
+	lines7 = lspRTrimLines(lines6);
+	strGlue(lines7, "\n");
+}
+
+lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string] {
+	map(tree2pairs(conf), \pair -> {
+		key = pair.first;
+		value = trim2(pair.second, " \t\r\n");
+		if (value == "") key else key + "=" + value;
+	});
+}
+
+lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, string) -> void) -> void {
+	on_exit_1 = \code, out, err -> {
+		out1 = if (trim_out) lspTrimOutput(out) else out;
+		on_exit(code, out1, err);
+	}
+	run_locally = \-> {
+		startProcess("flowc1", lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", on_exit_1);
+	}
+	if (containsKeyTree(conf.config, "server-kill")) {
+		// Executing 'server-kill=1' on server makes no sense - must be executed on a distinguished process.
+		run_locally();
+	} else {
+		lspRunConfViaHttp(conf, on_exit_1,
+			\code, msg -> {
+				if (getConfigParameterDef(conf.config, "client-mode", "") == "1") {
+					on_exit(code, "", "Error " + i2s(code) + ": " + msg);
+				} else {
+					run_locally();
+				}
+			}
+		);
+	}
+}
+
+lspRunConfViaHttp(
+	conf : CompilerConfig, 
+	on_exit : (int, string, string) -> void, 
+	on_fail : (int, string) -> void
+) -> void {
+	serverUrl = 
+		"http://localhost:" +
+		getConfigParameterDef(conf.config, "server-port", "10001");
+	patchedConfig = patchRemoteConfig(conf);
+	serialized_server_job = 
+		(getConfigParameterDef(conf.config, "compile-expression", "") != "") || 
+		(getConfigParameterDef(conf.config, "dump-program", "") == "1");
+	serialized_config = "config_" + serialize(patchedConfig);
+	httpCustomRequest(
+		serverUrl,
+		GET(), [], RequestPayload(serialized_config),
+		\status, data, headers -> {
+			code = status - 200;
+			if (code == 0) {
+				if (serialized_server_job) {
+					value = deserialize(data, IllegalStruct());
+					if (value == IllegalStruct()) {
+						on_exit(1, "", "WARNING: Illegal serialized data in response.");
+					} else {
+						on_exit(0, value, "");
+					}
+				} else {
+					on_exit(0, data, "");
+				}
+			} else if (0 < code && code < 64) {
+				msg = if (conf.verbose > 0) {
+					"Compilation error " + i2s(code) + "\n";
+				} else {
+					"";
+				}
+				on_exit(code, "", msg + data);
+			} else {
+				on_fail(status, data);
+			}
+		},
+		false
+	);
+}

@@ -26,7 +26,7 @@ export {
 	fiGetAuxCode(cfg : FiJsConfig, program : FiProgram, hasConcurrencyCalls : bool) -> string; 
 	fiGetFcStructDefs(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) -> string;
 
-	fiJsMangleNativeName(ovl : FiJsOverlayGroup, name : string) -> string;
+	fiJsMangleNativeName(ovl : FiJsOverlayGroup, name : string, add_class : bool) -> string;
 	fiJsExportedName(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string, id : string) -> string;
 	fiJsMangleModuleName(ovl : FiJsOverlayGroup, module : string) -> string;
 	fiJsRename(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string) -> string;
@@ -75,11 +75,14 @@ fiPrepareNativeNames(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGro
 			}
 			Some(module): {
 				natives = fold(module.natives, makeTree(), \acc, native -> {
-					mangled = fiJsMangleNativeName(ovl, native.nativeName);
-					if (cfg.debug && !fiNativeHasFallback(native, cfg.threadId))
-						setTree(acc, native.name, mangled)
-					else
-						acc
+					if (containsSet(cfg.externNatives, native.nativeName)) acc else {
+						// println(native.nativeName + prettyFiType(dummyPretty, native.type, makeSet()));
+						mangled = fiJsMangleNativeName(ovl, native.nativeName, true);
+						if (cfg.debug && !fiNativeHasFallback(native, cfg.threadId))
+							setTree(acc, native.name, mangled)
+						else
+							acc
+					}
 				});
 				mergeTree(macc, natives);
 			}
@@ -96,9 +99,9 @@ fiCollectAllNativeNames(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlay
 				macc;
 			}
 			Some(module): {
-				natives = fold(module.natives, makeTree(), \acc, native -> {
-					setTree(acc, native.name, fiJsMangleNativeName(ovl, native.nativeName))
-				});
+				natives = fold(module.natives, makeTree(), \acc, native ->
+					setTree(acc, native.name, fiJsMangleNativeName(ovl, native.nativeName, !containsSet(cfg.externNatives, native.nativeName)))
+				);
 				mergeTree(macc, natives);
 			}
 		}
@@ -138,9 +141,9 @@ fiPrepareFieldRenamings(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlay
 fiPrepareRenamings(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, decls : [Pair<string, [FiDeclaration]>]) {
 	if (!cfg.debug)
 		ovl.fieldRenamings ::= fiPrepareFieldRenamings(cfg, program, ovl);
-	// This function converts names to short ones in debug mode
+	// This function converts names to short ones in non-debug mode
 	// (for example "main" -> "$o2") or changes "keyword" to
-	// "keyword__" in non-debug mode.
+	// "keyword__" in debug mode.
 	renameGlobalFn =
 		if (cfg.debug) {
 			\name -> if (containsSet(ovl.keywords, name)) name+"__" else name;
@@ -171,7 +174,6 @@ fiPrepareRenamings(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup
 }
 
 fiGetHeaderCode(cfg : FiJsConfig, prog : FiProgram, ovl : FiJsOverlayGroup, hasConcurrencyCalls : bool) {
-
 	auxcode = fiGetAuxCode(cfg, prog, hasConcurrencyCalls);
 	aStructDefs = fiGetFcStructDefs(cfg, prog, ovl);
 
@@ -319,13 +321,15 @@ fiGetFcStructDefs(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup)
 	}
 }
 
-fiJsMangleNativeName(ovl : FiJsOverlayGroup, name : string) {
+fiJsMangleNativeName(ovl : FiJsOverlayGroup, name : string, add_class : bool) {
 	parts = strSplit(name, ".");
 	// Some names, like Native and RenderSupport need a gentle extra renaming to avoid colliding
 	// with other implementations of these natives
 	cla = parts[0];
 
-	ovl.nativeClasses ::= insertSet(ovl.nativeClasses, cla);
+	if (add_class) {
+		ovl.nativeClasses ::= insertSet(ovl.nativeClasses, cla);
+	}
 
 	renamed = cla + "." + parts[1];
 
@@ -333,7 +337,7 @@ fiJsMangleNativeName(ovl : FiJsOverlayGroup, name : string) {
 }
 
 fiJsES6FunctionPrefix(cfg : FiJsConfig, ctx : FiJsToplevelContext, nativeName : string) {
-	fname = (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName);
+	fname = (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName, !containsSet(cfg.externNatives, nativeName));
 	if (cfg.jsmode != STANDARD_JS && cfg.jsmode != TS_MODE) {
 		"(" + fname + " !== undefined)?" + fname + ":"
 	} else {
@@ -418,5 +422,7 @@ fiType2JsType(cfg : FiJsConfig, program : FiProgram, type : FiType) {
 }
 
 fcJsStrict(cfg : FiJsConfig) {
-	if ((cfg.jsmode == STANDARD_ES6) || (cfg.jsmode == NODEJS_MODE) || (cfg.jsmode == NWJS_MODE)) "'use strict';\n" else "";
+	if ((cfg.jsmode == STANDARD_ES6) || (cfg.jsmode == NODEJS_MODE) || (cfg.jsmode == NWJS_MODE)) 
+	"'use strict';\n" 
+	else "";
 }

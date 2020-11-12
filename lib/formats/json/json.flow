@@ -7,6 +7,7 @@ import text/deserialize_string;
 export {
 	native parseJson : (json : string) -> Json = Native.parseJson;
 	// Dummy way to skip js native implementation and use safer flow one which is capable to recover broken json.
+	// It is not recommended use it since it is slower than native but can help to debug.
 	parseJsonSafe(json : string) -> Json;
 	getJsonObjectValue(json : Json, def : [Pair<string, Json>]) -> [Pair<string, Json>];
 	getJsonFieldValue(json : Json, field : string, def : Json) -> Json;
@@ -16,6 +17,7 @@ export {
 	getJsonBoolValue(json : Json, def : bool) -> bool;
 	getJsonStringValue(json : Json, def : string) -> string;
 	getJsonDoubleValue(json : Json, def : double) -> double;
+	getJsonDoubleValueM(json : Json) -> Maybe<double>;
 	getJsonIntValue(json : Json, def : int) -> int;
 	getJsonIntValueM(json : Json) -> Maybe<int>;
 
@@ -48,6 +50,7 @@ export {
 
 	setJsonField(json : Json, field : string, value : Json) -> JsonObject;
 	setJsonFieldCustom(json : Json, field : string, value : Json, options : [JsonFieldOptions]) -> JsonObject;
+
 		JsonFieldOptions ::= JsonFieldIgnoreCase, JsonFieldTreatAsPath;
 			JsonFieldIgnoreCase();
 			JsonFieldTreatAsPath(pathDelimiter : string);
@@ -64,6 +67,11 @@ export {
 		JsonDouble(value : double);
 		JsonNull();
 
+	jsonNull = JsonNull();
+	jsonTrue = JsonBool(true);
+	jsonFalse = JsonBool(false);
+	jsonStringEmpty = JsonString("");
+
 	// Converts back to a single-line JSON string
 	json2string(j : Json) -> string;
 	json2stringTrimQuotes(j : Json) -> string;
@@ -78,10 +86,13 @@ export {
 	//equals Json
 	isJsonEqual(first : Json, second : Json) -> bool;
 
-	// Returns true iff json is an object and has appropriate member.
+	// Returns true if json is an object and has appropriate member.
 	jsonObjectHasField(json : Json, member : string) -> bool;
 	// Access to a nested field like obj.f1.f2.f3, where fields = [f1, f2, f3]
 	getJsonNestedField(json: Json, fields: [string]) -> Json;
+
+	// escape chars not allowed for JSON
+	toStringForJson(s : string) -> string;
 }
 
 parseJson(json : string) -> Json {
@@ -96,14 +107,14 @@ parseJsonSafe(json : string) -> Json {
 
 getJsonObjectValue(json, def) {
 	switch (json : Json) {
-		JsonObject(members) : members;
-		default : def
+		JsonObject(members): members;
+		default: def;
 	}
 }
 
 getJsonFieldValue(json : Json, field : string, def : Json) -> Json {
 	objects = getJsonObjectValue(json, [Pair(field, def)]);
-	findObjectByName(objects, field, false, def)
+	findObjectByName(objects, field, false, def);
 }
 
 getJsonFieldValueM(json : Json, field : string) -> Maybe<Json> {
@@ -111,7 +122,7 @@ getJsonFieldValueM(json : Json, field : string) -> Maybe<Json> {
 	maybeMap(
 		find(members, \member -> member.first == field),
 		secondOfPair
-	)
+	);
 }
 
 getJsonFieldValueCustom(json : Json, field : string, def : Json, options : [JsonFieldOptions]) -> Json {
@@ -124,7 +135,7 @@ getJsonFieldValueCustom(json : Json, field : string, def : Json, options : [Json
 	else {
 		jsonFieldIgnoreCase = contains(options, JsonFieldIgnoreCase());
 		objects = getJsonObjectValue(json, [Pair(field, def)]);
-		findObjectByName(objects, field, jsonFieldIgnoreCase, def)
+		findObjectByName(objects, field, jsonFieldIgnoreCase, def);
 	}
 }
 
@@ -133,19 +144,19 @@ findObjectByName(objects : [Pair<string, Json>], key : string, ignoreCase : bool
 	findDef(objects, \o -> {
 		k = if (ignoreCase) toLowerCase(o.first) else o.first;
 		k == key2
-	}, Pair(key2, defaultValue)).second
+	}, Pair(key2, defaultValue)).second;
 }
 
 getJsonArrayValue(json, def) {
 	switch (json : Json) {
-		JsonArray(value) : value;
-		default : def
+		JsonArray(value): value;
+		default: def;
 	}
 }
 
-getJsonBoolValue(json, def) {
+getJsonBoolValue(json : Json, def : bool) -> bool {
 	switch (json : Json) {
-		JsonBool(v) : v;
+		JsonBool(v): v;
 		JsonDouble(d): d != 0.0; // For additional robustness
 		JsonString(s): s == "1" || s == "true" || s == "TRUE"; // it happens!
 		JsonObject(members): def;
@@ -154,33 +165,38 @@ getJsonBoolValue(json, def) {
 	}
 }
 
-getJsonStringValue(json, def) {
+getJsonStringValue(json : Json, def : string) -> string {
 	switch (json : Json) {
-		JsonString(s) : s;
+		JsonString(s): s;
 		JsonDouble(d): d2s(d);
-		default : def
+		JsonBool(b): b2s(b);
+		default: def;
 	}
 }
 
-getJsonDoubleValue(json, def) {
+getJsonDoubleValue(json : Json, def : double) -> double {
+	either(getJsonDoubleValueM(json), def);
+}
+
+getJsonDoubleValueM(json : Json) -> Maybe<double> {
 	switch (json : Json) {
-		JsonDouble(value) : value;
+		JsonDouble(value): Some(value);
 		// Ints are sometimes taken as strings!
-		JsonString(s): s2d(s);
-		default : def
+		JsonString(s): Some(s2d(s));
+		default: None();
 	}
 }
 
 getJsonIntValue(json : Json, def : int) -> int {
-	either(getJsonIntValueM(json), def)
+	either(getJsonIntValueM(json), def);
 }
 
 getJsonIntValueM(json : Json) -> Maybe<int> {
 	switch (json : Json) {
-		JsonDouble(value) : Some(floor(value));
+		JsonDouble(value): Some(floor(value));
 		// Ints are sometimes taken as strings!
 		JsonString(s): Some(s2i(s));
-		default : None();
+		default: None();
 	}
 }
 
@@ -234,7 +250,7 @@ parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<s
 }
 
 skipJson(json : string, start : int, char : string) -> int {
-	skipJson2(json, strlen(json), start, char)
+	skipJson2(json, strlen(json), start, char);
 }
 
 skipJson2(json : string, jsonLength : int, start : int, char : string) -> int {
@@ -251,7 +267,7 @@ skipJson2(json : string, jsonLength : int, start : int, char : string) -> int {
 }
 
 parseJsonArray(json : string, start : int, acc : List<Json>) -> Pair<[Json], int> {
-	parseJsonArray2(json, strlen(json), start, acc)
+	parseJsonArray2(json, strlen(json), start, acc);
 }
 
 parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) -> Pair<[Json], int> {
@@ -270,13 +286,14 @@ parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) 
 }
 
 parseJsonDouble(s : string, start : int) -> Pair<Json, int> {
-	parseJsonDouble2(s, strlen(s), start)
+	parseJsonDouble2(s, strlen(s), start);
 }
 
 parseJsonDouble2(s : string, stringLength: int, start : int) -> Pair<Json, int> {
 	end = countUntil(start, stringLength, \i -> {
 		c = getCharCodeAt(s, i);
-		! ((48 <= c && c <= 57) || c == 46 || c == 45 || c == 101 || c == 43); // "0" <= c && c <= "9") || c == "." || c == "-" || c == "e" || c == "+"
+		// "0" <= c && c <= "9") || c == "." || c == "-" || c == "e" || c == "E" || c == "+"
+		! ((48 <= c && c <= 57) || c == 46 || c == 45 || c == 101 || c == 69 || c == 43);
 	});
 	Pair(JsonDouble(s2d(substring(s, start, end - start))), end);
 }
@@ -288,7 +305,7 @@ parseId(s : string, l : int, start : int) -> Pair<string, int> {
 	Pair(cloneString(trim(substring(s, start, end - start))), end);
 }
 
-getJsonStringField(json, field, def) {
+getJsonStringField(json: Json, field: string, def: string) -> string {
 	getJsonStringValue(getJsonFieldValue(json, field, JsonString(def)), def);
 }
 
@@ -296,15 +313,15 @@ getJsonStringFieldCustom(json : Json, field: string, def : string, options : [Js
 	getJsonStringValue(getJsonFieldValueCustom(json, field, JsonString(def), options), def)
 }
 
-getJsonDoubleField(json, field, def) {
+getJsonDoubleField(json: Json, field: string, def: double) -> double {
 	getJsonDoubleValue(getJsonFieldValue(json, field, JsonDouble(def)), def);
 }
 
-getJsonIntField(json, field, def) {
+getJsonIntField(json: Json, field: string, def: int) -> int {
 	trunc(getJsonDoubleField(json, field, i2d(def)));
 }
 
-getJsonArrayField(json, field) {
+getJsonArrayField(json: Json, field: string) -> [Json] {
 	// This produces a bit less garbage compared to getJsonFieldValue
 	switch (getJsonFieldValueM(json, field) : Maybe<Json>) {
 		None(): [];
@@ -312,30 +329,46 @@ getJsonArrayField(json, field) {
 	}
 }
 
-array2json(arr, item2json) {
+array2json(arr: [?], item2json: (?) -> string) -> string {
 	"[" + strGlue(map(arr, item2json), ",") + "]";
 }
 
-getJsonObjectField(json, field) {
+getJsonObjectField(json: Json, field: string) -> JsonObject {
 	JsonObject(getJsonObjectValue(getJsonFieldValue(json, field, JsonObject([])), []));
 }
 
-getJsonBoolField(json, field, def) {
+getJsonBoolField(json: Json, field: string, def: bool) -> bool {
 	getJsonBoolValue(getJsonFieldValue(json, field, JsonBool(def)), def);
 }
 
-getJsonMaybeField(json, getJsonValueFn, field, def) {
+getJsonMaybeField(json : Json, getJsonValueFn : (Json, ?) -> ?, field: string, def : ?) -> Maybe<?> {
 	value = getJsonFieldValue(json, field, JsonNull());
-	getJsonMaybeValue(value, getJsonValueFn, def)
+	getJsonMaybeValue(value, getJsonValueFn, def);
 }
 
-getJsonMaybeValue(value, getJsonValueFn, def) {
+getJsonMaybeValue(value : Json, getJsonValueFn : (Json, ?) -> ?, def : ?) -> Maybe<?> {
 	switch (value) {
 		JsonNull(): None();
-		default: {
-			Some(getJsonValueFn(value, def));
-		}
+		default: Some(getJsonValueFn(value, def));
 	}
+}
+
+toStringForJson(s : string) -> string {
+	f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
+		Cons(if (code < 0x20) {
+			if (code == 0x08) "\\b"
+			else if (code == 0x09) "\\t"
+			else if (code == 0x0A) "\\n"
+			else if (code == 0x0C) "\\f"
+			else if (code == 0x0D) "\\r"
+			else "\\u" + lpad(formatHex(code), "0", 4);
+		} else {
+			if (code == 0x22) "\\\""
+			else if (code == 0x5c) "\\\\"
+			else fromCharCode(code);
+		}, acc);
+	});
+	list2string(Cons("\"", f));
 }
 
 json2string(j : Json) -> string {
@@ -343,9 +376,9 @@ json2string(j : Json) -> string {
 		JsonNull(): "null";
 		JsonBool(v): b2s(v);
 		JsonDouble(d): d2s(d);
-		JsonString(s): toString(s);
+		JsonString(s): toStringForJson(s);
 		JsonArray(arr): "[" + strGlue(map(arr, json2string), ",") + "]";
-		JsonObject(m): "{" + strGlue(map(m, \p : Pair<string, Json> -> toString(p.first) + ":" + json2string(p.second)), ",") + "}";
+		JsonObject(m): "{" + strGlue(map(m, \p : Pair<string, Json> -> toStringForJson(p.first) + ":" + json2string(p.second)), ",") + "}";
 	}
 }
 
@@ -354,7 +387,7 @@ json2stringFormatted(j : Json) -> string {
 		JsonNull(): "null";
 		JsonBool(v): b2s(v);
 		JsonDouble(d): d2s(d);
-		JsonString(s): toString(s);
+		JsonString(s): toStringForJson(s);
 		JsonArray(arr): {
 			if (arr == []) "[]" else {
 				a = map(arr, \v -> json2stringFormatted(v));
@@ -364,8 +397,10 @@ json2stringFormatted(j : Json) -> string {
 			}
 		}
 		JsonObject(arr): {
-			if (arr == []) "{}" else {
-				a = map(arr, \v : Pair<string, Json> -> toString(v.first) + ": " + json2stringFormatted(v.second));
+			if (arr == []) {
+				"{}";
+			} else {
+				a = map(arr, \v : Pair<string, Json> -> toStringForJson(v.first) + ": " + json2stringFormatted(v.second));
 				b = length(arr) > 1 || strContains(a[0], "\n");
 				if (!b)	"{" + a[0] + "}"
 				else "{\n" + strGlue(map(strSplit(strGlue(a, ",\n"), "\n"), \l -> "\t" + l),"\n") + "\n}";
@@ -376,15 +411,15 @@ json2stringFormatted(j : Json) -> string {
 
 
 json2stringTrimQuotes(j : Json) -> string {
-	trim2(json2string(j), "\"")
+	trim2(json2string(j), "\"");
 }
 
 getValueFromJsonArray(json: Json, index: int, defaultValue: Json) -> Json {
 	array = getJsonArrayValue(json, []);
 	if (length(array) <= index) {
-		defaultValue
+		defaultValue;
 	} else {
-		array[index]
+		array[index];
 	}
 }
 
@@ -401,72 +436,72 @@ getIntValueFromJsonArray(json: Json, index: int, defaultValue: int) -> int {
 getDoubleValueFromJsonArray(json: Json, index: int, defaultValue: double) -> double {
 	array = getJsonArrayValue(json, []);
 	if (length(array) <= index) {
-		defaultValue
+		defaultValue;
 	} else {
 		value = getJsonArrayValue(json, [])[index];
-		getJsonDoubleValue(value, defaultValue)
+		getJsonDoubleValue(value, defaultValue);
 	}
 }
 
 getStringValueFromJsonArray(json: Json, index: int, defaultValue: string) -> string {
 	array = getJsonArrayValue(json, []);
 	if (length(array) <= index) {
-		defaultValue
+		defaultValue;
 	} else {
 		value = getJsonArrayValue(json, [])[index];
-		getJsonStringValue(value, defaultValue)
+		getJsonStringValue(value, defaultValue);
 	}
 }
 
 getBoolValueFromJsonArray(json: Json, index: int, defaultValue: bool) -> bool {
 	array = getJsonArrayValue(json, []);
 	if (length(array) <= index) {
-		defaultValue
+		defaultValue;
 	} else {
 		value = getJsonArrayValue(json, [])[index];
-		getJsonBoolValue(value, defaultValue)
+		getJsonBoolValue(value, defaultValue);
 	}
 }
 
 isJsonEqual(first : Json, second : Json) -> bool {
 	switch (first : Json) {
-		JsonBool(v) : switch (second : Json) {
+		JsonBool(v): switch (second : Json) {
 			JsonBool(val): v == val;
-			default: false
+			default: false;
 		}
 		JsonDouble(d): switch (second : Json) {
 			JsonDouble(val): equalDoubles(d, val);
-			default: false
+			default: false;
 		}
 		JsonString(s): switch (second : Json) {
 			JsonString(val): s == val;
-			default: false
+			default: false;
 		}
-		JsonNull() : switch (second : Json) {
+		JsonNull(): switch (second : Json) {
 			JsonNull(): true;
-			default: false
+			default: false;
 		}
-		JsonArray(value) : switch (second : Json) {
+		JsonArray(value): switch (second : Json) {
 			JsonArray(values): {
 				if (length(value) == length(values)) {
 					iteriUntil(value, \id, val -> !isJsonEqual(val, values[id])) == length(value);
 				} else {
-					false
+					false;
 				}
 			}
-			default: false
+			default: false;
 		}
-		JsonObject(obj) : switch (second : Json) {
+		JsonObject(obj): switch (second : Json) {
 			JsonObject(objs): {
 				if (length(obj) == length(objs)) {
 					compareFn = \x : Pair, y : Pair -> if (x.first < y.first) -1 else if (x.first == y.first) 0 else 1;
 					sortedObjs = mergeSort(objs, compareFn);
 					iteriUntil(mergeSort(obj, compareFn), \id, val -> val.first != sortedObjs[id].first || !isJsonEqual(val.second, sortedObjs[id].second)) == length(obj);
 				} else {
-					false
+					false;
 				}
 			}
-			default: false
+			default: false;
 		}
 	}
 }
@@ -512,7 +547,7 @@ removeJsonObjectField(json : JsonObject, field : string) -> JsonObject {
 removeJsonField(json : Json, field : string) -> Json {
 	switch (json) {
 		JsonObject(members): removeJsonObjectField(json, field);
-		default: json
+		default: json;
 	}
 }
 

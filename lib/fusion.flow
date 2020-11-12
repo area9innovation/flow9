@@ -29,6 +29,7 @@ export {
 
 	fsubselect : (b : Transform<??>, fn : FFn<??, Transform<?>>) -> Transform<?>;
 	fsubselect2 : (b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> Transform<?>) -> Transform<?>;
+	fsubselect3 : (b1 : Transform<??>, b2 : Transform<???>, b3 : Transform<????>, fn : (??, ???, ????) -> Transform<?>) -> Transform<?>;
 
 	// disposer is called after last unsubcription from b Transform
 	fdisposable(b : Transform<?>, disposer : () -> void) -> Transform<?>;
@@ -72,6 +73,7 @@ export {
 	makeSubscribe2Uns(v : Transform<?>, f : (?) -> [() -> void]) -> () -> () -> void;
 	makeSubscribe2UnsTimer(v : Transform<?>, ms : int, f : (?) -> [() -> void]) -> () -> () -> void;
 	make2SubscribeUns(v1 : Transform<?>, v2 : Transform<??>, f : (?, ??) -> [() -> void]) -> () -> () -> void;
+	make2SubscribeUnsTimer(v1 : Transform<?>, v2 : Transform<??>, ms : int, f : (?, ??) -> [() -> void]) -> () -> () -> void;
 	make2Subscribe2Uns(v1 : Transform<?>, v2 : Transform<??>, f : (?, ??) -> [() -> void]) -> () -> () -> void;
 
 	// Same as makeSubscribes only you pass a trigger which enables or disables this subscription
@@ -96,6 +98,8 @@ export {
 		v5 : Transform<?????>, f : (?, ??, ???, ????, ?????) -> void) -> () -> () -> void;
 	make5Subscribe2Trigger(trigger : Transform<bool>, v1 : Transform<?>, v2 : Transform<??>, v3 : Transform<???>, v4 : Transform<????>,
 		v5 : Transform<?????>, f : (?, ??, ???, ????, ?????) -> void) -> () -> () -> void;
+
+	makeSubscribeDelayedDispose(t : Transform<?>, delay : int, fn : (?) -> void) -> () -> () -> void;
 
 	// Helpers for ref unsubscribers disposal
 	dispUns(uns : ref () -> void) -> void;
@@ -161,6 +165,7 @@ export {
 	fand(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fOr(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
+	fabs(a : Transform<double>) -> Transform<double>;
 
 	fpair(v1 : Transform<?>, v2 : Transform<??>) -> Transform<Pair<?, ??>>;
 	// ftriple -> see fusion_utils.flow
@@ -445,6 +450,10 @@ fsubselect2(b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> Transform
 	fsubselect(fpair(b1, b2), FLift(\p : Pair<??, ???> -> fn(firstOfPair(p), secondOfPair(p))));
 }
 
+fsubselect3(b1 : Transform<??>, b2 : Transform<???>, b3 : Transform<????>, fn : (??, ???, ????) -> Transform<?>) -> Transform<?> {
+	fsubselect(fpair(fpair(b1, b2), b3), FLift(\p : Pair<Pair<??, ???>, ????> -> fn(firstOfPair(firstOfPair(p)), secondOfPair(firstOfPair(p)), secondOfPair(p))));
+}
+
 //indentation = ref "";
 
 fuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> void]> {
@@ -626,6 +635,24 @@ make2SubscribeUns(v1 : Transform<?>, v2 : Transform<??>, f : (?, ??) -> [() -> v
 	}
 }
 
+make2SubscribeUnsTimer(v1 : Transform<?>, v2 : Transform<??>, ms : int, f : (?, ??) -> [() -> void]) -> () -> () -> void {
+	\ -> {
+		uns = ref [];
+		uns2 = ref nop;
+		uns3 = make2Subscribe(v1, v2, \val1, val2 -> {
+			dispUns(uns2);
+			dispUnsA(uns);
+			uns2 := interruptibleTimer(ms, \ -> uns := f(val1, val2));
+		})();
+
+		\ -> {
+			dispUns(uns2);
+			uns3();
+			dispUnsA(uns);
+		}
+	}
+}
+
 make2Subscribe2Uns(v1 : Transform<?>, v2 : Transform<??>, f : (?, ??) -> [() -> void]) -> () -> () -> void {
 	\ -> {
 		uns = ref [];
@@ -685,6 +712,45 @@ make5SubscribeTrigger(trigger : Transform<bool>, v1 : Transform<?>, v2 : Transfo
 make5Subscribe2Trigger(trigger : Transform<bool>, v1 : Transform<?>, v2 : Transform<??>, v3 : Transform<???>, v4 : Transform<????>,
 	v5 : Transform<?????>, f : (?, ??, ???, ????, ?????) -> void) -> () -> () -> void {
 	makeSubscribeUns(trigger, \tr -> if (tr) [make5Subscribe2(v1, v2, v3, v4, v5, f)()] else []);
+}
+
+makeSubscribeDelayedDispose(t : Transform<?>, delay : int, fn : (?) -> void) -> () -> () -> void {
+	timerUns = ref None();
+	disposer = ref None();
+	subsCounter = ref 0;
+
+	\ -> {
+		subsCounter := ^subsCounter + 1;
+
+		eitherFn(
+			^timerUns,
+			\uns -> {
+				uns();
+			},
+			\ -> {
+				if (isNone(^disposer)) {
+					u = makeSubscribe(t, fn)();
+					disposer :=
+						Some(\ -> {
+							if (^subsCounter == 0) {
+								disposer := None();
+								u();
+							}
+						});
+				}
+			}
+		);
+
+		\ -> {
+			subsCounter := ^subsCounter - 1;
+
+			timerUns :=
+				Some(interruptibleTimer(delay, \ -> {
+					timerUns := None();
+					maybeApply(^disposer, apply0);
+				}));
+		}
+	}
 }
 
 dispUns(uns : ref () -> void) -> void {
@@ -1142,16 +1208,18 @@ transformLength(s : Transform<?>) -> int {
 
 
 faddition(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double> {
-	if (b1 == b2)
+	if (isSameObj(b1, b2))
 		fselect(b1, FLift(\v : double -> v + v))
-	else if (b1 == zero)
+	else if (isSameObj(b1, zero))
 		b2
-	else if (b2 == zero)
+	else if (isSameObj(b2, zero))
 		b1
 	else {
 		switch (b1) {
 			ConstBehaviour(v1): {
-				switch (b2) {
+				if (v1 == doubleMax) {
+					ConstBehaviour(v1)
+				} else switch (b2) {
 					ConstBehaviour(v2): {
 						// While the default case effectively reduces to this case,
 						// it does so after a lot of garbage is made, so let us just
@@ -1166,7 +1234,11 @@ faddition(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double> {
 			default: {
 				switch (b2) {
 					ConstBehaviour(v): {
-						fselect(b1, FAddConst(v))
+						if (v == doubleMax) {
+							ConstBehaviour(v);
+						} else {
+							fselect(b1, FAddConst(v));
+						}
 					}
 					default: {
 						// println(transform2string(b1) + " + " + transform2string(b2));
@@ -1179,11 +1251,11 @@ faddition(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double> {
 }
 
 fsubtract(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double> {
-	if (b1 == b2)
+	if (isSameObj(b1, b2))
 		zero
-	else if (b1 == zero)
+	else if (isSameObj(b1, zero))
 		fnegate(b2)
-	else if (b2 == zero)
+	else if (isSameObj(b2, zero))
 		b1
 	else {
 		switch (b1) {
@@ -1203,9 +1275,9 @@ fsubtract(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double> {
 }
 
 fmultiply(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double> {
-	if (b1 == b2)
+	if (isSameObj(b1, b2))
 		fselect(b1, FLift(\v : double -> v * v))
-	else if (b1 == zero || b2 == zero)
+	else if (isSameObj(b1, zero) || isSameObj(b2, zero))
 		zero
 	else if (b1 == ConstBehaviour(1.0))
 		b2
@@ -1270,9 +1342,9 @@ flessi(b1 : Transform<int>, b2 : Transform<int>) -> Transform<bool> {
 }
 
 fdivide(b1 : Transform<double>, b2 : Transform<double>) -> Transform<double> {
-	if (b1 == b2)
+	if (isSameObj(b1, b2))
 		fselect(b1, FLift(\v -> if (v == 0.) 0. else 1.))
-	else if (b1 == zero || b2 == zero)
+	else if (isSameObj(b1, zero) || isSameObj(b2, zero))
 		zero
 	else if (b2 == ConstBehaviour(1.0))
 		b1
@@ -1308,7 +1380,7 @@ fnegatei(b1 : Transform<int>) -> Transform<int> {
 }
 
 fmax(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
-	if (b1 == b2)
+	if (isSameObj(b1, b2))
 		b1
 	else switch (b1 : Transform<?>) {
 		ConstBehaviour(v1): {
@@ -1317,11 +1389,11 @@ fmax(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
 					// While the default case effectively reduces to this case,
 					// it does so after a lot of garbage is made, so let us just
 					// handle this common case directly
-					const(max(v1, v2));
+					ConstBehaviour(max(v1, v2));
 				}
 				default: {
-					if (flow(v1) == true) {
-						const(flow(true))
+					if (flow(v1) == true || flow(v1) == doubleMax) {
+						ConstBehaviour(flow(v1))
 					} else {
 						fselect(b2, FMaxConst(v1));
 					}
@@ -1331,8 +1403,8 @@ fmax(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
 		default: {
 			switch (b2) {
 				ConstBehaviour(v2): {
-					if (flow(v2) == true) {
-						const(flow(true))
+					if (flow(v2) == true || flow(v2) == doubleMax) {
+						ConstBehaviour(flow(v2))
 					} else {
 						fselect(b1, FMaxConst(v2));
 					}
@@ -1350,7 +1422,7 @@ fmax3(b1 : Transform<?>, b2 : Transform<?>, b3 : Transform<?>) -> Transform<?> {
 }
 
 fmin(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
-	if (b1 == b2)
+	if (isSameObj(b1, b2))
 		b1
 	else switch (b1) {
 		ConstBehaviour(v1): {
@@ -1363,7 +1435,7 @@ fmin(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
 				}
 				default: {
 					if (flow(v1) == false) {
-						const(flow(false))
+						ConstBehaviour(flow(v1))
 					} else {
 						fselect(b2, FMinConst(v1));
 					}
@@ -1374,7 +1446,7 @@ fmin(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
 			switch (b2) {
 				ConstBehaviour(v2): {
 					if (flow(v2) == false) {
-						const(flow(false))
+						ConstBehaviour(flow(v2))
 					} else {
 						fselect(b1, FMinConst(v2));
 					}
@@ -1531,7 +1603,7 @@ fcompose(f1 : FFn<flow, ??>, f2 : FFn<?, flow>) -> FFn<?, ??> {
 }
 
 fif(b1 : Transform<bool>, then1 : Transform<?>, else1 : Transform<?>) -> Transform<?> {
-	if (then1 == else1)
+	if (isSameObj(then1, else1))
 		then1
 	else {
 		switch (b1) {
@@ -1573,21 +1645,25 @@ fnot(b : Transform<bool>) -> Transform<bool> {
 }
 
 fand(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
-	if (a == const(false) || b == const(false))
-		const(false)
+	if (ConstBehaviour(false) == a || ConstBehaviour(false) == b)
+		ConstBehaviour(false)
 	else
 		fselect2(a, b, FusionAnd());
 }
 
 fOr(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
-	if (a == const(true) || b == const(true))
-		const(true)
+	if (a == ConstBehaviour(true) || b == ConstBehaviour(true))
+		ConstBehaviour(true)
 	else
 		fselect2(a, b, FusionOr());
 }
 
 fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
 	fselect2(a, b, FusionXor());
+}
+
+fabs(a : Transform<double>) -> Transform<double> {
+	fselect(a, abs |> FLift);
 }
 
 fpair(v1 : Transform<?>, v2 : Transform<??>) -> Transform<Pair<?, ??>> {
@@ -1668,7 +1744,7 @@ fconnect2Select(t1 : Transform<?>, t2 : Transform<??>, v : DynamicBehaviour<???>
 
 fmerge(a : [Transform<?>]) -> Transform<[?]> {
 	if (length(a) > 0)
-		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [v], r)), const([]))
+		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [v], r)), ConstBehaviour([]))
 	else
 		ConstBehaviour([])
 }
@@ -1676,7 +1752,7 @@ fmerge(a : [Transform<?>]) -> Transform<[?]> {
 fmergeTree(tree : Tree<??, Transform<?>>) -> Transform<Tree<??, ?>> {
 	if (sizeTree(tree) > 0)
 		fselect(
-			foldTreeBinary(tree, \k, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [Pair(k, v)], r)), const([])),
+			foldTreeBinary(tree, \k, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [Pair(k, v)], r)), ConstBehaviour([])),
 			pairs2tree |> FLift
 		)
 	else
@@ -1685,14 +1761,14 @@ fmergeTree(tree : Tree<??, Transform<?>>) -> Transform<Tree<??, ?>> {
 
 fsum(a : [Transform<double>]) -> Transform<double> {
 	if (length(a) > 0)
-		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), const(0.0))
+		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), ConstBehaviour(0.0))
 	else
 		ConstBehaviour(0.0)
 }
 
 fsumi(a : [Transform<int>]) -> Transform<int> {
 	if (length(a) > 0)
-		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), const(0))
+		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), ConstBehaviour(0))
 	else
 		ConstBehaviour(0)
 }
@@ -1704,9 +1780,9 @@ faverage(a : [Transform<double>]) -> Transform<double> {
 			\__, vv : Pair<int, Transform<double>>, ll : Pair<int, Transform<double>>, rr : Pair<int, Transform<double>> -> {
 				Pair(ll.first + vv.first + rr.first, fselect3(ll.second, vv.second, rr.second, \l, v, r -> l + v + r));
 			},
-			Pair(0, const(0.0))
+			Pair(0, ConstBehaviour(0.0))
 		)
-		|> (\t -> fdivide(t.second, const(i2d(t.first))))
+		|> (\t -> fdivide(t.second, ConstBehaviour(i2d(t.first))))
 	else
 		ConstBehaviour(0.0)
 }
@@ -1723,7 +1799,7 @@ ftransistor(g : Transform<bool>, v: Transform<?>) -> Transform<?> {
 		if (b) {
 			newV;
 		} else {
-			const(^currentV);
+			ConstBehaviour(^currentV);
 		}
 	))
 }
@@ -2000,9 +2076,9 @@ safeToString(t : flow) -> string {
 	} else if (isSameStructType(t, zero)) {
 		ct : ConstBehaviour<flow> = cast(t : flow -> ConstBehaviour<flow>);
 		"const(" + safeToString(getValue(ct)) + ")";
-	} else if (isSameStructType(t, FSelect(const(flow(0)), FIdentity(), FDestroyed()))
-			|| isSameStructType(t, FSelect2(const(flow(0)), const(flow(0)), FAddition(), FDestroyed()))
-			|| isSameStructType(t, FSubSelect(const(flow(0)), FIdentity(), FDestroyed()))
+	} else if (isSameStructType(t, FSelect(ConstBehaviour(flow(0)), FIdentity(), FDestroyed()))
+			|| isSameStructType(t, FSelect2(ConstBehaviour(flow(0)), ConstBehaviour(flow(0)), FAddition(), FDestroyed()))
+			|| isSameStructType(t, FSubSelect(ConstBehaviour(flow(0)), FIdentity(), FDestroyed()))
 		) {
 		ct : Transform<flow> = fselect(cast(t : flow -> Transform<?>), FLift(\v : ? -> cast(v : ? -> flow)));
 		transform2string(ct)

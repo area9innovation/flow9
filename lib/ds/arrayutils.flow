@@ -34,6 +34,9 @@ export {
 	// Same as doneP(allP(map(xs, \x -> Promise(\f, r -> f(x, f, r)))), fulfill, reject)
 	mapAsync(xs : [?], fn : (?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
 	mapiAsync(xs : [?], fn : (int, ?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
+
+	mapiAsyncChunked(xs : [?], fn : (int, ?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
+
 	// Same as doneP(parallelP(map(xs, \x -> Promise(\f, r -> f(x, f, r)))), fulfill, reject)
 	mapAsyncParallel(xs : [?], fn : (?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
 	mapiAsyncParallel(xs : [?], fn : (int, ?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void;
@@ -44,7 +47,7 @@ export {
 	iterAsync(xs : [?], fn : (?, () -> void, (??) -> void) -> void, fulfill : () -> void, reject : (??) -> void) -> void;
 
 	iteriAsync(xs : [?], fn : (int, ?, () -> void, (??) -> void) -> void, onOK : () -> void, onError : (??) -> void) -> void;
-	
+
 	iterAsyncParallelChunked(xs : [?], chunkSize : int, simultaneous : int, fn : ([?], () -> void, (???) -> void) -> void, fulfill : () -> void, reject : (???) -> void) -> void;
 
 	// Count from start until the predicate is false, and collect all products from fn into an array
@@ -128,8 +131,10 @@ export {
 
 	// map while fn returns something
 	mapM(xs : [?], fn : (?) -> Maybe<??>) -> Maybe<[??]>;
+	mapiM(xs : [?], fn : (int, ?) -> Maybe<??>) -> Maybe<[??]>;
 	// fold while fn returns something
 	foldM(xs : [?], init : ??, fn : (??, ?) -> Maybe<??>) -> Maybe<??>;
+	foldiM(xs : [?], init : ??, fn : (int, ??, ?) -> Maybe<??>) -> Maybe<??>;
 
 	// Removes the last element of the array. O(n)
 	removeLastElement(a : [?]) -> [?];
@@ -250,6 +255,12 @@ mapiAsync(xs : [?], fn : (int, ?, (??) -> void, (???) -> void) -> void, fulfill 
 	doneP(allP(promises), fulfill, reject);
 }
 
+mapiAsyncChunked(xs : [?], fn : (int, ?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void {
+	chunkSize = max(1, min(64, (length(xs) + 32) / 64));
+	promises = mapi(xs, \i, x -> Promise(\fulf, rej -> fn(i, x, fulf, rej)));
+	doneP(allPchunked(promises, chunkSize), fulfill, reject);
+}
+
 mapAsyncParallel(xs : [?], fn : (?, (??) -> void, (???) -> void) -> void, fulfill : ([??]) -> void, reject : (???) -> void) -> void {
 	promises = map(xs, \x -> Promise(\fulf, rej -> fn(x, fulf, rej)));
 	doneP(parallelP(promises), fulfill, reject);
@@ -310,22 +321,14 @@ foldi2(a : [?], init1 : ??, init2 : ???, fn : (int, ??, ???, ?) -> Pair<??, ???>
 }
 
 replaceAtAndPad(pad : ?, xs : [?], i : int, x : ?) -> [?] {
-	l = length(xs);
-
-	if (i < l) {
-		replace(xs, i, x)
-	} else if (i == l) {
-		arrayPush(xs, x)
-	} else {
-		arrayPush(padArray(xs, pad, i - l), x)
-	}
+	replace(padArray(xs, pad, i), i, x);
 }
 
 padArray(xs : [?], pad : ?, i : int) -> [?] {
-	if (i <= 0) {
+	if (i <= length(xs)) {
 		xs
 	} else {
-		padArray(arrayPush(xs, pad), pad, i - 1);
+		concat(xs, arrayRepeat(pad, i - length(xs)));
 	}
 }
 
@@ -486,6 +489,14 @@ mapM(xs : [?], fn : (?) -> Maybe<??>) -> Maybe<[??]> {
 	fold(xs, Some([]), \accM : Maybe<[??]>, x : ? -> maybeBind(accM, \acc : [??] -> maybeMap(fn(x), \y -> arrayPush(acc, y))));
 }
 
+mapiM(xs : [?], fn : (int, ?) -> Maybe<??>) -> Maybe<[??]> {
+	foldi(xs, Some([]), \i, accM : Maybe<[??]>, x : ? -> maybeBind(accM, \acc : [??] -> maybeMap(fn(i, x), \y -> arrayPush(acc, y))));
+}
+
 foldM(xs : [?], init : ??, fn : (??, ?) -> Maybe<??>) -> Maybe<??> {
 	fold(xs, Some(init), \accM : Maybe<??>, x : ? -> maybeBind(accM, \acc : ?? -> fn(acc, x)));
+}
+
+foldiM(xs : [?], init : ??, fn : (int, ??, ?) -> Maybe<??>) -> Maybe<??> {
+	foldi(xs, Some(init), \i, accM : Maybe<??>, x : ? -> maybeBind(accM, \acc : ?? -> fn(i, acc, x)));
 }

@@ -80,7 +80,7 @@ TRenderParagraph(
 	updateFn = \wi, alignWidthM -> {
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
-		w = if (isSingleLine) 100000.0 else max(0.0, wi);
+		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
@@ -109,19 +109,29 @@ TRenderParagraph(
 
 	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
 
-	subscribe2dynWord = \w -> if (isSameStructType(NonTextElement(), w.word)) apply0(make2Subscribe2(
-		w.inspector.size,
-		w.inspector.baseline,
-		\size, ba -> {
-			if (ndynamic <= ndymamicUpper) {
-				// There is less or equal than upper limit of dynamic elements here, so just update immediately
-				executeReflow()
-			} else {
-				// There are more, so to prevent unnecessary work, delay the update
-				nextDistinct(update, 1);
+	dynMetricsSubscription = \w -> {
+		apply0(make2Subscribe2(
+			w.inspector.size,
+			w.inspector.baseline,
+			\size, ba -> {
+				if (ndynamic <= ndymamicUpper) {
+					// There is less or equal than upper limit of dynamic elements here, so just update immediately
+					executeReflow()
+				} else {
+					// There are more, so to prevent unnecessary work, delay the update
+					nextDistinct(update, 1);
+				}
 			}
+		))
+	}
+
+	subscribe2dynWord = \w -> {
+		switch (w.word : GeneralWrapElement) {
+			NonTextElement() : dynMetricsSubscription(w);
+			GeneralDynamicText(__): dynMetricsSubscription(w);
+			default: nop;
 		}
-	)) else nop;
+	}
 
 	dynamicWordsUns = ref [];
 
@@ -182,7 +192,7 @@ TRenderParagraph(
 			awB
 		)
 	) |> if (needIndent) {
-		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent) 
+		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent)
 	} else {
 		idfn
 	};
@@ -206,7 +216,8 @@ commonWordConstructor(
 		wordView,
 		make(id),
 		style,
-		make(false)
+		make(false),
+		None()
 	);
 }
 
@@ -603,8 +614,9 @@ TRenderLine(
 	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
 		max(ac, getValue(m.baseline));
 	});
+
 	lineHeight = foldi(inspectors, 0.0, \i, ac, m ->
-		max(ac, lineAsc + getValue(m.size).height - getValue(m.baseline))
+		max(ac, getValue(m.size).height + lineAsc - getValue(m.baseline))
 	);
 
 	// Alignment offset
@@ -631,7 +643,15 @@ TRenderLine(
 	iteri(inspectors, \i : int, inspector -> {
 		elemWidth = getValue(inspector.size).width;
 		elemHeight = getValue(inspector.size).height;
-		yOffset = y + lineAsc - getValue(inspector.baseline);
+		dy = eitherMap(
+			words[i].scriptM,
+			\script -> switch(script) {
+				ParaElementSuperscript() : -1.0;
+				ParaElementSubscript() : lineAsc - getValue(inspector.baseline) / 2.0;
+			},
+			lineAsc - getValue(inspector.baseline)
+		);
+		yOffset = y + dy;
 		nextDistinct(inspector.y, yOffset);
 		nextDistinct(inspector.x, ^alignmentOffset + generalIndent);
 		nextDistinct(inspector.lineHeight, lineHeight);
@@ -658,6 +678,7 @@ translateWord(word : TParaWord, genIndent : double) -> Tropic {
 isTParaWordEmpty(w: TParaWord) -> bool {
 	switch(w.word) {
 		GeneralText(t): t == "";
+		GeneralDynamicText(t) : t == "";
 		default: false;
 	}
 }
@@ -665,6 +686,7 @@ isTParaWordEmpty(w: TParaWord) -> bool {
 getTParaWordText(w: TParaWord) -> string {
 	switch(w.word) {
 		GeneralText(t): t;
+		GeneralDynamicText(t) : t;
 		default: "";
 	}
 }
@@ -673,7 +695,10 @@ setTParaWordText(w: TParaWord, t: string) -> TParaWord {
 	switch(w.word) {
 		GeneralText(__): {
 			view = inspectWordView(TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)), w.inspector);
-
+			TParaWord(w with ghostView = view);
+		}
+		GeneralDynamicText(__): {
+			view = inspectWordView(TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)), w.inspector);
 			TParaWord(w with ghostView = view);
 		}
 		default: w;

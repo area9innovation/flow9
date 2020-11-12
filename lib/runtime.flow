@@ -15,7 +15,7 @@ export {
 	fori : (start : int, end : int, fn : (i : int) -> void) -> void;
 
 	// A simple loop from start to end, not including end, and collect all products to a nice little array
-	generate : (start : int, end : int, fn : (i : int) -> ?) -> [?];
+	generate(start : int, end : int, fn : (i : int) -> ?) -> [?];
 
 	// Counts up(down) from start to max(min), until the predicate is true
 	countUntil : (start : int, max : int, predicate : (int) -> bool) -> int;
@@ -71,8 +71,6 @@ export {
 
 	// executes given function (void) -> ?
 	executefn : (() -> ?) -> ?;
-	// wait for condition become true, then exec
-	executeAfter : (condition : () -> bool, fn : () -> void) -> void;
 
 	// create single elemented array
 	v2a : (?) -> [?];
@@ -81,7 +79,7 @@ export {
 	native quit : io (code : int) -> void = Native.quit;
 
 	// Fires when an application is about to quit (QT only)
-	native onQuit : io (callback : () -> void) -> (() -> void) = Native.onQuit;
+	native onQuit : io (callback : () -> void) -> () -> void = Native.onQuit;
 
 	// Sets current directory for file/dir operations (QT only)
 	native setCurrentDirectory : io (path : string) -> void = Native.setCurrentDirectory;
@@ -96,6 +94,15 @@ export {
 
 	// Try to save the file content as utf-16 with a BOM marker, if supported, or return false
 	native setFileContentUTF16 : io (path : string, content : string) -> bool = Native.setFileContentUTF16;
+
+	// splits array into array of subarrays of given length (last subarray can be shorter)
+	splitBy(a : [?], len : int) -> [[?]];
+
+	// True if c is the code of a printable unicode character.
+	isPrintableCharCode(c : int) -> bool { 0x1F < c && c < 0x7F || 0x9F < c }
+
+	max : (?, ?) -> ?;
+	min : (?, ?) -> ?;
 
 	//
 	// Time & profiling
@@ -113,25 +120,6 @@ export {
 	// Returns a string representation for the local time (time is given in milliseconds since epoch 1970 in UTC)
 	native time2string : (double) -> string = Native.time2string;
 
-	// Get a callback in x ms
-	native timer : io (int, () -> void) -> void = Native.timer;
-
-	// Deffer function call
-	deferred(fn : () -> void) -> void;
-
-	// Wait until rendering finished
-	deferUntilRender : (fn : () -> void) -> void;
-
-	native deferUntilNextFrameRendered : (cb : () -> void) -> void = RenderSupport.deferUntilRender;
-
-	// splits array into chunks of chunkSize and does a deferred call between
-	// processing them to avoid flash timeout
-	iterDeferred(arr: [?], chunkSize: int, doItem: (?) -> void, onDone: () -> void, progress: (int, int) -> void) -> void;
-	iterDeferred2(arr: [?], iterator: (?, onDoneChunk: () -> void) -> void, onDone: () -> void, progress: (int, int) -> void) -> void;
-
-	// apply all using deferred() after each call. Elements of array should be functions with two parameters - current input and function which is called at the end
-	threadApplyDeferred(input : ?, array : [(?, (?) -> void) -> void]) -> void;
-
 	// How long does it take to run this function? Not very accurate. See profiling below for more accurate measurements
 	timeit(fn : () -> void) -> double;
 
@@ -147,7 +135,6 @@ export {
 	ignore : (?) -> void;
 
 
-
 	//
 	// Debugging help
 	//
@@ -161,11 +148,11 @@ export {
 	}
 
 	// Pipe print. Prints a value given with an annotation and returns it.
-	pprint(m : string) -> ((?) -> ?);
+	pprint(m : string) -> (?) -> ?;
 
 	// Pipe print. Returns a function similar to pprint of a one that does not print nothing.
 	// For the first one common message can be specified.
-	cprint(c : bool, m : string) -> (string) -> ((?) -> ?);
+	cprint(c : bool, m : string) -> (string) -> (?) -> ?;
 
 	// Clear the haXe tracing window
 	native clearTrace : io () -> void = Native.clearTrace;
@@ -214,7 +201,7 @@ export {
 	// JS functions in www/custom.js for a given project.
 	native hostCall : io (name: string, args: [flow]) -> flow = Native.hostCall;
 	// This registers the function in the window[name] key of your browser in JS.
-	native hostAddCallback : io (name: string, () -> flow) -> void = Native.hostAddCallback;
+	native hostAddCallback : io (name: string, cb : () -> flow) -> void = Native.hostAddCallback;
 
 	native setClipboard : io (text: string) -> void = Native.setClipboard;
 
@@ -240,11 +227,14 @@ export {
 	//JS only. If dev tools are available stops execution at this line.
 	native debugStopExecution : io () -> void = Native.debugStopExecution;
 
-	debugStopExecution() {};
+	debugStopExecution() -> void {}
 
 	//
 	// Persistence
 	//
+
+	// check if localstorage available
+	checkLocalStorageAvailability() -> bool;
 
 	// Disable all local storage functions
 	disableLocalStorage() -> void;
@@ -275,15 +265,6 @@ export {
 	setSessionKeyValue(key : string, value : string) -> bool;
 	getSessionKeyValue(key : string, value : string) -> string;
 	removeSessionKeyValue(key : string) -> void;
-
-	// splits array into array of subarrays of given length (last subarray can be shorter)
-	splitBy(a : [?], len : int) -> [[?]];
-
-	// True if c is the code of a printable unicode character.
-	isPrintableCharCode(c : int) -> bool { 0x1F < c && c < 0x7F || 0x9F < c }
-
-	max : (?, ?) -> ?;
-	min : (?, ?) -> ?;
 }
 
 // Only works in the C++ runner when debugging or profiling
@@ -297,39 +278,17 @@ captureStringCallstack() -> string {
 // native fallback body
 deleteNative(arg) { }
 
-deferred(fn : () -> void) -> void {
-	timer(0, fn);
-}
-
-deferUntilRender(fn : () -> void) -> void {
-	timer(10, fn);
-}
-
-deferUntilNextFrameRendered(fn : () -> void) {
-	timer(10, fn);
-}
-
-threadApplyDeferred(input, array) {
-	len = length(array);
-	if (len > 0) {
-		// println("Calls remaining: " + toString(len));
-		curFn = array[0];
-		array2 = subrange(array, 1, len - 1);
-		curFn(input, \output -> deferred(\-> { threadApplyDeferred(output, array2) }));
-	}
-}
-
 timeit(fn) {
 	start = timestamp();
 	fn();
 	timestamp() - start;
 }
 
-timestampToDay(time : double) {
+timestampToDay(time : double) -> double {
 	time / (1000.0 * 86400.0);
 }
 
-dayToTimestamp(day : double) {
+dayToTimestamp(day : double) -> double {
 	day * 86400.0 * 1000.0;
 }
 
@@ -363,9 +322,9 @@ fori(start, end, fn) {
 }
 
 // Does NOT include end
-generate(start, end, fn) {
+generate(start : int, end : int, fn : (i : int) -> ?) -> [?] {
 	if (start >= end) []
-	else map(enumFromTo(start, end-1), fn);
+	else map(enumFromTo(start, end - 1), fn);
 }
 
 countUntil(start, maxcount, predicate) {
@@ -397,11 +356,6 @@ nop6(a1, a2, a3, a4, a5, a6) {}
 
 executefn(fn) fn();
 
-executeAfter(condition : () -> bool, fn : () -> void) -> void {
-	if (condition()) fn()
-	else timer(10, \ -> executeAfter(condition, fn))
-}
-
 v2a(v) [v];
 
 // Fortran-like named relations
@@ -412,7 +366,6 @@ all(a) { forall(a, idfn) } //alt: fold(a, true, \res, v -> res && v)
 
 any(a) { exists(a, idfn) }
 
-
 localStorageEnabled = ref true;
 disableLocalStorage() {
 	println("disable local storage");
@@ -420,8 +373,20 @@ disableLocalStorage() {
 }
 
 getLocalStorageStatus() {
-	//^localStorageEnabled;
-	false;
+	^localStorageEnabled;
+}
+
+checkLocalStorageAvailability() {
+	tmpKey = "check_ls_avail";
+	tmpValue = "true";
+
+	if (setKeyValueN(tmpKey, tmpValue)) {
+		ret = getKeyValueN(tmpKey, "") == tmpValue;
+		removeKeyValueN(tmpKey);
+		ret;
+	} else {
+		false;
+	}
 }
 
 native setKeyValueN : io (key : string, value : string) -> bool = Native.setKeyValue;
@@ -495,60 +460,12 @@ cprint(doPrint, prefix) {
 	}
 }
 
-iterDeferredRec : (arr : [?], from : int, chunkSize : int, doItem : (?)->void, onDone : ()->void, progress : (int, int)->void)->void;
-iterDeferredRec(arr, from, chunkSize, doItem, onDone, progress) {
-	if (chunkSize <= 0) {
-		onDone();
-	} else {
-		len = length(arr);
-
-		iteri(subrange(arr, from, chunkSize),
-			\i, item -> {
-				doItem(item);
-				progress(from + i + 1, len);
-			}
-		);
-
-		if (len < from + chunkSize) {
-			onDone();
-		} else {
-			deferred(\ -> iterDeferredRec(arr, from + chunkSize, chunkSize, doItem, onDone, progress))
-		}
-	}
-}
-
-iterDeferred(arr: [?], chunkSize: int, doItem: (?) -> void, onDone: () -> void, progress: (int, int) -> void) -> void {
-	iterDeferredRec(arr, 0, chunkSize, doItem, onDone, progress);
-}
-
-iterDeferred2Rec(arr: [?], index : int, len : int, iterator: (?, onDoneItem: () -> void) -> void, onDone: () -> void, onProgress: (int, int) -> void) -> void {
-	if (index < len) {
-		iterator(arr[index],
-			\ -> {
-				onProgress(index + 1, len);
-				deferred(\ -> iterDeferred2Rec(arr, index + 1, len, iterator, onDone, onProgress));
-			}
-		);
-	} else {
-		onDone()
-	}
-}
-
-iterDeferred2(arr, iterator, onDone, onProgress) {
-	len = length(arr);
-	if (len > 0) {
-		iterDeferred2Rec(arr, 0, len, iterator, onDone, onProgress)
-	} else {
-		onDone()
-	}
-}
-
 native max : (?, ?) -> ? = Native.fast_max;
 max(a,b) { if (a > b) a else b; }
 min(a,b) { if (a <= b) a else b; }
 
 
-onQuit(cb : () -> void) -> (() -> void) {
+onQuit(cb : () -> void) -> () -> void {
 	nop
 }
 

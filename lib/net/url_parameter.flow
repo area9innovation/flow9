@@ -1,6 +1,7 @@
 
 import string;
 import ds/tree;
+import formats/json/json;
 
 export {
 	// Get a parameter from the URL
@@ -21,6 +22,7 @@ export {
 	eitherGetUrlParameter(name : string, mapFn : (string) -> ?, def : ?) -> ?;
 
 	// Advanced version with validation and mapping of the result to something.
+	eitherGetUrlValidParameterM(name : string, mapFn : (string) -> Maybe<?>, def : ?) -> ?;
 	eitherGetUrlValidParameter(name : string, valid : (string) -> bool, mapFn : (string) -> ?, def : ?) -> ?;
 
 	// Returns
@@ -72,6 +74,11 @@ eitherGetUrlParameter(name : string, mapFn : (string) -> ?, def : ?) -> ? {
 	if (param != "") mapFn(param) else def
 }
 
+eitherGetUrlValidParameterM(name : string, mapFn : (string) -> Maybe<?>, def : ?) -> ? {
+	param = getUrlParameter(name);
+	either(mapFn(param),  def)
+}
+
 eitherGetUrlValidParameter(name : string, valid : (string) -> bool, mapFn : (string) -> ?, def : ?) -> ? {
 	param = getUrlParameter(name);
 	if (valid(param)) mapFn(param) else def
@@ -97,7 +104,28 @@ getUrlParameterEncode(param : string) {
 }
 
 getAllUrlParameters() -> Tree<string, string> {
-	fold(getAllUrlParametersArray(), makeTree(), \acc, par -> setTree(acc, par[0], par[1]))
+	// Allow additional parameters to be set via localStorage. 
+	debugStorage = parseJson(getKeyValue("local-url-parameters", "{}"));
+
+	// We only allow selected parameters, this is for security reasons...
+	localTree: Tree<string, string> = fold(["dev", "devtrace", "new", "allow_share_progress"], makeTree(), \acc, key -> {
+		value = getJsonStringField(debugStorage, key, "");
+		if (value == "") {
+			acc;
+		} else {
+			setTree(acc, key, value);
+		}
+	});
+
+	// Url parameters will overwrite localStorage parameters.
+	tree0 = fold(getAllUrlParametersArray(), localTree, \acc, par -> setTree(acc, par[0], par[1]));
+	
+	// Add short "i" alias for "impersonate" parameter
+	eitherMap(
+		lookupTree(tree0, "i"),
+		\v -> setTree(tree0, "impersonate", v),
+		tree0
+	)
 }
 
 getUrlParameter(name : string) -> string {

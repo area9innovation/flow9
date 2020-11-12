@@ -48,7 +48,7 @@ This library gets good reviews:
 
 */
 
-import runtime;
+import timer;
 
 export {
 	Promise : (
@@ -67,6 +67,7 @@ export {
 	// The `all` function takes an array of promises and fires one callback once they are
 	// all fulfilled or as soon as one of then is rejected.
 	allP(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
+	allPchunked(promises : [Promise<?, ??>], chunkSize : int) -> Promise<[?], ??>;
 
 	// Parallel version of `all`.
 	parallelP(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
@@ -153,12 +154,20 @@ catchP(promise : Promise<?, ??>, transformError : (??) -> ???) -> Promise<?, ???
 allP(promises : [Promise<?, ??>]) -> Promise<[?], ??> {
 	Promise(
 		\fulfill, reject -> {
-			allP0(promises, 0, makeList(), fulfill, reject)
+			allP0(promises, 0, makeList(), fulfill, reject, 0)
 		}
 	)
 }
 
-allP0(promises : [Promise<?, ??>], idx : int, acc : List<?>, fulfill : ([?]) -> void, reject : (??) -> void) -> void {
+allPchunked(promises : [Promise<?, ??>], chunkSize : int) -> Promise<[?], ??> {
+	Promise(
+		\fulfill, reject -> {
+			allP0(promises, 0, makeList(), fulfill, reject, chunkSize)
+		}
+	)
+}
+
+allP0(promises : [Promise<?, ??>], idx : int, acc : List<?>, fulfill : ([?]) -> void, reject : (??) -> void, chunkSize : int) -> void {
 	if (length(promises) <= idx) {
 		fulfill(list2array(acc))
 	} else {
@@ -168,8 +177,11 @@ allP0(promises : [Promise<?, ??>], idx : int, acc : List<?>, fulfill : ([?]) -> 
 			\result -> {
 				// For a very big number of promises we can get a very big stack of calls, and it might easily crash (especially in FF),
 				// so let's defer once in a while, it might also let browser redraw UI, so it doesn't look frozen
-				if (idx % 0x40 == 0x3F) deferred(\ -> allP0(promises, idx+1, Cons(result, acc), fulfill, reject))
-				else allP0(promises, idx+1, Cons(result, acc), fulfill, reject)
+				if ((chunkSize == 0 && idx % 0x40 == 0x3F) || (chunkSize != 0 && idx % chunkSize == chunkSize - 1)) {
+					deferred(\ -> allP0(promises, idx+1, Cons(result, acc), fulfill, reject, chunkSize))
+				} else {
+					allP0(promises, idx+1, Cons(result, acc), fulfill, reject, chunkSize)
+				}
 			},
 			reject
 		)

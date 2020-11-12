@@ -79,7 +79,7 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function setFocus(focus : Bool) : Bool {
 		if (nativeWidget != null) {
-			if (untyped nativeWidget.parentNode == null && !this.destroyed && this.focusRetries < 3) {
+			if (untyped nativeWidget.parentNode == null && !this.destroyed && this.focusRetries < 3 && focus) {
 				focusRetries++;
 				RenderSupport.once("drawframe", function() { setFocus(focus); });
 
@@ -90,10 +90,12 @@ class NativeWidgetClip extends FlowContainer {
 
 			if (focus && nativeWidget.focus != null && !getFocus()) {
 				nativeWidget.focus();
+				if (RenderSupport.EnableFocusFrame) nativeWidget.classList.add("focused");
 
 				return true;
 			} else if (!focus && nativeWidget.blur != null && getFocus()) {
 				nativeWidget.blur();
+				nativeWidget.classList.remove("focused");
 
 				return true;
 			}

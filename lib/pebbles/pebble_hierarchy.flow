@@ -36,12 +36,16 @@ export {
 		style : [PebbledHierarchyBodyStyle]
 	) -> Material;
 
-	PebbledHierarchyBodyStyle ::= PebbledHierarchyBodyAdditionalChips, PebbledHierarchyBodyErrorView, PebbledHierarchyBodyHideChips;
+	PebbledHierarchyBodyStyle ::= PebbledHierarchyBodyAdditionalChips, PebbledHierarchyBodyErrorView,
+		PebbledHierarchyBodyHideChips, PebbledHierarchyBodyChipBorders, PebbledHierarchyBodyChipPinnable;
 		PebbledHierarchyBodyAdditionalChips(chips : Transform<[Material]>);
 		PebbledHierarchyBodyErrorView(fn : (itemName : string, itemId : string) -> Material);
 		// useful when hierarchy view does not depend on chip filtration and uses visual elements like breadcrumbs
 		PebbledHierarchyBodyHideChips();
+		PebbledHierarchyBodyChipBorders(left : double, top : double, right : double, bottom : double);
+		PebbledHierarchyBodyChipPinnable(labels : [PinnedPebbleHierarchyChip]);
 
+	PinnedPebbleHierarchyChip(label : string, utf : string, show : (Pebble) -> bool);
 	// Display view corresponding to selected item preserving pebble parameters.
 	// For example: open `organizations` table
 	setViewForPebbledHierarchyItemParameters(
@@ -186,27 +190,100 @@ collectPebbledHierarchyData2(items : [PebbledHierarchyItem], values : [string], 
 
 buildPebbledHierarchyChips(controller : PebbleController, datas : [PebbledHierarchyItemData], style : [PebbledHierarchyBodyStyle]) -> Material {
 	additionalChips = extractStruct(style, PebbledHierarchyBodyAdditionalChips(const([]))).chips;
+	borders = extractStruct(style, PebbledHierarchyBodyChipBorders(8.0, 8.0, 8.0, 8.0));
+	pinnables = extractStruct(style, PebbledHierarchyBodyChipPinnable([])).labels;
+	utfPressedB = make(false);
 
-	chips = map(datas, \data -> {
-		MChip(data.label, [
-			MCloseButton(), 
-			MOnClose(\-> {
-				childrenParams = map(getAllChildrenOfPebbledHierarchyItem(data.item), \p -> KeyValue(p.parameter, ""));
-				setViewFromPebble(
-					controller,
-					extendCurrentPebbleWithParameters(controller, arrayPush(childrenParams, KeyValue(data.item.parameter, "")))
-				);	
-				true
-			}), 
-			MOnClick(\-> {
-				setViewForPebbledHierarchyItemParametersInner(controller, map(datas, \d -> d.item), data.item.name, [])
-			})
-		])
-	});
+	setViewInner = \name -> setViewForPebbledHierarchyItemParametersInner(
+		controller,
+		map(datas, \d -> d.item),
+		name,
+		[]
+	);
+
+	chips = map(
+		datas,
+		\data -> eitherFn(
+			find(pinnables, \p -> p.label == data.item.parameter),
+			\p : PinnedPebbleHierarchyChip -> MInteractive(
+				[
+					KeyDown(\ke -> if (ke.utf == p.utf) nextDistinct(utfPressedB, true)),
+					KeyUp(\ke -> if (ke.utf == p.utf) nextDistinct(utfPressedB, false))
+				],
+				MSelect(
+					fselect(
+						getPinnedParametersTree(),
+						FLift(\pt -> containsKeyTree(pt, p.label))
+					),
+					\pinned -> makePebbleHierarchyMChip(
+						controller,
+						data,
+						\-> unPinParameter(p.label),
+						\-> if (getValue(utfPressedB)) {
+							if (pinned) {
+								unPinParameter(p.label)
+							} else {
+								pinParameter(
+									p.label,
+									getCurrentPebbleLastParameter(controller, p.label, ""),
+									p.show
+								)
+							}
+						} else {
+							setViewInner(data.item.name)
+						},
+						if (pinned) [MIcon("push_pin", [])] else []
+					)
+				)
+			),
+			\-> makePebbleHierarchyMChip(
+				controller,
+				data,
+				nop,
+				\-> setViewInner(data.item.name),
+				[]
+			)
+		)
+	);
 	chipsB = fconcat(const(chips), additionalChips);
-	border = fif(feq(flength(chipsB), 0), const(0.), const(8.));
-	MBorderT(border, border, border, border, MFlexibleGrid(chipsB, [MOrdered(true)]))
+	getBorder = \border -> fif(feq(flength(chipsB), 0), const(0.0), const(border));
+	MBorderTA(
+		getBorder(borders.left), getBorder(borders.top), getBorder(borders.right), getBorder(borders.bottom),
+		MFlexibleGrid(chipsB, [MOrdered(true)])
+	)
+}
 
+makePebbleHierarchyMChip(
+	controller : PebbleController,
+	data : PebbledHierarchyItemData,
+	unpinOnClose : () -> void,
+	onClick : () -> void,
+	style : [MChipStyle]
+) -> MChip {
+	MChip(
+		data.label,
+		concat(
+			[
+				MCloseButton(),
+				MOnClose(\-> {
+					unpinOnClose();
+					setViewFromPebble(
+						controller,
+						extendCurrentPebbleWithParameters(
+							controller,
+							arrayPush(
+								map(getAllChildrenOfPebbledHierarchyItem(data.item), \h -> KeyValue(h.parameter, "")),
+								KeyValue(data.item.parameter, "")
+							)
+						)
+					);
+					true
+				}),
+				MOnClick(onClick)
+			],
+			style,
+		)
+	)
 }
 
 setViewForPebbledHierarchyItemParametersInner(
