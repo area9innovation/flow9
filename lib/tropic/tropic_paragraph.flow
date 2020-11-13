@@ -1,15 +1,22 @@
 
+import material/internal/material_typography;
 import tropic/tropic_paragraph_preparation;
 import tropic/tropictransforms;
 import form/paragraph3;
 import text/bidi_text;
 
 export {
-	TRenderParagraph(
+	TRenderDynamicParagraph(
 		words : ref [TParaWord],
 		s : [ParagraphStyle],
 		alignWidthM : Maybe<DynamicBehaviour<double>>
 	) -> TDynamicParagraph;
+
+	TRenderParagraph(
+		words : [TParaWord],
+		s : [ParagraphStyle],
+		alignWidthBM : Maybe<DynamicBehaviour<double>>
+	) -> Tropic;
 
 	TDynamicParagraph(
 		tropic : Tropic,
@@ -28,7 +35,7 @@ export {
 	getTParaWordText(w: TParaWord) -> string;
 }
 
-TRenderParagraph(
+TRenderDynamicParagraph(
 	words : ref [TParaWord],
 	s : [ParagraphStyle],
 	alignWidthBM : Maybe<DynamicBehaviour<double>>
@@ -41,12 +48,6 @@ TRenderParagraph(
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 
 	tightWidth = contains(s, TightWidth());
-
-	fill = filtermap(s, \st -> switch (st) {
-		Fill(__): Some(st);
-		FillOpacity(__): Some(st);
-		default: None();
-	});
 
 	topLineBaseline = contains(s, TopLineBaseline());
 
@@ -75,6 +76,7 @@ TRenderParagraph(
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
 	));
+
 	rtl = isParagraphRtl(s);
 
 	updateFn = \wi, alignWidthM -> {
@@ -199,7 +201,177 @@ TRenderParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
-// Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
+TRenderParagraph(
+	words : [TParaWord],
+	s : [ParagraphStyle],
+	alignWidthBM : Maybe<DynamicBehaviour<double>>
+) -> Tropic {
+
+	alignment : ParaLineAlignment = extractParaLineAlignment(s);
+	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
+	needIndent = genIndent != 0.0;
+
+	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
+
+	tightWidth = contains(s, TightWidth());
+
+	topLineBaseline = contains(s, TopLineBaseline());
+
+	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
+
+	isSingleLine = containsStruct(s, ParagraphSingleLine());
+	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
+
+	awB = make(0.0);
+	update = make(0);
+	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
+
+	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
+	ndynamic = fold(words, 0, \acc, w -> switch (w.word) {
+		NonTextElement() : acc + 1;
+		default : acc;
+	});
+	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
+
+	groupedWords = groupAndTranslateWords(words, genIndent);
+
+	paragraphWHB = makeWH();
+	paragraphBaselineB = make(0.0);
+
+	contentGroup = TBaseline(paragraphBaselineB, TSize(
+		TSized(paragraphWHB),
+		TGroup(groupedWords)
+	));
+	rtl = isParagraphRtl(s);
+
+	updateFn = \wi, alignWidthM -> {
+		// Ignore negative widths
+		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
+		paragraphSizeBaselineAndChanges = reflowTParaWords(
+			words, w, indent, tightWidth, alignment, interlineSpacing,
+			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
+			genIndent, linesCountB, alignWidthM
+		);
+		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
+		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
+		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
+	};
+
+	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+
+	dynMetricsSubscription = \w -> {
+		apply0(make2Subscribe2(
+			w.inspector.size,
+			w.inspector.baseline,
+			\size, ba -> {
+				if (ndynamic <= ndymamicUpper) {
+					// There is less or equal than upper limit of dynamic elements here, so just update immediately
+					executeReflow()
+				} else {
+					// There are more, so to prevent unnecessary work, delay the update
+					nextDistinct(update, 1);
+				}
+			}
+		))
+	}
+
+	subscribe2dynWord = \w -> {
+		switch (w.word : GeneralWrapElement) {
+			NonTextElement() : dynMetricsSubscription(w);
+			GeneralDynamicText(__): dynMetricsSubscription(w);
+			default: nop;
+		}
+	}
+
+	TConstruct(
+		[
+			eitherFn(
+				alignWidthBM,
+				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
+				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
+			),
+			\-> subscribe(update, \u -> {
+				if (u == 1) {
+					deferUntilNextFrameRendered(\ -> {
+						next(update, 0);
+						// Force an update
+						executeReflow()
+					})
+				}
+			}),
+			\ -> {
+				dynamicWordsUns = map(words, subscribe2dynWord);
+				\ -> {
+					applyall(dynamicWordsUns);
+				}
+			}
+		],
+		TAttachAvailableWidth(
+			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
+				TBorder(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
+			} else {
+				contentGroup;
+			},
+			awB
+		)
+	) |> if (needIndent) {
+		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent)
+	} else {
+		idfn
+	};
+}
+
+LineHeadingsAcc(groupedWords : List<Tropic>, currentGroup: List<Tropic>, currentTag : string);
+
+makeHeadingGroup(words : List<Tropic>, tag : string) -> Tropic {
+	TAccess(
+		[
+			AccessRole("heading"),
+			FAccessAttribute("aria-level", const(takeAfter(tag, "h", "2")))
+		],
+		TGroup(list2array(words))
+	)
+}
+
+groupAndTranslateWords(words : [TParaWord], genIndent : double) -> [Tropic] {
+	groupResult = fold(
+		words,
+		LineHeadingsAcc(makeList(), makeList(), ""),
+		\acc, word -> appendWordToLine(acc, word, genIndent)
+	);
+
+	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords  else Cons(
+		makeHeadingGroup(groupResult.currentGroup, groupResult.currentTag),
+		groupResult.groupedWords
+	);
+
+	list2array(withLastGroup);
+}
+
+appendWordToLine(acc : LineHeadingsAcc, word: TParaWord, genIndent: double) -> LineHeadingsAcc {
+	tag = either(getHeadingTagFromFontSize(extractStruct(word.style, FontSize(0.0)).size), "");
+	if (acc.currentTag == tag) {
+		if (tag == "") LineHeadingsAcc(acc with
+			groupedWords = Cons(translateWord(word, genIndent), acc.groupedWords)
+		) else LineHeadingsAcc(acc with
+			currentGroup = Cons(translateWord(word, genIndent), acc.currentGroup)
+		);
+	} else {
+		newGroupedWords = if (acc.currentGroup == EmptyList()) acc.groupedWords else Cons(
+			makeHeadingGroup(acc.currentGroup, acc.currentTag),
+			acc.groupedWords
+		);
+		newCurrentGroup = if (tag == "") makeList() else makeList1(translateWord(word, genIndent));
+
+		LineHeadingsAcc(
+			if (tag == "") Cons(translateWord(word, genIndent), newGroupedWords) else newGroupedWords,
+			newCurrentGroup,
+			tag
+		)
+	}
+}
 
 commonWordConstructor(
 	w : GeneralWrapElement,
