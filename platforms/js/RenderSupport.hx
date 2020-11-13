@@ -2607,6 +2607,10 @@ class RenderSupport {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
 	}
 
+	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
+		picture.switchUseCrossOrigin(useCrossOrigin);
+	}
+
 	public static function cursor2css(cursor : String) : String {
 		return switch (cursor) {
 			case "arrow": "default";
