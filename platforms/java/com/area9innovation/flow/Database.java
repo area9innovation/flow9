@@ -277,6 +277,7 @@ public class Database extends NativeHost {
                 case (Types.NULL):
                     value = anull;
                     break;
+                case (Types.BIGINT): // Session variables in MySql are either bigint or longtext. Without this they are both converted to SString
                 case (Types.INTEGER):
                 case (Types.TINYINT):
                 case (Types.SMALLINT):
