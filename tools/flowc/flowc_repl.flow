@@ -1,4 +1,5 @@
 import sys/system;
+import string_utils;
 import tools/flowc/flowc_helpers;
 
 export {
@@ -10,7 +11,7 @@ fcReplLoop(config : CompilerConfig) -> void {
 	code = if (config.flowfile == "") "" else {
 		getFcFileInfo(config.flowfile, config).content
 	}
-	////fcDebugLog("REPL STARTED", config);
+	//fcDebugLog("REPL STARTED", config);
 	println("Type 'help' and press enter to get more information about REPL mode in flowc.");
 	println("A piece of code is input from a command line until an empty line (two enters pressed).");
 	for(
@@ -18,13 +19,14 @@ fcReplLoop(config : CompilerConfig) -> void {
 		\env -> !env.exit,
 		\env -> fcReplLoopStep(config, env)
 	);
-	////fcDebugLog("REPL ENDED", config);
+	//fcDebugLog("REPL ENDED", config);
 	quit(0);
 }
 
-FcReplCommand ::= FcReplEval, FcReplExec, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplExit;
+FcReplCommand ::= FcReplEval, FcReplExec, FcReplCompile, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplExit;
 	FcReplEval(expr : string);
 	FcReplExec(code : string);
+	FcReplCompile(code : string, args : [string]);
 	FcReplAdd(name : string, code : string);
 	FcReplDel(name : string);
 	FcReplSave(file : string);
@@ -77,6 +79,8 @@ fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
 			FcReplEval(fcReadCode(config)); 
 		} else if (comm == "exec") {
 			FcReplExec(fcReadCode(config)); 
+		} else if (comm == "compile") {
+			FcReplCompile(fcReadCode(config), tail(args)); 
 		} else if (comm == "add") {
 			if (length(args) == 1) {
 				println("add command must take an argument: the name of a code piece");
@@ -127,19 +131,57 @@ fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
 	}
 }
 
+FcReplCode(
+	imports : [string],
+	source : string
+);
+
+fcReplSplitCode(config : CompilerConfig, src : string) -> FcReplCode {
+	lines = filtermap(strSplit(src, "\n"), \l -> 
+		if (isNotSpace(l)) Some(trim2(l, " \t\r")) else None()
+	);
+	FcReplCode(
+		filtermap(lines, \line ->
+			if (startsWith(line, "import ")) Some(rtrim2(strRight(line, 7), "; \t")) else None()
+		),
+		strGlue(filter(lines, \line -> !startsWith(line, "import")), "\n")
+	);
+}
+
 fcReplLoopStep(config : CompilerConfig, env : FcReplEnv) -> FcReplEnv {
 	switch (fcReplReadCommand(config, env)) {
-		FcReplEval(expr): {
-			code = fcReplWrapExpr(expr);
-			fcReplRun(config, env, code);
+		FcReplEval(src): {
+			code = fcReplSplitCode(config, src);
+			expr = fcReplWrapExpr(code.source);
+			fcReplRun(config, 
+				FcReplEnv(env with imports = concat(env.imports, code.imports)), 
+				expr
+			);
 			env;
 		}
-		FcReplExec(code): {
-			fcReplRun(config, env, code);
+		FcReplExec(src): {
+			code = fcReplSplitCode(config, src);
+			fcReplRun(config, 
+				FcReplEnv(env with imports = concat(env.imports, code.imports)), 
+				code.source
+			);
 			env;
 		}
-		FcReplAdd(name, code): {
-			env_added = FcReplEnv(env with pieces = setTree(env.pieces, name, code));
+		FcReplCompile(src, args): {
+			code = fcReplSplitCode(config, src);
+			fcReplCompile(config, 
+				FcReplEnv(env with imports = concat(env.imports, code.imports)), 
+				code.source, 
+				args
+			);
+			env;
+		}
+		FcReplAdd(name, src): {
+			code = fcReplSplitCode(config, src);
+			env_added = FcReplEnv(env with 
+				imports = concat(env.imports, code.imports),
+				pieces = setTree(env.pieces, name, code.source)
+			);
 			if (fcReplRun(config, env_added, "")) env_added else env;
 		}
 		FcReplDel(name): {
@@ -178,15 +220,43 @@ fcReplWrapExpr(expr : string) -> string {
 	"println(" + expr3 + ");";
 }
 
-fcReplRun(config : CompilerConfig, env : FcReplEnv, code0 : string) -> bool {
+fcReplPrepareSource(config : CompilerConfig, env : FcReplEnv, code0 : string) -> string {
 	code = trim2(code0, " \t\n\r");
 	prog_code = 
 		"import string;\n" + 
 		fcReplJoinCode(env) + "\n" + 
 		"main() -> void {\n" + 
-		"\t" + (if (code != "" && !endsWith(code, ";")) code + ";" else code) + "\n" +
+		strIndent(if (code != "" && !endsWith(code, ";")) code + ";" else code) + "\n" +
 		"\tquit(0);\n}\n\n";
 	setFileContent("___tmp___.flow", prog_code);
+	prog_code;
+}
+
+fcReplCompile(config : CompilerConfig, env : FcReplEnv, code0 : string, args : [string]) -> bool {
+	prog_code = fcReplPrepareSource(config, env, code0);
+	//fcDebugLog("REPL compiling args: '" + strGlue(args, " ") + "'", config);
+	//fcDebugLog("REPL compiling code:\n" + prog_code, config);
+	flowc = "flowc1" + (if (hasTargetName("windows")) ".bat" else "");
+	err_count = ref 0;
+	print_err = \out -> {
+		if (strContains(out, "Error:")) {
+			//fcDebugLog("REPL err:\n" + out, config);
+			if (^err_count == 0) {
+				println(out + "\ncode:\n" + prog_code);
+			} else {
+				println(out);
+			}
+			err_count := ^err_count + 1;
+		}
+	}
+	cmp_code = execSystemProcess(flowc, concat(args, ["___tmp___.flow"]), ".", print_err, println);
+	fcDeleteGently("___tmp___.flow");
+	(^err_count == 0) && (cmp_code == 0);
+}
+
+fcReplRun(config : CompilerConfig, env : FcReplEnv, code : string) -> bool {
+	prog_code = fcReplPrepareSource(config, env, code);
+	//fcDebugLog("REPL running:\n" + prog_code, config);
 	err_count = ref 0;
 	print_err = \out -> {
 		if (strContains(out, "Error:")) {
