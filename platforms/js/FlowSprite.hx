@@ -41,6 +41,7 @@ class FlowSprite extends Sprite {
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
+	public var useCrossOrigin : Bool = false;
 	private var disposed : Bool = false;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
@@ -382,6 +383,7 @@ class FlowSprite extends Sprite {
 			nativeWidget = Browser.document.createElement(tagName);
 			this.updateClipID();
 
+			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
 			nativeWidget.onload = onLoaded;
 			nativeWidget.onerror = onError;
 			nativeWidget.src = url;
@@ -392,6 +394,15 @@ class FlowSprite extends Sprite {
 		nativeWidget.alt = altText;
 
 		isNativeWidget = true;
+	}
+
+	public function switchUseCrossOrigin(useCrossOrigin) : Void {
+		if (this.useCrossOrigin != useCrossOrigin) {
+			this.useCrossOrigin = useCrossOrigin;
+			
+			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url)
+			else nativeWidget.crossOrigin = null;
+		}
 	}
 
 	public function calculateWidgetBounds() : Void {

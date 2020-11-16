@@ -26,7 +26,7 @@ public class FlowJwt extends NativeHost {
 
 	public String verifyJwt(String jwt, String key) {
 		try {
-			Jwts.parser().setSigningKey(getSecretKey(key)).parseClaimsJws(jwt);
+			Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt);
 			return "OK";
 		} catch (MalformedJwtException e) {
 			System.out.println(e.getMessage());
@@ -49,29 +49,36 @@ public class FlowJwt extends NativeHost {
 	public Object decodeJwt(String jwt, String key, Func7<Object, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
 		String verify = verifyJwt(jwt, key);
 		if (verify == "OK") {
+			String iss;
+			String sub;
+			String aud;
+			Date exp;
+			Date nbf;
+			Date iat;
+			String jti;
 			try {
-				Claims jws = Jwts.parser().setSigningKey(getSecretKey(key)).parseClaimsJws(jwt).getBody();
-				String iss = jws.getIssuer();
-				String sub = jws.getSubject();
-				String aud = jws.getAudience();
-				Date exp = jws.getExpiration();
-				Date nbf = jws.getNotBefore();
-				Date iat = jws.getIssuedAt();
-				String jti = jws.get("id").toString();
-
-				callback.invoke(
-					(iss == null ? "" : iss),
-					(sub == null ? "" : sub),
-					(aud == null ? "" : aud),
-					(exp == null ? "" : DateFormats.formatIso8601(exp, false)),
-					(nbf == null ? "" : DateFormats.formatIso8601(nbf, false)),
-					(iat == null ? "" : DateFormats.formatIso8601(iat, false)),
-					(jti == null ? "" : jti)
-				);
+				Claims jws = Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt).getBody();
+				iss = jws.getIssuer();
+				sub = jws.getSubject();
+				aud = jws.getAudience();
+				exp = jws.getExpiration();
+				nbf = jws.getNotBefore();
+				iat = jws.getIssuedAt();
+				jti = jws.get("id").toString();
 			} catch (Exception e) {
 				System.out.println(e.getMessage());
 				onError.invoke("Hash problems");
+				return null;
 			}
+			callback.invoke(
+				(iss == null ? "" : iss),
+				(sub == null ? "" : sub),
+				(aud == null ? "" : aud),
+				(exp == null ? "" : DateFormats.formatIso8601(exp, false)),
+				(nbf == null ? "" : DateFormats.formatIso8601(nbf, false)),
+				(iat == null ? "" : DateFormats.formatIso8601(iat, false)),
+				(jti == null ? "" : jti)
+			);
 		} else {
 			onError.invoke(verify);
 		}
@@ -109,7 +116,7 @@ public class FlowJwt extends NativeHost {
 			header.put(JwsHeader.ALGORITHM, algorithm.getValue());
 			header.put(Header.TYPE, "JWT");
 
-			return builder.setHeader(header).signWith(algorithm, getSecretKey(key)).compact();
+			return builder.setHeader(header).signWith(getSecretKey(key), algorithm).compact();
 
 		} catch (NumberFormatException e) {
 			System.out.println(e.getMessage());
@@ -117,51 +124,18 @@ public class FlowJwt extends NativeHost {
 		}
 	}
 
-	public Object createJwtHs256(String jwtKey, Object[] keys, Object[] values, Func1<Object, String> onOk, Func1<Object, String> onError) {
-		if (keys.length != 0 && keys.length == values.length) {
-			JwtBuilder builder = Jwts.builder();
 
-			// we cannot pass string[] arrays using flow native machinery, so we need to
-			// make these transofmations to avoid unsafe conversions and calm the compiler!!
-			String[] sKeys = java.util.Arrays.copyOf(keys, keys.length, String[].class);
-			String[] sValues = java.util.Arrays.copyOf(values, values.length, String[].class);
+	public String createJwtClaims(String jwtKey, Object[] keys, Object[] values) {
+		JwtBuilder builder = Jwts.builder();
 
-			try {
-				for (int i = 0; i < sKeys.length; i++) {
-					String key = sKeys[i];
-					String value = sValues[i];
-
-					if (key.equals(ID)) {
-						builder = builder.setIssuer(value);
-					} else if (key.equals(ISSUER)) {
-						builder = builder.setIssuer(value);
-					} else if (key.equals(ISSUED_AT)) {
-						builder = builder.setIssuedAt(getDateFromIsoString(value));
-					} else if (key.equals(SUBJECT)) {
-						builder = builder.setSubject(value);
-					} else if (key.equals(AUDIENCE)) {
-						builder = builder.setAudience(value);
-					} else if (key.equals((EXPIRATION))) {
-						builder = builder.setExpiration(getDateFromIsoString(value));
-					} else if (key.equals((NOT_BEFORE))) {
-						builder = builder.setNotBefore(getDateFromIsoString(value));
-					} else {
-						builder = builder.claim(key, value);
-					}
-				}
-
-				Map<String, Object> header = new HashMap<String, Object>();
-				header.put(JwsHeader.ALGORITHM, algorithm.getValue());
-				header.put(Header.TYPE, "JWT");
-
-				onOk.invoke(builder.setHeader(header).signWith(algorithm, getSecretKey(jwtKey)).compact());
-
-			} catch (NumberFormatException e) {
-				onError.invoke(e.getMessage());
-			}
-		} else {
-			onError.invoke("No claims provided!");
+		for (int i = 0; i < keys.length; i++) {
+			builder.claim((String)keys[i], values[i]);
 		}
-		return null;
+
+		Map<String, Object> header = new HashMap<String, Object>();
+		header.put(JwsHeader.ALGORITHM, algorithm.getValue());
+		header.put(Header.TYPE, "JWT");
+
+		return builder.setHeader(header).signWith(getSecretKey(jwtKey), algorithm).compact();
 	}
 }

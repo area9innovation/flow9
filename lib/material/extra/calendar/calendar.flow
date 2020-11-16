@@ -75,8 +75,8 @@ export {
 		CalendarTabMenuText(getText : (date : Date, tab : CalendarTab) -> Maybe<string>);
 		CalendarTodayColors(text : MColor, background : MColor);
 		CalendarWeekendsColor(color : MColor);
-		// Instead of dayEventsPopup show add event dialog for eventType
-		CalendarDefaultEventToAdd(eventType : string);
+		// Instead of dayEventsPopup show add event dialog for event type
+		CalendarDefaultEventToAdd(getEventType : () -> string);
 		CalendarHideEventTypesLegend();
 		// Allows to get or set current date
 		CalendarCurrentDate(currentDateB : DynamicBehaviour<Date>);
@@ -474,9 +474,8 @@ CalendarCell(
 		])
 	}
 
-	eventsCheck = \-> {
+	eventsCheck = \currentEventTypes -> {
 		multiDayEvents = getMultiDayEvents(dayEvents);
-		currentEventTypes = getValue(eventTypes);
 		getEventTypeBackColor = \event -> {
 			eitherMap(
 				find(currentEventTypes, \type -> type.name == event.eventType),
@@ -684,16 +683,14 @@ CalendarCell(
 	}
 
 	bubble = TGroup2(
-		TSelect(thisMonth, \month -> {
-			TSelect(currentDate, \date -> {
-				if (length(dayEvents) > 0) {
-					eventsCheck()
-				} else if (stamp2date(timestamp()) != makeDate(month, day)) {
-					TEmpty()
-				} else {
-					TCircle(diam / 2.0, [MThemeFill(manager, color)])
-				}
-			})
+		TSelect2(thisMonth, currentDate, \month, date -> {
+			if (length(dayEvents) > 0) {
+				TSelect(eventTypes, \types -> eventsCheck(types));
+			} else if (stamp2date(timestamp()) != makeDate(month, day)) {
+				TEmpty()
+			} else {
+				TCircle(diam / 2.0, [MThemeFill(manager, color)])
+			}
 		}),
 		text
 	);
@@ -827,7 +824,7 @@ dayEventsPopup(
 	showStart = contains(colsToShow, "start");
 	showEnd = contains(colsToShow, "end");
 	closePopupAfterAdditionalAction = containsStruct(styles, CloseDayPopupAfterAdditionalAction());
-	defaultEventToAdd = extractStruct(styles, CalendarDefaultEventToAdd("")).eventType;
+	defaultEventToAdd = extractStruct(styles, CalendarDefaultEventToAdd(\ -> "")).getEventType();
 
 	close = make(false);
 	dayEvents = make(dayEventsStatic);
@@ -1219,13 +1216,11 @@ MonthTable(
 	weekendsColor = extractStruct(styles, CalendarWeekendsColor(MRed(600))).color;
 
 	calendarDayTouch = \item : CalendarEvent, dayDate : Date -> {
-		eventTypes = getValue(eventTypesB);
 		isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
-		eventName = item.eventType;
 		eventTime = if (hideTimeInfo) ""
 			else i2s(item.startDate.hour) + ":" + substring(item.startDate |> time2stamp2 |> time2string, 14, 2) + "   ";
 
-		eventIndex = either(findi(eventTypes, \p -> p.name == item.eventType), -1);
+		eventTypeB = fselect(eventTypesB, FLift(\eventTypes -> find(eventTypes, \p -> p.name == item.eventType)));
 		eventText = if (!isMultiDay)
 				eventTime + getEventTitle(item)
 			else if (dayDate == time2date(item.startDate))
@@ -1233,8 +1228,13 @@ MonthTable(
 			else
 				" ";
 
-		block = if (eventIndex != -1) {
-			eventTextColor = if (isUseMTextMColor) MTextMColor(eventTypes[eventIndex].mainColor) else eventTypes[eventIndex].mainColor;
+		MShowLazy(fIsSome(eventTypeB), \ -> {
+			backColorB = fselect(eventTypeB, FLift(\eventTypeM -> eitherMap(eventTypeM, \eventType -> eventType.backColor, MBlack())));
+			eventTextM = MSelect(eventTypeB, \eventTypeM -> {
+				mainColor = eitherMap(eventTypeM, \eventType -> eventType.mainColor, MBlack());
+				eventTextColor = if (isUseMTextMColor) MTextMColor(mainColor) else mainColor;
+				MEllipsisText(eventText, [eventTextColor])
+			});
 			MClickable(
 				MGroup([
 					if (!isMultiDay) {
@@ -1245,7 +1245,7 @@ MonthTable(
 								TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
 							]),
 							MCenterIn(
-								TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithEvent),
+								MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(1.0)], lineBoxForBlockWithEvent)),
 								lineBox
 							)
 						])
@@ -1259,7 +1259,7 @@ MonthTable(
 								MColsA([
 									TFixed(1.5, 0.),
 									MCenterYIn(
-										TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithFirstMultiDayEvent),
+										MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(1.0)], lineBoxForBlockWithFirstMultiDayEvent)),
 										lineBoxForBlockWithFirstMultiDayEvent2
 									)
 								]),
@@ -1272,7 +1272,7 @@ MonthTable(
 								]),
 								MColsA([
 									MCenterYIn(
-										TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithFirstMultiDayEvent),
+										MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(1.0)], lineBoxForBlockWithFirstMultiDayEvent)),
 										lineBoxForBlockWithFirstMultiDayEvent2
 									),
 									TFixed(1.5, 0.),
@@ -1282,7 +1282,7 @@ MonthTable(
 							MGroup([
 								TRectangle([Fill(white), FillOpacity(1.0)], lineBox),
 								MCenterYIn(
-									TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithNotFirstMultiDayEvent),
+									MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(1.0)], lineBoxForBlockWithNotFirstMultiDayEvent)),
 									lineBox
 								),
 							])
@@ -1290,19 +1290,16 @@ MonthTable(
 					},
 					MTooltip(
 						MCenterIn(
-							MBorderA(2., 0., 2., 0., MEllipsisText(eventText, [eventTextColor])),
+							MBorderA(2., 0., 2., 0., eventTextM),
 							lineBox
 						),
 						MText(item.description, []),
 						[MEnabled(const(isTooltipEnabled(item)))]
 					),
 				]),
-				\-> eventTypes[eventIndex].editAction(item.id)
+				\-> maybeApply(fgetValue(eventTypeB), \eventType -> eventType.editAction(item.id))
 			)
-		} else {
-			TEmpty()
-		}
-		block
+		});
 	}
 
 	openDayEventsPopup = \dayNumber, isEnable, events : [CalendarEvent] -> {
@@ -1643,20 +1640,26 @@ RangeView(
 	}));
 
 	EventCells = \len : int, event : CalendarEvent -> {
-		eventType = findDef(getValue(eventTypes), \et -> et.name == event.eventType, makeCalendarEventDescription());
-		backColourInt = MColor2int(eventType.backColor);
+		eventTypeB = fselect(eventTypes, FLift(\types -> {
+			findDef(types, \et -> et.name == event.eventType, makeCalendarEventDescription())
+		}));
 		eventCells = MCols(generate(0, len, \cellNum : int -> {
 			leftCorner = b2d(cellNum == 0) * 4.;
 			rightCorner = b2d(cellNum == len - 1) * 4.;
-			MCols2A(
-				TRounded(leftCorner, rightCorner, rightCorner, leftCorner, [Fill(backColourInt)], byDayCellSize),
-				cellBorder(if (cellNum == len - 1) white else backColourInt)
-			)
+			MSelect(eventTypeB, \eventType -> {
+				backColourInt = MColor2int(eventType.backColor);
+				MCols2A(
+					TRounded(leftCorner, rightCorner, rightCorner, leftCorner, [Fill(backColourInt)], byDayCellSize),
+					cellBorder(if (cellNum == len - 1) white else backColourInt)
+				)
+			});
 		}));
-		text = MCenterYIn(MBorder(8., 0., 8., 0., MEllipsisText(getEventTitle(event), [eventType.mainColor, MShowTooltip(make(true))])), eventCells);
+		text = MCenterYIn(MBorder(8., 0., 8., 0.,
+			MSelect(eventTypeB, \eventType -> MEllipsisText(getEventTitle(event), [eventType.mainColor, MShowTooltip(make(true))]))
+		), eventCells);
 		MClickable(
 			MGroup2(eventCells, MTooltip(text, MText(event.description, []), [MEnabled(const(isTooltipEnabled(event)))])),
-			\ -> eventType.editAction(event.id)
+			\ -> fgetValue(eventTypeB).editAction(event.id)
 		)
 	};
 	EmptyCells = \len : int -> MCols(generate(0, len, \__ -> MCols2(byDayCellSize, cellBorder(white))));
