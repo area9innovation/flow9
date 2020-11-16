@@ -152,3 +152,6 @@
 ## 0.4.8
  - command 'execCommand' on execution of a general command (like server-cache-info=1) on server is added.
  - http server status displays main memory stats: Used, Free and Total memory. 
+
+## 0.4.9
+ - flow notebook, based on proposed Vscode Notebook API, is added. Work only in code-insiders with '--enable-proposed-api area9.flow' option.
