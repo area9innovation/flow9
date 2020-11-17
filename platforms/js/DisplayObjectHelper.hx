@@ -312,6 +312,7 @@ class DisplayObjectHelper {
 
 			if (isCanvas(clip.parent)) {
 				updateIsCanvas(clip);
+				updateIsOnStage(clip);
 			}
 
 			if (untyped clip.keepNativeWidgetChildren || clip.keepNativeWidget) {
@@ -904,6 +905,63 @@ class DisplayObjectHelper {
 			clip.once("removed", function () {
 				disp();
 				disp = onAddedDisposable(clip, fn);
+			});
+		}
+
+		return function() {
+			alive = false;
+			disp();
+		}
+	}
+
+	public static function onAttached(clip : DisplayObject, fn : Void -> (Void -> Void)) : Void {
+		var disp = function () {};
+
+		if (!untyped clip.isOnStage) {
+			clip.once("attached", function () {
+				disp = fn();
+
+				clip.once("detached", function () {
+					disp();
+					onAttached(clip, fn);
+				});
+			});
+		} else {
+			disp = fn();
+
+			clip.once("detached", function () {
+				disp();
+				onAttached(clip, fn);
+			});
+		}
+	}
+
+	public static function onAttachedDisposable(clip : DisplayObject, fn0 : Void -> (Void -> Void)) : Void -> Void {
+		var disp = function () {};
+		var alive = true;
+		var fn = function() {
+			if (alive) {
+				return fn0();
+			} else {
+				return function () {};
+			}
+		}
+
+		if (!untyped clip.isOnStage) {
+			clip.once("attached", function () {
+				disp = fn();
+
+				clip.once("detached", function () {
+					disp();
+					disp = onAttachedDisposable(clip, fn);
+				});
+			});
+		} else {
+			disp = fn();
+
+			clip.once("detached", function () {
+				disp();
+				disp = onAttachedDisposable(clip, fn);
 			});
 		}
 
@@ -1743,8 +1801,8 @@ class DisplayObjectHelper {
 			}
 
 			if (clip.visible) {
-				if (untyped clip.child == null && (!clip.onStage || getParentNode(clip) != clip.parentClip.nativeWidget)) {
-					untyped clip.onStage = true;
+				if (untyped clip.child == null && (!clip.isOnStage || getParentNode(clip) != clip.parentClip.nativeWidget)) {
+					untyped clip.isOnStage = true;
 
 					if (!Platform.isIE) {
 						untyped clip.nativeWidget.style.display = null;
@@ -1752,15 +1810,15 @@ class DisplayObjectHelper {
 
 					addNativeWidget(clip);
 				}
-			} else if (untyped clip.onStage) {
-				untyped clip.onStage = false;
+			} else if (untyped clip.isOnStage) {
+				untyped clip.isOnStage = false;
 
 				if (!Platform.isIE) {
 					untyped clip.nativeWidget.style.display = 'none';
 				}
 
 				RenderSupport.once("drawframe", function() {
-					if (untyped isNativeWidget(clip) && !clip.onStage && (!clip.visible || clip.parent == null)) {
+					if (untyped isNativeWidget(clip) && !clip.isOnStage && (!clip.visible || clip.parent == null)) {
 						removeNativeWidget(clip);
 					}
 				});
@@ -1772,17 +1830,35 @@ class DisplayObjectHelper {
 		return untyped clip.isNativeWidget;
 	}
 
-	public static function isClipOnStage(clip : DisplayObject) : Bool {
-		return untyped clip.onStage && clip.tansform != null;
+	public static inline function isOnStage(clip : DisplayObject) : Bool {
+		return untyped clip.isOnStage && clip.transform != null;
+	}
+
+	public static function updateIsOnStage(clip : DisplayObject) : Void {
+		if (clip.parent != null) {
+			if (untyped clip.isOnStage != clip.parent.isOnStage) {
+				untyped clip.isOnStage = clip.parent.isOnStage;
+
+				clip.emit(untyped clip.isOnStage ? "attached" : "detached");
+			}
+
+			for (child in getClipChildren(clip)) {
+				updateIsOnStage(child);
+			}
+		}
 	}
 
 	public static function addNativeWidget(clip : DisplayObject) : Void {
-		if (untyped clip.addNativeWidget != null) {
-			untyped clip.addNativeWidget();
-		} else if (RenderSupport.RendererType == "html") {
+		if (RenderSupport.RendererType == "html") {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && (clip.renderable || clip.keepNativeWidgetChildren)) {
 				appendNativeWidget(untyped clip.parentClip || findParentClip(clip), clip);
 				RenderSupport.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
+
+				if (isCanvas(clip)) {
+					updateIsOnStage(clip);
+				} else {
+					clip.emit("attached");
+				}
 			}
 		} else {
 			clip.once('removed', function() { deleteNativeWidget(clip); });
@@ -1790,20 +1866,18 @@ class DisplayObjectHelper {
 	}
 
 	public static function removeNativeWidget(clip : DisplayObject) : Void {
-		if (untyped clip.removeNativeWidget != null) {
-			untyped clip.removeNativeWidget();
-		} else {
-			if (untyped isNativeWidget(clip)) {
-				var nativeWidget : Dynamic = untyped clip.nativeWidget;
+		if (untyped isNativeWidget(clip)) {
+			var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
-				if (untyped nativeWidget.parentNode != null) {
-					nativeWidget.parentNode.removeChild(nativeWidget);
+			if (untyped nativeWidget.parentNode != null) {
+				nativeWidget.parentNode.removeChild(nativeWidget);
 
-					if (untyped clip.parentClip != null) {
-						applyScrollFn(untyped clip.parentClip);
-						untyped clip.parentClip = null;
-					}
+				if (untyped clip.parentClip != null) {
+					applyScrollFn(untyped clip.parentClip);
+					untyped clip.parentClip = null;
 				}
+
+				clip.emit("detached");
 			}
 		}
 	}
@@ -1824,7 +1898,7 @@ class DisplayObjectHelper {
 
 			if (children.indexOf(clip) >= 0) {
 				for (child in children.slice(children.indexOf(clip) + 1)) {
-					if (untyped child.visible && (!isNativeWidget(child) || (child.onStage && child.parentClip == parent))) {
+					if (untyped child.visible && (!isNativeWidget(child) || (child.isOnStage && child.parentClip == parent))) {
 						var nativeWidget = findNativeWidgetChild(child, parent);
 
 						if (nativeWidget != null) {

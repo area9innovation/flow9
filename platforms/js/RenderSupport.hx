@@ -1848,100 +1848,90 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
-			if (untyped clip.nativeWidget == null) {
-				clip.initNativeWidget();
+		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0" && !clip.isCanvas()) {
+			if (untyped !clip.hasAnimation) {
+				untyped clip.hasAnimation = true;
+				clip.invalidateTransform("addClipAnimation");
 			}
 
-			if (untyped clip.nativeWidget == null) {
-				return fallbackAnimation();
+			if (clip.parent == null) {
+				return clip.onAttachedDisposable(function() {
+					return addClipAnimation(clip, keyframes, options, onFinish, fallbackAnimation);
+				});
 			} else {
-				try {
-					if (untyped !clip.hasAnimation) {
-						untyped clip.hasAnimation = true;
-						clip.invalidateTransform("addClipAnimation");
-					}
+				if (untyped clip.nativeWidget == null) {
+					clip.initNativeWidget();
+				}
 
-					var nativeWidget = untyped clip.nativeWidget;
-					var optionsObject : Dynamic = {};
-					var disposed = false;
-
-					if (clip.isClipOnStage()) {
-						clip.updateNativeWidget();
-					}
-
-					function isNormalInteger(str) {
-						var n = Math.floor(Std.parseInt(str));
-						return n != Math.POSITIVE_INFINITY && Std.string(n) == str && n >= 0;
-					}
-
-					for (option in options) {
-						if (isNormalInteger(option[1])) {
-							untyped optionsObject[option[0]] = Std.parseInt(option[1]);
-						} else {
-							untyped optionsObject[option[0]] = option[1];
-						}
-					}
-
-					var animation : Dynamic =
-						nativeWidget.animate(
-							keyframes.map(
-								function(keyframe : Array<String>) {
-									var o : Dynamic = {};
-									var ii : Int = Std.int(keyframe.length / 2);
-									for (i in 0...ii) {
-										untyped o[keyframe[i * 2]] = keyframe[i * 2 + 1];
-									}
-									return o;
-								}
-							),
-							optionsObject
-						);
-
-
-					animation.oncancel = function() {
-						if (!disposed) {
-							disposed = true;
-							onFinish();
-						}
-
-						if (clip.isClipOnStage()) {
-							clip.updateNativeWidget();
-						}
-					}
-
-					animation.onremove = function() {
-						if (!disposed) {
-							disposed = true;
-							onFinish();
-						}
-
-						if (clip.isClipOnStage()) {
-							clip.updateNativeWidget();
-						}
-					}
-
-					animation.onfinish = function() {
-						if (!disposed) {
-							disposed = true;
-							onFinish();
-						}
-
-						if (clip.isClipOnStage()) {
-							clip.updateNativeWidget();
-						}
-					}
-
-					return function() {
-						if (animation != null) {
-							animation.cancel();
-						}
-					}
-				} catch (e : Dynamic) {
-					trace("addClipAnimation error:");
-					trace(e);
-
+				if (untyped clip.nativeWidget == null) {
 					return fallbackAnimation();
+				} else {
+					try {
+						var nativeWidget = untyped clip.nativeWidget;
+						var optionsObject : Dynamic = {};
+						var disposed = false;
+
+						function isNormalInteger(str) {
+							var n = Math.floor(Std.parseInt(str));
+							return n != Math.POSITIVE_INFINITY && Std.string(n) == str && n >= 0;
+						}
+
+						for (option in options) {
+							if (isNormalInteger(option[1])) {
+								untyped optionsObject[option[0]] = Std.parseInt(option[1]);
+							} else {
+								untyped optionsObject[option[0]] = option[1];
+							}
+						}
+
+						var animation : Dynamic =
+							nativeWidget.animate(
+								keyframes.map(
+									function(keyframe : Array<String>) {
+										var o : Dynamic = {};
+										var ii : Int = Std.int(keyframe.length / 2);
+										for (i in 0...ii) {
+											untyped o[keyframe[i * 2]] = keyframe[i * 2 + 1];
+										}
+										return o;
+									}
+								),
+								optionsObject
+							);
+
+
+						animation.oncancel = function() {
+							if (!disposed) {
+								disposed = true;
+								onFinish();
+							}
+						}
+
+						animation.onremove = function() {
+							if (!disposed) {
+								disposed = true;
+								onFinish();
+							}
+						}
+
+						animation.onfinish = function() {
+							if (!disposed) {
+								disposed = true;
+								onFinish();
+							}
+						}
+
+						return function() {
+							if (animation != null) {
+								animation.cancel();
+							}
+						}
+					} catch (e : Dynamic) {
+						trace("addClipAnimation error:");
+						trace(e);
+
+						return fallbackAnimation();
+					}
 				}
 			}
 		} else {
