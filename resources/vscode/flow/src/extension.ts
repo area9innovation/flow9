@@ -13,6 +13,7 @@ import {
 import * as tools from "./tools";
 import * as updater from "./updater";
 import * as simplegit from 'simple-git/promise';
+import { FlowNotebookProvider, createNotebook, FlowNotebookKernelProvider } from './notebook';
 //import { performance } from 'perf_hooks';
 const isPortReachable = require('is-port-reachable');
 
@@ -50,19 +51,24 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Flow extension active');
 	serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	serverStatusBarItem.command = 'flow.toggleHttpServer';
-    context.subscriptions.push(serverStatusBarItem);
-    
-    context.subscriptions.push(vscode.commands.registerCommand('flow.compile', compile));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.GetFlowCompiler', getFlowCompilerFamily));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.compileNeko', compileNeko));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.run', runCurrentFile));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.updateFlowRepo', () => { updateFlowRepo(context); }));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.startHttpServer', startHttpServer));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.execCommand', execCommand));
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
+	let reg_com = (name, com) => vscode.commands.registerCommand(name, com);
+    context.subscriptions.push(
+        serverStatusBarItem,
+		reg_com('flow.compile', compile),
+		reg_com('flow.GetFlowCompiler', getFlowCompilerFamily),
+		reg_com('flow.compileNeko', compileNeko),
+		reg_com('flow.run', runCurrentFile),
+		reg_com('flow.updateFlowRepo', () => { updateFlowRepo(context); }),
+		reg_com('flow.startHttpServer', startHttpServer),
+		reg_com('flow.stopHttpServer', stopHttpServer),
+		reg_com('flow.toggleHttpServer', toggleHttpServer),
+		reg_com('flow.flowConsole', flowConsole),
+		reg_com('flow.execCommand', execCommand),
+		reg_com('flow.createNotebook', createNotebook),
+		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
+		vscode.notebook.registerNotebookContentProvider('flow-notebook', new FlowNotebookProvider()),
+		vscode.notebook.registerNotebookKernelProvider({filenamePattern: "*.{noteflow,flow}"}, new FlowNotebookKernelProvider())
+    );
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
