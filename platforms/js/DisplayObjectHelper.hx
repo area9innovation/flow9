@@ -1025,8 +1025,8 @@ class DisplayObjectHelper {
 					nativeWidget.firstChild.style.width = '${untyped Math.max(clip.contentBounds.maxX, maskWidth)}px';
 					nativeWidget.firstChild.style.height = '${untyped Math.max(clip.contentBounds.maxY, maskHeight)}px';
 				} else if (untyped clip.maxLocalBounds != null) {
-					nativeWidget.firstChild.style.width = '${untyped clip.maxLocalBounds.maxX + maskWidth}px';
-					nativeWidget.firstChild.style.height = '${untyped clip.maxLocalBounds.maxY + maskHeight}px';
+					nativeWidget.firstChild.style.width = '${untyped Math.max(clip.maxLocalBounds.maxX, maskWidth)}px';
+					nativeWidget.firstChild.style.height = '${untyped Math.max(clip.maxLocalBounds.maxY, maskHeight)}px';
 				}
 			}
 
@@ -1609,14 +1609,20 @@ class DisplayObjectHelper {
 					nativeWidget.style.borderRadius = '${round(data.shape.radius)}px';
 					nativeWidget.style.overflow = "hidden";
 
-					scrollNativeWidget(clip, round(data.shape.x - data.shape.radius), round(data.shape.y - data.shape.radius));
+					var transform = prependInvertedMatrix(mask.worldTransform, clip.worldTransform);
+					var point = applyTransformPoint(new Point(data.shape.x - data.shape.radius, data.shape.y - data.shape.radius), transform);
+
+					scrollNativeWidget(clip, round(point.x), round(point.y));
 				} else if (data.shape.type == 4) {
 					untyped nativeWidget.style.webkitClipPath = null;
 					nativeWidget.style.clipPath = null;
 					nativeWidget.style.borderRadius = '${round(data.shape.radius)}px';
 					nativeWidget.style.overflow = "hidden";
 
-					scrollNativeWidget(clip, round(data.shape.x), round(data.shape.y));
+					var transform = prependInvertedMatrix(mask.worldTransform, clip.worldTransform);
+					var point = applyTransformPoint(new Point(data.shape.x, data.shape.y), transform);
+
+					scrollNativeWidget(clip, round(point.x), round(point.y));
 				}  else {
 					removeNativeMask(clip);
 
