@@ -34,7 +34,7 @@ class VideoClip extends FlowContainer {
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
-	private var videoWidget : Dynamic;
+	public var videoWidget : Dynamic;
 	private var widgetBounds = new Bounds();
 
 	public static inline function NeedsDrawing() : Bool {
@@ -217,9 +217,11 @@ class VideoClip extends FlowContainer {
 		createVideoClip(filename, startPaused);
 	}
 
-	public function playVideoFromMediaStream(mediaStream : js.html.MediaStream, startPaused : Bool) : Void {
+	public function playVideoFromMediaStream(mediaStream : FlowMediaStream, startPaused : Bool) : Void {
 		createVideoClip("", startPaused);
-		videoWidget.srcObject = mediaStream;
+		videoWidget.srcObject = mediaStream.mediaStream;
+		mediaStream.videoClip = this;
+		mediaStream.emit("attached");
 	}
 
 	public function setTimeRange(start : Float, end : Float) : Void {

@@ -61,9 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow', () => { setLspClient(context, LspKind.Flow); }));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.lspFlow_lsp', () => { setLspClient(context, LspKind.Flow_lsp); }));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.lspJs', () => { setLspClient(context, LspKind.JS); }));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.execCommand', execCommand));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
@@ -85,7 +83,7 @@ function checkHttpServerStatus(initial : boolean) {
 	isPortReachable(port, {host: 'localhost'}).then(
 		(reacheable : boolean) => {
 			if (reacheable) {
-				showHttpServerOnline();
+				outputHttpServerMemStats();
 				httpServerOnline = true;
 			} else {
 				httpServer = null;
@@ -100,6 +98,21 @@ function checkHttpServerStatus(initial : boolean) {
 				}
 			}
 		}
+	);
+}
+
+function outputHttpServerMemStats() {
+	client.sendRequest("workspace/executeCommand", { 
+		command : "command", 
+		arguments : ["server-mem-info=1", "do_not_log_this=1"]
+	}).then(
+		(out : string) => {
+			let msg_start = out.indexOf("Used:");
+			let msg_end = out.indexOf("\n", msg_start);
+			let mem_stats = out.substr(msg_start, msg_end - msg_start);
+			showHttpServerOnline(mem_stats);
+		},
+		(err : any) => showHttpServerOffline()
 	);
 }
 
@@ -165,11 +178,6 @@ function setLspClient(context: vscode.ExtensionContext, kind : LspKind) {
 			let serverOptions: ServerOptions;
 			switch (clientKind) {
 				case LspKind.Flow: {
-					if (serverStatusBarItem.text.indexOf("online") != -1) {
-						serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`;
-					} else {
-						serverStatusBarItem.text = `$(vm-outline) flow http server: offline (lsp)`;
-					}
 					serverStatusBarItem.show();
 					serverOptions = {
 						command: process.platform == "win32" ? 'flowc1.bat' : 'flowc1',
@@ -179,11 +187,6 @@ function setLspClient(context: vscode.ExtensionContext, kind : LspKind) {
 					break;
 				}
 				case LspKind.Flow_lsp: {
-					if (serverStatusBarItem.text.indexOf("online") != -1) {
-						serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`;
-					} else {
-						serverStatusBarItem.text = `$(vm-outline) flow http server: offline (lsp)`;
-					}
 					serverStatusBarItem.show();
 					serverOptions = {
 						command: process.platform == "win32" ? 'flowc1_lsp.bat' : 'flowc1_lsp',
@@ -193,11 +196,6 @@ function setLspClient(context: vscode.ExtensionContext, kind : LspKind) {
 					break;
 				}
 				case LspKind.JS: {
-					if (serverStatusBarItem.text.indexOf("online") != -1) {
-						serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`;
-					} else {
-						serverStatusBarItem.text = `$(vm-outline) flow http server: offline (legacy lsp)`;
-					}
 					// The server is implemented in node
 					let serverModule = context.asAbsolutePath(path.join('out', 'flow_language_server.js'));
 					serverOptions = {
@@ -233,22 +231,16 @@ function setLspClient(context: vscode.ExtensionContext, kind : LspKind) {
     }
 }
 
-function showHttpServerOnline() { 
-    //'flow http server online (lsp)' vs. 'flow http server online (legacy lsp)'
-    if (serverStatusBarItem.text.indexOf("legacy") == -1) {
-        serverStatusBarItem.text = `$(vm-active) flow http server: online (lsp)`; 
-    } else {
-        serverStatusBarItem.text = `$(vm-active) flow http server: online (legacy lsp)`; 
-    }
+function showHttpServerOnline(mem_stats : string = null) {
+	if (mem_stats) {
+		serverStatusBarItem.text = `$(vm-active) flow http server: online (` + mem_stats + ")"; 
+	} else {
+		serverStatusBarItem.text = `$(vm-active) flow http server: online`; 
+	}
 }
 
-function showHttpServerOffline() { 
-    //'flow http server online (lsp)' vs. 'flow http server online (legacy lsp)'
-    if (serverStatusBarItem.text.indexOf("legacy") == -1) {
-        serverStatusBarItem.text = `$(vm-outline) flow: http server: offline (lsp)`; 
-    } else {
-        serverStatusBarItem.text = `$(vm-outline) flow: http server: offline (legacy lsp)`; 
-    }
+function showHttpServerOffline() {
+    serverStatusBarItem.text = `$(vm-outline) flow: http server: offline`;
 }
 
 // this method is called when your extension is deactivated
@@ -443,8 +435,8 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
 		}
 		let kind2s = (kind : LspKind) => {
 			switch (clientKind) {
-				case LspKind.Flow:     return "Flow LSP";
-				case LspKind.Flow_lsp: return "Flow_lsp";
+				case LspKind.Flow:     return "flowc";
+				case LspKind.Flow_lsp: return "flowc_lsp";
 				case LspKind.JS:       return "Nodejs";
 				case LspKind.None:     return "None";
 			}
@@ -551,4 +543,24 @@ function readConfiguration(): PropertiesReader.Reader {
         reader.append(configFile);
    
     return reader;
+}
+
+function execCommand() {
+	flowChannel.show(true);
+	let options: vscode.InputBoxOptions = { prompt: "Command and args: ", placeHolder: "" };
+	vscode.window.showInputBox(options).then(value => {
+		let val_arr = value.split(" ");
+		if (val_arr.length > 0) {
+			let file_arg = Array("file=" + vscode.window.activeTextEditor.document.uri.fsPath);
+			let args = file_arg.concat(val_arr);
+			client.sendRequest("workspace/executeCommand", { command : "command", arguments: args }).then(
+				(out : string) => {
+					flowChannel.appendLine(out);
+				},
+				(err : any) => {
+					vscode.window.showErrorMessage(`command ${value} failed: ${err}`);
+				}
+			);
+		}
+	});
 }

@@ -81,6 +81,14 @@ ParaWord(
 	interactivityIdM : Maybe<int>
 );
 
+ParaLine(words : [ParaWord], indent : double);
+ParaLineAcc(lines : List<Form>, y : double, baseline : double);
+
+OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
+ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double);
+ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
+ParaLineResult(form : Form, width : double, height : double, baseline : double);
+
 makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement> {
 	mapList(fragments.elements, \elem -> general2WrapElement(elem, fragments.style))
 }
@@ -185,13 +193,15 @@ renderParagraph(
 
 	aw = make(0.0);
 	update = make(0);
-	linesB : DynamicBehaviour<[ParaLine]> = make([]);
+	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0));
 
-	renderParaLinesFn = \lines, storyWidth -> renderParaLines(
-		storyWidth, lines, tightWidth, alignment, interlineSpacing,
-		topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-		interLineHighlighting, fitLongWords
-	);
+	renderParaLinesFn = \lines, storyWidth -> {
+		renderParaLines(
+			storyWidth, lines, tightWidth, alignment, interlineSpacing,
+			topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
+			interLineHighlighting, fitLongWords
+		);
+	}
 	paragraphAccessibilityParent = ^accessibilityParent;
 
 	// it renders all words but for dynamics it just reserves space and updates coordinates
@@ -201,7 +211,7 @@ renderParagraph(
 			accessibilityParent := paragraphAccessibilityParent;
 			rpl = renderParaLinesFn(lines, getValue(aw));
 			accessibilityParent := prevAccessibilityParent;
-			rpl.first
+			rpl
 		});
 	} else if (widthManager.infoOnly) {
 		// in this non-TightWidth case we just inform WidthManager about our width
@@ -210,9 +220,9 @@ renderParagraph(
 			prevAccessibilityParent = ^accessibilityParent;
 			accessibilityParent := paragraphAccessibilityParent;
 			rendered = renderParaLinesFn(lines, getValue(aw));
-			nextDistinct(widthManager.width, rendered.second);
+			nextDistinct(widthManager.width, lines.maxLineWidth);
 			accessibilityParent := prevAccessibilityParent;
-			rendered.first
+			rendered
 		});
 	} else {
 		Select2(linesB, widthManager.storyWidth, \lines, storyWidth -> {
@@ -220,13 +230,13 @@ renderParagraph(
 			accessibilityParent := paragraphAccessibilityParent;
 			rendered = renderParaLinesFn(
 				lines,
-				if (storyWidth > 0.0) storyWidth else getValue(aw)
+				if (storyWidth > 0.0) storyWidth else getValue(aw),
 			);
 			// we have to notify story about changes in our width.
 			// it could alter widthManager.storyWidth if we are new winner so we have to defer
-			deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, rendered.second));
+			deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, lines.maxLineWidth));
 			accessibilityParent := prevAccessibilityParent;
-			rendered.first
+			rendered
 		});
 	}
 
@@ -267,10 +277,21 @@ renderParagraph(
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 				newLines = reflowParaWords(words, w, indent, isParagraphMarked, rtl);
+				infos = map(newLines, \line -> {
+					optimizedLine = getOptimizedLine(line.words, alignment);
+					metrics = map(optimizedLine, \ole -> getValue(ole.metrics));
+					lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
+					ParaLineInfo(
+						optimizedLine, lineAsc,
+						fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
+						line.indent + fold(metrics, 0.0, \ac, m -> ac + m.width),
+						line.indent,
+					)
+				});
 				nextDistinct(linesCountB, length(newLines));
 
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				next(linesB, newLines);
+				next(linesB, ParaLinesInfos(infos, fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))));
 			};
 
 			uns = concatA([
@@ -465,8 +486,6 @@ isGhostable(f : Form) -> bool {
 		}
 	}
 }
-
-ParaLine(words : [ParaWord], indent : double);
 
 // We indent the first line if paragraph's first-line indent is positive
 // or all of the other lines if the indent is negative.
@@ -706,12 +725,10 @@ keepFormTogether(form : Form) -> bool {
 	};
 }
 
-ParaLineAcc(lines : List<Form>, width : double, y : double, baseline : double);
-
 // renders lines and returns resulting forms along with their tight width at the rendering time
 renderParaLines(
 	availableWidth : double,
-	lines : [ParaLine],
+	lines : ParaLinesInfos,
 	tightWidth : bool,
 	alignment: ParaLineAlignment,
 	interlineSpacing : double,
@@ -721,9 +738,9 @@ renderParaLines(
 	isMarked : bool,
 	interLineHighlighting : bool,
 	fitLongWords : bool
-) -> Pair<Form, double> {
-	lasti = length(lines) - 1;
-	a : ParaLineAcc = foldi(lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
+) -> Form {
+	lasti = length(lines.lines) - 1;
+	a : ParaLineAcc = foldi(lines.lines, ParaLineAcc(EmptyList(), 0.0, 0.0), \i : int, acc : ParaLineAcc, lineInfo : ParaLineInfo -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
@@ -735,8 +752,8 @@ renderParaLines(
 				alignment;
 			}
 		f = RenderLine(
-			acc.y, line.words, availableWidth, tightWidth,
-			lineAlignment, line.indent,
+			acc.y, lineInfo,
+			availableWidth, lineAlignment,
 			i, styleTree, rtl, isMarked,
 			if (interLineHighlighting) {
 				if (i == 0) 0. else - interlineSpacing / 2.0
@@ -748,22 +765,14 @@ renderParaLines(
 		);
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
-			max(acc.width, f.width),
 			acc.y + f.height + if (lastLine) 0. else interlineSpacing,
 			if (i == 0 || !topLineBaseline) f.baseline else acc.baseline
 		);
 	});
-
-	Pair(
-		Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) a.width else max(availableWidth, a.width), a.y)),
-			Group(list2array(a.lines))
-		)),
-		a.width
-	);
+	Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) lines.maxLineWidth else max(availableWidth, lines.maxLineWidth), a.y)),
+		Group(list2array(a.lines))
+	))
 }
-
-ParaLineResult(form : Form, width : double, height : double, baseline : double);
-OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
 
 getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [OptimizedLineElement]{
 	if (isBiDiEnabled() || alignment == Justify()) {
@@ -777,11 +786,9 @@ getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [Optimize
 // Send out the result, width, height
 RenderLine(
 	y : double,
-	words : [ParaWord],
+	info : ParaLineInfo,
 	width : double,
-	tightWidth : bool,
 	alignment : ParaLineAlignment,
-	lineIndent: double,
 	lineNumber : int,
 	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>,
 	rtl : bool,
@@ -790,34 +797,28 @@ RenderLine(
 	interlineSpacing : double,
 	fitLongWords : bool
 ) -> ParaLineResult {
-	optimizedLine = getOptimizedLine(words, alignment);
-	metrics = map(optimizedLine, \p -> getValue(p.metrics));
-	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + m.width); // this is real width of the line at the moment.
-	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
-	lineHeight = fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline));
-
 	// Alignment offset
-	startOffset = if (rtl) max(width - lineWidth, 0.) else 0.;
-	endOffset = if (rtl) 0. else max(0., width - lineWidth);
+	remaining = width - info.lineWidth;
+	startOffset = if (rtl) max(remaining, 0.) else 0.;
+	endOffset = if (rtl) 0. else max(0., remaining);
 	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
 		LeftAlign(): if (rtl) endOffset else startOffset;
 		RightAlign(): if (rtl) startOffset else endOffset;
-		CenterAlign(): max(0.0, (width - lineWidth) / 2.0);
+		CenterAlign(): max(0.0, remaining / 2.0);
 		StartAlign(): startOffset;
 		EndAlign(): endOffset;
 		Justify(): 0.0;
-	} + (if (rtl) 0. else lineIndent);
+	} + (if (rtl) 0. else info.lineIndent);
 
-	remaining = (width - lineWidth);
-	fittingCoef = if (fitLongWords && remaining < 0.0) width / lineWidth else 1.0;
+	fittingCoef = if (fitLongWords && remaining < 0.0) width / info.lineWidth else 1.0;
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && length(optimizedLine) > 1) {
-		nwords = length(optimizedLine);
+	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1) {
+		nwords = length(info.optimizedLine);
 		min(10.0, remaining / i2d(nwords - 1));
 	} else 0.0;
 
 	// The width and the individual forms
-	lo : [Form] = filtermapi(optimizedLine, \i : int, elem : OptimizedLineElement -> {
+	lo : [Form] = filtermapi(info.optimizedLine, \i : int, elem : OptimizedLineElement -> {
 		f = elem.f;
 		m = getValue(elem.metrics);
 		intStyleContains = \st : ParaElementInteractiveStyle -> eitherMap(
@@ -839,7 +840,7 @@ RenderLine(
 			Scale(const(fittingCoef), const(fittingCoef), fm)
 		 ) else fm;
 
-		dy = if (isSuperscript) -1.0 else lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
+		dy = if (isSuperscript) -1.0 else info.lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
 		applyStylesAndOffset = \fm : Form -> eitherMap(
 			elem.interactivityIdM,
 			\id -> applyIntStylesAndHighlighting(
@@ -849,7 +850,7 @@ RenderLine(
 				y,
 				dy,
 				wordWidth,
-				lineHeight * fittingCoef,
+				info.lineHeight * fittingCoef,
 				interWord,
 				highLightOffset,
 				interlineSpacing
@@ -873,7 +874,7 @@ RenderLine(
 				nextDistinct(inspector.x, ^alignmentOffset);
 				nextDistinct(inspector.y, y + dy);
 				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, lineHeight);
+				nextDistinct(inspector.lineHeight, info.lineHeight);
 				nextDistinct(inspector.lineNumber, lineNumber);
 				Some(applyStylesAndOffset(Empty()));
 			}
@@ -882,7 +883,7 @@ RenderLine(
 				nextDistinct(inspector.x, ^alignmentOffset);
 				nextDistinct(inspector.y, y + dy);
 				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
-				nextDistinct(inspector.lineHeight, lineHeight);
+				nextDistinct(inspector.lineHeight, info.lineHeight);
 				nextDistinct(inspector.lineNumber, lineNumber);
 				Some(fo);
 			}
@@ -894,9 +895,9 @@ RenderLine(
 	});
 	ParaLineResult(
 		Group(lo),
-		if (fitLongWords) min(lineWidth, width) else lineWidth,
-		lineHeight * fittingCoef,
-		y + lineAsc
+		if (fitLongWords) min(info.lineWidth, width) else info.lineWidth,
+		info.lineHeight * fittingCoef,
+		y + info.lineAsc
 	);
 }
 
