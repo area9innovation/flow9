@@ -802,7 +802,7 @@ class DisplayObjectHelper {
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
 	public static function getFirstGraphicsOrSprite(clip : DisplayObject) : DisplayObject {
-		if (untyped clip.clipVisible && (untyped HaxeRuntime.instanceof(clip, FlowGraphics) || untyped HaxeRuntime.instanceof(clip, FlowSprite)))
+		if (untyped clip.clipVisible && ((HaxeRuntime.instanceof(clip, FlowGraphics) && !clip.isEmpty) || HaxeRuntime.instanceof(clip, FlowSprite)))
 			return clip;
 
 		for (c in getClipChildren(clip)) {
@@ -1216,7 +1216,7 @@ class DisplayObjectHelper {
 		var clip = getFirstGraphicsOrSprite(parent);
 
 		if (clip == null) {
-			return;
+			clip = parent;
 		}
 
 		var nativeWidget = untyped clip.nativeWidget;
