@@ -2409,6 +2409,36 @@ class RenderSupport {
 		MousePos.y = y;
 	}
 
+	public static function insideY(clip : DisplayObject, x : Float, y : Float) : Bool {
+		if (!clip.getClipRenderable() || clip.parent == null) {
+			return false;
+		}
+
+		clip.invalidateLocalBounds();
+
+		var point = new Point(x, y);
+		return hittestMaskY(clip.parent, point);
+	}
+
+	private static function hittestMaskY(clip : DisplayObject, point : Point) : Bool {
+		if (untyped clip.viewBounds != null) {
+			if (untyped clip.worldTransformChanged) {
+				untyped clip.transform.updateTransform(clip.parent.transform);
+			}
+
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var viewBounds = untyped clip.viewBounds;
+
+			return viewBounds.minY <= local.y && viewBounds.maxY >= local.y;
+		} else if (untyped clip.scrollRect != null && !hittestGraphics(untyped clip.scrollRect, point)) {
+			return false;
+		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
+			return false;
+		} else {
+			return clip.parent == null || hittestMaskY(clip.parent, point);
+		}
+	}
+
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
 		if (!clip.getClipRenderable() || clip.parent == null) {
 			return false;
