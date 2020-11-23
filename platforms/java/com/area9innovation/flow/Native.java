@@ -966,7 +966,7 @@ public class Native extends NativeHost {
 		return runtime.makeStructValue(
 				"Date",
 				new Object[] {
-					date.get(Calendar.YEAR) + 1900,
+					date.get(Calendar.YEAR),
 					date.get(Calendar.MONTH) + 1,
 					date.get(Calendar.DAY_OF_MONTH)
 				},

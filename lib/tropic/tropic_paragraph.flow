@@ -1,15 +1,23 @@
 
+import material/internal/material_typography;
 import tropic/tropic_paragraph_preparation;
 import tropic/tropictransforms;
 import form/paragraph3;
 import text/bidi_text;
 
 export {
-	TRenderParagraph(
+	TRenderDynamicParagraph(
 		words : ref [TParaWord],
 		s : [ParagraphStyle],
 		alignWidthM : Maybe<DynamicBehaviour<double>>
 	) -> TDynamicParagraph;
+
+	TRenderParagraph(
+		words : [TParaWord],
+		s : [ParagraphStyle],
+		alignWidthBM : Maybe<DynamicBehaviour<double>>,
+		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	) -> Tropic;
 
 	TDynamicParagraph(
 		tropic : Tropic,
@@ -22,13 +30,14 @@ export {
 		tr : Tropic,
 		id : int,
 		style : [CharacterStyle],
-		inspectorM : Maybe<ParaElementInspector>
+		inspectorM : Maybe<ParaElementInspector>,
+		scriptM : Maybe<ParaElementScriptType>
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
 }
 
-TRenderParagraph(
+TRenderDynamicParagraph(
 	words : ref [TParaWord],
 	s : [ParagraphStyle],
 	alignWidthBM : Maybe<DynamicBehaviour<double>>
@@ -41,12 +50,6 @@ TRenderParagraph(
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 
 	tightWidth = contains(s, TightWidth());
-
-	fill = filtermap(s, \st -> switch (st) {
-		Fill(__): Some(st);
-		FillOpacity(__): Some(st);
-		default: None();
-	});
 
 	topLineBaseline = contains(s, TopLineBaseline());
 
@@ -75,6 +78,7 @@ TRenderParagraph(
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
 	));
+
 	rtl = isParagraphRtl(s);
 
 	updateFn = \wi, alignWidthM -> {
@@ -199,14 +203,417 @@ TRenderParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
-// Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
+TRenderParagraph(
+	words : [TParaWord],
+	s : [ParagraphStyle],
+	alignWidthBM : Maybe<DynamicBehaviour<double>>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+) -> Tropic {
+
+	alignment : ParaLineAlignment = extractParaLineAlignment(s);
+	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
+	needIndent = genIndent != 0.0;
+
+	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
+
+	tightWidth = contains(s, TightWidth());
+
+	topLineBaseline = contains(s, TopLineBaseline());
+
+	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
+
+	isSingleLine = containsStruct(s, ParagraphSingleLine());
+	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
+
+	awB = make(0.0);
+	update = make(0);
+	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
+
+	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
+	ndynamic = fold(words, 0, \acc, w -> switch (w.word) {
+		NonTextElement() : acc + 1;
+		default : acc;
+	});
+	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
+
+	rtl = isParagraphRtl(s);
+	reflowHappenedB = make(false);
+	groupedWords = groupAndTranslateWords(
+		words,
+		genIndent,
+		reflowHappenedB,
+		joinedWordsConstructors,
+		rtl
+	);
+
+	paragraphWHB = makeWH();
+	paragraphBaselineB = make(0.0);
+
+	contentGroup = TBaseline(paragraphBaselineB, TSize(
+		TSized(paragraphWHB),
+		TGroup(groupedWords)
+	));
+
+	updateFn = \wi, alignWidthM -> {
+		// Ignore negative widths
+		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
+		paragraphSizeBaselineAndChanges = reflowTParaWords(
+			words, w, indent, tightWidth, alignment, interlineSpacing,
+			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
+			genIndent, linesCountB, alignWidthM
+		);
+		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
+		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
+		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
+		deferred(\ -> updateBehaviour(reflowHappenedB, \t -> !t));
+	};
+
+	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+
+	dynMetricsSubscription = \w -> {
+		apply0(make2Subscribe2(
+			w.inspector.size,
+			w.inspector.baseline,
+			\size, ba -> {
+				if (ndynamic <= ndymamicUpper) {
+					// There is less or equal than upper limit of dynamic elements here, so just update immediately
+					executeReflow()
+				} else {
+					// There are more, so to prevent unnecessary work, delay the update
+					nextDistinct(update, 1);
+				}
+			}
+		))
+	}
+
+	subscribe2dynWord = \w -> {
+		switch (w.word : GeneralWrapElement) {
+			NonTextElement() : dynMetricsSubscription(w);
+			GeneralDynamicText(__): dynMetricsSubscription(w);
+			default: nop;
+		}
+	}
+
+	TConstruct(
+		[
+			eitherFn(
+				alignWidthBM,
+				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
+				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
+			),
+			\-> subscribe(update, \u -> {
+				if (u == 1) {
+					deferUntilNextFrameRendered(\ -> {
+						next(update, 0);
+						// Force an update
+						executeReflow()
+					})
+				}
+			}),
+			\ -> {
+				dynamicWordsUns = map(words, subscribe2dynWord);
+				\ -> {
+					applyall(dynamicWordsUns);
+				}
+			}
+		],
+		TAttachAvailableWidth(
+			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
+				TBorder(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
+			} else {
+				contentGroup;
+			},
+			awB
+		)
+	) |> if (needIndent) {
+		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent)
+	} else {
+		idfn
+	};
+}
+
+LineHeadingsAcc(
+	groupedWords : List<Tropic>,
+	currentGroup: List<TParaWord>,
+	currentTag : string
+);
+
+
+groupAndTranslateWords(
+	words : [TParaWord],
+	genIndent : double,
+	reflowHappened : DynamicBehaviour<bool>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	rtl : bool
+) -> [Tropic] {
+	groupResult = fold(
+		words,
+		LineHeadingsAcc(makeList(), makeList(), ""),
+		\acc, word -> appendWordToLine(
+			acc,
+			word,
+			genIndent,
+			reflowHappened,
+			joinedWordsConstructors,
+			rtl
+		)
+	);
+
+	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords  else Cons(
+		makeHeadingGroup(
+			groupResult.currentGroup,
+			groupResult.currentTag,
+			genIndent,
+			reflowHappened,
+			joinedWordsConstructors,
+			rtl
+		),
+		groupResult.groupedWords
+	);
+
+	list2array(withLastGroup);
+}
+
+appendWordToLine(
+	acc : LineHeadingsAcc,
+	word: TParaWord,
+	genIndent: double,
+	reflowHappened : DynamicBehaviour<bool>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	rtl : bool
+) -> LineHeadingsAcc {
+	tag = either(getHeadingTagFromFontSize(extractStruct(word.style, FontSize(0.0)).size), "");
+	if (acc.currentTag == tag) {
+		LineHeadingsAcc(acc with
+			currentGroup = Cons(word, acc.currentGroup)
+		);
+	} else {
+		newGroupedWords = if (acc.currentGroup == EmptyList()) acc.groupedWords else Cons(
+			makeHeadingGroup(
+				acc.currentGroup,
+				tag,
+				genIndent,
+				reflowHappened,
+				joinedWordsConstructors,
+				rtl
+			),
+			acc.groupedWords
+		);
+		newCurrentGroup = makeList1(word);
+
+		LineHeadingsAcc(newGroupedWords, newCurrentGroup, tag)
+	}
+}
+
+makeHeadingGroup(
+	words : List<TParaWord>,
+	tag : string,
+	genIndent: double,
+	reflowHappened : DynamicBehaviour<bool>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	rtl : bool 
+) -> Tropic {
+
+	joinedWords = if (rtl) translateInteractiveWords(
+		words,
+		genIndent,
+		joinedWordsConstructors
+	) else splitRejoinableWords(words, genIndent, reflowHappened, joinedWordsConstructors);
+
+	if (tag == "") TGroup(joinedWords) else TAccess(
+		[
+			AccessRole("heading"),
+			FAccessAttribute("aria-level", const(takeAfter(tag, "h", "2")))
+		],
+		TAccess([AccessRole("presentation")], TGroup(joinedWords))
+	)
+}
+
+translateInteractiveWords(
+	words: List<TParaWord>,
+	genIndent : double,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+) -> [Tropic] {
+	map(
+		list2array(words),
+		\word -> {
+			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), \__, __ -> word.ghostView);
+			wordView = switch (word.word) {
+				GeneralText(str) : viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style));
+				GeneralSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
+				default : word.ghostView;
+			};
+
+			TTranslate(
+				fpoint(fsubtract(word.inspector.x, const(genIndent)), word.inspector.y),
+				wordView
+			);
+		}
+	)
+}
+splitRejoinableWords(
+	words: List<TParaWord>,
+	genIndent : double,
+	reflowHappened : DynamicBehaviour<bool>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+) -> [Tropic] {
+
+	isSameGroup = \currentGroup : List<TParaWord>, id : int -> switch (currentGroup) {
+		Cons(h, __) : getValue(h.id) == id;
+		EmptyList() : false
+	};
+
+	appendJoinedWordsView = \acc : [Tropic], wordsList : List<TParaWord> -> {
+		switch (wordsList) {
+			EmptyList() : acc;
+			Cons(h, __) : arrayPush(
+				acc,
+				joinTextWords(
+					wordsList,
+					genIndent,
+					reflowHappened,
+					lookupTreeDef(
+						joinedWordsConstructors,
+						getValue(h.id),
+						\t, s -> TText(t, s)
+					)
+				)
+			)
+		}
+	}
+
+	splitResult = fold2(list2array(words), [], EmptyList(), \acc, currentGroup, word -> {
+		onDynamicElemCase = \ -> Pair(
+			arrayPush(
+				appendJoinedWordsView(acc, currentGroup),
+				translateWord(word, genIndent)
+			),
+			EmptyList()
+		);
+		switch (word.word) {
+			NonTextElement() : onDynamicElemCase();
+			GeneralDynamicText(__) : onDynamicElemCase();
+			EmptyLineElement() : onDynamicElemCase();
+			default : {
+				if (isSameGroup(currentGroup, getValue(word.id))) Pair(
+					acc,
+					Cons(word, currentGroup)
+				) else Pair(
+					appendJoinedWordsView(acc, currentGroup),
+					makeList1(word)
+				)
+			}
+		}
+	});
+
+	appendJoinedWordsView(splitResult.first, splitResult.second);
+}
+
+JoinTextAcc(
+	currentString : string,
+	style : [CharacterStyle],
+	lineNumber : int,
+	currentOffset : Transform<Point>,
+	acc : List<Tropic>
+);
+
+joinTextWords(
+	words : List<TParaWord>,
+	genIndent : double,
+	reflowHappened : DynamicBehaviour<bool>,
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+) -> Tropic {
+	TSelect(
+		reflowHappened,
+		\__ -> {
+			joinResult = foldList(
+				words,
+				JoinTextAcc("", [], -1, const(zeroPoint), EmptyList()),
+				\acc, word -> appendOrJoinWord(
+					acc,
+					word,
+					genIndent,
+					reflowHappened,
+					wordsViewConstructor
+				)
+			);
+			TGroup(
+				list2array(addLastLine(joinResult, wordsViewConstructor))
+			);
+		}
+	);
+}
+
+appendOrJoinWord(
+	acc : JoinTextAcc,
+	word : TParaWord,
+	genIndent : double,
+	reflowHappened : DynamicBehaviour<bool>,
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+) -> JoinTextAcc {
+	lineNumber = getValue(word.inspector.lineNumber);
+	wordString = switch (word.word) {
+		GeneralText(str) : str;
+		GeneralSpace(str, __, __) : str;
+		default : "";
+	};
+
+	wordOffset = const(Point(
+		getValue(word.inspector.x) - genIndent,
+		getValue(word.inspector.y)
+	));
+
+	if (acc.lineNumber == -1) {
+		// There are no words yet.
+		JoinTextAcc(
+			wordString,
+			word.style,
+			lineNumber,
+			wordOffset,
+			acc.acc
+		);
+	} else if (acc.lineNumber == getValue(word.inspector.lineNumber)) {
+		// just concat to current string
+		JoinTextAcc(acc with
+			currentString = wordString + acc.currentString,
+			currentOffset = wordOffset
+		)
+	} else {
+		JoinTextAcc(
+			wordString,
+			word.style,
+			lineNumber,
+			wordOffset,
+			addLastLine(acc, wordsViewConstructor)
+		)
+	}
+}
+
+addLastLine(
+	joinResult : JoinTextAcc,
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+) -> List<Tropic> {
+	Cons(
+		TTranslate(
+			joinResult.currentOffset,
+			wordsViewConstructor(
+				joinResult.currentString,
+				joinResult.style
+			)
+		),
+		joinResult.acc,
+	)
+}
 
 commonWordConstructor(
 	w : GeneralWrapElement,
 	tr : Tropic,
 	id : int,
 	style : [CharacterStyle],
-	inspectorM : Maybe<ParaElementInspector>
+	inspectorM : Maybe<ParaElementInspector>,
+	scriptM : Maybe<ParaElementScriptType>
 ) -> TParaWord {
 	inspector = either(inspectorM, dummyInspector());
 	wordView = inspectWordView(tr, inspector);
@@ -217,7 +624,7 @@ commonWordConstructor(
 		make(id),
 		style,
 		make(false),
-		None()
+		scriptM
 	);
 }
 
@@ -659,6 +1066,7 @@ TRenderLine(
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) elemWidth + justifyOffset else 0.0;
 	});
+
 	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
 }
 
