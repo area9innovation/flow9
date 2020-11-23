@@ -1531,6 +1531,9 @@ class TextClip extends NativeWidgetClip {
 			this.updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
+			if (this.className != null && this.className != '') {
+				nativeWidget.classList.add(this.className);
+			}
 
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');

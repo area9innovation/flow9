@@ -1439,6 +1439,14 @@ class RenderSupport {
 		}
 	}
 
+	public static function setClipClassName(clip : Dynamic, className : String) : Void {
+		if (clip.nativeWidget != null) {
+			clip.nativeWidget.classList.add(className);
+		}
+
+		clip.className = className;
+	}
+
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
 		if (clip.nativeWidget != null && clip.shouldPreventFromBlur != null) {
 			clip.shouldPreventFromBlur = true;

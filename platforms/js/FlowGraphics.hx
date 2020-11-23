@@ -32,6 +32,7 @@ class FlowGraphics extends Graphics {
 	private var nativeWidget : Element;
 	private var accessWidget : AccessWidget;
 	public var tagName : String;
+	public var className : String;
 
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
@@ -640,6 +641,9 @@ class FlowGraphics extends Graphics {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		if (this.className != null && this.className != '') {
+			nativeWidget.classList.add(this.className);
+		}
 		nativeWidget.setAttribute('role', 'presentation');
 
 		isNativeWidget = true;
