@@ -171,10 +171,15 @@ public class Database extends NativeHost {
     }
 
     public final String requestExceptionDb(Object database) {
-        if (database != null && ((DBObject) database).err != null) {
-            return ((DBObject) database).err;
-        } else {
-            return "";
+        try {
+            if (database != null && ((DBObject) database).err != null) {
+                return ((DBObject) database).err;
+            } else {
+                return "";
+            }
+        } catch (Exception e) {
+            printException(e);
+            return "Unknown Exception";
         }
     }
 
