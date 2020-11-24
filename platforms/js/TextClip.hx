@@ -514,6 +514,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		nativeWidget.style.letterSpacing = RenderSupport.RendererType != "html" || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		nativeWidget.style.wordSpacing = RenderSupport.RendererType != "html" || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
 		nativeWidget.style.fontFamily = RenderSupport.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupport.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupport.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
@@ -638,6 +639,10 @@ class TextClip extends NativeWidgetClip {
 		this.style.lineHeight = Math.ceil(fontSize * 1.15);
 		this.style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		this.style.padding = Math.ceil(fontSize * 0.2);
+
+		if (untyped Math.isFinite(RenderSupport.UserDefinedWordSpacing) && RenderSupport.UserDefinedWordSpacing != 0.0) {
+			this.style.wordSpacing = untyped RenderSupport.UserDefinedWordSpacing;
+		}
 
 		measureFont();
 

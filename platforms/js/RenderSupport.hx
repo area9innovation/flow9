@@ -224,10 +224,20 @@ class RenderSupport {
 		return false;
 	}
 
+	private static var UserStyleTestElement = null;
+	private static function createUserStyleTestElement() : Void {
+		if (UserStyleTestElement == null) {
+			UserStyleTestElement = Browser.document.createElement("p");
+			UserStyleTestElement.setAttribute("role", "presentation");
+			UserStyleTestElement.style.visibility = "hidden";
+			Browser.document.body.appendChild(UserStyleTestElement);
+		}
+	}
 	private static var UserDefinedFontSize : Float = null;
 	private static function getUserDefinedFontSize() : Float {
 		if (UserDefinedFontSize == null) {
-			var style = Browser.window.getComputedStyle(Browser.document.body);
+			createUserStyleTestElement();
+			var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
 			UserDefinedFontSize = Std.parseFloat(style.fontSize);
 		}
@@ -239,32 +249,38 @@ class RenderSupport {
 		return UserDefinedFontSize;
 	}
 
-	private static var UserDefinedLetterSpacing = null;
+	private static var UserDefinedLetterSpacing = 0.0;
 	private static function getUserDefinedLetterSpacing() : Float {
-		var div = Browser.document.createElement("p");
-		Browser.document.body.appendChild(div);
-		var style = Browser.window.getComputedStyle(div);
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
 		UserDefinedLetterSpacing = style.letterSpacing != "normal"
 			? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
 			: 0.0;
 
-		Browser.document.body.removeChild(div);
-
 		return UserDefinedLetterSpacing;
 	}
 
-	private static var UserDefinedLetterSpacingPercent = null;
+	private static var UserDefinedWordSpacing = 0.0;
+	private static function getUserDefinedWordSpacing() : Float {
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
+
+		UserDefinedWordSpacing = style.wordSpacing != "normal"
+			? (new String(style.wordSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.wordSpacing))
+			: 0.0;
+
+		return UserDefinedWordSpacing;
+	}
+
+	private static var UserDefinedLetterSpacingPercent = 0.0;
 	private static function getUserDefinedLetterSpacingPercent() : Float {
-		var div = Browser.document.createElement("p");
-		Browser.document.body.appendChild(div);
-		var style = Browser.window.getComputedStyle(div);
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
 		UserDefinedLetterSpacingPercent = style.letterSpacing != "normal"
 			? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
 			: 0.0;
-
-		Browser.document.body.removeChild(div);
 
 		return UserDefinedLetterSpacingPercent;
 	}
@@ -274,7 +290,8 @@ class RenderSupport {
 		if (!UserStylePending) {
 			UserStylePending = true;
 			RenderSupport.once("drawframe", function() {
-				if (UserDefinedLetterSpacing != getUserDefinedLetterSpacing() || UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) {
+				if (untyped (UserDefinedLetterSpacing != getUserDefinedLetterSpacing()) | (UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) |
+					(UserDefinedWordSpacing != getUserDefinedWordSpacing())) {
 					RenderSupport.emit("userstylechanged");
 				}
 				UserStylePending = false;
@@ -291,11 +308,7 @@ class RenderSupport {
 	}
 
 	public static function monitorUserStyleChanges() : Void -> Void {
-		if (isInsideFrame()) {
-			return Native.setInterval(1000, emitUserStyleChanged);
-		} else {
-			return function() {};
-		}
+		return Native.setInterval(1000, emitUserStyleChanged);
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -516,6 +529,10 @@ class RenderSupport {
 			PixiWorkarounds.workaroundIEArrayFromMethod();
 			PixiWorkarounds.workaroundIECustomEvent();
 		}
+
+		UserDefinedWordSpacing = getUserDefinedWordSpacing();
+		UserDefinedLetterSpacing = getUserDefinedLetterSpacing();
+		UserDefinedLetterSpacingPercent = getUserDefinedLetterSpacingPercent();
 
 		createPixiRenderer();
 
