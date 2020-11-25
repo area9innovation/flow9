@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
+import * as tools from './tools';
 import { spawn, ChildProcess, spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
 
@@ -63,34 +63,59 @@ export class FlowNotebookKernelProvider implements vscode.NotebookKernelProvider
     }
 }
 
+export function killExecutor(): void {
+	if (executor) {
+		executor.stdin.write("exit");
+		executor.kill("SIGKILL");
+		executor = null;
+	}
+}
+
+// run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[]):
+
+export function startExecutor(): void {
+	if (!executor) {
+		executor = spawn("flowc1", ["repl=1", "repl-compile-output=1", "bin-dir=/home/dmitry/area9/flow9/bin/"]);
+		//executor = run_cmd("flowc1", null, ["repl=1", "repl-compile-output=1"])
+	} else {
+		executor.removeAllListeners();
+	}
+}
+
+let executor : ChildProcess = null;
+let kernelChannel: vscode.OutputChannel = vscode.window.createOutputChannel("Flow Notebook kernel");
+
 class FlowNotebookKernel implements vscode.NotebookKernel {
     label: "flow";
-    private executor: ChildProcess = null;
     private runIndex: number = 0;
     private start: number = 0;
-    private kernelChannel: vscode.OutputChannel;
     private callback = (arg: string) => { };
 
-    private startExecutor(): void {
-        this.executor = spawn("flowc1", ["repl=1"]);
-        let buffer: string = "";
-        this.executor.stdout.on("data", (buf : string) => {
-            let out = buf.toString();
-            this.kernelChannel.append(out);
-            buffer += out;
-            if (buffer.endsWith("> ")) {
-                this.callback(buffer.slice(0, buffer.length - 2));
-                buffer = "";
-            }
-        });
-        this.executor.stderr.on("data", (out : string) => this.kernelChannel.append(out.toString()));
-        this.executor.stdout.on("error", (out : string) => this.kernelChannel.append(out.toString()));
-        this.executor.stderr.on("error", (out : string) => this.kernelChannel.append(out.toString()));
+    private setupExecutorCallbacks(): void {
+		let buffer: string = "";
+		executor.stdout.on("data", (buf : string) => {
+			let out = buf.toString();
+			kernelChannel.append(out);
+			buffer += out;
+			if (buffer.endsWith("> ")) {
+				this.callback(buffer.slice(0, buffer.length - 2));
+				buffer = "";
+			}
+		});
+		executor.stderr.on("data", (out : string) => kernelChannel.append(out.toString()));
+		executor.stdout.on("error", (out : string) => kernelChannel.append(out.toString()));
+		executor.stderr.on("error", (out : string) => kernelChannel.append(out.toString()));
+		executor.stderr.on("error", (out : string) => kernelChannel.append(out.toString()));
+		// Exit callbacks for executor
+		executor.on("close", (code : number, signal : string) => executor = null);
+		executor.on("disconnect", () => executor = null);
+		executor.on("error", (err : Error) => executor = null);
+		executor.on("exit", (code : number, signal : string) => executor = null);
     }
 
     constructor() {
-        this.kernelChannel = vscode.window.createOutputChannel("Flow Notebook kernel");
-        this.startExecutor();
+		startExecutor();
+        this.setupExecutorCallbacks();
     }
 
     async executeCell(document: vscode.NotebookDocument, cell: vscode.NotebookCell): Promise<void> {
@@ -102,13 +127,15 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
                 this.setCellRunning(cell);
                 const code = this.prepareCellCode(cell);
                 const should_be_rendered = this.cellShouldBeRendered(cell);
-                this.kernelChannel.appendLine("should_be_rendered: " + should_be_rendered);
+				//const js_opts = "readable=1";
+				const html_opts = 
+					"verbose=1 bin-dir=/home/dmitry/area9/flow9/bin/ readable=1 js-call-main=1 repl-compile-output=1 repl-no-quit=1";
                 const request = should_be_rendered ? 
-                    //"compile html=www/cell_" + cell.index  + ".html\n" + code + "\n\n":
-                    "compile js=www/cell_" + cell.index  + ".js\n" + code + "\n\n":
+                    "compile html=www/cell_" + cell.index  + ".html " + html_opts + "\n" + code + "\n\n":
+                    //"compile js=www/cell_" + cell.index  + ".js readable=1 js-call-main=1\n" + code + "\n\n":
                     "add cell_" + cell.index + " force\n" + code + "\n\n"; 
-                this.kernelChannel.append(request);
-                if (!this.executor || !this.executor.stdin.write(request)) {
+                kernelChannel.append(request);
+                if (!executor || !executor.stdin.write(request)) {
                     reject("Error while writing: \n" + request);
                 } else {
                     const wrap_resolve = () => { this.callback = (s: string) => { }; resolve(); }
@@ -146,16 +173,9 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
                 cell.metadata.lastRunDuration = +new Date() - this.start;
             }
         });
-        this.stopExecutor();
-        this.startExecutor();
-    }
-    private stopExecutor(): void {
-        if (this.executor && !this.executor.killed) {
-            this.kernelChannel.append("exit\n");
-            this.executor.stdin.write("exit\n");
-        }
-        this.executor.kill();
-        this.executor = null;
+		killExecutor();
+		startExecutor();
+        this.setupExecutorCallbacks();
     }
     private makeTextOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell): (a : string) => void { 
         let first_try = true;
@@ -172,8 +192,8 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
                     const code = this.prepareCellCode(cell);
                     const request = "exec\n" + code + "\n\n";
                     first_try = false;
-                    this.kernelChannel.append(request);
-                    if (!this.executor.stdin.write(request)) {
+                    kernelChannel.append(request);
+                    if (!executor.stdin.write(request)) {
                         reject("Error while writing: \n" + request);
                     }
                 }
@@ -193,7 +213,7 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
             buffer = buffer.replace("\"No carrier\"", "");
             if (buffer.indexOf('Error:') == -1) {
                 //if (buffer.length > 10000) {
-                    this.kernelChannel.appendLine("buffer.length: " + buffer.length);
+                //    kernelChannel.appendLine("buffer.length: " + buffer.length);
                 //}
                 this.setCellHtmlSuccess(cell, buffer);
                 resolve();
@@ -220,23 +240,26 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
         cell.metadata.lastRunDuration = +new Date() - this.start;
     }
     private setCellHtmlSuccess(cell: vscode.NotebookCell, result: string): void {
-        //const html_file = readFileSync("www/cell_" + cell.index  + ".html").toString();
-        //const html_file = readFileSync("/home/dmitry/area9/flow9/demos/7guis/www/1_counter.html").toString();
-        const js_file = readFileSync("www/cell_" + cell.index  + ".js").toString();
-        //this.kernelChannel.appendLine("html_file.length: " + html_file.length);
-        this.kernelChannel.appendLine("js_file.length: " + js_file.length);
+		const js_file = readFileSync("www/cell_" + cell.index  + ".html.js").toString();
+		const html_file = readFileSync("www/cell_" + cell.index  + ".html").toString();
+		const test_html_file = readFileSync("www/test.html").toString();
+		
+		//kernelChannel.appendLine("js_file.length: " + js_file.length);
+		//kernelChannel.appendLine("html_file.length: " + html_file.length);
+
         cell.outputs = [{
             outputKind: vscode.CellOutputKind.Rich, 
             data: {
-                "text/plain": ["result: '" + result + "'"],
-                "application/javascript": [
-                    js_file
-                    //,'<b>Hello</b> World'
-                ]
-                //"text/html": [
-                //    html_file
-                    //,'<b>Hello</b> World'
-                //]
+                "text/plain": [
+					"output: '" + result + "'"
+					//, html_file
+				],
+                "application/javascript": [js_file],
+				"text/x-javascript": [js_file],
+                "text/html": [
+					"<!DOCTYPE html>\n" + html_file
+					//, test_html_file
+				]
             }
         }];
         cell.metadata.runState = vscode.NotebookCellRunState.Success;

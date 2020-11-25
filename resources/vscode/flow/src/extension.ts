@@ -13,7 +13,7 @@ import {
 import * as tools from "./tools";
 import * as updater from "./updater";
 import * as simplegit from 'simple-git/promise';
-import { FlowNotebookProvider, createNotebook, FlowNotebookKernelProvider } from './notebook';
+import * as notebook from './notebook';
 //import { performance } from 'perf_hooks';
 const isPortReachable = require('is-port-reachable');
 
@@ -64,11 +64,12 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_com('flow.toggleHttpServer', toggleHttpServer),
 		reg_com('flow.flowConsole', flowConsole),
 		reg_com('flow.execCommand', execCommand),
-		reg_com('flow.createNotebook', createNotebook),
+		reg_com('flow.createNotebook', notebook.createNotebook),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
-		vscode.notebook.registerNotebookContentProvider('flow-notebook', new FlowNotebookProvider()),
-		vscode.notebook.registerNotebookKernelProvider({filenamePattern: "*.{noteflow,flow}"}, new FlowNotebookKernelProvider())
-    );
+		vscode.notebook.registerNotebookContentProvider('flow-notebook', new notebook.FlowNotebookProvider()),
+		vscode.notebook.registerNotebookKernelProvider({filenamePattern: "*.{noteflow,flow}"}, new notebook.FlowNotebookKernelProvider())
+	);
+	notebook.startExecutor();
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
@@ -255,6 +256,7 @@ export function deactivate() {
 	if (httpServer) {
 		tools.shutdownFlowcHttpServer().on("exit", (code, msg) => httpServer = null);
 	}
+	notebook.killExecutor();
     // kill all child processed we launched
     childProcesses.forEach(child => { 
         child.kill('SIGKILL'); 
