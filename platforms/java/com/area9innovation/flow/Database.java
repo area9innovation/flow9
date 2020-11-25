@@ -364,6 +364,9 @@ public class Database extends NativeHost {
             }
 
             return res.toArray(new Struct[res.size()][][]);
+        } catch (SQLException e) {
+            ((DBObject) database).err = e.getMessage();
+            return empty;
         } catch (Exception e) {
             printException(e);
             ((DBObject) database).err = e.getMessage();
