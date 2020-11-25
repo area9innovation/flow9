@@ -609,7 +609,7 @@ class PixiWorkarounds {
 			var nativeSetProperty = CSSStyleDeclaration.prototype.setProperty;
 
 			CSSStyleDeclaration.prototype.setProperty = function(propertyName, value, priority) {
-				RenderSupport.emitUserStyleChanged();
+				RenderSupport.checkUserStyleChanged();
 				nativeSetProperty.call(this, propertyName, value, priority);
 			}
 

@@ -261,16 +261,28 @@ class RenderSupport {
 		return UserDefinedLetterSpacing;
 	}
 
-	private static var UserDefinedWordSpacing = 0.0;
-	private static function getUserDefinedWordSpacing() : Float {
+	private static var UserDefinedLineHeightPercent = 1.15;
+	private static function getUserDefinedLineHeightPercent() : Float {
 		createUserStyleTestElement();
 		var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
-		UserDefinedWordSpacing = style.wordSpacing != "normal"
-			? (new String(style.wordSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.wordSpacing))
+		UserDefinedLineHeightPercent = style.lineHeight != "normal"
+			? (new String(style.lineHeight).indexOf("em") >= 0 ? Std.parseFloat(style.lineHeight) : Std.parseFloat(style.lineHeight) / Std.parseFloat(style.fontSize))
+			: 1.15;
+
+		return UserDefinedLineHeightPercent;
+	}
+
+	private static var UserDefinedWordSpacingPercent = 0.0;
+	private static function getUserDefinedWordSpacingPercent() : Float {
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
+
+		UserDefinedWordSpacingPercent = style.wordSpacing != "normal"
+			? (new String(style.wordSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.wordSpacing) : Std.parseFloat(style.wordSpacing) / Std.parseFloat(style.fontSize))
 			: 0.0;
 
-		return UserDefinedWordSpacing;
+		return UserDefinedWordSpacingPercent;
 	}
 
 	private static var UserDefinedLetterSpacingPercent = 0.0;
@@ -289,14 +301,19 @@ class RenderSupport {
 	public static function emitUserStyleChanged() {
 		if (!UserStylePending) {
 			UserStylePending = true;
+			var userStyleChanged = RenderSupport.checkUserStyleChanged();
 			RenderSupport.once("drawframe", function() {
-				if (untyped (UserDefinedLetterSpacing != getUserDefinedLetterSpacing()) | (UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) |
-					(UserDefinedWordSpacing != getUserDefinedWordSpacing())) {
+				if (userStyleChanged) {
 					RenderSupport.emit("userstylechanged");
 				}
 				UserStylePending = false;
 			});
 		}
+	}
+
+	public static function checkUserStyleChanged() : Bool {
+		return (untyped (UserDefinedLetterSpacing != getUserDefinedLetterSpacing()) | (UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) |
+			(UserDefinedWordSpacingPercent != getUserDefinedWordSpacingPercent()) | (UserDefinedLineHeightPercent != getUserDefinedLineHeightPercent()));
 	}
 
 	public static function isInsideFrame() : Bool {
@@ -529,10 +546,6 @@ class RenderSupport {
 			PixiWorkarounds.workaroundIEArrayFromMethod();
 			PixiWorkarounds.workaroundIECustomEvent();
 		}
-
-		UserDefinedWordSpacing = getUserDefinedWordSpacing();
-		UserDefinedLetterSpacing = getUserDefinedLetterSpacing();
-		UserDefinedLetterSpacingPercent = getUserDefinedLetterSpacingPercent();
 
 		createPixiRenderer();
 
