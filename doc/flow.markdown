@@ -839,7 +839,7 @@ you can use the type in declarations, as well as pass values of these around.
 Of course, they are meant to be consumed by other native functions.
 
 	native currentClip : () -> native = RenderSupport.currentClip;
-	renderTo : (clip : native, form : Form) -> (() -> void);
+	renderTo : (clip : native, form : Form) -> () -> void;
 
 To provide information to flow optimizers, we have a type annotation "`io`" which marks
 that a given (native) function is impure and can not be calculated at compile time.
