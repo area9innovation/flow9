@@ -537,7 +537,8 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupport.RendererType == "html" && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize)}px';
+				var lineHeightGap = (style.lineHeight - style.fontSize * 1.15) / 2.0;
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
 				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
@@ -613,6 +614,8 @@ class TextClip extends NativeWidgetClip {
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 
+		RenderSupport.emitUserStyleChanged();
+
 		if (fontWeight > 0 || fontSlope != "") {
 			untyped __js__("
 			if (TextClip.ffMap === undefined) TextClip.ffMap = {}
@@ -632,16 +635,22 @@ class TextClip extends NativeWidgetClip {
 
 		this.style.fontSize = Math.max(fontSize, 0.6);
 		this.style.fill = RenderSupport.makeCSSColor(fillColor, fillOpacity);
-		this.style.letterSpacing = letterSpacing;
+		if (untyped Math.isFinite(RenderSupport.UserDefinedLetterSpacingPercent) && RenderSupport.UserDefinedLetterSpacingPercent != 0.0) {
+			this.style.letterSpacing = untyped RenderSupport.UserDefinedLetterSpacingPercent * this.style.fontSize;
+		} else if (untyped Math.isFinite(RenderSupport.UserDefinedLetterSpacing) && RenderSupport.UserDefinedLetterSpacing != 0.0) {
+			this.style.letterSpacing = untyped RenderSupport.UserDefinedLetterSpacing;
+		} else {
+			this.style.letterSpacing = letterSpacing;
+		}
 		this.style.fontFamily = fontStyle.family;
 		this.style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		this.style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		this.style.lineHeight = Math.ceil(fontSize * 1.15);
+		this.style.lineHeight = Math.ceil(untyped RenderSupport.UserDefinedLineHeightPercent * this.style.fontSize);
 		this.style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		this.style.padding = Math.ceil(fontSize * 0.2);
 
-		if (untyped Math.isFinite(RenderSupport.UserDefinedWordSpacing) && RenderSupport.UserDefinedWordSpacing != 0.0) {
-			this.style.wordSpacing = untyped RenderSupport.UserDefinedWordSpacing;
+		if (untyped Math.isFinite(RenderSupport.UserDefinedWordSpacingPercent) && RenderSupport.UserDefinedWordSpacingPercent != 0.0) {
+			this.style.wordSpacing = untyped RenderSupport.UserDefinedWordSpacingPercent * this.style.fontSize;
 		}
 
 		measureFont();
