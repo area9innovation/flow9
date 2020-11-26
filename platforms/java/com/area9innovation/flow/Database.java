@@ -28,6 +28,7 @@ public class Database extends NativeHost {
         public String err = "";
         public RSObject lrurs = null;
         private DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSS");
+        private HashSet<String> intOverflowFields = new HashSet<String>();
 
         public DBObject() {
             dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -55,6 +56,15 @@ public class Database extends NativeHost {
                 } catch (SQLException e) {
                     printException(e);
                 }
+            }
+        }
+
+        public void checkIntOverflow() {
+            if (!intOverflowFields.isEmpty()) {
+                // Hope it will never happen with id fields,
+                // otherwise we should support long integer in the rule interpreter
+                System.out.println("Warning! These fields " + intOverflowFields.toString() + " contains values that are out of 32-bit integers");
+                intOverflowFields.clear();
             }
         }
     }
@@ -269,7 +279,7 @@ public class Database extends NativeHost {
         return values;
     }
 
-    private Struct[] getRowValues(ResultSet rs, String[] fieldNames, int[] fieldtypes, Struct[] nulls, DateFormat dateFormat) throws SQLException {
+    private Struct[] getRowValues(ResultSet rs, String[] fieldNames, int[] fieldtypes, Struct[] nulls, DBObject dbObj) throws SQLException {
         int columnCount = fieldNames.length;
         Struct[] values = new Struct[columnCount];
         for (int i = 0; i < columnCount; i++) {
@@ -288,6 +298,29 @@ public class Database extends NativeHost {
                     Integer ivalue = rs.getInt(i + 1);
                     value = rs.wasNull() ? anull : runtime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
                     break;
+                case (Types.BIGINT):
+                    long lvalue = rs.getLong(i + 1);
+                    if (rs.wasNull()) {
+                        value = anull;
+                    } else {
+                        ivalue = (int)lvalue;
+                        if ((long)ivalue == lvalue) {
+                            // use int type if the value fits in 32 bit integer
+                            value = runtime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
+                        } else {
+                            if ((lvalue & 0xFFFF000000000000L) == 0L) {
+                                // if the value fits in double type
+                                // in double 52 bits are used for the mantissa (15-16 decimal digits)
+                                // We support 48 bit non-negative integers as double (14 decimal digits)
+                                value = runtime.makeStructValue("DbDoubleField", new Object[]{name, (double)lvalue}, illegal);
+                            } else {
+                                // otherwise use string
+                                value = runtime.makeStructValue("DbStringField", new Object[]{name, Long.toString(lvalue)}, illegal);
+                            }
+                            dbObj.intOverflowFields.add(name);
+                        }
+                    }
+                    break;
                 case (Types.DOUBLE):
                 case (Types.DECIMAL):
                 case (Types.REAL):
@@ -301,7 +334,7 @@ public class Database extends NativeHost {
                     if (t == null || rs.wasNull()) {
                         value = anull;
                     } else {
-                        String svalue = dateFormat.format(t);
+                        String svalue = dbObj.dateFormat.format(t);
                         value = runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
                     }
                     break;
@@ -348,7 +381,7 @@ public class Database extends NativeHost {
                     Struct[] nulls = getNullRowValues(rs, fieldNames);
                     while (notEmptyResultSet(rs)) {
                         rs.next();
-                        table.add(getRowValues(rs, fieldNames, fieldTypes, nulls, dbo.dateFormat));
+                        table.add(getRowValues(rs, fieldNames, fieldTypes, nulls, dbo));
                     }
                     if (table.isEmpty()) {
                         // The table is empty but we need to return columns names somehow
@@ -362,6 +395,8 @@ public class Database extends NativeHost {
                 isResultSet = stmt.getMoreResults();
                 updateCount = stmt.getUpdateCount();
             }
+
+            dbo.checkIntOverflow();
 
             return res.toArray(new Struct[res.size()][][]);
         } catch (SQLException e) {
@@ -384,8 +419,9 @@ public class Database extends NativeHost {
             Struct[] nulls = getNullRowValues(res.rs, fieldNames);
             if (res.rs.next()) {
                 res.dbObj.setRS(res);
-                return getRowValues(res.rs, fieldNames, fieldTypes, nulls, res.dbObj.dateFormat);
+                return getRowValues(res.rs, fieldNames, fieldTypes, nulls, res.dbObj);
             } else {
+                res.dbObj.checkIntOverflow();
                 return nulls;
             }
         } catch (Exception e) {
