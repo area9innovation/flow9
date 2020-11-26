@@ -537,7 +537,7 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupport.RendererType == "html" && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				var lineHeightGap = (style.lineHeight - style.fontSize * 1.15) / 2.0;
+				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
 				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
