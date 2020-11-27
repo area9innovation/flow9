@@ -328,6 +328,19 @@ class RenderSupport {
 		return Native.setInterval(1000, emitUserStyleChanged);
 	}
 
+	public static function setPrintPageSize(wd : Float, hgt : Float) : Void -> Void {
+		var style = Browser.document.createElement('style');
+		style.setAttribute('type', 'text/css');
+
+		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; }";
+		Browser.document.head.appendChild(style);
+
+		return function () {
+			Browser.document.head.removeChild(style);
+		}
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
