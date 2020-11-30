@@ -1,0 +1,141 @@
+import runtime;
+import ds/array;
+import ds/set;
+import math/math;
+
+// See https://github.com/thi-ng/umbrella/tree/develop/packages/transducers for inspiration
+
+export {
+	// A reducer represents a processing pipeline.
+	// The resulting type of the pipeline is ? (i.e. acc), and the individual values we send in is ??
+	Reducer(
+		// The initial value
+		init : () -> ?, 
+		// The final value is transformed here
+		final : (acc : ?) -> ?, 
+		// Each step is done here
+		reduce : (acc : ?, value : ??) -> ReducerResult<?>
+	);
+
+		// At each processing step, we either get a value or stop processing
+		ReducerResult<?> ::= ReduceAcc<?>, Reduced<?>;
+			// When the reduction should continue
+			ReduceAcc(value : ?);
+			// Used when we are fully reduced and should stop
+			Reduced(value : ?);
+
+	// Evaluate a reducer on this array of value
+	rreduce(r : Reducer<?, ??>, v : [??]) -> ?;
+
+	//
+	// Reducers
+	//
+
+	// Collect items in array
+	rpush : () -> Reducer<[?], ?>;
+
+	//
+	// Transducers
+	//
+
+	// Transforms a reducer by a fn
+	rmap(r : Reducer<?, ??>, fn : (???) -> ??) -> Reducer<?, ???>;
+
+	// Keeps only distinct values
+	rdistinct(r : Reducer<?, ??>) -> Reducer<?, ??>;
+
+	// Keeps values that match the condition
+	rfilter(r : Reducer<?, ??>, fn : (??) -> bool) -> Reducer<?, ??>;
+
+	// Keeps the maximum result value - this is different from the package, where it is the input values
+	rmax(r : Reducer<?, ??>) -> Reducer<?, ??>;
+	// This would work with input values:
+	// rmax(r : Reducer<?, ?>) -> Reducer<?, ?>;
+}
+
+// Driver
+
+rreduce(r : Reducer<?, ??>, v : [??]) -> ? {
+	acc = doRReduce(r, r.init(), v, 0);
+	r.final(acc);
+}
+
+doRReduce(r : Reducer<?, ??>, acc : ?, vs : [??], i : int) -> ? {
+	if (i < length(vs)) {
+		v = r.reduce(acc, vs[i]);
+		switch (v) {
+			ReduceAcc(nacc): {
+				doRReduce(r, nacc, vs, i + 1)
+			}
+			Reduced(val): val;
+		}
+	} else acc;
+}
+
+// Reducer
+
+rpush() -> Reducer<[?], ?> {
+	Reducer(\ -> [], \acc : [?] -> acc, \acc : [?], v : ? -> ReduceAcc(arrayPush(acc, v)));
+}
+
+// Transducers
+
+rmap(r : Reducer<?, ??>, fn : (???) -> ??) -> Reducer<?, ???> {
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v : ? -> {
+            r.reduce(acc, fn(v))
+		}
+	)
+}
+
+rdistinct(r : Reducer<?, ??>) -> Reducer<?, ??> {
+	seen = ref makeSet();
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v -> {
+			if (containsSet(^seen, v)) ReduceAcc(acc)
+			else {
+				seen := insertSet(^seen, v);
+				r.reduce(acc, v)
+			}
+		}
+	)
+}
+
+rfilter(r : Reducer<?, ??>, fn : (??) -> bool) -> Reducer<?, ??> {
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v -> {
+			if (fn(v)) {
+				r.reduce(acc, v)
+			} else ReduceAcc(acc)
+		}
+	)
+}
+
+
+rmax(r : Reducer<?, ??>) -> Reducer<?, ??> {
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v -> {
+			val = r.reduce(acc, v);
+			switch (val) {
+				Reduced(nacc): Reduced(max(acc, nacc));
+				ReduceAcc(nacc): ReduceAcc(max(acc, nacc));
+			}
+		}
+	)
+}
+
+main() {
+	// To combine into an array
+	reducer0 = rpush();
+	reducer = rmap(reducer0, i2s);
+	f = rreduce(rfilter(rdistinct(reducer), \n -> n % 3 == 0), [1, 1, 2, 3, 2, 5, 2, 1]);
+	println(f);
+}
