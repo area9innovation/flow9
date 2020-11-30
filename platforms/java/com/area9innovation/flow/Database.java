@@ -94,7 +94,7 @@ public class Database extends NativeHost {
             err = "";
             dbObj = dbo;
 
-            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
+            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
             boolean resType = stmt.execute(query, Statement.RETURN_GENERATED_KEYS);
             if (resType) {
                 rs = stmt.getResultSet();
@@ -131,8 +131,8 @@ public class Database extends NativeHost {
             db.err = "";
             return db;
         } catch (SQLException se) {
-            System.out.println(se.getMessage());
-            db.err = se.getMessage();
+            db.err = getSqlErrorMessage(se);
+            System.out.println("Error on connect db: " + db.err);
             return null;
         } catch (Exception e) {
             printException(e);
@@ -171,8 +171,9 @@ public class Database extends NativeHost {
             RSObject rso = new RSObject(dbObj, query);
             return (Object) rso;
         } catch (SQLException se) {
-            System.out.println(se.getMessage());
-            ((DBObject) database).err = se.getMessage();
+            String err = getSqlErrorMessage(se);
+            System.out.println("Error on request db: " + err);
+            ((DBObject) database).err = err;
             return null;
         } catch (Exception e) {
             printException(e);
@@ -236,7 +237,7 @@ public class Database extends NativeHost {
             if (res == null) return false;
             return notEmptyResultSet(res.rs);
         } catch (SQLException se) {
-            res.err = se.getMessage();
+            res.err = getSqlErrorMessage(se);
             return false;
         } catch (Exception e) {
             printException(e);
@@ -400,7 +401,7 @@ public class Database extends NativeHost {
 
             return res.toArray(new Struct[res.size()][][]);
         } catch (SQLException e) {
-            ((DBObject) database).err = e.getMessage();
+            ((DBObject) database).err = getSqlErrorMessage(e);
             return empty;
         } catch (Exception e) {
             printException(e);
@@ -433,5 +434,13 @@ public class Database extends NativeHost {
     public static void printException(Exception e) {
         System.out.println("Exception: '" + e.toString() + "' at:");
         e.printStackTrace();
+    }
+
+    public static String getSqlErrorMessage(SQLException e) {
+        String msg = e.getMessage();
+        if (msg == null || msg == "") {
+            msg = "Error state: " + e.getSQLState();
+        }
+        return msg;
     }
 }
