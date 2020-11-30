@@ -199,6 +199,7 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         resultRows          // result of a single sql from a query
     );
 
+    last_error = "";
     // Tell last result it's not last anymore
     if (last_result)
         last_result->releaseLast();

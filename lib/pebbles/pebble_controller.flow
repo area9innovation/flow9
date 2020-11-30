@@ -83,6 +83,7 @@ export {
 	findCurrentPebbleIntParameter : (controller : PebbleController, pathPartName : string, parameter : string, def : int) -> int;
 	findCurrentPebbleBoolParameter : (controller : PebbleController, pathPartName : string, parameter : string, def : bool) -> bool;
 
+	collectPebbleParametersAndValues(pebble : Pebble, parameters : [string]) -> [KeyValue];
 	collectCurrentPebbleParametersAndValues : (controller : PebbleController, parameters : [string]) -> [KeyValue];
 
 	pebble2mask : (pebble : Pebble) -> string;
@@ -100,7 +101,10 @@ export {
 	// Check for "debug_pebbles=true" URL flag
 	debugPebbles() -> bool;
 
-	PebbleDispatcher(dispatcher : () -> Material, handler : Maybe<(Pebble) -> void>);
+	// dispatcher builds the correspondant view
+	// handler is called just before dispatcher
+	// required will be added to pebble before it will be set (usefull for tabs e.g.)
+	PebbleDispatcher(dispatcher : () -> Material, handler : Maybe<(Pebble) -> void>, required : [KeyValue]);
 
 	// NOTE: This is an internal structure that is exported only because of technical restrictions in the old compiler! 
 	//
@@ -126,11 +130,48 @@ export {
 		// Bookkeeping for MConfirmPebbleParameterSwitch 
 		confirmations : DynamicBehaviour<[(Pebble, Pebble, (bool) -> void) -> void]>
 	);
+	pinParameter(parameter : string, value : string, show : (Pebble) -> bool) -> void;
+	unPinParameter(parameter : string) -> void;
+	getPinnedParametersTree() -> DynamicBehaviour<Tree<string, Pair<string, (Pebble) -> bool>>>;
+	updatePinnedParameter(parameter : string, value : string) -> void;
 }
 
 isControllerCreatedRef : ref bool = ref false;
 viewBoxB = make(MEmpty());
 ignoreHash : ref [string] = ref [];
+pinnedParameters : DynamicBehaviour<Tree<string, Pair<string, (Pebble) -> bool>>> = make(makeTree());
+
+getPinnedParameters(pebble : Pebble) -> [KeyValue] {
+	lastPathPartParameters = getLastPathPart(pebble, makeEmptyPathPart()).parameters;
+	foldTree(getValue(pinnedParameters), [], \k, v, acc -> ifArrayPush(
+		acc,
+		v.second(pebble) && !exists(lastPathPartParameters, \lpp -> lpp.key == k),
+		KeyValue(k, v.first)
+	))
+}
+
+pinParameter(parameter : string, value : string, show : (Pebble) -> bool) -> void {
+	nextDistinct(pinnedParameters, setTree(getValue(pinnedParameters), parameter, Pair(value, show)))
+}
+
+unPinParameter(parameter : string) -> void {
+	nextDistinct(pinnedParameters, removeFromTree(getValue(pinnedParameters), parameter))
+}
+
+getPinnedParametersTree() -> DynamicBehaviour<Tree<string, Pair<string, (Pebble) -> bool>>> {
+	pinnedParameters
+}
+
+updatePinnedParameter(parameter : string, value : string) -> void {
+	pinnedParams = getValue(pinnedParameters);
+	switch (lookupTree(pinnedParams, parameter)) {
+		None(): {}
+		Some(p): nextDistinct(
+			pinnedParameters,
+			setTree(pinnedParams, parameter, Pair(value, p.second))
+		)
+	}
+}
 
 addIgnoreHash(hash: string) ->void {
 	ignoreHash := arrayPush(^ignoreHash, hash);
@@ -141,7 +182,6 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 		println("Something is wrong. Pebble controller should be created only once per application");
 	}
 	isControllerCreatedRef := true;
-
 	dispatchers : ref Tree<string, PebbleDispatcher> = ref makeTree();
 
 	pebbleStackB = make([]);
@@ -152,9 +192,14 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 			switch(getPebbleDispatcher2(^dispatchers, pebbleAndUpdateHashUrl.first)) {
 				Some(pebbleAndDispatcher): {
 					unpair(pebbleAndDispatcher, \foundPebble, dispatcher -> {
-						pushPebble2(pebbleStackB, pebbleAndUpdateHashUrl.second, foundPebble);
+						next(viewBoxB, MEmpty());
+						pebble2Push = setLastPathPartParameters(
+							foundPebble,
+							getLastPathPartParametersDefs(foundPebble, dispatcher.required)
+						);
+						pushPebble2(pebbleStackB, pebbleAndUpdateHashUrl.second, pebble2Push);
 						switch (dispatcher.handler) {
-							Some(handler): handler(foundPebble);
+							Some(handler): handler(pebble2Push);
 							None(): {}
 						}
 						next(viewBoxB, dispatcher.dispatcher());
@@ -170,7 +215,7 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 	view = ref MEmpty();
 	
 	controller = PebbleController(
-		dispatchers, 
+		dispatchers,
 		view,
 		setViewFn,
 		pebbleStackB,
@@ -233,6 +278,8 @@ clearPebbleController(controller : PebbleController) -> void {
 	next(controller.confirmations, []);
 	next(controller.currentPebbleB, makeEmptyPebble());
 	pushPebble2UrlHash(makeEmptyPebble());
+	ignoreHash := [];
+	next(pinnedParameters, makeTree());
 }
 
 getPebblesControlledView(controller : PebbleController) -> Material {
@@ -240,7 +287,7 @@ getPebblesControlledView(controller : PebbleController) -> Material {
 }
 
 registerDispatcher(controller : PebbleController, mask : string, dispatcher : () -> Material) -> void {
-	controller.dispatchers := setTree(^(controller.dispatchers), mask, PebbleDispatcher(dispatcher, None()));
+	controller.dispatchers := setTree(^(controller.dispatchers), mask, PebbleDispatcher(dispatcher, None(), []));
 }
 
 registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
@@ -286,7 +333,10 @@ mask2pebble(mask : string) -> Pebble {
 restoreLastPebble(controller : PebbleController, pebble : Pebble) -> void {
 	setViewFromPebble(
 		controller,
-		findLastPebbleInStack(controller, lastElement(pebble.path, makeEmptyPathPart()), pebble)
+		setLastPathPartParameters(
+			findLastPebbleInStack(controller, lastElement(pebble.path, makeEmptyPathPart()), pebble),
+			getPinnedParameters(pebble)
+		)
 	)
 }
 
@@ -325,11 +375,12 @@ setViewFromPebbleIfRequired(controller : PebbleController, current : Pebble, peb
 	//} 
 	// we don't want to push broken pebbles
 	if (!isBrokenPebble(pebble) && pebble != makeEmptyPebble()) {
+		pinnedPebble = setLastPathPartParameters(pebble, getPinnedParameters(pebble));
 		if (pebble2mask(pebble) == pebble2mask(current)) {
 			// only parameters changed
-			pushPebble(controller, pebble);
+			pushPebble(controller, pinnedPebble);
 		} else {
-			controller.setViewFn.fn(Pair(pebble, true))
+			controller.setViewFn.fn(Pair(pinnedPebble, true))
 		}
 	}
 }
@@ -580,9 +631,11 @@ findCurrentPebbleBoolParameter(controller : PebbleController, pathPartName : str
 }
 
 collectCurrentPebbleParametersAndValues(controller : PebbleController, parameters : [string]) -> [KeyValue] {
-	currentPebble = getCurrentPebble(controller);
+	collectPebbleParametersAndValues(getCurrentPebble(controller), parameters)
+}
 
-	fold(currentPebble.path, [], \acc : [KeyValue], pp : PathPart -> {
+collectPebbleParametersAndValues(pebble : Pebble, parameters : [string]) -> [KeyValue] {
+	fold(pebble.path, [], \acc : [KeyValue], pp : PathPart -> {
 		fold(pp.parameters, acc, \acc2, parameter : KeyValue -> {
 			if (contains(parameters, parameter.key)) {
 				arrayPush(acc2, parameter)

@@ -12,7 +12,7 @@ export {
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
-		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled;
+		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled, TScrollResizeBeforePrint;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -123,7 +123,7 @@ export {
 		TOnScrolledToBottom(event : () -> void);
 		TOnScrolledToSide(event : () -> void);
 
-		TScrollFadeContent(color : int, width : double);
+		TScrollFadeContent(color : int, width : double, start : bool, end : bool);
 
 		TScrollMouseEnabled(enabled : Transform<bool>);
 		TScrollPosition(position : DynamicBehaviour<Point>);
@@ -137,6 +137,7 @@ export {
 		TScrollInspectShowScrolling(show : DynamicBehaviour<bool>);
 
 		TScrollbarOverlapContent(overlap : bool); // true by default
+		TScrollResizeBeforePrint(resize : bool); // Resize to the max content height before printing page, true by default
 
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
 
@@ -178,7 +179,8 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 		if (overlapContent) const(WidthHeight(0., 0.))
 		else fwh(scrollBarStyles.y.thickness, scrollBarStyles.x.thickness)
 	)).box;
-	scrollFadeContent = tryExtractStruct(style, TScrollFadeContent(0, 0.0));
+	scrollFadeContent = tryExtractStruct(style, TScrollFadeContent(0, 0.0, false, false));
+	scrollResizeBeforePrint = extractStruct(style, TScrollResizeBeforePrint(true)).resize;
 
 	onScrolledToBottom = tryExtractStruct(style, TOnScrolledToBottom(nop));
 	onScrolledToSide = tryExtractStruct(style, TOnScrolledToSide(nop));
@@ -226,7 +228,16 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 			else
 				boxWHCutted;
 
-		b = TAttachBox(box, boxWH0) |> t2a;
+		rend = make(false);
+		printMode = make(false);
+		b =
+			TAttachBox(
+				if (scrollResizeBeforePrint)
+					TGroup2(box, TShow(fand(printMode, rend), TSized(contentWH)))
+				else
+					box,
+				boxWH0
+			) |> t2a;
 
 		cAcc = ref zeroTAcc;
 		cAcc2 = ref zeroTAcc;
@@ -236,7 +247,17 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					0.0,
 					0.0,
 					interactiveRectangleStyle,
-					TAttachBox(content, contentWH)
+					if (scrollResizeBeforePrint)
+						TConstruct(
+							[
+								\ -> \ -> next(printMode, false),
+								\ -> addEventListener(getStage(), "beforeprint", \ -> next(printMode, true)),
+								\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false))
+							],
+							TAttachBox(TRenderable(rend, content), contentWH)
+						)
+					else
+						TAttachBox(content, contentWH)
 				)
 				|> (\t ->
 					TransformTAcc2(\t2a2 -> {
@@ -482,19 +503,25 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 								)
 								|> (\t -> TAlpha(fmin(fdivide(offset, const(sfc.width)), const(1.)), t));
 
-							[
-								gradientBlock(
-									if (vertical) fpointY(scrollPosition)
-									else fpointX(scrollPosition),
-									gradientPointsStart
-								),
-								if (vertical) TFillY() else TFillX(),
-								gradientBlock(
-									if (vertical) fsubtract(fheight(maxWH), fpointY(scrollPosition))
-									else fsubtract(fwidth(maxWH), fpointX(scrollPosition)),
-									gradientPointsEnd
-								)
-							]
+							concatA([
+								if (sfc.start)
+									[gradientBlock(
+										if (vertical) fpointY(scrollPosition)
+										else fpointX(scrollPosition),
+										gradientPointsStart
+									)]
+								else [],
+
+								[if (vertical) TFillY() else TFillX()],
+
+								if (sfc.end)
+									[gradientBlock(
+										if (vertical) fsubtract(fheight(maxWH), fpointY(scrollPosition))
+										else fsubtract(fwidth(maxWH), fpointX(scrollPosition)),
+										gradientPointsEnd
+									)]
+								else []
+							])
 							|> (\t -> if (vertical) TLines(t) else TColsDir(t, isRTL));
 						}
 						TGroup2(

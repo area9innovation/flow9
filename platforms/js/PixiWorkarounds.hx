@@ -394,6 +394,7 @@ class PixiWorkarounds {
 				let lines = '';
 
 				const cache = {};
+				const wordSpacing = style.wordSpacing || 0;
 				const letterSpacing = style.letterSpacing;
 				const whiteSpace = style.whiteSpace;
 
@@ -563,7 +564,7 @@ class PixiWorkarounds {
 							line += token;
 
 							// update width counter
-							width += tokenWidth;
+							width += tokenWidth + (token != ' ' ? wordSpacing : 0.0);
 						}
 					}
 				}
@@ -603,6 +604,13 @@ class PixiWorkarounds {
 				}
 
 				return width;
+			}
+
+			var nativeSetProperty = CSSStyleDeclaration.prototype.setProperty;
+
+			CSSStyleDeclaration.prototype.setProperty = function(propertyName, value, priority) {
+				RenderSupport.checkUserStyleChanged();
+				nativeSetProperty.call(this, propertyName, value, priority);
 			}
 
 			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
@@ -660,19 +668,11 @@ class PixiWorkarounds {
 				const lineWidths = new Array(lines.length);
 				let maxLineWidth = 0;
 
-				const spaceWidth = Platform.isSafari ? context.measureText(' ').width : 0;
-
 				for (let i = 0; i < lines.length; i++)
 				{
 					let lineWidth;
-					if (Platform.isSafari) {
-						let spacesCount = 0;
-						lineWidth = context.measureText(lines[i].replace(/ /g, function(){ spacesCount++; return '';})).width;
-						lineWidth += spacesCount * spaceWidth;
-					} else {
-						lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					}
-					lineWidth += (lines[i].length - 1) * style.letterSpacing;
+					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
+					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
 
 					lineWidths[i] = lineWidth;
 					maxLineWidth = Math.max(maxLineWidth, lineWidth);

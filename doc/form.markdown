@@ -371,7 +371,7 @@ ourselves.
 
 Alternative to `Disposer` form is the following:
 
-	Constructor(form : Form, fn : () -> (() -> void));
+	Constructor(form : Form, fn : () -> () -> void);
 
 Like `Disposer` it has no visual representation itself. It provides not only dispose facility,
 but also construct one. The function provided is a good place for additional subscriptions or other

@@ -34,7 +34,11 @@ fcProcessRequest(serverConf : CompilerConfig, globEnv : FcTypeEnvGlobal, req : s
 					if (!(isConfigParameterTrue(conf.config, "symbol-info") || isConfigParameterTrue(conf.config, "print-flow-dir"))) {
 						fcPrintln("Processing '" + conf.flowfile + "' on " + getConfigParameter(serverConf.config, "server-mode") + " server", config.threadId);
 					}
-					fcServerLog("Request: " + escapeStr(nonDefaultCompilerConfigToString(config)), serverConf);
+					// Special watermark for non-logging
+					log_request = !isConfigParameterSet(conf.config, "do_not_log_this");
+					if (log_request) {
+						fcServerLog("Request: " + escapeStr(nonDefaultCompilerConfigToString(config)), serverConf);
+					}
 					start_time = timestamp();
 					runConfigLocally(conf, globEnv, \code -> {
 						pair.second();
@@ -46,7 +50,9 @@ fcProcessRequest(serverConf : CompilerConfig, globEnv : FcTypeEnvGlobal, req : s
 						}
 						clearFcOutput(conf.threadId);
 						clearTimePhases(conf.threadId);
-						fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(if (bin_out) "<binary>" else out), serverConf);
+						if (log_request) {
+							fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(if (bin_out) "<binary>" else out), serverConf);
+						}
 						out_cb(code, out);
 						loop_cb();
 					});
@@ -77,11 +83,17 @@ fcConsoleServer(config : CompilerConfig) -> void {
 fcRunConsoleServer(globEnv : FcTypeEnvGlobal, config : CompilerConfig) -> void {
 	switch (fcLspReadRequest()) {
 		Some(req): {
-			fcServerLog("Request: " + escapeStr(req.request), config);
+			// Special watermark for non-logging
+			log_request = !strContains(req.request, "do_not_log_this");
+			if (log_request) {
+				fcServerLog("Request: " + escapeStr(req.request), config);
+			}
 			start_time = timestamp();
 			fcProcessRequest(config, globEnv, req.json, 
 				\__, msg -> {
-					fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(msg), config);
+					if (log_request) {
+						fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(msg), config);
+					}
 					print(msg);
 				},
 				\-> fcRunConsoleServer(globEnv, config),
@@ -108,17 +120,21 @@ fcHttpServer(config : CompilerConfig) -> void {
 			fcPrintln("Http server started.", config.threadId)
 		},
 		\request, response -> {
-			fcProcessRequest(config, globEnv, request.body,
-				\code, output -> HttpResponse(200 + code, output, []) |> response,
-				nop,
-				\-> {
-					fcPrintln("Http server stopped.", config.threadId);
-					fcServerLog("Http server stopped.", config);
-					HttpResponse(200, fcOutput(config.threadId), []) |> response;
-					^server();
-					quit(0);
-				}
-			)
+			if (request.body == "ping") {
+				HttpResponse(200, "Flow http server is online", []) |> response
+			} else {
+				fcProcessRequest(config, globEnv, request.body,
+					\code, output -> HttpResponse(200 + code, output, []) |> response,
+					nop,
+					\-> {
+						fcPrintln("Http server stopped.", config.threadId);
+						fcServerLog("Http server stopped.", config);
+						HttpResponse(200, fcOutput(config.threadId), []) |> response;
+						^server();
+						quit(0);
+					}
+				);
+			}
 		}
 	);
 }

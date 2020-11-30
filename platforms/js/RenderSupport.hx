@@ -224,10 +224,20 @@ class RenderSupport {
 		return false;
 	}
 
+	private static var UserStyleTestElement = null;
+	private static function createUserStyleTestElement() : Void {
+		if (UserStyleTestElement == null) {
+			UserStyleTestElement = Browser.document.createElement("p");
+			UserStyleTestElement.setAttribute("role", "presentation");
+			UserStyleTestElement.style.visibility = "hidden";
+			Browser.document.body.appendChild(UserStyleTestElement);
+		}
+	}
 	private static var UserDefinedFontSize : Float = null;
 	private static function getUserDefinedFontSize() : Float {
 		if (UserDefinedFontSize == null) {
-			var style = Browser.window.getComputedStyle(Browser.document.body);
+			createUserStyleTestElement();
+			var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
 			UserDefinedFontSize = Std.parseFloat(style.fontSize);
 		}
@@ -239,25 +249,96 @@ class RenderSupport {
 		return UserDefinedFontSize;
 	}
 
-	private static var UserDefinedLetterSpacing : Float = null;
+	private static var UserDefinedLetterSpacing = 0.0;
 	private static function getUserDefinedLetterSpacing() : Float {
-		if (UserDefinedLetterSpacing == null) {
-			var div = Browser.document.createElement("p");
-			Browser.document.body.appendChild(div);
-			var style = Browser.window.getComputedStyle(div);
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
-			UserDefinedLetterSpacing = style.letterSpacing != "normal"
-				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) * getUserDefinedFontSize() : Std.parseFloat(style.letterSpacing))
-				: 0.0;
-
-			Browser.document.body.removeChild(div);
-		}
-
-		if (Math.isNaN(UserDefinedLetterSpacing)) {
-			UserDefinedLetterSpacing = 0.0;
-		}
+		UserDefinedLetterSpacing = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
+			: 0.0;
 
 		return UserDefinedLetterSpacing;
+	}
+
+	private static var UserDefinedLineHeightPercent = 1.15;
+	private static function getUserDefinedLineHeightPercent() : Float {
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
+
+		UserDefinedLineHeightPercent = style.lineHeight != "normal"
+			? (new String(style.lineHeight).indexOf("em") >= 0 ? Std.parseFloat(style.lineHeight) : Std.parseFloat(style.lineHeight) / Std.parseFloat(style.fontSize))
+			: 1.15;
+
+		return UserDefinedLineHeightPercent;
+	}
+
+	private static var UserDefinedWordSpacingPercent = 0.0;
+	private static function getUserDefinedWordSpacingPercent() : Float {
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
+
+		UserDefinedWordSpacingPercent = style.wordSpacing != "normal"
+			? (new String(style.wordSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.wordSpacing) : Std.parseFloat(style.wordSpacing) / Std.parseFloat(style.fontSize))
+			: 0.0;
+
+		return UserDefinedWordSpacingPercent;
+	}
+
+	private static var UserDefinedLetterSpacingPercent = 0.0;
+	private static function getUserDefinedLetterSpacingPercent() : Float {
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
+
+		UserDefinedLetterSpacingPercent = style.letterSpacing != "normal"
+			? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
+			: 0.0;
+
+		return UserDefinedLetterSpacingPercent;
+	}
+
+	private static var UserStylePending = false;
+	public static function emitUserStyleChanged() {
+		if (!UserStylePending) {
+			UserStylePending = true;
+			var userStyleChanged = RenderSupport.checkUserStyleChanged();
+			RenderSupport.once("drawframe", function() {
+				if (userStyleChanged) {
+					RenderSupport.emit("userstylechanged");
+				}
+				UserStylePending = false;
+			});
+		}
+	}
+
+	public static function checkUserStyleChanged() : Bool {
+		return (untyped (UserDefinedLetterSpacing != getUserDefinedLetterSpacing()) | (UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) |
+			(UserDefinedWordSpacingPercent != getUserDefinedWordSpacingPercent()) | (UserDefinedLineHeightPercent != getUserDefinedLineHeightPercent()));
+	}
+
+	public static function isInsideFrame() : Bool {
+		try {
+			return untyped __js__("window.self !== window.top");
+		} catch (e : Dynamic) {
+			return true;
+		}
+	}
+
+	public static function monitorUserStyleChanges() : Void -> Void {
+		return Native.setInterval(1000, emitUserStyleChanged);
+	}
+
+	public static function setPrintPageSize(wd : Float, hgt : Float) : Void -> Void {
+		var style = Browser.document.createElement('style');
+		style.setAttribute('type', 'text/css');
+
+		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; }";
+		Browser.document.head.appendChild(style);
+
+		return function () {
+			Browser.document.head.removeChild(style);
+		}
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -507,11 +588,37 @@ class RenderSupport {
 	//
 	//	Browser window events
 	//
+
+	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
+	private static var printMode = false;
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
-		Browser.window.addEventListener('blur', function () { PageWasHidden = true; }, false);
+		Browser.window.addEventListener('blur', function () {
+			PageWasHidden = true;
+
+			for (key in keysPending) {
+				key.preventDefault = function() {};
+				emit("keyup", key);
+			}
+		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+		var prevInvalidateRenderable = true;
+		Browser.window.addEventListener('beforeprint', function () {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+			PixiStage.forceClipRenderable();
+			emit("beforeprint");
+			forceRender();
+		}, false);
+
+		Browser.window.addEventListener('afterprint', function () {
+			DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+			printMode = false;
+			emit("afterprint");
+			forceRender();
+		}, false);
 
 		// Make additional resize for mobile fullscreen mode
 		if (Platform.isMobile) {
@@ -691,7 +798,7 @@ class RenderSupport {
 	}
 
 	private static inline function getScreenSize() {
-		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
+		if (Platform.isIOS && (Platform.isChrome || Platform.isSafari || ProgressiveWebTools.isRunningPWA())) {
 			var is_portrait = isPortaitOrientation();
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
@@ -710,6 +817,8 @@ class RenderSupport {
 	}
 
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
+		if (printMode) return;
+
 		backingStoreRatio = getBackingStoreRatio();
 
 		if (backingStoreRatio != PixiRenderer.resolution) {
@@ -1373,6 +1482,14 @@ class RenderSupport {
 		}
 	}
 
+	public static function setClipClassName(clip : Dynamic, className : String) : Void {
+		if (clip.nativeWidget != null) {
+			clip.nativeWidget.classList.add(className);
+		}
+
+		clip.className = className;
+	}
+
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
 		if (clip.nativeWidget != null && clip.shouldPreventFromBlur != null) {
 			clip.shouldPreventFromBlur = true;
@@ -1774,7 +1891,8 @@ class RenderSupport {
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
 			var a = clip.worldTransform;
-			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
+			var az = getAccessibilityZoom();
+			return [a.a / az, a.b, a.c, a.d / az, a.tx / az, a.ty / az];
 		} else {
 			return [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 		}
@@ -2122,6 +2240,12 @@ class RenderSupport {
 	public static function addKeyEventListener(clip : DisplayObject, event : String,
 		fn : String -> Bool -> Bool -> Bool -> Bool -> Int -> (Void -> Void) -> Bool) : Void -> Void {
 		var keycb = function(ke) {
+			if (event == "keydown") {
+				keysPending.set(ke.keyCode, ke);
+			} else {
+				keysPending.remove(ke.keyCode);
+			}
+
 			fn(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode, ke.preventDefault);
 		}
 
@@ -2138,7 +2262,12 @@ class RenderSupport {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (untyped HaxeRuntime.instanceof(clip, Element)) {
+		if (event == "userstylechanged" || event == "beforeprint" || event == "afterprint") {
+			on(event, fn);
+			return function () {
+				off(event, fn);
+			}
+		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
 		} else {
@@ -2404,6 +2533,17 @@ class RenderSupport {
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = untyped clip.getWidth();
 			var clipHeight = untyped clip.getHeight();
+			if (checkAlpha != null && untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
+				try {
+					var tempCanvas = Browser.document.createElement('canvas');
+					untyped tempCanvas.width = clipWidth;
+					untyped tempCanvas.height = clipHeight;
+					var ctx = untyped tempCanvas.getContext('2d');
+					untyped ctx.drawImage(clip.nativeWidget, 0, 0, clipWidth, clipHeight);
+					var pixel = ctx.getImageData(local.x, local.y, 1, 1);
+					if (pixel.data[3] * clip.worldAlpha / 255 < checkAlpha) return null;
+				} catch (e : Dynamic) {}
+			}
 
 			if (local.x >= 0.0 && local.y >= 0.0 && local.x <= clipWidth && local.y <= clipHeight) {
 				return clip;
@@ -2516,6 +2656,10 @@ class RenderSupport {
 
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
+	}
+
+	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
+		picture.switchUseCrossOrigin(useCrossOrigin);
 	}
 
 	public static function cursor2css(cursor : String) : String {
@@ -2930,9 +3074,9 @@ class RenderSupport {
 
 	public static function setFavIcon(url : String) : Void {
 		var head = Browser.document.getElementsByTagName('head')[0];
-		var oldNode = Browser.document.getElementById('dynamic-favicon');
+		var oldNode = Browser.document.getElementById('app-favicon');
 		var node = Browser.document.createElement('link');
-		node.setAttribute("id", "dynamic-favicon");
+		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
 		node.setAttribute("href", url);
 		node.setAttribute("type", "image/ico");
@@ -3064,6 +3208,10 @@ class RenderSupport {
 
 	public static function setWebClipDisabled(clip : WebClip, disabled : Bool) : Void {
 		clip.setDisableOverlay(disabled);
+	}
+
+	public static function setWebClipNoScroll(clip : WebClip) : Void {
+		clip.setNoScroll();
 	}
 
 	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {

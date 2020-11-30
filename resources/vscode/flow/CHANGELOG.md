@@ -145,3 +145,10 @@
  
 ## 0.4.6
  - flow interactive console is added. 
+
+## 0.4.7
+ - another LSP server is added (flowc_lsp), choice of LSP servers is modified. 
+
+## 0.4.8
+ - command 'execCommand' on execution of a general command (like server-cache-info=1) on server is added.
+ - http server status displays main memory stats: Used, Free and Total memory. 
