@@ -1,4 +1,5 @@
 import material/internal/material_ellipsis;
+import material/internal/material_ripple;
 
 export {
 	MGraphicsState : (
@@ -30,6 +31,12 @@ export {
 		graphicsState : Transform<MGraphicsState>,
 		dynamicColor : DynamicBehaviour<MColor>) -> (Tropic) -> Tropic;
 
+	addMFilledUnderline(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		graphicsState : Transform<MGraphicsState>,
+		dynamicColor : DynamicBehaviour<MColor>) -> (Tropic) -> Tropic;
+
 	MFloatingLabelState(
 		progress : DynamicBehaviour<double>,
 		showFloatingLabel : Transform<bool>,
@@ -52,7 +59,7 @@ export {
 		m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
-outlineDuration = easingTransitionDuration;
+skinAnimationDuration = easingTransitionDuration;
 
 addMOutline(
 	manager : MaterialManager,
@@ -64,8 +71,10 @@ addMOutline(
 
 	\tr -> {
 		size = makeWH();
+		baseline = make(0.);
+		
 		TGroup2SameMetrics(
-			TAttachBox(tr, size),
+			TInspect([ISize(size), IBaseline(baseline)], tr),
 			MOutline(
 				manager,
 				parent,
@@ -76,6 +85,7 @@ addMOutline(
 				dynamicColor
 			)
 		)
+		|> (\t -> TBaseline(baseline, t))
 	}
 }
 
@@ -105,7 +115,7 @@ MOutline(
 	MEasingAnimation(
 		manager,
 		parent,
-		const(outlineDuration),
+		const(skinAnimationDuration),
 		const(easingStandartCurve),
 		stateWithLast,
 		\st -> Some(st),
@@ -284,6 +294,112 @@ graphicsStateLerp(
 	);
 }
 
+addMFilledUnderline(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	graphicsState : Transform<MGraphicsState>,
+	dynamicColor : DynamicBehaviour<MColor>) -> (Tropic) -> Tropic {
+
+	width = make(0.);
+	\t ->
+		TBaselineLines2(
+			TAttachWidth(t, width),
+			MFilledUnderline(manager, parent, width, graphicsState, dynamicColor)
+		)
+}
+
+MFilledUnderline(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	width : DynamicBehaviour<double>,
+	graphicsState : Transform<MGraphicsState>,
+	dynamicColor : DynamicBehaviour<MColor>) -> Tropic {
+
+	initState       = fgetValue(graphicsState);
+	backgroundState = make(initState);
+	rippleState     = make(None());
+	rippleTrigger   = make(false);
+
+	stateWithLast =
+		fselectWithLast(
+			graphicsState,
+			FLift2(\prev, curr -> Pair(prev, curr))
+		);
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(skinAnimationDuration),
+		const(easingStandartCurve),
+		stateWithLast,
+		\st -> {
+			// Swap buffers
+			maybeApply(getValue(rippleState), \s -> {
+				next(backgroundState, s);
+				next(rippleState, None());
+				next(rippleTrigger, false);
+			});
+
+			if (st.second.ripple) {
+				next(rippleState, Some(st.second));
+				deferred(\ -> next(rippleTrigger, true));
+				None();
+			} else {
+				Some(st);
+			}
+		},
+		\st, percent -> {
+			prev = st.first;
+			curr = st.second;
+			next(backgroundState, graphicsStateLerp(prev, curr, percent));
+		},
+		[],
+		TGroup2(
+			TSelect(backgroundState, \st -> if (st.opacity == 0.0) {
+				TEmpty();
+			} else if (st.strokeWidth == 0.0) {
+				TDynamicGraphics(
+					fselect(width, FLift(\w -> 
+						generate(0, floor(w / 4.0), \i ->
+							[MoveTo(i2d(i) * 4.0, 0.0), LineTo(i2d(i) * 4.0 + 1.0, 0.0)]
+						) |> concatA
+					)),
+					const([Stroke(st.color), StrokeOpacity(st.opacity)])
+				)
+			} else {
+				TRectangle(
+					[Fill(st.color), FillOpacity(st.opacity)],
+					TFillXH(st.strokeWidth)
+				);
+			})
+				|> (\f -> TTweak([TAlign(const(0.0), const(1.0))], f, TFixed(0.0, 2.0))),
+			TSelect(rippleState, \st ->
+				eitherMap(
+					st,
+					\s ->
+						MRipple2T(
+							manager,
+							parent,
+							TFillXH(s.strokeWidth),
+							rippleTrigger,
+							[
+								MRippleColor(const(MCustomColor(s.color))),
+								MRippleOpacity(const(1.0)),
+								MRippleType(const(MRippleFill())),
+								MRipplePosition(fselect(width, FLift(\w -> Point(w / 2.0, s.strokeWidth / 2.0))))
+							]
+						),
+					TEmpty()
+				)
+			)
+		)
+		|> (\t -> TConstruct([
+			makeSubscribe2(backgroundState, \st -> nextDistinct(dynamicColor, MCustomColor(st.color))),
+			makeSubscribe2(rippleState, \rSt -> maybeApply(rSt, \st -> nextDistinct(dynamicColor, MCustomColor(st.color))))
+		], t))
+	);
+}
+
 makeMFloatingLabel(
 	manager : MaterialManager,
 	parent : MFocusGroup,
@@ -310,7 +426,7 @@ makeMFloatingLabel(
 	MEasingAnimation(
 		manager,
 		parent,
-		const(outlineDuration),
+		const(skinAnimationDuration),
 		const(easingStandartCurve),
 		state.showFloatingLabel,
 		\fl -> {

@@ -1,0 +1,270 @@
+import runtime;
+import ds/array;
+import ds/set;
+import math/math;
+
+// See https://github.com/thi-ng/umbrella/tree/develop/packages/transducers for inspiration
+
+export {
+	// A reducer represents a processing pipeline.
+	// The resulting type of the pipeline is ? (i.e. acc), and the individual values we send in is ??
+	Reducer(
+		// The initial value
+		init : () -> ?, 
+		// The final value is transformed here
+		final : (acc : ?) -> ?, 
+		// Each step is done here
+		reduce : (acc : ?, value : ??) -> ReducerResult<?>
+	);
+
+		// At each processing step, we either get a value or stop processing
+		ReducerResult<?> ::= ReduceAcc<?>, Reduced<?>;
+			// When the reduction should continue
+			ReduceAcc(value : ?);
+			// Used when we are fully reduced and should stop
+			Reduced(value : ?);
+
+	//
+	// Drivers (all linear time)
+	//
+
+	// Evaluate a reducer on this array of values
+	rreduce(r : Reducer<?, ??>, v : [??]) -> ?;
+
+	// Evaluate a reducer on this list of values
+	rreduceList(r : Reducer<?, ??>, v : List<??>) -> ?;
+
+	// Evaluate a reducer on this tree of values
+	rreduceTree(r : Reducer<?, Pair<??, ???>>, v : Tree<??, ???>) -> ?;
+
+	// Evaluate a reducer on the keys from this tree
+	rreduceTreeKeys(r : Reducer<?, ??>, v : Tree<??, ???>) -> ?;
+
+	// Evaluate a reducer on this set of values
+	rreduceSet(r : Reducer<?, ??>, set : Set<??>) -> ?;
+
+	//
+	// Reducers
+	//
+
+	// Collect items in a list - O(n)
+	rlist : () -> Reducer<List<?>, ?>;
+	// Collect items in array - O(n^2)
+	rarray : () -> Reducer<[?], ?>;
+	// Collect items in a set - O(n log n)
+	rset : () -> Reducer<Set<?>, ?>;
+	// Collect items in a tree - O(n log n)
+	rtree : () -> Reducer<Tree<?, ??>, Pair<?, ??>>;
+
+	//
+	// Transducers
+	//
+
+	// Transforms a reducer by a fn
+	rmap(r : Reducer<?, ??>, fn : (???) -> ??) -> Reducer<?, ???>;
+
+	// Keeps only distinct values - n log n
+	rdistinct(r : Reducer<?, ??>) -> Reducer<?, ??>;
+
+	// Keeps values that match the condition
+	rfilter(r : Reducer<?, ??>, fn : (??) -> bool) -> Reducer<?, ??>;
+
+	// Keeps the maximum result value - this is different from the package, where it is the input values
+	rmax(r : Reducer<?, ??>) -> Reducer<?, ??>;
+	// This would work with input values:
+	// rmax(r : Reducer<?, ?>) -> Reducer<?, ?>;
+}
+
+//
+// Drivers
+//
+
+rreduce(r : Reducer<?, ??>, v : [??]) -> ? {
+	acc = doRReduce(r, r.init(), v, 0);
+	r.final(acc);
+}
+
+doRReduce(r : Reducer<?, ??>, acc : ?, vs : [??], i : int) -> ? {
+	if (i < length(vs)) {
+		v = r.reduce(acc, vs[i]);
+		switch (v) {
+			ReduceAcc(nacc): {
+				doRReduce(r, nacc, vs, i + 1)
+			}
+			Reduced(val): val;
+		}
+	} else acc;
+}
+
+rreduceList(r : Reducer<?, ??>, v : List<??>) -> ? {
+	acc = doRReduceList(r, r.init(), v);
+	r.final(acc);
+}
+
+doRReduceList(r : Reducer<?, ??>, acc : ?, vs : List<??>) -> ? {
+	switch (vs) {
+		EmptyList(): acc;
+		Cons(v1, t): {
+			v = r.reduce(acc, v1);
+			switch (v) {
+				ReduceAcc(nacc): {
+					doRReduceList(r, nacc, t)
+				}
+				Reduced(val): val;
+			}
+		}
+	}
+}
+
+rreduceTree(r : Reducer<?, Pair<??, ???>>, tree : Tree<??, ???>) -> ? {
+	acc = doRReduceTree(r, r.init(), tree);
+	r.final(acc.value);
+}
+
+doRReduceTree(r : Reducer<?, Pair<??, ???>>, acc : ?, tree : Tree<??, ???>) -> ReducerResult<?> {
+	switch (tree : Tree) {
+		TreeEmpty(): ReduceAcc(acc);
+		TreeNode(k, v, left, right, depth): {
+			acc1 = doRReduceTree(r, acc, left);
+			switch (acc1) {
+				ReduceAcc(nacc1): {
+					// OK, there is more
+					acc2 = r.reduce(nacc1, Pair(k, v));
+					switch (acc2) {
+						ReduceAcc(nacc2): {
+							// OK, there is more
+							doRReduceTree(r, nacc2, right);
+						}
+						Reduced(value): acc2; // We are done
+					}
+				}
+				Reduced(value): acc1;	// We are done
+			}
+		}
+	}
+}
+
+rreduceTreeKeys(r : Reducer<?, ??>, tree : Tree<??, ???>) -> ? {
+	acc = doRReduceTreeKeys(r, r.init(), tree);
+	r.final(acc.value);
+}
+
+doRReduceTreeKeys(r : Reducer<?, ??>, acc : ?, tree : Tree<??, ???>) -> ReducerResult<?> {
+	switch (tree : Tree) {
+		TreeEmpty(): ReduceAcc(acc);
+		TreeNode(k, v, left, right, depth): {
+			acc1 = doRReduceTreeKeys(r, acc, left);
+			switch (acc1) {
+				ReduceAcc(nacc1): {
+					// OK, there is more
+					acc2 = r.reduce(nacc1, k);
+					switch (acc2) {
+						ReduceAcc(nacc2): {
+							// OK, there is more
+							doRReduceTreeKeys(r, nacc2, right);
+						}
+						Reduced(value): acc2; // We are done
+					}
+				}
+				Reduced(value): acc1;	// We are done
+			}
+		}
+	}
+}
+
+rreduceSet(r : Reducer<?, ??>, set : Set<??>) -> ? {
+	rreduceTreeKeys(r, set.tree);
+}
+
+//
+// Reducers
+//
+
+rlist() -> Reducer<List<?>, ?> {
+	Reducer(\ -> makeList(), \acc : List<?> -> acc, \acc : List<?>, v : ? -> ReduceAcc(Cons(v, acc)));
+}
+
+rarray() -> Reducer<[?], ?> {
+	Reducer(\ -> [], \acc : [?] -> acc, \acc : [?], v : ? -> ReduceAcc(arrayPush(acc, v)));
+}
+
+rset() -> Reducer<Set<?>, ?> {
+	Reducer(\ -> makeSet(), \acc : Set<?> -> acc, \acc : Set<?>, v : ? -> ReduceAcc(insertSet(acc, v)));
+}
+
+rtree() -> Reducer<Tree<?, ??>, Pair<?, ??>> {
+	Reducer(\ -> makeTree(), \acc : Tree<?, ??> -> acc, \acc : Tree<?, ??>, v : Pair<?, ??> -> ReduceAcc(setTree(acc, v.first, v.second)));
+}
+
+
+//
+// Transducers
+//
+
+rmap(r : Reducer<?, ??>, fn : (???) -> ??) -> Reducer<?, ???> {
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v : ? -> {
+            r.reduce(acc, fn(v))
+		}
+	)
+}
+
+rdistinct(r : Reducer<?, ??>) -> Reducer<?, ??> {
+	seen = ref makeSet();
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v -> {
+			if (containsSet(^seen, v)) ReduceAcc(acc)
+			else {
+				seen := insertSet(^seen, v);
+				r.reduce(acc, v)
+			}
+		}
+	)
+}
+
+rfilter(r : Reducer<?, ??>, fn : (??) -> bool) -> Reducer<?, ??> {
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v -> {
+			if (fn(v)) {
+				r.reduce(acc, v)
+			} else ReduceAcc(acc)
+		}
+	)
+}
+
+
+rmax(r : Reducer<?, ??>) -> Reducer<?, ??> {
+	Reducer(
+		r.init,
+		r.final,
+		\acc, v -> {
+			val = r.reduce(acc, v);
+			switch (val) {
+				Reduced(nacc): Reduced(max(acc, nacc));
+				ReduceAcc(nacc): ReduceAcc(max(acc, nacc));
+			}
+		}
+	)
+}
+
+/*
+main() {
+	// To combine into an array
+	reducer0 = rarray();
+	reducer = rmap(reducer0, i2s);
+	f = rreduce(rfilter(rdistinct(reducer), \n -> n % 3 == 0), [1, 1, 2, 3, 2, 5, 2, 1]);
+	println(f);
+
+	f2 = rreduceTree(rarray(), setTree(makeTree1(2, -2), 1, -1));
+	println(f2);
+
+	f3 = rreduceSet(rarray(), buildSet([1,2,3]));
+	println(f3);
+}
+*/
