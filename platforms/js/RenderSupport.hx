@@ -341,6 +341,20 @@ class RenderSupport {
 		}
 	}
 
+	public static function getClipHTML(clip : DisplayObject) : String {
+		printMode = true;
+		var prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+		DisplayObjectHelper.InvalidateRenderable = false;
+		clip.initNativeWidget();
+		PixiStage.forceClipRenderable();
+		forceRender();
+		var nativeWidget : Dynamic = untyped clip.nativeWidget;
+		var content = nativeWidget ? nativeWidget.innerHTML : '';
+		printMode = false;
+		DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+		return content;
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);

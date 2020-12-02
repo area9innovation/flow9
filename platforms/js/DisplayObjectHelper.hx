@@ -1356,7 +1356,7 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (nativeWidget.firstChild != null) {
-			if (untyped x < 0 || clip.scrollRect == null || x > getContentWidth(clip) - clip.scrollRect.width) {
+			if (untyped x < 0 || clip.scrollRect == null || x > getContentWidth(clip) - clip.scrollRect.width || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.left = '${-round(x)}px';
 
 				x = 0;
@@ -1364,7 +1364,7 @@ class DisplayObjectHelper {
 				nativeWidget.firstChild.style.left = null;
 			}
 
-			if (untyped y < 0 || clip.scrollRect == null || y > getContentHeight(clip) - clip.scrollRect.height) {
+			if (untyped y < 0 || clip.scrollRect == null || y > getContentHeight(clip) - clip.scrollRect.height || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.top = '${-round(y)}px';
 
 				y = 0;
