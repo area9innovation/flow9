@@ -5,16 +5,39 @@ import math/math;
 
 // See https://github.com/thi-ng/umbrella/tree/develop/packages/transducers for inspiration
 
+/*
+TODO:
+https://docs.thi.ng/umbrella/transducers/modules/_index_.html
+compose(a : Reducer<?, ??>, b : Reducer<??, ???>) -> Reducer<?, ???>
+add, count, div, mul, sub, 
+dup, duplicate, every, any, some, 
+
+benchmark, cat/concat, choices/random, converge, fill, fillN, frequencies, 
+groupBinary, groupbyMap, groupByObject, interleave, interpolate, keep,
+permutations, last, line, mapNth, mapKeys, mapVals, matchFirst, matchLast,
+mean, min, movingAverage, movingMedian, padLast, padSides, page, 
+partition, partitionBy, range, repeat, repeatedly, reverse, run, 
+sample, scan, step, 
+
+drop, dropNth, dropWhile, take, takeLast, takeNth, takeWhile, trim
+
+throttle,
+toggle, debug/trace, tween, wordWrap, 
+
+parallel/multiplex, 
+*/
+
 export {
 	// A reducer represents a processing pipeline.
 	// The resulting type of the pipeline is ? (i.e. acc), and the individual values we send in is ??
+	// TODO: Swap ? and ?? to make it more natural.
 	Reducer(
 		// The initial value
 		init : () -> ?, 
+		// Each step is done here
+		reduce : (acc : ?, value : ??) -> ReducerResult<?>,
 		// The final value is transformed here
 		final : (acc : ?) -> ?, 
-		// Each step is done here
-		reduce : (acc : ?, value : ??) -> ReducerResult<?>
 	);
 
 		// At each processing step, we either get a value or stop processing
@@ -43,6 +66,13 @@ export {
 	// Evaluate a reducer on this set of values
 	rreduceSet(r : Reducer<?, ??>, set : Set<??>) -> ?;
 
+	// TODO: Char-wise iteration
+	// rreduceString(r : Reducer<?, string>, str : string) -> ?;
+	// Char-wise iteration as unicode
+	// rreduceChars(r : Reducer<?, int>, str : string) -> ?;
+
+	// TODO: graphs, dlist, behaviour/transforms
+
 	//
 	// Reducers
 	//
@@ -55,6 +85,11 @@ export {
 	rset : () -> Reducer<Set<?>, ?>;
 	// Collect items in a tree - O(n log n)
 	rtree : () -> Reducer<Tree<?, ??>, Pair<?, ??>>;
+
+	// TODO: Collect chars into a string - O(n^2)
+	// rstring : () -> Reducer<string, string>
+	// rchars : () -> Reducer<string, int>
+	// graphs, dlist, behaviour/transforms
 
 	//
 	// Transducers
@@ -181,19 +216,19 @@ rreduceSet(r : Reducer<?, ??>, set : Set<??>) -> ? {
 //
 
 rlist() -> Reducer<List<?>, ?> {
-	Reducer(\ -> makeList(), \acc : List<?> -> acc, \acc : List<?>, v : ? -> ReduceAcc(Cons(v, acc)));
+	Reducer(\ -> makeList(), \acc : List<?>, v : ? -> ReduceAcc(Cons(v, acc)), \acc : List<?> -> acc);
 }
 
 rarray() -> Reducer<[?], ?> {
-	Reducer(\ -> [], \acc : [?] -> acc, \acc : [?], v : ? -> ReduceAcc(arrayPush(acc, v)));
+	Reducer(\ -> [], \acc : [?], v : ? -> ReduceAcc(arrayPush(acc, v)), \acc : [?] -> acc);
 }
 
 rset() -> Reducer<Set<?>, ?> {
-	Reducer(\ -> makeSet(), \acc : Set<?> -> acc, \acc : Set<?>, v : ? -> ReduceAcc(insertSet(acc, v)));
+	Reducer(\ -> makeSet(), \acc : Set<?>, v : ? -> ReduceAcc(insertSet(acc, v)), \acc : Set<?> -> acc);
 }
 
 rtree() -> Reducer<Tree<?, ??>, Pair<?, ??>> {
-	Reducer(\ -> makeTree(), \acc : Tree<?, ??> -> acc, \acc : Tree<?, ??>, v : Pair<?, ??> -> ReduceAcc(setTree(acc, v.first, v.second)));
+	Reducer(\ -> makeTree(), \acc : Tree<?, ??>, v : Pair<?, ??> -> ReduceAcc(setTree(acc, v.first, v.second)), \acc : Tree<?, ??> -> acc);
 }
 
 
@@ -204,10 +239,10 @@ rtree() -> Reducer<Tree<?, ??>, Pair<?, ??>> {
 rmap(r : Reducer<?, ??>, fn : (???) -> ??) -> Reducer<?, ???> {
 	Reducer(
 		r.init,
-		r.final,
 		\acc, v : ? -> {
             r.reduce(acc, fn(v))
-		}
+		},
+		r.final,
 	)
 }
 
@@ -215,26 +250,26 @@ rdistinct(r : Reducer<?, ??>) -> Reducer<?, ??> {
 	seen = ref makeSet();
 	Reducer(
 		r.init,
-		r.final,
 		\acc, v -> {
 			if (containsSet(^seen, v)) ReduceAcc(acc)
 			else {
 				seen := insertSet(^seen, v);
 				r.reduce(acc, v)
 			}
-		}
+		},
+		r.final,
 	)
 }
 
 rfilter(r : Reducer<?, ??>, fn : (??) -> bool) -> Reducer<?, ??> {
 	Reducer(
 		r.init,
-		r.final,
 		\acc, v -> {
 			if (fn(v)) {
 				r.reduce(acc, v)
 			} else ReduceAcc(acc)
-		}
+		},
+		r.final,
 	)
 }
 
@@ -242,29 +277,27 @@ rfilter(r : Reducer<?, ??>, fn : (??) -> bool) -> Reducer<?, ??> {
 rmax(r : Reducer<?, ??>) -> Reducer<?, ??> {
 	Reducer(
 		r.init,
-		r.final,
 		\acc, v -> {
 			val = r.reduce(acc, v);
 			switch (val) {
 				Reduced(nacc): Reduced(max(acc, nacc));
 				ReduceAcc(nacc): ReduceAcc(max(acc, nacc));
 			}
-		}
+		},
+		r.final,
 	)
 }
 
-/*
+
 main() {
 	// To combine into an array
-	reducer0 = rarray();
-	reducer = rmap(reducer0, i2s);
+	reducer = rmap(rarray(), i2s);
 	f = rreduce(rfilter(rdistinct(reducer), \n -> n % 3 == 0), [1, 1, 2, 3, 2, 5, 2, 1]);
-	println(f);
+	println(f);	// ["3"]
 
 	f2 = rreduceTree(rarray(), setTree(makeTree1(2, -2), 1, -1));
-	println(f2);
+	println(f2);	// [Pair(1, -1), Pair(2, -2)]
 
-	f3 = rreduceSet(rarray(), buildSet([1,2,3]));
-	println(f3);
+	f3 = rreduceSet(rarray(), buildSet([3,1,2,3,6]));
+	println(f3);	// [1,2,3,6]
 }
-*/
