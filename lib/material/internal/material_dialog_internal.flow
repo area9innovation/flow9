@@ -76,7 +76,21 @@ export {
 		MSnackbarOnDisappear(fn : () -> void);
 }
 
+fwZorder = make(-1);
+fwAnimated = ref make(false);
+
 renderMDialog2(
+	manager : MaterialManager,
+	closeWhen : Transform<bool>,
+	style : [MDialogStyle],
+	content : Material,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	renderFn : (Tropic) -> () -> void) -> void {
+
+	if (!fgetValue(closeWhen)) renderMDialog3(manager, closeWhen, style, content, m2t, renderFn)
+}
+
+renderMDialog3(
 	manager : MaterialManager,
 	closeWhen : Transform<bool>,
 	style : [MDialogStyle],
@@ -100,10 +114,10 @@ renderMDialog2(
 
 	u1 =
 		switch (closeWhen : Transform<bool>) {
-			DynamicBehaviour(__, __): {
-				subscribe2(closeWhen, \__ -> disp());
+			DynamicBehaviour(val, __): {
+				subscribe2(closeWhen, \__ -> if (^val) disp());
 			}
-			default: makeSubscribe2(closeWhen, \__ -> disp())();
+			default: makeSubscribe2(closeWhen, \val -> if (val) disp())();
 		};
 
 	title = tryExtractStruct(style, MDialogTitle(""));
@@ -163,7 +177,7 @@ renderMDialog2(
 	point = make(zeroPoint);
 	insideDialogB = make(false);
 	pressedOutsideB = fand(down, fnot(insideDialogB));
-	noAnimation = contains(style, MDialogNoAnimation()) || contains(style, MDialogFullScreen())
+	noAnimation = contains(style, MDialogNoAnimation()) || (!cpp && contains(style, MDialogFullScreen()))
 		|| !manager.theme.enableAnimations || noCenter || isSome(draggable);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
 	cs = if (isMaterialLogLevelEnabled(MaterialError())) captureStringCallstack() else "";
@@ -622,7 +636,7 @@ renderMDialog2(
 			longTouchCapture = extractStruct(manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(manager);
 
 			TConstruct(
-				[\ -> fconnect(fand(fand(animated, fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), feq(manager.manager.zorder, zorder))), fw)],
+				[\ -> fconnect(fand(fand(animated, fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), fselectdelay(feq(fwZorder, zorder), b2i))), fw)],
 				TFullWindow(
 					fw,
 					TGroup([
@@ -636,10 +650,9 @@ renderMDialog2(
 		})
 	|> (\t ->
 		us :=
-			[
+			concat([
 				u1,
 				zUns,
-				renderFn(t),
 				onClose,
 				\ -> maybeApply(previousFocus, \pf -> {
 					deferred(\ -> {
@@ -653,7 +666,26 @@ renderMDialog2(
 						deferred(\ -> manager.downInsideFocus ::= None());
 					}
 				})
+			],
+			if (fullWindow) [
+				{
+					prevfwZorder = getValue(fwZorder);
+					if (zorder > prevfwZorder) {
+						nextDistinct(fwZorder, zorder);
+						fwAnimated := animated;
+						\ -> nextDistinct(fwZorder, prevfwZorder);
+					} else nop
+				},
+				makeSubscribe2(feq(fwZorder, zorder), \fwz ->
+					if (fwz) fwAnimated := animated
+				)(),
+				renderFn(t)
 			]
+			else if (fgetValue(fwZorder) < 0 || zorder < fgetValue(fwZorder))
+				[renderFn(t)]
+			else
+				[make2SubscribeUnsTimer(fwZorder, ^fwAnimated, 0, \fzorder, an -> if (zorder >= fzorder && an) [renderFn(t)] else [])()]
+		)
 	);
 }
 

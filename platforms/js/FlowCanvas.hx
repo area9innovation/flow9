@@ -1,12 +1,4 @@
-import js.Browser;
-import js.html.CanvasElement;
-
-import pixi.core.display.Bounds;
-import pixi.core.math.shapes.Rectangle;
-import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
-import pixi.core.math.Matrix;
-import pixi.core.renderers.canvas.CanvasRenderer;
 import haxe.extern.EitherType;
 
 using DisplayObjectHelper;
@@ -23,6 +15,9 @@ class FlowCanvas extends FlowContainer {
 
 	public function updateNativeWidget() {
 		if (visible && worldAlpha > 0 && renderable) {
+			var tempResolution = RenderSupport.PixiRenderer.resolution;
+			RenderSupport.PixiRenderer.resolution =  Math.max(worldTransform.a, worldTransform.d) * tempResolution;
+
 			if (DisplayObjectHelper.DebugUpdate) {
 				nativeWidget.setAttribute("update", Std.int(nativeWidget.getAttribute("update")) + 1);
 				if (untyped this.from) {
@@ -42,6 +37,8 @@ class FlowCanvas extends FlowContainer {
 			transform.ty += Math.max(-localBounds.minY, 0.0);
 
 			this.renderToCanvas(nativeWidget, context, transform);
+
+			RenderSupport.PixiRenderer.resolution = tempResolution;
 
 			if (worldTransform.tx < 0 || worldTransform.ty < 0) {
 				untyped this.localTransformChanged = true;
