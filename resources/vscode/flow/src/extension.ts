@@ -62,7 +62,8 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
 	context.subscriptions.push(vscode.commands.registerCommand('flow.execCommand', execCommand));
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
+	context.subscriptions.push(vscode.commands.registerCommand('flow.runUI', runUI));
+	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
@@ -77,6 +78,61 @@ export function activate(context: vscode.ExtensionContext) {
     updater.setupUpdateChecker();
     serverStatusBarItem.show();
 }
+
+//function compile(extra_args : string[] = [], callback : () => void = null) 
+
+function changeExtension(file: string, ext: string): string {
+	return path.join(path.dirname(file), path.basename(file, path.extname(file)) + ext);
+}
+
+function runUI() {
+	const document = vscode.window.activeTextEditor.document;
+	const file = document.uri.path;
+	const html_file = changeExtension(file, ".html");
+	compile(["html=" + html_file], 
+		() => {
+			// Create and show panel
+			const panel = vscode.window.createWebviewPanel(
+				'flowUI',
+				path.basename(file, path.extname(file)) + ".html",
+				vscode.ViewColumn.One, 
+				{ enableScripts: true }
+			);
+
+			// And set its HTML content
+			panel.webview.html = fs.readFileSync(html_file).toString();
+		}
+	);
+	// Create and show panel
+	/*const panel = vscode.window.createWebviewPanel(
+		'catCoding',
+		'Cat Coding',
+		vscode.ViewColumn.One, 
+		{ enableScripts: true }
+	);
+
+	// And set its HTML content
+	panel.webview.html = getWebviewContent();*/
+}
+
+/*
+function getWebviewContent() {
+	//return fs.readFileSync("/home/dmitry/area9/flow9/resources/vscode/flow/www/test.html").toString();
+	return fs.readFileSync("/home/dmitry/area9/flow9/resources/vscode/flow/www/cell_7.html").toString();
+*/
+	/*return `<!DOCTYPE html>
+		<html lang="en">
+		<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Cat Coding</title>
+		</head>
+		<body>
+		<img src="https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif" width="300" />
+		</body>
+	</html>`;*/
+//}
+
 
 function checkHttpServerStatus(initial : boolean) {
 	const port = vscode.workspace.getConfiguration("flow").get("portOfHttpServer");
@@ -381,31 +437,34 @@ interface CommandWithArgs {
     matcher: string
 }
 
-function compile() {
-    compileCurrentFile("", ["verbose=1"]); // empty means default compiler
+function compile(extra_args : string[] = [], callback : () => void = null) {
+    compileCurrentFile("", ["verbose=1"].concat(extra_args), callback); // empty means default compiler
 }
 
 function compileNeko() {
     compileCurrentFile("nekocompiler");
 }
 
-function runCurrentFile() {
-    processFile(function (flowBinPath, flowpath) {
-        return { 
-            cmd : path.join(flowBinPath, "flowcpp"), 
-            args : [flowpath],
-            matcher: 'flowc'
-        }
-    }, false);
+function runCurrentFile(extra_args : string[] = [], callback : () => void = null) {
+    processFile(
+		function (flowBinPath, flowpath) {
+			return { 
+				cmd : path.join(flowBinPath, "flowcpp"), 
+				args : [flowpath],
+				matcher: 'flowc'
+			}
+		}, 
+		false, extra_args, callback
+	);
 }
 
-function compileCurrentFile(compilerHint: string, extra_args : string[] = []) {
+function compileCurrentFile(compilerHint: string, extra_args : string[] = [], callback : () => void = null) {
 	let use_lsp = vscode.workspace.getConfiguration("flow").get("lspMode") != "None";
     processFile(
 		function(flowBinPath, flowpath) { 
         	return getCompilerCommand(compilerHint, flowBinPath, flowpath);
 		}, 
-		use_lsp, extra_args
+		use_lsp, extra_args, callback
 	);
 }
 
@@ -414,7 +473,12 @@ function getFlowRoot(): string {
     return config.get("root");
 }
 
-function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, use_lsp : boolean, extra_args : string[] = []) {
+function processFile(
+	getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, 
+	use_lsp : boolean, 
+	extra_args : string[] = [],
+	callback : () => void = null
+) {
     let document = vscode.window.activeTextEditor.document;
     document.save().then(() => {
         let current = ++counter;
@@ -426,12 +490,15 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
         flowChannel.appendLine("Current directory '" + rootPath + "'");
         let run_separately = () => {
-            tools.run_cmd(command.cmd, rootPath, command.args, (s) => {
+            let proc = tools.run_cmd(command.cmd, rootPath, command.args.concat(extra_args), (s) => {
                 // if there is a newer job, ignoring ones pending
                 if (counter == current) {
                     flowChannel.append(s.toString());
                 }
-            }, childProcesses);
+			}, childProcesses);
+			if (callback) {
+				proc.on("exit", callback);
+			}
 		}
 		let kind2s = (kind : LspKind) => {
 			switch (clientKind) {
@@ -454,6 +521,9 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
 					if (counter == current) {
 						//flowChannel.appendLine("Execution of a request took " + (performance.now() - start) + " milliseconds.")
 						flowChannel.appendLine(out);
+					}
+					if (callback) {
+						callback()
 					}
 				}
 			);
