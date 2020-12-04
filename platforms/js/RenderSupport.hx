@@ -328,6 +328,56 @@ class RenderSupport {
 		return Native.setInterval(1000, emitUserStyleChanged);
 	}
 
+	public static function setPrintPageSize(wd : Float, hgt : Float) : Void -> Void {
+		var style = Browser.document.createElement('style');
+		style.setAttribute('type', 'text/css');
+
+		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; }";
+		Browser.document.head.appendChild(style);
+
+		return function () {
+			Browser.document.head.removeChild(style);
+		}
+	}
+
+	public static function getClipHTML(clip : DisplayObject) : String {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		clip.initNativeWidget();
+		PixiStage.forceClipRenderable();
+		forceRender();
+		var nativeWidget : Dynamic = untyped clip.nativeWidget;
+		var content = nativeWidget ? nativeWidget.innerHTML : '';
+
+		if (printMode) {
+			printMode = false;
+			DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+		}
+
+		return content;
+	}
+
+	public static function showPrintDialog() : Void {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		PixiStage.forceClipRenderable();
+		emit("beforeprint");
+		forceRender();
+
+		PixiStage.onImagesLoaded(function () {
+			Browser.window.print();
+		});
+	}
+
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
@@ -578,6 +628,7 @@ class RenderSupport {
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
 	private static var printMode = false;
+	private static var prevInvalidateRenderable = false;
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
@@ -590,21 +641,24 @@ class RenderSupport {
 			}
 		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
-		var prevInvalidateRenderable = true;
 		Browser.window.addEventListener('beforeprint', function () {
-			printMode = true;
-			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
-			DisplayObjectHelper.InvalidateRenderable = false;
-			PixiStage.forceClipRenderable();
-			emit("beforeprint");
-			forceRender();
+			if (!printMode) {
+				printMode = true;
+				prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+				DisplayObjectHelper.InvalidateRenderable = false;
+				PixiStage.forceClipRenderable();
+				emit("beforeprint");
+				forceRender();
+			}
 		}, false);
 
 		Browser.window.addEventListener('afterprint', function () {
-			DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
-			printMode = false;
-			emit("afterprint");
-			forceRender();
+			if (printMode) {
+				DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+				printMode = false;
+				emit("afterprint");
+				forceRender();
+			}
 		}, false);
 
 		// Make additional resize for mobile fullscreen mode
@@ -1469,12 +1523,14 @@ class RenderSupport {
 		}
 	}
 
-	public static function setClipClassName(clip : Dynamic, className : String) : Void {
-		if (clip.nativeWidget != null) {
-			clip.nativeWidget.classList.add(className);
-		}
+	public static function setClipClassName(clip : DisplayObject, className : String) : Void {
+		untyped clip.className = className;
 
-		clip.className = className;
+		if (untyped clip.nativeWidget == null) {
+			clip.initNativeWidget();
+		} else {
+			untyped clip.nativeWidget.classList.add(className);
+		}
 	}
 
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {

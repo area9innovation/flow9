@@ -429,8 +429,15 @@ export {
 	TPrintTarget(t : Tropic) -> Tropic;
 	// Similar to TPrintTarget, only every element is printed on different page
 	TPrintPages(t : [Tropic]) -> Tropic;
+	// By default TPrintPages uses web view size as available space for printing
+	// TPrintPageSize lets to redefine this size with any other
+	TPrintPageSize : DynamicBehaviour<Maybe<WidthHeight>> = make(None());
 	// Change content when printing
 	TIfPrint(then : Tropic, elset : Tropic) -> Tropic;
+
+	// JS HTML Renderer: Extract rendered static html from the clip
+	// Use wrapFlowHTML to wrap resulting html string with root tags, flow stylesheet and Roboto webfonts
+	TExtractHTML(t : Tropic, setfn : (fn : () -> string) -> void) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -3084,7 +3091,10 @@ TPrintPages(t : [Tropic]) -> Tropic {
 				next(stageWH, WidthHeight(getStageWidth(), getStageHeight()));
 				next(printMode, true);
 			}),
-			\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false))
+			\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false)),
+			make2SubscribeUns(printMode, TPrintPageSize, \pm, sz -> {
+				eitherMap(sz, \ssz -> if (pm) [setPrintPageSize(ssz.width, ssz.height)] else [], []);
+			})
 		],
 		TFullWindow(
 			printMode,
@@ -3093,7 +3103,7 @@ TPrintPages(t : [Tropic]) -> Tropic {
 					[
 						ClassName("print-page")
 					],
-					TAvailable(tt, TIf(printMode, TSized(stageWH), TFillXY()))
+					TAvailable(tt, TIf(printMode, TSized(feither(TPrintPageSize, stageWH)), TFillXY()))
 				)
 			))
 		)
@@ -3115,4 +3125,31 @@ TIfPrint(then : Tropic, elset : Tropic) -> Tropic {
 			elset
 		)
 	)
+}
+
+TExtractHTML(t : Tropic, setfn : (fn : () -> string) -> void) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b = t2a(t);
+
+		TAcc(b with
+			form = FNativeForm(
+				t,
+				const(FormMetrics(0., 0., 0., 0.)),
+				\ -> b.form,
+				\__, z, __ -> {
+					rr = renderFForm(b.form, const(z));
+					parent = makeClip();
+					iter(rr.clips, \c -> addChild(parent, c));
+					setfn(\ -> getClipHTML(parent));
+
+					NativeRenderResult(
+						[parent],
+						\ -> {
+							applyall(rr.disposers);
+						}
+					)
+				}
+			)
+		)
+	})
 }

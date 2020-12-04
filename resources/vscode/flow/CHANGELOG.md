@@ -154,4 +154,7 @@
  - http server status displays main memory stats: Used, Free and Total memory. 
 
 ## 0.4.9
+ - 'runUI' command is added: runs a visual application, compiled to html+js, in webview panel.
+
+## 0.5.0
  - flow notebook, based on proposed Vscode Notebook API, is added. Work only in code-insiders with '--enable-proposed-api area9.flow' option.

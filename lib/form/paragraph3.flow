@@ -276,7 +276,7 @@ renderParagraph(
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
-				newLines = reflowParaWords(words, w, indent, isParagraphMarked, rtl);
+				newLines = reflowParaWords(words, w, indent, isParagraphMarked, rtl, extractStruct(s, FontSize(14.0)).size);
 				infos = map(newLines, \line -> {
 					optimizedLine = getOptimizedLine(line.words, alignment);
 					metrics = map(optimizedLine, \ole -> getValue(ole.metrics));
@@ -495,9 +495,9 @@ getLineIndent(paraIndent : double, lineIndex : int) -> double {
 }
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
-reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double, isFirstMark : bool, rtl : bool) -> [ParaLine] {
+reflowParaWords(words : [ParaWord], availableParaWidth : double, paraIndent : double, isFirstMark : bool, rtl : bool, fontSize : double) -> [ParaLine] {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
-	text = reflowParaWords2(words, firstLineWidth, firstLineWidth, [], [], paraIndent, isFirstMark);
+	text = reflowParaWords2(words, firstLineWidth, firstLineWidth, [], [], paraIndent, isFirstMark, fontSize);
 	if (rtl)
 		zipWith(
 			text,
@@ -515,15 +515,18 @@ getParaWordWidth(word : ParaWord) -> double {
 reflowParaWords2(
 	words : [ParaWord],
 	availableWidth : double,
-	remaining : double,
+	remainingWithSpacing : double,
 	currentWords : [ParaWord],
 	lines : [ParaLine],
 	paraIndent : double,
-	isFirstMark : bool
+	isFirstMark : bool,
+	fontSize : double
 ) -> [ParaLine] {
 	addLine = \cw, indent -> {
 		if (cw != []) arrayPush(lines, ParaLine(cw, indent)) else lines;
 	}
+
+	remaining = remainingWithSpacing - getUserDefinedWordSpacingPercent() * fontSize;
 
 	detachWord = \w : ParaWord, detach : bool -> {
 		switch (w.ghosted) {
@@ -591,7 +594,7 @@ reflowParaWords2(
 
 		switch (word.word : ParaAtomic) {
 			NewLine(): {
-				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
+				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false, fontSize);
 			}
 			LinePart(f, p, e): {
 				width = getParaWordWidth(word);
@@ -600,15 +603,15 @@ reflowParaWords2(
 				if (currentWords == []) {
 					// If it is the first item on the line
 					paraword = makeParaWord2(word, f);
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false, fontSize);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
 					paraword = makeParaWord2(word, p);
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent, false, fontSize);
 				} else {
 					// If it is the last item on the line
 					paraword = makeParaWord2(word, e);
-					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent, false);
+					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent, false, fontSize);
 				}
 			}
 			Space(s): {
@@ -616,10 +619,10 @@ reflowParaWords2(
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
 				width = getParaWordWidth(word);
 				if (width < remaining) {
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent, false);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent, false, fontSize);
 				} else {
 					detachWord(word, true);
-					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false);
+					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent, false, fontSize);
 				}
 			}
 			default: {
@@ -674,9 +677,9 @@ reflowParaWords2(
 						));
 					});
 
-					reflowParaWords2(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent, false);
+					reflowParaWords2(_rest, availableWidth, remaining - ^width, newCurrentWords, lines, paraIndent, false, fontSize);
 				} else {
-					reflowParaWords2(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent, false);
+					reflowParaWords2(words, nextLineWidth, nextLineWidth, [],  addLine(currentWords, lineIndent), paraIndent, false, fontSize);
 				}
 			}
 		}
