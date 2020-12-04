@@ -55,7 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
 		serverStatusBarItem,
     	reg_comm('flow.compile', compileCurrentFile),
     	reg_comm('flow.GetFlowCompiler', getFlowCompilerFamily),
-    	reg_comm('flow.compileNeko', () => compileCurrentFile([], null, "nekocompiler")),
+    	reg_comm('flow.compileNeko', () => compileCurrentFile([], () => { }, "nekocompiler")),
     	reg_comm('flow.run', runCurrentFile),
     	reg_comm('flow.updateFlowRepo', () => updateFlowRepo(context)),
     	reg_comm('flow.startHttpServer', startHttpServer),
@@ -408,7 +408,7 @@ interface CommandWithArgs {
     matcher: string
 }
 
-function runCurrentFile(extra_args : string[] = [], callback : () => void = null) {
+function runCurrentFile(extra_args : string[] = []) {
     processFile(
 		function (flowBinPath, flowpath) {
 			return { 
@@ -417,11 +417,11 @@ function runCurrentFile(extra_args : string[] = [], callback : () => void = null
 				matcher: 'flowc'
 			}
 		}, 
-		false, extra_args, callback
+		false, extra_args
 	);
 }
 
-function compileCurrentFile(extra_args : string[] = [], callback : () => void = null, compilerHint: string = "") {
+function compileCurrentFile(extra_args : string[] = [], on_compiled : () => void = () => {}, compilerHint: string = "") {
 	const use_lsp = vscode.workspace.getConfiguration("flow").get("lspMode") != "None";
     processFile(
 		function(flowBinPath, flowpath) { 
@@ -429,7 +429,7 @@ function compileCurrentFile(extra_args : string[] = [], callback : () => void = 
 		}, 
 		use_lsp, 
 		extra_args, 
-		callback
+		on_compiled
 	);
 }
 
@@ -442,7 +442,7 @@ function processFile(
 	getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs,
 	use_lsp : boolean,
 	extra_args : string[] = [],
-	callback : () => void = null
+	on_compiled : () => void = () => { }
 ) {
 	const document = vscode.window.activeTextEditor.document;
 	const verbose = vscode.workspace.getConfiguration("flow").get("compilerVerbose");
@@ -463,9 +463,7 @@ function processFile(
                     flowChannel.append(s.toString());
                 }
 			}, childProcesses);
-			if (callback) {
-				proc.on("exit", callback);
-			}
+			proc.on("exit", on_compiled);
 		}
 		let kind2s = (kind : LspKind) => {
 			switch (clientKind) {
@@ -489,9 +487,7 @@ function processFile(
 						//flowChannel.appendLine("Execution of a request took " + (performance.now() - start) + " milliseconds.")
 						flowChannel.appendLine(out);
 					}
-					if (callback) {
-						callback()
-					}
+					on_compiled();
 				}
 			);
 		}
