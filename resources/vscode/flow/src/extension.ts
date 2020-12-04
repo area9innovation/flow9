@@ -50,20 +50,22 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Flow extension active');
 	serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	serverStatusBarItem.command = 'flow.toggleHttpServer';
-    context.subscriptions.push(serverStatusBarItem);
-    
-    context.subscriptions.push(vscode.commands.registerCommand('flow.compile', compile));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.GetFlowCompiler', getFlowCompilerFamily));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.compileNeko', compileNeko));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.run', runCurrentFile));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.updateFlowRepo', () => { updateFlowRepo(context); }));
-    context.subscriptions.push(vscode.commands.registerCommand('flow.startHttpServer', startHttpServer));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.stopHttpServer', stopHttpServer));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.toggleHttpServer', toggleHttpServer));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.flowConsole', flowConsole));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.execCommand', execCommand));
-	context.subscriptions.push(vscode.commands.registerCommand('flow.runUI', runUI));
-	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)));
+	const reg_comm = (id: string, comm: any) => vscode.commands.registerCommand(id, comm);
+    context.subscriptions.push(
+		serverStatusBarItem,
+    	reg_comm('flow.compile', compileCurrentFile),
+    	reg_comm('flow.GetFlowCompiler', getFlowCompilerFamily),
+    	reg_comm('flow.compileNeko', () => compileCurrentFile([], null, "nekocompiler")),
+    	reg_comm('flow.run', runCurrentFile),
+    	reg_comm('flow.updateFlowRepo', () => updateFlowRepo(context)),
+    	reg_comm('flow.startHttpServer', startHttpServer),
+		reg_comm('flow.stopHttpServer', stopHttpServer),
+		reg_comm('flow.toggleHttpServer', toggleHttpServer),
+		reg_comm('flow.flowConsole', flowConsole),
+		reg_comm('flow.execCommand', execCommand),
+		reg_comm('flow.runUI', runUI),
+		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
+	);
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
@@ -91,7 +93,7 @@ function runUI() {
 	const file_name = path.basename(file_path, path.extname(file_path));
 	const file_dir = path.dirname(file_path);
 	const html_file = path.join(file_dir, "www", file_name + ".html");
-	compile(["html=" + html_file], 
+	compileCurrentFile(["html=" + html_file], 
 		() => {
 			const panel = vscode.window.createWebviewPanel(
 				'flowUI',
@@ -400,19 +402,10 @@ function resolveProjectRoot(uri : string | vscode.Uri) : string {
 
 	return getPath(config.get("root"));
 }
-
 interface CommandWithArgs { 
     cmd: string, 
     args: string[], 
     matcher: string
-}
-
-function compile(extra_args : string[] = [], callback : () => void = null) {
-    compileCurrentFile("", ["verbose=1"].concat(extra_args), callback); // empty means default compiler
-}
-
-function compileNeko() {
-    compileCurrentFile("nekocompiler");
 }
 
 function runCurrentFile(extra_args : string[] = [], callback : () => void = null) {
@@ -428,28 +421,32 @@ function runCurrentFile(extra_args : string[] = [], callback : () => void = null
 	);
 }
 
-function compileCurrentFile(compilerHint: string, extra_args : string[] = [], callback : () => void = null) {
-	let use_lsp = vscode.workspace.getConfiguration("flow").get("lspMode") != "None";
+function compileCurrentFile(extra_args : string[] = [], callback : () => void = null, compilerHint: string = "") {
+	const use_lsp = vscode.workspace.getConfiguration("flow").get("lspMode") != "None";
     processFile(
 		function(flowBinPath, flowpath) { 
         	return getCompilerCommand(compilerHint, flowBinPath, flowpath);
 		}, 
-		use_lsp, extra_args, callback
+		use_lsp, 
+		extra_args, 
+		callback
 	);
 }
 
 function getFlowRoot(): string {
-    let config = vscode.workspace.getConfiguration("flow");
+    const config = vscode.workspace.getConfiguration("flow");
     return config.get("root");
 }
 
 function processFile(
-	getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs, 
-	use_lsp : boolean, 
+	getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs,
+	use_lsp : boolean,
 	extra_args : string[] = [],
 	callback : () => void = null
 ) {
-    let document = vscode.window.activeTextEditor.document;
+	const document = vscode.window.activeTextEditor.document;
+	const verbose = vscode.workspace.getConfiguration("flow").get("compilerVerbose");
+	extra_args = (verbose == "" || verbose == "0") ? extra_args : extra_args.concat(["verbose=" + verbose]);
     document.save().then(() => {
         let current = ++counter;
         flowChannel.clear();
@@ -458,7 +455,7 @@ function processFile(
         let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
-        flowChannel.appendLine("Current directory '" + rootPath + "'");
+		flowChannel.appendLine("Current directory '" + rootPath + "'");
         let run_separately = () => {
             let proc = tools.run_cmd(command.cmd, rootPath, command.args.concat(extra_args), (s) => {
                 // if there is a newer job, ignoring ones pending
@@ -480,7 +477,6 @@ function processFile(
 		}
 		let run_on_server = (kind : LspKind) => {
 			flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using " + kind2s(kind) + " server");
-			//flowChannel.appendLine("Args '" + ["file=" + getPath(document.uri), "working_dir=" + rootPath].concat(extra_args).join(" ") + "'");
 			//let start = performance.now();
 			client.sendRequest("workspace/executeCommand", {
 					command : "compile", 
@@ -525,8 +521,7 @@ function processFile(
     });
 }
 
-function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile: string): 
-    CommandWithArgs
+function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile: string): CommandWithArgs
 {
     let compiler = compilerHint ? compilerHint : getFlowCompiler();
     let serverArgs = (compiler.startsWith("flowc") && !httpServerOnline) ? ["server=0"] : [];
