@@ -87,52 +87,22 @@ function changeExtension(file: string, ext: string): string {
 
 function runUI() {
 	const document = vscode.window.activeTextEditor.document;
-	const file = document.uri.path;
-	const html_file = changeExtension(file, ".html");
+	const file_path = document.uri.path;
+	const file_name = path.basename(file_path, path.extname(file_path));
+	const file_dir = path.dirname(file_path);
+	const html_file = path.join(file_dir, "www", file_name + ".html");
 	compile(["html=" + html_file], 
 		() => {
-			// Create and show panel
 			const panel = vscode.window.createWebviewPanel(
 				'flowUI',
-				path.basename(file, path.extname(file)) + ".html",
+				file_name + ".html",
 				vscode.ViewColumn.One, 
 				{ enableScripts: true }
 			);
-
-			// And set its HTML content
 			panel.webview.html = fs.readFileSync(html_file).toString();
 		}
 	);
-	// Create and show panel
-	/*const panel = vscode.window.createWebviewPanel(
-		'catCoding',
-		'Cat Coding',
-		vscode.ViewColumn.One, 
-		{ enableScripts: true }
-	);
-
-	// And set its HTML content
-	panel.webview.html = getWebviewContent();*/
 }
-
-/*
-function getWebviewContent() {
-	//return fs.readFileSync("/home/dmitry/area9/flow9/resources/vscode/flow/www/test.html").toString();
-	return fs.readFileSync("/home/dmitry/area9/flow9/resources/vscode/flow/www/cell_7.html").toString();
-*/
-	/*return `<!DOCTYPE html>
-		<html lang="en">
-		<head>
-		<meta charset="UTF-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Cat Coding</title>
-		</head>
-		<body>
-		<img src="https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif" width="300" />
-		</body>
-	</html>`;*/
-//}
-
 
 function checkHttpServerStatus(initial : boolean) {
 	const port = vscode.workspace.getConfiguration("flow").get("portOfHttpServer");
@@ -510,10 +480,11 @@ function processFile(
 		}
 		let run_on_server = (kind : LspKind) => {
 			flowChannel.appendLine("Compiling '" + getPath(document.uri) + "' using " + kind2s(kind) + " server");
+			//flowChannel.appendLine("Args '" + ["file=" + getPath(document.uri), "working_dir=" + rootPath].concat(extra_args).join(" ") + "'");
 			//let start = performance.now();
 			client.sendRequest("workspace/executeCommand", {
 					command : "compile", 
-					arguments: ["file=" + getPath(document.uri), "working_dir=" + rootPath].concat(extra_args)
+					arguments: ["file=" + getPath(document.uri), "working-dir=" + rootPath].concat(extra_args)
 				}
 			).then(
 				(out : any) => {
