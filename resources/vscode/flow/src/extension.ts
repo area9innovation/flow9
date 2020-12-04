@@ -81,12 +81,6 @@ export function activate(context: vscode.ExtensionContext) {
     serverStatusBarItem.show();
 }
 
-//function compile(extra_args : string[] = [], callback : () => void = null) 
-
-function changeExtension(file: string, ext: string): string {
-	return path.join(path.dirname(file), path.basename(file, path.extname(file)) + ext);
-}
-
 function runUI() {
 	const document = vscode.window.activeTextEditor.document;
 	const file_path = document.uri.path;
@@ -98,8 +92,9 @@ function runUI() {
 			const panel = vscode.window.createWebviewPanel(
 				'flowUI',
 				file_name + ".html",
-				vscode.ViewColumn.One, 
-				{ enableScripts: true }
+				vscode.ViewColumn.One, { 
+					enableScripts: true
+				}
 			);
 			panel.webview.html = fs.readFileSync(html_file).toString();
 		}
@@ -435,7 +430,12 @@ function compileCurrentFile(extra_args : string[] = [], on_compiled : () => void
 
 function getFlowRoot(): string {
     const config = vscode.workspace.getConfiguration("flow");
-    return config.get("root");
+	let root: string = config.get("root");
+	if (!fs.existsSync(root)) {
+		root = tools.run_cmd_sync("flowc1", ".", ["print-flow-dir=1"]).stdout.toString().trim();
+		config.update("root", root, vscode.ConfigurationTarget.Global);
+	}
+	return root;
 }
 
 function processFile(
@@ -517,8 +517,7 @@ function processFile(
     });
 }
 
-function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile: string): CommandWithArgs
-{
+function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile: string): CommandWithArgs {
     let compiler = compilerHint ? compilerHint : getFlowCompiler();
     let serverArgs = (compiler.startsWith("flowc") && !httpServerOnline) ? ["server=0"] : [];
     if (compiler == "nekocompiler") {
