@@ -817,9 +817,9 @@ class DisplayObjectHelper {
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
-	public static function getFirstGraphics(clip : DisplayObject) : DisplayObject {
+	public static function getFirstGraphics(clip : DisplayObject) : FlowGraphics {
 		if (untyped HaxeRuntime.instanceof(clip, FlowGraphics))
-			return clip;
+			return cast(clip, FlowGraphics);
 
 		for (c in getClipChildren(clip)) {
 			var g = getFirstGraphics(untyped c);
@@ -830,6 +830,38 @@ class DisplayObjectHelper {
 		}
 
 		return null;
+	}
+
+	public static function getAllSprites(clip : DisplayObject) : Array<FlowSprite> {
+		if (untyped HaxeRuntime.instanceof(clip, FlowSprite))
+			return [cast(clip, FlowSprite)];
+
+		var r = [];
+
+		for (c in getClipChildren(clip)) {
+			r = r.concat(getAllSprites(c));
+		}
+
+		return r;
+	}
+
+	public static function onImagesLoaded(clip : DisplayObject, cb : Void -> Void) : Void -> Void {
+		var sprites = getAllSprites(clip);
+
+		if (sprites.filter(function (sprite) { return !sprite.loaded && sprite.visible && !sprite.failed; }).length > 0) {
+			var disp = null;
+			var fn = function() { disp = onImagesLoaded(clip, cb); }
+			RenderSupport.once("drawframe", fn);
+
+			return function() {
+				if (disp != null) { disp(); }
+				RenderSupport.off("drawframe", fn);
+			};
+		} else {
+			cb();
+
+			return function() {}
+		}
 	}
 
 	public static function emitEvent(parent : DisplayObject, event : String, ?value : Dynamic) : Void {
