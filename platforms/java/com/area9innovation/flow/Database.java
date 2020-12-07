@@ -112,7 +112,7 @@ public class Database extends NativeHost {
             Integer strid = runtime.struct_ids.get("IllegalStruct");
             illegal = runtime.struct_prototypes[strid];
         } catch (Exception e) {
-
+            printException(e);
         }
     }
 
