@@ -132,7 +132,8 @@ public class Database extends NativeHost {
             return db;
         } catch (SQLException se) {
             db.err = getSqlErrorMessage(se);
-            System.out.println("Error on connect db: " + db.err);
+			System.out.println("Error on connect db: " + db.err);
+			printException(se);
             return null;
         } catch (Exception e) {
             printException(e);
