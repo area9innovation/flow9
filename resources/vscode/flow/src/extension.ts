@@ -65,7 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.flowConsole', flowConsole),
 		reg_comm('flow.execCommand', execCommand),
 		reg_comm('flow.runUI', runUI),
-		reg_com('flow.createNotebook', notebook.createNotebook),
+		reg_comm('flow.createNotebook', notebook.createNotebook),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
 		vscode.notebook.registerNotebookContentProvider('flow-notebook', new notebook.FlowNotebookProvider()),
 		vscode.notebook.registerNotebookKernelProvider({filenamePattern: "*.{noteflow,flow}"}, new notebook.FlowNotebookKernelProvider())
