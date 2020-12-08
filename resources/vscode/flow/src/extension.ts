@@ -83,7 +83,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 function runUI() {
 	const document = vscode.window.activeTextEditor.document;
-	const file_path = document.uri.path;
+	const file_path = document.uri.fsPath;
 	const file_name = path.basename(file_path, path.extname(file_path));
 	const file_dir = path.dirname(file_path);
 	const html_file = path.join(file_dir, "www", file_name + ".html");
