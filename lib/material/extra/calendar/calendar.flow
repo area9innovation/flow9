@@ -207,8 +207,9 @@ CalendarCells(
 	monthEvents : [CalendarEvent],
 	monthNumber : DynamicBehaviour<int>,
 	openPopupForDay : (curDate : DynamicBehaviour<Date>, dayEvents : [CalendarEvent]) -> void,
-	currentEventTypes : DynamicBehaviour<[CalendarEventDecription]>
-	) -> Tropic {
+	currentEventTypes : DynamicBehaviour<[CalendarEventDecription]>,
+	isReadOnlyB : Transform<bool>
+) -> Material {
 
 	maxDayInMonth = 31;
 	invisible = Point(0.0, calendarDateCellH * 6.0);
@@ -227,7 +228,7 @@ CalendarCells(
 		sortEvents(allEvents)
 	});
 
-	TConstruct(
+	MConstruct(
 		[
 			makeSubscribe(month, \mv -> {
 				// days of week start from 0
@@ -244,7 +245,7 @@ CalendarCells(
 				{}
 			})
 		],
-		TLinesA([
+		MLinesA([
 			TCenterIn(
 				TSelect(month, \mv -> {
 					MText2T(parent, monthString(mv, true), [])
@@ -257,12 +258,12 @@ CalendarCells(
 					TFixed(calendarDateCellW, calendarDateCellH)
 				)
 			})),
-			TGroup(mapi(offsets, \i, offset -> {
-				TTranslate(
+			MGroup(mapi(offsets, \i, offset -> {
+				MTranslate(
 					offset,
 					CalendarCell(manager, color, parent, month, i+1, currentDate, dateMin,
 						dateMax, filteredByDay[i], monthNumber,
-						openPopupForDay, currentEventTypes
+						openPopupForDay, currentEventTypes, isReadOnlyB
 					)
 				)
 			}))
@@ -283,8 +284,9 @@ CalendarCell(
 	dayEvents : [CalendarEvent],
 	monthNumber : DynamicBehaviour<int>,
 	openPopupForDay : (curDate : DynamicBehaviour<Date>, dayEvents : [CalendarEvent]) -> void,
-	eventTypes : DynamicBehaviour<[CalendarEventDecription]>
-	) -> Tropic {
+	eventTypes : DynamicBehaviour<[CalendarEventDecription]>,
+	isReadOnlyB : Transform<bool>
+	) -> Material {
 
 	makeDate = \mon, d -> Date(getValue(currentDate).year, mon.month, d);
 
@@ -694,7 +696,7 @@ CalendarCell(
 	}
 
 	bubble = TGroup2(
-		TSelect2(thisMonth, currentDate, \month, date -> {
+		TSelect2(thisMonth, /*currentDate*/make(getCurrentDate()), \month, date -> {
 			if (length(dayEvents) > 0) {
 				TSelect(eventTypes, \types -> eventsCheck(types));
 			} else if (stamp2date(timestamp()) != makeDate(month, day)) {
@@ -728,23 +730,24 @@ CalendarCell(
 		println("this day not available!");
 	}
 
-	bubbleClickable = TGroup2(
-		mouseDownAround(manager, None(), make(false), hover, click2,
-			TFrame(0.0, 0.0, [Fill(green), FillOpacity(0.0)], bubbleAnimated)
+	bubbleClickable = MGroup2(
+		MComponent(
+			[MOnClick(click2), MEnabled(fnot(isReadOnlyB)), THovering(hover)],
+			\__ -> TFrame(0.0, 0.0, [Fill(green), FillOpacity(0.0)], bubbleAnimated)
 		),
 		TCursor(FingerCursor(), TRectangle([Fill(white), FillOpacity(0.0)], TFixed(calendarDateCellW, calendarDateCellH)))
 	);
 
-	TConstruct(
+	MConstruct(
 		[
 			makeSubscribe(thisMonth, \month -> updateTextColor(month, getValue(currentDate), getValue(hover))),
 			makeSubscribe(currentDate, \date -> updateTextColor(getValue(thisMonth), date, getValue(hover))),
 			makeSubscribe(hover, \hov -> updateTextColor(getValue(thisMonth), getValue(currentDate), hov)),
 			makeSubscribe(thisMonth, \month -> nextDistinct(enabled, isDateEnable(makeDate(month, day), dateMin, dateMax)))
 		],
-		TSize(
-			TFixed(calendarDateCellW, calendarDateCellH),
-			TIf(enabled, bubbleClickable, text)
+		MSize(
+			MFixed(calendarDateCellW, calendarDateCellH),
+			MIf(enabled, bubbleClickable, text)
 		)
 	)
 }
@@ -1312,11 +1315,13 @@ MonthTable(
 				),
 			]);
 
-			MClickable(
-				MSelect(eventTypeB, \eventType -> {
-					eitherMap(getEventView(MonthTab(), item, eventType, dayDate, 1), \m -> MFixSize(m, defaultViewM), defaultViewM)
-				}),
-				\-> if (!fgetValue(isReadOnlyB)) fgetValue(eventTypeB).editAction(item.id)
+			MComponent(
+				[MOnClick(\-> fgetValue(eventTypeB).editAction(item.id)), MEnabled(fnot(isReadOnlyB))],
+				\__ -> {
+					MSelect(eventTypeB, \eventType -> {
+						eitherMap(getEventView(MonthTab(), item, eventType, dayDate, 1), \m -> MFixSize(m, defaultViewM), defaultViewM)
+					});
+				}
 			);
 		});
 	}
@@ -1327,45 +1332,51 @@ MonthTable(
 		if (isEnable) dayEventsPopup(dayDate, events, eventTypesB, manager, getValue(choosedFilters), 0, styles);
 	}
 
-	makeTitle = \eventColor, dayNumber, isEnable, events : [CalendarEvent] -> MClickable(
-		MGroup2(
-			TRectangle([MFill(eventColor), FillOpacity(1.0)], lineBox),
-			MCenterIn(
-				MText(i2s(dayNumber), [MWhite()]),
-				lineBox
-			)
-		),
-		\-> openDayEventsPopup(dayNumber, isEnable, events)
+	makeTitle = \eventColor, dayNumber, isEnable, events : [CalendarEvent] -> MComponent(
+		[MOnClick(\-> openDayEventsPopup(dayNumber, isEnable, events)), MEnabled(fnot(isReadOnlyB))],
+		\__ -> {
+			MGroup2(
+				TRectangle([MFill(eventColor), FillOpacity(1.0)], lineBox),
+				MCenterIn(
+					MText(i2s(dayNumber), [MWhite()]),
+					lineBox
+				)
+			);
+		}
 	);
 
-	makeEmptyBlock = \dayNumber, isEnable, events : [CalendarEvent] -> MClickable(
-		MGroup2(
-			MColsA([
-				TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
-				TRectangle([Fill(white), FillOpacity(1.0)], lineBoxWithoutBorderLines),
-				TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
-			]),
-			MCenterIn(
-				MText("  ", [MWhite()]),
-				lineBox
-			)
-		),
-		\-> openDayEventsPopup(dayNumber, isEnable, events)
+	makeEmptyBlock = \dayNumber, isEnable, events : [CalendarEvent] -> MComponent(
+		[MOnClick(\-> openDayEventsPopup(dayNumber, isEnable, events)), MEnabled(fnot(isReadOnlyB))],
+		\__ -> {
+			MGroup2(
+				MColsA([
+					TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+					TRectangle([Fill(white), FillOpacity(1.0)], lineBoxWithoutBorderLines),
+					TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+				]),
+				MCenterIn(
+					MText("  ", [MWhite()]),
+					lineBox
+				)
+			);
+		}
 	);
 
-	makeAdditionalEventsBlock = \addDaysCount, dayNumber, isEnable, events : [CalendarEvent] -> MClickable(
-		MGroup2(
-			MColsA([
-				TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
-				TRectangle([MFill(MGrey(400)), FillOpacity(1.0)], lineBoxWithoutBorderLines),
-				TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
-			]),
-			MCenterIn(
-				MText(i2s(addDaysCount) + _("+ events"), [MWhite()]),
-				lineBox
-			)
-		),
-		\-> openDayEventsPopup(dayNumber, isEnable, events)
+	makeAdditionalEventsBlock = \addDaysCount, dayNumber, isEnable, events : [CalendarEvent] -> MComponent(
+		[MOnClick(\-> openDayEventsPopup(dayNumber, isEnable, events)), MEnabled(fnot(isReadOnlyB))],
+		\__ -> {
+			MGroup2(
+				MColsA([
+					TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+					TRectangle([MFill(MGrey(400)), FillOpacity(1.0)], lineBoxWithoutBorderLines),
+					TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+				]),
+				MCenterIn(
+					MText(i2s(addDaysCount) + _("+ events"), [MWhite()]),
+					lineBox
+				)
+			);
+		}
 	);
 
 	// "Empty" day consists of a header with the number of the day and maxDisplayedEventsInOneDay empty units.
@@ -1659,7 +1670,10 @@ RangeView(
 				\event -> max(sectionStart, startDate) <= time2date(event.endDate) && time2date(event.startDate) <= min(sectionEnd, endDate)
 			)
 		}
-		MClickable(TFillXY(), \ -> if (isDateBetween(date, dateMin, dateMax)) showDayEventsPopup(date, eventsToShow))
+		onClick = \ -> {
+			if (isDateBetween(date, dateMin, dateMax)) showDayEventsPopup(date, eventsToShow);
+		}
+		MComponent([MOnClick(onClick), MEnabled(fnot(isReadOnlyB))], \__ -> MFillXY());
 	}));
 
 	EventCells = \len : int, event : CalendarEvent -> {
@@ -1683,12 +1697,14 @@ RangeView(
 			MGroup2(eventCells, MTooltip(text, MText(event.description, []), [MEnabled(const(isTooltipEnabled(event)))]));
 		}
 
-		MClickable(
-			MSelect(eventTypeB, \eventType -> {
-				eventCells = getEventCells(eventType);
-				eitherMap(getEventView(tab, event, eventType, date, len), MFixWidth(eventCells), getDefaultView(eventCells, eventType))
-			}),
-			\ -> if (!fgetValue(isReadOnlyB)) fgetValue(eventTypeB).editAction(event.id)
+		MComponent(
+			[MOnClick(\ -> fgetValue(eventTypeB).editAction(event.id)), MEnabled(fnot(isReadOnlyB))],
+			\__ -> {
+				MSelect(eventTypeB, \eventType -> {
+					eventCells = getEventCells(eventType);
+					eitherMap(getEventView(tab, event, eventType, date, len), MFixWidth(eventCells), getDefaultView(eventCells, eventType))
+				})
+			}
 		);
 	};
 	EmptyCells = \len : int -> MCols(generate(0, len, \__ -> MCols2(MFillXH(0.0), cellBorder(white, 0.0))));
@@ -1875,8 +1891,9 @@ PlannedEventsTable(
 				)
 		};
 
-		MClickable(
-			MGroup([
+		MComponent(
+			[MOnClick(\ -> nextDistinct(currentLine, number)), MEnabled(fnot(isReadOnlyB))],
+			\__ -> MGroup([
 				MGroup2(
 					MSelect(feq(currentLine, number), \isCurrent ->
 						TRectangle([MFill(if (isCurrent) MCustomColor(0xFFECB3) else MWhite()), FillOpacity(1.0)], TFillXH(61.))),
@@ -1961,8 +1978,7 @@ PlannedEventsTable(
 						}
 					})
 				])
-			]),
-			\-> if (!fgetValue(isReadOnlyB)) next(currentLine, number)
+			])
 		)
 	};
 
@@ -2209,7 +2225,7 @@ CalendarForEvents(
 						const(zeroPoint),
 						const(WidthHeight(width, height)),
 						MGetFocusGroup(\parent -> CalendarCells(manager, MPrimaryColor(), parent, mMonth, currentDate, dateMin, dateMax,
-							filteredByMonth, currentMonthNumber, openPopupForDay, currentEventTypes))
+							filteredByMonth, currentMonthNumber, openPopupForDay, currentEventTypes, isReadOnlyB))
 					),
 					\-> {
 						next(currentMonthNumber, monthNumber);
