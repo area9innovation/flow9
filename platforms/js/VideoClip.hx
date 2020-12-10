@@ -575,9 +575,15 @@ class VideoClip extends FlowContainer {
 
 		this.deleteNativeWidget();
 
-		nativeWidget = Browser.document.createElement(tagName);
+		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		if (this.zIndex != null) {
+			nativeWidget.style.zIndex = this.zIndex;
+		}
+		if (this.className != null && this.className != '') {
+			nativeWidget.classList.add(this.className);
+		}
 
 		isNativeWidget = true;
 	}

@@ -27,10 +27,14 @@ class FlowContainer extends Container {
 	private var _bounds = new Bounds();
 	public var filterPadding = 0.0;
 
+	public var clipWidth : Float = null;
+	public var clipHeight : Float = null;
+
 	public var nativeWidget : Dynamic;
 	public var accessWidget : AccessWidget;
 	public var tagName : String;
 	public var className : String;
+	public var zIndex : Int;
 
 	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
@@ -137,6 +141,20 @@ class FlowContainer extends Container {
 			this.initNativeWidget();
 		}
 
+		if (RenderSupport.RendererType != 'html' || this.isCanvas) {
+			this.children.sort(function(a : Dynamic, b : Dynamic) {
+				if (a.zIndex == null && b.zIndex == null) {
+					return 0;
+				} else if (a.zIndex == null || a.zIndex < b.zIndex) {
+					return -1;
+				} else if (b.zIndex == null || b.zIndex < a.zIndex) {
+					return 1;
+				} else {
+					return 0;
+				}
+			});
+		}
+
 		return newChild;
 	}
 
@@ -150,6 +168,20 @@ class FlowContainer extends Container {
 		if (newChild != null) {
 			newChild.invalidate();
 			this.emitEvent("childrenchanged");
+		}
+
+		if (RenderSupport.RendererType != 'html'|| this.isCanvas) {
+			this.children.sort(function(a : Dynamic, b : Dynamic) {
+				if (a.zIndex == null && b.zIndex == null) {
+					return 0;
+				} else if (a.zIndex == null || a.zIndex < b.zIndex) {
+					return -1;
+				} else if (b.zIndex == null || b.zIndex < a.zIndex) {
+					return 1;
+				} else {
+					return 0;
+				}
+			});
 		}
 
 		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
@@ -251,6 +283,22 @@ class FlowContainer extends Container {
 		return rect;
 	}
 
+	public function setWidth(clipWidth : Float) : Void {
+		if (this.clipWidth != clipWidth) {
+			this.clipWidth = clipWidth;
+
+			this.invalidateTransform("setWidth");
+		}
+	}
+
+	public function setHeight(clipHeight : Float) : Void {
+		if (this.clipHeight != clipHeight) {
+			this.clipHeight = clipHeight;
+
+			this.invalidateTransform("setHeight");
+		}
+	}
+
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
 		if (!skipUpdate) {
 			updateTransform();
@@ -279,6 +327,9 @@ class FlowContainer extends Container {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		if (this.zIndex != null) {
+			nativeWidget.style.zIndex = this.zIndex + '';
+		}
 		if (this.className != null && this.className != '') {
 			nativeWidget.classList.add(this.className);
 		}

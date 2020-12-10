@@ -33,6 +33,7 @@ class FlowGraphics extends Graphics {
 	private var accessWidget : AccessWidget;
 	public var tagName : String;
 	public var className : String;
+	public var zIndex : Int;
 
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
@@ -214,7 +215,7 @@ class FlowGraphics extends Graphics {
 			if (isNativeWidget) {
 				this.deleteNativeWidget();
 			}
-		} else if (!isEmpty) {
+		} else if (!isEmpty && this.parent != null) {
 			this.initNativeWidget();
 		}
 
@@ -641,6 +642,9 @@ class FlowGraphics extends Graphics {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		if (this.zIndex != null) {
+			nativeWidget.style.zIndex = this.zIndex + '';
+		}
 		if (this.className != null && this.className != '') {
 			nativeWidget.classList.add(this.className);
 		}

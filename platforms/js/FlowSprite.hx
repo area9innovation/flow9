@@ -36,6 +36,7 @@ class FlowSprite extends Sprite {
 	public var accessWidget : AccessWidget;
 	public var tagName : String;
 	public var className : String;
+	public var zIndex : Int;
 
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
@@ -395,6 +396,9 @@ class FlowSprite extends Sprite {
 		}
 
 		nativeWidget.className = 'nativeWidget';
+		if (this.zIndex != null) {
+			nativeWidget.style.zIndex = this.zIndex + '';
+		}
 		if (this.className != null && this.className != '') {
 			nativeWidget.classList.add(this.className);
 		}

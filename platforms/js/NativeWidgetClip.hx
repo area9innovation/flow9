@@ -128,7 +128,7 @@ class NativeWidgetClip extends FlowContainer {
 		this.invalidateTransform('invalidateStyle');
 	}
 
-	public function setWidth(widgetWidth : Float) : Void {
+	public override function setWidth(widgetWidth : Float) : Void {
 		if (this.widgetWidth != widgetWidth) {
 			this.widgetWidth = widgetWidth;
 
@@ -136,7 +136,7 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	public function setHeight(widgetHeight : Float) : Void {
+	public override function setHeight(widgetHeight : Float) : Void {
 		if (this.widgetHeight != widgetHeight) {
 			this.widgetHeight = widgetHeight;
 

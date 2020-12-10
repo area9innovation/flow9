@@ -1535,6 +1535,16 @@ class RenderSupport {
 		}
 	}
 
+	public static function setClipZIndex(clip : DisplayObject, zIndex : Int) : Void {
+		untyped clip.zIndex = zIndex;
+
+		if (untyped clip.nativeWidget != null) {
+			untyped clip.nativeWidget.style.zIndex = zIndex;
+		} else {
+			clip.initNativeWidget();
+		}
+	}
+
 	private static function setShouldPreventFromBlur(clip : Dynamic) : Void {
 		if (clip.nativeWidget != null && clip.shouldPreventFromBlur != null) {
 			clip.shouldPreventFromBlur = true;
@@ -2392,9 +2402,6 @@ class RenderSupport {
 				clip.off("pointerout", checkFn);
 				clip.invalidateInteractive();
 			};
-		} else if (event == "scroll") {
-			clip.on("scroll", fn);
-			return function() { clip.off("scroll", fn); };
 		} else if (event == "change") {
 			clip.on("input", fn);
 			return function() { clip.off("input", fn); };
@@ -2404,9 +2411,9 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible"){
-			clip.on("visible", fn);
-			return function() { clip.off("visible", fn); }
+		} else if (event == "visible" || event == "scroll" || event == "renderable"){
+			clip.on(event, fn);
+			return function() { clip.off(event, fn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};

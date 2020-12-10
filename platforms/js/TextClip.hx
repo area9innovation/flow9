@@ -1545,6 +1545,9 @@ class TextClip extends NativeWidgetClip {
 			this.updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
+			if (this.zIndex != null) {
+				nativeWidget.style.zIndex = this.zIndex + '';
+			}
 			if (this.className != null && this.className != '') {
 				nativeWidget.classList.add(this.className);
 			}

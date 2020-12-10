@@ -458,9 +458,14 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
-		if (clip.renderable != renderable) {
+		if (untyped clip.renderable != renderable || !clip.renderableSet) {
+			untyped clip.renderableSet = true;
 			clip.renderable = renderable;
 			invalidateVisible(clip);
+
+			RenderSupport.once("drawframe", function() {
+				clip.emit("renderable");
+			});
 
 			if (untyped !clip.keepNativeWidget) {
 				invalidateTransform(clip, 'setClipRenderable');
@@ -2050,9 +2055,19 @@ class DisplayObjectHelper {
 					}
 				}
 
-				if (untyped clip.mask == null) {
-					applyNewBounds(clip, untyped clip.maxLocalBounds);
+				if (untyped clip.clipWidth != null && clip.clipHeight != null) {
+					untyped clip.maxLocalBounds.minX = 0;
+					untyped clip.maxLocalBounds.minY = 0;
+					untyped clip.maxLocalBounds.maxX = clip.clipWidth;
+					untyped clip.maxLocalBounds.maxY = clip.clipHeight;
+				} else if (untyped clip.maxLocalBounds.isEmpty()) {
+					untyped clip.maxLocalBounds.minX = 0;
+					untyped clip.maxLocalBounds.minY = 0;
+					untyped clip.maxLocalBounds.maxX = 0;
+					untyped clip.maxLocalBounds.maxY = 0;
 				}
+
+				applyNewBounds(clip, untyped clip.maxLocalBounds);
 			}
 
 			if (untyped clip.scrollRect != null) {
