@@ -109,10 +109,13 @@ public class Database extends NativeHost {
     public Database() {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver").getConstructor().newInstance();
-            Integer strid = runtime.struct_ids.get("IllegalStruct");
+        } catch (Exception e) {
+            printException(e);
+        }
+        try {
+            Integer strid = runtime.struct_ids.get("IllegalStruct"); // IllegalStruct() could be not used in the code
             illegal = runtime.struct_prototypes[strid];
         } catch (Exception e) {
-
         }
     }
 
@@ -440,6 +443,9 @@ public class Database extends NativeHost {
         String msg = e.getMessage();
         if (msg == null || msg == "") {
             msg = "Error state: " + e.getSQLState();
+        }
+        if (e.getCause() != null) {
+            msg = msg + "\nCause: " + e.getCause().getMessage();
         }
         return msg;
     }

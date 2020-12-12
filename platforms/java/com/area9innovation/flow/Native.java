@@ -1807,4 +1807,25 @@ public class Native extends NativeHost {
 		vector.clear();
 		return null;
 	}
+
+	public final <RT, A1> Func1<RT, A1> synchronizedUnaryFn(Object lock, Func1<RT, A1> fn) {
+		return new Func1<RT, A1>() {
+			@Override
+			public RT invoke(A1 arg1) {
+				synchronized (lock) {
+					return fn.invoke(arg1);
+				}
+			}
+		};
+	}
+	public final <RT, A1, A2> Func2<RT, A1, A2> synchronizedBinaryFn(Object lock, Func2<RT, A1, A2> fn) {
+		return new Func2<RT, A1, A2>() {
+			@Override
+			public RT invoke(A1 arg1, A2 arg2) {
+				synchronized (lock) {
+					return fn.invoke(arg1, arg2);
+				}
+			}
+		};
+	}
 }
