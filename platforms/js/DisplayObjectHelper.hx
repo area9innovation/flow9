@@ -1116,6 +1116,7 @@ class DisplayObjectHelper {
 		if (isCanvas(clip)) {
 			tx -= Math.max(-localBounds.minX, 0.0);
 			ty -= Math.max(-localBounds.minY, 0.0);
+			untyped clip.nativeWidgetBoundsChanged = true;
 		}
 
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
