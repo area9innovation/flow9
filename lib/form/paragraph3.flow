@@ -429,7 +429,7 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 			);
 		}
 		Space(s): {
-			dynFormSizePair = getDynamicFormSize2(s, true);
+			dynFormSizePair = getJoinableTextMetrics(s, true);
 			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM);
 		}
 		ParaOneWord(wd): {
@@ -440,7 +440,7 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 		InspectElement(inspector, e): {
 			makeWord = \word, form -> ParaWord(
 				word,
-				const(getStaticFormSize(form)),
+				getJoinableTextMetrics(form, false).second,
 				CoordinateInspectElement(inspector, form),
 				Empty(),
 				interactivityIdM
@@ -456,7 +456,7 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 					makeWord(Space(t), t);
 				}
 				default: {
-					s = getDynamicFormSize(cast(e : InspectableElement -> Form));
+					s = getJoinableTextMetrics(cast(e : InspectableElement -> Form), false);
 					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM);
 				}
 			}
@@ -466,8 +466,24 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 		}
 		default: {
 			opt = optimizeForm(cast(w : ParaAtomic -> Form));
-			getDynamicFormSize(opt) |> s2w;
+			getJoinableTextMetrics(opt, false) |> s2w;
 		}
+	}
+}
+
+getJoinableTextMetrics(form: Form, getExactTopPoint : bool) -> Pair<Form, Behaviour<FormMetrics>> {
+	switch (form) {
+		Text(__, st) : {
+			letterSpacing = extractStruct(st, LetterSpacing(0.0)).spacing;
+			metrics = getStaticFormSizeCached2(form, getExactTopPoint);
+			Pair(
+				form,
+				const(FormMetrics(metrics with
+					width = metrics.width + letterSpacing
+				))
+			);
+		}
+		default : getDynamicFormSize2(form, getExactTopPoint)
 	}
 }
 
@@ -1010,8 +1026,16 @@ optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
 									t : Form = join[0];
 									// TODO: Do not do this until at the end of the joining fest
 									m = getStaticFormSize(t);
+
+									joinedWordMetrics = FormMetrics(m with
+										width = m.width + extractStruct(s2, LetterSpacing(0.0)).spacing
+									);
+
 									// Replace the last element with the newly joined
-									Cons(OptimizedLineElement(t, const(m), intIdM), tail_)
+									Cons(
+										OptimizedLineElement(t, const(joinedWordMetrics), intIdM),
+										tail_
+									);
 								} else Cons(OptimizedLineElement(f, metrics, intIdM), acc);
 							}
 							default: {
