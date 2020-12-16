@@ -405,7 +405,7 @@ function processFile(
         let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
-		flowChannel.appendLine("Current directory '" + rootPath + "'");
+		//flowChannel.appendLine("Current directory '" + rootPath + "'");
         let run_separately = () => {
             let proc = tools.run_cmd(command.cmd, rootPath, command.args.concat(extra_args), (s) => {
                 // if there is a newer job, ignoring ones pending
@@ -419,7 +419,7 @@ function processFile(
             if (!httpServerOnline) {
                 flowChannel.appendLine("Caution: you are using a separate instance of flowc LSP server. To improve performance it is recommended to switch HTTP server on. Click the status in the lower right corner. Try \"flowc1 server-mode=http\" on the command line.");
 			}
-			flowChannel.appendLine("Compiling '" + getPath(document.uri) + "'");
+			//flowChannel.appendLine("Compiling '" + getPath(document.uri) + "'");
 			//let start = performance.now();
 			client.sendRequest("workspace/executeCommand", {
 					command : "compile", 
