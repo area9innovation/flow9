@@ -61,6 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.flowConsole', flowConsole),
 		reg_comm('flow.execCommand', execCommand),
 		reg_comm('flow.runUI', runUI),
+		reg_comm('flow.restartLspClient', startLspClient),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
 	);
 
