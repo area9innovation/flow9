@@ -128,9 +128,8 @@ function outputHttpServerMemStats() {
 		arguments : ["server-mem-info=1", "do_not_log_this=1"]
 	}).then(
 		(out : string) => {
-			let msg_start = out.indexOf("Used:");
-			let msg_end = out.indexOf("\n", msg_start);
-			let mem_stats = out.substr(msg_start, msg_end - msg_start);
+			const lines = out.split("\n");
+			const mem_stats = lines.find((line) => line.indexOf("free") != -1);
 			showHttpServerOnline(mem_stats);
 		},
 		(err : any) => showHttpServerOffline()
