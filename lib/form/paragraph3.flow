@@ -353,7 +353,7 @@ getParaLineInfosAndScale(
 				indent,
 				isParagraphMarked,
 				rtl,
-				false
+				fitLongWords
 			);
 			Pair(p.first, Some(availWidth / overflowWidth))
 		}
@@ -566,7 +566,8 @@ reflowParaWords(
 		words,
 		firstLineWidth,
 		firstLineWidth,
-		[], [],
+		[],
+		ReflowedLines([]),
 		paraIndent,
 		isFirstMark,
 		catchOverflow
@@ -594,13 +595,21 @@ reflowParaWords2(
 	availableWidth : double,
 	remaining : double,
 	currentWords : [ParaWord],
-	lines : [ParaLine],
+	result : ReflowResult,
 	paraIndent : double,
 	isFirstMark : bool,
 	catchOverflow : bool
 ) -> ReflowResult {
-	addLine = \cw, indent -> {
-		if (cw != []) arrayPush(lines, ParaLine(cw, indent)) else lines;
+	addLine = \cw, indent -> switch (result) {
+		ReflowedLines(lines) : ReflowedLines(
+			if (cw != []) arrayPush(lines, ParaLine(cw, indent)) else lines
+		);
+		OverflowCase(__, __) : result;
+	}
+
+	addOverflow = \overflowWidth : double -> switch (result) {
+		ReflowedLines(__) : OverflowCase(availableWidth, overflowWidth);
+		OverflowCase(aWidth, oWidth) : OverflowCase(aWidth, max(oWidth, overflowWidth));
 	}
 
 	detachWord = \w : ParaWord, detach : bool -> {
@@ -615,12 +624,16 @@ reflowParaWords2(
 		}
 	}
 
-	lineIndex = length(lines);
+	lineIndex = switch (result) {
+		ReflowedLines(lines) : length(lines);
+		OverflowCase(__, __) : 1;
+	};
+
 	lineIndent = getLineIndent(paraIndent, lineIndex);
 	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, lineIndex + 1);
 
 	if (words == []) {
-		ReflowedLines(addLine(currentWords, lineIndent))
+		addLine(currentWords, lineIndent);
 	} else {
 		word = words[0];
 		detachWord(word, false);
@@ -692,7 +705,7 @@ reflowParaWords2(
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, paraword),
-						lines,
+						result,
 						paraIndent,
 						false,
 						catchOverflow
@@ -705,7 +718,7 @@ reflowParaWords2(
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, paraword),
-						lines,
+						result,
 						paraIndent,
 						false,
 						catchOverflow
@@ -735,7 +748,7 @@ reflowParaWords2(
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))),
-						lines,
+						result,
 						paraIndent,
 						false,
 						catchOverflow
@@ -806,15 +819,12 @@ reflowParaWords2(
 						));
 					});
 
-					if (catchOverflow && ^width > remaining) OverflowCase(
-						availableWidth,
-						^width
-					) else reflowParaWords2(
+					reflowParaWords2(
 						_rest,
 						availableWidth,
 						remaining - ^width,
 						newCurrentWords,
-						lines,
+						if (catchOverflow && ^width > remaining) addOverflow(^width) else result,
 						paraIndent,
 						false,
 						catchOverflow
