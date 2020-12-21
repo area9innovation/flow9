@@ -9,7 +9,7 @@ TODO:
 - Add FRP version for interactives
 
 - Add default constructors for each
-- Add helpers without crazy amount of parameters
+
 
 - Add converters to/from lvalue:
 	html.body.p = "Hello world"
@@ -21,4 +21,12 @@ TODO:
 
   in some shape or form.
 
-- Maybe we can do a hybrid inspired by Swift UI syntax
+- Add helpers without crazy amount of parameters:
+  Define what parameters are always used, and turn the rest
+  into helpers somehow:
+
+  // EP(html : string, children : [EDom], style : CssValues, attributes : GlobalAttributes, events : [DomEvent])
+
+	// Easy:
+	EP(eP("Hello world") with children = [whatever]);
+
