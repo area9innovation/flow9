@@ -86,18 +86,20 @@ export {
 	// Char-wise iteration as unicode
 	rreduceChars(str : string, r : Reducer<int, ?>) -> ?;
 
-	rreduceJson(json : Json, reducer : Reducer<JsonAssign, ??>) -> ??;
+	rreduceJson(json : Json, reducer : Reducer<RAssign<Json>, ??>) -> ??;
 		// An assignment is a path to the place in the structure where it belongs and the value to put there
-		JsonAssign(lvalue : JsonLValue, value : Json);
+		RAssign(lvalue : RLValue, value : ?);
 
 		// An "address" in an JSON object to place a value
-		JsonLValue ::= JsonLeaf, JsonLObject, JsonLArray;
+		RLValue ::= RLeaf, RLObject, RLArray;
 			// Immediate value
-			JsonLeaf();
+			RLeaf();
 			// Place the value inside this key in an object
-			JsonLObject(key : string, rvalue : JsonLValue);
+			RLObject(key : string, rvalue : RLValue);
 			// Add the value to this place inside this array
-			JsonLArray(rvalue : JsonLValue);
+			RLArray(rvalue : RLValue);
+			// TODO: Implement this
+			RLArrayIndex(index : int, rvalue : RLValue);
 
 	// TODO: multimap, tuples, graphs, dlist, behaviour/transforms
 
@@ -124,7 +126,7 @@ export {
 
 	// Construct a JSON object based on a bunch of assignments
 	// This is O(n^2) time, unfortunately, so beware!
-	rjson() -> Reducer<JsonAssign, Json>;
+	rjson() -> Reducer<RAssign<Json>, Json>;
 
 	// Fold the values using this initial value, and this function
 	rfold(init : ??, fn : (??, ?) -> ??) -> Reducer<?, ??>;
@@ -339,12 +341,12 @@ rdebug() -> Reducer<?, bool> {
 }
 
 
-rreduceJson(json : Json, reducer : Reducer<JsonAssign, ??>) -> ?? {
+rreduceJson(json : Json, reducer : Reducer<RAssign<Json>, ??>) -> ?? {
 	acc = doRReduceJson(reducer, reducer.init(), \v -> v, json);
 	reducer.final(acc.value);
 }
 
-doRReduceJson(reducer : Reducer<JsonAssign, ??>, acc : ??, lvalueWrap : (JsonLValue) -> JsonLValue, json : Json) -> ReducerResult<??> {
+doRReduceJson(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, json : Json) -> ReducerResult<??> {
 	switch (json) {
 		JsonObject(members): {
 			doRReduceJsonObject(reducer, acc, lvalueWrap, 0, members);
@@ -352,17 +354,17 @@ doRReduceJson(reducer : Reducer<JsonAssign, ??>, acc : ??, lvalueWrap : (JsonLVa
 		JsonArray(elements): {
 			doRReduceJsonArray(reducer, acc, lvalueWrap, 0, elements);
 		}
-		JsonNull(): reducer.reduce(acc, JsonAssign(lvalueWrap(JsonLeaf()), json));
-		JsonBool(v): reducer.reduce(acc, JsonAssign(lvalueWrap(JsonLeaf()), json));
-		JsonDouble(v): reducer.reduce(acc, JsonAssign(lvalueWrap(JsonLeaf()), json));
-		JsonString(v): reducer.reduce(acc, JsonAssign(lvalueWrap(JsonLeaf()), json));
+		JsonNull(): reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
+		JsonBool(v): reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
+		JsonDouble(v): reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
+		JsonString(v): reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
 	}
 }
 
-doRReduceJsonObject(reducer : Reducer<JsonAssign, ??>, acc : ??, lvalueWrap : (JsonLValue) -> JsonLValue, i : int, members : [Pair<string, Json>]) -> ReducerResult<??> {
+doRReduceJsonObject(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, i : int, members : [Pair<string, Json>]) -> ReducerResult<??> {
 	if (i < length(members)) {
 		member = members[i];
-		lvalue = \v -> lvalueWrap(JsonLObject(member.first, v));
+		lvalue = \v -> lvalueWrap(RLObject(member.first, v));
 		v = doRReduceJson(reducer, acc, lvalue, member.second);
 		switch (v) {
 			ReduceAcc(nacc): {
@@ -373,9 +375,9 @@ doRReduceJsonObject(reducer : Reducer<JsonAssign, ??>, acc : ??, lvalueWrap : (J
 	} else ReduceAcc(acc);
 }
 
-doRReduceJsonArray(reducer : Reducer<JsonAssign, ??>, acc : ??, lvalueWrap : (JsonLValue) -> JsonLValue, i : int, elements : [Json]) -> ReducerResult<??> {
+doRReduceJsonArray(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, i : int, elements : [Json]) -> ReducerResult<??> {
 	if (i < length(elements)) {
-		lvalue = \v -> lvalueWrap(JsonLArray(v));
+		lvalue = \v -> lvalueWrap(RLArray(v));
 		element = elements[i];
 		v = doRReduceJson(reducer, acc, lvalue, element);
 		switch (v) {
@@ -388,11 +390,11 @@ doRReduceJsonArray(reducer : Reducer<JsonAssign, ??>, acc : ??, lvalueWrap : (Js
 	} else ReduceAcc(acc);
 }
 
-rjson() -> Reducer<JsonAssign, Json> {
+rjson() -> Reducer<RAssign<Json>, Json> {
 	Reducer(
 		\ -> JsonNull(),
 		\acc, val -> {
-			ReduceAcc(rjsonAssign(acc, val))
+			ReduceAcc(jsonRAssign(acc, val))
 		},
 		\acc -> {
 			acc
@@ -400,15 +402,15 @@ rjson() -> Reducer<JsonAssign, Json> {
 	)
 }
 
-rjsonAssign(acc : Json, assign : JsonAssign) -> Json {
+jsonRAssign(acc : Json, assign : RAssign<Json>) -> Json {
 	switch (assign.lvalue) {
-		JsonLeaf(): assign.value;
-		JsonLObject(key, lvalue2): {
+		RLeaf(): assign.value;
+		RLObject(key, lvalue2): {
 			fieldValue = getJsonFieldValue(acc, key, JsonNull());
-			setJsonField(acc, key, rjsonAssign(fieldValue, JsonAssign(lvalue2, assign.value)));
+			setJsonField(acc, key, jsonRAssign(fieldValue, RAssign(lvalue2, assign.value)));
 		}
-		JsonLArray(lvalue2): {
-			pushJsonValue(acc, rjsonAssign(JsonNull(), JsonAssign(lvalue2, assign.value)));
+		RLArray(lvalue2): {
+			pushJsonValue(acc, jsonRAssign(JsonNull(), RAssign(lvalue2, assign.value)));
 		}
 	}
 }
@@ -505,6 +507,7 @@ rmaxOutput(r : Reducer<?, ??>) -> Reducer<?, ??> {
 	)
 }
 
+/*
 //
 // Testing
 //
@@ -520,7 +523,7 @@ main() {
 	f3 = rreduceSet(buildSet([3,1,2,3,6]), rarray());
 	println(f3);	// [1,2,3,6]
 
-	json1 = parseJson("
+	json1 : Json = parseJson("
 		{
 			a: 0,
 			b: [
@@ -536,29 +539,30 @@ main() {
 	");
 
 	// Reduce to a list of json-assignments
-	jassigns : [JsonAssign] = rreduceJson(json1, rarray());
+	jassigns : [RAssign<Json>] = rreduceJson(json1, rarray());
 	iter(jassigns, println);
-	// JsonAssign(JsonLObject("a", JsonLeaf()), JsonDouble(0.0))
-	// JsonAssign(JsonLObject("b", JsonLArray(JsonLeaf())), JsonDouble(1.0))
-	// JsonAssign(JsonLObject("b", JsonLArray(JsonLeaf())), JsonDouble(2.0))
-	// JsonAssign(JsonLObject("b", JsonLArray(JsonLeaf())), JsonDouble(3.0))
-	// JsonAssign(JsonLObject("c", JsonLObject("d", JsonLeaf())), JsonBool(true))
-	// JsonAssign(JsonLObject("c", JsonLObject("e", JsonLeaf())), JsonNull())
+	// RAssign(RLObject("a", RLeaf()), JsonDouble(0.0))
+	// RAssign(RLObject("b", RLArray(RLeaf())), JsonDouble(1.0))
+	// RAssign(RLObject("b", RLArray(RLeaf())), JsonDouble(2.0))
+	// RAssign(RLObject("b", RLArray(RLeaf())), JsonDouble(3.0))
+	// RAssign(RLObject("c", RLObject("d", RLeaf())), JsonBool(true))
+	// RAssign(RLObject("c", RLObject("e", RLeaf())), JsonNull())
 
 	// Then restruct as JSON object again
 	json2 = rreduce(jassigns, rjson());
 	println(json2stringFormatted(json2));
 	// Same output as the input
 
-	leafs = rreduce(jassigns, rmap(rarray(), \assign : JsonAssign -> assign.value));
+	leafs = rreduce(jassigns, rmap(rarray(), \assign : RAssign -> assign.value));
 	println(leafs);
 	// [JsonDouble(0.0), JsonDouble(1.0), JsonDouble(2.0), JsonDouble(3.0), JsonBool(true), JsonNull()]
 
 	s1 : [string] = rreduceString("Char by Char", rtake(rarray(), 10));
 
-	s2 : [int] = rreduceChars("Char by Char", rdrop(rarray(), 25));
+	s2 : [int] = rreduceChars("Char by Char", rdrop(rarray(), 5));
 	s3 = rreduce(s2, rchars());
 	println("Result " + s3);
 
 	quit(0);
 }
+*/
