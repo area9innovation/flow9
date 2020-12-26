@@ -1,0 +1,223 @@
+import ds/reducer;
+import material/material;
+import material/material2tropic;
+import formats/dom/render;
+
+/*
+TODO:
+- Update the RAssign. Have a wrapper which uses behaviours?
+- Try a version using HTML. Can we express a reducer for HTML?
+
+  html.body.p = "Hello world";
+  html.body.p.style = "Bold";
+
+- Figure out how assignments can be compositional: Introduce RAssigns
+*/
+
+REditor(
+	document : Behaviour<[RAssign<?>]>,
+	// Where are the cursors?
+	cursor : Behaviour<[RLValue]>,
+	// What leading path are we focusing on?
+	focus : Behaviour<RLValue>,
+	// What elements are selected?
+	selected : Behaviour<[RLValue]>,
+	// What elements are collapsed?
+	collapsed : Behaviour<[RLValue]>,
+	// How to edit a given value
+	editValue : (e : RAssign<?>, cursor : bool, selected : bool) -> Material,
+);
+
+makeView(e : REditor<?>) -> Material {
+	MSelect3(
+		e.document, e.cursor, e.selected,
+		\assigns : [RAssign<?>], cursor, selected -> {
+			MLines(
+				map(
+					assigns,
+					\a -> {
+						e.editValue(a, contains(cursor, a.lvalue), contains(selected, a.lvalue))
+					}
+				)
+			)
+		}
+	);
+}
+
+makeREditor(doc : [RAssign<?>], editFn : (e : RAssign<?>, cursor : bool, selected : bool) -> Material) -> REditor {
+	REditor(
+		make(doc),
+		make(if (doc != []) [doc[0].lvalue] else []),
+		make(RLeaf()),
+		make([]),
+		make([]),
+		editFn
+	);
+}
+
+
+viewRAssignJson(l : RAssign<Json>, cursor : bool, selected : bool) -> Material {
+	todo = \ -> MText("todo", []);
+	MBaselineCols([
+		viewRLValue(l.lvalue),
+		switch (l.value : Json) {
+			JsonObject(members): todo();
+			JsonArray(value): todo();
+			JsonNull(): MText("null", []);
+			JsonBool(v): MCheckBox(MText("bool",[]), make(v), []);
+			JsonString(s): MTextInput(make(s), [], []);
+			JsonDouble(value): MTextInput(make(d2s(value)), [], []);
+		}
+	])
+}
+
+// This is called for all leafs
+viewRAssignHtml(l : RAssign<Json>, cursor : bool, selected : bool) -> IXmlNode {
+	dom2ixml(switch (l.value) {
+		JsonObject(members): eP("Object");
+		JsonArray(value): eP("Array");
+		JsonNull(): eP("null");
+		JsonBool(v): eP(b2s(v));
+		JsonDouble(v): eP(d2s(v));
+		JsonString(s): eP(escapeHtml(s));
+	});
+}
+
+jsonAssign2htmlAssign(l : RAssign<Json>, cursor : bool, selected : bool) -> RAssign<IXmlNode> {
+	RAssign(
+		l.lvalue,
+		viewRAssignHtml(l, cursor, selected)
+	)
+}
+
+viewRLValue(l : RLValue) -> Material {
+	switch (l) {
+		RLeaf(): MText(": ", []);
+		RLObject(key, rvalue): MCols([MText(key + ".", []), viewRLValue(rvalue)]);
+		RLArray(rvalue): MCols([MText("[]", []), viewRLValue(rvalue)]);
+	}
+}
+
+main() {
+	json1 = parseJson("
+		{
+			a: 0,
+			b: [
+				1,
+				2,
+				3
+			],
+			c: {
+				d: true,
+				e: null
+			}
+		}
+	");
+
+/*
+a = 0
+b[] = 1
+b[] = 2
+b[] = 3
+c.d = true
+c.e = null
+
+	<div>  a  0 </div>
+	<div>  b 
+			<div>1</div>
+			<div>2</div>
+			<div>3</div>
+	</div>
+	<div>  c
+		<div> d  true </div>
+		<div> e  null </div>
+	<div>
+*/
+	editor = makeREditor(rreduceJson(json1, rarray()), viewRAssignJson);
+
+	assigns = getValue(editor.document);
+
+	htmlAssigns = map(assigns, \a -> jsonAssign2htmlAssign(a, false, false));
+	iter(htmlAssigns, println);
+
+/*	mrender(
+		makeMaterialManager([]), true,
+		makeView(editor)
+	);*/
+	quit(0);
+}
+
+
+/*
+
+From the JSON, we get this sequence of RAssign<IXmlNode>:
+
+RAssign(RLObject("a", RLeaf()), IXmlElement("p", [], [IXmlText("0")], []))
+RAssign(RLObject("b", RLArray(RLeaf())), IXmlElement("p", [], [IXmlText("1")], []))
+RAssign(RLObject("b", RLArray(RLeaf())), IXmlElement("p", [], [IXmlText("2")], []))
+RAssign(RLObject("b", RLArray(RLeaf())), IXmlElement("p", [], [IXmlText("3")], []))
+RAssign(RLObject("c", RLObject("d", RLeaf())), IXmlElement("p", [], [IXmlText("true")], []))
+RAssign(RLObject("c", RLObject("e", RLeaf())), IXmlElement("p", [], [IXmlText("null")], []))
+
+That should correspond to
+
+   <div id="a"><p>0</p></div>
+   <div id="b">
+        <div id="b.0"><p>1</p></div>
+        <div id="b.1"><p>2</p></div>
+        <div id="b.2"><p>3</p></div>
+   </div>
+   <div id="c">
+       <div id="c.d"><p>true</p></div>
+       <div id="c.e"><p>null</p></div>
+   </div>
+
+I.e. an lvalue object with "id" becomes <div id=path.id>, and rlarray becomes <div id=path.index>.
+RLLeaf is just text. The goal is that each id is unique.
+
+So the task is to implement
+
+	htmlRAssign(acc : native HtmlStage, assign : RAssign<IXmlNode>) -> native <HtmlStage>
+
+so that it results in that dom.
+
+The point is that with this approach, we can imperatively update the DOM tree efficiently, 
+and rely on HTML to do a lot of layout for us.
+
+This requires document.getElementById, which we have wrapped as getElementById, and then we can use
+isElementNull to check if that element exists. If not, we should stub it up.
+
+TODO:
+
+RAssigns(
+	assignments : [RAssign]
+)
+
+renderComap(p : Topic) -> RAssigns {
+	html.body.p = renderTopic(p);
+}
+
+renderComap(Reducer<Topic>) -> Reducer<Html>;
+
+Curator:
+
+renderTopic(p : Topic) -> RAssigns {
+	RAssigns(
+		[
+			table.tr[0] = RAssigns([
+				td[0] = p.topic;
+				rowspan = length(p.children());
+				yalign = center;
+			]),
+			mapi(p.children(), \i, child -> {
+				table.tr[i].td[1] = renderTopic(child);
+			})
+		]
+	)
+}
+
+htmlRAssign(acc : MHTMLStage, assign : RAssign<IXmlNode>) -> MHTMLStage {
+
+}
+
+*/
