@@ -11,7 +11,7 @@ TODO:
 - Add FRP version for interactives
 
 - Add "efficient" updating function for rendering with some FRP
-  or lvalue-based approach
+  or lvalue-based approach: Done. See assign.flow.
 
 - Add default constructors for each element to make code easier
 
