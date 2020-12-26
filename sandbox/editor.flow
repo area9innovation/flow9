@@ -6,16 +6,14 @@ import formats/dom/render;
 
 /*
 TODO:
-- Update the RAssign. Have a wrapper which uses behaviours?
-- Try a version using HTML. Can we express a reducer for HTML?
-
-  html.body.p = "Hello world";
-  html.body.p.style = "Bold";
-
-- Figure out how assignments can be compositional: Introduce RAssigns
+- Debug why we get multiple B and C nodes
+- Implement arrays formats/dom/assign
+- Figure out how to do layout using HTML. Maybe we should not make divs, but other constructs for nesting?
+- Implement editing, and incremental updates
 */
 
 REditor(
+	// The document is represented as a bunch of assignments. This works for any data structure
 	document : Behaviour<[RAssign<?>]>,
 	// Where are the cursors?
 	cursor : Behaviour<[RLValue]>,
@@ -25,23 +23,23 @@ REditor(
 	selected : Behaviour<[RLValue]>,
 	// What elements are collapsed?
 	collapsed : Behaviour<[RLValue]>,
-	// How to edit a given value
-	editValue : (e : RAssign<?>, cursor : bool, selected : bool) -> RAssign<IXmlNode>,
+	// How to edit a given value: Convert it to IXmlNode for use in the DOM
+	editValue : (e : RAssign<?>, cursor : bool, readonly : bool, selected : bool) -> RAssign<IXmlNode>,
 );
 
 makeView(e : REditor<?>) -> Material {
 	wh = make(WidthHeight(0.0, 0.0));
 	MInspect([IAvailable(wh)], 
 		MHTMLStage(wh, \stage -> {
+			// TODO: We could use some FRP array construct for the document to allow partial updates
+			// instead of full updates
 			us = fsubscribe(fselect3(e.document, e.cursor, e.selected, \assigns : [RAssign<?>], cursor, selected -> {
-				iter(
-					assigns,
+				// We run all the assignments
+				iter(assigns,
 					\a -> {
-						println(a);
-						xml = e.editValue(a, contains(cursor, a.lvalue), contains(selected, a.lvalue));
+						xml = e.editValue(a, contains(cursor, a.lvalue), false, contains(selected, a.lvalue));
 						htmlRAssign(stage, xml);
-					}
-				);
+				});
 				0;
 			}), nop1);
 			\ -> callList(us);
@@ -49,26 +47,32 @@ makeView(e : REditor<?>) -> Material {
 	);
 }
 
-makeREditor(doc : [RAssign<?>], editFn : (e : RAssign<?>, cursor : bool, selected : bool) -> RAssign<IXmlNode>) -> REditor {
+makeREditor(doc : [RAssign<?>], editFn : (e : RAssign<?>, cursor : bool, readonly : bool, selected : bool) -> RAssign<IXmlNode>) -> REditor {
 	REditor(
+		// The document
 		make(doc),
+		// The cursors
 		make(if (doc != []) [doc[0].lvalue] else []),
+		// Where the focus is
 		make(RLeaf()),
+		// Selection
 		make([]),
+		// What parts are collapsed
 		make([]),
+		// The function which will convert a node to HTML
 		editFn
 	);
 }
 
-jsonAssign2htmlAssign(l : RAssign<Json>, cursor : bool, selected : bool) -> RAssign<IXmlNode> {
+jsonAssign2htmlAssign(l : RAssign<Json>, cursor : bool, readonly : bool, selected : bool) -> RAssign<IXmlNode> {
 	RAssign(
 		l.lvalue,
-		viewRAssignHtml(l, cursor, selected)
+		viewRAssignHtml(l, cursor, readonly, selected)
 	)
 }
 
 // This is called for all leafs
-viewRAssignHtml(l : RAssign<Json>, cursor : bool, selected : bool) -> IXmlNode {
+viewRAssignHtml(l : RAssign<Json>, cursor : bool, readonly : bool, selected : bool) -> IXmlNode {
 	dom2ixml(switch (l.value) {
 		JsonObject(members): eP("Object");
 		JsonArray(value): eP("Array");
@@ -95,25 +99,6 @@ main() {
 		}
 	");
 
-/*
-a = 0
-b[] = 1
-b[] = 2
-b[] = 3
-c.d = true
-c.e = null
-
-	<div>  a  0 </div>
-	<div>  b 
-			<div>1</div>
-			<div>2</div>
-			<div>3</div>
-	</div>
-	<div>  c
-		<div> d  true </div>
-		<div> e  null </div>
-	<div>
-*/
 	editor = makeREditor(rreduceJson(json1, rarray()), jsonAssign2htmlAssign);
 	mrender(
 		makeMaterialManager([]), true,
@@ -136,33 +121,28 @@ RAssign(RLObject("c", RLObject("e", RLeaf())), IXmlElement("p", [], [IXmlText("n
 
 That should correspond to
 
-   <div id="a"><p>0</p></div>
-   <div id="b">
-        <div id="b.0"><p>1</p></div>
-        <div id="b.1"><p>2</p></div>
-        <div id="b.2"><p>3</p></div>
+   <div id=".a"><p>0</p></div>
+   <div id=".b">
+        <div id=".b.0"><p>1</p></div>
+        <div id=".b.1"><p>2</p></div>
+        <div id=".b.2"><p>3</p></div>
    </div>
-   <div id="c">
-       <div id="c.d"><p>true</p></div>
-       <div id="c.e"><p>null</p></div>
+   <div id=".c">
+       <div id=".c.d"><p>true</p></div>
+       <div id=".c.e"><p>null</p></div>
    </div>
 
 I.e. an lvalue object with "id" becomes <div id=path.id>, and RLArrayPush becomes <div id=path.index>.
 RLLeaf is just text. The goal is that each id is unique.
 
-So the task is to implement
-
-	htmlRAssign(acc : native HtmlStage, assign : RAssign<IXmlNode>) -> native <HtmlStage>
-
-so that it results in that dom.
+Right now, there is a bug so we do not get this structure correctly.
 
 The point is that with this approach, we can imperatively update the DOM tree efficiently, 
 and rely on HTML to do a lot of layout for us.
 
-This requires document.getElementById, which we have wrapped as getElementById, and then we can use
-isElementNull to check if that element exists. If not, we should stub it up.
-
 TODO:
+
+See we can maybe provide some kind of nesting structure:
 
 RAssigns(
 	assignments : [RAssign]
@@ -189,10 +169,6 @@ renderTopic(p : Topic) -> RAssigns {
 			})
 		]
 	)
-}
-
-htmlRAssign(acc : MHTMLStage, assign : RAssign<IXmlNode>) -> MHTMLStage {
-
 }
 
 */
