@@ -3284,6 +3284,15 @@ class RenderSupport {
 		element.nodeValue = value;
 	}
 
+	public static function getElementById(selector : String) : Element {
+		return Browser.document.getElementById(selector);
+	}
+
+	public static function isElementNull(element : Element) : Bool {
+		return element == null;
+	}
+
+
 	public static function setAttribute(element : Element, name : String, value : String) : Void {
 		if (name == "innerHTML")
 			element.innerHTML = value
