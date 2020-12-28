@@ -5,10 +5,25 @@ import formats/dom/assign;
 import formats/dom/render;
 
 /*
+This is the start of a general editor.
+
+It is intended to be a generalization of comapping, prime, flowschema and other similar editors.
+
+This is possible through the abstraction of RAssign. This allow any data structure
+to be de-composed into individual "assignments" of "atomic" values. Similarly, the notion 
+of a cursor or place in the document is captured by the notion of RLValues.
+
+Run:
+
+c:\flow9\> flowc1 sandbox/editor.flow html=editor.html
+
+and then open c:\flow9\editor.html in your browser.
+
 TODO:
 - Debug why we get multiple B and C nodes
-- Implement arrays formats/dom/assign
-- Figure out how to do layout using HTML. Maybe we should not make divs, but other constructs for nesting?
+- "Replace" arraypush with explicit indexes into the arrays?
+- Implement lvalues for arrays in formats/dom/assign.flow
+- Figure out how to do layout using HTML. I.e. figure out a way to nest divs.
 - Implement editing, and incremental updates
 */
 
@@ -25,6 +40,9 @@ REditor(
 	collapsed : Behaviour<[RLValue]>,
 	// How to edit a given value: Convert it to IXmlNode for use in the DOM
 	editValue : (e : RAssign<?>, cursor : bool, readonly : bool, selected : bool) -> RAssign<IXmlNode>,
+
+	// TODO: Add clipboard, undo/redo
+	// TODO: Make sure all actions are events
 );
 
 makeView(e : REditor<?>) -> Material {
@@ -91,41 +109,128 @@ makeREditor(doc : [RAssign<?>], editFn : (e : RAssign<?>, cursor : bool, readonl
 jsonAssign2htmlAssign(l : RAssign<Json>, cursor : bool, readonly : bool, selected : bool) -> RAssign<IXmlNode> {
 	RAssign(
 		l.lvalue,
-		viewRAssignHtml(l, cursor, readonly, selected)
+		viewJsonRAssignHtml(l, cursor, readonly, selected)
 	)
 }
 
 // This is called for all leafs
-viewRAssignHtml(l : RAssign<Json>, cursor : bool, readonly : bool, selected : bool) -> IXmlNode {
-	dom0 = switch (l.value) {
-		JsonObject(members): eP("Object");
-		JsonArray(value): eP("Array");
-		JsonNull(): eP("null");
-		JsonBool(v): eP(b2s(v));
-		JsonDouble(v): eP(d2s(v));
-		JsonString(s): eP(escapeHtml(s));
+viewJsonRAssignHtml(l : RAssign<Json>, cursor : bool, readonly : bool, selected : bool) -> IXmlNode {
+	key = rlvalueKey(l.lvalue);
+
+	text = (if (key != "") key + ": " else "")
+		+ switch (l.value) {
+		JsonObject(members): "Object";
+		JsonArray(value): "Array";
+		JsonNull(): "null";
+		JsonBool(v): b2s(v);
+		JsonDouble(v): d2s(v);
+		JsonString(s): escapeHtml(s);
 	};
-	css0 = dom0.style;
+
 	leftMargin = i2d(depthRLValue(l.lvalue)) * 8.0;
-	css1 = CssValues(css0 with box = CssBox(css0.box with margin = CssMargin(css0.box.margin with left = CssLength(leftMargin, CssUnitEm()))));
-	css = if (cursor) {
-		// OK, this syntax sucks, but will work for now:
-		CssValues(css1 with colors = CssColors(CssColorRgb(0, 180, 200)))
-	} else css1;
-	dom = EP(dom0 with style = css);
-	dom2ixml(dom);
+
+	if (true) {
+		// TODO: Figure out a better way to construct this.
+		IXmlElement("p", [
+			IXmlAttribute("style", 
+				"position: static; margin-left: " + d2s(leftMargin) + "em;" 
+				+ (if (cursor) "color: blue;" else "")
+				+ (if (selected) "border:1px solid black;" else "")
+				+ (if (readonly) "" else "")
+			) ], [IXmlText(text)], []);
+	} else {
+		// OK, these constructs for HTML are shit:
+		dom0 = eP(text);
+		css0 = dom0.style;
+		css1 = CssValues(css0 with box = CssBox(css0.box with margin = CssMargin(css0.box.margin with left = CssLength(leftMargin, CssUnitEm()))));
+		css = if (cursor) {
+			CssValues(css1 with colors = CssColors(CssColorRgb(0, 180, 200)))
+		} else css1;
+		dom = EP(dom0 with style = css);
+		dom2ixml(dom);
+	}
 }
 
-// TODO: We want a bunch of helpers for rlvalues
+//
+// We want a bunch of helpers for rlvalues
+//
 
 depthRLValue(l : RLValue) -> int {
 	switch (l) {
 		RLeaf(): 0;
-		RLObject(__, rvalue): 1 + depthRLValue(rvalue);
-		RLArrayPush(rvalue): 1 + depthRLValue(rvalue);
-		RLArrayIndex(index, rvalue): 1 + depthRLValue(rvalue);
+		RLObject(__, lvalue): 1 + depthRLValue(lvalue);
+		RLArrayPush(lvalue): 1 + depthRLValue(lvalue);
+		RLArrayIndex(index, lvalue): 1 + depthRLValue(lvalue);
 	}
 }
+
+isRLValueParent(parent : RLValue, child : RLValue) -> bool {
+	switch (parent) {
+		RLeaf(): child != RLeaf();
+		RLObject(pkey, plvalue): {
+			switch (child) {
+				RLObject(ckey, clvalue): {
+					ckey == pkey && isRLValueParent(plvalue, clvalue);
+				}
+				default: false;
+			}
+		}
+		RLArrayPush(plvalue): {
+			switch (child) {
+				RLArrayPush(clvalue): {
+					isRLValueParent(plvalue, clvalue);
+				}
+				default: false;
+			}
+		}
+		RLArrayIndex(pindex, plvalue): {
+			switch (child) {
+				RLArrayIndex(cindex, clvalue): {
+					pindex == cindex && isRLValueParent(plvalue, clvalue);
+				}
+				default: false;
+			}
+		}
+	}
+}
+
+parentRLValue(child : RLValue) -> RLValue {
+	switch (child) {
+		RLeaf(): child;
+		RLObject(key, lvalue): {
+			if (lvalue == RLeaf()) {
+				lvalue;
+			} else {
+				RLObject(key, parentRLValue(lvalue))
+			}
+		}
+		RLArrayPush(lvalue): {
+			if (lvalue == RLeaf()) lvalue
+			else RLArrayPush(parentRLValue(lvalue))
+		}
+		RLArrayIndex(index, lvalue): {
+			if (lvalue == RLeaf()) lvalue
+			else RLArrayIndex(index, parentRLValue(lvalue));
+		}
+	}
+}
+
+// What is the final key for this element?
+rlvalueKey(l : RLValue) -> string {
+	switch (l) {
+		RLeaf(): "";
+		RLObject(key, lvalue): {
+			if (lvalue == RLeaf()) key
+			else rlvalueKey(lvalue);
+		}
+		RLArrayPush(lvalue): rlvalueKey(lvalue);
+		RLArrayIndex(index, lvalue): rlvalueKey(lvalue);
+	}
+}
+
+//
+// TODO: Next and previous rlvalue. What to do with objects?
+//
 
 main() {
 	json1 = parseJsonSafe("
@@ -138,7 +243,10 @@ main() {
 			],
 			c: {
 				d: true,
-				e: null
+				e: null,
+				f: {
+					g: 5
+				}
 			}
 		}
 	");
