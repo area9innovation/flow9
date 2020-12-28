@@ -84,7 +84,10 @@ function runUI() {
 	const file_path = document.uri.fsPath;
 	const file_name = path.basename(file_path, path.extname(file_path));
 	const file_dir = path.dirname(file_path);
-	const html_file = path.join(file_dir, "www", file_name + ".html");
+	const file_conf = findConfigDir();
+	const html_file = file_conf ? 
+		path.join(file_conf, "www2", file_name + ".html") : 
+		path.join(file_dir, "www2", file_name + ".html");
 	compileCurrentFile(["html=" + html_file], 
 		() => {
 			const panel = vscode.window.createWebviewPanel(
@@ -493,12 +496,35 @@ function getFlowCompilerFamily(): string {
 
 // reads configuration, defaults to global plugin configuration
 function readConfiguration(): PropertiesReader.Reader {
-    let configFile = path.join(vscode.workspace.rootPath, "flow.config");
-    var reader = PropertiesReader(undefined);
-    if (fs.existsSync(configFile))
-        reader.append(configFile);
-   
-    return reader;
+	const conf_dir = findConfigDir();
+	if (conf_dir) {
+		return PropertiesReader(path.join(conf_dir, "flow.config"));
+	} else {
+		return PropertiesReader(null);
+	}
+}
+
+// finds a closest flow.config file
+function findConfigDir(dir: string = null): string {
+	if (!dir) {
+		const file_conf_dir = findConfigDir(path.dirname(vscode.window.activeTextEditor.document.uri.fsPath));
+		if (file_conf_dir) {
+			return file_conf_dir;
+		} else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+			return findConfigDir(vscode.workspace.workspaceFolders[0].uri.fsPath);
+		} else {
+			return null;
+		}
+	} else if (fs.existsSync(path.join(dir, "flow.config"))) {
+		return dir;
+	} else {
+		const upper = path.dirname(dir);
+		if (dir == upper) {
+			return null;
+		} else {
+			return findConfigDir(upper);
+		}
+	}
 }
 
 function execCommand() {
