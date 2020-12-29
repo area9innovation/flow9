@@ -235,8 +235,7 @@ class FlowContainer extends Container {
 					bounds.minY = 0;
 					bounds.maxX = renderer.width;
 					bounds.maxY = renderer.height;
-					this.invalidateLocalBounds();
-					this.invalidateRenderable(bounds);
+					this.invalidateLocalBounds(null, bounds);
 
 					DisplayObjectHelper.lockStage();
 					updateTransform();
@@ -260,8 +259,7 @@ class FlowContainer extends Container {
 				bounds.minY = 0;
 				bounds.maxX = renderer.width;
 				bounds.maxY = renderer.height;
-				this.invalidateLocalBounds();
-				this.invalidateRenderable(bounds);
+				this.invalidateLocalBounds(null, bounds);
 			}
 
 			DisplayObjectHelper.lockStage();

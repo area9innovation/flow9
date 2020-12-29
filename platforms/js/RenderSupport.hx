@@ -2515,7 +2515,7 @@ class RenderSupport {
 			return false;
 		}
 
-		clip.invalidateLocalBounds();
+		// clip.invalidateLocalBounds();
 
 		var point = new Point(x, y);
 		return hittestMask(clip.parent, point) && doHitTest(clip, point);
