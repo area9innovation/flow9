@@ -155,3 +155,9 @@
 
 ## 0.4.9
  - 'runUI' command is added: runs a visual application, compiled to html+js, in webview panel.
+
+ ## 0.4.10
+ - obsolete LSP modes (JS and flowc-based) are removed.
+
+ ## 0.4.11
+ - more concise format of server memory state is used.

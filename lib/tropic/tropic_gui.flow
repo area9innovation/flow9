@@ -121,6 +121,12 @@ export {
 	TFrameT(margin : Transform<double>, radius : Transform<double>, style : Transform<[TGraphicsStyle]>, box : Tropic) -> Tropic;
 	TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double, trRounded : bool, r : double,
 		br : double, brRounded : bool, b : double, bl : double, blRounded : bool, style : [TGraphicsStyle], box : Tropic) -> Tropic;
+	TFrameCustomT(
+		l : Transform<double>, tl : Transform<double>, tlRounded : Transform<bool>,
+		t : Transform<double>, tr : Transform<double>, trRounded : Transform<bool>,
+		r : Transform<double>, br : Transform<double>, brRounded : Transform<bool>,
+		b : Transform<double>, bl : Transform<double>, blRounded : Transform<bool>,
+		style : Transform<[TGraphicsStyle]>, box : Tropic) -> Tropic;
 
 	// Round rectangle corners to maximum possible radius
 	TRoundedFull(style : [TGraphicsStyle], size : Tropic) -> Tropic;
@@ -428,7 +434,7 @@ export {
 	// Content displayed in browser print dialog
 	TPrintTarget(t : Tropic) -> Tropic;
 	// Similar to TPrintTarget, only every element is printed on different page
-	TPrintPages(t : [Tropic]) -> Tropic;
+	TPrintPages(t : Transform<[Tropic]>) -> Tropic;
 	// By default TPrintPages uses web view size as available space for printing
 	// TPrintPageSize lets to redefine this size with any other
 	TPrintPageSize : DynamicBehaviour<Maybe<WidthHeight>> = make(None());
@@ -438,11 +444,6 @@ export {
 	// JS HTML Renderer: Extract rendered static html from the clip
 	// Use wrapFlowHTML to wrap resulting html string with root tags, flow stylesheet and Roboto webfonts
 	TExtractHTML(t : Tropic, setfn : (fn : () -> string) -> void) -> Tropic;
-	// JS: Extract clip as png in base64 format
-	// Ignores crossorigin images
-	// setfn returns a function that recieves callback which gets base64 string when image is ready
-	// setfn returns None() if child is destroyed
-	TExtractPNG(t : Tropic, setfn : (fn : Maybe<((png : string) -> void) -> void>) -> void) -> Tropic;
 
 	// JS HTML: Set clip z-index
 	TZIndex(zIndex : Transform<int>, t : Tropic) -> Tropic;
@@ -910,6 +911,40 @@ TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double,
 		TBorder(r, t, l, b, box)
 	else
 		box
+}
+
+TFrameCustomT(
+	l : Transform<double>, tl : Transform<double>, tlRounded : Transform<bool>,
+	t : Transform<double>, tr : Transform<double>, trRounded : Transform<bool>,
+	r : Transform<double>, br : Transform<double>, brRounded : Transform<bool>,
+	b : Transform<double>, bl : Transform<double>, blRounded : Transform<bool>,
+	style : Transform<[TGraphicsStyle]>, box : Tropic) -> Tropic {
+	borderedBox = TBorderT(r, t, l, b, box);
+
+	if (isFConst(style) && length(fgetValue(style)) == 0)
+		borderedBox
+	else
+		TransformTAcc2(\tac -> {
+			b1 = borderedBox |> tac;
+
+			gstyle = fselect(style, FLift(tgraphicsStyle2graphicsStyle));
+
+			isconst = b1.xConstant && b1.yConstant;
+			wd = if (isconst) const(fgetValue(b1.metrics.width)) else b1.metrics.width;
+			hgt = if (isconst) const(fgetValue(b1.metrics.height)) else b1.metrics.height;
+
+			TAcc(b1 with form =
+				FGroup([
+					FGraphics(
+						fselect4(fquadruple(tl, tr, br, bl), fquadruple(tlRounded, trRounded, brRounded, blRounded), wd, hgt, \rad, isRounded, w, h ->
+							customRect(w, h, rad.first, rad.second, rad.third, rad.fourth, isRounded.first, isRounded.second, isRounded.third, isRounded.fourth)
+						),
+						gstyle
+					),
+					b1.form
+				], false)
+			)
+		})
 }
 
 TRoundedFull(style : [TGraphicsStyle], size : Tropic) -> Tropic {
@@ -3088,7 +3123,7 @@ TPrintTarget(t : Tropic) -> Tropic {
 	)
 }
 
-TPrintPages(t : [Tropic]) -> Tropic {
+TPrintPages(t : Transform<[Tropic]>) -> Tropic {
 	printMode = make(false);
 	stageWH = makeWH();
 
@@ -3106,14 +3141,19 @@ TPrintPages(t : [Tropic]) -> Tropic {
 		],
 		TFullWindow(
 			printMode,
-			TLines(map(t, \tt ->
-				TAccess(
-					[
-						ClassName("print-page")
-					],
-					TAvailable(tt, TIf(printMode, TSized(feither(TPrintPageSize, stageWH)), TFillXY()))
+			TMutable(
+				fselect(
+					fmap(t, \tt ->
+						TAccess(
+							[
+								ClassName("print-page")
+							],
+							TAvailable(tt, TIf(printMode, TSized(feither(TPrintPageSize, stageWH)), TFillXY()))
+						)
+					),
+					FLift(\tt -> TLines(tt))
 				)
-			))
+			)
 		)
 	)
 }
@@ -3153,38 +3193,6 @@ TExtractHTML(t : Tropic, setfn : (fn : () -> string) -> void) -> Tropic {
 					NativeRenderResult(
 						[parent],
 						\ -> {
-							setfn(\ -> "");
-							applyall(rr.disposers);
-						}
-					)
-				}
-			)
-		)
-	})
-}
-
-
-TExtractPNG(t : Tropic, setfn : (fn : Maybe<((png : string) -> void) -> void>) -> void) -> Tropic {
-	TransformTAcc2(\t2a -> {
-		b = t2a(t);
-
-		TAcc(b with
-			form = FNativeForm(
-				t,
-				const(FormMetrics(0., 0., 0., 0.)),
-				\ -> b.form,
-				\__, z, __ -> {
-					rr = renderFForm(b.form, const(z));
-					parent = makeClip();
-					targetClip = makeClip();
-					addChild(parent, targetClip);
-					iter(rr.clips, \c -> addChild(targetClip, c));
-					setfn(Some(\cb -> getClipSnapshot(parent, cb)));
-
-					NativeRenderResult(
-						[parent],
-						\ -> {
-							setfn(None());
 							applyall(rr.disposers);
 						}
 					)

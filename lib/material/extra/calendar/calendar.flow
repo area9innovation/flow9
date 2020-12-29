@@ -162,13 +162,6 @@ timeDayCheck(start : Time, end : Time, current : Date, dayNumber : int) -> bool 
 	}
 }
 
-oneNumberInDateCheck(number : int) -> string {
-	if (number >= 10)
-		i2s(number)
-	else
-		"0" + i2s(number)
-}
-
 getMultiDayEvents(events : [CalendarEvent]) -> [CalendarEvent] {
 	filter(events, \event -> time2date(event.startDate) != time2date(event.endDate))
 }
@@ -1315,8 +1308,9 @@ MonthTable(
 				),
 			]);
 
+			isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
 			MComponent(
-				[MOnClick(\-> fgetValue(eventTypeB).editAction(item.id)), MEnabled(fnot(isReadOnlyB))],
+				[MOnClick(\-> fgetValue(eventTypeB).editAction(item.id)), MEnabled(fand(fnot(isReadOnlyB), isEditActionNotEmptyB))],
 				\__ -> {
 					MSelect(eventTypeB, \eventType -> {
 						eitherMap(getEventView(MonthTab(), item, eventType, dayDate, 1), \m -> MFixSize(m, defaultViewM), defaultViewM)
@@ -1697,15 +1691,16 @@ RangeView(
 			MGroup2(eventCells, MTooltip(text, MText(event.description, []), [MEnabled(const(isTooltipEnabled(event)))]));
 		}
 
+		isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
 		MComponent(
-			[MOnClick(\ -> fgetValue(eventTypeB).editAction(event.id)), MEnabled(fnot(isReadOnlyB))],
+			[MOnClick(\ -> fgetValue(eventTypeB).editAction(event.id)), MEnabled(fand(fnot(isReadOnlyB), isEditActionNotEmptyB))],
 			\__ -> {
 				MSelect(eventTypeB, \eventType -> {
 					eventCells = getEventCells(eventType);
 					eitherMap(getEventView(tab, event, eventType, date, len), MFixWidth(eventCells), getDefaultView(eventCells, eventType))
 				})
 			}
-		);
+		) |> disableMInteractivesBelow;
 	};
 	EmptyCells = \len : int -> MCols(generate(0, len, \__ -> MCols2(MFillXH(0.0), cellBorder(white, 0.0))));
 
@@ -1882,17 +1877,33 @@ PlannedEventsTable(
 		eventName = if (event.title != "") event.title else event.eventType;
 		eventDate = date2formatString(time2date(event.startDate), tableDateFormat);
 
-		createTimeLabel = \_curTime -> {
+		isStartDayOrEndDayTime = \time -> {
+			time.hour == 0 && time.min == 0 || time.hour == 23 && time.min == 59;
+		}
+		createTimeLabel = \time -> {
 			if (hideTimeInfo) TEmpty()
 			else
 				MCenterYIn(
-					MText(oneNumberInDateCheck(_curTime.hour) + ":" + oneNumberInDateCheck(_curTime.min), [littleFont]),
+					MText(if (time != "") lpad(time, "0", 5) else "", [littleFont]),
 					TFixed(150., lineHeight)
 				)
-		};
+		}
+		times = if (isStartDayOrEndDayTime(event.startDate) && isStartDayOrEndDayTime(event.endDate)) {
+			Pair("", "");
+		} else if (event.startDate.hour == event.endDate.hour && event.startDate.min == event.endDate.min) {
+			Pair(getTimeOnlyString(event.startDate, false, false), "");
+		} else {
+			Pair(
+				getTimeOnlyString(event.startDate, false, false),
+				getTimeOnlyString(event.endDate, false, false)
+			);
+		}
+		startTimeM = createTimeLabel(times.first);
+		endTimeM = createTimeLabel(times.second);
 
+		isEditActionNotEmpty = eventType.editAction != nop1;
 		MComponent(
-			[MOnClick(\ -> nextDistinct(currentLine, number)), MEnabled(fnot(isReadOnlyB))],
+			[MOnClick(\ -> nextDistinct(currentLine, number)), MEnabled(fand(fnot(isReadOnlyB), const(isEditActionNotEmpty)))],
 			\__ -> MGroup([
 				MGroup2(
 					MSelect(feq(currentLine, number), \isCurrent ->
@@ -1920,9 +1931,9 @@ PlannedEventsTable(
 						TFillXH(lineHeight)
 					),
 					TFixed(5., 0.),
-					createTimeLabel(event.startDate),
+					startTimeM,
 					MSelect(currentLine, \line -> {
-						if (line != number) createTimeLabel(event.endDate)
+						if (line != number) endTimeM
 						else {
 							MColsA([
 								if (length(eventType.additionalActions) > 0) {
