@@ -161,3 +161,6 @@
 
  ## 0.4.11
  - more concise format of server memory state is used.
+
+ ## 0.4.12
+ - html files are placed in the www2 directory in the nearest directory with flow.config file.
