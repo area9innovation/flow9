@@ -174,6 +174,7 @@ class DisplayObjectHelper {
 	public static function invalidateParentTransform(clip : DisplayObject) : Void {
 		if (clip.parent != null) {
 			untyped clip.transformChanged = true;
+			untyped clip.localBoundsChanged = true;
 
 			if (isCanvas(clip)) {
 				untyped clip.localTransformChanged = true;
@@ -2284,9 +2285,15 @@ class DisplayObjectHelper {
 		return untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null;
 	}
 
+	public static var invalidatedLocalBounds = 0;
+
 	public static function invalidateLocalBounds(clip : DisplayObject, ?invalidateMask : Bool = false, viewBounds : Bounds, ?hasAnimation : Bool = false) : Void {
 		if (untyped clip.transformChanged || clip.localBoundsChanged) {
-			untyped clip.localBoundsChanged = false;
+			var checkLocalBounds = untyped clip.localBoundsChanged;
+			if (checkLocalBounds) {
+				invalidatedLocalBounds++;
+				untyped clip.localBoundsChanged = false;
+			}
 
 			if (untyped clip.localTransformChanged) {
 				untyped clip.transform.updateLocalTransform();
@@ -2295,8 +2302,10 @@ class DisplayObjectHelper {
 			viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
 
 			if (untyped clip.maskContainer != null) {
-				invalidateLocalBounds(untyped clip.maskContainer, true, viewBounds, untyped hasAnimation || clip.hasAnimation);
-				applyNewBounds(clip, untyped clip.scrollRect != null ? clip.maskContainer.currentBounds : applyInvertedTransform(clip.maskContainer.currentBounds, clip.localTransform));
+				if (checkLocalBounds) {
+					invalidateLocalBounds(untyped clip.maskContainer, true, viewBounds, untyped hasAnimation || clip.hasAnimation);
+					applyNewBounds(clip, untyped clip.scrollRect != null ? clip.maskContainer.currentBounds : applyInvertedTransform(clip.maskContainer.currentBounds, clip.localTransform));
+				}
 
 				if (untyped clip.scrollRect != null) {
 					viewBounds.minX = Math.max(viewBounds.minX, untyped clip.localBounds.minX);
@@ -2305,14 +2314,25 @@ class DisplayObjectHelper {
 					viewBounds.maxY = Math.min(viewBounds.maxY, untyped clip.localBounds.maxY);
 				}
 
-				if (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty()) {
+				if (InvalidateRenderable && (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty())) {
 					setClipRenderable(clip, false);
+					untyped clip.localBoundsChanged = true;
+
+					for (child in getClipChildren(clip)) {
+						if (isWorthChecking(child, invalidateMask, viewBounds)) {
+							invalidateLocalBounds(child, invalidateMask, viewBounds, untyped hasAnimation || clip.hasAnimation);
+						}
+					}
 				} else {
-					setClipRenderable(
-						clip,
-						untyped viewBounds.maxX >= clip.localBounds.minX && viewBounds.minX <= clip.localBounds.maxX &&
-							viewBounds.maxY >= clip.localBounds.minY && viewBounds.minY <= clip.localBounds.maxY
-					);
+					if (InvalidateRenderable) {
+						setClipRenderable(
+							clip,
+							untyped viewBounds.maxX >= clip.localBounds.minX && viewBounds.minX <= clip.localBounds.maxX &&
+								viewBounds.maxY >= clip.localBounds.minY && viewBounds.minY <= clip.localBounds.maxY
+						);
+					}
+
+					untyped clip.maxLocalBounds = new Bounds();
 
 					for (child in getClipChildren(clip)) {
 						if (isWorthChecking(child, invalidateMask, viewBounds)) {
@@ -2321,15 +2341,26 @@ class DisplayObjectHelper {
 						}
 					}
 				}
-			} else if (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty()) {
+			} else if (InvalidateRenderable && (!Math.isFinite(viewBounds.minX) || !Math.isFinite(viewBounds.minY) || viewBounds.isEmpty())) {
 				setClipRenderable(clip, false);
+				untyped clip.localBoundsChanged = true;
+
+				for (child in getClipChildren(clip)) {
+					if (isWorthChecking(child, invalidateMask, viewBounds)) {
+						invalidateLocalBounds(child, invalidateMask, viewBounds, untyped hasAnimation || clip.hasAnimation);
+					}
+				}
 			} else {
 				if (untyped clip.graphicsBounds != null) {
-					untyped clip.calculateGraphicsBounds();
-					applyNewBounds(clip, untyped clip.graphicsBounds);
+					if (checkLocalBounds) {
+						untyped clip.calculateGraphicsBounds();
+						applyNewBounds(clip, untyped clip.graphicsBounds);
+					}
 				} else if (untyped clip.widgetBounds != null) {
-					untyped clip.calculateWidgetBounds();
-					applyNewBounds(clip, untyped clip.widgetBounds);
+					if (checkLocalBounds) {
+						untyped clip.calculateWidgetBounds();
+						applyNewBounds(clip, untyped clip.widgetBounds);
+					}
 
 					if ((RenderSupport.RendererType != "html" && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 						untyped clip.invalidateStyle();
@@ -2360,11 +2391,13 @@ class DisplayObjectHelper {
 					applyNewBounds(clip, untyped clip.maxLocalBounds);
 				}
 
-				setClipRenderable(
-					clip,
-					untyped viewBounds.maxX >= clip.localBounds.minX && viewBounds.minX <= clip.localBounds.maxX &&
-						viewBounds.maxY >= clip.localBounds.minY && viewBounds.minY <= clip.localBounds.maxY
-				);
+				if (InvalidateRenderable) {
+					setClipRenderable(
+						clip,
+						untyped viewBounds.maxX >= clip.localBounds.minX && viewBounds.minX <= clip.localBounds.maxX &&
+							viewBounds.maxY >= clip.localBounds.minY && viewBounds.minY <= clip.localBounds.maxY
+					);
+				}
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
@@ -2397,10 +2430,12 @@ class DisplayObjectHelper {
 
 				untyped clip.currentBounds = applyLocalBoundsTransform(clip);
 			}
-		} else if (untyped !clip.visible) {
+		} else {
 			invalidateRenderable(clip, viewBounds, untyped hasAnimation || clip.hasAnimation);
 		}
 	}
+
+	public static var invalidatedRenderable = 0;
 
 	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds, ?hasAnimation : Bool = false) : Void {
 		if (!InvalidateRenderable) {
@@ -2419,7 +2454,16 @@ class DisplayObjectHelper {
 			untyped clip.transform.updateLocalTransform();
 		}
 
+		invalidatedRenderable++;
+
 		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
+
+		if (untyped clip.scrollRect != null) {
+			viewBounds.minX = Math.max(viewBounds.minX, untyped clip.localBounds.minX);
+			viewBounds.minY = Math.max(viewBounds.minY, untyped clip.localBounds.minY);
+			viewBounds.maxX = Math.min(viewBounds.maxX, untyped clip.localBounds.maxX);
+			viewBounds.maxY = Math.min(viewBounds.maxY, untyped clip.localBounds.maxY);
+		}
 
 		if ((RenderSupport.RendererType != "html" && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
@@ -2436,7 +2480,11 @@ class DisplayObjectHelper {
 			);
 		}
 
-		if (untyped !clip.transformChanged || clip.scrollRect != null || !clip.visible) {
+		// if (untyped !clip.transformChanged || clip.scrollRect != null || !clip.visible) {
+		// 	return;
+		// }
+
+		if (untyped !clip.transformChanged) {
 			return;
 		}
 
@@ -2592,5 +2640,13 @@ class DisplayObjectHelper {
 		} else {
 			return child.parent != null && isParentOf(parent, child.parent);
 		}
+	}
+
+	public static function countClips(clip : DisplayObject) : Int {
+		var count = 1;
+		for (child in getClipChildren(clip)) {
+			count += countClips(child);
+		}
+		return count;
 	}
 }
