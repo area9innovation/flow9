@@ -15,7 +15,7 @@ NativeFunction *AbstractNotificationsSupport::MakeNativeFunction(const char *nam
 
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, hasPermissionLocalNotification, 0);
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, requestPermissionLocalNotification, 1);
-    TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, scheduleLocalNotification, 7);
+    TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, scheduleLocalNotification, 8);
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, cancelLocalNotification, 1);
     TRY_USE_NATIVE_METHOD(AbstractNotificationsSupport, addOnClickListenerLocalNotification, 1);
 
@@ -86,11 +86,12 @@ StackSlot AbstractNotificationsSupport::requestPermissionLocalNotification(RUNNE
 
 StackSlot AbstractNotificationsSupport::scheduleLocalNotification(RUNNER_ARGS)
 {
-    RUNNER_PopArgs7(time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pin);
+    RUNNER_PopArgs8(time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pin, notificationIcon);
     RUNNER_CheckTag1(TDouble, time);
     RUNNER_CheckTag1(TInt, notificationId);
     RUNNER_CheckTag3(TString, notificationCallbackArgs, notificationTitle, notificationText);
     RUNNER_CheckTag2(TBool, withSound, pin);
+    RUNNER_CheckTag1(TString, notificationIcon);
 
     doScheduleLocalNotification(time.GetDouble(), notificationId.GetInt(), encodeUtf8(RUNNER->GetString(notificationCallbackArgs)), encodeUtf8(RUNNER->GetString(notificationTitle)), encodeUtf8(RUNNER->GetString(notificationText)), withSound.GetBool(), pin.GetBool());
 
