@@ -2415,7 +2415,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function renderToCanvas(clip : DisplayObject, canvas : CanvasElement, ?context : Dynamic, ?transform : Matrix) : Void {
+	public static inline function renderToCanvas(clip : DisplayObject, canvas : CanvasElement, ?context : Dynamic, ?transform : Matrix, ?alpha : Float) : Void {
 		if (!clip.visible || clip.worldAlpha <= 0 || !clip.renderable)
 		{
 			return;
@@ -2455,11 +2455,6 @@ class DisplayObjectHelper {
 			);
 
 			RenderSupport.RendererType = 'canvas';
-
-			if (transform != null) {
-				untyped tempWorldAlpha = clip.worldAlpha;
-				untyped clip.worldAlpha = clip.alpha;
-			}
 		}
 
 		if (clip.mask != null)
@@ -2474,19 +2469,26 @@ class DisplayObjectHelper {
 
 		if (children.length > 0) {
 			for (child in children) {
-				renderToCanvas(child, canvas, context, transform);
+				renderToCanvas(child, canvas, context, transform, alpha);
 			}
 		} else {
 			if (transform != null) {
 				untyped tempWorldTransform = clip.transform.worldTransform;
-				untyped tempWorldAlpha = clip.worldAlpha;
 				untyped clip.transform.worldTransform = clip.transform.worldTransform.clone().prepend(transform);
+			}
+
+			if (alpha != null && alpha > 0) {
+				untyped tempWorldAlpha = clip.worldAlpha;
+				untyped clip.worldAlpha = clip.worldAlpha / alpha;
 			}
 
 			untyped clip.renderCanvas(RenderSupport.PixiRenderer);
 
 			if (transform != null) {
 				untyped clip.transform.worldTransform = tempWorldTransform;
+			}
+
+			if (alpha != null && alpha > 0) {
 				untyped clip.worldAlpha = tempWorldAlpha;
 			}
 		}
