@@ -40,7 +40,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
             notificationIconID = android.R.drawable.ic_popup_reminder;
         }
 
-        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context);
+        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context, "Local Notification");
 
         mBuilder.setSmallIcon(notificationIconID)
                 .setContentTitle(notificationTitle)
