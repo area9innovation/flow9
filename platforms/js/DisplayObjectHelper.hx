@@ -622,6 +622,8 @@ class DisplayObjectHelper {
 			clip.mask = null;
 			untyped clip.maskContainer = null;
 
+			deleteNativeWidget(clip);
+
 			invalidateTransform(clip, 'removeScrollRect');
 		}
 	}
