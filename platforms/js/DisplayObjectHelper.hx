@@ -571,6 +571,7 @@ class DisplayObjectHelper {
 	public static function setCropEnabled(clip : FlowContainer, enabled : Bool) : Void {
 		if (clip.cropEnabled != enabled) {
 			clip.cropEnabled = enabled;
+			invalidateTransform(clip, "setCropEnabled");
 		}
 	}
 
