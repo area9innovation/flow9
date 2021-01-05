@@ -1762,9 +1762,10 @@ class DisplayObjectHelper {
 
 	public static function getParentNode(clip : DisplayObject) : Dynamic {
 		if (isNativeWidget(clip)) {
-			return untyped clip.parentClip != null && clip.parentClip.mask != null && clip.nativeWidget.parentNode != null ?
-				clip.nativeWidget.parentNode.parentNode :
-				clip.nativeWidget.parentNode;
+			return untyped clip.forceParentNode ? clip.forceParentNode
+				: clip.parentClip != null && clip.parentClip.mask != null && clip.nativeWidget.parentNode != null ?
+					clip.nativeWidget.parentNode.parentNode :
+					clip.nativeWidget.parentNode;
 		}
 
 		return null;
@@ -1820,7 +1821,11 @@ class DisplayObjectHelper {
 			untyped clip.addNativeWidget();
 		} else if (RenderSupport.RendererType == "html") {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && (clip.renderable || clip.keepNativeWidgetChildren)) {
-				appendNativeWidget(untyped clip.parentClip || findParentClip(clip), clip);
+				if (untyped clip.forceParentNode != null) {
+					untyped clip.forceParentNode.append(clip.nativeWidget);
+				} else {
+					appendNativeWidget(untyped clip.parentClip || findParentClip(clip), clip);
+				}
 				RenderSupport.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
 			}
 		} else {
@@ -2039,6 +2044,14 @@ class DisplayObjectHelper {
 			} else if (untyped clip.widgetBounds != null) {
 				untyped clip.calculateWidgetBounds();
 				applyNewBounds(clip, untyped clip.widgetBounds);
+
+				if (untyped clip.isHTMLStage && clip.children && clip.children.length > 0) {
+					for (child in getClipChildren(clip)) {
+						if (untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null) {
+							invalidateLocalBounds(child, invalidateMask);
+						}
+					}
+				}
 			} else {
 				untyped clip.maxLocalBounds = new Bounds();
 
