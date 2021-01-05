@@ -2941,6 +2941,10 @@ class RenderSupport {
 		clip.setScrollRect(left, top, width, height);
 	}
 
+	public static function setCropEnabled(clip : FlowContainer, enabled : Bool) : Void {
+		clip.setCropEnabled(enabled);
+	}
+
 	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
 		clip.setContentRect(width, height);
 	}
