@@ -373,8 +373,10 @@ class RenderSupport {
 		emit("beforeprint");
 		forceRender();
 
-		PixiStage.onImagesLoaded(function () {
-			Browser.window.print();
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				Browser.window.print();
+			});
 		});
 	}
 
@@ -3196,6 +3198,74 @@ class RenderSupport {
 			emit("disable_sprites");
 
 			render();
+
+			return 'error';
+		}
+	}
+
+	public static function getClipSnapshot(clip : FlowContainer, cb : String -> Void) : Void {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		PixiStage.forceClipRenderable();
+		forceRender();
+
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				var snapshot = clip.children != null && clip.children.length > 0 ?
+					getClipSnapshotBox(
+						untyped clip,
+						Math.floor(clip.worldTransform.tx),
+						Math.floor(clip.worldTransform.ty),
+						Math.floor(clip.getWidth()),
+						Math.floor(clip.getHeight())
+					) : "";
+
+				if (printMode) {
+					printMode = false;
+					DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+					forceRender();
+				}
+
+				cb(snapshot);
+			});
+		});
+	}
+
+	public static function getClipSnapshotBox(clip : FlowContainer, x : Int, y : Int, w : Int, h : Int) : String {
+		if (clip == null) {
+			return "";
+		}
+
+		untyped RenderSupport.LayoutText = true;
+		emit("enable_sprites");
+		var prevX = clip.x;
+		var prevY = clip.y;
+		clip.setScrollRect(x, y, w, h);
+
+		forceRender();
+
+		var dispFn = function() {
+			clip.removeScrollRect();
+			clip.x = prevX;
+			clip.y = prevY;
+			clip.invalidateTransform('getClipSnapshotBox');
+
+			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
+			forceRender();
+		}
+
+		try {
+			var img = PixiRenderer.plugins.extract.base64(clip == mainRenderClip() ? clip : clip.children[0]);
+			dispFn();
+
+			return img;
+		} catch(e : Dynamic) {
+			dispFn();
 
 			return 'error';
 		}
