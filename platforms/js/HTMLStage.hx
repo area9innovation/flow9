@@ -13,6 +13,9 @@ class HTMLStage extends NativeWidgetClip {
 		this.initNativeWidget();
 
 		untyped nativeWidget.style['pointer-events'] = 'auto';
+		nativeWidget.style.display = 'none';
+
+		Browser.document.body.appendChild(nativeWidget);
 	}
 
 	public function appendChild(child : Element) : Void {
