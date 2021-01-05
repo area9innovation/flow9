@@ -2402,9 +2402,9 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible"){
-			clip.on("visible", fn);
-			return function() { clip.off("visible", fn); }
+		} else if (event == "visible" || event == "added" || event == "removed"){
+			clip.on(event, fn);
+			return function() { clip.off(event, fn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -3263,6 +3263,10 @@ class RenderSupport {
 
 	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {
 		return new HTMLStage(width, height);
+	}
+
+	public static function assignClip(stage : HTMLStage, id : String, clip : DisplayObject) : Void {
+		stage.assignClip(id, clip);
 	}
 
 	public static function createElement(tagName : String) : Element {
