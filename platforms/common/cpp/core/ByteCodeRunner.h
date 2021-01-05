@@ -359,8 +359,8 @@ private:
 
     /* End of high-throughput vars */
 
-    static const unsigned int EPHEMERAL_HEAP_SIZE = 2*1024*1024;
-    static const unsigned int MAX_EPHEMERAL_ALLOC = 32*1024;
+    static const unsigned int EPHEMERAL_HEAP_SIZE = 128*1024*1024;
+    static const unsigned int MAX_EPHEMERAL_ALLOC = 1*1024*1024;
 
     /* Heap structure
 
