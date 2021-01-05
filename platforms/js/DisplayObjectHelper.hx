@@ -568,6 +568,13 @@ class DisplayObjectHelper {
 		scrollRect.drawRect(0.0, 0.0, width, height);
 	}
 
+	public static function setCropEnabled(clip : FlowContainer, enabled : Bool) : Void {
+		if (clip.cropEnabled != enabled) {
+			clip.cropEnabled = enabled;
+			invalidateTransform(clip, "setCropEnabled");
+		}
+	}
+
 	public static inline function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
 		if (untyped clip.contentBounds == null) {
 			untyped clip.contentBounds = new Bounds();
@@ -1549,9 +1556,9 @@ class DisplayObjectHelper {
 			nativeWidget.style.borderRadius = null;
 			if (untyped clip.scrollRectListener != null) {
 				nativeWidget.classList.add("nativeScroll");
-				nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "scroll";
+				nativeWidget.style.overflow = untyped clip.cropEnabled ? (untyped clip.isInput ? "auto" : "scroll") : "visible";
 			} else {
-				nativeWidget.style.overflow = untyped clip.isInput ? "auto" : "hidden";
+				nativeWidget.style.overflow = untyped clip.cropEnabled ? (untyped clip.isInput ? "auto" : "hidden") : "visible";
 			}
 
 			scrollNativeWidget(clip, round(scrollRect.x), round(scrollRect.y));
