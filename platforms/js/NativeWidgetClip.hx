@@ -34,7 +34,7 @@ class NativeWidgetClip extends FlowContainer {
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			if (accessWidget == null) {
 				accessWidget = new AccessWidget(this, nativeWidget);
 			} else {
@@ -61,7 +61,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.width = '${this.getWidgetWidth()}px';
 		nativeWidget.style.height = '${this.getWidgetHeight()}px';
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			var viewBounds = this.getViewBounds();
 
 			if (viewBounds != null) {

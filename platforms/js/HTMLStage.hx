@@ -6,8 +6,9 @@ import pixi.core.display.DisplayObject;
 using DisplayObjectHelper;
 
 class HTMLStage extends NativeWidgetClip {
-	private var isHTMLStage = true;
-	private var clips : Map<String, DisplayObject> = new Map<String, DisplayObject>();
+	public var isHTMLStage = true;
+	private var clips : Map<String, FlowContainer> = new Map<String, FlowContainer>();
+	private var stageRect : Dynamic;
 	public function new(width : Float, height : Float) {
 		super();
 
@@ -21,6 +22,22 @@ class HTMLStage extends NativeWidgetClip {
 		nativeWidget.classList.add("stage");
 
 		Browser.document.body.appendChild(nativeWidget);
+		stageRect = untyped this.nativeWidget.getBoundingClientRect();
+
+		var config = { attributes: true, childList: true, subtree: true };
+		var callback = function() {
+			stageRect = untyped this.nativeWidget.getBoundingClientRect();
+
+			for (clip in clips) {
+				if (clip.children != null && clip.children.length > 0) {
+					var parentRect = untyped clip.children[0].forceParentNode.getBoundingClientRect();
+					clip.setClipX(parentRect.x - stageRect.x);
+					clip.setClipY(parentRect.y - stageRect.y);
+				}
+			}
+		};
+		var observer = untyped __js__("new MutationObserver(callback)");
+		observer.observe(nativeWidget, config);
 	}
 
 	public function appendChild(child : Element) : Void {
@@ -29,14 +46,19 @@ class HTMLStage extends NativeWidgetClip {
 
 	public function assignClip(id : String, clip : DisplayObject) : Void {
 		if (clips.get(id) != null) {
+			clips.get(id).removeChildren();
 			this.removeChild(clips.get(id));
 		}
 
+		var container = new FlowContainer();
+		untyped container.isHTMLStageContainer = true;
 		untyped clip.forceParentNode = Browser.document.getElementById(id);
-		clip.initNativeWidget();
-		this.addChild(clip);
 
-		clips.set(id, clip);
+		clip.initNativeWidget();
+		container.addChild(clip);
+		this.addChild(container);
+
+		clips.set(id, container);
 	}
 
 	public function insertBefore(child : Element, reference : Element) : Void {
@@ -47,5 +69,9 @@ class HTMLStage extends NativeWidgetClip {
 		if (child.parentElement == nativeWidget) {
 			nativeWidget.removeChild(child);
 		}
+	}
+
+	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
+		return;
 	}
 }

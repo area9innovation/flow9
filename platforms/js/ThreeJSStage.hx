@@ -83,7 +83,7 @@ class ThreeJSStage extends Container {
 			dispose();
 		}
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.initNativeWidget('canvas');
 			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
 		} else {
@@ -191,7 +191,7 @@ class ThreeJSStage extends Container {
 	}
 
 	public function invalidateStage() {
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.invalidateTransform('ThreeJSStage');
 		} else {
 			DisplayObjectHelper.invalidateStage(this);
@@ -496,7 +496,7 @@ class ThreeJSStage extends Container {
 	}
 
 	public function updateNativeWidget() : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			if (isNativeWidget) {
 				if (visible && camera != null && scene != null && getWidth() > 0 && getHeight() > 0) {
 					this.emit("drawframe");

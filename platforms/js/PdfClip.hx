@@ -35,8 +35,8 @@ class PdfClip extends FlowCanvas {
 
 			var pageChanged = untyped this.nativeWidgetBoundsChanged;
 
-			updateNativeWidgetTransformMatrix();
-			updateNativeWidgetOpacity();
+			this.updateNativeWidgetTransformMatrix();
+			this.updateNativeWidgetOpacity();
 
 			if (pageChanged) {
 				renderView(nativeWidget.getContext("2d"), RenderSupport.backingStoreRatio);
@@ -47,7 +47,7 @@ class PdfClip extends FlowCanvas {
 			}
 		}
 
-		updateNativeWidgetDisplay();
+		this.updateNativeWidgetDisplay();
 	}
 
 	public function setRenderPage(page : Dynamic, scale : Float) {
@@ -81,8 +81,8 @@ class PdfClip extends FlowCanvas {
 				var taskPromise : Promise<Dynamic> = renderTask.promise;
 				taskPromise.then(function(e : Dynamic) {
 					renderTask = null;
-					invalidateTransform();
-					untyped this.nativeWidgetBoundsChanged = RenderSupport.RendererType == "html";
+					this.invalidateTransform();
+					untyped this.nativeWidgetBoundsChanged = this.isHTMLRenderer();
 				}).catchError(function(e : Dynamic) {
 					renderTask = null;
 					renderPage();
@@ -92,19 +92,19 @@ class PdfClip extends FlowCanvas {
 	}
 
 	private function renderView(ctx : Dynamic, resolution : Float) {
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			ctx.globalAlpha = this.worldAlpha;
 			ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
 		}
 
-		var width = getWidth() * resolution;
-		var height = getHeight() * resolution;
+		var width = this.getWidth() * resolution;
+		var height = this.getHeight() * resolution;
 
 		ctx.drawImage(this.renderWidget, 0, 0, width, height, 0, 0, width, height);
 	}
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
-		if (!this.visible || this.worldAlpha <= 0 || !this.renderable || getWidth() <= 0 || getHeight() <= 0) {
+		if (!this.visible || this.worldAlpha <= 0 || !this.renderable || this.getWidth() <= 0 || this.getHeight() <= 0) {
 			return;
 		}
 

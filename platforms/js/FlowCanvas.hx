@@ -4,12 +4,12 @@ import haxe.extern.EitherType;
 using DisplayObjectHelper;
 
 class FlowCanvas extends FlowContainer {
+	public var isCanvasStage = true;
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.initNativeWidget('canvas');
-			untyped this.isCanvas = true;
 		}
 	}
 

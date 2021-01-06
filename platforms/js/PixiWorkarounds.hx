@@ -1009,7 +1009,7 @@ class PixiWorkarounds {
 
 						this.emit('transformchanged');
 
-						if (RenderSupport.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html' && !this.isHTML) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1022,7 +1022,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
+					if ((RenderSupport.RendererType == 'html' || this.isHTML) && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
@@ -1047,7 +1047,7 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						if (RenderSupport.RendererType == 'html') {
+						if (RenderSupport.RendererType == 'html' || this.isHTML) {
 							if (RenderSupport.LayoutText || this.isCanvas) {
 								this.textClipChanged = true;
 								this.layoutText();
@@ -1071,7 +1071,7 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupport.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html' && !this.isHTML) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1086,7 +1086,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
+					if ((RenderSupport.RendererType == 'html' || this.isHTML) && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {

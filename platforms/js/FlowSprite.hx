@@ -67,7 +67,7 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			// Chrome can't render svgs with <img> element if file contains "data:img" type instead of "data:image"
 			// As workaround we insert svg content directly to innerHTML
 			forceSvg = Platform.isChrome && url.indexOf(".svg") > 0;
@@ -248,7 +248,7 @@ class FlowSprite extends Sprite {
 						}
 					}
 				} else {
-					if (RenderSupport.RendererType == "html") {
+					if (this.isHTMLRenderer()) {
 						if (nativeWidget == null) {
 							return;
 						}
@@ -418,7 +418,7 @@ class FlowSprite extends Sprite {
 			return;
 		}
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {
