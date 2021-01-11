@@ -22,7 +22,7 @@ You can also define what program to run by giving a bytecode filename on the com
     flowcpp bytecode_file.bytecode [bytecode_file.debug | --disassemble]
 
 Here, bytecode_file.bytecode is a file with the compiled flow program.  
-The bytecode_file.debug is a file with debug information. 
+The bytecode_file.debug is a file with debug information.
 
 Example of how to compile a flow program to bytecode with debugging info:
 
@@ -31,7 +31,7 @@ Example of how to compile a flow program to bytecode with debugging info:
 or
 
     flow -c driver.bytecode --debuginfo driver.debug sandbox/hello.flow
- 
+
 Example of how to run a flow program and pass a parameter that will be accepted
 through getUrlParameter in the flow code:
 
@@ -54,7 +54,7 @@ Other command line options to QtByteCoderunner
   Normally c:\flow9 on Windows.
   Warning: wrong media-path now causes program crash!
 
-`--fallback_font <font>` 
+`--fallback_font <font>`
   enables lookup of unknown glyphs in the `<font>`. `<font>` example - `DejaVuSans`.
 
 `--touch`
@@ -80,7 +80,7 @@ Using `flow.config` file
 
 There is a way to provide a project-specific configuration setting via `flow.config` file put into project root - where `flowcpp` is ran from. This is a standard properties file (key=value), the following options are currently supported:
  * `flowcompiler` - choice of `nekocompiler`, `flowcompiler`, `flowc` (or `0`,`1`,`2`)
- * `media_path` 
+ * `media_path`
  * `fallback_font`
 
 Options given in the command line take precedence over `flow.config`.
@@ -121,7 +121,7 @@ Installation path should be /opt/Qt5.12.0. Or you can install wherever and symli
 
 * It's possible to have several versions of QT installed at once
 with qtchooser. If you are using it, either provide qt= parameter when
-using qmake or set default version to 5.12.0 with libs at the location 
+using qmake or set default version to 5.12.0 with libs at the location
 mentioned above. man qtchooser will tell you how.
 
 * Minimal list of libraries required to run QT byte runner on Linux:
@@ -143,9 +143,9 @@ Another way to build QtByteRunner is to use the QtCreator IDE. It can be downloa
 https://www.qt.io/download/
 
 Download and execute online installer.
-Choose 
+Choose
 - Qt/Qt 5.12.0
-and 
+and
 - Tools
 Install.
 
@@ -188,7 +188,7 @@ Another way to build QtByteRunner is to use the QtCreator IDE. It can be downloa
 https://www.qt.io/download/
 
 Download and execute online installer.
-Choose 
+Choose
 - Qt/Qt 5.12.0/msvc(2017 or 2015) 64bit
 and
 - Qt/Qt 5.12.0/msvc(2017 or 2015) 32bit
@@ -213,6 +213,7 @@ Command: `windeployqt`
 Arguments:
  - for Release: `--release release/QtByteRunner.exe`
  - for Debug: `--debug debug/QtByteRunner.exe`
+This step creates updated `vc_redist.x64.exe` and requires environment variable VCINSTALLDIR (f.e. `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\`)
 
 Build either Release or Debug version.
 
@@ -267,7 +268,7 @@ it could be c:/flow9/
 Enabling fast-cgi in apache
 ---------------------------
 
-To execute flow code via apache to implement backend in flow, you should 
+To execute flow code via apache to implement backend in flow, you should
 have apache configured, see below Linux/Windows configuring.
 
 You need to compile flow file into bytecode like this:
@@ -298,7 +299,7 @@ File /etc/apache2/mods-enabled/fcgid.conf should look like this:
         IPCCommTimeout 600
         AddHandler fcgid-script .serverbc
         FcgidConnectTimeout 600
-        FcgidIOTimeout 600 
+        FcgidIOTimeout 600
         # Useful for debugging when you want one instance of runner
         # DefaultMinClassProcessCount 1
         FCGIWrapper PATH_TO_CGI_BYTERUNNER .serverbc
