@@ -33,7 +33,7 @@ export {
 		inspectorM : Maybe<ParaElementInspector>,
 		scriptM : Maybe<ParaElementScriptType>
 	) -> TParaWord;
-	inspectWordView(tr : Tropic, inspector : ParaElementInspector) -> Tropic;
+	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
 }
 
@@ -236,8 +236,15 @@ TRenderParagraph(
 	});
 	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
 
+	rtl = isParagraphRtl(s);
 	reflowHappenedB = make(false);
-	groupedWords = groupAndTranslateWords(words, genIndent, reflowHappenedB, joinedWordsConstructors);
+	groupedWords = groupAndTranslateWords(
+		words,
+		genIndent,
+		reflowHappenedB,
+		joinedWordsConstructors,
+		rtl
+	);
 
 	paragraphWHB = makeWH();
 	paragraphBaselineB = make(0.0);
@@ -246,7 +253,6 @@ TRenderParagraph(
 		TSized(paragraphWHB),
 		TGroup(groupedWords)
 	));
-	rtl = isParagraphRtl(s);
 
 	updateFn = \wi, alignWidthM -> {
 		// Ignore negative widths
@@ -339,7 +345,8 @@ groupAndTranslateWords(
 	words : [TParaWord],
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	rtl : bool
 ) -> [Tropic] {
 	groupResult = fold(
 		words,
@@ -349,7 +356,8 @@ groupAndTranslateWords(
 			word,
 			genIndent,
 			reflowHappened,
-			joinedWordsConstructors
+			joinedWordsConstructors,
+			rtl
 		)
 	);
 
@@ -359,7 +367,8 @@ groupAndTranslateWords(
 			groupResult.currentTag,
 			genIndent,
 			reflowHappened,
-			joinedWordsConstructors
+			joinedWordsConstructors,
+			rtl
 		),
 		groupResult.groupedWords
 	);
@@ -372,7 +381,8 @@ appendWordToLine(
 	word: TParaWord,
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	rtl : bool
 ) -> LineHeadingsAcc {
 	tag = either(getHeadingTagFromFontSize(extractStruct(word.style, FontSize(0.0)).size), "");
 	if (acc.currentTag == tag) {
@@ -386,7 +396,8 @@ appendWordToLine(
 				tag,
 				genIndent,
 				reflowHappened,
-				joinedWordsConstructors
+				joinedWordsConstructors,
+				rtl
 			),
 			acc.groupedWords
 		);
@@ -401,10 +412,15 @@ makeHeadingGroup(
 	tag : string,
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	rtl : bool 
 ) -> Tropic {
 
-	joinedWords = splitRejoinableWords(words, genIndent, reflowHappened, joinedWordsConstructors);
+	joinedWords = if (rtl || isUrlParameterFalse("join_words")) translateInteractiveWords(
+		words,
+		genIndent,
+		joinedWordsConstructors
+	) else splitRejoinableWords(words, genIndent, reflowHappened, joinedWordsConstructors);
 
 	if (tag == "") TGroup(joinedWords) else TAccess(
 		[
@@ -415,6 +431,28 @@ makeHeadingGroup(
 	)
 }
 
+translateInteractiveWords(
+	words: List<TParaWord>,
+	genIndent : double,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+) -> [Tropic] {
+	map(
+		list2array(words),
+		\word -> {
+			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), \__, __ -> word.ghostView);
+			wordView = switch (word.word) {
+				GeneralText(str) : viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style));
+				GeneralSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
+				default : word.ghostView;
+			};
+
+			TTranslate(
+				fpoint(fsubtract(word.inspector.x, const(genIndent)), word.inspector.y),
+				wordView
+			);
+		}
+	)
+}
 splitRejoinableWords(
 	words: List<TParaWord>,
 	genIndent : double,
@@ -560,7 +598,10 @@ addLastLine(
 	Cons(
 		TTranslate(
 			joinResult.currentOffset,
-			wordsViewConstructor(joinResult.currentString, joinResult.style)
+			wordsViewConstructor(
+				joinResult.currentString,
+				joinResult.style
+			)
 		),
 		joinResult.acc,
 	)
@@ -575,7 +616,11 @@ commonWordConstructor(
 	scriptM : Maybe<ParaElementScriptType>
 ) -> TParaWord {
 	inspector = either(inspectorM, dummyInspector());
-	wordView = inspectWordView(tr, inspector);
+	wordView = inspectWordView(
+		tr,
+		inspector,
+		extractStruct(style, LetterSpacing(0.0)).spacing
+	);
 	TParaWord(
 		w,
 		inspector,
@@ -587,10 +632,10 @@ commonWordConstructor(
 	);
 }
 
-inspectWordView(tr : Tropic, inspector : ParaElementInspector) -> Tropic {
+inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double) -> Tropic {
 	if (isConstantSizeTropic(tr)) {
 		fMetrics = getTropicMetrics(tr);
-		nextDistinct(inspector.size, WidthHeight(fMetrics.width, fMetrics.height));
+		nextDistinct(inspector.size, WidthHeight(fMetrics.width + letterSpacing, fMetrics.height));
 		nextDistinct(inspector.baseline, fMetrics.baseline);
 		tr;
 	} else {
@@ -715,7 +760,11 @@ reflowTParaWordsRec(
 			GeneralLinePart(first, mid, end): {
 
 				makeLinePartWord = \txt : string -> {
-					newView = inspectWordView(TText(txt, applyAlphabetStyles(detectAlphabet(txt), word.style)), word.inspector);
+					newView = inspectWordView(
+						TText(txt, applyAlphabetStyles(detectAlphabet(txt), word.style)),
+						word.inspector,
+						extractStruct(word.style, LetterSpacing(0.0)).spacing
+					);
 					TParaWord(word with ghostView = newView);
 				};
 				width = getWordWidth(word);
@@ -885,7 +934,7 @@ keepWordsTogether(tr : Tropic) -> bool {
 		TMinimumGroup2(down, up): keepWordsTogether(up) && keepWordsTogether(down);
 		TScale(fac, t): keepWordsTogether(t);
 		TConstruct(__, t): keepWordsTogether(t);
-		TCrop(__, size, t): keepWordsTogether(t);
+		TCrop2(__, __, __, t): keepWordsTogether(t);
 		TTag(__, t): keepWordsTogether(t);
 		TFormIn(f, b): keepFormTogether(f);
 		TForm(f): keepFormTogether(f);
@@ -1061,11 +1110,19 @@ getTParaWordText(w: TParaWord) -> string {
 setTParaWordText(w: TParaWord, t: string) -> TParaWord {
 	switch(w.word) {
 		GeneralText(__): {
-			view = inspectWordView(TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)), w.inspector);
+			view = inspectWordView(
+				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)),
+				w.inspector,
+				extractStruct(w.style, LetterSpacing(0.0)).spacing
+			);
 			TParaWord(w with ghostView = view);
 		}
 		GeneralDynamicText(__): {
-			view = inspectWordView(TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)), w.inspector);
+			view = inspectWordView(
+				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)),
+				w.inspector,
+				extractStruct(w.style, LetterSpacing(0.0)).spacing
+			);
 			TParaWord(w with ghostView = view);
 		}
 		default: w;

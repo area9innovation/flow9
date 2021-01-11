@@ -17,7 +17,12 @@ MSliderThumb(
 
 MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	sliderId = makeTropicTag(manager);
-	color : MColor = extractMColor(parent, m.style, MAccentColor());
+	color : MThemeColor = extractStruct(m.style, MAccentColor());
+	dynColor =
+		fselect(
+			extractStruct(m.style, MDynamicColor(const(color))).color,
+			FLift(\col -> MThemeColor2MColor(parent, col))
+		);
 	inactiveColorM : Maybe<MColor> = maybeMap(
 		tryExtractStruct(m.style, MInactiveAreaColor(MAccentColor())),
 		\ic -> MThemeColor2MColor(parent, ic.color)
@@ -154,7 +159,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 
 	barHeight0 = make(0.);
 	barHeight = eitherMap(customBar, \__ -> barHeight0, const(4.));
-	activeItemStyle = \en -> [MFill(if (en) color else MGrey(400))];
+	activeItemStyle = \en -> if (en) fselect(dynColor, FLift(\col -> [MFill(col)])) else const([MFill(MGrey(400))]);
 	unactiveItemStyle = \en ->
 		eitherFn(inactiveColorM, \ic -> [MFill(ic), FillOpacity(0.73)], \-> mDisabledStyle(lightBackground))
 		|> (\st -> if (en) st else replaceStruct(st, FillOpacity(extractStruct(st, FillOpacity(0.0)).opacity / 4.0)));
@@ -167,7 +172,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			else
 				thumbRadius;
 
-		circleStyle = fselect(foc.enabled, FLift(st));
+		circleStyle = fsubselect(foc.enabled, FLift(st));
 		setMarker = \t -> t |> MHintMarker(manager, foc, false);
 
 		TCenteredCircle(foc.parent, radius, circleStyle, setMarker)
@@ -226,7 +231,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				FAccessAttribute("aria-valuemin", fd2s(fselect(thumb.min, FLift(percent2value)))),
 				FAccessAttribute("aria-valuemax", fd2s(fselect(thumb.max, FLift(percent2value)))),
 				extractStruct(m.style, MRippleType(const(MRippleCenter()))),
-				MRippleColor(const(color)),
+				MRippleColor(dynColor),
 				MMouseDown(focusDown),
 				extractStruct(m.style, MHighlightOnFocus(const(true))),
 				extractStruct(m.style, MHighlightOnHover(const(!condensed))),
@@ -254,7 +259,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 							makeValueLabel(
 								foc,
 								thumb.percent,
-								const(style(true))
+								style(true)
 							)
 							|> (\t -> TShow(fand(foc.enabled, fOr(activeU, foc.focused)), t)),
 							circle
@@ -302,13 +307,13 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 
 		strValue = make("");
 
-		MTextInput2T(
+		TSelect(dynColor, \col -> MTextInput2T(
 			manager,
 			parent,
 			MTextInput(
 				strValue,
 				arrayPushMaybe(
-					[TextInputType(NumericType()), color, MWidth(width), MNumericStep(const(sliderStep))],
+					[TextInputType(NumericType()), col, MWidth(width), MNumericStep(const(sliderStep))],
 					maybeMap(itemsColor, \ic -> MCustomTextStyle([ic.color]))
 				),
 				[
@@ -320,7 +325,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				]
 			),
 			m2t
-		)
+		))
 		|> (\t -> TConstruct([
 				make2Subscribe(thumb.percent, sliderUndefined, \p, su ->
 					nextDistinct(strValue, if (su) "" else percent2strvalue(p))
@@ -344,15 +349,17 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			circleGap = if (en || isSome(customThumb)) zero else thumbRadius;
 			barLength = fsubtract(fmultiply(prc, sliderWidth), if (type == ActiveBar()) fmultiply(circleGap, const(2.0)) else circleGap);
 			border = faddition(fmin(const(0.), barLength), circleGap);
-			style = if (type != ActiveBar()) unactiveItemStyle(en) else activeItemStyle(en);
+			style = if (type != ActiveBar()) const(unactiveItemStyle(en)) else activeItemStyle(en);
 
-			eitherMap(
-				customBar,
-				\cb -> TAttachHeight(m2t(cb.makeBar(type, fmax(barLength, const(0.)), style), foc), barHeight0),
-				if (condensed)
-					TRectangle(style, TSizedWidthHeight(fmax(barLength, const(0.)), barHeight))
-				else
-					TRounded(2.0, 2.0, 2.0, 2.0, style, TSizedWidthHeight(fmax(barLength, const(0.)), barHeight))
+			TSelect(style, \st ->
+				eitherMap(
+					customBar,
+					\cb -> TAttachHeight(m2t(cb.makeBar(type, fmax(barLength, const(0.)), st), foc), barHeight0),
+					if (condensed)
+						TRectangle(st, TSizedWidthHeight(fmax(barLength, const(0.)), barHeight))
+					else
+						TRounded(2.0, 2.0, 2.0, 2.0, st, TSizedWidthHeight(fmax(barLength, const(0.)), barHeight))
+				)
 			)
 			|> (\t -> TBorderT(if (type == LeftBar()) zero else border, zero, if (type == RightBar()) zero else border, zero, t))
 		});
@@ -408,10 +415,10 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			f2,
 			(\ ->
 				map(discreteValues, \v -> {
-					tickColor = fselect2(startThumb.percent, endThumb.percent, FLift2(\st, e -> {
-						light = if (v >= st && v <= e) isLightMColor(color) else lightBackground;
+					tickColor = fselect3(startThumb.percent, endThumb.percent, dynColor, \st, e, col -> {
+						light = if (v >= st && v <= e) isLightMColor(col) else lightBackground;
 						MDialogMColor(!light)
-					}));
+					});
 					TTranslate(
 						fselect2(sliderWidth, barHeight, FLift2(\w, h -> {x = 2.0 + v * (w - 4.0) - h / 2.; Point(if (isRTL) (w - 4.0) - x else x, 0.)})),
 						TSelect(
