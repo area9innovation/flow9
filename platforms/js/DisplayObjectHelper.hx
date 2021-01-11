@@ -817,9 +817,9 @@ class DisplayObjectHelper {
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
-	public static function getFirstGraphics(clip : DisplayObject) : DisplayObject {
+	public static function getFirstGraphics(clip : DisplayObject) : FlowGraphics {
 		if (untyped HaxeRuntime.instanceof(clip, FlowGraphics))
-			return clip;
+			return cast(clip, FlowGraphics);
 
 		for (c in getClipChildren(clip)) {
 			var g = getFirstGraphics(untyped c);
@@ -830,6 +830,38 @@ class DisplayObjectHelper {
 		}
 
 		return null;
+	}
+
+	public static function getAllSprites(clip : DisplayObject) : Array<FlowSprite> {
+		if (untyped HaxeRuntime.instanceof(clip, FlowSprite))
+			return [cast(clip, FlowSprite)];
+
+		var r = [];
+
+		for (c in getClipChildren(clip)) {
+			r = r.concat(getAllSprites(c));
+		}
+
+		return r;
+	}
+
+	public static function onImagesLoaded(clip : DisplayObject, cb : Void -> Void) : Void -> Void {
+		var sprites = getAllSprites(clip);
+
+		if (sprites.filter(function (sprite) { return !sprite.loaded && sprite.visible && !sprite.failed; }).length > 0) {
+			var disp = null;
+			var fn = function() { disp = onImagesLoaded(clip, cb); }
+			RenderSupport.once("drawframe", fn);
+
+			return function() {
+				if (disp != null) { disp(); }
+				RenderSupport.off("drawframe", fn);
+			};
+		} else {
+			cb();
+
+			return function() {}
+		}
 	}
 
 	public static function emitEvent(parent : DisplayObject, event : String, ?value : Dynamic) : Void {
@@ -1082,6 +1114,7 @@ class DisplayObjectHelper {
 		if (isCanvas(clip)) {
 			tx -= Math.max(-localBounds.minX, 0.0);
 			ty -= Math.max(-localBounds.minY, 0.0);
+			untyped clip.nativeWidgetBoundsChanged = true;
 		}
 
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
@@ -1356,7 +1389,7 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (nativeWidget.firstChild != null) {
-			if (untyped x < 0 || clip.scrollRect == null || x > getContentWidth(clip) - clip.scrollRect.width) {
+			if (untyped x < 0 || clip.scrollRect == null || x > getContentWidth(clip) - clip.scrollRect.width || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.left = '${-round(x)}px';
 
 				x = 0;
@@ -1364,7 +1397,7 @@ class DisplayObjectHelper {
 				nativeWidget.firstChild.style.left = null;
 			}
 
-			if (untyped y < 0 || clip.scrollRect == null || y > getContentHeight(clip) - clip.scrollRect.height) {
+			if (untyped y < 0 || clip.scrollRect == null || y > getContentHeight(clip) - clip.scrollRect.height || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.top = '${-round(y)}px';
 
 				y = 0;
