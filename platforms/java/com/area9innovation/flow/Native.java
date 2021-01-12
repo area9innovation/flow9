@@ -1808,6 +1808,16 @@ public class Native extends NativeHost {
 		return null;
 	}
 
+	public final <RT> Func0<RT> synchronizedConstFn(Object lock, Func0<RT> fn) {
+		return new Func0<RT>() {
+			@Override
+			public RT invoke() {
+				synchronized (lock) {
+					return fn.invoke();
+				}
+			}
+		};
+	}
 	public final <RT, A1> Func1<RT, A1> synchronizedUnaryFn(Object lock, Func1<RT, A1> fn) {
 		return new Func1<RT, A1>() {
 			@Override
