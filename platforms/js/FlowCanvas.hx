@@ -36,7 +36,7 @@ class FlowCanvas extends FlowContainer {
 			transform.tx += Math.max(-localBounds.minX, 0.0);
 			transform.ty += Math.max(-localBounds.minY, 0.0);
 
-			this.renderToCanvas(nativeWidget, context, transform);
+			this.renderToCanvas(nativeWidget, context, transform, worldAlpha);
 
 			RenderSupport.PixiRenderer.resolution = tempResolution;
 
