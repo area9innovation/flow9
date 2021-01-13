@@ -3366,6 +3366,18 @@ class RenderSupport {
 		return Browser.document.getElementById(selector);
 	}
 
+	public static function getElementChildren(element : Dynamic) : Array<Element> {
+		if (element.isHTMLStage) {
+			return untyped Array.from(element.nativeWidget.childNodes);
+		} else {
+			return untyped Array.from(element.childNodes);
+		}
+	}
+
+	public static function getElementNextSibling(element : Dynamic) : Element {
+		return element.nextSibling;
+	}
+
 	public static function isElementNull(element : Element) : Bool {
 		return element == null;
 	}
