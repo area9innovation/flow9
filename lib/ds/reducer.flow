@@ -87,19 +87,28 @@ export {
 	rreduceChars(str : string, r : Reducer<int, ?>) -> ?;
 
 	rreduceJson(json : Json, reducer : Reducer<RAssign<Json>, ??>) -> ??;
-		// An assignment is a path to the place in the structure where it belongs and the value to put there
-		RAssign(lvalue : RLValue, value : ?);
 
-		// An "address" in an JSON object to place a value
-		RLValue ::= RLeaf, RLObject, RLArray;
+		// A generalized update of a data value
+		RUpdate<?> ::= RAssign<?>, RInsert<?>, RDelete;
+
+			// An assignment is a path to the place in the structure where it belongs and the value to put there
+			// Notice this can also do insert at the end of arrays
+			RAssign(lvalue : RLValue, value : ?);
+
+			// Insert an element here -> probably expects an array at the end
+			RInsert(lvalue : RLValue, value : ?);
+
+			// Remove this element -> probably expects an array at the end
+			RDelete(lvalue : RLValue);
+
+		// An "address" in an object to place a value
+		RLValue ::= RLeaf, RLObject, RLArrayIndex;
 			// Immediate value
 			RLeaf();
 			// Place the value inside this key in an object
-			RLObject(key : string, rvalue : RLValue);
-			// Add the value to this place inside this array
-			RLArray(rvalue : RLValue);
-			// TODO: Implement this
-			RLArrayIndex(index : int, rvalue : RLValue);
+			RLObject(key : string, lvalue : RLValue);
+			// Place the value at this index in the array at rvalue
+			RLArrayIndex(index : int, lvalue : RLValue);
 
 	// TODO: multimap, tuples, graphs, dlist, behaviour/transforms
 
@@ -349,10 +358,16 @@ rreduceJson(json : Json, reducer : Reducer<RAssign<Json>, ??>) -> ?? {
 doRReduceJson(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, json : Json) -> ReducerResult<??> {
 	switch (json) {
 		JsonObject(members): {
-			doRReduceJsonObject(reducer, acc, lvalueWrap, 0, members);
+			if (members == []) {
+				// The empty object, we have to send directly!
+				reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
+			} else doRReduceJsonObject(reducer, acc, lvalueWrap, 0, members);
 		}
 		JsonArray(elements): {
-			doRReduceJsonArray(reducer, acc, lvalueWrap, 0, elements);
+			if (elements == []) {
+				// The empty arrray, we have to send directly!
+				reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
+			} else doRReduceJsonArray(reducer, acc, lvalueWrap, 0, elements);
 		}
 		JsonNull(): reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
 		JsonBool(v): reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), json));
@@ -372,12 +387,14 @@ doRReduceJsonObject(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap :
 			}
 			Reduced(val): v;
 		}
-	} else ReduceAcc(acc);
+	} else {
+		ReduceAcc(acc);
+	}
 }
 
 doRReduceJsonArray(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, i : int, elements : [Json]) -> ReducerResult<??> {
 	if (i < length(elements)) {
-		lvalue = \v -> lvalueWrap(RLArray(v));
+		lvalue = \v -> lvalueWrap(RLArrayIndex(i, v));
 		element = elements[i];
 		v = doRReduceJson(reducer, acc, lvalue, element);
 		switch (v) {
@@ -402,6 +419,8 @@ rjson() -> Reducer<RAssign<Json>, Json> {
 	)
 }
 
+// TODO: Add jsonRInsert and jsonRRemove and implement jsonRUpdate
+
 jsonRAssign(acc : Json, assign : RAssign<Json>) -> Json {
 	switch (assign.lvalue) {
 		RLeaf(): assign.value;
@@ -409,8 +428,17 @@ jsonRAssign(acc : Json, assign : RAssign<Json>) -> Json {
 			fieldValue = getJsonFieldValue(acc, key, JsonNull());
 			setJsonField(acc, key, jsonRAssign(fieldValue, RAssign(lvalue2, assign.value)));
 		}
-		RLArray(lvalue2): {
-			pushJsonValue(acc, jsonRAssign(JsonNull(), RAssign(lvalue2, assign.value)));
+		RLArrayIndex(index, lvalue2): {
+			val = jsonRAssign(JsonNull(), RAssign(lvalue2, assign.value));
+			av = getJsonArrayValue(acc, []);
+
+			// We allow adding at the end, which is why this is <= and not <
+			if (index <= length(av)) {
+				JsonArray(replace(av, index, val));
+			} else {
+				// Out of bounds. Ignore it!
+				acc;
+			}
 		}
 	}
 }
@@ -542,9 +570,9 @@ main() {
 	jassigns : [RAssign<Json>] = rreduceJson(json1, rarray());
 	iter(jassigns, println);
 	// RAssign(RLObject("a", RLeaf()), JsonDouble(0.0))
-	// RAssign(RLObject("b", RLArray(RLeaf())), JsonDouble(1.0))
-	// RAssign(RLObject("b", RLArray(RLeaf())), JsonDouble(2.0))
-	// RAssign(RLObject("b", RLArray(RLeaf())), JsonDouble(3.0))
+	// RAssign(RLObject("b", RLArrayPush(RLeaf())), JsonDouble(1.0))
+	// RAssign(RLObject("b", RLArrayPush(RLeaf())), JsonDouble(2.0))
+	// RAssign(RLObject("b", RLArrayPush(RLeaf())), JsonDouble(3.0))
 	// RAssign(RLObject("c", RLObject("d", RLeaf())), JsonBool(true))
 	// RAssign(RLObject("c", RLObject("e", RLeaf())), JsonNull())
 
