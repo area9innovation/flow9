@@ -16,8 +16,10 @@ NativeFunction *MediaStreamSupport::MakeNativeFunction(const char *name, int num
     TRY_USE_NATIVE_METHOD(MediaStreamSupport, requestAudioInputDevices, 1);
 
     TRY_USE_NATIVE_METHOD(MediaStreamSupport, requestVideoInputDevices, 1);
-
+    
     TRY_USE_NATIVE_METHOD(MediaStreamSupport, makeMediaStream, 6);
+    
+    TRY_USE_NATIVE_METHOD(MediaStreamSupport, scanMediaStream, 3);
     TRY_USE_NATIVE_METHOD(MediaStreamSupport, stopMediaStream, 1);
 
     return NULL;
@@ -51,6 +53,27 @@ StackSlot MediaStreamSupport::requestVideoInputDevices(RUNNER_ARGS)
     RETVOID;
 }
 
+StackSlot MediaStreamSupport::scanMediaStream(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(mediaStream, scanTypes);
+    RUNNER_CheckTag1(TNative, mediaStream);
+    RUNNER_CheckTag1(TArray, scanTypes);
+    
+    std::vector<std::string> types = std::vector<std::string>();
+    for (unsigned int i = 0; i < RUNNER->GetArraySize(scanTypes); i++)
+    {
+        const StackSlot &str = RUNNER->GetArraySlot(scanTypes, i);
+        RUNNER_CheckTag1(TString, str);
+        types.push_back(encodeUtf8(RUNNER->GetString(str)));
+    }
+    
+    int onResultRoot = RUNNER->RegisterRoot(RUNNER_ARG(2));
+    
+    scanStream(mediaStream, types, onResultRoot);
+    
+    RETVOID;
+}
+
 StackSlot MediaStreamSupport::makeMediaStream(RUNNER_ARGS)
 {
     RUNNER_PopArgs4(recordAudio, recordVideo, audioDeviceId, videoDeviceId);
@@ -72,5 +95,6 @@ StackSlot MediaStreamSupport::stopMediaStream(RUNNER_ARGS)
 
     stopStream(mediaStream);
     RUNNER->DeleteNative(mediaStream);
+    
     RETVOID;
 }

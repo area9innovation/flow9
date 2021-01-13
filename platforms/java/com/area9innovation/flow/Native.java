@@ -966,7 +966,7 @@ public class Native extends NativeHost {
 		return runtime.makeStructValue(
 				"Date",
 				new Object[] {
-					date.get(Calendar.YEAR) + 1900,
+					date.get(Calendar.YEAR),
 					date.get(Calendar.MONTH) + 1,
 					date.get(Calendar.DAY_OF_MONTH)
 				},
@@ -1806,5 +1806,36 @@ public class Native extends NativeHost {
 		ArrayList vector = (ArrayList)v;
 		vector.clear();
 		return null;
+	}
+
+	public final <RT> Func0<RT> synchronizedConstFn(Object lock, Func0<RT> fn) {
+		return new Func0<RT>() {
+			@Override
+			public RT invoke() {
+				synchronized (lock) {
+					return fn.invoke();
+				}
+			}
+		};
+	}
+	public final <RT, A1> Func1<RT, A1> synchronizedUnaryFn(Object lock, Func1<RT, A1> fn) {
+		return new Func1<RT, A1>() {
+			@Override
+			public RT invoke(A1 arg1) {
+				synchronized (lock) {
+					return fn.invoke(arg1);
+				}
+			}
+		};
+	}
+	public final <RT, A1, A2> Func2<RT, A1, A2> synchronizedBinaryFn(Object lock, Func2<RT, A1, A2> fn) {
+		return new Func2<RT, A1, A2>() {
+			@Override
+			public RT invoke(A1 arg1, A2 arg2) {
+				synchronized (lock) {
+					return fn.invoke(arg1, arg2);
+				}
+			}
+		};
 	}
 }

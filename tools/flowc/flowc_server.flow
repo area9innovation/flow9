@@ -1,20 +1,33 @@
 import server/http;
-import tools/flowc/flowc_lsp;
+import tools/flowc/flowc_local;
 
 export {
 	// A language server working over http.
 	fcHttpServer(config : CompilerConfig) -> void;
-
-	// A language server using stdin/stdout to communicate. Usually is invoked as a child process of an IDE.
-	fcConsoleServer(config : CompilerConfig) -> void;
 }
+
+// Global array of request ids, shared by concurrent threads.
+// When a request is finished, corresponding id is removed from the array and may be reused.
+fc_request_ids : ref [int] = ref [1];
+
+// Makes a new fresh id and stores it in fc_request_ids. Thread safe.
+fcMakeNewRequestId = synchronizedConstFn(fc_request_ids, \ -> {
+	new_id = for(2, \id -> contains(^fc_request_ids, id), \id -> id + 1);
+	fc_request_ids := concat(^fc_request_ids, [new_id]);
+	new_id
+});
+
+// Removes an id from fc_request_ids. Thread safe.
+fcRemoveRequestId = synchronizedUnaryFn(fc_request_ids, \id -> 
+	fc_request_ids := removeAll(^fc_request_ids, id)
+);
 
 fcDecodeConfigRequest(s : string) -> Maybe<CompilerConfig> {
 	conf = deserialize(s, IllegalStruct());
 	if (conf == IllegalStruct()) None() else {
 		switch (conf) {
 			CompilerConfig(__,__,__,__,__,__,__): {
-				Some(CompilerConfig(conf with threadId = s2i(getThreadId())));
+				Some(CompilerConfig(conf with threadId = fcMakeNewRequestId()));
 			}
 			default: None();
 		}
@@ -50,6 +63,7 @@ fcProcessRequest(serverConf : CompilerConfig, globEnv : FcTypeEnvGlobal, req : s
 						}
 						clearFcOutput(conf.threadId);
 						clearTimePhases(conf.threadId);
+						fcRemoveRequestId(conf.threadId);
 						if (log_request) {
 							fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(if (bin_out) "<binary>" else out), serverConf);
 						}
@@ -64,49 +78,8 @@ fcProcessRequest(serverConf : CompilerConfig, globEnv : FcTypeEnvGlobal, req : s
 			}
 		}
 	} else {
-		json = fcDecodeJsonRequest(req);
-		if (json == JsonNull()) {
-			out_cb(200, "WARNING: Illegal request");
-			loop_cb();
-		} else {
-			fcLspProcessRequest(serverConf, globEnv, json, \msg -> out_cb(0, msg), loop_cb, exit_cb);
-		}
-	}
-}
-
-fcConsoleServer(config : CompilerConfig) -> void { 
-	fcServerLog("Console server started in: " + resolveRelativePath(".") + " directory", config);
-	fcSetSkipPrinting(config.threadId, true);
-	fcRunConsoleServer(initFcTypeEnvGlobal(), config);
-}
-
-fcRunConsoleServer(globEnv : FcTypeEnvGlobal, config : CompilerConfig) -> void {
-	switch (fcLspReadRequest()) {
-		Some(req): {
-			// Special watermark for non-logging
-			log_request = !strContains(req.request, "do_not_log_this");
-			if (log_request) {
-				fcServerLog("Request: " + escapeStr(req.request), config);
-			}
-			start_time = timestamp();
-			fcProcessRequest(config, globEnv, req.json, 
-				\__, msg -> {
-					if (log_request) {
-						fcServerLog("Response[" + d2st((timestamp() - start_time) / 1000.0, 2) + " s.]: " + escapeStr(msg), config);
-					}
-					print(msg);
-				},
-				\-> fcRunConsoleServer(globEnv, config),
-				\-> {
-					fcServerLog("Console server stopped.", config);
-					quit(0);
-				}
-			);
-		}
-		None(): {
-			fcServerLog("Failed to read a request.", config);
-			fcRunConsoleServer(globEnv, config);
-		}
+		out_cb(200, "WARNING: Illegal request");
+		loop_cb();
 	}
 }
 

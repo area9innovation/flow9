@@ -15,7 +15,8 @@ class FlowSprite extends Sprite {
 	private var transformChanged : Bool = true;
 
 	private var url : String = "";
-	private var loaded : Bool = false;
+	public var loaded : Bool = false;
+	public var failed : Bool = false;
 	private var visibilityChanged : Bool = true;
 	private var widgetBoundsChanged : Bool = false;
 	private var updateParent : Bool = false;
@@ -31,8 +32,10 @@ class FlowSprite extends Sprite {
 	private var _bounds = new Bounds();
 	public var filterPadding = 0.0;
 
-	private var nativeWidget : Dynamic;
-	private var accessWidget : AccessWidget;
+	public var nativeWidget : Dynamic;
+	public var accessWidget : AccessWidget;
+	public var tagName : String;
+	public var className : String;
 
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
@@ -41,6 +44,7 @@ class FlowSprite extends Sprite {
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
+	public var useCrossOrigin : Bool = false;
 	private var disposed : Bool = false;
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
@@ -191,6 +195,7 @@ class FlowSprite extends Sprite {
 		}
 
 		loaded = false;
+		failed = true;
 		visibilityChanged = true;
 
 		texture = Texture.EMPTY;
@@ -204,7 +209,7 @@ class FlowSprite extends Sprite {
 	}
 
 	private function enableSprites() : Void {
-		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+		if (untyped this.destroyed || parent == null || nativeWidget == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
 			return;
 		}
 
@@ -267,6 +272,7 @@ class FlowSprite extends Sprite {
 
 					visibilityChanged = true;
 					loaded = true;
+					failed = false;
 				}
 			} catch (e : Dynamic) {
 				if (parent != null && retries < 2) {
@@ -382,17 +388,29 @@ class FlowSprite extends Sprite {
 			nativeWidget = Browser.document.createElement(tagName);
 			this.updateClipID();
 
-			nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
+			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
 			nativeWidget.onload = onLoaded;
 			nativeWidget.onerror = onError;
 			nativeWidget.src = url;
 		}
 
 		nativeWidget.className = 'nativeWidget';
+		if (this.className != null && this.className != '') {
+			nativeWidget.classList.add(this.className);
+		}
 		nativeWidget.style.visibility = 'hidden';
 		nativeWidget.alt = altText;
 
 		isNativeWidget = true;
+	}
+
+	public function switchUseCrossOrigin(useCrossOrigin) : Void {
+		if (this.useCrossOrigin != useCrossOrigin) {
+			this.useCrossOrigin = useCrossOrigin;
+
+			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url)
+			else nativeWidget.crossOrigin = null;
+		}
 	}
 
 	public function calculateWidgetBounds() : Void {

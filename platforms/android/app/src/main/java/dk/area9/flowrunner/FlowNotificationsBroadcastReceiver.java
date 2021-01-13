@@ -1,17 +1,23 @@
 package dk.area9.flowrunner;
 
 import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.support.annotation.NonNull;
 import android.support.v4.app.NotificationCompat;
 
 // We interact with NotificationManager in this receiver
 // onReceive will be called at scheduled time for every scheduled notification
 public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
+
+    public static String NOTIFICATION_CHANNEL = "local_channel";
+    public static String NOTIFICATION_CHANNEL_NAME = "Local Notifications";
+    public static int NOTIFICATION_CHANNEL_IMPORTANCE = NotificationManager.IMPORTANCE_DEFAULT;
 
     @Override
     public void onReceive(@NonNull Context context, @NonNull Intent intent) {
@@ -40,7 +46,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
             notificationIconID = android.R.drawable.ic_popup_reminder;
         }
 
-        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context);
+        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context, NOTIFICATION_CHANNEL);
 
         mBuilder.setSmallIcon(notificationIconID)
                 .setContentTitle(notificationTitle)
@@ -48,6 +54,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
                 .setContentIntent(onClickIntent)
                 .setDeleteIntent(onCancelIntent)
                 .setOngoing(pinNotification)
+                .setChannelId(NOTIFICATION_CHANNEL)
                 .setAutoCancel(!pinNotification);
 
         if (withSound) {
@@ -55,6 +62,12 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
         }
 
         NotificationManager notifyManager = (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notifyManager.getNotificationChannels().size() == 0) {
+            NotificationChannel channel = new NotificationChannel(NOTIFICATION_CHANNEL, NOTIFICATION_CHANNEL_NAME, NOTIFICATION_CHANNEL_IMPORTANCE);
+            notifyManager.createNotificationChannel(channel);
+        }
+
         notifyManager.notify(notificationId, mBuilder.build());
     }
     

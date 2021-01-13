@@ -224,10 +224,20 @@ class RenderSupport {
 		return false;
 	}
 
+	private static var UserStyleTestElement = null;
+	private static function createUserStyleTestElement() : Void {
+		if (UserStyleTestElement == null) {
+			UserStyleTestElement = Browser.document.createElement("p");
+			UserStyleTestElement.setAttribute("role", "presentation");
+			UserStyleTestElement.style.visibility = "hidden";
+			Browser.document.body.appendChild(UserStyleTestElement);
+		}
+	}
 	private static var UserDefinedFontSize : Float = null;
 	private static function getUserDefinedFontSize() : Float {
 		if (UserDefinedFontSize == null) {
-			var style = Browser.window.getComputedStyle(Browser.document.body);
+			createUserStyleTestElement();
+			var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
 			UserDefinedFontSize = Std.parseFloat(style.fontSize);
 		}
@@ -239,32 +249,50 @@ class RenderSupport {
 		return UserDefinedFontSize;
 	}
 
-	private static var UserDefinedLetterSpacing = null;
+	private static var UserDefinedLetterSpacing = 0.0;
 	private static function getUserDefinedLetterSpacing() : Float {
-		var div = Browser.document.createElement("p");
-		Browser.document.body.appendChild(div);
-		var style = Browser.window.getComputedStyle(div);
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
 		UserDefinedLetterSpacing = style.letterSpacing != "normal"
 			? (new String(style.letterSpacing).indexOf("em") >= 0 ? 0.0 : Std.parseFloat(style.letterSpacing))
 			: 0.0;
 
-		Browser.document.body.removeChild(div);
-
 		return UserDefinedLetterSpacing;
 	}
 
-	private static var UserDefinedLetterSpacingPercent = null;
+	private static var UserDefinedLineHeightPercent = 1.15;
+	private static function getUserDefinedLineHeightPercent() : Float {
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
+
+		UserDefinedLineHeightPercent = style.lineHeight != "normal"
+			? (new String(style.lineHeight).indexOf("em") >= 0 ? Std.parseFloat(style.lineHeight) : Std.parseFloat(style.lineHeight) / Std.parseFloat(style.fontSize))
+			: 1.15;
+
+		return UserDefinedLineHeightPercent;
+	}
+
+	private static var UserDefinedWordSpacingPercent = 0.0;
+	private static function getUserDefinedWordSpacingPercent() : Float {
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
+
+		UserDefinedWordSpacingPercent = style.wordSpacing != "normal"
+			? (new String(style.wordSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.wordSpacing) : Std.parseFloat(style.wordSpacing) / Std.parseFloat(style.fontSize))
+			: 0.0;
+
+		return UserDefinedWordSpacingPercent;
+	}
+
+	private static var UserDefinedLetterSpacingPercent = 0.0;
 	private static function getUserDefinedLetterSpacingPercent() : Float {
-		var div = Browser.document.createElement("p");
-		Browser.document.body.appendChild(div);
-		var style = Browser.window.getComputedStyle(div);
+		createUserStyleTestElement();
+		var style = Browser.window.getComputedStyle(UserStyleTestElement);
 
 		UserDefinedLetterSpacingPercent = style.letterSpacing != "normal"
 			? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
 			: 0.0;
-
-		Browser.document.body.removeChild(div);
 
 		return UserDefinedLetterSpacingPercent;
 	}
@@ -273,13 +301,19 @@ class RenderSupport {
 	public static function emitUserStyleChanged() {
 		if (!UserStylePending) {
 			UserStylePending = true;
+			var userStyleChanged = RenderSupport.checkUserStyleChanged();
 			RenderSupport.once("drawframe", function() {
-				if (UserDefinedLetterSpacing != getUserDefinedLetterSpacing() || UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) {
+				if (userStyleChanged) {
 					RenderSupport.emit("userstylechanged");
 				}
 				UserStylePending = false;
 			});
 		}
+	}
+
+	public static function checkUserStyleChanged() : Bool {
+		return (untyped (UserDefinedLetterSpacing != getUserDefinedLetterSpacing()) | (UserDefinedLetterSpacingPercent != getUserDefinedLetterSpacingPercent()) |
+			(UserDefinedWordSpacingPercent != getUserDefinedWordSpacingPercent()) | (UserDefinedLineHeightPercent != getUserDefinedLineHeightPercent()));
 	}
 
 	public static function isInsideFrame() : Bool {
@@ -291,11 +325,59 @@ class RenderSupport {
 	}
 
 	public static function monitorUserStyleChanges() : Void -> Void {
-		if (isInsideFrame()) {
-			return Native.setInterval(1000, emitUserStyleChanged);
-		} else {
-			return function() {};
+		return Native.setInterval(1000, emitUserStyleChanged);
+	}
+
+	public static function setPrintPageSize(wd : Float, hgt : Float) : Void -> Void {
+		var style = Browser.document.createElement('style');
+		style.setAttribute('type', 'text/css');
+
+		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; }";
+		Browser.document.head.appendChild(style);
+
+		return function () {
+			Browser.document.head.removeChild(style);
 		}
+	}
+
+	public static function getClipHTML(clip : DisplayObject) : String {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		clip.initNativeWidget();
+		PixiStage.forceClipRenderable();
+		forceRender();
+		var nativeWidget : Dynamic = untyped clip.nativeWidget;
+		var content = nativeWidget ? nativeWidget.innerHTML : '';
+
+		if (printMode) {
+			printMode = false;
+			DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+		}
+
+		return content;
+	}
+
+	public static function showPrintDialog() : Void {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		PixiStage.forceClipRenderable();
+		emit("beforeprint");
+		forceRender();
+
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				Browser.window.print();
+			});
+		});
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -548,6 +630,7 @@ class RenderSupport {
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
 	private static var printMode = false;
+	private static var prevInvalidateRenderable = false;
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
@@ -560,21 +643,24 @@ class RenderSupport {
 			}
 		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
-		var prevInvalidateRenderable = true;
 		Browser.window.addEventListener('beforeprint', function () {
-			printMode = true;
-			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
-			DisplayObjectHelper.InvalidateRenderable = false;
-			PixiStage.forceClipRenderable();
-			emit("beforeprint");
-			forceRender();
+			if (!printMode) {
+				printMode = true;
+				prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+				DisplayObjectHelper.InvalidateRenderable = false;
+				PixiStage.forceClipRenderable();
+				emit("beforeprint");
+				forceRender();
+			}
 		}, false);
 
 		Browser.window.addEventListener('afterprint', function () {
-			DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
-			printMode = false;
-			emit("afterprint");
-			forceRender();
+			if (printMode) {
+				DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+				printMode = false;
+				emit("afterprint");
+				forceRender();
+			}
 		}, false);
 
 		// Make additional resize for mobile fullscreen mode
@@ -1436,6 +1522,16 @@ class RenderSupport {
 			DisplayObjectHelper.invalidateTransform(clip);
 		} else {
 			clip.tagName = tagName;
+		}
+	}
+
+	public static function setClipClassName(clip : DisplayObject, className : String) : Void {
+		untyped clip.className = className;
+
+		if (untyped clip.nativeWidget == null) {
+			clip.initNativeWidget();
+		} else {
+			untyped clip.nativeWidget.classList.add(className);
 		}
 	}
 
@@ -2308,9 +2404,9 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible"){
-			clip.on("visible", fn);
-			return function() { clip.off("visible", fn); }
+		} else if (event == "visible" || event == "added" || event == "removed"){
+			clip.on(event, fn);
+			return function() { clip.off(event, fn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -2607,6 +2703,10 @@ class RenderSupport {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
 	}
 
+	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
+		picture.switchUseCrossOrigin(useCrossOrigin);
+	}
+
 	public static function cursor2css(cursor : String) : String {
 		return switch (cursor) {
 			case "arrow": "default";
@@ -2841,6 +2941,10 @@ class RenderSupport {
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
 		clip.setScrollRect(left, top, width, height);
+	}
+
+	public static function setCropEnabled(clip : FlowContainer, enabled : Bool) : Void {
+		clip.setCropEnabled(enabled);
 	}
 
 	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
@@ -3099,6 +3203,74 @@ class RenderSupport {
 		}
 	}
 
+	public static function getClipSnapshot(clip : FlowContainer, cb : String -> Void) : Void {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		PixiStage.forceClipRenderable();
+		forceRender();
+
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				var snapshot = clip.children != null && clip.children.length > 0 ?
+					getClipSnapshotBox(
+						untyped clip,
+						Math.floor(clip.worldTransform.tx),
+						Math.floor(clip.worldTransform.ty),
+						Math.floor(clip.getWidth()),
+						Math.floor(clip.getHeight())
+					) : "";
+
+				if (printMode) {
+					printMode = false;
+					DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+					forceRender();
+				}
+
+				cb(snapshot);
+			});
+		});
+	}
+
+	public static function getClipSnapshotBox(clip : FlowContainer, x : Int, y : Int, w : Int, h : Int) : String {
+		if (clip == null) {
+			return "";
+		}
+
+		untyped RenderSupport.LayoutText = true;
+		emit("enable_sprites");
+		var prevX = clip.x;
+		var prevY = clip.y;
+		clip.setScrollRect(x, y, w, h);
+
+		forceRender();
+
+		var dispFn = function() {
+			clip.removeScrollRect();
+			clip.x = prevX;
+			clip.y = prevY;
+			clip.invalidateTransform('getClipSnapshotBox');
+
+			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
+			forceRender();
+		}
+
+		try {
+			var img = PixiRenderer.plugins.extract.base64(clip == mainRenderClip() ? clip : clip.children[0]);
+			dispFn();
+
+			return img;
+		} catch(e : Dynamic) {
+			dispFn();
+
+			return 'error';
+		}
+	}
+
 	public static function compareImages(image1 : String, image2 : String, cb : String -> Void) : Void {
 		if (untyped __js__("typeof resemble === 'undefined'")) {
 			var head = Browser.document.getElementsByTagName('head')[0];
@@ -3167,6 +3339,10 @@ class RenderSupport {
 		return new HTMLStage(width, height);
 	}
 
+	public static function assignClip(stage : HTMLStage, id : String, clip : DisplayObject) : Void {
+		stage.assignClip(id, clip);
+	}
+
 	public static function createElement(tagName : String) : Element {
 		return Browser.document.createElementNS(
 				if (tagName.toLowerCase() == "svg" || tagName.toLowerCase() == "path" || tagName.toLowerCase() == "g") {
@@ -3185,6 +3361,27 @@ class RenderSupport {
 	public static function changeNodeValue(element : Element, value : String) : Void {
 		element.nodeValue = value;
 	}
+
+	public static function getElementById(selector : String) : Element {
+		return Browser.document.getElementById(selector);
+	}
+
+	public static function getElementChildren(element : Dynamic) : Array<Element> {
+		if (element.isHTMLStage) {
+			return untyped Array.from(element.nativeWidget.childNodes);
+		} else {
+			return untyped Array.from(element.childNodes);
+		}
+	}
+
+	public static function getElementNextSibling(element : Dynamic) : Element {
+		return element.nextSibling;
+	}
+
+	public static function isElementNull(element : Element) : Bool {
+		return element == null;
+	}
+
 
 	public static function setAttribute(element : Element, name : String, value : String) : Void {
 		if (name == "innerHTML")
