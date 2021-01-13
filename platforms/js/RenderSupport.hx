@@ -373,8 +373,10 @@ class RenderSupport {
 		emit("beforeprint");
 		forceRender();
 
-		PixiStage.onImagesLoaded(function () {
-			Browser.window.print();
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				Browser.window.print();
+			});
 		});
 	}
 
@@ -2415,7 +2417,7 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "scroll" || event == "renderable"){
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "scroll" || event == "renderable") {
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {
@@ -2954,6 +2956,10 @@ class RenderSupport {
 		clip.setScrollRect(left, top, width, height);
 	}
 
+	public static function setCropEnabled(clip : FlowContainer, enabled : Bool) : Void {
+		clip.setCropEnabled(enabled);
+	}
+
 	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
 		clip.setContentRect(width, height);
 	}
@@ -3210,6 +3216,74 @@ class RenderSupport {
 		}
 	}
 
+	public static function getClipSnapshot(clip : FlowContainer, cb : String -> Void) : Void {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		PixiStage.forceClipRenderable();
+		forceRender();
+
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				var snapshot = clip.children != null && clip.children.length > 0 ?
+					getClipSnapshotBox(
+						untyped clip,
+						Math.floor(clip.worldTransform.tx),
+						Math.floor(clip.worldTransform.ty),
+						Math.floor(clip.getWidth()),
+						Math.floor(clip.getHeight())
+					) : "";
+
+				if (printMode) {
+					printMode = false;
+					DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+					forceRender();
+				}
+
+				cb(snapshot);
+			});
+		});
+	}
+
+	public static function getClipSnapshotBox(clip : FlowContainer, x : Int, y : Int, w : Int, h : Int) : String {
+		if (clip == null) {
+			return "";
+		}
+
+		untyped RenderSupport.LayoutText = true;
+		emit("enable_sprites");
+		var prevX = clip.x;
+		var prevY = clip.y;
+		clip.setScrollRect(x, y, w, h);
+
+		forceRender();
+
+		var dispFn = function() {
+			clip.removeScrollRect();
+			clip.x = prevX;
+			clip.y = prevY;
+			clip.invalidateTransform('getClipSnapshotBox');
+
+			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
+			forceRender();
+		}
+
+		try {
+			var img = PixiRenderer.plugins.extract.base64(clip == mainRenderClip() ? clip : clip.children[0]);
+			dispFn();
+
+			return img;
+		} catch(e : Dynamic) {
+			dispFn();
+
+			return 'error';
+		}
+	}
+
 	public static function compareImages(image1 : String, image2 : String, cb : String -> Void) : Void {
 		if (untyped __js__("typeof resemble === 'undefined'")) {
 			var head = Browser.document.getElementsByTagName('head')[0];
@@ -3278,6 +3352,10 @@ class RenderSupport {
 		return new HTMLStage(width, height);
 	}
 
+	public static function assignClip(stage : HTMLStage, id : String, clip : DisplayObject) : Void {
+		stage.assignClip(id, clip);
+	}
+
 	public static function createElement(tagName : String) : Element {
 		return Browser.document.createElementNS(
 				if (tagName.toLowerCase() == "svg" || tagName.toLowerCase() == "path" || tagName.toLowerCase() == "g") {
@@ -3299,6 +3377,18 @@ class RenderSupport {
 
 	public static function getElementById(selector : String) : Element {
 		return Browser.document.getElementById(selector);
+	}
+
+	public static function getElementChildren(element : Dynamic) : Array<Element> {
+		if (element.isHTMLStage) {
+			return untyped Array.from(element.nativeWidget.childNodes);
+		} else {
+			return untyped Array.from(element.childNodes);
+		}
+	}
+
+	public static function getElementNextSibling(element : Dynamic) : Element {
+		return element.nextSibling;
 	}
 
 	public static function isElementNull(element : Element) : Bool {

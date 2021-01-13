@@ -55,7 +55,7 @@ pickerLayout(
 	dialogButtons : [MDialogButton],
 	pickerWidth0 : double,
 	cellHeight : Transform<double>,
-	infoSection : Tropic,
+	infoSection : Maybe<Tropic>,
 	mainSection : Tropic,
 	enabled : Transform<bool>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -139,16 +139,21 @@ pickerLayout(
 	}
 
 	infoSection1 =
-		TAvailable(infoSection, if (album) TSizedHeight(pickerWidthInfoAlbum, height) else TFixed(pickerWidth, 100.0))
-		|> (\t ->
-			TGroup2(
-				TIfLazy2(
-					enabled,
-					\en -> headerBackground(en, if (themeHeaderColor) color else MWhite()),
-					true
+		eitherMap(
+			infoSection,
+			\section ->
+				TAvailable(section, if (album) TSizedHeight(pickerWidthInfoAlbum, height) else TFixed(pickerWidth, 100.0))
+				|> (\t ->
+					TGroup2(
+						TIfLazy2(
+							enabled,
+							\en -> headerBackground(en, if (themeHeaderColor) color else MWhite()),
+							true
+						),
+						t
+					)
 				),
-				t
-			)
+			TEmpty()
 		);
 
 	[infoSection1, mainSection1]
@@ -168,6 +173,7 @@ datepickerCells(
 	enabled : Transform<bool>,
 	startFromMonday : bool,
 	yearDisabled : bool,
+	multipleDate : Maybe<MMultipleDate>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	total = 31;
@@ -227,26 +233,37 @@ datepickerCells(
 					}), parent.rtl)
 				},
 				TGroup2(
-					TSelect3(month, date, offsets, \m, d, ofs ->
+					TSelect3(month, date, offsets, \m, d, ofs -> {
 						if (d.year == m.year && d.month == m.month && d.day > 0 && d.day <= ^daysNum)
 							TTranslate(const(ofs[(^startOffset + d.day - 1) / 7][(^startOffset + d.day - 1) % 7]),
-								TCircle(18., [MFill(color)])
+								eitherMap(
+									multipleDate,
+									\multiple ->
+									TSelect(
+										multiple.dates,
+										\dates ->
+											TCircle(18., [MFill(if (exists(dates, \mDate -> compareDates(mDate, d) == DateEqual())) getAccentColor(manager) else color)])
+									),
+									TCircle(18., [MFill(color)])
+								)
 							)
 						else
 							TEmpty()
+					}
 					),
 					(\p -> TSelect(offsets, \ofs ->
 						mapi(ofs, \i, of ->
 							(\p2 ->
-								mapi(of, \j, o ->
+								mapi(of, \j, o -> {
 									if (o == invisible)
 										TEmpty()
 									else
 										TTranslate(
 											const(o),
 											datepickerCell(manager, p2, color, month,
-												i * 7 + j + 1 - ^startOffset, date, mDateMin, mDateMax, isMarked, enabled, m2t)
+												i * 7 + j + 1 - ^startOffset, date, mDateMin, mDateMax, isMarked, enabled, multipleDate, m2t)
 										)
+								}
 								)
 								|> TGroup
 							)
@@ -273,6 +290,7 @@ datepickerCell(
 	mDateMax : Maybe<Date>,
 	isMarked : (Date) -> bool,
 	enabled0 : Transform<bool>,
+	multipleDate : Maybe<MMultipleDate>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	hover = make(false);
@@ -351,9 +369,41 @@ datepickerCell(
 			bubble
 		);
 
+	bubbleAnimatedHighlited = 
+		TGroup2(
+			eitherMap(
+				multipleDate,
+				\multiple -> {
+					TSelect2(multiple.dates, thisMonth, \dates, m -> 
+						if (exists(dates, \mDate -> mDate.year == m.year && mDate.month == m.month && mDate.day == day))
+							TCircle(18., [MFill(getAccentColor(manager)), FillOpacity(0.28)])
+						else
+							TEmpty()
+					)
+				},
+				TEmpty()
+			),
+			bubbleAnimated
+		)
+
 	click = \ -> {
+		currentDate = getValue(dateB);
 		thisDate = makeDate(getValue(thisMonth), day);
-		if (isEnabled(thisDate)) next(dateB, thisDate)
+		if (isEnabled(thisDate)) next(dateB, thisDate);
+		eitherFn(
+			multipleDate,
+			\multiple -> {
+				dates = getValue(multiple.dates);
+				if (compareDates(currentDate, thisDate) == DateEqual())
+					eitherFn(
+						findi(dates, \mDate -> compareDates(mDate, thisDate) == DateEqual()),
+						\i -> next(multiple.dates, removeIndex(dates, i)),
+						\-> next(multiple.dates, arrayPush(dates, thisDate))
+					)
+			},
+			nop
+		);
+		
 	};
 
 	bubbleClickable =
@@ -362,7 +412,7 @@ datepickerCell(
 			parent,
 			"MDatePickerCell",
 			[THovering(hover), MFocused(focused), MOnClick(click), MRippleType(const(MNoRipple()))],
-			\f -> TFrame(0.0, 0.0, interactiveRectangleStyle, bubbleAnimated),
+			\f -> TFrame(0.0, 0.0, interactiveRectangleStyle, bubbleAnimatedHighlited),
 			m2t
 		);
 
@@ -387,6 +437,7 @@ datepickerCellsAnimated(
 	enabled : Transform<bool>,
 	startFromMonday : bool,
 	yearDisabled : bool,
+	multipleDate : Maybe<MMultipleDate>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	cards = map([1., 0.], \c ->
@@ -402,7 +453,7 @@ datepickerCellsAnimated(
 	mapi(cards, \i, c ->
 		TGroup2(
 			datepickerCells(manager, parent, color, c.month, date, mDateMin, mDateMax, isMarked,
-				fand(enabled, feq(cardCur, i)), startFromMonday, yearDisabled, m2t),
+				fand(enabled, feq(cardCur, i)), startFromMonday, yearDisabled, multipleDate, m2t),
 
 			TFixed(width, height)
 			|> (\t -> TAlpha(c.opacity, t))
@@ -484,6 +535,8 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker, 
 	buttonsM = tryExtractStruct(m.style, MDialogButtons([]));
 	buttons = eitherMap(buttonsM, \but -> but.buttons, []);
 	startFromMonday = extractStruct(m.style, MDatePickerFirstWeekDay(false)).monday;
+	noHeader = contains(m.style, MNoHeader());
+	multipleDate = tryExtractStruct(m.style, MMultipleDate(make([])));
 
 	isRTL = parent.rtl;
 
@@ -562,6 +615,7 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker, 
 				enabled,
 				startFromMonday,
 				yearDisabled,
+				multipleDate,
 				m2t
 			)
 			|> (\t -> TBorder(pickerMarginCells, 0., pickerMarginCells, 0., t)),
@@ -660,60 +714,62 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker, 
 	};
 
 	infoSection =
-		TConstruct(
-			[
-				makeSubscribe(dateB, \dt -> {
-					nextDistinct(year, dt.year);
-					nextDistinct(month, monthValue(dt));
-					nextDistinct(dateB, checkYearDisabled(dt));
-				}),
-				\ -> \ -> maybeApply(updateOnClose, \uoc -> nextDistinct(m.date, getValue(uoc)))
-			],
-			if (yearDisabled)
-				TIfLazy2(enabled, timePickerheaderContent, true)
-			else {
-				focusState =
-					[
-						MEnabled(enabled),
-						MRippleType(const(MRippleFill())),
-						MOnClick(\ -> {
-							if (!getValue(yearsActive)) {
-								nextDistinct(yearsActive, true);
-								adjustYearSection()
-							} else
-								nextDistinct(yearsActive, false);
-						}),
-						MTooltipText(const(_("Click to switch between date and year selection")))
-					];
+		if (noHeader) None()
+		else
+			Some(TConstruct(
+				[
+					makeSubscribe(dateB, \dt -> {
+						nextDistinct(year, dt.year);
+						nextDistinct(month, monthValue(dt));
+						nextDistinct(dateB, checkYearDisabled(dt));
+					}),
+					\ -> \ -> maybeApply(updateOnClose, \uoc -> nextDistinct(m.date, getValue(uoc)))
+				],
+				if (yearDisabled)
+					TIfLazy2(enabled, timePickerheaderContent, true)
+				else {
+					focusState =
+						[
+							MEnabled(enabled),
+							MRippleType(const(MRippleFill())),
+							MOnClick(\ -> {
+								if (!getValue(yearsActive)) {
+									nextDistinct(yearsActive, true);
+									adjustYearSection()
+								} else
+									nextDistinct(yearsActive, false);
+							}),
+							MTooltipText(const(_("Click to switch between date and year selection")))
+						];
 
-				MComponent2T(
-					manager,
-					parent,
-					"MDatePicker",
-					focusState,
-					\focus ->
-						TIfLazy2(focus.enabled, \en ->
-							timePickerheaderContent(en)
-							|> (\f ->
-								if (en)
-									TCopySize(
-										f,
-										\tr ->
-											TVisible(
-												fOrs([focus.down, focus.hover, focus.focused], false),
-												TRectangle([MFill(MGrey(500)), FillOpacity(^disabledItemOpacity)], tr)
-											),
-										false
-									)
-								else
-									f
+					MComponent2T(
+						manager,
+						parent,
+						"MDatePicker",
+						focusState,
+						\focus ->
+							TIfLazy2(focus.enabled, \en ->
+								timePickerheaderContent(en)
+								|> (\f ->
+									if (en)
+										TCopySize(
+											f,
+											\tr ->
+												TVisible(
+													fOrs([focus.down, focus.hover, focus.focused], false),
+													TRectangle([MFill(MGrey(500)), FillOpacity(^disabledItemOpacity)], tr)
+												),
+											false
+										)
+									else
+										f
+								),
+								true
 							),
-							true
-						),
-					m2t
-				)
-			}
-		);
+						m2t
+					)
+				}
+			));
 
 	pickerLayout(
 		manager,
@@ -1443,7 +1499,7 @@ MTimePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MTimePicker, 
 		extractStruct(m.style, MDialogButtons([])).buttons,
 		mpickerWidth,
 		const(pickerHeightCells),
-		infoSection,
+		Some(infoSection),
 		mainSection,
 		enabled,
 		m2t
@@ -1525,11 +1581,11 @@ MColorPicker2T(
 			extractStruct(style, MDialogButtons([])).buttons,
 			colorPickerWidth,
 			faddition(height, const(8.)),
-			eitherMap(
+			Some(eitherMap(
 				selectedColorSetMB,
 				\colorSetB  -> colorPickerMultiSelectHeader(manager, parent, colorSetB, enabled, album, m2t),
 				colorPickerHeader(manager, parent, selectedColorB, opacityPicker, showPreviousColor, enabled, album)
-			),
+			)),
 			f,
 			enabled,
 			m2t

@@ -22,6 +22,7 @@ class FlowContainer extends Container {
 	public var stageChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
 	private var localTransformChanged : Bool = true;
+	public var cropEnabled : Bool = true;
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
