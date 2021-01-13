@@ -585,7 +585,6 @@ class Object3DHelper {
 			stage.objectCache.push(object);
 		}
 
-		var childrenMap = get3DChildrenMap(object);
 		var i = 0;
 
 		for (child in get3DObjectAllChildren(object)) {
@@ -593,7 +592,8 @@ class Object3DHelper {
 				// stage.setCamera(untyped child, []);
 				remove3DChild(object, child, true);
 			} else {
-				childrenMap.set(i, child);
+				object.children.remove(child);
+				object.children.insert(i, child);
 				updateObject3DParent(stage, child);
 				i++;
 			}
