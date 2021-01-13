@@ -1,19 +1,14 @@
 import js.Browser;
 import pixi.core.display.Bounds;
 import pixi.core.display.Container;
-import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
-import pixi.core.math.Point;
 
 import js.three.Object3D;
 import js.three.Vector2;
 
 import js.three.Camera;
-import js.three.PerspectiveCamera;
 
 import js.three.OrbitControls;
-import js.three.TransformControls;
-import js.three.BoxHelper;
 
 import js.three.Scene;
 import js.three.Raycaster;

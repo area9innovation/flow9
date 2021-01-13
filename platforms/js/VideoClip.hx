@@ -69,6 +69,7 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
+		isFlowContainer = false;
 		super();
 
 		this.keepNativeWidget = true;

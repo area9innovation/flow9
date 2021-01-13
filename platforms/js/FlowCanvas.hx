@@ -6,6 +6,7 @@ using DisplayObjectHelper;
 class FlowCanvas extends FlowContainer {
 	public var isCanvasStage = true;
 	public function new(?worldVisible : Bool = false) {
+		isFlowContainer = false;
 		super(worldVisible);
 
 		if (this.isHTMLRenderer()) {

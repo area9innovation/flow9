@@ -2,10 +2,6 @@ import js.Browser;
 import js.html.File;
 import js.html.FileList;
 
-import pixi.core.display.Bounds;
-import pixi.core.display.TransformBase;
-import pixi.core.math.Point;
-
 using DisplayObjectHelper;
 
 class DropAreaClip extends NativeWidgetClip {

@@ -35,6 +35,7 @@ class FlowContainer extends Container {
 
 	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
+	public var isFlowContainer : Bool = true;
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;

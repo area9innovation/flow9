@@ -2053,7 +2053,7 @@ class DisplayObjectHelper {
 	public static inline function getWidgetWidth(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
 		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) :
-			untyped clip.mask != null || clip.getWidth != null || clip.localBounds == null ? getWidth(clip) : clip.localBounds.maxX;
+			untyped clip.isFlowContainer && clip.mask == null ? clip.localBounds.maxX : getWidth(clip);
 
 		return widgetWidth;
 	}
@@ -2081,7 +2081,7 @@ class DisplayObjectHelper {
 	public static inline function getWidgetHeight(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
 		return (widgetBounds != null && Math.isFinite(widgetBounds.minY)) ? getBoundsHeight(widgetBounds) :
-			untyped clip.mask != null || clip.getHeight != null || clip.localBounds == null ? getHeight(clip) : clip.localBounds.maxY;
+			untyped clip.isFlowContainer && clip.mask == null ? clip.localBounds.maxY : getHeight(clip);
 	}
 
 	public static function invalidateLocalBounds(clip : DisplayObject, ?invalidateMask : Bool = false) : Void {

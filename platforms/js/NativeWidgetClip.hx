@@ -1,10 +1,6 @@
 import js.Browser;
 
-import pixi.core.math.Matrix;
 import pixi.core.display.Bounds;
-import pixi.core.display.DisplayObject;
-import pixi.core.math.shapes.Rectangle;
-import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -20,6 +16,7 @@ class NativeWidgetClip extends FlowContainer {
 	private var focusRetries : Int = 0;
 
 	public function new(?worldVisible : Bool = false) {
+		isFlowContainer = false;
 		super(worldVisible);
 	}
 
