@@ -25,15 +25,23 @@ class HTMLStage extends NativeWidgetClip {
 		stageRect = untyped this.nativeWidget.getBoundingClientRect();
 
 		var config = { attributes: true, childList: true, subtree: true };
+		var updating = false;
 		var callback = function() {
-			stageRect = untyped this.nativeWidget.getBoundingClientRect();
+			if (!updating) {
+				updating = true;
+				RenderSupport.once("drawframe", function() {
+					stageRect = untyped this.nativeWidget.getBoundingClientRect();
 
-			for (clip in clips) {
-				if (clip.children != null && clip.children.length > 0) {
-					var parentRect = untyped clip.children[0].forceParentNode.getBoundingClientRect();
-					clip.setClipX(parentRect.x - stageRect.x);
-					clip.setClipY(parentRect.y - stageRect.y);
-				}
+					for (clip in clips) {
+						if (clip.children != null && clip.children.length > 0) {
+							var parentRect = untyped clip.children[0].forceParentNode.getBoundingClientRect();
+							clip.setClipX(parentRect.x - stageRect.x);
+							clip.setClipY(parentRect.y - stageRect.y);
+						}
+					}
+
+					updating = false;
+				});
 			}
 		};
 		var observer = untyped __js__("new MutationObserver(callback)");
