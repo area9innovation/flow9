@@ -93,7 +93,7 @@ export {
 		// Date - date of first event cell displayed
 		// int - number of cells (dates) in which event is displayed
 		CalendarCustomEventView(getView : (CalendarTab, CalendarEvent, CalendarEventDecription, Date, int) -> Maybe<Material>);
-		CalendarPrintable();
+		CalendarPrintable(style : [MIconButtonStyle]);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab();
@@ -1788,7 +1788,7 @@ PlannedEventsTable(
 	littleFont = MBody();
 	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
-	isPrintable = containsStruct(styles, CalendarPrintable());
+	printButtonStyleM = maybeMap(tryExtractStruct(styles, CalendarPrintable([])), \p -> p.style);
 
 	timeSort = \item : CalendarEvent -> item.startDate;
 
@@ -2020,7 +2020,7 @@ PlannedEventsTable(
 
 	addBackground = \m -> MFrame(0.0, 0.0, calendarTabMenuStyle.background, m);
 
-	printCalendarButtonM = if (isPrintable) {
+	printCalendarButtonM = eitherMap(printButtonStyleM, \printButtonStyle -> {
 		headerM = MLines2A(addBackground(titleTextM), columnNames);
 		getPrintPages = \availableSize -> {
 			rows = fgetValue(rowsB);
@@ -2029,12 +2029,11 @@ PlannedEventsTable(
 			pagesCount = ceil(i2d(length(rows)) / i2d(rowsPerPage));
 			generate(0, pagesCount, \i -> MLinesA(subrange(rows, i * rowsPerPage, rowsPerPage)));
 		}
-		getPrintCalendarIconButton(manager, headerM, MEmpty(), getPrintPages, isPrintingB, calendarTabMenuStyle.icon);
-	} else {
-		MEmpty();
-	}
+		style = if (printButtonStyle == []) calendarTabMenuStyle.icon else printButtonStyle;
+		getPrintCalendarIconButton(manager, headerM, MEmpty(), getPrintPages, isPrintingB, style);
+	}, MEmpty());
 
-	headerM = addBackground(MCols2A(titleTextM, printCalendarButtonM));
+	headerM = addBackground(MColsYCenterA([titleTextM, printCalendarButtonM]));
 
 	MLinesA([headerM, columnNames, MScroll(contentM, TFillXY(), [])]);
 }
@@ -2212,7 +2211,7 @@ CalendarForEvents(
 	menuTightWidth = containsStruct(styles, CalendarMenuTightWidth());
 	menuAddEventButtonM = tryExtractStruct(styles, CalendarMenuAddEventButton([]));
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
-	isPrintable = containsStruct(styles, CalendarPrintable());
+	printButtonStyleM = maybeMap(tryExtractStruct(styles, CalendarPrintable([])), \p -> p.style);
 
 	filteredEvents = make(getValue(allEvents));
 	hiddenEventTypes = extractStruct(styles, HiddenEventTypes([])).types;
@@ -2370,7 +2369,7 @@ CalendarForEvents(
 				),
 				TFixed(16., 0.),
 				MCenterYIn(
-					MText(eventDescription.name, []),
+					MText(eventDescription.name, [MCaption()]),
 					TFixed(0., 20.)
 				),
 				TFixed(30., 0.),
@@ -2415,7 +2414,7 @@ CalendarForEvents(
 		}
 
 		TabMenu = \items : [Material] -> {
-			centeredItemsM = MCenterX(MColsYCenter(items));
+			centeredItemsM = MCenterX(MColsYCenterA(items));
 			addHeaderBackground(centeredItemsM);
 		}
 		TabBody = \body : Material -> MGroup2(
@@ -2461,22 +2460,28 @@ CalendarForEvents(
 		}
 
 		getPrintButton = \headerM, getPrintPages -> {
-			if (isPrintable) {
-				getPrintCalendarIconButton(manager, addHeaderBackground(headerM), printLegendM, getPrintPages, isPrintingB, subMenuIconStyle);
-			} else {
-				MEmpty();
-			}
+			eitherMap(printButtonStyleM, \printButtonStyle -> {
+				style = if (printButtonStyle == []) subMenuIconStyle else printButtonStyle;
+				getPrintCalendarIconButton(manager, addHeaderBackground(headerM), printLegendM, getPrintPages, isPrintingB, style);
+			}, MEmpty());
 		}
 
-		getAdditionalButtonsWithSizes = \currentStartDate, printButtonM -> {
-			buttons = [
-				getTodayButton(currentStartDate),
+		getAdditionalButtons = \currentStartDate, printButtonM -> {
+			todayButtonM = getTodayButton(currentStartDate);
+			addButtonM = getAddEventButton(currentStartDate);
+			leftButtons = [
+				todayButtonM,
+				MSizeOf(addButtonM),
+				MSizeOf(printButtonM),
+				if (menuTightWidth) MFillX() else MEmpty()
+			];
+			rightButtons = [
 				if (menuTightWidth) MFillX() else MEmpty(),
-				getAddEventButton(currentStartDate),
+				MSizeOf(todayButtonM),
+				addButtonM,
 				printButtonM
 			];
-			sizes = map(buttons, \m -> MSizeOf(m));
-			Pair(buttons, sizes);
+			Pair(leftButtons, rightButtons);
 		}
 
 		tabContent = switch(tab) {
@@ -2488,24 +2493,24 @@ CalendarForEvents(
 
 				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), annualView.getPrintPages);
 
-				menuItems = unpair(getAdditionalButtonsWithSizes(getCurrentDate(), printButtonM), \buttons, sizes -> concatA([
-					if (menuTightWidth) sizes else [],
+				menuItems = unpair(getAdditionalButtons(getCurrentDate(), printButtonM), \leftButtons, rightButtons -> concatA([
+					if (menuTightWidth) leftButtons else [],
 					[MIconButton(
 						"keyboard_arrow_left",
 						\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1)),
 						subMenuIconStyle,
 						[]
 					)],
-					if (!menuTightWidth) sizes else [],
+					if (!menuTightWidth) leftButtons else [],
 					[tabMenuTextM],
-					if (!menuTightWidth) buttons else [],
+					if (!menuTightWidth) rightButtons else [],
 					[MIconButton(
 						"keyboard_arrow_right",
 						\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1)),
 						subMenuIconStyle,
 						[]
 					)],
-					if (menuTightWidth) buttons else []
+					if (menuTightWidth) rightButtons else []
 				]));
 
 				MConstruct([
@@ -2539,8 +2544,8 @@ CalendarForEvents(
 
 				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), monthTable.getPrintPages);
 
-				menuItems = unpair(getAdditionalButtonsWithSizes(startOfCurrentMonth, printButtonM), \buttons, sizes -> concatA([
-					if (menuTightWidth) sizes else [],
+				menuItems = unpair(getAdditionalButtons(startOfCurrentMonth, printButtonM), \leftButtons, rightButtons -> concatA([
+					if (menuTightWidth) leftButtons else [],
 					[
 						MIconButton(
 							"first_page",
@@ -2555,9 +2560,9 @@ CalendarForEvents(
 							[]
 						)
 					],
-					if (!menuTightWidth) sizes else [],
+					if (!menuTightWidth) leftButtons else [],
 					[tabMenuTextM],
-					if (!menuTightWidth) buttons else [],
+					if (!menuTightWidth) rightButtons else [],
 					[
 						MIconButton(
 							"keyboard_arrow_right",
@@ -2572,7 +2577,7 @@ CalendarForEvents(
 							[]
 						)
 					],
-					if (menuTightWidth) buttons else []
+					if (menuTightWidth) rightButtons else []
 				]));
 				MConstruct([
 						make3Subscribe(currentDate, currentEventTypes, filteredEvents, \date, types, events -> {
@@ -2704,9 +2709,9 @@ CalendarForEvents(
 				getPrintPages = \availableSize -> fgetValue(contentB).getPrintPages(availableSize);
 				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages);
 
-				menuItems = unpair(getAdditionalButtonsWithSizes(startOfCurrentWeek, printButtonM), \buttons, sizes -> {
+				menuItems = unpair(getAdditionalButtons(startOfCurrentWeek, printButtonM), \leftButtons, rightButtons -> {
 					concatA([
-						if (menuTightWidth) sizes else [],
+						if (menuTightWidth) leftButtons else [],
 						[
 							MIconButton(
 								"first_page",
@@ -2721,9 +2726,9 @@ CalendarForEvents(
 								[]
 							)
 						],
-						if (!menuTightWidth) sizes else [],
+						if (!menuTightWidth) leftButtons else [],
 						[tabMenuTextM],
-						if (!menuTightWidth) buttons else [],
+						if (!menuTightWidth) rightButtons else [],
 						[
 							MIconButton(
 								"keyboard_arrow_right",
@@ -2738,7 +2743,7 @@ CalendarForEvents(
 								[]
 							)
 						],
-						if (menuTightWidth) buttons else []
+						if (menuTightWidth) rightButtons else []
 					])
 				});
 
@@ -2837,7 +2842,7 @@ getPrintCalendarIconButton(
 	showDialog = \ -> {
 		closeB = make(false);
 		pageSizeB = make(4);
-		pageOrientationB = make(0);
+		pageOrientationB = make(1);
 		widthS = make("21.0");
 		heightS = make("29.7");
 
@@ -2921,7 +2926,7 @@ getPrintCalendarIconButton(
 			MDialogTitle(_("Print Dialog")),
 			MDialogActions([
 				MTextButton(_("CLOSE"), \ -> next(closeB, true), [], []),
-				MTextButton(_("PRINT"), onPrint, [], []),
+				MTextButton(_("PREVIEW"), onPrint, [], []),
 			])
 		];
 
