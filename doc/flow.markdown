@@ -30,6 +30,7 @@ functions, polymorphism, closures and simple pattern matching.
 * [Data structures](#data)
 * [Loops](#loops)
 * [Structs of functions](#structsoffunctions)
+* [Language finesses](#languagefinesses)
 * [flow vs. JavaScript](#javascript)
 
 <h2 id=goals>Design goals</h2>
@@ -838,7 +839,7 @@ you can use the type in declarations, as well as pass values of these around.
 Of course, they are meant to be consumed by other native functions.
 
 	native currentClip : () -> native = RenderSupport.currentClip;
-	renderTo : (clip : native, form : Form) -> (() -> void);
+	renderTo : (clip : native, form : Form) -> () -> void;
 
 To provide information to flow optimizers, we have a type annotation "`io`" which marks
 that a given (native) function is impure and can not be calculated at compile time.
@@ -1316,6 +1317,48 @@ so in Flow I can directly write:
     )
 
 This shorter form is the preferred way to do it.
+
+
+<h2 id=languagefinesses>Language finesses</h2>
+Flow as any other language has some unobvious moments. Let's consider some of them:
+
+### Example 1
+
+	println("Value is " + if (value) {""} else {"not "} + "true");
+
+Here program will print just "Value is " in case of value=true, since flow parser grabs "true" within the *else* block. Because *{"not" }* is considered as basic block as well as "true",
+and then they are processed as the arguments of **+** operator, which serves as final expression for the *else* block.
+Fix will look like this
+
+	println("Value is " + if (value) {""} else {"not "}; + "true");
+
+or like this
+
+	println("Value is " + {if (value) {""} else {"not "}} + "true");
+
+### Example 2
+
+	func() -> [string] {
+		t = if (b) {
+			"asd"
+		} else {
+			"qwe"
+		}
+		[t]
+	}
+
+Similar to previous example. Code will not be compiled, since parser grabs *[t]* and gives final expression for *else* block as **"qwe"[t]**, while *t* isn't declared yet.
+Fix will look like 
+
+	func() -> [string] {
+		t = if (b) {
+			"asd"
+		} else {
+			"qwe"
+		};
+		[t]
+	}
+
 
 <h2 id=javascript>flow vs. javascript</h2>
 	// Javascript                            // flow

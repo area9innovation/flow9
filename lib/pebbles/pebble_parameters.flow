@@ -185,6 +185,11 @@ export {
 
 	// TODO: rename to `makePebbleParameterName`
 	makePebbleTabUid(s : string) -> string;
+	pinPebbleParameterDialog(
+		manager : MaterialManager,
+		controller : PebbleController,
+		pinnable : [Pair<string, (Pebble) -> bool>]
+	) -> void;
 }
 
 MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameterLink], m : Material) -> Material {
@@ -197,23 +202,27 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 		controller,
 		map(handlers, \handler -> handler.parameter),
 		\parameters : [Pair<string, DynamicBehaviour<string>>] -> {
-			MConstruct(concatA(
-				map(handlers, \handler -> {
-					if (handler.action == DoNotRecord() || controller.dummy) {
-						[
-							// call onChange on every valueB update if user don't care about pebbles
-							callOnChangeOnParameterChange(controller, handler, callstack)
-						]
-					} else {
-						[
-							makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
-								changeParameterValue(handler, value, callstack, \-> checkPebble() || checkCustomCheckPebble(handler.action)())
-							}),
-							setViewOnParameterChange(controller, handler)
-						]
-					}
-				})),
-				m
+			MGetManager(\manager ->
+				MConstruct(concatA(
+					map(handlers, \handler -> {
+						if (handler.action == DoNotRecord() || controller.dummy) {
+							[
+								// call onChange on every valueB update if user don't care about pebbles
+								callOnChangeOnParameterChange(manager, controller, handler, callstack)
+							]
+						} else {
+							[
+								makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
+									if (fgetValue(manager.pebblesEnabled)) {
+										changeParameterValue(handler, value, callstack, \-> checkPebble() || checkCustomCheckPebble(handler.action)());
+									}
+								}),
+								setViewOnParameterChange(controller, handler)
+							]
+						}
+					})),
+					m
+				)
 			)
 		}
 	)
@@ -321,6 +330,7 @@ setViewOnParameterChange2(
 	tryToRestorePebble = \val, shared -> restoreLastPebbleWithParameter(controller, parameter, converValueToString(val), shared);
 
 	makeSubscribe2(valueB, \value -> {
+		updatePinnedParameter(parameter, converValueToString(value));
 		setViewFromPebble(
 			controller,
 			switch (action : PebbleAction) {
@@ -352,34 +362,44 @@ restoreLastPebbleWithParameter(controller : PebbleController, parameter : string
 }
 
 // Dummy process new value from dynamic behavior (UI event)
-callOnChangeOnParameterChange(controller : PebbleController, handler : PebbleParameterLink, callstack : string) -> () -> () -> void {
+callOnChangeOnParameterChange(manager : MaterialManager, controller : PebbleController, handler : PebbleParameterLink, callstack : string) -> () -> () -> void {
 	switch (handler) {
 		PebbleStringLink(parameter, valueB, onChange, __): {
 			makeSubscribe(valueB, \value -> {
-				printPebbleCallStackInfo(parameter, value, callstack);
-				onChange(value)
+				if (getValue(manager.pebblesEnabled)) {
+					printPebbleCallStackInfo(parameter, value, callstack);
+					onChange(value);
+				}
 			});
 		}
 		PebbleIntLink(parameter, valueB, onChange, __): {
 			makeSubscribe(valueB, \value -> {
-				printPebbleCallStackInfo(parameter, i2s(value), callstack);
-				onChange(value)
+				if (getValue(manager.pebblesEnabled)) {
+					printPebbleCallStackInfo(parameter, i2s(value), callstack);
+					onChange(value);
+				}
 			});
 		}
 		PebbleBoolLink(parameter, valueB, onChange, __): {
 			makeSubscribe(valueB, \value -> {
-				printPebbleCallStackInfo(parameter, b2s(value), callstack);
-				onChange(value)
+				if (getValue(manager.pebblesEnabled)) {
+					printPebbleCallStackInfo(parameter, b2s(value), callstack);
+					onChange(value);
+				}
 			});
 		}
 		PebbleBoolBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, __): {
 			makeSubscribe(valueB, \value -> {
-				printPebbleCallStackInfo(parameter, onValueChange(value), callstack);
+				if (getValue(manager.pebblesEnabled)) {
+					printPebbleCallStackInfo(parameter, onValueChange(value), callstack);
+				}
 			});
 		}
 		PebbleDoubleBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, record): {
 			makeSubscribe(valueB, \value -> {
-				printPebbleCallStackInfo(parameter, onValueChange(value), callstack);
+				if (getValue(manager.pebblesEnabled)) {
+					printPebbleCallStackInfo(parameter, onValueChange(value), callstack);
+				}
 			});
 		};
 	}
@@ -493,5 +513,56 @@ checkCustomCheckPebble(action : PebbleAction) -> () -> bool {
 		RecordURLRestoreOrChangeParameters(__): \-> false;
 		DoNotRecord(): \-> false;
 		RecordURLChangeCheckPebble(fn): fn;
+	}
+}
+
+pinPebbleParameterDialog(
+	manager : MaterialManager,
+	controller : PebbleController,
+	pinnable : [Pair<string, (Pebble) -> bool>]
+) -> void {
+	close = make(false);
+	parameters = getLastPathPart(getCurrentPebble(controller), makeEmptyPathPart()).parameters;
+	feed = filtermap(
+		pinnable,
+		\pnbl -> eitherMap(
+			find(parameters, \p -> p.key == pnbl.first),
+			\f -> Some(Triple(f.key, f.value, pnbl.second)),
+			None()
+		)
+	);
+	if (feed != []) {
+		ShowMDialog(
+			manager,
+			close,
+			[MDialogUseFrame()],
+			MInteractive(
+				[KeyDown(\ke -> if (ke.utf == "esc") next(close, true))],
+				MLinesA(
+					map(
+						feed,
+						\f -> MSelect(
+							fselect(
+								getPinnedParametersTree(),
+								FLift(\pt -> containsKeyTree(pt, f.first))
+							),
+							\pinned -> MChip(
+								f.first + " : " + f.second,
+								ifArrayPush(
+									[
+										MOnClick(\-> {
+											if (pinned) unPinParameter(f.first)
+											else pinParameter(f.first, f.second, f.third);
+										}),
+									],
+									pinned,
+									MIcon("push_pin", [])
+								)
+							)
+						)
+					)
+				)
+			)
+		)
 	}
 }

@@ -20,7 +20,7 @@ import js.html.Uint8Array;
 #end
 
 class HttpSupport {
-	static var TimeoutInterval = 600000;	// Ten minutes in ms
+	static var TimeoutInterval = 1200000;	// twenty minutes in ms
 
 	#if (js && !flow_nodejs)
 	private static var XMLHttpRequestOverriden : Bool = false;
@@ -129,21 +129,21 @@ class HttpSupport {
 		options.method = post ? "POST" : "GET";
 		options.headers = {};
 
-		headers.map(function(pair) {
+		for (pair in headers) {
 			options.headers[pair[0]] = pair[1];
-		});
+		}
 
 		if (options.headers["Content-Type"] == null) {
 			options.headers["Content-Type"] = "application/x-www-form-urlencoded";
 		}
 
 		var queryString = "";
-		params.map(function(pair) {
+		for (pair in params) {
 			var key = pair[0];
 			var val = pair[1];
 
 			queryString += key + "=" + Querystring.escape(val) + "&";
-		});
+		}
 
 		queryString = queryString.substr(0, queryString.length - 1);
 
@@ -643,7 +643,7 @@ class HttpSupport {
 				payloadName = p[1];
 			}
 		};
-		form_data.append(payloadName, file);
+		form_data.append(payloadName, file, file.name);
 
 		for (header in headers) {
 			xhr.setRequestHeader(header[0], header[1]);

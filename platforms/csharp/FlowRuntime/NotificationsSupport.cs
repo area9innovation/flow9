@@ -27,7 +27,7 @@ namespace Area9Innovation.Flow
 			return null;
 		}
 
-		public virtual object scheduleLocalNotification(double a, int b, string c, string d, string e, bool f, bool g)
+		public virtual object scheduleLocalNotification(double a, int b, string c, string d, string e, bool f, bool g, string iu)
 		{
 			return null;
 		}

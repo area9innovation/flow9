@@ -6,8 +6,9 @@ import material/internal/tropic_size_util;
 export {
 	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
 		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
-		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent, MDialogCloseButton,
-		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MDialogCloseOnForceRender, MAddSafeArea;
+		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MFocusOnPrevious, MFloatingContent, MDialogCloseButton,
+		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MAddSafeArea,
+		MPassClicks;
 
 		// These are very commonly recommended
 		MDialogTitle(title : string);
@@ -38,14 +39,11 @@ export {
 		MDialogResizableWithInitialSize(size : Material);
 		// Hides dialog without disposing it but changing zorder
 		MDialogHide(hide : Transform<bool>);
-		MDialogFocusOnPrevious();
 		MButtonTitles(titles : Tree<string, string>);
 		MDialogNonModal();
 		// Allow to run callback every time the dialog is getting closed
 		MDialogOnClose(onClose : () -> void);
 		MDialogActionsNoEndAlign();
-
-		MDialogCloseOnForceRender();
 
 		MDialogPopupStyle ::= MDialogPopupCanClose, MDialogPopupSaveEnabled, MDialogPopupNotResize, MDialogPopupOnClose, MDialogPopupFullScreen;
 			MDialogPopupCanClose(canCloseCheck : () -> bool);
@@ -78,7 +76,21 @@ export {
 		MSnackbarOnDisappear(fn : () -> void);
 }
 
+fwZorder = make(-1);
+fwAnimated = ref make(false);
+
 renderMDialog2(
+	manager : MaterialManager,
+	closeWhen : Transform<bool>,
+	style : [MDialogStyle],
+	content : Material,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	renderFn : (Tropic) -> () -> void) -> void {
+
+	if (!fgetValue(closeWhen)) renderMDialog3(manager, closeWhen, style, content, m2t, renderFn)
+}
+
+renderMDialog3(
 	manager : MaterialManager,
 	closeWhen : Transform<bool>,
 	style : [MDialogStyle],
@@ -88,10 +100,9 @@ renderMDialog2(
 
 	us = ref [];
 	disp = \ -> dispUnsA(us);
-	closeOnForceRender = contains(style, MDialogCloseOnForceRender());
 
-	focusedBeforeDialog =
-		if (contains(style, MDialogFocusOnPrevious())) {
+	previousFocus =
+		if (extractStruct(style, MFocusOnPrevious(true)).enabled) {
 			eitherFn(
 				getCurrentFocusedItem(manager),
 				\fi -> Some(fi),
@@ -103,10 +114,10 @@ renderMDialog2(
 
 	u1 =
 		switch (closeWhen : Transform<bool>) {
-			DynamicBehaviour(__, __): {
-				subscribe2(closeWhen, \__ -> disp());
+			DynamicBehaviour(val, __): {
+				subscribe2(closeWhen, \__ -> if (^val) disp());
 			}
-			default: makeSubscribe2(closeWhen, \__ -> disp())();
+			default: makeSubscribe2(closeWhen, \val -> if (val) disp())();
 		};
 
 	title = tryExtractStruct(style, MDialogTitle(""));
@@ -134,6 +145,7 @@ renderMDialog2(
 	sameZorder = extractStruct(style, MSameZorder(nonModal)).same;
 	zUns = if (sameZorder) nop else pushZorder(manager);
 	zorder = fgetValue(manager.manager.zorder);
+	passClicks = contains(style, MPassClicks());
 
 	onClose = extractStruct(style, MDialogOnClose(nop)).onClose;
 	name = "MDialog";
@@ -142,16 +154,18 @@ renderMDialog2(
 	customFrame =
 		if (useFrame)
 			MDialogCustomFrame(24., 24., 24., 24.,
-				TShadowShape(
-					manager.focus,
-					const(6.0),
-					MShape(
+				TSelect(manager.forceRender, \__ ->
+					TShadowShape(
 						manager.focus,
-						[if (getLightBackground(manager.focus)) Fill(white) else Fill(0x303030)],
-						if (fullScreen) TBorder4(8.0, TFillXY()) else TFillXY(),
-						name
-					),
-					RectangleShape(name)
+						const(6.0),
+						MShape(
+							manager.focus,
+							[MThemeFill(manager, if (fullScreen) MBackgroundColor() else MSurfaceColor())],
+							if (fullScreen) TBorder4(8.0, TFillXY()) else TFillXY(),
+							name
+						),
+						RectangleShape(name)
+					)
 				)
 				|> (\shp -> if (fullScreen) TBorder4(-8.0, shp) else shp)
 			) |> Some
@@ -163,8 +177,8 @@ renderMDialog2(
 	point = make(zeroPoint);
 	insideDialogB = make(false);
 	pressedOutsideB = fand(down, fnot(insideDialogB));
-	noAnimation = noCenter || isSome(draggable) || contains(style, MDialogNoAnimation()) || !manager.theme.enableAnimations;
-	easing = if (noAnimation) EasingAnimation(nop, const(1.)) else makeEasing(0.6, easingStandartCurve, managerTimer(manager), nop);
+	noAnimation = contains(style, MDialogNoAnimation()) || (!cpp && contains(style, MDialogFullScreen()))
+		|| !manager.theme.enableAnimations || noCenter || isSome(draggable);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
 	cs = if (isMaterialLogLevelEnabled(MaterialError())) captureStringCallstack() else "";
 
@@ -178,6 +192,7 @@ renderMDialog2(
 	boxH = make(0.);
 
 	availW = make(0.);
+	animated = make(noAnimation);
 
 	(\p -> {
 		isRTL = p.rtl;
@@ -204,17 +219,11 @@ renderMDialog2(
 					eitherMap(
 						title,
 						\ttl ->
-							MEllipsisText2T(
-								manager,
+							MParagraph2T(
 								p,
-								MEllipsisText(ttl.title, [MTitle(), MShowTooltip(const(true))]),
-								m2t
+								ttl.title,
+								[MTitle(), ParagraphMargin(0.0, 0.0)]
 							)
-							// MParagraph2T( // TODO: Change ellipsis to paragraph
-							// 	p,
-							// 	ttl.title,
-							// 	[MTitle(), ParagraphMargin(0.0, 0.0)]
-							// )
 							|> (\t ->
 								eitherMap(
 									customFrame,
@@ -353,8 +362,8 @@ renderMDialog2(
 				t
 			)
 		)
-		|> disableBelow(sameZorder)
-		|> (\t -> if (sameZorder) TCursor(ArrowCursor(), t) else t)
+		|> disableBelow(!passClicks && sameZorder)
+		|> (\t -> if (!passClicks && sameZorder) TCursor(ArrowCursor(), t) else t)
 		|> (\t : Tropic ->
 			if (resizable)
 				MResizable2T(
@@ -376,20 +385,53 @@ renderMDialog2(
 				t
 		)
 		|> (\t ->
+			if (noAnimation) {
+				t
+			} else {
+				TOrigin(
+					const(Factor(-0.5, -0.5)),
+					TGroup2(
+						TOrigin(
+							const(Factor(0.5, 0.5)),
+							TRectangle(interactiveRectangleStyle, TSized(fwh(boxW, boxH))) // Invisible reactangle to keep metrics static
+						),
+						TAnimation(
+							TOrigin(
+								const(Factor(0.5, 0.5)),
+								TCropSize(TSized(fwh(boxW, boxH)), t)
+							),
+							fif(
+								animated,
+								const([]),
+								const(
+									[
+										FAnimationKeyframe([
+											FScaleValue(Factor(0.0, 0.0)),
+											FAlphaValue(0.0)
+										]),
+										FAnimationKeyframe([
+											FScaleValue(Factor(1.0, 1.0)),
+											FAlphaValue(1.0)
+										])
+									]
+								)
+							),
+							[
+								FAnimationDuration(const(0.6)),
+								FAnimationEasing(const(easingStandartCurve)),
+								FAnimationOnFinish(\ -> nextDistinct(animated, true))
+							]
+						)
+					)
+				);
+			}
+		)
+		|> (\t ->
 			if (noCenter || isSome(draggable))
 				t
 			else
-				TCenter(
-					if (noAnimation)
-						t
-					else {
-						availH = make(0.);
-
-						TAvailableWidthHeight(t, availW, availH)
-						|> (\t2 -> TAlpha(easing.percent, t2))
-						|> (\t2 -> TScale(ffactor2(easing.percent), t2))
-						|> (\t2 -> TAttachAvailableHeight(t2, availH))
-				}))
+				TCenter(t)
+		)
 		|> (\t : Tropic ->
 			eitherMap(
 				draggable,
@@ -446,7 +488,36 @@ renderMDialog2(
 					|> (\inter -> ifArrayPush(inter, blockKeyboardEvents, makeTKey(\k -> {materialLog(toString(k), MaterialInfo()); k != noKey}))),
 
 					TFillXY()
-					|> (\t2 -> if (nonModal) t2 else TRectangle([Fill(black), FillOpacity(0.5)], t2))
+					|> (\t2 ->
+						if (nonModal) {
+							t2
+						} else {
+							if (noAnimation) {
+								TRectangle([Fill(black), FillOpacity(0.5)], t2)
+							} else {
+								TAnimation(
+									TRectangle([Fill(black), FillOpacity(0.5)], t2),
+									fif(
+										animated,
+										const([]),
+										const([
+											FAnimationKeyframe([
+												FAlphaValue(0.0)
+											]),
+											FAnimationKeyframe([
+												FAlphaValue(1.0)
+											])
+										])
+									),
+									[
+										FAnimationDuration(const(0.6)),
+										FAnimationEasing(const(easingStandartCurve)),
+										FAnimationOnFinish(\ -> nextDistinct(animated, true))
+									]
+								);
+							}
+						}
+					)
 					|> (\t2 ->
 						if (clickOutToClose)
 							TConstruct(
@@ -500,9 +571,7 @@ renderMDialog2(
 		)
 	})
 	|> (\t -> {
-		animated = make(false);
-		TConstruct(
-			[\ -> fconnectSelect(easing.percent, animated, eq(1.))],
+		TSelect(manager.forceRender, \__ ->
 			MComponentGroup2T(
 				manager,
 				manager.focus,
@@ -512,9 +581,11 @@ renderMDialog2(
 					IScriptBehaviour("down", down, ISInteractionEvent()),
 					IScriptBehaviour("inside", insideDialogB, ISInteractionEvent()),
 					IScriptBehaviour("animated", animated, ISAppearanceEvent()),
-					extractStruct(style, UpdateMaterialTheme(idfn))
+					extractStruct(style, UpdateMaterialTheme(idfn)),
+					MSetReady(animated)
 				]
-				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MSetRTL(false)))),
+				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MSetRTL(false))))
+				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MIsReady(make(false))))),
 				t
 			)
 		)
@@ -566,7 +637,7 @@ renderMDialog2(
 			longTouchCapture = extractStruct(manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(manager);
 
 			TConstruct(
-				[\ -> fconnect(fand(fand(feq(easing.percent, 1.), fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), feq(manager.manager.zorder, zorder))), fw)],
+				[\ -> fconnect(fand(fand(animated, fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), fselectdelay(feq(fwZorder, zorder), b2i))), fw)],
 				TFullWindow(
 					fw,
 					TGroup([
@@ -580,17 +651,36 @@ renderMDialog2(
 		})
 	|> (\t ->
 		us :=
-			[
-				subscribe2(manager.forceRender, \__ -> {
-					disp();
-					if (!closeOnForceRender) renderMDialog2(manager, closeWhen, style, content, m2t, renderFn)
-				}),
+			concatA([[
 				u1,
 				zUns,
-				renderFn(t),
-				onClose,
-				\ -> maybeApply(focusedBeforeDialog, \pf -> {
-					nextDistinct(pf.focused, true);
+				onClose
+			],
+			if (fullWindow) [
+				{
+					prevfwZorder = getValue(fwZorder);
+					if (zorder > prevfwZorder) {
+						nextDistinct(fwZorder, zorder);
+						fwAnimated := animated;
+						\ -> nextDistinct(fwZorder, prevfwZorder);
+					} else nop
+				},
+				makeSubscribe2(feq(fwZorder, zorder), \fwz ->
+					if (fwz) fwAnimated := animated
+				)(),
+				renderFn(t)
+			]
+			else if (fgetValue(fwZorder) < 0 || zorder < fgetValue(fwZorder))
+				[renderFn(t)]
+			else
+				[make2SubscribeUnsTimer(fwZorder, ^fwAnimated, 1, \fzorder, an -> if (zorder >= fzorder && an) [renderFn(t)] else [])()],
+			[
+				\ -> maybeApply(previousFocus, \pf -> {
+					deferred(\ -> {
+						if (isNone(getCurrentFocusedItem(manager)) && fgetValue(pf.focusEnabled)) {
+							nextDistinct(pf.focused, true);
+						}
+					});
 
 					if (isNone(manager.downInsideFocus)) {
 						manager.downInsideFocus ::= Some(pf);
@@ -598,10 +688,8 @@ renderMDialog2(
 					}
 				})
 			]
+		])
 	);
-
-	if (!noAnimation)
-		easing.start();
 }
 
 snackbarDisp = initUnsM();
@@ -623,7 +711,7 @@ renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarSty
 	bgColor =
 		either(
 			tryExtractStruct(style, MBlack()),
-			MBackgroundColor(!lightBackground)
+			MBackgroundMColor(!lightBackground)
 		);
 	textColor : MColor =
 		eitherMap(

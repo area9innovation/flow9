@@ -80,7 +80,7 @@ class NotificationsSupport {
 
         #if flash
         #elseif js
-        result = untyped HaxeRuntime.typeof(Notification) != "undefined" 
+        result = untyped __js__("typeof Notification !== 'undefined'")
                 && Notification.permission == GRANTED;
         #end
 
@@ -90,7 +90,7 @@ class NotificationsSupport {
     public static function requestPermissionLocalNotification(cb : Bool -> Void) : Void {
         #if flash
         #elseif js
-        if (untyped HaxeRuntime.typeof(Notification) == "undefined") {
+        if (untyped __js__("typeof Notification === 'undefined'")) {
             cb(false);
             return;
         }
@@ -122,11 +122,12 @@ class NotificationsSupport {
         return function() { };
     }
 
-    public static function scheduleLocalNotification(time : Float, notificationId : Int, notificationCallbackArgs : String, notificationTitle : String, notificationText : String, withSound : Bool) : Void {
+    public static function scheduleLocalNotification(time : Float, notificationId : Int, notificationCallbackArgs : String, notificationTitle : String, notificationText : String, withSound : Bool, pinNotification : Bool, notificationIconUrl : String) : Void {
         #if flash
         #elseif js
+        // TODO: Implement pin notification if possible
         // Notificaitons API is not available
-        if (untyped HaxeRuntime.typeof(Notification) == "undefined") return;
+        if (untyped __js__("typeof Notification === 'undefined'")) return;
 
         NotificationsSupport.cancelLocalNotification(notificationId);
         var timer = haxe.Timer.delay(
@@ -136,7 +137,8 @@ class NotificationsSupport {
                     notificationTitle,
                     {
                         body : notificationText,
-                        tag : strNotificationId
+                        tag : strNotificationId,
+                        icon : notificationIconUrl != "" ? notificationIconUrl : null
                     }
                 );
                 notification.onclick = function() {

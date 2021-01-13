@@ -43,14 +43,14 @@ export {
 	//
 	makeMTreeEditor(
 		manager : MaterialManager,
-		tree : MTreeEditorNode<?, ??>,
+		tree : DynamicBehaviour<[MTreeEditorNode<?, ??>]>,
 		getNewNode : (cb : (MTreeEditorNode<?, ??>) -> void) -> void,
 		style : [MTreeEditorStyle<?, ??>]
 	) -> MTreeEditor<?, ??>;
 
 		MTreeEditor(
 			state : MTreeEditorState<?, ??>,
-			tree : MTreeEditorNode<?, ??>,
+			tree : DynamicBehaviour<[MTreeEditorNode<?, ??>]>,
 			toolbar : MMenuPanel,
 			view : Material
 		);
@@ -116,7 +116,7 @@ makeMTreeEditorNodeFromIdAndContent(id : ?, content : ??) -> MTreeEditorNode<?, 
 
 makeMTreeEditor(
 	manager : MaterialManager,
-	tree : MTreeEditorNode<?, ??>,
+	tree : DynamicBehaviour<[MTreeEditorNode<?, ??>]>,
 	getNewNode : (cb : (MTreeEditorNode<?, ??>) -> void) -> void,
 	style : [MTreeEditorStyle<?, ??>]
 ) -> MTreeEditor<?, ??> {
@@ -152,12 +152,16 @@ makeMTreeEditor(
 	getSelectedPrevious = \s -> replace(s, length(s) - 1, max(lastElement(s, 1) - 1, 0));
 	getSelectedNext = \s -> replace(s, length(s) - 1, lastElement(s, -1) + 1);
 
-	isSelected = fselect(state.selected, FLift(\s -> length(getSelectedId(s)) > 1));
-	isSelectedChild = fselect(state.selected, FLift(\s -> length(getSelectedId(s)) > 2));
+	isSelected = fselect(state.selected, FLift(\s -> length(getSelectedId(s)) > 0));
+	isSelectedChild = fselect(state.selected, FLift(\s -> length(getSelectedId(s)) > 1));
 	isSelectedFirstElement = fselect(state.selected, FLift(\s -> lastElement(getSelectedId(s), -1) == 0));
 	isSelectedLastElement = fsubselect(state.selected, FLift(\s ->
 		feq(
-			eitherMap(getMTreeEditorNodeByPath(tree, getSelectedParent(getSelectedId(s))), \node -> fsubtracti(flength(node.children), const(1)), const(-1)),
+			eitherMap(
+				getMTreeEditorNodeByPath(tree, getSelectedParent(getSelectedId(s))),
+				\node -> fsubtracti(flength(node.children), const(1)),
+				fsubtracti(flength(tree), const(1))
+			),
 			lastElement(getSelectedId(s), -1)
 		)
 	));
@@ -244,7 +248,7 @@ makeMTreeEditor(
 				);
 
 				if (active) {
-					ids = if (length(getSelected()) < 2) [0, 0] else getSelectedNext(getSelected());
+					ids = if (length(getSelected()) < 1) [0] else getSelectedNext(getSelected());
 					createMTreeEditorNodeAtPath(state, tree, ids, selectAndFocusItem);
 				}
 			},
@@ -254,7 +258,7 @@ makeMTreeEditor(
 		MIconButton(
 			"library_add",
 			\ -> {
-				ids = if (length(getSelected()) < 2) [0, 0] else getSelectedChild(getSelected());
+				ids = if (length(getSelected()) < 1) [0] else getSelectedChild(getSelected());
 				createMTreeEditorNodeAtPath(state, tree, ids, selectAndFocusItem);
 			},
 			[],
@@ -335,7 +339,7 @@ makeMTreeEditor(
 				state.toolbarAdditionalItems
 			),
 			replaceStructMany(
-				[MMenuPanelBackground(MGrey(200)), MKeysEnabled(state.keysEnabled)],
+				[MMenuPanelBackground(MThemedColor(MGrey(200), MGrey(800))), MKeysEnabled(state.keysEnabled)],
 				state.toolbarStyle
 			)
 		),
@@ -388,7 +392,7 @@ makeMTreeEditor(
 			MInteractive(
 				[keypress],
 				MTree(
-					const([MTreeEditorNode2MTreeNode(state, tree)]),
+					fmap(tree, \l -> MTreeEditorNode2MTreeNode(state, l)),
 					replaceStructMany(
 						filtermap(style, \st ->
 							switch (st : MTreeEditorStyle<?, ??>) {
@@ -469,41 +473,23 @@ MTreeEditorNode2MTreeNode(state : MTreeEditorState<?, ??>, node : MTreeEditorNod
 				)
 			);
 		},
-		fselect(node.children, FLift(\children -> map(children, \l -> MTreeEditorNode2MTreeNode(state, l)))),
-		[MSelected(node.selected), MExpanded(node.expanded), MChildSelected(node.childSelected), MShortHighlighter(), MFocusEnabled(const(false))]
+		fmap(node.children, \l -> MTreeEditorNode2MTreeNode(state, l)),
+		[MSelected(node.selected), MExpanded(node.expanded), MChildSelected(node.childSelected), MShortHighlighter()]
 	)
 }
 
-getMTreeEditorNodeByPath(node : MTreeEditorNode, path : [int]) -> Maybe<MTreeEditorNode> {
-	materialLog(
-		"getMTreeEditorNodeByPath: " + toString(path),
-		MaterialInfo()
-	);
-
-	if (length(path) > 0 && path[0] == 0) {
-		if (length(path) > 1) {
-			getMTreeEditorNodeByPath2(node, tail(path));
-		} else {
-			Some(node);
-		}
-	} else {
-		None();
-	}
-}
-
-
-getMTreeEditorNodeByPath2(node : MTreeEditorNode, path : [int]) -> Maybe<MTreeEditorNode> {
+getMTreeEditorNodeByPath(children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, path : [int]) -> Maybe<MTreeEditorNode<?, ??>> {
 	if (length(path) > 1) {
 		index = path[0];
-		if (existsIndex(getValue(node.children), index)) {
-			getMTreeEditorNodeByPath2(getValue(node.children)[index], tail(path));
+		if (existsIndex(getValue(children), index)) {
+			getMTreeEditorNodeByPath(getValue(children)[index].children, tail(path));
 		} else {
 			None()
 		}
 	} else if (length(path) == 1) {
 		index = path[0];
-		if (existsIndex(getValue(node.children), index)) {
-			Some(getValue(node.children)[index])
+		if (existsIndex(getValue(children), index)) {
+			Some(getValue(children)[index])
 		} else {
 			None()
 		}
@@ -512,133 +498,87 @@ getMTreeEditorNodeByPath2(node : MTreeEditorNode, path : [int]) -> Maybe<MTreeEd
 	}
 }
 
-getMTreeEditorNodeById(node : MTreeEditorNode, id : ?) -> Maybe<MTreeEditorNode<?, ??>> {
-	getMTreeEditorNodeBy(node, \l -> l.id == id);
+getMTreeEditorNodeById(children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, id : ?) -> Maybe<MTreeEditorNode<?, ??>> {
+	getMTreeEditorNodeBy(children, \l -> l.id == id);
 }
 
-getMTreeEditorNodeBy(node : MTreeEditorNode, fn : (MTreeEditorNode) -> bool) -> Maybe<MTreeEditorNode> {
-	if (fn(node)) {
-		Some(node)
-	} else {
-		fold(getValue(node.children), None(), \acc, child -> {
-			if (isSome(acc)) {
-				// already found
-				acc
-			} else {
-				getMTreeEditorNodeBy(child, fn)
-			}
-		})
-	}
+getMTreeEditorNodeBy(children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, fn : (MTreeEditorNode<?, ??>) -> bool) -> Maybe<MTreeEditorNode> {
+	fold(getValue(children), None(), \acc, child -> {
+		if (isSome(acc)) {
+			// already found
+			acc
+		} else {
+			getMTreeEditorNodeBy(child.children, fn)
+		}
+	})
 }
 
-getAllMTreeEditorNodeBy(node : MTreeEditorNode, fn : (MTreeEditorNode) -> bool) -> [MTreeEditorNode] {
-	getAllMTreeEditorNodeBy0(node, fn, []);
+getAllMTreeEditorNodeBy(children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, fn : (MTreeEditorNode<?, ??>) -> bool) -> [MTreeEditorNode<?, ??>] {
+	fold(getValue(children), [], \acc, child -> concat(acc, getAllMTreeEditorNodeBy(child.children, fn)));
 }
 
-getAllMTreeEditorNodeBy0(node : MTreeEditorNode, fn : (MTreeEditorNode) -> bool, acc : [MTreeEditorNode]) -> [MTreeEditorNode] {
-	fold(getValue(node.children), ifArrayPush(acc, fn(node), node), \acc_, child -> getAllMTreeEditorNodeBy0(child, fn, acc_));
-}
-
-createMTreeEditorNodeAtPath(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, path : [int], cb : (MTreeEditorNode) -> void) -> void {
-	materialLog(
-		"createMTreeEditorNodeAtPath: " + toString(path),
-		MaterialError()
-	);
-
+createMTreeEditorNodeAtPath(state : MTreeEditorState<?, ??>, children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, path : [int], cb : (MTreeEditorNode<?, ??>) -> void) -> void {
 	state.getNewNode(\newNode -> {
-		insertMTreeEditorNodeAtPath(state, node, newNode, path, cb);
+		insertMTreeEditorNodeAtPath(state, children, newNode, path, cb);
 	});
 }
 
-insertMTreeEditorNodeAtPath(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, newNode : MTreeEditorNode, path : [int], cb : (MTreeEditorNode) -> void) -> void {
-	materialLog(
-		"insertMTreeEditorNodeAtPath: " + toString(path),
-		MaterialError()
-	);
 
-	if (length(path) > 1 && path[0] == 0) {
-		insertMTreeEditorNodeAtPath2(state, node, newNode, tail(path), cb);
-	}
-}
-
-
-insertMTreeEditorNodeAtPath2(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, newNode : MTreeEditorNode, path : [int], cb : (MTreeEditorNode) -> void) -> void {
+insertMTreeEditorNodeAtPath(state : MTreeEditorState<?, ??>, children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, newNode : MTreeEditorNode<?, ??>, path : [int], cb : (MTreeEditorNode<?, ??>) -> void) -> void {
 	if (length(path) > 1) {
-		if (length(getValue(node.children)) > path[0]) {
-			insertMTreeEditorNodeAtPath2(state, getValue(node.children)[path[0]], newNode, tail(path), cb);
+		if (length(getValue(children)) > path[0]) {
+			insertMTreeEditorNodeAtPath(state, getValue(children)[path[0]].children, newNode, tail(path), cb);
 		} else {
 			state.getNewNode(\newNodeParent -> {
-				next(node.children, insertArray(getValue(node.children), path[0], newNodeParent));
-				insertMTreeEditorNodeAtPath2(state, newNodeParent, newNode, tail(path), cb);
+				next(children, insertArray(getValue(children), path[0], newNodeParent));
+				insertMTreeEditorNodeAtPath(state, newNodeParent.children, newNode, tail(path), cb);
 			});
 		}
 	} else if (length(path) > 0) {
-		next(node.children, insertArray(getValue(node.children), path[0], newNode));
+		next(children, insertArray(getValue(children), path[0], newNode));
 		cb(newNode);
 	}
 }
 
-removeMTreeEditorNodeAtPath(node : MTreeEditorNode, path : [int], cb : (MTreeEditorNode) -> void) -> void {
-	materialLog(
-		"removeMTreeEditorNodeAtPath: " + toString(path),
-		MaterialError()
-	);
-
-	if (length(path) > 1 && path[0] == 0) {
-		removeMTreeEditorNodeAtPath2(node, tail(path), cb);
-	}
-}
-
-removeMTreeEditorNodeAtPath2(node : MTreeEditorNode, path : [int], cb : (MTreeEditorNode) -> void) -> void {
-	if (length(path) > 0 && length(getValue(node.children)) > path[0]) {
-		if (length(path) == 1 && length(getValue(node.children)) > path[0]) {
-			item = getValue(node.children)[path[0]];
-			next(node.children, removeIndex(getValue(node.children), path[0]));
+removeMTreeEditorNodeAtPath(children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, path : [int], cb : (MTreeEditorNode<?, ??>) -> void) -> void {
+	if (length(path) > 0 && length(getValue(children)) > path[0]) {
+		if (length(path) == 1 && length(getValue(children)) > path[0]) {
+			item = getValue(children)[path[0]];
+			next(children, removeIndex(getValue(children), path[0]));
 			cb(item);
 		} else {
-			removeMTreeEditorNodeAtPath2(getValue(node.children)[path[0]], tail(path), cb);
+			removeMTreeEditorNodeAtPath(getValue(children)[path[0]].children, tail(path), cb);
 		}
 	}
 }
 
-swapMTreeEditorNodeAtPath(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, path1 : [int], path2 : [int], cb : (MTreeEditorNode) -> void) -> void {
-	materialLog(
-		"swapMTreeEditorNodeAtPath: " + toString(path1) + " " + toString(path2),
-		MaterialError()
-	);
-
-	if (length(path1) > 1 && path1[0] == 0 && length(path2) > 1 && path2[0] == 0) {
-		swapMTreeEditorNodeAtPath2(state, node, tail(path1), tail(path2), cb);
-	}
-}
-
-swapMTreeEditorNodeAtPath2(state : MTreeEditorState<?, ??>, node : MTreeEditorNode, path1 : [int], path2 : [int], cb : (MTreeEditorNode) -> void) -> void {
+swapMTreeEditorNodeAtPath(state : MTreeEditorState<?, ??>, children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, path1 : [int], path2 : [int], cb : (MTreeEditorNode<?, ??>) -> void) -> void {
 	if (path1 != path2) {
 		path1length = length(path1);
 		path2length = length(path2);
 
 		if (path1length == path2length && subrange(path1, 0, path1length - 1) == subrange(path2, 0, path2length - 1)) {
 			if (path1length == 1) {
-				item = getValue(node.children)[path1[0]];
-				next(node.children, insertArray(removeIndex(getValue(node.children), path1[0]), path2[0], item));
+				item = getValue(children)[path1[0]];
+				next(children, insertArray(removeIndex(getValue(children), path1[0]), path2[0], item));
 				cb(item);
 			} else {
-				swapMTreeEditorNodeAtPath2(state, getValue(node.children)[path1[0]], tail(path1), tail(path2), cb);
+				swapMTreeEditorNodeAtPath(state, getValue(children)[path1[0]].children, tail(path1), tail(path2), cb);
 			}
 		} else {
-			removeMTreeEditorNodeAtPath2(node, path1, \item -> {
-				maybeApply(getMTreeEditorNodeByPath2(node, path1), \l -> nextDistinct(l.expanded, true));
-				insertMTreeEditorNodeAtPath2(state, node, item, path2, cb);
+			removeMTreeEditorNodeAtPath(children, path1, \item -> {
+				maybeApply(getMTreeEditorNodeByPath(children, path1), \l -> nextDistinct(l.expanded, true));
+				insertMTreeEditorNodeAtPath(state, children, item, path2, cb);
 			});
 		}
 	}
 }
 
-filterMTreeEditorNode(node : MTreeEditorNode, cb : (MTreeEditorNode) -> bool) -> void {
-	iter(getValue(node.children), \child -> {
-		filterMTreeEditorNode(child, cb);
+filterMTreeEditorNode(children : DynamicBehaviour<[MTreeEditorNode<?, ??>]>, cb : (MTreeEditorNode<?, ??>) -> bool) -> void {
+	iter(getValue(children), \child -> {
+		filterMTreeEditorNode(child.children, cb);
 		if (!cb(child)) {
-			nextDistinct(node.children, removeFirst(getValue(node.children), child));
+			nextDistinct(children, removeFirst(getValue(children), child));
 		}
 	});
 }

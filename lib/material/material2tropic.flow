@@ -35,6 +35,7 @@ export {
 	material2tropicWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Tropic;
 
 	material2nativeForm(manager : MaterialManager, m : Material) -> Form;
+	material2nativeFormWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Form;
 }
 
 // You can have more than one render counter only if you have dialogs opened.
@@ -57,12 +58,12 @@ mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m :
 	if (^mSpeechAccessiblityEnabled)
 		initSpeechSynthesis();
 
-	if (js && (isUrlParameterTrue("accessenabled") || ((strContains(toLowerCase(getBrowser()), "chrom") || strContains(toLowerCase(getBrowser()), "crios")
-		|| strContains(toLowerCase(getBrowser()), "firefox") || strContains(toLowerCase(getBrowser()), "safari") || strContains(toLowerCase(getBrowser()), "explorer"))
+	if (js && (isUrlParameterTrue("accessenabled") || ((isChrome() || strContains(toLowerCase(getBrowser()), "crios")
+		|| strContains(toLowerCase(getBrowser()), "firefox") || isSafariBrowser() || isIE())
 		&& !isUrlParameterFalse("accessenabled")))) {
 		fAccessibilityEnabled := true;
 		setAccessibilityEnabled(true);
-		setEnableFocusFrame(false);
+		setEnableFocusFrame(isUrlParameterTrue("accessorder"));
 	}
 
 	setDropCurrentFocusOnMouse(false);
@@ -86,9 +87,20 @@ mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m :
 		)
 		|> TGroup;
 
+	contentWH = makeWH();
+	printMode = make(false);
+
 	// Create the top IScript menu last.
-	t = t1
-		|> (\f -> TAvailable(f, TSized(manager.iscript.available)))
+	t =
+		TConstruct(
+			[
+				\ -> \ -> next(printMode, false),
+				\ -> addEventListener(getStage(), "beforeprint", \ -> next(printMode, true)),
+				\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false))
+			],
+			TInspect([IMinSize(contentWH)], t1)
+		)
+		|> (\f -> TAvailable(f, TGroup2(TShow(printMode, TSized(contentWH)), TSized(manager.iscript.available))))
 		|> (\f ->
 			materialLogFn(
 				\ -> {
@@ -100,8 +112,7 @@ mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m :
 				\ -> f
 			)
 		)
-		|> (\f -> TCropSize(TSized(manager.iscript.available), f))
-		|> (\f -> TLines2(TIf(manager.iscript.showPanel, TFixed(0.0, 48.0), TEmpty()), f));
+		|> (\f -> TIf(manager.iscript.showPanel, TLines2(TFixed(0.0, 48.0), TCropSize(TSized(manager.iscript.available), f)), f));
 
 	initMaterialManagerSubs(manager);
 
@@ -184,6 +195,11 @@ initMaterialManagerSubs(manager : MaterialManager) -> void {
 				manager.disposers,
 				-1,
 				[
+					addEventListener(getStage(), "userstylechanged", \ -> {
+						userDefinedLetterSpacing := getUserDefinedLetterSpacing();
+						userDefinedLetterSpacingPercent := getUserDefinedLetterSpacingPercent();
+						reverseBehaviour(manager.forceRender);
+					}),
 					handleRealEvents(
 						MouseDown2(\h, mi -> captureIScriptMouseDownEvent(manager, h, mi, \ -> Point(0., 0.), "canvas")),
 						getStage(),
@@ -292,6 +308,10 @@ material2nativeForm(manager : MaterialManager, m : Material) -> Form {
 	tropic2nativeForm(material2tropic(manager, m), emptyStylesheet);
 }
 
+material2nativeFormWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Form {
+	tropic2nativeForm(material2tropicWithParent(manager, parent, m), emptyStylesheet);
+}
+
 material2tropic(manager : MaterialManager, m : Material) -> Tropic {
 	rend = MaterialRender(manager, manager.nextRenderId());
 
@@ -308,15 +328,20 @@ material2tropic(manager : MaterialManager, m : Material) -> Tropic {
 				rerenderEnabled = getValue(
 					extractStruct(manager.style, MForceRenderOnLangChangedEnabled(make(true))).enabled
 				);
-				if (rerenderEnabled) reverseBehaviour(manager.forceRender)
+				if (rerenderEnabled) {
+					prevPebblesEnabled = getValue(manager.pebblesEnabled);
+					nextDistinct(manager.pebblesEnabled, false);
+					reverseBehaviour(manager.forceRender);
+					nextDistinct(manager.pebblesEnabled, prevPebblesEnabled);
+				}
 			})
 		],
 		TSelect(
 			manager.forceRender,
 			\__ -> {
-				setiOSBackgroundColor(MColor2int(MBackgroundColor(getLightBackground(manager))));
-				setiOSStatusBarColor(MColor2int(getPrimaryColor(manager)));
-				setiOSStatusBarIconsTheme(MTextColor(getToolbarItemsColor(manager)) == black);
+				setiOSBackgroundColor(MThemeColor2int(manager, MBackgroundColor()));
+				setiOSStatusBarColor(MThemeColor2int(manager, MPrimaryColor()));
+				setiOSStatusBarIconsTheme(MThemeColor2int(manager, MOnToolbarColor()) == black);
 
 				rootFocus = manager.focus;
 				rootFocus.rtl ::= extractStruct(manager.style, MSetRTL(getDefaultRtl())).rtl;
@@ -561,10 +586,11 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MCrop(topleft, wh, mat): TCrop(topleft, wh, doMaterial2tropic(rend, mat, parent));
 		MCropSize(size, mat): TCropSize(doMaterial2tropic(rend, size, parent), doMaterial2tropic(rend, mat, parent));
 		MVisible(val, mat): TVisible(val, doMaterial2tropic(rend, mat, parent));
-		MShow(sh, mat): TShow(sh, doMaterial2tropic(rend, mat, parent));
 		MAvailable(b, a): TAvailable(doMaterial2tropic(rend, b, parent), doMaterial2tropic(rend, a, parent));
 		MShift(m1, d1): TShift(doMaterial2tropic(rend, m1, parent), doMaterial2tropic(rend, d1, parent));
 		MMutable(material): MSelect2T(rend.manager, parent, "MMutable", [], material, \mat, p -> doMaterial2tropic(rend, mat, p));
+		MShow(sh, mat): MShow2T(rend.manager, parent, sh, \p -> doMaterial2tropic(rend, mat, p));
+		MRenderable(renderable, mat): TRenderable(renderable, doMaterial2tropic(rend, mat, parent));
 		MIf(c, t, e): TIf(c, doMaterial2tropic(rend, t, parent), doMaterial2tropic(rend, e, parent));
 		MIfPreRender(c, t, e, ss): MIfPreRender2T(rend.manager, parent, c, \p -> doMaterial2tropic(rend, t, p), \p -> doMaterial2tropic(rend, e, p), ss);
 		MIfLazy(c, fn): MIfLazy2T(rend.manager, parent, c, \c0, p -> doMaterial2tropic(rend, fn(c0), p), false);
@@ -589,8 +615,10 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 				style
 			);
 		}
+		MAnimation(mat, keyframes, style): TAnimation(doMaterial2tropic(rend, mat, parent), keyframes, style);
 		MTranslate(p, mat): TTranslate(p, doMaterial2tropic(rend, mat, parent));
 		MRotate(degree, mat) : TRotate(degree, doMaterial2tropic(rend, mat, parent));
+		MOrigin(origin, mat) : TOrigin(origin, doMaterial2tropic(rend, mat, parent));
 		MCenter(mat): TCenter(doMaterial2tropic(rend, mat, parent));
 		MCenterIn(mat, f): TCenterIn(doMaterial2tropic(rend, mat, parent), doMaterial2tropic(rend, f, parent));
 		MCenterY(mat): TCenterY(doMaterial2tropic(rend, mat, parent));
@@ -601,8 +629,36 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MCenterX(mat): TCenterX(doMaterial2tropic(rend, mat, parent));
 		MFrame(mar, r, s, b): TFrame(mar, r, s, doMaterial2tropic(rend, b, parent));
 		MScale(factor, mat) : TScale(factor, doMaterial2tropic(rend, mat, parent));
-		MFullWindow(fw, f): TFullWindow(fw, doMaterial2tropic(rend, f, parent));
-		MFullScreen(fs, f): TFullScreen(fs, doMaterial2tropic(rend, f, parent));
+		MFullWindow(fw, f): {
+			keysCapture = extractStruct(rend.manager.style, MCaptureKeys(\__ -> TEmpty())).capture(rend.manager);
+			mouseCapture = extractStruct(rend.manager.style, MCaptureMouse(\__ -> TEmpty())).capture(rend.manager);
+			longTouchCapture = extractStruct(rend.manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(rend.manager);
+
+			TFullWindow(
+				fw,
+				TGroup([
+					TShow(fw, keysCapture),
+					TShow(fw, mouseCapture),
+					doMaterial2tropic(rend, f, parent),
+					TShow(fw, longTouchCapture)
+				])
+			)
+		}
+		MFullScreen(fs, f): {
+			keysCapture = extractStruct(rend.manager.style, MCaptureKeys(\__ -> TEmpty())).capture(rend.manager);
+			mouseCapture = extractStruct(rend.manager.style, MCaptureMouse(\__ -> TEmpty())).capture(rend.manager);
+			longTouchCapture = extractStruct(rend.manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(rend.manager);
+
+			TFullScreen(
+				fs,
+				TGroup([
+					TShow(fs, keysCapture),
+					TShow(fs, mouseCapture),
+					doMaterial2tropic(rend, f, parent),
+					TShow(fs, longTouchCapture)
+				])
+			)
+		}
 		MRawButton(__, __, __, __, __, __, __): {
 			MRawButton2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}

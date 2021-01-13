@@ -38,12 +38,12 @@ export {
 	arraySubscribe2(bs : [Behaviour<?>], updateFn : (i : int, before : ?, after : ?) -> void) -> () -> void;
 
 	// Connects all events from one behaviour to another
-	connect : (from : Behaviour<?>, to : DynamicBehaviour<?>) -> (() -> void);
+	connect : (from : Behaviour<?>, to : DynamicBehaviour<?>) -> () -> void;
 	// The same as connect but uses subscribe2 instead of subscribe
-	connect2 : (from : Behaviour<?>, to : DynamicBehaviour<?>) -> (() -> void);
+	connect2 : (from : Behaviour<?>, to : DynamicBehaviour<?>) -> () -> void;
 
 	// Connects all events from one behaviour to another
-	connectDistinct : (from : Behaviour<?>, to : DynamicBehaviour<?>) -> (() -> void);
+	connectDistinct : (from : Behaviour<?>, to : DynamicBehaviour<?>) -> () -> void;
 
 	// Functions that combine select- and connect- functionality. They don't create new behavior. The result is written directly to the target.
 	// Return the unsubscribe function.
@@ -178,7 +178,7 @@ export {
 	throttle2(b : Behaviour<?>, maxDelta : int) -> Behaviour<?>;
 	// Buffer the value of the behaviour exactly with one element. Raise previous value of behaviour
 	// Starts with init
-	buffer1 : (Behaviour<?>, init : ?) -> Behaviour<?>;
+	buffer1 : (b : Behaviour<?>, init : ?) -> Behaviour<?>;
 	transistor(gate : Behaviour<bool>, value : Behaviour<?>) -> Behaviour<?>;
 	subselect  : (b : Behaviour<?>, fn : (?) -> Behaviour<??>) -> Behaviour<??>;
 }
@@ -872,29 +872,12 @@ repeatable2(xRaw, startNow) {
 	// in flash timer(x < 10, fn) becomes timer(10, fn).
 	// Flash is the first target and some code is based on its assumptions.
 	x = max(10, xRaw);
-	curStopping = ref ref true;
+	disp = ref None();
 	b = make(timestamp());
 
 	doStart = \ -> {
-		// In order to avoid duplicate timer chains,
-		// every one must use a separate stop variable.
-		// It might be easier to think that doStart
-		// creates a new thread, which obviously needs
-		// its own quit flag.
-		stopping = ref false;
-
-		// emit next timestamp, then wait and repeat
-		f = ref nop;
-		f := \ -> {
-			if (!^stopping) {
-				nextDistinct(b, timestamp());
-				timer(x, ^f)
-			}
-		}
-
-		// start timer
-		curStopping := stopping;
-		timer(x, ^f);
+		maybeApply(^disp, apply0);
+		disp := Some(setInterval(x, \ -> nextDistinct(b, timestamp())));
 	}
 
 	if (startNow) {
@@ -903,8 +886,8 @@ repeatable2(xRaw, startNow) {
 
 	Timer(
 		b,
-		\ -> ^curStopping := true,
-		\ -> if (^(^curStopping)) doStart()
+		\ -> maybeApply(^disp, apply0),
+		\ -> doStart()
 	)
 }
 

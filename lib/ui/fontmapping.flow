@@ -32,12 +32,14 @@ export {
 	// Check if "lang" is one of RTL languages
 	isRTLLang(lang : string) -> bool;
 
+	isRtlAlphabet(alphabet : string) -> bool;
+
 	// Returns if BiDi support is enabled
 	isBiDiEnabled() -> bool;
 
 	// Helpers to make Form in specific language environment
 	// At moment of implementation are used to render Chinese transcript for VideoResource in English product
-	renderWithLang(lang : string) -> ((Form) -> Form);
+	renderWithLang(lang : string) -> (Form) -> Form;
 	createWithLang(lang : string, fn : () -> ?) -> ?;
 
 	isCJKLang() -> bool; // is current lang chinese/japanese/korean?
@@ -59,6 +61,9 @@ export {
 	// Note that function may be called by renderForm very often, so it must be fast.
 	setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -> void;
 
+	// override font family for default font (works as defaultFont http-parameter but lower priority)
+	setFontFamilyOverride(familyM : Maybe<string>) -> void;
+
 	getNativeLangFromBCP(bcpLang : string) -> string;
 
 	getMappedFontFamily(style : [CharacterStyle]) -> string;
@@ -75,6 +80,8 @@ export {
 	arrayRTL(arr : [?]) -> [?];
 	arrayRTL2(isRTL : bool) -> ([?]) -> [?];
 }
+
+FontParams(mainstream : string, minimal : string);
 
 debugFontMapping = isUrlParameterTrue("debugfontmapping");
 
@@ -100,144 +107,199 @@ getAnyUrlParameter(name : string) -> string {
 	getUrlParameterDef(name, getUrlHashParameter(name))
 }
 
-chineseFontParams : Triple<string, string, double> = {
+getFontScaling(family : string) {
+	if (startsWith(family, "Tahoma")) {
+		if (opengl) 0.95 else 1.0  // QtByteRunner vs flash & win7
+	} else if (startsWith(family, "NotoSans")) {
+		if (ios() || macosx()) 0.95 else 1.0
+	} else if (startsWith(family, "HiraKakuProN-W3")) {
+		if (js) 0.95 else 1.0
+	} else if (startsWith(family, "MS Gothic")) {
+		1.05
+	} else if (startsWith(family, "Verdana")) {
+		if (js || macosx()) 0.95 else 1.0
+	} else if (startsWith(family, "DejaVu Sans")) {
+		0.835
+	} else if (startsWith(family, "Scheherazade")) {
+		1.5
+	} else if (startsWith(family, "GeezaPro")) {
+		1.2
+	} else if (startsWith(family, "Dubai")) {
+		1.1
+	} else 1.0
+}
+
+chineseFontParams : FontParams = {
 	if (windows()) {
 		if (opengl) {                                           // QtByteRunner
-			Triple("Tahoma", "Tahoma", 0.95)
+			FontParams("Tahoma", "Tahoma")
 		} else if ((cpp || js) && getAnyUrlParameter("lang") != "ch") {
-			Triple("NotoSans", "NotoSansMinimal", 1.0)
+			FontParams("NotoSans", "NotoSansMinimal")
 		} else if (windowsxp()) {                               // flash, winxp
-			Triple("Microsoft YaHei", "Microsoft YaHei", 1.0)
+			FontParams("Microsoft YaHei", "Microsoft YaHei")
 		} else {                                                // flash, win7
-			Triple("Tahoma", "Tahoma", 1.0)
+			FontParams("Tahoma", "Tahoma")
 		}
 	} else if (android() || linux()) {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)   // TODO: Check that this is correct. It seems it is the default font already
+		FontParams("DroidSansFallback", "DroidSansFallback")   // TODO: Check that this is correct. It seems it is the default font already
 	} else if (ios() || macosx()) {
-		Triple("Tahoma", "NotoSansMinimal", 0.95)               // [-Revise-] officialy, Tahoma is not available on iOS
+		FontParams("Tahoma", "NotoSansMinimal")               // [-Revise-] officialy, Tahoma is not available on iOS
 	} else {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+		FontParams("DroidSansFallback", "DroidSansFallback")
 	}
 }
 
-japaneseFontParams : Triple<string, string, double> = {
+japaneseFontParams : FontParams = {
 	if (windows()) {
 		if (opengl) {                                           // QtByteRunner
-			Triple("Tahoma", "Tahoma", 0.95)
+			FontParams("Tahoma", "Tahoma")
 		} else if (cpp || js) {
-			Triple("Meiryo", "NotoSansMinimal", 1.0)            // Trackman asked Meiryo for Japanese on Windows/javascript
+			FontParams("Meiryo", "NotoSansMinimal")            // Trackman asked Meiryo for Japanese on Windows/javascript
 		} else if (windowsxp()) {                               // flash, winxp
-			Triple("Microsoft YaHei", "Microsoft YaHei", 1.0)
+			FontParams("Microsoft YaHei", "Microsoft YaHei")
 		} else {                                                // flash, win7
-			Triple("Tahoma", "Tahoma", 1.0)
+			FontParams("Tahoma", "Tahoma")
 		}
 	} else if (android() || linux()) {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+		FontParams("DroidSansFallback", "DroidSansFallback")
 	} else if (ios()) {
 		if (js)
-			Triple("HiraKakuProN-W3", "Verdana", 0.95)
+			FontParams("HiraKakuProN-W3", "Verdana")
 		else // cpp
-			Triple("HiraKakuProN-W3", "Verdana", 1.0)
+			FontParams("HiraKakuProN-W3", "Verdana")
 	} else if (macosx()) {
-		Triple("Meiryo", "Tahoma", 1.0)                         // Trackman asked Meiryo for Japanese on Mac desktop
+		FontParams("Meiryo", "Tahoma")                         // Trackman asked Meiryo for Japanese on Mac desktop
 	} else {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+		FontParams("DroidSansFallback", "DroidSansFallback")
 	}
 }
 
-koreanFontParams : Triple<string, string, double> = {
+koreanFontParams : FontParams = {
 	if (windows()) {
 		if (opengl) {                                           // QtByteRunner
-			Triple("Tahoma", "Tahoma", 0.95)
+			FontParams("Tahoma", "Tahoma")
 		} else if (cpp || js) {
-			Triple("MS Gothic", "NotoSansMinimal", 1.05)        // Trackman wanted MS Gothic for Korean on Windows/javascript
+			FontParams("MS Gothic", "NotoSansMinimal")        // Trackman wanted MS Gothic for Korean on Windows/javascript
 		} else if (windowsxp()) {                               // flash, winxp
-			Triple("Microsoft YaHei", "Microsoft YaHei", 1.0)
+			FontParams("Microsoft YaHei", "Microsoft YaHei")
 		} else {                                                // flash, win7
-			Triple("Tahoma", "Tahoma", 1.0)
+			FontParams("Tahoma", "Tahoma")
 		}
 	} else if (android() || linux()) {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+		FontParams("DroidSansFallback", "DroidSansFallback")
 	} else if (ios()) {
 		if (js)
-			Triple("HiraKakuProN-W3", "Verdana", 0.95)
+			FontParams("HiraKakuProN-W3", "Verdana")
 		else // cpp
-			Triple("HiraKakuProN-W3", "Verdana", 1.0)
+			FontParams("HiraKakuProN-W3", "Verdana")
 	} else if (macosx()) {
-		Triple("Verdana", "Tahoma", 0.95)                       // Trackman asked Verdana for Korean on Mac desktop
+		FontParams("Verdana", "Tahoma")                       // Trackman asked Verdana for Korean on Mac desktop
 	} else {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+		FontParams("DroidSansFallback", "DroidSansFallback")
 	}
 }
 
-arabicFontParams : () -> Triple<string, string, double> = \ -> {
+arabicFontParams : () -> FontParams = \ -> {
 	if (windows()) {
 		if (opengl) {
-			Triple("Tahoma", "Tahoma", 0.95)
+			FontParams("Tahoma", "Tahoma")
 		} else if (windowsxp()) {
-			Triple("Andalus", "Andalus", 1.0)
+			FontParams("Andalus", "Andalus")
 		} else {
-			Triple("Tahoma", "Tahoma", 1.0)
+			FontParams("Tahoma", "Tahoma")
 		}
 	} else if (android()) {
-		Triple("Tahoma", "Tahoma", 1.0)
+		FontParams("Tahoma", "Tahoma")
 	} else if (linux()) {
-		Triple("DejaVu Sans", "DejaVu Sans", 0.835)
+		FontParams("DejaVu Sans", "DejaVu Sans")
 	} else if (ios()) {
-		Triple("GeezaPro", "GeezaPro", 1.0)
+		FontParams("GeezaPro", "GeezaPro")
 	} else if (macosx()) {
-		Triple("Tahoma", "Tahoma", 1.0)
+		FontParams("Tahoma", "Tahoma")
 	} else {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+		FontParams("DroidSansFallback", "DroidSansFallback")
 	}
 }
 
-hebrewFontParams : Triple<string, string, double> = {
+hebrewFontParams : FontParams = {
 	if (windows()) {
 		if (opengl) {
-			Triple("Tahoma", "Tahoma", 0.95)
+			FontParams("Tahoma", "Tahoma")
 		} else if (windowsxp()) {
-			Triple("Andalus", "Andalus", 1.0)
+			FontParams("Andalus", "Andalus")
 		} else {
-			Triple("Tahoma", "Tahoma", 1.0)
+			FontParams("Tahoma", "Tahoma")
 		}
 	} else if (android()) {
-		Triple("Tahoma", "Tahoma", 1.0)
+		FontParams("Tahoma", "Tahoma")
 	} else if (linux()) {
-		Triple("DejaVu Sans", "DejaVu Sans", 0.835)
+		FontParams("DejaVu Sans", "DejaVu Sans")
 	} else if (ios()) {
-		Triple("GeezaPro", "GeezaPro", 1.0)
+		FontParams("GeezaPro", "GeezaPro")
 	} else if (macosx()) {
-		Triple("Tahoma", "Tahoma", 1.0)
+		FontParams("Tahoma", "Tahoma")
 	} else {
-		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+		FontParams("DroidSansFallback", "DroidSansFallback")
 	}
 }
 
 getChineseFont() -> FontFamily {
-	FontFamily(chineseFontParams.first)
+	FontFamily(chineseFontParams.mainstream)
 }
 
 getJapaneseFont() -> FontFamily {
-	FontFamily(japaneseFontParams.first)
+	FontFamily(japaneseFontParams.mainstream)
 }
 
 getKoreanFont() -> FontFamily {
-	FontFamily(koreanFontParams.first)
+	FontFamily(koreanFontParams.mainstream)
 }
 
 getArabicFont() -> FontFamily {
-	FontFamily(arabicFontParams().first)
+	FontFamily(arabicFontParams().mainstream)
 }
 
 getChineseFontMinimal() -> FontFamily {
-	FontFamily(chineseFontParams.second)
+	FontFamily(chineseFontParams.minimal)
 }
 
 //In case of change update getCharacterStyleFromWigiTextStyle
 defaultFontFamily_ = "Roboto";
 defaultFontSize_ = 11.0;
-defaultFontOverride_ = eitherGetUrlValidParameter("defaultFont", isValidIdentifier, idfn, defaultFontFamily_);
+defaultFontOverride_ = eitherGetUrlValidParameter("defaultFont", isValidIdentifier, idfn, "");
+fontFamilyOverride_ : ref Maybe<string> = ref None();
+
+setFontFamilyOverride(familyM : Maybe<string>) -> void {
+	fontFamilyOverride_ := familyM;
+}
+
+getDefaultFontFaceOverride() -> string {
+	if (defaultFontOverride_ != "") defaultFontOverride_
+	else either(^fontFamilyOverride_,  defaultFontFamily_);
+}
+
+fontOverrides = eitherGetUrlValidParameterM("fontOverrides", \s -> {
+	fold(strSplit(s, ","), Some([]), \acc, raw -> {
+		eitherMap(acc, \a -> {
+			parts1 = strSplit(raw, "*");
+			tmp = if (length(parts1) == 2)
+				Pair(parts1[0], parts1[1])
+			else if (length(parts1) == 1)
+				Pair(parts1[0], "1.0")
+			else
+				Pair("", "");
+			parts2 = strSplit(tmp.first, "@");
+			if (tmp.first == "")
+				None()
+			else if (length(parts2) == 2)
+				Some(arrayPush(a, Triple(parts2[1], parts2[0], s2d(tmp.second))))
+			else if (length(parts2) == 1)
+				Some(arrayPush(a, Triple(parts2[0], parts2[0], s2d(tmp.second))))
+			else
+				None()
+		}, None())
+	})
+}, []);
 
 getMappedFontFn : ref (string, double) -> Pair<string, double> =
 	ref \family, size -> Pair(family, size);
@@ -246,21 +308,21 @@ getMappedFontFn : ref (string, double) -> Pair<string, double> =
 getMappedFont_cache_key = ref Pair("", -1.0);
 getMappedFont_cache_value = ref Pair("", -1.0);
 
-getMappedFont(family : string, size : double) {
-	ffamily = if (family != "" && family != defaultFontFamily_) family else defaultFontOverride_;
-	if (ffamily != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
+getMappedFont(face : string, size : double) {
+	fface = if (face != "" && face != defaultFontFamily_) face else getDefaultFontFaceOverride();
+	if (fface != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
 		mappedFont =
-			if (ffamily == "MaterialIcons" || (ffamily == "'Material Icons'")) {
+			if (fface == "MaterialIcons" || (fface == "'Material Icons'")) {
 				Pair("MaterialIcons", size)
 			} else {
-		 		(^getMappedFontFn)(ffamily, size);
+		 		(^getMappedFontFn)(fface, size);
 			}
-		getMappedFont_cache_key := Pair(ffamily, size);
+		getMappedFont_cache_key := Pair(fface, size);
 		getMappedFont_cache_value := mappedFont;
 	}
 
 	if (debugFontMapping) {
-		println("zz mapped font: " + "'"+ffamily+"' -> " + toString(^getMappedFont_cache_value));
+		println("zz mapped font: " + "'"+fface+"' -> " + toString(^getMappedFont_cache_value));
 	}
 
 	^getMappedFont_cache_value
@@ -305,6 +367,7 @@ setLangCore(lang0 : string) -> void{
 }
 
 rtlLanguages = ["ar", "he", "yi"];
+rtlAlphabets = ["arb", "heb"];
 
 getDefaultRtl() -> bool {
 	contains(rtlLanguages, getValue(currentLang));
@@ -316,6 +379,10 @@ getDefaultRtlB() -> Transform<bool> {
 
 isRTLLang(lang : string) -> bool {
 	contains(rtlLanguages, lang);
+}
+
+isRtlAlphabet(alphabet : string) -> bool {
+	contains(rtlAlphabets, alphabet);
 }
 
 isBiDiEnabled() -> bool {
@@ -334,7 +401,7 @@ setReverseMappedFontFamilyMap(mapping : [Pair<string, string>]) -> void {
 	reverseFontFamilyMappingTree := pairs2tree(mapping);
 }
 
-setDefaultFontMappingFnHelper(mapping : [Pair<string, string>]) -> (string, double) -> Pair<string, double> {
+setDefaultFontMappingFnHelper(mapping : [Pair<string, string>], fallback : bool) -> (string, double) -> Pair<string, double> {
 	directTree = pairs2tree(mapping);
 	setReverseMappedFontFamilyMap(map(mapping, \p -> Pair(p.second, p.first)));
 
@@ -342,7 +409,7 @@ setDefaultFontMappingFnHelper(mapping : [Pair<string, string>]) -> (string, doub
 		\family, size -> Pair(family, size)
 	} else {
 		\family, size -> Pair(
-			eitherMap(lookupTree(directTree, family), \ff -> if (js) family + "," + ff else ff, family),
+			eitherMap(lookupTree(directTree, family), \ff -> if (fallback && js && getRendererType() == "html") family + "," + ff else ff, family),
 			size
 		)
 	}
@@ -354,77 +421,80 @@ setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -
 }
 
 setDefaultFontMappingFn(mapping : [Pair<string, string>]) -> void {
-	mapper = setDefaultFontMappingFnHelper(mapping);
+	mapper = setDefaultFontMappingFnHelper(mapping, false);
 
 	setDefaultFontMappingFn2(mapper);
 }
 
 cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 	lang = getValue(currentLang);
-	fontParams = {
-		if (lang == "ja")
-			japaneseFontParams
-		else if (lang == "ko")
-			koreanFontParams
-		else if (isChinese(lang))
-			chineseFontParams
-		else if (lang == "ar") { // enable font mapping for arabic
-			font = arabicFontParams().first;
-			makeFontMedium = \font1 -> font1 + "Medium";
-			makeFontSloped = \fam -> {
-				slopedStr = if (startsWith(fam, "DejaVu Sans") || startsWith(fam, "DejaVuSans")) "Oblique" else "Italic";
-				fam + slopedStr
-			}
-			makeFontBold = \font1 -> font1 + "Bold";
-			makePairs = \font1, font2 -> {[
-				Pair(font1, font2),
-				Pair(makeFontMedium(font1), makeFontBold(font2)),
-				Pair(makeFontSloped(font1), makeFontSloped(font2)),
-				Pair(makeFontSloped(makeFontMedium(font1)), makeFontSloped(makeFontBold(font2))),
-			]};
-
-			mapper = setDefaultFontMappingFnHelper(concat(
-				if (ios() && isUrlParameterTrue("ArabicExtraFonts")) {
-					makePairs("Tahoma", font)
-				} else {
-					makePairs("Roboto", font)
-				},
-				[
-					Pair("Book", font),
-					Pair("Bold", makeFontBold(font)),
-					Pair("BoldItalic", makeFontSloped(makeFontBold(font))),
-					Pair("Italic", makeFontSloped(font))
-				],
-			));
-			mapper(family, size) |> (\fm -> Triple(fm.first, fm.first, arabicFontParams().third))
-		} else if (lang == "he")
-			hebrewFontParams
-		else
-			^defaultFontMappingFn(family, size) |> (\fm -> Triple(fm.first, fm.first, fm.second / size));
+	makeFontMedium = \font1 -> font1 + "Medium";
+	makeFontSloped = \fam -> {
+		slopedStr = if (startsWith(fam, "DejaVu Sans") || startsWith(fam, "DejaVuSans")) "Oblique" else "Italic";
+		fam + slopedStr
 	};
-	Pair(fontParams.first, roundFontSize(size * fontParams.third))
+	makeFontBold = \font1 -> font1 + "Bold";
+	makePairs = \font1, font2 -> {[
+		Pair(font1, font2),
+		Pair(makeFontMedium(font1), makeFontBold(font2)),
+		Pair(makeFontSloped(font1), makeFontSloped(font2)),
+		Pair(makeFontSloped(makeFontMedium(font1)), makeFontSloped(makeFontBold(font2))),
+	]};
+	nativeFontParams : Maybe<FontParams> = 
+		if (lang == "ja")
+			Some(japaneseFontParams)
+		else if (lang == "ko")
+			Some(koreanFontParams)
+		else if (isChinese(lang))
+			Some(chineseFontParams)
+		else if (lang == "ar") // enable font mapping for arabic
+			Some(arabicFontParams())
+		else if (lang == "he")
+			Some(hebrewFontParams)
+		else
+			None();
+	fontParams = {
+		eitherMap(nativeFontParams,
+			\nvp -> {
+				font = nvp.mainstream;
+				mappingPairs = concat(
+					if (lang=="ar" && ios() && isUrlParameterTrue("ArabicExtraFonts")) {
+						makePairs("Tahoma", font)
+					} else {
+						makePairs("Roboto", font)
+					},
+					[
+						Pair("Book", font),
+						Pair("Bold", makeFontBold(font)),
+						Pair("BoldItalic", makeFontSloped(makeFontBold(font))),
+						Pair("Italic", makeFontSloped(font))
+					],
+				);
+
+				mapper = setDefaultFontMappingFnHelper(mappingPairs, true);
+				mapper(family, size) |> (\fm -> FontParams(fm.first, fm.first))
+			},
+			^defaultFontMappingFn(family, size) |> (\fm -> FontParams(fm.first, fm.first))
+		)
+	};
+	Pair(fontParams.mainstream, roundFontSize(size * getFontScaling(fontParams.mainstream)))
 }
 
 // This allows setting font and size multiplier in url flag.
-// Example: setting font family: overridefont=Meyrio
-// Example: setting font family and size multiplier: overridefont=Meyrio;1.2
+// Example: setting font family Meiro instead of Roboto: fontOverrides=Meyrio@Roboto
+// Example: setting font size multiplier: fontOverrides=Meyrio*1.2
+// You can split several settings with comma.
 applyFontOverriding = {
-	t = getAnyUrlParameter("overridefont");
-	if (t == "") {
+	if (fontOverrides == []) {
 		idfn
 	} else {
-		tt = strSplit(t, ";");
-		overridden_family = tt[0];
-		size_multiplier = {
-			m = if (length(tt) > 1) s2d(tt[1]) else 1.0;
-			if (m < 0.01 || m > 100.0) 1.0 else m
-		};
 		\fontOverrideMappingFn -> {
 			\family : string, size : double -> {
 				mapped_FamilySize : Pair<string, double> = fontOverrideMappingFn(family, size);
-				Pair(
-					if (overridden_family != "") overridden_family else mapped_FamilySize.first,
-					mapped_FamilySize.second * size_multiplier
+				eitherMap(
+					find(fontOverrides, \o -> o.first == family),
+					\o -> Pair(o.second, mapped_FamilySize.second * o.third),
+					Pair(mapped_FamilySize.first, mapped_FamilySize.second)
 				)
 			}
 		}
@@ -432,7 +502,7 @@ applyFontOverriding = {
 }
 
 
-renderWithLang(lang : string) -> ((Form) -> Form) {
+renderWithLang(lang : string) -> (Form) -> Form {
 	\f -> {
 		savedLang = ref getLang();
 		Constructor2(
@@ -536,21 +606,12 @@ getMappedFontFamily(style : [CharacterStyle]) -> string {
 }
 
 detectAlphabet(text : string) -> string {
-	getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1))
+	lalph = getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1));
+	if (lalph == "") getUnicodeAlphabet(getCharCodeAt(text, 0)) else lalph
 }
 
 getAlphabetScaling(alphabet : string, fontFamily : string) -> double {
-	// FIXME looks like bad place for per-font scaling, move somewhere else.
-	isScheherazade = startsWith(fontFamily, "Scheherazade");
-	if (alphabet == "arb") {
-		if (isScheherazade) {
-			2.5
-		} else 1.4
-	} else {
-		if (isScheherazade) {
-			1.5
-		} else 1.0
-	}
+	if (alphabet == "arb") 1.4 else 1.0
 }
 
 get2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> double {

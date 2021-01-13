@@ -8,6 +8,7 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageWidth : Dynamic = null;
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
+	private var noScroll : Dynamic = null;
 
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
@@ -99,6 +100,13 @@ class WebClip extends NativeWidgetClip {
 					}
 				}
 
+				if (this.noScroll) {
+					untyped iframeDocument.body.style["overflow"] = "hidden";
+					iframeDocument.addEventListener('wheel', function (e) {
+						RenderSupport.provideEvent(e);
+					}, true);
+				}
+
 				if (shrinkToFit) {
 					try {
 						this.htmlPageWidth = iframeDocument.body.scrollWidth;
@@ -174,7 +182,7 @@ class WebClip extends NativeWidgetClip {
 			RenderSupport.MousePos.x = pos.x;
 			RenderSupport.MousePos.y = pos.y;
 
-			if (RenderSupport.getClipAt(localStages[i], RenderSupport.MousePos, true, true) != null) {
+			if (RenderSupport.getClipAt(localStages[i], RenderSupport.MousePos, true, 0.0) != null) {
 				untyped localStages[i].view.style.pointerEvents = "all";
 				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
 
@@ -242,6 +250,10 @@ class WebClip extends NativeWidgetClip {
 			nativeWidget.appendChild(disableOverlay);
 			iframe.style.pointerEvents = 'none';
 		}
+	}
+
+	public function setNoScroll() : Void {
+		this.noScroll = true;
 	}
 
 	public function setSandBox(value : String) : Void {

@@ -1059,6 +1059,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLClip, setClipScaleX, 2);
     TRY_USE_OBJECT_METHOD(GLClip, setClipScaleY, 2);
     TRY_USE_OBJECT_METHOD(GLClip, setClipRotation, 2);
+    TRY_USE_OBJECT_METHOD(GLClip, setClipOrigin, 3);
     TRY_USE_OBJECT_METHOD(GLClip, setClipAlpha, 2);
     TRY_USE_OBJECT_METHOD(GLClip, setClipCallstack, 2);
     TRY_USE_OBJECT_METHOD(GLClip, setClipDebugInfo, 3);

@@ -16,10 +16,10 @@ Tropic ::=
 	TRealHTML, TVideo,
 
 	// Mirror versions of the Forms, except recursive to Tropic
-	TBorder, TTranslate, TScale, TRotate, TAlpha, TVisible,
+	TBorder, TTranslate, TScale, TRotate, TOrigin, TAlpha, TVisible,
 	TMask,
 	TFilter, TCursor,
-	TCrop, TAccess,
+	TCrop2, TAccess,
 	TInteractive,
 	TBaselineOffset,
 	TFullWindow,
@@ -64,6 +64,9 @@ Tropic ::=
 	// Tag this element, so we can get the position later
 	TTag, TTag2, TInspect, TOverride,
 
+	// Element animation
+	TAnimation,
+
 	// Creates some tropic from css stylesheet
 	TCssBlock,
 
@@ -84,9 +87,11 @@ TEmpty();
 TText(text : string, style : [TCharacterStyle]);
 	TCharacterStyle ::= FTextStyle, TCssStyle;
 TParagraph(text : Transform<string>, style : [TParagraphStyle]);
-	TParagraphStyle ::= FParagraphStyle, TCssStyle, ParagraphMargin, TCharacterStyle; // Important that TCharacterStyle is a sub-type even if it is redundant
+	TParagraphStyle ::= FParagraphStyle, TCssStyle, ParagraphMargin, FullWidth, TCharacterStyle; // Important that TCharacterStyle is a sub-type even if it is redundant
 		// Margin around a paragraph
 		ParagraphMargin(top : double, bottom : double);
+		// Paragraph takes all available width
+		FullWidth();
 TGraphics(path : [StaticGraphicOp], style : [TGraphicsStyle]);
 	TGraphicsStyle ::= GraphicsStyle, TCssStyle;
 TDynamicGraphics(path : Transform<[StaticGraphicOp]>, style : Transform<[TGraphicsStyle]>);
@@ -113,20 +118,25 @@ TBorder(left : double, top : double, right : double, bottom : double, form : Tro
 TTranslate : (point : Transform<Point>, form : Tropic);
 TScale : (factor : Transform<Factor>, form : Tropic);
 TRotate : (degree : Transform<double>, form : Tropic);
+// Define tranformation origin as Factor of the form size.
+// TScale and TRotate will use this origin as center point of all the transformations applied.
+// For example if you want to rotate form around its center use TOrigin(const(Factor(0.5, 0.5), ...).
+// By default origin is Factor(0.0, 0.0) which is the top left corner of the form.
+TOrigin : (origin : Transform<Factor>, form : Tropic);
 TAlpha : (alpha : Transform<double>, form : Tropic);
 TMask : (main : Tropic, mask : Tropic);
 TFilter(filters : [Filters], form : Tropic);
 TCursor(kind : CursorShape2, form : Tropic);
 TAccess : (properties : [FAccessProperty], form : Tropic);
-TCrop : (topleft : Transform<Point>, widthHeight : Transform<WidthHeight>, form : Tropic);
+TCrop(topleft : Transform<Point>, widthHeight : Transform<WidthHeight>, form : Tropic) -> Tropic {TCrop2(topleft, widthHeight, const(true), form)};
+TCrop2 : (topleft : Transform<Point>, widthHeight : Transform<WidthHeight>, enabled : Transform<bool>, form : Tropic);
 
 // The tropic is NOT destroyed/reconstructed when 'visible' becomes false/true for performance, only hidden.
 // See TShow in tropic_gui.flow if you want it to be destroyed and reconstructed.
 TVisible : (visible : Transform<bool>, tropic : Tropic);
 
 TInteractive : (interactivity: [TInteractivity], form : Tropic);
-	TInteractivity ::= TMouseXY, TMouseInside, TMouseDown, TMouseDownGhost, TMouseRightDown, TMouseRightDownGhost, TMouseMiddleDown, TMouseMiddleDownGhost, TRollOver, TKeyBroadcast, TKey, TMouseWheel, TPanGesture,
-		TMouseDownGhostHandleRadiusEvents, TPinchGesture, TFileDrop, EventHandler;
+	TInteractivity ::= TMouseXY, TMouseInside, TMouseDown, TMouseDownGhost, TMouseRightDown, TMouseRightDownGhost, TMouseMiddleDown, TMouseMiddleDownGhost, TRollOver, TKeyBroadcast, TKey, TMouseWheel, TPanGesture, TPinchGesture, TFileDrop, EventHandler;
 		// Where is the mouse in local x,y coordinates?
 		TMouseXY : (point : DynamicBehaviour<Point>);
 
@@ -158,9 +168,6 @@ TInteractive : (interactivity: [TInteractivity], form : Tropic);
 		// Same as TMouseMiddleDown, except that it allows lower-z-order element to handle mouse
 		// (in other words it is transparent for events)
 		TMouseMiddleDownGhost : (down : DynamicBehaviour<bool>);
-
-		// Same as TMouseDownGhost, except that it handles click radius events on mobile
-		TMouseDownGhostHandleRadiusEvents : (down : DynamicBehaviour<bool>);
 
 		// Is the mouse rolled over this form (or any of the children).
 		// This respects z-order, so only the top-most clip will get this event.
@@ -281,7 +288,7 @@ TTweak(style : [TTweakStyle], content : Tropic, size : Tropic);
 
 	// Zoom to fill the resulting area. If crop is true, the excess area is removed
 	TFillZoom(crop : bool);
-	// Override zoom factor (will be used if it is more than automatically calculated)
+	// Override zoom factor (will be used if it is greater than automatically calculated)
 	TFillScale(scale : Transform<double>);
 
 	// Zoom to fit, filling with empty space if keepAspect is given
@@ -421,6 +428,13 @@ TOverride(overriders : [TOverrider], t : Tropic);
 		// Don't show content, only calculate metrics
 		OMetricsOnly() -> TOverrider { IMetricsOnly(); };
 
+// Keyframe-based animation (asynchronous in js).
+// Keyframes are evenly distributed across timeline with first and last on the ends.
+// Modifying keyframes Transform cancels previous animation and immediately starts new one.
+// For example if you want to animate content fading-in use
+// TAnimation(..., const([FAnimationKeyframe([FAlphaValue(0.0)]), FAnimationKeyframe([FAlphaValue(1.0)])]), [])
+TAnimation(content : Tropic, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]);
+
 // Trying to create Tropic from css stylesheet. Second argument will be rendered, if unable to create Tropic from css stylesheet.
 TCssBlock(style : [TCssStyle], tropic : Tropic);
 	TCssStyle ::= TStyle, TStyleWithSelector;
@@ -463,8 +477,6 @@ TDynamicGroup2 : (stackChanges : DynamicBehaviour<[TGroupChange]>, currentStack 
 TDynamicGroup(stackChanges : DynamicBehaviour<[TGroupChange]>) -> TDynamicGroup2 {
 	TDynamicGroup2(stackChanges, ref [], TGroupCombiner());
 }
-
-	tropicFillersMax = ref 4096.;
 
 	// Bookkeeping info about each Form to make it possible to do the layout
 	TAcc(

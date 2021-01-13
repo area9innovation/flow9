@@ -150,7 +150,12 @@ const GLTransform &GLClip::getLocalTransform()
 {
     if (!checkFlag(LocalTransformReady)) {
         setFlags(LocalTransformReady);
-        local_transform = local_transform_raw.toMatrixForm();
+        if (local_transform_raw.ox != 0 || local_transform_raw.oy != 0) {
+            local_transform = local_transform_raw.toMatrixForm(getLocalBBox().size().x, getLocalBBox().size().y);
+        } else {
+            local_transform = local_transform_raw.toMatrixForm();
+        }
+
     }
 
     return local_transform;
@@ -260,6 +265,32 @@ const GLBoundingBox &GLClip::getGlobalBBox()
     }
 
     return global_bbox_effect;
+}
+
+const GLBoundingBox &GLClip::getLocalBBox()
+{
+    if (!checkFlag(LocalBBoxReady) && renderable && !destroyed) {
+        // Local bbox
+        local_bbox_full = getLocalBBoxSelf();
+
+        // + children
+        for (T_Children::iterator it = children.begin(); it != children.end(); ++it)
+            local_bbox_full |= (*it)->getLocalBBox();
+        if (scroll_rect)
+            local_bbox_full = scroll_rect_box;
+        if (mask)
+            local_bbox_full = mask->getLocalBBox();
+
+        // + effects
+        local_bbox_effect = local_bbox_full;
+
+        setFlags(LocalBBoxReady);
+
+        for (T_Filters::iterator it = filters.begin(); it != filters.end(); ++it)
+            (*it)->updateBBox(this, local_bbox_full, &local_bbox_effect);
+    }
+
+    return local_bbox_effect;
 }
 
 const GLBoundingBox &GLClip::getLocalBBoxSelf()
@@ -840,6 +871,26 @@ StackSlot GLClip::setClipRotation(RUNNER_ARGS)
     local_transform_raw.angle = angle.GetDouble();
 
     FIX_NAN_VALUE(local_transform_raw.angle, 0.0f, "setClipRotation");
+
+    RETVOID;
+}
+
+StackSlot GLClip::setClipOrigin(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(x, y);
+    RUNNER_CheckTag(TDouble, x);
+    RUNNER_CheckTag(TDouble, y);
+
+#ifdef FLOW_INSTRUCTION_PROFILING
+    getFlowRunner()->ClaimInstructionsSpent(owner->ProfilingInsnCost, 110);
+#endif
+
+    wipeFlags(WipeLocalTransformChanged);
+    local_transform_raw.ox = x.GetDouble();
+    local_transform_raw.oy = y.GetDouble();
+
+    FIX_NAN_VALUE(local_transform_raw.ox, 0.0f, "setClipOrigin");
+    FIX_NAN_VALUE(local_transform_raw.oy, 0.0f, "setClipOrigin");
 
     RETVOID;
 }

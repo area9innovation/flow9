@@ -20,7 +20,10 @@ export {
 }
 
 MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	color : MColor = extractStruct(m.style, getPrimaryColor(parent));
+	color : MColor = extractMColor(parent, m.style, MPrimaryColor());
+	outlineColor = extractStruct(m.style, MOutlineColor(MCustomColor(contrastingColor(parent)))).color;
+	outlineOpacity = extractStruct(m.style, MOutlineOpacity(0.12)).opacity;
+	outlineWidth = extractStruct(m.style, MOutlineWidth(1.)).width;
 	contained = contains(m.style, MContained());
 	outlined = contains(m.style, MOutlined());
 	fullWidth = contains(m.style, MFullWidth());
@@ -37,20 +40,48 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 		).elevation;
 	paddings = extractStruct(m.style, MButtonPaddings(16.0, 9.5, 16.0, 9.5));
 	isRTL = parent.rtl;
+	textAlignment = commonAlignment2abs(extractStruct(m.style, MTextAlignment(CenterAlign())).alignment, isRTL);
+	textAlignmentX = switch (textAlignment) {
+		LeftAlign() : 0.0;
+		RightAlign() : 1.0;
+		default : 0.5;
+	};
+
+	bgStyle =
+		if (outlined)
+			[
+				MThemeStroke(parent, outlineColor),
+				StrokeOpacity(outlineOpacity),
+				StrokeWidth(outlineWidth),
+				Fill(black),
+				FillOpacity(0.0)
+			]
+		else if (contained)
+			[
+				MFill(color),
+				FillOpacity(1.0)
+			]
+		else
+			[];
+
+	disabledBgStyle =
+		if (outlined)
+			[
+				Stroke(contrastingColor(parent)),
+				StrokeOpacity(0.2),
+				StrokeWidth(outlineWidth),
+				Fill(black),
+				FillOpacity(0.0)
+			]
+		else
+			[
+				Fill(contrastingColor(parent)),
+				FillOpacity(if (contained) 0.12 else 0.0)
+			];
 
 	textColor : MColor =
 		if (contained) {
-			if (color == getPrimaryColor(parent) &&
-				(getToolbarItemsColor(parent) == MWhite() || getToolbarItemsColor(parent) == MBlack())) {
-				getToolbarItemsColor(parent)
-			} else if (length(buttonTextColor) > 0) {
-				if (buttonTextColor[0].white)
-					MWhite()
-				else
-					MBlack()
-			} else {
-				MTextMColor(color)
-			}
+			getTextColorWithBackground(parent, bgStyle)
 		} else {
 			color
 		};
@@ -67,26 +98,15 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 		MText2T(
 			parent,
 			m.text,
-			replaceStructMany(textStyle, [getTextColor(parent), MTextDisabled()])
+			replaceStructMany(textStyle, [contrastingMColor(parent), MTextDisabled()])
 		)
 		|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, true))
 		|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
-		|> (\f -> if (fullWidth) TCenterX(f) else f)
+		|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f)
 		|> (\f ->
 			MShapeFrame(
 				parent,
-				if (outlined)
-					[
-						Stroke(contrastingColor(parent)),
-						StrokeOpacity(0.2),
-						Fill(black),
-						FillOpacity(0.0)
-					]
-				else
-					[
-						Fill(contrastingColor(parent)),
-						FillOpacity(if (contained) 0.12 else 0.0)
-					],
+				disabledBgStyle,
 				f,
 				"MTextButton"
 			)
@@ -112,7 +132,7 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 	)
 	|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, false))
 	|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
-	|> (\f -> if (fullWidth) TCenterX(f) else f))
+	|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f))
 	|> (\f ->
 		MComponent2T(
 			manager,
@@ -127,18 +147,7 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 					if (contained || outlined)
 						MShapeFrame(
 							parent,
-							if (outlined)
-								[
-									Stroke(contrastingColor(parent)),
-									StrokeOpacity(0.4),
-									Fill(black),
-									FillOpacity(0.0)
-								]
-							else
-								[
-									MFill(color),
-									FillOpacity(1.0)
-								],
+							bgStyle,
 							f2,
 							"MTextButton"
 						)
@@ -154,7 +163,7 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 							if (contained)
 								f2
 							else
-								MShapeFrame(parent, [MFill(MBackgroundColor(getLightBackground(parent)))], f2, "MTextButton"),
+								MShapeFrame(parent, [MThemeFill(parent, MSurfaceColor())], f2, "MTextButton"),
 							0.3,
 							RectangleShape("MTextButton")
 						)
@@ -239,7 +248,7 @@ MTextClickable2T(manager : MaterialManager, parent : MFocusGroup, m : MTextClick
 							if (raised)
 								f2
 							else
-								MShapeFrame(parent, [MFill(MBackgroundColor(getLightBackground(parent)))], f2, "MTextClickable"),
+								MShapeFrame(parent, [MThemeFill(parent, MSurfaceColor())], f2, "MTextClickable"),
 							0.3,
 							RectangleShape("MTextClickable")
 						)
@@ -297,7 +306,7 @@ addLeftRightIcons(parent : MFocusGroup, t : Tropic, style : [flow], textColor : 
 
 style2MIconStyle(style : [?]) -> [MIconStyle] {
 	concatA([
-		extractStructMany(style, MColor(CWhite(), 0, false)),
+		extractMThemeColorMany(style),
 		extractStructMany(style, FillOpacity(0.)),
 		extractStructMany(style, MIconSize(0.)),
 		extractStructMany(style, MIconDisabled()),
@@ -311,18 +320,19 @@ MIconButton2T(manager : MaterialManager, parent : MFocusGroup, m : MIconButton, 
 	circleBackground = extractStruct(m.style, MCircleBackground(MRed(500), 0.));
 	iconSize = extractStruct(m.style, MIconSize(standardIconSize)).size;
 	border = max(extractStruct(m.style, MIconButtonBorder(iconSize / 2.0)).border - max(circleBackground.size - iconSize, 0.) / 2., 0.);
+	borders = tryExtractStruct(m.style, MIconButtonBorders(0., 0., 0., 0.));
 	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f();}));
 	disabled = contains(m.style, MIconDisabled());
 	defaultIconColor =
 		if (circleBackground.size > 0.)
-			MTextMColor(circleBackground.color)
+			MContrastingTextColor(circleBackground.color)
 		else
-			getIconColor(parent);
+			MIconsColor();
 	iconColor =
-		extractStruct(m.style, defaultIconColor)
+		extractMColor(parent, m.style, defaultIconColor)
 		|> (\iconColor ->
 			if (disabled && iconColor != MBlack() && iconColor != MWhite())
-				defaultIconColor
+				MThemeColor2MColor(parent, defaultIconColor)
 			else
 				iconColor
 		);
@@ -354,10 +364,13 @@ MIconButton2T(manager : MaterialManager, parent : MFocusGroup, m : MIconButton, 
 				),
 				true
 			)
-			|> (\f -> TBorder4(border * 3.0 / 4.0, f)),
+			|> (\f -> eitherMap(borders,
+				\b -> TBorder(b.left, b.top, b.right, b.bottom, f),
+				TBorder4(border * 3.0 / 4.0, f)
+			)),
 		m2t
 	)
-	|> (\f -> TBorder4(border / 4.0, f))
+	|> (\f -> if (isNone(borders)) TBorder4(border / 4.0, f) else f)
 	|> makeTropicConstant(None(), None())
 }
 
@@ -377,14 +390,14 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 	disabled = contains(m.style, MIconDisabled());
 	defaultIconColor =
 		if (circleBackground.size > 0.)
-			MTextMColor(circleBackground.color)
+			MContrastingTextColor(circleBackground.color)
 		else
-			getIconColor(parent);
+			MIconsColor();
 	iconColor =
-		extractStruct(m.style, defaultIconColor)
+		extractMColor(parent, m.style, defaultIconColor)
 		|> (\iconColor ->
 			if (disabled && iconColor != MBlack() && iconColor != MWhite())
-				defaultIconColor
+				MThemeColor2MColor(parent, defaultIconColor)
 			else
 				iconColor
 		);
@@ -395,20 +408,27 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 	falseIconStyle = replaceStructMany(falseIcon.style, [falseCircleBackground, MIconSize(falseIconSize)]);
 	falseDisabled = contains(falseIconStyle, MIconDisabled());
 	falseDefaultIconColor =
-		if (falseCircleBackground.size > 0.)
-			MTextMColor(falseCircleBackground.color)
+		if (circleBackground.size > 0.)
+			MContrastingTextColor(circleBackground.color)
 		else
-			getIconColor(parent);
+			MIconsColor();
 	falseIconColor =
-		extractStruct(falseIconStyle, defaultIconColor)
+		extractMColor(parent, falseIconStyle, defaultIconColor)
 		|> (\falseIconColor ->
 			if (falseDisabled && falseIconColor != MBlack() && falseIconColor != MWhite())
-				falseDefaultIconColor
+				MThemeColor2MColor(parent, falseDefaultIconColor)
 			else
 				falseIconColor
 		);
 
 	sameSize = iconSize == falseIconSize && circleBackground.size == falseCircleBackground.size;
+
+	attributes : [FAccessAttribute] = extractStructMany(m.state, FAccessAttribute("", const("")));
+	ariaPressed =
+		findDef(attributes,
+			\a -> a.name == "aria-pressed",
+			FAccessAttribute("aria-pressed", fif(value, const("true"), const("false")))
+		);
 
 	focusState =
 		concat(
@@ -423,9 +443,9 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 				]
 			),
 			[
-				IScriptBehaviour("value", value, ISValueEvent()),
-				FAccessAttribute("aria-pressed", fif(value, const("true"), const("false"))),
-				MButtonTitle(const(m.icon + " " + falseIcon.icon))
+				IScriptBehaviour("value", value, ISInputValue([], "bool", true)),
+				ariaPressed,
+				extractStruct(m.state, MButtonTitle(const(m.icon + " " + falseIcon.icon)))
 			]
 		);
 
@@ -458,7 +478,8 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 				)
 				|> (\iconToggle -> TBorder4(border * 3.0 / 4.0, iconToggle)),
 				sameSize
-			),
+			)
+			|> MHintMarker(manager, focus, false),
 		m2t
 	)
 	|> (\iconToggle -> TBorder4(border / 4.0, iconToggle))
@@ -485,7 +506,7 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 }
 
 MCheckBox2T(manager : MaterialManager, parent : MFocusGroup, m : MCheckBox, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	MCheckable2T(manager, parent, "MCheckBox", m.value, m.caption, m.style, "check_box", "check_box_outline_blank", false, "checkbox", m2t)
+	MCheckable2T(manager, parent, "MCheckBox", m.value, m.caption, m.style, "check_box", "check_box_outline_blank", false, false, "checkbox", m2t)
 }
 
 MRadio2T(manager : MaterialManager, parent : MFocusGroup, m : MRadio, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -494,21 +515,26 @@ MRadio2T(manager : MaterialManager, parent : MFocusGroup, m : MRadio, m2t : (Mat
 		[
 			\ -> fBidirectionalLink(m.activeValue, checked, \v -> nextDistinct(checked, v == m.thisValue), \ch -> if (ch) nextDistinct(m.activeValue, m.thisValue))
 		],
-		MCheckable2T(manager, parent, "MRadio", checked, m.caption, m.style, "radio_button_checked", "radio_button_unchecked", true, "radio", m2t)
+		MCheckable2T(manager, parent, "MRadio", checked, m.caption, m.style, "radio_button_checked", "radio_button_unchecked", true, true, "radio", m2t)
 	)
 }
 
 MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, value : DynamicBehaviour<bool>, captionM : Material, style : [MCheckableStyle],
-	iNameChecked : string, iNameUnchecked : string, cannotUncheck : bool, accessRole : string, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	mcolor : MColor = extractStruct(style, getAccentColor(parent));
+	iNameChecked : string, iNameUnchecked : string, cannotUncheck : bool, constHeight : bool, accessRole : string, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	mcolor : MColor = extractMColor(parent, style, MAccentColor());
 	iconStyle = MCheckableStyle2IconStyle(style);
 	iconSize = extractStruct(style, MIconSize(standardIconSize)).size;
 	iconButtonBorder = extractStruct(style, MIconButtonBorder(iconSize / 2.)).border;
 	border4 = extractStruct(style, MIconBorder4(iconButtonBorder, iconButtonBorder, iconButtonBorder, iconButtonBorder));
-	uncheckedIconStyle = extractStruct(style, MUncheckedIconStyle(replaceStruct(iconStyle, getIconColor(parent)))).style;
+	uncheckedIconStyle = extractStruct(style, MUncheckedIconStyle(replaceMThemeColor(iconStyle, MIconsColor()))).style;
 	captionPosition = extractStruct(style, MCaptionPosition(MAfterPosition()));
 	onClick = extractStruct(style, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {next(value, cannotUncheck || !getValue(value)); f();}));
-	onNewValue = tryExtractStruct(style, MOnNewValue(nop1));
+	onNewValue =
+		eitherMap(
+			tryExtractStruct(style, MOnNewValue(nop1)),
+			\onv -> Some(Pair(onv.fn, true)),
+			maybeMap(tryExtractStruct(style, MOnNewValue2(nop1)), \onv -> Pair(onv.fn, false))
+		);
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 	clickEnabled = extractStruct(style, MClickEnabled(const(true))).enabled;
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
@@ -584,13 +610,14 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			MBottomPosition() : TLinesXCenter([f, cap]);
 		}
 	})
-	|> makeTropicConstantHeight(None())
+	|> (if (constHeight) makeTropicConstantHeight(None()) else idfn)
 	|> (\checkable ->
 		eitherMap(
 			onNewValue,
 			\onv ->
 				TConstruct(
-					[makeSubscribe(value, onv.fn)],
+					if (onv.second) [makeSubscribe(value, onv.first)]
+					else [makeSubscribe2(value, onv.first)],
 					checkable
 				),
 			checkable
@@ -610,7 +637,7 @@ MCheckableStyle2IconStyle(style : [MCheckableStyle]) -> [MIconStyle] {
 }
 
 MSwitchControl2T(manager : MaterialManager, parent : MFocusGroup, m : MSwitchControl, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	color : MColor = extractStruct(m.style, getAccentColor(parent));
+	color : MColor = extractMColor(parent, m.style, MAccentColor());
 	onOffText = tryExtractStruct(m.style, MOnOffText("", ""));
 	thumbPosition = makePoint();
 	onClick =
@@ -654,7 +681,7 @@ MSwitchControl2T(manager : MaterialManager, parent : MFocusGroup, m : MSwitchCon
 								MFill(if (en && v) color else contrastingMColor(parent)),
 								FillOpacity(
 									if (en) {
-										if (v) 0.5 else if (getLightBackground(parent)) 0.38 else 0.3
+										if (v) 0.5 else 0.45
 									} else {
 										if (getLightBackground(parent)) 0.12 else 0.1
 									}
@@ -708,21 +735,32 @@ MSwitchControl2T(manager : MaterialManager, parent : MFocusGroup, m : MSwitchCon
 	|> (\f ->
 		eitherMap(
 			onOffText,
-			\text ->
+			\text -> {
+				onOffTextFontM = tryExtractStruct(m.style, MOnOffTextFont(MSecondaryButtonStyle()));
 				TGroup2(
 					TIfLazy2(
 						fmin(parent.enabled, enabled),
-						\en ->
-							MText2T(parent, text.on, [MButton1(), if (en) color else MTextDisabled()]),
+						\en -> MText2T(
+							parent, text.on,
+							[eitherMap(onOffTextFontM, \s -> s.font, MButton1()), if (en) color else MTextDisabled()]
+						),
 						true
 					)
 					|> (\t -> TVisible(feq(m.value, true), t)),
 
-					MText2T(parent, if (text.off != "") text.off else text.on, [MButton1(), MTextDisabled()])
+					TIfLazy2(
+						fmin(parent.enabled, enabled),
+						\en -> MText2T(
+							parent, if (text.off != "") text.off else text.on,
+							[eitherMap(onOffTextFontM, \s -> s.font, MSecondaryButtonStyle()), if (en) MTextColor() else MTextDisabled()]
+						),
+						true
+					)
 					|> (\t -> TVisible(feq(m.value, false), t))
 				)
 				|> (\t -> TBorderDir(0., 0., 24., 0., t, isRTL))
-				|> (\t -> TBaselineCols2Dir(f, t, isRTL)),
+				|> (\t -> TBaselineCols2Dir(f, t, isRTL))
+			},
 			f
 		)
 	)
@@ -761,8 +799,8 @@ MSwitchControl2T(manager : MaterialManager, parent : MFocusGroup, m : MSwitchCon
 
 MFloatingButton2T(manager : MaterialManager, parent : MFocusGroup, m : MFloatingButton, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	speedDial = tryExtractStruct(m.style, MFabSpeedDial("", [], []));
-	bgColor = extractStruct(m.style, getAccentColor(parent));
-	iconColor = extractStruct(m.style, MIconColor(MWhite())).color;
+	bgColor = extractMColor(parent, m.style, MAccentColor());
+	iconColor = MThemeColor2MColor(parent, extractStruct(m.style, MIconColor(MWhite())).color);
 	iconOpacity = extractStruct(m.style, FillOpacity(1.));
 	buttonSize = if (extractStruct(m.style, MFabMini(false)).mini) 40. else 56.;
 	elevation = \down -> extractStruct(m.style, MElevation(fif(down, const(12.), const(6.)))).elevation;
@@ -897,7 +935,7 @@ MFloatingButton2T(manager : MaterialManager, parent : MFocusGroup, m : MFloating
 		else
 			f
 	)
-	|> (\f -> if ((contains(m.style, MRight()) != (parent.rtl && !isUrlParameterTrue("new"))) || contains(m.style, if (parent.rtl) MStart() else MEnd())) TCols2(TFillX(), f) else TCols2(f, TFillX()))
+	|> (\f -> if (commonAlignment2abs(extractMFloatingButtonCommonAlignment(m.style), parent.rtl) == RightAlign()) TCols2(TFillX(), f) else f)
 	|> (\f ->
 		if (contains(m.style, MTop()) || contains(m.style, MBottom()))
 			TTweak([TAlign(zero, const(b2d(contains(m.style, MBottom()))))], f, TFillY())
@@ -953,7 +991,7 @@ MFabSpeedDial2T(manager : MaterialManager, parent : MFocusGroup, m : MFabSpeedDi
 					sameLightMColor(parent)
 			])
 		).textStyle;
-	textBgStyle = [MFill(extractStruct(m.style, MDialogColor(mobile == getLightBackground(parent))))];
+	textBgStyle = [MFill(extractStruct(m.style, MDialogMColor(mobile == getLightBackground(parent))))];
 	buttonBorder = (mainSize - size) / 2.;
 	mainLabelSize = getTWordMetrics(MText2T(parent, m.label, textStyle), makeTree()).width + 8.;
 	textSize = either(maxA(map(m.actions, \a -> getTWordMetrics(MText2T(parent, a.label, textStyle), makeTree()).width)), 142.) + 8.;
@@ -974,7 +1012,7 @@ MFabSpeedDial2T(manager : MaterialManager, parent : MFocusGroup, m : MFabSpeedDi
 				TFixed(8., 0.),
 			switch (a) {
 				MFabIconButton(icon, __, __, iconStyle): {
-					bgColor = extractStruct(iconStyle, getAccentColor(parent));
+					bgColor = extractMColor(parent, iconStyle, MAccentColor());
 					iconColor = extractStruct(iconStyle, MIconColor(MTextMColor(bgColor))).color;
 
 					MIconButton2T(
@@ -1010,7 +1048,7 @@ MFabSpeedDial2T(manager : MaterialManager, parent : MFocusGroup, m : MFabSpeedDi
 						TGroup2(
 							MShape(
 								parent,
-								[MFill(MDialogColor(getLightBackground(parent)))],
+								[MFill(MDialogMColor(getLightBackground(parent)))],
 								TFixed(size, size),
 								"MAvatar"
 							),
@@ -1069,7 +1107,7 @@ MFabSpeedDial2T(manager : MaterialManager, parent : MFocusGroup, m : MFabSpeedDi
 }
 
 MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	if (contains(m.style, MNewChip()) || (isUrlParameterTrue("new") && !isUrlParameterTrue("old_chip")))
+	if (contains(m.style, MNewChip()))
 		MNewChip2T(manager, parent, m, m2t)
 	else {
 
@@ -1090,7 +1128,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 		if (fgetValue(selectable.enabled)) reverseBehaviour(selectable.selected)
 	};
 	width = tryExtractStruct(style, MWidth(-1.));
-	color = extractStruct(style, getPrimaryColor(parent));
+	color = extractMColor(parent, style, MPrimaryColor());
 	shadeColor = MColor(color.color, min(900, color.shade + 200), color.accent);
 	icon : Material =
 		extractStructMany(style, MAvatar("", []))
@@ -1099,14 +1137,23 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 				f[0]
 			else
 				extractStructMany(style, MLetterIcon("", [], []))
-				|> (\f2 -> if (length(f2) > 0) f2[0] else TEmpty())
+				|> (\f2 ->
+					if (length(f2) > 0)
+						f2[0]
+					else
+						extractStructMany(style, MIcon("", []))
+						|> (\f3 -> if (length(f3) > 0) f3[0] else TEmpty())
+				)
 		);
 	focusEnabled = make(true);
 	focusHover = make(false);
 	focusDown = make(false);
 	focusFocused = make(false);
 
-	focusState = [MEnabled(enabled), MOnClick(onClick), MRippleType(const(MNoRipple())), MButtonTitle(const(m.title)), MAdditionalRollOutCheck()];
+	focusState = concat(
+		[MEnabled(enabled), MOnClick(onClick), MRippleType(const(MNoRipple())), MButtonTitle(const(m.title)), MAdditionalRollOutCheck()],
+		extractStructMany(style, MTooltipText(const("")))
+	);
 
 	(\p -> (\hov, sel -> {
 		col : MColor = if (sel) {if (hov) MTextMColor(shadeColor) else MTextMColor(color) } else if (hov) MWhite() else MBlack();
@@ -1132,7 +1179,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 									replaceStruct(iconStyle, MIconSize(32.))
 									|> (\f2 ->
 										if (hov) {
-											extractStruct(iconStyle, getPrimaryColor(parent))
+											extractMColor(parent, iconStyle, MPrimaryColor())
 											|> (\f3 -> replaceStruct(f2, MColor(f3.color, min(900, f3.shade + 200), f3.accent)))
 										} else f2),
 									textStyle
@@ -1141,6 +1188,9 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 						}
 						MAvatar(url, avatarStyle): {
 							MAvatar2T(p, url, replaceStruct(avatarStyle, MIconSize(32.)))
+						}
+						MIcon(name, iconStyle): {
+							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, replaceStruct(iconStyle, MIconSize(20.))))
 						}
 						default: TEmpty();
 					}
@@ -1153,6 +1203,12 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 		|> (\f ->
 			if (contains(style, MCloseButton()) || isSome(onClose)) {
 				onClickClose = \ -> eitherFn(onClose, \oc -> if (oc.close()) next(visible, false), \ -> next(visible, false));
+				defaultCloseIconStyle = [MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)];
+				closeIconStyle = eitherMap(
+					tryExtractStruct(style, MCustomCloseButtonIconStyle(\__, __ -> [])),
+					\customStyle : MCustomCloseButtonIconStyle -> replaceStructMany(defaultCloseIconStyle, customStyle.styleFn(hov, sel)),
+					defaultCloseIconStyle
+				);
 
 				MIconButton2T(
 					manager,
@@ -1160,7 +1216,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 					MIconButton(
 						extractStruct(style, MCustomCloseButtonIcon("cancel")).icon,
 						onClickClose,
-						[MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)],
+						closeIconStyle,
 						[MEnabled(enabled), MRippleType(const(MNoRipple())), MFocusEnabled(const(false)), MDisableHover(),
 							MCursorShape(const(DefaultCursor())), AccessRole("")]
 					),
@@ -1269,9 +1325,9 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 	outlined = contains(style, MOutlined());
 	strokeWidth = 1.;
 
-	selectedColor = extractStruct(style, getPrimaryColor(parent));
+	selectedColor = extractMColor(parent, style, MPrimaryColor());
 	colorOpacityDef = extractStruct(style, FillOpacity(1.)).opacity;
-	unselectedColor = extractStruct(style, MUnselectedColor(if (outlined) MWhite() else MGrey(300))).color;
+	unselectedColor = MThemeColor2MColor(parent, extractStruct(style, MUnselectedColor(if (outlined) MWhite() else MGrey(300))).color);
 
 	growth = make(0.);
 	fade = make(0.);
@@ -1281,19 +1337,27 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 		eitherMap(
 			tryExtractStruct(style, MAvatar("", [])),
 			\v -> Some(v),
-			tryExtractStruct(style, MLetterIcon("", [], [])),
+			eitherMap(
+				tryExtractStruct(style, MLetterIcon("", [], [])),
+				\v -> Some(v),
+				tryExtractStruct(style, MIcon("", []))
+			)
 		);
 
-	focusState = [
-		MEnabled(enabled),
-		MOnClick(onClick),
-		MMousePosition(mousePosition),
-		MButtonTitle(const(m.title)),
-		MAdditionalRollOutCheck(),
-		MOnMouseUp(\__, ins -> nextDistinct(isInside, ins))
-	];
+	focusState = concat(
+		[
+			MEnabled(enabled),
+			MOnClick(onClick),
+			MMousePosition(mousePosition),
+			MButtonTitle(const(m.title)),
+			MAdditionalRollOutCheck(),
+			MPassClicks(),
+			MOnMouseUp(\__, ins -> nextDistinct(isInside, ins))
+		],
+		extractStructMany(style, MTooltipText(const("")))
+	);
 
-	(\p -> (\textColor, isEnabled -> {
+	(\p -> (\textColor, isEnabled, selected, hovered -> {
 		isRTL = p.rtl;
 
 		titleStyle =
@@ -1326,6 +1390,9 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						MAvatar(url, avatarStyle): {
 							MAvatar2T(p, url, replaceStruct(avatarStyle, MIconSize(32.)))
 						}
+						MIcon(name, iconStyle): {
+							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, replaceStruct(iconStyle, MIconSize(20.))))
+						}
 						default: TEmpty();
 					}
 					|> (\f2 -> TAlpha(fif(isEnabled, const(1.), const(defaultDisabledItemOpacity(getLightBackground(parent)))), f2))
@@ -1339,11 +1406,19 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 			if (contains(style, MCloseButton()) || isSome(onClose)) {
 				onClickClose = \ -> eitherFn(onClose, \oc -> if (oc.close()) next(visible, false), \ -> next(visible, false));
 
+				closeIconStyleFn = tryExtractStruct(style, MCustomCloseButtonIconStyle(\__, __ -> []));
+
 				iconStyle =
-					fselect2(textColor, isEnabled, FLift2(\col : MColor, en -> {
+					fselect4(textColor, isEnabled, selected, hovered, \col : MColor, en, sel, hov -> {
 						op = if (col == MWhite()) 1. else 0.32;
-						ifArrayPush([MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)], !en, MIconDisabled())
-					}));
+						defaultCloseIconStyle = [MIconSize(20.), FillOpacity(op), col, MIconButtonBorder(0.)];
+
+						eitherMap(closeIconStyleFn, \customStyle : MCustomCloseButtonIconStyle ->
+							replaceStructMany(defaultCloseIconStyle, customStyle.styleFn(sel, hov)),
+							defaultCloseIconStyle
+						)
+						|> (\arr -> ifArrayPush(arr, !en, MIconDisabled()))
+					});
 
 				TSelect(iconStyle, \st ->
 					MIconButton2T(
@@ -1409,7 +1484,7 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						if (down) 0.04 else if (focused) 0.12 else if (hov) 0.04 else 0.
 					);
 
-				TCopySize2(makeChipFn(textColor, isEnabled), \sz, tr ->
+				TCopySize2(makeChipFn(textColor, isEnabled, selected, hovered), \sz, tr ->
 					TGroup([
 						TSelect2(mainLayerColor, mainLayerOpacity, \col, op ->
 							MShape(p, [MFill(col), FillOpacity(op)], sz, "MChip")
@@ -1500,4 +1575,18 @@ MRawButton2T(manager : MaterialManager, parent : MFocusGroup, m : MRawButton, m2
 			),
 		m2t
 	);
+}
+
+extractMFloatingButtonCommonAlignment(style : [MFabStyle]) -> CommonAlignment {
+	alignments = filtermap(style, \st ->
+		switch (st) {
+			MLeft() : {a : Maybe<CommonAlignment> = Some(LeftAlign()); a};
+			MRight() : Some(RightAlign());
+			MStart() : Some(StartAlign());
+			MEnd() : Some(EndAlign());
+			default : None();
+		}
+	);
+
+	extractCommonAlignment(alignments)
 }

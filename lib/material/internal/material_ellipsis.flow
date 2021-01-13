@@ -103,20 +103,24 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 	minWidth = extractStruct(m.style, MMinWidth(-1.)).width;
 	tooltipMaxWidth = extractStruct(m.style, MTooltipMaxWidth(400.0)).width;
 	lines = extractStruct(m.style, MMaxLines(1)).lines;
-	rightAlign = contains(m.style, RightAlign());
-	centerAlign = contains(m.style, CenterAlign());
+	textAlignment = maybeMap(tryExtractStruct(m.style, MEllipsisTextAlignment(StartAlign())), \al -> al.alignment);
+	rightAlign0 = contains(m.style, RightAlign());
+	centerAlign0 = contains(m.style, CenterAlign());
+	rightAlign = rightAlign0 || eitherMap(textAlignment, \al -> !centerAlign0 && commonAlignment2abs(al, parent.rtl) == RightAlign(), false);
+	centerAlign = centerAlign0 || eitherMap(textAlignment, \al -> !rightAlign0 && al == CenterAlign(), false);
 	truncateFromStart = contains(m.style, MTruncateFromStart());
 	isTruncated = extractStruct(m.style, MTextIsTruncated(make(false))).isTruncated;
 	setIsTruncated = \v -> nextDistinct(isTruncated, v);
 	isFullWidth = contains(m.style, MFullWidth());
 	interlineSpacing = extractStruct(m.style, InterlineSpacing(0.0));
 	escapeHTML = extractStruct(m.style, EscapeHTML(true));
-	unescape = \s -> if (escapeHTML.escape) s else unescapeHtml2(s);
+	unescape = if (escapeHTML.escape) idfn else unescapeSpacesIntoTags;
 	text = unescape(m.text);
 
-	charStyle = addMLangFontFamily(text, MTextStyle2CharacterStyleDef(parent, mTextStyle, Triple(getTextColor(parent), getFontStyle(parent), true)));
+	charStyle = MTextStyle2TCharacterStyle(parent, text, mTextStyle);
 	textT = TText(text, charStyle);
 	fullWidth = getTWordMetrics(textT, makeTree()).width;
+	maybeApply(tryExtractStruct(m.style, MEllipsisTextGetFullWidth(nop1)), \getfw -> getfw.fn(fullWidth));
 	variants = arrayPush(extractStruct(m.style, MTextVariants([])).variants, m.text);
 	variantWidths = map(variants, \v -> getTWordMetrics(TText(v, charStyle), makeTree()).width);
 
@@ -144,7 +148,15 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 		} else {
 			currentText = make(text);
 
-			TDynamicText(fselect(currentText, FLift(unescape)), concat(charStyle, [ParagraphWidth(availableWidth), interlineSpacing]))
+			(if (lines > 1)
+				TParagraph(
+					fselect(currentText, FLift(unescape)),
+					concat3(charStyle, [ParagraphWidth(availableWidth), interlineSpacing], eitherMap(textAlignment, v2a, []))
+				)
+			else {
+				ttext = TSelect(currentText, \txt -> TText(unescape(txt), charStyle));
+				TAvailableWidth(eitherMap(textAlignment, \align -> TAlignHorizontal(align)(ttext), ttext), availableWidth);
+			})
 			|> (\t ->
 				TConstruct(
 					[
@@ -186,8 +198,11 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 									[sameLightMColor(parent), MTooltipDesktop(), CropWords(true), MWidth(min(fullWidth, tooltipMaxWidth)), escapeHTML]
 								)
 						),
-						[MEnabled(showTooltip)]
-						|> (\f2 -> ifArrayPush(f2, disableOnDragging, MDisableOnDragging()))
+						concatA([
+							[MEnabled(showTooltip)],
+							extractStructMany(m.style, MTooltipExternalFocused(const(false))),
+							if (disableOnDragging) [MDisableOnDragging()] else []
+						])
 					),
 					m2t
 				)
@@ -208,4 +223,15 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 			)
 		)
 	}
+}
+
+unescapeSpacesIntoTags(s : string) -> string{
+	strReplaceCustom2(s, "&#32;", \st, e -> {
+		tagsCount = stringFold(strLeft(s, st), 0, \acc, c ->
+			if (fromCharCode(c) == "<") acc + 1
+			else if (fromCharCode(c) == ">") acc - 1
+			else acc
+		);
+		if (tagsCount > 0) Some(" ") else	None()
+	})
 }

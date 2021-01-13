@@ -7,6 +7,7 @@ import tools/flowc/backends/javascript/fi2javascript_utils;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/freevars;
 import tools/flowc/manipulation/find_unused;
+import text/compression/lzw;
 
 export {
 	fiJsCompileToplevel(
@@ -78,16 +79,20 @@ fiJsCompileToplevel(cfg : FiJsConfig, ctx : FiJsToplevelContext, decl : FiDeclar
 	toplevel = switch (decl : FiDeclaration) {
 		FiNativeDec(name0, io, type, nativeName, fallback, declStart, defiStart) : {
 			no_fallback = \ -> {
-				if (cfg.debug) {
-					name = fiJsPrefixedName(cfg, ctx, name0);
-
-					if (!startsWith(nativeName, "RenderSupport")) {
-						"var " + (if (name == "length") "length__" else name) + "=" +
-						(if (cfg.modules != "") "R." else "") +
-						fiJsMangleNativeName(ctx.ovl, nativeName) + ";"
-					} else ""
+				if (containsSet(cfg.externNatives, nativeName)) {
+					(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + fiJsMangleNativeName(ctx.ovl, nativeName, false) + ";";
 				} else {
-					(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName)+";";
+					if (cfg.debug) {
+						name = fiJsPrefixedName(cfg, ctx, name0);
+
+						if (!startsWith(nativeName, "RenderSupport")) {
+							"var " + (if (name == "length") "length__" else name) + "=" +
+							(if (cfg.modules != "") "R." else "") +
+							fiJsMangleNativeName(ctx.ovl, nativeName, true) + ";"
+						} else ""
+					} else {
+						(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName, true) + ";";
+					}
 				}
 			}
 			switch (fallback) {
@@ -95,7 +100,7 @@ fiJsCompileToplevel(cfg : FiJsConfig, ctx : FiJsToplevelContext, decl : FiDeclar
 				FiLambda(__, __, __, __): {
 					// fcPrintln("FcNative fallback: " + toString(e));
 					// TODO: TS processing
-					mn = fiJsMangleNativeName(ctx.ovl, nativeName);
+					mn = fiJsMangleNativeName(ctx.ovl, nativeName, true);
 					fd =
 						FiFunctionDec(
 							name0,
@@ -236,7 +241,7 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 	exprstr =
 		(if (commentsBefore == "") "" else commentsBefore) +
 	*/
-	switch (expr : FiExp) {
+	code = switch (expr : FiExp) {
 		// TODO: Not declared
 		// FcForeign(a,b,c): fail0("FbForeign not supported");
 		FiVoid(__): "null";
@@ -279,25 +284,7 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 			}
 
 		FiString(s, __): {
-			// We use Cons() concatenation instead of string concatenation,
-			// because structures creation and list2string() call is
-			// much cheaper than usual string concatenation.
-			f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
-				Cons(if (code < 0x20) {
-						if (code == 0x09) "\\t"
-						else if (code == 0x0a) "\\n"
-						else if (code == 0x0d) "\\r"
-						else "\\u"+lpad(formatHex(code), "0", 4);
-					} else if (code >= 0x80) {
-						"\\u"+lpad(formatHex(code), "0", 4)
-					} else {
-						if (code == 0x22) "\\\""
-						else if (code == 0x3c) "<\"+\""
-						else if (code == 0x5c) "\\\\"
-						else fromCharCode(code);
-					}, acc)
-			});
-			list2string(Cons("\"", f));
+			generateJsString(s);
 		}
 
 		FiVar(x, __, __): {
@@ -576,6 +563,51 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 	// TODO: Comments processing
 	//	endComment = jsConvertComment(jsLnComment(ctx : FiJsToplevelContext, ei.end));
 	//	exprstr + (if (endComment == "") "" else " " + endComment);
+
+	if (false && fiExpIsData(expr)) {
+		flowstring = prettyFiExp(dummyPretty, expr);
+		compressed = compressLzw(code);
+
+		switch (compressed) {
+			CompressedLzw(s): {
+				jsdata = "eval(A9__decompressLzw(c$7(" + generateJsString(s) + ")))";
+				if (true || strlen(jsdata) < strlen(code)) {
+					println("Worked");
+					jsdata
+				} else code;
+			}
+			CompressedNone(s): code;
+			CompressedLzwbp(s): {
+				println("TODO: Consider to compress this");
+				code;
+			}
+		}
+	} else code;
+}
+
+generateJsString(s : string) -> string {
+	// We use Cons() concatenation instead of string concatenation,
+	// because structures creation and list2string() call is
+	// much cheaper than usual string concatenation.
+	f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
+		Cons(if (code < 0x20) {
+				if (code == 0x00) "\\0"
+				else if (code == 0x09) "\\t"
+				else if (code == 0x0a) "\\n"
+				else if (code == 0x0d) "\\r"
+				else "\\x"+lpad(formatHex(code), "0", 2);
+			} else if (code >= 0x100) {
+				"\\u"+lpad(formatHex(code), "0", 4)
+			} else if (code >= 0x80) {
+				"\\x"+lpad(formatHex(code), "0", 2)
+			} else {
+				if (code == 0x22) "\\\""
+				else if (code == 0x3c) "<\"+\""
+				else if (code == 0x5c) "\\\\"
+				else fromCharCode(code);
+			}, acc)
+	});
+	list2string(Cons("\"", f));
 }
 
 fiJsCompileToReturn(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string, unusedVars : Set<string>) {

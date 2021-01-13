@@ -14,7 +14,6 @@ export {
 }
 
 fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig, callback : ()  -> void) -> void {
-
 	program = if (isConfigParameterTrue(orig_program.config.config, "optimize")) {
 		makeBool = \v -> { e : FiExp = FiBool(v, -1); e };
 		optimizeCode(
@@ -25,8 +24,7 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 		)
 	} else if (isConfigParameterTrue(orig_program.config.config, "specialize")) {
 		specializeProgramJS(cfg, orig_program, true)
-	}
-	else orig_program;
+	} else orig_program;
 
 	jsmode = fiJavascriptMode(cfg);
 	fcVerbose(cfg, 0, "Making Javascript (" + jsmode+ ") '" + cfg.outputfile + "'...");
@@ -37,6 +35,7 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 
 	// Store all declarations of a program into one large array.
 	// Declarations stored in init order (order of their appearance in files).
+	// The first is the flowfile, the second is the list of declarations in that file.
 	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
 
 	// 'nativeNames' is a relation between native names and
@@ -63,7 +62,7 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 	// stored in files, selected depending on cfg.jsmode and asynchronous functions.
 
 	// All structs resides then in ovl.structs (side effect of fcGetFcStructDefs)
-	// and reffered from fc2javascript_compile module.
+	// and referred from fc2javascript_compile module.
 	headerCode = fiGetHeaderCode(cfg, program, ovl, hasConcurrencyCalls);
 
 	// Create directory for separated modules, if necessary
@@ -78,7 +77,8 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 
 	// Generating JS code for all declarations.
 	fcVerbose(cfg, 0, "Generating JS code for declarations...");
-	modulesCode = foldi(decls, Cons(if (cfg.modules != "") "" else headerCode, makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+	modulesCode = foldi(decls, Cons(if (cfg.modules != "") "" else headerCode, makeList()), 
+		\i, acc, p: Pair<string, [FiDeclaration]> -> {
 
 		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating JS code for module " + p.first);
 
@@ -169,9 +169,20 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 		}
 	});
 
-	fiLinkRuntime(cfg, program, ovl, modulesCode, \runtimeContents -> {
+	fiLinkRuntime(cfg, program, ovl, modulesCode, \runtime -> {
 		if (isConfigParameterTrue(program.config.config, "js-report-sizes")) {
 			reportFileSizes(^sizeTracker, cfg.threadId);
+		}
+		runtimeContents = if (cfg.externLib == "") runtime else {
+			if (!fileExists(cfg.externLib)) {
+				fcPrintln("JS external library '" + cfg.externLib + "' doesn't exist.", cfg.threadId);
+				runtime
+			} else {
+				if (cfg.verbose > 0) {
+					fcPrintln("Adding JS external library '" + cfg.externLib + "'", cfg.threadId);
+				}
+				runtime + "\n\n// External library: " + cfg.externLib + "\n\n" + getFileContent(cfg.externLib) + "\n\n";
+			}
 		}
 		// When Haxe compilation fails, runtimeContent == ""
 		if (runtimeContents != "") {

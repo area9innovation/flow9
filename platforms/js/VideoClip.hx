@@ -3,12 +3,9 @@ import js.html.Element;
 import js.Promise;
 
 import pixi.core.display.Bounds;
-import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
-import pixi.core.textures.BaseTexture;
-import pixi.core.renderers.canvas.CanvasRenderer;
 
 using DisplayObjectHelper;
 
@@ -37,7 +34,7 @@ class VideoClip extends FlowContainer {
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
-	private var videoWidget : Dynamic;
+	public var videoWidget : Dynamic;
 	private var widgetBounds = new Bounds();
 
 	public static inline function NeedsDrawing() : Bool {
@@ -47,7 +44,9 @@ class VideoClip extends FlowContainer {
 				if (videoWidget == null) {
 					return false;
 				}
-				v.checkTimeRange(videoWidget.currentTime, true);
+				// On iPad video with time range can return currentTime, which is slightly ahead of the startTime. So let's be less strict in this case.
+				var checkingGap = Platform.isIOS ? 0.5 : 0.0;
+				v.checkTimeRange(videoWidget.currentTime, true, checkingGap);
 
 				if (RenderSupport.RendererType != "html") {
 					if (videoWidget.width != videoWidget.videoWidth || videoWidget.height != videoWidget.videoHeight) {
@@ -79,9 +78,9 @@ class VideoClip extends FlowContainer {
 		this.positionFn = positionFn;
 	}
 
-	private function checkTimeRange(currentTime : Float, videoResponse : Bool) : Void {
+	private function checkTimeRange(currentTime : Float, videoResponse : Bool, gap : Float = 0) : Void {
 		try { // Crashes in IE sometimes
-			if (currentTime < startTime && startTime < videoWidget.duration) {
+			if (currentTime < startTime - gap && startTime < videoWidget.duration) {
 				videoWidget.currentTime = startTime;
 				positionFn(videoWidget.currentTime);
 			} else if (endTime > 0 && endTime > startTime && currentTime >= endTime) {
@@ -115,6 +114,7 @@ class VideoClip extends FlowContainer {
 		videoWidget.crossOrigin = Util.determineCrossOrigin(filename);
 		videoWidget.className = 'nativeWidget';
 		videoWidget.setAttribute('playsinline', true);
+		videoWidget.setAttribute('autoplay', true);
 		videoWidget.style.pointerEvents = 'none';
 
 		for (source in sources) {
@@ -203,6 +203,9 @@ class VideoClip extends FlowContainer {
 	public function setVolume(volume : Float) : Void {
 		if (videoWidget != null) {
 			videoWidget.volume = volume;
+			if (Platform.isIOS) {
+				videoWidget.muted = volume == 0.0;
+			}
 		}
 	}
 
@@ -216,9 +219,11 @@ class VideoClip extends FlowContainer {
 		createVideoClip(filename, startPaused);
 	}
 
-	public function playVideoFromMediaStream(mediaStream : js.html.MediaStream, startPaused : Bool) : Void {
+	public function playVideoFromMediaStream(mediaStream : FlowMediaStream, startPaused : Bool) : Void {
 		createVideoClip("", startPaused);
-		videoWidget.srcObject = mediaStream;
+		videoWidget.srcObject = mediaStream.mediaStream;
+		mediaStream.videoClip = this;
+		mediaStream.emit("attached");
 	}
 
 	public function setTimeRange(start : Float, end : Float) : Void {
@@ -334,6 +339,7 @@ class VideoClip extends FlowContainer {
 
 	public function pauseVideo() : Void {
 		if (loaded && !videoWidget.paused) {
+			autoPlay = false;
 			videoWidget.pause();
 			playingVideos.remove(this);
 		}
@@ -341,6 +347,7 @@ class VideoClip extends FlowContainer {
 
 	public function resumeVideo() : Void {
 		if (loaded && videoWidget.paused) {
+			autoPlay = true;
 			var playPromise : Promise<Dynamic> = videoWidget.play();
 			if (playPromise != null) {
 				playPromise.then(
@@ -428,11 +435,15 @@ class VideoClip extends FlowContainer {
 
 	private function onStreamPlay() : Void {
 		if (videoWidget != null && !videoWidget.paused) {
-			for (l in streamStatusListener) {
-				l("FlowGL.User.Resume");
-			}
+			if (!autoPlay) {
+				videoWidget.pause();
+			} else {
+				for (l in streamStatusListener) {
+					l("FlowGL.User.Resume");
+				}
 
-			playFn(true);
+				playFn(true);
+			}
 		}
 	}
 

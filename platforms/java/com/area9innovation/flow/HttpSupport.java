@@ -127,13 +127,19 @@ public class HttpSupport extends NativeHost {
 	 			urlParameters = urlParameters + this.encodeUrlParameter(key, value);
 			}
 			HttpURLConnection con = null;
+			byte[] postData = null;
 			if (method == "POST") {
-				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
-				int postDataLength = postData.length;				
 				URL obj = new URL(url);
 				con = (HttpURLConnection) obj.openConnection();
+				if (data != null & data != "") {
+					postData = data.getBytes(StandardCharsets.UTF_8);
+					con.setRequestProperty("Content-Type", "application/raw");
+				} else {
+					postData = urlParameters.getBytes(StandardCharsets.UTF_8);
+					con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+				};
+				int postDataLength = postData.length;
 				this.addHeaders(con, headers);
-				con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 				con.setRequestProperty("charset", "utf-8");
 				con.setRequestMethod(method);
 				con.setDoOutput(true);	
@@ -161,7 +167,7 @@ public class HttpSupport extends NativeHost {
 			con.setReadTimeout(timeout.intValue());
 
 	 		// Add data
-			if (data != null) {
+			if (data != null & data != "") {
 				try {
 					byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), data);
 					con.getOutputStream().write(converted/*data.getBytes("UTF8")*/);

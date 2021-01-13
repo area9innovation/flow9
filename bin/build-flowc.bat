@@ -66,4 +66,4 @@ echo }>> %VERFILE%
 )
 
 call flowc1 jar=flowc_1 tools/flowc/flowc.flow
-move flowc_1.jar tools/flowc/flowc.jar
+move flowc_1.jar %BASE_DIR%\tools\flowc\flowc.jar
