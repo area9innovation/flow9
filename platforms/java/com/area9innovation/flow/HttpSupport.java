@@ -167,7 +167,7 @@ public class HttpSupport extends NativeHost {
 			con.setReadTimeout(timeout.intValue());
 
 	 		// Add data
-			if (data != null) {
+			if (data != null & data != "") {
 				try {
 					byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), data);
 					con.getOutputStream().write(converted/*data.getBytes("UTF8")*/);

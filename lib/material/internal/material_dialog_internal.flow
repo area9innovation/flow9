@@ -87,6 +87,17 @@ renderMDialog2(
 	m2t : (Material, MFocusGroup) -> Tropic,
 	renderFn : (Tropic) -> () -> void) -> void {
 
+	if (!fgetValue(closeWhen)) renderMDialog3(manager, closeWhen, style, content, m2t, renderFn)
+}
+
+renderMDialog3(
+	manager : MaterialManager,
+	closeWhen : Transform<bool>,
+	style : [MDialogStyle],
+	content : Material,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	renderFn : (Tropic) -> () -> void) -> void {
+
 	us = ref [];
 	disp = \ -> dispUnsA(us);
 
@@ -103,10 +114,10 @@ renderMDialog2(
 
 	u1 =
 		switch (closeWhen : Transform<bool>) {
-			DynamicBehaviour(__, __): {
-				subscribe2(closeWhen, \__ -> disp());
+			DynamicBehaviour(val, __): {
+				subscribe2(closeWhen, \__ -> if (^val) disp());
 			}
-			default: makeSubscribe2(closeWhen, \__ -> disp())();
+			default: makeSubscribe2(closeWhen, \val -> if (val) disp())();
 		};
 
 	title = tryExtractStruct(style, MDialogTitle(""));
@@ -166,7 +177,7 @@ renderMDialog2(
 	point = make(zeroPoint);
 	insideDialogB = make(false);
 	pressedOutsideB = fand(down, fnot(insideDialogB));
-	noAnimation = contains(style, MDialogNoAnimation()) || contains(style, MDialogFullScreen())
+	noAnimation = contains(style, MDialogNoAnimation()) || (!cpp && contains(style, MDialogFullScreen()))
 		|| !manager.theme.enableAnimations || noCenter || isSome(draggable);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
 	cs = if (isMaterialLogLevelEnabled(MaterialError())) captureStringCallstack() else "";
@@ -573,7 +584,8 @@ renderMDialog2(
 					extractStruct(style, UpdateMaterialTheme(idfn)),
 					MSetReady(animated)
 				]
-				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MSetRTL(false)))),
+				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MSetRTL(false))))
+				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MIsReady(make(false))))),
 				t
 			)
 		)
@@ -639,22 +651,10 @@ renderMDialog2(
 		})
 	|> (\t ->
 		us :=
-			concat([
+			concatA([[
 				u1,
 				zUns,
-				onClose,
-				\ -> maybeApply(previousFocus, \pf -> {
-					deferred(\ -> {
-						if (isNone(getCurrentFocusedItem(manager)) && fgetValue(pf.focusEnabled)) {
-							nextDistinct(pf.focused, true);
-						}
-					});
-
-					if (isNone(manager.downInsideFocus)) {
-						manager.downInsideFocus ::= Some(pf);
-						deferred(\ -> manager.downInsideFocus ::= None());
-					}
-				})
+				onClose
 			],
 			if (fullWindow) [
 				{
@@ -673,8 +673,22 @@ renderMDialog2(
 			else if (fgetValue(fwZorder) < 0 || zorder < fgetValue(fwZorder))
 				[renderFn(t)]
 			else
-				[makeSubscribeUns(^fwAnimated, \an -> if (an) [renderFn(t)] else [])()]
-		)
+				[make2SubscribeUnsTimer(fwZorder, ^fwAnimated, 1, \fzorder, an -> if (zorder >= fzorder && an) [renderFn(t)] else [])()],
+			[
+				\ -> maybeApply(previousFocus, \pf -> {
+					deferred(\ -> {
+						if (isNone(getCurrentFocusedItem(manager)) && fgetValue(pf.focusEnabled)) {
+							nextDistinct(pf.focused, true);
+						}
+					});
+
+					if (isNone(manager.downInsideFocus)) {
+						manager.downInsideFocus ::= Some(pf);
+						deferred(\ -> manager.downInsideFocus ::= None());
+					}
+				})
+			]
+		])
 	);
 }
 

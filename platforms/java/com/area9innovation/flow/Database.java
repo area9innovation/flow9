@@ -9,7 +9,7 @@ public class Database extends NativeHost {
 
     private Struct illegal = null;
 
-    private String dbErr = "";
+    private Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
 
     /*
       This two classes intended to store relations between
@@ -27,6 +27,12 @@ public class Database extends NativeHost {
         public Connection con = null;
         public String err = "";
         public RSObject lrurs = null;
+        private DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSS");
+        private HashSet<String> intOverflowFields = new HashSet<String>();
+
+        public DBObject() {
+            dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
+        }
 
         public void cleanRS() {
             if (lrurs != null) {
@@ -50,6 +56,15 @@ public class Database extends NativeHost {
                 } catch (SQLException e) {
                     printException(e);
                 }
+            }
+        }
+
+        public void checkIntOverflow() {
+            if (!intOverflowFields.isEmpty()) {
+                // Hope it will never happen with id fields,
+                // otherwise we should support long integer in the rule interpreter
+                System.out.println("Warning! These fields " + intOverflowFields.toString() + " contains values that are out of 32-bit integers");
+                intOverflowFields.clear();
             }
         }
     }
@@ -79,7 +94,7 @@ public class Database extends NativeHost {
             err = "";
             dbObj = dbo;
 
-            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
+            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
             boolean resType = stmt.execute(query, Statement.RETURN_GENERATED_KEYS);
             if (resType) {
                 rs = stmt.getResultSet();
@@ -93,11 +108,14 @@ public class Database extends NativeHost {
 
     public Database() {
         try {
-            Class.forName("com.mysql.cj.jdbc.Driver").newInstance();
-            Integer strid = runtime.struct_ids.get("IllegalStruct");
+            Class.forName("com.mysql.cj.jdbc.Driver").getConstructor().newInstance();
+        } catch (Exception e) {
+            printException(e);
+        }
+        try {
+            Integer strid = runtime.struct_ids.get("IllegalStruct"); // IllegalStruct() could be not used in the code
             illegal = runtime.struct_prototypes[strid];
         } catch (Exception e) {
-
         }
     }
 
@@ -105,7 +123,7 @@ public class Database extends NativeHost {
         DBObject db = new DBObject();
         try {
 			if (socket.isEmpty()) {
-	            db.con = DriverManager.getConnection(String.format("jdbc:mysql://%s:%d/%s?allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&autoReconnect=true&characterEncoding=UTF-8", host, port, database), user, password);
+	            db.con = DriverManager.getConnection(String.format("jdbc:mysql://%s:%d/%s?allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&autoReconnect=true&tcpKeepAlive=true&characterEncoding=UTF-8", host, port, database), user, password);
 			} else {
 				// This makes H2 work
 				Class.forName("org.h2.Driver");
@@ -114,12 +132,10 @@ public class Database extends NativeHost {
 				db.con = DriverManager.getConnection(socket, user, password);
 			}
             db.err = "";
-            dbErr = "";
             return db;
         } catch (SQLException se) {
-            System.out.println(se.getMessage());
-            db.err = se.getMessage();
-            dbErr = se.getMessage();
+            db.err = getSqlErrorMessage(se);
+            System.out.println("Error on connect db: " + db.err);
             return null;
         } catch (Exception e) {
             printException(e);
@@ -128,7 +144,7 @@ public class Database extends NativeHost {
     }
 
     public final String connectExceptionDb(Object database) {
-        if (database == null) return dbErr;
+        if (database == null) return "Empty database object";
         return ((DBObject) database).err;
     }
 
@@ -158,8 +174,9 @@ public class Database extends NativeHost {
             RSObject rso = new RSObject(dbObj, query);
             return (Object) rso;
         } catch (SQLException se) {
-            System.out.println(se.getMessage());
-            ((DBObject) database).err = se.getMessage();
+            String err = getSqlErrorMessage(se);
+            System.out.println("Error on request db: " + err);
+            ((DBObject) database).err = err;
             return null;
         } catch (Exception e) {
             printException(e);
@@ -168,10 +185,15 @@ public class Database extends NativeHost {
     }
 
     public final String requestExceptionDb(Object database) {
-        if (database != null && ((DBObject) database).err != null) {
-            return ((DBObject) database).err;
-        } else {
-            return "";
+        try {
+            if (database != null && ((DBObject) database).err != null) {
+                return ((DBObject) database).err;
+            } else {
+                return "";
+            }
+        } catch (Exception e) {
+            printException(e);
+            return "Unknown Exception";
         }
     }
 
@@ -189,9 +211,6 @@ public class Database extends NativeHost {
             } else {
                 return -1;
             }
-        } catch (SQLException e) {
-            System.out.println(e.getMessage());
-            return -1;
         } catch (Exception e) {
             printException(e);
             return -1;
@@ -209,9 +228,6 @@ public class Database extends NativeHost {
             } else {
                 return 0;
             }
-        } catch (SQLException se) {
-            System.out.println(se.getMessage());
-            return 0;
         } catch (Exception e) {
             printException(e);
             return 0;
@@ -221,10 +237,10 @@ public class Database extends NativeHost {
     public final Boolean hasNextResultDb(Object result) {
         RSObject res = (RSObject) result;
         try {
-            if (res == null) return false;
+            if (res == null || res.rs == null) return false;
             return notEmptyResultSet(res.rs);
         } catch (SQLException se) {
-            res.err = se.getMessage();
+            res.err = getSqlErrorMessage(se);
             return false;
         } catch (Exception e) {
             printException(e);
@@ -236,59 +252,102 @@ public class Database extends NativeHost {
         return (rs.isBeforeFirst() || rs.getRow() > 0) && !(rs.isLast() || rs.isAfterLast());
     }
 
-    // Collect single row of nulls in order to preserve columns names
-    // Can be used as a special case for empty tables
-    private Struct[] getNullRowValues(ResultSet rs) throws SQLException {
+    private String[] getFieldNames(ResultSet rs) throws SQLException {
         ResultSetMetaData rsmd = rs.getMetaData();
         int columnCount = rsmd.getColumnCount();
-        Struct[] values = new Struct[columnCount];
-        for (int i = 1; i <= columnCount; i++) {
-            String name = rsmd.getColumnLabel(i);
-            values[i - 1] = runtime.makeStructValue("DbNullField", new Object[]{name}, illegal);
+        String[] fieldNames = new String[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            fieldNames[i] = rsmd.getColumnLabel(i + 1);
         }
+        return fieldNames;
+    }
 
+    private int[] getFieldTypes(ResultSet rs) throws SQLException {
+        ResultSetMetaData rsmd = rs.getMetaData();
+        int columnCount = rsmd.getColumnCount();
+        int[] fieldtypes = new int[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            fieldtypes[i] = rsmd.getColumnType(i + 1);
+        }
+        return fieldtypes;
+    }
+
+    // Collect single row of nulls in order to preserve columns names
+    // Can be used as a special case for empty tables
+    private Struct[] getNullRowValues(ResultSet rs, String[] fieldNames) throws SQLException {
+        int columnCount = fieldNames.length;
+        Struct[] values = new Struct[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            values[i] = runtime.makeStructValue("DbNullField", new Object[]{fieldNames[i]}, illegal);
+        }
         return values;
     }
 
-    private Struct[] getRowValues(ResultSet rs) throws SQLException {
-        ResultSetMetaData rsmd = rs.getMetaData();
-        int columnCount = rsmd.getColumnCount();
+    private Struct[] getRowValues(ResultSet rs, String[] fieldNames, int[] fieldtypes, Struct[] nulls, DBObject dbObj) throws SQLException {
+        int columnCount = fieldNames.length;
         Struct[] values = new Struct[columnCount];
-        for (int i = 1; i <= columnCount; i++) {
+        for (int i = 0; i < columnCount; i++) {
             Struct value;
-            String name = rsmd.getColumnLabel(i);
-            int type = rsmd.getColumnType(i);
+            int type = fieldtypes[i];
+            String name = fieldNames[i];
+            Struct anull = nulls[i];
 
-            Struct anull = runtime.makeStructValue("DbNullField", new Object[]{name}, illegal);
-
-            if (type == Types.NULL) {
-                value = runtime.makeStructValue("DbNullField", new Object[]{name}, illegal);
-            } else if (type == Types.DOUBLE) {
-                Double dvalue = rs.getDouble(i);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbDoubleField", new Object[]{name, dvalue}, illegal);
-            } else if (type == Types.INTEGER || type == Types.TINYINT) {
-                Integer ivalue = rs.getInt(i);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
-            } else if (type == Types.DECIMAL || type == Types.REAL) {
-                Double dvalue = rs.getDouble(i);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbDoubleField", new Object[]{name, dvalue}, illegal);
-            } else if (type == Types.TIMESTAMP) {
-                Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-                Timestamp t = rs.getTimestamp(i, calendar);
-                if (t == null || rs.wasNull()) {
+            switch (type) {
+                case (Types.NULL):
                     value = anull;
-                } else {
-                    DateFormat format = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSS");
-                    format.setTimeZone(TimeZone.getTimeZone("UTC"));
-                    String svalue = format.format(t);
-                    value = runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
-                }
-            } else {
-                String svalue = rs.getString(i);
-                value = rs.wasNull() ? anull : runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
+                    break;
+                case (Types.INTEGER):
+                case (Types.TINYINT):
+                case (Types.SMALLINT):
+                    Integer ivalue = rs.getInt(i + 1);
+                    value = rs.wasNull() ? anull : runtime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
+                    break;
+                case (Types.BIGINT):
+                    long lvalue = rs.getLong(i + 1);
+                    if (rs.wasNull()) {
+                        value = anull;
+                    } else {
+                        ivalue = (int)lvalue;
+                        if ((long)ivalue == lvalue) {
+                            // use int type if the value fits in 32 bit integer
+                            value = runtime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
+                        } else {
+                            if ((lvalue & 0xFFFF000000000000L) == 0L) {
+                                // if the value fits in double type
+                                // in double 52 bits are used for the mantissa (15-16 decimal digits)
+                                // We support 48 bit non-negative integers as double (14 decimal digits)
+                                value = runtime.makeStructValue("DbDoubleField", new Object[]{name, (double)lvalue}, illegal);
+                            } else {
+                                // otherwise use string
+                                value = runtime.makeStructValue("DbStringField", new Object[]{name, Long.toString(lvalue)}, illegal);
+                            }
+                            dbObj.intOverflowFields.add(name);
+                        }
+                    }
+                    break;
+                case (Types.DOUBLE):
+                case (Types.DECIMAL):
+                case (Types.REAL):
+                case (Types.FLOAT):
+                case (Types.NUMERIC):
+                    Double dvalue = rs.getDouble(i + 1);
+                    value = rs.wasNull() ? anull : runtime.makeStructValue("DbDoubleField", new Object[]{name, dvalue}, illegal);
+                    break;
+                case (Types.TIMESTAMP):
+                    Timestamp t = rs.getTimestamp(i + 1, calendar);
+                    if (t == null || rs.wasNull()) {
+                        value = anull;
+                    } else {
+                        String svalue = dbObj.dateFormat.format(t);
+                        value = runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
+                    }
+                    break;
+                default:
+                    String svalue = rs.getString(i + 1);
+                    value = rs.wasNull() ? anull : runtime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
             }
 
-            values[i - 1] = value;
+            values[i] = value;
         }
 
         return values;
@@ -321,13 +380,16 @@ public class Database extends NativeHost {
                 if (isResultSet) {
                     ArrayList<Struct[]> table = new ArrayList<Struct[]>();
                     ResultSet rs = stmt.getResultSet();
+                    String[] fieldNames = getFieldNames(rs);
+                    int[] fieldTypes = getFieldTypes(rs);
+                    Struct[] nulls = getNullRowValues(rs, fieldNames);
                     while (notEmptyResultSet(rs)) {
                         rs.next();
-                        table.add(getRowValues(rs));
+                        table.add(getRowValues(rs, fieldNames, fieldTypes, nulls, dbo));
                     }
                     if (table.isEmpty()) {
                         // The table is empty but we need to return columns names somehow
-                        table.add(getNullRowValues(rs));
+                        table.add(nulls);
                     }
                     res.add(table.toArray(new Struct[0][]));
                 } else {
@@ -338,10 +400,15 @@ public class Database extends NativeHost {
                 updateCount = stmt.getUpdateCount();
             }
 
+            dbo.checkIntOverflow();
+
             return res.toArray(new Struct[res.size()][][]);
-        } catch (SQLException se) {
-            System.out.println(se.getMessage());
-            ((DBObject) database).err = se.getMessage();
+        } catch (SQLException e) {
+            ((DBObject) database).err = getSqlErrorMessage(e);
+            return empty;
+        } catch (Exception e) {
+            printException(e);
+            ((DBObject) database).err = e.getMessage();
             return empty;
         }
     }
@@ -349,16 +416,18 @@ public class Database extends NativeHost {
     public final Struct[] nextResultDb(Object result) {
         RSObject res = (RSObject) result;
 
-        if (res == null) return new Struct[0];
+        if (res == null || res.rs == null) return new Struct[0];
         try {
+            String[] fieldNames = getFieldNames(res.rs);
+            int[] fieldTypes = getFieldTypes(res.rs);
+            Struct[] nulls = getNullRowValues(res.rs, fieldNames);
             if (res.rs.next()) {
                 res.dbObj.setRS(res);
-                return getRowValues(res.rs);
+                return getRowValues(res.rs, fieldNames, fieldTypes, nulls, res.dbObj);
             } else {
-                return getNullRowValues(res.rs);
+                res.dbObj.checkIntOverflow();
+                return nulls;
             }
-        } catch (SQLException e) {
-            return new Struct[0];
         } catch (Exception e) {
             printException(e);
             return new Struct[0];
@@ -368,5 +437,16 @@ public class Database extends NativeHost {
     public static void printException(Exception e) {
         System.out.println("Exception: '" + e.toString() + "' at:");
         e.printStackTrace();
+    }
+
+    public static String getSqlErrorMessage(SQLException e) {
+        String msg = e.getMessage();
+        if (msg == null || msg == "") {
+            msg = "Error state: " + e.getSQLState();
+        }
+        if (e.getCause() != null) {
+            msg = msg + "\nCause: " + e.getCause().getMessage();
+        }
+        return msg;
     }
 }
