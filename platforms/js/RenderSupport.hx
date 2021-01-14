@@ -270,50 +270,73 @@ class RenderSupport {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget == null) {
-			untyped clip.letterSpacing = 0.0;
+			untyped clip.letterSpacingPercent = 0.0;
 		} else {
 			var style = Browser.window.getComputedStyle(nativeWidget);
 
-			untyped clip.letterSpacing = style.letterSpacing != "normal"
+			untyped clip.letterSpacingPercent = style.letterSpacing != "normal"
 				? (new String(style.letterSpacing).indexOf("em") >= 0 ? Std.parseFloat(style.letterSpacing) : 0.0)
 				: 0.0;
 		}
 
-		if (untyped clip.style != null && clip.letterSpacing != 0.0 && clip.style.letterSpacing != clip.letterSpacing) {
-			untyped clip.style.letterSpacing = clip.letterSpacing;
+		if (untyped clip.style != null && clip.letterSpacingPercent != 0.0 && clip.style.letterSpacing != clip.letterSpacingPercent * clip.style.fontSize) {
+			untyped clip.style.letterSpacing = clip.letterSpacingPercent * clip.style.fontSize;
 			untyped clip.invalidateMetrics();
 			untyped clip.measureFont();
 		}
 
-		return untyped clip.letterSpacing;
+		return untyped clip.letterSpacingPercent;
 	}
 
 	private static function getUserDefinedWordSpacingPercent(clip : DisplayObject) : Float {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget == null) {
-			untyped clip.wordSpacing = 0.0;
+			untyped clip.wordSpacingPercent = 0.0;
 		} else {
 			var style = Browser.window.getComputedStyle(nativeWidget);
 
-			untyped clip.wordSpacing = style.wordSpacing != "normal"
-			? (new String(style.wordSpacing).indexOf("em") >= 0
-				? Std.parseFloat(style.wordSpacing) : Std.parseFloat(style.wordSpacing) / Std.parseFloat(style.fontSize))
-			: 0.0;
+			untyped clip.wordSpacingPercent = style.wordSpacing != "normal"
+				? (new String(style.wordSpacing).indexOf("em") >= 0
+					? Std.parseFloat(style.wordSpacing) : Std.parseFloat(style.wordSpacing) / Std.parseFloat(style.fontSize))
+				: 0.0;
 		}
 
-		if (untyped clip.style != null && clip.wordSpacing != 0.0 && clip.style.wordSpacing != clip.wordSpacing) {
-			untyped clip.style.wordSpacing = clip.wordSpacing;
+		if (untyped clip.style != null && clip.wordSpacingPercent != 0.0 && clip.style.wordSpacing != clip.wordSpacingPercent * clip.style.fontSize) {
+			untyped clip.style.wordSpacing = clip.wordSpacingPercent * clip.style.fontSize;
 			untyped clip.invalidateMetrics();
 			untyped clip.measureFont();
 		}
 
-		return untyped clip.wordSpacing;
+		return untyped clip.wordSpacingPercent;
+	}
+
+	private static function getUserDefinedLineHeightPercent(clip : DisplayObject) : Float {
+		var nativeWidget = untyped clip.nativeWidget;
+
+		if (nativeWidget == null) {
+			untyped clip.lineHeightPercent = 1.15;
+		} else {
+			var style = Browser.window.getComputedStyle(nativeWidget);
+
+			untyped clip.lineHeightPercent = style.lineHeight != "normal"
+				? (new String(style.lineHeight).indexOf("em") >= 0 ? Std.parseFloat(style.lineHeight) : 1.15)
+				: 1.15;
+		}
+
+		if (untyped clip.style != null && clip.lineHeightPercent != 1.15 && clip.style.lineHeight != clip.lineHeightPercent * clip.style.fontSize) {
+			untyped clip.style.lineHeight = clip.lineHeightPercent * clip.style.fontSize;
+			untyped clip.invalidateMetrics();
+			untyped clip.measureFont();
+		}
+
+		return untyped clip.lineHeightPercent;
 	}
 
 	public static function emitUserStyleChanged(clip : DisplayObject) {
-		if (untyped (clip.letterSpacing != getUserDefinedLetterSpacing(clip)) | (clip.letterSpacingPercent != getUserDefinedLetterSpacingPercent(clip)) |
-			(clip.fontSize != getUserDefinedFontSize(clip)) | (clip.wordSpacing != getUserDefinedWordSpacingPercent(clip))) {
+		if (untyped (clip.fontSize != getUserDefinedFontSize(clip)) | (clip.letterSpacing != getUserDefinedLetterSpacing(clip)) |
+			(clip.letterSpacingPercent != getUserDefinedLetterSpacingPercent(clip)) | (clip.wordSpacingPercent != getUserDefinedWordSpacingPercent(clip)) |
+			(clip.lineHeightPercent != getUserDefinedLineHeightPercent(clip))) {
 			RenderSupport.once("drawframe", function() { clip.emit("userstylechanged"); });
 		}
 	}
@@ -327,20 +350,24 @@ class RenderSupport {
 			emitUserStyleChanged(clip);
 		};
 
-		if (untyped clip.letterSpacing == null) {
-			untyped clip.letterSpacing = untyped clip.style != null ? clip.style.letterSpacing : 0.0;
-		}
-
-		if (untyped clip.wordSpacing == null) {
-			untyped clip.wordSpacing = untyped clip.style != null ? clip.style.wordSpacing : 0.0;
-		}
-
 		if (untyped clip.fontSize == null) {
 			untyped clip.fontSize = untyped clip.style != null ? clip.style.fontSize : 16.0;
 		}
 
+		if (untyped clip.letterSpacing == null) {
+			untyped clip.letterSpacing = untyped clip.style != null ? clip.style.letterSpacing : 0.0;
+		}
+
+		if (untyped clip.wordSpacingPercent == null) {
+			untyped clip.wordSpacingPercent = 0.0;
+		}
+
 		if (untyped clip.letterSpacingPercent == null) {
 			untyped clip.letterSpacingPercent = 0.0;
+		}
+
+		if (untyped clip.lineHeightPercent == null) {
+			untyped clip.lineHeightPercent = 1.15;
 		}
 
 		once("drawframe", fn);

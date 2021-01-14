@@ -658,13 +658,17 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			this.style.letterSpacing = letterSpacing;
 		}
-		if (untyped Math.isFinite(RenderSupport.PixiStage.wordSpacing) && RenderSupport.PixiStage.wordSpacing != 0.0) {
-			this.style.wordSpacing = untyped RenderSupport.PixiStage.wordSpacing;
+		if (untyped Math.isFinite(RenderSupport.PixiStage.wordSpacingPercent) && RenderSupport.PixiStage.wordSpacingPercent != 0.0) {
+			this.style.wordSpacing = untyped RenderSupport.PixiStage.wordSpacingPercent * this.style.fontSize;
+		}
+		if (untyped Math.isFinite(RenderSupport.PixiStage.lineHeightPercent) && RenderSupport.PixiStage.lineHeightPercent != 1.15) {
+			this.style.lineHeight = untyped RenderSupport.PixiStage.lineHeightPercent * this.style.fontSize;
+		} else {
+			this.style.lineHeight = 1.15 * this.style.fontSize;
 		}
 		this.style.fontFamily = fontStyle.family;
 		this.style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		this.style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		this.style.lineHeight = Math.ceil(untyped RenderSupport.UserDefinedLineHeightPercent * this.style.fontSize);
 		this.style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		this.style.padding = Math.ceil(fontSize * 0.2);
 
