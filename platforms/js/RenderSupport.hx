@@ -2321,7 +2321,12 @@ class RenderSupport {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (event == "userstylechanged" || event == "beforeprint" || event == "afterprint") {
+		if (event == "metricschanged") {
+			clip.on("metricschanged", fn);
+			return function () {
+				clip.off("metricschanged", fn);
+			}
+		} else if (event == "userstylechanged" || event == "beforeprint" || event == "afterprint") {
 			on(event, fn);
 			return function () {
 				off(event, fn);

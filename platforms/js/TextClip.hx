@@ -899,8 +899,8 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function setEllipsis(lines : Int, cb : Bool -> Void) : Void {
-		untyped this.style.truncate = lines;
-		untyped this.style.truncateCallback = cb;
+		untyped this.style.ellipsis = lines;
+		untyped this.style.ellipsisCallback = cb;
 
 		invalidateMetrics();
 	}
@@ -918,7 +918,6 @@ class TextClip extends NativeWidgetClip {
 			this.textDirection = textDirection.toLowerCase();
 			this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 
-			invalidateStyle();
 			invalidateMetrics();
 			layoutText();
 		}
@@ -1431,14 +1430,51 @@ class TextClip extends NativeWidgetClip {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
 			}
 
-			metrics.maxWidth = 0.0;
-			var lineWidths : Array<Float> = metrics.lineWidths;
+			if (style.ellipsis != null) {
+				var prevEllipsis = style.ellipsis;
+				var prevWordWrap = style.wordWrap;
+				var prevWordWrapWidth = style.wordWrapWidth;
+				style.ellipsis = null;
+				style.wordWrap = false;
+				style.wordWrapWidth = null;
+				var metrics2 = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				style.ellipsis = prevEllipsis;
+				style.wordWrap = prevWordWrap;
+				style.wordWrapWidth = prevWordWrapWidth;
 
-			for (lineWidth in lineWidths) {
-				metrics.maxWidth += lineWidth;
+				untyped metrics2.maxWidth = 0.0;
+				var lineWidths : Array<Float> = untyped metrics2.lineWidths;
+
+				for (lineWidth in lineWidths) {
+					untyped metrics2.maxWidth += lineWidth;
+				}
+
+				metrics.maxWidth = Math.max(metrics2.width, untyped metrics2.maxWidth);
+			} else {
+				metrics.maxWidth = 0.0;
+				var lineWidths : Array<Float> = metrics.lineWidths;
+
+				for (lineWidth in lineWidths) {
+					metrics.maxWidth += lineWidth;
+				}
+
+				metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 			}
 
-			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+			RenderSupport.once("drawframe", function() {
+				this.emit("metricschanged");
+			});
+		}
+	}
+
+	private function createResizeObserver() : Void {
+		if (nativeWidget != null) {
+			var callback = function(entries) {
+				DisplayObjectHelper.log(entries);
+				updateTextMetrics();
+			};
+			var resizeObserver = untyped __js__("new ResizeObserver(callback)");
+			resizeObserver.observe(nativeWidget);
 		}
 	}
 
