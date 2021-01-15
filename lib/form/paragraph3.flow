@@ -189,7 +189,11 @@ renderParagraph(
 	// Expand elements into word-units
 	glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
 	// Construct our ParaWords
-	words : [ParaWord] = map(list2array(glued), makeParaWord);
+	gluedArr = list2array(glued);
+	words : [ParaWord] = mapi(gluedArr, \i, word -> makeParaWord(
+		word,
+		i + 1 == length(gluedArr) || containsStruct(s, IgnoreLetterspacingOnReflow())
+	));
 
 	aw = make(0.0);
 	update = make(0);
@@ -441,7 +445,11 @@ expandGlueFragments(
 	}
 }
 
-makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWord {
+makeInteractiveParaWord(
+	w : ParaAtomic,
+	interactivityIdM : Maybe<int>,
+	ignoreLetterSpacing : bool
+) -> ParaWord {
 	s2w = \s : Pair<Form, Behaviour<FormMetrics>> -> {
 		if (!isGhostable(s.first)) {
 			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM);
@@ -477,7 +485,7 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 			);
 		}
 		Space(s): {
-			dynFormSizePair = getJoinableTextMetrics(s, true);
+			dynFormSizePair = getJoinableTextMetrics(s, true, ignoreLetterSpacing);
 			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM);
 		}
 		ParaOneWord(wd): {
@@ -488,7 +496,7 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 		InspectElement(inspector, e): {
 			makeWord = \word, form -> ParaWord(
 				word,
-				getJoinableTextMetrics(form, false).second,
+				getJoinableTextMetrics(form, false, ignoreLetterSpacing).second,
 				CoordinateInspectElement(inspector, form),
 				Empty(),
 				interactivityIdM
@@ -504,23 +512,33 @@ makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWo
 					makeWord(Space(t), t);
 				}
 				default: {
-					s = getJoinableTextMetrics(cast(e : InspectableElement -> Form), false);
+					s = getJoinableTextMetrics(
+						cast(e : InspectableElement -> Form),
+						false,
+						ignoreLetterSpacing
+					);
 					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM);
 				}
 			}
 		}
 		InteractiveParaAtomic(word, id) : {
-			makeInteractiveParaWord(word, Some(id));
+			makeInteractiveParaWord(word, Some(id), ignoreLetterSpacing);
 		}
 		default: {
 			opt = optimizeForm(cast(w : ParaAtomic -> Form));
-			getJoinableTextMetrics(opt, false) |> s2w;
+			getJoinableTextMetrics(opt, false, ignoreLetterSpacing) |> s2w;
 		}
 	}
 }
 
-getJoinableTextMetrics(form: Form, getExactTopPoint : bool) -> Pair<Form, Behaviour<FormMetrics>> {
-	switch (form) {
+getJoinableTextMetrics(
+	form: Form,
+	getExactTopPoint : bool,
+	ignoreLetterSpacing : bool
+) -> Pair<Form, Behaviour<FormMetrics>> {
+	if (ignoreLetterSpacing) {
+		getDynamicFormSize2(form, getExactTopPoint)
+	} else switch (form) {
 		Text(__, st) : {
 			letterSpacing = extractStruct(st, LetterSpacing(0.0)).spacing;
 			metrics = getStaticFormSizeCached2(form, getExactTopPoint);
@@ -535,10 +553,18 @@ getJoinableTextMetrics(form: Form, getExactTopPoint : bool) -> Pair<Form, Behavi
 	}
 }
 
-makeParaWord(w : ParaAtomic) -> ParaWord {
+makeParaWord(w : ParaAtomic, ignoreLetterSpacing : bool) -> ParaWord {
 	switch (w) {
-		InteractiveParaAtomic(word, id): makeInteractiveParaWord(word, Some(id));
-		default : makeInteractiveParaWord(w, None());
+		InteractiveParaAtomic(word, id): makeInteractiveParaWord(
+			word,
+			Some(id),
+			ignoreLetterSpacing
+		);
+		default : makeInteractiveParaWord(
+			w,
+			None(),
+			ignoreLetterSpacing
+		);
 	}
 }
 
