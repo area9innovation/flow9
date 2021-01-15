@@ -100,9 +100,14 @@ MEllipsis2T(m : MEllipsis, m2t : (Material) -> Tropic) {
 
 MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisText, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	mTextStyle = style2MTextStyle(m.style);
-	minWidth = extractStruct(m.style, MMinWidth(-1.)).width;
+	escapeHTML = extractStruct(m.style, EscapeHTML(true));
+	unescape = if (escapeHTML.escape) idfn else unescapeSpacesIntoTags;
+	text = unescape(m.text);
+	charStyle = MTextStyle2TCharacterStyle(parent, text, mTextStyle);
+
 	tooltipMaxWidth = extractStruct(m.style, MTooltipMaxWidth(400.0)).width;
 	lines = extractStruct(m.style, MMaxLines(1)).lines;
+	isFullWidth = contains(m.style, MFullWidth());
 	textAlignment = maybeMap(tryExtractStruct(m.style, MEllipsisTextAlignment(StartAlign())), \al -> al.alignment);
 	rightAlign0 = contains(m.style, RightAlign());
 	centerAlign0 = contains(m.style, CenterAlign());
@@ -111,41 +116,65 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 	truncateFromStart = contains(m.style, MTruncateFromStart());
 	isTruncated = extractStruct(m.style, MTextIsTruncated(make(false))).isTruncated;
 	setIsTruncated = \v -> nextDistinct(isTruncated, v);
-	isFullWidth = contains(m.style, MFullWidth());
 	interlineSpacing = extractStruct(m.style, InterlineSpacing(0.0));
-	escapeHTML = extractStruct(m.style, EscapeHTML(true));
-	unescape = if (escapeHTML.escape) idfn else unescapeSpacesIntoTags;
-	text = unescape(m.text);
+	disableOnDragging = contains(m.style, MDisableOnDragging());
+	showTooltip0 = extractStruct(m.style, MShowTooltip(const(false))).show;
+	showTooltip = fand(showTooltip0, isTruncated);
 
-	charStyle = MTextStyle2TCharacterStyle(parent, text, mTextStyle);
-	textT = TText(text, charStyle);
-	fullWidth = getTWordMetrics(textT, makeTree()).width;
-	maybeApply(tryExtractStruct(m.style, MEllipsisTextGetFullWidth(nop1)), \getfw -> getfw.fn(fullWidth));
-	variants = arrayPush(extractStruct(m.style, MTextVariants([])).variants, m.text);
-	variantWidths = map(variants, \v -> getTWordMetrics(TText(v, charStyle), makeTree()).width);
-
-	if (minWidth > 0. && minWidth >= fullWidth && strCountOf(text, "\n") < lines) {
-		setIsTruncated(false);
-		TText(text, charStyle);
-	} else {
-		availableWidth = make(fullWidth);
-		disableOnDragging = contains(m.style, MDisableOnDragging());
-		showTooltip0 = extractStruct(m.style, MShowTooltip(const(false))).show;
-		showTooltip = fand(showTooltip0, isTruncated);
-
-		dottedTextSize = TSizeOf(TText(substring(text, 0, 1) + THREE_DOTS, charStyle));
-
-		(if (js && !truncateFromStart && false) { // Temporary disabled
-			TParagraph(
-				const(text),
-				concat(
-					charStyle,
-					[
-						ParagraphEllipsis(lines, setIsTruncated)
-					]
-				)
+	if (js && !truncateFromStart) {
+		TParagraph(
+			const(text),
+			concat(
+				concat3(charStyle, if (lines > 1) [interlineSpacing] else [], eitherMap(textAlignment, v2a, [])),
+				[
+					ParagraphEllipsis(lines, setIsTruncated)
+				]
 			)
+		)
+		|> (\f : Tropic ->
+			if (isFConst(showTooltip0) && fgetValue(showTooltip0) == false)
+				f
+			else
+				MTooltip2T(
+					manager,
+					parent,
+					MTooltip(
+						f,
+						TShowLazy(
+							showTooltip,
+							\ ->
+								MParagraph2T(
+									parent,
+									if (strlen(text) > 1000) strSubRange(text, 0, 1000) + THREE_DOTS else text,
+									[sameLightMColor(parent), MTooltipDesktop(), CropWords(true), MWidth(tooltipMaxWidth), escapeHTML]
+								)
+						),
+						concatA([
+							[MEnabled(showTooltip)],
+							extractStructMany(m.style, MTooltipExternalFocused(const(false))),
+							if (disableOnDragging) [MDisableOnDragging()] else []
+						])
+					),
+					m2t
+				)
+		)
+		|> (\t -> if (centerAlign) TCenterX(t) else if (rightAlign) TCols2(TFillX(), t) else if (isFullWidth) TCols2(t, TFillX()) else t)
+	} else {
+		minWidth = extractStruct(m.style, MMinWidth(-1.)).width;
+
+		textT = TText(text, charStyle);
+		fullWidth = getTWordMetrics(textT, makeTree()).width;
+		maybeApply(tryExtractStruct(m.style, MEllipsisTextGetFullWidth(nop1)), \getfw -> getfw.fn(fullWidth));
+		variants = arrayPush(extractStruct(m.style, MTextVariants([])).variants, m.text);
+		variantWidths = map(variants, \v -> getTWordMetrics(TText(v, charStyle), makeTree()).width);
+
+		if (minWidth > 0. && minWidth >= fullWidth && strCountOf(text, "\n") < lines) {
+			setIsTruncated(false);
+			TText(text, charStyle);
 		} else {
+			availableWidth = make(fullWidth);
+
+			dottedTextSize = TSizeOf(TText(substring(text, 0, 1) + THREE_DOTS, charStyle));
 			currentText = make(text);
 
 			(if (lines > 1)
@@ -179,49 +208,49 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 					t
 				)
 			)
-		})
-		|> (\f : Tropic ->
-			if (isFConst(showTooltip0) && fgetValue(showTooltip0) == false)
-				f
-			else
-				MTooltip2T(
-					manager,
-					parent,
-					MTooltip(
-						f,
-						TShowLazy(
-							showTooltip,
-							\ ->
-								MParagraph2T(
-									parent,
-									if (strlen(text) > 1000) strSubRange(text, 0, 1000) + THREE_DOTS else text,
-									[sameLightMColor(parent), MTooltipDesktop(), CropWords(true), MWidth(min(fullWidth, tooltipMaxWidth)), escapeHTML]
-								)
+			|> (\f : Tropic ->
+				if (isFConst(showTooltip0) && fgetValue(showTooltip0) == false)
+					f
+				else
+					MTooltip2T(
+						manager,
+						parent,
+						MTooltip(
+							f,
+							TShowLazy(
+								showTooltip,
+								\ ->
+									MParagraph2T(
+										parent,
+										if (strlen(text) > 1000) strSubRange(text, 0, 1000) + THREE_DOTS else text,
+										[sameLightMColor(parent), MTooltipDesktop(), CropWords(true), MWidth(min(fullWidth, tooltipMaxWidth)), escapeHTML]
+									)
+							),
+							concatA([
+								[MEnabled(showTooltip)],
+								extractStructMany(m.style, MTooltipExternalFocused(const(false))),
+								if (disableOnDragging) [MDisableOnDragging()] else []
+							])
 						),
-						concatA([
-							[MEnabled(showTooltip)],
-							extractStructMany(m.style, MTooltipExternalFocused(const(false))),
-							if (disableOnDragging) [MDisableOnDragging()] else []
-						])
-					),
-					m2t
-				)
-		)
-		|> (\t -> if (centerAlign) TCenterX(t) else if (rightAlign) TCols2(TFillX(), t) else if (isFullWidth) TCols2(t, TFillX()) else t)
-		|> (\t -> TGroup2(t, THeight(dottedTextSize)))
-		|> (\t ->
-			TAttachWidth2(
-				if ((isFullWidth || centerAlign) && !getDefaultRtl()) TFillX() else TMinimumGroup2(TFixed(fullWidth, 0.0), TFillX())
-				|> (\f ->
-					if (strlen(text) > 1)
-						TGroup2(TWidth(dottedTextSize), f)
-					else
-						f
-				),
-				availableWidth,
-				t
+						m2t
+					)
 			)
-		)
+			|> (\t -> if (centerAlign) TCenterX(t) else if (rightAlign) TCols2(TFillX(), t) else if (isFullWidth) TCols2(t, TFillX()) else t)
+			|> (\t -> TGroup2(t, THeight(dottedTextSize)))
+			|> (\t ->
+				TAttachWidth2(
+					if ((isFullWidth || centerAlign) && !getDefaultRtl()) TFillX() else TMinimumGroup2(TFixed(fullWidth, 0.0), TFillX())
+					|> (\f ->
+						if (strlen(text) > 1)
+							TGroup2(TWidth(dottedTextSize), f)
+						else
+							f
+					),
+					availableWidth,
+					t
+				)
+			)
+		}
 	}
 }
 

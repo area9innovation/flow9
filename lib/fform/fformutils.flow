@@ -1174,14 +1174,12 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		eitherMap(
 			tryExtractStruct(style, ParagraphMetrics(nop1)),
 			\fn -> \ ->
-				fn.fn(
-					FFormMetrics(
-						getTextFieldWidth(textfield),
-						getTextFieldHeight(textfield),
-						getTextMetrics(textfield)[0],
-						getTextFieldMaxWidth(textfield)
-					)
-				),
+				fn.fn(FFormMetrics(
+					getTextFieldWidth(textfield),
+					getTextFieldHeight(textfield),
+					getTextMetrics(textfield)[0],
+					getTextFieldMaxWidth(textfield)
+				)),
 			nop
 		);
 
@@ -1189,7 +1187,6 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		tryExtractStruct(style, InterlineSpacing(0.)),
 		\interlineSpacing -> {
 			setTextFieldInterlineSpacing(textfield, interlineSpacing.d);
-			updateMetricsFn();
 		}
 	);
 
@@ -1205,10 +1202,16 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 
 	setAutoAlign(textfield, autoAlign);
 
-	eitherFn(
+	maybeMap(
 		tryExtractStruct(style, ParagraphWidth(const(-1.))),
 		\width -> {
-			setWordWrap(textfield, true);
+			refArrayPush(
+				disposers,
+				makeSubscribe(width.width, \wd -> {
+					setWordWrap(textfield, wd > 0.0);
+					setTextFieldWidth(textfield, wd);
+				})()
+			);
 
 			maybeApply(
 				tryExtractStruct(style, ParagraphEllipsis(0, nop1)),
@@ -1216,21 +1219,14 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 					setTextEllipsis(textfield, el.lines, el.fn);
 				}
 			);
-
-			refArrayPush(
-				disposers,
-				makeSubscribe(width.width, \wd -> {
-					setTextFieldWidth(textfield, wd);
-					updateMetricsFn();
-				})()
-			)
-		},
-		updateMetricsFn
+		}
 	);
 
-	refArrayPush(disposers,
-		makeSubscribe2(text, \__ -> updateMetricsFn())()
-	);
+	updateMetricsFn();
+
+	addEventListener(textfield, "metricschanged", \ -> {
+		updateMetricsFn();
+	});
 
 	FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities)
 }

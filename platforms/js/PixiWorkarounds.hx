@@ -392,11 +392,13 @@ class PixiWorkarounds {
 				let width = 0;
 				let line = '';
 				let lines = '';
+				let linesCount = 1;
 
 				const cache = {};
 				const wordSpacing = style.wordSpacing || 0;
 				const letterSpacing = style.letterSpacing;
 				const whiteSpace = style.whiteSpace;
+				const ellipsis = style.ellipsis;
 
 				// How to handle whitespaces
 				const collapseSpaces = PIXI.TextMetrics.collapseSpaces(whiteSpace);
@@ -415,9 +417,26 @@ class PixiWorkarounds {
 
 				// break text into words, spaces and newline chars
 				const tokens = PIXI.TextMetrics.tokenize(text);
+				const ellipsisWidth = PIXI.TextMetrics.getFromCache('…', letterSpacing, cache, context, style);
+
+				let hasEllipsis = false;
+				const addEllipsis = function() {
+					if (text.length > 1) {
+						lines += PIXI.TextMetrics.addLine('…', false);
+					}
+					linesCount++;
+
+					line = '';
+					width = 0;
+					hasEllipsis = true;
+				}
 
 				for (let i = 0; i < tokens.length; i++)
 				{
+					if (hasEllipsis) {
+						break;
+					}
+
 					// get the word, space or newlineChar
 					let token = tokens[i];
 
@@ -427,8 +446,14 @@ class PixiWorkarounds {
 						// keep the new line
 						if (!collapseNewlines)
 						{
-							lines += PIXI.TextMetrics.addLine(line);
 							canPrependSpaces = !collapseSpaces;
+
+							if (linesCount > ellipsis) {
+								addEllipsis();
+								break;
+							}
+
+							lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 							line = '';
 							width = 0;
 							continue;
@@ -456,19 +481,24 @@ class PixiWorkarounds {
 					const tokenWidth = PIXI.TextMetrics.getFromCache(token, letterSpacing, cache, context, style);
 
 					// word is longer than desired bounds
-					if (tokenWidth > wordWrapWidth)
+					if ((tokenWidth + (linesCount == ellipsis ? width : 0) + ((linesCount == ellipsis && (i != tokens.length - 1)) ? ellipsisWidth : 0)) > wordWrapWidth)
 					{
 						// if we are not already at the beginning of a line
-						if (line !== '')
+						if (line !== '' && tokenWidth > wordWrapWidth - (linesCount == ellipsis ? ellipsisWidth : 0))
 						{
+							if (linesCount > ellipsis) {
+								addEllipsis();
+								break;
+							}
+
 							// start newlines for overflow words
-							lines += PIXI.TextMetrics.addLine(line);
+							lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 							line = '';
 							width = 0;
 						}
 
 						// break large word over multiple lines
-						if (PIXI.TextMetrics.canBreakWords(token, style.breakWords))
+						if (PIXI.TextMetrics.canBreakWords(token, style.breakWords || ellipsis > 0))
 						{
 							// break word into characters
 							const characters = token.split('');
@@ -487,7 +517,7 @@ class PixiWorkarounds {
 									const lastChar = char[char.length - 1];
 
 									// should not split chars
-									if (!PIXI.TextMetrics.canBreakChars(lastChar, nextChar, token, j, style.breakWords))
+									if (!PIXI.TextMetrics.canBreakChars(lastChar, nextChar, token, j, style.breakWords || ellipsis > 0))
 									{
 										// combine chars & move forward one
 										char += nextChar;
@@ -504,10 +534,19 @@ class PixiWorkarounds {
 
 								const characterWidth = PIXI.TextMetrics.getFromCache(char, letterSpacing, cache, context, style);
 
-								if (characterWidth + width > wordWrapWidth)
+								if (characterWidth + width > wordWrapWidth - (linesCount == ellipsis ? ellipsisWidth : 0))
 								{
-									lines += PIXI.TextMetrics.addLine(line);
 									canPrependSpaces = false;
+
+									if (linesCount > ellipsis) {
+										if (lines.length == 0) {
+											lines += line;
+										}
+										addEllipsis();
+										break;
+									}
+
+									lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 									line = '';
 									width = 0;
 								}
@@ -520,20 +559,31 @@ class PixiWorkarounds {
 						// run word out of the bounds
 						else
 						{
-						// if there are words in this line already
+							canPrependSpaces = false;
+
+							if (linesCount > ellipsis) {
+								addEllipsis();
+								break;
+							}
+
+							// if there are words in this line already
 							// finish that line and start a new one
 							if (line.length > 0)
 							{
-								lines += PIXI.TextMetrics.addLine(line);
+								lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 								line = '';
 								width = 0;
+							}
+
+							if (linesCount > ellipsis) {
+								addEllipsis();
+								break;
 							}
 
 							const isLastToken = i === tokens.length - 1;
 
 							// give it its own line if it's not the end
-							lines += PIXI.TextMetrics.addLine(token, !isLastToken);
-							canPrependSpaces = false;
+							lines += PIXI.TextMetrics.addLine(token, linesCount++ != ellipsis && !isLastToken);
 							line = '';
 							width = 0;
 						}
@@ -544,13 +594,18 @@ class PixiWorkarounds {
 					{
 						// word won't fit because of existing words
 						// start a new line
-						if (tokenWidth + width > wordWrapWidth)
+						if (tokenWidth + width > wordWrapWidth - ((linesCount == ellipsis && (i != tokens.length - 1)) ? ellipsisWidth : 0))
 						{
 							// if its a space we don't want it
 							canPrependSpaces = false;
 
+							if (linesCount > ellipsis) {
+								addEllipsis();
+								break;
+							}
+
 							// add a new line
-							lines += PIXI.TextMetrics.addLine(line);
+							lines += PIXI.TextMetrics.addLine(line, linesCount++ != ellipsis);
 
 							// start a new line
 							line = '';
@@ -569,7 +624,17 @@ class PixiWorkarounds {
 					}
 				}
 
-				lines += PIXI.TextMetrics.addLine(line, false);
+				if (linesCount > ellipsis) {
+					if (line != '') {
+						addEllipsis();
+					}
+				} else {
+					lines += PIXI.TextMetrics.addLine(line, false);
+				}
+
+				if (ellipsis > 0) {
+					RenderSupport.once('drawframe', function() { style.ellipsisCallback(hasEllipsis); });
+				}
 
 				return lines;
 			}
@@ -604,13 +669,6 @@ class PixiWorkarounds {
 				}
 
 				return width;
-			}
-
-			var nativeSetProperty = CSSStyleDeclaration.prototype.setProperty;
-
-			CSSStyleDeclaration.prototype.setProperty = function(propertyName, value, priority) {
-				RenderSupport.checkUserStyleChanged();
-				nativeSetProperty.call(this, propertyName, value, priority);
 			}
 
 			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
