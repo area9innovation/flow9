@@ -868,7 +868,7 @@ class TextClip extends NativeWidgetClip {
 
 	public override function setWidth(widgetWidth : Float) : Void {
 		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
-		super.setWidth(widgetWidth);
+		// super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
 

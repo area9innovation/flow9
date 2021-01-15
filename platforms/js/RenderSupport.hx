@@ -1545,7 +1545,7 @@ class RenderSupport {
 		untyped clip.zIndex = zIndex;
 
 		if (untyped clip.nativeWidget != null) {
-			untyped clip.nativeWidget.style.zIndex = zIndex;
+			untyped clip.nativeWidget.style.zIndex = zIndex + '';
 		} else {
 			clip.initNativeWidget();
 		}
