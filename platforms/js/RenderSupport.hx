@@ -2427,7 +2427,7 @@ class RenderSupport {
 	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };
-		} else if (RenderSupport.RendererType != "html" || !clip.isHTMLRenderer()) {
+		} else if (!clip.isHTMLRenderer()) {
 			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
 			clip.addChild(dropArea);
