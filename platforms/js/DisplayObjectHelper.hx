@@ -96,7 +96,7 @@ class DisplayObjectHelper {
 				}
 			} else if (clip.parent == RenderSupport.PixiStage) {
 				untyped clip.stage = clip;
-				if (RenderSupport.RendererType != "html") {
+				if (!isHTMLRenderer(clip)) {
 					untyped clip.createView(clip.parent.children.indexOf(clip) + 1);
 				}
 
@@ -155,7 +155,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (RenderSupport.RendererType != "html") {
+			if (!isHTMLRenderer(clip)) {
 				untyped clip.rvlast = null;
 			}
 
@@ -176,15 +176,15 @@ class DisplayObjectHelper {
 			untyped clip.transformChanged = true;
 			untyped clip.localBoundsChanged = true;
 
-			if (isCanvas(clip)) {
+			if (isCanvas(clip) || isCanvasStage(clip)) {
 				untyped clip.localTransformChanged = true;
 			}
 
-			if (RenderSupport.RendererType != "html") {
+			if (!isHTMLRenderer(clip)) {
 				untyped clip.rvlast = null;
 			}
 
-			if (untyped clip.parent.parent != null && (!clip.parent.transformChanged || (isCanvas(clip.parent) && !clip.parent.localTransformChanged))) {
+			if (untyped clip.parent.parent != null && (!clip.parent.transformChanged || ((isCanvas(clip.parent) || isCanvasStage(clip.parent)) && !clip.parent.localTransformChanged))) {
 				invalidateParentTransform(clip.parent);
 			} else {
 				invalidateParentLocalBounds(clip);
@@ -230,7 +230,7 @@ class DisplayObjectHelper {
 				invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
 			}
 
-			if (RenderSupport.RendererType != "html" && updateAccessWidget) {
+			if (!isHTMLRenderer(clip) && updateAccessWidget) {
 				untyped clip.accessWidget.updateDisplay();
 			}
 
@@ -243,7 +243,7 @@ class DisplayObjectHelper {
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
-			if (RenderSupport.RendererType == "html") {
+			if (isHTMLRenderer(clip)) {
 				if (!isNativeWidget(clip)) {
 					initNativeWidget(clip);
 				} else {
@@ -277,7 +277,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function setChildrenInteractive(clip : DisplayObject) : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (isHTMLRenderer(clip)) {
 			return;
 		}
 
@@ -311,8 +311,12 @@ class DisplayObjectHelper {
 				updateIsMask(clip);
 			}
 
-			if (isCanvas(clip.parent)) {
+			if (isCanvas(clip.parent) || isCanvasStage(clip.parent)) {
 				updateIsCanvas(clip);
+			}
+
+			if (isHTML(clip.parent) || isHTMLStage(clip.parent)) {
+				updateIsHTML(clip);
 			}
 
 			if (untyped clip.keepNativeWidgetChildren || clip.keepNativeWidget) {
@@ -384,7 +388,7 @@ class DisplayObjectHelper {
 
 			clip.scale.x = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 0.0) {
+			if (isHTMLRenderer(clip) && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -398,7 +402,7 @@ class DisplayObjectHelper {
 
 			clip.scale.y = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 0.0) {
+			if (isHTMLRenderer(clip) && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -421,7 +425,7 @@ class DisplayObjectHelper {
 
 			untyped clip.origin = new Point(x, y);
 
-			if (RenderSupport.RendererType == "html") {
+			if (isHTMLRenderer(clip)) {
 				initNativeWidget(clip);
 
 				if (untyped clip.nativeWidget != null) {
@@ -496,7 +500,7 @@ class DisplayObjectHelper {
 		if (untyped clip.cursor != cursor) {
 			untyped clip.cursor = cursor;
 
-			if (RenderSupport.RendererType == "html" && !isNativeWidget(clip)) {
+			if (isHTMLRenderer(clip) && !isNativeWidget(clip)) {
 				initNativeWidget(clip);
 			}
 
@@ -667,7 +671,7 @@ class DisplayObjectHelper {
 			untyped clip.mask.child = clip;
 			untyped clip.maskContainer = maskContainer;
 
-			if (RenderSupport.RendererType == "html" && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
+			if (isHTMLRenderer(clip) && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
 				updateHasMask(clip);
 			}
 
@@ -688,7 +692,7 @@ class DisplayObjectHelper {
 		setClipRenderable(maskContainer, false);
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
-		if (RenderSupport.RendererType == "html") {
+		if (isHTMLRenderer(clip)) {
 			if (untyped clip.mask != null || clip.alphaMask != null) {
 				initNativeWidget(clip);
 			}
@@ -698,7 +702,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateHasMask(clip : DisplayObject) : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (isHTMLRenderer(clip)) {
 			if (!untyped clip.hasMask) {
 				untyped clip.hasMask = true;
 
@@ -735,7 +739,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateIsCanvas(clip : DisplayObject) : Void {
-		if (clip.parent != null && isCanvas(clip.parent)) {
+		if (clip.parent != null && (isCanvas(clip.parent) || isCanvasStage(clip.parent))) {
 			untyped clip.isCanvas = true;
 
 			deleteNativeWidget(clip);
@@ -750,6 +754,41 @@ class DisplayObjectHelper {
 		return untyped clip.isCanvas;
 	}
 
+	public static inline function isCanvasStage(clip : DisplayObject) : Bool {
+		return untyped clip.isCanvasStage;
+	}
+
+	public static function updateIsHTML(clip : DisplayObject) : Void {
+		if (clip.parent != null && (isHTML(clip.parent) || isHTMLStage(clip.parent))) {
+			untyped clip.isHTML = true;
+
+			if (untyped clip.nativeWidget == null && !clip.isEmpty && !isHTMLStageContainer(clip) &&
+				(clip.children == null || clip.children.length == 0 || clip.transform.a != 1 || clip.transform.d != 1)) {
+				initNativeWidget(clip);
+			}
+
+			for (child in getClipChildren(clip)) {
+				updateIsHTML(child);
+			}
+		}
+	}
+
+	public static inline function isHTML(clip : DisplayObject) : Bool {
+		return untyped clip.isHTML;
+	}
+
+	public static inline function isHTMLStage(clip : DisplayObject) : Bool {
+		return untyped clip.isHTMLStage;
+	}
+
+	public static inline function isHTMLStageContainer(clip : DisplayObject) : Bool {
+		return untyped clip.isHTMLStageContainer;
+	}
+
+	public static inline function isHTMLRenderer(clip : DisplayObject) : Bool {
+		return untyped (RenderSupport.RendererType == "html" || clip.isHTML) && !clip.isCanvas;
+	}
+
 	public static function updateKeepNativeWidgetChildren(clip : DisplayObject, keepNativeWidgetChildren : Bool = false) : Void {
 		untyped clip.keepNativeWidgetChildren = keepNativeWidgetChildren || clip.keepNativeWidget;
 
@@ -759,7 +798,7 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (RenderSupport.RendererType == "html" && isNativeWidget(clip)) {
+		if (isHTMLRenderer(clip) && isNativeWidget(clip)) {
 			untyped clip.nativeWidget.style.visibility = untyped clip.keepNativeWidget ? "visible" : clip.keepNativeWidgetChildren ? "inherit" : null;
 		}
 
@@ -972,7 +1011,7 @@ class DisplayObjectHelper {
 		if (untyped clip.updateNativeWidget != null) {
 			untyped clip.updateNativeWidget();
 		} else {
-			if (RenderSupport.RendererType == "html") {
+			if (isHTMLRenderer(clip)) {
 				if (isNativeWidget(clip)) {
 					if (clip.visible) {
 						if (DebugUpdate) {
@@ -1028,8 +1067,8 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getNativeWidgetTransform(clip : DisplayObject) : Matrix {
-		if (RenderSupport.RendererType == "html") {
-			if (untyped !clip.parentClip || RenderSupport.RenderContainers) {
+		if (isHTMLRenderer(clip)) {
+			if (untyped !clip.parentClip || RenderSupport.RenderContainers || isHTMLStageContainer(clip.parent)) {
 				if (untyped clip.localTransformChanged) {
 					untyped clip.transform.updateLocalTransform();
 				}
@@ -1126,7 +1165,7 @@ class DisplayObjectHelper {
 
 		var localBounds = untyped clip.localBounds;
 
-		if (isCanvas(clip)) {
+		if (isCanvasStage(clip)) {
 			tx -= Math.max(-localBounds.minX, 0.0);
 			ty -= Math.max(-localBounds.minY, 0.0);
 			untyped clip.nativeWidgetBoundsChanged = true;
@@ -1135,7 +1174,7 @@ class DisplayObjectHelper {
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
 
-			if (isCanvas(clip)) {
+			if (isCanvasStage(clip)) {
 				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}');
 				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * transform.d * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupport.PixiRenderer.resolution), 0.0)}');
 				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}px';
@@ -1172,7 +1211,7 @@ class DisplayObjectHelper {
 		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
 		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
 
-		if (isCanvas(clip)) {
+		if (isCanvasStage(clip)) {
 			nativeWidget.style.transform = 'matrix(${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0, ${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0)';
 		} else {
 			nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
@@ -1185,7 +1224,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
-		if (RenderSupport.RendererType == "html" && !RenderSupport.RenderContainers) {
+		if (isHTMLRenderer(clip) && !RenderSupport.RenderContainers) {
 			if (untyped clip.parentClip && clip.parentClip.worldAlpha > 0) {
 				return clip.worldAlpha / untyped clip.parentClip.worldAlpha;
 			} else if (clip.parent != null && !isNativeWidget(clip.parent)) {
@@ -1834,7 +1873,7 @@ class DisplayObjectHelper {
 	public static function addNativeWidget(clip : DisplayObject) : Void {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
-		} else if (RenderSupport.RendererType == "html") {
+		} else if (isHTMLRenderer(clip)) {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && (clip.renderable || clip.keepNativeWidgetChildren)) {
 				if (untyped clip.forceParentNode != null) {
 					untyped clip.forceParentNode.append(clip.nativeWidget);
@@ -1902,7 +1941,7 @@ class DisplayObjectHelper {
 	public static function findNativeWidgetChild(clip : DisplayObject, parent : DisplayObject) : Element {
 		if (untyped isNativeWidget(clip) && clip.parentClip == parent && getParentNode(clip) == parent.nativeWidget) {
 			return untyped clip.nativeWidget;
-		} else if (!RenderSupport.RenderContainers && RenderSupport.RendererType == "html") {
+		} else if (!RenderSupport.RenderContainers && isHTMLRenderer(clip)) {
 			for (child in getClipChildren(clip)) {
 				if (untyped child.visible && (!isNativeWidget(child) || child.parentClip == parent)) {
 					var nativeWidget = findNativeWidgetChild(child, parent);
@@ -2019,7 +2058,8 @@ class DisplayObjectHelper {
 
 	public static inline function getWidgetWidth(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
-		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) : getWidth(clip);
+		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) :
+			untyped clip.isFlowContainer && clip.mask == null ? clip.localBounds.maxX : getWidth(clip);
 
 		return widgetWidth;
 	}
@@ -2046,7 +2086,8 @@ class DisplayObjectHelper {
 
 	public static inline function getWidgetHeight(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
-		return (widgetBounds != null && Math.isFinite(widgetBounds.minY)) ? getBoundsHeight(widgetBounds) : getHeight(clip);
+		return (widgetBounds != null && Math.isFinite(widgetBounds.minY)) ? getBoundsHeight(widgetBounds) :
+			untyped clip.isFlowContainer && clip.mask == null ? clip.localBounds.maxY : getHeight(clip);
 	}
 
 	public static function applyMaxBounds(clip : DisplayObject, newBounds : Bounds) : Void {
@@ -2067,7 +2108,7 @@ class DisplayObjectHelper {
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
 			untyped clip.nativeWidgetBoundsChanged = true;
-			if (RenderSupport.RendererType != "html") {
+			if (!isHTMLRenderer(clip)) {
 				untyped clip.rvlast = null;
 			}
 
@@ -2363,7 +2404,7 @@ class DisplayObjectHelper {
 						applyNewBounds(clip, untyped clip.widgetBounds);
 					}
 
-					if ((RenderSupport.RendererType != "html" && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
+					if ((!isHTMLRenderer(clip) && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 						untyped clip.invalidateStyle();
 						invalidateTransform(clip, 'invalidateRenderable');
 					}
@@ -2402,12 +2443,12 @@ class DisplayObjectHelper {
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
-				if (RenderSupport.RendererType != "html") {
+				if (!isHTMLRenderer(clip)) {
 					untyped clip.nativeWidgetBoundsChanged = false;
 				}
 
 				if (untyped clip.origin != null) {
-					if (RenderSupport.RendererType == "html") {
+					if (isHTMLRenderer(clip)) {
 						initNativeWidget(clip);
 
 						if (untyped clip.nativeWidget != null) {
@@ -2453,8 +2494,6 @@ class DisplayObjectHelper {
 			untyped clip.transform.updateLocalTransform();
 		}
 
-		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
-
 		if (untyped clip.scrollRect != null) {
 			viewBounds.minX = Math.max(viewBounds.minX, untyped clip.localBounds.minX);
 			viewBounds.minY = Math.max(viewBounds.minY, untyped clip.localBounds.minY);
@@ -2462,7 +2501,9 @@ class DisplayObjectHelper {
 			viewBounds.maxY = Math.min(viewBounds.maxY, untyped clip.localBounds.maxY);
 		}
 
-		if ((RenderSupport.RendererType != "html" && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
+		untyped clip.viewBounds = viewBounds;
+
+		if ((!isHTMLRenderer(clip) && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
 			invalidateTransform(clip, 'invalidateRenderable');
 		}

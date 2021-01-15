@@ -48,7 +48,7 @@ class VideoClip extends FlowContainer {
 				var checkingGap = Platform.isIOS ? 0.5 : 0.0;
 				v.checkTimeRange(videoWidget.currentTime, true, checkingGap);
 
-				if (RenderSupport.RendererType != "html") {
+				if (!v.isHTMLRenderer()) {
 					if (videoWidget.width != videoWidget.videoWidth || videoWidget.height != videoWidget.videoHeight) {
 						videoWidget.dispatchEvent(new js.html.Event("resize"));
 					}
@@ -69,6 +69,7 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
+		isFlowContainer = false;
 		super();
 
 		this.keepNativeWidget = true;
@@ -106,7 +107,7 @@ class VideoClip extends FlowContainer {
 		addVideoSource(filename, "");
 		videoWidget = Browser.document.createElement("video");
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.initNativeWidget("div");
 			nativeWidget.appendChild(videoWidget);
 		}
@@ -121,7 +122,7 @@ class VideoClip extends FlowContainer {
 			videoWidget.appendChild(source);
 		}
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			videoTexture = Texture.fromVideo(videoWidget);
 			untyped videoTexture.baseTexture.autoUpdate = false;
 			videoSprite = new Sprite(videoTexture);
@@ -375,14 +376,14 @@ class VideoClip extends FlowContainer {
 		this.invalidateTransform('onMetadataLoaded'); // Update the widget
 
 		if (textField != null) {
-			if (RenderSupport.RendererType != "html" && getChildIndex(videoSprite) > getChildIndex(textField)) {
+			if (!this.isHTMLRenderer() && getChildIndex(videoSprite) > getChildIndex(textField)) {
 				swapChildren(videoSprite, textField);
 			}
 
 			updateSubtitlesClip();
 		};
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			videoTexture.update();
 		}
 
@@ -401,7 +402,7 @@ class VideoClip extends FlowContainer {
 		calculateWidgetBounds();
 		this.invalidateTransform('updateVideoMetrics');
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			videoWidget.style.width = '${this.getWidth()}px';
 			videoWidget.style.height = '${this.getHeight()}px';
 		} else {

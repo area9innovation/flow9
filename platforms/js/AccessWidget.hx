@@ -201,7 +201,8 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateDisplay() : Void {
-		if (RenderSupport.RendererType != "html") {
+		if (RenderSupport.RendererType != "html" &&
+			(accessWidget == null || accessWidget.clip != null || !accessWidget.clip.isHTMLRenderer())) {
 			updateTransform();
 
 			for (child in children) {
@@ -211,7 +212,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateTransform() : Void {
-		if (RenderSupport.RendererType != "html" && accessWidget != null) {
+		if (accessWidget != null && accessWidget.clip != null && !accessWidget.clip.isHTMLRenderer()) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
@@ -481,7 +482,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (clip.isHTMLRenderer()) {
 			return;
 		}
 
@@ -513,7 +514,8 @@ class AccessWidget extends EventEmitter {
 
 	public function set_element(element : Element) : Element {
 		if (this.element != element) {
-			if (this.element != null && this.element.parentNode != null && (element != null || RenderSupport.RendererType != "html")) {
+			if (this.element != null && this.element.parentNode != null &&
+				(element != null || (RenderSupport.RendererType != "html" && (this.clip == null || !this.clip.isHTMLRenderer())))) {
 				this.element.parentNode.removeChild(this.element);
 
 				untyped __js__("delete this.element;");
@@ -666,7 +668,7 @@ class AccessWidget extends EventEmitter {
 			this.clip.updateKeepNativeWidgetChildren();
 		}
 
-		if (RenderSupport.RendererType == "html" && accessRoleMap.get(role) != null &&
+		if (RenderSupport.RendererType == "html" && (this.clip == null || this.clip.isHTMLRenderer()) && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
@@ -1064,7 +1066,7 @@ class AccessWidget extends EventEmitter {
 			var accessWidget = child.accessWidget;
 
 			if (accessWidget != null && accessWidget.element != null) {
-				if (RenderSupport.RendererType != "html") {
+				if (RenderSupport.RendererType != "html" && (accessWidget.clip == null || !accessWidget.clip.isHTMLRenderer())) {
 					if (child.changed) {
 						try {
 							if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {
