@@ -191,6 +191,16 @@
                 return NO;
         }
         
+        
+        // Workaround for proposed email choose. Range behaves wrong from iOS side.
+        if ([string isEqualToString:@""] && range.length == 0) {
+            NSUInteger location = range.location;
+            range.location = range.length;
+            range.length = location;
+        } else if (textView.realText.length == 0 && textView.text.length > 0) {
+            range.location = 0;
+        }
+        
         NSString* newText =
             [textView.realText stringByReplacingCharactersInRange: range withString: string];
         int maxLength = clip->getMaxChars();

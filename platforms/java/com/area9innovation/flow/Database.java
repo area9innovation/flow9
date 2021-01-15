@@ -237,7 +237,7 @@ public class Database extends NativeHost {
     public final Boolean hasNextResultDb(Object result) {
         RSObject res = (RSObject) result;
         try {
-            if (res == null) return false;
+            if (res == null || res.rs == null) return false;
             return notEmptyResultSet(res.rs);
         } catch (SQLException se) {
             res.err = getSqlErrorMessage(se);
@@ -416,7 +416,7 @@ public class Database extends NativeHost {
     public final Struct[] nextResultDb(Object result) {
         RSObject res = (RSObject) result;
 
-        if (res == null) return new Struct[0];
+        if (res == null || res.rs == null) return new Struct[0];
         try {
             String[] fieldNames = getFieldNames(res.rs);
             int[] fieldTypes = getFieldTypes(res.rs);
