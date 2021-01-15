@@ -27,7 +27,7 @@ class HTMLStage extends NativeWidgetClip {
 		var config = { attributes: true, childList: true, subtree: true };
 		var updating = false;
 		var callback = function() {
-			if (!updating) {
+			if (!updating && untyped Array.from(clips.keys()).length > 0) {
 				updating = true;
 				RenderSupport.once("drawframe", function() {
 					stageRect = untyped this.nativeWidget.getBoundingClientRect();
