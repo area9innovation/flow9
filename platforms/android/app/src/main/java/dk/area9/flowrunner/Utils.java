@@ -538,7 +538,7 @@ public class Utils {
 
     public static Uri fileUriToContentUri(Context context, File file) {
         if(Utils.isFileProviderRequired) {
-            return FileProvider.getUriForFile(context, "dk.area9.flowrunner.fileprovider", file);
+            return FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", file);
         }
         return Uri.fromFile(file);
     }
