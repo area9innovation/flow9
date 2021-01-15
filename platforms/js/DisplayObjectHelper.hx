@@ -2430,6 +2430,14 @@ class DisplayObjectHelper {
 						untyped clip.invalidateStyle();
 						invalidateTransform(clip, 'invalidateRenderable');
 					}
+
+					if (untyped (isHTMLStage(clip) || isHTML(clip)) && clip.children && clip.children.length > 0) {
+						for (child in getClipChildren(clip)) {
+							if (untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null) {
+								invalidateLocalBounds(child, invalidateMask, viewBounds, untyped hasAnimation || clip.hasAnimation);
+							}
+						}
+					}
 				} else {
 					untyped clip.maxLocalBounds = new Bounds();
 
