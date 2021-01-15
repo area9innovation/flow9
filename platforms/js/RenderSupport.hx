@@ -617,8 +617,6 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
-
-		trace(PixiStage.countClips());
 	}
 
 	public static function countClips() {

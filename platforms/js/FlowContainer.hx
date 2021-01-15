@@ -237,11 +237,7 @@ class FlowContainer extends Container {
 					bounds.maxX = renderer.width;
 					bounds.maxY = renderer.height;
 
-					DisplayObjectHelper.invalidatedLocalBounds = 0;
-					DisplayObjectHelper.invalidatedRenderable = 0;
 					this.invalidateLocalBounds(null, bounds);
-					// trace('invalidatedLocalBounds: ' + DisplayObjectHelper.invalidatedLocalBounds);
-					// trace('invalidatedRenderable: ' + DisplayObjectHelper.invalidatedRenderable);
 
 					DisplayObjectHelper.lockStage();
 					updateTransform();

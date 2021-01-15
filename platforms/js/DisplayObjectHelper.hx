@@ -2066,14 +2066,6 @@ class DisplayObjectHelper {
 		}
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
-			// if (isNativeWidget(clip)) {
-			// 	if (RenderSupport.RendererType == "html") {
-			// 		invalidateTransform(clip);
-			// 	} else {
-			// 		invalidateParentTransform(clip);
-			// 	}
-			// }
-
 			untyped clip.nativeWidgetBoundsChanged = true;
 			if (RenderSupport.RendererType != "html") {
 				untyped clip.rvlast = null;
@@ -2299,15 +2291,10 @@ class DisplayObjectHelper {
 		return untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null;
 	}
 
-	public static var invalidatedLocalBounds = 0;
-
 	public static function invalidateLocalBounds(clip : DisplayObject, ?invalidateMask : Bool = false, viewBounds : Bounds, ?hasAnimation : Bool = false) : Void {
 		if (untyped clip.transformChanged || clip.localBoundsChanged) {
 			var checkLocalBounds = untyped clip.localBoundsChanged;
-			if (checkLocalBounds) {
-				invalidatedLocalBounds++;
-				untyped clip.localBoundsChanged = false;
-			}
+			untyped clip.localBoundsChanged = false;
 
 			if (untyped clip.localTransformChanged) {
 				untyped clip.transform.updateLocalTransform();
@@ -2449,8 +2436,6 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static var invalidatedRenderable = 0;
-
 	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds, ?hasAnimation : Bool = false) : Void {
 		if (!InvalidateRenderable) {
 			return;
@@ -2467,8 +2452,6 @@ class DisplayObjectHelper {
 		if (untyped clip.localTransformChanged) {
 			untyped clip.transform.updateLocalTransform();
 		}
-
-		invalidatedRenderable++;
 
 		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
 
@@ -2493,10 +2476,6 @@ class DisplayObjectHelper {
 					viewBounds.maxY >= clip.localBounds.minY && viewBounds.minY <= clip.localBounds.maxY
 			);
 		}
-
-		// if (untyped !clip.transformChanged || clip.scrollRect != null || !clip.visible) {
-		// 	return;
-		// }
 
 		if (untyped !clip.transformChanged) {
 			return;
