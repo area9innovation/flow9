@@ -2494,14 +2494,14 @@ class DisplayObjectHelper {
 			untyped clip.transform.updateLocalTransform();
 		}
 
+		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
+
 		if (untyped clip.scrollRect != null) {
 			viewBounds.minX = Math.max(viewBounds.minX, untyped clip.localBounds.minX);
 			viewBounds.minY = Math.max(viewBounds.minY, untyped clip.localBounds.minY);
 			viewBounds.maxX = Math.min(viewBounds.maxX, untyped clip.localBounds.maxX);
 			viewBounds.maxY = Math.min(viewBounds.maxY, untyped clip.localBounds.maxY);
 		}
-
-		untyped clip.viewBounds = viewBounds;
 
 		if ((!isHTMLRenderer(clip) && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
