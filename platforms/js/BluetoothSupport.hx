@@ -63,16 +63,16 @@ class BluetoothSupport {
         }).catchError(onError);
     }
 
-    public static function addGattCharacteristicValueListener(characteristicNative : Dynamic, callback : Array<Int> -> Void) : Void {
-        untyped characteristicNative.addEventListener("characteristicvaluechanged", function (event) {
+    public static function addGattCharacteristicValueListener(characteristicNative : Dynamic, callback : Array<Int> -> Void) : Void -> Void {
+        var cb = function (event) {
             callback(untyped __js__("new Uint8Array(event.target.value.buffer)"));
-        });
-    }
+        }
 
-    public static function removeGattCharacteristicValueListener(characteristicNative : Dynamic, callback : Array<Int> -> Void) : Void {
-        untyped characteristicNative.removeEventListener("characteristicvaluechanged", function (event) {
-            callback(untyped __js__("new Uint8Array(event.target.value.buffer)"));
-        });
+        untyped characteristicNative.addEventListener("characteristicvaluechanged", cb);
+
+        return function () {
+            untyped characteristicNative.removeEventListener("characteristicvaluechanged", cb);
+        }
     }
 
     public static function readGattCharacteristicValue(characteristicNative : Dynamic, onValue : Array<Int> -> Void, onError : String -> Void) : Void {
