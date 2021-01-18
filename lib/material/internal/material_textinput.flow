@@ -1,4 +1,5 @@
 import material/internal/material_textinput_state;
+import material/internal/material_list;
 import material/internal/material_button;
 import material/internal/material_outline;
 
@@ -922,6 +923,8 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 			).height,
 			0.
 		);
+	inputHgt = make(0.);
+	popupMaxSize = makeWH();
 
 	directionChangeLinesThreshold = 2;
 	directionChangeThreshold = i2d(directionChangeLinesThreshold) * lineHeight;
@@ -942,14 +945,14 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 		eitherMap(
 			inputState.autocomplete,
 			\ac -> if (eitherMap(ac.inLine, \inline -> inline.showPopup, true)) {
-				(\p -> MSelect2T(inputState.manager, p, "MTextInputCompletionItems", [MFocusEnabled(const(false))], ac.sentences, \compl, p2 -> {
-					next(ac.selected, -1);
+				(\p -> {
+					items = fselect(ac.sentences, FLift(\compl -> {
+						next(ac.selected, -1);
 
-					items =
-						mapi(compl, \i, com ->
+						res = mapi(compl, \i, com ->
 							MIfLazy2T(
 								inputState.manager,
-								p2,
+								p,
 								feq(ac.selected, i),
 								\sel, p3 ->
 									m2t(
@@ -967,44 +970,86 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 							)
 						);
 
-					if (ac.autoSelect && length(items) > 0)
-						next(ac.selected, 0);
+						if (ac.autoSelect && length(res) > 0)
+							next(ac.selected, 0);
 
-					TLines(items)
-				})
-				|> (\f -> TCopySize(f, \tr ->
+						res
+					}));
+
+					lines =
+						if (popupState.dynListMode) {
+							contentWH = makeWH();
+							maxHeight =
+								fselect3(
+									if (popupState.maxHeight > 0.) const(popupState.maxHeight) else fheight(inputState.manager.stageWH),
+									fheight(popupMaxSize),
+									inputHgt,
+									\maxH, pH, iH -> {
+										a = if (pH - 2. - iH > 0.) pH else maxH;
+										a - 2. - iH
+									}
+								);
+
+							avHeigth =
+								fif(
+									feq(flength(items), 0),
+									const(0.),
+									fselect2(fheight(contentWH), maxHeight, FLift2(\cH, maxH ->
+										if (cH > 0.) min(cH, maxH) else maxH
+									))
+								);
+
+							MDynamicList2T(
+								inputState.manager,
+								p,
+								MDynamicList(
+									fselect(items, FLift(\itms -> map(itms, \it -> MCustomLine(it, [])))),
+									[MSideBorders(const(0.))],
+									[
+										MItemsHeights(\__ -> const(48.)),
+										MScrollWidthHeight(contentWH, makeWH()),
+										MHoverEnabled(const(false)),
+									]
+								),
+								m2t
+							)
+							|> (\t -> TAvailableHeight(t, avHeigth))
+						} else 
+							MSelect2T(inputState.manager, p, "MTextInputCompletionItems", [MFocusEnabled(const(false))], items, \itms, p2 -> TLines(itms));
+					
+					TCopySize(lines, \tr ->
 						MShape(p, ac.fill, tr, "MAutoComplete")
 						|> TRotate180(fnot(onTop), tr),
 						false
 					)
-				)
-				|> (\f ->
-					TConstruct(
-						[
-							makeSubscribe(ac.selected, \sel -> {
-								if (sel >= 0) {
-									scrollHeight = max(0., getValue(popupState.contentWH).height - getValue(popupState.boxWH).height);
+					|> (\f ->
+						TConstruct(
+							[
+								makeSubscribe(ac.selected, \sel -> {
+									if (sel >= 0) {
+										scrollHeight = max(0., getValue(popupState.contentWH).height - getValue(popupState.boxWH).height);
 
-									if (scrollHeight > 0.) {
-										minSelHeight = max(0., lineHeight * i2d(max(sel, 0)));
-										maxSelHeight = max(0., minSelHeight + lineHeight - getValue(popupState.boxWH).height);
+										if (scrollHeight > 0.) {
+											minSelHeight = max(0., lineHeight * i2d(max(sel, 0)));
+											maxSelHeight = max(0., minSelHeight + lineHeight - getValue(popupState.boxWH).height);
 
-										if (getValue(popupState.scrollPosition).y < maxSelHeight) {
-											next(popupState.scrollPosition, Point(0., maxSelHeight))
-										} else if (getValue(popupState.scrollPosition).y > minSelHeight) {
-											next(popupState.scrollPosition, Point(0., minSelHeight))
+											if (getValue(popupState.scrollPosition).y < maxSelHeight) {
+												next(popupState.scrollPosition, Point(0., maxSelHeight))
+											} else if (getValue(popupState.scrollPosition).y > minSelHeight) {
+												next(popupState.scrollPosition, Point(0., minSelHeight))
+											}
+										} else {
+											nextDistinct(popupState.scrollPosition, zeroPoint)
 										}
 									} else {
 										nextDistinct(popupState.scrollPosition, zeroPoint)
 									}
-								} else {
-									nextDistinct(popupState.scrollPosition, zeroPoint)
-								}
-							})
-						],
-						f
+								})
+							],
+							f
+						)
 					)
-				))
+				})
 				|> (\f ->
 					[
 						\p -> TShowLazy(fneq(ac.sentences, []), \ -> m2t(MSeparator(true), p)),
@@ -1031,6 +1076,7 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 
 	content =
 		TMoveClip(makeTextInput(inputState.parent), \ti -> textInputClip := ti)
+		|> (\t -> TAttachHeight(t, inputHgt))
 		|> addMTextInputBackground(onTop)
 		|> addErrorText;
 
@@ -1111,7 +1157,8 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 								MBackgroundStyle(inputState.backgroundStyle.focused),
 								MRippleShape("MMenu"),
 								MActive(make(true)),
-								MFocusOnPrevious(false)
+								MFocusOnPrevious(false),
+								RMCurrentMaxSize(popupMaxSize)
 							]
 							|> (\arr ->
 								if (popupItems != [])
