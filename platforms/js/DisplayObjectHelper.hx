@@ -2140,6 +2140,14 @@ class DisplayObjectHelper {
 		}
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
+			if (isNativeWidget(clip)) {
+				if (RenderSupport.RendererType == "html") {
+					invalidateTransform(clip);
+				} else {
+					invalidateParentTransform(clip);
+				}
+			}
+
 			untyped clip.nativeWidgetBoundsChanged = true;
 			if (!isHTMLRenderer(clip)) {
 				untyped clip.rvlast = null;
