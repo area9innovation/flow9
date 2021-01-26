@@ -1440,6 +1440,19 @@ class TextClip extends NativeWidgetClip {
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
+
+		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
+			RenderSupport.defer(updateTextNodeWidth, 0);
+		}
+	}
+
+	private function updateTextNodeWidth() : Void {
+		var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
+		
+		if (textNodeWidth != null && textNodeWidth > 0 && textNodeWidth != metrics.width) {
+			metrics.width = textNodeWidth;
+			this.emitEvent('textwidthchanged');
+		}
 	}
 
 	private function measureHTMLWidth() : Void {
