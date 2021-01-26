@@ -2,7 +2,11 @@
 
 These are typed version of the HTML DOM types in browsers.
 
+After having used these, it turns out they are really verbose and not that helpful.
+
 TODO:
+- Figure out a better way to do this.
+
 - Replace events QExp with lambdas. Can events be considered as structures, or RAssigns?
   They probably can. Decide which is better.
   

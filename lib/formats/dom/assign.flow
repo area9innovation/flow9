@@ -6,6 +6,7 @@ import ds/reducer;
 export {
 	// Assign this node to this element. Get this with MHTMLStage or makeHTMLStage
 	htmlRAssign(element : native, assign : RAssign<IXmlNode>) -> void;
+	materialRAssign(manager : MaterialManager, element : native, assign : RAssign<Material>, prevAssign : Maybe<RAssign<?>>) -> void;
 
 	// Remove this path from this element.
 	removeHtmlRValue(element : native, lvalue : RLValue) -> void;
@@ -27,62 +28,229 @@ prepareHtmlStage() -> Pair<Material, ref native> {
 
 htmlRAssign(element : native, assign : RAssign<IXmlNode>) -> void {
 	// println(assign.lvalue);
-	dom = findOrMakeHtmlElement(element, "", assign.lvalue);
+	// TODO: Provide previous assign to keep order
+	dom = findOrMakeHtmlElement(element, "", assign.lvalue, None());
 	html = ixml2string(assign.value);
 	setAttribute(dom, "innerHTML", html);
 }
 
-findOrMakeHtmlElement(element : native, path : string, l : RLValue) -> native {
+materialRAssign(manager : MaterialManager, element : native, assign : RAssign<Material>, prevAssign : Maybe<RAssign<?>>) -> void {
+	dom = findOrMakeHtmlElement(element, "", assign.lvalue, eitherMap(prevAssign, \pa -> Some(pa.lvalue), None()));
+	id = rlvalue2path(assign.lvalue);
+
+	f = staticTropic2fform(material2tropic(manager, assign.value), emptyStylesheet);
+	d = renderFForm(f, const([]));
+	// TODO: Check if necessary to listen removed
+	// addEventListener(d.clips[0], "removed", \ -> applyall(d.disposers));
+
+	assignClip(element, id, d.clips[0]);
+}
+
+rlvalue2path(l : RLValue) -> string {
+	switch (l) {
+		RLeaf(): "";
+		RLObject(key, rvalue): {
+			"." + key + rlvalue2path(rvalue);
+		}
+		RLArrayIndex(index, rvalue): {
+			"." + i2s(index) + rlvalue2path(rvalue);
+		}
+	}
+}
+
+findOrMakeHtmlElement(element : native, path : string, l : RLValue, prevL : Maybe<RLValue>) -> native {
 	switch (l) {
 		RLeaf(): element;
 		RLObject(key, rvalue): {
 			npath = path + "." + key;
 			// println("Looking for " + npath);
 			elm = getElementById(npath);
-			if (isElementNull(elm)) {
+			nelement = if (isElementNull(elm)) {
 				// OK, we have to construct a new element
-				nelement = createElement("div");
-				appendChild(element, nelement);
+				nelement = createHtmlElement(element, path, l, prevL);
+
 				// println("adding div with id " + npath);
 				setAttribute(nelement, "id", npath);
-				// We have to fix the positioning
-				setAttribute(nelement, "style", "position:static");
-				findOrMakeHtmlElement(nelement, npath, rvalue);
+				if (strContains(key, "#")) {
+					setAttribute(nelement, "class", strSplit(key, "#")[0]);
+				}
+				nelement;
 			} else {
 				// println("Found it");
-				findOrMakeHtmlElement(elm, npath, rvalue);
+				elm;
 			}
-		}
-		RLArrayPush(rvalue): {
-			// OK, find out how many children this guy has
-			println("TODO: Fix array pushing");
-			element;
+
+			findOrMakeHtmlElement(nelement, npath, rvalue, subRLValue(Some(key), None(), prevL));
 		}
 		RLArrayIndex(index, rvalue): {
-			println("TODO: Fix array indexing");
-			element;
+			npath = path + "." + i2s(index);
+			// println("Looking for " + npath);
+			elm = getElementById(npath);
+			nelement = if (isElementNull(elm)) {
+				// OK, we have to construct a new element
+				nelement = createHtmlElement(element, path, l, prevL);
+
+				// println("adding div with id " + npath);
+				setAttribute(nelement, "id", npath);
+				nelement;
+			} else {
+				// println("Found it");
+				elm;
+			}
+
+			findOrMakeHtmlElement(nelement, npath, rvalue, subRLValue(None(), Some(index), prevL));
 		}
 	}
 }
 
+
+// Get RLValue of an element which is a child of another element with a key or index passed
+subRLValue(keyM : Maybe<string>, indexM : Maybe<int>, prevL : Maybe<RLValue>) -> Maybe<RLValue> {
+	eitherFn(
+		prevL,
+		\pl -> {
+			switch (pl) {
+				RLeaf(): {
+					None();
+				}
+				RLObject(prevKey, prevRvalue): {
+					eitherMap(
+						keyM,
+						\key -> {
+							if (prevKey == key) {
+								Some(prevRvalue);
+							} else {
+								None();
+							}
+						},
+						None()
+					);
+				}
+				RLArrayIndex(prevIndex, prevRvalue): {
+					eitherMap(
+						indexM,
+						\index -> {
+							if (prevIndex == index) {
+								Some(prevRvalue);
+							} else {
+								None();
+							}
+						},
+						None()
+					);
+				}
+			}
+		},
+		\ -> {
+			None();
+		}
+	);
+}
+
+// Create new container and place it right after prevL
+createHtmlElement(element : native, path : string, l : RLValue, prevL : Maybe<RLValue>) -> native {
+	nelement = createElement("div");
+	children = getElementChildren(element);
+
+	eitherFn(
+		prevL,
+		\pl -> {
+			switch (pl) {
+				RLeaf(): {
+					if (length(children) == 0) {
+						appendChild(element, nelement);
+					} else {
+						insertBefore(element, nelement, children[0]);
+					}
+				}
+				RLObject(prevKey, prevRvalue): {
+					prevPath = path + "." + prevKey;
+					prevElm = getElementById(prevPath);
+
+					if (!isElementNull(prevElm)) {
+						if (!isElementNull(getElementNextSibling(prevElm))) {
+							insertBefore(element, nelement, getElementNextSibling(prevElm));
+						} else {
+							appendChild(element, nelement);
+						}
+					} else {
+						if (length(children) == 0) {
+							appendChild(element, nelement);
+						} else {
+							insertBefore(element, nelement, children[0]);
+						}
+					}
+				}
+				RLArrayIndex(prevIndex, prevRvalue): {
+					prevPath = path + "." + i2s(prevIndex);
+					prevElm = getElementById(prevPath);
+
+					if (!isElementNull(prevElm)) {
+						if (!isElementNull(getElementNextSibling(prevElm))) {
+							insertBefore(element, nelement, getElementNextSibling(prevElm));
+						} else {
+							appendChild(element, nelement);
+						}
+					} else {
+						if (length(children) == 0) {
+							appendChild(element, nelement);
+						} else {
+							insertBefore(element, nelement, children[0]);
+						}
+					}
+				}
+			}
+		},
+		\ -> {
+			if (length(children) == 0) {
+				appendChild(element, nelement);
+			} else {
+				insertBefore(element, nelement, children[0]);
+			}
+		}
+	);
+
+	nelement;
+}
+
 removeHtmlRValue(element : native, lvalue : RLValue) -> void {
+	removeHtmlElement(element, "", lvalue);
+}
+
+removeHtmlElement(element : native, path : string, lvalue : RLValue) -> void {
 	switch (lvalue) {
 		RLeaf(): {}
 		RLObject(key, value): {
-			elm = getElementById(key);
+			npath = path + "." + key;
+			elm = getElementById(npath);
 			if (!isElementNull(elm)) {
-				// Remove recursively: TODO: Not sure this is required.
-				removeHtmlRValue(elm, value);
-				removeElementChild(element, elm);
-				// TODO: There is also .remove directly on the element, so we do not need to know
-				// the parent.
+				if (value == RLeaf()) {
+					removeElementChild(element, elm);
+				} else {
+					removeHtmlElement(elm, npath, value);
+
+					// Remove element if it has no children
+					if (length(getElementChildren(elm)) == 0) {
+						removeElementChild(element, elm);
+					}
+				}
 			}
 		}
-		RLArrayPush(rvalue): {
-			println("TODO: Fix array removal");
-		}
 		RLArrayIndex(index, rvalue): {
-			println("TODO: Fix array index removal");
+			npath = path + "." + i2s(index);
+			elm = getElementById(npath);
+			if (!isElementNull(elm)) {
+				if (rvalue == RLeaf()) {
+					removeElementChild(element, elm);
+				} else {
+					removeHtmlElement(elm, npath, rvalue);
+
+					// Remove element if it has no children
+					if (length(getElementChildren(elm)) == 0) {
+						removeElementChild(element, elm);
+					}
+				}
+			}
 		}
 	}
 }

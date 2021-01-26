@@ -209,7 +209,7 @@ class FlowSprite extends Sprite {
 	}
 
 	private function enableSprites() : Void {
-		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+		if (untyped this.destroyed || parent == null || nativeWidget == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
 			return;
 		}
 
@@ -407,7 +407,7 @@ class FlowSprite extends Sprite {
 	public function switchUseCrossOrigin(useCrossOrigin) : Void {
 		if (this.useCrossOrigin != useCrossOrigin) {
 			this.useCrossOrigin = useCrossOrigin;
-			
+
 			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url)
 			else nativeWidget.crossOrigin = null;
 		}

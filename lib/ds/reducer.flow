@@ -87,19 +87,28 @@ export {
 	rreduceChars(str : string, r : Reducer<int, ?>) -> ?;
 
 	rreduceJson(json : Json, reducer : Reducer<RAssign<Json>, ??>) -> ??;
-		// An assignment is a path to the place in the structure where it belongs and the value to put there
-		RAssign(lvalue : RLValue, value : ?);
+
+		// A generalized update of a data value
+		RUpdate<?> ::= RAssign<?>, RInsert<?>, RDelete;
+
+			// An assignment is a path to the place in the structure where it belongs and the value to put there
+			// Notice this can also do insert at the end of arrays
+			RAssign(lvalue : RLValue, value : ?);
+
+			// Insert an element here -> probably expects an array at the end
+			RInsert(lvalue : RLValue, value : ?);
+
+			// Remove this element -> probably expects an array at the end
+			RDelete(lvalue : RLValue);
 
 		// An "address" in an object to place a value
-		RLValue ::= RLeaf, RLObject, RLArrayPush, RLArrayIndex;
+		RLValue ::= RLeaf, RLObject, RLArrayIndex;
 			// Immediate value
 			RLeaf();
 			// Place the value inside this key in an object
-			RLObject(key : string, rvalue : RLValue);
-			// Add the value to this place at the end of an array
-			RLArrayPush(rvalue : RLValue);
+			RLObject(key : string, lvalue : RLValue);
 			// Place the value at this index in the array at rvalue
-			RLArrayIndex(index : int, rvalue : RLValue);
+			RLArrayIndex(index : int, lvalue : RLValue);
 
 	// TODO: multimap, tuples, graphs, dlist, behaviour/transforms
 
@@ -385,7 +394,7 @@ doRReduceJsonObject(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap :
 
 doRReduceJsonArray(reducer : Reducer<RAssign<Json>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, i : int, elements : [Json]) -> ReducerResult<??> {
 	if (i < length(elements)) {
-		lvalue = \v -> lvalueWrap(RLArrayPush(v));
+		lvalue = \v -> lvalueWrap(RLArrayIndex(i, v));
 		element = elements[i];
 		v = doRReduceJson(reducer, acc, lvalue, element);
 		switch (v) {
@@ -410,6 +419,8 @@ rjson() -> Reducer<RAssign<Json>, Json> {
 	)
 }
 
+// TODO: Add jsonRInsert and jsonRRemove and implement jsonRUpdate
+
 jsonRAssign(acc : Json, assign : RAssign<Json>) -> Json {
 	switch (assign.lvalue) {
 		RLeaf(): assign.value;
@@ -417,13 +428,12 @@ jsonRAssign(acc : Json, assign : RAssign<Json>) -> Json {
 			fieldValue = getJsonFieldValue(acc, key, JsonNull());
 			setJsonField(acc, key, jsonRAssign(fieldValue, RAssign(lvalue2, assign.value)));
 		}
-		RLArrayPush(lvalue2): {
-			pushJsonValue(acc, jsonRAssign(JsonNull(), RAssign(lvalue2, assign.value)));
-		}
 		RLArrayIndex(index, lvalue2): {
 			val = jsonRAssign(JsonNull(), RAssign(lvalue2, assign.value));
 			av = getJsonArrayValue(acc, []);
-			if (index < length(av)) {
+
+			// We allow adding at the end, which is why this is <= and not <
+			if (index <= length(av)) {
 				JsonArray(replace(av, index, val));
 			} else {
 				// Out of bounds. Ignore it!

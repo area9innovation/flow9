@@ -398,6 +398,16 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     }
     LogI(@"Flow local storage path: %@", flow_local_storage_path);
     LocalStore->SetBasePath( [flow_local_storage_path UTF8String] );
+    
+    // Copy www bundle to Library to access preloaded content
+    NSString* wwwTargetDirectory = [applicationLibraryDirectory() stringByAppendingString: @"/www/"];
+    NSURL* wwwSourceDirectoryUrl = [[[NSBundle mainBundle] resourceURL] URLByAppendingPathComponent:@"www"];
+    
+    if (![[NSFileManager defaultManager] fileExistsAtPath:wwwTargetDirectory]) {
+        NSError *copyError = nil;
+        [[NSFileManager defaultManager] copyItemAtPath:[wwwSourceDirectoryUrl path] toPath:wwwTargetDirectory error:&copyError];
+    }
+    
 
     CFURLRef cwd = (CFURLRef)[NSURL fileURLWithPath: flow_local_storage_path isDirectory: YES];
     char path[PATH_MAX];
