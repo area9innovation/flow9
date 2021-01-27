@@ -397,7 +397,7 @@ class RenderSupport {
 		return Math.max(roundPlus(ratio, 2), 1.0);
 	}
 
-	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
+	public static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
 		untyped __js__("setTimeout(fn, time)");
 	}
 
@@ -2404,7 +2404,7 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "added" || event == "removed"){
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged"){
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {

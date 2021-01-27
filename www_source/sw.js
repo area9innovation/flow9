@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 21;
+var SERVICE_WORKER_VERSION = 22;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -504,8 +504,8 @@ var cleanServiceWorkerCache = function() {
 
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
-      // We should reset whole cache on update #21 (excluding SHARED_DATA_ENDPOINT)
-      if (!((SHARED_DATA_ENDPOINT == key) || (CACHE_NAME == key && SERVICE_WORKER_VERSION != 21))) {
+      // We should reset whole cache on update #22 (excluding SHARED_DATA_ENDPOINT)
+      if (!((SHARED_DATA_ENDPOINT == key) || (CACHE_NAME == key && SERVICE_WORKER_VERSION != 22))) {
         console.log("cache cleared", key);
         return caches.delete(key);
       }
