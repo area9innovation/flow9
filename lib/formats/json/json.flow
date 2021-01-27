@@ -96,8 +96,7 @@ export {
 }
 
 parseJson(json : string) -> Json {
-	v = doParseJson(json, strlen(json), 0);
-	v.first;
+	parseJsonSafe(json)
 }
 
 parseJsonSafe(json : string) -> Json {
@@ -202,29 +201,32 @@ getJsonIntValueM(json : Json) -> Maybe<int> {
 
 doParseJson(json : string, jsonLength : int, start : int) -> Pair<Json, int> {
 	charCode = getCharCodeAt(json, start);
-	if (charCode == 32 || charCode == 9 || charCode == 10 || charCode == 13) { // " " || "\t" || "\n" || "\r"
+	v = if (charCode == 32 || charCode == 9 || charCode == 10 || charCode == 13) { // " " || "\t" || "\n" || "\r"
 		// Eat white space
-		doParseJson(json, jsonLength, start + 1);
+		v = doParseJson(json, jsonLength, start + 1);
+		Triple(v.first, start + 1, v.second)
 	} else {
 		if (charCode == 91) {				// "["
 			v = parseJsonArray2(json, jsonLength, start + 1, makeList());
-			Pair(JsonArray(v.first), v.second);
+			Triple(JsonArray(v.first), start + 1, v.second);
 		} else if (charCode == 123) {		// "{"
 			v = parseJsonObject2(json, jsonLength, start + 1, makeList());
-			Pair(JsonObject(v.first), v.second);
+			Triple(JsonObject(v.first), start + 1, v.second);
 		} else if (charCode == 34) {		// "\""
 			v = deserializeRestOfString2(json, start + 1);
-			Pair(JsonString(v.first), v.second);
+			Triple(JsonString(v.first), start + 1, v.second);
 		} else if (charCode == 110 /* "n" */ && substring(json,start, 4) == "null") {
-			Pair(JsonNull(), start + 4);
+			Triple(JsonNull(), start, start + 4);
 		} else if (charCode == 116 /* "t" */ && substring(json,start, 4) == "true") {
-			Pair(JsonBool(true), start + 4);
+			Triple(JsonBool(true), start, start + 4);
 		} else if (charCode == 102 /* "f" */ && substring(json,start, 5) == "false") {
-			Pair(JsonBool(false), start + 5);
+			Triple(JsonBool(false), start, start + 5);
 		} else {
-			parseJsonDouble2(json, jsonLength, start);
+			v = parseJsonDouble2(json, jsonLength, start);
+			Triple(v.first, start, v.second)
 		}
 	}
+	if (v.second == v.third) Pair(JsonDouble(0.0), start) else Pair(v.first, v.third);
 }
 
 parseJsonObject(json : string, start : int, acc : List<Pair<string, Json>>) -> Pair<[Pair<string, Json>], int> {
@@ -232,36 +234,51 @@ parseJsonObject(json : string, start : int, acc : List<Pair<string, Json>>) -> P
 }
 
 parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<string, Json>>) -> Pair<[Pair<string, Json>], int> {
-	head = skipJson2(json, jsonLength, start, ",");
-	charCode = getCharCodeAt(json, head);
-	if (head >= jsonLength || charCode == 125) { // "}"
-		Pair(list2array(acc), head + 1);
-	} else {
+	tail = skipJson2(json, jsonLength, start, " ").second;
+	head = switch (acc) {
+		EmptyList(): Pair(tail, tail);
+		Cons(__, __): skipJson2(json, jsonLength, start, ",");
+	};
+	charCode = getCharCodeAt(json, head.second);
+	if (getCharCodeAt(json, tail) == 125) // "}"
+		Pair(list2array(acc), tail + 1)
+	else if (head.second >= jsonLength || head.first < 0)  // No comma nor brace
+		Pair([], start)
+	else {
 		key =
-			if (charCode == 34) // "\""
-				deserializeRestOfString2(json, head + 1)
-			else
-				parseId(json, jsonLength, head);
+			if (charCode == 34) {// "\""
+				v = deserializeRestOfString2(json, head.second + 1);
+				if (v.second == head.second + 1) Pair("", head.second + 1) else v
+			} else
+				Pair("", head.second + 1);
 
 		afterColon = skipJson2(json, jsonLength, key.second, ":");
-		value = doParseJson(json, jsonLength, afterColon);
-		parseJsonObject2(json, jsonLength, value.second, Cons(Pair(key.first, value.first), acc));
+		value = doParseJson(json, jsonLength, afterColon.second);
+		if (key.second == head.second + 1 || afterColon.first < 0 || value.second == afterColon.second)
+			Pair([], start)
+		else {
+			v = parseJsonObject2(json, jsonLength, value.second, Cons(Pair(key.first, value.first), acc));
+			if (v.second == value.second) Pair([], start) else v
+		}
 	}
 }
 
 skipJson(json : string, start : int, char : string) -> int {
-	skipJson2(json, strlen(json), start, char);
+	skipJson2(json, strlen(json), start, char).second;
 }
 
-skipJson2(json : string, jsonLength : int, start : int, char : string) -> int {
+skipJson2(json : string, jsonLength : int, start : int, char : string) -> Pair<int, int> {
 	if (start >= jsonLength) {
-		start
+		Pair(-1, start);
 	} else {
 		headCharCode = getCharCodeAt(json, start);
-		if (fromCharCode(headCharCode) == char || headCharCode == 32 || headCharCode == 9 || headCharCode == 10 || headCharCode == 13) {
+		if (fromCharCode(headCharCode) == char) {
+			v = skipJson2(json, jsonLength, start + 1, " ");
+			Pair(start, v.second);
+		} else if (headCharCode == 32 || headCharCode == 9 || headCharCode == 10 || headCharCode == 13) {
 			skipJson2(json, jsonLength, start + 1, char);
 		} else {
-			start;
+			Pair(-1, start);
 		}
 	}
 }
@@ -271,16 +288,23 @@ parseJsonArray(json : string, start : int, acc : List<Json>) -> Pair<[Json], int
 }
 
 parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) -> Pair<[Json], int> {
-	head = skipJson2(json, jsonLength, start, ",");
-	if (head >= jsonLength || getCharCodeAt(json, head) == 93) { // "]"
-		Pair(list2array(acc), head + 1);
-	} else {
-		value = doParseJson(json, jsonLength, head);
-		if (value.second == start) {
+	tail = skipJson2(json, jsonLength, start, " ").second;
+	head = switch (acc) {
+		EmptyList(): Pair(tail, tail);
+		Cons(__, __): skipJson2(json, jsonLength, start, ",");
+	};
+	if (getCharCodeAt(json, tail) == 93) // "]"
+		Pair(list2array(acc), tail + 1)
+	else if (head.second >= jsonLength || head.first < 0)  // No comma nor bracket
+		Pair([], start)
+	else {
+		value = doParseJson(json, jsonLength, head.second);
+		if (value.second == head.second) {
 			// No progress, so we have some problem
-			Pair(list2array(acc), value.second);
+			Pair([], start);
 		} else {
-			parseJsonArray2(json, jsonLength, value.second, Cons(value.first, acc));
+			v = parseJsonArray2(json, jsonLength, value.second, Cons(value.first, acc));
+			if (v.second == value.second) Pair([], start) else Pair(v.first, v.second);
 		}
 	}
 }
@@ -296,13 +320,6 @@ parseJsonDouble2(s : string, stringLength: int, start : int) -> Pair<Json, int> 
 		! ((48 <= c && c <= 57) || c == 46 || c == 45 || c == 101 || c == 69 || c == 43);
 	});
 	Pair(JsonDouble(s2d(substring(s, start, end - start))), end);
-}
-
-parseId(s : string, l : int, start : int) -> Pair<string, int> {
-	end = countUntil(start, l, \i -> {
-		getCharCodeAt(s, i) == 58; // ":"
-	});
-	Pair(cloneString(trim(substring(s, start, end - start))), end);
 }
 
 getJsonStringField(json: Json, field: string, def: string) -> string {
