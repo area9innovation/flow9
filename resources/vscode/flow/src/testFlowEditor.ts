@@ -45,7 +45,10 @@ export class TestFlowEditorProvider implements vscode.CustomTextEditorProvider {
 				type: 'update',
 				text: document.getText(),
 			});*/
-			webviewPanel.webview.postMessage(document.getText());
+			setTimeout(function() {
+				console.log("post message")
+				webviewPanel.webview.postMessage(document.getText());
+			}, 5000);
 		}
 
 		// Hook up event handlers so that we can synchronize the webview with the text document.
