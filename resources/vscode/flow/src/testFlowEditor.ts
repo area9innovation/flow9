@@ -1,20 +1,15 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-//import { getNonce } from './util';
 import * as fs from "fs";
 
-/**
- * Provider for cat scratch editors.
- * 
- * Cat scratch editors are used for `.cscratch` files, which are just json files.
- * To get started, run this extension and open an empty `.cscratch` file in VS Code.
- * 
- * This provider demonstrates:
- * 
- * - Setting up the initial webview for a custom editor.
- * - Loading scripts and styles in a custom editor.
- * - Synchronizing changes between a text document and a custom editor.
- */
+/* 
+To compile the editor run
+
+	flowc1 html=editor2.html editor2.flow 
+
+in editors folder
+*/
+
 export class TestFlowEditorProvider implements vscode.CustomTextEditorProvider {
 
 	public static register(context: vscode.ExtensionContext): vscode.Disposable {
@@ -40,15 +35,10 @@ export class TestFlowEditorProvider implements vscode.CustomTextEditorProvider {
 		webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
 
 		function updateWebview() {
-			vscode.window.showInformationMessage("document.getText():\n" + document.getText());
-			/*webviewPanel.webview.postMessage({
+			webviewPanel.webview.postMessage(JSON.stringify({
 				type: 'update',
-				text: document.getText(),
-			});*/
-			setTimeout(function() {
-				console.log("post message")
-				webviewPanel.webview.postMessage(document.getText());
-			}, 5000);
+				text: document.getText()
+			}));
 		}
 
 		// Hook up event handlers so that we can synchronize the webview with the text document.
@@ -70,11 +60,35 @@ export class TestFlowEditorProvider implements vscode.CustomTextEditorProvider {
 			changeDocumentSubscription.dispose();
 		});
 
-		updateWebview();
+		// Receive message from the webview.
+		webviewPanel.webview.onDidReceiveMessage(e => {
+			//vscode.window.showInformationMessage("GOT MESSAGE: " + JSON.stringify(e));
+			const msg = JSON.parse(e);
+			//vscode.window.showInformationMessage("GOT MESSAGE: " + e);
+			if (msg.type == 'ready') {
+				updateWebview();		
+			} else if (msg.type == 'apply') {
+				//vscode.window.showInformationMessage("TO APPLY: " + msg.text);
+				this.updateTextDocument(document, msg.text);
+			}
+		});
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {
 		const editor_path = path.join(this.context.extensionPath, 'editors', 'editor2.html')
 		return fs.readFileSync(editor_path).toString();
+	}
+
+	private updateTextDocument(document: vscode.TextDocument, txt: string): void {
+		const edit = new vscode.WorkspaceEdit();
+
+		// Just replace the entire document every time for this example extension.
+		// A more complete extension should compute minimal edits instead.
+		edit.replace(
+			document.uri,
+			new vscode.Range(0, 0, document.lineCount, 0),
+			txt
+		);
+		vscode.workspace.applyEdit(edit);
 	}
 }
