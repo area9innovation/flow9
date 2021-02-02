@@ -15,6 +15,10 @@ class PdfClip extends FlowCanvas {
 	public function new() {
 		super();
 
+		if (RenderSupport.RendererType == "html") {
+			nativeWidget.style.zIndex = 'inherit';
+		}
+
 		renderWidget = cast(Browser.document.createElement('canvas'), CanvasElement);
 		renderContext = renderWidget.getContext("2d");
 	}
@@ -38,7 +42,7 @@ class PdfClip extends FlowCanvas {
 			this.updateNativeWidgetTransformMatrix();
 			this.updateNativeWidgetOpacity();
 
-			if (pageChanged) {
+			if (RenderSupport.RendererType == "html" || pageChanged) {
 				renderView(nativeWidget.getContext("2d"), RenderSupport.backingStoreRatio);
 			}
 
@@ -82,7 +86,6 @@ class PdfClip extends FlowCanvas {
 				taskPromise.then(function(e : Dynamic) {
 					renderTask = null;
 					this.invalidateTransform();
-					untyped this.nativeWidgetBoundsChanged = this.isHTMLRenderer();
 				}).catchError(function(e : Dynamic) {
 					renderTask = null;
 					renderPage();

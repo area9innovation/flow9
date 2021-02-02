@@ -1478,6 +1478,21 @@ class TextClip extends NativeWidgetClip {
 			var resizeObserver = untyped __js__("new ResizeObserver(callback)");
 			resizeObserver.observe(nativeWidget);
 		}
+
+		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
+			RenderSupport.defer(updateTextNodeWidth, 0);
+		}
+	}
+
+	private function updateTextNodeWidth() : Void {
+		if (nativeWidget != null) {
+			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
+			
+			if (textNodeWidth != null && textNodeWidth > 0 && textNodeWidth != metrics.width) {
+				metrics.width = textNodeWidth;
+				this.emitEvent('textwidthchanged');
+			}
+		}
 	}
 
 	private function measureHTMLWidth() : Void {

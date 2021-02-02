@@ -397,7 +397,7 @@ class RenderSupport {
 		return Math.max(roundPlus(ratio, 2), 1.0);
 	}
 
-	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
+	public static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
 		untyped __js__("setTimeout(fn, time)");
 	}
 
@@ -1145,19 +1145,6 @@ class RenderSupport {
 		}
 	}
 
-
-	private static function emitForInteractives(clip : DisplayObject, event : String) : Void {
-		if (clip.interactive)
-			clip.emit(event);
-
-		if (untyped clip.children != null) {
-			var childs : Array<DisplayObject> = untyped clip.children;
-			for (c in childs) {
-				emitForInteractives(c, event);
-			}
-		}
-	}
-
 	public static function provideEvent(e : js.html.Event) {
 		try {
 			if (Platform.isIE) {
@@ -1168,18 +1155,6 @@ class RenderSupport {
 		} catch (er : Dynamic) {
 			Errors.report("Error in provideEvent: " + er);
 		}
-	}
-
-	public static function emulateMouseClickOnClip(clip : DisplayObject) : Void {
-		var b = clip.getBounds();
-		MousePos = clip.toGlobal(new Point( b.width / 2.0, b.height / 2.0));
-
-		// Expicitly emulate user action with mouse
-		emulateEvent("mousemove");
-		emulateEvent("mouseover", 100, clip);
-		emulateEvent("mousedown", 400);
-		emulateEvent("mouseup", 500);
-		emulateEvent("mouseout", 600, clip);
 	}
 
 	private static function forceRollOverRollOutUpdate() : Void {
@@ -1254,21 +1229,6 @@ class RenderSupport {
 				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
 			}
 		}
-	}
-
-	private static function emulateEvent(event : String, delay : Int = 10, clip : DisplayObject = null) : Void {
-		defer(function() {
-			isEmulating = true;
-
-			if (event == "mouseover" || event == "mouseout") {
-				if (clip != null)
-					emitForInteractives(clip, event);
-			} else {
-				emit(event);
-			}
-
-			isEmulating = false;
-		}, delay);
 	}
 
 	public static function ensureCurrentInputVisible() : Void {
@@ -2321,12 +2281,7 @@ class RenderSupport {
 	}
 
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
-		if (event == "metricschanged") {
-			clip.on("metricschanged", fn);
-			return function () {
-				clip.off("metricschanged", fn);
-			}
-		} else if (event == "userstylechanged" || event == "beforeprint" || event == "afterprint") {
+		if (event == "userstylechanged" || event == "beforeprint" || event == "afterprint") {
 			on(event, fn);
 			return function () {
 				off(event, fn);
@@ -2420,7 +2375,7 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "added" || event == "removed" || event == "scroll" || event == "renderable") {
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "scroll" || event == "renderable" || event == "metricschanged") {
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {
