@@ -167,6 +167,7 @@ class TextClip extends NativeWidgetClip {
 	private var needBaseline : Bool = true;
 
 	private var doNotRemap : Bool = false;
+	private var resizeObserver : Dynamic;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -1463,34 +1464,56 @@ class TextClip extends NativeWidgetClip {
 				metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 			}
 
+			updateTextNodeWidth();
+
 			RenderSupport.once("drawframe", function() {
 				this.emit("metricschanged");
 			});
 		}
 	}
 
-	private function createResizeObserver() : Void {
-		if (nativeWidget != null) {
-			var callback = function(entries) {
-				DisplayObjectHelper.log(entries);
-				updateTextMetrics();
-			};
-			var resizeObserver = untyped __js__("new ResizeObserver(callback)");
-			resizeObserver.observe(nativeWidget);
-		}
+	private  function resizeCallback() {
+		metrics = null;
+		RenderSupport.once("drawframe", updateTextMetrics);
+	}
 
-		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
-			RenderSupport.defer(updateTextNodeWidth, 0);
+	private function createResizeObserver() : Void {
+		destroyResizeObserver();
+		if (nativeWidget != null) {
+			try {
+				var resizeCallback = this.resizeCallback;
+				resizeObserver = untyped __js__("new ResizeObserver(resizeCallback)");
+				resizeObserver.observe(nativeWidget);
+			} catch(e : Dynamic) {
+				resizeObserver = null;
+			};
+			RenderSupport.on("resize", this.resizeCallback);
+			this.once("removed", this.destroyResizeObserver);
 		}
 	}
 
+	private function destroyResizeObserver() {
+		try {
+			if (resizeObserver != null) {
+				if (nativeWidget != null) {
+					resizeObserver.unobserve(nativeWidget);
+				}
+				resizeObserver = null;
+			}
+		} catch(e : Dynamic) {
+			resizeObserver = null;
+		};
+
+		RenderSupport.off("resize", this.resizeCallback);
+		this.once("added", this.createResizeObserver);
+	}
+
 	private function updateTextNodeWidth() : Void {
-		if (nativeWidget != null) {
+		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && nativeWidget != null) {
 			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
 
 			if (textNodeWidth != null && textNodeWidth > 0 && textNodeWidth != metrics.width) {
 				metrics.width = textNodeWidth;
-				this.emit('metricschanged');
 			}
 		}
 	}
@@ -1609,6 +1632,8 @@ class TextClip extends NativeWidgetClip {
 			baselineWidget.classList.add('baselineWidget');
 
 			isNativeWidget = true;
+
+			createResizeObserver();
 		} else {
 			super.createNativeWidget(tagName);
 		}
