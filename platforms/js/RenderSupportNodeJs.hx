@@ -175,7 +175,7 @@ class RenderSupport {
 
 	public static function setWebClipDomains(clip : Dynamic, domains : Array<String>) : Void {}
 
-    public static function setClipCallstack(clip : Dynamic, callstack : Dynamic) : Void {}
+	public static function setClipCallstack(clip : Dynamic, callstack : Dynamic) : Void {}
 
 	public static function setClipX(clip : Dynamic, x : Float) : Void {}
 

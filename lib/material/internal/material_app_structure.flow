@@ -24,7 +24,7 @@ MAppState(
 );
 
 MAppNav(content : Material, expander : DynamicBehaviour<bool>, mini : bool, fullHeight : bool, persistent : Transform<bool>, width : double, miniWidth : double,
-	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>, elevation : Transform<double>);
+	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>, elevation : Transform<double>, focusOnPrevious : bool);
 
 MAppFlexibleState(persistent : Transform<bool>, persistentB : DynamicBehaviour<bool>, showExpander : Transform<bool>, showToolbar : Transform<bool>);
 
@@ -57,6 +57,7 @@ MBottomSheetState(
 	expanding : Maybe<MExpandingBottomSheet>,
 	modal : Maybe<MModalBottomSheetState>,
 	enabled : Transform<bool>,
+	noBackground : bool,
 	focusEnabled : Transform<bool>,
 	style : [MBottomSheetStyle]
 );
@@ -151,7 +152,15 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 		)
 		|> (\t -> eitherMap(
 				state.bottomSheet,
-				\bs -> eitherMap(bs.expanding, \__ -> t, TLines2(t, TGhost("MAppBottomSheet"))),
+				\bs ->
+					if (isSome(bs.expanding) || bs.noBackground) t
+					else TLines2(
+						t,
+						TShow(
+							eitherMap(bs.modal, \mdl -> feq(mdl.progress, 1.), const(true)),
+							TGhost("MAppBottomSheet")
+						)
+					),
 				t
 			))
 		|> (\t -> TGroupSameMetrics(concatA([[
@@ -378,7 +387,7 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 						m
 					)
 				)
-			|> (\t -> eitherMap(bottom.expanding, \__ -> t, TShadowShape(parent, const(16.), t, RectangleShape("MBottomSheet"))))
+			|> (\t -> if (isSome(bottom.expanding) || bottom.noBackground) t else TShadowShape(parent, const(16.), t, RectangleShape("MBottomSheet")))
 			|> (\t -> TConstruct([
 					[
 						makeSubscribe2(mouseDown, \d -> {
@@ -514,10 +523,8 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 					navSwipe.gapLength,
 					navSwipe.enabled,
 					if (navMini) const(true) else nav.expander,
-					extractStruct(
-						nav.style,
-						MElevation(const(2.0))
-					).elevation,
+					extractStruct(nav.style, MElevation(const(2.0))).elevation,
+					extractStruct(nav.style, MFocusOnPrevious(true)).enabled
 				)
 			}
 		);
@@ -541,10 +548,11 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 				if (mobile)
 					maybeMap(
 						tryExtractStruct(bs.style, MModalBottomSheet(make(false), false)),
-						\mdl -> MModalBottomSheetState(mdl.show, mdl.closeOnClick, make(0.))
+						\mdl -> MModalBottomSheetState(mdl.show, mdl.closeOnClick, extractStruct(bs.style, MModalBottomProgress(make(0.))).progress)
 					)
 				else None(),
 				extractStruct(bs.style, MEnabled(const(true))).enabled,
+				contains(bs.style, MNoBackground()),
 				focusEnabled0,
 				bs.style
 			)
@@ -713,7 +721,7 @@ letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tro
 			manager,
 			parent,
 			"MAppContent",
-			concat(state.state, [TagName("main"), MFocusEnabled(state.content.second), MFocusId(const(3)), MSetParent(state.scrollParent)]),
+			concat(state.state, [FAccessVisible(const(true)), TagName("main"), MFocusEnabled(state.content.second), MFocusId(const(3)), MSetParent(state.scrollParent)]),
 			\p ->
 				state.content.first
 				|> MAlignStart
@@ -963,6 +971,7 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 						AccessRole("navigation"),
 						IScriptBehaviour("expander", nav.expander, ISInputValue([], "bool", false)),
 						IScriptBehaviour("animated", animated, ISAppearanceEvent()),
+						MFocusOnPrevious(nav.focusOnPrevious)
 					],
 					\p ->
 						m2t(eContent, p)
@@ -1027,6 +1036,7 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 				else
 					TIf(nav.persistent, TLines2(THeight(TGhost("MAppBar")), f), f)
 			)
+			|> (\f -> TAvailable(f, TGhost("MAppSize")))
 			|> (\f -> TCropSize(TGhost("MAppSize"), f))
 			|> (\f ->
 				TConstruct(
@@ -1106,11 +1116,20 @@ wrapContentByScroll(
 	scrollParent : DynamicBehaviour<Maybe<MFocusGroup>>,
 	m2t : (Material, MFocusGroup) -> Tropic,
 	appStyle : [MAppStyle],
-	style : [TScrollStyle]) -> (Tropic) -> Tropic {
+	style : [TScrollStyle]
+) -> (Tropic) -> Tropic {
+	contentWH = makeWH();
 
 	\t ->
 		if (contains(appStyle, MNoScroll()))
 			TCenterXIn(t, TFillXY())
 		else
-			MScroll2T(manager, parent, MScroll(t, TFillXY(), concat(style, [MGetParent(scrollParent), MFocusId(const(3))])), m2t)
+			MScroll2T(manager, parent,
+				MScroll(
+					TInspect([ISize(contentWH)], t),
+					TGroup2(TIfPrint(TSized(contentWH), TEmpty()), TFillXY()),
+					concat(style, [MGetParent(scrollParent), MFocusId(const(3))])
+				),
+				m2t
+			)
 }

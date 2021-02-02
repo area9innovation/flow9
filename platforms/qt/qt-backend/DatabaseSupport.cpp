@@ -5,6 +5,7 @@
 #include <QSqlQuery>
 #include <QSqlRecord>
 #include <QSqlField>
+#include <QDateTime>
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(DatabaseConnection, FlowNativeObject);
 IMPLEMENT_FLOW_NATIVE_OBJECT(DatabaseResult, FlowNativeObject);
@@ -199,6 +200,7 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         resultRows          // result of a single sql from a query
     );
 
+    last_error = "";
     // Tell last result it's not last anymore
     if (last_result)
         last_result->releaseLast();
@@ -392,6 +394,10 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
                 break;
             case QVariant::Double:
                 value = StackSlot::MakeDouble(field.value().toDouble());
+                break;
+            case QVariant::Time:
+            case QVariant::DateTime:
+                value = RUNNER->AllocateString(field.value().toDateTime().toString("yyyy-MM-dd'T'HH:mm:ss'Z'"));
                 break;
             default:
                 value = RUNNER->AllocateString(field.value().toString());

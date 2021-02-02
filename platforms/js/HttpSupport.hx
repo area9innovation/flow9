@@ -129,21 +129,21 @@ class HttpSupport {
 		options.method = post ? "POST" : "GET";
 		options.headers = {};
 
-		headers.map(function(pair) {
+		for (pair in headers) {
 			options.headers[pair[0]] = pair[1];
-		});
+		}
 
 		if (options.headers["Content-Type"] == null) {
 			options.headers["Content-Type"] = "application/x-www-form-urlencoded";
 		}
 
 		var queryString = "";
-		params.map(function(pair) {
+		for (pair in params) {
 			var key = pair[0];
 			var val = pair[1];
 
 			queryString += key + "=" + Querystring.escape(val) + "&";
-		});
+		}
 
 		queryString = queryString.substr(0, queryString.length - 1);
 

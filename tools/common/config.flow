@@ -8,7 +8,7 @@ import lingo/flow/javascript_cli_params;
 // and then functions here to work with it
 export {
 	// Parses config file as a string for options
-	parseFlowConfig(config : string) -> Tree<string, string>;
+	parseFlowConfig(config : string, dir : string) -> Tree<string, string>;
 
 	// Finds directory, containing 'flow.config' file upwards from the given directory. Empty string means no such directory.
 	findFlowConfigDir(dir : string) -> string;
@@ -76,39 +76,87 @@ export {
     compilerConfigFromConfig : (config : Tree<string, string>) -> CompilerConfig;
     compilerConfigToTree : (config : CompilerConfig) -> Tree<string, string>;
     compilerConfigToString(config : CompilerConfig) -> string;
+	jsCliParamsToTree(params : JSCliParams) -> Tree<string, string>;
 
-    // Finds the directory of flow itself. Is not very clever
+    // Finds the directory of flow distribution.
+	// In case of failure prints the warning message and returns "../flow9/"
 	getFlowDir() -> string;
+
+	// Tries to find the directory of flow distribution.
+	// In case of failure returns "" and doens't report anything.
+	findFlowDir() -> string;
 
 	fcDirName(path : string) -> string;
 
 	setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig;
+
+	patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig;
+
+	// Set (add or modify) a config field(s) in conf struct.
+	setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig;
+	setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig;
+}
+
+getFlowDir() -> string {
+	flowdir = findFlowDir();
+	if (flowdir != "") flowdir else {
+		println("WARNING: Could not determine the flow directory.");
+		println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
+		"../flow9/";
+	} 
 }
 
 fcFlowDir : ref Maybe<string> = ref None();
 
-getFlowDir() -> string {
+findFlowDir() -> string {
 	init_dir = \-> {
+		// Use the 'print-flow-dir=1' option of flowc
+		flowDirByFlowc = \-> {
+			if (strContains(getApplicationPath(), "flowc1")) {
+				// flowc1 must not use itsef in this function, 
+				// otherwise there's a fork bomb.
+				"" 
+			} else {
+				dir_lines = ref "";
+				err_lines = ref "";
+				code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".", 
+					\out -> dir_lines := ^dir_lines + out, 
+					\err -> {
+						println(err);
+						err_lines := err;
+					}
+				);
+				filtered = filtermap(strSplit(^dir_lines, "\n"), \line -> {
+					line1 = trim2(line, " \n\t\r");
+					if (line1 == "") None() else Some(line1);
+				});
+				if (code != 0 || ^err_lines != "" || length(filtered) != 1) "" else {
+					filtered[0];
+				}
+			}
+		}
 		// Use the path of the executable
-		appPath = strReplace(getApplicationPath(), "\\", "/");
-		flowDefDir = if (strContains(appPath, "/platforms/qt")) {
-			takeBefore(appPath, "/platforms/qt", appPath) + "/"
-		} else if (strContains(appPath, "flow9/platforms/java")) {
-			takeBefore(appPath, "platforms/java", appPath)
-		} else if (strContains(appPath, "tools/flowc/")) {
-			takeBefore(appPath, "tools/flowc/", appPath)
-		} else if (strContains(appPath, "flow9/bin/")) {
-			takeBefore(appPath, "bin/", appPath)
-		} else if (strContains(appPath, "bin/")) {
-			takeBefore(appPath, "bin/", appPath)
-		} else {
-			println("WARNING: Could not determine the flow directory.");
-			println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
-			"../flow9/";
+		flowDirByAppPath = \-> {
+			appPath = strReplace(getApplicationPath(), "\\", "/");
+			if (strContains(appPath, "/platforms/qt")) {
+				takeBefore(appPath, "/platforms/qt", appPath) + "/"
+			} else if (strContains(appPath, "flow9/platforms/java")) {
+				takeBefore(appPath, "platforms/java", appPath)
+			} else if (strContains(appPath, "tools/flowc/")) {
+				takeBefore(appPath, "tools/flowc/", appPath)
+			} else if (strContains(appPath, "tools/flowc_lsp/")) {
+				takeBefore(appPath, "tools/flowc_lsp/", appPath)
+			} else if (strContains(appPath, "flow9/bin/")) {
+				takeBefore(appPath, "bin/", appPath)
+			} else if (strContains(appPath, "bin/")) {
+				takeBefore(appPath, "bin/", appPath)
+			} else {
+				flowDirByFlowc();
+			}
 		}
 		binDir = getUrlParameter("bin-dir");
 		flowdir = if (binDir == "") {
-			flowDefDir
+			flowDirByAppPath()
 		} else {
 			if (endsWith(binDir, "bin/") || endsWith(binDir, "bin\\"))
 				substring(binDir, 0, strlen(binDir)-4)
@@ -142,7 +190,13 @@ findFlowConfigDir(d : string) -> string {
 	}
 }
 
-parseFlowConfig(config : string) -> Tree<string, string> {
+fcFirstExistentFile(files : [string], i : int, def : string) -> string {
+	if (i == length(files)) def else
+	if (fileExists(files[i])) resolveRelativePath(files[i]) else
+	fcFirstExistentFile(files, i + 1, def);
+}
+
+parseFlowConfig(config : string, dir : string) -> Tree<string, string> {
 	lines = strSplit(config, "\n");
 	fold(lines, makeTree(), \acc, l -> {
 		// Skip comment lines in flow.config
@@ -157,7 +211,10 @@ parseFlowConfig(config : string) -> Tree<string, string> {
 						if (strFindFirstOf(val2, "/\\") != -1) val2
 						else "resources/" + val2
 					} else val;
-				setTree(acc, opt, val1)
+				val2 = if (!contains(["fontconfig", "html-splash", "js-extern-lib"], opt)) val1 else {
+					fcFirstExistentFile([val1, pathCombine(dir, val1)], 0, val1)
+				}
+				setTree(acc, opt, val2)
 			} else acc;
 		} else acc;
 	});
@@ -309,8 +366,8 @@ compilerConfigToTree(config : CompilerConfig) -> Tree<string, string> {
 		),
 		getConstConfig([
 			Pair("flowfile", config.flowfile),
-			Pair("includes", strGlue(config.includes, ",")),
-			Pair("objectFolders", strGlue(config.objectFolders, ",")),
+			Pair("include", strGlue(config.includes, ",")),
+			Pair("obj", strGlue(config.objectFolders, ",")),
 			Pair("verbose", i2s(config.verbose)),
 			Pair("threadId", i2s(config.threadId)),
 		])
@@ -340,17 +397,104 @@ jsCliParamsToTree(params : JSCliParams) -> Tree<string, string> {
 		Pair("isES6", b2s(params.isES6)),
 		Pair("isTypeScript", b2s(params.isTypeScript)),
 		Pair("readable", b2s(params.readable)),
-		Pair("beautify", b2s(params.beautify)),
-		Pair("sourcemap", b2s(params.sourcemap)),
+		Pair("jsbeautify", b2s(params.beautify)),
+		Pair("js-source-map", b2s(params.sourcemap)),
 		Pair("jsverbose", i2s(params.verbose)),
-		Pair("nwjsmode", b2s(params.nwjs)),
+		Pair("nwjs", b2s(params.nwjs)),
 		Pair("fontconfig", params.fontconfig),
 		Pair("dce-preserved-names", strGlue(set2array(params.dcePreservedNames), ",")),
 		Pair("dce-remove-main", b2s(params.dceRemoveMain)),
-		Pair("call-main", b2s(params.callMain))
+		Pair("jslibraryobject", params.jslibraryObject),
+		Pair("js-call-main", b2s(params.callMain))
 	])
 }
 
 setConfigFlowfile(conf : CompilerConfig, file : string) -> CompilerConfig {
 	CompilerConfig(conf with flowfile = file)
+}
+
+patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
+	cwd = strReplace(resolveRelativePath("."), "\\", "/");
+	conf_dir = findFlowConfigDir(dirName(conf.flowfile));
+
+	// Setup the 'output-dir' in case it is not set explicitly.
+	conf1 = switch (lookupTree(conf.config, "output-dir")) {
+		Some(__): conf.config;
+		None():   setTree(conf.config, "output-dir", cwd);
+	}
+	// Add a flowfile as a config tree option.
+	conf2 = setTree(conf1, "file", conf.flowfile);
+
+	// Setup the 'working-dir' option
+	conf3 = setTree(conf2, "working-dir", lookupTreeDef(conf2, "working-dir", cwd));
+
+	resolve_fontconfig = \file -> {
+		resolved = fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file);
+		setTree(setTree(conf3, "fontconfig", resolved), "fontconfig-file", resolved);
+	}
+
+	// Resolve relative path for 'fontconfig', because server may run in a different place.
+	conf4 = switch (lookupTree(conf3, "fontconfig")) {
+		Some(file): resolve_fontconfig(file);
+		None(): {
+			switch (lookupTree(conf3, "fontconfig-file")) {
+				Some(file): resolve_fontconfig(file)
+				None(): conf3;
+			}
+		}
+	}
+
+	// Resolve relative path for 'html-splash', because server may run in a different place.
+	conf5 = switch (lookupTree(conf4, "html-splash")) {
+		Some(file): setTree(conf4, "html-splash", fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file));
+		None(): conf4;
+	}
+
+	// Resolve relative path for 'js-extern-lib', because server may run in a different place.
+	conf6 = switch (lookupTree(conf5, "js-extern-lib")) {
+		Some(file): setTree(conf5, "js-extern-lib", fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file));
+		None(): conf5;
+	}
+
+	// Update 'fontconfig' field in JSCliParams
+	fontconfig = lookupTreeDef(conf6, "fontconfig-file", conf.jsParams.fontconfig);
+	jsParams = JSCliParams(conf.jsParams with fontconfig = fontconfig);
+
+	// Output the result
+	CompilerConfig(conf with config = conf6, jsParams = jsParams);
+}
+
+setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig {
+	CompilerConfig(conf with 
+		flowfile = if (opt == "file" || opt == "flowfile") val else conf.flowfile,
+		includes = if (opt == "I" || opt == "include") strSplit(val, ",") else conf.includes,
+		objectFolders = if (opt == "obj" || opt == "objectFolders") strSplit(val, ",") else conf.objectFolders,
+		verbose = if (opt == "verbose") s2i(val) else conf.verbose,
+		jsParams = JSCliParams(conf.jsParams with
+			jsfile = if (opt == "js") val else if (opt == "html") val + ".js" else conf.jsParams.jsfile,
+			esfile = if (opt == "es6") val else conf.jsParams.esfile,
+			typescriptFile = if (opt == "ts") val else conf.jsParams.typescriptFile,
+			debug = if (opt == "debug") s2b(val) else conf.jsParams.debug,
+			code = if (opt == "jscode") s2b(val) else conf.jsParams.code,
+			modules = if (opt == "jsmodules") val else conf.jsParams.modules,
+			comments = if (opt == "jscomments") s2b(val) else conf.jsParams.comments,
+			node = if (opt == "nodejs") s2b(val) else conf.jsParams.node,
+			webmodule = if (opt == "webmodule") s2b(val) else conf.jsParams.webmodule,
+			readable = if (opt == "readable") s2b(val) else conf.jsParams.readable,
+			beautify = if (opt == "jsbeautify") s2b(val) else conf.jsParams.beautify,
+			sourcemap = if (opt == "js-source-map") s2b(val) else conf.jsParams.sourcemap,
+			verbose = if (opt == "jsverbose") s2i(val) else conf.jsParams.verbose,
+			nwjs = if (opt == "nwjs" || opt == "nwjsmode") s2b(val) else conf.jsParams.nwjs,
+			fontconfig = if (opt == "fontconfig-file" || opt == "fontconfig") val else conf.jsParams.fontconfig,
+			dcePreservedNames = if (opt == "dce-preserved-names") buildSet(strSplit(val, ",")) else conf.jsParams.dcePreservedNames,
+			dceRemoveMain = if (opt == "dce-remove-main") s2b(val) else conf.jsParams.dceRemoveMain,
+			jslibraryObject = if (opt == "jslibraryobject") val else conf.jsParams.jslibraryObject,
+			callMain = if (opt == "js-call-main") s2b(val) else conf.jsParams.callMain,
+		),
+		config = setTree(conf.config, opt, val)
+	);
+}
+
+setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig {
+	fold(opt_pairs, conf, \acc, pair -> setConfigOption(acc, pair.first, pair.second));
 }

@@ -1,0 +1,74 @@
+import ds/frp;
+import runtime;
+
+export {
+	rmakea(elements : [?]) -> FrpArray<?>;
+	rgeta(v : FrpArray<?>) -> [?];
+
+	rnextaf(v : FrpArray<?>, values : [?]) -> void;
+
+	// Update the value of a given element
+	rupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void;
+
+	// rsubscribe
+	// rsubscribeIndex ( should we get an update when the index changes?)
+	// rsubscribe - insert/delete
+
+	// 
+
+}
+
+FrpArray(
+	values : ref [ref ?], subscribers : DList<(int, ?) -> void>, disposers : ref List<() -> void>
+);
+
+rmakea(elements : [?]) -> FrpArray<?> {
+	FrpArray(ref map(elements, \a -> ref a), makeDList(), ref makeList());
+}
+
+rgeta(v : FrpArray<?>) -> [?] {
+	map(^(v.values), \r -> ^r);
+}
+
+rnextaf(v : FrpArray<?>, values : [?]) -> void {
+	nv = map(values, \vv -> ref vv);
+	v.values := nv;
+	fori(0, length(values) - 1, \i -> {
+		applyARefDList(v.subscribers, i, nv)
+	});
+}
+
+rupdateIndexf(v : FrpArray<?>, index : int, value : ?) -> void {
+	vals = ^(v.values);
+	if (index < length(vals)) {
+		vals[index] := value;
+		applyARefDList(v.subscribers, index, vals)
+	}
+}
+
+
+applyARefDList(list : DList<(int, ?) -> void>, i : int, v : [ref ?]) -> void {
+	applyARefDNode(list.first, i, v);
+}
+
+applyARefDNode(node : DNode<(int, ?) -> void>, i : int, v : [ref ?]) -> void {
+	switch (node : DNode) {
+		DEnd(): {}
+		DLink(fn, before, after, attached): {
+			// node could be removed from the list in previous call, do nothing in this case.
+			if (attached) {
+				// Notice that we deference the value by purpose in each iteration, because a previous
+				// iteration might have changed the value when used in behaviours.
+				fn(i, ^(v[i]));
+				// in case if fn(^r) changed the list by removing inself, we have to use saved 'after' node
+				nextNode : DNode<(int, ?) -> void> =
+					if (node.after == DEnd() && node.before == DEnd() && after != DEnd()) {
+						after;
+					} else {
+						node.after;
+					}
+				applyARefDNode(nextNode, i, v)
+			}
+		}
+	}
+}

@@ -5,10 +5,10 @@ export {
 	MPopup(items : [[Material]], positionScale : Transform<PositionScale>, style : [MPopupStyle]);
 
 	MPopupStyle ::= RMWidth, RMOffset, MElevation, RMSelected, RMBorders, RMOutterBorder, MOpenMenu,
-		RMLeftAnimation, RMHeight, RMClickOutToClose, RMTranslateAnimation, RMScaleAnimation,
+		RMLeftAnimation, RMHeight, RMClickOutToClose, RMTranslateAnimation, RMScaleAnimation, RMExpandingAnimation,
 		RMAlphaAnimation, MSameZorder, RMSameFocus, RMScrollArea, MFixPosition,
 		MBackgroundStyle, // Transparency only works in combination with RMNoShadow
-		RMNoScrollbars, TScrollPersistent, TScrollPosition, RMCurrentHeight, RMCurrentWidth, RMDontHandle, RMNoSnapSize,
+		RMNoScrollbars, TScrollPersistent, TScrollPosition, RMCurrentHeight, RMCurrentWidth, RMCurrentMaxSize, RMDontHandle, RMNoSnapSize,
 		RMNoShadow, TScrollWidthHeight, MCustomScale, MComponentGroupState, MFocusOnPrevious, MBlockClicks, MRippleShape, MActive;
 
 		RMWidth(width : Transform<double>);
@@ -22,11 +22,13 @@ export {
 		RMTranslateAnimation();
 		RMScaleAnimation();
 		RMAlphaAnimation();
+		RMExpandingAnimation();
 		RMSameFocus(focus : MaterialFocus);
 		RMScrollArea(from : int, to : int);
 		RMNoScrollbars();
 		RMCurrentHeight(height : DynamicBehaviour<double>);
 		RMCurrentWidth(width : DynamicBehaviour<double>);
+		RMCurrentMaxSize(wh : DynamicBehaviour<WidthHeight>);
 		RMDontHandle();
 		RMNoSnapSize();
 		RMHeight(min : double, max : double);
@@ -87,6 +89,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 	leftAnimation = extractStruct(style, RMLeftAnimation(true)).leftAnimation;
 	sameZorder = extractStruct(style, MSameZorder(false)).same;
 	sameFocus = tryExtractStruct(style, RMSameFocus(manager.focus));
+	currentMaxSize = extractStruct(style, RMCurrentMaxSize(makeWH())).wh;
 	currentHeight = extractStruct(style, RMCurrentHeight(make(0.))).height;
 	currentWidth = extractStruct(style, RMCurrentWidth(make(0.))).width;
 	dontHandle = contains(style, RMDontHandle());
@@ -95,6 +98,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 	scrollPersistent = tryExtractStruct(style, TScrollPersistent(const(false)));
 	blockClicks = contains(style, MBlockClicks());
 	shape = extractStruct(style, MRippleShape("")).component;
+	expandingAnimation = contains(style, RMExpandingAnimation());
 
 	zorder = getValue(manager.manager.zorder);
 	newZorder = zorder + 1;
@@ -308,6 +312,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 							wd = min(realSize.width, maxSize.width);
 							hgt = min(realSize.height, maxSize.height);
 
+							nextDistinct(currentMaxSize, maxSize);
 							nextDistinct(currentWidth, wd);
 							nextDistinct(currentHeight, hgt);
 
@@ -353,9 +358,10 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 		)
 		|> TBorderTopBottom(borders)
 		|> (\f -> MPopupAlphaAnimation(manager, p, f, style, beginAnimation, alphaContentDelay, alphaContentDuration, animated))
+		|> (\t -> if (expandingAnimation) TAnimatedExpander(manager, parent, t, beginAnimation, []) else t)
 		|> (\f -> MShapeFrame(p, extractStruct(style, MBackgroundStyle([MFill(MDialogMColor(getLightBackground(p)))])).style, f, shape))
 		|> (\f -> MPopupScaleAnimation(manager, p, f, style, beginAnimation, elevation, animated))
-		|> (\f -> MPopupAlphaAnimation(manager, p, f, style, beginAnimation, alphaDelay, alphaDuration, animated))
+		|> (\f -> MPopupAlphaAnimation(manager, p, f, style, if (expandingAnimation) make(true) else beginAnimation, alphaDelay, alphaDuration, animated))
 		|> (\f -> if (dontHandle) f else TInteractive([TMouseDown(make(false))], f))
 		|> (\f ->
 			if (isSome(sameFocus))
@@ -538,8 +544,6 @@ MPopupScaleAnimation(
 		};
 
 	if (parent.theme.enableAnimations && contains(style, RMScaleAnimation())) {
-		scaleAnimation = make(Factor(widthStart, heightStart));
-
 		(\tr, mi ->
 			TCropSize(
 				TAnimation(
@@ -583,15 +587,6 @@ MPopupScaleAnimation(
 				mi
 			)
 			|> maybeShadow
-			|> (\f3 ->
-				if (leftAnimation)
-					f3
-				else
-					TCols2(
-						TSubtractGroup2(tr, TScale(scaleAnimation, tr)),
-						f3
-					)
-			)
 			|> (\f2 -> TFixSize(f2, tr))
 		)
 		|> (\f -> TCopySize2(content, f))

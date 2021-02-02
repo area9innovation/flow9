@@ -22,7 +22,7 @@ Border(left : double, top : double, right : double, bottom : double, form : Form
 
 // When rendered, the given function is called. The result disposer is called when removed.
 // Useful inside Switch in pair with Disposer
-Constructor : (form : Form, fn : () -> (() -> void));
+Constructor : (form : Form, fn : () -> () -> void);
 
 Create2 : (current : ref Form, fn : () -> Form);
 
@@ -32,7 +32,7 @@ Create(fn : () -> Form) -> Create2 {
 
 // Composes a complicated Form to get fn2 executed immediatelly after renderForm(form) call.
 // See example in ui/fontmapping.flow::renderWithLang
-Constructor2(form : Form, fn : () -> (() -> void), fn2 : () -> void) -> Form;
+Constructor2(form : Form, fn : () -> () -> void, fn2 : () -> void) -> Form;
 
 // A static text
 Text : (text : string, style : [CharacterStyle]);
@@ -46,9 +46,11 @@ Graphics : (path : [StaticGraphicOp], style : [GraphicsStyle]);
 
 /// A static picture
 Picture : (url : string, style : [PictureStyle]);
-	PictureStyle ::= DontCache, OnlyDownloadToCache, OnLoadingError, OnLoaded, InspectRealSize, AltText;
+	PictureStyle ::= DontCache, OnlyDownloadToCache, OnLoadingError, OnLoaded, InspectRealSize, AltText, UseCrossOrigin;
 	DontCache : ();
 	OnlyDownloadToCache : ();
+	// JS only
+	UseCrossOrigin : (useCrossOrigin : bool);
 	OnLoadingError : (fn : (string) -> void);
 	OnLoaded : (fn : ()->void);
 	InspectRealSize : (fn : (WidthHeight) -> void);
@@ -96,7 +98,7 @@ Camera : (filename : string, parameters : [RecordParameter], listeners: [RecordS
 // To allow a video play inline (not in fullscreen mode only) playsinline property is required;
 RealHTML2 : (url : string, wh : Behaviour<WidthHeight>, style : [RealHTMLStyle]);
 
-RealHTMLStyle ::= UpdateCachedContent, OverridePageDomain, FlowCallback, PageHostcallSetter,
+RealHTMLStyle ::= UpdateCachedContent, OverridePageDomain, FlowCallback, PageHostcallSetter, NoScroll,
 	OnError, OnPageLoaded, ZoomEnabled, ReloadBlock, PageEvalJS, MouseDisabled, SandBoxJS, RealHtmlShrink2Fit, WhitelistDomains, ViewBounds;
 
 	// UpdateCachedContent - download the latest version of resources when online. true by default.
@@ -122,6 +124,8 @@ RealHTMLStyle ::= UpdateCachedContent, OverridePageDomain, FlowCallback, PageHos
 	WhitelistDomains : (domains : [string]);
 
 	ViewBounds(bounds : Transform<Bounds>);
+	// Hides iframe body scroll and redirects 'wheel' event to main stage
+	NoScroll();
 
 // If specified adds sandbox attribute to IFRAME (<iframe sandbox="...">) which allows
 // to limit page access rights if needed
@@ -233,13 +237,13 @@ Interactive : (listeners: [EventHandler], form : Form);
 	// This continues until all handlers have been called.
 
 	// The helpers "MouseDown" and "MouseUp" handle this protocol.
-	MouseDown2 : (fn : (handled : bool, MouseDownInfo) -> bool);
-	MouseUp2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
-	MouseRightDown2 : (fn : (handled : bool, MouseDownInfo) -> bool);
-	MouseRightUp2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
-	MouseMiddleDown2 : (fn : (handled : bool, MouseDownInfo) -> bool);
-	MouseMiddleUp2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
-	MouseMove2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
+	MouseDown2 : (fn : (handled : bool, info : MouseDownInfo) -> bool);
+	MouseUp2 : (fn : (handled : bool, info :() -> MouseInfo) -> bool);
+	MouseRightDown2 : (fn : (handled : bool, info :MouseDownInfo) -> bool);
+	MouseRightUp2 : (fn : (handled : bool, info :() -> MouseInfo) -> bool);
+	MouseMiddleDown2 : (fn : (handled : bool, info :MouseDownInfo) -> bool);
+	MouseMiddleUp2 : (fn : (handled : bool, info :() -> MouseInfo) -> bool);
+	MouseMove2 : (fn : (handled : bool, info :() -> MouseInfo) -> bool);
 
 	// Useful helpers which obey z-order rules
 	MouseDown(fn : (MouseDownInfo) -> bool) -> RespectHandled {
@@ -281,7 +285,7 @@ Interactive : (listeners: [EventHandler], form : Form);
 	// Thus, Form with MouseMove handler prevents underlying one's scrolling,
 	// but MouseWheel movement might be considered as MouseMove without x and y changes.
 	// If both dx and dy are 0.0 we are processing MouseMove.
-	FineGrainMouseWheel2 : (fn : (handled : bool, () -> MouseWheelInfo) -> bool);
+	FineGrainMouseWheel2 : (fn : (handled : bool, info :() -> MouseWheelInfo) -> bool);
 	FineGrainMouseWheel(fn : (MouseWheelInfo) -> void) -> FineGrainMouseWheel2 {
 		FineGrainMouseWheel2(\handled, mi -> {
 			if (!handled) {
@@ -296,14 +300,14 @@ Interactive : (listeners: [EventHandler], form : Form);
 				true
 			}
 		})
-	};
+	}
 
-	KeyDown2 : (fn : (handled : bool, KeyEvent) -> bool);
-	KeyUp2 : (fn : (handled : bool, KeyEvent) -> bool);
+	KeyDown2 : (fn : (handled : bool, event : KeyEvent) -> bool);
+	KeyUp2 : (fn : (handled : bool, event : KeyEvent) -> bool);
 
-	TouchStart2 : (fn : (handled : bool, TouchInfo) -> bool);
-	TouchMove2 : (fn : (handled : bool, TouchInfo) -> bool);
-	TouchEnd2 : (fn : (handled : bool, TouchInfo) -> bool);
+	TouchStart2 : (fn : (handled : bool, info : TouchInfo) -> bool);
+	TouchMove2 : (fn : (handled : bool, info : TouchInfo) -> bool);
+	TouchEnd2 : (fn : (handled : bool, info : TouchInfo) -> bool);
 
 	TouchStart(fn : (TouchInfo) -> bool) -> RespectHandled {
 		RespectHandled(TouchStart2(\h, mi -> fn(mi)));
@@ -316,10 +320,10 @@ Interactive : (listeners: [EventHandler], form : Form);
 	}
 
 	KeyDown(fn : (KeyEvent) -> void) -> KeyDown2 {
-		KeyDown2(\handled, ke -> { if (!handled) { fn(ke); } false; });
+		KeyDown2(\handled, ke -> { if (!handled) { fn(ke) }; false });
 	}
 	KeyUp(fn : (KeyEvent) -> void) -> KeyUp2 {
-		KeyUp2(\handled, ke -> { if (!handled) { fn(ke); } false; });
+		KeyUp2(\handled, ke -> { if (!handled) { fn(ke) }; false });
 	}
 
 	// Makes nested Form to allow any file to be dropped. Provides name and file content as data URL.
@@ -736,7 +740,7 @@ Constructor2(form, construct, afterConstruct) {
 	emptyConstruct = \ -> {
 		afterConstruct();
 		nop
-	}
+	};
 	Group([
 		Constructor(form, construct),
 		Constructor(Empty(), emptyConstruct)
