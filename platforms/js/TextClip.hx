@@ -1474,8 +1474,10 @@ class TextClip extends NativeWidgetClip {
 
 	private  function resizeCallback() {
 		RenderSupport.once("drawframe", function() {
-			metrics = null;
-			this.updateTextMetrics();
+			if (untyped this.nativeWidget != null && !this.destroyed) {
+				metrics = null;
+				this.updateTextMetrics();
+			}
 		});
 	}
 
