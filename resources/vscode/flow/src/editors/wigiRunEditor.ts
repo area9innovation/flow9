@@ -29,6 +29,7 @@ export class WigiRunEditorProvider implements vscode.CustomTextEditorProvider {
 		function updateWebview() {
 			webviewPanel.webview.postMessage(JSON.stringify({
 				type: 'update',
+				file: document.uri.fsPath,
 				data: document.getText()
 			}));
 		}
@@ -49,8 +50,10 @@ export class WigiRunEditorProvider implements vscode.CustomTextEditorProvider {
 			const msg = JSON.parse(e);
 			if (msg.type == 'ready') {
 				updateWebview();
-			} else if (msg.type == 'save') {
-				this.updateTextDocument(document, msg.text);
+			} else if (msg.type == 'update') {
+				this.updateTextDocument(document, msg.data);
+			} else if (msg.type == 'save-code') {
+				fs.writeFileSync(msg.file, msg.code);
 			}
 		});
 	}
@@ -61,15 +64,17 @@ export class WigiRunEditorProvider implements vscode.CustomTextEditorProvider {
 	}
 
 	private updateTextDocument(document: vscode.TextDocument, txt: string): void {
-		const edit = new vscode.WorkspaceEdit();
+		if (document.getText() != txt) {
+			const edit = new vscode.WorkspaceEdit();
 
-		// Just replace the entire document every time for this example extension.
-		// A more complete extension should compute minimal edits instead.
-		edit.replace(
-			document.uri,
-			new vscode.Range(0, 0, document.lineCount, 0),
-			txt
-		);
-		vscode.workspace.applyEdit(edit);
+			// Just replace the entire document every time for this example extension.
+			// A more complete extension should compute minimal edits instead.
+			edit.replace(
+				document.uri,
+				new vscode.Range(0, 0, document.lineCount, 0),
+				txt
+			);
+			vscode.workspace.applyEdit(edit);
+		}
 	}
 }
