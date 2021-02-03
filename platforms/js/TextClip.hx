@@ -521,7 +521,9 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = RenderSupport.RendererType != "html" || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
+		var lh = style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height;
+		if (Platform.isIOS || Platform.isMacintosh) lh = Math.ceil(lh) else lh = DisplayObjectHelper.round(lh); 
+		nativeWidget.style.lineHeight = '${lh}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -774,7 +776,9 @@ class TextClip extends NativeWidgetClip {
 					measureFont();
 				}
 
-				textClip.setClipY(style.fontProperties.descent / (Platform.isIOS ? 2.0 : Platform.isMacintosh ? RenderSupport.backingStoreRatio : 1.0));
+				var y = style.fontProperties.descent / (Platform.isIOS ? 2.0 : Platform.isMacintosh ? RenderSupport.backingStoreRatio : 1.0);
+				if (Platform.isIOS || Platform.isMacintosh) y = Math.ceil(y);
+				textClip.setClipY(y);
 			}
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
