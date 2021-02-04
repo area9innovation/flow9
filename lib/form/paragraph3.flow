@@ -10,7 +10,7 @@ export {
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager) -> Form;
 	getLineIndent(paraIndent : double, lineIndex : int) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
-	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement;
+	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement;
 	makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement>;
 	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 	keepFormTogether(form : Form) -> bool;
@@ -90,7 +90,7 @@ ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
 makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement> {
-	mapList(fragments.elements, \elem -> general2WrapElement(elem, fragments.style))
+	mapList(fragments.elements, \elem -> general2WrapElement(elem, fragments.style, idfn))
 }
 
 makeZeroSpaceElement(style : [CharacterStyle]) -> Form {
@@ -105,23 +105,23 @@ generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 	)
 }
 
-general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle]) -> WrapElement {
+general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement {
 	switch (elem) {
 		GeneralText(txt) : {
-			Text(txt, applyAlphabetStyles(detectAlphabet(txt), style));
+			Text(txt, applyAlphabetStyles(detectAlphabet(txt), style)) |> wordDecorator;
 		}
 		GeneralDynamicText(txt) : {
-			Text(txt, applyAlphabetStyles(detectAlphabet(txt), style));
+			Text(txt, applyAlphabetStyles(detectAlphabet(txt), style)) |> wordDecorator;
 		}
 		GeneralSpace(txt, alBef, alAft) : {
-			Space(Text(txt, apply2AlphabetsScaling(alBef, alAft, style)));
+			Space(Text(txt, apply2AlphabetsScaling(alBef, alAft, style)) |> wordDecorator);
 		}
 		NewLine() : NewLine();
-		GeneralLinePart(f, m, e) : LinePart(Text(f, style), Text(m, style), Text(e, style));
+		GeneralLinePart(f, m, e) : LinePart(Text(f, style) |> wordDecorator, Text(m, style), Text(e, style) |> wordDecorator);
 		EmptyLineElement() : makeZeroSpaceElement(style);
 		GeneralInspectElement(inspector, element) : InspectElement(
 			inspector,
-			cast(general2WrapElement(element, style) : WrapElement -> InspectableElement)
+			cast(general2WrapElement(element, style, wordDecorator) : WrapElement -> InspectableElement)
 		);
 		NonTextElement() : Empty();
 	}
@@ -297,7 +297,7 @@ renderParagraph(
 				nextDistinct(linesCountB, length(infosAndScale.first));
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				next(linesB, ParaLinesInfos(infosAndScale.first, fold(infosAndScale.first, 0.0, \acc, info -> max(info.lineWidth, acc))));
-				maybeApply(infosAndScale.second, \scaleFactor -> nextDistinct(scaleB, scaleFactor));
+				nextDistinct(scaleB, either(infosAndScale.second, 1.0));
 			};
 
 			uns = concatA([
@@ -316,7 +316,6 @@ renderParagraph(
 				],
 				mapi(dynamicWords, \i, w -> subscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1)))
 			]);
-
 			\ -> applyall(uns)
 		}
 	)
