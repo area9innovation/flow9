@@ -75,7 +75,7 @@ Ghosted ::= Empty, Ghost, CoordinateInspectElement, InspectGhost;
 // Each word to be placed in the paragraph, including the metrics and as well as any ghost constructed
 ParaWord(
 	word : ParaAtomic,
-	metrics : Behaviour<FormMetrics>,
+	metrics : Transform<FormMetrics>,
 	ghosted : Ghosted,
 	form: GhostForm,
 	interactivityIdM : Maybe<int>
@@ -84,7 +84,7 @@ ParaWord(
 ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double);
 
-OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
+OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>);
 ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
@@ -245,7 +245,7 @@ renderParagraph(
 	}
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	dynamicWords = filter(words, \w -> !isConst(w.metrics));
+	dynamicWords = filter(words, \w -> !isFConst(w.metrics));
 	ndynamic = length(dynamicWords);
 	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
 
@@ -314,7 +314,7 @@ renderParagraph(
 						})
 					})
 				],
-				mapi(dynamicWords, \i, w -> subscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1)))
+				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1))())
 			]);
 			\ -> applyall(uns)
 		}
@@ -343,7 +343,7 @@ getParaLineInfosAndScale(
 		ReflowedLines(newLines) : {
 			infos = map(newLines, \line -> {
 				optimizedLine = getOptimizedLine(line.words, alignment);
-				metrics = map(optimizedLine, \ole -> getValue(ole.metrics));
+				metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
 				lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
 				ParaLineInfo(
 					optimizedLine,
@@ -449,7 +449,7 @@ makeInteractiveParaWord(
 	interactivityIdM : Maybe<int>,
 	ignoreLetterSpacing : bool
 ) -> ParaWord {
-	s2w = \s : Pair<Form, Behaviour<FormMetrics>> -> {
+	s2w = \s : Pair<Form, Transform<FormMetrics>> -> {
 		if (!isGhostable(s.first)) {
 			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM);
 		} else {
@@ -534,18 +534,21 @@ getJoinableTextMetrics(
 	form: Form,
 	getExactTopPoint : bool,
 	ignoreLetterSpacing : bool
-) -> Pair<Form, Behaviour<FormMetrics>> {
+) -> Pair<Form, Transform<FormMetrics>> {
 	if (ignoreLetterSpacing) {
 		getDynamicFormSize2(form, getExactTopPoint)
 	} else switch (form) {
-		Text(__, st) : {
+		Text(text, st) : {
 			letterSpacing = extractStruct(st, LetterSpacing(0.0)).spacing;
-			metrics = getStaticFormSizeCached2(form, getExactTopPoint);
+			staticMetrics = getStaticFormSizeCached2(form, getExactTopPoint);
+			pprint("Static metrics for text (" + text + ") : ")(staticMetrics);
+			textWidth = make(staticMetrics.width);
+			fpprint("Text width for text (" + text + ") : ")(textWidth);
 			Pair(
-				form,
-				const(FormMetrics(metrics with
-					width = metrics.width + letterSpacing
-				))
+				Text(text, arrayPush(st, FTextWidth(textWidth))),
+				fselect(textWidth, FLift(\tw -> FormMetrics(staticMetrics with
+					width = tw + letterSpacing
+				)))
 			);
 		}
 		default : getDynamicFormSize2(form, getExactTopPoint)
@@ -624,7 +627,7 @@ reflowParaWords(
 }
 
 getParaWordWidth(word : ParaWord) -> double {
-	getValue(word.metrics).width;
+	fgetValue(word.metrics).width;
 };
 
 // here availableWidth is an amount of width for current line
@@ -1028,7 +1031,7 @@ RenderLine(
 	// The width and the individual forms
 	lo : [Form] = filtermapi(info.optimizedLine, \i : int, elem : OptimizedLineElement -> {
 		f = elem.f;
-		m = getValue(elem.metrics);
+		m = fgetValue(elem.metrics);
 		intStyleContains = \st : ParaElementInteractiveStyle -> eitherMap(
 			elem.interactivityIdM,
 			\id -> containsStruct(
