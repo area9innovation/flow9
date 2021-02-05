@@ -1326,7 +1326,7 @@ class DisplayObjectHelper {
 				clipFilter.appendChild(feOffset);
 				clipFilter.appendChild(feGaussianBlur);
 
-				if (!Platform.isSafari) {
+				if (!Platform.isSafari && !(Platform.isIOS && Platform.isChrome)) {
 					var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
 					feBlend.setAttribute("in2", "blurOut");
 					feBlend.setAttribute("in", "SourceGraphic");
