@@ -693,8 +693,6 @@ class AccessWidget extends EventEmitter {
 				if (e.target == element && e.detail == 0) {
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
-					} else {
-						RenderSupport.emulateMouseClickOnClip(clip);
 					}
 				}
 			};

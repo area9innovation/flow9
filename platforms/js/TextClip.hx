@@ -1447,11 +1447,13 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextNodeWidth() : Void {
-		var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
-		
-		if (textNodeWidth != null && textNodeWidth > 0 && textNodeWidth != metrics.width) {
-			metrics.width = textNodeWidth;
-			this.emitEvent('textwidthchanged');
+		if (nativeWidget != null) {
+			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
+			
+			if (textNodeWidth != null && textNodeWidth > 0 && textNodeWidth != metrics.width) {
+				metrics.width = textNodeWidth;
+				this.emitEvent('textwidthchanged');
+			}
 		}
 	}
 
