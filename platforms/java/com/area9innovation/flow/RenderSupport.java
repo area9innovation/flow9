@@ -445,4 +445,7 @@ public class RenderSupport extends NativeHost {
 	public Object takeSnapshot(String path) {
 		return null;
 	}
+	public String getFontStylesConfigString() {
+		return null;
+	}
 }
