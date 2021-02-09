@@ -1949,7 +1949,7 @@ void GLRenderSupport::toggleFullWindow(bool fw)
             fullWindowClipParent = FullWindowTarget->getParent();
             regularStageChildren = Stage->removeChildren();
 
-            if (regularStageChildren.size() != 0) {
+			if (regularStageChildren.size() != 0 && fullWindowClipParent != NULL) {
                 Stage->addChild(FullWindowTarget);
 
                 notifyFullWindow(true);
