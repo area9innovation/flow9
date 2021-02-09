@@ -1546,6 +1546,10 @@ class RenderSupport {
 		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
+	public static function getConfigString(key : String) : String {
+		return haxe.Resource.getString(key);
+	}
+
 	public static function makeTextField(fontFamily : String) : TextClip {
 		return new TextClip();
 	}
