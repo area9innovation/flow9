@@ -14,7 +14,7 @@ import * as tools from "./tools";
 import * as updater from "./updater";
 import * as simplegit from 'simple-git/promise';
 //import { performance } from 'perf_hooks';
-import * as testFlowEditor from './testFlowEditor';
+import * as testFlowEditor from './editors/testFlowEditor';
 import * as wigiRunEditor from './editors/wigiRunEditor';
 const isPortReachable = require('is-port-reachable');
 
