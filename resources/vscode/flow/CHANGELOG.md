@@ -164,3 +164,6 @@
 
  ## 0.4.12
  - html files are placed in the www2 directory in the nearest directory with flow.config file.
+
+ ## 0.4.13
+ - embedded editor for *.wigirun editor is added. 
