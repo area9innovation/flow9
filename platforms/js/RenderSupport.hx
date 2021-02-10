@@ -1546,6 +1546,10 @@ class RenderSupport {
 		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
+	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
+		FontLoader.loadPreconfiguredWebFonts(families, onDone);
+	}
+
 	public static function getFontStylesConfigString() : String {
 		return haxe.Resource.getString("fontstyles");
 	}
