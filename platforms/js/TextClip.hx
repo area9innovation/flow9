@@ -1442,17 +1442,20 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
-			RenderSupport.defer(updateTextNodeWidth, 0);
+			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
 
-	private function updateTextNodeWidth() : Void {
+	private function updateTextWidth() : Void {
 		if (nativeWidget != null) {
 			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
-			
-			if (textNodeWidth != null && textNodeWidth > 0 && textNodeWidth != metrics.width) {
-				metrics.width = textNodeWidth;
-				this.emitEvent('textwidthchanged');
+			if (textNodeWidth != null && textNodeWidth > 0) {
+				var textWidth = textNodeWidth / (untyped this.transform ? untyped this.transform.worldTransform.a : 1);
+
+				if (textWidth != metrics.width) {
+					metrics.width = textWidth;
+					this.emitEvent('textwidthchanged');
+				}
 			}
 		}
 	}
