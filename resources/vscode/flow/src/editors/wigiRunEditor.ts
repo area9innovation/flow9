@@ -3,7 +3,6 @@ import * as vscode from 'vscode';
 import * as fs from "fs";
 
 export class WigiRunEditorProvider implements vscode.CustomTextEditorProvider {
-
 	public static register(context: vscode.ExtensionContext): vscode.Disposable {
 		const provider = new WigiRunEditorProvider(context);
 		const providerRegistration = vscode.window.registerCustomEditorProvider(WigiRunEditorProvider.viewType, provider);
@@ -11,9 +10,7 @@ export class WigiRunEditorProvider implements vscode.CustomTextEditorProvider {
 	}
 
 	private static readonly viewType = 'flow.wigiRunEditor';
-	constructor(
-		private readonly context: vscode.ExtensionContext
-	) { }
+	constructor(private readonly context: vscode.ExtensionContext) { }
 
 	public async resolveCustomTextEditor(
 		document: vscode.TextDocument,
@@ -23,8 +20,11 @@ export class WigiRunEditorProvider implements vscode.CustomTextEditorProvider {
 		// Setup initial content for the webview
 		webviewPanel.webview.options = {
 			enableScripts: true,
+			localResourceRoots: [
+				vscode.Uri.file(path.join(this.context.extensionPath, 'www2'))
+			]
 		};
-		webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+		webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel);
 
 		function updateWebview() {
 			webviewPanel.webview.postMessage(JSON.stringify({
@@ -58,9 +58,20 @@ export class WigiRunEditorProvider implements vscode.CustomTextEditorProvider {
 		});
 	}
 
-	private getHtmlForWebview(webview: vscode.Webview): string {
-		const editor_path = path.join(this.context.extensionPath, 'editors', 'wigiRunEditor.html')
-		return fs.readFileSync(editor_path).toString();
+	private getHtmlForWebview(panel: vscode.WebviewPanel): string {
+		const editor_path = path.join(this.context.extensionPath, 'editors', 'wigiRunEditor.html');
+		const convert_path = (rel_path: string) => {
+			const abs_path = vscode.Uri.file(path.join(this.context.extensionPath, 'www2', rel_path));
+			return panel.webview.asWebviewUri(abs_path).toString();
+		}
+		let html = fs.readFileSync(editor_path).toString();
+		[
+			'fonts/fonts.css', 
+			'images/splash/Area9_innovation_splash.png', 
+			'images/splash/innovation_loader.webm',
+			'images/splash/innovation_loader.gif'
+		].forEach(rel => html = html.replace(rel, convert_path(rel)));
+		return html;
 	}
 
 	private updateTextDocument(document: vscode.TextDocument, txt: string): void {
