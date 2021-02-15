@@ -1,8 +1,7 @@
 import material/material;
+import material/material_ui;
 import material/material2tropic;
-import material/extra/docking_ui/internal/material_docking_styles;
-import material/extra/docking_ui/internal/material_docking_theme;
-import material/extra/docking_ui/internal/material_docking_state;
+import material/extra/docking_ui/internal/material_docking_ui_utils;
 
 export {
 
@@ -12,7 +11,7 @@ export {
 		title : string,
 		// note: if content is [MDockingPanelToolbarItem] is not used
 		panelIcon : string,
-		// decreates easily different standard panels as array of MDockingPanelItems
+		// creates easily different standard panels as array of MDockingPanelItems
 		content : [MDockingPanelItem],
 		// set on which MDockingArea the panel is docked by default (a negative number means the panel is floating undocked)
 		dockingAreaId : int,
@@ -24,19 +23,24 @@ export {
 		style : [MDockingStyle]
 	);
 
-	updateMDockingState(state : MDockingState, panelsA : [MDockingPanel]) -> void;
+	updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], style : [MDockingStyle]) -> void;
 	makeDockingPanel(docked : bool, state : MDockingState,id : int, groupName : string, isColumn : bool, fillPanel : bool, style : [MDockingStyle],
-		barHeight: double, cursorPosition : DynamicBehaviour<[Point]>, sizeCollapsed : DynamicBehaviour<bool>, zorder : int) -> Material;
+		barHeight: double, cursorPositionA : DynamicBehaviour<[Point]>, sizeCollapsed : DynamicBehaviour<bool>, zorder : int) -> Material;
+	makeMovablePanel(state : MDockingState, id : int, cursorPositionA : DynamicBehaviour<[Point]>) -> Material;
 }
 
 makeDockingPanel(docked : bool, state : MDockingState, id : int, groupName : string, isColumn : bool, fillPanel : bool, style : [MDockingStyle], barHeight: double,
-	cursorPosition : DynamicBehaviour<[Point]>/*,enabled = DynamicBehaviour<bool>*/, sizeCollapsed : DynamicBehaviour<bool>, zorder : int) -> Material {
-	if (docked) makeDockedPanel(state, id, groupName, isColumn, fillPanel, style, barHeight, sizeCollapsed, zorder)
-		else makeMovablePanel(state, id, cursorPosition);
+	cursorPositionA : DynamicBehaviour<[Point]>/*,enabled = DynamicBehaviour<bool>*/, sizeCollapsed : DynamicBehaviour<bool>, zorder : int) -> Material {
+
+	if (docked) makeDockedPanel(state, id, groupName, isColumn, fillPanel, style, barHeight, sizeCollapsed, zorder) 
+		else makeMovablePanel(state, id, cursorPositionA);
 }
 
 
-updateMDockingState(state : MDockingState, panelsA : [MDockingPanel]) -> void {
+updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], style : [MDockingStyle]) -> void {
+
+println(" |--> update docking state");
+
 	titleA = state.title;
 	panelIconA = state.panelIcon;
 	contentA = state.content;
@@ -47,24 +51,41 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel]) -> void {
 	expandedA = state.expanded;
 	panelsStyleA = state.style;
 
-	// Update UI
+	// Update UI layout
 	if (getValue(dockA) == [[]]) {
-		iteri(panelsA, \i, p -> {
-			next(dockA, replace(getValue(dockA), i , [p.dockingAreaId, p.order, i]));
+		iteri(panelsA, \panelId, p -> {
+			next(dockA, replace(getValue(dockA), panelId , [p.dockingAreaId, p.order, panelId]));
 		});
 	};
+	
+	// Expanded
+	if (getValue(state.expanded) == []) iteri(panelsA, \i, p -> {	
+		expandedB = extractStruct(p.style, MDPanelExpanded(make(true))).expanded;
+		next(state.expanded, replace(getValue(state.expanded), i ,expandedB))
+	});
+	if (getValue(state.sideExpanded) == []) iteri(panelsA, \i, p -> {
+		next(state.sideExpanded, replace(getValue(state.sideExpanded), i , make(true)))
+	});
 
-	// MDockingDisabled
-	if (getValue(state.enabled) == []) iteri(panelsA, \i, p ->
-		if (contains(p.style, MDockingDisabled())) next(state.enabled, replace(getValue(state.enabled), i , make(false)))
-		else next(state.enabled, replace(getValue(state.enabled), i , make(true)))
-	);
+	// Positions
+	offsetP = extractStruct(style, MDockingMobileOffset(Point(72.0, 72.0))).offsetPosition;
+	println(style);
+	println(offsetP);
+	if (getValue(state.positions) == []) iteri(panelsA, \i, p -> {
+		zeroPosition = Point(
+			offsetP.x + 36.0 * i2d(i),
+			offsetP.y + dockingItemHeight * i2d(i)
+		);
+		positionB = extractStruct(p.style, MDPanelPosition(make(zeroPosition))).position;
+		next(state.positions, replace(getValue(state.positions), i , positionB));
+	});
 
-
-
-	if (getValue(state.expanded) == []) iteri(panelsA, \i, p -> next(state.expanded, replace(getValue(state.expanded), i , make(true))));
-	if (getValue(state.sideExpanded) == []) iteri(panelsA, \i, p -> next(state.sideExpanded, replace(getValue(state.sideExpanded), i , make(true))));
-	if (getValue(state.positions) == []) iteri(panelsA, \i, p -> next(state.positions, replace(getValue(state.positions), i , make(zeroPoint))));
+	// Enabled
+	if (getValue(state.enabled) == []) iteri(panelsA, \i, p -> {
+		enabledB = extractStruct(p.style, MDPanelEnabled(make(true))).enabled;
+		if (contains(p.style, MDockingDisabled())) next(enabledB, false);
+		next(state.enabled, replace(getValue(state.enabled), i , enabledB));
+	});
 
 	if (getValue(titleA) == []) {
 		iteri(panelsA, \i, p -> {
@@ -75,8 +96,6 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel]) -> void {
 			next(panelsStyleA, replace(getValue(panelsStyleA), i , p.style));
 
 			content = getValue(state.content)[i];
-
-
 
 			iteri(getValue(contentA)[i], \j, itemA -> {
 
@@ -126,43 +145,13 @@ makeDockingPanelContent(state : MDockingState, id : int, mobilePanel : bool, isH
 	resizeHandleColor = if (fgetValue(theme)) textColorLight else textColorDark;
 	isToolbarItem = isSameStructType(getValue(state.content)[id][0], MDockingPanelToolbarItem("", []));
 
-	resizeHandleMobile = {
-		dot = TRounded(1.0, 1.0, 1.0, 1.0, [MThemeFill(state.manager, MThemedColor(mobileHandleColorFn(true, style), mobileHandleColorFn(false, style)))], TFixed(1.0, 1.0));
-		gapW = TFixed(2.0, 0.0);
-		gapH = TFixed(0.0, 2.0);
-		cornerSpace = TFixed(24.0, 18.0);
-
-		MLines([
-			TFillY(),
-			MColsA([
-				TFillX(),
-				MCursor(
-					MoveCursor(),
-					MGroup2(
-						TRectangle(interactiveRectangleStyle, cornerSpace),
-						MAvailable(
-							MLines([
-								TFillY(),
-								MColsA([
-									TFillX(),
-									MLines([
-										MColsA([TFixed(6.0, 0.0), dot]),
-										gapH,
-										MColsA([TFixed(3.0, 0.0), dot, gapW, dot]),
-										gapH,
-										MColsA([dot, gapW, dot, gapW, dot])
-									]),
-									TFixed(3.0, 0.0)
-								]),
-								TFixed(0.0, 3.0)
-							]),
-							cornerSpace
-						)
-					)
-				)
-			])
-		]) |> (\f -> MInteractive([TMouseDown(resizePressed), TMouseInside(isHovering, false)], f ));
-	};
+	resizeHandleMobile = MInteractive(
+		[
+			TMouseDown(resizePressed), 
+			TMouseInside(isHovering, false)
+		],
+		makeMDockingResizeHandleMobile(state, style)
+	);
 
 	buttonsA = mapi(contentA, \i, c -> {
 
@@ -245,7 +234,8 @@ makePanelTopBar(docked : bool, id: int, state : MDockingState, isColumn: bool, l
 	height = getTropicMetrics(size).height;
 	isHorizontal = contains(style, MDockingMobileHorizontal());
 	handleWidth = 24.0;
-	barSize = if (isColumn) TFillXH(dockingBarHeight) else TFillWY(dockingBarHeight);
+	handleHeight = 24.0;
+	topBarSize = if (isColumn) TFillXH(dockingBarHeight) else TFillWY(dockingBarHeight / 2.0);
 	// Prop
 	ifMobile = extractStruct(style, MDockingMobileWatcher(make(false))).mobile;
 	disableButton = contains(style, MDockingDisableButton());
@@ -258,32 +248,26 @@ makePanelTopBar(docked : bool, id: int, state : MDockingState, isColumn: bool, l
 	// Colors
 	color = extractStruct(style, if (fgetValue(theme)) textColorLight else textColorDark);
 	bgHandleColor = extractStruct(style, if (fgetValue(theme)) bgHandleColorLight else bgHandleColorDark);
-	dockedBarColor = extractStruct(style, if (fgetValue(theme)) dockedBarColorLight else dockedBarColorDark);
-	dockedBarColorToolbar = extractStruct(style, if (fgetValue(theme)) panelBgColorLight else dockedBarColorDark);
-	mobileBarColor = extractStruct(style, if (fgetValue(theme)) mobileBarColorLight else mobileBarColorDark);
-	barColor = if (docked) dockedBarColor else mobileBarColor;
-	dockedTitleColor : MColor = if (fgetValue(theme)) dockedTitleColorLight else dockedTitleColorDark;
-	titleColor = if (docked) dockedTitleColor else MWhite();
+
+	dockedBarColorToolbar = extractStruct(style, if (fgetValue(theme)) panelBgColorLight else areaBgColorDark);
+	barColor : MColor = if (fgetValue(theme)) barColorLight else barColorDark;
+	titleColor : MColor = if (fgetValue(theme)) textColorLight else textColorDark;
 
 	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), []);
 
-
-	// isToolbarItem = isSameStructType(getValue(state.content)[id][0], MDockingPanelToolbarItem("", []));
-
 	makeIconToggleButton = \boolB : DynamicBehaviour<bool>,
-	iconOn : string, iconOff : string,
-	tooltipOn : string, tooltipOff :string,
-	iconSize: double, clickFn : () -> void,
-	iconColor : MColor, fill : double -> {
-		MSelect(boolB,\b -> if (b) MIconButton(iconOn, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\f -> addTooltip(tooltipOn, f))
-			else MIconButton(iconOff, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\f -> addTooltip(tooltipOff, f))
-		) |> MCenterY
+		iconOn : string, iconOff : string,
+		tooltipOn : string, tooltipOff :string,
+		iconSize: double, clickFn : () -> void,
+		iconColor : MColor, fill : double -> {
+			MSelect(boolB,\b -> if (b) MIconButton(iconOn, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\f -> addTooltip(tooltipOn, f))
+				else MIconButton(iconOff, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\f -> addTooltip(tooltipOff, f))
+			) |> MCenterY
 	}
 
-
+	// Panel's buttons
 	customButtonsA = extractStruct(style, MDockingCustomButtons([])).buttons;
 	customButtons = customButtonsA != [];
-
 	panelButtonsA = map(customButtonsA, \btn -> {
 		clickedB = make(false);
 		switch (btn) {
@@ -296,219 +280,112 @@ makePanelTopBar(docked : bool, id: int, state : MDockingState, isColumn: bool, l
 
 	});
 
+	// Handles
+	linedHandle = makeMDockingLinedHandle(isHorizontal, titleColor);
+	dottedHandle =  makeMDockingDottedHandle(isColumn, color);
 
-	linedHandle = {
-		if (isHorizontal) {
-			MCenterIn(
-				MColsA([
-					TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(1.0, 18.0)),
-					TFixed(2.0, 0.0),
-					TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(1.0, 18.0))
-				]),
-				TFixed(dockingBarHeight, handleWidth)
-			);
-		} else {
-			MCenterIn(
-				MLines([
-					TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(18.0, 1.0)),
-					TFixed(0.0, 2.0),
-					TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(18.0, 1.0))
-				]),
-				TFixed(handleWidth, dockingBarHeight)
-			);
-		};
-	};
-
-	dottedHandle =  {
-		r = 2.0;
-		t = 1.0;
-		if (isColumn) {
-			TGroup2(
-				TRectangle(interactiveRectangleStyle, TFixed(handleWidth, dockingBarHeight)),
-				TCenterIn(
-					TCols([
-						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-						TFixed(2.0, 0.0),
-						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-						TFixed(2.0, 0.0),
-						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-						TFixed(2.0, 0.0),
-						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-					]),
-					TFixed(handleWidth, dockingBarHeight)
+	// TopBar Content
+	panelTopBarButtons = {
+		MBaselineColsA([
+			MIcon(panelIcon, [MIconSize(dockingTopBarIconSize), titleColor]) 
+				|> MBorderLeftRight(8.0)
+				|> MCenterY,
+			MEllipsisText(title + " - " + d2s(width) + "x"+ d2s(height), [titleColor, MCaptionSolid(), MMinWidth(minTitleEllipsisWidth)])	|> MCenterY,
+			TFillX(),
+			if (customButtons)
+				MBaselineColsA(panelButtonsA) |> MCenterY
+			else TEmpty(),
+			if (disableButton)
+				MCols2A(
+					TFixed(6.0, 0.0),
+					MIconButton("visibility_off", \ -> next(enabled, false), [MIconSize(dockingTopBarIconSize), titleColor, MIconButtonBorder(1.0), FillOpacity(0.5)], [])
+					|> (\f -> addTooltip("hide panel", f)) |> MCenterY
 				)
-			);
-		} else {
-			TGroup2(
-				TRectangle(interactiveRectangleStyle, TFixed(dockingBarHeight, handleWidth)),
-				TCenterIn(
-					TLines([
-						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-						TFixed(0.0, 2.0),
-						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-						TFixed(0.0, 2.0),
-						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-						TFixed(0.0, 2.0),
-						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
-					]),
-					TFixed(dockingBarHeight, handleWidth)
-				)
-			);
-		};
-	};
+			else TEmpty(),
+			TFixed(4.0, 0.0),
+			if (disableExpander)
+				TEmpty()
+			else
+				makeIconToggleButton(
+					expanded,
+					"keyboard_arrow_up",
+					"keyboard_arrow_down",
+					"collapse panel",
+					"expand panel",
+					dockingTopBarIconSize,
+					\ -> {
+						reverseBehaviour(expanded);
+						// next(state.dock, getValue(state.dock)); //force redraw (should be used for mobile)
+					},
+					titleColor,
+					0.5
+				),
+			TFixed(8.0, 0.0)
+		])
+	}
 
 	dockedTopBar = \isSideExpanded : bool  -> {
 		MAvailable(
 			MGroup([
+				// Toplbar background
 				if (isColumn) {
 					if (isSideExpanded) {
-						MSelect(expanded,\e -> if (e) TRounded(dockingRadius, dockingRadius, 0.0, 0.0, [MFill(dockedBarColor), FillOpacity(1.0)], TFillXH(dockingBarHeight))
-							else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(dockedBarColor)], TFillXH(dockingBarHeight))
+						MIfLazy(expanded,\e -> 
+							if (e) TRounded(dockingRadius, dockingRadius, 0.0, 0.0, [MFill(barColor), FillOpacity(1.0)], TFillXH(dockingBarHeight))
+								else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColor)], TFillXH(dockingBarHeight))
 						);
+
 					} else {
-						TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(dockedBarColor)], TFillXH(dockingBarHeight));
+						TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColor)], TFillXH(dockingBarHeight));
 					}
 
 				} else {
-					TRectangle([MFill(dockedBarColor)], TFillWY(dockingBarHeight))
+					TRectangle([MFill(barColor)], TFillWY(dockingBarHeight / 2.0))
 				},
+
+				// Toplbar content
 				if (isToolbarItem) {
 					MGroup2(
-						TRectangle([MFill(dockedBarColorToolbar)], if (isColumn) TFillXH(dockingBarHeight) else TFillWY(dockingBarHeight)),
-						MCenterIn(dottedHandle, if(isColumn) TFillXH(dockingBarHeight) else TFillWY(dockingBarHeight))
+						TRectangle([MFill(dockedBarColorToolbar)], topBarSize),
+						MCenterIn(dottedHandle, topBarSize)
 					)
 				} else {
 					if (isColumn)
-
-							if (isSideExpanded) {
-
-
-
-
-
-								MColsA([
-									TFixed(8.0, 0.0),
-									MIcon(panelIcon, [MIconSize(dockingTopBarIconSize), dockedTitleColor]) |> MCenterY,
-									TFixed(8.0, 0.0),
-									MEllipsisText(title, [dockedTitleColor, MCaptionSolid(), MMinWidth(minTitleEllipsisWidth)]) |> MCenterY,
-									TFillX(),
-									if (customButtons)
-										MBaselineColsA(panelButtonsA) |> MCenterY
-									else TEmpty(),
-									if (disableButton)
-										MCols2A(
-											TFixed(6.0, 0.0),
-											MIconButton("visibility_off", \ -> next(enabled, false), [MIconSize(dockingTopBarIconSize), titleColor, MIconButtonBorder(1.0), FillOpacity(0.5)], [])
-											|> (\f -> addTooltip("hide panel", f)) |> MCenterY
-										)
-									else TEmpty(),
-									TFixed(4.0, 0.0),
-									if (disableExpander)
-										TEmpty()
-									else
-										makeIconToggleButton(
-											expanded,
-											"keyboard_arrow_up",
-											"keyboard_arrow_down",
-											"collapse panel",
-											"expand panel",
-											dockingTopBarIconSize,
-											\ -> reverseBehaviour(expanded),
-											dockedTitleColor,
-											0.5
-										),
-									TFixed(8.0, 0.0)
-								])
-
-
-
-
-
-							} else {
-								MTooltip(
-									MIcon(panelIcon, [MIconSize(dockingTopBarIconSize), dockedTitleColor, FillOpacity(0.3)]) |> MCenter,
-									MText(title + " panel" , []),
-									[]
-								)
-							}
-
-					else MCenterIn(dottedHandle, TFillWY(dockingBarHeight));
+						if (isSideExpanded) panelTopBarButtons else {
+							MIcon(panelIcon, [MIconSize(dockingTopBarIconSize), titleColor, FillOpacity(0.3)]) |> MCenter
+								|> (\f -> addTooltip(title + " panel", f))
+						}
+					else MCenterIn(dottedHandle, TFillWY(dockingBarHeight / 2.0));
 				}
-			]),
-
-			if (isColumn) TFillXH(dockingBarHeight) else TFillWY(dockingBarHeight)
+			]), topBarSize
 		);
 	};
 
 	mobileTopBar =
-	if (isHorizontal) {
-		MSelect(expanded,\e ->
+		if (isHorizontal) {
+			MSelect(expanded,\e ->
+				MAvailable(
+					MGroup([
+						if (e) TRounded(dockingRadius, 0.0, 0.0, dockingRadius, [MFill(barColor)], TFillXY())
+						else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColor)], TFillXY()),
+						MCenterIn(linedHandle, TFixed(dockingBarHeight, width)),
+					]),
+					TFixed(dockingBarHeight, width)
+				)
+			);
+		} else {
 			MAvailable(
 				MGroup([
-					if (e) TRounded(dockingRadius, 0.0, 0.0, dockingRadius, [MFill(mobileBarColor)], TFillXY())
-					else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(mobileBarColor)], TFillXY()),
-					MCenterIn(linedHandle, TFixed(dockingBarHeight, width)),
+					MSelect(expanded,\e -> if (e) TRounded(dockingRadius, dockingRadius, 0.0, 0.0, [MFill(barColor)], TFillXY())
+						else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColor)], TFillXY())	
+					),
+					if (isSameStructType(getValue(state.content)[id][0], MDockingPanelToolbarItem("", [])))
+						MCenterIn(linedHandle, TFillXH(dockingBarHeight))
+					else panelTopBarButtons			
 				]),
-				TFixed(dockingBarHeight, width)
-			)
-		);
-	} else {
-		MAvailable(
-			MGroup([
-				MSelect(expanded,\e -> if (e) TRounded(dockingRadius, dockingRadius, 0.0, 0.0, [MFill(mobileBarColor)], TFillXY())
-					else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(mobileBarColor)], TFillXY())
-				),
-				if (isSameStructType(getValue(state.content)[id][0], MDockingPanelToolbarItem("", [])))
-					MCenterIn(linedHandle, TFillXH(dockingBarHeight))
-				else
-
-
-
-					MColsA([
-						TFixed(8.0, 0.0),
-						MIcon(panelIcon, [MIconSize(18.0), MWhite()]) |> MCenterY,
-						TFixed(8.0, 0.0),
-						MEllipsisText(title, [MWhite(), MCaptionSolid(), MMinWidth(minTitleEllipsisWidth)])|> MCenterY,
-						TFillX(),
-						if (customButtons)
-							MBaselineCols(panelButtonsA) |> MCenterY
-						else TEmpty(),
-						if (disableButton)
-							MCols2A(
-								TFixed(6.0, 0.0),
-								MIconButton("visibility_off", \ -> next(enabled, false), [MIconSize(dockingTopBarIconSize), titleColor, MIconButtonBorder(1.0), FillOpacity(0.5)], [])
-								|> (\f -> addTooltip("hide panel", f)) |> MCenterY
-							)
-						else TEmpty(),
-						TFixed(4.0, 0.0),
-						if (disableExpander)
-							TEmpty()
-						else
-							makeIconToggleButton(
-								expanded,
-								"keyboard_arrow_up",
-								"keyboard_arrow_down",
-								"collapse panel",
-								"expand panel",
-								dockingTopBarIconSize,
-								\ -> {
-									reverseBehaviour(expanded);
-									next(state.dock, getValue(state.dock)); //force redraw
-								},
-								MWhite(),
-								0.5
-							),
-						TFixed(8.0, 0.0)
-
-					])
-
-
-
-
-			]),
-			TFillXH(dockingBarHeight)
-		 );
-	}
+				TFillXH(dockingBarHeight)
+			);
+		}
 
 	MSelect(getValue(state.sideExpanded)[id], \se -> {
 		if (se) {
@@ -519,7 +396,7 @@ makePanelTopBar(docked : bool, id: int, state : MDockingState, isColumn: bool, l
 	});
 }
 
-makeMovablePanel(state : MDockingState, id : int, cursorPosition : DynamicBehaviour<[Point]>) -> Material {
+makeMovablePanel(state : MDockingState, id : int, cursorPositionA : DynamicBehaviour<[Point]>) -> Material {
 	manager = state.manager;
 	itemId = makeTropicTag(manager);
 	dockA = state.dock;
@@ -581,7 +458,7 @@ makeMovablePanel(state : MDockingState, id : int, cursorPosition : DynamicBehavi
 							if (e)
 								MAvailable(
 									MGroup([
-										TRectangle([MFill(bgColorFn(lg, style))], size |> TRotate90 ),
+										TRectangle([MFill(areaBgColorFn(lg, style))], size |> TRotate90 ),
 										MCenterIn(c, size |> TRotate90),
 									]),
 									size |> TRotate90
@@ -611,7 +488,7 @@ makeMovablePanel(state : MDockingState, id : int, cursorPosition : DynamicBehavi
 		MSelect(manager.manager.dragging, \h -> {
 			d = MConstruct([
 				makeSubscribe(dragPressed, \p -> {
-					if (p) next(cursorPosition, replace(getValue(cursorPosition), id, getValue(mouseXyLocal)));
+					if (p) next(cursorPositionA, replace(getValue(cursorPositionA), id, getValue(mouseXyLocal)));
 				})],
 				makeResizablePanel(content)
 			);
@@ -730,48 +607,57 @@ makeDockedPanel(state : MDockingState, id : int, groupName : string, isColumn : 
 
 	draggingShape = TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(dockingPrimaryColor)], panelSize);
 
-	dragHandle = MSelect(manager.white, \lg ->
+	topDragHandle = MSelect(manager.white, \lg ->
 		if (dontMove) makePanelTopBar(true, id, state, isColumn, lg) else
 		MDraggable(id, makePanelTopBar(true, id, state, isColumn, lg),
 			[TDragShape(TTranslate(const(posCorrection), TAlpha(const(dockingMobileOpacity), draggingShape)))]
 		)
 	);
 
-	handleBar = MInteractive([TMouseDown(dragPressed)],
-	if (isColumn) MCenterIn(dragHandle, TFillXH(dockingBarHeight)) else MCenterXIn(dragHandle, TFillWY(dockingBarHeight)));
+	topBar = MInteractive([TMouseDown(dragPressed)], 
+		if (isColumn) MCenterIn(topDragHandle, TFillXH(dockingBarHeight)) else MCenterXIn(topDragHandle, TFillWY(dockingBarHeight / 2.0)));
 
-	panel = if (isColumn) {
+	panelWithTopBar = if (isColumn) {
 		MLines([
-			handleBar,
+			topBar,
+
+
+			// MShowLazy(sideExpanded, \ -> 
 			MSelect(sideExpanded, \se -> if (se)
+				// MIfLazy(expanded, \e -> if (e) {
 				MSelect(expanded, \e -> if (e) {
 						if (dontScroll) {
 							MCropSize(TFillXY(), content)
 						} else {
-						MScroll(
-							content, TFillXY(),
-							if (hasScrollPos(style) && hasScrollInspectVisible(style))
-								[MScrollPosition(scrollPos), TScrollInspectVisible(scrollTopLeft, scrollWidthHeight)]
-							else if (hasScrollPos(style))
-								[MScrollPosition(scrollPos)]
-							else []
-						)
-					}
-				} else TFillXH(dockingCollapsedSeparatorH))    // scroll for single inner panel
+							MScroll(
+								content, TFillXY(),
+								if (hasScrollPos(style) && hasScrollInspectVisible(style))
+									[MScrollPosition(scrollPos), TScrollInspectVisible(scrollTopLeft, scrollWidthHeight)]
+								else if (hasScrollPos(style))
+									[MScrollPosition(scrollPos)]
+								else []
+							)
+						}
+
+
+					} else TFillXH(dockingCollapsedSeparatorH)
+				)    // scroll for single inner panel
+
 				else TEmpty()
 			)
+
 		]);
 	} else {
-		if (dontMove) content else MColsA([handleBar,  content]);
+		if (dontMove) content else MCols([topBar,  content]);
 	}
 
 	draggingHandleInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, style)), FillOpacity(0.05)], dragHandleSize);
 
 	draggingHandle = \lg : bool -> {
-		handle = TRectangle([MFill(resizeHandleColorFn(lg, style))], if (isColumn) TFixed(dockingHandleH, dockingHandleW) else TFixed(dockingHandleW, dockingHandleH));
+		smallHandle = TRectangle([MFill(resizeHandleColorFn(lg, style))], if (isColumn) TFixed(dockingHandleH, dockingHandleW) else TFixed(dockingHandleW, dockingHandleH));
 		MSelect(manager.manager.dragging, \dr ->
 			if ((dr >= 0) && (dr < length(getValue(state.title))) && zorder >= getValue(manager.manager.zorder) && (dr < length(getValue(groupA))) && (contains(getValue(groupA)[dr], groupName))) {
-				MGroup2(TRectangle([MFill(separatorColorFn(lg, style))], dragHandleSize), MCenterIn(handle, dragHandleSize))
+				MGroup2(TRectangle([MFill(separatorColorFn(lg, style))], dragHandleSize), MCenterIn(smallHandle, dragHandleSize))
 			} else {
 				MSelect(expanded, \e -> if (e) {
 					if (fillHeight || !getValue(getValue(state.sideExpanded)[id])) TEmpty() else
@@ -779,7 +665,7 @@ makeDockedPanel(state : MDockingState, id : int, groupName : string, isColumn : 
 						MInteractive([TMouseDown(resizePressed), TMouseInside(isHovering, false)],
 							MGroup2(
 								MSelect(isHovering,\h -> if (h) TRectangle([MFill(dockingPrimaryColor)], dragHandleSize) else TRectangle([MFill(separatorColorFn(lg, style))], dragHandleSize)),
-								MCenterIn(handle, dragHandleSize)
+								MCenterIn(smallHandle, dragHandleSize)
 							)
 						)
 					)} else TRectangle([MFill(collapsedSepColor), FillOpacity(0.4)], TFillXH(dockingCollapsedSeparatorH))
@@ -813,15 +699,45 @@ makeDockedPanel(state : MDockingState, id : int, groupName : string, isColumn : 
 			MInteractive([TMouseXY(mouseXyLocal)],
 				MSelect(sideExpanded, \se -> {
 					MSelect(expanded, \e -> {
+// println(id);
+// println("fillHeight");
+// println(fillHeight);
+// println("fillPanel");
+// println(fillPanel);
 						dockedSpace = {
 							if (isColumn) {
 								if (fillHeight || fillPanel) {
-									if (e || se) TGroup2(TFillXY(), TSelect(WH, \wh -> TFillXH(wh.height))) else TFillXH(dockingBarHeight + dockingCollapsedSeparatorH);
+									println("Panel " + title + " - fillHeight: " + b2s(fillHeight) + " fillPanel: " + b2s(fillPanel));
+									if (e || se) TGroup2(TFillXY(), TSelect(WH, \wh -> {
+										
+																					
+											
+											println(" -------->");
+										println(wh.height);
+										println(" -------->");
+										
+										TFillXH(wh.height)})) else TFillXH(dockingBarHeight + dockingCollapsedSeparatorH);
 								} else {
 									if (se) {
+										
+
 										if (e) TSelect(WH, \wh -> TFillXH(wh.height)) else TFillXH(dockingBarHeight);
 									} else {TFixed(sideCollapsedSize, dockingBarHeight);}
 								}
+
+
+								// if (fillHeight || fillPanel) {
+								// 	// if (e || se) TGroup2(TFillXY(), TSelect(WH, \wh -> TFillXH(wh.height))) else TFillXH(dockingBarHeight + dockingCollapsedSeparatorH);
+								// 	if (e || se) TSelect(WH, \wh -> TFillXH(wh.height)) else TFillXH(dockingBarHeight + dockingCollapsedSeparatorH);
+								// } else {
+								// 	if (se) {
+								// 		if (e) TSelect(WH, \wh -> TFillXH(wh.height)) else TFillXH(dockingBarHeight);
+								// 	} else TFixed(sideCollapsedSize, dockingBarHeight);
+								// }
+
+
+
+
 							} else {
 								if (fillHeight || fillPanel) TGroup2(TFillXY(), TSelect(WH, \wh -> TFillWY(wh.width + dockingBarHeight))) else TSelect(WH, \wh -> TFillWY(wh.width + dockingBarHeight));
 							}
@@ -830,31 +746,46 @@ makeDockedPanel(state : MDockingState, id : int, groupName : string, isColumn : 
 						MAvailable(
 							if (isColumn) {
 								MLines([
+
 									MGroup2(
-										if (se) {
-											r = dockingRadius;
-											if (e) TRounded(r,r,r,r, [MFill(panelBgColorFn(lg, style))/*, Stroke(0x000000)*/], TFillXY()) else TFillXH(dockingBarHeight);
-										} else {
-											TFixed(sideCollapsedSize, dockingBarHeight)
-										},
-										panel
+										// Panel background
+
+										// if (se) {
+										// 	r = dockingRadius;
+										// 	if (e) TRounded(r,r,r,r, [MFill(panelBgColorFn(lg, style))/*, Stroke(0x000000)*/], TFillXY()) else TFillXH(dockingBarHeight);
+										// } else {
+										// 	TFixed(sideCollapsedSize, dockingBarHeight)
+										// },
+
+										MEmpty(),
+										panelWithTopBar
 									),
-									if (fillPanel || isToolbarItem) TEmpty() else draggingHandle(lg)
+									// if (fillPanel || isToolbarItem) TEmpty() else draggingHandle(lg), 
+									// TRectangle([MFill(MBrown(500)), FillOpacity(1.0)], TFillXH(dockingCollapsedSeparatorH))
 									//  if (fillPanel || isToolbarItem) draggingHandleInactive(lg) else draggingHandle(lg)
 
+
 								])
+
+// |> (\f -> MGroup2(f, TRectangle([MFill(MBlue(500)), FillOpacity(0.9)], TFillXY()) |> MBorderBottom(0.0)))
 							} else {
 								MColsA([
 									MGroup2(
 										TRectangle([MFill(panelBgColorFn (lg, style))], TFillXY()),
-										panel
+										panelWithTopBar
 									),
 									if (fillPanel || isToolbarItem) TEmpty() else draggingHandle(lg)
 									//  if (fillPanel || isToolbarItem) draggingHandleInactive(lg) else draggingHandle(lg)
 								])
 							},
 							dockedSpace
-						)
+						) 
+
+						// |> (\f -> MGroup2(MFrame(0.0, 0.0, [MFill(MBlue(500)), FillOpacity(0.7)], dockedSpace), f))
+
+
+
+
 					})
 				})
 			)

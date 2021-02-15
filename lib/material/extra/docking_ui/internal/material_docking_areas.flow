@@ -1,0 +1,376 @@
+import material/material_ui;
+import material/extra/docking_ui/internal/material_docking_state;
+import material/extra/docking_ui/internal/material_docking_ui_utils;
+import material/extra/docking_ui/internal/material_docking_panels;
+
+
+export {
+	// Make a single resizable column (or row) with docked panels inside
+	makeSingleResizableColFn(
+		isColumn : bool, 
+		state : MDockingState, 
+		groupName : string, 
+		id : int,
+		redraw : DynamicBehaviour<bool>, 
+		WA : [DynamicBehaviour<double>], 
+		HA : [DynamicBehaviour<double>], 
+		dockedPanelsCols : [[int]], 
+		singleColA : [int], 
+		colId : int, 
+		resizePressedH : DynamicBehaviour<bool>, 
+		resizePressedV : DynamicBehaviour<bool>, 
+		style : [MDockingStyle]
+	) -> (int, int, bool) -> [Material];
+
+
+makeColResizeSeparatorFn(isColumn : bool, state : MDockingState, style : [MDockingStyle]) -> (int, int, int, [int], bool, DynamicBehaviour<bool>, MColor) -> Material;
+makeSingleDockedColFn(isColumn : bool, redraw : DynamicBehaviour<bool>, state : MDockingState, groupName : string, id : int, WA : [DynamicBehaviour<double>], HA : [DynamicBehaviour<double>], style : [MDockingStyle]) -> 
+	(i : int, dockedPanelsCols : [[int]], singleColA : [int], resizePressedV : DynamicBehaviour<bool>, resizePressedH : DynamicBehaviour<bool>, light : bool) -> Material;
+}
+
+
+
+makeSingleResizableColFn(
+	isColumn : bool, 
+	state : MDockingState, 
+	groupName : string, 
+	id : int,
+	redraw : DynamicBehaviour<bool>,
+	WA : [DynamicBehaviour<double>], 
+	HA : [DynamicBehaviour<double>], 
+	dockedPanelsCols : [[int]], 
+	singleColA : [int], 
+	colId : int, 
+	resizePressedH : DynamicBehaviour<bool>, 
+	resizePressedV : DynamicBehaviour<bool>, 
+	style : [MDockingStyle]
+) -> (int, int, bool) -> [Material] {
+
+	// Array of docked panels in a single resizable column/row
+	makeSingleDockedArea = makeSingleDockedColFn(isColumn, redraw, state, groupName, id, WA, HA, style);
+	// Cols separator
+	makeColResizeSeparator = makeColResizeSeparatorFn(isColumn, state, style);
+
+	isRightCol  = contains(style, MDockingRightCols());
+	isBottomLine = contains(style, MDockingBottomtLines());
+
+	\idx : int, len : int , lg : bool -> {
+		if (idx == 0 && len == 1)
+		[
+			makeColResizeSeparator(idx, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+			makeSingleDockedArea(idx, dockedPanelsCols, singleColA, resizePressedV, resizePressedH, lg),
+			makeColResizeSeparator(idx + 1, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+		]
+		else if (idx == 0 && len != 1)
+		[
+			makeColResizeSeparator(idx, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+			makeSingleDockedArea(idx, dockedPanelsCols, singleColA, resizePressedV, resizePressedH, lg),
+			if (isRightCol || isBottomLine) TEmpty() else makeColResizeSeparator(idx + 1, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+		]
+		else if (idx != 0 && colId == len - 1)
+		[
+			if (!isRightCol && !isBottomLine) TEmpty() else makeColResizeSeparator(idx, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+			makeSingleDockedArea(idx, dockedPanelsCols, singleColA, resizePressedV, resizePressedH, lg),
+			makeColResizeSeparator(idx + 1, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+		]
+		else
+		[
+			if (!isRightCol && !isBottomLine) TEmpty() else makeColResizeSeparator(idx, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+			makeSingleDockedArea(idx, dockedPanelsCols, singleColA, resizePressedV, resizePressedH, lg),
+			if (isRightCol || isBottomLine) TEmpty() else makeColResizeSeparator(idx + 1, 0, len, singleColA, lg, resizePressedH, separatorColorFn(lg, style)),
+		]
+	}
+}
+
+// Make a resizable col (or row) of docked panels
+makeSingleDockedColFn(isColumn : bool, redraw : DynamicBehaviour<bool>, state : MDockingState, groupName : string, id : int, WA : [DynamicBehaviour<double>], HA : [DynamicBehaviour<double>], style : [MDockingStyle]) -> 
+	(i : int, dockedPanelsCols : [[int]], singleColA : [int], resizePressedV : DynamicBehaviour<bool>, resizePressedH : DynamicBehaviour<bool>, light : bool) -> Material { 
+
+	manager = state.manager;
+	itemId = makeTropicTag(manager);
+	onDragging = manager.manager.dragging;
+	zorder = getValue(manager.manager.zorder);
+	groupA = state.group;
+	contentA = getValue(state.content);
+
+	dockedSizeA = getValue(state.dockedSize);
+	dropSize = extractStruct(style, MDockingDropSize(dockingDropSize)).size;
+	dragSize = dockingDragSize;
+	handleHeight = dropSize;
+	rowSize = if (isColumn) TFillXH(dropSize) else TFillWY(dropSize);
+	colSize = if (isColumn) TFillWY(dropSize) else TFillXH(dropSize);
+
+	isRightCol  = contains(style, MDockingRightCols());
+	isBottomLine = contains(style, MDockingBottomtLines());
+	fillHeightArea = contains(style, MDockingFillSpace());
+
+	dockedPanelsGrid = make([[]]);
+
+	onDrop = make(-1);
+	order = make([0, 0]);
+	isRow = make(false);
+	isDockingCol = make(true);
+	lastDropSize = make(TEmpty());
+	stickBottomPanels = contains(style, MDockingColStickBottom());
+
+			
+	dontResize  = contains(style, MDockingDontResize());
+	dontScroll  = contains(style, MDockingDontScroll());
+	dontSideExpand = contains(style, MDockingDontCollapseColumn());
+
+	// redraw = make(false);
+	sideExpandedA = map(contentA,\c -> make(false));
+
+	color = extractStruct(style, MBlue(600));
+
+	\i : int, dockedPanelsCols : [[int]], singleColA : [int], resizePressedV : DynamicBehaviour<bool>, resizePressedH : DynamicBehaviour<bool>, light : bool -> {
+
+		lastPanel = length(singleColA) - 1;
+		lastCol = length(dockedPanelsCols) - 1;
+		isResizing = make(false);
+		mouseXyLocal = make(zeroPoint);
+		mouseXyLocalR = make(zeroPoint);
+		maxPanelSize = TSizeOf(TGroup(map(singleColA, \s -> if (dockedSizeA != []) dockedSizeA[s] else TEmpty())));
+		dontResizeAll = fold(singleColA, true, \acc, p -> acc && contains(getValue(state.style)[p], MDockingDontResize()));
+		dontSideExpandPanel = fold(singleColA, false, \acc, p -> acc || contains(getValue(state.style)[p], MDockingDontCollapsePanel()));
+
+		panelsWidthA = map(singleColA, \s -> getTropicMetrics(getValue(state.size)[s]).width);
+		dockedWidthA = map(singleColA, \s -> getTropicMetrics(getValue(state.dockedSize)[s]).width);
+		mobileWidthA = map(singleColA, \s -> getTropicMetrics(getValue(state.mobileSize)[s]).width);
+
+		maxPanelsWidth = either(maxA(panelsWidthA), -doubleMax);
+		maxDockedWidth = either(maxA(dockedWidthA), -doubleMax);
+		maxMobileWidth = either(maxA(mobileWidthA), -doubleMax);
+		se = getValue(getValue(state.sideExpanded)[singleColA[0]]);
+
+		currXy = make(zeroPoint);
+		panelWH = makeWH();
+		if (getValue(WA[i]) == 0.0) next(WA[i], maxPanelsWidth);
+		if (getValue(HA[i]) == 0.0) next(HA[i], maxPanelsWidth);
+
+
+		// Dropping line for rows
+		makeInnerDroppingLine = \a : int, b : int, c : MColor, lg : bool, s : int -> {
+			dragCorrection = if  ((dontResize || dontResizeAll) && length(dockedPanelsCols) == 1) 0.0 else dragSize;
+			separatorSize = if (isColumn) {
+				if (isRightCol) {
+					if (a != lastCol) TSubtractGroup2(rowSize, TFixed(dropSize - dragSize, 0.0)) else TSubtractGroup2(rowSize, TFixed(dropSize + dropSize - dragCorrection, 0.0));
+				} else {
+					if (a != 0) TSubtractGroup2(rowSize, TFixed(dropSize - dragSize, 0.0)) else TSubtractGroup2(rowSize, TFixed(dropSize + dropSize - dragCorrection, 0.0));
+				}
+			} else {
+				TFillWY(dropSize);
+			}
+
+			MSelect(onDragging, \dr -> {
+				if ((dr >= 0) && (dr < length(getValue(groupA))) && (contains(getValue(groupA)[dr], groupName))) {
+					if (isColumn) {
+						if (isSameStructType(getValue(state.content)[dr][0], MDockingPanelToolbarItem("", []))) {
+								dockingDropLine(state, onDrop, dockedPanelsGrid, [a, b], id, groupName, color, order, separatorSize, true, isRow, lastDropSize, true, isDockingCol, zorder)
+						} else {
+							if (isRightCol) {
+								MOffset(dropSize - dragSize, 0.0, dockingDropLine(state, onDrop, dockedPanelsGrid, [a, b], id, groupName, c, order, separatorSize, true, isRow, lastDropSize, true, isDockingCol, zorder));
+							} else {
+								if (a == 0)
+								MOffset(dropSize, 0.0, dockingDropLine(state, onDrop, dockedPanelsGrid, [a, b], id, groupName, c, order, separatorSize, true, isRow, lastDropSize, true, isDockingCol, zorder))
+								else
+								dockingDropLine(state, onDrop, dockedPanelsGrid, [a, b], id, groupName, c, order, separatorSize, true, isRow, lastDropSize, true, isDockingCol, zorder);
+							}
+						}
+
+					} else {
+						dockingDropLine(state, onDrop, dockedPanelsGrid, [a, b], id, groupName, color, order, separatorSize, true, isRow, lastDropSize, true, isDockingCol, zorder);
+					}
+				} else TEmpty()
+			});
+		};
+
+		// Make single area (col or row) docked panels
+		makeAreaContents = \areaScrollingSize : Tropic, lg : bool -> {
+			cntA = mapi(singleColA, \j, s -> {
+				panelStyle = getValue(state.style)[s];
+				enabled = getValue(state.enabled)[s];
+				fillHeight = fillHeightArea || contains(panelStyle, MDockingFillSpace());
+				
+				// Fill panel order
+				fillBottomTop = j == lastPanel; 	// fill last panel - default
+				fillTopBottom = j == 0; 			// fill first panel
+				fillPanelOrder = if (stickBottomPanels) fillTopBottom else fillBottomTop;
+
+				// Dropping area overlay
+				dropAreaOverlay = 
+					if (isColumn) {
+						MLines([
+							makeInnerDroppingLine(i, j, dockingPrimaryColor, lg, s),
+							if (se) {
+								// if (j == lastPanel || fillHeight) MShow(getValue(state.expanded)[s], TFillY()) else TEmpty(); //--ORIGINAL
+								if (fillPanelOrder || fillHeight) MShow(getValue(state.expanded)[s], TFillY()) else TEmpty();
+							} else TEmpty(),
+							// if (j == lastPanel) makeInnerDroppingLine(i, j + 1, dockingPrimaryColor, lg, s) else TEmpty()
+							makeInnerDroppingLine(i, j + 1, dockingPrimaryColor, lg, s) 
+						]) 
+
+
+					} else {
+						MColsA([
+							makeInnerDroppingLine(i, j, dockingPrimaryColor, lg, s),
+							if (se) {
+								if (j == lastPanel) MShow(getValue(state.expanded)[s], TFillX()) else TEmpty();
+							} else TEmpty(),
+							makeInnerDroppingLine(i, j + 1, dockingPrimaryColor, lg, s) |> showIf(j == lastPanel)
+						])
+					}
+
+				// ENABLED
+				MShowLazy(enabled, \ ->
+					MGroup2(	
+						// makeDockingPanel(true, state, s, groupName, isColumn, j == lastPanel, panelStyle, dropSize, make([]), sideExpandedA[i], zorder)  	// Docked panel		 
+						makeDockingPanel(true, state, s, groupName, isColumn, fillPanelOrder, panelStyle, dropSize, make([]), sideExpandedA[i], zorder)  	// Docked panel - fill the first	 
+							|> showIf(dockedSizeA != []),	
+						dropAreaOverlay 																													// Drop layer
+					)
+				);
+			});
+
+			singleAreaWithContents = if (isColumn) MLines(cntA) else MColsA(cntA);
+			if (dontScroll)  MCropSize(areaScrollingSize, singleAreaWithContents) else MScroll(singleAreaWithContents, areaScrollingSize, []);
+		}
+
+		// Side expander button
+		sideExpFn = \ -> {
+			iter(singleColA, \c -> reverseBehaviour(getValue(state.sideExpanded)[c]));
+			reverseBehaviour(redraw);
+		}
+
+		sideExpBtnLabel = if (isRightCol) {
+			if (se) "skip_next" else "skip_previous";
+		} else {
+			if (!se) "skip_next" else "skip_previous";
+		}
+
+		sideExpBtnItem = \lg : bool -> MGroup2(
+			TRectangle([MFill(sideExpanderBgColorFn(lg, style))], TFillXH(sideExpanderButtonSize)),
+			if (isRightCol) MColsA([TFillX(), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)]), TFixed(2.0, 2.0)])
+			else MColsA([TFixed(2.0, 2.0), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)]), TFillX()]),
+		);
+
+		sideExpBtnItemHover = \lg : bool -> MGroup2(
+			TRectangle([MFill(sideExpanderHoverColorFn(lg, style))], TFillXH(sideExpanderButtonSize)),
+			if (isRightCol) MColsA([TFillX(), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)]), TFixed(2.0, 2.0),])
+			else MColsA([TFixed(2.0, 2.0), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)])]),
+		) ;
+
+		sideExpanderBtn = \lg : bool -> MRawButton(sideExpBtnItem(lg), sideExpBtnItemHover(lg), sideExpBtnItem(lg), sideExpBtnItem(lg),
+			"", [], [TOnClicked(sideExpFn)]);
+
+
+		// Area background with content
+		makeBgAndContentCol = \colWidthB : Transform<double> -> {
+			singleColSize = if (se) TSelect(colWidthB, \w  -> TFillWY(w)) else TFillWY(dockingSideCollapsedSize);
+			// MGroup2(
+			// 	TRectangle([MFill(areaBgColorFn(light, style))], singleColSize),
+			// 	makeAreaContents(singleColSize, light),
+			// );
+
+			MFrame(0.0, 0.0, [MFill(areaBgColorFn(light, style))], makeAreaContents(singleColSize, light))
+		}
+
+		makeBgAndContentRow = \rowHeightB : Transform<double> -> {
+			singleRowSize = if (se) TSelect(rowHeightB, \h  -> TFillXH(h)) else TFillXH(dockingSideCollapsedSize);
+			MGroup2(
+				TRectangle([MFill(areaBgColorFn(light, style))], singleRowSize),
+				makeAreaContents(singleRowSize, light)
+			);
+		}
+
+		// A resizable column or row of panels
+		MSelect(getValue(state.enabled)[i], \e -> {
+			MConstruct([
+				makeSubscribe(resizePressedH, \p -> {
+					if (p) {
+						addMInteractionItemId(manager, itemId);
+						next(currXy, getValue(state.mouseXy));
+						next(panelWH, WidthHeight(getValue(WA[i]),getValue(HA[i])));
+						next(isResizing, true);
+					} else {
+						if (getValue(isResizing)) next(isResizing, false);
+					}
+				}),
+				makeSubscribe(state.mouseXy, \mxy -> {
+					if (isCurrentMInteractionItemId(manager, itemId) && getValue(isResizing)) {
+						rtlCorrection = if (getDefaultRtl()) -1.0 else 1.0; // correction the direction of width changing depending of rtl mode
+						blockOtherMInteractionItemIds(manager, itemId);
+						if (isColumn) {
+							if (isRightCol) nextDistinct(WA[i], max(maxPanelsWidth, getValue(panelWH).width + rtlCorrection*(getValue(currXy).x - mxy.x)))
+								else nextDistinct(WA[i], max(maxPanelsWidth, getValue(panelWH).width - rtlCorrection*(getValue(currXy).x - mxy.x)));
+							} else {
+							if (isBottomLine) nextDistinct(HA[i], max(maxPanelsWidth, getValue(panelWH).height + (getValue(currXy).y - mxy.y)))
+								else nextDistinct(HA[i], max(maxPanelsWidth, getValue(panelWH).height - (getValue(currXy).y - mxy.y)));
+							}
+					};
+				}),
+				// \ -> \-> println("dispose" + i2s(id)),
+			],
+			MInteractive([TMouseXY(mouseXyLocal)],
+				MLines2(
+					if ((isColumn && !dontSideExpand && !dontSideExpandPanel))  sideExpanderBtn(light) else TEmpty(),
+					if (isColumn) makeBgAndContentCol(WA[i]) else makeBgAndContentRow(HA[i])
+				)
+			));
+		});
+	}
+}
+
+
+
+// Col separator with resize handle
+makeColResizeSeparatorFn(isColumn : bool, state : MDockingState, style : [MDockingStyle]) -> (int, int, int, [int], bool, DynamicBehaviour<bool>, MColor) -> Material {
+	\a : int, b : int, maxLenght : int, singleColA : [int], lg : bool, resizePressedH : DynamicBehaviour<bool>, bgColor : MColor -> {	
+		isHovering = make(false);
+		isRightCol  = contains(style, MDockingRightCols());
+		isBottomLine = contains(style, MDockingBottomtLines());
+		dontResize  = contains(style, MDockingDontResize());
+		dontResizeAll = fold(singleColA, true, \acc, p -> acc && contains(getValue(state.style)[p], MDockingDontResize()));
+
+		// Sizes
+		dropSize = extractStruct(style, MDockingDropSize(dockingDropSize)).size;
+		dragSize = dockingDragSize;
+		rowSize = if (isColumn) TFillXH(dropSize) else TFillWY(dropSize);
+		colSize = if (isColumn) TFillWY(dropSize) else TFillXH(dropSize);
+		colSizeDrag = if (isColumn) TFillWY(dragSize) else TFillXH(dragSize);
+		invisibleBar = TRectangle([MFill(MGreen(700)), FillOpacity(0.0)], colSizeDrag);
+
+		// Dragging bar 
+		smallHandle = TRectangle([MFill(resizeHandleColorFn(lg, style))], if (isColumn) TFixed(dockingHandleW, dockingHandleH) else TFixed(dockingHandleH, dockingHandleW));		
+		draggingBarInactive = TRectangle([MFill(separatorColorFn(lg, style))], colSizeDrag);
+		draggingBarActive = {
+			MCursor(
+				if (isColumn) EWResizeCursor() else NSResizeCursor(),
+				MInteractive([TMouseDown(resizePressedH), TMouseInside(isHovering, false)],
+					MGroup2(
+						MSelect(isHovering, \h -> TRectangle([MFill(if (h) dockingPrimaryColor else bgColor), FillOpacity(dockingDragHandleOpacity)], colSizeDrag)),
+						MCenterIn(smallHandle, colSizeDrag)
+					)
+				)
+			);
+		}
+
+		draggingBarSideExpanded = if (getValue(getValue(state.sideExpanded)[singleColA[0]])) draggingBarActive else draggingBarInactive;
+
+		draggingBar = {
+			if (maxLenght == 1) {
+				if (dontResizeAll || dontResize) TEmpty() else draggingBarSideExpanded;
+			} else {
+				if (dontResizeAll || dontResize) draggingBarInactive else {
+					if (getValue(getValue(state.sideExpanded)[singleColA[0]])) draggingBarActive else invisibleBar			
+				}
+			}
+		};
+
+		if (isRightCol || isBottomLine) {
+			if (a != maxLenght) draggingBar else TEmpty();
+		} else {
+			if (a != 0) draggingBar else TEmpty();
+		}
+	}
+};
