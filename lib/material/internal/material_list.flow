@@ -9,7 +9,6 @@ export {
 MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	state = makeMListInnerState(defaultListState(manager, parent, m2t), concat(m.style, m.state));
 
-	down = make(false);
 	MComponentGroup2T(
 		manager,
 		parent,
@@ -24,24 +23,30 @@ MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Mater
 				state.reorder,
 				\rdr -> {
 					reorderState = concatA([
-						[MEnabled(fminA([state.enabled, rdr.enabled, fnot(down)], false)), MWrapNewColumn(true)],
-						extractStructMany(m.state, MGrabDelay(0)),
+						[
+							MEnabled(fminA([state.enabled, rdr.enabled], false)),
+							MWrapNewColumn(true),
+							extractStruct(m.state, MDraggingItem(state.draggingItem)),
+							extractStruct(m.state, MGrabPosition(state.grabXY)),
+							extractStruct(m.state, MDragging(state.dragging))
+						],
+						extractStructMany(m.state, MGrabDelay(const(0))),
 						extractStructMany(m.state, MReorderDropSpot(MEmpty())),
 						extractStructMany(m.state, MReorderCustomDraggingOrder()),
-						extractStructMany(m.state, MReorderOnDragEnd())
+						extractStructMany(m.state, MReorderOnDragEnd()),
 					]);
 
 					MReorderGrid2T(
 						manager,
 						p2,
-						mapi(m.lines, \i, line -> MReorderItem(MGetFocusGroup(\par -> MListLine2T(par, const(i), const(line), state, down)), [])),
+						mapi(m.lines, \i, line -> MReorderItem(MGetFocusGroup(\par -> MListLine2T(par, const(i), const(line), state)), [])),
 						rdr.order,
 						reorderState,
 						m2t
 					)
 				},
 				\ ->
-					TLines(mapi(m.lines, \i, line -> MListLine2T(p2, const(i), const(line), state, down)))
+					TLines(mapi(m.lines, \i, line -> MListLine2T(p2, const(i), const(line), state)))
 			))
 			|> (\f : Material ->
 				eitherMap(
@@ -86,10 +91,6 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 	boxH = make(0.);
 	availableW = make(0.);
 	hgt = make(0.);
-
-	down = make(false);
-	draggingItem = make(-1);
-	draggingXY = make(zeroPoint);
 
 	changingSize = ref false;
 	metricsLock = ref false;
@@ -204,7 +205,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 							elementAt(itms, i, dummySingleLine())
 						));
 
-					MListLine2T(p, lineId, lineContent, state, down)
+					MListLine2T(p, lineId, lineContent, state)
 					|> (\line -> TAttachHeightTrigger(line, lineHeight, fnot(sameHeight)))
 					|> (\t -> TConstruct(
 							[
@@ -232,12 +233,12 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 								if (isFConst(rdr.enabled) && !fgetValue(rdr.enabled)) {
 									listLine
 								} else {
-									rdrdown = make(false);
 									point = make(Point(-1., -1.));
 									hover = make(false);
-									grabDelay = extractStruct(m.state, MGrabDelay(300)).delay;
+									grabDelay = extractStruct(m.state, MGrabDelay(const(300))).delay;
+									reorderOnDragEnd = contains(m.state, MReorderOnDragEnd());
 
-									TVisible(fselect2(draggingItem, lineId, FLift2(\dr, ln -> dr != ln)), listLine)
+									TVisible(fselect2(state.draggingItem, lineId, FLift2(\dr, ln -> dr != ln)), listLine)
 									|> (\listLineVisible ->
 										TCopySize(
 											listLineVisible,
@@ -250,12 +251,15 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 														MFocusEnabled(const(false)),
 														MClickEnabled(rdr.enabled),
 														THovering(hover),
-														TPressed(rdrdown),
 														MMousePosition(point),
 														MOnTouch(grabDelay, \ -> {
-															if (!getValue(down)) {
-																nextDistinct(draggingXY, getValue(point));
-																nextDistinct(draggingItem, fgetValue(lineId));
+															nextDistinct(state.draggingItem, fgetValue(lineId));
+															nextDistinct(state.dragging, true);
+														}),
+														MOnMouseUp(\__, __ -> {
+															if (getValue(state.draggingItem) == fgetValue(lineId)) {
+																nextDistinct(state.dragging, false);
+																nextDistinct(state.draggingItem, -1);
 															}
 														}),
 														MCursorShape(const(DefaultCursor())),
@@ -268,26 +272,36 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 											true
 										)
 									)
-									|> (\listLineVisible ->
+									|> (\listLineVisible -> {
+										tempOrder = make([]);
+
 										TConstruct(
 											[
-												make2Subscribe(hover, fif(rdr.enabled, draggingItem, const(-1)), \h, hId -> if (h && hId >= 0) {
-													id = fgetValue(lineId);
-													ordr = fgetValue(rdr.order);
-
-													nextDistinct(
-														rdr.order,
-														insertArray(removeIndex(ordr, findiDef(ordr, eq(hId), -1)), findiDef(ordr, eq(id), -1), hId)
-													);
+												makeSubscribe2(state.draggingItem, \dr -> {
+													if (dr == fgetValue(lineId)) {
+														nextDistinct(state.grabXY, getValue(point));
+													}
 												}),
-												makeSubscribe2(fand(rdr.enabled, rdrdown), \d ->
-													if (!d)
-														nextDistinct(draggingItem, -1)
-												)
+												make2Subscribe(hover, fif(rdr.enabled, state.draggingItem, const(-1)), \h, hId -> {
+													if (h && hId >= 0) {
+														id = fgetValue(lineId);
+														ordr = fgetValue(rdr.order);
+
+														nextDistinct(
+															if (reorderOnDragEnd) tempOrder else rdr.order,
+															insertArray(removeIndex(ordr, findiDef(ordr, eq(hId), -1)), findiDef(ordr, eq(id), -1), hId)
+														);
+													}
+												}),
+												make2Subscribe2(rdr.enabled, state.draggingItem, \en, d -> {
+													if (en && reorderOnDragEnd && d < 0) {
+														nextDistinct(rdr.order, getValue(tempOrder));
+													}
+												})
 											],
 											listLineVisible
 										)
-									)
+									})
 								},
 							listLine
 						)
@@ -593,19 +607,19 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 			\rdr ->
 				TConstruct(
 					[
-						makeSubscribe2Uns(fif(rdr.enabled, draggingItem, const(-1)), \dr ->
+						makeSubscribe2Uns(fif(fand(rdr.enabled, state.dragging), state.draggingItem, const(-1)), \dr ->
 							if (dr >= 0) {
 								mouseXY = make(zeroPoint);
 
 								[
 									(\par ->
-										MListLine2T(par, const(dr), const(fgetValue(items)[dr]), state, down)
+										MListLine2T(par, const(dr), const(fgetValue(items)[dr]), state)
 										|> (\t -> TAvailableWidth(t, availableW))
 										|> (\t -> MGrabAnimation(state.manager, par, t))
 									)
 									|> (\fn -> MComponentGroup2T(manager, parent, "MDynamicListDraggable", [], fn))
 									|> (\t -> TTranslate(
-											fselect(mouseXY, FLift(\xy0 -> Point(xy0.x - getValue(draggingXY).x, xy0.y - getValue(draggingXY).y))),
+											fselect(mouseXY, FLift(\xy0 -> Point(xy0.x - getValue(state.grabXY).x, xy0.y - getValue(state.grabXY).y))),
 											t
 										))
 									|> (\t -> MMonitorMousePosition(manager, mouseXY, t)())

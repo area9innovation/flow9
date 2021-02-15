@@ -4,7 +4,7 @@ import material/internal/material_icons;
 
 export {
 	MListLine2Height(line : MListLine, listState : MListInnerState) -> Maybe<double>;
-	MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine>, listState : MListInnerState, down : DynamicBehaviour<bool>) -> Tropic;
+	MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine>, listState : MListInnerState) -> Tropic;
 
 	MListInnerState(
 		manager : MaterialManager,
@@ -13,6 +13,10 @@ export {
 		emptyMessage : Maybe<Material>,
 		reorder : Maybe<MListReorder>,
 		reorderShowIcon : bool,
+		grabDelay : Transform<int>,
+		dragging : DynamicBehaviour<bool>,
+		grabXY : DynamicBehaviour<Point>,
+		draggingItem : DynamicBehaviour<int>,
 		minimize : Transform<bool>,
 		minimizedWidth : double,
 		selection : MListSelection,
@@ -105,7 +109,7 @@ MListLine2Height(line : MListLine, listState : MListInnerState) -> Maybe<double>
 	}
 }
 
-MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine>, listState : MListInnerState, down : DynamicBehaviour<bool>) -> Tropic {
+MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine>, listState : MListInnerState) -> Tropic {
 	m2t = listState.m2t;
 
 	makeMLine = \p -> {
@@ -263,18 +267,31 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 
 		reorderIcon = \p2 ->
 			TIfLazy(isReorderIconEnabled, \isRIE ->
-				if (isRIE)
+				if (isRIE) {
 					listState.m2t(
-						MTooltip(
-							MIcon("drag_handle", [])
-							|> MCenterY
-							|> MBorderStart(16.),
-							MText("Drag the item to reorder the list", []),
-							[]
-						), p2
+						MIconButton(
+							"drag_handle",
+							nop,
+							[],
+							[
+								MOnTouch(const(0), \ -> {
+									nextDistinct(listState.draggingItem, fgetValue(i));
+									nextDistinct(listState.dragging, true);
+								}),
+								MOnMouseUp(\__, __ -> {
+									if (getValue(listState.draggingItem) == fgetValue(i)) {
+										nextDistinct(listState.dragging, false);
+										nextDistinct(listState.draggingItem, -1);
+									}
+								}),
+								MTooltipText(const("Drag the item to reorder the list")),
+								MRippleType(const(MNoRipple()))
+							]
+						)
+						|> MCenterY
+						|> MBorderStart(16.), p2
 					)
-					|> (\t -> TInteractive([TMouseDown(make(false))], t))
-				else
+				} else
 					TEmpty()
 			);
 
@@ -379,11 +396,6 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 								)
 						)
 						|> addActions(p2)
-						|> (\f -> TIfLazy(isReorderIconEnabled, \isRIE ->
-								if (isRIE) TCopySize2(f, \size, t ->
-									TGroup2(t, TInteractive([TMouseDownGhost(down)], size))
-								) else f)
-						)
 				)
 			)
 			|> (\t -> TCols2Dir(t, reorderIcon(p2), p2.rtl))
@@ -503,7 +515,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 				],
 				subLines,
 				\sl, par ->
-					mapi(sl, \j, l -> TSelect(subListState, \sls -> MListLine2T(par, const(j), const(l), sls, down)))
+					mapi(sl, \j, l -> TSelect(subListState, \sls -> MListLine2T(par, const(j), const(l), sls)))
 					|> TLines
 			);
 		yFact = make(b2d(fgetValue(expanded)));
@@ -514,7 +526,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 
 		TLines2(
 			fif(customExpanding, subMain, addClickToSubMain(subMain, expanded))
-			|> (\f -> MListLine2T(p, i, f, listState, down)),
+			|> (\f -> MListLine2T(p, i, f, listState)),
 			TCopySize2(
 				TSelect(noDispose, \nd ->
 					if (nd)
@@ -628,6 +640,10 @@ defaultListState(manager : MaterialManager, parent : MFocusGroup, m2t : (Materia
 		None(),
 		None(),
 		true,
+		const(300),
+		make(false),
+		make(zeroPoint),
+		make(-1),
 		const(false),
 		72.,
 		MListSelection(const(false), false, false, make([])),
@@ -713,6 +729,10 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 		emptyMessage,
 		reorderList,
 		reorderShowIcon,
+		extractStruct(state, MGrabDelay(listState.grabDelay)).delay,
+		extractStruct(state, MDragging(listState.dragging)).dragging,
+		extractStruct(state, MGrabPosition(listState.grabXY)).point,
+		extractStruct(state, MDraggingItem(listState.draggingItem)).item,
 		minimizeList,
 		minimizedWidth,
 		selection,
