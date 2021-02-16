@@ -1836,6 +1836,10 @@ class RenderSupport {
 		return clip.addTextInputFilter(filter);
 	}
 
+	public static function addTextInputEventFilter(clip : TextClip, filter : String -> String -> String) : Void -> Void {
+		return clip.addTextInputEventFilter(filter);
+	}
+
 	public static function addTextInputKeyEventFilter(clip : TextClip, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
 		if (event == "keydown")
 			return clip.addTextInputKeyDownEventFilter(filter);

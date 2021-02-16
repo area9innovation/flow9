@@ -153,6 +153,7 @@ class TextClip extends NativeWidgetClip {
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
+	private var TextInputEventFilters : Array<String -> String -> String> = new Array();
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
@@ -1214,6 +1215,12 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
+		if (e != null && e.inputType != null) {
+			for (f in TextInputEventFilters) {
+				newValue = f(newValue, e.inputType);
+			}
+		}
+
 		if (nativeWidget == null) {
 			return;
 		}
@@ -1407,6 +1414,11 @@ class TextClip extends NativeWidgetClip {
 	public function addTextInputFilter(filter : String -> String) : Void -> Void {
 		TextInputFilters.push(filter);
 		return function() { TextInputFilters.remove(filter); }
+	}
+
+	public function addTextInputEventFilter(filter : String -> String -> String) : Void -> Void {
+		TextInputEventFilters.push(filter);
+		return function() { TextInputEventFilters.remove(filter); }
 	}
 
 	public function addTextInputKeyDownEventFilter(filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
