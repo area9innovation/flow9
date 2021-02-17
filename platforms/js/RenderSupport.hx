@@ -3441,6 +3441,10 @@ class RenderSupport {
 		return function() { untyped Browser.window.removeEventListener("hashchange", wrapper); };
 	}
 
+	public static function reloadPage(forced : Bool) : Void {
+		Browser.window.location.reload(forced);
+	}
+
 	public static function setGlobalZoomEnabled(enabled : Bool) : Void {
 		// NOP
 	}
