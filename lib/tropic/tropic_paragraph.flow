@@ -88,7 +88,7 @@ TRenderDynamicParagraph(
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM
+			genIndent, linesCountB, alignWidthM, false
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
@@ -222,6 +222,9 @@ TRenderParagraph(
 
 	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
 
+	fitLongWords = containsStruct(s, ParagraphFitLongWords());
+	scaleB = make(Factor(1., 1.));
+
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
@@ -254,6 +257,8 @@ TRenderParagraph(
 		TGroup(groupedWords)
 	));
 
+	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
+
 	updateFn = \wi, alignWidthM -> {
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
@@ -261,12 +266,18 @@ TRenderParagraph(
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
 			words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM
+			genIndent, linesCountB, alignWidthM, fitLongWords
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
+		nextDistinct(scaleB, eitherMap(
+			paragraphSizeBaselineAndChanges.scaleM,
+			\scale -> Factor(scale, scale),
+			Factor(1., 1.)
+		));
+
 		deferred(\ -> updateBehaviour(reflowHappenedB, \t -> !t));
 	};
 
@@ -321,9 +332,9 @@ TRenderParagraph(
 		],
 		TAttachAvailableWidth(
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
-				TBorder(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
+				TBorder(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, scaledContent);
 			} else {
-				contentGroup;
+				scaledContent;
 			},
 			awB
 		)
@@ -651,9 +662,12 @@ TParaLine(words : [TParaWord], indent : double);
 // To remember changed in reflowTParaWords words and thier indexes
 WordsAndIndexes(words : [TParaWord], indexes : [int]);
 // Return type for reflowTParaWordsRec
-LinesAndWords(lines : [TParaLine], words : WordsAndIndexes);
+TReflowResultAcc ::= TOverflowCase, TReflowedLinesAndChanges;
+	TOverflowCase(width: double);
+	TReflowedLinesAndChanges(lines : [TParaLine], changes : WordsAndIndexes);
+	initialLines = TReflowedLinesAndChanges([], WordsAndIndexes([], []));
 // Return type for reflowTParaWords
-metricsAndWords(metrics : Pair<WidthHeight, double>, words : WordsAndIndexes);
+TReflowResult(metrics : Pair<WidthHeight, double>, words : WordsAndIndexes, scaleM : Maybe<double>);
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
 reflowTParaWords(
@@ -668,21 +682,19 @@ reflowTParaWords(
 	isMarked : bool,
 	generalIndent : double,
 	linesCountB : DynamicBehaviour<int>,
-	alignWidthM : Maybe<double>
-) -> metricsAndWords {
-	firstLineWidth = availableParaWidth - getLineIndent(firstLineIndent, 0);
-	textAndChanges = reflowTParaWordsRec(
+	alignWidthM : Maybe<double>,
+	fitLongWords : bool
+) -> TReflowResult {
+
+	reflowAndWidth = reflowAndFitTParaWords(
 		words,
-		0,
-		firstLineWidth,
-		firstLineWidth,
-		[],
-		[],
+		availableParaWidth,
 		firstLineIndent,
 		isMarked,
-		WordsAndIndexes([], [])
+		fitLongWords
 	);
-	text = textAndChanges.lines;
+
+	text = reflowAndWidth.first.lines;
 	paraLines = if (rtl)
 		zipWith(
 			text,
@@ -694,7 +706,7 @@ reflowTParaWords(
 	nextDistinct(linesCountB, length(text));
 
 	widthAndBaseline = TAlignParaLines(
-		availableParaWidth,
+		either(reflowAndWidth.second, availableParaWidth),
 		paraLines,
 		tightWidth,
 		alignment,
@@ -706,7 +718,48 @@ reflowTParaWords(
 		alignWidthM
 	);
 
-	metricsAndWords(widthAndBaseline, textAndChanges.words);
+	TReflowResult(
+		widthAndBaseline,
+		reflowAndWidth.first.changes,
+		maybeMap(reflowAndWidth.second, \overflowWidth -> availableParaWidth / overflowWidth)
+	);
+}
+
+
+reflowAndFitTParaWords(
+	words : [TParaWord],
+	availableWidth : double,
+	firstLineIndent : double,
+	isMarked : bool,
+	fitLongWords : bool
+) -> Pair<TReflowedLinesAndChanges, Maybe<double>> {
+	firstLineWidth = availableWidth - getLineIndent(firstLineIndent, 0);
+	reflowResult = reflowTParaWordsRec(
+		words,
+		0,
+		firstLineWidth,
+		firstLineWidth,
+		[],
+		initialLines,
+		firstLineIndent,
+		isMarked,
+		fitLongWords,
+	);
+
+	switch (reflowResult) {
+		TOverflowCase(overflowWidth) : {
+			newFirstLineWidth = overflowWidth - getLineIndent(firstLineIndent, 0);
+			reflowAndScale = reflowAndFitTParaWords(
+				words,
+				overflowWidth,
+				firstLineIndent,
+				isMarked,
+				false
+			);
+			Pair(reflowAndScale.first, Some(overflowWidth));
+		}
+		TReflowedLinesAndChanges(lines, changes) : Pair(reflowResult, None());
+	}
 }
 
 // here availableWidth is an amount of width for current line
@@ -716,25 +769,38 @@ reflowTParaWordsRec(
 	availableWidth : double,
 	remaining : double,
 	currentWords : [TParaWord],
-	lines : [TParaLine],
+	result : TReflowResultAcc,
 	paraIndent : double,
 	isMarked : bool,
-	wordsChanges : WordsAndIndexes
-) -> LinesAndWords {
-	addLine = \cw, indent -> {
-		if (cw != []) arrayPush(lines, TParaLine(cw, indent)) else lines;
+	catchOverflow : bool
+) -> TReflowResultAcc {
+	addLine = \cw, indent -> switch (result) {
+		TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
+			ifArrayPush(lines, cw != [], TParaLine(cw, indent)),
+			changes
+		);
+		TOverflowCase(__) : result;
 	}
+
+	addOverflow = \overflowWidth -> switch(result) {
+		TReflowedLinesAndChanges(__, __) : TOverflowCase(overflowWidth);
+		TOverflowCase(ow) : TOverflowCase(max(overflowWidth, ow));
+	};
 
 	detachWord = \w : TParaWord, detach : bool -> {
 		nextDistinct(w.inspector.detached, detach);
 	}
 
-	lineIndex = length(lines);
+	lineIndex = switch(result) {
+		TReflowedLinesAndChanges(lines, __) : length(lines);
+		TOverflowCase(ow) : 1;
+	}
+
 	lineIndent = getLineIndent(paraIndent, lineIndex);
 	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, lineIndex + 1);
 
 	if (words == []) {
-		LinesAndWords(addLine(currentWords, lineIndent), wordsChanges)
+		addLine(currentWords, lineIndent);
 	} else {
 		word = words[0];
 		detachWord(word, false);
@@ -754,7 +820,7 @@ reflowTParaWordsRec(
 					addLine(currentWords, lineIndent),
 					paraIndent,
 					false,
-					wordsChanges
+					catchOverflow
 				);
 			}
 			GeneralLinePart(first, mid, end): {
@@ -770,14 +836,18 @@ reflowTParaWordsRec(
 				width = getWordWidth(word);
 				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
 
-				addChange = \paraword -> {
+				addChange = \reflowResult, paraword -> {
 					// Add change only if the word really changed
-					if (paraword.ghostView != word.ghostView) {
-						WordsAndIndexes(
-							arrayPush(wordsChanges.words, paraword),
-							arrayPush(wordsChanges.indexes, currentWordIndex)
-						)
-					} else wordsChanges
+					if (paraword.ghostView != word.ghostView) switch (reflowResult) {
+						TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
+							lines,
+							WordsAndIndexes(
+								arrayPush(changes.words, paraword),
+								arrayPush(changes.indexes, currentWordIndex)
+							)
+						);
+						TOverflowCase(__) : reflowResult;
+					} else reflowResult
 				};
 
 				if (currentWords == []) {
@@ -789,10 +859,10 @@ reflowTParaWordsRec(
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, paraword),
-						lines,
+						addChange(result, paraword),
 						paraIndent,
 						false,
-						addChange(paraword)
+						catchOverflow
 					);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
@@ -803,10 +873,10 @@ reflowTParaWordsRec(
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, paraword),
-						lines,
+						addChange(result, paraword),
 						paraIndent,
 						false,
-						addChange(paraword)
+						catchOverflow
 					);
 				} else {
 					// If it is the last item on the line
@@ -817,10 +887,13 @@ reflowTParaWordsRec(
 						nextLineWidth,
 						nextLineWidth,
 						[],
-						addLine(arrayPush(currentWords, paraword), lineIndent),
+						addChange(
+							addLine(arrayPush(currentWords, paraword), lineIndent),
+							paraword
+						),
 						paraIndent,
 						false,
-						addChange(paraword)
+						catchOverflow
 					);
 				}
 			}
@@ -835,10 +908,10 @@ reflowTParaWordsRec(
 						availableWidth,
 						remaining - width,
 						arrayPush(currentWords, word),
-						lines,
+						result,
 						paraIndent,
 						false,
-						wordsChanges
+						catchOverflow
 					);
 				} else {
 					detachWord(word, true);
@@ -851,7 +924,7 @@ reflowTParaWordsRec(
 						addLine(currentWords, lineIndent),
 						paraIndent,
 						false,
-						wordsChanges
+						catchOverflow
 					);
 				}
 			}
@@ -891,16 +964,21 @@ reflowTParaWordsRec(
 					_rest = tailFrom(words, wordsCount);
 
 					newCurrentWords = concat(currentWords, _words);
+					isText = switch(word.word) {
+						NonTextElement() : false;
+						default : true;
+					}
+
 					reflowTParaWordsRec(
 						_rest,
 						currentWordIndex + wordsCount,
 						availableWidth,
 						remaining - ^width,
 						newCurrentWords,
-						lines,
+						if (isText && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
 						paraIndent,
 						false,
-						wordsChanges
+						catchOverflow
 					);
 				} else {
 					reflowTParaWordsRec(
@@ -912,7 +990,7 @@ reflowTParaWordsRec(
 						addLine(currentWords, lineIndent),
 						paraIndent,
 						false,
-						wordsChanges
+						catchOverflow
 					);
 				}
 			}
