@@ -241,7 +241,7 @@ TRenderParagraph(
 
 	rtl = isParagraphRtl(s);
 	reflowHappenedB = make(false);
-	groupedWords = groupAndTranslateWords(
+	groupedWords = groupAndPositionWords(
 		words,
 		genIndent,
 		reflowHappenedB,
@@ -351,8 +351,9 @@ LineHeadingsAcc(
 	currentTag : string
 );
 
-
-groupAndTranslateWords(
+// This function groups all words by heading level and lines.
+// Each regrouping happens after reflowHappenedB gets updated.
+groupAndPositionWords(
 	words : [TParaWord],
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
@@ -427,11 +428,11 @@ makeHeadingGroup(
 	rtl : bool 
 ) -> Tropic {
 
-	joinedWords = if (rtl || isUrlParameterFalse("join_words")) translateInteractiveWords(
+	joinedWords = if (rtl || isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
-	) else splitRejoinableWords(words, genIndent, reflowHappened, joinedWordsConstructors);
+	) else joinGroupedWords(words, genIndent, reflowHappened, joinedWordsConstructors);
 
 	if (tag == "") TGroup(joinedWords) else TAccess(
 		[
@@ -442,7 +443,8 @@ makeHeadingGroup(
 	)
 }
 
-translateInteractiveWords(
+// This function converts words to positioned tropic when we don't do joining.
+positionInteractiveWords(
 	words: List<TParaWord>,
 	genIndent : double,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
@@ -464,7 +466,12 @@ translateInteractiveWords(
 		}
 	)
 }
-splitRejoinableWords(
+
+// Groups words by id 
+// same id refers to the same wigi text that means that words with same id have the same style and behaviour, so they can be joined.
+// After grouping we do joining of words that are on the same line
+// Joining happens in joinTextWords function
+joinGroupedWords(
 	words: List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
@@ -472,14 +479,14 @@ splitRejoinableWords(
 ) -> [Tropic] {
 
 	isSameGroup = \currentGroup : List<TParaWord>, id : int -> switch (currentGroup) {
-		Cons(h, __) : getValue(h.id) == id;
+		Cons(firstWord, __) : getValue(firstWord.id) == id;
 		EmptyList() : false
 	};
 
 	appendJoinedWordsView = \acc : [Tropic], wordsList : List<TParaWord> -> {
 		switch (wordsList) {
 			EmptyList() : acc;
-			Cons(h, __) : arrayPush(
+			Cons(firstWord, __) : arrayPush(
 				acc,
 				joinTextWords(
 					wordsList,
@@ -487,14 +494,14 @@ splitRejoinableWords(
 					reflowHappened,
 					lookupTreeDef(
 						joinedWordsConstructors,
-						getValue(h.id),
+						getValue(firstWord.id),
 						\t, s -> TText(t, s)
 					)
 				)
 			)
 		}
 	}
-
+	// TODO: consider to get rid of list2array.
 	splitResult = fold2(list2array(words), [], EmptyList(), \acc, currentGroup, word -> {
 		onDynamicElemCase = \ -> Pair(
 			arrayPush(
@@ -530,12 +537,16 @@ JoinTextAcc(
 	acc : List<Tropic>
 );
 
+// Joins words of the same style and line to one TText.
+// wordsViewConstructor is function that creates interactive tropic(with all features of wigiText) from concatenated string.
 joinTextWords(
 	words : List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
 ) -> Tropic {
+	// Here is TSelect that recalculates the view when behaviour is updated.
+	// It happens on each reflow because after reflow words can go to another line.
 	TSelect(
 		reflowHappened,
 		\__ -> {
@@ -551,12 +562,15 @@ joinTextWords(
 				)
 			);
 			TGroup(
+				// here we get group because words of the same style(wigiText) can be placed on few lines
 				list2array(addLastLine(joinResult, wordsViewConstructor))
 			);
 		}
 	);
 }
 
+// Actuall concatenation happens here
+// The pattern for grouping is the same as above.
 appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
