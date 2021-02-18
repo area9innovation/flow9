@@ -31,7 +31,8 @@ export {
 		id : int,
 		style : [CharacterStyle],
 		inspectorM : Maybe<ParaElementInspector>,
-		scriptM : Maybe<ParaElementScriptType>
+		scriptM : Maybe<ParaElementScriptType>,
+		ignoreLetterSpacing : bool
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
@@ -88,7 +89,7 @@ TRenderDynamicParagraph(
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM, false
+			genIndent, linesCountB, alignWidthM, false, false
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
@@ -225,6 +226,8 @@ TRenderParagraph(
 	fitLongWords = containsStruct(s, ParagraphFitLongWords());
 	scaleB = make(Factor(1., 1.));
 
+	ignoreLetterSpacing = containsStruct(s, IgnoreLetterspacingOnReflow());
+
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
@@ -266,7 +269,8 @@ TRenderParagraph(
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
 			words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM, fitLongWords
+			genIndent, linesCountB, alignWidthM, fitLongWords,
+			ignoreLetterSpacing
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
@@ -638,13 +642,14 @@ commonWordConstructor(
 	id : int,
 	style : [CharacterStyle],
 	inspectorM : Maybe<ParaElementInspector>,
-	scriptM : Maybe<ParaElementScriptType>
+	scriptM : Maybe<ParaElementScriptType>,
+	ignoreLetterSpacing : bool
 ) -> TParaWord {
 	inspector = either(inspectorM, dummyInspector());
 	wordView = inspectWordView(
 		tr,
 		inspector,
-		extractStruct(style, LetterSpacing(0.0)).spacing
+		if (ignoreLetterSpacing) 0.0 else extractStruct(style, LetterSpacing(0.0)).spacing
 	);
 	TParaWord(
 		w,
@@ -697,22 +702,32 @@ reflowTParaWords(
 	generalIndent : double,
 	linesCountB : DynamicBehaviour<int>,
 	alignWidthM : Maybe<double>,
-	fitLongWords : bool
+	fitLongWords : bool,
+	ignoreLetterSpacing : bool 
 ) -> TReflowResult {
+	setTParaWordText = tParaWordsTextSetter(ignoreLetterSpacing);
 
 	reflowAndWidth = reflowAndFitTParaWords(
 		words,
 		availableParaWidth,
 		firstLineIndent,
 		isMarked,
-		fitLongWords
+		fitLongWords,
+		ignoreLetterSpacing
 	);
 
 	text = reflowAndWidth.first.lines;
 	paraLines = if (rtl)
 		zipWith(
 			text,
-			reflowTextToBiDi(map(text, \l -> l.words), isTParaWordEmpty, getTParaWordText, setTParaWordText, idfn, rtl),
+			reflowTextToBiDi(
+				map(text, \l -> l.words),
+				isTParaWordEmpty,
+				getTParaWordText,
+				setTParaWordText,
+				idfn,
+				rtl
+			),
 			\l, ws -> TParaLine(ws, l.indent),
 		)
 	else text;
@@ -745,7 +760,8 @@ reflowAndFitTParaWords(
 	availableWidth : double,
 	firstLineIndent : double,
 	isMarked : bool,
-	fitLongWords : bool
+	fitLongWords : bool,
+	ignoreLetterSpacing : bool
 ) -> Pair<TReflowedLinesAndChanges, Maybe<double>> {
 	firstLineWidth = availableWidth - getLineIndent(firstLineIndent, 0);
 	reflowResult = reflowTParaWordsRec(
@@ -758,6 +774,7 @@ reflowAndFitTParaWords(
 		firstLineIndent,
 		isMarked,
 		fitLongWords,
+		ignoreLetterSpacing
 	);
 
 	switch (reflowResult) {
@@ -768,7 +785,8 @@ reflowAndFitTParaWords(
 				overflowWidth,
 				firstLineIndent,
 				isMarked,
-				false
+				false,
+				ignoreLetterSpacing
 			);
 			Pair(reflowAndScale.first, Some(overflowWidth));
 		}
@@ -786,7 +804,8 @@ reflowTParaWordsRec(
 	result : TReflowResultAcc,
 	paraIndent : double,
 	isMarked : bool,
-	catchOverflow : bool
+	catchOverflow : bool,
+	ignoreLetterSpacing : bool
 ) -> TReflowResultAcc {
 	addLine = \cw, indent -> switch (result) {
 		TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
@@ -834,7 +853,8 @@ reflowTParaWordsRec(
 					addLine(currentWords, lineIndent),
 					paraIndent,
 					false,
-					catchOverflow
+					catchOverflow,
+					ignoreLetterSpacing
 				);
 			}
 			GeneralLinePart(first, mid, end): {
@@ -843,7 +863,7 @@ reflowTParaWordsRec(
 					newView = inspectWordView(
 						TText(txt, applyAlphabetStyles(detectAlphabet(txt), word.style)),
 						word.inspector,
-						extractStruct(word.style, LetterSpacing(0.0)).spacing
+						if (ignoreLetterSpacing || rest == []) 0.0 else extractStruct(word.style, LetterSpacing(0.0)).spacing
 					);
 					TParaWord(word with ghostView = newView);
 				};
@@ -876,7 +896,8 @@ reflowTParaWordsRec(
 						addChange(result, paraword),
 						paraIndent,
 						false,
-						catchOverflow
+						catchOverflow,
+						ignoreLetterSpacing
 					);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
@@ -890,7 +911,8 @@ reflowTParaWordsRec(
 						addChange(result, paraword),
 						paraIndent,
 						false,
-						catchOverflow
+						catchOverflow,
+						ignoreLetterSpacing
 					);
 				} else {
 					// If it is the last item on the line
@@ -907,7 +929,8 @@ reflowTParaWordsRec(
 						),
 						paraIndent,
 						false,
-						catchOverflow
+						catchOverflow,
+						ignoreLetterSpacing
 					);
 				}
 			}
@@ -925,7 +948,8 @@ reflowTParaWordsRec(
 						result,
 						paraIndent,
 						false,
-						catchOverflow
+						catchOverflow,
+						ignoreLetterSpacing
 					);
 				} else {
 					detachWord(word, true);
@@ -938,7 +962,8 @@ reflowTParaWordsRec(
 						addLine(currentWords, lineIndent),
 						paraIndent,
 						false,
-						catchOverflow
+						catchOverflow,
+						ignoreLetterSpacing
 					);
 				}
 			}
@@ -992,7 +1017,8 @@ reflowTParaWordsRec(
 						if (isText && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
 						paraIndent,
 						false,
-						catchOverflow
+						catchOverflow,
+						ignoreLetterSpacing
 					);
 				} else {
 					reflowTParaWordsRec(
@@ -1004,7 +1030,8 @@ reflowTParaWordsRec(
 						addLine(currentWords, lineIndent),
 						paraIndent,
 						false,
-						catchOverflow
+						catchOverflow,
+						ignoreLetterSpacing
 					);
 				}
 			}
@@ -1199,13 +1226,13 @@ getTParaWordText(w: TParaWord) -> string {
 	}
 }
 
-setTParaWordText(w: TParaWord, t: string) -> TParaWord {
-	switch(w.word) {
+tParaWordsTextSetter(ignoreLetterSpacing: bool) -> (TParaWord, string) -> TParaWord {
+	\w: TParaWord, t: string -> switch(w.word) {
 		GeneralText(__): {
 			view = inspectWordView(
 				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)),
 				w.inspector,
-				extractStruct(w.style, LetterSpacing(0.0)).spacing
+				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
 			);
 			TParaWord(w with ghostView = view);
 		}
@@ -1213,7 +1240,7 @@ setTParaWordText(w: TParaWord, t: string) -> TParaWord {
 			view = inspectWordView(
 				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)),
 				w.inspector,
-				extractStruct(w.style, LetterSpacing(0.0)).spacing
+				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
 			);
 			TParaWord(w with ghostView = view);
 		}
