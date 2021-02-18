@@ -50,7 +50,7 @@ export {
 		ShowWeekViewDaysNames, CalendarTabMenuStyle, CalendarTabMenuText, CalendarHideEventTypesLegend, CalendarCurrentDate, CalendarShowTodayButton,
 		CalendarMenuTightWidth, CalendarMenuAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
-		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity;
+		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarDayCustomTabMenu;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -125,9 +125,22 @@ export {
 		CalendarYearHideEventsCount();
 		CalendarCustomEventTitle(getTitle : (CalendarEvent) -> string);
 		CalendarEventsOpacity(opacity : double);
+		CalendarDayCustomTabMenu(getView : (
+			currentDateT : Transform<Date>,
+			buttons : CalendarActionButtons
+		) -> Material);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
+
+	CalendarActionButtons : (
+		addButton : Material,
+		printButton : Material,
+		tabsDropdown : Material,
+		todayButton : Material,
+		prevPeriodButtons : Pair<Material, Material>,
+		nextPeriodButtons : Pair<Material, Material>
+	);
 }
 
 CalendarTabView(
@@ -2682,6 +2695,7 @@ CalendarForEvents(
 	printButtonStyleM = maybeMap(tryExtractStruct(styles, CalendarPrintable([])), \p -> p.style);
 	isTabsDropdown = containsStruct(styles, CalendarTabsDropdown());
 	hideEventsCount = containsStruct(styles, CalendarYearHideEventsCount());
+	dayCustomTabMenuM = tryExtractStruct(styles, CalendarDayCustomTabMenu(\__, __ -> MEmpty()));
 
 	filteredEvents = make(getValue(allEvents));
 	hiddenEventTypes = extractStruct(styles, HiddenEventTypes([])).types;
@@ -2957,7 +2971,7 @@ CalendarForEvents(
 						\ -> updateCurrentDate(currentStartDate),
 						concat([MButtonPaddings(28.0, 6.0, 28.0, 6.0)], subMenuButtonStyle),
 						[]
-					) |> MBorderLeftRight(16.0)
+					)
 				);
 			} else {
 				MEmpty();
@@ -2983,21 +2997,31 @@ CalendarForEvents(
 			}, MEmpty());
 		}
 
-		getAdditionalButtons = \currentStartDate, printButtonM -> {
-			todayButtonM = getTodayButton(currentStartDate);
-			addButtonM = getAddEventButton(currentStartDate);
+		buildActionButtons = \currentStartDate, printButtonM, prevPeriodButtons, nextPeriodButtons -> {
+			CalendarActionButtons(
+				getAddEventButton(currentStartDate),
+				printButtonM,
+				tabsDropdownM,
+				getTodayButton(currentStartDate),
+				prevPeriodButtons,
+				nextPeriodButtons
+			)
+		}
+
+		getAdditionalButtons = \buttons : CalendarActionButtons -> {
+			todayButton = buttons.todayButton |> MBorderLeftRight(16.0);
 			leftButtons = [
 				MGroup2(
-					MWidthOf(MCols([addButtonM, printButtonM, tabsDropdownM])),
-					todayButtonM
+					MWidthOf(MCols([buttons.addButton, buttons.printButton, buttons.tabsDropdown])),
+					todayButton
 				),
 				if (menuTightWidth) MFillX() else MEmpty()
 			];
 			rightButtons = [
 				if (menuTightWidth) MFillX() else MEmpty(),
 				MGroup2(
-					MWidthOf(todayButtonM),
-					MColsYCenterA([tabsDropdownM, printButtonM, addButtonM])
+					MWidthOf(todayButton),
+					MColsYCenterA([buttons.tabsDropdown, buttons.printButton, buttons.addButton])
 				)
 			];
 			Pair(leftButtons, rightButtons);
@@ -3009,26 +3033,36 @@ CalendarForEvents(
 					defaultText = i2s(date.year);
 					drawCalendarTabMenuText(date, defaultText);
 				});
+				buttons = buildActionButtons(
+					getCurrentDate(),
+					getPrintButton(addHeaderBorder(tabMenuTextM), annualView.getPrintPages),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_left",
+							\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_right",
+							\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					)
+				);
 
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), annualView.getPrintPages);
-
-				menuItems = unpair(getAdditionalButtons(getCurrentDate(), printButtonM), \leftButtons, rightButtons -> concatA([
+				menuItems = unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons -> concatA([
 					if (menuTightWidth) leftButtons else [],
-					[MIconButton(
-						"keyboard_arrow_left",
-						\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1)),
-						subMenuIconStyle,
-						[]
-					)],
+					[buttons.prevPeriodButtons.first],
 					if (!menuTightWidth) leftButtons else [],
 					[tabMenuTextM],
 					if (!menuTightWidth) rightButtons else [],
-					[MIconButton(
-						"keyboard_arrow_right",
-						\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1)),
-						subMenuIconStyle,
-						[]
-					)],
+					[buttons.nextPeriodButtons.first],
 					if (menuTightWidth) rightButtons else []
 				]));
 
@@ -3061,11 +3095,10 @@ CalendarForEvents(
 					drawCalendarTabMenuText(date, defaultText);
 				});
 
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), monthTable.getPrintPages);
-
-				menuItems = unpair(getAdditionalButtons(startOfCurrentMonth, printButtonM), \leftButtons, rightButtons -> concatA([
-					if (menuTightWidth) leftButtons else [],
-					[
+				buttons = buildActionButtons(
+					startOfCurrentMonth,
+					getPrintButton(addHeaderBorder(tabMenuTextM), monthTable.getPrintPages),
+					Pair(
 						MIconButton(
 							"first_page",
 							\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1)),
@@ -3078,11 +3111,8 @@ CalendarForEvents(
 							subMenuIconStyle,
 							[]
 						)
-					],
-					if (!menuTightWidth) leftButtons else [],
-					[tabMenuTextM],
-					if (!menuTightWidth) rightButtons else [],
-					[
+					),
+					Pair(
 						MIconButton(
 							"keyboard_arrow_right",
 							\ -> updateCurrentDate(addMonthsToDate(getValue(currentDate), 1)),
@@ -3095,7 +3125,15 @@ CalendarForEvents(
 							subMenuIconStyle,
 							[]
 						)
-					],
+					)
+				);
+				menuItems = unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons -> concatA([
+					if (menuTightWidth) leftButtons else [],
+					[buttons.prevPeriodButtons.first, buttons.prevPeriodButtons.second],
+					if (!menuTightWidth) leftButtons else [],
+					[tabMenuTextM],
+					if (!menuTightWidth) rightButtons else [],
+					[buttons.nextPeriodButtons.first, buttons.nextPeriodButtons.second],
 					if (menuTightWidth) rightButtons else []
 				]));
 				MConstruct([
@@ -3224,42 +3262,47 @@ CalendarForEvents(
 				});
 
 				getPrintPages = \availableSize -> fgetValue(contentB).getPrintPages(availableSize);
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages);
 
-				menuItems = unpair(getAdditionalButtons(startOfCurrentWeek, printButtonM), \leftButtons, rightButtons -> {
+				buttons = buildActionButtons(
+					startOfCurrentWeek,
+					getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages),
+					Pair(
+						MIconButton(
+							"first_page",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -28)),
+							subMenuIconStyle,
+							[]
+						),
+						MIconButton(
+							"keyboard_arrow_left",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -7)),
+							subMenuIconStyle,
+							[]
+						)
+					),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_right",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 7)),
+							subMenuIconStyle,
+							[]
+						),
+						MIconButton(
+							"last_page",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 28)),
+							subMenuIconStyle,
+							[]
+						)
+					)
+				);
+				menuItems = unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons -> {
 					concatA([
 						if (menuTightWidth) leftButtons else [],
-						[
-							MIconButton(
-								"first_page",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -28)),
-								subMenuIconStyle,
-								[]
-							),
-							MIconButton(
-								"keyboard_arrow_left",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -7)),
-								subMenuIconStyle,
-								[]
-							)
-						],
+						[buttons.prevPeriodButtons.first, buttons.prevPeriodButtons.second],
 						if (!menuTightWidth) leftButtons else [],
 						[tabMenuTextM],
 						if (!menuTightWidth) rightButtons else [],
-						[
-							MIconButton(
-								"keyboard_arrow_right",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 7)),
-								subMenuIconStyle,
-								[]
-							),
-							MIconButton(
-								"last_page",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 28)),
-								subMenuIconStyle,
-								[]
-							)
-						],
+						[buttons.nextPeriodButtons.first, buttons.nextPeriodButtons.second],
 						if (menuTightWidth) rightButtons else []
 					])
 				});
@@ -3301,33 +3344,45 @@ CalendarForEvents(
 				});
 
 				getPrintPages = \availableSize -> fgetValue(contentB).getPrintPages(availableSize);
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages);
 
-				menuItems = unpair(getAdditionalButtons(getCurrentDate(), printButtonM), \leftButtons, rightButtons -> {
-					concatA([
-						if (menuTightWidth) leftButtons else [],
-						[
-							MIconButton(
-								"keyboard_arrow_left",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -1)),
-								subMenuIconStyle,
-								[]
-							)
-						],
-						if (!menuTightWidth) leftButtons else [],
-						[tabMenuTextM],
-						if (!menuTightWidth) rightButtons else [],
-						[
-							MIconButton(
-								"keyboard_arrow_right",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 1)),
-								subMenuIconStyle,
-								[]
-							)
-						],
-						if (menuTightWidth) rightButtons else []
-					])
-				});
+				buttons = buildActionButtons(
+					getCurrentDate(),
+					getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_left",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_right",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					)
+				);
+
+				menuItems = eitherFn(
+					dayCustomTabMenuM,
+					\dayCustomTabMenu -> dayCustomTabMenu.getView(currentDate, buttons),
+					\-> unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons ->
+						TabMenu(concatA([
+							if (menuTightWidth) leftButtons else [],
+							[buttons.prevPeriodButtons.first,],
+							if (!menuTightWidth) leftButtons else [],
+							[tabMenuTextM],
+							if (!menuTightWidth) rightButtons else [],
+							[buttons.nextPeriodButtons.first,],
+							if (menuTightWidth) rightButtons else []
+						]))
+					)
+				);
 
 				MConstruct([
 						\ -> eitherMap(externalDateM, \externalDate -> {
@@ -3338,7 +3393,7 @@ CalendarForEvents(
 							);
 						}, nop)
 					],
-					MLines2A(TabMenu(menuItems), TabBody(MSelect(contentB, \content -> content.main)))
+					MLines2A(menuItems, TabBody(MSelect(contentB, \content -> content.main)))
 				);
 			}
 		}
