@@ -3,6 +3,7 @@ import material/extra/docking_ui/internal/material_docking_utils;
 import material/extra/docking_ui/internal/material_docking_drop;
 
 export {
+	// NOTE: example in flow9/lib/material/tests/test_docking_ui.flow
 
 	// Each panel can be movable or docked, and it's defined by:
 	MDockingPanel(
@@ -180,7 +181,7 @@ makePanelTopBar(docked : bool, panelId: int, state : MDockingState, isColumn: bo
 			MIcon(panelIcon, [MIconSize(dockingTopBarIconSize), titleColor]) 
 				|> MBorderLeftRight(8.0)
 				|> MCenterY,
-			MEllipsisText(title + " - " + d2s(width) + "x"+ d2s(height), [titleColor, MCaptionSolid(), MMinWidth(minTitleEllipsisWidth)])	|> MCenterY,
+			MEllipsisText(title + "  ("+ i2s(panelId) +  ")  - " + d2s(width) + "x"+ d2s(height), [titleColor, MCaptionSolid(), MMinWidth(minTitleEllipsisWidth)])	|> MCenterY,
 			TFillX(),
 			if (customButtons)
 				MBaselineColsA(panelButtonsA) |> MCenterY
@@ -309,6 +310,8 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	color = extractStruct(style, if (fgetValue(theme)) textColorLight else textColorDark);
 	pad = 36.0;
 
+	println(" > DRAW - MovablePanel -m- " + i2s(panelId) /*+ "      - " + toString(singleColA)*/);
+
 	// Mobile size
 	size = getValue(state.mobileSize)[panelId];
 	width = getTropicMetrics(size).width;
@@ -382,8 +385,8 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 				})],
 				makeResizablePanel(content)
 			);
-
-			if (h == panelId) draggingShape else d;
+d
+			// if (h == panelId) draggingShape else d;
 		})|> (\f-> MInteractive([TMouseDownGhost(dragPressed)],f)),
 		[]
 	);
@@ -408,11 +411,24 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 				blockOtherMInteractionItemIds(manager, itemId);
 				if (mxy.x >= width) nextDistinct(WH, WidthHeight(mxy.x, getValue(WH).height)) else nextDistinct(WH, WidthHeight(width, getValue(WH).height));
 			}
-		})],
-		MSelect(dockA, \d -> if (d[panelId][0] < 0) {
+		}),
+		makeSubscribe(position, \p ->
+		println(i2s(panelId) + " - " + toString(p))
+		
+		
+		
+		)],
+		
+		MSelect(dockA, \d -> 
+		if (d[panelId][0] < 0) {
 				next(getValue(state.sideExpanded)[panelId], true);
 				next(ifMobile, true);
-				MSelect(enabled, \e -> if (e) MTranslate(const(getValue(position)), movablePanel) else TEmpty());
+				MSelect(enabled, \e -> if (e) 
+					MTranslate(
+						const(getValue(position)), 
+						movablePanel
+					) else TEmpty()
+				);
 			} else {
 				next(ifMobile, false);
 				TEmpty();
@@ -421,6 +437,109 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 }
 
 makeDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHeightB : DynamicBehaviour<double>, groupName : string, isColumn : bool, fillPanel : bool, style : [MDockingStyle], barHeight: double, sideCollapsed : DynamicBehaviour<bool>, zorder : int) -> Material {
+	manager = state.manager;
+	pstyle = getValue(state.style)[panelId];
+	panelDockedSize = getValue(state.dockedSize)[panelId];
+
+	// Scroll
+	hasScrollPos = \dockingstyle -> {
+		!exists([MDockingScrollPosition(make(zeroPoint))], \dsp -> isSameStructType(dsp, dockingstyle))
+	};
+	scrollPos = extractStruct(style, MDockingScrollPosition(make(zeroPoint))).scrollPos;
+	hasScrollInspectVisible = \dockingstyle -> {
+		!exists([MDockingScrollInspectVisible(make(zeroPoint), makeWH())], \dsiv -> isSameStructType(dsiv, dockingstyle))
+	};
+	scrollTopLeft = extractStruct(style, MDockingScrollInspectVisible(make(zeroPoint), makeWH())).scrollTopLeft;
+	scrollWidthHeight = extractStruct(style, MDockingScrollInspectVisible(make(zeroPoint), makeWH())).scrollWidthHeight;
+
+	// Expanded
+	expanded = getValue(state.expanded)[panelId];
+	sideExpanded = getValue(state.sideExpanded)[panelId];
+	enabled = getValue(state.enabled)[panelId];
+	
+	// Theme
+	darkTheme = contains(style, MDockingForceDarkTheme());
+	lightTheme = contains(style, MDockingForceLightTheme());
+	theme = if (darkTheme) const(false) else if (lightTheme) const(true) else manager.white;
+
+	dontMove  = contains(pstyle, MDockingDontMove());
+	dontScroll  = contains(pstyle, MDockingDontScroll());
+	sideCollapsedSize = dockingSideCollapsedSize;
+
+	dragPressed = make(false);
+
+	xheight = make(0.0);
+	xwidth = make(0.0);
+	println(" > DRAW - DockedPanel - " + i2s(panelId) /*+ "      - " + toString(singleColA)*/);
+
+
+	// Panel's content
+	content = makeDockingPanelContent(state, panelId, false, !isColumn, make(false), make(false), theme, pstyle);
+
+	dheight = if (isColumn) getTropicMetrics(panelDockedSize).height else getTropicMetrics(panelDockedSize).width;
+	posCorrection =
+	if (isColumn) {dx = 0.0; dy = 0.0; Point(-dx, dy);}
+		else {dx = 4.0; dy = (dheight / 2.0) - 12.0; Point(dx, -dy);};
+
+	// Mobile size for dragging shape
+	mHeight = if (isColumn) getTropicMetrics(getValue(state.mobileSize)[panelId]).height else getTropicMetrics(getValue(state.mobileSize)[panelId]).width;
+	mWidth = if (isColumn) getTropicMetrics(getValue(state.mobileSize)[panelId]).width else getTropicMetrics(getValue(state.mobileSize)[panelId]).height;
+
+	panelSize = if (isColumn) TFixed(mWidth, mHeight + dockingBarHeight) else TFixed(mWidth + dockingBarHeight, mHeight);
+	draggingShape = TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(dockingPrimaryColor)], panelSize);
+
+	topDragHandle = MSelect(manager.white, \lg ->
+		if (dontMove) makePanelTopBar(true, panelId, state, isColumn, lg) else
+		MDraggable(panelId, makePanelTopBar(true, panelId, state, isColumn, lg),
+			[TDragShape(TTranslate(const(posCorrection), TAlpha(const(dockingMobileOpacity), draggingShape)))]
+		)
+	);
+
+	topBar = MInteractive([TMouseDown(dragPressed)], 
+		if (isColumn) MCenterIn(topDragHandle, TFillXH(dockingBarHeight)) else MCenterXIn(topDragHandle, TFillWY(dockingBarHeight / 2.0)));
+
+	dPanel = 
+		if (isColumn) {
+			MLines([
+				topBar,
+				// MShowLazy(sideExpanded, \ -> 
+				MSelect(sideExpanded, \se -> if (se)
+					// MIfLazy(expanded, \e -> if (e) {
+					MSelect(expanded, \e -> if (e) {
+							if (dontScroll) {
+								MCropSize(TFillXY(), content)
+							} else {
+								MScroll(
+									content, TFillXY(),
+									if (hasScrollPos(style) && hasScrollInspectVisible(style))
+										[MScrollPosition(scrollPos), TScrollInspectVisible(scrollTopLeft, scrollWidthHeight)]
+									else if (hasScrollPos(style))
+										[MScrollPosition(scrollPos)]
+									else []
+								)
+							}
+
+
+						} else TFillXH(dockingCollapsedSeparatorH)
+					)    // scroll for single inner panel
+
+					else TEmpty()
+				)
+
+			]);
+		} else {
+			if (dontMove) content else MCols([topBar,  content]);
+		}
+
+
+	MExplicitTheme(
+		makeAvailableDockedHeight(dPanel, state, panelId, singleColA, colHeightB, groupName, isColumn, fillPanel, style, barHeight, sideCollapsed, zorder),
+		// |> (\f -> MAttachWidthHeight(f, xwidth, xheight)),
+		theme, []
+	)	
+}
+
+makeAvailableDockedHeight(box : Material, state : MDockingState, panelId : int, singleColA : [int], colHeightB : DynamicBehaviour<double>, groupName : string, isColumn : bool, fillPanel : bool, style : [MDockingStyle], barHeight: double, sideCollapsed : DynamicBehaviour<bool>, zorder : int) -> Material {
 	manager = state.manager;
 	itemId = makeTropicTag(manager);
 	pstyle = getValue(state.style)[panelId];
@@ -468,7 +587,7 @@ makeDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHei
 	xwidth = make(0.0);
 
 
-	println(" > DRAW - Container R - " + i2s(panelId) /*+ "      - " + toString(singleColA)*/);
+	// println(" > DRAW - Container R - " + i2s(panelId) /*+ "      - " + toString(singleColA)*/);
 
 	// Resize handle
 	draggingHandleInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, style)), FillOpacity(10.05)], dragHandleSize);
@@ -499,11 +618,11 @@ makeDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHei
 	}
 
 	// Panel with topbar
-	dPanel = makeSingleDockedPanel(state, panelId, singleColA, colHeightB, groupName, isColumn, fillPanel, style, barHeight, sideCollapsed, zorder);
+	// dPanel = makeSingleDockedPanel(state, panelId, singleColA, colHeightB, groupName, isColumn, fillPanel, style, barHeight, sideCollapsed, zorder);
 
 
 	// Resizable container, with drag handle to the bottom/right
-	makeResizableRowFn = \m -> {
+	// makeResizableRowFn = \m -> {
 
 		MSelect(manager.white, \lg ->
 			MConstruct([
@@ -580,15 +699,15 @@ makeDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHei
 									MLines2(
 										MGroup2(
 											// Panel background
-											// if (se) {
-											// 	r = dockingRadius;
-											// 	if (e) TRounded(r,r,r,r, [MFill(panelBgColorFn(lg, style))/*, Stroke(0x000000)*/], TFillXY()) else TFillXH(dockingBarHeight);
-											// } else {
-											// 	TFixed(sideCollapsedSize, dockingBarHeight)
-											// },
+											if (se) {
+												r = dockingRadius;
+												if (e) TRounded(r,r,r,r, [MFill(panelBgColorFn(lg, style))/*, Stroke(0x000000)*/], TFillXY()) else TFillXH(dockingBarHeight);
+											} else {
+												TFixed(sideCollapsedSize, dockingBarHeight)
+											},
 
-											MEmpty(),
-											m
+											// MEmpty(),
+											box
 										),
 										// draggingHandle(lg) |> showIf(!isLastPanel)
 										// if (fillPanel || isToolbarItem) TEmpty() else draggingHandle(lg), // ORIGINAL
@@ -601,7 +720,7 @@ makeDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHei
 									MColsA([
 										MGroup2(
 											TRectangle([MFill(panelBgColorFn (lg, style))], TFillXY()),
-											m
+											box
 										),
 										if (fillPanel || isToolbarItem) TEmpty() else draggingHandle(lg)
 										//  if (fillPanel || isToolbarItem) draggingHandleInactive(lg) else draggingHandle(lg)
@@ -614,17 +733,10 @@ makeDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHei
 				)
 			)
 		)
-}
+// }
 
 
-
-
-	// Resize docked panel
-	MExplicitTheme(
-		makeResizableRowFn(dPanel),
-		// |> (\f -> MAttachWidthHeight(f, xwidth, xheight)),
-		theme, []
-	)
+	
 	
 		
 	
@@ -638,97 +750,3 @@ makeDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHei
 
 
 
-makeSingleDockedPanel(state : MDockingState, panelId : int, singleColA : [int], colHeightB : DynamicBehaviour<double>, groupName : string, isColumn : bool, fillPanel : bool, style : [MDockingStyle], barHeight: double, sideCollapsed : DynamicBehaviour<bool>, zorder : int) -> Material {
-	manager = state.manager;
-	pstyle = getValue(state.style)[panelId];
-	panelDockedSize = getValue(state.dockedSize)[panelId];
-
-	// Scroll
-	hasScrollPos = \dockingstyle -> {
-		!exists([MDockingScrollPosition(make(zeroPoint))], \dsp -> isSameStructType(dsp, dockingstyle))
-	};
-	scrollPos = extractStruct(style, MDockingScrollPosition(make(zeroPoint))).scrollPos;
-	hasScrollInspectVisible = \dockingstyle -> {
-		!exists([MDockingScrollInspectVisible(make(zeroPoint), makeWH())], \dsiv -> isSameStructType(dsiv, dockingstyle))
-	};
-	scrollTopLeft = extractStruct(style, MDockingScrollInspectVisible(make(zeroPoint), makeWH())).scrollTopLeft;
-	scrollWidthHeight = extractStruct(style, MDockingScrollInspectVisible(make(zeroPoint), makeWH())).scrollWidthHeight;
-
-	// Expanded
-	expanded = getValue(state.expanded)[panelId];
-	sideExpanded = getValue(state.sideExpanded)[panelId];
-	enabled = getValue(state.enabled)[panelId];
-	
-	// Theme
-	darkTheme = contains(style, MDockingForceDarkTheme());
-	lightTheme = contains(style, MDockingForceLightTheme());
-	theme = if (darkTheme) const(false) else if (lightTheme) const(true) else manager.white;
-
-	dontMove  = contains(pstyle, MDockingDontMove());
-	dontScroll  = contains(pstyle, MDockingDontScroll());
-	sideCollapsedSize = dockingSideCollapsedSize;
-
-	dragPressed = make(false);
-
-	xheight = make(0.0);
-	xwidth = make(0.0);
-	println(" > DRAW - DockedPanel - " + i2s(panelId) /*+ "      - " + toString(singleColA)*/);
-
-
-	// Panel's content
-	content = makeDockingPanelContent(state, panelId, false, !isColumn, make(false), make(false), theme, pstyle);
-
-	dheight = if (isColumn) getTropicMetrics(panelDockedSize).height else getTropicMetrics(panelDockedSize).width;
-	posCorrection =
-	if (isColumn) {dx = 0.0; dy = 0.0; Point(-dx, dy);}
-		else {dx = 4.0; dy = (dheight / 2.0) - 12.0; Point(dx, -dy);};
-
-	// Mobile size for dragging shape
-	mHeight = if (isColumn) getTropicMetrics(getValue(state.mobileSize)[panelId]).height else getTropicMetrics(getValue(state.mobileSize)[panelId]).width;
-	mWidth = if (isColumn) getTropicMetrics(getValue(state.mobileSize)[panelId]).width else getTropicMetrics(getValue(state.mobileSize)[panelId]).height;
-
-	panelSize = if (isColumn) TFixed(mWidth, mHeight + dockingBarHeight) else TFixed(mWidth + dockingBarHeight, mHeight);
-	draggingShape = TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(dockingPrimaryColor)], panelSize);
-
-	topDragHandle = MSelect(manager.white, \lg ->
-		if (dontMove) makePanelTopBar(true, panelId, state, isColumn, lg) else
-		MDraggable(panelId, makePanelTopBar(true, panelId, state, isColumn, lg),
-			[TDragShape(TTranslate(const(posCorrection), TAlpha(const(dockingMobileOpacity), draggingShape)))]
-		)
-	);
-
-	topBar = MInteractive([TMouseDown(dragPressed)], 
-		if (isColumn) MCenterIn(topDragHandle, TFillXH(dockingBarHeight)) else MCenterXIn(topDragHandle, TFillWY(dockingBarHeight / 2.0)));
-
-	if (isColumn) {
-		MLines([
-			topBar,
-			// MShowLazy(sideExpanded, \ -> 
-			MSelect(sideExpanded, \se -> if (se)
-				// MIfLazy(expanded, \e -> if (e) {
-				MSelect(expanded, \e -> if (e) {
-						if (dontScroll) {
-							MCropSize(TFillXY(), content)
-						} else {
-							MScroll(
-								content, TFillXY(),
-								if (hasScrollPos(style) && hasScrollInspectVisible(style))
-									[MScrollPosition(scrollPos), TScrollInspectVisible(scrollTopLeft, scrollWidthHeight)]
-								else if (hasScrollPos(style))
-									[MScrollPosition(scrollPos)]
-								else []
-							)
-						}
-
-
-					} else TFillXH(dockingCollapsedSeparatorH)
-				)    // scroll for single inner panel
-
-				else TEmpty()
-			)
-
-		]);
-	} else {
-		if (dontMove) content else MCols([topBar,  content]);
-	}
-}
