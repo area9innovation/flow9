@@ -941,10 +941,25 @@ public class Native extends NativeHost {
 	}
 
 	public final Object captureCallstack() {
-		return null;
+		return Thread.currentThread().getStackTrace();
+	}
+	public final String captureStringCallstack() {
+		return callstack2string(captureCallstack());
+	}
+	public final String callstack2string(Object obj) {
+		if (obj instanceof StackTraceElement[]) {
+			StackTraceElement[] stack = (StackTraceElement[])obj;
+			StringBuilder sb = new StringBuilder();
+			for (StackTraceElement el : stack) {
+				sb.append(el.toString() + "\n");
+			}
+			return sb.toString();
+		} else {
+			return new String();
+		}
 	}
 	public final Object captureCallstackItem(int index) {
-		return null;
+		return Thread.currentThread().getStackTrace()[index];
 	}
 	public final Object impersonateCallstackItem(Object item, int index) {
 		return null;
