@@ -73,39 +73,52 @@ class MediaStreamSupport {
 	public static function initDeviceInfo(
 		onDeviceInfoReady : Void->Void
 	) : Void {
+		onDeviceInfoReady();
+	}
+
+	private static function requestDeviceInfoContstraints(constraints : Dynamic, onDeviceInfoReady : Array<Dynamic> -> Void) : Void {
 	#if (js && !flow_nodejs)
-		untyped navigator.mediaDevices.getUserMedia({audio: true, video : true})
+		untyped navigator.mediaDevices.getUserMedia(constraints)
 		.then(function(mediaStream) {
 			untyped navigator.mediaDevices.enumerateDevices()
 			.then(function(devices) {
-				audioDevices.deviceIds = [];
-				audioDevices.labels = [];
-
-				videoDevices.deviceIds = [];
-				videoDevices.labels = [];
-
-				devices.forEach(function(device) {
-					if (device.kind == 'audioinput') {
-						audioDevices.push([device.deviceId, device.label]);
-					} else if (device.kind == 'videoinput') {
-						videoDevices.push([device.deviceId, device.label]);
-					}
-				});
-
 				stopMediaStream(new FlowMediaStream(mediaStream));
-
-				onDeviceInfoReady();
+				onDeviceInfoReady(devices);
 			}, function() {});
 		}, function() {});
 	#end
 	}
 
 	public static function requestAudioInputDevices(onDeviceInfoReady : Array<Array<String>>->Void) : Void {
-		onDeviceInfoReady(audioDevices);
+		if (audioDevices.length == 0) {
+			requestDeviceInfoContstraints({ audio: true, video: false }, function (devices) {
+				for (device in devices) {
+					if (device.kind == 'audioinput') {
+						audioDevices.push([device.deviceId, device.label]);
+					}
+				}
+
+				onDeviceInfoReady(audioDevices);
+			});
+		} else {
+			onDeviceInfoReady(audioDevices);
+		}
 	}
 
 	public static function requestVideoInputDevices(onDeviceInfoReady : Array<Array<String>>->Void) : Void {
-		onDeviceInfoReady(videoDevices);
+		if (videoDevices.length == 0) {
+			requestDeviceInfoContstraints({ audio: false, video: true }, function (devices) {
+				for (device in devices) {
+					if (device.kind == 'videoinput') {
+						videoDevices.push([device.deviceId, device.label]);
+					}
+				}
+
+				onDeviceInfoReady(videoDevices);
+			});
+		} else {
+			onDeviceInfoReady(videoDevices);
+		}
 	}
 
 	public static function makeMediaStream(

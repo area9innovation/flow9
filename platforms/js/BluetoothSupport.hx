@@ -38,7 +38,9 @@ class BluetoothSupport {
     public static function getServiceCharacteristic(serviceNative : Dynamic, uuid : String, onCharacteristic : Dynamic -> String -> Array<Bool> -> Void, onError : String -> Void) : Void {
         var characteristicPromise : Promise<Dynamic> = untyped serviceNative.getCharacteristic(uuid);
         characteristicPromise.then(function (characteristic) {
-            untyped characteristic.startNotifications();
+            if (characteristic.properties.notify) {
+                untyped characteristic.startNotifications();
+            }
             onCharacteristic(
                 characteristic,
                 characteristic.uuid, [
@@ -65,7 +67,7 @@ class BluetoothSupport {
 
     public static function addGattCharacteristicValueListener(characteristicNative : Dynamic, callback : Array<Int> -> Void) : Void -> Void {
         var cb = function (event) {
-            callback(untyped __js__("new Uint8Array(event.target.value.buffer)"));
+            callback(untyped __js__("[].slice.call(new Uint8Array(event.target.value.buffer))"));
         }
 
         untyped characteristicNative.addEventListener("characteristicvaluechanged", cb);
@@ -78,7 +80,7 @@ class BluetoothSupport {
     public static function readGattCharacteristicValue(characteristicNative : Dynamic, onValue : Array<Int> -> Void, onError : String -> Void) : Void {
         var valuePromise : Promise<Dynamic> = untyped characteristicNative.readValue();
         valuePromise.then(function (value) {
-            onValue(untyped __js__("new Uint8Array(value.buffer)"));
+            onValue(untyped __js__("[].slice.call(new Uint8Array(value.buffer))"));
         }).catchError(onError);
     }
 
