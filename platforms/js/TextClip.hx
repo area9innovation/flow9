@@ -1215,9 +1215,10 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
-		if (e != null && e.inputType != null) {
+		// Hotfix for IE : inputType isn`t implemented for IE, so in this case we fake all the events to have "insertText" type
+		if (e != null && (e.inputType != null || Platform.isIE)) {
 			for (f in TextInputEventFilters) {
-				newValue = f(newValue, e.inputType);
+				newValue = f(newValue, Platform.isIE ? "insertText" : e.inputType);
 			}
 		}
 
