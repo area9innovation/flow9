@@ -7,18 +7,21 @@ export {
 	dockingDropLine(
 		dropInfo : MDockingDropInfo,
 		state : MDockingState,   
-		defPanelsOrder : [int],
-		areaId : int, 
-		groupName : string, 
+		defPanelsOrder : [int],  // colId, rowId
 		color : MColor,  
-		size : Tropic, 
+		size : Tropic,
+		inactiveBar : Material,
 		defRow : bool,  
 		defDockingCol : bool,  
-		zorder : int
+		zorder : int,
+		style : [MDockingStyle]
 	) -> Material;
 
 	// Drop info
 	MDockingDropInfo(
+		areaId : int, 
+		groupName : string, 
+		onDragging : DynamicBehaviour<int>,
 		onDrop : DynamicBehaviour<int>,
 		order : DynamicBehaviour<[int]>,
 		dockedPanelsGrid : DynamicBehaviour<[[int]]>,
@@ -28,17 +31,152 @@ export {
 	);
 }
 
+
+
 dockingDropLine(
 	dropInfo : MDockingDropInfo,
 	state : MDockingState,   
-	defPanelsOrderA : [int],
-	areaId : int,
-	groupName : string, 
-	color : MColor,  
+	defPanelsOrderA : [int], // colId, rowId
+	color : MColor,  //note necessary
+	size : Tropic,
+	inactiveBar : Material,
+	defRow : bool,  
+	defDockingCol : bool,  
+	zorder : int,  //maybe not necssary
+	style : [MDockingStyle]
+) -> Material {
+
+	manager = state.manager;
+	dockA = state.dock;
+	groupA = state.group;
+	onHover = make(-1);
+	hoverColor = dockingDropLineHoverColor;
+	dropLineOpacity = dockingDropLineOpacity;
+	dropLineOpacityHover = 1.0;
+	hovering = make(false);
+
+isColumn = defDockingCol;
+colSizeDropBig = if (isColumn) TFillWY(dockingHelperDropSize) else TFillXH(dockingHelperDropSize);
+
+	dropSize = dockingDragSize;
+	dropSizeBig = dockingHelperDropSize;
+	dragSizeBig = dockingHelperDragSize;
+
+
+	isRightCol  = contains(style, MDockingRightCols());
+	isBottomLine = contains(style, MDockingBottomtLines());
+
+
+	offSetBar =  \f : Material -> MOffset(
+								if (isColumn) (dropSizeBig - dropSize) * (if (isRightCol) 0.0 else 1.0) else 0.0,
+								if (isColumn) 0.0 else (dropSizeBig - dropSize) * (if (isBottomLine) 0.0 else 1.0), 
+								f
+							);
+
+
+	offSetBar2 =  \f : Material -> MOffset(
+								if (isColumn) abs(dropSizeBig - dragSizeBig) * (if (isRightCol) 0.0 else 1.0) else 0.0,
+								if (isColumn) 0.0 else abs(dropSizeBig - dragSizeBig) * (if (isBottomLine) 0.0 else 1.0), 
+								f
+							);
+
+
+
+
+	// Drop info
+	areaId = dropInfo.areaId;
+	groupName = dropInfo.groupName; 
+	isDragging = dropInfo.onDragging;
+	onDrop = dropInfo.onDrop;
+	panelsOrder = dropInfo.order;
+	panelsArray = dropInfo.dockedPanelsGrid;
+	isDockingCol = dropInfo.isDockingCol;
+	isRow = dropInfo.isRow; 
+	lastDropSize = dropInfo.lastDropSize;
+
+	// MSelect(manager.manager.dragging, \dr -> {
+		// if ((dr >= 0) && (dr < length(getValue(state.title))) && zorder >= getValue(manager.manager.zorder) && (dr < length(getValue(groupA))) && (contains(getValue(groupA)[dr], groupName))) {
+			
+		MIfLazy(fselect(manager.manager.dragging, FLift(\dr -> 
+			(dr >= 0) &&
+			(dr < length(getValue(state.title))) &&
+			zorder >= getValue(manager.manager.zorder) &&
+			(dr < length(getValue(groupA))) &&
+			(contains(getValue(groupA)[dr], groupName))
+		)),	\e -> if (e) {
+			MGroup([
+				// MDropSpot2(onHover, onDrop, TRectangle([MFill(MTeal(500)), FillOpacity(dropLineOpacity)], size), false),
+				// MDropSpot2(onHover, onDrop, TRectangle([MFill(color), FillOpacity(dropLineOpacity)], size), false),
+				MDropSpot2(onHover, onDrop, 
+					
+					MGroup([
+						inactiveBar |> offSetBar2,
+						// TRectangle([MFill(color), FillOpacity(dropLineOpacity)], size) // Hightlight allowed droppimg areas
+						// TRectangle([MFill(MYellow(600)), FillOpacity(1.0)], size) |> offSetBar // Hightlight allowed droppimg areas
+
+						// |> (\f -> MOffset(
+						// 		if (isColumn) (dropSizeBig - dropSize) * (if (isRightCol) 0.0 else 1.0) else 0.0,
+						// 		if (isColumn) 0.0 else (dropSizeBig - dropSize) * (if (isBottomLine) 0.0 else 1.0), 
+						// 		f
+						// 	)),
+
+						TRectangle([MFill(MBlue(500)), FillOpacity(0.05)], colSizeDropBig)
+						// TRectangle([MFill(MBlue(500)), FillOpacity(dockingHelperDropOpacity)], colSizeDropBig)
+							|> (\f -> MBorder(
+								if (isRightCol) {if (isColumn) 0.0 else dockingDropSize} else 0.0, 0.0,
+								if (!isRightCol) {if (isColumn) 0.0 else dockingDropSize} else 0.0, 0.0, 
+								f
+							))
+
+
+
+					]), false),
+			
+				MConstruct([
+					makeSubscribe(onHover, \h -> if (h >= 0) {
+							next(isDockingCol, defDockingCol);
+							next(panelsOrder, defPanelsOrderA);
+							next(lastDropSize, size);
+							next(isRow, defRow);
+							// dockedLength = if (getValue(isDockingCol)) getTropicMetri cs(getValue(lastDropSize)).width else getTropicMetrics(getValue(lastDropSize)).height;
+							if (/*(*/getValue(isRow) /*&& (dockedLength == getTropicMetrics(m2t(getValue(state.size)[h])).width))*/) next(hovering, true)
+								else if (!getValue(isRow)) next(hovering, true)
+									else next(hovering, false);
+						} else next(hovering, false)
+					),
+					makeSubscribe(onDrop, \d -> if (d >= 0) {
+						updateDockingPositions(d, areaId, dockA, panelsArray, panelsOrder, isRow);
+					})],
+					MShowLazy(hovering, \ -> TRectangle([MFill(hoverColor), FillOpacity(dropLineOpacityHover)], size))
+						|> offSetBar
+					// MSelect(hovering, \h -> if (h) 
+					// 	TRectangle([MFill(hoverColor), FillOpacity(dropLineOpacityHover)], size) 
+					// 	else TEmpty()
+					// )
+				),
+
+
+
+				// MSelect(onDrop,\dd -> MText(i2s(dd) + ", " + i2s(areaId) + "    " + toString(defPanelsOrderA), []))  //debug
+
+			])
+
+		} else inactiveBar
+		// } else TRectangle([MFill(MGreen(500))], size)
+		// } else TRectangle([MFill(MGrey(300))], size)
+	);
+}
+
+
+dockingDropLineOLD(
+	dropInfo : MDockingDropInfo,
+	state : MDockingState,   
+	defPanelsOrderA : [int], // colId, rowId
+	color : MColor,  //note necessary
 	size : Tropic, 
 	defRow : bool,  
 	defDockingCol : bool,  
-	zorder : int
+	zorder : int  //maybe not necssary
 ) -> Material {
 
 	manager = state.manager;
@@ -51,6 +189,9 @@ dockingDropLine(
 	hovering = make(false);
 
 	// Drop info
+	areaId = dropInfo.areaId;
+	groupName = dropInfo.groupName; 
+	isDragging = dropInfo.onDragging;
 	onDrop = dropInfo.onDrop;
 	panelsOrder = dropInfo.order;
 	panelsArray = dropInfo.dockedPanelsGrid;
