@@ -535,16 +535,19 @@ getJoinableTextMetrics(
 	getExactTopPoint : bool,
 	ignoreLetterSpacing : bool
 ) -> Pair<Form, Transform<FormMetrics>> {
+
+	getDefault = \-> {
+		formSize : Pair<Form, Behaviour<FormMetrics>> = getDynamicFormSize2(form, getExactTopPoint);
+		Pair(formSize.first, cast(formSize.second : Behaviour<FormMetrics> -> Transform<FormMetrics>))
+	}
 	if (ignoreLetterSpacing) {
-		getDynamicFormSize2(form, getExactTopPoint)
+		getDefault()
 	} else switch (form) {
 		Text(text, st) : {
 			letterSpacing = extractStruct(st, LetterSpacing(0.0)).spacing;
 			staticMetrics = getStaticFormSizeCached2(form, getExactTopPoint);
 
-			// Moved uner flag due to discovered issue.
-			if (isSafariBrowser() && isUrlParameterTrue("dynamic_text_metrics")) {
-				println("dynamic_text_metrics");
+			metrics : Pair<Form, Transform<FormMetrics>> = if (isSafariBrowser() && isUrlParameterTrue("new") && !isUrlParameterFalse("dynamic_text_metrics")) {
 				textWidth = make(staticMetrics.width);
 				Pair(
 					Text(text, arrayPush(st, TextWidthInspector(textWidth))),
@@ -553,15 +556,13 @@ getJoinableTextMetrics(
 					)))
 				);
 			} else {
-				Pair(
-					form,
-					const(FormMetrics(staticMetrics with
-						width = staticMetrics.width + letterSpacing
-					))
-				);
+				metrics : Behaviour<FormMetrics> = const(FormMetrics(staticMetrics with width = staticMetrics.width + letterSpacing));
+				Pair(form, cast(metrics : Behaviour<FormMetrics> -> Transform<FormMetrics>));
 			}
+
+			metrics
 		}
-		default : getDynamicFormSize2(form, getExactTopPoint)
+		default : getDefault()
 	}
 }
 
@@ -659,12 +660,13 @@ reflowParaWords2(
 		OverflowCase(__, __) : result;
 	}
 
+	remaining = remainingWithSpacing - getUserDefinedWordSpacingPercent() * fontSize;
+
 	addOverflow = \overflowWidth : double -> switch (result) {
-		ReflowedLines(__) : OverflowCase(availableWidth, overflowWidth);
+		ReflowedLines(__) : OverflowCase(remaining, overflowWidth);
 		OverflowCase(aWidth, oWidth) : OverflowCase(aWidth, max(oWidth, overflowWidth));
 	}
 
-	remaining = remainingWithSpacing - getUserDefinedWordSpacingPercent() * fontSize;
 
 	detachWord = \w : ParaWord, detach : bool -> {
 		switch (w.ghosted) {
@@ -872,19 +874,22 @@ reflowParaWords2(
 					_words = subrange(words, 0, wordsCount);
 					_rest = subrange(words, wordsCount, length(words) - wordsCount);
 
-					newCurrentWords = fold(_words, currentWords, \acc, _word -> {
-						arrayPush(acc, setWordForm(
-							_word,
-							getWordGhostedForm(_word)
-						));
-					});
+					newCurrentWords = concat(
+						currentWords,
+						map(_words, \_word -> setWordForm(_word, getWordGhostedForm(_word)))
+					);
+
+					isText = switch (word.word) {
+						Empty() : false;
+						default : true;
+					}
 
 					reflowParaWords2(
 						_rest,
 						availableWidth,
 						remaining - ^width,
 						newCurrentWords,
-						if (catchOverflow && ^width > remaining) addOverflow(^width) else result,
+						if (isText && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
 						paraIndent,
 						false,
 						catchOverflow,

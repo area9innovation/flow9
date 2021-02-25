@@ -50,7 +50,8 @@ export {
 		ShowWeekViewDaysNames, CalendarTabMenuStyle, CalendarTabMenuText, CalendarHideEventTypesLegend, CalendarCurrentDate, CalendarShowTodayButton,
 		CalendarMenuTightWidth, CalendarMenuAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
-		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity;
+		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarDayCustomTab,
+		CalendarScrolls;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -73,7 +74,7 @@ export {
 		HiddenEventTypes(types : [string]);
 		// Show days names in week view
 		ShowWeekViewDaysNames();
-		CalendarTabMenuStyle(text : [MTextStyle], icon : [MIconStyle], background : [TGraphicsStyle]);
+		CalendarTabMenuStyle(text : [MTextStyle], icon : [MIconStyle], background : [TGraphicsStyle], button : [MTextButtonStyle]);
 		CalendarTabMenuText(getText : (date : Date, tab : CalendarTab) -> Maybe<string>);
 		CalendarHideEventTypesLegend();
 		// Allows to get or set current date
@@ -125,9 +126,23 @@ export {
 		CalendarYearHideEventsCount();
 		CalendarCustomEventTitle(getTitle : (CalendarEvent) -> string);
 		CalendarEventsOpacity(opacity : double);
+		CalendarDayCustomTab(
+			getMenuView : (currentDateT : Transform<Date>, buttons : CalendarActionButtons) -> Material,
+			needContentViewFrame : bool
+		);
+		CalendarScrolls(enable : bool);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
+
+	CalendarActionButtons : (
+		addButton : Material,
+		printButton : Material,
+		tabsDropdown : Material,
+		todayButton : Material,
+		prevPeriodButtons : Pair<Material, Material>,
+		nextPeriodButtons : Pair<Material, Material>
+	);
 }
 
 CalendarTabView(
@@ -146,7 +161,12 @@ calendarPickerMarginCells = 12.0;
 calendarMpickerWidth = calendarPickerWidthCells + calendarPickerMarginCells * 2.0;
 isOnlyOneSameTypeEventsByDay = ref true;
 isColorizeDayHeaders = ref true;
-defaultCalendarTabMenuStyle = CalendarTabMenuStyle([MWhite(), MCustomFont(20.0, "RobotoMedium", primarySmallTextOpacity)], [MIconSize(30.0), MCustomColor(0xFDB22B)], [Fill(black)]);
+defaultCalendarTabMenuStyle = CalendarTabMenuStyle(
+	[MWhite(), MCustomFont(20.0, "RobotoMedium", primarySmallTextOpacity)],
+	[MIconSize(30.0), MCustomColor(0xFDB22B)],
+	[Fill(black)],
+	[MCustomColor(0xFDB22B)]
+);
 
 isDateEnable(
 	thisDate : Date,
@@ -1219,7 +1239,6 @@ MonthTable(
 	dateMax : Date,
 	manager : MaterialManager,
 	maxDisplayedEventsInOneDay : int,
-	multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>,
 	choosedFilters : DynamicBehaviour<[string]>,
 	isPrintingB : DynamicBehaviour<bool>,
 	styles : [CalendarForEventsStyle]
@@ -1246,12 +1265,14 @@ MonthTable(
 	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(getEventTitleDefault)).getTitle;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	isDynamicNumberOfEvents = maxDisplayedEventsInOneDay == -1;
+	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 
 	weekDayHeightB = make(0.0);
 	dayTitleHeightB = make(0.0);
 	eventRowHeightB = make(0.0);
 	availableHeightB = make(0.0);
 	maxDisplayedEventsInOneDayB = make(if (maxDisplayedEventsInOneDay <= 0) CalendarDefaultDisplayedEventsInOneDay else maxDisplayedEventsInOneDay);
+	multiDayEventsPosition = make([]);
 
 	defaultAdditionalEventsView = \count -> {
 		MGroup2(
@@ -1585,7 +1606,7 @@ MonthTable(
 					[];
 				},
 				MAttachAvailableHeight(
-					MLines2A(headerM, MScroll(MLines(separateRows(rows)), MFillXY(), [])),
+					MLines2A(headerM, MLines(separateRows(rows)) |> (\c-> if (enableScrolls) MScroll(c, MFillXY(), []) else c)),
 					availableHeightB
 				)
 			),
@@ -1728,6 +1749,7 @@ RangeView(
 	gridWidth = 1.0;
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
+	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> {
 		MCenterX(MText(dayName, [MCaptionColumn(), MGrey(500)])) |> MBorderTopBottom(6.0)
@@ -1915,7 +1937,7 @@ RangeView(
 	}
 
 	CalendarTabView(
-		addTitleAndGrid(MScroll(MLinesA(eventRows), TFillXY(), [])),
+		addTitleAndGrid(MLinesA(eventRows) |> (\c -> if (enableScrolls) MScroll(c, TFillXY(), []) else c)),
 		\availableSize -> {
 			titleHeight = getValue(monthNamesRowHeightB) + getValue(titleRowHeightB) + 2.0 * gridWidth;
 			availableHeight = availableSize.height - titleHeight;
@@ -2275,7 +2297,7 @@ checkOneDayEventsPosition(
 		//printEvents(events);
 		newEvents = reshuffleEvents(events, eventsInWrongPosition[0].first, eventsInWrongPosition[0].second, events[eventsInWrongPosition[0].first]);
 		//printEvents(newEvents);
-		checkOneDayEventsPosition(newEvents, maxEvents, multiDayEventsPosition);
+		if (events != newEvents) checkOneDayEventsPosition(newEvents, maxEvents, multiDayEventsPosition) else events;
 	} else {
 		events
 	}
@@ -2358,7 +2380,7 @@ showDatePickerDialog(
 CalendarDayEvent(event : CalendarEvent, type : CalendarEventDecription, heightB : DynamicBehaviour<double>);
 
 CalendarDayEventTimeType ::= CalendarDayAllDayEvent, CalendarDayPastEvent, CalendarDayCurrentEvent, CalendarDayFutureEvent;
-	CalendarDayAllDayEvent();
+	CalendarDayAllDayEvent(isPastEvent : bool);
 	CalendarDayPastEvent();
 	CalendarDayCurrentEvent();
 	CalendarDayFutureEvent();
@@ -2388,7 +2410,7 @@ getCalendarDayEventTimeline(
 	}
 
 	timelineM = switch (timeType : CalendarDayEventTimeType) {
-		CalendarDayAllDayEvent(): MEmpty();
+		CalendarDayAllDayEvent(__): MEmpty();
 		CalendarDayPastEvent(): getLine(pastColor, false, eventHeightB);
 		CalendarDayFutureEvent(): {
 			futureHeightB = fsubtract(eventHeightB, const(circleDiam));
@@ -2416,7 +2438,7 @@ getCalendarDayEventTimeline(
 
 	getTimelineBorder = \isStart -> {
 		colorM = switch (timeType : CalendarDayEventTimeType) {
-			CalendarDayAllDayEvent(): None();
+			CalendarDayAllDayEvent(__): None();
 			CalendarDayPastEvent(): Some(pastColor);
 			CalendarDayFutureEvent(): Some(futureColor);
 			CalendarDayCurrentEvent(): Some(if (isStart) pastColor else futureColor);
@@ -2432,7 +2454,7 @@ getCalendarDayEventTimeline(
 	MComponent([
 			THovering(isHoveringB),
 			MTooltipAlignment(MRight()),
-			MEnabled(const(timeType != CalendarDayAllDayEvent())),
+			MEnabled(const(!isSameStructType(timeType, CalendarDayAllDayEvent(false)))),
 			MTooltipText(fselect(isHoveringB, FLift(\__ -> getTimeOnlyString(stamp2time2(timestamp()), false, false))))
 		],
 		\__ -> MGroup2(centerTimeline(timelineM), centerTimeline(timelineBordersM))
@@ -2459,24 +2481,24 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 			])
 		) |> MBorderEnd(12.0);
 	}
-	getTransparentColor = \c -> MCustomColor(mixColors(MColor2int(c), white, eventsOpacity, 1.0 - eventsOpacity));
-	if (timeType == CalendarDayAllDayEvent()) {
-		backColor = getTransparentColor(type.backColor);
-		getEventView(_("All Day"), backColor, backColor, backColor);
-	} else {
+	geEventTimeString = \ -> {
 		startTime = getTimeOnlyString(event.startDate, false, false);
 		endTime = if (event.startDate != event.endDate) "-" + getTimeOnlyString(event.endDate, false, false) else "";
-		time = startTime + endTime;
+		startTime + endTime;
+	}
 
-		backColor = switch (timeType : CalendarDayEventTimeType) {
-			CalendarDayCurrentEvent(): type.backColor;
-			CalendarDayFutureEvent(): getTransparentColor(type.backColor);
-			default: MWhite();
+	transparentBackColor = MCustomColor(mixColors(MColor2int(type.backColor), white, eventsOpacity, 1.0 - eventsOpacity));
+	switch (timeType : CalendarDayEventTimeType) {
+		CalendarDayAllDayEvent(isPastEvent): {
+			if (isPastEvent) {
+				getEventView(_("All Day"), MWhite(), MGrey(400), transparentBackColor);
+			} else {
+				getEventView(_("All Day"), transparentBackColor, transparentBackColor, transparentBackColor);
+			}
 		}
-		strokeColor = if (timeType == CalendarDayPastEvent()) MGrey(400) else backColor;
-		circleColor = if (timeType == CalendarDayPastEvent()) getTransparentColor(type.backColor) else backColor;
-
-		getEventView(time, backColor, strokeColor, circleColor);
+		CalendarDayCurrentEvent(): getEventView(geEventTimeString(), type.backColor, type.backColor, type.backColor);
+		CalendarDayFutureEvent(): getEventView(geEventTimeString(), transparentBackColor, transparentBackColor, transparentBackColor);
+		CalendarDayPastEvent(): getEventView(geEventTimeString(), MWhite(), MGrey(400), transparentBackColor);
 	}
 }
 
@@ -2491,9 +2513,14 @@ getCalendarDayView(
 ) -> CalendarTabView {
 	getEventView = extractStruct(styles, CalendarCustomEventView(\__, __, __, __, __ -> None())).getView;
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
+	needContentViewFrame = extractStruct(
+		styles, CalendarDayCustomTab(\__, __ -> MEmpty(), true)
+	).needContentViewFrame;
+	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 
 	getTime = \ -> stamp2time2(timestamp());
 	isToday = getCurrentDate() == date;
+	isPastDay = date < getCurrentDate();
 	currentTimeB = make(getTime());
 	timer = repeatable2(5 * 60 * 1000, false);
 	pastColor = MGrey(400);
@@ -2522,7 +2549,10 @@ getCalendarDayView(
 	getDayEvent = \event -> maybeMap(find(dayEventTypes, \type -> type.name == event.eventType), \type -> CalendarDayEvent(event, type, make(0.0)));
 
 	sortEvents = \events -> sortCustom(events, \e -> time2stamp(e.event.startDate) + time2stamp(e.event.endDate) * 0.001, true);
-	isAllDayEvent = \dayEvent -> dayEvent.event.startDate <= date2time(date) && dayEvent.event.endDate >= date2timeEOD(date);
+	isAllDayEvent = \dayEvent -> {
+		time2date(dayEvent.event.startDate) != time2date(dayEvent.event.endDate) ||
+			(dayEvent.event.startDate <= date2time(date) && dayEvent.event.endDate >= date2timeEOD(date));
+	}
 	splittedEvents = unzip(filtermap(dayEvents, getDayEvent), isAllDayEvent);
 
 	allDayEvents = splittedEvents.first;
@@ -2531,9 +2561,13 @@ getCalendarDayView(
 	currentEventsB = make([]);
 	futureEventsB = make([]);
 
-	addFrame = \m -> MFrame(4.0, 0.0, [MStroke(MGrey(300)), StrokeWidth(1.0)], MGroup2(MFillXY(), m));
+	addFrame = \m -> if (needContentViewFrame) {
+		MFrame(4.0, 0.0, [MStroke(MGrey(300)), StrokeWidth(1.0)], MGroup2(MFillXY(), m))
+	} else {
+		MGroup2(MFillXY(), m)
+	}
 
-	getAllDayEvent = \event -> getDayEventView(CalendarDayAllDayEvent(), event, false);
+	getAllDayEvent = \event -> getDayEventView(CalendarDayAllDayEvent(isPastDay), event, false);
 	getPastEvent = \event -> getDayEventView(CalendarDayPastEvent(), event, false);
 	getCurrentEvent = \event, isFirst -> getDayEventView(CalendarDayCurrentEvent(), event, isFirst);
 	getFutureEvent = \event, isFirst -> MSelect(currentEventsB, \currentEvents -> {
@@ -2581,7 +2615,6 @@ getCalendarDayView(
 	updateEvents(nonAllDayEvents, getValue(currentTimeB));
 
 	getNoEventsView = \ -> {
-		isPastDay = date < getCurrentDate();
 		MCenter(
 			MLinesXCenter([
 				MIcon("event", [MIconSize(168.0), MCustomColor(0xF6F7F9)]) |> MBorderBottom(4.0),
@@ -2597,14 +2630,13 @@ getCalendarDayView(
 	getEventsView = \ -> {
 		MLines2A(
 			MLinesA(map(allDayEvents, \event -> MAttachHeight(getAllDayEvent(event), event.heightB))),
-			MScroll(
-				MLinesA([
-					SelectMLinesA(pastEventsB, \__, i, event -> MAttachHeight(getPastEvent(event), event.heightB)),
-					SelectMLinesA(currentEventsB, \__, i, event -> MAttachHeight(getCurrentEvent(event, i == 0), event.heightB)),
-					SelectMLinesA(futureEventsB, \__, i, event -> MAttachHeight(getFutureEvent(event, i == 0), event.heightB)),
-				]),
-				MFillXY(),
-				[TScrollSetPosition(scrollPositionB)]
+			MLinesA([
+				SelectMLinesA(pastEventsB, \__, i, event -> MAttachHeight(getPastEvent(event), event.heightB)),
+				SelectMLinesA(currentEventsB, \__, i, event -> MAttachHeight(getCurrentEvent(event, i == 0), event.heightB)),
+				SelectMLinesA(futureEventsB, \__, i, event -> MAttachHeight(getFutureEvent(event, i == 0), event.heightB)),
+			]) |> (\c ->
+				if (enableScrolls) MScroll(c, MFillXY(), [TScrollSetPosition(scrollPositionB)])
+				else c
 			)
 		);
 	}
@@ -2674,11 +2706,12 @@ CalendarForEvents(
 	printButtonStyleM = maybeMap(tryExtractStruct(styles, CalendarPrintable([])), \p -> p.style);
 	isTabsDropdown = containsStruct(styles, CalendarTabsDropdown());
 	hideEventsCount = containsStruct(styles, CalendarYearHideEventsCount());
+	dayCustomTabM = tryExtractStruct(styles, CalendarDayCustomTab(\__, __ -> MEmpty(), true));
+	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 
 	filteredEvents = make(getValue(allEvents));
 	hiddenEventTypes = extractStruct(styles, HiddenEventTypes([])).types;
 	choosedFilters = make(hiddenEventTypes);
-	multiDayEventsPosition = make([]);
 
 	tabOrder : [CalendarTab] = extractStruct(styles, TabOrder([YearTab(), MonthTab(), PlannedTab()])).tabs;
 	//0 - year, 1 - month, 2 - planned - by default
@@ -2830,10 +2863,12 @@ CalendarForEvents(
 		)
 	}
 
+	subMenuButtonStyle = calendarTabMenuStyle.button;
+	subMenuDropdownStyle = concat([MRightIcon("arrow_drop_down", []), MButtonPaddings(14.0, 2.0, 10.0, 2.0)], subMenuButtonStyle);
 	tabTitles = MCenterXIn(MCols(mapi(tabOrder, makeTabTitle)), TFillX());
 	tabsDropdownButtonM = MSelect(choosedTab, \tab -> {
 		name = getTabName(tabOrder[tab]);
-		MTextButton(name, nop, [MGrey(200), MButtonRaised(), MButtonPaddings(14.0, 2.0, 10.0, 2.0), MRightIcon("arrow_drop_down", [])], []);
+		MTextButton(name, nop, subMenuDropdownStyle, []);
 	});
 	tabsDropdownM = if (!hideTabs && isTabsDropdown) {
 		MDropDown(choosedTab, "", map(tabOrder, getTabName), [MCustomButton(tabsDropdownButtonM), MOutlined()]) |> MBorderEnd(14.0);
@@ -2881,7 +2916,7 @@ CalendarForEvents(
 
 	subMenuIconStyle = calendarTabMenuStyle.icon;
 
-	monthTable = MonthTable(filteredEvents, currentEventTypes, currentDate, dateMin, dateMax, manager, displayedEventsInOneDay, multiDayEventsPosition, choosedFilters, isPrintingB, styles);
+	monthTable = MonthTable(filteredEvents, currentEventTypes, currentDate, dateMin, dateMax, manager, displayedEventsInOneDay, choosedFilters, isPrintingB, styles);
 	plannedTable = PlannedEventsTable(filteredEvents, currentEventTypes, manager, tabsDropdownM, styles);
 
 	eventTypesForPrintingB = make([]);
@@ -2928,7 +2963,7 @@ CalendarForEvents(
 		TabBody = \body : Material -> MGroup2(
 			TRectangle([Fill(white)], TFillXY()),
 			MLines2(
-				MScroll(body, TFillXY(), []),
+				if (enableScrolls) MScroll(body, TFillXY(), []) else body,
 				if (hideLegend) MEmpty() else legendM
 			)
 		);
@@ -2946,9 +2981,9 @@ CalendarForEvents(
 					MTextButton(
 						_("Today"),
 						\ -> updateCurrentDate(currentStartDate),
-						[MGrey(200), MButtonRaised(), MButtonPaddings(28.0, 6.0, 28.0, 6.0)],
+						concat([MButtonPaddings(28.0, 6.0, 28.0, 6.0)], subMenuButtonStyle),
 						[]
-					) |> MBorderLeftRight(16.0)
+					)
 				);
 			} else {
 				MEmpty();
@@ -2974,21 +3009,31 @@ CalendarForEvents(
 			}, MEmpty());
 		}
 
-		getAdditionalButtons = \currentStartDate, printButtonM -> {
-			todayButtonM = getTodayButton(currentStartDate);
-			addButtonM = getAddEventButton(currentStartDate);
+		buildActionButtons = \currentStartDate, printButtonM, prevPeriodButtons, nextPeriodButtons -> {
+			CalendarActionButtons(
+				getAddEventButton(currentStartDate),
+				printButtonM,
+				tabsDropdownM,
+				getTodayButton(currentStartDate),
+				prevPeriodButtons,
+				nextPeriodButtons
+			)
+		}
+
+		getAdditionalButtons = \buttons : CalendarActionButtons -> {
+			todayButton = buttons.todayButton |> MBorderLeftRight(16.0);
 			leftButtons = [
 				MGroup2(
-					MWidthOf(MCols([addButtonM, printButtonM, tabsDropdownM])),
-					todayButtonM
+					MWidthOf(MCols([buttons.addButton, buttons.printButton, buttons.tabsDropdown])),
+					todayButton
 				),
 				if (menuTightWidth) MFillX() else MEmpty()
 			];
 			rightButtons = [
 				if (menuTightWidth) MFillX() else MEmpty(),
 				MGroup2(
-					MWidthOf(todayButtonM),
-					MColsYCenterA([tabsDropdownM, printButtonM, addButtonM])
+					MWidthOf(todayButton),
+					MColsYCenterA([buttons.tabsDropdown, buttons.printButton, buttons.addButton])
 				)
 			];
 			Pair(leftButtons, rightButtons);
@@ -3000,26 +3045,36 @@ CalendarForEvents(
 					defaultText = i2s(date.year);
 					drawCalendarTabMenuText(date, defaultText);
 				});
+				buttons = buildActionButtons(
+					getCurrentDate(),
+					getPrintButton(addHeaderBorder(tabMenuTextM), annualView.getPrintPages),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_left",
+							\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_right",
+							\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					)
+				);
 
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), annualView.getPrintPages);
-
-				menuItems = unpair(getAdditionalButtons(getCurrentDate(), printButtonM), \leftButtons, rightButtons -> concatA([
+				menuItems = unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons -> concatA([
 					if (menuTightWidth) leftButtons else [],
-					[MIconButton(
-						"keyboard_arrow_left",
-						\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1)),
-						subMenuIconStyle,
-						[]
-					)],
+					[buttons.prevPeriodButtons.first],
 					if (!menuTightWidth) leftButtons else [],
 					[tabMenuTextM],
 					if (!menuTightWidth) rightButtons else [],
-					[MIconButton(
-						"keyboard_arrow_right",
-						\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1)),
-						subMenuIconStyle,
-						[]
-					)],
+					[buttons.nextPeriodButtons.first],
 					if (menuTightWidth) rightButtons else []
 				]));
 
@@ -3052,11 +3107,10 @@ CalendarForEvents(
 					drawCalendarTabMenuText(date, defaultText);
 				});
 
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), monthTable.getPrintPages);
-
-				menuItems = unpair(getAdditionalButtons(startOfCurrentMonth, printButtonM), \leftButtons, rightButtons -> concatA([
-					if (menuTightWidth) leftButtons else [],
-					[
+				buttons = buildActionButtons(
+					startOfCurrentMonth,
+					getPrintButton(addHeaderBorder(tabMenuTextM), monthTable.getPrintPages),
+					Pair(
 						MIconButton(
 							"first_page",
 							\ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1)),
@@ -3069,11 +3123,8 @@ CalendarForEvents(
 							subMenuIconStyle,
 							[]
 						)
-					],
-					if (!menuTightWidth) leftButtons else [],
-					[tabMenuTextM],
-					if (!menuTightWidth) rightButtons else [],
-					[
+					),
+					Pair(
 						MIconButton(
 							"keyboard_arrow_right",
 							\ -> updateCurrentDate(addMonthsToDate(getValue(currentDate), 1)),
@@ -3086,7 +3137,15 @@ CalendarForEvents(
 							subMenuIconStyle,
 							[]
 						)
-					],
+					)
+				);
+				menuItems = unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons -> concatA([
+					if (menuTightWidth) leftButtons else [],
+					[buttons.prevPeriodButtons.first, buttons.prevPeriodButtons.second],
+					if (!menuTightWidth) leftButtons else [],
+					[tabMenuTextM],
+					if (!menuTightWidth) rightButtons else [],
+					[buttons.nextPeriodButtons.first, buttons.nextPeriodButtons.second],
 					if (menuTightWidth) rightButtons else []
 				]));
 				MConstruct([
@@ -3132,13 +3191,9 @@ CalendarForEvents(
 						[MHighlightOnHover(const(true))]
 				);
 
-				types = map(["days", "weeks", "months"], \s -> "grouped by " + s);
-				groupedByMenu = MDropDown(
-					rangeTypeB, "", types,
-					[MCustomButton(
-						MSelect(rangeTypeB, \rangeType -> MTextButton(types[rangeType], nop, [MRightIcon("arrow_drop_down", []), MOrange(600)], []))
-					)]
-				);
+				types = [_("Grouped by days"), _("Grouped by weeks"), _("Grouped by months")];
+				groupedByView = MSelect(rangeTypeB, \rangeType -> MTextButton(types[rangeType], nop, subMenuDropdownStyle, []));
+				groupedByMenu = MDropDown(rangeTypeB, "", types, [MCustomButton(groupedByView), MOutlined()]);
 
 				tabMenuContentM = MCenterX(
 					MSelect2(startDate, endDate, \start, end ->
@@ -3219,42 +3274,47 @@ CalendarForEvents(
 				});
 
 				getPrintPages = \availableSize -> fgetValue(contentB).getPrintPages(availableSize);
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages);
 
-				menuItems = unpair(getAdditionalButtons(startOfCurrentWeek, printButtonM), \leftButtons, rightButtons -> {
+				buttons = buildActionButtons(
+					startOfCurrentWeek,
+					getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages),
+					Pair(
+						MIconButton(
+							"first_page",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -28)),
+							subMenuIconStyle,
+							[]
+						),
+						MIconButton(
+							"keyboard_arrow_left",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -7)),
+							subMenuIconStyle,
+							[]
+						)
+					),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_right",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 7)),
+							subMenuIconStyle,
+							[]
+						),
+						MIconButton(
+							"last_page",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 28)),
+							subMenuIconStyle,
+							[]
+						)
+					)
+				);
+				menuItems = unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons -> {
 					concatA([
 						if (menuTightWidth) leftButtons else [],
-						[
-							MIconButton(
-								"first_page",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -28)),
-								subMenuIconStyle,
-								[]
-							),
-							MIconButton(
-								"keyboard_arrow_left",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -7)),
-								subMenuIconStyle,
-								[]
-							)
-						],
+						[buttons.prevPeriodButtons.first, buttons.prevPeriodButtons.second],
 						if (!menuTightWidth) leftButtons else [],
 						[tabMenuTextM],
 						if (!menuTightWidth) rightButtons else [],
-						[
-							MIconButton(
-								"keyboard_arrow_right",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 7)),
-								subMenuIconStyle,
-								[]
-							),
-							MIconButton(
-								"last_page",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 28)),
-								subMenuIconStyle,
-								[]
-							)
-						],
+						[buttons.nextPeriodButtons.first, buttons.nextPeriodButtons.second],
 						if (menuTightWidth) rightButtons else []
 					])
 				});
@@ -3282,6 +3342,7 @@ CalendarForEvents(
 			}
 
 			DayTab(): {
+				updateCurrentDate(getCurrentDate());
 				tabMenuTextM = MSelect(currentDate, \date -> {
 					defaultText = date2formatString(date, "%MMMM %DD, %YYYY");
 					drawCalendarTabMenuText(date, defaultText);
@@ -3296,33 +3357,45 @@ CalendarForEvents(
 				});
 
 				getPrintPages = \availableSize -> fgetValue(contentB).getPrintPages(availableSize);
-				printButtonM = getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages);
 
-				menuItems = unpair(getAdditionalButtons(getCurrentDate(), printButtonM), \leftButtons, rightButtons -> {
-					concatA([
-						if (menuTightWidth) leftButtons else [],
-						[
-							MIconButton(
-								"keyboard_arrow_left",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -1)),
-								subMenuIconStyle,
-								[]
-							)
-						],
-						if (!menuTightWidth) leftButtons else [],
-						[tabMenuTextM],
-						if (!menuTightWidth) rightButtons else [],
-						[
-							MIconButton(
-								"keyboard_arrow_right",
-								\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 1)),
-								subMenuIconStyle,
-								[]
-							)
-						],
-						if (menuTightWidth) rightButtons else []
-					])
-				});
+				buttons = buildActionButtons(
+					getCurrentDate(),
+					getPrintButton(addHeaderBorder(tabMenuTextM), getPrintPages),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_left",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					),
+					Pair(
+						MIconButton(
+							"keyboard_arrow_right",
+							\ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 1)),
+							subMenuIconStyle,
+							[]
+						),
+						MEmpty()
+					)
+				);
+
+				menuItems = eitherFn(
+					dayCustomTabM,
+					\dayCustomTab -> dayCustomTab.getMenuView(currentDate, buttons),
+					\-> unpair(getAdditionalButtons(buttons), \leftButtons, rightButtons ->
+						TabMenu(concatA([
+							if (menuTightWidth) leftButtons else [],
+							[buttons.prevPeriodButtons.first,],
+							if (!menuTightWidth) leftButtons else [],
+							[tabMenuTextM],
+							if (!menuTightWidth) rightButtons else [],
+							[buttons.nextPeriodButtons.first,],
+							if (menuTightWidth) rightButtons else []
+						]))
+					)
+				);
 
 				MConstruct([
 						\ -> eitherMap(externalDateM, \externalDate -> {
@@ -3333,7 +3406,7 @@ CalendarForEvents(
 							);
 						}, nop)
 					],
-					MLines2A(TabMenu(menuItems), TabBody(MSelect(contentB, \content -> content.main)))
+					MLines2A(menuItems, TabBody(MSelect(contentB, \content -> content.main)))
 				);
 			}
 		}

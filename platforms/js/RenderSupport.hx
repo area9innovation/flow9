@@ -1836,6 +1836,10 @@ class RenderSupport {
 		return clip.addTextInputFilter(filter);
 	}
 
+	public static function addTextInputEventFilter(clip : TextClip, filter : String -> String -> String) : Void -> Void {
+		return clip.addTextInputEventFilter(filter);
+	}
+
 	public static function addTextInputKeyEventFilter(clip : TextClip, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
 		if (event == "keydown")
 			return clip.addTextInputKeyDownEventFilter(filter);
@@ -3435,6 +3439,10 @@ class RenderSupport {
 		var wrapper = function(e) { cb(Browser.window.location.hash); }
 		untyped Browser.window.addEventListener("hashchange", wrapper);
 		return function() { untyped Browser.window.removeEventListener("hashchange", wrapper); };
+	}
+
+	public static function reloadPage(forced : Bool) : Void {
+		Browser.window.location.reload(forced);
 	}
 
 	public static function setGlobalZoomEnabled(enabled : Bool) : Void {
