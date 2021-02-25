@@ -891,6 +891,7 @@ MDropDownOrAutoComplete(
 MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>, separator : string) -> Material {
 	text = make("");
 	focused = make(false);
+	currentMatches = make([]);
 
 	idxs2string = \idxs -> concatStrings(map(idxs, \idx -> elementAt(items, idx, "") + separator));
 	trimStr = \s -> trim(s) |> toLowerCase;
@@ -907,15 +908,6 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
 	}
 
-	matchHandler = \matched, __, __ -> {
-		deferred(\ -> nextDistinct(focused, true));
-		maybeApply(string2idx(matched), \idx ->
-		 	if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
-			else nextDistinct(selected, filter(getValue(selected), \it -> it != idx))
-		);
-		idxs2string(getValue(selected))
-	}
-
 	completionFn = \com, active, __ ->
 		MGetManager(\manager -> MGetFocusGroup(\parent -> {
 			selectedB = make(false);
@@ -927,7 +919,7 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 				)
 			));
 
-			wrapSetWordFn = \__ -> {
+			wrapSetWordFn = \ -> {
 				reverseBehaviour(selectedB);
 				deferred(\ -> nextDistinct(focused, true))
 			}
@@ -945,17 +937,55 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 					)],
 					MCheckBox(TEmpty(), selectedB, [])
 				),
-				defaultCompletionFn(manager, parent, []).fn(com, active, wrapSetWordFn)
+				MInteractive(
+					[KeyDown2(\h, k -> {
+						if (!h && active && k.keycode == 13) {
+							wrapSetWordFn();
+							true
+						} else h
+					})],
+					defaultCompletionFn(manager, parent, []).fn(com, active, \__ -> wrapSetWordFn())
+				)
 			)
 		}));
 
+	mainCheckboxSelected = make(false);
+	mainCheckbox =
+		MConstruct(
+			[
+				\ -> fBidirectionalLink(
+					fselect2(fstall(currentMatches, 0), selected, FLift2(\cm, sel ->
+						forall(cm, \it : Triple -> contains(sel, it.first))
+					)),
+					mainCheckboxSelected,
+					\sel -> nextDistinct(mainCheckboxSelected, sel),
+					\sel -> {
+						cm = map(getValue(currentMatches), \m -> m.first);
+						nextDistinct(selected,
+							if (sel) uniq(concat(fgetValue(selected), cm))
+							else filter(fgetValue(selected), \it -> !contains(cm, it))
+						)
+					}
+				)
+			],
+			MCheckBox(TEmpty(), mainCheckboxSelected, [])
+		)
+		|> MBorderTopBottom(-8.);
+
 	MAutoComplete(text, items, [
+		MLeftCustomButton(
+			TEmpty(),
+			mainCheckbox,
+			48.,
+			false
+		),
 		MSentenceMatcher(simpleBuildSentenceMatcher, matchFn),
-		TMatchedHandler(matchHandler),
-		MCompletionFn(completionFn)
+		MCompletionFn(completionFn),
+		MCurrentMatches(\cm -> nextDistinct(currentMatches, cm))
 	], [
 		MFocused(focused),
 		MPositionOnFocus(\c, p -> strlen(c)),
+		MInputProcessKeyDown(\k -> k.keycode != 13)
 	])
 	|> (\m -> MConstruct(
 		[\ -> bidirectionalLink(selected, text, idxs2string, string2idxsMulti)],
