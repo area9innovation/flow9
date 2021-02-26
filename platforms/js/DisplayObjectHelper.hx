@@ -645,9 +645,7 @@ class DisplayObjectHelper {
 			untyped clip.alphaMask = null;
 
 			// If it's one Graphics, use clip mask; otherwise use alpha mask
-			var obj : Dynamic = maskContainer;
-			while (obj.children != null && obj.children.length == 1)
-				obj = obj.children[0];
+			var obj : Dynamic = getLastGraphicsOrSprite(maskContainer);
 
 			if (untyped HaxeRuntime.instanceof(obj, FlowGraphics)) {
 				clip.mask = obj;
@@ -823,6 +821,26 @@ class DisplayObjectHelper {
 		}
 
 		return null;
+	}
+
+
+	// Get the last Graphics from the Pixi DisplayObjects tree
+	public static function getLastGraphicsOrSprite(clip : DisplayObject) : DisplayObject {
+		var g = null;
+
+		if (untyped HaxeRuntime.instanceof(clip, FlowGraphics) || untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
+			g = clip;
+		}
+
+		for (c in getClipChildren(clip)) {
+			var g2 = getLastGraphicsOrSprite(untyped c);
+
+			if (g2 != null) {
+				g = g2;
+			}
+		}
+
+		return g;
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
@@ -2567,5 +2585,15 @@ class DisplayObjectHelper {
 		} else {
 			return child.parent != null && isParentOf(parent, child.parent);
 		}
+	}
+
+	public static function countClips(parent : DisplayObject) : Int {
+		var count = 1;
+
+		for (child in getClipChildren(parent)) {
+			count += countClips(child);
+		}
+
+		return count;
 	}
 }

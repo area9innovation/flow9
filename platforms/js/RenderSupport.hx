@@ -40,7 +40,7 @@ class RenderSupport {
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
 	public static var EnableFocusFrame : Bool = false;
 	/* Antialiasing doesn't work correctly on mobile devices */
-	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
@@ -88,7 +88,7 @@ class RenderSupport {
 			RendererType = rendererType;
 			RoundPixels = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 			Antialias = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" :
-				!Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+				!Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 
 			untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
 
@@ -429,21 +429,6 @@ class RenderSupport {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
 	}
 
-	public static function detectExternalVideoCard() : Bool {
-		var canvas = Browser.document.createElement('canvas');
-		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
-
-		if (gl == null) {
-			return false;
-		}
-
-		var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-		var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
-		var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-
-		return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
-	}
-
 	private static function disablePixiPlugins() {
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.accessibility");
 		untyped __js__("delete PIXI.CanvasRenderer.__plugins.tilingSprite");
@@ -500,7 +485,7 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
-		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
+		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
 			RendererType = "webgl";
@@ -1546,6 +1531,14 @@ class RenderSupport {
 		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
+	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
+		FontLoader.loadPreconfiguredWebFonts(families, onDone);
+	}
+
+	public static function getFontStylesConfigString() : String {
+		return haxe.Resource.getString("fontstyles");
+	}
+
 	public static function makeTextField(fontFamily : String) : TextClip {
 		return new TextClip();
 	}
@@ -1826,6 +1819,10 @@ class RenderSupport {
 
 	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
 		return clip.addTextInputFilter(filter);
+	}
+
+	public static function addTextInputEventFilter(clip : TextClip, filter : String -> String -> String) : Void -> Void {
+		return clip.addTextInputEventFilter(filter);
 	}
 
 	public static function addTextInputKeyEventFilter(clip : TextClip, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
@@ -2585,6 +2582,14 @@ class RenderSupport {
 		}
 
 		return null;
+	}
+
+	public static function countClips(?parent : DisplayObject) : Int {
+		if (parent == null) {
+			parent = PixiStage;
+		}
+
+		return parent.countClips();
 	}
 
 	public static function makeGraphics() : FlowGraphics {
@@ -3427,6 +3432,10 @@ class RenderSupport {
 		var wrapper = function(e) { cb(Browser.window.location.hash); }
 		untyped Browser.window.addEventListener("hashchange", wrapper);
 		return function() { untyped Browser.window.removeEventListener("hashchange", wrapper); };
+	}
+
+	public static function reloadPage(forced : Bool) : Void {
+		Browser.window.location.reload(forced);
 	}
 
 	public static function setGlobalZoomEnabled(enabled : Bool) : Void {

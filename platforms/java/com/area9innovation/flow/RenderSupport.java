@@ -189,6 +189,9 @@ public class RenderSupport extends NativeHost {
 	public boolean hittest(Object stg, double x, double y) {
 		return false;
 	}
+	public String getFontStylesConfigString() {
+		return null;
+	}
 	public Object makeTextField(String fontfamily) {
 		return null;
 	}
