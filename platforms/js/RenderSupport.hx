@@ -3181,22 +3181,24 @@ class RenderSupport {
 
 		PixiStage.once("drawframe", function () {
 			PixiStage.onImagesLoaded(function () {
-				var snapshot = clip.children != null && clip.children.length > 0 ?
-					getClipSnapshotBox(
-						untyped clip,
-						Math.floor(clip.worldTransform.tx),
-						Math.floor(clip.worldTransform.ty),
-						Math.floor(clip.getWidth()),
-						Math.floor(clip.getHeight())
-					) : "";
+				PixiStage.once("drawframe", function () {
+					var snapshot = clip.children != null && clip.children.length > 0 ?
+						getClipSnapshotBox(
+							untyped clip,
+							Math.floor(clip.worldTransform.tx),
+							Math.floor(clip.worldTransform.ty),
+							Math.floor(clip.getWidth()),
+							Math.floor(clip.getHeight())
+						) : "";
 
-				if (printMode) {
-					printMode = false;
-					DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
-					forceRender();
-				}
+					if (printMode) {
+						printMode = false;
+						DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+						forceRender();
+					}
 
-				cb(snapshot);
+					cb(snapshot);
+				});
 			});
 		});
 	}
