@@ -3230,6 +3230,7 @@ class RenderSupport {
 
 			return img;
 		} catch(e : Dynamic) {
+			trace(e);
 			dispFn();
 
 			return 'error';
