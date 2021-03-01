@@ -127,9 +127,14 @@ export {
 		front : [MCardBlock],
 		back : [MCardBlock],
 		style : Transform<[MCardStyle]>,
-		state : [MButtonState],
-		duration0 : Maybe<int> // ms
+		state : [MFlippingCardState]
 	) -> Material;
+
+		MFlippingCardState ::= MButtonState, MDuration, MTrigger;
+			MTrigger(type : MTriggerType);
+				MTriggerType ::= MTriggerHover, MTriggerClick;
+					MTriggerHover();
+					MTriggerClick();
 
 	// Construct an HTML stage with the given metrics
 	MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material;
@@ -1045,11 +1050,13 @@ MFlippingCard(
 	front : [MCardBlock],
 	back : [MCardBlock],
 	style : Transform<[MCardStyle]>,
-	state : [MButtonState],
-	duration0 : Maybe<int> // ms
+	state : [MFlippingCardState],
 ) -> Material {
+	duration = extractStruct(state, MDuration(const(0.4))).duration;
+	triggerType = extractStruct(state, MTrigger(MTriggerHover())).type;
+	isHover = isSameStructType(triggerType, MTriggerHover());
+	flipped = make(false);
 
-	duration = either(duration0, 1000);
 	keyframes = [
 		FAnimationKeyframe([FScaleValue(Factor(1., 1.))]),
 		FAnimationKeyframe([FScaleValue(Factor(1.05, 1.05))]),
@@ -1061,15 +1068,22 @@ MFlippingCard(
 	];
 
 	MComponent([], \foc -> {
-		trigger = fstall(foc.hover, 0);
+		trigger = if (isHover) fstall(foc.hover, 0) else flipped;
 		MDynamicCard(
-			fselect(fstall(trigger, duration / 2), FLift(\tr -> if (tr) back else front)),
+			fselect(fstall(trigger, floor(1000. * fgetValue(duration)) / 2), FLift(\tr -> if (tr) back else front)),
 			style,
-			state
+			extractMButtonState(state)
+			|> (\st ->
+				if (isHover) st
+				else replaceStruct(st, MOnClick(\ -> {
+					reverseBehaviour(flipped);
+					maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click())
+				}))
+			)
 		)
-		|> (\m -> MAnimation(m, fif(trigger, const(keyframes), const([])), [FAnimationDuration(const(i2d(duration) / 1000.))]))
+		|> (\m -> MAnimation(m, fif(trigger, const(keyframes), const([])), [FAnimationDuration(duration)]))
 		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
-		|> (\m -> MAnimation(m, fif(fselectWithLast(trigger, FLift2(\old, new -> (old == new) || new)), const([]), const(keyframes)), [FAnimationDuration(const(i2d(duration) / 1000.))]))
+		|> (\m -> MAnimation(m, fif(fselectWithLast(trigger, FLift2(\old, new -> (old == new) || new)), const([]), const(keyframes)), [FAnimationDuration(duration)]))
 		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
 	})
 }
