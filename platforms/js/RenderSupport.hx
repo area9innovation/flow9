@@ -3158,6 +3158,7 @@ class RenderSupport {
 
 			return img;
 		} catch(e : Dynamic) {
+			trace(e);
 			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
@@ -3225,7 +3226,7 @@ class RenderSupport {
 		}
 
 		try {
-			var img = PixiRenderer.plugins.extract.base64(clip == mainRenderClip() ? clip : clip.children[0]);
+			var img = untyped __js__("RenderSupport.PixiRenderer.plugins.extract.base64(clip == RenderSupport.mainRenderClip() ? clip : clip.children[0])");
 			dispFn();
 
 			return img;
