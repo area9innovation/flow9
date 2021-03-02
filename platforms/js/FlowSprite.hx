@@ -431,8 +431,18 @@ class FlowSprite extends Sprite {
 
 				widgetBounds.minX = 0;
 				widgetBounds.minY = 0;
-				widgetBounds.maxX = nativeWidget.naturalWidth != null && nativeWidget.naturalWidth > 0 ? nativeWidget.naturalWidth : nativeWidget.clientWidth;
-				widgetBounds.maxY = nativeWidget.naturalHeight != null && nativeWidget.naturalHeight > 0 ? nativeWidget.naturalHeight : nativeWidget.clientHeight;
+
+				if (nativeWidget.naturalWidth != null && nativeWidget.naturalHeight != null && (nativeWidget.naturalWidth > 0 || nativeWidget.naturalHeight > 0)) {
+					widgetBounds.maxX = nativeWidget.naturalWidth;
+					widgetBounds.maxY = nativeWidget.naturalHeight;
+				} else {
+					Browser.document.body.appendChild(nativeWidget);
+
+					widgetBounds.maxX = nativeWidget.clientWidth * RenderSupport.backingStoreRatio;
+					widgetBounds.maxY = nativeWidget.clientHeight * RenderSupport.backingStoreRatio;
+
+					this.addNativeWidget();
+				}
 			}
 		} else {
 			widgetBounds.minX = 0;

@@ -153,6 +153,7 @@ class TextClip extends NativeWidgetClip {
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
+	private var TextInputEventFilters : Array<String -> String -> String> = new Array();
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
@@ -1216,6 +1217,13 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
+		// Hotfix for IE : inputType isn`t implemented for IE, so in this case we fake all the events to have "insertText" type
+		if (e != null && (e.inputType != null || Platform.isIE)) {
+			for (f in TextInputEventFilters) {
+				newValue = f(newValue, Platform.isIE ? "insertText" : e.inputType);
+			}
+		}
+
 		if (nativeWidget == null) {
 			return;
 		}
@@ -1409,6 +1417,11 @@ class TextClip extends NativeWidgetClip {
 	public function addTextInputFilter(filter : String -> String) : Void -> Void {
 		TextInputFilters.push(filter);
 		return function() { TextInputFilters.remove(filter); }
+	}
+
+	public function addTextInputEventFilter(filter : String -> String -> String) : Void -> Void {
+		TextInputEventFilters.push(filter);
+		return function() { TextInputEventFilters.remove(filter); }
 	}
 
 	public function addTextInputKeyDownEventFilter(filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {

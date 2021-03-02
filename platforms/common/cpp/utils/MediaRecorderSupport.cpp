@@ -13,7 +13,7 @@ NativeFunction *MediaRecorderSupport::MakeNativeFunction(const char *name, int n
 #undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "MediaRecorderSupport."
 
-    TRY_USE_NATIVE_METHOD(MediaRecorderSupport, makeMediaRecorderFromStream, 6);
+    TRY_USE_NATIVE_METHOD(MediaRecorderSupport, makeMediaRecorderFromStream, 7);
 
     TRY_USE_NATIVE_METHOD(MediaRecorderSupport, startRecording, 2);
 
@@ -29,12 +29,12 @@ NativeFunction *MediaRecorderSupport::MakeNativeFunction(const char *name, int n
 StackSlot MediaRecorderSupport::makeMediaRecorderFromStream(RUNNER_ARGS)
 {
 
-    RUNNER_PopArgs4(websocketUri, filePath, mediaStream, timeslice);
+    RUNNER_PopArgs5(websocketUri, filePath, dataCb, mediaStream, timeslice);
     RUNNER_CheckTag2(TString, websocketUri, filePath);
     RUNNER_CheckTag1(TNative, mediaStream);
     RUNNER_CheckTag1(TInt, timeslice);
-    int onReadyRoot = RUNNER->RegisterRoot(RUNNER_ARG(4));
-    int onErrorRoot = RUNNER->RegisterRoot(RUNNER_ARG(5));
+    int onReadyRoot = RUNNER->RegisterRoot(RUNNER_ARG(5));
+    int onErrorRoot = RUNNER->RegisterRoot(RUNNER_ARG(6));
 
     makeMediaRecorder(RUNNER->GetString(websocketUri), RUNNER->GetString(filePath), mediaStream, timeslice.GetInt(),
                      onReadyRoot, onErrorRoot);
