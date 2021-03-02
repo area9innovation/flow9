@@ -604,10 +604,6 @@ class RenderSupport {
 		requestAnimationFrame();
 	}
 
-	public static function countClips() {
-		return PixiStage.countClips();
-	}
-
 	private static function StartFlowMainWithTimeCheck() {
 		Errors.print("Web fonts loaded in " + (NativeTime.timestamp() - webFontsLoadingStartAt) + " ms");
 		StartFlowMain();
