@@ -4,20 +4,37 @@ import material/internal/material_slider;
 import material/internal/material_textinput;
 import material/internal/material_splitter;
 import material/internal/filebrowser/material_filebrowser_internal_view;
+import formats/base64;
+import formats/mime/mime_types;
 import tropic/tropic_ui;
 
 export {
 	// Initialization and start of filebrowser using custom style
 	renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, caption : string, ext : [string], buttons : [FileBrowserButtonsM], styles : [FbMStyle], m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
-	//checks if file name has no conflicts with existing names
+	// Checks if file name has no conflicts with existing names
 	validateFileName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string], ignoreName : string) -> void;
 
-	//checks if partition name has no conflicts with existing names
+	// Checks if partition name has no conflicts with existing names
 	validatePartitionName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string]) -> void;
 
-	//filter (with dialog option) to exclude files with large size
-	filterFilesByMaxSizeDialog(manager : MaterialManager, files : [native], maxSize : int, showDialog : bool, m2t : (Material, MFocusGroup) -> Tropic, onDone : ([native]) -> void) -> void;
+	// Filter (with dialog option) to exclude files with large size (realisation for native files)
+	filterUploadedFilesForRestrictionsNative(
+		files : [native],
+		managerM : Maybe<MaterialManager>,
+		m2t : (Material, MFocusGroup) -> Tropic,
+		onDone : (/*toUpload*/ [native], /*toReduce*/ [native], /*largeSize*/ [native]) -> void,
+		style : [FbFilterUploadDialog]
+	) -> void;
+
+	// The same like above but for the string content
+	filterUploadedFilesForRestrictionsBase64(
+		files : [FbSourceBase64],
+		managerM : Maybe<MaterialManager>,
+		m2t : (Material, MFocusGroup) -> Tropic,
+		onDone : (/*toUpload*/ [FbSourceBase64], /*toReduce*/ [FbSourceBase64], /*largeSize*/ [FbSourceBase64]) -> void,
+		style : [FbFilterUploadDialog]
+	) -> void;
 }
 
 SearchState(
@@ -242,6 +259,8 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	selectedFilesB = extractStruct(styles, FbSelectedNames(make([]))).filenamesB;
 	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop3)), \s -> s.fn);
 	uploadMaxSizeM = minA(map(extractStructMany(styles, FbUploadMaxFileSize(0)), \s -> s.size));
+	uploadMaxImageResolutionM = minA(map(extractStructMany(styles, FbUploadImageMaxResolution(0)), \s -> s.resolution));
+	uploadMaxVideoBitrateM = minA(map(extractStructMany(styles, FbUploadVideoMaxBitrate(0)), \s -> s.bitrate));
 
 	// Reset the last cache for the WhatIsChanged to start new `session`
 	lastCheckResultR := None();
@@ -962,17 +981,19 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			TFixed(0.0, 8.0),
 			eitherMap(dropFnM,
 				\dropFn -> {
-					dropFn2 = eitherMap(
-						uploadMaxSizeM,
-						\size -> {
-							\files -> {
-								filterFilesByMaxSizeDialog(manager, files, size, true, m2t, \files2 -> {
-									if (files2 != []) dropFn.fn(files2);
-								});
-							};
-						},
-						dropFn.fn
-					);
+					dropFn2 = {
+						\files -> {
+							filterUploadedFilesForRestrictionsNative(files, Some(manager), m2t, \files2, files3, __ -> {
+									dropFn.fn(concat(files2, files3));
+								},
+								concat3(
+									eitherMap(uploadMaxSizeM, \size -> [FbFilterMaxSize(size)], []),
+									eitherMap(uploadMaxImageResolutionM, \resolution -> [FbFilterMaxResolution(resolution)], []),
+									eitherMap(uploadMaxVideoBitrateM, \bitrate -> [FbFilterMaxBitrate(bitrate)], []),
+								)
+							);
+						}
+					}
 					// we accept only list of extensions without "*." and "." prefixes
 					eRegFilter = if (normalExts == []) "" else strGlue(map(normalExts, \e -> strReplace(strReplace(e, "*.", ""), ".", "")), "|");
 					MInteractive([TFileDrop(-1, eRegFilter, dropFn2)], dialogContent);
@@ -1017,6 +1038,542 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 // Utils
 //////////
 
+FbSourceData(
+	index : int,
+	name : string,
+	extension : string,
+	size : double,
+	getContentBase64 : (onContent : (string) -> void, onError : (string) -> void) -> void
+);
+
+FbResultReduce(data : FbSourceData, reduceFile : bool);
+
+filterUploadedFilesForRestrictionsBase64(
+	files : [FbSourceBase64],
+	managerM : Maybe<MaterialManager>,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	onDone : (/*toUpload*/ [FbSourceBase64], /*toReduce*/ [FbSourceBase64], /*largeSize*/ [FbSourceBase64]) -> void,
+	style : [FbFilterUploadDialog]
+) -> void {
+	data = mapi(files, \i, file -> {
+		ext1 = toLowerCase(getFileExt(file.filename));
+		ext = if (startsWith(ext1, ".")) strRight(ext1, 1) else ext1;
+
+		FbSourceData(
+			i,
+			rtrim2(file.filename, "." + ext),
+			ext,
+			// we don't reduce length on amount of '=' in the base64 string
+			i2d(strlen(file.contentBase64) * 3 / 4),
+			\onContent, __ -> onContent(file.contentBase64)
+		)
+	});
+
+	filterUploadedFilesForRestrictions(
+		data, managerM, m2t,
+		\res1, res2, res3 -> {
+			idx1 = map(res1, \r -> r.index);
+			idx2 = map(res2, \r -> r.index);
+			idx3 = map(res3, \r -> r.index);
+
+			onDone(
+				filtermapi(files, \i, f -> if (contains(idx1, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx2, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx3, i)) Some(f) else None())
+			);
+		},
+		style
+	);
+}
+
+filterUploadedFilesForRestrictionsNative(
+	files : [native],
+	managerM : Maybe<MaterialManager>,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	onDone : (/*toUpload*/ [native], /*toReduce*/ [native], /*largeSize*/ [native]) -> void,
+	style : [FbFilterUploadDialog]
+) -> void {
+	data = mapi(files, \i, file -> {
+		filename = fileNameOnly(fileNameClient(file));
+		ext1 = toLowerCase(getFileExt(fileNameClient(file)));
+		ext = if (startsWith(ext1, ".")) strRight(ext1, 1) else ext1;
+
+		FbSourceData(
+			i,
+			rtrim2(filename, "." + ext),
+			ext,
+			fileSizeClient(file),
+			\onContent, onError -> readFileEncClient(
+				file,
+				"data",
+				"Win1252",
+				\binaryContent -> onContent(encodeBase64(binaryContent)),
+				onError
+			)
+		)
+	});
+
+	if (isUrlParameterTrue("new")) {
+		filterUploadedFilesForRestrictions(
+			data, managerM, m2t,
+			\res1, res2, res3 -> {
+				idx1 = map(res1, \r -> r.index);
+				idx2 = map(res2, \r -> r.index);
+				idx3 = map(res3, \r -> r.index);
+
+				onDone(
+					filtermapi(files, \i, f -> if (contains(idx1, i)) Some(f) else None()),
+					filtermapi(files, \i, f -> if (contains(idx2, i)) Some(f) else None()),
+					filtermapi(files, \i, f -> if (contains(idx3, i)) Some(f) else None())
+				);
+			},
+			style
+		);
+	} else {
+		//>> Temporary - while testing new `image resize feature`
+		eitherFn(
+			tryExtractStruct(style, FbFilterMaxSize(0)),
+			\sSize -> {
+				eitherFn(
+					managerM,
+					\manager -> filterFilesByMaxSizeDialog(manager, files, sSize.size, isSome(managerM), m2t, \res -> onDone(res, [], [])),
+					\-> onDone(files, [], [])
+				);
+			},
+			\-> onDone(files, [], [])
+		);
+		//<< Temporary - while testing new `image resize feature`
+	}
+}
+
+filterUploadedFilesForRestrictions(
+	data : [FbSourceData],
+	managerM : Maybe<MaterialManager>,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	onDone : (normal : [FbSourceData], large : [FbSourceData], toReduce : [FbSourceData]) -> void,
+	style : [FbFilterUploadDialog]
+) -> void {
+	maxSizeM = maybeMap(tryExtractStruct(style, FbFilterMaxSize(0)), \s -> i2d(s.size));
+	maxResolutionM = maybeMap(tryExtractStruct(style, FbFilterMaxResolution(0)), \s -> s.size);
+	maxBitrateM = maybeMap(tryExtractStruct(style, FbFilterMaxBitrate(0)), \s -> s.bitrate);
+
+	defaultImageReduce = extractStruct(style, FbDefaultResolutionReduce(true)).reduce;
+	defaultVideoReduce = extractStruct(style, FbDefaultBitrateReduce(true)).reduce;
+
+	filesLargeSmall = eitherFn(
+		maxSizeM,
+		\maxSize -> partition(data, \d -> d.size > maxSize),
+		\-> Pair([], data)
+	);
+
+	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
+	getText = \isMany -> if (isMany) _("Sorry, your files are too large for the system.")
+		else _("Sorry, your file is too large for the system.");
+
+	showDefaultDialog = \manager, closeB, title, buttons, view -> {
+		renderMDialog2(
+			manager,
+			closeB,
+			concat(
+				if (title != "") [MDialogTitle(title)] else [],
+				[
+					MDialogUseFrame(),
+					MDialogActions(buttons),
+					MDialogScroll(),
+					MDialogScrollStyle([TScrollCropByContent(), TExpandOnHover(true)])
+				]
+			),
+			MAvailable(view, TFillWY(418.)),
+			m2t,
+			\t -> {
+				trender(
+					TAvailable(
+						TTranslate(fif(manager.iscript.showPanel, const(Point(0.0, 48.0)), const(zeroPoint)), t),
+						TIf(manager.iscript.showPanel, TSized(manager.iscript.available), TFillXY())
+					)
+					|> (\f ->
+						materialLogFn(
+							\ ->
+								TFixSize(
+									TLines2(
+										TFixed(36., 36.),
+										f
+									),
+									TFillXY()
+								),
+							MaterialWarning(),
+							\ -> f
+						)
+					),
+					manager.manager.renderStyle
+				)
+			}
+		);
+	}
+	
+	doStepDialog = \manager, resultNormal, resultLarge, resultImageLarge, resultVideoLarge -> {
+		resultImageLargePair : [Pair<FbSourceData, DynamicBehaviour<bool>>] = map(
+			resultImageLarge, \r -> Pair(r, make(defaultImageReduce))
+		);
+		resultVideoLargePair : [Pair<FbSourceData, DynamicBehaviour<bool>>] = map(
+			resultVideoLarge, \r -> Pair(r, make(defaultVideoReduce))
+		);
+
+		if ((resultLarge == [] && resultImageLarge == [] && resultVideoLarge == []) || !isSome(managerM)) {
+			onDone(resultNormal, [], []);
+		} else {
+			closeB = make(false);
+			isMany = (length(resultNormal) + length(resultLarge) + length(resultImageLarge) + length(resultVideoLarge)) > 1;
+			title = getTitle(isMany);
+
+			onCancelFn = \-> {
+				onDone([], [], []);
+				next(closeB, true);
+			}
+
+			onUploadFn = \-> {
+				resultImageLarge2 = partition(resultImageLargePair, \r -> getValue(r.second));
+				resultVideoLarge2 = partition(resultVideoLargePair, \r -> getValue(r.second));
+				onDone(
+					concat3(
+						resultNormal,
+						map(resultImageLarge2.second, firstOfPair),
+						map(resultVideoLarge2.second, firstOfPair)
+					),
+					concat(
+						map(resultImageLarge2.first, firstOfPair),
+						map(resultVideoLarge2.first, firstOfPair)
+					),
+					resultLarge
+				);
+				next(closeB, true);
+			}
+
+			buttons = [
+				MTextButton("CANCEL", onCancelFn, [], [MShortcut("esc")]),
+				MTextButton("UPLOAD", onUploadFn, [MButtonRaised()], [MShortcut("enter")])
+			];
+
+			getExpander = \text, len, viewHeaderAdd, viewBody -> {
+				MGroup2(
+					MExpander(
+						MBaselineCols([
+							TFixed(8., 0.),
+							MText(formatString(text, [i2s(len)]), [getToolbarItemsColor(manager), MSubheading()]),
+							TFixed(8., 0.),
+							TFillX(),
+							viewHeaderAdd
+						]),
+						\-> MBorder(16., 8., 8., 8., viewBody),
+						make(false),
+						[MWidth(416.0), getToolbarItemsColor(manager), MExpanderBackgroundStyle([MFill(getPrimaryColor(manager))], [])]
+					),
+					MEmpty()
+					// For future ...
+					/*MCols2(
+						TFixed(336., 0.),
+						MBorder4(12., MIcon("help_outline", [MIconSize(24.), getToolbarItemsColor(manager)]))
+					)*/
+
+					/*
+					MParagraph(_("The video will be reformatted and optimized in the background for a good web streaming experience. It usually takes 5-10 minutes."), []),
+					MParagraph(_("This message can be closed."), []),
+					*/
+
+					/*
+					MParagraph(_("Use smaller images for the best performance."), []),
+					MParagraph(_("Smaller than 1MB and 2000 pixels is recommended."), [])
+					*/
+				);
+			}
+
+			getFileRow = \text, viewLast -> {
+				MBaselineCols([
+					MGroup2(
+						MEllipsisText(text, [MShowTooltip(const(true))]),
+						TFillX()
+					),
+					TFixed(8., 0.),
+					viewLast
+				]);
+			}
+
+			view = MLines(concatA([
+				[MText(getText(isMany), [MSubheading()]), MEmpty()],
+				if (resultNormal != []) [
+					getExpander(
+						_("Normal files, (%1)"), length(resultNormal), MEmpty(),
+						MLines(interleave(
+							map(resultNormal, \r -> {
+								getFileRow(r.name + "." + r.extension, MText(_("to upload"), [MGrey(400)]));
+							}),
+							TFixed(0., 8.)
+						))
+					)
+				] else [],
+				if (resultLarge != []) [
+					getExpander(
+						_("Extra large files, (%1)"), length(resultLarge), MEmpty(),
+						MLines(interleave(
+							map(resultLarge, \r -> {
+								getFileRow(r.name + "." + r.extension, MText(_("to skip"), [MGrey(400)]));
+							}),
+							TFixed(0., 8.)
+						))
+					)
+				] else [],
+				if (resultImageLargePair != []) [
+					getExpander(
+						_("High resolution images, (%1)"), length(resultImageLargePair),
+						{
+							mainSwitcherB = make(defaultImageReduce);
+							MConstruct(
+								[makeSubscribe(mainSwitcherB, \v -> iter(resultImageLargePair, \r -> nextDistinct(r.second, v)))],
+								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText("Reduce", "As is")])
+							)
+						},
+						MLines(
+							map(resultImageLargePair, \r -> {
+								getFileRow(
+									r.first.name + "." + r.first.extension,
+									MSwitchControl(r.second, [getPrimaryColor(manager), MOnOffText("Reduce", "As is")])
+								)
+							})
+						)
+					)
+				] else [],
+				if (resultVideoLargePair != []) [
+					getExpander(
+						_("High resolution videos, (%1)"), length(resultVideoLargePair),
+						{
+							mainSwitcherB = make(defaultVideoReduce);
+							MConstruct(
+								[makeSubscribe(mainSwitcherB, \v -> iter(resultVideoLargePair, \r -> nextDistinct(r.second, v)))],
+								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText("Reduce", "As is")])
+							)
+						},
+						MLines(
+							map(resultVideoLargePair, \r -> {
+								getFileRow(
+									r.first.name + "." + r.first.extension,
+									MSwitchControl(r.second, [getPrimaryColor(manager), MOnOffText("Reduce", "As is")])
+								)
+							})
+						)
+					)
+				] else []
+			]) |> (\arr -> interleave(arr, TFixed(0., 8.))));
+
+			showDefaultDialog(manager, closeB, title, buttons, view);
+		}
+	}
+
+	videoExtensions = ["mp4", "webm", "m4v"];
+	imageExtensions = ["swf", "png", "jpg", "jpeg", "bmp"];
+
+	dataSplitted = fold(filesLargeSmall.second, Triple([], [], []), \acc, r -> {
+		if (contains(imageExtensions, r.extension)) {
+			Triple(arrayPush(acc.first, r), acc.second, acc.third);
+		} else if (contains(videoExtensions, r.extension)) {
+			Triple(acc.first, arrayPush(acc.second, r), acc.third);
+		} else {
+			Triple(acc.first, acc.second, arrayPush(acc.third, r));
+		}
+	});
+	
+	eitherFn(
+		managerM,
+		\manager -> {
+			defaultResultFn = \-> {
+				doStepDialog(manager,
+					concatA([
+						dataSplitted.third,
+						if (defaultImageReduce) [] else dataSplitted.first,
+						if (defaultVideoReduce) [] else dataSplitted.second
+					]),
+					filesLargeSmall.first,
+					if (defaultImageReduce) dataSplitted.first else [],
+					if (defaultVideoReduce) dataSplitted.second else []
+				);
+			}
+
+			if ((isSome(maxResolutionM) && dataSplitted.first != []) || (isSome(maxBitrateM) && dataSplitted.second != [])) {
+				closeDialogB = make(false);
+				imageDataMB = make(None());
+				videoDataMB = make(None());
+				buttons = [MTextButton("CANCEL", \-> { next(closeDialogB, true); onDone([], [], []); }, [MButtonRaised()], [])];
+
+				view = MLinesA([
+					MText("Checking of files...", [MTitle()]),
+					TFixed(0.0, 8.0),
+					MProgressBar([WidthHeight(240.0, 4.0), MProgressBackgroundColor(MGrey(400))]),
+					MSelect(imageDataMB, \imageDataM -> {
+						eitherMap(
+							imageDataM,
+							\imageData -> MPicture(imageData.first, [InspectRealSize(imageData.second), MPictureShowLoading(false), MPictureSize(const(WidthHeight(1., 1.)))]),
+							MEmpty()
+						)
+					}),
+					MSelect(videoDataMB, \videoDataM -> {
+						eitherMap(
+							videoDataM,
+							\videoData -> {
+								lengthB = make(0.);
+								MConstruct(
+									[makeSubscribe2(lengthB, videoData.second)],
+									MVideo(
+										videoData.first,
+										make(WidthHeight(1., 1.)),
+										[FVideoLength(lengthB), FVideoPlay(make(false)), FVideoVolume(make(0.))]
+									)
+								);
+							},
+							MEmpty()
+						)
+					})
+				]);
+
+				showDefaultDialog(manager, closeDialogB, "", buttons, view);
+
+				checkImagesFn = \iData, onChecked -> mapAsync(
+					iData,
+					\iDataRow, ff, __ -> {
+						gotWHR = ref true;
+						gotWH = \wh -> {
+							if (^gotWHR) {
+								gotWHR := false;
+								ff(Pair(iDataRow, max(trunc(wh.width), trunc(wh.height))));
+							}
+						}
+
+						iDataRow.getContentBase64(
+							\base64Content -> {
+								next(
+									imageDataMB, 
+									Some(Pair(
+										"data:image/" + iDataRow.extension + ";base64," + base64Content,
+										gotWH
+									))
+								);
+							},
+							\__ -> gotWH(WidthHeight(0., 0.))
+						);
+
+						// If can't load image for a long time
+						timer(5000, \-> gotWH(WidthHeight(0., 0.)));
+					},
+					onChecked,
+					// Never should happen
+					\__ -> onChecked(map(iData, \iDataRow -> Pair(iDataRow, 0)))
+				);
+
+				checkVideosFn = \vData, onChecked -> mapAsync(
+					vData,
+					\vDataRow, ff, __ -> {
+						lengthDoneR = ref false;
+						gotLen = \len -> {
+							if (!(^lengthDoneR)) {
+								lengthDoneR := true;
+								len2 = if (len == 0.) 1. else len;
+								ff(Pair(vDataRow, trunc(vDataRow.size * 8. / len2 / 1024. * 0.95)));
+							}
+						}
+
+						vDataRow.getContentBase64(
+							\base64Content -> {
+								next(
+									videoDataMB, 
+									Some(Pair(
+										"data:" + extension2mimeString("." + vDataRow.extension) + ";base64," + base64Content,
+										gotLen
+									))
+								);
+							},
+							\__ -> gotLen(1.)
+						);
+
+						// If can't load image for a long time
+						timer(5000, \-> gotLen(1.));
+					},
+					onChecked,
+					// Never should happen
+					\__ -> onChecked(map(vData, \vDataRow -> Pair(vDataRow, 0)))
+				);
+
+				mapiAsync(
+					[maxResolutionM, maxBitrateM],
+					\i, sM, ff, __ -> {
+						if (i == 0) {
+							eitherFn(
+								sM,
+								\maxResolution -> {
+									checkImagesFn(dataSplitted.first, \result -> {
+										normalLarge = partition(result, \r -> r.second <= maxResolution);
+										ff(Pair(
+											map(normalLarge.first, firstOfPair),
+											map(normalLarge.second, firstOfPair)
+										))
+									})
+								},
+								\-> ff(Pair(dataSplitted.first, []))
+							);
+						} else if (i == 1) {
+							eitherFn(
+								sM,
+								\maxBitrate -> {
+									checkVideosFn(dataSplitted.second, \result -> {
+										normalLarge = partition(result, \r -> r.second <= maxBitrate);
+										ff(Pair(
+											map(normalLarge.first, firstOfPair),
+											map(normalLarge.second, firstOfPair)
+										))
+									})
+								},
+								\-> ff(Pair(dataSplitted.second, []))
+							);
+						}
+					},
+					\resultA /* [Pairs([normal], [large])] */ -> {
+						next(closeDialogB, true);
+						doStepDialog(manager,
+							concat(
+								dataSplitted.third,
+								mapConcat(resultA, firstOfPair)
+							),
+							filesLargeSmall.first,
+							if (resultA != []) resultA[0].second else [],
+							if (length(resultA) > 1) resultA[1].second else []
+						);
+					},
+					// Never should happen
+					\__ -> {
+						next(closeDialogB, true);
+						defaultResultFn();
+					}
+				)
+			} else {
+				defaultResultFn();
+			}
+		},
+		\-> {
+			onDone(
+				concat3(
+					dataSplitted.third,
+					if (defaultImageReduce) [] else dataSplitted.first,
+					if (defaultVideoReduce) [] else dataSplitted.second
+				),
+				concat(
+					if (defaultImageReduce) dataSplitted.first else [],
+					if (defaultVideoReduce) dataSplitted.second else []
+				),
+				filesLargeSmall.first
+			);
+		}
+	);
+}
+
+
+// Old version  - Deprecated
 filterFilesByMaxSizeDialog(manager : MaterialManager, files : [native], maxSize : int, showDialog : bool, m2t : (Material, MFocusGroup) -> Tropic, onDone : ([native]) -> void) -> void {
 	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
 	getText = \isMany -> if (isMany) _("Sorry, your files is too large for the system.")
