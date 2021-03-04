@@ -25,7 +25,7 @@ export {
 
 		DynamicArrayMapi(
 			container : DynamicArray<flow>,
-			fn : (int, flow) -> ?,
+			fn : (Transform<int>, flow) -> ?,
 			mutable values : [?],
 			mutable linked : bool,
 			subscribers : DList<(HeckelOperationSimple<?>) -> void>,
@@ -135,7 +135,7 @@ export {
 	nextDynamicArray(a : DynamicArray<?>, b : [?]) -> void;
 
 	mapDynamicArray(a : DynamicArray<?>, fn : (?) -> ??) -> DynamicArray<??>;
-	mapiDynamicArray(a : DynamicArray<?>, fn : (int, ?) -> ??) -> DynamicArray<??>;
+	mapiDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> ??) -> DynamicArray<??>;
 	submapDynamicArray(a : DynamicArray<?>, fn : (?) -> Transform<??>) -> DynamicArray<??>;
 	submapiDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> Transform<??>) -> DynamicArray<??>;
 	mapuDynamicArray(a : DynamicArray<?>, fn : (?) -> Disposable<??>) -> DynamicArray<??>;
@@ -307,29 +307,41 @@ linkDynamicArray(a : DynamicArray<?>) -> void {
 				a.values ::= map(a.container.values, a.fn);
 			}
 			DynamicArrayMapi(__, __, __, __, __, __) : {
+				indexes = ref [];
+
 				a.dispose ::=
 					[
 						listen2DynamicArray(a.container, \op -> {
 							switch (op : HeckelOperationSimple<?>) {
 								HeckelInsert(i, v): {
-									insertDynamicArray(a, i, a.fn(i, v));
-									fori(i + 1, getDynamicArrayLengthInternal(a.container) - 1, \j -> {
-										maybeApply(getDynamicArrayElementAtInternal(a.container, j), \vv -> replaceDynamicArray(a, j, a.fn(j, vv)));
-									});
+									index = make(i);
+									indexes := insertArray(^indexes, i, index);
+									r = a.fn(index, v);
+									insertDynamicArray(a, i, r);
+
+									fori(i + 1, length(^indexes) - 1, \j -> next(^indexes[j], j));
 								}
 								// HeckelMove(f, t): {
 								// 	moveDynamicArray(a, f, t);
 								// }
 								HeckelDelete(i, __): {
+									indexes := removeIndex(^indexes, i);
+
 									deleteDynamicArray(a, i);
-									fori(i, getDynamicArrayLengthInternal(a.container) - 1, \j -> {
-										maybeApply(getDynamicArrayElementAtInternal(a.container, j), \vv -> replaceDynamicArray(a, j, a.fn(j, vv)));
-									});
+									fori(i, length(^indexes) - 1, \j -> next(^indexes[j], j));
 								}
 							}
-						})
+						}),
+						\ -> {
+							indexes := [];
+						}
 					];
-				a.values ::= mapi(a.container.values, a.fn);
+
+				a.values ::= mapi(a.container.values, \i, v -> {
+					index = make(i);
+					indexes := insertArray(^indexes, i, index);
+					a.fn(index, v);
+				});
 			}
 			DynamicArraySubMap(__, __, __, __, __, __) : {
 				disposers = ref [];
@@ -713,9 +725,25 @@ linkDynamicArray(a : DynamicArray<?>) -> void {
 
 		switch (a : DynamicArray<?>) {
 			DynamicArrayModifier(): {
-				iterDList(a.subscribers, \fn -> iteri(a.values, \i, aa -> fn(HeckelInsert(i, aa))));
+				iterDynamicArraySubscribers(a.subscribers, \fn -> iteri(a.values, \i, aa -> fn(HeckelInsert(i, aa))));
 			}
 			default: {}
+		}
+	}
+}
+
+
+
+iterDynamicArraySubscribers(list : DList<?>, fn : (?) -> void) -> void {
+	iterDynamicArraySubscribersNode(list.first, fn);
+}
+
+iterDynamicArraySubscribersNode(node : DNode<?>, fn : (?) -> void) -> void {
+	switch (node : DNode) {
+		DEnd(): {}
+		DLink(v, before, after, __): {
+			fn(v);
+			iterDynamicArraySubscribersNode(after, fn);
 		}
 	}
 }
@@ -743,7 +771,7 @@ insertDynamicArray(a : DynamicArray<?>, i : int, v : ?) -> void {
 	a.values ::= insertArray(a.values, ii, v);
 
 	if (a.linked) {
-		iterDList(a.subscribers, \fn -> fn(HeckelInsert(ii, v)));
+		iterDynamicArraySubscribers(a.subscribers, \fn -> fn(HeckelInsert(ii, v)));
 	}
 }
 
@@ -754,7 +782,7 @@ insertDynamicArray(a : DynamicArray<?>, i : int, v : ?) -> void {
 // 		a.values ::= moveElement(a.values, f, tt);
 
 // 		if (a.linked) {
-// 			iterDList(a.subscribers, \fn -> fn(HeckelMove(f, tt)));
+// 			iterDynamicArraySubscribers(a.subscribers, \fn -> fn(HeckelMove(f, tt)));
 // 		}
 // 	}
 // }
@@ -765,7 +793,7 @@ deleteDynamicArray(a : DynamicArray<?>, i : int) -> void {
 		a.values ::= removeIndex(a.values, i);
 
 		if (a.linked) {
-			iterDList(a.subscribers, \fn -> fn(HeckelDelete(i, v)));
+			iterDynamicArraySubscribers(a.subscribers, \fn -> fn(HeckelDelete(i, v)));
 		}
 	}
 }
@@ -831,7 +859,7 @@ mapDynamicArray(a : DynamicArray<?>, fn : (?) -> ??) -> DynamicArray<??> {
 	DynamicArrayMap(a, fn, [], false, makeDList(), []);
 }
 
-mapiDynamicArray(a : DynamicArray<?>, fn : (int, ?) -> ??) -> DynamicArray<??> {
+mapiDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> ??) -> DynamicArray<??> {
 	DynamicArrayMapi(a, fn, [], false, makeDList(), []);
 }
 
