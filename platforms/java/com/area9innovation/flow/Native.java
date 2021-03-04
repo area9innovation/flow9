@@ -754,16 +754,41 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private Timer timer_obj = null;
+	private Map<Long, Timer> timers = new HashMap();
+
+	private Timer getTimer() {
+		Long threadId = Thread.currentThread().getId();
+		if (timers.containsKey(threadId)) {
+			return timers.get(threadId);
+		} else {
+			Timer timer = new Timer(true);
+			synchronized (timers) {
+				timers.put(threadId, timer);
+			}
+
+			TimerTask task = new TimerTask() {
+				public void run() {
+					invokeCallback(new Runnable() {
+						public void run() {
+							synchronized (timers) {
+								timers.put(Thread.currentThread().getId(), timer);
+							}
+						}
+					});
+				}
+			};
+			timer.schedule(task, 0);
+
+			return timer;
+		}
+	}
 
 	public void invokeCallback(Runnable cb) {
 		cb.run();
 	}
 
 	public final Object timer(int ms, final Func0<Object> cb) {
-		if (timer_obj == null)
-			timer_obj = new Timer(true);
-
+		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
 			public void run() {
 				invokeCallback(new Runnable() {
@@ -773,15 +798,13 @@ public class Native extends NativeHost {
 				});
 			}
 		};
-		timer_obj.schedule(task, ms);
+		timer.schedule(task, ms);
 
 		return null;
 	}
 
 	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
-		if (timer_obj == null)
-			timer_obj = new Timer(true);
-
+		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
 			public void run() {
 				invokeCallback(new Runnable() {
@@ -791,11 +814,11 @@ public class Native extends NativeHost {
 				});
 			}
 		};
-		timer_obj.schedule(task, ms);
+		timer.schedule(task, ms);
 
 		return new Func0<Object>() {
 			public Object invoke() {
-				timer_obj.cancel();
+				timer.cancel();
 				return null;
 			}
 		};
@@ -918,10 +941,25 @@ public class Native extends NativeHost {
 	}
 
 	public final Object captureCallstack() {
-		return null;
+		return Thread.currentThread().getStackTrace();
+	}
+	public final String captureStringCallstack() {
+		return callstack2string(captureCallstack());
+	}
+	public final String callstack2string(Object obj) {
+		if (obj instanceof StackTraceElement[]) {
+			StackTraceElement[] stack = (StackTraceElement[])obj;
+			StringBuilder sb = new StringBuilder();
+			for (StackTraceElement el : stack) {
+				sb.append(el.toString() + "\n");
+			}
+			return sb.toString();
+		} else {
+			return new String();
+		}
 	}
 	public final Object captureCallstackItem(int index) {
-		return null;
+		return Thread.currentThread().getStackTrace()[index];
 	}
 	public final Object impersonateCallstackItem(Object item, int index) {
 		return null;
@@ -1806,5 +1844,36 @@ public class Native extends NativeHost {
 		ArrayList vector = (ArrayList)v;
 		vector.clear();
 		return null;
+	}
+
+	public final <RT> Func0<RT> synchronizedConstFn(Object lock, Func0<RT> fn) {
+		return new Func0<RT>() {
+			@Override
+			public RT invoke() {
+				synchronized (lock) {
+					return fn.invoke();
+				}
+			}
+		};
+	}
+	public final <RT, A1> Func1<RT, A1> synchronizedUnaryFn(Object lock, Func1<RT, A1> fn) {
+		return new Func1<RT, A1>() {
+			@Override
+			public RT invoke(A1 arg1) {
+				synchronized (lock) {
+					return fn.invoke(arg1);
+				}
+			}
+		};
+	}
+	public final <RT, A1, A2> Func2<RT, A1, A2> synchronizedBinaryFn(Object lock, Func2<RT, A1, A2> fn) {
+		return new Func2<RT, A1, A2>() {
+			@Override
+			public RT invoke(A1 arg1, A2 arg2) {
+				synchronized (lock) {
+					return fn.invoke(arg1, arg2);
+				}
+			}
+		};
 	}
 }

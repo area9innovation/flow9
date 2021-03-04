@@ -22,6 +22,7 @@ class FlowContainer extends Container {
 	public var stageChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
 	private var localTransformChanged : Bool = true;
+	public var cropEnabled : Bool = true;
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
@@ -30,6 +31,7 @@ class FlowContainer extends Container {
 	public var nativeWidget : Dynamic;
 	public var accessWidget : AccessWidget;
 	public var tagName : String;
+	public var className : String;
 
 	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
@@ -278,6 +280,9 @@ class FlowContainer extends Container {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		if (this.className != null && this.className != '') {
+			nativeWidget.classList.add(this.className);
+		}
 
 		isNativeWidget = true;
 

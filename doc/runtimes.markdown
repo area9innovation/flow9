@@ -214,7 +214,7 @@ works best.
 Next, construct a static profile of the top-100 functions in your program using the flowprof-selfrating
 script:
 
-	flowprof-rating flowprof.ins foo.debug >top.txt
+	flowprof-selfrating flowprof.ins foo.debug >top.txt
 
 Next, recompile your program like this:
 

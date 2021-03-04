@@ -15,7 +15,8 @@ class FlowSprite extends Sprite {
 	private var transformChanged : Bool = true;
 
 	private var url : String = "";
-	private var loaded : Bool = false;
+	public var loaded : Bool = false;
+	public var failed : Bool = false;
 	private var visibilityChanged : Bool = true;
 	private var widgetBoundsChanged : Bool = false;
 	private var updateParent : Bool = false;
@@ -31,8 +32,10 @@ class FlowSprite extends Sprite {
 	private var _bounds = new Bounds();
 	public var filterPadding = 0.0;
 
-	private var nativeWidget : Dynamic;
-	private var accessWidget : AccessWidget;
+	public var nativeWidget : Dynamic;
+	public var accessWidget : AccessWidget;
+	public var tagName : String;
+	public var className : String;
 
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
@@ -192,6 +195,7 @@ class FlowSprite extends Sprite {
 		}
 
 		loaded = false;
+		failed = true;
 		visibilityChanged = true;
 
 		texture = Texture.EMPTY;
@@ -205,7 +209,7 @@ class FlowSprite extends Sprite {
 	}
 
 	private function enableSprites() : Void {
-		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+		if (untyped this.destroyed || parent == null || nativeWidget == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
 			return;
 		}
 
@@ -268,6 +272,7 @@ class FlowSprite extends Sprite {
 
 					visibilityChanged = true;
 					loaded = true;
+					failed = false;
 				}
 			} catch (e : Dynamic) {
 				if (parent != null && retries < 2) {
@@ -390,6 +395,9 @@ class FlowSprite extends Sprite {
 		}
 
 		nativeWidget.className = 'nativeWidget';
+		if (this.className != null && this.className != '') {
+			nativeWidget.classList.add(this.className);
+		}
 		nativeWidget.style.visibility = 'hidden';
 		nativeWidget.alt = altText;
 
@@ -399,7 +407,7 @@ class FlowSprite extends Sprite {
 	public function switchUseCrossOrigin(useCrossOrigin) : Void {
 		if (this.useCrossOrigin != useCrossOrigin) {
 			this.useCrossOrigin = useCrossOrigin;
-			
+
 			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url)
 			else nativeWidget.crossOrigin = null;
 		}
@@ -419,8 +427,18 @@ class FlowSprite extends Sprite {
 
 				widgetBounds.minX = 0;
 				widgetBounds.minY = 0;
-				widgetBounds.maxX = nativeWidget.naturalWidth != null && nativeWidget.naturalWidth > 0 ? nativeWidget.naturalWidth : nativeWidget.clientWidth;
-				widgetBounds.maxY = nativeWidget.naturalHeight != null && nativeWidget.naturalHeight > 0 ? nativeWidget.naturalHeight : nativeWidget.clientHeight;
+
+				if (nativeWidget.naturalWidth != null && nativeWidget.naturalHeight != null && (nativeWidget.naturalWidth > 0 || nativeWidget.naturalHeight > 0)) {
+					widgetBounds.maxX = nativeWidget.naturalWidth;
+					widgetBounds.maxY = nativeWidget.naturalHeight;
+				} else {
+					Browser.document.body.appendChild(nativeWidget);
+
+					widgetBounds.maxX = nativeWidget.clientWidth * RenderSupport.backingStoreRatio;
+					widgetBounds.maxY = nativeWidget.clientHeight * RenderSupport.backingStoreRatio;
+
+					this.addNativeWidget();
+				}
 			}
 		} else {
 			widgetBounds.minX = 0;

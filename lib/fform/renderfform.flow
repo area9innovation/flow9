@@ -4,8 +4,8 @@ import form/renderform;
 import formats/svg/svg;
 
 export {
-	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void);
-	frenderStage : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void);
+	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void;
+	frenderStage : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void;
 	renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult;
 	attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability]) -> FRenderResult;
 
@@ -17,7 +17,7 @@ export {
 
 currentFFormCount = ref 0;
 
-frenderTo(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void) {
+frenderTo(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
 	renCt = ^globalRenderCount;
 	globalRenderCount := ^globalRenderCount + 1;
 
@@ -27,14 +27,14 @@ frenderTo(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>) ->
 	\ -> {d1(); applyall(d2.disposers); if (renCt == ^globalRenderCount - 1) globalRenderCount := renCt}
 }
 
-frenderStage(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void) {
+frenderStage(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
 	if (^globalRenderCount == 0)
 		println("Warning: Don't use overlay stage render as first layer render.");
 
 	frenderTo(currentClip(), form, awh);
 }
 
-frender(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void) {
+frender(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
 	frenderTo(mainRenderClip(), form, awh);
 }
 
@@ -666,6 +666,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			setFullWindow = \fw -> {
 				setFullWindowTarget(container);
 				toggleFullWindow(fw);
+				if (!fw) resetFullWindowTarget()
 			};
 
 			if (getValue(fullwindow)) {
@@ -691,7 +692,6 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						if (getValue(fullwindow)) {
 							setFullWindow(false);
 						}
-						resetFullWindowTarget();
 						deleteNative(container);
 					}
 				),
@@ -950,14 +950,18 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			else
 				d
 		}
-		FCrop2(left, top, cwidth, cheight, form, stack): {
+		FCrop2(left, top, cwidth, cheight, enabled, form, stack): {
 			attachFChildAndCapability(
 				rform,
 				renderFForm(form, zorder),
 				[FClipMove(), FClipRotate(), FClipScale(), FClipMask()],
 				\clip -> {
 					setClipCallstack(clip, stack);
-					make4Subscribe(left, top, cwidth, cheight, \l, t, w, h -> setScrollRect(clip, l, t, w, h))()
+					uns = [
+						make4Subscribe(left, top, cwidth, cheight, \l, t, w, h -> setScrollRect(clip, l, t, w, h))(),
+						makeSubscribe(enabled, \en -> setCropEnabled(clip, en))()
+					];
+					\ -> applyall(uns)
 				}
 			);
 		}
@@ -1002,7 +1006,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		FSize2(__, form): renderFForm(form, zorder);
 		FAvailable2(__, form): renderFForm(form, zorder);
 		FAccess(properties, form): {
-			if (^accessibilityEnabled || ^fAccessibilityEnabled) {
+			if (^accessibilityEnabled || ^fAccessibilityEnabled ||
+				(js && (extractStruct(properties, ClassName("")).className != "" || extractStruct(properties, TagName("")).tagName != ""))) {
 				d = renderFForm(form, zorder);
 
 				makeAccessClip =
@@ -1399,6 +1404,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			maxChars = extractStruct(style, FMaxChars(const(-1))).maxChars;
 			numericStep = tryExtractStruct(style, FNumericStep(const(1.)));
 			filterFn = tryExtractStruct(style, FInputFilter(idfn));
+			eventFilterFn = tryExtractStruct(style, dummyFInputEventFilter);
+
 			keyFilterFn = tryExtractStruct(style, FInputKeyFilter(\__, __ -> true));
 			cursorColor = extractStruct(style, FCursorColor(fselect(characterStyle, FLift(\cs -> extractStruct(cs, Fill(0)).color)))).color;
 			cursorOpacity = extractStruct(style, FCursorOpacity(fselect(characterStyle, FLift(\cs -> extractStruct(cs, FillOpacity(1.)).opacity)))).opacity;
@@ -1511,6 +1518,12 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						filterFn,
 						\fn ->
 							[addTextInputFilter(textfield, fn.fn)],
+						[]
+					),
+					eitherMap(
+						eventFilterFn,
+						\fn ->
+							[addTextInputEventFilter(textfield, fn.fn)],
 						[]
 					),
 					eitherMap(

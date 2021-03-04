@@ -153,6 +153,7 @@ class TextClip extends NativeWidgetClip {
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
+	private var TextInputEventFilters : Array<String -> String -> String> = new Array();
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
@@ -514,6 +515,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		nativeWidget.style.letterSpacing = RenderSupport.RendererType != "html" || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		nativeWidget.style.wordSpacing = RenderSupport.RendererType != "html" || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
 		nativeWidget.style.fontFamily = RenderSupport.RendererType != "html" || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
 		nativeWidget.style.fontWeight = RenderSupport.RendererType != "html" || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = RenderSupport.RendererType != "html" || style.fontStyle != 'normal' ? style.fontStyle : null;
@@ -536,7 +538,8 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (RenderSupport.RendererType == "html" && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize)}px';
+				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
 				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
@@ -612,6 +615,8 @@ class TextClip extends NativeWidgetClip {
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 
+		RenderSupport.emitUserStyleChanged();
+
 		if (fontWeight > 0 || fontSlope != "") {
 			untyped __js__("
 			if (TextClip.ffMap === undefined) TextClip.ffMap = {}
@@ -631,13 +636,23 @@ class TextClip extends NativeWidgetClip {
 
 		this.style.fontSize = Math.max(fontSize, 0.6);
 		this.style.fill = RenderSupport.makeCSSColor(fillColor, fillOpacity);
-		this.style.letterSpacing = letterSpacing;
+		if (untyped Math.isFinite(RenderSupport.UserDefinedLetterSpacingPercent) && RenderSupport.UserDefinedLetterSpacingPercent != 0.0) {
+			this.style.letterSpacing = untyped RenderSupport.UserDefinedLetterSpacingPercent * this.style.fontSize;
+		} else if (untyped Math.isFinite(RenderSupport.UserDefinedLetterSpacing) && RenderSupport.UserDefinedLetterSpacing != 0.0) {
+			this.style.letterSpacing = untyped RenderSupport.UserDefinedLetterSpacing;
+		} else {
+			this.style.letterSpacing = letterSpacing;
+		}
 		this.style.fontFamily = fontStyle.family;
 		this.style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		this.style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		this.style.lineHeight = Math.ceil(fontSize * 1.15);
+		this.style.lineHeight = Math.ceil(untyped RenderSupport.UserDefinedLineHeightPercent * this.style.fontSize);
 		this.style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		this.style.padding = Math.ceil(fontSize * 0.2);
+
+		if (untyped Math.isFinite(RenderSupport.UserDefinedWordSpacingPercent) && RenderSupport.UserDefinedWordSpacingPercent != 0.0) {
+			this.style.wordSpacing = untyped RenderSupport.UserDefinedWordSpacingPercent * this.style.fontSize;
+		}
 
 		measureFont();
 
@@ -1200,6 +1215,13 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
+		// Hotfix for IE : inputType isn`t implemented for IE, so in this case we fake all the events to have "insertText" type
+		if (e != null && (e.inputType != null || Platform.isIE)) {
+			for (f in TextInputEventFilters) {
+				newValue = f(newValue, Platform.isIE ? "insertText" : e.inputType);
+			}
+		}
+
 		if (nativeWidget == null) {
 			return;
 		}
@@ -1395,6 +1417,11 @@ class TextClip extends NativeWidgetClip {
 		return function() { TextInputFilters.remove(filter); }
 	}
 
+	public function addTextInputEventFilter(filter : String -> String -> String) : Void -> Void {
+		TextInputEventFilters.push(filter);
+		return function() { TextInputEventFilters.remove(filter); }
+	}
+
 	public function addTextInputKeyDownEventFilter(filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
 		TextInputKeyDownFilters.push(filter);
 		return function() { TextInputKeyDownFilters.remove(filter); }
@@ -1425,6 +1452,24 @@ class TextClip extends NativeWidgetClip {
 			}
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+		}
+
+		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
+			RenderSupport.defer(updateTextWidth, 0);
+		}
+	}
+
+	private function updateTextWidth() : Void {
+		if (nativeWidget != null) {
+			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
+			if (textNodeWidth != null && textNodeWidth > 0) {
+				var textWidth = textNodeWidth / (untyped this.transform ? untyped this.transform.worldTransform.a : 1);
+
+				if (textWidth != metrics.width) {
+					metrics.width = textWidth;
+					this.emitEvent('textwidthchanged');
+				}
+			}
 		}
 	}
 
@@ -1531,6 +1576,9 @@ class TextClip extends NativeWidgetClip {
 			this.updateClipID();
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
+			if (this.className != null && this.className != '') {
+				nativeWidget.classList.add(this.className);
+			}
 
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');

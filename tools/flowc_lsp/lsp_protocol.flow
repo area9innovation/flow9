@@ -32,7 +32,7 @@ export {
 		type : string, // Content-Type
 		json : string  // the Json description of request
 	);
-	lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, out_cb : (string) -> void, loop_cb : () -> void, exit_cb : () -> void) -> void;
+	lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, out_cb : (string) -> void, exit_cb : () -> void) -> void;
 }
 
 lspDecodeJsonRequest(s : string) -> Json {
@@ -76,7 +76,6 @@ LspMethodCall(
 	id : Json, 
 	params : Json, 
 	out_cb : (Json) ->  void, 
-	loop_cb : () -> void, 
 	exit_cb : () -> void
 );
 
@@ -116,7 +115,7 @@ lspNormalResponse(id : Json, result : Json) -> Json {
 	lspResponseMessage2Json(LspResponseMessage("2.0", id, result, None()));
 }
 
-lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (string) ->  void, loop_cb : () -> void, exit_cb : () -> void) -> void {
+lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (string) ->  void, exit_cb : () -> void) -> void {
 	out_cb = \msg -> {
 		js_len = strlen(expandUtf8(json2string(msg)));
 		js_out = json2string(msg);
@@ -126,11 +125,10 @@ lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (st
 		Some(request): {
 			if (request.method == "") {
 				out_cb(lspErrorResponse(request.id, 1, "request method is not set"));
-				loop_cb();
 			} else {
 				switch (lookupTree(lspMethods, request.method)) {
 					Some(method): {
-						method(LspMethodCall(lsp_conf, request.id, request.params, out_cb, loop_cb, exit_cb));
+						method(LspMethodCall(lsp_conf, request.id, request.params, out_cb, exit_cb));
 					}
 					None(): {
 						if (request.method == "$/cancelRequest") {
@@ -138,7 +136,6 @@ lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (st
 						} else {
 							out_cb(lspErrorResponse(request.id, 1, "request method " + request.method + " is not found"));
 						}
-						loop_cb();
 					}
 				}
 			}
@@ -159,11 +156,9 @@ lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (st
 							lspServerLog("unknown request: " + json2string(response.id), lsp_conf);
 						}
 					}
-					loop_cb();
 				}
 				None(): {
 					out_cb(lspErrorResponse(getJsonFieldValue(json, "id", JsonNull()), 1, "illegal request '" + json2string(json) + "'"));
-					loop_cb();
 				}
 			}
 		}
@@ -175,7 +170,6 @@ lspShutdown(call : LspMethodCall) -> void {
 	lspServerState.currId ::= 1;
 	lspServerState.requests ::= makeTree();
 	call.out_cb(lspNormalResponse(call.id, JsonNull()));
-	call.loop_cb();
 }
 
 lspExit(call : LspMethodCall) -> void {
@@ -197,7 +191,7 @@ lspInitialized(call: LspMethodCall) -> void {
 		lspServerState.currId ::= lspServerState.currId + 1;
 		call.out_cb(lspRequestMessage2Json(request));
 	}
-	call.loop_cb(); // It's a notification, no response.
+	// It's a notification, no response.
 }
 
 lspInitialize(call: LspMethodCall) -> void {
@@ -234,7 +228,6 @@ lspInitialize(call: LspMethodCall) -> void {
 			)
 		])
 	));
-	call.loop_cb();
 }
 
 lspTextDocumentDidOpen(call: LspMethodCall) -> void {
@@ -245,7 +238,7 @@ lspTextDocumentDidOpen(call: LspMethodCall) -> void {
 			lspRunConf(true,
 				setConfigOption(conf, "update-cache", "1"),
 				\code, out, err -> {
-					if (code != 0) call.loop_cb() else {
+					if (code == 0) {
 						lspRunConf(true,
 							setConfigOptions(conf, [
 									Pair("did-open", path),
@@ -255,7 +248,6 @@ lspTextDocumentDidOpen(call: LspMethodCall) -> void {
 							),
 							\code_, out_, err_ -> {
 								call.out_cb(lspErrorDiagnostics(textitem.uri, out));
-								call.loop_cb();
 							}
 						);
 					}
@@ -264,7 +256,6 @@ lspTextDocumentDidOpen(call: LspMethodCall) -> void {
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -283,14 +274,12 @@ lspTextDocumentDidChange(call: LspMethodCall) -> void {
 				),
 				\code, out, err -> {
 					call.out_cb(lspErrorDiagnostics(params.textDocument.uri, out));
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			lspServerLog("Failed to load a file " + json2string(call.params) + " ", call.lspConf);
 			call.out_cb(lspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -300,14 +289,10 @@ lspTextDocumentDidSave(call: LspMethodCall) -> void {
 		Some(params): {
 			path = fcCorrectUriPath(params.textDocument.uri.path);
 			conf = lspFileConfig(path);
-			lspRunConf(true,
-				setConfigOption(conf, "did-save", path),
-				\__,__,__ -> call.loop_cb()
-			);
+			lspRunConf(true, setConfigOption(conf, "did-save", path), nop3);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text document item is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -327,13 +312,11 @@ lspTextDocumentDocumentSymbol(call: LspMethodCall) -> void {
 						symbols = lspParseSymbols(out);
 						call.out_cb(lspNormalResponse(call.id, JsonArray(symbols)));
 					}
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text document id is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -358,13 +341,11 @@ lspTextDocumentDeclaration(call: LspMethodCall) -> void {
 						locations = lspParseLocations(out);
 						call.out_cb(lspNormalResponse(call.id, JsonArray(locations)));
 					}
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -389,13 +370,11 @@ lspTextDocumentDefinition(call: LspMethodCall) -> void {
 						locations = lspParseLocations(out);
 						call.out_cb(lspNormalResponse(call.id, JsonArray(locations)));
 					}
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -420,13 +399,11 @@ lspTextDocumentReferences(call: LspMethodCall) -> void {
 						locations = lspParseLocations(out);
 						call.out_cb(lspNormalResponse(call.id, JsonArray(locations)));
 					}
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -455,13 +432,11 @@ lspTextDocumentHover(call: LspMethodCall) -> void {
 							call.out_cb(lspNormalResponse(call.id, JsonNull()));
 						}
 					}
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -486,13 +461,11 @@ lspTextDocumentRename(call: LspMethodCall) -> void {
 					} else {
 						call.out_cb(lspNormalResponse(call.id, JsonNull()));
 					}
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "text position is invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -527,13 +500,11 @@ lspTextDocumentCompletion(call: LspMethodCall) -> void {
 							call.out_cb(lspNormalResponse(call.id, JsonNull()));
 						}
 					}
-					call.loop_cb();
 				}
 			);
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "completion params are invalid: " + json2string(call.params)));
-			call.loop_cb();
 		}
 	}
 }
@@ -545,7 +516,6 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 				// Execute a special command: compilation
 				if (length(commandParams.arguments) == 0) {
 					call.out_cb(lspErrorResponse(call.id, 1, "no file for compilation is provided"));
-					call.loop_cb();
 				} else {
 					file = ref "";
 					params = filtermap(commandParams.arguments, \arg -> 
@@ -569,7 +539,6 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 					);
 					if (^file == "") {
 						call.out_cb(lspErrorResponse(call.id, 1, "no file for compilation"));
-						call.loop_cb();
 					} else {
 						path = fcCorrectUriPath(^file);
 						conf = lspFileConfig(path);
@@ -579,7 +548,6 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 								msg = if (err == "") out else err + "\n" + out;
 								call.out_cb(lspErrorDiagnostics(parseURI(path), msg));
 								call.out_cb(lspNormalResponse(call.id, JsonString(msg)));
-								call.loop_cb();
 							}
 						);
 					}
@@ -606,17 +574,14 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 					\code, out, err -> {
 						msg = if (err == "") out else err + "\n" + out;
 						call.out_cb(lspNormalResponse(call.id, JsonString(msg)));
-						call.loop_cb();
 					}
 				);
 			} else {
 				call.out_cb(lspErrorResponse(call.id, 1, "Unknown command: '" + commandParams.command + "'"));
-				call.loop_cb();
 			}
 		}
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "ExecuteCommand request is illegal"));
-			call.loop_cb();
 		}
 	}
 }

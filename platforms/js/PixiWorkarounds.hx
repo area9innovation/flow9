@@ -394,6 +394,7 @@ class PixiWorkarounds {
 				let lines = '';
 
 				const cache = {};
+				const wordSpacing = style.wordSpacing || 0;
 				const letterSpacing = style.letterSpacing;
 				const whiteSpace = style.whiteSpace;
 
@@ -563,7 +564,7 @@ class PixiWorkarounds {
 							line += token;
 
 							// update width counter
-							width += tokenWidth;
+							width += tokenWidth + (token != ' ' ? wordSpacing : 0.0);
 						}
 					}
 				}
@@ -608,7 +609,7 @@ class PixiWorkarounds {
 			var nativeSetProperty = CSSStyleDeclaration.prototype.setProperty;
 
 			CSSStyleDeclaration.prototype.setProperty = function(propertyName, value, priority) {
-				RenderSupport.emitUserStyleChanged();
+				RenderSupport.checkUserStyleChanged();
 				nativeSetProperty.call(this, propertyName, value, priority);
 			}
 
@@ -671,7 +672,7 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					lineWidth += (lines[i].length - 1) * style.letterSpacing;
+					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
 
 					lineWidths[i] = lineWidth;
 					maxLineWidth = Math.max(maxLineWidth, lineWidth);

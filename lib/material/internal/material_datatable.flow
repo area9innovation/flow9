@@ -22,6 +22,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	reorderShowIcon = !contains(style, MListReorderHideIcon());
 	// Reserved space for column with drag&drop reorder icon. Icon added at function MListLine2T
 	reorderIconSpace = if (isReorderEnabled && reorderShowIcon) 40. else 0.;
+	reorderOnDragEnd = contains(style, MReorderOnDragEnd());
 
 	rowsBoxScrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
 	hoverEnabled : MHoverEnabled = extractStruct(style, MHoverEnabled(const(true)));
@@ -222,6 +223,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 											),
 											[state.selection, state.onClick, rl, hoverEnabled]
 											|> (\st : [MListState] -> ifArrayPush(st, !reorderShowIcon, MListReorderHideIcon()))
+											|> (\st -> ifArrayPush(st, reorderOnDragEnd, MReorderOnDragEnd()))
 										),
 										m2t
 									)
@@ -431,6 +433,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			}, t))
 		|> MDTFirstColumn(state, p, headers, rows, sorting, innerScrollState, expandRow, rowsBoxScrollPosition,
 				rowBackgroundStyle, selectedBgStyle,visibleRowsHeight, rowsAvailableHeight)
+		|> (\t -> TAccess([TagName("tbody")], t))
 		|> (\t -> TAccess([TagName("table")], t))
 		|> addHeaderActions(p)
 		// Bottom bar
@@ -567,13 +570,17 @@ makeMDataTableState(
 	isCheckboxColumn = \i -> isSome(checkboxSelection) && i == 0;
 	checkboxColor = eitherMap(checkboxSelection, \cs -> extractMColor(parent, cs.style, MPrimaryColor()), MPrimaryColor());
 	checkboxBorder = \rh -> forceRange((rh - 24.) / 2., 0., 12.);
-	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + standardIconSize - cellBorder;
+	checkboxIconSize = eitherMap(checkboxSelection, \cs -> extractStruct(cs.style, MIconSize(standardIconSize)).size, standardIconSize);
+	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + checkboxIconSize - cellBorder;
 
 	makeChkbox = \p, trigger, en, onClk, hStyle -> {
 		lh = lineHeight(isSome(hStyle));
 		chStyle =
-			[MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)]
-			|> (\st -> eitherMap(hStyle, \hs : [MIconStyle] -> concat3(st, hs, [MUncheckedIconStyle(hs)]), st));
+			concat3(
+				[MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)],
+				eitherMap(hStyle, \hs : [MIconStyle] -> concat(hs, [MUncheckedIconStyle(arrayPush(hs, MIconSize(checkboxIconSize)))]), []),
+				[MIconSize(checkboxIconSize)]
+			);
 
 		MCheckBox2T(manager, p, MCheckBox(TEmpty(), trigger, chStyle), m2t)
 		|> (\t -> TBorderDir(-checkboxBorder(lh) / 2. - cellBorder / 2., 0., 0., 0., t, p.rtl))
@@ -1026,7 +1033,7 @@ MDTTitles(
 	mapi(state.columns, \i0, c : MColumnDynamic -> if (state.replaceHeader) state.cellBox(i0, true) else {
 		colHeaderStyle = tryExtractStruct(concat(c.style, eitherMap(headerStyle, \e -> [e], [])), defaultHS);
 		arrowStyle = eitherMap(colHeaderStyle, \chs -> style2MIconStyle(chs.textStyle), []);
-		rightAlign = (contains(c.style, RightAlign()) != (p.rtl && !isUrlParameterTrue("new"))) || contains(c.style, if (p.rtl) StartAlign() else EndAlign());
+		rightAlign = isSameStructType(commonAlignment2abs(extractCommonAlignment(c.style), p.rtl), RightAlign());
 		sortStyle = if (isReorder) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
 		sortable = isSome(sortStyle) || (!isReorder && (sorting.hasExtOrderBy || contains(c.style, MAutoSort())));
 		i = i0 - state.headCount + 1;
@@ -1552,13 +1559,18 @@ initExpandRow(enabled : Transform<bool>, screenW : Transform<double>, minWidthsS
 
 alignCellContent(parent : MFocusGroup, cellBorder : double, colstyle : [MColumnStyle], box : Tropic) -> (Tropic) -> Tropic {
 	\content : Tropic -> {
-		right = (contains(colstyle, RightAlign()) != (parent.rtl && !isUrlParameterTrue("new"))) || contains(colstyle, if (parent.rtl) StartAlign() else EndAlign());
-		center = contains(colstyle, CenterAlign());
+		alignment = 
+			switch (commonAlignment2abs(extractCommonAlignment(colstyle), parent.rtl)) {
+				RightAlign() : 1.;
+				CenterAlign() : 0.5;
+				default : 0.;
+			}
+
 		TCopySize(
 			box,
 			\tr ->
 				TTweak(
-					[TAlign(const(if (center) 0.5 else if (right) 1. else 0.), const(0.5))],
+					[TAlign(const(alignment), const(0.5))],
 					TBorderDir(cellBorder / 2., 0., cellBorder / 2., 1.,
 						TAvailable(content, TBorderDir(-cellBorder, 0., 0., -1., tr, parent.rtl)),
 						parent.rtl

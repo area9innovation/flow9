@@ -16,7 +16,7 @@ class FlowCanvas extends FlowContainer {
 	public function updateNativeWidget() {
 		if (visible && worldAlpha > 0 && renderable) {
 			var tempResolution = RenderSupport.PixiRenderer.resolution;
-			RenderSupport.PixiRenderer.resolution =  Math.max(worldTransform.a, worldTransform.d) * tempResolution;
+			RenderSupport.PixiRenderer.resolution =  Math.ceil(Math.max(worldTransform.a, worldTransform.d) * tempResolution);
 
 			if (DisplayObjectHelper.DebugUpdate) {
 				nativeWidget.setAttribute("update", Std.int(nativeWidget.getAttribute("update")) + 1);
@@ -36,7 +36,7 @@ class FlowCanvas extends FlowContainer {
 			transform.tx += Math.max(-localBounds.minX, 0.0);
 			transform.ty += Math.max(-localBounds.minY, 0.0);
 
-			this.renderToCanvas(nativeWidget, context, transform);
+			this.renderToCanvas(nativeWidget, context, transform, worldAlpha);
 
 			RenderSupport.PixiRenderer.resolution = tempResolution;
 

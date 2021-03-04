@@ -1,4 +1,5 @@
 import material/material_dialog;
+import material/material_print;
 import material/material_snackbar;
 import material/internal/material_reorder;
 import ui/animate/teasing;
@@ -122,6 +123,19 @@ export {
 		fade : bool
 	) -> Material;
 
+	MFlippingCard(
+		front : [MCardBlock],
+		back : [MCardBlock],
+		style : Transform<[MCardStyle]>,
+		state : [MFlippingCardState]
+	) -> Material;
+
+		MFlippingCardState ::= MButtonState, MDuration, MTrigger;
+			MTrigger(type : MTriggerType);
+				MTriggerType ::= MTriggerHover, MTriggerClick;
+					MTriggerHover();
+					MTriggerClick();
+
 	// Construct an HTML stage with the given metrics
 	MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material;
 
@@ -195,6 +209,8 @@ MLazyListExtended(lines : [Pair<() -> Material, Transform<bool>>], scrollInspect
 	loadState0 : [DynamicBehaviour<bool>] = generate(0, length(lines), \__ -> make(false));
 	loadState = mapi(loadState0, \i, loaded -> fOrs(concat([loaded], map(tailFrom(lines, i), \p -> p.second)), true));
 
+	itemHeights : [DynamicBehaviour<double>] = generate(0, length(lines), \__ -> make(0.));
+
 	loadLazy = ref nop;
 	loadLazy := \ -> if (getValue(height) <= getValue(scrollInspect.topleft).y + getValue(scrollInspect.widthHeight).height) {
 		// scrolled to the end of list
@@ -206,10 +222,13 @@ MLazyListExtended(lines : [Pair<() -> Material, Transform<bool>>], scrollInspect
 	}
 
 	MConstruct([
-		\ -> subscribe(scrollInspect.topleft, \__ -> ^loadLazy()),
-		\ -> subscribe2(scrollInspect.widthHeight, \__ -> ^loadLazy())
+		makeSubscribeWithLast(scrollInspect.topleft, \prev, curr -> {
+			if (prev.y <= curr.y) ^loadLazy()
+		}),
+		\ -> subscribe2(scrollInspect.widthHeight, \__ -> ^loadLazy()),
+		makeSubscribe2(fstall(fmerge(itemHeights), 0), \__ -> ^loadLazy())
 	], TEmpty())
-		|> (\m -> arrayPush(mapi(lines, \i, line -> MShowLazy(loadState[i], line.first)), m))
+		|> (\m -> arrayPush(mapi(lines, \i, line -> MAttachHeight(MShowLazy(loadState[i], line.first), itemHeights[i])), m))
 		|> MLines
 		|> (\m -> MAttachHeight(m, height));
 }
@@ -885,6 +904,7 @@ MDropDownOrAutoComplete(
 MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>, separator : string) -> Material {
 	text = make("");
 	focused = make(false);
+	currentMatches = make([]);
 
 	idxs2string = \idxs -> concatStrings(map(idxs, \idx -> elementAt(items, idx, "") + separator));
 	trimStr = \s -> trim(s) |> toLowerCase;
@@ -901,15 +921,6 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
 	}
 
-	matchHandler = \matched, __, __ -> {
-		deferred(\ -> nextDistinct(focused, true));
-		maybeApply(string2idx(matched), \idx ->
-		 	if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
-			else nextDistinct(selected, filter(getValue(selected), \it -> it != idx))
-		);
-		idxs2string(getValue(selected))
-	}
-
 	completionFn = \com, active, __ ->
 		MGetManager(\manager -> MGetFocusGroup(\parent -> {
 			selectedB = make(false);
@@ -921,7 +932,7 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 				)
 			));
 
-			wrapSetWordFn = \__ -> {
+			wrapSetWordFn = \ -> {
 				reverseBehaviour(selectedB);
 				deferred(\ -> nextDistinct(focused, true))
 			}
@@ -939,17 +950,55 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 					)],
 					MCheckBox(TEmpty(), selectedB, [])
 				),
-				defaultCompletionFn(manager, parent, []).fn(com, active, wrapSetWordFn)
+				MInteractive(
+					[KeyDown2(\h, k -> {
+						if (!h && active && k.keycode == 13) {
+							wrapSetWordFn();
+							true
+						} else h
+					})],
+					defaultCompletionFn(manager, parent, []).fn(com, active, \__ -> wrapSetWordFn())
+				)
 			)
 		}));
 
+	mainCheckboxSelected = make(false);
+	mainCheckbox =
+		MConstruct(
+			[
+				\ -> fBidirectionalLink(
+					fselect2(fstall(currentMatches, 0), selected, FLift2(\cm, sel ->
+						forall(cm, \it : Triple -> contains(sel, it.first))
+					)),
+					mainCheckboxSelected,
+					\sel -> nextDistinct(mainCheckboxSelected, sel),
+					\sel -> {
+						cm = map(getValue(currentMatches), \m -> m.first);
+						nextDistinct(selected,
+							if (sel) uniq(concat(fgetValue(selected), cm))
+							else filter(fgetValue(selected), \it -> !contains(cm, it))
+						)
+					}
+				)
+			],
+			MCheckBox(TEmpty(), mainCheckboxSelected, [])
+		)
+		|> MBorderTopBottom(-8.);
+
 	MAutoComplete(text, items, [
-		MSentenceMatcher(buildSentenceMatcher, matchFn),
-		TMatchedHandler(matchHandler),
-		MCompletionFn(completionFn)
+		MLeftCustomButton(
+			TEmpty(),
+			mainCheckbox,
+			48.,
+			false
+		),
+		MSentenceMatcher(simpleBuildSentenceMatcher, matchFn),
+		MCompletionFn(completionFn),
+		MCurrentMatches(\cm -> nextDistinct(currentMatches, cm))
 	], [
 		MFocused(focused),
 		MPositionOnFocus(\c, p -> strlen(c)),
+		MInputProcessKeyDown(\k -> k.keycode != 13)
 	])
 	|> (\m -> MConstruct(
 		[\ -> bidirectionalLink(selected, text, idxs2string, string2idxsMulti)],
@@ -995,6 +1044,48 @@ MCollapsingBox(content : Material, yTrans : Transform<double>, expand : Transfor
 	MGetManager(\manager -> MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t ->
 		TCollapsingBox(manager, p, m2t(content, p), yTrans, expand, None(), None(), absoluteOffsetMode, fade)
 	)))
+}
+
+MFlippingCard(
+	front : [MCardBlock],
+	back : [MCardBlock],
+	style : Transform<[MCardStyle]>,
+	state : [MFlippingCardState],
+) -> Material {
+	duration = extractStruct(state, MDuration(const(0.4))).duration;
+	triggerType = extractStruct(state, MTrigger(MTriggerHover())).type;
+	isHovered = isSameStructType(triggerType, MTriggerHover());
+	flipped = make(false);
+
+	keyframes = [
+		FAnimationKeyframe([FScaleValue(Factor(1., 1.))]),
+		FAnimationKeyframe([FScaleValue(Factor(1.05, 1.05))]),
+		FAnimationKeyframe([FScaleValue(Factor(0.5, 1.05))]),
+		FAnimationKeyframe([FScaleValue(Factor(0., 1.05))]),
+		FAnimationKeyframe([FScaleValue(Factor(0.5, 1.05))]),
+		FAnimationKeyframe([FScaleValue(Factor(1.05, 1.05))]),
+		FAnimationKeyframe([FScaleValue(Factor(1., 1.))]),
+	];
+
+	MComponent([], \foc -> {
+		trigger = if (isHovered) fstall(foc.hover, 0) else flipped;
+		MDynamicCard(
+			fselect(fstall(trigger, floor(1000. * fgetValue(duration)) / 2), FLift(\tr -> if (tr) back else front)),
+			style,
+			extractMButtonState(state)
+			|> (\st ->
+				if (isHovered) st
+				else replaceStruct(st, MOnClick(\ -> {
+					reverseBehaviour(flipped);
+					maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click())
+				}))
+			)
+		)
+		|> (\m -> MAnimation(m, fif(trigger, const(keyframes), const([])), [FAnimationDuration(duration)]))
+		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
+		|> (\m -> MAnimation(m, fif(fselectWithLast(trigger, FLift2(\old, new -> (old == new) || new)), const([]), const(keyframes)), [FAnimationDuration(duration)]))
+		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
+	})
 }
 
 MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material {

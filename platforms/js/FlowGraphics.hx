@@ -32,6 +32,7 @@ class FlowGraphics extends Graphics {
 	private var nativeWidget : Element;
 	private var accessWidget : AccessWidget;
 	public var tagName : String;
+	public var className : String;
 
 	public var isEmpty : Bool = true;
 	public var isCanvas : Bool = false;
@@ -334,10 +335,11 @@ class FlowGraphics extends Graphics {
 		updateLocalBounds();
 
 		if (untyped Math.isFinite(this._localBounds.minX) && Math.isFinite(this._localBounds.minY)) {
-			graphicsBounds.minX = untyped this._localBounds.minX;
-			graphicsBounds.minY = untyped this._localBounds.minY;
-			graphicsBounds.maxX = untyped this._localBounds.maxX;
-			graphicsBounds.maxY = untyped this._localBounds.maxY;
+			var shouldFixBound = lineWidth != null && graphicsData != null && graphicsData.length > 0 && graphicsData[0].lineAlpha == 0;
+			graphicsBounds.minX = untyped this._localBounds.minX - (shouldFixBound ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.minY = untyped this._localBounds.minY - (shouldFixBound ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.maxX = untyped this._localBounds.maxX + (shouldFixBound ? lineWidth / 2.0 : 0.0);
+			graphicsBounds.maxY = untyped this._localBounds.maxY + (shouldFixBound ? lineWidth / 2.0 : 0.0);
 		} else {
 			graphicsBounds.minX = pen.x - (lineWidth != null ? lineWidth / 2.0 : 0.0);
 			graphicsBounds.minY = pen.y - (lineWidth != null ? lineWidth / 2.0 : 0.0);
@@ -598,25 +600,26 @@ class FlowGraphics extends Graphics {
 						nativeWidget.style.borderImage = untyped data.strokeGradient;
 					}
 
+					var lineWidth = data.lineWidth != null && data.lineAlpha > 0 ? data.lineWidth : 0.0;
 					if (data.shape.type == 1) {
-						left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - lineWidth / 2.0;
+						top = data.shape.y - lineWidth / 2.0;
 
 						nativeWidget.style.borderRadius = null;
 					} else if (data.shape.type == 2) {
-						left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - DisplayObjectHelper.round(data.shape.radius) - lineWidth / 2.0;
+						top = data.shape.y - DisplayObjectHelper.round(data.shape.radius) - lineWidth / 2.0;
 
-						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius + data.lineWidth)}px';
+						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius + lineWidth)}px';
 					} else if (data.shape.type == 3) {
-						left = data.shape.x - DisplayObjectHelper.round(data.shape.width - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						top = data.shape.y - DisplayObjectHelper.round(data.shape.height - data.lineWidth) - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - DisplayObjectHelper.round(data.shape.width - lineWidth) - lineWidth / 2.0;
+						top = data.shape.y - DisplayObjectHelper.round(data.shape.height - lineWidth) - lineWidth / 2.0;
 
-						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width + data.lineWidth)}px /
-							${DisplayObjectHelper.round(data.shape.height + data.lineWidth)}px';
+						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.width + lineWidth)}px /
+							${DisplayObjectHelper.round(data.shape.height + lineWidth)}px';
 					} else if (data.shape.type == 4) {
-						left = data.shape.x - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
-						top = data.shape.y - (data.lineWidth != null ? data.lineWidth / 2.0 : 0.0);
+						left = data.shape.x - lineWidth / 2.0;
+						top = data.shape.y - lineWidth / 2.0;
 
 						nativeWidget.style.borderRadius = '${DisplayObjectHelper.round(data.shape.radius)}px';
 					} else {
@@ -640,6 +643,9 @@ class FlowGraphics extends Graphics {
 		nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
+		if (this.className != null && this.className != '') {
+			nativeWidget.classList.add(this.className);
+		}
 		nativeWidget.setAttribute('role', 'presentation');
 
 		isNativeWidget = true;
