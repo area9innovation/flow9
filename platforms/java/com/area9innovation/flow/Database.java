@@ -94,7 +94,7 @@ public class Database extends NativeHost {
             err = "";
             dbObj = dbo;
 
-            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
+            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
             boolean resType = stmt.execute(query, Statement.RETURN_GENERATED_KEYS);
             if (resType) {
                 rs = stmt.getResultSet();
@@ -217,6 +217,9 @@ public class Database extends NativeHost {
         }
     }
 
+    // We don't want to support it in java,
+    // we prefer performance and more fast record sets (ResultSet.TYPE_FORWARD_ONLY)
+    /*
     public final Integer resultLengthDb(Object result) {
         RSObject res = (RSObject) result;
         try {
@@ -233,6 +236,7 @@ public class Database extends NativeHost {
             return 0;
         }
     }
+    */
 
     public final Boolean hasNextResultDb(Object result) {
         RSObject res = (RSObject) result;
