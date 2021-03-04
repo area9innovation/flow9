@@ -153,6 +153,7 @@ class TextClip extends NativeWidgetClip {
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
+	private var TextInputEventFilters : Array<String -> String -> String> = new Array();
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
@@ -1214,6 +1215,13 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
+		// Hotfix for IE : inputType isn`t implemented for IE, so in this case we fake all the events to have "insertText" type
+		if (e != null && (e.inputType != null || Platform.isIE)) {
+			for (f in TextInputEventFilters) {
+				newValue = f(newValue, Platform.isIE ? "insertText" : e.inputType);
+			}
+		}
+
 		if (nativeWidget == null) {
 			return;
 		}
@@ -1409,6 +1417,11 @@ class TextClip extends NativeWidgetClip {
 		return function() { TextInputFilters.remove(filter); }
 	}
 
+	public function addTextInputEventFilter(filter : String -> String -> String) : Void -> Void {
+		TextInputEventFilters.push(filter);
+		return function() { TextInputEventFilters.remove(filter); }
+	}
+
 	public function addTextInputKeyDownEventFilter(filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
 		TextInputKeyDownFilters.push(filter);
 		return function() { TextInputKeyDownFilters.remove(filter); }
@@ -1439,6 +1452,24 @@ class TextClip extends NativeWidgetClip {
 			}
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+		}
+
+		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
+			RenderSupport.defer(updateTextWidth, 0);
+		}
+	}
+
+	private function updateTextWidth() : Void {
+		if (nativeWidget != null) {
+			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
+			if (textNodeWidth != null && textNodeWidth > 0) {
+				var textWidth = textNodeWidth / (untyped this.transform ? untyped this.transform.worldTransform.a : 1);
+
+				if (textWidth != metrics.width) {
+					metrics.width = textWidth;
+					this.emitEvent('textwidthchanged');
+				}
+			}
 		}
 	}
 

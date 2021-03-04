@@ -194,6 +194,9 @@ export {
 	// Simplified version of MTransformTAcc
 	MTransformTAcc2(fn : ((Material) -> TAcc) -> TAcc) -> Material;
 
+	// Similar to MConstruct, but constructing/disposing are triggered by changing the rendered state of the corresponding clip.
+	// So, for example, it reacts to changes into MVisible or to fullwindow dialog opening, while MConstruct ignores it.
+	// See material/tests/test_mconstruct_renderable.flow for the testcase
 	MConstructRenderable(constructors : [() -> () -> void], m : Material) -> Material;
 
 	// Zoom material if its metrics are bigger than maxWH
@@ -248,13 +251,15 @@ export {
 			])
 		}
 
-		MIfFitsColsStyle ::= MIfFitsColsFn, MIfFitsColsOverflowItems, MIfFitsColsMenuButton;
+		MIfFitsColsStyle ::= MIfFitsColsFn, MIfFitsColsOverflowItems, MIfFitsColsMenuButton, MIfFitsMenuLine;
 			// Defines how items should be wrapped into cols. MCols by default. MColsA, MBaselineColsA are other good choices
 			MIfFitsColsFn(fn : ([Material]) -> Material);
 			// Returns overflowView of hidden items
 			MIfFitsColsOverflowItems(items : DynamicBehaviour<[MMenuLine]>);
 			// Collect hidden items and add them to the menu
 			MIfFitsColsMenuButton(enabled : Transform<bool>);
+			// If you want something to always be in the menu
+			MIfFitsMenuLine(line : MMenuLine);
 
 	MIfFitsColsYCenterA(items : Transform<[MIfFitsColsItem]>) -> Material;
 
@@ -683,7 +688,7 @@ MFixSizeKeepBaseline(m : Material, size : Material) -> Material {
 			sf.addFillers,
 			sf.xConstant,
 			sf.yConstant && isFConst(bf.metrics.baseline),
-			sf.disposers
+			concat(sf.disposers, bf.disposers)
 		)
 	})
 }
@@ -958,11 +963,12 @@ MIfFitsColsYCenterA(items0 : Transform<[MIfFitsColsItem]>) -> Material {
 
 MIfFitsCols(items0 : Transform<[MIfFitsColsItem]>, style : [MIfFitsColsStyle]) -> Material {
 	availableWidth = make(0.);
-	colsFn = extractStruct(style, MIfFitsColsFn(\arr -> MCols(arr))).fn;
+	colsFn = extractStruct(style, MIfFitsColsFn(\arr -> MColsA(arr))).fn;
 
 	overflowItems0 = tryExtractStruct(style, MIfFitsColsOverflowItems(make([])));
 	menuButton = tryExtractStruct(style, MIfFitsColsMenuButton(const(false)));
 	overflowItems : Maybe<DynamicBehaviour<[MMenuLine]>> = eitherMap(overflowItems0, \oi -> Some(oi.items), maybeMap(menuButton, \__ -> make([])));
+	menuLines : [MMenuLine] = map(extractStructMany(style, MIfFitsMenuLine(MSeparatorLine())), \l -> l.line);
 
 	MSelect(items0, \itms -> {
 		items = map(itms, \it -> 
@@ -984,12 +990,13 @@ MIfFitsCols(items0 : Transform<[MIfFitsColsItem]>, style : [MIfFitsColsStyle]) -
 		iteri(priorityOrder, \i, it -> nextDistinct(it.priorityIndex, i));
 
 		showThreshold =
-			fselect(fstall(availableWidth, 0), FLift(\av ->
-				foldi(priorityOrder, Pair(0., length(priorityOrder)), \i, acc, it -> {
-					s = acc.first + fgetValue(it.minWidth);
+			fsubselect(fthrottleNextFrame(availableWidth), FLift(\av -> {
+				ffoldi(fthrottleNextFrame(fmerge(map(priorityOrder, \it -> it.minWidth))), Pair(0., length(priorityOrder)), \i, acc, minWidth -> {
+					s = acc.first + minWidth;
 					Pair(s, if (acc.first <= av && s > av) i else acc.second)
-				}).second
-			));
+				})
+				|> fSecondOfPair
+			}));
 
 		map(items, \it ->
 			MInspect([IMinWidth(it.minWidth)], it.material)
@@ -1005,10 +1012,11 @@ MIfFitsCols(items0 : Transform<[MIfFitsColsItem]>, style : [MIfFitsColsStyle]) -
 	})
 	|> (\m -> MInspect([AvailableWidth(availableWidth)], m))
 	|> (\m -> eitherMap(menuButton, \mb -> {
-		oi = either(overflowItems, make([]));
-		MCols2(m,
+		oi1 = either(overflowItems, make([]));
+		oi = fselect(oi1, FLift(\l -> concat(menuLines, l)));
+		MCols2A(m,
 			MShow(
-				fand(mb.enabled, fselectWithLast(flength(oi), FLift2(\oldLen, len -> len > b2i(oldLen > 1)))),
+				if (menuLines != []) const(true) else fand(mb.enabled, fselectWithLast(flength(oi), FLift2(\oldLen, len -> len > b2i(oldLen > 1)))),
 				MDynamicMenu(MIconButton("more_vert", nop, [], []), oi, [])
 			)
 		)

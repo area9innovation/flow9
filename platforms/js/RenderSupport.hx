@@ -40,7 +40,7 @@ class RenderSupport {
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
 	public static var EnableFocusFrame : Bool = false;
 	/* Antialiasing doesn't work correctly on mobile devices */
-	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
@@ -88,7 +88,7 @@ class RenderSupport {
 			RendererType = rendererType;
 			RoundPixels = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 			Antialias = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" :
-				!Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+				!Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 
 			untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
 
@@ -397,7 +397,7 @@ class RenderSupport {
 		return Math.max(roundPlus(ratio, 2), 1.0);
 	}
 
-	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
+	public static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
 		untyped __js__("setTimeout(fn, time)");
 	}
 
@@ -427,21 +427,6 @@ class RenderSupport {
 
 	private static function printOptionValues() : Void {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
-	}
-
-	public static function detectExternalVideoCard() : Bool {
-		var canvas = Browser.document.createElement('canvas');
-		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
-
-		if (gl == null) {
-			return false;
-		}
-
-		var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-		var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
-		var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-
-		return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
 	}
 
 	private static function disablePixiPlugins() {
@@ -500,7 +485,7 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
-		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
+		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
 			RendererType = "webgl";
@@ -1141,19 +1126,6 @@ class RenderSupport {
 		}
 	}
 
-
-	private static function emitForInteractives(clip : DisplayObject, event : String) : Void {
-		if (clip.interactive)
-			clip.emit(event);
-
-		if (untyped clip.children != null) {
-			var childs : Array<DisplayObject> = untyped clip.children;
-			for (c in childs) {
-				emitForInteractives(c, event);
-			}
-		}
-	}
-
 	public static function provideEvent(e : js.html.Event) {
 		try {
 			if (Platform.isIE) {
@@ -1164,18 +1136,6 @@ class RenderSupport {
 		} catch (er : Dynamic) {
 			Errors.report("Error in provideEvent: " + er);
 		}
-	}
-
-	public static function emulateMouseClickOnClip(clip : DisplayObject) : Void {
-		var b = clip.getBounds();
-		MousePos = clip.toGlobal(new Point( b.width / 2.0, b.height / 2.0));
-
-		// Expicitly emulate user action with mouse
-		emulateEvent("mousemove");
-		emulateEvent("mouseover", 100, clip);
-		emulateEvent("mousedown", 400);
-		emulateEvent("mouseup", 500);
-		emulateEvent("mouseout", 600, clip);
 	}
 
 	private static function forceRollOverRollOutUpdate() : Void {
@@ -1250,21 +1210,6 @@ class RenderSupport {
 				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
 			}
 		}
-	}
-
-	private static function emulateEvent(event : String, delay : Int = 10, clip : DisplayObject = null) : Void {
-		defer(function() {
-			isEmulating = true;
-
-			if (event == "mouseover" || event == "mouseout") {
-				if (clip != null)
-					emitForInteractives(clip, event);
-			} else {
-				emit(event);
-			}
-
-			isEmulating = false;
-		}, delay);
 	}
 
 	public static function ensureCurrentInputVisible() : Void {
@@ -1586,6 +1531,14 @@ class RenderSupport {
 		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
 	}
 
+	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
+		FontLoader.loadPreconfiguredWebFonts(families, onDone);
+	}
+
+	public static function getFontStylesConfigString() : String {
+		return haxe.Resource.getString("fontstyles");
+	}
+
 	public static function makeTextField(fontFamily : String) : TextClip {
 		return new TextClip();
 	}
@@ -1866,6 +1819,10 @@ class RenderSupport {
 
 	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
 		return clip.addTextInputFilter(filter);
+	}
+
+	public static function addTextInputEventFilter(clip : TextClip, filter : String -> String -> String) : Void -> Void {
+		return clip.addTextInputEventFilter(filter);
 	}
 
 	public static function addTextInputKeyEventFilter(clip : TextClip, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
@@ -2404,7 +2361,7 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "added" || event == "removed"){
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged"){
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {
@@ -2625,6 +2582,14 @@ class RenderSupport {
 		}
 
 		return null;
+	}
+
+	public static function countClips(?parent : DisplayObject) : Int {
+		if (parent == null) {
+			parent = PixiStage;
+		}
+
+		return parent.countClips();
 	}
 
 	public static function makeGraphics() : FlowGraphics {
@@ -3193,6 +3158,7 @@ class RenderSupport {
 
 			return img;
 		} catch(e : Dynamic) {
+			trace(e);
 			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
@@ -3215,22 +3181,24 @@ class RenderSupport {
 
 		PixiStage.once("drawframe", function () {
 			PixiStage.onImagesLoaded(function () {
-				var snapshot = clip.children != null && clip.children.length > 0 ?
-					getClipSnapshotBox(
-						untyped clip,
-						Math.floor(clip.worldTransform.tx),
-						Math.floor(clip.worldTransform.ty),
-						Math.floor(clip.getWidth()),
-						Math.floor(clip.getHeight())
-					) : "";
+				PixiStage.once("drawframe", function () {
+					var snapshot = clip.children != null && clip.children.length > 0 ?
+						getClipSnapshotBox(
+							untyped clip,
+							Math.floor(clip.worldTransform.tx),
+							Math.floor(clip.worldTransform.ty),
+							Math.floor(clip.getWidth()),
+							Math.floor(clip.getHeight())
+						) : "";
 
-				if (printMode) {
-					printMode = false;
-					DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
-					forceRender();
-				}
+					if (printMode) {
+						printMode = false;
+						DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+						forceRender();
+					}
 
-				cb(snapshot);
+					cb(snapshot);
+				});
 			});
 		});
 	}
@@ -3260,11 +3228,12 @@ class RenderSupport {
 		}
 
 		try {
-			var img = PixiRenderer.plugins.extract.base64(clip == mainRenderClip() ? clip : clip.children[0]);
+			var img = untyped __js__("RenderSupport.PixiRenderer.plugins.extract.base64(clip == RenderSupport.mainRenderClip() ? clip : clip.children[0])");
 			dispFn();
 
 			return img;
 		} catch(e : Dynamic) {
+			trace(e);
 			dispFn();
 
 			return 'error';
@@ -3467,6 +3436,10 @@ class RenderSupport {
 		var wrapper = function(e) { cb(Browser.window.location.hash); }
 		untyped Browser.window.addEventListener("hashchange", wrapper);
 		return function() { untyped Browser.window.removeEventListener("hashchange", wrapper); };
+	}
+
+	public static function reloadPage(forced : Bool) : Void {
+		Browser.window.location.reload(forced);
 	}
 
 	public static function setGlobalZoomEnabled(enabled : Bool) : Void {
