@@ -1,8 +1,21 @@
 import material/material_ui;
 import material/extra/docking_ui/internal/material_docking_state;
 import material/extra/docking_ui/internal/material_docking_theme;
+import material/extra/docking_ui/internal/material_docking_utils;
+
 
 export {
+	// Resizing cols and rows, and drop panels
+	dockingResizeAndDropLine(
+		isColumn : bool,
+		resizeCol : bool,  	// resize cols (W) or panels (H)
+		orderA : [int], 	// colId, rowId
+		dropInfo : MDockingDropInfo, 
+		resizePressed : DynamicBehaviour<bool>,
+		state : MDockingState, 
+		style : [MDockingStyle]
+	) -> Material;
+
 	// The place where we can drop panels
 	dockingDropLine(
 		isColumn : bool,
@@ -12,6 +25,19 @@ export {
 		defPanelsOrderA : [int], // colId, rowId
 		inactiveBar : Material,
 		isEndpoint : bool,
+		style : [MDockingStyle]
+	) -> Material;
+
+		makeMDockingSeparatorDrop(
+		isColumn : bool,
+		resizeCol : bool,  // resize cols (W) or panels (H)
+		colId : int,
+		rowId : int,
+		colA : [int], 	
+		numOfCols : int,
+		dropInfo : MDockingDropInfo, 
+		resizePressed : DynamicBehaviour<bool>,
+		state : MDockingState, 
 		style : [MDockingStyle]
 	) -> Material;
 
@@ -27,6 +53,222 @@ export {
 		lastDropSize : DynamicBehaviour<Tropic>
 	);
 }
+
+
+
+dockingResizeAndDropLine(
+	isColumn : bool,
+	resizeCol : bool,  	// resize cols (W) or panels (H)
+	orderA : [int], 	// colId, rowId
+	dropInfo : MDockingDropInfo, 
+	resizePressed : DynamicBehaviour<bool>,
+	state : MDockingState, 
+	style : [MDockingStyle]
+) -> Material {
+
+	manager = state.manager;	
+	// isHovering = make(false);
+	isRightCol  = contains(style, MDockingRightCols());
+	isBottomLine = contains(style, MDockingBottomtLines());
+
+	rotate = resizeCol && isColumn;
+	colId = firstElement(orderA, 0);
+	rowId = lastElement(orderA, 0);
+	id = if (rotate) colId else rowId;
+
+	dragSize = dockingDragSize;
+	dragSizeBig = dockingHelperDragSize;
+	dragHandleSizeBig = makeColSize(dragSizeBig, rotate);
+			
+	offSetHelper = \f : Material -> MBorder(
+		if (isRightCol) {if (rotate) 0.0 else dragSizeBig - dragSize} else 0.0, 0.0,
+		if (!isRightCol) {if (rotate) 0.0 else dragSizeBig - dragSize} else 0.0, 0.0, 
+		f
+	);
+
+	dragHelper = 
+		MCursor(
+			if (rotate) EWResizeCursor() else NSResizeCursor(),
+			MInteractive([
+					TMouseDown(resizePressed), 
+					// TMouseInside(isHovering, false)
+				],
+				TRectangle([MFill(MRed(500)), FillOpacity(dockingHelperDragOpacity)], dragHandleSizeBig) |> offSetHelper	
+			)
+		);
+
+	dockingDropLine(rotate, id, dropInfo, state, orderA, dragHelper, false, style);
+};
+
+
+
+
+
+
+
+// Col separator with resize handle and drop area
+makeMDockingSeparatorDrop(
+	isColumn : bool,
+	resizeCol : bool,  // resize cols (W) or panels (H)
+	colId : int,
+	rowId : int,
+	colA : [int], 	   // it could be colA or rowA
+	numOfCols : int,
+	dropInfo : MDockingDropInfo, 
+	resizePressed : DynamicBehaviour<bool>,
+	state : MDockingState, 
+	style : [MDockingStyle]
+) -> Material {
+
+		manager = state.manager;	
+		isHovering = make(false);
+		isRightCol  = contains(style, MDockingRightCols());
+		isBottomLine = contains(style, MDockingBottomtLines());
+		dontResize  = contains(style, MDockingDontResize());
+		dontResizeAll = fold(colA, true, \acc, p -> acc && contains(getValue(state.style)[p], MDockingDontResize()));
+
+		rotate = resizeCol && isColumn;
+		id = if (rotate) colId else rowId;
+		isLastItem= id == (length(colA) - 1);
+
+		// println(dropInfo.areaId);
+		// println("isColumn: " + b2s(isColumn));
+		// println("resizeCol: " + b2s(resizeCol));
+		// println("");
+
+	
+
+		// Sizes
+		dropSize = extractStruct(style, MDockingDropSize(dockingDropSize)).size;
+
+		dragSize = dockingDragSize;
+		dragSizeBig = dockingHelperDragSize;
+		dHW = dockingHandleW;
+		dHH = dockingHandleH;
+		// smallHandleSize = if (isColumn) makeColFixedSize(dHW, dHH, resizeCol) else makeRowFixedSize(dHW, dHH, resizeCol);
+		// dragHandleSize = if (isColumn) makeColSize(dockingDragSize, resizeCol) else makeRowSize(dockingDragSize, resizeCol);
+		// dragHandleSizeBig = if (isColumn) makeColSize(dragSizeBig, resizeCol) else makeRowSize(dragSizeBig, resizeCol);
+		// dragHandleSizeInactive = if (isColumn) makeColSize(dockingDragSizeInactive, resizeCol) else makeRowSize(dockingDragSizeInactive, resizeCol);
+
+		smallHandleSize = makeColFixedSize(dHW, dHH, rotate);
+		dragHandleSize = makeColSize(dockingDragSize, rotate);
+		dragHandleSizeBig = makeColSize(dragSizeBig, rotate);
+		dragHandleSizeInactive = makeColSize(dockingDragSizeInactive, rotate);
+
+		draggingHandleInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, style))], dragHandleSizeInactive);
+
+		invisibleBar = TRectangle([MFill(MGreen(700)), FillOpacity(0.0)], dragHandleSize);
+		se = getValue(getValue(state.sideExpanded)[colA[0]]);
+
+		smallHandle = \lg : bool -> TRectangle([MFill(smallHandleColorFn(lg, style))], smallHandleSize);		
+		draggingBarInactive = \lg : bool -> TRectangle([MFill(separatorColorInactiveFn(lg, style))], dragHandleSizeInactive);
+
+				offSetBar = \f : Material -> MOffset(
+					if (rotate) (dragSizeBig - dragSize) * (if (isRightCol) 0.0 else 1.0) else 0.0,
+					if (rotate) 0.0 else (dragSizeBig - dragSize) * (if (isBottomLine) 0.0 else 1.0), 
+					f
+				);
+
+				offSetHelper = \f : Material -> MBorder(
+					if (isRightCol) {if (rotate) 0.0 else dragSizeBig} else 0.0, 0.0,
+					if (!isRightCol) {if (rotate) 0.0 else dragSizeBig} else 0.0, 0.0, 
+					f
+				);
+
+		draggingBarActive = \lg : bool -> {
+			MCursor(
+				if (rotate) EWResizeCursor() else NSResizeCursor(),
+				MInteractive([
+						TMouseDown(resizePressed), 
+						// TMouseInside(isHovering, false)
+					],
+					// MGroup2(
+						
+					// 	MGroup2(
+					// 		MSelect(isHovering, \h -> TRectangle([MFill(if (h) dockingPrimaryColor else separatorColorFn(lg, style)), FillOpacity(dockingDragHandleOpacity)], dragHandleSize)),
+					// 		MCenterIn(smallHandle(lg), dragHandleSize),
+					// 		// MEmpty()
+					// 	) |> offSetBar,
+						
+						
+
+						// if (isRightCol)
+						// Helper for a better dragging area
+						// MOffset((dragSizeBig / 2.0) * (if (isRightCol) - 1.0 else 1.0), 0.0,
+							TRectangle([MFill(MRed(500)), FillOpacity(dockingHelperDragOpacity)], dragHandleSizeBig) |> offSetHelper
+							// |> MBorderLeft(if (isColumn) 0.0 else if (isRightCol) dragSizeBig else 0.0
+							// |> MBorderRight(if (isColumn) 0.0 else dragSizeBig)
+							
+						// ) 
+						// else MEmpty()
+
+
+
+
+					// )
+
+					
+				)
+			);
+		}
+
+		draggingBarSideExpanded =  \lg : bool -> if (se) draggingBarActive(lg) else draggingBarInactive(lg);
+
+		draggingBar=
+			MSelect(manager.white, \ww -> {
+				containsDark = fold(colA, false, \acc, p -> acc || contains(getValue(state.style)[p], MDockingForceDarkTheme()));
+				containsLight = fold(colA, false, \acc, p -> acc || contains(getValue(state.style)[p], MDockingForceLightTheme()));
+				light = if (containsDark) false else if (containsLight) true else ww;
+
+					// if (numOfCols == 1) {
+					// 	if (dontResizeAll || dontResize) TEmpty() else draggingBarSideExpanded(light);
+					// } else {
+						if (dontResizeAll || dontResize /*|| isLastItem*/) draggingBarInactive(light) else {
+							if (se) draggingBarActive(light) else TRectangle([MFill(MGreen(700)), FillOpacity(0.0)], dragHandleSize)			
+		
+						} 
+					// }
+
+// b 
+// |> (\f -> MGroup2(f, MCenterIn(MText(i2s(id), [MOverline(), if (light) MBlack() else MWhite()]), dragHandleSize)))
+			});
+
+		// if (isRightCol || isBottomLine) {
+		// 	if (id != numOfCols) draggingBar else TEmpty();
+		// } else {
+		// 	if (id != 0) draggingBar else TEmpty();
+		// }
+
+
+
+
+
+	// Drop info
+	onDrop = dropInfo.onDrop;
+	panelsOrder = dropInfo.order;
+	panelsArray = dropInfo.dockedPanelsGrid;
+	isDockingCol = dropInfo.isDockingCol;
+	isRow = dropInfo.isRow; 
+	lastDropSize = dropInfo.lastDropSize;
+
+
+	// manager = state.manager;
+					// itemId = makeTropicTag(manager);
+					
+	onDragging = manager.manager.dragging;
+	zorder = getValue(manager.manager.zorder);
+
+	// newId = if (rotate) {
+	// 	if (isRightCol) id else id + 1;
+	// } else {
+	// 		if (isBottomLine) id else id + 1;
+	// }
+
+	colRowOrderA = [colId, rowId]; //if (rotate) [newId, newId] else [colId, rowId];
+	dockingDropLine(rotate, id, dropInfo, state, colRowOrderA, draggingBar, false, style)
+
+};
+
 
 
 
@@ -63,12 +305,12 @@ dockingDropLine(
 	areaId = dropInfo.areaId;
 	groupName = dropInfo.groupName; 
 	onDrop = dropInfo.onDrop;
-	panelsOrder = dropInfo.order;
+	panelsOrderB = dropInfo.order;
 	panelsArray = dropInfo.dockedPanelsGrid;
 
 	isDockingCol = dropInfo.isDockingCol;
 	isRow = dropInfo.isRow; 
-	lastDropSize = dropInfo.lastDropSize;
+	lastDropSizeB = dropInfo.lastDropSize;
 	
 	// ?
 	dockedPanelsCols = getValue(panelsArray);
@@ -126,7 +368,14 @@ dockingDropLine(
 					MGroup([
 						inactiveBar |> offSetBar,	
 						// TRectangle([MFill(MBlue(500)), FillOpacity(0.05)], colSizeDropBig)
-						TRectangle([MFill(dockingPrimaryColor), FillOpacity(dockingHelperDropOpacity)], colSizeDropBig) |> offSetHelper, // Hightlight allowed droppimg areas
+						TRectangle([MFill(dockingPrimaryColor), FillOpacity(dockingHelperDropOpacity)], colSizeDropBig) |> offSetHelper // Hightlight allowed droppimg areas
+
+							|> (\f -> MGroup2(f, MCenterIn(
+								MLines2(
+									MText(i2s(id), [MOverline(), MBlack()]),
+									MText(toString(order), [MOverline(), MBlack()]),
+								), colSizeDropBig)))
+
 						// MText(i2s(id), [if (isLastCol) MBlue(600) else MOrange(600), MCaptionSolid() ])  // debug
 						// |>(\f -> if (isColumn) f |> MBorderLeft(16.0)|>MBorderTop(512.0) else  f |>MBorderLeft(128.0))
 					]), 
@@ -135,19 +384,19 @@ dockingDropLine(
 				MConstruct([
 					makeSubscribe(onHover, \h -> if (h >= 0) {
 							next(isDockingCol, isColumn);
-							next(panelsOrder, order);
-							next(lastDropSize, colSize);
+							next(panelsOrderB, order);
+							next(lastDropSizeB, colSize);
 							// next(isRow, defRow);
 							next(isRow, !isColumn);
 							
-							// dockedLength = if (getValue(isDockingCol)) getTropicMetri cs(getValue(lastDropSize)).width else getTropicMetrics(getValue(lastDropSize)).height;
+							// dockedLength = if (getValue(isDockingCol)) getTropicMetri cs(getValue(lastDropSizeB)).width else getTropicMetrics(getValue(lastDropSizeB)).height;
 							if (/*(*/getValue(isRow) /*&& (dockedLength == getTropicMetrics(m2t(getValue(state.dropSize)[h])).width))*/) next(hovering, true)
 								else if (!getValue(isRow)) next(hovering, true)
 									else next(hovering, false);
 						} else next(hovering, false)
 					),
 					makeSubscribe(onDrop, \d -> if (d >= 0) {
-						updateDockingPositions(d, areaId, dockA, panelsArray, panelsOrder, isRow);
+						updateDockingPositions(d, areaId, dockA, panelsArray, panelsOrderB, isRow);
 
 // println(" > " + toString(order));
 
@@ -163,10 +412,13 @@ dockingDropLine(
 
 updateDockingPositions(droppedId: int, areaId : int, dockA : DynamicBehaviour<[[int]]>, panelsArray : DynamicBehaviour<[[int]]>, panelsOrder : DynamicBehaviour<[int]>, isRow : DynamicBehaviour<bool>) -> void {
 	tempA = make([]);
-	colId = getValue(panelsOrder)[0];
-	rowId = getValue(panelsOrder)[1];
+	// colId = getValue(panelsOrder)[0];
+	// rowId = getValue(panelsOrder)[1];
+	colId = firstElement(getValue(panelsOrder), 0);
+	rowId = lastElement(getValue(panelsOrder), 0);
 
-	// println(" +++ updateDockingPositions - dropped: " + i2s(droppedId));
+
+	println(" +++ (" + i2s(areaId) + ") updateDockingPositions - dropped: " + i2s(droppedId) + "    - " + toString(getValue(panelsOrder)));
 
 	if (!fold(getValue(panelsArray), false, \acc, a -> acc || contains(a, droppedId))) {
 		if (getValue(panelsArray) != [[]]) {
