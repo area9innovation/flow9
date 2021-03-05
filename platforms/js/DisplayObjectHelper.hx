@@ -2586,4 +2586,14 @@ class DisplayObjectHelper {
 			return child.parent != null && isParentOf(parent, child.parent);
 		}
 	}
+
+	public static function countClips(parent : DisplayObject) : Int {
+		var count = 1;
+
+		for (child in getClipChildren(parent)) {
+			count += countClips(child);
+		}
+
+		return count;
+	}
 }
