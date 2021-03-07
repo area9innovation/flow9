@@ -9,14 +9,14 @@ export {
 	TRenderDynamicParagraph(
 		words : ref [TParaWord],
 		s : [ParagraphStyle],
-		alignWidthM : Maybe<DynamicBehaviour<double>>
+		widthManager : ParagraphWidthManager
 	) -> TDynamicParagraph;
 
 	TRenderParagraph(
 		words : [TParaWord],
 		s : [ParagraphStyle],
-		alignWidthBM : Maybe<DynamicBehaviour<double>>,
-		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+		widthManager : ParagraphWidthManager,
+		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	) -> Tropic;
 
 	TDynamicParagraph(
@@ -41,12 +41,13 @@ export {
 TRenderDynamicParagraph(
 	words : ref [TParaWord],
 	s : [ParagraphStyle],
-	alignWidthBM : Maybe<DynamicBehaviour<double>>
+	widthManager : ParagraphWidthManager
 ) -> TDynamicParagraph {
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
 	needIndent = genIndent != 0.0;
+	alignWidthBM = if (widthManager == dummyParagraphWidthManager) None() else Some(widthManager.storyWidth);
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 
@@ -94,6 +95,7 @@ TRenderDynamicParagraph(
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+		if (widthManager != dummyParagraphWidthManager) deferUntilNextFrameRendered(\-> nextDistinct(widthManager.width, paragraphSizeAndBaseline.first.width));
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 
 		// need to update words to show hyphenation point
@@ -166,10 +168,11 @@ TRenderDynamicParagraph(
 
 	tropic = TConstruct(
 		[
+			makeSubscribe(awB, \aw -> updateFn(aw, None())),
 			eitherFn(
 				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
-				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
+				\alignWidthB -> \-> subscribe(alignWidthB, \alw -> updateFn(fgetValue(awB), Some(alw))),
+				\ -> \-> nop
 			),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
@@ -207,13 +210,14 @@ TRenderDynamicParagraph(
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
-	alignWidthBM : Maybe<DynamicBehaviour<double>>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	widthManager : ParagraphWidthManager,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 ) -> Tropic {
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
 	needIndent = genIndent != 0.0;
+	alignWidthBM = if (widthManager == dummyParagraphWidthManager) None() else Some(widthManager.storyWidth);
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 
@@ -275,6 +279,7 @@ TRenderParagraph(
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+		if (widthManager != dummyParagraphWidthManager) deferUntilNextFrameRendered(\-> nextDistinct(widthManager.width, paragraphSizeAndBaseline.first.width));
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 		nextDistinct(scaleB, eitherMap(
 			paragraphSizeBaselineAndChanges.scaleM,
@@ -313,10 +318,11 @@ TRenderParagraph(
 
 	TConstruct(
 		[
+			makeSubscribe(awB, \aw -> updateFn(aw, None())),
 			eitherFn(
 				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
-				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
+				\alignWidthB -> \-> subscribe(alignWidthB, \alw -> updateFn(fgetValue(awB), Some(alw))),
+				\ -> \-> nop
 			),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
@@ -1157,21 +1163,12 @@ TRenderLine(
 
 	// Alignment offset
 	alignWidth = min(either(alignWidthM, width), width);
-	startOffset = if (rtl) max(0.0, alignWidth - lineWidth) else 0.;
-	endOffset = if (rtl) 0.0 else max(0., alignWidth - lineWidth);
-	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
-		LeftAlign(): if (rtl) endOffset else startOffset;
-		RightAlign(): if (rtl) startOffset else endOffset;
-		CenterAlign(): max(0.0, (alignWidth - lineWidth) / 2.0);
-		StartAlign(): startOffset;
-		EndAlign(): endOffset;
-		Justify(): 0.0;
-	} + (if (rtl) 0. else lineIndent);
+	remaining = alignWidth - lineWidth;
+	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, lineIndent, rtl, alignment);
 
 	// Inter-word spacing for justification
 	interWord = if (alignment == Justify() && length(inspectors) > 1) {
 		nwords = length(inspectors);
-		remaining = alignWidth - lineWidth;
 		min(10.0, remaining / i2d(nwords - 1));
 	} else 0.0;
 
