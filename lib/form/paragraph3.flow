@@ -207,41 +207,30 @@ renderParagraph(
 		);
 	}
 	paragraphAccessibilityParent = ^accessibilityParent;
-
-	// it renders all words but for dynamics it just reserves space and updates coordinates
-	renderedParagraph = if (widthManager == dummyParagraphWidthManager) {
-		Select(linesB, \lines -> {
-			prevAccessibilityParent = ^accessibilityParent;
-			accessibilityParent := paragraphAccessibilityParent;
-			rpl = renderParaLinesFn(lines, getValue(aw));
-			accessibilityParent := prevAccessibilityParent;
-			rpl
-		});
-	} else if (widthManager.infoOnly) {
-		// in this non-TightWidth case we just inform WidthManager about our width
-		// we will not take story width into account in this case, but use availableWidth as usual
-		Select(linesB, \lines -> {
-			prevAccessibilityParent = ^accessibilityParent;
-			accessibilityParent := paragraphAccessibilityParent;
-			rendered = renderParaLinesFn(lines, getValue(aw));
-			nextDistinct(widthManager.width, lines.maxLineWidth);
-			accessibilityParent := prevAccessibilityParent;
-			rendered
-		});
-	} else {
-		Select2(linesB, widthManager.storyWidth, \lines, storyWidth -> {
+	renderWrapper = \updaterWrapper ->
+		\lines, storyWidth -> {
 			prevAccessibilityParent = ^accessibilityParent;
 			accessibilityParent := paragraphAccessibilityParent;
 			rendered = renderParaLinesFn(
 				lines,
 				if (storyWidth > 0.0) storyWidth else getValue(aw),
 			);
-			// we have to notify story about changes in our width.
-			// it could alter widthManager.storyWidth if we are new winner so we have to defer
-			deferUntilNextFrameRendered(\->nextDistinct(widthManager.width, lines.maxLineWidth));
+			updaterWrapper(\-> nextDistinct(widthManager.width, lines.maxLineWidth));
 			accessibilityParent := prevAccessibilityParent;
 			rendered
-		});
+		};
+
+	renderedParagraph = if (widthManager == dummyParagraphWidthManager) {
+		// it renders all words but for dynamics it just reserves space and updates coordinates
+		Select(linesB, \lines -> renderWrapper(ignore)(lines, -1.0));
+	} else if (widthManager.infoOnly) {
+		// in this non-TightWidth case we just inform WidthManager about our width
+		// we will not take story width into account in this case, but use availableWidth as usual
+		Select(linesB, \lines -> renderWrapper(\fn -> fn())(lines, -1.0));
+	} else {
+		// we have to notify story about changes in our width.
+		// it could alter widthManager.storyWidth if we are new winner so we have to defer
+		Select2(linesB, widthManager.storyWidth, renderWrapper(deferUntilNextFrameRendered))
 	}
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
