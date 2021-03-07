@@ -1,0 +1,85 @@
+import gringo/compiler/dopcode;
+import runtime;
+
+export {
+	optimizeDOpCode(d : DOpCode) -> DOpCode;
+}
+
+optimizeDOpCode(d : DOpCode) -> DOpCode {
+	switch (d) {
+		DFunction(name, code, body): {
+			DFunction(name, optimizeDOpCode(code), optimizeDOpCode(body));
+		}
+		DTrue(): d;
+		DFalse(): d;
+		DString(s): d;
+		DIf(cond, then, else_): {
+			oc = optimizeDOpCode(cond);
+			split = splitDSequence(oc);
+
+			ot = optimizeDOpCode(then);
+			oe = optimizeDOpCode(else_);
+			seq = arrayPush(split.first,
+					if (isDOpCodeTrue(split.second)) {
+						ot
+					} else {
+						DIf(split.second, ot, oe)
+					}
+				);
+			if (length(seq) == 1) seq[0]
+			else DSequence(seq)
+		}
+		DSequence(exps): {
+			DSequence(concatA(filtermapi(exps, \i, e -> {
+				co = optimizeDOpCode(e);
+				islast = i == length(exps) - 1;
+				if (!islast && (co == DSequence([]) || co == DTrue() || co == DFalse())) {
+					None();
+				} else {
+					Some(switch (co) {
+						DSequence(ns): ns;
+						default: [co];
+					})
+				}
+			})));
+		}
+		DPushCheckpoint(): d;
+		DDiscardCheckpoint(): d;
+		DRestoreCheckpoint(): d;
+		DParseStar(term): DParseStar(optimizeDOpCode(term));
+		DAddError(error): d;
+		DCaptureI(): d;
+		DMatched(): d;
+		DPosition(): d;
+		DAddVerbatim(e): DAddVerbatim(optimizeDOpCode(e));
+		DAddMatched(e): DAddMatched(optimizeDOpCode(e));
+		DMatchString(text): d;
+		DMatchRange(lower, upper): d;
+		DCall(id): d;
+	}
+}
+
+
+// If this is a sequence, split into the head and the tail
+splitDSequence(f : DOpCode) -> Pair<[DOpCode], DOpCode> {
+	switch (f) {
+		DSequence(exprs): {
+			n = length(exprs);
+			if (n == 0) Pair([], f)
+			else Pair(subrange(exprs, 0, n - 1), exprs[n-1]);
+		}
+		default: Pair([], f);
+	}
+}
+
+
+isDOpCodeTrue(d : DOpCode) -> bool {
+	switch (d) {
+		DTrue(): true;
+		DSequence(ops): {
+			if (ops == []) false
+			else isDOpCodeTrue(lastElement(ops, DTrue()))
+		}
+		default: false;
+	}
+}
