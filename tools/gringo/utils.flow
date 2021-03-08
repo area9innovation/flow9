@@ -1,0 +1,172 @@
+import text/gringo/gringo_ast;
+import ds/treeutils;
+
+export {
+	// Construct a map of all rules
+	findRules(acc : Tree<string, GTerm>, g : GTerm) -> Tree<string, GTerm>;
+
+	// Find the definition of this rule
+	findRule(rule : string, g : GTerm) -> Maybe<GTerm>;
+
+	// What is the main rule we should run?
+	mainRule(g : GTerm) -> string;
+
+	// Does basic replacement in the term, except in a named rule
+	replaceTerm(find : GTerm, replace : GTerm, exceptInRule : string, g : GTerm) -> GTerm;
+
+	// Construct an explanation for what this rule looks for
+	makeGExplanation(g : GTerm) -> string;
+
+	// Extract all in a sequence
+	getGSequence(g : GTerm) -> [GTerm];
+
+	// Extract all choices
+	getGChoice(g : GTerm) -> [GTerm];
+}
+
+// Extract rule definitioms. We only support a seq of rules. Not deeply nested rules.
+findRules(acc : Tree<string, GTerm>, g : GTerm) -> Tree<string, GTerm> {
+	switch (g) {
+		GRule(id, term, body): {
+			if (containsKeyTree(acc, id)) {
+				println("Duplicate rule " + id);
+			};
+			nacc = setTree(acc, id, term);
+			findRules(nacc, body);
+		}
+
+		GSeq(left, right): findRules(findRules(acc, left), right);
+
+		// TODO: Check that these do not have recursive rules
+		GChoice(left, right): acc;
+		GPrecedence(left, right): acc;
+		GStar(term): acc;
+		GPlus(term): acc;
+		GOpt(term): acc;
+		GNegate(term): acc;
+		GError(term): acc;
+		GLower(term): acc;
+
+		GUnquote(term): acc;
+		GString(text): acc;
+		GRange(lower, upper): acc;
+		GVar(id): acc;
+		GEpsilon(): acc;
+	}	
+}
+
+findRule(rule : string, g : GTerm) -> Maybe<GTerm> {
+	switch (g) {
+		GRule(id, term, body): if (id == rule) Some(term) else findRule(rule, body);
+		GPrecedence(left, right): {
+			mleft = findRule(rule, left);
+			mleft ?? Some(mleft) : {
+				findRule(rule, right);
+			}
+		}
+		GChoice(left, right): {
+			mleft = findRule(rule, left);
+			mleft ?? Some(mleft) : {
+				findRule(rule, right);
+			}
+		}
+		GSeq(left, right): {
+			mleft = findRule(rule, left);
+			mleft ?? Some(mleft) : {
+				findRule(rule, right);
+			}
+		}
+		GStar(term): findRule(rule, term);
+		GPlus(term): findRule(rule, term);
+		GOpt(term): findRule(rule, term);
+		GNegate(term): findRule(rule, term);
+		GError(term): findRule(rule, term);
+		GLower(term): findRule(rule, term);
+		GUnquote(term): findRule(rule, term);
+		GString(text): None();
+		GRange(lower, upper): None();
+		GVar(id): None();
+		GEpsilon(): None();
+	}
+}
+
+mainRule(g : GTerm) -> string {
+	switch (g) {
+		GRule(id, term, body): mainRule(body);
+		GPrecedence(left, right): mainRule(right);
+		GChoice(left, right): mainRule(right);
+		GSeq(left, right): mainRule(right);
+		GStar(term): mainRule(term);
+		GPlus(term): mainRule(term);
+		GOpt(term): mainRule(term);
+		GNegate(term): mainRule(term);
+		GError(term): mainRule(term);
+		GLower(term): mainRule(term);
+		GUnquote(term): mainRule(term);
+		GString(text): "";
+		GRange(lower, upper): "";
+		GVar(id): id;
+		GEpsilon(): "";
+	}
+}
+
+// Does basic replacement in the term
+replaceTerm(find : GTerm, replace : GTerm, exceptInRule : string, g : GTerm) -> GTerm {
+	if (g == find) replace
+	else switch (g) {
+		GRule(id, term, body): {
+			nbody = replaceTerm(find, replace, exceptInRule, body);
+			nterm = if (exceptInRule == id) term else replaceTerm(find, replace, exceptInRule, term);
+			GRule(id, nterm, nbody);
+		}
+		GPrecedence(left, right): GPrecedence(replaceTerm(find, replace, exceptInRule, left), replaceTerm(find, replace, exceptInRule, right)); 
+		GChoice(left, right): GChoice(replaceTerm(find, replace, exceptInRule, left), replaceTerm(find, replace, exceptInRule, right)); 
+		GSeq(left, right): GSeq(replaceTerm(find, replace, exceptInRule, left), replaceTerm(find, replace, exceptInRule, right));
+		GStar(term): GStar(replaceTerm(find, replace, exceptInRule, term));
+		GPlus(term): GPlus(replaceTerm(find, replace, exceptInRule, term));
+		GOpt(term): GOpt(replaceTerm(find, replace, exceptInRule, term));
+		GNegate(term): GNegate(replaceTerm(find, replace, exceptInRule, term));
+		GError(term): GError(replaceTerm(find, replace, exceptInRule, term));
+		GLower(term): GLower(replaceTerm(find, replace, exceptInRule, term));
+		GUnquote(term): GUnquote(replaceTerm(find, replace, exceptInRule, term));
+		GString(text): g;
+		GRange(lower, upper): g;
+		GVar(id): g;
+		GEpsilon(): g;
+	}
+}
+
+makeGExplanation(g : GTerm) -> string {
+	switch (g) {
+		GRule(id, term, body): makeGExplanation(body);
+		GPrecedence(left, right): makeGExplanation(left) + " or " + makeGExplanation(right);
+		GChoice(left, right): makeGExplanation(left) + " or " + makeGExplanation(right);
+		GSeq(left, right): makeGExplanation(left);
+		GStar(term): "zero or more " + makeGExplanation(term);
+		GPlus(term): makeGExplanation(term);
+		GNegate(term): "not " + makeGExplanation(term);
+		GOpt(term): "optional " + makeGExplanation(term);
+		GError(term): makeGExplanation(term);
+		GLower(term): makeGExplanation(term);
+		GUnquote(term): makeGExplanation(term);
+		GString(text): toString(text);
+		GRange(lower, upper): "range " + i2s(lower) + " to " + i2s(upper);
+		GVar(id): id;
+		GEpsilon(): "";
+	}
+}
+
+getGSequence(g : GTerm) -> [GTerm] {
+	switch (g) {
+		GSeq(l, r): concat(getGSequence(l), getGSequence(r));
+		default: [g];
+	}
+}
+
+getGChoice(g : GTerm) -> [GTerm] {
+	switch (g) {
+		GChoice(l, r): concat(getGChoice(l), getGChoice(r));
+		default: [g];
+	}
+}
+
