@@ -1,0 +1,360 @@
+import material/material_ui;
+import material/extra/docking_ui/internal/material_docking_styles;
+import material/extra/docking_ui/internal/material_docking_theme;
+import material/extra/docking_ui/internal/material_docking_state;
+
+
+
+export {
+	// Get docked panels IDs into an area of given areaId 
+	extractAreaGridById(dockA: [[int]], areaId : int) -> [[int]];
+
+	// Cache docking state
+	addDockingSuffix(input : string) -> string;
+	dockingState2json(state : MDockingState) -> Json;
+	setMDockingStateKeyValue(state : MDockingState) -> bool;
+	removeMDockingStateKeyValue(state : MDockingState) -> void;
+
+	// Handles & buttons
+	makeSeparatorBar(isColumn : bool, dontResize : bool, sideExpanded :bool, light : bool, style : [MDockingStyle]) -> Material;
+	makeMDockingResizeHandleMobile(state : MDockingState, style : [MDockingStyle]) -> Material;
+	makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor) -> Material;
+	makeMDockingDottedHandle(isColumn : bool, color : MColor) -> Material;
+	makeSideExpanderBtn(state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material;
+
+	// Utils
+	showIf(cond : bool) -> (Material) -> Material;
+	makeColsIf(isColumn : bool) -> ([Material]) -> Material;
+	makeVSize(s : double, rotate: bool) -> Tropic;
+	makeHSize(s : double, rotate: bool) -> Tropic;
+	makeColFixedSize(w : double, h : double, rotate: bool) -> Tropic;
+	makeRowFixedSize(w : double, h : double, rotate: bool) -> Tropic;
+	
+	updateTH(sizeB : DynamicBehaviour<[Tropic]>, id : int, h : double) -> void;
+	updateTW(sizeB : DynamicBehaviour<[Tropic]>, id : int, w : double) -> void;
+	updateH(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, h : double) -> void;
+	updateW(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, w : double) -> void;
+	
+	// Debug prints
+	makeMDockingDebugPrints(state : MDockingState) -> Material;
+	
+}
+
+updateTH(sizeB : DynamicBehaviour<[Tropic]>, id : int, h : double) -> void {
+	updateBehaviourDistinct(sizeB, \szA ->   replace(szA, id , TFixed(getTropicMetrics(szA[id]).width, h)));
+}
+updateTW(sizeB : DynamicBehaviour<[Tropic]>, id : int, w : double) -> void {
+	updateBehaviourDistinct(sizeB, \szA ->   replace(szA, id , TFixed(w, getTropicMetrics(szA[id]).height)));
+}
+updateH(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, h : double) -> void {
+	updateBehaviourDistinct(sizeB, \whA ->   replace(whA, id , WidthHeight(whA[id].width, h)));
+}
+updateW(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, w : double) -> void {
+	updateBehaviourDistinct(sizeB, \whA ->   replace(whA, id , WidthHeight(w, whA[id].height)));
+	
+}
+
+
+extractAreaGridById(dockA: [[int]], areaId : int) -> [[int]] {
+	areaIdSorted = sortCustom(filter(mapi(dockA, \i : int, v : [int] -> if (v[0] == areaId) [v[1], v[2], i] else []), \item -> item != []), \v -> v, true);
+	colsIdSorted = map(areaIdSorted, \item -> item[2]);
+	// We don't need to have an order for mobile panels
+	if (areaId < 0) [colsIdSorted] else {
+		colGroups = sortCustom(filter(uniq(map(dockA, \v -> if (v[0] == areaId) v[1] else -intMax)), \v -> v >= 0), \v -> v, true);
+		filter(map(colGroups, \item -> filter(map(colsIdSorted, \c -> if (dockA[c][1] == item ) c else -intMax), \itm -> itm != -intMax)), \item -> item != []);
+	}
+}
+
+addDockingSuffix(input : string) -> string {
+	input + "_MDockingPanels"
+}
+
+
+setMDockingStateKeyValue(state : MDockingState) -> bool {
+	println(" SET DOCKING STATE KEY VALUE");
+	setKeyValue(state.keyGroupName |> addDockingSuffix, json2string(dockingState2json(state)));
+}
+
+removeMDockingStateKeyValue(state : MDockingState) -> void {
+	removeKeyValue(state.keyGroupName |> addDockingSuffix)
+}
+
+
+
+
+dockingState2json(state : MDockingState) -> Json {
+	dockA = getValue(state.dock);
+	dockAjson = 
+		JsonObject(
+			mapi(dockA,\panelId, dock -> {
+
+				title = getValue(state.title)[panelId];
+				enabled = getValue(getValue(state.enabled)[panelId]);
+				expanded = getValue(getValue(state.expanded)[panelId]);
+				sideExpanded = getValue(getValue(state.sideExpanded)[panelId]);
+				
+				size = getTropicMetrics(getValue(state.size)[panelId]);
+
+				// panelSize = lf(4, d2s(size.width)) + "  x " + lf(4, d2s(size.height));
+				// // mobileSize = getTropicMetrics(msize[panelId]);
+				mobileSize = getTropicMetrics(getValue(state.mobileSize)[panelId]);
+				// mobilePanelSize = lf(4, d2s(mobileSize.width)) + "  x " + lf(4, d2s(mobileSize.height));
+				dockedSize = getTropicMetrics(getValue(state.dockedSize)[panelId]);
+				// dockedPanelSize = lf(4, d2s(dockedSize.width)) + "  x " + lf(4, d2s(dockedSize.height));
+				// dockString = "[areaID: " + lf(2, i2s(areaId)) + ",   colID: " + lf(2, i2s(colID)) + ",   panelID: " + lf(2, i2s(panelId)) + "]   ";
+				pos = getValue(getValue(state.positions)[panelId]);
+
+				Pair(i2s(panelId),
+				// Pair(title,
+					JsonObject(
+						[
+							// Pair("panelId", JsonDouble(i2d(dock[2]))),
+							Pair("title", JsonString(title)),
+							Pair("areaId", JsonDouble(i2d(dock[0]))),
+							Pair("colId", JsonDouble(i2d(dock[1]))),
+							Pair("x", JsonDouble(pos.x)),
+							Pair("y", JsonDouble(pos.y)),
+							Pair("w", JsonDouble(size.width)),
+							Pair("h", JsonDouble(size.height)),
+							Pair("mobileW", JsonDouble(dockedSize.width)),
+							Pair("mobileH", JsonDouble(dockedSize.height)),
+							Pair("dockedW", JsonDouble(dockedSize.width)),
+							Pair("dockedH", JsonDouble(dockedSize.height)),
+							Pair("enabled", JsonBool(enabled)),
+							Pair("expanded", JsonBool(expanded)),
+							Pair("sideExpanded", JsonBool(sideExpanded)),
+						]
+					)
+				);
+
+			}));
+
+
+	json2stringFormatted(dockAjson) |> println;  // Debug print
+
+	dockAjson
+
+}
+
+
+
+makeSeparatorBar(isColumn : bool, dontResize : bool, sideExpanded :bool,  light : bool, style : [MDockingStyle]) -> Material {
+	// Drop enpoint
+	dragHandleSize = makeVSize(dockingDragSize, isColumn);
+	// draggingBarInactive = \lg : bool -> TRectangle([MFill(MIndigoA(500))], dragHandleSize);
+	draggingBarInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, style))], dragHandleSize);
+	
+	dHW = dockingHandleW;
+	dHH = dockingHandleH;
+	smallHandleSize = makeColFixedSize(dHW, dHH, isColumn);
+
+	smallHandle = \lg : bool -> TRectangle([MFill(smallHandleColorFn(lg, style))], smallHandleSize);
+	draggingBarActive = \lg : bool -> {
+		MGroup2(
+			TRectangle([MFill(separatorColorFn(lg, style)), FillOpacity(dockingDragHandleOpacity)], dragHandleSize),
+			MCenterIn(smallHandle(lg), dragHandleSize)
+		)
+	}
+
+	draggingBar = \lg : bool -> if (sideExpanded && !dontResize) draggingBarActive(lg) else draggingBarInactive(lg);
+	// draggingBar = \lg : bool -> if (sideExpanded && !dontResize) draggingBarActive(lg) else MEmpty();
+
+	draggingBar(light);
+	// draggingBarInactive(light);
+}
+
+
+
+makeSideExpanderBtn(state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material {	
+	isRightCol  = contains(style, MDockingRightCols());
+	se = getValue(getValue(state.sideExpanded)[colA[0]]);
+	sideExpFn = \ -> {
+		iter(colA, \c -> reverseBehaviour(getValue(state.sideExpanded)[c]));
+	}
+	 
+	sideExpBtnLabel = if (if (getDefaultRtl()) !isRightCol else isRightCol) {
+		if (se) "skip_next" else "skip_previous";
+	} else {
+		if (!se) "skip_next" else "skip_previous";
+	}
+	sideExpBtnItem = \lg : bool -> MGroup2(
+		TRectangle([MFill(sideExpanderBgColorFn(lg, style))], TFillXH(sideExpanderButtonSize)),
+		if (isRightCol) MColsA([TFillX(), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)]), TFixed(2.0, 2.0)])
+		else MColsA([TFixed(2.0, 2.0), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)]), TFillX()]),
+	);
+	sideExpBtnItemHover = \lg : bool -> MGroup2(
+		TRectangle([MFill(sideExpanderHoverColorFn(lg, style))], TFillXH(sideExpanderButtonSize)),
+		if (isRightCol) MColsA([TFillX(), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)]), TFixed(2.0, 2.0),])
+		else MColsA([TFixed(2.0, 2.0), MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)])]),
+	) ;
+	MRawButton(sideExpBtnItem(light), sideExpBtnItemHover(light), sideExpBtnItem(light), sideExpBtnItem(light), "", [], [TOnClicked(sideExpFn)]);
+}
+
+makeMDockingResizeHandleMobile(state : MDockingState, style : [MDockingStyle]) -> Material {
+	dot = TRounded(1.0, 1.0, 1.0, 1.0, [MThemeFill(state.manager, MThemedColor(mobileHandleColorFn(true, style), mobileHandleColorFn(false, style)))], TFixed(1.0, 1.0));
+	gapW = TFixed(2.0, 0.0);
+	gapH = TFixed(0.0, 2.0);
+	cornerSpace = TFixed(24.0, 18.0);
+
+	MLines([
+		TFillY(),
+		MColsA([
+			TFillX(),
+			MCursor(
+				MoveCursor(),
+				MGroup2(
+					TRectangle(interactiveRectangleStyle, cornerSpace),
+					MAvailable(
+						MLines([
+							TFillY(),
+							MColsA([
+								TFillX(),
+								MLines([
+									MColsA([TFixed(6.0, 0.0), dot]),
+									gapH,
+									MColsA([TFixed(3.0, 0.0), dot, gapW, dot]),
+									gapH,
+									MColsA([dot, gapW, dot, gapW, dot])
+								]),
+								TFixed(3.0, 0.0)
+							]),
+							TFixed(0.0, 3.0)
+						]),
+						cornerSpace
+					)
+				)
+			)
+		])
+	]);
+};
+
+makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor) -> Material {
+	handleWidth = 24.0;
+	if (isHorizontal) {
+		MCenterIn(
+			MColsA([
+				TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(1.0, 18.0)),
+				TFixed(2.0, 0.0),
+				TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(1.0, 18.0))
+			]),
+			TFixed(dockingBarHeight, handleWidth)
+		);
+	} else {
+		MCenterIn(
+			MLines([
+				TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(18.0, 1.0)),
+				TFixed(0.0, 2.0),
+				TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(18.0, 1.0))
+			]),
+			TFixed(handleWidth, dockingBarHeight)
+		);
+	};
+};
+
+makeMDockingDottedHandle(isColumn : bool, color : MColor) -> Material {
+		r = 2.0;
+		t = 1.0;
+		handleWidth = 24.0;
+		if (isColumn) {
+			TGroup2(
+				TRectangle(interactiveRectangleStyle, TFixed(handleWidth, dockingBarHeight)),
+				TCenterIn(
+					TCols([
+						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+						TFixed(2.0, 0.0),
+						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+						TFixed(2.0, 0.0),
+						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+						TFixed(2.0, 0.0),
+						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+					]),
+					TFixed(handleWidth, dockingBarHeight / 2.0)
+				)
+			);
+		} else {
+			TGroup2(
+				TRectangle(interactiveRectangleStyle, TFixed(dockingBarHeight / 2.0, handleWidth)),
+				TCenterIn(
+					TLines([
+						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+						TFixed(0.0, 2.0),
+						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+						TFixed(0.0, 2.0),
+						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+						TFixed(0.0, 2.0),
+						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
+					]),
+					TFixed(dockingBarHeight / 2.0, handleWidth)
+				)
+			);
+		};
+	};
+
+
+showIf(cond : bool) -> (Material) -> Material {\m : Material -> if (cond) m else TEmpty()}
+makeColsIf(isColumn : bool) -> ([Material]) -> Material {\m : [Material] -> if (isColumn) MCols(m) else MLines(m)}
+makeVSize(s : double, rotate: bool) -> Tropic { if (rotate) TFillWY(s) else TFillXH(s)}
+makeHSize(s : double, rotate: bool) -> Tropic { if (rotate) TFillXH(s) else TFillWY(s)}
+makeColFixedSize(w : double, h : double, rotate: bool) -> Tropic { if (rotate) TFixed(w, h) else TFixed(h, w)}
+makeRowFixedSize(w : double, h : double, rotate: bool) -> Tropic { if (rotate) TFixed(h, w) else TFixed(w, h)}
+
+makeMDockingDebugPrints(state : MDockingState) -> Material {
+	MConstruct([
+			makeSubscribe(state.dock, \dockA -> {
+				println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
+				println("State.dock :  DynamicBehaviour<[[int]]> -  stores UI layout");
+				println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
+				println(dockA);
+				println("");
+
+				iter(dockA,\panelDockInfoA -> {
+					lf = \j : int, s : string -> lpad(s, " ", j);
+					GAP = " ";
+
+					areaId = panelDockInfoA[0];
+					colID = panelDockInfoA[1];
+					panelId = panelDockInfoA[2];
+					enabled = if (getValue(getValue(state.enabled)[panelId])) "e   " else "    ";
+					expanded = if (getValue(getValue(state.expanded)[panelId])) "+   " else "-   ";
+					sideExpanded = if (getValue(getValue(state.sideExpanded)[panelId])) "se   " else "--   ";
+					
+					size = getTropicMetrics(getValue(state.size)[panelId]);
+					panelSize = lf(4, d2s(size.width)) + "  x " + lf(4, d2s(size.height));
+					mobileSize = getTropicMetrics(getValue(state.mobileSize)[panelId]);
+					mobilePanelSize = lf(4, d2s(mobileSize.width)) + "  x " + lf(4, d2s(mobileSize.height));
+					dockedSize = getTropicMetrics(getValue(state.dockedSize)[panelId]);
+					dockedPanelSize = lf(4, d2s(dockedSize.width)) + "  x " + lf(4, d2s(dockedSize.height));
+					dockString = "[areaID: " + lf(2, i2s(areaId)) + ",   colID: " + lf(2, i2s(colID)) + ",   panelID: " + lf(2, i2s(panelId)) + "]   ";
+					positionString = toString(getValue(getValue(state.positions)[panelId]));
+
+					println(
+						dockString + 
+						GAP + enabled + 
+						GAP + expanded + 
+						GAP + sideExpanded + 
+						rpad(getValue(state.title)[panelId], " ", 16) + 
+						"s: " + panelSize + 
+						"       m: " + mobilePanelSize + 
+						"       d: " + dockedPanelSize + 
+						"       " + positionString
+					);
+				});
+				println("");
+
+				// Print area's docked panels
+				areaIDs = uniq(fold(dockA, [], \acc, p ->if (p != []) arrayPush(acc, p[0]) else acc));
+				iter(areaIDs,\areaId -> if (areaId > 0) println("Area " + i2s(areaId) + " contains: " + toString(extractAreaGridById(dockA, areaId))));
+				println("Floating: " + toString(extractAreaGridById(dockA, -1)));
+				println("");
+			}),
+
+			// makeSubscribe(state.positions, \positionA -> {
+			// 	println("State.positions :  DynamicBehaviour<[DynamicBehaviour<Point>]>");
+			// 	println("");
+			// 	iteri(positionA,\i,p -> println(i2s(i) + " - " + toString(p)));
+			// 	println("");
+			// }),
+		],
+		TRectangle(interactiveRectangleStyle, TFillXY())
+	)
+}
