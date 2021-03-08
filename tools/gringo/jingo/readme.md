@@ -26,6 +26,10 @@ https://factorcode.org/
 Joy is a concatenative functional language:
 http://joy-lang.org/
 
+## Status
+
+Jingo is incomplete.
+
 ## Literals/types
 
 We support these values:
