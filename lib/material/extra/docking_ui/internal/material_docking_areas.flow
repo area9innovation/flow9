@@ -117,6 +117,7 @@ MDockingArea(isColumn : bool, state : MDockingState, groupName : string, areaId 
 }
 
 
+
 makeDockedPanelA(
 	isColumn : bool,
 	dropInfo : MDockingDropInfo,
@@ -172,7 +173,6 @@ makeDockedPanelA(
 
 	maxPanelsWidth = either(maxA(panelsWidthA), -doubleMax);
 	maxDockedWidth = either(maxA(dockedWidthA), -doubleMax);
-	// maxMobileWidth = either(maxA(mobileWidthA), -doubleMax);
 	// se = getValue(getValue(state.sideExpanded)[colA[0]]);
 		
 	colWB = make(maxDockedWidth);
@@ -239,12 +239,14 @@ makeDockedPanelA(
 
 				MConstruct([
 					// makeSubscribe(rowHB, \rh -> {
-						// 	println(i2s(panelId) + "- rowHB: " +  toString(rh));
+					// 		println(i2s(panelId) + "- rowHB: " +  toString(rh));
 					// }),
 					makeSubscribe(sideExpanded, \se -> {
 						if (se) {
 							nextDistinct(rowHB, pHeight);
 							nextDistinct(colWB, pWidth);
+							// Also expand panels in col
+							iter(colA, \pId -> nextDistinct(getValue(state.expanded)[pId], se));
 						} else {
 							nextDistinct(rowHB, dockingBarHeight);
 							nextDistinct(colWB, dockingSideCollapsedSize);
@@ -259,7 +261,8 @@ makeDockedPanelA(
 						} else pHeight;
 
 						// println(" panel" + i2s(panelId) + " - h: " + d2s(rH) );
-						if (e) nextDistinct(rowHB, rH) else nextDistinct(rowHB, dockingBarHeight);
+						// if (e) nextDistinct(rowHB, rH) else nextDistinct(rowHB, dockingBarHeight);
+						nextDistinct(rowHB, if (e) getTropicMetrics(getValue(state.size)[panelId]).height else dockingBarHeight);
 					}),
 					makeSubscribe(enabled, \e -> {
 						if (!e) next(state.dock, mapi(getValue(state.dock), \j, item -> if (j == panelId) [-1, item[1], item[2]] else item)); //undock
@@ -276,14 +279,14 @@ makeDockedPanelA(
 							})),
 							colHeightB
 						), \totColH -> {
-			
 							if (fillPanelOrder) {
 								availableColHeight = totColH - sideExpanderButtonSize /*- dockingDragSize*/ - dockingBarHeight - otherPanelsH;
 								// Fill height
 								if (totColH > otherPanelsH) next(rowHB, availableColHeight);
 							} 
 						}
-					)],
+					)
+					],
 					makeDockedPanel(
 						state, 
 						panelId, 
@@ -369,7 +372,7 @@ resizePanelH(
 	fillHeight = fillHeightArea || contains(pstyle, MDockingFillSpace());
 	isBottomLine = contains(style, MDockingBottomtLines());
 	dontScroll  = contains(style, MDockingDontScroll());	
-	dontResizeAll = fold(parentA, true, \acc, p -> acc && contains(getValue(state.style)[p], MDockingDontResize()));
+	dontResizeAll = fold(parentA, true, \acc, p -> acc || contains(getValue(state.style)[p], MDockingDontResize()));
 	dontResize = isLastPanel;
 
 	// println(" > DRAW - Container R - " + i2s(panelId) /*+ "      - " + toString(parentA)*/);
@@ -383,15 +386,14 @@ resizePanelH(
 	rowFiller = if (isColumn) TFillY() else TFillX();
 
 	makeSeparator = \resizeW : bool, order : [int], resize : bool, endpoint : bool -> {
-		resizeHelper = if (resize) dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, dragHandleSizeBig, style) else MEmpty();
-		dockingDropLine(isColumn, resizeW, dropInfo, state, order, true, resizeHelper, dragHandleSize, dragHandleSizeBig, endpoint, style)
-		
+		resizeHelper = MShowLazy(fmin(expanded, sideExpanded), \ -> dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, dragHandleSizeBig, style)) |> showIf(resize);
+		dockingDropLine(isColumn, resizeW, dropInfo, state, order, true, resizeHelper, dragHandleSize, dragHandleSizeBig, endpoint, style);
 	}
 
 	rowsWithHandles = 
-			if (isColumn) {
-				// Resize H
-				MLines( 
+		if (isColumn) {
+			// Resize H
+			MLines( 
 				if (rowId == 0 && length(parentA) == 1)
 				[
 					makeSeparator(false, [colId, rowId], false, true /*endpoint*/), 		// top
@@ -415,9 +417,9 @@ resizePanelH(
 					makeSeparator(false, [colId, rowId + 1], true /*resize*/, false),
 				]
 			)
-			} else {
+		} else {
 			// Resize W
-				MCols(
+			MCols(
 				//  if (rowId == 0 && length(parentA) == 1)
 				// [
 				// 	if (isBottomLine) dLine(rowId + 1, false) else dLine(rowId, true),   //top
@@ -442,8 +444,8 @@ resizePanelH(
 					rowFiller,
 					makeSeparator(true, [colId, rowId + 1], true /*resize*/, false),
 				]
-				)
-			}
+			)
+		}
 
 	scrollBox = if (dontScroll) MCropSize(TFillXY(), box) else MScroll(box, TFillXY(), []);
 
@@ -451,7 +453,7 @@ resizePanelH(
 	addRowSeparators = \f : Material ->
 		[
 			f,
-			if (isLastPanel) TEmpty() else makeSeparatorBar(!isColumn, dontResize, se, light, style)    // bottom/dx
+			if (isLastPanel) TEmpty() else makeSeparatorBar(!isColumn, state, panelId, dontResize, light, style)    // bottom/dx
 		] |> (\r -> if (isColumn) MLines(r) else MCols(r));
 
 	addDragAndDropHelperGroup = \ f : Material ->  MGroup2(f, rowsWithHandles);
@@ -541,10 +543,11 @@ resizeAreaW(
 	currXy = make(zeroPoint);
 	panelWH = makeWH();
 	startingValueB = make(0.0);
+	firstPanelId = firstElement(colA, 0);
 
 	panelsWidthA = map(colA, \s -> getTropicMetrics(getValue(state.size)[s]).width);
 	maxPanelsWidth = either(maxA(panelsWidthA), -doubleMax);
-	se = getValue(getValue(state.sideExpanded)[colA[0]]);
+	se = getValue(getValue(state.sideExpanded)[firstPanelId]);
 
 	numOfCols = length(areaGrid);
 	lastCol = numOfCols - 1;
@@ -562,7 +565,7 @@ resizeAreaW(
 	corrSide = if (isReversed) -1.0 else 1.0;
 
 	makeSeparator = \resizeW : bool, order : [int], resize : bool, endpoint : bool -> {
-		resizeHelper = if (resize) dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, dragHandleSizeBig, style) else MEmpty();
+		resizeHelper = dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, dragHandleSizeBig, style)  |> showIf(resize);
 		dockingDropLine(isColumn, resizeW, dropInfo, state, order, false, resizeHelper, dragHandleSize, dragHandleSizeBig, endpoint, style);
 	} 
 	
@@ -629,9 +632,9 @@ resizeAreaW(
 
 	// addColSeparators = \ f : Material ->
 	// 	[
-	// 		if (!isRightCol || dontResize) TEmpty() else makeSeparatorBar(isColumn, dontResize, se, light, style),	// sx
+	// 		if (!isRightCol || dontResize) TEmpty() else makeSeparatorBar(isColumn, state, firstPanelId, dontResize, light, style),	// sx
 	// 		f,
-	// 		if (isRightCol || dontResize) TEmpty() else makeSeparatorBar(isColumn, dontResize, se, light, style)  	// dx
+	// 		if (isRightCol || dontResize) TEmpty() else makeSeparatorBar(isColumn, state, firstPanelId, dontResize, light, style)  	// dx
 	// 	] 
 	// 	|> (\c -> if (isColumn) MCols(c) else MLines(c));
 
@@ -640,21 +643,21 @@ resizeAreaW(
 		if (isColumn) {
 			MColsA([
 				if (isEdgeReverse && dontResize) TEmpty() else  {
-					if (isRightCol) makeSeparatorBar(isColumn, dontResize, se, light, style) else TEmpty()	// sx
+					if (isRightCol) makeSeparatorBar(isColumn, state, firstPanelId, dontResize, light, style) else TEmpty()	// sx
 				},
 				f,
 				if (isEdge && dontResize) TEmpty() else {
-					if (isRightCol) TEmpty() else makeSeparatorBar(isColumn, dontResize, se, light, style)  	// dx
+					if (isRightCol) TEmpty() else makeSeparatorBar(isColumn, state, firstPanelId, dontResize, light, style)  	// dx
 				}
 			])
 		} else {
 			MLines([
 				if (isEdgeReverse && dontResize) TEmpty() else  {
-					if (isBottomLine)  makeSeparatorBar(isColumn, dontResize, se, light, style) else TEmpty()  // top
+					if (isBottomLine)  makeSeparatorBar(isColumn, state, firstPanelId, dontResize, light, style) else TEmpty()  // top
 				},	
 				f,
 				if (isEdge && dontResize) TEmpty() else {
-					if (isBottomLine) TEmpty() else makeSeparatorBar(isColumn, dontResize, se, light, style)  // bottom
+					if (isBottomLine) TEmpty() else makeSeparatorBar(isColumn, state, firstPanelId, dontResize, light, style)  // bottom
 				}	
 			])
 		}
@@ -668,7 +671,7 @@ resizeAreaW(
 		// }),
 		makeSubscribe2(isResizing, \rs -> { 
 			if (!rs) {
-				println("update Ws -" + i2s(colId) + "- "+ toString(getValue(sizeB)));
+				// println("update Ws -" + i2s(colId) + "- "+ toString(getValue(sizeB)));
 				// Update all docked panels in a col
 				iter(colA, \pId -> {
 					if (isColumn) updateTW(state.dockedSize, pId,  getValue(sizeB))
@@ -692,8 +695,8 @@ resizeAreaW(
 				rtlCorrection = if (getDefaultRtl()) -1.0 else 1.0; // correction the direction of width changing depending of rtl mode
 				blockOtherMInteractionItemIds(manager, itemId);
 				if (isColumn) {
-					if (isRightCol) nextDistinct(sizeB, max(dockingSideCollapsedSize, getValue(startingValueB) + rtlCorrection * (getValue(currXy).x - mxy.x)))
-						else nextDistinct(sizeB, max(dockingSideCollapsedSize, getValue(startingValueB) - rtlCorrection * (getValue(currXy).x - mxy.x)));
+					if (isRightCol) nextDistinct(sizeB, max(maxPanelsWidth, getValue(startingValueB) + rtlCorrection * (getValue(currXy).x - mxy.x)))
+						else nextDistinct(sizeB, max(maxPanelsWidth, getValue(startingValueB) - rtlCorrection * (getValue(currXy).x - mxy.x)));
 				} else {
 					if (isBottomLine) nextDistinct(sizeB, max(dockingItemHeight, getValue(panelWH).height + (getValue(currXy).y - mxy.y)))
 						else nextDistinct(sizeB, max(dockingItemHeight, getValue(panelWH).height - (getValue(currXy).y - mxy.y)));
