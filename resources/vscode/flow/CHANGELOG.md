@@ -164,3 +164,6 @@
 
  ## 0.4.12
  - html files are placed in the www2 directory in the nearest directory with flow.config file.
+
+## 0.4.13
+- a test editor written in flow is added. Readme is updated with instructions how to implement a custom editor written in flow. 
