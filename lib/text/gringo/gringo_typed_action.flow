@@ -1,5 +1,6 @@
 import text/gringo/gringo_action;
 import text/gringo/dcode_lib;
+import lingo/linecolumn;
 import ds/tree;
 
 /*
@@ -45,7 +46,7 @@ export {
 		// Binary operators
 		binops : Tree<string, (?, ?) -> ?>,
 		// Ternary operators
-		ternops : Tree<string, (?, ?, ?) -> ?>
+		ternops : Tree<string, (?, ?, ?) -> ?>,
 	) -> GringoAction<List<?>>;
 
 	// This does a parse of this text with typed result values of type ?. 
@@ -58,7 +59,9 @@ export {
 		// The generated parser function from Gringo
 		parser : (DParseAcc) -> bool, 
 		// A default value in case parsing fail
-		defaultVal : ?
+		defaultVal : ?,
+		// For parse errors
+		onError : (string) -> void,
 	) -> ?;
 }
 
@@ -72,7 +75,7 @@ gringoTypedAction(
 		push : (?, ?) -> ?,
 		unops : Tree<string, (?) -> ?>,
 		binops : Tree<string, (?, ?) -> ?>,
-		ternops : Tree<string, (?, ?, ?) -> ?>
+		ternops : Tree<string, (?, ?, ?) -> ?>,
 	) -> GringoAction<List<?>> {
 	GringoAction(
 		\stack : List<?>, command : string -> {
@@ -151,7 +154,10 @@ gringoTypedAction(
 	);
 }
 
-gringoTypedParse(text : string, action : GringoAction<List<?>>, parser : (DParseAcc) -> bool, defaultVal : ?) -> ? {
+gringoTypedParse(
+		text : string, action : GringoAction<List<?>>, parser : (DParseAcc) -> bool, defaultVal : ?,
+		onError : (string) -> void,
+	) -> ? {
 	pacc : DParseAcc<List<?>> = DParseAcc(text, 
 		action,
 		0,
@@ -161,6 +167,22 @@ gringoTypedParse(text : string, action : GringoAction<List<?>>, parser : (DParse
 		0
 	);
 	success = parser(pacc);
-	// TODO: We could report errors here
+
+	// We report errors here
+	traverseInOrder(pacc.errors, \pos, error -> {
+		resolver = makeLineResolver(text);
+		linecol = findLine(resolver, pos);
+		onError(
+			i2s(linecol.lineno) + ":" + i2s(linecol.column) + ": " + error
+			+ "\n" + linecol.line
+			+ "\n" + lpad("^", " ", linecol.lineIndex - 1)
+		);
+	});
+
+	if (pacc.i < strlen(text) || !success) {
+		resolver = makeLineResolver(text);
+		linecol = findLine(resolver, pacc.i); // maxi
+		onError(i2s(linecol.lineno) + ":" + i2s(linecol.column) + ": Parsing ended here");
+	}
 	headList(pacc.output, defaultVal);
 }
