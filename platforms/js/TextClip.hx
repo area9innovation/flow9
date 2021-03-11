@@ -1454,7 +1454,7 @@ class TextClip extends NativeWidgetClip {
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 
-		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
