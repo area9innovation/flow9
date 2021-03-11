@@ -1113,37 +1113,21 @@ filterUploadedFilesForRestrictionsNative(
 		)
 	});
 
-	if (isUrlParameterTrue("new")) {
-		filterUploadedFilesForRestrictions(
-			data, managerM, m2t,
-			\res1, res2, res3 -> {
-				idx1 = map(res1, \r -> r.index);
-				idx2 = map(res2, \r -> r.index);
-				idx3 = map(res3, \r -> r.index);
+	filterUploadedFilesForRestrictions(
+		data, managerM, m2t,
+		\res1, res2, res3 -> {
+			idx1 = map(res1, \r -> r.index);
+			idx2 = map(res2, \r -> r.index);
+			idx3 = map(res3, \r -> r.index);
 
-				onDone(
-					filtermapi(files, \i, f -> if (contains(idx1, i)) Some(f) else None()),
-					filtermapi(files, \i, f -> if (contains(idx2, i)) Some(f) else None()),
-					filtermapi(files, \i, f -> if (contains(idx3, i)) Some(f) else None())
-				);
-			},
-			style
-		);
-	} else {
-		//>> Temporary - while testing new `image resize feature`
-		eitherFn(
-			tryExtractStruct(style, FbFilterMaxSize(0)),
-			\sSize -> {
-				eitherFn(
-					managerM,
-					\manager -> filterFilesByMaxSizeDialog(manager, files, sSize.size, isSome(managerM), m2t, \res -> onDone(res, [], [])),
-					\-> onDone(files, [], [])
-				);
-			},
-			\-> onDone(files, [], [])
-		);
-		//<< Temporary - while testing new `image resize feature`
-	}
+			onDone(
+				filtermapi(files, \i, f -> if (contains(idx1, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx2, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx3, i)) Some(f) else None())
+			);
+		},
+		style
+	);
 }
 
 filterUploadedFilesForRestrictions(
@@ -1212,8 +1196,8 @@ filterUploadedFilesForRestrictions(
 	}
 	
 	doStepDialog = \manager, resultNormal, resultLarge, resultImageLarge, resultVideoLarge -> {
-		resultImageLargePair : [Pair<FbSourceData, DynamicBehaviour<bool>>] = map(
-			resultImageLarge, \r -> Pair(r, make(defaultImageReduce))
+		resultImageLargePair : [Triple<FbSourceData, DynamicBehaviour<bool>, WidthHeight>] = map(
+			resultImageLarge, \r -> Triple(r.first, make(defaultImageReduce), r.second)
 		);
 		resultVideoLargePair : [Pair<FbSourceData, DynamicBehaviour<bool>>] = map(
 			resultVideoLarge, \r -> Pair(r, make(defaultVideoReduce))
@@ -1237,11 +1221,11 @@ filterUploadedFilesForRestrictions(
 				onDone(
 					concat3(
 						resultNormal,
-						map(resultImageLarge2.second, firstOfPair),
+						map(resultImageLarge2.second, firstOfTriple),
 						map(resultVideoLarge2.second, firstOfPair)
 					),
 					concat(
-						map(resultImageLarge2.first, firstOfPair),
+						map(resultImageLarge2.first, firstOfTriple),
 						map(resultVideoLarge2.first, firstOfPair)
 					),
 					resultLarge
@@ -1272,21 +1256,6 @@ filterUploadedFilesForRestrictions(
 						[MWidth(416.0), getToolbarItemsColor(manager), MExpanderBackgroundStyle([MFill(getPrimaryColor(manager))], [])]
 					),
 					MEmpty()
-					// For future ...
-					/*MCols2(
-						TFixed(336., 0.),
-						MBorder4(12., MIcon("help_outline", [MIconSize(24.), getToolbarItemsColor(manager)]))
-					)*/
-
-					/*
-					MParagraph(_("The video will be reformatted and optimized in the background for a good web streaming experience. It usually takes 5-10 minutes."), []),
-					MParagraph(_("This message can be closed."), []),
-					*/
-
-					/*
-					MParagraph(_("Use smaller images for the best performance."), []),
-					MParagraph(_("Smaller than 1MB and 2000 pixels is recommended."), [])
-					*/
 				);
 			}
 
@@ -1300,6 +1269,11 @@ filterUploadedFilesForRestrictions(
 					viewLast
 				]);
 			}
+
+			getInfoTextView = \text, value -> [
+				MText(formatString(text, [value]), [getPrimaryColor(manager)]),
+				TFixed(0., 8.)
+			];
 
 			view = MLines(concatA([
 				[MText(getText(isMany), [MSubheading()]), MEmpty()],
@@ -1317,11 +1291,14 @@ filterUploadedFilesForRestrictions(
 				if (resultLarge != []) [
 					getExpander(
 						_("Extra large files"), MEmpty(),
-						MLines(interleave(
-							map(resultLarge, \r -> {
-								getFileRow(r.name + "." + r.extension, MText(_("to skip"), [MGrey(400)]));
-							}),
-							TFixed(0., 8.)
+						MLines(concat(
+							eitherMap(maxSizeM, \size -> getInfoTextView(_("Allowed max file size is %1 bytes;"), d2s(size)), []),
+							interleave(
+								map(resultLarge, \r -> {
+									getFileRow(r.name + "." + r.extension, MText(_("to skip"), [MGrey(400)]));
+								}),
+								TFixed(0., 8.)
+							)
 						))
 					)
 				] else [],
@@ -1335,14 +1312,19 @@ filterUploadedFilesForRestrictions(
 								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText("Reduce", "As is")])
 							)
 						},
-						MLines(
+						MLines(concat(
+							eitherMap(maxResolutionM, \res -> getInfoTextView(_("Allowed max resolution for the image is %1 x %1 pixels;"), i2s(res)), []),
 							map(resultImageLargePair, \r -> {
+								maxRes = max(r.third.width, r.third.height);
+								k = maxRes / max(eitherMap(maxResolutionM, i2d, maxRes), 1.);
+								text = formatString(_("Current imgae resolution is %1 x %2 pixels."), [i2s(trunc(r.third.width)), i2s(trunc(r.third.height))]) + "\n" +
+									formatString(_("On image reducing the resolution will become %1 x %2 pixels."), [i2s(trunc(r.third.width / k)), i2s(trunc(r.third.height / k))]);
 								getFileRow(
 									r.first.name + "." + r.first.extension,
-									MSwitchControl(r.second, [getPrimaryColor(manager), MOnOffText("Reduce", "As is")])
+									MSwitchControl(r.second, [getPrimaryColor(manager), MOnOffText("Reduce", "As is"), MTooltipText(const(text))])
 								)
 							})
-						)
+						))
 					)
 				] else [],
 				if (resultVideoLargePair != []) [
@@ -1355,14 +1337,15 @@ filterUploadedFilesForRestrictions(
 								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText("Reduce", "As is")])
 							)
 						},
-						MLines(
+						MLines(concat(
+							eitherMap(maxBitrateM, \bitrate -> getInfoTextView(_("Allowed max video bitrate is %1 kbps;"), i2s(bitrate)), []),
 							map(resultVideoLargePair, \r -> {
 								getFileRow(
 									r.first.name + "." + r.first.extension,
 									MSwitchControl(r.second, [getPrimaryColor(manager), MOnOffText("Reduce", "As is")])
 								)
 							})
-						)
+						))
 					)
 				] else []
 			]) |> (\arr -> interleave(arr, TFixed(0., 8.))));
@@ -1391,12 +1374,12 @@ filterUploadedFilesForRestrictions(
 				doStepDialog(manager,
 					concatA([
 						dataSplitted.third,
-						if (defaultImageReduce) [] else dataSplitted.first,
-						if (defaultVideoReduce) [] else dataSplitted.second
+						if (defaultImageReduce && isSome(maxResolutionM)) [] else dataSplitted.first,
+						if (defaultVideoReduce && isSome(maxBitrateM)) [] else dataSplitted.second
 					]),
 					filesLargeSmall.first,
-					if (defaultImageReduce) dataSplitted.first else [],
-					if (defaultVideoReduce) dataSplitted.second else []
+					if (defaultImageReduce && isSome(maxResolutionM)) map(dataSplitted.first, \v -> Pair(v, WidthHeight(0., 0.))) else [],
+					if (defaultVideoReduce && isSome(maxBitrateM)) dataSplitted.second else []
 				);
 			}
 
@@ -1445,7 +1428,7 @@ filterUploadedFilesForRestrictions(
 						gotWH = \wh -> {
 							if (^gotWHR) {
 								gotWHR := false;
-								ff(Pair(iDataRow, max(trunc(wh.width), trunc(wh.height))));
+								ff(Pair(iDataRow, wh));
 							}
 						}
 
@@ -1467,7 +1450,7 @@ filterUploadedFilesForRestrictions(
 					},
 					onChecked,
 					// Never should happen
-					\__ -> onChecked(map(iData, \iDataRow -> Pair(iDataRow, 0)))
+					\__ -> onChecked(map(iData, \iDataRow -> Pair(iDataRow, WidthHeight(0., 0.))))
 				);
 
 				checkVideosFn = \vData, onChecked -> mapAsync(
@@ -1511,10 +1494,10 @@ filterUploadedFilesForRestrictions(
 								sM,
 								\maxResolution -> {
 									checkImagesFn(dataSplitted.first, \result -> {
-										normalLarge = partition(result, \r -> r.second <= maxResolution);
+										normalLarge = partition(result, \r -> max(trunc(r.second.width), trunc(r.second.height)) <= maxResolution);
 										ff(Pair(
 											map(normalLarge.first, firstOfPair),
-											map(normalLarge.second, firstOfPair)
+											normalLarge.second
 										))
 									})
 								},
@@ -1528,7 +1511,7 @@ filterUploadedFilesForRestrictions(
 										normalLarge = partition(result, \r -> r.second <= maxBitrate);
 										ff(Pair(
 											map(normalLarge.first, firstOfPair),
-											map(normalLarge.second, firstOfPair)
+											map(normalLarge.second, \v -> Pair(v.first, WidthHeight(0., 0.)))
 										))
 									})
 								},
@@ -1545,7 +1528,7 @@ filterUploadedFilesForRestrictions(
 							),
 							filesLargeSmall.first,
 							if (resultA != []) resultA[0].second else [],
-							if (length(resultA) > 1) resultA[1].second else []
+							if (length(resultA) > 1) map(resultA[1].second, firstOfPair) else []
 						);
 					},
 					// Never should happen
@@ -1573,89 +1556,6 @@ filterUploadedFilesForRestrictions(
 			);
 		}
 	);
-}
-
-
-// Old version  - Deprecated
-filterFilesByMaxSizeDialog(manager : MaterialManager, files : [native], maxSize : int, showDialog : bool, m2t : (Material, MFocusGroup) -> Tropic, onDone : ([native]) -> void) -> void {
-	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
-	getText = \isMany -> if (isMany) _("Sorry, your files is too large for the system.")
-		else _("Sorry, your file is too large for the system.");
-
-	files2 = filter(files, \file -> fileSizeClient(file) <= i2d(maxSize));
-	showErrorDialog = \isMany, title, text -> {
-		if (showDialog) {
-			closeB = make(false);
-			renderMDialog2(
-				manager,
-				closeB,
-				[
-					MDialogTitle(title),
-					MDialogUseFrame(),
-					MDialogActions([MTextButton("OK", \-> { onDone(files2); next(closeB, true); }, [], [MShortcut("enter")])]),
-					MDialogScroll()
-				],
-				MLines(interleave(map([
-						getText(isMany),
-						formatString(_("Try to compress it or break it up into smaller pieces (max size is %1 Mb)."), [i2s(maxSize / 1024 / 1024)]),
-						"",
-						text
-					],
-					\t -> MText(t, [MSubheading()])), TFixed(8.0, 8.0)
-				)),
-				m2t,
-				\t -> {
-					trender(
-						TAvailable(
-							TTranslate(fif(manager.iscript.showPanel, const(Point(0.0, 48.0)), const(zeroPoint)), t),
-							TIf(manager.iscript.showPanel, TSized(manager.iscript.available), TFillXY())
-						)
-						|> (\f ->
-							materialLogFn(
-								\ ->
-									TFixSize(
-										TLines2(
-											TFixed(36., 36.),
-											f
-										),
-										TFillXY()
-									),
-								MaterialWarning(),
-								\ -> f
-							)
-						),
-						manager.manager.renderStyle
-					)
-				}
-			);
-		} else {
-			onDone(files2);
-		}
-	}
-
-	if (files2 == []) {
-		isMany = length(files) > 1;
-		title = getTitle(isMany);
-		text = if (isMany) formatString(_("Nothing were uploaded from %1 files."), [i2s(length(files))])
-			else formatString(_("The file was not uploaded."), [i2s(length(files))]);
-		showErrorDialog(isMany, title, text);
-	} else if (length(files) != length(files2)) {
-		countOrig = length(files);
-		countFiltered = length(files2);
-		countDiff = countOrig - countFiltered;
-
-		title = getTitle(countDiff > 1);
-		text = if (countOrig > 1) {
-			if (countFiltered > 1) formatString(_("Only %1 of %2 files were uploaded."), [i2s(countFiltered), i2s(countOrig)])
-			else formatString(_("Only 1 of %1 files was uploaded."), [i2s(countOrig)]);
-		} else {
-			// It should be never reached
-			_("... and something went wrong. Nothing were uploaded.");
-		};
-		showErrorDialog(countDiff > 1, title, text);
-	} else {
-		onDone(files2);
-	}
 }
 
 checkIsDirectoryAll(api : FilesystemExtAPI, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
