@@ -1460,11 +1460,18 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextWidth() : Void {
-		if (nativeWidget != null) {
-			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
-			if (textNodeWidth != null && textNodeWidth > 0) {
-				var textWidth = textNodeWidth / (untyped this.transform ? untyped this.transform.worldTransform.a : 1);
-
+		if (nativeWidget != null && metrics != null) {
+			var textNodeMetrics = getTextNodeMetrics(nativeWidget);
+			var textNodeWidth = textNodeMetrics.width;
+			var textNodeHeight = textNodeMetrics.height;
+			if (textNodeWidth != null && textNodeWidth > 0 && textNodeHeight != null && textNodeHeight > 0) {
+				var textWidth =
+					untyped this.transform
+						? (
+							(textNodeWidth * (1 - Math.pow(untyped this.transform.worldTransform.c, 2)) / untyped this.transform.worldTransform.a)
+							+ Math.abs(textNodeHeight * untyped this.transform.worldTransform.c)
+						)
+						: textNodeWidth;
 				if (textWidth != metrics.width) {
 					metrics.width = textWidth;
 					this.emitEvent('textwidthchanged');
