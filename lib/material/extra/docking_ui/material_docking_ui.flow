@@ -23,9 +23,10 @@ export {
 
 
 MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, style : [MDockingStyle]) -> Material {
-	restartB = extractStruct(state.style, MDockingRestartUI(make(false))).restart;
-	originalState = copyMDockingState(state);
-	updateMDockingState(state, panelsA, style);
+	// Update state
+	cacheEnabled = extractStruct(state.style, MDockingEnableLoadAndStoreCache(false)).cacheEnabled;
+	updateMDockingState(state, panelsA, cacheEnabled, style);
+
 	manager = state.manager;
 	titleA = state.title;
 	panelIconA = state.panelIcon;
@@ -56,32 +57,18 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 	//overlay layout
 	movableDropArea = 
 		MConstruct([
-			// NOTE : Debug use, delete after tests
-			// makeSubscribe(restartB, \ps -> {
-			// 	println("restartB");
-			// 	println(ps);
-			// 	next(state.title, getValue(originalState.title));
-			// 	next(state.panelIcon, getValue(originalState.panelIcon));
-			// 	next(state.content, getValue(originalState.content));
-			// 	next(state.dock, getValue(originalState.dock));
-			// 	next(state.group, getValue(originalState.group));
-			// 	next(state.size, getValue(originalState.size));
-			// 	next(state.mobileSize, getValue(originalState.mobileSize)); 
-			// 	next(state.dockedSize, getValue(originalState.dockedSize));
-			// 	next(state.positions, getValue(originalState.positions)); 
-			// 	next(state.enabled, getValue(originalState.enabled));
-			// 	next(state.expanded, getValue(originalState.expanded)); 
-			// 	next(state.sideExpanded, getValue(originalState.sideExpanded));
-			// 	next(state.colorScheme, getValue(originalState.colorScheme));
-			// 	next(state.panelStyle, getValue(originalState.panelStyle));
-			// 	updateMDockingState(state, panelsA, style);
-			// }),
-			// makeSubscribe(state.positions, \ps -> {
-			// 	println(ps);
-			// }),
-			// makeSubscribe(state.dock, \ps -> {
-			// 	println(ps);
-			// }),
+			// Update borwser cache
+			make4Subscribe(
+				state.dock,
+				fmerge(map(getValue(state.positions), \p -> p)),	
+				fmerge(map(getValue(state.enabled), \e -> e)),
+				// fmerge(map(getValue(state.expanded), \ex -> ex)),  // check areas redraw before
+				fmerge(map(getValue(state.sideExpanded), \se -> se)),
+				\__, __, __, __ -> {
+					if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
+				}
+			),
+			// makeSubscribe(state.dock, \d -> {println(d)}),
 			makeSubscribe(onDrop, \d -> {
 				if (d >= 0) {
 					pstyle = panelsA[d].style;
@@ -130,7 +117,7 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 
 
 // Update MDockingState collecting data from panels and areas
-updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], style : [MDockingStyle]) -> void {
+updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabled : bool, style : [MDockingStyle]) -> void {
 	titleA = state.title;
 	panelIconA = state.panelIcon;
 	contentA = state.content;
@@ -141,24 +128,15 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], style : [M
 	expandedA = state.expanded;
 	panelsStyleA = state.panelStyle;
 
-	enableLoad = make(true);
-	cacheEnabled = getValue(enableLoad);
-
-	savedString = getKeyValue(state.keyGroupName |> addDockingSuffix, "");
-	// println("savedString");
-	// println(savedString);
-	cachedPanelsA = if (cacheEnabled && savedString != "") {
-		savedJson = parseJson(savedString);
-		getJsonObjectValue(savedJson, []);	
-	} else [];
-
+	// Cache
+	savedString = getKeyValue(state.keyGroupName |> addDockingSuffix, "");	
 	cachedPanelA = mapi(panelsA, \panelId, __ -> 
 		getJsonFieldValue(parseJson(savedString), i2s(panelId), JsonNull())
 	);
 
 	// Update UI layout
 	if (getValue(dockA) == [[]]) {
-		iteri(panelsA, \panelId, p -> {
+		iteri(panelsA, \panelId, p -> {			
 			cachedPanel = cachedPanelA[panelId];
 			cAreaId = getJsonIntValue(getJsonFieldValue(cachedPanel, "areaId", JsonNull()), intMax);
 			cColId = getJsonIntValue(getJsonFieldValue(cachedPanel, "colId", JsonNull()), intMax);
