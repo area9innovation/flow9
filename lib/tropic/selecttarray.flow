@@ -159,61 +159,129 @@ SelectTDynamicGroup(values : DynamicArray<?>, makeTropicFn : (index :  Transform
 }
 
 SelectTDynamicArray(values : DynamicArray<?>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic, combiner : TCombiner) -> Tropic {
-	stackChanges = make([]);
-	old = ref [];
-	indexes : ref [DynamicBehaviour<int>] = ref [];
 	ids : ref [int] = ref [];
-
 	getNextId = \ -> fold(sort(^ids), -1, \acc, id -> if (id == acc + 1) id else acc) + 1;
 
-	TConstruct(
-		[
-			\ -> listenDynamicArray(values, \op ->
-				switch (op) {
-					HeckelInsert(y, v): {
-						// println("insert " + i2s(y) + " " + toString(v));
-
-						index = make(y);
-						id = getNextId();
-
-						indexes := insertArray(^indexes, y, index);
-						fori(y + 1, length(^indexes) - 1, \i -> next(^indexes[i], i));
-						ids := insertArray(^ids, y, id);
-
-						// println(map(^indexes, getValue));
-
-						// fselect to block any changes to index
-						next(stackChanges, arrayPush(getValue(stackChanges), TGroupAdd(makeTropicFn(fselect(index, idfn |> FLift), id, v), y)));
-					}
-					// HeckelMove(f, t): {
-					// 	indexes := moveElement(^indexes, f, t);
-					// 	fori(min(f, t), length(^indexes) - 1, \i -> next(^indexes[i], i));
-					// 	ids := moveElement(^ids, f, t);
-
-					// 	next(stackChanges, arrayPush(getValue(stackChanges), TGroupMove(f, t)));
-					// }
-					HeckelDelete(y, v): {
-						// println("remove " + i2s(y));
-
-						indexes := removeIndex(^indexes, y);
-						fori(y, length(^indexes) - 1, \i -> next(^indexes[i], i));
-						ids := removeIndex(^ids, y);
-
-						// println(map(^indexes, getValue));
-
-						next(stackChanges, arrayPush(getValue(stackChanges), TGroupDelete(y)));
-					}
-				}
-			)
-		],
-		TDynamicGroup2(
-			stackChanges,
-			ref [],
-			combiner
-		)
+	TDynamicArrayCombiner(
+		mapiDynamicArray(values, \i, v -> {
+			id = getNextId();
+			ids := insertArray(^ids, fgetValue(i), id);
+			makeTropicFn(i, id, v);
+		}),
+		combiner
 	)
 }
 
+TDynamicArrayCombiner(a : DynamicArray<Tropic>, combiner : TCombiner) -> Tropic {
+	id = random();
+	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
+		stackChanges = make([]);
+		b : DynamicArray<TAcc> = mapiDynamicArrayWithPrevious(a, \p : Transform<Maybe<TAcc>>, i, v : Tropic -> {
+			isGroupCombiner = combiner == TGroupCombiner();
+			isLinesCombiner = combiner == TLinesCombiner() || combiner == TLinesACombiner();
+			isColsCombiner = combiner == TColsCombiner() || combiner == TColsACombiner();
+			top = fsubselect(p, FLift(\pp -> eitherMap(pp, \ppp -> ppp.metrics.height, zero)));
+			left = fsubselect(p, FLift(\pp -> eitherMap(pp, \ppp -> ppp.metrics.width, zero)));
+
+			b = t2a(
+				v,
+				if (isGroupCombiner)
+					parent
+				else
+					TParentInfo(
+						if (isColsCombiner) fsubtract(parent.maxX, left) else parent.maxX,
+						if (isLinesCombiner) fsubtract(parent.maxY, top) else parent.maxY,
+						parent.environment,
+						parent.transformMatrix
+					),
+				sheet,
+				metricsOnly
+			);
+
+			TAcc(
+				if (isLinesCombiner)
+					FTranslate(zero, top, b.form)
+				else if (isColsCombiner)
+					FTranslate(left, zero, b.form)
+				else
+					b.form,
+				TFormMetrics(
+					if (isGroupCombiner || isLinesCombiner)
+						fmax(b.metrics.width, left)
+					else
+						faddition(b.metrics.width, left),
+					if (isGroupCombiner || isColsCombiner)
+						fmax(b.metrics.height, top)
+					else
+						faddition(b.metrics.height, top),
+					if (isGroupCombiner || isColsCombiner)
+						fmax(b.metrics.baseline, fsubselect(p, FLift(\pp -> eitherMap(pp, \ppp -> ppp.metrics.baseline, zero))))
+					else
+						faddition(b.metrics.baseline, top)
+				),
+				if (isGroupCombiner || isLinesCombiner)
+					fmax(b.minWidth, left)
+				else
+					faddition(b.minWidth, left),
+				if (isGroupCombiner || isColsCombiner)
+					fmax(b.minHeight, top)
+				else
+					faddition(b.minHeight, top),
+				if (isGroupCombiner || isLinesCombiner)
+					fmax(b.maxWidth, left)
+				else
+					faddition(b.maxWidth, left),
+				if (isGroupCombiner || isColsCombiner)
+					fmax(b.maxHeight, top)
+				else
+					faddition(b.maxHeight, top),
+				zero,
+				zero,
+				const(false),
+				false,
+				false,
+				b.disposers
+			)
+		});
+		bb : Transform<Maybe<TAcc>> = elementAtDynamicArray(b, fsubtracti(lengthDynamicArray(b), const(1)));
+
+		d = listenDynamicArray(
+			b,
+			\op -> {
+				switch (op : HeckelOperationSimple<TAcc>) {
+					HeckelInsert(i, v): {
+						next(stackChanges, arrayPush(getValue(stackChanges), FGroupAdd(v.form, i)));
+					}
+					// HeckelMove(f, t): {
+					// 	moveDynamicArray(a, f, t);
+					// }
+					HeckelDelete(i, __): {
+						next(stackChanges, arrayPush(getValue(stackChanges), FGroupDelete(i)));
+					}
+				}
+			}
+		);
+
+		TAcc(
+			FDynamicGroup(stackChanges),
+			TFormMetrics(
+				fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.metrics.width, zero))),
+				fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.metrics.height, zero))),
+				fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.metrics.baseline, zero)))
+			),
+			fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.minWidth, zero))),
+			fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.minHeight, zero))),
+			fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.maxWidth, zero))),
+			fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.maxHeight, zero))),
+			fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.xFillers, zero))),
+			fsubselect(bb, FLift(\bbb : Maybe<TAcc> -> eitherMap(bbb, \bbbb -> bbbb.yFillers, zero))),
+			const(false),
+			false,
+			false,
+			[d]
+		)
+	})
+}
 
 TDynamicArrayLines(da : DynamicArray<Tropic>) -> Tropic {
 	SelectTDynamicLines(
