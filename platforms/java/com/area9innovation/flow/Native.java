@@ -1845,6 +1845,29 @@ public class Native extends NativeHost {
 		vector.clear();
 		return null;
 	}
+	public final Object shrinkVector(Object v, Integer size) {
+		ArrayList vector = (ArrayList)v;
+		int i = vector.size();
+		while (i > size) {
+			vector.remove(--i);
+		}
+		return null;
+	}
+	public final Object subVector(Object v, Integer index, Integer len) {
+		ArrayList vector = (ArrayList)v;
+		ArrayList sub = new ArrayList(len);
+		for (int i = index; i < index + len; ++ i) {
+			sub.add(vector.get(i));
+		}
+		return sub;
+	}
+	public final Object[] vector2array(Object v) {
+		ArrayList vector = (ArrayList)v;
+		return vector.toArray();
+	}
+	public final Object array2vector(Object[] a) {
+		return new ArrayList(Arrays.asList(a));
+	}
 
 	public final <RT> Func0<RT> synchronizedConstFn(Object lock, Func0<RT> fn) {
 		return new Func0<RT>() {
