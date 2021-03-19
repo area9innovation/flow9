@@ -24,6 +24,7 @@ import java.nio.charset.CharsetDecoder;
 import java.io.FileInputStream;
 import java.io.File;
 import java.nio.charset.CodingErrorAction;
+import java.net.URLDecoder;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.CharsetEncoder;
@@ -1898,5 +1899,14 @@ public class Native extends NativeHost {
 				}
 			}
 		};
+	}
+
+	public final String urlDecode(String s) {
+		try {
+			return URLDecoder.decode(s, "UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			System.out.println(e.toString());
+			return "";
+		}
 	}
 }
