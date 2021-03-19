@@ -149,9 +149,11 @@ export {
 TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyle]) -> Tropic {
 	scrollId = makeTagId(manager);
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
+	reverseForRTL = \v -> if (isRTL) 1. - v else v;
 	// Current scroll offset
 	scrollPosition = make(zeroPoint);
-	scrollPercent = tryExtractStruct(style, TScrollPercent(make(zeroPoint)));
+	isScrollPercent = containsStruct(style, TScrollPercent(make(zeroPoint)));
+	scrollPercent = extractStruct(style, TScrollPercent(make(zeroPoint))).percent;
 	cropByContent = contains(style, TScrollCropByContent());
 	inspectVisible = tryExtractStruct(style, makeTScrollInspectVisible());
 	setPosition = tryExtractStruct(style, TScrollSetPosition(const(zeroPoint)));
@@ -305,31 +307,30 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						)
 					]
 					|> (\f2 ->
-						eitherMap(
-							scrollPercent,
-							\percent ->
-								arrayPush(
-									f2,
-									\ -> fBidirectionalLink(
-										fselect(percent.percent, FLift(\p -> {
-											mwh = fgetValue(maxWH);
-											newScrollPosition = Point(
-												p.x * mwh.width,
-												p.y * mwh.height
-											);
-											boundScrollPosition(newScrollPosition, mwh, fgetValue(scrollBound.x), fgetValue(scrollBound.y))
-										})),
-										fselect2(scrollPosition, maxWH, FLift2(\sp, mwh ->
-											Point(
-												if (equalDoubles(mwh.width, 0.0)) 0.0 else sp.x / mwh.width,
-												if (equalDoubles(mwh.height, 0.0)) 0.0 else sp.y / mwh.height
-											)
-										)),
-										\sp -> deferred(\ -> nextDistinct(scrollPosition, sp)),
-										\p -> next(percent.percent, p)
+						arrayPush(
+							f2,
+							\ -> fBidirectionalLink(
+								fselect(scrollPercent, FLift(\p -> {
+									mwh = fgetValue(maxWH);
+									newScrollPosition = Point(
+										reverseForRTL(p.x) * mwh.width,
+										p.y * mwh.height
+									);
+									boundScrollPosition(newScrollPosition, mwh, fgetValue(scrollBound.x), fgetValue(scrollBound.y))
+								})),
+								fselect2(scrollPosition, maxWH, FLift2(\sp, mwh ->
+									Point(
+										if (equalDoubles(mwh.width, 0.0)) 0.0 else reverseForRTL(sp.x / mwh.width) ,
+										if (equalDoubles(mwh.height, 0.0)) 0.0 else sp.y / mwh.height
 									)
-								),
-							f2
+								)),
+								\sp ->
+									if (isScrollPercent) deferred(\ -> nextDistinct(scrollPosition, sp))
+									else if (isRTL) deferred(\ -> if (getValue(scrollPosition).x <= 0.)
+										nextDistinct(scrollPosition, Point(sp.x, getValue(scrollPosition).y))
+									),
+								\p -> next(scrollPercent, p)
+							)
 						)
 					)
 					|> (\f2 ->
