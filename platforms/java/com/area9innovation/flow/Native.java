@@ -1662,6 +1662,13 @@ public class Native extends NativeHost {
 		return concurrentMap.containsKey(key) ? concurrentMap.get(key) : defval;
 	}
 
+	public final Object setAllConcurrentHashMap(Object map1, Object map2) {
+		ConcurrentHashMap concurrentMap1 = (ConcurrentHashMap) map1;
+		ConcurrentHashMap concurrentMap2 = (ConcurrentHashMap) map2;
+		concurrentMap1.putAll(concurrentMap2);
+		return null;
+	}
+
 	public final Boolean containsConcurrentHashMap(Object map, Object key) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		return concurrentMap.containsKey(key);
