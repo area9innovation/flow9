@@ -1679,7 +1679,7 @@ public class Native extends NativeHost {
 		return concurrentMap.values().toArray();
 	}
 
-	public final Object[] removeConcurrentHashMap(Object map, Object key) {
+	public final Object removeConcurrentHashMap(Object map, Object key) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		concurrentMap.remove(key);
 		return null;
