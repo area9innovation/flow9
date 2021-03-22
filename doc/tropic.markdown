@@ -1,7 +1,7 @@
 *Tropic* & *Material*
 =====================
 
-*Tropic* is the second generation layout language for *flow* building on the lessons learned from *Form*. The main key difference is that *Tropic* no longer contains code, only data. This makes the language more robust, perform better and work at a higher level. The name *Tropic* relates to our first layout library developed in Haxe called *Arctic*. This library got superceded by *Form* in *flow*, which now in turn is superceded by *Tropic*,
+*Tropic* is the second generation layout language for *flow* building on the lessons learned from *Form*. The main key difference is that *Tropic* no longer contains code, only data. This makes the language more robust, perform better and work at a higher level. The name *Tropic* relates to our first layout library developed in Haxe called *Arctic*. This library got superseded by *Form* in *flow*, which now in turn is superseded by *Tropic*,
 which in turn is adopted by *Material*.
 
 *Material* is the recommended library for making UIs.
@@ -21,7 +21,7 @@ The main goals for *Tropic* & *Material* are:
 
 `Tropic` is implemented in *Flow*, and does support `Form` elements, so existing user interface components can be utilized in `Tropic` layouts.
 
-`Tropic` serves as the fundation for the `Material` library, which contains all of `Tropic`, and which is what you normally want to use.
+`Tropic` serves as the foundation for the `Material` library, which contains all of `Tropic`, and which is what you normally want to use.
 So learning `Tropic` is helpful, since the underlying principles and constructs are directly embedded in `Material`.
 
 Hello World using Tropic
@@ -563,5 +563,5 @@ To set different views for `TTextButton` in different states(hovered, pressed, d
 		TCssBlockStyle ::= TStyle, TStyleWithSelector;
 
 `TCssBlock` - allows you to create a Tropic from a CSS style. The second argument will be rendered, if unable to create Tropic from css stylesheet.
-Currenlty it is trying to create `TGroup2(TRounded, TPicture)`, if there enough properties in given css style.
+Currently it is trying to create `TGroup2(TRounded, TPicture)`, if there enough properties in given css style.
 

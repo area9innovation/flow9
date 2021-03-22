@@ -484,7 +484,7 @@ called on render and `foo()` on dispose. But when rendering `a` second time
 
 It might be the behavior you want for the code. But most likely you want
 `bar()` be called on every render. For example it's very common to run
-subscribers on render and unsubsribers on dispose. In this case it's important
+subscribers on render and unsubscribers on dispose. In this case it's important
 that subscribers will be called the same number of times as unsubscribers.
 Then you want use `MConstruct` instead:
 
@@ -576,7 +576,7 @@ by compiler and would lead to stack overflow.
 
 #### Creating Maybe in iterators
 
-There are two common antipaterns:
+There are two common antipatterns:
 
 	m : Maybe<?>
 	filter(arr, \a : ? -> Some(a) == m)
