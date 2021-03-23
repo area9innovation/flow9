@@ -64,6 +64,9 @@ class EditWidget extends NativeWidget {
 
                 @Override
                 public void afterTextChanged(Editable s) {
+                    if (id == 0)
+                        return;
+                    
                     String oldText = textView.getText().toString();
                     String newText = group.getWrapper().textIsAcceptedByFlowFilters(id, oldText);
                     if (previousText.equals(newText) || newText.equals(oldText)) {

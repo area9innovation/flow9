@@ -20,7 +20,7 @@ A *lingo* grammar consists of productions:
 
 	language = "World, hello" | "World, goodbye";
 
-A production starts with a name ('language'), an equal sign, and then a list of choices separted by
+A production starts with a name ('language'), an equal sign, and then a list of choices separated by
 pipes, and end with a semi-colon. This grammar matches the two strings "World, hello" or "World, goodbye".
 
 Each choice itself is a sequence of parsing elements. The following matches the same grammar:
@@ -32,7 +32,7 @@ where each choice is a sequence of three terminals.
 A terminal is the name used for lexical elements in a grammar - i.e. the basic elementary symbols 
 or words of the language, such as integers, keywords, identifiers, operator-symbols and similar. 
 Conversely, non-terminals are the "grammar" rules, where the rules for how the terminals (words) 
-can combine. In addition to terminals and non-terminals, normally white-space is considered a seperate
+can combine. In addition to terminals and non-terminals, normally white-space is considered a separate
 category. White-space is commonly any sequence, potentially empty, of space, tabs, newlines, carriage
 returns as well as comments. White-space is parsed, but otherwise thrown away.
 
@@ -53,7 +53,7 @@ Even though this grammar requires look-ahead to resolve, PEG grammars can parse 
 grammars efficiently, because it can cache partial parsings, and thus backtracking is
 efficient.
 
-The choice operator (`|`) is a committed choice operator, so if two choices are ambigious, 
+The choice operator (`|`) is a committed choice operator, so if two choices are ambiguous, 
 the first one matching is chosen:
 
 	dangling_else_solved = "if" exp "then" exp "else" exp | "if" exp "then" exp;
@@ -154,7 +154,7 @@ will give the position of where the b's start, as well as where they end.
 Testing a grammar
 -----------------
 
-In this section we are going to change files in flow/lib folder. Be sure not to commit this to the public repo.
+In this section we are going to change files in flow/lib folder. Make sure not to commit this to the public repo.
 
 The recommended way of testing a lingo grammar:
 
@@ -227,7 +227,7 @@ which prints
 	ParseResult(3, Some(FaProgram([], [FaVarDecl("a", [], [FaInt(1, 2, 3)], 0, 3)], 0)))
 
 As you can see, the program also prints the number of seconds required to parse the string. Often, this number
-is too small to be noticable. To get more statistical data, you can parse the same string many times using
+is too small to be noticeable. To get more statistical data, you can parse the same string many times using
 the `testruns=10` flag:
 
 	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo test=a=1 testruns=100
@@ -237,7 +237,7 @@ which takes 0.0156 seconds for 100 runs on my machine.
 Debug
 -----
 
-To help debugging lingo syntax and contructions the debug() pegaction, which prints the current Flow construct 
+To help debugging lingo syntax and constructions the debug() pegaction, which prints the current Flow construct 
 to console, helps quite a bit. Changing the example above: 
 
 	exp = int:e1 { debug(:e1) } "+" exp:e2 { debug(Add(:e1, :e2)) } 
@@ -445,7 +445,7 @@ program. In this case, *flow* code like the following will work to prepare and r
 In production code where less console output is wanted `parsic3` can be used. It prepares a nice
 error message on parse failures, as well as a default value on errors.
 
-Once the grammar works, then you want to precompile the grammar for effiency and use that in production. 
+Once the grammar works, then you want to precompile the grammar for efficiency and use that in production. 
 See the next section to learn how to do that.
 
 Using custom semantic actions
@@ -550,7 +550,7 @@ We reach the end of input, but we do not expect anything else. So we fold the re
 buildSub([Int(1), [Int(2), Int(3)]])
 
 Now we need to define `buildSub` in our code. We have a list of arguments: the first one is the leftmost
-integer (which corrseponds to `int` in `exp` rule), the second one is the array of all other integers
+integer (which corresponds to `int` in `exp` rule), the second one is the array of all other integers
 (which corresponds to `sub*` in the `exp` rule), so we can just fold them this way:
 
 	buildSub(xs : [flow]) {
