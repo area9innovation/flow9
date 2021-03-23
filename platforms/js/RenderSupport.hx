@@ -90,7 +90,7 @@ class RenderSupport {
 			Antialias = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" :
 				!Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 
-			untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+			untyped __js__("PIXI.TextMetrics.METRICS_STRING = ((Platform.isMacintosh || Platform.isIOS) && RenderSupport.RendererType != 'html') ? '|Éq█Å' : '|Éq'");
 
 			PixiWorkarounds.workaroundGetContext();
 
@@ -571,7 +571,7 @@ class RenderSupport {
 			untyped __js__("document.location.reload(true)");
 		}
 
-		untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = ((Platform.isMacintosh || Platform.isIOS) && RenderSupport.RendererType != 'html') ? '|Éq█Å' : '|Éq'");
 
 		PixiWorkarounds.workaroundGetContext();
 		PixiWorkarounds.workaroundTextMetrics();
