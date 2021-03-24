@@ -8,6 +8,7 @@ import text/blueprint;
 export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager) -> Form;
+	renderParagraphEx(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager, renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>) -> Form;
 	getLineIndent(paraIndent : double, lineIndex : int) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement;
@@ -40,6 +41,11 @@ export {
 	// Helper to pass accessibility properties from material to forms
 	// Used in material2form
 	accessibilityParent : ref Maybe<flow> = ref None();
+
+	// Will be populated when rendering wigi document with real height of all lines from top-level paragraphs
+	WigiRenderedLinesInfoStyle(baselines : DynamicBehaviour<[DynamicBehaviour<[WigiRenderedLinesInfo]>]>);
+		WigiRenderedLinesInfo(height : double, baseline : double);
+		dummyWigiRenderedLinesInfo = WigiRenderedLinesInfo(0.0, 0.0);
 }
 
 // TODO:
@@ -160,6 +166,16 @@ renderParagraph(
 	rtl : bool,
 	widthManager : ParagraphWidthManager
 ) -> Form {
+	renderParagraphEx(p, s, rtl, widthManager, None());
+}
+
+renderParagraphEx(
+	p : [ParagraphElement],
+	s : [ParagraphStyle],
+	rtl : bool,
+	widthManager : ParagraphWidthManager,
+	renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>
+) -> Form {
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -205,7 +221,8 @@ renderParagraph(
 		renderParaLines(
 			storyWidth, lines, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-			interLineHighlighting
+			interLineHighlighting,
+			renderedLinesInfoM
 		);
 	}
 	paragraphAccessibilityParent = ^accessibilityParent;
@@ -958,6 +975,7 @@ renderParaLines(
 	rtl : bool,
 	isMarked : bool,
 	interLineHighlighting : bool,
+	renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>
 ) -> Form {
 	lasti = length(lines.lines) - 1;
 	a : ParaLineAcc = foldi(lines.lines, ParaLineAcc(EmptyList(), 0.0, 0.0), \i : int, acc : ParaLineAcc, lineInfo : ParaLineInfo -> {
@@ -988,6 +1006,14 @@ renderParaLines(
 			if (i == 0 || !topLineBaseline) f.baseline else acc.baseline
 		);
 	});
+
+	maybeApply(
+		renderedLinesInfoM,
+		\renderedLinesInfo -> {
+			nextDistinct(renderedLinesInfo, map(lines.lines, \info : ParaLineInfo -> WigiRenderedLinesInfo(info.lineHeight, info.lineAsc)));
+		}
+	);
+
 	Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) lines.maxLineWidth else max(availableWidth, lines.maxLineWidth), a.y)),
 		Group(list2array(a.lines))
 	))
