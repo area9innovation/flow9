@@ -1367,7 +1367,7 @@ class TextClip extends NativeWidgetClip {
 			var r : Dynamic = untyped Browser.document.selection.createRange();
 			if (r == null) return 0;
 
-			var re = nativeWidget.createTextRange();
+			var re : Dynamic = nativeWidget.createTextRange();
 			var rc = re.duplicate();
 			re.moveToBookmark(r.getBookmark());
 			untyped rc.setEndPoint('EndToStart', re);
