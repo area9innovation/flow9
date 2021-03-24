@@ -457,7 +457,7 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Bool {
+	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
 		if (clip.renderable != renderable) {
 			clip.renderable = renderable;
 			invalidateVisible(clip);
@@ -465,39 +465,16 @@ class DisplayObjectHelper {
 			if (untyped !clip.keepNativeWidget) {
 				invalidateTransform(clip, 'setClipRenderable');
 			}
-
-			return true;
-		} else {
-			return false;
 		}
 	}
 
-	public static inline function forceClipRenderable(clip : DisplayObject, ?renderable : Bool = true) : Bool {
-		var parentChanged = forceClipParentRenderable(clip, renderable);
-		var childrenChanged = forceClipChildrenRenderable(clip, renderable);
-
-		return parentChanged || childrenChanged;
-	}
-
-	public static inline function forceClipChildrenRenderable(clip : DisplayObject, ?renderable : Bool = true) : Bool {
-		var changed = setClipRenderable(clip, renderable);
+	public static inline function forceClipRenderable(clip : DisplayObject, ?renderable : Bool = true) : Void {
+		setClipRenderable(clip, renderable);
 
 		for (child in getClipChildren(clip)) {
 			if (untyped child.clipVisible && !child.isMask) {
-				changed = forceClipChildrenRenderable(child, renderable) || changed;
+				forceClipRenderable(child, renderable);
 			}
-		}
-
-		return changed;
-	}
-
-	public static inline function forceClipParentRenderable(clip : DisplayObject, ?renderable : Bool = true) : Bool {
-		var changed = setClipRenderable(clip, renderable);
-
-		if (clip.parent != null) {
-			return forceClipParentRenderable(clip.parent, renderable) || changed;
-		} else {
-			return changed;
 		}
 	}
 
