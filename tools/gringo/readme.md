@@ -104,7 +104,27 @@ operations are produced verbatim.
 	$$pos			-> will call addVerbatim with a string representation of the position
 					   in the input
 
-## TODO
+There is a helper in 
+
+	flow9\lib\text\gringo\gringo_typed_action.flow
+
+which provides useful building blocks for making a Forth-style, stack-based semantic
+actions for expression-based languages with unary, binary and ternary operators.
+
+## Error recovery
+
+Gringo has a construct to help with recovering better from parsing errors, using the # 
+prefix. We support two different recovery strategies:
+
+	#";"	-> matches ;. If ; is missing, we report an error, but otherwise continue
+	#!";"	-> does not match ;. If there is a ;, we match it and report an error, but otherwise continue
+
+## TODO: Example
+
+TODO: Write an simple example of how to use Gringo using gringoTypedParse & gringoTypedAction
+as the driver.
+
+## TODO for Gringo itself
 
 - This construct is exponential:
 	exp1 = exp2 (...)+ | exp2
@@ -120,13 +140,9 @@ operations are produced verbatim.
 
 - Add error message when we have left recursion deep inside a choice
 
-- JSON output format, with some convention for #args for actions from the name?
-
 - "flowfile" to make a parser driver
 
 - Support multiple grammars to allow composition
-
-- Add JSON action output, parse flow types, and construct actions for that
 
 ## Inspiration
 
@@ -181,10 +197,6 @@ schemes.
 
 The simplest way of handling syntax errors a bit better is to include the max. position we have seen.
 
-We could introduce an "if this is not there, report error, but otherwise continue" kind of thing.
-
-That can work for missing ; and } and ).
-
 We could also introduce a construct that just keeps going until we see a specific token.
 I.e. explicitly add
 
@@ -193,17 +205,8 @@ I.e. explicitly add
 	
 construct, which reports an error, but otherwise, keeps parsing.
 
-Another case is superfluous chars. Here, we could do a match, but otherwise ignore it.
-
-So potentially, the way to do it is to have a "turn error into acceptance, but report it" construct.
-
-	#";"	-> matches ;. If ; is missing, we report an error, but otherwise continue
-	#!";"	-> does not match ;. If there is a ;, we match it and report an error, but otherwise continue
-
-To refine it, we could maybe have a construct which recovers, but understands structure to some extend:
-{ }, ( ) [ ] are recursively matched.
-
-Another 
+To refine it, we could maybe have a construct which recovers, but understands structure to 
+some extend: { }, ( ) [ ] are recursively matched.
 
 We did try a scheme for precedence and associativy inspired by the approach in
 

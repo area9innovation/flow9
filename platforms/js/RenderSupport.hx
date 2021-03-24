@@ -90,7 +90,7 @@ class RenderSupport {
 			Antialias = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" :
 				!Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 
-			untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+			untyped __js__("PIXI.TextMetrics.METRICS_STRING = ((Platform.isMacintosh || Platform.isIOS) && RenderSupport.RendererType != 'html') ? '|Éq█Å' : '|Éq'");
 
 			PixiWorkarounds.workaroundGetContext();
 
@@ -571,7 +571,7 @@ class RenderSupport {
 			untyped __js__("document.location.reload(true)");
 		}
 
-		untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = ((Platform.isMacintosh || Platform.isIOS) && RenderSupport.RendererType != 'html') ? '|Éq█Å' : '|Éq'");
 
 		PixiWorkarounds.workaroundGetContext();
 		PixiWorkarounds.workaroundTextMetrics();
@@ -1892,10 +1892,6 @@ class RenderSupport {
 
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
-			if (clip.forceClipRenderable()) {
-				forceRender();
-			}
-
 			var a = clip.worldTransform;
 			var az = getAccessibilityZoom();
 			return [a.a / az, a.b, a.c, a.d / az, a.tx / az, a.ty / az];
