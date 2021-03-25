@@ -468,7 +468,7 @@ class TextClip extends NativeWidgetClip {
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = isFocused ? alpha : 0;
+				nativeWidget.style.opacity = alpha;
 				nativeWidget.style.color = style.fill;
 			}
 		} else {
