@@ -15,7 +15,8 @@ class Vscode {
 	public static function getState() : String {
 		initApi();
 		#if js
-		return Vscode.api.getState();
+		var s = Vscode.api.getState();
+		return s ? untyped __js__("JSON.parse(s).state") : "";
 		#else
 		return "";
 		#end
@@ -24,7 +25,9 @@ class Vscode {
 	public static function setState(state : String) : Void {
 		initApi();
 		#if js
-		Vscode.api.setState(state);
+		var s = "";
+		untyped __js__("s = JSON.stringify({\"state\": state})");
+		Vscode.api.setState(s);
 		#end
 	}
 
