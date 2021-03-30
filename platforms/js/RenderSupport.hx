@@ -981,7 +981,7 @@ class RenderSupport {
 					if (MouseUpReceived) emit("mousedown");
 				}
 			}
-			} catch(e) {
+			} catch (e : Dynamic) {
 				untyped console.log("onpointerdown error : ");
 				untyped console.log(e);
 			}
@@ -1010,7 +1010,7 @@ class RenderSupport {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			}
-			} catch(e) {
+			} catch (e : Dynamic) {
 				untyped console.log("onpointerup error : ");
 				untyped console.log(e);
 			}
@@ -1038,7 +1038,7 @@ class RenderSupport {
 
 				emit("mousemove");
 			}
-			} catch(e) {
+			} catch (e : Dynamic) {
 				untyped console.log("onpointermove error : ");
 				untyped console.log(e);
 			}
@@ -1049,7 +1049,7 @@ class RenderSupport {
 			if (e.relatedTarget == Browser.document.documentElement) {
 				if (!MouseUpReceived) emit("mouseup");
 			}
-			} catch(e) {
+			} catch (e : Dynamic) {
 				untyped console.log("onpointerout error : ");
 				untyped console.log(e);
 			}
