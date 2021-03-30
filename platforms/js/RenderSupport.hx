@@ -952,6 +952,7 @@ class RenderSupport {
 
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
+			try {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
 			e.preventDefault();
@@ -980,9 +981,14 @@ class RenderSupport {
 					if (MouseUpReceived) emit("mousedown");
 				}
 			}
+			} catch(e) {
+				untyped console.log("onpointerdown error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointerup = function(e : Dynamic) {
+			try {
 			if (e.touches != null) {
 				TouchPoints = e.touches;
 				emit("touchend");
@@ -1004,9 +1010,14 @@ class RenderSupport {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			}
+			} catch(e) {
+				untyped console.log("onpointerup error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointermove = function(e : Dynamic) {
+			try {
 			if (e.touches != null) {
 				e.preventDefault();
 
@@ -1027,11 +1038,20 @@ class RenderSupport {
 
 				emit("mousemove");
 			}
+			} catch(e) {
+				untyped console.log("onpointermove error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointerout = function(e : Dynamic) {
+			try {
 			if (e.relatedTarget == Browser.document.documentElement) {
 				if (!MouseUpReceived) emit("mouseup");
+			}
+			} catch(e) {
+				untyped console.log("onpointerout error : ");
+				untyped console.log(e);
 			}
 		};
 
