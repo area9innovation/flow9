@@ -66,4 +66,8 @@ echo }>> %VERFILE%
 )
 
 call flowc1 jar=flowc_1 tools/flowc/flowc.flow
+
+"%JAVA%" %BASE_DIR%bin\check_java_version.java
+if errorlevel 1 pause
+
 move flowc_1.jar %BASE_DIR%\tools\flowc\flowc.jar
