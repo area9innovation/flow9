@@ -1110,9 +1110,8 @@ public class Native extends NativeHost {
 
 	public final String getFileContentBinary(String name) {
 		try {
-			// TODO: This is wrong. Figure it out
-			byte[] encoded = Files.readAllBytes(Paths.get(name));
-			return new String(encoded, StandardCharsets.ISO_8859_1);
+			byte[] bytes = Files.readAllBytes(Paths.get(name));
+			return new String(bytes, StandardCharsets.ISO_8859_1);
 		} catch (IOException e) {
 			return "";
 		}
@@ -1122,11 +1121,15 @@ public class Native extends NativeHost {
 		Writer writer = null;
 
 		try {
-			// TODO: This is wrong. Figure it out
 			writer = new BufferedWriter(new OutputStreamWriter(
 				new FileOutputStream(name), StandardCharsets.ISO_8859_1)
 			);
-			writer.write(data);
+			char[] bytes = new char[data.length()];
+			for (int i = 0; i < bytes.length; i++) {
+				int cp =  Character.codePointAt(data, i);
+				bytes[i] = (char)(cp % 256);
+			}
+			writer.write(bytes);
 		} catch (IOException ex) {
 		} finally {
 			try {
