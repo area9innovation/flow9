@@ -59,6 +59,11 @@ class RenderSupport {
 	public static var hadUserInteracted = false;
 
 	public static var WebFontsConfig = null;
+	public static var DebugClip = null;
+
+	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
+		DebugClip.innerText += ('\n' + text + " " + text2);
+	}
 
 	private static var RenderSupportInitialised : Bool = init();
 
@@ -567,6 +572,10 @@ class RenderSupport {
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
+		if (Util.getParameter("debugClip") == "1") {
+			appendDebugClip();
+		}
+
 		if (untyped PIXI.VERSION != "4.8.2") {
 			untyped __js__("document.location.reload(true)");
 		}
@@ -602,6 +611,26 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+	}
+
+	private static function appendDebugClip() {
+		var debugClip = Browser.document.createElement("p");
+		Browser.document.body.appendChild(debugClip);
+
+		debugClip.textContent = "DEBUG";
+		debugClip.style.fontSize = "12px";
+		debugClip.style.zIndex = "1000";
+		debugClip.style.background = "#424242";
+		debugClip.style.color = "#FFFFFF";
+		debugClip.style.padding = "8px";
+		debugClip.style.paddingTop = "4px";
+		debugClip.style.paddingBottom = "4px";
+		debugClip.style.borderRadius = "4px";
+		debugClip.style.left = "50%";
+		debugClip.style.top = "8px";
+		debugClip.style.transform = "translate(-50%, 0)";
+
+		DebugClip = debugClip;
 	}
 
 	private static function StartFlowMainWithTimeCheck() {
