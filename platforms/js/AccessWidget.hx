@@ -591,8 +591,6 @@ class AccessWidget extends EventEmitter {
 								Browser.window.removeEventListener("blur", fn);
 							}
 						});
-
-						return false;
 					}
 
 					this.element.addEventListener("mouseenter", function () {
