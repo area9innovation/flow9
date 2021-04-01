@@ -51,7 +51,7 @@ export {
 		CalendarMenuTightWidth, CalendarMenuAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarDayCustomTab,
-		CalendarScrolls;
+		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarEventAdditionalInfo;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -131,6 +131,8 @@ export {
 			needContentViewFrame : bool
 		);
 		CalendarScrolls(enable : bool);
+		CalendarPlannedHideDeleteButton();
+		CalendarEventAdditionalInfo(getView : (event : CalendarEvent, titleTextColor : MColor, isCompactView : bool) -> Material);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -1266,6 +1268,7 @@ MonthTable(
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	isDynamicNumberOfEvents = maxDisplayedEventsInOneDay == -1;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	getAdditionalInfo = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView;
 
 	weekDayHeightB = make(0.0);
 	dayTitleHeightB = make(0.0);
@@ -1297,11 +1300,12 @@ MonthTable(
 
 		MShowLazy(fselect(eventTypeB, FLift(\eventType -> eventType.name != "")), \ -> {
 			backColorB = fselect(eventTypeB, FLift(\eventType -> eventType.backColor));
-			eventTextM = MSelect(eventTypeB, \eventType -> {
+			textColorB = fselect(eventTypeB, FLift(\eventType -> {
 				mainColor = eventType.mainColor;
-				eventTextColor = if (isUseMTextMColor) MTextMColor(mainColor) else mainColor;
-				MEllipsisText(eventText, [eventTextColor])
-			});
+				if (isUseMTextMColor) MTextMColor(mainColor) else mainColor;
+			}));
+			eventTextM = MSelect(textColorB, \textColor -> MEllipsisText(eventText, [textColor, MFullWidth()]));
+			additionalInfoM = MSelect(textColorB, \textColor -> getAdditionalInfo(item, textColor, true));
 			defaultViewM = MGroup([
 				if (!isMultiDay) {
 					MGroup2(
@@ -1346,7 +1350,7 @@ MonthTable(
 				},
 				MTooltip(
 					MCenterIn(
-						MBorderA(2., 0., 2., 0., eventTextM),
+						MCols2A(eventTextM, additionalInfoM) |> MBorderLeftRight(2.0),
 						lineBox
 					),
 					MText(item.description, []),
@@ -1502,11 +1506,14 @@ MonthTable(
 			makeEmptyCalendarDay(dayDate, isEnable, rowsEventsCount)
 		}
 		separatorM = MSeparator(false) |> MFixHeight(calendarDayM);
-		MCols([
-			if (dayOfWeek(dayDate) == 0) separatorM else MEmpty(),
-			calendarDayM,
-			separatorM
-		]);
+		MGroup2(
+			MFillX(),
+			MCols([
+				if (dayOfWeek(dayDate) == 0) separatorM else MEmpty(),
+				calendarDayM,
+				separatorM
+			])
+		);
 	}
 
 	// First, we keep out all events except the events for the current month. Then create a list of events for each day
@@ -1750,6 +1757,7 @@ RangeView(
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	getAdditionalInfo = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView;
 
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> {
 		MCenterX(MText(dayName, [MCaptionColumn(), MGrey(500)])) |> MBorderTopBottom(6.0)
@@ -1858,7 +1866,10 @@ RangeView(
 		}));
 		getDefaultView = \eventCells, eventType -> {
 			text = MCenterYIn(MBorder(8., 0., 8., 0.,
-				MEllipsisText(getEventTitle(event), [eventType.mainColor, MShowTooltip(make(true))])
+				MLines2A(
+					MEllipsisText(getEventTitle(event), [eventType.mainColor, MShowTooltip(make(true))]),
+					getAdditionalInfo(event, eventType.mainColor, false)
+				)
 			), eventCells);
 			MGroup2(eventCells, MTooltip(text, MText(event.description, []), [MEnabled(const(isTooltipEnabled(event)))]));
 		}
@@ -1973,6 +1984,7 @@ PlannedEventsTable(
 ) -> Material {
 	tableDateFormat = extractStruct(styles, PlannedTableDateFormat("%YYYY/%MM/%DD")).tableDateFormat;
 	hideTimeInfo = contains(styles, HideTimeInfo());
+	hideDeleteButton = contains(styles, CalendarPlannedHideDeleteButton());
 	littleFont = MBody();
 	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
@@ -1980,6 +1992,7 @@ PlannedEventsTable(
 	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\event -> {
 		if (event.title != "") event.title else event.eventType;
 	})).getTitle;
+	getAdditionalInfo = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView;
 
 	timeSort = \item : CalendarEvent -> item.startDate;
 
@@ -2107,6 +2120,7 @@ PlannedEventsTable(
 		}
 		startTimeM = createTimeLabel(times.first);
 		endTimeM = createTimeLabel(times.second);
+		additionalInfoM = getAdditionalInfo(event, MBlack(), false);
 
 		isEditActionNotEmpty = eventType.editAction != nop1;
 		isSelectedB = fand(feq(currentLine, number), fnot(isPrintingB));
@@ -2130,7 +2144,10 @@ PlannedEventsTable(
 						TFixed(100., lineHeight)
 					),
 					MCenterYIn(
-						MEllipsisText(eventName, [littleFont]),
+						MLines2A(
+							MEllipsisText(eventName, [littleFont]),
+							additionalInfoM
+						),
 						TFixed(200., lineHeight)
 					),
 					TFixed(5., 0.),
@@ -2168,24 +2185,26 @@ PlannedEventsTable(
 								),
 								TFixed(50., lineHeight)
 							),
-							MCenterYIn(
-								MIconButton("close",
-									\-> {
-										close = make(false);
-										ShowMDialog(manager, close, [],
-											eventDeletePopup(
-												\-> next(close, true),
-												\-> {
-													eventType.deleteAction(event.id);
-													next(close, true);
-												}
-											)
-										);
-									},
-									[MIconSize(22.), FillOpacity(0.8)],
-									[]
-								),
-								TFixed(50., lineHeight)
+							MVisible(const(!hideDeleteButton),
+								MCenterYIn(
+									MIconButton("close",
+										\-> {
+											close = make(false);
+											ShowMDialog(manager, close, [],
+												eventDeletePopup(
+													\-> next(close, true),
+													\-> {
+														eventType.deleteAction(event.id);
+														next(close, true);
+													}
+												)
+											);
+										},
+										[MIconSize(22.), FillOpacity(0.8)],
+										[]
+									),
+									TFixed(50., lineHeight)
+								)
 							),
 							if (length(eventType.additionalActions) == 0)
 								TFixed(50., 0.)
@@ -2201,6 +2220,7 @@ PlannedEventsTable(
 
 	rowsB = fselect(currentEvents, FLift(\eventUnsort -> {
 		eventSorted = getLastEvents(eventUnsort);
+		nextDistinct(currentLine, -1);
 		mapi(eventSorted, eventLine);
 	}));
 
@@ -2465,17 +2485,19 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(getEventTitleDefault)).getTitle;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(0.2)).opacity;
 
-	getEventView = \timeString, backColor, strokeColor, circleColor -> {
+	getEventView = \timeString, backColor, strokeColor, circleColor, isPastEvent -> {
 		textColor = MTextMColor(backColor);
+		additionalViewM = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView(event, textColor, false);
 		MFrame(16.0, 4.0, [MFill(backColor), StrokeWidth(1.0), MStroke(strokeColor)],
 			MColsYCenterA([
-				MLines2A(
+				MLinesA([
 					MColsYCenterA([
 						MIcon("schedule", [textColor]) |> MBorderEnd(8.0),
 						MText(timeString, [textColor, MBodyBold()])
 					]) |> MBorderBottom(4.0),
-					MEllipsisText(getEventTitle(event), [textColor, MFullWidth()]) |> MBorderStart(2.0)
-				),
+					MEllipsisText(getEventTitle(event), ifArrayPush([textColor, MFullWidth()], !isPastEvent, MBodyBold())) |> MBorderStart(2.0),
+					additionalViewM |> MBorderStart(2.0)
+				]),
 				MFillX(),
 				MFrame(0.0, 5.0, [MFill(circleColor)], MFixed(10.0, 10.0))
 			])
@@ -2491,14 +2513,14 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 	switch (timeType : CalendarDayEventTimeType) {
 		CalendarDayAllDayEvent(isPastEvent): {
 			if (isPastEvent) {
-				getEventView(_("All Day"), MWhite(), MGrey(400), transparentBackColor);
+				getEventView(_("All Day"), MWhite(), MGrey(400), transparentBackColor, true);
 			} else {
-				getEventView(_("All Day"), transparentBackColor, transparentBackColor, transparentBackColor);
+				getEventView(_("All Day"), transparentBackColor, transparentBackColor, transparentBackColor, false);
 			}
 		}
-		CalendarDayCurrentEvent(): getEventView(geEventTimeString(), type.backColor, type.backColor, type.backColor);
-		CalendarDayFutureEvent(): getEventView(geEventTimeString(), transparentBackColor, transparentBackColor, transparentBackColor);
-		CalendarDayPastEvent(): getEventView(geEventTimeString(), MWhite(), MGrey(400), transparentBackColor);
+		CalendarDayCurrentEvent(): getEventView(geEventTimeString(), type.backColor, type.backColor, type.backColor, false);
+		CalendarDayFutureEvent(): getEventView(geEventTimeString(), transparentBackColor, transparentBackColor, transparentBackColor, false);
+		CalendarDayPastEvent(): getEventView(geEventTimeString(), MWhite(), MGrey(400), transparentBackColor, true);
 	}
 }
 
