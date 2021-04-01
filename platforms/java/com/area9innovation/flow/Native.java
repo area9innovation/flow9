@@ -507,7 +507,8 @@ public class Native extends NativeHost {
 
 			char[] cs = Character.toChars(h);
 
-			str.append(cs[0]);
+			// Surrogate pair(?) (or more ?)
+			str.append(cs);
 			} else if ((b1 & 0xF8) == 0xF0 && i < len - 3) {
 			byte b2 = bytes[i+1];
 			byte b3 = bytes[i+2];
@@ -515,6 +516,7 @@ public class Native extends NativeHost {
 			i = i+3;
 
 			int h1 = (b1 & 0x7) << 18;
+
 			int h2 = (b2 & 0x3F) << 12;
 			int h3 = (b3 & 0x3F) << 6;
 			int h4 = 0x3F & b4;
@@ -523,7 +525,9 @@ public class Native extends NativeHost {
 
 			char[] cs = Character.toChars(h);
 
+			// Surrogate pair
 			str.append(cs[0]);
+			str.append(cs[1]);
 			} else if ((b1 & 0xF0) == 0xE0 && i < len - 2) {
 			byte b2 = bytes[i+1];
 			byte b3 = bytes[i+2];
@@ -552,12 +556,14 @@ public class Native extends NativeHost {
 			} else {
 			int h = b1 & 0xff;
 			char[] cs = Character.toChars(h);
+
 			str.append(cs[0]);
 			}
 		}
 
 		return str.toString();
 	}
+
 	public final Object[] s2a(String str) {
 		int l = str.length();
 		Object[] rv = new Object[l];
