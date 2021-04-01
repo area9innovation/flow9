@@ -1455,6 +1455,9 @@ class RenderSupport {
 				}
 
 				var nativeWidget : Element = untyped clip.nativeWidget;
+				if (untyped clip.iframe != null) {
+					nativeWidget = untyped clip.iframe;
+				}
 
 				// Create DOM node for access. properties
 				if (nativeWidget != null) {

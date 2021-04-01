@@ -528,8 +528,7 @@ class AccessWidget extends EventEmitter {
 					this.clip.updateKeepNativeWidgetChildren();
 				}
 
-				// Add focus notification. Used for focus control
-				this.element.addEventListener("focus", function () {
+				var onFocus = function () {
 					focused = true;
 					if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 
@@ -545,7 +544,7 @@ class AccessWidget extends EventEmitter {
 						);
 
 						return;
-					}
+					};
 
 					clip.emit("focus");
 
@@ -553,11 +552,10 @@ class AccessWidget extends EventEmitter {
 
 					if (parent != null) {
 						parent.emitEvent("childfocused", clip);
-					}
-				});
+					};
+				};
 
-				// Add blur notification. Used for focus control
-				this.element.addEventListener("blur", function () {
+				var onBlur = function () {
 					if (untyped RenderSupport.Animating || clip.preventBlur) {
 						RenderSupport.once(
 							"stagechanged",
@@ -570,14 +568,54 @@ class AccessWidget extends EventEmitter {
 						);
 
 						return;
-					}
+					};
 
 					RenderSupport.once("drawframe", function() {
 						focused = false;
 						if (this.element != null) this.element.classList.remove("focused");
 						clip.emit("blur");
 					});
-				});
+				};
+
+				if (this.element.tagName.toLowerCase() == "iframe") {
+					var fn = function () {};
+
+					fn = function () {
+						RenderSupport.defer(function () {
+							if (Browser.document.activeElement == this.element) {
+								onFocus();
+							} else {
+								onBlur();
+
+								Browser.window.removeEventListener("focus", fn);
+								Browser.window.removeEventListener("blur", fn);
+							}
+						});
+
+						return false;
+					}
+
+					this.element.addEventListener("mouseenter", function () {
+						if (Browser.document.activeElement == null || Browser.document.activeElement == Browser.document.body) {
+							Browser.window.focus();
+						}
+
+						Browser.window.addEventListener("focus", fn);
+						Browser.window.addEventListener("blur", fn);
+					});
+
+					this.element.addEventListener("mouseleave", function () {
+						if (!focused) {
+							Browser.window.removeEventListener("focus", fn);
+							Browser.window.removeEventListener("blur", fn);
+						}
+					});
+				};
+
+				// Add focus notification. Used for focus control
+				this.element.addEventListener("focus", onFocus);
+				// Add blur notification. Used for focus control
+				this.element.addEventListener("blur", onBlur);
 
 				if (this.tagName == "button") {
 					this.element.classList.remove("accessElement");
