@@ -12086,6 +12086,7 @@ RenderSupport.initPixiRenderer = function() {
 	});
 	RenderSupport.switchFocusFramesShow(false);
 	RenderSupport.setDropCurrentFocusOnMouse(true);
+	Native.timer(10000,RenderSupport.emitFullSequence);
 	var topHeight;
 	if(Platform.isIOS && (Platform.isChrome || Platform.isSafari || ProgressiveWebTools.isRunningPWA())) {
 		var is_portrait = window.matchMedia("(orientation: portrait)").matches || Platform.isAndroid && window.orientation == 0;
@@ -12964,6 +12965,7 @@ RenderSupport.initPixiStageEventListeners = function() {
 	});
 	RenderSupport.switchFocusFramesShow(false);
 	RenderSupport.setDropCurrentFocusOnMouse(true);
+	Native.timer(10000,RenderSupport.emitFullSequence);
 };
 RenderSupport.emitFullSequence = function() {
 	RenderSupport.debugLog("TRACKPAD");
@@ -13147,21 +13149,7 @@ RenderSupport.emitMouseEventCustom = function(clip,event,x,y) {
 	window.document.body.dispatchEvent(e);
 };
 RenderSupport.emitMouseEvent = function(clip,event,x,y) {
-	console.log("emitMouseEvent",event);
-	RenderSupport.MousePos.x = x;
-	RenderSupport.MousePos.y = y;
-	if(event == "mousemove") {
-		var me = { clientX : x | 0, clientY : y | 0};
-		var e = Platform.isIE || Platform.isSafari ? new CustomEvent('pointermove', me) : new PointerEvent("pointermove",me);
-		window.document.dispatchEvent(e);
-		RenderSupport.forceRollOverRollOutUpdate();
-	}
-	if(Util.isMouseEventName(event)) {
-		console.log("emit",event);
-		RenderSupport.emit(event);
-	} else {
-		clip.emit(event);
-	}
+	RenderSupport.emitMouseEventCustom(clip,event,x,y);
 };
 RenderSupport.emitKeyEvent = function(clip,event,key,ctrl,shift,alt,meta,keyCode) {
 	var activeElement = window.document.activeElement;
@@ -13984,8 +13972,8 @@ RenderSupport.addClipAnimation = function(clip,keyframes,options,onFinish,fallba
 			} catch( _g ) {
 				haxe_NativeStackTrace.lastError = _g;
 				var e = haxe_Exception.caught(_g).unwrap();
-				haxe_Log.trace("addClipAnimation error:",{ fileName : "RenderSupport.hx", lineNumber : 2247, className : "RenderSupport", methodName : "addClipAnimation"});
-				haxe_Log.trace(e,{ fileName : "RenderSupport.hx", lineNumber : 2248, className : "RenderSupport", methodName : "addClipAnimation"});
+				haxe_Log.trace("addClipAnimation error:",{ fileName : "RenderSupport.hx", lineNumber : 2248, className : "RenderSupport", methodName : "addClipAnimation"});
+				haxe_Log.trace(e,{ fileName : "RenderSupport.hx", lineNumber : 2249, className : "RenderSupport", methodName : "addClipAnimation"});
 				return fallbackAnimation();
 			}
 		}
@@ -15516,7 +15504,7 @@ RenderSupport.getSnapshotBox = function(x,y,w,h) {
 	} catch( _g ) {
 		haxe_NativeStackTrace.lastError = _g;
 		var e = haxe_Exception.caught(_g).unwrap();
-		haxe_Log.trace(e,{ fileName : "RenderSupport.hx", lineNumber : 3414, className : "RenderSupport", methodName : "getSnapshotBox"});
+		haxe_Log.trace(e,{ fileName : "RenderSupport.hx", lineNumber : 3415, className : "RenderSupport", methodName : "getSnapshotBox"});
 		child.scrollRectListener = null;
 		var scrollRect = child.scrollRect;
 		if(scrollRect != null) {
@@ -15667,7 +15655,7 @@ RenderSupport.getClipSnapshotBox = function(clip,x,y,w,h) {
 	} catch( _g ) {
 		haxe_NativeStackTrace.lastError = _g;
 		var e = haxe_Exception.caught(_g).unwrap();
-		haxe_Log.trace(e,{ fileName : "RenderSupport.hx", lineNumber : 3489, className : "RenderSupport", methodName : "getClipSnapshotBox"});
+		haxe_Log.trace(e,{ fileName : "RenderSupport.hx", lineNumber : 3490, className : "RenderSupport", methodName : "getClipSnapshotBox"});
 		dispFn();
 		return "error";
 	}
