@@ -1,0 +1,124 @@
+// An e-graph as invented by Max Willsey (https://www.mwillsey.com/)
+// which is useful for efficient rewriting systems
+
+// This implementation is inspired by https://www.philipzucker.com/a-simplified-egraph/
+
+import ds/union_find_map;
+import ds/set;
+
+// import formats/json/json;
+
+export {
+	// Given some expression type, and a way to split the childrne
+	// out of an expression, build an egraph.
+	// The split function should convert op([1,2]) to Pair(op([]), [1,2]).
+	// The clearing is required for canonicality
+	makeEGraph(splitChildren : (?) -> Pair<?, [?]>) -> EGraph;
+
+	// Adds an expression to the graph, and returns the equivalence class
+	addEExp(g : EGraph<?>, e : ?) -> int;
+
+	// Unifies two equivalence classes and returns the new class
+	unionEClass(g : EGraph<?>, a : int, b : int) -> int;
+
+	// TODO: Define map, iter and such on the graph
+
+	EGraph(
+		// From equivalence class (int) to set of ENodes in that class
+		eclass : UnionFindMap<Set<ENode<?>>>,
+		// What eclass does this node belong to?
+		mutable memo : Tree<ENode<?>, int>,
+		// What is the next equivalence class?
+		mutable nextId : int,
+		// How to clear recursive children from this expression,
+		// and extract children from our expression
+		splitChildren : (?) -> Pair<?, [?]>	
+	);
+
+	ENode(
+		// The parent
+		head : ?,
+		// The children are pointing to equilvance classes
+		args : [int]
+	);
+}
+
+
+makeEGraph(splitChildren : (?) -> Pair<?, [?]>) -> EGraph {
+	EGraph(
+		makeUnionFindMap(makeSet(), mergeSets),
+		makeTree(),
+		0,
+		splitChildren
+	);
+}
+
+// As classes are joined, the enodes can become stale
+// This will resolve them
+canonizeENode(g : EGraph<?>, f : ENode<?>) -> ENode<?> {
+	ENode(f.head, map(f.args, \a -> unionFindMap(g.eclass, a)))
+}
+
+addENode(g : EGraph<?>, f : ENode<?>) -> int {
+    f0 = canonizeENode(g, f);
+	mclass = lookupTree(g.memo, f0);
+	mclass ?? {
+		mclass;
+	} : {
+		id = g.nextId;
+		setUnionMapValue(g.eclass, id, makeSet1(f0));
+		g.memo ::= setTree(g.memo, f0, id);
+		g.nextId ::= id + 1;
+		id;
+	}
+}
+
+addEExp(g : EGraph<?>, e : ?) -> int {
+	split : Pair<?, [?]> = g.splitChildren(e);
+	enode = ENode(split.first, map(split.second, \child -> {
+		addEExp(g, child)
+	}));
+	addENode(g, enode);
+}
+
+unionEClass(g : EGraph<?>, a : int, b : int) -> int {
+	id = unionUnionMap(g.eclass, a, b);
+	nodes : Set<ENode<?>> = getUnionMapValue(g.eclass, id);
+	eclass : Set<ENode<?>> = mapSet(nodes, \enode : ENode<?> -> {
+		g.memo ::= removeFromTree(g.memo, enode);
+		enode0 = canonizeENode(g, enode);
+		g.memo ::= setTree(g.memo, enode0, id);
+		enode0;
+	});
+	setUnionMapValue(g.eclass, id, eclass);
+	id;
+}
+
+/*
+main() {
+	egraph : EGraph<Json> = makeEGraph(\json -> {
+		switch (json : Json) {
+			JsonNull(): Pair(json, []);
+			JsonBool(v): Pair(json, []);
+			JsonDouble(v): Pair(json, []);
+			JsonString(s): Pair(json, []);
+			JsonObject(members): {
+				Pair(
+					JsonObject(map(members, \m -> Pair(m.first, JsonNull()))),
+					map(members, \m -> m.second)
+				)
+			}
+			JsonArray(values): Pair(JsonArray([]), values);
+		}
+	});
+
+	null = addEExp(egraph, JsonNull());
+	one = addEExp(egraph, JsonDouble(1.0));
+	two = addEExp(egraph, JsonDouble(2.0));
+	array1 = addEExp(egraph, JsonArray([JsonNull(), JsonDouble(2.0)]));
+	array2 = addEExp(egraph, JsonArray([JsonNull(), JsonDouble(1.0)]));
+	joined = unionEClass(egraph, one, two);
+	println(joined);
+}
+
+*/
