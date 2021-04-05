@@ -1,8 +1,17 @@
 package com.area9innovation.flow;
 
 import java.util.*;
-import java.nio.charset.Charset;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.FileNotFoundException;
+import java.net.URL;
+import java.net.MalformedURLException;
+import java.nio.charset.Charset;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
+import java.lang.reflect.InvocationTargetException;
 
 public class FlowFileSystem extends NativeHost {
 	public String createDirectory(String path) {
@@ -87,7 +96,8 @@ public class FlowFileSystem extends NativeHost {
     }
 
     public String fileName(Object file) {
-		return "";
+		File _file = (File)file;
+		return _file.getAbsolutePath();
     }
 
     public Object readFile(Object file, String as, Func1<Object,String> onData, Func1<Object, String> onError) {
@@ -114,5 +124,62 @@ public class FlowFileSystem extends NativeHost {
 		File _file = (File)file;
 		double d = _file.lastModified() / 1000;
 		return Math.round(d) * 1000;
+	}
+	public Object makeFileByBlobUrl(String url, String fileName, Func1<Object,File> onFile, Func1<Object,String> onError) {
+		try (
+			ReadableByteChannel readableByteChannel = Channels.newChannel(new URL(url).openStream());
+			FileOutputStream fileOutputStream = new FileOutputStream(fileName);
+		) {
+			fileOutputStream.getChannel().transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
+			onFile.invoke(new File(fileName));
+		} catch (MalformedURLException e) {
+			onError.invoke("Malformed url " + url + " " + e.getMessage());
+		} catch (FileNotFoundException e) {
+			onError.invoke("File not found " + fileName + " " + e.getMessage());
+		} catch (IOException e) {
+			onError.invoke("IO Exception while downloading " + url + " to " + fileName + " " + e.getMessage());
+		}
+
+		return null;
+	}
+
+	public File createTempFile(String name, String content) {
+		File tmpdir = new File(System.getProperty("java.io.tmpdir"));
+		File newFile = new File(tmpdir, name);
+		try {
+			newFile.createNewFile();
+		} catch (IOException e) {
+			System.out.println("IO Exception: " + e.getMessage());
+		}
+		if (content != null & content != "") {
+			try {
+				byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), content);
+				try (
+					FileOutputStream fileOutputStream = new FileOutputStream(newFile);
+				) {
+					fileOutputStream.write(converted);
+				} catch (IOException e) {
+					System.out.println("IO Exception: " + e.getMessage());
+				}
+			} catch (IllegalAccessException e) {
+				System.out.println("At data string conversion: " + e.getMessage());
+			} catch (InvocationTargetException e) {
+				System.out.println("At data string conversion: " + e.getMessage());
+			}
+		}
+		return newFile;
+	}
+
+	private final static java.lang.reflect.Method string2utf8Bytes;
+	static {
+		java.lang.reflect.Method method = null;
+		try {
+			method = Native.class.getMethod("string2utf8Bytes", String.class);
+		} catch (ReflectiveOperationException e) {
+			System.out.println("string2utf8 method is not initialized: " + e.getMessage());
+			throw new ExceptionInInitializerError(e);
+		} finally {
+			string2utf8Bytes = method;
+		}
 	}
 }
