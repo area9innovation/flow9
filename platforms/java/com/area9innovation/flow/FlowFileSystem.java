@@ -1,6 +1,8 @@
 package com.area9innovation.flow;
 
 import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -181,5 +183,54 @@ public class FlowFileSystem extends NativeHost {
 		} finally {
 			string2utf8Bytes = method;
 		}
+	}
+
+	public Object extractZipFile(String zipFileName, String outputDir, Func0<Object> onDone, Func1<Object,String> onError) {
+		File destDir = new File(outputDir);
+		try (
+			ZipFile zipFile = new ZipFile(zipFileName)
+		) {
+			Enumeration<? extends ZipEntry> zipEntries = zipFile.entries();
+
+			while (zipEntries.hasMoreElements()) {
+				ZipEntry zipEntry = zipEntries.nextElement();
+				File destFile = getFileForExtraction(destDir, zipEntry);
+				if (zipEntry.isDirectory()) {
+					if (!destFile.isDirectory() && !destFile.mkdirs()) {
+						throw new IOException("Failed to create directory " + destFile);
+					}
+				} else {
+					File parent = destFile.getParentFile();
+					if (!parent.isDirectory() && !parent.mkdirs()) {
+						throw new IOException("Failed to create directory " + parent);
+					}
+
+					try (
+						ReadableByteChannel readableByteChannel = Channels.newChannel(zipFile.getInputStream(zipEntry));
+						FileOutputStream fileOutputStream = new FileOutputStream(destFile);
+					) {
+						fileOutputStream.getChannel().transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
+					}
+				}
+			}
+		} catch (IOException e) {
+			onError.invoke("IOException while extracting " + zipFileName + " to " + outputDir + ": " + e.getMessage());
+		}
+
+		onDone.invoke();
+		return null;
+	}
+
+	private final static File getFileForExtraction(File destinationDir, ZipEntry zipEntry) throws IOException {
+		File destFile = new File(destinationDir, zipEntry.getName());
+
+		String destDirPath = destinationDir.getCanonicalPath();
+		String destFilePath = destFile.getCanonicalPath();
+
+		if (!destFilePath.startsWith(destDirPath + File.separator)) {
+			throw new IOException("Entry is outside of the target dir: " + zipEntry.getName());
+		}
+
+		return destFile;
 	}
 }
