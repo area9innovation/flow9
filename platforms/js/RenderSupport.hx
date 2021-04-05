@@ -2724,6 +2724,40 @@ class RenderSupport {
 		picture.switchUseCrossOrigin(useCrossOrigin);
 	}
 
+	public static function parseXml(xmlString) {
+		var doc;
+		if (untyped __js__('window.ActiveXObject')) {
+			// Internet Explorer
+			doc = untyped __js__('new ActiveXObject("MSXML.DOMDocument")');
+			doc.async = false;
+			doc.loadXML(xmlString);
+		} else {
+			// Other browsers
+			var parser = untyped __js__('new DOMParser()');
+			doc = parser.parseFromString(xmlString, "text/xml");
+		}
+		return doc;
+	}
+
+	public static function checkIsValidSvg(url : String, cb : (Bool) -> Void) : Void {
+		var svgXhr = new js.html.XMLHttpRequest();
+		if (!Platform.isIE && !Platform.isEdge)
+			svgXhr.overrideMimeType('image/svg+xml');
+
+		svgXhr.onload = function () {
+			try {
+				var doc = parseXml(svgXhr.response);
+				var viewBox = untyped doc.documentElement.getAttribute('viewBox');
+				cb(viewBox != null);
+			} catch (e : Dynamic) {
+				cb(false);
+			}
+		};
+
+		svgXhr.open('GET', url, true);
+		svgXhr.send();
+	}
+
 	public static function cursor2css(cursor : String) : String {
 		return switch (cursor) {
 			case "arrow": "default";
