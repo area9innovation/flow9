@@ -1,0 +1,85 @@
+import ds/egraph;
+import formats/json/json;
+
+// Pattern matching language
+EPattern<?> ::= EPatternVar, EPatternTerm<?>;
+	EPatternVar(id : string);
+	EPatternTerm(head : ?, args : [EPattern<?>]);
+
+EMatchResult(bindings : Tree<string, ?>, fail : bool);
+
+epatternMatch(acc : EMatchResult, e : EGraph<?>, term : ?, pattern : EPattern<?>) -> EMatchResult {
+	switch (pattern) {
+		EPatternVar(id): {
+			mbind = lookupTree(acc.bindings, id);
+			mbind ?? {
+				// OK, already is bound. Check that it is consistent,
+				if (mbind == term) {
+					acc
+				} else {
+					// otherwise, fail
+					EMatchResult(acc with fail = true);
+				}
+			} : EMatchResult(acc with bindings = setTree(acc.bindings, id, term));
+		}
+		EPatternTerm(head, pargs): {
+			split = e.splitChildren(term);
+			if (split.first == head && length(split.second) == length(pargs)) {
+				// OK, the head and # args match
+				foldi(split.second, acc, \i, acc2, cterm : ? -> {
+					epatternMatch(acc2, e, cterm, pargs[i]);
+				});
+			} else {
+				// No match
+				EMatchResult(acc with fail = true);
+			}
+		}
+	}
+}
+
+main() {
+	egraph : EGraph<Json> = makeEGraph(\json -> {
+		switch (json : Json) {
+			JsonNull(): Pair(json, []);
+			JsonBool(v): Pair(json, []);
+			JsonDouble(v): Pair(json, []);
+			JsonString(s): Pair(json, []);
+			JsonObject(members): {
+				Pair(
+					JsonObject(map(members, \m -> Pair(m.first, JsonNull()))),
+					map(members, \m -> m.second)
+				)
+			}
+			JsonArray(values): Pair(JsonArray([]), values);
+		}
+	});
+
+	null = addEExp(egraph, JsonNull());
+	one = addEExp(egraph, JsonDouble(1.0));
+	two = addEExp(egraph, JsonDouble(2.0));
+	array1 = addEExp(egraph, JsonArray([JsonNull(), JsonDouble(2.0)]));
+	array2 = addEExp(egraph, JsonArray([JsonNull(), JsonDouble(1.0)]));
+	joined = unionEClass(egraph, one, two);
+
+	println(joined);
+
+	// Check pattern matching
+	pattern = EPatternTerm(
+		JsonArray([]), 
+		[
+			EPatternVar("elem1"),
+			EPatternVar("elem2"),
+		]
+	);
+	term = JsonArray([JsonNull(), JsonDouble(2.0)]);
+	res = epatternMatch(EMatchResult(makeTree(), false), egraph, term, pattern);
+	if (res.fail) {
+		println("Could not match pattern")
+	} else {
+		traverseInOrder(res.bindings, \name, val -> {
+			println(name + ": " + toString(val));
+		})
+	};
+
+	quit(0);
+}
