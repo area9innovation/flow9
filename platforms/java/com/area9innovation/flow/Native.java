@@ -507,8 +507,9 @@ public class Native extends NativeHost {
 
 			char[] cs = Character.toChars(h);
 
-			// Surrogate pair(?) (or more ?)
-			str.append(cs);
+			// Surrogate pair
+			str.append(cs[0]);
+			str.append(cs[1]);
 			} else if ((b1 & 0xF8) == 0xF0 && i < len - 3) {
 			byte b2 = bytes[i+1];
 			byte b3 = bytes[i+2];
