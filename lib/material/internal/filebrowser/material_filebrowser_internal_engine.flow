@@ -1,0 +1,265 @@
+import material/extra/filesystem/filesystem_extended_api;
+import material/internal/filebrowser/material_filebrowser_internal_utils;
+import material/material;
+
+export {
+	// Define the converter for "Files Paths" to "Material Preview"
+	// Used to load all preview contents at once
+	FbGetFilesPreview(fn : (filesPaths : [string], ([Pair<string, Material>]) -> void) -> void);
+			
+	// Filebrowser UI engine
+	FilebrowserEngine : (
+		// Get the files-source (partition) name
+		whoAmI : (
+			onDone : (string) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Get the root name of the partition, if has (by default is `DB`)
+		myRootName : () -> Maybe<string>,
+		// Get contents of the folder
+		readDirectory : (
+			string /* directory full path */,
+			onDone : ([string] /* folder names*/, [string] /* file names*/) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Check does the given path correponds to the folder
+		isDirectory : (
+			string /* directory full path */,
+			onDone : (bool) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Check does the file exists (for the given path)
+		fileExists : (
+			string /* file full path */,
+			onDone : (bool) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Create a new folder (will be created all folders in the path, if they does not exists)
+		createDirectory : (
+			string /* folder full path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Update a content of the file. Create a file, if does not exists.
+		setFileContent : (
+			string /* full path */,
+			string /* content */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Rename the file/folder
+		renamePath : (
+			string /* full path */,
+			string /* new name, without path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Read the file content
+		getFileContent : (
+			string /* full path */,
+			formatBase64 : bool /* format of the content should be base64? */,
+			onDone : (string /* content */) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Copy given paths to the destination folder
+		copyPaths : (
+			[string] /* full path */,
+			string /* destination directory */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Move given paths to the destination folder
+		movePaths : (
+			[string] /* full path */,
+			string /* destination directory */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Create a file from specific type (if the type supported)
+		copySpecial : (
+			[FBContentPath<??>] /* native or some info about a file-source */,
+			string /* destination directory */,
+			/* if type does not supported, create a file from content */
+			getContentBase64 : (FBContentPath<??>, onContentDone : (string) -> void, onContentError : (string) -> void) -> void,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Remove the directories
+		deleteDirectories : (
+			[string] /* full path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Remove the files
+		deleteFiles : (
+			[string] /* full path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// make preview of the files for the given paths
+		getPathsPreview : (
+			[string] /* full path */,
+			onDone : ([Pair<string, Material>]) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Resolve relative paths which begins with "../", "./"
+		resolveRelativePath : (string) -> string,
+		// Converting filebrowser path to url for file downloading
+		path2url : (string) -> string,
+		// Converting filebrowser path to original file type
+		paths2originals : (
+			[string] /* full paths */,
+			// responce is in the same order as `full paths`
+			onDone : ([Maybe<?>]) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Get access right for the given path to know what we can do with it
+		getAccessRight : (
+			string /* path */,
+			onDone : (PathAccessRight) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Get any specific info about a path
+		getExtraInfo : (
+			string /* path */,
+			string /* type */,
+			onDone : (Maybe<Json>) -> void,
+			onError : (string) -> void
+		) -> void,
+		// UI should be updated
+		subscribeOnUpdates : (onUpdated : () -> void) -> () -> void
+	);
+
+	convertExtApi2engine(api : FilesystemExtAPI, previewStyleM : Maybe<FbGetFilesPreview>, createFromNativesFnM : Maybe<([native]) -> void>) -> FilebrowserEngine<?>;
+}
+
+convertExtApi2engine(api : FilesystemExtAPI, previewStyleM : Maybe<FbGetFilesPreview>, createFromNativesFnM : Maybe<([native]) -> void>) -> FilebrowserEngine<?> {
+	FilebrowserEngine(
+		//whoAmI
+		\onDone, onError -> {
+			onDone("Unknown: converted from API");
+		},
+		// myRootName
+		\-> None(),
+		// readDirectory
+		api.readDirectory,
+		// isDirectory
+		\path, onDone, __ -> api.isDirectory(path, onDone),
+		// fileExists
+		\path, onDone, __ -> api.fileExists(path, onDone),
+		// createDirectory
+		\path, onDone, onError -> {
+			api.createFolder(path, onDone, onError);
+		},
+		// setFileContent
+		\path, content, onDone, onError -> {
+			api.setFileContent(path, content, \-> onDone(), onError);
+		},
+		// renamePath
+		\path, onlyNameNew, onDone, onError -> {
+			api.renameElement(path, onlyNameNew, onDone, onError);
+		},
+		// getFileContent
+		\path, formatBase64, onDone, onError -> {
+			api.getFileContent(path, formatBase64, onDone, onError);
+		},
+		// copyPaths
+		\paths, pathTo, onDone, onError -> {
+			iterAsync(
+				paths,
+				\path, ff, rj -> api.copyElement(path, pathTo, ff, rj),
+				onDone,
+				onError
+			);
+		},
+		// movePaths
+		\paths, pathTo, onDone, onError -> {
+			iterAsync(
+				paths,
+				\path, ff, rj -> api.moveElement(path, pathTo, ff, rj),
+				onDone,
+				onError
+			);
+		},
+		// copySpecial /* TODO: createFromNativesFn supports copying into root folder only */
+		\files, pathTo, getContentBase64, onDone, onError -> {
+			pathTo2 = rtrim2(pathTo, "/") + "/";
+			copySpecialSimple = \items, ff, rj -> {
+				iterAsync(
+					items,
+					\itemCP, ff2, rj2 -> {
+						getContentBase64(
+							itemCP,
+							\contentBase64 -> {
+								api.setFileContent(pathTo2 + itemCP.filename, contentBase64 /* BlobBase64()*/, ff2, rj2);
+							},
+							rj2
+						);
+					},
+					ff,
+					rj
+				)
+			}
+
+			eitherFn(
+				createFromNativesFnM,
+				\createFromNativesFn -> {
+					splittedNativeOthers = partition(files, \itemCP -> serialize(itemCP.item) == "native");
+					iterAsync([
+							\ff, rj -> {
+								if (splittedNativeOthers.first != []) {
+									createFromNativesFn(
+										map(splittedNativeOthers.first, \itemCP -> cast(itemCP.item : flow -> native))
+									);
+									ff()
+								} else ff();
+							},
+							\ff, rj -> {
+								if (splittedNativeOthers.second != []) copySpecialSimple(splittedNativeOthers.second, ff, rj)
+								else ff();
+							},
+						],
+						\fn, ff, rj -> fn(ff, rj),
+						onDone,
+						onError
+					);
+				},
+				\-> copySpecialSimple(files, onDone, onError)
+			);
+		},
+		// deleteDirectories
+		\paths, onDone, onError -> {
+			iterAsync(paths, api.deleteElement, onDone, onError);
+		},
+		// deleteFiles
+		\paths, onDone, onError -> {
+			iterAsync(paths, api.deleteElement, onDone, onError);
+		},
+		//getPathsPreview
+		\paths, onDone, onError -> {
+			eitherFn(
+				previewStyleM,
+				\previewStyle -> previewStyle.fn(paths, onDone),
+				\-> onDone([])
+			);
+		},
+		// resolveRelativePath
+		api.resolveRelativePath,
+		// path2url
+		api.convert2realPath,
+		// paths2originals
+		\paths, onDone, onError -> {
+			onError("The engine does not supports `paths2originals` operation.");
+		},
+		// getAccessRight
+		\path, onDone, onError -> {
+			onDone(api.getAccessRight(path));
+		},
+		// getExtraInfo
+		\path, type, onDone, onError -> {
+			onDone(api.getExtraInfo(path, type));
+		},
+		// UI should be updated
+		\onUpdated -> nop
+	);
+}
