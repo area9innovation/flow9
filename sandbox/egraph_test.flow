@@ -1,11 +1,5 @@
-import ds/egraph;
+import ds/egraph_matching;
 import formats/json/json;
-import loop;
-
-// Pattern matching language
-EPattern<?> ::= EPatternVar, EPatternTerm<?>;
-	EPatternVar(id : string);
-	EPatternTerm(head : ?, args : [EPattern<?>]);
 
 EMatchResult(bindings : Tree<string, ?>, fail : bool);
 
@@ -35,152 +29,6 @@ epatternMatch(acc : EMatchResult, e : EGraph<?>, term : ?, pattern : EPattern<?>
 				// No match
 				EMatchResult(acc with fail = true);
 			}
-		}
-	}
-}
-
-//
-// Pattern matching on the egraph
-//
-
-ENodeMatchResult(bindings : Tree<string, EGraphMatch<?>>, matchNode : EGraphMatch<?>, fail : bool);
-
-// What kind of match is this?
-EGraphMatch<?> ::= EClassMatch, EHeadMatch<?>, ENodeMatch<?>;
-	// We match an entire class
-	EClassMatch(class : int);
-	// We match a specific head, with various children
-	EHeadMatch(head : ?, args : [EGraphMatch<?>]);
-	// We match a specific node
-	ENodeMatch(node : ENode<?>);
-
-makeENodeMatchResult(e : EGraph<?>) -> ENodeMatchResult {
-	ENodeMatchResult(makeTree(), EHeadMatch(e.eclass.defaultValue, []), false)
-}
-
-// Will match the pattern against this node, and bind as specific bindings
-// as possible
-epatternENodeMatch(acc : ENodeMatchResult, e : EGraph<?>, term : ENode<?>, pattern : EPattern<?>) -> ENodeMatchResult {
-	switch (pattern) {
-		EPatternVar(id): {
-			mbind = lookupTree(acc.bindings, id);
-			mbind ?? {
-				// OK, already is bound. Check that it is consistent
-				mmatch = consistentEGraphMatch(e, mbind, term);
-				switch (mmatch) {
-					None(): {
-						// These are not consistent. fail
-						ENodeMatchResult(acc with fail = true);
-					}
-					Some(match): {
-						// OK, we have a match. Let us update it to the newest one
-						ENodeMatchResult(acc with 
-							bindings = setTree(acc.bindings, id, match), 
-							matchNode = match
-						);
-					}
-				}
-			} : {
-				match = ENodeMatch(term);
-				ENodeMatchResult(acc with 
-					bindings = setTree(acc.bindings, id, match), 
-					matchNode = match
-				);
-			}
-		}
-		EPatternTerm(head, pargs): {
-			if (!acc.fail && term.head == head && length(term.args) == length(pargs)) {
-				// OK, the head and # args match
-				res = foldi(term.args, Pair(acc, []), \i, acc2 : Pair<ENodeMatchResult, [EGraphMatch<?>]>, class : int -> {
-					if (acc2.first.fail) acc2
-					else {
-						cm = epatternEClassMatch(acc2.first, e, class, pargs[i]);
-						Pair(cm, arrayPush(acc2.second, cm.matchNode))
-					}
-				});
-				ENodeMatchResult(
-					res.first
-					with matchNode = EHeadMatch(head, res.second)
-				)
-			} else {
-				// No match
-				ENodeMatchResult(acc with fail = true);
-			}
-		}
-	}
-}
-
-// Will match the pattern against this class, and bind as specific bindings
-// as possible
-epatternEClassMatch(acc : ENodeMatchResult, e : EGraph<?>, class : int, pattern : EPattern<?>) -> ENodeMatchResult {
-	nodes = getEClassNodes(e, class);
-	epatternENodesMatch(acc, e, nodes, pattern);
-}
-
-// Check if any of these nodes match, and bind with the first that works
-epatternENodesMatch(acc : ENodeMatchResult, e : EGraph<?>, nodes : Set<ENode<?>>, pattern : EPattern<?>) -> ENodeMatchResult {
-	pm : Maybe<PopSetResult<ENode<?>>> = popMaxSet(nodes);
-	pm ?? {
-		node = pm.value;
-		rest = pm.rest;
-		nodematch = epatternENodeMatch(acc, e, node, pattern);
-		if (nodematch.fail) {
-			// Didn't work. Try the next node
-			epatternENodesMatch(acc, e, rest, pattern)
-		} else {
-			nodematch
-		}
-	} : {
-		ENodeMatchResult(acc with fail = true);		
-	}
-}
-
-// Is this term consistent with a previous match?
-// If so, provide the most specialized match we can provide
-consistentEGraphMatch(e : EGraph<?>, match : EGraphMatch<?>, term : ENode<?>) -> Maybe<EGraphMatch<?>> {
-	switch (match) {
-		ENodeMatch(node): if (node == term) Some(match) else None();
-		EClassMatch(class): {
-			nodes = getEClassNodes(e, class);
-			if (containsSet(nodes, term)) {
-				Some(ENodeMatch(term));
-			} else None();
-		}
-		EHeadMatch(head, args): {
-			if (term.head == head && length(term.args) == length(args)) {
-				matches : [EGraphMatch<?>] = filtermapi(args, \i, arg : EGraphMatch<?> -> {
-					argClass = term.args[i];
-					consistentEGraphClassMatch(e, arg, argClass);
-				});
-				if (length(matches) == length(args)) {
-					Some(
-						EHeadMatch(head, matches)
-					)
-				} else None();
-			} else None();
-		}
-	}
-}
-
-// Is this class consistent with a previous match?
-// If so, provide the most specialized match we can provide
-consistentEGraphClassMatch(e : EGraph<?>, match : EGraphMatch<?>, class : int) -> Maybe<EGraphMatch<?>> {
-	switch (match) {
-		ENodeMatch(node): {
-			nodes = getEClassNodes(e, class);
-			if (containsSet(nodes, node)) {
-				Some(match)
-			} else None();
-		}
-		EClassMatch(class2): if (class == class2) Some(match) else None();
-		EHeadMatch(head, args): {
-			nodes = getEClassNodes(e, class);
-			foldUntil(set2array(nodes), None(), \acc : Maybe<EGraphMatch<?>>, node -> {
-				mm = consistentEGraphMatch(e, match, node);
-				mm ?? {
-					Pair(false, Some(mm));
-				} : Pair(true, acc)
-			})
 		}
 	}
 }
@@ -216,7 +64,9 @@ main() {
 	// Now, array1 & array2 should be equivalent
 	array1Class = getEClassRoot(egraph, array1);
 	array2Class = getEClassRoot(egraph, array2);
-	println([array1Class, array2Class]);
+	if (array1Class != array2Class) {
+		println("INVARIANT BROKEN: these should be equivalent")
+	}
 
 	if (false) {
 		// Check basic pattern matching
@@ -250,17 +100,21 @@ main() {
 				EPatternVar("elem1"),
 			]
 		);
-		res = epatternEClassMatch(makeENodeMatchResult(egraph), egraph, array1Class, pattern2);
-		if (res.fail) {
-			println("Could not match pattern")
-		} else {
-			traverseInOrder(res.bindings, \name, val -> {
+
+		pattern4 = EPatternTerm(JsonNull(), []);
+		pattern3 = EPatternVar("elem");
+
+		engine = makeENodeMatchEngine(egraph, JsonNull(), \bindings, match : EGraphMatch<Json> -> {
+			println("Match: " + toString(match) + " gave bindings:");
+			traverseInOrder(bindings, \name, val -> {
 				println(name + ": " + toString(val));
 			})
-		};
+		});
+		findAllEClassMatches(engine, array1Class, pattern2);
 	}
 
 	// TODO: OK, now pattern match against ALL classes
+	// OK, maybe return all matches
 
 	quit(0);
 }
