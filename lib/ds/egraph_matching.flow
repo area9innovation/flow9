@@ -4,7 +4,8 @@ import loop;
 export {
 	// Prepare a matching engine to be used with a given EGraph
 	makeENodeMatchEngine(e : EGraph<?>, def : ?, 
-		onMatch : (bindings : Tree<string, EGraphMatch<?>>, EGraphMatch<?>) -> void
+		// How to construct a value, from a head and recursive arguments
+		combine : (head : ?, args : [?]) -> ?,
 	) -> ENodeMatchEngine<?>;
 
 	// Pattern matching language
@@ -14,7 +15,10 @@ export {
 
 	// Find all matches to this pattern to a given class. Calls the onMatch function
 	// for each. Traverses all down recursive
-	findAllEClassMatches(acc : ENodeMatchEngine<?>, class : int, pattern : EPattern<?>) -> void;
+	findAllEClassMatches(
+		acc : ENodeMatchEngine<?>, class : int, pattern : EPattern<?>,
+		onMatch : (bindings : Tree<string, ?>, ?) -> void
+	) -> void;
 }
 
 //
@@ -26,7 +30,8 @@ ENodeMatchEngine(
 	bindings : Tree<string, EGraphMatch<?>>, 
 	matchNode : EGraphMatch<?>, 
 	fail : bool,
-	onMatch : (bindings : Tree<string, EGraphMatch<?>>, match : EGraphMatch<?>) -> void,
+	def : ?,
+	combine : (head : ?, args : [?]) -> ?,
 );
 
 // What kind of match is this?
@@ -36,24 +41,32 @@ EGraphMatch<?> ::= EHeadMatch<?>, ENodeMatch<?>;
 	// We match a specific node
 	ENodeMatch(node : ENode<?>);
 
+
 makeENodeMatchEngine(e : EGraph<?>, def : ?, 
-	onMatch : (bindings : Tree<string, EGraphMatch<?>>, EGraphMatch<?>) -> void) -> ENodeMatchEngine<?> {
-	ENodeMatchEngine(e, makeTree(), ENodeMatch(ENode(def, [])), false, onMatch)
+		combine : (head : ?, args : [?]) -> ?,
+	) -> ENodeMatchEngine<?> {
+	ENodeMatchEngine(e, makeTree(), EHeadMatch(def, []), false, def, combine)
 }
 
 // Looks transitively throughout the entire graph and find all matches to the
 // given pattern
-findAllEClassMatches(acc : ENodeMatchEngine<?>, class : int, pattern : EPattern<?>) -> void {
+findAllEClassMatches(acc : ENodeMatchEngine<?>, class : int, pattern : EPattern<?>,
+		onMatch : (bindings : Tree<string, ?>, ?) -> void
+) -> void {
 	nodes = getEClassNodes(acc.egraph, class);
 	iterSet(nodes, \node -> {
 		match = epatternENodeMatch(acc, node, pattern);
 		if (!match.fail) {
-			acc.onMatch(match.bindings, match.matchNode)
+			expr = egraphMatch2Exp(acc.egraph, acc.def, acc.combine, match.matchNode);
+			bindings = mapTree(match.bindings, \mat -> {
+				egraphMatch2Exp(acc.egraph, acc.def, acc.combine, mat)
+			});
+			onMatch(bindings, expr)
 		}
 	
 		// OK, look at the children
 		iter(node.args, \arg -> {
-			findAllEClassMatches(acc, arg, pattern)
+			findAllEClassMatches(acc, arg, pattern, onMatch)
 		})
 	});
 }
@@ -82,6 +95,7 @@ epatternENodeMatch(acc : ENodeMatchEngine, term : ENode<?>, pattern : EPattern<?
 				}
 			} : {
 				match = ENodeMatch(term);
+
 				ENodeMatchEngine(acc with 
 					bindings = setTree(acc.bindings, id, match), 
 					matchNode = match
@@ -98,17 +112,15 @@ epatternENodeMatch(acc : ENodeMatchEngine, term : ENode<?>, pattern : EPattern<?
 						Pair(cm, arrayPush(acc2.second, cm.matchNode))
 					}
 				});
-				if (res.second == []) {
-					ENodeMatchEngine(
-						res.first
-						with matchNode = ENodeMatch(ENode(head, []))
-					)
+				match = if (res.second == []) {
+					ENodeMatch(ENode(head, []));
 				} else {
-					ENodeMatchEngine(
-						res.first
-						with matchNode = EHeadMatch(head, res.second)
-					)
-				}
+					EHeadMatch(head, res.second);
+				};
+				ENodeMatchEngine(
+					res.first
+					with matchNode = match
+				);
 			} else {
 				// No match
 				ENodeMatchEngine(acc with fail = true);
@@ -183,4 +195,32 @@ consistentEGraphClassMatch(e : EGraph<?>, match : EGraphMatch<?>, class : int) -
 			})
 		}
 	}
+}
+
+// Convert a match into a real value
+egraphMatch2Exp(
+		e : EGraph<?>, def : ?,
+		combine : (head : ?, args : [?]) -> ?,
+		match : EGraphMatch<?>, 
+	) -> ? {
+	switch (match) {
+		EHeadMatch(head, args): {
+			combine(head, map(args, \a -> egraphMatch2Exp(e, def, combine, a)))
+		}
+		ENodeMatch(node): {
+			combine(node.head, map(node.args, \class -> egraphClass2Exp(e, def, combine, class)))
+		}
+	}
+}
+
+egraphClass2Exp(
+	e : EGraph<?>, def : ?,
+	combine : (head : ?, args : [?]) -> ?,
+	class : int, 
+) -> ? {
+	nodes = getEClassNodes(e, class);
+	mnode = popMaxSet(nodes);
+	mnode ?? {
+		egraphMatch2Exp(e, def, combine, ENodeMatch(mnode.value))
+	} : def
 }

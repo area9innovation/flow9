@@ -33,6 +33,55 @@ epatternMatch(acc : EMatchResult, e : EGraph<?>, term : ?, pattern : EPattern<?>
 	}
 }
 
+combineJson(head : Json, args : [Json]) -> Json {
+	switch (head) {
+		JsonNull(): head;
+		JsonBool(v): head;
+		JsonString(s): head;
+		JsonDouble(value): head;
+		JsonObject(members): {
+			JsonObject(mapi(members, \i, p -> {
+				arg = elementAt(args, i, JsonNull());
+				Pair(p.first, arg);
+			}))
+		}
+		JsonArray(value): JsonArray(args);
+	}
+}
+
+EReplacement(pattern : EPattern<?>, rewrite : (bindings : Tree<string, ?>) -> ?);
+
+performEReplacements(e : ENodeMatchEngine<?>, iterations : int, class : int, replacements : [EReplacement<?>]) -> void {
+	// Here, we record all the unifications to be done
+	unifications = ref makeSet();
+	iter(replacements, \replacement -> {
+		findAllEClassMatches(e, class, replacement.pattern, \bindings, match : ? -> {
+			rep = replacement.rewrite(bindings);
+			unifications := insertSet(^unifications, Pair(match, rep))
+		});
+	});
+
+	if (!isEmptySet(^unifications)) {
+		more = ref false;
+		iterSet(^unifications, \u : Pair<?, ?> -> {
+			c1 = addEExp(e.egraph, u.first);
+			c2 = addEExp(e.egraph, u.second);
+			if (c1 != c2) {
+				println("Unifying " + toString(u));
+				unionEClass(e.egraph, c1, c2);
+				more := true;
+			}
+			{}
+		});
+		if (^more) {
+			// OK, make it canonical again
+			canonicalizeEGraph(e.egraph);
+			if (iterations > 0) {
+				performEReplacements(e, iterations - 1, class, replacements);
+			}
+		}
+	}
+}
 
 main() {
 	egraph : EGraph<Json> = makeEGraph(\json -> {
@@ -104,17 +153,41 @@ main() {
 		pattern4 = EPatternTerm(JsonNull(), []);
 		pattern3 = EPatternVar("elem");
 
-		engine = makeENodeMatchEngine(egraph, JsonNull(), \bindings, match : EGraphMatch<Json> -> {
+		replacement = EPatternTerm(
+			JsonArray([]),
+			[
+				EPatternVar("elem1")
+			]
+		);
+
+		engine = makeENodeMatchEngine(egraph, JsonNull(), combineJson);
+		findAllEClassMatches(engine, array1Class, pattern2, \bindings, match : Json -> {
 			println("Match: " + toString(match) + " gave bindings:");
-			traverseInOrder(bindings, \name, val -> {
+			traverseInOrder(bindings, \name, val : Json -> {
 				println(name + ": " + toString(val));
 			})
 		});
-		findAllEClassMatches(engine, array1Class, pattern2);
-	}
 
-	// TODO: OK, now pattern match against ALL classes
-	// OK, maybe return all matches
+		replacements = [
+			EReplacement(
+				EPatternTerm(JsonNull(), []),
+				\bin -> {
+					JsonDouble(1.0)
+				}
+			)
+		];
+
+		performEReplacements(engine, 5, array1Class, replacements);
+
+		test = JsonArray([JsonDouble(1.0), JsonDouble(2.0)]);
+		finalClass = addEExp(egraph, test);
+
+		if (isSameEClass(egraph, finalClass, array1Class)) {
+			println("Something is wrong");
+			println(finalClass);
+			println(array1Class);
+		}
+	}
 
 	quit(0);
 }
