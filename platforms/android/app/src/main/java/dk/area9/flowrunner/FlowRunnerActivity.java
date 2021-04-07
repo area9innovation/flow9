@@ -18,6 +18,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 // this is only for checking hardware acceleration, probably could be refactored
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -67,6 +69,7 @@ import android.Manifest.permission;
 
 import dk.area9.flowrunner.FlowRunnerWrapper.HttpResolver;
 import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
+import dk.area9.patient.R;
 
 public class FlowRunnerActivity extends FragmentActivity  {
 
@@ -330,6 +333,28 @@ public class FlowRunnerActivity extends FragmentActivity  {
 
         wrapper.setFlowNotificationsAPI(FlowNotificationsAPI.getInstance(wrapper));
         FlowNotificationsAPI.getInstance(wrapper).setContext(this);
+
+        NotificationManager notifyManager = (NotificationManager)this.getSystemService(Context.NOTIFICATION_SERVICE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notifyManager.getNotificationChannels().size() == 0) {
+            String channelId = getString(R.string.default_notification_channel_id);
+            String channelName = getString(R.string.default_notification_channel_name);
+
+            NotificationChannel channel = new NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT);
+            notifyManager.createNotificationChannel(channel);
+
+            try {
+                // Check if firebase imported and add default channel
+                Class.forName("com.google.firebase.iid.FirebaseInstanceId");
+
+                String pushChannelId  = getString(R.string.default_push_notification_channel_id);
+                String pushChannelName = getString(R.string.default_push_notification_channel_name);
+
+                NotificationChannel push_channel = new NotificationChannel(pushChannelId, pushChannelName, NotificationManager.IMPORTANCE_DEFAULT);
+                notifyManager.createNotificationChannel(push_channel);
+            } catch (ClassNotFoundException ex) {
+            }
+        }
 
         wrapper.setFlowCameraAPI(FlowCameraAPI.getInstance());
         FlowCameraAPI.getInstance().setContext(this);
