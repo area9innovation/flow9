@@ -465,6 +465,8 @@ public class Native extends NativeHost {
 			bytesList.add(0x80 | b2);
 			bytesList.add(0x80 | b3);
 			bytesList.add(0x80 | b4);
+			// Surrogate pair
+			++i;
 			} else if (x <= 0x3FFFFFF) {
 			int b5 = x & 0x3F;
 			int b4 = (x >> 6) & 0x3F;
@@ -477,6 +479,8 @@ public class Native extends NativeHost {
 			bytesList.add(0x80 | b3);
 			bytesList.add(0x80 | b4);
 			bytesList.add(0x80 | b5);
+			// Surrogate pair
+			++i;
 			} else {
 			}
 		}
