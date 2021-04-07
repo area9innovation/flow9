@@ -1124,20 +1124,6 @@ public class Native extends NativeHost {
 		}
 	}
 
-	public final String getFileContentBytes(String name) {
-		try {
-			byte[] bytes = Files.readAllBytes(Paths.get(name));
-			char[] chars = new char[bytes.length / 2];
-			for (int i = 0; i < bytes.length / 2; ++ i) {
-				chars[i] = (char)(bytes[i / 2] + bytes[(i / 2) + 1] >> 8);
-			}
-			return new String(chars);
-		} catch (IOException e) {
-			return "";
-		}
-	}
-
-
 	public final boolean setFileContentBytes(String name, String data) {
 		Writer writer = null;
 
