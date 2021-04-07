@@ -62,7 +62,7 @@ class RenderSupport {
 	public static var DebugClip = null;
 
 	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
-		DebugClip.innerText += ('\n' + text + " " + text2);
+		if (DebugClip != null) DebugClip.innerText += ('\n' + text + " " + text2);
 	}
 
 	private static var RenderSupportInitialised : Bool = init();
@@ -952,6 +952,7 @@ class RenderSupport {
 
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
+			try {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
 			e.preventDefault();
@@ -980,9 +981,14 @@ class RenderSupport {
 					if (MouseUpReceived) emit("mousedown");
 				}
 			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerdown error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointerup = function(e : Dynamic) {
+			try {
 			if (e.touches != null) {
 				TouchPoints = e.touches;
 				emit("touchend");
@@ -1004,9 +1010,14 @@ class RenderSupport {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerup error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointermove = function(e : Dynamic) {
+			try {
 			if (e.touches != null) {
 				e.preventDefault();
 
@@ -1027,11 +1038,20 @@ class RenderSupport {
 
 				emit("mousemove");
 			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointermove error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointerout = function(e : Dynamic) {
+			try {
 			if (e.relatedTarget == Browser.document.documentElement) {
 				if (!MouseUpReceived) emit("mouseup");
+			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerout error : ");
+				untyped console.log(e);
 			}
 		};
 
@@ -1435,6 +1455,9 @@ class RenderSupport {
 				}
 
 				var nativeWidget : Element = untyped clip.nativeWidget;
+				if (untyped clip.iframe != null) {
+					nativeWidget = untyped clip.iframe;
+				}
 
 				// Create DOM node for access. properties
 				if (nativeWidget != null) {
@@ -2699,6 +2722,40 @@ class RenderSupport {
 
 	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
 		picture.switchUseCrossOrigin(useCrossOrigin);
+	}
+
+	public static function parseXml(xmlString) {
+		var doc;
+		if (untyped __js__('window.ActiveXObject')) {
+			// Internet Explorer
+			doc = untyped __js__('new ActiveXObject("MSXML.DOMDocument")');
+			doc.async = false;
+			doc.loadXML(xmlString);
+		} else {
+			// Other browsers
+			var parser = untyped __js__('new DOMParser()');
+			doc = parser.parseFromString(xmlString, "text/xml");
+		}
+		return doc;
+	}
+
+	public static function checkIsValidSvg(url : String, cb : (Bool) -> Void) : Void {
+		var svgXhr = new js.html.XMLHttpRequest();
+		if (!Platform.isIE && !Platform.isEdge)
+			svgXhr.overrideMimeType('image/svg+xml');
+
+		svgXhr.onload = function () {
+			try {
+				var doc = parseXml(svgXhr.response);
+				var viewBox = untyped doc.documentElement.getAttribute('viewBox');
+				cb(viewBox != null);
+			} catch (e : Dynamic) {
+				cb(false);
+			}
+		};
+
+		svgXhr.open('GET', url, true);
+		svgXhr.send();
 	}
 
 	public static function cursor2css(cursor : String) : String {

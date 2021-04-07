@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 22;
+var SERVICE_WORKER_VERSION = 23;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -712,7 +712,7 @@ self.addEventListener('fetch', function(event) {
                     } else {
                       var checkRequestParameters = function(parameter) {
                         return parameter.keyValues.every(function(keyValue) {
-                          var pair = (keyValue.key + "=" + keyValue.value);
+                          var pair = (keyValue.key + "=" + keyValue.value).toLowerCase();
                           return (urlParams.findIndex(function(up) {
                             return (pair == up);
                           }) != -1);

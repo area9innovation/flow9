@@ -274,16 +274,13 @@ renderParagraphEx(
 		})
 	));
 
-	scaleB = make(1.0);
-	scaledView = if (fitLongWords) Scale(scaleB, scaleB, contentGroup) else contentGroup;
-
 	Constructor(
 		Inspect(
 			[AvailableWidth2(aw)],
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
-				Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, scaledView);
+				Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
 			} else {
-				scaledView;
+				contentGroup;
 			}
 		),
 		\ -> {
@@ -291,7 +288,7 @@ renderParagraphEx(
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful staff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
-				infosAndScale = getParaLineInfosAndScale(
+				infos = getParaLineInfos(
 					alignment,
 					words,
 					w,
@@ -302,10 +299,9 @@ renderParagraphEx(
 					extractStruct(s, FontSize(14.0)).size
 				);
 
-				nextDistinct(linesCountB, length(infosAndScale.first));
+				nextDistinct(linesCountB, length(infos));
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				next(linesB, ParaLinesInfos(infosAndScale.first, fold(infosAndScale.first, 0.0, \acc, info -> max(info.lineWidth, acc))));
-				nextDistinct(scaleB, either(infosAndScale.second, 1.0));
+				next(linesB, ParaLinesInfos(infos, fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))));
 			};
 
 			uns = concatA([
@@ -336,50 +332,34 @@ renderParagraphEx(
 	})
 }
 
-getParaLineInfosAndScale(
+getParaLineInfos(
 	alignment : ParaLineAlignment,
 	words : [ParaWord],
 	availableWidth : double,
 	indent : double,
 	isParagraphMarked : bool,
 	rtl : bool,
-	fitLongWords : bool,
+	shrinkLongWords : bool,
 	fontSize : double
-) -> Pair<[ParaLineInfo], Maybe<double>> {
-	reflowResult = reflowParaWords(words, availableWidth, indent, isParagraphMarked, rtl, fitLongWords, fontSize);
-	switch (reflowResult) {
-		ReflowedLines(newLines) : {
-			infos = map(newLines, \line -> {
-				optimizedLine = getOptimizedLine(line.words, alignment);
-				metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
-				lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
-				ParaLineInfo(
-					optimizedLine,
-					lineAsc,
-					fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
-					fold(metrics, line.indent, \ac, m -> ac + m.width),
-					line.indent,
-				)
-			});
-			Pair(infos, None());
-		}
-		OverflowCase(availWidth, overflowWidth) : {
-			// We have word that is too long to fit paragraph width so
-			// We are reflowing paragraph to respect the width of the long word
-			// And scaling paragrph to fit it to available width
-			p = getParaLineInfosAndScale(
-				alignment,
-				words,
-				overflowWidth,
-				indent,
-				isParagraphMarked,
-				rtl,
-				false, // hotfix for https://trello.com/c/Ys9UFE1K/12479-rangeerror-maximum-call-stack-size-exceeded-simulate-hangs-forever
-				fontSize
-			);
-			Pair(p.first, Some(availWidth / overflowWidth))
-		}
-	}
+) -> [ParaLineInfo] {
+	isText = \w -> switch (w.word) {
+		Empty() : false;
+		default : true;
+	};
+
+	reflowResult = reflowParaWords(words, availableWidth, indent, isParagraphMarked, rtl, shrinkLongWords, fontSize, isText);
+	map(reflowResult, \line -> {
+		optimizedLine = getOptimizedLine(line.words, alignment);
+		metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
+		lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
+		ParaLineInfo(
+			optimizedLine,
+			lineAsc,
+			fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
+			fold(metrics, line.indent, \ac, m -> ac + m.width),
+			line.indent,
+		)
+	});
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -605,10 +585,6 @@ getLineIndent(paraIndent : double, lineIndex : int) -> double {
 	else 0.0;
 }
 
-ReflowResult ::= ReflowedLines, OverflowCase;
-	ReflowedLines(lines : [ParaLine]);
-	OverflowCase(availableWidth: double, overflowWidth : double);
-
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
 reflowParaWords(
 	words : [ParaWord],
@@ -616,9 +592,10 @@ reflowParaWords(
 	paraIndent : double,
 	isFirstMark : bool,
 	rtl : bool,
-	catchOverflow : bool,
-	fontSize : double
-) -> ReflowResult {
+	shrinkLongWords : bool,
+	fontSize : double,
+	isText : (ParaWord) -> bool
+) -> [ParaLine] {
 
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
 	reflowResult = reflowParaWords2(
@@ -626,23 +603,21 @@ reflowParaWords(
 		firstLineWidth,
 		firstLineWidth,
 		[],
-		ReflowedLines([]),
+		[],
 		paraIndent,
 		isFirstMark,
-		catchOverflow,
-		fontSize
+		shrinkLongWords,
+		fontSize,
+		isText
 	);
 
-	if (rtl) switch (reflowResult) {
-		ReflowedLines(lines) : ReflowedLines(
-			zipWith(
-				lines,
-				reflowTextToBiDi(map(lines, \l -> l.words), isWordEmpty, getWordText, setWordText, idfn, rtl),
-				\l, ws -> ParaLine(ws, l.indent),
-			)
-		);
-		OverflowCase(__, __) : reflowResult;
-	} else reflowResult;
+	if (rtl)
+		zipWith(
+			reflowResult,
+			reflowTextToBiDi(map(reflowResult, \l -> l.words), isWordEmpty, getWordText, setWordText, idfn, rtl),
+			\l, ws -> ParaLine(ws, l.indent),
+		)
+	else reflowResult;
 }
 
 getParaWordWidth(word : ParaWord) -> double {
@@ -655,26 +630,71 @@ reflowParaWords2(
 	availableWidth : double,
 	remainingWithSpacing : double,
 	currentWords : [ParaWord],
-	result : ReflowResult,
+	result : [ParaLine],
 	paraIndent : double,
 	isFirstMark : bool,
-	catchOverflow : bool,
-	fontSize : double
-) -> ReflowResult {
-	addLine = \cw, indent -> switch (result) {
-		ReflowedLines(lines) : ReflowedLines(
-			if (cw != []) arrayPush(lines, ParaLine(cw, indent)) else lines
-		);
-		OverflowCase(__, __) : result;
-	}
+	shrinkLongWords : bool,
+	fontSize : double,
+	isText : (ParaWord) -> bool
+) -> [ParaLine] {
+	extractParaAtomicForm = \word1 -> {
+		w : ParaAtomic = word1.word;
+		f : Form = switch(w : ParaAtomic) {
+			ParaOneWord(__): Empty();
+			InspectElement(__, __): Empty();
+			LinePart(first, inline, last): inline;
+			Space(s): s;
+			default: cast(w : ParaAtomic -> Form);
+		};
+		f
+	};
+
+	getWordGhostedForm = \word1 -> {
+		g = word1.ghosted;
+		switch (g : Ghosted) {
+			Empty(): extractParaAtomicForm(word1);
+			Ghost(xc, yc, fm): g;
+			InspectGhost(__, fm): g;
+			CoordinateInspectElement(__, __): g;
+		}
+	};
 
 	remaining = remainingWithSpacing - getUserDefinedWordSpacingPercent() * fontSize;
 
-	addOverflow = \overflowWidth : double -> switch (result) {
-		ReflowedLines(__) : OverflowCase(remaining, overflowWidth);
-		OverflowCase(aWidth, oWidth) : OverflowCase(aWidth, max(oWidth, overflowWidth));
-	}
+	addLine = \cw : [ParaWord], indent : double -> {
+		if (cw == []) result else arrayPush(result, ParaLine(
+			if (!shrinkLongWords || remaining >= 0.0) cw else {
+				width = fold(cw, 0.0, \a, w -> if (isText(w)) a + getParaWordWidth(w) else a);
+				ratio = (width+remaining) / width;
+				ratioC = const(ratio);
+				scale = \f -> Scale(ratioC, ratioC, f);
 
+				map(cw, \w -> {
+					if (isText(w)) {
+						gform = getWordGhostedForm(w);
+						ParaWord(
+							w.word,
+							fselect(w.metrics, FLift(\fm -> FormMetrics(fm.width*ratio, fm.height*ratio, fm.baseline*ratio, fm.dHeight*ratio))),
+							switch (w.ghosted : Ghosted) {
+								Empty(): Empty();
+								Ghost(x, y, f): Ghost(x, y, scale(f));
+								InspectGhost(inspector, f): InspectGhost(inspector, scale(f));
+								CoordinateInspectElement(i, f): CoordinateInspectElement(i, scale(f));
+							},
+							switch (gform) {
+								Ghost(xc, yc, form): Ghost(xc, yc, scale(form));
+								CoordinateInspectElement(inspector, form): CoordinateInspectElement(inspector, scale(form));
+								InspectGhost(inspector, form): InspectGhost(inspector, scale(form));
+								Form(): scale(gform);
+							},
+							w.interactivityIdM
+						)
+					} else w
+				})
+			},
+			indent
+		));
+	}
 
 	detachWord = \w : ParaWord, detach : bool -> {
 		switch (w.ghosted) {
@@ -688,10 +708,7 @@ reflowParaWords2(
 		}
 	}
 
-	lineIndex = switch (result) {
-		ReflowedLines(lines) : length(lines);
-		OverflowCase(__, __) : 1;
-	};
+	lineIndex = length(result);
 
 	lineIndent = getLineIndent(paraIndent, lineIndex);
 	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, lineIndex + 1);
@@ -702,26 +719,6 @@ reflowParaWords2(
 		word = words[0];
 		detachWord(word, false);
 		rest = subrange(words, 1, length(words) - 1);
-		extractParaAtomicForm = \word1 -> {
-			w : ParaAtomic = word1.word;
-			f : Form = switch(w : ParaAtomic) {
-				ParaOneWord(__): Empty();
-				InspectElement(__, __): Empty();
-				LinePart(first, inline, last): inline;
-				Space(s): s;
-				default: cast(w : ParaAtomic -> Form);
-			};
-			f
-		};
-		getWordGhostedForm = \word1 -> {
-			g = word1.ghosted;
-			switch (g : Ghosted) {
-				Empty(): extractParaAtomicForm(word1);
-				Ghost(xc, yc, fm): g;
-				InspectGhost(__, fm): g;
-				CoordinateInspectElement(__, __): g;
-			}
-		};
 		makeParaWord2 = \word2, form2 -> {
 			g = word2.ghosted;
 			replaceWordGhosted = \ -> {
@@ -754,8 +751,9 @@ reflowParaWords2(
 					addLine(currentWords, lineIndent),
 					paraIndent,
 					false,
-					catchOverflow,
-					fontSize
+					shrinkLongWords,
+					fontSize,
+					isText
 				);
 			}
 			LinePart(f, p, e): {
@@ -773,8 +771,9 @@ reflowParaWords2(
 						result,
 						paraIndent,
 						false,
-						catchOverflow,
-						fontSize
+						shrinkLongWords,
+						fontSize,
+						isText
 					);
 				} else if (width + nextWordWidth < remaining) {
 					// If it is the middle item on the line
@@ -787,8 +786,9 @@ reflowParaWords2(
 						result,
 						paraIndent,
 						false,
-						catchOverflow,
-						fontSize
+						shrinkLongWords,
+						fontSize,
+						isText
 					);
 				} else {
 					// If it is the last item on the line
@@ -801,8 +801,9 @@ reflowParaWords2(
 						addLine(arrayPush(currentWords, paraword), lineIndent),
 						paraIndent,
 						false,
-						catchOverflow,
-						fontSize
+						shrinkLongWords,
+						fontSize,
+						isText
 					);
 				}
 			}
@@ -819,8 +820,9 @@ reflowParaWords2(
 						result,
 						paraIndent,
 						false,
-						catchOverflow,
-						fontSize
+						shrinkLongWords,
+						fontSize,
+						isText
 					);
 				} else {
 					detachWord(word, true);
@@ -832,8 +834,9 @@ reflowParaWords2(
 						addLine(currentWords, lineIndent),
 						paraIndent,
 						false,
-						catchOverflow,
-						fontSize
+						shrinkLongWords,
+						fontSize,
+						isText
 					);
 				}
 			}
@@ -887,21 +890,17 @@ reflowParaWords2(
 						map(_words, \_word -> setWordForm(_word, getWordGhostedForm(_word)))
 					);
 
-					isText = switch (word.word) {
-						Empty() : false;
-						default : true;
-					}
-
 					reflowParaWords2(
 						_rest,
 						availableWidth,
 						remaining - ^width,
 						newCurrentWords,
-						if (isText && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
+						result,
 						paraIndent,
 						false,
-						catchOverflow,
-						fontSize
+						shrinkLongWords,
+						fontSize,
+						isText
 					);
 				} else {
 					reflowParaWords2(
@@ -912,8 +911,9 @@ reflowParaWords2(
 						addLine(currentWords, lineIndent),
 						paraIndent,
 						false,
-						catchOverflow,
-						fontSize
+						shrinkLongWords,
+						fontSize,
+						isText
 					);
 				}
 			}
