@@ -7,7 +7,9 @@ import material/extra/docking_ui/internal/material_docking_state;
 
 export {
 	// Get docked panels IDs into an area of given areaId 
-	extractAreaGridById(dockA: [[int]], areaId : int) -> [[int]];
+	extractAreaGridById(dockA: [MDock], areaId : int) -> [[int]];
+	// Undock panel
+	undockPanel(state : MDockingState, panelId : int) -> void;
 
 	// Cache docking state
 	addDockingSuffix(input : string) -> string;
@@ -55,14 +57,23 @@ updateW(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, w : double) -> void {
 	
 }
 
+undockPanel(state : MDockingState, panelId : int) -> void {
+	next(state.dock, mapi(getValue(state.dock), \j, item -> if (j == panelId) MDock(-1, item.colId, item.rowId) else item));
+}
 
-extractAreaGridById(dockA: [[int]], areaId : int) -> [[int]] {
-	areaIdSorted = sortCustom(filter(mapi(dockA, \i : int, v : [int] -> if (v[0] == areaId) [v[1], v[2], i] else []), \item -> item != []), \v -> v, true);
+extractAreaGridById(dockA: [MDock], areaId : int) -> [[int]] {
+	areaIdSorted = 	mapi(dockA, \panelId : int, d : MDock -> if (d.areaId == areaId) [d.colId, d.rowId, panelId] else [])
+		|> (\f -> filter(f, \item -> item != []))
+		|> (\f -> sortCustom(f, \item -> item[0], true)) // sort by cols
+		|> (\f -> sortCustom(f, \item -> item[1], true)); // sort by rows
+
 	colsIdSorted = map(areaIdSorted, \item -> item[2]);
 	// We don't need to have an order for mobile panels
 	if (areaId < 0) [colsIdSorted] else {
-		colGroups = sortCustom(filter(uniq(map(dockA, \v -> if (v[0] == areaId) v[1] else -intMax)), \v -> v >= 0), \v -> v, true);
-		filter(map(colGroups, \item -> filter(map(colsIdSorted, \c -> if (dockA[c][1] == item ) c else -intMax), \itm -> itm != -intMax)), \item -> item != []);
+		colGroups = sortCustom(filter(uniq(map(dockA, \v -> if (v.areaId == areaId) v.colId else -intMax)), \v -> v >= 0), \v -> v, true);
+		map(colGroups, \colId -> 
+			map(colsIdSorted, \c -> if (dockA[c].colId == colId ) c else -intMax) |> (\f -> filter(f, \itm -> itm != -intMax))
+		)|> (\f -> filter(f, \item -> item != []));
 	}
 }
 
@@ -71,7 +82,6 @@ addDockingSuffix(input : string) -> string {
 }
 
 setMDockingStateKeyValue(state : MDockingState) -> bool {
-	// println(" set key ");
 	setKeyValue(state.keyGroupName |> addDockingSuffix, json2string(dockingState2json(state)));
 }
 
@@ -84,7 +94,6 @@ dockingState2json(state : MDockingState) -> Json {
 	dockAjson = 
 		JsonObject(
 			mapi(dockA,\panelId, dock -> {
-				// panelId = dock[2];
 				title = getValue(state.title)[panelId];
 				enabled = getValue(getValue(state.enabled)[panelId]);
 				expanded = getValue(getValue(state.expanded)[panelId]);
@@ -98,8 +107,9 @@ dockingState2json(state : MDockingState) -> Json {
 					JsonObject(
 						[
 							Pair("title", JsonString(title)),
-							Pair("areaId", JsonDouble(i2d(dock[0]))),
-							Pair("colId", JsonDouble(i2d(dock[1]))),
+							Pair("areaId", JsonDouble(i2d(dock.areaId))),
+							Pair("colId", JsonDouble(i2d(dock.colId))),
+							Pair("rowId", JsonDouble(i2d(dock.rowId))),
 							Pair("x", JsonDouble(pos.x)),
 							Pair("y", JsonDouble(pos.y)),
 							Pair("w", JsonDouble(size.width)),
@@ -321,13 +331,14 @@ makeMDockingDebugPrints(state : MDockingState) -> Material {
 				println(dockA);
 				println("");
 
-				iter(dockA,\panelDockInfoA -> {
+				iteri(dockA,\panelId, dock -> {
 					lf = \j : int, s : string -> lpad(s, " ", j);
 					GAP = " ";
 
-					areaId = panelDockInfoA[0];
-					colID = panelDockInfoA[1];
-					panelId = panelDockInfoA[2];
+					areaId = dock.areaId;
+					colID = dock.colId;
+					rowID = dock.rowId;
+
 					enabled = if (getValue(getValue(state.enabled)[panelId])) "e   " else "    ";
 					expanded = if (getValue(getValue(state.expanded)[panelId])) "+   " else "-   ";
 					sideExpanded = if (getValue(getValue(state.sideExpanded)[panelId])) "se   " else "--   ";
@@ -338,7 +349,7 @@ makeMDockingDebugPrints(state : MDockingState) -> Material {
 					mobilePanelSize = lf(4, d2s(mobileSize.width)) + "  x " + lf(4, d2s(mobileSize.height));
 					dockedSize = getTropicMetrics(getValue(state.dockedSize)[panelId]);
 					dockedPanelSize = lf(4, d2s(dockedSize.width)) + "  x " + lf(4, d2s(dockedSize.height));
-					dockString = "[areaID: " + lf(2, i2s(areaId)) + ",   colID: " + lf(2, i2s(colID)) + ",   panelID: " + lf(2, i2s(panelId)) + "]   ";
+					dockString = "[areaID: " + lf(2, i2s(areaId)) + ",   colID: " + lf(2, i2s(colID)) + ",   rowID: " + lf(2, i2s(rowID)) + ",   panelID: " + lf(2, i2s(panelId)) + "]   ";
 					positionString = toString(getValue(getValue(state.positions)[panelId]));
 
 					println(
@@ -356,7 +367,7 @@ makeMDockingDebugPrints(state : MDockingState) -> Material {
 				println("");
 
 				// Print area's docked panels
-				areaIDs = uniq(fold(dockA, [], \acc, p ->if (p != []) arrayPush(acc, p[0]) else acc));
+				areaIDs = uniq(fold(dockA, [], \acc, p -> if (dockA != []) arrayPush(acc, p.areaId) else acc));
 				iter(areaIDs,\areaId -> if (areaId > 0) println("Area " + i2s(areaId) + " contains: " + toString(extractAreaGridById(dockA, areaId))));
 				println("Floating: " + toString(extractAreaGridById(dockA, -1)));
 				println("");
