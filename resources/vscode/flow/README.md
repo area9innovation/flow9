@@ -125,7 +125,7 @@ Flow language tools configured in a standard layout - i.e. c:\flow9. There is a 
 See https://code.visualstudio.com/docs/extensions/example-hello-world .
 
 ## Build
-1. Make sure Node.js, NPM and `vsce` package are all installed (i.e. `npm install -g vsce`)
+1. Make sure Node.js, NPM is installed and all packages are installed (`npm install`)
 2. Run `build.cmd` or `build.sh` to update the `flow.vsix` package
 
 ## Release Notes
