@@ -11,8 +11,6 @@ import android.os.Build;
 import android.support.annotation.NonNull;
 import android.support.v4.app.NotificationCompat;
 
-import dk.area9.patient.R;
-
 // We interact with NotificationManager in this receiver
 // onReceive will be called at scheduled time for every scheduled notification
 public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
@@ -44,7 +42,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
             notificationIconID = android.R.drawable.ic_popup_reminder;
         }
 
-        String channelId = context.getString(R.string.default_notification_channel_id);
+        String channelId = FlowNotificationsAPI.CHANNEL_ID;
 
         NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context, channelId);
 

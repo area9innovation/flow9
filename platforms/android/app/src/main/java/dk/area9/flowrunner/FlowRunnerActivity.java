@@ -69,7 +69,6 @@ import android.Manifest.permission;
 
 import dk.area9.flowrunner.FlowRunnerWrapper.HttpResolver;
 import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
-import dk.area9.patient.R;
 
 public class FlowRunnerActivity extends FragmentActivity  {
 
@@ -337,16 +336,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
         NotificationManager notifyManager = (NotificationManager)this.getSystemService(Context.NOTIFICATION_SERVICE);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notifyManager.getNotificationChannels().size() == 0) {
-            String channelId = getString(R.string.default_notification_channel_id);
-            String channelName = getString(R.string.default_notification_channel_name);
-
-            NotificationChannel channel = new NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT);
+            NotificationChannel channel = new NotificationChannel(FlowNotificationsAPI.CHANNEL_ID, FlowNotificationsAPI.CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT);
             notifyManager.createNotificationChannel(channel);
 
-            String pushChannelId  = getString(R.string.default_push_notification_channel_id);
-            String pushChannelName = getString(R.string.default_push_notification_channel_name);
-
-            NotificationChannel push_channel = new NotificationChannel(pushChannelId, pushChannelName, NotificationManager.IMPORTANCE_DEFAULT);
+            NotificationChannel push_channel = new NotificationChannel(FlowNotificationsAPI.PUSH_CHANNEL_ID, FlowNotificationsAPI.PUSH_CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT);
             notifyManager.createNotificationChannel(push_channel);
         }
 
