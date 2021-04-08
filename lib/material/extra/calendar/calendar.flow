@@ -51,7 +51,7 @@ export {
 		CalendarMenuTightWidth, CalendarMenuAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarDayCustomTab,
-		CalendarScrolls, CalendarPlannedHideDeleteButton;
+		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarEventAdditionalInfo;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -90,8 +90,7 @@ export {
 		// CalendarEventDecription - current event type
 		// Date - date of first event cell displayed
 		// int - number of cells (dates) in which event is displayed
-		// fn - get default view
-		CalendarCustomEventView(getView : (CalendarTab, CalendarEvent, CalendarEventDecription, Date, int, (CalendarEvent) -> Material) -> Material);
+		CalendarCustomEventView(getView : (CalendarTab, CalendarEvent, CalendarEventDecription, Date, int) -> Maybe<Material>);
 		CalendarPrintable(style : [MIconButtonStyle]);
 		// Show dropdown with views instead of tabs
 		CalendarTabsDropdown();
@@ -125,7 +124,7 @@ export {
 		CalendarEventsPopup(open : (bool, Time, [CalendarEvent]) -> void);
 		// Hide number of events in year view
 		CalendarYearHideEventsCount();
-		CalendarCustomEventTitle(getTitle : (CalendarEvent, CalendarEventDecription) -> Material);
+		CalendarCustomEventTitle(getTitle : (CalendarEvent) -> string);
 		CalendarEventsOpacity(opacity : double);
 		CalendarDayCustomTab(
 			getMenuView : (currentDateT : Transform<Date>, buttons : CalendarActionButtons) -> Material,
@@ -133,6 +132,7 @@ export {
 		);
 		CalendarScrolls(enable : bool);
 		CalendarPlannedHideDeleteButton();
+		CalendarEventAdditionalInfo(getView : (event : CalendarEvent, titleTextColor : MColor, isCompactView : bool) -> Material);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -868,6 +868,7 @@ dayEventsPopup(
 	closePopupAfterAdditionalAction = containsStruct(styles, CloseDayPopupAfterAdditionalAction());
 	isReadOnly = fgetValue(extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB);
 	customPopupM = tryExtractStruct(styles, CalendarEventsPopup(nop3));
+	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(getEventTitleDefault)).getTitle;
 
 	close = make(false);
 	dayEvents = make(dayEventsStatic);
@@ -974,19 +975,14 @@ dayEventsPopup(
 		);
 	}
 
-	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\event : CalendarEvent, __ -> {
+	makeTextCols = \event : CalendarEvent -> {
 		makeNameTextCol = \text : string -> makeTextCol(text, nameBox);
 		MColsA([
-			if (contains(colsToShow, "event any text")) makeNameTextCol(getEventTitleDefault(event)) else MEmpty(),
+			if (contains(colsToShow, "event any text")) makeNameTextCol(getEventTitle(event)) else MEmpty(),
 			if (contains(colsToShow, "event type") || (length(colsToShow) == 0 && event.title == "")) makeNameTextCol(event.eventType) else MEmpty(),
 			if (contains(colsToShow, "event title") || (length(colsToShow) == 0 && event.title != "")) makeNameTextCol(event.title) else MEmpty(),
 			if (contains(colsToShow, "event description")) makeNameTextCol(event.description) else MEmpty()
 		])
-	})).getTitle;
-
-	makeTextCols = \event : CalendarEvent -> {
-		eventTypeB = fselect(eventTypesB, FLift(\eventTypes -> findDef(eventTypes, \p -> p.name == event.eventType, makeCalendarEventDescription())));
-		MSelect(eventTypeB, \eventType -> getEventTitle(event, eventType));
 	}
 
 	makeAdditionalCols = \event : CalendarEvent -> {
@@ -1265,12 +1261,14 @@ MonthTable(
 	hideTimeInfo = contains(styles, HideTimeInfo());
 	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
-	getEventView = extractStruct(styles, CalendarCustomEventView(\__, e, __, __, __, getDefaultView -> getDefaultView(e))).getView;
+	getEventView = extractStruct(styles, CalendarCustomEventView(\__, __, __, __, __ -> None())).getView;
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> MCenterIn(MText(dayName, []), MFillXH(58.0)))).getView;
 	otherMonthViewM = tryExtractStruct(styles, CalendarMonthFillEmpty(\__, __, __ -> MEmpty()));
+	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(getEventTitleDefault)).getTitle;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	isDynamicNumberOfEvents = maxDisplayedEventsInOneDay == -1;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	getAdditionalInfo = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView;
 
 	weekDayHeightB = make(0.0);
 	dayTitleHeightB = make(0.0);
@@ -1286,85 +1284,86 @@ MonthTable(
 		);
 	}
 	getAdditionalEventsView = extractStruct(styles, CalendarMonthAdditionalEventsView(defaultAdditionalEventsView)).getView;
-	isMultiDay = \e -> (time2date(e.startDate) != time2date(e.endDate));
 
 	calendarDayTouch = \item : CalendarEvent, dayDate : Date -> {
+		isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
+		eventTime = if (hideTimeInfo) ""
+			else i2s(item.startDate.hour) + ":" + substring(item.startDate |> time2stamp2 |> time2string, 14, 2) + "   ";
+
 		eventTypeB = fselect(eventTypesB, FLift(\eventTypes -> findDef(eventTypes, \p -> p.name == item.eventType, makeCalendarEventDescription())));
-		getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\e, t -> {
-			eventTime = if (hideTimeInfo) "" else i2s(e.startDate.hour) + ":" + substring(time2string(time2stamp2(e.startDate)), 14, 2) + "   ";
-			eventText = if (!isMultiDay(e)) {
-				eventTime + getEventTitleDefault(e)
-			} else if (dayDate == time2date(e.startDate) || dayOfWeek(dayDate) == 0) {
-				getEventTitleDefault(e)
-			} else {
+		eventText = if (!isMultiDay)
+				eventTime + getEventTitle(item)
+			else if (dayDate == time2date(item.startDate) || dayOfWeek(dayDate) == 0)
+				getEventTitle(item)
+			else
 				" ";
-			}
-			textColor = if (isUseMTextMColor) MTextMColor(t.mainColor) else t.mainColor;
-			MEllipsisText(eventText, [textColor, MFullWidth()]);
-		})).getTitle;
 
 		MShowLazy(fselect(eventTypeB, FLift(\eventType -> eventType.name != "")), \ -> {
-			getDefaultView = \e : CalendarEvent -> {
-				backColorB = fselect(eventTypeB, FLift(\eventType -> eventType.backColor));
-				MGroup([
-					if (!isMultiDay(e)) {
+			backColorB = fselect(eventTypeB, FLift(\eventType -> eventType.backColor));
+			textColorB = fselect(eventTypeB, FLift(\eventType -> {
+				mainColor = eventType.mainColor;
+				if (isUseMTextMColor) MTextMColor(mainColor) else mainColor;
+			}));
+			eventTextM = MSelect(textColorB, \textColor -> MEllipsisText(eventText, [textColor, MFullWidth()]));
+			additionalInfoM = MSelect(textColorB, \textColor -> getAdditionalInfo(item, textColor, true));
+			defaultViewM = MGroup([
+				if (!isMultiDay) {
+					MGroup2(
+						TRectangle([Fill(white), FillOpacity(eventsOpacity)], lineBox),
+						MCenterIn(
+							MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithEvent)),
+							lineBox
+						)
+					)
+				} else {
+					if (dayDate == time2date(item.startDate)) {
 						MGroup2(
 							TRectangle([Fill(white), FillOpacity(eventsOpacity)], lineBox),
-							MCenterIn(
-								MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithEvent)),
-								lineBox
-							)
+							MColsA([
+								TFixed(1.5, 0.),
+								MCenterYIn(
+									MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithFirstMultiDayEvent)),
+									lineBoxForBlockWithFirstMultiDayEvent2
+								)
+							])
+						)
+					} else if (dayDate == time2date(item.endDate)) {
+						MGroup2(
+							TRectangle([Fill(white), FillOpacity(eventsOpacity)], lineBox),
+							MColsA([
+								MCenterYIn(
+									MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithFirstMultiDayEvent)),
+									lineBoxForBlockWithFirstMultiDayEvent2
+								),
+								TFixed(1.5, 0.),
+							])
 						)
 					} else {
-						if (dayDate == time2date(e.startDate)) {
-							MGroup2(
-								TRectangle([Fill(white), FillOpacity(eventsOpacity)], lineBox),
-								MColsA([
-									TFixed(1.5, 0.),
-									MCenterYIn(
-										MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithFirstMultiDayEvent)),
-										lineBoxForBlockWithFirstMultiDayEvent2
-									)
-								])
-							)
-						} else if (dayDate == time2date(e.endDate)) {
-							MGroup2(
-								TRectangle([Fill(white), FillOpacity(eventsOpacity)], lineBox),
-								MColsA([
-									MCenterYIn(
-										MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithFirstMultiDayEvent)),
-										lineBoxForBlockWithFirstMultiDayEvent2
-									),
-									TFixed(1.5, 0.),
-								])
-							)
-						} else {
-							MGroup2(
-								TRectangle([Fill(white), FillOpacity(eventsOpacity)], lineBox),
-								MCenterYIn(
-									MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithNotFirstMultiDayEvent)),
-									lineBox
-								),
-							)
-						}
-					},
-					MTooltip(
-						MCenterIn(
-							MSelect(eventTypeB, \eventType -> getEventTitle(e, eventType)) |> MBorderLeftRight(2.0),
-							lineBox
-						),
-						MText(e.description, []),
-						[MEnabled(const(isTooltipEnabled(e)))]
+						MGroup2(
+							TRectangle([Fill(white), FillOpacity(eventsOpacity)], lineBox),
+							MCenterYIn(
+								MSelect(backColorB, \backColor -> TRectangle([MFill(backColor), FillOpacity(eventsOpacity)], lineBoxForBlockWithNotFirstMultiDayEvent)),
+								lineBox
+							),
+						)
+					}
+				},
+				MTooltip(
+					MCenterIn(
+						MCols2A(eventTextM, additionalInfoM) |> MBorderLeftRight(2.0),
+						lineBox
 					),
-				]);
-			}
+					MText(item.description, []),
+					[MEnabled(const(isTooltipEnabled(item)))]
+				),
+			]);
 
 			isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
 			MComponent(
 				[MOnClick(\-> fgetValue(eventTypeB).editAction(item.id)), MEnabled(fand(fnot(isReadOnlyB), isEditActionNotEmptyB))],
 				\__ -> {
 					MSelect(eventTypeB, \eventType -> {
-						getEventView(MonthTab(), item, eventType, dayDate, 1, getDefaultView) |> MFixWidth(getDefaultView(item))
+						eitherMap(getEventView(MonthTab(), item, eventType, dayDate, 1), MFixWidth(defaultViewM), defaultViewM)
 					});
 				}
 			);
@@ -1411,7 +1410,7 @@ MonthTable(
 
 	makeEmptyBlock = \date, isEnable, events : [CalendarEvent] -> MComponent(
 		[MOnClick(\-> openDayEventsPopup(date, isEnable, events, false)), MEnabled(fnot(isReadOnlyB))],
-		\__ -> MSizeOf(getEventView(MonthTab(), emptyEvent, makeCalendarEventDescription(), date, 1, \__ -> lineBox))
+		\__ -> MSizeOf(either(getEventView(MonthTab(), emptyEvent, makeCalendarEventDescription(), date, 1), lineBox))
 	);
 
 	makeAdditionalEventsBlock = \additionalEventsCount, date, isEnable, events : [CalendarEvent] -> MComponent(
@@ -1758,6 +1757,7 @@ RangeView(
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	getAdditionalInfo = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView;
 
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> {
 		MCenterX(MText(dayName, [MCaptionColumn(), MGrey(500)])) |> MBorderTopBottom(6.0)
@@ -1783,11 +1783,9 @@ RangeView(
 			dayNumberM;
 		});
 	})).getView;
-	getEventView = extractStruct(styles, CalendarCustomEventView(\__, e, __, __, __, getDefaultView -> getDefaultView(e))).getView;
+	getEventView = extractStruct(styles, CalendarCustomEventView(\__, __, __, __, __ -> None())).getView;
 	showDaysNames = containsStruct(styles, ShowWeekViewDaysNames());
-	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\event, type -> {
-		MEllipsisText(getEventTitleDefault(event), [type.mainColor, MShowTooltip(make(true))]);
-	})).getTitle;
+	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(getEventTitleDefault)).getTitle;
 
 	byDayCellHeight = if (showDaysNames) 58.0 else 48.0;
 	byDayCellSize : Tropic = TFillXH(byDayCellHeight);
@@ -1852,10 +1850,6 @@ RangeView(
 		MComponent([MOnClick(onClick), MEnabled(fnot(isReadOnlyB))], \__ -> MFillXY());
 	}));
 
-	getDefaultEventView = \event, eventCells, eventType -> {
-		text = MCenterYIn(MBorder(8., 0., 8., 0., getEventTitle(event, eventType)), eventCells);
-		MGroup2(eventCells, MTooltip(text, MText(event.description, []), [MEnabled(const(isTooltipEnabled(event)))]));
-	}
 	EventCells = \len : int, event : CalendarEvent -> {
 		eventTypeB = fselect(eventTypes, FLift(\types -> {
 			findDef(types, \et -> et.name == event.eventType, makeCalendarEventDescription())
@@ -1870,6 +1864,15 @@ RangeView(
 				cellBorder(if (cellNum == len - 1) white else backColourInt, byDayCellHeight)
 			);
 		}));
+		getDefaultView = \eventCells, eventType -> {
+			text = MCenterYIn(MBorder(8., 0., 8., 0.,
+				MLines2A(
+					MEllipsisText(getEventTitle(event), [eventType.mainColor, MShowTooltip(make(true))]),
+					getAdditionalInfo(event, eventType.mainColor, false)
+				)
+			), eventCells);
+			MGroup2(eventCells, MTooltip(text, MText(event.description, []), [MEnabled(const(isTooltipEnabled(event)))]));
+		}
 
 		isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
 		MComponent(
@@ -1877,7 +1880,7 @@ RangeView(
 			\__ -> {
 				MSelect(eventTypeB, \eventType -> {
 					eventCells = getEventCells(eventType);
-					getEventView(tab, event, eventType, date, len, \e -> getDefaultEventView(e, eventCells, eventType)) |> MFixWidth(eventCells)
+					eitherMap(getEventView(tab, event, eventType, date, len), MFixWidth(eventCells), getDefaultView(eventCells, eventType))
 				})
 			}
 		) |> disableMInteractivesBelow |> MBorderLeft(gridWidth);
@@ -1986,10 +1989,10 @@ PlannedEventsTable(
 	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
 	printButtonStyleM = maybeMap(tryExtractStruct(styles, CalendarPrintable([])), \p -> p.style);
-	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\event, __ -> {
-		eventName = if (event.title != "") event.title else event.eventType;
-		MEllipsisText(eventName, [littleFont]);
+	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\event -> {
+		if (event.title != "") event.title else event.eventType;
 	})).getTitle;
+	getAdditionalInfo = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView;
 
 	timeSort = \item : CalendarEvent -> item.startDate;
 
@@ -2088,8 +2091,10 @@ PlannedEventsTable(
 
 	isPrintingB = make(false);
 
-	eventLine = \number, event, eventType -> {
-		eventTitle = getEventTitle(event, eventType);
+	eventLine = \number, event -> {
+		eventTypes = getValue(eventTypesB);
+		eventType = findDef(eventTypes, \p -> p.name == event.eventType, makeCalendarEventDescription());
+		eventName = getEventTitle(event);
 		eventDate = date2formatString(time2date(event.startDate), tableDateFormat);
 
 		isStartDayOrEndDayTime = \time -> {
@@ -2115,6 +2120,7 @@ PlannedEventsTable(
 		}
 		startTimeM = createTimeLabel(times.first);
 		endTimeM = createTimeLabel(times.second);
+		additionalInfoM = getAdditionalInfo(event, MBlack(), false);
 
 		isEditActionNotEmpty = eventType.editAction != nop1;
 		isSelectedB = fand(feq(currentLine, number), fnot(isPrintingB));
@@ -2127,13 +2133,28 @@ PlannedEventsTable(
 					TRectangle([Fill(grey), FillOpacity(0.6)], TFillXH(lineSeparatorHeight))
 					|> (\m -> MBorder(25., lineHeight, 25., 0., m))
 				),
-				MColsYCenterA([
+				MColsA([
 					TFixed(25., 0.),
-					MText(eventDate, [littleFont]) |> MFixWidth(MFixedX(80.0)),
-					if (eventType.icon != "") MAvatar(eventType.icon, [MIconSize(40.0)]) |> MBorderLeftRight(30.0) else MFixedX(100.0),
-					MAvailable(eventTitle, MFixed(200.0, lineHeight)),
+					MCenterYIn(
+						MText(eventDate, [littleFont]),
+						TFixed(80., lineHeight)
+					),
+					MCenterIn(
+						MAvatar(eventType.icon, [MIconSize(40.0)]),
+						TFixed(100., lineHeight)
+					),
+					MCenterYIn(
+						MLines2A(
+							MEllipsisText(eventName, [littleFont]),
+							additionalInfoM
+						),
+						TFixed(200., lineHeight)
+					),
 					TFixed(5., 0.),
-					MEllipsisText(event.description, [littleFont, MFullWidth()]),
+					MCenterYIn(
+						MEllipsisText(event.description, [littleFont]),
+						TFillXH(lineHeight)
+					),
 					TFixed(5., 0.),
 					startTimeM,
 					MIf(isSelectedB,
@@ -2197,16 +2218,10 @@ PlannedEventsTable(
 		)
 	};
 
-	getEventView = extractStruct(styles, CalendarCustomEventView(\__, e, __, __, __, getDefaultView -> getDefaultView(e))).getView;
-
 	rowsB = fselect(currentEvents, FLift(\eventUnsort -> {
 		eventSorted = getLastEvents(eventUnsort);
 		nextDistinct(currentLine, -1);
-		eventTypes = getValue(eventTypesB);
-		mapi(eventSorted, \i, event -> {
-			eventType = findDef(eventTypes, \p -> p.name == event.eventType, makeCalendarEventDescription());
-			getEventView(PlannedTab(), event, eventType, event.startDate, 1, \e -> eventLine(i, e, eventType));
-		});
+		mapi(eventSorted, eventLine);
 	}));
 
 	contentM = MGroup2(
@@ -2467,13 +2482,12 @@ getCalendarDayEventTimeline(
 }
 
 getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecription, timeType : CalendarDayEventTimeType, styles : [CalendarForEventsStyle]) -> Material {
+	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(getEventTitleDefault)).getTitle;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(0.2)).opacity;
 
 	getEventView = \timeString, backColor, strokeColor, circleColor, isPastEvent -> {
 		textColor = MTextMColor(backColor);
-		getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\e, __ -> {
-			MEllipsisText(getEventTitleDefault(e), ifArrayPush([textColor, MFullWidth()], !isPastEvent, MBodyBold()));
-		})).getTitle;
+		additionalViewM = extractStruct(styles, CalendarEventAdditionalInfo(\__, __, __ -> MEmpty())).getView(event, textColor, false);
 		MFrame(16.0, 4.0, [MFill(backColor), StrokeWidth(1.0), MStroke(strokeColor)],
 			MColsYCenterA([
 				MLinesA([
@@ -2481,7 +2495,8 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 						MIcon("schedule", [textColor]) |> MBorderEnd(8.0),
 						MText(timeString, [textColor, MBodyBold()])
 					]) |> MBorderBottom(4.0),
-					getEventTitle(event, type) |> MBorderStart(2.0)
+					MEllipsisText(getEventTitle(event), ifArrayPush([textColor, MFullWidth()], !isPastEvent, MBodyBold())) |> MBorderStart(2.0),
+					additionalViewM |> MBorderStart(2.0)
 				]),
 				MFillX(),
 				MFrame(0.0, 5.0, [MFill(circleColor)], MFixed(10.0, 10.0))
@@ -2518,7 +2533,7 @@ getCalendarDayView(
 	isPrintingB : Transform<bool>,
 	styles : [CalendarForEventsStyle]
 ) -> CalendarTabView {
-	getEventView = extractStruct(styles, CalendarCustomEventView(\__, e, __, __, __, getDefaultView -> getDefaultView(e))).getView;
+	getEventView = extractStruct(styles, CalendarCustomEventView(\__, __, __, __, __ -> None())).getView;
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
 	needContentViewFrame = extractStruct(
 		styles, CalendarDayCustomTab(\__, __ -> MEmpty(), true)
@@ -2537,9 +2552,9 @@ getCalendarDayView(
 
 	getDayEventView = \timeType, dayEvent, isTimelineCircleVisible -> {
 		timelineM = getCalendarDayEventTimeline(dayEvent, timeType, currentTimeB, firstEventIdB, lastEventIdB, isTimelineCircleVisible, pastColor, futureColor);
-		getDefaultView = \event -> {
+		getDefaultView = \ -> {
 			MLines2A(
-				getCalendarDayEventDefaultView(event, dayEvent.type, timeType, styles),
+				getCalendarDayEventDefaultView(dayEvent.event, dayEvent.type, timeType, styles),
 				MShow(fneq(lastEventIdB, dayEvent.event.id), MFixedY(4.0))
 			);
 		}
@@ -2547,7 +2562,7 @@ getCalendarDayView(
 		isEditActionNotEmpty = dayEvent.type.editAction != nop1;
 		eventViewM = MComponent(
 			[MOnClick(\ -> dayEvent.type.editAction(dayEvent.event.id)), MEnabled(fand(fnot(isReadOnlyB), const(isEditActionNotEmpty)))],
-			\__ -> getEventView(DayTab(), dayEvent.event, dayEvent.type, date, 1, getDefaultView)
+			\__ -> either(getEventView(DayTab(), dayEvent.event, dayEvent.type, date, 1), getDefaultView())
 		);
 
 		MColsSameHeight([timelineM |> MBorderRight(4.0), eventViewM]);
@@ -2574,7 +2589,7 @@ getCalendarDayView(
 		MGroup2(MFillXY(), m)
 	}
 
-	getAllDayEvent = \event -> getDayEventView(CalendarDayAllDayEvent(getValue(currentTimeB) > event.event.endDate), event, false);
+	getAllDayEvent = \event -> getDayEventView(CalendarDayAllDayEvent(isPastDay), event, false);
 	getPastEvent = \event -> getDayEventView(CalendarDayPastEvent(), event, false);
 	getCurrentEvent = \event, isFirst -> getDayEventView(CalendarDayCurrentEvent(), event, isFirst);
 	getFutureEvent = \event, isFirst -> MSelect(currentEventsB, \currentEvents -> {
