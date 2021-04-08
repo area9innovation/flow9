@@ -627,6 +627,18 @@ class TextClip extends NativeWidgetClip {
 			");
 		}
 
+		// In Firefox canvas ignores 'lang' attribute, so for arabic different fallback fonts are used for measuring and rendering.
+		// To fix it let`s set fallback fonts explicitly
+		if (Platform.isFirefox && RenderSupport.RendererType == "html" && Browser.document.documentElement.lang == "ar" && StringTools.startsWith(fontFamilies, "Roboto")) {
+			if (Platform.isWindows) {
+				fontFamilies += ", Segoe UI";
+			} else if (Platform.isLinux) {
+				fontFamilies += ", DejaVu Sans";
+			} else if (Platform.isMacintosh) {
+				fontFamilies += ", Geeza Pro";
+			}
+		}
+
 		if (Platform.isSafari) {
 			fontSize = Math.round(fontSize);
 		}
