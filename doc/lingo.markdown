@@ -141,6 +141,19 @@ Unfortunately, you cannot include information about the AST data structures type
 to either include the corresponding file in the flow program or, if you running lingo from command line, into 
 `pegcompiler.flow`.
 
+Basic types in actions
+----------------------
+
+Lingo supports basic types(ints, doubles, bools and strings) as the actions. I.e constructions like
+
+	exp = something_to_match { Struct("Matched") }
+
+or
+
+	exp = something_to_match { "Matched!" }
+
+will be considered valid.
+
 Position of match in string
 ---------------------------
 
