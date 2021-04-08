@@ -343,17 +343,11 @@ public class FlowRunnerActivity extends FragmentActivity  {
             NotificationChannel channel = new NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT);
             notifyManager.createNotificationChannel(channel);
 
-            try {
-                // Check if firebase imported and add default channel
-                Class.forName("com.google.firebase.iid.FirebaseInstanceId");
+            String pushChannelId  = getString(R.string.default_push_notification_channel_id);
+            String pushChannelName = getString(R.string.default_push_notification_channel_name);
 
-                String pushChannelId  = getString(R.string.default_push_notification_channel_id);
-                String pushChannelName = getString(R.string.default_push_notification_channel_name);
-
-                NotificationChannel push_channel = new NotificationChannel(pushChannelId, pushChannelName, NotificationManager.IMPORTANCE_DEFAULT);
-                notifyManager.createNotificationChannel(push_channel);
-            } catch (ClassNotFoundException ex) {
-            }
+            NotificationChannel push_channel = new NotificationChannel(pushChannelId, pushChannelName, NotificationManager.IMPORTANCE_DEFAULT);
+            notifyManager.createNotificationChannel(push_channel);
         }
 
         wrapper.setFlowCameraAPI(FlowCameraAPI.getInstance());
