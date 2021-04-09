@@ -116,35 +116,67 @@ prefix. We support two different recovery strategies:
 	#";"	-> matches ;. If ; is missing, we report an error, but otherwise continue
 	#!";"	-> does not match ;. If there is a ;, we match it and report an error, but otherwise continue
 
-## Example: Expression grammar
+## Tutorial
 
-Here is an example expression grammar that matches C
-associativity and precedence.
+In the `tutorial` folder, there is a complete parser for a simple expression language
+with the main part being like this:
 
-	exp = exp "||" exp $"||"
-		|> exp "&&" exp $"&&"
-		|> exp "==" exp $"==" | exp "!=" exp $"!="
-		|> exp ("<=" | "<" | ">=" | ">") exp
-		|> exp <(("+" exp $"+" | "-" exp $"-")*)
-		|> exp <(("*" exp $"*" | "/" exp $"/" | "%" exp $"%")*)
-		|> exp ("[" exp "]" $"index")+	// Right associative
-		|> exp ("." exp $"dot")+		// Right associative
-		|> exp "?" exp ":" exp $"ifelse"
-		|> 
-			"(" exp ")"
-			| "-" exp $"negate"
-			| "if" exp exp "else" exp $"ifelse" 
-			| "if" exp exp $"if"
-			| $('0x30'-'0x39'+)
-		;
-		exp
+	exp = exp "||" ws exp $"||"
+		|> exp "&&" ws exp $"&&"
+		|> exp "==" ws exp $"==" | exp "!=" ws exp $"!="
+		|> exp ("<=" ws exp $"<=" | "<" ws exp $"<" | ">=" ws exp $">=" | ">" ws exp $">")
+		|> exp < ("+" ws exp $"+" | "-" ws exp ws $"-")*
+		|> exp ("*" ws exp $"*" | "/" ws exp $"/" | "%" ws exp $"%")*
 
-For real use, it is necessary to add white-space handling, but it should
-illustrate how the core grammar can be defined with suitable semantic actinos.
+		|> exp ("[" ws exp "]" ws $"index")+ 
+		|> exp ("." ws exp $"dot")+
+		|> exp "?" ws exp ":" ws exp $"ifelse"
+
+		|> "-" ws exp $"negate"
+
+		|> (
+			"if" ws "(" ws exp ")" ws exp "else" ws exp $"ifelse" 
+			| "if" ws "(" ws exp ")" ws exp $"if"
+			| "(" ws exp ")" ws 
+			| "true" $"true"
+			| "false" $"false"
+			| string ws $"unescape"
+			| int ws $"s2i"
+			| "[" ws exps "]" ws
+		);
+
+`tutorial.flow` demonstrates how to use the interpreter to parse a simple language
+into this, simple AST:
+
+	Exp ::= Int, String, Call, Array;
+
+	Int(i : int);
+	String(s : string);
+	Call(op : string, args : [Exp]);
+	Array(values : [Exp]);
+
+This demonstrates all main aspects of how to make a grammar.
+
+## Semantic action helper
+
+To help with semantic actions, the `gringoTypedAction` helper provides a number of
+built-in actions:
+
+	s2i		Convert a string to a typed int
+	s2d		Convert a string to a typed double
+	true	Make the constant "true"
+	false	Make the constant "false"
+	list	Construct an empty list or array
+	cons	Append an element to a list or array
+
+The `list` and `cons` constructs are very helpful to construct arrays of elements.
+Most often used in combination with + and * constructs.
+
+## Using a compiled grammar
 
 Put your grammar in a .gringo file, and compile it with something like:
 
-	gringo file=mygrammar.gringo out=1 flow=1
+	gringo file=mygrammar.gringo out=1 compile=1
 
 and it will produce a mygrammar.flow file with the grammar where it will export
 a function like
@@ -161,50 +193,6 @@ Then use like this:
 		gringoTypedParse(a, expTypeAction(onError), parse_exp, String("Empty parse stack"), onError);
 	}
 
-	// This defines the semantic actions used in the grammar
-	expTypeAction(onError : (string) -> void) -> GringoAction<List<Exp>> {
-		gringoTypedAction(
-			// Make a string
-			\s : string -> String(s),
-			// Extract a string from a value (typically a string)
-			\e : Exp -> switch (e) {
-				String(s): s;
-				default: { onError("Expected string"); ""; }
-			},
-			// Construct the basic value
-			\b -> Bool(b),
-			\i -> Int(s2i(i)),
-			\d -> Double(s2d(d)),
-			// Construct an empty array
-			\ -> Array([]),
-			// Append an element to an array
-			\h, t -> {
-				switch (t) {
-					Array(es): Array(arrayPush(es, h));
-					default: t;
-				}
-			},
-			// A Tree<string, (Exp) -> Exp> of unary operator constructors
-			makeTree(), 
-			// A Tree<string, (Exp, Exp) -> Exp> of binary operator constructors
-			makeTree(), 
-			// A Tree<string, (Exp, Exp, Exp) -> Exp> of ternary operator constructors
-			makeTree(), 
-		);
-	}
-
-To construct arrays, the gringoTypedAction helper provides a number of
-built-in actions:
-
-	s2i		Convert a string to a typed int
-	s2d		Convert a string to a typed double
-	true	Make the constant "true"
-	false	Make the constant "false"
-	list	Construct an empty list or array
-	cons	Append an element to a list or array
-
-The `list` and `cons` constructs are very helpful to construct arrays of elements.
-Most often used in combination with + and * constructs.
 
 ## TODO for Gringo itself
 
