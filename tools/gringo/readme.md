@@ -1,14 +1,15 @@
 # Gringo
 
 This is a Parsing Expression Grammar tool. It provides a way
-to write a parser, which will convert a string to another string.
+to write a parser, which will convert a string to another string
+or an AST.
 
 It is designed to allow succinct and composable grammars to be
 written.
 
 ## Grammar
 
-The (simplified) grammar for Gringo is given here:
+The (simplified) grammar for Gringo itself is given here:
 
 	term = 
 		term "|>" ws term 							$"GPrecedence"
@@ -36,8 +37,9 @@ See `gringo.gringo` for the real grammar.
 
 A gringo program takes a string, and produces a sequence of events based
 on a stack-based action semantics. It will call the events as a stack of 
-matched strings and operations from unquotes. This can be used to construct
-an AST or a post-fix Forth style program that builds an AST.
+matched strings and operations from "unquotes". This can be used to construct
+an AST or a post-fix Forth style program that builds an AST. This is
+explaining below.
 
 ## Handling precedence and associativity
 
@@ -48,7 +50,7 @@ The precedence is handled using the |> operator.
 		|> int;
 	e
 	
-is a short-hand syntax for this grammar:
+which is a short-hand syntax for this grammar:
 
 	e = e1 ("+" e) | e1;
 	e1 = e2 ("*" e1) | e2;
@@ -57,23 +59,23 @@ is a short-hand syntax for this grammar:
 
 and thus provides a short syntax for the common definition of precedence.
 
-To get minus associativity right, use the "<" lower operator:
+To get the associativity of "minus" right, use the "<" lower operator:
 
-	e = e "|" e $$"Or"
+	e = e "|" e $"Or"
 		|> e 
 			<(
-				("+" e | "-" e)*
+				("+" e $"Plus" | "-" e $"Minus")*
 			)
-		|> e "*" e
-		|> $var ; 
+		|> e "*" e $"Prod"
+		|> $var; 
 	var = ('0'-'9')+;
 	e
 
 which is short for this grammar:
 
 	e = (e1 ((("|" e) $$"Or"))?);
-	e1 = (e2 (((("+" e2) $$"Plus") | (("-" e2) $$"Minus")))*);
-	e2 = (e3 ((("*" e2) $$"Prod"))?);
+	e1 = (e2 (((("+" e2) $"Plus") | (("-" e2) $"Minus")))*);
+	e2 = (e3 ((("*" e2) $"Prod"))?);
 	e3 = $var;
 
 	var = ('0'-'9')+;
@@ -83,15 +85,16 @@ The "<" only works on the right-hand side of a sequence.
 
 ## Actions
 
-The `$<term>` construct is used to produce semantic output. This will produce
-the matched output of the `<term>` as a string. The `addVerbatim` and `addMatched`
-functions are passed to the parser, and that way, the grammar can have
+The `$<term>` construct is used to produce semantic actions. This will send
+the matched output of the `<term>` as a string to the `addVerbatim` action 
+function. As a user of the grammar, you provide an `addVerbatim` and a 
+`addMatched` functionto the parser, and that way, the grammar can have
 an effect.
 
-The $ operator comes in a few different forms:
+The `$` operator comes in a few different forms:
 
-	$"operation"	-> will call addVerbatim with "operation", but match epsilon
-	$$"fakematch"	-> will call addMatched with "fakematch", but match epsilon
+	$"operation"	-> will call addVerbatim with "operation" (but match epsilon)
+	$$"fakematch"	-> will call addMatched with "fakematch" (but match epsilon)
 	$term			-> will call addMatched with the string matched by term
 	$$pos			-> will call addVerbatim with a string representation of the 
 					   input position in the input
@@ -104,9 +107,13 @@ a helper in
 which provides useful building blocks for making a stack-based semantic
 actions for expression-based languages with unary, binary and ternary operators.
 
+See the tutorial below for real examples of how this works.
+
 By default, this semantic helper works well for expression-based languages. In case
 your language has both statements and expressions, then you have to define a union for
-both statements and expressions, and use that for the semantic actions.
+both statements and expressions, and use that for the semantic actions. Since Gringo
+is built to support fully typed semantic actions, this is the best compromise in terms 
+of power and safety.
 
 ## Error recovery
 
@@ -145,7 +152,8 @@ with the main part being like this:
 			| "[" ws exps "]" ws
 		);
 
-This grammar has correct precendence and associativity. It also features the recommended approach to handling white-space.
+This grammar has correct precendence and associativity similar to C. It also features the 
+recommended approach to handling white-space, which is very similar to `Lingo`.
 
 The main program `tutorial.flow` demonstrates how to use the interpreter to parse a simple language
 into this, simple AST:
@@ -157,8 +165,8 @@ into this, simple AST:
 	Call(op : string, args : [Exp]);
 	Array(values : [Exp]);
 
-The program contains all main aspects of how to make a grammar and using it to construct the typed AST, using three different
-approaches:
+The program contains all main aspects of how to make a grammar and using it to construct the 
+typed AST, using three different approaches:
 
   1) Parsing and preparing the grammar at runtime, and the interpreting it to parse
   2) Using a pre-processed grammar that is interpreted to parse.
@@ -169,6 +177,9 @@ Option 2 is mostly useful as a demonstration. The grammar is saved in exp_gramma
 using the `out=1` option to `Gringo`. Can be helpful when debugging.
 Option 3 is the most efficient, and recommended for production. The parser is saved in
 exp_parser.flow using the `compile=1` option to Gringo.
+
+So when you start a new grammar, we recommend you use approach 1. Once your grammar and
+semantic actions are complete, then switch to the third approach for the best performance.
 
 ## Semantic action helper
 
@@ -182,7 +193,9 @@ built-in actions:
 	list	Construct an empty list or array
 	cons	Append an element to a list or array
 
-The `list` and `cons` constructs are very helpful to construct arrays of elements. Most often used in combination with `+` and `*` constructs. See the Array construct in the tutorial to see how.
+The `list` and `cons` constructs are very helpful to construct arrays of elements. 
+Most often used in combination with `+` and `*` constructs. See the Array construct 
+in the tutorial to see how this pattern works in the `exps` production.
 
 ## Using a compiled grammar
 
@@ -207,6 +220,31 @@ Then use like this:
 
 See also the tutorial for more hints.
 
+## Comparison with Lingo
+
+Gringo is an expression-based grammar, while Lingo has "production statements" and then terms. 
+This is why your grammar in Gringo has to end with the name of the production to match. 
+In Gringo, productions are just let-bindings with a body:
+
+	a = <term>;
+	body
+
+Gringo does not have caching, and thus is potentially more efficient for grammars that do not
+need much backtracking, since we do not use memory to keep a cache. Since Gringo automatically 
+transforms left-recursion, as well as provides features for handling precendence and associativity, 
+the resulting grammars are shorter and easier to understand.
+
+Gringo does not use bindings for semantic actions, but rather is based on a stack discipline.
+This is also more efficient, since it does not require a binding environment, but just a
+simple stack (in the form of a List).
+
+This also allows Gringo to support fully typed semantic actions, in contrast to Lingo, which
+relies on the dynamic "flow" type to allow semantic actions.
+
+Gringo is a relatively new tool. A complete grammar for flow has been written in Gringo, and
+is known to work well. There are no known bugs in the parsers. That said, it might be that 
+there are some rough edges in the tooling.
+
 ## TODO for Gringo itself
 
 - This construct is exponential:
@@ -222,8 +260,6 @@ See also the tutorial for more hints.
   recursion, which will break precedence
 
 - Add error message when we have left recursion deep inside a choice
-
-- Support "flowfile" to make a parser driver
 
 - Support multiple grammars to allow composition
 
@@ -253,15 +289,6 @@ Overly complicated opcodes (page 39):
 
 Initial pegcode paper:
 http://www.inf.puc-rio.br/~roberto/docs/peg.pdf
-Opcodes from PEGCODE:
-	- Match string
-	- Jump <address>
-	- Backtrack to Choice <address>
-	- Call <address>
-	- Return
-	- Commit <address>
-	- Capture
-	- Fail
 
 Adding error recovery:
 https://www.eyalkalderon.com/nom-error-recovery/
@@ -285,11 +312,11 @@ I.e. explicitly add
 
   e |>
 	| recover-at ";";
-	
+
 construct, which reports an error, but otherwise, keeps parsing.
 
 To refine it, we could maybe have a construct which recovers, but understands structure to 
-some extend: { }, ( ) [ ] are recursively matched.
+some degree: { }, ( ) [ ] are recursively matched.
 
 We did try a scheme for precedence and associativy inspired by the approach in
 
