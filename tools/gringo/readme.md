@@ -83,8 +83,8 @@ The "<" only works on the right-hand side of a sequence.
 
 ## Actions
 
-The $<term> construct is used to produce semantic output. This will produce
-the matched output of the <term> as a string. The `addVerbatim` and `addMatched`
+The `$<term>` construct is used to produce semantic output. This will produce
+the matched output of the `<term>` as a string. The `addVerbatim` and `addMatched`
 functions are passed to the parser, and that way, the grammar can have
 an effect.
 
@@ -118,7 +118,7 @@ prefix. We support two different recovery strategies:
 
 ## Tutorial
 
-In the `tutorial` folder, there is a complete parser for a simple expression language
+In the `tutorial/` folder, there is a complete parser for a simple expression language
 with the main part being like this:
 
 	exp = exp "||" ws exp $"||"
@@ -145,7 +145,9 @@ with the main part being like this:
 			| "[" ws exps "]" ws
 		);
 
-`tutorial.flow` demonstrates how to use the interpreter to parse a simple language
+This grammar has correct precendence and associativity. It also features the recommended approach to handling white-space.
+
+The main program `tutorial.flow` demonstrates how to use the interpreter to parse a simple language
 into this, simple AST:
 
 	Exp ::= Int, String, Call, Array;
@@ -155,7 +157,18 @@ into this, simple AST:
 	Call(op : string, args : [Exp]);
 	Array(values : [Exp]);
 
-This demonstrates all main aspects of how to make a grammar.
+The program contains all main aspects of how to make a grammar and using it to construct the typed AST, using three different
+approaches:
+
+  1) Parsing and preparing the grammar at runtime, and the interpreting it to parse
+  2) Using a pre-processed grammar that is interpreted to parse.
+  3) Using generated flow code to parse
+
+Option 1 is flexible, since you can change the grammar and quickly check that it works.
+Option 2 is mostly useful as a demonstration. The grammar is saved in exp_grammar,
+using the `out=1` option to `Gringo`. Can be helpful when debugging.
+Option 3 is the most efficient, and recommended for production. The parser is saved in
+exp_parser.flow using the `compile=1` option to Gringo.
 
 ## Semantic action helper
 
@@ -169,16 +182,15 @@ built-in actions:
 	list	Construct an empty list or array
 	cons	Append an element to a list or array
 
-The `list` and `cons` constructs are very helpful to construct arrays of elements.
-Most often used in combination with + and * constructs.
+The `list` and `cons` constructs are very helpful to construct arrays of elements. Most often used in combination with `+` and `*` constructs. See the Array construct in the tutorial to see how.
 
 ## Using a compiled grammar
 
-Put your grammar in a .gringo file, and compile it with something like:
+Put your grammar in a `.gringo` file, and compile it with something like:
 
 	gringo file=mygrammar.gringo out=1 compile=1
 
-and it will produce a mygrammar.flow file with the grammar where it will export
+and it will produce a `mygrammar_parser.flow` file with the grammar where it will export
 a function like
 
 	parse_exp(DParseAcc) -> bool;
@@ -193,6 +205,7 @@ Then use like this:
 		gringoTypedParse(a, expTypeAction(onError), parse_exp, String("Empty parse stack"), onError);
 	}
 
+See also the tutorial for more hints.
 
 ## TODO for Gringo itself
 
