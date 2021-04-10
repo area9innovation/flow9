@@ -13,6 +13,18 @@ actions to a host of languages.
 
 Jingo is that language.
 
+## Status
+
+Jingo is incomplete.
+
+It turns out that Jingo is not really needed. Experience has shown that the
+typed action helpers is sufficient for almost all grammars we have seen so far.
+Also, it was surprisingly easy to produce relatively good flow code for the
+parsers, so the point of Jingo eroded.
+
+Study Jingo if you are interested in Forth, but there is no production use
+of Jingo at this point in time, and no plans to develop it further.
+
 ## Inspirations
 
 We are inspired by Forth, Factor, and Joy.
@@ -25,10 +37,6 @@ https://factorcode.org/
 
 Joy is a concatenative functional language:
 http://joy-lang.org/
-
-## Status
-
-Jingo is incomplete.
 
 ## Literals/types
 
