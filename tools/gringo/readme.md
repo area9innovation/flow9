@@ -270,6 +270,8 @@ Optimizations possible in generated Gringo parser:
 
 ## TODO for Gringo itself
 
+- Keep track of max i in the code gen case for better error reporting
+
 - This construct is exponential:
 	exp1 = exp2 (...)+ | exp2
 
