@@ -181,6 +181,11 @@ exp_parser.flow using the `compile=1` option to Gringo.
 So when you start a new grammar, we recommend you use approach 1. Once your grammar and
 semantic actions are complete, then switch to the third approach for the best performance.
 
+We also recommend that you consider to use `gringoParseWithActionCheck` which will check
+that any actions ($"action") mentioned are present in your semantic actions, as well
+as do a coverage analysis to check if a specific text parsed covers all semantic actions.
+See `parseExpWithPreprocessedGringo` in the tutorial for an example.
+
 ## Semantic action helper
 
 To help with semantic actions, the `gringoTypedAction` helper provides a number of
