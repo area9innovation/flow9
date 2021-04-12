@@ -815,6 +815,22 @@ public class Native extends NativeHost {
 		return null;
 	}
 
+	public final Object sustainableTimer(int ms, final Func0<Object> cb) {
+		Timer timer = new Timer(false);
+		TimerTask task = new TimerTask() {
+			public void run() {
+				invokeCallback(new Runnable() {
+					public void run() {
+						cb.invoke();
+						timer.cancel();
+					}
+				});
+			}
+		};
+		timer.schedule(task, ms);
+		return null;
+	}
+
 	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
 		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
