@@ -58,7 +58,7 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 	movableDropArea = 
 		MConstruct([
 			// Update borwser cache
-			make4Subscribe(
+			make4Subscribe2(
 				state.dock,
 				fmerge(map(getValue(state.positions), \p -> p)),	
 				fmerge(map(getValue(state.enabled), \e -> e)),
@@ -72,12 +72,12 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 			makeSubscribe(onDrop, \d -> {
 				if (d >= 0) {
 					pstyle = panelsA[d].style;
-					width = getTropicMetrics(getValue(sizeA)[d]).width;
-					height = getTropicMetrics(getValue(sizeA)[d]).height;
+					width = getValue(sizeA)[d].width;
+					height = getValue(sizeA)[d].height;
 
 					posCorrection =
-						if (getValue(dockA)[d][0] >= 0) {
-								dx = if (d >= 0)  (width / 2.0) else 0.0; dy = 4.0; Point(dx, dy);
+						if (getValue(dockA)[d].areaId >= 0) {
+							dx = if (d >= 0)  (width / 2.0) else 0.0; dy = 4.0; Point(dx, dy);
 						} else {
 							getValue(localPositionA)[d];
 						}
@@ -88,7 +88,7 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 					));
 
 					next(getValue(state.enabled)[d], true);
-					if (getValue(dockA)[d][0] >= 0) next(dockA, mapi(getValue(dockA), \j, item -> if (j == d) [-1, item[1], item[2]] else item)); //undock panel
+					if (getValue(dockA)[d].areaId >= 0) undockPanel(state, d); //undock panel
 					next(localPositionA, replace(getValue(localPositionA), d, zeroPoint));
 				}
 			})
@@ -135,14 +135,16 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 	);
 
 	// Update UI layout
-	if (getValue(dockA) == [[]]) {
+	if (getValue(dockA) == []) {
 		iteri(panelsA, \panelId, p -> {			
 			cachedPanel = cachedPanelA[panelId];
 			cAreaId = getJsonIntValue(getJsonFieldValue(cachedPanel, "areaId", JsonNull()), intMax);
 			cColId = getJsonIntValue(getJsonFieldValue(cachedPanel, "colId", JsonNull()), intMax);
-			aId = if (cacheEnabled && cAreaId != intMax) cAreaId else p.dockingAreaId;
-			cId = if (cacheEnabled && cColId != intMax) cColId else p.order;
-			next(dockA, replace(getValue(dockA), panelId , [aId, cId, panelId]));
+			cRowId = getJsonIntValue(getJsonFieldValue(cachedPanel, "rowId", JsonNull()), intMax);
+			aId = if (cacheEnabled && cAreaId != intMax) cAreaId else p.panelDock.areaId;
+			cId = if (cacheEnabled && cColId != intMax) cColId else p.panelDock.colId;
+			rId = if (cacheEnabled && cRowId != intMax) cRowId else p.panelDock.rowId;
+			next(dockA, replace(getValue(dockA), panelId , MDock(aId, cId, rId)));
 		});
 	};
 	
@@ -188,7 +190,7 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 	if (getValue(titleA) == []) {
 		iteri(panelsA, \i, p -> {
 			next(titleA, replace(getValue(titleA), i , p.title));
-			next(panelIconA, replace(getValue(panelIconA), i , p.panelIcon));
+			next(panelIconA, replace(getValue(panelIconA), i , extractStruct(p.style, MDPanelIcon("web_asset")).icon));
 			next(contentA, replace(getValue(contentA), i , p.content));
 			next(groupA, replace(getValue(groupA), i , p.allowedGroups));
 			next(panelsStyleA, replace(getValue(panelsStyleA), i , p.style));
@@ -203,24 +205,9 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 						minWidth = dockingItemHeight;
 						dontShowSep = contains(p.style, MDockingDontShowSeparators());
 						panelHeight = if (dontShowSep) (minWidth * i2d(length(content))) else (minWidth * i2d(length(content))) + (i2d(length(content)) - 1.0);
-						size = TFixed(minWidth, panelHeight);
+						size = WidthHeight(minWidth, panelHeight);
 						next(state.size, replace(getValue(state.size), i , size));
 						next(state.dockedSize, replace(getValue(state.dockedSize), i , size));
-						next(state.mobileSize, replace(getValue(state.mobileSize), i , size));
-					}
-					// Panel of Buttons
-					MDockingPanelButtonsItem(ic, lb, st): {
-						minWidth = dockingItemHeight;
-						width = extractStruct(p.style, MDockingPanelWidth(minWidth * 5.0)).width;
-						dontShowSep = contains(p.style, MDockingDontShowSeparators());
-						fillHeight = contains(p.style, MDockingFillSpace());
-
-						panelHeight = if (dontShowSep) (minWidth * i2d(length(content))) else (minWidth * i2d(length(content))) + (i2d(length(content)) - 1.0);
-						size = TFixed(width, panelHeight);
-						dockedSize = if (fillHeight) TFillWY(width) else TFixed(width, panelHeight + dockingBarHeight + dockingDragSize);
-
-						next(state.size, replace(getValue(state.size), i , size));
-						next(state.dockedSize, replace(getValue(state.dockedSize), i , dockedSize));
 						next(state.mobileSize, replace(getValue(state.mobileSize), i , size));
 					}
 					// Custom panels
@@ -240,9 +227,13 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 						mobileWidth = if (cacheEnabled && (cMobileWidth != doubleMax)) cMobileWidth else msize.width;
 						mobileHeight = if (cacheEnabled && (cMobileHeight != doubleMax)) cMobileHeight else msize.height;
 
-						next(state.size, replace(getValue(state.size), i , TFixed(pWidth, pHeight)));
-						next(state.mobileSize, replace(getValue(state.mobileSize), i , TFixed(mobileWidth, mobileHeight)));
-						next(state.dockedSize, replace(getValue(state.dockedSize), i , TFixed(dockedWidth, dockedHeight)));
+						// next(state.size, replace(getValue(state.size), i , TFixed(pWidth, pHeight)));
+						// next(state.mobileSize, replace(getValue(state.mobileSize), i , TFixed(mobileWidth, mobileHeight)));
+						// next(state.dockedSize, replace(getValue(state.dockedSize), i , TFixed(dockedWidth, dockedHeight)));
+
+						next(state.size, replace(getValue(state.size), i , WidthHeight(pWidth, pHeight)));
+						next(state.mobileSize, replace(getValue(state.mobileSize), i , WidthHeight(mobileWidth, mobileHeight)));
+						next(state.dockedSize, replace(getValue(state.dockedSize), i , WidthHeight(dockedWidth, dockedHeight)));
 					}
 				};
 			});

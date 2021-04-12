@@ -753,7 +753,7 @@ class PixiWorkarounds {
 				{
 					for (var j = 0; j < line; j += 4)
 					{
-						if (imagedata[idx + j] <= 150)
+						if (typeof RenderSupport !== 'undefined' && RenderSupport.RendererType === 'canvas' ? imagedata[idx + j] !== 255 : imagedata[idx + j] <= 150)
 						{
 							stop = true;
 							break;
@@ -779,7 +779,7 @@ class PixiWorkarounds {
 				{
 					for (var j = 0; j < line; j += 4)
 					{
-						if (imagedata[idx + j] <= 150)
+						if (typeof RenderSupport !== 'undefined' && RenderSupport.RendererType === 'canvas' ? imagedata[idx + j] !== 255 : imagedata[idx + j] <= 150)
 						{
 							stop = true;
 							break;

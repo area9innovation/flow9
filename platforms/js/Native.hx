@@ -1675,7 +1675,7 @@ class Native {
 		try {
 			return untyped __js__("window.performance.timing.domComplete - window.performance.timing.domLoading");
 		} catch (e : Dynamic) {
-			return 0;
+			return -1;
 		}
 	}
 
@@ -1694,7 +1694,23 @@ class Native {
 		");
 		#end
 
-		return 0.0;
+		return -1;
+	}
+
+	public static function getDeviceMemory() : Float {
+		try {
+			return untyped __js__("window.navigator.deviceMemory || -1");
+		} catch (e : Dynamic) {
+			return -1;
+		}
+	}
+
+	public static function getDevicePlatform() : Float {
+		try {
+			return untyped __js__("window.navigator.platform || ''");
+		} catch (e : Dynamic) {
+			return -1;
+		}
 	}
 
 	private static var FlowCrashHandlers : Array< String -> Void > = new Array< String -> Void>();

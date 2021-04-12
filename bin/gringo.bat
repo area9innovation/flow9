@@ -1,1 +1,1 @@
-flowcpp -I %~dp0..\tools\ gringo/gringo.flow -- %*
+flowcpp tools/gringo/gringo.flow -- %*

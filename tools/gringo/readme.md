@@ -1,14 +1,15 @@
 # Gringo
 
 This is a Parsing Expression Grammar tool. It provides a way
-to write a parser, which will convert a string to another string.
+to write a parser, which will convert a string to another string
+or an AST.
 
 It is designed to allow succinct and composable grammars to be
 written.
 
 ## Grammar
 
-The (simplified) grammar for Gringo is given here:
+The (simplified) grammar for Gringo itself is given here:
 
 	term = 
 		term "|>" ws term 							$"GPrecedence"
@@ -32,16 +33,13 @@ The (simplified) grammar for Gringo is given here:
 
 See `gringo.gringo` for the real grammar.
 
-We might consider to add:
-
-		| term(13) ":" type		// Type annotation
-
 ## Semantics
 
 A gringo program takes a string, and produces a sequence of events based
 on a stack-based action semantics. It will call the events as a stack of 
-matched strings and operations from unquotes. This can be used to construct
-an AST or a post-fix forth style program that builds an AST.
+matched strings and operations from "unquotes". This can be used to construct
+an AST or a post-fix Forth style program that builds an AST. This is
+explaining below.
 
 ## Handling precedence and associativity
 
@@ -52,7 +50,7 @@ The precedence is handled using the |> operator.
 		|> int;
 	e
 	
-is a short-hand syntax for this grammar:
+which is a short-hand syntax for this grammar:
 
 	e = e1 ("+" e) | e1;
 	e1 = e2 ("*" e1) | e2;
@@ -61,23 +59,23 @@ is a short-hand syntax for this grammar:
 
 and thus provides a short syntax for the common definition of precedence.
 
-To get minus associativity right, use the "<" lower operator:
+To get the associativity of "minus" right, use the "<" lower operator:
 
-	e = e "|" e $$"Or"
+	e = e "|" e $"Or"
 		|> e 
 			<(
-				("+" e | "-" e)*
+				("+" e $"Plus" | "-" e $"Minus")*
 			)
-		|> e "*" e
-		|> $var ; 
+		|> e "*" e $"Prod"
+		|> $var; 
 	var = ('0'-'9')+;
 	e
 
 which is short for this grammar:
 
 	e = (e1 ((("|" e) $$"Or"))?);
-	e1 = (e2 (((("+" e2) $$"Plus") | (("-" e2) $$"Minus")))*);
-	e2 = (e3 ((("*" e2) $$"Prod"))?);
+	e1 = (e2 (((("+" e2) $"Plus") | (("-" e2) $"Minus")))*);
+	e2 = (e3 ((("*" e2) $"Prod"))?);
 	e3 = $var;
 
 	var = ('0'-'9')+;
@@ -87,29 +85,35 @@ The "<" only works on the right-hand side of a sequence.
 
 ## Actions
 
-The $<term> construct is used to produce semantic output. This will produce
-the matched output of the <term> as a string. As a special case, if you use
-$"string", it will produce the verbatim output "string" instead.
+The `$<term>` construct is used to produce semantic actions. This will send
+the matched output of the `<term>` as a string to the `addVerbatim` action 
+function. As a user of the grammar, you provide an `addVerbatim` and a 
+`addMatched` functionto the parser, and that way, the grammar can have
+an effect.
 
-These actions are defined through an event-based API. By default, we use a
-Forth-like output where the matched tokens are pushed on a stack as strings, 
-and then semantic actions are pushed as operations.
+The `$` operator comes in a few different forms:
 
-Concretely, strings are written as "string" on a separate line, and then 
-operations are produced verbatim.
-
-	$"operation"	-> will call addVerbatim with "operation", but match epsilon
-	$$"fakematch"	-> will call addMatched with "fakematch", but match epsilon
+	$"operation"	-> will call addVerbatim with "operation" (but match epsilon)
+	$$"fakematch"	-> will call addMatched with "fakematch" (but match epsilon)
 	$term			-> will call addMatched with the string matched by term
-	$$pos			-> will call addVerbatim with a string representation of the position
-					   in the input
+	$$pos			-> will call addVerbatim with a string representation of the 
+					   input position in the input
 
-There is a helper in 
+To help define the `addVerbatim` and `addMatched` in a reasonable way, there is
+a helper in
 
-	flow9\lib\text\gringo\gringo_typed_action.flow
+	import text/gringo/gringo_typed_action;
 
-which provides useful building blocks for making a Forth-style, stack-based semantic
+which provides useful building blocks for making a stack-based semantic
 actions for expression-based languages with unary, binary and ternary operators.
+
+See the tutorial below for real examples of how this works.
+
+By default, this semantic helper works well for expression-based languages. In case
+your language has both statements and expressions, then you have to define a union for
+both statements and expressions, and use that for the semantic actions. Since Gringo
+is built to support fully typed semantic actions, this is the best compromise in terms 
+of power and safety.
 
 ## Error recovery
 
@@ -119,10 +123,145 @@ prefix. We support two different recovery strategies:
 	#";"	-> matches ;. If ; is missing, we report an error, but otherwise continue
 	#!";"	-> does not match ;. If there is a ;, we match it and report an error, but otherwise continue
 
-## TODO: Example
+## Tutorial
 
-TODO: Write an simple example of how to use Gringo using gringoTypedParse & gringoTypedAction
-as the driver.
+In the `tutorial/` folder, there is a complete parser for a simple expression language
+with the main part being like this:
+
+	exp = exp "||" ws exp $"||"
+		|> exp "&&" ws exp $"&&"
+		|> exp "==" ws exp $"==" | exp "!=" ws exp $"!="
+		|> exp ("<=" ws exp $"<=" | "<" ws exp $"<" | ">=" ws exp $">=" | ">" ws exp $">")
+		|> exp < ("+" ws exp $"+" | "-" ws exp ws $"-")*
+		|> exp ("*" ws exp $"*" | "/" ws exp $"/" | "%" ws exp $"%")*
+
+		|> exp ("[" ws exp "]" ws $"index")+ 
+		|> exp ("." ws exp $"dot")+
+		|> exp "?" ws exp ":" ws exp $"ifelse"
+
+		|> "-" ws exp $"negate"
+
+		|> (
+			"if" ws "(" ws exp ")" ws exp "else" ws exp $"ifelse" 
+			| "if" ws "(" ws exp ")" ws exp $"if"
+			| "(" ws exp ")" ws 
+			| "true" $"true"
+			| "false" $"false"
+			| string ws $"unescape"
+			| int ws $"s2i"
+			| "[" ws exps "]" ws
+		);
+
+This grammar has correct precendence and associativity similar to C. It also features the 
+recommended approach to handling white-space, which is very similar to `Lingo`.
+
+The main program `tutorial.flow` demonstrates how to use the interpreter to parse a simple language
+into this, simple AST:
+
+	Exp ::= Int, String, Call, Array;
+
+	Int(i : int);
+	String(s : string);
+	Call(op : string, args : [Exp]);
+	Array(values : [Exp]);
+
+The program contains all main aspects of how to make a grammar and using it to construct the 
+typed AST, using three different approaches:
+
+  1) Parsing and preparing the grammar at runtime, and the interpreting it to parse
+  2) Using a pre-processed grammar that is interpreted to parse.
+  3) Using generated flow code to parse
+
+Option 1 is flexible, since you can change the grammar and quickly check that it works.
+Option 2 is mostly useful as a demonstration. The grammar is saved in exp_grammar,
+using the `out=1` option to `Gringo`. Can be helpful when debugging.
+Option 3 is the most efficient, and recommended for production. The parser is saved in
+exp_parser.flow using the `compile=1` option to Gringo.
+
+So when you start a new grammar, we recommend you use approach 1. Once your grammar and
+semantic actions are complete, then switch to the third approach for the best performance.
+
+## Semantic action helper
+
+To help with semantic actions, the `gringoTypedAction` helper provides a number of
+built-in actions:
+
+	s2i		Convert a string to a typed int
+	s2d		Convert a string to a typed double
+	true	Make the constant "true"
+	false	Make the constant "false"
+	list	Construct an empty list or array
+	cons	Append an element to a list or array
+
+The `list` and `cons` constructs are very helpful to construct arrays of elements. 
+Most often used in combination with `+` and `*` constructs. See the Array construct 
+in the tutorial to see how this pattern works in the `exps` production.
+
+## Using a compiled grammar
+
+Put your grammar in a `.gringo` file, and compile it with something like:
+
+	gringo file=mygrammar.gringo out=1 compile=1
+
+and it will produce a `mygrammar_parser.flow` file with the grammar where it will export
+a function like
+
+	parse_exp(DParseAcc) -> bool;
+
+Then use like this:
+
+	import mygrammar;
+	import text/gringo/gringo_typed_action;
+	import math/math;
+
+	parseExp(a : string, onError : (string) -> void) -> Exp {
+		gringoTypedParse(a, expTypeAction(onError), parse_exp, String("Empty parse stack"), onError);
+	}
+
+See also the tutorial for more hints.
+
+## Comparison with Lingo
+
+Gringo is an expression-based grammar, while Lingo has "production statements" and then terms. 
+This is why your grammar in Gringo has to end with the name of the production to match. 
+In Gringo, productions are just let-bindings with a body:
+
+	a = <term>;
+	body
+
+Gringo does not have caching, and thus is potentially more efficient for grammars that do not
+need much backtracking, since we do not use memory to keep a cache. Since Gringo automatically 
+transforms left-recursion, as well as provides features for handling precendence and associativity, 
+the resulting grammars are shorter and easier to understand.
+
+Gringo does not use bindings for semantic actions, but rather is based on a stack discipline.
+This is also more efficient, since it does not require a binding environment, but just a
+simple stack (in the form of a List).
+
+This also allows Gringo to support fully typed semantic actions, in contrast to Lingo, which
+relies on the dynamic "flow" type to allow semantic actions.
+
+Gringo has simple support for error recovery, while Lingo does not. The implementation of 
+Gringo itself is shorter and simpler than Lingo. This is a result of Gringo being an 
+expression-based language.
+
+Gringo is a relatively new tool. A complete grammar for flow has been written in Gringo, and
+is known to work well. There are no known bugs in the parsers. That said, it might be that 
+there are some rough edges in the tooling.
+
+## Potential optimizations in the generated code
+
+The code generated by the compiler is decent, but can be improved.
+
+The compiler works by converting the grammar to the DCode opcodes, and then compiling
+those to flow code.
+
+Optimizations possible in generated Gringo parser: 
+
+- Use && instead of nested ifs
+- Change NOT to be a sequence
+- Epsilon is probably correctly compiled to TRUE
+- Add a C++ or Rust backend for DCode and try to use Wasm
 
 ## TODO for Gringo itself
 
@@ -139,8 +278,6 @@ as the driver.
   recursion, which will break precedence
 
 - Add error message when we have left recursion deep inside a choice
-
-- "flowfile" to make a parser driver
 
 - Support multiple grammars to allow composition
 
@@ -170,15 +307,6 @@ Overly complicated opcodes (page 39):
 
 Initial pegcode paper:
 http://www.inf.puc-rio.br/~roberto/docs/peg.pdf
-Opcodes from PEGCODE:
-	- Match string
-	- Jump <address>
-	- Backtrack to Choice <address>
-	- Call <address>
-	- Return
-	- Commit <address>
-	- Capture
-	- Fail
 
 Adding error recovery:
 https://www.eyalkalderon.com/nom-error-recovery/
@@ -202,37 +330,14 @@ I.e. explicitly add
 
   e |>
 	| recover-at ";";
-	
+
 construct, which reports an error, but otherwise, keeps parsing.
 
 To refine it, we could maybe have a construct which recovers, but understands structure to 
-some extend: { }, ( ) [ ] are recursively matched.
+some degree: { }, ( ) [ ] are recursively matched.
 
 We did try a scheme for precedence and associativy inspired by the approach in
 
 	https://matklad.github.io//2020/04/13/simple-but-powerful-pratt-parsing.html
 
 but it turned out to not work well, so we changed to the |> operator instead.
-
-## Expression grammar
-
-Here is an example expression grammar that matches C
-associativity and precedence.
-
-	exp = exp "||" exp $"||"
-		|> exp "&&" exp $"&&"
-		|> exp "==" exp $"==" | exp "!=" exp $"!="
-		|> exp ("<=" | "<" | ">=" | ">") exp
-		|> exp <(("+" exp $"+" | "-" exp $"-")*)
-		|> exp <(("*" exp $"*" | "/" exp $"/" | "%" exp $"%")*)
-		|> exp ("[" exp "]" $"index")+	// Right associative
-		|> exp ("." exp $"dot")+		// Right associative
-		|> exp "?" exp ":" exp $"ifelse"
-		|> 
-			"(" exp ")"
-			| "-" exp $"negate"
-			| "if" exp exp "else" exp $"ifelse" 
-			| "if" exp exp $"if"
-			| $('0x30'-'0x39'+)
-		;
-		exp

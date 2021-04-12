@@ -59,6 +59,11 @@ class RenderSupport {
 	public static var hadUserInteracted = false;
 
 	public static var WebFontsConfig = null;
+	public static var DebugClip = null;
+
+	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
+		if (DebugClip != null) DebugClip.innerText += ('\n' + text + " " + text2);
+	}
 
 	private static var RenderSupportInitialised : Bool = init();
 
@@ -567,6 +572,10 @@ class RenderSupport {
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
+		if (Util.getParameter("debugClip") == "1") {
+			appendDebugClip();
+		}
+
 		if (untyped PIXI.VERSION != "4.8.2") {
 			untyped __js__("document.location.reload(true)");
 		}
@@ -602,6 +611,26 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+	}
+
+	private static function appendDebugClip() {
+		var debugClip = Browser.document.createElement("p");
+		Browser.document.body.appendChild(debugClip);
+
+		debugClip.textContent = "DEBUG";
+		debugClip.style.fontSize = "12px";
+		debugClip.style.zIndex = "1000";
+		debugClip.style.background = "#424242";
+		debugClip.style.color = "#FFFFFF";
+		debugClip.style.padding = "8px";
+		debugClip.style.paddingTop = "4px";
+		debugClip.style.paddingBottom = "4px";
+		debugClip.style.borderRadius = "4px";
+		debugClip.style.left = "50%";
+		debugClip.style.top = "8px";
+		debugClip.style.transform = "translate(-50%, 0)";
+
+		DebugClip = debugClip;
 	}
 
 	private static function StartFlowMainWithTimeCheck() {
@@ -923,6 +952,7 @@ class RenderSupport {
 
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
+			try {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
 			e.preventDefault();
@@ -951,9 +981,14 @@ class RenderSupport {
 					if (MouseUpReceived) emit("mousedown");
 				}
 			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerdown error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointerup = function(e : Dynamic) {
+			try {
 			if (e.touches != null) {
 				TouchPoints = e.touches;
 				emit("touchend");
@@ -975,9 +1010,14 @@ class RenderSupport {
 					if (!MouseUpReceived) emit("mouseup");
 				}
 			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerup error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointermove = function(e : Dynamic) {
+			try {
 			if (e.touches != null) {
 				e.preventDefault();
 
@@ -998,11 +1038,20 @@ class RenderSupport {
 
 				emit("mousemove");
 			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointermove error : ");
+				untyped console.log(e);
+			}
 		};
 
 		var onpointerout = function(e : Dynamic) {
+			try {
 			if (e.relatedTarget == Browser.document.documentElement) {
 				if (!MouseUpReceived) emit("mouseup");
+			}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerout error : ");
+				untyped console.log(e);
 			}
 		};
 
@@ -1406,6 +1455,9 @@ class RenderSupport {
 				}
 
 				var nativeWidget : Element = untyped clip.nativeWidget;
+				if (untyped clip.iframe != null) {
+					nativeWidget = untyped clip.iframe;
+				}
 
 				// Create DOM node for access. properties
 				if (nativeWidget != null) {
@@ -2670,6 +2722,40 @@ class RenderSupport {
 
 	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
 		picture.switchUseCrossOrigin(useCrossOrigin);
+	}
+
+	public static function parseXml(xmlString) {
+		var doc;
+		if (untyped __js__('window.ActiveXObject')) {
+			// Internet Explorer
+			doc = untyped __js__('new ActiveXObject("MSXML.DOMDocument")');
+			doc.async = false;
+			doc.loadXML(xmlString);
+		} else {
+			// Other browsers
+			var parser = untyped __js__('new DOMParser()');
+			doc = parser.parseFromString(xmlString, "text/xml");
+		}
+		return doc;
+	}
+
+	public static function checkIsValidSvg(url : String, cb : (Bool) -> Void) : Void {
+		var svgXhr = new js.html.XMLHttpRequest();
+		if (!Platform.isIE && !Platform.isEdge)
+			svgXhr.overrideMimeType('image/svg+xml');
+
+		svgXhr.onload = function () {
+			try {
+				var doc = parseXml(svgXhr.response);
+				var viewBox = untyped doc.documentElement.getAttribute('viewBox');
+				cb(viewBox != null);
+			} catch (e : Dynamic) {
+				cb(false);
+			}
+		};
+
+		svgXhr.open('GET', url, true);
+		svgXhr.send();
 	}
 
 	public static function cursor2css(cursor : String) : String {
