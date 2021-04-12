@@ -15,10 +15,6 @@ import android.support.v4.app.NotificationCompat;
 // onReceive will be called at scheduled time for every scheduled notification
 public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
 
-    public static String NOTIFICATION_CHANNEL = "local_channel";
-    public static String NOTIFICATION_CHANNEL_NAME = "Local Notifications";
-    public static int NOTIFICATION_CHANNEL_IMPORTANCE = NotificationManager.IMPORTANCE_DEFAULT;
-
     @Override
     public void onReceive(@NonNull Context context, @NonNull Intent intent) {
         String action = intent.getAction();
@@ -46,7 +42,9 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
             notificationIconID = android.R.drawable.ic_popup_reminder;
         }
 
-        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context, NOTIFICATION_CHANNEL);
+        String channelId = FlowNotificationsAPI.CHANNEL_ID;
+
+        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context, channelId);
 
         mBuilder.setSmallIcon(notificationIconID)
                 .setContentTitle(notificationTitle)
@@ -54,7 +52,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
                 .setContentIntent(onClickIntent)
                 .setDeleteIntent(onCancelIntent)
                 .setOngoing(pinNotification)
-                .setChannelId(NOTIFICATION_CHANNEL)
+                .setChannelId(channelId)
                 .setAutoCancel(!pinNotification);
 
         if (withSound) {
@@ -62,12 +60,6 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
         }
 
         NotificationManager notifyManager = (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notifyManager.getNotificationChannels().size() == 0) {
-            NotificationChannel channel = new NotificationChannel(NOTIFICATION_CHANNEL, NOTIFICATION_CHANNEL_NAME, NOTIFICATION_CHANNEL_IMPORTANCE);
-            notifyManager.createNotificationChannel(channel);
-        }
-
         notifyManager.notify(notificationId, mBuilder.build());
     }
     

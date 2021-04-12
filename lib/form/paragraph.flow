@@ -38,7 +38,13 @@ export {
 	*/
 	TextFragment(text : string, charStyle : [CharacterStyle]) -> TextFragments;
 	TextFragmentExt(text : string, charStyle : [CharacterStyle], styles : [TextFragmentStyle]) -> TextFragments;
-	TextFragmentWithDecorator(text : string, charStyle : [CharacterStyle], styles : [TextFragmentStyle], wordDecorator : (Form) -> Form) -> TextFragments;
+	TextFragmentWithDecorator(
+		text : string,
+		charStyle : [CharacterStyle],
+		styles : [TextFragmentStyle],
+		wordDecorator : (Form) -> Form,
+		customParagraphStyle : [ParagraphStyle]
+	) -> TextFragments;
 		TextFragmentStyle ::= TextFragmentMoreLineBreaks, TextFragmentLastChild;
 			TextFragmentMoreLineBreaks();
 			TextFragmentLastChild();
@@ -64,7 +70,8 @@ export {
 		indexingInit : int,
 		init : List<GeneralWrapElement>,
 		isLastChild : bool,
-		disableBreaksAfterHyphen : bool
+		disableBreaksAfterHyphen : bool,
+		emulateLetterspacing : bool
 	) -> GeneralTextFragments;
 	// for text like "some text\n\n", we have to insert special InspectElement between NewLines in order to be able to position into such line
 	// also we have to add such element after the last \n in the last child text element of the paragraph
@@ -282,10 +289,10 @@ TextFragment(text, charStyle) {
 }
 
 TextFragmentExt(text, charStyle, style) {
-	TextFragmentWithDecorator(text, charStyle, [], idfn)
+	TextFragmentWithDecorator(text, charStyle, [], idfn, [])
 }
 
-TextFragmentWithDecorator(text, charStyle, style, wordDecorator : (Form) -> Form) {
+TextFragmentWithDecorator(text, charStyle, style, wordDecorator : (Form) -> Form, customParagraphStyle : [ParagraphStyle]) {
 	generalFragments = breakTextFragment(
 		text,
 		charStyle,
@@ -293,7 +300,8 @@ TextFragmentWithDecorator(text, charStyle, style, wordDecorator : (Form) -> Form
 		-100000,
 		makeList(),
 		containsStruct(style, TextFragmentLastChild()),
-		false
+		false,
+		containsStruct(customParagraphStyle, IgnoreLetterspacingOnReflow())
 	);
 	TextFragments(
 		mapList(generalFragments.elements, \e -> general2WrapElement(e, generalFragments.style, wordDecorator))
@@ -306,11 +314,12 @@ DynamicWrapElement(index : int, form : WrapElement, width : Behaviour<double>);
 // It will monitor the available width, and reflow as necessary (also when dynamic
 // forms change size).
 // The result is a behaviour that produces an array of lines (each expressed as a Form)
-Wrap(availableWidth : Behaviour<double>, elements : [WrapElement],
-     alignment : ParagraphAlignment, interlineSpacing : double,
-     background : int, opacity : double)
-    -> DynamicBehaviour<[Form]> {
-    dynamicElementsList = ref makeList();
+Wrap(
+	availableWidth : Behaviour<double>, elements : [WrapElement],
+	alignment : ParagraphAlignment, interlineSpacing : double,
+	background : int, opacity : double
+) -> DynamicBehaviour<[Form]> {
+	dynamicElementsList = ref makeList();
 
 	widths = mapi(elements, \i, e -> {
 		switch(e : WrapElement) {
@@ -561,7 +570,8 @@ breakTextFragment(
 	indexingInit : int,
 	init : List<GeneralWrapElement>,
 	isLastChild : bool,
-	disableBreaksAfterHyphen : bool
+	disableBreaksAfterHyphen : bool,
+	emulateLetterspacing : bool
 ) -> GeneralTextFragments {
 
 	toInspectingElementIfNecessary : (int, int, GeneralWrapElement) -> GeneralWrapElement = \indexing, offset, f -> {
@@ -741,7 +751,30 @@ breakTextFragment(
 
 	elements = ^loop1(0, indexingInit, init);
 
-	GeneralTextFragments(elements, style);
+	// Text with LetterSpacing honors spacing between characters only (JS, CPP)
+	// If paragraph has several successive WigiText fragments with letterspacing, then the space between them will be lost
+	// so we make a trick - add zerro-width space to the end of text in Text to force it to add last letterspacing space
+	// It is not used for TropicWigify
+	letterspacingNeeded = emulateLetterspacing && !isLastChild && containsStruct(style, LetterSpacing(0.0));
+
+	GeneralTextFragments(
+		if (letterspacingNeeded) switch(elements) {
+			Cons(h, t) : Cons(makeLetterSpacingForWord(h), t);
+			EmptyList() : elements;
+		} else elements,
+		style
+	);
+}
+
+makeLetterSpacingForWord(w : GeneralWrapElement) -> GeneralWrapElement {
+	switch(w) {
+		GeneralInspectElement(inspector, word) : GeneralInspectElement(
+			inspector,
+			makeLetterSpacingForWord(word)
+		);
+		GeneralText(txt) : GeneralText(txt + "\u200b");
+		default : w
+	}
 }
 
 wordDividers = map(

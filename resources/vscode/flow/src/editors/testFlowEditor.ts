@@ -5,7 +5,7 @@ import * as fs from "fs";
 /* 
 To compile the editor run
 
-	flowc1 html=editor2.html editor2.flow 
+	flowc1 html=testFlowEditor.html testFlowEditor.flow 
 
 in editors folder
 */
@@ -75,7 +75,7 @@ export class TestFlowEditorProvider implements vscode.CustomTextEditorProvider {
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {
-		const editor_path = path.join(this.context.extensionPath, 'editors', 'editor2.html')
+		const editor_path = path.join(this.context.extensionPath, 'editors', 'testFlowEditor.html')
 		return fs.readFileSync(editor_path).toString();
 	}
 

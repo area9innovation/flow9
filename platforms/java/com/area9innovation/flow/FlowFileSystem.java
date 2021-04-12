@@ -1,8 +1,19 @@
 package com.area9innovation.flow;
 
 import java.util.*;
-import java.nio.charset.Charset;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.FileNotFoundException;
+import java.net.URL;
+import java.net.MalformedURLException;
+import java.nio.charset.Charset;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
+import java.lang.reflect.InvocationTargetException;
 
 public class FlowFileSystem extends NativeHost {
 	public String createDirectory(String path) {
@@ -87,7 +98,8 @@ public class FlowFileSystem extends NativeHost {
     }
 
     public String fileName(Object file) {
-		return "";
+		File _file = (File)file;
+		return _file.getAbsolutePath();
     }
 
     public Object readFile(Object file, String as, Func1<Object,String> onData, Func1<Object, String> onError) {
@@ -114,5 +126,111 @@ public class FlowFileSystem extends NativeHost {
 		File _file = (File)file;
 		double d = _file.lastModified() / 1000;
 		return Math.round(d) * 1000;
+	}
+	public Object makeFileByBlobUrl(String url, String fileName, Func1<Object,File> onFile, Func1<Object,String> onError) {
+		try (
+			ReadableByteChannel readableByteChannel = Channels.newChannel(new URL(url).openStream());
+			FileOutputStream fileOutputStream = new FileOutputStream(fileName);
+		) {
+			fileOutputStream.getChannel().transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
+			onFile.invoke(new File(fileName));
+		} catch (MalformedURLException e) {
+			onError.invoke("Malformed url " + url + " " + e.getMessage());
+		} catch (FileNotFoundException e) {
+			onError.invoke("File not found " + fileName + " " + e.getMessage());
+		} catch (IOException e) {
+			onError.invoke("IO Exception while downloading " + url + " to " + fileName + " " + e.getMessage());
+		}
+
+		return null;
+	}
+
+	public File createTempFile(String name, String content) {
+		File tmpdir = new File(System.getProperty("java.io.tmpdir"));
+		File newFile = new File(tmpdir, name);
+		try {
+			newFile.createNewFile();
+		} catch (IOException e) {
+			System.out.println("IO Exception: " + e.getMessage());
+		}
+		if (content != null & content != "") {
+			try {
+				byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), content);
+				try (
+					FileOutputStream fileOutputStream = new FileOutputStream(newFile);
+				) {
+					fileOutputStream.write(converted);
+				} catch (IOException e) {
+					System.out.println("IO Exception: " + e.getMessage());
+				}
+			} catch (IllegalAccessException e) {
+				System.out.println("At data string conversion: " + e.getMessage());
+			} catch (InvocationTargetException e) {
+				System.out.println("At data string conversion: " + e.getMessage());
+			}
+		}
+		return newFile;
+	}
+
+	private final static java.lang.reflect.Method string2utf8Bytes;
+	static {
+		java.lang.reflect.Method method = null;
+		try {
+			method = Native.class.getMethod("string2utf8Bytes", String.class);
+		} catch (ReflectiveOperationException e) {
+			System.out.println("string2utf8 method is not initialized: " + e.getMessage());
+			throw new ExceptionInInitializerError(e);
+		} finally {
+			string2utf8Bytes = method;
+		}
+	}
+
+	public Object extractZipFile(String zipFileName, String outputDir, Func0<Object> onDone, Func1<Object,String> onError) {
+		File destDir = new File(outputDir);
+		try (
+			ZipFile zipFile = new ZipFile(zipFileName)
+		) {
+			Enumeration<? extends ZipEntry> zipEntries = zipFile.entries();
+
+			while (zipEntries.hasMoreElements()) {
+				ZipEntry zipEntry = zipEntries.nextElement();
+				File destFile = getFileForExtraction(destDir, zipEntry);
+				if (zipEntry.isDirectory()) {
+					if (!destFile.isDirectory() && !destFile.mkdirs()) {
+						throw new IOException("Failed to create directory " + destFile);
+					}
+				} else {
+					File parent = destFile.getParentFile();
+					if (!parent.isDirectory() && !parent.mkdirs()) {
+						throw new IOException("Failed to create directory " + parent);
+					}
+
+					try (
+						ReadableByteChannel readableByteChannel = Channels.newChannel(zipFile.getInputStream(zipEntry));
+						FileOutputStream fileOutputStream = new FileOutputStream(destFile);
+					) {
+						fileOutputStream.getChannel().transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
+					}
+				}
+			}
+		} catch (IOException e) {
+			onError.invoke("IOException while extracting " + zipFileName + " to " + outputDir + ": " + e.getMessage());
+		}
+
+		onDone.invoke();
+		return null;
+	}
+
+	private final static File getFileForExtraction(File destinationDir, ZipEntry zipEntry) throws IOException {
+		File destFile = new File(destinationDir, zipEntry.getName());
+
+		String destDirPath = destinationDir.getCanonicalPath();
+		String destFilePath = destFile.getCanonicalPath();
+
+		if (!destFilePath.startsWith(destDirPath + File.separator)) {
+			throw new IOException("Entry is outside of the target dir: " + zipEntry.getName());
+		}
+
+		return destFile;
 	}
 }

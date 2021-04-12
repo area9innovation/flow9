@@ -1,0 +1,129 @@
+import string_utils;
+import tools/gringo/utils;
+import tools/gringo/gringo_pretty;
+
+export {
+    Gringo2FastConf(
+        accType : string, // type of accumulator
+        verb : string,    // name of addVerbatim semantic action of type: (accType, string) -> accType 
+        matched : string  // name of addMatched semantic action of type: (accType, string) -> accType 
+    );
+
+    // Translates a grammar to a combination of parser combinators
+    generateFastParserFromGringo(file : string, term : GTerm, conf : Gringo2FastConf) -> string;
+}
+
+generateFastParserFromGringo(file : string, term : GTerm, conf : Gringo2FastConf) -> string {
+    rules = tree2pairs(findRules(makeTree(), term));
+    strGlue(map(rules, \rule -> generateFastParserFromRule(file, rule, conf)), "\n");
+}
+
+generateFastParserFromRule(file : string, rule : Pair<string, GTerm>, conf : Gringo2FastConf) -> string {
+    id = rule.first;
+    term = rule.second;
+    file + "_" + id + "_rule" + "(input : string, i : i32, acc : " + conf.accType + ") -> Tuple<i32, " + conf.accType + " > {\n" +
+        strIndent(
+            "p = " + generateFastParserFromTerm(file, term, conf) + ";\n" +
+            "p(input, i, acc);"
+        ) +
+    "\n}\n";
+}
+
+generateFastParserFromTerm(file : string, t : GTerm, conf : Gringo2FastConf) -> string {
+    switch (t) {
+		GRule(id, term, body): {
+            println("rule met - must not happen");
+            "";
+		}
+		GSeq(left, right): {
+            "compiletime::sequenceParseC1(\n" +
+                strIndent(
+                    generateFastParserFromTerm(file, left, conf) + ",\n" +
+                    generateFastParserFromTerm(file, right, conf)
+                )
+            + "\n)"
+        }
+		GChoice(left, right): {
+            "compiletime::choiceParseC1(\n" +
+                strIndent(
+                    generateFastParserFromTerm(file, left, conf) + ",\n" +
+                    generateFastParserFromTerm(file, right, conf)
+                )
+            + "\n)"
+        }
+		GPrecedence(left, right): {
+            println("Error: precedence is met - must not happen");
+            "";
+        }
+		GStar(term): {
+            "compiletime::starParseC1(\n" +
+                strIndent(
+                    generateFastParserFromTerm(file, term, conf)
+                )
+            + "\n)"
+        }
+		GPlus(term): {
+            "compiletime::plusParseC1(\n" +
+                strIndent(
+                    generateFastParserFromTerm(file, term, conf)
+                )
+            + "\n)"
+        }
+		GOpt(term): {
+            "compiletime::optionalParseC1(\n" +
+                strIndent(
+                    generateFastParserFromTerm(file, term, conf)
+                )
+            + "\n)"
+        }
+		GNegate(term): {
+            "compiletime::notPredicateParseC1(\n" +
+                strIndent(
+                    generateFastParserFromTerm(file, term, conf)
+                )
+            + "\n)"
+        }
+		GError(term): {
+			println("TODO");
+			generateFastParserFromTerm(file, term, conf)
+        }
+		GLower(term): {
+			println("TODO");
+			generateFastParserFromTerm(file, term, conf)
+        }
+		GUnquote(term): {
+            switch (term) {
+                GUnquote(ut):
+                    switch (ut) {
+                        GString(text):
+                            "compiletime::addVerbatimParseC1(" + conf.matched + ", \"" + text + "\")";
+                        default: {
+                            println("Error: $$ must be applied to string literals only, got: " + gterm2string(ut));
+                            "";
+                        }
+                    }
+                GString(text):
+                    "compiletime::addVerbatimParseC1(" + conf.verb + ", \"" + text + "\")";
+                default: 
+                    "compiletime::addMatchedParseC1(\n" +
+                        strIndent(
+                            generateFastParserFromTerm(file, term, conf) + ",\n" +
+                            conf.matched
+                        )
+                    + "\n)";
+            }
+        }
+		GString(text): {
+            "compiletime::tokenParseC1(\"" + escapeStr(text) + "\")"
+        }
+		GRange(lower, upper): {
+            "compiletime::rangeParseC1(" + i2s(lower) + ", " + i2s(upper) + ")"
+        }
+		GVar(id): {
+            file + "_" + id + "_rule";
+        }
+		GEpsilon(): {
+            "compiletime::emptyParseC1()"
+        }
+	}
+}

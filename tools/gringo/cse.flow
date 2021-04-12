@@ -1,0 +1,168 @@
+import tools/gringo/utils;
+import tools/gringo/gringo_pretty;
+import ds/simplegraph;
+
+export {
+	// Does common subexpression elimination as well as dead rule removal
+	reduceCommon(g : GTerm) -> GTerm;
+}
+
+reduceCommon(g : GTerm) -> GTerm {
+	// We should do this from small rules up to bigger rules
+	// so we do not have to iterate and maximize overlap
+	rules : Tree<string, GTerm> = findRules(makeTree(), g);
+
+	// Build the dependency graph of rules
+	graph0 = dependencyGraph(rules);
+	source = mainRule(g);
+	// OK, we get a loop-free graph
+	graph = simpleLoopFree(graph0, source);
+
+	if (false) {
+		dot = simpleGraph2dot(graph, "", [], \node -> [DotLabel(node)], \edge -> []);
+		setFileContent("deps.dot", dot);
+		{}
+	};
+
+	if (false) {
+		println("Expanded, not optimized:");
+		println(gterm2string(g));
+	};
+
+	// Find a topological order, and start from the leaves
+	order = reverseA(topoSortSimpleGraph(graph));
+	// println(order);
+
+	// Do CSE of the rules in this order
+	reduced = fold(order, g, \acc, rule -> {
+		mterm : Maybe<GTerm> = findRule(rule, acc);
+		mterm ?? {
+			term : GTerm = mterm;
+			// Replace the occurrences of the term of a rule with the name to compress it
+			// println(rule + " is " + gterm2string(mterm));
+			switch (term) {
+				GVar(r): {
+					// It is just a basic assignment.
+					// Let us rewrite to avoid referencing the identity rules
+					replaceTerm(GVar(rule), term, rule, acc)
+				}
+				default: {
+					// Replace the occurrences of the term of a rule with the name to compress it
+					replaceTerm(term, GVar(rule), rule, acc)
+				}
+			}
+		} : acc
+	});
+
+	if (false) {
+		println("After CSE:");
+		println(gterm2string(reduced));
+	};
+
+	// Finally, do dead code elimination, where identity rules (and other dead rules) will be removed
+	deadCodeElimination(reduced);
+}
+
+// Remove all dead rules
+deadCodeElimination(g : GTerm) -> GTerm {
+	rules : Tree<string, GTerm> = findRules(makeTree(), g);
+
+	// Build the dependency graph of rules
+	graph = dependencyGraph(rules);
+	source = mainRule(g);
+
+	alive = insertSet(reachableClosureFromSimpleNode(graph, source), source);
+
+	if (false) {
+		dead = differenceSets(buildSet(getTreeKeys(rules)), alive);
+		println("Dead rules: " + strGlue(set2array(dead), ", "));
+	};
+	
+	removeDeadRules(alive, g);
+}
+
+// Given these rules, what dependencies do each have?
+dependencyGraph(rules : Tree<string, GTerm>) -> SimpleGraph<string, bool> {
+	foldTree(rules, makeSimpleGraph(), \rule, term, acc -> {
+		deps = ruleDependencies(makeSet(), term);
+		foldSet(deps, acc, \acc2, dep -> {
+			if (rule != dep) {
+				addSimpleEdge(acc2, rule, dep, true, 0);
+			} else acc2;
+		})
+	});
+}
+
+ruleDependencies(acc : Set<string>, g : GTerm) -> Set<string> {
+	switch (g) {
+		GRule(id, term, body): {
+			println("Unexpected");
+			acc;
+		}
+
+		GPrecedence(left, right): ruleDependencies(ruleDependencies(acc, left), right);
+		GChoice(left, right): ruleDependencies(ruleDependencies(acc, left), right);
+		GSeq(left, right): ruleDependencies(ruleDependencies(acc, left), right);
+		GStar(term): ruleDependencies(acc, term);
+		GPlus(term): ruleDependencies(acc, term);
+		GOpt(term): ruleDependencies(acc, term);
+		GNegate(term): ruleDependencies(acc, term);
+		GError(term): ruleDependencies(acc, term);
+		GLower(term): ruleDependencies(acc, term);
+		GUnquote(term): ruleDependencies(acc, term);
+		GString(text): acc;
+		GRange(lower, upper): acc;
+		GVar(id): insertSet(acc, id);
+		GEpsilon(): acc;
+	}
+}
+
+removeDeadRules(alive : Set<string>, g : GTerm) -> GTerm {
+	switch (g) {
+		GRule(id, term, body): {
+			nbody = removeDeadRules(alive, body);
+			if (!containsSet(alive, id)) {
+				nbody;
+			} else {
+				GRule(id, term, nbody)
+			}
+		}
+		GPrecedence(left, right): g;
+		GChoice(left, right): g;
+		GSeq(left, right): {
+			lrule = getGRuleName(left);
+			if (lrule != "" && !containsSet(alive, lrule)) {
+				// It is dead!
+				removeDeadRules(alive, right);
+			} else {
+				rrule = getGRuleName(right);
+				if (rrule != "" && !containsSet(alive, rrule)) {
+					removeDeadRules(alive, left);	
+				} else {
+					GSeq(
+						removeDeadRules(alive, left),
+						removeDeadRules(alive, right),
+					)
+				}
+			}
+		}
+		GStar(term): g;
+		GPlus(term): g;
+		GOpt(term): g;
+		GError(term): g;
+		GLower(term): g;
+		GNegate(term): g;
+		GUnquote(term): g;
+		GString(text): g;
+		GRange(lower, upper): g;
+		GVar(id): g;
+		GEpsilon(): g;
+	}
+}
+
+getGRuleName(g : GTerm) -> string {
+	switch (g) {
+		GRule(id, __, body): id;
+		default: "";
+	}
+}

@@ -105,7 +105,17 @@ are supported. To debug a program:
     2. To show the definition in popup, hover the mouse over a symbol and hold down CTRL
     3. Go to Implementation (Ctrl-F12) - this jumps to the definition
     4. Rename - experimental
- 
+
+# Adding a custom editor written in flow
+To add a custom editor you need to:
+1. Add the description of the editor to `customEditors` field in `package.json`
+2. Make a typescript wrapper of the editor, place it in the `src/editors` folder and add it to `src/editors/index.ts`
+3. Place a flow source of the editor into `editors` folder
+4. Compile it to a monolithic html file with `flowc1 html=editor.htm editor.flow`
+5. Rebuild the extension and re-install it to vscode
+
+All sources for the example of simple editor `testFlowEditor` are provided in appropriate folders.
+
 ## Requirements
 Flow language tools configured in a standard layout - i.e. c:\area9\flow. There is a flow.root configuration parameter (in VS Code) to override that.
 
@@ -113,8 +123,8 @@ Flow language tools configured in a standard layout - i.e. c:\area9\flow. There 
 See https://code.visualstudio.com/docs/extensions/example-hello-world .
 
 ## Build
-1. Make sure Node.js, NPM and `vsce` package are all installed (i.e. `npm install -g vsce`)
-2. Run `build.cmd` to update the `flow.vsix` package
+1. Make sure Node.js, NPM is installed and all packages are installed (`npm install`)
+2. Run `build.cmd` or `build.sh` to update the `flow.vsix` package
 
 ## Release Notes
 See [Changelog](./CHANGELOG.md).

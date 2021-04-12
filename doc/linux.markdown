@@ -46,7 +46,10 @@ Also it can be useful to define environment variables in .xsessionrc. This way t
 # Backend
 ## MySQL
 Set up MySQL and MySQL Workbench:
+> https://dev.mysql.com/downloads/repo/apt/
 ```bash
+sudo dpkg -i mysql-apt-config_0.8.16-1_all.deb
+sudo apt update
 sudo apt install -y mysql-server mysql-client
 ```
 Make root@localhost user with empty password:

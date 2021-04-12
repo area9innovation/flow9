@@ -18,6 +18,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 // this is only for checking hardware acceleration, probably could be refactored
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -330,6 +332,16 @@ public class FlowRunnerActivity extends FragmentActivity  {
 
         wrapper.setFlowNotificationsAPI(FlowNotificationsAPI.getInstance(wrapper));
         FlowNotificationsAPI.getInstance(wrapper).setContext(this);
+
+        NotificationManager notifyManager = (NotificationManager)this.getSystemService(Context.NOTIFICATION_SERVICE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notifyManager.getNotificationChannels().size() == 0) {
+            NotificationChannel channel = new NotificationChannel(FlowNotificationsAPI.CHANNEL_ID, FlowNotificationsAPI.CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT);
+            notifyManager.createNotificationChannel(channel);
+
+            NotificationChannel push_channel = new NotificationChannel(FlowNotificationsAPI.PUSH_CHANNEL_ID, FlowNotificationsAPI.PUSH_CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT);
+            notifyManager.createNotificationChannel(push_channel);
+        }
 
         wrapper.setFlowCameraAPI(FlowCameraAPI.getInstance());
         FlowCameraAPI.getInstance().setContext(this);

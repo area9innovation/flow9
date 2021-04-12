@@ -468,7 +468,7 @@ class TextClip extends NativeWidgetClip {
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = isFocused ? alpha : 0;
+				nativeWidget.style.opacity = alpha;
 				nativeWidget.style.color = style.fill;
 			}
 		} else {
@@ -625,6 +625,18 @@ class TextClip extends NativeWidgetClip {
 			}
 			fontFamilies = TextClip.ffMap[fontFamilies];
 			");
+		}
+
+		// In Firefox canvas ignores 'lang' attribute, so for arabic different fallback fonts are used for measuring and rendering.
+		// To fix it let`s set fallback fonts explicitly
+		if (Platform.isFirefox && RenderSupport.RendererType == "html" && Browser.document.documentElement.lang == "ar" && StringTools.startsWith(fontFamilies, "Roboto")) {
+			if (Platform.isWindows) {
+				fontFamilies += ", Segoe UI";
+			} else if (Platform.isLinux) {
+				fontFamilies += ", DejaVu Sans";
+			} else if (Platform.isMacintosh) {
+				fontFamilies += ", Geeza Pro";
+			}
 		}
 
 		if (Platform.isSafari) {
@@ -1367,7 +1379,7 @@ class TextClip extends NativeWidgetClip {
 			var r : Dynamic = untyped Browser.document.selection.createRange();
 			if (r == null) return 0;
 
-			var re = nativeWidget.createTextRange();
+			var re : Dynamic = nativeWidget.createTextRange();
 			var rc = re.duplicate();
 			re.moveToBookmark(r.getBookmark());
 			untyped rc.setEndPoint('EndToStart', re);
@@ -1454,17 +1466,24 @@ class TextClip extends NativeWidgetClip {
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 
-		if (Platform.isSafari && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
 
 	private function updateTextWidth() : Void {
-		if (nativeWidget != null) {
-			var textNodeWidth = getTextNodeMetrics(nativeWidget).width;
-			if (textNodeWidth != null && textNodeWidth > 0) {
-				var textWidth = textNodeWidth / (untyped this.transform ? untyped this.transform.worldTransform.a : 1);
-
+		if (nativeWidget != null && metrics != null) {
+			var textNodeMetrics = getTextNodeMetrics(nativeWidget);
+			var textNodeWidth = textNodeMetrics.width;
+			var textNodeHeight = textNodeMetrics.height;
+			if (textNodeWidth != null && textNodeWidth > 0 && textNodeHeight != null && textNodeHeight > 0) {
+				var textWidth =
+					untyped this.transform
+						? (
+							(textNodeWidth * (1 - Math.pow(untyped this.transform.worldTransform.c, 2)) / untyped this.transform.worldTransform.a)
+							+ Math.abs(textNodeHeight * untyped this.transform.worldTransform.c)
+						)
+						: textNodeWidth;
 				if (textWidth != metrics.width) {
 					metrics.width = textWidth;
 					this.emitEvent('textwidthchanged');

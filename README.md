@@ -80,6 +80,10 @@ There is a blog about flow here:
 
 https://flow9.org/
 
+There is a YouTube channel here:
+
+https://www.youtube.com/channel/UC9lxa2X3hMFQKaKnn-sq2Pg
+
 There is a chat in Telegram for discussions about flow:
 
 https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ

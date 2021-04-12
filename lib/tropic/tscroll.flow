@@ -493,8 +493,12 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					|> (\t ->
 						if (nativeScroll())
 							TScrollRectT(scrollPosition, boxWH, t, enabled)
-						else
-							TCrop2(scrollPosition, boxWH, cropEnabled, t)
+						else {
+							sPosition =
+								if (isRTL) fselect2(maxWH, scrollPosition, FLift2(\mwh, sp -> Point(mwh.width - sp.x, sp.y)))
+								else scrollPosition;
+							TCrop2(sPosition, boxWH, cropEnabled, t)
+						}
 					)
 				),
 				eitherMap(
@@ -532,7 +536,9 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 									)]
 								else []
 							])
-							|> (\t -> if (vertical) TLines(t) else TColsDir(t, isRTL));
+							// Gradients pre-built geometrically to be left and right
+							// and this does not depend of text direction, so TCols.
+							|> (\t -> if (vertical) TLines(t) else TCols(t));
 						}
 						TGroup2(
 							TShowLazy(
@@ -725,6 +731,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	// Reverse mouse wheel
 	reverseWheel = contains(style, TReverseMouseWheel());
 	disableOutOfBounds = extractStruct(style, TScrollDisableOutOfBounds(const(false))).disable;
+	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
 
 	axisEnabled = extractStruct(style, TScrollAxisEnabled(const(true), const(true)));
 	xEnabled = axisEnabled.x;
@@ -827,7 +834,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		if (getValue(moving) && isCurrentInteractionItemId(manager, scrollId) && getValue(manager.dragging) == -1) {
 			sp = getValue(scrollPosition);
 
-			dx = if (fgetValue(xEnabled)) ^startPoint.x - getValue(currentPoint).x else 0.;
+			dx = if (fgetValue(xEnabled)) (^startPoint.x - getValue(currentPoint).x) * (if (isRTL) -1. else 1.) else 0.;
 			nx = sp.x + dx;
 
 			dy = if (fgetValue(yEnabled)) ^startPoint.y - getValue(currentPoint).y else 0.;
@@ -1182,13 +1189,14 @@ createTScrollBars(
 		contentSize = sizeFn(contentWH);
 		scale = fdivide(boxSize, contentSize);
 
-		updateScrollPosition = \coord -> {
+		updateScrollPosition = \coord0 -> {
 			contentSz = fgetValue(contentSize);
 			boxSz = fgetValue(boxSize);
 			scl = fgetValue(scale);
 			height = getValue(scrollbarLength);
 			gap = getValue(barGap);
 
+			coord = if (horizontal && isRTL) boxSz - gap - coord0 else coord0;
 			ncoord = (coord - height / 2.) / scl / (boxSz + gap) * boxSz;
 			newCoord = max(0., min(ncoord, contentSz - boxSz));
 
@@ -1199,7 +1207,7 @@ createTScrollBars(
 			TShowLazy(fand(axEnabled, fand(fless(scale, const(1.)), barStyle.visible)), \ -> {
 				prevPosition = ref if (horizontal) getValue(scrollPosition).x else getValue(scrollPosition).y;
 
-				translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
+				translatePoint = fselect4(boxSize, scrollPosition, barGap, scrollbarLength, \boxSz, sp, gap, barLen -> {
 					if (horizontal) {
 						if (sp.x != ^prevPosition) {
 							prevPosition := sp.x;
@@ -1215,7 +1223,13 @@ createTScrollBars(
 					}
 
 					scl = fgetValue(scale);
-					coord2point(if (boxSz > 0.) point2coord(sp) * scl * (boxSz + gap) / boxSz else 0.)
+					coord =
+						if (boxSz > 0.) {
+							if (horizontal && isRTL) boxSz - barLen - point2coord(sp) * scl * (boxSz + gap) / boxSz
+							else point2coord(sp) * scl * (boxSz + gap) / boxSz
+						} else 0.;
+
+					coord2point(coord)
 				});
 
 				thickness =

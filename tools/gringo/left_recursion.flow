@@ -1,0 +1,74 @@
+import tools/gringo/utils;
+import tools/gringo/gringo_pretty;
+import math/math;
+
+export {
+	/*
+	This does left recursion rewriting
+		e1 = e1 "+" e2 | rest
+		->
+		e1 = rest ("+" e2 )*;
+
+	This is unfortunately wrong in the light of semantic actions
+
+		e1 = e1 "+" e2 { $e2+$1 } | rest;
+		->
+		e1 = rest ("+" e2 { $e2+$e1 } )*;
+
+	where $e1 is not defined anymore.
+
+	We should have
+
+		e1 = rest $rest ("+" e2 { + $e2 })+;
+
+	since e1 is not defined.
+	*/
+	rewriteLeftRecursion(g : GTerm) -> GTerm;
+}
+
+rewriteLeftRecursion(g : GTerm) -> GTerm {
+	switch (g) {
+		GRule(rule, term, body): {
+			nterm = switch (term) {
+				GChoice(left, rest): {
+					switch (left) {
+						GSeq(first, rtail): {
+							switch (first) {
+								GVar(lid): {
+									if (lid == rule) {
+										/*
+										We do this transformation:
+
+											e1 = e1 tail | rest
+											== GRule(e1, GChoice(GSeq(GVar(rule), tail), rest))
+
+											-> 
+
+											e1 = rest tail*;
+											== GRule(e1, GSeq(rest, GStar(tail)))
+										*/
+										GSeq(rest, GStar(rtail))
+									} else {
+										term
+									}
+								}
+								default: term;
+							}
+						}
+						GChoice(rleft, rrest): {
+							println("TODO: OK, we do not handle this association of choices yet");
+							term;
+						}
+						default: term;
+					}
+				}
+				default: term;
+			};
+			GRule(rule, nterm, rewriteLeftRecursion(body));
+		}
+		GSeq(left, right): {
+			GSeq(rewriteLeftRecursion(left), rewriteLeftRecursion(right));
+		}
+		default: g;
+	}
+}
