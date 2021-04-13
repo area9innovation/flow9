@@ -11,9 +11,15 @@ import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 @SuppressWarnings("unchecked")
 public class HttpSupport extends NativeHost {
@@ -271,10 +277,102 @@ public class HttpSupport extends NativeHost {
 			Func1<Object, String> onData,
 			Func1<Object, String> onError, 
 			Func2<Object, Double, Double> onProgress) {
-		// TODO
-		System.out.println("uploadNativeFile not implemented");
 
-		return no_op;
+		File _file = (File)file;
+		String contentType = null;
+		try {
+			contentType = Files.probeContentType(_file.toPath());
+		} catch (FileNotFoundException e) {
+			onError.invoke("File not found " + _file.toPath() + " " + e.getMessage());
+		} catch (IOException e) {
+			onError.invoke("IO exception while getting file info " + _file.toPath() + " " + e.getMessage());
+		}
+
+		HttpURLConnection con = null;
+		URL urlObj = null;
+		try {
+			urlObj = new URL(url);
+		} catch (MalformedURLException e) {
+			onError.invoke("Malformed url " + url + " " + e.getMessage());
+		}
+
+		String boundary = Long.toHexString(System.currentTimeMillis()); // Just generate some unique random value.
+		String CRLF = "\r\n"; // Line separator required by multipart/form-data.
+
+		try {
+			con = (HttpURLConnection) urlObj.openConnection();
+			onOpen.invoke();
+
+			this.addHeaders(con, headers);
+			con.setDoOutput(true);
+			con.setRequestMethod("POST");
+
+			con.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+			con.setUseCaches(false);
+
+			try (
+				OutputStream output = con.getOutputStream();
+				PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), true);
+			) {
+
+				// Send normal param.
+				for (Object param : params) {
+					Object [] keyvalue = (Object []) param;
+					String key = (String) keyvalue[0];
+					String value = (String) keyvalue[1];
+					writer.append("--" + boundary).append(CRLF);
+					writer.append("Content-Disposition: form-data; name=\"" + URLEncoder.encode(key, StandardCharsets.UTF_8) + "\"").append(CRLF);
+					writer.append("Content-Type: text/plain; charset=" + StandardCharsets.UTF_8).append(CRLF);
+					writer.append(CRLF).append(URLEncoder.encode(value, StandardCharsets.UTF_8)).append(CRLF).flush();
+				}
+
+				// Send binary file.
+				writer.append("--" + boundary).append(CRLF);
+				writer.append("Content-Disposition: form-data; name=\"binaryFile\"; filename=\"" + _file.getName() + "\"").append(CRLF);
+				writer.append("Content-Type: " + contentType).append(CRLF);
+				writer.append("Content-Transfer-Encoding: binary").append(CRLF);
+				writer.append(CRLF).flush();
+				Files.copy(_file.toPath(), output);
+				output.flush(); // Important before continuing with writer!
+				writer.append(CRLF).flush(); // CRLF is important! It indicates end of boundary.
+
+				// // End of multipart/form-data.
+				writer.append("--" + boundary + "--").append(CRLF).flush();
+			} catch (IOException e) {
+				onError.invoke("IO exception while sending data to " + url + " " + e.getMessage());
+			}
+
+			int responseCode = con.getResponseCode();
+
+			// TODO: Make this asynchronous
+			StringBuffer response = new StringBuffer();
+
+			try (
+				BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+			) {
+				String inputLine;
+				while ((inputLine = in.readLine()) != null) {
+					response.append(inputLine);
+					response.append('\n');
+				}
+				in.close();
+			} catch (IOException e) {
+				onError.invoke("IO exception while reading reponse " + url + " " + e.getMessage());
+			}
+
+			if (responseCode != 200) {
+				onError.invoke("Response code: " + Integer.toString(responseCode) + ", data: " + response.toString());
+			} else {
+				onData.invoke(response.toString());
+			}
+		} catch (IOException e) {
+			onError.invoke("IO exception " + url + " " + e.getMessage());
+		} finally {
+			if (con != null) {
+				con.disconnect();
+			}
+		}
+		return null;
 	}
 
 	private Func0<Object> no_op = new Func0<Object>() {
