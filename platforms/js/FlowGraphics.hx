@@ -335,7 +335,7 @@ class FlowGraphics extends Graphics {
 		updateLocalBounds();
 
 		if (untyped Math.isFinite(this._localBounds.minX) && Math.isFinite(this._localBounds.minY)) {
-			var shouldFixBound = RenderSupport.RendererType == 'html' && lineWidth != null && graphicsData != null && graphicsData.length > 0 && graphicsData[0].lineAlpha == 0;
+			var shouldFixBound = lineWidth != null && graphicsData != null && graphicsData.length > 0 && graphicsData[0].lineAlpha == 0;
 			graphicsBounds.minX = untyped this._localBounds.minX - (shouldFixBound ? lineWidth / 2.0 : 0.0);
 			graphicsBounds.minY = untyped this._localBounds.minY - (shouldFixBound ? lineWidth / 2.0 : 0.0);
 			graphicsBounds.maxX = untyped this._localBounds.maxX + (shouldFixBound ? lineWidth / 2.0 : 0.0);
