@@ -286,7 +286,7 @@ Optimizations possible in generated Gringo parser:
 
 - Support multiple grammars to allow composition
 
-Consider to make an overly, where the semantic actions can be written
+Consider to make an overlay, where the semantic actions can be written
 inline:
 
 	"if" !letterOrDigit ws "(" ws exp ")" ws exp "else" ws exp \PIf($0, $1, $2)
