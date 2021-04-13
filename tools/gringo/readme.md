@@ -286,6 +286,19 @@ Optimizations possible in generated Gringo parser:
 
 - Support multiple grammars to allow composition
 
+Consider to make an overly, where the semantic actions can be written
+inline:
+
+	"if" !letterOrDigit ws "(" ws exp ")" ws exp "else" ws exp \PIf($0, $1, $2)
+
+where we look at the right hand side of \, and find the biggest $, and use
+that to extract that number of elements from the stack, and thus, can generate
+the action tree.
+
+semaction = "\" sem-exp
+	sem-exp = id "(" sem-exps ")" | $ int;
+	sem-exps = $"list" sem-exp ("," sem-exp $"cons")* | $"list";
+
 ## Inspiration
 
 Optimizing PEG grammars:
