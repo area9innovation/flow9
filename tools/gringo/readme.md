@@ -7,6 +7,13 @@ or an AST.
 It is designed to allow succinct and composable grammars to be
 written.
 
+## YouTube video
+
+There is a video showing how to write a grammar using Gringo
+here:
+
+https://youtu.be/ZnIlsZbY4JY
+
 ## Grammar
 
 The (simplified) grammar for Gringo itself is given here:
