@@ -7,6 +7,13 @@ or an AST.
 It is designed to allow succinct and composable grammars to be
 written.
 
+## YouTube video
+
+There is a video showing how to write a grammar using Gringo
+here:
+
+https://youtu.be/ZnIlsZbY4JY
+
 ## Grammar
 
 The (simplified) grammar for Gringo itself is given here:
@@ -181,6 +188,11 @@ exp_parser.flow using the `compile=1` option to Gringo.
 So when you start a new grammar, we recommend you use approach 1. Once your grammar and
 semantic actions are complete, then switch to the third approach for the best performance.
 
+We also recommend that you consider to use `gringoParseWithActionCheck` which will check
+that any actions ($"action") mentioned are present in your semantic actions, as well
+as do a coverage analysis to check if a specific text parsed covers all semantic actions.
+See `parseExpWithPreprocessedGringo` in the tutorial for an example.
+
 ## Semantic action helper
 
 To help with semantic actions, the `gringoTypedAction` helper provides a number of
@@ -280,6 +292,19 @@ Optimizations possible in generated Gringo parser:
 - Add error message when we have left recursion deep inside a choice
 
 - Support multiple grammars to allow composition
+
+Consider to make an overlay, where the semantic actions can be written
+inline:
+
+	"if" !letterOrDigit ws "(" ws exp ")" ws exp "else" ws exp \PIf($0, $1, $2)
+
+where we look at the right hand side of \, and find the biggest $, and use
+that to extract that number of elements from the stack, and thus, can generate
+the action tree.
+
+semaction = "\" sem-exp
+	sem-exp = id "(" sem-exps ")" | $ int;
+	sem-exps = $"list" sem-exp ("," sem-exp $"cons")* | $"list";
 
 ## Inspiration
 

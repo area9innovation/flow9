@@ -43,7 +43,7 @@ export {
 		// Append the second element to the first list/array
 		push : (?, ?) -> ?,
 		// Operators
-		operators : GringoTypedOperators<?>
+		operators : GringoTypedOperators<?>,
 	) -> GringoAction<List<?>>;
 
 	GringoTypedOperators(
@@ -56,7 +56,9 @@ export {
 		// Ternary operators
 		ternops : Tree<string, (?, ?, ?) -> ?>,
 		// Quadranary operators
-		quadops : Tree<string, (?, ?, ?, ?) -> ?>
+		quadops : Tree<string, (?, ?, ?, ?) -> ?>,
+		// General fallback construct, which gets the entire stack and returns the new stack
+		stackops : Tree<string, (List<?>) -> List<?>>,
 	);
 
 	// This does a parse of this text with typed result values of type ?. 
@@ -152,8 +154,14 @@ gringoTypedAction(
 											mquadop = lookupTree(ops.quadops, command);
 											switch (mquadop) {
 												None(): {
-													println("Unknown Command " + command);
-													stack;
+													mstackop = lookupTree(ops.stackops, command);
+													switch (mstackop) {
+														None(): {
+															println("Unknown Command " + command);
+															stack;
+														}
+														Some(stackop): stackop(stack);
+													}
 												}
 												Some(quadop): {
 													pop(stack, \h3, t1 -> {
@@ -211,35 +219,39 @@ gringoTypedParse(
 		makeList(),
 		makeTree(),
 		makeList(),
+		0,
 		0
 	);
 	success = parser(pacc);
-	gringoEndGame(text, success, pacc.i, pacc.output, pacc.errors, defaultVal, onError);
+	gringoEndGame(text, success, pacc.maxi, pacc.output, pacc.errors, defaultVal, onError);
 }
 
 gringoEndGame(text : string, success : bool, i : int, output : List<?>, 
 	errors : Tree<int, string>, defaultVal : ?, onError : (string) -> void) -> ? {
 
-	// We report errors here
-	traverseInOrder(errors, \pos, error -> {
-		resolver = makeLineResolver(text);
-		linecol = findLine(resolver, pos);
-		onError(
-			i2s(linecol.lineno) + ":" + i2s(linecol.column) + ": " + error
-			+ "\n" + linecol.line
-			+ "\n" + lpad("^", " ", linecol.lineIndex - 1)
-		);
-	});
-
+	// First, check if we did not parse all, since this can lead to "down the line" errors,
+	// which are not right, so we want this first
 	if (i < strlen(text) || !success) {
-		resolver = makeLineResolver(text);
+		resolver = makeLineResolver(text)	;
 		linecol = findLine(resolver, i); // maxi
 		onError(
 			i2s(linecol.lineno) + ":" + i2s(linecol.column) + ": Parsing ended here"
 			+ "\n" + linecol.line
 			+ "\n" + lpad("^", " ", linecol.lineIndex - 1)
 		);
+	} else {
+		// We report other errors here
+		traverseInOrder(errors, \pos, error -> {
+			resolver = makeLineResolver(text);
+			linecol = findLine(resolver, pos);
+			onError(
+				i2s(linecol.lineno) + ":" + i2s(linecol.column) + ": " + error
+				+ "\n" + linecol.line
+				+ "\n" + lpad("^", " ", linecol.lineIndex - 1)
+			);
+		});
 	}
+
 	switch (output) {
 		EmptyList(): {
 			onError("Failing back to default value");
