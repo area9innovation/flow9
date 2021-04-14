@@ -95,6 +95,10 @@ export {
 	// Set (add or modify) a config field(s) in conf struct.
 	setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig;
 	setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig;
+
+	// Gather includes from external flow.config's, listed in include_extern as CSV.
+	// When gathering external includes, relative paths are resolved to absolute.
+	fcExternIncludes(include_extern : string) -> [string];
 }
 
 getFlowDir() -> string {
@@ -497,4 +501,29 @@ setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerCo
 
 setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig {
 	fold(opt_pairs, conf, \acc, pair -> setConfigOption(acc, pair.first, pair.second));
+}
+
+fcExternIncludes(include_extern : string) -> [string] {
+	if (include_extern == "") [] else {
+		configs_to_merge = filter(strSplit(include_extern, ","), neq(""));
+		fold(configs_to_merge, [], \acc, conf_file -> {
+			if (!fileExists(conf_file)) {
+				println("extern config file '" + conf_file + "' doens't exist");
+				acc;
+			} else {
+				conf_str = getFileContent(conf_file);
+				conf_dir = fcDirName(conf_file);
+				extern_conf = parseFlowConfig(conf_str, conf_dir);
+				includes_str = lookupTreeDef(extern_conf, "include", "");
+				acc1 = concat(acc, [resolveRelativePath(conf_dir)]);
+				if (includes_str == "") acc1 else {
+					includes = filter(strSplit(includes_str, ","), neq(""));
+					concat(acc1, map(includes, \incl ->
+						if (isAbsolutePath(incl)) incl else
+						resolveRelativePath(pathCombine(fcDirName(conf_file), incl))
+					));
+				}
+			}
+		});
+	}
 }
