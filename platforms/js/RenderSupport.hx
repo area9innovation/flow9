@@ -3448,11 +3448,18 @@ class RenderSupport {
 	}
 
 
-	public static function setAttribute(element : Element, name : String, value : String) : Void {
-		if (name == "innerHTML")
-			element.innerHTML = value
-		else
-			element.setAttribute(name, value);
+	public static function setAttribute(element : Element, name : String, value : String, ?safe : Bool = false) : Void {
+		if (safe) {
+			if (name == "innerHTML")
+				element.innerHTML = untyped __js__("DOMPurify.sanitize(value)")
+			else
+				element.setAttribute(name, untyped __js__("DOMPurify.sanitize(value)"));
+		} else {
+			if (name == "innerHTML")
+				element.innerHTML = value
+			else
+				element.setAttribute(name, value);
+		}
 	}
 
 	public static function removeAttribute(element : Element, name : String) : Void {
