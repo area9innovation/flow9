@@ -955,7 +955,10 @@ class RenderSupport {
 			try {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
-			e.preventDefault();
+			// On iOS 14 preventing default on 'touchstart' leads to bug with trackpad : 'pointer*' events disapper
+			if (!((Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1") && Platform.isIOS && Platform.browserMajorVersion >= 14 && RendererType == 'html' && e.type == 'touchstart')) {
+				e.preventDefault();
+			}
 
 			if (e.touches != null) {
 				TouchPoints = e.touches;
@@ -1061,6 +1064,13 @@ class RenderSupport {
 				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+				// On iOS 14 swiping on touchscreen leads to bug with trackpad events : 'pointer*' become 'mouse*'
+				if ((Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1") && Platform.isIOS && Platform.browserMajorVersion >= 14) {
+					addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
+					addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
+					addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
+					addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
+				}
 			}
 
 			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
