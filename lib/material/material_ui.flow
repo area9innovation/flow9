@@ -147,6 +147,14 @@ export {
 		// You can observe the font, but not change it.
 		MEllipsisTextCurrentFont(fontB : DynamicBehaviour<MFontStyle>);
 
+	MDynamicDataTableLightweight(
+		columns : [MColumnDynamic],
+		data : Transform<[?]>,
+		rowsFn : (?) -> [Material],
+		style : [MDynamicDataTableLightweightStyle]
+	) -> Material;
+	MDynamicDataTableLightweightStyle ::= MPagination, MPaginationAutoScaling, MNoSeparators, MRowHeight, MHeaderRowHeight, MOnListClick, MEnabled;
+
 	// Construct an HTML stage with the given metrics
 	MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material;
 
@@ -1149,6 +1157,230 @@ MEllipsisTextTwoFonts(
 		})
 	})
 	|> (\m -> MAttachAvailableWidth(m, avWidth))
+}
+
+MDynamicDataTableLightweightStyle ::= MPagination, MPaginationAutoScaling, MNoSeparators, MRowHeight, MHeaderRowHeight, MOnListClick, MEnabled;
+
+MDynamicDataTableLightweight(columns : [MColumnDynamic], data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MDynamicDataTableLightweightStyle]) -> Material {
+	rowsCountB = flength(data);
+
+	cellBorder = 16.;
+	externalBorder = 16.;
+	footerHeight = 56.;
+	rowHeight = extractStruct(style, MRowHeight(if (extractStruct(style, MCondensed(false)).condensed) 32. else 48.)).height;
+	headerRowHeight = extractStruct(style, MHeaderRowHeight(rowHeight)).height;
+	separators = !contains(style, MNoSeparators());
+	separatorsHeight = b2d(separators);
+	rowsBoxH = make(0.);
+
+	page = make(Pair(0, 0));
+	pagination = extractStruct(style, MPagination(make(0), []));
+	autoPagination = contains(style, MPaginationAutoScaling());
+
+	columnWidths = map(columns, \c -> fselect(c.width, FLift(\w -> i2d(w) + cellBorder)));
+	tableWidth = fselect(fmerge(columnWidths), FLift(\cWs -> dsum(cWs) + 2. * externalBorder));
+	cellBox = \i, h -> TSizedWidth(columnWidths[i], if (h) headerRowHeight else rowHeight);
+
+	onClick : MOnListClick = extractStruct(style, MOnListClick(const(false), nop1));
+
+	alignCellContent = \content, box, colstyle -> {
+		alignment = 
+			switch (commonAlignment2abs(extractCommonAlignment(colstyle), getDefaultRtl())) {
+				RightAlign() : 1.;
+				CenterAlign() : 0.5;
+				default : 0.;
+			}
+
+		MTweak(
+			[TAlign(const(alignment), const(0.5))],
+			MBorder(cellBorder / 2., 0., cellBorder / 2., 1.,
+				MAvailable(content, MBorderA(-cellBorder, 0., 0., -1., box)),
+			),
+			box
+		)
+	}
+
+	header =
+		mapi(columns, \i, c -> {
+			MSelect(c.header, \txt -> MEllipsisText(txt, [MCaptionColumn()]))
+			|> (\m ->
+				if (c.tooltip == const(""))
+					m
+				else
+					MTooltip(m, MSelect(c.tooltip, \t -> MText(t, [MTooltipDesktop()])), [MBlockHover()])
+			)
+			|> (\m -> alignCellContent(m, cellBox(i, true), c.style))
+		})
+		|> MColsA
+		|> MBorderLeftRight(externalBorder)
+		|> (\m -> if (separators) MLines2A(m, MSeparator(true)) else m);
+	
+	rows = fselect2(data, page, FLift2(\dat, pg ->
+		map(subrange(dat, pg.first, pg.second), rowsFn)
+	));
+
+	content = MSelect(rows, \rws ->
+		mapi(rws, \j, cells ->
+			mapi(cells, \i, cell -> {
+				cellFixed = switch (cell) {
+					MText(txt, st): MEllipsisText(txt, concat(st, [MShowTooltip(const(true))]));
+					default : cell;
+				}
+				alignCellContent(cellFixed, cellBox(i, false), columns[i].style)
+			})
+			|> MColsA
+			|> MBorderLeftRight(externalBorder)
+			|> (\m -> MComponent([
+					MHighlightOnHover(const(true)),
+					MOnClick(\ -> if (fgetValue(onClick.enabled)) {
+						pg = getValue(page);
+						onClick.onClick(j + pg.first * pg.second)
+					}),
+					MRippleType(const(MRippleFill()))
+				], \__ -> m)
+			)
+			|> (\m -> if (separators) MLines2A(m, MSeparator(true)) else m)
+		)
+		|> MLinesA
+	)
+	|> (\m -> MAttachAvailableHeight(m, rowsBoxH));
+
+	footer = MDTLightweightFooter(page, pagination, autoPagination, rowsCountB, footerHeight);
+
+	MLines([
+		header,
+		content,
+		footer
+	])
+	|> (\m -> MAvailable(m, TFillWYT(tableWidth)))
+	|> (\m ->
+		if (autoPagination)
+			MConstruct([
+				make2Subscribe(rowsBoxH, rowsCountB, \height, rowsCount -> {
+					newRowsCount = forceRange(floor(height / (rowHeight + separatorsHeight)), 3, rowsCount);
+
+					pg = getValue(page);
+					if (pg.second != newRowsCount)
+						next(page,
+							Pair(
+								forceRange(
+									pg.first * newRowsCount / max(pg.second, 1),
+									0,
+									max(rowsCount - 1, 0)
+								),
+								newRowsCount
+							)
+						);
+				})],
+				m
+			)
+		else m
+	)
+	|> (\m -> MComponentGroup(m, [extractStruct(style, MEnabled(const(true)))]))
+}
+
+MDTLightweightFooter(
+	page : DynamicBehaviour<Pair<int, int>>,
+	pagination : MPagination,
+	autoPagination : bool,
+	rowsCountB : Transform<int>,
+	footerHeight : double
+) -> Material {
+	MSelect(rowsCountB, \rowsCount -> {
+		makeFooterButton = \title : string, makeUpdatedRow : (Pair<int, int>) -> int, makeEnabled : (Pair<int, int>) -> bool ->
+			MIconButton(
+				title,
+				\ -> {
+					pg = getValue(page);
+					newPageNumber = makeUpdatedRow(pg);
+					nextDistinct(page, Pair(newPageNumber, pg.second));
+				},
+				[],
+				[MEnabled(fselect(page, FLift(makeEnabled)))]
+			)
+			|> MCenterY;
+
+		showFooter =
+			eitherMap(minA(pagination.rowsPerPage),
+				\rpp -> const(rowsCount >= rpp),
+				fselect(page, FLift(\pg -> rowsCount > pg.second))
+			);
+
+		showButtons =
+			fselect(fSecondOfPair(page), FLift(\rpp -> ceil(i2d(rowsCount) / i2d(rpp)) > 2));
+
+		if (!autoPagination) {
+			selectedRowsPerPage = forceRange(getValue(pagination.current), 0, length(pagination.rowsPerPage) - 1);
+			nextDistinct(page, Pair(getValue(page).first, pagination.rowsPerPage[selectedRowsPerPage]));
+		}
+		
+		concatA([
+			[TFillX()],
+			if (length(pagination.rowsPerPage) > 1)
+				[
+					MText(_("Rows per Page:"), [MCaption()])
+					|> MCenterY
+					|> (\m -> MBorder(8., 0., 16., 0., m)),
+					
+					MDropDown(
+						pagination.current,
+						"",
+						map(pagination.rowsPerPage, toString),
+						[MDataTableFooter(), MCroppedButton()]
+					)
+					|> (\m ->
+						MConstruct([
+							makeSubscribe2(pagination.current, \c -> {
+								nextDistinct(page, Pair(getValue(page).first, pagination.rowsPerPage[c]));
+							})
+						], m)
+					)
+					|> MCenterY
+					|> MBorderRight(16.)
+				]
+			else
+				[],
+
+			[
+				MSelect(page, \pg -> {
+					text =  formatString(
+						_("%3-%2 of %1"),
+						[i2s(rowsCount), i2s(max(min(pg.first + pg.second, rowsCount), 0)), i2s(min(pg.first + 1, rowsCount))]
+					);
+
+					MText(text, [MCaption()])
+				})
+				|> MCenterY
+				|> MBorderRight(16.),
+				makeFooterButton(
+					"first_page",
+					\__ -> 0,
+					\pg -> pg.first > 0
+				)
+				|> (\m -> MShow(showButtons, m)),
+				makeFooterButton(
+					"navigate_before",
+					\pg -> max(pg.first - pg.second, 0),
+					\pg -> pg.first > 0
+				),
+				makeFooterButton(
+					"navigate_next",
+					\pg -> min(pg.first + pg.second, rowsCount),
+					\pg -> (rowsCount > 0) && (pg.first + pg.second < rowsCount)
+				),
+				makeFooterButton(
+					"last_page",
+					\pg -> (rowsCount - 1) / pg.second * pg.second,
+					\pg -> pg.first + pg.second < rowsCount
+				)
+				|> (\m -> MShow(showButtons, m))
+			]
+		])
+		|> MColsA
+		|> (\m -> MAvailableHeight(m, const(footerHeight)))
+		|> (\m -> MTransformTAcc2(\t2a -> TAcc(t2a(m) with yFillers = const(0.))))
+		|> (\m -> MShow(showFooter, m))
+	});
 }
 
 MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material {
