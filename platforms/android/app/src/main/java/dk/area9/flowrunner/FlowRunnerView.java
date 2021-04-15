@@ -11,8 +11,8 @@ import javax.microedition.khronos.opengles.GL10;
 
 import android.graphics.PixelFormat;
 import android.opengl.GLSurfaceView;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.GestureDetector.SimpleOnGestureListener;

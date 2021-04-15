@@ -1,6 +1,6 @@
 package dk.area9.flowrunner;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import org.java_websocket.WebSocket;
 import org.java_websocket.client.WebSocketClient;
