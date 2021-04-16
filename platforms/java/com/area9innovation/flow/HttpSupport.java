@@ -321,9 +321,9 @@ public class HttpSupport extends NativeHost {
 					String key = (String) keyvalue[0];
 					String value = (String) keyvalue[1];
 					writer.append("--" + boundary).append(CRLF);
-					writer.append("Content-Disposition: form-data; name=\"" + URLEncoder.encode(key, StandardCharsets.UTF_8) + "\"").append(CRLF);
-					writer.append("Content-Type: text/plain; charset=" + StandardCharsets.UTF_8).append(CRLF);
-					writer.append(CRLF).append(URLEncoder.encode(value, StandardCharsets.UTF_8)).append(CRLF).flush();
+					writer.append("Content-Disposition: form-data; name=\"" + URLEncoder.encode(key, StandardCharsets.UTF_8.name()) + "\"").append(CRLF);
+					writer.append("Content-Type: text/plain; charset=" + StandardCharsets.UTF_8.name()).append(CRLF);
+					writer.append(CRLF).append(URLEncoder.encode(value, StandardCharsets.UTF_8.name())).append(CRLF).flush();
 				}
 
 				// Send binary file.
