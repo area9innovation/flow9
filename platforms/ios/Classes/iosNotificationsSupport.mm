@@ -125,7 +125,8 @@ void iosNotificationsSupport::doCancelLocalNotification(int notificationId)
 void iosNotificationsSupport::doGetFBToken(int cb_root)
 {
 #ifdef FLOW_PUSH_NOTIFICATIONS
-    deliverFBTokenTo(cb_root, NS2UNICODE([FIRMessaging messaging].FCMToken));
+    NSString* token = [FIRMessaging messaging].FCMToken;
+    deliverFBTokenTo(cb_root, NS2UNICODE(token != nil ? token : @""));
 #endif
 }
 
