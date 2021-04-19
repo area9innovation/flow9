@@ -1,0 +1,89 @@
+import ds/egraph;
+
+export {
+	// Extracts the cheapest enode for each class
+	extractEGraph(e : EGraph<?>, costFn : (ENode<?>, [EClassCost<?>]) -> EClassCost<?>) -> ExtractorEnv<?>;
+
+	EClassCost(
+		// The cost of this
+		cost : int,
+		// The node that wins
+		node : ENode<?>
+	);
+}
+
+ExtractorEnv(
+	egraph : EGraph<?>,
+	costFn : (ENode<?>, [EClassCost<?>]) -> EClassCost<?>,
+	// The cheapest cost so far per class
+	costs : ref Tree<int, EClassCost<?>>,
+);
+
+// https://github.com/egraphs-good/egg/blob/main/src/extract.rs
+extractEGraph(e : EGraph<?>, costFn : (ENode<?>, [EClassCost<?>]) -> EClassCost<?>) -> ExtractorEnv<?> {
+	env = ExtractorEnv(
+		e,
+		costFn,
+		ref makeTree()
+	);
+	calcEClassCosts(env);
+	env;
+}
+
+calcEClassCosts(e : ExtractorEnv<?>) -> void {
+	work = ref false;
+	roots = getEClasses(e.egraph);
+	iterSet(roots, \eclass : int -> {
+		mcost = getEClassCost(e, eclass);
+		mcost ?? {
+			mecost = lookupTree(^(e.costs), eclass);
+			switch (mecost) {
+				None(): {
+					e.costs := setTree(^(e.costs), eclass, mcost);
+					work := true;
+				}
+				Some(ec): {
+					// OK, there is an existing cost.
+					// Is the new one cheaper?
+					if (mcost.cost < ec.cost) {
+						e.costs := setTree(^(e.costs), eclass, mcost);
+						work := true;
+					}
+				}
+			}
+		} : {}
+	});
+	if (^work) {
+		calcEClassCosts(e);
+	}
+}
+
+getEClassCost(env : ExtractorEnv<?>, eclass : int) -> Maybe<EClassCost<?>> {
+	nodes = getEClassNodes(env.egraph, eclass);
+	foldSet(nodes, None(), \acc, node -> {
+		ncost = getENodeCost(env, node);
+		switch (ncost) {
+			None(): acc;
+			Some(cost): {
+				switch (acc) {
+					None(): Some(cost);
+					Some(ec): {
+						if (cost.cost < ec.cost) {
+							Some(cost);
+						} else acc;
+					}
+				}
+			}
+		}
+	});
+}
+
+getENodeCost(env : ExtractorEnv<?>, node : ENode<?>) -> Maybe<EClassCost<?>> {
+	childcosts = filtermap(node.args, \arg -> {
+		getEClassCost(env, arg)
+	});
+	if (length(childcosts) == length(node.args)) {
+		cost = env.costFn(node, map(childcosts, \cc -> cc));
+		Some(cost);
+	} else None();
+}
