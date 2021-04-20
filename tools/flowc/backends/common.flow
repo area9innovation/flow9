@@ -176,6 +176,8 @@ export {
 		debug : bool,
 		verbose : int,
 		threadId : int,
+		dependencies : [string], // like: "io.jsonwebtoken:jjwt-api:0.11.0"
+		builder : string         // possible builders: "mvn", "gradle", "raw"
 	);
 
 	FiHTMLConfig(
@@ -393,31 +395,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 			))
 		} else None();
 
-	jar0 = getConfigParameter(config.config, "jar");
-	jar = if (jar0 != "1") jar0 else changeFileExt(config.flowfile, ".jar");
-	jv = if (jar == "" || isConfigParameterSet(config.config, "java")) {
-		dir = getConfigParameter(config.config, "java");
-		if (dir == "1") "javagen" else dir;
-	} else "javagen";
-	java_package = getConfigParameter(config.config, "java-package");
-	javaconfig =
-		if (jv != "")
-			Some(FiJavaConfig(
-				config.flowfile,
-				outdir,
-				fcConcatTarget(config, outdir, jv),
-				if (java_package == "") strReplace(config.flowfile, "/", ".") else java_package,
-				getConfigParameterDef(config.config, "java-main", fileNameOnly(config.flowfile)),
-				jar,
-				buildSet(filtermap(strSplit(getConfigParameterDef(config.config, "java-library", ""), ","), 
-					\n -> if (n == "") None() else Some(n)
-				)),
-				config.includes,
-				config.jsParams.debug,
-				config.verbose,
-				config.threadId,
-				)
-			) else None();
+	javaconfig = fcMakeJavaConfig(config, outdir);
 
 	rs = getConfigParameter(config.config, "rust");
 	rustconfig =
@@ -762,5 +740,74 @@ updateJsConfig(conf : CompilerConfig, file : string) -> CompilerConfig {
 			),
 			conf.threadId
 		)
+	}
+}
+
+fcMakeJavaConfig(config : CompilerConfig, outdir : string) -> Maybe<FiJavaConfig> {
+	if (!(isConfigParameterSet(config.config, "java") || isConfigParameterSet(config.config, "jar"))) {
+		None();
+	} else {
+		jar0 = getConfigParameter(config.config, "jar");
+		jar_file = if (jar0 != "1") jar0 else changeFileExt(config.flowfile, ".jar");
+
+		// Directory, where generated sources are placed
+		gen_dir0 = if (jar_file == "" || isConfigParameterSet(config.config, "java")) {
+			dir = getConfigParameter(config.config, "java");
+			if (dir == "1") "javagen" else dir;
+		} else "javagen";
+		gen_dir = fcConcatTarget(config, outdir, gen_dir0);
+
+		// Choose a builder
+		java_builder = getConfigParameter(config.config, "java-builder");
+
+		// Choose a java package
+		java_package0= getConfigParameter(config.config, "java-package");
+		java_package = if (java_package0 == "") strReplace(config.flowfile, "/", ".") else java_package0;
+
+		// Java main class
+		java_main = getConfigParameterDef(config.config, "java-main", fileNameOnly(config.flowfile));
+
+		// java library
+		java_library = buildSet(filter(strSplit(getConfigParameterDef(config.config, "java-library", ""), ","), isNotSpace));
+
+		// External dependencies
+		java_dependencies = filter(strSplit(getConfigParameter(config.config, "java-dependencies"), ","), isNotSpace);
+
+		make_conf = \ -> Some(FiJavaConfig(
+			config.flowfile,
+			outdir,
+			gen_dir,
+			java_package,
+			java_main,
+			jar_file,
+			java_library,
+			config.includes,
+			config.jsParams.debug,
+			config.verbose,
+			config.threadId,
+			java_dependencies,
+			java_builder,
+		));
+
+		if (java_builder == "gradle") {
+			gradle_version = filtermap(
+				strSplit(fcProgramVersion("gradle"), "\n"),
+				\line0 -> {
+					line = toLowerCase(line0);
+					if (startsWith(line, "gradle")) Some(substring(line, 7, strlen(line) - 7)) else None();
+				}
+			);
+			if (length(gradle_version) != 1) {
+				fcPrintln("no gradle is found in the system", config.threadId);
+				None();
+			} else if (s2d(gradle_version[0]) < 6.7) {
+				fcPrintln("gradle version is: " + gradle_version[0] + ", while should be >= 6.7", config.threadId);
+				None();
+			} else {
+				make_conf();
+			}
+		} else {
+			make_conf();
+		}
 	}
 }
