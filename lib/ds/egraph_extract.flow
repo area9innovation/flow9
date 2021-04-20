@@ -18,11 +18,13 @@ ExtractorEnv(
 	costFn : (ENode<?>, [EClassCost<?>]) -> EClassCost<?>,
 	// The cheapest cost so far per class
 	costs : ref Tree<int, EClassCost<?>>,
+	// What eclasses are we currently extracting? Attempt to avoid infinite loops
+	extracting : ref Set<int>,
 );
 
 // https://github.com/egraphs-good/egg/blob/main/src/extract.rs
 extractEGraph(e : EGraph<?>, costFn : (ENode<?>, [EClassCost<?>]) -> EClassCost<?>) -> Tree<int,  EClassCost<?>> {
-	env = ExtractorEnv(e, costFn, ref makeTree());
+	env = ExtractorEnv(e, costFn, ref makeTree(), ref makeSet());
 	calcEClassCosts(env);
 	^(env.costs);
 }
@@ -44,28 +46,34 @@ getEClassCost(env : ExtractorEnv<?>, eclass : int) -> Maybe<EClassCost<?>> {
 	mcost ?? {
 		Some(mcost)
 	} : {
-		nodes = getEClassNodes(env.egraph, eclass);
-		foldSet(nodes, mcost, \acc, node -> {
-			ncost = getENodeCost(env, node);
-			switch (ncost) {
-				None(): acc;
-				Some(cost): {
-					switch (acc) {
-						None(): {
-							env.costs := setTree(^(env.costs), eclass, cost);
-							Some(cost);
-						}
-						Some(ec): {
-							if (cost.cost < ec.cost) {
+		if (containsSet(^(env.extracting), eclass)) None()
+		else {
+			env.extracting := insertSet(^(env.extracting), eclass);
+			nodes = getEClassNodes(env.egraph, eclass);
+			res = foldSet(nodes, mcost, \acc, node -> {
+				ncost = getENodeCost(env, node);
+				switch (ncost) {
+					None(): acc;
+					Some(cost): {
+						switch (acc) {
+							None(): {
 								env.costs := setTree(^(env.costs), eclass, cost);
 								Some(cost);
-							} else acc;
+							}
+							Some(ec): {
+								if (cost.cost < ec.cost) {
+									env.costs := setTree(^(env.costs), eclass, cost);
+									Some(cost);
+								} else acc;
+							}
 						}
 					}
 				}
-			}
-		});
+			});
+			env.extracting := removeSet(^(env.extracting), eclass);
 
+			res;
+		}
 	}
 }
 
