@@ -7,7 +7,7 @@ import java.util.stream.Collectors;
 import java.io.*;
 import java.security.KeyStore;
 import javax.net.ssl.*;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 public class HttpServerSupport extends NativeHost
 {
@@ -57,6 +57,67 @@ public class HttpServerSupport extends NativeHost
 
 				HttpContext context =
 					server.createContext("/", new EchoHandler(onMessage));
+
+				server.start();
+				onOpen.invoke();
+
+				return server;
+			}
+		}
+		catch (Exception e)
+		{
+			System.out.println(e);
+			System.out.println("Failed to create HTTPS server");
+			return null;
+		}
+	}
+
+	public Object createHttpChunkedServerNative(
+		int port,
+		boolean isHttps,
+		String pfxPath,
+		String pfxPassword,
+		Func0<Object> onOpen,
+		Func8<
+			Object,
+			String,
+			String,
+			String,
+			Object[],
+			Func0<Object>,
+			Func1<Object,String>,
+			Func2<Object,String,Object[]>,
+			Func1<Object,Integer>
+		> onMessage
+	)
+	{
+		try
+		{
+			if (isHttps)
+			{
+				HttpsServer server = HttpsServer.create();
+				server.setExecutor(Executors.newCachedThreadPool());
+				SSLContext sslContext = setupSSLContext(pfxPath, pfxPassword);
+				configureHttpsServer(server, sslContext);
+
+				server.bind(new InetSocketAddress(port), 0);
+
+				HttpContext context =
+					server.createContext("/", new ChunkedHandler(onMessage));
+
+				server.start();
+				onOpen.invoke();
+
+				return server;
+			}
+			else
+			{
+				HttpServer server = HttpServer.create();
+				server.bind(new InetSocketAddress(port), 0);
+				server.setExecutor(Executors.newCachedThreadPool());
+
+				HttpContext context =
+					server.createContext("/", new ChunkedHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
@@ -132,7 +193,7 @@ public class HttpServerSupport extends NativeHost
 		});
 	}
 
-	static class EchoHandler implements HttpHandler {
+	static class EchoHandler extends HttpHandlerBase implements HttpHandler {
 		private Func7<
 			Object,
 			String,
@@ -172,8 +233,55 @@ public class HttpServerSupport extends NativeHost
 				handler.makeResponseStatus()
 			);
 		}
+	}
 
-		private static String readInputStream(InputStream stream)
+	static class ChunkedHandler extends HttpHandlerBase implements HttpHandler {
+		private Func8<
+			Object,
+			String,
+			String,
+			String,
+			Object[],
+			Func0<Object>,
+			Func1<Object,String>,
+			Func2<Object,String,Object[]>,
+			Func1<Object,Integer>
+		> onMessage;
+
+		public ChunkedHandler(Func8<
+			Object,
+			String,
+			String,
+			String,
+			Object[],
+			Func0<Object>,
+			Func1<Object,String>,
+			Func2<Object,String,Object[]>,
+			Func1<Object,Integer>
+		> _onMessage)
+		{
+			onMessage = _onMessage;
+		}
+
+		@Override
+		public void handle(HttpExchange exchange) throws IOException
+		{
+			ResponseHandler handler = new ResponseHandler(exchange);
+			onMessage.invoke(
+				exchange.getRequestURI().toString(),
+				readInputStream(exchange.getRequestBody()),
+				exchange.getRequestMethod(),
+				readHeaders(exchange.getRequestHeaders().entrySet()),
+				handler.makeEndResponse(),
+				handler.makeSendChunk(),
+				handler.makeSetHeaders(),
+				handler.makeResponseStatus()
+			);
+		}
+	}
+
+	abstract static class HttpHandlerBase implements HttpHandler {
+		public String readInputStream(InputStream stream)
 		{
 			// https://stackoverflow.com/questions/309424/how-do-i-read-convert-an-inputstream-into-a-string-in-java
 			try {
@@ -191,7 +299,7 @@ public class HttpServerSupport extends NativeHost
 			}
 		}
 
-		private static String[][] readHeaders(Set<Map.Entry<String,List<String>>> entries)
+		public static String[][] readHeaders(Set<Map.Entry<String,List<String>>> entries)
 		{
 			String[][] result = new String[entries.size()][];
 			int i = 0;
@@ -214,7 +322,7 @@ public class HttpServerSupport extends NativeHost
 			return result;
 		}
 
-		private static class ResponseHandler {
+		public static class ResponseHandler {
 			private Integer responseStatusCode = 200;
 			private HttpExchange exchange;
 
@@ -222,6 +330,33 @@ public class HttpServerSupport extends NativeHost
 			{
 				exchange = _exchange;
 			}
+
+			public Func1<Object, String> makeSendChunk() {
+				return new Func1<Object, String>() {
+					public Object invoke(String chunk) {
+						try {
+							exchange.getResponseBody().write((chunk).getBytes("UTF-8"));
+							return "";
+						} catch (IOException e) {
+							return "Sending chunk error: " + e.getMessage();
+						}
+					}
+				};
+			}
+
+			public Func0<Object> makeEndResponse() {
+				return new Func0<Object>() {
+					public Object invoke() {
+						try {
+							exchange.getResponseBody().close();
+						} catch (IOException e) {
+							System.out.println(e);
+						}
+						return null;
+					}
+				};
+			}
+
 
 			public Func1<Object,Integer> makeResponseStatus()
 			{
