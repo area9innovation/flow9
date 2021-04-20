@@ -1,0 +1,75 @@
+import tools/flowc/backends/common;
+
+export {
+	fi2javaBuildWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void;
+}
+
+fi2javaBuildWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void {
+	flow_dir = findFlowDir();
+	if (flow_dir == "") {
+		fcPrintln("flow directory is not found - can't copy java runtime files", cfg.threadId);
+		callback(5);
+	} else {
+		fcVerbose(cfg, 1, "Copying java runtime files");
+		java_dir = pathCombineMany([flow_dir, "platforms", "java"]);
+		copyDirectory(
+			java_dir, 
+			pathCombineMany([java_dir, "com", "area9innovation", "flow"]), 
+			pathCombineMany([cfg.generatedir, cfg.mainClassName, "src", "main", "java"]), 
+			\file -> endsWith(file, ".java")
+		);
+		setFileContent(
+			pathCombine(cfg.generatedir, "settings.gradle"), 
+			fiGradleSettings(cfg)
+		);
+		setFileContent(
+			pathCombineMany([cfg.generatedir, cfg.mainClassName, "build.gradle"]), 
+			fiGradleBuild(cfg)
+		);
+		fcVerbose(cfg, 0, "Building a program with gradle");
+		runSystemProcess("gradle", ["build", "--warning-mode", "all"], cfg.generatedir, 
+			\out -> fcVerbose(cfg, 0, out),
+			\err -> fcVerbose(cfg, 0, err),
+			\code -> if (code != 0) callback(5 + code) else {
+				jar_file_from = pathCombineMany([cfg.generatedir, cfg.mainClassName, "build", "libs", cfg.mainClassName + ".jar"]);
+				jar_file_to = pathCombineMany([cfg.outputdir, cfg.mainClassName + ".jar"]);
+				if (!copyFile(jar_file_from, jar_file_to)) {
+					fcPrintln("failed to copy *.jar file '"+ jar_file_from + "' to '" + jar_file_to + "'", cfg.threadId);
+					callback(5);
+				} else {
+					callback(0);
+				}
+			}
+		);
+		{}
+	}
+}
+
+fiGradleSettings(cfg : FiJavaConfig) -> string {
+"rootProject.name = '" + cfg.mainClassName + "'
+include('" + cfg.mainClassName + "')"
+}
+
+fiGradleBuild(cfg : FiJavaConfig) -> string {
+	main_class = if (cfg.packageName == "") cfg.mainClassName else cfg.packageName + "." + cfg.mainClassName;
+	dependencies = concatStrings(map(cfg.dependencies, \dep -> "\timplementation \"" + dep + "\"\n"));
+"plugins {
+    id 'application' 
+}
+repositories {
+    mavenCentral() 
+}
+dependencies {\n" + dependencies + "}
+application {
+    mainClass.set(\"" + main_class + "\")
+}
+jar {
+	duplicatesStrategy = DuplicatesStrategy.INCLUDE
+	manifest {
+		attributes \"Main-Class\": \"" + main_class + "\"
+	}
+	from {
+		configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+	}
+}"
+}

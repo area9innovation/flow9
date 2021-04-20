@@ -1,18 +1,46 @@
 import tools/flowc/backends/java/fi2java_compile;
 import tools/flowc/backends/java/fi2java_main;
-import tools/flowc/backends/java/fi2jar;
+import tools/flowc/backends/java/fi2jar_raw;
+import tools/flowc/backends/java/fi2jar_gradle;
 
 export {
 	fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> void;
 }
 
 fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> void {
-	fcVerbose(cfg, 0, "Making Java '" + cfg.flowfile + "'...");
+	fcVerbose(cfg, 0, "Building a Java '" + cfg.flowfile + "' application " + (if (cfg.builder == "") "" else "with " + cfg.builder ) + "...");
 
+	package_path = if (cfg.builder != "gradle") {
+		pathCombineMany(concat([cfg.generatedir], strSplit(cfg.packageName, ".")));
+	} else {
+		pathCombineMany(concat([cfg.generatedir, cfg.mainClassName, "src", "main", "java"], strSplit(cfg.packageName, ".")));
+	}
+	ensureDirectoryExists(package_path);
+	gcontext = fi2javaTranslate(program, cfg, package_path);
+
+	if (length(gcontext.errors) > 0) {
+		callback(5);
+	} else {
+		sources_list_file = pathCombine(package_path, "sources");
+		if (!setFileContent(sources_list_file, javaList2String(gcontext.to_compile, ""))) {
+			callback(5);
+		} else {
+			if (cfg.jarfile != "") {
+				if (cfg.builder == "gradle") {
+					fi2javaBuildWithGradle(cfg, callback);
+				} else {
+					fi2JavaBuildRaw(cfg, package_path, callback);
+				}
+			} else {
+				callback(0);
+			}
+		}
+	}
+}
+
+fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string) -> JavaGlobalContext {
 	fcVerbose(cfg, 1, "Collecting code for all imported files...");
 
-	package_path = pathCombineMany(concat([cfg.generatedir], strSplit(cfg.packageName, ".")));
-	ensureDirectoryExists(package_path);
 	main_fname = pathCombine(package_path, "Main.java");
 	prev_build_has_collisions = getCollisionAndTimestampOfFile(main_fname).first;
 	cmodules_info = indexJavaModules(program);
@@ -99,18 +127,5 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> vo
 			}
 		}
 	});
-	if (length(gcontext.errors) > 0) {
-		callback(5);
-	} else {
-		sources_list_file = pathCombine(package_path, "sources");
-		if (!setFileContent(sources_list_file, javaList2String(gcontext.to_compile, ""))) {
-			callback(5);
-		} else {
-			if (cfg.jarfile != "") {
-				buildFiJarFile(cfg, package_path, callback)
-			} else {
-				callback(0);
-			}
-		}
-	}
+	gcontext;
 }
