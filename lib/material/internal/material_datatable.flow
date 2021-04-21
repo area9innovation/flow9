@@ -34,7 +34,7 @@ MDynamicDataTable2TInner(
 	reorderIconSpace = if (isReorderEnabled && reorderShowIcon) 40. else 0.;
 	reorderOnDragEnd = contains(style, MReorderOnDragEnd());
 
-	sorting = makeMSortingState(data, rowsFn, style, isSome(reorderList));
+	sorting = makeMSortingState(data, rowsFn, style, isSome(reorderList), lightweight);
 	paginationState = makeMPaginationState(style, isSome(reorderList));
 	page = paginationState.page;
 
@@ -197,11 +197,7 @@ MDynamicDataTable2TInner(
 							|> (if (lifted) TBorderTop(state.rowHeight) else idfn)
 							|> (\t -> MComponent2T(manager, p2, "MDataTableLine" + i2s(j), [
 									MHighlightOnHover(const(true)),
-									MOnClick(\ -> {
-										println(j0);
-										println(j);
-										MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(j)
-									}),
+									MOnClick(\ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(j)),
 									MRippleType(const(MRippleFill()))
 								], \__ -> t, m2t)
 							)
@@ -958,7 +954,7 @@ MSortingState(
 	sortedBy : DynamicBehaviour<MDataTableSorting>,
 	sortColumnNumber : DynamicBehaviour<int>,
 	hasExtOrderBy : bool,
-	onColumnClick : (int, Maybe<MSort>, bool) -> void,
+	onColumnClick : (int, Maybe<MSort>, bool, bool) -> void,
 	subs : ([MColumnDynamic]) -> [() -> () -> void]
 );
 
@@ -966,12 +962,13 @@ MDataTableSorting(
 	column : int,
 	ascending : bool,
 	sortInfo : Maybe<MSort>,
+	autoSortByRowData : bool
 );
 
-makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MDataTableStyle], isReorder : bool) -> MSortingState {
+makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MDataTableStyle], isReorder : bool, lightweight : bool) -> MSortingState {
 	defaultParam : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
 	listSortedCallback = extractStruct(style, MListSorted(nop1)).newOrderCallback;
-	sortedBy : DynamicBehaviour<MDataTableSorting> = make(MDataTableSorting(-1, true, None()));
+	sortedBy : DynamicBehaviour<MDataTableSorting> = make(MDataTableSorting(-1, true, None(), false));
 	sortColumnNumber = make(-1);
 	sortUpdating = tryExtractStruct(style, MUpdateSorting(0));
 	hasExtOrderBy = contains(style, MExternalSort());
@@ -994,21 +991,33 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 									else sInfo.colCompares(b, a)
 							),
 						\ ->
-							map(
-								sortCustom(
-									mapi(dat, \j, r ->
-										Pair({
-											cellM = elementAt(rowsFn(r), sb.column, TEmpty());
-											switch (cellM) {
-												MMutable(mutContent): fgetValue(mutContent);
-												TMutable(mutContent): fgetValue(mutContent);
-												default: cellM
-											}
-										}, j)),
-									firstOfPair, sb.ascending
-								),
-								secondOfPair
-							)
+							if (lightweight && sb.autoSortByRowData)
+								map(
+									sortCustom(
+										mapi(dat, \j, r -> Pair(r, j)),
+										firstOfPair,
+										sb.ascending
+									),
+									secondOfPair
+								)
+							else
+								map(
+									sortCustom(
+										mapi(dat, \j, r ->
+											Pair({
+												cellM = elementAt(rowsFn(r), sb.column, TEmpty());
+												switch (cellM) {
+													MMutable(mutContent): fgetValue(mutContent);
+													TMutable(mutContent): fgetValue(mutContent);
+													default: cellM
+												}
+											}, j)
+										),
+										firstOfPair,
+										sb.ascending
+									),
+									secondOfPair
+								)
 					)
 				else enumFromTo(0, length(dat) - 1);
 			listSortedCallback(sorted);
@@ -1016,13 +1025,13 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 		})
 	)));
 
-	onColumnClick = \i, columnSortStyle, initialClick -> {
+	onColumnClick = \i, columnSortStyle, autoSortByRowData, initialClick -> {
 		if (!initialClick || (^isFirstClick && getValue(defaultParam).colIndex == i)) {
 			sb = fgetValue(sortedBy);
 			
 			if (sb.column == i && !sb.ascending) {
 				nextDistinct(defaultParam, MSortingParam(-1, true));
-				next(sortedBy, MDataTableSorting(-1, false, None()))
+				next(sortedBy, MDataTableSorting(-1, false, None(), false))
 			} else {
 				asc =
 					if (sb.column == -1)
@@ -1030,7 +1039,7 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 					else
 						sb.column != i;
 				nextDistinct(defaultParam, MSortingParam(i, asc));
-				next(sortedBy, MDataTableSorting(i, asc, columnSortStyle))
+				next(sortedBy, MDataTableSorting(i, asc, columnSortStyle, autoSortByRowData))
 			}
 			isFirstClick := false
 		}
@@ -1046,7 +1055,9 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 					else
 						None();
 
-				nextDistinct(sortedBy, MDataTableSorting(num, !getValue(defaultParam).isAsc, sortColumn));
+				autoSortByRowData = num >= 0 && contains(columns[num].style, MAutoSortByRowData());	
+
+				nextDistinct(sortedBy, MDataTableSorting(num, !getValue(defaultParam).isAsc, sortColumn, autoSortByRowData));
 			})
 	];
 
@@ -1112,7 +1123,7 @@ MDTTitles(
 		arrowStyle = eitherMap(colHeaderStyle, \chs -> style2MIconStyle(chs.textStyle), []);
 		rightAlign = isSameStructType(commonAlignment2abs(extractCommonAlignment(c.style), p.rtl), RightAlign());
 		sortStyle = if (isReorder) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
-		sortable = isSome(sortStyle) || (!isReorder && (sorting.hasExtOrderBy || contains(c.style, MAutoSort())));
+		sortable = isSome(sortStyle) || (!isReorder && (sorting.hasExtOrderBy || contains(c.style, MAutoSort()) || contains(c.style, MAutoSortByRowData())));
 		i = i0 - state.headCount + 1;
 
 		defHeaderTitle = \isSelected : bool -> {
@@ -1138,7 +1149,8 @@ MDTTitles(
 
 		(if (sortable) {
 			hover = make(false);
-			clickColumn = \initialClick -> sorting.onColumnClick(i, sortStyle, initialClick);
+			autoSortByRowData = contains(c.style, MAutoSortByRowData());
+			clickColumn = \initialClick -> sorting.onColumnClick(i, sortStyle, autoSortByRowData, initialClick);
 
 				TIfLazy2(
 					fselect(sorting.sortedBy, FLift(\sb : MDataTableSorting -> sb.column == i)),
