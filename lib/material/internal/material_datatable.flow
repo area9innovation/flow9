@@ -511,7 +511,7 @@ MDynamicDataTable2TInner(
 				MScroll2T(manager, p, scroll, m2t)
 			}, t))
 		|> MDTFirstColumn(state, p, headers, data, rowsFn, sorting, innerScrollState, expandRow, rowsBoxScrollPosition,
-				rowBackgroundStyle, selectedBgStyle,visibleRowsHeight, rowsAvailableHeight)
+				rowBackgroundStyle, selectedBgStyle,visibleRowsHeight, rowsAvailableHeight, page, lightweight)
 		|> (\t -> TAccess([TagName("tbody")], t))
 		|> (\t -> TAccess([TagName("table")], t))
 		|> addHeaderActions(p)
@@ -1256,6 +1256,8 @@ MDTFirstColumn(
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle>,
 	visibleRowsHeight : Transform<double>,
 	rowsAvailableHeight : Transform<double>,
+	page : DynamicBehaviour<Pair<int, int>>,
+	lightweight : bool
 ) -> (Tropic) -> Tropic {
 	\table ->
 		eitherMap(innerScrollState, \is -> if (is.glued || is.lifted) {
@@ -1275,8 +1277,12 @@ MDTFirstColumn(
 				|> implementExpandRow(true);
 
 			cells =
-				fselect2(sorting.result, data, FLift2(\sortRes, dat -> {
-					map(sortRes, \i -> if (existsIndex(dat, i)) rowsFn(dat[i]) else [])
+				fselect3(sorting.result, data, if (lightweight) page else make(Pair(-1, -1)), \sortRes, dat, pg -> {
+					rows =
+						if (lightweight) map(subrange(sortRes, pg.first, pg.second), \i -> elementAtMap(dat, i, rowsFn, []))
+						else map(sortRes, \i -> elementAtMap(dat, i, rowsFn, []));
+
+					rows
 					|> (\arr -> eitherMap(state.fixedRow, \fr -> concat([fr.cols], arr), arr))
 					|> (\arr -> mapi(arr, \i0, row -> {
 						i = i0 - b2i(isSome(state.fixedRow));
@@ -1311,32 +1317,38 @@ MDTFirstColumn(
 								TagName("tr")
 							], \__ -> t, state.m2t) else t)
 					}))
-				}));
+				});
+
+			firstColumn0 =
+				if (lightweight)
+					TSelect(cells, \l -> TLinesDir(l, parent.rtl))
+				else
+					TSelect(eitherMap(state.fixedRow, \__ -> fselect(cells, FLift(tail)), cells), \l -> TLinesDir(l, parent.rtl))
+					|> (\t -> MScroll2T(state.manager, parent, MScroll(t, TFillXY(), [
+							MScrollCropByContent(),
+							TScrollEnabled(const(false)),
+							MScrollbars(
+								TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
+								TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
+							),
+							rowsBoxScrollPosition,
+							MScrollBound(const(false), const(false))
+						]), state.m2t))
+					|> (\t -> eitherMap(state.fixedRow, \fr -> {
+							bStyle =
+								filtermap(fr.style, \st -> switch (st) {
+									TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
+									default : None()
+								});
+
+							TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
+							|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
+							|> (\t2 -> TShow(fr.show, t2))
+							|> (\t2 -> TLines2Dir(t2, t, parent.rtl))
+						}, t));
 
 			firstColumn =
-				TSelect(eitherMap(state.fixedRow, \__ -> fselect(cells, FLift(tail)), cells), \l -> TLinesDir(l, parent.rtl))
-				|> (\t -> MScroll2T(state.manager, parent, MScroll(t, TFillXY(), [
-						MScrollCropByContent(),
-						TScrollEnabled(const(false)),
-						MScrollbars(
-							TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
-							TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
-						),
-						rowsBoxScrollPosition,
-						MScrollBound(const(false), const(false))
-					]), state.m2t))
-				|> (\t -> eitherMap(state.fixedRow, \fr -> {
-						bStyle =
-							filtermap(fr.style, \st -> switch (st) {
-								TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
-								default : None()
-							});
-
-						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
-						|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
-						|> (\t2 -> TShow(fr.show, t2))
-						|> (\t2 -> TLines2Dir(t2, t, parent.rtl))
-					}, t))
+				firstColumn0
 				|> (\t -> TAlpha(fif(parent.enabled, const(1.), const(if (getLightBackground(parent)) 0.26 else 0.3)), t))
 				|> (\t -> TAvailableHeight(t, rowsAvailableHeight))
 				|> (\t -> if (state.separators && is.glued) TLines2Dir(MSeparator2T(state.manager, parent, true), t, parent.rtl) else t)
