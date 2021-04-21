@@ -744,6 +744,8 @@ bool QGLRenderSupport::doCreateWebWidget(QWidget *&widget, GLWebClip *web_clip) 
         web_view->load(rq_url);
     }
 
+    web_view->setFocusPolicy(Qt::NoFocus);
+
     connect(web_view, SIGNAL(loadFinished(bool)), SLOT(webPageLoaded(bool)));
 
     return true;

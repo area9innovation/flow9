@@ -10,6 +10,19 @@ export {
 	extractAreaGridById(dockA: [MDock], areaId : int) -> [[int]];
 	// Undock panel
 	undockPanel(state : MDockingState, panelId : int) -> void;
+	// Estimate size for panel's resizable container
+	calculatePanelH(isColumn : bool, state : MDockingState, en : bool, se : bool, ex : bool, pID : int) -> double;
+
+	makeFillPanelSubscriber(
+		isColumn : bool,
+		rowId : int,
+		panelId : int,
+		state : MDockingState,
+		maxAreaSizeB : DynamicBehaviour<double>,
+		panelHB : DynamicBehaviour<double>,
+		colA : [int],
+		style : [MDockingAreaStyle]
+	) -> () -> () -> void;
 
 	// Cache docking state
 	addDockingSuffix(input : string) -> string;
@@ -20,8 +33,8 @@ export {
 	// Handles & buttons
 	makeSeparatorBar(isColumn : bool, state : MDockingState, panelId : int, dontResize : bool, light : bool, style : [MDockingStyle]) -> Material;
 	makeMDockingResizeHandleMobile(state : MDockingState, style : [MDockingStyle]) -> Material;
-	makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor) -> Material;
-	makeMDockingDottedHandle(isColumn : bool, color : MColor) -> Material;
+	makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor, isToolbar : bool) -> Material;
+	makeMDockingDottedHandle(isColumn : bool, color : MColor, isToolbar : bool) -> Material;
 	makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material;
 
 	// Utils
@@ -38,7 +51,6 @@ export {
 	
 	// Debug prints
 	makeMDockingDebugPrints(state : MDockingState) -> Material;
-	
 }
 
 
@@ -50,6 +62,7 @@ updateW(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, w : double) -> void {
 }
 
 undockPanel(state : MDockingState, panelId : int) -> void {
+	// println("undock panel: " + i2s(panelId));
 	next(state.dock, mapi(getValue(state.dock), \j, item -> if (j == panelId) MDock(-1, item.colId, item.rowId) else item));
 }
 
@@ -74,11 +87,14 @@ addDockingSuffix(input : string) -> string {
 }
 
 setMDockingStateKeyValue(state : MDockingState) -> bool {
-	setKeyValue(state.keyGroupName |> addDockingSuffix, json2string(dockingState2json(state)));
+	keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
+	// println("> setKey: " + keyGroupName); // debug print
+	setKeyValue(keyGroupName |> addDockingSuffix, json2string(dockingState2json(state)));
 }
 
 removeMDockingStateKeyValue(state : MDockingState) -> void {
-	removeKeyValue(state.keyGroupName |> addDockingSuffix)
+	keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
+	removeKeyValue(keyGroupName |> addDockingSuffix)
 }
 
 dockingState2json(state : MDockingState) -> Json {
@@ -123,26 +139,144 @@ dockingState2json(state : MDockingState) -> Json {
 }
 
 
+makeFillPanelSubscriber(
+	isColumn : bool,
+	rowId : int,
+	panelId : int,
+	state : MDockingState,
+	maxAreaSizeB : DynamicBehaviour<double>,
+	panelHB : DynamicBehaviour<double>,
+	colA : [int],
+	style : [MDockingAreaStyle]
+) -> () -> () -> void {
 
-getAllPanelsHeightExcept(id : int, isColumn : bool, state : MDockingState, colA : [int]) -> double {
+	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
+	topBarW = if (isToolbar) dockingBarHeightToolbar else 0.0;
+	
+	fillLast =  contains(style, MDAreaExpandLastPanel());
+	lastPanel = length(colA) - 1;
+	fillBottom = rowId == lastPanel; 	// fill last panel --default
+	fillTop = rowId == 0; 				// fill first panel
+	fillPanelOrder = if (fillLast) fillBottom else fillTop;
+	fillPanelOrderId = if (fillLast) lastPanel else 0;
+
+	dontSideExpandPanel = fold(colA, false, \acc, p -> acc || 
+		contains(getValue(state.panelStyle)[p], MDPanelHideSideExpander()) ||
+		isSameStructType(getValue(state.content)[p], MDPanelToolbar([]))
+	);
+	showSideExpanderBtn = isColumn && !contains(style, MDAreaHideSideExpander()) && !dontSideExpandPanel;
+	
+	enabInCol = fold(colA, [], \acc, pId -> {
+		en = getValue(getValue(state.enabled)[pId]);
+		if (en) arrayPush(acc, en) else acc;
+	});
+
+	expanded = getValue(getValue(state.expanded)[panelId]);
+	enabled = getValue(getValue(state.expanded)[panelId]);
+
+	// println("	fillPanelOrderId");
+	// println(fillPanelOrderId);
+	// println("panelId");
+	// println(panelId);
+	// println("	title");
+	// println(getValue(state.title)[panelId]);
+	// println("expandedB");
+	// println(	expanded);
+	// println("");
+			
+	makeSubscribe(
+		ftransistor(
+			fselect(maxAreaSizeB, FLift(\mas -> {
+				// println("max area: " + d2s(mas));
+
+				// Update only the first time: fill if docking state is not cached
+				keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
+				savedString = getKeyValue(keyGroupName |> addDockingSuffix, "");
+				// println("GATE: " + b2s(savedString == ""));
+				// println("GATE: " + b2s(mas > 2500.0));
+				// println("GATE: " + savedString);
+				savedString == "";
+				// mas > 2500.0
+			})),
+			maxAreaSizeB
+		),
+		// state.dock, // recalculate when a panel is disabled (and then undocked)
+		\maxASize -> {
+			// println("- - - - AUTO FILL - - - -");
+			// println("- - - - MAX AREA: " + d2s(maxASize));
+
+			sideExpBtnSize = if (showSideExpanderBtn) sideExpanderButtonSize else 0.0;
+			dragSeparators = dockingDragSize * if (enabInCol != []) i2d((length(enabInCol) - 1)) else 0.0;
+			others = getAllPanelsHeightExcept(fillPanelOrderId, isColumn, state, colA);
+			availableColSize = maxASize - sideExpBtnSize - dragSeparators - others;
+
+				if (fillPanelOrder) {
+					if (enabled) {
+						if (maxASize > others) {
+							if (isColumn) {
+								if (expanded) {
+									// Fill width
+									nextDistinct(panelHB, availableColSize);
+									updateH(state.dockedSize, panelId, availableColSize - topBarH);
+								}
+							} else {
+								// Fill height
+								nextDistinct(panelHB, availableColSize);
+								updateW(state.dockedSize, panelId, availableColSize - topBarW);
+							}
+						}  
+					}
+				}
+		}
+	)
+}
+
+
+
+
+
+getAllPanelsHeightExcept(exceptId : int, isColumn : bool, state : MDockingState, colA : [int]) -> double {
 	foldi(colA, 0.0, \k, acc, pId -> {
 		if (k < (length(colA) )) {
-			if (k != id) {
-				sz = if (isColumn) {
-					isExp = getValue(getValue(state.expanded)[k]);
-					if (isExp)
-					getValue(state.dockedSize)[pId].height // + dockingDragSize + dockingBarHeight
-					else  dockingBarHeight  + dockingDragSize
-				} else {
-					getValue(state.dockedSize)[pId].width // + dockingDragSize
-				}
+			if (k != exceptId) {
+				pInCol = colA[k];
+				en = getValue(getValue(state.enabled)[pInCol]);
+				se = getValue(getValue(state.sideExpanded)[pInCol]);
+				ex = getValue(getValue(state.expanded)[pInCol]);
+				// println("getExcept: pId: " + i2s(pId) + "  |  en: " + b2s(en) + "  |  se: " + b2s(se) + "  |  ex: " + b2s(ex));
+				sz = calculatePanelH(isColumn, state, en, se, ex, pId);
 				acc + sz
-				// if (getValue(expanded)) /*dockingBarHeight + */ dockingDragSize else if (getValue(enabled)) 0.0 else  sz;
 			} else acc
 		} else acc;
 	});
 }
 
+
+calculatePanelH(isColumn : bool, state : MDockingState, en : bool, se : bool, ex : bool, pId : int) -> double {
+	isToolbar = isSameStructType(getValue(state.content)[pId], MDPanelToolbar([]));
+	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
+	dSize = getValue(state.dockedSize)[pId];
+	pW = dSize.width;
+	pH = dSize.height;
+	// println("calculate: pId: " + i2s(pId) + "  |  en: " + b2s(en) + "  |  se: " + b2s(se) + "  |  ex: " + b2s(ex));
+	if (en) {
+		if (se) {
+			if (ex) {
+				if (isColumn) {
+					// We need to add the topbar height correction for panel container
+					pH + topBarH
+				} else {
+					if (isToolbar) pH + dockingBarHeightToolbar else pW
+				}
+			} else {
+				if (isColumn) topBarH else {
+					if (isToolbar) pH + dockingBarHeightToolbar else pW
+				}
+			}
+		} else topBarH;
+	} else 0.0;
+}
 
 
 
@@ -178,7 +312,12 @@ makeSeparatorBar(isColumn : bool, state : MDockingState, panelId : int, dontResi
 	draggingBarInactive(light)
 }
 
-
+reverseSideExpandedinColA(state : MDockingState, colA : [int]) -> void {
+	seA  : [DynamicBehaviour<bool>] = map(getValue(state.sideExpanded), \se -> make(getValue(se)));
+	iter(colA, \pId -> reverseBehaviour(seA[pId]));
+	// Reverse in one step
+	nextDistinct(state.sideExpanded, seA);
+}
 
 makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material {	
 	isRightCol  = contains(style, MDockingRightCols());
@@ -186,7 +325,16 @@ makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light 
 	btnSize = makeHSize(sideExpanderButtonSize, isColumn);
 	btnFiller = if(isColumn) TFillX() else TFillY();
 	sideExpFn = \ -> {
-		iter(colA, \c -> reverseBehaviour(getValue(state.sideExpanded)[c]));
+		// Update panels in col
+		// println("> REVERSE in:" + toString(colA));
+		// reverseSideExpandedinColA(state, colA);
+		iter(colA, \c -> {
+			reverseBehaviour(getValue(state.sideExpanded)[c])
+		});
+
+		// Update cache
+		cacheEnabled = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).cacheEnabled;
+		if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
 	}
 	 
 	sideExpBtnLabel = if (if (getDefaultRtl()) !isRightCol else isRightCol) {
@@ -194,7 +342,7 @@ makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light 
 	} else {
 		if (!se) "skip_next" else "skip_previous";
 	}
-	sideExpBtn = \lg : bool -> MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), dockedTitleColorFn(lg, style)])
+	sideExpBtn = \lg : bool -> MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), titleColorFn(lg, style)])
 		|> (\m -> if (isColumn) m else MRotate90Left(m));
 
 	sideExpBtnItem = \lg : bool -> MGroup2(
@@ -246,8 +394,8 @@ makeMDockingResizeHandleMobile(state : MDockingState, style : [MDockingStyle]) -
 	]);
 };
 
-makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor) -> Material {
-	handleWidth = 24.0;
+makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor, isToolbar : bool) -> Material {
+	size = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
 	if (isHorizontal) {
 		MCenterIn(
 			MColsA([
@@ -255,7 +403,7 @@ makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor) -> Material {
 				TFixed(2.0, 0.0),
 				TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(1.0, 18.0))
 			]),
-			TFixed(dockingBarHeight, handleWidth)
+			TFixed(size, dockingTopBarHandleWidth)
 		);
 	} else {
 		MCenterIn(
@@ -264,18 +412,17 @@ makeMDockingLinedHandle(isHorizontal : bool, titleColor : MColor) -> Material {
 				TFixed(0.0, 2.0),
 				TRounded(1.0, 1.0, 1.0, 1.0, [MFill(titleColor)], TFixed(18.0, 1.0))
 			]),
-			TFixed(handleWidth, dockingBarHeight)
+			TFixed(dockingTopBarHandleWidth, size)
 		);
 	};
 };
 
-makeMDockingDottedHandle(isColumn : bool, color : MColor) -> Material {
+makeMDockingDottedHandle(isColumn : bool, color : MColor, isToolbar : bool) -> Material {
 		r = 2.0;
 		t = 1.0;
-		handleWidth = 24.0;
+		size = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
 		if (isColumn) {
 			TGroup2(
-				TRectangle(interactiveRectangleStyle, TFixed(handleWidth, dockingBarHeight)),
 				TCenterIn(
 					TCols([
 						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
@@ -286,12 +433,12 @@ makeMDockingDottedHandle(isColumn : bool, color : MColor) -> Material {
 						TFixed(2.0, 0.0),
 						TLines([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(0.0, 2.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
 					]),
-					TFixed(handleWidth, dockingBarHeight / 2.0)
-				)
+					TFixed(dockingTopBarHandleWidth, size / 2.0)
+				),
+				TRectangle([MFill(dockingTopbarDragHelperColor), FillOpacity(dockingTopbarDragHelperOpacity)], TFixed(dockingTopBarHandleWidth, size / 2.0))
 			);
 		} else {
 			TGroup2(
-				TRectangle(interactiveRectangleStyle, TFixed(dockingBarHeight / 2.0, handleWidth)),
 				TCenterIn(
 					TLines([
 						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
@@ -302,8 +449,9 @@ makeMDockingDottedHandle(isColumn : bool, color : MColor) -> Material {
 						TFixed(0.0, 2.0),
 						TCols([TRounded(r, r, r, r, [MFill(color)], TFixed(t, t)), TFixed(2.0, 0.0), TRounded(r, r, r, r, [MFill(color)], TFixed(t, t))]),
 					]),
-					TFixed(dockingBarHeight / 2.0, handleWidth)
-				)
+					TFixed(size / 2.0, dockingTopBarHandleWidth)
+				),
+				TRectangle([MFill(dockingTopbarDragHelperColor), FillOpacity(dockingTopbarDragHelperOpacity)], TFixed(size / 2.0, dockingTopBarHandleWidth))
 			);
 		};
 	};
