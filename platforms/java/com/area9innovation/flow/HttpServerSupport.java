@@ -85,9 +85,9 @@ public class HttpServerSupport extends NativeHost
 			String,
 			Object[],
 			Func0<Object>,
-			Func1<Object,String>,
-			Func2<Object,String,Object[]>,
-			Func1<Object,Integer>
+			Func1<String, String>,
+			Func1<String, Integer>,
+			Func2<Object, String, Object[]>
 		> onMessage
 	)
 	{
@@ -200,9 +200,9 @@ public class HttpServerSupport extends NativeHost
 			String,
 			String,
 			Object[],
-			Func1<Object,String>,
-			Func2<Object,String,Object[]>,
-			Func1<Object,Integer>
+			Func1<Object, String>,
+			Func2<Object, String, Object[]>,
+			Func1<Object, Integer>
 		> onMessage;
 
 		public EchoHandler(Func7<
@@ -212,7 +212,7 @@ public class HttpServerSupport extends NativeHost
 			String,
 			Object[],
 			Func1<Object,String>,
-			Func2<Object,String,Object[]>,
+			Func2<Object,String, Object[]>,
 			Func1<Object,Integer>
 		> _onMessage)
 		{
@@ -243,9 +243,9 @@ public class HttpServerSupport extends NativeHost
 			String,
 			Object[],
 			Func0<Object>,
-			Func1<Object,String>,
-			Func2<Object,String,Object[]>,
-			Func1<Object,Integer>
+			Func1<String, String>,
+			Func1<String, Integer>,
+			Func2<Object, String, Object[]>
 		> onMessage;
 
 		public ChunkedHandler(Func8<
@@ -255,9 +255,9 @@ public class HttpServerSupport extends NativeHost
 			String,
 			Object[],
 			Func0<Object>,
-			Func1<Object,String>,
-			Func2<Object,String,Object[]>,
-			Func1<Object,Integer>
+			Func1<String, String>,
+			Func1<String, Integer>,
+			Func2<Object, String, Object[]>
 		> _onMessage)
 		{
 			onMessage = _onMessage;
@@ -274,8 +274,8 @@ public class HttpServerSupport extends NativeHost
 				readHeaders(exchange.getRequestHeaders().entrySet()),
 				handler.makeEndResponse(),
 				handler.makeSendChunk(),
-				handler.makeSetHeaders(),
-				handler.makeResponseStatus()
+				handler.makeSendHeaders(),
+				handler.makeSetHeaders()
 			);
 		}
 	}
@@ -331,9 +331,9 @@ public class HttpServerSupport extends NativeHost
 				exchange = _exchange;
 			}
 
-			public Func1<Object, String> makeSendChunk() {
-				return new Func1<Object, String>() {
-					public Object invoke(String chunk) {
+			public Func1<String, String> makeSendChunk() {
+				return new Func1<String, String>() {
+					public String invoke(String chunk) {
 						try {
 							exchange.getResponseBody().write((chunk).getBytes("UTF-8"));
 							return "";
@@ -411,6 +411,19 @@ public class HttpServerSupport extends NativeHost
 									.collect(Collectors.toList())
 							);
 						return null;
+					}
+				};
+			}
+
+			public Func1<String, Integer> makeSendHeaders() {
+				return new Func1<String, Integer>() {
+					public String invoke(Integer status) {
+						try {
+							exchange.sendResponseHeaders(status, 0);
+							return "";
+						} catch (IOException e) {
+							return "Sending headers error: " + e.getMessage();
+						}
 					}
 				};
 			}
