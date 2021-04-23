@@ -47,24 +47,24 @@ export {
     // Gets config from all url parameters
     getAllUrlConfig() -> Tree<string, string>;
 
-    // Gets config from select url parameters given by first of params and 
+    // Gets config from select url parameters given by first of params and
     // stores them under second of params.
     getUrlConfigMapNames : (params : [Pair<string, string>])->Tree<string, string>;
 
     // Combines two configs. Settings in over overrides settings in under.
     combineConfigsOverride : (
-        over : Tree<string, string>, 
+        over : Tree<string, string>,
         under : Tree<string, string>
     )->Tree<string, string>;
     combineConfigs : (
-        left : Tree<string, string>, 
+        left : Tree<string, string>,
         right : Tree<string, string>,
         combine : (param : string, fromLeft : string, fromRight : string)->string
     )->Tree<string, string>;
 
     // The structure to contain the configuration for a compiler invocation
     CompilerConfig(
-        flowfile : string, 
+        flowfile : string,
         includes : [string],
         objectFolders : [string],
         verbose : int,
@@ -104,6 +104,8 @@ export {
 	// In case a program doesn't exist on path or any other errors return an empty string.
 	fcProgramVersion(program : string) -> string;
 
+	runGradle(args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void, onExit : (errocode : int) -> void) -> native;
+
 	// Returns the gradle version like '6.8' in case gradle is installed and -1.0 otherwise.
 	fcGradleVersion() -> double;
 }
@@ -114,7 +116,7 @@ getFlowDir() -> string {
 		println("WARNING: Could not determine the flow directory.");
 		println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
 		"../flow9/";
-	} 
+	}
 }
 
 fcFlowDir : ref Maybe<string> = ref None();
@@ -124,14 +126,14 @@ findFlowDir() -> string {
 		// Use the 'print-flow-dir=1' option of flowc
 		flowDirByFlowc = \-> {
 			if (strContains(getApplicationPath(), "flowc1")) {
-				// flowc1 must not use itsef in this function, 
+				// flowc1 must not use itsef in this function,
 				// otherwise there's a fork bomb.
-				"" 
+				""
 			} else {
 				dir_lines = ref "";
 				err_lines = ref "";
-				code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".", 
-					\out -> dir_lines := ^dir_lines + out, 
+				code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".",
+					\out -> dir_lines := ^dir_lines + out,
 					\err -> {
 						println(err);
 						err_lines := err;
@@ -252,16 +254,16 @@ getConfigParameter(config : Tree<string, string>, paramName : string) -> string 
 
 getConfigParameterInt(config : Tree<string, string>, paramName : string, defValue : int) -> int {
     raw = getConfigParameterDef(config, paramName, "");
-    if (raw == "") defValue else s2i(raw); 
+    if (raw == "") defValue else s2i(raw);
 }
 
 isConfigParameterSet(config, param)
     getConfigParameter(config, param) != "";
 
-isConfigParameterTrue(config, param) 
+isConfigParameterTrue(config, param)
     isParameterTrue(getConfigParameter(config, param));
 
-isConfigParameterFalse(config, param) 
+isConfigParameterFalse(config, param)
     isParameterFalse(getConfigParameter(config, param));
 
 isAnyConfigParametersTrue(config : Tree<string, string>, params : [string]) -> bool {
@@ -287,7 +289,7 @@ underrideConfigParameter(conf, key, value)
     if (containsKeyTree(conf.config, key)) conf
     else setConfigParameter(conf, key, value);
 
-getConstConfig(params) 
+getConstConfig(params)
     fold(params, makeTree(), \t, pair->
         if (pair.second != "") setTree(t, pair.first, pair.second)
         else t
@@ -308,7 +310,7 @@ getAllUrlConfig() -> Tree<string, string> {
 	fold(getAllUrlParametersArray(), makeTree(), \acc, param -> setTree(acc, param[0], param[1]))
 }
 
-combineConfigsOverride(over, under) 
+combineConfigsOverride(over, under)
     mergeTreeCustom(over, under, \__, upper, __ -> upper);
 
 combineConfigs(left, right, combine)
@@ -487,7 +489,7 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 }
 
 setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig {
-	CompilerConfig(conf with 
+	CompilerConfig(conf with
 		flowfile = if (opt == "file" || opt == "flowfile") val else conf.flowfile,
 		includes = if (opt == "I" || opt == "include") strSplit(val, ",") else conf.includes,
 		objectFolders = if (opt == "obj" || opt == "objectFolders") strSplit(val, ",") else conf.objectFolders,
@@ -552,12 +554,28 @@ fcProgramVersion(program : string) -> string {
 	if (exit_code == 0 && !^err) ^out else "";
 }
 
+runGradle(args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void, onExit : (errocode : int) -> void) -> native {
+	println("Run Gradle: " + toString(windows()));
+	if (windows()) {
+		println(">> cmd: " + strGlue(concat(["cmd", "gradle", "/c"], args), " "));
+		runSystemProcess("cmd", concat(["/c", "gradle"], args), currentWorkingDirectory, onStdOutLine, onStdErr, onExit);
+	} else {
+		runSystemProcess("gradle", args, currentWorkingDirectory, onStdOutLine, onStdErr, onExit);
+	}
+}
+
 fc_gradle_version : ref Maybe<double> = ref None();
 
 fcGradleVersion() -> double {
 	lookup_version = \-> {
+		out = ref "";
+		err = ref false;
+		exitCode = ref 0;
+		runGradle(["-version"], ".", \o -> out := ^out + "\n" + o, \e -> err := true, \c -> exitCode := c);
+		version = if (^exitCode == 0 && !^err) ^out else "";
+
 		gradle_version = filtermap(
-			strSplit(fcProgramVersion("gradle"), "\n"),
+			strSplit(version, "\n"),
 			\line0 -> {
 				line = toLowerCase(line0);
 				if (startsWith(line, "gradle")) Some(substring(line, 7, strlen(line) - 7)) else None();
