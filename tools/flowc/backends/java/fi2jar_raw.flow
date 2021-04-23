@@ -1,123 +1,37 @@
+import promise;
 import sys/system;
 import sys/target;
 import tools/flowc/backends/common;
-import promise;
+import tools/flowc/backends/java/fi2jar_gradle;
 
 export {
 	fi2JavaBuildRaw(cfg : FiJavaConfig, path : string, callback : (int) -> void) -> void;
 }
 
 fi2JavaBuildRaw(cfg : FiJavaConfig, path : string, callback : (int) -> void) -> void {
+	fi2javaDownloadDependenciesWithGradle(cfg, \code -> 
+		if (code == 0) {
+			fi2JavaBuildFatJar(cfg, path, callback);
+		} else callback(5 + code)
+	);
+}
+
+fi2JavaBuildFatJar(cfg : FiJavaConfig, path : string, callback : (int) -> void) -> void {
 	jar = changeFileExt(cfg.jarfile, ".jar");
 	flowdir = rtrim2(getFlowDir(), "/");
 	outdir = if (cfg.outputdir == "") "." else cfg.outputdir;
-
 	java_deps = fi2JavaJarDependencies(cfg, path);
-
-	exit_handler = \prog, success, failure -> {
-		\errcode, stdout, stderr -> {
-			if (stdout != "") fcPrintln(stdout, cfg.threadId);
-			if (stderr != "") fcPrintln(stderr, cfg.threadId);
-			if (errcode == 0) {
-				success(0)
-			} else {
-				fcPrintln("Failed to run " + prog + ". Check if " + prog + " is installed, JAVA_HOME environment variable is properly defined and is present in your PATH.", cfg.threadId);
-				failure(5 + errcode)
-			}
-		}
-	}
-	build_program_jar = \fulfil, reject -> {
-		if (cfg.verbose > 0) {
-			fcPrintln("Adding a program to " + jar, cfg.threadId);
-		}
-		args = ["feu", jar, cfg.packageName + "." + cfg.mainClassName, "-C", cfg.generatedir, strReplace(cfg.packageName, ".", "/")];
-		fcPrintln("BUILD PROGRAM(C): jar " + strGlue(args, " "), cfg.threadId);
-		startProcess("jar", args, outdir, "",
-			exit_handler("jar",
-				\code -> {
-					if (cfg.verbose > 0) {
-						fcPrintln("Run with \"java -jar " + jar + "\"", cfg.threadId);
-					}
-					fulfil(code)
-				},
-				reject
-			)
-		)
-	}
-	build_runtime_jar = \fulfil, reject -> {
-		if (cfg.verbose > 0) {
-			fcPrintln("Adding a runtime to " + jar, cfg.threadId);
-		}
-		args1 = ["cf", jar, "-C", flowdir + "/platforms/java", "com/area9innovation/flow"];
-		//args2 = fi2JavaJarDependencies(cfg, path);
-		args = args1;
-		fcPrintln("BUILD RUNTIME(B): jar " + strGlue(args, " "), cfg.threadId);
-		startProcess("jar", args, outdir, "", exit_handler("jar", fulfil, reject));
-	}
-	compile_java = \fulfil, reject -> {
-		if (cfg.verbose > 0) {
-			fcPrintln("Compiling the generated code", cfg.threadId);
-		}
-		cp_sep = if (hasTargetName("windows")) ";" else ":";
-		args = ["-Xlint:unchecked", "-encoding", "UTF-8", "-cp", 
-			flowdir + "/platforms/java" + cp_sep + "javagen" + 
-				fold(java_deps, "", \acc, dep -> acc + cp_sep + pathCombine(dep.first, dep.second)) +
-				fold(cfg.externNatives, "", \acc, nat -> acc + cp_sep + nat)
-			,
-			"@" + path + "/sources"
-		];
-		//args2 = fi2JavaRuntimeHosts(cfg);
-		//args = concat(args1, args2);
-		fcPrintln("COMPILE(A): javac " + strGlue(args, " "), cfg.threadId);
-		startProcess("javac", args, outdir, "", exit_handler("javac", fulfil, reject));
-	}
-	//fi2JavaUpdateSources(cfg, path);
-
 	jobs = concat3(
-		[Promise(compile_java), Promise(build_runtime_jar)],
+		[
+			fi2javaCompileJavaProgram(cfg, java_deps, outdir, flowdir, path), 
+			fi2javaBuildRuntimeJar(cfg, jar, outdir, flowdir)
+		],
 		concat(
-			mapConcat(java_deps, \p -> {
-				dir = p.first;
-				jar_lib = p.second;
-				lib_name = changeFileExt(jar_lib, "");
-				lib_dir = pathCombine(dir, lib_name);
-				concat(
-					if (isDirectory(lib_dir)) [] else {
-						[
-							Promise(\fulfil, reject -> {
-								args = [lib_name];
-								fcPrintln("\tMKDIR(A): 'mkdir " + strGlue(args, " ") + "' (dir: " + dir + ")", cfg.threadId);
-								startProcess("mkdir", args, dir, "", exit_handler("mkdir", fulfil, reject))
-							}),
-							Promise(\fulfil, reject -> {
-								args = ["-xf", pathCombine(dir, jar_lib)];
-								fcPrintln("\tEXTRACT_JAR(B): 'jar " + strGlue(args, " ") + "' (dir: " + pathCombine(dir, lib_name) + ")", cfg.threadId);
-								startProcess("jar", args, lib_dir, "", exit_handler("jar -xf", fulfil, reject))
-							})
-						]
-					},
-					[Promise(\fulfil, reject -> {
-						args = ["fu", jar, "-C", lib_dir, "."];
-						fcPrintln("\tUPDATE_JAR(C): 'jar " + strGlue(args, " ") + "' (dir: " + resolveRelativePath(outdir) + ")", cfg.threadId);
-						startProcess("jar", args, outdir, "", exit_handler("jar -u", fulfil, reject))
-					})]
-				)
-			}),
-			map(cfg.externNatives, \nat -> {
-				//dir = p.first;
-				//jar_lib = p.second;
-				//lib_name = changeFileExt(jar_lib, "");
-				//lib_dir = pathCombine(dir, lib_name);
-				Promise(\fulfil, reject -> {
-					args = ["fu", jar, "-C", nat, "."];
-					fcPrintln("\tUPDATE_JAR(D): 'jar " + strGlue(args, " ") + "' (dir: " + resolveRelativePath(outdir) + ")", cfg.threadId);
-					startProcess("jar", args, outdir, "", exit_handler("jar -u", fulfil, reject))
-				})
-			}),
+			mapConcat(java_deps, \p -> fi2javaAddLibraryJar(cfg, outdir, jar, p.first, p.second)),
+			fi2javaAddExternalNatives(cfg, outdir, jar),
 		),
-		[Promise(build_program_jar)]	
+		[fi2JavaBuildProgramJar(cfg, jar, outdir)]
 	);
-
 	doneP(
 		allP(jobs),
 		\codes -> if (forall(codes, \code -> code == 0)) callback(0) else callback(5),
@@ -130,35 +44,111 @@ fi2JavaJarDependencies(cfg : FiJavaConfig, path : string) -> [Pair<string, strin
 		if (!startsWith(dep, "jar")) None() else Some(substring(dep, 4, strlen(dep) - 5))
 	);
 	flow_dir = getFlowDir();
-	jar_deps_resolved = filtermap(jar_deps, \dep -> {
+	gradle_deps = fi2javaGradleDeps2JarDeps(cfg);
+	all_deps = concat(jar_deps, gradle_deps);
+	filtermap(all_deps, \dep -> {
 		path1 = pathCombine(path, dep);
 		if (fileExists(path1)) Some(Pair(path, dep)) else {
 			path2 = pathCombineMany([flow_dir, "platforms", "java", "lib"]);
-			if (fileExists(pathCombine(path2, dep))) Some(Pair(path2, dep)) else {
+			if (fileExists(pathCombine(path2, dep))) Some(Pair(path2, dep)) 
+			else {
 				fcPrintln("library: " + dep + " is not resolved", cfg.threadId);
 				None();
 			}
 		}
 	});
-	jar_deps_resolved;
 }
 
-fi2JavaJarNatives(cfg : FiJavaConfig) -> [string] {
-	mapConcat(cfg.externNatives, \nat -> ["-C", nat, "com/area9innovation/flow"]);
-}
-
-fi2JavaUpdateSources(cfg : FiJavaConfig, path : string) -> void {
-	prog_sources_path = pathCombine(path, "sources");
-	prog_sources = getFileContent(prog_sources_path);
-	prog_sources_set = buildSet(filter(strSplit(prog_sources, "\n"), isNotSpace));
-	extern_sources = set2array(fold(cfg.externNatives, makeSet(), \acc, extern -> 
-		mergeSets(acc, buildSet(
-			filter(readDirectoryRecursively(extern), \file -> endsWith(file, ".java"))
-		))
-	));
-	extra_sources = filter(extern_sources, \src -> !containsSet(prog_sources_set, src));
-	if (length(extra_sources) > 0) {
-		setFileContent(prog_sources_path, prog_sources + "\n" + strGlue(extra_sources, "\n"));
-		{}
+fi2JavaBuilderExitHandler(cfg : FiJavaConfig, prog : string, args : [string], success : (int) -> void, failure : (int) -> void) -> (int, string, string) -> void {
+	\errcode, stdout, stderr -> {
+		if (stdout != "") fcPrintln(stdout, cfg.threadId);
+		if (stderr != "") fcPrintln(stderr, cfg.threadId);
+		if (errcode == 0) {
+			success(0)
+		} else {
+			fcPrintln("stdout:\n" + stdout, cfg.threadId);
+			fcPrintln("stderr:\n" + stderr, cfg.threadId);
+			fcPrintln(
+				"Failed to run '" + prog + concatStrings(map(args, \arg -> " " + arg)) + "'\n" + 
+				"Check if " + prog + " is installed, JAVA_HOME environment variable is properly defined and is present in your PATH.", cfg.threadId);
+			failure(5 + errcode)
+		}
 	}
+}
+
+fi2JavaBuildProgramJar(cfg : FiJavaConfig, jar : string, outdir : string) -> Promise<int, int> {
+	Promise(\fulfil, reject -> {
+		fcVerbose(cfg, 0, "Adding compiled classes of " + cfg.flowfile + " to " + jar);
+		args = ["feu", jar, cfg.packageName + "." + cfg.mainClassName, "-C", cfg.generatedir, strReplace(cfg.packageName, ".", "/")];
+		fcVerbose(cfg, 1, "\tjar " + strGlue(args, " "));
+		startProcess("jar", args, outdir, "",
+			fi2JavaBuilderExitHandler(cfg, "jar", args,
+				\code -> {
+					if (cfg.verbose > 0) {
+						fcPrintln("Run with \"java -jar " + jar + "\"", cfg.threadId);
+					}
+					fulfil(code)
+				},
+				reject
+			)
+		)
+	});
+}
+
+fi2javaBuildRuntimeJar(cfg : FiJavaConfig, jar : string, outdir : string, flowdir : string) -> Promise<int, int> {
+	Promise(\fulfil, reject -> {
+		fcVerbose(cfg, 0, "Adding a flow runtime to " + jar);
+		args = ["cf", jar, "-C", flowdir + "/platforms/java", "com/area9innovation/flow"];
+		fcVerbose(cfg, 1, "\tjar " + strGlue(args, " "));
+		startProcess("jar", args, outdir, "", fi2JavaBuilderExitHandler(cfg, "jar", args, fulfil, reject));
+	});
+}
+
+fi2javaCompileJavaProgram(cfg : FiJavaConfig, java_deps : [Pair<string, string>], outdir : string, flowdir : string, path : string) -> Promise<int, int> {
+	Promise(\fulfil, reject -> {
+		fcVerbose(cfg, 0, "Compiling the generated code of " + cfg.flowfile);
+		cp_sep = if (hasTargetName("windows")) ";" else ":";
+		args = ["-Xlint:unchecked", "-encoding", "UTF-8", "-cp", 
+			flowdir + "/platforms/java" + cp_sep + "javagen" + 
+				fold(java_deps, "", \acc, dep -> acc + cp_sep + pathCombine(dep.first, dep.second)) +
+				fold(cfg.externNatives, "", \acc, nat -> acc + cp_sep + nat)
+			,
+			"@" + path + "/sources"
+		];
+		fcVerbose(cfg, 1, "\tjavac " + strGlue(args, " "));
+		startProcess("javac", args, outdir, "", fi2JavaBuilderExitHandler(cfg, "javac", args, fulfil, reject));
+	});
+}
+
+fi2javaAddLibraryJar(cfg : FiJavaConfig, outdir : string, jar : string, dir : string, jar_lib : string) -> [Promise<int, int>] {
+	lib_name = changeFileExt(jar_lib, "");
+	lib_dir = pathCombine(dir, lib_name);
+	concat(
+		if (isDirectory(lib_dir)) [] else {
+			ensureDirectoryExists(lib_dir);
+			[Promise(\fulfil, reject -> {
+					fcVerbose(cfg, 0, "Extracting a library " + jar_lib);
+					args = ["-xf", pathCombine(dir, jar_lib)];
+					fcVerbose(cfg, 1, "\tjar " + strGlue(args, " "));
+					startProcess("jar", args, lib_dir, "", fi2JavaBuilderExitHandler(cfg, "jar", args, fulfil, reject))
+			})]
+		},
+		[Promise(\fulfil, reject -> {
+			fcVerbose(cfg, 0, "Adding a library " + jar_lib + " to " + jar);
+			args = ["fu", jar, "-C", lib_dir, "."];
+			fcVerbose(cfg, 1, "\tjar " + strGlue(args, " "));
+			startProcess("jar", args, outdir, "", fi2JavaBuilderExitHandler(cfg, "jar", args, fulfil, reject))
+		})]
+	);
+}
+
+fi2javaAddExternalNatives(cfg : FiJavaConfig, outdir : string, jar : string) -> [Promise<int, int>] {
+	map(cfg.externNatives, \nat -> {
+		Promise(\fulfil, reject -> {
+			fcVerbose(cfg, 0, "Adding external natives from " + nat + " to " + jar);
+			args = ["fu", jar, "-C", nat, "."];
+			fcVerbose(cfg, 1, "\tjar " + strGlue(args, " "));
+			startProcess("jar", args, outdir, "", fi2JavaBuilderExitHandler(cfg, "jar", args, fulfil, reject))
+		})
+	})
 }

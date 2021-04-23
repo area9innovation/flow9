@@ -1,8 +1,10 @@
-import tools/flowc/backends/common;
 import string_utils;
+import tools/flowc/backends/common;
+import tools/flowc/backends/java/fi2jar_utils;
 
 export {
 	fi2javaBuildWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void;
+	fi2javaDownloadDependenciesWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void;
 }
 
 fi2javaBuildWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void {
@@ -60,6 +62,43 @@ fi2javaBuildWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void {
 	}
 }
 
+fi2javaDownloadDependenciesWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void {
+	flow_dir = findFlowDir();
+	if (flow_dir == "") {
+		fcPrintln("flow directory is not found - can't download dependencies", cfg.threadId);
+		callback(5);
+	} else {
+		java_lib_dir = pathCombineMany([flow_dir, "platforms", "java", "lib"]);
+		jar_deps = fi2javaGradleDeps2JarDeps(cfg);
+		missing_jar_deps = filter(jar_deps, \dep -> !fileExists(pathCombine(java_lib_dir, dep)));
+		if (length(missing_jar_deps) == 0) {
+			fcVerbose(cfg, 1, "All dependencies are already downloaded");
+			callback(0);
+		} else {
+			java_tmp_dir = pathCombineMany([flow_dir, "platforms", "java", "tmp"]);
+			ensureDirectoryExists(java_tmp_dir);
+			setFileContent(
+				pathCombine(java_tmp_dir, "build.gradle"), 
+				fiGradleDownloadDependencies(cfg, java_lib_dir)
+			);
+			fcVerbose(cfg, 1, "Downloading dependencies with gradle");
+			runSystemProcess("gradle", ["getDeps", "--warning-mode", "all"], java_tmp_dir, 
+				\out -> fcVerbose(cfg, 0, out),
+				\err -> fcVerbose(cfg, 0, err),
+				\code -> if (code != 0) callback(5 + code) else {
+					fcVerbose(cfg, 0, 
+						"Dependencies downloaded to '" + java_lib_dir + "':\n" + 
+						concatStrings(map(cfg.dependencies, \dep -> "\t" + dep + "\n"))
+					);
+					deleteRecursively(java_tmp_dir);
+					callback(0);
+				}
+			);
+			{}
+		}
+	}
+}
+
 fiGradleProperties(cfg : FiJavaConfig) -> string {
 "org.gradle.jvmargs=-Xmx" + cfg.builderXmX + "
 org.gradle.parallel=true
@@ -95,5 +134,22 @@ jar {
 	from {
 		configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
 	}
+}"
+}
+
+fiGradleDownloadDependencies(cfg : FiJavaConfig, java_lib_dir : string) -> string {
+	dependencies = concatStrings(filtermap(cfg.dependencies, \dep -> 
+		if (!startsWith(dep, "gradle")) None() else Some("\timplementation \"" + substring(dep, 7, strlen(dep) - 8) + "\"\n")
+	));
+"plugins {
+    id 'java' 
+}
+repositories {
+    mavenCentral() 
+}
+dependencies {\n" + dependencies + "}
+task getDeps(type: Copy) {
+  from sourceSets.main.runtimeClasspath
+  into '" + java_lib_dir + "'
 }"
 }
